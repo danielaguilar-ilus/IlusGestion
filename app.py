@@ -76830,6 +76830,13 @@ def ot2_api_crear():
                 "descripcion": (_tm.get("descripcion") or "").strip()[:2000] or None,
                 "cantidad": _tm_cant,
                 "plantilla_id": _tm_plantilla_id,
+                # 🆕 2026-09-01 (Daniel — tarjetas de trabajo interno en
+                # ot_ejecutar): el SKU del producto se recibía del wizard
+                # pero se descartaba acá -- nunca llegó a persistirse en
+                # ningún lado. Se guarda en mant_visita_tareas.item_manual_sku
+                # (ver _ensure_visita_tarea_item_manual_cols) para poder
+                # mostrarlo en la tarjeta, igual que el SKU de un equipo real.
+                "sku": (_tm.get("sku") or "").strip()[:60] or None,
             })
 
     if not equipos and not plantilla_suelta and not tareas_manuales:
@@ -77225,15 +77232,27 @@ def ot2_api_crear():
         # del catálogo o tareas sueltas para Capacitación/Control de calidad,
         # y la observación de Trabajo de bodega (una sola tarea con el texto
         # completo). Mismo mant_visita_tareas de siempre, columna ya prevista.
-        for _tm in tareas_manuales:
+        #
+        # 🆕 2026-09-01 (Daniel — tarjetas de trabajo interno en ot_ejecutar):
+        # cada producto/fila de este paso recibe un `item_manual_id`
+        # secuencial (1, 2, 3...) PROPIO de esta OT. La tarea-título (ancla)
+        # y TODOS los ítems copiados de su plantilla comparten el mismo
+        # número -- es la única forma de volver a agruparlos más tarde en
+        # `mant_ot_ejecutar`, porque `maquina_id` queda NULL para todas
+        # (trabajo interno no tiene ficha de equipo). Sin este campo, dos
+        # productos con la MISMA plantilla se mezclaban en una sola tarjeta
+        # (agrupación vieja por maquina_id=0 + plantilla_id). Ver
+        # _ensure_visita_tarea_item_manual_cols().
+        for _tm_idx, _tm in enumerate(tareas_manuales, start=1):
             orden += 1
             cur.execute(
                 "INSERT INTO mant_visita_tareas "
                 "  (visita_id, orden, titulo, descripcion, tipo, cantidad, "
-                "   tipo_respuesta, obligatoria, estado_trabajo, created_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s,'check',1,'pendiente',%s)",
+                "   tipo_respuesta, obligatoria, estado_trabajo, created_by, "
+                "   item_manual_id, item_manual_sku) "
+                "VALUES (%s,%s,%s,%s,%s,%s,'check',1,'pendiente',%s,%s,%s)",
                 (vid, orden, _tm["titulo"], _tm["descripcion"], tarea_tipo,
-                 _tm["cantidad"], current_username()))
+                 _tm["cantidad"], current_username(), _tm_idx, _tm.get("sku")))
             n_tareas += 1
             # 🆕 2026-08-31: si este producto/tarea trae su PROPIA plantilla
             # (columna "Checklist" del Paso 5), se copian sus ítems tal cual
@@ -77255,15 +77274,16 @@ def ot2_api_crear():
                         "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
                         "   maquina_id, tipo_respuesta, target_field, obligatoria, "
                         "   requiere_foto, unidad, rango_min, rango_max, "
-                        "   opciones_lista_json, estado_trabajo, created_by) "
+                        "   opciones_lista_json, estado_trabajo, created_by, "
+                        "   item_manual_id) "
                         "VALUES (%s,%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,"
-                        "        'pendiente',%s)",
+                        "        'pendiente',%s,%s)",
                         (vid, _tm["plantilla_id"], orden, (it.get("titulo") or "")[:300],
                          it.get("descripcion"), tarea_tipo,
                          it.get("tipo_respuesta") or "check", it.get("target_field"),
                          it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
                          it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                         it.get("opciones_lista_json"), current_username()))
+                         it.get("opciones_lista_json"), current_username(), _tm_idx))
                     n_tareas += 1
 
         # Una OT sin tareas no se puede ejecutar ni cerrar: mejor no nacer.
@@ -83064,14 +83084,23 @@ def mant_ot_ejecutar(vid):
     _huerf_info = mysql_fetchone(
         "SELECT "
         "  COUNT(*) AS n_total, "
-        "  SUM(CASE WHEN maquina_id IS NULL THEN 1 ELSE 0 END) AS n_huerfanas "
+        "  SUM(CASE WHEN maquina_id IS NULL THEN 1 ELSE 0 END) AS n_huerfanas, "
+        "  SUM(CASE WHEN maquina_id IS NULL AND item_manual_id IS NULL THEN 1 ELSE 0 END) AS n_huerfanas_sin_grupo "
         "  FROM mant_visita_tareas WHERE visita_id=%s",
         (vid,)
-    ) or {"n_total": 0, "n_huerfanas": 0}
+    ) or {"n_total": 0, "n_huerfanas": 0, "n_huerfanas_sin_grupo": 0}
     _tareas_total_v = int(_huerf_info.get("n_total") or 0)
     _tareas_huerf_v = int(_huerf_info.get("n_huerfanas") or 0)
+    # 🆕 2026-09-01 (Daniel: "quiero que se comporte como una OT igual al
+    # resto"): tareas de trabajo interno son huérfanas de maquina_id A
+    # PROPÓSITO (no tienen ficha de equipo) -- si YA vienen agrupadas por
+    # item_manual_id (ver ot2_api_crear), no es una OT mal configurada,
+    # es trabajo interno normal. El aviso "Configurar OT" queda SOLO para
+    # huérfanas de verdad (sin ningún agrupador, ej. OTs viejas o casos
+    # donde de verdad falta asignar equipos).
+    _tareas_huerf_sin_grupo_v = int(_huerf_info.get("n_huerfanas_sin_grupo") or 0)
     ot_necesita_config = (
-        len(equipos) == 0 and (_tareas_total_v == 0 or _tareas_huerf_v > 0)
+        len(equipos) == 0 and (_tareas_total_v == 0 or _tareas_huerf_sin_grupo_v > 0)
     )
 
     # Tareas con info de plantilla origen + valor_json para tipos avanzados.
@@ -83083,12 +83112,13 @@ def mant_ot_ejecutar(vid):
         "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
         "       t.completada, t.completada_at, t.completada_por, t.observaciones, t.valor_json, "
         "       t.version, t.locked_by_user_id, t.locked_at, "
+        "       t.item_manual_id, t.item_manual_sku, "
         "       COALESCE(p.nombre, 'Gestión de tareas') AS plantilla_nombre, "
         "       COALESCE(p.tipo_visita, t.tipo, 'otro') AS plantilla_tipo "
         "  FROM mant_visita_tareas t "
         "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
         " WHERE t.visita_id=%s "
-        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
+        " ORDER BY t.maquina_id, t.item_manual_id, t.plantilla_id, t.orden, t.id",
         (vid,)
     ) or []
     tareas = [dict(t) for t in tareas]
@@ -83114,10 +83144,21 @@ def mant_ot_ejecutar(vid):
     # Agrupar por (maquina_id, plantilla_id) — UNA card por equipo×plantilla.
     # Si una máquina tiene 3 plantillas, aparece 3 veces en grupos.
     # ════════════════════════════════════════════════════════════════
+    # 🆕 2026-09-01 (Daniel: "quiero que se comporte como una OT igual al
+    # resto... entrar en él y gestionar las plantillas"): trabajo interno
+    # guarda TODAS sus tareas con maquina_id=NULL -- sin esto, el
+    # producto A y el producto B de la misma OT (o incluso con la MISMA
+    # plantilla) se mezclaban en una sola bolsa bajo mid=0. item_manual_id
+    # (ver ot2_api_crear/_ensure_visita_tarea_item_manual_cols) agrupa por
+    # PRODUCTO cuando no hay equipo real -- mismo mecanismo de
+    # plantillas_por_maquina/stats_por_maquina de siempre, ningún cambio
+    # de template hace falta para eso. Equipos reales y grupos de trabajo
+    # interno NUNCA coexisten en la misma OT (trabajo interno no tiene
+    # mant_maquinas), así que no hay colisión de ids entre ambos mundos.
     grupos = []  # lista de {maquina_id, plantilla_id, plantilla_nombre, tareas[], stats{}}
     grupo_idx = {}  # (mid, pid) → index en grupos
     for t in tareas:
-        mid = t.get("maquina_id") or 0
+        mid = t.get("maquina_id") or t.get("item_manual_id") or 0
         pid = t.get("plantilla_id") or 0  # 0 = sin plantilla (manual/legacy)
         key = (mid, pid)
         if key not in grupo_idx:
@@ -83221,6 +83262,75 @@ def mant_ot_ejecutar(vid):
     for _f in fotos_js:
         if _f.get("maquina_id"):
             fotos_por_equipo_count[_f["maquina_id"]] = fotos_por_equipo_count.get(_f["maquina_id"], 0) + 1
+
+    # ════════════════════════════════════════════════════════════════
+    # 🆕 2026-09-01 (Daniel: "quiero que se comporte como una OT igual al
+    # resto... que muestre el producto declarado y entrar en él"):
+    # tarjetas sintéticas de PRODUCTO para trabajo interno -- reusan
+    # TAL CUAL la grilla `.tx-eq-card` del template (mismo semáforo/barra
+    # de progreso que un equipo real) sin tocar el template para nada,
+    # inyectando dicts con la misma forma que espera esa grilla. Nunca
+    # son un `mant_maquinas.id` real (no hay FK, no hay ficha) -- ver
+    # comentario en _ensure_visita_tarea_item_manual_cols. Solo se arma
+    # cuando NO hay equipos reales (trabajo interno nunca tiene equipos).
+    if not equipos:
+        # 🖼️ 2026-09-01 (Daniel, pedido posterior — "coloquemos las fotos en
+        # las tarjetas una vez gestionadas"): índice tarea_id → primera foto,
+        # para poder mostrar una miniatura real en la tarjeta sintética sin
+        # inventar ningún mecanismo de subida nuevo -- reusa `fotos_js`
+        # (mant_visita_fotos de siempre) que YA viaja con tarea_id. Las
+        # fotos de trabajo interno tienen maquina_id NULL (ver el fix en
+        # mant_visita_fotos_subir que ya no confía en el maquina_id que
+        # manda el cliente), así que fotos_por_equipo_count no las cuenta
+        # -- necesitan su propio índice, por tarea.
+        _foto_por_tarea = {}
+        for _fj in fotos_js:
+            _tj = _fj.get("tarea_id")
+            if _tj and _tj not in _foto_por_tarea:
+                _foto_por_tarea[_tj] = _fj["url"]
+        _grupos_por_mid = {}
+        for t in tareas:
+            if t.get("maquina_id"):
+                continue  # tiene equipo real -- no es de este camino
+            mid = t.get("item_manual_id") or 0
+            g = _grupos_por_mid.setdefault(mid, {
+                "titulo": None, "sku": None, "n": 0, "completas": 0, "foto_url": None,
+            })
+            g["n"] += 1
+            if t.get("completada"):
+                g["completas"] += 1
+            if not g["foto_url"]:
+                g["foto_url"] = _foto_por_tarea.get(t.get("id"))
+            # La tarea-ancla (la que NO vino de copiar una plantilla) trae
+            # el título/SKU reales del producto -- se detecta porque su
+            # plantilla_id queda NULL (ver ot2_api_crear, INSERT del
+            # título vs INSERT de los ítems copiados).
+            if not t.get("plantilla_id") and not g["titulo"]:
+                g["titulo"] = t.get("titulo")
+                g["sku"] = t.get("item_manual_sku")
+        for mid, g in _grupos_por_mid.items():
+            equipos.append({
+                "id": mid,
+                "nombre": g["titulo"] or ("Trabajo interno" if mid == 0 else f"Producto #{mid}"),
+                "sku": g["sku"],
+                "serie": None,
+                "foto_url": g["foto_url"],
+                "marca": None, "modelo": None, "anio_fabricacion": None, "voltaje": None,
+                "ubicacion_sala": None, "estado_capturado": None, "tiene_dano": None,
+                "observaciones": None, "ultima_intervencion": None, "visitas_count": None,
+                "aplica_mantencion": 1,
+                # 🔴 CRÍTICO: `id` de esta tarjeta es un item_manual_id, NUNCA
+                # un mant_maquinas.id real -- las acciones de la tarjeta que
+                # operan sobre la ficha real del equipo (ficha técnica,
+                # saltar equipo, toggle aplica_mantencion) deben esconderse
+                # para estas tarjetas en el template (`{% if not eq._interno %}`),
+                # porque `mant_maquinas.id` es un autoincrement GLOBAL -- un
+                # click ahí podría tocar por error una máquina real de OTRO
+                # cliente que comparta el mismo número.
+                "_interno": True,
+            })
+        if equipos:
+            equipos.sort(key=lambda e: (e["id"] != 0, e.get("nombre") or ""))
 
     # ════════════════════════════════════════════════════════════════
     # FIX 2026-05-17 — Keys stringificadas para JSON.
@@ -89535,20 +89645,37 @@ def _mant_visita_fotos_subir_impl(vid):
         maquina_id = None
 
     # FIX 2026-06-02 (Daniel — "ver la foto del levantamiento en la ficha del equipo"):
-    # si la foto va asociada a una tarea pero el frontend NO envió maquina_id, lo
-    # DERIVAMOS de la tarea. Sin maquina_id la foto queda huérfana: la proyección a la
-    # ficha y la sección "último levantamiento" filtran por (visita_id, maquina_id),
-    # así que sin él la foto NUNCA aparece en el equipo.
-    if maquina_id is None and tarea_id:
+    # si la foto va asociada a una tarea, el maquina_id SIEMPRE se deriva de la
+    # tarea real en BD -- nunca se confía en el valor que mandó el frontend.
+    #
+    # 🔒 2026-09-01 (Daniel, vía otra sesión — tarjetas de trabajo interno):
+    # ot_ejecutar.html ahora pinta tarjetas SINTÉTICAS para productos de
+    # trabajo interno (id = item_manual_id, un entero PROPIO de la OT que
+    # NO es un maquina_id real -- ver equipos.append() en mant_ot_ejecutar).
+    # Su JS reusa las mismas funciones que un equipo real y les pasa ese id
+    # como `mid`, que subirFotoTarea() reenvía tal cual en el campo
+    # `maquina_id` del FormData. Si se confiara en ese valor, un producto
+    # con item_manual_id=2 podría insertar su foto contra el mant_maquinas
+    # real #2 de OTRO cliente (FK válida, dato cruzado silencioso -- sin
+    # error, sin FK rota, solo una foto en la ficha del equipo equivocado).
+    # Derivar SIEMPRE desde `tarea_id` (columna real, no tocable por el
+    # cliente) cierra ese riesgo sin tener que enseñarle al frontend a
+    # distinguir "equipo real" de "producto sintético".
+    if tarea_id:
         try:
             _tr = mysql_fetchone(
                 "SELECT maquina_id FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
                 (tarea_id, vid)
             )
-            if _tr and _tr.get("maquina_id"):
-                maquina_id = _tr["maquina_id"]
+            maquina_id = (_tr or {}).get("maquina_id")  # NULL si la tarea es de trabajo interno
         except Exception:
             pass
+    elif maquina_id is not None and maquina_id <= 0:
+        # Sin tarea_id (ej. subida inicial de "Trabajo de bodega") pero con
+        # un maquina_id no positivo -- nunca es un mant_maquinas real
+        # (AUTO_INCREMENT arranca en 1). Se descarta en vez de dejar que la
+        # FK falle o, peor, apunte a un id que sí exista por coincidencia.
+        maquina_id = None
 
     # Log entrada — útil en Railway logs
     print(f"[fotos_subir vid={vid}] iniciando: {len(files)} archivo(s), "
@@ -107496,6 +107623,52 @@ def _ensure_visita_tarea_cantidad_col():
         print(f"[ensure_visita_tarea_cantidad] {e}", flush=True)
 
 
+def _ensure_visita_tarea_item_manual_cols():
+    """Columnas 'item_manual_id' y 'item_manual_sku' en mant_visita_tareas
+    -- SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+
+    2026-09-01 (Daniel, vía otra sesión — tarjetas de trabajo interno en
+    ot_ejecutar): las OT de "trabajo interno" (Capacitación / Control de
+    calidad) guardan sus productos/tareas manuales con maquina_id=NULL
+    (no hay ficha de equipo real que asociar). Sin ninguna columna que
+    agrupe "estas N tareas son del mismo producto", ot_ejecutar no podía
+    armar UNA tarjeta por producto -- las mostraba todas sueltas (o ni
+    siquiera las mostraba, ver banner "Sin máquinas en esta OT").
+
+    `item_manual_id` es un número secuencial (1, 2, 3...) PROPIO de cada
+    OT (no una FK a ninguna tabla — es solo un agrupador, NUNCA se usa
+    como maquina_id real en ningún endpoint). La tarea-título (ancla) de
+    un producto y los ítems copiados de su plantilla comparten el mismo
+    valor. `item_manual_sku` guarda el SKU del producto (si vino del
+    catálogo) solo para mostrarlo en la tarjeta -- antes se recibía del
+    wizard y se descartaba sin persistirse en ningún lado.
+
+    NULL para todas las tareas viejas (OT anteriores a este cambio) --
+    ot_ejecutar las agrupa en un único grupo "Trabajo interno" como
+    fallback, ver mant_ot_ejecutar."""
+    try:
+        _existentes = {
+            r["COLUMN_NAME"] for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_tareas' "
+                "   AND COLUMN_NAME IN ('item_manual_id','item_manual_sku')"
+            ) or [])
+        }
+        if "item_manual_id" not in _existentes:
+            mysql_execute(
+                "ALTER TABLE mant_visita_tareas ADD COLUMN item_manual_id INT NULL "
+                "COMMENT 'Agrupador de producto en trabajo interno (2026-09-01) -- "
+                "NO es FK, solo agrupa tareas del mismo producto/fila del wizard'")
+            print("[ensure_visita_tarea_item_manual] +item_manual_id", flush=True)
+        if "item_manual_sku" not in _existentes:
+            mysql_execute(
+                "ALTER TABLE mant_visita_tareas ADD COLUMN item_manual_sku VARCHAR(60) NULL "
+                "COMMENT 'SKU del producto en trabajo interno (2026-09-01), solo para mostrar'")
+            print("[ensure_visita_tarea_item_manual] +item_manual_sku", flush=True)
+    except Exception as e:
+        print(f"[ensure_visita_tarea_item_manual] {e}", flush=True)
+
+
 def _tipos_interno_listar(incluir_inactivos=False):
     """Tipos de trabajo interno para el CRUD y para el wizard (Paso 1 de
     OT interna). Fallback a la semilla fija si la tabla todavía no existe
@@ -112883,6 +113056,15 @@ try:
         _ensure_visita_tarea_cantidad_col()
 except Exception as _ensure_vt_cant_err:
     print(f"[ILUS][WARN] _ensure_visita_tarea_cantidad_col: {_ensure_vt_cant_err}", flush=True)
+
+# CRÍTICO: columnas 'item_manual_id'/'item_manual_sku' en mant_visita_tareas
+# SIEMPRE (incluso skip-migrations) -- tarjetas de trabajo interno en
+# ot_ejecutar (Daniel 2026-09-01, ver _ensure_visita_tarea_item_manual_cols).
+try:
+    with app.app_context():
+        _ensure_visita_tarea_item_manual_cols()
+except Exception as _ensure_vt_iman_err:
+    print(f"[ILUS][WARN] _ensure_visita_tarea_item_manual_cols: {_ensure_vt_iman_err}", flush=True)
 
 # CRÍTICO: tipo_respuesta='asistencia' SIEMPRE (incluso skip-migrations) --
 # Daniel 2026-08-30: checklist "Capacitación" con lista de asistencia real

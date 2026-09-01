@@ -2018,6 +2018,13 @@
         <div class="eq-prog-wrap" id="eqbar-{{ eq.id }}"><div class="eq-prog-bar" style="width:{{ stats.progreso or 0 }}%"></div></div>
       </div>
       <div class="eq-actions" onclick="event.stopPropagation()">
+        {# 🔴 2026-09-01: tarjetas de trabajo interno (eq._interno) usan un
+           id sintético (item_manual_id), NUNCA un mant_maquinas.id real --
+           estos 3 botones operan sobre la ficha REAL del equipo, así que
+           quedan ocultos acá para no tocar por error una máquina ajena que
+           comparta el mismo número (ver comentario en mant_ot_ejecutar,
+           app.py). #}
+        {% if not eq._interno %}
         <button type="button" class="eq-action-btn"
                 title="Capturar / ver ficha del equipo"
                 aria-label="Capturar ficha del equipo {{ eq.nombre or eq.id }}"
@@ -2025,11 +2032,12 @@
                 onclick="event.stopPropagation(); abrirModalFichaTecnica({{ eq.id }})">
           <i class="bi bi-clipboard-check-fill"></i>
         </button>
+        {% endif %}
         {# 2026-08-12 (Daniel): "que el técnico también pueda saltarse con
            un argumento... de casi todas menos las levantamiento, porque el
            técnico no las va a marcar porque no está levantándolas, va a
            levantar lo que existe" — se agrega la exclusión de tipo. #}
-        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar and (visita.tipo or '') != 'levantamiento' %}
+        {% if not eq._interno and visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar and (visita.tipo or '') != 'levantamiento' %}
         <button type="button" class="eq-action-btn"
                 title="Saltar este equipo"
                 aria-label="Saltar este equipo"
@@ -2063,7 +2071,7 @@
            excepción puntual a un técnico desde /admin/roles (mismo espíritu
            que mant_ot_interna / caso Jaizer), el botón deja de estar oculto
            sin necesitar otro deploy. #}
-        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar and (not es_tecnico or permissions.cat_clasificacion) %}
+        {% if not eq._interno and visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar and (not es_tecnico or permissions.cat_clasificacion) %}
         {% set _apl_ot = (eq.aplica_mantencion if eq.aplica_mantencion is not none else 1) %}
         <button type="button" class="eq-action-btn" id="eqAplBtn-{{ eq.id }}"
                 data-aplica="{{ 1 if _apl_ot else 0 }}"
