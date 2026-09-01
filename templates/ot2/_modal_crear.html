@@ -3930,8 +3930,20 @@ window.OT2C = (function(){
     _o2mTMPintarFilas();
     var _pf = ov.querySelector('input'); if (_pf) _pf.focus();
   }
+  /* 🐛 FIX 2026-09-01 (Daniel: "no estoy pudiendo agregar productos"): el SKU
+     era OBLIGATORIO, así que una tarea real sin código de producto -- el
+     ejemplo que dio él mismo, "instalar pizarra" x6 -- era imposible de
+     agregar: "Guardar" rechazaba TODAS las filas y no pasaba nada. El SKU
+     vuelve a ser opcional y, si no se escribe, se genera uno propio
+     (MAN-001, MAN-002...) como se había definido para las tareas manuales.
+     Lo único indispensable es la descripción y una cantidad válida. */
   function _o2mTMFilaCompleta(f){
-    return !!(f.sku||'').trim() && !!(f.descripcion||'').trim() && parseInt(f.cantidad,10) > 0;
+    return !!(f.descripcion||'').trim() && parseInt(f.cantidad,10) > 0;
+  }
+  function _o2mSkuManualSiguiente(){
+    var s = 'MAN-' + String(_o2mSkuManualSeq).padStart(3, '0');
+    _o2mSkuManualSeq++;
+    return s;
   }
   function _o2mTMPintarFilas(){
     var c = document.getElementById('o2mTareaManualFilas'); if (!c) return;
@@ -3940,7 +3952,7 @@ window.OT2C = (function(){
       return '<div class="d-flex gap-2 mb-2 align-items-center" style="'+
         (ok ? 'background:#dcfce7;border:1px solid #86efac' : 'background:#fafafa;border:1px solid #eee')+
         ';border-radius:8px;padding:8px">'+
-        '<input class="form-control form-control-sm" style="width:110px;font-size:16px" placeholder="SKU" '+
+        '<input class="form-control form-control-sm" style="width:110px;font-size:16px" placeholder="SKU (opcional)" '+
         'value="'+esc(f.sku)+'" oninput="OT2C._o2mTMSetCampo('+i+',\'sku\',this.value)">'+
         '<input class="form-control form-control-sm" style="flex:1;font-size:16px" placeholder="Descripción" '+
         'value="'+esc(f.descripcion)+'" oninput="OT2C._o2mTMSetCampo('+i+',\'descripcion\',this.value)">'+
@@ -3984,7 +3996,7 @@ window.OT2C = (function(){
   function _o2mTMGuardar(){
     var validas = _o2mTM.filas.filter(_o2mTMFilaCompleta);
     if (!validas.length){
-      if (window.ilusToast) ilusToast('Completa SKU, descripción y cantidad de al menos una fila.', {type:'warning'});
+      if (window.ilusToast) ilusToast('Escribe al menos la descripción de una fila (el SKU es opcional).', {type:'warning'});
       return;
     }
     // Mismo criterio que ya usaba la tarea manual de un solo campo: cada
@@ -3993,9 +4005,12 @@ window.OT2C = (function(){
     // más arriba sobre "6 fotos y 6 comentarios".
     validas.forEach(function(f){
       var n = Math.min(parseInt(f.cantidad,10) || 1, 50);
+      // Un SKU propio por PRODUCTO, no por unidad: las 6 pizarras del ejemplo
+      // comparten el mismo MAN-001 y se distinguen por el "(i/n)" del título.
+      var _sku = (f.sku||'').trim() || _o2mSkuManualSiguiente();
       for (var i = 0; i < n; i++){
         S.tareas_manuales.push({
-          sku: f.sku.trim(),
+          sku: _sku,
           titulo: (n > 1 ? f.descripcion.trim().slice(0,290) + ' (' + (i+1) + '/' + n + ')' : f.descripcion.trim().slice(0,300)),
           descripcion: '', cantidad: 1, plantilla_id: null
         });
