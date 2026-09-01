@@ -766,6 +766,19 @@
     {# Hint del courier elegido — peso máx, tipo, etc #}
     <div id="ddCourierHint" style="display:none;font-size:.7rem;color:#888;
          background:#151515;border:1px solid #1f1f1f;border-radius:6px;padding:6px 8px;margin-bottom:6px"></div>
+    {# 🆕 2026-09-01 (Daniel: "no hay una barra de carga cuando presionamos
+       el botón... para saber en qué está y cuánto le falta"): la creación
+       de manifiesto es UNA sola llamada al backend (no hay pasos
+       intermedios que reportar de verdad), así que en vez de inventar un
+       porcentaje falso se muestra una barra INDETERMINADA (animación
+       continua) mientras la petición está en vuelo -- confirma que sigue
+       trabajando, sin prometer un "cuánto falta" que no se puede medir. #}
+    <style>@keyframes ddProgAnim{0%{transform:translateX(-100%)}100%{transform:translateX(285%)}}</style>
+    <div id="ddProgWrap" style="display:none;height:4px;background:#1f1f1f;border-radius:3px;
+         overflow:hidden;margin-bottom:6px">
+      <div id="ddProgBar" style="height:100%;width:35%;background:var(--ilus-red);border-radius:3px;
+           animation:ddProgAnim 1.1s ease-in-out infinite"></div>
+    </div>
     <div id="ddMsg" style="min-height:16px;font-size:.74rem;margin-bottom:6px"></div>
     <div class="d-flex gap-2">
       <button class="btn btn-sm fw-bold flex-grow-1"

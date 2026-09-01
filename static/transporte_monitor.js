@@ -3555,8 +3555,13 @@ async function dpCrearManifiesto() {
 async function _asignarAPI(cids, mid) {
   var courier = (document.getElementById('ddCourier')?.value || '').trim() || 'Por asignar';
   var msg = document.getElementById('ddMsg');
-  if (msg) msg.innerHTML = '<span style="color:#ffb700"><div class="spinner-border spinner-border-sm me-1" style="display:inline-block"></div>Asignando ' + cids.length + ' documento(s)…</span>';
+  if (msg) msg.innerHTML = '<span style="color:#ffb700">Asignando ' + cids.length + ' documento(s)…</span>';
   if (document.getElementById('dpBtnCrear')) document.getElementById('dpBtnCrear').disabled = true;
+  // 🆕 2026-09-01 (Daniel: "no hay una barra de carga cuando presionamos
+  // el boton"): barra indeterminada mientras la peticion esta en vuelo --
+  // ver comentario junto a #ddProgWrap en templates/transporte/index.html.
+  var progWrap = document.getElementById('ddProgWrap');
+  if (progWrap) progWrap.style.display = '';
 
   try {
     const r = await fetch('/transporte/api/manifiestos/asignar', {
@@ -3591,6 +3596,8 @@ async function _asignarAPI(cids, mid) {
   } catch(err) {
     if (msg) msg.innerHTML = '<span style="color:#f66">Error de conexión</span>';
     if (document.getElementById('dpBtnCrear')) document.getElementById('dpBtnCrear').disabled = false;
+  } finally {
+    if (progWrap) progWrap.style.display = 'none';
   }
 }
 
