@@ -1823,6 +1823,17 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN erp_tido VARCHAR(10) NULL")
         if "erp_nudo" not in existentes:
             alters.append("ADD COLUMN erp_nudo VARCHAR(30) NULL")
+        # 2026-09-01 (Daniel, columna PLAN en cotizaciones -- Opción A):
+        # cuando el ítem viene de "Traer equipos de la ficha" (maquina_id
+        # real conocido), la línea puede reflejar/editar si ese equipo
+        # pertenece al plan de mantención del cliente -- mismo campo que
+        # mant_maquinas.aplica_mantencion (ver eqTogPlan en
+        # templates/ot2/_modal_crear.html). NULL/0 en ítems que no
+        # vinieron de un equipo real (documento ERP, bodega, manual).
+        if "maquina_id" not in existentes:
+            alters.append("ADD COLUMN maquina_id INT NULL")
+        if "aplica_mantencion" not in existentes:
+            alters.append("ADD COLUMN aplica_mantencion TINYINT(1) NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizacion_items {a}")
@@ -4329,14 +4340,24 @@ def register_tickets_routes(app, ctx):
                     # la línea (el modal ERP compartido ya conoce tido/nudo).
                     erp_tido_it = (str(it.get("tido") or "").strip().upper())[:10] or None
                     erp_nudo_it = (str(it.get("nudo") or "").strip())[:30] or None
+                    # PLAN (2026-09-01): solo viaja si el ítem viene de un
+                    # equipo real de la ficha (maquina_id). Sin eso, la
+                    # columna queda NULL -- no es un "toggle deshabilitado".
+                    maquina_id_it = None
+                    try:
+                        _mid = it.get("maquina_id")
+                        maquina_id_it = int(_mid) if _mid not in (None, "") else None
+                    except (TypeError, ValueError):
+                        maquina_id_it = None
+                    aplica_mantencion_it = (1 if it.get("aplica_mantencion") else 0) if maquina_id_it else None
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, "
                         " precio_unitario, subtotal, total, desde_ticket, clase_producto, vaneli_original, "
-                        " precio_manual, erp_tido, erp_nudo) "
-                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s,%s)",
+                        " precio_manual, erp_tido, erp_nudo, maquina_id, aplica_mantencion) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s,%s,%s,%s)",
                         (cot_id, sku, descripcion, cantidad, clase_producto, vaneli_original,
-                         precio_manual, erp_tido_it, erp_nudo_it),
+                         precio_manual, erp_tido_it, erp_nudo_it, maquina_id_it, aplica_mantencion_it),
                     )
             conn.commit()
         except Exception as e:
@@ -4582,6 +4603,7 @@ def register_tickets_routes(app, ctx):
         items = mysql_fetchall(
             "SELECT id, erp_kopr AS sku, descripcion AS nombre, cantidad AS qty, clase_producto, "
             "       precio_manual, precio_unitario, erp_tido AS tido, erp_nudo AS nudo, vaneli_original, "
+            "       maquina_id, aplica_mantencion, "
             "       item_tipo "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
@@ -4942,12 +4964,23 @@ def register_tickets_routes(app, ctx):
                         vaneli_it = int(float(_vv)) if _vv not in (None, "") else None
                     except (TypeError, ValueError):
                         vaneli_it = None
+                    # PLAN (2026-09-01): igual criterio que en desde-erp --
+                    # solo viaja si hay maquina_id real.
+                    maquina_id_it = None
+                    try:
+                        _mid = it.get("maquina_id")
+                        maquina_id_it = int(_mid) if _mid not in (None, "") else None
+                    except (TypeError, ValueError):
+                        maquina_id_it = None
+                    aplica_mantencion_it = (1 if it.get("aplica_mantencion") else 0) if maquina_id_it else None
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, precio_unitario, "
-                        " subtotal, total, desde_ticket, clase_producto, precio_manual, erp_tido, erp_nudo, vaneli_original) "
-                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s,%s)",
-                        (cid, sku, descripcion, cantidad, clase_producto, precio_manual, erp_tido_it, erp_nudo_it, vaneli_it))
+                        " subtotal, total, desde_ticket, clase_producto, precio_manual, erp_tido, erp_nudo, vaneli_original, "
+                        " maquina_id, aplica_mantencion) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s,%s,%s,%s)",
+                        (cid, sku, descripcion, cantidad, clase_producto, precio_manual, erp_tido_it, erp_nudo_it, vaneli_it,
+                         maquina_id_it, aplica_mantencion_it))
                 if _estaba_aprobada:
                     cur.execute("UPDATE tk_cotizaciones SET editada_post_aprobacion=1 WHERE id=%s", (cid,))
             conn.commit()

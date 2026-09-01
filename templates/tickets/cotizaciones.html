@@ -515,10 +515,16 @@
       <div class="cot-rev-tabla-wrap">
         <table class="cot-rev-tabla" style="min-width:700px;">
           <thead>
-            <tr><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Característica</th><th>P. base/u</th><th>Total con ruta</th><th></th></tr>
+            <tr><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Característica</th><th>P. base/u</th><th>Total con ruta</th>
+              <th class="cot-rev-plan-th"><i class="bi bi-shield-check me-1"></i>Plan
+                <button type="button" id="btnCotWizTogPlanTodos" class="cot-rev-plan-todos"
+                  title="Marcar/desmarcar todos los equipos con plan de mantención"
+                  onclick="cotWizTogPlanTodos()" style="display:none">
+                  <i class="bi bi-check-all"></i></button></th>
+              <th></th></tr>
           </thead>
           <tbody id="cotWizBody">
-            <tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Agregar producto"</td></tr>
+            <tr class="cot-wiz-vacio"><td colspan="8">Sin productos todavía — usa "Agregar producto"</td></tr>
           </tbody>
         </table>
       </div>

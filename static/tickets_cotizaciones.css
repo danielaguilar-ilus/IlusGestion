@@ -198,6 +198,19 @@
 .cot-wiz-quitar{border:none;background:transparent;color:#c1c5cc;width:30px;height:30px;border-radius:7px;
   cursor:pointer;display:inline-flex;align-items:center;justify-content:center;}
 .cot-wiz-quitar:hover{background:#fee2e2;color:#dc2626;}
+/* PLAN (2026-09-01): mismo lenguaje visual del escudo de eqTogPlan
+   (templates/ot2/_modal_crear.html, .o2m-eq-plan-btn) para mantener el
+   patrón consistente en todo el proyecto. */
+.cot-rev-plan-th{text-align:center;white-space:nowrap;position:relative;}
+.cot-rev-plan-cell{text-align:center;width:52px;}
+.cot-rev-plan-btn{width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#f8fafc;
+  color:#9ca3af;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  font-size:1.05rem;transition:background .15s,border-color .15s,color .15s,transform .15s;}
+.cot-rev-plan-btn:hover{transform:scale(1.08);border-color:#c7cbd1;}
+.cot-rev-plan-btn.on{background:#f0fdf4;border-color:#86efac;color:#16a34a;}
+.cot-rev-plan-todos{border:none;background:transparent;color:#6b7280;cursor:pointer;margin-left:4px;
+  display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;}
+.cot-rev-plan-todos:hover{background:#eef2f7;color:#0a0a0a;}
 .cot-wiz-resumen{margin:8px 0 4px;margin-left:auto;max-width:320px;background:#f9fafb;
   border:1px solid #eef0f3;border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:5px;}
 .cot-wiz-resumen>div{display:flex;justify-content:space-between;align-items:center;font-size:.78rem;color:#6b7280;}

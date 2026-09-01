@@ -87,7 +87,7 @@ function cotWizAbrir(editCid){
     b.classList.toggle('on', b.dataset.v === 'mantencion');
   });
   document.getElementById('cotWizBody').innerHTML =
-    '<tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Agregar de Bodega 02"</td></tr>';
+    '<tr class="cot-wiz-vacio"><td colspan="8">Sin productos todavía — usa "Agregar de Bodega 02"</td></tr>';
   cotWizCargarEjecutivos();
   _cotWizCargarUf();
   cotWizResumen();
@@ -161,7 +161,12 @@ async function _cotWizCargarEdicion(cid){
                clase_producto: it.clase_producto || null,
                vaneli_original: (it.vaneli_original != null ? it.vaneli_original : null),
                precio_manual: (String(it.clase_producto || '').toLowerCase() === 'accesorio'
-                 ? null : (it.precio_manual != null ? it.precio_manual : null)) };
+                 ? null : (it.precio_manual != null ? it.precio_manual : null)),
+               // PLAN (2026-09-01): sobrevive al guardar/recargar. Cotizaciones
+               // guardadas ANTES de esta fecha no traen la columna -- quedan
+               // en null/false por default, sin romper nada.
+               maquina_id: (it.maquina_id != null ? it.maquina_id : null),
+               aplica_mantencion: !!it.aplica_mantencion };
     });
     _WIZ.rutaManual = (parseInt(c.costo_ruta, 10) || 0) > 0;
     // 2026-07-24 (Daniel, insiste: "quiero ver los productos que gestiono
@@ -353,7 +358,7 @@ function _cotWizAplicarOrigenPaso2(){
   // ítems ya cargados.
   if (_WIZ && !_WIZ.items.length){
     const body = document.getElementById('cotWizBody');
-    if (body) body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="7">' + _cotWizVacioTexto() + '</td></tr>';
+    if (body) body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="8">' + _cotWizVacioTexto() + '</td></tr>';
   }
   // Choke point único por donde pasan TODOS los cambios de _WIZ.origen --
   // ideal para aplicar la regla de "Instalación" bloqueada (ver abajo).
@@ -1058,8 +1063,13 @@ function _cotWizRenderEquiposFichaPanel(){
 async function _cotWizAgregarMaquinasComoItems(maquinas){
   if (!_WIZ || !maquinas || !maquinas.length) return;
   const nuevos = maquinas.map(function(m){
+    // maquina_id/aplica_mantencion (2026-09-01, columna PLAN): solo estos
+    // ítems (venidos de un equipo REAL de la ficha) pueden mostrar/editar
+    // el escudo de plan de mantención -- el resto de orígenes (documento
+    // ERP, bodega, manual) nunca tiene maquina_id.
     return { sku: m.sku || '', nombre: m.nombre || 'Equipo', qty: m.cantidad || 1,
-             tido: null, koen: null, clase_producto: null };
+             tido: null, koen: null, clase_producto: null,
+             maquina_id: m.id != null ? m.id : null, aplica_mantencion: !!m.en_plan };
   });
   _WIZ.items = _WIZ.items.concat(nuevos);
   await cotWizClasificar();
@@ -1316,7 +1326,7 @@ function _cotWizEsAccesorio(it){
 async function cotWizRender(){
   const body = document.getElementById('cotWizBody');
   if (!_WIZ || !_WIZ.items.length){
-    body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="7">' + _cotWizVacioTexto() + '</td></tr>';
+    body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="8">' + _cotWizVacioTexto() + '</td></tr>';
     return;
   }
   const clases = await _cotClasifCargarClases();
@@ -1342,6 +1352,16 @@ async function cotWizRender(){
             + ' title="Precio base unitario — la ruta se muestra debajo" onchange="cotWizPrecioManual(' + i + ', this.value)"') + '>'
         + '<div class="cot-ruta-desglose' + (accesorio ? ' no-cobrable' : '') + '" data-ruta-i="' + i + '">' + (accesorio ? '<i class="bi bi-lock-fill"></i> $0 · no cobrable' : '') + '</div></td>' +
       '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
+      // PLAN (2026-09-01): escudo clickeable SOLO si el ítem viene de un
+      // equipo real de la ficha (maquina_id) -- mismo criterio/colores que
+      // eqTogPlan en templates/ot2/_modal_crear.html. Filas sin equipo real
+      // (documento ERP, bodega, manual) muestran un guion, nunca un ícono
+      // deshabilitado que parezca roto.
+      '<td class="cot-rev-plan-cell">' + (it.maquina_id != null
+        ? '<button type="button" class="cot-rev-plan-btn' + (it.aplica_mantencion ? ' on' : '') + '" ' +
+          'title="' + (it.aplica_mantencion ? 'Quitar del plan de mantención de este cliente' : 'Agregar al plan de mantención de este cliente') + '" ' +
+          'onclick="cotWizTogPlan(' + i + ')"><i class="bi ' + (it.aplica_mantencion ? 'bi-shield-check' : 'bi-shield-slash') + '"></i></button>'
+        : '<span class="text-muted">—</span>') + '</td>' +
       // 2026-08-28 (Daniel, causa raíz de OT-2026-00125: "que no se
       // eliminen productos, a menos que sea el superadministrador"): sin
       // el botón, un ítem "Sin clasificar" ya no tiene escapatoria -- el
@@ -1358,6 +1378,54 @@ async function cotWizRender(){
       const s = body.querySelector('select[data-i="' + i + '"]');
       if (s) s.value = it.clase_producto;
     }
+  });
+  // "Marcar/desmarcar todos" (REGLA #14) del escudo de plan -- solo se
+  // muestra si hay al menos un ítem con equipo real (maquina_id); nunca
+  // toca las filas sin equipo detrás.
+  const btnTodos = document.getElementById('btnCotWizTogPlanTodos');
+  if (btnTodos) btnTodos.style.display = _WIZ.items.some(function(it){ return it.maquina_id != null; }) ? '' : 'none';
+}
+// PLAN (2026-09-01): toggle individual -- mismo endpoint/patrón que
+// eqTogPlan (templates/ot2/_modal_crear.html): edita aplica_mantencion en
+// la FICHA del equipo (persistente para siempre), optimista con reversión
+// si el backend falla.
+function cotWizTogPlan(i){
+  if (!_WIZ || !_WIZ.items[i]) return;
+  const it = _WIZ.items[i];
+  if (it.maquina_id == null) return;
+  const antes = !!it.aplica_mantencion;
+  const nuevo = !antes;
+  it.aplica_mantencion = nuevo;
+  cotWizRender();
+  fetch('/mantenciones/api/maquinas/' + it.maquina_id + '/aplica-mantencion', {
+    method: 'PUT', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({aplica: nuevo})
+  }).then(function(r){ return r.json(); }).then(function(r){
+    if (!r || !r.ok){
+      it.aplica_mantencion = antes;
+      cotWizRender();
+      ilusToast('No se pudo actualizar el plan de mantención.', {type:'error'});
+    } else {
+      ilusToast(nuevo ? '✓ Equipo agregado al plan de mantención' : '✓ Equipo quitado del plan de mantención', {type:'success'});
+    }
+  }).catch(function(){
+    it.aplica_mantencion = antes;
+    cotWizRender();
+    ilusToast('No se pudo actualizar el plan de mantención.', {type:'error'});
+  });
+}
+// "Marcar/desmarcar todos" (REGLA #14) -- reutiliza cotWizTogPlan línea
+// por línea (así cada llamado va a su propio equipo/endpoint) y SOLO
+// afecta filas con maquina_id real, nunca las que no tienen equipo detrás.
+function cotWizTogPlanTodos(){
+  if (!_WIZ) return;
+  const candidatos = [];
+  _WIZ.items.forEach(function(it, i){ if (it.maquina_id != null) candidatos.push(i); });
+  if (!candidatos.length) return;
+  const faltaAlguno = candidatos.some(function(i){ return !_WIZ.items[i].aplica_mantencion; });
+  candidatos.forEach(function(i){
+    if (!!_WIZ.items[i].aplica_mantencion !== faltaAlguno) return; // ya está en el estado deseado
+    cotWizTogPlan(i);
   });
 }
 function cotWizCantidad(i, v){
@@ -1702,7 +1770,11 @@ function cotWizResumen(){
                                        clase_producto: it.clase_producto,
                                        vaneli_original: (it.vaneli_original != null ? it.vaneli_original : null),
                                        // precio unitario editado a mano (null = automático)
-                                       precio_manual: (_cotWizEsAccesorio(it) ? null : (it.precio_manual != null ? it.precio_manual : null)) })),
+                                       precio_manual: (_cotWizEsAccesorio(it) ? null : (it.precio_manual != null ? it.precio_manual : null)),
+                                       // PLAN (2026-09-01): solo tiene sentido si el
+                                       // ítem viene de un equipo real de la ficha.
+                                       maquina_id: (it.maquina_id != null ? it.maquina_id : null),
+                                       aplica_mantencion: !!it.aplica_mantencion })),
         header: {
           cliente: empresa,
           rut: document.getElementById('cotWizRut').value.trim(),
