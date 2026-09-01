@@ -602,8 +602,10 @@
   border:1px solid var(--o2m-line);border-radius:9px}
 @media (max-width:767.98px){ .o2m-day-scroll{height:360px} }
 .o2m-day-scroll.sin-dia{opacity:.6}
-.o2m-day-inner{position:relative;height:576px}
-.o2m-day-canvas{position:relative;height:576px;margin-left:44px;cursor:copy}
+/* 576px = (20-8)*48px, hoy la línea de tiempo llega a las 22:00 (14h*48px) --
+   ver O2M_DAY_END. */
+.o2m-day-inner{position:relative;height:672px}
+.o2m-day-canvas{position:relative;height:672px;margin-left:44px;cursor:copy}
 .o2m-day-hline{position:absolute;left:0;right:0;height:0;border-top:1px solid #f1f3f5;pointer-events:none}
 .o2m-day-hline.half{border-top:1px dashed #f6f7f9}
 .o2m-day-hlbl{position:absolute;left:0;width:44px;text-align:right;padding-right:7px;
@@ -611,6 +613,17 @@
 .o2m-day-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--ilus-red,#dc2626);z-index:3}
 .o2m-day-now::before{content:'';position:absolute;left:-4px;top:-4px;width:8px;height:8px;
   border-radius:50%;background:var(--ilus-red,#dc2626)}
+
+/* Franja de colación (13:00-14:00, REGLA jornada 8-17 + colación) -- solo
+   informativa/visual: pointer-events:none para que el clic-para-agendar y
+   el drag de "Tu OT" sigan funcionando encima. El aviso de texto real
+   (bloque cruza colación) sigue viviendo en avisosAgenda(). */
+.o2m-day-colacion{position:absolute;left:0;right:0;z-index:1;pointer-events:none;
+  background:repeating-linear-gradient(135deg,rgba(107,114,128,.11),rgba(107,114,128,.11) 7px,
+  rgba(107,114,128,.02) 7px,rgba(107,114,128,.02) 14px);
+  border-top:1px dashed #d1d5db;border-bottom:1px dashed #d1d5db}
+.o2m-day-colacion .lbl{position:absolute;left:6px;top:2px;font-size:0.62rem;font-weight:800;
+  color:#9ca3af;text-transform:uppercase;letter-spacing:.03em}
 
 .o2m-day-blk{position:absolute;border-radius:7px;padding:3px 8px;cursor:default;background:#fff;
   border:1px solid #e5e7eb;border-left-width:3px;overflow:hidden;box-sizing:border-box}
@@ -634,9 +647,14 @@
 .o2m-day-blk.blk-mas .who{color:#6b7280}
 @media (max-width:767.98px){ .o2m-day-blk{min-height:22px} }
 
-.o2m-day-blk.mine{left:0;width:100%;z-index:5;cursor:default;pointer-events:none;overflow:visible;
+.o2m-day-blk.mine{left:0;width:100%;z-index:5;cursor:grab;pointer-events:auto;overflow:visible;
+  touch-action:none;user-select:none;
   background:rgba(220,38,38,.06);border:2px dashed var(--ilus-red,#dc2626);border-radius:8px;
   transition:top .22s cubic-bezier(.34,1.56,.64,1),height .22s cubic-bezier(.34,1.56,.64,1)}
+/* 🆕 2026-08-31 (Daniel, voz, en vivo): arrastrar "Tu OT" con mouse/touch
+   en la línea de tiempo -- mientras se arrastra, sin transición (si no, la
+   caja va "detrás" del dedo/puntero) y con el cursor en modo agarre. */
+.o2m-day-blk.mine.dragging{cursor:grabbing;transition:none;box-shadow:0 10px 24px -8px rgba(220,38,38,.45);opacity:.96}
 .o2m-day-blk.mine .mine-tag{position:absolute;top:-9px;left:8px;display:inline-flex;align-items:center;gap:3px;
   background:var(--ilus-red,#dc2626);color:#fff;font-size:0.71rem;font-weight:800;border-radius:50px;
   padding:2px 9px;white-space:nowrap;box-shadow:0 2px 6px rgba(220,38,38,.35)}
@@ -1621,8 +1639,10 @@ window.OT2C = (function(){
 
   function pintarAgenda(b){
     b.innerHTML = '<h6 class="t">Agenda</h6>'+
-      '<p class="d">La jornada es de 08:00 a 17:00, con colación de 13:00 a 14:00. '+
-      'Puedes salirte de ese horario: no se bloquea, solo se avisa.</p>'+
+      '<p class="d">La jornada es de 08:00 a 17:00, con colación de 13:00 a 14:00 (achurada en la línea '+
+      'de tiempo). Puedes arrastrar el bloque "Tu OT" con el mouse o el dedo para reagendarlo -- '+
+      'también sigues pudiendo escribir la hora a mano. Puedes salirte de la jornada: no se bloquea, '+
+      'solo se avisa -- salvo las 22:00, que es el límite absoluto del día.</p>'+
       '<div class="row g-3">'+
         '<div class="col-md-4"><label class="fl">Fecha programada *</label>'+
         '<input type="date" class="form-control" id="o2mFecha" value="'+esc(S.fecha)+'" '+
@@ -1704,6 +1724,7 @@ window.OT2C = (function(){
     // duplicarlo ni de listeners huérfanos sobre nodos ya descartados.
     var _o2mCanvasEl = document.getElementById('o2mDayCanvas');
     if (_o2mCanvasEl) _o2mCanvasEl.addEventListener('click', o2mDaySlotClick);
+    _o2mDayLigarDragMine();
   }
 
   /* Hoy en formato YYYY-MM-DD, hora local del navegador. Se usa como piso
@@ -1722,13 +1743,37 @@ window.OT2C = (function(){
     return String(h.getHours()).padStart(2,'0')+':'+String(h.getMinutes()).padStart(2,'0');
   }
 
+  // 🆕 2026-08-31 (Daniel, voz, en vivo, paso Agenda): corte del día en
+  // 20:00 -- es una SUGERENCIA (no bloqueo) para continuar al día
+  // siguiente en trabajos de un solo día. Daniel mencionó que si la OT se
+  // declara en VARIOS días el corte debería bajar a 19:00 ("las dos horas
+  // legales que tiene Chile como referencia"), pero ese concepto (rango
+  // multi-día) NO existe hoy en el wizard (no hay S.multidia/fecha_fin) --
+  // ver nota en o2mSchedTope() más abajo. Mientras no exista, se usa
+  // SIEMPRE el corte de un solo día (20:00).
+  var O2M_SCHED_CORTE_SUGERIDO = '20:00';
+  var O2M_SCHED_LIMITE_ABS = '22:00';
+
   /* Mismos umbrales que valida el backend, para que el usuario vea el
      aviso antes de mandar y no se lleve la sorpresa después. */
   function avisosAgenda(){
     var c = document.getElementById('o2mAvisos'); if (!c) return;
     var a = [];
     if (S.hini && S.hini < '08:00') a.push('Empieza antes de las 08:00, fuera de la jornada.');
-    if (S.hfin && S.hfin > '17:00') a.push('Termina después de las 17:00: es jornada extendida.');
+    if (S.hfin && S.hfin > '17:00'){
+      a.push(esInterno()
+        ? 'Termina después de las 17:00: cuenta como hora extraordinaria para el personal interno.'
+        : 'Termina después de las 17:00: es jornada extendida.');
+    }
+    if (S.hfin && S.hfin > O2M_SCHED_CORTE_SUGERIDO && S.hfin <= O2M_SCHED_LIMITE_ABS){
+      a.push('Pasa las '+O2M_SCHED_CORTE_SUGERIDO+': para un trabajo de un solo día lo recomendable es '+
+        'cortar ahí y continuar mañana. (Si la OT se declara en varios días el corte sugerido baja a '+
+        '19:00 -- ese concepto de "varios días" todavía no existe en este wizard.)');
+    }
+    if (S._hfinTopado){
+      a.push('La hora de término se topó en '+O2M_SCHED_LIMITE_ABS+': es el límite absoluto del día, '+
+        'no se puede agendar más tarde.');
+    }
     if (S.hini && S.hfin && S.hini < '14:00' && S.hfin > '13:00') a.push('Cruza la colación (13:00–14:00).');
     if (S.fecha){ var d = new Date(S.fecha+'T12:00:00').getDay();
       if (d===0 || d===6) a.push('Cae en fin de semana, cuando no hay operación.'); }
@@ -1993,7 +2038,12 @@ window.OT2C = (function(){
 
   // ── Línea de tiempo del día (Col B) -- geometría idéntica al original:
   //    jornada 08:00-20:00 pintada a 0.8px/min (48px/hora). ──────────────
-  var O2M_DAY_START = 8*60, O2M_DAY_END = 20*60, O2M_DAY_PXMIN = 0.8;
+  // O2M_DAY_END = 22:00 -- límite ABSOLUTO del día (Daniel, voz, 2026-08-31:
+  // "no hay ningún problema que puedan pasar hasta el límite diez de la
+  // noche... más allá de eso es un poco abusivo"). No confundir con el
+  // corte SUGERIDO de las 20:00 (O2M_SCHED_CORTE_SUGERIDO, más abajo) --
+  // ese es un aviso, este es el tope duro de la línea de tiempo.
+  var O2M_DAY_START = 8*60, O2M_DAY_END = 22*60, O2M_DAY_PXMIN = 0.8;
   var O2M_DAY_H = (O2M_DAY_END - O2M_DAY_START) * O2M_DAY_PXMIN;
   var O2M_DAY_MINH = 18;
   var O2M_DAY_MINDUR = O2M_DAY_MINH / O2M_DAY_PXMIN;
@@ -2124,12 +2174,19 @@ window.OT2C = (function(){
     var gut = document.getElementById('o2mDayGutter');
     if (!rej || !gut) return;
     var r='', g='';
-    for (var h=8; h<=20; h++){
+    var hTope = O2M_DAY_END/60; // 22 -- ver comentario en O2M_DAY_END
+    for (var h=8; h<=hTope; h++){
       var y = (h-8)*48;
       r += '<div class="o2m-day-hline" style="top:'+y+'px"></div>';
-      if (h<20) r += '<div class="o2m-day-hline half" style="top:'+(y+24)+'px"></div>';
+      if (h<hTope) r += '<div class="o2m-day-hline half" style="top:'+(y+24)+'px"></div>';
       g += '<div class="o2m-day-hlbl" style="top:'+(y-7)+'px">'+String(h).padStart(2,'0')+':00</div>';
     }
+    // Franja de colación 13:00-14:00 -- solo visual (pointer-events:none),
+    // el aviso de texto real sigue en avisosAgenda().
+    var colTop = (13*60 - O2M_DAY_START) * O2M_DAY_PXMIN;
+    var colH = 60 * O2M_DAY_PXMIN;
+    r += '<div class="o2m-day-colacion" style="top:'+colTop+'px;height:'+colH+'px">'+
+      '<span class="lbl">Colación</span></div>';
     rej.innerHTML = r; gut.innerHTML = g;
     o2mDay.rejilla = true;
   }
@@ -2376,6 +2433,88 @@ window.OT2C = (function(){
     mine.innerHTML = '<span class="mine-tag"><i class="bi bi-geo-alt-fill" style="font-size:.5rem"></i>Tu OT · '+esc(rangoTxt)+'</span>'+
       '<div class="mine-body">'+_body+'</div>';
     _o2mDayGhostSync();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 🆕 2026-08-31 (Daniel, voz, en vivo, paso Agenda): arrastrar el
+  // bloque "Tu OT" con el mouse (o el dedo) dentro de la línea de tiempo
+  // para reagendarlo, sin tener que escribir la hora a mano. Mueve el
+  // bloque COMPLETO (la duración queda fija) -- redimensionar arrastrando
+  // los bordes queda para una mejora aparte si Daniel la pide.
+  // Pointer Events unifica mouse+touch (REGLA #3 mobile-first) en un solo
+  // set de listeners.
+  // ═══════════════════════════════════════════════════════════════════
+  var _o2mDrag = null;
+
+  function _o2mDayMineDragStart(ev){
+    if (!S.hini || !S.hfin) return; // sin horario aún, nada que arrastrar
+    var mine = document.getElementById('o2mDayMine');
+    var canvas = document.getElementById('o2mDayCanvas');
+    if (!mine || !canvas || mine.style.display === 'none') return;
+    var iniMin = _o2mDayToMin(S.hini), finMin = _o2mDayToMin(S.hfin);
+    if (iniMin==null || finMin==null || finMin<=iniMin) return;
+    ev.preventDefault();
+    _o2mDrag = {
+      startClientY: ev.clientY,
+      startTop: parseFloat(mine.style.top) || 0,
+      dur: finMin - iniMin,
+      previewIniMin: null
+    };
+    mine.classList.add('dragging');
+    try { mine.setPointerCapture(ev.pointerId); } catch(e){}
+  }
+
+  function _o2mDayMineDragMove(ev){
+    if (!_o2mDrag) return;
+    ev.preventDefault();
+    var mine = document.getElementById('o2mDayMine');
+    if (!mine) return;
+    var deltaY = ev.clientY - _o2mDrag.startClientY;
+    var rawTop = _o2mDrag.startTop + deltaY;
+    var maxTop = (O2M_DAY_END - O2M_DAY_START) * O2M_DAY_PXMIN - _o2mDrag.dur * O2M_DAY_PXMIN;
+    rawTop = Math.max(0, Math.min(rawTop, maxTop));
+    // Snap a 30 min en vivo, igual que o2mDaySlotClick.
+    var minsFromTop = rawTop / O2M_DAY_PXMIN;
+    var snappedMin = Math.round(minsFromTop / 30) * 30;
+    var snappedTop = snappedMin * O2M_DAY_PXMIN;
+    mine.style.top = snappedTop + 'px';
+    _o2mDrag.previewIniMin = O2M_DAY_START + snappedMin;
+  }
+
+  function _o2mDayMineDragEnd(ev){
+    if (!_o2mDrag) return;
+    var mine = document.getElementById('o2mDayMine');
+    if (mine) mine.classList.remove('dragging');
+    var previewIniMin = _o2mDrag.previewIniMin;
+    var dur = _o2mDrag.dur;
+    _o2mDrag = null;
+    if (previewIniMin == null) return; // no se movió lo suficiente para "snappear"
+
+    var nuevoIni = previewIniMin;
+    var nuevoFin = nuevoIni + dur;
+    // 22:00 sigue siendo el límite absoluto también al soltar el arrastre.
+    if (nuevoFin > O2M_DAY_END){ nuevoFin = O2M_DAY_END; nuevoIni = nuevoFin - dur; }
+    if (nuevoIni < O2M_DAY_START){ nuevoIni = O2M_DAY_START; nuevoFin = nuevoIni + dur; }
+
+    var hi = _o2mDayHHMM(nuevoIni), hf = _o2mDayHHMM(nuevoFin);
+    var elIni = document.getElementById('o2mHoraIni'), elFin = document.getElementById('o2mHoraFin');
+    if (elIni) elIni.value = hi;
+    if (elFin) elFin.value = hf;
+    setHora('hini', hi);
+    setHora('hfin', hf);
+  }
+
+  // Se re-liga cada vez que pintarAgenda() reconstruye el DOM del paso
+  // (mismo criterio que el listener de o2mDaySlotClick, unas líneas más
+  // arriba en pintarAgenda) -- el nodo #o2mDayMine es nuevo cada vez, así
+  // que no hay riesgo de doble-bind ni de listener huérfano.
+  function _o2mDayLigarDragMine(){
+    var mine = document.getElementById('o2mDayMine');
+    if (!mine) return;
+    mine.addEventListener('pointerdown', _o2mDayMineDragStart);
+    mine.addEventListener('pointermove', _o2mDayMineDragMove);
+    mine.addEventListener('pointerup', _o2mDayMineDragEnd);
+    mine.addEventListener('pointercancel', _o2mDayMineDragEnd);
   }
 
   function _o2mDayAutoScroll(){
@@ -5293,6 +5432,18 @@ window.OT2C = (function(){
     o2mChequearChoqueDebounced();
   }
   function setHora(campo, v){
+    // 🆕 2026-08-31 (Daniel, voz): 22:00 es el límite ABSOLUTO del día --
+    // este SÍ bloquea de verdad (a diferencia del resto de los avisos de
+    // este paso, que son solo sugerencia). Se topa el valor y se marca
+    // S._hfinTopado para que avisosAgenda() explique por qué.
+    if (campo === 'hfin' && v && v > O2M_SCHED_LIMITE_ABS){
+      v = O2M_SCHED_LIMITE_ABS;
+      var elFinTope = document.getElementById('o2mHoraFin');
+      if (elFinTope) elFinTope.value = v;
+      S._hfinTopado = true;
+    } else if (campo === 'hfin'){
+      S._hfinTopado = false;
+    }
     S[campo] = v; avisosAgenda();
     // El bloque "Tu OT" de la línea de tiempo se mueve EN VIVO y el
     // choque se re-chequea (debounced) con cada cambio de hora.
