@@ -83293,28 +83293,34 @@ def mant_ot_ejecutar(vid):
             if t.get("maquina_id"):
                 continue  # tiene equipo real -- no es de este camino
             mid = t.get("item_manual_id") or 0
-            g = _grupos_por_mid.setdefault(mid, {
+            _grp = _grupos_por_mid.setdefault(mid, {
                 "titulo": None, "sku": None, "n": 0, "completas": 0, "foto_url": None,
             })
-            g["n"] += 1
+            _grp["n"] += 1
             if t.get("completada"):
-                g["completas"] += 1
-            if not g["foto_url"]:
-                g["foto_url"] = _foto_por_tarea.get(t.get("id"))
+                _grp["completas"] += 1
+            if not _grp["foto_url"]:
+                _grp["foto_url"] = _foto_por_tarea.get(t.get("id"))
             # La tarea-ancla (la que NO vino de copiar una plantilla) trae
             # el título/SKU reales del producto -- se detecta porque su
             # plantilla_id queda NULL (ver ot2_api_crear, INSERT del
             # título vs INSERT de los ítems copiados).
-            if not t.get("plantilla_id") and not g["titulo"]:
-                g["titulo"] = t.get("titulo")
-                g["sku"] = t.get("item_manual_sku")
-        for mid, g in _grupos_por_mid.items():
+            if not t.get("plantilla_id") and not _grp["titulo"]:
+                _grp["titulo"] = t.get("titulo")
+                _grp["sku"] = t.get("item_manual_sku")
+        # NOTA: la variable de este bucle NO puede llamarse `g` -- `flask.g`
+        # se usa más arriba en esta misma función (u = getattr(g, "user"...)),
+        # y una asignación local a `g` en cualquier parte de la función hace
+        # que Python trate `g` como local en TODA la función (UnboundLocalError
+        # real en producción, 2026-09-01, tumbaba CUALQUIER OT con equipos
+        # sintéticos de trabajo interno, no solo las nuevas).
+        for mid, _grp in _grupos_por_mid.items():
             equipos.append({
                 "id": mid,
-                "nombre": g["titulo"] or ("Trabajo interno" if mid == 0 else f"Producto #{mid}"),
-                "sku": g["sku"],
+                "nombre": _grp["titulo"] or ("Trabajo interno" if mid == 0 else f"Producto #{mid}"),
+                "sku": _grp["sku"],
                 "serie": None,
-                "foto_url": g["foto_url"],
+                "foto_url": _grp["foto_url"],
                 "marca": None, "modelo": None, "anio_fabricacion": None, "voltaje": None,
                 "ubicacion_sala": None, "estado_capturado": None, "tiene_dano": None,
                 "observaciones": None, "ultima_intervencion": None, "visitas_count": None,
