@@ -297,6 +297,16 @@
 .o2m-op .l{font-size:0.85rem;color:#6b7280;line-height:1.35;display:block;margin-top:3px}
 
 .o2m-lista{border:1px solid #eaecf0;border-radius:10px;max-height:250px;overflow-y:auto}
+/* 🎨 2026-08-31 (Daniel: "ponle color a esa tabla, útil pero bonita"):
+   tabla de Productos y tareas (Paso 5, trabajo interno) -- cabecera con
+   tinte rojo ILUS suave, filas con separación clara, sin perder la
+   densidad de una tabla de trabajo. */
+.o2m-lista table thead th{
+  background:#fef2f2;color:#991b1b;font-weight:800;font-size:.72rem;
+  text-transform:uppercase;letter-spacing:.03em;border-bottom:2px solid #fecaca!important}
+.o2m-lista table tbody tr:hover{background:#fffbfb}
+.o2m-lista table td, .o2m-lista table th{padding:8px 10px;vertical-align:middle}
+.o2m-item-actions{background:#fafafa;border:1px dashed #e5e7eb;border-radius:12px;padding:14px}
 .o2m-it{display:flex;align-items:center;gap:11px;padding:11px 13px;border-bottom:1px solid #f3f4f6;
   cursor:pointer;transition:background .13s}
 .o2m-it:last-child{border-bottom:0}
@@ -3608,40 +3618,36 @@ window.OT2C = (function(){
     // siempre, solo que ahora puede venir de un documento real, no solo
     // tipeado. Si ya hay un documento asociado (de cualquiera de los dos
     // caminos), se muestra con opción de "cambiar" en vez del input.
-    var _docBloqueHtml;
-    if (S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo){
-      _docBloqueHtml = '<div class="o2m-aviso mb-3" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
+    // 🔧 FIX 2026-08-31 (Daniel: "yo sacaría el número nota venta interna,
+    // la caja de texto, la plantilla de checklist adicional... y el botón
+    // de buscar de nuevo. Dejaría el botón más atractivo de buscar ítem
+    // con color"): se quitan el input manual de NVI y el selector global
+    // de plantilla (con su botón "Buscar de nuevo") -- el checklist ahora
+    // se asigna SOLO por fila en la tabla (columna Checklist), y el
+    // documento se asocia SOLO por "Buscar ítem" (pestaña Documento). El
+    // badge de "Documento: X ya asociado" se mantiene -- sigue siendo
+    // información útil una vez que existe.
+    var _docBadgeHtml = (S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo)
+      ? '<div class="o2m-aviso mb-3" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
         '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(S.doc_origen.tido)+' '+esc(S.doc_origen.nudo)+'</b>'+
-        ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.setNotaVentaInterna(\'\')">cambiar</button>'+
-        '</div>';
-    } else {
-      // 🔀 2026-08-31 (Daniel: "no sé si por un botón o por ese mismo
-      // modal" -- se unifica en el botón "Buscar ítem" de abajo, que ya
-      // abre las 3 pestañas (producto/documento/RUT) juntas). Se deja
-      // el input manual como respaldo rápido si ya se sabe el número.
-      _docBloqueHtml = '<label class="fl">N° de nota de venta interna (opcional, o usa "Buscar ítem" abajo)</label>'+
-        '<input class="form-control mb-3" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
-        'value="" oninput="OT2C.setNotaVentaInterna(this.value)">';
-    }
+        ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.setNotaVentaInterna(\'\')">quitar</button>'+
+        '</div>'
+      : '';
     b.innerHTML = '<h6 class="t">Productos y tareas</h6>'+
-      '<p class="d">Agrega al menos un producto del catálogo o describe una tarea manual. '+
-      'Si existe un checklist para este tipo de trabajo, se conecta solo abajo.</p>'+
-      // 🔀 2026-08-30 (Daniel: "sacar el número de nota de venta del paso
-      // [Detalle] y agregarlo al paso número cinco... para que pueda
-      // realizar la capacitación"): vivía en el paso "¿Qué hay que
-      // hacer?" -- se traslada acá, junto a la plantilla de checklist,
-      // porque es este paso el que de verdad necesita el dato para poder
-      // ejecutar la capacitación (no la descripción). Mismo S.doc_origen
-      // de siempre (alimenta factura_tido/factura_nudo en crear()), solo
-      // cambia DÓNDE se pinta el campo -- ver setNotaVentaInterna().
-      (S.tipo === 'capacitacion' ? _docBloqueHtml : '')+
-      '<label class="fl">Plantilla de checklist (opcional)</label>'+
-      '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
-      '<div class="d-flex gap-2 mb-2 flex-wrap">'+
-      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
-      '<i class="bi bi-search me-1"></i>Buscar ítem (producto / documento / RUT)</button>'+
-      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.agregarTareaManual()">'+
-      '<i class="bi bi-plus-lg me-1"></i>Tarea manual</button></div>'+
+      '<p class="d">Busca el ítem por producto, documento o RUT del cliente, o agrégalo a mano. '+
+      'El checklist se asigna por fila en la tabla.</p>'+
+      (S.tipo === 'capacitacion' ? _docBadgeHtml : '')+
+      // 🎨 2026-08-31: grupo de acción único ("un solo botón, y dentro la
+      // tarea manual también") -- "Buscar ítem" grande y con color (antes
+      // outline gris, se confundía con cualquier botón secundario), con
+      // "+ Tarea manual" como acción chica pegada debajo, mismo bloque
+      // visual en vez de dos botones sueltos.
+      '<div class="o2m-item-actions mb-2">'+
+      '<button type="button" class="btn btn-danger fw-bold w-100" style="min-height:48px" onclick="OT2C.abrirProductoCatalogo()">'+
+      '<i class="bi bi-search me-2"></i>Buscar ítem (producto / documento / RUT)</button>'+
+      '<button type="button" class="btn btn-link btn-sm p-0 mt-2" onclick="OT2C.agregarTareaManual()">'+
+      '<i class="bi bi-plus-lg me-1"></i>Agregar tarea manual (SKU, descripción y cantidad)</button>'+
+      '</div>'+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
       _htmlCostoInterno();
     pintarTareasManuales();
@@ -3708,6 +3714,12 @@ window.OT2C = (function(){
   }
 
   function pintarPlantillaInternoSelect(){
+    // 🔧 FIX 2026-08-31: el selector global de "Plantilla de checklist" ya
+    // no se pinta (se quitó de la pantalla, ver pintarTrabajoInterno) --
+    // pero cachePlantInterno sigue siendo la fuente de opciones para el
+    // select POR FILA de la tabla de productos, así que hay que refrescar
+    // esa tabla cada vez que la caché de plantillas termina de cargar.
+    pintarTareasManuales();
     var c = document.getElementById('o2mPlantInternoWrap'); if (!c) return;
     if (cachePlantInternoCargando){
       c.innerHTML = '<div class="text-muted small">Buscando plantillas de checklist…</div>';
@@ -3904,32 +3916,44 @@ window.OT2C = (function(){
   // para el técnico, con su propia foto/comentario). El campo "Cantidad"
   // de la tabla queda en 1 para cada una a propósito -- el conteo real ya
   // está en cuántas filas hay, no en un número dentro de una sola fila.
+  // 🔧 FIX 2026-08-31 (Daniel: "la tarea manual, insisto, tiene que
+  // colocar SKU, descripción y cantidad"): 3 pasos explícitos en vez de
+  // uno solo -- SKU opcional (vacío = se genera uno temporal MAN-xxx),
+  // Descripción obligatoria, Cantidad (repite en N filas independientes,
+  // cada una su propia foto/comentario).
   async function agregarTareaManual(){
+    var skuTxt = await ilusPrompt({
+      title: 'Tarea manual — SKU',
+      message: 'SKU del ítem, si lo tiene (déjalo vacío si no aplica).',
+      placeholder: 'Ej: SD45HEP',
+    });
+    if (skuTxt === null) return;   // canceló
     var texto = await ilusPrompt({
-      title: 'Tarea manual',
-      message: 'Describe la tarea (ej: "Instalar pizarra")',
+      title: 'Tarea manual — Descripción',
+      message: 'Describe la tarea o el ítem (ej: "Instalar pizarra").',
       placeholder: 'Ej: Armar repisa de bodega',
       required: true,
     });
     if (!texto) return;
     var cantTxt = await ilusPrompt({
-      title: 'Cantidad',
+      title: 'Tarea manual — Cantidad',
       message: '¿Cuántas veces se repite "' + texto.slice(0,60) + '"? Cada una queda como su propia fila (su propia foto/comentario).',
       placeholder: '1',
     });
     var n = parseInt(cantTxt, 10);
     if (!n || n < 1) n = 1;
     if (n > 50) n = 50;   // mismo tope que ya usa el backend para tareas_manuales
-    // 🆕 2026-08-31 (Daniel: "en terminos de no SKU... yo diria que
-    // crearamos SKU dinamico, de momento manuales, y ahi vemos como lo
-    // conectamos"): una tarea manual sin SKU real dejaba la columna
-    // "Código" vacía -- se genera un SKU temporal legible (MAN-xxxx) solo
-    // para que la fila tenga identidad visual en la tabla; NO se guarda
-    // en ninguna columna sku de la base (mant_visita_tareas no la tiene),
-    // es puramente de despliegue mientras se arma la OT.
+    // 🆕 2026-08-31 (Daniel: "en términos de no SKU... yo diría que
+    // creáramos SKU dinámico, de momento manuales, y ahí vemos cómo lo
+    // conectamos"): si no se tipeó un SKU real, se genera uno temporal
+    // legible (MAN-xxx) solo para que la fila tenga identidad visual en
+    // la tabla; NO se guarda en ninguna columna sku de la base
+    // (mant_visita_tareas no la tiene), es puramente de despliegue
+    // mientras se arma la OT.
+    var skuBase = skuTxt.trim();
     for (var i = 0; i < n; i++){
       S.tareas_manuales.push({
-        sku: 'MAN-' + String(_o2mSkuManualSeq++).padStart(3,'0'),
+        sku: skuBase || ('MAN-' + String(_o2mSkuManualSeq++).padStart(3,'0')),
         titulo: (n > 1 ? texto.slice(0,290) + ' (' + (i+1) + '/' + n + ')' : texto.slice(0,300)),
         descripcion: '', cantidad: 1, plantilla_id: null
       });
