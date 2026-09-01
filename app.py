@@ -18336,6 +18336,108 @@ def _fedex_get_token() -> str:
         return _fedex_token_cache["token"]
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  DIAGNÓSTICO DE ERRORES DE LA FEDEX RATE API
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-09-01 (logs de producción: "400 Client Error: Bad Request for url:
+# https://apis.fedex.com/rate/v1/rates/quotes"): el `raise_for_status()` pelado
+# tiraba a la basura el CUERPO de la respuesta, que es justo donde FedEx explica
+# QUÉ campo está mal (`errors[].code` / `errors[].message`). Sin ese cuerpo el
+# error es indiagnosticable. Estos helpers lo rescatan para el log del backend
+# y, aparte, arman un mensaje amigable para el usuario (REGLA #4: nunca devolver
+# detalles internos —ni la URL de la API— al cliente).
+
+# Mensaje único que ve el usuario cuando el motivo real no le sirve de nada.
+FEDEX_MSG_GENERICO = ("No pudimos cotizar con FedEx en este momento. "
+                      "Intenta de nuevo o elige otro courier.")
+
+# Códigos de error de FedEx que SÍ le sirven al operador porque hablan del dato
+# que él ingresó (destino, peso, dimensiones). El resto (autorización, caída del
+# servicio, error interno) se traduce al mensaje genérico: no puede hacer nada
+# con eso y expondría internals.
+_FEDEX_CODIGOS_UTILES = (
+    "POSTAL", "ZIP", "CITY", "STATE", "PROVINCE", "COUNTRY", "ADDRESS",
+    "WEIGHT", "DIMENSION", "PACKAGE", "DESTINATION", "ORIGIN",
+)
+
+
+class FedexRateError(Exception):
+    """Error controlado del cotizador FedEx.
+
+    Guarda a propósito DOS textos distintos (REGLA #4):
+      - el texto de la excepción → detalle técnico, SOLO para el log del backend.
+      - `mensaje_usuario`        → lo único que puede viajar al navegador.
+    """
+
+    def __init__(self, mensaje_tecnico: str, mensaje_usuario: str = ""):
+        super().__init__(mensaje_tecnico)
+        self.mensaje_usuario = (mensaje_usuario or "").strip() or FEDEX_MSG_GENERICO
+
+
+def _fedex_sanitizar_log(texto) -> str:
+    """Quita credenciales del texto antes de mandarlo al log (REGLA #4).
+
+    Tapa el client id/secret, el número de cuenta y cualquier Bearer token que
+    se pudiera colar en el cuerpo devuelto por FedEx.
+    """
+    out = str(texto or "")
+    for secreto in (FEDEX_RATE_CLIENT_SECRET, FEDEX_RATE_CLIENT_ID, FEDEX_ACCOUNT):
+        if secreto and len(secreto) >= 4:
+            out = out.replace(secreto, "«oculto»")
+    try:
+        out = re.sub(r"(?i)bearer\s+[A-Za-z0-9._\-]+", "Bearer «oculto»", out)
+    except Exception:
+        pass
+    return out
+
+
+def _fedex_errores_de_respuesta(resp):
+    """Extrae los errores que FedEx devuelve en el cuerpo de una respuesta HTTP.
+
+    Devuelve (lista de {code, message}, cuerpo crudo sanitizado y truncado).
+    Nunca revienta: si el cuerpo no es JSON, la lista vuelve vacía y queda el
+    crudo para el log.
+    """
+    try:
+        crudo = (resp.text or "")[:2000]
+    except Exception:
+        crudo = ""
+    errores = []
+    try:
+        payload = resp.json()
+        brutos = payload.get("errors") or []
+        if isinstance(brutos, dict):
+            brutos = [brutos]
+        for e in brutos:
+            if not isinstance(e, dict):
+                continue
+            errores.append({
+                "code":    str(e.get("code") or "").strip(),
+                "message": str(e.get("message") or "").strip(),
+            })
+    except Exception:
+        pass
+    return errores, _fedex_sanitizar_log(crudo)
+
+
+def _fedex_mensaje_usuario(errores) -> str:
+    """Traduce los errores de FedEx a un texto que el operador pueda accionar.
+
+    Si FedEx explicó algo del dato ingresado (ej. código postal inválido), se
+    propaga ESE texto —sanitizado— porque le sirve para corregir. Cualquier otra
+    cosa (auth, error interno, servicio caído) sale como mensaje genérico.
+    """
+    for e in (errores or []):
+        code = (e.get("code") or "").upper()
+        msg  = (e.get("message") or "").strip()
+        if not msg:
+            continue
+        if any(clave in code for clave in _FEDEX_CODIGOS_UTILES):
+            msg = _fedex_sanitizar_log(msg)[:220]
+            return f"FedEx rechazó la cotización: {msg}"
+    return FEDEX_MSG_GENERICO
+
+
 def _fedex_calc_rate(peso_pred_kg: float, postal_destino: str,
                      es_residencial: bool = False) -> dict:
     """
@@ -18393,11 +18495,42 @@ def _fedex_calc_rate(peso_pred_kg: float, postal_destino: str,
         },
         timeout=20,
     )
-    resp.raise_for_status()
+    # Antes acá había un `resp.raise_for_status()` pelado: perdía el cuerpo de la
+    # respuesta y dejaba solo "400 Bad Request for url: ...". Ahora se rescata el
+    # detalle de FedEx para el log y se levanta un error controlado.
+    if resp.status_code >= 400:
+        errores, crudo = _fedex_errores_de_respuesta(resp)
+        detalle = "; ".join(
+            f"{e['code']}: {e['message']}".strip(": ")
+            for e in errores if (e["code"] or e["message"])
+        )
+        print(
+            f"[FEDEX] Rate API HTTP {resp.status_code} — "
+            f"peso_fact={peso_fact}kg postal_destino={postal_destino} "
+            f"residencial={es_residencial} · "
+            f"errores=[{_fedex_sanitizar_log(detalle) or 'sin detalle en el cuerpo'}]",
+            flush=True,
+        )
+        if not errores:
+            # Cuerpo no-JSON o sin `errors[]`: se loguea crudo (ya sanitizado)
+            # porque es la única pista disponible.
+            print(f"[FEDEX] Rate API cuerpo crudo: {crudo or '(vacío)'}", flush=True)
+        raise FedexRateError(
+            f"FedEx Rate HTTP {resp.status_code}: "
+            f"{_fedex_sanitizar_log(detalle) or crudo[:300] or 'sin cuerpo'}",
+            _fedex_mensaje_usuario(errores),
+        )
+
     data  = resp.json()
     rates = data.get("output", {}).get("rateReplyDetails", [])
     if not rates:
-        return {"error": "Sin tarifas disponibles en respuesta FedEx"}
+        # Contrato histórico: se devuelve dict con clave "error" (no se levanta
+        # excepción) para no romper a quien haga `if "error" in result`.
+        print(f"[FEDEX] Rate API 200 sin tarifas — peso_fact={peso_fact}kg "
+              f"postal_destino={postal_destino} residencial={es_residencial}",
+              flush=True)
+        return {"error": "FedEx no devolvió tarifas para este envío. "
+                         "Revisa el peso y el destino, o elige otro courier."}
 
     # Elegir primer rate con detalles
     best = next((r for r in rates if r.get("ratedShipmentDetails")), rates[0])
@@ -20167,10 +20300,27 @@ def api_asignar_tarifa_fedex():
                 "zona_id":         zona_id,
             },
         })
+    except FedexRateError as ex:
+        # El detalle técnico (código y mensaje de FedEx) ya quedó en el log de
+        # _fedex_calc_rate con prefijo [FEDEX]; acá se agrega el contexto del
+        # endpoint. Al cliente viaja SOLO texto amigable (REGLA #4).
+        print(f"[FEDEX] tarifa-fedex zona={zona_id} peso_pred={peso_pred} "
+              f"residencial={es_resid} remoto={es_remoto} → {ex}", flush=True)
+        return jsonify({"error": ex.mensaje_usuario}), 502
     except Exception as ex:
         import traceback
-        print(f"[FEDEX ERROR] {ex}\n{traceback.format_exc()}")
-        return jsonify({"error": f"Error FedEx API: {str(ex)}"}), 502
+        # Log completo al backend, mensaje amigable al usuario: el `str(ex)` de
+        # requests incluye la URL interna de la API de FedEx y no debe salir.
+        print(f"[FEDEX ERROR] tarifa-fedex zona={zona_id} peso_pred={peso_pred}: "
+              f"{_fedex_sanitizar_log(ex)}\n"
+              f"{_fedex_sanitizar_log(traceback.format_exc())}", flush=True)
+        msg = FEDEX_MSG_GENERICO
+        if "no configurada" in str(ex).lower():
+            # Caso típico: faltan las credenciales en el entorno. Se avisa qué
+            # hacer, sin nombrar variables ni endpoints internos.
+            msg = ("La cotización con FedEx no está disponible (falta configurar "
+                   "la integración). Avisa a soporte o elige otro courier.")
+        return jsonify({"error": msg}), 502
 
 
 # ════════════════════════════════════════════════════════════════
@@ -82134,6 +82284,24 @@ def mant_plantilla_detalle(pid):
     })
 
 
+def _plantilla_error_nombre_duplicado(ex, nombre, tipo_visita):
+    """Traduce el choque contra `uq_plant_nombre_cat` a un aviso entendible.
+
+    La tabla tiene un índice único por (nombre, categoría). Guardar una
+    plantilla con un nombre ya usado en esa misma categoría reventaba con
+    500 "Algo salió mal" y no había forma de saber qué pasó (error real en
+    producción: "Selectorizador de pesos-mantencion", "Booty Builder
+    P-instalacion"). Devuelve el mensaje si es ESE choque, o None si el
+    error es otro (para no tragarse errores distintos).
+    """
+    _txt = str(ex)
+    if "uq_plant_nombre_cat" not in _txt and "1062" not in _txt:
+        return None
+    return (f"Ya existe otra plantilla llamada «{nombre}» para "
+            f"«{tipo_visita}». Ponle un nombre distinto o edita la que ya "
+            f"está creada.")
+
+
 @app.route("/mantenciones/api/plantillas", methods=["POST"])
 @_mant_required
 def mant_plantilla_crear():
@@ -82211,6 +82379,13 @@ def mant_plantilla_crear():
             _mant_log("plantilla", pid, "creada", f"{nombre} ({len(items_norm)} items)")
         except Exception: pass
         return jsonify({"ok": True, "id": pid, "items_count": len(items_norm)})
+    except Exception as _ex:
+        conn.rollback()
+        _msg = _plantilla_error_nombre_duplicado(_ex, nombre, tv)
+        if _msg:
+            return jsonify({"ok": False, "error": _msg,
+                            "error_codigo": "PLANTILLA_DUPLICADA"}), 409
+        raise
     finally:
         conn.close()
 
@@ -82317,8 +82492,11 @@ def mant_plantilla_actualizar(pid):
             # asociadas -- no perder tiempo de request en algo que además
             # no es lo que Daniel pidió (plantillas EN AJUSTE activo, no
             # las de uso masivo ya estables).
-            for g in _grupos[:500]:
-                _vid_g, _mid_g = g.get("visita_id"), g.get("maquina_id")
+            # `_g`, no `g`: asignar a `g` dentro de una función que también
+            # usa `flask.g` la vuelve local en TODA la función y revienta con
+            # UnboundLocalError (ya pasó en producción, 2026-09-01).
+            for _g in _grupos[:500]:
+                _vid_g, _mid_g = _g.get("visita_id"), _g.get("maquina_id")
                 if not _vid_g:
                     continue
                 if not _grupo_ot_sin_editar(_vid_g, _mid_g, pid):
@@ -82334,6 +82512,13 @@ def mant_plantilla_actualizar(pid):
 
         return jsonify({"ok": True, "id": pid, "items_count": len(items_norm),
                          "ots_sincronizadas": _sync_n_grupos, "tareas_recreadas": _sync_n_tareas})
+    except Exception as _ex:
+        conn.rollback()
+        _msg = _plantilla_error_nombre_duplicado(_ex, nombre, tv)
+        if _msg:
+            return jsonify({"ok": False, "error": _msg,
+                            "error_codigo": "PLANTILLA_DUPLICADA"}), 409
+        raise
     finally:
         conn.close()
 

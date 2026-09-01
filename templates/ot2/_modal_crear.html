@@ -3715,45 +3715,13 @@ window.OT2C = (function(){
   }
 
   function pintarPlantillaInternoSelect(){
-    // 🔧 FIX 2026-08-31: el selector global de "Plantilla de checklist" ya
-    // no se pinta (se quitó de la pantalla, ver pintarTrabajoInterno) --
-    // pero cachePlantInterno sigue siendo la fuente de opciones para el
-    // select POR FILA de la tabla de productos, así que hay que refrescar
-    // esa tabla cada vez que la caché de plantillas termina de cargar.
+    // 🔧 FIX 2026-08-31 / 2026-09-01: el selector global de "Plantilla de
+    // checklist" ya no se pinta en NINGÚN camino de trabajo interno
+    // (capacitación ni bodega) -- el checklist se elige por fila en la
+    // tabla. cachePlantInterno sigue siendo la fuente de opciones de esos
+    // selects por fila, así que lo único que queda por hacer acá es
+    // repintar la tabla cuando la caché termina de cargar.
     pintarTareasManuales();
-    var c = document.getElementById('o2mPlantInternoWrap'); if (!c) return;
-    if (cachePlantInternoCargando){
-      c.innerHTML = '<div class="text-muted small">Buscando plantillas de checklist…</div>';
-      return;
-    }
-    // 🔧 FIX 2026-08-31 (Daniel, probando en vivo: "acabo de crear una
-    // plantilla y no me la asocia"): la caché (cachePlantInternoTipo) solo
-    // se invalida cuando cambia el TIPO elegido -- si el usuario crea la
-    // plantilla en OTRA pestaña (el aviso de abajo abre Plantillas con
-    // target="_blank" a propósito, para no perder el wizard) y vuelve
-    // acá, el wizard sigue mostrando la lista vieja para siempre, sin
-    // ninguna forma de refrescarla. Botón manual explícito en vez de
-    // adivinar con un evento de foco de ventana (poco confiable con
-    // pestañas nuevas y no vale la pena el riesgo de una recarga sola).
-    var _btnRefrescar = '<button type="button" class="btn btn-sm btn-outline-secondary mt-2" '+
-      'onclick="OT2C.recargarPlantillasInterno()" title="Volver a buscar plantillas (por si creaste una nueva)">'+
-      '<i class="bi bi-arrow-clockwise me-1"></i>Buscar de nuevo</button>';
-    if (!cachePlantInterno.length){
-      c.innerHTML = '<div class="o2m-aviso" style="background:#f3f4f6;border-color:#e5e7eb;color:#4b5563">'+
-        '<i class="bi bi-info-circle-fill me-1"></i>Todavía no hay checklist para este tipo de trabajo interno. '+
-        'Puedes seguir sin checklist, o crear uno en '+
-        '<a href="/mantenciones/plantillas" target="_blank" rel="noopener">Plantillas</a>.</div>'+_btnRefrescar;
-      return;
-    }
-    var ops = '<option value="">Sin checklist (solo con lo de arriba)</option>' +
-      cachePlantInterno.map(function(p){
-        return '<option value="'+p.id+'" '+(S.plantilla_id_interno===p.id?'selected':'')+'>'+
-          esc(p.nombre)+' ('+p.items_count+' ítem'+(p.items_count===1?'':'s')+')</option>';
-      }).join('');
-    var sugerida = cachePlantInterno.length===1 && S.plantilla_id_interno===cachePlantInterno[0].id;
-    c.innerHTML = '<select class="form-select" id="o2mPlantInterno" onchange="OT2C.setPlantillaInterno(this.value)">'+ops+'</select>'+
-      (sugerida ? '<small class="text-muted d-block mt-1" style="font-size:.72rem">'+
-        '<i class="bi bi-magic me-1"></i>Sugerida automáticamente para este tipo de trabajo.</small>' : '')+_btnRefrescar;
   }
 
   function recargarPlantillasInterno(){
@@ -3952,8 +3920,15 @@ window.OT2C = (function(){
           '<i class="bi bi-check-lg me-1"></i>Guardar</button>'+
         '</div>'+
       '</div>';
-    document.body.appendChild(ov);
+    // 🐛 FIX 2026-09-01 (Daniel: "está bloqueado para escribir"): el overlay
+    // NO puede colgar de document.body. El wizard es un modal de Bootstrap
+    // y su focus trap (enforceFocus) devuelve el foco al modal apenas se
+    // enfoca algo que esté FUERA de él -- los inputs de este modal apilado
+    // quedaban imposibles de escribir. Colgándolo dentro del propio modal,
+    // Bootstrap lo considera parte suyo y deja de robarle el foco.
+    (document.getElementById('ot2ModalCrear') || document.body).appendChild(ov);
     _o2mTMPintarFilas();
+    var _pf = ov.querySelector('input'); if (_pf) _pf.focus();
   }
   function _o2mTMFilaCompleta(f){
     return !!(f.sku||'').trim() && !!(f.descripcion||'').trim() && parseInt(f.cantidad,10) > 0;
@@ -3971,7 +3946,8 @@ window.OT2C = (function(){
         'value="'+esc(f.descripcion)+'" oninput="OT2C._o2mTMSetCampo('+i+',\'descripcion\',this.value)">'+
         '<input type="number" min="1" class="form-control form-control-sm" style="width:70px;font-size:16px" '+
         'placeholder="Cant." value="'+(f.cantidad||1)+'" oninput="OT2C._o2mTMSetCampo('+i+',\'cantidad\',this.value)">'+
-        (ok ? '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i>' : '<span style="width:16px"></span>')+
+        '<span data-tm-check style="width:16px;display:inline-block">'+
+        (ok ? '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i>' : '')+'</span>'+
         (_o2mTM.filas.length > 1 ? '<button type="button" class="btn btn-sm btn-link text-danger p-1" '+
           'onclick="OT2C._o2mTMQuitarFila('+i+')"><i class="bi bi-x-lg"></i></button>' : '')+
         '</div>';
@@ -3980,9 +3956,30 @@ window.OT2C = (function(){
   function _o2mTMSetCampo(i, campo, v){
     if (!_o2mTM.filas[i]) return;
     _o2mTM.filas[i][campo] = campo === 'cantidad' ? (parseInt(v,10)||1) : v;
-    _o2mTMPintarFilas();
+    // 🐛 FIX 2026-09-01: repintar TODAS las filas en cada tecla destruía el
+    // <input> que el usuario estaba usando y le quitaba el foco -- se podía
+    // escribir una sola letra por clic. Ahora solo se refresca el estado
+    // visual (verde + check) de la fila tocada, sin recrear los inputs.
+    _o2mTMPintarEstadoFila(i);
   }
-  function _o2mTMAgregarFila(){ _o2mTM.filas.push({sku:'', descripcion:'', cantidad:1}); _o2mTMPintarFilas(); }
+  function _o2mTMPintarEstadoFila(i){
+    var c = document.getElementById('o2mTareaManualFilas'); if (!c) return;
+    var fila = c.children[i]; if (!fila) return;
+    var ok = _o2mTMFilaCompleta(_o2mTM.filas[i]);
+    fila.style.background = ok ? '#dcfce7' : '#fafafa';
+    fila.style.border = ok ? '1px solid #86efac' : '1px solid #eee';
+    var chk = fila.querySelector('[data-tm-check]');
+    if (chk) chk.innerHTML = ok
+      ? '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i>' : '';
+  }
+  function _o2mTMAgregarFila(){
+    _o2mTM.filas.push({sku:'', descripcion:'', cantidad:1});
+    _o2mTMPintarFilas();
+    var c = document.getElementById('o2mTareaManualFilas');
+    var ult = c && c.children[c.children.length-1];
+    var inp = ult && ult.querySelector('input');
+    if (inp) inp.focus();
+  }
   function _o2mTMQuitarFila(i){ _o2mTM.filas.splice(i,1); _o2mTMPintarFilas(); }
   function _o2mTMGuardar(){
     var validas = _o2mTM.filas.filter(_o2mTMFilaCompleta);
@@ -4041,8 +4038,6 @@ window.OT2C = (function(){
     b.innerHTML = '<h6 class="t">Trabajo de bodega</h6>'+
       '<p class="d">Si hay un checklist para este tipo de trabajo se sugiere solo abajo. '+
       'De igual forma, describe qué se hizo y deja fotos de evidencia.</p>'+
-      '<label class="fl">Plantilla de checklist</label>'+
-      '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
       // 🆕 2026-08-31 (Daniel: "quiero ver una tabla maravillosa como la
       // de los demás modales para agregar los productos a los que se le
       // va a aplicar el checklist, aunque sea uno manual") -- ADITIVO,
@@ -4051,12 +4046,15 @@ window.OT2C = (function(){
       // abrirProductoCatalogo/agregarTareaManual, ya la envían al backend
       // como tareas propias) en vez de inventar una tabla nueva -- es
       // exactamente lo que Daniel pidió: "como la de los demás modales".
+      // Mismos controles que Capacitación (Daniel 2026-09-01: "te dije que
+      // solo dejaras la tabla y eliminaras el resto") -- el checklist se
+      // asigna por fila en la tabla, no con un selector global.
       '<label class="fl">Productos/equipos a los que aplica el checklist (opcional)</label>'+
-      '<div class="d-flex gap-2 mb-2 flex-wrap">'+
-      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
-      '<i class="bi bi-tag me-1"></i>Buscar por producto</button>'+
-      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirTareaManualModal()">'+
-      '<i class="bi bi-plus-lg me-1"></i>Agregar manual</button></div>'+
+      '<div class="o2m-item-actions mb-2 d-flex gap-2 flex-wrap align-items-center">'+
+      '<button type="button" class="btn btn-outline-danger btn-sm" onclick="OT2C.abrirProductoCatalogo()">'+
+      '<i class="bi bi-search me-1" style="color:var(--ilus-red,#dc2626)"></i>Buscar ítem</button>'+
+      '<button type="button" class="btn btn-link btn-sm p-0" onclick="OT2C.abrirTareaManualModal()">'+
+      '<i class="bi bi-plus-circle me-1" style="color:#16a34a"></i>Agregar manual</button></div>'+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
       '<label class="fl">¿Qué se hizo? *</label>'+
       '<textarea class="form-control mb-3" id="o2mBodegaObs" rows="3" maxlength="1000" '+
