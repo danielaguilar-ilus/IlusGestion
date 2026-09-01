@@ -3477,7 +3477,7 @@ window.OT2C = (function(){
         '</div>';
     } else {
       _docBloqueHtml = '<button type="button" class="btn btn-sm btn-outline-secondary mb-2" onclick="OT2C.abrirBusquedaDocInterno()">'+
-        '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'+
+        '<i class="bi bi-search me-1"></i>Buscar por documento</button>'+
         '<label class="fl">N° de nota de venta interna (opcional)</label>'+
         '<input class="form-control mb-3" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
         'value="" oninput="OT2C.setNotaVentaInterna(this.value)">';
@@ -3498,7 +3498,7 @@ window.OT2C = (function(){
       '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
       '<div class="d-flex gap-2 mb-2 flex-wrap">'+
       '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
-      '<i class="bi bi-tag me-1"></i>Producto del catálogo</button>'+
+      '<i class="bi bi-tag me-1"></i>Buscar por producto</button>'+
       '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.agregarTareaManual()">'+
       '<i class="bi bi-plus-lg me-1"></i>Tarea manual</button></div>'+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
@@ -3731,15 +3731,37 @@ window.OT2C = (function(){
     pintarTareasManuales();
     refrescarAnclas();
   }
+  // 🆕 2026-08-31 (Daniel: "si son varias tareas... instalar pizarra me va
+  // a tener que pedir cuántas cantidades para repetirlo, y una vez que lo
+  // declare, se va a repetir en la tabla... voy a necesitar seis fotos y
+  // seis comentarios de esa tarea"): una tarea manual con cantidad > 1 ya
+  // NO se guarda como 1 fila con un número de cantidad -- se REPITE como
+  // N filas independientes (cada mant_visita_tareas es su propia tarjeta
+  // para el técnico, con su propia foto/comentario). El campo "Cantidad"
+  // de la tabla queda en 1 para cada una a propósito -- el conteo real ya
+  // está en cuántas filas hay, no en un número dentro de una sola fila.
   async function agregarTareaManual(){
     var texto = await ilusPrompt({
       title: 'Tarea manual',
-      message: 'Describe la tarea (ej: "Pegar baranda sala 2")',
+      message: 'Describe la tarea (ej: "Instalar pizarra")',
       placeholder: 'Ej: Armar repisa de bodega',
       required: true,
     });
     if (!texto) return;
-    S.tareas_manuales.push({sku:'', titulo: texto.slice(0,300), descripcion:'', cantidad:1, plantilla_id:null});
+    var cantTxt = await ilusPrompt({
+      title: 'Cantidad',
+      message: '¿Cuántas veces se repite "' + texto.slice(0,60) + '"? Cada una queda como su propia fila (su propia foto/comentario).',
+      placeholder: '1',
+    });
+    var n = parseInt(cantTxt, 10);
+    if (!n || n < 1) n = 1;
+    if (n > 50) n = 50;   // mismo tope que ya usa el backend para tareas_manuales
+    for (var i = 0; i < n; i++){
+      S.tareas_manuales.push({
+        sku: '', titulo: (n > 1 ? texto.slice(0,290) + ' (' + (i+1) + '/' + n + ')' : texto.slice(0,300)),
+        descripcion: '', cantidad: 1, plantilla_id: null
+      });
+    }
     pintarTareasManuales();
     refrescarAnclas();
   }
@@ -3789,7 +3811,7 @@ window.OT2C = (function(){
       '<label class="fl">Productos/equipos a los que aplica el checklist (opcional)</label>'+
       '<div class="d-flex gap-2 mb-2 flex-wrap">'+
       '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
-      '<i class="bi bi-tag me-1"></i>Producto del catálogo</button>'+
+      '<i class="bi bi-tag me-1"></i>Buscar por producto</button>'+
       '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.agregarTareaManual()">'+
       '<i class="bi bi-plus-lg me-1"></i>Agregar manual</button></div>'+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
