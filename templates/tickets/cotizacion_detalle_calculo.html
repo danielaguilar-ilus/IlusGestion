@@ -273,7 +273,7 @@
           <td class="c">{{ it.horas | fkg(2) }}</td>
           <td class="c">{{ it.tecnicos }}</td>
           <td class="c"><b>{{ it.hh | fkg(2) }}</b></td>
-          <td class="r">${{ clp(cfg.valor_hh) }}</td>
+          <td class="r">${{ clp(it.valor_hh) }}</td>
           <td class="r">${{ clp(it.costo_mo) }}</td>
           <td class="c">{{ cfg.margen_pct | fkg(1) }}%</td>
           <td class="r">
@@ -356,7 +356,7 @@
     {% if uf_info %}El Total en UF se obtiene dividiendo el Total en CLP por el valor de la UF del día{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %}.{% endif %}
   </div>
   <div class="config-foot">
-    <span>Valor HH vigente: <b>${{ clp(cfg.valor_hh) }}</b></span>
+    <span>Valor HH vigente: <b>${{ clp(valor_hh_vigente) }}</b></span>
     <span>Margen vigente: <b>{{ cfg.margen_pct | fkg(1) }}%</b></span>
     <span>IVA de esta cotización: <b>{{ cot.iva_pct | fkg(1) }}%</b></span>
     <span>Tipo de servicio: <b>{{ cot.tipo_servicio_label }}</b></span>

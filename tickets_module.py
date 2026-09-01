@@ -3768,7 +3768,13 @@ def register_tickets_routes(app, ctx):
                 costo_mo = hh * _valor_hh_tipo
             else:
                 horas = tecnicos = hh = costo_mo = None
+                _valor_hh_tipo = None
             items.append({
+                # El valor de la HH usado en ESTE ítem. La plantilla lo
+                # necesita por fila: `cfg.valor_hh` es un dict por tipo de
+                # servicio desde 2026-07-30 y mostrarlo directo reventaba la
+                # vista de cálculo con 500 (error real en producción).
+                "valor_hh": _valor_hh_tipo,
                 "sku": it.get("erp_kopr") or "",
                 "descripcion": it.get("descripcion") or "",
                 "clase_producto": clase,
@@ -3842,6 +3848,13 @@ def register_tickets_routes(app, ctx):
             "items": items,
             "ruta": ruta,
             "cfg": cfg,
+            # `cfg["valor_hh"]` es un dict {tipo_servicio: valor} desde
+            # 2026-07-30; el pie de la vista necesita el número plano del
+            # tipo de servicio de ESTA cotización.
+            "valor_hh_vigente": (
+                cfg["valor_hh"].get(tipo_servicio, 20000.0)
+                if isinstance(cfg.get("valor_hh"), dict) else cfg.get("valor_hh")
+            ),
             "uf_info": uf_info_disp,
             "uf_total": uf_total,
             "logo_b64": _tk_cotiz_logo_b64(),

@@ -9,7 +9,7 @@ import smtplib
 import threading
 import time
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as dt_time
 
 # ════════════════════════════════════════════════════════════════════
 #  PLAYWRIGHT — fijar PLAYWRIGHT_BROWSERS_PATH antes que NADIE lo importe.
@@ -69413,6 +69413,32 @@ def _ot_visita_basic(vid):
 _OT_VENTANA_TOLERANCIA_MIN = 60
 
 
+def _ot_hora_a_time(valor):
+    """Normaliza una hora de MySQL a `datetime.time` (o None).
+
+    Las columnas TIME llegan como `timedelta` por el driver, y las horas
+    escritas a mano pueden llegar como texto 'HH:MM'. Cualquiera de los dos
+    hacía explotar `datetime.combine()`.
+    """
+    if valor is None or isinstance(valor, dt_time):
+        return valor
+    if isinstance(valor, timedelta):
+        _seg = int(valor.total_seconds()) % 86400
+        return dt_time(_seg // 3600, (_seg % 3600) // 60, _seg % 60)
+    if isinstance(valor, datetime):
+        return valor.time()
+    _txt = str(valor).strip()
+    if not _txt:
+        return None
+    try:
+        _p = [int(x) for x in _txt.split(":")[:3]]
+        while len(_p) < 3:
+            _p.append(0)
+        return dt_time(_p[0] % 24, _p[1] % 60, _p[2] % 60)
+    except (ValueError, IndexError):
+        return None
+
+
 def _ot_dentro_ventana_horario(v):
     """¿Puede iniciarse esta OT AHORA, según su fecha/hora programada?
 
@@ -69454,7 +69480,12 @@ def _ot_dentro_ventana_horario(v):
             f"{fecha_fin.strftime('%d/%m/%Y')} y ya pasó. Pide que la reprogramen "
             f"si todavía hay que hacerla.")
 
-    h_ini, h_fin = v.get("hora_inicio"), v.get("hora_fin")
+    # MySQL devuelve las columnas TIME como `timedelta`, no como `time` --
+    # sin normalizar, `datetime.combine()` y `.strftime()` revientan con 500
+    # y el técnico se queda sin poder tocar el botón "Iniciar OT" (error real
+    # en producción, 2026-09-01). Normalizamos acá, en el único lugar que las
+    # usa, en vez de confiar en el tipo que traiga el driver.
+    h_ini, h_fin = _ot_hora_a_time(v.get("hora_inicio")), _ot_hora_a_time(v.get("hora_fin"))
     if not h_ini and not h_fin:
         return True, None    # día correcto, sin horario declarado -> todo el día
 
