@@ -88910,9 +88910,24 @@ def mant_visita_pdf(vid):
     # tickets_module.py "Cotizacion_{numero}_{empresa}.pdf"): trabajo
     # interno no tiene cliente (razon_social queda NULL, LEFT JOIN), en
     # ese caso el nombre se queda solo con el numero, igual que antes.
-    _pdf_num = ctx["visita"].get("numero_ot") or vid
-    _pdf_cli = (ctx["visita"].get("razon_social") or "").strip()
-    fname = (f"OT_{_pdf_num}_{_pdf_cli}.pdf" if _pdf_cli else f"OT_{_pdf_num}.pdf").replace(" ", "_")
+    # 🐛 FIX 2026-09-01 (Daniel, descargando OT-2026-00058: "ese nombre se
+    # repite y es muy largo, peligroso para errores"): `numero_ot` YA trae
+    # el prefijo "OT-" (ej. "OT-2026-00058") -- anteponerle otro "OT_" acá
+    # dejaba el archivo como "OT_OT-2026-00058_Corporacion_Municipal_De_
+    # Deporte_De_Vitacura.pdf", con el número duplicado y el nombre del
+    # cliente sin acortar (riesgo real de superar el límite de ruta de
+    # Windows, 260 caracteres, al sumarse a una carpeta con nombre largo).
+    _pdf_num = str(ctx["visita"].get("numero_ot") or vid).strip()
+    _pdf_num_slug = re.sub(r"^OT[-_]?", "", _pdf_num, flags=re.IGNORECASE) or _pdf_num
+    _pdf_cli_raw = (ctx["visita"].get("razon_social") or "").strip()
+    # Mismo criterio que ya usa el PDF de cotizaciones (tickets_module.py,
+    # "Cotizacion_{numero}_{empresa}.pdf"): transliterar tildes/ñ a ASCII
+    # en vez de solo borrarlas (para no perder legibilidad, ej. "Ó"→"O")
+    # y limitar el largo del nombre del cliente.
+    _pdf_cli = unicodedata.normalize("NFKD", _pdf_cli_raw).encode("ascii", "ignore").decode("ascii")
+    _pdf_cli = re.sub(r"[^A-Za-z0-9 _-]", "", _pdf_cli)[:40].strip()
+    fname = (f"OT-{_pdf_num_slug}_{_pdf_cli}.pdf" if _pdf_cli
+             else f"OT-{_pdf_num_slug}.pdf").replace(" ", "_")
     return send_file(
         io.BytesIO(pdf_bytes), mimetype="application/pdf",
         as_attachment=False, download_name=fname,
