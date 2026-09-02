@@ -937,7 +937,115 @@ function rbPickSondeo(i){
   rbRefreshStepStates();
 }
 
-function rbAbrirNuevo(mantenerContexto){
+// ════════════════════════════════════════════════════════════════
+// 🔧 FIX 2026-09-02 (Daniel, caso Lenin: "descargó la app [Android,
+// instalada como app desde el navegador], estaba agregando repuestos,
+// salió a WhatsApp y al volver perdió todos los datos, con menos de
+// 10 min de haber iniciado sesión").
+//
+// POR QUÉ PASA (no es un cierre de sesión -- el login seguía vigente):
+// Android mata procesos en segundo plano para liberar RAM cuando el
+// usuario abre otra app (sobre todo una pesada como WhatsApp), y una
+// PWA/pestaña de navegador NO es la excepción -- de hecho, con la
+// app "instalada" desde el navegador (Agregar a pantalla de inicio)
+// Android la trata como una tarea más, sujeta a la MISMA política de
+// memoria que cualquier otra. Al volver, Chrome no "reanuda" la
+// página: la vuelve a CARGAR DE CERO. Todo lo que Lenin había
+// escrito en el formulario -- que solo vivía en la memoria del
+// navegador, nunca se había mandado al servidor porque no había
+// tocado "Guardar" -- se pierde con el proceso. Esto es MÁS probable
+// en equipos con poca RAM o batería baja (Android es más agresivo
+// matando procesos ahí), y no tiene que ver con el tiempo logueado.
+//
+// FIX: mientras Lenin escribe, el formulario de "Nuevo repuesto" se
+// autoguarda como borrador en localStorage del propio teléfono (nunca
+// viaja al servidor). Si Android mata la pestaña y Lenin vuelve a
+// abrir "Nuevo repuesto", se le ofrece recuperar lo que tenía escrito.
+// Limitación real, avisada de una: las FOTOS elegidas antes de guardar
+// no se pueden recuperar (viven como blob en memoria, mueren con la
+// pestaña igual que antes) -- todo lo demás (descripción, medidas,
+// marca, ubicación, proveedor, modelos asociados, notas) sí.
+// ════════════════════════════════════════════════════════════════
+const RB_DRAFT_KEY = 'ilus_repuesto_draft_v1';
+const RB_DRAFT_MAX_HORAS = 48;   // borradores mas viejos que esto se descartan solos
+
+function rbDraftGuardar(){
+  // Solo aplica a "repuesto nuevo" -- si rbId tiene valor es una edición
+  // real ya respaldada en el servidor, nunca se pisa con un borrador local.
+  if (document.getElementById('rbId').value) return;
+  const _get = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const _chip = id => { const el = document.getElementById(id); return el ? el.textContent.trim() : ''; };
+  const vacio = !_get('rbDescripcion') && !_get('rbCantidad') && !_get('rbNotas') &&
+                !_get('rbMarca') && !_get('rbUbicacion') && !_get('rbProveedor') &&
+                RB_MODELOS_PENDIENTES.length === 0;
+  if (vacio){ rbDraftLimpiar(); return; }   // nada que proteger todavia
+  const draft = {
+    ts: Date.now(),
+    descripcion: _get('rbDescripcion'), cantidad: _get('rbCantidad'),
+    stock_minimo: _get('rbStockMinimo'), costo: (typeof rbCostoRaw === 'function' ? rbCostoRaw() : ''),
+    codigo_fabricante: _get('rbCodigoFabricante'), notas: _get('rbNotas'),
+    largo: _get('rbLargo'), ancho: _get('rbAncho'), alto: _get('rbAlto'),
+    peso_kg: _get('rbPesoKg'), bultos: _get('rbBultos'),
+    marca_id: _get('rbMarca'), marca_nombre: _chip('rbMarcaSeleccionada'),
+    ubicacion_id: _get('rbUbicacion'), ubicacion_texto: _chip('rbUbicacionSeleccionada'),
+    proveedor_id: _get('rbProveedor'), proveedor_nombre: _chip('rbProveedorSeleccionado'),
+    cliente_id: _get('rbClienteId'), cliente_nombre: _chip('rbClienteSeleccionado'),
+    ticket_id: _get('rbTicketId'), ticket_numero: _chip('rbTicketSeleccionado'),
+    modelos_pendientes: RB_MODELOS_PENDIENTES,
+  };
+  try { localStorage.setItem(RB_DRAFT_KEY, JSON.stringify(draft)); } catch(e){ /* localStorage lleno o deshabilitado -- no es critico, se sigue sin borrador */ }
+}
+
+function rbDraftCargar(){
+  let raw;
+  try { raw = localStorage.getItem(RB_DRAFT_KEY); } catch(e){ return null; }
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw);
+    if (!d.ts || (Date.now() - d.ts) > RB_DRAFT_MAX_HORAS * 3600 * 1000){ rbDraftLimpiar(); return null; }
+    return d;
+  } catch(e){ return null; }
+}
+
+function rbDraftLimpiar(){
+  try { localStorage.removeItem(RB_DRAFT_KEY); } catch(e){}
+}
+
+function rbDraftAplicar(d){
+  document.getElementById('rbDescripcion').value = d.descripcion || '';
+  document.getElementById('rbCantidad').value = d.cantidad || '';
+  document.getElementById('rbStockMinimo').value = d.stock_minimo || 1;
+  if (d.costo) rbCostoSet(d.costo);
+  document.getElementById('rbCodigoFabricante').value = d.codigo_fabricante || '';
+  document.getElementById('rbNotas').value = d.notas || '';
+  document.getElementById('rbLargo').value = d.largo || '';
+  document.getElementById('rbAncho').value = d.ancho || '';
+  document.getElementById('rbAlto').value = d.alto || '';
+  document.getElementById('rbPesoKg').value = d.peso_kg || '';
+  document.getElementById('rbBultos').value = d.bultos || '';
+  if (d.marca_id) rbSetMarca(d.marca_id, d.marca_nombre);
+  if (d.ubicacion_id) rbSetUbicacion(d.ubicacion_id, d.ubicacion_texto);
+  if (d.proveedor_id) rbSetProveedor(d.proveedor_id, d.proveedor_nombre);
+  if (d.cliente_id) rbSetCliente(d.cliente_id, d.cliente_nombre);
+  if (d.ticket_id) rbSetTicket(d.ticket_id, d.ticket_numero);
+  RB_MODELOS_PENDIENTES = d.modelos_pendientes || [];
+  rbRenderModelosChips();
+  rbRefreshStepStates();
+}
+
+// Autoguardado: un solo listener delegado en todo el modal (evita cablear
+// campo por campo) — debounced para no escribir en localStorage en cada tecla.
+let _rbDraftDebounce = null;
+document.addEventListener('DOMContentLoaded', function(){
+  const modalEl = document.getElementById('modalRepStock');
+  if (!modalEl) return;
+  modalEl.addEventListener('input', function(){
+    clearTimeout(_rbDraftDebounce);
+    _rbDraftDebounce = setTimeout(rbDraftGuardar, 500);
+  });
+});
+
+async function rbAbrirNuevo(mantenerContexto){
   // mantenerContexto=true (viene de "Guardar y crear otro"): conserva
   // marca, ubicación y stock mínimo — cargar 20 piezas del mismo estante
   // no debería obligar a reelegirlas 20 veces.
@@ -970,6 +1078,25 @@ function rbAbrirNuevo(mantenerContexto){
   rbRenderFotos();
   rbSetAvatarPrincipal(null);   // repuesto nuevo: nunca hay fotos todavia
   document.getElementById('rbTrazabilidad').style.display = 'none';
+  // 🔧 FIX 2026-09-02 (caso Lenin, ver comentario grande arriba de
+  // RB_DRAFT_KEY): solo se ofrece recuperar en una apertura FRESCA del
+  // modal (mantenerContexto=false) -- el flujo interno "Guardar y crear
+  // otro" ya guardó todo en el servidor, ahí nunca hay nada que recuperar.
+  if (!mantenerContexto){
+    const draft = rbDraftCargar();
+    if (draft){
+      const minutos = Math.max(1, Math.round((Date.now() - draft.ts) / 60000));
+      const ok = await ilusConfirm({
+        title: 'Encontramos un borrador sin guardar',
+        message: `Hace ${minutos} minuto${minutos === 1 ? '' : 's'} estabas escribiendo` +
+                 (draft.descripcion ? ` "${draft.descripcion}"` : ' un repuesto nuevo') + '.',
+        sub: 'Puede haber pasado si la app se cerró sola al cambiar a otra app (WhatsApp, etc). ¿Quieres recuperarlo?',
+        okLabel: 'Recuperar', cancelLabel: 'Empezar de cero',
+      });
+      if (ok) rbDraftAplicar(draft);
+      rbDraftLimpiar();
+    }
+  }
   if (!mantenerContexto) RB_MODAL.show();
   setTimeout(() => document.getElementById('rbDescripcion').focus(), mantenerContexto ? 50 : 400);
 }
@@ -1100,6 +1227,10 @@ async function rbGuardar(crearOtro){
       return;
     }
     RB_DIRTY = true;
+    // Guardado real en el servidor -- el borrador local ya cumplió su
+    // función (o nunca existió, si era una edición). Limpiar siempre acá
+    // evita que un repuesto ya creado se ofrezca "recuperar" después.
+    rbDraftLimpiar();
     if (id){
       ilusToast('Repuesto actualizado', {type:'success'});
       if (crearOtro){ rbAbrirNuevo(true); } else { RB_MODAL.hide(); }
