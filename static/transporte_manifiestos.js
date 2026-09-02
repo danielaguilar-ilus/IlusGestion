@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // Monitor. Se auto-envía SOLO al quedar vacío (no en cada tecla: acá el
 // filtrado es server-side con recarga completa de página, y recargar mientras
 // se escribe sería peor que el problema). Escribir sigue necesitando Enter o
-// el botón, como siempre.
+// el botón "Buscar" (2026-09-01: ahora sí existe, ver .man-btn-buscar).
 document.addEventListener('DOMContentLoaded', function() {
   var form = document.getElementById('filtrosForm');
   if (!form) return;

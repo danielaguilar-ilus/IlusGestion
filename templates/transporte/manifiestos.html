@@ -100,9 +100,18 @@
     <div class="search">
       <i class="bi bi-search"></i>
       <input type="text" name="q" value="{{ filtros.q }}"
-             placeholder="Buscar por correlativo, courier o notas…"
+             placeholder="Buscar factura (FCV 11431), cliente, comuna, tracking, correlativo…"
              autocomplete="off">
     </div>
+    {# FIX 2026-09-01 (Daniel: "el filtro y el buscador no está funcionando
+       como corresponde"): los selects y las fechas de abajo auto-envían con
+       onchange, pero esta caja de texto solo respondía a Enter -- sin botón
+       visible, escribir "Cipax" y no ver reaccionar nada se leía como que
+       estaba roto. El botón no reemplaza el Enter (sigue funcionando: es el
+       mismo <form>), solo lo hace visible. #}
+    <button type="submit" class="man-btn-buscar">
+      <i class="bi bi-search"></i><span>Buscar</span>
+    </button>
     <select name="courier" onchange="document.getElementById('filtrosForm').submit()">
       <option value="">Todos los courier</option>
       {% for c in couriers %}
@@ -126,10 +135,27 @@
       <input type="date" name="hasta" value="{{ filtros.hasta }}"
              onchange="document.getElementById('filtrosForm').submit()">
     </div>
-    <a href="{{ url_for('tr_manifiestos', vista=filtros.vista) }}" class="btn-limpiar">
+    {# REGLA #4.3 punto 3: el tamaño de página es del usuario, no del código
+       -- "Limpiar filtros" no puede resetearlo de paso. Usa url_limpiar
+       (calculado en el backend) para no duplicar la lógica acá. #}
+    <a href="{{ url_limpiar }}" class="btn-limpiar">
       <i class="bi bi-arrow-counterclockwise"></i> Limpiar filtros
     </a>
   </form>
+  <div class="man-search-hint">
+    Busca por N° de factura o boleta (FCV 11431, 11431), cliente, RUT, comuna, guía, N° de tracking, correlativo (MAN 49), courier o notas.
+  </div>
+  {% if chips %}
+  <div class="man-chips">
+    <span class="man-chips-lbl">Filtros activos:</span>
+    {% for ch in chips %}
+    <span class="man-chip">{{ ch.lbl }}: <strong>{{ ch.val }}</strong>
+      <a href="{{ ch.url }}" title="Quitar este filtro" aria-label="Quitar {{ ch.lbl }}"><i class="bi bi-x"></i></a>
+    </span>
+    {% endfor %}
+    <a class="man-chips-clear" href="{{ url_limpiar }}">Limpiar todo</a>
+  </div>
+  {% endif %}
   {% if filtros.vista == 'entregados' and filtros.fecha_default_aplicado %}
   <div class="man-filtro-fecha-hint">
     <i class="bi bi-info-circle me-1"></i>Mostrando solo los últimos 30 días por defecto (evita cargar todo el historial acumulado).
@@ -326,7 +352,11 @@
           <td data-label="Estado">
             <span class="estado-pill {{ estado_visual_class }}"><i class="bi {{ estado_visual_ico }}"></i>{{ estado_visual_label }}</span>
           </td>
-          <td data-label="Notas" class="cell-notas">
+          <td data-label="Notas" class="cell-notas" {% if m.notas %}title="{{ m.notas }}"{% endif %}>
+            {# El buscador ahora incluye "notas" -- si el término calzaba en
+               la parte cortada, la fila aparecía sin que se entendiera por
+               qué (REGLA #15: dato completo accesible, no se quita el
+               truncado, se agrega el acceso al valor real). #}
             {% if m.notas %}{{ m.notas[:32] }}{{ '…' if m.notas|length > 32 }}{% else %}—{% endif %}
           </td>
           <td data-label="Acción">
@@ -413,7 +443,14 @@
        ".empty-state i{font-size:42px}" deformaba el icono del DS. La regla
        sigue en transporte_manifiestos.css, no se borro nada. #}
     <div class="trx-empty">
-      {% if filtros.q or filtros.courier or filtros.estado %}
+      {# FIX 2026-09-01: antes este "if" no miraba el filtro de FECHA -- una
+         búsqueda en "Activos" con rango de fechas sin resultados no entraba
+         acá NI en el elif de abajo (que exige vista=='entregados'), y caía
+         al else genérico de "Todavía no hay manifiestos", que se lee como
+         pérdida de datos aunque sí haya manifiestos, solo que ninguno cae
+         en ese rango. #}
+      {% if filtros.q or filtros.courier or filtros.estado
+            or (filtros.desde and not filtros.fecha_default_aplicado) or filtros.hasta %}
       <div class="trx-empty-ico"><i class="bi bi-search"></i></div>
       <div class="trx-empty-t">Ningún manifiesto coincide con el filtro</div>
       <div class="trx-empty-d">
@@ -421,7 +458,7 @@
         filtros aplicados. Prueba con otro courier o estado, o limpia los
         filtros para ver el listado completo.
       </div>
-      <a href="{{ url_for('tr_manifiestos') }}" class="trx-btn-primary">
+      <a href="{{ url_limpiar }}" class="trx-btn-primary">
         <i class="bi bi-arrow-counterclockwise"></i> Limpiar filtros
       </a>
       {% elif filtros.vista == 'entregados' and filtros.fecha_default_aplicado %}
@@ -438,7 +475,10 @@
         Esto solo muestra los últimos 30 días. Tus entregas más antiguas
         siguen guardadas — no se borró nada.
       </div>
-      <a href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados&desde=2000-01-01"
+      {# FIX 2026-09-01: le faltaba |urlencode (su gemelo de la línea ~136 sí
+         lo tiene desde el fix del 2026-08-01) -- un courier/estado/q con &
+         o # partía el link y perdía el resto del filtro. #}
+      <a href="?{{ ('courier=' + filtros.courier|urlencode + '&') if filtros.courier }}{{ ('estado=' + filtros.estado|urlencode + '&') if filtros.estado }}{{ ('q=' + filtros.q|urlencode + '&') if filtros.q }}vista=entregados&desde=2000-01-01"
          class="trx-btn-primary">
         <i class="bi bi-clock-history"></i> Ver todo el historial
       </a>
