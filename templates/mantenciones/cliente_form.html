@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}{% if cliente %}Editar{% else %}Nuevo{% endif %} cliente — Mantenciones{% endblock %}
+{% block title %}{% if cliente %}Editar{% else %}Nuevo{% endif %} cliente — Servicio Técnico{% endblock %}
 {% block content %}
 <div class="page-header">
   <div class="d-flex align-items-center gap-2">
     <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
     <h4 class="mb-0"><i class="bi bi-building-add me-2" style="color:var(--ilus-red)"></i>
-      {% if cliente %}Editar cliente{% else %}Nuevo cliente de mantención{% endif %}
+      {% if cliente %}Editar cliente{% else %}Nuevo cliente de Servicio Técnico{% endif %}
     </h4>
   </div>
 </div>

@@ -12438,7 +12438,7 @@ PERMISSIONS_MATRIX = {
     #                   (técnico de bodega) levante las suyas. En vez de
     #                   invertir la regla para TODOS los técnicos, se abre
     #                   por permiso: Daniel decide quién desde /admin/roles.
-    "mantenciones":   {"label":"Mantenciones",   "icon":"bi-wrench-adjustable",
+    "mantenciones":   {"label":"Servicio Técnico",   "icon":"bi-wrench-adjustable",
                        "acciones":["ver","crear","editar","eliminar",
                                    "calendario","ots","cotizaciones",
                                    "ot_interna","tipo_interno_crear",
@@ -48810,7 +48810,7 @@ def init_comunicaciones_tables():
                  'Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo.</p>'),
                 ('visita_agendada', 'whatsapp',
                  '',
-                 '🔧 *ILUS Mantenciones*\n\nHola *{{cliente}}*, agendamos visita técnica:\n\n'
+                 '🔧 *ILUS Servicio Técnico*\n\nHola *{{cliente}}*, agendamos visita técnica:\n\n'
                  '📋 *OT:* {{ot}}\n📅 *Fecha:* {{fecha}} ({{horario}})\n'
                  '👷 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}\n\n'
                  'Si necesitas reagendar, escríbenos.'),
@@ -48834,7 +48834,7 @@ def init_comunicaciones_tables():
                  'Ver orden de trabajo</a></p>'),
                 ('ot_asignada', 'whatsapp',
                  '',
-                 '👷 *ILUS Mantenciones*\n\nHola *{{tecnico}}*, tienes una nueva OT asignada.\n\n'
+                 '👷 *ILUS Servicio Técnico*\n\nHola *{{tecnico}}*, tienes una nueva OT asignada.\n\n'
                  '📋 *OT:* {{ot}}\n🏢 *Cliente:* {{cliente}}\n📅 *Visita:* {{fecha}} ({{horario}})\n'
                  '🔧 *Equipo:* {{maquina}}\n\n📲 Detalles: {{link_ot}}'),
 
@@ -48855,7 +48855,7 @@ def init_comunicaciones_tables():
                  'Por favor asegúrate de que alguien pueda recibir al técnico en el horario indicado.</p>'),
                 ('recordatorio_visita', 'whatsapp',
                  '',
-                 '⏰ *ILUS Mantenciones*\n\nRecordatorio: mañana visita técnica.\n\n'
+                 '⏰ *ILUS Servicio Técnico*\n\nRecordatorio: mañana visita técnica.\n\n'
                  '📅 *Fecha:* {{fecha}} ({{horario}})\n📋 *OT:* {{ot}}\n'
                  '👷 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}'),
 
@@ -48863,7 +48863,7 @@ def init_comunicaciones_tables():
                  'OT {{ot}} completada — Reporte adjunto',
                  '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
                  '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
-                 'El servicio de mantención se ha completado exitosamente. Encontrarás el detalle a continuación.</p>'
+                 'El servicio técnico se ha completado exitosamente. Encontrarás el detalle a continuación.</p>'
                  '<table cellpadding="0" cellspacing="0" width="100%" style="background:#dcfce7;border-left:4px solid #16a34a;'
                  'border-radius:4px;padding:14px 18px;margin:18px 0">'
                  '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">OT:</strong>&nbsp; '
@@ -48877,7 +48877,7 @@ def init_comunicaciones_tables():
                  'Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.</p>'),
                 ('ot_completada', 'whatsapp',
                  '',
-                 '✅ *ILUS Mantenciones*\n\nHola *{{cliente}}*, la OT *{{ot}}* fue completada exitosamente.\n\n'
+                 '✅ *ILUS Servicio Técnico*\n\nHola *{{cliente}}*, la OT *{{ot}}* fue completada exitosamente.\n\n'
                  '🔧 *Servicio:* {{tipo_mantencion}}\n⚙️ *Equipo:* {{maquina}}\n'
                  '👷 *Técnico:* {{tecnico}}\n\n¡Gracias por confiar en ILUS! 💪'),
             ]
@@ -55478,7 +55478,7 @@ def init_mantenciones_tables():
                 ('superadmin', 'Super Administrador', '#dc2626', 1),
                 ('admin',      'Administrador',      '#2563eb', 1),
                 ('editor',     'Editor',             '#ea580c', 1),
-                ('mantenciones','Mantenciones',      '#16a34a', 1),
+                ('mantenciones','Servicio Técnico',  '#16a34a', 1),
                 ('transporte', 'Transporte',         '#d97706', 1),
                 ('vendedor',   'Vendedor',           '#7c3aed', 1),
                 ('lector',     'Solo lectura',       '#6b7280', 1),
@@ -55490,6 +55490,20 @@ def init_mantenciones_tables():
                     )
                 except Exception:
                     pass
+
+            # 2026-09 (Daniel): el módulo pasó de "Mantenciones" a
+            # "Servicio Técnico" (renombre de marca, el slug no cambia).
+            # El INSERT IGNORE de arriba no pisa la fila ya sembrada en
+            # producción -- este UPDATE puntual sí, pero solo si el nombre
+            # sigue siendo el default viejo (no toca un nombre que el admin
+            # haya editado a mano desde /admin/roles).
+            try:
+                cur.execute(
+                    "UPDATE roles_dinamicos SET nombre='Servicio Técnico' "
+                    "WHERE slug='mantenciones' AND nombre='Mantenciones'"
+                )
+            except Exception:
+                pass
 
             # ── Rol de negocio: Agente de retiros (Daniel 2026-06-01) ──────────
             # is_system=0 → totalmente gestionable por el admin (editar/eliminar).
@@ -64525,7 +64539,7 @@ def mant_visita_multi(cid):
     tipos_label = {
         "garantia":   "Cambio / Garantía",
         "correctiva": "Reparación correctiva",
-        "preventiva": "Mantención preventiva",
+        "preventiva": "Servicio técnico preventivo",
         "inspeccion": "Inspección / Levantamiento",
     }
     titulo = titulo_input or f"{tipos_label[tipo_visita]} — {len(rows)} equipo(s)"
@@ -91582,7 +91596,7 @@ def _mant_plan_email_cuerpo(cliente_tok, fechas_tok, mensaje_tok, anio_tok):
     NO se duplica footer.
     """
     return (
-        _mant_email_hero("Plan de mantención preventiva",
+        _mant_email_hero("Plan de servicio técnico preventivo",
                          cliente_tok,
                          f"Propuesta de fechas · {anio_tok}") +
         _mant_email_stepper([
@@ -91592,8 +91606,8 @@ def _mant_plan_email_cuerpo(cliente_tok, fechas_tok, mensaje_tok, anio_tok):
             ("Realizado", False, False),
         ]) +
         '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
-        'Le proponemos las siguientes fechas para las próximas mantenciones '
-        'preventivas de sus equipos:</p>' +
+        'Le proponemos las siguientes fechas para los próximos servicios técnicos '
+        'preventivos de sus equipos:</p>' +
         str(fechas_tok) +
         str(mensaje_tok) +
         '<p style="font-size:13px;color:#6b7280;line-height:1.6;margin:18px 0 0">'
@@ -91610,7 +91624,7 @@ def _mant_plan_propuesto_seed():
     ÚNICO source of truth del HTML — lo consumen la siembra de
     init_comunicaciones_tables y _ensure_comm_template_plan_propuesto.
     """
-    asunto = "Propuesta de plan de mantención {{anio}}"
+    asunto = "Propuesta de plan de servicio técnico {{anio}}"
     cuerpo = _mant_plan_email_cuerpo("{{cliente}}", "{{fechas_html}}",
                                      "{{mensaje_extra}}", "{{anio}}")
     return asunto, cuerpo
@@ -91740,7 +91754,7 @@ def mant_visita_enviar_email(vid):
         h_fin = str(v["hora_fin"])[:5] if v.get("hora_fin") else ""
         horario = f"{h_ini}{(' – ' + h_fin) if h_fin else ''}"
     tipo_label = {
-        "preventiva":"Mantención preventiva",
+        "preventiva":"Servicio técnico preventivo",
         "correctiva":"Reparación correctiva",
         "garantia":"Cambio / Garantía",
         "inspeccion":"Inspección"
@@ -91958,9 +91972,9 @@ def mant_cliente_proponer_plan_email(cid):
         print(f"[plan-propuesto] plantilla no disponible, uso HTML inline: {_e_tpl}", flush=True)
     if tpl:
         asunto_base, cuerpo = tpl
-        asunto_base = (asunto_base or "").strip() or f"Propuesta de plan de mantención {anio}"
+        asunto_base = (asunto_base or "").strip() or f"Propuesta de plan de servicio técnico {anio}"
     else:
-        asunto_base = f"Propuesta de plan de mantención {anio}"
+        asunto_base = f"Propuesta de plan de servicio técnico {anio}"
         cuerpo = _mant_plan_email_cuerpo(_h.escape(cliente_nombre), fechas_html,
                                          mensaje_html, str(anio))
 
@@ -97511,7 +97525,7 @@ def _informe_postservicio_html(visita, cliente, equipos, analisis, auto_print=Tr
       <b>{ILUS_BRAND}</b> · {ILUS_LEGAL} · Informe del Agente (determinista, sin IA) · {ILUS_CONTACTO} · Generado el {gen_fecha}
     </div></div>
     <div class="rep-content">
-      <div class="rep-asunto"><span class="rep-asunto-k">Servicio</span>{e(visita.get('titulo') or _tipo_label.get(tipo, 'Visita de mantención'))}</div>
+      <div class="rep-asunto"><span class="rep-asunto-k">Servicio</span>{e(visita.get('titulo') or _tipo_label.get(tipo, 'Visita de servicio técnico'))}</div>
       <div class="rep-section">
         <div class="rep-section-bar">Identificación del servicio</div>
         <table class="rep-kv">
@@ -101435,7 +101449,7 @@ def mant_notif_enviar(nid):
     _mensaje = str(_esc(notif.get('mensaje') or '')).replace("\n", "<br>")
     html_body = _ilus_email_master({
         "subject":          _brand_subject(_titulo),
-        "status_label":     "Mantenciones",
+        "status_label":     "Servicio Técnico",
         "title":            _titulo,
         "subtitle":         "Servicio Técnico · ILUS Fitness",
         "customer_name":    notif.get('razon_social') or "",
@@ -101446,7 +101460,7 @@ def mant_notif_enviar(nid):
         # Pasa por el wrapper para respetar kill switch global + llave por módulo
         resultado = _send_ilus_email(
             destinatario,
-            f"[ILUS Mantenciones] {notif['titulo']}",
+            f"[ILUS Servicio Técnico] {notif['titulo']}",
             html_body,
             evento="mant_notificacion", modulo="mantenciones",
         )
@@ -112955,7 +112969,7 @@ def _mantenciones_tpl_seed():
             'OT {{ot}} completada — Reporte adjunto',
             '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
             '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
-            'El servicio de mantención se ha completado exitosamente. Encontrarás el detalle a continuación.</p>'
+            'El servicio técnico se ha completado exitosamente. Encontrarás el detalle a continuación.</p>'
             '<table cellpadding="0" cellspacing="0" width="100%" style="background:#dcfce7;border-left:4px solid #16a34a;'
             'border-radius:4px;padding:14px 18px;margin:18px 0">'
             '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">OT:</strong>&nbsp; '

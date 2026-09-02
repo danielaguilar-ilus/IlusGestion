@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ cliente.razon_social }} — Mantenciones{% endblock %}
+{% block title %}{{ cliente.razon_social }} — Servicio Técnico{% endblock %}
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='mantenciones_ficha.css') }}">
@@ -16,7 +16,7 @@
     <i class="bi bi-arrow-left"></i>
   </a>
   <nav aria-label="breadcrumb" style="font-size:.78rem">
-    <span class="text-muted">Mantenciones / Clientes /</span>
+    <span class="text-muted">Servicio Técnico / Clientes /</span>
     <span class="fw-semibold ms-1">{{ cliente.razon_social }}</span>
   </nav>
 </div>

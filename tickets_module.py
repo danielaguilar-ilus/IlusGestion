@@ -8579,7 +8579,7 @@ def register_tickets_routes(app, ctx):
         if not (_perms_ficha.get("mantenciones") or _perms_ficha.get("superadmin")):
             return jsonify({
                 "ok": False,
-                "error": "Se requiere acceso a Mantenciones para ver la ficha del cliente.",
+                "error": "Se requiere acceso a Servicio Técnico para ver la ficha del cliente.",
                 "error_codigo": "SIN_PERMISO_MANTENCIONES",
             }), 403
         cli = mysql_fetchone(
@@ -8721,7 +8721,7 @@ def register_tickets_routes(app, ctx):
         if not (_perms_buscar.get("mantenciones") or _perms_buscar.get("superadmin")):
             return jsonify({
                 "ok": False,
-                "error": "Se requiere acceso a Mantenciones para buscar fichas de clientes.",
+                "error": "Se requiere acceso a Servicio Técnico para buscar fichas de clientes.",
                 "error_codigo": "SIN_PERMISO_MANTENCIONES",
             }), 403
 
