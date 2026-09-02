@@ -97,6 +97,37 @@
   .otd-header-acts .otd-btn{flex:1;justify-content:center}
 }
 
+/* ══ BARRA INFERIOR FIJA ══════════════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "por default, siempre coloca un botón abajo, en
+   caso de: yo prefiero que sea para ver el PDF en cualquiera de los
+   estados, y también para firmar y cerrar la OT como aprobador" — y al
+   confirmarlo: "eso también es necesario para poder empezar a usar ese
+   menú"). Mismo patrón .tx-bottom que ya usa la pantalla de ejecución
+   (static/mantenciones_ot_ejecutar.css ~1010), incluido el left:250px que
+   la despega del sidebar en escritorio y el safe-area-inset del notch. */
+.otd-bottom{position:fixed;bottom:0;left:0;right:0;z-index:90;background:#fff;
+  border-top:1px solid #e5e7eb;padding:10px 16px;
+  padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+  box-shadow:0 -4px 14px rgba(0,0,0,.07);
+  display:flex;gap:10px;align-items:center}
+@media (min-width:992px){.otd-bottom{left:250px}}
+.otd-bottom .b{flex:1;min-height:48px;border-radius:11px;border:1px solid #e5e7eb;
+  background:#fff;color:#111827;font-weight:800;font-size:.92rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:background .15s,border-color .15s,transform .12s}
+.otd-bottom .b:hover{background:#f9fafb;border-color:#d1d5db}
+.otd-bottom .b:active{transform:scale(.985)}
+.otd-bottom .b.pri{flex:2;border:0;color:#fff;
+  background:linear-gradient(135deg,#15803d,#16a34a);
+  box-shadow:0 4px 14px -4px rgba(22,163,74,.6)}
+.otd-bottom .b.pri:hover{background:linear-gradient(135deg,#166534,#15803d)}
+/* El contenido de la página no puede quedar tapado por la barra. */
+.otd.has-bottombar{padding-bottom:86px}
+@media (max-width:640px){
+  .otd-bottom .b{font-size:.86rem}
+  .otd.has-bottombar{padding-bottom:96px}
+}
+
 /* ══ ACTIVIDAD DE LA OT — bitácora estilo "Actividad del ticket" ══════
    🆕 2026-09-02 (Daniel: "necesito algo parecido a una trazabilidad como
    esta, la de los tickets"). Mismo lenguaje visual que
@@ -1920,7 +1951,35 @@
      esta barra; el motor sigue vivo (modal `_modal_anexo.html`/OT2ANX,
      flujo ?abrir_anexo=1 del wizard, más abajo en este archivo) por si
      Daniel pide reubicar la puerta de entrada más adelante. #}
+
+  {# ══ BARRA INFERIOR FIJA ═══════════════════════════════════════════
+     🆕 2026-09-02 (Daniel: "por default, siempre coloca un botón abajo,
+     en caso de: yo prefiero que sea para ver el PDF en cualquiera de los
+     estados, y también para firmar y cerrar la OT como aprobador").
+     OJO con "en cualquiera de los estados": es un cambio deliberado
+     respecto del botón del header, que sigue apareciendo recién cuando
+     el técnico firmó. Acá Daniel lo quiere SIEMPRE disponible -- si la OT
+     va a medias, el PDF sale a medias, y eso es exactamente lo que quiere
+     poder mirar.
+     El botón de firmar reusa OT2F.abrirAprobacion(), el MISMO flujo de la
+     card "Firmar y cerrar OT" -- no hay una segunda ruta de cierre. #}
+  <div class="otd-bottom">
+    <button type="button" class="b" onclick="otdVerPdf()">
+      <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
+    {% if v.estado == 'pendiente_aprobacion' and puede_aprobar %}
+    <button type="button" class="b pri" onclick="OT2F.abrirAprobacion()">
+      <i class="bi bi-pen-fill"></i> Firmar y cerrar OT</button>
+    {% elif v.estado == 'firmada_tecnico' and puede_firmar_cliente %}
+    <button type="button" class="b pri" onclick="OT2F.abrirFirmaCliente()">
+      <i class="bi bi-vector-pen"></i> Firma del cliente</button>
+    {% endif %}
+  </div>
 </div>
+<script>
+  /* La barra fija tapa el final de la página: se compensa con padding en
+     el contenedor, y solo cuando la barra existe de verdad. */
+  document.querySelector('.ot2.otd')?.classList.add('has-bottombar');
+</script>
 
 {% if not es_tecnico %}
   {% include "ot2/_modal_anexo.html" %}
