@@ -356,30 +356,73 @@
 .otd-track-card .ttl-row h3 i{color:var(--ilus-red,#dc2626);font-size:.9rem}
 .otd-track-card .ttl-row .sub{font-size:.72rem;color:#8b8b93;font-weight:700}
 
+/* 🔊 REDISEÑO 2026-09-02 (Daniel: "el tracking tiene que ser poderoso, la
+   trazabilidad tiene que ser impecable... una OT que informa, que avisa
+   todos los pasos, es lo que queremos vender" + antes: "lo veo muy
+   sencillo, con íconos chiquititos, si vamos a trabajar algo,
+   trabajémoslo en grande"). Qué cambia respecto de la versión anterior:
+   nodos de 31px→52px, tipografías arriba, la línea que une los hitos ya
+   no es un color plano sino un degradado que se LLENA hasta donde llegó
+   la OT, el hito actual late con anillo propio, y sobre cada tramo se
+   muestra cuánto se demoró la OT en recorrerlo (dato nuevo, calculado en
+   el backend con los timestamps que ya existían). */
 .otd-track{display:flex;align-items:flex-start;gap:0}
-.otd-h{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;
-  position:relative;text-align:center;min-width:0}
-.otd-h::before{content:"";position:absolute;top:15px;left:-50%;width:100%;height:2px;
-  background:rgba(255,255,255,.14);transition:background-color .5s ease}
+.otd-h{flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;
+  position:relative;text-align:center;min-width:0;padding-top:16px}
+/* Conector: gris por defecto, degradado verde cuando el tramo ya se
+   recorrió. Se anima al entrar (transición de color, no de layout). */
+.otd-h::before{content:"";position:absolute;top:42px;left:-50%;width:100%;height:3px;
+  border-radius:3px;background:rgba(255,255,255,.13);
+  transition:background .6s ease}
 .otd-h:first-child::before{display:none}
-.otd-h.ok::before{background:var(--comp)}
-.otd-h .p{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;
-  background:rgba(255,255,255,.06);border:2px solid rgba(255,255,255,.16);
-  color:#71717a;font-size:.82rem;z-index:1;
-  transition:transform .2s,background-color .4s ease,border-color .4s ease,color .4s ease}
-.otd-h.ok .p{background:var(--comp);border-color:var(--comp);color:#fff}
-.otd-h.now .p{background:var(--ejec);border-color:var(--ejec);color:#fff;
-  animation:otdPulse 1.9s ease-out infinite}
-.otd-h:hover .p{transform:scale(1.12)}
-.otd-h .l{font-size:.66rem;font-weight:800;color:#a1a1aa;letter-spacing:.02em;
-  transition:color .4s ease}
+.otd-h.ok::before{background:linear-gradient(90deg,var(--comp) 0%,#4ade80 100%)}
+/* El tramo que entra al hito ACTUAL se pinta a medias: de verde (lo ya
+   recorrido) a rojo (donde está parada la OT ahora mismo). */
+.otd-h.now::before{background:linear-gradient(90deg,var(--comp) 0%,var(--ejec) 100%)}
+/* Duración del tramo, flotando sobre el conector. */
+.otd-h .dur{position:absolute;top:24px;left:-50%;width:100%;display:flex;
+  justify-content:center;pointer-events:none}
+.otd-h .dur span{background:rgba(10,10,10,.92);border:1px solid rgba(255,255,255,.14);
+  color:#a1a1aa;font-size:.58rem;font-weight:800;letter-spacing:.04em;
+  padding:1px 8px;border-radius:99px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.otd-h.ok .dur span{color:#86efac;border-color:rgba(74,222,128,.3)}
+.otd-h .dur span.aprox{color:#8b8b93}
+.otd-h:first-child .dur{display:none}
+.otd-h .p{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(255,255,255,.05);border:2.5px solid rgba(255,255,255,.15);
+  color:#71717a;font-size:1.32rem;z-index:1;position:relative;
+  transition:transform .25s cubic-bezier(.34,1.56,.64,1),
+             background-color .5s ease,border-color .5s ease,color .5s ease,
+             box-shadow .5s ease}
+.otd-h.ok .p{background:var(--comp);border-color:#4ade80;color:#fff;
+  box-shadow:0 0 0 5px rgba(22,163,74,.16),0 6px 18px -6px rgba(22,163,74,.75)}
+.otd-h.now .p{background:var(--ejec);border-color:#f87171;color:#fff;
+  box-shadow:0 0 0 5px rgba(220,38,38,.18),0 6px 20px -6px rgba(220,38,38,.85)}
+/* Anillo que late SOLO en el hito actual — el "estás aquí" del recorrido. */
+.otd-h.now .p::after{content:"";position:absolute;inset:-9px;border-radius:50%;
+  border:2.5px solid var(--ejec);opacity:0;animation:otdTrackPing 2s ease-out infinite}
+@keyframes otdTrackPing{
+  0%{transform:scale(.82);opacity:.75}
+  75%{transform:scale(1.18);opacity:0}
+  100%{opacity:0}
+}
+.otd-h:hover .p{transform:scale(1.09)}
+.otd-h .l{font-size:.78rem;font-weight:900;color:#a1a1aa;letter-spacing:.01em;
+  line-height:1.2;transition:color .5s ease}
 .otd-h.ok .l{color:#4ade80}
 .otd-h.now .l{color:#fff}
-.otd-h .t{font-size:.6rem;color:#71717a;font-variant-numeric:tabular-nums}
-.otd-h .ago{display:inline-block;margin-top:2px;padding:1px 7px;border-radius:99px;
-  font-size:.56rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase}
+.otd-h .t{font-size:.68rem;color:#8b8b93;font-variant-numeric:tabular-nums;font-weight:700}
+.otd-h.ok .t,.otd-h.now .t{color:#d4d4d8}
+.otd-h .ago{display:inline-block;margin-top:1px;padding:2px 9px;border-radius:99px;
+  font-size:.58rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
 .otd-h.ok .ago{background:rgba(22,163,74,.2);color:#4ade80}
 .otd-h.now .ago{background:rgba(220,38,38,.22);color:#fca5a5}
+/* Los hitos que todavía no pasaron se apagan, para que el ojo caiga solo
+   en lo que ya ocurrió y en dónde está parada la OT ahora. */
+.otd-h:not(.ok):not(.now){opacity:.5}
+@media (prefers-reduced-motion:reduce){
+  .otd-h.now .p::after{animation:none}
+}
 
 /* Resumen del recorrido — tiempo total + paso actual con pulso */
 .otd-track-sum{display:flex;align-items:center;gap:14px;margin-top:12px;
@@ -769,8 +812,16 @@
 }
 @media (max-width:640px){
   .otd-num{font-size:2.1rem}
-  .otd-track{overflow-x:auto;padding-bottom:4px}
-  .otd-h{min-width:74px}
+  /* Con los nodos grandes (52px, rediseño 2026-09-02) los 6 hitos ya no
+     entran en un celular: se scrollea en horizontal dentro de su propia
+     caja -- la PÁGINA nunca scrollea de lado (memoria:
+     feedback_scroll_contenido_no_pagina). */
+  .otd-track{overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity}
+  .otd-h{min-width:104px;scroll-snap-align:center}
+  .otd-h .p{width:44px;height:44px;font-size:1.1rem}
+  .otd-h::before{top:38px}
+  .otd-h .dur{top:21px}
+  .otd-h .l{font-size:.7rem}
   /* Mobile-first (REGLA #3): el panel de estado y las acciones rápidas
      pasan a ocupar el ancho completo en vez de competir por espacio con
      la identidad de la OT. */
@@ -1063,7 +1114,15 @@
       {% for h in hitos %}
       <div class="otd-h {{ 'ok' if h.hecho }} {{ 'now' if h.actual }}"
            data-key="{{ h.clave }}" data-ts="{{ h.ts or '' }}"
-           title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}">
+           title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}{% if h.dur_desde_anterior %} · tardó {{ h.dur_desde_anterior }} desde el hito anterior{% endif %}">
+        {# 🆕 2026-09-02 — cuánto tardó la OT en recorrer ESTE tramo. Solo
+           aparece cuando los dos extremos tienen hora real; si el tramo se
+           saltó un hito sin hora propia (ej. "Ejecutando", que casi nunca
+           se registra) se marca con "≈" en vez de fingir precisión. #}
+        {% if h.dur_desde_anterior %}
+        <div class="dur"><span class="{{ 'aprox' if h.dur_abarca_saltos }}">
+          {{ '≈ ' if h.dur_abarca_saltos }}{{ h.dur_desde_anterior }}</span></div>
+        {% endif %}
         <div class="p"><i class="bi {{ h.icono }}"></i></div>
         <span class="l">{{ h.label }}</span>
         <span class="t" data-ts-iso="{{ h.ts or '' }}">{{ h.cuando or '—' }}</span>

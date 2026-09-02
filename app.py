@@ -77116,6 +77116,46 @@ def ot2_detalle(vid):
     if 0 <= _idx_ultimo_hecho < len(hitos) - 1:
         hitos[_idx_ultimo_hecho + 1]["actual"] = True
 
+    # 🆕 2026-09-02 (Daniel: "el tracking tiene que ser poderoso... tenemos
+    # que tomarle el tiempo al técnico"). Primer paso, con CERO columnas
+    # nuevas: cuánto tardó la OT ENTRE hito e hito, calculado con los
+    # timestamps que ya existen. No cubre todavía el cronómetro fino que
+    # Daniel pidió (en ruta / llegada / tiempo por máquina) -- eso necesita
+    # marcas nuevas y va aparte -- pero ya responde "¿dónde se demoró esta
+    # OT?", que es la pregunta que hoy no se podía contestar.
+    # Solo se calcula entre hitos con timestamp REAL: si uno fue inferido
+    # (ver el fix de arriba) no hay hora que restar y se deja en blanco,
+    # antes que inventar una duración.
+    _prev_ts, _prev_idx = None, None
+    for _i, h in enumerate(hitos):
+        if not h.get("ts"):
+            continue
+        if _prev_ts is not None:
+            try:
+                _delta = h["ts"] - _prev_ts
+                _seg = int(_delta.total_seconds())
+                if _seg >= 0:
+                    _d, _resto = divmod(_seg, 86400)
+                    _hh, _resto = divmod(_resto, 3600)
+                    _mm = _resto // 60
+                    if _d:
+                        _txt_dur = f"{_d}d {_hh}h"
+                    elif _hh:
+                        _txt_dur = f"{_hh}h {_mm}m"
+                    else:
+                        _txt_dur = f"{_mm}m"
+                    # La duración se cuelga del hito de LLEGADA: es el tramo
+                    # que va del hito anterior con hora real hasta este.
+                    h["dur_desde_anterior"] = _txt_dur
+                    # Si en el medio hubo hitos inferidos (sin hora propia),
+                    # el tramo los abarca -- se avisa para no dar a entender
+                    # que fue un salto directo.
+                    h["dur_abarca_saltos"] = (_prev_idx is not None
+                                              and _i - _prev_idx > 1)
+            except Exception:
+                pass
+        _prev_ts, _prev_idx = h["ts"], _i
+
     # 🆕 2026-08-27 — panel "Estado operativo" del hero (referencia visual
     # de Daniel): el hito ACTUAL es el estado operativo en vivo; el
     # SIGUIENTE (si queda alguno) es el hint de qué viene. Se calcula acá
