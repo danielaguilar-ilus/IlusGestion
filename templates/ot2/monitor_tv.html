@@ -1181,6 +1181,24 @@
     @media (prefers-reduced-motion:reduce){
       .tvm-firma{animation:none !important}
     }
+    /* 🆕 2026-09-02 (Daniel: "involucrar los documentos... factura o
+       boleta... a la hora de cerrar"): mismo lenguaje visual de las
+       píldoras de firma (.tvm-firma-*) de arriba -- verde ya resuelto,
+       ámbar falta algo. Sin animación de pulso (a diferencia de las de
+       firma): esto es un estado a revisar cuando se pueda, no algo que
+       esté esperando una acción inmediata del técnico en terreno. */
+    .tvm-doc{
+      display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 12px;
+      border-radius:10px;font-size:14px;font-weight:800;letter-spacing:-.01em;
+    }
+    .tvm-doc i{font-size:16px}
+    .tvm-doc-ok{
+      background:linear-gradient(135deg,rgba(34,197,94,.22),rgba(21,128,61,.16));
+      border:1px solid rgba(74,222,128,.5);color:#86efac;
+    }
+    .tvm-doc-falta{
+      background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.4);color:#fbbf24;
+    }
     /* Acciones por OT dentro del modal (solo pantalla de control) */
     .tvm-ot-acc{display:flex;align-items:center;gap:7px;margin-top:12px;flex-wrap:wrap;
       padding-top:11px;border-top:1px solid var(--line-1)}
@@ -2186,6 +2204,26 @@
         const pill = el('div', 'tvm-firma tvm-firma-' + b.firma_estado);
         pill.innerHTML = '<i class="bi ' + fp.icon + '"></i><span>' + fp.txt + '</span>';
         ot.appendChild(pill);
+      }
+
+      // 🆕 2026-09-02 (Daniel, viendo este mismo modal: "empezar a
+      // involucrar los documentos... si es factura o boleta... sobre todo
+      // a la hora de cerrar... que sea amigable abrir, gestionar y
+      // cerrar"). `b.doc_cierre` viene de _ot2_finanzas_estado (misma
+      // regla que ya traba la firma real, reusada sin duplicar) -- solo
+      // llega poblado en la pantalla de CONTROL (incluir_finanzas=True),
+      // igual que b.precio más abajo. Si es trabajo interno Y ya está
+      // resuelto no se dibuja nada (no hay factura/garantía que mostrar,
+      // sería ruido) -- pero si a un interno todavía le falta su costo
+      // estimado, SÍ se avisa, porque eso también bloquea el cierre.
+      if (b.doc_cierre && !(b.doc_cierre.es_interna && b.doc_cierre.ok)){
+        const dc = b.doc_cierre;
+        const pillDoc = el('div', 'tvm-doc ' + (dc.ok ? 'tvm-doc-ok' : 'tvm-doc-falta'));
+        const txtDoc = dc.ok
+          ? (dc.label || 'Documento OK')
+          : 'Falta: ' + (dc.faltan || []).join(', ');
+        pillDoc.innerHTML = '<i class="bi ' + (dc.ok ? 'bi-file-earmark-check-fill' : 'bi-file-earmark-excel-fill') + '"></i><span>' + txtDoc + '</span>';
+        ot.appendChild(pillDoc);
       }
 
       // 🆕 2026-08-31 (Daniel: "necesito ver las finanzas para tomar

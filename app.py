@@ -78776,6 +78776,19 @@ _OT_TV_SELECT = (
     # CONTROL (sesión + `_require_gestion_monitor`), NUNCA en el televisor
     # público (`/tv/<token>`, sin sesión). Ver bloque más abajo.
     "       v.costo, v.costo_proveedor, v.costo_despacho, "
+    # 🆕 2026-09-02 (Daniel, viendo el modal del monitor: "empezar a
+    # involucrar los documentos... si es factura o boleta... sobre todo a
+    # la hora de cerrar"): columnas para reusar `_ot2_finanzas_estado()`
+    # (ya escrita y probada, ver su docstring) SIN reinventar la lógica --
+    # de ahí sale si falta documento/centro de costo/garantía, mismo
+    # criterio que ya gobierna el gate real de la firma. Estas NO son
+    # montos (a diferencia de costo/costo_proveedor/costo_despacho de
+    # arriba) -- son estado/tipo de documento, mismo nivel de sensibilidad
+    # que 'documento_erp_nudo', que ya viaja siempre. Aun así, por
+    # consistencia con el resto de esta pantalla, el estado derivado solo
+    # se expone cuando incluir_finanzas=True (ver bloque más abajo).
+    "       v.centro_costo, v.modalidad_cobro, v.cubierto_por, "
+    "       v.factura_tido, v.factura_nudo, v.garantia_motivo, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, "
     # 🔴 FIX 2026-08-27 (hallazgo de la verificación): antes esto era solo
@@ -79094,6 +79107,29 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             _doc = ((f.get("documento_erp_tido") or "DOC").strip() + " "
                     + str(f.get("documento_erp_nudo")).strip())
 
+        # 🆕 2026-09-02 (Daniel: "involucrar los documentos... si es
+        # factura o boleta... sobre todo a la hora de cerrar"). Reusa
+        # _ot2_finanzas_estado (misma función que ya gobierna el gate real
+        # de la firma) para no duplicar la regla de negocio -- si dice que
+        # falta algo, ese es el mismo motivo por el que la firma se va a
+        # trabar más adelante. `_doc_cierre` es el documento de CIERRE
+        # (factura/boleta/NVV declarado para cobrar), distinto de `_doc`
+        # arriba (el documento de ORIGEN del ERP que trajo los equipos).
+        _fin_ok, _fin_faltan = _ot2_finanzas_estado(f)
+        _es_garantia_tv = ((f.get("modalidad_cobro") or "").lower() == "garantia"
+                            or (f.get("cubierto_por") or "").lower() == "garantia")
+        if _es_garantia_tv:
+            _doc_cierre_label = "Garantía"
+        elif (f.get("factura_nudo") or "").strip():
+            _doc_cierre_label = ((f.get("factura_tido") or "DOC").strip()
+                                  + " " + str(f.get("factura_nudo")).strip())
+        else:
+            _doc_cierre_label = None
+        _doc_cierre = {
+            "ok": _fin_ok, "label": _doc_cierre_label, "faltan": _fin_faltan,
+            "es_interna": _ot_es_interna(f),
+        }
+
         bloque = {
             # `vid`/`fecha` (2026-08-27): los usa la pantalla de CONTROL para
             # abrir o correr la OT desde el propio modal del monitor. El
@@ -79108,6 +79144,11 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             "cliente": cliente_txt[:44],
             "ticket": f.get("numero_ticket") or None,
             "documento": _doc or None,
+            # 🆕 2026-09-02: estado del documento de CIERRE (factura/boleta/
+            # NVV/garantía) -- ver cálculo de _doc_cierre arriba. Mismo
+            # criterio de exposición que precio/costo_proveedor/costo_
+            # despacho de abajo (solo pantalla de CONTROL con sesión).
+            "doc_cierre": (_doc_cierre if incluir_finanzas else None),
             # 🆕 2026-08-31 (Daniel: "necesito ver las finanzas para tomar
             # decisiones y que se completen las OT... las lucas"): SOLO se
             # llenan si `incluir_finanzas=True` (pantalla de CONTROL, con
