@@ -6,19 +6,27 @@ pero el botón nunca llegaba a dispararlo: en el HTML servido, el atributo
 `disabled` estaba puesto sin condición para saber si ERA un duplicado.
 
 Pregunta real de Daniel (2026-08-27, tras ver el backend + JS ya listos):
-"va a quedar por el front?" -- la respuesta antes de este fix era NO.
+"va a quedar por el front?" -- la respuesta antes de ese fix era NO.
 
-EL FIX:
-  1. `_fetch_items()` (dentro de tr_manifiesto_detalle) ahora calcula en LOTE
-     -- una sola query, no N+1 -- si cada item tiene una copia hermana
-     (mismo commitment_id) YA entregada en OTRO manifiesto no eliminado.
-     Mismo criterio EXACTO que la guarda de tr_quitar_item(), para que lo
-     que el botón promete coincida con lo que el backend después autoriza.
-  2. El template calcula `_puede_quitar_duplicada` = es duplicado Y
-     (is_superadmin o permissions.tr_eliminar). Si es true, el botón queda
-     habilitado (con tooltip distinto) aunque `_en_gestion_courier` sea
-     true. Si NO es duplicado, sigue bloqueado sin excepción (REGLA #4.2:
-     no se relaja lo que no se acordó).
+AMPLIADO 2026-09-02: Alison seguía sin poder quitar duplicadas reales.
+Daniel, en vivo: "recuerda que la única restricción es que tenga
+movimiento con el courier". El botón (igual que el backend) exigía ADEMÁS
+que `_fetch_items()` encontrara una copia hermana calzando el criterio
+(`duplicada_en_otro_manifiesto`) -- si esa copia ya no calificaba, el botón
+quedaba deshabilitado igual aunque el usuario tuviera permiso. Ahora la
+única condición para habilitar el botón es tener el permiso -- el dato de
+"hay otra copia" solo cambia el tooltip, ya no gatea el botón.
+
+EL FIX (vigente):
+  1. `_fetch_items()` (dentro de tr_manifiesto_detalle) calcula en LOTE --
+     una sola query, no N+1 -- si cada item tiene una copia hermana (mismo
+     commitment_id) en OTRO manifiesto no eliminado. Es solo INFORMATIVO
+     para el tooltip; ya no condiciona si el botón se habilita.
+  2. El template calcula `_puede_quitar_con_gestion` = está en gestión con
+     el courier Y (is_superadmin o permissions.tr_eliminar). Si es true, el
+     botón queda habilitado (con tooltip distinto según si se detectó o no
+     una copia duplicada) aunque `_en_gestion_courier` sea true. Sin el
+     permiso, sigue bloqueado sin excepción.
 
 app.py tiene 90k+ líneas -- se extrae el cuerpo de tr_manifiesto_detalle()
 por slicing de texto, mismo patrón que el resto de los tests de este módulo.
@@ -49,7 +57,7 @@ with open(os.path.join(BASE_DIR, "templates", "transporte", "manifiesto_detalle.
 class TestQueryBatchDeDuplicados(unittest.TestCase):
     """La detección de duplicados se hace en UNA sola query dentro de
     _fetch_items(), no una consulta por item (evita N+1 en manifiestos
-    grandes)."""
+    grandes). Sigue existiendo como dato informativo para el tooltip."""
 
     def test_agrega_la_columna_duplicada_en_otro_manifiesto(self):
         self.assertIn("AS duplicada_en_otro_manifiesto", SRC)
@@ -73,16 +81,17 @@ class TestQueryBatchDeDuplicados(unittest.TestCase):
         self.assertLess(i_col, i_fin_fetch)
 
 
-class TestElBotonSeHabilitaParaDuplicadasConPermiso(unittest.TestCase):
-    """Las DOS vistas (tabla de escritorio + tarjeta móvil) deben llegar a
-    la misma conclusión: duplicada + permiso -> boton clickeable."""
+class TestElBotonSeHabilitaConSoloElPermiso(unittest.TestCase):
+    """AMPLIADO 2026-09-02: las DOS vistas (tabla de escritorio + tarjeta
+    móvil) deben llegar a la misma conclusión: en gestión con el courier +
+    permiso -> botón clickeable, exista o no una copia duplicada detectada."""
 
     def _fragmentos_boton_quitar(self):
         # Hay 2 ocurrencias de quitarItem( en el HTML (desktop + mobile card).
         ocurrencias = []
         idx = 0
         while True:
-            i = HTML_SRC.find('_puede_quitar_duplicada = _en_gestion_courier', idx)
+            i = HTML_SRC.find('_puede_quitar_con_gestion = _en_gestion_courier', idx)
             if i == -1:
                 break
             fin = HTML_SRC.index("</button>", i)
@@ -95,48 +104,47 @@ class TestElBotonSeHabilitaParaDuplicadasConPermiso(unittest.TestCase):
         self.assertEqual(len(frags), 2,
             "se esperaban 2 botones 'Quitar' con la logica nueva (tabla + tarjeta movil)")
 
-    def test_la_condicion_exige_duplicada_y_permiso(self):
+    def test_la_condicion_ya_no_exige_duplicada_detectada(self):
+        """El bug real: antes se exigia ADEMAS item.get('duplicada_en_otro_manifiesto')
+        para habilitar -- eso volvia a bloquear si esa copia ya no calificaba."""
         for frag in self._fragmentos_boton_quitar():
-            self.assertIn("item.get('duplicada_en_otro_manifiesto')", frag)
-            self.assertIn("is_superadmin", frag)
-            self.assertIn("permissions.tr_eliminar", frag)
+            i_set = frag.index("_puede_quitar_con_gestion = _en_gestion_courier")
+            fin_set = frag.index("%}", i_set)
+            condicion = frag[i_set:fin_set]
+            self.assertNotIn("duplicada_en_otro_manifiesto", condicion)
+            self.assertIn("is_superadmin", condicion)
+            self.assertIn("permissions.tr_eliminar", condicion)
 
     def test_el_disabled_ahora_tiene_excepcion(self):
         """El bug real: antes 'disabled' se ponia SIEMPRE que
-        _en_gestion_courier fuera true, sin mirar si era un duplicado."""
+        _en_gestion_courier fuera true, sin mirar el permiso."""
         for frag in self._fragmentos_boton_quitar():
             i_disabled = frag.index("disabled")
             antes = frag[:i_disabled]
-            # La condicion que antecede al disabled debe incluir la negacion
-            # de _puede_quitar_duplicada -- si no, el fix no esta aplicado.
-            self.assertIn("_en_gestion_courier and not _puede_quitar_duplicada", antes)
+            self.assertIn("_en_gestion_courier and not _puede_quitar_con_gestion", antes)
 
     def test_el_boton_habilitado_sigue_llamando_quitaritem(self):
         for frag in self._fragmentos_boton_quitar():
             self.assertIn("onclick=\"quitarItem(", frag)
 
-    def test_sin_duplicada_el_boton_sigue_bloqueado_sin_excepcion(self):
-        """REGLA #4.2: si NO hay duplicada entregada en otro lado, el
-        candado de siempre se mantiene -- no se toca el caso general."""
+    def test_sin_permiso_el_boton_sigue_bloqueado_sin_excepcion(self):
+        """El único candado real ahora es el permiso, no la existencia de
+        una copia duplicada detectada."""
         for frag in self._fragmentos_boton_quitar():
-            # _puede_quitar_duplicada es False si duplicada_en_otro_manifiesto
-            # es None/False -- el 'and' en la definicion garantiza esto,
-            # verificado en la propia condicion de habilitacion.
             self.assertIn(
-                "_en_gestion_courier and item.get('duplicada_en_otro_manifiesto') and",
+                "_en_gestion_courier and (is_superadmin or permissions.tr_eliminar)",
                 frag)
 
 
 class TestRenderReal(unittest.TestCase):
     """No basta con el texto crudo -- la prueba definitiva (mismo patron que
     test_eliminar_manifiesto_html_no_se_corta.py) es renderizar el fragmento
-    REAL con Flask/Jinja y confirmar el HTML resultante en los 3 casos que
-    importan: duplicada+permiso (habilitado), duplicada sin permiso
-    (bloqueado con el tooltip nuevo), y sin duplicada (bloqueado como
-    siempre, sin tocar el caso general)."""
+    REAL con Flask/Jinja y confirmar el HTML resultante en los 4 casos que
+    importan: con permiso (habilitado, exista o no una duplicada detectada),
+    y sin permiso (bloqueado, exista o no una duplicada detectada)."""
 
     def _fragmento_boton_desktop(self):
-        i = HTML_SRC.index("_puede_quitar_duplicada = _en_gestion_courier")
+        i = HTML_SRC.index("_puede_quitar_con_gestion = _en_gestion_courier")
         # Retrocede al {% set que lo contiene y avanza hasta el </button> del
         # boton de basurero (el primero despues del set).
         ini = HTML_SRC.rfind("{% set", 0, i)
@@ -172,12 +180,17 @@ class TestRenderReal(unittest.TestCase):
         self.assertIn("Eliminar manifiestos y pedidos", html)
         self.assertNotIn("onclick=\"quitarItem(", html)
 
-    def test_sin_duplicada_sigue_bloqueado_aunque_tenga_permiso(self):
-        """REGLA #4.2: tener el permiso no relaja el candado general -- solo
-        aplica al caso de duplicado confirmado."""
+    def test_sin_duplicada_pero_con_permiso_ahora_queda_habilitado(self):
+        """AMPLIADO 2026-09-02 (Daniel: "la única restricción es que tenga
+        movimiento con el courier"): antes esto seguía bloqueado aunque
+        tuviera permiso -- exactamente el caso real que Alison reportó."""
         html = self._renderizar(duplicada=False, tiene_permiso=True)
+        self.assertNotIn("disabled", html)
+        self.assertIn("onclick=\"quitarItem(77, 501)\"", html)
+
+    def test_sin_duplicada_y_sin_permiso_sigue_bloqueado(self):
+        html = self._renderizar(duplicada=False, tiene_permiso=False)
         self.assertIn("disabled", html)
-        self.assertIn("ya está en gestión con el courier", html)
         self.assertNotIn("onclick=\"quitarItem(", html)
 
     def test_sin_en_gestion_courier_el_boton_esta_libre_como_siempre(self):

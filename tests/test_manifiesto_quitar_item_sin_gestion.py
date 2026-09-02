@@ -99,10 +99,22 @@ class TestElRiesgoRealSigueCubiertoPorItem(unittest.TestCase):
         fragmento = SRC[i:i + 300]
         self.assertIn('"ok": False', fragmento)
 
-    def test_tracking_propio_sin_duplicada_sigue_bloqueado_sin_excepcion(self):
-        i = SRC.index("Esta factura ya está en gestión con el courier")
-        fragmento = SRC[max(0, i - 400):i]
-        self.assertIn("if not duplicada:", fragmento)
+    def test_tracking_propio_sin_permiso_sigue_bloqueado_sin_excepcion(self):
+        # AMPLIADO 2026-09-02 (Daniel: "la única restricción es que tenga
+        # movimiento con el courier"): ya no se exige encontrar una copia
+        # duplicada -- el único candado real que sigue sin excepción es el
+        # permiso. Sin tr_eliminar/superadmin, un item con tracking propio
+        # se bloquea con 403 apenas se detecta el tracking, ANTES de buscar
+        # ninguna duplicada.
+        i_tracking = SRC.index('if info and (info.get("master_tracking_number")')
+        i_permiso = SRC.index(
+            'if not (g.permissions.get("superadmin") or g.permissions.get("tr_eliminar")):',
+            i_tracking)
+        i_duplicada_query = SRC.index("duplicada = mysql_fetchone(", i_tracking)
+        self.assertLess(i_tracking, i_permiso,
+            "el chequeo de permiso debe estar dentro del bloque de tracking propio")
+        self.assertLess(i_permiso, i_duplicada_query,
+            "el permiso se exige ANTES de buscar una duplicada, no despues")
 
     def test_tracking_propio_con_duplicada_exige_tr_eliminar(self):
         self.assertIn('g.permissions.get("superadmin") or g.permissions.get("tr_eliminar")', SRC)
@@ -119,6 +131,52 @@ class TestElRiesgoRealSigueCubiertoPorItem(unittest.TestCase):
         fragmento_previo = SRC_SIN_COMENTARIOS[i_inicio:i_primer_if_tracking]
         self.assertNotIn("superadmin", fragmento_previo)
         self.assertNotIn("403", fragmento_previo)
+
+
+class TestLaUnicaRestriccionEsTenerMovimientoConElCourier(unittest.TestCase):
+    """Caso real reportado por Daniel (2026-09-02): Alison seguía sin poder
+    quitar facturas duplicadas. Causa: tr_quitar_item() exigía ADEMÁS
+    encontrar una copia VIVA de la misma factura en otro manifiesto no
+    eliminado -- si esa copia ya no calificaba (su manifiesto también se
+    había limpiado, o nunca quedó una segunda fila calzando el criterio),
+    el candado bloqueaba PARA SIEMPRE sin excepción, ni para superadmin.
+
+    Daniel, en vivo: "recuerda que la única restricción es que tenga
+    movimiento con el courier". Ahora: sin movimiento -> libre (ver
+    TestElRiesgoRealSigueCubiertoPorItem); con movimiento -> se puede
+    quitar con tr_eliminar/superadmin + confirmación, exista o no una
+    copia duplicada detectada."""
+
+    def test_sin_duplicada_detectada_ya_no_bloquea_sin_excepcion(self):
+        # El viejo "if not duplicada: return ... 409" incondicional (incluso
+        # para superadmin) ya no existe -- la ausencia de una duplicada solo
+        # cambia el mensaje, dentro del else de "if duplicada:".
+        self.assertNotIn("if not duplicada:", SRC)
+
+    def test_el_permiso_gobierna_independiente_de_si_hay_duplicada(self):
+        i_permiso = SRC.index(
+            'if not (g.permissions.get("superadmin") or g.permissions.get("tr_eliminar")):')
+        i_duplicada_query = SRC.index("duplicada = mysql_fetchone(")
+        # El chequeo de permiso queda ANTES de siquiera consultar si existe
+        # una duplicada -- ya no depende de haberla encontrado.
+        self.assertLess(i_permiso, i_duplicada_query)
+
+    def test_sin_duplicada_arma_un_mensaje_de_confirmacion_generico(self):
+        i = SRC.index("Sin otra copia calzando el criterio")
+        fragmento = SRC[i:i + 500]
+        self.assertIn("_msg_duplicada = (", fragmento)
+        self.assertIn("¿Confirmas que quieres quitarla igual del manifiesto?", fragmento)
+
+    def test_no_inventa_una_copia_duplicada_que_no_existe(self):
+        # El JSON de confirmacion no debe mandar un correlativo/manifest_id
+        # inventado cuando no se encontro duplicada -- debe ser None.
+        i = SRC.index('"duplicada_manifiesto": duplicada.get("correlativo") if duplicada else None')
+        self.assertGreater(i, 0)
+        i2 = SRC.index('"duplicada_manifiesto_id": duplicada.get("manifest_id") if duplicada else None')
+        self.assertGreater(i2, 0)
+
+    def test_el_log_de_auditoria_distingue_el_caso_sin_duplicada_detectada(self):
+        self.assertIn("QUITADA CON GESTIÓN ACTIVA", SRC)
 
 
 class TestNoSeTocoElGuardDeAgregar(unittest.TestCase):
