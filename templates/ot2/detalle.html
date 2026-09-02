@@ -107,6 +107,13 @@
 .otd-anx-est.pend{background:#fff8e1;border-color:#fcd34d;color:#92400e}
 .otd-anx-est.go{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
 .otd-anx-est.ok{background:#f0fdf4;border-color:#86efac;color:#166534}
+/* El candado del anexo, dicho en pantalla (2026-09-02): existía en el
+   backend desde el 29-ago pero era invisible. */
+.otd-anx-lock{display:flex;align-items:flex-start;gap:8px;margin-top:9px;
+  padding:9px 11px;border-radius:9px;font-size:.76rem;line-height:1.4;
+  background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+.otd-anx-lock i{font-size:.95rem;flex:none;margin-top:1px}
+.otd-anx-lock.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
 
 /* Lo que el documento le cobra al cliente (líneas ZZ del ERP) — 2026-09-02,
    caso OT-149: el dato estaba guardado pero invisible, y por eso parecía
@@ -1591,16 +1598,45 @@
               <small>
                 {%- if _anx_firmado %}
                   {{ anexo.firmante_nombre or anexo.proveedor_nombre or 'Proveedor' }}
+                  {%- if anexo.firmante_rut %} · {{ anexo.firmante_rut | rut_fmt }}{% endif %}
                   · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}
                 {%- elif anexo.enviado_at %}
                   Enviado el {{ anexo.enviado_at | chile_fmt('%d/%m/%Y %H:%M') }}
                   a {{ anexo.proveedor_nombre or 'el proveedor' }}
+                  {%- if anexo.proveedor_rut %} ({{ anexo.proveedor_rut | rut_fmt }}){% endif %}
                 {%- else %}
                   {{ anexo.proveedor_nombre or 'Sin proveedor declarado' }}
+                  {%- if anexo.proveedor_rut %} · {{ anexo.proveedor_rut | rut_fmt }}{% endif %}
                 {%- endif -%}
               </small>
             </div>
           </div>
+
+          {# 🔒 2026-09-02 (Daniel: "la firma del anexo es restringible para
+             que se desbloquee la OT. Si no firma el anexo, no puede ver la
+             orden de trabajo"). El candado YA existía y funciona así desde
+             el 2026-08-29 (_anexo_bloquea_ot + _puede_ot_accion): un anexo
+             'enviado'/'visto' le bloquea al técnico asignado TODAS las
+             acciones, incluida ver la OT. Lo que faltaba era decirlo en
+             pantalla -- una regla que nadie ve es una regla que sorprende.
+             Ojo: un anexo en 'borrador' NO bloquea, porque todavía no hay
+             compromiso real con el proveedor. #}
+          {% if anexo.estado in ('enviado','visto') %}
+          <div class="otd-anx-lock">
+            <i class="bi bi-lock-fill"></i>
+            <span><b>La OT está bloqueada para el técnico.</b> Mientras el proveedor
+              no firme este anexo, no puede verla ni trabajarla. Se desbloquea sola
+              al firmar.</span>
+          </div>
+          {% elif _anx_firmado %}
+          <div class="otd-anx-lock ok">
+            <i class="bi bi-unlock-fill"></i>
+            <span><b>OT desbloqueada.</b> El anexo está firmado, el proveedor ya puede
+              trabajarla.
+              {%- if anexo.documento_hash_cliente %} Queda registrado el documento exacto
+              que el firmante leyó.{% endif %}</span>
+          </div>
+          {% endif %}
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             {# El PDF vale para las tres fases: borrador, enviado y firmado.
                Cuando está firmado, ESTE es "el documento guardado en la OT"

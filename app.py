@@ -56083,6 +56083,77 @@ def _mant_log(entidad, entidad_id, accion, detalle=""):
         pass
 
 
+def _ensure_backfill_costo_desde_zz():
+    """Repara el precio al cliente de las OT que nacieron con `costo` vacío.
+
+    🐛 2026-09-02 — caso OT-2026-00149 (Daniel: "no me guardó las finanzas...
+    recuerdo que me trajo el precio final en servicio de despacho y de
+    instalación, pero no lo guardó porque me está tirando a pérdida").
+
+    Causa raíz (ya corregida en `ot2_api_crear`): la columna `costo` -- el
+    "Precio al cliente", y la ÚNICA que entra al margen -- solo recibía
+    `costo_interno`, un campo pensado para el trabajo de bodega. En una OT
+    de cliente ese campo viene vacío, así que `costo` quedaba NULL mientras
+    costo_proveedor/costo_despacho sí traían valores. Resultado: TODA OT de
+    cliente creada por el wizard nacía con margen negativo, y el Reporte
+    Excel las marcaba "Margen negativo" uniformemente.
+
+    El fix de raíz solo arregla las OT NUEVAS. Esto repara las que ya
+    existen, en la base y de una vez, en vez de parchar con un COALESCE
+    cada pantalla que lee el margen (reporte, monitor, ficha del cliente,
+    tarjeta de finanzas) -- que era el camino a tener cuatro versiones de
+    la misma regla.
+
+    Candados, porque esto ESCRIBE sobre datos reales de producción:
+      · Solo filas con `costo IS NULL` — jamás pisa un precio ya declarado.
+      · Solo OT con línea ZZ real del documento (zz_monto o zz_envio_monto).
+      · Nunca toca trabajo interno (modalidad_cobro='interno'): ahí `costo`
+        significa otra cosa (estimado de referencia, no un cobro).
+      · Nunca toca garantía: no hay precio al cliente que reconstruir.
+      · Guarda de una sola ejecución en mant_logs, mismo patrón que
+        _ensure_flujo_levantamiento_modificado_log().
+    """
+    try:
+        _ya = mysql_fetchone(
+            "SELECT id FROM mant_logs WHERE entidad='sistema' "
+            "  AND accion='backfill_costo_desde_zz' LIMIT 1")
+        if _ya:
+            return
+        _cand = mysql_fetchall(
+            "SELECT id, numero_ot, "
+            "       COALESCE(zz_monto,0) + COALESCE(zz_envio_monto,0) AS total_zz "
+            "  FROM mant_visitas "
+            " WHERE costo IS NULL "
+            "   AND (zz_monto IS NOT NULL OR zz_envio_monto IS NOT NULL) "
+            "   AND COALESCE(zz_monto,0) + COALESCE(zz_envio_monto,0) > 0 "
+            "   AND COALESCE(modalidad_cobro,'') NOT IN ('interno','garantia') "
+            "   AND COALESCE(cubierto_por,'') <> 'garantia'") or []
+        if not _cand:
+            _mant_log("sistema", 0, "backfill_costo_desde_zz",
+                      "Sin OT que reparar: ninguna tenía costo NULL con línea ZZ declarada.")
+            return
+        _n = mysql_execute_returning_rowcount(
+            "UPDATE mant_visitas "
+            "   SET costo = COALESCE(zz_monto,0) + COALESCE(zz_envio_monto,0) "
+            " WHERE costo IS NULL "
+            "   AND (zz_monto IS NOT NULL OR zz_envio_monto IS NOT NULL) "
+            "   AND COALESCE(zz_monto,0) + COALESCE(zz_envio_monto,0) > 0 "
+            "   AND COALESCE(modalidad_cobro,'') NOT IN ('interno','garantia') "
+            "   AND COALESCE(cubierto_por,'') <> 'garantia'")
+        _muestra = ", ".join(
+            f"{(c.get('numero_ot') or c.get('id'))}=${int(c.get('total_zz') or 0):,}"
+            for c in _cand[:12])
+        _mant_log("sistema", 0, "backfill_costo_desde_zz",
+                  f"Reparadas {_n} OT: se copió el total de las líneas ZZ del "
+                  f"documento (servicio + envío) al precio al cliente, que había "
+                  f"quedado NULL por el bug de ot2_api_crear corregido el "
+                  f"2026-09-02. Muestra: {_muestra}"
+                  + (" …" if len(_cand) > 12 else ""))
+        print(f"[ILUS][backfill] costo desde ZZ: {_n} OT reparadas", flush=True)
+    except Exception as e:
+        print(f"[ILUS][WARN] _ensure_backfill_costo_desde_zz: {e}", flush=True)
+
+
 def _ensure_flujo_levantamiento_modificado_log():
     """PASO 5f (2026-08-12, plan "el levantamiento es un tipo más"): deja
     constancia en mant_logs (accion='flujo_levantamiento_modificado') de
@@ -77468,9 +77539,18 @@ def ot2_detalle(vid):
     # proveedor -- solo numero/estado/firmante/fechas -- así que mostrarlo
     # al técnico no expone ninguna cifra: solo le confirma si el proveedor
     # YA puede trabajar esta OT (anexo firmado) o todavía no.
+    # 🆕 2026-09-02 (Daniel: "quiero potenciar el anexo... la firma del anexo
+    # es restringible para que se desbloquee la OT. Si no firma el anexo, no
+    # puede ver la orden de trabajo"). Ese candado YA existe y funciona tal
+    # cual desde el 2026-08-29 (`_anexo_bloquea_ot` + `_puede_ot_accion`,
+    # app.py ~52086) -- lo que faltaba era que se VIERA: nadie podía saber,
+    # mirando la OT, que el técnico la tenía bloqueada. Se suman al SELECT el
+    # RUT del proveedor (dato que el anexo ya guarda) y los dos hashes de la
+    # evidencia de firma, para poder mostrar con qué respaldo quedó firmado.
     anexo = mysql_fetchone(
-        "SELECT id, numero, estado, proveedor_nombre, firmante_nombre, "
-        "       firmado_at, enviado_at "
+        "SELECT id, numero, estado, proveedor_nombre, proveedor_rut, "
+        "       firmante_nombre, firmante_rut, firmado_at, enviado_at, "
+        "       documento_hash, documento_hash_cliente "
         "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1",
         (vid,)
     )
@@ -81597,7 +81677,13 @@ def ot2_reporte_xlsx():
                 fin_tot["no_sstt_ot"] += 1
                 fin_tot["no_sstt_cobrado"] += _precio
                 fin_tot["no_sstt_margen"] += margen
-            if margen < 0:
+            # 🐛 2026-09-02: distinguir "esta OT perdió plata" de "nadie
+            # declaró cuánto se cobró". Antes las dos salían como "Margen
+            # negativo", y como el bug de `costo` dejaba en NULL el precio
+            # de TODA OT de cliente, el reporte marcaba pérdida en bloque.
+            if f.get("costo") is None and (_cprov or _cdesp):
+                obs.append("Falta el precio al cliente (margen no confiable)")
+            elif margen < 0:
                 obs.append("Margen negativo")
 
         vals = [
@@ -114927,6 +115013,17 @@ try:
         _ensure_flujo_levantamiento_modificado_log()
 except Exception as _ensure_flujo_lev_err:
     print(f"[ILUS][WARN] _ensure_flujo_levantamiento_modificado_log: {_ensure_flujo_lev_err}", flush=True)
+
+# 2026-09-02 — repara el precio al cliente de las OT que nacieron con
+# `costo` NULL por el bug de ot2_api_crear (caso OT-2026-00149). SIEMPRE,
+# incluso con ILUS_SKIP_MIGRATIONS=1: es un UPDATE de datos, no un ALTER, y
+# sin él el Reporte Excel sigue marcando "Margen negativo" en toda OT de
+# cliente anterior al fix. Guarda de una sola ejecución adentro.
+try:
+    with app.app_context():
+        _ensure_backfill_costo_desde_zz()
+except Exception as _ensure_backfill_zz_err:
+    print(f"[ILUS][WARN] _ensure_backfill_costo_desde_zz: {_ensure_backfill_zz_err}", flush=True)
 
 # Huella digital de fotos (Daniel 2026-08-09 — evitar que 4 copias de la
 # misma foto cuenten como 4 evidencias). SIEMPRE, incluso con
