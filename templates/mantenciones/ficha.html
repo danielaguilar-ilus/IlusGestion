@@ -427,6 +427,72 @@
       </div>
       {# /6 KPIs #}
 
+      {# ══ HISTORIAL DE TRABAJOS ══════════════════════════════════════
+         🆕 2026-09-02 (Daniel, textual: "cuando yo entre a la ficha del
+         cliente, yo quiero ver cuántas instalaciones le hice,
+         mantenciones, visitas, cuántas veces se le movieron equipos, se
+         le vendieron repuestos, todo"). Todo esto YA vivía en la base
+         (mant_visitas, mant_maquinas, mant_repuestos) pero había que
+         sumarlo a mano OT por OT — acá se agrega de una pasada por tabla
+         en el backend (ver `historial` en _mant_ficha_impl).
+         Cada tipo de OT es clickeable: lleva al tab Visitas, que es donde
+         está el detalle real. #}
+      {% if historial and historial.total_ot %}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-clock-history me-1"></i>Historial con este cliente</span>
+          <span class="ms-auto text-muted" style="font-size:.74rem;font-weight:700">
+            {% if historial.primera %}Desde {{ historial.primera.strftime('%m/%Y') }}{% endif %}
+          </span>
+        </div>
+        <div class="f-card-body">
+          <div class="fh-grid">
+            {% for t in historial.por_tipo %}
+            <div class="fh-cell" role="button" tabindex="0"
+                 onclick="switchTab('visitas')"
+                 title="{{ t.n }} {{ t.label }} · {{ t.n_cerradas }} cerrada(s){% if t.ultima %} · última {{ t.ultima.strftime('%d/%m/%Y') }}{% endif %}">
+              <div class="fh-n">{{ t.n }}</div>
+              <div class="fh-l">{{ t.label }}</div>
+              <div class="fh-s">
+                {%- if t.ultima %}última {{ t.ultima.strftime('%d/%m/%y') }}
+                {%- else %}sin fecha{% endif -%}
+              </div>
+            </div>
+            {% endfor %}
+
+            <div class="fh-cell fh-eq" role="button" tabindex="0" onclick="switchTab('equipos')"
+                 title="{{ historial.equipos.n }} equipos registrados en la ficha · {{ historial.equipos.n_activos }} activos{% if historial.equipos.n_baja %} · {{ historial.equipos.n_baja }} dados de baja{% endif %}">
+              <div class="fh-n">{{ historial.equipos.n_activos }}</div>
+              <div class="fh-l">Equipos activos</div>
+              <div class="fh-s">
+                {%- if historial.equipos.n_baja %}{{ historial.equipos.n_baja }} de baja
+                {%- else %}{{ historial.equipos.n }} registrados{% endif -%}
+              </div>
+            </div>
+
+            <div class="fh-cell fh-rep" role="button" tabindex="0"
+                 onclick="switchTab('repuestos');if(window.cargarRepuestos)cargarRepuestos()"
+                 title="{{ historial.repuestos.n_venta }} repuestos vendidos{% if historial.repuestos.n_garantia %} · {{ historial.repuestos.n_garantia }} por garantía{% endif %}">
+              <div class="fh-n">{{ historial.repuestos.n_venta }}</div>
+              <div class="fh-l">Repuestos vendidos</div>
+              <div class="fh-s">
+                {%- if historial.repuestos.monto_venta %}${{ '{:,.0f}'.format(historial.repuestos.monto_venta)|replace(',','.') }}
+                {%- elif historial.repuestos.n_garantia %}{{ historial.repuestos.n_garantia }} por garantía
+                {%- else %}sin ventas{% endif -%}
+              </div>
+            </div>
+          </div>
+          {% if historial.repuestos.n_garantia %}
+          <div class="fh-nota">
+            <i class="bi bi-shield-check"></i>
+            {{ historial.repuestos.n_garantia }} repuesto{{ 's' if historial.repuestos.n_garantia != 1 }}
+            cubierto{{ 's' if historial.repuestos.n_garantia != 1 }} por garantía (no facturados a este cliente).
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
       {# ── CENTRO DE CONTROL: consolida KPIs financieros/operativos + brechas y
          oportunidades que ya calcula el Agente (endpoint /inteligencia). Read-only;
          las acciones se resuelven en la pestaña Agente. Se hidrata por JS al cargar. #}

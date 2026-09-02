@@ -10,6 +10,31 @@
 .f-card-title{font-size:.72rem;font-weight:800;text-transform:uppercase;
               letter-spacing:.8px;color:#6b7280;margin:0;}
 .f-card-body{padding:18px 20px;}
+/* ── Historial con este cliente ──────────────────────
+   🆕 2026-09-02 (Daniel: "cuando yo entre a la ficha del cliente, yo
+   quiero ver cuántas instalaciones le hice, mantenciones, visitas,
+   cuántas veces se le movieron equipos, se le vendieron repuestos,
+   todo"). Cada celda es un contador clickeable que lleva al tab con el
+   detalle real -- el número solo, sin salida, no sirve para nada. */
+.fh-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;}
+.fh-cell{background:#fafbfc;border:1px solid var(--border);border-radius:10px;
+         padding:12px 12px 10px;text-align:center;cursor:pointer;
+         border-top:3px solid #dc2626;
+         transition:background .14s,box-shadow .18s,transform .14s;}
+.fh-cell:hover{background:#fff;box-shadow:var(--shadow);transform:translateY(-1px);}
+.fh-cell:focus-visible{outline:2px solid #dc2626;outline-offset:2px;}
+.fh-cell.fh-eq{border-top-color:#2563eb;}
+.fh-cell.fh-rep{border-top-color:#16a34a;}
+.fh-n{font-size:1.7rem;font-weight:900;line-height:1;color:#0a0a0a;
+      font-variant-numeric:tabular-nums;}
+/* REGLA #15: los nombres de tipo de OT van completos, nunca cortados. */
+.fh-l{font-size:.72rem;font-weight:800;color:#374151;margin-top:5px;line-height:1.25;}
+.fh-s{font-size:.64rem;font-weight:700;color:#9ca3af;margin-top:2px;
+      font-variant-numeric:tabular-nums;}
+.fh-nota{margin-top:12px;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;
+         border-radius:9px;font-size:.76rem;color:#166534;font-weight:600;
+         display:flex;align-items:center;gap:7px;}
+
 /* ── KPI bar ─────────────────────────────────────── */
 .kpi-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:20px;}
 .kpi-item{background:#fff;border:1px solid var(--border);border-radius:var(--rad);

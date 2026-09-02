@@ -62903,6 +62903,91 @@ def _mant_ficha_impl(cid):
     except Exception:
         sucursales = []
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 🆕 2026-09-02 — HISTORIAL DEL CLIENTE (Daniel: "cuando yo entre a la
+    # ficha del cliente, yo quiero ver cuántas instalaciones le hice,
+    # mantenciones, visitas, cuántas veces se le movieron equipos, se le
+    # vendieron repuestos, todo").
+    #
+    # Todo esto ya estaba en la base -- repartido entre mant_visitas,
+    # mant_maquinas y mant_repuestos -- pero había que sumarlo a mano OT
+    # por OT. Acá se agrega de una sola pasada por tabla (no una consulta
+    # por tipo) para no encarecer una ficha que ya hace bastantes queries.
+    # ═══════════════════════════════════════════════════════════════════
+    historial = {"por_tipo": [], "repuestos": {}, "equipos": {},
+                 "primera": None, "ultima": None, "total_ot": 0}
+    try:
+        _h_tipos = mysql_fetchall(
+            "SELECT COALESCE(NULLIF(TRIM(tipo),''),'sin_tipo') AS tipo, "
+            "       COUNT(*) AS n, "
+            "       SUM(CASE WHEN estado IN ('cerrada','completada') THEN 1 ELSE 0 END) AS n_cerradas, "
+            "       MIN(fecha_programada) AS primera, MAX(fecha_programada) AS ultima "
+            "  FROM mant_visitas WHERE cliente_id=%s "
+            " GROUP BY COALESCE(NULLIF(TRIM(tipo),''),'sin_tipo') "
+            " ORDER BY n DESC", (cid,)) or []
+        for _r in _h_tipos:
+            _t = (_r.get("tipo") or "sin_tipo")
+            historial["por_tipo"].append({
+                "tipo": _t,
+                "label": _TIPO_OT_LABEL.get(_t, _t.replace("_", " ").title()),
+                "n": int(_r.get("n") or 0),
+                "n_cerradas": int(_r.get("n_cerradas") or 0),
+                "primera": _r.get("primera"),
+                "ultima": _r.get("ultima"),
+            })
+        historial["total_ot"] = sum(x["n"] for x in historial["por_tipo"])
+        _fechas = [x["primera"] for x in historial["por_tipo"] if x["primera"]]
+        _fechas_u = [x["ultima"] for x in historial["por_tipo"] if x["ultima"]]
+        historial["primera"] = min(_fechas) if _fechas else None
+        historial["ultima"] = max(_fechas_u) if _fechas_u else None
+    except Exception as _e_ht:
+        print(f"[ficha-cli] historial tipos cid={cid}: {_e_ht}", flush=True)
+
+    try:
+        # Repuestos: se separa lo VENDIDO de lo cubierto por garantía —
+        # son dos historias distintas para el negocio (una factura, la
+        # otra cuesta). Solo cuentan los que llegaron a instalarse o
+        # facturarse: un repuesto "cotizado" todavía no le pasó nada al
+        # cliente y contarlo inflaría el historial.
+        _h_rep = mysql_fetchone(
+            "SELECT COUNT(*) AS n, "
+            "       COALESCE(SUM(CASE WHEN tipo='venta' THEN 1 ELSE 0 END),0) AS n_venta, "
+            "       COALESCE(SUM(CASE WHEN tipo='garantia' THEN 1 ELSE 0 END),0) AS n_garantia, "
+            "       COALESCE(SUM(CASE WHEN tipo='venta' "
+            "                    THEN cantidad * precio_venta ELSE 0 END),0) AS monto_venta "
+            "  FROM mant_repuestos "
+            " WHERE cliente_id=%s AND estado IN ('instalado','facturado','aprobado')",
+            (cid,)) or {}
+        historial["repuestos"] = {
+            "n": int(_h_rep.get("n") or 0),
+            "n_venta": int(_h_rep.get("n_venta") or 0),
+            "n_garantia": int(_h_rep.get("n_garantia") or 0),
+            "monto_venta": float(_h_rep.get("monto_venta") or 0),
+        }
+    except Exception as _e_hr:
+        print(f"[ficha-cli] historial repuestos cid={cid}: {_e_hr}", flush=True)
+        historial["repuestos"] = {"n": 0, "n_venta": 0, "n_garantia": 0, "monto_venta": 0}
+
+    try:
+        # "Cuántas veces se le movieron equipos": altas de máquina en la
+        # ficha (cuándo entró cada equipo) + cuántas siguen activas.
+        _h_eq = mysql_fetchone(
+            "SELECT COUNT(*) AS n, "
+            "       COALESCE(SUM(CASE WHEN COALESCE(estado,'activo') <> 'baja' "
+            "                    THEN 1 ELSE 0 END),0) AS n_activos, "
+            "       MIN(created_at) AS primera, MAX(created_at) AS ultima "
+            "  FROM mant_maquinas WHERE cliente_id=%s", (cid,)) or {}
+        historial["equipos"] = {
+            "n": int(_h_eq.get("n") or 0),
+            "n_activos": int(_h_eq.get("n_activos") or 0),
+            "n_baja": int(_h_eq.get("n") or 0) - int(_h_eq.get("n_activos") or 0),
+            "primera": _h_eq.get("primera"),
+            "ultima": _h_eq.get("ultima"),
+        }
+    except Exception as _e_he:
+        print(f"[ficha-cli] historial equipos cid={cid}: {_e_he}", flush=True)
+        historial["equipos"] = {"n": 0, "n_activos": 0, "n_baja": 0}
+
     return render_template("mantenciones/ficha.html",
         cliente   = dict(cliente),
         maquinas  = maquinas,
@@ -62912,6 +62997,8 @@ def _mant_ficha_impl(cid):
         hoy       = hoy,
         stats     = stats,
         sucursales = sucursales,
+        # 2026-09-02 — resumen de "todo lo que le hemos hecho a este cliente".
+        historial = historial,
     )
 
 
