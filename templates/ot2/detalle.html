@@ -1007,7 +1007,40 @@
     {# ── Equipos ── #}
     <div class="otd-card">
       <h3><i class="bi bi-boxes"></i> Equipos de la OT
-        <span class="n">{{ kpis.equipos }}</span></h3>
+        <span class="n">{{ kpis.equipos }}</span>
+        {# 2026-09-02 (Daniel, caso Aaron, OT-2026-00154): "Agregar equipos
+           a OT ya creada" -- permiso granular sembrado el mismo día en
+           /admin/roles, apagado por defecto para todos los roles hasta que
+           Daniel lo prenda. Fuera de un estado terminal solamente (única
+           restricción que pidió); no aplica a trabajo interno (sin
+           cliente, sin fichas de equipo que elegir). #}
+        {% if v.cliente_id and v.estado not in ('cerrada','completada','cancelada','anulada')
+              and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
+        <button type="button" class="edit" style="margin-left:auto"
+                onclick="otdAbrirAgregarEquipo()" title="Agregar un equipo nuevo a esta OT">
+          <i class="bi bi-plus-circle"></i> Agregar equipo</button>
+        {% endif %}
+      </h3>
+      {% if v.cliente_id and v.estado not in ('cerrada','completada','cancelada','anulada')
+            and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
+      <div class="otd-editbox" id="otdAgregarEquipoBox">
+        <div class="row" style="flex-wrap:wrap">
+          <select id="otdAgregarEquipoSelect" class="form-select form-select-sm" style="max-width:280px"
+                  onchange="otdSugerirPlantillaEquipo()">
+            <option value="">Cargando equipos del cliente…</option>
+          </select>
+          <select id="otdAgregarEquipoPlantilla" class="form-select form-select-sm" style="max-width:280px">
+            <option value="">Elige un equipo primero…</option>
+          </select>
+        </div>
+        <div class="hint">El checklist se sugiere solo según la clasificación del equipo — puedes cambiarlo antes de guardar.</div>
+        <div class="actions">
+          <button type="button" class="otd-btn pri" onclick="otdConfirmarAgregarEquipo()">
+            <i class="bi bi-check2"></i> Agregar</button>
+          <button type="button" class="otd-btn" onclick="otdCerrarAgregarEquipo()">Cancelar</button>
+        </div>
+      </div>
+      {% endif %}
       {% if equipos %}
       <div class="otd-eqs">
         {% for e in equipos %}
@@ -2077,6 +2110,11 @@ const PLANTILLAS_TODAS = {{ plantillas_todas | tojson }};
 const CATEGORIA_OT_ACTUAL = {{ categoria_ot_actual | tojson }};
 const _CAT_ADMIN_LABEL = {instalacion:'Instalación', mantencion:'Mantención', visitas:'Visitas', trabajo_interno:'Interno'};
 
+// 2026-09-02 (Daniel, caso Aaron, OT-2026-00154): equipos que YA están en
+// esta OT -- se filtran del selector de "Agregar equipo" para no ofrecer
+// dos veces el mismo (el backend igual lo rechaza, esto es solo UX).
+const EQUIPOS_YA_EN_OT = {{ equipos | map(attribute='id') | list | tojson }};
+
 // 2026-08-28 (Daniel): uids de los técnicos COLABORADORES ya sumados a esta
 // OT (aparte del principal) -- se usa para que el picker de "Agregar
 // técnico" no vuelva a ofrecer a alguien que ya figura en el equipo.
@@ -2502,6 +2540,107 @@ window.otdConfirmarReasignar = async function(){
     }
   } catch(e){
     ilusToast('Error de conexión al reasignar el técnico.', {type:'error'});
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════
+   AGREGAR EQUIPO a una OT ya creada (2026-09-02, Daniel, caso Aaron:
+   "Aaron también quiere agregar un equipo nuevo a la OT-154"). Reusa
+   /mantenciones/api/clientes/<cid>/maquinas-list (mismo endpoint que el
+   wizard de creación) para listar equipos del cliente, y
+   /mantenciones/api/plantillas/sugerida-por-sku (mismo endpoint que
+   preselecciona el checklist al crear una OT) para sugerir el checklist
+   apenas se elige el equipo -- el humano siempre puede cambiarlo antes de
+   guardar (Daniel, 13-08: "no quiero nada automático, todo lo debe
+   escoger el usuario").
+   ══════════════════════════════════════════════════════════════ */
+let _otdMaquinasClienteCache = null;
+
+window.otdAbrirAgregarEquipo = async function(){
+  const box = document.getElementById('otdAgregarEquipoBox');
+  if (!box) return;
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+  const selEq = document.getElementById('otdAgregarEquipoSelect');
+  if (!selEq) return;
+  if (!_otdMaquinasClienteCache){
+    try {
+      const r = await fetch('/mantenciones/api/clientes/{{ v.cliente_id or 0 }}/maquinas-list');
+      _otdMaquinasClienteCache = await r.json();
+    } catch(e){ _otdMaquinasClienteCache = []; }
+  }
+  const disponibles = (_otdMaquinasClienteCache || [])
+    .filter(m => !EQUIPOS_YA_EN_OT.includes(m.id));
+  if (!disponibles.length){
+    selEq.innerHTML = '<option value="">— No hay más equipos de este cliente para agregar —</option>';
+    return;
+  }
+  selEq.innerHTML = ['<option value="">Elige un equipo…</option>'].concat(
+    disponibles.map(m =>
+      `<option value="${m.id}" data-sku="${(m.sku || '').replace(/"/g, '&quot;')}">`
+      + `${(m.nombre || ('Equipo ' + m.id)).replace(/</g, '&lt;')}`
+      + `${m.sku ? ' — ' + m.sku.replace(/</g, '&lt;') : ''}</option>`)
+  ).join('');
+};
+
+window.otdCerrarAgregarEquipo = function(){
+  const box = document.getElementById('otdAgregarEquipoBox');
+  if (box) box.style.display = 'none';
+};
+
+window.otdSugerirPlantillaEquipo = async function(){
+  const selEq = document.getElementById('otdAgregarEquipoSelect');
+  const selPl = document.getElementById('otdAgregarEquipoPlantilla');
+  if (!selEq || !selPl) return;
+  const opt = selEq.options[selEq.selectedIndex];
+  const sku = opt ? opt.dataset.sku : '';
+  // Mismo orden que otdCambiarPlantilla: primero las de la categoría de
+  // ESTA OT, después el resto marcadas con su categoría.
+  const propia = [], otras = [];
+  PLANTILLAS_TODAS.forEach(p => (p.categoria_admin === CATEGORIA_OT_ACTUAL ? propia : otras).push(p));
+  const opcion = (p, etiqueta) =>
+    `<option value="${p.id}">${p.nombre.replace(/</g, '&lt;')}${etiqueta ? ' (' + etiqueta + ')' : ''}</option>`;
+  selPl.innerHTML = '<option value="">Elige un checklist…</option>'
+    + propia.map(p => opcion(p, '')).join('')
+    + otras.map(p => opcion(p, _CAT_ADMIN_LABEL[p.categoria_admin] || 'otra categoría')).join('');
+  if (!sku || !selEq.value) return;
+  try {
+    const r = await fetch(`/mantenciones/api/plantillas/sugerida-por-sku?sku=${encodeURIComponent(sku)}&tipo_ot={{ v.tipo }}`);
+    const j = await r.json();
+    if (j && j.plantilla_id){
+      selPl.value = String(j.plantilla_id);
+    }
+  } catch(e){ /* sin sugerencia, el humano elige a mano */ }
+};
+
+window.otdConfirmarAgregarEquipo = async function(){
+  const selEq = document.getElementById('otdAgregarEquipoSelect');
+  const selPl = document.getElementById('otdAgregarEquipoPlantilla');
+  if (!selEq || !selEq.value){
+    ilusToast('Elige un equipo primero.', {type:'warning'});
+    return;
+  }
+  if (!selPl || !selPl.value){
+    ilusToast('Elige el checklist para este equipo.', {type:'warning'});
+    return;
+  }
+  try {
+    const r = await fetch('/ot/api/{{ v.id }}/equipos', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        maquina_id: parseInt(selEq.value, 10),
+        plantilla_id: parseInt(selPl.value, 10),
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok){
+      ilusToast('✓ Equipo agregado a la OT', {type:'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo agregar el equipo.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al agregar el equipo.', {type:'error'});
   }
 };
 

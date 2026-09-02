@@ -78395,6 +78395,140 @@ def ot2_api_crear():
     })
 
 
+@app.route("/ot/api/<int:vid>/equipos", methods=["POST"])
+@_mant_required
+def ot2_api_agregar_equipo(vid):
+    """Agrega UN equipo nuevo a una OT ya creada -- fuera del flujo de
+    levantamiento (Daniel, 2026-09-02, caso Aaron: "Aaron también quiere
+    agregar un equipo nuevo a la OT-154", Mantención Correctiva, ya con 4
+    equipos cargados).
+
+    El permiso "Agregar equipos a OT ya creada" (mant_equipos_agregar_libre,
+    sembrado el mismo día en /admin/roles) se conectó primero a
+    mant_lev_item_crear -- pero ESE endpoint exige una fila en
+    mant_levantamientos, y desde el Paso 5a (12-ago) esa fila YA NO se crea
+    para correctiva/preventiva/instalación/garantía/inspección (solo para
+    tipo='levantamiento'). Para la OT-154 esa fila nunca existió: con el
+    permiso prendido y un botón en pantalla, ese camino igual habría dado
+    404 "Levantamiento no encontrado". Este endpoint no depende de ningún
+    levantamiento -- agrega el equipo directo a mant_visita_tareas,
+    replicando el MISMO INSERT que ya usa ot2_api_crear (~línea 78250) para
+    cada equipo al crear la OT. Ningún checklist nuevo: el de siempre.
+
+    Candado: superadmin o permissions.mant_equipos_agregar_libre (mismo
+    flag), y la OT no puede estar en un estado terminal (cerrada/
+    completada/cancelada/anulada) -- mismo criterio ya acordado con Daniel
+    para el camino de levantamiento por descubrimiento.
+    """
+    if not (bool(g.permissions.get("superadmin"))
+            or bool(g.permissions.get("mant_equipos_agregar_libre"))):
+        return _ot2_err(
+            "No tienes permiso para agregar equipos a una OT ya creada. "
+            "Pide que un superadministrador te habilite \"Agregar equipos a "
+            "OT ya creada\" en Usuarios y roles.",
+            "SIN_PERMISO_AGREGAR_EQUIPO", http=403)
+
+    v = mysql_fetchone(
+        "SELECT id, cliente_id, tipo, estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
+    _estado_ot = (v.get("estado") or "").strip().lower()
+    if _estado_ot in ("cerrada", "completada", "cancelada", "anulada"):
+        return _ot2_err(
+            f"La OT ya está {_estado_ot} — no acepta más equipos.",
+            "OT_TERMINAL", http=409)
+
+    d = request.get_json(silent=True) or {}
+    try:
+        maquina_id = int(d.get("maquina_id"))
+    except (TypeError, ValueError):
+        return _ot2_err("Elige un equipo válido.", "EQUIPO_INVALIDO")
+    try:
+        plantilla_id = int(d.get("plantilla_id"))
+    except (TypeError, ValueError):
+        return _ot2_err(
+            "Elige el checklist para este equipo.", "PLANTILLA_REQUERIDA")
+
+    maq = mysql_fetchone(
+        "SELECT id, cliente_id, nombre FROM mant_maquinas WHERE id=%s", (maquina_id,))
+    if not maq:
+        return _ot2_err("Ese equipo no existe.", "EQUIPO_NO_EXISTE", http=404)
+    if v.get("cliente_id") and maq.get("cliente_id") != v.get("cliente_id"):
+        return _ot2_err(
+            "Ese equipo no pertenece al cliente de esta OT.", "EQUIPO_OTRO_CLIENTE")
+
+    plant = mysql_fetchone(
+        "SELECT id, nombre FROM mant_tarea_plantillas "
+        "WHERE id=%s AND COALESCE(activa,1)=1", (plantilla_id,))
+    if not plant:
+        return _ot2_err(
+            "Ese checklist no existe o está inactivo.", "PLANTILLA_NO_EXISTE", http=404)
+
+    ya = mysql_fetchone(
+        "SELECT 1 FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
+        (vid, maquina_id))
+    if ya:
+        return _ot2_err("Ese equipo ya está en esta OT.", "EQUIPO_YA_AGREGADO", http=409)
+
+    tarea_tipo = _tarea_tipo_seguro(v.get("tipo"))
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(orden),0) AS m FROM mant_visita_tareas WHERE visita_id=%s",
+                (vid,))
+            orden = (cur.fetchone() or {}).get("m") or 0
+            cur.execute(
+                "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
+                "       requiere_foto, unidad, rango_min, rango_max, "
+                "       opciones_lista_json, target_field "
+                "  FROM mant_tarea_plantilla_items "
+                " WHERE plantilla_id=%s ORDER BY orden, id", (plantilla_id,))
+            items = cur.fetchall()
+            if not items:
+                conn.rollback()
+                return _ot2_err("Ese checklist no tiene tareas.", "CHECKLIST_VACIO")
+            n_tareas = 0
+            for it in items:
+                orden += 1
+                cur.execute(
+                    "INSERT INTO mant_visita_tareas "
+                    "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
+                    "   maquina_id, tipo_respuesta, target_field, obligatoria, "
+                    "   requiere_foto, unidad, rango_min, rango_max, "
+                    "   opciones_lista_json, estado_trabajo, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                    "        'pendiente',%s)",
+                    (vid, plantilla_id, orden, (it.get("titulo") or "")[:300],
+                     it.get("descripcion"), tarea_tipo, maquina_id,
+                     it.get("tipo_respuesta") or "check", it.get("target_field"),
+                     it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+                     it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
+                     it.get("opciones_lista_json"), current_username()))
+                n_tareas += 1
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        print(f"[ot2_agregar_equipo] vid={vid} maquina_id={maquina_id}: {e}", flush=True)
+        return _ot2_err(
+            "No pudimos agregar el equipo. Intenta de nuevo.",
+            "ERROR_INTERNO", http=500)
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    _mant_log(
+        "visita", vid, "equipo_agregado",
+        f"{current_username() or '?'} agregó el equipo '{maq.get('nombre') or maquina_id}' "
+        f"(checklist '{plant.get('nombre')}', {n_tareas} tarea(s)) a una OT ya creada "
+        f"[permiso de rol mant_equipos_agregar_libre].")
+    return jsonify({
+        "ok": True, "maquina_id": maquina_id, "maquina_nombre": maq.get("nombre"),
+        "n_tareas": n_tareas,
+    })
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  MONITOR DE OFICINA — modo TV (Daniel, 2026-08-26)
 #
@@ -102378,87 +102512,6 @@ def _familia_plantilla_para_tipo(tipo_ot):
     if not categoria:
         categoria = _PLANT_CATEGORIA_TIPO_SEED.get(tipo_ot)
     return _PLANT_CATEGORIA_LABEL.get(categoria) if categoria else None
-
-
-def _plantilla_por_clasificacion_sku(sku, tipo_ot):
-    """ID de la plantilla que corresponde a un equipo SEGÚN SU CLASIFICACIÓN
-    REAL de catálogo -- no el criterio ciego de _plantilla_estandar_para_tipo
-    (que solo mira el tipo de OT y por eso puede darle a una trotadora el
-    checklist de una bicicleta si esa plantilla tiene más ítems). Daniel,
-    2026-08-12: "no le voy a hacer una verificación a una trotadora como a
-    una bicicleta".
-
-    Puente (medido en vivo el 2026-08-12, ver GET /mantenciones/api/
-    diagnostico/cobertura-clasificacion): mant_maquinas.sku ->
-    cat_productos.sku -> cat_productos.clase_producto (slug) ->
-    cat_clases_producto.nombre. Con ese nombre + la familia del tipo de OT
-    (Instalación/Mantención/...) arma el nombre de convención
-    "{familia} · {clasificación}" y busca una plantilla ACTIVA con ese
-    nombre exacto y al menos 1 ítem (mismo estándar de calidad que la
-    plantilla "de convención" de _plantilla_estandar_para_tipo).
-
-    Devuelve None si falta CUALQUIER eslabón (sin sku, sku fuera del
-    catálogo, producto sin clase asignada, o no existe todavía la
-    plantilla para esa clasificación) -- el caller SIEMPRE debe caer a
-    _plantilla_estandar_para_tipo en ese caso. NUNCA bloquea la creación
-    de la OT: "no hay suficiente información" es un caso legítimo, no un
-    error (medición real 2026-08-12: buena parte de los equipos hoy no
-    cruza contra el catálogo por SKU faltante/generado a mano/fuera de
-    catálogo).
-    """
-    sku = (sku or "").strip()
-    if not sku:
-        return None
-    familia = _familia_plantilla_para_tipo(tipo_ot)
-    if not familia:
-        return None
-    try:
-        clase_row = mysql_fetchone(
-            "SELECT cp.nombre AS clase_nombre "
-            "  FROM cat_productos p "
-            "  JOIN cat_clases_producto cp "
-            "    ON cp.slug = p.clase_producto AND cp.activo = 1 "
-            " WHERE p.sku = %s "
-            "   AND COALESCE(TRIM(p.clase_producto), '') <> '' "
-            " LIMIT 1",
-            (sku,)
-        )
-    except Exception as e:
-        print(f"[plantilla_por_clasificacion] resolver clase de sku={sku!r} falló: {e}", flush=True)
-        return None
-    if not clase_row or not clase_row.get("clase_nombre"):
-        return None
-    nombre_plantilla = f"{familia} · {clase_row['clase_nombre']}"
-    try:
-        prow = mysql_fetchone(
-            "SELECT p.id FROM mant_tarea_plantillas p "
-            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
-            " WHERE p.nombre = %s AND COALESCE(p.activa, 1) = 1 "
-            " GROUP BY p.id LIMIT 1",
-            (nombre_plantilla,)
-        )
-    except Exception as e:
-        print(f"[plantilla_por_clasificacion] buscar plantilla '{nombre_plantilla}' falló: {e}", flush=True)
-        return None
-    return int(prow["id"]) if prow else None
-
-
-def _plantilla_por_clasificacion_equipo(maquina_id, tipo_ot):
-    """Wrapper de _plantilla_por_clasificacion_sku para cuando solo se tiene
-    el id de mant_maquinas a mano (no el sku ya resuelto en memoria). Si el
-    caller YA tiene el sku (ej. el dict `maquinas` de _mant_lev_crear_ot_core,
-    que lo trae en la misma consulta que arma la lista de equipos), preferir
-    llamar directo a _plantilla_por_clasificacion_sku y ahorrarse esta
-    consulta extra.
-    """
-    if not maquina_id:
-        return None
-    try:
-        row = mysql_fetchone("SELECT sku FROM mant_maquinas WHERE id=%s", (maquina_id,))
-    except Exception as e:
-        print(f"[plantilla_por_clasificacion] leer sku de maquina {maquina_id} falló: {e}", flush=True)
-        return None
-    return _plantilla_por_clasificacion_sku(row.get("sku") if row else None, tipo_ot)
 
 
 def _tarea_respaldo_texto(tipo_ot, nombre_equipo):
