@@ -76918,6 +76918,33 @@ def ot2_detalle(vid):
         (vid, vid)
     ) or []
     equipos = [dict(e) for e in equipos]
+
+    # 🔴 2026-09-02 (Daniel, OT-2026-00153: "no me muestra el trabajo...
+    # 'todavía no tienes equipo asignado'. ¿Qué pasó allí? ¿Por qué tenemos
+    # eso sin gestión?"). El SELECT de arriba descarta a propósito los
+    # equipos dados de BAJA (`m.estado <> 'baja'`, candado que viene del
+    # caso OT-58: un equipo de baja trababa el cierre). El efecto lateral
+    # es que una OT cuyos equipos se dieron de baja DESPUÉS de crearla se
+    # ve exactamente igual que una OT que nunca tuvo equipos -- y el
+    # mensaje en pantalla mentía. Acá se cuenta lo mismo SIN el filtro de
+    # baja: si hay equipos ligados pero ninguno visible, la pantalla lo
+    # dice con todas sus letras en vez de sugerir que nadie los asignó.
+    try:
+        _eq_tot = mysql_fetchone(
+            "SELECT COUNT(DISTINCT m.id) AS n "
+            "  FROM mant_maquinas m "
+            "  LEFT JOIN (SELECT DISTINCT maquina_id FROM mant_visita_tareas "
+            "              WHERE visita_id=%s AND maquina_id IS NOT NULL) t "
+            "         ON t.maquina_id = m.id "
+            "  LEFT JOIN mant_visita_equipos ve ON ve.maquina_id = m.id AND ve.visita_id=%s "
+            " WHERE (t.maquina_id IS NOT NULL OR ve.maquina_id IS NOT NULL)",
+            (vid, vid)) or {}
+        _n_eq_ligados = int(_eq_tot.get("n") or 0)
+    except Exception as _e_eqb:
+        print(f"[ot2_detalle] conteo equipos ligados vid={vid}: {_e_eqb}", flush=True)
+        _n_eq_ligados = len(equipos)
+    equipos_ocultos_baja = max(0, _n_eq_ligados - len(equipos))
+
     _REV_LABEL = {"verificado": "Verificado", "con_cambios": "Con cambios",
                   "saltado": "Saltado", "falla_detectada": "Con falla"}
     _DIAG_LABEL = {"aprobado": "Aprobado", "observacion": "Con observación", "falla": "Con falla"}
@@ -77150,6 +77177,30 @@ def ot2_detalle(vid):
     # OJO: _ot2_finanzas_estado devuelve una TUPLA (ok, faltan), no un dict.
     _fin_ok, _fin_faltan = _ot2_finanzas_estado(v)
 
+    # 🆕 2026-09-02 (Daniel: "necesito expresar el documento en el ERP. Eso
+    # lo quiero ver en el header... y eso tiene que estar aprobado sí o sí,
+    # o que diga garantía, o trabajo interno"). MISMO cálculo que ya
+    # alimenta la píldora del Monitor (`doc_cierre` en _ot_tv_datos, ver
+    # app.py ~79372) -- una sola fuente de verdad para "¿esta OT tiene su
+    # documento resuelto?", no una segunda regla escrita a mano en el
+    # template.
+    _es_garantia_ot = ((v.get("modalidad_cobro") or "").lower() == "garantia"
+                       or (v.get("cubierto_por") or "").lower() == "garantia")
+    _es_interna_ot = _ot_es_interna(v)
+    _doc_nudo_hdr = (v.get("documento_erp_nudo") or v.get("factura_nudo") or "").strip()
+    _doc_tido_hdr = (v.get("documento_erp_tido") or v.get("factura_tido") or "").strip()
+    if _es_interna_ot:
+        _doc_label, _doc_tipo = "Trabajo interno", "interna"
+    elif _es_garantia_ot:
+        _doc_label, _doc_tipo = "Garantía", "garantia"
+    elif _doc_nudo_hdr:
+        _doc_label = f"{_doc_tido_hdr or 'DOC'} {_doc_nudo_hdr}"
+        _doc_tipo = "documento"
+    else:
+        _doc_label, _doc_tipo = "Sin documento", "falta"
+    doc_header = {"label": _doc_label, "tipo": _doc_tipo,
+                  "ok": bool(_fin_ok), "faltan": _fin_faltan}
+
     # ── Evidencia — pestaña nueva (Daniel 27-ago: "los técnicos no sabían
     # que podían dejar evidencia... buscar la mejor manera de mostrarlo").
     # El dato ya se sube desde hace tiempo (mant_visita_fotos); lo que
@@ -77212,7 +77263,13 @@ def ot2_detalle(vid):
         "ot2/detalle.html",
         v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         equipos_serie_map=equipos_serie_map,
+        # 2026-09-02 — ver el bloque `equipos_ocultos_baja` más arriba:
+        # distingue "esta OT nunca tuvo equipos" de "sus equipos están
+        # dados de baja en la ficha y por eso no se dibujan".
+        equipos_ocultos_baja=equipos_ocultos_baja,
         finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
+        # 2026-09-02 — chip de documento en el header (ver doc_header arriba).
+        doc_header=doc_header,
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         puede_eliminar=puede_eliminar,
