@@ -69445,8 +69445,15 @@ def _mant_calendario_role_where():
     `mant_visitas_api`. Si el rol no puede ver la OT en el listado,
     tampoco debe verla como visita del día/mes.
 
+    🔓 2026-09-02 (Daniel, reporte de Víctor/JP/Aarón): 'ejecutivo' dejó de
+    estar acotado a lo propio -- ve TODO, igual que admin/superadmin/
+    supervisor. Ahora el ÚNICO rol con esta restricción es 'tecnico'. Ver
+    el bloque `elif False and _role_fam == "ejecutivo":` más abajo (lógica
+    vieja, inactiva a propósito, no borrada).
+
     Devuelve (extra_where_sql, extra_params) — extra_where_sql arranca con
-    " AND (...)" o " AND 1=0 " o "" (admin/superadmin/supervisor sin filtro).
+    " AND (...)" o " AND 1=0 " o "" (admin/superadmin/supervisor/ejecutivo
+    sin filtro; solo 'tecnico' recibe restricción).
     """
     _u = getattr(g, "user", None) or {}
     _role_raw = (_u.get("role") or "").lower()
@@ -69454,9 +69461,19 @@ def _mant_calendario_role_where():
     _uid = _u.get("id")
     _extra_where = ""
     _extra_params = []
-    if _role_fam in ("admin", "superadmin", "supervisor"):
+    # 🔓 FIX 2026-09-02 (Daniel, reporte de Víctor/Juan Pablo/Aarón -- los 3
+    # ejecutivo_sstt que crean la mayoría de las OT: "solo se ven los
+    # trabajos que ellos hicieron"): pedido explícito de Daniel, textual --
+    # "lo que estoy necesitando es que los técnicos sean quienes tengan esa
+    # restricción... ellos [ejecutivo] sí podrán ver la visión general de
+    # las OT". Se invierte a propósito: 'ejecutivo' pasa a ver TODO (como
+    # admin/superadmin/supervisor), 'tecnico' es el ÚNICO que sigue acotado
+    # a lo suyo. La rama de 'ejecutivo' de abajo queda documentada pero
+    # INACTIVA -- no se borra (REGLA #4.2), por si algún día alguien pide
+    # volver a acotar ejecutivo sin reescribir la lógica desde cero.
+    if _role_fam in ("admin", "superadmin", "supervisor", "ejecutivo"):
         pass
-    elif _role_fam == "ejecutivo":
+    elif False and _role_fam == "ejecutivo":
         username_actual = (_u.get("username") or "").strip()
         nombre_actual = (_u.get("nombre") or "").strip()
         _has_cbu = False
