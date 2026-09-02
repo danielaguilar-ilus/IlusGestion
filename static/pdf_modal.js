@@ -117,13 +117,30 @@
     { atMs: 22000, texto: 'Esto puede tardar un poco más (documento grande)…' },
   ];
 
+  // 🔧 FIX 2026-09-02 (OT-2026-00058, Daniel: "no deja descargar bien las
+  // OT"): un documento pesado (60 equipos, 127 fotos) tarda 25-33s en
+  // generarse. Sin este freno, un usuario impaciente reintentaba el click
+  // de "Descargar" mientras la primera descarga todavía estaba en curso --
+  // dos generaciones del MISMO PDF pesado corriendo a la vez es justo lo
+  // que agotaba la memoria del servidor y hacía caer la instancia (ver
+  // _pdf_grande_lock en app.py). Este flag ignora un segundo click mientras
+  // el primero sigue en vuelo, en vez de dejar que dispare otra descarga.
+  let _descargaEnCurso = false;
+
   function _descargarConProgreso(url, downloadName) {
+    if (_descargaEnCurso) {
+      if (typeof ilusToast === 'function') {
+        ilusToast('Ya se está generando el documento, espera un momento…', { type: 'info' });
+      }
+      return;
+    }
     if (!window.ilusLoader) {
       // Sin ilusLoader no hay forma de mostrar progreso -- cae al
       // comportamiento simple de siempre (abrir la URL tal cual).
       global.open(url, '_blank', 'noopener');
       return;
     }
+    _descargaEnCurso = true;
     const t0 = Date.now();
     let pct = 6;
     let ultimaEtapa = -1;
@@ -170,6 +187,7 @@
         return r.blob();
       })
       .then(function (blob) {
+        _descargaEnCurso = false;
         window.ilusLoader.progress(100);
         window.ilusLoader.text('¡Listo!');
         const blobUrl = URL.createObjectURL(blob);
@@ -183,6 +201,7 @@
         setTimeout(function () { window.ilusLoader.hide(); }, 500);
       })
       .catch(function (err) {
+        _descargaEnCurso = false;
         clearInterval(tick);
         window.ilusLoader.hide();
         console.error('[pdf_modal] descarga falló:', err);

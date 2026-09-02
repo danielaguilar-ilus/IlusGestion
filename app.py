@@ -880,6 +880,68 @@ def _pw_pdf(html: str, *, queue_timeout: int = 90, **kwargs) -> bytes:
     return result_box["data"]
 
 
+# 🔧 FIX 2026-09-02 (OT-2026-00058, Vitacura -- Daniel: "no deja descargar
+# bien las OT" + "que sea mas rapido"). Diagnóstico con logs reales de
+# producción: esta OT (60 equipos, 645 tareas, 127 fotos) genera un HTML de
+# ~17MB (las fotos YA venían comprimidas desde el 2026-08-27, ver
+# _PDF_EMBED_MAX_DIM) y Cloud Run mataba la instancia por memoria --
+# "Memory limit of 2048 MiB exceeded with 2143 MiB used" -- justo cuando
+# había DOS peticiones casi simultáneas para el mismo PDF (Daniel
+# reintentando porque la primera tardaba). _pw_pdf ya serializa los PDF
+# DENTRO de un mismo proceso de gunicorn (un solo hilo dedicado por
+# proceso, ver _pw_worker_loop más arriba), pero Cloud Run corre 2 workers
+# de gunicorn por instancia -- CADA worker puede tener su propio Chromium
+# renderizando un documento pesado al mismo tiempo, y dos de estos (cada
+# uno con cientos de MB de fotos ya decodificadas en memoria) suman más de
+# los 2GB del contenedor. Este candado usa un archivo en /tmp (compartido
+# por los procesos de UNA MISMA instancia -- nunca entre instancias, no
+# hace falta) para que el SEGUNDO PDF "grande" espere a que termine el
+# primero en vez de correr en paralelo y reventar la instancia. Los PDF
+# normales (la inmensa mayoría) no pasan por acá y no se ven afectados.
+import contextlib as _contextlib_pdf_lock
+
+
+@_contextlib_pdf_lock.contextmanager
+def _pdf_grande_lock(timeout=120):
+    """Serializa, ENTRE PROCESOS de la misma instancia, la generación de
+    PDF marcados como "grandes" (ver _es_doc_grande en mant_visita_pdf).
+
+    fcntl no existe en Windows (desarrollo local) -- si falta, no bloquea
+    nada, mismo comportamiento de siempre en ese entorno. En producción
+    (contenedor Linux) sí protege. Nunca cuelga la petición indefinidamente:
+    si no logra el candado dentro de `timeout` segundos, sigue igual (el
+    peor caso es exactamente el comportamiento de HOY, nunca peor).
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    fh = open("/tmp/ilus_pdf_grande.lock", "a")
+    tiene_lock = False
+    t0 = time.time()
+    try:
+        while time.time() - t0 < timeout:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                tiene_lock = True
+                break
+            except BlockingIOError:
+                time.sleep(0.5)
+        if not tiene_lock:
+            print(f"[pdf_grande_lock] no se obtuvo el candado en {timeout}s -- "
+                  "sigo sin él (riesgo de memoria compartido con otro PDF grande)",
+                  flush=True)
+        yield
+    finally:
+        if tiene_lock:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+        fh.close()
+
+
 @app.template_filter('wa_link')
 def wa_link_filter(tel, texto=""):
     """Deep-link de WhatsApp a partir de un teléfono en CUALQUIER formato.
@@ -89644,28 +89706,34 @@ def mant_visita_pdf(vid):
         if _es_informe_lev else
         {"top": "36mm", "bottom": "16mm", "left": "0mm", "right": "0mm"}
     )
+    # 🔧 FIX 2026-09-02 (OT-2026-00058): un PDF "grande" no corre en paralelo
+    # con otro PDF grande de la misma instancia -- ver _pdf_grande_lock.
+    # Los documentos normales (inmensa mayoría) usan nullcontext: cero
+    # cambio de comportamiento para ellos.
+    _pdf_lock_ctx = _pdf_grande_lock() if _es_doc_grande else _contextlib_pdf_lock.nullcontext()
     try:
-        pdf_bytes = _pw_pdf(
-            html, page_format=_pdf_formato, margin=_pdf_margin,
-            header_template=_hdr_tpl, footer_template=_ftr_tpl,
-            # 2026-07-10: con embed_images=True las fotos ya vienen como
-            # data-URI dentro del HTML (sin red que esperar) — timeout
-            # corto de sobra; el wait real anterior (20s) era precisamente
-            # lo que causaba lentitud/caída a fallback con 40+ fotos.
-            wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
-            wait_timeout=5000,
-            # 2026-07-26 (OT-2026-00039, 19 equipos/54 fotos): action_timeout
-            # de set_content()/page.pdf() default (45s) puede no alcanzar con
-            # informes de levantamiento muy grandes (muchas fotos base64) —
-            # se sube a 60s solo en este endpoint (el de mayor volumen de
-            # imágenes por documento de toda la app). 2026-08-27: para
-            # documentos EXCEPCIONALMENTE grandes (ver _es_doc_grande arriba)
-            # se sube más todavía, junto con queue_timeout (antes ese límite
-            # externo estaba fijo en 90s sin relación con action_timeout --
-            # ver fix en _pw_pdf).
-            action_timeout=_action_timeout_ms,
-            **_pw_extra_kwargs,
-        )
+        with _pdf_lock_ctx:
+            pdf_bytes = _pw_pdf(
+                html, page_format=_pdf_formato, margin=_pdf_margin,
+                header_template=_hdr_tpl, footer_template=_ftr_tpl,
+                # 2026-07-10: con embed_images=True las fotos ya vienen como
+                # data-URI dentro del HTML (sin red que esperar) — timeout
+                # corto de sobra; el wait real anterior (20s) era precisamente
+                # lo que causaba lentitud/caída a fallback con 40+ fotos.
+                wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
+                wait_timeout=5000,
+                # 2026-07-26 (OT-2026-00039, 19 equipos/54 fotos): action_timeout
+                # de set_content()/page.pdf() default (45s) puede no alcanzar con
+                # informes de levantamiento muy grandes (muchas fotos base64) —
+                # se sube a 60s solo en este endpoint (el de mayor volumen de
+                # imágenes por documento de toda la app). 2026-08-27: para
+                # documentos EXCEPCIONALMENTE grandes (ver _es_doc_grande arriba)
+                # se sube más todavía, junto con queue_timeout (antes ese límite
+                # externo estaba fijo en 90s sin relación con action_timeout --
+                # ver fix en _pw_pdf).
+                action_timeout=_action_timeout_ms,
+                **_pw_extra_kwargs,
+            )
     except PDFEngineUnavailable:
         # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
         # documento; el usuario hace "Guardar como PDF" desde el navegador). Antes
