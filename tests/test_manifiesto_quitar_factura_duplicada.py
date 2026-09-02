@@ -63,10 +63,18 @@ JS_QUITAR = _cuerpo_quitar_item_js()
 
 
 class TestElCandadoOriginalSigueVigenteSinDuplicado(unittest.TestCase):
-    """Si NO hay NINGUNA otra copia en ningún otro manifiesto, el candado de
-    siempre bloquea igual -- no se relaja lo que no se acordó."""
+    """AMPLIADO 2026-09-02 (Daniel, en vivo, Alison seguía sin poder quitar
+    duplicadas reales: "recuerda que la única restricción es que tenga
+    movimiento con el courier"). Antes, si NO había ninguna otra copia
+    calzando el criterio, el candado bloqueaba PARA SIEMPRE sin excepción,
+    ni para superadmin -- eso era justo el bug real que Alison reportó (la
+    otra copia dejaba de calificar y ya no se podía quitar ninguna). Ahora
+    la ausencia de una copia detectada solo cambia el mensaje -- con
+    tr_eliminar/superadmin, igual se puede quitar confirmando."""
 
-    def test_sin_duplicada_sigue_devolviendo_el_error_de_siempre(self):
+    def test_sin_duplicada_el_mensaje_sigue_mencionando_gestion_con_courier(self):
+        # El texto "en gestión con el courier" sigue apareciendo (ahora en
+        # el mensaje de confirmación, no como bloqueo incondicional).
         self.assertIn("Esta factura ya está en gestión con el courier", SRC)
 
     def test_la_consulta_de_duplicada_ya_no_exige_estado_entregado(self):
@@ -152,7 +160,9 @@ class TestFuncionaTambienConCopiaNoEntregadaTodavia(unittest.TestCase):
     con que exista en otro manifiesto activo para poder elegir cuál dejar."""
 
     def test_distingue_si_la_otra_copia_ya_se_entrego_o_no(self):
-        self.assertIn("_ya_entregada_en_otro = (duplicada.get(\"estado_entrega\") == \"Entregado\")", SRC)
+        self.assertIn(
+            '_ya_entregada_en_otro = bool(duplicada and duplicada.get("estado_entrega") == "Entregado")',
+            SRC)
 
     def test_el_mensaje_no_miente_diciendo_entregada_si_no_lo_esta(self):
         i = SRC.index("else:")
