@@ -192,17 +192,16 @@
     padding: 8px 10px;
     page-break-inside: avoid;
   }
-  .info-card .ic-row { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 4px; }
+  {# 🎨 FIX 2026-09-02 (Daniel: "tiene muchos monitos" -- comparando contra
+     el PDF de Cotizaciones, que usa filas de texto simples dt-lbl/dt-val
+     sin ícono, ver templates/tickets/cotizacion_pdf.html). Se retiran los
+     cuadritos/círculos de ícono decorativos (emoji + letra-en-círculo) de
+     esta sección y se deja SOLO etiqueta en mayúscula + valor en negrita,
+     igual que Cotizaciones. Nada de información se pierde, es puro
+     recorte visual. #}
+  .info-card .ic-row { margin-bottom: 5px; }
   .info-card .ic-row:last-child { margin-bottom: 0; }
-  .info-card .ic-ico {
-    width: 22px; height: 22px;
-    background: var(--ilus-red-l);
-    border-radius: 6px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--ilus-red); font-weight: 900;
-    font-size: 11pt; line-height: 1;
-  }
-  .info-card .ic-text { flex: 1; min-width: 0; font-size: 8.5pt; line-height: 1.4; }
+  .info-card .ic-text { font-size: 8.5pt; line-height: 1.4; }
   .info-card .ic-text .lbl {
     color: var(--ilus-mute); font-weight: 700;
     text-transform: uppercase; font-size: 7pt;
@@ -219,17 +218,9 @@
     border: 1px solid #fca5a5;
     border-radius: 8px;
     padding: 8px 12px;
-    display: flex; align-items: center; gap: 10px;
     margin-bottom: 10px;
   }
-  .ubic-box .u-ico {
-    width: 26px; height: 26px;
-    background: #fff; color: var(--ilus-red);
-    border-radius: 50%; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13pt; font-weight: 900;
-  }
-  .ubic-box .u-text { font-size: 9pt; line-height: 1.4; flex: 1; }
+  .ubic-box .u-text { font-size: 9pt; line-height: 1.4; }
   .ubic-box .u-text b { color: var(--ilus-red); }
 
   /* ───── Técnicos card ───── */
@@ -272,13 +263,6 @@
     text-align: center;
     page-break-inside: avoid;
   }
-  .log-card .lc-ico {
-    width: 30px; height: 30px; margin: 0 auto 4px;
-    background: var(--ilus-bg);
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--ilus-red); font-weight: 900; font-size: 13pt;
-  }
   .log-card .lc-lbl {
     font-size: 7.5pt; color: var(--ilus-mute);
     text-transform: uppercase; font-weight: 700;
@@ -298,15 +282,6 @@
     border-radius: 6px;
     padding: 8px 12px;
     margin-bottom: 12px;
-    display: flex; gap: 10px; align-items: flex-start;
-  }
-  .obs-box .o-ico {
-    width: 22px; height: 22px;
-    background: var(--ilus-red);
-    color: #fff; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 900; font-size: 11pt;
-    flex-shrink: 0;
   }
   .obs-box .o-text { font-size: 9pt; line-height: 1.45; }
   .obs-box .o-text b { color: var(--ilus-red); }
@@ -336,10 +311,25 @@
     padding: 10px;
     margin-bottom: 10px;
     page-break-inside: avoid;
+    break-inside: avoid;
+    position: relative;
+  }
+  /* 🐛 FIX 2026-09-02 (OT-2026-00058, Daniel: "espacios vacíos" -- 60+
+     equipos, documento de 73 páginas con páginas que dejaban 2/3 en
+     blanco). Causa real: Chromium no calcula de forma confiable
+     page-break-inside:avoid cuando la MISMA caja es también un contenedor
+     display:grid (bug conocido, ya advertido en el comentario de arriba
+     sobre .eq-card-wrap) -- a veces sobreestimaba la altura de la tarjeta
+     y la empujaba entera a la página siguiente aunque sobraba espacio de
+     sobra para ella. El fix: page-break-inside:avoid vive en .eq-card
+     (ahora un bloque normal, sin grid), y el grid de 3 columnas se movió
+     a un DESCENDIENTE (.eq-card-cols) que no tiene esa propiedad -- el
+     mismo patrón recomendado para este bug específico de Chromium.
+     Layout visual idéntico, cero cambio de diseño. */
+  .eq-card-cols {
     display: grid;
     grid-template-columns: 110px 1fr 150px;
     gap: 12px;
-    position: relative;
   }
   .eq-card .eq-idx {
     position: absolute;
@@ -823,14 +813,12 @@
     {# Col 1 – Técnico/s + Ticket #}
     <div class="info-card">
       <div class="ic-row">
-        <div class="ic-ico">👤</div>
         <div class="ic-text">
           <span class="lbl">Técnico/s</span>
           <span class="val">{{ visita.tecnico_principal or '—' }}{% if tecnicos_extra %}{% for t in tecnicos_extra %} · {{ t.nombre }}{% endfor %}{% endif %}</span>
         </div>
       </div>
       <div class="ic-row">
-        <div class="ic-ico" style="background:#dbeafe;color:#1e40af">T</div>
         <div class="ic-text">
           <span class="lbl">Ticket / Tipo</span>
           <span class="val">{{ (visita.tipo or 'instalacion')|replace('_',' ')|title }}</span>
@@ -838,7 +826,6 @@
       </div>
       {% if visita.documento_erp_tido and visita.documento_erp_nudo %}
       <div class="ic-row">
-        <div class="ic-ico" style="background:#fee2e2;color:#991b1b">D</div>
         <div class="ic-text">
           <span class="lbl">Documento ERP</span>
           <span class="val">{{ visita.documento_erp_tido }}-{{ visita.documento_erp_nudo }}</span>
@@ -850,7 +837,6 @@
     {# Col 2 – Fecha/Repuestos #}
     <div class="info-card">
       <div class="ic-row">
-        <div class="ic-ico">📅</div>
         <div class="ic-text">
           <span class="lbl">Fecha</span>
           <span class="val">
@@ -859,7 +845,6 @@
         </div>
       </div>
       <div class="ic-row">
-        <div class="ic-ico" style="background:#fef3c7;color:#92400e">R</div>
         <div class="ic-text">
           <span class="lbl">Repuestos</span>
           <span class="val">{{ 'Sí' if visita.usa_repuestos else 'No' }}</span>
@@ -870,7 +855,6 @@
     {# Col 3 – Cliente #}
     <div class="info-card">
       <div class="ic-row">
-        <div class="ic-ico">🏠</div>
         <div class="ic-text">
           <span class="lbl">Cliente</span>
           <span class="val">{{ visita.razon_social }}</span>
@@ -878,7 +862,6 @@
       </div>
       {% if visita.cli_contacto_tel %}
       <div class="ic-row">
-        <div class="ic-ico" style="background:#dcfce7;color:#166534">☏</div>
         <div class="ic-text">
           <span class="lbl">Contacto</span>
           <span class="val">{{ visita.cli_contacto_tel }}</span>
@@ -887,7 +870,6 @@
       {% endif %}
       {% if visita.cli_email or visita.contacto_email %}
       <div class="ic-row">
-        <div class="ic-ico" style="background:#e0e7ff;color:#3730a3">@</div>
         <div class="ic-text">
           <span class="lbl">Correo</span>
           <span class="val" style="font-size:8pt">{{ visita.contacto_email or visita.cli_email }}</span>
@@ -900,7 +882,6 @@
   {# ── Bloque ubicación ── #}
   {% if visita.direccion_visita or visita.cli_direccion %}
   <div class="ubic-box">
-    <div class="u-ico">📍</div>
     <div class="u-text">
       <b>Ubicación:</b>
       {{ visita.direccion_visita or visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}
@@ -922,22 +903,18 @@
   <div class="sec-title">Logística de acceso</div>
   <div class="logist-4">
     <div class="log-card">
-      <div class="lc-ico">P</div>
       <div class="lc-lbl">Estacionamiento</div>
       <div class="lc-val {{ 'si' if visita.acceso_estacionamiento else 'no' }}">{{ 'Sí' if visita.acceso_estacionamiento else 'No' }}</div>
     </div>
     <div class="log-card">
-      <div class="lc-ico">⬆</div>
       <div class="lc-lbl">Ascensor</div>
       <div class="lc-val {{ 'si' if visita.acceso_ascensor else 'no' }}">{{ 'Sí' if visita.acceso_ascensor else 'No' }}</div>
     </div>
     <div class="log-card">
-      <div class="lc-ico">⚙</div>
       <div class="lc-lbl">Montacarga</div>
       <div class="lc-val {{ 'si' if visita.acceso_montacarga else 'no' }}">{{ 'Sí' if visita.acceso_montacarga else 'No' }}</div>
     </div>
     <div class="log-card">
-      <div class="lc-ico">▸</div>
       <div class="lc-lbl">Carga / Descarga</div>
       <div class="lc-val {{ 'si' if visita.acceso_carga else 'no' }}">{{ 'Sí' if visita.acceso_carga else 'No' }}</div>
     </div>
@@ -946,7 +923,6 @@
   {# ── Observación general ── #}
   {% if visita.observaciones or visita.descripcion %}
   <div class="obs-box">
-    <div class="o-ico">💬</div>
     <div class="o-text">
       <b>Observación:</b> {{ visita.observaciones or visita.descripcion }}
     </div>
@@ -963,6 +939,7 @@
     <div class="eq-card-wrap">
     <div class="eq-card">
       <div class="eq-idx">{{ idx }}</div>
+      <div class="eq-card-cols">
       <div class="eq-foto">
         {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}📷{% endif %}
       </div>
@@ -1017,6 +994,7 @@
             <span class="ec-txt" style="color:var(--ilus-mute);font-style:italic">Sin checklist asignado</span>
           </div>
         {% endif %}
+      </div>
       </div>
     </div>
     </div>
@@ -1055,6 +1033,7 @@
     <div class="eq-card-wrap">
     <div class="eq-card">
       <div class="eq-idx">{{ idx }}</div>
+      <div class="eq-card-cols">
       <div class="eq-foto">
         {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}📷{% endif %}
       </div>
@@ -1109,6 +1088,7 @@
             <span class="ec-txt" style="color:var(--ilus-mute);font-style:italic">Sin checklist asignado</span>
           </div>
         {% endif %}
+      </div>
       </div>
     </div>
     </div>

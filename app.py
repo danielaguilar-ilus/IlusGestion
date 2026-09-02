@@ -89045,9 +89045,29 @@ def _ot_pdf_context(vid, embed_images=False):
         })
 
     # ── Paginar equipos: 2 en pág 1, 3 por página siguientes ─────────
+    # 🐛 FIX 2026-09-02 (OT-2026-00058, Daniel: "espacios vacíos" -- 60
+    # equipos, PDF de 73 páginas con la mayoría 2/3 en blanco). Causa raíz
+    # real: esta agrupación fija ("2 y luego de a 3") viene de la ÉPOCA en
+    # que header_block/footer_block se dibujaban A MANO dentro de cada
+    # <section class="sheet"> -- cada "sheet" necesitaba su propio grupo
+    # chico para que el header se repitiera. Desde 2026-08-28 el PDF real
+    # (embed_images=True) usa el header/footer NATIVO de Playwright
+    # (_ot_pdf_header_footer_native), que Chromium repite solo en TODA
+    # página física real -- header_block/footer_block ya son no-operativos
+    # en ese caso (ver {% if not native_header_footer %} en ot_pdf.html).
+    # Resultado: la agrupación fija seguía forzando un salto de página
+    # (.sheet{page-break-after:always}) cada 2-3 equipos aunque sobrara
+    # espacio de sobra en la hoja física -- de ahí las páginas casi vacías.
+    # Para el PDF real, TODOS los equipos van en un solo grupo lógico
+    # (mismo camino que YA usan hoy las OT con <=2 equipos, probado en
+    # producción) y Chromium empaqueta tantas tarjetas como quepan por
+    # página real, usando el fix de page-break-inside:avoid ya corregido
+    # en ot_pdf.html (.eq-card ya no es su propio contenedor grid). La
+    # vista previa por navegador (embed_images=False, sin header nativo)
+    # SIGUE necesitando la agrupación fija -- no se le cambia nada.
     paginas_equipos = []
     if equipos:
-        if len(equipos) <= 2:
+        if len(equipos) <= 2 or embed_images:
             paginas_equipos = [equipos]
         else:
             paginas_equipos.append(equipos[:2])
