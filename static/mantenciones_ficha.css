@@ -1690,8 +1690,10 @@
    Antes de mover se verificó con grep que esas clases solo aparecen en ese
    partial (las menciones en _repuestos_bodega_pane.html son comentarios).
    El resto de clases del modal (.lev-modo-*, .lev-yn-*, .lev-adj-*,
-   .lev-table-eq, .lev-tec-*, .tkcal-*, .tksched-*) y el bloque
-   "POLISH 2026" del final de este archivo NO se movieron: siguen acá. ── */
+   .lev-table-eq, .lev-tec-*, .tkcal-*, .tksched-*) NO se movieron: siguen
+   acá (y siguen duplicadas en tickets_ficha.css). El bloque "POLISH 2026"
+   que estaba al final de este archivo SÍ se movió, el 2026-08-12 ── ver la
+   nota del final. ── */
 .lev-tec-chip{
   cursor:pointer; padding:.45rem .9rem; font-size:.82rem;
   font-weight:500; border-radius:9999px;

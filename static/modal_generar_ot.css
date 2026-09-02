@@ -20,12 +20,25 @@
    templates/mantenciones/_repuestos_bodega_pane.html son COMENTARIOS
    (ese modal usa su propio prefijo .rb-step-*, copiado a propósito).
 
+   ── 2026-08-12: también se movió acá el bloque "POLISH 2026" ──
+   Vivía SOLO al final de mantenciones_ficha.css, así que el mismo modal se
+   veía peor abierto desde un Ticket. Medido con getComputedStyle sobre el
+   mismo HTML: .lev-modo-card .ico daba 42px (chip cuadrado) desde la ficha
+   de cliente y 364.5px (div a ancho completo, sin chip) desde el ticket;
+   #otTipoDescripcion perdía el fondo y la barra roja; #otGarantiaWrap el
+   degradado verde; .lev-adj-zone el radio de 14px. Está al FINAL de este
+   archivo a propósito: tiene que ganarle por cascada a las reglas base de
+   .lev-modo-card / .lev-yn-btn / .lev-adj-* que siguen viviendo (aún
+   duplicadas y algo divergentes) en tickets_ficha.css ~1019 y
+   mantenciones_ficha.css ~1701/~2218.
+
    ── Qué se dejó donde estaba (a propósito, REGLA #4.2) ──
-   · .lev-step-card.lev-sc / .lev-step-ico / .lev-step-wm y todo el bloque
-     "POLISH 2026" al final de mantenciones_ficha.css: no se toca. Parte de
-     ese bloque quedó inerte cuando se retiró #modalLevSelector (ningún
-     HTML/JS escribe hoy la clase .lev-sc), pero eso se REPORTA, no se
-     borra.
+   · Las reglas del bloque POLISH ancladas a .lev-sc (.lev-step-card.lev-sc,
+     .lev-step-ico, .lev-step-wm, .lev-sc .form-label.small, …) quedaron
+     INERTES cuando se retiró #modalLevSelector el 2026-08-10: ningún HTML
+     ni JS escribe hoy esa clase. Igual que .lev-tec-badge, .lev-tec-avatar,
+     .lev-eq-toolbar, .lev-eq-tip, .lev-dir-pin y .lev-inp-pin, que hoy no
+     los aplica nadie. Se movieron TAL CUAL: eso se REPORTA, no se borra.
    · El resto de clases del modal (.lev-modo-*, .lev-yn-*, .lev-adj-*,
      .lev-table-eq, .tkcal-*, .tksched-*) siguen en sus archivos actuales.
      Ojo: ahí SÍ hay divergencia real entre Tickets y Mantenciones —

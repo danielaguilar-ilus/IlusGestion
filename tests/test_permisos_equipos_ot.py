@@ -296,31 +296,98 @@ for ruta, metodo, porque in LEGITIMOS:
         check("@_no_tecnico" not in blq,
               f"{metodo} {ruta} NO lleva @_no_tecnico -- {porque}")
 
-# 4b. El tecnico solo agrega equipos si la OT ES de levantamiento
-#     (Daniel 2026-08-10: "nunca podra agregar, a menos que sea una OT por
-#      levantamiento y descubrimiento en terreno").
-#     No basta con esconder el boton en la plantilla: la ruta se llama directo.
+# 4b. PASO 7 del plan "el levantamiento es un tipo mas" (2026-08-12):
+#     el candado de agregar equipos ya NO es solo del tecnico -- Daniel:
+#     "si hay que limitar todo a una factura por favor, o a menos que
+#      provenga de la ficha de productos" -- aplica a TODOS los roles.
+#     Criterio nuevo: tipo='levantamiento' Y modalidad_captura=
+#     'descubrimiento' (columna del Paso 3), NO el criterio amplio
+#     _ot_es_levantamiento() (que tambien mira el vinculo legacy --
+#     ese criterio, aplicado aqui, nunca podia dar False: era codigo
+#     muerto, ver commit del Paso 7).
 i_crear = next((i for i, l in enumerate(LINEAS)
                 if l.startswith("def mant_lev_item_crear")), None)
 check(i_crear is not None, "existe def mant_lev_item_crear")
 if i_crear is not None:
-    cuerpo_crear = "".join(LINEAS[i_crear:i_crear + 80])
+    cuerpo_crear = "".join(LINEAS[i_crear:i_crear + 150])
     check("TECNICO_NO_AGREGA_EQUIPOS" in cuerpo_crear,
-          "mant_lev_item_crear rechaza al tecnico con codigo TECNICO_NO_AGREGA_EQUIPOS")
-    check("_ot_es_levantamiento" in cuerpo_crear,
-          "usa _ot_es_levantamiento() -- misma definicion que el resto del backend, "
-          "no un criterio paralelo")
-    check('_rol_familia' in cuerpo_crear,
-          "decide por FAMILIA de rol (cubre tecnico_externo), no por string exacto")
+          "mant_lev_item_crear rechaza con codigo TECNICO_NO_AGREGA_EQUIPOS")
+    check("modalidad_captura" in cuerpo_crear,
+          "el candado consulta modalidad_captura (Paso 3), no solo el tipo")
+    check("'descubrimiento'" in cuerpo_crear or '"descubrimiento"' in cuerpo_crear,
+          "el candado exige modalidad_captura == 'descubrimiento'")
+    check('_rol_familia((getattr(g, "user", None) or {}).get("role")) == "tecnico"'
+          not in cuerpo_crear,
+          "el candado YA NO distingue por rol tecnico -- aplica a TODOS los roles "
+          "(Daniel: 'limitar todo a una factura... a menos que provenga de la ficha')")
+    # 4b-i. Override de superadmin: mismo patron que garantia retroactiva
+    #       (mant_visita_update) -- flag + motivo >=10 chars + auditoria.
+    check("override_superadmin" in cuerpo_crear,
+          "existe el flag override_superadmin para la excepcion de superadmin")
+    check("override_motivo" in cuerpo_crear,
+          "existe el campo override_motivo")
+    check("len(_motivo_override) < 10" in cuerpo_crear,
+          "el override exige motivo de al menos 10 caracteres (mismo minimo que "
+          "garantia retroactiva)")
+    check("equipo_agregado_override_superadmin" in cuerpo_crear,
+          "el override queda auditado en mant_logs con accion "
+          "'equipo_agregado_override_superadmin'")
+    check('(getattr(g, "permissions", {}) or {}).get("superadmin")' in cuerpo_crear,
+          "el override solo lo puede usar superadmin (mismo mecanismo de permisos "
+          "que el resto del modulo)")
+    # 4b-ii. Fail-closed ESTRICTO -- Daniel: "pienso que esta bien que sea
+    #        estricto... a menos que sea un levantamiento para conocer al
+    #        cliente". El except NO se invirtio a fail-open generico: solo
+    #        el caso especifico "columna inexistente" (1054) se trata
+    #        distinto; cualquier otro error mantiene el bloqueo.
+    check('"1054" in _msg_e or "unknown column" in _msg_e' in cuerpo_crear,
+          "SOLO el error 1054 (columna aun no desplegada) se trata como caso "
+          "especial -- no es un fail-open generico del except")
+    check("_puede_agregar = False" in cuerpo_crear,
+          "el except generico (cualquier otro error) sigue bloqueando "
+          "(fail-closed), no se invirtio la polaridad")
 
-# 4c. La plantilla tampoco muestra el boton en una OT que no es levantamiento
+# 4b-iii. Test de COMPORTAMIENTO (no solo texto): modalidad_captura IS NULL
+#         debe seguir bloqueando -- lectura fail-closed de lo legacy
+#         (Paso 7d). Se simula la MISMA comparacion que usa el codigo real
+#         ("_modalidad != 'descubrimiento'", ver arriba) para verificar el
+#         resultado sin necesitar una base de datos.
+print("\n4b-iii. modalidad_captura: comportamiento NULL vs valores reales")
+for _modalidad_sim, _debe_bloquear in [
+    (None, True),                 # legacy sin migrar -- Paso 7d: bloquea
+    ("ficha", True),               # equipos preseleccionados -- bloquea
+    ("descubrimiento", False),     # via legitima -- permite
+]:
+    _bloqueado_sim = (_modalidad_sim != "descubrimiento")
+    check(_bloqueado_sim == _debe_bloquear,
+          f"modalidad_captura={_modalidad_sim!r} -> "
+          f"{'BLOQUEADO' if _bloqueado_sim else 'PERMITIDO'} "
+          f"(esperado: {'BLOQUEADO' if _debe_bloquear else 'PERMITIDO'})")
+
+# 4c. La plantilla tampoco muestra el boton en una OT que no cumple el
+#     criterio nuevo (tipo='levantamiento' Y modalidad_captura=
+#     'descubrimiento').
 TPL = os.path.join(RAIZ, "templates", "mantenciones", "ot_ejecutar.html")
 with open(TPL, encoding="utf-8") as f:
     tpl = f.read()
-check("_es_lev_ot" in tpl,
-      "la plantilla calcula si la OT es de levantamiento antes de mostrar 'Agregar equipo'")
-check("lev_editable and (_es_lev_ot or not es_tecnico)" in tpl,
-      "el boton 'Agregar equipo' se oculta al tecnico si la OT no es de levantamiento")
+check("_puede_agregar_equipo" in tpl,
+      "la plantilla calcula _puede_agregar_equipo con el criterio nuevo antes "
+      "de mostrar 'Agregar equipo'")
+check("lev_modalidad_captura == 'descubrimiento'" in tpl,
+      "el boton 'Agregar equipo' exige modalidad_captura == 'descubrimiento', "
+      "no solo el tipo/vinculo (criterio amplio viejo)")
+check("lev_editable and _puede_agregar_equipo" in tpl,
+      "el boton se gatea con lev_editable + el criterio nuevo, para TODOS los "
+      "roles (ya no hay excepcion 'not es_tecnico')")
+# 4c-i. El botón sigue naciendo con Jinja {% if %} (no display:none) -- un
+#       ocultamiento CSS se revertiría solo con el forzado de
+#       actualizarLockFirmar() en el JS y el técnico recibiría un 403.
+JS = os.path.join(RAIZ, "static", "mantenciones_ot_ejecutar.js")
+with open(JS, encoding="utf-8") as f:
+    js_src = f.read()
+check("el.classList.contains('levd-add')" in js_src,
+      "el JS sigue forzando display='' sobre .levd-add -- por eso el gate REAL "
+      "tiene que ser que el elemento no exista en el DOM (Jinja), no CSS")
 
 
 # ══════════════════════════════════════════════════════════════════

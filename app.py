@@ -84210,6 +84210,24 @@ def mant_ot_ejecutar(vid):
         (vid,)
     )
 
+    # PASO 7e (2026-08-12, plan "el levantamiento es un tipo más"): la
+    # plantilla necesita la modalidad_captura del levantamiento (Paso 3)
+    # para alinear el botón "Agregar equipo" con el candado REAL del
+    # backend (mant_lev_item_crear, Paso 7a-7d) -- criterio server-side es
+    # la única fuente de verdad, ver Paso 7f. Defensivo: si la columna aún
+    # no existe en este entorno (1054) o hay cualquier otro error, se
+    # asume None -- oculta el botón (más conservador: nunca muestra un
+    # botón que el backend luego rechazaría con 403).
+    lev_modalidad_captura = None
+    if _lev_id_huerf:
+        try:
+            _row_modcap = mysql_fetchone(
+                "SELECT modalidad_captura FROM mant_levantamientos WHERE id=%s",
+                (_lev_id_huerf,))
+            lev_modalidad_captura = (_row_modcap or {}).get("modalidad_captura")
+        except Exception as _e_modcap_tpl:
+            print(f"[ot_ejecutar] lev_modalidad_captura error: {_e_modcap_tpl}", flush=True)
+
     return render_template(
         "mantenciones/ot_ejecutar.html",
         visita=visita,
@@ -84244,6 +84262,7 @@ def mant_ot_ejecutar(vid):
         # tupla de estados en Jinja/JS por separado.
         lev_editable=((visita.get("estado") or "") in _LEV_ESTADOS_EDITABLES),
         lev_huerfanos_count=lev_huerfanos_count,
+        lev_modalidad_captura=lev_modalidad_captura,
         # 2026-06-23 (Daniel) — controles de TERRENO habilitables desde
         # /mantenciones/configuracion (geofence check-in + control de tiempo).
         reglas_terreno={
@@ -84479,6 +84498,16 @@ def mant_ot_equipo_datos(vid, mid):
             # placa). Es lo que Daniel autorizó: "sí, pero sin pisar lo ya
             # registrado".
             #
+            # NOTA DE FUSIÓN (2026-09): esto llegó DOS DÍAS DESPUÉS de que
+            # sesión-ot-import (Paso 5c, 12-ago, recuperado a main como
+            # b6c3344 el 19-ago) estableciera "fuera de levantamiento, la
+            # ficha JAMÁS se escribe sola -- todo va a sugerencia". Esta
+            # función NO contradice esa regla, la afina: solo completa
+            # campos VACÍOS (nunca pisa un dato ya cargado) y deja auditoría
+            # en mant_maquina_audit; lo que no aplica sigue yendo a
+            # sugerencia igual que antes (ver _campos_prop más abajo). Se
+            # conserva la versión de main (más nueva y ya en producción).
+            #
             # Lo que NO se aplicó sigue yendo a sugerencia, más abajo: el
             # dato nunca se pierde.
             _campos_ot = dict(zip([s.split('=')[0] for s in sets], vals[:-1]))
@@ -84501,8 +84530,9 @@ def mant_ot_equipo_datos(vid, mid):
             # acciones automáticas, solo sugiere"). `last_visita_id` se
             # excluye del cuerpo -- no es un dato de ficha, es trazabilidad
             # interna sin valor para quien revise la sugerencia.
-            # 2026-08-20: si la serie YA se escribió arriba, se excluye para
-            # no pedir a un humano que apruebe algo que ya está aplicado.
+            # 2026-08-20: si el campo YA se escribió arriba (_aplicados), se
+            # excluye para no pedir a un humano que apruebe algo que ya
+            # está aplicado.
             _campos_prop = {
                 k: v for k, v in _campos_ot.items()
                 if k != "last_visita_id" and k not in _aplicados
@@ -101905,6 +101935,116 @@ def mant_plantilla_sugerida_por_sku():
     return jsonify({"ok": True, "plantilla_id": pid, "plantilla_nombre": nombre})
 
 
+def _familia_plantilla_para_tipo(tipo_ot):
+    """Nombre de 'familia' (el texto ANTES del ' · ') que usa la convención
+    de nombre de las plantillas por clasificación real de equipo, ej.
+    'Mantención · Trotadora Motorizada' (sembradas en producción el
+    2026-08-12). Se resuelve con la MISMA tabla editable que ya decide en
+    qué pestaña vive cada plantilla (mant_categoria_tipo_map, Tarea 1,
+    2026-08-10) -- no se inventa un mapeo nuevo. Si la tabla no tiene el
+    tipo o la consulta falla, cae al seed fijo (_PLANT_CATEGORIA_TIPO_SEED),
+    mismo patrón de _tipo_es_trabajo_interno.
+
+    Devuelve None si el tipo no resuelve a ninguna categoría con label
+    conocido (_PLANT_CATEGORIA_LABEL) -- en ese caso el caller no debe
+    intentar armar un nombre de plantilla por clasificación.
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return None
+    categoria = None
+    try:
+        row = mysql_fetchone(
+            "SELECT categoria FROM mant_categoria_tipo_map WHERE tipo_ot=%s", (tipo_ot,))
+        categoria = row["categoria"] if row else None
+    except Exception:
+        categoria = None
+    if not categoria:
+        categoria = _PLANT_CATEGORIA_TIPO_SEED.get(tipo_ot)
+    return _PLANT_CATEGORIA_LABEL.get(categoria) if categoria else None
+
+
+def _plantilla_por_clasificacion_sku(sku, tipo_ot):
+    """ID de la plantilla que corresponde a un equipo SEGÚN SU CLASIFICACIÓN
+    REAL de catálogo -- no el criterio ciego de _plantilla_estandar_para_tipo
+    (que solo mira el tipo de OT y por eso puede darle a una trotadora el
+    checklist de una bicicleta si esa plantilla tiene más ítems). Daniel,
+    2026-08-12: "no le voy a hacer una verificación a una trotadora como a
+    una bicicleta".
+
+    Puente (medido en vivo el 2026-08-12, ver GET /mantenciones/api/
+    diagnostico/cobertura-clasificacion): mant_maquinas.sku ->
+    cat_productos.sku -> cat_productos.clase_producto (slug) ->
+    cat_clases_producto.nombre. Con ese nombre + la familia del tipo de OT
+    (Instalación/Mantención/...) arma el nombre de convención
+    "{familia} · {clasificación}" y busca una plantilla ACTIVA con ese
+    nombre exacto y al menos 1 ítem (mismo estándar de calidad que la
+    plantilla "de convención" de _plantilla_estandar_para_tipo).
+
+    Devuelve None si falta CUALQUIER eslabón (sin sku, sku fuera del
+    catálogo, producto sin clase asignada, o no existe todavía la
+    plantilla para esa clasificación) -- el caller SIEMPRE debe caer a
+    _plantilla_estandar_para_tipo en ese caso. NUNCA bloquea la creación
+    de la OT: "no hay suficiente información" es un caso legítimo, no un
+    error (medición real 2026-08-12: buena parte de los equipos hoy no
+    cruza contra el catálogo por SKU faltante/generado a mano/fuera de
+    catálogo).
+    """
+    sku = (sku or "").strip()
+    if not sku:
+        return None
+    familia = _familia_plantilla_para_tipo(tipo_ot)
+    if not familia:
+        return None
+    try:
+        clase_row = mysql_fetchone(
+            "SELECT cp.nombre AS clase_nombre "
+            "  FROM cat_productos p "
+            "  JOIN cat_clases_producto cp "
+            "    ON cp.slug = p.clase_producto AND cp.activo = 1 "
+            " WHERE p.sku = %s "
+            "   AND COALESCE(TRIM(p.clase_producto), '') <> '' "
+            " LIMIT 1",
+            (sku,)
+        )
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] resolver clase de sku={sku!r} falló: {e}", flush=True)
+        return None
+    if not clase_row or not clase_row.get("clase_nombre"):
+        return None
+    nombre_plantilla = f"{familia} · {clase_row['clase_nombre']}"
+    try:
+        prow = mysql_fetchone(
+            "SELECT p.id FROM mant_tarea_plantillas p "
+            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+            " WHERE p.nombre = %s AND COALESCE(p.activa, 1) = 1 "
+            " GROUP BY p.id LIMIT 1",
+            (nombre_plantilla,)
+        )
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] buscar plantilla '{nombre_plantilla}' falló: {e}", flush=True)
+        return None
+    return int(prow["id"]) if prow else None
+
+
+def _plantilla_por_clasificacion_equipo(maquina_id, tipo_ot):
+    """Wrapper de _plantilla_por_clasificacion_sku para cuando solo se tiene
+    el id de mant_maquinas a mano (no el sku ya resuelto en memoria). Si el
+    caller YA tiene el sku (ej. el dict `maquinas` de _mant_lev_crear_ot_core,
+    que lo trae en la misma consulta que arma la lista de equipos), preferir
+    llamar directo a _plantilla_por_clasificacion_sku y ahorrarse esta
+    consulta extra.
+    """
+    if not maquina_id:
+        return None
+    try:
+        row = mysql_fetchone("SELECT sku FROM mant_maquinas WHERE id=%s", (maquina_id,))
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] leer sku de maquina {maquina_id} falló: {e}", flush=True)
+        return None
+    return _plantilla_por_clasificacion_sku(row.get("sku") if row else None, tipo_ot)
+
+
 def _tarea_respaldo_texto(tipo_ot, nombre_equipo):
     """(titulo, descripcion) de la tarea de respaldo por equipo."""
     nombre_equipo = (nombre_equipo or 'equipo')[:240]
@@ -103453,47 +103593,115 @@ def mant_lev_item_crear(lid):
     if not _lev_puede_accion(lid, "ejecutar", lev_row=lev):
         return _lev_403_response("ejecutar")
 
-    # ── El tecnico NO amplia la lista de equipos de una OT normal ──
-    # Daniel 2026-08-10: "nunca podra agregar, a menos que sea una OT por
-    # levantamiento y descubrimiento en terreno".
+    d = request.get_json(silent=True) or {}
+
+    # ── Candado REAL de "quién puede agregar equipos" ───────────────────
+    # PASO 7 (2026-08-12, plan "el levantamiento es un tipo más"): el
+    # candado de arriba (antes de este cambio) nunca podía dar False --
+    # `_v_lev` casi siempre resolvía `_ot_es_levantamiento()` a True porque
+    # el propio `levantamiento_id` de la OT apunta de vuelta a `lid`
+    # (el levantamiento con el que se entró al endpoint). Era código
+    # muerto. Daniel, textual: "el técnico ni nadie puede agregar
+    # productos que no estén en una factura cobrada, a menos que sea un
+    # levantamiento para conocer al cliente" -- confirma que el candado
+    # debe ser ESTRICTO.
     #
-    # En una preventiva / inspeccion / garantia / instalacion el alcance lo
-    # define quien crea la OT; el tecnico la EJECUTA. Sumar equipos en terreno
-    # cambiaba el alcance (y por lo tanto lo facturable) sin que nadie lo
-    # aprobara. La excepcion es el levantamiento/descubrimiento, cuyo proposito
-    # ES que el tecnico arme el inventario alla.
-    #
-    # Esto es el candado REAL: en la plantilla ya se esconde el boton, pero la
-    # ruta se puede llamar directo. Los roles gestores no se tocan.
-    try:
-        if _rol_familia((getattr(g, "user", None) or {}).get("role")) == "tecnico":
-            _v_lev = None
-            if lev.get("visita_id"):
-                _v_lev = mysql_fetchone(
-                    "SELECT id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s",
-                    (lev["visita_id"],)
+    # 7a: criterio nuevo — SOLO se permite si la OT es tipo='levantamiento'
+    #     Y su modalidad_captura (Paso 3) es 'descubrimiento'.
+    # 7b: aplica a TODOS los roles, no solo técnico (Daniel: "si hay que
+    #     limitar todo a una factura por favor, o a menos que provenga de
+    #     la ficha de productos" -- sin excepción por rol).
+    # 7d: modalidad_captura IS NULL (legacy, de antes del Paso 3) se trata
+    #     como "NO es descubrimiento" -- lectura fail-closed correcta.
+    _v_lev = None
+    if lev.get("visita_id"):
+        _v_lev = mysql_fetchone(
+            "SELECT id, tipo FROM mant_visitas WHERE id=%s",
+            (lev["visita_id"],)
+        )
+    _puede_agregar = True
+    _motivo_bloqueo = None
+    if not lev.get("visita_id"):
+        # Sin OT espejo el levantamiento es autónomo (flujo de
+        # levantamiento puro) => se permite, es su caso de uso (Daniel
+        # 2026-06-23).
+        pass
+    elif ((_v_lev or {}).get("tipo") or "").strip().lower() != "levantamiento":
+        _puede_agregar = False
+        _motivo_bloqueo = "La OT vinculada no es de tipo levantamiento."
+    else:
+        try:
+            _lev_mod = mysql_fetchone(
+                "SELECT modalidad_captura FROM mant_levantamientos WHERE id=%s", (lid,))
+            _modalidad = (_lev_mod or {}).get("modalidad_captura")
+            if _modalidad != "descubrimiento":
+                _puede_agregar = False
+                _motivo_bloqueo = (
+                    "El levantamiento no es de modalidad 'descubrimiento' "
+                    f"(modalidad_captura={_modalidad!r})."
                 )
-            # Sin OT espejo el levantamiento es autonomo (flujo de
-            # levantamiento puro) => se permite, es su caso de uso.
-            if _v_lev and not _ot_es_levantamiento(_v_lev):
+        except Exception as _e_modcap:
+            # 7c (CORRECCIÓN DE FABLE, confirmada por Daniel como la
+            # interpretación correcta): SOLO para el error específico de
+            # columna inexistente (1054 -- el ALTER del Paso 3 aún no
+            # llegó a este entorno, recordar que prod corre con
+            # ILUS_SKIP_MIGRATIONS=1) se trata como "comportamiento aún no
+            # desplegado" y se permite -- NO se convierte el except
+            # genérico en fail-open. Cualquier OTRO error mantiene
+            # fail-closed (403), sin excepciones.
+            _msg_e = str(_e_modcap).lower()
+            if "1054" in _msg_e or "unknown column" in _msg_e:
+                print(f"[lev_item_crear][gate] lid={lid}: modalidad_captura aún no "
+                      f"desplegada en este entorno -- se permite sin el gate nuevo "
+                      f"(comportamiento pre-Paso 7).", flush=True)
+            else:
+                print(f"[lev_item_crear][gate] lid={lid}: {_e_modcap}", flush=True)
+                _puede_agregar = False
+                _motivo_bloqueo = "No se pudo validar la modalidad del levantamiento."
+
+    if not _puede_agregar:
+        # EXCEPCIÓN CONFIRMADA por Daniel: "debe considerarse una pequeña
+        # flexibilidad al super admin." Mismo patrón ya aprobado para la
+        # corrección retroactiva de garantía (mant_visita_update, ver
+        # "CORRECCIÓN RETROACTIVA DE GARANTÍA" / garantia_retroactiva):
+        # flag + motivo obligatorio (>=10 caracteres) + auditoría en
+        # mant_logs. Solo superadmin (_puede_superadmin, mismo mecanismo
+        # de permisos que usa el resto del módulo -- g.permissions).
+        _es_superadmin = bool((getattr(g, "permissions", {}) or {}).get("superadmin"))
+        _override = bool(d.get("override_superadmin"))
+        if _es_superadmin and _override:
+            _motivo_override = (d.get("override_motivo") or "").strip()
+            if len(_motivo_override) < 10:
                 return jsonify({
                     "ok": False,
-                    "error": "Esta OT no es de levantamiento: no puedes agregar "
-                             "equipos. Trabaja sobre los equipos asignados.",
-                    "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
-                }), 403
-    except Exception as _e_gate_add:
-        # FAIL-CLOSED a proposito: si no podemos determinar el tipo de OT no
-        # abrimos la puerta. Es una restriccion, no una funcionalidad: ante la
-        # duda conviene bloquear y que el gestor lo resuelva.
-        print(f"[lev_item_crear][gate_tecnico] lid={lid}: {_e_gate_add}", flush=True)
-        return jsonify({
-            "ok": False,
-            "error": "No se pudo validar el tipo de OT. Avisa a tu supervisor.",
-            "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
-        }), 403
+                    "error": "Para agregar un equipo fuera de un levantamiento por "
+                             "descubrimiento, indica el motivo (mínimo 10 caracteres).",
+                    "error_codigo": "OVERRIDE_MOTIVO_REQUERIDO",
+                }), 400
+            _mant_log(
+                "levantamiento", lid, "equipo_agregado_override_superadmin",
+                f"{current_username() or 'superadmin'} agregó equipo saltando el "
+                f"candado ({_motivo_bloqueo}) · motivo: {_motivo_override[:500]}"
+            )
+            # Sigue el flujo normal de creación más abajo (permitido).
+        elif _es_superadmin:
+            # Superadmin SIN el override explícito: se le avisa que puede
+            # forzarlo, pero no se le abre la puerta en silencio.
+            return jsonify({
+                "ok": False,
+                "error": f"{_motivo_bloqueo} Como superadmin puedes forzarlo con un "
+                         "motivo (override_superadmin=true + override_motivo).",
+                "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
+            }), 403
+        else:
+            return jsonify({
+                "ok": False,
+                "error": f"{_motivo_bloqueo} Trabaja sobre los equipos ya asociados a "
+                         "la factura, o pide que se genere un Levantamiento por "
+                         "descubrimiento para conocer al cliente.",
+                "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
+            }), 403
 
-    d = request.get_json(silent=True) or {}
     maquina_id = d.get("maquina_id")
     nombre = (d.get("nombre") or "").strip()[:300]
     # client_uid (Daniel 2026-08-08): generado en el navegador al abrir un
