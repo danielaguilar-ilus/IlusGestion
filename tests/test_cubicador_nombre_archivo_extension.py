@@ -184,12 +184,15 @@ class TestNoSeTocoNadaAjeno(unittest.TestCase):
                  if _fuente(fn, self.tree_local) != _fuente(fn, self.tree_main)]
         self.assertEqual(rotas, [], f"caminos criticos modificados: {rotas}")
 
-    def test_no_hay_funciones_nuevas(self):
-        f_local = {n.name for n in ast.walk(self.tree_local)
-                   if isinstance(n, ast.FunctionDef)}
-        f_main = {n.name for n in ast.walk(self.tree_main)
-                  if isinstance(n, ast.FunctionDef)}
-        self.assertEqual(sorted(f_local - f_main), [])
+    # NOTA 2026-09-01: se retira test_no_hay_funciones_nuevas (exigia CERO
+    # funciones nuevas en TODO app.py comparado con origin/main). Es el mismo
+    # assert de punto-en-el-tiempo que ya se retiro el 2026-08-24 en
+    # test_cubicador_excel_vol_m3_y_bultos_total.py -- se rompe con CUALQUIER
+    # PR legitimo que agregue una funcion a app.py, sin importar donde. Se
+    # rompio ahora con el laboratorio de cotizacion FedEx
+    # (tr_diag_fedex_rate_lab y sus helpers), que no toca nada del cubicador
+    # ni esta en INTOCABLES. Ver tests/test_fedex_rate_lab.py para su propia
+    # proteccion especifica.
 
 
 if __name__ == "__main__":
