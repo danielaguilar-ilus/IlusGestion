@@ -77201,6 +77201,96 @@ def ot2_detalle(vid):
     doc_header = {"label": _doc_label, "tipo": _doc_tipo,
                   "ok": bool(_fin_ok), "faltan": _fin_faltan}
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 🆕 2026-09-02 — ACTIVIDAD DE LA OT (Daniel, urgente: "necesito algo
+    # parecido a una trazabilidad como esta, la de los tickets... tiene que
+    # decir la trazabilidad de quién realizó la orden de trabajo, y si la
+    # reagendaron, también necesito toda esa trazabilidad, una trazabilidad
+    # a detalle").
+    #
+    # CERO backend nuevo de captura: `mant_logs` (entidad='visita') YA venía
+    # registrando todo esto desde hace meses vía `_mant_log()` -- creación,
+    # reagendamientos CON el salto de días y el motivo declarado, cambios de
+    # cobertura, firmas, correos, fotos, adjuntos. Lo único que faltaba era
+    # una pantalla que lo mostrara: hasta hoy esa historia solo era visible
+    # consultando la tabla a mano. Acá se lee y se traduce a lenguaje humano.
+    # ═══════════════════════════════════════════════════════════════════
+    _ACT_MAP = {
+        # accion                        (etiqueta legible, icono, color, grupo)
+        "creada":                       ("creó la OT", "bi-flag-fill", "verde", "cambios"),
+        "retroactiva_creada":           ("creó la OT (retroactiva)", "bi-flag-fill", "verde", "cambios"),
+        "registrada_historica":         ("registró la OT como histórica", "bi-clock-history", "gris", "cambios"),
+        "programada_auto":              ("programó la OT automáticamente", "bi-calendar-check", "azul", "cambios"),
+        "actualizada":                  ("actualizó la OT", "bi-pencil-fill", "azul", "cambios"),
+        "edicion_post_firma":           ("editó la OT después de firmada", "bi-exclamation-triangle-fill", "ambar", "cambios"),
+        "eliminada":                    ("eliminó la OT", "bi-trash3-fill", "rojo", "cambios"),
+        "tecnico_agregado":             ("agregó un técnico", "bi-person-plus-fill", "verde", "cambios"),
+        "tecnico_quitado":              ("quitó un técnico", "bi-person-dash-fill", "ambar", "cambios"),
+        "ruta_iniciada":                ("inició la ruta", "bi-signpost-2-fill", "azul", "cambios"),
+        "equipo_agregado_permiso_rol":  ("agregó un equipo a la OT", "bi-plus-square-fill", "verde", "cambios"),
+        "plantilla_aplicada":           ("aplicó un checklist", "bi-list-check", "azul", "cambios"),
+        "plantilla_reasignada":         ("cambió el checklist de un equipo", "bi-arrow-left-right", "azul", "cambios"),
+        "diagnostico_guardado":         ("guardó un diagnóstico", "bi-clipboard2-pulse-fill", "azul", "cambios"),
+        "diagnostico_compuesto":        ("guardó el diagnóstico general", "bi-clipboard2-pulse-fill", "azul", "cambios"),
+        # ── Firmas y aprobación
+        "firmada_tecnico":              ("firmó como técnico", "bi-pen-fill", "verde", "firmas"),
+        "firmada_cliente":              ("registró la firma del cliente", "bi-pen-fill", "verde", "firmas"),
+        "firmada_cliente_remoto":       ("el cliente firmó a distancia", "bi-pen-fill", "verde", "firmas"),
+        "firma_tecnico_liberada":       ("liberó la firma del técnico", "bi-arrow-counterclockwise", "ambar", "firmas"),
+        "firma_con_borradores":         ("firmó con respuestas en borrador", "bi-exclamation-triangle-fill", "ambar", "firmas"),
+        "aprobada_supervisor":          ("aprobó y cerró la OT", "bi-check-circle-fill", "verde", "firmas"),
+        "rechazada_supervisor":         ("rechazó el cierre de la OT", "bi-x-circle-fill", "rojo", "firmas"),
+        # ── Dinero y documentos
+        "finanzas_declaradas":          ("declaró las finanzas", "bi-cash-coin", "verde", "cambios"),
+        "factura_asociada":             ("asoció un documento", "bi-file-earmark-check-fill", "verde", "cambios"),
+        "factura_ligada":               ("ligó una factura", "bi-file-earmark-check-fill", "verde", "cambios"),
+        "cotizacion_ligada":            ("ligó una cotización", "bi-file-earmark-text-fill", "azul", "cambios"),
+        "oc_ligada":                    ("ligó una orden de compra", "bi-file-earmark-text-fill", "azul", "cambios"),
+        # ── Envíos
+        "email_enviado":                ("envió un correo", "bi-envelope-fill", "azul", "envios"),
+        "firma_remota_enviada":         ("envió el link de firma por correo", "bi-envelope-paper-fill", "azul", "envios"),
+        "firma_remota_whatsapp_generada": ("generó el link de firma por WhatsApp", "bi-whatsapp", "verde", "envios"),
+        "ot_compartida_wa":             ("compartió la OT por WhatsApp", "bi-whatsapp", "verde", "envios"),
+        "informe_postservicio":         ("generó el informe post servicio", "bi-file-earmark-word-fill", "azul", "envios"),
+        # ── Archivos
+        "adjunto_subido":               ("subió un archivo", "bi-paperclip", "azul", "archivos"),
+        "adjunto_eliminado":            ("eliminó un archivo", "bi-trash3", "ambar", "archivos"),
+        "grabacion_video":              ("grabó un video", "bi-camera-reels-fill", "azul", "archivos"),
+        "foto_eliminada":               ("eliminó una foto", "bi-trash3", "ambar", "archivos"),
+    }
+    actividad = []
+    try:
+        _logs = mysql_fetchall(
+            "SELECT accion, detalle, usuario, created_at "
+            "  FROM mant_logs "
+            " WHERE entidad='visita' AND entidad_id=%s "
+            " ORDER BY created_at DESC, id DESC LIMIT 120", (vid,)) or []
+        for _lg in _logs:
+            _acc = (_lg.get("accion") or "").strip()
+            _lbl, _ico, _col, _grp = _ACT_MAP.get(
+                _acc,
+                # Fallback honesto: en vez de esconder una acción que no está
+                # mapeada, se muestra el nombre técnico legible. Así una
+                # acción nueva aparece igual en la bitácora desde el día uno.
+                (_acc.replace("_", " "), "bi-dot", "gris", "cambios"))
+            _det = (_lg.get("detalle") or "").strip()
+            # "REAGENDADA: 01/09 → 05/09 (+4 días) · motivo: ..." ya viene
+            # armado por el PUT de la visita — se destaca como su propio tipo
+            # de evento porque es justo lo que Daniel quiere poder auditar.
+            if _acc == "actualizada" and _det.upper().startswith("REAGENDADA"):
+                _lbl, _ico, _col = "reagendó la OT", "bi-calendar-event-fill", "ambar"
+            actividad.append({
+                "accion": _acc, "label": _lbl, "icono": _ico,
+                "color": _col, "grupo": _grp,
+                "detalle": _det,
+                "usuario": (_lg.get("usuario") or "sistema"),
+                "cuando": chile_fmt_filter(_lg.get("created_at"), "%d/%m/%Y %H:%M")
+                          if _lg.get("created_at") else "",
+            })
+    except Exception as _e_act:
+        print(f"[ot2_detalle] actividad vid={vid}: {_e_act}", flush=True)
+        actividad = []
+
     # ── Evidencia — pestaña nueva (Daniel 27-ago: "los técnicos no sabían
     # que podían dejar evidencia... buscar la mejor manera de mostrarlo").
     # El dato ya se sube desde hace tiempo (mant_visita_fotos); lo que
@@ -77270,6 +77360,8 @@ def ot2_detalle(vid):
         finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
         # 2026-09-02 — chip de documento en el header (ver doc_header arriba).
         doc_header=doc_header,
+        # 2026-09-02 — bitácora de la OT, estilo "Actividad del ticket".
+        actividad=actividad,
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         puede_eliminar=puede_eliminar,

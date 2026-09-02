@@ -97,6 +97,61 @@
   .otd-header-acts .otd-btn{flex:1;justify-content:center}
 }
 
+/* ══ ACTIVIDAD DE LA OT — bitácora estilo "Actividad del ticket" ══════
+   🆕 2026-09-02 (Daniel: "necesito algo parecido a una trazabilidad como
+   esta, la de los tickets"). Mismo lenguaje visual que
+   static/tickets_ficha.css (.tk-act-*): línea vertical continua, nodo
+   circular con color por tipo de evento, anillo pulsante en el más
+   reciente. Clases propias `otd-act-*` para NO acoplar esta pantalla al
+   CSS de Tickets -- si mañana cambia esa ficha, esta no se rompe. */
+.otd-act-filtros{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.otd-act-chip{padding:4px 12px;border-radius:50px;font-size:.72rem;font-weight:700;cursor:pointer;
+  background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb;user-select:none;
+  transition:background .12s,color .12s,border-color .12s}
+.otd-act-chip:hover{border-color:#dc2626;color:#dc2626}
+.otd-act-chip.active{background:#dc2626;color:#fff;border-color:#dc2626}
+.otd-act-chip.active:hover{color:#fff}
+.otd-act-item{position:relative;display:flex;gap:14px;padding-bottom:14px}
+.otd-act-item::before{content:'';position:absolute;left:17px;top:40px;bottom:-4px;width:3px;
+  border-radius:2px;background:linear-gradient(180deg,#e2e8f0 0%,#f1f5f9 100%)}
+.otd-act-item:last-child{padding-bottom:0}
+.otd-act-item:last-child::before{display:none}
+.otd-act-nodo{width:36px;height:36px;border-radius:50%;flex-shrink:0;display:flex;
+  align-items:center;justify-content:center;font-size:.92rem;position:relative;z-index:1;
+  border:2.5px solid #fff;box-shadow:0 0 0 1.5px #e2e8f0,0 1px 3px rgba(0,0,0,.08);margin-top:2px}
+/* Semáforo por tipo de evento (REGLA #2): verde ok, azul info, ámbar aviso,
+   rojo problema, gris neutro. */
+.c-verde .otd-act-nodo{background:#dcfce7;color:#16a34a}
+.c-azul  .otd-act-nodo{background:#dbeafe;color:#2563eb}
+.c-ambar .otd-act-nodo{background:#fff8e1;color:#b45309}
+.c-rojo  .otd-act-nodo{background:#fee2e2;color:#dc2626}
+.c-gris  .otd-act-nodo{background:#f3f4f6;color:#6b7280}
+/* El evento más reciente late — "¿en qué va esta OT?" de un vistazo. */
+.otd-act-item:first-child .otd-act-nodo::after{content:'';position:absolute;inset:-6px;
+  border-radius:50%;border:2px solid currentColor;opacity:0;
+  animation:otdActPing 2.2s ease-out infinite}
+@keyframes otdActPing{0%{transform:scale(.75);opacity:.5}80%{transform:scale(1.12);opacity:0}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .otd-act-item:first-child .otd-act-nodo::after{animation:none}
+}
+.otd-act-body{flex:1;min-width:0;background:#fafbfc;border:1px solid #f1f5f9;border-radius:10px;
+  padding:9px 13px;transition:background .15s,border-color .15s,box-shadow .2s}
+.otd-act-item:hover .otd-act-body,
+.otd-act-item:first-child .otd-act-body{background:#fff;border-color:#e5e7eb;
+  box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.otd-act-linea{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.otd-act-texto{font-size:.85rem;color:#374151;line-height:1.4;overflow-wrap:anywhere}
+.otd-act-texto b{color:#0f172a;font-weight:800}
+.otd-act-fecha{font-size:.7rem;color:#9ca3af;margin-left:auto;white-space:nowrap;
+  font-weight:600;font-variant-numeric:tabular-nums}
+/* REGLA #15: el detalle NUNCA se trunca -- ahí va el motivo del
+   reagendamiento, que es justo lo que hay que poder leer completo. */
+.otd-act-extracto{font-size:.78rem;color:#6b7280;margin-top:4px;overflow-wrap:anywhere;
+  padding-top:4px;border-top:1px dashed #f1f5f9;line-height:1.45}
+@media (max-width:520px){
+  .otd-act-fecha{margin-left:0;flex-basis:100%}
+}
+
 /* ══ HERO NEGRO — identidad + datos + recorrido, todo en un bloque ══ */
 .otd-hero{position:relative;background:var(--ink);border-radius:14px;
   padding:22px 24px 18px;overflow:hidden;margin-bottom:16px;
@@ -1081,6 +1136,63 @@
         </div>
       </div>
       {% endif %}
+
+      {# ═══ ACTIVIDAD DE LA OT ═══════════════════════════════════════════
+         🆕 2026-09-02 (Daniel, urgente: "necesito algo parecido a una
+         trazabilidad como esta, la de los tickets... quién realizó la orden
+         de trabajo, y si la reagendaron, también necesito toda esa
+         trazabilidad, una trazabilidad a detalle"). Mismo lenguaje visual
+         que "Actividad del ticket" (static/tickets_ficha.css: línea vertical,
+         nodo circular por tipo de evento, anillo pulsante en el más reciente,
+         chips de filtro) -- pero con clases propias `otd-act-*` para no
+         acoplar esta pantalla al CSS de Tickets.
+         El dato NO es nuevo: `mant_logs` ya registraba todo esto; lo que
+         faltaba era mostrarlo. #}
+      <div class="otd-card" id="otdCardActividad">
+        <h3><i class="bi bi-activity"></i> Actividad de la OT
+          <span class="n">{{ actividad | length }}</span></h3>
+        <div style="padding:12px 16px 16px">
+          {% if actividad %}
+          <div class="otd-act-filtros" id="otdActFiltros">
+            <span class="otd-act-chip active" data-filtro="todo">Todo</span>
+            <span class="otd-act-chip" data-filtro="cambios">Cambios</span>
+            <span class="otd-act-chip" data-filtro="firmas">Firmas</span>
+            <span class="otd-act-chip" data-filtro="envios">Envíos</span>
+            <span class="otd-act-chip" data-filtro="archivos">Archivos</span>
+          </div>
+          <div class="otd-act-timeline" id="otdActTimeline">
+            {% for a in actividad %}
+            <div class="otd-act-item c-{{ a.color }}" data-grupo="{{ a.grupo }}"
+                 {% if loop.index > 8 %}data-extra="1" style="display:none"{% endif %}>
+              <span class="otd-act-nodo"><i class="bi {{ a.icono }}"></i></span>
+              <div class="otd-act-body">
+                <div class="otd-act-linea">
+                  <span class="otd-act-texto"><b>{{ a.usuario }}</b> {{ a.label }}</span>
+                  <span class="otd-act-fecha">{{ a.cuando }}</span>
+                </div>
+                {% if a.detalle %}
+                <div class="otd-act-extracto">{{ a.detalle }}</div>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% if actividad | length > 8 %}
+          <button type="button" class="otd-btn" id="otdActVerTodo" style="width:100%;justify-content:center;margin-top:10px"
+                  onclick="otdActToggleTodo(this)">
+            <i class="bi bi-chevron-down"></i> Ver los {{ actividad | length }} eventos</button>
+          {% endif %}
+          <div class="otd-vacio" id="otdActVacioFiltro" style="display:none">
+            No hay eventos de este tipo en esta OT.
+          </div>
+          {% else %}
+          <div class="otd-vacio">
+            <i class="bi bi-activity" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+            Todavía no hay actividad registrada en esta OT.
+          </div>
+          {% endif %}
+        </div>
+      </div>
 
       <div class="otd-card">
         <h3><i class="bi bi-graph-up-arrow"></i> Avance del trabajo técnico</h3>
@@ -2373,6 +2485,50 @@ window.otdGuardarFinanzas = async function(){
     if (window.ilusToast) ilusToast('Error de conexión al guardar finanzas.', {type: 'error'});
   }
 };
+
+/* ══ Actividad de la OT — filtros + "ver todo" ═══════════════════════
+   🆕 2026-09-02. Los eventos ya vienen renderizados desde Jinja (no hay
+   fetch): esto solo muestra/oculta. Por defecto se ven los 8 más
+   recientes; el botón despliega el resto. */
+window.otdActToggleTodo = function(btn){
+  const extras = document.querySelectorAll('#otdActTimeline .otd-act-item[data-extra="1"]');
+  const abierto = btn.dataset.abierto === '1';
+  extras.forEach(function(el){
+    // Respeta el filtro activo: un evento oculto por filtro sigue oculto.
+    el.style.display = (abierto || el.dataset.filtrado === '1') ? 'none' : '';
+  });
+  btn.dataset.abierto = abierto ? '0' : '1';
+  btn.innerHTML = abierto
+    ? '<i class="bi bi-chevron-down"></i> Ver los ' + document.querySelectorAll('#otdActTimeline .otd-act-item').length + ' eventos'
+    : '<i class="bi bi-chevron-up"></i> Ver menos';
+};
+
+(function(){
+  const cont = document.getElementById('otdActFiltros');
+  if (!cont) return;
+  const vacio = document.getElementById('otdActVacioFiltro');
+  const btnTodo = document.getElementById('otdActVerTodo');
+  cont.addEventListener('click', function(ev){
+    const chip = ev.target.closest('.otd-act-chip');
+    if (!chip) return;
+    cont.querySelectorAll('.otd-act-chip').forEach(c => c.classList.toggle('active', c === chip));
+    const f = chip.dataset.filtro;
+    let visibles = 0;
+    document.querySelectorAll('#otdActTimeline .otd-act-item').forEach(function(el){
+      const pasa = (f === 'todo') || (el.dataset.grupo === f);
+      el.dataset.filtrado = pasa ? '0' : '1';
+      // Con un filtro puesto se muestra TODO lo que califica (no tiene
+      // sentido esconder 3 firmas detrás de un "ver más"); sin filtro se
+      // respeta el corte de los 8 primeros.
+      const cortado = (f === 'todo') && el.dataset.extra === '1'
+                      && (!btnTodo || btnTodo.dataset.abierto !== '1');
+      el.style.display = (pasa && !cortado) ? '' : 'none';
+      if (pasa) visibles++;
+    });
+    if (vacio) vacio.style.display = visibles ? 'none' : '';
+    if (btnTodo) btnTodo.style.display = (f === 'todo') ? '' : 'none';
+  });
+})();
 
 /* 🆕 2026-09-02 (Daniel, en vivo, viendo OT-2026-00127: "no consigo nada
    de este cliente... no lo consigo en el ERP"): antes había que YA saber
