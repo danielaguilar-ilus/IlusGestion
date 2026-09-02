@@ -81,6 +81,21 @@
   font-weight:700;margin-bottom:6px;opacity:.85;text-decoration:none}
 .otd-back:hover{opacity:1;text-decoration:underline}
 
+/* 🆕 2026-09-02 (Daniel: "el botón de PDF... no considero que vaya ahí...
+   mételo dentro del header, el eliminar también, mételo dentro del
+   header"): antes "Ver PDF"/"Eliminar OT" vivían en .otd-acts, una fila
+   suelta DEBAJO del page-header. Ahora entran al propio header, a la
+   derecha del título — mismo botón .otd-btn de siempre (fondo blanco,
+   ya pensado para verse bien sobre fondo oscuro, igual que .btn-light
+   del resto del proyecto), solo que reposicionado. */
+.otd-header-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.otd-header-acts{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
+@media (max-width:640px){
+  .otd-header-row{flex-direction:column}
+  .otd-header-acts{width:100%}
+  .otd-header-acts .otd-btn{flex:1;justify-content:center}
+}
+
 /* ══ HERO NEGRO — identidad + datos + recorrido, todo en un bloque ══ */
 .otd-hero{position:relative;background:var(--ink);border-radius:14px;
   padding:22px 24px 18px;overflow:hidden;margin-bottom:16px;
@@ -704,14 +719,44 @@
 <div class="ot2 otd">
 
   <div class="page-header">
-    <div class="page-header-content">
-      <a class="otd-back" href="{{ url_for('ot2_panel') }}">
-        <i class="bi bi-arrow-left"></i> Volver al panel</a>
-      <h1 class="page-title">
-        <i class="bi bi-clipboard2-pulse-fill"></i>
-        {{ v.numero_ot or ('OT #' ~ v.id) }}
-      </h1>
-      <p class="page-subtitle">{{ v.tipo_label }} · {{ v.razon_social or 'Sin cliente' }}</p>
+    <div class="otd-header-row">
+      <div class="page-header-content">
+        <a class="otd-back" href="{{ url_for('ot2_panel') }}">
+          <i class="bi bi-arrow-left"></i> Volver al panel</a>
+        <h1 class="page-title">
+          <i class="bi bi-clipboard2-pulse-fill"></i>
+          {{ v.numero_ot or ('OT #' ~ v.id) }}
+        </h1>
+        <p class="page-subtitle">{{ v.tipo_label }} · {{ v.razon_social or 'Sin cliente' }}</p>
+      </div>
+      {# 🆕 2026-09-02 (Daniel: "el botón de PDF... no considero que vaya ahí,
+         mételo dentro del header, el eliminar también, mételo dentro del
+         header"): "Ver PDF" y "Eliminar OT" se mudan acá, junto al título.
+         "Enviar al cliente" (WhatsApp) se queda abajo en .otd-acts -- Daniel
+         no pidió moverlo y tiene su propio color de marca (verde WhatsApp)
+         que no calza con el resto de botones del header. #}
+      <div class="otd-header-acts">
+        {# 🆕 2026-08-31 (Daniel: "quiero visualizar la OT en digital... si está
+           firmada necesito ver y descargar el PDF siempre en un modal local...
+           con una barra de proceso"): antes esta pantalla no tenía NINGÚN link
+           al informe PDF de la OT (mant_visita_pdf, ya existe y ya lo usa el
+           modo clásico) -- se agrega acá, en modal propio (nunca pestaña
+           nueva), visible desde que el técnico ya firmó (antes de eso no hay
+           nada real que mostrar más que un borrador a medio llenar). #}
+        {% if v.estado not in ('programada','en_curso','en_ejecucion') %}
+        <button type="button" class="otd-btn" onclick="otdVerPdf()">
+          <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
+        {% endif %}
+        {# 🆕 2026-08-28 (Daniel: "podemos eliminar la OT 134 o ponerme un botón
+           para eliminarlas y agrega eso por el front en los roles") -- visible
+           SOLO si el rol tiene el permiso (superadmin siempre, o el flag de
+           matriz "Eliminar OT / cliente"). El backend revalida igual con
+           @_ot_can_eliminar -- esto solo evita mostrar un botón que rebotaría. #}
+        {% if puede_eliminar %}
+        <button type="button" class="otd-btn danger" onclick="otdEliminarOT()">
+          <i class="bi bi-trash3"></i> Eliminar OT</button>
+        {% endif %}
+      </div>
     </div>
   </div>
 
@@ -731,17 +776,6 @@
      el checklist inline no cubra, pero deja de ofrecerse como camino
      principal acá arriba. #}
   <div class="otd-acts">
-    {# 🆕 2026-08-31 (Daniel: "quiero visualizar la OT en digital... si está
-       firmada necesito ver y descargar el PDF siempre en un modal local...
-       con una barra de proceso"): antes esta pantalla no tenía NINGÚN link
-       al informe PDF de la OT (mant_visita_pdf, ya existe y ya lo usa el
-       modo clásico) -- se agrega acá, en modal propio (nunca pestaña
-       nueva), visible desde que el técnico ya firmó (antes de eso no hay
-       nada real que mostrar más que un borrador a medio llenar). #}
-    {% if v.estado not in ('programada','en_curso','en_ejecucion') %}
-    <button type="button" class="otd-btn" onclick="otdVerPdf()">
-      <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
-    {% endif %}
     {# Compartir la OT firmada — SEPARADO del cierre a propósito (Daniel,
        21-08): si WhatsApp falla, la OT igual quedó cerrada y firmada.
        Solo aparece cuando ya hay documento que mandar. #}
@@ -749,15 +783,6 @@
     <button type="button" class="otd-btn pri" id="otdBtnWa" onclick="otdCompartirWa()"
             style="background:#25d366;border-color:#25d366;color:#fff">
       <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
-    {% endif %}
-    {# 🆕 2026-08-28 (Daniel: "podemos eliminar la OT 134 o ponerme un botón
-       para eliminarlas y agrega eso por el front en los roles") -- visible
-       SOLO si el rol tiene el permiso (superadmin siempre, o el flag de
-       matriz "Eliminar OT / cliente"). El backend revalida igual con
-       @_ot_can_eliminar -- esto solo evita mostrar un botón que rebotaría. #}
-    {% if puede_eliminar %}
-    <button type="button" class="otd-btn danger" onclick="otdEliminarOT()">
-      <i class="bi bi-trash3"></i> Eliminar OT</button>
     {% endif %}
   </div>
 
@@ -1004,68 +1029,217 @@
   <div class="otd-tabpanel" data-tab="info">
   <div class="otd-grid">
 
-    {# ── Equipos ── #}
-    <div class="otd-card">
-      <h3><i class="bi bi-boxes"></i> Equipos de la OT
-        <span class="n">{{ kpis.equipos }}</span>
-        {# 2026-09-02 (Daniel, caso Aaron, OT-2026-00154): "Agregar equipos
-           a OT ya creada" -- permiso granular sembrado el mismo día en
-           /admin/roles, apagado por defecto para todos los roles hasta que
-           Daniel lo prenda. Fuera de un estado terminal solamente (única
-           restricción que pidió); no aplica a trabajo interno (sin
-           cliente, sin fichas de equipo que elegir). #}
-        {% if v.cliente_id and v.estado not in ('cerrada','completada','cancelada','anulada')
-              and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
-        <button type="button" class="edit" style="margin-left:auto"
-                onclick="otdAbrirAgregarEquipo()" title="Agregar un equipo nuevo a esta OT">
-          <i class="bi bi-plus-circle"></i> Agregar equipo</button>
-        {% endif %}
-      </h3>
-      {% if v.cliente_id and v.estado not in ('cerrada','completada','cancelada','anulada')
-            and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
-      <div class="otd-editbox" id="otdAgregarEquipoBox">
-        <div class="row" style="flex-wrap:wrap">
-          <select id="otdAgregarEquipoSelect" class="form-select form-select-sm" style="max-width:280px"
-                  onchange="otdSugerirPlantillaEquipo()">
-            <option value="">Cargando equipos del cliente…</option>
-          </select>
-          <select id="otdAgregarEquipoPlantilla" class="form-select form-select-sm" style="max-width:280px">
-            <option value="">Elige un equipo primero…</option>
-          </select>
-        </div>
-        <div class="hint">El checklist se sugiere solo según la clasificación del equipo — puedes cambiarlo antes de guardar.</div>
-        <div class="actions">
-          <button type="button" class="otd-btn pri" onclick="otdConfirmarAgregarEquipo()">
-            <i class="bi bi-check2"></i> Agregar</button>
-          <button type="button" class="otd-btn" onclick="otdCerrarAgregarEquipo()">Cancelar</button>
+    {# ── Columna izquierda: documento + trabajo técnico ──────────────────
+       2026-09-02 (Daniel, en vivo, viendo OT-2026-00127: "la información
+       está mal repartida, hay vacíos después del equipo... ahí no quiero
+       ver el equipo, porque quiero verlo en donde dice Trabajo, y yo le
+       pondría información de la boleta y trabajo técnico"). "Equipos de
+       la OT" se QUITA de acá -- no se pierde nada (REGLA #4.2: Daniel lo
+       pidió explícito en este mismo mensaje) porque la pestaña Trabajo ya
+       muestra cada equipo con MÁS detalle (checklist editable inline, ver
+       más abajo "Equipos — detalle de trabajo"). En su lugar entra lo que
+       Daniel quiere ver de inmediato al abrir una OT: el documento/boleta
+       (antes enterrado al fondo de la columna derecha) y el avance del
+       trabajo técnico -- así la columna izquierda deja de quedar corta y
+       vacía frente a la derecha. #}
+    <div style="display:flex;flex-direction:column;gap:14px">
+
+      {# 🆕 2026-09-02 (Daniel, en vivo: "es necesario que siempre lleve
+         documento y mostrarlo por trazabilidad además del responsable"):
+         quién y cuándo creó la OT, visible para CUALQUIERA que la vea
+         (no solo gestión) -- mismo espíritu que la trazabilidad ya
+         construida esta noche para Repuestos (created_by/created_at). #}
+      {% if v.created_by %}
+      <div class="otd-card">
+        <div style="padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:.85rem;color:#374151">
+          <i class="bi bi-person-check-fill" style="color:#dc2626;font-size:1.1rem"></i>
+          <span>Creada por <b>{{ v.created_by }}</b>{% if v.created_at %} el {{ v.created_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}</span>
         </div>
       </div>
       {% endif %}
-      {% if equipos %}
-      <div class="otd-eqs">
-        {% for e in equipos %}
-        <div class="otd-eq">
-          {% if e.foto_url %}
-            <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
-          {% else %}
-            <span class="th"><i class="bi bi-image"></i></span>
-          {% endif %}
-          <div class="nm">
-            <b>{{ e.nombre or ('Equipo #' ~ e.id) }}</b>
-            <small>{% if e.serie %}S/N {{ e.serie }}{% endif %}
-              {%- if e.n_tareas %} · {{ e.n_ok }}/{{ e.n_tareas }} tareas{% endif %}</small>
+
+      <div class="otd-card">
+        <h3><i class="bi bi-graph-up-arrow"></i> Avance del trabajo técnico</h3>
+        <div class="otd-av">
+          <div class="otd-av-top">
+            <b>{{ kpis.pct }}%</b>
+            <span>{{ kpis.obl_ok }} de {{ kpis.obl }} obligatorias</span>
           </div>
-          <span class="bar"><i style="--w:{{ e.pct }}%"></i></span>
-          <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
+          <div class="otd-av-bar {{ 'full' if kpis.pct >= 100 }}">
+            <i style="--w:{{ kpis.pct }}%"></i>
+          </div>
+          <div class="otd-av-top" style="margin:10px 0 0">
+            <span>Checklist completo</span>
+            <b style="font-size:.95rem">{{ kpis.tareas_ok }}/{{ kpis.tareas }}</b>
+          </div>
         </div>
-        {% endfor %}
       </div>
-      {% else %}
-      <div class="otd-vacio">
-        <i class="bi bi-inbox" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-        Esta OT todavía no tiene equipos asignados.
+
+      {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
+         técnica externa: "le está saliendo centro de costos, sus costos,
+         la parte financiera, la factura... eso no es para que ella la
+         vea"). Esta tarjeta no tenía NINGÚN filtro de rol -- cualquiera
+         que abriera /ot/<id> la veía, técnico incluido. El proceso real
+         de un técnico es: firma él → se manda a firmar al cliente → se le
+         avisa cuando el cliente firma → ahí se libera. Nunca ve
+         modalidad de cobro, centro de costo ni documento asociado — eso
+         es exclusivamente de gestión (Aarón/admin/supervisor), igual que
+         ya está resuelto en /mantenciones/ot/<id>/ejecutar (card
+         "Finanzas de la OT", gate puede_metadata). `es_tecnico` ya vive
+         en el contexto global (inject_globals), no hace falta pasarlo
+         desde ot2_detalle(). #}
+      {# 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del
+         [ejecutar] ... esto hay que aplicárselo a la orden de trabajo dos
+         punto cero"): la card "Cobro" de solo lectura se reemplaza por el
+         MISMO desglose que ya usa la pantalla clásica ("Finanzas de la OT"
+         en ot_ejecutar.html) -- Precio al cliente, Costo proveedor, Costo
+         de despacho, Tipo, Nombre proveedor, Centro de costo, Documento
+         ERP + margen calculado -- para no tener dos vistas distintas del
+         mismo dinero. Reusa el MISMO endpoint que ya está probado y ya
+         escribe ambos pares de columnas de documento (PUT
+         /mantenciones/api/visitas/<vid>, ver fix de esta misma noche) en
+         vez de inventar un segundo modelo financiero. `puede_metadata`
+         decide editable vs solo-lectura, igual que en la pantalla clásica;
+         `es_tecnico` sigue ocultando la card entera (REGLA de seguridad
+         2026-08-27, Isabel Milling). #}
+      {% if not es_tecnico %}
+      <div class="otd-card" id="otdCardFinanzas">
+        <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT</h3>
+        <div style="padding:14px 16px">
+          {% if puede_metadata %}
+          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" id="otdFinCosto" class="form-control" min="0" step="1000"
+                       value="{{ v.costo if v.costo is not none else '' }}">
+              </div>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" id="otdFinCostoProveedor" class="form-control" min="0" step="1000"
+                       value="{{ v.costo_proveedor if v.costo_proveedor is not none else '' }}">
+              </div>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" id="otdFinCostoDespacho" class="form-control" min="0" step="1000"
+                       placeholder="0" value="{{ v.costo_despacho if v.costo_despacho is not none else '' }}">
+              </div>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Tipo</label>
+              <select id="otdFinProveedorTipo" class="form-select form-select-sm">
+                <option value="">— Sin definir —</option>
+                <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
+                <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Nombre proveedor/instalador</label>
+              <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
+                     maxlength="200" placeholder="Ej: Instalaciones XYZ" value="{{ v.proveedor_nombre or '' }}">
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Centro de costo</label>
+              <select id="otdFinCentroCosto" class="form-select form-select-sm">
+                <option value="">— Sin definir —</option>
+                <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
+                <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
+                <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
+              </select>
+            </div>
+          </div>
+          {% set _doc_tido_fin = v.documento_erp_tido or v.factura_tido %}
+          {% set _doc_nudo_fin = v.documento_erp_nudo or v.factura_nudo %}
+          {# 🆕 2026-09-02 (Daniel, en vivo: "no consigo nada de este
+             cliente... no lo consigo en el ERP"): antes había que YA saber
+             el tipo+número del documento para declararlo -- si Daniel no
+             lo tenía a mano, quedaba trabado. Reusa el MISMO motor
+             read-only de Random que ya usa Tickets/Retiros
+             (buscar-cliente-documentos: por RUT, número o razón social,
+             REGLA #4.1) para sugerir el documento y llenar los campos de
+             abajo con un clic, en vez de tipearlo a ciegas. #}
+          <div class="otd-erpdoc-search" style="margin-bottom:10px">
+            <label class="form-label small fw-semibold mb-1">Buscar documento del cliente en el ERP</label>
+            <div class="input-group input-group-sm">
+              <input type="text" id="otdErpDocQ" class="form-control"
+                     placeholder="RUT, N° de documento o razón social"
+                     value="{{ v.cliente_rut or '' }}">
+              <button type="button" class="btn btn-outline-danger" onclick="otdBuscarDocErp()">
+                <i class="bi bi-search"></i> Buscar</button>
+            </div>
+            <div id="otdErpDocResultados" style="display:none;margin-top:8px;max-height:220px;
+                 overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
+            <div id="otdErpDocMsg" class="small text-muted" style="margin-top:6px"></div>
+          </div>
+          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 2fr;gap:10px">
+            <div>
+              <label class="form-label small fw-semibold mb-1">Documento ERP</label>
+              <select id="otdFinDocErpTido" class="form-select form-select-sm">
+                <option value="">— Sin asociar —</option>
+                <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
+                <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
+                <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
+                <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Número</label>
+              <input type="text" id="otdFinDocErpNudo" class="form-control form-control-sm"
+                     maxlength="20" placeholder="Ej: 552" inputmode="numeric" value="{{ _doc_nudo_fin or '' }}">
+            </div>
+          </div>
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2"
+               style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px">
+            <div>
+              <div class="text-muted small">Margen</div>
+              <div class="fw-bold" id="otdFinMargen" style="font-size:1rem">—</div>
+            </div>
+            <div>
+              <div class="text-muted small">% Margen</div>
+              <div class="fw-bold" id="otdFinMargenPct" style="font-size:1rem">—</div>
+            </div>
+            <button type="button" class="btn btn-danger btn-sm" onclick="otdGuardarFinanzas()">
+              <i class="bi bi-check-lg me-1"></i>Guardar</button>
+          </div>
+          <div id="otdFinMargenWarn" style="display:none;margin-top:8px;background:#fff8e1;
+               border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;font-size:.82rem;
+               color:#92400e;align-items:flex-start;gap:8px">
+            <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>
+            <span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico,
+              considera asignarla a Logística o Comercial arriba.</span>
+          </div>
+          {% else %}
+          <div class="otd-din">
+            <div class="row"><span>Precio al cliente</span>
+              <b>{{ '$' ~ '{:,}'.format(v.costo|int) if v.costo is not none else '—' }}</b></div>
+            <div class="row"><span>Centro de costo</span>
+              <b>{{ (v.centro_costo or '—') | replace('_',' ') | title }}</b></div>
+            {% set _doc_tido_ro2 = v.documento_erp_tido or v.factura_tido %}
+            {% set _doc_nudo_ro2 = v.documento_erp_nudo or v.factura_nudo %}
+            {% if _doc_nudo_ro2 %}
+            <div class="row"><span>Documento</span>
+              <b>{{ _doc_tido_ro2 or 'DOC' }} {{ _doc_nudo_ro2 }}</b></div>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% if finanzas and finanzas.faltan %}
+          <div class="otd-warn" style="margin-top:10px">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <div>Falta declarar antes de pedir la firma:
+              {{ finanzas.faltan | join(', ') }}.</div>
+          </div>
+          {% endif %}
+        </div>
       </div>
       {% endif %}
+
     </div>
 
     {# ── Columna derecha ── #}
@@ -1149,23 +1323,6 @@
             <div class="otf-msg otf-wait"><i class="bi bi-eye"></i> Solo lectura — no puedes ejecutar esta OT.</div>
             {% endif %}
           {% endif %}
-        </div>
-      </div>
-
-      <div class="otd-card">
-        <h3><i class="bi bi-graph-up-arrow"></i> Avance del trabajo</h3>
-        <div class="otd-av">
-          <div class="otd-av-top">
-            <b>{{ kpis.pct }}%</b>
-            <span>{{ kpis.obl_ok }} de {{ kpis.obl }} obligatorias</span>
-          </div>
-          <div class="otd-av-bar {{ 'full' if kpis.pct >= 100 }}">
-            <i style="--w:{{ kpis.pct }}%"></i>
-          </div>
-          <div class="otd-av-top" style="margin:10px 0 0">
-            <span>Checklist completo</span>
-            <b style="font-size:.95rem">{{ kpis.tareas_ok }}/{{ kpis.tareas }}</b>
-          </div>
         </div>
       </div>
 
@@ -1322,150 +1479,6 @@
           </div>
         </div>
       </div>
-
-      {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
-         técnica externa: "le está saliendo centro de costos, sus costos,
-         la parte financiera, la factura... eso no es para que ella la
-         vea"). Esta tarjeta no tenía NINGÚN filtro de rol -- cualquiera
-         que abriera /ot/<id> la veía, técnico incluido. El proceso real
-         de un técnico es: firma él → se manda a firmar al cliente → se le
-         avisa cuando el cliente firma → ahí se libera. Nunca ve
-         modalidad de cobro, centro de costo ni documento asociado — eso
-         es exclusivamente de gestión (Aarón/admin/supervisor), igual que
-         ya está resuelto en /mantenciones/ot/<id>/ejecutar (card
-         "Finanzas de la OT", gate puede_metadata). `es_tecnico` ya vive
-         en el contexto global (inject_globals), no hace falta pasarlo
-         desde ot2_detalle(). #}
-      {# 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del
-         [ejecutar] ... esto hay que aplicárselo a la orden de trabajo dos
-         punto cero"): la card "Cobro" de solo lectura se reemplaza por el
-         MISMO desglose que ya usa la pantalla clásica ("Finanzas de la OT"
-         en ot_ejecutar.html) -- Precio al cliente, Costo proveedor, Costo
-         de despacho, Tipo, Nombre proveedor, Centro de costo, Documento
-         ERP + margen calculado -- para no tener dos vistas distintas del
-         mismo dinero. Reusa el MISMO endpoint que ya está probado y ya
-         escribe ambos pares de columnas de documento (PUT
-         /mantenciones/api/visitas/<vid>, ver fix de esta misma noche) en
-         vez de inventar un segundo modelo financiero. `puede_metadata`
-         decide editable vs solo-lectura, igual que en la pantalla clásica;
-         `es_tecnico` sigue ocultando la card entera (REGLA de seguridad
-         2026-08-27, Isabel Milling). #}
-      {% if not es_tecnico %}
-      <div class="otd-card" id="otdCardFinanzas">
-        <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT</h3>
-        <div style="padding:14px 16px">
-          {% if puede_metadata %}
-          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div>
-              <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
-              <div class="input-group input-group-sm">
-                <span class="input-group-text">$</span>
-                <input type="number" id="otdFinCosto" class="form-control" min="0" step="1000"
-                       value="{{ v.costo if v.costo is not none else '' }}">
-              </div>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
-              <div class="input-group input-group-sm">
-                <span class="input-group-text">$</span>
-                <input type="number" id="otdFinCostoProveedor" class="form-control" min="0" step="1000"
-                       value="{{ v.costo_proveedor if v.costo_proveedor is not none else '' }}">
-              </div>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
-              <div class="input-group input-group-sm">
-                <span class="input-group-text">$</span>
-                <input type="number" id="otdFinCostoDespacho" class="form-control" min="0" step="1000"
-                       placeholder="0" value="{{ v.costo_despacho if v.costo_despacho is not none else '' }}">
-              </div>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Tipo</label>
-              <select id="otdFinProveedorTipo" class="form-select form-select-sm">
-                <option value="">— Sin definir —</option>
-                <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
-                <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Nombre proveedor/instalador</label>
-              <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
-                     maxlength="200" placeholder="Ej: Instalaciones XYZ" value="{{ v.proveedor_nombre or '' }}">
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Centro de costo</label>
-              <select id="otdFinCentroCosto" class="form-select form-select-sm">
-                <option value="">— Sin definir —</option>
-                <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
-                <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
-                <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
-              </select>
-            </div>
-          </div>
-          {% set _doc_tido_fin = v.documento_erp_tido or v.factura_tido %}
-          {% set _doc_nudo_fin = v.documento_erp_nudo or v.factura_nudo %}
-          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 2fr;gap:10px">
-            <div>
-              <label class="form-label small fw-semibold mb-1">Documento ERP</label>
-              <select id="otdFinDocErpTido" class="form-select form-select-sm">
-                <option value="">— Sin asociar —</option>
-                <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
-                <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
-                <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
-                <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Número</label>
-              <input type="text" id="otdFinDocErpNudo" class="form-control form-control-sm"
-                     maxlength="20" placeholder="Ej: 552" inputmode="numeric" value="{{ _doc_nudo_fin or '' }}">
-            </div>
-          </div>
-          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2"
-               style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px">
-            <div>
-              <div class="text-muted small">Margen</div>
-              <div class="fw-bold" id="otdFinMargen" style="font-size:1rem">—</div>
-            </div>
-            <div>
-              <div class="text-muted small">% Margen</div>
-              <div class="fw-bold" id="otdFinMargenPct" style="font-size:1rem">—</div>
-            </div>
-            <button type="button" class="btn btn-danger btn-sm" onclick="otdGuardarFinanzas()">
-              <i class="bi bi-check-lg me-1"></i>Guardar</button>
-          </div>
-          <div id="otdFinMargenWarn" style="display:none;margin-top:8px;background:#fff8e1;
-               border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;font-size:.82rem;
-               color:#92400e;align-items:flex-start;gap:8px">
-            <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>
-            <span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico,
-              considera asignarla a Logística o Comercial arriba.</span>
-          </div>
-          {% else %}
-          <div class="otd-din">
-            <div class="row"><span>Precio al cliente</span>
-              <b>{{ '$' ~ '{:,}'.format(v.costo|int) if v.costo is not none else '—' }}</b></div>
-            <div class="row"><span>Centro de costo</span>
-              <b>{{ (v.centro_costo or '—') | replace('_',' ') | title }}</b></div>
-            {% set _doc_tido_ro2 = v.documento_erp_tido or v.factura_tido %}
-            {% set _doc_nudo_ro2 = v.documento_erp_nudo or v.factura_nudo %}
-            {% if _doc_nudo_ro2 %}
-            <div class="row"><span>Documento</span>
-              <b>{{ _doc_tido_ro2 or 'DOC' }} {{ _doc_nudo_ro2 }}</b></div>
-            {% endif %}
-          </div>
-          {% endif %}
-          {% if finanzas and finanzas.faltan %}
-          <div class="otd-warn" style="margin-top:10px">
-            <i class="bi bi-exclamation-triangle-fill"></i>
-            <div>Falta declarar antes de pedir la firma:
-              {{ finanzas.faltan | join(', ') }}.</div>
-          </div>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
 
     </div>
   </div>
@@ -2261,6 +2274,63 @@ window.otdGuardarFinanzas = async function(){
     }
   } catch (e){
     if (window.ilusToast) ilusToast('Error de conexión al guardar finanzas.', {type: 'error'});
+  }
+};
+
+/* 🆕 2026-09-02 (Daniel, en vivo, viendo OT-2026-00127: "no consigo nada
+   de este cliente... no lo consigo en el ERP"): antes había que YA saber
+   tipo+número del documento para declararlo. Este buscador consulta el
+   mismo motor read-only de Random que ya usa Tickets/Retiros (por RUT,
+   número de documento o razón social) y deja elegir con un clic -- llena
+   los mismos inputs de siempre, no inventa un modelo de datos nuevo. */
+window.otdBuscarDocErp = async function(){
+  const q = (document.getElementById('otdErpDocQ').value || '').trim();
+  const box = document.getElementById('otdErpDocResultados');
+  const msg = document.getElementById('otdErpDocMsg');
+  if (q.length < 3){
+    msg.textContent = 'Escribe al menos 3 caracteres (RUT, N° de documento o razón social).';
+    box.style.display = 'none';
+    return;
+  }
+  msg.textContent = 'Buscando en el ERP…';
+  box.style.display = 'none';
+  try {
+    const r = await fetch(`/ot/api/finanzas/{{ v.id }}/buscar-erp`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({q}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok){
+      msg.textContent = j.error || 'No se pudo buscar en el ERP.';
+      return;
+    }
+    if (!j.documentos || !j.documentos.length){
+      msg.textContent = 'Sin resultados para "' + q + '" en el ERP.';
+      return;
+    }
+    msg.textContent = j.documentos.length + ' documento(s) encontrado(s) — elige uno:';
+    box.innerHTML = '';
+    j.documentos.forEach(function(d){
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:8px 10px;border-bottom:1px solid #f1f3f5;cursor:pointer;font-size:.82rem;display:flex;justify-content:space-between;gap:8px;align-items:center';
+      row.onmouseenter = function(){ row.style.background = '#fef2f2'; };
+      row.onmouseleave = function(){ row.style.background = ''; };
+      const usoTxt = d.usado_en_otra_ot ? ' · ⚠️ ya asociado a ' + d.usado_en_otra_ot : '';
+      row.innerHTML = `<div><b>${d.tido_display} ${d.nudo_display}</b>
+          <span style="color:#6b7280"> · ${d.razon_social || 'Sin nombre'} · ${d.fecha || '—'}</span>
+          ${usoTxt ? '<div style="color:#b45309">' + usoTxt + '</div>' : ''}</div>
+        <div style="text-align:right;white-space:nowrap"><b>$${Math.round(d.valor_total||0).toLocaleString('es-CL')}</b></div>`;
+      row.onclick = function(){
+        document.getElementById('otdFinDocErpTido').value = d.tido_display;
+        document.getElementById('otdFinDocErpNudo').value = d.nudo_display;
+        box.style.display = 'none';
+        msg.textContent = 'Documento seleccionado: ' + d.tido_display + ' ' + d.nudo_display + '. Recuerda presionar Guardar.';
+      };
+      box.appendChild(row);
+    });
+    box.style.display = 'block';
+  } catch (e){
+    msg.textContent = 'Error de conexión al buscar en el ERP.';
   }
 };
 

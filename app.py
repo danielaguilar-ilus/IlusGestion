@@ -77049,6 +77049,27 @@ def ot2_detalle(vid):
             "cuando": chile_fmt_filter(ts, "%d/%m %H:%M") if ts else "",
             "hecho": bool(ts),
         })
+    # 🐛 FIX 2026-09-02 (Daniel, viendo el tracker en vivo: la OT ya tenía
+    # firma técnico + firma cliente + estaba aprobada, pero "Ejecutando"
+    # seguía pintado gris con "—", exactamente igual que "Cerrada" (que
+    # genuinamente no había pasado). Causa: "ejecutando" cuelga de
+    # hora_real_inicio, columna que casi nunca se llena (mismo hueco de
+    # datos ya documentado arriba para el fix del 28-ago) -- si NUNCA se
+    # marca "hecho", su nodo queda visualmente IDÉNTICO a un hito futuro
+    # de verdad, aunque cronológicamente sea imposible que no haya pasado
+    # (no se firma el técnico sin haber ejecutado antes). Se infiere
+    # "hecho" para todo hito anterior al último con timestamp real -- el
+    # nodo se pinta verde/completo como corresponde, y como no se inventa
+    # una hora falsa, "cuando" sigue mostrando "—" con honestidad (el
+    # propio template ya lo maneja así, sin tocar CSS ni Jinja).
+    _idx_ultimo_con_ts = -1
+    for _i, h in enumerate(hitos):
+        if h["ts"]:
+            _idx_ultimo_con_ts = _i
+    for _i, h in enumerate(hitos):
+        if not h["hecho"] and _i < _idx_ultimo_con_ts:
+            h["hecho"] = True
+            h["inferido"] = True   # sin timestamp real -- "cuando" queda en "—" a propósito
     # 🔴 FIX 2026-08-28 (OT-2026-00119: recorrido mostraba TODO cerrado
     # hace 2 días -- técnico, cliente, aprobada y cerrada con fecha real --
     # pero "Estado operativo" seguía diciendo "EJECUTANDO / Siguiente hito:
@@ -77549,6 +77570,208 @@ def ot2_api_finanzas(vid):
     ok, faltan = _ot2_finanzas_estado(v2)
     return jsonify({"ok": True, "completa": ok, "faltan": faltan,
                     "estado_facturacion": estado_fact})
+
+
+@app.route("/ot/api/finanzas/<int:vid>/buscar-erp", methods=["POST"])
+@_mant_required
+@_ot_can_cobertura
+def ot2_api_finanzas_buscar_erp(vid):
+    """Busca documentos del cliente en el ERP Random para asociarlos a la OT.
+
+    🆕 2026-09-02 (Daniel, en vivo, viendo OT-2026-00127: "no consigo nada
+    de este cliente... no lo consigo en el ERP... es necesario que siempre
+    lleve documento y mostrarlo por trazabilidad"). Antes había que YA
+    saber tipo+número del documento para declararlo en "Finanzas de la
+    OT" -- si Daniel no lo tenía a mano (caso típico: el documento aún no
+    se emitió con esos datos exactos, o el cliente tiene varios), quedaba
+    trabado sin forma de buscar. Clona el MISMO motor read-only de Random
+    que ya usa Tickets (/tickets/api/erp/buscar-cliente-documentos,
+    tickets_module.py) -- por RUT, número de documento o razón social.
+    Se duplica el SQL (no se importa la ruta de Tickets) porque ese
+    endpoint filtra por "ya asociado a un TICKET", un concepto ajeno a
+    OT 2.0; acá el candado de duplicado es "ya asociado a OTRA OT"
+    (ver `usado_map` más abajo) -- ambos comparten el motor, no la regla.
+
+    100% READ-ONLY (REGLA #4.1): unicamente SELECT via _random_sql_query
+    (whitelist SELECT/WITH, blacklist de escritura, autocommit=False,
+    siempre parametrizado con %s).
+    """
+    d = request.get_json(silent=True) or {}
+    q = (d.get("q") or "").strip()
+    if len(q) < 3:
+        return jsonify({"ok": False, "error": "Mínimo 3 caracteres", "documentos": []}), 400
+    if not _random_sql_query:
+        return jsonify({"ok": True, "documentos": [], "modo": "", "count": 0, "query": q,
+                         "error": "Motor ERP no disponible", "sin_conexion": True})
+
+    q_clean = q.replace(".", "").replace(" ", "").replace("-", "").upper()
+    is_digits = q_clean.isdigit()
+    tidos_in = "','".join(("FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "VD", "WEB"))
+
+    docs, modo = [], ""
+    try:
+        # ── Modo RUT (7-9 dígitos) ──────────────────────────────
+        if is_digits and 7 <= len(q_clean) <= 9:
+            modo = "rut"
+            rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
+            docs = _random_sql_query(f"""
+                SELECT TOP 80
+                    e.IDMAEEDO, LTRIM(RTRIM(e.TIDO)) AS TIDO, LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                    LTRIM(RTRIM(e.ENDO)) AS ENDO, LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
+                    e.FEEMDO, e.VANEDO, e.VABRDO, LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
+                FROM MAEEDO e
+                WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
+                  AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                  AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                ORDER BY e.FEEMDO DESC
+            """, (f"{rut_base}%", f"%{q_clean}%"), max_rows=80) or []
+
+        # ── Modo Número documento (1-7 dígitos) ─────────────────
+        if not docs and is_digits and 1 <= len(q_clean) <= 7:
+            modo = "numero"
+            nudo_padded = q_clean.zfill(10)
+            nudo_vd  = f"VD{q_clean.zfill(8)}"
+            nudo_web = f"WEB{q_clean.zfill(7)}"
+            docs = _random_sql_query(f"""
+                SELECT TOP 30
+                    e.IDMAEEDO, LTRIM(RTRIM(e.TIDO)) AS TIDO, LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                    LTRIM(RTRIM(e.ENDO)) AS ENDO, LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
+                    e.FEEMDO, e.VANEDO, e.VABRDO, LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
+                FROM MAEEDO e
+                WHERE e.NUDO IN (%s, %s, %s)
+                  AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                  AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                ORDER BY e.FEEMDO DESC
+            """, (nudo_padded, nudo_vd, nudo_web), max_rows=30) or []
+
+        # ── Modo Razón social (texto) ────────────────────────────
+        if not docs and not is_digits:
+            modo = "nombre"
+            q_like = f"%{q.upper()}%"
+            ruts = _random_sql_query("""
+                SELECT TOP 20 LTRIM(RTRIM(RTEN)) AS rut,
+                              LTRIM(RTRIM(COALESCE(NOKOENAMP, NOKOEN, ''))) AS razon
+                  FROM MAEEN
+                 WHERE (UPPER(NOKOEN) LIKE %s OR UPPER(COALESCE(NOKOENAMP,'')) LIKE %s)
+            """, (q_like, q_like)) or []
+            if ruts:
+                rut_map = {r['rut']: r['razon'] for r in ruts if r.get('rut')}
+                if rut_map:
+                    like_clauses = " OR ".join(["e.ENDO LIKE %s"] * len(rut_map))
+                    params = tuple(f"{rk}%" for rk in rut_map.keys())
+                    docs = _random_sql_query(f"""
+                        SELECT TOP 60
+                            e.IDMAEEDO, LTRIM(RTRIM(e.TIDO)) AS TIDO, LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                            LTRIM(RTRIM(e.ENDO)) AS ENDO, LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
+                            e.FEEMDO, e.VANEDO, e.VABRDO, LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
+                        FROM MAEEDO e
+                        WHERE ({like_clauses})
+                          AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                          AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                        ORDER BY e.FEEMDO DESC
+                    """, params, max_rows=60) or []
+
+        # ── Deduplicar por IDMAEEDO ──────────────────────────────
+        seen_ids, unique_docs = set(), []
+        for r in docs:
+            idm = r.get("IDMAEEDO")
+            if idm in seen_ids:
+                continue
+            seen_ids.add(idm)
+            unique_docs.append(r)
+        docs = unique_docs
+
+        # ── Nombre por RUT (mismo patrón que Tickets) ────────────
+        ruts_needed = set()
+        for r in docs:
+            endo = (r.get("ENDO") or "").strip()
+            if not endo:
+                continue
+            rut_clean = endo.split("-")[0] if "-" in endo else endo
+            if rut_clean and len(rut_clean) >= 4:
+                ruts_needed.add(rut_clean)
+        nombre_map = {}
+        if ruts_needed:
+            rph = ",".join(["%s"] * len(ruts_needed))
+            try:
+                nm_rows = _random_sql_query(f"""
+                    SELECT LTRIM(RTRIM(RTEN)) AS rut,
+                           LTRIM(RTRIM(COALESCE(NULLIF(LTRIM(RTRIM(NOKOENAMP)),''), NOKOEN, ''))) AS razon
+                      FROM MAEEN WHERE LTRIM(RTRIM(RTEN)) IN ({rph})
+                """, tuple(ruts_needed), max_rows=len(ruts_needed) * 4) or []
+                for nm in nm_rows:
+                    rut = (nm.get("rut") or "").strip()
+                    razon = (nm.get("razon") or "").strip()
+                    if rut and razon and not nombre_map.get(rut):
+                        nombre_map[rut] = razon
+            except Exception as e:
+                print(f"[ot2_buscar_erp] nombre lookup falló: {e}", flush=True)
+
+        for r in docs:
+            endo = (r.get("ENDO") or "").strip()
+            rut_clean = endo.split("-")[0] if "-" in endo else endo
+            nombre = nombre_map.get(rut_clean, "") or (r.get("SUENDO") or "").strip()
+            r["NOMBRE"] = nombre or "Consumidor final"
+
+    except PermissionError as pe:
+        return jsonify({"ok": False, "error": f"Bloqueado por seguridad: {pe}",
+                         "documentos": []}), 403
+    except Exception as exc:
+        print(f"[ot2_buscar_erp] error inesperado: {exc}", flush=True)
+        return jsonify({"ok": False, "error": f"Error consultando ERP: {str(exc)[:200]}",
+                         "documentos": []})
+
+    # tido_display/nudo_display -- NVV con prefijo VD/WEB se muestra con
+    # el tido "real" que el usuario reconoce (mismo criterio que Tickets).
+    for r in docs:
+        nudo_raw = (r.get("NUDO") or "").strip()
+        tido_raw = (r.get("TIDO") or "").strip()
+        if tido_raw == "NVV" and nudo_raw.startswith("VD"):
+            r["_tido_display"] = "VD"; r["_nudo_display"] = nudo_raw[2:].lstrip("0") or "0"
+        elif tido_raw == "NVV" and nudo_raw.startswith("WEB"):
+            r["_tido_display"] = "WEB"; r["_nudo_display"] = nudo_raw[3:].lstrip("0") or "0"
+        else:
+            r["_tido_display"] = tido_raw; r["_nudo_display"] = nudo_raw.lstrip("0") or "0"
+
+    # 🆕 candado propio de OT2 (distinto al de Tickets, que mira sus
+    # propios tickets): avisar si ese documento ya quedó asociado a OTRA
+    # OT -- evita cobrarle el mismo documento a dos trabajos distintos,
+    # justo la "trazabilidad documental" que Daniel pidió reforzar.
+    usado_map = {}
+    try:
+        pares = sorted({(r["_tido_display"], r["_nudo_display"]) for r in docs
+                        if r.get("_tido_display") and r.get("_nudo_display")})
+        if pares:
+            placeholders = ",".join(["(%s,%s)"] * len(pares))
+            params = tuple(x for par in pares for x in par)
+            rows_ot = mysql_fetchall(
+                f"SELECT id, numero_ot, factura_tido, factura_nudo FROM mant_visitas "
+                f"WHERE (factura_tido, factura_nudo) IN ({placeholders}) AND id <> %s",
+                params + (vid,)
+            ) or []
+            for r in rows_ot:
+                key = f"{(r.get('factura_tido') or '').upper()}|{(r.get('factura_nudo') or '').strip()}"
+                usado_map[key] = r.get("numero_ot") or f"OT #{r.get('id')}"
+    except Exception as e:
+        print(f"[ot2_buscar_erp] usado_map fallback: {e}", flush=True)
+
+    out = []
+    for r in docs:
+        tido_display = r["_tido_display"]; nudo_display = r["_nudo_display"]
+        fe = r.get("FEEMDO")
+        endo = (r.get("ENDO") or "").strip()
+        rut_clean = endo.split("-")[0] if "-" in endo else endo
+        key = f"{tido_display.upper()}|{nudo_display}"
+        out.append({
+            "tido": (r.get("TIDO") or "").strip(), "nudo": (r.get("NUDO") or "").strip(),
+            "tido_display": tido_display, "nudo_display": nudo_display,
+            "rut": rut_clean, "razon_social": (r.get("NOMBRE") or "").strip().title(),
+            "fecha": fe.strftime("%d/%m/%Y") if fe else "",
+            "valor_total": float(r.get("VABRDO") or 0),
+            "usado_en_otra_ot": usado_map.get(key),
+        })
+
+    return jsonify({"ok": True, "modo": modo, "documentos": out, "count": len(out), "query": q})
 
 
 @app.route("/ot/api/crear", methods=["POST"])
