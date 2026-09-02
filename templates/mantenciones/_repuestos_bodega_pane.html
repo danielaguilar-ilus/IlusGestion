@@ -517,8 +517,16 @@
                 <input type="number" class="form-control" id="rbAlto" min="0" step="0.1" placeholder="0">
               </div>
               <div class="col-6 col-md-3">
-                <label class="form-label small fw-semibold">Peso <span class="text-muted fw-normal">(kg)</span></label>
-                <input type="number" class="form-control" id="rbPesoKg" min="0" step="0.1" placeholder="0">
+                {# 🔧 FIX 2026-09-02 (Daniel: "en el ingreso de repuestos... en
+                   lugar de KG prefiero que sea en gramos para ser más preciso"):
+                   la BASE DE DATOS sigue guardando en kilos (mant_repuestos_stock.
+                   peso_kg, DECIMAL(8,2) -- no se toca la columna, otros repuestos
+                   ya guardados siguen leyéndose igual), pero el campo ahora
+                   RECIBE y MUESTRA gramos -- con step=0.1kg (100g) no se podía
+                   ni siquiera escribir un repuesto de 50g. La conversión va en
+                   JS al leer/guardar (ver rbEditar / rbGuardar más abajo). #}
+                <label class="form-label small fw-semibold">Peso <span class="text-muted fw-normal">(g)</span></label>
+                <input type="number" class="form-control" id="rbPesoKg" min="0" step="1" placeholder="0">
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Bultos</label>
@@ -955,7 +963,8 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbLargo').value = r.largo != null ? r.largo : '';
   document.getElementById('rbAncho').value = r.ancho != null ? r.ancho : '';
   document.getElementById('rbAlto').value = r.alto != null ? r.alto : '';
-  document.getElementById('rbPesoKg').value = r.peso_kg != null ? r.peso_kg : '';
+  {# peso_kg viene en KILOS de la base -- el campo ahora es en gramos #}
+  document.getElementById('rbPesoKg').value = r.peso_kg != null ? Math.round(r.peso_kg * 1000) : '';
   document.getElementById('rbBultos').value = r.bultos != null ? r.bultos : '';
   rbCostoSet(r.costo_unitario || '');
   rbCerrarSondeo();
@@ -1032,7 +1041,8 @@ async function rbGuardar(crearOtro){
     largo: document.getElementById('rbLargo').value || null,
     ancho: document.getElementById('rbAncho').value || null,
     alto: document.getElementById('rbAlto').value || null,
-    peso_kg: document.getElementById('rbPesoKg').value || null,
+    {# el campo esta en GRAMOS (ver fix 2026-09-02) -- la base sigue en kilos #}
+    peso_kg: document.getElementById('rbPesoKg').value ? (parseFloat(document.getElementById('rbPesoKg').value) / 1000) : null,
     bultos: document.getElementById('rbBultos').value || null,
     cliente_id: document.getElementById('rbClienteId').value || null,
     ticket_id: document.getElementById('rbTicketId').value || null,

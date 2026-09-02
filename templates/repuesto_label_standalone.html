@@ -469,7 +469,10 @@ body {
         <span>Bulto 1 de {{ r.bultos or 1 }}</span>
       </div>
       <div class="meta-cell"><span>Peso bruto</span></div>
-      <div class="meta-cell"><span>{{ '%.1f'|format(r.peso_kg|float) ~ ' KG' if r.peso_kg else '—' }}</span></div>
+      {# 🔧 FIX 2026-09-02 (Daniel: ingreso en gramos "para ser más preciso"):
+         la etiqueta seguía mostrando "0.1 KG" para un repuesto de 50g -- la
+         columna sigue en kilos, pero bajo 1kg se muestra en gramos enteros. #}
+      <div class="meta-cell"><span>{% if r.peso_kg %}{% if r.peso_kg|float < 1 %}{{ (r.peso_kg|float * 1000)|round|int }} G{% else %}{{ '%.1f'|format(r.peso_kg|float) }} KG{% endif %}{% else %}—{% endif %}</span></div>
     </div>
 
     <div class="product-row">

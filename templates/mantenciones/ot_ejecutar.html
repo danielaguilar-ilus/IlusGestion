@@ -2236,9 +2236,20 @@
     <i class="bi bi-check-circle-fill"></i>Guardado automático activo — cada cambio queda registrado con tu usuario.
   </div>
   {% if visita.estado == 'cerrada' %}
-    {% if _es_superadmin %}
-    {# OT cerrada — botón descargar PDF · 🔒 SOLO superadmin (brecha Aaron 2026-06-02):
-       los roles no-superadmin (ejecutivo/supervisor/técnico) NO deben ver la descarga. #}
+    {# 🔓 FIX 2026-09-02 (Daniel: "necesito que los chicos puedan descargar
+       y ver los PDF de las OT"): se agrega es_tecnico (flag global ya
+       normalizado -- reconoce tecnico/tecnico_externo/tecnico_jr, ver
+       _es_rol_tecnico) a la excepción de la brecha Aaron de abajo. Sigue
+       siendo seguro: para llegar a ESTA página el técnico ya tuvo que
+       pasar el gate _ot_can_view (solo ve OT propias, asignado o
+       colaborador -- REGLA de la matriz de permisos), y el PDF de la OT
+       no muestra monto/margen/centro de costo en ningún lado. Ejecutivo/
+       supervisor NO se agregan acá -- eso sigue siendo lo que la brecha
+       Aaron cerró, no se toca sin que Daniel lo pida explícito. #}
+    {% if _es_superadmin or es_tecnico %}
+    {# OT cerrada — botón descargar PDF · 🔒 SOLO superadmin + técnico
+       (brecha Aaron 2026-06-02, ampliado 2026-09-02): ejecutivo/supervisor
+       NO deben ver la descarga. #}
     {# 2026-08-08 (Daniel): el PDF se ve en un modal, no en pestaña nueva.
        href se conserva (clic derecho / clic central -- REGLA #4.2).
 
