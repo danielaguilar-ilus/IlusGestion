@@ -97,6 +97,24 @@
   .otd-header-acts .otd-btn{flex:1;justify-content:center}
 }
 
+/* Lo que el documento le cobra al cliente (líneas ZZ del ERP) — 2026-09-02,
+   caso OT-149: el dato estaba guardado pero invisible, y por eso parecía
+   perdido y la OT salía "a pérdida". */
+.otd-zzbox{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;
+  padding:10px 12px;margin-bottom:12px}
+.otd-zzbox .hd{font-size:.66rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.06em;color:#166534;display:flex;align-items:center;gap:6px;
+  margin-bottom:7px}
+.otd-zzbox .ln{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;
+  font-size:.78rem;color:#166534}
+.otd-zzbox .ln b{font-size:.95rem;font-weight:900;font-variant-numeric:tabular-nums}
+.otd-zzbox .ln .tot{margin-left:auto;font-weight:800}
+.otd-zzbox .usar{margin-top:9px;width:100%;min-height:38px;border:1px solid #16a34a;
+  background:#fff;color:#15803d;border-radius:9px;font-size:.78rem;font-weight:800;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;
+  transition:background .14s}
+.otd-zzbox .usar:hover{background:#dcfce7}
+
 /* ══ BARRA INFERIOR FIJA ══════════════════════════════════════════════
    🆕 2026-09-02 (Daniel: "por default, siempre coloca un botón abajo, en
    caso de: yo prefiero que sea para ver el PDF en cualquiera de los
@@ -406,10 +424,15 @@
   border-radius:3px;background:rgba(255,255,255,.13);
   transition:background .6s ease}
 .otd-h:first-child::before{display:none}
-.otd-h.ok::before{background:linear-gradient(90deg,var(--comp) 0%,#4ade80 100%)}
-/* El tramo que entra al hito ACTUAL se pinta a medias: de verde (lo ya
-   recorrido) a rojo (donde está parada la OT ahora mismo). */
-.otd-h.now::before{background:linear-gradient(90deg,var(--comp) 0%,var(--ejec) 100%)}
+/* El conector toma el color del hito al que LLEGA: el recorrido cambia de
+   tono a medida que avanza, en vez de ser un tubo verde uniforme. */
+.otd-h.ok::before{background:linear-gradient(90deg,
+  color-mix(in srgb,var(--hc,#4ade80) 45%,transparent) 0%,var(--hc,#4ade80) 100%)}
+.otd-h.now::before{background:linear-gradient(90deg,
+  rgba(255,255,255,.16) 0%,var(--hc,#dc2626) 100%)}
+@supports not (color: color-mix(in srgb, red 50%, transparent)){
+  .otd-h.ok::before{background:var(--hc,#4ade80)}
+}
 /* Duración del tramo, flotando sobre el conector. */
 .otd-h .dur{position:absolute;top:24px;left:-50%;width:100%;display:flex;
   justify-content:center;pointer-events:none}
@@ -419,19 +442,42 @@
 .otd-h.ok .dur span{color:#86efac;border-color:rgba(74,222,128,.3)}
 .otd-h .dur span.aprox{color:#8b8b93}
 .otd-h:first-child .dur{display:none}
+/* 🎨 2026-09-02 (Daniel: "los logos están en blanco, yo los quería a
+   color... algo bien poderoso, con profundidad, que se vea muy bien
+   realizado el trabajo"). Antes TODO hito cumplido era un disco verde
+   plano con el icono en blanco. Ahora cada hito tiene su propio color
+   (--hc, inyectado desde el backend, ver _OT2_HITOS) y el icono se pinta
+   de ESE color sobre un disco oscuro con degradado radial: se lee como
+   una pieza con volumen y no como una pastilla plana. El estado se sigue
+   distinguiendo por saturación y brillo -- cumplido brilla, pendiente se
+   apaga -- así el color no le roba el trabajo al semáforo. */
 .otd-h .p{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;
-  background:rgba(255,255,255,.05);border:2.5px solid rgba(255,255,255,.15);
+  background:radial-gradient(circle at 32% 26%,rgba(255,255,255,.09) 0%,rgba(255,255,255,.02) 55%,rgba(0,0,0,.35) 100%),#141416;
+  border:2.5px solid rgba(255,255,255,.14);
   color:#71717a;font-size:1.32rem;z-index:1;position:relative;
   transition:transform .25s cubic-bezier(.34,1.56,.64,1),
-             background-color .5s ease,border-color .5s ease,color .5s ease,
-             box-shadow .5s ease}
-.otd-h.ok .p{background:var(--comp);border-color:#4ade80;color:#fff;
-  box-shadow:0 0 0 5px rgba(22,163,74,.16),0 6px 18px -6px rgba(22,163,74,.75)}
-.otd-h.now .p{background:var(--ejec);border-color:#f87171;color:#fff;
-  box-shadow:0 0 0 5px rgba(220,38,38,.18),0 6px 20px -6px rgba(220,38,38,.85)}
+             border-color .5s ease,color .5s ease,box-shadow .5s ease,filter .5s ease}
+/* Brillo interior: da el volumen que Daniel pide ("con profundidad"). */
+.otd-h .p::before{content:"";position:absolute;inset:2px;border-radius:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,.10) 0%,transparent 42%);
+  pointer-events:none}
+.otd-h.ok .p{border-color:var(--hc,#4ade80);color:var(--hc,#4ade80);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--hc,#4ade80) 15%,transparent),
+             0 8px 22px -8px var(--hc,#4ade80),
+             inset 0 0 18px -6px color-mix(in srgb,var(--hc,#4ade80) 45%,transparent)}
+.otd-h.now .p{border-color:var(--hc,#dc2626);color:var(--hc,#dc2626);
+  box-shadow:0 0 0 5px color-mix(in srgb,var(--hc,#dc2626) 20%,transparent),
+             0 10px 26px -8px var(--hc,#dc2626),
+             inset 0 0 22px -6px color-mix(in srgb,var(--hc,#dc2626) 55%,transparent)}
+/* Fallback para navegadores sin color-mix(): el halo se pierde, el color
+   del icono y el borde -- que es lo que Daniel pidió -- se mantiene. */
+@supports not (color: color-mix(in srgb, red 50%, transparent)){
+  .otd-h.ok .p{box-shadow:0 8px 22px -8px var(--hc,#4ade80)}
+  .otd-h.now .p{box-shadow:0 10px 26px -8px var(--hc,#dc2626)}
+}
 /* Anillo que late SOLO en el hito actual — el "estás aquí" del recorrido. */
 .otd-h.now .p::after{content:"";position:absolute;inset:-9px;border-radius:50%;
-  border:2.5px solid var(--ejec);opacity:0;animation:otdTrackPing 2s ease-out infinite}
+  border:2.5px solid var(--hc,#dc2626);opacity:0;animation:otdTrackPing 2s ease-out infinite}
 @keyframes otdTrackPing{
   0%{transform:scale(.82);opacity:.75}
   75%{transform:scale(1.18);opacity:0}
@@ -440,7 +486,7 @@
 .otd-h:hover .p{transform:scale(1.09)}
 .otd-h .l{font-size:.78rem;font-weight:900;color:#a1a1aa;letter-spacing:.01em;
   line-height:1.2;transition:color .5s ease}
-.otd-h.ok .l{color:#4ade80}
+.otd-h.ok .l{color:var(--hc,#4ade80)}
 .otd-h.now .l{color:#fff}
 .otd-h .t{font-size:.68rem;color:#8b8b93;font-variant-numeric:tabular-nums;font-weight:700}
 .otd-h.ok .t,.otd-h.now .t{color:#d4d4d8}
@@ -891,16 +937,9 @@
      (REGLA #4.2) como red de respaldo silenciosa para el caso raro que
      el checklist inline no cubra, pero deja de ofrecerse como camino
      principal acá arriba. #}
-  <div class="otd-acts">
-    {# Compartir la OT firmada — SEPARADO del cierre a propósito (Daniel,
-       21-08): si WhatsApp falla, la OT igual quedó cerrada y firmada.
-       Solo aparece cuando ya hay documento que mandar. #}
-    {% if v.estado in ('completada','cerrada') %}
-    <button type="button" class="otd-btn pri" id="otdBtnWa" onclick="otdCompartirWa()"
-            style="background:#25d366;border-color:#25d366;color:#fff">
-      <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
-    {% endif %}
-  </div>
+  {# La fila .otd-acts quedó vacía el 2026-09-02: su último botón ("Enviar
+     al cliente") se mudó a la barra del hero. Se elimina el contenedor
+     para no dejar un hueco flotando arriba de la página. #}
 
   {# ══ HERO: navegación + identidad + estado operativo + datos + acciones ══ #}
   <div class="otd-hero h-{{ v.estado_fase or 'pend' }}">
@@ -911,6 +950,19 @@
       <a class="otd-back" href="{{ url_for('ot2_panel') }}">
         <i class="bi bi-arrow-left"></i> Volver al panel</a>
       <div class="otd-header-acts">
+        {# 🐛 FIX 2026-09-02 (Daniel: "aquí hay un botón de enviar al cliente
+           arriba, ¿por qué está ese botón allí?... no me gusta ese botón
+           allí, está por encima del header"). Era una regresión mía: al
+           eliminar el .page-header duplicado, la fila .otd-acts que contenía
+           este botón quedó huérfana ARRIBA de todo, flotando sobre la
+           página. Se muda a la barra del hero, junto a Ver PDF, que es
+           donde viven las acciones de la OT. Conserva su verde de marca
+           WhatsApp -- ahí sí es información, no decoración. #}
+        {% if v.estado in ('completada','cerrada') %}
+        <button type="button" class="otd-btn" id="otdBtnWa" onclick="otdCompartirWa()"
+                style="background:#25d366;border-color:#25d366;color:#fff">
+          <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
+        {% endif %}
         {# 🆕 2026-08-31 (Daniel: "quiero visualizar la OT en digital... si está
            firmada necesito ver y descargar el PDF siempre en un modal local...
            con una barra de proceso"): modal propio, nunca pestaña nueva. #}
@@ -1143,7 +1195,10 @@
     </div>
     <div class="otd-track" id="otdTrack">
       {% for h in hitos %}
+      {# --hc = color propio del hito (2026-09-02, ver _OT2_HITOS en app.py):
+         el CSS lo usa para el icono, el borde, el halo y el conector. #}
       <div class="otd-h {{ 'ok' if h.hecho }} {{ 'now' if h.actual }}"
+           style="--hc:{{ h.color or '#4ade80' }}"
            data-key="{{ h.clave }}" data-ts="{{ h.ts or '' }}"
            title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}{% if h.dur_desde_anterior %} · tardó {{ h.dur_desde_anterior }} desde el hito anterior{% endif %}">
         {# 🆕 2026-09-02 — cuánto tardó la OT en recorrer ESTE tramo. Solo
@@ -1187,15 +1242,22 @@
      entrada manual desde acá. Ver resumen final de la tarea: si gestión
      necesita crear/reemplazar un anexo fuera del flujo del wizard, hay que
      decidir con Daniel dónde vuelve a vivir ese botón. #}
+  {# 🔁 2026-09-02 (Daniel: "cuando entro por primera vez, me gustaría que
+     entre Información... parece que cada vez que tengo que entrar a la OT
+     tengo que presionar Información, entonces quiero que lo dejes allí por
+     defecto"). Esto REVIERTE la decisión del 2026-08-30 ("quiero que
+     aparezca siempre en Trabajo"): desde entonces Información pasó a
+     concentrar el documento, las finanzas, las firmas y la trazabilidad,
+     que es lo que Daniel viene a mirar al abrir una OT. #}
   <div class="otd-tabs" id="otdTabs">
-    <button type="button" class="otd-tab" data-tab="info">
+    <button type="button" class="otd-tab on" data-tab="info">
       <i class="bi bi-clipboard2-data"></i> Información</button>
-    <button type="button" class="otd-tab on" data-tab="trabajo">
+    <button type="button" class="otd-tab" data-tab="trabajo">
       <i class="bi bi-wrench-adjustable-circle-fill"></i> Trabajo <span class="cnt">{{ kpis.equipos }}</span></button>
   </div>
 
   {# ══ INFORMACIÓN (grilla original) ══ #}
-  <div class="otd-tabpanel" data-tab="info">
+  <div class="otd-tabpanel on" data-tab="info">
   <div class="otd-grid">
 
     {# ── Columna izquierda: documento + trabajo técnico ──────────────────
@@ -1226,63 +1288,6 @@
         </div>
       </div>
       {% endif %}
-
-      {# ═══ ACTIVIDAD DE LA OT ═══════════════════════════════════════════
-         🆕 2026-09-02 (Daniel, urgente: "necesito algo parecido a una
-         trazabilidad como esta, la de los tickets... quién realizó la orden
-         de trabajo, y si la reagendaron, también necesito toda esa
-         trazabilidad, una trazabilidad a detalle"). Mismo lenguaje visual
-         que "Actividad del ticket" (static/tickets_ficha.css: línea vertical,
-         nodo circular por tipo de evento, anillo pulsante en el más reciente,
-         chips de filtro) -- pero con clases propias `otd-act-*` para no
-         acoplar esta pantalla al CSS de Tickets.
-         El dato NO es nuevo: `mant_logs` ya registraba todo esto; lo que
-         faltaba era mostrarlo. #}
-      <div class="otd-card" id="otdCardActividad">
-        <h3><i class="bi bi-activity"></i> Actividad de la OT
-          <span class="n">{{ actividad | length }}</span></h3>
-        <div style="padding:12px 16px 16px">
-          {% if actividad %}
-          <div class="otd-act-filtros" id="otdActFiltros">
-            <span class="otd-act-chip active" data-filtro="todo">Todo</span>
-            <span class="otd-act-chip" data-filtro="cambios">Cambios</span>
-            <span class="otd-act-chip" data-filtro="firmas">Firmas</span>
-            <span class="otd-act-chip" data-filtro="envios">Envíos</span>
-            <span class="otd-act-chip" data-filtro="archivos">Archivos</span>
-          </div>
-          <div class="otd-act-timeline" id="otdActTimeline">
-            {% for a in actividad %}
-            <div class="otd-act-item c-{{ a.color }}" data-grupo="{{ a.grupo }}"
-                 {% if loop.index > 8 %}data-extra="1" style="display:none"{% endif %}>
-              <span class="otd-act-nodo"><i class="bi {{ a.icono }}"></i></span>
-              <div class="otd-act-body">
-                <div class="otd-act-linea">
-                  <span class="otd-act-texto"><b>{{ a.usuario }}</b> {{ a.label }}</span>
-                  <span class="otd-act-fecha">{{ a.cuando }}</span>
-                </div>
-                {% if a.detalle %}
-                <div class="otd-act-extracto">{{ a.detalle }}</div>
-                {% endif %}
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          {% if actividad | length > 8 %}
-          <button type="button" class="otd-btn" id="otdActVerTodo" style="width:100%;justify-content:center;margin-top:10px"
-                  onclick="otdActToggleTodo(this)">
-            <i class="bi bi-chevron-down"></i> Ver los {{ actividad | length }} eventos</button>
-          {% endif %}
-          <div class="otd-vacio" id="otdActVacioFiltro" style="display:none">
-            No hay eventos de este tipo en esta OT.
-          </div>
-          {% else %}
-          <div class="otd-vacio">
-            <i class="bi bi-activity" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-            Todavía no hay actividad registrada en esta OT.
-          </div>
-          {% endif %}
-        </div>
-      </div>
 
       <div class="otd-card">
         <h3><i class="bi bi-graph-up-arrow"></i> Avance del trabajo técnico</h3>
@@ -1332,6 +1337,40 @@
       <div class="otd-card" id="otdCardFinanzas">
         <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT</h3>
         <div style="padding:14px 16px">
+          {# 🐛 2026-09-02 (Daniel, OT-2026-00149: "no me guardó las finanzas...
+             me trajo el precio final en servicio de despacho y de instalación,
+             pero no lo guardó porque me está tirando a pérdida"). El dato SÍ
+             estaba guardado -- en zz_monto (línea de servicio del documento) y
+             zz_envio_monto (línea de envío) -- pero esta tarjeta nunca los
+             mostraba, así que parecía perdido. Acá se hacen visibles, y si el
+             "Precio al cliente" está vacío se puede traer con un clic.
+             El fix de raíz (que toda OT de cliente nazca con `costo` bien
+             puesto) ya está en ot2_api_crear; esto rescata las que se crearon
+             antes. #}
+          {% set _zz_serv = v.zz_monto|float if v.zz_monto else 0 %}
+          {% set _zz_env  = v.zz_envio_monto|float if v.zz_envio_monto else 0 %}
+          {% if _zz_serv or _zz_env %}
+          <div class="otd-zzbox">
+            <div class="hd"><i class="bi bi-receipt"></i> Lo que el documento le cobra al cliente</div>
+            <div class="ln">
+              {% if _zz_serv %}
+              <span><b>${{ '{:,.0f}'.format(_zz_serv)|replace(',','.') }}</b>
+                {{ v.zz_codigo or 'servicio' }}</span>
+              {% endif %}
+              {% if _zz_env %}
+              <span><b>${{ '{:,.0f}'.format(_zz_env)|replace(',','.') }}</b>
+                {{ v.zz_envio_codigo or 'envío' }}</span>
+              {% endif %}
+              <span class="tot">Total <b>${{ '{:,.0f}'.format(_zz_serv + _zz_env)|replace(',','.') }}</b></span>
+            </div>
+            {% if puede_metadata %}
+            <button type="button" class="usar" id="otdZzUsar"
+                    data-total="{{ (_zz_serv + _zz_env)|int }}"
+                    onclick="otdUsarPrecioDocumento(this)">
+              <i class="bi bi-arrow-down-circle-fill"></i> Usar como precio al cliente</button>
+            {% endif %}
+          </div>
+          {% endif %}
           {% if puede_metadata %}
           <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div>
@@ -1471,6 +1510,27 @@
     {# ── Columna derecha ── #}
     <div style="display:flex;flex-direction:column;gap:14px">
 
+      {# 🔼 2026-09-02 (Daniel, dos veces: "no veo las firmas en la
+         información" / "insisto, necesito ver las firmas"). La tarjeta
+         existía pero quedaba DEBAJO de "Firmar y cerrar OT", o sea
+         debajo de la acción. Sube al primer lugar de la columna: primero
+         se ve quién firmó y quién falta, después se actúa. #}
+      <div class="otd-card">
+        <h3><i class="bi bi-vector-pen"></i> Firmas</h3>
+        <div class="otd-fir">
+          {% for f in firmas %}
+          <div class="otd-f {{ 'si' if f.url else 'no' }}">
+            <span class="ic"><i class="bi {{ 'bi-check-lg' if f.url else 'bi-dash-lg' }}"></i></span>
+            <div class="in">
+              <b>{{ f.rol }}</b>
+              <small>{{ f.nombre or ('Firmado ' ~ f.cuando) if f.url else 'Pendiente' }}</small>
+            </div>
+            <span class="st">{{ 'Firmada' if f.url else 'Falta' }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
       {# ══ FIRMAR Y CERRAR OT — 2026-08-28 (Daniel, 2do pedido de hoy) ══
          "que se pueda realizar la firma... que firme el técnico, después
          que firme el cliente, que se pueda enviar por correo o WhatsApp...
@@ -1549,22 +1609,6 @@
             <div class="otf-msg otf-wait"><i class="bi bi-eye"></i> Solo lectura — no puedes ejecutar esta OT.</div>
             {% endif %}
           {% endif %}
-        </div>
-      </div>
-
-      <div class="otd-card">
-        <h3><i class="bi bi-vector-pen"></i> Firmas</h3>
-        <div class="otd-fir">
-          {% for f in firmas %}
-          <div class="otd-f {{ 'si' if f.url else 'no' }}">
-            <span class="ic"><i class="bi {{ 'bi-check-lg' if f.url else 'bi-dash-lg' }}"></i></span>
-            <div class="in">
-              <b>{{ f.rol }}</b>
-              <small>{{ f.nombre or ('Firmado ' ~ f.cuando) if f.url else 'Pendiente' }}</small>
-            </div>
-            <span class="st">{{ 'Firmada' if f.url else 'Falta' }}</span>
-          </div>
-          {% endfor %}
         </div>
       </div>
 
@@ -1708,6 +1752,68 @@
 
     </div>
   </div>
+
+  {# 🔽 2026-09-02 (Daniel: "la actividad de la OT mándala hacia
+     abajo, por favor"). Sale de la columna izquierda y pasa al final
+     de Información, a ancho completo: es la bitácora que se consulta
+     cuando hace falta, no lo primero que uno viene a mirar. #}
+      {# ═══ ACTIVIDAD DE LA OT ═══════════════════════════════════════════
+         🆕 2026-09-02 (Daniel, urgente: "necesito algo parecido a una
+         trazabilidad como esta, la de los tickets... quién realizó la orden
+         de trabajo, y si la reagendaron, también necesito toda esa
+         trazabilidad, una trazabilidad a detalle"). Mismo lenguaje visual
+         que "Actividad del ticket" (static/tickets_ficha.css: línea vertical,
+         nodo circular por tipo de evento, anillo pulsante en el más reciente,
+         chips de filtro) -- pero con clases propias `otd-act-*` para no
+         acoplar esta pantalla al CSS de Tickets.
+         El dato NO es nuevo: `mant_logs` ya registraba todo esto; lo que
+         faltaba era mostrarlo. #}
+      <div class="otd-card" id="otdCardActividad">
+        <h3><i class="bi bi-activity"></i> Actividad de la OT
+          <span class="n">{{ actividad | length }}</span></h3>
+        <div style="padding:12px 16px 16px">
+          {% if actividad %}
+          <div class="otd-act-filtros" id="otdActFiltros">
+            <span class="otd-act-chip active" data-filtro="todo">Todo</span>
+            <span class="otd-act-chip" data-filtro="cambios">Cambios</span>
+            <span class="otd-act-chip" data-filtro="firmas">Firmas</span>
+            <span class="otd-act-chip" data-filtro="envios">Envíos</span>
+            <span class="otd-act-chip" data-filtro="archivos">Archivos</span>
+          </div>
+          <div class="otd-act-timeline" id="otdActTimeline">
+            {% for a in actividad %}
+            <div class="otd-act-item c-{{ a.color }}" data-grupo="{{ a.grupo }}"
+                 {% if loop.index > 8 %}data-extra="1" style="display:none"{% endif %}>
+              <span class="otd-act-nodo"><i class="bi {{ a.icono }}"></i></span>
+              <div class="otd-act-body">
+                <div class="otd-act-linea">
+                  <span class="otd-act-texto"><b>{{ a.usuario }}</b> {{ a.label }}</span>
+                  <span class="otd-act-fecha">{{ a.cuando }}</span>
+                </div>
+                {% if a.detalle %}
+                <div class="otd-act-extracto">{{ a.detalle }}</div>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% if actividad | length > 8 %}
+          <button type="button" class="otd-btn" id="otdActVerTodo" style="width:100%;justify-content:center;margin-top:10px"
+                  onclick="otdActToggleTodo(this)">
+            <i class="bi bi-chevron-down"></i> Ver los {{ actividad | length }} eventos</button>
+          {% endif %}
+          <div class="otd-vacio" id="otdActVacioFiltro" style="display:none">
+            No hay eventos de este tipo en esta OT.
+          </div>
+          {% else %}
+          <div class="otd-vacio">
+            <i class="bi bi-activity" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+            Todavía no hay actividad registrada en esta OT.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
   </div>
   {# ══ /INFORMACIÓN ══ #}
 
@@ -2555,6 +2661,26 @@ async function otdEliminarOT(){
       if (elMargenWarn) elMargenWarn.style.display = 'none';
       return;
     }
+    /* 🐛 FIX 2026-09-02 (OT-149): antes, una OT con costos declarados pero
+       SIN precio al cliente mostraba "pérdida" con todas sus letras -- y
+       ese era justo el estado en que nacían todas las OT de cliente por el
+       bug de `costo`. No es una pérdida: es un dato que falta. Decirle a
+       Daniel "estás perdiendo plata" cuando en realidad nadie declaró el
+       precio es la peor forma de reportar un campo vacío. */
+    if (!precio && costoTotal){
+      elMargen.textContent = '—'; elMargenPct.textContent = '—';
+      elMargen.style.color = '#6b7280'; elMargenPct.style.color = '#6b7280';
+      if (elMargenWarn){
+        elMargenWarn.style.display = 'flex';
+        elMargenWarn.innerHTML = '<i class="bi bi-info-circle-fill" style="margin-top:2px"></i>' +
+          '<span>Falta el <b>precio al cliente</b> para poder calcular el margen. ' +
+          'Si el documento ya lo trae, úsalo con el botón verde de arriba.</span>';
+        elMargenWarn.style.background = '#eff6ff';
+        elMargenWarn.style.borderColor = '#3b82f6';
+        elMargenWarn.style.color = '#1e40af';
+      }
+      return;
+    }
     const margen = precio - costoTotal;
     const pct = precio > 0 ? (margen / precio * 100) : 0;
     elMargen.textContent = fmtCLP(margen);
@@ -2565,6 +2691,16 @@ async function otdEliminarOT(){
       const cc = document.getElementById('otdFinCentroCosto');
       const ccVal = cc ? cc.value : '';
       const avisar = margen < 0 && (ccVal === '' || ccVal === 'sstt');
+      if (avisar){
+        // Restaurar el aviso REAL de pérdida (pudo haber quedado con el
+        // texto de "falta el precio" de la rama de arriba).
+        elMargenWarn.innerHTML = '<i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>' +
+          '<span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico, ' +
+          'considera asignarla a Logística o Comercial arriba.</span>';
+        elMargenWarn.style.background = '#fff8e1';
+        elMargenWarn.style.borderColor = '#f59e0b';
+        elMargenWarn.style.color = '#92400e';
+      }
       elMargenWarn.style.display = avisar ? 'flex' : 'none';
     }
   }
@@ -2654,6 +2790,20 @@ window.otdActToggleTodo = function(btn){
    mismo motor read-only de Random que ya usa Tickets/Retiros (por RUT,
    número de documento o razón social) y deja elegir con un clic -- llena
    los mismos inputs de siempre, no inventa un modelo de datos nuevo. */
+/* 🐛 2026-09-02 (OT-149) — traer el precio del documento al campo "Precio
+   al cliente". No guarda solo: deja el número puesto, recalcula el margen
+   al instante y deja que Daniel presione Guardar -- escribir dinero sin
+   que nadie lo confirme sería peor que el bug original. */
+window.otdUsarPrecioDocumento = function(btn){
+  const total = parseFloat(btn.dataset.total || 0) || 0;
+  const el = document.getElementById('otdFinCosto');
+  if (!el || !total) return;
+  el.value = total;
+  el.dispatchEvent(new Event('input', {bubbles: true}));  // recalcula el margen
+  el.focus();
+  if (window.ilusToast) ilusToast('Precio traído del documento — revisa y presiona Guardar', {type:'info'});
+};
+
 window.otdBuscarDocErp = async function(){
   const q = (document.getElementById('otdErpDocQ').value || '').trim();
   const box = document.getElementById('otdErpDocResultados');

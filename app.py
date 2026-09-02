@@ -76848,12 +76848,25 @@ _OT2_HITOS = (
     # reemplazan por las 3 firmas reales del proceso (técnico → cliente →
     # supervisor), que SIEMPRE se llenan en el flujo real y son justo lo
     # que Daniel más cuida — más informativo y más fiable que antes.
-    ("creada",     "Creada",            "bi-plus-circle-fill", "created_at"),
-    ("ejecutando", "Ejecutando",        "bi-tools",            "hora_real_inicio"),
-    ("f_tecnico",  "Firma técnico",     "bi-person-check-fill", "firma_tecnico_at"),
-    ("f_cliente",  "Firma cliente",     "bi-vector-pen",       "firma_cliente_at"),
-    ("aprobada",   "Aprobada",          "bi-patch-check-fill", "firma_supervisor_at"),
-    ("cerrada",    "Cerrada",           "bi-flag-fill",        "cerrada_at"),
+    # 🎨 2026-09-02 (Daniel, viendo el tracker nuevo: "los logos están en
+    # blanco, yo los quería a color, y quería logos más representativos en
+    # algunos casos... algo bien poderoso, con profundidad"). Dos cambios:
+    #  1. Iconos más literales de lo que pasa en cada paso: la OT se
+    #     ESCRIBE (clipboard-plus), el técnico TRABAJA con herramienta
+    #     (wrench), FIRMA (pen), el cliente APRUEBA con su firma
+    #     (person-check), el supervisor SELLA (shield-check) y la OT se
+    #     ARCHIVA cerrada (lock).
+    #  2. Cada hito trae su PROPIO color -- antes todos los cumplidos se
+    #     pintaban del mismo verde y el icono salía blanco. El color viaja
+    #     al template como variable CSS (ver `--hc` en detalle.html), así
+    #     el estado (cumplido / actual / pendiente) sigue leyéndose por
+    #     saturación y brillo, no por el tono.
+    ("creada",     "Creada",        "bi-clipboard2-plus-fill", "created_at",          "#60a5fa"),
+    ("ejecutando", "Ejecutando",    "bi-wrench-adjustable",    "hora_real_inicio",    "#fbbf24"),
+    ("f_tecnico",  "Firma técnico", "bi-pen-fill",             "firma_tecnico_at",    "#c084fc"),
+    ("f_cliente",  "Firma cliente", "bi-person-check-fill",    "firma_cliente_at",    "#22d3ee"),
+    ("aprobada",   "Aprobada",      "bi-shield-fill-check",    "firma_supervisor_at", "#4ade80"),
+    ("cerrada",    "Cerrada",       "bi-lock-fill",            "cerrada_at",          "#f87171"),
 )
 
 
@@ -77155,10 +77168,11 @@ def ot2_detalle(vid):
 
     # ── Recorrido de la OT ─────────────────────────────────────────────
     hitos = []
-    for clave, label, icono, col in _OT2_HITOS:
+    for clave, label, icono, col, color in _OT2_HITOS:
         ts = v.get(col)
         hitos.append({
             "clave": clave, "label": label, "icono": icono,
+            "color": color,          # 2026-09-02 — un color propio por hito
             "ts": ts,
             "cuando": chile_fmt_filter(ts, "%d/%m %H:%M") if ts else "",
             "hecho": bool(ts),
@@ -78600,6 +78614,35 @@ def ot2_api_crear():
         _fin_estado_fact = "sin_cotizar"
     _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int or _fin_costo_prov)
 
+    # 🐛 FIX 2026-09-02 (Daniel, OT-2026-00149: "no me guardó las finanzas...
+    # recuerdo que me trajo el precio final en servicio de despacho y de
+    # instalación, pero no lo guardó porque me está tirando a pérdida").
+    #
+    # El dato NUNCA se perdió: quedó guardado en zz_monto (línea
+    # ZZINSTALACION/ZZMANTENCION del documento) y zz_envio_monto (línea
+    # ZZENVIO). Lo que estaba mal es que la columna `costo` -- la que la
+    # tarjeta "Finanzas de la OT" muestra como "Precio al cliente" y la
+    # única que entra al cálculo del margen -- solo recibía
+    # `costo_interno`, un campo pensado para el trabajo de bodega
+    # ("valorizarlo, esto no se cobra", 2026-08-28). En una OT de CLIENTE
+    # ese campo viene vacío, así que `costo` quedaba NULL mientras
+    # costo_proveedor/costo_despacho sí traían valores → margen negativo
+    # siempre. Toda OT de cliente creada por este wizard nacía "a pérdida".
+    #
+    # Ahora, para una OT de cliente, el precio al cliente es lo que el
+    # DOCUMENTO le cobra: servicio + envío. Es el mismo número que Daniel
+    # vio en el wizard, y el que hace que el margen signifique algo:
+    #   margen = (zz_monto + zz_envio_monto) − (costo_proveedor + costo_despacho)
+    # El trabajo interno conserva su costo_interno, que es otra cosa
+    # (estimado de referencia, no un cobro).
+    if es_interna:
+        _fin_costo_cliente = _fin_costo_int
+    else:
+        _fin_costo_cliente = _fin_costo_int
+        if _fin_costo_cliente is None:
+            _zz_total = (_fin_zzm or 0) + (_fin_zz_envio_m or 0)
+            _fin_costo_cliente = float(_zz_total) if _zz_total else None
+
     # Modalidad de cobro: una OT interna NO nace cobrable al cliente
     # (`pagado` significa "facturable", no "ya pagado" — ver el comentario
     # de la columna). Sin esto, el trabajo de bodega entraba al pipeline
@@ -78660,7 +78703,7 @@ def ot2_api_crear():
              acc_asc, acc_est, acc_piso, acc_notas,
              _fin_centro, _fin_zzc, _fin_zzm, _fin_zz_envio_c, _fin_zz_envio_m,
              _fin_zz_motivo_manual, _fin_zz_envio_motivo_manual,
-             _fin_costo_int,
+             _fin_costo_cliente,   # ← ver FIX 2026-09-02 (OT-149) más arriba
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
