@@ -47591,59 +47591,14 @@ def _build_retiro_email_templates():
         )
 
     def _ret_stepper(active_idx):
-        """Stepper de 5 nodos CON LÍNEA CONECTORA (email-safe, tabla).
-        (Juan Daniel 2026-06-05: 'que tenga la conexión, como en retiros'.)
-        Nodo: verde=completado (i<active), rojo=actual (i==active), gris=pendiente.
-        Leg (línea): verde la ya pasada, roja la que sale del actual, gris las pendientes.
-        Fila 1 = 5 nodos + 4 legs (9 celdas). Fila 2 = 5 labels al 20% (centradas)."""
-        # Daniel 2026-06-15: hitos del MODELO CANÓNICO ÚNICO
-        # (pickups_module.PICKUP_JOURNEY) para que el correo y el
-        # seguimiento del cliente muestren EXACTAMENTE los mismos pasos.
-        from pickups_module import PICKUP_JOURNEY as _PJ
-        pasos = [(p["emoji"], p["label"]) for p in _PJ]
-        celdas = []      # nodos + legs (fila superior)
-        labels_tds = []  # labels (fila inferior)
-        n = len(pasos)
-        for i, (icon, label) in enumerate(pasos):
-            if i < active_idx:
-                bg, fg, extra = "#16a34a", "#ffffff", ""
-            elif i == active_idx:
-                bg, fg, extra = "#dc2626", "#ffffff", "box-shadow:0 0 0 4px rgba(220,38,38,.15);"
-            else:
-                bg, fg, extra = "#f3f4f6", "#9ca3af", "border:1px solid #e5e7eb;"
-            celdas.append(
-                f'<td align="center" valign="middle" width="11%" style="padding:0">'
-                f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
-                f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;'
-                f'font-size:15px;font-weight:900;text-align:center;margin:0 auto;{extra}">{icon}</div>'
-                f'</td>'
-            )
-            if i < n - 1:
-                leg = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#e5e7eb")
-                celdas.append(
-                    f'<td valign="middle" width="11.5%" style="padding:0 2px">'
-                    f'<div style="height:4px;background:{leg};border-radius:2px;'
-                    f'font-size:0;line-height:0">&nbsp;</div></td>'
-                )
-            lbl_color = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
-            lbl_weight = "800" if i == active_idx else "600"
-            labels_tds.append(
-                f'<td align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
-                f'font-size:10px;color:{lbl_color};text-transform:uppercase;font-weight:{lbl_weight};'
-                f'letter-spacing:.04em">{label}</td>'
-            )
-        return (
-            '<table cellpadding="0" cellspacing="0" width="100%" '
-            'style="background:#ffffff;border:1px solid #ececef;border-radius:12px;margin:0 0 18px">'
-            '<tr><td style="padding:20px 14px 16px 14px">'
-            '<table cellpadding="0" cellspacing="0" width="100%"><tr>'
-            f'{"".join(celdas)}'
-            '</tr></table>'
-            '<table cellpadding="0" cellspacing="0" width="100%" style="margin-top:9px"><tr>'
-            f'{"".join(labels_tds)}'
-            '</tr></table>'
-            '</td></tr></table>'
-        )
+        """Stepper de 5 nodos (email-safe). Delega a pickups_module.
+        pickup_email_stepper_html — FUENTE ÚNICA compartida con el aviso
+        interno (2026-08-24, fix Outlook: círculos VML condicionales en vez
+        de border-radius, que Outlook clásico no soporta y rendía como
+        bloques cuadrados). Antes esta función tenía su propia copia casi
+        idéntica del markup — quedaban dos diseños que podían desincronizarse."""
+        from pickups_module import pickup_email_stepper_html as _pesh
+        return _pesh(active_idx)
 
     # Datos clave reutilizables (siempre presentes en el email)
     _DATOS_BASE = (

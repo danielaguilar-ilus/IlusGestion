@@ -91,6 +91,75 @@ def pickup_journey_idx(status):
     """Índice del hito canónico (0-4) para un estado; -1 = cancelado/fallido."""
     return PICKUP_JOURNEY_IDX.get(status or "", 0)
 
+
+def pickup_email_stepper_html(active_idx):
+    """Stepper de 5 hitos email-safe (tabla) — FUENTE ÚNICA para el tracking
+    dentro de un correo. La usan tanto el correo al CLIENTE (_ret_stepper en
+    app.py, que delega aquí) como el aviso INTERNO (_pickup_email_stepper en
+    register_pickup_routes). Antes eran dos copias casi idénticas que podían
+    desincronizarse — ahora hay un solo lugar para editar el diseño del
+    tracking en TODO correo de retiros.
+
+    FIX 2026-08-24 (Daniel: "el tracking se ve horrible en Outlook, no tiene
+    ningún sentido... se ve mucho mejor en Gmail"): Outlook de escritorio
+    (motor de render de Word) NO soporta `border-radius` — los círculos del
+    stepper se veían como bloques cuadrados/rectangulares, rompiendo el
+    diseño. Fix: patrón VML condicional (el estándar de la industria del
+    email — el mismo que usan Mailchimp/SendGrid/Litmus para insignias
+    circulares): un óvalo VML real para Outlook clásico
+    (`<!--[if mso]>...<![endif]-->`, VML lo soporta Word nativamente desde
+    Office 2000) + el `<div>` con `border-radius` de siempre para todos los
+    demás clientes (`<!--[if !mso]><!-->...<!--<![endif]-->`, un comentario
+    HTML normal para cualquier cliente que no entienda comentarios
+    condicionales de Outlook, así que Gmail/Apple Mail/Outlook.com lo
+    renderizan igual que antes). Verde=hecho, rojo=actual, gris=pendiente.
+    """
+    try:
+        pasos = [(p["emoji"], p["label"]) for p in PICKUP_JOURNEY]
+        celdas, labels = [], []
+        n = len(pasos)
+        for i, (ic, lb) in enumerate(pasos):
+            if i < active_idx:
+                bg, fg, ex = "#16a34a", "#ffffff", ""
+            elif i == active_idx:
+                bg, fg, ex = "#dc2626", "#ffffff", "box-shadow:0 0 0 4px rgba(220,38,38,.15);"
+            else:
+                bg, fg, ex = "#f3f4f6", "#9ca3af", "border:1px solid #e5e7eb;"
+            circulo = (
+                '<!--[if mso]>'
+                f'<v:oval xmlns:v="urn:schemas-microsoft-com:vml" style="width:34px;height:34px;v-text-anchor:middle" '
+                f'fillcolor="{bg}" strokecolor="{bg}">'
+                f'<v:textbox inset="0,0,0,0"><center style="color:{fg};font-family:Helvetica,Arial,sans-serif;'
+                f'font-size:15px;font-weight:900;line-height:34px">{ic}</center></v:textbox></v:oval>'
+                '<![endif]-->'
+                '<!--[if !mso]><!-->'
+                f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
+                f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;font-size:15px;'
+                f'font-weight:900;text-align:center;margin:0 auto;{ex}">{ic}</div>'
+                '<!--<![endif]-->'
+            )
+            celdas.append(f'<td align="center" valign="middle" width="11%" style="padding:0">{circulo}</td>')
+            if i < n - 1:
+                leg = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#e5e7eb")
+                celdas.append(
+                    f'<td valign="middle" width="11.5%" style="padding:0 2px"><div style="height:4px;'
+                    f'background:{leg};border-radius:2px;font-size:0;line-height:0">&nbsp;</div></td>')
+            lc = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
+            lw = "800" if i == active_idx else "600"
+            labels.append(
+                f'<td align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
+                f'font-size:10px;color:{lc};text-transform:uppercase;font-weight:{lw};'
+                f'letter-spacing:.04em">{lb}</td>')
+        return (
+            '<table cellpadding="0" cellspacing="0" width="100%" '
+            'style="background:#ffffff;border:1px solid #ececef;border-radius:12px;margin:0 0 18px">'
+            '<tr><td style="padding:20px 14px 16px 14px">'
+            '<table cellpadding="0" cellspacing="0" width="100%"><tr>' + "".join(celdas) +
+            '</tr></table><table cellpadding="0" cellspacing="0" width="100%" style="margin-top:9px"><tr>' +
+            "".join(labels) + '</tr></table></td></tr></table>')
+    except Exception:
+        return ""
+
 # ── PIPELINE_GROUPS (2026-05-26 Daniel) ──────────────────────────────
 # Agrupación VISUAL del kanban del monitor de retiros: los 12 estados
 # de PICKUP_STATUS se consolidan en 6 columnas para reducir saturación.
@@ -1573,46 +1642,10 @@ def register_pickup_routes(app, ctx):
 
 
     def _pickup_email_stepper(active_idx):
-        """Stepper de 5 hitos email-safe (tabla) para el correo del cliente.
-        Mismo modelo canónico PICKUP_JOURNEY que el seguimiento y las plantillas
-        de BD. Verde=hecho, rojo=actual, gris=pendiente. (Daniel 2026-06-17: el
-        tracking debe ir SIEMPRE en el correo, también en el fallback.)"""
-        try:
-            pasos = [(p["emoji"], p["label"]) for p in PICKUP_JOURNEY]
-            celdas, labels = [], []
-            n = len(pasos)
-            for i, (ic, lb) in enumerate(pasos):
-                if i < active_idx:
-                    bg, fg, ex = "#16a34a", "#ffffff", ""
-                elif i == active_idx:
-                    bg, fg, ex = "#dc2626", "#ffffff", "box-shadow:0 0 0 4px rgba(220,38,38,.15);"
-                else:
-                    bg, fg, ex = "#f3f4f6", "#9ca3af", "border:1px solid #e5e7eb;"
-                celdas.append(
-                    f'<td align="center" width="11%" style="padding:0">'
-                    f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
-                    f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;font-size:15px;'
-                    f'font-weight:900;text-align:center;margin:0 auto;{ex}">{ic}</div></td>')
-                if i < n - 1:
-                    leg = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#e5e7eb")
-                    celdas.append(
-                        f'<td width="11.5%" style="padding:0 2px"><div style="height:4px;'
-                        f'background:{leg};border-radius:2px;font-size:0;line-height:0">&nbsp;</div></td>')
-                lc = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
-                lw = "800" if i == active_idx else "600"
-                labels.append(
-                    f'<td align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
-                    f'font-size:10px;color:{lc};text-transform:uppercase;font-weight:{lw};'
-                    f'letter-spacing:.04em">{lb}</td>')
-            return (
-                '<table cellpadding="0" cellspacing="0" width="100%" '
-                'style="background:#ffffff;border:1px solid #ececef;border-radius:12px;margin:0 0 18px">'
-                '<tr><td style="padding:20px 14px 16px">'
-                '<table cellpadding="0" cellspacing="0" width="100%"><tr>' + "".join(celdas) +
-                '</tr></table><table cellpadding="0" cellspacing="0" width="100%" style="margin-top:9px"><tr>' +
-                "".join(labels) + '</tr></table></td></tr></table>')
-        except Exception:
-            return ""
+        """Delega a pickup_email_stepper_html (fuente única, a nivel de módulo
+        — 2026-08-24, fix Outlook). Mantenido como wrapper para no tocar los
+        ~5 call-sites existentes dentro de este closure."""
+        return pickup_email_stepper_html(active_idx)
 
     # Mapeo: kind del notify() → estado en comm_templates
     # Cada kind dispara una plantilla del módulo 'retiros'. Si la plantilla
@@ -2020,48 +2053,59 @@ def register_pickup_routes(app, ctx):
                         # ── (b) Email interno ─────────────────────────────
                         if send_email_snap:
                             try:
+                                # FIX 2026-08-24 (Daniel: "para de enviar a Fran, Juan,
+                                # Alison, Roberto y Daniel Aguilar... gestionemos en
+                                # Comunicaciones a quién se debe enviar cada copia...
+                                # elimina las copias que tenemos por código, manejémoslo
+                                # por el front"). ANTES: cada uno de los ~9 eventos del
+                                # ciclo de vida (nueva solicitud, confirmado, en
+                                # preparación, retirado, mensaje, contrapropuesta...)
+                                # mandaba copia a un broadcast FIJO por rol (cualquier
+                                # superadmin/admin/supervisor, ~5 personas) — de ahí las
+                                # "7 copias" en una sola prueba: eran 7 eventos reales,
+                                # cada uno repartido al mismo grupo. AHORA: si el retiro
+                                # ya tiene un RESPONSABLE asignado, la copia interna va
+                                # SOLO a esa persona (es quien lo está gestionando). Si
+                                # AÚN no tiene responsable (recién llegado, sin asignar),
+                                # va a la lista configurable en Comunicaciones → Retiros
+                                # → "Avisar por email a" (notify_emails, editable desde
+                                # el front, sin tocar código) + soporte como respaldo.
                                 dests = []
+                                _resp_email = None
                                 try:
-                                    cfg_n = settings() or {}
-                                    for em in str(cfg_n.get("notify_emails") or "").replace(";", ",").split(","):
-                                        em = em.strip().lower()
-                                        if em and is_valid_email(em) and em not in dests:
-                                            dests.append(em)
-                                except Exception:
-                                    pass
-                                try:
-                                    brand_cfg = _get_brand_cfg() or {}
-                                    _sup = (brand_cfg.get("support_email") or "").strip().lower()
-                                    if _sup and _sup not in dests:
-                                        dests.append(_sup)
-                                except Exception:
-                                    pass
-                                # Daniel 2026-06-17: además del CSV + soporte, avisar al
-                                # CORREO PERSONAL de cada RESPONSABLE por ROL. El email es
-                                # la columna `username` de app_users. Robusto a roles nuevos:
-                                # incluye a quien tenga el módulo 'retiros' encendido en
-                                # rol_permisos + todos los superadmin/admin/supervisor (estos
-                                # NO siempre tienen fila en rol_permisos). Best-effort.
-                                try:
-                                    _auth_table = ctx.get("AUTH_TABLE") or "app_users"
-                                    rows_rol = mysql_fetchall(
-                                        f"SELECT DISTINCT u.username AS email "
-                                        f"FROM `{_auth_table}` u "
-                                        f"LEFT JOIN rol_permisos rp ON rp.rol_slug = u.role "
-                                        f"   AND rp.modulo='retiros' AND rp.accion='ver' "
-                                        f"   AND rp.permitido=1 "
-                                        f"WHERE u.active=1 AND ("
-                                        f"     rp.rol_slug IS NOT NULL "
-                                        f"  OR u.role LIKE 'superadmin%%' "
-                                        f"  OR u.role LIKE 'admin%%' "
-                                        f"  OR u.role LIKE 'supervisor%%')"
-                                    ) or []
-                                    for r in rows_rol:
-                                        em = str(r.get("email") or "").strip().lower()
-                                        if em and is_valid_email(em) and em not in dests:
-                                            dests.append(em)
-                                except Exception as _e_rol:
-                                    print(f"[ILUS][PICKUP TEAM NOTIF] dests por rol: {_e_rol}", flush=True)
+                                    _rq_dest = mysql_fetchone(
+                                        f"SELECT responsable_user_id FROM `{REQ}` WHERE id=%s",
+                                        (rid_snap,)) or {}
+                                    _resp_uid = _rq_dest.get("responsable_user_id")
+                                    if _resp_uid:
+                                        _auth_table = ctx.get("AUTH_TABLE") or "app_users"
+                                        _resp_row = mysql_fetchone(
+                                            f"SELECT username FROM `{_auth_table}` WHERE id=%s AND active=1",
+                                            (_resp_uid,)) or {}
+                                        _cand = (_resp_row.get("username") or "").strip().lower()
+                                        if _cand and is_valid_email(_cand):
+                                            _resp_email = _cand
+                                except Exception as _e_resp:
+                                    print(f"[ILUS][PICKUP TEAM NOTIF] responsable lookup: {_e_resp}", flush=True)
+
+                                if _resp_email:
+                                    dests = [_resp_email]
+                                else:
+                                    try:
+                                        cfg_n = settings() or {}
+                                        for em in str(cfg_n.get("notify_emails") or "").replace(";", ",").split(","):
+                                            em = em.strip().lower()
+                                            if em and is_valid_email(em) and em not in dests:
+                                                dests.append(em)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        brand_cfg = _get_brand_cfg() or {}
+                                        _sup = (brand_cfg.get("support_email") or "").strip().lower()
+                                        if _sup and _sup not in dests:
+                                            dests.append(_sup)
+                                    except Exception:
+                                        pass
                                 if dests:
                                     import html as _html_esc
                                     link = _public_base_url() + f"/retiros/{rid_snap}"
