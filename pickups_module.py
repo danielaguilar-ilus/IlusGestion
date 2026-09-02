@@ -2088,9 +2088,48 @@ def register_pickup_routes(app, ctx):
                                 except Exception as _e_resp:
                                     print(f"[ILUS][PICKUP TEAM NOTIF] responsable lookup: {_e_resp}", flush=True)
 
+                                # Daniel 2026-08-24: "dejarle el control por el front a
+                                # comunicaciones... cada plantilla, pueda yo agregar
+                                # cuáles son las copias". Además del responsable, suma
+                                # la copia interna configurada en /comunicaciones para
+                                # la plantilla que corresponde a ESTE evento (columna
+                                # comm_templates.copia_interna_emails). Best-effort:
+                                # si el módulo de tipo no tiene un estado equivalente
+                                # de cara al cliente, simplemente no aporta nada acá.
+                                _TIPO_A_ESTADO = {
+                                    "retiro_nuevo":       "solicitud_recibida",
+                                    "retiro_confirmado":  "agenda_confirmada",
+                                    "retiro_respuesta":   "agenda_confirmada",
+                                    "retiro_preparacion": "en_preparacion",
+                                    "retiro_listo":       "en_preparacion",
+                                    "retiro_cerrado":     "retirada",
+                                }
+                                _tpl_dests = []
+                                try:
+                                    _est_tpl = _TIPO_A_ESTADO.get(tipo_snap)
+                                    if _est_tpl:
+                                        _tpl_row = mysql_fetchone(
+                                            "SELECT copia_interna_emails FROM comm_templates "
+                                            "WHERE modulo='retiros' AND estado=%s AND canal='email' LIMIT 1",
+                                            (_est_tpl,)) or {}
+                                        _ci = (_tpl_row.get("copia_interna_emails") or "")
+                                        for em in _ci.split(","):
+                                            em = em.strip().lower()
+                                            if em and is_valid_email(em) and em not in _tpl_dests:
+                                                _tpl_dests.append(em)
+                                except Exception as _e_tpl:
+                                    print(f"[ILUS][PICKUP TEAM NOTIF] copia_interna_emails: {_e_tpl}", flush=True)
+
+                                # dests = responsable asignado (si hay) UNIÓN copia
+                                # configurada por plantilla (si hay). Si NINGUNA de
+                                # las dos aporta nada, cae al respaldo global
+                                # (notify_emails + soporte) — igual que antes.
                                 if _resp_email:
-                                    dests = [_resp_email]
-                                else:
+                                    dests.append(_resp_email)
+                                for em in _tpl_dests:
+                                    if em not in dests:
+                                        dests.append(em)
+                                if not dests:
                                     try:
                                         cfg_n = settings() or {}
                                         for em in str(cfg_n.get("notify_emails") or "").replace(";", ",").split(","):

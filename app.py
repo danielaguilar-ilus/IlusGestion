@@ -50944,6 +50944,9 @@ def comm_templates_get():
             "asunto": r.get("asunto") or "",
             "cuerpo": r.get("cuerpo") or "",
             "activo": r.get("activo", 1),
+            # Daniel 2026-08-24: control por plantilla de quién recibe copia
+            # interna (antes hardcodeado en código, ver _notificar_equipo_retiros).
+            "copia_interna_emails": r.get("copia_interna_emails") or "",
         }
     return jsonify(data)
 
@@ -50962,16 +50965,53 @@ def comm_template_save(estado, canal):
         modulo = "transporte"
     asunto = d.get("asunto", "")
     cuerpo = d.get("cuerpo", "")
+    # Daniel 2026-08-24: "cada plantilla, pueda yo agregar cuáles son las
+    # copias" — lista de emails que reciben copia interna al disparar ESTA
+    # plantilla. Normaliza + valida cada dirección; una inválida rechaza el
+    # guardado completo con mensaje claro (mejor que guardar basura en
+    # silencio y que el correo interno falle después, sin avisar a nadie).
+    #
+    # FIX (review): distinguir "el body NO trae este campo" (ej. el botón
+    # Restaurar solo manda asunto/cuerpo desde TPL_DEFAULTS, que nunca tuvo
+    # copia_interna_emails) de "lo trae vacío a propósito" (el usuario borró
+    # el campo). Antes, "no viene" se trataba igual que "vaciar" → Restaurar
+    # borraba en silencio la config de copias cada vez que alguien
+    # restauraba el TEXTO de una plantilla. Ahora: si la clave no está en el
+    # body, la columna copia_interna_emails NI SE TOCA (se preserva lo que
+    # ya había guardado).
+    _trae_copia = "copia_interna_emails" in d
+    copia_interna_emails = None
+    if _trae_copia:
+        _copia_raw = (d.get("copia_interna_emails") or "").strip()
+        if _copia_raw:
+            _partes = [p.strip().lower() for p in re.split(r"[,;\s]+", _copia_raw) if p.strip()]
+            _malos = [p for p in _partes if not _EMAIL_RE.match(p)]
+            if _malos:
+                return jsonify({"error": f"Email(s) inválido(s) en 'Copia interna': {', '.join(_malos[:3])}"}), 400
+            copia_interna_emails = ", ".join(dict.fromkeys(_partes))[:800]
     user   = current_username()
     conn   = get_db()
     with conn.cursor() as cur:
-        cur.execute(
-            """INSERT INTO comm_templates (modulo, estado, canal, asunto, cuerpo, updated_by)
-               VALUES (%s,%s,%s,%s,%s,%s)
-               ON DUPLICATE KEY UPDATE
-                 asunto=VALUES(asunto), cuerpo=VALUES(cuerpo), updated_by=VALUES(updated_by)""",
-            (modulo, estado, canal, asunto, cuerpo, user)
-        )
+        if _trae_copia:
+            cur.execute(
+                """INSERT INTO comm_templates (modulo, estado, canal, asunto, cuerpo, updated_by, copia_interna_emails)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)
+                   ON DUPLICATE KEY UPDATE
+                     asunto=VALUES(asunto), cuerpo=VALUES(cuerpo), updated_by=VALUES(updated_by),
+                     copia_interna_emails=VALUES(copia_interna_emails)""",
+                (modulo, estado, canal, asunto, cuerpo, user, copia_interna_emails)
+            )
+        else:
+            # No se toca copia_interna_emails: en INSERT nace NULL (fila nueva,
+            # no hay nada que preservar); en UPDATE se omite del SET, así que
+            # conserva lo que ya tenía guardado.
+            cur.execute(
+                """INSERT INTO comm_templates (modulo, estado, canal, asunto, cuerpo, updated_by)
+                   VALUES (%s,%s,%s,%s,%s,%s)
+                   ON DUPLICATE KEY UPDATE
+                     asunto=VALUES(asunto), cuerpo=VALUES(cuerpo), updated_by=VALUES(updated_by)""",
+                (modulo, estado, canal, asunto, cuerpo, user)
+            )
     conn.commit()
     # Audit log del cambio
     try:
@@ -50980,11 +51020,43 @@ def comm_template_save(estado, canal):
             target_type="comm_template",
             target_id=f"{modulo}:{estado}:{canal}",
             details={"modulo": modulo, "estado": estado, "canal": canal,
-                     "asunto_len": len(asunto or ""), "cuerpo_len": len(cuerpo or "")},
+                     "asunto_len": len(asunto or ""), "cuerpo_len": len(cuerpo or ""),
+                     "copia_interna_emails": copia_interna_emails or ""},
         )
     except Exception:
         pass
     return jsonify({"ok": True})
+
+
+@app.route("/comunicaciones/templates/copia-interna/aplicar-a-todas", methods=["POST"])
+@_require_superadmin
+def comm_template_copia_interna_aplicar_todas():
+    """Copia el mismo 'copia_interna_emails' a TODAS las plantillas de email
+    de un módulo de una sola vez (Daniel 2026-08-24: "controlar que se
+    repitan en todas las plantillas de retiros"). Body: {modulo, emails}."""
+    d = request.get_json(silent=True) or {}
+    modulo = (d.get("modulo") or "").strip()
+    if modulo not in _COMM_MODULOS_VALIDOS:
+        return jsonify({"error": "Módulo inválido"}), 400
+    _copia_raw = (d.get("emails") or "").strip()
+    copia_interna_emails = None
+    if _copia_raw:
+        _partes = [p.strip().lower() for p in re.split(r"[,;\s]+", _copia_raw) if p.strip()]
+        _malos = [p for p in _partes if not _EMAIL_RE.match(p)]
+        if _malos:
+            return jsonify({"error": f"Email(s) inválido(s): {', '.join(_malos[:3])}"}), 400
+        copia_interna_emails = ", ".join(dict.fromkeys(_partes))[:800]
+    n = mysql_execute_returning_rowcount(
+        "UPDATE comm_templates SET copia_interna_emails=%s, updated_by=%s "
+        "WHERE modulo=%s AND canal='email'",
+        (copia_interna_emails, current_username(), modulo)
+    )
+    try:
+        _audit("comm_template_copia_interna_bulk", target_type="comm_template", target_id=modulo,
+               details={"modulo": modulo, "emails": copia_interna_emails or "", "filas": n})
+    except Exception:
+        pass
+    return jsonify({"ok": True, "filas_actualizadas": n})
 
 
 @app.route("/comunicaciones/templates/restaurar-todo", methods=["POST"])
@@ -112272,26 +112344,39 @@ def _ensure_comm_template_ot2_anexo():
 
 
 def _ensure_comm_templates_columns():
-    """Garantiza que comm_templates.activo exista SIEMPRE (incluso con
-    ILUS_SKIP_MIGRATIONS=1). Sin esta columna el toggle 'activo' del editor de
-    /comunicaciones no persiste y _render_comm_template no puede apagar
-    plantillas (afecta a TODOS los módulos, no solo retiros). Idempotente: 1
-    SELECT barato; solo hace ALTER la 1ª vez."""
+    """Garantiza que comm_templates.activo y .copia_interna_emails existan
+    SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1). Sin `activo` el toggle del
+    editor de /comunicaciones no persiste. Sin `copia_interna_emails`, quién
+    recibe copia interna de cada plantilla queda hardcodeado en el código en
+    vez de configurable desde el front (Daniel 2026-08-24: "dejarle el
+    control por el front a comunicaciones... cada plantilla, pueda yo agregar
+    cuáles son las copias"). Idempotente: 1 SELECT barato; solo hace ALTER
+    la 1ª vez."""
     try:
-        col = mysql_fetchone(
+        cols = mysql_fetchall(
             "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
             "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='comm_templates' "
-            "  AND COLUMN_NAME='activo' LIMIT 1"
-        )
-        if col:
-            return False  # ya existe
-        mysql_execute(
-            "ALTER TABLE comm_templates ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1"
-        )
-        print("[ensure_comm_tpl] columna comm_templates.activo agregada", flush=True)
-        return True
+            "  AND COLUMN_NAME IN ('activo','copia_interna_emails')"
+        ) or []
+        existentes = {r["COLUMN_NAME"] for r in cols}
+        cambio = False
+        if "activo" not in existentes:
+            mysql_execute(
+                "ALTER TABLE comm_templates ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1"
+            )
+            print("[ensure_comm_tpl] columna comm_templates.activo agregada", flush=True)
+            cambio = True
+        if "copia_interna_emails" not in existentes:
+            mysql_execute(
+                "ALTER TABLE comm_templates ADD COLUMN copia_interna_emails VARCHAR(800) NULL "
+                "COMMENT 'CSV de emails que reciben copia interna al disparar esta plantilla; "
+                "editable desde /comunicaciones. NULL = usa el respaldo (responsable/notify_emails).'"
+            )
+            print("[ensure_comm_tpl] columna comm_templates.copia_interna_emails agregada", flush=True)
+            cambio = True
+        return cambio
     except Exception as e:
-        print(f"[ensure_comm_tpl] no se pudo garantizar columna activo: {e}", flush=True)
+        print(f"[ensure_comm_tpl] no se pudo garantizar columnas: {e}", flush=True)
         return False
 
 

@@ -1529,6 +1529,10 @@ function tplActivarEdicion() {
   document.getElementById('tplTextoWrap').style.display = 'none';
   document.getElementById('tplCuerpoVisual').innerHTML = saved2.cuerpo || '';
   document.getElementById('tplCuerpoHtml').value = saved2.cuerpo || '';
+  // Copia interna (Daniel 2026-08-24): solo viene de la BD (dbVal2), nunca
+  // de TPL_DEFAULTS (no hay "default de fábrica" para esto — nace vacío).
+  const ci = document.getElementById('tplCopiaInterna');
+  if (ci) ci.value = (dbVal2 && dbVal2.copia_interna_emails) || '';
 }
 
 function tplCancelarEdicion() {
@@ -1550,6 +1554,7 @@ async function tplGuardar() {
     modulo: getCurrentModulo(),
     asunto: val('tplAsunto'),
     cuerpo: document.getElementById('tplCuerpoVisual').innerHTML,
+    copia_interna_emails: val('tplCopiaInterna'),
   };
   const r = await fetch(`/comunicaciones/templates/${_tplEstado}/email`, {
     method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
@@ -1560,10 +1565,46 @@ async function tplGuardar() {
     if (!_tplData[_tplEstado][_tplCanal]) _tplData[_tplEstado][_tplCanal] = {};
     _tplData[_tplEstado][_tplCanal].asunto = body.asunto;
     _tplData[_tplEstado][_tplCanal].cuerpo = body.cuerpo;
+    _tplData[_tplEstado][_tplCanal].copia_interna_emails = body.copia_interna_emails;
     msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
     setTimeout(() => { tplCancelarEdicion(); }, 1200);
   } else {
     msg.innerHTML = `<span class="text-danger">${esc(d.error||'Error al guardar')}</span>`;
+  }
+}
+
+async function tplAplicarCopiaATodas() {
+  const emails = val('tplCopiaInterna');
+  const modulo = getCurrentModulo();
+  const ok = await ilusConfirm({
+    title: 'Aplicar a todas las plantillas',
+    message: emails
+      ? `¿Copiar "${emails}" como copia interna de TODAS las plantillas de email del módulo "${modulo}"?`
+      : `¿VACIAR la copia interna de TODAS las plantillas de email del módulo "${modulo}" (volverán al respaldo automático)?`,
+    sub: 'Esto reemplaza lo que cada plantilla tenía configurado individualmente para este módulo.',
+    okLabel: 'Sí, aplicar a todas', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  const msg = document.getElementById('tplMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Aplicando…';
+  try {
+    const r = await fetch('/comunicaciones/templates/copia-interna/aplicar-a-todas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modulo, emails }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      Object.keys(_tplData).forEach(est => {
+        if (_tplData[est] && _tplData[est].email) _tplData[est].email.copia_interna_emails = emails;
+      });
+      msg.innerHTML = `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Aplicado a ${d.filas_actualizadas} plantilla(s)</span>`;
+      ilusToast(`Copia interna aplicada a ${d.filas_actualizadas} plantilla(s) de ${modulo}`, { type: 'success' });
+    } else {
+      msg.innerHTML = `<span class="text-danger">${esc(d.error || 'Error al aplicar')}</span>`;
+    }
+  } catch (e) {
+    msg.innerHTML = '<span class="text-danger">Error de red</span>';
   }
 }
 

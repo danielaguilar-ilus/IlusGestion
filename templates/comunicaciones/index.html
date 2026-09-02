@@ -620,6 +620,25 @@
                      placeholder="Asunto del correo...">
             </div>
 
+            {# Copia interna (Daniel 2026-08-24): quién recibe copia interna al
+               disparar ESTA plantilla — reemplaza el hardcodeo por rol en el
+               código. Vacío = usa el respaldo automático (responsable
+               asignado del retiro, o el correo de avisos configurado). #}
+            <div class="mb-3 p-2 rounded" style="background:#f8fafc;border:1px solid #e2e8f0">
+              <label class="form-label small fw-semibold mb-1">
+                <i class="bi bi-people me-1"></i>Copia interna de esta plantilla
+              </label>
+              <input id="tplCopiaInterna" class="form-control form-control-sm"
+                     placeholder="ej: bodega@ilusfitness.com, ventas@ilusfitness.com (vacío = automático)">
+              <div class="small text-muted mt-1" style="font-size:.7rem">
+                Quién recibe copia interna cuando se dispara este evento. Vacío = el responsable
+                asignado del retiro (si tiene uno) o el correo de avisos configurado en Ajustes.
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="tplAplicarCopiaATodas()">
+                <i class="bi bi-copy me-1"></i>Aplicar este mismo destinatario a TODAS las plantillas de este módulo
+              </button>
+            </div>
+
             {# Cuerpo #}
             <div class="mb-3">
               <div class="d-flex align-items-center justify-content-between mb-1">
