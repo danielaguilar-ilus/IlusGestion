@@ -99161,8 +99161,18 @@ def _repstock_fmt(r):
     d["costo_unitario"] = float(d.get("costo_unitario") or 0)
     d["stock_minimo"] = float(d["stock_minimo"]) if d.get("stock_minimo") is not None else None
     d["bajo_minimo"] = (d["stock_minimo"] is not None and d["cantidad"] <= d["stock_minimo"])
-    d["created_at"] = str(d.get("created_at"))[:16] if d.get("created_at") else ""
-    d["updated_at"] = str(d.get("updated_at"))[:16] if d.get("updated_at") else ""
+    # 🔧 FIX 2026-09-02 (Daniel: "trazabilidad de cuando y quien agrego el
+    # repuesto"): created_by/updated_by ya se guardaban desde el 07-ago
+    # (ver repstock_crear/repstock_editar) pero NUNCA se mostraban en la
+    # UI -- el dato existía y era invisible. De paso, el formato de fecha
+    # anterior (str(...)[:16]) era UTC crudo sin convertir, en contra de
+    # la REGLA #6 -- se reemplaza por chile_fmt_filter (hora Chile,
+    # dd/mm/aaaa). created_at_corto es solo la fecha (sin hora), para la
+    # columna angosta de la tabla; created_at/updated_at completos
+    # (fecha+hora) van al detalle del modal.
+    d["created_at_corto"] = chile_fmt_filter(d.get("created_at"), "%d/%m/%y") if d.get("created_at") else ""
+    d["created_at"] = chile_fmt_filter(d.get("created_at")) if d.get("created_at") else ""
+    d["updated_at"] = chile_fmt_filter(d.get("updated_at")) if d.get("updated_at") else ""
     return d
 
 

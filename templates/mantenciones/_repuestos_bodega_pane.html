@@ -324,7 +324,17 @@
     <tr class="{{ 'rb-bajo-min' if r.bajo_minimo else '' }}" data-id="{{ r.id }}" style="cursor:pointer"
         onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }}, {{ rfotos|tojson }})' title="Click para editar">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
-      <td class="rb-sku">{{ r.sku }}</td>
+      {# 🔧 FIX 2026-09-02 (Daniel: "trazabilidad de cuando y quien agrego
+         el repuesto") -- quien lo agrego, a simple vista en la tabla (el
+         detalle completo con fecha+hora y la ultima edicion va en el
+         modal, ver #rbTrazabilidad). Sin columna nueva -- REGLA #4.3 ya
+         tiene la tabla con 10 columnas, esto va de subtitulo bajo el SKU. #}
+      <td class="rb-sku">
+        {{ r.sku }}
+        {% if r.created_by %}<div class="text-muted" style="font-size:.68rem;font-weight:400;white-space:nowrap">
+          <i class="bi bi-person-fill"></i> {{ r.created_by }} · {{ r.created_at_corto }}
+        </div>{% endif %}
+      </td>
       <td>
         {# ?w=96 -> miniatura cacheada en GCS (~6 KB) en vez de la foto original de
    1600px (~156 KB). Medido: 7 filas pasaban de 1.362 KB / 4,4 s a algo
@@ -629,6 +639,16 @@
             </div>
           </div>
         </section>
+
+        {# 🔧 FIX 2026-09-02 (Daniel: "trazabilidad de cuando y quien
+           agrego el repuesto"): solo aparece editando (rbAbrirEditar la
+           llena y la muestra) -- un repuesto nuevo todavia no tiene
+           quien/cuando. "Ultima edicion" solo se pinta si de verdad hubo
+           una edicion posterior a la creacion (ver rbAbrirEditar). #}
+        <div id="rbTrazabilidad" style="display:none;margin-top:4px;padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:.78rem;color:#6b7280">
+          <i class="bi bi-clock-history me-1"></i>Creado por <strong id="rbTrazCreadoPor" style="color:#374151"></strong> el <strong id="rbTrazCreadoEl" style="color:#374151"></strong>
+          <span id="rbTrazEditado" style="display:none"> · Última edición: <strong id="rbTrazEditadoPor" style="color:#374151"></strong> el <strong id="rbTrazEditadoEl" style="color:#374151"></strong></span>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
@@ -949,6 +969,7 @@ function rbAbrirNuevo(mantenerContexto){
   RB_FOTOS_PENDIENTES = [];
   rbRenderFotos();
   rbSetAvatarPrincipal(null);   // repuesto nuevo: nunca hay fotos todavia
+  document.getElementById('rbTrazabilidad').style.display = 'none';
   if (!mantenerContexto) RB_MODAL.show();
   setTimeout(() => document.getElementById('rbDescripcion').focus(), mantenerContexto ? 50 : 400);
 }
@@ -986,6 +1007,27 @@ function rbAbrirEditar(r, modelos, fotos){
   // (mismo criterio que la miniatura de la tabla y rbRenderFotos -- ver
   // comentario en RB_FOTOS_ACTUALES más arriba en el archivo).
   rbSetAvatarPrincipal((fotos && fotos.length) ? fotos[0].url : null);
+  // 🔧 FIX 2026-09-02 (Daniel: "trazabilidad de cuando y quien agrego el
+  // repuesto"): r.created_at/updated_at ya vienen formateados en hora
+  // Chile desde _repstock_fmt (REGLA #6). "Última edición" solo se
+  // muestra si de verdad hubo una edición distinta a la creación --
+  // updated_by/updated_at quedan poblados desde el propio INSERT (mismo
+  // valor que created_by/created_at) porque la columna tiene default, así
+  // que comparar contra created_by/created_at es lo que evita mostrar una
+  // "edición" fantasma en un repuesto que nunca se tocó.
+  if (r.created_by){
+    document.getElementById('rbTrazCreadoPor').textContent = r.created_by;
+    document.getElementById('rbTrazCreadoEl').textContent = r.created_at || '—';
+    var huboEdicion = r.updated_by && (r.updated_by !== r.created_by || r.updated_at !== r.created_at);
+    document.getElementById('rbTrazEditado').style.display = huboEdicion ? '' : 'none';
+    if (huboEdicion){
+      document.getElementById('rbTrazEditadoPor').textContent = r.updated_by;
+      document.getElementById('rbTrazEditadoEl').textContent = r.updated_at || '—';
+    }
+    document.getElementById('rbTrazabilidad').style.display = '';
+  } else {
+    document.getElementById('rbTrazabilidad').style.display = 'none';
+  }
   RB_MODAL.show();
 }
 
