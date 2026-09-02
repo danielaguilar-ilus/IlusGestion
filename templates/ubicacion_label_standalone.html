@@ -27,16 +27,22 @@ html, body {
 }
 body { font-family: Arial, Helvetica, sans-serif; }
 
-/* Cuarta variante del motor de etiquetas del proyecto (Catálogo/Productos,
-   Bodega de Repuestos, Equipos de mantención son las otras tres) -- pero
-   deliberadamente MINIMA (Daniel, 31-08-2026: "solo nomenclatura + codigo
-   de barras"), sin marca/cliente/dimensiones -- esta etiqueta se pega en
-   un estante/gaveta físico, no identifica un producto ni un cliente. */
+/* 🎨 FIX 2026-09-02 (Daniel, mostrando una etiqueta de repuesto real como
+   referencia: "algo bien elegante", "con los logos de ILUS"): esta era la
+   única de las 4 variantes del motor de etiquetas sin el header de marca
+   real (logo + texto) -- Daniel pidió "solo nomenclatura + código de
+   barras" el 31-ago y eso se tomó como "sin marca" también, pero lo que
+   quería era simple, no sin marca. Contenido sigue igual de simple
+   (código + barcode, nada de producto/dimensiones/peso) -- lo único que
+   cambia es que ahora se ve con el mismo nivel de terminación que las
+   otras 3 (header partido texto+logo real, acento rojo ILUS), mismo
+   esqueleto que repuesto_label_standalone.html (Bodega de Repuestos, la
+   pantalla hermana de donde sale esta etiqueta). */
 .label {
   width: var(--label-w);
   height: var(--label-h);
   display: grid;
-  grid-template-rows: var(--hdr-h) minmax(0, 1fr) var(--code-h);
+  grid-template-rows: var(--hdr-h) var(--accent-h) minmax(0, 1fr) var(--code-h);
   overflow: hidden;
   position: relative;
   background: #fff;
@@ -49,24 +55,81 @@ body { font-family: Arial, Helvetica, sans-serif; }
 .label:last-child { page-break-after: auto; break-after: auto; }
 
 .label-head {
+  display: grid;
+  grid-template-columns: 44% 1px minmax(0, 1fr);
+  align-items: stretch;
+  background: #0a0a0a;
+  color: #fff;
+}
+
+.ubi-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: var(--brand-pad-y) 1mm var(--brand-pad-bottom);
+  overflow: hidden;
+  text-align: center;
+  line-height: .88;
+}
+.ubi-brand strong {
+  display: block;
+  font-size: var(--brand-size);
+  font-weight: 950;
+  letter-spacing: 0;
+}
+.ubi-brand span {
+  display: block;
+  margin-top: var(--brand-sub-gap);
+  color: #fff;
+  font-size: var(--brand-sub-size);
+  font-weight: 800;
+  letter-spacing: var(--brand-sub-spacing);
+}
+
+.brand-sep {
+  align-self: center;
+  width: .34mm;
+  height: 62%;
+  background: #fff;
+}
+
+.ilus-brand {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0a0a0a;
-  color: #fff;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  font-size: var(--hdr-size);
-  border-bottom: var(--label-border) solid #000;
+  min-width: 0;
+  padding: 0 .6mm;
+  overflow: hidden;
 }
+.ilus-logo {
+  max-width: 104%;
+  max-height: 112%;
+  display: block;
+  object-fit: contain;
+  transform: translateY(var(--ilus-lift)) scale(var(--ilus-scale));
+  filter: grayscale(1) brightness(0) invert(1);
+  image-rendering: crisp-edges;
+}
+
+/* Acento de marca ILUS -- toque de color sin agregar otra fila de datos */
+.accent-bar { background: #dc2626; }
 
 .codigo-wrap {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: var(--pad-y) var(--pad-x);
   overflow: hidden;
+}
+.codigo-eyebrow {
+  color: var(--eyebrow-color, #9ca3af);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: var(--eyebrow-size);
+  margin-bottom: var(--eyebrow-gap);
 }
 .codigo {
   font-weight: 950;
@@ -91,34 +154,71 @@ body { font-family: Arial, Helvetica, sans-serif; }
 
 .label-100x50 {
   --label-border: .28mm;
-  --hdr-h: 8mm;
-  --hdr-size: 2.6mm;
+  --hdr-h: 11.5mm;
+  --accent-h: .8mm;
   --code-h: 15mm;
   --pad-x: 2mm;
   --pad-y: 1mm;
-  --codigo-size: 8mm;
+  --brand-size: 3.1mm;
+  --brand-sub-size: 1.22mm;
+  --brand-sub-spacing: .32mm;
+  --brand-sub-gap: .35mm;
+  --brand-pad-y: .85mm;
+  --brand-pad-bottom: .5mm;
+  --ilus-scale: 1.32;
+  --ilus-lift: -.7mm;
+  --eyebrow-size: 1.7mm;
+  --eyebrow-gap: .5mm;
+  --codigo-size: 7.5mm;
   --barcode-w: 92%;
-  --barcode-h: 12mm;
+  --barcode-h: 11mm;
 }
 .label-150x100 {
   --label-border: .38mm;
-  --hdr-h: 14mm;
-  --hdr-size: 4.6mm;
+  --hdr-h: 24mm;
+  --accent-h: 1.4mm;
   --code-h: 26mm;
   --pad-x: 4mm;
   --pad-y: 2mm;
-  --codigo-size: 15mm;
+  --brand-size: 6.4mm;
+  --brand-sub-size: 2.45mm;
+  --brand-sub-spacing: .9mm;
+  --brand-sub-gap: 1mm;
+  --brand-pad-y: 2.4mm;
+  --brand-pad-bottom: 1.8mm;
+  --ilus-scale: 1.25;
+  --ilus-lift: -1.85mm;
+  --eyebrow-size: 3.2mm;
+  --eyebrow-gap: 1.2mm;
+  --codigo-size: 14mm;
   --barcode-w: 94%;
-  --barcode-h: 22mm;
+  --barcode-h: 20mm;
 }
 </style>
 </head>
 <body>
 {% set format_key = fmt or label_format.key %}
+{% set logo_src = logo_url or url_for('static', filename='Logo.png') %}
 {% for u in ubicaciones %}
   <article class="label label-{{ format_key }}">
-    <header class="label-head">Ubicación · ILUS Fitness</header>
-    <div class="codigo-wrap"><span class="codigo">{{ u.codigo }}</span></div>
+    <header class="label-head">
+      <div class="ubi-brand">
+        <strong>BODEGA</strong>
+        <strong>UBICACIÓN</strong>
+        {# Marca comercial, no razón social -- la etiqueta la lee una
+           persona en bodega, no es un documento tributario (REGLA #0). #}
+        <span>ILUS FITNESS</span>
+      </div>
+      <div class="brand-sep"></div>
+      <div class="ilus-brand">
+        <img class="ilus-logo" src="{{ logo_src }}" alt="ILUS">
+      </div>
+    </header>
+    <div class="accent-bar"></div>
+    <div class="codigo-wrap">
+      <span class="codigo-eyebrow">Código de ubicación</span>
+      <span class="codigo">{{ u.codigo }}</span>
+    </div>
     <div class="barcode-wrap">
       <svg class="barcode" id="barcode-{{ loop.index0 }}" data-code="{{ u.codigo }}"></svg>
     </div>
@@ -136,7 +236,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const wrapWidth = wrap ? wrap.clientWidth : 140;
       const density = formatKey === "100x50" ? 10 : 8.5;
       const lineWidth = Math.max(0.8, Math.min(2.4, wrapWidth / Math.max(code.length * density, 1)));
-      const height = formatKey === "100x50" ? 40 : 70;
+      const height = formatKey === "100x50" ? 36 : 68;
       JsBarcode(barcode, code, {
         format: "CODE128", displayValue: false, lineColor: "#000",
         background: "#fff", width: lineWidth, height, margin: 0
