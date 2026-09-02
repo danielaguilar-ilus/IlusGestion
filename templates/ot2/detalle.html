@@ -97,6 +97,17 @@
   .otd-header-acts .otd-btn{flex:1;justify-content:center}
 }
 
+/* Estado del Anexo de servicios — 2026-09-02. Semáforo (REGLA #15): ámbar
+   borrador, azul enviado/esperando, verde firmado. */
+.otd-anx-est{display:flex;align-items:flex-start;gap:11px;border-radius:10px;
+  padding:11px 13px;border:1px solid}
+.otd-anx-est i{font-size:1.25rem;flex:none;margin-top:1px}
+.otd-anx-est b{display:block;font-size:.86rem;font-weight:800;line-height:1.25}
+.otd-anx-est small{display:block;font-size:.75rem;margin-top:2px;line-height:1.35;opacity:.9}
+.otd-anx-est.pend{background:#fff8e1;border-color:#fcd34d;color:#92400e}
+.otd-anx-est.go{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
+.otd-anx-est.ok{background:#f0fdf4;border-color:#86efac;color:#166534}
+
 /* Lo que el documento le cobra al cliente (líneas ZZ del ERP) — 2026-09-02,
    caso OT-149: el dato estaba guardado pero invisible, y por eso parecía
    perdido y la OT salía "a pérdida". */
@@ -1239,9 +1250,12 @@
      de Servicios (antes "Documentos") deja de tener entrada en esta barra;
      el motor (modal OT2ANX, botones crear/enviar, flujo ?abrir_anexo=1 del
      wizard) sigue intacto más abajo en este archivo -- solo sin puerta de
-     entrada manual desde acá. Ver resumen final de la tarea: si gestión
-     necesita crear/reemplazar un anexo fuera del flujo del wizard, hay que
-     decidir con Daniel dónde vuelve a vivir ese botón. #}
+     entrada manual desde acá.
+     ✅ RESUELTO 2026-09-02: Daniel decidió dónde vuelve a vivir ("aparte de
+     la firma, necesita tener el documento del anexo... se necesita enviar
+     de manera remota y guardarse en el documento de la OT, como firmado").
+     Vive ahora en una tarjeta propia de Información, justo debajo de
+     Firmas. Ver "ANEXO DE SERVICIOS" más abajo. #}
   {# 🔁 2026-09-02 (Daniel: "cuando entro por primera vez, me gustaría que
      entre Información... parece que cada vez que tengo que entrar a la OT
      tengo que presionar Información, entonces quiero que lo dejes allí por
@@ -1530,6 +1544,82 @@
           {% endfor %}
         </div>
       </div>
+
+      {# ══ ANEXO DE SERVICIOS ════════════════════════════════════════════
+         🆕 2026-09-02 (Daniel: "aparte de la firma, necesita tener el
+         documento del anexo. Eso se necesita enviar de manera remota y
+         guardarse en el documento de la orden de trabajo, como firmado y
+         todo").
+
+         El MOTOR ya existía completo desde el 2026-08-27: tabla
+         mant_anexos, generación del PDF (/ot/api/anexos/<id>/pdf), envío
+         al proveedor (/ot/api/anexos/<id>/enviar) y firma pública con
+         token (/firmar-anexo/<token>). Lo que se perdió el 2026-08-30 fue
+         la PUERTA DE ENTRADA: el anexo vivía en la pestaña "Documentos",
+         que Daniel pidió eliminar, y quedó alcanzable solo si el wizard
+         mandaba ?abrir_anexo=1. Acá vuelve a tener casa, al lado de las
+         firmas -- que es exactamente donde Daniel lo pidió.
+
+         Nunca visible para técnicos: el anexo trae el precio pactado con
+         el proveedor (requisito explícito de 2026-08-26, "visible SOLO
+         para la parte administrativa"). #}
+      {% if not es_tecnico %}
+      <div class="otd-card">
+        <h3><i class="bi bi-file-earmark-medical-fill"></i> Anexo de servicios
+          {% if anexo %}<span class="n">N° {{ anexo.numero }}</span>{% endif %}</h3>
+        <div style="padding:14px 16px">
+          {% if not anexo %}
+          <div class="otd-din" style="padding:0 0 10px">
+            <div class="row"><span>Estado</span><b>Sin anexo</b></div>
+          </div>
+          <div class="otf-hint" style="margin-bottom:10px">
+            El anexo es el documento que firma el <b>proveedor externo</b> antes de
+            ejecutar. Si esta OT la hace un proveedor, sin anexo firmado no debería
+            trabajarla.
+          </div>
+          <button type="button" class="otd-btn pri" style="width:100%;justify-content:center"
+                  onclick="OT2ANX.abrir({{ v.id }})">
+            <i class="bi bi-file-earmark-plus-fill"></i> Crear anexo de servicios</button>
+          {% else %}
+          {% set _anx_firmado = anexo.firmado_at is not none %}
+          <div class="otd-anx-est {{ 'ok' if _anx_firmado else ('go' if anexo.enviado_at else 'pend') }}">
+            <i class="bi {{ 'bi-patch-check-fill' if _anx_firmado
+                            else ('bi-send-check-fill' if anexo.enviado_at else 'bi-hourglass-split') }}"></i>
+            <div>
+              <b>{{ 'Firmado' if _anx_firmado
+                    else ('Enviado — esperando firma' if anexo.enviado_at else 'Borrador — sin enviar') }}</b>
+              <small>
+                {%- if _anx_firmado %}
+                  {{ anexo.firmante_nombre or anexo.proveedor_nombre or 'Proveedor' }}
+                  · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}
+                {%- elif anexo.enviado_at %}
+                  Enviado el {{ anexo.enviado_at | chile_fmt('%d/%m/%Y %H:%M') }}
+                  a {{ anexo.proveedor_nombre or 'el proveedor' }}
+                {%- else %}
+                  {{ anexo.proveedor_nombre or 'Sin proveedor declarado' }}
+                {%- endif -%}
+              </small>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            {# El PDF vale para las tres fases: borrador, enviado y firmado.
+               Cuando está firmado, ESTE es "el documento guardado en la OT"
+               que Daniel pide -- lleva la firma capturada incrustada. #}
+            <button type="button" class="otd-btn" style="flex:1;justify-content:center"
+                    onclick="otdVerAnexoPdf({{ anexo.id }})">
+              <i class="bi bi-file-earmark-pdf-fill"></i>
+              {{ 'Ver anexo firmado' if _anx_firmado else 'Ver borrador' }}</button>
+            {% if not _anx_firmado %}
+            <button type="button" class="otd-btn pri" style="flex:1;justify-content:center"
+                    onclick="OT2ANX.abrirEnviar({{ anexo.id }})">
+              <i class="bi bi-send-fill"></i>
+              {{ 'Reenviar' if anexo.enviado_at else 'Enviar a firmar' }}</button>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
 
       {# ══ FIRMAR Y CERRAR OT — 2026-08-28 (Daniel, 2do pedido de hoy) ══
          "que se pueda realizar la firma... que firme el técnico, después
@@ -2790,6 +2880,17 @@ window.otdActToggleTodo = function(btn){
    mismo motor read-only de Random que ya usa Tickets/Retiros (por RUT,
    número de documento o razón social) y deja elegir con un clic -- llena
    los mismos inputs de siempre, no inventa un modelo de datos nuevo. */
+/* 🆕 2026-09-02 — ver el PDF del anexo (borrador o firmado) en el mismo
+   modal estándar del proyecto, nunca en pestaña nueva. Cuando el anexo ya
+   está firmado, ESTE es "el documento guardado en la OT" que Daniel pide:
+   el PDF lleva la firma capturada incrustada. */
+window.otdVerAnexoPdf = function(aid){
+  openPdf('/ot/api/anexos/' + aid + '/pdf', {
+    title: 'Anexo de servicios · OT {{ v.numero_ot or v.id }}',
+    downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
+  });
+};
+
 /* 🐛 2026-09-02 (OT-149) — traer el precio del documento al campo "Precio
    al cliente". No guarda solo: deja el número puesto, recalcula el margen
    al instante y deja que Daniel presione Guardar -- escribir dinero sin
