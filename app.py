@@ -77288,45 +77288,15 @@ def ot2_detalle(vid):
     if 0 <= _idx_ultimo_hecho < len(hitos) - 1:
         hitos[_idx_ultimo_hecho + 1]["actual"] = True
 
-    # 🆕 2026-09-02 (Daniel: "el tracking tiene que ser poderoso... tenemos
-    # que tomarle el tiempo al técnico"). Primer paso, con CERO columnas
-    # nuevas: cuánto tardó la OT ENTRE hito e hito, calculado con los
-    # timestamps que ya existen. No cubre todavía el cronómetro fino que
-    # Daniel pidió (en ruta / llegada / tiempo por máquina) -- eso necesita
-    # marcas nuevas y va aparte -- pero ya responde "¿dónde se demoró esta
-    # OT?", que es la pregunta que hoy no se podía contestar.
-    # Solo se calcula entre hitos con timestamp REAL: si uno fue inferido
-    # (ver el fix de arriba) no hay hora que restar y se deja en blanco,
-    # antes que inventar una duración.
-    _prev_ts, _prev_idx = None, None
-    for _i, h in enumerate(hitos):
-        if not h.get("ts"):
-            continue
-        if _prev_ts is not None:
-            try:
-                _delta = h["ts"] - _prev_ts
-                _seg = int(_delta.total_seconds())
-                if _seg >= 0:
-                    _d, _resto = divmod(_seg, 86400)
-                    _hh, _resto = divmod(_resto, 3600)
-                    _mm = _resto // 60
-                    if _d:
-                        _txt_dur = f"{_d}d {_hh}h"
-                    elif _hh:
-                        _txt_dur = f"{_hh}h {_mm}m"
-                    else:
-                        _txt_dur = f"{_mm}m"
-                    # La duración se cuelga del hito de LLEGADA: es el tramo
-                    # que va del hito anterior con hora real hasta este.
-                    h["dur_desde_anterior"] = _txt_dur
-                    # Si en el medio hubo hitos inferidos (sin hora propia),
-                    # el tramo los abarca -- se avisa para no dar a entender
-                    # que fue un salto directo.
-                    h["dur_abarca_saltos"] = (_prev_idx is not None
-                                              and _i - _prev_idx > 1)
-            except Exception:
-                pass
-        _prev_ts, _prev_idx = h["ts"], _i
+    # 🔇 2026-09-02 — acá vivió un cálculo de "cuánto tardó la OT entre hito
+    # e hito", que se dibujaba como chips sobre el recorrido. Daniel lo
+    # descartó en el mismo día que se propuso ("elimina el ≈27m, 1m, 2d 22h,
+    # 0m, eso no lo necesito" y después "sácalo por favor, pero llevemos el
+    # tiempo por otro lado"). Se elimina completo -- no queda como código
+    # muerto -- porque la medición de tiempos que Daniel sí quiere es otra
+    # cosa: el cronómetro del técnico (en ruta → llegada → tiempo por
+    # máquina), que necesita marcas propias y va como pieza aparte, no
+    # derivada de las fechas de firma.
 
     # 🆕 2026-08-27 — panel "Estado operativo" del hero (referencia visual
     # de Daniel): el hito ACTUAL es el estado operativo en vivo; el
@@ -78142,6 +78112,110 @@ def ot2_api_finanzas_buscar_erp(vid):
         })
 
     return jsonify({"ok": True, "modo": modo, "documentos": out, "count": len(out), "query": q})
+
+
+@app.route("/ot/api/finanzas/<int:vid>/lineas-zz", methods=["POST"])
+@_mant_required
+@_ot_can_cobertura
+def ot2_api_lineas_zz(vid):
+    """Lee las líneas ZZ de un documento del ERP para llenar las finanzas.
+
+    🆕 2026-09-02 (Daniel, viendo la tarjeta de Finanzas: "me dejó guardar
+    la boleta, pero no me trajo nada, los datos... necesito que la hagas
+    inteligente, que yo pueda llamar un documento y me traiga el ZZ
+    instalación, el ZZ envío, el ZZ mantención, todo lo que sea que tenga
+    que traer. Pero si [es] instalación tiene que buscar ZZ envío").
+
+    El WIZARD de creación ya hacía esto -- por eso una OT nueva nace con
+    zz_monto/zz_envio_monto llenos. Esta pantalla, en cambio, solo guardaba
+    el par tipo+número del documento y nunca lo abría: el operador tenía
+    que tipear los montos de memoria, o dejarlos vacíos (que es justo lo
+    que pasó y produjo el margen falso de la OT-149).
+
+    Las líneas ZZ son los SERVICIOS que el documento le cobra al cliente
+    (ZZINSTALACION, ZZMANTENCION, ZZSERVTEC, ZZENVIO...), a diferencia de
+    las líneas de producto físico. Se devuelven TODAS las que tenga el
+    documento -- Daniel, 2026-08-26: "mostrar todas, por si se inventan
+    uno" -- marcando cuál corresponde al tipo de esta OT y cuál es el
+    envío, pero sin decidir por el usuario.
+
+    100% READ-ONLY (REGLA #4.1): usa _mant_erp_doc_cached, que ya cachea 5
+    minutos y va contra Random solo por SELECT.
+    """
+    d = request.get_json(silent=True) or {}
+    tido = (d.get("tido") or "").strip().upper()[:5]
+    nudo = re.sub(r"[^0-9]", "", str(d.get("nudo") or ""))
+    if not tido or not nudo:
+        return _ot2_err("Indica el tipo y el número del documento.", "DOC_INCOMPLETO")
+
+    v = mysql_fetchone("SELECT tipo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    _tipo_ot = (v.get("tipo") or "").lower()
+    _zz_esperada = _OT2_LINEA_ZZ.get(_tipo_ot)
+
+    try:
+        header, lineas = _mant_erp_doc_cached(tido, nudo)
+    except Exception as e:
+        print(f"[ot2_lineas_zz] vid={vid} {tido} {nudo}: {e}", flush=True)
+        return _ot2_err("No pudimos leer el documento en el ERP.", "ERP_ERROR", http=502)
+    if not header:
+        return _ot2_err(
+            f"No encontramos {tido} N° {nudo} en el ERP. Revisa el número.",
+            "DOC_NO_EXISTE", http=404)
+
+    zz, total_servicio, total_envio = [], 0.0, 0.0
+    for ln in (lineas or []):
+        _sku = (ln.get("sku") or "").strip().upper()
+        # `es_zz` ya viene calculado por el motor del ERP (ver el contrato
+        # documentado en _cubicador_fetch: "no toques la estructura del
+        # dict 'lineas'... es_zz, vaneli"). Se usa ese flag como fuente
+        # principal y el prefijo como red de respaldo, por si una línea
+        # llega sin la bandera.
+        if not (ln.get("es_zz") or _sku.startswith("ZZ")):
+            continue
+        try:
+            _monto = float(ln.get("vaneli") or 0)
+        except (TypeError, ValueError):
+            _monto = 0.0
+        _es_envio = (_sku == "ZZENVIO")
+        zz.append({
+            "codigo": _sku,
+            # OJO: las líneas del ERP NO traen "nombre"/"descripcion" --
+            # son `nombre_app` (nuestro catálogo) y `descripcion_erp` (lo
+            # que dice Random). Leer las claves equivocadas devolvía None
+            # en silencio y mostraba solo el código.
+            "nombre": (ln.get("nombre_app") or ln.get("descripcion_erp") or _sku),
+            "monto": _monto,
+            "es_envio": _es_envio,
+            # "sugerida" = la línea que corresponde al TIPO de esta OT
+            # (instalación → ZZINSTALACION, preventiva/correctiva →
+            # ZZMANTENCION). Es una sugerencia, no un filtro: las demás
+            # igual se devuelven.
+            "sugerida": bool(_zz_esperada and _sku == _zz_esperada),
+        })
+        if _es_envio:
+            total_envio += _monto
+        else:
+            total_servicio += _monto
+
+    return jsonify({
+        "ok": True,
+        "documento": {
+            "tido": tido, "nudo": nudo,
+            "cliente_nombre": header.get("cliente_nombre") or "",
+            "cliente_rut": header.get("cliente_rut") or "",
+            "fecha": str(header.get("fecha") or "")[:10],
+        },
+        "zz": zz,
+        "zz_esperada": _zz_esperada,
+        "tipo_ot": _tipo_ot,
+        "total_servicio": total_servicio,
+        "total_envio": total_envio,
+        "total": total_servicio + total_envio,
+        # Sin líneas ZZ no es un error: puede ser un documento de puro
+        # producto físico. Se dice con todas sus letras en vez de dejar la
+        # pantalla en blanco.
+        "sin_zz": not zz,
+    })
 
 
 @app.route("/ot/api/crear", methods=["POST"])

@@ -97,6 +97,47 @@
   .otd-header-acts .otd-btn{flex:1;justify-content:center}
 }
 
+/* ══ FINANZAS POR PASOS ═══════════════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "necesito que la enumeres, la hagas inteligente").
+   Mismo lenguaje de pasos numerados que ya usan el modal de Repuestos y
+   /retiros/solicitar (memoria: feedback_diseno_estandar_modales) --
+   círculo rojo con el número, que pasa a verde con check cuando el paso
+   ya tiene su dato. No es decoración: marca el ORDEN de llenado, que era
+   justo lo que faltaba (se podía guardar el documento sin que nadie
+   leyera sus montos). */
+.otd-fpaso{border:1px solid #e5e7eb;border-radius:11px;margin-bottom:10px;
+  background:#fff;overflow:hidden}
+.otd-fpaso .hd{display:flex;align-items:center;gap:9px;padding:9px 12px;
+  background:#fafbfc;border-bottom:1px solid #f1f3f5;
+  font-size:.8rem;font-weight:800;color:#374151}
+.otd-fpaso .hd .num{width:22px;height:22px;border-radius:50%;flex:none;
+  display:grid;place-items:center;background:var(--ilus-red,#dc2626);color:#fff;
+  font-size:.72rem;font-weight:900;transition:background .3s ease}
+.otd-fpaso.listo .hd .num{background:#16a34a}
+.otd-fpaso.listo .hd .num::after{content:"\F26E";font-family:"bootstrap-icons"}
+.otd-fpaso.listo .hd .num{font-size:.68rem}
+.otd-fpaso .bd{padding:11px 12px}
+
+/* Líneas ZZ leídas del documento (paso 2) */
+.otd-zzl{border:1px solid #bbf7d0;border-radius:9px;overflow:hidden}
+.otd-zzl .row-zz{display:flex;align-items:center;gap:9px;padding:8px 11px;
+  border-bottom:1px solid #dcfce7;background:#f0fdf4;font-size:.8rem;color:#166534}
+.otd-zzl .row-zz:last-child{border-bottom:0}
+.otd-zzl .row-zz .cod{font-weight:900;font-size:.7rem;letter-spacing:.03em}
+.otd-zzl .row-zz .mon{margin-left:auto;font-weight:900;font-variant-numeric:tabular-nums}
+.otd-zzl .row-zz .tag{font-size:.6rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;background:#16a34a;color:#fff;border-radius:99px;padding:1px 7px}
+.otd-zzl .row-zz.envio{background:#eff6ff;border-bottom-color:#dbeafe;color:#1e40af}
+.otd-zzl .row-zz.envio .tag{background:#2563eb}
+.otd-zzl .tot-zz{display:flex;align-items:center;gap:9px;padding:9px 11px;
+  background:#0a0a0a;color:#fff;font-size:.82rem;font-weight:800}
+.otd-zzl .tot-zz .mon{margin-left:auto;font-size:1rem;font-weight:900;
+  font-variant-numeric:tabular-nums}
+.otd-zzl .aplicar{width:100%;min-height:40px;border:0;background:#16a34a;color:#fff;
+  font-size:.82rem;font-weight:800;cursor:pointer;display:flex;align-items:center;
+  justify-content:center;gap:7px}
+.otd-zzl .aplicar:hover{background:#15803d}
+
 /* Estado del Anexo de servicios — 2026-09-02. Semáforo (REGLA #15): ámbar
    borrador, azul enviado/esperando, verde firmado. */
 .otd-anx-est{display:flex;align-items:flex-start;gap:11px;border-radius:10px;
@@ -1211,13 +1252,14 @@
            style="--hc:{{ h.color or '#4ade80' }}"
            data-key="{{ h.clave }}" data-ts="{{ h.ts or '' }}"
            title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}">
-        {# 🔇 2026-09-02 (Daniel: "elimina el ≈27m, 1m, 2d 22h, 0m, eso no lo
-           necesito"): las duraciones por tramo salen del recorrido -- le
-           metían ruido a lo que tiene que leerse de un vistazo, que es el
-           semáforo. El cálculo se conserva en el backend
-           (`dur_desde_anterior`, ver ot2_detalle) porque es la base del
-           cronómetro por máquina que Daniel sí pidió; simplemente no se
-           dibuja acá. El tiempo total sigue abajo, en el resumen. #}
+        {# 🔇 2026-09-02: acá iban las duraciones por tramo (≈27m, 2d 22h…).
+           Daniel las descartó el mismo día ("eso no lo necesito" y después
+           "sácalo por favor, pero llevemos el tiempo por otro lado"): le
+           metían ruido a lo único que este recorrido tiene que decir, que
+           es el semáforo. El cálculo también se eliminó del backend -- la
+           medición de tiempos que sí quiere es el cronómetro del técnico
+           (en ruta → llegada → tiempo por máquina), que es otra cosa y va
+           aparte. El tiempo total sigue abajo, en el resumen. #}
         <div class="p"><i class="bi {{ h.icono }}"></i></div>
         <span class="l">{{ h.label }}</span>
         <span class="t" data-ts-iso="{{ h.ts or '' }}">{{ h.cuando or '—' }}</span>
@@ -1384,8 +1426,72 @@
           </div>
           {% endif %}
           {% if puede_metadata %}
-          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div>
+          {% set _doc_tido_fin = v.documento_erp_tido or v.factura_tido %}
+          {% set _doc_nudo_fin = v.documento_erp_nudo or v.factura_nudo %}
+
+          {# ══ PASOS NUMERADOS ═══════════════════════════════════════════
+             🆕 2026-09-02 (Daniel: "necesito que la enumeres, la hagas
+             inteligente, que yo pueda llamar un documento y me traiga el ZZ
+             instalación, el ZZ envío, el ZZ mantención, todo lo que sea que
+             tenga que traer"). Antes esto era una bandeja plana de 8
+             campos sin orden de llenado: se podía guardar el documento sin
+             que el sistema lo leyera nunca -- que es exactamente lo que
+             pasó (boleta guardada, montos en blanco, margen falso).
+             Ahora sigue el patrón de pasos del proyecto (REGLA #15,
+             lenguaje de Retiros): 1 documento → 2 lo que cobra → 3 lo que
+             cuesta → 4 a quién se le carga. #}
+
+          {# ── PASO 1: el documento ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">1</span> ¿Qué documento respalda esta OT?</div>
+            <div class="bd">
+              <div class="input-group input-group-sm mb-2">
+                <input type="text" id="otdErpDocQ" class="form-control"
+                       placeholder="Busca por RUT, N° de documento o razón social"
+                       value="{{ v.cliente_rut or '' }}">
+                <button type="button" class="btn btn-outline-danger" onclick="otdBuscarDocErp()">
+                  <i class="bi bi-search"></i> Buscar</button>
+              </div>
+              <div id="otdErpDocResultados" style="display:none;margin-bottom:8px;max-height:220px;
+                   overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
+              <div id="otdErpDocMsg" class="small text-muted" style="margin-bottom:8px"></div>
+              <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:end">
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Tipo</label>
+                  <select id="otdFinDocErpTido" class="form-select form-select-sm">
+                    <option value="">— Sin asociar —</option>
+                    <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
+                    <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
+                    <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
+                    <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Número</label>
+                  <input type="text" id="otdFinDocErpNudo" class="form-control form-control-sm"
+                         maxlength="20" placeholder="Ej: 552" inputmode="numeric" value="{{ _doc_nudo_fin or '' }}">
+                </div>
+                <button type="button" class="btn btn-danger btn-sm" id="otdBtnLeerZz"
+                        style="min-height:31px;white-space:nowrap"
+                        onclick="otdLeerLineasZz()">
+                  <i class="bi bi-magic"></i> Leer documento</button>
+              </div>
+            </div>
+          </div>
+
+          {# ── PASO 2: lo que el documento le cobra al cliente ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">2</span> ¿Cuánto le cobra ese documento al cliente?</div>
+            <div class="bd">
+              {# Acá aterrizan las líneas ZZ leídas del ERP. Se muestran
+                 TODAS las que tenga el documento (Daniel, 26-ago: "mostrar
+                 todas, por si se inventan uno"), marcando cuál corresponde
+                 al tipo de esta OT y cuál es el envío. #}
+              <div id="otdZzLineas" style="display:none;margin-bottom:10px"></div>
+              <div id="otdZzMsg" class="small text-muted" style="margin-bottom:8px">
+                Presiona <b>Leer documento</b> y traigo las líneas de servicio
+                (ZZ instalación, ZZ mantención, ZZ envío…) directo del ERP.
+              </div>
               <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
               <div class="input-group input-group-sm">
                 <span class="input-group-text">$</span>
@@ -1393,85 +1499,63 @@
                        value="{{ v.costo if v.costo is not none else '' }}">
               </div>
             </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
-              <div class="input-group input-group-sm">
-                <span class="input-group-text">$</span>
-                <input type="number" id="otdFinCostoProveedor" class="form-control" min="0" step="1000"
-                       value="{{ v.costo_proveedor if v.costo_proveedor is not none else '' }}">
+          </div>
+
+          {# ── PASO 3: lo que le cuesta a ILUS ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">3</span> ¿Cuánto nos cuesta a nosotros?</div>
+            <div class="bd">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="number" id="otdFinCostoProveedor" class="form-control" min="0" step="1000"
+                           value="{{ v.costo_proveedor if v.costo_proveedor is not none else '' }}">
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="number" id="otdFinCostoDespacho" class="form-control" min="0" step="1000"
+                           placeholder="0" value="{{ v.costo_despacho if v.costo_despacho is not none else '' }}">
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Tipo</label>
+                  <select id="otdFinProveedorTipo" class="form-select form-select-sm">
+                    <option value="">— Sin definir —</option>
+                    <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
+                    <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Nombre proveedor/instalador</label>
+                  <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
+                         maxlength="200" placeholder="Ej: Instalaciones XYZ" value="{{ v.proveedor_nombre or '' }}">
+                </div>
               </div>
             </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
-              <div class="input-group input-group-sm">
-                <span class="input-group-text">$</span>
-                <input type="number" id="otdFinCostoDespacho" class="form-control" min="0" step="1000"
-                       placeholder="0" value="{{ v.costo_despacho if v.costo_despacho is not none else '' }}">
-              </div>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Tipo</label>
-              <select id="otdFinProveedorTipo" class="form-select form-select-sm">
-                <option value="">— Sin definir —</option>
-                <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
-                <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Nombre proveedor/instalador</label>
-              <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
-                     maxlength="200" placeholder="Ej: Instalaciones XYZ" value="{{ v.proveedor_nombre or '' }}">
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Centro de costo</label>
+          </div>
+
+          {# ── PASO 4: a quién se le carga ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">4</span> ¿A qué centro de costo se carga?</div>
+            <div class="bd">
               <select id="otdFinCentroCosto" class="form-select form-select-sm">
                 <option value="">— Sin definir —</option>
                 <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
                 <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
                 <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
               </select>
+              <div class="otf-hint" style="margin-top:6px">
+                Si la pérdida no es de Servicio Técnico, cárgala a Logística o Comercial:
+                así el informe de resultados no se la atribuye al área equivocada.
+              </div>
             </div>
           </div>
-          {% set _doc_tido_fin = v.documento_erp_tido or v.factura_tido %}
-          {% set _doc_nudo_fin = v.documento_erp_nudo or v.factura_nudo %}
-          {# 🆕 2026-09-02 (Daniel, en vivo: "no consigo nada de este
-             cliente... no lo consigo en el ERP"): antes había que YA saber
-             el tipo+número del documento para declararlo -- si Daniel no
-             lo tenía a mano, quedaba trabado. Reusa el MISMO motor
-             read-only de Random que ya usa Tickets/Retiros
-             (buscar-cliente-documentos: por RUT, número o razón social,
-             REGLA #4.1) para sugerir el documento y llenar los campos de
-             abajo con un clic, en vez de tipearlo a ciegas. #}
-          <div class="otd-erpdoc-search" style="margin-bottom:10px">
-            <label class="form-label small fw-semibold mb-1">Buscar documento del cliente en el ERP</label>
-            <div class="input-group input-group-sm">
-              <input type="text" id="otdErpDocQ" class="form-control"
-                     placeholder="RUT, N° de documento o razón social"
-                     value="{{ v.cliente_rut or '' }}">
-              <button type="button" class="btn btn-outline-danger" onclick="otdBuscarDocErp()">
-                <i class="bi bi-search"></i> Buscar</button>
-            </div>
-            <div id="otdErpDocResultados" style="display:none;margin-top:8px;max-height:220px;
-                 overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
-            <div id="otdErpDocMsg" class="small text-muted" style="margin-top:6px"></div>
-          </div>
-          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 2fr;gap:10px">
-            <div>
-              <label class="form-label small fw-semibold mb-1">Documento ERP</label>
-              <select id="otdFinDocErpTido" class="form-select form-select-sm">
-                <option value="">— Sin asociar —</option>
-                <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
-                <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
-                <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
-                <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label small fw-semibold mb-1">Número</label>
-              <input type="text" id="otdFinDocErpNudo" class="form-control form-control-sm"
-                     maxlength="20" placeholder="Ej: 552" inputmode="numeric" value="{{ _doc_nudo_fin or '' }}">
-            </div>
-          </div>
+
           <div class="d-flex align-items-center justify-content-between flex-wrap gap-2"
                style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px">
             <div>
@@ -2917,6 +3001,124 @@ window.otdVerAnexoPdf = function(aid){
     downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
   });
 };
+
+/* ══ Leer las líneas ZZ del documento ═════════════════════════════════
+   🆕 2026-09-02 (Daniel: "me dejó guardar la boleta, pero no me trajo
+   nada, los datos... que yo pueda llamar un documento y me traiga el ZZ
+   instalación, el ZZ envío, el ZZ mantención, todo lo que sea que tenga
+   que traer"). El wizard de creación ya leía el documento; esta pantalla
+   solo guardaba tipo+número sin abrirlo nunca -- por eso se podía guardar
+   una boleta y quedar con los montos en blanco (y el margen falso). */
+window.otdLeerLineasZz = async function(){
+  const tido = (document.getElementById('otdFinDocErpTido') || {}).value || '';
+  const nudo = ((document.getElementById('otdFinDocErpNudo') || {}).value || '').trim();
+  const cont = document.getElementById('otdZzLineas');
+  const msg  = document.getElementById('otdZzMsg');
+  const btn  = document.getElementById('otdBtnLeerZz');
+  if (!cont || !msg) return;
+  if (!tido || !nudo){
+    msg.textContent = 'Elige el tipo de documento y escribe su número (o búscalo arriba).';
+    cont.style.display = 'none';
+    return;
+  }
+  if (btn){ btn.disabled = true; btn.style.opacity = '.6'; }
+  msg.textContent = 'Leyendo ' + tido + ' N° ' + nudo + ' en el ERP…';
+  cont.style.display = 'none';
+  try {
+    const r = await fetch(`/ot/api/finanzas/{{ v.id }}/lineas-zz`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tido, nudo}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok){
+      msg.textContent = j.error || 'No pudimos leer ese documento en el ERP.';
+      return;
+    }
+    if (j.sin_zz){
+      // Honestidad: un documento sin líneas ZZ no es un error, pero hay
+      // que decirlo -- si no, el usuario se queda esperando montos que no
+      // van a llegar nunca.
+      msg.innerHTML = '<b>' + tido + ' ' + nudo + '</b> existe en el ERP pero no trae ' +
+        'líneas de servicio (ZZ). Si el trabajo se cobra en ese documento, ' +
+        'escribe el precio a mano abajo.';
+      return;
+    }
+    const fmt = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
+    let html = '<div class="otd-zzl">';
+    j.zz.forEach(function(l){
+      const tag = l.sugerida ? '<span class="tag">de esta OT</span>'
+                : (l.es_envio ? '<span class="tag">envío</span>' : '');
+      // El nombre real de la línea (nombre_app / descripcion_erp) solo se
+      // muestra cuando aporta algo distinto del código.
+      const nom = (l.nombre && l.nombre !== l.codigo)
+        ? '<span style="opacity:.85;overflow-wrap:anywhere">' + l.nombre + '</span>' : '';
+      html += '<div class="row-zz' + (l.es_envio ? ' envio' : '') + '">' +
+              '<span class="cod">' + l.codigo + '</span>' + tag + nom +
+              '<span class="mon">' + fmt(l.monto) + '</span></div>';
+    });
+    html += '<div class="tot-zz"><span>Total al cliente</span>' +
+            '<span class="mon">' + fmt(j.total) + '</span></div>' +
+            '<button type="button" class="aplicar" data-total="' + Math.round(j.total) + '" ' +
+            'onclick="otdAplicarTotalZz(this)">' +
+            '<i class="bi bi-check2-circle"></i> Usar ' + fmt(j.total) +
+            ' como precio al cliente</button></div>';
+    cont.innerHTML = html;
+    cont.style.display = '';
+    let detalle = j.documento.cliente_nombre
+      ? (j.documento.cliente_nombre + (j.documento.fecha ? ' · ' + j.documento.fecha : ''))
+      : '';
+    // Si la OT es de un tipo con línea ZZ esperada y el documento no la
+    // trae, se avisa: es el caso "instalación tiene que buscar ZZ envío"
+    // que Daniel pidió vigilar.
+    const faltaEsperada = j.zz_esperada && !j.zz.some(l => l.codigo === j.zz_esperada);
+    msg.innerHTML = (detalle ? detalle + '<br>' : '') +
+      (faltaEsperada
+        ? '<span style="color:#b45309">Ojo: esta OT es <b>' + (j.tipo_ot || '') +
+          '</b> y el documento no trae <b>' + j.zz_esperada + '</b>. Revisa si es el documento correcto.</span>'
+        : 'Líneas de servicio leídas del ERP.');
+  } catch (e){
+    msg.textContent = 'Error de conexión al leer el documento.';
+  } finally {
+    if (btn){ btn.disabled = false; btn.style.opacity = ''; }
+  }
+};
+
+/* Aplica el total de las líneas ZZ al precio al cliente. Igual que el
+   botón del documento: deja el número puesto y espera el Guardar -- nunca
+   escribe plata sin que alguien lo confirme. */
+window.otdAplicarTotalZz = function(btn){
+  const total = parseFloat(btn.dataset.total || 0) || 0;
+  const el = document.getElementById('otdFinCosto');
+  if (!el || !total) return;
+  el.value = total;
+  el.dispatchEvent(new Event('input', {bubbles: true}));
+  el.focus();
+  if (window.ilusToast) ilusToast('Precio traído del documento — revisa y presiona Guardar', {type:'success'});
+};
+
+/* Marca en verde los pasos que ya tienen su dato. Puramente visual: no
+   bloquea nada (la validación real de qué falta para firmar sigue siendo
+   _ot2_finanzas_estado en el backend, una sola fuente de verdad). */
+(function(){
+  const pasos = document.querySelectorAll('#otdCardFinanzas .otd-fpaso');
+  if (!pasos.length) return;
+  const val = id => ((document.getElementById(id) || {}).value || '').trim();
+  function repintar(){
+    const listo = [
+      !!(val('otdFinDocErpTido') && val('otdFinDocErpNudo')),
+      !!val('otdFinCosto'),
+      !!(val('otdFinCostoProveedor') || val('otdFinCostoDespacho')),
+      !!val('otdFinCentroCosto'),
+    ];
+    pasos.forEach((p, i) => p.classList.toggle('listo', !!listo[i]));
+  }
+  ['otdFinDocErpTido','otdFinDocErpNudo','otdFinCosto','otdFinCostoProveedor',
+   'otdFinCostoDespacho','otdFinCentroCosto'].forEach(function(id){
+    const el = document.getElementById(id);
+    if (el){ el.addEventListener('input', repintar); el.addEventListener('change', repintar); }
+  });
+  repintar();
+})();
 
 /* 🐛 2026-09-02 (OT-149) — traer el precio del documento al campo "Precio
    al cliente". No guarda solo: deja el número puesto, recalcula el margen
