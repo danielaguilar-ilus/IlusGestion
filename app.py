@@ -88108,6 +88108,20 @@ def mant_visita_tarea_respuesta(vid, tid):
         _min_chars = 10 if tar.get("obligatoria") else 3
         if len(v) < _min_chars:
             completar = False
+            # 🐛 FIX 2026-09-02 (OT-133, Daniel: "el técnico coloca
+            # observaciones en el texto libre y lo guarda pero esto no
+            # cambia en el sistema" -- causa real: el texto SÍ se
+            # guardaba (valor_json, mas abajo, es incondicional), pero
+            # esta rama nunca seteaba `error`/`warning`, y el frontend
+            # (guardarResp, mantenciones_ot_ejecutar.js) solo muestra un
+            # toast si hay warning O si quedó completada -- con las dos
+            # en falso/null no aparecía NADA. El técnico no tenía forma
+            # de saber que su texto, aunque guardado, era muy corto para
+            # marcar la tarea como hecha.
+            error = (
+                f"Guardado, pero necesitas al menos {_min_chars} caracteres "
+                f"para marcar esta tarea como completada (llevas {len(v)})."
+            )
     elif tipo == "numero":
         # 🔧 FIX 2026-08-27 (auditoría de plantillas — queja real de Isabel
         # Milling: le pedía "Voltaje" en equipos que no llevan electrónica,
@@ -88129,6 +88143,11 @@ def mant_visita_tarea_respuesta(vid, tid):
             if n is None:
                 completar = False
                 valor_norm = {"numero": None}
+                # 🐛 FIX 2026-09-02: mismo patron que "texto" arriba -- sin
+                # esto, dejar el campo vacio (blur sin escribir nada) no
+                # avisaba por que la tarea seguia sin marcarse.
+                if tar.get("obligatoria"):
+                    error = "Esta tarea es obligatoria: ingresa un valor numérico (o N/A si no aplica) para marcarla como completada."
             else:
                 valor_norm = {"numero": n}
                 # Validar rango si aplica
@@ -88155,6 +88174,9 @@ def mant_visita_tarea_respuesta(vid, tid):
             if not v:
                 completar = False
                 valor_norm = {"serie": None}
+                # 🐛 FIX 2026-09-02: mismo patron que "texto" -- sin aviso,
+                # dejar el campo vacio no explicaba por que seguia pendiente.
+                error = "Escribe el número de serie (o elige N/A) para marcar esta tarea como completada."
             else:
                 valor_norm = {"serie": v}
                 # Escribe a la ficha permanente del equipo con la MISMA regla
@@ -88188,6 +88210,8 @@ def mant_visita_tarea_respuesta(vid, tid):
         valor_norm = {"fecha": v or None}
         if tar.get("obligatoria") and not v:
             completar = False
+            # 🐛 FIX 2026-09-02: mismo patron que "texto" arriba.
+            error = "Esta tarea es obligatoria: selecciona fecha y hora para marcarla como completada."
     elif tipo == "gps":
         # ═══════════════════════════════════════════════════════════
         # POLÍTICA 2026-05-17 (Daniel) — Solo GPS REAL del dispositivo.
@@ -88270,6 +88294,9 @@ def mant_visita_tarea_respuesta(vid, tid):
         # Se marca completada solo si quedó al menos un asistente registrado
         # (mismo criterio que "texto": no perder lo escrito aunque no complete).
         completar = len(asistentes_norm) > 0
+        if not completar:
+            # 🐛 FIX 2026-09-02: mismo patron que "texto" arriba.
+            error = "Marca al menos un asistente presente para guardar la lista de asistencia."
     else:
         return jsonify({"ok": False, "error": f"Tipo no soportado por este endpoint: {tipo}"}), 400
 
