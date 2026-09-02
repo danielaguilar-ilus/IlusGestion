@@ -436,30 +436,20 @@
 .otd-track{display:flex;align-items:flex-start;gap:0}
 .otd-h{flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;
   position:relative;text-align:center;min-width:0;padding-top:16px}
-/* Conector: gris por defecto, degradado verde cuando el tramo ya se
-   recorrió. Se anima al entrar (transición de color, no de layout). */
+/* 🚦 SEMÁFORO — corrección 2026-09-02 (Daniel: "los logos eran los que
+   iban a color; la línea, el contorno circular y la línea de avance
+   necesito que sea en verde, y que esté en rojo todo lo que no esté
+   gestionado"). En la versión anterior el color propio de cada hito se
+   había ido TAMBIÉN al borde y al conector, y eso rompía la lectura de
+   estado: el recorrido se veía bonito pero ya no decía qué está hecho y
+   qué falta. Ahora el color de cada hito vive SOLO en el icono; el
+   contorno y la línea son verde (hecho) / rojo (pendiente), que es lo que
+   se lee de un vistazo -- mismo semáforo del resto del proyecto. */
 .otd-h::before{content:"";position:absolute;top:42px;left:-50%;width:100%;height:3px;
-  border-radius:3px;background:rgba(255,255,255,.13);
+  border-radius:3px;background:var(--ejec);
   transition:background .6s ease}
 .otd-h:first-child::before{display:none}
-/* El conector toma el color del hito al que LLEGA: el recorrido cambia de
-   tono a medida que avanza, en vez de ser un tubo verde uniforme. */
-.otd-h.ok::before{background:linear-gradient(90deg,
-  color-mix(in srgb,var(--hc,#4ade80) 45%,transparent) 0%,var(--hc,#4ade80) 100%)}
-.otd-h.now::before{background:linear-gradient(90deg,
-  rgba(255,255,255,.16) 0%,var(--hc,#dc2626) 100%)}
-@supports not (color: color-mix(in srgb, red 50%, transparent)){
-  .otd-h.ok::before{background:var(--hc,#4ade80)}
-}
-/* Duración del tramo, flotando sobre el conector. */
-.otd-h .dur{position:absolute;top:24px;left:-50%;width:100%;display:flex;
-  justify-content:center;pointer-events:none}
-.otd-h .dur span{background:rgba(10,10,10,.92);border:1px solid rgba(255,255,255,.14);
-  color:#a1a1aa;font-size:.58rem;font-weight:800;letter-spacing:.04em;
-  padding:1px 8px;border-radius:99px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.otd-h.ok .dur span{color:#86efac;border-color:rgba(74,222,128,.3)}
-.otd-h .dur span.aprox{color:#8b8b93}
-.otd-h:first-child .dur{display:none}
+.otd-h.ok::before{background:var(--comp)}
 /* 🎨 2026-09-02 (Daniel: "los logos están en blanco, yo los quería a
    color... algo bien poderoso, con profundidad, que se vea muy bien
    realizado el trabajo"). Antes TODO hito cumplido era un disco verde
@@ -479,23 +469,25 @@
 .otd-h .p::before{content:"";position:absolute;inset:2px;border-radius:50%;
   background:linear-gradient(180deg,rgba(255,255,255,.10) 0%,transparent 42%);
   pointer-events:none}
-.otd-h.ok .p{border-color:var(--hc,#4ade80);color:var(--hc,#4ade80);
-  box-shadow:0 0 0 4px color-mix(in srgb,var(--hc,#4ade80) 15%,transparent),
-             0 8px 22px -8px var(--hc,#4ade80),
-             inset 0 0 18px -6px color-mix(in srgb,var(--hc,#4ade80) 45%,transparent)}
-.otd-h.now .p{border-color:var(--hc,#dc2626);color:var(--hc,#dc2626);
-  box-shadow:0 0 0 5px color-mix(in srgb,var(--hc,#dc2626) 20%,transparent),
-             0 10px 26px -8px var(--hc,#dc2626),
-             inset 0 0 22px -6px color-mix(in srgb,var(--hc,#dc2626) 55%,transparent)}
-/* Fallback para navegadores sin color-mix(): el halo se pierde, el color
-   del icono y el borde -- que es lo que Daniel pidió -- se mantiene. */
-@supports not (color: color-mix(in srgb, red 50%, transparent)){
-  .otd-h.ok .p{box-shadow:0 8px 22px -8px var(--hc,#4ade80)}
-  .otd-h.now .p{box-shadow:0 10px 26px -8px var(--hc,#dc2626)}
-}
+/* CONTORNO = estado (verde hecho / rojo pendiente). ICONO = color propio
+   del hito (--hc). Los dos datos conviven sin pisarse: el aro dice en qué
+   va la OT, el icono dice de qué paso se trata. */
+.otd-h .p{border-color:var(--ejec)}
+.otd-h.ok .p{border-color:var(--comp);color:var(--hc,#4ade80);
+  box-shadow:0 0 0 4px rgba(22,163,74,.15),
+             0 8px 22px -8px rgba(22,163,74,.9),
+             inset 0 0 18px -6px rgba(22,163,74,.5)}
+.otd-h.now .p{border-color:var(--ejec);color:var(--hc,#f87171);
+  box-shadow:0 0 0 5px rgba(220,38,38,.18),
+             0 10px 26px -8px rgba(220,38,38,.95),
+             inset 0 0 22px -6px rgba(220,38,38,.55)}
+/* Pendientes (ni hechos ni actual): aro rojo apagado, icono en su color
+   pero atenuado -- se ve que existe, se ve que falta. */
+.otd-h:not(.ok):not(.now) .p{border-color:rgba(220,38,38,.5);
+  color:var(--hc,#71717a)}
 /* Anillo que late SOLO en el hito actual — el "estás aquí" del recorrido. */
 .otd-h.now .p::after{content:"";position:absolute;inset:-9px;border-radius:50%;
-  border:2.5px solid var(--hc,#dc2626);opacity:0;animation:otdTrackPing 2s ease-out infinite}
+  border:2.5px solid var(--ejec);opacity:0;animation:otdTrackPing 2s ease-out infinite}
 @keyframes otdTrackPing{
   0%{transform:scale(.82);opacity:.75}
   75%{transform:scale(1.18);opacity:0}
@@ -504,7 +496,8 @@
 .otd-h:hover .p{transform:scale(1.09)}
 .otd-h .l{font-size:.78rem;font-weight:900;color:#a1a1aa;letter-spacing:.01em;
   line-height:1.2;transition:color .5s ease}
-.otd-h.ok .l{color:var(--hc,#4ade80)}
+.otd-h.ok .l{color:#4ade80}
+.otd-h:not(.ok):not(.now) .l{color:#f87171}
 .otd-h.now .l{color:#fff}
 .otd-h .t{font-size:.68rem;color:#8b8b93;font-variant-numeric:tabular-nums;font-weight:700}
 .otd-h.ok .t,.otd-h.now .t{color:#d4d4d8}
@@ -512,9 +505,9 @@
   font-size:.58rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
 .otd-h.ok .ago{background:rgba(22,163,74,.2);color:#4ade80}
 .otd-h.now .ago{background:rgba(220,38,38,.22);color:#fca5a5}
-/* Los hitos que todavía no pasaron se apagan, para que el ojo caiga solo
-   en lo que ya ocurrió y en dónde está parada la OT ahora. */
-.otd-h:not(.ok):not(.now){opacity:.5}
+/* Los pendientes se atenúan un poco, pero NO tanto como antes: Daniel
+   quiere que el rojo se lea, no que desaparezca. */
+.otd-h:not(.ok):not(.now){opacity:.72}
 @media (prefers-reduced-motion:reduce){
   .otd-h.now .p::after{animation:none}
 }
@@ -915,7 +908,6 @@
   .otd-h{min-width:104px;scroll-snap-align:center}
   .otd-h .p{width:44px;height:44px;font-size:1.1rem}
   .otd-h::before{top:38px}
-  .otd-h .dur{top:21px}
   .otd-h .l{font-size:.7rem}
   /* Mobile-first (REGLA #3): el panel de estado y las acciones rápidas
      pasan a ocupar el ancho completo en vez de competir por espacio con
@@ -1218,15 +1210,14 @@
       <div class="otd-h {{ 'ok' if h.hecho }} {{ 'now' if h.actual }}"
            style="--hc:{{ h.color or '#4ade80' }}"
            data-key="{{ h.clave }}" data-ts="{{ h.ts or '' }}"
-           title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}{% if h.dur_desde_anterior %} · tardó {{ h.dur_desde_anterior }} desde el hito anterior{% endif %}">
-        {# 🆕 2026-09-02 — cuánto tardó la OT en recorrer ESTE tramo. Solo
-           aparece cuando los dos extremos tienen hora real; si el tramo se
-           saltó un hito sin hora propia (ej. "Ejecutando", que casi nunca
-           se registra) se marca con "≈" en vez de fingir precisión. #}
-        {% if h.dur_desde_anterior %}
-        <div class="dur"><span class="{{ 'aprox' if h.dur_abarca_saltos }}">
-          {{ '≈ ' if h.dur_abarca_saltos }}{{ h.dur_desde_anterior }}</span></div>
-        {% endif %}
+           title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}">
+        {# 🔇 2026-09-02 (Daniel: "elimina el ≈27m, 1m, 2d 22h, 0m, eso no lo
+           necesito"): las duraciones por tramo salen del recorrido -- le
+           metían ruido a lo que tiene que leerse de un vistazo, que es el
+           semáforo. El cálculo se conserva en el backend
+           (`dur_desde_anterior`, ver ot2_detalle) porque es la base del
+           cronómetro por máquina que Daniel sí pidió; simplemente no se
+           dibuja acá. El tiempo total sigue abajo, en el resumen. #}
         <div class="p"><i class="bi {{ h.icono }}"></i></div>
         <span class="l">{{ h.label }}</span>
         <span class="t" data-ts-iso="{{ h.ts or '' }}">{{ h.cuando or '—' }}</span>
