@@ -29698,33 +29698,145 @@ def tr_manifiestos():
     else:
         filtros["fecha_default_aplicado"] = False
 
-    # Los eliminados (soft-delete, 2026-07-25) nunca aparecen en el listado
-    # normal — solo quedan en la BD para poder auditar/restaurar a mano.
-    where, params = ["(eliminado IS NULL OR eliminado=0)"], []
-    if filtros["courier"]:
-        where.append("courier=%s"); params.append(filtros["courier"])
-    if filtros["estado"]:
-        where.append("estado=%s"); params.append(filtros["estado"])
-    if filtros["q"]:
-        q_like = f"%{filtros['q']}%"
-        where.append("(correlativo LIKE %s OR courier LIKE %s OR notas LIKE %s)")
-        params.extend([q_like, q_like, q_like])
-    where_fecha, params_fecha = [], []
-    if filtros["desde"]:
-        where_fecha.append("fecha >= %s"); params_fecha.append(filtros["desde"])
-    if filtros["hasta"]:
-        where_fecha.append("fecha <= %s"); params_fecha.append(filtros["hasta"])
-
     # PESTAÑAS "Activos" / "Entregados" (2026-07-29, Daniel — demo directorio):
     # un manifiesto pasa a "Entregados" solo cuando el 100% de sus items están
     # en un estado TERMINAL ('Entregado' o 'Devolución'). Mismo criterio que ya
     # usa _EN_MANIF_ACTIVO en tr_compromisos_json() para documentos individuales,
     # aplicado ahora a nivel de manifiesto completo (todos sus items, no solo uno).
+    # 2026-09-01: se MUEVE arriba del bloque de filtros (antes vivía después)
+    # porque el filtro de estado (más abajo) ahora necesita _SQL_ENTREGADOS
+    # para reconstruir el mismo estado VISUAL que dibuja la tabla. Movimiento
+    # puro, sin cambio de comportamiento — más _HAY_ENTREGADO, nuevo.
     _TIENE_ITEMS       = "id IN (SELECT manifest_id FROM transport_manifest_items)"
     _TIENE_NO_TERMINAL = ("id IN (SELECT manifest_id FROM transport_manifest_items "
                           "WHERE estado_entrega NOT IN ('Entregado','Devolución'))")
     _SQL_ACTIVOS    = f"(NOT ({_TIENE_ITEMS}) OR ({_TIENE_NO_TERMINAL}))"
     _SQL_ENTREGADOS = f"({_TIENE_ITEMS} AND NOT ({_TIENE_NO_TERMINAL}))"
+    # NUEVO (filtro de estado visual): "al menos un item ya entregado" — es
+    # la condición que dibuja el pill "En curso · NN%" en la tabla.
+    _HAY_ENTREGADO  = ("id IN (SELECT manifest_id FROM transport_manifest_items "
+                       "WHERE estado_entrega IN ('Entregado','Devolución'))")
+    # Ninguno de los 3 fragmentos de arriba lleva %s — si algún día se le
+    # agrega uno, el orden de params de la query de pestañas (más abajo, que
+    # pasa params_fecha_entregados ANTES que params porque sus %s viven en el
+    # SELECT) se descuadra en silencio. No agregar placeholders acá.
+
+    # Los eliminados (soft-delete, 2026-07-25) nunca aparecen en el listado
+    # normal — solo quedan en la BD para poder auditar/restaurar a mano.
+    where, params = ["(eliminado IS NULL OR eliminado=0)"], []
+    if filtros["courier"]:
+        # 2026-09-01 (bug ya documentado en _nombres_couriers_activos,
+        # app.py:14336, y ya resuelto en el Monitor con el mismo criterio,
+        # ver tr_compromisos_json): transport_manifests.courier es texto
+        # libre CONGELADO al crear cada manifiesto ("Transporte Felca" vs
+        # "Transportes Felca" en la ficha) -- comparar exacto devolvía CERO
+        # resultados con cualquier variante de nombre. LIKE tolerante, mismo
+        # placeholder (1), mismo conteo de params que antes.
+        _c_esc = (filtros["courier"].replace("\\", "\\\\")
+                  .replace("%", "\\%").replace("_", "\\_"))
+        where.append("courier LIKE %s"); params.append(f"%{_c_esc}%")
+    if filtros["estado"]:
+        # 2026-09-01 (Daniel: "el filtro y el buscador no funciona como
+        # corresponde"): antes comparaba la columna CRUDA `estado`, pero el
+        # pill que ve el usuario en la tabla (manifiestos.html) se DERIVA del
+        # % de avance -- veía "En curso · 79%", elegía "En curso" en el
+        # desplegable, y la fila desaparecía porque en la BD seguía diciendo
+        # "En preparación". Este CASE es la traducción literal de ese
+        # if/elif del template: si uno cambia, el otro también. Sigue siendo
+        # 1 solo placeholder.
+        where.append(
+            "(CASE WHEN estado='Cerrado' THEN 'Cerrado' "
+            "      WHEN " + _SQL_ENTREGADOS + " THEN 'Entregado completo' "
+            "      WHEN " + _HAY_ENTREGADO  + " THEN 'En curso' "
+            "      ELSE estado END) = %s")
+        params.append(filtros["estado"])
+    if filtros["q"]:
+        _q = filtros["q"]
+        # Escapar comodines de LIKE: un '%' o '_' pegado (típico al copiar
+        # desde Excel) hacía que la búsqueda devolviera cualquier cosa.
+        _esc = _q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        q_like = f"%{_esc}%"
+        _cond = ["correlativo LIKE %s", "courier LIKE %s", "notas LIKE %s"]
+        _p    = [q_like, q_like, q_like]
+
+        # "FCV 11431" / "fcv-11431" / "11431" / "0000011431" / "VD 6371":
+        # el ERP guarda el nudo con ceros a la izquierda hasta 10 caracteres
+        # y las notas de venta con prefijo de letras (VD00006371) -- un LIKE
+        # ingenuo sobre esos formatos no calza. _tido_q/_num_q separan un
+        # posible prefijo de letras del número real tecleado.
+        _compact = re.sub(r"[\s\-_.·]+", "", _q).upper()
+        _m       = re.match(r"^([A-Z]{2,3})?0*(\d{1,10})$", _compact)
+        _tido_q  = _m.group(1) if _m else None
+        _num_q   = _m.group(2) if _m else None
+
+        # "MAN 49" / "MAN-49" -> MAN-2026-0049. El '%' va DOBLE: pymysql hace
+        # `query % params`, así que un '%' literal suelto en el SQL revienta.
+        if _num_q and len(_num_q) <= 4:
+            _cond.append("correlativo LIKE CONCAT('%%-', LPAD(%s, 4, '0'))")
+            _p.append(_num_q)
+
+        # Documento: igualdad directa (usa índice) + LPAD (el padding real
+        # del ERP) + REGEXP (cuela un prefijo de letras tipo "VD"/"WEB"). El
+        # REGEXP solo se evalúa sobre las pocas filas que el EXISTS ya trajo
+        # por PRIMARY KEY -- no es un scan de toda la tabla.
+        _doc_sql, _doc_p = "", []
+        if _num_q:
+            _doc_sql = (" OR c_q.nudo = %s"
+                        " OR c_q.nudo = LPAD(%s, 10, '0')"
+                        " OR c_q.nudo REGEXP CONCAT('^[A-Za-z]*0*', %s, '$')")
+            _doc_p   = [_num_q, _num_q, _num_q]
+            if _tido_q:                      # "FCV 11431" acota también el tipo
+                _doc_sql = " OR (c_q.tido = %s AND (1=0" + _doc_sql + "))"
+                _doc_p   = [_tido_q] + _doc_p
+
+        # RUT tecleado con puntos y guion ("76.996.964-0").
+        _rut_sql, _rut_p = "", []
+        _solo_dig = re.sub(r"\D", "", _q)
+        if len(_solo_dig) >= 7:
+            _rut_sql = (" OR REPLACE(REPLACE(REPLACE(c_q.cliente_rut,'.',''),"
+                        "'-',''),' ','') LIKE %s")
+            _rut_p   = [f"{_solo_dig}%"]
+
+        # EXISTS correlacionado, NUNCA JOIN: este fragmento se inyecta dentro
+        # de SUM(CASE...) (pestañas) y COUNT(*)/SUM(costo_total) (KPIs) -- un
+        # JOIN multiplicaría cada manifiesto por su número de items, inflando
+        # el margen y rompiendo el paginador (REGLA #4.3: "Mostrando 1-10 de
+        # 112" con 8 manifiestos reales). Alias mi_q/c_q a propósito: `mi` y
+        # `c` YA están tomados por la query de KPIs más abajo.
+        _cond.append(
+            "EXISTS (SELECT 1 "
+            "          FROM transport_manifest_items mi_q "
+            "          JOIN transport_commitments c_q ON c_q.id = mi_q.commitment_id "
+            "         WHERE mi_q.manifest_id = transport_manifests.id "
+            "           AND (c_q.cliente_nombre LIKE %s "
+            "             OR c_q.comuna LIKE %s "
+            "             OR c_q.guia_numero LIKE %s "
+            "             OR c_q.tracking_code LIKE %s "
+            "             OR mi_q.tracking_number LIKE %s "
+            "             OR mi_q.master_tracking_number LIKE %s "
+            + _doc_sql + _rut_sql +
+            "               ))")
+        _p += [q_like] * 6 + _doc_p + _rut_p
+
+        _q_cond = "(" + " OR ".join(_cond) + ")"
+        # Red de seguridad: este fragmento se consume 4 veces en total (1 en
+        # badges, 2 en KPIs -- where_sql va embebido dos veces ahí --, 1 en
+        # el listado). Un descuadre acá no siempre da un error visible: puede
+        # desplazar valores a la columna equivocada sin romper la query. Si
+        # el conteo no calza, se degrada a la búsqueda simple de siempre en
+        # vez de arriesgar resultados incorrectos.
+        if _q_cond.count("%s") != len(_p):
+            print("[ILUS][WARN] manifiestos: descuadre de params en q "
+                  f"({_q_cond.count('%s')} vs {len(_p)}) — busqueda simple",
+                  flush=True)
+            _q_cond, _p = "(correlativo LIKE %s)", [q_like]
+        where.append(_q_cond)
+        params.extend(_p)
+    where_fecha, params_fecha = [], []
+    if filtros["desde"]:
+        where_fecha.append("fecha >= %s"); params_fecha.append(filtros["desde"])
+    if filtros["hasta"]:
+        where_fecha.append("fecha <= %s"); params_fecha.append(filtros["hasta"])
 
     where_sql_base = " AND ".join(where)  # sin filtro de vista NI de fecha — para contar ambas pestañas
     where_vista = where + where_fecha + [_SQL_ENTREGADOS if filtros["vista"] == "entregados" else _SQL_ACTIVOS]
@@ -29832,14 +29944,57 @@ def tr_manifiestos():
         m["avance"] = av
         m["cien_pct"] = bool(av["total"] > 0 and av["pct"] == 100)
 
+    # 2026-09-01 (Daniel: "poder buscar facturas y clientes... y poder
+    # filtrar información"). Desplegable de courier: unión de los couriers
+    # ACTIVOS (fuente de verdad, decisión 2026-08-05) + los nombres
+    # históricos que realmente existen en la tabla — sin esto, desactivar un
+    # courier deja sus manifiestos viejos sin forma de filtrarse (se SUMA,
+    # no se quita — REGLA #4.2).
+    _couriers_ui = list(_nombres_couriers_activos())
+    for _r in (mysql_fetchall(
+            "SELECT DISTINCT courier FROM transport_manifests "
+            " WHERE (eliminado IS NULL OR eliminado=0) AND courier<>'' "
+            " ORDER BY courier") or []):
+        _n = (_r.get("courier") or "").strip()
+        if _n and _n.lower() not in {x.lower() for x in _couriers_ui}:
+            _couriers_ui.append(_n)
+
+    # Chips de filtros activos: "el filtro no funciona" también era, en
+    # parte, "no sé qué filtro tengo puesto". Cada chip trae su propia URL
+    # para quitar SOLO ese filtro, conservando vista y page_size.
+    _chips = []
+    if filtros["q"]:
+        _chips.append({"k": "q", "lbl": "Búsqueda", "val": filtros["q"]})
+    if filtros["courier"]:
+        _chips.append({"k": "courier", "lbl": "Courier", "val": filtros["courier"]})
+    if filtros["estado"]:
+        _chips.append({"k": "estado", "lbl": "Estado", "val": filtros["estado"]})
+    if filtros["desde"] and not filtros["fecha_default_aplicado"]:
+        _chips.append({"k": "desde", "lbl": "Desde", "val": filtros["desde"]})
+    if filtros["hasta"]:
+        _chips.append({"k": "hasta", "lbl": "Hasta", "val": filtros["hasta"]})
+    _base_chip = {
+        "vista": filtros["vista"], "page_size": page_size,
+        "courier": filtros["courier"], "estado": filtros["estado"],
+        "q": filtros["q"],
+        "desde": ("" if filtros["fecha_default_aplicado"] else filtros["desde"]),
+        "hasta": filtros["hasta"],
+    }
+    for _ch in _chips:
+        _ch["url"] = url_for("tr_manifiestos", **{
+            _k: _v for _k, _v in _base_chip.items() if _v and _k != _ch["k"]})
+    _url_limpiar = url_for("tr_manifiestos", vista=filtros["vista"], page_size=page_size)
+
     return render_template(
         "transporte/manifiestos.html",
         manifiestos=manifiestos,
         filtros=filtros,
-        couriers=_nombres_couriers_activos(),
+        couriers=_couriers_ui,
         estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
         kpis=kpis,
         tabs_count=tabs_count,
+        chips=_chips,
+        url_limpiar=_url_limpiar,
         paginacion={
             "page": page,
             "total_pages": total_pages,
@@ -39432,6 +39587,21 @@ def _ensure_transport_producto_indices():
                 "ADD INDEX idx_koprct_comm (koprct, commitment_id)",
                 "ALTER TABLE transport_commitments "
                 "ADD INDEX idx_fecha_id (fecha_emision, id)",
+                # 2026-09-01 (Daniel: "poder buscar facturas y clientes" en
+                # /transporte/manifiestos). idx_nudo/idx_cliente_nombre/
+                # idx_comuna se habían declarado el 2026-06-14 DENTRO de
+                # init_transporte_tables(), que no corre en prod desde el
+                # 2026-05-18 (ILUS_SKIP_MIGRATIONS=1) -- probablemente nunca
+                # se aplicaron. Se re-declaran acá, que SÍ corre siempre.
+                "ALTER TABLE transport_commitments ADD INDEX idx_nudo (nudo)",
+                "ALTER TABLE transport_commitments "
+                "ADD INDEX idx_cliente_nombre (cliente_nombre)",
+                "ALTER TABLE transport_commitments ADD INDEX idx_comuna (comuna)",
+                # Cubre "de qué manifiesto es este documento" sin volver a la
+                # fila -- hoy solo existe idx_tmi_commitment (commitment_id,
+                # id), que no trae manifest_id.
+                "ALTER TABLE transport_manifest_items "
+                "ADD INDEX idx_tmi_comm_manifest (commitment_id, manifest_id)",
             ):
                 try:
                     cur.execute(_mig)

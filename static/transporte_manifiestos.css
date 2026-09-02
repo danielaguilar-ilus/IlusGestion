@@ -58,7 +58,9 @@
 .man-filtros{
   background:#fff; border:1px solid #e5e7eb;
   border-radius:14px; padding:14px;
-  display:grid; grid-template-columns: 1.6fr 1fr 1fr auto; gap:12px;
+  /* 2026-09-01: se agrega la columna del botón "Buscar" (auto), pegada a
+     la caja de búsqueda -- ver .man-btn-buscar al final del archivo. */
+  display:grid; grid-template-columns: 1.6fr auto 1fr 1fr auto; gap:12px;
   margin-bottom:18px;
 }
 .man-filtros .search{
@@ -346,6 +348,7 @@
 @media (max-width: 900px){
   .man-kpis{ grid-template-columns:repeat(2,1fr); }
   .man-filtros{ grid-template-columns:1fr; }
+  .man-btn-buscar{ width:100%; }
   /* Layout mobile en tarjetas (label a la izquierda / valor a la derecha).
      Va con .man-page delante para ganarle al .trx-table del DS, que se carga
      despues y no trae este patron. Ver nota de especificidad mas arriba. */
@@ -556,3 +559,50 @@
   .vc-tabla .vc-sel{ width:20px; height:20px; margin-top:2px; }
   .vc-tabla tbody td{ padding-top:11px; padding-bottom:11px; }
 }
+
+/* ── Buscador + chips de filtros activos (2026-09-01, Daniel: "el filtro y
+   el buscador no está funcionando como corresponde... poder buscar
+   facturas, clientes y poder filtrar información"). Va DESPUÉS del bloque
+   @media (max-width:575.98px) de arriba a propósito -- ese bloque tiene su
+   propio test (tests/test_simpliroute_puerta_trasera.py) que lee una
+   ventana fija de caracteres desde su inicio; insertar código nuevo antes
+   corre esa ventana y rompe el test sin tocar ni una línea de las que
+   protege. ── */
+.man-btn-buscar{
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  background:var(--ilus-red); color:#fff; border:none; border-radius:10px;
+  padding:0 18px; min-height:44px; font-size:14px; font-weight:700;
+  cursor:pointer; transition:background .12s, transform .05s;
+}
+.man-btn-buscar:hover{ background:#b91c1c; }
+.man-btn-buscar:active{ transform:translateY(1px); }
+.man-btn-buscar i{ font-size:15px; }
+
+.man-search-hint{
+  font-size:.78rem; color:#6b7280; margin:-10px 0 14px 2px;
+}
+
+.man-chips{
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+  margin:-8px 0 14px 2px;
+}
+.man-chips-lbl{ font-size:.78rem; font-weight:700; color:#6b7280; }
+.man-chip{
+  display:inline-flex; align-items:center; gap:6px;
+  background:#fef2f2; color:#dc2626; border:1px solid #fecaca;
+  border-radius:999px; padding:5px 6px 5px 12px;
+  font-size:.8rem; font-weight:600; white-space:nowrap;
+}
+.man-chip strong{ font-weight:800; }
+.man-chip a{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:18px; height:18px; border-radius:50%; color:#dc2626;
+  background:rgba(220,38,38,.12); text-decoration:none; font-size:11px;
+  transition:background .12s;
+}
+.man-chip a:hover{ background:rgba(220,38,38,.22); }
+.man-chips-clear{
+  font-size:.78rem; font-weight:700; color:#6b7280; text-decoration:underline;
+  margin-left:4px;
+}
+.man-chips-clear:hover{ color:var(--ilus-black); }
