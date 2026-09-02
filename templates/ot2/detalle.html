@@ -97,6 +97,30 @@
   .otd-header-acts .otd-btn{flex:1;justify-content:center}
 }
 
+/* ══ FIRMAS CON EL TRAZO REAL ═════════════════════════════════════════
+   🖊️ 2026-09-02 (Daniel, comparando con la pantalla clásica: "necesito ver
+   las firmas... la información la quiero parecida"). Mismo formato de tres
+   tarjetas que /mantenciones/ot/<id>/ejecutar: rol arriba, la firma
+   dibujada en un recuadro blanco, y abajo quién y cuándo. */
+.otd-firmas-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:10px;padding:14px 16px}
+.otd-firma{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:11px;
+  padding:10px;text-align:center}
+.otd-firma.no{border-color:#e5e7eb;background:#fafbfc}
+.otd-firma .rol{font-size:.64rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.07em;color:#16a34a;display:flex;align-items:center;
+  justify-content:center;gap:5px;margin-bottom:7px}
+.otd-firma.no .rol{color:#9ca3af}
+.otd-firma .tinta{background:#fff;border:1px solid #e5e7eb;border-radius:8px;
+  height:66px;display:grid;place-items:center;overflow:hidden;margin-bottom:7px}
+.otd-firma .tinta img{max-width:100%;max-height:100%;object-fit:contain}
+.otd-firma .tinta.vacia{color:#cbd5e1;font-size:1.3rem}
+/* REGLA #15: el nombre del firmante NUNCA se corta. */
+.otd-firma .quien{font-size:.82rem;font-weight:800;color:#0f172a;line-height:1.25;
+  overflow-wrap:anywhere}
+.otd-firma .cuando{font-size:.7rem;color:#6b7280;font-weight:600;
+  font-variant-numeric:tabular-nums;margin-top:1px}
+
 /* ══ FINANZAS POR PASOS ═══════════════════════════════════════════════
    🆕 2026-09-02 (Daniel: "necesito que la enumeres, la hagas inteligente").
    Mismo lenguaje de pasos numerados que ya usan el modal de Repuestos y
@@ -337,6 +361,20 @@
 .d-doc .v{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25}
 .d-doc .sub{font-size:.63rem;font-weight:700;color:#fca5a5;line-height:1.3;margin-top:2px}
 .d-doc.doc-ok .sub{color:#86efac}
+/* El chip es el acceso a gestionar el documento (2026-09-02) */
+.d-doc{cursor:pointer}
+.d-doc:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.d-doc .sub .ir{display:inline-flex;align-items:center;gap:1px;margin-top:2px;
+  font-weight:900;text-transform:uppercase;letter-spacing:.05em;
+  color:#fff;opacity:.75;transition:opacity .15s}
+.d-doc:hover .sub .ir{opacity:1;text-decoration:underline}
+/* Resalte momentáneo al aterrizar en Finanzas desde el chip */
+@keyframes otdFlash{
+  0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}
+  100%{box-shadow:0 0 0 14px rgba(220,38,38,0)}
+}
+.otd-card.otd-flash{animation:otdFlash 1.1s ease-out 2}
+@media (prefers-reduced-motion:reduce){.otd-card.otd-flash{animation:none}}
 
 /* 🔴 FIX (visto en preview): los chips con botón "Reagendar"/"Reasignar"
    NO pueden heredar el nowrap+ellipsis de `.otd-d .v` -- el botón quedaba
@@ -1094,16 +1132,27 @@
          trabajo interno), rojo = todavía falta algo para poder cerrar.
          El detalle de QUÉ falta ya vive en Finanzas de la OT; acá va el
          titular, que es lo que Daniel necesita ver de un vistazo. #}
+      {# 🖱️ 2026-09-02 (Daniel: "falta un botón que me diga dónde gestiono
+         eso" / "o la misma tarjeta pero que me lleve a gestionar eso"): el
+         chip decía qué falta pero dejaba al usuario buscando dónde
+         arreglarlo. Ahora el chip ES el acceso: abre la pestaña
+         Información y salta a Finanzas de la OT, resaltándola. #}
       {% if not es_tecnico and doc_header %}
-      <div class="otd-d d-doc doc-{{ 'ok' if doc_header.ok else 'falta' }}">
+      <div class="otd-d d-doc doc-{{ 'ok' if doc_header.ok else 'falta' }}"
+           role="button" tabindex="0"
+           onclick="otdIrAFinanzas()" onkeydown="if(event.key==='Enter')otdIrAFinanzas()"
+           title="Ir a Finanzas de la OT para gestionar el documento">
         <i class="bi {{ 'bi-file-earmark-check-fill' if doc_header.ok else 'bi-file-earmark-excel-fill' }}"></i>
         {# OJO: .otd-d .in usa flex-direction:column-reverse -- el orden
            visual es el INVERSO del orden en el HTML. Por eso .sub va
            primero acá para terminar abajo del todo. #}
         <div class="in">
-          {% if not doc_header.ok and doc_header.faltan %}
-          <div class="sub">Falta: {{ doc_header.faltan | join(', ') }}</div>
-          {% endif %}
+          <div class="sub gestionar">
+            {%- if not doc_header.ok and doc_header.faltan %}
+              Falta: {{ doc_header.faltan | join(', ') }}<br>
+            {%- endif %}
+            <span class="ir">Gestionar <i class="bi bi-arrow-right-short"></i></span>
+          </div>
           <span class="k">Documento</span>
           <span class="v">{{ doc_header.label }}</span>
         </div></div>
@@ -1445,12 +1494,33 @@
           <div class="otd-fpaso">
             <div class="hd"><span class="num">1</span> ¿Qué documento respalda esta OT?</div>
             <div class="bd">
-              <div class="input-group input-group-sm mb-2">
+              {# 🔎 2026-09-02 (Daniel: "la finanza solamente está buscando el
+                 RUT, y aunque lo buscara, no está sugiriendo ni siquiera el
+                 RUT... si quieres buscarlo por RUT, que sea el del cliente
+                 que tiene la orden de trabajo"). El campo venía prellenado
+                 con v.cliente_rut, pero si la ficha del cliente NO tiene RUT
+                 quedaba vacío y sin explicación -- parecía roto. Ahora cae a
+                 la razón social, que el buscador también acepta, y se dice
+                 con qué está buscando. #}
+              {% set _q_sug = v.cliente_rut or v.razon_social or '' %}
+              <div class="input-group input-group-sm mb-1">
                 <input type="text" id="otdErpDocQ" class="form-control"
-                       placeholder="Busca por RUT, N° de documento o razón social"
-                       value="{{ v.cliente_rut or '' }}">
+                       placeholder="RUT, N° de documento o razón social"
+                       value="{{ _q_sug }}">
                 <button type="button" class="btn btn-outline-danger" onclick="otdBuscarDocErp()">
                   <i class="bi bi-search"></i> Buscar</button>
+              </div>
+              <div class="small text-muted" style="margin-bottom:8px">
+                {%- if v.cliente_rut %}
+                  Buscando por el RUT de <b>{{ v.razon_social or 'este cliente' }}</b>
+                  ({{ v.cliente_rut | rut_fmt }}).
+                {%- elif v.razon_social %}
+                  <i class="bi bi-exclamation-triangle-fill" style="color:#b45309"></i>
+                  <b>{{ v.razon_social }}</b> no tiene RUT en su ficha, así que busco por
+                  nombre. Cárgale el RUT para que la búsqueda sea exacta.
+                {%- else %}
+                  Esta OT no tiene cliente asignado: busca el documento por su número.
+                {%- endif -%}
               </div>
               <div id="otdErpDocResultados" style="display:none;margin-bottom:8px;max-height:220px;
                    overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
@@ -1611,17 +1681,31 @@
          existía pero quedaba DEBAJO de "Firmar y cerrar OT", o sea
          debajo de la acción. Sube al primer lugar de la columna: primero
          se ve quién firmó y quién falta, después se actúa. #}
+      {# 🖊️ 2026-09-02 (Daniel, mostrando la pantalla clásica al lado:
+         "insisto, necesito ver las firmas" + "la información la quiero
+         parecida"). OT 2.0 tenía las firmas como una lista de estados
+         (rol · nombre · Firmada/Falta) mientras la pantalla clásica las
+         muestra COMO IMAGEN, que es lo que uno realmente quiere ver: el
+         trazo. El dato ya venía en `f.url` -- solo se usaba para decidir
+         un ícono de check. Ahora se dibuja, con el mismo formato de tres
+         tarjetas de la pantalla clásica. #}
       <div class="otd-card">
-        <h3><i class="bi bi-vector-pen"></i> Firmas</h3>
-        <div class="otd-fir">
+        <h3><i class="bi bi-vector-pen"></i> Firmas de esta OT
+          <span class="n" style="margin-left:auto;font-weight:700;text-transform:none;
+                letter-spacing:0">Solo lectura</span></h3>
+        <div class="otd-firmas-grid">
           {% for f in firmas %}
-          <div class="otd-f {{ 'si' if f.url else 'no' }}">
-            <span class="ic"><i class="bi {{ 'bi-check-lg' if f.url else 'bi-dash-lg' }}"></i></span>
-            <div class="in">
-              <b>{{ f.rol }}</b>
-              <small>{{ f.nombre or ('Firmado ' ~ f.cuando) if f.url else 'Pendiente' }}</small>
-            </div>
-            <span class="st">{{ 'Firmada' if f.url else 'Falta' }}</span>
+          <div class="otd-firma {{ 'si' if f.url else 'no' }}">
+            <div class="rol"><i class="bi {{ f.icono or 'bi-pen' }}"></i> {{ f.rol }}</div>
+            {% if f.url %}
+            <div class="tinta"><img src="{{ f.url }}" alt="Firma de {{ f.nombre or f.rol }}" loading="lazy"></div>
+            <div class="quien">{{ f.nombre or '—' }}</div>
+            <div class="cuando">{{ f.cuando or '' }}</div>
+            {% else %}
+            <div class="tinta vacia"><i class="bi bi-hourglass-split"></i></div>
+            <div class="quien">Pendiente</div>
+            <div class="cuando">Sin firmar</div>
+            {% endif %}
           </div>
           {% endfor %}
         </div>
@@ -2999,6 +3083,29 @@ window.otdVerAnexoPdf = function(aid){
   openPdf('/ot/api/anexos/' + aid + '/pdf', {
     title: 'Anexo de servicios · OT {{ v.numero_ot or v.id }}',
     downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
+  });
+};
+
+/* 🖱️ 2026-09-02 (Daniel: "falta un botón que me diga dónde gestiono eso...
+   o la misma tarjeta pero que me lleve a gestionar eso"). El chip de
+   Documento del header ahora lleva a Finanzas: abre la pestaña correcta,
+   hace scroll y resalta la tarjeta un momento para que no haya que
+   buscarla con la vista. Resuelve de paso el "no se posiciona arriba". */
+window.otdIrAFinanzas = function(){
+  const tabInfo = document.querySelector('#otdTabs .otd-tab[data-tab="info"]');
+  if (tabInfo && !tabInfo.classList.contains('on')) tabInfo.click();
+  const card = document.getElementById('otdCardFinanzas');
+  if (!card) return;
+  // El click de arriba puede haber cambiado el layout: se espera al
+  // siguiente frame para que el scroll caiga en la posición correcta.
+  requestAnimationFrame(function(){
+    card.scrollIntoView({behavior: 'smooth', block: 'start'});
+    card.classList.remove('otd-flash');
+    void card.offsetWidth;            // reinicia la animación si ya corrió
+    card.classList.add('otd-flash');
+    setTimeout(() => card.classList.remove('otd-flash'), 2600);
+    const primero = document.getElementById('otdErpDocQ');
+    if (primero) setTimeout(() => primero.focus({preventScroll: true}), 420);
   });
 };
 

@@ -76753,6 +76753,38 @@ def _ensure_ot_finanzas_cols():
             print(f"[ensure_ot_finanzas] {_nombre}: {e}", flush=True)
 
 
+def _ensure_maquina_origen_ot_col():
+    """`mant_maquinas.origen_ot_id` — de qué OT nació la ficha del equipo.
+
+    🆕 2026-09-02 (Daniel: "quiero ver qué ingresó por instalación, qué, o
+    si fue por levantamiento, si le hizo mantención"). Hasta ahora el
+    origen de una máquina solo se podía adivinar leyendo el texto libre de
+    `notas`, o mirando `ultimo_levantamiento_vid` (que existe únicamente
+    para el levantamiento).
+
+    Se guarda SOLO el id de la OT, no el tipo: el tipo se lee uniendo con
+    mant_visitas.tipo, así nunca queda desincronizado si una OT cambia de
+    tipo. Mismo patrón idempotente de _ensure_ot_finanzas_cols() -- SIEMPRE,
+    incluso con ILUS_SKIP_MIGRATIONS=1.
+    """
+    try:
+        _r = mysql_fetchone(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_maquinas' "
+            "   AND COLUMN_NAME='origen_ot_id'")
+        if not _r:
+            mysql_execute(
+                "ALTER TABLE mant_maquinas ADD COLUMN origen_ot_id INT NULL "
+                "COMMENT 'mant_visitas.id de la OT que dio de alta esta ficha'")
+            print("[ensure_maquina_origen] +origen_ot_id", flush=True)
+        try:
+            mysql_execute("CREATE INDEX idx_mm_origen_ot ON mant_maquinas (origen_ot_id)")
+        except Exception:
+            pass   # ya existe
+    except Exception as e:
+        print(f"[ensure_maquina_origen] {e}", flush=True)
+
+
 def _ensure_ot_contacto_rut_col():
     """RUT de la contraparte (quien recibe al técnico) -- SIEMPRE, incluso
     con ILUS_SKIP_MIGRATIONS=1. Mismo patrón que _ensure_ot_finanzas_cols().
@@ -77346,11 +77378,14 @@ def ot2_detalle(vid):
     }
 
     firmas = [
-        {"rol": "Técnico",    "url": v.get("firma_tecnico_url"),
+        # `icono` — 2026-09-02: la tarjeta de firmas ahora muestra el trazo
+        # real (como la pantalla clásica) y cada rol lleva su propio ícono,
+        # igual que allá. Dato de presentación, no de negocio.
+        {"rol": "Técnico",    "url": v.get("firma_tecnico_url"), "icono": "bi-tools",
          "nombre": v.get("firma_tecnico_nombre"), "at": v.get("firma_tecnico_at")},
-        {"rol": "Cliente",    "url": v.get("firma_cliente_url"),
+        {"rol": "Cliente",    "url": v.get("firma_cliente_url"), "icono": "bi-person-badge",
          "nombre": v.get("firma_cliente_nombre"), "at": v.get("firma_cliente_at")},
-        {"rol": "Supervisor", "url": v.get("firma_supervisor_url"),
+        {"rol": "Responsable", "url": v.get("firma_supervisor_url"), "icono": "bi-shield-check",
          "nombre": v.get("firma_supervisor_nombre"), "at": v.get("firma_supervisor_at")},
     ]
     for f in firmas:
@@ -78216,6 +78251,172 @@ def ot2_api_lineas_zz(vid):
         # pantalla en blanco.
         "sin_zz": not zz,
     })
+
+
+@app.route("/ot/api/<int:vid>/equipos-desde-documento", methods=["POST"])
+@_mant_required
+@_ot_can_metadata
+def ot2_api_equipos_desde_documento(vid):
+    """Da de alta en la ficha del cliente los equipos del documento de la OT.
+
+    🆕 2026-09-02 (Daniel, dos veces: "es indispensable que se vayan creando
+    clientes nuevos para yo ver los equipos que vamos instalando como un
+    historial... si existe, tiene que agregarle esos productos y indicar que
+    fue una instalación con esa fecha" / "las órdenes de trabajo tienen que
+    empezar a mover las fichas en definitiva").
+
+    QUÉ FALTABA: hoy solo el LEVANTAMIENTO alimenta la ficha del cliente
+    (`_lev_materializar_equipos_nuevos`, tipo='levantamiento'). Una OT de
+    INSTALACIÓN cierra sin dejar rastro de las máquinas que se instalaron:
+    la ficha del cliente queda igual de vacía que antes de la visita, y por
+    eso "cuántas instalaciones le hice" no se podía responder desde los
+    equipos. El documento de la OT (factura/boleta/NV) ya tiene esas
+    máquinas: son sus líneas de producto físico.
+
+    Reusa las piezas que ya existen, no inventa un importador nuevo:
+      · `_mant_erp_doc_cached` para leer el documento (read-only, REGLA #4.1)
+      · `_asignados_por_sku` para NO duplicar lo ya dado de alta con ese
+        mismo documento (control de saldo que ya gobierna el wizard de
+        clientes)
+      · `_generar_serie_ilus` para la serie interna cuando el equipo no
+        trae una real
+
+    Dos modos, `confirmar` en el body:
+      · false (default) -> PREVIEW: dice qué daría de alta y qué omite.
+      · true            -> escribe las fichas.
+    Nunca escribe sin que alguien lo confirme: dar de alta máquinas en la
+    ficha de un cliente es un cambio permanente en sus datos.
+    """
+    d = request.get_json(silent=True) or {}
+    confirmar = bool(d.get("confirmar"))
+
+    v = mysql_fetchone(
+        "SELECT id, numero_ot, cliente_id, tipo, fecha_programada, "
+        "       documento_erp_tido, documento_erp_nudo, factura_tido, factura_nudo "
+        "  FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+    cid = v.get("cliente_id")
+    if not cid:
+        return _ot2_err(
+            "Esta OT no tiene cliente (trabajo interno): no hay ficha que alimentar.",
+            "SIN_CLIENTE")
+
+    tido = (v.get("documento_erp_tido") or v.get("factura_tido") or "").strip().upper()
+    nudo = re.sub(r"[^0-9]", "", str(v.get("documento_erp_nudo")
+                                     or v.get("factura_nudo") or ""))
+    if not tido or not nudo:
+        return _ot2_err(
+            "Esta OT todavía no tiene un documento declarado. Decláralo en "
+            "Finanzas de la OT y vuelve a intentar.", "SIN_DOCUMENTO")
+
+    try:
+        header, lineas = _mant_erp_doc_cached(tido, nudo)
+    except Exception as e:
+        print(f"[ot2_equipos_doc] vid={vid} {tido} {nudo}: {e}", flush=True)
+        return _ot2_err("No pudimos leer el documento en el ERP.", "ERP_ERROR", http=502)
+    if not header:
+        return _ot2_err(f"No encontramos {tido} N° {nudo} en el ERP.",
+                        "DOC_NO_EXISTE", http=404)
+
+    _doc_key = _doc_origen_key(tido, nudo)
+    _ya = _asignados_por_sku(tido, nudo)
+    _doc_fecha = header.get("fecha") or None
+    # La fecha de INSTALACIÓN es la de la visita, no la del documento: el
+    # documento se emite cuando se vende, la máquina se instala cuando el
+    # técnico va. Daniel: "indicar que fue una instalación con esa fecha".
+    _fecha_inst = v.get("fecha_programada")
+
+    candidatos, omitidos = [], []
+    for ln in (lineas or []):
+        _sku = (ln.get("sku") or "").strip()
+        _sku_u = _sku.upper()
+        # Las líneas ZZ son SERVICIOS (instalación, envío, mantención), no
+        # máquinas: nunca entran a la ficha de equipos.
+        if ln.get("es_zz") or _sku_u.startswith("ZZ"):
+            continue
+        if not _sku:
+            continue
+        try:
+            _cant = int(float(ln.get("cantidad") or 0))
+        except (TypeError, ValueError):
+            _cant = 0
+        if _cant <= 0:
+            continue
+        _asig = int(_ya.get(_sku_u) or 0)
+        _saldo = _cant - _asig
+        _nombre = (ln.get("nombre_app") or ln.get("descripcion_erp") or _sku)[:400]
+        if _saldo <= 0:
+            # Ya se dieron de alta con ESTE documento: no se duplica.
+            omitidos.append({"sku": _sku, "nombre": _nombre,
+                             "cantidad": _cant, "asignados": _asig,
+                             "motivo": "ya está en la ficha con este documento"})
+            continue
+        candidatos.append({"sku": _sku, "nombre": _nombre,
+                           "cantidad": _saldo, "del_documento": _cant,
+                           "ya_asignados": _asig})
+
+    if not confirmar:
+        return jsonify({
+            "ok": True, "preview": True,
+            "documento": _doc_key,
+            "doc_fecha": str(_doc_fecha)[:10] if _doc_fecha else "",
+            "fecha_instalacion": str(_fecha_inst)[:10] if _fecha_inst else "",
+            "candidatos": candidatos, "omitidos": omitidos,
+            "total_a_crear": sum(c["cantidad"] for c in candidatos),
+        })
+
+    if not candidatos:
+        return _ot2_err(
+            "No hay equipos nuevos que dar de alta con este documento.",
+            "SIN_CANDIDATOS")
+
+    creados, errores = [], []
+    _usuario = current_username() or "sistema"
+    _tipo_lbl = _TIPO_OT_LABEL.get((v.get("tipo") or "").lower(), v.get("tipo") or "OT")
+    for c in candidatos:
+        # Una fila de ficha POR UNIDAD: dos trotadoras iguales son dos
+        # máquinas distintas, cada una con su serie y su historial. Es el
+        # mismo criterio del wizard de clientes.
+        for _ in range(int(c["cantidad"])):
+            try:
+                try:
+                    _serie = _generar_serie_ilus(cid, c["sku"])
+                except Exception:
+                    _serie = None
+                mysql_execute(
+                    "INSERT INTO mant_maquinas "
+                    "  (cliente_id, sku, nombre, serie, cantidad, doc_origen, "
+                    "   doc_fecha, fecha_instalacion, estado, notas, "
+                    "   origen_ot_id, created_by) "
+                    "VALUES (%s,%s,%s,%s,1,%s,%s,%s,'activo',%s,%s,%s)",
+                    (cid, c["sku"][:100], c["nombre"], _serie,
+                     _doc_key, _doc_fecha, _fecha_inst,
+                     f"Alta desde {_tipo_lbl} {v.get('numero_ot') or vid}",
+                     vid, _usuario))
+                _row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}
+                _mid = _row.get("id")
+                if _mid:
+                    creados.append(_mid)
+                    _mant_log("maquina", _mid, "creada_por_ot",
+                              f"Alta desde {_tipo_lbl} "
+                              f"{v.get('numero_ot') or vid} · documento {_doc_key}"
+                              + (f" · instalada el {str(_fecha_inst)[:10]}"
+                                 if _fecha_inst else ""))
+            except Exception as e:
+                print(f"[ot2_equipos_doc] alta {c['sku']} vid={vid}: {e}", flush=True)
+                errores.append(f"{c['sku']}: {str(e)[:120]}")
+
+    try:
+        _mant_log("visita", vid, "equipos_alta_desde_documento",
+                  f"{len(creados)} equipo(s) dados de alta en la ficha del cliente "
+                  f"desde el documento {_doc_key}"
+                  + (f" · {len(errores)} con error" if errores else ""))
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "creados": len(creados), "errores": errores,
+                    "documento": _doc_key})
 
 
 @app.route("/ot/api/crear", methods=["POST"])
@@ -115182,6 +115383,15 @@ try:
         _ensure_ot_contacto_rut_col()
 except Exception as _ensure_cp_rut_err:
     print(f"[ILUS][WARN] _ensure_ot_contacto_rut_col: {_ensure_cp_rut_err}", flush=True)
+
+# Origen de la ficha del equipo (de qué OT nació), Daniel 2026-09-02 --
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1: sin la columna, el alta
+# automática de equipos al cerrar una instalación falla al insertar.
+try:
+    with app.app_context():
+        _ensure_maquina_origen_ot_col()
+except Exception as _ensure_maq_origen_err:
+    print(f"[ILUS][WARN] _ensure_maquina_origen_ot_col: {_ensure_maq_origen_err}", flush=True)
 
 # Diagnóstico por equipo (borrador, flujo rediseñado de Ejecutar OT,
 # 2026-08-12) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
