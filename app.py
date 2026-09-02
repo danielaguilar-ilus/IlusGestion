@@ -4508,6 +4508,24 @@ PERMS_KEYS = (
     # /admin/roles. El GET (listar) no cambia -- ya lo puede ver cualquiera
     # con acceso a mantenciones.
     "mant_tipo_interno_crear",
+    # mant_equipos_agregar_libre — permiso para agregar equipos a una OT YA
+    # CREADA sin la restricción de "solo levantamiento por descubrimiento"
+    # (aditivo 2026-09-02, Daniel: "agregar al perfil de Aarón que él pueda
+    # agregar equipos después de creada la OT... solo restringir que
+    # agregue equipos solo si está cerrada la OT, pero solo a la condición
+    # de su rol... es mejor así, para controlar todos estos permisos por
+    # el front"). El candado real vive en mant_lev_item_crear: hoy SOLO dos
+    # caminos pasan (OT tipo='levantamiento' con modalidad_captura=
+    # 'descubrimiento', o el override manual de superadmin con motivo
+    # obligatorio). Este flag abre un TERCER camino, sin el trámite del
+    # override: cualquier rol con este permiso prendido puede agregar
+    # equipos a CUALQUIER tipo de OT, con el único candado que Daniel pidió
+    # -- que la OT no esté en un estado terminal (cerrada/completada/
+    # cancelada/anulada). Nace en False para todos los roles hasta que
+    # Daniel lo prenda desde /admin/roles (mismo patrón que
+    # mant_tipo_interno_crear / mant_ot_interna -- puramente aditivo, nunca
+    # quita el camino que ya existía).
+    "mant_equipos_agregar_libre",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -4610,6 +4628,10 @@ def _build_perms_from_matrix(role):
     # Crear/editar tipos de trabajo interno (aditivo 2026-08-31). Ver
     # comentario de "mant_tipo_interno_crear" en PERMS_KEYS.
     base["mant_tipo_interno_crear"] = bool(man.get("tipo_interno_crear"))
+    # Agregar equipos a una OT ya creada, sin la restricción de
+    # levantamiento/descubrimiento (aditivo 2026-09-02, caso Aarón). Ver
+    # comentario de "mant_equipos_agregar_libre" en PERMS_KEYS.
+    base["mant_equipos_agregar_libre"] = bool(man.get("equipos_agregar_libre"))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
@@ -12504,7 +12526,8 @@ PERMISSIONS_MATRIX = {
                        "acciones":["ver","crear","editar","eliminar",
                                    "calendario","ots","cotizaciones",
                                    "ot_interna","tipo_interno_crear",
-                                   "cotizaciones_eliminar_item"]},
+                                   "cotizaciones_eliminar_item",
+                                   "equipos_agregar_libre"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -12565,6 +12588,8 @@ PERMISSIONS_META = {
                          "tipo": "submodulo", "icon": "bi-box-seam"},
         "tipo_interno_crear": {"label": "Crear tipos de trabajo interno",
                          "tipo": "submodulo", "icon": "bi-clipboard2-check"},
+        "equipos_agregar_libre": {"label": "Agregar equipos a OT ya creada",
+                         "tipo": "submodulo", "icon": "bi-plus-square"},
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
         "cotizaciones_eliminar_item": {"label": "Quitar producto de una cotización",
                          "tipo": "bloqueo", "icon": "bi-x-circle"},
@@ -103998,7 +104023,7 @@ def mant_lev_item_crear(lid):
     _v_lev = None
     if lev.get("visita_id"):
         _v_lev = mysql_fetchone(
-            "SELECT id, tipo FROM mant_visitas WHERE id=%s",
+            "SELECT id, tipo, estado FROM mant_visitas WHERE id=%s",
             (lev["visita_id"],)
         )
     _puede_agregar = True
@@ -104040,6 +104065,32 @@ def mant_lev_item_crear(lid):
                 print(f"[lev_item_crear][gate] lid={lid}: {_e_modcap}", flush=True)
                 _puede_agregar = False
                 _motivo_bloqueo = "No se pudo validar la modalidad del levantamiento."
+
+    # ── Tercer camino: permiso por rol "agregar equipos a OT ya creada" ──
+    # Aditivo 2026-09-02 (Daniel, caso Aarón -- textual: "agregar al perfil
+    # de Aarón que él pueda agregar equipos después de creada la OT... solo
+    # restringir que agregue equipos solo si está cerrada la OT, pero solo
+    # a la condición de su rol... es mejor así, para controlar todos estos
+    # permisos por el front"). No reemplaza el candado 7a-7d de arriba, lo
+    # RODEA: si ese candado ya dejó pasar (levantamiento por descubrimiento,
+    # o autónomo), esto no hace nada. Si lo bloqueó, este flag lo reabre --
+    # sin el trámite de motivo+auditoría del override de superadmin, porque
+    # acá el permiso YA ES la autorización (se prende una vez desde
+    # /admin/roles, no en cada click) -- el único candado que Daniel pidió
+    # es que la OT no esté en un estado terminal.
+    if not _puede_agregar and bool((getattr(g, "permissions", {}) or {}).get("mant_equipos_agregar_libre")):
+        _estado_ot = ((_v_lev or {}).get("estado") or "").strip().lower()
+        if _estado_ot in ("cerrada", "completada", "cancelada", "anulada"):
+            _motivo_bloqueo = f"La OT ya está {_estado_ot} — no acepta más equipos."
+        else:
+            _mant_log(
+                "levantamiento", lid, "equipo_agregado_permiso_rol",
+                f"{current_username() or '?'} agregó equipo fuera de levantamiento por "
+                f"descubrimiento vía permiso de rol (mant_equipos_agregar_libre), "
+                f"OT estado={_estado_ot or 'sin OT espejo'}."
+            )
+            _puede_agregar = True
+            _motivo_bloqueo = None
 
     if not _puede_agregar:
         # EXCEPCIÓN CONFIRMADA por Daniel: "debe considerarse una pequeña
