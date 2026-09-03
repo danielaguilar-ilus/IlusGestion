@@ -9,6 +9,40 @@
 }
 .ubi-card:hover{box-shadow:0 8px 22px -8px rgba(220,38,38,.24);border-color:#f3c9c9}
 .ubi-card.inactiva{opacity:.55;background:#f9fafb}
+
+/* ══ COLOR POR TIPO DE UBICACIÓN — 2026-09-03 ═══════════════════════
+   Daniel: "quería darle una vuelta a la situación de las ubicaciones,
+   que las tarjetas tengan color, que sea un poco más colorida y
+   amigable para gestionar".
+   El color NO es decoración: codifica el TIPO (estante, gaveta, piso,
+   rack, contenedor). Con 20+ tarjetas iguales había que leer el chip de
+   cada una para saber qué era; ahora la franja de la izquierda y el chip
+   lo dicen de un vistazo, que es como se busca una ubicación en una
+   bodega. El estado de ocupación (verde con repuestos / gris vacía) se
+   mantiene aparte: son dos preguntas distintas y no deben pisarse. */
+.ubi-card{border-left:5px solid #d1d5db}
+.ubi-card.t-estante    {border-left-color:#3b82f6}
+.ubi-card.t-gaveta     {border-left-color:#8b5cf6}
+.ubi-card.t-piso       {border-left-color:#f59e0b}
+.ubi-card.t-rack       {border-left-color:#0891b2}
+.ubi-card.t-contenedor {border-left-color:#16a34a}
+.ubi-card.t-otro       {border-left-color:#6b7280}
+/* Un velo tenue del mismo color: da identidad sin bajar el contraste
+   del texto (el código de la ubicación es lo que hay que leer). */
+.ubi-card.t-estante    {background:linear-gradient(105deg,#eff6ff 0%,#fff 42%)}
+.ubi-card.t-gaveta     {background:linear-gradient(105deg,#f5f3ff 0%,#fff 42%)}
+.ubi-card.t-piso       {background:linear-gradient(105deg,#fffbeb 0%,#fff 42%)}
+.ubi-card.t-rack       {background:linear-gradient(105deg,#ecfeff 0%,#fff 42%)}
+.ubi-card.t-contenedor {background:linear-gradient(105deg,#f0fdf4 0%,#fff 42%)}
+.ubi-card.t-otro       {background:linear-gradient(105deg,#f9fafb 0%,#fff 42%)}
+.ubi-card.inactiva{background:#f9fafb;border-left-color:#d1d5db}
+/* El chip del tipo toma el mismo color -- una sola lectura, no dos */
+.ubi-tipo.t-estante    {background:#dbeafe;color:#1d4ed8}
+.ubi-tipo.t-gaveta     {background:#ede9fe;color:#6d28d9}
+.ubi-tipo.t-piso       {background:#fef3c7;color:#b45309}
+.ubi-tipo.t-rack       {background:#cffafe;color:#0e7490}
+.ubi-tipo.t-contenedor {background:#dcfce7;color:#15803d}
+.ubi-tipo.t-otro       {background:#f3f4f6;color:#4b5563}
 .ubi-codigo{font-weight:900;font-size:1.15rem;color:#0a0a0a;font-family:'JetBrains Mono',monospace}
 .ubi-tipo{
   display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:800;
@@ -48,7 +82,11 @@
 {% if ubicaciones %}
 <div class="ubi-grid">
   {% for u in ubicaciones %}
-  <div class="ubi-card {{ '' if u.activo else 'inactiva' }}">
+  {# `t-<tipo>` pinta franja, velo y chip con el MISMO color (ver CSS). #}
+  {% set _t = (u.tipo or 'otro')|lower %}
+  {% set _ico = {'estante':'bi-bookshelf','gaveta':'bi-archive-fill','piso':'bi-grid-1x2-fill',
+                 'rack':'bi-hdd-stack-fill','contenedor':'bi-box-seam-fill'}.get(_t,'bi-geo-alt-fill') %}
+  <div class="ubi-card t-{{ _t }} {{ '' if u.activo else 'inactiva' }}">
     <div class="ubi-actions">
       <button type="button" title="Imprimir etiqueta" onclick="ubiImprimirEtiqueta({{ u.id }}, '{{ u.codigo|e }}')">
         <i class="bi bi-upc-scan"></i></button>
@@ -68,7 +106,7 @@
     </div>
     <div>
       <span class="ubi-codigo">{{ u.codigo }}</span>
-      {% if u.tipo %}<span class="ubi-tipo">{{ u.tipo }}</span>{% endif %}
+      {% if u.tipo %}<span class="ubi-tipo t-{{ _t }}"><i class="bi {{ _ico }}"></i>{{ u.tipo }}</span>{% endif %}
     </div>
     <div class="ubi-nombre">{{ u.nombre or '' }}</div>
     {% if u.n_repuestos %}
@@ -158,7 +196,13 @@ function ubiAbrirEditar(id, codigo, nombre, tipo){
 
 function ubiImprimirEtiqueta(id, codigo){
   if (!id) return;
-  openPdf(`/mantenciones/repuestos-stock/ubicaciones/etiqueta?ids=${id}&fmt=100x50`, {
+  /* 🔎 2026-09-03 (Daniel: "en el modal, como que se aleja muchísimo hacia
+     atrás"). El PDF está bien -- medido: 100,2 x 50,1 mm, exactamente la
+     etiqueta. Lo que pasa es que Chrome abre una página TAN chica a tamaño
+     real dentro de un visor grande, y queda perdida en el centro con todo
+     el fondo alrededor. `#zoom=page-width` le pide al visor que la ajuste
+     al ancho: se ve la etiqueta, no el vacío. */
+  openPdf(`/mantenciones/repuestos-stock/ubicaciones/etiqueta?ids=${id}&fmt=100x50#zoom=page-width`, {
     title: `Etiqueta de ubicación ${codigo || ''}`,
     downloadName: `Etiqueta-Ubicacion-${codigo || id}.pdf`,
   });
