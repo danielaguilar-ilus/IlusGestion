@@ -1767,8 +1767,9 @@
               <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
               <div class="input-group input-group-sm">
                 <span class="input-group-text">$</span>
-                <input type="number" id="otdFinCosto" class="form-control" min="0" step="1000"
-                       value="{{ v.costo if v.costo is not none else '' }}">
+                <input type="text" id="otdFinCosto" class="form-control" data-money="1"
+                       inputmode="numeric" autocomplete="off"
+                       value="{{ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '' }}">
               </div>
             </div>
           </div>
@@ -1782,16 +1783,18 @@
                   <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
                   <div class="input-group input-group-sm">
                     <span class="input-group-text">$</span>
-                    <input type="number" id="otdFinCostoProveedor" class="form-control" min="0" step="1000"
-                           value="{{ v.costo_proveedor if v.costo_proveedor is not none else '' }}">
+                    <input type="text" id="otdFinCostoProveedor" class="form-control" data-money="1"
+                           inputmode="numeric" autocomplete="off"
+                           value="{{ '{:,.0f}'.format(v.costo_proveedor|float)|replace(',','.') if v.costo_proveedor is not none else '' }}">
                   </div>
                 </div>
                 <div>
                   <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
                   <div class="input-group input-group-sm">
                     <span class="input-group-text">$</span>
-                    <input type="number" id="otdFinCostoDespacho" class="form-control" min="0" step="1000"
-                           placeholder="0" value="{{ v.costo_despacho if v.costo_despacho is not none else '' }}">
+                    <input type="text" id="otdFinCostoDespacho" class="form-control" data-money="1"
+                           inputmode="numeric" autocomplete="off" placeholder="0"
+                           value="{{ '{:,.0f}'.format(v.costo_despacho|float)|replace(',','.') if v.costo_despacho is not none else '' }}">
                   </div>
                 </div>
                 {# 🔇 2026-09-02 (Daniel: "el tipo no le veo sentido, porque
@@ -3251,9 +3254,13 @@ async function otdEliminarOT(){
   function fmtCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
 
   function recalcularOtdFin(){
-    const precio = parseFloat(elCosto.value || 0) || 0;
-    const costoProv = parseFloat(elCostoProv.value || 0) || 0;
-    const costoDespacho = parseFloat((elCostoDespacho && elCostoDespacho.value) || 0) || 0;
+    // 2026-09-02: los campos ahora llevan separador de miles, así que el
+    // valor se lee SIEMPRE por otdMoneyVal (que quita los puntos). Leer
+    // .value directo devolvería "352.029" -> parseFloat -> 352. Ese era el
+    // riesgo real de este cambio y por eso hay una sola función que lee.
+    const precio = window.otdMoneyVal('otdFinCosto') || 0;
+    const costoProv = window.otdMoneyVal('otdFinCostoProveedor') || 0;
+    const costoDespacho = window.otdMoneyVal('otdFinCostoDespacho') || 0;
     const costoTotal = costoProv + costoDespacho;
     if (!precio && !costoTotal){
       elMargen.textContent = '—'; elMargenPct.textContent = '—';
@@ -3313,11 +3320,12 @@ async function otdEliminarOT(){
 })();
 
 window.otdGuardarFinanzas = async function(){
+  // 2026-09-02: SIEMPRE por otdMoneyVal -- los campos muestran "352.029" y
+  // al backend tiene que viajar 352029. Leer .value crudo mandaría 352.
   const body = {
-    costo: document.getElementById('otdFinCosto').value.trim() === ''
-      ? null : (parseFloat(document.getElementById('otdFinCosto').value) || 0),
-    costo_proveedor: parseFloat(document.getElementById('otdFinCostoProveedor').value || 0) || 0,
-    costo_despacho: parseFloat(document.getElementById('otdFinCostoDespacho').value || 0) || 0,
+    costo: window.otdMoneyVal('otdFinCosto'),
+    costo_proveedor: window.otdMoneyVal('otdFinCostoProveedor') || 0,
+    costo_despacho: window.otdMoneyVal('otdFinCostoDespacho') || 0,
     proveedor_tipo: document.getElementById('otdFinProveedorTipo').value || '',
     proveedor_nombre: document.getElementById('otdFinProveedorNombre').value.trim(),
     documento_erp_tido: document.getElementById('otdFinDocErpTido').value || '',
@@ -3400,6 +3408,48 @@ window.otdVerAnexoPdf = function(aid){
     downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
   });
 };
+
+/* ══ DINERO CON SEPARADOR DE MILES ════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "que tenga separador de miles, y no la boleta,
+   pero sí los precios"). Los campos de monto pasaron de type=number a
+   texto: un input numérico NO puede mostrar puntos de miles, y sin ellos
+   $352029 y $35202 se confunden de un vistazo -- justo el error que no
+   puede pasar en la pantalla del dinero. El número de documento NO lleva
+   separador a propósito: es un identificador, no una cantidad.
+
+   REGLA: en pantalla van con puntos; al backend viaja SIEMPRE el número
+   pelado (otdMoneyVal). Una sola función lee, una sola escribe. */
+window.otdMoneyVal = function(id){
+  const el = document.getElementById(id);
+  if (!el) return null;
+  const limpio = String(el.value || '').replace(/[^\d]/g, '');
+  return limpio === '' ? null : parseInt(limpio, 10);
+};
+window.otdMoneyFmt = function(n){
+  if (n === null || n === undefined || n === '') return '';
+  return Number(n).toLocaleString('es-CL');
+};
+(function(){
+  function formatear(el){
+    const soloDigitos = String(el.value || '').replace(/[^\d]/g, '');
+    // Se recuerda cuántos dígitos había ANTES del cursor para devolverlo a
+    // su lugar: si no, al insertar un punto el cursor salta al final y
+    // escribir un monto largo se vuelve imposible.
+    const pos = el.selectionStart || 0;
+    const digitosAntes = String(el.value || '').slice(0, pos).replace(/[^\d]/g, '').length;
+    el.value = soloDigitos === '' ? '' : Number(soloDigitos).toLocaleString('es-CL');
+    let nuevaPos = 0, vistos = 0;
+    for (let i = 0; i < el.value.length && vistos < digitosAntes; i++){
+      if (/\d/.test(el.value[i])) vistos++;
+      nuevaPos = i + 1;
+    }
+    try { el.setSelectionRange(nuevaPos, nuevaPos); } catch(e){}
+  }
+  document.querySelectorAll('#otdCardFinanzas input[data-money="1"]').forEach(function(el){
+    el.addEventListener('input', function(){ formatear(el); });
+    el.addEventListener('blur',  function(){ formatear(el); });
+  });
+})();
 
 /* ══ Centro de costo con rectángulos ══════════════════════════════════
    🆕 2026-09-02 (Daniel: "tres rectángulos con cada centro de costo para
@@ -3623,7 +3673,9 @@ window.otdAplicarTotalZz = function(btn){
   const total = parseFloat(btn.dataset.total || 0) || 0;
   const el = document.getElementById('otdFinCosto');
   if (!el || !total) return;
-  el.value = total;
+  // 2026-09-02: el campo lleva separador de miles -- se escribe formateado
+  // para que lo que se ve coincida con lo que se va a guardar.
+  el.value = window.otdMoneyFmt(total);
   el.dispatchEvent(new Event('input', {bubbles: true}));
   el.focus();
   if (window.ilusToast) ilusToast('Precio traído del documento — revisa y presiona Guardar', {type:'success'});
@@ -3661,7 +3713,9 @@ window.otdUsarPrecioDocumento = function(btn){
   const total = parseFloat(btn.dataset.total || 0) || 0;
   const el = document.getElementById('otdFinCosto');
   if (!el || !total) return;
-  el.value = total;
+  // 2026-09-02: formateado con miles, igual que el otro botón que escribe
+  // este campo -- lo que se ve tiene que ser lo que se guarda.
+  el.value = window.otdMoneyFmt(total);
   el.dispatchEvent(new Event('input', {bubbles: true}));  // recalcula el margen
   el.focus();
   if (window.ilusToast) ilusToast('Precio traído del documento — revisa y presiona Guardar', {type:'info'});
