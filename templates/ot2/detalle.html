@@ -147,6 +147,25 @@
 .otd-firma .cuando{font-size:.7rem;color:#6b7280;font-weight:600;
   font-variant-numeric:tabular-nums;margin-top:1px}
 
+/* ══ MODAL DE FIRMA — resumen financiero resuelto ═════════════════════
+   🆕 2026-09-02 (Daniel: "si ya se definió el costo, que esto salga de
+   acá... darle una oportunidad de gestionar las finanzas nuevamente con un
+   botón en el modal"). Cuando la plata ya está declarada, el modal no pide
+   nada: solo confirma en una línea qué se cobró, qué costó y cuánto quedó. */
+.otf-fin-ok{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+  gap:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;
+  padding:11px 13px}
+.otf-fin-ok .ln{display:flex;flex-direction:column;gap:1px;min-width:0}
+.otf-fin-ok .lbl{font-size:.63rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.05em;color:#15803d;opacity:.85}
+.otf-fin-ok b{font-size:.92rem;font-weight:900;color:#14532d;
+  font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.otf-fin-ok b.neg{color:#b91c1c}
+.otf-fin-ok b.pos{color:#15803d}
+.otf-fin-link{display:inline-flex;align-items:center;gap:6px;margin-top:9px;
+  font-size:.78rem;font-weight:800;color:var(--ilus-red,#dc2626);text-decoration:none}
+.otf-fin-link:hover{text-decoration:underline;color:#b91c1c}
+
 /* ══ FINANZAS POR PASOS ═══════════════════════════════════════════════
    🆕 2026-09-02 (Daniel: "necesito que la enumeres, la hagas inteligente").
    Mismo lenguaje de pasos numerados que ya usan el modal de Repuestos y
@@ -2738,6 +2757,13 @@
           Al firmar como técnico, la OT pasa a <strong>"Firmada por técnico"</strong>. El ejecutivo SSTT podrá revisar/corregir antes de la firma del cliente.
         </div>
 
+          </div>
+        </div>
+        {# ══ PASO 2 — QUÉ ESTÁS CERTIFICANDO ═════════════════════════════ #}
+        <div class="otd-fpaso listo">
+          <div class="hd"><span class="num">2</span> Qué estás certificando</div>
+          <div class="bd">
+
         <div class="resp-firma-card">
           <div class="resp-firma-head">
             <i class="bi bi-file-earmark-check"></i>
@@ -2886,6 +2912,55 @@
           Al firmar, la OT pasa a <strong>"Cerrada"</strong>. Se enviará la confirmación al cliente
           y el PDF quedará disponible para descarga.
         </div>
+
+        {# ══ PASO 1 — FINANZAS Y DOCUMENTO ═══════════════════════════════
+           🆕 2026-09-02 (Daniel: "ese modal quiero que lo diseñes con el
+           formato de retiro, estructurado, paso a paso... que la intención
+           sea firmarlo con el menor problema posible"). El modal era una
+           pila de cajas de colores sin jerarquía: no se sabía qué faltaba
+           ni en qué orden resolverlo. Ahora son 3 pasos numerados, con el
+           mismo lenguaje del resto del proyecto (REGLA #15).
+           El paso se pinta VERDE cuando ya está resuelto. #}
+        {% set _fin_resuelto = finanzas and finanzas.ok %}
+        <div class="otd-fpaso {{ 'listo' if _fin_resuelto }}">
+          <div class="hd"><span class="num">1</span> Finanzas y documento</div>
+          <div class="bd">
+
+        {# 🆕 2026-09-02 (Daniel: "si ya se definió el costo, que esto salga
+           de acá... darle una oportunidad de gestionar las finanzas
+           nuevamente con un botón en el modal, y déjalo para cambiar la
+           garantía"). Cuando la parte financiera YA está resuelta, el modal
+           deja de pedir datos y solo muestra el resumen: quien viene a
+           firmar no tiene que volver a llenar nada. Los dos accesos que sí
+           quedan son los que Daniel pidió conservar hasta el último
+           momento: reabrir finanzas y cambiar la cobertura. #}
+        {% if _fin_resuelto %}
+        <div class="otf-fin-ok">
+          <div class="ln">
+            <span class="lbl">Precio al cliente</span>
+            <b>{{ '$' ~ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '—' }}</b>
+          </div>
+          <div class="ln">
+            <span class="lbl">Nos cuesta</span>
+            <b>{{ '$' ~ '{:,.0f}'.format((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0))|replace(',','.') }}</b>
+          </div>
+          {% if v.costo is not none %}
+          {% set _mrg = (v.costo|float) - ((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0)) %}
+          <div class="ln">
+            <span class="lbl">Margen</span>
+            <b class="{{ 'neg' if _mrg < 0 else 'pos' }}">
+              {{ '$' ~ '{:,.0f}'.format(_mrg)|replace(',','.') }}</b>
+          </div>
+          {% endif %}
+          <div class="ln">
+            <span class="lbl">Centro de costo</span>
+            <b>{{ (v.centro_costo or '—')|replace('sstt','Servicio Técnico')|replace('logistica','Logística')|replace('comercial','Comercial') }}</b>
+          </div>
+        </div>
+        <a class="otf-fin-link" href="#otdCardFinanzas" data-bs-dismiss="modal"
+           onclick="setTimeout(function(){ if(window.otdIrAFinanzas) otdIrAFinanzas(); }, 350)">
+          <i class="bi bi-pencil-square"></i> Gestionar finanzas de nuevo</a>
+        {% endif %}
 
         {% set _mod_cobro = (v.modalidad_cobro or '')|lower %}
         {% if _mod_cobro in ('garantia', 'sin_costo') %}
@@ -3086,6 +3161,13 @@
           </div>
         </div>
 
+          </div>
+        </div>
+        {# ══ PASO 3 — TU FIRMA ═══════════════════════════════════════════ #}
+        <div class="otd-fpaso">
+          <div class="hd"><span class="num">3</span> Tu firma</div>
+          <div class="bd">
+
         <div class="mb-2">
           <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
             <i class="bi bi-shield-check me-1" style="color:#15803d"></i>
@@ -3128,6 +3210,9 @@
                     placeholder="Observación interna del cierre…"
                     maxlength="500" style="font-size:.85rem"></textarea>
         </div>
+          </div>
+        </div>
+        {# ══ /PASO 3 ══ #}
       </div>
       <div class="modal-footer" style="background:#fafafa;border-top:1px solid #e5e7eb;flex-wrap:wrap;gap:6px">
         <button type="button" class="btn btn-outline-danger fw-bold" id="otfBtnRechazarAprob"
