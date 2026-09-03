@@ -492,6 +492,74 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════
+   MÓVIL DE VERDAD — 2026-09-03
+   Daniel, con cuatro capturas del teléfono: "estoy tratando de generar
+   una OT a nivel responsivo y se ve pésimo, pésimo... esta cuestión no le
+   está dando el peso a la parte responsiva. La mayoría lo va a ver en el
+   celular".
+   Y tenía razón. Lo que mostraban las capturas, uno por uno:
+     · el título del modal quedaba DEBAJO del reloj y la señal del
+       teléfono -- el modal pasa a pantalla completa y nadie respetaba el
+       notch (safe-area-inset-top);
+     · las tipografías eran las de escritorio (1rem/1.03rem/2.06rem), así
+       que "Mantención preventiva" ocupaba tres líneas y cada tarjeta de
+       tipo de OT se comía media pantalla;
+     · la tabla de equipos se cortaba en "PLANTILLAS E…" sin manera de
+       llegar al resto;
+     · el selector de centro de costo mostraba "Comerc…" cortado.
+   Nada de esto es un ajuste de gusto: en el teléfono el wizard era casi
+   inusable, y es donde se va a usar.
+   ══════════════════════════════════════════════════════════════════════ */
+@media (max-width:640px){
+  /* 1. El notch. El modal ocupa toda la pantalla, así que el header tiene
+        que empezar DEBAJO de la barra de estado del sistema. */
+  .o2m-head{padding-top:calc(14px + env(safe-area-inset-top,0px));
+    padding-left:16px;padding-right:16px;gap:10px}
+  .o2m-head h5{font-size:1.02rem;line-height:1.25}
+  .o2m-head .sub{font-size:.76rem;line-height:1.3}
+  .o2m-head .x{font-size:1.45rem;min-width:44px;min-height:44px}
+
+  /* 2. Tipografía a escala de teléfono. */
+  .o2m-body{padding:16px 14px}
+  .o2m h6.t{font-size:.98rem;line-height:1.3}
+  .o2m p.d{font-size:.82rem;line-height:1.4;margin-bottom:12px}
+  .o2m-op{padding:11px}
+  .o2m-op .ic{font-size:1.25rem;margin-bottom:4px}
+  .o2m-op .n{font-size:.87rem;line-height:1.25}
+  .o2m-op .l{font-size:.74rem;line-height:1.3}
+  .o2m-sec{padding:13px;gap:11px;margin-bottom:12px}
+  .o2m-step-circle-wrap{min-width:46px}
+  .o2m-step-circle{width:40px;height:40px;font-size:1.25rem}
+  .o2m-step-circle .chk{font-size:1.15rem}
+  .o2m-step-circle .lock{font-size:1.05rem}
+  .o2m-step-circle-label{font-size:.56rem;letter-spacing:.08em}
+  .o2m label.fl{font-size:.78rem}
+
+  /* 3. Toda tabla scrollea DENTRO de su caja -- la página nunca de lado
+        (memoria: feedback_scroll_contenido_no_pagina). */
+  .o2m-lista{overflow-x:auto}
+  .o2m-lista table{min-width:520px}
+  .o2m-eq-tablewrap{overflow:auto;max-height:52vh;-webkit-overflow-scrolling:touch}
+  .o2m-eq-table{min-width:560px;font-size:.82rem}
+  .o2m-eq-table thead th,.o2m-eq-table tbody td{padding:6px 8px}
+
+  /* 4. El centro de costo y cualquier fila de opciones: que envuelvan en
+        vez de cortarse. */
+  .o2m-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .o2m-foot{padding:12px 14px;
+    padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+  .o2m-foot .btn{min-height:44px}
+}
+/* Solo en teléfonos MUY angostos (≤339px) se baja a una columna. Medido:
+   a 360 y 390px las dos columnas dan tarjetas de ~163 y ~178px, que con la
+   tipografía de arriba muestran "Mantención preventiva" en dos líneas sin
+   cortarse. Poner el corte en 400px dejaba una sola columna en un iPhone
+   13 normal -- media pantalla desperdiciada por tarjeta. */
+@media (max-width:339.98px){
+  .o2m-grid{grid-template-columns:1fr}
+}
+
+/* ══════════════════════════════════════════════════════════════════════
    PASO "AGENDA" — mini-calendario del mes + línea de tiempo del día
    ══════════════════════════════════════════════════════════════════════
    Portado de templates/tickets/_modal_generar_ot.html (Paso 4) +
