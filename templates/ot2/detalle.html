@@ -5199,7 +5199,13 @@ window.otdConfirmarReasignar = async function(){
    ══════════════════════════════════════════════════════════════ */
 let _otdMaquinasClienteCache = null;
 let _otdEqmGrupos     = null;
-let _otdEqmFiltro     = 'todos';
+/* Mismo criterio que el wizard (Daniel via Aaron, 2026-09-03): en
+   mantencion / visita / inspeccion la lista arranca mostrando SOLO los
+   equipos del plan. En instalacion no -- ahi se entregan todos los
+   productos y el plan es otra cosa. El chip 'Todos' sigue a un click. */
+const OTD_TIPOS_CON_PLAN = ['preventiva','correctiva','visita_tecnica','inspeccion'];
+const OTD_PLAN_APLICA = OTD_TIPOS_CON_PLAN.indexOf('{{ v.tipo }}') >= 0;
+let _otdEqmFiltro     = OTD_PLAN_APLICA ? 'plan' : 'todos';
 let _otdEqmQ          = '';
 let _otdEqmErrorCarga = false;
 const _otdEqmSugCache = {};
@@ -5240,6 +5246,17 @@ function _otdEqmConstruirGrupos(maquinas){
   return arr;
 }
 
+/* Unidades de un producto que el filtro actual deja elegir. Importa cuando
+   un mismo SKU tiene unidades dentro y fuera del plan: con "Del plan"
+   puesto, el contador +/- y "marcar todo" no pueden tomar las de afuera --
+   si no, el filtro seria decorativo y la OT terminaria igual con equipos
+   que no van (que es justo lo que reporto Aaron). */
+function _otdEqmElegibles(g){
+  if (_otdEqmFiltro === 'plan')  return g.unidades.filter(u => u.plan);
+  if (_otdEqmFiltro === 'fuera') return g.unidades.filter(u => !u.plan);
+  return g.unidades;
+}
+
 function _otdEqmVisibles(){
   const q = _otdEqmNorm(_otdEqmQ);
   return (_otdEqmGrupos || []).filter(g => {
@@ -5276,7 +5293,8 @@ function _otdEqmOpcionesPlantilla(sel){
 
 function _otdEqmTarjeta(g){
   const n     = g.sel.size;
-  const total = g.unidades.length;
+  const eleg  = _otdEqmElegibles(g);
+  const total = eleg.length;
   // 🔴 RENDIMIENTO (2026-09-03, medido en producción con Brave Spa): el
   // <select> de checklist son 85 <option>. Dibujarlo en las 74 tarjetas
   // eran 6.364 <option> y 436 KB de HTML EN CADA TECLEO del buscador
@@ -5286,7 +5304,7 @@ function _otdEqmTarjeta(g){
   // tarjeta se repinta entera cuando cambia de estado.
   const conPie   = n > 0;
   const conLista = conPie && g.abierto && total > 1;
-  const unidades = !conLista ? '' : g.unidades.map(u => {
+  const unidades = !conLista ? '' : eleg.map(u => {
     const marc = g.sel.has(u.id);
     return '<label class="otd-eqg-u' + (marc ? ' sel' : '') + '" data-id="' + u.id + '">'
       + '<input type="checkbox"' + (marc ? ' checked' : '')
@@ -5305,6 +5323,8 @@ function _otdEqmTarjeta(g){
         + '<div class="otd-eqg-meta">'
           + (g.sku ? '<span class="b sku">' + otdEsc(g.sku) + '</span>' : '')
           + '<span class="b stock">' + total + ' disponible' + (total === 1 ? '' : 's') + '</span>'
+          + (_otdEqmFiltro === 'plan' && g.fuera
+              ? '<span class="b nplan">' + g.fuera + ' fuera del plan, sin mostrar</span>' : '')
           + (g.plan  ? '<span class="b plan">' + g.plan + ' del plan</span>' : '')
           + (g.fuera ? '<span class="b nplan">' + g.fuera + ' fuera del plan</span>' : '')
         + '</div>'
@@ -5384,8 +5404,9 @@ function otdEqmActualizarCard(i){
   if (n) n.textContent = g.sel.size;
   const bMenos = el.querySelector('[data-b="menos"]');
   if (bMenos) bMenos.disabled = g.sel.size <= 0;
+  const _eleg = _otdEqmElegibles(g);
   const bMas = el.querySelector('[data-b="mas"]');
-  if (bMas) bMas.disabled = g.sel.size >= g.unidades.length;
+  if (bMas) bMas.disabled = _eleg.every(u => g.sel.has(u.id));
   el.querySelectorAll('.otd-eqg-u').forEach(row => {
     const id = parseInt(row.dataset.id, 10);
     const marc = g.sel.has(id);
@@ -5444,14 +5465,15 @@ async function _otdEqmSugerir(g){
 window.otdEqmQty = function(i, delta){
   const g = (_otdEqmGrupos || [])[i];
   if (!g) return;
+  const eleg = _otdEqmElegibles(g);
   if (delta > 0){
-    const libre = g.unidades.find(u => !g.sel.has(u.id));
+    const libre = eleg.find(u => !g.sel.has(u.id));
     if (!libre) return;
     g.sel.add(libre.id);
     _otdEqmSugerir(g);
   } else {
-    for (let k = g.unidades.length - 1; k >= 0; k--){
-      if (g.sel.has(g.unidades[k].id)){ g.sel.delete(g.unidades[k].id); break; }
+    for (let k = eleg.length - 1; k >= 0; k--){
+      if (g.sel.has(eleg[k].id)){ g.sel.delete(eleg[k].id); break; }
     }
   }
   otdEqmActualizarCard(i);
@@ -5486,6 +5508,12 @@ window.otdEqmBuscar = function(q){ _otdEqmQ = q || ''; otdEqmRender(); };
 
 window.otdEqmChip = function(f){
   _otdEqmFiltro = f;
+  // Lo que el filtro nuevo ya no deja elegir se suelta: quedaria
+  // seleccionado sin verse en ninguna parte, y se iria a la OT igual.
+  (_otdEqmGrupos || []).forEach(g => {
+    const ok = new Set(_otdEqmElegibles(g).map(u => u.id));
+    [...g.sel].forEach(id => { if (!ok.has(id)) g.sel.delete(id); });
+  });
   document.querySelectorAll('#otdEqmChips .ch[data-f]').forEach(
     b => b.classList.toggle('on', b.dataset.f === f));
   otdEqmRender();
@@ -5497,10 +5525,11 @@ window.otdEqmChip = function(f){
 window.otdEqmToggleTodo = function(){
   const vis = _otdEqmVisibles();
   if (!vis.length) return;
-  const faltan = vis.some(g => g.sel.size < g.unidades.length);
+  const faltan = vis.some(g => _otdEqmElegibles(g).some(u => !g.sel.has(u.id)));
   vis.forEach(g => {
-    if (faltan){ g.unidades.forEach(u => g.sel.add(u.id)); _otdEqmSugerir(g); }
-    else g.sel.clear();
+    const eleg = _otdEqmElegibles(g);
+    if (faltan){ eleg.forEach(u => g.sel.add(u.id)); _otdEqmSugerir(g); }
+    else eleg.forEach(u => g.sel.delete(u.id));
   });
   otdEqmRender();
 };
@@ -5530,6 +5559,9 @@ window.otdAbrirAgregarEquipo = async function(){
   }
   const disponibles = (_otdMaquinasClienteCache || [])
     .filter(m => !EQUIPOS_YA_EN_OT.includes(m.id));
+  // Deja el chip del filtro coherente con el estado real al abrir.
+  document.querySelectorAll('#otdEqmChips .ch[data-f]').forEach(
+    b => b.classList.toggle('on', b.dataset.f === _otdEqmFiltro));
   _otdEqmGrupos = _otdEqmConstruirGrupos(disponibles);
   otdEqmRender();
 };

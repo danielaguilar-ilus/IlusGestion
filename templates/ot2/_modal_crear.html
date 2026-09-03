@@ -3298,8 +3298,11 @@ window.OT2C = (function(){
           // criterio de siempre, solo entra lo que YA está en el plan --
           // un accesorio suelto no amerita una visita técnica salvo que se
           // agregue a mano como desviación explícita.
+          // 2026-09-03: sobre la VISTA, no sobre cacheEquipos. Con un
+          // documento de origen, recorrer la ficha entera preseleccionaba
+          // equipos que ni siquiera estan en ese documento.
           var esInstalacion = (S.tipo === 'instalacion');
-          cacheEquipos.forEach(function(m){
+          _o2mEquiposVista().forEach(function(m){
             if (m.aplica_mantencion || esInstalacion){
               S.equipos.push({maquina_id:m.id, plantilla_id:null, plantilla_sugerida:false});
               sugerirPlantillaEquipo(m.id);
@@ -3405,12 +3408,67 @@ window.OT2C = (function(){
      (la alta automática ya corrió, ver _o2mAltaAutoFaltantesSiCorresponde).
      Origen "Cliente existente"/"Trabajo interno" (sin doc_lineas) sigue
      mostrando la ficha completa, tal como siempre. */
-  function _o2mEquiposVista(){
+  /* ── PLAN DE MANTENCION — que equipos entran a la OT ──────────────
+     Daniel, 2026-09-03 (reportado por Aaron): "aun en mantencion y visitas
+     estan trayendo todos los productos sin considerar el plan, debes
+     filtrar eso... de instalacion si se puede saltar el plan ya que eso es
+     otra cosa".
+
+     Hasta hoy el plan solo PRESELECCIONABA: la lista mostraba igual todos
+     los equipos del cliente (o todos los del documento) y los del plan
+     venian marcados. Con 137 equipos y 81 en plan -- caso real de Club de
+     Golf -- eso sigue siendo una lista de 137 para revisar, y lo que Aaron
+     ve es "los trae todos". Ahora el plan FILTRA de verdad.
+
+     Instalacion queda fuera de la regla a proposito, tal como lo dijo
+     Daniel el 2026-08-30: "solo instalacion toma todos los productos
+     excluyendo el plan... porque si es instalacion y estamos llevando los
+     productos, tenemos que dejar evidencia de que si los entregamos".
+
+     El filtro se puede APAGAR desde la misma barra: una mantencion puede
+     necesitar tocar un equipo fuera del plan como desviacion explicita, y
+     dejar eso sin salida convertiria la regla en una pared. Lo que ya
+     estaba marcado a mano NO se pierde al filtrar -- se sigue mandando en
+     la OT y la barra avisa cuantos son. */
+  var O2M_TIPOS_CON_PLAN = ['preventiva','correctiva','visita_tecnica','inspeccion'];
+  var _o2mSoloPlan = true;   // lo puede apagar el usuario, ver eqTogSoloPlan
+
+  function _o2mPlanAplica(){
+    return O2M_TIPOS_CON_PLAN.indexOf(S.tipo) >= 0;
+  }
+  /* Lista base: la ficha completa, o solo los SKU del documento de origen. */
+  function _o2mEquiposBase(){
     if (!S.doc_lineas || !S.doc_lineas.length) return cacheEquipos;
     var skusFuente = {};
     S.doc_lineas.forEach(function(l){ skusFuente[_o2mSkuNorm(l.sku)] = true; });
     return cacheEquipos.filter(function(m){ return skusFuente[_o2mSkuNorm(m.sku)]; });
   }
+  function _o2mEquiposVista(){
+    var base = _o2mEquiposBase();
+    if (!_o2mPlanAplica() || !_o2mSoloPlan) return base;
+    return base.filter(function(m){ return !!m.aplica_mantencion; });
+  }
+  /* Boton de la barra: cuantos quedaron fuera por el plan y como verlos.
+     Solo aparece en los tipos con plan -- en instalacion no tiene sentido. */
+  function _o2mBarraPlan(){
+    if (!_o2mPlanAplica()) return '';
+    var base = _o2mEquiposBase();
+    var fuera = base.filter(function(m){ return !m.aplica_mantencion; }).length;
+    if (!fuera && _o2mSoloPlan) return '';   // no hay nada escondido: no molestar
+    var selFuera = base.filter(function(m){
+      return !m.aplica_mantencion && S.equipos.some(function(e){ return e.maquina_id === m.id; });
+    }).length;
+    return '<button type="button" class="btn btn-sm o2m-eq-btn-todos" '+
+      'style="min-height:44px;border:1.5px dashed #d1d5db;background:#fff;color:#374151" '+
+      'title="El plan de mantencion decide que equipos entran a una mantencion o visita" '+
+      'onclick="OT2C.eqTogSoloPlan()">'+
+      (_o2mSoloPlan
+        ? '<i class="bi bi-funnel-fill me-1"></i>Solo del plan · ver ' + fuera + ' fuera del plan'
+        : '<i class="bi bi-funnel me-1"></i>Viendo todos · volver al plan')+
+      (selFuera ? ' <span style="color:#b45309">('+selFuera+' fuera del plan ya marcado'+(selFuera===1?'':'s')+')</span>' : '')+
+      '</button>';
+  }
+
   function pintarListaEquipos(){
     var c = document.getElementById('o2mEqList'); if(!c) return;
     var equiposVista = _o2mEquiposVista();
@@ -3443,6 +3501,7 @@ window.OT2C = (function(){
             ? '<i class="bi bi-square me-1"></i>Desmarcar todos'
             : '<i class="bi bi-check2-square me-1"></i>Marcar todos')+
           '</button>'+
+          _o2mBarraPlan()+
         '</div>'+
         '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
           '<th class="chk"></th><th>Equipo / SKU</th><th class="plan">Plan</th>'+
@@ -5769,6 +5828,12 @@ window.OT2C = (function(){
     o2mDayRenderMine();
     o2mChequearChoqueDebounced();
   }
+  /* Apaga/prende el filtro por plan de la lista de equipos. No toca lo que
+     el usuario ya marco: solo cambia QUE se ve (ver _o2mEquiposVista). */
+  function eqTogSoloPlan(){
+    _o2mSoloPlan = !_o2mSoloPlan;
+    pintarListaEquipos(); refrescarAnclas(); _o2mFinEstimar();
+  }
   function eqTog(mid){
     var i = S.equipos.findIndex(function(e){ return e.maquina_id===mid; });
     if (i>=0) S.equipos.splice(i,1);
@@ -5972,6 +6037,9 @@ window.OT2C = (function(){
   function setCli(id, nombre, rut){
     S.cliente = {id:id, nombre:nombre, rut: rut || ''};
     S.equipos = [];
+    // El filtro por plan vuelve a su default (encendido) en cada OT nueva:
+    // apagarlo es una decision de ESA OT, no una preferencia pegada.
+    _o2mSoloPlan = true;
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
     repintarSeccion('equipos');
@@ -6460,6 +6528,7 @@ window.OT2C = (function(){
           abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar,
           setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
+          eqTogSoloPlan:eqTogSoloPlan,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           _o2mAnexoPintarRutEstado:_o2mAnexoPintarRutEstado, anexoVerPdfPreview:anexoVerPdfPreview,
