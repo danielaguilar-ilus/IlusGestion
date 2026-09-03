@@ -5252,24 +5252,41 @@ function _otdEqmVisibles(){
   });
 }
 
+let _otdEqmOpcionesHTML = null;
 function _otdEqmOpcionesPlantilla(sel){
   // Mismo orden que otdCambiarPlantilla: primero las de la categoría de
   // ESTA OT, después el resto marcadas con su categoría.
-  const propia = [], otras = [];
-  PLANTILLAS_TODAS.forEach(
-    p => (p.categoria_admin === CATEGORIA_OT_ACTUAL ? propia : otras).push(p));
-  const op = (p, etq) =>
-    '<option value="' + p.id + '"' + (String(p.id) === String(sel) ? ' selected' : '') + '>'
-    + otdEsc(p.nombre) + (etq ? ' (' + etq + ')' : '') + '</option>';
-  return '<option value="">Elige un checklist…</option>'
-    + propia.map(p => op(p, '')).join('')
-    + otras.map(p => op(p, _CAT_ADMIN_LABEL[p.categoria_admin] || 'otra categoría')).join('');
+  // El string se arma UNA vez para toda la sesión (son 85 plantillas en
+  // producción): lo único que cambia por tarjeta es cuál queda marcada, y
+  // eso se resuelve con selected="" en el <option> correcto.
+  if (_otdEqmOpcionesHTML === null){
+    const propia = [], otras = [];
+    PLANTILLAS_TODAS.forEach(
+      p => (p.categoria_admin === CATEGORIA_OT_ACTUAL ? propia : otras).push(p));
+    const op = (p, etq) => '<option value="' + p.id + '">' + otdEsc(p.nombre)
+      + (etq ? ' (' + etq + ')' : '') + '</option>';
+    _otdEqmOpcionesHTML = '<option value="">Elige un checklist…</option>'
+      + propia.map(p => op(p, '')).join('')
+      + otras.map(p => op(p, _CAT_ADMIN_LABEL[p.categoria_admin] || 'otra categoría')).join('');
+  }
+  if (!sel) return _otdEqmOpcionesHTML;
+  return _otdEqmOpcionesHTML.replace(
+    '<option value="' + sel + '">', '<option value="' + sel + '" selected>');
 }
 
 function _otdEqmTarjeta(g){
   const n     = g.sel.size;
   const total = g.unidades.length;
-  const unidades = g.unidades.map(u => {
+  // 🔴 RENDIMIENTO (2026-09-03, medido en producción con Brave Spa): el
+  // <select> de checklist son 85 <option>. Dibujarlo en las 74 tarjetas
+  // eran 6.364 <option> y 436 KB de HTML EN CADA TECLEO del buscador
+  // (346 ms por letra en PC, mucho peor en el teléfono de un técnico).
+  // El pie está oculto por CSS mientras la tarjeta no esté elegida, así
+  // que no hay razón para construirlo: se dibuja solo donde se ve, y la
+  // tarjeta se repinta entera cuando cambia de estado.
+  const conPie   = n > 0;
+  const conLista = conPie && g.abierto && total > 1;
+  const unidades = !conLista ? '' : g.unidades.map(u => {
     const marc = g.sel.has(u.id);
     return '<label class="otd-eqg-u' + (marc ? ' sel' : '') + '" data-id="' + u.id + '">'
       + '<input type="checkbox"' + (marc ? ' checked' : '')
@@ -5300,7 +5317,8 @@ function _otdEqmTarjeta(g){
         + (n >= total ? ' disabled' : '') + ' aria-label="Agregar uno">+</button>'
       + '</div>'
     + '</div>'
-    + '<div class="otd-eqg-bot">'
+    + (!conPie ? '' :
+       '<div class="otd-eqg-bot">'
       + '<div class="campo"><label>Checklist para este producto</label>'
         + '<select onchange="otdEqmPlantilla(' + g.i + ',this.value)">'
         + _otdEqmOpcionesPlantilla(g.plantilla) + '</select></div>'
@@ -5309,10 +5327,8 @@ function _otdEqmTarjeta(g){
             + '<i class="bi bi-list-check"></i> <span>'
             + (g.abierto ? 'Ocultar unidades' : 'Elegir unidades') + '</span></button>'
           : '')
-    + '</div>'
-    + (total > 1
-        ? '<div class="otd-eqg-lista' + (g.abierto ? ' abierta' : '') + '">' + unidades + '</div>'
-        : '')
+    + '</div>')
+    + (conLista ? '<div class="otd-eqg-lista abierta">' + unidades + '</div>' : '')
   + '</div>';
 }
 
@@ -5342,10 +5358,27 @@ function otdEqmRender(){
 /* Actualiza UNA tarjeta sin repintar la lista: repintar entera perdería
    el scroll y cerraría la lista de unidades justo cuando el usuario está
    marcando dentro de ella. */
+function _otdEqmRepintarCard(i){
+  const g  = (_otdEqmGrupos || [])[i];
+  const el = document.querySelector('.otd-eqg[data-i="' + i + '"]');
+  if (!g || !el) return;
+  el.outerHTML = _otdEqmTarjeta(g);
+  otdEqmResumen();
+}
+
 function otdEqmActualizarCard(i){
   const g  = (_otdEqmGrupos || [])[i];
   const el = document.querySelector('.otd-eqg[data-i="' + i + '"]');
   if (!g || !el) return;
+  // ¿cambió la FORMA de la tarjeta (aparece/desaparece el pie o la lista
+  // de unidades)? Entonces hay que rehacerla; si no, basta con retocar.
+  const debePie   = g.sel.size > 0;
+  const debeLista = debePie && g.abierto && g.unidades.length > 1;
+  if (debePie !== !!el.querySelector('.otd-eqg-bot')
+      || debeLista !== !!el.querySelector('.otd-eqg-lista')){
+    _otdEqmRepintarCard(i);
+    return;
+  }
   el.classList.toggle('on', g.sel.size > 0);
   const n = el.querySelector('.otd-eqg-qty .n');
   if (n) n.textContent = g.sel.size;
@@ -5443,10 +5476,10 @@ window.otdEqmVerUnidades = function(i){
   const el = document.querySelector('.otd-eqg[data-i="' + i + '"]');
   if (!g || !el) return;
   g.abierto = !g.abierto;
-  const lista = el.querySelector('.otd-eqg-lista');
-  if (lista) lista.classList.toggle('abierta', g.abierto);
-  const txt = el.querySelector('.otd-eqg-uni span');
-  if (txt) txt.textContent = g.abierto ? 'Ocultar unidades' : 'Elegir unidades';
+  // La lista de unidades solo existe en el HTML mientras está abierta
+  // (ver el comentario de rendimiento en _otdEqmTarjeta), así que abrir
+  // significa crearla: se repinta esta tarjeta, nunca la lista entera.
+  _otdEqmRepintarCard(i);
 };
 
 window.otdEqmBuscar = function(q){ _otdEqmQ = q || ''; otdEqmRender(); };
