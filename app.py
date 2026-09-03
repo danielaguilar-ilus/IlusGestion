@@ -81674,6 +81674,35 @@ def _next_anexo_numero_atomic(conn=None):
             c.close()
 
 
+def _anexo_proximo_numero_sin_consumir():
+    """Que N° le tocaria al proximo anexo, SIN gastar el correlativo.
+
+    🆕 2026-09-03 (Daniel: "te dije que el 160, entonces que pasa con eso").
+    Lo que el veia era "Anexo de Servicios N° (vista previa)" y lo leyo como
+    que el correlativo no estaba asignado. En realidad la vista previa no
+    consume numero A PROPOSITO -- seria gastar folios en documentos que no
+    se llegan a crear. Pero decir "(vista previa)" y nada mas no responde la
+    pregunta legitima de "¿y con que numero va a salir?".
+
+    Solo LEE la secuencia (no usa LAST_INSERT_ID, que es lo que incrementa).
+    Si algo falla devuelve None y la vista previa vuelve al texto de antes:
+    es un dato informativo, nunca puede tumbar el PDF.
+    """
+    try:
+        anio = datetime.now().year
+        row = mysql_fetchone(
+            "SELECT n FROM mant_anexo_secuencia WHERE anio=%s", (anio,))
+        if row and row.get("n") is not None:
+            return int(row["n"]) + 1
+        # Sin fila todavia: el primero del anio. `_ensure_mant_anexos` deja
+        # la secuencia en 159 al arrancar, asi que en la practica esto solo
+        # pasa si ese bump no alcanzo a correr.
+        return 160
+    except Exception as e:
+        print(f"[anexo_proximo_numero] {e}", flush=True)
+        return None
+
+
 def _anexo_productos_norm(raw):
     """Normaliza la tabla de productos del anexo: [{sku, nombre, cantidad}].
 
@@ -82340,8 +82369,12 @@ def ot2_api_anexo_preview_pdf():
             return datetime.strptime((s or "")[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
         except Exception:
             return "—"
+    # El numero que le tocaria, sin gastarlo (ver
+    # _anexo_proximo_numero_sin_consumir): asi la vista previa responde
+    # "¿con que N° va a salir?" sin consumir un folio de verdad.
+    _prox = _anexo_proximo_numero_sin_consumir()
     payload = {
-        "numero": "(vista previa)",
+        "numero": (f"{_prox} (vista previa)" if _prox else "(vista previa)"),
         "fecha": _now_chile_str("%d/%m/%Y"),
         "proveedor_nombre": proveedor,
         "proveedor_rut": (d.get("proveedor_rut") or "").strip()[:20],
