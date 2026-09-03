@@ -776,7 +776,19 @@
        mínimo para decir algo. No toca la posición ni la escala: los
        bloques largos siguen midiendo exactamente lo que duran; solo se
        impide que uno corto quede impracticable. */
-    .tl-bloque{min-width:104px}
+    /* 🔴 FIX 2026-09-03 (Daniel, captura real de Jaizer: OT-163 10:30-11:00
+       y OT-164 11:30-13:00 NO se pisan en el tiempo y aun asi se dibujaban
+       una encima de la otra).
+       El piso estaba puesto como `min-width:104px` en CSS, y ese es el
+       problema: el CSS estira la burbuja DESPUES de que el reparto de
+       carriles ya decidio -- y el reparto solo miraba el horario, asi que
+       nunca se entero de que la burbuja corta iba a ocupar mas de lo que
+       dura. Ahora el piso se calcula en % del ancho real de la pista
+       (OT_MIN_PX / ancho de .p-tl) y se aplica en los DOS lugares: al
+       ancho de la burbuja Y al calculo de carriles. Si con el piso puesto
+       dos burbujas se tocan, van a carriles distintos y se apilan -- que
+       es lo que ya hacia bien con las OT que se pisan de verdad. */
+    .tl-bloque{min-width:0}
     /* Con ese piso, una burbuja corta ya no necesita esconder su texto:
        el ajuste de tipografía (ajustarTextoBloque) mide el ancho REAL y
        achica hasta que entre. */
@@ -1951,7 +1963,14 @@
     // a las 09:00-13:00). Antes cada bloque se posicionaba solo por su
     // horario, sin mirar a los demás. Ahora se reparten en carriles: los que
     // se pisan comparten el alto de la fila en vez de taparse.
-    repartirCarriles(bloques);
+    // Piso de ancho de burbuja, en % de ESTA pista. Se mide cada vez: el
+    // televisor y la pantalla de control tienen anchos distintos, y la
+    // densidad cambia con la cantidad de tecnicos.
+    const _anchoPista = tl.clientWidth || 0;
+    state.minPctBloque = _anchoPista > 0
+      ? Math.min(20, OT_MIN_PX_BLOQUE / _anchoPista * 100)
+      : 0;
+    repartirCarriles(bloques, state.minPctBloque);
 
     syncList(
       tl,
@@ -1965,8 +1984,21 @@
   /* Asigna a cada bloque el carril donde debe dibujarse. Dos bloques que se
      solapan en el tiempo nunca comparten carril; los que no se pisan, sí
      (para no desperdiciar alto). Escribe `__lane` y `__lanes` en el bloque. */
-  function repartirCarriles(bloques){
+  /* Ancho minimo de una burbuja, en pixeles. Nace del pedido de Daniel del
+     2026-09-03 ("un trabajo de media hora, como lo veriamos en el resumen,
+     porque es chiquitito"): OT-163 duraba 30 min = 5% de la jornada = unos
+     57px, y ahi no entra ni "Trabajo interno". */
+  const OT_MIN_PX_BLOQUE = 104;
+
+  function repartirCarriles(bloques, minPct){
     if (!bloques || !bloques.length) return;
+    // Cuanto dura, en minutos, una burbuja del ancho minimo. Si una OT
+    // corta se estira hasta ese piso, ocupa ese rato EN PANTALLA aunque no
+    // lo ocupe en la realidad -- y el carril tiene que contarlo, si no la
+    // siguiente se le monta encima.
+    const _esc = state.esc || {};
+    const _min = Math.max(0, (minPct || 0)) / 100
+                 * (((_esc.t1 != null ? _esc.t1 : 1080) - (_esc.t0 != null ? _esc.t0 : 480)));
     const conMin = bloques.map(b => {
       const ini = hm(b.ini);
       const fin = hm(b.fin);
@@ -1977,7 +2009,8 @@
       // marcaba como libre desde un minuto anterior al inicio — dos OT
       // volvían a dibujarse ENCIMA, justo el bug que esto arregla.
       if (f <= i) f = i + 60;
-      return { b, ini: i, fin: f };
+      // `fin` real para el dato, `finVis` para decidir el carril.
+      return { b, ini: i, fin: Math.max(f, i + _min) };
     }).sort((x, y) => x.ini - y.ini || x.fin - y.fin);
 
     const finPorCarril = [];   // último minuto ocupado en cada carril
@@ -2019,7 +2052,10 @@
     const ini = hm(b.ini), fin = hm(b.fin);
     const li = posPct(ini != null ? ini : state.esc.t0);
     const lf = posPct(fin != null ? fin : (ini != null ? ini + 60 : state.esc.t0 + 60));
-    const w = Math.max(0.8, lf - li);
+    // Ancho real por duracion, y ancho VISIBLE con el piso aplicado. Es el
+    // mismo piso que uso repartirCarriles, por eso ya no se pisan.
+    const wReal = Math.max(0.8, lf - li);
+    const w = Math.max(wReal, state.minPctBloque || 0);
 
     const lanes = Math.max(1, b.__lanes || 1);
     const lane = Math.min(lanes - 1, Math.max(0, b.__lane || 0));
