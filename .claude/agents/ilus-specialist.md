@@ -126,6 +126,61 @@ pestaña por RAM.
 
 ---
 
+## 🔴 LOS 5 PATRONES QUE HACEN PERDER DATOS DEL TÉCNICO (auditoría 2026-09-02)
+
+Una revisión del flujo del técnico en OT 2.0 encontró **tres caminos de
+pérdida silenciosa** en código que ya estaba escrito, probado y desplegado.
+Ninguno daba error: los tres mostraban un mensaje de ÉXITO mientras
+perdían el trabajo. Revisa estos patrones en TODO código que guarde algo
+desde el teléfono.
+
+1. **`r.ok` NO significa que el servidor te dijo que sí.** Con la sesión
+   caducada, Flask redirigía al login, `fetch` seguía el 302 solo, y
+   llegaba un **200 con el HTML del login**. La cola lo contaba como éxito
+   y borraba las respuestas. Exige siempre cuerpo JSON con `ok === true`:
+   ```js
+   const ct = r.headers.get('content-type') || '';
+   const d = ct.includes('application/json') ? await r.json().catch(()=>null) : null;
+   if (r.ok && d && d.ok === true) { /* éxito de verdad */ }
+   ```
+   Y del lado del servidor: **toda ruta `/api/` debe contestar 401 JSON en
+   el idle-logout, jamás un redirect** (`before_request`, `_is_api`).
+2. **`fetch` sin plazo máximo no llega nunca al `catch`.** El caso real en
+   un gimnasio no es "sin red": es WiFi asociado sin salida a internet.
+   La promesa queda colgada minutos, `navigator.onLine` dice `true`, y la
+   bandeja de salida —que solo se llena en el `catch`— no guarda nada.
+   Usa siempre un helper con `AbortController`.
+3. **`localStorage` puede fallar en silencio** (ventana privada, datos de
+   sitio bloqueados, cuota llena). Si el `catch` está vacío, la pantalla
+   dice "guardado en el teléfono" y no se guardó nada. Verifica releyendo
+   lo que escribiste y **avisa sin adornos si no quedó**. Mentirle al
+   técnico sobre un dato guardado es peor que no tener la feature.
+4. **El re-render optimista borra lo que la persona acaba de escribir** si
+   actualizas `completada` pero no el valor. La pantalla dibuja desde
+   `valor_json`: si no lo normalizas igual que el backend, el texto
+   desaparece del input mientras el ítem se pone verde.
+5. **`location.reload()` automático es una bomba en terreno.** Si corre en
+   un temporizador o al volver la señal, se dispara justo mientras el
+   técnico escribe una observación larga y se la borra. Refresca los
+   DATOS, no la página.
+
+Dos más, del mismo origen (fechas y permisos), que valen para todo el
+proyecto:
+
+- **UTC sin zona leído como hora local** (REGLA #6 en el frontend). MySQL
+  guarda UTC y el backend serializa `"2026-09-02 18:00:00"` sin `Z`. En un
+  teléfono chileno eso queda 4 h en el futuro. Un candado de 10 minutos
+  duraba **4 horas**. Normaliza siempre: `s.endsWith('Z')||s.includes('+') ? s : s+'Z'`.
+- **Ocultar en el template no es ocultar.** La tarjeta "Actividad de la OT"
+  no tenía el gate `not es_tecnico` e imprimía el `detalle` crudo de
+  `mant_logs`, que incluye `"FCV 11382 · $1.234.567"`. Filtra **en el
+  endpoint**, y deja un regex de respaldo que borre montos, para que una
+  acción nueva con plata no se filtre sola. Lo mismo con los endpoints:
+  `@_mant_required` NO basta para datos financieros — el técnico necesita
+  ese permiso para abrir sus OT. Agrega `if _es_rol_tecnico(): 403`.
+
+---
+
 ## 🗣️ Cómo trabaja Daniel (leer antes de responder)
 
 - **Dicta por voz mientras prueba en producción.** Los mensajes llegan

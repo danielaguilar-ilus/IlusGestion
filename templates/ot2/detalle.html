@@ -5683,6 +5683,73 @@ function otdChkTareaHtml(t){
   </div>`;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   MULTITÉCNICO — mantener el checklist vivo
+   🔴 FIX 2026-09-02 (auditoría, hallazgo M5). Esta pantalla cargaba el
+   checklist UNA sola vez (OTD_CHK_LOADED nunca se reseteaba) y, a
+   diferencia de la pantalla clásica, no consultaba los candados nunca
+   más. Con dos técnicos en la misma OT, el segundo trabajaba TODA la
+   visita contra una foto del momento en que entró: no veía lo que el otro
+   iba completando, y en cada tarea que el otro había tocado recibía
+   "Otro técnico modificó esta tarea. Recarga la página." sin más salida
+   que el F5 -- en un teléfono, en terreno, con las manos ocupadas.
+   ══════════════════════════════════════════════════════════════════════ */
+async function otdChkRecargar(silencioso){
+  OTD_CHK_LOADED = false;
+  try { await otdCargarChecklistSiHaceFalta(); } catch(e){ return false; }
+  if (window.otdWkRefrescarProgreso) window.otdWkRefrescarProgreso();
+  if (!silencioso && window.ilusToast)
+    ilusToast('Checklist actualizado con lo que hizo el otro técnico', {type:'info'});
+  return true;
+}
+
+/* Sincroniza candados y versiones sin recargar la página. Barato: el
+   endpoint solo devuelve las tareas bloqueadas vivas. */
+async function otdChkPollLocks(){
+  if (!OTD_CHK_DATA || !navigator.onLine) return;
+  let d;
+  try {
+    const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/locks`, {}, 8000);
+    const res = await otdRespuestaAfirmativa(r);
+    if (!res.ok) return;                 // sesión caída o error: no molestar
+    d = res.d;
+  } catch(e){ return; }
+  const porId = {};
+  (d.locks || d.tareas || []).forEach(l => { porId[l.tarea_id] = l; });
+  const mids = new Set();
+  let cambio = false;
+  for (const mid in OTD_CHK_DATA){
+    for (const g of OTD_CHK_DATA[mid]){
+      for (const t of g.tareas){
+        const l = porId[t.id];
+        const antes = t.locked_by_user_id || null;
+        const nuevo = l ? l.locked_by_user_id : null;
+        if (antes !== nuevo){ cambio = true; mids.add(mid); }
+        t.locked_by_user_id = nuevo;
+        t.locked_at = l ? l.locked_at : null;
+        t.locked_by_nombre = l ? l.locked_by_nombre : null;
+        // La versión del servidor manda: si el otro técnico avanzó, que el
+        // próximo guardado no choque con un 409 evitable.
+        if (l && typeof l.version === 'number' && l.version !== t.version){
+          t.version = l.version; cambio = true; mids.add(mid);
+        }
+      }
+    }
+  }
+  if (cambio) mids.forEach(mid => otdRenderChecklistEquipo(mid));
+}
+
+(function(){
+  // Cada 25s, solo si la pestaña está a la vista: en segundo plano no
+  // sirve de nada y gastaría batería y datos del técnico.
+  setInterval(function(){
+    if (document.visibilityState === 'visible') otdChkPollLocks();
+  }, 25000);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') otdChkPollLocks();
+  });
+})();
+
 function otdChkFindTarea(tid){
   if (!OTD_CHK_DATA) return null;
   for (const mid in OTD_CHK_DATA){
@@ -5735,7 +5802,8 @@ async function otdChkToggleCheck(tid, input){
       // checkbox a su lugar -- quedaba marcado en pantalla y desmarcado en
       // la base. El técnico creía la tarea hecha.
       input.checked = !newVal;
-      ilusToast('Otro técnico modificó esta tarea. Recarga la página.', {type:'warning'});
+      ilusToast('Otro técnico ya la marcó — actualizando…', {type:'warning'});
+      await otdChkRecargar(true);   // se resuelve solo, sin pedir F5
       return;
     }
     if (r.status === 401 || r.status === 403 || res.noJson){
@@ -6096,11 +6164,13 @@ async function otdChkGuardar(tid, valorCrudo){
     const res = await otdRespuestaAfirmativa(r);
     const d = res.d || {};
     if (r.status === 409){
-      ilusToast('Otro técnico modificó esta tarea. Recarga la página.', {type:'warning'});
+      ilusToast('Otro técnico respondió esta tarea — actualizando…', {type:'warning'});
+      await otdChkRecargar(true);
       return;
     }
     if (r.status === 404){
-      ilusToast('El checklist de este equipo cambió — recarga la página.', {type:'warning'});
+      ilusToast('El checklist de este equipo cambió — actualizando…', {type:'warning'});
+      await otdChkRecargar(true);
       return;
     }
     if (r.status === 401 || r.status === 403 || res.noJson){
