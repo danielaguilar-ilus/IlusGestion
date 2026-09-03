@@ -917,6 +917,24 @@
 #otdWkCard{transition:box-shadow .4s ease,border-color .4s ease}
 #otdWkCard.all-complete{border-color:#86efac;box-shadow:0 0 0 1px #86efac inset}
 @media (prefers-reduced-motion:reduce){.otd-wk-banner-ok{animation:none}}
+/* ══ BANDEJA DE SALIDA (sin señal) ════════════════════════════════════
+   🆕 2026-09-02. Barra fija abajo, sobre la barra de acciones: tiene que
+   verse SIEMPRE mientras haya algo sin enviar -- si se pudiera perder de
+   vista, el técnico se iría del gimnasio creyendo que guardó. */
+.otd-outbox{position:fixed;left:0;right:0;bottom:0;z-index:95;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:11px 16px;padding-bottom:calc(11px + env(safe-area-inset-bottom,0px));
+  background:#92400e;color:#fff;font-size:.82rem;line-height:1.4;
+  box-shadow:0 -6px 18px rgba(0,0,0,.25)}
+@media (min-width:992px){.otd-outbox{left:250px}}
+.otd-outbox > i{font-size:1.15rem;flex:none}
+.otd-outbox > span{flex:1;min-width:180px}
+.otd-outbox b{font-weight:900}
+.otd-outbox button{min-height:38px;padding:0 15px;border-radius:9px;border:0;
+  background:#fff;color:#92400e;font-size:.8rem;font-weight:900;cursor:pointer;
+  white-space:nowrap}
+.otd-outbox button:hover{background:#fff8e1}
+
 /* ══ BARRA DEL TÉCNICO EN TRABAJO ═════════════════════════════════════
    🆕 2026-09-02 (Daniel: "que el técnico pueda... buscar un equipo en
    específico, actuando en grandes cantidades de equipos"). Con 60 máquinas
@@ -5583,6 +5601,138 @@ async function otdChkUsarSerieSugerida(tid, sugerida){
   await otdChkGuardar(tid, sugerida);
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   BANDEJA DE SALIDA — que no se pierda una respuesta por falta de señal
+   🆕 2026-09-02 (Daniel: "con una memoria en caso de pérdida de señal, que
+   no se pierdan los datos de lo que no esté guardado todavía en la base de
+   datos" · "en caso de que Android o cualquier proveedor como Windows
+   quiera ahorrar RAM y borrar información de los modales").
+
+   EL PROBLEMA REAL: hasta hoy, si el técnico marcaba una tarea sin señal,
+   el `catch` mostraba "Error de red al guardar" y la respuesta SE PERDÍA.
+   En un gimnasio con paredes de hormigón eso pasa todo el tiempo, y el
+   técnico no se entera de que perdió trabajo hasta que revisa al final.
+
+   CÓMO FUNCIONA: la respuesta que no pudo viajar se guarda en
+   localStorage —no en memoria— así que sobrevive a que Android mate la
+   pestaña por RAM, a irse a WhatsApp y volver, y a cerrar el navegador.
+   Se reintenta sola al volver la conexión, cada 30s, y al reabrir la OT.
+
+   QUÉ **NO** SE ENCOLA, a propósito: los rechazos del servidor (409
+   conflicto de versión, 404, validaciones). Esos no son "falta de señal":
+   son un NO del sistema, y reintentarlos en loop pisaría el trabajo de
+   otro técnico. Solo se encola el fallo de RED.
+   ══════════════════════════════════════════════════════════════════════ */
+const OTD_OUTBOX_KEY = 'ilus_ot2_outbox_v1';
+const OTD_OUTBOX_MAX_HORAS = 72;
+
+function otdOutboxLeer(){
+  try {
+    const raw = localStorage.getItem(OTD_OUTBOX_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(arr)) return [];
+    // Se descarta lo muy viejo: una respuesta de hace 4 días ya no
+    // representa el estado real del equipo, y reenviarla sería peor.
+    const limite = Date.now() - OTD_OUTBOX_MAX_HORAS * 3600 * 1000;
+    return arr.filter(x => x && x.ts && x.ts > limite);
+  } catch(e){ return []; }
+}
+function otdOutboxEscribir(arr){
+  try { localStorage.setItem(OTD_OUTBOX_KEY, JSON.stringify(arr.slice(-200))); }
+  catch(e){ /* almacenamiento lleno o bloqueado: no romper la pantalla */ }
+}
+function otdOutboxPush(item){
+  const arr = otdOutboxLeer();
+  // Una sola entrada por tarea: si el técnico corrige la respuesta antes
+  // de recuperar señal, se manda la ÚLTIMA, no las dos.
+  const i = arr.findIndex(x => x.vid === item.vid && x.tid === item.tid);
+  if (i >= 0) arr[i] = item; else arr.push(item);
+  otdOutboxEscribir(arr);
+  otdOutboxPintar();
+}
+function otdOutboxPintar(){
+  const arr = otdOutboxLeer().filter(x => String(x.vid) === String(OTD_VID));
+  let el = document.getElementById('otdOutboxBanner');
+  if (!arr.length){ if (el) el.remove(); return; }
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'otdOutboxBanner';
+    el.className = 'otd-outbox';
+    document.body.appendChild(el);
+  }
+  el.innerHTML =
+    '<i class="bi bi-cloud-arrow-up-fill"></i>' +
+    '<span><b>' + arr.length + ' respuesta' + (arr.length === 1 ? '' : 's') +
+    ' sin enviar.</b> Se guardaron en este teléfono y se mandan solas al ' +
+    'volver la señal.</span>' +
+    '<button type="button" onclick="otdOutboxFlush(true)">Reintentar</button>';
+}
+
+/* Reenvía lo pendiente. `manual` solo cambia los avisos: el técnico que
+   aprieta "Reintentar" merece saber si funcionó o no. */
+window.otdOutboxFlush = async function(manual){
+  let arr = otdOutboxLeer();
+  const mios = arr.filter(x => String(x.vid) === String(OTD_VID));
+  if (!mios.length){
+    if (manual && window.ilusToast) ilusToast('No hay nada pendiente', {type:'info'});
+    return;
+  }
+  if (!navigator.onLine){
+    if (manual && window.ilusToast) ilusToast('Sigue sin conexión — lo guardado no se pierde', {type:'warning'});
+    return;
+  }
+  let ok = 0, rechazados = 0;
+  for (const it of mios){
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${it.vid}/tareas/${it.tid}/respuesta`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ valor: it.valor, version: it.version || 0 })
+      });
+      if (r.ok){ ok++; }
+      else if (r.status === 409 || r.status === 404 || r.status === 400){
+        // El servidor dijo que no. Sacarlo de la cola: insistir no lo va a
+        // arreglar y podría pisar lo que hizo otro técnico.
+        rechazados++;
+      } else {
+        continue;   // 5xx u otro: se deja para el próximo intento
+      }
+      arr = arr.filter(x => !(x.vid === it.vid && x.tid === it.tid));
+      otdOutboxEscribir(arr);
+    } catch(e){
+      break;        // volvió a caerse la red: se corta y se reintenta luego
+    }
+  }
+  otdOutboxPintar();
+  if (ok && window.ilusToast)
+    ilusToast('✓ ' + ok + ' respuesta' + (ok === 1 ? '' : 's') + ' sincronizada' +
+              (ok === 1 ? '' : 's'), {type:'success'});
+  if (rechazados && window.ilusAlert)
+    await ilusAlert({
+      title: 'Respuestas no aceptadas',
+      message: rechazados + ' respuesta(s) guardadas sin señal ya no se pudieron aplicar.',
+      sub: 'Probablemente otro técnico modificó esas tareas mientras estabas sin ' +
+           'conexión. Recarga la OT y revísalas.',
+      type: 'warning',
+    });
+  if (ok) setTimeout(() => location.reload(), 1200);
+};
+
+(function(){
+  // Al abrir la OT, al volver la señal y cada 30s: se intenta vaciar.
+  document.addEventListener('DOMContentLoaded', function(){
+    otdOutboxPintar();
+    if (navigator.onLine) setTimeout(() => window.otdOutboxFlush(false), 1500);
+  });
+  window.addEventListener('online', function(){
+    if (window.ilusToast) ilusToast('Conexión recuperada — enviando lo pendiente…', {type:'info'});
+    window.otdOutboxFlush(false);
+  });
+  window.addEventListener('offline', function(){
+    if (window.ilusToast) ilusToast('Sin conexión — lo que marques se guarda en el teléfono', {type:'warning'});
+  });
+  setInterval(function(){ if (navigator.onLine) window.otdOutboxFlush(false); }, 30000);
+})();
+
 async function otdChkGuardar(tid, valorCrudo){
   const found = otdChkFindTarea(tid);
   if (!found) return;
@@ -5617,7 +5767,18 @@ async function otdChkGuardar(tid, valorCrudo){
     else if (d.completada) ilusToast('✓ Guardado', {type:'success', duration:1200});
     otdRenderChecklistEquipo(mid);
   } catch(e){
-    ilusToast('Error de red al guardar', {type:'error'});
+    // 🆕 2026-09-02: acá se PERDÍA la respuesta. Ahora se guarda en el
+    // teléfono y se reintenta sola. El técnico ve la marca puesta en
+    // pantalla (optimista) y un aviso de que está pendiente de enviar --
+    // que es la verdad: la marcó, todavía no viajó.
+    otdOutboxPush({
+      vid: OTD_VID, tid: tid, valor: valor,
+      version: t.version || 0, ts: Date.now(),
+      etiqueta: (t.titulo || 'tarea'),
+    });
+    t.completada = true;          // optimista: lo que marcó, se ve marcado
+    otdRenderChecklistEquipo(mid);
+    ilusToast('Sin señal — guardado en el teléfono, se envía solo', {type:'warning'});
   }
 }
 
