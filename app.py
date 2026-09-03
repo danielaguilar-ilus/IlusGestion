@@ -78026,11 +78026,14 @@ def ot2_detalle(vid):
                 "costo_despacho": (int(v["costo_despacho"])
                                    if v.get("costo_despacho") is not None else None),
                 # Equipos de la OT, para la tabla del anexo.
-                "equipos": [
-                    {"nombre": e.get("nombre") or "", "sku": e.get("sku") or "",
-                     "serie": e.get("serie") or ""}
-                    for e in equipos
-                ],
+                # 🔴 2026-09-03 — en mantención/visita/inspección la tabla
+                # del anexo va SOLO con los equipos del plan (ver
+                # _ot_anexo_solo_plan). `equipos` de arriba no trae la
+                # columna del plan (es la lista de trabajo del técnico, que
+                # sí los lleva todos), así que se consulta aparte y se filtra
+                # por id -- sin tocar esa consulta, que alimenta la pestaña
+                # Trabajo y no debe perder ningún equipo.
+                "equipos": _anexo_equipos_del_plan(vid, v.get("tipo"), equipos),
             },
         },
     )
@@ -82303,11 +82306,19 @@ def ot2_api_anexo_pdf(aid):
     productos = []
     if a.get("ot_id"):
         try:
+            # 🔴 2026-09-03 — el filtro del PLAN (ver _ot_anexo_solo_plan).
+            # Este es el anexo que Daniel abre: reconstruye la tabla desde
+            # la base, así que el arreglo hecho en el wizard no lo tocaba.
+            _v_tipo = mysql_fetchone(
+                "SELECT tipo FROM mant_visitas WHERE id=%s", (a["ot_id"],)) or {}
+            _solo_plan = _ot_anexo_solo_plan(_v_tipo.get("tipo"))
+            _sql_plan = " AND COALESCE(m.aplica_mantencion,0)=1 " if _solo_plan else ""
             productos = mysql_fetchall(
                 "SELECT DISTINCT m.sku, m.nombre, COALESCE(m.cantidad,1) AS cantidad "
                 "  FROM mant_visita_tareas t "
                 "  JOIN mant_maquinas m ON m.id = t.maquina_id "
                 " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL "
+                + _sql_plan +
                 " ORDER BY m.nombre", (a["ot_id"],)) or []
             productos = [dict(p) for p in productos]
         except Exception as e:
@@ -87744,6 +87755,53 @@ def _ot_firmante_cliente(vid):
         return dict(r) if r else {}
     except Exception:
         return {}
+
+
+# ── ¿El anexo de esta OT se limita a los equipos DEL PLAN? ─────────────
+# 🔴 2026-09-03 (Daniel, dos veces: "en la generacion de OT por mantencion
+# correctiva el anexo me agrega todos los equipos... si esta filtrado por
+# mantenciones deberan agregar solo los equipos del plan" y despues "con el
+# anexo aun no excluyes los productos del plan, actualmente el anexo en
+# mantencion esta trayendo todo sin segregar").
+# La primera vez se corrigio SOLO el wizard de creacion. Pero el anexo se
+# arma en tres lugares distintos (wizard, modal de la OT ya creada, y el
+# PDF final, que lo reconstruye desde la base) -- y el que Daniel mira es
+# el PDF. La regla vive aca para que los tres usen la MISMA y no vuelvan a
+# divergir.
+# El plan (`mant_maquinas.aplica_mantencion`) manda en mantenciones,
+# visita e inspeccion. En instalacion, cambio, movimiento y desinstalacion
+# NO: ahi hay que dejar constancia de todo lo que se toco, tenga plan o no.
+_OT_TIPOS_CON_PLAN = ("preventiva", "correctiva", "visita_tecnica", "inspeccion")
+
+
+def _anexo_equipos_del_plan(vid, tipo, equipos):
+    """Equipos que van en la TABLA DEL ANEXO de esta OT.
+
+    En mantención, visita e inspección se limita a los del plan; en el
+    resto van todos. Si la consulta del plan falla por lo que sea, se
+    devuelven todos: es preferible un anexo con un equipo de más que uno
+    vacío -- el documento se firma y se paga con esa tabla.
+    """
+    base = [{"nombre": e.get("nombre") or "", "sku": e.get("sku") or "",
+             "serie": e.get("serie") or ""} for e in (equipos or [])]
+    if not _ot_anexo_solo_plan(tipo) or not base:
+        return base
+    try:
+        ids_plan = {int(r["id"]) for r in (mysql_fetchall(
+            "SELECT DISTINCT m.id FROM mant_visita_tareas t "
+            "  JOIN mant_maquinas m ON m.id = t.maquina_id "
+            " WHERE t.visita_id=%s AND COALESCE(m.aplica_mantencion,0)=1", (vid,)) or [])}
+        return [{"nombre": e.get("nombre") or "", "sku": e.get("sku") or "",
+                 "serie": e.get("serie") or ""}
+                for e in (equipos or []) if int(e.get("id") or 0) in ids_plan]
+    except Exception as _e:
+        print(f"[anexo_equipos_plan] vid={vid}: {_e}", flush=True)
+        return base
+
+
+def _ot_anexo_solo_plan(tipo):
+    """True si la tabla de productos del anexo debe limitarse al plan."""
+    return (tipo or "").strip().lower() in _OT_TIPOS_CON_PLAN
 
 
 def _ot_es_interna(v):
