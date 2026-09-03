@@ -97,6 +97,32 @@
   .otd-header-acts .otd-btn{flex:1;justify-content:center}
 }
 
+/* ══ DATOS DE LA OT (formato de la pantalla clásica) ══════════════════
+   🆕 2026-09-02 (Daniel: "llévala como la imagen que te mostré"). Lista
+   etiqueta/valor, no una grilla de chips: se lee de corrido, de arriba
+   abajo, que es como uno revisa los datos de una OT. */
+.otd-dl{padding:4px 16px 14px}
+.otd-dl .fila{display:flex;gap:14px;align-items:flex-start;
+  padding:8px 0;border-bottom:1px solid #f4f5f7}
+.otd-dl .fila:last-child{border-bottom:0}
+.otd-dl .lbl{flex:0 0 88px;font-size:.76rem;font-weight:700;color:#6b7280;padding-top:1px}
+/* REGLA #15: direcciones y nombres de cliente van completos, nunca
+   truncados -- son justo los datos largos de verdad. */
+.otd-dl .val{flex:1;min-width:0;font-size:.85rem;color:#111827;line-height:1.45;
+  overflow-wrap:anywhere}
+.otd-dl .val b{font-weight:800}
+.otd-dl .val.mono{font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.otd-dl .acc{display:inline-flex;align-items:center;gap:4px;margin-left:8px;
+  background:none;border:0;padding:0;cursor:pointer;text-decoration:none;
+  color:var(--ilus-red,#dc2626);font-size:.74rem;font-weight:800;white-space:nowrap}
+.otd-dl .acc:hover{text-decoration:underline}
+.otd-badge-est{display:inline-block;padding:2px 10px;border-radius:99px;
+  font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+.otd-badge-est.e-pend{background:#dbeafe;color:#1e40af}
+.otd-badge-est.e-ejec{background:#fee2e2;color:#991b1b}
+.otd-badge-est.e-comp{background:#dcfce7;color:#166534}
+.otd-badge-est.e-cerr{background:#fef3c7;color:#92400e}
+
 /* ══ FIRMAS CON EL TRAZO REAL ═════════════════════════════════════════
    🖊️ 2026-09-02 (Daniel, comparando con la pantalla clásica: "necesito ver
    las firmas... la información la quiero parecida"). Mismo formato de tres
@@ -141,6 +167,41 @@
 .otd-fpaso.listo .hd .num::after{content:"\F26E";font-family:"bootstrap-icons"}
 .otd-fpaso.listo .hd .num{font-size:.68rem}
 .otd-fpaso .bd{padding:11px 12px}
+
+/* Centro de costo como 3 rectángulos (2026-09-02, Daniel: "tres
+   rectángulos con cada centro de costo para seleccionar"). Cada uno con su
+   color, para que la elección se recuerde por dónde está y de qué color
+   es, no por leer el texto. */
+.otd-cc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.otd-cc{--c:#6b7280;border:2px solid #e5e7eb;background:#fff;border-radius:11px;
+  padding:11px 9px;cursor:pointer;text-align:center;min-height:78px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  transition:border-color .16s,background .16s,transform .14s,box-shadow .18s}
+.otd-cc i{font-size:1.15rem;color:#9ca3af;transition:color .16s}
+.otd-cc b{font-size:.76rem;font-weight:800;color:#374151;line-height:1.2}
+.otd-cc small{font-size:.63rem;color:#9ca3af;line-height:1.2}
+.otd-cc:hover{border-color:var(--c);transform:translateY(-1px)}
+.otd-cc.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 9%,#fff);
+  box-shadow:0 4px 14px -6px var(--c)}
+.otd-cc.on i{color:var(--c)}
+.otd-cc.on b{color:var(--c)}
+@supports not (color: color-mix(in srgb, red 50%, transparent)){
+  .otd-cc.on{background:#f9fafb}
+}
+.otd-cc.cc-sstt{--c:#dc2626} .otd-cc.cc-log{--c:#2563eb} .otd-cc.cc-com{--c:#d97706}
+
+/* Chips de técnicos (2026-09-02, "seleccionar uno o varios técnicos") */
+.otd-tecchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:30px}
+.otd-tecchips .cargando{font-size:.74rem;color:#9ca3af}
+.otd-tecchip{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;
+  border-radius:99px;border:1.5px solid #e5e7eb;background:#fff;cursor:pointer;
+  font-size:.76rem;font-weight:700;color:#374151;
+  transition:border-color .14s,background .14s,color .14s}
+.otd-tecchip:hover{border-color:#dc2626;color:#dc2626}
+.otd-tecchip.on{background:#dc2626;border-color:#dc2626;color:#fff}
+.otd-tecchip .ext{font-size:.58rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;background:#fff8e1;color:#b45309;border-radius:99px;padding:0 5px}
+.otd-tecchip.on .ext{background:rgba(255,255,255,.25);color:#fff}
 
 /* Líneas ZZ leídas del documento (paso 2) */
 .otd-zzl{border:1px solid #bbf7d0;border-radius:9px;overflow:hidden}
@@ -361,13 +422,29 @@
 .d-doc .v{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25}
 .d-doc .sub{font-size:.63rem;font-weight:700;color:#fca5a5;line-height:1.3;margin-top:2px}
 .d-doc.doc-ok .sub{color:#86efac}
-/* El chip es el acceso a gestionar el documento (2026-09-02) */
-.d-doc{cursor:pointer}
+/* 🖱️ El chip ENTERO es un botón, y se ve como tal (2026-09-02, Daniel:
+   "que el botón de gestionar y que toda la tarjeta sea un botón, y que sea
+   como flotante"). Se despega del resto con sombra propia y se levanta al
+   pasar por encima -- deja de parecer un chip informativo más. */
+.d-doc{cursor:pointer;box-shadow:0 6px 18px -8px rgba(0,0,0,.75);
+  transition:transform .16s cubic-bezier(.34,1.4,.64,1),
+             box-shadow .2s ease,background .16s,border-color .16s}
+.d-doc:hover{transform:translateY(-3px)}
+.d-doc.doc-falta:hover{box-shadow:0 12px 26px -8px rgba(220,38,38,.75);
+  border-color:#f87171}
+.d-doc.doc-ok:hover{box-shadow:0 12px 26px -8px rgba(22,163,74,.7);
+  border-color:#4ade80}
+.d-doc:active{transform:translateY(-1px)}
 .d-doc:focus-visible{outline:2px solid #fff;outline-offset:2px}
-.d-doc .sub .ir{display:inline-flex;align-items:center;gap:1px;margin-top:2px;
-  font-weight:900;text-transform:uppercase;letter-spacing:.05em;
-  color:#fff;opacity:.75;transition:opacity .15s}
-.d-doc:hover .sub .ir{opacity:1;text-decoration:underline}
+/* "GESTIONAR →" como botón real dentro de la tarjeta, no como un texto
+   suelto: es lo que Daniel buscaba con la vista y no encontraba. */
+.d-doc .sub .ir{display:inline-flex;align-items:center;gap:2px;margin-top:6px;
+  padding:3px 10px;border-radius:99px;
+  font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);
+  color:#fff;transition:background .16s,gap .16s}
+.d-doc:hover .sub .ir{background:rgba(255,255,255,.26);gap:5px}
+.d-doc .sub .ir i{font-size:.9rem;line-height:1}
 /* Resalte momentáneo al aterrizar en Finanzas desde el chip */
 @keyframes otdFlash{
   0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}
@@ -1409,6 +1486,60 @@
         </div>
       </div>
 
+      {# ══ DATOS DE LA OT ════════════════════════════════════════════════
+         🆕 2026-09-02 (Daniel: "me gustaría que la información del cliente
+         esté en la parte izquierda, inmediatamente después del avance del
+         técnico. Además, llévala como la imagen que te mostré"). La imagen
+         es la tarjeta "Datos de la OT" de la pantalla clásica: etiqueta a
+         la izquierda, valor a la derecha, con los accesos de Reagendar y
+         Reasignar en su fila. Se replica ese formato acá.
+         Los botones llaman a las MISMAS funciones que ya usa el hero
+         (otdAbrirReagendar/otdAbrirReasignar) -- no se duplica el
+         formulario: esas funciones abren su caja y hacen scroll hasta
+         ella, así que funcionan igual desde acá. #}
+      <div class="otd-card">
+        <h3><i class="bi bi-clipboard2-data"></i> Datos de la OT</h3>
+        <div class="otd-dl">
+          <div class="fila"><span class="lbl">N° OT</span>
+            <span class="val"><b>{{ v.numero_ot or ('OT #' ~ v.id) }}</b></span></div>
+          <div class="fila"><span class="lbl">Estado</span>
+            <span class="val"><span class="otd-badge-est e-{{ v.estado_fase or 'pend' }}">
+              {{ v.estado_label or (v.estado or '—') }}</span></span></div>
+          <div class="fila"><span class="lbl">Tipo</span>
+            <span class="val">{{ v.tipo_label or '—' }}</span></div>
+          <div class="fila"><span class="lbl">Cliente</span>
+            <span class="val"><b>{{ v.razon_social or 'Sin cliente asignado' }}</b></span></div>
+          {% if v.cliente_rut %}
+          <div class="fila"><span class="lbl">RUT</span>
+            <span class="val mono">{{ v.cliente_rut | rut_fmt }}</span></div>
+          {% endif %}
+          {% set _dir_ot = v.direccion_visita or v.cliente_direccion %}
+          {% if _dir_ot %}
+          <div class="fila"><span class="lbl">Dirección</span>
+            <span class="val">{{ _dir_ot }}{% if v.cliente_comuna %}, {{ v.cliente_comuna }}{% endif %}
+              <a class="acc" target="_blank" rel="noopener"
+                 href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ ', ' ~ (v.cliente_comuna or '')) | urlencode }}">
+                <i class="bi bi-geo-alt-fill"></i> Abrir mapa</a></span></div>
+          {% endif %}
+          <div class="fila"><span class="lbl">Fecha</span>
+            <span class="val">{{ v.fecha_dia }}{% if v.hora_inicio %} · {{ (v.hora_inicio | string)[:5] }}{% if v.hora_fin %}–{{ (v.hora_fin | string)[:5] }}{% endif %}{% endif %}
+              {% if puede_metadata %}
+              <button type="button" class="acc" onclick="otdAbrirReagendar()">
+                <i class="bi bi-calendar-event"></i> Reagendar</button>
+              {% endif %}</span></div>
+          <div class="fila"><span class="lbl">Técnico</span>
+            <span class="val"><b>{{ v.tecnico_nombre or 'Sin asignar' }}</b>
+              {% if puede_metadata %}
+              <button type="button" class="acc" onclick="otdAbrirReasignar()">
+                <i class="bi bi-person-gear"></i> {{ 'Reasignar' if v.tecnico_nombre else 'Asignar' }}</button>
+              {% endif %}</span></div>
+          {% if v.contacto_nombre %}
+          <div class="fila"><span class="lbl">Recibe</span>
+            <span class="val">{{ v.contacto_nombre }}{% if v.contacto_cargo %} · {{ v.contacto_cargo }}{% endif %}</span></div>
+          {% endif %}
+        </div>
+      </div>
+
       {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
          técnica externa: "le está saliendo centro de costos, sus costos,
          la parte financiera, la factura... eso no es para que ella la
@@ -1510,18 +1641,35 @@
                 <button type="button" class="btn btn-outline-danger" onclick="otdBuscarDocErp()">
                   <i class="bi bi-search"></i> Buscar</button>
               </div>
+              {# 🆔 2026-09-02 (Daniel: "me gustaría que manejáramos el RUT en
+                 vez del nombre del cliente. Si no tiene RUT, estamos con
+                 tremendo problema... el RUT es necesario para llevar un dato
+                 único del cliente, el nombre es muy redundante"). El RUT es
+                 la llave: es lo único que cruza de verdad con el ERP. Buscar
+                 por nombre es el plan B y se muestra como lo que es -- un
+                 problema de datos que hay que ir a arreglar, no una nota al
+                 pie. Por eso, sin RUT, esto es una alerta con acceso directo
+                 a la ficha del cliente. #}
+              {% if v.cliente_rut %}
               <div class="small text-muted" style="margin-bottom:8px">
-                {%- if v.cliente_rut %}
-                  Buscando por el RUT de <b>{{ v.razon_social or 'este cliente' }}</b>
-                  ({{ v.cliente_rut | rut_fmt }}).
-                {%- elif v.razon_social %}
-                  <i class="bi bi-exclamation-triangle-fill" style="color:#b45309"></i>
-                  <b>{{ v.razon_social }}</b> no tiene RUT en su ficha, así que busco por
-                  nombre. Cárgale el RUT para que la búsqueda sea exacta.
-                {%- else %}
-                  Esta OT no tiene cliente asignado: busca el documento por su número.
-                {%- endif -%}
+                Buscando por el RUT de <b>{{ v.razon_social or 'este cliente' }}</b>
+                ({{ v.cliente_rut | rut_fmt }}).
               </div>
+              {% elif v.cliente_id %}
+              <div class="otd-warn" style="margin:0 0 10px">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <div><b>{{ v.razon_social or 'Este cliente' }} no tiene RUT en su ficha.</b>
+                  El RUT es el dato único que cruza con el ERP; sin él la búsqueda es por
+                  nombre y puede traer documentos de otro cliente.
+                  <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" target="_blank"
+                     rel="noopener" style="color:inherit;font-weight:800;text-decoration:underline">
+                    Cargarle el RUT ahora</a>.</div>
+              </div>
+              {% else %}
+              <div class="small text-muted" style="margin-bottom:8px">
+                Esta OT no tiene cliente asignado: busca el documento por su número.
+              </div>
+              {% endif %}
               <div id="otdErpDocResultados" style="display:none;margin-bottom:8px;max-height:220px;
                    overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
               <div id="otdErpDocMsg" class="small text-muted" style="margin-bottom:8px"></div>
@@ -1600,10 +1748,24 @@
                     <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
                   </select>
                 </div>
-                <div>
-                  <label class="form-label small fw-semibold mb-1">Nombre proveedor/instalador</label>
+                <div style="grid-column:1/-1">
+                  {# 🆕 2026-09-02 (Daniel: "acá yo, en globos, o así como en
+                     la OT general, yo dejaría para seleccionar uno o varios
+                     técnicos"). Antes era un campo de texto libre donde
+                     había que escribir el nombre a mano -- se prestaba para
+                     que el mismo técnico quedara escrito de tres formas
+                     distintas y después no cuadrara ningún reporte.
+                     Los chips escriben en el MISMO input de siempre
+                     (separados por " · "), así el guardado y la columna
+                     `proveedor_nombre` no cambian. El campo sigue editable
+                     a mano para un proveedor que no esté en la lista. #}
+                  <label class="form-label small fw-semibold mb-1">¿Quién ejecutó el trabajo?</label>
+                  <div class="otd-tecchips" id="otdTecChips">
+                    <span class="cargando">Cargando técnicos…</span>
+                  </div>
                   <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
-                         maxlength="200" placeholder="Ej: Instalaciones XYZ" value="{{ v.proveedor_nombre or '' }}">
+                         maxlength="200" placeholder="O escríbelo a mano: Ej. Instalaciones XYZ"
+                         value="{{ v.proveedor_nombre or '' }}">
                 </div>
               </div>
             </div>
@@ -1613,13 +1775,33 @@
           <div class="otd-fpaso">
             <div class="hd"><span class="num">4</span> ¿A qué centro de costo se carga?</div>
             <div class="bd">
-              <select id="otdFinCentroCosto" class="form-select form-select-sm">
+              {# 🆕 2026-09-02 (Daniel: "el centro de costo, igual, tres
+                 rectángulos con cada centro de costo para seleccionar").
+                 El <select> sigue existiendo, oculto: es el que lee
+                 otdGuardarFinanzas() y el que marca el paso como listo, así
+                 que no hay que tocar el guardado ni duplicar estado. Los
+                 rectángulos solo lo escriben. #}
+              <select id="otdFinCentroCosto" class="form-select form-select-sm" hidden>
                 <option value="">— Sin definir —</option>
                 <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
                 <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
                 <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
               </select>
-              <div class="otf-hint" style="margin-top:6px">
+              <div class="otd-cc-grid" id="otdCcGrid">
+                <button type="button" class="otd-cc cc-sstt {{ 'on' if v.centro_costo=='sstt' }}"
+                        data-cc="sstt" onclick="otdSetCentroCosto(this)">
+                  <i class="bi bi-wrench-adjustable-circle-fill"></i>
+                  <b>Servicio Técnico</b><small>El costo es nuestro</small></button>
+                <button type="button" class="otd-cc cc-log {{ 'on' if v.centro_costo=='logistica' }}"
+                        data-cc="logistica" onclick="otdSetCentroCosto(this)">
+                  <i class="bi bi-truck"></i>
+                  <b>Logística</b><small>Despacho o bodega</small></button>
+                <button type="button" class="otd-cc cc-com {{ 'on' if v.centro_costo=='comercial' }}"
+                        data-cc="comercial" onclick="otdSetCentroCosto(this)">
+                  <i class="bi bi-briefcase-fill"></i>
+                  <b>Comercial</b><small>Convenio o venta</small></button>
+              </div>
+              <div class="otf-hint" style="margin-top:8px">
                 Si la pérdida no es de Servicio Técnico, cárgala a Logística o Comercial:
                 así el informe de resultados no se la atribuye al área equivocada.
               </div>
@@ -1841,10 +2023,19 @@
             <div class="otf-msg otf-ok"><i class="bi bi-check-circle-fill"></i> OT completada</div>
           {% elif v.estado == 'pendiente_aprobacion' %}
             {% if puede_aprobar %}
-            <button type="button" class="otd-btn pri" style="width:100%;justify-content:center"
-                    onclick="OT2F.abrirAprobacion()">
-              <i class="bi bi-pen-fill"></i> Firmar y cerrar OT como aprobador</button>
-            <div class="otf-hint">El técnico ya firmó. Falta tu firma para cerrar la OT.</div>
+            {# 🔁 2026-09-02 (Daniel: "la parte de firmar OT se repite,
+               entonces hágalo de allí"): el botón grande estaba DOS veces
+               en pantalla -- acá y en la barra inferior fija, que además
+               está siempre visible. Se quita el duplicado y queda el aviso
+               de qué falta, apuntando a la barra. NO se elimina la
+               capacidad: la barra inferior llama a la misma
+               OT2F.abrirAprobacion(). El resto de estados (firma del
+               cliente, firma del técnico, liberar firma) se conserva acá
+               intacto, porque de esos la barra no se hace cargo. #}
+            <div class="otf-msg otf-wait" style="background:#f0fdf4;border-color:#86efac;color:#166534">
+              <i class="bi bi-arrow-down-circle-fill"></i>
+              El técnico ya firmó. Falta tu firma: usa <b>Firmar y cerrar OT</b>
+              en la barra de abajo.</div>
             {% else %}
             <div class="otf-msg otf-wait"><i class="bi bi-clock-history"></i>
               OT firmada — esperando aprobación{% if v.created_by %} de {{ v.created_by }}{% endif %}</div>
@@ -1978,61 +2169,16 @@
           Todavía no hay videos ni documentos adjuntos a esta OT.
         </div>
 
-        {# 🔓 2026-08-30 (Daniel, pedido explícito, 3er punto del mismo
-           mensaje): "la evidencia se va a guardar como se guarda aquí en
-           video y documento, en información" -- la galería de fotos
-           (antes pestaña Evidencia propia, mant_visita_fotos vía
-           /fotos/subir, tipo_foto=general) se fusiona DENTRO de esta misma
-           card, como segunda sección. Sigue siendo un sistema de archivo
-           distinto al de arriba (mant_visita_adjuntos) -- eso NO se
-           unifica, solo la pantalla -- mismos ids (otdEvGrid/otdEvEmpty/
-           otdEvBtn/otdEvCount) y mismo JS de siempre (otdAbrirSheetFoto/
-           otdSubirFoto), sin tocar el backend. #}
-        <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
-          <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
-               text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
-            <i class="bi bi-camera-fill"></i> Fotos
-            <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
-          </div>
-          {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
-             técnico dueño de la visita o superadmin (@_tecnico_owns_visita). #}
-          {% if puede_ejecutar %}
-          <div class="otd-ev-add">
-            <div class="tx">
-              <b>¿Falta evidencia?</b>
-              <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
-            </div>
-            <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
-              <i class="bi bi-camera-fill"></i> Agregar foto
-            </button>
-            <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
-                   style="display:none" onchange="otdSubirFoto(this)">
-            <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
-                   style="display:none" onchange="otdSubirFoto(this)">
-          </div>
-          {% endif %}
-          <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
-            {% for f in fotos %}
-            <div class="otd-ev-item">
-              {% if f.url %}
-                <img src="{{ f.url }}" alt="" loading="lazy">
-              {% else %}
-                <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
-                  <i class="bi bi-image" style="font-size:1.6rem"></i></div>
-              {% endif %}
-              <div class="meta">
-                <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
-                {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
-                <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
-            <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-            Todavía no hay fotos subidas a esta OT.
-          </div>
-        </div>
+        {# 📸 Historia de esta sección, para que no se reponga sin querer:
+           el 2026-08-30 la galería de fotos se fusionó ACÁ, dentro de
+           "Videos y documentos" ("la evidencia se va a guardar como se
+           guarda aquí en video y documento, en información"). El
+           2026-09-02 Daniel pidió sacarla de Información para que la
+           pestaña quede compacta y no haya que scrollear: la galería se
+           MUDÓ a la pestaña Trabajo (ver "Fotos de la OT" allá), que es
+           donde el técnico las toma. Los videos y documentos adjuntos
+           (mant_visita_adjuntos) se quedan acá -- son otro sistema de
+           archivo y Daniel no pidió moverlos. #}
       </div>
 
     </div>
@@ -2150,6 +2296,64 @@
           <span>{{ v.hora_real_fin | chile_fmt('%d/%m/%Y %H:%M') if v.hora_real_fin else 'Sin registrar todavía' }}</span></div>
       </div>
     </div>
+    {# 📸 2026-09-02 (Daniel: "¿sabes que me gustaría que sacaras la
+       parte de evidencia de fotos? Sácala de ahí... así se queda un
+       poco más compacta, la idea es que no sea tan necesario darle
+       tanto scroll"). Las fotos salen de Información y se MUEVEN acá,
+       a Trabajo, que es donde el técnico las toma. No se elimina nada
+       (REGLA #4.2): mismos ids (otdEvGrid/otdEvEmpty/otdEvBtn/
+       otdEvCount), mismo JS y mismos endpoints de siempre -- solo
+       cambia de pestaña. #}
+    <div class="otd-card">
+      <h3><i class="bi bi-camera-fill"></i> Fotos de la OT
+        <span class="n" id="otdEvCountWrap"></span></h3>
+        <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
+          <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
+               text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
+            <i class="bi bi-camera-fill"></i> Fotos
+            <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
+          </div>
+          {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
+             técnico dueño de la visita o superadmin (@_tecnico_owns_visita). #}
+          {% if puede_ejecutar %}
+          <div class="otd-ev-add">
+            <div class="tx">
+              <b>¿Falta evidencia?</b>
+              <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
+            </div>
+            <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
+              <i class="bi bi-camera-fill"></i> Agregar foto
+            </button>
+            <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
+                   style="display:none" onchange="otdSubirFoto(this)">
+            <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
+                   style="display:none" onchange="otdSubirFoto(this)">
+          </div>
+          {% endif %}
+          <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
+            {% for f in fotos %}
+            <div class="otd-ev-item">
+              {% if f.url %}
+                <img src="{{ f.url }}" alt="" loading="lazy">
+              {% else %}
+                <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
+                  <i class="bi bi-image" style="font-size:1.6rem"></i></div>
+              {% endif %}
+              <div class="meta">
+                <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
+                {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
+                <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
+            <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+            Todavía no hay fotos subidas a esta OT.
+          </div>
+        </div>
+    </div>
+
     <div class="otd-card" id="otdWkCard">
       <h3><i class="bi bi-wrench-adjustable-circle-fill"></i> Equipos — detalle de trabajo
         <span class="n">{{ kpis.equipos }}</span>
@@ -3085,6 +3289,80 @@ window.otdVerAnexoPdf = function(aid){
     downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
   });
 };
+
+/* ══ Centro de costo con rectángulos ══════════════════════════════════
+   🆕 2026-09-02 (Daniel: "tres rectángulos con cada centro de costo para
+   seleccionar"). Los botones escriben en el <select> oculto de siempre --
+   una sola fuente de verdad, el guardado no cambió. Se puede
+   deseleccionar volviendo a hacer clic: dejar el centro de costo vacío es
+   un estado válido (la OT queda "sin definir"). */
+window.otdSetCentroCosto = function(btn){
+  const sel = document.getElementById('otdFinCentroCosto');
+  if (!sel) return;
+  const cc = btn.dataset.cc || '';
+  const yaEstaba = btn.classList.contains('on');
+  document.querySelectorAll('#otdCcGrid .otd-cc').forEach(b => b.classList.remove('on'));
+  if (!yaEstaba) btn.classList.add('on');
+  sel.value = yaEstaba ? '' : cc;
+  sel.dispatchEvent(new Event('change', {bubbles: true}));  // repinta el paso y el margen
+};
+
+/* ══ Chips de técnicos ════════════════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "acá yo, en globos, o así como en la OT general,
+   yo dejaría para seleccionar uno o varios técnicos"). Reusa el endpoint
+   que ya alimenta el resto de los selectores de técnico
+   (/mantenciones/api/tecnicos), que además ya distingue internos de
+   externos. Los chips solo COMPONEN el texto del input de siempre; no hay
+   estado paralelo ni columna nueva. */
+(function(){
+  const cont = document.getElementById('otdTecChips');
+  const input = document.getElementById('otdFinProveedorNombre');
+  if (!cont || !input) return;
+
+  const partes = () => (input.value || '').split('·').map(s => s.trim()).filter(Boolean);
+
+  function pintarSeleccion(){
+    const sel = partes();
+    cont.querySelectorAll('.otd-tecchip').forEach(function(ch){
+      ch.classList.toggle('on', sel.includes(ch.dataset.nombre));
+    });
+  }
+
+  fetch('/mantenciones/api/tecnicos')
+    .then(r => r.json())
+    .then(function(lista){
+      if (!Array.isArray(lista) || !lista.length){
+        cont.innerHTML = '<span class="cargando">No hay técnicos registrados — escribe el nombre abajo.</span>';
+        return;
+      }
+      cont.innerHTML = '';
+      lista.forEach(function(t){
+        const nombre = (t.nombre || '').trim();
+        if (!nombre) return;
+        const ch = document.createElement('button');
+        ch.type = 'button';
+        ch.className = 'otd-tecchip';
+        ch.dataset.nombre = nombre;
+        ch.innerHTML = nombre + (t.es_externo ? ' <span class="ext">ext</span>' : '');
+        ch.addEventListener('click', function(){
+          let sel = partes();
+          const i = sel.indexOf(nombre);
+          if (i >= 0) sel.splice(i, 1); else sel.push(nombre);
+          input.value = sel.join(' · ').slice(0, 200);
+          input.dispatchEvent(new Event('input', {bubbles: true}));
+          pintarSeleccion();
+        });
+        cont.appendChild(ch);
+      });
+      pintarSeleccion();
+    })
+    .catch(function(){
+      cont.innerHTML = '<span class="cargando">No se pudo cargar la lista — escribe el nombre abajo.</span>';
+    });
+
+  // Si se escribe a mano, los chips se sincronizan solos.
+  input.addEventListener('input', pintarSeleccion);
+})();
 
 /* 🖱️ 2026-09-02 (Daniel: "falta un botón que me diga dónde gestiono eso...
    o la misma tarjeta pero que me lleve a gestionar eso"). El chip de
