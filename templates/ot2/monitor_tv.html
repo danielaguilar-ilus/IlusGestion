@@ -766,6 +766,21 @@
     .tl-bloque.b-narrow .b-horas{display:none}
     .tl-bloque.b-tiny .b-cliente,.tl-bloque.b-tiny .b-horas{display:none}
     .tl-bloque.b-tiny{padding:0}
+    /* 🔴 2026-09-03 (Daniel: "un trabajo de media hora, cómo lo veríamos en
+       el resumen, porque es chiquitito").
+       Caso real OT-2026-00163: 10:30–11:00 en una jornada de 10 horas = 5%
+       del ancho, unos 57px. Ahí no entra ni "Trabajo interno", así que la
+       burbuja quedaba como un rectángulo vacío: ocupa lugar en la línea de
+       tiempo y no dice nada de lo que hay adentro.
+       Un piso en PÍXELES (no en %) le da a la burbuja corta el espacio
+       mínimo para decir algo. No toca la posición ni la escala: los
+       bloques largos siguen midiendo exactamente lo que duran; solo se
+       impide que uno corto quede impracticable. */
+    .tl-bloque{min-width:104px}
+    /* Con ese piso, una burbuja corta ya no necesita esconder su texto:
+       el ajuste de tipografía (ajustarTextoBloque) mide el ancho REAL y
+       achica hasta que entre. */
+    .tl-bloque.b-tiny .b-cliente{display:block}
 
     /* ════════ ESTADOS — recalibrados para lienzo oscuro (TV a 3 m).
        Jerarquía de brillo: EJECUTANDO es lo único saturado y lo único
@@ -1126,6 +1141,11 @@
     .tvm-ot-cli{margin-top:6px;font-size:19px;font-weight:800;color:var(--ink);letter-spacing:-.01em}
     .tvm-ot-dir{margin-top:2px;font-size:15px;font-weight:600;color:var(--txt-3)}
     /* 2026-08-31 (Daniel: "las lucas" -- solo pantalla de control) */
+    /* 🔉 2026-09-03 (Daniel: "los costos no son tan importantes ahí por
+       esta vez"). Antes competía en peso con el documento y el avance.
+       Baja a nota al pie: chico, gris y con etiqueta, para que se lea
+       cuando se busca y no antes. */
+    .tvm-ot-fin{opacity:.72;font-size:12px}
     .tvm-ot-fin{margin-top:6px;display:flex;align-items:center;gap:10px;
       font-size:15px;font-weight:800;color:var(--ink)}
     .tvm-ot-fin b{font-variant-numeric:tabular-nums}
@@ -2020,7 +2040,15 @@
       nodo.style.top = ''; nodo.style.bottom = ''; nodo.style.height = '';
     }
 
-    const _clienteTxt = b.cliente || b.numero || '';
+    /* En una burbuja angosta, "OT-2026-00163" es ilegible aunque quepa:
+       se muestra el número corto ("OT 163"), que es como se la nombra al
+       hablar. Con cliente, el nombre manda -- ese sí es el dato que se
+       busca a distancia. */
+    const _numCorto = (function(){
+      var m = String(b.numero || '').match(/(\d+)\s*$/);
+      return m ? ('OT ' + String(parseInt(m[1], 10))) : (b.numero || '');
+    })();
+    const _clienteTxt = b.cliente || (w < 9 ? _numCorto : (b.numero || '')) || '';
     const _clienteNodo = $('.b-cliente', nodo);
     setTexto(_clienteNodo, _clienteTxt);
     // 🔧 FIX 2026-08-27 (Daniel, captura real: nombres cortados "Juan D...",
@@ -2216,7 +2244,16 @@
       // resuelto no se dibuja nada (no hay factura/garantía que mostrar,
       // sería ruido) -- pero si a un interno todavía le falta su costo
       // estimado, SÍ se avisa, porque eso también bloquea el cierre.
-      if (b.doc_cierre && !(b.doc_cierre.es_interna && b.doc_cierre.ok)){
+      /* 🔴 2026-09-03 (Daniel, mirando este modal en la OT-2026-00163:
+         "no dice mucha información, como la NVI 639"). La condición
+         escondía la píldora justo cuando una OT INTERNA ya estaba
+         resuelta -- se había pensado como "no mostrar ruido", pero el
+         resultado era que el documento que respalda la OT (la NVI) no
+         aparecía en ninguna parte del resumen. Un documento resuelto no
+         es ruido: es LA información que se viene a buscar acá.
+         Ahora se muestra siempre que haya algo que decir: el número si
+         existe, o lo que falta si no. */
+      if (b.doc_cierre && (b.doc_cierre.label || (b.doc_cierre.faltan || []).length)){
         const dc = b.doc_cierre;
         const pillDoc = el('div', 'tvm-doc ' + (dc.ok ? 'tvm-doc-ok' : 'tvm-doc-falta'));
         const txtDoc = dc.ok
@@ -2239,7 +2276,9 @@
         const margen = precio - costoTot;
         const fin = el('div', 'tvm-ot-fin');
         const fmt = (n) => '$' + Math.round(n).toLocaleString('es-CL');
-        fin.innerHTML = '<span>' + fmt(precio) + '</span>' +
+        // Se rotula: "$10.000 +$10.000" a secas no decía qué era cada cifra.
+        fin.innerHTML = '<span style="opacity:.75">Valorizado</span>' +
+          '<span>' + fmt(precio) + '</span>' +
           '<b style="color:' + (margen < 0 ? '#dc2626' : '#16a34a') + '">' +
           (margen < 0 ? '−' : '+') + fmt(Math.abs(margen)) + '</b>';
         ot.appendChild(fin);
