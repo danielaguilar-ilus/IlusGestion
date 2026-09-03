@@ -6278,14 +6278,27 @@ window.OT2C = (function(){
               if (window.ilusToast) ilusToast('La OT se creó, pero el Anexo no se pudo generar — créalo desde el detalle de la OT.', {type:'warning', duration:7000});
               _o2mIrADetalle(); return;
             }
-            if (S.anexo.enviar_ahora && S.anexo.email_destino.trim()){
+            /* 🔴 FIX 2026-09-03 (Daniel: "tenemos que gestionar la entrega
+               por correo O POR WHATSAPP del proveedor, por eso tiene que
+               agregar el numero como forma opcional, y tambien el correo").
+               Antes esta condicion exigia CORREO: si alguien llenaba solo el
+               telefono para mandarlo por WhatsApp, no se enviaba nada y el
+               anexo quedaba en borrador sin que nadie lo notara -- con la OT
+               bloqueada para el proveedor mientras tanto. Ahora basta con
+               uno de los dos. */
+            if (S.anexo.enviar_ahora &&
+                ((S.anexo.email_destino || '').trim() || (S.anexo.telefono || '').trim())){
               fetch('/ot/api/anexos/'+ra.anexo_id+'/enviar', {
                 method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({email: S.anexo.email_destino, telefono: S.anexo.telefono})
               }).then(function(r2){ return r2.json(); }).then(function(rb){
                 if (window.ilusToast) ilusToast(
-                  (rb && rb.ok) ? '✓ Anexo N°'+ra.numero+' enviado a '+S.anexo.email_destino
-                                : 'El anexo se creó, pero no se pudo enviar el correo — envíalo desde el detalle de la OT.',
+                  (rb && rb.ok)
+                    ? ('✓ Anexo N°'+ra.numero+' listo — '
+                       + ((S.anexo.email_destino||'').trim()
+                          ? ('enviado a '+S.anexo.email_destino)
+                          : 'abre WhatsApp para mandarle el link'))
+                    : 'El anexo se creó, pero no se pudo enviar — envíalo desde el detalle de la OT.',
                   {type:(rb && rb.ok)?'success':'warning', duration:7000});
                 // 2026-08-29 (Daniel: "integra el anexo el envio por mail o
                 // whatsapp"): mismo patrón honesto que ya usa el backend --
