@@ -5844,9 +5844,13 @@ async function otdChkToggleCheck(tid, input){
       return;
     }
     if (r.status === 401 || r.status === 403 || res.noJson){
-      // Sesión caducada: no es un error de datos, y la marca no se perdió.
+      // Sesión caducada (401 / HTML del login) o rechazo de permiso o CSRF
+      // (403). En los dos casos la marca NO se pierde: se encola. Lo que
+      // cambia es el mensaje -- un 403 no es "sin señal" ni "sesión
+      // cerrada", y mandar al técnico a buscar cobertura sería engañarlo.
       input.checked = newVal;
-      await otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal);
+      await otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal,
+                          r.status === 403 ? 'permiso' : 'sesion');
       return;
     }
     if (!res.ok){
@@ -5874,7 +5878,7 @@ async function otdChkToggleCheck(tid, input){
    está bloqueado o lleno --ventana privada, datos de sitio bloqueados--
    NO se pinta la tarea como hecha y se avisa sin adornos: es preferible
    que el técnico la vuelva a responder a que se vaya creyendo que quedó. */
-async function otdChkEncolar(t, mid, tid, valor, kind, input, visual){
+async function otdChkEncolar(t, mid, tid, valor, kind, input, visual, motivo){
   const guardo = otdOutboxPush({
     vid: OTD_VID, tid: tid, kind: kind || 'respuesta', valor: valor,
     version: t.version || 0, ts: Date.now(),
@@ -5893,7 +5897,14 @@ async function otdChkEncolar(t, mid, tid, valor, kind, input, visual){
     return false;
   }
   if (input) input.checked = visual;
-  ilusToast('Sin señal — guardado en el teléfono, se envía solo', {type:'warning'});
+  // El motivo importa: decirle "sin señal" a alguien cuya sesión caducó lo
+  // manda a buscar cobertura donde no hay problema de cobertura.
+  const MSG = {
+    sesion:  'Tu sesión se cerró — quedó guardado en el teléfono, se envía al volver a entrar',
+    permiso: 'El servidor no la aceptó — quedó guardada en el teléfono y se reintenta sola',
+  };
+  ilusToast(MSG[motivo] || 'Sin señal — guardado en el teléfono, se envía solo',
+            {type:'warning'});
   return true;
 }
 
@@ -6107,10 +6118,17 @@ window.otdOutboxFlush = async function(manual){
         });
         const res = await otdRespuestaAfirmativa(r);
         if (res.ok){ ok++; }
-        else if (r.status === 401 || r.status === 403 || res.noJson){
+        else if (r.status === 401 || res.noJson){
           // Sesión caducada o respuesta que no es JSON (típicamente el
           // HTML del login). NO se borra nada: se avisa y se conserva.
           sesion = true;
+          continue;
+        }
+        else if (r.status === 403){
+          // 403 NO es sesión caducada: puede ser que a este técnico le
+          // reasignaron la OT, o un token CSRF que no se pudo reparar.
+          // Se conserva y se reintenta callado -- decirle "tu sesión se
+          // cerró" sería mentirle, y borrarlo le costaría el trabajo.
           continue;
         }
         else if (r.status === 409 || r.status === 404 || r.status === 400){
@@ -6227,7 +6245,8 @@ async function otdChkGuardar(tid, valorCrudo){
       // respuesta se perdía SIN encolarse, porque no hubo excepción y el
       // catch de la bandeja no llegaba a correr nunca. El técnico veía
       // "Error: ?" en cada guardado y perdía todo lo que escribía.
-      await otdChkEncolar(t, mid, tid, valor, 'respuesta', null, null);
+      await otdChkEncolar(t, mid, tid, valor, 'respuesta', null, null,
+                          r.status === 403 ? 'permiso' : 'sesion');
       return;
     }
     if (!res.ok){
