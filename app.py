@@ -4534,6 +4534,12 @@ PERMS_KEYS = (
     # se lee como True a propósito.
     "mant_reagendar",
     "mant_reasignar_tecnico",
+    # 🆕 2026-09-02 — deja que un TÉCNICO abra la pantalla de OT 2.0 en vez
+    # de ser redirigido a la de ejecución clásica. Apagado por defecto: el
+    # bloqueo lo pidió Daniel el 31-ago tras un incidente real (firma
+    # trabada en la OT-125), así que se enciende cuando él lo decida, con
+    # un clic y sin desplegar. Ver el redirect en `ot2_detalle`.
+    "mant_ot2_tecnico",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -4667,6 +4673,9 @@ def _build_perms_from_matrix(role):
                               or bool(man.get("reagendar")))
     base["mant_reasignar_tecnico"] = (man.get("reasignar_tecnico") is None
                                       or bool(man.get("reasignar_tecnico")))
+    # 🆕 2026-09-02 — acceso del TÉCNICO a la pantalla de OT 2.0. Este NO es
+    # de tipo bloqueo: nace apagado y hay que encenderlo a propósito.
+    base["mant_ot2_tecnico"] = bool(man.get("ot2_tecnico"))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
@@ -12567,7 +12576,8 @@ PERMISSIONS_MATRIX = {
                                    # quede liberado para todos y que se pueda
                                    # bloquear por el front en los roles.
                                    # Igual el reasignar el técnico").
-                                   "reagendar", "reasignar_tecnico"]},
+                                   "reagendar", "reasignar_tecnico",
+                                   "ot2_tecnico"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -12640,6 +12650,12 @@ PERMISSIONS_META = {
                          "tipo": "bloqueo", "icon": "bi-calendar-event"},
         "reasignar_tecnico": {"label": "Reasignar el técnico de una OT",
                          "tipo": "bloqueo", "icon": "bi-person-gear"},
+        # 🆕 2026-09-02 — el técnico abre la pantalla nueva de OT 2.0 en vez
+        # de la clásica. Apagado por defecto a propósito: revierte una
+        # decisión que Daniel tomó tras un incidente real, así que se
+        # enciende cuando él quiera probarlo en terreno.
+        "ot2_tecnico":  {"label": "Técnico ve la pantalla de OT 2.0 (en vez de la clásica)",
+                         "tipo": "submodulo", "icon": "bi-phone"},
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
         "cotizaciones_eliminar_item": {"label": "Quitar producto de una cotización",
                          "tipo": "bloqueo", "icon": "bi-x-circle"},
