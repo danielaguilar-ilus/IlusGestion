@@ -444,15 +444,9 @@
   border-color:#4ade80}
 .d-doc:active{transform:translateY(-1px)}
 .d-doc:focus-visible{outline:2px solid #fff;outline-offset:2px}
-/* "GESTIONAR →" como botón real dentro de la tarjeta, no como un texto
-   suelto: es lo que Daniel buscaba con la vista y no encontraba. */
-.d-doc .sub .ir{display:inline-flex;align-items:center;gap:2px;margin-top:6px;
-  padding:3px 10px;border-radius:99px;
-  font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;
-  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);
-  color:#fff;transition:background .16s,gap .16s}
-.d-doc:hover .sub .ir{background:rgba(255,255,255,.26);gap:5px}
-.d-doc .sub .ir i{font-size:.9rem;line-height:1}
+/* La pastilla "GESTIONAR" se retiró el 2026-09-02 a pedido de Daniel: con
+   la tarjeta entera clickeable (cursor + elevación en hover) el texto solo
+   repetía lo que ya se entiende. */
 /* Resalte momentáneo al aterrizar en Finanzas desde el chip */
 @keyframes otdFlash{
   0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}
@@ -778,6 +772,56 @@
 /* 🆕 2026-08-30 -- check-in/check-out (REGLA #15: lenguaje de Retiros,
    tarjetas + semáforo) y semáforo de equipo completo, con la misma
    "palpitancia" que ya usa @keyframes otdPulse en esta pantalla. */
+/* ══ CRONÓMETRO DEL TÉCNICO ═══════════════════════════════════════════
+   🆕 2026-09-02. Reemplaza la barra de check-in/check-out. Sobrio a
+   propósito: es una pieza de MEDICIÓN, no un adorno -- lo que tiene que
+   destacar son los números, no la decoración. */
+.otd-crono{background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  margin-bottom:14px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.otd-crono .hd{display:flex;align-items:center;justify-content:space-between;
+  gap:10px;flex-wrap:wrap;padding:11px 14px;background:#fafbfc;
+  border-bottom:1px solid #f1f3f5}
+.otd-crono .hd .t{font-size:.78rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.06em;color:#374151;display:flex;align-items:center;gap:7px}
+.otd-crono .hd .t i{color:var(--ilus-red,#dc2626)}
+.otd-crono .hd .tot{font-size:.78rem;color:#6b7280;font-weight:700}
+.otd-crono .hd .tot b{color:#0f172a;font-weight:900;font-variant-numeric:tabular-nums}
+.otd-crono .linea{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px;background:#f1f3f5}
+.otd-crono .paso{background:#fff;padding:11px 13px;display:flex;
+  align-items:center;gap:9px;opacity:.55}
+.otd-crono .paso.ok{opacity:1}
+.otd-crono .paso .ic{width:30px;height:30px;border-radius:8px;flex:none;
+  display:grid;place-items:center;background:#f3f4f6;color:#9ca3af;font-size:.9rem}
+.otd-crono .paso.ok .ic{background:#dcfce7;color:#16a34a}
+.otd-crono .paso .tx{min-width:0;display:flex;flex-direction:column}
+.otd-crono .paso b{font-size:.74rem;font-weight:800;color:#374151;line-height:1.2}
+.otd-crono .paso span{font-size:.76rem;color:#6b7280;font-weight:700;
+  font-variant-numeric:tabular-nums}
+.otd-crono .paso.ok span{color:#0f172a}
+.otd-crono .maqs{padding:12px 14px;border-top:1px solid #f1f3f5}
+.otd-crono .maqs .ttl{font-size:.68rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.06em;color:#6b7280;margin-bottom:8px}
+.otd-crono .mq{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+  padding:7px 0;border-bottom:1px solid #f6f7f8}
+.otd-crono .mq:last-of-type{border-bottom:0}
+/* REGLA #15: el nombre del equipo no se corta. */
+.otd-crono .mq .nm{flex:1;min-width:120px;font-size:.82rem;font-weight:800;
+  color:#0f172a;overflow-wrap:anywhere}
+.otd-crono .mq .tk{font-size:.7rem;color:#9ca3af;font-weight:700;white-space:nowrap}
+.otd-crono .mq .hs{font-size:.72rem;color:#6b7280;font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.otd-crono .mq .du{min-width:64px;text-align:right;font-size:.86rem;font-weight:900;
+  color:#16a34a;font-variant-numeric:tabular-nums;white-space:nowrap}
+.otd-crono .mq .du.aprox{color:#b45309}
+.otd-crono .maqs .nota{margin-top:10px;padding:8px 10px;background:#fff8e1;
+  border:1px solid #fcd34d;border-radius:8px;font-size:.72rem;color:#92400e;
+  line-height:1.4}
+@media (max-width:640px){
+  .otd-crono .mq .hs{flex-basis:100%;order:3}
+  .otd-crono .mq .du{order:2}
+}
+
 .otd-checkin-bar{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
 .otd-checkin-bar .ci{display:flex;align-items:center;gap:10px;background:#fff;
   border:1px solid var(--line);border-radius:12px;padding:12px 14px;
@@ -1232,12 +1276,14 @@
            visual es el INVERSO del orden en el HTML. Por eso .sub va
            primero acá para terminar abajo del todo. #}
         <div class="in">
-          <div class="sub gestionar">
-            {%- if not doc_header.ok and doc_header.faltan %}
-              Falta: {{ doc_header.faltan | join(', ') }}<br>
-            {%- endif %}
-            <span class="ir">Gestionar <i class="bi bi-arrow-right-short"></i></span>
-          </div>
+          {# 2026-09-02: la pastilla "GESTIONAR" se quitó por pedido de
+             Daniel ("sácale el gestionar por favor"). Ya no hace falta:
+             la tarjeta ENTERA es el botón (role=button + onclick), así que
+             el texto extra solo ocupaba espacio repitiendo lo que el
+             cursor y el hover ya dicen. #}
+          {% if not doc_header.ok and doc_header.faltan %}
+          <div class="sub">Falta: {{ doc_header.faltan | join(', ') }}</div>
+          {% endif %}
           <span class="k">Documento</span>
           <span class="v">{{ doc_header.label }}</span>
         </div></div>
@@ -1748,14 +1794,20 @@
                            placeholder="0" value="{{ v.costo_despacho if v.costo_despacho is not none else '' }}">
                   </div>
                 </div>
-                <div>
-                  <label class="form-label small fw-semibold mb-1">Tipo</label>
-                  <select id="otdFinProveedorTipo" class="form-select form-select-sm">
-                    <option value="">— Sin definir —</option>
-                    <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
-                    <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
-                  </select>
-                </div>
+                {# 🔇 2026-09-02 (Daniel: "el tipo no le veo sentido, porque
+                   estamos reconociendo los técnicos externos"). Tenía razón:
+                   preguntar "¿interno o externo?" al lado de unos chips que
+                   YA marcan cuáles son externos (badge EXT) es pedir dos
+                   veces el mismo dato, con el riesgo de que se contradigan.
+                   El campo sigue existiendo OCULTO -- es el que guarda
+                   proveedor_tipo -- pero ahora lo DEDUCE el propio chip:
+                   si alguno de los seleccionados es externo, la OT es de
+                   proveedor externo. #}
+                <select id="otdFinProveedorTipo" class="form-select form-select-sm" hidden>
+                  <option value="">— Sin definir —</option>
+                  <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
+                  <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
+                </select>
                 <div style="grid-column:1/-1">
                   {# 🆕 2026-09-02 (Daniel: "acá yo, en globos, o así como en
                      la OT general, yo dejaría para seleccionar uno o varios
@@ -2292,17 +2344,68 @@
        null todavía no se ha marcado ninguna tarea como iniciada; si
        `hora_real_fin` es null la OT no se ha cerrado -- placeholder
        honesto en vez de inventar un dato. #}
-    <div class="otd-checkin-bar">
-      <div class="ci {{ 'ok' if v.hora_real_inicio }}">
-        <span class="ic"><i class="bi bi-box-arrow-in-right"></i></span>
-        <div class="tx"><b>Hora de llegada</b>
-          <span>{{ v.hora_real_inicio | chile_fmt('%d/%m/%Y %H:%M') if v.hora_real_inicio else 'Sin registrar todavía' }}</span></div>
+    {# ══ CRONÓMETRO DEL TÉCNICO ═══════════════════════════════════════
+       🆕 2026-09-02 (Daniel: "tomemos el tiempo al técnico, y separar
+       cuándo comienza la que va en ruta, separando también cuándo comienza
+       a gestionar las máquinas. ¿Cuánto se tomó en cada máquina? Un
+       tracking bien elegante" · "eso me dará muchos puntos en la
+       gerencia").
+       Reemplaza a la barra de check-in/check-out, que solo mostraba dos
+       horas sueltas. Cero columnas nuevas: las marcas ya se guardaban
+       (ruta_iniciada_at, iniciado_at y completada_at por tarea) y nunca se
+       mostraban.
+       ⚠️ Cada tramo dice de dónde salió su hora: cuando el técnico no
+       presionó "Iniciar tarea" se usa la primera tarea COMPLETADA y se
+       marca con ≈. Un cronómetro que finge precisión no sirve para medir
+       a nadie. #}
+    <div class="otd-crono">
+      <div class="hd">
+        <span class="t"><i class="bi bi-stopwatch-fill"></i> Tiempos del técnico</span>
+        {% if cronometro.total_sitio %}
+        <span class="tot">En sitio <b>{{ cronometro.total_sitio }}</b>{% if cronometro.viaje %}
+          · viaje <b>{{ cronometro.viaje }}</b>{% endif %}</span>
+        {% endif %}
       </div>
-      <div class="ci {{ 'ok' if v.hora_real_fin }}">
-        <span class="ic"><i class="bi bi-box-arrow-right"></i></span>
-        <div class="tx"><b>Hora de salida</b>
-          <span>{{ v.hora_real_fin | chile_fmt('%d/%m/%Y %H:%M') if v.hora_real_fin else 'Sin registrar todavía' }}</span></div>
+      {% if cronometro.hay_datos %}
+      <div class="linea">
+        {% for h in cronometro.hitos %}
+        <div class="paso {{ 'ok' if h.hay }}">
+          <span class="ic"><i class="bi {{ h.icono }}"></i></span>
+          <div class="tx"><b>{{ h.label }}</b>
+            <span>{{ ('≈ ' if h.aprox else '') ~ h.cuando if h.hay else 'Sin registrar' }}</span></div>
+        </div>
+        {% endfor %}
       </div>
+
+      {% if cronometro.por_maquina %}
+      <div class="maqs">
+        <div class="ttl">Cuánto tomó cada máquina</div>
+        {% for m in cronometro.por_maquina %}
+        <div class="mq">
+          <span class="nm">{{ m.nombre }}</span>
+          <span class="tk">{{ m.n_ok }}/{{ m.n_tareas }} tareas</span>
+          <span class="hs">{{ m.desde or '—' }}{% if m.hasta %} → {{ m.hasta }}{% endif %}</span>
+          <span class="du {{ 'aprox' if m.aprox }}">
+            {{- ('≈ ' if m.aprox else '') ~ m.duracion if m.duracion else '—' -}}</span>
+        </div>
+        {% endfor %}
+        <div class="nota">
+          <i class="bi bi-info-circle"></i>
+          Los tiempos marcados con <b>≈</b> se calculan desde la primera tarea
+          completada, porque no se registró el "iniciar". Para medir con
+          precisión, el técnico tiene que iniciar la tarea al empezarla.
+        </div>
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="otd-vacio" style="padding:18px 12px">
+        <i class="bi bi-stopwatch" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+        Todavía no hay tiempos registrados en esta OT.
+        <div style="margin-top:6px;font-size:.82rem">
+          Se registran solos a medida que el técnico va iniciando y completando tareas.
+        </div>
+      </div>
+      {% endif %}
     </div>
     {# 📸 2026-09-02 (Daniel: "¿sabes que me gustaría que sacaras la
        parte de evidencia de fotos? Sácala de ahí... así se queda un
@@ -3326,14 +3429,36 @@ window.otdSetCentroCosto = function(btn){
   const cont = document.getElementById('otdTecChips');
   const input = document.getElementById('otdFinProveedorNombre');
   if (!cont || !input) return;
+  // Técnico ya asignado a ESTA OT: se usa para preseleccionar.
+  const TEC_OT = {{ (v.tecnico_nombre or '') | tojson }};
 
   const partes = () => (input.value || '').split('·').map(s => s.trim()).filter(Boolean);
+
+  /* 🆕 2026-09-02 (Daniel: "el tipo no le veo sentido, porque estamos
+     reconociendo los técnicos externos"). El tipo interno/externo se
+     DEDUCE de los chips elegidos en vez de preguntarse aparte: si alguno
+     de los seleccionados es externo, la OT es de proveedor externo. Así el
+     dato no puede contradecirse consigo mismo. */
+  function sincronizarTipo(){
+    const sel = partes();
+    if (!sel.length) return;                 // sin selección no se toca nada
+    let hayExterno = false, hayConocido = false;
+    cont.querySelectorAll('.otd-tecchip').forEach(function(ch){
+      if (!sel.includes(ch.dataset.nombre)) return;
+      hayConocido = true;
+      if (ch.dataset.externo === '1') hayExterno = true;
+    });
+    if (!hayConocido) return;                // escrito a mano: no se adivina
+    const tipo = document.getElementById('otdFinProveedorTipo');
+    if (tipo) tipo.value = hayExterno ? 'externo' : 'interno';
+  }
 
   function pintarSeleccion(){
     const sel = partes();
     cont.querySelectorAll('.otd-tecchip').forEach(function(ch){
       ch.classList.toggle('on', sel.includes(ch.dataset.nombre));
     });
+    sincronizarTipo();
   }
 
   fetch('/mantenciones/api/tecnicos')
@@ -3351,6 +3476,7 @@ window.otdSetCentroCosto = function(btn){
         ch.type = 'button';
         ch.className = 'otd-tecchip';
         ch.dataset.nombre = nombre;
+        ch.dataset.externo = t.es_externo ? '1' : '0';
         ch.innerHTML = nombre + (t.es_externo ? ' <span class="ext">ext</span>' : '');
         ch.addEventListener('click', function(){
           let sel = partes();
@@ -3362,6 +3488,20 @@ window.otdSetCentroCosto = function(btn){
         });
         cont.appendChild(ch);
       });
+      /* 🆕 2026-09-02 (Daniel: "arriba dice que el técnico es Rafael
+         Naranjo, entonces ¿por qué no viene predefinido esto de acá?").
+         Si nadie declaró todavía quién ejecutó, se preselecciona el
+         técnico ASIGNADO a la OT -- que es el dato que ya está arriba en
+         la pantalla. Solo cuando el campo está vacío: si alguien ya
+         declaró algo distinto, no se le pisa. */
+      if (!partes().length && TEC_OT){
+        const yaEsta = Array.from(cont.querySelectorAll('.otd-tecchip'))
+          .some(c => c.dataset.nombre === TEC_OT);
+        if (yaEsta){
+          input.value = TEC_OT;
+          input.dispatchEvent(new Event('input', {bubbles: true}));
+        }
+      }
       pintarSeleccion();
     })
     .catch(function(){

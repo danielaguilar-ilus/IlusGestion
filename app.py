@@ -77575,6 +77575,116 @@ def ot2_detalle(vid):
         print(f"[ot2_detalle] actividad vid={vid}: {_e_act}", flush=True)
         actividad = []
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 🆕 2026-09-02 — CRONÓMETRO DEL TÉCNICO (Daniel: "tomemos el tiempo al
+    # técnico, y separar cuándo comienza la que va en ruta, separando
+    # también cuándo comienza a gestionar las máquinas. ¿Cuánto se tomó en
+    # cada máquina? Un tracking bien elegante" · "eso me dará muchos puntos
+    # en la gerencia").
+    #
+    # NO hay columnas nuevas: las marcas ya se venían guardando y nadie las
+    # mostraba nunca.
+    #   · mant_visitas.ruta_iniciada_at   -> salió hacia el cliente
+    #   · mant_visitas.hora_real_inicio   -> primera tarea iniciada (llegada)
+    #   · mant_visita_tareas.iniciado_at  -> cuándo empezó cada tarea
+    #   · mant_visita_tareas.completada_at-> cuándo la cerró
+    #
+    # ⚠️ HONESTIDAD DEL DATO: `iniciado_at`/`hora_real_inicio` dependen de
+    # que el técnico presione "Iniciar tarea", cosa que en la práctica casi
+    # nunca hace (mismo hueco ya documentado en el fix del tracker). Por eso
+    # cada tramo dice de dónde salió su hora: si no hubo "iniciar", se usa
+    # la primera COMPLETADA de esa máquina y se marca como aproximado, en
+    # vez de inventar una precisión que no existe. Un cronómetro que miente
+    # es peor que no tener cronómetro.
+    # ═══════════════════════════════════════════════════════════════════
+    def _dur_txt(seg):
+        """Segundos -> '2h 15m' / '45m' / '30s'. None si no hay tramo."""
+        if seg is None or seg < 0:
+            return None
+        seg = int(seg)
+        h, resto = divmod(seg, 3600)
+        m = resto // 60
+        if h:
+            return f"{h}h {m}m"
+        if m:
+            return f"{m}m"
+        return f"{seg}s"
+
+    cronometro = {"hitos": [], "por_maquina": [], "total_sitio": None,
+                  "hay_datos": False}
+    try:
+        _t_rows = mysql_fetchall(
+            "SELECT t.maquina_id, "
+            "       MIN(t.iniciado_at)   AS ini, "
+            "       MIN(t.completada_at) AS prim_comp, "
+            "       MAX(t.completada_at) AS ult_comp, "
+            "       COUNT(*)             AS n_tareas, "
+            "       SUM(CASE WHEN t.completada=1 THEN 1 ELSE 0 END) AS n_ok "
+            "  FROM mant_visita_tareas t "
+            " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL "
+            " GROUP BY t.maquina_id", (vid,)) or []
+        _nombre_maq = {int(e["id"]): (e.get("nombre") or f"Equipo #{e['id']}")
+                       for e in equipos if e.get("id")}
+        _sitio_ini, _sitio_fin = None, None
+        for _r in _t_rows:
+            _mid = _r.get("maquina_id")
+            _ini = _r.get("ini") or _r.get("prim_comp")
+            _fin = _r.get("ult_comp")
+            _aprox = not _r.get("ini")     # sin "iniciar" real: es estimado
+            _seg = None
+            if _ini and _fin and _fin >= _ini:
+                _seg = (_fin - _ini).total_seconds()
+            if _ini and (_sitio_ini is None or _ini < _sitio_ini):
+                _sitio_ini = _ini
+            if _fin and (_sitio_fin is None or _fin > _sitio_fin):
+                _sitio_fin = _fin
+            cronometro["por_maquina"].append({
+                "maquina_id": _mid,
+                "nombre": _nombre_maq.get(_mid, f"Equipo #{_mid}"),
+                "desde": chile_fmt_filter(_ini, "%d/%m %H:%M") if _ini else "",
+                "hasta": chile_fmt_filter(_fin, "%d/%m %H:%M") if _fin else "",
+                "duracion": _dur_txt(_seg),
+                "aprox": _aprox,
+                "n_tareas": int(_r.get("n_tareas") or 0),
+                "n_ok": int(_r.get("n_ok") or 0),
+                "_orden": _ini,
+            })
+        # Orden cronológico real: en qué orden atacó las máquinas.
+        cronometro["por_maquina"].sort(
+            key=lambda x: (x["_orden"] is None, x["_orden"]))
+        for _m in cronometro["por_maquina"]:
+            _m.pop("_orden", None)
+
+        _ruta = v.get("ruta_iniciada_at")
+        _lleg = v.get("hora_real_inicio") or _sitio_ini
+        _cierre = v.get("cerrada_at")
+        cronometro["hitos"] = [
+            {"clave": "ruta", "label": "Salió a terreno", "icono": "bi-signpost-2-fill",
+             "cuando": chile_fmt_filter(_ruta, "%d/%m %H:%M") if _ruta else "",
+             "hay": bool(_ruta)},
+            {"clave": "llegada", "label": "Empezó a trabajar", "icono": "bi-box-arrow-in-right",
+             "cuando": chile_fmt_filter(_lleg, "%d/%m %H:%M") if _lleg else "",
+             "hay": bool(_lleg),
+             "aprox": bool(_lleg and not v.get("hora_real_inicio"))},
+            {"clave": "fin", "label": "Última tarea", "icono": "bi-box-arrow-right",
+             "cuando": chile_fmt_filter(_sitio_fin, "%d/%m %H:%M") if _sitio_fin else "",
+             "hay": bool(_sitio_fin)},
+            {"clave": "cierre", "label": "OT cerrada", "icono": "bi-lock-fill",
+             "cuando": chile_fmt_filter(_cierre, "%d/%m %H:%M") if _cierre else "",
+             "hay": bool(_cierre)},
+        ]
+        if _ruta and _lleg and _lleg >= _ruta:
+            cronometro["viaje"] = _dur_txt((_lleg - _ruta).total_seconds())
+        if _sitio_ini and _sitio_fin and _sitio_fin >= _sitio_ini:
+            cronometro["total_sitio"] = _dur_txt(
+                (_sitio_fin - _sitio_ini).total_seconds())
+        cronometro["hay_datos"] = bool(
+            cronometro["por_maquina"] or _ruta or _lleg)
+    except Exception as _e_cron:
+        print(f"[ot2_detalle] cronometro vid={vid}: {_e_cron}", flush=True)
+        cronometro = {"hitos": [], "por_maquina": [], "total_sitio": None,
+                      "hay_datos": False}
+
     # ── Evidencia — pestaña nueva (Daniel 27-ago: "los técnicos no sabían
     # que podían dejar evidencia... buscar la mejor manera de mostrarlo").
     # El dato ya se sube desde hace tiempo (mant_visita_fotos); lo que
@@ -77655,6 +77765,8 @@ def ot2_detalle(vid):
         doc_header=doc_header,
         # 2026-09-02 — bitácora de la OT, estilo "Actividad del ticket".
         actividad=actividad,
+        # 2026-09-02 — cronómetro del técnico (ver el bloque `cronometro`).
+        cronometro=cronometro,
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         puede_eliminar=puede_eliminar,
