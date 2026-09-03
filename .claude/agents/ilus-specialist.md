@@ -118,6 +118,14 @@ perfecto. Corre TODO esto:
 7. **Renderizar antes de desplegar** cuando el cambio es visual. Un preview
    con Playwright detecta al instante que un estilo no se aplicó — que es
    como se cazó el CSS metido en el `<script>`.
+8. **Si pruebas la plantilla CRUDA (sin renderizar por Jinja), quita
+   también `{# … #}`**, no solo `{{ }}` y `{% %}`. Un comentario Jinja
+   dentro de un `<style>` es válido en producción (Jinja lo elimina) pero
+   **mata el parseo del CSS** en una prueba que lee el archivo tal cual:
+   `detalle.html` pasaba de 538 reglas a 170 y parecía un bug gravísimo de
+   producción que no existía. Antes de dar una alarma por un estilo que
+   "no se aplica", verifica cuántas reglas parseó el navegador
+   (`document.styleSheets[0].cssRules.length`).
 
 Y para cualquier feature con estado que el usuario pueda perder (borradores
 sin conexión, colas de reintento): **simula el escenario completo**,

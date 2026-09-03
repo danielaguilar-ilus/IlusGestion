@@ -5833,7 +5833,7 @@ async function otdChkToggleCheck(tid, input){
     if (r.status === 401 || r.status === 403 || res.noJson){
       // Sesión caducada: no es un error de datos, y la marca no se perdió.
       input.checked = newVal;
-      otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal);
+      await otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal);
       return;
     }
     if (!res.ok){
@@ -5852,7 +5852,7 @@ async function otdChkToggleCheck(tid, input){
     // pero 'check' es el tipo POR DEFECTO del checklist -- o sea, el
     // mayoritario. La feature "modo sin señal" no cubría justo el caso
     // más común. Ahora el toggle también se encola.
-    otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal);
+    await otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal);
   }
 }
 
@@ -5980,9 +5980,19 @@ function otdOutboxLeer(){
    y la pantalla igual decía "guardado en el teléfono, se envía solo".
    Mentirle al técnico sobre un dato guardado es peor que no tener la
    feature: se va del sitio confiado y el trabajo no existe. */
+/* Tope de la cola. 🔴 2026-09-02 (hallazgo B1): estaba en 200 y se
+   descartaba lo más viejo EN SILENCIO. No es un número teórico: una OT
+   típica tiene ~7 equipos × ~11 tareas = 77 respuestas, así que tres OT
+   seguidas sin señal ya lo pasaban -- y lo primero en caerse era
+   justamente lo que llevaba más rato esperando. Se sube el tope y, si
+   igual se llega, se avisa en vez de perder trabajo calladamente. */
+const OTD_OUTBOX_MAX = 600;
 function otdOutboxEscribir(arr){
   try {
-    const payload = JSON.stringify(arr.slice(-200));
+    if (arr.length > OTD_OUTBOX_MAX && window.ilusToast)
+      ilusToast('Hay demasiadas respuestas sin enviar — busca señal cuanto antes',
+                {type:'error'});
+    const payload = JSON.stringify(arr.slice(-OTD_OUTBOX_MAX));
     localStorage.setItem(OTD_OUTBOX_KEY, payload);
     return localStorage.getItem(OTD_OUTBOX_KEY) === payload;  // verificar de verdad
   } catch(e){ return false; }
