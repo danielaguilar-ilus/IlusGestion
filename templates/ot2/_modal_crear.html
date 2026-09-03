@@ -1202,8 +1202,19 @@ window.OT2C = (function(){
         // creación de la OT"). Si Daniel pide más adelante que sí sea
         // obligatoria cuando SÍ hay opciones disponibles, agregar acá:
         // `&& (!cachePlantInterno.length || !!S.plantilla_id_interno)`.
+        // 🔴 2026-09-03 (Daniel, urgente): "necesito que el paso 5 me deje
+        // avanzar solo colocando el equipo o el producto manual y la
+        // plantilla... debes sacar el 'qué se hizo' porque AÚN NO SE HA
+        // HECHO, eso va en el checklist, y la foto de evidencia".
+        // Tenía razón de fondo: este paso corre al CREAR la OT, cuando el
+        // trabajo todavía no ocurrió. Exigir la descripción de lo hecho y
+        // una foto de evidencia para poder crearla obligaba a inventar las
+        // dos cosas -- y después el técnico las volvía a registrar de
+        // verdad al ejecutar. Ahora basta con QUÉ se va a intervenir (ítem
+        // de catálogo o manual); el checklist se elige por fila en la
+        // misma tabla.
         if (S.tipo === 'revision_interna')
-          return !!(S.bodega_obs && S.bodega_obs.trim()) && S.bodega_fotos.length > 0;
+          return S.tareas_manuales.length > 0;
         if (esInterno())
           return S.tareas_manuales.length > 0;
         return S.equipos.length > 0 && S.equipos.every(function(e){ return !!e.plantilla_id; });
@@ -4158,19 +4169,15 @@ window.OT2C = (function(){
       '<button type="button" class="btn btn-link btn-sm p-0" onclick="OT2C.abrirTareaManualModal()">'+
       '<i class="bi bi-plus-circle me-1" style="color:#16a34a"></i>Agregar manual</button></div>'+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
-      '<label class="fl">¿Qué se hizo? *</label>'+
-      '<textarea class="form-control mb-3" id="o2mBodegaObs" rows="3" maxlength="1000" '+
-      'placeholder="Ej: Se pegó la baranda de la sala 2 y se instalaron las pizarras del pasillo." '+
-      'oninput="OT2C.setBodegaObs(this.value)">'+esc(S.bodega_obs)+'</textarea>'+
-      '<label class="fl">Fotos de evidencia *</label>'+
-      '<div class="o2m-foto-zone" onclick="document.getElementById(\'o2mBodegaFotoInput\').click()">'+
-      '<input type="file" id="o2mBodegaFotoInput" accept="image/*" capture="environment" multiple style="display:none" '+
-      'onchange="OT2C.bodegaFotoAdd(this.files); this.value=\'\';">'+
-      '<i class="bi bi-camera-fill me-1"></i>Toca para tomar o subir fotos</div>'+
-      '<div class="o2m-foto-grid mb-3" id="o2mBodegaFotoGrid"></div>'+
+      /* 🔴 2026-09-03 — acá vivían "¿Qué se hizo?" y "Fotos de evidencia",
+         los dos obligatorios. Daniel: "aún no se ha hecho, eso va en el
+         checklist y la foto de evidencia". Salen de la CREACIÓN: el técnico
+         describe y fotografía cuando ejecuta, en el checklist de cada ítem.
+         El motor de fotos (bodegaFotoAdd/pintarBodegaFotos y su envío en
+         crear()) NO se elimina (REGLA #4.2): queda intacto y sin uso desde
+         acá, por si alguna vez se quiere volver a pedir una foto al crear. */
       _htmlCostoInterno();
     pintarTareasManuales();
-    pintarBodegaFotos();
     cargarPlantillasInterno();
   }
   function bodegaFotoAdd(files){
