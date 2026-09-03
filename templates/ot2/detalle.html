@@ -931,19 +931,45 @@
    🆕 2026-09-02. Barra fija abajo, sobre la barra de acciones: tiene que
    verse SIEMPRE mientras haya algo sin enviar -- si se pudiera perder de
    vista, el técnico se iría del gimnasio creyendo que guardó. */
-.otd-outbox{position:fixed;left:0;right:0;bottom:0;z-index:95;
+/* 🔴 FIX 2026-09-02 (auditoría, hallazgo A4): este banner y .otd-bottom
+   estaban LOS DOS en bottom:0. Como este tiene z-index mayor, se dibujaba
+   ENCIMA de la barra de acciones y dejaba "Ver PDF" y "Firma del cliente"
+   intocables en el teléfono -- justo mientras había respuestas sin
+   enviar, o sea en el peor momento posible. Ahora se apila sobre ella. */
+.otd-outbox{position:fixed;left:0;right:0;bottom:64px;z-index:95;
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  padding:11px 16px;padding-bottom:calc(11px + env(safe-area-inset-bottom,0px));
+  padding:11px 16px;
   background:#92400e;color:#fff;font-size:.82rem;line-height:1.4;
   box-shadow:0 -6px 18px rgba(0,0,0,.25)}
 @media (min-width:992px){.otd-outbox{left:250px}}
+@media (max-width:640px){.otd-outbox{bottom:74px}}
+/* Sin barra de acciones abajo, el banner vuelve al piso (y respeta el
+   notch del iPhone, que en ese caso sí le toca a él). */
+body:not(:has(.otd-bottom)) .otd-outbox{
+  bottom:0;padding-bottom:calc(11px + env(safe-area-inset-bottom,0px))}
 .otd-outbox > i{font-size:1.15rem;flex:none}
 .otd-outbox > span{flex:1;min-width:180px}
 .otd-outbox b{font-weight:900}
-.otd-outbox button{min-height:38px;padding:0 15px;border-radius:9px;border:0;
+.otd-outbox button{min-height:44px;padding:0 15px;border-radius:9px;border:0;
   background:#fff;color:#92400e;font-size:.8rem;font-weight:900;cursor:pointer;
   white-space:nowrap}
 .otd-outbox button:hover{background:#fff8e1}
+/* Y que el final del contenido no quede debajo del banner (lo pone y lo
+   quita otdOutboxPintar). ~86px = alto real del banner con 2 líneas. */
+body.has-outbox .otd.has-bottombar{padding-bottom:150px}
+@media (max-width:640px){body.has-outbox .otd.has-bottombar{padding-bottom:170px}}
+body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
+
+/* ══ TOQUE DE 44px EN EL CHECKLIST (REGLA #3) ═════════════════════════
+   🔴 FIX 2026-09-02 (auditoría, hallazgo M7). Estos son EXACTAMENTE los
+   botones que el técnico aprieta en terreno --con guantes, con el dedo
+   mojado, apurado-- y estaban entre 34 y 38px. mobile.css no los alcanza
+   porque su corrección apunta a .btn/.ilus-btn, no a estas clases. */
+@media (max-width:768px){
+  .otd-chk-pill,.otd-chk-save,.otd-chk-fotobtn,.otd-fs-btn,
+  .otd-chk-serie-quick button{min-height:44px}
+  .otd-chk-serie-quick button{padding-left:14px;padding-right:14px}
+}
 
 /* ══ BARRA DEL TÉCNICO EN TRABAJO ═════════════════════════════════════
    🆕 2026-09-02 (Daniel: "que el técnico pueda... buscar un equipo en
@@ -5286,8 +5312,17 @@ function otdChkEstaBloqueada(t){
   if (OTD_IS_SUPERADMIN) return false;
   if (!t.locked_by_user_id || t.locked_by_user_id === OTD_CURRENT_UID) return false;
   if (!t.locked_at) return false;
-  const mins = (Date.now() - new Date(t.locked_at.replace(' ', 'T')).getTime()) / 60000;
-  return mins < 10;
+  // 🔴 FIX 2026-09-02 (auditoría, hallazgo A5). El backend manda
+  // "2026-09-02 18:00:00" SIN zona, y MySQL guarda en UTC (REGLA #6). Sin
+  // la "Z", el teléfono chileno lo leía como hora LOCAL -> el instante
+  // quedaba 3-4 h en el FUTURO -> mins salía negativo -> "menor que 10"
+  // daba true igual, y la tarea se veía bloqueada por otro técnico
+  // durante 4 HORAS en vez de los 10 minutos que el servidor aplica.
+  // Recargar no lo arreglaba. Misma normalización que _otdHumanizeAgo.
+  const s = String(t.locked_at).replace(' ', 'T');
+  const iso = (s.endsWith('Z') || s.includes('+')) ? s : s + 'Z';
+  const mins = (Date.now() - new Date(iso).getTime()) / 60000;
+  return mins >= 0 && mins < 10;
 }
 
 function otdChkFotosHtml(t){
@@ -5662,7 +5697,12 @@ function otdChkFindTarea(tid){
 async function otdChkTomarLock(tid){
   if (OTD_IS_SUPERADMIN) return true;
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/lock`, {method:'POST'});
+    // Plazo corto a propósito (3 s): el candado es una cortesía entre
+    // técnicos, no la protección real -- esa es el chequeo de versión del
+    // servidor. Si la red está lenta, es preferible seguir y que la
+    // respuesta se guarde (o se encole) a dejar al técnico esperando.
+    const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/lock`,
+                             {method:'POST'}, 3000);
     if (r.status === 423){
       const d = await r.json().catch(() => ({}));
       ilusToast(d.error || 'Otro técnico está respondiendo esta tarea.', {type:'warning'});
@@ -5684,28 +5724,72 @@ async function otdChkToggleCheck(tid, input){
   }
   if (!await otdChkTomarLock(tid)){ input.checked = !newVal; return; }
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}`, {
+    const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}`, {
       method: 'PATCH', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ completada: newVal ? 1 : 0, version: t.version || 0 })
     });
-    const d = await r.json().catch(() => ({}));
+    const res = await otdRespuestaAfirmativa(r);
+    const d = res.d || {};
     if (r.status === 409){
+      // 🔴 FIX 2026-09-02 (hallazgo A7): antes se salía SIN devolver el
+      // checkbox a su lugar -- quedaba marcado en pantalla y desmarcado en
+      // la base. El técnico creía la tarea hecha.
+      input.checked = !newVal;
       ilusToast('Otro técnico modificó esta tarea. Recarga la página.', {type:'warning'});
       return;
     }
-    if (!r.ok || !d.ok){
+    if (r.status === 401 || r.status === 403 || res.noJson){
+      // Sesión caducada: no es un error de datos, y la marca no se perdió.
+      input.checked = newVal;
+      otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal);
+      return;
+    }
+    if (!res.ok){
       input.checked = !newVal;
-      ilusToast('Error: ' + (d.error || '?'), {type:'error'});
+      ilusToast('Error: ' + (d.error || 'no se pudo guardar'), {type:'error'});
       return;
     }
     t.completada = newVal;
     if (typeof d.version === 'number') t.version = d.version;
+    otdOutboxDrop(OTD_VID, tid);   // si estaba encolada, ya no hace falta
     ilusToast(newVal ? '✓ Marcado' : '○ Desmarcado', {type:'success', duration:1200});
     otdRenderChecklistEquipo(mid);
   } catch(e){
-    input.checked = !newVal;
-    ilusToast('Error de red', {type:'error'});
+    // 🔴 FIX 2026-09-02 (hallazgo CRÍTICO C2): acá se PERDÍA la marca. La
+    // bandeja de salida solo alimentaba las respuestas de texto/número,
+    // pero 'check' es el tipo POR DEFECTO del checklist -- o sea, el
+    // mayoritario. La feature "modo sin señal" no cubría justo el caso
+    // más común. Ahora el toggle también se encola.
+    otdChkEncolar(t, mid, tid, newVal ? 1 : 0, 'toggle', input, newVal);
   }
+}
+
+/* Encola una respuesta que no pudo viajar, y dice la VERDAD sobre si de
+   verdad quedó guardada en el teléfono (hallazgo A1). Si localStorage
+   está bloqueado o lleno --ventana privada, datos de sitio bloqueados--
+   NO se pinta la tarea como hecha y se avisa sin adornos: es preferible
+   que el técnico la vuelva a responder a que se vaya creyendo que quedó. */
+async function otdChkEncolar(t, mid, tid, valor, kind, input, visual){
+  const guardo = otdOutboxPush({
+    vid: OTD_VID, tid: tid, kind: kind || 'respuesta', valor: valor,
+    version: t.version || 0, ts: Date.now(),
+    etiqueta: (t.titulo || 'tarea'),
+  });
+  if (!guardo){
+    if (input) input.checked = !visual;
+    await ilusAlert({
+      title: 'No pude guardar en este teléfono',
+      message: 'Tu respuesta NO quedó guardada ni enviada. Anótala y vuelve a ' +
+               'intentarlo cuando tengas señal.',
+      sub: 'El navegador tiene el almacenamiento bloqueado o lleno ' +
+           '(¿ventana privada?).',
+      type: 'error',
+    });
+    return false;
+  }
+  if (input) input.checked = visual;
+  ilusToast('Sin señal — guardado en el teléfono, se envía solo', {type:'warning'});
+  return true;
 }
 
 async function otdChkGuardarInput(tid){
@@ -5748,6 +5832,43 @@ async function otdChkUsarSerieSugerida(tid, sugerida){
 const OTD_OUTBOX_KEY = 'ilus_ot2_outbox_v1';
 const OTD_OUTBOX_MAX_HORAS = 72;
 
+/* ── otdFetch: fetch CON PLAZO MÁXIMO ────────────────────────────────
+   🔴 FIX 2026-09-02 (auditoría, hallazgo CRÍTICO C3). `fetch` a secas no
+   se rinde nunca. El caso típico en un gimnasio NO es "sin red": es WiFi
+   asociado sin salida a internet, o LTE con una barra. Ahí la promesa
+   queda colgada varios minutos, `navigator.onLine` sigue diciendo true,
+   NO se dispara el catch, y por lo tanto NO se encola nada. Si Android
+   mata la pestaña por RAM en ese rato, todo lo que el técnico tocó
+   desaparece sin dejar rastro -- justo el escenario que la bandeja de
+   salida existe para evitar.
+   Con AbortController el cuelgue se convierte en un error real, cae en el
+   catch de siempre, y la respuesta se guarda en el teléfono.
+   Es `function` (no const) a propósito: se hoistea, así puede usarse en
+   funciones definidas más arriba de este punto del mismo <script>. */
+function otdFetch(url, init, ms){
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms || 12000);
+  return fetch(url, Object.assign({}, init || {}, { signal: ctrl.signal }))
+    .finally(() => clearTimeout(t));
+}
+
+/* ── ¿la respuesta del servidor es un SÍ de verdad? ──────────────────
+   🔴 FIX 2026-09-02 (hallazgo CRÍTICO C1). `r.ok` NO alcanza: con la
+   sesión caducada el servidor redirigía al login, `fetch` seguía el 302
+   solo, y llegaba un **200 con el HTML del login**. La cola lo leía como
+   éxito, BORRABA las respuestas y mostraba "✓ 4 respuestas sincronizadas"
+   1,2 s antes de mandar al técnico al login. Nunca llegaron a la base.
+   Ya se corrigió también del lado del servidor (ahora /mantenciones/api/
+   contesta 401 JSON en vez de redirigir), pero esta segunda capa se queda:
+   ante la duda, la respuesta se CONSERVA. Perder trabajo del técnico es
+   mucho peor que reintentar de más. */
+async function otdRespuestaAfirmativa(r){
+  const ct = (r.headers.get('content-type') || '');
+  if (!ct.includes('application/json')) return { ok:false, d:null, noJson:true };
+  const d = await r.json().catch(() => null);
+  return { ok: !!(r.ok && d && d.ok === true), d: d, noJson:false };
+}
+
 function otdOutboxLeer(){
   try {
     const raw = localStorage.getItem(OTD_OUTBOX_KEY);
@@ -5759,43 +5880,89 @@ function otdOutboxLeer(){
     return arr.filter(x => x && x.ts && x.ts > limite);
   } catch(e){ return []; }
 }
+
+/* Devuelve true SOLO si de verdad quedó escrito.
+   🔴 FIX 2026-09-02 (hallazgo A1): antes se tragaba el error en silencio.
+   En una ventana privada de Chrome Android, o con el almacenamiento del
+   sitio bloqueado o lleno, la escritura falla, el banner ni se dibuja...
+   y la pantalla igual decía "guardado en el teléfono, se envía solo".
+   Mentirle al técnico sobre un dato guardado es peor que no tener la
+   feature: se va del sitio confiado y el trabajo no existe. */
 function otdOutboxEscribir(arr){
-  try { localStorage.setItem(OTD_OUTBOX_KEY, JSON.stringify(arr.slice(-200))); }
-  catch(e){ /* almacenamiento lleno o bloqueado: no romper la pantalla */ }
+  try {
+    const payload = JSON.stringify(arr.slice(-200));
+    localStorage.setItem(OTD_OUTBOX_KEY, payload);
+    return localStorage.getItem(OTD_OUTBOX_KEY) === payload;  // verificar de verdad
+  } catch(e){ return false; }
 }
+
 function otdOutboxPush(item){
   const arr = otdOutboxLeer();
   // Una sola entrada por tarea: si el técnico corrige la respuesta antes
   // de recuperar señal, se manda la ÚLTIMA, no las dos.
-  const i = arr.findIndex(x => x.vid === item.vid && x.tid === item.tid);
+  const i = arr.findIndex(x => String(x.vid) === String(item.vid) && x.tid === item.tid);
   if (i >= 0) arr[i] = item; else arr.push(item);
-  otdOutboxEscribir(arr);
+  const guardo = otdOutboxEscribir(arr);
   otdOutboxPintar();
+  return guardo;
 }
+
+/* Saca una entrada de la cola. Se usa cuando la misma tarea se logró
+   guardar por el camino normal (con señal): si no, el próximo vaciado
+   mandaría la versión vieja y el servidor la rechazaría con un 409,
+   disparando la alerta falsa de "otro técnico modificó esta tarea". */
+function otdOutboxDrop(vid, tid){
+  const arr = otdOutboxLeer();
+  const resto = arr.filter(x => !(String(x.vid) === String(vid) && x.tid === tid));
+  if (resto.length !== arr.length){ otdOutboxEscribir(resto); otdOutboxPintar(); }
+}
+
 function otdOutboxPintar(){
-  const arr = otdOutboxLeer().filter(x => String(x.vid) === String(OTD_VID));
+  const todo = otdOutboxLeer();
+  const mios  = todo.filter(x => String(x.vid) === String(OTD_VID));
+  const otras = todo.length - mios.length;
   let el = document.getElementById('otdOutboxBanner');
-  if (!arr.length){ if (el) el.remove(); return; }
+  if (!todo.length){
+    if (el) el.remove();
+    document.body.classList.remove('has-outbox');
+    return;
+  }
   if (!el){
     el = document.createElement('div');
     el.id = 'otdOutboxBanner';
     el.className = 'otd-outbox';
     document.body.appendChild(el);
   }
+  // 🔴 FIX 2026-09-02 (hallazgo A2): antes el banner solo contaba las de
+  // ESTA OT. El técnico que hacía la OT-A sin señal y abría la OT-B no
+  // veía nada, y esas respuestas se borraban solas a las 72 h.
+  let txt = '<b>' + mios.length + ' respuesta' + (mios.length === 1 ? '' : 's') +
+            ' sin enviar' + (otras ? ' en esta OT' : '') + '.</b>';
+  if (otras) txt += ' <b>' + otras + '</b> en otras OT.';
+  if (!mios.length) txt = '<b>' + otras + ' respuesta' + (otras === 1 ? '' : 's') +
+                          ' sin enviar de otra OT.</b>';
+  txt += ' Se guardaron en este teléfono y se mandan solas al volver la señal.';
   el.innerHTML =
-    '<i class="bi bi-cloud-arrow-up-fill"></i>' +
-    '<span><b>' + arr.length + ' respuesta' + (arr.length === 1 ? '' : 's') +
-    ' sin enviar.</b> Se guardaron en este teléfono y se mandan solas al ' +
-    'volver la señal.</span>' +
+    '<i class="bi bi-cloud-arrow-up-fill"></i><span>' + txt + '</span>' +
     '<button type="button" onclick="otdOutboxFlush(true)">Reintentar</button>';
+  document.body.classList.add('has-outbox');
 }
 
 /* Reenvía lo pendiente. `manual` solo cambia los avisos: el técnico que
    aprieta "Reintentar" merece saber si funcionó o no. */
+let _otdFlushing = false;
 window.otdOutboxFlush = async function(manual){
+  // 🔴 FIX 2026-09-02 (hallazgo M2): sin este candado, el temporizador de
+  // 30 s, el evento "online" y el botón "Reintentar" podían solaparse y
+  // postear DOS VECES el mismo ítem. El segundo recibía 409 y disparaba
+  // la alerta "otro técnico modificó esas tareas" sin que hubiera nadie
+  // más -- un susto falso en medio del trabajo.
+  if (_otdFlushing){
+    if (manual && window.ilusToast) ilusToast('Ya se está enviando…', {type:'info'});
+    return;
+  }
   let arr = otdOutboxLeer();
-  const mios = arr.filter(x => String(x.vid) === String(OTD_VID));
-  if (!mios.length){
+  if (!arr.length){
     if (manual && window.ilusToast) ilusToast('No hay nada pendiente', {type:'info'});
     return;
   }
@@ -5803,40 +5970,81 @@ window.otdOutboxFlush = async function(manual){
     if (manual && window.ilusToast) ilusToast('Sigue sin conexión — lo guardado no se pierde', {type:'warning'});
     return;
   }
-  let ok = 0, rechazados = 0;
-  for (const it of mios){
-    try {
-      const r = await fetch(`/mantenciones/api/visitas/${it.vid}/tareas/${it.tid}/respuesta`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ valor: it.valor, version: it.version || 0 })
-      });
-      if (r.ok){ ok++; }
-      else if (r.status === 409 || r.status === 404 || r.status === 400){
-        // El servidor dijo que no. Sacarlo de la cola: insistir no lo va a
-        // arreglar y podría pisar lo que hizo otro técnico.
-        rechazados++;
-      } else {
-        continue;   // 5xx u otro: se deja para el próximo intento
+  _otdFlushing = true;
+  let ok = 0, rechazados = 0, sesion = false;
+  const nombres = [];
+  try {
+    // Se recorre TODO, no solo esta OT (hallazgo A2): la URL ya se arma
+    // con el vid de cada ítem, o sea que el diseño siempre lo contempló.
+    for (const it of arr.slice()){
+      try {
+        const esToggle = (it.kind === 'toggle');
+        const url  = esToggle
+          ? `/mantenciones/api/visitas/${it.vid}/tareas/${it.tid}`
+          : `/mantenciones/api/visitas/${it.vid}/tareas/${it.tid}/respuesta`;
+        const body = esToggle
+          ? { completada: it.valor ? 1 : 0, version: it.version || 0 }
+          : { valor: it.valor, version: it.version || 0 };
+        const r = await otdFetch(url, {
+          method: esToggle ? 'PATCH' : 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        const res = await otdRespuestaAfirmativa(r);
+        if (res.ok){ ok++; }
+        else if (r.status === 401 || r.status === 403 || res.noJson){
+          // Sesión caducada o respuesta que no es JSON (típicamente el
+          // HTML del login). NO se borra nada: se avisa y se conserva.
+          sesion = true;
+          continue;
+        }
+        else if (r.status === 409 || r.status === 404 || r.status === 400){
+          // El servidor dijo que no. Sacarlo de la cola: insistir no lo va a
+          // arreglar y podría pisar lo que hizo otro técnico.
+          rechazados++;
+          if (it.etiqueta) nombres.push(it.etiqueta);
+        } else {
+          continue;   // 5xx u otro: se deja para el próximo intento
+        }
+        arr = arr.filter(x => !(String(x.vid) === String(it.vid) && x.tid === it.tid));
+        otdOutboxEscribir(arr);
+      } catch(e){
+        break;        // volvió a caerse la red: se corta y se reintenta luego
       }
-      arr = arr.filter(x => !(x.vid === it.vid && x.tid === it.tid));
-      otdOutboxEscribir(arr);
-    } catch(e){
-      break;        // volvió a caerse la red: se corta y se reintenta luego
     }
+  } finally {
+    _otdFlushing = false;
   }
   otdOutboxPintar();
   if (ok && window.ilusToast)
     ilusToast('✓ ' + ok + ' respuesta' + (ok === 1 ? '' : 's') + ' sincronizada' +
               (ok === 1 ? '' : 's'), {type:'success'});
+  if (sesion && window.ilusAlert)
+    await ilusAlert({
+      title: 'Tu sesión se cerró',
+      message: 'Lo que respondiste sigue guardado en este teléfono — no se perdió nada.',
+      sub: 'Vuelve a entrar y se enviará solo.',
+      type: 'warning',
+    });
   if (rechazados && window.ilusAlert)
     await ilusAlert({
       title: 'Respuestas no aceptadas',
       message: rechazados + ' respuesta(s) guardadas sin señal ya no se pudieron aplicar.',
-      sub: 'Probablemente otro técnico modificó esas tareas mientras estabas sin ' +
-           'conexión. Recarga la OT y revísalas.',
+      sub: (nombres.length ? 'Tareas: ' + nombres.join(' · ') + '. ' : '') +
+           'Probablemente otro técnico modificó esas tareas mientras estabas sin ' +
+           'conexión. Revísalas.',
       type: 'warning',
     });
-  if (ok) setTimeout(() => location.reload(), 1200);
+  // 🔴 FIX 2026-09-02 (hallazgo A3): antes acá había un location.reload()
+  // automático. Como el vaciado corre SOLO cada 30 s y al volver la señal,
+  // la página se recargaba bajo los dedos del técnico justo cuando estaba
+  // escribiendo una observación larga -- y el texto no guardado se perdía.
+  // Ahora se refrescan los DATOS, no la página.
+  if (ok){
+    OTD_CHK_LOADED = false;
+    try { await otdCargarChecklistSiHaceFalta(); } catch(e){}
+    if (window.otdWkRefrescarProgreso) window.otdWkRefrescarProgreso();
+  }
 };
 
 (function(){
@@ -5852,6 +6060,11 @@ window.otdOutboxFlush = async function(manual){
   window.addEventListener('offline', function(){
     if (window.ilusToast) ilusToast('Sin conexión — lo que marques se guarda en el teléfono', {type:'warning'});
   });
+  // Si el técnico tiene la OT abierta en dos pestañas, que el banner de
+  // una refleje lo que encoló la otra (hallazgo M4, mitigación parcial).
+  window.addEventListener('storage', function(ev){
+    if (ev && ev.key === OTD_OUTBOX_KEY) otdOutboxPintar();
+  });
   setInterval(function(){ if (navigator.onLine) window.otdOutboxFlush(false); }, 30000);
 })();
 
@@ -5863,13 +6076,25 @@ async function otdChkGuardar(tid, valorCrudo){
   let valor = valorCrudo;
   if (tipo === 'numero') valor = valorCrudo === '' ? null : Number(valorCrudo);
   if (tipo === 'fecha_hora') valor = valorCrudo;
+  // 🔴 FIX 2026-09-02 (auditoría, hallazgo M6): la foto obligatoria se
+  // exigía solo en las tareas de checkbox. Una tarea sino/texto/numero con
+  // requiere_foto=1 se completaba SIN foto, quedaba verde y hasta encendía
+  // el aviso "todo listo para firmar"... y después el servidor rechazaba
+  // la firma (regla R3). El técnico se enteraba al final del trabajo, ya
+  // fuera del sitio. Mejor decírselo ahora, que la puede tomar.
+  const _valorVacio = (valor === null || valor === '' || valor === undefined);
+  if (!_valorVacio && t.requiere_foto && !(t.fotos && t.fotos.length)){
+    ilusToast('Esta tarea exige una foto — adjúntala para poder cerrarla', {type:'warning'});
+    return;
+  }
   if (!await otdChkTomarLock(tid)) return;
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/respuesta`, {
+    const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/respuesta`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ valor, version: t.version || 0 })
     });
-    const d = await r.json().catch(() => ({}));
+    const res = await otdRespuestaAfirmativa(r);
+    const d = res.d || {};
     if (r.status === 409){
       ilusToast('Otro técnico modificó esta tarea. Recarga la página.', {type:'warning'});
       return;
@@ -5878,13 +6103,24 @@ async function otdChkGuardar(tid, valorCrudo){
       ilusToast('El checklist de este equipo cambió — recarga la página.', {type:'warning'});
       return;
     }
-    if (!r.ok || !d.ok){
-      ilusToast('Error: ' + (d.error || '?'), {type:'error'});
+    if (r.status === 401 || r.status === 403 || res.noJson){
+      // 🔴 FIX 2026-09-02 (hallazgo CRÍTICO C1, segundo síntoma): con la
+      // sesión caducada llegaba el HTML del login como 200. El r.json()
+      // fallaba, d quedaba {}, y salía el toast inútil "Error: ?" -- la
+      // respuesta se perdía SIN encolarse, porque no hubo excepción y el
+      // catch de la bandeja no llegaba a correr nunca. El técnico veía
+      // "Error: ?" en cada guardado y perdía todo lo que escribía.
+      await otdChkEncolar(t, mid, tid, valor, 'respuesta', null, null);
+      return;
+    }
+    if (!res.ok){
+      ilusToast('Error: ' + (d.error || 'no se pudo guardar'), {type:'error'});
       return;
     }
     t.completada = d.completada;
     t.valor_json = d.valor_norm;
     if (typeof d.version === 'number') t.version = d.version;
+    otdOutboxDrop(OTD_VID, tid);   // ya viajó: que no quede duplicada en la cola
     if (d.warning) ilusToast(d.warning, {type:'warning'});
     else if (d.completada) ilusToast('✓ Guardado', {type:'success', duration:1200});
     otdRenderChecklistEquipo(mid);
@@ -5893,14 +6129,34 @@ async function otdChkGuardar(tid, valorCrudo){
     // teléfono y se reintenta sola. El técnico ve la marca puesta en
     // pantalla (optimista) y un aviso de que está pendiente de enviar --
     // que es la verdad: la marcó, todavía no viajó.
-    otdOutboxPush({
-      vid: OTD_VID, tid: tid, valor: valor,
-      version: t.version || 0, ts: Date.now(),
-      etiqueta: (t.titulo || 'tarea'),
-    });
-    t.completada = true;          // optimista: lo que marcó, se ve marcado
-    otdRenderChecklistEquipo(mid);
-    ilusToast('Sin señal — guardado en el teléfono, se envía solo', {type:'warning'});
+    const guardo = await otdChkEncolar(t, mid, tid, valor, 'respuesta', null, null);
+    if (guardo){
+      // 🔴 FIX 2026-09-02 (hallazgo A8): antes solo se marcaba
+      // `t.completada = true` y se re-renderizaba. Como la pantalla dibuja
+      // los valores desde `t.valor_json`, el texto que el técnico acababa
+      // de escribir DESAPARECÍA del input al repintar -- mientras el ítem
+      // se ponía verde. Veía su trabajo borrarse y lo volvía a escribir.
+      // Ahora se normaliza el valor igual que lo hace el backend.
+      t.valor_json = otdChkValorLocal(tipo, valor);
+      t.completada = true;          // optimista: lo que marcó, se ve marcado
+      otdRenderChecklistEquipo(mid);
+    }
+  }
+}
+
+/* Copia en el cliente de la normalización que hace el backend al guardar
+   una respuesta, para que el re-render optimista muestre EXACTAMENTE lo
+   que el técnico escribió (ver hallazgo A8). Si aparece un tipo nuevo,
+   cae en {valor} -- el mismo comodín que usa el servidor. */
+function otdChkValorLocal(tipo, valor){
+  switch ((tipo || '').toLowerCase()){
+    case 'texto':       return { texto: valor };
+    case 'numero':      return { numero: valor };
+    case 'serie':       return { serie: valor };
+    case 'lista':       return { opcion: valor };
+    case 'fecha_hora':  return { fecha: valor };
+    case 'gps':         return valor;
+    default:            return { valor: valor };
   }
 }
 

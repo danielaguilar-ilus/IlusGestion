@@ -5985,8 +5985,21 @@ def before_request():
     if getattr(g, '_idle_expired', False):
         _rpath = request.path or ""
         # Rutas de API / JSON → devolver 401 con JSON (no redirigir)
+        # 🔴 FIX 2026-09-02 (auditoría previa al lanzamiento, hallazgo
+        # CRÍTICO): faltaban "/mantenciones/api/" y "/ot/api/" en esta
+        # lista. Consecuencia real y grave: el checklist del técnico postea
+        # a /mantenciones/api/... -- con la sesión caducada recibía un 302
+        # al login que `fetch` sigue solo, devolviendo 200 con el HTML del
+        # login. La bandeja de salida leía ese 200 como éxito, BORRABA las
+        # respuestas de la cola y mostraba "✓ 4 respuestas sincronizadas"
+        # justo antes de mandar al técnico al login. Las respuestas nunca
+        # llegaban a la base y nadie se enteraba.
+        # Cualquier ruta /api/ debe contestar 401 JSON, nunca un redirect.
         _is_api = (_rpath.startswith("/api/") or _rpath.startswith("/admin/api/")
                    or _rpath.startswith("/retiros/api/") or _rpath.startswith("/transporte/api/")
+                   or _rpath.startswith("/mantenciones/api/") or _rpath.startswith("/ot/api/")
+                   or _rpath.startswith("/tickets/api/")
+                   or "/api/" in _rpath
                    or request.headers.get("X-Requested-With") == "XMLHttpRequest"
                    or "application/json" in (request.accept_mimetypes.best or ""))
         if _is_api:
@@ -77636,6 +77649,22 @@ def ot2_detalle(vid):
         "foto_eliminada":               ("eliminó una foto", "bi-trash3", "ambar", "archivos"),
     }
     actividad = []
+    # 🔴 FIX 2026-09-02 (auditoría, hallazgo A6). La tarjeta "Actividad de
+    # la OT" se dibuja SIN el candado `not es_tecnico` que sí protege
+    # Finanzas y el Anexo, e imprime el `detalle` crudo de mant_logs. Y
+    # varios detalles llevan plata: "FCV 11382 · $1.234.567" (factura
+    # asociada), "valorizada en $85.000" (garantía retroactiva), el centro
+    # de costo de finanzas_declaradas. O sea, se le estaba filtrando al
+    # técnico por la bitácora exactamente lo que el resto de la pantalla
+    # se cuida de esconderle. Se filtra ACÁ, en el servidor, no en el
+    # template: lo que no viaja no se puede ver con el inspector.
+    _ES_TEC = _es_rol_tecnico()
+    _ACT_SIN_DETALLE_TECNICO = {
+        "finanzas_declaradas", "factura_asociada", "factura_ligada",
+        "cotizacion_ligada", "oc_ligada", "garantia_retroactiva",
+        "garantia_declarada", "documento_asociado", "costo_actualizado",
+    }
+    _RE_MONTO = re.compile(r"\$\s?[\d\.,]+")
     try:
         _logs = mysql_fetchall(
             "SELECT accion, detalle, usuario, created_at "
@@ -77656,6 +77685,15 @@ def ot2_detalle(vid):
             # de evento porque es justo lo que Daniel quiere poder auditar.
             if _acc == "actualizada" and _det.upper().startswith("REAGENDADA"):
                 _lbl, _ico, _col = "reagendó la OT", "bi-calendar-event-fill", "ambar"
+            if _ES_TEC:
+                # El técnico ve QUE pasó (sirve para entender la OT), pero
+                # no CUÁNTO. Dos capas: las acciones conocidas se vacían
+                # enteras, y a cualquier otra se le borra el monto -- así
+                # una acción nueva con plata no vuelve a filtrarse sola.
+                if _acc in _ACT_SIN_DETALLE_TECNICO:
+                    _det = ""
+                elif "$" in _det:
+                    _det = _RE_MONTO.sub("[oculto]", _det)
             actividad.append({
                 "accion": _acc, "label": _lbl, "icono": _ico,
                 "color": _col, "grupo": _grp,
@@ -82975,6 +83013,14 @@ def ot2_api_lineas_zz(tido, nudo):
     Multidocumento: el frontend llama una vez por documento y une las
     listas — el orden lo decide quien está creando la OT.
     """
+    # 🔴 FIX 2026-09-02 (auditoría, hallazgo M1). Este endpoint tenía SOLO
+    # @_mant_required, y un técnico necesita ese permiso para abrir sus OT
+    # -- o sea que podía pedir por URL las líneas ZZ con montos de
+    # CUALQUIER documento del ERP. Mismo candado que ya tienen
+    # /ot/api/anexos y /ot/api/anexos/<aid>/pdf.
+    if _es_rol_tecnico():
+        return _ot2_err("Sin permiso para ver montos.", "SIN_PERMISO", http=403)
+
     tido = (tido or "").strip().upper()[:5]
     nudo = (nudo or "").strip()[:20]
     if not tido or not nudo:
@@ -83067,6 +83113,12 @@ def ot2_api_estimar_costo():
     tiene tarifa configurada, esa parte queda fuera del total con aviso
     (`sin_tarifa`), en vez de forzar un número.
     """
+    # 🔴 FIX 2026-09-02 (auditoría, hallazgo M1): igual que /ot/api/lineas-zz,
+    # tenía solo @_mant_required y devolvía tarifas. El técnico no ve
+    # precios en ninguna pantalla; tampoco debe poder pedirlos por URL.
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+
     d = request.get_json(silent=True) or {}
     tipo_ot = (d.get("tipo_ot") or "").strip().lower()
     tipo_servicio = _OT2_TIPO_A_TIPO_SERVICIO_COSTO.get(tipo_ot)
@@ -92332,6 +92384,34 @@ def mant_visita_tarea_update(vid, tid):
         fields.append("completada_por=%s"); vals.append(user if new_c else None)
     if not fields:
         return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
+
+    # 🔴 FIX 2026-09-02 (auditoría, hallazgo A7). La protección optimista
+    # (comparar `version`) existía SOLO en la rama action=="toggle" --que el
+    # frontend nunca usa-- y en /respuesta. El camino real del checkbox
+    # caía en este update genérico y aplicaba `completada` SIN comparar
+    # nada: dos técnicos sobre la misma tarea se pisaban en silencio, sin
+    # 409 y sin aviso. Ahora, si el cliente manda su versión, se exige que
+    # calce con la de la base.
+    _ver_cli = d.get("version")
+    if _ver_cli is not None:
+        try:
+            _ver_cli = int(_ver_cli)
+        except (TypeError, ValueError):
+            _ver_cli = None
+    if _ver_cli is not None:
+        _actual = mysql_fetchone(
+            "SELECT COALESCE(version,0) AS v FROM mant_visita_tareas "
+            " WHERE id=%s AND visita_id=%s", (tid, vid))
+        if not _actual:
+            return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+        if int(_actual.get("v") or 0) != _ver_cli:
+            return jsonify({
+                "ok": False,
+                "error": "Otro técnico modificó esta tarea. Recarga la página.",
+                "error_codigo": "CONFLICTO_VERSION",
+                "version": int(_actual.get("v") or 0),
+            }), 409
+
     # Bump version + libera lock (concurrencia multitécnico)
     fields.append("version=COALESCE(version,0)+1")
     fields.append("locked_by_user_id=NULL")
@@ -92341,7 +92421,12 @@ def mant_visita_tarea_update(vid, tid):
         f"UPDATE mant_visita_tareas SET {', '.join(fields)} WHERE id=%s AND visita_id=%s",
         tuple(vals)
     )
-    return jsonify({"ok": True})
+    # Devolver la versión nueva: sin esto el cliente se quedaba con una
+    # versión vieja para siempre y el próximo guardado chocaba solo.
+    _nv = mysql_fetchone(
+        "SELECT COALESCE(version,0) AS v FROM mant_visita_tareas "
+        " WHERE id=%s AND visita_id=%s", (tid, vid)) or {}
+    return jsonify({"ok": True, "version": int(_nv.get("v") or 0)})
 
 
 # ═════════════════════════════════════════════════════════════════════
