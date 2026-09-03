@@ -77762,7 +77762,29 @@ def ot2_api_cliente_crear():
     if not razon:
         return _ot2_err("Falta la razón social del cliente.", "RAZON_REQUERIDA")
 
-    rut = (d.get("rut") or "").strip()[:20] or None
+    # 🆔 2026-09-02 (Daniel: "necesito que se empiece a trabajar con el RUT
+    # desde un principio de la creación de la orden de trabajo, y que no
+    # falte, porque esa información está cuando se crea la orden de
+    # trabajo" + "si no tiene RUT estamos con tremendo problema... el RUT es
+    # necesario para llevar un dato único del cliente").
+    #
+    # El RUT pasa de opcional a OBLIGATORIO al crear una ficha desde el
+    # flujo de OT. Este es el momento correcto para exigirlo: el dato está
+    # a la vista de quien crea la OT. Dejarlo pasar acá es lo que produce
+    # las fichas sin RUT que después no cruzan con el ERP y obligan a
+    # buscar documentos por nombre -- con riesgo de traer los de otro
+    # cliente. Se valida el dígito verificador con el MISMO validador del
+    # resto del proyecto (REGLA #7), no solo que venga algo escrito.
+    rut_raw = (d.get("rut") or "").strip()
+    if not rut_raw:
+        return _ot2_err(
+            "Falta el RUT del cliente. Es obligatorio: es el dato único que "
+            "cruza la ficha con el ERP y con sus documentos.", "RUT_REQUERIDO")
+    _rut_ok, _rut_res = validar_rut(rut_raw)
+    if not _rut_ok:
+        return _ot2_err(f"El RUT del cliente no es válido: {_rut_res}.",
+                        "RUT_INVALIDO")
+    rut = _rut_res[:20]
     motivo = (d.get("motivo") or "").strip().lower()   # tipo de OT que la origina
 
     # 🔍 DEDUP INTELIGENTE (Daniel 2026-08-26): "que sea inteligente que se dé
@@ -78618,12 +78640,21 @@ def ot2_api_crear():
         cliente_id = None  # trabajo interno NUNCA queda colgado de un cliente
 
     cliente_razon_social = None
+    cliente_sin_rut = False
     if cliente_id:
         _cli = mysql_fetchone(
-            "SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cliente_id,))
+            "SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s", (cliente_id,))
         if not _cli:
             return _ot2_err("No encontramos ese cliente.", "CLIENTE_NO_EXISTE", http=404)
         cliente_razon_social = _cli.get("razon_social")
+        # 🆔 2026-09-02 (Daniel: "que no falte, porque esa información está
+        # cuando se crea la orden de trabajo"). Las fichas NUEVAS ya nacen
+        # con RUT obligatorio (ver ot2_api_cliente_crear). Para las que ya
+        # existen sin RUT esto AVISA en vez de bloquear: rechazar la OT
+        # dejaría al equipo sin poder trabajar mañana por una ficha vieja
+        # incompleta, y el trabajo en terreno no puede depender de eso.
+        # El aviso viaja de vuelta al wizard, que ya sabe mostrarlos.
+        cliente_sin_rut = not (_cli.get("rut") or "").strip()
 
     # ── 3. AGENDA ──────────────────────────────────────────────────────
     fecha_prog = (d.get("fecha_programada") or "").strip()
@@ -78650,6 +78681,14 @@ def ot2_api_crear():
         avisos.append(f"Cruza la colación ({_OT2_COLACION_INI}–{_OT2_COLACION_FIN}).")
     if _f.weekday() >= 5:
         avisos.append("Cae en fin de semana, cuando no hay operación.")
+    # 🆔 2026-09-02 — ver `cliente_sin_rut` arriba. Se avisa acá, junto al
+    # resto, para que salga en el mismo lugar donde el wizard ya muestra
+    # los avisos de jornada.
+    if cliente_sin_rut:
+        avisos.append(
+            f"{cliente_razon_social or 'El cliente'} no tiene RUT en su ficha. "
+            "Cárgaselo: sin RUT no se pueden cruzar sus documentos con el ERP "
+            "al cerrar la OT.")
 
     # ── 4. ACCESO AL LUGAR — obligatorio salvo trabajo interno ─────────
     #    (en bodega no hay "ascensor del cliente" que preguntar)

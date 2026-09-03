@@ -5852,11 +5852,51 @@ window.OT2C = (function(){
      después permite ofrecerle mantenciones.
      Se confirma una sola vez; de ahí en adelante el flujo sigue sin más
      preguntas. */
+  /* Dígito verificador chileno (módulo 11) — misma fórmula que
+     _validarRut en mantenciones_cliente_wizard.js y que validar_rut en el
+     backend. Se repite acá y no se importa porque este modal no carga ese
+     archivo; el backend valida igual, así que esto solo evita el viaje. */
+  function _o2cRutValido(rut){
+    var limpio = String(rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    if (limpio.length < 7 || limpio.length > 9) return false;
+    var cuerpo = limpio.slice(0, -1), dv = limpio.slice(-1);
+    var suma = 0, mult = 2;
+    for (var i = cuerpo.length - 1; i >= 0; i--){
+      suma += parseInt(cuerpo[i], 10) * mult;
+      mult = mult === 7 ? 2 : mult + 1;
+    }
+    var resto = 11 - (suma % 11);
+    var dvOk = resto === 11 ? '0' : (resto === 10 ? 'K' : String(resto));
+    return dv === dvOk;
+  }
+
   async function crearFicha(nombre, rut){
     var tipoTxt = '';
     if (S.tipo){
       var t = TIPOS.find(function(x){ return x.v === S.tipo; });
       tipoTxt = t ? t.n : S.tipo;
+    }
+    /* 🆔 2026-09-02 (Daniel: "necesito que se empiece a trabajar con el RUT
+       desde un principio de la creación de la orden de trabajo, y que no
+       falte, porque esa información está cuando se crea la orden de
+       trabajo"). El RUT pasó a ser obligatorio en el backend; acá se pide
+       ANTES de intentar crear, para no mandar al usuario contra un error.
+       Este es el momento correcto para exigirlo: quien está creando la OT
+       tiene el dato del cliente a la vista. */
+    if (!_o2cRutValido(rut)){
+      rut = await ilusPrompt({
+        title: 'RUT de ' + nombre,
+        message: 'Para crear la ficha necesito el RUT del cliente.',
+        sub: 'Es el dato único que cruza al cliente con el ERP y con sus ' +
+             'documentos. Sin él, después no se pueden buscar sus facturas ' +
+             'para cerrar la OT.',
+        placeholder: 'Ej: 76.996.964-0',
+        required: true,
+        validate: function(v){
+          return _o2cRutValido(v) ? null : 'Ese RUT no es válido — revisa el dígito verificador.';
+        },
+      });
+      if (!rut) return;   // canceló
     }
     var ok = true;
     if (window.ilusConfirm){
