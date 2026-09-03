@@ -81259,11 +81259,22 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         else:
             est = "disponible"
         act = p["actual"] or {}
+        # 🔧 FIX 2026-09-03 (Daniel, captura real de Jaizer: "TERMINADO" con
+        # un 0% verde al lado, y sus dos OT del dia al 100%). El porcentaje
+        # de la persona sale de `actual`, que es la OT EN CURSO o la
+        # proxima pendiente -- y quien ya cerro todo lo del dia no tiene
+        # ninguna de las dos, asi que caia en 0. Leido en la pared, eso
+        # dice "no hizo nada", que es exactamente lo contrario de lo que
+        # paso. Si termino todas sus OT del dia, su avance del dia es 100:
+        # es el mismo criterio que ya usa cada burbuja terminada.
+        _avance = act.get("avance_pct") or 0
+        if est == "terminado":
+            _avance = 100
         grupos["externo" if p["externo"] else "interno"].append({
             "nombre": p["nombre"], "iniciales": p["iniciales"], "estado": est,
             "cliente": act.get("cliente"), "direccion": act.get("direccion"),
             "tipo": act.get("tipo"),
-            "avance_pct": act.get("avance_pct") or 0,
+            "avance_pct": _avance,
             "tareas_ok": act.get("tareas_ok") or 0,
             "tareas_total": act.get("tareas_total") or 0,
             "inicio_iso": act.get("inicio_iso"),

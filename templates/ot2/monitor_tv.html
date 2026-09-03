@@ -760,7 +760,12 @@
        menos alto — se compacta el contenido para no perder el cliente. */
     .tl-bloque.b-compacto{padding:0 9px;gap:0;justify-content:center}
     .tl-bloque.b-compacto .b-cliente{font-size:calc(var(--fs-bloque,16px) * .82);line-height:1.15}
-    .tl-bloque.b-compacto .b-horas{font-size:12px;line-height:1.1}
+    /* 🔧 2026-09-03: en carril compacto la burbuja mide la mitad de alto,
+       y la segunda linea de detalle se cortaba POR LA MITAD del renglon
+       ('Armado De Equip' partido al medio, captura real de Jaizer). Una
+       sola linea entra completa; lo que no cabe se corta limpio al final
+       con el overflow del bloque, nunca a media letra (REGLA #15). */
+    .tl-bloque.b-compacto .b-horas{font-size:12px;line-height:1.1;-webkit-line-clamp:1}
 
     /* Bloques angostos: primero pierden las horas, luego el texto */
     .tl-bloque.b-narrow .b-horas{display:none}
