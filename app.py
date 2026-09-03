@@ -78698,6 +78698,144 @@ def _ot_alta_equipos_al_cerrar(vid, usuario=None):
               flush=True)
 
 
+@app.route("/ot/api/<int:vid>/proveedor-del-tecnico", methods=["GET", "POST"])
+@_mant_required
+@_ot_can_metadata
+def ot2_api_proveedor_del_tecnico(vid):
+    """Ficha de proveedor del técnico externo asignado — consultar y crear.
+
+    🆕 2026-09-02 (Daniel: "si llamo un técnico externo y no tiene proveedor
+    asignado, se agregue, y a medida que se complete la primera vez se
+    guarden proveedores; o sea, habría que validar si existe, y se solicita
+    una notificación si quiere crear este proveedor asociado a ese técnico,
+    avanzar... para que cada vez sea de manera más automática").
+
+    EL PROBLEMA REAL que resuelve: el anexo necesita razón social + RUT de
+    EMPRESA para identificar a la contraparte del contrato, y en producción
+    `mant_tecnicos_externos` está vacía -- los externos existen como
+    usuarios con rol, sin ficha de empresa. Resultado: cada anexo obligaba
+    a tipear los mismos datos a mano, otra vez, sin que quedaran guardados.
+
+    Ahora el dato se construye UNA vez y queda: la próxima OT de ese mismo
+    proveedor ya lo trae. Es el mismo criterio que el resto del sistema --
+    el trabajo del día llena la base, en vez de pedir que alguien la llene
+    aparte.
+
+    GET  -> ¿el técnico de esta OT ya tiene ficha de proveedor?
+    POST -> la crea (mínima: razón social + RUT + contacto) y la liga al
+            usuario del técnico, para que quede asociada de por vida.
+    """
+    v = mysql_fetchone(
+        "SELECT v.id, v.tecnico_user_id, COALESCE(au.nombre, au.username) AS tec_nombre, "
+        "       au.username AS tec_email, COALESCE(au.role,'') AS tec_rol "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+        " WHERE v.id=%s", (vid,))
+    if not v:
+        return _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+    uid = v.get("tecnico_user_id")
+    if not uid:
+        return _ot2_err("Esta OT no tiene técnico asignado todavía.", "SIN_TECNICO")
+
+    _ficha = mysql_fetchone(
+        "SELECT id, razon_social, rut_empresa, contacto_nombre, contacto_tel, "
+        "       contacto_email FROM mant_tecnicos_externos WHERE user_id=%s", (uid,))
+
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "tiene_ficha": bool(_ficha),
+            "proveedor": dict(_ficha) if _ficha else None,
+            "tecnico": {
+                "user_id": uid,
+                "nombre": v.get("tec_nombre") or "",
+                "email": v.get("tec_email") or "",
+                "es_externo": (v.get("tec_rol") or "").lower() == "tecnico_externo",
+            },
+        })
+
+    if _ficha:
+        # Ya existía: no se duplica ni se pisa. Se devuelve la que hay.
+        return jsonify({"ok": True, "creado": False, "proveedor": dict(_ficha),
+                        "mensaje": "Este técnico ya tenía ficha de proveedor."})
+
+    d = request.get_json(silent=True) or {}
+    razon = (d.get("razon_social") or "").strip()[:200]
+    rut_raw = (d.get("rut_empresa") or "").strip()
+    if not razon:
+        return _ot2_err("Falta la razón social del proveedor.", "RAZON_REQUERIDA")
+    if not rut_raw:
+        return _ot2_err(
+            "Falta el RUT de la empresa. Sin él el anexo no identifica a la "
+            "contraparte del contrato.", "RUT_REQUERIDO")
+    _ok_rut, _res_rut = validar_rut(rut_raw)
+    if not _ok_rut:
+        return _ot2_err(f"El RUT de la empresa no es válido: {_res_rut}.",
+                        "RUT_INVALIDO")
+    rut = _res_rut[:20]
+
+    # Un mismo RUT no puede tener dos fichas: si ya existe suelta (creada
+    # desde el CRUD, sin usuario), se LIGA a este técnico en vez de crear
+    # una segunda -- que es como se terminan teniendo dos proveedores
+    # iguales con historiales partidos.
+    _por_rut = mysql_fetchone(
+        "SELECT id, user_id, razon_social FROM mant_tecnicos_externos "
+        " WHERE rut_empresa=%s", (rut,))
+    if _por_rut:
+        if _por_rut.get("user_id") and int(_por_rut["user_id"]) != int(uid):
+            return _ot2_err(
+                f"Ese RUT ya está asociado a otro técnico "
+                f"({_por_rut.get('razon_social') or 'proveedor #' + str(_por_rut['id'])}).",
+                "RUT_DE_OTRO_TECNICO", http=409)
+        try:
+            mysql_execute(
+                "UPDATE mant_tecnicos_externos SET user_id=%s WHERE id=%s",
+                (uid, _por_rut["id"]))
+            _mant_log("sistema", 0, "proveedor_ligado_a_tecnico",
+                      f"Proveedor #{_por_rut['id']} ({_por_rut.get('razon_social')}) "
+                      f"ligado al técnico {v.get('tec_nombre')} desde la OT {vid}.")
+        except Exception as e:
+            print(f"[prov_tecnico] ligar vid={vid}: {e}", flush=True)
+        return jsonify({"ok": True, "creado": False,
+                        "proveedor": {"id": _por_rut["id"], "razon_social": _por_rut.get("razon_social"),
+                                      "rut_empresa": rut},
+                        "mensaje": "Ya existía una ficha con ese RUT — se asoció a este técnico."})
+
+    # Mínimo viable: las 4 columnas NOT NULL de la tabla. El resto
+    # (facturación, banco, contrato) se completa después desde el CRUD de
+    # proveedores -- pedirlo todo acá frenaría el flujo de la OT, que es
+    # justo lo contrario de lo que Daniel pidió.
+    contacto = (d.get("contacto_nombre") or v.get("tec_nombre") or razon)[:200]
+    tel = (d.get("contacto_tel") or "").strip()[:50] or "—"
+    email = (d.get("contacto_email") or v.get("tec_email") or "")[:190] or "—"
+    try:
+        mysql_execute(
+            "INSERT INTO mant_tecnicos_externos "
+            "  (user_id, razon_social, rut_empresa, contacto_nombre, contacto_tel, "
+            "   contacto_email, estado, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,'activo',%s)",
+            (uid, razon, rut, contacto, tel, email, current_username() or "sistema"))
+        _row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}
+        _pid = _row.get("id")
+    except Exception as e:
+        print(f"[prov_tecnico] crear vid={vid}: {e}", flush=True)
+        return _ot2_err("No pudimos crear la ficha del proveedor.",
+                        "ERROR_INTERNO", http=500)
+
+    try:
+        _mant_log("sistema", 0, "proveedor_creado_desde_ot",
+                  f"Proveedor '{razon}' (RUT {rut}) creado desde la OT {vid} y "
+                  f"asociado al técnico {v.get('tec_nombre') or uid}.")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "creado": True,
+                    "proveedor": {"id": _pid, "razon_social": razon,
+                                  "rut_empresa": rut, "contacto_nombre": contacto,
+                                  "contacto_tel": tel, "contacto_email": email},
+                    "mensaje": f"Proveedor «{razon}» creado y asociado a "
+                               f"{v.get('tec_nombre') or 'este técnico'}."})
+
+
 @app.route("/ot/api/<int:vid>/equipo/<int:mid>/fuera-servicio", methods=["POST"])
 @_mant_required
 @_ot_can_configurar

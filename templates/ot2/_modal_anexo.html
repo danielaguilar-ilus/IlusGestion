@@ -404,8 +404,9 @@ window.OT2ANX = (function(){
        en la lista de proveedores. Es el dato que ya está arriba en la
        pantalla: no tiene sentido volver a elegirlo a mano. */
     var tecOT = (DEF_OT && DEF_OT.tecnico_nombre || '').trim().toLowerCase();
+    var match = null;
     if (tecOT){
-      var match = proveedores.find(function(p){
+      match = proveedores.find(function(p){
         var rs = (p.razon_social || '').trim().toLowerCase();
         var nm = (p.nombre || '').trim().toLowerCase();
         return rs === tecOT || nm === tecOT ||
@@ -415,6 +416,76 @@ window.OT2ANX = (function(){
         sel.value = String(match.id);
         onProveedorChange();
       }
+    }
+    if (!match) ofrecerCrearProveedor();
+  }
+
+  /* 🆕 2026-09-02 (Daniel: "si llamo un técnico externo y no tiene proveedor
+     asignado, se agregue... validar si existe, y se solicita una
+     notificación si quiere crear este proveedor asociado a ese técnico,
+     avanzar, para que cada vez sea de manera más automática").
+     El técnico externo existe como usuario, pero sin ficha de EMPRESA el
+     anexo no puede identificar a la contraparte. En vez de hacer tipear los
+     mismos datos en cada anexo, se ofrece crearla UNA vez y queda ligada al
+     técnico: la próxima OT suya ya la trae. */
+  var _ofertaProvHecha = false;   // se pregunta UNA vez por apertura del modal
+  async function ofrecerCrearProveedor(){
+    // Candado anti-bucle: cargarProveedores() llama acá, y acá se vuelve a
+    // llamar a cargarProveedores() tras crear. Sin esta bandera, un
+    // proveedor cuya razón social no coincida con el nombre del técnico
+    // haría que la pregunta se repita en loop.
+    if (_ofertaProvHecha) return;
+    _ofertaProvHecha = true;
+    let info;
+    try {
+      const r = await fetch('/ot/api/' + OT_ID + '/proveedor-del-tecnico',
+                            {credentials: 'same-origin'});
+      info = await r.json();
+    } catch(e){ return; }
+    if (!info || !info.ok || info.tiene_ficha) return;
+    const tec = info.tecnico || {};
+    if (!tec.nombre || !tec.es_externo) return;   // solo para externos
+
+    const ok = await ilusConfirm({
+      title: 'Sin ficha de proveedor',
+      message: '«' + tec.nombre + '» es técnico externo pero no tiene ficha de empresa.',
+      sub: 'El anexo necesita razón social y RUT para identificar a la contraparte ' +
+           'del contrato. ¿La creamos ahora? Queda asociada a él y en la próxima OT ' +
+           'se carga sola.',
+      okLabel: 'Crear ficha', cancelLabel: 'Ahora no',
+    });
+    if (!ok) return;
+
+    const razon = await ilusPrompt({
+      title: 'Razón social', message: '¿A nombre de qué empresa factura ' + tec.nombre + '?',
+      sub: 'Es el nombre que va a aparecer en el anexo como proveedor.',
+      placeholder: 'Ej: Servicios Milling SpA', required: true,
+      defaultValue: tec.nombre,
+    });
+    if (!razon) return;
+    const rut = await ilusPrompt({
+      title: 'RUT de la empresa', message: 'RUT con el que factura ' + razon + '.',
+      placeholder: 'Ej: 76.996.964-0', required: true,
+    });
+    if (!rut) return;
+
+    try {
+      const r2 = await fetch('/ot/api/' + OT_ID + '/proveedor-del-tecnico', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({razon_social: razon, rut_empresa: rut}),
+      });
+      const j2 = await r2.json();
+      if (!j2.ok){
+        await ilusAlert({title: 'No se pudo crear',
+                         message: j2.error || 'Revisa los datos.', type: 'error'});
+        return;
+      }
+      if (window.ilusToast) ilusToast('✓ ' + (j2.mensaje || 'Proveedor creado'),
+                                      {type: 'success'});
+      await cargarProveedores();            // recarga y ahora sí lo encuentra
+    } catch(e){
+      await ilusAlert({title: 'Error de conexión', message: e.message, type: 'error'});
     }
   }
 
@@ -472,6 +543,7 @@ window.OT2ANX = (function(){
 
   async function abrir(vid){
     resetCrear();
+    _ofertaProvHecha = false;   // cada apertura vuelve a poder preguntar
     var modalEl = document.getElementById('oaxModal');
     var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
     modal.show();
