@@ -6029,14 +6029,31 @@ function otdChkTareaHtml(t, nro){
 /* Fecha corta y en hora de Chile (REGLA #6). El backend manda
    "2026-08-31 01:03:00" sin zona, y MySQL guarda UTC -- la misma trampa
    que hacía durar 4 horas el candado entre técnicos. */
+/* Fecha del sello de autoría, en hora de Chile (REGLA #6).
+   🔴 CORRECCIÓN 2026-09-03 (Daniel: "establecimos como regla del proyecto
+   que las fechas siempre en español: día, mes, año, hora"). La primera
+   versión de hoy usaba toLocaleString con day/month/hour/minute y salía
+   "30/8 · 09:04 p. m.": sin año, sin cero a la izquierda y en 12 horas con
+   a.m./p.m. El proyecto entero usa dd/mm/aaaa HH:MM en 24 horas (es lo que
+   hace `chile_fmt` con '%d/%m/%Y %H:%M'), así que una pantalla con otro
+   formato obliga a traducir mentalmente al comparar con el resto.
+   Se arma a mano en vez de con toLocaleString: los locales del navegador
+   deciden el orden y el reloj por su cuenta, y acá el formato NO es
+   opcional. La conversión a hora de Chile sí se delega al navegador, que
+   es quien sabe de horario de verano. */
 function otdChkCuando(s){
   try {
     const n = String(s).replace(' ', 'T');
     const iso = (n.endsWith('Z') || n.includes('+')) ? n : n + 'Z';
-    return new Date(iso).toLocaleString('es-CL', {
-      day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit',
-      timeZone:'America/Santiago',
-    }).replace(',', ' ·');
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    // en-CA da "AAAA-MM-DD" y hourCycle h23 evita el "24:05" de es-CL.
+    const f = new Intl.DateTimeFormat('en-CA', {
+      timeZone:'America/Santiago', year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit', hourCycle:'h23',
+    }).formatToParts(d);
+    const g = (t) => (f.find(x => x.type === t) || {}).value || '';
+    return `${g('day')}/${g('month')}/${g('year')} ${g('hour')}:${g('minute')}`;
   } catch(e){ return ''; }
 }
 
