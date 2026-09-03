@@ -546,6 +546,141 @@
 .otd-editbox .actions{display:flex;gap:8px;margin-top:10px}
 .otd-editbox .hint{color:#9ca3af;font-size:.7rem;margin-top:8px}
 
+/* ══════════════════════════════════════════════════════════════
+   MODAL "Agregar equipos" (2026-09-03) — lenguaje Retiros (REGLA #15):
+   tarjetas con semáforo (gris = sin elegir, verde = elegido), nombres
+   completos SIEMPRE (nada de line-clamp: los nombres reales de ILUS son
+   largos y truncarlos es justo lo que Daniel rechazó en el modal de
+   cotizaciones), y controles de 44px para el teléfono (REGLA #3).
+   ══════════════════════════════════════════════════════════════ */
+.otd-eqm-ov{position:fixed;inset:0;z-index:1200;background:rgba(10,10,10,.62);
+  backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;
+  padding:18px;animation:otdEqmFade .16s ease}
+.otd-eqm-ov[hidden]{display:none}
+@keyframes otdEqmFade{from{opacity:0}to{opacity:1}}
+.otd-eqm{width:min(980px,100%);max-height:92dvh;display:flex;flex-direction:column;
+  background:#fff;border-radius:20px;overflow:hidden;
+  box-shadow:0 30px 80px rgba(0,0,0,.45);animation:otdEqmUp .2s cubic-bezier(.2,.9,.3,1)}
+@keyframes otdEqmUp{from{transform:translateY(14px);opacity:.4}to{transform:none;opacity:1}}
+
+.otd-eqm-head{display:flex;align-items:center;gap:14px;padding:16px 20px;
+  background:linear-gradient(135deg,#0a0a0a 0%,#1b1b1f 55%,#26262b 100%);
+  border-bottom:4px solid #dc2626;color:#fff}
+.otd-eqm-head .ic{width:44px;height:44px;flex:none;border-radius:13px;display:grid;
+  place-items:center;font-size:1.25rem;color:#fff;
+  background:linear-gradient(140deg,#dc2626,#991b1b);
+  box-shadow:0 6px 18px rgba(220,38,38,.42)}
+.otd-eqm-head .tx{min-width:0;flex:1}
+.otd-eqm-head h4{margin:0;font-size:1.06rem;font-weight:800;letter-spacing:.2px}
+.otd-eqm-head p{margin:2px 0 0;font-size:.8rem;color:#d4d4d8;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.otd-eqm-head .x{width:38px;height:38px;flex:none;border-radius:10px;
+  border:1px solid rgba(255,255,255,.2);
+  background:rgba(255,255,255,.07);color:#fff;font-size:.95rem;cursor:pointer;transition:.15s}
+.otd-eqm-head .x:hover{background:rgba(255,255,255,.16)}
+
+.otd-eqm-tools{padding:12px 16px;border-bottom:1px solid #e5e7eb;background:#fafafa;
+  display:flex;flex-direction:column;gap:10px}
+.otd-eqm-tools .bus{position:relative}
+.otd-eqm-tools .bus > i{position:absolute;left:13px;top:50%;transform:translateY(-50%);
+  color:#9ca3af;font-size:.95rem;pointer-events:none}
+.otd-eqm-tools .bus input{width:100%;min-height:44px;padding:10px 14px 10px 38px;font-size:16px;
+  border:1.5px solid #d1d5db;border-radius:11px;background:#fff;color:#111827;transition:.15s}
+.otd-eqm-tools .bus input:focus{outline:none;border-color:#dc2626;
+  box-shadow:0 0 0 3px rgba(220,38,38,.14)}
+.otd-eqm-tools .chips{display:flex;gap:8px;flex-wrap:wrap}
+.otd-eqm-tools .ch{min-height:36px;padding:7px 13px;border-radius:999px;font-size:.76rem;
+  font-weight:700;border:1.5px solid #d1d5db;background:#fff;color:#4b5563;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;transition:.15s}
+.otd-eqm-tools .ch:hover{border-color:#9ca3af;background:#f9fafb}
+.otd-eqm-tools .ch.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.otd-eqm-tools .ch.todo{margin-left:auto;border-style:dashed;color:#111827}
+
+.otd-eqm-body{flex:1;overflow-y:auto;padding:14px 16px;background:#f7f7f8;
+  display:flex;flex-direction:column;gap:10px}
+.otd-eqm-vacio{padding:34px 16px;text-align:center;color:#6b7280;font-size:.86rem}
+.otd-eqm-vacio i{display:block;font-size:1.7rem;margin-bottom:8px;color:#9ca3af}
+
+/* Tarjeta de PRODUCTO — semáforo: gris sin elegir, verde al elegir */
+.otd-eqg{background:#fff;border:1.5px solid #e5e7eb;border-left:4px solid #d1d5db;
+  border-radius:14px;padding:12px 14px;
+  transition:border-color .18s,box-shadow .18s,background .18s}
+.otd-eqg.on{border-color:#16a34a;border-left-color:#16a34a;
+  background:linear-gradient(180deg,#f2fdf5,#fff 60%);
+  box-shadow:0 3px 14px rgba(22,163,74,.13)}
+.otd-eqg-top{display:flex;align-items:flex-start;gap:12px}
+.otd-eqg-tx{flex:1;min-width:0}
+/* Nombre COMPLETO — sin line-clamp a propósito (REGLA #15) */
+.otd-eqg-nom{font-size:.9rem;font-weight:800;color:#111827;line-height:1.32;
+  word-break:break-word}
+.otd-eqg-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.otd-eqg-meta .b{font-size:.68rem;font-weight:700;padding:3px 8px;border-radius:7px;
+  background:#f3f4f6;color:#4b5563;border:1px solid #e5e7eb}
+.otd-eqg-meta .b.sku{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2px}
+.otd-eqg-meta .b.plan{background:#dcfce7;color:#15803d;border-color:#bbf7d0}
+.otd-eqg-meta .b.nplan{background:#f3f4f6;color:#6b7280}
+.otd-eqg-meta .b.stock{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
+
+/* Contador de cantidad */
+.otd-eqg-qty{display:flex;align-items:center;gap:2px;flex:none;
+  border:1.5px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#fff}
+.otd-eqg.on .otd-eqg-qty{border-color:#86efac}
+.otd-eqg-qty button{width:40px;height:44px;border:0;background:#f9fafb;color:#374151;
+  font-size:1.05rem;font-weight:800;cursor:pointer;transition:.14s;line-height:1}
+.otd-eqg-qty button:hover:not(:disabled){background:#e5e7eb}
+.otd-eqg-qty button:disabled{opacity:.35;cursor:not-allowed}
+.otd-eqg-qty .n{min-width:46px;text-align:center;font-size:1rem;font-weight:800;
+  color:#111827;font-variant-numeric:tabular-nums}
+.otd-eqg.on .otd-eqg-qty .n{color:#15803d}
+
+.otd-eqg-bot{margin-top:11px;padding-top:11px;border-top:1px dashed #e5e7eb;
+  display:none;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.otd-eqg.on .otd-eqg-bot{display:flex}
+.otd-eqg-bot .campo{flex:1;min-width:230px}
+.otd-eqg-bot label{display:block;font-size:.68rem;font-weight:800;color:#6b7280;
+  text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.otd-eqg-bot select{width:100%;min-height:44px;font-size:16px;padding:8px 11px;
+  border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#111827}
+.otd-eqg-bot select:focus{outline:none;border-color:#16a34a;
+  box-shadow:0 0 0 3px rgba(22,163,74,.13)}
+.otd-eqg-bot select.falta{border-color:#dc2626;background:#fef2f2}
+.otd-eqg-uni{min-height:44px;padding:8px 13px;border-radius:10px;border:1.5px dashed #d1d5db;
+  background:#fff;color:#374151;font-size:.76rem;font-weight:700;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px}
+.otd-eqg-uni:hover{border-color:#9ca3af;background:#f9fafb}
+
+.otd-eqg-lista{margin-top:10px;display:none;flex-direction:column;gap:5px;
+  max-height:230px;overflow-y:auto;padding:9px;background:#fafafa;
+  border:1px solid #e5e7eb;border-radius:10px}
+.otd-eqg-lista.abierta{display:flex}
+.otd-eqg-u{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;
+  background:#fff;border:1px solid #e5e7eb;cursor:pointer;font-size:.78rem;color:#374151}
+.otd-eqg-u:hover{border-color:#9ca3af}
+.otd-eqg-u input{width:18px;height:18px;accent-color:#16a34a;flex:none;cursor:pointer}
+.otd-eqg-u .s{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700;color:#111827}
+.otd-eqg-u .d{color:#9ca3af;font-size:.72rem}
+.otd-eqg-u.sel{background:#f0fdf4;border-color:#86efac}
+
+.otd-eqm-foot{padding:13px 18px;border-top:1px solid #e5e7eb;background:#fff;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.otd-eqm-foot .res{flex:1;min-width:170px;font-size:.82rem;font-weight:700;color:#4b5563}
+.otd-eqm-foot .res b{color:#15803d}
+.otd-eqm-foot .btns{display:flex;gap:9px;margin-left:auto}
+.otd-eqm-foot .otd-btn{min-height:44px}
+
+@media (max-width:640px){
+  .otd-eqm-ov{padding:0}
+  .otd-eqm{width:100%;max-height:100dvh;height:100dvh;border-radius:0}
+  .otd-eqm-head{padding-top:max(16px,env(safe-area-inset-top))}
+  .otd-eqm-tools .ch.todo{margin-left:0;width:100%;justify-content:center}
+  .otd-eqg-top{flex-wrap:wrap}
+  .otd-eqg-qty{width:100%;justify-content:space-between}
+  .otd-eqg-qty .n{flex:1}
+  .otd-eqm-foot{padding-bottom:max(13px,env(safe-area-inset-bottom))}
+  .otd-eqm-foot .btns{width:100%}
+  .otd-eqm-foot .btns .otd-btn{flex:1;justify-content:center}
+}
+
 /* Panel "Estado operativo" — glow + texto grande, junto al sello.
    2026-08-27, referencia visual de Daniel: ícono con glow pulsante +
    "ESTADO OPERATIVO" chico arriba + estado en vivo grande + hint del
@@ -3039,21 +3174,72 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% if v.cliente_id and v.estado not in ('cerrada','completada','cancelada','anulada')
             and not es_tecnico
             and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
-      <div class="otd-editbox" id="otdAgregarEquipoBox">
-        <div class="row" style="flex-wrap:wrap">
-          <select id="otdAgregarEquipoSelect" class="form-select form-select-sm" style="max-width:280px"
-                  onchange="otdSugerirPlantillaEquipo()">
-            <option value="">Cargando equipos del cliente…</option>
-          </select>
-          <select id="otdAgregarEquipoPlantilla" class="form-select form-select-sm" style="max-width:280px">
-            <option value="">Elige un equipo primero…</option>
-          </select>
-        </div>
-        <div class="hint">El checklist se sugiere solo según la clasificación del equipo — puedes cambiarlo antes de guardar.</div>
-        <div class="actions">
-          <button type="button" class="otd-btn pri" onclick="otdConfirmarAgregarEquipo()">
-            <i class="bi bi-check2"></i> Agregar</button>
-          <button type="button" class="otd-btn" onclick="otdCerrarAgregarEquipo()">Cancelar</button>
+      {# ══════════════════════════════════════════════════════════
+         MODAL "Agregar equipos" (2026-09-03, Daniel, viendo esta misma
+         card): "me gustaría que cuando presionáramos ese botón me
+         apareciera un modal donde yo pudiera igual buscar equipos y
+         gestionarle las plantillas y las cantidades... para agregar
+         varios productos, buscarlo, moverme con mayor facilidad y
+         agregar en masivo".
+
+         Reemplaza al bloque en línea de dos <select> que solo dejaba
+         sumar UN equipo por vez (había que repetir el ciclo entero, con
+         recarga de pantalla incluida, por cada equipo). El botón que lo
+         abre es el mismo de siempre y llama a la misma función
+         `otdAbrirAgregarEquipo()` -- no cambió nada de su candado.
+
+         Los equipos se agrupan por PRODUCTO (SKU): un cliente con 40
+         trotadoras iguales no se gestiona marcando 40 casillas, se
+         gestiona escribiendo la cantidad. Quien necesita unidades
+         concretas (una serie puntual) abre "Elegir unidades" y las marca
+         a mano -- las dos vías escriben sobre la MISMA selección, no hay
+         dos verdades.
+
+         REGLA #14 (marcar/desmarcar todo), REGLA #15 (lenguaje Retiros:
+         tarjetas + semáforo, nombres SIEMPRE completos), REGLA #3
+         (pantalla completa en el teléfono, controles de 44px). #}
+      <div class="otd-eqm-ov" id="otdEqmOv" hidden onclick="otdEqmFondo(event)">
+        <div class="otd-eqm" role="dialog" aria-modal="true" aria-labelledby="otdEqmTit">
+          <div class="otd-eqm-head">
+            <span class="ic"><i class="bi bi-box-seam"></i></span>
+            <div class="tx">
+              <h4 id="otdEqmTit">Agregar equipos a la OT</h4>
+              <p>{{ v.razon_social or 'Cliente sin razón social' }}</p>
+            </div>
+            <button type="button" class="x" onclick="otdEqmCerrar()" aria-label="Cerrar">
+              <i class="bi bi-x-lg"></i></button>
+          </div>
+
+          <div class="otd-eqm-tools">
+            <div class="bus">
+              <i class="bi bi-search"></i>
+              <input type="search" id="otdEqmQ" placeholder="Buscar por nombre, SKU o N° de serie…"
+                     autocomplete="off" oninput="otdEqmBuscar(this.value)">
+            </div>
+            <div class="chips" id="otdEqmChips">
+              <button type="button" class="ch on" data-f="todos" onclick="otdEqmChip('todos')">Todos</button>
+              <button type="button" class="ch" data-f="plan" onclick="otdEqmChip('plan')">
+                <i class="bi bi-calendar-check"></i> Del plan</button>
+              <button type="button" class="ch" data-f="fuera" onclick="otdEqmChip('fuera')">Fuera del plan</button>
+              <button type="button" class="ch todo" onclick="otdEqmToggleTodo()" id="otdEqmBtnTodo">
+                <i class="bi bi-check-all"></i> Seleccionar/deseleccionar todo</button>
+            </div>
+          </div>
+
+          <div class="otd-eqm-body" id="otdEqmLista">
+            <div class="otd-eqm-vacio"><i class="bi bi-hourglass-split"></i>
+              Cargando equipos del cliente…</div>
+          </div>
+
+          <div class="otd-eqm-foot">
+            <div class="res" id="otdEqmResumen">Nada seleccionado todavía</div>
+            <div class="btns">
+              <button type="button" class="otd-btn" onclick="otdEqmCerrar()">Cancelar</button>
+              <button type="button" class="otd-btn pri" id="otdEqmBtnGuardar"
+                      onclick="otdEqmGuardar()" disabled>
+                <i class="bi bi-plus-circle"></i> Agregar a la OT</button>
+            </div>
+          </div>
         </div>
       </div>
       {% endif %}
@@ -4986,104 +5172,443 @@ window.otdConfirmarReasignar = async function(){
 };
 
 /* ══════════════════════════════════════════════════════════════
-   AGREGAR EQUIPO a una OT ya creada (2026-09-02, Daniel, caso Aaron:
-   "Aaron también quiere agregar un equipo nuevo a la OT-154"). Reusa
-   /mantenciones/api/clientes/<cid>/maquinas-list (mismo endpoint que el
-   wizard de creación) para listar equipos del cliente, y
-   /mantenciones/api/plantillas/sugerida-por-sku (mismo endpoint que
-   preselecciona el checklist al crear una OT) para sugerir el checklist
-   apenas se elige el equipo -- el humano siempre puede cambiarlo antes de
-   guardar (Daniel, 13-08: "no quiero nada automático, todo lo debe
-   escoger el usuario").
+   AGREGAR EQUIPOS a una OT ya creada — modal de alta MASIVA
+   (2026-09-03, Daniel: "me gustaría que cuando presionáramos ese botón
+   me apareciera un modal donde yo pudiera igual buscar equipos y
+   gestionarle las plantillas y las cantidades... para agregar varios
+   productos, buscarlo, moverme con mayor facilidad y agregar en masivo").
+
+   Nació el 2026-09-02 (caso Aarón / OT-154) como dos <select> en línea:
+   un equipo, una recarga de pantalla, repetir. Con clientes de 137
+   equipos eso no escala.
+
+   CÓMO SE MODELA LA "CANTIDAD" — la decisión de diseño que importa:
+   cada fila de mant_maquinas es UNA unidad física, así que agregar 8
+   trotadoras iguales son 8 maquina_id distintos. Pero nadie quiere marcar
+   8 casillas: la tarjeta es el PRODUCTO (agrupado por SKU) y el contador
+   +/- va tomando unidades libres de ese producto. Quien necesita una
+   serie puntual abre "Elegir unidades" y la marca a mano. Las dos vías
+   escriben sobre el MISMO Set `g.sel` — no hay dos verdades que se
+   puedan desincronizar.
+
+   Fuentes de datos, todas ya existentes:
+    · /mantenciones/api/clientes/<cid>/maquinas-list  → equipos del cliente
+    · /mantenciones/api/plantillas/sugerida-por-sku   → checklist sugerido
+    · POST /ot/api/<vid>/equipos-masivo               → alta (commit por
+      ítem, responde qué entró y qué no)
    ══════════════════════════════════════════════════════════════ */
 let _otdMaquinasClienteCache = null;
+let _otdEqmGrupos     = null;
+let _otdEqmFiltro     = 'todos';
+let _otdEqmQ          = '';
+let _otdEqmErrorCarga = false;
+const _otdEqmSugCache = {};
 
-window.otdAbrirAgregarEquipo = async function(){
-  const box = document.getElementById('otdAgregarEquipoBox');
-  if (!box) return;
-  box.style.display = 'block';
-  box.scrollIntoView({behavior:'smooth', block:'center'});
-  const selEq = document.getElementById('otdAgregarEquipoSelect');
-  if (!selEq) return;
-  if (!_otdMaquinasClienteCache){
-    try {
-      const r = await otdFetch('/mantenciones/api/clientes/{{ v.cliente_id or 0 }}/maquinas-list', {}, 10000);
-      const _j = await r.json();
-      if (Array.isArray(_j) && _j.length) _otdMaquinasClienteCache = _j;   // idem: no cachear el vacío
-    } catch(e){ /* se reintenta */ }
-  }
-  const disponibles = (_otdMaquinasClienteCache || [])
-    .filter(m => !EQUIPOS_YA_EN_OT.includes(m.id));
-  if (!disponibles.length){
-    selEq.innerHTML = '<option value="">— No hay más equipos de este cliente para agregar —</option>';
-    return;
-  }
-  selEq.innerHTML = ['<option value="">Elige un equipo…</option>'].concat(
-    disponibles.map(m =>
-      `<option value="${m.id}" data-sku="${(m.sku || '').replace(/"/g, '&quot;')}">`
-      + `${(m.nombre || ('Equipo ' + m.id)).replace(/</g, '&lt;')}`
-      + `${m.sku ? ' — ' + m.sku.replace(/</g, '&lt;') : ''}</option>`)
-  ).join('');
-};
+const _otdEqmNorm = s => (s || '').toString().toLowerCase()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-window.otdCerrarAgregarEquipo = function(){
-  const box = document.getElementById('otdAgregarEquipoBox');
-  if (box) box.style.display = 'none';
-};
+function _otdEqmConstruirGrupos(maquinas){
+  const porClave = new Map();
+  maquinas.forEach(m => {
+    const nom = (m.nombre || '').trim() || ('Equipo ' + m.id);
+    const sku = (m.sku || '').trim();
+    // Sin SKU no se puede agrupar por producto: agrupa por nombre exacto.
+    const clave = sku ? ('S#' + sku.toUpperCase()) : ('N#' + _otdEqmNorm(nom));
+    if (!porClave.has(clave)){
+      porClave.set(clave, {
+        key: clave, sku: sku, nombre: nom, plan: 0, fuera: 0,
+        unidades: [], sel: new Set(), plantilla: '', abierto: false, i: 0,
+      });
+    }
+    const g = porClave.get(clave);
+    g.unidades.push({
+      id: m.id, serie: (m.serie || '').trim(),
+      cantidad: parseInt(m.cantidad, 10) || 1,
+      estado_op: (m.estado_op || '').trim(),
+      doc: (m.doc_origen || '').trim(),
+      plan: Number(m.aplica_mantencion) === 1,
+    });
+    if (Number(m.aplica_mantencion) === 1) g.plan += 1; else g.fuera += 1;
+    // Gana el nombre más descriptivo (REGLA #15: nombres completos)
+    if (nom.length > g.nombre.length) g.nombre = nom;
+  });
+  const arr = Array.from(porClave.values());
+  arr.forEach(g => g.unidades.sort(
+    (a, b) => (a.serie || '').localeCompare(b.serie || '') || a.id - b.id));
+  arr.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  arr.forEach((g, i) => { g.i = i; });
+  return arr;
+}
 
-window.otdSugerirPlantillaEquipo = async function(){
-  const selEq = document.getElementById('otdAgregarEquipoSelect');
-  const selPl = document.getElementById('otdAgregarEquipoPlantilla');
-  if (!selEq || !selPl) return;
-  const opt = selEq.options[selEq.selectedIndex];
-  const sku = opt ? opt.dataset.sku : '';
+function _otdEqmVisibles(){
+  const q = _otdEqmNorm(_otdEqmQ);
+  return (_otdEqmGrupos || []).filter(g => {
+    if (_otdEqmFiltro === 'plan'  && !g.plan)  return false;
+    if (_otdEqmFiltro === 'fuera' && !g.fuera) return false;
+    if (!q) return true;
+    if (_otdEqmNorm(g.nombre).includes(q)) return true;
+    if (g.sku && _otdEqmNorm(g.sku).includes(q)) return true;
+    return g.unidades.some(u => u.serie && _otdEqmNorm(u.serie).includes(q));
+  });
+}
+
+function _otdEqmOpcionesPlantilla(sel){
   // Mismo orden que otdCambiarPlantilla: primero las de la categoría de
   // ESTA OT, después el resto marcadas con su categoría.
   const propia = [], otras = [];
-  PLANTILLAS_TODAS.forEach(p => (p.categoria_admin === CATEGORIA_OT_ACTUAL ? propia : otras).push(p));
-  const opcion = (p, etiqueta) =>
-    `<option value="${p.id}">${p.nombre.replace(/</g, '&lt;')}${etiqueta ? ' (' + etiqueta + ')' : ''}</option>`;
-  selPl.innerHTML = '<option value="">Elige un checklist…</option>'
-    + propia.map(p => opcion(p, '')).join('')
-    + otras.map(p => opcion(p, _CAT_ADMIN_LABEL[p.categoria_admin] || 'otra categoría')).join('');
-  if (!sku || !selEq.value) return;
-  try {
-    const r = await fetch(`/mantenciones/api/plantillas/sugerida-por-sku?sku=${encodeURIComponent(sku)}&tipo_ot={{ v.tipo }}`);
-    const j = await r.json();
-    if (j && j.plantilla_id){
-      selPl.value = String(j.plantilla_id);
+  PLANTILLAS_TODAS.forEach(
+    p => (p.categoria_admin === CATEGORIA_OT_ACTUAL ? propia : otras).push(p));
+  const op = (p, etq) =>
+    '<option value="' + p.id + '"' + (String(p.id) === String(sel) ? ' selected' : '') + '>'
+    + otdEsc(p.nombre) + (etq ? ' (' + etq + ')' : '') + '</option>';
+  return '<option value="">Elige un checklist…</option>'
+    + propia.map(p => op(p, '')).join('')
+    + otras.map(p => op(p, _CAT_ADMIN_LABEL[p.categoria_admin] || 'otra categoría')).join('');
+}
+
+function _otdEqmTarjeta(g){
+  const n     = g.sel.size;
+  const total = g.unidades.length;
+  const unidades = g.unidades.map(u => {
+    const marc = g.sel.has(u.id);
+    return '<label class="otd-eqg-u' + (marc ? ' sel' : '') + '" data-id="' + u.id + '">'
+      + '<input type="checkbox"' + (marc ? ' checked' : '')
+      + ' onchange="otdEqmUnidad(' + g.i + ',' + u.id + ',this.checked)">'
+      + '<span class="s">' + otdEsc(u.serie || ('#' + u.id)) + '</span>'
+      + (u.cantidad > 1 ? '<span class="d">· ' + u.cantidad + ' unidades en la ficha</span>' : '')
+      + (u.doc ? '<span class="d">· ' + otdEsc(u.doc) + '</span>' : '')
+      + (u.plan ? '' : '<span class="d">· fuera del plan</span>')
+      + '</label>';
+  }).join('');
+
+  return '<div class="otd-eqg' + (n ? ' on' : '') + '" data-i="' + g.i + '">'
+    + '<div class="otd-eqg-top">'
+      + '<div class="otd-eqg-tx">'
+        + '<div class="otd-eqg-nom">' + otdEsc(g.nombre) + '</div>'
+        + '<div class="otd-eqg-meta">'
+          + (g.sku ? '<span class="b sku">' + otdEsc(g.sku) + '</span>' : '')
+          + '<span class="b stock">' + total + ' disponible' + (total === 1 ? '' : 's') + '</span>'
+          + (g.plan  ? '<span class="b plan">' + g.plan + ' del plan</span>' : '')
+          + (g.fuera ? '<span class="b nplan">' + g.fuera + ' fuera del plan</span>' : '')
+        + '</div>'
+      + '</div>'
+      + '<div class="otd-eqg-qty">'
+        + '<button type="button" data-b="menos" onclick="otdEqmQty(' + g.i + ',-1)"'
+        + (n <= 0 ? ' disabled' : '') + ' aria-label="Quitar uno">−</button>'
+        + '<span class="n">' + n + '</span>'
+        + '<button type="button" data-b="mas" onclick="otdEqmQty(' + g.i + ',1)"'
+        + (n >= total ? ' disabled' : '') + ' aria-label="Agregar uno">+</button>'
+      + '</div>'
+    + '</div>'
+    + '<div class="otd-eqg-bot">'
+      + '<div class="campo"><label>Checklist para este producto</label>'
+        + '<select onchange="otdEqmPlantilla(' + g.i + ',this.value)">'
+        + _otdEqmOpcionesPlantilla(g.plantilla) + '</select></div>'
+      + (total > 1
+          ? '<button type="button" class="otd-eqg-uni" onclick="otdEqmVerUnidades(' + g.i + ')">'
+            + '<i class="bi bi-list-check"></i> <span>'
+            + (g.abierto ? 'Ocultar unidades' : 'Elegir unidades') + '</span></button>'
+          : '')
+    + '</div>'
+    + (total > 1
+        ? '<div class="otd-eqg-lista' + (g.abierto ? ' abierta' : '') + '">' + unidades + '</div>'
+        : '')
+  + '</div>';
+}
+
+function otdEqmRender(){
+  const cont = document.getElementById('otdEqmLista');
+  if (!cont) return;
+  if (_otdEqmErrorCarga){
+    cont.innerHTML = '<div class="otd-eqm-vacio"><i class="bi bi-wifi-off"></i>'
+      + 'No pudimos traer los equipos de este cliente.<br>'
+      + 'Revisa la conexión y vuelve a abrir esta ventana.</div>';
+    otdEqmResumen(); return;
+  }
+  const vis = _otdEqmVisibles();
+  if (!vis.length){
+    const hayAlgo = (_otdEqmGrupos || []).length > 0;
+    cont.innerHTML = '<div class="otd-eqm-vacio"><i class="bi bi-inbox"></i>'
+      + (hayAlgo
+          ? 'Ningún equipo coincide con lo que buscas.'
+          : 'Este cliente no tiene más equipos para agregar — todos los de su ficha ya están en esta OT.')
+      + '</div>';
+    otdEqmResumen(); return;
+  }
+  cont.innerHTML = vis.map(_otdEqmTarjeta).join('');
+  otdEqmResumen();
+}
+
+/* Actualiza UNA tarjeta sin repintar la lista: repintar entera perdería
+   el scroll y cerraría la lista de unidades justo cuando el usuario está
+   marcando dentro de ella. */
+function otdEqmActualizarCard(i){
+  const g  = (_otdEqmGrupos || [])[i];
+  const el = document.querySelector('.otd-eqg[data-i="' + i + '"]');
+  if (!g || !el) return;
+  el.classList.toggle('on', g.sel.size > 0);
+  const n = el.querySelector('.otd-eqg-qty .n');
+  if (n) n.textContent = g.sel.size;
+  const bMenos = el.querySelector('[data-b="menos"]');
+  if (bMenos) bMenos.disabled = g.sel.size <= 0;
+  const bMas = el.querySelector('[data-b="mas"]');
+  if (bMas) bMas.disabled = g.sel.size >= g.unidades.length;
+  el.querySelectorAll('.otd-eqg-u').forEach(row => {
+    const id = parseInt(row.dataset.id, 10);
+    const marc = g.sel.has(id);
+    row.classList.toggle('sel', marc);
+    const chk = row.querySelector('input');
+    if (chk) chk.checked = marc;
+  });
+  const selPl = el.querySelector('.otd-eqg-bot select');
+  if (selPl){
+    if (g.plantilla && selPl.value !== String(g.plantilla)) selPl.value = String(g.plantilla);
+    if (g.plantilla) selPl.classList.remove('falta');
+  }
+  otdEqmResumen();
+}
+
+function otdEqmResumen(){
+  let prod = 0, uds = 0;
+  (_otdEqmGrupos || []).forEach(g => { if (g.sel.size){ prod++; uds += g.sel.size; } });
+  const res = document.getElementById('otdEqmResumen');
+  const btn = document.getElementById('otdEqmBtnGuardar');
+  if (res) res.innerHTML = uds
+    ? '<b>' + uds + '</b> equipo' + (uds === 1 ? '' : 's')
+      + ' de <b>' + prod + '</b> producto' + (prod === 1 ? '' : 's')
+    : 'Nada seleccionado todavía';
+  if (btn){
+    btn.disabled = !uds;
+    btn.innerHTML = '<i class="bi bi-plus-circle"></i> '
+      + (uds ? ('Agregar ' + uds + ' a la OT') : 'Agregar a la OT');
+  }
+}
+
+/* El checklist se sugiere solo al elegir el producto — el humano siempre
+   puede cambiarlo antes de guardar (Daniel, 13-08: "no quiero nada
+   automático, todo lo debe escoger el usuario"). */
+async function _otdEqmSugerir(g){
+  if (g.plantilla || !g.sku) return;
+  if (_otdEqmSugCache[g.sku] !== undefined){
+    if (_otdEqmSugCache[g.sku]){
+      g.plantilla = String(_otdEqmSugCache[g.sku]);
+      otdEqmActualizarCard(g.i);
     }
-  } catch(e){ /* sin sugerencia, el humano elige a mano */ }
+    return;
+  }
+  try {
+    const r = await otdFetch('/mantenciones/api/plantillas/sugerida-por-sku?sku='
+      + encodeURIComponent(g.sku) + '&tipo_ot={{ v.tipo }}', {}, 8000);
+    const j = await r.json();
+    _otdEqmSugCache[g.sku] = (j && j.plantilla_id) ? j.plantilla_id : 0;
+    if (_otdEqmSugCache[g.sku] && !g.plantilla){
+      g.plantilla = String(_otdEqmSugCache[g.sku]);
+      otdEqmActualizarCard(g.i);
+    }
+  } catch(e){ _otdEqmSugCache[g.sku] = 0; }  // sin sugerencia, elige el humano
+}
+
+window.otdEqmQty = function(i, delta){
+  const g = (_otdEqmGrupos || [])[i];
+  if (!g) return;
+  if (delta > 0){
+    const libre = g.unidades.find(u => !g.sel.has(u.id));
+    if (!libre) return;
+    g.sel.add(libre.id);
+    _otdEqmSugerir(g);
+  } else {
+    for (let k = g.unidades.length - 1; k >= 0; k--){
+      if (g.sel.has(g.unidades[k].id)){ g.sel.delete(g.unidades[k].id); break; }
+    }
+  }
+  otdEqmActualizarCard(i);
 };
 
-window.otdConfirmarAgregarEquipo = async function(){
-  const selEq = document.getElementById('otdAgregarEquipoSelect');
-  const selPl = document.getElementById('otdAgregarEquipoPlantilla');
-  if (!selEq || !selEq.value){
-    ilusToast('Elige un equipo primero.', {type:'warning'});
-    return;
+window.otdEqmUnidad = function(i, mid, marcado){
+  const g = (_otdEqmGrupos || [])[i];
+  if (!g) return;
+  if (marcado){ g.sel.add(mid); _otdEqmSugerir(g); } else { g.sel.delete(mid); }
+  otdEqmActualizarCard(i);
+};
+
+window.otdEqmPlantilla = function(i, val){
+  const g = (_otdEqmGrupos || [])[i];
+  if (!g) return;
+  g.plantilla = val || '';
+  otdEqmActualizarCard(i);
+};
+
+window.otdEqmVerUnidades = function(i){
+  const g = (_otdEqmGrupos || [])[i];
+  const el = document.querySelector('.otd-eqg[data-i="' + i + '"]');
+  if (!g || !el) return;
+  g.abierto = !g.abierto;
+  const lista = el.querySelector('.otd-eqg-lista');
+  if (lista) lista.classList.toggle('abierta', g.abierto);
+  const txt = el.querySelector('.otd-eqg-uni span');
+  if (txt) txt.textContent = g.abierto ? 'Ocultar unidades' : 'Elegir unidades';
+};
+
+window.otdEqmBuscar = function(q){ _otdEqmQ = q || ''; otdEqmRender(); };
+
+window.otdEqmChip = function(f){
+  _otdEqmFiltro = f;
+  document.querySelectorAll('#otdEqmChips .ch[data-f]').forEach(
+    b => b.classList.toggle('on', b.dataset.f === f));
+  otdEqmRender();
+};
+
+/* REGLA #14 — un solo control marca/desmarca todo lo VISIBLE (respeta el
+   filtro y la búsqueda: "seleccionar todo" con un filtro puesto no debe
+   arrastrar lo que el usuario no está viendo). */
+window.otdEqmToggleTodo = function(){
+  const vis = _otdEqmVisibles();
+  if (!vis.length) return;
+  const faltan = vis.some(g => g.sel.size < g.unidades.length);
+  vis.forEach(g => {
+    if (faltan){ g.unidades.forEach(u => g.sel.add(u.id)); _otdEqmSugerir(g); }
+    else g.sel.clear();
+  });
+  otdEqmRender();
+};
+
+function _otdEqmEsc(e){ if (e.key === 'Escape') otdEqmCerrar(); }
+
+window.otdAbrirAgregarEquipo = async function(){
+  const ov = document.getElementById('otdEqmOv');
+  if (!ov) return;
+  // Al body: si algún contenedor de la página tuviera transform, un
+  // position:fixed adentro dejaría de anclarse a la ventana.
+  if (ov.parentElement !== document.body) document.body.appendChild(ov);
+  ov.hidden = false;
+  document.body.style.overflow = 'hidden';
+  document.addEventListener('keydown', _otdEqmEsc);
+
+  if (!_otdMaquinasClienteCache){
+    _otdEqmErrorCarga = false;
+    try {
+      const r = await otdFetch(
+        '/mantenciones/api/clientes/{{ v.cliente_id or 0 }}/maquinas-list', {}, 12000);
+      const j = await r.json();
+      // No cachear el vacío: puede ser un error transitorio disfrazado.
+      if (Array.isArray(j) && j.length) _otdMaquinasClienteCache = j;
+      else if (!Array.isArray(j)) _otdEqmErrorCarga = true;
+    } catch(e){ _otdEqmErrorCarga = true; }
   }
-  if (!selPl || !selPl.value){
-    ilusToast('Elige el checklist para este equipo.', {type:'warning'});
-    return;
-  }
-  try {
-    const r = await fetch('/ot/api/{{ v.id }}/equipos', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        maquina_id: parseInt(selEq.value, 10),
-        plantilla_id: parseInt(selPl.value, 10),
-      }),
+  const disponibles = (_otdMaquinasClienteCache || [])
+    .filter(m => !EQUIPOS_YA_EN_OT.includes(m.id));
+  _otdEqmGrupos = _otdEqmConstruirGrupos(disponibles);
+  otdEqmRender();
+};
+
+window.otdEqmCerrar = function(){
+  const ov = document.getElementById('otdEqmOv');
+  if (ov) ov.hidden = true;
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', _otdEqmEsc);
+};
+
+window.otdEqmFondo = function(e){
+  if (e && e.target && e.target.id === 'otdEqmOv') otdEqmCerrar();
+};
+
+window.otdEqmGuardar = async function(){
+  const items = [], sinPl = [];
+  (_otdEqmGrupos || []).forEach(g => {
+    if (!g.sel.size) return;
+    if (!g.plantilla){ sinPl.push(g); return; }
+    g.sel.forEach(id => items.push({
+      maquina_id: id, plantilla_id: parseInt(g.plantilla, 10),
+    }));
+  });
+
+  if (sinPl.length){
+    sinPl.forEach(g => {
+      const sel = document.querySelector('.otd-eqg[data-i="' + g.i + '"] .otd-eqg-bot select');
+      if (sel) sel.classList.add('falta');
     });
+    const primero = document.querySelector('.otd-eqg-bot select.falta');
+    if (primero) primero.scrollIntoView({behavior:'smooth', block:'center'});
+    await ilusAlert({
+      title: 'Falta elegir el checklist',
+      type: 'warning',
+      message: sinPl.length === 1
+        ? 'Elige el checklist de "' + sinPl[0].nombre + '" antes de agregarlo.'
+        : 'Hay ' + sinPl.length + ' productos elegidos sin checklist. Márcalos antes de agregar.',
+    });
+    return;
+  }
+  if (!items.length){
+    ilusToast('No has elegido ningún equipo todavía.', {type:'warning'});
+    return;
+  }
+  if (items.length > 200){
+    await ilusAlert({
+      title: 'Son demasiados de una vez',
+      message: 'Elegiste ' + items.length + ' equipos. El máximo por tanda son 200 — '
+             + 'divídelo en dos.', type: 'warning',
+    });
+    return;
+  }
+
+  const ok = await ilusConfirm({
+    title: 'Agregar equipos a la OT',
+    message: 'Se van a agregar ' + items.length + ' equipo'
+           + (items.length === 1 ? '' : 's') + ' con su checklist.',
+    sub: 'Cada equipo suma sus tareas al trabajo técnico de esta OT.',
+    okLabel: 'Agregar', cancelLabel: 'Volver',
+  });
+  if (!ok) return;
+
+  const btn = document.getElementById('otdEqmBtnGuardar');
+  const antes = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Agregando…'; }
+  try {
+    const r = await otdFetch('/ot/api/{{ v.id }}/equipos-masivo', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({items: items}),
+    }, 180000);
     const j = await r.json().catch(() => ({}));
-    if (r.ok && j.ok){
-      ilusToast('✓ Equipo agregado a la OT', {type:'success'});
-      setTimeout(() => location.reload(), 600);
-    } else {
-      ilusToast(j.error || 'No se pudo agregar el equipo.', {type:'error'});
+    const nOk  = (j && j.n_ok) || 0;
+    const fall = (j && j.fallidos) || [];
+
+    if (!r.ok && !nOk){
+      if (btn){ btn.disabled = false; btn.innerHTML = antes; }
+      await ilusAlert({
+        title: 'No se pudo agregar',
+        message: (j && j.error) || 'El servidor rechazó la operación.',
+        type: 'error',
+      });
+      return;
     }
+    if (fall.length){
+      const det = fall.slice(0, 6).map(f => '• ' + otdEsc(f.error || 'Error')).join('<br>')
+                + (fall.length > 6 ? '<br>…y ' + (fall.length - 6) + ' más' : '');
+      await ilusAlert({
+        title: nOk ? ('Se agregaron ' + nOk + ', ' + fall.length + ' no')
+                   : 'No se agregó ninguno',
+        message: nOk
+          ? ('Quedaron ' + nOk + ' equipo(s) en la OT. Estos no se pudieron agregar:')
+          : 'Ninguno se pudo agregar:',
+        sub: det, subHtml: true,
+        type: nOk ? 'warning' : 'error',
+      });
+    } else {
+      ilusToast('✓ ' + nOk + ' equipo' + (nOk === 1 ? '' : 's') + ' agregado'
+                + (nOk === 1 ? '' : 's') + ' a la OT', {type:'success'});
+    }
+    if (nOk){ setTimeout(() => location.reload(), 700); return; }
+    if (btn){ btn.disabled = false; btn.innerHTML = antes; }
   } catch(e){
-    ilusToast('Error de conexión al agregar el equipo.', {type:'error'});
+    if (btn){ btn.disabled = false; btn.innerHTML = antes; }
+    // Honestidad: sin respuesta NO sabemos si entraron. Reintentar a ciegas
+    // podría duplicar o dejar la OT a medias sin que nadie se entere.
+    await ilusAlert({
+      title: 'Nos quedamos sin respuesta',
+      message: 'No sabemos si los equipos alcanzaron a guardarse.',
+      sub: 'Recarga la pantalla y revisa la lista de equipos de la OT antes de volver a intentarlo.',
+      type: 'error',
+    });
   }
 };
 

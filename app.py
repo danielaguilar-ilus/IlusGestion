@@ -75724,6 +75724,7 @@ def mant_cliente_maquinas_list(cid):
     # el campo nuevo sin romperse.
     rows = mysql_fetchall(
         "SELECT id, nombre, sku, serie, estado_op, doc_origen, "
+        "       COALESCE(cantidad,1) AS cantidad, "
         "       COALESCE(aplica_mantencion,1) AS aplica_mantencion "
         "  FROM mant_maquinas WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
         " ORDER BY nombre", (cid,)
@@ -80102,6 +80103,96 @@ def ot2_api_crear():
     })
 
 
+class _OT2EquipoError(Exception):
+    """Rechazo con mensaje ya redactado para el humano.
+
+    Existe para que el alta de UN equipo y el alta MASIVA compartan
+    exactamente las mismas reglas: la validación vive en un solo lugar
+    (`_ot2_equipo_insertar`) y cada llamador decide qué hace con el
+    rechazo -- el de a uno devuelve el error, el masivo lo anota en la
+    lista de fallidos y sigue con el resto.
+    """
+    def __init__(self, msg, code, http=400):
+        super().__init__(msg)
+        self.msg, self.code, self.http = msg, code, http
+
+
+def _ot2_equipo_insertar(cur, v, vid, maquina_id, plantilla_id):
+    """Valida y mete UN equipo (con su checklist) en una OT ya creada.
+
+    Trabaja sobre un cursor YA ABIERTO -- quien llama decide el commit y el
+    rollback. Devuelve dict(maquina_nombre, plantilla_nombre, n_tareas) o
+    lanza `_OT2EquipoError`.
+
+    Es el MISMO INSERT que usa `ot2_api_crear` para cada equipo al crear la
+    OT: ningún checklist nuevo, el de siempre.
+    """
+    cur.execute(
+        "SELECT id, cliente_id, nombre FROM mant_maquinas WHERE id=%s", (maquina_id,))
+    maq = cur.fetchone()
+    if not maq:
+        raise _OT2EquipoError("Ese equipo no existe.", "EQUIPO_NO_EXISTE", 404)
+    if v.get("cliente_id") and maq.get("cliente_id") != v.get("cliente_id"):
+        raise _OT2EquipoError(
+            "Ese equipo no pertenece al cliente de esta OT.", "EQUIPO_OTRO_CLIENTE")
+
+    cur.execute(
+        "SELECT id, nombre FROM mant_tarea_plantillas "
+        "WHERE id=%s AND COALESCE(activa,1)=1", (plantilla_id,))
+    plant = cur.fetchone()
+    if not plant:
+        raise _OT2EquipoError(
+            "Ese checklist no existe o está inactivo.", "PLANTILLA_NO_EXISTE", 404)
+
+    cur.execute(
+        "SELECT 1 FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
+        (vid, maquina_id))
+    if cur.fetchone():
+        raise _OT2EquipoError(
+            f"'{maq.get('nombre') or maquina_id}' ya está en esta OT.",
+            "EQUIPO_YA_AGREGADO", 409)
+
+    cur.execute(
+        "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
+        "       requiere_foto, unidad, rango_min, rango_max, "
+        "       opciones_lista_json, target_field "
+        "  FROM mant_tarea_plantilla_items "
+        " WHERE plantilla_id=%s ORDER BY orden, id", (plantilla_id,))
+    items = cur.fetchall()
+    if not items:
+        raise _OT2EquipoError(
+            f"El checklist '{plant.get('nombre')}' no tiene tareas.", "CHECKLIST_VACIO")
+
+    cur.execute(
+        "SELECT COALESCE(MAX(orden),0) AS m FROM mant_visita_tareas WHERE visita_id=%s",
+        (vid,))
+    orden = (cur.fetchone() or {}).get("m") or 0
+    tarea_tipo = _tarea_tipo_seguro(v.get("tipo"))
+    n_tareas = 0
+    for it in items:
+        orden += 1
+        cur.execute(
+            "INSERT INTO mant_visita_tareas "
+            "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
+            "   maquina_id, tipo_respuesta, target_field, obligatoria, "
+            "   requiere_foto, unidad, rango_min, rango_max, "
+            "   opciones_lista_json, estado_trabajo, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+            "        'pendiente',%s)",
+            (vid, plantilla_id, orden, (it.get("titulo") or "")[:300],
+             it.get("descripcion"), tarea_tipo, maquina_id,
+             it.get("tipo_respuesta") or "check", it.get("target_field"),
+             it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+             it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
+             it.get("opciones_lista_json"), current_username()))
+        n_tareas += 1
+    return {
+        "maquina_nombre": maq.get("nombre"),
+        "plantilla_nombre": plant.get("nombre"),
+        "n_tareas": n_tareas,
+    }
+
+
 @app.route("/ot/api/<int:vid>/equipos", methods=["POST"])
 @_mant_required
 def ot2_api_agregar_equipo(vid):
@@ -80156,64 +80247,15 @@ def ot2_api_agregar_equipo(vid):
         return _ot2_err(
             "Elige el checklist para este equipo.", "PLANTILLA_REQUERIDA")
 
-    maq = mysql_fetchone(
-        "SELECT id, cliente_id, nombre FROM mant_maquinas WHERE id=%s", (maquina_id,))
-    if not maq:
-        return _ot2_err("Ese equipo no existe.", "EQUIPO_NO_EXISTE", http=404)
-    if v.get("cliente_id") and maq.get("cliente_id") != v.get("cliente_id"):
-        return _ot2_err(
-            "Ese equipo no pertenece al cliente de esta OT.", "EQUIPO_OTRO_CLIENTE")
-
-    plant = mysql_fetchone(
-        "SELECT id, nombre FROM mant_tarea_plantillas "
-        "WHERE id=%s AND COALESCE(activa,1)=1", (plantilla_id,))
-    if not plant:
-        return _ot2_err(
-            "Ese checklist no existe o está inactivo.", "PLANTILLA_NO_EXISTE", http=404)
-
-    ya = mysql_fetchone(
-        "SELECT 1 FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
-        (vid, maquina_id))
-    if ya:
-        return _ot2_err("Ese equipo ya está en esta OT.", "EQUIPO_YA_AGREGADO", http=409)
-
-    tarea_tipo = _tarea_tipo_seguro(v.get("tipo"))
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COALESCE(MAX(orden),0) AS m FROM mant_visita_tareas WHERE visita_id=%s",
-                (vid,))
-            orden = (cur.fetchone() or {}).get("m") or 0
-            cur.execute(
-                "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
-                "       requiere_foto, unidad, rango_min, rango_max, "
-                "       opciones_lista_json, target_field "
-                "  FROM mant_tarea_plantilla_items "
-                " WHERE plantilla_id=%s ORDER BY orden, id", (plantilla_id,))
-            items = cur.fetchall()
-            if not items:
-                conn.rollback()
-                return _ot2_err("Ese checklist no tiene tareas.", "CHECKLIST_VACIO")
-            n_tareas = 0
-            for it in items:
-                orden += 1
-                cur.execute(
-                    "INSERT INTO mant_visita_tareas "
-                    "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
-                    "   maquina_id, tipo_respuesta, target_field, obligatoria, "
-                    "   requiere_foto, unidad, rango_min, rango_max, "
-                    "   opciones_lista_json, estado_trabajo, created_by) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                    "        'pendiente',%s)",
-                    (vid, plantilla_id, orden, (it.get("titulo") or "")[:300],
-                     it.get("descripcion"), tarea_tipo, maquina_id,
-                     it.get("tipo_respuesta") or "check", it.get("target_field"),
-                     it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
-                     it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                     it.get("opciones_lista_json"), current_username()))
-                n_tareas += 1
+            res = _ot2_equipo_insertar(cur, v, vid, maquina_id, plantilla_id)
         conn.commit()
+    except _OT2EquipoError as e:
+        try: conn.rollback()
+        except Exception: pass
+        return _ot2_err(e.msg, e.code, http=e.http)
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
@@ -80227,12 +80269,127 @@ def ot2_api_agregar_equipo(vid):
 
     _mant_log(
         "visita", vid, "equipo_agregado",
-        f"{current_username() or '?'} agregó el equipo '{maq.get('nombre') or maquina_id}' "
-        f"(checklist '{plant.get('nombre')}', {n_tareas} tarea(s)) a una OT ya creada "
+        f"{current_username() or '?'} agregó el equipo '{res['maquina_nombre'] or maquina_id}' "
+        f"(checklist '{res['plantilla_nombre']}', {res['n_tareas']} tarea(s)) a una OT ya creada "
         f"[permiso de rol mant_equipos_agregar_libre].")
     return jsonify({
-        "ok": True, "maquina_id": maquina_id, "maquina_nombre": maq.get("nombre"),
-        "n_tareas": n_tareas,
+        "ok": True, "maquina_id": maquina_id,
+        "maquina_nombre": res["maquina_nombre"],
+        "n_tareas": res["n_tareas"],
+    })
+
+
+@app.route("/ot/api/<int:vid>/equipos-masivo", methods=["POST"])
+@_mant_required
+def ot2_api_agregar_equipos_masivo(vid):
+    """Agrega VARIOS equipos de una vez a una OT ya creada.
+
+    Daniel, 2026-09-03 (viendo "EQUIPOS — DETALLE DE TRABAJO"): "cuando
+    presionáramos ese botón me apareciera un modal donde yo pudiera igual
+    buscar equipos y gestionarle las plantillas y las cantidades... para
+    agregar varios productos, buscarlo, moverme con mayor facilidad y
+    agregar en masivo". Con el camino de a uno, sumar 20 equipos eran 20
+    idas y vueltas al servidor y 20 recargas de pantalla.
+
+    Comparte EXACTAMENTE la misma validación e inserción que el alta de a
+    uno (`_ot2_equipo_insertar`) -- no hay una segunda copia de las reglas
+    que se pueda desincronizar.
+
+    Cada equipo se confirma por separado (commit por ítem): si uno falla
+    (ya estaba en la OT, checklist vacío, equipo de otro cliente), los
+    demás igual quedan guardados y la respuesta dice cuáles fallaron y por
+    qué. Nada de "✓ listo" cuando la mitad no entró -- ver
+    [[gotchas_perdida_datos_tecnico_movil]].
+    """
+    if not (bool(g.permissions.get("superadmin"))
+            or bool(g.permissions.get("mant_equipos_agregar_libre"))):
+        return _ot2_err(
+            "No tienes permiso para agregar equipos a una OT ya creada. "
+            "Pide que un superadministrador te habilite \"Agregar equipos a "
+            "OT ya creada\" en Usuarios y roles.",
+            "SIN_PERMISO_AGREGAR_EQUIPO", http=403)
+
+    v = mysql_fetchone(
+        "SELECT id, cliente_id, tipo, estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
+    _estado_ot = (v.get("estado") or "").strip().lower()
+    if _estado_ot in ("cerrada", "completada", "cancelada", "anulada"):
+        return _ot2_err(
+            f"La OT ya está {_estado_ot} — no acepta más equipos.",
+            "OT_TERMINAL", http=409)
+
+    d = request.get_json(silent=True) or {}
+    items_raw = d.get("items")
+    if not isinstance(items_raw, list) or not items_raw:
+        return _ot2_err("No elegiste ningún equipo.", "SIN_EQUIPOS")
+    if len(items_raw) > 200:
+        return _ot2_err(
+            "Son demasiados equipos de una sola vez (máximo 200). "
+            "Divídelo en dos tandas.", "DEMASIADOS_EQUIPOS")
+
+    # Normalizar ANTES de tocar la base, y sin repetir el mismo equipo dos
+    # veces en la misma tanda (el segundo chocaría contra el primero).
+    pedidos, vistos = [], set()
+    for it in items_raw:
+        if not isinstance(it, dict):
+            continue
+        try:
+            mid = int(it.get("maquina_id"))
+            pid = int(it.get("plantilla_id"))
+        except (TypeError, ValueError):
+            continue
+        if mid in vistos:
+            continue
+        vistos.add(mid)
+        pedidos.append((mid, pid))
+    if not pedidos:
+        return _ot2_err(
+            "Ninguno de los equipos venía con su checklist elegido.",
+            "SIN_EQUIPOS_VALIDOS")
+
+    agregados, fallidos = [], []
+    conn = get_db()
+    try:
+        for mid, pid in pedidos:
+            try:
+                with conn.cursor() as cur:
+                    res = _ot2_equipo_insertar(cur, v, vid, mid, pid)
+                conn.commit()
+                agregados.append({
+                    "maquina_id": mid, "nombre": res["maquina_nombre"],
+                    "n_tareas": res["n_tareas"],
+                })
+            except _OT2EquipoError as e:
+                try: conn.rollback()
+                except Exception: pass
+                fallidos.append({"maquina_id": mid, "error": e.msg})
+            except Exception as e:
+                try: conn.rollback()
+                except Exception: pass
+                print(f"[ot2_equipos_masivo] vid={vid} maquina_id={mid}: {e}", flush=True)
+                fallidos.append({
+                    "maquina_id": mid,
+                    "error": "No pudimos agregarlo. Intenta de nuevo.",
+                })
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    if agregados:
+        _nombres = ", ".join((a["nombre"] or str(a["maquina_id"])) for a in agregados[:12])
+        if len(agregados) > 12:
+            _nombres += f" y {len(agregados) - 12} más"
+        _mant_log(
+            "visita", vid, "equipo_agregado",
+            f"{current_username() or '?'} agregó {len(agregados)} equipo(s) a una OT "
+            f"ya creada: {_nombres}"
+            + (f" — {len(fallidos)} no se pudo(ieron) agregar." if fallidos else "")
+            + " [permiso de rol mant_equipos_agregar_libre].")
+
+    return jsonify({
+        "ok": bool(agregados), "agregados": agregados, "fallidos": fallidos,
+        "n_ok": len(agregados), "n_error": len(fallidos),
     })
 
 
