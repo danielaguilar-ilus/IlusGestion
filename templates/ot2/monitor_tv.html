@@ -2257,8 +2257,16 @@
           '<button type="button" data-d="2">+2</button>' +
           '<button type="button" data-d="7">+1 semana</button>' +
           '<button type="button" data-d="-1">−1 día</button>' +
+          // 🐛 FIX 2026-09-02 (Daniel: "en el monitor, al abrir la OT me
+          // lleva a las OT normales"): este link mandaba a
+          // /mantenciones/ot/<id>/ejecutar, la pantalla LEGACY. El monitor
+          // es una pantalla de OT 2.0 y su botón tiene que quedarse en
+          // 2.0. /ot/<id> ya resuelve solo el caso del técnico (si el rol
+          // es técnico, ot2_detalle redirige a la pantalla de ejecución
+          // clásica -- ver app.py ~76806), así que este cambio NO le quita
+          // la herramienta a nadie: manda a cada quien donde corresponde.
           '<a class="tvm-ot-abrir" target="_blank" rel="noopener" ' +
-          '   href="/mantenciones/ot/' + b.vid + '/ejecutar">Abrir OT ↗</a>';
+          '   href="/ot/' + b.vid + '">Abrir OT ↗</a>';
         acc.querySelectorAll('button[data-d]').forEach(btn => {
           btn.addEventListener('click', (ev) => {
             ev.stopPropagation();

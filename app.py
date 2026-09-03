@@ -78261,71 +78261,51 @@ def ot2_api_finanzas_lineas_zz(vid):
     })
 
 
-@app.route("/ot/api/<int:vid>/equipos-desde-documento", methods=["POST"])
-@_mant_required
-@_ot_can_metadata
-def ot2_api_equipos_desde_documento(vid):
-    """Da de alta en la ficha del cliente los equipos del documento de la OT.
+def _ot_equipos_desde_doc_core(vid, confirmar=False, usuario=None):
+    """Núcleo del alta de equipos desde el documento de la OT.
 
-    🆕 2026-09-02 (Daniel, dos veces: "es indispensable que se vayan creando
-    clientes nuevos para yo ver los equipos que vamos instalando como un
-    historial... si existe, tiene que agregarle esos productos y indicar que
-    fue una instalación con esa fecha" / "las órdenes de trabajo tienen que
-    empezar a mover las fichas en definitiva").
+    Vive fuera de la ruta porque lo usan DOS disparadores, y la regla de
+    negocio tiene que ser UNA sola:
+      · el alta AUTOMÁTICA al cerrar la OT (Daniel 2026-09-02: "necesito
+        que la orden de trabajo sea la que mueva la ficha del cliente de
+        manera automática"), y
+      · el endpoint manual, para las OT ya cerradas antes de que esto
+        existiera, o cuyo documento se declaró después del cierre.
 
-    QUÉ FALTABA: hoy solo el LEVANTAMIENTO alimenta la ficha del cliente
-    (`_lev_materializar_equipos_nuevos`, tipo='levantamiento'). Una OT de
-    INSTALACIÓN cierra sin dejar rastro de las máquinas que se instalaron:
-    la ficha del cliente queda igual de vacía que antes de la visita, y por
-    eso "cuántas instalaciones le hice" no se podía responder desde los
-    equipos. El documento de la OT (factura/boleta/NV) ya tiene esas
-    máquinas: son sus líneas de producto físico.
-
-    Reusa las piezas que ya existen, no inventa un importador nuevo:
-      · `_mant_erp_doc_cached` para leer el documento (read-only, REGLA #4.1)
-      · `_asignados_por_sku` para NO duplicar lo ya dado de alta con ese
-        mismo documento (control de saldo que ya gobierna el wizard de
-        clientes)
-      · `_generar_serie_ilus` para la serie interna cuando el equipo no
-        trae una real
-
-    Dos modos, `confirmar` en el body:
-      · false (default) -> PREVIEW: dice qué daría de alta y qué omite.
-      · true            -> escribe las fichas.
-    Nunca escribe sin que alguien lo confirme: dar de alta máquinas en la
-    ficha de un cliente es un cambio permanente en sus datos.
+    Devuelve (ok: bool, data: dict). NUNCA lanza y NUNCA devuelve una
+    respuesta Flask: el caller automático corre dentro del cierre de una OT
+    y nada de acá puede impedir que una OT se cierre.
     """
-    d = request.get_json(silent=True) or {}
-    confirmar = bool(d.get("confirmar"))
-
     v = mysql_fetchone(
         "SELECT id, numero_ot, cliente_id, tipo, fecha_programada, "
         "       documento_erp_tido, documento_erp_nudo, factura_tido, factura_nudo "
         "  FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
-        return _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+        return False, {"codigo": "OT_NO_EXISTE",
+                       "error": "No encontramos esa orden de trabajo."}
     cid = v.get("cliente_id")
     if not cid:
-        return _ot2_err(
-            "Esta OT no tiene cliente (trabajo interno): no hay ficha que alimentar.",
-            "SIN_CLIENTE")
+        return False, {"codigo": "SIN_CLIENTE",
+                       "error": "Esta OT no tiene cliente (trabajo interno): "
+                                "no hay ficha que alimentar."}
 
     tido = (v.get("documento_erp_tido") or v.get("factura_tido") or "").strip().upper()
     nudo = re.sub(r"[^0-9]", "", str(v.get("documento_erp_nudo")
                                      or v.get("factura_nudo") or ""))
     if not tido or not nudo:
-        return _ot2_err(
-            "Esta OT todavía no tiene un documento declarado. Decláralo en "
-            "Finanzas de la OT y vuelve a intentar.", "SIN_DOCUMENTO")
+        return False, {"codigo": "SIN_DOCUMENTO",
+                       "error": "Esta OT todavía no tiene un documento declarado. "
+                                "Decláralo en Finanzas de la OT y vuelve a intentar."}
 
     try:
         header, lineas = _mant_erp_doc_cached(tido, nudo)
     except Exception as e:
         print(f"[ot2_equipos_doc] vid={vid} {tido} {nudo}: {e}", flush=True)
-        return _ot2_err("No pudimos leer el documento en el ERP.", "ERP_ERROR", http=502)
+        return False, {"codigo": "ERP_ERROR",
+                       "error": "No pudimos leer el documento en el ERP."}
     if not header:
-        return _ot2_err(f"No encontramos {tido} N° {nudo} en el ERP.",
-                        "DOC_NO_EXISTE", http=404)
+        return False, {"codigo": "DOC_NO_EXISTE",
+                       "error": f"No encontramos {tido} N° {nudo} en el ERP."}
 
     _doc_key = _doc_origen_key(tido, nudo)
     _ya = _asignados_por_sku(tido, nudo)
@@ -78355,7 +78335,9 @@ def ot2_api_equipos_desde_documento(vid):
         _saldo = _cant - _asig
         _nombre = (ln.get("nombre_app") or ln.get("descripcion_erp") or _sku)[:400]
         if _saldo <= 0:
-            # Ya se dieron de alta con ESTE documento: no se duplica.
+            # Ya se dieron de alta con ESTE documento: no se duplica. Este
+            # es también el candado que hace IDEMPOTENTE al alta automática:
+            # si el cierre se reintenta, no crea las máquinas dos veces.
             omitidos.append({"sku": _sku, "nombre": _nombre,
                              "cantidad": _cant, "asignados": _asig,
                              "motivo": "ya está en la ficha con este documento"})
@@ -78365,22 +78347,21 @@ def ot2_api_equipos_desde_documento(vid):
                            "ya_asignados": _asig})
 
     if not confirmar:
-        return jsonify({
-            "ok": True, "preview": True,
-            "documento": _doc_key,
+        return True, {
+            "preview": True, "documento": _doc_key,
             "doc_fecha": str(_doc_fecha)[:10] if _doc_fecha else "",
             "fecha_instalacion": str(_fecha_inst)[:10] if _fecha_inst else "",
             "candidatos": candidatos, "omitidos": omitidos,
             "total_a_crear": sum(c["cantidad"] for c in candidatos),
-        })
+        }
 
     if not candidatos:
-        return _ot2_err(
-            "No hay equipos nuevos que dar de alta con este documento.",
-            "SIN_CANDIDATOS")
+        return False, {"codigo": "SIN_CANDIDATOS",
+                       "error": "No hay equipos nuevos que dar de alta con "
+                                "este documento."}
 
     creados, errores = [], []
-    _usuario = current_username() or "sistema"
+    _usuario = usuario or current_username() or "sistema"
     _tipo_lbl = _TIPO_OT_LABEL.get((v.get("tipo") or "").lower(), v.get("tipo") or "OT")
     for c in candidatos:
         # Una fila de ficha POR UNIDAD: dos trotadoras iguales son dos
@@ -78422,9 +78403,89 @@ def ot2_api_equipos_desde_documento(vid):
                   + (f" · {len(errores)} con error" if errores else ""))
     except Exception:
         pass
+    return True, {"creados": len(creados), "errores": errores,
+                  "documento": _doc_key}
 
-    return jsonify({"ok": True, "creados": len(creados), "errores": errores,
-                    "documento": _doc_key})
+
+def _ot_alta_equipos_al_cerrar(vid, usuario=None):
+    """Alta AUTOMÁTICA de equipos en la ficha, al cerrar la OT.
+
+    🆕 2026-09-02 (Daniel: "necesito que la orden de trabajo sea la que
+    mueva la ficha del cliente de manera automática"). Es el equivalente,
+    para las OT con documento, de lo que `_lev_promover_full_async` ya hace
+    para el levantamiento.
+
+    Blindado a propósito -- corre DENTRO del cierre de una OT:
+      · Envuelto en try/except: un fallo acá jamás impide cerrar la OT.
+      · Los casos "sin cliente", "sin documento" o "sin candidatos" NO son
+        errores: son OT que simplemente no tienen equipos que aportar
+        (trabajo interno, una mantención sin venta de máquinas). Se pasan
+        en silencio, sin ensuciar la bitácora.
+      · Idempotente por `_asignados_por_sku`: si el cierre se reintenta, no
+        duplica las fichas.
+    """
+    try:
+        ok, data = _ot_equipos_desde_doc_core(vid, confirmar=True, usuario=usuario)
+        if ok and data.get("creados"):
+            print(f"[ot2_alta_auto] vid={vid}: {data['creados']} equipo(s) "
+                  f"a la ficha desde {data.get('documento')}", flush=True)
+        elif not ok and data.get("codigo") not in (
+                "SIN_CLIENTE", "SIN_DOCUMENTO", "SIN_CANDIDATOS"):
+            # Solo se registra lo que de verdad salió mal (ERP caído, doc
+            # inexistente): lo otro es normal y no merece ruido.
+            print(f"[ot2_alta_auto] vid={vid} no aplicó: "
+                  f"{data.get('codigo')} · {data.get('error')}", flush=True)
+    except Exception as e:
+        print(f"[ot2_alta_auto] vid={vid} falló (la OT se cierra igual): {e}",
+              flush=True)
+
+
+@app.route("/ot/api/<int:vid>/equipos-desde-documento", methods=["POST"])
+@_mant_required
+@_ot_can_metadata
+def ot2_api_equipos_desde_documento(vid):
+    """Da de alta en la ficha del cliente los equipos del documento de la OT.
+
+    🆕 2026-09-02 (Daniel, dos veces: "es indispensable que se vayan creando
+    clientes nuevos para yo ver los equipos que vamos instalando como un
+    historial... si existe, tiene que agregarle esos productos y indicar que
+    fue una instalación con esa fecha" / "las órdenes de trabajo tienen que
+    empezar a mover las fichas en definitiva").
+
+    QUÉ FALTABA: hoy solo el LEVANTAMIENTO alimenta la ficha del cliente
+    (`_lev_materializar_equipos_nuevos`, tipo='levantamiento'). Una OT de
+    INSTALACIÓN cierra sin dejar rastro de las máquinas que se instalaron:
+    la ficha del cliente queda igual de vacía que antes de la visita, y por
+    eso "cuántas instalaciones le hice" no se podía responder desde los
+    equipos. El documento de la OT (factura/boleta/NV) ya tiene esas
+    máquinas: son sus líneas de producto físico.
+
+    Reusa las piezas que ya existen, no inventa un importador nuevo:
+      · `_mant_erp_doc_cached` para leer el documento (read-only, REGLA #4.1)
+      · `_asignados_por_sku` para NO duplicar lo ya dado de alta con ese
+        mismo documento (control de saldo que ya gobierna el wizard de
+        clientes)
+      · `_generar_serie_ilus` para la serie interna cuando el equipo no
+        trae una real
+
+    Dos modos, `confirmar` en el body:
+      · false (default) -> PREVIEW: dice qué daría de alta y qué omite.
+      · true            -> escribe las fichas.
+    Nunca escribe sin que alguien lo confirme: dar de alta máquinas en la
+    ficha de un cliente es un cambio permanente en sus datos.
+
+    Toda la lógica vive en `_ot_equipos_desde_doc_core` -- esto es solo la
+    puerta HTTP. La MISMA función la usa el alta automática al cerrar la
+    OT, para que no existan dos versiones de la regla.
+    """
+    d = request.get_json(silent=True) or {}
+    ok, data = _ot_equipos_desde_doc_core(vid, confirmar=bool(d.get("confirmar")))
+    if not ok:
+        _http = {"OT_NO_EXISTE": 404, "DOC_NO_EXISTE": 404, "ERP_ERROR": 502}.get(
+            data.get("codigo"), 400)
+        return _ot2_err(data.get("error") or "No se pudo procesar.",
+                        data.get("codigo") or "ERROR", http=_http)
+    return jsonify({"ok": True, **data})
 
 
 @app.route("/ot/api/crear", methods=["POST"])
@@ -88549,6 +88610,18 @@ def mant_ot_aprobar_cierre(vid):
         # fino: solo promueve si tipo='levantamiento' o levantamiento_id NOT NULL.
         # 2026-06-23: full = materializa equipos descubiertos + promueve.
         _lev_promover_full_async(vid, usuario=current_username())
+        # ── Alta automática de equipos en la ficha del cliente ────────────
+        # 🆕 2026-09-02 (Daniel: "necesito que la orden de trabajo sea la que
+        # mueva la ficha del cliente de manera automática"). Hermano del
+        # bloque de arriba: aquel promueve lo que el LEVANTAMIENTO capturó en
+        # terreno, este da de alta lo que el DOCUMENTO de la OT vendió
+        # (típicamente una instalación). Antes de esto, una instalación
+        # cerraba sin dejar ni una máquina en la ficha del cliente.
+        # Corre síncrono a propósito -- misma lección que dejó la OT-32: en
+        # Cloud Run un hilo fire-and-forget se congela al enviar la respuesta
+        # y el trabajo nunca ocurre. Son pocas filas y ya está blindado para
+        # no romper el cierre pase lo que pase.
+        _ot_alta_equipos_al_cerrar(vid, usuario=current_username())
         # 2026-05-22 (Daniel) — Notificar al técnico (campana) y opcionalmente
         # al cliente por email (env MANT_NOTIF_CLIENTE_EMAIL_ENABLED).
         try:
