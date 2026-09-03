@@ -294,6 +294,12 @@
   background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
 .otd-anx-lock i{font-size:.95rem;flex:none;margin-top:1px}
 .otd-anx-lock.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+/* Traza del envío del anexo — 2026-09-02. Discreta: es información de
+   respaldo ("¿a qué correo se mandó?"), no una alerta. */
+.otd-anx-envio{display:flex;align-items:flex-start;gap:7px;margin-top:8px;
+  font-size:.73rem;line-height:1.4;color:#64748b}
+.otd-anx-envio i{flex:none;margin-top:1px;color:#94a3b8}
+.otd-anx-envio b{color:#334155;font-weight:800;word-break:break-all}
 
 /* Lo que el documento le cobra al cliente (líneas ZZ del ERP) — 2026-09-02,
    caso OT-149: el dato estaba guardado pero invisible, y por eso parecía
@@ -1883,7 +1889,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          para no confundirlas con el contacto registrado en la ficha del
          cliente). #}
       {% if v.contacto_nombre %}
-      <div class="otd-card">
+      <div class="otd-card" data-bal="1">
         <h3><i class="bi bi-person-vcard-fill"></i> Contraparte en sitio</h3>
         <div class="otd-din">
           <div class="row"><span>Nombre</span><b>{{ v.contacto_nombre }}</b></div>
@@ -2092,11 +2098,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {{ 'Ver anexo firmado' if _anx_firmado else 'Ver borrador' }}</button>
             {% if not _anx_firmado %}
             <button type="button" class="otd-btn pri" style="flex:1;justify-content:center"
-                    onclick="OT2ANX.abrirEnviar({{ anexo.id }})">
+                    onclick="OT2ANX.abrirEnviar({{ anexo.id }},
+                             {{ (anexo.get('enviado_email') or '') | tojson }},
+                             {{ (anexo.get('enviado_tel') or '') | tojson }})">
               <i class="bi bi-send-fill"></i>
               {{ 'Reenviar' if anexo.enviado_at else 'Enviar a firmar' }}</button>
             {% endif %}
           </div>
+          {# 🆕 2026-09-02 — A DÓNDE se mandó y cuántas veces. Antes no
+             quedaba en ninguna parte: si el proveedor decía "no me llegó",
+             nadie podía comprobar a qué correo se había mandado. #}
+          {% if anexo.enviado_at and anexo.get('enviado_email') %}
+          <div class="otd-anx-envio">
+            <i class="bi bi-envelope-check"></i>
+            <span>Enviado a <b>{{ anexo.get('enviado_email') }}</b>
+              el {{ anexo.enviado_at | chile_fmt('%d/%m/%Y %H:%M') }}
+              {%- if (anexo.get('envios_n') or 0) > 1 %} · {{ anexo.get('envios_n') }} envíos{% endif %}</span>
+          </div>
+          {% endif %}
           {% endif %}
         </div>
       </div>
@@ -2208,7 +2227,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          `capture="environment"` en el input de cámara activa grabar
          video directo con la cámara trasera en celular (>99% del uso,
          según Daniel) en vez de solo poder subir un archivo ya grabado. #}
-      <div class="otd-card">
+      <div class="otd-card" data-bal="1">
         <h3><i class="bi bi-camera-reels-fill"></i> Videos y documentos
           <span class="n" id="otdAdjCount">—</span></h3>
         {% if puede_ejecutar %}
@@ -7154,6 +7173,108 @@ const OT2F = (function(){
     factConsultar, factAsociar, declararGarantia, quitarGarantia, guardarCentroCosto,
     limpiarFirma, undoFirma, setFirmaColor,
   };
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   BALANCEO DE LAS DOS COLUMNAS (REGLA #16, segunda parte)
+   🆕 2026-09-02 — Daniel, viendo una OT INTERNA: "veo un hueco igual
+   cuando es interna".
+
+   POR QUÉ VOLVIÓ EL HUECO: el arreglo anterior repartió las tarjetas
+   mirando una OT de cliente completa. Pero media columna izquierda es
+   CONDICIONAL: sin cliente no hay "Contraparte en sitio", y "Datos de la
+   OT" se encoge porque no tiene dirección ni RUT. Medido en producción
+   sobre la OT-2026-00153 (trabajo interno): izquierda 512px contra
+   derecha 913px -- 401px de hueco. Es exactamente el punto 2 de la
+   REGLA #16, que yo mismo escribí y no cubrí.
+
+   POR QUÉ NO SE ARREGLA MOVIENDO TARJETAS A MANO: las combinaciones son
+   muchas (interna / sin contraparte / sin anexo / vista de técnico /
+   OT cerrada), y cada una desbalancea distinto. Cualquier reparto fijo
+   queda bien en un caso y mal en otro.
+
+   QUÉ HACE: mide las dos columnas y, si la diferencia es grande, pasa la
+   ÚLTIMA tarjeta marcada `data-bal="1"` de la columna alta a la baja --
+   pero SOLO si el movimiento de verdad reduce la diferencia. Si no
+   mejora, no toca nada. Así se adapta solo a cualquier combinación.
+
+   Se mueven únicamente las tarjetas que están al FINAL de su columna
+   ("Contraparte en sitio" y "Videos y documentos"): así devolverlas a su
+   lugar es exacto, y no se altera el orden que Daniel pidió para las que
+   sí importan arriba (Firmas primero, después Firmar y cerrar).
+
+   En móvil NO corre y se revierte: ahí la grilla colapsa a una columna y
+   manda el orden del DOM, que ya está resuelto con `order`. Mover
+   tarjetas rompería ese orden.
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const MIN_ESCRITORIO = 981;   // igual que el @media de .otd-grid
+  const TOLERANCIA     = 200;   // < una tarjeta chica (REGLA #16 punto 3)
+  const GAP            = 14;    // el gap real de .otd-grid
+  let _orig = null;             // posición original de cada tarjeta movible
+
+  function _capturarOriginal(cols){
+    if (_orig) return;
+    _orig = [];
+    cols.forEach(col => {
+      col.querySelectorAll(':scope > .otd-card[data-bal="1"]').forEach(el => {
+        _orig.push({ el: el, padre: col });
+      });
+    });
+  }
+  // Vuelven al final de su columna original, que es donde estaban escritas.
+  function _restaurar(){
+    if (!_orig) return;
+    _orig.forEach(o => { if (o.el.parentElement !== o.padre) o.padre.appendChild(o.el); });
+  }
+
+  function otdBalancearColumnas(){
+    const g = document.querySelector('.otd-grid');
+    if (!g) return;
+    const cols = Array.from(g.querySelectorAll(':scope > .otd-col'));
+    if (cols.length !== 2) return;
+
+    _capturarOriginal(cols);
+    _restaurar();                       // siempre partir del orden escrito
+    if (window.innerWidth < MIN_ESCRITORIO) return;   // en móvil se queda así
+
+    // Como máximo 3 pasadas: con 2 tarjetas movibles nunca hace falta más,
+    // y el tope evita cualquier riesgo de quedarse dando vueltas.
+    for (let paso = 0; paso < 3; paso++){
+      const h = cols.map(c => c.getBoundingClientRect().height);
+      const dif = Math.abs(h[0] - h[1]);
+      if (dif <= TOLERANCIA) return;
+
+      const alta = h[0] > h[1] ? 0 : 1;
+      const baja = 1 - alta;
+      const movibles = cols[alta].querySelectorAll(':scope > .otd-card[data-bal="1"]');
+      if (!movibles.length) return;
+
+      const cand = movibles[movibles.length - 1];      // la última de esa columna
+      const hc   = cand.getBoundingClientRect().height + GAP;
+      // Se simula ANTES de mover: si el salto deja la otra columna aún más
+      // desnivelada, es peor el remedio que la enfermedad.
+      if (Math.abs((h[alta] - hc) - (h[baja] + hc)) >= dif) return;
+
+      cols[baja].appendChild(cand);
+    }
+  }
+  window.otdBalancearColumnas = otdBalancearColumnas;
+
+  function _programar(){ requestAnimationFrame(() => requestAnimationFrame(otdBalancearColumnas)); }
+
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', _programar);
+  else _programar();
+  // Las fotos de firma cambian el alto al terminar de cargar.
+  window.addEventListener('load', _programar);
+
+  let _t = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(_t); _t = setTimeout(otdBalancearColumnas, 180);
+  });
 })();
 </script>
 {% endblock %}

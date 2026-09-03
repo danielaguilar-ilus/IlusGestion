@@ -47,6 +47,33 @@
 .oax-sec{padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid #f1f3f5}
 .oax-sec:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
 .oax label.fl{font-size:.76rem;font-weight:800;color:#374151;margin-bottom:4px;display:block}
+
+/* ══ PASOS NUMERADOS — lenguaje visual de /retiros/solicitar (REGLA #15)
+   🆕 2026-09-02. Daniel: "ese modal debe ser motivo de orgullo", y antes:
+   "quiero que lo diseñes con el formato de retiro, estructurado, paso a
+   paso". El anexo es un documento con efecto CONTRACTUAL y cuatro datos
+   obligatorios; con todo plano no se veía qué faltaba para poder crearlo.
+   El círculo nace rojo y pasa a verde con check cuando el paso está
+   completo — mismo semáforo que Retiros, misma lectura de un vistazo. ══ */
+.oax-sh{display:flex;align-items:center;gap:10px;margin-bottom:11px}
+.oax-num{width:28px;height:28px;flex:none;border-radius:50%;display:grid;place-items:center;
+  font-size:.8rem;font-weight:900;background:#fef2f2;color:#dc2626;
+  border:2px solid #fecaca;transition:background .25s,border-color .25s,color .25s}
+.oax-num i{font-size:.85rem;display:none}
+.oax-sec.ok .oax-num{background:#16a34a;border-color:#16a34a;color:#fff}
+.oax-sec.ok .oax-num span{display:none}
+.oax-sec.ok .oax-num i{display:block}
+.oax-sh .t{font-size:.85rem;font-weight:900;color:#0a0a0a;letter-spacing:.01em}
+.oax-sh .t small{display:block;font-size:.71rem;font-weight:600;color:#6b7280;
+  letter-spacing:0;margin-top:1px}
+.oax-sec.ok .oax-sh .t{color:#166534}
+/* Barra de progreso: cuántos de los pasos obligatorios están listos. */
+.oax-prog{display:flex;align-items:center;gap:9px;padding:10px 24px;background:#fafbfc;
+  border-bottom:1px solid #eaecf0;font-size:.74rem;font-weight:800;color:#6b7280}
+.oax-prog .bar{flex:1;height:6px;border-radius:99px;background:#e5e7eb;overflow:hidden}
+.oax-prog .bar > i{display:block;height:100%;width:0;border-radius:99px;
+  background:linear-gradient(90deg,#dc2626,#16a34a);transition:width .35s ease}
+.oax-prog.full{color:#166534}
 .oax input.form-control,.oax select.form-select,.oax textarea.form-control{font-size:16px}
 
 .oax-item{display:flex;gap:8px;margin-bottom:8px;align-items:center}
@@ -98,9 +125,18 @@
       </div>
 
       {# ═══ FASE 1 — CREAR ═══ #}
+      <div class="oax-prog" id="oaxProg">
+        <span id="oaxProgTxt">0 de 4 listos</span>
+        <span class="bar"><i id="oaxProgBar"></i></span>
+      </div>
       <div class="oax-body" id="oaxBodyCrear">
 
-        <div class="oax-sec">
+        <div class="oax-sec" data-paso="proveedor">
+          <div class="oax-sh">
+            <span class="oax-num"><span>1</span><i class="bi bi-check-lg"></i></span>
+            <span class="t">¿Quién ejecuta el servicio?
+              <small>La empresa que firma el anexo. Sin su RUT no hay contraparte.</small></span>
+          </div>
           <label class="fl">Proveedor externo</label>
           <select class="form-select form-select-sm" id="oaxProveedorSel" onchange="OT2ANX.onProveedorChange()">
             <option value="">Cargando proveedores…</option>
@@ -149,13 +185,23 @@
           </div>
         </div>
 
-        <div class="oax-sec">
+        <div class="oax-sec" data-paso="objetivo">
+          <div class="oax-sh">
+            <span class="oax-num"><span>2</span><i class="bi bi-check-lg"></i></span>
+            <span class="t">¿Qué trabajo se compromete?
+              <small>Es lo que el proveedor acepta al firmar. Se toma de la OT.</small></span>
+          </div>
           <label class="fl">Objetivo del servicio</label>
           <textarea class="form-control form-control-sm" id="oaxObjetivo" rows="2" maxlength="600"
                     oninput="OT2ANX.setObjetivo(this.value)"></textarea>
         </div>
 
-        <div class="oax-sec">
+        <div class="oax-sec" data-paso="precio">
+          <div class="oax-sh">
+            <span class="oax-num"><span>3</span><i class="bi bi-check-lg"></i></span>
+            <span class="t">¿Cuánto se le paga?
+              <small>Desglosado por concepto, igual que en el anexo en papel.</small></span>
+          </div>
           <label class="fl">Precio, por concepto (neto)</label>
           <div id="oaxItems"></div>
           <button type="button" class="btn btn-outline-secondary btn-sm" onclick="OT2ANX.agregarItem()">
@@ -163,7 +209,12 @@
           <div class="oax-total" id="oaxTotal">Total neto: $0</div>
         </div>
 
-        <div class="oax-sec">
+        <div class="oax-sec" data-paso="fechas">
+          <div class="oax-sh">
+            <span class="oax-num"><span>4</span><i class="bi bi-check-lg"></i></span>
+            <span class="t">¿Cuándo se ejecuta?
+              <small>Inicio y término, como en el anexo. Vienen de la fecha de la OT.</small></span>
+          </div>
           <div class="row g-2">
             <div class="col-6"><label class="fl">Inicio del servicio</label>
               <input type="date" class="form-control form-control-sm" id="oaxFechaIni"
@@ -329,6 +380,10 @@ window.OT2ANX = (function(){
     document.getElementById('oaxFootCrear').style.display  = (nombre === 'crear')  ? 'flex' : 'none';
     document.getElementById('oaxFootEnviar').style.display = (nombre === 'enviar') ? 'flex' : 'none';
     document.getElementById('oaxFootListo').style.display  = 'none';
+    // La barra de progreso mide los 4 pasos de la creación: en la fase de
+    // envío no tiene nada que medir y estorba.
+    var prog = document.getElementById('oaxProg');
+    if (prog) prog.style.display = (nombre === 'crear') ? 'flex' : 'none';
     var sub = document.getElementById('oaxSub');
     if (sub) sub.textContent = (nombre === 'crear')
       ? 'El proveedor no puede trabajar la OT hasta firmarlo.'
@@ -529,16 +584,61 @@ window.OT2ANX = (function(){
     btn.classList.toggle('on', abrir);
   }
 
-  function setObjetivo(v){ S.objetivo_servicio = v; }
-  function setFecha(cual, v){ if (cual === 'inicio') S.fecha_inicio = v; else S.fecha_termino = v; }
+  function setObjetivo(v){ S.objetivo_servicio = v; pintarPasos(); }
+  function setFecha(cual, v){ if (cual === 'inicio') S.fecha_inicio = v; else S.fecha_termino = v; pintarPasos(); }
   function setCond(campo, v){ S[campo] = v; }
-  function setItemConcepto(i, v){ if (S.items[i]) S.items[i].concepto = v; }
-  function setItemMonto(i, v){ if (S.items[i]){ S.items[i].monto = v; actualizarTotal(); } }
-  function agregarItem(){ S.items.push({concepto:'', monto:''}); pintarItems(); }
+  function setItemConcepto(i, v){ if (S.items[i]) S.items[i].concepto = v; pintarPasos(); }
+  function setItemMonto(i, v){ if (S.items[i]){ S.items[i].monto = v; actualizarTotal(); } pintarPasos(); }
+  function agregarItem(){ S.items.push({concepto:'', monto:''}); pintarItems(); pintarPasos(); }
   function quitarItem(i){
     if (S.items.length <= 1){ S.items[i] = {concepto:'', monto:''}; }
     else { S.items.splice(i, 1); }
-    pintarItems();
+    pintarItems(); pintarPasos();
+  }
+
+  /* ── Semáforo de los 4 pasos obligatorios (REGLA #15) ──────────────
+     Las mismas condiciones que valida `crear()` antes de mandar al
+     servidor. Esa es la gracia: lo que la pantalla pinta en verde es
+     EXACTAMENTE lo que el backend va a aceptar, así nadie llena todo y
+     recién al apretar "Crear Anexo" se entera de qué faltaba. */
+  function pasoListo(paso){
+    if (!S) return false;
+    if (paso === 'proveedor'){
+      var manual = document.getElementById('oaxProveedorManual');
+      if (manual && manual.checked){
+        var n = (document.getElementById('oaxManNombre').value || '').trim();
+        return !!n;
+      }
+      return !!(S.proveedor_nombre || '').trim();
+    }
+    if (paso === 'objetivo') return !!(S.objetivo_servicio || '').trim();
+    if (paso === 'precio')
+      return (S.items || []).some(function(it){ return Number(it.monto) > 0; });
+    if (paso === 'fechas') return !!(S.fecha_inicio && S.fecha_termino);
+    return false;
+  }
+  function pintarPasos(){
+    var secs = document.querySelectorAll('#oaxBodyCrear .oax-sec[data-paso]');
+    var n = 0;
+    secs.forEach(function(sec){
+      var ok = pasoListo(sec.dataset.paso);
+      sec.classList.toggle('ok', ok);
+      if (ok) n++;
+    });
+    var total = secs.length || 4;
+    var txt = document.getElementById('oaxProgTxt');
+    var bar = document.getElementById('oaxProgBar');
+    var box = document.getElementById('oaxProg');
+    if (txt) txt.textContent = (n === total)
+      ? '✓ Listo para crear el anexo'
+      : (n + ' de ' + total + ' listos');
+    if (bar) bar.style.width = Math.round((n / total) * 100) + '%';
+    if (box) box.classList.toggle('full', n === total);
+    var btn = document.getElementById('oaxBtnCrear');
+    if (btn) btn.classList.toggle('btn-secondary', false);   // nunca se deshabilita:
+    // a propósito NO se bloquea "Crear Anexo" -- el mensaje de qué falta ya
+    // lo da `crear()` con el campo exacto, y deshabilitar un botón sin decir
+    // por qué es justo lo que Daniel odia de otros sistemas.
   }
 
   async function abrir(vid){
@@ -550,13 +650,29 @@ window.OT2ANX = (function(){
     fase('crear');
     pintarForm();
     cargarProveedores();
+    pintarPasos();
+    // Red de seguridad: cualquier cambio dentro del formulario repinta el
+    // semáforo, incluidos los campos del proveedor manual, que no tienen
+    // handler propio. Se registra UNA vez (marca en el dataset) para no
+    // acumular listeners al reabrir el modal.
+    var cuerpo = document.getElementById('oaxBodyCrear');
+    if (cuerpo && cuerpo.dataset.pasosWired !== '1'){
+      cuerpo.dataset.pasosWired = '1';
+      cuerpo.addEventListener('input',  pintarPasos);
+      cuerpo.addEventListener('change', pintarPasos);
+    }
   }
 
-  function abrirEnviar(anexoId){
+  /* 🆕 2026-09-02 — `email` y `tel` los pasa la tarjeta del anexo desde lo
+     que quedó guardado en el último envío. Antes esta función los BORRABA:
+     al reenviar había que acordarse del correo del proveedor de memoria, y
+     si se dejaba vacío el reenvío salía sin destinatario -- silencioso, y
+     con la OT bloqueada para el proveedor mientras tanto. */
+  function abrirEnviar(anexoId, email, tel){
     aid = anexoId; creadoAlgo = false;   // ya existía -- no gatilla el "se creó algo nuevo" en el toast, pero SÍ recarga al cerrar si se envía
     document.getElementById('oaxNumeroCreado').textContent = '—';
-    document.getElementById('oaxEmailDestino').value = '';
-    document.getElementById('oaxTelDestino').value = '';
+    document.getElementById('oaxEmailDestino').value = email || '';
+    document.getElementById('oaxTelDestino').value = tel || '';
     document.getElementById('oaxResultadoBox').style.display = 'none';
     var modalEl = document.getElementById('oaxModal');
     var modal = bootstrap.Modal.getOrCreateInstance(modalEl);

@@ -77639,6 +77639,11 @@ def ot2_detalle(vid):
         # ── Envíos
         "email_enviado":                ("envió un correo", "bi-envelope-fill", "azul", "envios"),
         "firma_remota_enviada":         ("envió el link de firma por correo", "bi-envelope-paper-fill", "azul", "envios"),
+        # 🆕 2026-09-02 — el envío del anexo es lo que DESBLOQUEA la OT para
+        # el proveedor externo: tiene que quedar en la bitácora igual que
+        # una firma, no perdido en un log de correo.
+        "anexo_enviado":                ("envió el anexo a firmar", "bi-file-earmark-lock2-fill", "azul", "envios"),
+        "anexo_reenviado":              ("reenvió el anexo a firmar", "bi-arrow-repeat", "ambar", "envios"),
         "firma_remota_whatsapp_generada": ("generó el link de firma por WhatsApp", "bi-whatsapp", "verde", "envios"),
         "ot_compartida_wa":             ("compartió la OT por WhatsApp", "bi-whatsapp", "verde", "envios"),
         "informe_postservicio":         ("generó el informe post servicio", "bi-file-earmark-word-fill", "azul", "envios"),
@@ -77860,13 +77865,27 @@ def ot2_detalle(vid):
     # mirando la OT, que el técnico la tenía bloqueada. Se suman al SELECT el
     # RUT del proveedor (dato que el anexo ya guarda) y los dos hashes de la
     # evidencia de firma, para poder mostrar con qué respaldo quedó firmado.
-    anexo = mysql_fetchone(
+    _ANEXO_SEL_BASE = (
         "SELECT id, numero, estado, proveedor_nombre, proveedor_rut, "
         "       firmante_nombre, firmante_rut, firmado_at, enviado_at, "
-        "       documento_hash, documento_hash_cliente "
-        "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1",
-        (vid,)
-    )
+        "       documento_hash, documento_hash_cliente")
+    try:
+        # 🆕 2026-09-02: a quién y cuántas veces se mandó el link. Sin esto
+        # el reenvío obligaba a recordar el correo de memoria.
+        anexo = mysql_fetchone(
+            _ANEXO_SEL_BASE + ", enviado_email, enviado_tel, envios_n "
+            "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,))
+    except Exception as _e_anx_col:
+        # REGLA #5: estas tres columnas se agregan por ALTER idempotente en
+        # `_ensure_mant_anexos`, que corre al arrancar incluso con
+        # ILUS_SKIP_MIGRATIONS=1. Si ese ALTER llegara a fallar (permisos,
+        # tabla bloqueada), un SELECT de columnas inexistentes tumbaría la
+        # pantalla ENTERA de la OT. Se degrada a lo de siempre en vez de
+        # dejar a Daniel sin poder abrir ninguna orden.
+        print(f"[ot2_detalle] anexo sin columnas de envio: {_e_anx_col}", flush=True)
+        anexo = mysql_fetchone(
+            _ANEXO_SEL_BASE +
+            "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,))
 
     # Mapa liviano {maquina_id: {...}} para el renderer JS del checklist
     # (tipo 'serie', otdChkTareaHtml en ot2/detalle.html) -- evita mandar
@@ -81535,6 +81554,29 @@ def _ensure_mant_anexos():
                         "ALTER TABLE mant_anexos ADD COLUMN proveedor_direccion VARCHAR(400) NULL")
             except Exception as e:
                 print(f"[ensure_mant_anexos] proveedor_direccion: {e}", flush=True)
+            # 📮 2026-09-02 (Daniel: "arreglaste los anexos y sus envíos").
+            # A dónde se mandó el anexo NO se guardaba en ninguna parte: el
+            # correo viajaba solo en el POST del envío. Consecuencia real:
+            # al reenviar había que acordarse del correo de memoria, y si se
+            # dejaba vacío el reenvío salía sin destinatario. Ahora queda en
+            # el anexo y el modal lo precarga solo.
+            for _col, _ddl in (
+                ("enviado_email", "ALTER TABLE mant_anexos ADD COLUMN enviado_email VARCHAR(200) NULL "
+                                  "COMMENT 'ultimo destinatario del link de firma'"),
+                ("enviado_tel",   "ALTER TABLE mant_anexos ADD COLUMN enviado_tel VARCHAR(40) NULL "
+                                  "COMMENT 'ultimo telefono usado para el link de WhatsApp'"),
+                ("envios_n",      "ALTER TABLE mant_anexos ADD COLUMN envios_n INT NOT NULL DEFAULT 0 "
+                                  "COMMENT 'cuantas veces se mando el link'"),
+            ):
+                try:
+                    cur.execute(
+                        "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                        " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_anexos' "
+                        "   AND COLUMN_NAME=%s", (_col,))
+                    if not cur.fetchone():
+                        cur.execute(_ddl)
+                except Exception as e:
+                    print(f"[ensure_mant_anexos] {_col}: {e}", flush=True)
             # 🔢 2026-08-31 (Daniel, textual: "quiero dejarte el último anexo
             # para mantener el correlativo y partamos en el 160"): el
             # próximo anexo debe salir con N° 160. `_next_anexo_numero_atomic`
@@ -81805,24 +81847,65 @@ def ot2_api_anexo_enviar(aid):
     a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (aid,))
     if not a:
         return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
-    if a["estado"] not in ("borrador",):
-        return jsonify({"ok": False, "error": f"Este anexo ya está en estado "
-                        f"'{a['estado']}' — no se puede reenviar así."}), 400
+    # 🔴 FIX 2026-09-02 (Daniel: "arreglaste los anexos y sus envíos").
+    # BUG REAL: la tarjeta del anexo muestra un botón que dice "Reenviar"
+    # en cuanto hay `enviado_at`... y este endpoint lo rechazaba con un 400
+    # porque solo aceptaba 'borrador'. O sea: si el correo caía en spam o
+    # el email estaba mal escrito, el proveedor nunca recibía el link, la
+    # OT quedaba BLOQUEADA para él (el anexo es candado duro) y desde la
+    # pantalla no había ninguna salida. Ahora el reenvío funciona de
+    # verdad desde 'enviado' y 'visto'.
+    _REENVIABLES = ("borrador", "enviado", "visto", "vencido")
+    if a["estado"] not in _REENVIABLES:
+        _porque = {
+            "firmado":  "Este anexo ya está firmado: no hace falta reenviarlo.",
+            "rechazado": "El proveedor rechazó este anexo. Crea uno nuevo.",
+            "anulado":  "Este anexo está anulado. Crea uno nuevo.",
+        }.get(a["estado"], f"No se puede enviar un anexo en estado '{a['estado']}'.")
+        return jsonify({"ok": False, "error": _porque}), 400
 
     d = request.get_json(silent=True) or {}
     email_destino = (d.get("email") or "").strip()[:200]
     telefono = (d.get("telefono") or "").strip()
 
-    token = secrets.token_urlsafe(30)[:40]
-    expira = datetime.utcnow() + timedelta(days=15)
+    _es_reenvio = bool(a.get("enviado_at"))
+    # Si el link anterior sigue vigente se REUSA, para no romperle el que ya
+    # tenga a mano el proveedor (puede tenerlo abierto en el teléfono, o
+    # reenviado a un colega). Solo se genera uno nuevo si no hay o venció.
+    _tok_prev = (a.get("token") or "").strip()
+    _exp_prev = a.get("token_expira_at")
+    _vigente = bool(_tok_prev) and bool(_exp_prev) and _exp_prev > datetime.utcnow()
+    token = _tok_prev if _vigente else secrets.token_urlsafe(30)[:40]
+    expira = _exp_prev if _vigente else (datetime.utcnow() + timedelta(days=15))
     try:
+        # El estado NO retrocede de 'visto' a 'enviado': que el proveedor ya
+        # haya abierto el documento es información real que no se borra por
+        # reenviar el correo.
+        _nuevo_estado = "visto" if a["estado"] == "visto" else "enviado"
         mysql_execute(
-            "UPDATE mant_anexos SET token=%s, token_expira_at=%s, estado='enviado', "
-            "  enviado_at=NOW(), enviado_por=%s WHERE id=%s",
-            (token, expira, current_username(), aid))
+            "UPDATE mant_anexos SET token=%s, token_expira_at=%s, estado=%s, "
+            "  enviado_at=NOW(), enviado_por=%s, "
+            "  enviado_email=COALESCE(NULLIF(%s,''), enviado_email), "
+            "  enviado_tel=COALESCE(NULLIF(%s,''), enviado_tel), "
+            "  envios_n=COALESCE(envios_n,0)+1 "
+            " WHERE id=%s",
+            (token, expira, _nuevo_estado, current_username(),
+             email_destino, telefono, aid))
     except Exception as e:
         print(f"[anexo_enviar] {e}", flush=True)
         return _ot2_err("No pudimos generar el enlace.", "ERROR_INTERNO", http=500)
+
+    # Trazabilidad del envío en la bitácora de la OT (Daniel: "gestionar el
+    # envío y que se guarde en cada OT es indispensable").
+    if a.get("ot_id"):
+        try:
+            _mant_log("visita", a["ot_id"],
+                      "anexo_reenviado" if _es_reenvio else "anexo_enviado",
+                      f"Anexo N° {a.get('numero') or aid} "
+                      + (f"a {email_destino}" if email_destino else "sin correo destino")
+                      + (" · mismo link (seguía vigente)" if _vigente else " · link nuevo"))
+        except Exception:
+            pass
 
     # 🔔 Daniel 2026-08-26: "notificar por correo que se creó una nueva OT
     # para el técnico, y adjunto tiene que ir el link para que firme el
