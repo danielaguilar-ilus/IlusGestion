@@ -77130,8 +77130,24 @@ def ot2_detalle(vid):
     de ser alcanzables porque el técnico ya no llega a esta página para
     dispararlos. `_ot_can_view` sigue decidiendo si puede ver la OT en
     absoluto (asignación); esto decide CUÁL de las dos pantallas ve.
+
+    🔀 2026-09-02 — Daniel cambió de intención: "esta es la vista que van a
+    ver los técnicos en su mayoría" y "necesito que el técnico pueda entrar
+    a los equipos, mirar su avance... buscar un equipo en específico".
+    Pero el bloqueo de arriba es una decisión SUYA del 31-ago, tomada tras
+    un incidente real (firma trabada en la OT-125). Darla vuelta solo, de
+    noche y sin que él lo confirme, sería reabrir un problema que él mismo
+    cerró.
+
+    Por eso pasa a ser un TOGGLE DE ROL en vez de una constante: el
+    comportamiento por defecto NO cambia (el técnico sigue yendo a la
+    pantalla clásica), y Daniel lo habilita desde /admin/roles cuando
+    quiera, sin desplegar -- que es como pidió que se manejen todos los
+    permisos. Un clic para probarlo en terreno, un clic para revertirlo si
+    algo sale mal.
     """
-    if _es_rol_tecnico():
+    if _es_rol_tecnico() and not (
+            (getattr(g, "permissions", {}) or {}).get("mant_ot2_tecnico")):
         return redirect(url_for("mant_ot_ejecutar", vid=vid))
 
     v = mysql_fetchone(

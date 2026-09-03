@@ -217,6 +217,11 @@
 .otd-fpaso.listo .hd .num{font-size:.68rem}
 .otd-fpaso .bd{padding:11px 12px}
 
+/* Fila Tipo | N° documento | Leer documento (paso 1 de Finanzas). Vivía en
+   un style inline; se saca a una clase para poder reacomodarla en móvil
+   (2026-09-02). */
+.otd-fin-docrow{display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:end}
+
 /* Centro de costo como 3 rectángulos (2026-09-02, Daniel: "tres
    rectángulos con cada centro de costo para seleccionar"). Cada uno con su
    color, para que la elección se recuerde por dónde está y de qué color
@@ -768,8 +773,13 @@
 .otd-ev-item .meta{padding:7px 9px}
 .otd-ev-item .tipo{font-size:.62rem;font-weight:900;text-transform:uppercase;
   letter-spacing:.04em;color:var(--ilus-red,#dc2626)}
+/* 🔴 2026-09-02: acá había un -webkit-line-clamp:2 que cortaba la
+   descripción de la foto a dos líneas -- justo el truncado que la REGLA
+   #15 prohíbe ("los nombres y datos siempre completos, nunca cortados").
+   La descripción de una evidencia es lo que el técnico escribió sobre lo
+   que encontró: cortarla es perder el hallazgo. */
 .otd-ev-item .desc{font-size:.72rem;color:#374151;margin-top:2px;
-  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  overflow-wrap:anywhere;line-height:1.4}
 .otd-ev-item .who{font-size:.66rem;color:#9ca3af;margin-top:4px}
 
 /* 🆕 2026-08-27 (Daniel: "los técnicos no sabían que podían dejar
@@ -1102,8 +1112,47 @@
 .otd-doc-card .in small{font-size:.74rem;color:#6b7280}
 
 /* ══ GRILLA PRINCIPAL ══ */
-.otd-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;align-items:start}
-@media (max-width:980px){.otd-grid{grid-template-columns:1fr}}
+/* ══ GRILLA DE INFORMACIÓN ════════════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "ese hoyo me gustaría que fuera compensado, que
+   toda la página venga bien aprovechada").
+   DIAGNÓSTICO: la grilla no ve tarjetas, ve DOS hijos (un wrapper por
+   columna). La izquierda medía ~1600px y la derecha ~950px, así que al
+   terminar la derecha quedaba un hueco de 500-750px. Y una sola tarjeta
+   -- Finanzas, con sus 4 pasos -- medía más que TODA la columna derecha
+   junta: ninguna repartición entre dos columnas podía cerrarlo.
+   SOLUCIÓN: el outlier sale de las columnas y va a ancho completo con sus
+   pasos en 2×2 (de ~1000px de alto a ~500px). Contraparte se muda a la
+   izquierda. Columnas iguales, porque el 1.55fr existía por la lista de
+   Equipos que ya se fue a la pestaña Trabajo.
+   El 1.55fr también hacía que las 3 firmas no cupieran en una fila.
+   Ver REGLA #16 en CLAUDE.md. */
+.otd-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+.otd-grid > .otd-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.otd-grid > #otdCardFinanzas,
+.otd-grid > .otd-span2{grid-column:1/-1}
+
+@media (min-width:981px){
+  /* Finanzas a ancho completo: pasos 1-2 arriba, 3-4 abajo. Todo lo que NO
+     es un paso (líneas ZZ, margen+guardar, bloqueo, avisos, la versión de
+     solo lectura) ocupa la fila entera. */
+  #otdCardFinanzas > h3 + div{display:grid;grid-template-columns:1fr 1fr;
+    gap:10px 14px;align-items:stretch}
+  #otdCardFinanzas > h3 + div > :not(.otd-fpaso){grid-column:1/-1}
+  #otdCardFinanzas > h3 + div > .otd-fpaso{margin-bottom:0}
+  /* Con columnas iguales las 3 firmas caben en UNA fila (antes 2+1). */
+  .otd-firmas-grid{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+}
+
+@media (max-width:980px){
+  /* Una sola columna. Los wrappers se disuelven para que `order` pueda
+     mantener EXACTAMENTE el orden de lectura que Daniel definió:
+     Creada · Avance · Datos · Contraparte · Finanzas · Firmas · Anexo ·
+     Firmar y cerrar · Videos. */
+  .otd-grid{grid-template-columns:1fr}
+  .otd-grid > .otd-col{display:contents}
+  .otd-grid > .otd-col:first-of-type > *{order:-2}
+  .otd-grid > #otdCardFinanzas{order:-1}
+}
 
 .otd-card{background:#fff;border:1px solid var(--line);border-radius:12px;
   box-shadow:0 1px 4px rgba(0,0,0,.04);overflow:hidden}
@@ -1264,6 +1313,65 @@
   .otd-editbox .row{flex-direction:column;align-items:stretch}
   .otd-editbox .row > div{width:100%}
   .otd-editbox select, .otd-editbox input{width:100%}
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   📱 ANDROID DEL TÉCNICO — Daniel: "el 99% de las veces la va a gestionar
+   un técnico en su teléfono, en un Android". Tres arreglos concretos, no
+   un rediseño.
+   ══════════════════════════════════════════════════════════════════════ */
+@media (max-width:767px){
+  /* 1. Las pestañas se quedan pegadas al desplazarse. En un teléfono de
+     360×780 el hero + el recorrido dejan la barra a ~850px del tope: para
+     cambiar de pestaña había que subir TODA la página. Son la única
+     navegación de esta pantalla. */
+  .otd-tabs{position:sticky;top:var(--topbar-h,110px);z-index:20;padding:4px;
+    margin:0 -10px 14px;border-radius:0;border-left:0;border-right:0;
+    background:rgba(243,244,246,.94);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .otd-tab{min-height:44px;flex:1;justify-content:center}   /* táctil, REGLA #3 */
+  /* Que el scroll automático no aterrice DEBAJO de la barra pegajosa. */
+  .otd-card{scroll-margin-top:calc(var(--topbar-h,110px) + 60px)}
+
+  /* 2. Los chips del hero, en tira horizontal. Con minmax(128px) daban 5
+     filas ≈ 300px de hero negro antes de poder hacer nada. Mismo recurso
+     que ya usa el recorrido: la CAJA se desliza, la página nunca
+     (memoria: feedback_scroll_contenido_no_pagina). No se oculta ningún
+     dato -- REGLA #4.2 -- solo se desliza. */
+  .otd-datos{display:flex;gap:8px;margin:12px -10px 4px;padding:0 10px 6px;
+    overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;
+    -webkit-overflow-scrolling:touch}
+  .otd-datos::-webkit-scrollbar{display:none}
+  .otd-d{flex:0 0 auto;min-width:150px;max-width:78vw;scroll-snap-align:start}
+  .otd-d.has-edit,.d-doc,.d-con{min-width:210px}   /* llevan botón o nombre largo */
+}
+
+@media (max-width:480px){
+  /* 3. Que se lea sin zoom y se toque con el pulgar. */
+  /* Etiqueta arriba y valor a todo el ancho: con la etiqueta fija en 88px,
+     una dirección chilena caía en 4 líneas dentro de 190px. */
+  .otd-dl .fila{flex-direction:column;gap:3px;padding:10px 0}
+  .otd-dl .lbl{flex:none;font-size:.66rem;letter-spacing:.06em;text-transform:uppercase}
+  .otd-dl .val{font-size:.92rem}
+  /* Área táctil de 44px sin agrandar el texto (REGLA #3). */
+  .otd-dl .acc{position:relative;font-size:.8rem;min-height:28px}
+  .otd-dl .acc::before{content:"";position:absolute;inset:-8px -10px}
+  /* Este botón traía min-height:31px inline y le ganaba a mobile.css. */
+  #otdBtnLeerZz{min-height:44px !important;grid-column:1/-1}
+  /* Tipo | Número en una fila y el botón debajo, a todo el ancho: en 300px
+     el select "FCV (factura)" quedaba en ~60px, ilegible. */
+  .otd-fin-docrow{grid-template-columns:1fr 1fr}
+  /* Las 3 firmas y los 3 centros de costo, en UNA fila: apilados eran
+     450px de scroll para ver quién firmó. */
+  .otd-firmas-grid{grid-template-columns:repeat(3,1fr);gap:6px;padding:12px}
+  .otd-firma{padding:8px 4px}
+  .otd-firma .tinta{height:54px}
+  .otd-firma .rol{font-size:.56rem;letter-spacing:.04em}
+  .otd-firma .quien{font-size:.74rem}
+  .otd-cc-grid{grid-template-columns:repeat(3,1fr);gap:6px}
+  .otd-cc{padding:9px 4px;min-height:72px}
+  .otd-cc b{font-size:.7rem}
+  .otd-cc small{display:none}   /* subtítulo decorativo; el nombre queda entero */
 }
 </style>
 
@@ -1638,7 +1746,7 @@
        (antes enterrado al fondo de la columna derecha) y el avance del
        trabajo técnico -- así la columna izquierda deja de quedar corta y
        vacía frente a la derecha. #}
-    <div style="display:flex;flex-direction:column;gap:14px">
+    <div class="otd-col">
 
       {# 🆕 2026-09-02 (Daniel, en vivo: "es necesario que siempre lleve
          documento y mostrarlo por trazabilidad además del responsable"):
@@ -1725,6 +1833,52 @@
         </div>
       </div>
 
+      {# 🔀 2026-09-02 — Contraparte se muda a la columna IZQUIERDA:
+         semánticamente es FICHA (quién/dónde), no cierre. La derecha
+         queda solo con lo que la OT necesita para cerrarse. Además
+         ayuda a equilibrar las dos columnas (ver REGLA #16). #}
+      {# 🆕 Contraparte en sitio -- mismo dato/card que ya existe y está
+         probada en ot_ejecutar.html ("Contraparte en sitio"), adaptada al
+         lenguaje visual de esta pantalla. Usa v.contacto_* (columnas
+         PROPIAS de mant_visitas, ver el alias cli_contacto_* de arriba
+         para no confundirlas con el contacto registrado en la ficha del
+         cliente). #}
+      {% if v.contacto_nombre %}
+      <div class="otd-card">
+        <h3><i class="bi bi-person-vcard-fill"></i> Contraparte en sitio</h3>
+        <div class="otd-din">
+          <div class="row"><span>Nombre</span><b>{{ v.contacto_nombre }}</b></div>
+          {% if v.contacto_cargo %}
+          <div class="row"><span>Cargo</span><b>{{ v.contacto_cargo }}</b></div>
+          {% endif %}
+          {% if v.contacto_tel %}
+          <div class="row"><span>Teléfono</span><b>{{ v.contacto_tel | tel_chile_fmt }}</b></div>
+          {% endif %}
+          {% if v.contacto_email %}
+          <div class="row"><span>Email</span>
+            <b><a href="mailto:{{ v.contacto_email }}" style="color:var(--ilus-red,#dc2626)">{{ v.contacto_email }}</a></b></div>
+          {% endif %}
+        </div>
+        {% if v.contacto_tel or v.contacto_email %}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 14px">
+          {% if v.contacto_tel %}
+          <a href="tel:{{ v.contacto_tel }}" class="otd-lbtn call">
+            <i class="bi bi-telephone-fill"></i> Llamar</a>
+          {% set _wa3 = v.contacto_tel | wa_link %}
+          {% if _wa3 %}
+          <a href="{{ _wa3 }}" target="_blank" rel="noopener" class="otd-lbtn wa">
+            <i class="bi bi-whatsapp"></i> WhatsApp</a>
+          {% endif %}
+          {% endif %}
+          {% if v.contacto_email %}
+          <a href="mailto:{{ v.contacto_email }}" class="otd-lbtn mail">
+            <i class="bi bi-envelope-fill"></i> Email</a>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
       {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
          técnica externa: "le está saliendo centro de costos, sus costos,
          la parte financiera, la factura... eso no es para que ella la
@@ -1752,336 +1906,11 @@
          decide editable vs solo-lectura, igual que en la pantalla clásica;
          `es_tecnico` sigue ocultando la card entera (REGLA de seguridad
          2026-08-27, Isabel Milling). #}
-      {% if not es_tecnico %}
-      <div class="otd-card" id="otdCardFinanzas">
-        <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT</h3>
-        <div style="padding:14px 16px">
-          {# 🐛 2026-09-02 (Daniel, OT-2026-00149: "no me guardó las finanzas...
-             me trajo el precio final en servicio de despacho y de instalación,
-             pero no lo guardó porque me está tirando a pérdida"). El dato SÍ
-             estaba guardado -- en zz_monto (línea de servicio del documento) y
-             zz_envio_monto (línea de envío) -- pero esta tarjeta nunca los
-             mostraba, así que parecía perdido. Acá se hacen visibles, y si el
-             "Precio al cliente" está vacío se puede traer con un clic.
-             El fix de raíz (que toda OT de cliente nazca con `costo` bien
-             puesto) ya está en ot2_api_crear; esto rescata las que se crearon
-             antes. #}
-          {% set _zz_serv = v.zz_monto|float if v.zz_monto else 0 %}
-          {% set _zz_env  = v.zz_envio_monto|float if v.zz_envio_monto else 0 %}
-          {% if _zz_serv or _zz_env %}
-          <div class="otd-zzbox">
-            <div class="hd"><i class="bi bi-receipt"></i> Lo que el documento le cobra al cliente</div>
-            <div class="ln">
-              {% if _zz_serv %}
-              <span><b>${{ '{:,.0f}'.format(_zz_serv)|replace(',','.') }}</b>
-                {{ v.zz_codigo or 'servicio' }}</span>
-              {% endif %}
-              {% if _zz_env %}
-              <span><b>${{ '{:,.0f}'.format(_zz_env)|replace(',','.') }}</b>
-                {{ v.zz_envio_codigo or 'envío' }}</span>
-              {% endif %}
-              <span class="tot">Total <b>${{ '{:,.0f}'.format(_zz_serv + _zz_env)|replace(',','.') }}</b></span>
-            </div>
-            {% if puede_metadata %}
-            <button type="button" class="usar" id="otdZzUsar"
-                    data-total="{{ (_zz_serv + _zz_env)|int }}"
-                    onclick="otdUsarPrecioDocumento(this)">
-              <i class="bi bi-arrow-down-circle-fill"></i> Usar como precio al cliente</button>
-            {% endif %}
-          </div>
-          {% endif %}
-          {% if puede_metadata %}
-          {% set _doc_tido_fin = v.documento_erp_tido or v.factura_tido %}
-          {% set _doc_nudo_fin = v.documento_erp_nudo or v.factura_nudo %}
-
-          {# ══ PASOS NUMERADOS ═══════════════════════════════════════════
-             🆕 2026-09-02 (Daniel: "necesito que la enumeres, la hagas
-             inteligente, que yo pueda llamar un documento y me traiga el ZZ
-             instalación, el ZZ envío, el ZZ mantención, todo lo que sea que
-             tenga que traer"). Antes esto era una bandeja plana de 8
-             campos sin orden de llenado: se podía guardar el documento sin
-             que el sistema lo leyera nunca -- que es exactamente lo que
-             pasó (boleta guardada, montos en blanco, margen falso).
-             Ahora sigue el patrón de pasos del proyecto (REGLA #15,
-             lenguaje de Retiros): 1 documento → 2 lo que cobra → 3 lo que
-             cuesta → 4 a quién se le carga. #}
-
-          {# ── PASO 1: el documento ── #}
-          <div class="otd-fpaso">
-            <div class="hd"><span class="num">1</span> ¿Qué documento respalda esta OT?</div>
-            <div class="bd">
-              {# 🔎 2026-09-02 (Daniel: "la finanza solamente está buscando el
-                 RUT, y aunque lo buscara, no está sugiriendo ni siquiera el
-                 RUT... si quieres buscarlo por RUT, que sea el del cliente
-                 que tiene la orden de trabajo"). El campo venía prellenado
-                 con v.cliente_rut, pero si la ficha del cliente NO tiene RUT
-                 quedaba vacío y sin explicación -- parecía roto. Ahora cae a
-                 la razón social, que el buscador también acepta, y se dice
-                 con qué está buscando. #}
-              {% set _q_sug = v.cliente_rut or v.razon_social or '' %}
-              <div class="input-group input-group-sm mb-1">
-                <input type="text" id="otdErpDocQ" class="form-control"
-                       placeholder="RUT, N° de documento o razón social"
-                       value="{{ _q_sug }}">
-                <button type="button" class="btn btn-outline-danger" onclick="otdBuscarDocErp()">
-                  <i class="bi bi-search"></i> Buscar</button>
-              </div>
-              {# 🆔 2026-09-02 (Daniel: "me gustaría que manejáramos el RUT en
-                 vez del nombre del cliente. Si no tiene RUT, estamos con
-                 tremendo problema... el RUT es necesario para llevar un dato
-                 único del cliente, el nombre es muy redundante"). El RUT es
-                 la llave: es lo único que cruza de verdad con el ERP. Buscar
-                 por nombre es el plan B y se muestra como lo que es -- un
-                 problema de datos que hay que ir a arreglar, no una nota al
-                 pie. Por eso, sin RUT, esto es una alerta con acceso directo
-                 a la ficha del cliente. #}
-              {% if v.cliente_rut %}
-              <div class="small text-muted" style="margin-bottom:8px">
-                Buscando por el RUT de <b>{{ v.razon_social or 'este cliente' }}</b>
-                ({{ v.cliente_rut | rut_fmt }}).
-              </div>
-              {% elif v.cliente_id %}
-              <div class="otd-warn" style="margin:0 0 10px">
-                <i class="bi bi-exclamation-triangle-fill"></i>
-                <div><b>{{ v.razon_social or 'Este cliente' }} no tiene RUT en su ficha.</b>
-                  El RUT es el dato único que cruza con el ERP; sin él la búsqueda es por
-                  nombre y puede traer documentos de otro cliente.
-                  <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" target="_blank"
-                     rel="noopener" style="color:inherit;font-weight:800;text-decoration:underline">
-                    Cargarle el RUT ahora</a>.</div>
-              </div>
-              {% else %}
-              <div class="small text-muted" style="margin-bottom:8px">
-                Esta OT no tiene cliente asignado: busca el documento por su número.
-              </div>
-              {% endif %}
-              <div id="otdErpDocResultados" style="display:none;margin-bottom:8px;max-height:220px;
-                   overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
-              <div id="otdErpDocMsg" class="small text-muted" style="margin-bottom:8px"></div>
-              <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:end">
-                <div>
-                  <label class="form-label small fw-semibold mb-1">Tipo</label>
-                  <select id="otdFinDocErpTido" class="form-select form-select-sm">
-                    <option value="">— Sin asociar —</option>
-                    <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
-                    <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
-                    <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
-                    <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="form-label small fw-semibold mb-1">Número</label>
-                  <input type="text" id="otdFinDocErpNudo" class="form-control form-control-sm"
-                         maxlength="20" placeholder="Ej: 552" inputmode="numeric" value="{{ _doc_nudo_fin or '' }}">
-                </div>
-                <button type="button" class="btn btn-danger btn-sm" id="otdBtnLeerZz"
-                        style="min-height:31px;white-space:nowrap"
-                        onclick="otdLeerLineasZz()">
-                  <i class="bi bi-magic"></i> Leer documento</button>
-              </div>
-            </div>
-          </div>
-
-          {# ── PASO 2: lo que el documento le cobra al cliente ── #}
-          <div class="otd-fpaso">
-            <div class="hd"><span class="num">2</span> ¿Cuánto le cobra ese documento al cliente?</div>
-            <div class="bd">
-              {# Acá aterrizan las líneas ZZ leídas del ERP. Se muestran
-                 TODAS las que tenga el documento (Daniel, 26-ago: "mostrar
-                 todas, por si se inventan uno"), marcando cuál corresponde
-                 al tipo de esta OT y cuál es el envío. #}
-              <div id="otdZzLineas" style="display:none;margin-bottom:10px"></div>
-              <div id="otdZzMsg" class="small text-muted" style="margin-bottom:8px">
-                Presiona <b>Leer documento</b> y traigo las líneas de servicio
-                (ZZ instalación, ZZ mantención, ZZ envío…) directo del ERP.
-              </div>
-              <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
-              <div class="input-group input-group-sm">
-                <span class="input-group-text">$</span>
-                <input type="text" id="otdFinCosto" class="form-control" data-money="1"
-                       inputmode="numeric" autocomplete="off"
-                       value="{{ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '' }}">
-              </div>
-            </div>
-          </div>
-
-          {# ── PASO 3: lo que le cuesta a ILUS ── #}
-          <div class="otd-fpaso">
-            <div class="hd"><span class="num">3</span> ¿Cuánto nos cuesta a nosotros?</div>
-            <div class="bd">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                <div>
-                  <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
-                  <div class="input-group input-group-sm">
-                    <span class="input-group-text">$</span>
-                    <input type="text" id="otdFinCostoProveedor" class="form-control" data-money="1"
-                           inputmode="numeric" autocomplete="off"
-                           value="{{ '{:,.0f}'.format(v.costo_proveedor|float)|replace(',','.') if v.costo_proveedor is not none else '' }}">
-                  </div>
-                </div>
-                <div>
-                  <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
-                  <div class="input-group input-group-sm">
-                    <span class="input-group-text">$</span>
-                    <input type="text" id="otdFinCostoDespacho" class="form-control" data-money="1"
-                           inputmode="numeric" autocomplete="off" placeholder="0"
-                           value="{{ '{:,.0f}'.format(v.costo_despacho|float)|replace(',','.') if v.costo_despacho is not none else '' }}">
-                  </div>
-                </div>
-                {# 🔇 2026-09-02 (Daniel: "el tipo no le veo sentido, porque
-                   estamos reconociendo los técnicos externos"). Tenía razón:
-                   preguntar "¿interno o externo?" al lado de unos chips que
-                   YA marcan cuáles son externos (badge EXT) es pedir dos
-                   veces el mismo dato, con el riesgo de que se contradigan.
-                   El campo sigue existiendo OCULTO -- es el que guarda
-                   proveedor_tipo -- pero ahora lo DEDUCE el propio chip:
-                   si alguno de los seleccionados es externo, la OT es de
-                   proveedor externo. #}
-                <select id="otdFinProveedorTipo" class="form-select form-select-sm" hidden>
-                  <option value="">— Sin definir —</option>
-                  <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
-                  <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
-                </select>
-                <div style="grid-column:1/-1">
-                  {# 🆕 2026-09-02 (Daniel: "acá yo, en globos, o así como en
-                     la OT general, yo dejaría para seleccionar uno o varios
-                     técnicos"). Antes era un campo de texto libre donde
-                     había que escribir el nombre a mano -- se prestaba para
-                     que el mismo técnico quedara escrito de tres formas
-                     distintas y después no cuadrara ningún reporte.
-                     Los chips escriben en el MISMO input de siempre
-                     (separados por " · "), así el guardado y la columna
-                     `proveedor_nombre` no cambian. El campo sigue editable
-                     a mano para un proveedor que no esté en la lista. #}
-                  <label class="form-label small fw-semibold mb-1">¿Quién ejecutó el trabajo?</label>
-                  <div class="otd-tecchips" id="otdTecChips">
-                    <span class="cargando">Cargando técnicos…</span>
-                  </div>
-                  <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
-                         maxlength="200" placeholder="O escríbelo a mano: Ej. Instalaciones XYZ"
-                         value="{{ v.proveedor_nombre or '' }}">
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {# ── PASO 4: a quién se le carga ── #}
-          <div class="otd-fpaso">
-            <div class="hd"><span class="num">4</span> ¿A qué centro de costo se carga?</div>
-            <div class="bd">
-              {# 🆕 2026-09-02 (Daniel: "el centro de costo, igual, tres
-                 rectángulos con cada centro de costo para seleccionar").
-                 El <select> sigue existiendo, oculto: es el que lee
-                 otdGuardarFinanzas() y el que marca el paso como listo, así
-                 que no hay que tocar el guardado ni duplicar estado. Los
-                 rectángulos solo lo escriben. #}
-              <select id="otdFinCentroCosto" class="form-select form-select-sm" hidden>
-                <option value="">— Sin definir —</option>
-                <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
-                <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
-                <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
-              </select>
-              <div class="otd-cc-grid" id="otdCcGrid">
-                <button type="button" class="otd-cc cc-sstt {{ 'on' if v.centro_costo=='sstt' }}"
-                        data-cc="sstt" onclick="otdSetCentroCosto(this)">
-                  <i class="bi bi-wrench-adjustable-circle-fill"></i>
-                  <b>Servicio Técnico</b><small>El costo es nuestro</small></button>
-                <button type="button" class="otd-cc cc-log {{ 'on' if v.centro_costo=='logistica' }}"
-                        data-cc="logistica" onclick="otdSetCentroCosto(this)">
-                  <i class="bi bi-truck"></i>
-                  <b>Logística</b><small>Despacho o bodega</small></button>
-                <button type="button" class="otd-cc cc-com {{ 'on' if v.centro_costo=='comercial' }}"
-                        data-cc="comercial" onclick="otdSetCentroCosto(this)">
-                  <i class="bi bi-briefcase-fill"></i>
-                  <b>Comercial</b><small>Convenio o venta</small></button>
-              </div>
-              <div class="otf-hint" style="margin-top:8px">
-                Si la pérdida no es de Servicio Técnico, cárgala a Logística o Comercial:
-                así el informe de resultados no se la atribuye al área equivocada.
-              </div>
-            </div>
-          </div>
-
-          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2"
-               style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px">
-            <div>
-              <div class="text-muted small">Margen</div>
-              <div class="fw-bold" id="otdFinMargen" style="font-size:1rem">—</div>
-            </div>
-            <div>
-              <div class="text-muted small">% Margen</div>
-              <div class="fw-bold" id="otdFinMargenPct" style="font-size:1rem">—</div>
-            </div>
-            <button type="button" class="btn btn-danger btn-sm" id="otdFinBtnGuardar"
-                    onclick="otdGuardarFinanzas()">
-              <i class="bi bi-check-lg me-1"></i>Guardar</button>
-          </div>
-
-          {# 🔒 2026-09-02 (Daniel: "necesito que se vaya bloqueando a
-             medida que vayamos avanzando... si ya declaraste eso, yo pienso
-             que bloquéalo" + "dale, si bloquéalos, y deja al final una
-             corrección en caso de, con trazabilidad abajo").
-             Una vez declarada, la parte financiera queda EN SOLO LECTURA:
-             es plata ya comprometida y no debería cambiarse por accidente
-             al pasar por la pantalla. Corregir sigue siendo posible -- pero
-             es un acto deliberado, con un clic explícito, y queda
-             registrado en la Actividad de la OT (el backend ya escribe
-             `finanzas_declaradas` en cada guardado, así que la trazabilidad
-             no hay que construirla: hay que mostrarla, y está abajo). #}
-          <div id="otdFinBloqueo" style="display:none">
-            <div class="otd-fin-lock">
-              <i class="bi bi-lock-fill"></i>
-              <div>
-                <b>Finanzas declaradas.</b>
-                Quedaron bloqueadas para que no se cambien sin querer.
-                {% if v.finanzas_por %}Las declaró <b>{{ v.finanzas_por }}</b>{% endif %}
-                {%- if v.finanzas_at %} el {{ v.finanzas_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}.
-              </div>
-              <button type="button" class="corregir" onclick="otdCorregirFinanzas()">
-                <i class="bi bi-pencil-square"></i> Corregir</button>
-            </div>
-            <div class="otd-fin-trz">
-              <i class="bi bi-clock-history"></i>
-              Cada corrección queda registrada en <b>Actividad de la OT</b>, más abajo:
-              quién la hizo y cuándo.
-            </div>
-          </div>
-          <div id="otdFinMargenWarn" style="display:none;margin-top:8px;background:#fff8e1;
-               border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;font-size:.82rem;
-               color:#92400e;align-items:flex-start;gap:8px">
-            <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>
-            <span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico,
-              considera asignarla a Logística o Comercial arriba.</span>
-          </div>
-          {% else %}
-          <div class="otd-din">
-            <div class="row"><span>Precio al cliente</span>
-              <b>{{ '$' ~ '{:,}'.format(v.costo|int) if v.costo is not none else '—' }}</b></div>
-            <div class="row"><span>Centro de costo</span>
-              <b>{{ (v.centro_costo or '—') | replace('_',' ') | title }}</b></div>
-            {% set _doc_tido_ro2 = v.documento_erp_tido or v.factura_tido %}
-            {% set _doc_nudo_ro2 = v.documento_erp_nudo or v.factura_nudo %}
-            {% if _doc_nudo_ro2 %}
-            <div class="row"><span>Documento</span>
-              <b>{{ _doc_tido_ro2 or 'DOC' }} {{ _doc_nudo_ro2 }}</b></div>
-            {% endif %}
-          </div>
-          {% endif %}
-          {% if finanzas and finanzas.faltan %}
-          <div class="otd-warn" style="margin-top:10px">
-            <i class="bi bi-exclamation-triangle-fill"></i>
-            <div>Falta declarar antes de pedir la firma:
-              {{ finanzas.faltan | join(', ') }}.</div>
-          </div>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
 
     </div>
 
     {# ── Columna derecha ── #}
-    <div style="display:flex;flex-direction:column;gap:14px">
+    <div class="otd-col">
 
       {# 🔼 2026-09-02 (Daniel, dos veces: "no veo las firmas en la
          información" / "insisto, necesito ver las firmas"). La tarjeta
@@ -2324,47 +2153,6 @@
         </div>
       </div>
 
-      {# 🆕 Contraparte en sitio -- mismo dato/card que ya existe y está
-         probada en ot_ejecutar.html ("Contraparte en sitio"), adaptada al
-         lenguaje visual de esta pantalla. Usa v.contacto_* (columnas
-         PROPIAS de mant_visitas, ver el alias cli_contacto_* de arriba
-         para no confundirlas con el contacto registrado en la ficha del
-         cliente). #}
-      {% if v.contacto_nombre %}
-      <div class="otd-card">
-        <h3><i class="bi bi-person-vcard-fill"></i> Contraparte en sitio</h3>
-        <div class="otd-din">
-          <div class="row"><span>Nombre</span><b>{{ v.contacto_nombre }}</b></div>
-          {% if v.contacto_cargo %}
-          <div class="row"><span>Cargo</span><b>{{ v.contacto_cargo }}</b></div>
-          {% endif %}
-          {% if v.contacto_tel %}
-          <div class="row"><span>Teléfono</span><b>{{ v.contacto_tel | tel_chile_fmt }}</b></div>
-          {% endif %}
-          {% if v.contacto_email %}
-          <div class="row"><span>Email</span>
-            <b><a href="mailto:{{ v.contacto_email }}" style="color:var(--ilus-red,#dc2626)">{{ v.contacto_email }}</a></b></div>
-          {% endif %}
-        </div>
-        {% if v.contacto_tel or v.contacto_email %}
-        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 14px">
-          {% if v.contacto_tel %}
-          <a href="tel:{{ v.contacto_tel }}" class="otd-lbtn call">
-            <i class="bi bi-telephone-fill"></i> Llamar</a>
-          {% set _wa3 = v.contacto_tel | wa_link %}
-          {% if _wa3 %}
-          <a href="{{ _wa3 }}" target="_blank" rel="noopener" class="otd-lbtn wa">
-            <i class="bi bi-whatsapp"></i> WhatsApp</a>
-          {% endif %}
-          {% endif %}
-          {% if v.contacto_email %}
-          <a href="mailto:{{ v.contacto_email }}" class="otd-lbtn mail">
-            <i class="bi bi-envelope-fill"></i> Email</a>
-          {% endif %}
-        </div>
-        {% endif %}
-      </div>
-      {% endif %}
 
       {# 🆕 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del
          técnico: "que puedan grabar video y dejarlo ahí"). Reusa el
@@ -2418,6 +2206,340 @@
       </div>
 
     </div>
+
+    {# 💰 2026-09-02 (Daniel: "ese hoyo me gustaría que fuera
+       compensado, que toda la página venga bien aprovechada").
+       Finanzas medía más que TODA la columna derecha junta: por eso
+       quedaba el hueco. Sale de la columna y pasa a ancho completo,
+       con sus 4 pasos en 2x2 -- la única tarjeta que de verdad
+       aprovecha el ancho de esta pantalla. Ver REGLA #16. #}
+      {% if not es_tecnico %}
+      <div class="otd-card" id="otdCardFinanzas">
+        <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT</h3>
+        <div style="padding:14px 16px">
+          {# 🐛 2026-09-02 (Daniel, OT-2026-00149: "no me guardó las finanzas...
+             me trajo el precio final en servicio de despacho y de instalación,
+             pero no lo guardó porque me está tirando a pérdida"). El dato SÍ
+             estaba guardado -- en zz_monto (línea de servicio del documento) y
+             zz_envio_monto (línea de envío) -- pero esta tarjeta nunca los
+             mostraba, así que parecía perdido. Acá se hacen visibles, y si el
+             "Precio al cliente" está vacío se puede traer con un clic.
+             El fix de raíz (que toda OT de cliente nazca con `costo` bien
+             puesto) ya está en ot2_api_crear; esto rescata las que se crearon
+             antes. #}
+          {% set _zz_serv = v.zz_monto|float if v.zz_monto else 0 %}
+          {% set _zz_env  = v.zz_envio_monto|float if v.zz_envio_monto else 0 %}
+          {% if _zz_serv or _zz_env %}
+          <div class="otd-zzbox">
+            <div class="hd"><i class="bi bi-receipt"></i> Lo que el documento le cobra al cliente</div>
+            <div class="ln">
+              {% if _zz_serv %}
+              <span><b>${{ '{:,.0f}'.format(_zz_serv)|replace(',','.') }}</b>
+                {{ v.zz_codigo or 'servicio' }}</span>
+              {% endif %}
+              {% if _zz_env %}
+              <span><b>${{ '{:,.0f}'.format(_zz_env)|replace(',','.') }}</b>
+                {{ v.zz_envio_codigo or 'envío' }}</span>
+              {% endif %}
+              <span class="tot">Total <b>${{ '{:,.0f}'.format(_zz_serv + _zz_env)|replace(',','.') }}</b></span>
+            </div>
+            {% if puede_metadata %}
+            <button type="button" class="usar" id="otdZzUsar"
+                    data-total="{{ (_zz_serv + _zz_env)|int }}"
+                    onclick="otdUsarPrecioDocumento(this)">
+              <i class="bi bi-arrow-down-circle-fill"></i> Usar como precio al cliente</button>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% if puede_metadata %}
+          {% set _doc_tido_fin = v.documento_erp_tido or v.factura_tido %}
+          {% set _doc_nudo_fin = v.documento_erp_nudo or v.factura_nudo %}
+
+          {# ══ PASOS NUMERADOS ═══════════════════════════════════════════
+             🆕 2026-09-02 (Daniel: "necesito que la enumeres, la hagas
+             inteligente, que yo pueda llamar un documento y me traiga el ZZ
+             instalación, el ZZ envío, el ZZ mantención, todo lo que sea que
+             tenga que traer"). Antes esto era una bandeja plana de 8
+             campos sin orden de llenado: se podía guardar el documento sin
+             que el sistema lo leyera nunca -- que es exactamente lo que
+             pasó (boleta guardada, montos en blanco, margen falso).
+             Ahora sigue el patrón de pasos del proyecto (REGLA #15,
+             lenguaje de Retiros): 1 documento → 2 lo que cobra → 3 lo que
+             cuesta → 4 a quién se le carga. #}
+
+          {# ── PASO 1: el documento ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">1</span> ¿Qué documento respalda esta OT?</div>
+            <div class="bd">
+              {# 🔎 2026-09-02 (Daniel: "la finanza solamente está buscando el
+                 RUT, y aunque lo buscara, no está sugiriendo ni siquiera el
+                 RUT... si quieres buscarlo por RUT, que sea el del cliente
+                 que tiene la orden de trabajo"). El campo venía prellenado
+                 con v.cliente_rut, pero si la ficha del cliente NO tiene RUT
+                 quedaba vacío y sin explicación -- parecía roto. Ahora cae a
+                 la razón social, que el buscador también acepta, y se dice
+                 con qué está buscando. #}
+              {% set _q_sug = v.cliente_rut or v.razon_social or '' %}
+              <div class="input-group input-group-sm mb-1">
+                <input type="text" id="otdErpDocQ" class="form-control"
+                       placeholder="RUT, N° de documento o razón social"
+                       value="{{ _q_sug }}">
+                <button type="button" class="btn btn-outline-danger" onclick="otdBuscarDocErp()">
+                  <i class="bi bi-search"></i> Buscar</button>
+              </div>
+              {# 🆔 2026-09-02 (Daniel: "me gustaría que manejáramos el RUT en
+                 vez del nombre del cliente. Si no tiene RUT, estamos con
+                 tremendo problema... el RUT es necesario para llevar un dato
+                 único del cliente, el nombre es muy redundante"). El RUT es
+                 la llave: es lo único que cruza de verdad con el ERP. Buscar
+                 por nombre es el plan B y se muestra como lo que es -- un
+                 problema de datos que hay que ir a arreglar, no una nota al
+                 pie. Por eso, sin RUT, esto es una alerta con acceso directo
+                 a la ficha del cliente. #}
+              {% if v.cliente_rut %}
+              <div class="small text-muted" style="margin-bottom:8px">
+                Buscando por el RUT de <b>{{ v.razon_social or 'este cliente' }}</b>
+                ({{ v.cliente_rut | rut_fmt }}).
+              </div>
+              {% elif v.cliente_id %}
+              <div class="otd-warn" style="margin:0 0 10px">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <div><b>{{ v.razon_social or 'Este cliente' }} no tiene RUT en su ficha.</b>
+                  El RUT es el dato único que cruza con el ERP; sin él la búsqueda es por
+                  nombre y puede traer documentos de otro cliente.
+                  <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" target="_blank"
+                     rel="noopener" style="color:inherit;font-weight:800;text-decoration:underline">
+                    Cargarle el RUT ahora</a>.</div>
+              </div>
+              {% else %}
+              <div class="small text-muted" style="margin-bottom:8px">
+                Esta OT no tiene cliente asignado: busca el documento por su número.
+              </div>
+              {% endif %}
+              <div id="otdErpDocResultados" style="display:none;margin-bottom:8px;max-height:220px;
+                   overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px"></div>
+              <div id="otdErpDocMsg" class="small text-muted" style="margin-bottom:8px"></div>
+              {# clase propia (2026-09-02) para poder reacomodar esta fila en
+                 móvil sin depender de un selector por atributo de estilo #}
+              <div class="otd-fin-docrow">
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Tipo</label>
+                  <select id="otdFinDocErpTido" class="form-select form-select-sm">
+                    <option value="">— Sin asociar —</option>
+                    <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
+                    <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
+                    <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
+                    <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Número</label>
+                  <input type="text" id="otdFinDocErpNudo" class="form-control form-control-sm"
+                         maxlength="20" placeholder="Ej: 552" inputmode="numeric" value="{{ _doc_nudo_fin or '' }}">
+                </div>
+                <button type="button" class="btn btn-danger btn-sm" id="otdBtnLeerZz"
+                        style="min-height:31px;white-space:nowrap"
+                        onclick="otdLeerLineasZz()">
+                  <i class="bi bi-magic"></i> Leer documento</button>
+              </div>
+            </div>
+          </div>
+
+          {# ── PASO 2: lo que el documento le cobra al cliente ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">2</span> ¿Cuánto le cobra ese documento al cliente?</div>
+            <div class="bd">
+              {# Acá aterrizan las líneas ZZ leídas del ERP. Se muestran
+                 TODAS las que tenga el documento (Daniel, 26-ago: "mostrar
+                 todas, por si se inventan uno"), marcando cuál corresponde
+                 al tipo de esta OT y cuál es el envío. #}
+              <div id="otdZzLineas" style="display:none;margin-bottom:10px"></div>
+              <div id="otdZzMsg" class="small text-muted" style="margin-bottom:8px">
+                Presiona <b>Leer documento</b> y traigo las líneas de servicio
+                (ZZ instalación, ZZ mantención, ZZ envío…) directo del ERP.
+              </div>
+              <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="text" id="otdFinCosto" class="form-control" data-money="1"
+                       inputmode="numeric" autocomplete="off"
+                       value="{{ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '' }}">
+              </div>
+            </div>
+          </div>
+
+          {# ── PASO 3: lo que le cuesta a ILUS ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">3</span> ¿Cuánto nos cuesta a nosotros?</div>
+            <div class="bd">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="text" id="otdFinCostoProveedor" class="form-control" data-money="1"
+                           inputmode="numeric" autocomplete="off"
+                           value="{{ '{:,.0f}'.format(v.costo_proveedor|float)|replace(',','.') if v.costo_proveedor is not none else '' }}">
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="text" id="otdFinCostoDespacho" class="form-control" data-money="1"
+                           inputmode="numeric" autocomplete="off" placeholder="0"
+                           value="{{ '{:,.0f}'.format(v.costo_despacho|float)|replace(',','.') if v.costo_despacho is not none else '' }}">
+                  </div>
+                </div>
+                {# 🔇 2026-09-02 (Daniel: "el tipo no le veo sentido, porque
+                   estamos reconociendo los técnicos externos"). Tenía razón:
+                   preguntar "¿interno o externo?" al lado de unos chips que
+                   YA marcan cuáles son externos (badge EXT) es pedir dos
+                   veces el mismo dato, con el riesgo de que se contradigan.
+                   El campo sigue existiendo OCULTO -- es el que guarda
+                   proveedor_tipo -- pero ahora lo DEDUCE el propio chip:
+                   si alguno de los seleccionados es externo, la OT es de
+                   proveedor externo. #}
+                <select id="otdFinProveedorTipo" class="form-select form-select-sm" hidden>
+                  <option value="">— Sin definir —</option>
+                  <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
+                  <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
+                </select>
+                <div style="grid-column:1/-1">
+                  {# 🆕 2026-09-02 (Daniel: "acá yo, en globos, o así como en
+                     la OT general, yo dejaría para seleccionar uno o varios
+                     técnicos"). Antes era un campo de texto libre donde
+                     había que escribir el nombre a mano -- se prestaba para
+                     que el mismo técnico quedara escrito de tres formas
+                     distintas y después no cuadrara ningún reporte.
+                     Los chips escriben en el MISMO input de siempre
+                     (separados por " · "), así el guardado y la columna
+                     `proveedor_nombre` no cambian. El campo sigue editable
+                     a mano para un proveedor que no esté en la lista. #}
+                  <label class="form-label small fw-semibold mb-1">¿Quién ejecutó el trabajo?</label>
+                  <div class="otd-tecchips" id="otdTecChips">
+                    <span class="cargando">Cargando técnicos…</span>
+                  </div>
+                  <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
+                         maxlength="200" placeholder="O escríbelo a mano: Ej. Instalaciones XYZ"
+                         value="{{ v.proveedor_nombre or '' }}">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {# ── PASO 4: a quién se le carga ── #}
+          <div class="otd-fpaso">
+            <div class="hd"><span class="num">4</span> ¿A qué centro de costo se carga?</div>
+            <div class="bd">
+              {# 🆕 2026-09-02 (Daniel: "el centro de costo, igual, tres
+                 rectángulos con cada centro de costo para seleccionar").
+                 El <select> sigue existiendo, oculto: es el que lee
+                 otdGuardarFinanzas() y el que marca el paso como listo, así
+                 que no hay que tocar el guardado ni duplicar estado. Los
+                 rectángulos solo lo escriben. #}
+              <select id="otdFinCentroCosto" class="form-select form-select-sm" hidden>
+                <option value="">— Sin definir —</option>
+                <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
+                <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
+                <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
+              </select>
+              <div class="otd-cc-grid" id="otdCcGrid">
+                <button type="button" class="otd-cc cc-sstt {{ 'on' if v.centro_costo=='sstt' }}"
+                        data-cc="sstt" onclick="otdSetCentroCosto(this)">
+                  <i class="bi bi-wrench-adjustable-circle-fill"></i>
+                  <b>Servicio Técnico</b><small>El costo es nuestro</small></button>
+                <button type="button" class="otd-cc cc-log {{ 'on' if v.centro_costo=='logistica' }}"
+                        data-cc="logistica" onclick="otdSetCentroCosto(this)">
+                  <i class="bi bi-truck"></i>
+                  <b>Logística</b><small>Despacho o bodega</small></button>
+                <button type="button" class="otd-cc cc-com {{ 'on' if v.centro_costo=='comercial' }}"
+                        data-cc="comercial" onclick="otdSetCentroCosto(this)">
+                  <i class="bi bi-briefcase-fill"></i>
+                  <b>Comercial</b><small>Convenio o venta</small></button>
+              </div>
+              <div class="otf-hint" style="margin-top:8px">
+                Si la pérdida no es de Servicio Técnico, cárgala a Logística o Comercial:
+                así el informe de resultados no se la atribuye al área equivocada.
+              </div>
+            </div>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2"
+               style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px">
+            <div>
+              <div class="text-muted small">Margen</div>
+              <div class="fw-bold" id="otdFinMargen" style="font-size:1rem">—</div>
+            </div>
+            <div>
+              <div class="text-muted small">% Margen</div>
+              <div class="fw-bold" id="otdFinMargenPct" style="font-size:1rem">—</div>
+            </div>
+            <button type="button" class="btn btn-danger btn-sm" id="otdFinBtnGuardar"
+                    onclick="otdGuardarFinanzas()">
+              <i class="bi bi-check-lg me-1"></i>Guardar</button>
+          </div>
+
+          {# 🔒 2026-09-02 (Daniel: "necesito que se vaya bloqueando a
+             medida que vayamos avanzando... si ya declaraste eso, yo pienso
+             que bloquéalo" + "dale, si bloquéalos, y deja al final una
+             corrección en caso de, con trazabilidad abajo").
+             Una vez declarada, la parte financiera queda EN SOLO LECTURA:
+             es plata ya comprometida y no debería cambiarse por accidente
+             al pasar por la pantalla. Corregir sigue siendo posible -- pero
+             es un acto deliberado, con un clic explícito, y queda
+             registrado en la Actividad de la OT (el backend ya escribe
+             `finanzas_declaradas` en cada guardado, así que la trazabilidad
+             no hay que construirla: hay que mostrarla, y está abajo). #}
+          <div id="otdFinBloqueo" style="display:none">
+            <div class="otd-fin-lock">
+              <i class="bi bi-lock-fill"></i>
+              <div>
+                <b>Finanzas declaradas.</b>
+                Quedaron bloqueadas para que no se cambien sin querer.
+                {% if v.finanzas_por %}Las declaró <b>{{ v.finanzas_por }}</b>{% endif %}
+                {%- if v.finanzas_at %} el {{ v.finanzas_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}.
+              </div>
+              <button type="button" class="corregir" onclick="otdCorregirFinanzas()">
+                <i class="bi bi-pencil-square"></i> Corregir</button>
+            </div>
+            <div class="otd-fin-trz">
+              <i class="bi bi-clock-history"></i>
+              Cada corrección queda registrada en <b>Actividad de la OT</b>, más abajo:
+              quién la hizo y cuándo.
+            </div>
+          </div>
+          <div id="otdFinMargenWarn" style="display:none;margin-top:8px;background:#fff8e1;
+               border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;font-size:.82rem;
+               color:#92400e;align-items:flex-start;gap:8px">
+            <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>
+            <span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico,
+              considera asignarla a Logística o Comercial arriba.</span>
+          </div>
+          {% else %}
+          <div class="otd-din">
+            <div class="row"><span>Precio al cliente</span>
+              <b>{{ '$' ~ '{:,}'.format(v.costo|int) if v.costo is not none else '—' }}</b></div>
+            <div class="row"><span>Centro de costo</span>
+              <b>{{ (v.centro_costo or '—') | replace('_',' ') | title }}</b></div>
+            {% set _doc_tido_ro2 = v.documento_erp_tido or v.factura_tido %}
+            {% set _doc_nudo_ro2 = v.documento_erp_nudo or v.factura_nudo %}
+            {% if _doc_nudo_ro2 %}
+            <div class="row"><span>Documento</span>
+              <b>{{ _doc_tido_ro2 or 'DOC' }} {{ _doc_nudo_ro2 }}</b></div>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% if finanzas and finanzas.faltan %}
+          <div class="otd-warn" style="margin-top:10px">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <div>Falta declarar antes de pedir la firma:
+              {{ finanzas.faltan | join(', ') }}.</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
   </div>
 
   {# 🔽 2026-09-02 (Daniel: "la actividad de la OT mándala hacia

@@ -638,5 +638,40 @@ lugar del proyecto se replican, no se reinventan peor.
 
 ---
 
-_Última actualización: 2026-08-30_
+## 📐 REGLA #16 — En una grilla de 2 columnas, ninguna tarjeta puede medir más que la otra columna entera
+
+**Pedido de Daniel (2026-09-02, viendo la pestaña Información de OT 2.0):
+"ese hoyo me gustaría que fuera compensado, que toda la página venga bien
+aprovechada".**
+
+El caso real: la grilla tenía dos hijos (un wrapper por columna). La
+izquierda medía ~1600px y la derecha ~950px, así que al terminar la derecha
+quedaba un hueco de 500-750px. Y una sola tarjeta —Finanzas, con sus 4
+pasos— medía más que TODA la columna derecha junta: ninguna repartición
+entre dos columnas podía cerrarlo.
+
+Antes de armar o tocar una grilla de dos columnas:
+
+1. **Estimar el alto de cada tarjeta en el estado MÁS COMÚN** (gestión, con
+   permisos). Una tarjeta que sola supera ~600px, o el total de la otra
+   columna, NO va en una columna: va a **ancho completo**
+   (`grid-column:1/-1`) con su contenido en horizontal — pasos en 2×2,
+   listas en 2 columnas. Es el único "aprovechar el ancho" que sirve.
+2. **Las tarjetas condicionales (`{% if %}`) se cuentan como AUSENTES** al
+   balancear: si la mitad de tu columna depende de que el cliente tenga
+   contraparte, esa columna colapsa el día que no la tenga.
+3. Diferencia aceptable entre columnas: **menos de una tarjeta chica
+   (~250px)**. Medir antes de subir, a 1280px:
+   `[...document.querySelectorAll('.otd-grid > .otd-col')].map(c=>c.offsetHeight)`
+4. En móvil la grilla colapsa a 1 columna y manda el orden del DOM. Si el
+   orden de escritorio y el de móvil difieren, se resuelve con `order`,
+   **nunca duplicando HTML**.
+
+Referencia viva: `.otd-grid` y `#otdCardFinanzas` en
+`templates/ot2/detalle.html`. Ver también REGLA #15 (formato Retiros) y
+REGLA #3 (mobile-first) — las tres son del mismo espíritu.
+
+---
+
+_Última actualización: 2026-09-02_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
