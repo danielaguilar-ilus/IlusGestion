@@ -267,27 +267,35 @@
    menú"). Mismo patrón .tx-bottom que ya usa la pantalla de ejecución
    (static/mantenciones_ot_ejecutar.css ~1010), incluido el left:250px que
    la despega del sidebar en escritorio y el safe-area-inset del notch. */
-.otd-bottom{position:fixed;bottom:0;left:0;right:0;z-index:90;background:#fff;
-  border-top:1px solid #e5e7eb;padding:10px 16px;
-  padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
-  box-shadow:0 -4px 14px rgba(0,0,0,.07);
-  display:flex;gap:10px;align-items:center}
+/* 🔉 2026-09-02 (Daniel, viendo la primera versión: "muy grande y feo, por
+   favor más sutil"). Era una franja blanca de borde a borde con un botón
+   verde gigante en degradado -- competía con el contenido en vez de estar
+   disponible. Ahora: barra translúcida con desenfoque, botones del ancho
+   de su texto (no estirados), alineados a la derecha, y el verde plano y
+   más oscuro, sin glow. Se ve cuando la buscas y no grita cuando no. */
+.otd-bottom{position:fixed;bottom:0;left:0;right:0;z-index:90;
+  background:rgba(255,255,255,.9);backdrop-filter:saturate(180%) blur(10px);
+  -webkit-backdrop-filter:saturate(180%) blur(10px);
+  border-top:1px solid rgba(0,0,0,.07);padding:8px 16px;
+  padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));
+  display:flex;gap:8px;align-items:center;justify-content:flex-end}
 @media (min-width:992px){.otd-bottom{left:250px}}
-.otd-bottom .b{flex:1;min-height:48px;border-radius:11px;border:1px solid #e5e7eb;
-  background:#fff;color:#111827;font-weight:800;font-size:.92rem;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;gap:8px;
-  transition:background .15s,border-color .15s,transform .12s}
-.otd-bottom .b:hover{background:#f9fafb;border-color:#d1d5db}
-.otd-bottom .b:active{transform:scale(.985)}
-.otd-bottom .b.pri{flex:2;border:0;color:#fff;
-  background:linear-gradient(135deg,#15803d,#16a34a);
-  box-shadow:0 4px 14px -4px rgba(22,163,74,.6)}
-.otd-bottom .b.pri:hover{background:linear-gradient(135deg,#166534,#15803d)}
+.otd-bottom .b{min-height:36px;padding:0 16px;border-radius:8px;
+  border:1px solid #e5e7eb;background:#fff;color:#374151;
+  font-weight:700;font-size:.82rem;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  transition:background .15s,border-color .15s,color .15s}
+.otd-bottom .b:hover{background:#f9fafb;border-color:#d1d5db;color:#111827}
+.otd-bottom .b.pri{border-color:#15803d;background:#15803d;color:#fff}
+.otd-bottom .b.pri:hover{background:#166534;border-color:#166534;color:#fff}
 /* El contenido de la página no puede quedar tapado por la barra. */
-.otd.has-bottombar{padding-bottom:86px}
+.otd.has-bottombar{padding-bottom:64px}
 @media (max-width:640px){
-  .otd-bottom .b{font-size:.86rem}
-  .otd.has-bottombar{padding-bottom:96px}
+  /* En móvil sí ocupan el ancho: ahí el pulgar agradece el área grande
+     (REGLA #3, touch >=44px), pero sin el bloque gigante de escritorio. */
+  .otd-bottom{justify-content:stretch}
+  .otd-bottom .b{flex:1;min-height:44px;font-size:.84rem;padding:0 10px}
+  .otd.has-bottombar{padding-bottom:74px}
 }
 
 /* ══ ACTIVIDAD DE LA OT — bitácora estilo "Actividad del ticket" ══════
