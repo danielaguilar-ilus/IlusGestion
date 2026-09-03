@@ -6003,17 +6003,37 @@ window.OT2C = (function(){
               'Puedes crear la ficha desde Clientes.</div>';
             return;
           }
-          c.innerHTML = arr.map(function(x){
+          /* 🔴 2026-09-03 (Daniel, buscando "vitacura": "me trae todos los
+             Vitacura... necesito que venga la ficha y que no se repita
+             tanto, porque si estoy seleccionando cliente existente es
+             porque voy a buscar de la ficha de cliente de la aplicación").
+             Las fichas van PRIMERO, bajo su propio encabezado; lo que solo
+             existe en el ERP baja abajo, para que no se confunda con una
+             ficha ni compita con ella. El camino de crear la ficha se
+             mantiene (Daniel, 20-08: "sobre todo las instalaciones, pasan
+             muy frecuente") -- solo deja de estar mezclado. */
+          var conFicha = arr.filter(function(x){ return !!x.id; });
+          var sinFicha = arr.filter(function(x){ return !x.id; });
+          var itemFicha = function(x){
             var nom = esc(x.razon_social||x.nombre||'');
             var nomJs = String(x.razon_social||x.nombre||'').replace(/'/g,"\\'");
             var rut = esc(x.rut||'');
-            if (x.id){
-              return '<div class="o2m-it" onclick="OT2C.setCli('+x.id+',\''+esc(nomJs)+'\',\''+rut+'\')">'+
-                '<i class="bi bi-building text-muted"></i><span style="flex:1">'+
-                '<span class="nm">'+nom+'</span>'+
-                '<span class="mt d-block">'+rut+' · con ficha</span></span></div>';
-            }
-            /* Sin ficha: se ofrece crearla, diciendo por qué se crea. */
+            return '<div class="o2m-it" onclick="OT2C.setCli('+x.id+',\''+esc(nomJs)+'\',\''+rut+'\')">'+
+              '<i class="bi bi-building text-muted"></i><span style="flex:1">'+
+              '<span class="nm">'+nom+'</span>'+
+              '<span class="mt d-block">'+rut+' · con ficha'+
+              /* Dos fichas con el MISMO RUT es un dato duplicado real. No se
+                 esconde ninguna -- elegir por el usuario podría mandar la OT
+                 a la ficha equivocada -- pero se avisa para poder fusionar. */
+              (x.rut_duplicado
+                ? ' <span style="color:#b45309;font-weight:700">· hay otra ficha con este mismo RUT</span>'
+                : '')+
+              '</span></span></div>';
+          };
+          var itemSin = function(x){
+            var nom = esc(x.razon_social||x.nombre||'');
+            var nomJs = String(x.razon_social||x.nombre||'').replace(/'/g,"\\'");
+            var rut = esc(x.rut||'');
             return '<div class="o2m-it" style="background:#fffbeb" '+
               'onclick="OT2C.crearFicha(\''+esc(nomJs)+'\',\''+rut+'\')">'+
               '<i class="bi bi-person-plus-fill" style="color:#b45309"></i>'+
@@ -6021,7 +6041,22 @@ window.OT2C = (function(){
               '<span class="mt d-block" style="color:#b45309">'+
               (rut ? rut+' · ' : '')+'sin ficha — toca para crearla</span></span>'+
               '<i class="bi bi-plus-circle" style="color:#b45309"></i></div>';
-          }).join('');
+          };
+          var sep = function(txt, color){
+            return '<div style="padding:6px 12px;font-size:.68rem;font-weight:800;'+
+              'text-transform:uppercase;letter-spacing:.05em;color:'+color+';'+
+              'background:#f9fafb;border-top:1px solid #e5e7eb">'+txt+'</div>';
+          };
+          var html = '';
+          if (conFicha.length){
+            html += sep('En la ficha de clientes · ' + conFicha.length, '#374151')
+                 + conFicha.map(itemFicha).join('');
+          }
+          if (sinFicha.length){
+            html += sep('Solo en el ERP — se crea la ficha al elegirlo · ' + sinFicha.length, '#b45309')
+                 + sinFicha.map(itemSin).join('');
+          }
+          c.innerHTML = html;
         });
     }, 260);
   }

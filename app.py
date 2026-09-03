@@ -59794,9 +59794,22 @@ def mant_clientes_autocomplete():
         (q_like, q_like)
     )
     resultados = []
+    # 🔴 FIX 2026-09-03 (Daniel, buscando "vitacura": el MISMO cliente salia
+    # tres veces -- "65.206.047-1 con ficha", "652060471 con ficha" y
+    # "65206047 sin ficha, toca para crearla").
+    # El dedup comparaba el RUT como TEXTO CRUDO, asi que "65.206.047-1",
+    # "652060471" y "65206047" eran tres claves distintas y el del ERP nunca
+    # se reconocia como ya existente. Peor: invitaba a crear una CUARTA ficha
+    # del mismo cliente. Ahora se compara por el CUERPO del RUT (sin puntos,
+    # guion ni digito verificador) con _rut_cuerpo -- el mismo criterio que
+    # ya usa toda busqueda contra el ERP desde el 30-05.
     ids_rut_vistos = set()
+    _fichas_por_rut = {}
     for r in locales:
         rut = (r.get("rut") or "").strip()
+        _cuerpo = _rut_cuerpo(rut)
+        if _cuerpo:
+            _fichas_por_rut[_cuerpo] = _fichas_por_rut.get(_cuerpo, 0) + 1
         resultados.append({
             "id":           r["id"],
             "razon_social": r["razon_social"],
@@ -59808,8 +59821,19 @@ def mant_clientes_autocomplete():
             "telefono":     r.get("telefono",""),
             "estado":       r.get("estado",""),
             "origen":       "local",
+            # Se avisa cuando hay MAS DE UNA ficha con el mismo RUT. No se
+            # esconde ninguna: son dos registros reales, y elegir por el
+            # usuario podria mandar la OT a la ficha equivocada. Lo que
+            # corresponde es que el problema se VEA y se fusionen.
+            "rut_duplicado": False,
         })
-        if rut: ids_rut_vistos.add(rut)
+        if _cuerpo: ids_rut_vistos.add(_cuerpo)
+
+    # Recien ahora se sabe cuantas fichas comparten cada RUT.
+    for _r in resultados:
+        _c = _rut_cuerpo(_r.get("rut") or "")
+        if _c and _fichas_por_rut.get(_c, 0) > 1:
+            _r["rut_duplicado"] = True
 
     # 2) Buscar en ERP vía REST API /entidades (funciona desde Railway)
     TOKEN = ERP_CONFIG.get("api_token", "")
@@ -59821,7 +59845,7 @@ def mant_clientes_autocomplete():
             nombre = (e.get("NOKOEN") or "").strip()
             if not nombre:
                 continue
-            if rut and rut in ids_rut_vistos:
+            if rut and _rut_cuerpo(rut) in ids_rut_vistos:
                 continue
             # Capturar región, comuna, dirección y teléfono si el ERP los entrega
             region  = (e.get("NOKOREG")  or e.get("NOKOREGIO") or e.get("REGION") or "").strip()
