@@ -917,6 +917,57 @@
 #otdWkCard{transition:box-shadow .4s ease,border-color .4s ease}
 #otdWkCard.all-complete{border-color:#86efac;box-shadow:0 0 0 1px #86efac inset}
 @media (prefers-reduced-motion:reduce){.otd-wk-banner-ok{animation:none}}
+/* ══ BARRA DEL TÉCNICO EN TRABAJO ═════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "que el técnico pueda... buscar un equipo en
+   específico, actuando en grandes cantidades de equipos"). Con 60 máquinas
+   la lista sola es inusable. Mobile-first (REGLA #3): en el celular la
+   barra se apila y el buscador ocupa todo el ancho. */
+.otd-wk-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:12px 16px;border-bottom:1px solid #f1f3f5;background:#fafbfc}
+.otd-wk-bar .buscar{flex:1;min-width:200px;position:relative;display:flex;align-items:center}
+.otd-wk-bar .buscar > i{position:absolute;left:11px;color:#9ca3af;font-size:.9rem;
+  pointer-events:none}
+.otd-wk-bar .buscar input{width:100%;min-height:42px;border:1px solid #e5e7eb;
+  border-radius:10px;padding:0 34px;font-size:16px;background:#fff;color:#111827}
+.otd-wk-bar .buscar input:focus{outline:none;border-color:var(--ilus-red,#dc2626);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.otd-wk-bar .buscar .limpiar{position:absolute;right:6px;border:0;background:none;
+  color:#9ca3af;cursor:pointer;padding:6px;min-height:30px}
+.otd-wk-bar .buscar .limpiar:hover{color:#111827}
+.otd-wk-bar .prog{min-width:170px}
+.otd-wk-bar .prog .txt{font-size:.76rem;color:#6b7280;font-weight:700;margin-bottom:4px}
+.otd-wk-bar .prog .txt b{color:#0f172a;font-weight:900;font-variant-numeric:tabular-nums}
+.otd-wk-bar .prog .filtro-info{color:var(--ilus-red,#dc2626);font-weight:800}
+.otd-wk-bar .prog .barra{height:7px;border-radius:99px;background:#e5e7eb;overflow:hidden}
+.otd-wk-bar .prog .barra i{display:block;height:100%;border-radius:99px;
+  background:linear-gradient(90deg,#16a34a,#4ade80);transition:width .5s ease}
+.otd-wk-bar .sig{min-height:42px;padding:0 15px;border-radius:10px;border:0;
+  background:var(--ilus-red,#dc2626);color:#fff;font-size:.8rem;font-weight:800;
+  cursor:pointer;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.otd-wk-bar .sig:hover{background:#b91c1c}
+.otd-wk-bar .sig:disabled{background:#cbd5e1;cursor:default}
+.otd-wk-sinres{padding:22px 16px;text-align:center;color:#9ca3af;font-size:.86rem}
+/* Numeración con semáforo en cada equipo (metodología de la pantalla
+   clásica, que Daniel pidió replicar acá). */
+.otd-wk-item summary .num{width:26px;height:26px;border-radius:50%;flex:none;
+  display:grid;place-items:center;font-size:.74rem;font-weight:900;
+  border:2px solid currentColor;background:#fff}
+.otd-wk-item summary .num.ok{color:#16a34a;background:#dcfce7}
+.otd-wk-item summary .num.go{color:#d97706;background:#fff8e1}
+.otd-wk-item summary .num.pend{color:#9ca3af;background:#f3f4f6}
+.otd-wk-nav{display:flex;justify-content:flex-end;margin-top:12px;padding-top:10px;
+  border-top:1px dashed #e5e7eb}
+.otd-wk-navbtn{min-height:42px;padding:0 16px;border-radius:10px;
+  border:1px solid #e5e7eb;background:#fff;color:#374151;font-size:.82rem;
+  font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.otd-wk-navbtn:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626)}
+@media (max-width:640px){
+  .otd-wk-bar{flex-direction:column;align-items:stretch}
+  .otd-wk-bar .prog{min-width:0}
+  .otd-wk-bar .sig{width:100%;justify-content:center}
+  .otd-wk-navbtn{width:100%;justify-content:center}
+}
+
 .otd-wk-go{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.78rem;
   font-weight:800;color:var(--ilus-red,#dc2626);text-decoration:none}
 .otd-wk-go:hover{text-decoration:underline}
@@ -2532,12 +2583,24 @@
             <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
           </div>
           {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
-             técnico dueño de la visita o superadmin (@_tecnico_owns_visita). #}
+             técnico dueño de la visita o superadmin (@_tecnico_owns_visita).
+             🔇 2026-09-02 (Daniel: "ojalá este mensaje de falta de evidencia
+             sea solamente para superadministrador"): el reclamo "¿Falta
+             evidencia?" le sonaba a reproche al técnico, que muchas veces
+             ya subió sus fotos por equipo en el checklist -- estas son las
+             GENERALES de la OT. El botón para subir sigue estando para
+             todos los que pueden ejecutar; lo que se acota al superadmin es
+             el texto que pregunta. #}
           {% if puede_ejecutar %}
           <div class="otd-ev-add">
             <div class="tx">
+              {% if is_superadmin %}
               <b>¿Falta evidencia?</b>
               <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
+              {% else %}
+              <b>Fotos generales de la OT</b>
+              <small>Las del checklist por equipo van en cada máquina, en Trabajo.</small>
+              {% endif %}
             </div>
             <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
               <i class="bi bi-camera-fill"></i> Agregar foto
@@ -2613,11 +2676,59 @@
         <i class="bi bi-check-circle-fill"></i>
         <span>Todos los equipos tienen sus obligatorias completas — ya puedes firmar y cerrar la OT.</span>
       </div>
+
+      {# ══ BARRA DEL TÉCNICO ═════════════════════════════════════════════
+         🆕 2026-09-02 (Daniel: "necesito que el técnico pueda entrar a los
+         equipos, mirar su avance tanto en las tareas como en las máquinas,
+         y que dentro del formulario pueda avanzar a la siguiente máquina o
+         poder buscar un equipo en específico, actuando en grandes
+         cantidades de equipos").
+         Con 60 máquinas —caso real, la OT-58 de Vitacura— la lista sola es
+         inusable: hay que poder BUSCAR y saber CUÁNTO FALTA sin contar a
+         mano. El avance se muestra en las dos unidades que le importan al
+         técnico: máquinas listas y tareas obligatorias. #}
+      {% if equipos %}
+      <div class="otd-wk-bar">
+        <div class="buscar">
+          <i class="bi bi-search"></i>
+          <input type="search" id="otdWkBuscar" placeholder="Buscar equipo por nombre, SKU o serie…"
+                 autocomplete="off" oninput="otdWkFiltrar(this.value)">
+          <button type="button" class="limpiar" id="otdWkLimpiar" style="display:none"
+                  onclick="otdWkFiltrar(''); document.getElementById('otdWkBuscar').value='';"
+                  title="Limpiar búsqueda"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="prog">
+          {% set _eq_listos = equipos | selectattr('n_obl_falta', 'equalto', 0) | list | length %}
+          <div class="txt">
+            <b id="otdWkProgTxt">{{ _eq_listos }} de {{ equipos|length }}</b> equipos listos
+            <span id="otdWkFiltroInfo" class="filtro-info" style="display:none"></span>
+          </div>
+          <div class="barra"><i id="otdWkProgBar"
+            style="width:{{ (_eq_listos * 100 / (equipos|length or 1)) | round(0, 'floor') }}%"></i></div>
+        </div>
+        <button type="button" class="sig" id="otdWkSiguiente" onclick="otdWkIrSiguiente()"
+                title="Abrir el próximo equipo con obligatorias pendientes">
+          <i class="bi bi-arrow-down-circle-fill"></i> Siguiente pendiente</button>
+      </div>
+      <div class="otd-wk-sinres" id="otdWkSinRes" style="display:none">
+        <i class="bi bi-search"></i> Ningún equipo coincide con la búsqueda.
+      </div>
+      {% endif %}
+
       {% if equipos %}
       <div class="otd-wk-list">
         {% for e in equipos %}
-        <details class="otd-wk-item{{ ' is-complete' if e.n_obl and e.n_obl_ok == e.n_obl }}" data-obl="{{ e.n_obl }}" data-oblok="{{ e.n_obl_ok }}">
+        <details class="otd-wk-item{{ ' is-complete' if e.n_obl and e.n_obl_ok == e.n_obl }}"
+                 data-obl="{{ e.n_obl }}" data-oblok="{{ e.n_obl_ok }}"
+                 data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
+                 data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
           <summary>
+            {# Numeración + semáforo, como la pantalla clásica que Daniel
+               dice que "venía trabajando a la perfección": el número dice
+               en qué punto de la lista vas; el color, si ese equipo ya
+               está resuelto. #}
+            <span class="num {{ 'ok' if (e.n_obl and e.n_obl_ok == e.n_obl) else ('go' if e.n_ok else 'pend') }}">
+              {{ loop.index }}</span>
             {% if e.foto_url %}
               <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
             {% else %}
@@ -2725,6 +2836,17 @@
                mount point para que el JS sepa dónde insertar cada grupo. #}
             <div class="otd-chk-mount" data-mid="{{ e.id }}">
               <div class="otd-chk-skel"><i></i><i></i></div>
+            </div>
+
+            {# ➡️ 2026-09-02 (Daniel: "que dentro del formulario pueda
+               avanzar a la siguiente máquina"). Con muchos equipos, cerrar
+               este, hacer scroll y buscar el próximo es donde se pierde el
+               tiempo en terreno. Este botón cierra el actual, abre el
+               siguiente y lo deja en pantalla. #}
+            <div class="otd-wk-nav">
+              <button type="button" class="otd-wk-navbtn"
+                      onclick="otdWkSiguienteDesde({{ e.id }})">
+                Siguiente equipo <i class="bi bi-arrow-right-circle-fill"></i></button>
             </div>
 
             {# 2026-08-31 (Daniel, pedido explícito: "no me gusta que vayamos
@@ -3439,6 +3561,55 @@ async function otdEliminarOT(){
   }
 }
 
+/* ⚠️ ORDEN IMPORTANTE (bug real 2026-09-02): este bloque DEBE ir antes
+   de la IIFE del margen que sigue. Esa IIFE termina llamando a
+   recalcularOtdFin(), que usa window.otdMoneyVal -- si las funciones se
+   definen después, la llamada lanza TypeError, el bloque <script> muere
+   ahí y TODO lo que viene abajo (chips de técnicos, centro de costo,
+   bloqueo de finanzas) deja de ejecutarse en silencio. Se detectó en
+   producción por el margen en blanco y un "Cargando técnicos…" colgado. */
+/* ══ DINERO CON SEPARADOR DE MILES ════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "que tenga separador de miles, y no la boleta,
+   pero sí los precios"). Los campos de monto pasaron de type=number a
+   texto: un input numérico NO puede mostrar puntos de miles, y sin ellos
+   $352029 y $35202 se confunden de un vistazo -- justo el error que no
+   puede pasar en la pantalla del dinero. El número de documento NO lleva
+   separador a propósito: es un identificador, no una cantidad.
+
+   REGLA: en pantalla van con puntos; al backend viaja SIEMPRE el número
+   pelado (otdMoneyVal). Una sola función lee, una sola escribe. */
+window.otdMoneyVal = function(id){
+  const el = document.getElementById(id);
+  if (!el) return null;
+  const limpio = String(el.value || '').replace(/[^\d]/g, '');
+  return limpio === '' ? null : parseInt(limpio, 10);
+};
+window.otdMoneyFmt = function(n){
+  if (n === null || n === undefined || n === '') return '';
+  return Number(n).toLocaleString('es-CL');
+};
+(function(){
+  function formatear(el){
+    const soloDigitos = String(el.value || '').replace(/[^\d]/g, '');
+    // Se recuerda cuántos dígitos había ANTES del cursor para devolverlo a
+    // su lugar: si no, al insertar un punto el cursor salta al final y
+    // escribir un monto largo se vuelve imposible.
+    const pos = el.selectionStart || 0;
+    const digitosAntes = String(el.value || '').slice(0, pos).replace(/[^\d]/g, '').length;
+    el.value = soloDigitos === '' ? '' : Number(soloDigitos).toLocaleString('es-CL');
+    let nuevaPos = 0, vistos = 0;
+    for (let i = 0; i < el.value.length && vistos < digitosAntes; i++){
+      if (/\d/.test(el.value[i])) vistos++;
+      nuevaPos = i + 1;
+    }
+    try { el.setSelectionRange(nuevaPos, nuevaPos); } catch(e){}
+  }
+  document.querySelectorAll('#otdCardFinanzas input[data-money="1"]').forEach(function(el){
+    el.addEventListener('input', function(){ formatear(el); });
+    el.addEventListener('blur',  function(){ formatear(el); });
+  });
+})();
+
 /* 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del
    [ejecutar]... el margen debería salir allí"): MISMA fórmula y MISMO
    endpoint que `recalcular()`/`guardarFinanzasOT()` en ot_ejecutar.html --
@@ -3613,6 +3784,122 @@ window.otdVerAnexoPdf = function(aid){
   });
 };
 
+/* ══ NAVEGACIÓN Y BÚSQUEDA DE EQUIPOS (pestaña Trabajo) ═══════════════
+   🆕 2026-09-02 (Daniel: "necesito que el técnico pueda entrar a los
+   equipos, mirar su avance tanto en las tareas como en las máquinas, y que
+   dentro del formulario pueda avanzar a la siguiente máquina o poder
+   buscar un equipo en específico, actuando en grandes cantidades de
+   equipos").
+   Todo del lado del navegador: los equipos ya vienen renderizados, esto
+   solo filtra y navega. Sin fetch, sin esperas -- en un gimnasio con mala
+   señal eso importa más que cualquier animación. */
+window.otdWkFiltrar = function(q){
+  const items = document.querySelectorAll('#otdWkCard .otd-wk-item');
+  const term = (q || '').trim().toLowerCase();
+  let visibles = 0;
+  items.forEach(function(el){
+    const hay = !term || (el.dataset.buscar || '').indexOf(term) >= 0;
+    el.style.display = hay ? '' : 'none';
+    if (hay) visibles++;
+  });
+  const vacio = document.getElementById('otdWkSinRes');
+  if (vacio) vacio.style.display = (term && visibles === 0) ? '' : 'none';
+  const limpiar = document.getElementById('otdWkLimpiar');
+  if (limpiar) limpiar.style.display = term ? '' : 'none';
+  const info = document.getElementById('otdWkFiltroInfo');
+  if (info){
+    info.style.display = term ? '' : 'none';
+    info.textContent = term ? ' · ' + visibles + ' en pantalla' : '';
+  }
+};
+
+/* Devuelve el próximo equipo con obligatorias pendientes, en orden de
+   lista. Se salta los que el filtro dejó ocultos: si el técnico está
+   buscando algo, "siguiente" tiene que moverse dentro de lo que ve. */
+function _otdWkPendientes(){
+  return Array.from(document.querySelectorAll('#otdWkCard .otd-wk-item'))
+    .filter(function(el){
+      if (el.style.display === 'none') return false;
+      const obl = parseInt(el.dataset.obl || '0', 10);
+      const ok = parseInt(el.dataset.oblok || '0', 10);
+      return obl > 0 && ok < obl;
+    });
+}
+
+function _otdWkAbrir(el){
+  if (!el) return;
+  document.querySelectorAll('#otdWkCard .otd-wk-item[open]').forEach(function(o){
+    if (o !== el) o.open = false;
+  });
+  el.open = true;
+  // El scroll va al summary, no al details: si no, en un equipo con
+  // checklist largo la pantalla aterriza a mitad del formulario.
+  const cab = el.querySelector('summary') || el;
+  cab.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+window.otdWkIrSiguiente = function(){
+  const pend = _otdWkPendientes();
+  if (!pend.length){
+    if (window.ilusToast) ilusToast('No quedan equipos con obligatorias pendientes', {type:'success'});
+    return;
+  }
+  // Si hay uno abierto, se busca el SIGUIENTE pendiente después de él;
+  // si no, el primero. Así el botón avanza en vez de reabrir lo mismo.
+  const abierto = document.querySelector('#otdWkCard .otd-wk-item[open]');
+  let destino = pend[0];
+  if (abierto){
+    const idxAbierto = parseInt(abierto.dataset.idx || '0', 10);
+    destino = pend.find(function(el){
+      return parseInt(el.dataset.idx || '0', 10) > idxAbierto;
+    }) || pend[0];
+  }
+  _otdWkAbrir(destino);
+};
+
+/* "Siguiente equipo" desde dentro de una máquina: avanza al de al lado en
+   la lista (pendiente o no), que es lo que uno espera al ir recorriendo
+   equipo por equipo. */
+window.otdWkSiguienteDesde = function(mid){
+  const todos = Array.from(document.querySelectorAll('#otdWkCard .otd-wk-item'))
+    .filter(el => el.style.display !== 'none');
+  const i = todos.findIndex(el => String(el.dataset.mid) === String(mid));
+  if (i < 0) return;
+  if (i + 1 >= todos.length){
+    if (window.ilusToast) ilusToast('Era el último equipo de la lista', {type:'info'});
+    const primero = todos[0];
+    if (primero) _otdWkAbrir(primero);
+    return;
+  }
+  _otdWkAbrir(todos[i + 1]);
+};
+
+/* Mantiene el contador de "equipos listos" al día cuando el técnico va
+   completando tareas, sin recargar la página. Lo llama el checklist. */
+window.otdWkRefrescarProgreso = function(){
+  const items = Array.from(document.querySelectorAll('#otdWkCard .otd-wk-item'));
+  if (!items.length) return;
+  let listos = 0;
+  items.forEach(function(el){
+    const obl = parseInt(el.dataset.obl || '0', 10);
+    const ok = parseInt(el.dataset.oblok || '0', 10);
+    const completo = obl > 0 && ok >= obl;
+    if (completo) listos++;
+    el.classList.toggle('is-complete', completo);
+    const num = el.querySelector('summary .num');
+    if (num){
+      num.classList.remove('ok', 'go', 'pend');
+      num.classList.add(completo ? 'ok' : (ok > 0 ? 'go' : 'pend'));
+    }
+  });
+  const txt = document.getElementById('otdWkProgTxt');
+  const bar = document.getElementById('otdWkProgBar');
+  if (txt) txt.textContent = listos + ' de ' + items.length;
+  if (bar) bar.style.width = Math.round(listos * 100 / items.length) + '%';
+  const btn = document.getElementById('otdWkSiguiente');
+  if (btn) btn.disabled = (listos === items.length);
+};
+
 /* ══ FUERA DE SERVICIO POR EQUIPO ═════════════════════════════════════
    🆕 2026-09-02 (Daniel: "botón fuera de servicio por equipo que levante
    una urgencia"). Marcar exige MOTIVO: ese texto es el que va a leer quien
@@ -3703,48 +3990,6 @@ window.otdCorregirFinanzas = async function(){
   if (yaDeclarada && document.getElementById('otdCardFinanzas')){
     window.otdBloquearFinanzas();
   }
-})();
-
-/* ══ DINERO CON SEPARADOR DE MILES ════════════════════════════════════
-   🆕 2026-09-02 (Daniel: "que tenga separador de miles, y no la boleta,
-   pero sí los precios"). Los campos de monto pasaron de type=number a
-   texto: un input numérico NO puede mostrar puntos de miles, y sin ellos
-   $352029 y $35202 se confunden de un vistazo -- justo el error que no
-   puede pasar en la pantalla del dinero. El número de documento NO lleva
-   separador a propósito: es un identificador, no una cantidad.
-
-   REGLA: en pantalla van con puntos; al backend viaja SIEMPRE el número
-   pelado (otdMoneyVal). Una sola función lee, una sola escribe. */
-window.otdMoneyVal = function(id){
-  const el = document.getElementById(id);
-  if (!el) return null;
-  const limpio = String(el.value || '').replace(/[^\d]/g, '');
-  return limpio === '' ? null : parseInt(limpio, 10);
-};
-window.otdMoneyFmt = function(n){
-  if (n === null || n === undefined || n === '') return '';
-  return Number(n).toLocaleString('es-CL');
-};
-(function(){
-  function formatear(el){
-    const soloDigitos = String(el.value || '').replace(/[^\d]/g, '');
-    // Se recuerda cuántos dígitos había ANTES del cursor para devolverlo a
-    // su lugar: si no, al insertar un punto el cursor salta al final y
-    // escribir un monto largo se vuelve imposible.
-    const pos = el.selectionStart || 0;
-    const digitosAntes = String(el.value || '').slice(0, pos).replace(/[^\d]/g, '').length;
-    el.value = soloDigitos === '' ? '' : Number(soloDigitos).toLocaleString('es-CL');
-    let nuevaPos = 0, vistos = 0;
-    for (let i = 0; i < el.value.length && vistos < digitosAntes; i++){
-      if (/\d/.test(el.value[i])) vistos++;
-      nuevaPos = i + 1;
-    }
-    try { el.setSelectionRange(nuevaPos, nuevaPos); } catch(e){}
-  }
-  document.querySelectorAll('#otdCardFinanzas input[data-money="1"]').forEach(function(el){
-    el.addEventListener('input', function(){ formatear(el); });
-    el.addEventListener('blur',  function(){ formatear(el); });
-  });
 })();
 
 /* ══ Centro de costo con rectángulos ══════════════════════════════════
@@ -4870,6 +5115,11 @@ function otdRenderChecklistEquipo(mid){
     item.dataset.obl = String(oblTot);
   }
   otdWkCheckAllComplete();
+  // 2026-09-02: además del banner, se refresca la barra de avance del
+  // técnico (equipos listos + numeración con semáforo). Lee los MISMOS
+  // data-obl/data-oblok que se acaban de actualizar arriba, así no hay dos
+  // conteos que puedan discrepar.
+  if (window.otdWkRefrescarProgreso) window.otdWkRefrescarProgreso();
 }
 
 /* Banner "toda la OT lista para firmar" a nivel de card contenedora --
