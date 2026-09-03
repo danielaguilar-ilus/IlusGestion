@@ -657,13 +657,6 @@
        class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
       <i class="bi bi-speedometer2"></i><span>Dashboard</span>
     </a>
-    {# 2026-08-03 (Daniel): migra la tabla "Incidencias" que hoy vive en un
-       Clever Cloud aparte (Excel/VBA vía DSN=SPHS) para poder dar de baja
-       esa instancia externa. #}
-    <a href="{{ url_for('mant_incidencias_page') }}"
-       class="sidebar-link{% if request.endpoint == 'mant_incidencias_page' %} active{% endif %}">
-      <i class="bi bi-exclamation-triangle"></i><span>Incidencias</span>
-    </a>
     <a href="{{ url_for('mant_ots_list') }}"
        class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
       <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
@@ -741,20 +734,21 @@
          terreno que ellos hacen. Antes quedaban escondidos junto con
          Plantillas/Proveedores (Regla #4.2: se abre solo lo pedido). #}
       <a href="{{ url_for('repuestos_hub_list') }}"
-         class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint in ['repuestos_hub_list', 'repuestos_bodega_list', 'repstock_etiquetas', 'repuestos_print_labels'] %} active{% endif %}">
         <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
       </a>
-      {# 2026-08-25: repstock_etiquetas/repuestos_print_labels (PDF y vista
-         previa de etiquetas de repuestos) sumados acá -- sin esto ninguna
-         de las dos marcaba el link activo, el acordeón no encontraba
-         sección activa, y por defecto restauraba la última abierta en
-         localStorage (Etiquetas, en el caso real de Daniel) -- daba la
-         impresión de que Repuestos estaba "mezclado" con Etiquetas cuando
-         en realidad eran plantillas/rutas totalmente separadas. #}
-      <a href="{{ url_for('repuestos_bodega_list') }}"
-         class="sidebar-link{% if request.endpoint in ['repuestos_bodega_list', 'repstock_etiquetas', 'repuestos_print_labels'] %} active{% endif %}">
-        <i class="bi bi-box-seam"></i><span>Bodega de Repuestos</span>
-      </a>
+      {# 🔻 2026-09-03 (Daniel: "hay una parte que dice Repuestos y otra que
+         dice Bodega de Repuestos que está duplicado"). Tiene razón, y el
+         propio código ya lo decía: repuestos_bodega_list es "la bodega
+         como PÁGINA propia... aunque el acceso real hoy es la pestaña
+         'Bodega' dentro de /repuestos". Dos links del menú llevaban a la
+         misma pantalla.
+         Se quita el LINK, no la ruta: /repuestos/bodega sigue viva para
+         los enlaces guardados y las etiquetas, y devolver el link es
+         volver a pegar este bloque. Los endpoints de etiquetas se mudan
+         al link de Repuestos de arriba para que sigan marcando activo (si
+         no, el acordeón se abre en la sección equivocada -- bug real de
+         2026-08-25). #}
       {# 2026-08-27 (Daniel: "un botón que nos lleve a las ubicaciones,
          para tener un repositorio"). Mismo criterio de visibilidad que
          Repuestos/Bodega de arriba: crear una ubicación ya era una acción
@@ -769,6 +763,15 @@
         <i class="bi bi-person-badge"></i><span>Técnicos</span>
       </a>
       {% endif %}
+      {# 🔻 2026-09-03 (Daniel: "la de Incidencias tírala hacia abajo para
+         el Taller"). Migrada desde Clever Cloud el 2026-08-03; estaba
+         arriba entre Dashboard y Órdenes de Trabajo, compitiendo con lo
+         que se usa todos los días. Es una tabla de consulta, y su lugar
+         es acá adentro. Misma ruta, mismo permiso: solo se movió. #}
+      <a href="{{ url_for('mant_incidencias_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_incidencias_page' %} active{% endif %}">
+        <i class="bi bi-exclamation-triangle"></i><span>Incidencias</span>
+      </a>
     </div>
     {% endif %}
 

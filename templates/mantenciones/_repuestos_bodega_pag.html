@@ -5,7 +5,7 @@
 {% set _b_first = ((bod_page - 1) * bod_page_size) + 1 if bod_total > 0 else 0 %}
 {% set _b_last  = (_b_first + (bod_repuestos|length) - 1) if bod_total > 0 else 0 %}
 {% set _b_keep = '&q=' ~ (filtro_q or '') ~ '&estado=' ~ (filtro_estado or '') ~ '&ticket=' ~ (filtro_ticket or '') ~ '&orden=' ~ (orden or '') %}
-{% set _b_filtros = '&bq=' ~ (bod_q or '') ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') %}
+{% set _b_filtros = '&bq=' ~ (bod_q or '') ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') ~ ('&pendiente_modelo=1' if bod_pendiente_modelo else '') %}
 
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-3 py-2"
      style="border-top:1px solid #e5e7eb;background:#f9fafb;border-radius:0 0 12px 12px">

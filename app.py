@@ -101889,6 +101889,12 @@ def _repstock_contexto_bodega():
     # mismo patrón que bajo_minimo (querystring persistente, WHERE dinámico).
     solo_sin_costo = request.args.get("sin_costo") == "1"
     solo_sin_modelo = request.args.get("sin_modelo") == "1"
+    # 2026-09-03 (Daniel: "colocale un objeto que diga pendiente de
+    # identificar para despues filtrarlo y identificar que es lo que tenemos
+    # pendiente"). Distinto de "sin modelo asociado": ese es cualquiera que
+    # no tenga modelos -- puede ser un descuido. Este es el que alguien
+    # marco A PROPOSITO porque no se pudo identificar en el momento.
+    solo_pendiente_modelo = request.args.get("pendiente_modelo") == "1"
     try:
         page = max(1, int(request.args.get("bpage") or 1))
     except (TypeError, ValueError):
@@ -101928,11 +101934,19 @@ def _repstock_contexto_bodega():
         f"AND NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)",
         tuple(params)
     ) or {}).get("n", 0)
+    # Cuantos hay marcados "pendiente de identificar" bajo el filtro actual
+    # (sin contar el propio filtro, igual que los otros dos badges).
+    bod_count_pendiente_modelo = (mysql_fetchone(
+        f"SELECT COUNT(*) AS n FROM mant_repuestos_stock r WHERE {where_base_sql} "
+        f"AND COALESCE(r.modelo_pendiente,0)=1", tuple(params)
+    ) or {}).get("n", 0)
 
     if solo_sin_costo:
         where.append("(r.costo_unitario IS NULL OR r.costo_unitario = 0)")
     if solo_sin_modelo:
         where.append("NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)")
+    if solo_pendiente_modelo:
+        where.append("COALESCE(r.modelo_pendiente,0)=1")
     where_sql = " AND ".join(where)
 
     total = (mysql_fetchone(
@@ -101997,7 +102011,9 @@ def _repstock_contexto_bodega():
         "bod_q": q, "bod_marca_id": marca_id, "bod_ubicacion_id": ubicacion_id,
         "bod_bajo_minimo": solo_bajo_minimo,
         "bod_sin_costo": solo_sin_costo, "bod_sin_modelo": solo_sin_modelo,
+        "bod_pendiente_modelo": solo_pendiente_modelo,
         "bod_count_sin_costo": bod_count_sin_costo, "bod_count_sin_modelo": bod_count_sin_modelo,
+        "bod_count_pendiente_modelo": bod_count_pendiente_modelo,
         "bod_page": page, "bod_page_size": page_size,
         "bod_total": total, "bod_total_pages": total_pages,
     }
@@ -102124,6 +102140,9 @@ def repstock_crear():
             "alto": _repstock_dim_float(d.get("alto")),
             "peso_kg": _repstock_dim_float(d.get("peso_kg")),
             "bultos": _repstock_bultos_int(d.get("bultos")),
+            # 2026-09-03: el tecnico pudo declarar que todavia no sabe a que
+            # maquina sirve. Ver _ensure_repuestos_stock (modelo_pendiente).
+            "modelo_pendiente": 1 if d.get("modelo_pendiente") else 0,
             "created_by": current_username(),
         }
         cols = list(fields.keys())
@@ -102158,7 +102177,8 @@ def repstock_editar(rid):
             return jsonify({"ok": False, "error": "La descripción no puede quedar vacía"}), 400
     allowed = ["descripcion", "cantidad", "ubicacion_id", "marca_id", "proveedor_id",
                "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
-               "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg", "bultos"]
+               "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg", "bultos",
+               "modelo_pendiente"]
     sets, vals = [], []
     for f in allowed:
         if f in d:
@@ -102176,6 +102196,8 @@ def repstock_editar(rid):
                 v = _repstock_dim_float(v)
             elif f == "bultos":
                 v = _repstock_bultos_int(v)
+            elif f == "modelo_pendiente":
+                v = 1 if v in (1, "1", True, "true", "on") else 0
             elif v in ("", "null"):
                 v = None
             sets.append(f"{f}=%s"); vals.append(v)
@@ -103229,6 +103251,8 @@ def repstock_exportar_excel():
     solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
     solo_sin_costo = request.args.get("sin_costo") == "1"
     solo_sin_modelo = request.args.get("sin_modelo") == "1"
+    # El Excel tiene que traer lo MISMO que se esta viendo en pantalla.
+    solo_pendiente_modelo = request.args.get("pendiente_modelo") == "1"
 
     where = ["r.activo=1"]
     params = []
@@ -103246,6 +103270,8 @@ def repstock_exportar_excel():
         where.append("(r.costo_unitario IS NULL OR r.costo_unitario = 0)")
     if solo_sin_modelo:
         where.append("NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)")
+    if solo_pendiente_modelo:
+        where.append("COALESCE(r.modelo_pendiente,0)=1")
     where_sql = " AND ".join(where)
 
     rows = mysql_fetchall(
@@ -114963,6 +114989,43 @@ def _ensure_repuestos_bodega_tables():
             )
     except Exception as e:
         print(f"[ensure_repuestos_stock] ALTER largo/ancho/alto/peso_kg/bultos: {e}", flush=True)
+
+    # 2026-09-03 (Daniel: "si bien es obligatorio declarar un producto,
+    # podriamos dejar 'pendiente de declarar' por default para que los
+    # muchachos puedan avanzar, ya que hay productos que no se pueden
+    # identificar en el momento... colocale un objeto que diga pendiente de
+    # identificar para despues filtrarlo").
+    #
+    # Por que una COLUMNA y no un producto falso "PENDIENTE" en el catalogo:
+    # un producto falso se cuela en cotizaciones, en las OT, en el buscador
+    # de modelos y en cualquier reporte que lea el catalogo -- y despues hay
+    # que acordarse de excluirlo en cada uno. La bandera vive en el repuesto,
+    # que es de quien es la duda, y no ensucia nada mas.
+    #
+    # Se apaga sola cuando el repuesto recibe su primer modelo real (ver
+    # repstock_modelo_agregar): dejar de estar pendiente no es una accion
+    # aparte que alguien tenga que acordarse de hacer.
+    try:
+        _cols_pend = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos_stock'"
+            ) or [])
+        }
+        if "modelo_pendiente" not in _cols_pend:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN modelo_pendiente "
+                "TINYINT(1) NOT NULL DEFAULT 0 "
+                "COMMENT 'El tecnico declaro que todavia no sabe a que maquina sirve. "
+                "Deja avanzar el paso 4 y queda para identificar despues'"
+            )
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock "
+                "ADD INDEX idx_repstock_modelo_pendiente (modelo_pendiente)"
+            )
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] ALTER modelo_pendiente: {e}", flush=True)
 
     try:
         mysql_execute("""

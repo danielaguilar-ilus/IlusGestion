@@ -273,6 +273,16 @@
     <input type="checkbox" name="sin_modelo" value="1" {% if bod_sin_modelo %}checked{% endif %}> Sin modelo asociado
     <span class="rb-chip" style="background:#fee2e2;color:#991b1b">{{ bod_count_sin_modelo }}</span>
   </label>
+  {# 2026-09-03 (Daniel: "para despues filtrarlo y identificar que es lo
+     que tenemos pendiente"). OJO, no es lo mismo que "Sin modelo asociado":
+     ese es cualquiera que no tenga modelos -- puede ser un descuido. Este
+     es el que alguien marco A PROPOSITO porque no se pudo identificar en el
+     momento. Por eso son dos filtros y no uno. #}
+  <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
+    <input type="checkbox" name="pendiente_modelo" value="1" {% if bod_pendiente_modelo %}checked{% endif %}>
+    Pendiente de identificar
+    <span class="rb-chip" style="background:#fff8e1;color:#92400e">{{ bod_count_pendiente_modelo }}</span>
+  </label>
   <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
   <a href="/repuestos" class="btn btn-sm btn-outline-secondary">Limpiar</a>
 </form>
@@ -289,7 +299,7 @@
        falta). Mismo patrón de querystring que _repuestos_bodega_pag.html
        (_b_filtros): bq/marca_id/ubicacion_id/bajo_minimo/sin_costo/
        sin_modelo, para que "descargar" traiga lo mismo que se está viendo. #}
-    {% set rb_export_qs = '?bq=' ~ (bod_q or '')|urlencode ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') %}
+    {% set rb_export_qs = '?bq=' ~ (bod_q or '')|urlencode ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') ~ ('&pendiente_modelo=1' if bod_pendiente_modelo else '') %}
     <a class="btn btn-sm btn-outline-success" href="{{ url_for('repstock_exportar_excel') }}{{ rb_export_qs }}"
        title="Descargar Excel con los repuestos del filtro actual (incluye fotos)">
       <i class="bi bi-file-earmark-excel me-1"></i>Descargar Excel
@@ -368,7 +378,13 @@
         {% for mod in modelos_por_repuesto.get(r.id, []) %}
           <span class="rb-chip rb-chip-clase">{{ mod.producto_nombre }}</span>
         {% else %}
+          {% if r.modelo_pendiente %}
+          <span class="rb-chip" style="background:#fff8e1;color:#92400e;border:1px solid #fcd34d"
+                title="El técnico lo dejó marcado para identificar después">
+            <i class="bi bi-question-circle-fill me-1"></i>Pendiente de identificar</span>
+          {% else %}
           <span class="text-muted" style="font-size:.78rem">sin asociar</span>
+          {% endif %}
         {% endfor %}
       </td>
       <td>
@@ -754,6 +770,19 @@ let RB_MODELOS_ACTUALES = [];
 // elegidos ANTES de guardar, mismo patrón que RB_FOTOS_PENDIENTES -- se
 // suben en bloque justo después de crear el repuesto (rbSubirModelosPendientes).
 let RB_MODELOS_PENDIENTES = [];
+/* 2026-09-03 (Daniel: "si bien es obligatorio declarar un producto,
+   podriamos dejar 'pendiente de declarar' por default para que los
+   muchachos puedan avanzar, ya que hay productos que no se pueden
+   identificar en el momento... colocale un objeto que diga pendiente de
+   identificar para despues filtrarlo").
+
+   No es un modelo mas de la lista: es una DECLARACION sobre el repuesto
+   ("todavia no se a que sirve"). Por eso vive en su propia bandera y no
+   como un producto falso del catalogo -- un producto falso se colaria en
+   cotizaciones, en las OT y en cualquier reporte que lea el catalogo.
+   Es excluyente con tener modelos: en cuanto se agrega uno real, se
+   apaga sola. */
+let RB_MODELO_PENDIENTE = false;
 let RB_FOTOS_ACTUALES = [];
 let RB_FOTOS_PENDIENTES = [];   // fotos elegidas ANTES de guardar (blob local, ver rbRenderFotos)
 let RB_DIRTY = false;          // hubo cambios → recargar la tabla al cerrar el modal
@@ -1086,6 +1115,7 @@ async function rbAbrirNuevo(mantenerContexto){
   rbSetTicket(null, '');
   RB_MODELOS_ACTUALES = [];
   RB_MODELOS_PENDIENTES = [];
+  RB_MODELO_PENDIENTE = false;
   rbRenderModelosChips();
   RB_FOTOS_ACTUALES = [];
   RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
@@ -1140,6 +1170,7 @@ function rbAbrirEditar(r, modelos, fotos){
   rbSetTicket(r.ticket_id || null, r.ticket_numero || '');
   RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre, sku: m.producto_sku}));
   RB_MODELOS_PENDIENTES = [];
+  RB_MODELO_PENDIENTE = !!(r && (r.modelo_pendiente == 1 || r.modelo_pendiente === true));
   rbRenderModelosChips();
   RB_FOTOS_ACTUALES = (fotos || []).map(f => ({id: f.id, url: f.url}));
   RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
@@ -1206,13 +1237,20 @@ async function rbGuardar(crearOtro){
   // máquina"): al menos 1 modelo asociado (guardado O pendiente de
   // guardar, cuenta igual) para poder guardar el repuesto. Antes el paso
   // solo se pintaba verde si estaba completo, pero no bloqueaba nada.
-  if ((RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) === 0){
-    ilusToast('Asocia al menos 1 modelo de equipo compatible antes de guardar', {type:'warning'});
+  // 2026-09-03: "Pendiente de identificar" cuenta como declaracion valida.
+  // El paso sigue siendo obligatorio -- lo que cambia es que ahora hay una
+  // respuesta honesta para "no se todavia", en vez de obligar a inventar un
+  // modelo con tal de poder guardar (que es peor: ensucia el dato y nadie
+  // se entera de que estaba mal).
+  if ((RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) === 0
+      && !RB_MODELO_PENDIENTE){
+    ilusToast('Asocia un modelo compatible, o marca "Pendiente de identificar" para seguir', {type:'warning'});
     document.getElementById('rbModelosBuscar').focus();
     document.getElementById('rbModelosBuscar').scrollIntoView({behavior:'smooth', block:'center'});
     return;
   }
   const body = {
+    modelo_pendiente: RB_MODELO_PENDIENTE ? 1 : 0,
     descripcion: descripcion,
     cantidad: cantidad,
     stock_minimo: stockMin,
@@ -2126,7 +2164,15 @@ function rbRenderModelosChips(){
     '<span class="rb-modelo-chip">' + escHtmlRb(m.nombre) +
     '<button type="button" onclick="rbModeloPendienteQuitar(' + i + ')" title="Quitar">&times;</button></span>'
   ).join('');
-  cont.innerHTML = (chipsGuardados + chipsPendientes) ||
+  /* Chip de "pendiente de identificar" -- ambar, no verde: no es un
+     modelo declarado, es una deuda declarada. Se quita con la x apenas se
+     sepa a que sirve. */
+  const chipPendiente = RB_MODELO_PENDIENTE
+    ? '<span class="rb-modelo-chip" style="background:#fff8e1;border-color:#fcd34d;color:#92400e">'
+      + '<i class="bi bi-question-circle-fill me-1"></i>Pendiente de identificar'
+      + '<button type="button" onclick="rbQuitarPendiente()" title="Ya se a que sirve">&times;</button></span>'
+    : '';
+  cont.innerHTML = (chipsGuardados + chipsPendientes + chipPendiente) ||
     '<span class="text-muted small">Sin modelos asociados todavía.</span>';
   const total = RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length;
   // Al llegar al tope, se esconde el buscador (no tiene sentido buscar
@@ -2176,17 +2222,60 @@ async function rbBuscarModelos(){
   RB_MODELOS_RESULTS = (d.productos || []).filter(p =>
     !RB_MODELOS_ACTUALES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()) &&
     !RB_MODELOS_PENDIENTES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()));
+  /* 🔧 2026-09-03 (Daniel, mirandolo en el telefono: "necesito que separe
+     un poco el SKU, ya que se encuentra muy montado del nombre... seria
+     bueno dejarlo en una segunda linea").
+     Antes el SKU iba pegado al nombre en la misma linea, sin separacion:
+     "Gymleco - Standing Chest Press 10 Series028" se lee como una sola
+     cosa y el tecnico no distingue donde termina el nombre. Ahora el
+     nombre manda en su linea y el SKU baja a la suya, en monoespaciada y
+     mas apagado -- que es como se lee un codigo. */
+  const filaModelo = (p, i) =>
+    '<div class="rb-modelo-resultado-item" onclick="rbPickModelo(' + i + ')">' +
+      '<div style="font-weight:700;line-height:1.3">' + escHtmlRb(p.descripcion) + '</div>' +
+      '<div style="font-size:.72rem;color:#6b7280;margin-top:2px;' +
+           'font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.02em">' +
+        escHtmlRb(p.sku || '—') +
+        (p.cantidad > 0
+          ? '<span style="font-family:inherit;color:#15803d;font-weight:700"> · '
+            + rbCantidadFmt(p.cantidad) + ' en bodega</span>'
+          : '') +
+      '</div>' +
+    '</div>';
+  /* La salida de emergencia va SIEMPRE al final, tambien cuando no hubo
+     resultados: es justo cuando mas se necesita (no aparece nada porque
+     nadie sabe todavia que pieza es). */
+  const filaPendiente = RB_MODELO_PENDIENTE ? '' :
+    '<div class="rb-modelo-resultado-item" onclick="rbMarcarPendiente()" ' +
+         'style="background:#fffbeb;border-top:1px dashed #fcd34d">' +
+      '<div style="font-weight:700;color:#92400e;line-height:1.3">' +
+        '<i class="bi bi-question-circle-fill me-1"></i>Pendiente de identificar</div>' +
+      '<div style="font-size:.72rem;color:#a16207;margin-top:2px">' +
+        'Guarda el repuesto ahora y queda en la lista de pendientes por identificar.</div>' +
+    '</div>';
   if (!RB_MODELOS_RESULTS.length){
-    list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados en bodega 02</div>';
+    list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados en bodega 02</div>'
+      + filaPendiente;
   } else {
-    list.innerHTML = RB_MODELOS_RESULTS.map((p, i) =>
-      '<div class="rb-modelo-resultado-item" onclick="rbPickModelo(' + i + ')">' +
-      '<strong>' + escHtmlRb(p.descripcion) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(p.sku || '') +
-      (p.cantidad > 0 ? ' · ' + rbCantidadFmt(p.cantidad) + ' en bodega' : '') + '</span></div>'
-    ).join('');
+    list.innerHTML = RB_MODELOS_RESULTS.map(filaModelo).join('') + filaPendiente;
   }
   list.style.display = 'block';
 }
+/* Marca el repuesto como "no sabemos todavia a que sirve". Deja pasar el
+   paso 4 y lo deja filtrable despues -- que es exactamente lo que Daniel
+   pidio: que los muchachos puedan avanzar sin inventar un modelo. */
+function rbMarcarPendiente(){
+  RB_MODELO_PENDIENTE = true;
+  document.getElementById('rbModelosResultadosList').style.display = 'none';
+  document.getElementById('rbModelosBuscar').value = '';
+  rbRenderModelosChips();
+  ilusToast('Queda como "pendiente de identificar" — lo puedes filtrar después', {type:'info'});
+}
+function rbQuitarPendiente(){
+  RB_MODELO_PENDIENTE = false;
+  rbRenderModelosChips();
+}
+
 function rbPickModelo(i){
   const p = RB_MODELOS_RESULTS[i];
   if (p) rbAgregarModelo(p.sku, p.descripcion);
@@ -2205,6 +2294,9 @@ async function rbAgregarModelo(sku, nombre){
   // que esto quede de primera mano"): sin id todavía -> se guarda solo en
   // memoria (staging), igual que las fotos. Se asocia de verdad recién al
   // crear el repuesto (rbSubirModelosPendientes, llamado desde rbGuardar).
+  // Ya sabemos a que sirve: deja de ser una deuda. No hace falta que
+  // nadie se acuerde de sacar el chip a mano.
+  RB_MODELO_PENDIENTE = false;
   if (!id){
     RB_MODELOS_PENDIENTES.push({sku, nombre});
     rbRenderModelosChips();
