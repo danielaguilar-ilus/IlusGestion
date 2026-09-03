@@ -10,39 +10,69 @@
 .ubi-card:hover{box-shadow:0 8px 22px -8px rgba(220,38,38,.24);border-color:#f3c9c9}
 .ubi-card.inactiva{opacity:.55;background:#f9fafb}
 
-/* ══ COLOR POR TIPO DE UBICACIÓN — 2026-09-03 ═══════════════════════
-   Daniel: "quería darle una vuelta a la situación de las ubicaciones,
-   que las tarjetas tengan color, que sea un poco más colorida y
-   amigable para gestionar".
-   El color NO es decoración: codifica el TIPO (estante, gaveta, piso,
-   rack, contenedor). Con 20+ tarjetas iguales había que leer el chip de
-   cada una para saber qué era; ahora la franja de la izquierda y el chip
-   lo dicen de un vistazo, que es como se busca una ubicación en una
-   bodega. El estado de ocupación (verde con repuestos / gris vacía) se
-   mantiene aparte: son dos preguntas distintas y no deben pisarse. */
-.ubi-card{border-left:5px solid #d1d5db}
-.ubi-card.t-estante    {border-left-color:#3b82f6}
-.ubi-card.t-gaveta     {border-left-color:#8b5cf6}
-.ubi-card.t-piso       {border-left-color:#f59e0b}
-.ubi-card.t-rack       {border-left-color:#0891b2}
-.ubi-card.t-contenedor {border-left-color:#16a34a}
-.ubi-card.t-otro       {border-left-color:#6b7280}
-/* Un velo tenue del mismo color: da identidad sin bajar el contraste
-   del texto (el código de la ubicación es lo que hay que leer). */
-.ubi-card.t-estante    {background:linear-gradient(105deg,#eff6ff 0%,#fff 42%)}
-.ubi-card.t-gaveta     {background:linear-gradient(105deg,#f5f3ff 0%,#fff 42%)}
-.ubi-card.t-piso       {background:linear-gradient(105deg,#fffbeb 0%,#fff 42%)}
-.ubi-card.t-rack       {background:linear-gradient(105deg,#ecfeff 0%,#fff 42%)}
-.ubi-card.t-contenedor {background:linear-gradient(105deg,#f0fdf4 0%,#fff 42%)}
-.ubi-card.t-otro       {background:linear-gradient(105deg,#f9fafb 0%,#fff 42%)}
+/* ══ COLOR POR ZONA — 2026-09-03 ═══════════════════════════════════
+   Daniel: primero "que las tarjetas tengan color, que sea más colorida
+   y amigable para gestionar", y al ver el resultado: "colorea las
+   ubicaciones por zona".
+
+   Por qué la zona y no el tipo: medido en producción, de las 97
+   ubicaciones 83 son tipo 'rack'. Colorear por tipo dejaba la pantalla
+   de un solo color -- bonita y muda. La zona sí reparte (R01…R10, E01,
+   E02, Armado 1) y además es como se busca de verdad una pieza en la
+   bodega: "está en el rack 3", no "está en un rack".
+
+   El color de cada zona lo calcula el backend desde el propio código
+   (ver _ubi_zona / _ubi_zonas_agrupar en app.py) y llega en dos
+   variables CSS por tarjeta: --zc (franja y acentos) y --zt (velo). Así
+   una zona nueva se pinta sola, sin tocar este archivo.
+
+   El chip del TIPO se conserva con su ícono (REGLA #4.2: no se quita
+   información), pero en gris: el color ya lo tiene tomado la zona, y
+   dos códigos de color compitiendo no se leen. El estado de ocupación
+   (verde con repuestos / gris vacía) sigue aparte -- son tres preguntas
+   distintas y cada una tiene su lugar. */
+.ubi-card{border-left:5px solid var(--zc,#d1d5db);
+  background:linear-gradient(105deg,var(--zt,#fff) 0%,#fff 46%)}
 .ubi-card.inactiva{background:#f9fafb;border-left-color:#d1d5db}
-/* El chip del tipo toma el mismo color -- una sola lectura, no dos */
-.ubi-tipo.t-estante    {background:#dbeafe;color:#1d4ed8}
-.ubi-tipo.t-gaveta     {background:#ede9fe;color:#6d28d9}
-.ubi-tipo.t-piso       {background:#fef3c7;color:#b45309}
-.ubi-tipo.t-rack       {background:#cffafe;color:#0e7490}
-.ubi-tipo.t-contenedor {background:#dcfce7;color:#15803d}
-.ubi-tipo.t-otro       {background:#f3f4f6;color:#4b5563}
+.ubi-tipo{background:#f3f4f6;color:#4b5563}
+
+/* Encabezado de zona: barra del color, nombre y cuánto hay adentro */
+.ubi-zona-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  margin:26px 0 12px;padding-left:2px}
+.ubi-zona-head:first-of-type{margin-top:8px}
+.ubi-zona-bar{width:6px;height:26px;border-radius:4px;background:var(--zc,#d1d5db);flex:none}
+.ubi-zona-nom{font-size:1rem;font-weight:900;color:#0a0a0a;letter-spacing:.01em}
+.ubi-zona-chip{font-size:.7rem;font-weight:800;padding:3px 11px;border-radius:50px;
+  background:var(--zt,#f3f4f6);color:var(--zc,#4b5563);border:1px solid var(--zc,#e5e7eb);
+  text-transform:uppercase;letter-spacing:.03em}
+.ubi-zona-sub{font-size:.76rem;color:#9ca3af;font-weight:600}
+.ubi-zona-linea{flex:1;min-width:20px;height:1px;background:#e5e7eb}
+
+/* Barra de zonas: con 97 ubicaciones en 14 zonas, recorrer la página
+   entera para llegar al Rack 07 es justo el scroll que Daniel no quiere
+   ([[feedback_scroll_contenido_no_pagina]]). Un click deja en pantalla
+   solo esa zona; "Todas" vuelve al panorama completo. */
+.ubi-zonabar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;
+  padding:12px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  margin-bottom:6px;box-shadow:0 1px 3px rgba(15,23,42,.05)}
+.ubi-zonabar .lbl{font-size:.68rem;font-weight:800;color:#9ca3af;
+  text-transform:uppercase;letter-spacing:.05em;margin-right:2px}
+.ubi-zchip{min-height:34px;padding:5px 13px;border-radius:50px;cursor:pointer;
+  font-size:.75rem;font-weight:800;background:#fff;color:#4b5563;
+  border:1.5px solid #e5e7eb;display:inline-flex;align-items:center;gap:7px;
+  transition:.15s;font-family:inherit}
+.ubi-zchip:hover{border-color:var(--zc,#9ca3af);background:var(--zt,#f9fafb)}
+.ubi-zchip .pt{width:9px;height:9px;border-radius:50%;background:var(--zc,#d1d5db);flex:none}
+.ubi-zchip .qt{font-size:.68rem;font-weight:700;color:#9ca3af}
+.ubi-zchip.on{background:var(--zt,#f3f4f6);border-color:var(--zc,#0a0a0a);
+  color:var(--zc,#0a0a0a);box-shadow:0 0 0 3px color-mix(in srgb,var(--zc,#9ca3af) 18%,transparent)}
+.ubi-zchip.on .qt{color:inherit;opacity:.75}
+.ubi-zchip.todas{border-style:dashed}
+.ubi-zona-seccion.oculta{display:none}
+@media (max-width:640px){
+  .ubi-zonabar{gap:6px;padding:10px}
+  .ubi-zchip{min-height:38px}
+}
 .ubi-codigo{font-weight:900;font-size:1.15rem;color:#0a0a0a;font-family:'JetBrains Mono',monospace}
 .ubi-tipo{
   display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:800;
@@ -79,14 +109,41 @@
     <i class="bi bi-plus-lg me-1"></i>Nueva ubicación</button>
 </div>
 
-{% if ubicaciones %}
+{% if zonas %}
+{% if zonas|length > 1 %}
+<div class="ubi-zonabar">
+  <span class="lbl">Zonas</span>
+  <button type="button" class="ubi-zchip todas on" data-z="_todas" onclick="ubiZona('_todas')">
+    Todas <span class="qt">{{ ubicaciones|length }}</span></button>
+  {% for z in zonas %}
+  <button type="button" class="ubi-zchip" data-z="{{ z.clave }}"
+          style="--zc:{{ z.color }};--zt:{{ z.tinte }}" onclick="ubiZona('{{ z.clave }}')">
+    <span class="pt"></span>{{ z.label }} <span class="qt">{{ z.n }}</span></button>
+  {% endfor %}
+</div>
+{% endif %}
+{# Una sección por zona (Rack 01, Estante 01, …). El backend ya las trae
+   ordenadas, con su color y sus contadores -- acá solo se dibujan. #}
+{% for z in zonas %}
+<div class="ubi-zona-seccion" data-z="{{ z.clave }}">
+<div class="ubi-zona-head" style="--zc:{{ z.color }};--zt:{{ z.tinte }}">
+  <span class="ubi-zona-bar"></span>
+  <span class="ubi-zona-nom">{{ z.label }}</span>
+  <span class="ubi-zona-chip">{{ z.n }} ubicaci{{ 'ón' if z.n == 1 else 'ones' }}</span>
+  <span class="ubi-zona-sub">
+    {% if z.n_ocupadas %}{{ z.n_ocupadas }} con repuestos{% else %}todas vacías{% endif %}
+    {%- if z.n_inactivas %} · {{ z.n_inactivas }} desactivada{{ '' if z.n_inactivas == 1 else 's' }}{% endif %}
+  </span>
+  <span class="ubi-zona-linea"></span>
+</div>
 <div class="ubi-grid">
-  {% for u in ubicaciones %}
-  {# `t-<tipo>` pinta franja, velo y chip con el MISMO color (ver CSS). #}
+  {% for u in z['items'] %}
   {% set _t = (u.tipo or 'otro')|lower %}
   {% set _ico = {'estante':'bi-bookshelf','gaveta':'bi-archive-fill','piso':'bi-grid-1x2-fill',
                  'rack':'bi-hdd-stack-fill','contenedor':'bi-box-seam-fill'}.get(_t,'bi-geo-alt-fill') %}
-  <div class="ubi-card t-{{ _t }} {{ '' if u.activo else 'inactiva' }}">
+  {# --zc / --zt: el color de la ZONA a la que pertenece esta ubicación. #}
+  <div class="ubi-card {{ '' if u.activo else 'inactiva' }}"
+       style="--zc:{{ u.zona_color }};--zt:{{ u.zona_tinte }}">
     <div class="ubi-actions">
       <button type="button" title="Imprimir etiqueta" onclick="ubiImprimirEtiqueta({{ u.id }}, '{{ u.codigo|e }}')">
         <i class="bi bi-upc-scan"></i></button>
@@ -106,7 +163,7 @@
     </div>
     <div>
       <span class="ubi-codigo">{{ u.codigo }}</span>
-      {% if u.tipo %}<span class="ubi-tipo t-{{ _t }}"><i class="bi {{ _ico }}"></i>{{ u.tipo }}</span>{% endif %}
+      {% if u.tipo %}<span class="ubi-tipo"><i class="bi {{ _ico }}"></i>{{ u.tipo }}</span>{% endif %}
     </div>
     <div class="ubi-nombre">{{ u.nombre or '' }}</div>
     {% if u.n_repuestos %}
@@ -118,6 +175,8 @@
   </div>
   {% endfor %}
 </div>
+</div>
+{% endfor %}
 {% else %}
 <div class="ubi-empty">
   <i class="bi bi-geo-alt" style="font-size:2.5rem;opacity:.3"></i>
@@ -173,6 +232,18 @@ let _ubiModal;
 document.addEventListener('DOMContentLoaded', function(){
   _ubiModal = new bootstrap.Modal(document.getElementById('modalUbicacion'));
 });
+
+/* Filtro por zona (2026-09-03). Puramente visual: no re-consulta nada,
+   solo esconde las secciones que no son. "Todas" siempre vuelve. */
+function ubiZona(clave){
+  document.querySelectorAll('.ubi-zona-seccion').forEach(sec => {
+    sec.classList.toggle('oculta', clave !== '_todas' && sec.dataset.z !== clave);
+  });
+  document.querySelectorAll('.ubi-zchip').forEach(ch => {
+    ch.classList.toggle('on', ch.dataset.z === clave);
+  });
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
 
 function ubiAbrirNuevo(){
   document.getElementById('modalUbicacionTitulo').innerHTML = '<i class="bi bi-geo-alt-fill me-2"></i>Nueva ubicación';
