@@ -3804,10 +3804,13 @@ async function guardarMaquinaManual() {
 }
 
 // 2026-05-22 (Daniel): "Eliminar equipo" pasa a ser flujo confidencial.
-// Solo superadmin ve el botón (el template ya lo oculta a los demás roles),
-// pero igual exigimos motivo (≥ 12 chars) + confirm text "ELIMINAR" para
-// que quede en mant_logs con trazabilidad clara. El backend devuelve 403
-// si por alguna razón llega un no-superadmin (defensa en profundidad).
+// 2026-09-03: deja de ser exclusivo de superadmin -- lo ve quien tenga el
+// permiso de rol "Dar de baja equipos del cliente" (mant_equipos_baja),
+// que Daniel prende desde /admin/roles. Lo que NO cambia: seguimos
+// exigiendo motivo (≥ 12 chars) + confirm text "ELIMINAR" para que quede
+// en mant_logs con trazabilidad clara, la baja sigue siendo soft, y el
+// backend devuelve 403 igual si llega alguien sin el permiso (defensa en
+// profundidad).
 async function eliminarMaquina(mid, nombre, btn) {
   // Paso 1 — Motivo obligatorio (≥ 12 chars). Reemplaza al simple Yes/No.
   // ilusPrompt escapa `message` por defecto; el HTML va en `sub` con subHtml:true.

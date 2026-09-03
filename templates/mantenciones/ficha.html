@@ -1506,10 +1506,14 @@
                 {% endif %}
                 {# 2026-05-22 (Daniel): "Eliminar equipo" se restringe a SUPERADMIN.
                    Aarón y demás ejecutivos NO ven el botón. Backend refuerza 403. #}
-                {% if permissions and permissions.superadmin %}
+                {# 2026-09-03 (Daniel: "permitas a Aaron dar de baja a los equipos
+                   de los clientes y que se controle por el front"): la baja deja
+                   de depender del cargo y pasa a un permiso de rol. Sigue
+                   pidiendo motivo + confirm y queda auditada. #}
+                {% if permissions and (permissions.superadmin or permissions.mant_equipos_baja) %}
                 <button class="btn btn-xs btn-outline-danger"
                         onclick="eliminarMaquina({{ m.id }}, '{{ (m.nombre or '')|e }}', this)"
-                        title="Eliminar equipo (solo superadmin · queda auditado)">
+                        title="Dar de baja este equipo (queda auditado)">
                   <i class="bi bi-trash"></i>
                 </button>
                 {% endif %}
@@ -1635,13 +1639,13 @@
           </div>
           <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
         </div>
-        {% if permissions.superadmin %}
+        {% if permissions and (permissions.superadmin or permissions.mant_equipos_baja) %}
         <div class="eq-accion-item" onclick="bajaMasivaEquipos({{ cliente.id }})"
              style="border-top:1px solid #fee2e2;margin-top:4px;padding-top:10px">
           <div class="eq-accion-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-trash3-fill"></i></div>
           <div>
             <div class="eq-accion-title" style="color:#dc2626">Dar de baja todos los equipos</div>
-            <div class="eq-accion-sub">Solo superadmin · Requiere confirmación</div>
+            <div class="eq-accion-sub">Requiere confirmación</div>
           </div>
           <i class="bi bi-arrow-right ms-auto" style="color:#dc2626;font-size:.8rem"></i>
         </div>
@@ -1812,9 +1816,9 @@
     <i class="bi bi-dash-circle me-1"></i>Quitar del plan
   </button>
   {% endif %}
-  {% if permissions and permissions.superadmin %}
+  {% if permissions and (permissions.superadmin or permissions.mant_equipos_baja) %}
   <button class="btn btn-warning fw-bold px-4" onclick="bajaMasivaSeleccionados()"
-          style="border-radius:50px;min-height:44px" title="Dar de baja los equipos seleccionados (solo superadmin)">
+          style="border-radius:50px;min-height:44px" title="Dar de baja los equipos seleccionados (queda auditado)">
     <i class="bi bi-archive me-1"></i>Dar de baja
   </button>
   {% endif %}

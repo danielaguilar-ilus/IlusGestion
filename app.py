@@ -4526,6 +4526,28 @@ PERMS_KEYS = (
     # mant_tipo_interno_crear / mant_ot_interna -- puramente aditivo, nunca
     # quita el camino que ya existía).
     "mant_equipos_agregar_libre",
+    # mant_equipos_baja — dar de baja (soft-delete) equipos de la ficha de
+    # un cliente sin ser superadmin (aditivo 2026-09-03, Daniel: "necesito
+    # que permitas a Aarón dar de baja a los equipos de los clientes y que
+    # se controle por el front").
+    #
+    # Qué cambia y qué NO: el 2026-05-22 Daniel restringió "eliminar
+    # equipo" a superadmin porque la ficha del cliente es información
+    # confidencial. Eso sigue siendo verdad -- lo que cambia es QUIÉN
+    # puede, no CÓMO: el motivo de ≥12 caracteres, el confirm_text y el
+    # registro en mant_logs se conservan intactos, y la baja sigue siendo
+    # soft (estado='baja', nada se borra). El hard-delete real
+    # (/api/maquinas/<id>/destruir) sigue siendo solo de superadmin.
+    #
+    # Cubre los TRES caminos de baja que ya existen en la ficha, porque
+    # son la misma acción a distinta escala: un equipo, los seleccionados
+    # con checkbox, y todos los del cliente (este último sigue exigiendo
+    # escribir "BAJA TOTAL"). Y también RESTAURAR: quien puede dar de
+    # baja tiene que poder deshacerlo, si no el permiso es una trampa.
+    #
+    # Nace en False para todos los roles hasta que Daniel lo prenda desde
+    # /admin/roles (mismo patrón que mant_equipos_agregar_libre).
+    "mant_equipos_baja",
     # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
     # liberado para todos y que se pueda bloquear por el front en los roles.
     # Igual el reasignar el técnico"). Son permisos de BLOQUEO: se asumen
@@ -4662,6 +4684,9 @@ def _build_perms_from_matrix(role):
     # levantamiento/descubrimiento (aditivo 2026-09-02, caso Aarón). Ver
     # comentario de "mant_equipos_agregar_libre" en PERMS_KEYS.
     base["mant_equipos_agregar_libre"] = bool(man.get("equipos_agregar_libre"))
+    # Dar de baja equipos de la ficha del cliente (aditivo 2026-09-03, caso
+    # Aarón). Ver comentario de "mant_equipos_baja" en PERMS_KEYS.
+    base["mant_equipos_baja"] = bool(man.get("equipos_baja"))
     # 🆕 2026-09-02 — Reagendar / reasignar técnico (Daniel: "liberado para
     # todos y que se pueda bloquear por el front en los roles").
     # OJO al `not in`: son permisos de tipo BLOQUEO, o sea que la ausencia
@@ -12585,6 +12610,7 @@ PERMISSIONS_MATRIX = {
                                    "ot_interna","tipo_interno_crear",
                                    "cotizaciones_eliminar_item",
                                    "equipos_agregar_libre",
+                                   "equipos_baja",
                                    # 🆕 2026-09-02 (Daniel: "reagendar, que
                                    # quede liberado para todos y que se pueda
                                    # bloquear por el front en los roles.
@@ -12653,6 +12679,11 @@ PERMISSIONS_META = {
                          "tipo": "submodulo", "icon": "bi-clipboard2-check"},
         "equipos_agregar_libre": {"label": "Agregar equipos a OT ya creada",
                          "tipo": "submodulo", "icon": "bi-plus-square"},
+        # 🆕 2026-09-03 (Daniel: "permitas a Aarón dar de baja a los equipos
+        # de los clientes y que se controle por el front"). Cubre los tres
+        # caminos de baja de la ficha + restaurar. Ver "mant_equipos_baja".
+        "equipos_baja": {"label": "Dar de baja equipos del cliente",
+                         "tipo": "submodulo", "icon": "bi-archive"},
         # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
         # liberado para todos y que se pueda bloquear por el front en los
         # roles. Igual el reasignar el técnico"). Nacen como 'bloqueo' -- o
@@ -64237,13 +64268,20 @@ def mant_maquina_del(mid):
     exige un motivo ≥ 12 chars + confirm_text 'ELIMINAR' que registramos
     en `mant_logs` para auditoría completa.
     """
-    # Restricción dura: solo superadmin puede eliminar equipos (regla
-    # confidencialidad ficha cliente). Aarón / ejecutivo / técnico → 403.
-    if not (g.permissions or {}).get("superadmin"):
+    # Candado: superadmin O el permiso de rol "Dar de baja equipos del
+    # cliente" (mant_equipos_baja, 2026-09-03 — Daniel pidió abrírselo a
+    # Aarón "y que se controle por el front"). La regla de 2026-05-22
+    # sigue en pie en lo que importa: la ficha es confidencial, así que
+    # abajo se siguen exigiendo motivo ≥12 chars + confirm_text, y todo
+    # queda en mant_logs. Nadie más pasa: ejecutivo/técnico sin el flag
+    # siguen recibiendo 403.
+    if not ((g.permissions or {}).get("superadmin")
+            or (g.permissions or {}).get("mant_equipos_baja")):
         return jsonify({
             "ok": False,
-            "error": "Acción restringida al superadministrador. "
-                     "Razón: ficha confidencial.",
+            "error": "No tienes permiso para dar de baja equipos. Pide que "
+                     "un superadministrador te habilite \"Dar de baja "
+                     "equipos del cliente\" en Usuarios y roles.",
             "error_codigo": "REQUIERE_SUPERADMIN",
         }), 403
 
@@ -64315,10 +64353,17 @@ def mant_maquina_restaurar(mid):
     Restaurar NO es destructivo: lo permitimos a admin + superadmin
     (no a ejecutivo/técnico). Si en el futuro Daniel pide abrirlo a
     ejecutivo, basta con borrar el guard de rol.
+
+    2026-09-03: se suma quien tenga el permiso de rol "Dar de baja equipos
+    del cliente" (mant_equipos_baja). No es un permiso nuevo: es el mismo.
+    Dejar que alguien dé de baja pero no pueda deshacerlo convierte
+    cualquier error de dedo en un ticket para Daniel -- y restaurar es la
+    acción MENOS peligrosa de las dos.
     """
     _role = (g.user["role"] if g.user else "") or ""
     _is_super = bool((g.permissions or {}).get("superadmin"))
-    if not (_is_super or _role == "admin"):
+    _puede_baja = bool((g.permissions or {}).get("mant_equipos_baja"))
+    if not (_is_super or _puede_baja or _role == "admin"):
         return jsonify({
             "ok": False,
             "error": "Restaurar equipos está reservado a administradores.",
@@ -64376,10 +64421,20 @@ def mant_maquinas_baja_listar(cid):
 @_mant_required
 def mant_equipos_baja_masiva(cid):
     """Soft-delete masivo: marca como 'baja' todos los equipos activos de un cliente.
-    Solo superadmin. Requiere confirm_text='BAJA TOTAL' en el body JSON.
+    superadmin o el permiso de rol mant_equipos_baja (2026-09-03).
+    Requiere confirm_text='BAJA TOTAL' en el body JSON.
     Registra audit-log ANTES de ejecutar el UPDATE (regla #5)."""
-    if not (g.permissions or {}).get("superadmin"):
-        return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
+    # superadmin O permiso de rol "Dar de baja equipos del cliente"
+    # (mant_equipos_baja, 2026-09-03). Ver PERMS_KEYS.
+    if not ((g.permissions or {}).get("superadmin")
+            or (g.permissions or {}).get("mant_equipos_baja")):
+        return jsonify({
+            "ok": False,
+            "error": "No tienes permiso para dar de baja equipos. Pide que "
+                     "un superadministrador te habilite \"Dar de baja "
+                     "equipos del cliente\" en Usuarios y roles.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
 
     body = request.get_json(silent=True) or {}
     if (body.get("confirm_text") or "").strip().upper() != "BAJA TOTAL":
@@ -64424,7 +64479,8 @@ def mant_equipos_baja_masiva(cid):
 @_mant_required
 def mant_equipos_baja_seleccion(cid):
     """Soft-delete SELECTIVO: marca como 'baja' una lista específica de
-    equipos (no todos los del cliente). Solo superadmin.
+    equipos (no todos los del cliente). superadmin o el permiso de rol
+    mant_equipos_baja (2026-09-03).
 
     Body JSON: { "ids": [12, 34, 56] }
 
@@ -64433,8 +64489,17 @@ def mant_equipos_baja_seleccion(cid):
     la UI. Permite al admin elegir granularmente qué equipos retirar
     (ej: 3 trotadoras viejas pero NO las nuevas).
     """
-    if not (g.permissions or {}).get("superadmin"):
-        return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
+    # superadmin O permiso de rol "Dar de baja equipos del cliente"
+    # (mant_equipos_baja, 2026-09-03). Ver PERMS_KEYS.
+    if not ((g.permissions or {}).get("superadmin")
+            or (g.permissions or {}).get("mant_equipos_baja")):
+        return jsonify({
+            "ok": False,
+            "error": "No tienes permiso para dar de baja equipos. Pide que "
+                     "un superadministrador te habilite \"Dar de baja "
+                     "equipos del cliente\" en Usuarios y roles.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
 
     body = request.get_json(silent=True) or {}
     try:
@@ -101548,6 +101613,96 @@ def mant_proveedores_repuesto_page():
     return render_template("mantenciones/proveedores.html", proveedores=[dict(r) for r in rows])
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  ZONAS de la Bodega de Repuestos (2026-09-03, Daniel: "colorea las
+#  ubicaciones por zona").
+#
+#  Por qué la zona y no el tipo: medido en producción, de las 97
+#  ubicaciones 83 son tipo 'rack', 1 'piso', 1 'otro' y 12 sin tipo. Un
+#  color por tipo dejaba la pantalla prácticamente de un solo color --
+#  bonito y mudo. La zona sí reparte: R01…R10, E01, E02, Armado 1 y las
+#  sueltas. Y es como se busca de verdad una pieza en la bodega ("está en
+#  el rack 3"), no por si el mueble es rack o estante.
+#
+#  El código ya trae la zona adentro: "R01 P01 N01" = Rack / Piso / Nivel,
+#  "E01P01N04" = Estante 01. Se lee el prefijo letra+número; lo que no
+#  calce (KEISER, ZZTEST-A1) cae en "Sin zona", que es información honesta
+#  y no un error.
+# ══════════════════════════════════════════════════════════════════════
+
+# 12 colores bien separados en el círculo cromático. Cada zona se queda
+# SIEMPRE con el mismo: se calcula desde su propio código, no desde su
+# posición en la lista -- si mañana se crea el R11 en medio, ninguna otra
+# zona cambia de color.
+_UBI_ZONA_PALETA = [
+    ("#dc2626", "#fef2f2"), ("#ea580c", "#fff7ed"), ("#d97706", "#fffbeb"),
+    ("#65a30d", "#f7fee7"), ("#16a34a", "#f0fdf4"), ("#0d9488", "#f0fdfa"),
+    ("#0891b2", "#ecfeff"), ("#0284c7", "#f0f9ff"), ("#2563eb", "#eff6ff"),
+    ("#7c3aed", "#f5f3ff"), ("#c026d3", "#fdf4ff"), ("#e11d48", "#fff1f2"),
+]
+_UBI_ZONA_SIN = ("#9ca3af", "#f9fafb")
+_UBI_ZONA_NOMBRE = {"R": "Rack", "E": "Estante", "G": "Gaveta",
+                    "C": "Contenedor", "P": "Piso", "B": "Bandeja"}
+
+
+def _ubi_zona(codigo):
+    """Zona a la que pertenece una ubicación, leída de su propio código.
+
+    "R01 P01 N01" → ("R", 1) · "E01P01N04" → ("E", 1) ·
+    "Armado 1" → ("ARMADO", 1) · "KEISER" → None (sin zona).
+    """
+    import re as _re
+    m = _re.match(r"^([A-Za-z]+)\s*0*(\d+)", (codigo or "").strip())
+    if not m:
+        return None
+    return m.group(1).upper(), int(m.group(2))
+
+
+def _ubi_zonas_agrupar(rows):
+    """Arma los grupos de zona que dibuja la pantalla de ubicaciones.
+
+    Devuelve una lista ordenada (zonas con código primero, "Sin zona" al
+    final) donde cada grupo trae su color, su etiqueta legible y cuántas
+    de sus ubicaciones tienen repuestos guardados.
+    """
+    grupos = {}
+    for r in rows:
+        z = _ubi_zona(r.get("codigo"))
+        if z:
+            letras, num = z
+            clave = "%s%02d" % (letras, num)
+            nombre = _UBI_ZONA_NOMBRE.get(letras)
+            etiqueta = ("%s %02d" % (nombre, num)) if nombre \
+                else ("%s %d" % (letras.capitalize(), num))
+            # El color sale de las letras + el número: racks consecutivos
+            # nunca quedan del mismo color, y la zona conserva el suyo.
+            idx = (sum(ord(c) for c in letras) * 5 + num - 1) % len(_UBI_ZONA_PALETA)
+            color, tinte = _UBI_ZONA_PALETA[idx]
+            orden = (0, letras, num)
+        else:
+            clave, etiqueta = "_sin", "Sin zona"
+            color, tinte = _UBI_ZONA_SIN
+            orden = (1, "", 0)
+        g = grupos.get(clave)
+        if not g:
+            g = grupos[clave] = {
+                "clave": clave, "label": etiqueta, "color": color,
+                "tinte": tinte, "orden": orden, "items": [],
+                "n_ocupadas": 0, "n_inactivas": 0,
+            }
+        r["zona_color"] = color
+        r["zona_tinte"] = tinte
+        g["items"].append(r)
+        if r.get("n_repuestos"):
+            g["n_ocupadas"] += 1
+        if not r.get("activo"):
+            g["n_inactivas"] += 1
+    salida = sorted(grupos.values(), key=lambda g: g["orden"])
+    for g in salida:
+        g["n"] = len(g["items"])
+    return salida
+
+
 @app.route("/repuestos/ubicaciones")
 @_mant_required
 def repuestos_ubicaciones_page():
@@ -101572,8 +101727,10 @@ def repuestos_ubicaciones_page():
         "  LEFT JOIN mant_repuestos_stock s ON s.ubicacion_id = u.id AND s.activo=1 "
         " GROUP BY u.id ORDER BY u.activo DESC, u.codigo"
     ) or []
+    _ubis = [dict(r) for r in rows]
     return render_template("mantenciones/repuestos_ubicaciones.html",
-                            ubicaciones=[dict(r) for r in rows])
+                            ubicaciones=_ubis,
+                            zonas=_ubi_zonas_agrupar(_ubis))
 
 
 # ══════════════════════════════════════════════════════════════════════
