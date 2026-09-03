@@ -105,6 +105,19 @@
           <select class="form-select form-select-sm" id="oaxProveedorSel" onchange="OT2ANX.onProveedorChange()">
             <option value="">Cargando proveedores…</option>
           </select>
+          {# 🆕 2026-09-02 (Daniel: "acá no es que no hay proveedores").
+             El anexo es un documento con efecto contractual: sin RUT de
+             empresa del proveedor, no identifica a la contraparte. Cuando
+             no hay ninguno registrado, se explica QUÉ falta en vez de
+             sugerir que el sistema está vacío. #}
+          <div id="oaxSinProvAviso" style="display:none;margin-top:8px;padding:9px 11px;
+               background:#fff8e1;border:1px solid #fcd34d;border-radius:8px;
+               font-size:.76rem;color:#92400e;line-height:1.45">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            Ningún técnico externo tiene ficha de empresa (razón social + RUT).
+            El anexo la necesita para identificar a la contraparte del contrato.
+            Puedes cargarla acá abajo y quedará en este anexo.
+          </div>
           <div class="oax-check">
             <input type="checkbox" id="oaxProveedorManual" onchange="OT2ANX.toggleManual()">
             <label for="oaxProveedorManual">Proveedor nuevo, no está en la lista</label>
@@ -247,15 +260,59 @@ window.OT2ANX = (function(){
   var DEF_FECHA_INI = {{ (v.fecha_programada or '') | tojson }};
   var DEF_FECHA_FIN = {{ (v.fecha_fin or v.fecha_programada or '') | tojson }};
   var OT_ID = {{ v.id }};
+  /* 🆕 2026-09-02 (Daniel: "crees un anexo con todos los datos que tiene la
+     orden de trabajo... la orden valorizada, los montos declarados, el RUT
+     del cliente, el RUT del proveedor, los equipos... de manera
+     inteligente, cuidadosa y apegado a lo legal").
+     El anexo tiene efecto CONTRACTUAL: cada dato que haya que volver a
+     tipear es una oportunidad de que el papel diga algo distinto del
+     sistema, y eso en un contrato no es un detalle de UX. */
+  var DEF_OT = {{ anexo_defaults.ot | tojson }};
+
+  /* Los ítems de precio salen de lo que YA se declaró en Finanzas: es lo
+     que ILUS le paga al proveedor (costo_proveedor + costo_despacho), NO
+     lo que se le cobra al cliente -- son dos números distintos y mezclarlos
+     en un contrato sería grave. Si no hay nada declarado, se deja una fila
+     vacía como antes: nunca se inventa un monto. */
+  function itemsDesdeOT(){
+    var its = [];
+    if (DEF_OT && DEF_OT.costo_proveedor)
+      its.push({concepto: (DEF_OT.tipo_label || 'Servicio'), monto: String(DEF_OT.costo_proveedor)});
+    if (DEF_OT && DEF_OT.costo_despacho)
+      its.push({concepto: 'Despacho', monto: String(DEF_OT.costo_despacho)});
+    return its.length ? its : [{concepto:'', monto:''}];
+  }
+
+  /* El objetivo del servicio nombra al cliente CON su RUT: es quien recibe
+     el servicio y el documento tiene que poder identificarlo sin ambigüedad. */
+  function objetivoDesdeOT(){
+    if (!DEF_CLIENTE) return '';
+    var t = 'Ejecutar servicio';
+    if (DEF_OT && DEF_OT.tipo_label) t += ' de ' + DEF_OT.tipo_label.toLowerCase();
+    t += ' para el cliente ' + DEF_CLIENTE;
+    if (DEF_OT && DEF_OT.cliente_rut) t += ' (RUT ' + DEF_OT.cliente_rut + ')';
+    if (DEF_OT && DEF_OT.direccion) t += ', en ' + DEF_OT.direccion +
+      (DEF_OT.comuna ? ', ' + DEF_OT.comuna : '');
+    t += '. Referencia: ' + (DEF_OT && DEF_OT.numero_ot ? DEF_OT.numero_ot : 'OT') + '.';
+    if (DEF_OT && DEF_OT.equipos && DEF_OT.equipos.length){
+      t += '\n\nEquipos considerados (' + DEF_OT.equipos.length + '):\n' +
+           DEF_OT.equipos.map(function(e){
+             return '· ' + e.nombre +
+               (e.sku ? ' — SKU ' + e.sku : '') +
+               (e.serie ? ' — Serie ' + e.serie : '');
+           }).join('\n');
+    }
+    return t;
+  }
 
   function resetCrear(){
     S = {
       ot_id: OT_ID,
       tecnico_externo_id: null,
       proveedor_nombre: '', proveedor_rut: '', proveedor_direccion: '', email: '', tel: '',
-      objetivo_servicio: DEF_CLIENTE ? ('Ejecutar servicio para el cliente ' + DEF_CLIENTE + '.') : '',
+      objetivo_servicio: objetivoDesdeOT(),
       cliente_nombre: DEF_CLIENTE,
-      items: [{concepto:'', monto:''}],
+      items: itemsDesdeOT(),
       fecha_inicio: DEF_FECHA_INI, fecha_termino: DEF_FECHA_FIN,
       niveles_servicio: DEF_NIVELES, hitos_pago: DEF_HITOS, alcance_servicio: DEF_ALCANCE,
     };
@@ -325,15 +382,40 @@ window.OT2ANX = (function(){
       if (!Array.isArray(proveedores)) proveedores = [];
     } catch(e){ proveedores = []; }
     if (!proveedores.length){
-      sel.innerHTML = '<option value="">— No hay proveedores registrados —</option>';
+      /* 2026-09-02 (Daniel: "acá no es que no hay proveedores"): cuando la
+         lista viene vacía, el mensaje anterior sonaba a que el sistema no
+         tenía proveedores. En realidad significa que nadie está registrado
+         todavía en mant_tecnicos_externos con razón social y RUT de
+         empresa -- y ESE es el dato que el anexo necesita para tener valor
+         contractual. Se dice tal cual y se abre el ingreso manual. */
+      sel.innerHTML = '<option value="">— Ningún proveedor con ficha de empresa —</option>';
       document.getElementById('oaxProveedorManual').checked = true;
       toggleManual();
+      var aviso = document.getElementById('oaxSinProvAviso');
+      if (aviso) aviso.style.display = '';
       return;
     }
     sel.innerHTML = ['<option value="">— Selecciona un proveedor —</option>']
       .concat(proveedores.map(p =>
         `<option value="${p.id}">${(p.razon_social || ('Proveedor ' + p.id)).replace(/</g,'&lt;')}</option>`))
       .join('');
+
+    /* 🆕 2026-09-02 — preseleccionar al técnico ASIGNADO a la OT si está
+       en la lista de proveedores. Es el dato que ya está arriba en la
+       pantalla: no tiene sentido volver a elegirlo a mano. */
+    var tecOT = (DEF_OT && DEF_OT.tecnico_nombre || '').trim().toLowerCase();
+    if (tecOT){
+      var match = proveedores.find(function(p){
+        var rs = (p.razon_social || '').trim().toLowerCase();
+        var nm = (p.nombre || '').trim().toLowerCase();
+        return rs === tecOT || nm === tecOT ||
+               (rs && tecOT.indexOf(rs) >= 0) || (nm && tecOT.indexOf(nm) >= 0);
+      });
+      if (match){
+        sel.value = String(match.id);
+        onProveedorChange();
+      }
+    }
   }
 
   function onProveedorChange(){

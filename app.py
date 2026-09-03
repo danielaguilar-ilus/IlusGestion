@@ -77786,6 +77786,52 @@ def ot2_detalle(vid):
             "niveles": _ANEXO_NIVELES_DEFECTO,
             "hitos": _ANEXO_HITOS_DEFECTO,
             "alcance": _ANEXO_ALCANCE_DEFECTO,
+            # 🆕 2026-09-02 (Daniel: "lo que quiero hacer es que crees un
+            # anexo con todos los datos que tiene la orden de trabajo...
+            # tenemos que tener toda la evidencia contable con la orden
+            # valorizada, los montos declarados, el RUT y los datos, los
+            # equipos, el RUT del cliente, el RUT del proveedor... tiene que
+            # ser de manera inteligente, cuidadosa y apegado a lo legal").
+            #
+            # El anexo es un documento con efecto CONTRACTUAL: cada dato que
+            # el operador tenga que volver a tipear es una oportunidad de
+            # que el papel diga algo distinto de lo que dice el sistema. Y
+            # eso, en un contrato, no es un detalle de UX. Todo lo que la OT
+            # YA sabe viaja pre-llenado; lo que no sabe se deja vacío en vez
+            # de inventarse.
+            "ot": {
+                "numero_ot": v.get("numero_ot") or f"OT #{vid}",
+                "tipo_label": v.get("tipo_label") or "",
+                # Cliente: razón social + RUT, que es lo que identifica al
+                # destinatario del servicio en el documento.
+                "cliente_nombre": v.get("razon_social") or "",
+                "cliente_rut": (v.get("cliente_rut") or "").strip(),
+                "direccion": (v.get("direccion_visita")
+                              or v.get("cliente_direccion") or ""),
+                "comuna": v.get("cliente_comuna") or "",
+                # Fechas del servicio: la OT ya tiene el día agendado.
+                "fecha_inicio": (str(v.get("fecha_programada"))[:10]
+                                 if v.get("fecha_programada") else ""),
+                "fecha_termino": (str(v.get("fecha_fin") or v.get("fecha_programada"))[:10]
+                                  if (v.get("fecha_fin") or v.get("fecha_programada")) else ""),
+                # Proveedor sugerido: el técnico asignado. El modal solo lo
+                # PRESELECCIONA en su lista; si no calza, se elige a mano.
+                "tecnico_nombre": v.get("tecnico_nombre") or "",
+                # Montos ya declarados en Finanzas -> ítems del precio. Es
+                # exactamente "la orden valorizada" que pide Daniel: lo que
+                # ILUS le paga al proveedor, no lo que se le cobra al
+                # cliente (que es otro número y otro documento).
+                "costo_proveedor": (int(v["costo_proveedor"])
+                                    if v.get("costo_proveedor") is not None else None),
+                "costo_despacho": (int(v["costo_despacho"])
+                                   if v.get("costo_despacho") is not None else None),
+                # Equipos de la OT, para la tabla del anexo.
+                "equipos": [
+                    {"nombre": e.get("nombre") or "", "sku": e.get("sku") or "",
+                     "serie": e.get("serie") or ""}
+                    for e in equipos
+                ],
+            },
         },
     )
 
