@@ -4720,9 +4720,14 @@ window.otdAbrirReasignar = async function(){
   box.scrollIntoView({behavior:'smooth', block:'center'});
   if (!_otdTecnicosCache){
     try {
-      const r = await fetch('/mantenciones/api/tecnicos');
-      _otdTecnicosCache = await r.json();
-    } catch(e){ _otdTecnicosCache = []; }
+      const r = await otdFetch('/mantenciones/api/tecnicos', {}, 10000);
+      const _j = await r.json();
+      // Solo se cachea si de verdad llegó la lista. 🔴 FIX 2026-09-02: antes
+      // el catch dejaba `[]` cacheado, y como un arreglo vacío es truthy
+      // NUNCA se reintentaba -- un solo parpadeo de red dejaba el selector
+      // de técnicos vacío por el resto de la sesión.
+      if (Array.isArray(_j) && _j.length) _otdTecnicosCache = _j;
+    } catch(e){ /* se reintenta la próxima vez que se abra */ }
   }
   const sel = document.getElementById('otdReasignarSelect');
   if (!sel) return;
@@ -4780,9 +4785,10 @@ window.otdAbrirAgregarEquipo = async function(){
   if (!selEq) return;
   if (!_otdMaquinasClienteCache){
     try {
-      const r = await fetch('/mantenciones/api/clientes/{{ v.cliente_id or 0 }}/maquinas-list');
-      _otdMaquinasClienteCache = await r.json();
-    } catch(e){ _otdMaquinasClienteCache = []; }
+      const r = await otdFetch('/mantenciones/api/clientes/{{ v.cliente_id or 0 }}/maquinas-list', {}, 10000);
+      const _j = await r.json();
+      if (Array.isArray(_j) && _j.length) _otdMaquinasClienteCache = _j;   // idem: no cachear el vacío
+    } catch(e){ /* se reintenta */ }
   }
   const disponibles = (_otdMaquinasClienteCache || [])
     .filter(m => !EQUIPOS_YA_EN_OT.includes(m.id));
@@ -4930,9 +4936,14 @@ window.otdCambiarPlantilla = async function(mid, pidActual){
 window.otdAgregarColaborador = async function(){
   if (!_otdTecnicosCache){
     try {
-      const r = await fetch('/mantenciones/api/tecnicos');
-      _otdTecnicosCache = await r.json();
-    } catch(e){ _otdTecnicosCache = []; }
+      const r = await otdFetch('/mantenciones/api/tecnicos', {}, 10000);
+      const _j = await r.json();
+      // Solo se cachea si de verdad llegó la lista. 🔴 FIX 2026-09-02: antes
+      // el catch dejaba `[]` cacheado, y como un arreglo vacío es truthy
+      // NUNCA se reintentaba -- un solo parpadeo de red dejaba el selector
+      // de técnicos vacío por el resto de la sesión.
+      if (Array.isArray(_j) && _j.length) _otdTecnicosCache = _j;
+    } catch(e){ /* se reintenta la próxima vez que se abra */ }
   }
   const curUid = {{ (v.tecnico_user_id or 'null') }};
   const yaUids = new Set((OT_COLABORADORES_UIDS || []).map(String));
@@ -5325,9 +5336,21 @@ function otdChkEstaBloqueada(t){
   return mins >= 0 && mins < 10;
 }
 
+/* Escape para meter texto de la base dentro de HTML generado a mano.
+   🔴 FIX 2026-09-02 (auditoría, hallazgo B2): había escapes PARCIALES --
+   las opciones de lista no escapaban comillas, la serie sugerida solo
+   escapaba `'`, y la URL de la foto entraba cruda. Hoy son datos internos,
+   pero una opción con una comilla rompía el render de esa tarea entera y
+   dejaba al técnico sin poder responderla. */
+function otdEsc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 function otdChkFotosHtml(t){
   if (!t.fotos || !t.fotos.length) return '';
-  return `<div class="otd-chk-fotos">${t.fotos.map(f => `<img src="${f.url}" alt="" loading="lazy">`).join('')}</div>`;
+  return `<div class="otd-chk-fotos">${t.fotos.map(f => `<img src="${otdEsc(f.url)}" alt="" loading="lazy">`).join('')}</div>`;
 }
 
 function otdChkFotoBtnHtml(t){
@@ -5614,7 +5637,7 @@ function otdChkTareaHtml(t){
     body = `<div class="otd-chk-row">
       <select class="otd-chk-input" id="otdChkVal-${t.id}" ${bloqueada?'disabled':''}>
         <option value="">Elige una opción…</option>
-        ${opciones.map(o => `<option value="${o}" ${o===v?'selected':''}>${o}</option>`).join('')}
+        ${opciones.map(o => `<option value="${otdEsc(o)}" ${o===v?'selected':''}>${otdEsc(o)}</option>`).join('')}
       </select>
       <button type="button" class="otd-chk-save" ${bloqueada?'disabled':''}
         onclick="otdChkGuardarInput(${t.id})">Guardar</button>
@@ -5648,8 +5671,9 @@ function otdChkTareaHtml(t){
     </div>
     <div class="otd-chk-serie-quick">
       ${(srSug && !na) ? `<button type="button" ${bloqueada?'disabled':''}
-        onclick="otdChkUsarSerieSugerida(${t.id}, '${srSug.replace(/'/g,"\\'")}')">
-        <i class="bi bi-lightbulb-fill"></i> Usar sugerida (${srSug})</button>` : ''}
+        data-sug="${otdEsc(srSug)}"
+        onclick="otdChkUsarSerieSugerida(${t.id}, this.dataset.sug)">
+        <i class="bi bi-lightbulb-fill"></i> Usar sugerida (${otdEsc(srSug)})</button>` : ''}
       <button type="button" ${bloqueada?'disabled':''} onclick="otdChkGuardar(${t.id}, 'na')">
         <i class="bi bi-slash-circle"></i> No aplica</button>
     </div>`;
@@ -6366,6 +6390,14 @@ const OT2F = (function(){
       if (ev.touches){ const t = ev.touches[0]; return {x:t.clientX-r.left, y:t.clientY-r.top}; }
       return {x:ev.clientX-r.left, y:ev.clientY-r.top};
     };
+    // 🔴 FIX 2026-09-02 (auditoría, hallazgo B3): initCanvas corre CADA vez
+    // que se abre el modal de firma, y volvía a registrar los mismos 7
+    // listeners sobre el mismo canvas. Abrir "Firmar", cerrar y volver a
+    // abrir duplicaba cada trazo (y el historial de deshacer) -- una firma
+    // doble y temblorosa en el documento que el cliente firma. Se marca el
+    // canvas para no volver a engancharlos.
+    if (cv.dataset.sigWired === '1') return;
+    cv.dataset.sigWired = '1';
     cv.addEventListener('mousedown', e => { const p = getXY(e); start(p.x, p.y); });
     cv.addEventListener('mousemove', e => { const p = getXY(e); move(p.x, p.y); });
     cv.addEventListener('mouseup', end);
@@ -6668,7 +6700,19 @@ const OT2F = (function(){
           firma_tecnico_nombre: document.getElementById('otfFirmaTecNombre').value.trim(),
         }),
       });
-      const d = await r.json();
+      // 🔴 FIX 2026-09-02 (auditoría, hallazgo B4): sin el .catch, con la
+      // sesión caducada (que llegaba como 200 + HTML del login) esto
+      // lanzaba y se mostraba "Error de red" -- un diagnóstico equivocado
+      // en el momento más caro del flujo, con el cliente mirando.
+      const d = await r.json().catch(() => null);
+      if (!d){
+        await ilusAlert({
+          title: 'Tu sesión se cerró',
+          message: 'No se registró la firma. Vuelve a entrar y repítela.',
+          type: 'warning',
+        });
+        return;
+      }
       if (d.ok){
         bootstrap.Modal.getInstance(document.getElementById('otfModalFirma'))?.hide();
         await ilusAlert({
@@ -6719,7 +6763,19 @@ const OT2F = (function(){
           firma_cliente_sugerido_nombre: (cliNombreEl && cliNombreEl.dataset ? (cliNombreEl.dataset.sugerido || '') : ''),
         }),
       });
-      const d = await r.json();
+      // 🔴 FIX 2026-09-02 (auditoría, hallazgo B4): sin el .catch, con la
+      // sesión caducada (que llegaba como 200 + HTML del login) esto
+      // lanzaba y se mostraba "Error de red" -- un diagnóstico equivocado
+      // en el momento más caro del flujo, con el cliente mirando.
+      const d = await r.json().catch(() => null);
+      if (!d){
+        await ilusAlert({
+          title: 'Tu sesión se cerró',
+          message: 'No se registró la firma. Vuelve a entrar y repítela.',
+          type: 'warning',
+        });
+        return;
+      }
       if (d.ok){
         bootstrap.Modal.getInstance(document.getElementById('otfModalFirma'))?.hide();
         await ilusAlert({
@@ -6759,7 +6815,19 @@ const OT2F = (function(){
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ firma_supervisor:firma, firma_supervisor_nombre:nombre, comentario:comentario }),
       });
-      const d = await r.json();
+      // 🔴 FIX 2026-09-02 (auditoría, hallazgo B4): sin el .catch, con la
+      // sesión caducada (que llegaba como 200 + HTML del login) esto
+      // lanzaba y se mostraba "Error de red" -- un diagnóstico equivocado
+      // en el momento más caro del flujo, con el cliente mirando.
+      const d = await r.json().catch(() => null);
+      if (!d){
+        await ilusAlert({
+          title: 'Tu sesión se cerró',
+          message: 'No se registró la firma. Vuelve a entrar y repítela.',
+          type: 'warning',
+        });
+        return;
+      }
       if (d.ok){
         bootstrap.Modal.getInstance(document.getElementById('otfModalAprobacion'))?.hide();
         await ilusAlert({
@@ -6802,7 +6870,19 @@ const OT2F = (function(){
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ motivo:motivo }),
       });
-      const d = await r.json();
+      // 🔴 FIX 2026-09-02 (auditoría, hallazgo B4): sin el .catch, con la
+      // sesión caducada (que llegaba como 200 + HTML del login) esto
+      // lanzaba y se mostraba "Error de red" -- un diagnóstico equivocado
+      // en el momento más caro del flujo, con el cliente mirando.
+      const d = await r.json().catch(() => null);
+      if (!d){
+        await ilusAlert({
+          title: 'Tu sesión se cerró',
+          message: 'No se registró la firma. Vuelve a entrar y repítela.',
+          type: 'warning',
+        });
+        return;
+      }
       if (d.ok){
         bootstrap.Modal.getInstance(document.getElementById('otfModalAprobacion'))?.hide();
         await ilusAlert({
