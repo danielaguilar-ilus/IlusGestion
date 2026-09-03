@@ -76189,7 +76189,13 @@ def ot2_panel():
     calendario de siempre (mant_calendario), donde ya ve sus OT
     asignadas por el camino legacy. Ver mismo bloqueo en ot2_detalle.
     """
-    if _es_rol_tecnico():
+    # 🔴 FIX 2026-09-03 (Daniel: "Jaizer no ve la OT 2.0"). Este redirect
+    # mandaba a TODO técnico al calendario sin mirar el permiso nuevo, así
+    # que el interruptor `mant_ot2_tecnico` que se activó para el piloto no
+    # servía de nada: la ficha (`ot2_detalle`) sí lo respetaba, pero el
+    # panel — la puerta de entrada — lo ignoraba. Mismo criterio que allá.
+    if _es_rol_tecnico() and not (
+            (getattr(g, "permissions", {}) or {}).get("mant_ot2_tecnico")):
         return redirect(url_for("mant_calendario"))
 
     import datetime as _dt
@@ -101984,6 +101990,13 @@ def repstock_ubicaciones_etiqueta_pdf():
         "ubicacion_label_standalone.html",
         ubicaciones=[dict(r) for r in rows],
         fmt=label_format["key"], label_format=label_format,
+        # 🔴 FIX 2026-09-03 (Daniel: "el logo sale roto"). Faltaba pasar el
+        # logo: el template caía a url_for('static', ...), que es una ruta
+        # RELATIVA -- y el PDF se arma con Chromium sobre HTML en memoria,
+        # sin URL base, así que esa ruta no resuelve y la imagen quedaba
+        # rota. Las otras tres etiquetas del proyecto ya incrustaban el PNG
+        # como data URI con este mismo helper; a esta se le olvidó.
+        logo_url=_logo_data_url(),
     )
     pdf_bytes = _pw_pdf(
         html, width=label_format["w"], height=label_format["h"],
