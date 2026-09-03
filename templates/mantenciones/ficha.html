@@ -482,6 +482,27 @@
               </div>
             </div>
           </div>
+          {# ══ EQUIPOS POR ORIGEN ═══════════════════════════════════════
+             🆕 2026-09-02 (Daniel, urgente: "quiero ver qué ingresó por
+             instalación, qué, o si fue por levantamiento, si le hizo
+             mantención... es urgente para control y trazabilidad").
+             Responde de dónde salió cada máquina del parque del cliente.
+             Solo cuenta las ACTIVAS: un equipo dado de baja ya no es parte
+             de lo que hay instalado hoy. #}
+          {% if historial.equipos_por_origen %}
+          <div class="fh-origen">
+            <div class="hd"><i class="bi bi-diagram-3-fill"></i> Cómo entraron los equipos</div>
+            <div class="lista">
+              {% for o in historial.equipos_por_origen %}
+              <div class="og og-{{ o.clave }}">
+                <span class="n">{{ o.n }}</span>
+                <span class="l">{{ o.label }}</span>
+                {% if o.ultima %}<span class="f">última {{ o.ultima.strftime('%m/%Y') }}</span>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
           {% if historial.repuestos.n_garantia %}
           <div class="fh-nota">
             <i class="bi bi-shield-check"></i>
@@ -1277,6 +1298,25 @@
               {% endif %}
               {% if m.cantidad > 1 %}
               <div class="eq-name-sub"><i class="bi bi-layers me-1"></i>{{ m.cantidad }} unidades</div>
+              {% endif %}
+              {# 🆕 2026-09-02 (Daniel, urgente: "quiero ver qué ingresó por
+                 instalación, qué, o si fue por levantamiento"). De dónde
+                 salió ESTE equipo. Cuando vino de una OT, el chip lleva su
+                 número y es un link directo a esa OT -- la trazabilidad
+                 completa a un clic. #}
+              {% if m.origen_clave and m.origen_clave != 'manual' %}
+              <div class="eq-name-sub" style="margin-top:3px">
+                {% if m.origen_ot_id %}
+                <a href="{{ url_for('ot2_detalle', vid=m.origen_ot_id) }}"
+                   class="eq-origen og-{{ m.origen_clave }}"
+                   title="Ver la OT que dio de alta este equipo">
+                  <i class="bi bi-diagram-3-fill"></i>{{ m.origen_label }}
+                  {%- if m.origen_ref %} · {{ m.origen_ref }}{% endif %}</a>
+                {% else %}
+                <span class="eq-origen og-{{ m.origen_clave }}">
+                  <i class="bi bi-diagram-3-fill"></i>{{ m.origen_label }}</span>
+                {% endif %}
+              </div>
               {% endif %}
             </td>
             <td id="sku-cell-{{ m.id }}">

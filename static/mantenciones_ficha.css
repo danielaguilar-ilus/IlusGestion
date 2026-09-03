@@ -35,6 +35,37 @@
          border-radius:9px;font-size:.76rem;color:#166534;font-weight:600;
          display:flex;align-items:center;gap:7px;}
 
+/* Chip de origen en la fila del equipo (2026-09-02). Cuando vino de una
+   OT es un link a esa OT: la trazabilidad completa a un clic. */
+.eq-origen{display:inline-flex;align-items:center;gap:4px;--c:#6b7280;
+           border:1px solid var(--c);color:var(--c);background:#fff;
+           border-radius:99px;padding:1px 8px;font-size:.64rem;font-weight:800;
+           text-decoration:none;white-space:nowrap;}
+a.eq-origen:hover{background:var(--c);color:#fff;}
+.eq-origen.og-instalacion{--c:#16a34a;}
+.eq-origen.og-levantamiento{--c:#2563eb;}
+.eq-origen.og-preventiva,.eq-origen.og-correctiva{--c:#d97706;}
+
+/* ── Cómo entraron los equipos (origen) ──────────────────
+   🆕 2026-09-02: de dónde salió cada máquina del parque. Un color por
+   origen para poder leerlo de un vistazo sin tener que leer la etiqueta. */
+.fh-origen{margin-top:14px;padding-top:12px;border-top:1px dashed var(--border);}
+.fh-origen .hd{font-size:.66rem;font-weight:900;text-transform:uppercase;
+               letter-spacing:.07em;color:#6b7280;display:flex;align-items:center;
+               gap:6px;margin-bottom:9px;}
+.fh-origen .lista{display:flex;flex-wrap:wrap;gap:8px;}
+.fh-origen .og{--c:#6b7280;display:flex;align-items:baseline;gap:7px;
+               border:1px solid #e5e7eb;border-left:4px solid var(--c);
+               border-radius:9px;padding:7px 12px;background:#fff;}
+.fh-origen .og .n{font-size:1.15rem;font-weight:900;color:var(--c);
+                  font-variant-numeric:tabular-nums;line-height:1;}
+.fh-origen .og .l{font-size:.78rem;font-weight:800;color:#374151;}
+.fh-origen .og .f{font-size:.66rem;color:#9ca3af;font-weight:700;}
+.fh-origen .og-instalacion{--c:#16a34a;}
+.fh-origen .og-levantamiento{--c:#2563eb;}
+.fh-origen .og-preventiva,.fh-origen .og-correctiva{--c:#d97706;}
+.fh-origen .og-manual{--c:#9ca3af;}
+
 /* ── KPI bar ─────────────────────────────────────── */
 .kpi-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:20px;}
 .kpi-item{background:#fff;border:1px solid var(--border);border-radius:var(--rad);

@@ -62433,9 +62433,33 @@ def _mant_ficha_impl(cid):
     # ── Normaliza filas de DB para evitar mezcla datetime/date ───────────
     def _norm_maquina(row):
         r = dict(row)
-        for k in ('doc_fecha', 'fecha_instalacion', 'created_at', 'updated_at'):
+        for k in ('doc_fecha', 'fecha_instalacion', 'created_at', 'updated_at',
+                  'origen_fecha'):
             if k in r:
                 r[k] = _d(r[k])
+        # 🆕 2026-09-02 — de dónde salió esta ficha de equipo (Daniel:
+        # "quiero ver qué ingresó por instalación, qué, o si fue por
+        # levantamiento, si le hizo mantención"). Tres fuentes, en orden de
+        # confianza:
+        #   1. origen_ot_id → la OT que la dio de alta (dato duro, nuevo).
+        #   2. ultimo_levantamiento_vid → vino de un levantamiento (así se
+        #      recuperan las fichas creadas ANTES de que existiera la
+        #      columna nueva, que si no saldrían todas como "sin origen").
+        #   3. nada → carga manual o importada desde el wizard de clientes.
+        _tipo_org = (r.get("origen_tipo") or "").lower()
+        if _tipo_org:
+            r["origen_label"] = _TIPO_OT_LABEL.get(
+                _tipo_org, _tipo_org.replace("_", " ").title())
+            r["origen_clave"] = _tipo_org
+            r["origen_ref"] = r.get("origen_numero_ot") or ""
+        elif r.get("ultimo_levantamiento_vid"):
+            r["origen_label"] = "Levantamiento"
+            r["origen_clave"] = "levantamiento"
+            r["origen_ref"] = ""
+        else:
+            r["origen_label"] = "Carga manual"
+            r["origen_clave"] = "manual"
+            r["origen_ref"] = ""
         return r
 
     def _norm_contrato(row):
@@ -62482,14 +62506,33 @@ def _mant_ficha_impl(cid):
     # los equipos (activos + bajas) y el frontend oculta/muestra según el
     # toggle "Mostrar bajas". Las filas dadas de baja se marcan con
     # data-estado="baja" y CSS atenuado. Por default solo se ven activos.
-    maquinas_raw  = mysql_fetchall(
-        "SELECT * FROM mant_maquinas "
-        " WHERE cliente_id=%s "
+    # 🆕 2026-09-02 (Daniel, urgente: "quiero ver qué ingresó por
+    # instalación, qué, o si fue por levantamiento, si le hizo mantención...
+    # es urgente para control y trazabilidad"). El `m.*` se conserva tal
+    # cual (ver la nota de abajo sobre por qué), y se AGREGAN por LEFT JOIN
+    # el tipo y el número de la OT que dio de alta cada equipo. El tipo se
+    # lee de la OT en vivo, no se copia a la ficha: así nunca queda
+    # desincronizado si la OT cambia de tipo.
+    # `origen_ot_id` puede no existir todavía en un entorno que no haya
+    # corrido _ensure_maquina_origen_ot_col -- por eso el try/except cae a
+    # la consulta de siempre en vez de romper la ficha entera.
+    _sql_maq_orden = (
+        " WHERE m.cliente_id=%s "
         " ORDER BY "
-        "   CASE WHEN COALESCE(estado,'activo')='baja' THEN 1 ELSE 0 END ASC, "
-        "   created_at DESC",
-        (cid,)
-    ) or []
+        "   CASE WHEN COALESCE(m.estado,'activo')='baja' THEN 1 ELSE 0 END ASC, "
+        "   m.created_at DESC")
+    try:
+        maquinas_raw = mysql_fetchall(
+            "SELECT m.*, ov.tipo AS origen_tipo, ov.numero_ot AS origen_numero_ot, "
+            "       ov.fecha_programada AS origen_fecha "
+            "  FROM mant_maquinas m "
+            "  LEFT JOIN mant_visitas ov ON ov.id = m.origen_ot_id "
+            + _sql_maq_orden, (cid,)) or []
+    except Exception as _e_maq_org:
+        print(f"[ficha-cli] origen equipos cid={cid} (cae a query simple): "
+              f"{_e_maq_org}", flush=True)
+        maquinas_raw = mysql_fetchall(
+            "SELECT m.* FROM mant_maquinas m" + _sql_maq_orden, (cid,)) or []
     # SELECT * para máxima compatibilidad con el template (revertido del SELECT
     # explícito que causó error al perder alguna columna como monto_anual,
     # clausulas_custom, variables_extra, ai_editable, etc.)
@@ -63058,6 +63101,30 @@ def _mant_ficha_impl(cid):
     except Exception as _e_he:
         print(f"[ficha-cli] historial equipos cid={cid}: {_e_he}", flush=True)
         historial["equipos"] = {"n": 0, "n_activos": 0, "n_baja": 0}
+
+    # 🆕 2026-09-02 (Daniel, urgente: "quiero ver qué ingresó por
+    # instalación, qué, o si fue por levantamiento"). Desglose de los
+    # equipos POR ORIGEN. Se calcula sobre `maquinas` -- que ya está
+    # enriquecida con origen_label por _norm_maquina -- en vez de repetir
+    # la consulta: una sola definición de "de dónde vino este equipo".
+    try:
+        _por_origen = {}
+        for _m in maquinas:
+            if (_m.get("estado") or "activo") == "baja":
+                continue          # los de baja no cuentan como parque activo
+            _k = _m.get("origen_clave") or "manual"
+            _e = _por_origen.setdefault(
+                _k, {"clave": _k, "label": _m.get("origen_label") or "Carga manual",
+                     "n": 0, "ultima": None})
+            _e["n"] += 1
+            _f = _m.get("origen_fecha") or _m.get("fecha_instalacion")
+            if _f and (_e["ultima"] is None or _f > _e["ultima"]):
+                _e["ultima"] = _f
+        historial["equipos_por_origen"] = sorted(
+            _por_origen.values(), key=lambda x: -x["n"])
+    except Exception as _e_ho:
+        print(f"[ficha-cli] equipos por origen cid={cid}: {_e_ho}", flush=True)
+        historial["equipos_por_origen"] = []
 
     return render_template("mantenciones/ficha.html",
         cliente   = dict(cliente),
