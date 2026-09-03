@@ -217,6 +217,92 @@
 .otd-fpaso.listo .hd .num{font-size:.68rem}
 .otd-fpaso .bd{padding:11px 12px}
 
+/* ══════════════════════════════════════════════════════════════
+   MODAL DE CIERRE — semáforo (2026-09-03, Daniel: "ese modal se puede
+   modificar al formato de Retiros, enumerado, con tarjetas, con
+   semáforos, que me diga que está en rojo y que sepa identificar si
+   efectivamente falta algo... ese modal tiene que ser un amigo para
+   poder ayudar a cerrar y gestionar la orden de trabajo").
+
+   Antes el modal no decía nada: apretabas "Firmar y cerrar" y recién ahí
+   salía un toast rojo con lo que faltaba — y el control para resolverlo
+   a veces ni siquiera se dibujaba. Ahora el estado se ve ANTES: cada
+   paso nace rojo y se pone verde cuando está resuelto, y arriba se lee
+   en una línea qué falta.
+   ══════════════════════════════════════════════════════════════ */
+.otf-sem{display:flex;align-items:flex-start;gap:11px;padding:12px 14px;
+  border-radius:12px;margin-bottom:14px;border:1.5px solid}
+.otf-sem .ic{width:34px;height:34px;flex:none;border-radius:10px;display:grid;
+  place-items:center;font-size:1.05rem;color:#fff}
+.otf-sem .tx{min-width:0;flex:1}
+.otf-sem .tt{font-size:.88rem;font-weight:800;line-height:1.25}
+.otf-sem .sb{font-size:.76rem;margin-top:2px;line-height:1.35}
+.otf-sem.falta{background:#fef2f2;border-color:#fecaca}
+.otf-sem.falta .ic{background:linear-gradient(140deg,#dc2626,#991b1b)}
+.otf-sem.falta .tt{color:#991b1b}
+.otf-sem.falta .sb{color:#b91c1c}
+.otf-sem.listo{background:#f0fdf4;border-color:#86efac}
+.otf-sem.listo .ic{background:linear-gradient(140deg,#16a34a,#15803d)}
+.otf-sem.listo .tt{color:#15803d}
+.otf-sem.listo .sb{color:#166534}
+/* Lo que falta, como chips: se cuenta y se lee de un vistazo */
+.otf-sem-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.otf-sem-chip{font-size:.7rem;font-weight:800;padding:3px 9px;border-radius:50px;
+  background:#fff;border:1.5px solid #fca5a5;color:#991b1b;cursor:pointer}
+.otf-sem-chip:hover{background:#fee2e2}
+
+/* Un paso incompleto se marca en su propio encabezado, no solo arriba */
+.otd-fpaso.falta{border-color:#fecaca}
+.otd-fpaso.falta .hd{background:#fef2f2;color:#991b1b}
+.otd-fpaso.listo{border-color:#bbf7d0}
+.otd-fpaso.listo .hd{background:#f0fdf4;color:#15803d}
+.otd-fpaso .hd .est{margin-left:auto;font-size:.66rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.04em}
+.otd-fpaso.falta .hd .est{color:#dc2626}
+.otd-fpaso.listo .hd .est{color:#16a34a}
+/* Al intentar cerrar con algo pendiente, el paso culpable late una vez */
+@keyframes otfLatido{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}
+  35%{box-shadow:0 0 0 6px rgba(220,38,38,.22)}}
+.otd-fpaso.senala{animation:otfLatido 1s ease 2}
+
+/* Acciones que SIEMPRE están disponibles (Daniel: "si tengo que cambiarlo
+   a garantía, eso siempre tiene que estar, porque siempre puedo tomar
+   hasta la última decisión"). */
+.otf-acciones{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;
+  padding-top:10px;border-top:1px dashed #e5e7eb}
+.otf-acc{min-height:40px;padding:8px 13px;border-radius:9px;font-size:.76rem;
+  font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  background:#fff;border:1.5px solid #d1d5db;color:#374151;transition:.15s}
+.otf-acc:hover{border-color:#9ca3af;background:#f9fafb}
+.otf-acc.gar{border-color:#f59e0b;color:#b45309}
+.otf-acc.gar:hover{background:#fffbeb}
+.otf-acc.doc{border-color:#3b82f6;color:#1d4ed8}
+.otf-acc.doc:hover{background:#eff6ff}
+
+/* Las tres cifras que Daniel pidió ver juntas: cuánto cobré, cuánto me
+   cobraron, cuánto gané. Una al lado de la otra para que la resta se lea
+   sola, sin tener que buscarlas en pantallas distintas. */
+.otf-fin3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.otf-fin3 .c{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+  padding:9px 11px;display:flex;flex-direction:column;gap:1px;min-width:0}
+.otf-fin3 .l{font-size:.66rem;font-weight:800;color:#64748b;
+  text-transform:uppercase;letter-spacing:.04em}
+.otf-fin3 .v{font-size:1rem;font-weight:900;color:#0f172a;
+  font-variant-numeric:tabular-nums;line-height:1.25}
+.otf-fin3 .v.pos{color:#15803d}
+.otf-fin3 .v.neg{color:#dc2626}
+.otf-fin3 .v.pend{color:#b45309;font-size:.82rem}
+.otf-fin3 .d{font-size:.66rem;color:#94a3b8;line-height:1.25}
+.otf-costo-box{margin-top:10px;padding:12px;border-radius:12px;
+  background:#fef2f2;border:1.5px solid #fecaca}
+.otf-costo-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
+.otf-costo-row input{min-height:40px;font-size:16px}
+@media (max-width:640px){
+  .otf-fin3{grid-template-columns:1fr}
+  .otf-costo-row{grid-template-columns:1fr}
+  .otf-costo-row button{width:100%;min-height:44px}
+}
+
 /* Fila Tipo | N° documento | Leer documento (paso 1 de Finanzas). Vivía en
    un style inline; se saca a una clase para poder reacomodarla en móvil
    (2026-09-02). */
@@ -3733,201 +3819,440 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
            ni en qué orden resolverlo. Ahora son 3 pasos numerados, con el
            mismo lenguaje del resto del proyecto (REGLA #15).
            El paso se pinta VERDE cuando ya está resuelto. #}
+        {# ══════════════════════════════════════════════════════════════
+           SEMÁFORO DEL CIERRE (2026-09-03, Daniel: "que me diga que está
+           en rojo y que sepa identificar si efectivamente falta algo...
+           ese modal tiene que ser un amigo para poder ayudar a cerrar y
+           gestionar la orden de trabajo").
+
+           Antes este modal no decía nada hasta que apretabas: recién ahí
+           salía un toast rojo con lo que faltaba. Ahora las MISMAS reglas
+           que aplica el backend al firmar (ver aprobar-cierre: centro de
+           costo y documento-o-garantía, ambas exentas en trabajo interno)
+           se evalúan acá arriba y se muestran antes de intentarlo.
+
+           Se calcula con los datos que ya vienen en `v` -- no hay una
+           segunda fuente de verdad: si el backend cambia una regla, esto
+           se actualiza en el mismo lugar y no queda mintiendo. #}
+        {% set _es_int = (not v.cliente_id)
+                         or (v.modalidad_cobro or '')|lower == 'interno'
+                         or v.tipo == 'revision_interna' %}
+        {% set _falta_cc  = (not _es_int) and (not v.centro_costo) %}
+        {% set _falta_doc = (not _es_int)
+                            and _mod_cobro not in ('garantia', 'sin_costo')
+                            and (not v.factura_nudo) %}
+        {# 🔒 2026-09-03 (Daniel): "necesito cerrar cuánto me cobró el técnico,
+           eso tiene que ser un impedimento de cierre... para saber cuánto
+           cobré yo, cuánto me cobraron a mí, cuánto gané, cuánto perdí".
+           Sin este dato el margen que muestra la ficha es el precio completo:
+           la OT-150 marcaba "Margen $8.607.787 · 100.0%" con el campo del
+           técnico vacío. No es un dato incompleto, es un dato FALSO. #}
+        {% set _falta_costo = (not _es_int) and (v.costo_proveedor is none) %}
+        {% set _n_falta = (1 if _falta_cc else 0) + (1 if _falta_doc else 0) + (1 if _falta_costo else 0) %}
+        {% set _listo_cierre = (_n_falta == 0) %}
+
+        <div class="otf-sem {{ 'listo' if _listo_cierre else 'falta' }}" id="otfSemaforo">
+          <span class="ic">
+            <i class="bi bi-{{ 'check-lg' if _listo_cierre else 'exclamation-triangle-fill' }}"></i>
+          </span>
+          <div class="tx">
+            {% if _listo_cierre %}
+              <div class="tt">Todo listo — puedes firmar y cerrar</div>
+              <div class="sb">
+                {% if _es_int %}Trabajo interno: no requiere documento de cobro.
+                {% else %}Centro de costo declarado y
+                  {{ 'cobertura resuelta' if _mod_cobro in ('garantia','sin_costo') else 'documento asociado' }}.
+                {% endif %}
+                Firma abajo para dejarla cerrada.
+              </div>
+            {% else %}
+              <div class="tt">Falta {{ _n_falta }} {{ 'cosa' if _n_falta == 1 else 'cosas' }} para poder cerrar</div>
+              <div class="sb">Toca cualquiera y te llevo al paso — se resuelve acá mismo,
+                sin salir del modal.</div>
+              <div class="otf-sem-chips">
+                {% if _falta_cc %}
+                <span class="otf-sem-chip" onclick="OT2F.irAPaso('otfPaso1')">
+                  <i class="bi bi-tag-fill"></i> Centro de costo</span>
+                {% endif %}
+                {% if _falta_doc %}
+                <span class="otf-sem-chip" onclick="OT2F.irAPaso('otfPaso2')">
+                  <i class="bi bi-receipt"></i> Documento o garantía</span>
+                {% endif %}
+                {% if _falta_costo %}
+                <span class="otf-sem-chip" onclick="OT2F.irAPaso('otfPaso3')">
+                  <i class="bi bi-cash-coin"></i> Cuánto nos cobró el técnico</span>
+                {% endif %}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+
+        {# ══ PASO 1 — CENTRO DE COSTO ════════════════════════════════════
+           Los tres rectángulos son los MISMOS que Daniel aprobó el 02-09
+           para la tarjeta Finanzas ("tres rectángulos con cada centro de
+           costo para seleccionar"): se reusa el diseño, no se inventa otro.
+           Se puede cambiar siempre, no solo cuando está vacío. #}
         {% set _fin_resuelto = finanzas and finanzas.ok %}
-        <div class="otd-fpaso {{ 'listo' if _fin_resuelto }}">
-          <div class="hd"><span class="num">1</span> Finanzas y documento</div>
+        <div class="otd-fpaso {{ 'falta' if _falta_cc else 'listo' }}" id="otfPaso1">
+          <div class="hd"><span class="num">1</span> Centro de costo
+            <span class="est">{{ 'Falta' if _falta_cc else ('No aplica' if _es_int else 'Listo') }}</span>
+          </div>
+          <div class="bd">
+            {% if _es_int %}
+              <div class="text-muted small">
+                <i class="bi bi-info-circle me-1"></i>
+                Es un trabajo interno de ILUS: no se imputa a un centro de costo de cliente.
+              </div>
+            {% elif puede_cobertura %}
+              <div class="small mb-2" style="color:#6b7280">
+                ¿A quién se le imputa esta OT? Si la pérdida no es de Servicio Técnico,
+                cárgala a Logística o Comercial — así el informe de resultados no se la
+                atribuye al área equivocada.
+              </div>
+              <select id="otfModalCentroCosto" class="form-select form-select-sm" hidden>
+                <option value="">— Sin definir —</option>
+                <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
+                <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
+                <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
+              </select>
+              <div class="otd-cc-grid" id="otfCcGrid">
+                <button type="button" class="otd-cc cc-sstt {{ 'on' if v.centro_costo=='sstt' }}"
+                        data-cc="sstt" onclick="OT2F.setCC(this)">
+                  <i class="bi bi-wrench-adjustable-circle-fill"></i>
+                  <b>Servicio Técnico</b><small>El costo es nuestro</small></button>
+                <button type="button" class="otd-cc cc-log {{ 'on' if v.centro_costo=='logistica' }}"
+                        data-cc="logistica" onclick="OT2F.setCC(this)">
+                  <i class="bi bi-truck"></i>
+                  <b>Logística</b><small>Despacho o bodega</small></button>
+                <button type="button" class="otd-cc cc-com {{ 'on' if v.centro_costo=='comercial' }}"
+                        data-cc="comercial" onclick="OT2F.setCC(this)">
+                  <i class="bi bi-briefcase-fill"></i>
+                  <b>Comercial</b><small>Convenio o venta</small></button>
+              </div>
+            {% else %}
+              <div class="small">
+                <b>{{ (v.centro_costo or 'Sin definir')|replace('sstt','Servicio Técnico')|replace('logistica','Logística')|replace('comercial','Comercial') }}</b>
+                <div class="text-muted mt-1" style="font-size:.74rem">
+                  Solo gestión puede cambiar el centro de costo.</div>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+
+        {# ══ PASO 2 — COBERTURA Y DOCUMENTO ══════════════════════════════
+           Daniel, 2026-09-03: "si tengo que cambiarlo a garantía, eso
+           SIEMPRE tiene que estar, porque siempre puedo tomar hasta la
+           última decisión, si es garantía. Y en caso de también gestionar
+           la documentación".
+           Por eso las acciones viven abajo del estado y no dentro de un
+           {% raw %}{% if %}{% endraw %} que solo aparece cuando falta algo: se puede cambiar de
+           opinión con el documento ya asociado y con la garantía ya
+           declarada, hasta el último segundo antes de firmar. #}
+        <div class="otd-fpaso {{ 'falta' if _falta_doc else 'listo' }}" id="otfPaso2">
+          <div class="hd"><span class="num">2</span> Cobertura y documento
+            <span class="est">{{ 'Falta' if _falta_doc else ('No aplica' if _es_int else 'Listo') }}</span>
+          </div>
           <div class="bd">
 
-        {# 🆕 2026-09-02 (Daniel: "si ya se definió el costo, que esto salga
-           de acá... darle una oportunidad de gestionar las finanzas
-           nuevamente con un botón en el modal, y déjalo para cambiar la
-           garantía"). Cuando la parte financiera YA está resuelta, el modal
-           deja de pedir datos y solo muestra el resumen: quien viene a
-           firmar no tiene que volver a llenar nada. Los dos accesos que sí
-           quedan son los que Daniel pidió conservar hasta el último
-           momento: reabrir finanzas y cambiar la cobertura. #}
-        {% if _fin_resuelto %}
-        <div class="otf-fin-ok">
-          <div class="ln">
-            <span class="lbl">Precio al cliente</span>
-            <b>{{ '$' ~ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '—' }}</b>
-          </div>
-          <div class="ln">
-            <span class="lbl">Nos cuesta</span>
-            <b>{{ '$' ~ '{:,.0f}'.format((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0))|replace(',','.') }}</b>
-          </div>
-          {% if v.costo is not none %}
-          {% set _mrg = (v.costo|float) - ((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0)) %}
-          <div class="ln">
-            <span class="lbl">Margen</span>
-            <b class="{{ 'neg' if _mrg < 0 else 'pos' }}">
-              {{ '$' ~ '{:,.0f}'.format(_mrg)|replace(',','.') }}</b>
-          </div>
-          {% endif %}
-          <div class="ln">
-            <span class="lbl">Centro de costo</span>
-            <b>{{ (v.centro_costo or '—')|replace('sstt','Servicio Técnico')|replace('logistica','Logística')|replace('comercial','Comercial') }}</b>
-          </div>
-        </div>
-        <a class="otf-fin-link" href="#otdCardFinanzas" data-bs-dismiss="modal"
-           onclick="setTimeout(function(){ if(window.otdIrAFinanzas) otdIrAFinanzas(); }, 350)">
-          <i class="bi bi-pencil-square"></i> Gestionar finanzas de nuevo</a>
-        {% endif %}
+            {% if _es_int %}
+            <div class="text-muted small">
+              <i class="bi bi-info-circle me-1"></i>
+              Trabajo interno: no se le cobra a nadie, no requiere documento.
+            </div>
 
-        {% set _mod_cobro = (v.modalidad_cobro or '')|lower %}
-        {% if _mod_cobro in ('garantia', 'sin_costo') %}
-        <div class="alert py-2 small mb-3" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">
-          <i class="bi bi-shield-fill-check me-1"></i>
-          <strong>Cobertura: {{ 'GARANTÍA' if _mod_cobro == 'garantia' else 'SIN COSTO' }}.</strong>
-          Esta OT no requiere factura para cerrarse.
-          {% if puede_cobertura %}
-          <div class="mt-2 pt-2" style="border-top:1px dashed #86efac">
-            <button type="button" class="btn btn-sm fw-bold" id="otfQuitarGarBtn"
-                    style="background:#fff;color:#166534;border:1.5px solid #16a34a"
-                    onclick="OT2F.quitarGarantia()">
-              <i class="bi bi-arrow-counterclockwise me-1"></i>Quitar cobertura y asociar factura
-            </button>
-          </div>
-          {% endif %}
-        </div>
-        {% endif %}
+            {% elif _mod_cobro in ('garantia', 'sin_costo') %}
+            <div class="alert py-2 small mb-0" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">
+              <i class="bi bi-shield-fill-check me-1"></i>
+              <strong>Cobertura: {{ 'GARANTÍA' if _mod_cobro == 'garantia' else 'SIN COSTO' }}.</strong>
+              Esta OT no requiere documento para cerrarse.
+              {% if v.garantia_motivo %}
+              <div class="mt-1" style="opacity:.85">Motivo: {{ (v.garantia_motivo or '')[:220] }}</div>
+              {% endif %}
+            </div>
 
-{# 🔴 FIX 2026-09-03 (Daniel, Juan Martinez trabado en la OT-2026-00150:
-   "pide gestionar el centro de costo pero no proporciona el centro de
-   costo, necesito cerrar la OT").
-   Este bloque colgaba de `puede_metadata`, y ese permiso se APAGA en
-   cuanto la OT entra en pendiente_aprobacion (ot_sellada) -- que es
-   justamente el unico estado en el que este modal existe. O sea: el
-   candado del cierre exigia el centro de costo y el unico control para
-   ponerlo no se podia dibujar nunca, salvo siendo superadmin.
-   Pasa a `puede_cobertura`, que es el permiso que Daniel definio el 10-08
-   para exactamente esto: gestion (admin/supervisor/ejecutivo) mientras la
-   OT no este cerrada. Es el mismo que ya gobierna declarar garantia dos
-   bloques mas abajo -- no se inventa un permiso nuevo. #}
-        {% if puede_cobertura and not v.centro_costo %}
-        <div class="mb-3 p-3" style="background:#fff8e1;border:1.5px solid #fde68a;border-radius:12px">
-          <div class="fw-bold small mb-2" style="color:#92400e">
-            <i class="bi bi-tag-fill me-1"></i>Falta el centro de costo
-          </div>
-          <div class="small mb-2" style="color:#92400e">
-            Sin esto no se puede firmar el cierre — elige a quién se le imputa.
-          </div>
-          <div class="d-flex gap-2 flex-wrap align-items-end">
-            <div style="flex:1;min-width:160px">
-              <select id="otfModalCentroCosto" class="form-select form-select-sm">
-                <option value="">— Sin definir —</option>
-                <option value="sstt">Servicio Técnico</option>
-                <option value="logistica">Logística</option>
-                <option value="comercial">Comercial</option>
-              </select>
+            {% elif v.factura_nudo %}
+            <div class="alert py-2 small mb-0" id="otfFactGate"
+                 style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
+              <i class="bi bi-receipt me-1"></i>
+              <strong>{{ 'Nota de venta asociada' if v.factura_tido in ('NVV','NVI') else 'Documento asociado' }}:</strong>
+              {{ v.factura_tido or 'FCV' }} N° {{ v.factura_nudo }}
+              {% if v.factura_monto %} · ${{ '{:,.0f}'.format(v.factura_monto|float).replace(',', '.') }}{% endif %}
+              {% if v.factura_rut_ok == 0 %}
+              <div class="mt-1" style="color:#92400e"><i class="bi bi-exclamation-triangle-fill me-1"></i>
+                RUT no coincidía — justificado: {{ (v.factura_rut_justif or '')[:180] }}</div>
+              {% endif %}
             </div>
-            <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="OT2F.guardarCentroCosto()">
-              <i class="bi bi-check-lg me-1"></i>Guardar
-            </button>
-          </div>
-        </div>
-        {% endif %}
 
-        {% if _mod_cobro not in ('garantia', 'sin_costo') and v.factura_nudo %}
-        <div class="alert py-2 small mb-3" id="otfFactGate" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
-          <i class="bi bi-receipt me-1"></i>
-          <strong>{{ 'Nota de venta asociada' if v.factura_tido in ('NVV','NVI') else 'Documento asociado' }}:</strong>
-          {{ v.factura_tido or 'FCV' }} N° {{ v.factura_nudo }}
-          {% if v.factura_monto %} · ${{ '{:,.0f}'.format(v.factura_monto|float).replace(',', '.') }}{% endif %}
-          {% if v.factura_rut_ok == 0 %}
-          <div class="mt-1" style="color:#92400e"><i class="bi bi-exclamation-triangle-fill me-1"></i>
-            RUT no coincidía — justificado: {{ (v.factura_rut_justif or '')[:180] }}</div>
-          {% endif %}
-          {# 🆕 2026-09-03 (Daniel: "en ese modal quería la opción de dejarlo
-             como garantía y no está siendo amigable"). El botón de garantía
-             solo existía en la rama SIN documento -- así que apenas se
-             asociaba una factura, cambiar de opinión y declararla garantía
-             dejaba de ser posible desde acá, y había que salir del modal a
-             buscarlo. Es justo el momento en que aparece la información que
-             cambia la cobertura ("el proveedor falló y hay que cubrirlo").
-             Mismo botón, mismo endpoint, misma confirmación -- lo único
-             distinto es que acá se avisa que el documento se anula. #}
-          {% if puede_cobertura %}
-          <div class="mt-2 pt-2" style="border-top:1px dashed #bfdbfe">
-            <button type="button" class="btn btn-sm fw-bold otf-gar-btn"
-                    style="background:#fff;color:#b45309;border:1.5px solid #f59e0b"
-                    onclick="OT2F.declararGarantia()">
-              <i class="bi bi-shield-fill-check me-1"></i>No se le cobra: declarar como garantía
-            </button>
-            <div class="small mt-1" style="color:#1e3a8a;opacity:.8">
-              El documento {{ v.factura_tido or 'FCV' }} N° {{ v.factura_nudo }} quedará anulado en la OT.
+            {% else %}
+            <div class="mb-2 p-3" id="otfFactGate"
+                 style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px">
+              <div class="fw-bold small mb-1" style="color:#991b1b">
+                <i class="bi bi-lock-fill me-1"></i>Sin esto no se puede firmar el cierre
+              </div>
+              <div class="small mb-2" style="color:#7f1d1d">
+                Asocia el documento del ERP — factura, boleta o nota de venta — o declara
+                la OT como garantía. El RUT debe coincidir con el del cliente
+                ({{ (v.cliente_rut or '—') }}); si no coincide, deberás explicar por qué.
+              </div>
+              <div class="d-flex gap-2 flex-wrap align-items-end">
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Tipo</label>
+                  <select id="otfFactTipo" class="form-select form-select-sm" style="width:auto">
+                    <optgroup label="Factura / boleta">
+                      <option value="FCV" selected>FCV — Factura</option>
+                      <option value="FCE">FCE — Factura exenta</option>
+                      <option value="BLV">BLV — Boleta</option>
+                    </optgroup>
+                    <optgroup label="Nota de venta (facturable después)">
+                      <option value="NVV">NVV — Nota de venta</option>
+                      <option value="NVI">NVI — Nota de venta instalación</option>
+                      <option value="VD">VD — Nota de venta directa (Nro. VDxxxxxxxx)</option>
+                      <option value="WEB">WEB — Nota de venta web (Nro. WEBxxxxxxx)</option>
+                    </optgroup>
+                  </select>
+                </div>
+                <div style="flex:1;min-width:150px">
+                  <label class="form-label small fw-semibold mb-1">N° documento</label>
+                  <input type="text" id="otfFactNumero" class="form-control form-control-sm"
+                         inputmode="numeric" placeholder="Ej: 12456">
+                </div>
+                <button type="button" class="btn btn-sm btn-dark fw-bold" id="otfFactBuscarBtn"
+                        onclick="OT2F.factConsultar()">
+                  <i class="bi bi-search me-1"></i>Consultar
+                </button>
+              </div>
+              <div id="otfFactPreview" class="mt-2" style="display:none"></div>
+              <div id="otfFactJustifWrap" class="mt-2" style="display:none">
+                <label class="form-label small fw-semibold mb-1" style="color:#92400e">
+                  ¿Por qué corresponde esta factura si el RUT no coincide? <span class="text-danger">*</span>
+                </label>
+                <textarea id="otfFactJustif" class="form-control form-control-sm" rows="2"
+                          placeholder="Ej: factura emitida al holding / casa matriz del cliente"></textarea>
+              </div>
+              <button type="button" class="btn btn-sm fw-bold mt-2" id="otfFactAsociarBtn"
+                      style="background:#dc2626;color:#fff;display:none" onclick="OT2F.factAsociar()">
+                <i class="bi bi-link-45deg me-1"></i>Asociar documento a esta OT
+              </button>
+              <div class="small text-danger mt-1" id="otfFactErr" style="min-height:16px"></div>
             </div>
-          </div>
-          {% endif %}
-        </div>
-        {% else %}
-        <div class="mb-3 p-3" id="otfFactGate" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px">
-          <div class="fw-bold small mb-1" style="color:#991b1b">
-            <i class="bi bi-lock-fill me-1"></i>Firma bloqueada: OT cobrable sin documento
-          </div>
-          <div class="small mb-2" style="color:#7f1d1d">
-            Asocia el documento del ERP — factura, boleta o nota de venta — para
-            poder firmar el cierre. El RUT debe coincidir con el del cliente
-            ({{ (v.cliente_rut or '—') }}) — si no coincide, deberás explicar por qué.
-          </div>
-          <div class="d-flex gap-2 flex-wrap align-items-end">
-            <div>
-              <label class="form-label small fw-semibold mb-1">Tipo</label>
-              <select id="otfFactTipo" class="form-select form-select-sm" style="width:auto">
-                <optgroup label="Factura / boleta">
-                  <option value="FCV" selected>FCV — Factura</option>
-                  <option value="FCE">FCE — Factura exenta</option>
-                  <option value="BLV">BLV — Boleta</option>
-                </optgroup>
-                <optgroup label="Nota de venta (facturable después)">
-                  <option value="NVV">NVV — Nota de venta</option>
-                  <option value="NVI">NVI — Nota de venta instalación</option>
-                  <option value="VD">VD — Nota de venta directa (Nro. VDxxxxxxxx)</option>
-                  <option value="WEB">WEB — Nota de venta web (Nro. WEBxxxxxxx)</option>
-                </optgroup>
-              </select>
-            </div>
-            <div style="flex:1;min-width:150px">
-              <label class="form-label small fw-semibold mb-1">N° documento</label>
-              <input type="text" id="otfFactNumero" class="form-control form-control-sm" inputmode="numeric" placeholder="Ej: 12456">
-            </div>
-            <button type="button" class="btn btn-sm btn-dark fw-bold" id="otfFactBuscarBtn" onclick="OT2F.factConsultar()">
-              <i class="bi bi-search me-1"></i>Consultar
-            </button>
-          </div>
-          <div id="otfFactPreview" class="mt-2" style="display:none"></div>
-          <div id="otfFactJustifWrap" class="mt-2" style="display:none">
-            <label class="form-label small fw-semibold mb-1" style="color:#92400e">
-              ¿Por qué corresponde esta factura si el RUT no coincide? <span class="text-danger">*</span>
-            </label>
-            <textarea id="otfFactJustif" class="form-control form-control-sm" rows="2"
-                      placeholder="Ej: factura emitida al holding / casa matriz del cliente"></textarea>
-          </div>
-          <button type="button" class="btn btn-sm fw-bold mt-2" id="otfFactAsociarBtn"
-                  style="background:#dc2626;color:#fff;display:none" onclick="OT2F.factAsociar()">
-            <i class="bi bi-link-45deg me-1"></i>Asociar documento a esta OT
-          </button>
-          <div class="small text-danger mt-1" id="otfFactErr" style="min-height:16px"></div>
+            {% endif %}
 
-          {% if puede_cobertura %}
-          <div class="mt-3 pt-3" style="border-top:1px dashed #fecaca">
-            <div class="small fw-semibold mb-1" style="color:#7f1d1d">
-              ¿Esta visita no se le cobra al cliente?
+            {# Las acciones SIEMPRE presentes mientras la OT no esté cerrada.
+               No dependen de que falte algo: son la puerta para cambiar de
+               opinión con la información que aparece al final. #}
+            {% if not _es_int and puede_cobertura %}
+            <div class="otf-acciones">
+              {% if _mod_cobro in ('garantia', 'sin_costo') %}
+              <button type="button" class="otf-acc doc" id="otfQuitarGarBtn"
+                      onclick="OT2F.quitarGarantia()">
+                <i class="bi bi-arrow-counterclockwise"></i> Quitar cobertura y asociar documento
+              </button>
+              {% else %}
+              <button type="button" class="otf-acc gar otf-gar-btn" onclick="OT2F.declararGarantia()">
+                <i class="bi bi-shield-fill-check"></i> No se le cobra: declarar como garantía
+              </button>
+              {% endif %}
+              <a class="otf-acc" href="#otdCardFinanzas" data-bs-dismiss="modal"
+                 onclick="setTimeout(function(){ if(window.otdIrAFinanzas) otdIrAFinanzas(); }, 350)">
+                <i class="bi bi-cash-coin"></i> Gestionar costos y margen
+              </a>
             </div>
-            <div class="small mb-2" style="color:#991b1b">
-              Declárala como <strong>garantía</strong>: queda cerrable sin factura,
-              con tu nombre y el motivo registrados. Si había un documento de
-              cobro asociado, se anula.
+            {% if _mod_cobro not in ('garantia','sin_costo') and v.factura_nudo %}
+            <div class="small mt-1" style="color:#6b7280">
+              Si la declaras como garantía, el documento {{ v.factura_tido or 'FCV' }}
+              N° {{ v.factura_nudo }} quedará anulado en la OT.
             </div>
-            <button type="button" class="btn btn-sm fw-bold otf-gar-btn" id="otfGarBtn"
-                    style="background:#fff;color:#b45309;border:1.5px solid #f59e0b"
-                    onclick="OT2F.declararGarantia()">
-              <i class="bi bi-shield-fill-check me-1"></i>Declarar como garantía
-            </button>
+            {% endif %}
+            {% endif %}
+
+            {# Resumen económico, cuando ya está declarado #}
+            {% if _fin_resuelto %}
+            <div class="otf-fin-ok mt-2">
+              <div class="ln">
+                <span class="lbl">Precio al cliente</span>
+                <b>{{ '$' ~ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '—' }}</b>
+              </div>
+              <div class="ln">
+                <span class="lbl">Nos cuesta</span>
+                <b>{{ '$' ~ '{:,.0f}'.format((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0))|replace(',','.') }}</b>
+              </div>
+              {% if v.costo is not none %}
+              {% set _mrg = (v.costo|float) - ((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0)) %}
+              <div class="ln">
+                <span class="lbl">Margen</span>
+                <b class="{{ 'neg' if _mrg < 0 else 'pos' }}">{{ '$' ~ '{:,.0f}'.format(_mrg)|replace(',','.') }}</b>
+              </div>
+              {% endif %}
+            </div>
+            {% endif %}
           </div>
-          {% endif %}
         </div>
-        {% endif %}
+
+        {# ══ PASO 3 — FINANZAS ═══════════════════════════════════════════
+           Daniel, 2026-09-03: "las finanzas es muy importante... para saber
+           cuánto cobré yo, cuánto me cobraron a mí, cuánto gané, cuánto
+           perdí, tal cual como está, porque puede estar la opción de
+           despacho también".
+           Las tres cifras se ven juntas y el costo del técnico se escribe
+           ACÁ, no en otra pantalla: un candado que te manda a otro lado es
+           el mismo callejón sin salida del centro de costo. Despacho queda
+           opcional -- hay OT sin despacho, y exigir un cero explícito solo
+           entrena a la gente a escribir ceros. #}
+        {% set _cp = (v.costo_proveedor|float) if v.costo_proveedor is not none else None %}
+        {% set _cd = (v.costo_despacho|float) if v.costo_despacho else 0 %}
+        {% set _pv = (v.costo|float) if v.costo is not none else None %}
+        <div class="otd-fpaso {{ 'falta' if _falta_costo else 'listo' }}" id="otfPaso3">
+          <div class="hd"><span class="num">3</span> Finanzas de esta OT
+            <span class="est">{{ 'Falta' if _falta_costo else ('No aplica' if _es_int else 'Listo') }}</span>
+          </div>
+          <div class="bd">
+            {% if _es_int %}
+              <div class="text-muted small">
+                <i class="bi bi-info-circle me-1"></i>
+                Trabajo interno: no se le cobra a nadie ni hay proveedor que cobre.
+              </div>
+            {% else %}
+              <div class="otf-fin3">
+                <div class="c">
+                  <span class="l">Le cobré al cliente</span>
+                  <b class="v">{{ ('$' ~ '{:,.0f}'.format(_pv)|replace(',','.')) if _pv is not none else '—' }}</b>
+                </div>
+                <div class="c">
+                  <span class="l">Me cobró el técnico</span>
+                  <b class="v {{ 'pend' if _falta_costo }}">
+                    {{ ('$' ~ '{:,.0f}'.format(_cp + _cd)|replace(',','.')) if _cp is not none else 'Por declarar' }}</b>
+                  {% if _cp is not none and _cd %}
+                  <span class="d">{{ '$' ~ '{:,.0f}'.format(_cp)|replace(',','.') }} servicio
+                    + {{ '$' ~ '{:,.0f}'.format(_cd)|replace(',','.') }} despacho</span>
+                  {% endif %}
+                </div>
+                <div class="c">
+                  <span class="l">{{ 'Gané' if (_pv is not none and _cp is not none and (_pv - _cp - _cd) >= 0) else 'Resultado' }}</span>
+                  {% if _pv is not none and _cp is not none %}
+                  {% set _m = _pv - _cp - _cd %}
+                  <b class="v {{ 'neg' if _m < 0 else 'pos' }}">
+                    {{ '$' ~ '{:,.0f}'.format(_m)|replace(',','.') }}</b>
+                  <span class="d">{{ '%.1f'|format(_m * 100.0 / _pv) if _pv else '0.0' }}% de margen</span>
+                  {% else %}
+                  <b class="v pend">No se puede calcular</b>
+                  <span class="d">falta el costo del técnico</span>
+                  {% endif %}
+                </div>
+              </div>
+
+              {% if _falta_costo and puede_cobertura %}
+              <div class="otf-costo-box">
+                <div class="fw-bold small mb-1" style="color:#991b1b">
+                  <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                  ¿Cuánto nos cobró {{ v.tecnico_nombre or 'el técnico/proveedor' }}?
+                </div>
+                <div class="small mb-2" style="color:#7f1d1d">
+                  Sin este dato el margen sale inflado — arriba diría que ganaste
+                  todo el precio del documento.
+                </div>
+                <div class="otf-costo-row">
+                  <div>
+                    <label class="form-label small fw-semibold mb-1">Servicio (CLP) *</label>
+                    <input type="number" id="otfCostoProv" class="form-control form-control-sm"
+                           inputmode="numeric" min="0" placeholder="Ej: 85000">
+                  </div>
+                  <div>
+                    <label class="form-label small fw-semibold mb-1">Despacho (opcional)</label>
+                    <input type="number" id="otfCostoDesp" class="form-control form-control-sm"
+                           inputmode="numeric" min="0" placeholder="0"
+                           value="{{ '{:.0f}'.format(_cd) if _cd else '' }}">
+                  </div>
+                  <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="OT2F.guardarCosto()">
+                    <i class="bi bi-check-lg me-1"></i>Guardar
+                  </button>
+                </div>
+                <div class="small mt-1" style="color:#7f1d1d">
+                  Si el trabajo no tuvo costo para nosotros, escribe <b>0</b> —
+                  eso también es un dato, y queda registrado como tal.
+                </div>
+              </div>
+              {% elif puede_cobertura %}
+              <div class="otf-acciones">
+                <a class="otf-acc" href="#otdCardFinanzas" data-bs-dismiss="modal"
+                   onclick="setTimeout(function(){ if(window.otdIrAFinanzas) otdIrAFinanzas(); }, 350)">
+                  <i class="bi bi-pencil-square"></i> Corregir las cifras
+                </a>
+              </div>
+              {% endif %}
+            {% endif %}
+          </div>
+        </div>
+
+        {# ══ PASO 4 — LO QUE YA ESTÁ FIRMADO ═════════════════════════════
+           Antes esto vivía DENTRO del paso 1 (por eso el modal saltaba de
+           "1" a "3" y la tarjeta de compromiso quedaba colgando bajo
+           "Finanzas"). Es su propio paso: lo que ya se recogió en terreno. #}
+        {% set _firmas_ok = v.firma_tecnico_url and (v.firma_cliente_url or _es_int) %}
+        <div class="otd-fpaso {{ 'listo' if _firmas_ok }}" id="otfPaso4">
+          <div class="hd"><span class="num">4</span> Lo que ya está firmado
+            <span class="est">{{ 'Listo' if _firmas_ok else 'Parcial' }}</span>
+          </div>
+          <div class="bd">
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <div style="border:1.5px solid {{ '#16a34a' if v.firma_tecnico_url else '#cbd5e1' }};
+                            background:{{ '#f0fdf4' if v.firma_tecnico_url else '#f8fafc' }};
+                            border-radius:8px;padding:8px;text-align:center">
+                  <div style="font-size:.65rem;font-weight:700;
+                              color:{{ '#15803d' if v.firma_tecnico_url else '#94a3b8' }};
+                              text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+                    <i class="bi bi-tools me-1"></i>Técnico
+                  </div>
+                  {% if v.firma_tecnico_url %}
+                    <img src="{{ v.firma_tecnico_url }}" alt="Firma técnico"
+                         style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
+                  {% else %}
+                    <div class="text-muted small">Sin firma</div>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="col-6">
+                <div style="border:1.5px solid {{ '#16a34a' if v.firma_cliente_url else '#cbd5e1' }};
+                            background:{{ '#f0fdf4' if v.firma_cliente_url else '#f8fafc' }};
+                            border-radius:8px;padding:8px;text-align:center">
+                  <div style="font-size:.65rem;font-weight:700;
+                              color:{{ '#15803d' if v.firma_cliente_url else '#94a3b8' }};
+                              text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+                    <i class="bi bi-person-badge me-1"></i>Cliente
+                  </div>
+                  {% if v.firma_cliente_url %}
+                    <img src="{{ v.firma_cliente_url }}" alt="Firma cliente"
+                         style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
+                  {% elif _es_int %}
+                    <div class="text-muted small" style="font-size:.7rem">Trabajo interno — no aplica</div>
+                  {% else %}
+                    <div class="text-muted small" style="font-size:.7rem">No capturada en sitio</div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.82rem">
+                <div>
+                  <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Cliente</div>
+                  <div class="fw-bold">{{ v.razon_social or 'Trabajo interno' }}</div>
+                </div>
+                <div>
+                  <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Técnico</div>
+                  <div class="fw-bold">{{ v.tecnico_nombre or '—' }}</div>
+                </div>
+                <div>
+                  <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Fecha programada</div>
+                  <div class="fw-bold">{{ v.fecha_programada | chile_fmt('%d/%m/%Y') if v.fecha_programada else '—' }}</div>
+                </div>
+                <div>
+                  <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Firmada por técnico</div>
+                  <div class="fw-bold">{{ v.firma_tecnico_at | chile_fmt('%d/%m %H:%M') if v.firma_tecnico_at else '—' }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="resp-firma-card">
           <div class="resp-firma-head">
@@ -3950,70 +4275,9 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           </div>
         </div>
 
-        <div class="mb-3" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.82rem">
-            <div>
-              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Cliente</div>
-              <div class="fw-bold">{{ v.razon_social or 'Trabajo interno' }}</div>
-            </div>
-            <div>
-              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Técnico</div>
-              <div class="fw-bold">{{ v.tecnico_nombre or '—' }}</div>
-            </div>
-            <div>
-              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Fecha programada</div>
-              <div class="fw-bold">{{ v.fecha_programada | chile_fmt('%d/%m/%Y') if v.fecha_programada else '—' }}</div>
-            </div>
-            <div>
-              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Firmada por técnico</div>
-              <div class="fw-bold">{{ v.firma_tecnico_at | chile_fmt('%d/%m %H:%M') if v.firma_tecnico_at else '—' }}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="mb-3">
-          <label class="form-label small fw-bold mb-2" style="color:#0f172a">
-            <i class="bi bi-check2-circle text-success me-1"></i>Firmas ya capturadas
-          </label>
-          <div class="row g-2">
-            <div class="col-6">
-              <div style="border:1.5px solid #16a34a;background:#f0fdf4;border-radius:8px;padding:8px;text-align:center">
-                <div style="font-size:.65rem;font-weight:700;color:#15803d;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
-                  <i class="bi bi-tools me-1"></i>Técnico
-                </div>
-                {% if v.firma_tecnico_url %}
-                  <img src="{{ v.firma_tecnico_url }}" alt="Firma técnico"
-                       style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
-                {% else %}
-                  <div class="text-muted small">Sin firma</div>
-                {% endif %}
-              </div>
-            </div>
-            <div class="col-6">
-              <div style="border:1.5px solid {{ '#16a34a' if v.firma_cliente_url else '#cbd5e1' }};
-                          background:{{ '#f0fdf4' if v.firma_cliente_url else '#f8fafc' }};
-                          border-radius:8px;padding:8px;text-align:center">
-                <div style="font-size:.65rem;font-weight:700;
-                            color:{{ '#15803d' if v.firma_cliente_url else '#94a3b8' }};
-                            text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
-                  <i class="bi bi-person-badge me-1"></i>Cliente
-                </div>
-                {% if v.firma_cliente_url %}
-                  <img src="{{ v.firma_cliente_url }}" alt="Firma cliente"
-                       style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
-                {% else %}
-                  <div class="text-muted small" style="font-size:.7rem">No capturada en sitio</div>
-                {% endif %}
-              </div>
-            </div>
-          </div>
-        </div>
-
-          </div>
-        </div>
         {# ══ PASO 3 — TU FIRMA ═══════════════════════════════════════════ #}
-        <div class="otd-fpaso">
-          <div class="hd"><span class="num">3</span> Tu firma</div>
+        <div class="otd-fpaso" id="otfPaso5">
+          <div class="hd"><span class="num">5</span> Tu firma</div>
           <div class="bd">
 
         <div class="mb-2">
@@ -4072,7 +4336,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <i class="bi bi-arrow-left me-1"></i>Cerrar
         </button>
         <button type="button" class="btn btn-success fw-bold" id="otfBtnAprobConfirm"
-                onclick="OT2F.confirmarAprobacion()" style="padding:.6rem 1.4rem;font-size:.95rem">
+                onclick="OT2F.intentarCerrar()" style="padding:.6rem 1.4rem;font-size:.95rem">
           <i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT
         </button>
       </div>
@@ -7377,6 +7641,23 @@ const OT2F = (function(){
   // viaja al frontend si el usuario tiene permiso de metadata (dato
   // financiero sensible, un técnico no debe verlo ni en el HTML fuente).
   const COSTO_ACTUAL = {{ (v.costo | float) if (v.costo and puede_metadata) else 0 }};
+  /* Estado financiero ACTUAL de la OT (2026-09-03).
+     /ot/api/finanzas reescribe la fila financiera COMPLETA en un solo
+     UPDATE, así que cualquier guardado parcial desde el modal de cierre
+     tiene que reenviar lo que ya estaba o lo deja en NULL -- ahí es donde
+     se perdería la factura que costó asociar. Esto es esa foto.
+     Mismo gate que COSTO_ACTUAL: son datos financieros, no viajan al
+     navegador de quien no puede verlos. */
+  const OTF_FIN_ACTUAL = {{ {
+      'centro_costo':    v.centro_costo or '',
+      'costo':           (v.costo | float) if v.costo is not none else None,
+      'zz_codigo':       v.zz_codigo or '',
+      'zz_monto':        (v.zz_monto | float) if v.zz_monto is not none else None,
+      'factura_tido':    v.factura_tido or '',
+      'factura_nudo':    v.factura_nudo or '',
+      'garantia':        ((v.modalidad_cobro or '')|lower == 'garantia'),
+      'garantia_motivo': v.garantia_motivo or '',
+    } | tojson if puede_cobertura else '{}' | safe }};
   // Cifras ya calculadas por ot2_detalle() para el resto de la pantalla
   // (chips "Obligatorias"/"Avance") -- se reusan acá para el aviso suave de
   // "quedan tareas OPCIONALES sin marcar" antes de abrir la firma del
@@ -8130,6 +8411,102 @@ const OT2F = (function(){
     }
   }
 
+  /* Lleva al paso que falta y lo hace latir. Es la diferencia entre un
+     modal que te dice "no" y uno que te muestra dónde arreglarlo. */
+  function irAPaso(id){
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({behavior:'smooth', block:'center'});
+    el.classList.remove('senala');
+    void el.offsetWidth;          // reinicia la animación
+    el.classList.add('senala');
+    setTimeout(() => el.classList.remove('senala'), 2200);
+  }
+
+  /* Los tres rectángulos del centro de costo escriben en el <select>
+     oculto y guardan solos: un botón "Guardar" extra al lado de una
+     elección de tres opciones es un paso de más. */
+  function setCC(btn){
+    const grid = document.getElementById('otfCcGrid');
+    if (grid) grid.querySelectorAll('.otd-cc').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    const sel = document.getElementById('otfModalCentroCosto');
+    if (sel) sel.value = btn.dataset.cc || '';
+    guardarCentroCosto();
+  }
+
+  /* Cuánto nos cobró el técnico/proveedor. Se escribe DENTRO del modal a
+     propósito (Daniel, 2026-09-03): un candado que te manda a otra
+     pantalla es el mismo callejón sin salida que tenía el centro de costo.
+     Reusa /ot/api/finanzas, que ya es el dueño de estas columnas y está
+     gobernado por el mismo permiso de cobertura -- pero le manda TAMBIÉN
+     lo que ya estaba declarado, porque ese endpoint reescribe la fila
+     financiera completa y omitir un campo lo dejaría en NULL. */
+  async function guardarCosto(){
+    const inp = document.getElementById('otfCostoProv');
+    const inpD = document.getElementById('otfCostoDesp');
+    const raw = inp ? String(inp.value).trim() : '';
+    if (raw === ''){
+      ilusToast('Escribe cuánto nos cobró. Si no tuvo costo, pon 0.', {type:'warning'});
+      if (inp) inp.focus();
+      return;
+    }
+    const cp = parseFloat(raw.replace(/[^0-9.]/g, ''));
+    if (!isFinite(cp) || cp < 0){
+      ilusToast('El costo tiene que ser un número mayor o igual a 0.', {type:'warning'});
+      if (inp) inp.focus();
+      return;
+    }
+    const rawD = inpD ? String(inpD.value).trim() : '';
+    const cd = rawD === '' ? 0 : parseFloat(rawD.replace(/[^0-9.]/g, ''));
+    if (!isFinite(cd) || cd < 0){
+      ilusToast('El despacho tiene que ser un número mayor o igual a 0.', {type:'warning'});
+      if (inpD) inpD.focus();
+      return;
+    }
+    const cuerpo = {
+      costo_proveedor: cp,
+      costo_despacho: cd,
+      // Se reenvía lo que YA está declarado: /ot/api/finanzas hace un
+      // UPDATE de toda la fila financiera, así que omitir estos campos
+      // borraría la factura, el centro de costo y la cobertura.
+      centro_costo: OTF_FIN_ACTUAL.centro_costo || '',
+      costo: OTF_FIN_ACTUAL.costo,
+      zz_codigo: OTF_FIN_ACTUAL.zz_codigo || '',
+      zz_monto: OTF_FIN_ACTUAL.zz_monto,
+      factura_tido: OTF_FIN_ACTUAL.factura_tido || '',
+      factura_nudo: OTF_FIN_ACTUAL.factura_nudo || '',
+      garantia_aplica: OTF_FIN_ACTUAL.garantia,
+      garantia_motivo: OTF_FIN_ACTUAL.garantia_motivo || '',
+    };
+    try {
+      const r = await fetch(`/ot/api/finanzas/${VID}`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(cuerpo),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo guardar el costo');
+      ilusToast('✓ Costo del técnico guardado', {type:'success'});
+      setTimeout(() => location.reload(), 700);
+    } catch(e){
+      console.error('[OT2F.guardarCosto]', e);
+      ilusToast(e.message || 'No se pudo guardar el costo', {type:'error'});
+    }
+  }
+
+  /* El botón de cerrar no rebota: si falta algo, te lleva. */
+  function intentarCerrar(){
+    const pendiente = document.querySelector('#otfModalAprobacion .otd-fpaso.falta');
+    if (pendiente){
+      irAPaso(pendiente.id);
+      const t = (pendiente.querySelector('.hd') || {}).textContent || '';
+      ilusToast('Falta resolver: ' + t.replace(/\s+/g, ' ').replace('Falta', '').trim(),
+                {type:'warning'});
+      return;
+    }
+    confirmarAprobacion();
+  }
+
   async function guardarCentroCosto(){
     const sel = document.getElementById('otfModalCentroCosto');
     const valor = sel ? sel.value : '';
@@ -8156,6 +8533,7 @@ const OT2F = (function(){
   }
 
   return {
+    irAPaso, setCC, guardarCosto, intentarCerrar,
     abrirFirmaTecnico, abrirFirmaCliente, enviarFirma, liberarFirmaTecnico,
     enviarFirmaRemota, enviarFirmaWhatsApp, enviarFirmaAmbos,
     abrirAprobacion, confirmarAprobacion, rechazarAprobacion,

@@ -89872,7 +89872,12 @@ def mant_ot_aprobar_cierre(vid):
         # cliente_id incluido (2026-08-10) — ver comentario igual en
         # _ot_validar_cierre sobre por qué _ot_es_interna lo necesita.
         # centro_costo incluido (2026-08-27) — ver gate SIN_CENTRO_COSTO abajo.
-        "SELECT estado, modalidad_cobro, factura_nudo, cliente_id, centro_costo FROM mant_visitas WHERE id=%s",
+        # costo_proveedor + tipo incluidos (2026-09-03): el gate nuevo
+        # SIN_COSTO_PROVEEDOR los lee, y `tipo` lo necesita _ot_es_interna
+        # para reconocer las OT de revision interna (sin el, esa rama del
+        # chequeo era letra muerta y una OT interna podia quedar trabada).
+        "SELECT estado, modalidad_cobro, factura_nudo, cliente_id, centro_costo, "
+        "       costo_proveedor, tipo FROM mant_visitas WHERE id=%s",
         (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -89920,6 +89925,37 @@ def mant_ot_aprobar_cierre(vid):
             "ok": False,
             "error_codigo": "SIN_CENTRO_COSTO",
             "error": "Falta declarar el centro de costo de esta OT antes de firmar el cierre.",
+        }), 400
+    # 🔒 2026-09-03 (Daniel, textual): "necesito cerrar cuanto me cobro el
+    # tecnico, eso tiene que ser un impedimento de cierre. A partir de
+    # ahora tienen que estar esos datos completamente gestionados, para
+    # saber cuanto cobre yo, cuanto me cobraron a mi, cuanto gane, cuanto
+    # perdi".
+    #
+    # POR QUE IMPORTA Y NO ES BUROCRACIA: sin el costo del proveedor, el
+    # margen que muestra la ficha es el precio completo. La OT-2026-00150
+    # marcaba "Margen $8.607.787 · 100.0%" con el campo del tecnico vacio.
+    # Eso no es un dato incompleto, es un dato FALSO: el informe de
+    # resultados del departamento se arma con esa cifra.
+    #
+    # Se exige tambien en garantia a proposito -- ahi es donde MAS importa
+    # saber cuanto se entrego, porque es perdida pura. Trabajo interno
+    # queda exento igual que los otros dos candados (no hay proveedor a
+    # quien pagarle).
+    #
+    # El costo de DESPACHO sigue opcional: hay OT sin despacho, y exigir un
+    # cero explicito solo entrena a la gente a escribir ceros.
+    #
+    # Mismo kill-switch que los otros dos (ot_factura_gate_activo): si esto
+    # traba a alguien, Daniel lo apaga desde /mantenciones/configuracion sin
+    # esperar un deploy.
+    if _gate_on and not _ot_es_interna(v) and v.get("costo_proveedor") is None:
+        return jsonify({
+            "ok": False,
+            "error_codigo": "SIN_COSTO_PROVEEDOR",
+            "error": "Falta declarar cuánto nos cobró el técnico o proveedor. "
+                     "Sin ese dato el margen de la OT queda inflado y el "
+                     "informe de resultados sale mal.",
         }), 400
     # En trabajo INTERNO la firma del administrativo que revisa es la ÚNICA
     # contraparte del técnico (no hay cliente). Daniel 2026-08-08: "que un
