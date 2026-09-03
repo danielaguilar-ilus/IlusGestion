@@ -767,9 +767,21 @@
        con el overflow del bloque, nunca a media letra (REGLA #15). */
     .tl-bloque.b-compacto .b-horas{font-size:12px;line-height:1.1;-webkit-line-clamp:1}
 
-    /* Bloques angostos: primero pierden las horas, luego el texto */
-    .tl-bloque.b-narrow .b-horas{display:none}
-    .tl-bloque.b-tiny .b-cliente,.tl-bloque.b-tiny .b-horas{display:none}
+    /* 🔧 2026-09-03 (Daniel, viendo las dos burbujas de Jaizer lado a lado:
+       "¿por qué se ven con información distinta?").
+       Tenía razón: la corta caía en .b-narrow y esa regla ESCONDÍA la línea
+       de detalle entera, así que una decía "Trabajo interno · OT-2026-00164"
+       y la otra solo "Trabajo int…". Distinta información para dos trabajos
+       del mismo tipo, y justo la corta —la que menos se entiende sola— era
+       la que se quedaba muda.
+       Ahora la angosta no pierde la línea: la ABREVIA (ver actualizarBloque,
+       muestra "OT 163 · 10:30" en vez de comuna+documento+tipo+horario).
+       Las dos burbujas dicen lo mismo, cada una con el detalle que le
+       cabe. */
+    .tl-bloque.b-narrow .b-horas,
+    .tl-bloque.b-tiny .b-horas{display:-webkit-box;font-size:11px;line-height:1.15;
+      -webkit-line-clamp:1}
+    .tl-bloque.b-tiny .b-cliente{display:block}
     .tl-bloque.b-tiny{padding:0}
     /* 🔴 2026-09-03 (Daniel: "un trabajo de media hora, cómo lo veríamos en
        el resumen, porque es chiquitito").
@@ -2126,7 +2138,15 @@
     // duplicada ni atrasada (caso OT-133, del 01-09 al 04-09).
     const _md = (b.dias_total && b.dias_total > 1)
       ? ('Día ' + b.dia_n + ' de ' + b.dias_total + ' · ') : '';
-    setTexto($('.b-horas', nodo), _comuna + _doc + _md + _ot + _tipo + (b.ini || '') + '–' + (b.fin || ''));
+    // 🔧 2026-09-03: en la burbuja angosta no cabe comuna+documento+tipo+
+    // horario, pero eso no es razón para dejarla muda (era el reclamo de
+    // Daniel: "un trabajo de media hora... no dice mucha información").
+    // Se prioriza lo que IDENTIFICA la OT — su número y a qué hora parte —
+    // que es lo que se busca a 3 metros; el resto vive en el modal al
+    // tocarla.
+    const _detalleLargo = _comuna + _doc + _md + _ot + _tipo + (b.ini || '') + '–' + (b.fin || '');
+    const _detalleCorto = _numCorto + (b.ini ? ' · ' + b.ini : '');
+    setTexto($('.b-horas', nodo), (w < 9 ? _detalleCorto : _detalleLargo));
     // 2026-08-27 (Daniel: "sería bueno ver algún tipo de avance también en
     // las burbujas"). Antes solo se pintaba con la OT "ejecutando" — en
     // cualquier otro estado el ancho se forzaba a 0%, así que una OT
