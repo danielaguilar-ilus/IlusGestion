@@ -949,6 +949,37 @@ def register_tickets_routes(app, ctx):
                  REFERENCES tk_tickets(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+
+        # 2026-09-03 (Daniel: "el boton de traducir dura como diez segundos y
+        # se borra. Necesito que la traduccion sea permanente, pero si no, no
+        # tiene ni un sentido").
+        #
+        # POR QUE SE BORRABA: la traduccion se escribia SOLO en el DOM, y el
+        # hilo se repinta solo cada pocos segundos (cargar()). Al siguiente
+        # repintado el texto traducido desaparecia -- esos "diez segundos".
+        #
+        # Guardarla en el mensaje resuelve las dos mitades del pedido: deja
+        # de evaporarse EN pantalla, y sigue estando manana y para el resto
+        # del equipo. Ademas no se vuelve a pagar la llamada al traductor por
+        # el mismo texto.
+        try:
+            _cols_msg = {
+                (r.get("COLUMN_NAME") or "").lower()
+                for r in (mysql_fetchall(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tk_mensajes'"
+                ) or [])
+            }
+            if "traduccion" not in _cols_msg:
+                mysql_execute(
+                    "ALTER TABLE tk_mensajes ADD COLUMN traduccion MEDIUMTEXT NULL "
+                    "COMMENT 'Traduccion al espanol guardada, para que no se pierda al repintar el hilo'")
+            if "traduccion_idioma" not in _cols_msg:
+                mysql_execute(
+                    "ALTER TABLE tk_mensajes ADD COLUMN traduccion_idioma VARCHAR(10) NULL "
+                    "COMMENT 'Idioma detectado del texto original'")
+        except Exception as _e_trad:
+            print(f"[tickets] ALTER tk_mensajes.traduccion: {_e_trad}", flush=True)
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS tk_plantillas (
               id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -2240,8 +2271,27 @@ def register_tickets_routes(app, ctx):
         d = request.get_json(silent=True) or {}
         texto = (d.get("texto") or "").strip()
         target = (d.get("target") or "en").strip()[:10]
+        # 2026-09-03: si viene el id del mensaje, la traduccion se GUARDA y
+        # deja de perderse en el siguiente repintado del hilo.
+        try:
+            mensaje_id = int(d.get("mensaje_id")) if d.get("mensaje_id") else None
+        except (TypeError, ValueError):
+            mensaje_id = None
         if not texto:
             return jsonify({"ok": False, "error": "Texto vacío"}), 400
+        # Si ya se tradujo antes, se devuelve lo guardado: no se vuelve a
+        # pagar la llamada por el mismo texto ni se arriesga una redaccion
+        # distinta para el mismo mensaje.
+        if mensaje_id and target == "es":
+            _ya = mysql_fetchone(
+                "SELECT traduccion, traduccion_idioma FROM tk_mensajes WHERE id=%s",
+                (mensaje_id,)) or {}
+            if (_ya.get("traduccion") or "").strip():
+                return jsonify({
+                    "ok": True, "traduccion": _ya["traduccion"],
+                    "idioma_detectado": _ya.get("traduccion_idioma") or "",
+                    "guardada": True, "desde_cache": True,
+                })
         if len(texto) > 5000:
             texto = texto[:5000]
         cli = _gt_client()
@@ -2255,10 +2305,25 @@ def register_tickets_routes(app, ctx):
         try:
             res = cli.translate(texto, target_language=target)
             traduccion = _html_mod.unescape(res.get("translatedText") or "")
+            _idioma = res.get("detectedSourceLanguage") or ""
+            _guardada = False
+            if mensaje_id and target == "es" and traduccion:
+                try:
+                    mysql_execute(
+                        "UPDATE tk_mensajes SET traduccion=%s, traduccion_idioma=%s "
+                        " WHERE id=%s", (traduccion, _idioma[:10], mensaje_id))
+                    _guardada = True
+                except Exception as _e_g:
+                    # Que no se pueda guardar no invalida la traduccion: se
+                    # devuelve igual y se dice que no quedo guardada, en vez
+                    # de tumbar la operacion completa.
+                    print(f"[tk_api_traducir] no se pudo guardar en el mensaje "
+                          f"{mensaje_id}: {_e_g}", flush=True)
             return jsonify({
                 "ok": True,
                 "traduccion": traduccion,
-                "idioma_detectado": res.get("detectedSourceLanguage") or "",
+                "idioma_detectado": _idioma,
+                "guardada": _guardada,
             })
         except Exception as e:
             print(f"[tk_api_traducir] error: {e}", flush=True)
@@ -5594,7 +5659,7 @@ def register_tickets_routes(app, ctx):
         try:
             mensajes = mysql_fetchall(
                 "SELECT id, tipo, contenido, metadata, usuario, es_interno, message_date, created_at, "
-                "       to_email, cc_email, estado_envio "
+                "       to_email, cc_email, estado_envio, traduccion, traduccion_idioma "
                 "FROM tk_mensajes WHERE ticket_id=%s "
                 "ORDER BY COALESCE(message_date, created_at) ASC, id ASC", (tid,))
         except Exception as _e:
@@ -5607,6 +5672,7 @@ def register_tickets_routes(app, ctx):
                 "ORDER BY COALESCE(message_date, created_at) ASC, id ASC", (tid,))
             for _m in mensajes:
                 _m["to_email"] = None; _m["cc_email"] = None; _m["estado_envio"] = None
+                _m["traduccion"] = None; _m["traduccion_idioma"] = None
         adjuntos = mysql_fetchall(
             "SELECT id, mensaje_id, archivo_url, archivo_nombre, mime_type, file_size_kb, origen, created_at "
             "FROM tk_adjuntos WHERE ticket_id=%s ORDER BY id", (tid,))

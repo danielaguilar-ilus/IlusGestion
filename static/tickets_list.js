@@ -998,6 +998,56 @@ if(btnPurgar){
    'listo' cuando quedaron correos afuera es justo lo que hace que
    alguien crea que ya reviso y no vuelva.
    ═══════════════════════════════════════════════════════════════════ */
+/* 📊 2026-09-03 (Daniel: "me gustaria que tuviera una rayita de proceso,
+   una barra, para saber cuanto le falta, y que me de un informe de cuantos
+   tickets actualizo").
+
+   HONESTIDAD SOBRE LA BARRA: el servidor hace UNA sola llamada y no
+   informa avance parcial, asi que un porcentaje real no existe. Poner un
+   numero inventado subiendo al 90% seria mentir sobre algo que no sabemos.
+   Lo que SI sabemos es cuanto suele demorar, asi que la barra avanza por
+   ETAPAS declaradas ("leyendo el buzon", "revisando documentos") y se
+   queda esperando en la ultima hasta que llega la respuesta -- no finge
+   precision que no tiene. El informe de abajo, ese si es exacto: son los
+   numeros que devuelve el servidor. */
+function _tkBarraProgreso(){
+  let caja = document.getElementById('tkActBarra');
+  if (!caja){
+    caja = document.createElement('div');
+    caja.id = 'tkActBarra';
+    caja.style.cssText =
+      'position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:2000;' +
+      'min-width:min(420px,92vw);background:#0a0a0a;color:#fff;border-radius:14px;' +
+      'padding:14px 18px;box-shadow:0 18px 48px -12px rgba(0,0,0,.7);' +
+      'border:1px solid rgba(255,255,255,.12);font-size:.85rem';
+    caja.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">' +
+        '<i class="bi bi-envelope-arrow-down" style="color:#dc2626;font-size:1.1rem"></i>' +
+        '<b style="flex:1">Actualizando la bandeja</b>' +
+        '<span id="tkActPaso" style="font-size:.74rem;color:#a1a1aa"></span>' +
+      '</div>' +
+      '<div style="height:7px;border-radius:7px;background:rgba(255,255,255,.12);overflow:hidden">' +
+        '<div id="tkActFill" style="height:100%;width:0%;border-radius:7px;' +
+          'background:linear-gradient(90deg,#dc2626,#f87171);' +
+          'transition:width .5s cubic-bezier(.4,0,.2,1)"></div>' +
+      '</div>' +
+      '<div id="tkActDet" style="font-size:.72rem;color:#a1a1aa;margin-top:7px"></div>';
+    document.body.appendChild(caja);
+  }
+  caja.style.display = 'block';
+  const fill = document.getElementById('tkActFill');
+  const paso = document.getElementById('tkActPaso');
+  const det  = document.getElementById('tkActDet');
+  return {
+    etapa(pct, txt, sub){
+      if (fill) fill.style.width = pct + '%';
+      if (paso) paso.textContent = pct + '%';
+      if (det)  det.textContent = sub || txt || '';
+    },
+    cerrar(){ caja.style.display = 'none'; },
+  };
+}
+
 const btnActualizarBandeja = document.getElementById('btnActualizarBandeja');
 if (btnActualizarBandeja){
   btnActualizarBandeja.addEventListener('click', async function(){
@@ -1005,6 +1055,20 @@ if (btnActualizarBandeja){
     const _orig = btnActualizarBandeja.innerHTML;
     btnActualizarBandeja.innerHTML =
       '<span class="spinner-border spinner-border-sm me-1"></span>Actualizando…';
+    const barra = _tkBarraProgreso();
+    barra.etapa(8, '', 'Conectando con el buzón de soporte…');
+    // Las etapas se marcan por tiempo esperado, no por avance real del
+    // servidor -- ver el comentario de arriba. Si la respuesta llega antes,
+    // se cancelan y la barra salta al 100%.
+    const _pasos = [
+      [1200, 30, 'Leyendo los correos nuevos…'],
+      [4000, 55, 'Creando tickets y enganchando respuestas…'],
+      [9000, 78, 'Revisando documentos nuevos del ERP…'],
+      [16000, 90, 'Casi listo — el buzón tenía bastante que revisar…'],
+    ];
+    const _timers = _pasos.map(([ms, pct, txt]) =>
+      setTimeout(() => barra.etapa(pct, '', txt), ms));
+    const _limpiar = () => _timers.forEach(clearTimeout);
     try {
       const r = await fetch('/tickets/api/actualizar', {
         method:'POST',
@@ -1014,13 +1078,15 @@ if (btnActualizarBandeja){
       let d = null;
       try { d = await r.json(); } catch(_){ d = null; }
       if (!d){
+        _limpiar(); barra.cerrar();
         await ilusAlert({type:'error', title:'Sin respuesta del servidor',
-          message:'No sabemos si alcanzo a revisar el buzon. Recarga y vuelve a intentar.'});
+          message:'No sabemos si alcanzó a revisar el buzón. Recarga y vuelve a intentar.'});
         return;
       }
       if (!d.ok && !(d.correo && d.correo.ok)){
+        _limpiar(); barra.cerrar();
         await ilusAlert({type:'error', title:'No se pudo actualizar',
-          message: d.error || (d.correo && d.correo.error) || 'El buzon no respondio.'});
+          message: d.error || (d.correo && d.correo.error) || 'El buzón no respondió.'});
         return;
       }
       const c = d.correo || {}, doc = d.documentos || {};
@@ -1035,25 +1101,54 @@ if (btnActualizarBandeja){
       if (docNuevos) partes.push('<b>' + docNuevos + '</b> ticket' + (docNuevos===1?'':'s') + ' de instalacion desde el ERP');
       const avisos = (d.avisos || []);
       const hubo = nuevos + mensajes + docNuevos;
+      _limpiar();
+      barra.etapa(100, '', 'Listo');
+      await new Promise(r => setTimeout(r, 420));
+      barra.cerrar();
+      /* El informe que pidió Daniel: exacto, no aproximado. Se listan
+         también los ceros -- "0 tickets nuevos" es información: dice que
+         el buzón se revisó y no había nada, que es distinto de que no se
+         haya revisado. */
+      const _fila = (ico, n, txt, color) =>
+        '<div style="display:flex;align-items:center;gap:9px;padding:5px 0">' +
+          '<i class="bi bi-' + ico + '" style="color:' + color + ';width:18px"></i>' +
+          '<b style="min-width:34px;text-align:right;font-variant-numeric:tabular-nums">' + n + '</b>' +
+          '<span>' + txt + '</span></div>';
+      const informe =
+        _fila('envelope', revisados, 'correos revisados en el buzón', '#93c5fd') +
+        _fila('ticket-detailed', nuevos, 'tickets nuevos creados desde un correo',
+              nuevos ? '#4ade80' : '#71717a') +
+        _fila('chat-left-text', mensajes, 'respuestas de clientes enganchadas a su ticket',
+              mensajes ? '#4ade80' : '#71717a') +
+        _fila('receipt', docNuevos, 'tickets de instalación desde documentos del ERP',
+              docNuevos ? '#4ade80' : '#71717a');
       if (avisos.length){
         await ilusAlert({
           type: hubo ? 'warning' : 'error',
-          title: hubo ? 'Actualizado, pero quedo algo pendiente' : 'No se pudo completar',
-          message: partes.join(' · '),
-          sub: avisos.map(function(a){ return '• ' + a; }).join('<br>'),
+          title: hubo ? 'Actualizado, pero quedó algo pendiente' : 'No se pudo completar',
+          message: 'Esto es lo que alcanzó a hacer:',
+          sub: informe + '<div style="margin-top:9px;padding-top:9px;' +
+               'border-top:1px dashed rgba(0,0,0,.15)">' +
+               avisos.map(function(a){ return '⚠ ' + a; }).join('<br>') + '</div>',
           subHtml: true,
         });
-      } else if (hubo){
-        await ilusAlert({type:'success', title:'Bandeja al dia',
-          message: partes.join(' · '), subHtml:true});
       } else {
-        ilusToast('Nada nuevo — ' + revisados + ' correo(s) revisado(s), todo ya estaba en la bandeja.', {type:'info'});
+        await ilusAlert({
+          type: hubo ? 'success' : 'info',
+          title: hubo ? 'Bandeja al día' : 'Revisado — no había nada nuevo',
+          message: hubo
+            ? 'Esto es lo que entró:'
+            : 'Se revisó el buzón completo y todo lo que había ya estaba en la bandeja.',
+          sub: informe, subHtml: true,
+        });
       }
       if (hubo && typeof cargarTickets === 'function') cargarTickets();
     } catch(e){
-      await ilusAlert({type:'error', title:'Error de conexion',
+      _limpiar(); barra.cerrar();
+      await ilusAlert({type:'error', title:'Error de conexión',
         message:'No se pudo contactar al servidor: ' + (e.message || e)});
     } finally {
+      _limpiar(); barra.cerrar();
       btnActualizarBandeja.disabled = false;
       btnActualizarBandeja.innerHTML = _orig;
     }

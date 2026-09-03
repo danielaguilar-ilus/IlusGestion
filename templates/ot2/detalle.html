@@ -4188,6 +4188,18 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                   <i class="bi bi-pencil-square"></i> Corregir las cifras
                 </a>
               </div>
+              {% elif _falta_costo %}
+              {# 🔑 2026-09-03 (Daniel: "que no sea un candado sin llave").
+                 Si a quien abrió el modal le falta el permiso para declarar
+                 el costo, el candado lo dejaría mirando un muro. Se le dice
+                 QUIÉN puede resolverlo, en vez de repetirle que falta. #}
+              <div class="alert py-2 small mb-0 mt-2"
+                   style="background:#fff8e1;border:1px solid #fde68a;color:#92400e">
+                <i class="bi bi-key-fill me-1"></i>
+                <b>Tú no puedes declarar este costo.</b>
+                Lo declara un supervisor, un ejecutivo de Servicio Técnico o
+                un administrador — pídeselo y esta OT queda lista para cerrar.
+              </div>
               {% endif %}
             {% endif %}
           </div>

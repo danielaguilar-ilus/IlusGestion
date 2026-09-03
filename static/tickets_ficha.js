@@ -664,10 +664,17 @@ try{
     document.getElementById('rpTradIdiomaLabel').textContent = a.dataset.nombre;
   });
 
-  async function llamarTraductor(texto, target){
+  /* `mensajeId` es opcional: cuando viaja, el backend GUARDA la traducción
+     en el mensaje (2026-09-03, Daniel: "el botón de traducir dura como diez
+     segundos y se borra, necesito que la traducción sea permanente"). El
+     traductor del composer no manda id -- ahí se traduce un borrador que
+     todavía no existe como mensaje. */
+  async function llamarTraductor(texto, target, mensajeId){
+    const cuerpo = { texto: texto, target: target };
+    if (mensajeId) cuerpo.mensaje_id = mensajeId;
     const r = await fetch('/tickets/api/traducir', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto: texto, target: target }),
+      body: JSON.stringify(cuerpo),
     });
     return r.json();
   }
@@ -700,19 +707,44 @@ try{
   // porque el hilo se re-renderiza en cada cargar().
   window.tkTraducirMensaje = async function(btn, mid){
     const cont = document.getElementById('rpTrad_' + mid);
-    if (cont.style.display !== 'none'){ cont.style.display = 'none'; return; }
+    if (!cont) return;
+    // Ya traducido: el botón solo muestra/oculta, no vuelve a traducir.
+    if (cont.style.display !== 'none' && (cont.textContent || '').trim()){
+      cont.style.display = 'none';
+      btn.innerHTML = '<i class="bi bi-translate"></i> Traducir';
+      return;
+    }
+    if ((cont.textContent || '').trim()){
+      cont.style.display = 'block';
+      btn.innerHTML = '<i class="bi bi-translate"></i> Ocultar traducción';
+      return;
+    }
     const texto = btn.dataset.texto || '';
     if (!texto.trim()) return;
     const original = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     try{
-      const d = await llamarTraductor(texto, 'es');
+      const d = await llamarTraductor(texto, 'es', mid);
       if (!d.ok){ ilusToast(d.error || 'No se pudo traducir', { type: 'error' }); return; }
       cont.textContent = d.traduccion;
       cont.style.display = 'block';
+      // Se avisa solo cuando NO se pudo guardar: si quedó guardada, el
+      // usuario lo va a notar solo (sigue ahí al repintar). Decirlo cuando
+      // falló evita que crea que quedó y después se lleve la sorpresa.
+      if (d.guardada === false){
+        ilusToast('Traducida, pero no se pudo guardar — se perderá al recargar.',
+                  { type: 'warning' });
+      }
     }catch(e){ ilusToast('Error de red al traducir', { type: 'error' }); }
-    finally{ btn.disabled = false; btn.innerHTML = original; }
+    finally{
+      btn.disabled = false;
+      // Si quedó traducción a la vista, el botón pasa a ser el de ocultar.
+      const _c = document.getElementById('rpTrad_' + mid);
+      btn.innerHTML = (_c && _c.style.display !== 'none' && (_c.textContent||'').trim())
+        ? '<i class="bi bi-translate"></i> Ocultar traducción'
+        : original;
+    }
   };
 
   // 2026-07-19 (Fable) — Copiar mensaje (NUEVO, aditivo, Regla #4.2 no afecta
@@ -1404,8 +1436,16 @@ function renderThread(mensajes, adjuntos){
     // esc() que ya usa el resto del bubble, atributo HTML-safe).
     const tradHtml = esCliente
       ? '<button type="button" class="rp-btn-traducir" data-texto="'+esc(m.contenido||'')+'" '
-        + 'onclick="tkTraducirMensaje(this,'+m.id+')"><i class="bi bi-translate"></i> Traducir</button>'
-        + '<div class="rp-traduccion" id="rpTrad_'+m.id+'" style="display:none"></div>'
+        + 'onclick="tkTraducirMensaje(this,'+m.id+')"><i class="bi bi-translate"></i> '
+        + (m.traduccion ? 'Ocultar traducción' : 'Traducir') + '</button>'
+        /* 🔧 2026-09-03: si el mensaje YA tiene traducción guardada, se
+           pinta de entrada y visible. Antes esto nacía siempre vacío y
+           oculto, así que el repintado del hilo —que ocurre solo cada
+           pocos segundos— borraba lo que el usuario acababa de traducir.
+           Eran "los diez segundos" que reportó Daniel. */
+        + '<div class="rp-traduccion" id="rpTrad_'+m.id+'"'
+          + (m.traduccion ? '>' + esc(m.traduccion) : ' style="display:none">')
+          + '</div>'
       : '';
     // 2026-07-19 (Fable): Copiar -- NUEVO, aditivo (ver window.tkCopiarMensaje).
     const copiarHtml = '<button type="button" class="rp-btn-copiar" onclick="tkCopiarMensaje(this)" aria-label="Copiar mensaje">'
