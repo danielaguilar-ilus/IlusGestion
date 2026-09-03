@@ -2076,10 +2076,21 @@
           <div class="otd-din" style="padding:0 0 10px">
             <div class="row"><span>Estado</span><b>Sin anexo</b></div>
           </div>
+          {# 🔒 2026-09-02 (Daniel: "obviamente que bloquearía, pero es
+             necesario declarar los datos para avanzar"). Desde hoy, una OT
+             de proveedor externo SIN anexo firmado queda bloqueada para el
+             técnico. Gestión tiene que enterarse ACÁ, al abrir la OT -- no
+             cuando el técnico llame desde el gimnasio diciendo que no
+             puede entrar. #}
+          <div class="otd-anx-lock" style="margin-bottom:10px">
+            <i class="bi bi-lock-fill"></i>
+            <span><b>El técnico no puede trabajar esta OT.</b>
+              Si la ejecuta un proveedor externo, sin anexo firmado no puede ni verla.
+              Créalo acá abajo y mándaselo a firmar.</span>
+          </div>
           <div class="otf-hint" style="margin-bottom:10px">
             El anexo es el documento que firma el <b>proveedor externo</b> antes de
-            ejecutar. Si esta OT la hace un proveedor, sin anexo firmado no debería
-            trabajarla.
+            ejecutar: fija el precio pactado y las condiciones del servicio.
           </div>
           <button type="button" class="otd-btn pri" style="width:100%;justify-content:center"
                   onclick="OT2ANX.abrir({{ v.id }})">

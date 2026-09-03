@@ -70791,11 +70791,19 @@ def mant_visita_iniciar(vid):
     # igual (misma excepción que el candado de técnico asignado, arriba).
     _anexo_pend = _anexo_bloquea_ot(vid)
     if _anexo_pend and (getattr(g, "user", None) or {}).get("role", "").lower() != "superadmin":
+        # 2026-09-02: dos motivos distintos, dos mensajes distintos. Decirle
+        # "el anexo N° SIN_ANEXO no está firmado" a quien está en terreno
+        # sería una pared muda: tiene que saber qué falta y quién lo resuelve.
+        if _anexo_pend == "SIN_ANEXO":
+            _msg = ("Esta OT es de un proveedor externo y todavía no tiene "
+                    "Anexo de Servicios. No se puede iniciar el trabajo hasta "
+                    "que gestión lo cree y el proveedor lo firme.")
+        else:
+            _msg = (f"El Anexo de Servicios N° {_anexo_pend} de esta OT todavía no "
+                    f"está firmado por el proveedor. No se puede iniciar el trabajo "
+                    f"hasta que firme.")
         return jsonify({
-            "ok": False, "error_codigo": "ANEXO_SIN_FIRMAR",
-            "error": f"El Anexo de Servicios N° {_anexo_pend} de esta OT todavía no "
-                     f"está firmado por el proveedor. No se puede iniciar el trabajo "
-                     f"hasta que firme.",
+            "ok": False, "error_codigo": "ANEXO_SIN_FIRMAR", "error": _msg,
         }), 400
 
     mysql_execute(
@@ -82087,18 +82095,72 @@ def ot2_anexo_firma_submit(token):
     return jsonify({"ok": True, "mensaje": "Anexo firmado correctamente."})
 
 
-def _anexo_bloquea_ot(vid):
-    """¿Hay un anexo ligado a esta OT que todavía no está firmado?
+# 🔒 2026-09-02 — Desde esta fecha, una OT de proveedor EXTERNO exige
+# anexo firmado para poder trabajarse. Se acota por fecha de creación a
+# propósito: aplicarlo hacia atrás congelaría de golpe todas las OT que los
+# externos ya tienen asignadas y en curso, sin que eso ayude a declarar
+# ningún dato -- solo detendría trabajo comprometido con clientes. Las OT
+# creadas de acá en adelante nacen con la regla puesta.
+_ANEXO_OBLIGATORIO_DESDE = "2026-09-02"
 
-    Única fuente de verdad para el candado de `mant_visita_iniciar`. Un
-    anexo en 'borrador' (nunca se envió) NO bloquea — recién bloquea desde
-    que se manda a firmar, que es cuando existe un compromiso real
-    pendiente con el proveedor."""
+
+def _anexo_bloquea_ot(vid):
+    """¿Esta OT está trabada por el Anexo de Servicios del proveedor?
+
+    Única fuente de verdad para el candado de `_puede_ot_accion` (que lo
+    aplica a ver/ejecutar/configurar/firmar para el técnico asignado).
+
+    Dos motivos de bloqueo, y devuelve el número de anexo o un texto:
+
+    1. ANEXO ENVIADO Y SIN FIRMAR — el de siempre. Un anexo en 'borrador'
+       NO bloquea: recién hay compromiso real cuando se manda a firmar.
+
+    2. 🆕 PROVEEDOR EXTERNO SIN ANEXO — el hueco que faltaba. Daniel, desde
+       el 2026-08-26: "si no fue firmado, no puede realizar el trabajo", y
+       el 2026-09-02: "obviamente que bloquearía, pero es necesario declarar
+       los datos para avanzar". Hasta hoy, si NADIE creaba el anexo, el
+       externo trabajaba igual -- la regla se saltaba sola con no hacer
+       nada, que es la peor forma de tener una regla. Ahora la ausencia de
+       anexo bloquea igual que uno sin firmar.
+
+    Alcance del punto 2: solo OT creadas desde _ANEXO_OBLIGATORIO_DESDE y
+    solo cuando el técnico asignado es EXTERNO (un técnico propio no firma
+    contrato consigo mismo).
+    """
     try:
         row = mysql_fetchone(
             "SELECT numero FROM mant_anexos WHERE ot_id=%s "
             "  AND estado IN ('enviado','visto') LIMIT 1", (vid,))
-        return row["numero"] if row else None
+        if row:
+            return row["numero"]
+
+        # ── 2. Proveedor externo sin ningún anexo firmado ──────────────
+        _v = mysql_fetchone(
+            "SELECT v.tecnico_user_id, v.created_at, "
+            "       COALESCE(au.role,'') AS rol_tec, "
+            "       (SELECT COUNT(*) FROM mant_anexos a "
+            "         WHERE a.ot_id=v.id AND a.estado='firmado') AS n_firmados, "
+            "       (SELECT COUNT(*) FROM mant_tecnicos_externos te "
+            "         WHERE te.user_id = v.tecnico_user_id) AS es_ext_ficha "
+            "  FROM mant_visitas v "
+            "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+            " WHERE v.id=%s", (vid,))
+        if not _v:
+            return None
+        if int(_v.get("n_firmados") or 0) > 0:
+            return None                     # ya hay anexo firmado: libre
+        _creada = str(_v.get("created_at") or "")[:10]
+        if not _creada or _creada < _ANEXO_OBLIGATORIO_DESDE:
+            return None                     # OT anterior a la regla
+        # ¿El técnico asignado es externo? Mismo criterio doble que usa el
+        # resto del sistema: ficha en mant_tecnicos_externos O rol
+        # 'tecnico_externo' (en producción la tabla está vacía, ver el fix
+        # del 2026-08-29 en /mantenciones/api/tecnicos).
+        _es_ext = (int(_v.get("es_ext_ficha") or 0) > 0
+                   or (_v.get("rol_tec") or "").lower() == "tecnico_externo")
+        if not _es_ext:
+            return None
+        return "SIN_ANEXO"
     except Exception as e:
         print(f"[anexo_bloquea] {e}", flush=True)
         return None    # fail-open a propósito: un error de BD acá no debe
