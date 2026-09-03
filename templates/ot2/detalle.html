@@ -4065,26 +4065,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             {% endif %}
             {% endif %}
 
-            {# Resumen económico, cuando ya está declarado #}
-            {% if _fin_resuelto %}
-            <div class="otf-fin-ok mt-2">
-              <div class="ln">
-                <span class="lbl">Precio al cliente</span>
-                <b>{{ '$' ~ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '—' }}</b>
-              </div>
-              <div class="ln">
-                <span class="lbl">Nos cuesta</span>
-                <b>{{ '$' ~ '{:,.0f}'.format((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0))|replace(',','.') }}</b>
-              </div>
-              {% if v.costo is not none %}
-              {% set _mrg = (v.costo|float) - ((v.costo_proveedor|float if v.costo_proveedor else 0) + (v.costo_despacho|float if v.costo_despacho else 0)) %}
-              <div class="ln">
-                <span class="lbl">Margen</span>
-                <b class="{{ 'neg' if _mrg < 0 else 'pos' }}">{{ '$' ~ '{:,.0f}'.format(_mrg)|replace(',','.') }}</b>
-              </div>
-              {% endif %}
-            </div>
-            {% endif %}
+            {# 🔴 2026-09-03: acá vivía un resumen económico que repetía las
+               cifras del paso 3 -- y peor, mostraba "Margen $8.607.787 ·
+               100%" en una OT sin el costo del técnico declarado. Dos
+               números contradictorios en el mismo modal, y el que mentía
+               era el que se veía primero. Las finanzas viven en el paso 3,
+               que dice "No se puede calcular" cuando falta el dato. #}
           </div>
         </div>
 
