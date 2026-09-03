@@ -1705,7 +1705,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% endif %}
         </span>
         {% endfor %}
-        {% if puede_metadata %}
+        {# 🔒 2026-09-03 — con la OT cerrada tampoco se suma gente al
+           equipo. `puede_metadata` da True para superadmin aunque este
+           sellada (candado maestro), asi que el gate del ESTADO va aparte;
+           vuelve con el boton "Corregir". #}
+        {% if puede_metadata and not ot_solo_lectura %}
         <button type="button" class="otd-tec-add" onclick="otdAgregarColaborador()">
           <i class="bi bi-plus-lg"></i> Agregar técnico</button>
         {% endif %}
@@ -3127,13 +3131,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <i class="bi bi-exclamation-octagon-fill"></i>
                 <span><b>Fuera de servicio.</b> El cliente lo tiene detenido.</span>
               </div>
-              {% if puede_ejecutar %}
+              {% if puede_ejecutar and not ot_solo_lectura %}
               <button type="button" class="otd-fs-btn ok"
                       onclick="otdFueraServicio({{ e.id }}, true)">
                 <i class="bi bi-arrow-counterclockwise"></i> Volver a operativo</button>
               {% endif %}
               {% else %}
-              {% if puede_ejecutar %}
+              {# Marcar/quitar "fuera de servicio" cambia el estado del
+                 equipo del cliente: con la OT cerrada, no. #}
+              {% if puede_ejecutar and not ot_solo_lectura %}
               <button type="button" class="otd-fs-btn"
                       onclick="otdFueraServicio({{ e.id }}, false)">
                 <i class="bi bi-exclamation-octagon"></i> Marcar fuera de servicio</button>
