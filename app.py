@@ -12791,6 +12791,24 @@ def _es_rol_valido(slug):
         return slug in {"superadmin","admin","editor","lector","vendedor","ejecutivo"}
 
 
+# Permisos CONCEDIDOS POR OMISION: si el rol no tiene fila en
+# rol_permisos, se consideran DADOS, no negados. Son los que Daniel pidio
+# el 2026-09-02 "liberados para todos y que se puedan bloquear por el
+# front" -- ver como los lee _build_perms_from_matrix (`is None or ...`).
+#
+# BUG REAL encontrado el 2026-09-03 al ir a prender otro permiso: esta
+# funcion los devolvia en False cuando no habia fila, asi que /admin/roles
+# los dibujaba APAGADOS aunque estuvieran concedidos. Y como guardar la
+# matriz borra e inserta una fila por CADA accion, el primer "Guardar" de
+# ese rol escribia un 0 explicito y los bloqueaba de verdad -- en silencio
+# y sin que nadie lo hubiera pedido. El default de aca tiene que ser el
+# mismo que el de _build_perms_from_matrix o la pantalla miente.
+_PERMS_CONCEDIDOS_POR_OMISION = {
+    ("mantenciones", "reagendar"),
+    ("mantenciones", "reasignar_tecnico"),
+}
+
+
 def get_role_permissions(slug):
     """Devuelve dict {modulo:{accion:bool}} para un rol dado."""
     if slug == "superadmin":
@@ -12798,7 +12816,9 @@ def get_role_permissions(slug):
     rows = mysql_fetchall(
         "SELECT modulo,accion,permitido FROM rol_permisos WHERE rol_slug=%s", (slug,)
     )
-    perms = {m: {a: False for a in cfg["acciones"]} for m, cfg in PERMISSIONS_MATRIX.items()}
+    perms = {m: {a: ((m, a) in _PERMS_CONCEDIDOS_POR_OMISION)
+                 for a in cfg["acciones"]}
+             for m, cfg in PERMISSIONS_MATRIX.items()}
     for r in rows:
         if r["modulo"] in perms and r["accion"] in perms[r["modulo"]]:
             perms[r["modulo"]][r["accion"]] = bool(r["permitido"])
@@ -12813,7 +12833,11 @@ def has_role_permission(slug, modulo, accion):
         "SELECT permitido FROM rol_permisos WHERE rol_slug=%s AND modulo=%s AND accion=%s",
         (slug, modulo, accion)
     )
-    return bool(row and row.get("permitido"))
+    if row is None:
+        # Sin fila: manda el default de la accion (ver el comentario de
+        # _PERMS_CONCEDIDOS_POR_OMISION). Antes devolvia False siempre.
+        return (modulo, accion) in _PERMS_CONCEDIDOS_POR_OMISION
+    return bool(row.get("permitido"))
 
 
 # Roles nativos del sistema — protegidos por SLUG (no por is_system). NUNCA
