@@ -3431,7 +3431,27 @@ window.OT2C = (function(){
      estaba marcado a mano NO se pierde al filtrar -- se sigue mandando en
      la OT y la barra avisa cuantos son. */
   var O2M_TIPOS_CON_PLAN = ['preventiva','correctiva','visita_tecnica','inspeccion'];
-  var _o2mSoloPlan = true;   // lo puede apagar el usuario, ver eqTogSoloPlan
+  /* 🆕 2026-09-03 (Daniel, aclarando lo que en realidad pedía Aarón):
+     "el plan sí lo está efectuando, pero lo que quería Aarón es que el
+     checkbox actúe para que él seleccione, en un caso puntual, algo
+     excepcional... si vamos a hacer una mantención de un producto
+     puntual, ¿de qué manera excluimos todos los demás? Pongamos que es
+     una correctiva. Podríamos tener esa tercera opción que me permita
+     seleccionar productos que no sean del plan... o hacer una máquina
+     puntual".
+
+     Deja de ser un interruptor de dos estados y pasa a ser un MODO:
+       'plan'    — solo los del plan, marcados (lo correcto en preventiva)
+       'todos'   — todo el parque, sin tocar lo ya marcado
+       'puntual' — todo el parque y NADA marcado, para elegir a mano una o
+                   dos máquinas. Es el caso de la correctiva: vas a un
+                   equipo específico, no al plan completo.
+
+     El modo 'puntual' es el único que limpia la selección, y lo hace a
+     propósito: entrar a "voy por una máquina" arrastrando 81 equipos ya
+     marcados es exactamente lo que hace que alguien mande una OT con el
+     parque entero sin darse cuenta. */
+  var _o2mModoEq = 'plan';   // 'plan' | 'todos' | 'puntual'
 
   function _o2mPlanAplica(){
     return O2M_TIPOS_CON_PLAN.indexOf(S.tipo) >= 0;
@@ -3445,29 +3465,66 @@ window.OT2C = (function(){
   }
   function _o2mEquiposVista(){
     var base = _o2mEquiposBase();
-    if (!_o2mPlanAplica() || !_o2mSoloPlan) return base;
+    if (!_o2mPlanAplica() || _o2mModoEq !== 'plan') return base;
     return base.filter(function(m){ return !!m.aplica_mantencion; });
   }
   /* Boton de la barra: cuantos quedaron fuera por el plan y como verlos.
      Solo aparece en los tipos con plan -- en instalacion no tiene sentido. */
+  /* Los tres modos, como botones — no como un interruptor que hay que
+     adivinar en qué estado quedó. */
   function _o2mBarraPlan(){
     if (!_o2mPlanAplica()) return '';
     var base = _o2mEquiposBase();
-    var fuera = base.filter(function(m){ return !m.aplica_mantencion; }).length;
-    if (!fuera && _o2mSoloPlan) return '';   // no hay nada escondido: no molestar
+    var enPlan = base.filter(function(m){ return !!m.aplica_mantencion; }).length;
+    var fuera = base.length - enPlan;
     var selFuera = base.filter(function(m){
       return !m.aplica_mantencion && S.equipos.some(function(e){ return e.maquina_id === m.id; });
     }).length;
-    return '<button type="button" class="btn btn-sm o2m-eq-btn-todos" '+
-      'style="min-height:44px;border:1.5px dashed #d1d5db;background:#fff;color:#374151" '+
-      'title="El plan de mantencion decide que equipos entran a una mantencion o visita" '+
-      'onclick="OT2C.eqTogSoloPlan()">'+
-      (_o2mSoloPlan
-        ? '<i class="bi bi-funnel-fill me-1"></i>Solo del plan · ver ' + fuera + ' fuera del plan'
-        : '<i class="bi bi-funnel me-1"></i>Viendo todos · volver al plan')+
-      (selFuera ? ' <span style="color:#b45309">('+selFuera+' fuera del plan ya marcado'+(selFuera===1?'':'s')+')</span>' : '')+
-      '</button>';
+    var chip = function(modo, ico, txt, sub, titulo){
+      var on = (_o2mModoEq === modo);
+      return '<button type="button" class="o2m-eq-modo'+(on?' on':'')+'" '+
+        'title="'+esc(titulo)+'" onclick="OT2C.eqModo(\''+modo+'\')">'+
+        '<i class="bi bi-'+ico+'"></i><span><b>'+txt+'</b>'+
+        (sub ? '<small>'+sub+'</small>' : '')+'</span></button>';
+    };
+    return '<div class="o2m-eq-modos">'+
+      chip('plan', 'shield-check', 'Del plan', enPlan + ' equipos',
+           'Solo los equipos que están en el plan de mantención del cliente') +
+      chip('todos', 'grid-3x3-gap', 'Todos', base.length + ' equipos',
+           'Todo el parque del cliente, sin filtrar por plan') +
+      chip('puntual', 'crosshair', 'Máquina puntual', 'elige a mano',
+           'Para una correctiva sobre un equipo específico: muestra todo y parte sin nada marcado') +
+      (selFuera
+        ? '<span class="o2m-eq-modo-aviso">'+selFuera+' fuera del plan marcado'+
+          (selFuera===1?'':'s')+'</span>'
+        : '')+
+      '</div>';
   }
+
+  /* CSS de los modos — inyectado una sola vez, junto al resto del wizard. */
+  (function(){
+    if (document.getElementById('o2mEqModosCss')) return;
+    var st = document.createElement('style');
+    st.id = 'o2mEqModosCss';
+    st.textContent =
+      '.o2m-eq-modos{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:auto}' +
+      '.o2m-eq-modo{display:inline-flex;align-items:center;gap:8px;min-height:44px;' +
+        'padding:7px 13px;border-radius:11px;border:1.5px solid #d1d5db;background:#fff;' +
+        'color:#4b5563;cursor:pointer;transition:.15s;text-align:left}' +
+      '.o2m-eq-modo:hover{border-color:#9ca3af;background:#f9fafb}' +
+      '.o2m-eq-modo i{font-size:1.05rem;color:#9ca3af;transition:.15s}' +
+      '.o2m-eq-modo b{display:block;font-size:.78rem;font-weight:800;line-height:1.15}' +
+      '.o2m-eq-modo small{display:block;font-size:.66rem;color:#9ca3af;line-height:1.15}' +
+      '.o2m-eq-modo.on{border-color:#dc2626;background:#fef2f2;color:#991b1b}' +
+      '.o2m-eq-modo.on i{color:#dc2626}' +
+      '.o2m-eq-modo.on small{color:#b91c1c}' +
+      '.o2m-eq-modo-aviso{font-size:.72rem;font-weight:800;color:#b45309;' +
+        'background:#fff8e1;border:1px solid #fde68a;border-radius:50px;padding:4px 10px}' +
+      '@media (max-width:640px){.o2m-eq-modos{width:100%;margin-left:0}' +
+        '.o2m-eq-modo{flex:1;justify-content:center}' +
+        '.o2m-eq-modo small{display:none}}';
+    document.head.appendChild(st);
+  })();
 
   function pintarListaEquipos(){
     var c = document.getElementById('o2mEqList'); if(!c) return;
@@ -5828,10 +5885,23 @@ window.OT2C = (function(){
     o2mDayRenderMine();
     o2mChequearChoqueDebounced();
   }
-  /* Apaga/prende el filtro por plan de la lista de equipos. No toca lo que
-     el usuario ya marco: solo cambia QUE se ve (ver _o2mEquiposVista). */
-  function eqTogSoloPlan(){
-    _o2mSoloPlan = !_o2mSoloPlan;
+  /* Cambia el modo de la lista de equipos. 'plan' y 'todos' solo cambian
+     QUÉ SE VE -- lo que el usuario ya marcó no se toca. 'puntual' SÍ
+     limpia la selección, porque su razón de ser es partir de cero para ir
+     a un equipo específico; se avisa antes, no se borra a la mala. */
+  async function eqModo(modo){
+    if (modo === _o2mModoEq) return;
+    if (modo === 'puntual' && S.equipos.length){
+      var ok = await ilusConfirm({
+        title: 'Ir a una máquina puntual',
+        message: 'Se van a desmarcar los ' + S.equipos.length + ' equipos que tienes elegidos.',
+        sub: 'Es para partir de cero y marcar solo el equipo que hay que atender. Los checklists ya asignados se pierden con ellos.',
+        okLabel: 'Sí, empezar de cero', cancelLabel: 'Mejor no',
+      });
+      if (!ok) return;
+      S.equipos = [];
+    }
+    _o2mModoEq = modo;
     pintarListaEquipos(); refrescarAnclas(); _o2mFinEstimar();
   }
   function eqTog(mid){
@@ -6072,9 +6142,9 @@ window.OT2C = (function(){
   function setCli(id, nombre, rut){
     S.cliente = {id:id, nombre:nombre, rut: rut || ''};
     S.equipos = [];
-    // El filtro por plan vuelve a su default (encendido) en cada OT nueva:
-    // apagarlo es una decision de ESA OT, no una preferencia pegada.
-    _o2mSoloPlan = true;
+    // El modo vuelve a su default en cada OT nueva: cambiarlo es una
+    // decision de ESA OT, no una preferencia que se quede pegada.
+    _o2mModoEq = 'plan';
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
     repintarSeccion('equipos');
@@ -6563,7 +6633,7 @@ window.OT2C = (function(){
           abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar,
           setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
-          eqTogSoloPlan:eqTogSoloPlan,
+          eqModo:eqModo,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           _o2mAnexoPintarRutEstado:_o2mAnexoPintarRutEstado, anexoVerPdfPreview:anexoVerPdfPreview,

@@ -889,7 +889,7 @@
    qué falta. Ahora el color de cada hito vive SOLO en el icono; el
    contorno y la línea son verde (hecho) / rojo (pendiente), que es lo que
    se lee de un vistazo -- mismo semáforo del resto del proyecto. */
-.otd-h::before{content:"";position:absolute;top:42px;left:-50%;width:100%;height:3px;
+.otd-h::before{content:"";position:absolute;top:52px;left:-50%;width:100%;height:4px;
   border-radius:3px;background:var(--ejec);
   transition:background .6s ease}
 .otd-h:first-child::before{display:none}
@@ -914,10 +914,17 @@
    una pieza con volumen y no como una pastilla plana. El estado se sigue
    distinguiendo por saturación y brillo -- cumplido brilla, pendiente se
    apaga -- así el color no le roba el trabajo al semáforo. */
-.otd-h .p{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;
+/* 📏 2026-09-03 (Daniel, comparándolo con el de Transporte: "con ícono
+   grande, de color, palpitante... necesito que los íconos sean más
+   grandes"). El nodo pasa de 52 a 72px y el icono de 1.32 a 1.95rem --
+   el mismo peso visual que tiene el recorrido del envío, que es la
+   referencia que pidió. No es la copia: el semáforo verde/rojo del aro y
+   la línea se mantienen tal cual los definió el 02-09, porque eso es lo
+   que dice si la OT avanzó; lo que cambia es cuánto se ve. */
+.otd-h .p{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;
   background:radial-gradient(circle at 32% 26%,rgba(255,255,255,.09) 0%,rgba(255,255,255,.02) 55%,rgba(0,0,0,.35) 100%),#141416;
-  border:2.5px solid rgba(255,255,255,.14);
-  color:#71717a;font-size:1.32rem;z-index:1;position:relative;
+  border:3px solid rgba(255,255,255,.14);
+  color:#71717a;font-size:1.95rem;z-index:1;position:relative;
   transition:transform .25s cubic-bezier(.34,1.56,.64,1),
              border-color .5s ease,color .5s ease,box-shadow .5s ease,filter .5s ease}
 /* Brillo interior: da el volumen que Daniel pide ("con profundidad"). */
@@ -959,16 +966,28 @@
    pero atenuado -- se ve que existe, se ve que falta. */
 .otd-h:not(.ok):not(.now) .p{border-color:rgba(220,38,38,.5);
   color:var(--hc,#71717a)}
+/* ✅ 2026-09-03: sello de cumplido, tomado del recorrido de Transporte
+   (el ✓ verde pegado abajo a la derecha del círculo). Suma un segundo
+   indicio del mismo dato: el aro ya dice verde, pero a distancia el
+   check se reconoce antes que un color. Va en el nodo, no en la etiqueta,
+   para que se lea junto con el icono. */
+.otd-h.ok .p::after{content:"\F26E";font-family:"bootstrap-icons";
+  position:absolute;right:-2px;bottom:-2px;width:24px;height:24px;
+  border-radius:50%;display:grid;place-items:center;
+  background:linear-gradient(140deg,#22c55e,#15803d);color:#fff;
+  font-size:.78rem;font-weight:700;border:2.5px solid #141416;
+  box-shadow:0 3px 10px -2px rgba(22,163,74,.9)}
+
 /* Anillo que late SOLO en el hito actual — el "estás aquí" del recorrido. */
-.otd-h.now .p::after{content:"";position:absolute;inset:-9px;border-radius:50%;
-  border:2.5px solid var(--ejec);opacity:0;animation:otdTrackPing 2s ease-out infinite}
+.otd-h.now .p::after{content:"";position:absolute;inset:-11px;border-radius:50%;
+  border:3px solid var(--ejec);opacity:0;animation:otdTrackPing 2s ease-out infinite}
 @keyframes otdTrackPing{
   0%{transform:scale(.82);opacity:.75}
   75%{transform:scale(1.18);opacity:0}
   100%{opacity:0}
 }
 .otd-h:hover .p{transform:scale(1.09)}
-.otd-h .l{font-size:.78rem;font-weight:900;color:#a1a1aa;letter-spacing:.01em;
+.otd-h .l{font-size:.86rem;font-weight:900;color:#a1a1aa;letter-spacing:.01em;
   line-height:1.2;transition:color .5s ease}
 .otd-h.ok .l{color:#4ade80}
 .otd-h:not(.ok):not(.now) .l{color:#f87171}
@@ -1704,9 +1723,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      horizontal, que es como se lee un recorrido. */
   .otd-track{overflow:visible;padding-bottom:2px}
   .otd-h{min-width:0;flex:1 1 0;padding-top:10px;gap:5px}
-  .otd-h .p{width:32px;height:32px;font-size:.82rem;border-width:2px}
+  /* En el teléfono el recorrido tiene que seguir entrando COMPLETO de
+     lado (Daniel, 03-09: "que quepa dentro del teléfono, horizontal,
+     nunca vertical"). Crece de 32 a 44px -- se gana presencia sin que la
+     fila se desborde ni con 6 hitos. */
+  .otd-h .p{width:44px;height:44px;font-size:1.15rem;border-width:2px}
+  .otd-h.ok .p::after{width:17px;height:17px;font-size:.58rem;border-width:2px}
   .otd-h.ok .p,.otd-h.now .p{box-shadow:0 0 0 3px rgba(22,163,74,.15)}
-  .otd-h::before{top:26px;height:2px;}
+  .otd-h::before{top:32px;height:3px;}
   .otd-h .l{font-size:.5rem;letter-spacing:0;line-height:1.15;
     overflow-wrap:anywhere;hyphens:auto}
   .otd-h .t{font-size:.47rem;letter-spacing:-.02em;line-height:1.15}
