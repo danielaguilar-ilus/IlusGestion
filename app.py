@@ -77166,7 +77166,10 @@ def ot2_detalle(vid):
     # diagnóstico/observación y el desglose de OBLIGATORIAS por equipo
     # (antes solo existía el total agregado en `kpis`, no por máquina).
     equipos = mysql_fetchall(
+        # 2026-09-02: `estado_capturado` se suma para poder mostrar (y
+        # revertir) el marcado de "fuera de servicio" por equipo.
         "SELECT m.id, m.nombre, m.sku, m.serie, m.marca, m.foto_url, "
+        "       m.estado_capturado, "
         "       COALESCE(t.n, 0) AS n_tareas, COALESCE(t.ok, 0) AS n_ok, "
         "       COALESCE(t.obl, 0) AS n_obl, COALESCE(t.obl_ok, 0) AS n_obl_ok, "
         "       ve.estado_revision, ve.diagnostico_estado, ve.diagnostico_texto, "
@@ -78685,6 +78688,142 @@ def _ot_alta_equipos_al_cerrar(vid, usuario=None):
     except Exception as e:
         print(f"[ot2_alta_auto] vid={vid} falló (la OT se cierra igual): {e}",
               flush=True)
+
+
+@app.route("/ot/api/<int:vid>/equipo/<int:mid>/fuera-servicio", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_equipo_fuera_servicio(vid, mid):
+    """Marca un equipo FUERA DE SERVICIO desde la OT y levanta una urgencia.
+
+    🆕 2026-09-02 (Daniel: "botón fuera de servicio por equipo que levante
+    una urgencia... y que segregue los equipos como baja, o mejor como
+    fuera de servicio").
+
+    POR QUÉ "fuera de servicio" Y NO "baja": son cosas distintas y
+    confundirlas destruye información. `estado='baja'` significa que el
+    equipo YA NO ES del cliente -- desaparece de su parque, del contador de
+    equipos activos y de las futuras mantenciones. Una máquina detenida
+    SIGUE siendo del cliente: hay que verla, hay que arreglarla y hay que
+    cobrarla. Por eso esto escribe `estado_capturado='fuera_servicio'` +
+    `estado_op='critico'` y NO toca `estado`.
+
+    La urgencia se levanta como TICKET (tk_tickets, el eje de servicio
+    técnico) y no como incidencia: el ticket entra al flujo real de trabajo
+    -- se asigna, se convierte en OT, se cierra -- mientras que el módulo de
+    incidencias está en retiro. Prioridad 'urgente' y tipo 'repair'.
+
+    Es reversible: el mismo endpoint con `reactivar` devuelve el equipo a
+    operativo, porque un técnico se puede equivocar al marcarlo.
+    """
+    d = request.get_json(silent=True) or {}
+    reactivar = bool(d.get("reactivar"))
+    motivo = (d.get("motivo") or "").strip()[:400]
+
+    v = mysql_fetchone(
+        "SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+    m = mysql_fetchone(
+        "SELECT id, nombre, sku, serie, cliente_id, estado_capturado "
+        "  FROM mant_maquinas WHERE id=%s", (mid,))
+    if not m:
+        return _ot2_err("No encontramos ese equipo.", "EQUIPO_NO_EXISTE", http=404)
+    # El equipo tiene que ser del MISMO cliente de la OT: sin esto, un vid
+    # cualquiera podría marcar la máquina de otro cliente.
+    if v.get("cliente_id") and m.get("cliente_id") and \
+            int(v["cliente_id"]) != int(m["cliente_id"]):
+        return _ot2_err("Ese equipo no pertenece al cliente de esta OT.",
+                        "EQUIPO_DE_OTRO_CLIENTE", http=403)
+
+    if reactivar:
+        try:
+            mysql_execute(
+                "UPDATE mant_maquinas SET estado_capturado='operativo', "
+                "       estado_op='operativo', updated_by=%s "
+                " WHERE id=%s", (current_username() or "sistema", mid))
+            _mant_log("maquina", mid, "reactivado",
+                      f"Vuelve a operativo desde {v.get('numero_ot') or vid}"
+                      + (f" · {motivo}" if motivo else ""))
+        except Exception as e:
+            print(f"[fuera_servicio] reactivar mid={mid}: {e}", flush=True)
+            return _ot2_err("No pudimos reactivar el equipo.", "ERROR_INTERNO", http=500)
+        return jsonify({"ok": True, "estado": "operativo"})
+
+    if not motivo:
+        return _ot2_err(
+            "Explica por qué queda fuera de servicio: ese texto es el que "
+            "va a leer quien tome la urgencia.", "MOTIVO_REQUERIDO")
+
+    try:
+        mysql_execute(
+            "UPDATE mant_maquinas SET estado_capturado='fuera_servicio', "
+            "       estado_op='critico', updated_by=%s WHERE id=%s",
+            (current_username() or "sistema", mid))
+    except Exception as e:
+        print(f"[fuera_servicio] marcar mid={mid}: {e}", flush=True)
+        return _ot2_err("No pudimos marcar el equipo.", "ERROR_INTERNO", http=500)
+
+    # ── Urgencia: ticket de reparación, prioridad urgente ──────────────
+    ticket_num = None
+    try:
+        _cli = mysql_fetchone(
+            "SELECT razon_social, rut, contacto_email, contacto_tel, direccion, comuna "
+            "  FROM mant_clientes WHERE id=%s", (m.get("cliente_id") or v.get("cliente_id"))) or {}
+        _desc = (f"EQUIPO FUERA DE SERVICIO — {m.get('nombre') or 'equipo'}"
+                 + (f" (SKU {m['sku']})" if m.get("sku") else "")
+                 + (f" · Serie {m['serie']}" if m.get("serie") else "")
+                 + f"\nDetectado en {v.get('numero_ot') or ('OT #' + str(vid))}."
+                 + f"\nMotivo: {motivo}")
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tk_tickets "
+                    "(origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, "
+                    " email, phone, direccion, comuna_nombre, created_by) "
+                    "VALUES ('interno','open','repair','urgente',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (f"Fuera de servicio: {(m.get('nombre') or 'equipo')[:200]}",
+                     _desc,
+                     (_cli.get("rut") or "")[:12] or None,
+                     (_cli.get("razon_social") or "")[:150] or None,
+                     (_cli.get("contacto_email") or "")[:150] or None,
+                     (_cli.get("contacto_tel") or "")[:20] or None,
+                     (_cli.get("direccion") or "")[:255] or None,
+                     (_cli.get("comuna") or "")[:120] or None,
+                     current_username() or "sistema"))
+                _tid = cur.lastrowid
+                cur.execute(
+                    "UPDATE tk_tickets SET numero_ticket = "
+                    "CONCAT('TK-', YEAR(NOW()), '-', LPAD(id,5,'0')) WHERE id=%s", (_tid,))
+                cur.execute("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (_tid,))
+                _r = cur.fetchone()
+                ticket_num = (_r or {}).get("numero_ticket") if isinstance(_r, dict) else None
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        # La urgencia es importante, pero si falla NO se revierte la marca:
+        # el equipo está detenido igual, y perder ese dato sería peor que
+        # quedarse sin ticket. Queda registrado para poder crearlo a mano.
+        print(f"[fuera_servicio] ticket mid={mid} vid={vid}: {e}", flush=True)
+
+    try:
+        _mant_log("maquina", mid, "fuera_de_servicio",
+                  f"Marcado desde {v.get('numero_ot') or vid} · {motivo}"
+                  + (f" · urgencia {ticket_num}" if ticket_num else
+                     " · NO se pudo crear la urgencia, créala a mano"))
+        _mant_log("visita", vid, "equipo_fuera_de_servicio",
+                  f"{m.get('nombre') or ('Equipo #' + str(mid))}: {motivo}"
+                  + (f" · urgencia {ticket_num}" if ticket_num else ""))
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "estado": "fuera_servicio",
+                    "ticket": ticket_num,
+                    "aviso": None if ticket_num else
+                             "El equipo quedó marcado, pero no se pudo crear la "
+                             "urgencia automáticamente. Créala a mano desde Tickets."})
 
 
 @app.route("/ot/api/<int:vid>/equipos-desde-documento", methods=["POST"])

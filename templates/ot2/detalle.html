@@ -816,6 +816,21 @@
 .otd-wk-item .sel{font-size:.63rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;
   border-radius:99px;padding:3px 9px;white-space:nowrap;flex:none;min-width:74px;text-align:center}
 .otd-wk-body{padding:2px 16px 14px;border-top:1px solid #f4f5f7}
+/* ⛔ Fuera de servicio por equipo (2026-09-02). Rojo de verdad: una
+   máquina detenida es plata que el cliente no está produciendo. */
+.otd-fs-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0 0}
+.otd-fs-badge{flex:1;min-width:200px;display:flex;align-items:center;gap:8px;
+  background:#fef2f2;border:1px solid #fecaca;border-radius:9px;padding:8px 11px;
+  font-size:.78rem;color:#991b1b;line-height:1.35}
+.otd-fs-badge i{font-size:1rem;flex:none}
+.otd-fs-btn{border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:8px;
+  padding:7px 13px;font-size:.76rem;font-weight:800;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;min-height:36px;white-space:nowrap;
+  transition:background .14s,border-color .14s,color .14s}
+.otd-fs-btn:hover{background:#dc2626;border-color:#dc2626;color:#fff}
+.otd-fs-btn.ok{border-color:#bbf7d0;color:#15803d}
+.otd-fs-btn.ok:hover{background:#16a34a;border-color:#16a34a;color:#fff}
+
 .otd-wk-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0}
 .otd-wk-kv .k{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;font-weight:800}
 .otd-wk-kv .v{font-size:.82rem;color:#0a0a0a;font-weight:700}
@@ -2622,6 +2637,37 @@
               <div><div class="k">Revisado</div><div class="v">{{ e.revisado_at | chile_fmt('%d/%m %H:%M') }}{% if e.revisado_por %} · {{ e.revisado_por }}{% endif %}</div></div>
               {% endif %}
             </div>
+
+            {# ⛔ FUERA DE SERVICIO ══════════════════════════════════════
+               🆕 2026-09-02 (Daniel: "botón fuera de servicio por equipo
+               que levante una urgencia... y que segregue los equipos como
+               baja, o mejor como fuera de servicio").
+               OJO con la diferencia, que no es cosmética: dar de BAJA
+               significa que el equipo ya no es del cliente -- sale de su
+               parque y de las mantenciones futuras. Una máquina detenida
+               SIGUE siendo suya: hay que verla, arreglarla y cobrarla. Por
+               eso esto marca `fuera de servicio`, no `baja`. #}
+            {% set _fs = (e.estado_capturado or '') == 'fuera_servicio' %}
+            <div class="otd-fs-row" data-mid="{{ e.id }}">
+              {% if _fs %}
+              <div class="otd-fs-badge">
+                <i class="bi bi-exclamation-octagon-fill"></i>
+                <span><b>Fuera de servicio.</b> El cliente lo tiene detenido.</span>
+              </div>
+              {% if puede_ejecutar %}
+              <button type="button" class="otd-fs-btn ok"
+                      onclick="otdFueraServicio({{ e.id }}, true)">
+                <i class="bi bi-arrow-counterclockwise"></i> Volver a operativo</button>
+              {% endif %}
+              {% else %}
+              {% if puede_ejecutar %}
+              <button type="button" class="otd-fs-btn"
+                      onclick="otdFueraServicio({{ e.id }}, false)">
+                <i class="bi bi-exclamation-octagon"></i> Marcar fuera de servicio</button>
+              {% endif %}
+              {% endif %}
+            </div>
+
             {% if e.razon_saltado %}
             <div class="otd-wk-note">Saltado — motivo: {{ e.razon_saltado | replace('_',' ') | title }}</div>
             {% endif %}
@@ -3554,6 +3600,59 @@ window.otdVerAnexoPdf = function(aid){
     title: 'Anexo de servicios · OT {{ v.numero_ot or v.id }}',
     downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
   });
+};
+
+/* ══ FUERA DE SERVICIO POR EQUIPO ═════════════════════════════════════
+   🆕 2026-09-02 (Daniel: "botón fuera de servicio por equipo que levante
+   una urgencia"). Marcar exige MOTIVO: ese texto es el que va a leer quien
+   tome la urgencia, y sin él el ticket nace inútil. Revertir no lo exige:
+   equivocarse al marcar tiene que ser barato de deshacer. */
+window.otdFueraServicio = async function(mid, reactivar){
+  let motivo = '';
+  if (reactivar){
+    const ok = await ilusConfirm({
+      title: 'Volver a operativo',
+      message: '¿El equipo ya está funcionando?',
+      sub: 'Sale del estado "fuera de servicio". La urgencia que se creó no se ' +
+           'cierra sola: revísala en Tickets.',
+      okLabel: 'Sí, está operativo', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+  } else {
+    motivo = await ilusPrompt({
+      title: 'Marcar fuera de servicio',
+      message: '¿Qué le pasa al equipo?',
+      sub: 'Esto lo saca de operación y levanta una urgencia. Lo que escribas acá ' +
+         'es lo que va a leer quien la tome, así que sé concreto.',
+      placeholder: 'Ej: motor quemado, no enciende',
+      required: true,
+    });
+    if (!motivo) return;
+  }
+  try {
+    const r = await fetch(`/ot/api/{{ v.id }}/equipo/${mid}/fuera-servicio`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({motivo, reactivar: !!reactivar}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok){
+      await ilusAlert({title: 'No se pudo', message: j.error || 'Intenta de nuevo.',
+                       type: 'error'});
+      return;
+    }
+    if (j.aviso){
+      // El equipo quedó marcado pero la urgencia falló: se dice, no se
+      // esconde -- si no, nadie se entera de que hay que crearla a mano.
+      await ilusAlert({title: 'Equipo marcado', message: j.aviso, type: 'warning'});
+    } else if (window.ilusToast){
+      ilusToast(reactivar ? '✓ Equipo operativo de nuevo'
+                          : '✓ Fuera de servicio · urgencia ' + (j.ticket || 'creada'),
+                {type: 'success'});
+    }
+    setTimeout(() => location.reload(), 900);
+  } catch (e){
+    await ilusAlert({title: 'Error de conexión', message: e.message, type: 'error'});
+  }
 };
 
 /* ══ BLOQUEO PROGRESIVO DE FINANZAS ═══════════════════════════════════
