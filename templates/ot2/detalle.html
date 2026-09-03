@@ -147,6 +147,36 @@
 .otd-firma .cuando{font-size:.7rem;color:#6b7280;font-weight:600;
   font-variant-numeric:tabular-nums;margin-top:1px}
 
+/* ══ BLOQUEO DE FINANZAS ══════════════════════════════════════════════
+   🔒 2026-09-02. Declarada la plata, los campos quedan en solo lectura.
+   Corregir es posible, pero deliberado. */
+#otdCardFinanzas.bloqueada .otd-fpaso .bd input,
+#otdCardFinanzas.bloqueada .otd-fpaso .bd select,
+#otdCardFinanzas.bloqueada .otd-fpaso .bd textarea{
+  background:#f8fafc;color:#475569;pointer-events:none}
+#otdCardFinanzas.bloqueada .otd-fpaso .bd button,
+#otdCardFinanzas.bloqueada .otd-tecchip,
+#otdCardFinanzas.bloqueada .otd-cc{pointer-events:none;opacity:.65}
+#otdCardFinanzas.bloqueada #otdFinBtnGuardar{display:none}
+/* El buscador del ERP y el lector de documento SÍ siguen vivos: consultar
+   nunca es destructivo, y bloquearlos obligaría a "corregir" solo para
+   mirar un documento. */
+#otdCardFinanzas.bloqueada #otdErpDocQ,
+#otdCardFinanzas.bloqueada .otd-erpdoc-search button,
+#otdCardFinanzas.bloqueada #otdBtnLeerZz{pointer-events:auto;opacity:1;background:#fff}
+.otd-fin-lock{display:flex;align-items:flex-start;gap:10px;margin-top:10px;
+  padding:11px 13px;border-radius:10px;background:#f1f5f9;border:1px solid #cbd5e1;
+  font-size:.79rem;color:#334155;line-height:1.45;flex-wrap:wrap}
+.otd-fin-lock > i{font-size:1rem;color:#64748b;margin-top:2px}
+.otd-fin-lock > div{flex:1;min-width:180px}
+.otd-fin-lock .corregir{border:1px solid #cbd5e1;background:#fff;color:#334155;
+  border-radius:8px;padding:6px 13px;font-size:.76rem;font-weight:800;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.otd-fin-lock .corregir:hover{border-color:var(--ilus-red,#dc2626);
+  color:var(--ilus-red,#dc2626)}
+.otd-fin-trz{margin-top:7px;font-size:.72rem;color:#94a3b8;display:flex;
+  align-items:center;gap:6px;line-height:1.4}
+
 /* ══ MODAL DE FIRMA — resumen financiero resuelto ═════════════════════
    🆕 2026-09-02 (Daniel: "si ya se definió el costo, que esto salga de
    acá... darle una oportunidad de gestionar las finanzas nuevamente con un
@@ -541,6 +571,11 @@
 .otd-qabtn.mail{background:rgba(59,130,246,.18);border-color:rgba(96,165,250,.4);color:#93c5fd}
 .otd-qabtn.pri{background:#16a34a;border-color:#16a34a;color:#fff;margin-left:auto}
 .otd-qabtn.pri:hover{color:#fff;box-shadow:0 8px 18px -8px rgba(22,163,74,.7)}
+/* Eliminar OT: destructivo. Se empuja al extremo derecho para que no
+   quede pegado a los demás y no se clickee por inercia (2026-09-02). */
+.otd-qabtn.del{margin-left:auto;background:rgba(220,38,38,.16);
+  border-color:rgba(248,113,113,.45);color:#fca5a5}
+.otd-qabtn.del:hover{background:#dc2626;border-color:#dc2626;color:#fff}
 
 /* Variante CLARA de los botones rápidos -- para la card "Contraparte en
    sitio" (fondo blanco), que reusa el mismo dato/patrón que el hero pero
@@ -1180,42 +1215,15 @@
 
   {# ══ HERO: navegación + identidad + estado operativo + datos + acciones ══ #}
   <div class="otd-hero h-{{ v.estado_fase or 'pend' }}">
-    {# Barra de navegación del hero — reemplaza al .page-header que se
-       eliminó arriba (2026-09-02, "júntalas"). Mantiene exactamente los
-       mismos controles: volver al panel, Ver PDF y Eliminar OT. #}
+    {# Barra de navegación del hero. 2026-09-02: los botones de acción
+       (Ver PDF / Enviar al cliente / Eliminar OT) BAJARON de acá a la fila
+       de acciones rápidas, junto a Llamar/WhatsApp/Correo -- pedido de
+       Daniel ("esos botones colócalo al lado del botón de correo y
+       WhatsApp"), y de paso dejan de pelearse con la campana de
+       notificaciones, que los tapaba. Acá queda solo volver al panel. #}
     <div class="otd-hnav">
       <a class="otd-back" href="{{ url_for('ot2_panel') }}">
         <i class="bi bi-arrow-left"></i> Volver al panel</a>
-      <div class="otd-header-acts">
-        {# 🐛 FIX 2026-09-02 (Daniel: "aquí hay un botón de enviar al cliente
-           arriba, ¿por qué está ese botón allí?... no me gusta ese botón
-           allí, está por encima del header"). Era una regresión mía: al
-           eliminar el .page-header duplicado, la fila .otd-acts que contenía
-           este botón quedó huérfana ARRIBA de todo, flotando sobre la
-           página. Se muda a la barra del hero, junto a Ver PDF, que es
-           donde viven las acciones de la OT. Conserva su verde de marca
-           WhatsApp -- ahí sí es información, no decoración. #}
-        {% if v.estado in ('completada','cerrada') %}
-        <button type="button" class="otd-btn" id="otdBtnWa" onclick="otdCompartirWa()"
-                style="background:#25d366;border-color:#25d366;color:#fff">
-          <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
-        {% endif %}
-        {# 🆕 2026-08-31 (Daniel: "quiero visualizar la OT en digital... si está
-           firmada necesito ver y descargar el PDF siempre en un modal local...
-           con una barra de proceso"): modal propio, nunca pestaña nueva. #}
-        {% if v.estado not in ('programada','en_curso','en_ejecucion') %}
-        <button type="button" class="otd-btn" onclick="otdVerPdf()">
-          <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
-        {% endif %}
-        {# 🆕 2026-08-28 (Daniel: "podemos eliminar la OT 134 o ponerme un botón
-           para eliminarlas y agrega eso por el front en los roles") -- visible
-           SOLO si el rol tiene el permiso. El backend revalida igual con
-           @_ot_can_eliminar -- esto solo evita mostrar un botón que rebotaría. #}
-        {% if puede_eliminar %}
-        <button type="button" class="otd-btn danger" onclick="otdEliminarOT()">
-          <i class="bi bi-trash3"></i> Eliminar OT</button>
-        {% endif %}
-      </div>
     </div>
     <div class="otd-top">
       <div>
@@ -1433,6 +1441,26 @@
       {% if v.contacto_email %}
       <a class="otd-qabtn mail" href="mailto:{{ v.contacto_email }}">
         <i class="bi bi-envelope-fill"></i> Correo</a>
+      {% endif %}
+
+      {# 🔀 2026-09-02 (Daniel: "esos botones colócalo al lado del botón de
+         correo y WhatsApp"). Ver PDF / Enviar al cliente / Eliminar OT
+         estaban arriba en la barra del hero, donde además se los tapaba la
+         campana de notificaciones. Bajan acá, junto al resto de acciones
+         de la OT: todo lo accionable queda en UNA fila. Eliminar se
+         empuja a la derecha con margin-left:auto -- es destructivo y no
+         debe quedar pegado a los demás, para no clickearlo por inercia. #}
+      {% if v.estado in ('completada','cerrada') %}
+      <button type="button" class="otd-qabtn wa" id="otdBtnWa" onclick="otdCompartirWa()">
+        <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
+      {% endif %}
+      {% if v.estado not in ('programada','en_curso','en_ejecucion') %}
+      <button type="button" class="otd-qabtn" onclick="otdVerPdf()">
+        <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
+      {% endif %}
+      {% if puede_eliminar %}
+      <button type="button" class="otd-qabtn del" onclick="otdEliminarOT()">
+        <i class="bi bi-trash3"></i> Eliminar OT</button>
       {% endif %}
     </div>
   </div>
@@ -1900,8 +1928,39 @@
               <div class="text-muted small">% Margen</div>
               <div class="fw-bold" id="otdFinMargenPct" style="font-size:1rem">—</div>
             </div>
-            <button type="button" class="btn btn-danger btn-sm" onclick="otdGuardarFinanzas()">
+            <button type="button" class="btn btn-danger btn-sm" id="otdFinBtnGuardar"
+                    onclick="otdGuardarFinanzas()">
               <i class="bi bi-check-lg me-1"></i>Guardar</button>
+          </div>
+
+          {# 🔒 2026-09-02 (Daniel: "necesito que se vaya bloqueando a
+             medida que vayamos avanzando... si ya declaraste eso, yo pienso
+             que bloquéalo" + "dale, si bloquéalos, y deja al final una
+             corrección en caso de, con trazabilidad abajo").
+             Una vez declarada, la parte financiera queda EN SOLO LECTURA:
+             es plata ya comprometida y no debería cambiarse por accidente
+             al pasar por la pantalla. Corregir sigue siendo posible -- pero
+             es un acto deliberado, con un clic explícito, y queda
+             registrado en la Actividad de la OT (el backend ya escribe
+             `finanzas_declaradas` en cada guardado, así que la trazabilidad
+             no hay que construirla: hay que mostrarla, y está abajo). #}
+          <div id="otdFinBloqueo" style="display:none">
+            <div class="otd-fin-lock">
+              <i class="bi bi-lock-fill"></i>
+              <div>
+                <b>Finanzas declaradas.</b>
+                Quedaron bloqueadas para que no se cambien sin querer.
+                {% if v.finanzas_por %}Las declaró <b>{{ v.finanzas_por }}</b>{% endif %}
+                {%- if v.finanzas_at %} el {{ v.finanzas_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}.
+              </div>
+              <button type="button" class="corregir" onclick="otdCorregirFinanzas()">
+                <i class="bi bi-pencil-square"></i> Corregir</button>
+            </div>
+            <div class="otd-fin-trz">
+              <i class="bi bi-clock-history"></i>
+              Cada corrección queda registrada en <b>Actividad de la OT</b>, más abajo:
+              quién la hizo y cuándo.
+            </div>
           </div>
           <div id="otdFinMargenWarn" style="display:none;margin-top:8px;background:#fff8e1;
                border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;font-size:.82rem;
@@ -3425,6 +3484,9 @@ window.otdGuardarFinanzas = async function(){
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.ok !== false){
       if (window.ilusToast) ilusToast('✓ Finanzas de la OT guardadas', {type: 'success'});
+      // 2026-09-02: guardado = declarado -> vuelve a quedar bloqueada, para
+      // que el siguiente que pase por la pantalla no la toque sin querer.
+      if (window.otdBloquearFinanzas) window.otdBloquearFinanzas();
     } else {
       if (window.ilusToast) ilusToast(j.error || 'No se pudo guardar. Intenta de nuevo.', {type: 'error'});
     }
@@ -3493,6 +3555,45 @@ window.otdVerAnexoPdf = function(aid){
     downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
   });
 };
+
+/* ══ BLOQUEO PROGRESIVO DE FINANZAS ═══════════════════════════════════
+   🔒 2026-09-02 (Daniel: "necesito que se vaya bloqueando a medida que
+   vayamos avanzando... si ya declaraste eso, bloquéalo, y deja al final
+   una corrección en caso de, con trazabilidad abajo").
+   El bloqueo es visual/UX -- el candado REAL de quién puede tocar el
+   dinero vive en el backend (@_ot_can_cobertura). Esto evita el cambio
+   accidental, no reemplaza el permiso. */
+window.otdBloquearFinanzas = function(){
+  const card = document.getElementById('otdCardFinanzas');
+  const aviso = document.getElementById('otdFinBloqueo');
+  if (!card) return;
+  card.classList.add('bloqueada');
+  if (aviso) aviso.style.display = '';
+};
+window.otdCorregirFinanzas = async function(){
+  // Corregir plata ya declarada es deliberado: se confirma una vez y se
+  // recuerda que queda registrado. REGLA #1: nunca confirm() nativo.
+  const ok = await ilusConfirm({
+    title: 'Corregir las finanzas',
+    message: 'Vas a reabrir la parte financiera de esta OT.',
+    sub: 'El cambio queda registrado en la Actividad de la OT con tu nombre y la hora.',
+    okLabel: 'Sí, corregir', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const card = document.getElementById('otdCardFinanzas');
+  const aviso = document.getElementById('otdFinBloqueo');
+  if (card) card.classList.remove('bloqueada');
+  if (aviso) aviso.style.display = 'none';
+  const primero = document.getElementById('otdFinCosto');
+  if (primero){ primero.focus(); primero.select(); }
+};
+(function(){
+  // Al cargar: si la OT ya tiene finanzas declaradas, arranca bloqueada.
+  const yaDeclarada = {{ 'true' if v.finanzas_at else 'false' }};
+  if (yaDeclarada && document.getElementById('otdCardFinanzas')){
+    window.otdBloquearFinanzas();
+  }
+})();
 
 /* ══ DINERO CON SEPARADOR DE MILES ════════════════════════════════════
    🆕 2026-09-02 (Daniel: "que tenga separador de miles, y no la boleta,
