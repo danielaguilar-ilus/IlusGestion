@@ -77476,8 +77476,19 @@ def ot2_detalle(vid):
         print(f"[ot2_detalle] tecnicos_colaboradores vid={vid}: {_e_tc}", flush=True)
 
     # ── Recorrido de la OT ─────────────────────────────────────────────
+    # 🔴 2026-09-03 (Daniel: "las OT internas no llevan cliente, así que
+    # elimínale a los trabajos internos la necesidad de que un cliente
+    # firme"). Caso real OT-2026-00163: trabajo interno, "Sin cliente
+    # asignado", y el recorrido igual pintaba "Firma cliente" en rojo como
+    # hito pendiente -- una OT esperando la firma de alguien que no existe.
+    # El MOTOR ya lo contemplaba desde el 8-ago (`_ot_es_interna`, y
+    # `_ot_validar_cierre` no exige firma de cliente para internas): la que
+    # mentía era esta pantalla, que armaba hitos y firmas sin mirarlo.
+    _es_interna_ot = _ot_es_interna(v)
     hitos = []
     for clave, label, icono, col, color in _OT2_HITOS:
+        if clave == "f_cliente" and _es_interna_ot:
+            continue          # trabajo interno: no hay cliente que firme
         ts = v.get(col)
         hitos.append({
             "clave": clave, "label": label, "icono": icono,
@@ -77589,11 +77600,17 @@ def ot2_detalle(vid):
         # igual que allá. Dato de presentación, no de negocio.
         {"rol": "Técnico",    "url": v.get("firma_tecnico_url"), "icono": "bi-tools",
          "nombre": v.get("firma_tecnico_nombre"), "at": v.get("firma_tecnico_at")},
-        {"rol": "Cliente",    "url": v.get("firma_cliente_url"), "icono": "bi-person-badge",
-         "nombre": v.get("firma_cliente_nombre"), "at": v.get("firma_cliente_at")},
         {"rol": "Responsable", "url": v.get("firma_supervisor_url"), "icono": "bi-shield-check",
          "nombre": v.get("firma_supervisor_nombre"), "at": v.get("firma_supervisor_at")},
     ]
+    # La tarjeta "Cliente · Pendiente" en un trabajo interno solo genera la
+    # duda de a quién hay que perseguir. Se inserta únicamente cuando hay
+    # cliente -- o cuando ya existe una firma guardada, para no esconder
+    # evidencia de una OT vieja que sí la tuvo.
+    if not _es_interna_ot or v.get("firma_cliente_url"):
+        firmas.insert(1, {
+            "rol": "Cliente", "url": v.get("firma_cliente_url"), "icono": "bi-person-badge",
+            "nombre": v.get("firma_cliente_nombre"), "at": v.get("firma_cliente_at")})
     for f in firmas:
         f["cuando"] = chile_fmt_filter(f["at"], "%d/%m/%Y %H:%M") if f.get("at") else ""
 
@@ -77609,7 +77626,6 @@ def ot2_detalle(vid):
     # template.
     _es_garantia_ot = ((v.get("modalidad_cobro") or "").lower() == "garantia"
                        or (v.get("cubierto_por") or "").lower() == "garantia")
-    _es_interna_ot = _ot_es_interna(v)
     _doc_nudo_hdr = (v.get("documento_erp_nudo") or v.get("factura_nudo") or "").strip()
     _doc_tido_hdr = (v.get("documento_erp_tido") or v.get("factura_tido") or "").strip()
     if _es_interna_ot:
