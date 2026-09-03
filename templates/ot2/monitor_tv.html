@@ -1142,12 +1142,14 @@
     .tvm-ot-dir{margin-top:2px;font-size:15px;font-weight:600;color:var(--txt-3)}
     /* 2026-08-31 (Daniel: "las lucas" -- solo pantalla de control) */
     /* 🔉 2026-09-03 (Daniel: "los costos no son tan importantes ahí por
-       esta vez"). Antes competía en peso con el documento y el avance.
-       Baja a nota al pie: chico, gris y con etiqueta, para que se lea
-       cuando se busca y no antes. */
-    .tvm-ot-fin{opacity:.72;font-size:12px}
+       esta vez"). Antes competía en peso con el documento y el avance:
+       15px en negrita, igual de fuerte que el resto. Baja a nota al pie
+       -- chico, gris y rotulado -- para que se lea cuando se busca y no
+       antes. Los valores van DENTRO de esta misma regla y no en una
+       aparte: puesta antes, la de abajo le ganaba el font-size (misma
+       especificidad, gana la última) y el costo seguía en 15px. */
     .tvm-ot-fin{margin-top:6px;display:flex;align-items:center;gap:10px;
-      font-size:15px;font-weight:800;color:var(--ink)}
+      font-size:12px;font-weight:700;color:var(--ink);opacity:.72}
     .tvm-ot-fin b{font-variant-numeric:tabular-nums}
     .tvm-ot-av{display:flex;align-items:center;gap:12px;margin-top:10px}
     .tvm-ot-av .av-bar{flex:1;height:7px;margin-top:0}
