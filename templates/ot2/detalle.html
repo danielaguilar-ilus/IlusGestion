@@ -7263,13 +7263,29 @@ const OT2F = (function(){
   }
   window.otdBalancearColumnas = otdBalancearColumnas;
 
-  function _programar(){ requestAnimationFrame(() => requestAnimationFrame(otdBalancearColumnas)); }
+  /* 🔴 2026-09-02 — el doble requestAnimationFrame NO basta, y se detectó
+     probando en un Chrome de verdad: **Chrome congela rAF en las pestañas
+     que están en segundo plano**. Medido en producción con la OT-153
+     abierta en una pestaña de fondo: document.hidden === true, rAF nunca
+     corría, y el hueco de 401px seguía ahí. Le pasa a cualquiera que abra
+     la OT con el botón central del mouse o en "abrir en pestaña nueva",
+     que es como se revisan varias OT seguidas.
+     Por eso van las tres vías: rAF (rápido cuando la pestaña está a la
+     vista), un setTimeout de respaldo (que sí corre igual en segundo
+     plano) y visibilitychange (para cuando por fin la mira). */
+  function _programar(){
+    requestAnimationFrame(() => requestAnimationFrame(otdBalancearColumnas));
+    setTimeout(otdBalancearColumnas, 260);
+  }
 
   if (document.readyState === 'loading')
     document.addEventListener('DOMContentLoaded', _programar);
   else _programar();
   // Las fotos de firma cambian el alto al terminar de cargar.
   window.addEventListener('load', _programar);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') _programar();
+  });
 
   let _t = null;
   window.addEventListener('resize', function(){

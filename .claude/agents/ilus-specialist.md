@@ -126,6 +126,19 @@ perfecto. Corre TODO esto:
    producción que no existía. Antes de dar una alarma por un estilo que
    "no se aplica", verifica cuántas reglas parseó el navegador
    (`document.styleSheets[0].cssRules.length`).
+9. **🔴 `requestAnimationFrame` NO corre en una pestaña en segundo plano.**
+   Chrome lo congela cuando `document.hidden === true`. Cualquier ajuste
+   de layout que dependa SOLO de rAF (medir alturas, balancear columnas,
+   posicionar algo) simplemente no ocurre si el usuario abrió la página
+   con el botón central del mouse o en "abrir en pestaña nueva" — que es
+   justo como se revisan varias OT seguidas. Se detectó midiendo en un
+   Chrome real: el balanceo de columnas no corría y el hueco de 401px
+   seguía ahí, sin ningún error en consola. Usa siempre las tres vías:
+   rAF (rápido con la pestaña a la vista) + un `setTimeout` de respaldo
+   (ese sí corre igual) + `visibilitychange`. Y al verificar en el
+   navegador, **revisa `document.visibilityState` antes de concluir que
+   algo funciona o que no** — un resultado tomado con la pestaña oculta
+   puede mentir en las dos direcciones.
 
 Y para cualquier feature con estado que el usuario pueda perder (borradores
 sin conexión, colas de reintento): **simula el escenario completo**,
