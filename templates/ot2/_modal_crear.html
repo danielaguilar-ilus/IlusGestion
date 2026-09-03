@@ -959,7 +959,7 @@ window.OT2C = (function(){
          // (costo proveedor / despacho) -- se sincronizan solos, no se
          // vuelven a preguntar (ver _o2mAnexoSyncItems()).
          anexo:{proveedor_nombre:'', proveedor_rut:'', objetivo_servicio:'',
-                fecha_inicio:'', fecha_termino:'', items:[],
+                fecha_inicio:'', fecha_termino:'', items:[], productos:[],
                 email_destino:'', telefono:'', enviar_ahora:true},
          _tipoFiltro:''};
     fase = 'origen';
@@ -4647,12 +4647,37 @@ window.OT2C = (function(){
         var nombre = m ? (m.nombre || m.modelo || ('Equipo '+m.id)) : null;
         if (nombre) conteoEq[nombre] = (conteoEq[nombre]||0) + 1;
       });
-      var nombresEq = Object.keys(conteoEq)
-        .sort(function(a2,b2){ return conteoEq[b2] - conteoEq[a2]; })
-        .map(function(n){ return conteoEq[n] > 1 ? (conteoEq[n]+'x '+n) : n; });
-      var eqTxt = nombresEq.length ? (' Equipos: ' + nombresEq.join(', ') + '.') : '';
-      a.objetivo_servicio = 'Ejecutar servicio de ' + (tInfo ? tInfo.n.toLowerCase() : S.tipo) + cliTxt + '.' + eqTxt;
+      /* 🔴 2026-09-03 (Daniel: "en el objetivo no quiero meter los productos,
+         porque si hay más de 15 productos ya el objetivo se corrompe. Deja
+         PRODUCTOS ASOCIADOS y lo dejas con una tablita: SKU, descripción y
+         cantidad, bien ordenado").
+         Tenía razón y el problema es real: una OT de instalación con 94
+         equipos convertía el "Objetivo del Servicio" en un párrafo
+         ilegible de varias líneas dentro de un documento contractual. El
+         objetivo vuelve a ser UNA frase; los equipos pasan a su propia
+         tabla del anexo (ver `productos` más abajo y la tabla en
+         ot2/anexo_documento.html). */
+      a.objetivo_servicio = 'Ejecutar servicio de ' + (tInfo ? tInfo.n.toLowerCase() : S.tipo) + cliTxt + '.';
     }
+    /* Tabla de productos del anexo: SKU · descripción · cantidad, agrupada
+       por SKU (o por nombre si el equipo no tiene SKU) y ordenada por
+       cantidad. Se recalcula SIEMPRE -- no como el objetivo, que respeta lo
+       que el usuario haya escrito a mano. */
+    (function(){
+      var acc = {};
+      (S.equipos||[]).forEach(function(e){
+        var m = cacheEquipos.find(function(x){ return x.id === e.maquina_id; });
+        if (!m) return;
+        var nombre = m.nombre || m.modelo || ('Equipo ' + m.id);
+        var sku = (m.sku || '').trim();
+        var k = sku || ('n:' + nombre);
+        if (!acc[k]) acc[k] = { sku: sku, nombre: nombre, cantidad: 0 };
+        acc[k].cantidad += 1;
+      });
+      a.productos = Object.keys(acc).map(function(k){ return acc[k]; })
+        .sort(function(x,y){ return y.cantidad - x.cantidad ||
+                                    String(x.nombre).localeCompare(String(y.nombre)); });
+    })();
     if (!a.fecha_inicio && S.fecha) a.fecha_inicio = S.fecha;
     if (!a.fecha_termino && S.fecha) a.fecha_termino = S.fecha;
     // Los ítems de precio son LOS MISMOS que ya se declararon en Finanzas
@@ -4762,6 +4787,7 @@ window.OT2C = (function(){
       body: JSON.stringify({
         proveedor_nombre: a.proveedor_nombre, proveedor_rut: a.proveedor_rut,
         objetivo_servicio: a.objetivo_servicio, precio_items: a.items,
+        productos: a.productos || [],
         fecha_inicio: a.fecha_inicio, fecha_termino: a.fecha_termino,
         cliente_nombre: S.cliente ? S.cliente.nombre : ''
       })
@@ -5511,6 +5537,15 @@ window.OT2C = (function(){
     var i2 = document.getElementById('o2mAnexoFechaFin');
     if (i1) i1.value = txt;
     if (i2) i2.value = txt;
+    /* 🔴 FIX 2026-09-03 (Daniel: "todavía veo que no está el inicio y el fin").
+       Esta función actualizaba SOLO los inputs visibles y nunca el estado del
+       anexo. Como esos dos inputs están `disabled` (la fecha se toma de
+       Agenda, no se tipea acá), tampoco disparaban ningún evento que lo
+       sincronizara. Resultado: el PDF salía con "Inicio del servicio — /
+       Término del servicio —" y el anexo se creaba con las fechas en NULL,
+       que en un documento contractual es un dato que falta, no un detalle. */
+    S.anexo.fecha_inicio  = S.fecha || '';
+    S.anexo.fecha_termino = S.fecha || '';
   }
   function setFecha(v){
     S.fecha = v; avisosAgenda(); refrescarAnclas();
@@ -6163,6 +6198,7 @@ window.OT2C = (function(){
               proveedor_nombre: S.anexo.proveedor_nombre,
               proveedor_rut: S.anexo.proveedor_rut,
               objetivo_servicio: S.anexo.objetivo_servicio,
+              productos: S.anexo.productos || [],
               precio_items: S.anexo.items,
               fecha_inicio: S.anexo.fecha_inicio || null,
               fecha_termino: S.anexo.fecha_termino || null,

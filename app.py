@@ -77223,6 +77223,33 @@ def ot2_detalle(vid):
     # que el backend iba a rechazar con 403 al primer click.
     puede_ejecutar = _puede_ot_accion(vid, "ejecutar")
 
+    # 🔒 2026-09-03 — OT SELLADA: solo lectura, TAMBIÉN para superadmin.
+    # Daniel, tras firmar y cerrar la OT-2026-00127: "¿y sigue estando
+    # abierta para editar? Eso bloquéalo de inmediato, todo tiene que
+    # quedar cerrado... es peligroso que se altere la información que
+    # declaró el técnico. Bloquea el número de serie, porque ya lo guardé,
+    # bloquea volver a capturar la ubicación, todo. Lo que sí se puede
+    # siempre es VER las fotos; lo que no se puede es agregar más ni
+    # cambiar absolutamente nada".
+    #
+    # `puede_ejecutar` NO servía para esto: para un superadmin da True
+    # aunque la OT esté cerrada, porque existe el candado maestro que le
+    # permite rescatar OT trabadas (casos reales OT-58 y OT-132). Ese
+    # candado NO se elimina (REGLA #4.2) -- se INVIERTE el default: la
+    # pantalla nace en solo lectura para todos, y el superadmin la
+    # desbloquea a propósito con el botón "Corregir", que además deja
+    # traza (Daniel el 2-sep: "bloquéalos y deja al final una corrección
+    # en caso de, con trazabilidad abajo").
+    #
+    # Este flag es del ESTADO de la OT, no del rol: por eso se calcula
+    # aparte y no depende de quién esté mirando.
+    _est_ot = (v.get("estado") or "").lower()
+    ot_solo_lectura = bool(
+        v.get("firma_cliente_url")
+        or _est_ot in ("pendiente_aprobacion", "completada", "cerrada",
+                       "cancelada", "anulada")
+    )
+
     # 🆕 2026-08-28 (Daniel: botón para eliminar la OT desde el front,
     # configurable por rol vía /admin/roles): decide si se dibuja el botón
     # "Eliminar OT" en la barra de acciones. El backend re-valida con
@@ -77919,6 +77946,7 @@ def ot2_detalle(vid):
         cronometro=cronometro,
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
+        ot_solo_lectura=ot_solo_lectura,
         puede_eliminar=puede_eliminar,
         puede_aprobar=puede_aprobar, puede_firmar_cliente=puede_firmar_cliente,
         puede_cobertura=puede_cobertura, es_creador=es_creador,
@@ -81567,6 +81595,12 @@ def _ensure_mant_anexos():
                                   "COMMENT 'ultimo telefono usado para el link de WhatsApp'"),
                 ("envios_n",      "ALTER TABLE mant_anexos ADD COLUMN envios_n INT NOT NULL DEFAULT 0 "
                                   "COMMENT 'cuantas veces se mando el link'"),
+                # 📋 2026-09-03 (Daniel: "deja PRODUCTOS ASOCIADOS con una
+                # tablita: SKU, descripcion y cantidad"). Antes los equipos
+                # iban embutidos como texto dentro de objetivo_servicio, y
+                # con 15+ productos ese parrafo quedaba ilegible.
+                ("productos_json", "ALTER TABLE mant_anexos ADD COLUMN productos_json TEXT NULL "
+                                   "COMMENT '[{sku,nombre,cantidad}] equipos del servicio'"),
             ):
                 try:
                     cur.execute(
@@ -81590,7 +81624,21 @@ def _ensure_mant_anexos():
                 cur.execute(
                     "SELECT COALESCE(MAX(numero),0) AS mx FROM mant_anexos "
                     " WHERE YEAR(created_at)=%s", (_anio_actual,))
-                _max_num = (cur.fetchone() or {}).get("mx", 0) or 0
+                # 🔴 FIX 2026-09-03 (Daniel: "te dije que el 160, ¿qué pasa
+                # con eso?"). El bump nunca corría: este cursor NO siempre es
+                # DictCursor, así que `fetchone()` podía devolver una TUPLA;
+                # `.get("mx")` lanzaba AttributeError, el except de abajo se lo
+                # tragaba y la secuencia se quedaba como estaba -- sin ningún
+                # error visible. `_next_anexo_numero_atomic`, unas líneas más
+                # arriba, ya contemplaba los dos formatos; acá se había
+                # asumido solo uno.
+                _row_mx = cur.fetchone()
+                if isinstance(_row_mx, (tuple, list)):
+                    _max_num = int(_row_mx[0] or 0)
+                elif isinstance(_row_mx, dict):
+                    _max_num = int(_row_mx.get("mx") or 0)
+                else:
+                    _max_num = 0
                 if _max_num < 160:
                     cur.execute(
                         "INSERT INTO mant_anexo_secuencia (anio, n) VALUES (%s, 159) "
@@ -81624,6 +81672,35 @@ def _next_anexo_numero_atomic(conn=None):
     finally:
         if own_conn:
             c.close()
+
+
+def _anexo_productos_norm(raw):
+    """Normaliza la tabla de productos del anexo: [{sku, nombre, cantidad}].
+
+    Es un documento con efecto contractual: se sanea el largo y el tipo de
+    cada campo acá, y no se confia en lo que mande el navegador. Se limita
+    a 300 filas -- una OT real llego a 94 equipos, y mas alla de eso el
+    problema es otro, no un anexo mas largo.
+    """
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for it in raw[:300]:
+        if not isinstance(it, dict):
+            continue
+        nombre = str(it.get("nombre") or "").strip()[:200]
+        if not nombre:
+            continue
+        try:
+            cant = int(it.get("cantidad") or 1)
+        except (TypeError, ValueError):
+            cant = 1
+        out.append({
+            "sku": str(it.get("sku") or "").strip()[:60],
+            "nombre": nombre,
+            "cantidad": max(1, cant),
+        })
+    return out
 
 
 def _anexo_render_canonico(a):
@@ -81800,15 +81877,16 @@ def ot2_api_anexo_crear():
             "INSERT INTO mant_anexos "
             "  (numero, ot_id, tecnico_externo_id, proveedor_nombre, proveedor_rut, "
             "   proveedor_direccion, "
-            "   cliente_nombre, objetivo_servicio, precio_items_json, "
+            "   cliente_nombre, objetivo_servicio, precio_items_json, productos_json, "
             "   fecha_inicio, fecha_termino, niveles_servicio, hitos_pago, "
             "   alcance_servicio, clausulas_adicionales, created_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (numero, vid, d.get("tecnico_externo_id") or None,
              proveedor, (d.get("proveedor_rut") or "").strip()[:20] or None,
              (d.get("proveedor_direccion") or "").strip()[:400] or None,
              (d.get("cliente_nombre") or "").strip()[:200] or None,
              objetivo, _json.dumps(items),
+             _json.dumps(_anexo_productos_norm(d.get("productos"))),
              d.get("fecha_inicio") or None, d.get("fecha_termino") or None,
              (d.get("niveles_servicio") or "").strip() or _ANEXO_NIVELES_DEFECTO,
              (d.get("hitos_pago") or "").strip() or _ANEXO_HITOS_DEFECTO,
@@ -82282,6 +82360,13 @@ def ot2_api_anexo_preview_pdf():
         anexo=payload,
         precio_txt=_anexo_precio_texto(payload.get("precio_items")),
         firma=None,
+        # 🆕 2026-09-03 — la tabla de productos ya existía en el PDF REAL
+        # (se arma desde los equipos de la OT), pero en la VISTA PREVIA del
+        # wizard todavía no hay OT creada, así que salía sin ella y con los
+        # equipos embutidos dentro del objetivo. Ahora el wizard manda la
+        # lista y la vista previa muestra exactamente el mismo documento
+        # que se va a firmar -- que es para lo que sirve una vista previa.
+        productos=_anexo_productos_norm(d.get("productos")),
         generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
         es_vista_previa=True,
     )

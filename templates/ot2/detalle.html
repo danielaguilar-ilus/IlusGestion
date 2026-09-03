@@ -1075,16 +1075,98 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   color:#9ca3af;font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:8px}
 .otd-chk-plant-nm .pg{font-size:.68rem;color:#6b7280;font-weight:700;text-transform:none;
   letter-spacing:0}
-.otd-chk-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;
-  margin-bottom:8px;background:#fafbfc}
-.otd-chk-item.is-ok{border-color:#bbf7d0;background:#f0fdf4}
+/* Barra SEGMENTADA: una barrita por tarea. A diferencia de una barra
+   continua, dice cuántas tareas son y cuáles faltan de un vistazo --
+   es la de la pantalla clásica, que Daniel señaló como bien resuelta. */
+.otd-chk-segs{display:flex;gap:3px;margin-bottom:6px}
+.otd-chk-segs > i{flex:1;height:7px;border-radius:99px;background:#e5e7eb;
+  transition:background .25s ease}
+.otd-chk-segs > i.obl{background:#fcd34d}
+.otd-chk-segs > i.ok{background:#16a34a}
+.otd-chk-oblline{display:flex;align-items:baseline;gap:8px;margin-bottom:10px;
+  font-size:.72rem;color:#6b7280}
+.otd-chk-oblline b{font-size:.9rem;font-weight:900;color:#0a0a0a;
+  font-variant-numeric:tabular-nums}
+.otd-chk-oblline span{margin-left:auto;font-weight:800}
+.otd-chk-oblline.ok b,.otd-chk-oblline.ok span{color:#15803d}
+/* ══ TAREA DEL CHECKLIST — rediseño 2026-09-03 ═══════════════════════
+   Daniel, mostrando la pantalla clásica al lado: "así quiero ver una
+   versión mejorada de los equipos en la parte de trabajo de la OT 2.0.
+   Con semáforos, te dije que copiaras eso... hay un semáforo, está bien
+   hecho eso... las plantillas tienen que lucir hermosas, con un diseño
+   espectacular asociado al formato que venimos desarrollando de Retiros".
+
+   Se copia la ANATOMÍA que ya funciona en la pantalla clásica y que él
+   validó en pantalla: franja de color a la izquierda (el semáforo),
+   número de tarea, título, chips de tipo/obligatoria, sello de quién
+   respondió y cuándo, y un check circular grande a la derecha. Antes acá
+   era una caja plana con el título y poco más: no se leía de un vistazo
+   qué faltaba ni quién había hecho qué.
+
+   Semáforo (misma lectura que Retiros):
+     verde  = respondida
+     ámbar  = obligatoria pendiente  → es lo que traba la firma
+     gris   = opcional pendiente     → no traba nada                     */
+.otd-chk-item{display:grid;grid-template-columns:30px 1fr 46px;gap:0 10px;
+  align-items:start;border:1px solid var(--line);border-left:4px solid #d1d5db;
+  border-radius:10px;padding:11px 12px;margin-bottom:8px;background:#fff;
+  transition:border-color .2s,background .2s}
+.otd-chk-item.is-obl{border-left-color:#f59e0b;background:#fffdf7}
+.otd-chk-item.is-ok{border-color:#bbf7d0;border-left-color:#16a34a;background:#f0fdf4}
 .otd-chk-item.is-locked{opacity:.6}
-.otd-chk-item .hd{display:flex;align-items:flex-start;gap:8px}
-.otd-chk-item .hd b{flex:1;min-width:0;font-size:.84rem;color:#0a0a0a;font-weight:700;
+/* Columna 1 — el número, como en la pantalla clásica ("01", "02"…) */
+.otd-chk-item > .nm{grid-column:1;grid-row:1/span 5;font-size:.68rem;font-weight:900;
+  color:#9ca3af;font-variant-numeric:tabular-nums;padding-top:2px;text-align:right}
+.otd-chk-item.is-ok > .nm{color:#16a34a}
+.otd-chk-item.is-obl > .nm{color:#b45309}
+/* Columna 3 — el check circular grande */
+.otd-chk-item > .tk{grid-column:3;grid-row:1/span 5;width:38px;height:38px;border-radius:50%;
+  display:grid;place-items:center;background:#f3f4f6;color:#d1d5db;font-size:1.05rem;
+  justify-self:end;transition:background .2s,color .2s}
+.otd-chk-item.is-ok > .tk{background:#16a34a;color:#fff}
+.otd-chk-item.is-obl > .tk{background:#fef3c7;color:#d97706}
+/* Columna 2 — el contenido */
+.otd-chk-item .hd{grid-column:2;display:flex;align-items:flex-start;gap:8px}
+.otd-chk-item .hd b{flex:1;min-width:0;font-size:.86rem;color:#0a0a0a;font-weight:800;
   line-height:1.3}
-.otd-chk-item .hd .obl{flex:none;font-size:.6rem;font-weight:900;color:#b91c1c;
-  background:#fee2e2;border-radius:99px;padding:2px 7px;letter-spacing:.03em}
-.otd-chk-item .desc{font-size:.74rem;color:#6b7280;margin:4px 0 8px}
+.otd-chk-item .chips{grid-column:2;display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.otd-chk-item .ch{font-size:.58rem;font-weight:900;letter-spacing:.045em;
+  text-transform:uppercase;border-radius:99px;padding:3px 8px;line-height:1.25;
+  background:#f3f4f6;color:#6b7280}
+.otd-chk-item .ch.obl{background:#fee2e2;color:#b91c1c}
+.otd-chk-item .ch.tipo{background:#eef2ff;color:#4338ca}
+.otd-chk-item .ch.foto{background:#fff8e1;color:#92400e}
+.otd-chk-item .ch.foto.ok{background:#dcfce7;color:#15803d}
+/* Sello de autoría — la trazabilidad que Daniel pide ver en la tarea */
+.otd-chk-item .sello{grid-column:2;display:inline-flex;align-items:center;gap:5px;
+  margin-top:7px;font-size:.66rem;font-weight:700;color:#475569;background:#f1f5f9;
+  border-radius:7px;padding:3px 8px;width:fit-content;max-width:100%}
+.otd-chk-item .sello i{font-size:.72rem;color:#16a34a;flex:none}
+.otd-chk-item .desc{grid-column:2;font-size:.74rem;color:#6b7280;margin:6px 0 8px}
+.otd-chk-item .bodyc{grid-column:2}
+@media (max-width:640px){
+  /* En el teléfono el número y el check se comen ancho que hace falta para
+     el control de respuesta: el semáforo ya lo da la franja de color. */
+  .otd-chk-item{grid-template-columns:24px 1fr 34px;gap:0 8px;padding:11px 10px}
+  .otd-chk-item > .tk{width:30px;height:30px;font-size:.85rem}
+}
+/* 🔒 Aviso de OT sellada — 2026-09-03 */
+.otd-cerrada{display:flex;align-items:flex-start;gap:9px;margin:0 0 14px;
+  padding:11px 13px;border-radius:10px;background:#f8fafc;border:1px solid #cbd5e1;
+  font-size:.76rem;line-height:1.45;color:#334155}
+.otd-cerrada > i{font-size:1rem;flex:none;margin-top:1px;color:#64748b}
+.otd-cerrada b{color:#0f172a;font-weight:900}
+.otd-cerrada .corr{flex:none;margin-left:auto;min-height:36px;padding:0 13px;
+  border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#475569;
+  font-size:.74rem;font-weight:800;cursor:pointer;white-space:nowrap}
+.otd-cerrada .corr:hover{border-color:#94a3b8;color:#0f172a}
+.otd-cerrada.editando{background:#fff8e1;border-color:#fcd34d;color:#92400e}
+.otd-cerrada.editando > i{color:#d97706}
+@media (max-width:640px){
+  .otd-cerrada{flex-wrap:wrap}
+  .otd-cerrada .corr{margin-left:0;width:100%;min-height:44px}
+}
+.otd-chk-item .lockmsg.cerrada{color:#475569;background:#f1f5f9}
 .otd-chk-item .lockmsg{font-size:.72rem;color:#a16207;background:#fff8e1;border-radius:7px;
   padding:6px 9px;margin-top:6px;display:flex;align-items:center;gap:6px}
 .otd-chk-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -1114,9 +1196,21 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   padding:0 12px;border-radius:9px;border:1.5px dashed #d1d5db;background:#fff;
   font-size:.72rem;font-weight:800;color:#374151;cursor:pointer}
 .otd-chk-fotobtn.need{border-color:#dc2626;color:#b91c1c}
-.otd-chk-fotos{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
-.otd-chk-fotos img{width:52px;height:52px;object-fit:cover;border-radius:8px;
-  border:1px solid var(--line)}
+/* 📷 2026-09-03 (Daniel: "en agregar fotos, colocarle un recuadro bonito,
+   más grande con una foto. Lo que sí se pueden ver siempre serán las
+   fotos"). Las miniaturas de 52px no dejaban ver NADA de lo que el
+   técnico fotografió -- y en una OT cerrada la foto es la única evidencia
+   que queda. Ahora son recuadros de 92px (74 en el teléfono, donde caben
+   3 por fila), con marco y sombra, y se abren al tocarlas. */
+.otd-chk-fotos{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.otd-chk-fotos img{width:92px;height:92px;object-fit:cover;border-radius:10px;
+  border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.16),0 0 0 1px var(--line);
+  cursor:zoom-in;transition:transform .15s ease,box-shadow .15s ease}
+.otd-chk-fotos img:hover{transform:translateY(-1px);
+  box-shadow:0 4px 10px rgba(0,0,0,.2),0 0 0 1px #cbd5e1}
+@media (max-width:640px){
+  .otd-chk-fotos img{width:74px;height:74px}
+}
 .otd-chk-fallback{font-size:.72rem;color:#6b7280;font-style:italic}
 .otd-chk-gpsbtn{width:100%;min-height:52px;border-radius:10px;border:none;
   background:var(--ilus-red,#dc2626);color:#fff;font-size:.86rem;font-weight:800;
@@ -1344,11 +1438,28 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      entran en un celular: se scrollea en horizontal dentro de su propia
      caja -- la PÁGINA nunca scrollea de lado (memoria:
      feedback_scroll_contenido_no_pagina). */
-  .otd-track{overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity}
-  .otd-h{min-width:104px;scroll-snap-align:center}
-  .otd-h .p{width:44px;height:44px;font-size:1.1rem}
-  .otd-h::before{top:38px}
-  .otd-h .l{font-size:.7rem}
+  /* 🔴 2026-09-03 (Daniel, con la captura del teléfono al lado: "en el
+     seguimiento de la OT me gustaría que se vea así, PERO QUE QUEPA
+     DENTRO DEL TELÉFONO. Que sea responsivo, pero no vertical: siempre
+     tiene que ser horizontal para que se vea bien").
+     Antes cada hito reservaba 104px y el tracker scrolleaba de lado:
+     6 hitos x 104 = 624px contra 390 de pantalla, así que "Firma cliente",
+     "Aprobada" y "Cerrada" quedaban fuera de cuadro y había que
+     arrastrar para descubrir que existían -- justo lo contrario de lo
+     que un recorrido tiene que hacer.
+     Ahora los 6 caben enteros: el nodo baja de 44 a 32px, la etiqueta
+     puede partirse en dos líneas y el chip "HACE 8D" se oculta (el
+     tiempo total ya está en el resumen de abajo). Sigue siendo
+     horizontal, que es como se lee un recorrido. */
+  .otd-track{overflow:visible;padding-bottom:2px}
+  .otd-h{min-width:0;flex:1 1 0;padding-top:10px;gap:5px}
+  .otd-h .p{width:32px;height:32px;font-size:.82rem;border-width:2px}
+  .otd-h.ok .p,.otd-h.now .p{box-shadow:0 0 0 3px rgba(22,163,74,.15)}
+  .otd-h::before{top:26px;height:2px;}
+  .otd-h .l{font-size:.5rem;letter-spacing:0;line-height:1.15;
+    overflow-wrap:anywhere;hyphens:auto}
+  .otd-h .t{font-size:.47rem;letter-spacing:-.02em;line-height:1.15}
+  .otd-h .ago{display:none}
   /* Mobile-first (REGLA #3): el panel de estado y las acciones rápidas
      pasan a ocupar el ancho completo en vez de competir por espacio con
      la identidad de la OT. */
@@ -1889,7 +2000,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          para no confundirlas con el contacto registrado en la ficha del
          cliente). #}
       {% if v.contacto_nombre %}
-      <div class="otd-card" data-bal="1">
+      <div class="otd-card">
         <h3><i class="bi bi-person-vcard-fill"></i> Contraparte en sitio</h3>
         <div class="otd-din">
           <div class="row"><span>Nombre</span><b>{{ v.contacto_nombre }}</b></div>
@@ -1952,6 +2063,169 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          `es_tecnico` sigue ocultando la card entera (REGLA de seguridad
          2026-08-27, Isabel Milling). #}
 
+
+      {# ══ MOVIDO DESDE LA PESTAÑA "TRABAJO" — 2026-09-03 ═══════════════
+         Daniel, viendo la pestaña Trabajo: "tiempo del técnico, no es
+         necesario colocar eso. Fotos de la OT, tampoco. Yo, con tener los
+         equipos y poder entrar y ver las fotos allí, ya tengo. Agregar
+         evidencia, falta evidencia, no. Eso yo lo agregaría a información.
+         En Trabajo yo quiero ver los equipos nomás. ¿Para qué tanto, si lo
+         que quiere el técnico es ir y gestionar los equipos, y chao?".
+
+         NO se elimina nada (REGLA #4.2): el cronómetro lo pidió él mismo
+         el 2-sep ("me dará muchos puntos en la gerencia") y las fotos son
+         la evidencia de la OT. Las dos tarjetas se mudan enteras acá, con
+         los MISMOS ids (otdEvGrid/otdEvEmpty/otdEvBtn/otdEvCount), el mismo
+         JS y los mismos endpoints. Lo único que cambia es la pestaña.
+
+         Por qué acá y no en otro lado: Información es donde vive el resto
+         de la trazabilidad de la OT, y así Trabajo queda como una sola
+         lista de equipos -- que es exactamente lo que el técnico necesita
+         para entrar, gestionar y salir. #}
+      {# 🆕 2026-08-30 (Daniel, 4to punto del mismo pedido, interpretado --
+         dicta por voz: "vas a agregar exactamente los documentos
+         considerando claramente cuando entres y cuando salgas para que se
+         sepa"): check-in/check-out del técnico en sitio. El dato YA existe
+         en mant_visitas (hora_real_inicio/hora_real_fin, ver ALTER en
+         app.py ~52960 y su uso real en mant_visita_tarea_iniciar/cerrar,
+         app.py ~69100-69180) -- acá solo se MUESTRA, de solo lectura, no se
+         inventa un sistema de geofence nuevo (eso es lo que ya usa
+         ot_ejecutar.html/el Monitor, sin GPS acá). Si `hora_real_inicio` es
+         null todavía no se ha marcado ninguna tarea como iniciada; si
+         `hora_real_fin` es null la OT no se ha cerrado -- placeholder
+         honesto en vez de inventar un dato. #}
+      {# ══ CRONÓMETRO DEL TÉCNICO ═══════════════════════════════════════
+         🆕 2026-09-02 (Daniel: "tomemos el tiempo al técnico, y separar
+         cuándo comienza la que va en ruta, separando también cuándo comienza
+         a gestionar las máquinas. ¿Cuánto se tomó en cada máquina? Un
+         tracking bien elegante" · "eso me dará muchos puntos en la
+         gerencia").
+         Reemplaza a la barra de check-in/check-out, que solo mostraba dos
+         horas sueltas. Cero columnas nuevas: las marcas ya se guardaban
+         (ruta_iniciada_at, iniciado_at y completada_at por tarea) y nunca se
+         mostraban.
+         ⚠️ Cada tramo dice de dónde salió su hora: cuando el técnico no
+         presionó "Iniciar tarea" se usa la primera tarea COMPLETADA y se
+         marca con ≈. Un cronómetro que finge precisión no sirve para medir
+         a nadie. #}
+      <div class="otd-crono">
+        <div class="hd">
+          <span class="t"><i class="bi bi-stopwatch-fill"></i> Tiempos del técnico</span>
+          {% if cronometro.total_sitio %}
+          <span class="tot">En sitio <b>{{ cronometro.total_sitio }}</b>{% if cronometro.viaje %}
+            · viaje <b>{{ cronometro.viaje }}</b>{% endif %}</span>
+          {% endif %}
+        </div>
+        {% if cronometro.hay_datos %}
+        <div class="linea">
+          {% for h in cronometro.hitos %}
+          <div class="paso {{ 'ok' if h.hay }}">
+            <span class="ic"><i class="bi {{ h.icono }}"></i></span>
+            <div class="tx"><b>{{ h.label }}</b>
+              <span>{{ ('≈ ' if h.aprox else '') ~ h.cuando if h.hay else 'Sin registrar' }}</span></div>
+          </div>
+          {% endfor %}
+        </div>
+
+        {% if cronometro.por_maquina %}
+        <div class="maqs">
+          <div class="ttl">Cuánto tomó cada máquina</div>
+          {% for m in cronometro.por_maquina %}
+          <div class="mq">
+            <span class="nm">{{ m.nombre }}</span>
+            <span class="tk">{{ m.n_ok }}/{{ m.n_tareas }} tareas</span>
+            <span class="hs">{{ m.desde or '—' }}{% if m.hasta %} → {{ m.hasta }}{% endif %}</span>
+            <span class="du {{ 'aprox' if m.aprox }}">
+              {{- ('≈ ' if m.aprox else '') ~ m.duracion if m.duracion else '—' -}}</span>
+          </div>
+          {% endfor %}
+          <div class="nota">
+            <i class="bi bi-info-circle"></i>
+            Los tiempos marcados con <b>≈</b> se calculan desde la primera tarea
+            completada, porque no se registró el "iniciar". Para medir con
+            precisión, el técnico tiene que iniciar la tarea al empezarla.
+          </div>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="otd-vacio" style="padding:18px 12px">
+          <i class="bi bi-stopwatch" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+          Todavía no hay tiempos registrados en esta OT.
+          <div style="margin-top:6px;font-size:.82rem">
+            Se registran solos a medida que el técnico va iniciando y completando tareas.
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {# 📸 2026-09-02 (Daniel: "¿sabes que me gustaría que sacaras la
+         parte de evidencia de fotos? Sácala de ahí... así se queda un
+         poco más compacta, la idea es que no sea tan necesario darle
+         tanto scroll"). Las fotos salen de Información y se MUEVEN acá,
+         a Trabajo, que es donde el técnico las toma. No se elimina nada
+         (REGLA #4.2): mismos ids (otdEvGrid/otdEvEmpty/otdEvBtn/
+         otdEvCount), mismo JS y mismos endpoints de siempre -- solo
+         cambia de pestaña. #}
+      <div class="otd-card" data-bal="1">
+        <h3><i class="bi bi-camera-fill"></i> Fotos de la OT
+          <span class="n" id="otdEvCountWrap"></span></h3>
+          <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
+            <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
+                 text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
+              <i class="bi bi-camera-fill"></i> Fotos
+              <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
+            </div>
+            {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
+               técnico dueño de la visita o superadmin (@_tecnico_owns_visita).
+               🔇 2026-09-02 (Daniel: "ojalá este mensaje de falta de evidencia
+               sea solamente para superadministrador"): el reclamo "¿Falta
+               evidencia?" le sonaba a reproche al técnico, que muchas veces
+               ya subió sus fotos por equipo en el checklist -- estas son las
+               GENERALES de la OT. El botón para subir sigue estando para
+               todos los que pueden ejecutar; lo que se acota al superadmin es
+               el texto que pregunta. #}
+            {% if puede_ejecutar %}
+            <div class="otd-ev-add">
+              <div class="tx">
+                {% if is_superadmin %}
+                <b>¿Falta evidencia?</b>
+                <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
+                {% else %}
+                <b>Fotos generales de la OT</b>
+                <small>Las del checklist por equipo van en cada máquina, en Trabajo.</small>
+                {% endif %}
+              </div>
+              <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
+                <i class="bi bi-camera-fill"></i> Agregar foto
+              </button>
+              <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
+                     style="display:none" onchange="otdSubirFoto(this)">
+              <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
+                     style="display:none" onchange="otdSubirFoto(this)">
+            </div>
+            {% endif %}
+            <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
+              {% for f in fotos %}
+              <div class="otd-ev-item">
+                {% if f.url %}
+                  <img src="{{ f.url }}" alt="" loading="lazy">
+                {% else %}
+                  <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
+                    <i class="bi bi-image" style="font-size:1.6rem"></i></div>
+                {% endif %}
+                <div class="meta">
+                  <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
+                  {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
+                  <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
+              <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+              Todavía no hay fotos subidas a esta OT.
+            </div>
+          </div>
+      </div>
     </div>
 
     {# ── Columna derecha ── #}
@@ -2688,152 +2962,29 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      clásico de respaldo mientras esta pantalla nueva recibe tráfico real
      y Daniel la valida a fondo. #}
   <div class="otd-tabpanel" data-tab="trabajo">
-    {# 🆕 2026-08-30 (Daniel, 4to punto del mismo pedido, interpretado --
-       dicta por voz: "vas a agregar exactamente los documentos
-       considerando claramente cuando entres y cuando salgas para que se
-       sepa"): check-in/check-out del técnico en sitio. El dato YA existe
-       en mant_visitas (hora_real_inicio/hora_real_fin, ver ALTER en
-       app.py ~52960 y su uso real en mant_visita_tarea_iniciar/cerrar,
-       app.py ~69100-69180) -- acá solo se MUESTRA, de solo lectura, no se
-       inventa un sistema de geofence nuevo (eso es lo que ya usa
-       ot_ejecutar.html/el Monitor, sin GPS acá). Si `hora_real_inicio` es
-       null todavía no se ha marcado ninguna tarea como iniciada; si
-       `hora_real_fin` es null la OT no se ha cerrado -- placeholder
-       honesto en vez de inventar un dato. #}
-    {# ══ CRONÓMETRO DEL TÉCNICO ═══════════════════════════════════════
-       🆕 2026-09-02 (Daniel: "tomemos el tiempo al técnico, y separar
-       cuándo comienza la que va en ruta, separando también cuándo comienza
-       a gestionar las máquinas. ¿Cuánto se tomó en cada máquina? Un
-       tracking bien elegante" · "eso me dará muchos puntos en la
-       gerencia").
-       Reemplaza a la barra de check-in/check-out, que solo mostraba dos
-       horas sueltas. Cero columnas nuevas: las marcas ya se guardaban
-       (ruta_iniciada_at, iniciado_at y completada_at por tarea) y nunca se
-       mostraban.
-       ⚠️ Cada tramo dice de dónde salió su hora: cuando el técnico no
-       presionó "Iniciar tarea" se usa la primera tarea COMPLETADA y se
-       marca con ≈. Un cronómetro que finge precisión no sirve para medir
-       a nadie. #}
-    <div class="otd-crono">
-      <div class="hd">
-        <span class="t"><i class="bi bi-stopwatch-fill"></i> Tiempos del técnico</span>
-        {% if cronometro.total_sitio %}
-        <span class="tot">En sitio <b>{{ cronometro.total_sitio }}</b>{% if cronometro.viaje %}
-          · viaje <b>{{ cronometro.viaje }}</b>{% endif %}</span>
-        {% endif %}
-      </div>
-      {% if cronometro.hay_datos %}
-      <div class="linea">
-        {% for h in cronometro.hitos %}
-        <div class="paso {{ 'ok' if h.hay }}">
-          <span class="ic"><i class="bi {{ h.icono }}"></i></span>
-          <div class="tx"><b>{{ h.label }}</b>
-            <span>{{ ('≈ ' if h.aprox else '') ~ h.cuando if h.hay else 'Sin registrar' }}</span></div>
-        </div>
-        {% endfor %}
-      </div>
-
-      {% if cronometro.por_maquina %}
-      <div class="maqs">
-        <div class="ttl">Cuánto tomó cada máquina</div>
-        {% for m in cronometro.por_maquina %}
-        <div class="mq">
-          <span class="nm">{{ m.nombre }}</span>
-          <span class="tk">{{ m.n_ok }}/{{ m.n_tareas }} tareas</span>
-          <span class="hs">{{ m.desde or '—' }}{% if m.hasta %} → {{ m.hasta }}{% endif %}</span>
-          <span class="du {{ 'aprox' if m.aprox }}">
-            {{- ('≈ ' if m.aprox else '') ~ m.duracion if m.duracion else '—' -}}</span>
-        </div>
-        {% endfor %}
-        <div class="nota">
-          <i class="bi bi-info-circle"></i>
-          Los tiempos marcados con <b>≈</b> se calculan desde la primera tarea
-          completada, porque no se registró el "iniciar". Para medir con
-          precisión, el técnico tiene que iniciar la tarea al empezarla.
-        </div>
-      </div>
-      {% endif %}
-      {% else %}
-      <div class="otd-vacio" style="padding:18px 12px">
-        <i class="bi bi-stopwatch" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-        Todavía no hay tiempos registrados en esta OT.
-        <div style="margin-top:6px;font-size:.82rem">
-          Se registran solos a medida que el técnico va iniciando y completando tareas.
-        </div>
-      </div>
-      {% endif %}
-    </div>
-    {# 📸 2026-09-02 (Daniel: "¿sabes que me gustaría que sacaras la
-       parte de evidencia de fotos? Sácala de ahí... así se queda un
-       poco más compacta, la idea es que no sea tan necesario darle
-       tanto scroll"). Las fotos salen de Información y se MUEVEN acá,
-       a Trabajo, que es donde el técnico las toma. No se elimina nada
-       (REGLA #4.2): mismos ids (otdEvGrid/otdEvEmpty/otdEvBtn/
-       otdEvCount), mismo JS y mismos endpoints de siempre -- solo
-       cambia de pestaña. #}
-    <div class="otd-card">
-      <h3><i class="bi bi-camera-fill"></i> Fotos de la OT
-        <span class="n" id="otdEvCountWrap"></span></h3>
-        <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
-          <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
-               text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
-            <i class="bi bi-camera-fill"></i> Fotos
-            <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
-          </div>
-          {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
-             técnico dueño de la visita o superadmin (@_tecnico_owns_visita).
-             🔇 2026-09-02 (Daniel: "ojalá este mensaje de falta de evidencia
-             sea solamente para superadministrador"): el reclamo "¿Falta
-             evidencia?" le sonaba a reproche al técnico, que muchas veces
-             ya subió sus fotos por equipo en el checklist -- estas son las
-             GENERALES de la OT. El botón para subir sigue estando para
-             todos los que pueden ejecutar; lo que se acota al superadmin es
-             el texto que pregunta. #}
-          {% if puede_ejecutar %}
-          <div class="otd-ev-add">
-            <div class="tx">
-              {% if is_superadmin %}
-              <b>¿Falta evidencia?</b>
-              <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
-              {% else %}
-              <b>Fotos generales de la OT</b>
-              <small>Las del checklist por equipo van en cada máquina, en Trabajo.</small>
-              {% endif %}
-            </div>
-            <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
-              <i class="bi bi-camera-fill"></i> Agregar foto
-            </button>
-            <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
-                   style="display:none" onchange="otdSubirFoto(this)">
-            <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
-                   style="display:none" onchange="otdSubirFoto(this)">
-          </div>
-          {% endif %}
-          <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
-            {% for f in fotos %}
-            <div class="otd-ev-item">
-              {% if f.url %}
-                <img src="{{ f.url }}" alt="" loading="lazy">
-              {% else %}
-                <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
-                  <i class="bi bi-image" style="font-size:1.6rem"></i></div>
-              {% endif %}
-              <div class="meta">
-                <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
-                {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
-                <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
-            <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-            Todavía no hay fotos subidas a esta OT.
-          </div>
-        </div>
-    </div>
 
     <div class="otd-card" id="otdWkCard">
+      {# 🔒 2026-09-03 — Aviso de OT sellada. Daniel, tras cerrar la
+         OT-2026-00127: "todo tiene que quedar cerrado... es peligroso que
+         se altere la información que declaró el técnico".
+         El botón "Corregir" existe SOLO para superadmin y solo porque él
+         mismo lo pidió el 2-sep ("bloquéalos y deja al final una
+         corrección en caso de, con trazabilidad abajo"): es la vía de
+         rescate para una OT trabada (casos reales OT-58 y OT-132), y cada
+         cambio que haga por ahí queda en la bitácora vía
+         `_ot_evidencia_post_firma`, que ya corre en el backend. #}
+      {% if ot_solo_lectura %}
+      <div class="otd-cerrada" id="otdCerradaAviso">
+        <i class="bi bi-lock-fill"></i>
+        <span><b>OT cerrada — solo lectura.</b> Lo que respondió el técnico
+          queda tal cual: no se puede cambiar el N° de serie, la ubicación,
+          las respuestas ni agregar fotos. Las fotos que ya están sí se ven.</span>
+        {% if is_superadmin %}
+        <button type="button" class="corr" onclick="otdActivarCorreccion()">
+          <i class="bi bi-pencil-fill"></i> Corregir</button>
+        {% endif %}
+      </div>
+      {% endif %}
       <h3><i class="bi bi-wrench-adjustable-circle-fill"></i> Equipos — detalle de trabajo
         <span class="n">{{ kpis.equipos }}</span>
         {# 2026-09-02 — "Agregar equipo" (permiso granular
@@ -2844,13 +2995,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
            Trabajo"). Se mueve, NO se elimina (REGLA #4.2) -- mismos ids,
            mismo JS, mismo candado de estado. #}
         {% if v.cliente_id and v.estado not in ('cerrada','completada','cancelada','anulada')
-              and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
+              and not es_tecnico
+            and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
         <button type="button" class="edit" style="margin-left:auto"
                 onclick="otdAbrirAgregarEquipo()" title="Agregar un equipo nuevo a esta OT">
           <i class="bi bi-plus-circle"></i> Agregar equipo</button>
         {% endif %}
       </h3>
       {% if v.cliente_id and v.estado not in ('cerrada','completada','cancelada','anulada')
+            and not es_tecnico
             and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
       <div class="otd-editbox" id="otdAgregarEquipoBox">
         <div class="row" style="flex-wrap:wrap">
@@ -3096,7 +3249,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         <i class="bi bi-inbox" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
         Esta OT todavía no tiene equipos asignados.
         {% if v.estado not in ('cerrada','completada','cancelada','anulada')
-              and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
+              and not es_tecnico
+            and (is_superadmin or permissions.mant_equipos_agregar_libre) %}
         <div style="margin-top:8px;font-size:.82rem">
           Puedes agregarlos con el botón <b>Agregar equipo</b> de arriba.
         </div>
@@ -3247,8 +3401,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <i class="bi bi-arrow-counterclockwise"></i> Deshacer
             </button>
             <div class="firma-color-pick">
-              <div class="firma-color active" style="background:#0f172a" onclick="OT2F.setFirmaColor('otfCanvasTec', '#0f172a', this)" title="Negro"></div>
-              <div class="firma-color" style="background:#1e40af" onclick="OT2F.setFirmaColor('otfCanvasTec', '#1e40af', this)" title="Azul"></div>
+              <div class="firma-color" style="background:#0f172a" onclick="OT2F.setFirmaColor('otfCanvasTec', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color active" style="background:#1e40af" onclick="OT2F.setFirmaColor('otfCanvasTec', '#1e40af', this)" title="Azul"></div>
               <div class="firma-color" style="background:#dc2626" onclick="OT2F.setFirmaColor('otfCanvasTec', '#dc2626', this)" title="Rojo"></div>
             </div>
           </div>
@@ -3304,8 +3458,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <i class="bi bi-arrow-counterclockwise"></i> Deshacer
             </button>
             <div class="firma-color-pick">
-              <div class="firma-color active" style="background:#0f172a" onclick="OT2F.setFirmaColor('otfCanvasCli', '#0f172a', this)" title="Negro"></div>
-              <div class="firma-color" style="background:#1e40af" onclick="OT2F.setFirmaColor('otfCanvasCli', '#1e40af', this)" title="Azul"></div>
+              <div class="firma-color" style="background:#0f172a" onclick="OT2F.setFirmaColor('otfCanvasCli', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color active" style="background:#1e40af" onclick="OT2F.setFirmaColor('otfCanvasCli', '#1e40af', this)" title="Azul"></div>
             </div>
           </div>
         </div>
@@ -3630,9 +3784,9 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <i class="bi bi-arrow-counterclockwise"></i> Deshacer
             </button>
             <div class="firma-color-pick">
-              <div class="firma-color active" style="background:#0f172a"
+              <div class="firma-color" style="background:#0f172a"
                    onclick="OT2F.setFirmaColor('otfCanvasAprob', '#0f172a', this)" title="Negro"></div>
-              <div class="firma-color" style="background:#1e40af"
+              <div class="firma-color active" style="background:#1e40af"
                    onclick="OT2F.setFirmaColor('otfCanvasAprob', '#1e40af', this)" title="Azul"></div>
               <div class="firma-color" style="background:#dc2626"
                    onclick="OT2F.setFirmaColor('otfCanvasAprob', '#dc2626', this)" title="Rojo"></div>
@@ -5242,6 +5396,56 @@ document.addEventListener('DOMContentLoaded', otdCargarAdjuntos);
    aviso simple, sin salida hacia pantallas fuera de OT 2.0.
    ══════════════════════════════════════════════════════════════════════ */
 const OTD_IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
+/* 🔒 2026-09-03 — OT SELLADA = SOLO LECTURA para todos, superadmin incluido.
+   Daniel, tras firmar y cerrar la OT-2026-00127: "¿y sigue estando abierta
+   para editar? Bloquéalo de inmediato... es peligroso que se altere la
+   información que declaró el técnico. Bloquea el número de serie, porque ya
+   lo guardé, bloquea volver a capturar la ubicación, todo. Lo que sí se
+   puede siempre es VER las fotos; lo que no se puede es agregar más ni
+   cambiar absolutamente nada".
+   Antes esta pantalla solo miraba el candado por-tarea de otro técnico
+   (otdChkEstaBloqueada), NUNCA el estado de la OT: con la OT cerrada, los
+   inputs, las píldoras Sí/No, el N° de serie y el botón de GPS seguían
+   vivos. El backend sí frena a todos... salvo al superadmin, que tiene el
+   candado maestro para rescatar OT trabadas. Se invierte el default: nace
+   cerrado, y el superadmin lo abre a propósito con "Corregir". */
+const OTD_SOLO_LECTURA = {{ 'true' if ot_solo_lectura else 'false' }};
+let OTD_CORRIGIENDO = false;   // superadmin activó la corrección con traza
+function otdBloqueadaPorCierre(){ return OTD_SOLO_LECTURA && !OTD_CORRIGIENDO; }
+
+/* Desbloqueo consciente, solo superadmin. No es un "editar" cualquiera:
+   la OT ya está firmada y cerrada, así que se pide confirmación explícita
+   y se avisa que cada cambio queda registrado. El backend ya deja la
+   evidencia (`_ot_evidencia_post_firma` corre en los decoradores de
+   ejecución) -- acá no se inventa un permiso nuevo: el superadmin ya
+   podía, lo que faltaba era que no pudiera hacerlo SIN DARSE CUENTA. */
+window.otdActivarCorreccion = async function(){
+  if (!OTD_IS_SUPERADMIN) return;
+  const ok = await ilusConfirm({
+    title: 'Corregir una OT cerrada',
+    message: 'Esta OT ya está firmada y cerrada. Vas a poder cambiar lo que ' +
+             'declaró el técnico.',
+    sub: 'Cada cambio queda registrado en la actividad de la OT, con tu nombre ' +
+         'y la hora. Úsalo solo para arreglar un error real.',
+    okLabel: 'Sí, corregir', cancelLabel: 'Dejarla cerrada', danger: true,
+  });
+  if (!ok) return;
+  OTD_CORRIGIENDO = true;
+  const av = document.getElementById('otdCerradaAviso');
+  if (av){
+    av.classList.add('editando');
+    av.querySelector('span').innerHTML =
+      '<b>Corrección activada.</b> Estás editando una OT cerrada: todo lo que ' +
+      'cambies queda registrado a tu nombre. Recarga la página para volver a ' +
+      'dejarla en solo lectura.';
+    const b = av.querySelector('.corr'); if (b) b.remove();
+  }
+  // Repintar el checklist para que los controles se habiliten.
+  document.querySelectorAll('.otd-chk-mount').forEach(el => {
+    if (el.dataset.mid) otdRenderChecklistEquipo(el.dataset.mid);
+  });
+  ilusToast('Corrección activada — queda registrada', {type:'warning'});
+};
 const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
 
 let OTD_CHK_DATA = null;      // plantillas_por_maquina, tal como llega del backend
@@ -5282,12 +5486,30 @@ function otdRenderChecklistEquipo(mid){
     mount.innerHTML = '<div class="otd-chk-fallback">Sin checklist asignado a este equipo.</div>';
     return;
   }
-  mount.innerHTML = grupos.map(g => `
+  // 🆕 2026-09-03 — barra SEGMENTADA (una barrita por tarea) copiada de la
+  // pantalla clásica que Daniel puso al lado: "hay un semáforo, está bien
+  // hecho eso". Una barra continua dice el porcentaje; ésta dice además
+  // CUÁNTAS tareas son y cuáles faltan, que es lo que el técnico mira.
+  mount.innerHTML = grupos.map(g => {
+    const oblT = g.tareas.filter(t => t.obligatoria).length;
+    const oblO = g.tareas.filter(t => t.obligatoria && t.completada).length;
+    const segs = g.tareas.map(t =>
+      `<i class="${t.completada ? 'ok' : (t.obligatoria ? 'obl' : '')}"></i>`).join('');
+    const cerrado = oblT > 0 && oblO >= oblT;
+    return `
     <div class="otd-chk-plant">
-      <div class="otd-chk-plant-nm"><i class="bi bi-list-check"></i> ${g.plantilla_nombre}
+      <div class="otd-chk-plant-nm"><i class="bi bi-list-check"></i> ${otdEsc(g.plantilla_nombre)}
         <span class="pg">${g.completas}/${g.total}</span></div>
-      ${g.tareas.map(t => otdChkTareaHtml(t)).join('')}
-    </div>`).join('');
+      <div class="otd-chk-segs">${segs}</div>
+      <div class="otd-chk-oblline${cerrado ? ' ok' : ''}">
+        <b>${g.completas}/${g.total}</b>
+        <span>${oblT === 0 ? 'sin obligatorias'
+                : (cerrado ? 'obligatorias completas ✓'
+                           : `faltan ${oblT - oblO} obligatoria${oblT - oblO === 1 ? '' : 's'}`)}</span>
+      </div>
+      ${g.tareas.map((t, i) => otdChkTareaHtml(t, i + 1)).join('')}
+    </div>`;
+  }).join('');
   // Actualiza los resúmenes de la cabecera del equipo (n_ok/n_tareas,
   // obligatorias) con el dato fresco del checklist recién cargado --
   // sin esto seguirían mostrando el valor con el que cargó la página.
@@ -5352,6 +5574,9 @@ function otdWkCheckAllComplete(){
 }
 
 function otdChkEstaBloqueada(t){
+  // El cierre de la OT manda sobre todo lo demás, incluso para superadmin
+  // (a menos que haya entrado a "Corregir" a propósito).
+  if (otdBloqueadaPorCierre()) return true;
   if (OTD_IS_SUPERADMIN) return false;
   if (!t.locked_by_user_id || t.locked_by_user_id === OTD_CURRENT_UID) return false;
   if (!t.locked_at) return false;
@@ -5380,12 +5605,32 @@ function otdEsc(s){
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+/* Abre una foto a pantalla completa. Reusa ilusAlert (REGLA #1: nada de
+   window.open ni de visores nuevos) con subHtml, que es contenido que
+   armamos nosotros a partir de una URL ya escapada. */
+window.otdVerFotoGrande = function(url){
+  ilusAlert({
+    title: 'Foto de la OT',
+    message: '',
+    sub: `<img src="${url}" alt="" style="width:100%;border-radius:10px;display:block">`,
+    subHtml: true, okLabel: 'Cerrar',
+  });
+};
+
 function otdChkFotosHtml(t){
   if (!t.fotos || !t.fotos.length) return '';
-  return `<div class="otd-chk-fotos">${t.fotos.map(f => `<img src="${otdEsc(f.url)}" alt="" loading="lazy">`).join('')}</div>`;
+  // Se abren en grande al tocarlas: con la OT cerrada, la foto es la única
+  // evidencia que queda y una miniatura no deja verificar nada.
+  return `<div class="otd-chk-fotos">${t.fotos.map(f =>
+    `<img src="${otdEsc(f.url)}" alt="Foto de ${otdEsc(t.titulo || 'la tarea')}"
+          loading="lazy" onclick="otdVerFotoGrande('${otdEsc(f.url)}')">`).join('')}</div>`;
 }
 
 function otdChkFotoBtnHtml(t){
+  // Con la OT cerrada no se agregan fotos. Las que ya están se muestran
+  // igual (otdChkFotosHtml, aparte): "lo que sí se puede siempre es ver
+  // las fotos; lo que no se puede es agregar más".
+  if (otdBloqueadaPorCierre()) return '';
   if (!t.requiere_foto) return '';
   const need = !(t.fotos && t.fotos.length);
   return `<button type="button" class="otd-chk-fotobtn${need ? ' need' : ''}"
@@ -5610,12 +5855,16 @@ async function otdCapturarGps(tid){
   }
 }
 
-function otdChkTareaHtml(t){
+function otdChkTareaHtml(t, nro){
   const tipo = (t.tipo_respuesta || 'check').toLowerCase();
   const bloqueada = otdChkEstaBloqueada(t);
-  const oblBadge = t.obligatoria ? '<span class="obl">Obligatoria</span>' : '';
-  const lockMsg = bloqueada
-    ? `<div class="lockmsg"><i class="bi bi-lock-fill"></i> Otro técnico está respondiendo esta tarea ahora.</div>` : '';
+  const oblBadge = '';   // pasó a los chips de abajo (rediseño 2026-09-03)
+  // El motivo del candado importa: "otro técnico la está respondiendo" y
+  // "la OT ya está cerrada" piden cosas distintas de quien lo lee.
+  const lockMsg = !bloqueada ? ''
+    : (otdBloqueadaPorCierre()
+        ? `<div class="lockmsg cerrada"><i class="bi bi-lock-fill"></i> OT cerrada — esta respuesta ya no se puede cambiar.</div>`
+        : `<div class="lockmsg"><i class="bi bi-lock-fill"></i> Otro técnico está respondiendo esta tarea ahora.</div>`);
   let body = '';
 
   if (tipo === 'check'){
@@ -5729,14 +5978,60 @@ function otdChkTareaHtml(t){
     body = `<div class="otd-chk-fallback">Tipo de respuesta no disponible en esta vista todavía.</div>`;
   }
 
-  return `<div class="otd-chk-item${t.completada ? ' is-ok' : ''}${bloqueada ? ' is-locked' : ''}" id="otdChkItem-${t.id}">
-    <div class="hd"><b>${(t.titulo || '').replace(/</g,'&lt;')}</b>${oblBadge}</div>
-    ${t.descripcion ? `<div class="desc">${t.descripcion.replace(/</g,'&lt;')}</div>` : ''}
-    ${body}
-    ${otdChkFotoBtnHtml(t)}
-    ${otdChkFotosHtml(t)}
-    ${lockMsg}
+  /* ── Anatomía copiada de la pantalla clásica (Daniel, 2026-09-03) ──
+     número · título · chips · sello de autoría · control · check. Cada
+     pieza está porque responde una pregunta que el técnico se hace:
+     ¿cuál voy? ¿esta traba la firma? ¿qué me piden? ¿ya la hizo alguien? */
+  const CH_TIPO = {
+    serie:'N° de serie', sino:'Sí / No', numero:'Número', texto:'Texto',
+    lista:'Lista', fecha_hora:'Fecha', gps:'GPS', verificacion:'Verificación',
+  };
+  const chips = [];
+  if (t.obligatoria) chips.push('<span class="ch obl">Obligatoria</span>');
+  if (CH_TIPO[tipo]) chips.push(`<span class="ch tipo">${CH_TIPO[tipo]}</span>`);
+  if (t.requiere_foto){
+    const conFoto = !!(t.fotos && t.fotos.length);
+    chips.push(`<span class="ch foto${conFoto ? ' ok' : ''}">` +
+               (conFoto ? 'Foto lista' : 'Necesita foto') + '</span>');
+  }
+  /* Sello de autoría. `completada_por` NO viaja al técnico (el backend lo
+     saca del JSON a propósito), así que acá simplemente no aparece --
+     nunca se inventa un nombre. */
+  const sello = (t.completada && (t.completada_por || t.completada_at))
+    ? `<div class="sello"><i class="bi bi-shield-check"></i>` +
+      `${t.completada_por ? otdEsc(t.completada_por) : 'Respondida'}` +
+      `${t.completada_at ? ' · ' + otdChkCuando(t.completada_at) : ''}</div>`
+    : '';
+  const clase = t.completada ? ' is-ok' : (t.obligatoria ? ' is-obl' : '');
+
+  return `<div class="otd-chk-item${clase}${bloqueada ? ' is-locked' : ''}" id="otdChkItem-${t.id}">
+    <span class="nm">${String(nro || 0).padStart(2, '0')}</span>
+    <span class="tk"><i class="bi bi-${t.completada ? 'check-lg' : (t.obligatoria ? 'exclamation-lg' : 'dash-lg')}"></i></span>
+    <div class="hd"><b>${otdEsc(t.titulo || '')}</b>${oblBadge}</div>
+    ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
+    ${t.descripcion ? `<div class="desc">${otdEsc(t.descripcion)}</div>` : ''}
+    ${sello}
+    <div class="bodyc">
+      ${body}
+      ${otdChkFotoBtnHtml(t)}
+      ${otdChkFotosHtml(t)}
+      ${lockMsg}
+    </div>
   </div>`;
+}
+
+/* Fecha corta y en hora de Chile (REGLA #6). El backend manda
+   "2026-08-31 01:03:00" sin zona, y MySQL guarda UTC -- la misma trampa
+   que hacía durar 4 horas el candado entre técnicos. */
+function otdChkCuando(s){
+  try {
+    const n = String(s).replace(' ', 'T');
+    const iso = (n.endsWith('Z') || n.includes('+')) ? n : n + 'Z';
+    return new Date(iso).toLocaleString('es-CL', {
+      day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit',
+      timeZone:'America/Santiago',
+    }).replace(',', ' ·');
+  } catch(e){ return ''; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -6429,8 +6724,14 @@ const OT2F = (function(){
     const ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
     ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#0f172a';
-    _sig[id] = { ctx, drawing:false, last:null, has:false, color:'#0f172a', wrap, history:[] };
+    /* 🖊️ 2026-09-03 (Daniel: "deja por defecto siempre para que firme en
+       AZUL, para que se vea original, no en negro, para que no se vea como
+       copia. Pero déjalo como opción"). Una firma azul sobre un documento
+       impreso se lee como trazo hecho a mano; una negra se confunde con la
+       impresión y parece fotocopia -- en un anexo con efecto contractual
+       eso importa. El negro y el rojo siguen disponibles en el selector. */
+    ctx.strokeStyle = '#1e40af';
+    _sig[id] = { ctx, drawing:false, last:null, has:false, color:'#1e40af', wrap, history:[] };
 
     function pushHistory(){
       try {
