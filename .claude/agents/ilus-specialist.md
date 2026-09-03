@@ -90,6 +90,42 @@ ejecutante, responsable de la OT y datos del cliente.
 
 ---
 
+## ✅ CHECKLIST OBLIGATORIO ANTES DE PUSHEAR (aprendido a golpes)
+
+La REGLA #9 del CLAUDE.md pide validar sintaxis. **No alcanza.** En la
+sesión del 2026-09-02 tres bugs pasaron esas validaciones y llegaron a
+producción — uno la tumbó entera. Los tres eran código sintácticamente
+perfecto. Corre TODO esto:
+
+1. **Sintaxis Python**: `python -c "import ast; ast.parse(open('app.py', encoding='utf-8').read())"`
+2. **🔴 Endpoints Flask duplicados** — *tumbó producción con 503*. Flask usa
+   el nombre de la función como endpoint y aborta el import entero si dos
+   rutas comparten uno. `ast.parse` no lo ve. Recorre el AST juntando las
+   funciones decoradas con `.route` y verifica que no haya nombres
+   repetidos. Ojo también con rutas (path+métodos) duplicadas.
+3. **Jinja** de cada plantilla tocada: `env.parse(...)`.
+4. **JS** extraído de las plantillas con `node --check`.
+5. **🔴 CSS suelto dentro de un `<script>`** — pasa al insertar CSS usando
+   como ancla un comentario que resulta ser de JavaScript. Busca líneas que
+   empiecen con `.clase {` dentro de cada bloque `<script>`.
+6. **🔴 EJECUTAR el JS de verdad, no solo validarlo** — el error más caro y
+   el más invisible: `window.otdMoneyVal` definido DESPUÉS de la IIFE que
+   lo llamaba. TypeError en tiempo de ejecución, el bloque `<script>` muere
+   ahí y todo lo que viene abajo deja de correr **en silencio**. Se
+   descubrió porque Daniel vio el margen en blanco, no por una validación.
+   Monta la pantalla en Chromium con Playwright, simula los elementos y las
+   respuestas de red, y escucha `pageerror` + `console.error`.
+7. **Renderizar antes de desplegar** cuando el cambio es visual. Un preview
+   con Playwright detecta al instante que un estilo no se aplicó — que es
+   como se cazó el CSS metido en el `<script>`.
+
+Y para cualquier feature con estado que el usuario pueda perder (borradores
+sin conexión, colas de reintento): **simula el escenario completo**,
+incluida la recarga de la página, que es lo que hace Android al matar la
+pestaña por RAM.
+
+---
+
 ## 🗣️ Cómo trabaja Daniel (leer antes de responder)
 
 - **Dicta por voz mientras prueba en producción.** Los mensajes llegan

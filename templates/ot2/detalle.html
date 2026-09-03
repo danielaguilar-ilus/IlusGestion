@@ -1351,7 +1351,7 @@
       <div class="otd-d d-fec{{ ' has-edit' if puede_metadata }}"><i class="bi bi-calendar3"></i>
         <div class="in"><span class="k">Agendada</span>
           <span class="v"><span>{{ v.fecha_dia }}{% if v.fecha_dow %} · {{ v.fecha_dow }}{% endif %}</span>
-          {% if puede_metadata %}
+          {% if puede_metadata and permissions.mant_reagendar %}
           <button type="button" class="edit" onclick="otdAbrirReagendar()">
             <i class="bi bi-calendar-event"></i> Reagendar</button>
           {% endif %}</span></div></div>
@@ -1361,7 +1361,7 @@
       <div class="otd-d d-tec{{ ' has-edit' if puede_metadata }}"><i class="bi bi-person-badge-fill"></i>
         <div class="in"><span class="k">Técnico</span>
           <span class="v"><span>{{ v.tecnico_nombre or 'Sin asignar' }}</span>
-          {% if puede_metadata %}
+          {% if puede_metadata and permissions.mant_reasignar_tecnico %}
           <button type="button" class="edit" onclick="otdAbrirReasignar()">
             <i class="bi bi-person-gear"></i> {{ 'Reasignar' if v.tecnico_nombre else 'Asignar' }}</button>
           {% endif %}</span></div></div>
@@ -1708,13 +1708,13 @@
           {% endif %}
           <div class="fila"><span class="lbl">Fecha</span>
             <span class="val">{{ v.fecha_dia }}{% if v.hora_inicio %} · {{ (v.hora_inicio | string)[:5] }}{% if v.hora_fin %}–{{ (v.hora_fin | string)[:5] }}{% endif %}{% endif %}
-              {% if puede_metadata %}
+              {% if puede_metadata and permissions.mant_reagendar %}
               <button type="button" class="acc" onclick="otdAbrirReagendar()">
                 <i class="bi bi-calendar-event"></i> Reagendar</button>
               {% endif %}</span></div>
           <div class="fila"><span class="lbl">Técnico</span>
             <span class="val"><b>{{ v.tecnico_nombre or 'Sin asignar' }}</b>
-              {% if puede_metadata %}
+              {% if puede_metadata and permissions.mant_reasignar_tecnico %}
               <button type="button" class="acc" onclick="otdAbrirReasignar()">
                 <i class="bi bi-person-gear"></i> {{ 'Reasignar' if v.tecnico_nombre else 'Asignar' }}</button>
               {% endif %}</span></div>

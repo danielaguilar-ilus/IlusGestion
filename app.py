@@ -4526,13 +4526,37 @@ PERMS_KEYS = (
     # mant_tipo_interno_crear / mant_ot_interna -- puramente aditivo, nunca
     # quita el camino que ya existía).
     "mant_equipos_agregar_libre",
+    # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
+    # liberado para todos y que se pueda bloquear por el front en los roles.
+    # Igual el reasignar el técnico"). Son permisos de BLOQUEO: se asumen
+    # concedidos y Daniel se los quita a quien no deba tenerlos, sin tocar
+    # código. Ver `_build_perms_from_matrix`, donde la ausencia de la llave
+    # se lee como True a propósito.
+    "mant_reagendar",
+    "mant_reasignar_tecnico",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
 
 
+# 🆕 2026-09-02 — Permisos que se asumen CONCEDIDOS mientras nadie los
+# bloquee (Daniel, sobre reagendar y reasignar: "que quede liberado para
+# todos y que se pueda bloquear por el front en los roles").
+#
+# OJO, esto no es un detalle: `_empty_perms()` es la base de
+# `_legacy_permission_set`, que sirve a los roles SIN filas en
+# `rol_permisos` -- admin, ejecutivo, técnico. Si estas llaves nacieran en
+# False como el resto, reagendar y reasignar se apagarían de golpe para
+# todo el mundo al desplegar, que es justo lo contrario de lo pedido. Un
+# permiso de tipo "bloqueo" solo apaga a quien se le marca explícitamente.
+_PERMS_CONCEDIDOS_POR_DEFECTO = ("mant_reagendar", "mant_reasignar_tecnico")
+
+
 def _empty_perms():
-    return {k: False for k in PERMS_KEYS}
+    d = {k: False for k in PERMS_KEYS}
+    for k in _PERMS_CONCEDIDOS_POR_DEFECTO:
+        d[k] = True
+    return d
 
 
 def _legacy_permission_set(role):
@@ -4632,6 +4656,17 @@ def _build_perms_from_matrix(role):
     # levantamiento/descubrimiento (aditivo 2026-09-02, caso Aarón). Ver
     # comentario de "mant_equipos_agregar_libre" en PERMS_KEYS.
     base["mant_equipos_agregar_libre"] = bool(man.get("equipos_agregar_libre"))
+    # 🆕 2026-09-02 — Reagendar / reasignar técnico (Daniel: "liberado para
+    # todos y que se pueda bloquear por el front en los roles").
+    # OJO al `not in`: son permisos de tipo BLOQUEO, o sea que la ausencia
+    # de la llave significa CONCEDIDO. Si se leyeran como los normales
+    # (`bool(man.get(...))`), todos los roles existentes quedarían sin poder
+    # reagendar de un día para otro -- exactamente lo contrario de lo que
+    # Daniel pidió. Solo queda bloqueado quien lo tenga explícitamente en 0.
+    base["mant_reagendar"] = (man.get("reagendar") is None
+                              or bool(man.get("reagendar")))
+    base["mant_reasignar_tecnico"] = (man.get("reasignar_tecnico") is None
+                                      or bool(man.get("reasignar_tecnico")))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
@@ -12527,7 +12562,12 @@ PERMISSIONS_MATRIX = {
                                    "calendario","ots","cotizaciones",
                                    "ot_interna","tipo_interno_crear",
                                    "cotizaciones_eliminar_item",
-                                   "equipos_agregar_libre"]},
+                                   "equipos_agregar_libre",
+                                   # 🆕 2026-09-02 (Daniel: "reagendar, que
+                                   # quede liberado para todos y que se pueda
+                                   # bloquear por el front en los roles.
+                                   # Igual el reasignar el técnico").
+                                   "reagendar", "reasignar_tecnico"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -12590,6 +12630,16 @@ PERMISSIONS_META = {
                          "tipo": "submodulo", "icon": "bi-clipboard2-check"},
         "equipos_agregar_libre": {"label": "Agregar equipos a OT ya creada",
                          "tipo": "submodulo", "icon": "bi-plus-square"},
+        # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
+        # liberado para todos y que se pueda bloquear por el front en los
+        # roles. Igual el reasignar el técnico"). Nacen como 'bloqueo' -- o
+        # sea, se ASUMEN concedidos y Daniel los quita a quien no deba
+        # tenerlos -- que es exactamente lo que pidió: liberado por defecto,
+        # bloqueable desde /admin/roles sin tocar código.
+        "reagendar":    {"label": "Reagendar una OT (cambiar fecha)",
+                         "tipo": "bloqueo", "icon": "bi-calendar-event"},
+        "reasignar_tecnico": {"label": "Reasignar el técnico de una OT",
+                         "tipo": "bloqueo", "icon": "bi-person-gear"},
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
         "cotizaciones_eliminar_item": {"label": "Quitar producto de una cotización",
                          "tipo": "bloqueo", "icon": "bi-x-circle"},
