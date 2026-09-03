@@ -11616,6 +11616,108 @@ def register_tickets_routes(app, ctx):
     # respondiendo ahora mismo". Ver el uso en _tk_leer_correo_entrante.
     _TK_REABRIR_DIAS_MAX = 15
 
+    @app.route("/tickets/api/actualizar", methods=["POST"])
+    @_tickets_required
+    def tk_api_actualizar_ahora():
+        """UN boton que pone la bandeja al dia (Daniel, 2026-09-03: "puedes
+        colocar un boton donde podamos actualizar los tickets que estan en
+        el correo... actualmente hay tickets que estan saltandose").
+
+        POR QUE HACIA FALTA: el buzon se lee solo, pero desde la misma
+        instancia web (autopoll cada 8s) y por un cron externo que todavia
+        no existe 24/7. En Cloud Run la instancia se apaga cuando no hay
+        trafico: mientras duerme, nadie lee el correo. Al despertar barre
+        una ventana de dias hacia atras y normalmente los alcanza -- pero
+        si la pausa fue larga, o el barrido se corto por tiempo, quedan
+        correos afuera. Eso es lo que se ve como "tickets que se saltan".
+        Este boton es la manija manual para esos casos: la persona que
+        esta mirando la bandeja la pone al dia sin depender de nada.
+
+        Hace de una sola vez las dos cosas que estaban en botones aparte:
+          1. Lee el buzon DE VERDAD (no en seco): crea los tickets nuevos y
+             engancha las respuestas de clientes a su ticket.
+          2. Revisa documentos nuevos del ERP con linea ZZINSTALACION y
+             crea el ticket de instalacion que falte.
+        Las dos son idempotentes -- el correo por Message-ID
+        (tk_mail_ingeridos) y el documento por UNIQUE(tido,nudo)
+        (tk_zz_instalacion_scan) -- asi que apretarlo dos veces no duplica
+        nada. Por eso puede vivir en la barra sin ser peligroso.
+
+        Quien puede: superadmin o ejecutivo de tickets. Es quien mira la
+        bandeja el que necesita refrescarla; pedirle a Daniel que entre a
+        apretar un boton no resuelve el problema que reporto.
+        """
+        perms = g.get("permissions") or {}
+        if not (perms.get("superadmin") or perms.get("tk_es_ejecutivo")):
+            return jsonify({
+                "ok": False,
+                "error": "Necesitas ser ejecutivo de tickets para actualizar "
+                         "la bandeja.",
+            }), 403
+
+        d = request.get_json(silent=True) or {}
+        try:
+            dias = int(d.get("dias") or 15)
+        except Exception:
+            dias = 15
+        dias = max(1, min(_TK_REC_DIAS_MAX, dias))
+        con_documentos = bool(d.get("documentos", True))
+
+        out = {"ok": True, "correo": None, "documentos": None, "avisos": []}
+
+        # ── 1. Correo ────────────────────────────────────────────────
+        # Mismo lock que el autopoll y el cron: un solo login IMAP a la vez.
+        if not _TK_MAIL_POLL["lock"].acquire(timeout=20):
+            return jsonify({
+                "ok": False,
+                "error": "Justo ahora hay otro barrido del buzon en curso. "
+                         "Espera unos segundos y vuelve a apretar.",
+            }), 409
+        try:
+            _TK_MAIL_POLL["ts"] = time.monotonic()
+            out["correo"] = _tk_leer_correo_entrante(
+                dias=dias, max_correos=200, dry_run=False,
+                detalle=False, notificar="resumen",
+                incluir_taa=False, oldest_first=False,
+                # Presupuesto menor que el timeout de la request: si no
+                # alcanza, preferimos devolver un parcial y DECIRLO antes de
+                # que Cloud Run corte la conexion. Reintentar es seguro.
+                max_segundos=110)
+        except Exception as _e:
+            print(f"[tk_actualizar] correo: {_e}", flush=True)
+            out["correo"] = {"ok": False, "error": "No se pudo leer el buzon."}
+        finally:
+            try: _TK_MAIL_POLL["lock"].release()
+            except Exception: pass
+
+        # ── 2. Documentos nuevos de instalacion (ERP) ────────────────
+        if con_documentos:
+            try:
+                out["documentos"] = _tk_zz_instalacion_scan(
+                    dias_default=7, actor=(current_username() or "sistema"))
+            except Exception as _e:
+                print(f"[tk_actualizar] zz_instalacion: {_e}", flush=True)
+                out["documentos"] = {
+                    "ok": False,
+                    "error": "No se pudieron revisar los documentos del ERP.",
+                }
+
+        _c = out.get("correo") or {}
+        _d = out.get("documentos") or {}
+        if not _c.get("ok"):
+            out["avisos"].append(_c.get("error") or "El buzon no respondio.")
+        if _c.get("parcial") or _c.get("truncado"):
+            out["avisos"].append(
+                "El barrido del correo se corto por tiempo: quedaron correos "
+                "sin revisar. Vuelve a apretar Actualizar para seguir.")
+        if con_documentos and not _d.get("ok", True):
+            out["avisos"].append(_d.get("error") or "El ERP no respondio.")
+        # ok=False solo si NINGUNA de las dos mitades funciono: si el correo
+        # entro y el ERP fallo, la bandeja igual quedo mas al dia.
+        out["ok"] = bool(_c.get("ok")) or bool(_d.get("ok"))
+        return jsonify(out)
+
+
     @app.route("/tickets/api/mail/recuperar", methods=["POST"])
     @_tickets_required
     def tk_api_mail_recuperar():

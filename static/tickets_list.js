@@ -984,6 +984,82 @@ if(btnPurgar){
 // POST /tickets/api/zz-instalacion/escanear) es responsable de la
 // idempotencia real (tabla tk_zz_instalacion_scan); este botón solo dispara
 // el escaneo y muestra el resultado.
+/* ═══════════════════════════════════════════════════════════════════
+   ACTUALIZAR LA BANDEJA (2026-09-03, Daniel: "un boton donde podamos
+   actualizar los tickets que estan en el correo... actualmente hay
+   tickets que estan saltandose").
+
+   Una sola llamada hace las dos cosas que antes eran dos botones:
+   leer el buzon de verdad y revisar documentos nuevos de instalacion.
+   Las dos son idempotentes, asi que apretar de mas no hace dano.
+
+   El resultado se cuenta COMPLETO, incluido lo que no salio bien: si el
+   barrido se corto por tiempo o el ERP no respondio, se dice -- un
+   'listo' cuando quedaron correos afuera es justo lo que hace que
+   alguien crea que ya reviso y no vuelva.
+   ═══════════════════════════════════════════════════════════════════ */
+const btnActualizarBandeja = document.getElementById('btnActualizarBandeja');
+if (btnActualizarBandeja){
+  btnActualizarBandeja.addEventListener('click', async function(){
+    btnActualizarBandeja.disabled = true;
+    const _orig = btnActualizarBandeja.innerHTML;
+    btnActualizarBandeja.innerHTML =
+      '<span class="spinner-border spinner-border-sm me-1"></span>Actualizando…';
+    try {
+      const r = await fetch('/tickets/api/actualizar', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+        body: JSON.stringify({dias: 15, documentos: true}),
+      });
+      let d = null;
+      try { d = await r.json(); } catch(_){ d = null; }
+      if (!d){
+        await ilusAlert({type:'error', title:'Sin respuesta del servidor',
+          message:'No sabemos si alcanzo a revisar el buzon. Recarga y vuelve a intentar.'});
+        return;
+      }
+      if (!d.ok && !(d.correo && d.correo.ok)){
+        await ilusAlert({type:'error', title:'No se pudo actualizar',
+          message: d.error || (d.correo && d.correo.error) || 'El buzon no respondio.'});
+        return;
+      }
+      const c = d.correo || {}, doc = d.documentos || {};
+      const nuevos  = c.auto_creados || 0;      // tickets creados desde un correo
+      const mensajes= c.ingresados || 0;        // respuestas enganchadas a su ticket
+      const revisados = c.candidatos || 0;
+      const docNuevos = (doc.tickets_creados || []).length;
+      const partes = [];
+      partes.push(revisados + ' correo' + (revisados===1?'':'s') + ' revisado' + (revisados===1?'':'s'));
+      if (nuevos)   partes.push('<b>' + nuevos + '</b> ticket' + (nuevos===1?'':'s') + ' nuevo' + (nuevos===1?'':'s') + ' desde el correo');
+      if (mensajes) partes.push('<b>' + mensajes + '</b> respuesta' + (mensajes===1?'':'s') + ' enganchada' + (mensajes===1?'':'s'));
+      if (docNuevos) partes.push('<b>' + docNuevos + '</b> ticket' + (docNuevos===1?'':'s') + ' de instalacion desde el ERP');
+      const avisos = (d.avisos || []);
+      const hubo = nuevos + mensajes + docNuevos;
+      if (avisos.length){
+        await ilusAlert({
+          type: hubo ? 'warning' : 'error',
+          title: hubo ? 'Actualizado, pero quedo algo pendiente' : 'No se pudo completar',
+          message: partes.join(' · '),
+          sub: avisos.map(function(a){ return '• ' + a; }).join('<br>'),
+          subHtml: true,
+        });
+      } else if (hubo){
+        await ilusAlert({type:'success', title:'Bandeja al dia',
+          message: partes.join(' · '), subHtml:true});
+      } else {
+        ilusToast('Nada nuevo — ' + revisados + ' correo(s) revisado(s), todo ya estaba en la bandeja.', {type:'info'});
+      }
+      if (hubo && typeof cargarTickets === 'function') cargarTickets();
+    } catch(e){
+      await ilusAlert({type:'error', title:'Error de conexion',
+        message:'No se pudo contactar al servidor: ' + (e.message || e)});
+    } finally {
+      btnActualizarBandeja.disabled = false;
+      btnActualizarBandeja.innerHTML = _orig;
+    }
+  });
+}
+
 const btnZzInstalacion = document.getElementById('btnZzInstalacion');
 if(btnZzInstalacion){
   btnZzInstalacion.addEventListener('click', async function(){

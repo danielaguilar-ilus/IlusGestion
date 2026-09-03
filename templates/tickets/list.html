@@ -106,13 +106,19 @@
       <i class="bi bi-file-earmark-arrow-up me-1"></i>Importar CSV Triple A</button>
     <input type="file" id="taaFileTickets" accept=".csv" style="display:none">
     <input type="file" id="taaFileSla" accept=".csv" style="display:none">
-    <button class="btn btn-sm btn-outline-light" id="btnPurgarTickets" title="Borrar todos los tickets excepto los de un correo (limpieza)">
-      <i class="bi bi-trash3 me-1"></i>Purgar tickets</button>
-    <button class="btn btn-sm btn-outline-light" id="btnZzInstalacion" title="Revisa documentos ERP nuevos con línea ZZINSTALACION y crea un ticket de instalación por cada uno (sin duplicar)">
-      <i class="bi bi-search-heart me-1"></i>Revisar documentos nuevos (Instalación)</button>
-    <button class="btn btn-sm btn-outline-light" id="btnRecuperarMail"
-            title="Revisar el buzón de soporte hacia atrás y recuperar respuestas de clientes que no entraron como mensaje del ticket">
-      <i class="bi bi-envelope-arrow-down me-1"></i>Recuperar correos</button>
+    {# 2026-09-03 (Daniel): "puedes borrar recuperar correos, revisar
+       documentos, purgar ticket, esos botones, eso no está haciendo nada".
+       Se quitaron de la barra los tres:
+         · Purgar tickets      — limpieza destructiva de la migración.
+         · Revisar documentos nuevos (Instalación)
+         · Recuperar correos
+       Las DOS últimas no se perdieron: viven ahora dentro del botón
+       "Actualizar" de abajo, que hace las dos cosas de una vez y es el que
+       Daniel pidió ("un botón donde podamos actualizar los tickets que
+       están en el correo"). Sus endpoints siguen existiendo intactos, así
+       que devolver cualquiera de estos botones es volver a pegar el HTML.
+       Purgar sí queda solo por endpoint (superadmin) a propósito: es la
+       única de las tres que borra datos. #}
     {% endif %}
     {# 2026-08-25 (Daniel: "cambiarle el nombre al boton ya que no es solo
        de documentos si no que trae productos de todos lados"): el modal
@@ -120,6 +126,19 @@
        también trae productos por RUT/nombre, del Catálogo maestro y de
        cotizaciones internas (ver _tka_modal.html). El nombre viejo
        ("Desde documento ERP") quedó chico frente a eso. #}
+    {# 🆕 2026-09-03 (Daniel: "un botón donde podamos actualizar los tickets
+       que están en el correo... actualmente hay tickets que están
+       saltándose"). El buzón se lee solo, pero desde esta misma instancia:
+       en Cloud Run, mientras nadie usa la app, la instancia duerme y nadie
+       lee el correo. Este botón es la manija manual para ponerse al día sin
+       depender de eso. Trae el correo Y revisa los documentos nuevos de
+       instalación del ERP, las dos cosas en una. Apretarlo dos veces no
+       duplica nada (dedup por Message-ID y por documento). #}
+    {% if permissions.superadmin or permissions.tk_es_ejecutivo %}
+    <button class="btn btn-sm btn-outline-light" id="btnActualizarBandeja"
+            title="Traer ahora los correos nuevos del buzón de soporte y revisar documentos nuevos de instalación">
+      <i class="bi bi-arrow-repeat me-1"></i>Actualizar</button>
+    {% endif %}
     <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket buscando productos por documento ERP, RUT/nombre, Catálogo o una cotización interna">
       <i class="bi bi-search me-1"></i>Buscar productos</button>
     <button class="btn btn-ilus trx-btn-primary" data-bs-toggle="modal" data-bs-target="#ntModal">
