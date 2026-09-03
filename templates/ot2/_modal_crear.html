@@ -4739,10 +4739,31 @@ window.OT2C = (function(){
        cantidad. Se recalcula SIEMPRE -- no como el objetivo, que respeta lo
        que el usuario haya escrito a mano. */
     (function(){
+      /* 🔴 2026-09-03 (Daniel: "en la generación de OT por mantención
+         correctiva, en la parte del anexo me agrega TODOS los equipos. Si
+         está filtrado por mantenciones, estas deberán agregar solo los
+         equipos del PLAN — el plan es exclusivo de las mantenciones y
+         visitas").
+         Por qué pasaba: la preselección por plan (`aplica_mantencion`)
+         solo corre cuando la OT arranca SIN equipos marcados. Si nace de
+         una factura, cotización o ticket, los equipos del documento ya
+         vienen todos marcados, así que ese filtro no llega a aplicarse y
+         el anexo terminaba listando el parque completo del cliente en un
+         documento que se le paga a un proveedor.
+         El anexo se queda solo con los del plan cuando el tipo lo usa
+         (mantenciones, visita e inspección). Instalación, cambio,
+         movimiento y desinstalación NO filtran: ahí el plan es
+         irrelevante y hay que dejar constancia de todo lo que se tocó.
+         Ojo: esto filtra el ANEXO, no la selección de equipos de la OT —
+         si alguien marcó a propósito un equipo fuera del plan, la OT
+         igual lo lleva. */
+      var TIPOS_CON_PLAN = ['preventiva','correctiva','visita_tecnica','inspeccion'];
+      var soloPlan = TIPOS_CON_PLAN.indexOf(S.tipo) >= 0;
       var acc = {};
       (S.equipos||[]).forEach(function(e){
         var m = cacheEquipos.find(function(x){ return x.id === e.maquina_id; });
         if (!m) return;
+        if (soloPlan && !m.aplica_mantencion) return;
         var nombre = m.nombre || m.modelo || ('Equipo ' + m.id);
         var sku = (m.sku || '').trim();
         var k = sku || ('n:' + nombre);
