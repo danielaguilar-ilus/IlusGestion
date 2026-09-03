@@ -265,6 +265,20 @@
       els.downloadLink.dataset.downloadName = opts.downloadName || '';
     }
 
+    /* 🖨️ 2026-09-03 (Daniel: "necesito que la página se autoajuste a las
+       medidas que declaramos de la etiqueta 100x150 y 100x50... deja eso
+       automático porque estoy perdiendo tiempo con la orientación y las
+       hojas").
+       Imprimir la PÁGINA HTML deja el tamaño de papel en manos del
+       diálogo de Chrome, que recuerda lo último que usó el usuario e
+       ignora el `@page size` de la hoja: por eso salía en carta, con la
+       etiqueta chiquita al centro y con encabezado y pie del navegador.
+       El PDF, en cambio, lleva el tamaño DENTRO del archivo (medido:
+       100,2 x 50,1 mm), así que al imprimirlo Chrome usa esa medida sola.
+       Con `autoPrint` el visor abre el PDF y lanza la impresión apenas
+       carga -- sin tocar orientación ni tamaño de hoja. */
+    _autoPrintPend = !!opts.autoPrint;
+
     _showLoading(els, opts.loadingMessage);
     els.frame.src = iframeSrc;
 
@@ -290,6 +304,9 @@
     _hideLoading(els);
   }
 
+  // Bandera de "imprimir apenas cargue" (ver opts.autoPrint en openPdf).
+  let _autoPrintPend = false;
+
   function printPdf() {
     const els = _els();
     if (!els.frame) return;
@@ -314,6 +331,12 @@
       els.frame.addEventListener('load', function () {
         _clearSafetyTimer();
         _hideLoading(_els());
+        if (_autoPrintPend) {
+          _autoPrintPend = false;
+          // Un respiro para que el visor nativo termine de montarse: sin
+          // esto, print() a veces sale sobre un documento todavía vacío.
+          setTimeout(printPdf, 350);
+        }
       });
     }
 

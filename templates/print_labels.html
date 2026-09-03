@@ -783,8 +783,18 @@
     <a class="print-btn" href="{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}&download=1">
       <i class="bi bi-filetype-pdf"></i> Descargar PDF
     </a>
-    <button type="button" class="print-btn" onclick="window.print()">
-      <i class="bi bi-printer"></i> Imprimir pagina
+    <button type="button" class="print-btn"
+            {# 🖨️ 2026-09-03 — imprime el PDF, no la página HTML: el
+               tamaño va DENTRO del archivo, así que Chrome no tiene que
+               adivinar hoja ni orientación (Daniel: "estoy perdiendo
+               tiempo con la orientación y las hojas"). #}
+            onclick="openPdf('{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}', {autoPrint:true, title:'Imprimir etiquetas'})">
+      <i class="bi bi-printer"></i> Imprimir
+    </button>
+    {# Se conserva la impresión de la página como alternativa (REGLA #4.2) #}
+    <button type="button" class="print-btn secondary no-print" onclick="window.print()"
+            title="Imprimir la página tal como se ve (depende de la config del navegador)">
+      <i class="bi bi-file-earmark-text"></i> Imprimir página
     </button>
   </div>
 </div>
@@ -929,9 +939,19 @@
         <a class="print-btn" href="{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}&download=1">
           <i class="bi bi-download"></i> Descargar PDF
         </a>
-        <button type="button" class="print-btn" onclick="window.print()">
-          <i class="bi bi-printer"></i> Imprimir pagina
-        </button>
+        <button type="button" class="print-btn"
+            {# 🖨️ 2026-09-03 — imprime el PDF, no la página HTML: el
+               tamaño va DENTRO del archivo, así que Chrome no tiene que
+               adivinar hoja ni orientación (Daniel: "estoy perdiendo
+               tiempo con la orientación y las hojas"). #}
+            onclick="openPdf('{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}', {autoPrint:true, title:'Imprimir etiquetas'})">
+      <i class="bi bi-printer"></i> Imprimir
+    </button>
+    {# Se conserva la impresión de la página como alternativa (REGLA #4.2) #}
+    <button type="button" class="print-btn secondary no-print" onclick="window.print()"
+            title="Imprimir la página tal como se ve (depende de la config del navegador)">
+      <i class="bi bi-file-earmark-text"></i> Imprimir página
+    </button>
       </div>
       <div class="hint-box">
         Para imprimir fisicamente, usa escala 100% o "Sin escala". Para revisar antes, abre la vista previa PDF.

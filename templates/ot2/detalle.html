@@ -673,6 +673,17 @@
   transition:background .6s ease}
 .otd-h:first-child::before{display:none}
 .otd-h.ok::before{background:var(--comp)}
+/* 🔴 FIX 2026-09-03 (Daniel, con la captura del recorrido: "mira los
+   errores"). El tramo se pintaba según el hito de LLEGADA, no el de
+   salida: con "Creada" ya cumplida y "Ejecutando" en curso, el trecho
+   entre ambas salía ROJO -- decía que no se había recorrido un camino
+   que sí se recorrió. El avance es la línea que quedó atrás, así que
+   manda el hito ANTERIOR. */
+.otd-h.ok + .otd-h::before{background:var(--comp)}
+/* Y el tramo que entra al hito ACTUAL se degrada verde -> rojo: hasta
+   acá llegó la OT, de acá en adelante falta. */
+.otd-h.ok + .otd-h.now::before{
+  background:linear-gradient(90deg,var(--comp) 0%,var(--comp) 45%,var(--ejec) 100%)}
 /* 🎨 2026-09-02 (Daniel: "los logos están en blanco, yo los quería a
    color... algo bien poderoso, con profundidad, que se vea muy bien
    realizado el trabajo"). Antes TODO hito cumplido era un disco verde
@@ -700,10 +711,29 @@
   box-shadow:0 0 0 4px rgba(22,163,74,.15),
              0 8px 22px -8px rgba(22,163,74,.9),
              inset 0 0 18px -6px rgba(22,163,74,.5)}
+/* Hito ACTUAL: icono a color PLENO y el disco late. Daniel: "que sea
+   dinámico y palpitante, con los iconos a color como el de Retiros" --
+   antes solo latía el anillo de afuera y el nodo se veía tan quieto como
+   los pendientes. */
 .otd-h.now .p{border-color:var(--ejec);color:var(--hc,#f87171);
   box-shadow:0 0 0 5px rgba(220,38,38,.18),
              0 10px 26px -8px rgba(220,38,38,.95),
-             inset 0 0 22px -6px rgba(220,38,38,.55)}
+             inset 0 0 22px -6px rgba(220,38,38,.55);
+  animation:otdTrackLatido 2s ease-in-out infinite}
+@keyframes otdTrackLatido{
+  0%,100%{transform:scale(1)}
+  50%{transform:scale(1.07)}
+}
+/* El icono del hito actual respira con su propio color, no en gris. */
+.otd-h.now .p > i{animation:otdTrackIcono 2s ease-in-out infinite;
+  filter:drop-shadow(0 0 6px currentColor)}
+@keyframes otdTrackIcono{
+  0%,100%{opacity:.85;transform:scale(1)}
+  50%{opacity:1;transform:scale(1.08)}
+}
+@media (prefers-reduced-motion:reduce){
+  .otd-h.now .p,.otd-h.now .p > i,.otd-h.now .p::after{animation:none}
+}
 /* Pendientes (ni hechos ni actual): aro rojo apagado, icono en su color
    pero atenuado -- se ve que existe, se ve que falta. */
 .otd-h:not(.ok):not(.now) .p{border-color:rgba(220,38,38,.5);
