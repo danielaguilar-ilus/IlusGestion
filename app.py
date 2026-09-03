@@ -78152,8 +78152,16 @@ def ot2_api_finanzas_buscar_erp(vid):
 @app.route("/ot/api/finanzas/<int:vid>/lineas-zz", methods=["POST"])
 @_mant_required
 @_ot_can_cobertura
-def ot2_api_lineas_zz(vid):
+def ot2_api_finanzas_lineas_zz(vid):
     """Lee las líneas ZZ de un documento del ERP para llenar las finanzas.
+
+    ⚠️ El nombre lleva el prefijo `finanzas_` a propósito: ya existe un
+    `ot2_api_lineas_zz(tido, nudo)` más abajo (ruta
+    /ot/api/lineas-zz/<tido>/<nudo>, la que usa el WIZARD de creación).
+    Flask usa el nombre de la función como endpoint y aborta el arranque
+    entero si dos rutas comparten uno -- pasó el 2026-09-02 y tumbó
+    producción con 503. `ast.parse` NO detecta esto: es una AssertionError
+    en tiempo de import, no un error de sintaxis.
 
     🆕 2026-09-02 (Daniel, viendo la tarjeta de Finanzas: "me dejó guardar
     la boleta, pero no me trajo nada, los datos... necesito que la hagas
