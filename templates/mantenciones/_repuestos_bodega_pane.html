@@ -297,6 +297,17 @@
     <button type="button" class="btn btn-sm btn-outline-dark" id="rbBtnEtiquetas" disabled onclick="rbImprimirEtiquetas()">
       <i class="bi bi-tag me-1"></i>Imprimir etiquetas de seleccionados
     </button>
+    {# 🆕 2026-09-03 (Daniel: "debemos colocar un check para borrar los
+       productos de los repuestos"). La selección múltiple ya existía pero
+       solo servía para imprimir etiquetas: había que desactivar de a uno
+       desde el menú Acciones de cada fila. Reusa el MISMO endpoint DELETE
+       del borrado individual -- que es soft-delete ("queda desactivado, no
+       se borra el historial", REGLA #5), no un borrado nuevo ni más
+       agresivo por ser masivo. #}
+    <button type="button" class="btn btn-sm btn-outline-danger" id="rbBtnEliminarSel" disabled
+            onclick="rbEliminarSeleccionados()">
+      <i class="bi bi-trash me-1"></i>Eliminar seleccionados
+    </button>
   </div>
 </div>
 
@@ -586,7 +597,6 @@
           </div>
           <div class="rb-step-body">
             <p class="rb-input-help mt-0 mb-2">A qué máquinas les sirve este repuesto — tenga o no tenga stock hoy.</p>
-            <div id="rbModelosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder asociar modelos.</div>
             <div id="rbModelosContenido">
               <div id="rbModelosChips" class="mb-2"></div>
               <div class="rb-modelo-resultados" id="rbModelosBuscarWrap">
@@ -795,6 +805,11 @@ function rbUpdateBtn(){
   const btn = document.getElementById('rbBtnEtiquetas');
   btn.disabled = n === 0;
   btn.innerHTML = '<i class="bi bi-tag me-1"></i>Imprimir etiquetas' + (n ? ' (' + n + ')' : ' de seleccionados');
+  const btnDel = document.getElementById('rbBtnEliminarSel');
+  if (btnDel){
+    btnDel.disabled = n === 0;
+    btnDel.innerHTML = '<i class="bi bi-trash me-1"></i>Eliminar' + (n ? ' (' + n + ')' : ' seleccionados');
+  }
 }
 
 // Costo unitario: separador de miles + "$" chileno (Daniel 2026-08-08:
@@ -1270,6 +1285,74 @@ async function rbEliminar(id, sku){
   } else {
     ilusToast(d.error || 'No se pudo desactivar', {type:'error'});
   }
+}
+
+/* Borrado múltiple desde la selección de la tabla — 2026-09-03.
+   Reusa el DELETE de siempre, uno por uno: es soft-delete (desactiva, no
+   borra el historial), y no se inventa un endpoint masivo que pudiera
+   comportarse distinto del individual.
+
+   Dos cuidados, porque acá se tocan varias filas de una:
+   · la confirmación dice CUÁNTOS y CUÁLES (los primeros SKU), no un
+     "¿eliminar seleccionados?" a ciegas;
+   · si alguno falla, se dice cuántos quedaron y cuáles no salieron, en vez
+     de recargar y dejar creer que se hizo todo. */
+async function rbEliminarSeleccionados(){
+  const checks = [...document.querySelectorAll('.rb-row-check:checked')];
+  if (!checks.length) return;
+  // OJO: la celda .rb-sku lleva el SKU y DEBAJO "quién lo creó · fecha".
+  // Con textContent la confirmación diría "CB02M3i055 Aaron Urbina ·
+  // 10/08/26"; se toma solo el primer nodo de texto, que es el SKU.
+  const skuDeFila = (tr) => {
+    const td = tr && tr.querySelector('.rb-sku');
+    if (!td) return null;
+    for (const n of td.childNodes){
+      if (n.nodeType === 3 && n.textContent.trim()) return n.textContent.trim();
+    }
+    // Sin nodo de texto propio no se adivina: mejor caer al id que
+    // mostrar el nombre de quien lo creo como si fuera el SKU.
+    return null;
+  };
+  const items = checks.map(el => ({
+    id: el.value,
+    sku: skuDeFila(el.closest('tr')) || ('#' + el.value),
+  }));
+  const muestra = items.slice(0, 6).map(i => i.sku).join(' · ');
+  const resto = items.length - Math.min(items.length, 6);
+  const ok = await ilusConfirm({
+    title: 'Eliminar ' + items.length + ' repuesto' + (items.length === 1 ? '' : 's'),
+    message: '¿Quitar de la bodega ' + (items.length === 1 ? 'este repuesto' : 'estos ' + items.length + ' repuestos') + '?',
+    sub: muestra + (resto > 0 ? ' y ' + resto + ' más' : '') +
+         '. Quedan desactivados, no se borra el historial.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+
+  const btn = document.getElementById('rbBtnEliminarSel');
+  if (btn){ btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Eliminando…'; }
+  let bien = 0; const fallaron = [];
+  for (const it of items){
+    try {
+      const r = await fetch('/mantenciones/api/repuestos-stock/' + it.id, {method:'DELETE'});
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok !== false) bien++;
+      else fallaron.push(it.sku);
+    } catch(e){ fallaron.push(it.sku); }
+  }
+
+  if (fallaron.length){
+    await ilusAlert({
+      title: bien ? 'Se eliminaron ' + bien + ' de ' + items.length : 'No se pudo eliminar',
+      message: fallaron.length + ' no se pudieron eliminar: ' + fallaron.slice(0, 8).join(' · ') +
+               (fallaron.length > 8 ? ' y ' + (fallaron.length - 8) + ' más' : '') + '.',
+      sub: bien ? 'Los otros ' + bien + ' sí quedaron desactivados.' : 'No cambió nada en la bodega.',
+      type: bien ? 'warning' : 'error',
+    });
+  } else {
+    ilusToast('✓ ' + bien + ' repuesto' + (bien === 1 ? '' : 's') + ' eliminado' + (bien === 1 ? '' : 's'), {type:'success'});
+  }
+  if (bien) setTimeout(() => location.reload(), 600);
+  else if (btn){ btn.disabled = false; rbUpdateBtn(); }
 }
 
 function rbImprimirUno(id){
@@ -2031,11 +2114,16 @@ function rbRenderModelosChips(){
     '<span class="rb-modelo-chip">' + escHtmlRb(m.producto_nombre) +
     '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>'
   ).join('');
-  // Pendientes (repuesto sin guardar todavía): mismo chip, borde punteado +
-  // "(sin guardar)" para que quede claro que aún no está en el servidor.
+  /* 🔧 2026-09-03 (Daniel: "en el paso 4 de modelos compatibles necesito
+     que me propongas dejar NO PENDIENTE sino COLOCAR").
+     Estos chips se veían con borde punteado y el texto "(sin guardar)".
+     Es un detalle de implementación: el modelo YA está elegido y se graba
+     junto con el repuesto (rbSubirModelosPendientes corre apenas se
+     guarda), así que mostrarlo como algo a medias solo hace dudar de si
+     quedó puesto o no -- y el paso 4 encima es obligatorio para guardar.
+     Se ven igual que los ya guardados, que es lo que de verdad pasa. */
   const chipsPendientes = RB_MODELOS_PENDIENTES.map((m, i) =>
-    '<span class="rb-modelo-chip" style="border-style:dashed;opacity:.85">' + escHtmlRb(m.nombre) +
-    ' <span class="text-muted" style="font-size:.68rem">(sin guardar)</span>' +
+    '<span class="rb-modelo-chip">' + escHtmlRb(m.nombre) +
     '<button type="button" onclick="rbModeloPendienteQuitar(' + i + ')" title="Quitar">&times;</button></span>'
   ).join('');
   cont.innerHTML = (chipsGuardados + chipsPendientes) ||
