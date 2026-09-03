@@ -3792,10 +3792,25 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         </div>
         {% endif %}
 
-        {% if puede_metadata and not v.centro_costo %}
+{# 🔴 FIX 2026-09-03 (Daniel, Juan Martinez trabado en la OT-2026-00150:
+   "pide gestionar el centro de costo pero no proporciona el centro de
+   costo, necesito cerrar la OT").
+   Este bloque colgaba de `puede_metadata`, y ese permiso se APAGA en
+   cuanto la OT entra en pendiente_aprobacion (ot_sellada) -- que es
+   justamente el unico estado en el que este modal existe. O sea: el
+   candado del cierre exigia el centro de costo y el unico control para
+   ponerlo no se podia dibujar nunca, salvo siendo superadmin.
+   Pasa a `puede_cobertura`, que es el permiso que Daniel definio el 10-08
+   para exactamente esto: gestion (admin/supervisor/ejecutivo) mientras la
+   OT no este cerrada. Es el mismo que ya gobierna declarar garantia dos
+   bloques mas abajo -- no se inventa un permiso nuevo. #}
+        {% if puede_cobertura and not v.centro_costo %}
         <div class="mb-3 p-3" style="background:#fff8e1;border:1.5px solid #fde68a;border-radius:12px">
           <div class="fw-bold small mb-2" style="color:#92400e">
             <i class="bi bi-tag-fill me-1"></i>Falta el centro de costo
+          </div>
+          <div class="small mb-2" style="color:#92400e">
+            Sin esto no se puede firmar el cierre — elige a quién se le imputa.
           </div>
           <div class="d-flex gap-2 flex-wrap align-items-end">
             <div style="flex:1;min-width:160px">
@@ -3822,6 +3837,27 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% if v.factura_rut_ok == 0 %}
           <div class="mt-1" style="color:#92400e"><i class="bi bi-exclamation-triangle-fill me-1"></i>
             RUT no coincidía — justificado: {{ (v.factura_rut_justif or '')[:180] }}</div>
+          {% endif %}
+          {# 🆕 2026-09-03 (Daniel: "en ese modal quería la opción de dejarlo
+             como garantía y no está siendo amigable"). El botón de garantía
+             solo existía en la rama SIN documento -- así que apenas se
+             asociaba una factura, cambiar de opinión y declararla garantía
+             dejaba de ser posible desde acá, y había que salir del modal a
+             buscarlo. Es justo el momento en que aparece la información que
+             cambia la cobertura ("el proveedor falló y hay que cubrirlo").
+             Mismo botón, mismo endpoint, misma confirmación -- lo único
+             distinto es que acá se avisa que el documento se anula. #}
+          {% if puede_cobertura %}
+          <div class="mt-2 pt-2" style="border-top:1px dashed #bfdbfe">
+            <button type="button" class="btn btn-sm fw-bold otf-gar-btn"
+                    style="background:#fff;color:#b45309;border:1.5px solid #f59e0b"
+                    onclick="OT2F.declararGarantia()">
+              <i class="bi bi-shield-fill-check me-1"></i>No se le cobra: declarar como garantía
+            </button>
+            <div class="small mt-1" style="color:#1e3a8a;opacity:.8">
+              El documento {{ v.factura_tido or 'FCV' }} N° {{ v.factura_nudo }} quedará anulado en la OT.
+            </div>
+          </div>
           {% endif %}
         </div>
         {% else %}
@@ -3883,7 +3919,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               con tu nombre y el motivo registrados. Si había un documento de
               cobro asociado, se anula.
             </div>
-            <button type="button" class="btn btn-sm fw-bold" id="otfGarBtn"
+            <button type="button" class="btn btn-sm fw-bold otf-gar-btn" id="otfGarBtn"
                     style="background:#fff;color:#b45309;border:1.5px solid #f59e0b"
                     onclick="OT2F.declararGarantia()">
               <i class="bi bi-shield-fill-check me-1"></i>Declarar como garantía
@@ -8028,7 +8064,10 @@ const OT2F = (function(){
       okLabel: 'Sí, es garantía', cancelLabel: 'Cancelar',
     });
     if (!ok) return;
-    const btn = document.getElementById('otfGarBtn');
+    // Hay DOS botones de garantía (con documento y sin él): se toma el que
+    // exista, no uno por id fijo -- con id duplicado el navegador devuelve
+    // siempre el primero y el spinner aparecía en el botón equivocado.
+    const btn = document.querySelector('.otf-gar-btn') || document.getElementById('otfGarBtn');
     const orig = btn ? btn.innerHTML : '';
     if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…'; }
     try {
@@ -8096,8 +8135,14 @@ const OT2F = (function(){
     const valor = sel ? sel.value : '';
     if (!valor){ ilusToast('Elige un centro de costo antes de guardar.', {type:'warning'}); return; }
     try {
-      const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
-        method:'PUT', headers:{'Content-Type':'application/json'},
+      // Endpoint propio y quirurgico: escribe SOLO centro_costo.
+      // /ot/api/finanzas hace un UPDATE de toda la fila financiera, asi que
+      // mandarle solo esto le habria borrado la factura a la OT. Y el PUT
+      // de la visita exige `metadata`, que en pendiente_aprobacion no lo
+      // tiene nadie salvo superadmin -- era el 403 que dejaba trabado a
+      // quien venia a firmar.
+      const r = await fetch(`/ot/api/${VID}/centro-costo`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ centro_costo:valor }),
       });
       const d = await r.json().catch(() => ({}));

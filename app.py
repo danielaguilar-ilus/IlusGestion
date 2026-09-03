@@ -78330,6 +78330,72 @@ def ot2_api_cliente_crear():
     })
 
 
+@app.route("/ot/api/<int:vid>/centro-costo", methods=["POST"])
+@_ot_can_cobertura
+def ot2_api_centro_costo(vid):
+    """Declara SOLO el centro de costo de una OT.
+
+    Daniel, 2026-09-03 (Juan Martinez trabado en la OT-2026-00150): "pide
+    gestionar el centro de costo pero no proporciona el centro de costo,
+    necesito cerrar la OT". Era un candado sin manija -- el modal de cierre
+    exigia el centro de costo, y el unico control para ponerlo estaba
+    escondido detras de un permiso (`metadata`) que por definicion NUNCA se
+    tiene en estado pendiente_aprobacion, que es exactamente cuando el
+    candado aparece.
+
+    POR QUE UN ENDPOINT PROPIO y no reusar /ot/api/finanzas:
+    ese hace `UPDATE ... SET centro_costo, zz_codigo, zz_monto,
+    modalidad_cobro, factura_tido, factura_nudo, estado_facturacion` de una
+    sola vez. Mandarle solo el centro de costo le habria BORRADO la factura
+    a la OT -- justo la que costo asociar. Esto escribe una columna y nada
+    mas.
+
+    Permiso: @_ot_can_cobertura, el mismo que ya gobierna declarar garantia.
+    Es la regla que Daniel definio el 10-08: gestion (admin / supervisor /
+    ejecutivo), y solo mientras la OT no este cerrada. Nunca el tecnico:
+    imputar un costo es una decision de gestion, no de terreno.
+    """
+    d = request.get_json(silent=True) or {}
+    centro = (d.get("centro_costo") or "").strip().lower()
+    _validos = [c for c, _ in _OT2_CENTROS_COSTO]
+    if centro not in _validos:
+        return jsonify({
+            "ok": False,
+            "error": "Centro de costo no valido.",
+        }), 400
+
+    v = mysql_fetchone(
+        "SELECT id, numero_ot, centro_costo, estado FROM mant_visitas WHERE id=%s",
+        (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "Esa OT no existe."}), 404
+
+    # La condicion de estado viaja DENTRO del UPDATE (no solo en un SELECT
+    # previo): si alguien cierra la OT mientras este modal esta abierto, la
+    # escritura no entra y se avisa -- mismo patron que asociar-factura.
+    _n = mysql_execute_returning_rowcount(
+        "UPDATE mant_visitas SET centro_costo=%s "
+        " WHERE id=%s AND COALESCE(estado,'') NOT IN "
+        "       ('completada','cerrada','cancelada','anulada')",
+        (centro, vid))
+    if not _n:
+        return jsonify({
+            "ok": False,
+            "error": "La OT se cerro mientras declarabas el centro de costo. "
+                     "Recarga la pantalla para ver como quedo.",
+            "error_codigo": "CONFLICTO_CONCURRENCIA",
+        }), 409
+
+    _label = dict(_OT2_CENTROS_COSTO).get(centro, centro)
+    _mant_log(
+        "visita", vid, "centro_costo",
+        f"{current_username() or '?'} declaro el centro de costo "
+        f"'{_label}' en {v.get('numero_ot') or ('OT ' + str(vid))}"
+        + (f" (antes: {v.get('centro_costo')})" if v.get("centro_costo") else "")
+        + ".")
+    return jsonify({"ok": True, "centro_costo": centro, "label": _label})
+
+
 @app.route("/ot/api/finanzas/<int:vid>", methods=["GET", "POST"])
 @_mant_required
 @_ot_can_cobertura
