@@ -85901,6 +85901,15 @@ def mant_tarifa_hora_tecnica():
     agenda". El wizard de OT 2.0 multiplica esto por las horas de Agenda
     (hini/hfin) para sugerir el costo interno -- sigue siendo un campo
     editable, nunca un monto forzado."""
+    # 🔴 FIX 2026-09-04 (auditoria de seguridad, mismo hallazgo M1 ya
+    # corregido el 02-09 en otras dos pantallas -- no se habia replicado
+    # acá). Este endpoint tenía SOLO @_mant_required, el mismo permiso
+    # que necesita un técnico (incluido tecnico_externo, cuentas de
+    # contratistas) para ver sus propias OT. Sin este candado, cualquier
+    # cuenta con acceso a Mantenciones podía pedir por URL el margen/costo
+    # real de la cartera completa de clientes.
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     row = mysql_fetchone(
         "SELECT valor FROM tk_settings WHERE clave='cotiz_valor_hh'")
     try:
@@ -95257,6 +95266,15 @@ def mant_analytics_repuestos():
     """KPIs de repuestos: costo total, top clientes, desglose por modalidad,
     series por mes (últimos 12 meses).
     """
+    # 🔴 FIX 2026-09-04 (auditoria de seguridad, mismo hallazgo M1 ya
+    # corregido el 02-09 en otras dos pantallas -- no se habia replicado
+    # acá). Este endpoint tenía SOLO @_mant_required, el mismo permiso
+    # que necesita un técnico (incluido tecnico_externo, cuentas de
+    # contratistas) para ver sus propias OT. Sin este candado, cualquier
+    # cuenta con acceso a Mantenciones podía pedir por URL el margen/costo
+    # real de la cartera completa de clientes.
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     try:
         # Totales globales últimos 90 días
         totales = mysql_fetchone(
@@ -95314,6 +95332,15 @@ def mant_analytics_familias():
     """Incidencias por familia de equipo: cuáles familias tienen más
     intervenciones, más tiempo invertido, más costo de repuestos.
     """
+    # 🔴 FIX 2026-09-04 (auditoria de seguridad, mismo hallazgo M1 ya
+    # corregido el 02-09 en otras dos pantallas -- no se habia replicado
+    # acá). Este endpoint tenía SOLO @_mant_required, el mismo permiso
+    # que necesita un técnico (incluido tecnico_externo, cuentas de
+    # contratistas) para ver sus propias OT. Sin este candado, cualquier
+    # cuenta con acceso a Mantenciones podía pedir por URL el margen/costo
+    # real de la cartera completa de clientes.
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     try:
         # OT por familia (últimos 180 días)
         rows = mysql_fetchall(
@@ -95353,6 +95380,15 @@ def mant_analytics_familias():
 @_mant_required
 def mant_analytics_modalidad():
     """Desglose de OTs por modalidad de cobro: cuántas, costos, % del total."""
+    # 🔴 FIX 2026-09-04 (auditoria de seguridad, mismo hallazgo M1 ya
+    # corregido el 02-09 en otras dos pantallas -- no se habia replicado
+    # acá). Este endpoint tenía SOLO @_mant_required, el mismo permiso
+    # que necesita un técnico (incluido tecnico_externo, cuentas de
+    # contratistas) para ver sus propias OT. Sin este candado, cualquier
+    # cuenta con acceso a Mantenciones podía pedir por URL el margen/costo
+    # real de la cartera completa de clientes.
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     try:
         rows = mysql_fetchall(
             "SELECT COALESCE(modalidad_cobro,'pagado') AS modalidad, "
@@ -104032,6 +104068,15 @@ def repstock_exportar_excel():
 @_mant_required
 def mant_cliente_finanzas(cid):
     """Devuelve agregados financieros del cliente para los últimos N meses."""
+    # 🔴 FIX 2026-09-04 (auditoria de seguridad, mismo hallazgo M1 ya
+    # corregido el 02-09 en otras dos pantallas -- no se habia replicado
+    # acá). Este endpoint tenía SOLO @_mant_required, el mismo permiso
+    # que necesita un técnico (incluido tecnico_externo, cuentas de
+    # contratistas) para ver sus propias OT. Sin este candado, cualquier
+    # cuenta con acceso a Mantenciones podía pedir por URL el margen/costo
+    # real de la cartera completa de clientes.
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     meses = int(request.args.get("meses") or 12)
     if meses <= 0:
         fecha_corte = "1900-01-01"
