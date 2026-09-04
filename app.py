@@ -60870,11 +60870,24 @@ def mant_cliente_nuevo():
                 rut_norm = normalizar_rut(rut_input) or rut_input
             else:
                 rut_norm = val_or_err
-            # Check duplicado (UNIQUE index nos protege, pero damos error amigable antes)
+            # 🔴 FIX 2026-09-04 (Daniel: "no dupliques más por favor", tras la
+            # triplicacion real de "Corporacion Municipal De Deporte De
+            # Vitacura" tres RUT: 65.206.047-1 / 652060471-1 / 652060471).
+            # El comentario decia "el UNIQUE index nos protege" -- es FALSO:
+            # mant_clientes.rut es un INDEX normal (ver CREATE TABLE,
+            # ~linea 53001), no UNIQUE. Sin un indice unico de verdad, esta
+            # comparacion es la UNICA defensa, y comparaba el RUT como TEXTO
+            # CRUDO -- el mismo bug que ya se corrigio en el wizard de crear
+            # OT (ot2_api_cliente_crear) usando _rut_cuerpo. Ahora usa el
+            # mismo criterio: mismo cuerpo de RUT (sin puntos/guion/DV) =
+            # mismo cliente, sin importar como se haya tipeado.
+            _cuerpo_nuevo = _rut_cuerpo(rut_norm)
             existing = mysql_fetchone(
-                "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1",
-                (rut_norm,)
-            )
+                "SELECT id, razon_social FROM mant_clientes "
+                " WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') "
+                "       LIKE CONCAT(%s, '%%') LIMIT 1",
+                (_cuerpo_nuevo,)
+            ) if _cuerpo_nuevo else None
             if existing:
                 err = (f"Ya existe un cliente con ese RUT: "
                        f"«{existing.get('razon_social','')}» (ID {existing.get('id')}).")
