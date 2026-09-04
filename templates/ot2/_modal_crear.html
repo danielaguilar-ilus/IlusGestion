@@ -907,6 +907,13 @@ window.OT2C = (function(){
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
          ticket_id:null,
+         // 2026-09-04 (Daniel: "no quiero salir del ticket, quiero que
+         // todos los modales trabajen desde allí"). Quien abrió el wizard
+         // puede decidir qué pasa al terminar de crear -- por defecto
+         // navega al detalle de la OT (comportamiento de siempre en el
+         // panel de OT 2.0); si viene con un callback, ESE manda (ver
+         // abrirDesdeTicket, que se queda en el ticket).
+         onCreada:null,
          // 2026-08-29 — Contraparte: quién recibe al técnico y DÓNDE.
          // `origen` deja registrado de dónde salió (principal/secundario/
          // sucursal:<id>/manual) para poder auditarlo después.
@@ -6433,10 +6440,13 @@ window.OT2C = (function(){
         // -- ver mant_visita_fotos_subir_inicial (app.py). Si algo falla
         // acá, la OT igual quedó creada: solo se avisa, no se bloquea.
         function _o2mIrADetalle(){
+          var _seguir = (typeof S.onCreada === 'function')
+            ? function(){ S.onCreada(vid, _url); }
+            : function(){ location.href = _url; };
           if (S.tipo === 'revision_interna' && S.bodega_fotos.length){
-            _subirEvidenciaBodega(vid).finally(function(){ location.href = _url; });
+            _subirEvidenciaBodega(vid).finally(_seguir);
           } else {
-            location.href = _url;
+            _seguir();
           }
         }
         // 2026-08-29 (Daniel, insistiendo: "¿dónde y cuándo aparece el
@@ -6592,6 +6602,7 @@ window.OT2C = (function(){
     if (opts.origen)     S.origen     = opts.origen;
     if (opts.cliente)    S.cliente    = opts.cliente;
     if (opts.ticket_id)  S.ticket_id  = opts.ticket_id;
+    if (typeof opts.onCreada === 'function') S.onCreada = opts.onCreada;
     if (opts.titulo)     S.titulo     = opts.titulo;
     if (opts.descripcion) S.descripcion = opts.descripcion;
     if (opts.fecha)      S.fecha      = opts.fecha;
@@ -6609,6 +6620,45 @@ window.OT2C = (function(){
     pintar(); modal.show();
   }
 
+  // Cierra el wizard por JS -- lo necesita abrirDesdeTicket para volver al
+  // ticket sin dejar el modal abierto encima (ver tickets/ficha.html).
+  function cerrar(){ if (modal) modal.hide(); }
+
+  /* 🔗 2026-09-03/04 (Daniel: "el botón de crear una OT de los tickets
+     conéctalo a las OT 2.0" -- y al ver que el botón navegaba a /ot/ antes
+     de abrir el wizard: "no quiero salir del ticket, quiero que todos los
+     modales trabajen desde allí sin moverme a órdenes de trabajo").
+
+     Dos formas de llegar acá, las dos sin abandonar la página del que
+     llama:
+       1. abrirDesdeTicket(tid) -- el botón del ticket la llama DIRECTO
+          (ver templates/tickets/ficha.html, que ahora incluye este mismo
+          modal). Nunca navega a /ot/.
+       2. ?crear=1&ticket=<id> en la URL -- se mantiene para quien SÍ está
+          parado en /ot/ (el panel de OT 2.0) y llega con un enlace directo
+          o recarga la página con el wizard abierto.
+     Ambas caen en el mismo fetch: se pre-llena cliente y asunto del
+     ticket, y si no se puede leer, el wizard igual abre vacío -- quedarse
+     sin pantalla sería peor que llenar a mano. */
+  function abrirDesdeTicket(ticketId, onCreada){
+    var _tid = parseInt(ticketId || 0, 10);
+    if (!_tid){ abrir({onCreada:onCreada}); return; }
+    fetch('/tickets/api/tickets/' + _tid, {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var t = (j && (j.ticket || j)) || {};
+        var opts = {origen:'ticket', ticket_id:_tid, onCreada:onCreada};
+        if (t.cliente_id){
+          opts.cliente = {id:t.cliente_id,
+                          nombre:t.cliente_nombre || t.razon_social || '',
+                          rut:t.cliente_rut || ''};
+        }
+        if (t.titulo || t.asunto) opts.titulo = (t.titulo || t.asunto);
+        abrir(opts);
+      })
+      .catch(function(){ abrir({origen:'ticket', ticket_id:_tid, onCreada:onCreada}); });
+  }
+
   document.addEventListener('DOMContentLoaded', function(){
     var a = document.getElementById('o2mAtras'), s = document.getElementById('o2mSig');
     // "Atrás" en la fase "form" vuelve a elegir el origen (Daniel: "Origen
@@ -6616,33 +6666,10 @@ window.OT2C = (function(){
     // nada antes -- el botón queda oculto (ver pintar()).
     if (a) a.onclick = function(){ if (fase === 'form') irAOrigen(); };
     if (s) s.onclick = function(){ crear(); };
-    /* 🔗 2026-09-03 (Daniel: "el botón de crear una OT de los tickets
-       conéctalo a las OT 2.0"). El ticket ya no abre el modal viejo: manda
-       acá con ?crear=1&ticket=<id>, y el wizard se pre-llena solo con el
-       cliente y el asunto del ticket. Si por lo que sea no se puede leer el
-       ticket, el wizard igual abre -- vacío, pero abre: quedarse sin
-       pantalla sería peor que llenar a mano. */
     var _qs = new URLSearchParams(location.search);
     if (_qs.get('crear') === '1'){
       var _tid = parseInt(_qs.get('ticket') || '0', 10);
-      if (_tid){
-        fetch('/tickets/api/tickets/' + _tid, {credentials:'same-origin'})
-          .then(function(r){ return r.json(); })
-          .then(function(j){
-            var t = (j && (j.ticket || j)) || {};
-            var opts = {origen:'ticket', ticket_id:_tid};
-            if (t.cliente_id){
-              opts.cliente = {id:t.cliente_id,
-                              nombre:t.cliente_nombre || t.razon_social || '',
-                              rut:t.cliente_rut || ''};
-            }
-            if (t.titulo || t.asunto) opts.titulo = (t.titulo || t.asunto);
-            abrir(opts);
-          })
-          .catch(function(){ abrir({origen:'ticket', ticket_id:_tid}); });
-      } else {
-        abrir();
-      }
+      if (_tid) abrirDesdeTicket(_tid); else abrir();
     }
   });
 
@@ -6653,7 +6680,7 @@ window.OT2C = (function(){
      con quien lo haya llamado antes. */
   function abrirWizard(opts){ abrir(opts); }
 
-  return {abrir:abrir, abrirWizard:abrirWizard, irAncla:irAncla, avisarBloqueado:avisarBloqueado,
+  return {abrir:abrir, abrirWizard:abrirWizard, abrirDesdeTicket:abrirDesdeTicket, cerrar:cerrar, irAncla:irAncla, avisarBloqueado:avisarBloqueado,
           setOrigen:setOrigen, setTipo:setTipo,
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, abrirBusquedaDocInterno:abrirBusquedaDocInterno,

@@ -123,15 +123,23 @@
              Daniel, ver contrato remocion_autorizada). -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
           <div id="otwSinOT">
-{# 🔗 2026-09-03 (Daniel: "el botón de crear una OT de los tickets
-               conéctalo a las OT 2.0"). Antes abría #modalGenerarOT, el modal
-               viejo. Ahora lleva al wizard de OT 2.0 con el ticket ya cargado.
-               El modal viejo NO se elimina (REGLA #4.2): sigue en la página y
-               volver atrás es cambiar este href por su data-bs-toggle. #}
-            <a class="btn btn-sm fw-bold" id="btnGenerarOT"
-               style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
-               href="/ot/?crear=1&ticket={{ ticket_id }}">
-              <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</a>
+{# 🔗 2026-09-03/04 (Daniel: "el botón de crear una OT de los tickets
+               conéctalo a las OT 2.0" -- y despues, viendo que el boton
+               navegaba a /ot/ antes de abrir el wizard: "no quiero salir
+               del ticket, quiero que todos los modales trabajen desde allí
+               sin moverme a órdenes de trabajo").
+               El wizard de OT 2.0 vive INCLUIDO en esta misma página (ver
+               el include al final del archivo) y se abre como modal, sin
+               navegar a ningún lado. OT2C.abrirDesdeTicket() precarga
+               cliente/asunto del ticket y, al terminar, el callback cierra
+               el wizard y refresca esta ficha -- nunca sales de acá.
+               El modal viejo NO se elimina (REGLA #4.2): sigue en la
+               página; volver a él es cambiar este onclick por el
+               data-bs-toggle de antes. #}
+            <button type="button" class="btn btn-sm fw-bold" id="btnGenerarOT"
+                    style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
+                    onclick="tkAbrirGenerarOT2()">
+              <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
           </div>
           <div id="otwConOT" style="display:none;">
             <a class="btn btn-sm btn-outline-secondary" id="otwVerOtLink" href="#" target="_blank" rel="noopener">
@@ -202,10 +210,11 @@
           <div class="tk-ot-side-hint">
             Este ticket todavía no tiene OT. Genérala para que un técnico la ejecute en terreno.
           </div>
-          {# Mismo destino que el botón de arriba: la OT 2.0. #}
-          <a class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarOTSide"
-             href="/ot/?crear=1&ticket={{ ticket_id }}">
-            <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</a>
+          {# Mismo destino que el botón de arriba: la OT 2.0, sin salir del
+             ticket -- ver tkAbrirGenerarOT2() más abajo. #}
+          <button type="button" class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarOTSide"
+                  onclick="tkAbrirGenerarOT2()">
+            <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
         </div>
         <!-- Ya hay OT: un ticket tiene UNA sola OT (el backend responde 409
              si se intenta una segunda), así que acá no va un botón de
@@ -498,6 +507,32 @@ const PUEDE_VER_ACTIVIDAD = {{ 'true' if (permissions.superadmin or permissions.
 window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
 </script>
 <script defer src="{{ url_for('static', filename='tickets_ficha.js') }}"></script>
+
+{# 2026-09-04: el wizard completo de OT 2.0, incluido tal cual -- mismo
+   markup y mismo JS que usa /ot/ (templates/ot2/panel.html). No se
+   duplica ni se recorta nada: es EL wizard, aquí adentro. Solo necesita
+   `permissions`/`es_tecnico`, que ya llegan a TODOS los templates vía
+   context_processor (app.py, inject_globals) -- no hace falta pasarle
+   nada especial desde tk_ficha(). #}
+{% include "ot2/_modal_crear.html" %}
+
+<script>
+// Abre el wizard de OT 2.0 SIN salir de esta página (Daniel, 2026-09-04:
+// "no quiero salir del ticket, quiero que todos los modales trabajen
+// desde allí"). Al terminar de crear, el callback cierra el wizard y
+// refresca la ficha -- el toast de "✓ OT-XXXX creada" ya lo dispara el
+// propio wizard antes de llegar aquí (ver crear() en _modal_crear.html).
+function tkAbrirGenerarOT2(){
+  if (!window.OT2C){
+    if (window.ilusToast) ilusToast('El formulario de OT no cargó — recarga la página.', {type:'error'});
+    return;
+  }
+  OT2C.abrirDesdeTicket(TID, function(){
+    OT2C.cerrar();
+    if (typeof cargar === 'function') cargar();
+  });
+}
+</script>
 
 {% include "tickets/_tka_modal.html" %}
 {% endblock %}
