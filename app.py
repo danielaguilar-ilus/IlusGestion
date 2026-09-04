@@ -6411,6 +6411,8 @@ def _product_listing_base_sql(search_query=""):
               p.id                                      AS app_product_id,
               p.created_by,
               p.updated_by,
+              p.created_at,
+              p.updated_at,
               COALESCE((SELECT COUNT(*) FROM `{BULTOS_TABLE}` b
                           WHERE b.product_id = p.id), 0)         AS total_bultos,
               COALESCE((SELECT SUM(b.peso) FROM `{BULTOS_TABLE}` b
@@ -6435,6 +6437,8 @@ def _product_listing_base_sql(search_query=""):
               p.id                                      AS app_product_id,
               p.created_by,
               p.updated_by,
+              p.created_at,
+              p.updated_at,
               COALESCE((SELECT COUNT(*) FROM `{BULTOS_TABLE}` b
                           WHERE b.product_id = p.id), 0)         AS total_bultos,
               COALESCE((SELECT SUM(b.peso) FROM `{BULTOS_TABLE}` b
@@ -6454,8 +6458,14 @@ def _product_listing_base_sql(search_query=""):
     return sql_inner, erp_params + app_params
 
 
-def get_product_listing_paginated(search_query="", page=1, page_size=100, foto_filter=None):
+def get_product_listing_paginated(search_query="", page=1, page_size=100, foto_filter=None,
+                                  orden=None, orden_dir="asc"):
     """Devuelve {rows, total, page, page_size, total_pages, foto0, foto1, foto2}.
+
+    orden/orden_dir (Daniel 2026-09-04): orden SERVER-SIDE al tocar un
+    encabezado de la tabla — ordena el universo completo, no la página
+    visible (misma lección del filtro de fotos). Lista blanca _ORDEN_SQL;
+    los productos sin ficha (columna NULL) van SIEMPRE al final.
 
     foto_filter (Daniel 2026-07-03): 'con' | '0' | '1' | '2' | None.
     Filtra en el SERVIDOR por cantidad de fotos — antes el filtro KPI solo
@@ -6487,8 +6497,22 @@ def get_product_listing_paginated(search_query="", page=1, page_size=100, foto_f
         page_size = 100  # default seguro
     if foto_filter not in ("con", "0", "1", "2"):
         foto_filter = None
+    # Lista blanca de columnas ordenables (JAMÁS interpolar input del usuario)
+    _ORDEN_SQL = {
+        "sku":         "u.sku",
+        "nombre":      "u.nombre",
+        "bultos":      "u.total_bultos",
+        "peso":        "u.peso_total",
+        "pv":          "u.pv_total",
+        "estado":      "u.estado",
+        "creado":      "u.created_at",
+        "actualizado": "u.updated_at",
+    }
+    if orden not in _ORDEN_SQL:
+        orden = None
+    orden_dir = "desc" if str(orden_dir).lower() == "desc" else "asc"
 
-    cache_key = (search_query.strip().lower(), page, page_size, foto_filter)
+    cache_key = (search_query.strip().lower(), page, page_size, foto_filter, orden, orden_dir)
     now = time.time()
     with _listing_cache_lock:
         entry = _listing_cache.get(cache_key)
@@ -6544,12 +6568,21 @@ def get_product_listing_paginated(search_query="", page=1, page_size=100, foto_f
     }
     foto_where = _FOTO_WHERE.get(foto_filter, "")
 
+    # ORDER BY desde la lista blanca. El prefijo "(col IS NULL)" empuja los
+    # productos sin ficha (created_at/updated_at NULL) al final en ambas
+    # direcciones. sku de desempate para un orden estable entre páginas.
+    if orden:
+        col = _ORDEN_SQL[orden]
+        order_by = f"ORDER BY ({col} IS NULL), {col} {orden_dir.upper()}, u.nombre, u.sku"
+    else:
+        order_by = "ORDER BY nombre, sku"
+
     # ── 2) Página actual (LIMIT + OFFSET) ──
     offset = (page - 1) * page_size
     sql_page = f"""
         SELECT * FROM ({sql_inner}) AS u
         {foto_where}
-        ORDER BY nombre, sku
+        {order_by}
         LIMIT %s OFFSET %s
     """
     rows = mysql_fetchall(sql_page, base_params + [page_size, offset])
@@ -6559,6 +6592,8 @@ def get_product_listing_paginated(search_query="", page=1, page_size=100, foto_f
         "total": filtered_total,
         "total_global": total_count,
         "foto_filter": foto_filter,
+        "orden": orden,
+        "orden_dir": orden_dir,
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
@@ -10604,8 +10639,13 @@ def index():
     # la página visible.
     fotos_f = request.args.get("fotos") or None
 
+    # Orden server-side al tocar un encabezado (Daniel 2026-09-04)
+    orden_arg = request.args.get("orden") or None
+    dir_arg   = request.args.get("dir") or "asc"
+
     listing = get_product_listing_paginated(q, page=page, page_size=page_size,
-                                            foto_filter=fotos_f)
+                                            foto_filter=fotos_f,
+                                            orden=orden_arg, orden_dir=dir_arg)
     products    = listing["rows"]
     total       = listing["total"]          # total FILTRADO (para paginar)
     total_pages = listing["total_pages"]
@@ -10618,6 +10658,7 @@ def index():
                            foto0=foto0, foto1=foto1, foto2=foto2,
                            total=total, total_global=listing["total_global"],
                            foto_filter=listing["foto_filter"],
+                           orden=listing["orden"], orden_dir=listing["orden_dir"],
                            page=page, page_size=page_size,
                            total_pages=total_pages)
 
@@ -10625,8 +10666,16 @@ def index():
 @app.route("/products/refresh-cache", methods=["POST"])
 @login_required
 def refresh_listing_cache():
-    """Limpia el caché del listado de productos para ver datos frescos."""
+    """Limpia el caché del listado de productos para ver datos frescos.
+
+    Vuelve a la MISMA vista (preserva ?ver/q/orden/fotos/size) — antes un
+    redirect pelado a index() rebotaba al usuario con home-por-rol a su
+    home (gotcha Alison) y descartaba búsqueda/orden/filtros activos.
+    Solo se acepta el referrer si es de ESTA app (evita open-redirect)."""
     _invalidate_listing_cache()
+    ref = request.referrer or ""
+    if ref.startswith(request.host_url):
+        return redirect(ref)
     return redirect(url_for("index"))
 
 
@@ -10934,7 +10983,8 @@ def edit_product(pid):
         with conn.cursor() as cur:
             cur.execute(
                 f"""UPDATE `{PRODUCTS_TABLE}`
-                    SET sku=%s, nombre=%s, estado=%s, unidades_por_venta=%s, updated_by=%s
+                    SET sku=%s, nombre=%s, estado=%s, unidades_por_venta=%s, updated_by=%s,
+                        updated_at=NOW()
                     WHERE id=%s""",
                 (sku, nombre, estado, uxv, current_username(), pid),
             )
@@ -11002,6 +11052,23 @@ def delete_product(pid):
 # ─────────────────────────────────────────────
 #  Fotos
 # ─────────────────────────────────────────────
+
+def _touch_product_auditoria(pid):
+    """Firma updated_by/updated_at de la ficha cuando el cambio vive en una
+    tabla satélite (fotos) y no toca app_products por sí solo — sin esto la
+    columna "Actualizado" del catálogo no refleja subir/editar/borrar fotos."""
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE `{PRODUCTS_TABLE}` SET updated_by=%s, updated_at=NOW() WHERE id=%s",
+                (current_username(), pid),
+            )
+        conn.commit()
+        _invalidate_listing_cache()
+    except Exception as exc:
+        print(f"[ILUS] No se pudo firmar auditoría del producto {pid}: {exc}", flush=True)
+
 
 def _foto_ajax():
     """True si la petición viene del componente JS de fotos (fetch/XHR)."""
@@ -11087,6 +11154,8 @@ def upload_photo(pid):
             pass
         return _err("Error al registrar la foto. Intenta nuevamente.", "danger", 500)
 
+    _touch_product_auditoria(pid)
+
     if ajax:
         return jsonify({
             "ok": True, "id": new_id,
@@ -11125,6 +11194,7 @@ def delete_photo(pid, photo_id):
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM `{PHOTOS_TABLE}` WHERE id=%s", (photo_id,))
         conn.commit()
+        _touch_product_auditoria(pid)
         if ajax:
             return jsonify({"ok": True})
         flash("Foto eliminada.", "success")
@@ -11197,6 +11267,7 @@ def replace_photo(pid, photo_id):
     # evita que un rol con 'edit' pero sin 'delete' destruya contenido.
     if old and old != filename:
         print(f"[ILUS] Foto {photo_id} editada: archivo anterior conservado en {old}", flush=True)
+    _touch_product_auditoria(pid)
     return jsonify({"ok": True, "url": _photo_src(filename)})
 
 
@@ -18516,9 +18587,11 @@ def cubicador_sync_nombre():
         return jsonify({"error": "datos incompletos"}), 400
     conn = get_db()
     with conn.cursor() as cur:
+        # updated_by: sin esto, ON UPDATE CURRENT_TIMESTAMP bumpeaba la fecha
+        # pero la columna "Actualizado" del catálogo mostraba al editor ANTERIOR
         cur.execute(
-            f"UPDATE `{PRODUCTS_TABLE}` SET nombre=%s WHERE UPPER(TRIM(sku))=%s",
-            (nombre_erp, sku)
+            f"UPDATE `{PRODUCTS_TABLE}` SET nombre=%s, updated_by=%s WHERE UPPER(TRIM(sku))=%s",
+            (nombre_erp, current_username(), sku)
         )
     conn.commit()
     _invalidate_listing_cache()
