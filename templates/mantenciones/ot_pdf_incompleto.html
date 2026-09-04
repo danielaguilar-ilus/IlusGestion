@@ -1,0 +1,163 @@
+{#-
+  ════════════════════════════════════════════════════════════════════
+  "PDF AÚN NO DISPONIBLE" — reemplazo del redirect a la pantalla clásica
+  ════════════════════════════════════════════════════════════════════
+  Página pequeña y AUTOCONTENIDA (sin base.html) pensada para vivir
+  DENTRO del iframe del modal de PDF (ver static/pdf_modal.js openPdf()).
+  También funciona sola si se abre en una pestaña nueva ("Abrir en
+  pestaña nueva" del propio modal usa la misma URL).
+
+  Contrato de datos (Jinja): vid, numero_ot, cliente_nombre, estado_label,
+  razones (lista de strings, ya en español, armada por _ot_pdf_context).
+
+  Ver _ot_pdf_incompleto_html() en app.py para el porqué de esta página.
+-#}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0a0a0a">
+<title>PDF no disponible · {{ numero_ot }} · ILUS Fitness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<style>
+  :root{
+    --ilus-red:#dc2626; --ink:#0a0a0a;
+    --gray-1:#f8fafc; --gray-2:#e5e7eb; --gray-3:#9ca3af; --gray-4:#475569;
+    --amber:#f59e0b; --amber-bg:#fff8e1; --amber-bd:#fde68a;
+    --shadow-lg:0 1px 0 rgba(255,255,255,.7) inset, 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
+    --r-lg:18px; --r-xl:24px;
+    --display:'Bebas Neue','Inter',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;color:#0f172a;
+    font-family:'Inter','Segoe UI',Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    background:
+      radial-gradient(900px 420px at 88% -8%, rgba(220,38,38,.06) 0%, transparent 60%),
+      radial-gradient(700px 380px at 6% 4%, rgba(10,10,10,.035) 0%, transparent 55%),
+      linear-gradient(180deg,#f7f7f8 0%,#f1f2f4 100%);
+    display:flex; align-items:center; justify-content:center;
+    padding:32px 20px;
+  }
+  .topline{position:fixed; top:0; left:0; right:0; height:4px;
+    background:linear-gradient(90deg,var(--ink) 0%,var(--ilus-red) 50%,var(--ink) 100%)}
+
+  .card{
+    width:min(520px, 100%);
+    background:#fff; border-radius:var(--r-xl);
+    box-shadow:var(--shadow-lg); border:1px solid var(--gray-2);
+    padding:34px 30px 28px; text-align:center;
+  }
+  .badge-ico{
+    width:64px; height:64px; margin:0 auto 18px; border-radius:50%;
+    background:var(--amber-bg); border:1px solid var(--amber-bd);
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.7rem; color:var(--amber);
+  }
+  h1{
+    font-family:var(--display); letter-spacing:.02em;
+    font-size:1.65rem; font-weight:400; margin:0 0 6px; color:var(--ink);
+    text-wrap:balance;
+  }
+  .sub{margin:0 0 4px; font-size:.92rem; color:var(--gray-4); line-height:1.5}
+  .meta{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    margin:14px 0 22px; flex-wrap:wrap;
+  }
+  .chip{
+    display:inline-flex; align-items:center; gap:6px;
+    background:var(--gray-1); border:1px solid var(--gray-2); color:var(--gray-4);
+    border-radius:999px; padding:5px 12px; font-size:.78rem; font-weight:700;
+  }
+  .chip b{color:var(--ink); font-weight:800}
+  .chip.st{background:var(--amber-bg); border-color:var(--amber-bd); color:#92400e}
+
+  .razones{
+    list-style:none; margin:0 0 26px; padding:0;
+    display:flex; flex-direction:column; gap:8px; text-align:left;
+  }
+  .razones li{
+    display:flex; align-items:flex-start; gap:10px;
+    background:var(--gray-1); border:1px solid var(--gray-2);
+    border-radius:12px; padding:11px 14px; font-size:.86rem; color:#1f2937;
+    line-height:1.45;
+  }
+  .razones li i{color:var(--amber); font-size:1rem; margin-top:1px; flex-shrink:0}
+
+  .actions{display:flex; gap:10px; justify-content:center; flex-wrap:wrap}
+  .btn{
+    appearance:none; border:0; cursor:pointer; text-decoration:none;
+    font-family:inherit; font-weight:800; font-size:.88rem;
+    border-radius:12px; padding:12px 20px;
+    display:inline-flex; align-items:center; gap:8px;
+    transition:transform .15s var(--ease-out,ease), filter .15s ease;
+  }
+  .btn:active{transform:scale(.97)}
+  .btn-primary{background:var(--ink); color:#fff}
+  .btn-primary:hover{filter:brightness(1.25)}
+  .btn-ghost{background:#fff; color:var(--ink); border:1px solid var(--gray-2)}
+  .btn-ghost:hover{background:var(--gray-1)}
+
+  .foot-note{margin:20px 0 0; font-size:.74rem; color:var(--gray-3)}
+
+  @media (max-width:420px){
+    .card{padding:26px 20px 22px; border-radius:16px}
+    h1{font-size:1.4rem}
+  }
+</style>
+</head>
+<body>
+<div class="topline"></div>
+<div class="card">
+  <div class="badge-ico"><i class="bi bi-hourglass-split"></i></div>
+  <h1>El PDF todavía no está disponible</h1>
+  <p class="sub">Se genera automáticamente en cuanto la OT quede cerrada con sus 3 firmas.</p>
+
+  <div class="meta">
+    <span class="chip"><b>{{ numero_ot }}</b></span>
+    {% if cliente_nombre %}<span class="chip">{{ cliente_nombre }}</span>{% endif %}
+    <span class="chip st"><i class="bi bi-hourglass-split"></i> {{ estado_label }}</span>
+  </div>
+
+  {% if razones %}
+  <ul class="razones">
+    {% for r in razones %}
+    <li><i class="bi bi-exclamation-circle-fill"></i><span>{{ r }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="actions">
+    <button type="button" class="btn btn-primary" id="btnCerrar">
+      <i class="bi bi-check2"></i> Entendido
+    </button>
+    <a class="btn btn-ghost" href="{{ url_for('ot2_detalle', vid=vid) }}" target="_top">
+      <i class="bi bi-arrow-up-right-square"></i> Ver la OT completa
+    </a>
+  </div>
+
+  <p class="foot-note">ILUS Fitness · Servicio Técnico</p>
+</div>
+<script>
+(function(){
+  var btn = document.getElementById('btnCerrar');
+  btn.addEventListener('click', function(){
+    try {
+      if (window.parent && window.parent !== window && typeof window.parent.closePdf === 'function') {
+        window.parent.closePdf();
+        return;
+      }
+    } catch (e) { /* cross-origin u otro caso raro: cae al fallback */ }
+    try { window.close(); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

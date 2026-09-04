@@ -313,6 +313,12 @@
     page-break-inside: avoid;
     break-inside: avoid;
     position: relative;
+    /* 🎨 2026-09-04 (Daniel: "hazlo más atractivo") — un poco de
+       profundidad para que cada equipo se lea como tarjeta, no como
+       recuadro plano. No toca layout/tamaño (eq-card-wrap sigue siendo
+       el único responsable de que el badge no se corte en un salto de
+       página, ver comentario arriba). */
+    box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 3px 8px -2px rgba(15,23,42,.07);
   }
   /* 🐛 FIX 2026-09-02 (OT-2026-00058, Daniel: "espacios vacíos" -- 60+
      equipos, documento de 73 páginas con páginas que dejaban 2/3 en
@@ -540,6 +546,12 @@
     font-weight: 900; font-size: 13pt;
     flex-shrink: 0;
   }
+  {# 🎨 2026-09-04: los 4 mini-resumen usaban el mismo cuadrado rojo -- un
+     color por categoría lee más rápido como panel de estado (mismo
+     espíritu semáforo de REGLA #15), sin tocar la estructura. #}
+  .res-mini .rm-ico.ok   { background: var(--ilus-ok); }
+  .res-mini .rm-ico.dark { background: var(--ilus-black); }
+  .res-mini .rm-ico.mute { background: #64748b; }
   .res-mini .rm-text { line-height: 1.3; }
   .res-mini .rm-val {
     font-size: 10.5pt; font-weight: 900;
@@ -605,14 +617,19 @@
     border-radius: 10px;
     padding: 10px 8px;
     text-align: center;
+    /* 🎨 2026-09-04: mismo trato de profundidad que .eq-card -- las 3
+       firmas son el cierre "ceremonial" del documento, merecen leerse
+       como bloque propio, no como una celda de tabla. */
+    box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 3px 8px -2px rgba(15,23,42,.07);
   }
   .fir .fir-img {
     width: 100%; height: 70px;
     background: #fafafa;
-    border-bottom: 1px solid var(--ilus-line);
+    border-radius: 6px;
+    border: 1px solid var(--ilus-line);
     display: flex; align-items: center; justify-content: center;
     overflow: hidden;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
   .fir .fir-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .fir .fir-img.empty { color: var(--ilus-mute); font-size: 14pt; font-weight: 200; }
@@ -713,6 +730,22 @@
 </head>
 <body>
 
+{# ════════════ Iconos inline (SVG, sin CDN) ════════════
+   🎨 FIX 2026-09-04 (Daniel: "el PDF de las OT no me gusta, hazlo más
+   atractivo... el header y footer sí están ok, es como mostramos todo").
+   El cuerpo usaba emoji sueltos (📷 ✓ ☑ 📍 🖨) como si fueran íconos --
+   se ven distinto según el motor que los renderice y no calzan con el
+   resto del sistema (que usa bootstrap-icons). Playwright genera este
+   PDF sin red disponible de forma confiable (ver los timeouts de
+   OT-2026-00058 en mant_visita_pdf) así que en vez de cargar un ícono-
+   font externo, estos son SVG inline -- cero dependencia de red, cero
+   riesgo de que el PDF se demore o falle por un CDN caído. #}
+{% macro ic_camera(size=14, color='#9ca3af') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" fill="none" style="display:inline-block;vertical-align:-2px"><path d="M7 5.5 7.9 4h4.2l.9 1.5H15a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2h2Z" stroke="{{ color }}" stroke-width="1.3" stroke-linejoin="round"/><circle cx="10" cy="10.4" r="2.6" stroke="{{ color }}" stroke-width="1.3"/></svg>{% endmacro %}
+{% macro ic_check(size=12, color='#fff') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" fill="none" style="display:inline-block;vertical-align:-1px"><path d="M3.5 8.3 6.6 11.4 12.5 5" stroke="{{ color }}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endmacro %}
+{% macro ic_clipboard(size=14, color='#fff') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" fill="none" style="display:inline-block;vertical-align:-2px"><rect x="5" y="4" width="10" height="13" rx="1.6" stroke="{{ color }}" stroke-width="1.3"/><path d="M7.8 4V3.2A1.2 1.2 0 0 1 9 2h2a1.2 1.2 0 0 1 1.2 1.2V4" stroke="{{ color }}" stroke-width="1.3"/><path d="M7.6 10.3 9 11.7l3.4-3.4" stroke="{{ color }}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endmacro %}
+{% macro ic_pin(size=13, color='#9ca3af') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" fill="none" style="display:inline-block;vertical-align:-2px"><path d="M8 14.5S13 10 13 6.5a5 5 0 1 0-10 0C3 10 8 14.5 8 14.5Z" stroke="{{ color }}" stroke-width="1.3" stroke-linejoin="round"/><circle cx="8" cy="6.5" r="1.7" stroke="{{ color }}" stroke-width="1.3"/></svg>{% endmacro %}
+{% macro ic_printer(size=14, color='#0a0a0a') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" fill="none" style="display:inline-block;vertical-align:-2px"><path d="M6 8V3.5h8V8" stroke="{{ color }}" stroke-width="1.3" stroke-linejoin="round"/><rect x="3.5" y="8" width="13" height="6.5" rx="1.2" stroke="{{ color }}" stroke-width="1.3"/><rect x="6" y="12" width="8" height="4.5" rx=".6" stroke="{{ color }}" stroke-width="1.3"/></svg>{% endmacro %}
+
 {# ════════════ TOOLBAR (solo pantalla) ════════════ #}
 <div class="toolbar no-print">
   <div class="tb-left">
@@ -723,7 +756,7 @@
   </div>
   <div class="tb-actions">
     <button class="tb-btn primary" onclick="window.print()">
-      <span style="font-size:13pt;line-height:1">🖨</span> Imprimir / Guardar PDF
+      {{ ic_printer(15, '#0a0a0a') }} Imprimir / Guardar PDF
     </button>
     <a class="tb-btn" href="{{ url_for('mant_ot_ejecutar', vid=visita.id) }}">← Volver a la OT</a>
   </div>
@@ -941,7 +974,7 @@
       <div class="eq-idx">{{ idx }}</div>
       <div class="eq-card-cols">
       <div class="eq-foto">
-        {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}📷{% endif %}
+        {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}{{ ic_camera(26, '#cbd5e1') }}{% endif %}
       </div>
       <div class="eq-body">
         <div class="eq-nom">{{ e.nombre }}</div>
@@ -974,7 +1007,7 @@
           <img src="{{ f.url }}" alt="">
           {% endfor %}
           {% for _ in range(3 - _fotos|length) %}
-          <span class="ph">📷</span>
+          <span class="ph">{{ ic_camera(16, '#cbd5e1') }}</span>
           {% endfor %}
         </div>
         {% endif %}
@@ -984,7 +1017,7 @@
         {% if _checks %}
           {% for c in _checks[:5] %}
           <div class="ec-item">
-            <span class="ec-ck {{ '' if c.ok else 'no' }}">✓</span>
+            <span class="ec-ck {{ '' if c.ok else 'no' }}">{{ ic_check(9, '#fff' if c.ok else '#9ca3af') }}</span>
             <span class="ec-txt">{{ c.titulo|truncate(40,true) }}</span>
           </div>
           {% endfor %}
@@ -1035,7 +1068,7 @@
       <div class="eq-idx">{{ idx }}</div>
       <div class="eq-card-cols">
       <div class="eq-foto">
-        {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}📷{% endif %}
+        {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}{{ ic_camera(26, '#cbd5e1') }}{% endif %}
       </div>
       <div class="eq-body">
         <div class="eq-nom">{{ e.nombre }}</div>
@@ -1068,7 +1101,7 @@
           <img src="{{ f.url }}" alt="">
           {% endfor %}
           {% for _ in range(3 - _fotos|length) %}
-          <span class="ph">📷</span>
+          <span class="ph">{{ ic_camera(16, '#cbd5e1') }}</span>
           {% endfor %}
         </div>
         {% endif %}
@@ -1078,7 +1111,7 @@
         {% if _checks %}
           {% for c in _checks[:5] %}
           <div class="ec-item">
-            <span class="ec-ck {{ '' if c.ok else 'no' }}">✓</span>
+            <span class="ec-ck {{ '' if c.ok else 'no' }}">{{ ic_check(9, '#fff' if c.ok else '#9ca3af') }}</span>
             <span class="ec-txt">{{ c.titulo|truncate(40,true) }}</span>
           </div>
           {% endfor %}
@@ -1107,7 +1140,7 @@
         <th>Tarea</th>
         <th style="width:80px">Tipo</th>
         <th style="width:80px">Resultado</th>
-        <th style="width:30px">📷</th>
+        <th style="width:30px">{{ ic_camera(11, '#fff') }}</th>
         <th style="width:80px">Fecha/Hora</th>
         <th style="width:80px">Ubicación</th>
       </tr>
@@ -1126,9 +1159,9 @@
           {% set rescls = t.resultado_clase or 'ok' %}
           {% if res %}<span class="pill-res {{ rescls }}">{{ res|truncate(20,true) }}</span>{% else %}—{% endif %}
         </td>
-        <td class="ico">{% if t.tiene_foto %}📷{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
+        <td class="ico">{% if t.tiene_foto %}{{ ic_camera(12, '#dc2626') }}{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
         <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
-        <td class="ubi">📍 {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
+        <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -1152,28 +1185,28 @@
       <div class="sec-title">Resumen de la orden</div>
       <div class="resumen-4">
         <div class="res-mini">
-          <div class="rm-ico">✓</div>
+          <div class="rm-ico">{{ ic_check(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{{ equipos|length }} de {{ equipos|length }}</div>
             <div class="rm-lbl">Equipos revisados</div>
           </div>
         </div>
         <div class="res-mini">
-          <div class="rm-ico">☑</div>
+          <div class="rm-ico ok">{{ ic_clipboard(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{% if chk_total %}{{ chk_pct }}%{% else %}—{% endif %}</div>
             <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
-          <div class="rm-ico">📷</div>
+          <div class="rm-ico dark">{{ ic_camera(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{{ fotos|length }} fotos</div>
             <div class="rm-lbl">Evidencia registrada</div>
           </div>
         </div>
         <div class="res-mini">
-          <div class="rm-ico">📍</div>
+          <div class="rm-ico mute">{{ ic_pin(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{{ 'Validada' if ubic_validada else 'Sin GPS' }}</div>
             <div class="rm-lbl">Ubicación</div>
@@ -1203,7 +1236,7 @@
       <div class="ev-grid">
         {% set _fotos_gen = (fotos_generales or fotos)[:4] %}
         {% for f in _fotos_gen %}<img src="{{ f.url }}" alt="">{% endfor %}
-        {% for _ in range(4 - (_fotos_gen|length)) %}<div class="ph">📷</div>{% endfor %}
+        {% for _ in range(4 - (_fotos_gen|length)) %}<div class="ph">{{ ic_camera(20, '#cbd5e1') }}</div>{% endfor %}
       </div>
     </div>
   </div>
@@ -1265,7 +1298,7 @@
         <th>Tarea</th>
         <th style="width:80px">Tipo</th>
         <th style="width:80px">Resultado</th>
-        <th style="width:30px">📷</th>
+        <th style="width:30px">{{ ic_camera(11, '#fff') }}</th>
         <th style="width:80px">Fecha/Hora</th>
         <th style="width:80px">Ubicación</th>
       </tr>
@@ -1284,9 +1317,9 @@
           {% set rescls = t.resultado_clase or 'ok' %}
           {% if res %}<span class="pill-res {{ rescls }}">{{ res|truncate(20,true) }}</span>{% else %}—{% endif %}
         </td>
-        <td class="ico">{% if t.tiene_foto %}📷{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
+        <td class="ico">{% if t.tiene_foto %}{{ ic_camera(12, '#dc2626') }}{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
         <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
-        <td class="ubi">📍 {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
+        <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -1308,28 +1341,28 @@
       <div class="sec-title">Resumen de la orden</div>
       <div class="resumen-4">
         <div class="res-mini">
-          <div class="rm-ico">✓</div>
+          <div class="rm-ico">{{ ic_check(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{{ equipos|length }} de {{ equipos|length }}</div>
             <div class="rm-lbl">Equipos revisados</div>
           </div>
         </div>
         <div class="res-mini">
-          <div class="rm-ico">☑</div>
+          <div class="rm-ico ok">{{ ic_clipboard(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{% if chk_total %}{{ chk_pct }}%{% else %}—{% endif %}</div>
             <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
-          <div class="rm-ico">📷</div>
+          <div class="rm-ico dark">{{ ic_camera(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{{ fotos|length }} fotos</div>
             <div class="rm-lbl">Evidencia registrada</div>
           </div>
         </div>
         <div class="res-mini">
-          <div class="rm-ico">📍</div>
+          <div class="rm-ico mute">{{ ic_pin(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{{ 'Validada' if ubic_validada else 'Sin GPS' }}</div>
             <div class="rm-lbl">Ubicación</div>
@@ -1358,7 +1391,7 @@
       <div class="ev-grid">
         {% set _fotos_gen = (fotos_generales or fotos)[:4] %}
         {% for f in _fotos_gen %}<img src="{{ f.url }}" alt="">{% endfor %}
-        {% for _ in range(4 - (_fotos_gen|length)) %}<div class="ph">📷</div>{% endfor %}
+        {% for _ in range(4 - (_fotos_gen|length)) %}<div class="ph">{{ ic_camera(20, '#cbd5e1') }}</div>{% endfor %}
       </div>
     </div>
   </div>

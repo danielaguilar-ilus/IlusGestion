@@ -92656,6 +92656,41 @@ def _ot_pdf_header_footer_native(ctx, grande=False):
     return header_html, footer_html
 
 
+def _ot_pdf_incompleto_html(vid, razones):
+    """Página de reemplazo cuando el PDF de una OT todavía no se puede
+    generar (faltan firmas/cierre) — devuelve el HTML ya renderizado.
+
+    🔴 FIX 2026-09-04 (Daniel, OT-2026-00133: "le di para ver el PDF antes
+    de firmar... y me lleva a la pagina"). Antes esto era un
+    `redirect(url_for("mant_ot_ejecutar", vid=vid))`: como "Ver PDF" abre
+    su URL dentro del iframe del modal (`openPdf()`, static/pdf_modal.js —
+    un <iframe src=...> normal, indistinguible para Flask de una
+    navegación real), el redirect cargaba la pantalla clásica ENTERA
+    dentro del modal, dando la sensación de "me saca de la OT". Ahora se
+    devuelve una página propia, chica y explicando qué falta — el iframe
+    la carga igual, pero sin salir de ningún lado.
+    Compartida por `mant_visita_pdf` y `mant_ot_pdf_render` (mismo bug,
+    mismo patrón de apertura vía iframe en ots_list.html/ot_ejecutar.html/
+    ot_ficha.html — ver openPdf(url_for('mant_ot_pdf_render', ...))).
+    """
+    v = mysql_fetchone(
+        "SELECT v.numero_ot, v.estado, v.tipo, c.razon_social "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        " WHERE v.id=%s", (vid,)
+    ) or {}
+    estado = (v.get("estado") or "").lower()
+    estado_meta = _OT2_ESTADO_META.get(estado)
+    estado_label = estado_meta[0] if estado_meta else (estado or "—")
+    return render_template(
+        "mantenciones/ot_pdf_incompleto.html",
+        vid=vid,
+        numero_ot=v.get("numero_ot") or f"OT #{vid}",
+        cliente_nombre=v.get("razon_social") or "",
+        estado_label=estado_label,
+        razones=razones or [],
+    )
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/pdf")
 @_mant_required
 @_ot_can_view
@@ -92677,23 +92712,22 @@ def mant_visita_pdf(vid):
     if status == "not_found":
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
     if status == "incompleto":
-        # Si es petición browser (no AJAX), redirigir con flash a la OT
+        # Llamador programático (JS que espera JSON, no el iframe del
+        # modal) → sigue recibiendo el 409 de siempre.
         is_ajax = (
             request.headers.get("X-Requested-With") == "XMLHttpRequest"
             or (request.headers.get("Accept") or "").startswith("application/json")
         )
-        if not is_ajax:
-            flash(
-                "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
-                + " ".join(razones),
-                "warning",
-            )
-            return redirect(url_for("mant_ot_ejecutar", vid=vid))
-        return jsonify({
-            "ok": False,
-            "error": "Faltan requisitos para generar el PDF",
-            "razones": razones,
-        }), 409
+        if is_ajax:
+            return jsonify({
+                "ok": False,
+                "error": "Faltan requisitos para generar el PDF",
+                "razones": razones,
+            }), 409
+        # Petición de navegador/iframe (el modal openPdf()): antes esto
+        # redirigía a la pantalla clásica completa (ver _ot_pdf_incompleto_html
+        # para el detalle del bug). Ahora se queda en el mismo lugar.
+        return _ot_pdf_incompleto_html(vid, razones)
 
     # Render HTML (contexto compartido con mant_ot_pdf_render → no divergen)
     # 2026-07-10 (Daniel — OT-2026-00032): los levantamientos usan su propio
@@ -93248,12 +93282,10 @@ def mant_ot_pdf_render(vid):
         flash("OT no encontrada.", "danger")
         return redirect(url_for("mant_index"))
     if status == "incompleto":
-        flash(
-            "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
-            + " ".join(razones),
-            "warning"
-        )
-        return redirect(url_for("mant_ot_ejecutar", vid=vid))
+        # Este botón también abre su URL dentro del modal iframe (ver
+        # openPdf() en ots_list.html/ot_ejecutar.html/ot_ficha.html) — mismo
+        # bug y mismo arreglo que mant_visita_pdf, ver _ot_pdf_incompleto_html.
+        return _ot_pdf_incompleto_html(vid, razones)
     # Contexto compartido con mant_visita_pdf (fuente única → no divergen)
     # 2026-07-10: misma selección de template que mant_visita_pdf.
     # FIX 2026-08-08: mismo criterio que mant_visita_pdf (ver comentario allá).

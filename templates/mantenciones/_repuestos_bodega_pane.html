@@ -1393,13 +1393,33 @@ async function rbEliminarSeleccionados(){
   else if (btn){ btn.disabled = false; rbUpdateBtn(); }
 }
 
+/* 🔧 2026-09-04 (Daniel, viendo el flujo: "la etiqueta de 100x50 pide mas
+   configuracion para generar a diferencia de la 100x150... podemos
+   acortarle el camino a los tecnicos"). El boton "Imprimir etiqueta" de
+   esta tabla SIEMPRE abria en 100x150 (el default del backend cuando no
+   viaja `fmt`) -- para usar la chica, el tecnico tenia que entrar, hacer
+   UN CLIC MAS para cambiar de formato (recarga la pagina de vista previa),
+   y recien ahi imprimir. Con repuestos, que suelen llevar la etiqueta
+   chica, eso era el paso extra en CADA impresion.
+   Se recuerda el ultimo formato que el tecnico eligio (localStorage, por
+   navegador) y el boton de esta tabla abre DIRECTO en ese formato la
+   proxima vez -- ver el companero de este fix en
+   repuesto_print_labels.html, que es quien guarda la eleccion. La primera
+   vez sigue siendo 100x150 (comportamiento de siempre); en cuanto alguien
+   elige 100x50 una vez, se queda ahi. */
+function _rbFmtRecordado(){
+  try { return localStorage.getItem('rbFmtEtiqueta') || ''; }
+  catch(e){ return ''; }
+}
 function rbImprimirUno(id){
-  window.open('/repuestos/bodega/imprimir?ids=' + id, '_blank');
+  const fmt = _rbFmtRecordado();
+  window.open('/repuestos/bodega/imprimir?ids=' + id + (fmt ? '&fmt=' + fmt : ''), '_blank');
 }
 function rbImprimirEtiquetas(){
   const ids = [...document.querySelectorAll('.rb-row-check:checked')].map(el => el.value);
   if (!ids.length) return;
-  window.open('/repuestos/bodega/imprimir?ids=' + ids.join(','), '_blank');
+  const fmt = _rbFmtRecordado();
+  window.open('/repuestos/bodega/imprimir?ids=' + ids.join(',') + (fmt ? '&fmt=' + fmt : ''), '_blank');
 }
 
 // ── Marca: typeahead conectado al ERP (MAEPR.MRPR vía sync backend) ──

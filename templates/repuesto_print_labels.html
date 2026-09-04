@@ -917,6 +917,14 @@
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   const formatKey = "{{ format_key }}";
+  // 🔧 2026-09-04 (Daniel: "podemos acortarle el camino a los tecnicos en
+  // las etiquetas de repuestos"). Companero de _rbFmtRecordado() en
+  // _repuestos_bodega_pane.html: cada vez que esta pantalla se abre con un
+  // formato ya sabido (sea porque el tecnico lo eligio, sea porque llego
+  // recordado), lo guarda -- la proxima vez que apriete "Imprimir etiqueta"
+  // desde la tabla, entra derecho a ese formato, sin el clic extra.
+  try { localStorage.setItem('rbFmtEtiqueta', formatKey === '150x100' ? '100x150' : formatKey); }
+  catch(e){ /* localStorage bloqueado: no pasa nada, solo no se recuerda */ }
 
   function fitText(el, minPx) {
     if (!el) return;
