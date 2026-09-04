@@ -78377,7 +78377,12 @@ def mant_clientes_fusion_preview():
 
 @app.route("/mantenciones/api/clientes/fusionar", methods=["POST"])
 @_mant_required
-def mant_clientes_fusionar():
+# ⚠️ El nombre NO puede ser mant_clientes_fusionar: ya existe la fusion
+# vieja por URL (/<keep>/fusionar/<drop>) con ese mismo nombre de
+# funcion, y Flask usa el nombre como endpoint -- dos iguales y la app
+# NO ARRANCA. Paso real: tumbo produccion el 03-09 hasta que se
+# renombro esta.
+def mant_clientes_fusionar_v2():
     """Mueve TODO lo de la ficha origen a la destino y desactiva la origen.
 
     Una sola transaccion: o se mueve todo, o no se mueve nada. Una fusion a
