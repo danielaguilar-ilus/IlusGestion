@@ -60,7 +60,7 @@
 
     {# Botón anterior #}
     {% if _pg_p > 1 %}
-      <a href="?page={{ _pg_p - 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}{% if _pg_ver %}&ver={{ _pg_ver }}{% endif %}{% if _pg_o %}&orden={{ _pg_o }}&dir={{ _pg_od }}{% endif %}"
+      <a href="?page={{ _pg_p - 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q|urlencode }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}{% if _pg_ver %}&ver={{ _pg_ver }}{% endif %}{% if _pg_o %}&orden={{ _pg_o }}&dir={{ _pg_od }}{% endif %}"
          class="btn btn-sm btn-outline-secondary fw-bold" style="font-size:.78rem">
         <i class="bi bi-chevron-left"></i> Anterior
       </a>
@@ -80,7 +80,7 @@
 
     {# Botón siguiente #}
     {% if _pg_p < _pg_tp %}
-      <a href="?page={{ _pg_p + 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}{% if _pg_ver %}&ver={{ _pg_ver }}{% endif %}{% if _pg_o %}&orden={{ _pg_o }}&dir={{ _pg_od }}{% endif %}"
+      <a href="?page={{ _pg_p + 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q|urlencode }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}{% if _pg_ver %}&ver={{ _pg_ver }}{% endif %}{% if _pg_o %}&orden={{ _pg_o }}&dir={{ _pg_od }}{% endif %}"
          class="btn btn-sm btn-ilus fw-bold" style="font-size:.78rem">
         Siguiente <i class="bi bi-chevron-right"></i>
       </a>

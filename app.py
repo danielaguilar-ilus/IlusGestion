@@ -10666,8 +10666,16 @@ def index():
 @app.route("/products/refresh-cache", methods=["POST"])
 @login_required
 def refresh_listing_cache():
-    """Limpia el caché del listado de productos para ver datos frescos."""
+    """Limpia el caché del listado de productos para ver datos frescos.
+
+    Vuelve a la MISMA vista (preserva ?ver/q/orden/fotos/size) — antes un
+    redirect pelado a index() rebotaba al usuario con home-por-rol a su
+    home (gotcha Alison) y descartaba búsqueda/orden/filtros activos.
+    Solo se acepta el referrer si es de ESTA app (evita open-redirect)."""
     _invalidate_listing_cache()
+    ref = request.referrer or ""
+    if ref.startswith(request.host_url):
+        return redirect(ref)
     return redirect(url_for("index"))
 
 
@@ -10975,7 +10983,8 @@ def edit_product(pid):
         with conn.cursor() as cur:
             cur.execute(
                 f"""UPDATE `{PRODUCTS_TABLE}`
-                    SET sku=%s, nombre=%s, estado=%s, unidades_por_venta=%s, updated_by=%s
+                    SET sku=%s, nombre=%s, estado=%s, unidades_por_venta=%s, updated_by=%s,
+                        updated_at=NOW()
                     WHERE id=%s""",
                 (sku, nombre, estado, uxv, current_username(), pid),
             )
@@ -11043,6 +11052,23 @@ def delete_product(pid):
 # ─────────────────────────────────────────────
 #  Fotos
 # ─────────────────────────────────────────────
+
+def _touch_product_auditoria(pid):
+    """Firma updated_by/updated_at de la ficha cuando el cambio vive en una
+    tabla satélite (fotos) y no toca app_products por sí solo — sin esto la
+    columna "Actualizado" del catálogo no refleja subir/editar/borrar fotos."""
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE `{PRODUCTS_TABLE}` SET updated_by=%s, updated_at=NOW() WHERE id=%s",
+                (current_username(), pid),
+            )
+        conn.commit()
+        _invalidate_listing_cache()
+    except Exception as exc:
+        print(f"[ILUS] No se pudo firmar auditoría del producto {pid}: {exc}", flush=True)
+
 
 def _foto_ajax():
     """True si la petición viene del componente JS de fotos (fetch/XHR)."""
@@ -11128,6 +11154,8 @@ def upload_photo(pid):
             pass
         return _err("Error al registrar la foto. Intenta nuevamente.", "danger", 500)
 
+    _touch_product_auditoria(pid)
+
     if ajax:
         return jsonify({
             "ok": True, "id": new_id,
@@ -11166,6 +11194,7 @@ def delete_photo(pid, photo_id):
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM `{PHOTOS_TABLE}` WHERE id=%s", (photo_id,))
         conn.commit()
+        _touch_product_auditoria(pid)
         if ajax:
             return jsonify({"ok": True})
         flash("Foto eliminada.", "success")
@@ -11238,6 +11267,7 @@ def replace_photo(pid, photo_id):
     # evita que un rol con 'edit' pero sin 'delete' destruya contenido.
     if old and old != filename:
         print(f"[ILUS] Foto {photo_id} editada: archivo anterior conservado en {old}", flush=True)
+    _touch_product_auditoria(pid)
     return jsonify({"ok": True, "url": _photo_src(filename)})
 
 
@@ -18557,9 +18587,11 @@ def cubicador_sync_nombre():
         return jsonify({"error": "datos incompletos"}), 400
     conn = get_db()
     with conn.cursor() as cur:
+        # updated_by: sin esto, ON UPDATE CURRENT_TIMESTAMP bumpeaba la fecha
+        # pero la columna "Actualizado" del catálogo mostraba al editor ANTERIOR
         cur.execute(
-            f"UPDATE `{PRODUCTS_TABLE}` SET nombre=%s WHERE UPPER(TRIM(sku))=%s",
-            (nombre_erp, sku)
+            f"UPDATE `{PRODUCTS_TABLE}` SET nombre=%s, updated_by=%s WHERE UPPER(TRIM(sku))=%s",
+            (nombre_erp, current_username(), sku)
         )
     conn.commit()
     _invalidate_listing_cache()
