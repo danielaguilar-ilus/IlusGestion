@@ -468,11 +468,22 @@
        ERP, que antes no tenían ningún botón acá. Abre el selector de
        origen (#modalOTOrigen) — mismo flag is_tecnico que ya ocultaba
        ambos botones viejos (no se inventa un mecanismo nuevo de permisos). #}
-    {% if not is_tecnico %}
+    {# 🔒 2026-09-03 (Daniel: "quisiera que ocultaras el botón de crear OT
+       en las OT normales"). Las OT nuevas se crean en OT 2.0 -- dejar
+       este botón acá seguía repartiendo el nacimiento de las OT entre
+       dos motores, que es justo lo que complica cerrar la pantalla
+       vieja. Esta pantalla queda de CONSULTA de lo ya existente.
+       Se OCULTA, no se elimina: el modal, su JS y la ruta siguen
+       intactos (REGLA #4.2) -- devolverlo es quitar este {% raw %}{% if false %}{% endraw %}. #}
+    {% if false %}
     <button type="button" class="btn btn-sm btn-light fw-bold" onclick="abrirSelectorOrigenOT()">
       <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
     </button>
     {% endif %}
+    <a href="/ot/?crear=1" class="btn btn-sm btn-light fw-bold"
+       title="Las OT nuevas se crean en Órdenes de Trabajo 2.0">
+      <i class="bi bi-clipboard2-plus me-1"></i>Crear OT en la 2.0
+    </a>
   </div>
 </div>
 

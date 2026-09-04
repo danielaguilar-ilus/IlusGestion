@@ -123,10 +123,15 @@
              Daniel, ver contrato remocion_autorizada). -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
           <div id="otwSinOT">
-            <button class="btn btn-sm fw-bold" id="btnGenerarOT" type="button"
-                    style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
-                    data-bs-toggle="modal" data-bs-target="#modalGenerarOT">
-              <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
+{# 🔗 2026-09-03 (Daniel: "el botón de crear una OT de los tickets
+               conéctalo a las OT 2.0"). Antes abría #modalGenerarOT, el modal
+               viejo. Ahora lleva al wizard de OT 2.0 con el ticket ya cargado.
+               El modal viejo NO se elimina (REGLA #4.2): sigue en la página y
+               volver atrás es cambiar este href por su data-bs-toggle. #}
+            <a class="btn btn-sm fw-bold" id="btnGenerarOT"
+               style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
+               href="/ot/?crear=1&ticket={{ ticket_id }}">
+              <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</a>
           </div>
           <div id="otwConOT" style="display:none;">
             <a class="btn btn-sm btn-outline-secondary" id="otwVerOtLink" href="#" target="_blank" rel="noopener">
@@ -197,9 +202,10 @@
           <div class="tk-ot-side-hint">
             Este ticket todavía no tiene OT. Genérala para que un técnico la ejecute en terreno.
           </div>
-          <button class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarOTSide" type="button"
-                  data-bs-toggle="modal" data-bs-target="#modalGenerarOT">
-            <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
+          {# Mismo destino que el botón de arriba: la OT 2.0. #}
+          <a class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarOTSide"
+             href="/ot/?crear=1&ticket={{ ticket_id }}">
+            <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</a>
         </div>
         <!-- Ya hay OT: un ticket tiene UNA sola OT (el backend responde 409
              si se intenta una segunda), así que acá no va un botón de

@@ -6616,7 +6616,34 @@ window.OT2C = (function(){
     // nada antes -- el botón queda oculto (ver pintar()).
     if (a) a.onclick = function(){ if (fase === 'form') irAOrigen(); };
     if (s) s.onclick = function(){ crear(); };
-    if (new URLSearchParams(location.search).get('crear') === '1') abrir();
+    /* 🔗 2026-09-03 (Daniel: "el botón de crear una OT de los tickets
+       conéctalo a las OT 2.0"). El ticket ya no abre el modal viejo: manda
+       acá con ?crear=1&ticket=<id>, y el wizard se pre-llena solo con el
+       cliente y el asunto del ticket. Si por lo que sea no se puede leer el
+       ticket, el wizard igual abre -- vacío, pero abre: quedarse sin
+       pantalla sería peor que llenar a mano. */
+    var _qs = new URLSearchParams(location.search);
+    if (_qs.get('crear') === '1'){
+      var _tid = parseInt(_qs.get('ticket') || '0', 10);
+      if (_tid){
+        fetch('/tickets/api/tickets/' + _tid, {credentials:'same-origin'})
+          .then(function(r){ return r.json(); })
+          .then(function(j){
+            var t = (j && (j.ticket || j)) || {};
+            var opts = {origen:'ticket', ticket_id:_tid};
+            if (t.cliente_id){
+              opts.cliente = {id:t.cliente_id,
+                              nombre:t.cliente_nombre || t.razon_social || '',
+                              rut:t.cliente_rut || ''};
+            }
+            if (t.titulo || t.asunto) opts.titulo = (t.titulo || t.asunto);
+            abrir(opts);
+          })
+          .catch(function(){ abrir({origen:'ticket', ticket_id:_tid}); });
+      } else {
+        abrir();
+      }
+    }
   });
 
   /* Alias histórico: hasta el 2026-08-26 esto defendía el "wizard corto"

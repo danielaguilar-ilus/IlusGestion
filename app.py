@@ -78275,6 +78275,57 @@ def _cli_fusion_tablas():
             and r["TABLE_NAME"] != "mant_clientes"]
 
 
+def _cli_fusion_uniques(tabla):
+    """Claves UNICAS de la tabla que incluyen cliente_id.
+
+    Existen de verdad: mant_maquinas tiene uq_cliente_serie (cliente_id,
+    serie). Si la MISMA maquina esta registrada en las dos fichas -- que es
+    justo lo que produce una ficha duplicada -- mover la fila choca contra
+    esa clave y MySQL tumba la transaccion entera con un 1062.
+
+    Paso en la primera fusion real (Vitacura, 04-09): el error era correcto
+    y el rollback tambien, pero el mensaje no decia nada util. Ahora esto se
+    detecta ANTES, se muestra en el inventario y se explica.
+    """
+    try:
+        rows = mysql_fetchall(
+            "SELECT INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX "
+            "  FROM information_schema.STATISTICS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND NON_UNIQUE=0 "
+            " ORDER BY INDEX_NAME, SEQ_IN_INDEX", (tabla,)) or []
+    except Exception:
+        return []
+    por_idx = {}
+    for r in rows:
+        por_idx.setdefault(r["INDEX_NAME"], []).append(r["COLUMN_NAME"])
+    return [(idx, cols) for idx, cols in por_idx.items()
+            if "cliente_id" in cols and len(cols) > 1]
+
+
+def _cli_fusion_colisiones(tabla, origen, destino):
+    """Filas del origen que la ficha destino YA TIENE (misma clave unica).
+
+    Devuelve (ids_que_chocan, columnas_de_la_clave). Se resuelve con un JOIN
+    sobre las columnas de la clave que no son cliente_id.
+    """
+    choques, cols_key = set(), []
+    for _idx, cols in _cli_fusion_uniques(tabla):
+        otras = [c for c in cols if c != "cliente_id"]
+        if not otras:
+            continue
+        cols_key = otras
+        cond = " AND ".join(f"a.`{c}` <=> b.`{c}`" for c in otras)
+        try:
+            filas = mysql_fetchall(
+                f"SELECT a.id FROM `{tabla}` a JOIN `{tabla}` b "
+                f"  ON {cond} AND b.cliente_id=%s "
+                f" WHERE a.cliente_id=%s", (destino, origen)) or []
+            choques.update(f["id"] for f in filas)
+        except Exception as e:
+            print(f"[fusion_colisiones] {tabla}: {e}", flush=True)
+    return sorted(choques), cols_key
+
+
 # Detalle legible por tabla: que columna sirve de "titulo" en el inventario.
 # Lo que no este aca igual se cuenta y se mueve -- solo no muestra ejemplos.
 _CLI_FUSION_DETALLE = {
@@ -78291,8 +78342,12 @@ _CLI_FUSION_DETALLE = {
 }
 
 
-def _cli_fusion_inventario(cid):
-    """Que cuelga HOY de esta ficha, tabla por tabla, con ejemplos."""
+def _cli_fusion_inventario(cid, destino=None):
+    """Que cuelga HOY de esta ficha, tabla por tabla, con ejemplos.
+
+    Con `destino`, ademas separa lo que se puede mover de lo que la ficha
+    destino YA TIENE -- ver _cli_fusion_colisiones.
+    """
     inv = []
     for tabla in _cli_fusion_tablas():
         try:
@@ -78309,18 +78364,28 @@ def _cli_fusion_inventario(cid):
         if not n:
             continue
         col, label = _CLI_FUSION_DETALLE.get(tabla, (None, tabla))
-        ejemplos = []
+        # Filas que la ficha destino YA tiene (el mismo equipo cargado en
+        # las dos fichas). Se separan del conteo que se va a mover.
+        choques, cols_key = ([], [])
+        if destino:
+            choques, cols_key = _cli_fusion_colisiones(tabla, cid, destino)
+        ejemplos, ejemplos_choque = [], []
         if col:
             try:
                 filas = mysql_fetchall(
                     f"SELECT id, `{col}` AS titulo FROM `{tabla}` "
-                    f" WHERE cliente_id=%s ORDER BY id DESC LIMIT 8", (cid,)) or []
-                ejemplos = [{"id": f["id"], "titulo": str(f.get("titulo") or f"#{f['id']}")[:90]}
-                            for f in filas]
+                    f" WHERE cliente_id=%s ORDER BY id DESC LIMIT 40", (cid,)) or []
+                for f in filas:
+                    it = {"id": f["id"], "titulo": str(f.get("titulo") or f"#{f['id']}")[:90]}
+                    (ejemplos_choque if f["id"] in set(choques) else ejemplos).append(it)
+                ejemplos = ejemplos[:8]
+                ejemplos_choque = ejemplos_choque[:8]
             except Exception:
                 ejemplos = []
         inv.append({"tabla": tabla, "label": label, "n": int(n),
-                    "error": None, "ejemplos": ejemplos})
+                    "n_mueve": int(n) - len(choques), "n_choque": len(choques),
+                    "clave": ", ".join(cols_key), "error": None,
+                    "ejemplos": ejemplos, "ejemplos_choque": ejemplos_choque})
     return inv
 
 
@@ -78363,13 +78428,15 @@ def mant_clientes_fusion_preview():
             "error_codigo": "RUT_DISTINTO",
         }), 400
 
-    inv = _cli_fusion_inventario(origen)
+    inv = _cli_fusion_inventario(origen, destino)
     return jsonify({
         "ok": True,
         "destino": dict(a), "origen": dict(b),
         "mismo_rut": mismo_rut,
         "inventario": inv,
         "total_filas": sum((i["n"] or 0) for i in inv),
+        "total_mueve": sum((i.get("n_mueve") or 0) for i in inv),
+        "total_choque": sum((i.get("n_choque") or 0) for i in inv),
         "con_error": [i["tabla"] for i in inv if i.get("error")],
         "tablas_revisadas": len(_cli_fusion_tablas()),
     })
@@ -78425,7 +78492,7 @@ def mant_clientes_fusionar_v2():
     # El inventario se vuelve a leer ACA, no se confia en el que vio el
     # navegador: entre que se miro la pantalla y se apreto el boton pudo
     # cambiar, y lo que se audita tiene que ser lo que realmente se movio.
-    inv = _cli_fusion_inventario(origen)
+    inv = _cli_fusion_inventario(origen, destino)
     if [i for i in inv if i.get("error")]:
         return jsonify({
             "ok": False,
@@ -78440,11 +78507,26 @@ def mant_clientes_fusionar_v2():
             for item in inv:
                 if not item["n"]:
                     continue
-                cur.execute(
-                    f"UPDATE `{item['tabla']}` SET cliente_id=%s WHERE cliente_id=%s",
-                    (destino, origen))
+                # Las filas que la ficha destino YA TIENE se quedan donde
+                # estan. Moverlas seria imposible (clave unica) y forzarlas
+                # duplicaria el mismo equipo en la ficha buena -- justo lo
+                # que Daniel pidio evitar ("que no pierda ni agregue
+                # informacion absurda"). Se quedan en la ficha origen, que
+                # queda inactiva pero consultable, y se REPORTAN.
+                choques, _ = _cli_fusion_colisiones(item["tabla"], origen, destino)
+                if choques:
+                    _ph = ",".join(["%s"] * len(choques))
+                    cur.execute(
+                        f"UPDATE `{item['tabla']}` SET cliente_id=%s "
+                        f" WHERE cliente_id=%s AND id NOT IN ({_ph})",
+                        tuple([destino, origen] + list(choques)))
+                else:
+                    cur.execute(
+                        f"UPDATE `{item['tabla']}` SET cliente_id=%s WHERE cliente_id=%s",
+                        (destino, origen))
                 movidos.append({"tabla": item["tabla"], "label": item["label"],
-                                "n": int(cur.rowcount or 0)})
+                                "n": int(cur.rowcount or 0),
+                                "n_quedaron": len(choques)})
             # La ficha vaciada se DESACTIVA, no se borra: su historial
             # explica por que existia y quien la creo.
             cur.execute(
@@ -78469,6 +78551,11 @@ def mant_clientes_fusionar_v2():
         except Exception: pass
 
     _detalle = ", ".join(f"{m['n']} {m['label'].lower()}" for m in movidos if m["n"]) or "nada"
+    _quedaron = ", ".join(f"{m['n_quedaron']} {m['label'].lower()}"
+                          for m in movidos if m.get("n_quedaron"))
+    if _quedaron:
+        _detalle += (f". Quedaron en la ficha origen por estar YA en la destino "
+                     f"(mismo registro cargado dos veces): {_quedaron}")
     _txt = (f"{current_username() or '?'} fusiono la ficha #{origen} "
             f"'{b.get('razon_social')}' ({b.get('rut') or 'sin RUT'}) dentro de "
             f"#{destino} '{a.get('razon_social')}'. Se movio: {_detalle}. "
@@ -78479,6 +78566,7 @@ def mant_clientes_fusionar_v2():
     _mant_log("cliente", origen, "fusion_origen", _txt)
     return jsonify({"ok": True, "movidos": movidos,
                     "total": sum(m["n"] for m in movidos),
+                    "total_quedaron": sum(m.get("n_quedaron", 0) for m in movidos),
                     "destino_id": destino, "origen_id": origen})
 
 
