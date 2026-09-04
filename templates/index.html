@@ -169,6 +169,7 @@
     {# exact=1 lo activa el JS cuando detecta un scanner físico o cámara #}
     <input type="hidden" name="exact" id="exactFlag" value="0">
     {% if ff %}<input type="hidden" name="fotos" value="{{ ff }}">{% endif %}
+    {% if orden is defined and orden %}<input type="hidden" name="orden" value="{{ orden }}"><input type="hidden" name="dir" value="{{ orden_dir or 'asc' }}">{% endif %}
     {% if _ver_etq %}<input type="hidden" name="ver" value="{{ _ver_etq }}">{% endif %}
     <div class="input-group shadow-sm">
       <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
@@ -254,15 +255,38 @@
       </span>
     </div>
     <div class="table-responsive eti-flex-grow">
+      {# ── Encabezados ORDENABLES: tocar ordena el universo completo en el
+            servidor (asc ⇄ desc), preservando búsqueda, filtro y tamaño ── #}
+      {# OJO: dentro de un macro solo son confiables las variables del CONTEXTO
+         de render (orden, orden_dir, q, page_size, foto_filter) — los {% set %}
+         de la plantilla no siempre se ven dentro del macro. #}
+      {% macro th_sort(key, label, cls='') -%}
+        {%- set act = (orden is defined and orden == key) -%}
+        {%- set dsc = (orden_dir is defined and orden_dir == 'desc') -%}
+        <th class="{{ cls }}" style="white-space:nowrap">
+          <a href="?orden={{ key }}&dir={{ 'desc' if (act and not dsc) else 'asc' }}&size={{ page_size }}{% if q %}&q={{ q }}{% endif %}{% if foto_filter %}&fotos={{ foto_filter }}{% endif %}{% if request.args.get('ver') %}&ver={{ request.args.get('ver') }}{% endif %}"
+             title="Ordenar por {{ label }}"
+             style="color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:5px">
+            {{ label }}
+            {% if act %}
+              <i class="bi bi-caret-{{ 'down' if dsc else 'up' }}-fill" style="color:var(--ilus-red)"></i>
+            {% else %}
+              <i class="bi bi-arrow-down-up" style="font-size:.65rem;opacity:.45"></i>
+            {% endif %}
+          </a>
+        </th>
+      {%- endmacro %}
       <table class="table ilus-table mb-0" id="productTable">
         <thead>
           <tr>
-            <th>SKU</th>
-            <th>Nombre</th>
-            <th class="text-center">Bultos</th>
-            <th class="text-end">Peso (kg)</th>
-            <th class="text-end">Peso Vol</th>
-            <th class="text-center">Estado</th>
+            {{ th_sort('sku', 'SKU') }}
+            {{ th_sort('nombre', 'Nombre') }}
+            {{ th_sort('bultos', 'Bultos', 'text-center') }}
+            {{ th_sort('peso', 'Peso (kg)', 'text-end') }}
+            {{ th_sort('pv', 'Peso Vol', 'text-end') }}
+            {{ th_sort('estado', 'Estado', 'text-center') }}
+            {{ th_sort('creado', 'Creado', '') }}
+            {{ th_sort('actualizado', 'Actualizado', '') }}
             <th class="text-center">Acciones</th>
           </tr>
         </thead>
@@ -276,7 +300,6 @@
             </td>
             <td>
               <div class="fw-semibold">{{ p.nombre }}</div>
-              <div class="small text-muted">Por: {{ p.created_by or '-' }}</div>
             </td>
             <td class="text-center">
               {% if p.total_bultos > 0 %}
@@ -293,6 +316,19 @@
               {% if p.estado == 'Confirmado' %}<span class="ilus-badge badge-confirmado">Confirmado</span>
               {% elif p.estado == 'Impreso'   %}<span class="ilus-badge badge-impreso">Impreso</span>
               {% else %}<span class="ilus-badge badge-pendiente">Pendiente</span>{% endif %}
+            </td>
+            {# Auditoría: quién y cuándo (hora de Chile — REGLA #6) #}
+            <td style="font-size:.74rem;line-height:1.4;white-space:nowrap">
+              {% if p.created_at %}
+                <div class="fw-semibold">{{ p.created_by or '—' }}</div>
+                <div class="text-muted">{{ p.created_at|chile_fmt("%d-%m-%Y %H:%M") }}</div>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td style="font-size:.74rem;line-height:1.4;white-space:nowrap">
+              {% if p.updated_at %}
+                <div class="fw-semibold">{{ p.updated_by or p.created_by or '—' }}</div>
+                <div class="text-muted">{{ p.updated_at|chile_fmt("%d-%m-%Y %H:%M") }}</div>
+              {% else %}<span class="text-muted">—</span>{% endif %}
             </td>
             <td class="text-center">
               <div class="d-flex gap-1 justify-content-center">
@@ -360,11 +396,17 @@
           {% else %}<span class="ilus-badge badge-pendiente flex-shrink-0">Pendiente</span>{% endif %}
         </div>
         {# Datos clave #}
-        <div class="d-flex gap-3 mb-2" style="font-size:.8rem">
+        <div class="d-flex gap-3 mb-1" style="font-size:.8rem">
           <span><i class="bi bi-boxes me-1 text-muted"></i>{{ p.total_bultos }} bulto(s)</span>
           {% if p.peso_total > 0 %}<span><i class="bi bi-weight me-1 text-muted"></i>{{ "%.1f"|format(p.peso_total) }} kg</span>{% endif %}
           {% if p.pv_total > 0  %}<span style="color:#1a7a1a"><i class="bi bi-box me-1"></i>PV {{ "%.2f"|format(p.pv_total) }}</span>{% endif %}
         </div>
+        {% if p.created_at %}
+        <div class="text-muted mb-2" style="font-size:.72rem;line-height:1.5">
+          <i class="bi bi-person-plus me-1"></i>{{ p.created_by or '—' }} · {{ p.created_at|chile_fmt("%d-%m-%Y %H:%M") }}
+          {% if p.updated_at %}<br><i class="bi bi-pencil me-1"></i>{{ p.updated_by or p.created_by or '—' }} · {{ p.updated_at|chile_fmt("%d-%m-%Y %H:%M") }}{% endif %}
+        </div>
+        {% endif %}
         <div class="d-flex gap-2">
           {% if p.app_product_id %}
             <button type="button" class="btn btn-sm btn-dark-ilus flex-grow-1"
