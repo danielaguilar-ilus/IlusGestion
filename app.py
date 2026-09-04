@@ -4548,6 +4548,23 @@ PERMS_KEYS = (
     # Nace en False para todos los roles hasta que Daniel lo prenda desde
     # /admin/roles (mismo patrón que mant_equipos_agregar_libre).
     "mant_equipos_baja",
+    # mant_ot_finanzas — gestionar el paso de Finanzas al cerrar una OT
+    # (centro de costo, documento/garantia, cuanto cobro el proveedor):
+    # aditivo 2026-09-04, Daniel: "a Victor le toco cerrar la OT 150 y le
+    # costo con las finanzas, al parecer no tiene las credenciales... yo
+    # lo dejaria controlable en el front".
+    #
+    # Hasta hoy esto exigia el ROL EXACTO admin/supervisor/ejecutivo (regla
+    # del 19-08, ver el bloque 'cobertura' en _puede_ot_accion) -- Victor
+    # crea OTs (junto a Aaron y Juan Pablo) pero su rol no cae en esas tres
+    # familias, asi que quedaba trabado en el paso 2/3 del modal de cierre
+    # sin ninguna salida. Este flag es la salida: se suma como OR a la
+    # regla de rol, nunca la reemplaza -- admin/supervisor/ejecutivo siguen
+    # pudiendo sin prender nada.
+    #
+    # Nace en False para todos los roles hasta que Daniel lo prenda desde
+    # /admin/roles (mismo patron que mant_equipos_baja / mant_equipos_agregar_libre).
+    "mant_ot_finanzas",
     # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
     # liberado para todos y que se pueda bloquear por el front en los roles.
     # Igual el reasignar el técnico"). Son permisos de BLOQUEO: se asumen
@@ -4687,6 +4704,10 @@ def _build_perms_from_matrix(role):
     # Dar de baja equipos de la ficha del cliente (aditivo 2026-09-03, caso
     # Aarón). Ver comentario de "mant_equipos_baja" en PERMS_KEYS.
     base["mant_equipos_baja"] = bool(man.get("equipos_baja"))
+    # Gestionar finanzas de la OT sin ser admin/supervisor/ejecutivo
+    # (aditivo 2026-09-04, caso Victor / OT-150). Ver "mant_ot_finanzas" en
+    # PERMS_KEYS.
+    base["mant_ot_finanzas"] = bool(man.get("ot_finanzas"))
     # 🆕 2026-09-02 — Reagendar / reasignar técnico (Daniel: "liberado para
     # todos y que se pueda bloquear por el front en los roles").
     # OJO al `not in`: son permisos de tipo BLOQUEO, o sea que la ausencia
@@ -12611,6 +12632,7 @@ PERMISSIONS_MATRIX = {
                                    "cotizaciones_eliminar_item",
                                    "equipos_agregar_libre",
                                    "equipos_baja",
+                                   "ot_finanzas",
                                    # 🆕 2026-09-02 (Daniel: "reagendar, que
                                    # quede liberado para todos y que se pueda
                                    # bloquear por el front en los roles.
@@ -12684,6 +12706,11 @@ PERMISSIONS_META = {
         # caminos de baja de la ficha + restaurar. Ver "mant_equipos_baja".
         "equipos_baja": {"label": "Dar de baja equipos del cliente",
                          "tipo": "submodulo", "icon": "bi-archive"},
+        # 🆕 2026-09-04 (Daniel, caso Victor / OT-150: "no tiene las
+        # credenciales para gestionar las finanzas... lo dejaria
+        # controlable en el front"). Ver "mant_ot_finanzas".
+        "ot_finanzas": {"label": "Gestionar finanzas de la OT (centro de costo, documento, garantía)",
+                         "tipo": "submodulo", "icon": "bi-cash-coin"},
         # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
         # liberado para todos y que se pueda bloquear por el front en los
         # roles. Igual el reasignar el técnico"). Nacen como 'bloqueo' -- o
@@ -52481,8 +52508,26 @@ def _puede_ot_accion(vid, accion, user=None):
             print(f"[PERM] vid={vid} action=cobertura role={role_raw}->{role} user={username} "
                   f"-> ALLOWED (gestión, OT aún no cerrada)", flush=True)
             return True
+        # 🆕 2026-09-04 (Daniel, caso Victor / OT-150): además del rol de
+        # gestión de siempre, se acepta el permiso de rol "Gestionar
+        # finanzas de la OT" (mant_ot_finanzas) -- mismo patrón que
+        # 'eliminar' arriba: se consulta has_role_permission() directo a
+        # rol_permisos (no g.permissions), porque este `role_raw` puede
+        # no ser el del usuario logueado en ESTE request.
+        try:
+            _tiene_permiso_finanzas = has_role_permission(
+                role_raw, "mantenciones", "ot_finanzas"
+            )
+        except Exception as e:
+            print(f"[SECURITY] _puede_ot_accion error consultando permiso "
+                  f"ot_finanzas vid={vid} role={role_raw}: {e}", flush=True)
+            _tiene_permiso_finanzas = False
+        if _tiene_permiso_finanzas:
+            print(f"[PERM] vid={vid} action=cobertura role={role_raw}->{role} user={username} "
+                  f"-> ALLOWED (permiso de rol 'Gestionar finanzas de la OT')", flush=True)
+            return True
         print(f"[PERM] vid={vid} action=cobertura role={role_raw}->{role} user={username} "
-              f"-> DENIED (solo gestión declara garantía)", flush=True)
+              f"-> DENIED (sin rol de gestión ni permiso mant_ot_finanzas)", flush=True)
         return False
 
     # ── VER ────────────────────────────────────────────────────
