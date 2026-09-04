@@ -695,31 +695,141 @@ async function cargarDuplicados(){
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   FUSION DE FICHAS — 2026-09-03 (Daniel: "allí tienes que hacer algo de
+   cirujano. Quiero que no pierda ni agregar información absurda. Siempre
+   tiene que tener el detalle, o sea, saber si vamos a agregar, qué vamos
+   a agregar... hazlo pero con el detalle completo antes de mover nada").
+
+   LO QUE HABIA: un confirm() nativo (contra la REGLA #1) que decía "se
+   transfieren máquinas, contratos, OTs, fotos, documentos" sin decir
+   cuántas ni cuáles, y el resultado en un alert con JSON crudo. O sea,
+   había que apretar a ciegas y leer después.
+
+   AHORA: primero se PIDE EL INVENTARIO al servidor y se muestra tabla por
+   tabla, con ejemplos reales de lo que se va a mover. Recién con eso a la
+   vista se pide escribir FUSIONAR y el motivo, que queda en auditoría.
+   Nada se mueve antes de esa pantalla.
+   ══════════════════════════════════════════════════════════════════ */
 async function fusionarClientes(idKeep, idDrop, btn){
-  const ok = confirm(
-    `¿Fusionar cliente?\n\n` +
-    `CONSERVAR: cliente #${idKeep}\n` +
-    `ABSORBER:   cliente #${idDrop} (quedará INACTIVO)\n\n` +
-    `Se transfieren máquinas, contratos, OTs, fotos, documentos.\n` +
-    `Esta acción es REVERSIBLE (el inactivo se puede restaurar).\n\n` +
-    `¿Confirmar?`
-  );
-  if (!ok) return;
   btn.disabled = true;
   const txt = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Revisando…';
+  let prev = null;
+  try {
+    const rp = await fetch('/mantenciones/api/clientes/fusion-preview?origen='
+      + idDrop + '&destino=' + idKeep);
+    prev = await rp.json();
+  } catch(e){ prev = null; }
+  btn.disabled = false; btn.innerHTML = txt;
+
+  if (!prev || !prev.ok){
+    await ilusAlert({
+      type: 'error', title: 'No se puede fusionar',
+      message: (prev && prev.error) || 'No se pudo leer qué contiene esa ficha.',
+    });
+    return;
+  }
+
+  const esc2 = s => String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const inv = prev.inventario || [];
+  let detalle = '';
+  if (!inv.length){
+    detalle = '<div style="padding:10px;background:#f0fdf4;border:1px solid #86efac;'
+      + 'border-radius:8px;color:#166534">La ficha a absorber está <b>vacía</b>: '
+      + 'no tiene nada colgando. Solo quedará inactiva.</div>';
+  } else {
+    detalle = inv.map(function(i){
+      const ej = (i.ejemplos || []).map(function(e){
+        return '<li style="color:#475569">' + esc2(e.titulo) + '</li>'; }).join('');
+      const mas = (i.n > (i.ejemplos || []).length)
+        ? '<li style="color:#94a3b8;font-style:italic">y ' +
+          (i.n - (i.ejemplos || []).length) + ' más…</li>' : '';
+      return '<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9">'
+        + '<div style="display:flex;align-items:center;gap:9px">'
+          + '<b style="min-width:38px;text-align:right;font-variant-numeric:tabular-nums;'
+            + 'color:#0f172a">' + i.n + '</b>'
+          + '<span style="font-weight:700">' + esc2(i.label) + '</span>'
+          + '<code style="margin-left:auto;font-size:.68rem;color:#94a3b8">' + esc2(i.tabla) + '</code>'
+        + '</div>'
+        + (ej ? '<ul style="margin:5px 0 0 52px;padding:0;font-size:.76rem">' + ej + mas + '</ul>' : '')
+        + '</div>';
+    }).join('');
+  }
+
+  const ok1 = await ilusConfirm({
+    title: 'Esto es lo que se va a mover',
+    message: 'De la ficha #' + idDrop + ' «' + esc2(prev.origen.razon_social)
+      + '» hacia la #' + idKeep + ' «' + esc2(prev.destino.razon_social) + '».',
+    sub: '<div style="max-height:46vh;overflow:auto;border:1px solid #e2e8f0;'
+      + 'border-radius:10px;background:#fff;margin-top:8px">' + detalle + '</div>'
+      + '<div style="margin-top:9px;font-size:.78rem;color:#475569">'
+      + '<b>' + prev.total_filas + '</b> registros en total, revisando <b>'
+      + prev.tablas_revisadas + '</b> tablas. '
+      + (prev.mismo_rut ? 'Las dos fichas tienen el <b>mismo RUT</b>. '
+                        : 'Una de las dos <b>no tiene RUT</b>. ')
+      + 'La ficha #' + idDrop + ' queda <b>inactiva</b>, no se borra.</div>',
+    subHtml: true, okLabel: 'Continuar', cancelLabel: 'Cancelar',
+  });
+  if (!ok1) return;
+
+  const motivo = await ilusPrompt({
+    title: 'Motivo de la fusión',
+    message: '¿Por qué se fusionan? Queda en la auditoría de las dos fichas.',
+    placeholder: 'Ej: misma corporación, el RUT se cargó dos veces con formato distinto',
+    required: true, multiline: true, okLabel: 'Continuar',
+  });
+  if (!motivo || motivo.trim().length < 10){
+    if (motivo !== null) ilusToast('El motivo debe tener al menos 10 caracteres.', {type:'warning'});
+    return;
+  }
+
+  const conf = await ilusPrompt({
+    title: 'Confirmación final',
+    message: 'Se moverán ' + prev.total_filas + ' registros. No hay botón para deshacerlo.',
+    sub: 'Escribe <strong style="color:#dc2626">FUSIONAR</strong> para confirmar.',
+    subHtml: true, placeholder: 'FUSIONAR', required: true,
+    okLabel: 'Fusionar ahora', cancelLabel: 'Cancelar',
+  });
+  if (!conf || conf.trim().toUpperCase() !== 'FUSIONAR'){
+    if (conf !== null) ilusToast('No escribiste FUSIONAR — se canceló.', {type:'info'});
+    return;
+  }
+
+  btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Fusionando…';
   try {
-    const r = await fetch(`/mantenciones/api/clientes/${idKeep}/fusionar/${idDrop}`, {method:'POST'});
+    const r = await fetch('/mantenciones/api/clientes/fusionar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({origen: idDrop, destino: idKeep,
+                            motivo: motivo.trim(), confirm_text: 'FUSIONAR'}),
+    });
     const d = await r.json();
     if (!d.ok){
-      alert('Error: ' + (d.error || 'desconocido'));
+      await ilusAlert({type:'error', title:'No se fusionó',
+        message: d.error || 'Error desconocido',
+        sub: 'Las dos fichas quedaron como estaban.'});
       btn.disabled = false; btn.innerHTML = txt;
       return;
     }
-    alert(d.mensaje + '\n\nReasignaciones: ' + JSON.stringify(d.reasignaciones));
+    /* El informe de lo que REALMENTE se movió -- contado por el servidor
+       después de escribir, no el estimado que se mostró antes. */
+    await ilusAlert({
+      type:'success', title:'Fichas fusionadas',
+      message: 'Se movieron ' + d.total + ' registros a la ficha #' + idKeep + '.',
+      sub: (d.movidos || []).filter(m => m.n).map(function(m){
+        return '• <b>' + m.n + '</b> ' + esc2(m.label); }).join('<br>')
+        + '<div style="margin-top:8px;color:#64748b">La ficha #' + idDrop
+        + ' quedó inactiva. Puedes verla en «Fichas ocultas».</div>',
+      subHtml: true,
+    });
     cargarDuplicados();
   } catch(e){
-    alert('Error de red: ' + e.message);
+    // REGLA #1: nada de alert() nativo.
+    await ilusAlert({type:'error', title:'Error de red',
+      message: 'No se pudo contactar al servidor: ' + (e.message || e),
+      sub: 'Recarga y revisa las dos fichas antes de reintentar.'});
     btn.disabled = false; btn.innerHTML = txt;
   }
 }

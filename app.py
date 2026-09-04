@@ -63634,18 +63634,30 @@ def mant_clientes_fusionar(cid_keep, cid_drop):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            # Reasignar TODAS las relaciones del duplicado al cliente bueno
+            # 🔴 FIX 2026-09-03: esta lista estaba ESCRITA A MANO y cubria 7
+            # tablas. En la base hay 17 con cliente_id. O sea que fusionar
+            # dejaba huerfanas las cotizaciones, los tickets, los repuestos,
+            # el stock, las notificaciones, la inteligencia del cliente y los
+            # planes de IA: apuntando a una ficha que quedaba inactiva y que
+            # nadie vuelve a mirar. Nadie se enteraba, porque el resumen solo
+            # contaba las que si estaban en la lista.
+            #
+            # Ahora las tablas se DESCUBREN en information_schema (ver
+            # _cli_fusion_tablas), asi que una tabla nueva con cliente_id
+            # entra sola. mant_logs se mantiene aparte porque su columna no
+            # es cliente_id sino entidad_id + entidad='cliente'.
+            _stat_por_tabla = {
+                "mant_maquinas": "maquinas", "mant_contratos": "contratos",
+                "mant_visitas": "visitas", "mant_sucursales": "sucursales",
+                "mant_contrato_adjuntos": "documentos",
+                "mant_maquina_eventos": "logs",
+                "mant_levantamientos": "levantamientos",
+                "mant_reportes": "documentos",
+            }
             tablas_a_reasignar = [
-                ("mant_maquinas",            "cliente_id", "maquinas"),
-                ("mant_contratos",           "cliente_id", "contratos"),
-                ("mant_visitas",             "cliente_id", "visitas"),
-                ("mant_sucursales",          "cliente_id", "sucursales"),
-                ("mant_contrato_adjuntos",   "cliente_id", "documentos"),
-                ("mant_maquina_eventos",     "cliente_id", "logs"),
-                ("mant_levantamientos",      "cliente_id", "levantamientos"),
-                ("mant_reportes",            "cliente_id", "documentos"),
-                ("mant_logs",                "entidad_id", None),  # logs con entidad='cliente'
-            ]
+                (t, "cliente_id", _stat_por_tabla.get(t))
+                for t in _cli_fusion_tablas()
+            ] + [("mant_logs", "entidad_id", None)]
             for tabla, col, key_stat in tablas_a_reasignar:
                 try:
                     if tabla == "mant_logs":
@@ -63661,6 +63673,12 @@ def mant_clientes_fusionar(cid_keep, cid_drop):
                         )
                     if key_stat:
                         stats[key_stat] = stats.get(key_stat, 0) + cur.rowcount
+                    elif tabla != "mant_logs" and cur.rowcount:
+                        # Tablas sin nombre propio en el resumen: se reportan
+                        # igual con su nombre de tabla. Mover filas sin
+                        # decirlo es como no moverlas -- nadie puede
+                        # verificar despues que la fusion quedo completa.
+                        stats[tabla] = stats.get(tabla, 0) + cur.rowcount
                 except Exception as e_t:
                     print(f"[fusionar] tabla {tabla} falló: {e_t}", flush=True)
 
@@ -78211,6 +78229,252 @@ def ot2_api_cliente(cid):
         # Lo que le falta a la ficha para trabajarla sin sorpresas en terreno.
         "calidad": {"completa": not faltan, "faltan": faltan},
     })
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  FUSION DE FICHAS DE CLIENTE DUPLICADAS (2026-09-03)
+#
+#  Daniel: "alli tienes que hacer algo de cirujano. Quiero que no pierda ni
+#  agregar informacion absurda. Siempre tiene que tener el detalle, o sea,
+#  saber si vamos a agregar, que vamos a agregar... necesito tener esa
+#  informacion siempre".
+#
+#  El caso que lo origino: "Corporacion Municipal De Deporte De Vitacura"
+#  existia dos veces, con el mismo RUT escrito distinto (65.206.047-1 y
+#  652060471). El antiduplicado que se puso hoy evita que nazcan nuevas,
+#  pero no limpia las que ya estaban.
+#
+#  DOS REGLAS QUE GOBIERNAN TODO ESTO:
+#  1. Nada se mueve sin que antes se haya PODIDO VER que se mueve. Por eso
+#     son dos endpoints: uno que solo mira (preview) y otro que escribe.
+#  2. La ficha vaciada NO se borra: queda inactiva. El historial de por que
+#     existia, quien la creo y cuando, se conserva -- borrarla haria
+#     imposible entender despues que paso.
+# ══════════════════════════════════════════════════════════════════════
+
+# Tablas cuyo `cliente_id` NO apunta a mant_clientes. Hoy ninguna conocida;
+# existe para poder excluir una sin tocar el resto del motor si aparece.
+_CLI_FUSION_EXCLUIR = set()
+
+
+def _cli_fusion_tablas():
+    """Tablas que cuelgan de una ficha de cliente, descubiertas EN VIVO.
+
+    Se leen de information_schema en vez de estar escritas a mano a
+    proposito: una lista fija se queda vieja en cuanto alguien agrega una
+    tabla nueva con cliente_id, y el sintoma seria silencioso -- filas
+    huerfanas apuntando a una ficha que ya nadie mira. Descubrirlas cada vez
+    hace imposible ese olvido.
+    """
+    rows = mysql_fetchall(
+        "SELECT TABLE_NAME FROM information_schema.COLUMNS "
+        " WHERE TABLE_SCHEMA=DATABASE() AND COLUMN_NAME='cliente_id' "
+        " ORDER BY TABLE_NAME") or []
+    return [r["TABLE_NAME"] for r in rows
+            if r["TABLE_NAME"] not in _CLI_FUSION_EXCLUIR
+            and r["TABLE_NAME"] != "mant_clientes"]
+
+
+# Detalle legible por tabla: que columna sirve de "titulo" en el inventario.
+# Lo que no este aca igual se cuenta y se mueve -- solo no muestra ejemplos.
+_CLI_FUSION_DETALLE = {
+    "mant_maquinas":        ("nombre",        "Equipos"),
+    "mant_visitas":         ("numero_ot",     "Ordenes de trabajo"),
+    "mant_contratos":       ("nombre",        "Contratos"),
+    "mant_cotizaciones":    ("numero",        "Cotizaciones"),
+    "mant_repuestos":       ("descripcion",   "Repuestos"),
+    "mant_repuestos_stock": ("descripcion",   "Repuestos en bodega"),
+    "mant_sucursales":      ("nombre",        "Sucursales"),
+    "mant_levantamientos":  ("id",            "Levantamientos"),
+    "mant_reportes":        ("id",            "Reportes"),
+    "tk_tickets":           ("numero_ticket", "Tickets"),
+}
+
+
+def _cli_fusion_inventario(cid):
+    """Que cuelga HOY de esta ficha, tabla por tabla, con ejemplos."""
+    inv = []
+    for tabla in _cli_fusion_tablas():
+        try:
+            n = (mysql_fetchone(
+                f"SELECT COUNT(*) AS n FROM `{tabla}` WHERE cliente_id=%s",
+                (cid,)) or {}).get("n", 0)
+        except Exception as e:
+            # Una tabla que no se puede contar se REPORTA, no se ignora: si
+            # se ignorara en silencio, la fusion movería algo que el humano
+            # nunca vio en el inventario.
+            inv.append({"tabla": tabla, "label": tabla, "n": None,
+                        "error": str(e)[:120], "ejemplos": []})
+            continue
+        if not n:
+            continue
+        col, label = _CLI_FUSION_DETALLE.get(tabla, (None, tabla))
+        ejemplos = []
+        if col:
+            try:
+                filas = mysql_fetchall(
+                    f"SELECT id, `{col}` AS titulo FROM `{tabla}` "
+                    f" WHERE cliente_id=%s ORDER BY id DESC LIMIT 8", (cid,)) or []
+                ejemplos = [{"id": f["id"], "titulo": str(f.get("titulo") or f"#{f['id']}")[:90]}
+                            for f in filas]
+            except Exception:
+                ejemplos = []
+        inv.append({"tabla": tabla, "label": label, "n": int(n),
+                    "error": None, "ejemplos": ejemplos})
+    return inv
+
+
+@app.route("/mantenciones/api/clientes/fusion-preview", methods=["GET"])
+@_mant_required
+def mant_clientes_fusion_preview():
+    """Que pasaria si se fusionaran estas dos fichas. NO escribe nada."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False,
+                        "error": "Solo un superadministrador puede fusionar fichas."}), 403
+    try:
+        origen = int(request.args.get("origen") or 0)
+        destino = int(request.args.get("destino") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Fichas invalidas."}), 400
+    if not origen or not destino or origen == destino:
+        return jsonify({"ok": False,
+                        "error": "Elige dos fichas distintas."}), 400
+
+    _sel = ("SELECT id, razon_social, rut, estado, direccion, comuna, "
+            "       contacto_email, contacto_tel, created_at "
+            "  FROM mant_clientes WHERE id=%s")
+    a = mysql_fetchone(_sel, (destino,))
+    b = mysql_fetchone(_sel, (origen,))
+    if not a or not b:
+        return jsonify({"ok": False, "error": "Alguna de las fichas no existe."}), 404
+
+    # Guarda contra fusionar dos clientes DISTINTOS. Es el error que no se
+    # puede deshacer con un boton, asi que se bloquea salvo que una de las
+    # dos no tenga RUT (caso real: ficha creada a mano, sin RUT).
+    ca, cb = _rut_cuerpo(a.get("rut") or ""), _rut_cuerpo(b.get("rut") or "")
+    mismo_rut = bool(ca and cb and ca == cb)
+    sin_rut = (not ca) or (not cb)
+    if not mismo_rut and not sin_rut:
+        return jsonify({
+            "ok": False,
+            "error": f"Estas dos fichas tienen RUT distinto ({a.get('rut')} y "
+                     f"{b.get('rut')}). No se fusionan: casi seguro son "
+                     f"clientes diferentes.",
+            "error_codigo": "RUT_DISTINTO",
+        }), 400
+
+    inv = _cli_fusion_inventario(origen)
+    return jsonify({
+        "ok": True,
+        "destino": dict(a), "origen": dict(b),
+        "mismo_rut": mismo_rut,
+        "inventario": inv,
+        "total_filas": sum((i["n"] or 0) for i in inv),
+        "con_error": [i["tabla"] for i in inv if i.get("error")],
+        "tablas_revisadas": len(_cli_fusion_tablas()),
+    })
+
+
+@app.route("/mantenciones/api/clientes/fusionar", methods=["POST"])
+@_mant_required
+def mant_clientes_fusionar():
+    """Mueve TODO lo de la ficha origen a la destino y desactiva la origen.
+
+    Una sola transaccion: o se mueve todo, o no se mueve nada. Una fusion a
+    medias dejaria al cliente partido entre dos fichas, que es peor que el
+    duplicado con el que empezamos.
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False,
+                        "error": "Solo un superadministrador puede fusionar fichas."}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        origen = int(d.get("origen") or 0)
+        destino = int(d.get("destino") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Fichas invalidas."}), 400
+    if not origen or not destino or origen == destino:
+        return jsonify({"ok": False, "error": "Elige dos fichas distintas."}), 400
+    if (d.get("confirm_text") or "").strip().upper() != "FUSIONAR":
+        return jsonify({"ok": False,
+                        "error": "Escribe FUSIONAR para confirmar."}), 400
+    motivo = (d.get("motivo") or "").strip()
+    if len(motivo) < 10:
+        return jsonify({"ok": False,
+                        "error": "Explica en una linea por que se fusionan "
+                                 "(minimo 10 caracteres) — queda en auditoria."}), 400
+
+    _sel = "SELECT id, razon_social, rut, estado FROM mant_clientes WHERE id=%s"
+    a = mysql_fetchone(_sel, (destino,))
+    b = mysql_fetchone(_sel, (origen,))
+    if not a or not b:
+        return jsonify({"ok": False, "error": "Alguna de las fichas no existe."}), 404
+    ca, cb = _rut_cuerpo(a.get("rut") or ""), _rut_cuerpo(b.get("rut") or "")
+    if ca and cb and ca != cb:
+        return jsonify({
+            "ok": False,
+            "error": "Estas dos fichas tienen RUT distinto. No se fusionan.",
+            "error_codigo": "RUT_DISTINTO",
+        }), 400
+
+    # El inventario se vuelve a leer ACA, no se confia en el que vio el
+    # navegador: entre que se miro la pantalla y se apreto el boton pudo
+    # cambiar, y lo que se audita tiene que ser lo que realmente se movio.
+    inv = _cli_fusion_inventario(origen)
+    if [i for i in inv if i.get("error")]:
+        return jsonify({
+            "ok": False,
+            "error": "Hay tablas que no se pudieron leer. No se fusiona a "
+                     "ciegas: revisa el detalle y vuelve a intentar.",
+            "tablas": [i["tabla"] for i in inv if i.get("error")],
+        }), 500
+
+    movidos, conn = [], get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for item in inv:
+                if not item["n"]:
+                    continue
+                cur.execute(
+                    f"UPDATE `{item['tabla']}` SET cliente_id=%s WHERE cliente_id=%s",
+                    (destino, origen))
+                movidos.append({"tabla": item["tabla"], "label": item["label"],
+                                "n": int(cur.rowcount or 0)})
+            # La ficha vaciada se DESACTIVA, no se borra: su historial
+            # explica por que existia y quien la creo.
+            cur.execute(
+                "UPDATE mant_clientes SET estado='inactivo', "
+                "       notas=CONCAT(COALESCE(notas,''), %s) WHERE id=%s",
+                (f"\n[{_now_chile_str('%d/%m/%Y %H:%M')}] Ficha fusionada en "
+                 f"#{destino} ({a.get('razon_social')}) por "
+                 f"{current_username() or '?'}. Motivo: {motivo[:300]}",
+                 origen))
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        print(f"[fusion_clientes] {origen}->{destino}: {e}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo completar la fusion. No se movio nada — "
+                     "las dos fichas quedaron como estaban.",
+        }), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    _detalle = ", ".join(f"{m['n']} {m['label'].lower()}" for m in movidos if m["n"]) or "nada"
+    _txt = (f"{current_username() or '?'} fusiono la ficha #{origen} "
+            f"'{b.get('razon_social')}' ({b.get('rut') or 'sin RUT'}) dentro de "
+            f"#{destino} '{a.get('razon_social')}'. Se movio: {_detalle}. "
+            f"Motivo: {motivo[:400]}")
+    # Queda en las DOS fichas: en la que recibio y en la que se vacio, para
+    # que la historia se pueda leer desde cualquiera de las dos.
+    _mant_log("cliente", destino, "fusion_recibida", _txt)
+    _mant_log("cliente", origen, "fusion_origen", _txt)
+    return jsonify({"ok": True, "movidos": movidos,
+                    "total": sum(m["n"] for m in movidos),
+                    "destino_id": destino, "origen_id": origen})
 
 
 @app.route("/ot/api/cliente", methods=["POST"])
