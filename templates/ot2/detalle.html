@@ -889,8 +889,10 @@
    qué falta. Ahora el color de cada hito vive SOLO en el icono; el
    contorno y la línea son verde (hecho) / rojo (pendiente), que es lo que
    se lee de un vistazo -- mismo semáforo del resto del proyecto. */
-.otd-h::before{content:"";position:absolute;top:52px;left:-50%;width:100%;height:4px;
-  border-radius:3px;background:var(--ejec);
+/* La línea pendiente pasa a un rojo tenue: seis tramos rojos a full
+   convertían el recorrido en una sola raya roja de lado a lado. */
+.otd-h::before{content:"";position:absolute;top:52px;left:-50%;width:100%;height:3px;
+  border-radius:3px;background:rgba(220,38,38,.28);
   transition:background .6s ease}
 .otd-h:first-child::before{display:none}
 .otd-h.ok::before{background:var(--comp)}
@@ -921,9 +923,21 @@
    referencia que pidió. No es la copia: el semáforo verde/rojo del aro y
    la línea se mantienen tal cual los definió el 02-09, porque eso es lo
    que dice si la OT avanzó; lo que cambia es cuánto se ve. */
+/* 🎨 AJUSTE 2026-09-04 (Daniel, viendo el tracker grande: "se ve
+   pésimo"). Tenía razón y el problema no era el tamaño: era que al pasar
+   a 72px el ROJO de los pendientes dejó de ser un acento y se volvió el
+   color de toda la barra -- de 6 hitos, 4 o 5 están siempre pendientes.
+   A 52px eso pasaba desapercibido; a 72px, con aro grueso, grita.
+
+   Qué cambia y qué NO: el semáforo que pediste el 02-09 se mantiene
+   ("verde lo hecho, rojo lo que no está gestionado") -- lo que cambia es
+   el PESO. Pendiente pasa a un rojo apagado y fino (se lee que falta, no
+   te grita); hecho y actual se quedan con todo el color. Y el disco se
+   aclara para que el icono de color se despegue, que es lo que hace
+   legible al recorrido de Transporte que usaste de referencia. */
 .otd-h .p{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;
-  background:radial-gradient(circle at 32% 26%,rgba(255,255,255,.09) 0%,rgba(255,255,255,.02) 55%,rgba(0,0,0,.35) 100%),#141416;
-  border:3px solid rgba(255,255,255,.14);
+  background:radial-gradient(circle at 32% 24%,rgba(255,255,255,.16) 0%,rgba(255,255,255,.05) 52%,rgba(0,0,0,.28) 100%),#1c1c20;
+  border:3px solid rgba(255,255,255,.10);
   color:#71717a;font-size:1.95rem;z-index:1;position:relative;
   transition:transform .25s cubic-bezier(.34,1.56,.64,1),
              border-color .5s ease,color .5s ease,box-shadow .5s ease,filter .5s ease}
@@ -936,17 +950,19 @@
    va la OT, el icono dice de qué paso se trata. */
 .otd-h .p{border-color:var(--ejec)}
 .otd-h.ok .p{border-color:var(--comp);color:var(--hc,#4ade80);
-  box-shadow:0 0 0 4px rgba(22,163,74,.15),
-             0 8px 22px -8px rgba(22,163,74,.9),
-             inset 0 0 18px -6px rgba(22,163,74,.5)}
+  box-shadow:0 0 0 3px rgba(22,163,74,.12),
+             0 8px 20px -10px rgba(22,163,74,.7),
+             inset 0 0 16px -8px rgba(22,163,74,.3)}
 /* Hito ACTUAL: icono a color PLENO y el disco late. Daniel: "que sea
    dinámico y palpitante, con los iconos a color como el de Retiros" --
    antes solo latía el anillo de afuera y el nodo se veía tan quieto como
    los pendientes. */
+/* El hito ACTUAL es el único que late y el único con el aro pleno: es lo
+   que hay que mirar primero al abrir la OT. */
 .otd-h.now .p{border-color:var(--ejec);color:var(--hc,#f87171);
-  box-shadow:0 0 0 5px rgba(220,38,38,.18),
-             0 10px 26px -8px rgba(220,38,38,.95),
-             inset 0 0 22px -6px rgba(220,38,38,.55);
+  box-shadow:0 0 0 4px rgba(220,38,38,.14),
+             0 10px 24px -10px rgba(220,38,38,.75),
+             inset 0 0 20px -8px rgba(220,38,38,.35);
   animation:otdTrackLatido 2s ease-in-out infinite}
 @keyframes otdTrackLatido{
   0%,100%{transform:scale(1)}
@@ -962,10 +978,12 @@
 @media (prefers-reduced-motion:reduce){
   .otd-h.now .p,.otd-h.now .p > i,.otd-h.now .p::after{animation:none}
 }
-/* Pendientes (ni hechos ni actual): aro rojo apagado, icono en su color
-   pero atenuado -- se ve que existe, se ve que falta. */
-.otd-h:not(.ok):not(.now) .p{border-color:rgba(220,38,38,.5);
-  color:var(--hc,#71717a)}
+/* Pendientes: el aro se adelgaza y se apaga. Sigue siendo rojo -- se lee
+   que falta -- pero deja de competir con el hito que SÍ importa mirar. */
+.otd-h:not(.ok):not(.now) .p{border-width:2px;border-color:rgba(220,38,38,.32);
+  color:var(--hc,#71717a);opacity:.72;
+  background:radial-gradient(circle at 32% 24%,rgba(255,255,255,.07) 0%,rgba(255,255,255,.02) 55%,rgba(0,0,0,.3) 100%),#17171a}
+.otd-h:not(.ok):not(.now) .p > i{opacity:.62}
 /* ✅ 2026-09-03: sello de cumplido, tomado del recorrido de Transporte
    (el ✓ verde pegado abajo a la derecha del círculo). Suma un segundo
    indicio del mismo dato: el aro ya dice verde, pero a distancia el
@@ -990,7 +1008,9 @@
 .otd-h .l{font-size:.86rem;font-weight:900;color:#a1a1aa;letter-spacing:.01em;
   line-height:1.2;transition:color .5s ease}
 .otd-h.ok .l{color:#4ade80}
-.otd-h:not(.ok):not(.now) .l{color:#f87171}
+/* Etiqueta pendiente en gris: si TODO lo que falta va en rojo, el rojo
+   deja de significar algo. El estado ya lo dice el aro. */
+.otd-h:not(.ok):not(.now) .l{color:#8b8b93}
 .otd-h.now .l{color:#fff}
 .otd-h .t{font-size:.68rem;color:#8b8b93;font-variant-numeric:tabular-nums;font-weight:700}
 .otd-h.ok .t,.otd-h.now .t{color:#d4d4d8}
