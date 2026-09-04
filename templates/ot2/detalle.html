@@ -8310,12 +8310,21 @@ const OT2F = (function(){
     }
   }
 
-  // 🔧 Nace SIN el bug de "el modal se cierra solo" (ver el mismo fix hoy en
-  // static/mantenciones_ot_ejecutar.js, factAsociar()): en vez de recargar
-  // TODA la página al asociar el documento (lo que en la práctica cierra
-  // este modal), se reemplaza el bloque #otfFactGate por el resumen de
-  // solo-lectura con los mismos datos que devuelve este mismo POST -- el
-  // modal queda abierto y listo para firmar de inmediato.
+  // 🔧 FIX 2026-09-04 (Daniel, Aarón: "lo declara, pero no lo guarda").
+  // ANTES este paso evitaba a propósito recargar la página tras asociar el
+  // documento (parcheaba solo el bloque #otfFactGate) para que "el modal
+  // quede abierto y listo para firmar de inmediato" -- pero eso dejaba
+  // desactualizada la foto `OTF_FIN_ACTUAL` que usa guardarCosto() para no
+  // pisar el resto de la fila financiera. Resultado real: asociabas el
+  // documento, guardabas el costo del proveedor a continuación (sin
+  // recargar entre medio) y el documento recién asociado quedaba
+  // silenciosamente en NULL otra vez -- el guardado "avisaba éxito" pero no
+  // sobrevivía al siguiente paso. Mismo patrón que ya usan sin problemas
+  // guardarCentroCosto()/declararGarantia()/quitarGarantia() (recargar tras
+  // guardar): se pareja este paso a esos tres via _finGuardadoOk(), y para
+  // no perder el "listo para firmar de inmediato" que este paso pedía, el
+  // modal se reabre SOLO tras la recarga (ver el listener de
+  // sessionStorage al final de este bloque).
   async function factAsociar(){
     const err = _factEl('otfFactErr'); err.textContent = '';
     if (!_factPreviewOk){ err.textContent = 'Primero consulta el documento.'; return; }
@@ -8333,30 +8342,14 @@ const OT2F = (function(){
       if (!r.ok || !d.ok){
         err.textContent = d.error || 'No se pudo asociar.';
         if (d.error_codigo === 'RUT_NO_COINCIDE') _factEl('otfFactJustifWrap').style.display = '';
+        btn.disabled = false; btn.innerHTML = orig;
         return;
       }
-      ilusToast('✓ Documento asociado — ya puedes firmar el cierre', {type:'success'});
-      _factRenderAsociado(d.factura);
+      _finGuardadoOk('✓ Documento asociado — ya puedes firmar el cierre', 700);
     } catch(_e){
       err.textContent = 'Error de conexión con el servidor.';
-    } finally {
       btn.disabled = false; btn.innerHTML = orig;
     }
-  }
-
-  function _factRenderAsociado(f){
-    const gate = _factEl('otfFactGate');
-    if (!gate || !f){ setTimeout(() => location.reload(), 900); return; }
-    const esNV = (f.tipo === 'NVV' || f.tipo === 'NVI');
-    const montoTxt = (f.monto || f.monto === 0) ? ' · $' + Math.round(f.monto).toLocaleString('es-CL') : '';
-    const div = document.createElement('div');
-    div.id = 'otfFactGate';
-    div.className = 'alert py-2 small mb-3';
-    div.style.cssText = 'background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a';
-    div.innerHTML =
-      `<i class="bi bi-receipt me-1"></i><strong>${esNV ? 'Nota de venta asociada' : 'Documento asociado'}:</strong> ` +
-      `${f.tipo || 'FCV'} N° ${f.numero || ''}${montoTxt}`;
-    gate.replaceWith(div);
   }
 
   async function declararGarantia(){
@@ -8408,7 +8401,7 @@ const OT2F = (function(){
           : `✓ Garantía declarada ($${monto.toLocaleString('es-CL')}) — ya puedes firmar el cierre`,
           {type:'success'});
       }
-      setTimeout(() => location.reload(), 1100);
+      _reabrirYRecargar(1100);
     } catch(e){
       console.error('[OT2F.declararGarantia]', e);
       const err = document.getElementById('otfFactErr');
@@ -8444,13 +8437,45 @@ const OT2F = (function(){
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo quitar la garantía');
-      ilusToast('✓ Garantía quitada — ahora puedes asociar una factura', {type:'success'});
-      setTimeout(() => location.reload(), 900);
+      _finGuardadoOk('✓ Garantía quitada — ahora puedes asociar una factura', 900);
     } catch(e){
       console.error('[OT2F.quitarGarantia]', e);
       ilusToast(e.message || 'No se pudo quitar la garantía', {type:'error'});
       if (btn){ btn.disabled = false; btn.innerHTML = orig; }
     }
+  }
+
+  /* 🔧 FIX 2026-09-04 (Daniel, Aarón: "lo declara, pero no lo guarda" — el
+     modal final de cierre). Causa raíz real: cada paso de este modal
+     (centro de costo, documento, garantía, costo del proveedor) guarda
+     con su propio POST, pero `/ot/api/finanzas` reescribe la fila
+     financiera COMPLETA de una vez — por eso `guardarCosto()` reenvía
+     `OTF_FIN_ACTUAL`, la FOTO de lo que ya estaba declarado cuando la
+     página cargó (ver el comentario junto a esa constante, más arriba).
+     El problema: `factAsociar()` (guardar el documento) NO recargaba la
+     página a propósito, "para firmar de inmediato" — pero eso dejaba esa
+     FOTO desactualizada. Si después de asociar el documento el usuario
+     guardaba el costo del proveedor SIN recargar, `guardarCosto()` mandaba
+     el `factura_tido`/`factura_nudo` VIEJOS (vacíos) y el UPDATE de
+     `/ot/api/finanzas` los pisaba de vuelta a NULL — el documento recién
+     asociado desaparecía en silencio. Los otros 3 pasos (centro de costo,
+     declarar garantía, quitar garantía) YA recargan tras guardar — nunca
+     tuvieron este problema porque la foto siempre nace fresca. La
+     solución no es un parche puntual: se pareja `factAsociar()` al MISMO
+     patrón que los demás (recargar), y para no perder el "modal listo
+     para firmar de inmediato" que ese paso pedía, el modal se reabre solo
+     tras la recarga -- un flag de sessionStorage, leído y borrado una sola
+     vez al cargar la página (ver el listener al final de este bloque). */
+  const _OTF_REABRIR_KEY = 'otfReabrirCierre_' + VID;
+  // Solo marca + recarga -- para pasos que ya arman su propio toast/alert
+  // condicional (declararGarantia, quitarGarantia) y no deben duplicarlo.
+  function _reabrirYRecargar(delayMs){
+    try { sessionStorage.setItem(_OTF_REABRIR_KEY, '1'); } catch(e){ /* modo privado: no reabre solo, no rompe nada */ }
+    setTimeout(() => location.reload(), delayMs || 700);
+  }
+  function _finGuardadoOk(msg, delayMs){
+    if (msg) ilusToast(msg, {type:'success'});
+    _reabrirYRecargar(delayMs);
   }
 
   /* Lleva al paso que falta y lo hace latir. Es la diferencia entre un
@@ -8528,8 +8553,7 @@ const OT2F = (function(){
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo guardar el costo');
-      ilusToast('✓ Costo del técnico guardado', {type:'success'});
-      setTimeout(() => location.reload(), 700);
+      _finGuardadoOk('✓ Costo del técnico guardado', 700);
     } catch(e){
       console.error('[OT2F.guardarCosto]', e);
       ilusToast(e.message || 'No se pudo guardar el costo', {type:'error'});
@@ -8566,13 +8590,24 @@ const OT2F = (function(){
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo guardar el centro de costo');
-      ilusToast('✓ Centro de costo guardado', {type:'success'});
-      setTimeout(() => location.reload(), 700);
+      _finGuardadoOk('✓ Centro de costo guardado', 700);
     } catch(e){
       console.error('[OT2F.guardarCentroCosto]', e);
       ilusToast(e.message || 'No se pudo guardar el centro de costo', {type:'error'});
     }
   }
+
+  // Reabre el modal de cierre solo si la página se recargó por un guardado
+  // DE ESTE modal (_reabrirYRecargar arriba) -- nunca en una recarga normal
+  // (F5, volver de otra pantalla). Se lee y se borra una sola vez: si el
+  // usuario recarga manual después, no vuelve a saltar solo.
+  document.addEventListener('DOMContentLoaded', function(){
+    let _marcado = false;
+    try { _marcado = sessionStorage.getItem(_OTF_REABRIR_KEY) === '1'; } catch(e){}
+    if (!_marcado) return;
+    try { sessionStorage.removeItem(_OTF_REABRIR_KEY); } catch(e){}
+    abrirAprobacion();
+  });
 
   return {
     irAPaso, setCC, guardarCosto, intentarCerrar,

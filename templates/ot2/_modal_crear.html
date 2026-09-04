@@ -6432,6 +6432,15 @@ window.OT2C = (function(){
           return;
         }
         if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas', {type:'success'});
+        // 🔧 FIX 2026-09-04 (Daniel, "podemos pulir eso" -- ticket sin
+        // vincular a su OT): el backend arma esta lista hace rato (jornada
+        // fuera de horario, cliente sin RUT, etc. -- ver "avisos" en
+        // ot2_api_crear) pero NUNCA se mostraba acá, así que cualquier cosa
+        // que la OT creara "con éxito, pero..." se perdía en silencio. Ahora
+        // sí se avisa -- no bloquea nada, la OT ya existe.
+        if (window.ilusToast && res.j.avisos && res.j.avisos.length){
+          res.j.avisos.forEach(function(av){ ilusToast(av, {type:'warning', duration:8000}); });
+        }
         var vid = res.j.visita_id;
         var _url = res.j.ot_url;
         // Trabajo de bodega: la evidencia se sube DESPUÉS de crear la OT

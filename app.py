@@ -78873,7 +78873,8 @@ def ot2_api_finanzas(vid):
     que no queden OT con las dos cosas puestas.
     """
     v = mysql_fetchone(
-        "SELECT id, numero_ot, tipo, costo, centro_costo, zz_codigo, zz_monto, "
+        "SELECT id, numero_ot, tipo, costo, costo_proveedor, costo_despacho, "
+        "       centro_costo, zz_codigo, zz_monto, "
         "       modalidad_cobro, cubierto_por, garantia_motivo, "
         "       factura_tido, factura_nudo, "
         "       estado_facturacion, finanzas_at, finanzas_por "
@@ -78927,6 +78928,30 @@ def ot2_api_finanzas(vid):
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
 
+    # 🔧 FIX 2026-09-04 (Daniel, Aarón trabado en el modal de cierre: "lo
+    # declara, pero no lo guarda"). guardarCosto() en ot2/detalle.html manda
+    # costo_proveedor/costo_despacho a ESTE endpoint desde que se escribió
+    # (su propio comentario ya decía "Reusa /ot/api/finanzas, que ya es el
+    # dueño de estas columnas") pero el UPDATE de abajo nunca las leía: el
+    # servidor respondía {ok:true} sin tocar la fila, así que el candado de
+    # mant_ot_aprobar_cierre (que exige costo_proveedor is not None) seguía
+    # viendo NULL después de "guardar" — Paso 3 del semáforo no se movía
+    # nunca de "Falta", por más que se guardara una y otra vez.
+    # None acá significa "no vino en esta petición, no tocar la columna"
+    # (el UPDATE usa COALESCE) — a diferencia del resto de esta función,
+    # 0 SÍ se guarda como 0 y no se convierte en None: el propio modal
+    # invita a declarar "Si no tuvo costo, pon 0", y un costo real de $0
+    # no es lo mismo que "todavía no se declaró".
+    def _parse_costo_opt(raw):
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return None
+    costo_proveedor = _parse_costo_opt(d.get("costo_proveedor")) if "costo_proveedor" in d else None
+    costo_despacho = _parse_costo_opt(d.get("costo_despacho")) if "costo_despacho" in d else None
+
     zz_cod = (d.get("zz_codigo") or "").strip().upper()[:30] or None
     # Si no lo indican, se sugiere la línea que corresponde al tipo.
     if not zz_cod and not garantia:
@@ -78956,11 +78981,13 @@ def ot2_api_finanzas(vid):
         _n_upd = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET "
             "  centro_costo=%s, zz_codigo=%s, zz_monto=%s, costo=COALESCE(%s, costo), "
+            "  costo_proveedor=COALESCE(%s, costo_proveedor), "
+            "  costo_despacho=COALESCE(%s, costo_despacho), "
             "  modalidad_cobro=%s, cubierto_por=%s, garantia_motivo=%s, "
             "  factura_tido=%s, factura_nudo=%s, estado_facturacion=%s, "
             "  finanzas_at=NOW(), finanzas_por=%s "
             " WHERE id=%s" + _where_lock,
-            (centro, zz_cod, zz_monto, costo,
+            (centro, zz_cod, zz_monto, costo, costo_proveedor, costo_despacho,
              'garantia' if garantia else 'pagado',
              'garantia' if garantia else 'cliente',
              motivo, f_tido, f_nudo, estado_fact,
@@ -80636,13 +80663,43 @@ def ot2_api_crear():
                 "El checklist elegido no tiene tareas.", "CHECKLIST_VACIO")
 
         # Vínculo con el ticket de origen, si vino de ahí.
+        # 🔧 FIX 2026-09-04 (Daniel: "el ticket no se asocia a la orden de
+        # trabajo... no aparece la orden como estaba antes con las
+        # normales"). El guard de antes (`AND visita_id IS NULL`) era MUDO:
+        # si ese ticket ya tenía un visita_id de una vuelta anterior (una OT
+        # vieja cancelada/anulada, o una prueba repetida sobre el mismo
+        # ticket), el UPDATE afectaba 0 filas y quedaba solo un print en
+        # logs de servidor -- la OT se creaba igual, con éxito visible en
+        # pantalla, pero SIN aparecer nunca en el ticket. Ahora se revisa
+        # qué había antes: si el vínculo previo apunta a una OT viva, no se
+        # pisa (mismo criterio de siempre: un ticket, una OT) pero el aviso
+        # SÍ llega al wizard (ver "avisos" en la respuesta) en vez de
+        # perderse en el server; si apuntaba a una OT muerta (cancelada o
+        # anulada), se re-vincula sola a esta OT nueva -- una OT cancelada
+        # no debería dejar a un ticket sin OT para siempre.
         if ticket_id:
             try:
-                cur.execute(
-                    "UPDATE tk_tickets SET visita_id=%s WHERE id=%s AND visita_id IS NULL",
-                    (vid, ticket_id))
+                _tk_prev = mysql_fetchone(
+                    "SELECT t.visita_id, v.estado FROM tk_tickets t "
+                    "  LEFT JOIN mant_visitas v ON v.id = t.visita_id "
+                    " WHERE t.id=%s", (ticket_id,))
+                _tk_visita_previa = (_tk_prev or {}).get("visita_id")
+                _tk_estado_previo = ((_tk_prev or {}).get("estado") or "").lower()
+                if _tk_visita_previa and _tk_estado_previo not in ("cancelada", "anulada"):
+                    avisos.append(
+                        f"Este ticket ya estaba vinculado a otra OT (#{_tk_visita_previa}, "
+                        f"estado {_tk_estado_previo or '—'}) — la OT nueva se creó igual, "
+                        "pero el ticket sigue mostrando la anterior.")
+                    print(f"[ot2_crear] ticket {ticket_id} ya vinculado a visita "
+                          f"{_tk_visita_previa} (estado={_tk_estado_previo or '—'}) — "
+                          f"OT nueva {vid} queda sin vincular al ticket", flush=True)
+                else:
+                    cur.execute(
+                        "UPDATE tk_tickets SET visita_id=%s WHERE id=%s", (vid, ticket_id))
             except Exception as _e_tk:
                 print(f"[ot2_crear] ticket {ticket_id}: {_e_tk}", flush=True)
+                avisos.append(
+                    "No pudimos vincular esta OT al ticket de origen — revísalo a mano.")
 
         # Trazabilidad "bajo qué OT" (2026-08-30, Daniel: "esa información
         # debe ser trazable... bajo qué OT también"): recién acá existe el
