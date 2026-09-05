@@ -99441,6 +99441,65 @@ def mant_configuracion():
     return render_template("mantenciones/configuracion.html")
 
 
+@app.route("/mantenciones/ot-firmadas-sin-cerrar")
+@app.route("/servicio-tecnico/ot-firmadas-sin-cerrar")
+@_mant_required
+@_no_tecnico
+def mant_ot_firmadas_sin_cerrar():
+    """Auditoría SOLO LECTURA: OT con firma del responsable que nunca cerraron.
+
+    🆕 2026-09-05 (Daniel, tras el caso OT-2026-00133). Hasta el 05-09
+    existían DOS formas de firmar como responsable: `/aprobar-cierre` (que
+    valida los candados, deja `estado='cerrada'`, promueve los equipos a la
+    ficha del cliente, notifica y sincroniza el ticket) y el pad genérico de
+    `/firmar`, que SOLO estampaba la firma. Ese segundo camino ya quedó
+    bloqueado, pero las OT que pasaron por ahí antes siguen como están:
+    firmadas, con el tracker mostrándolas "Aprobada", y sin que nada del
+    cierre real haya ocurrido.
+
+    Esta pantalla las muestra para que Daniel decida qué hacer con cada una.
+    NO toca ninguna: no cierra, no re-firma, no borra. Una OT firmada es
+    evidencia (ver la regla del proyecto sobre alteración de evidencia), así
+    que acá se mira y se decide, no se corrige en masa.
+    """
+    filas = mysql_fetchall(
+        "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.fecha_programada, "
+        "       v.firma_supervisor_nombre, v.firma_supervisor_at, "
+        "       v.factura_tido, v.factura_nudo, v.modalidad_cobro, "
+        "       v.centro_costo, v.costo_proveedor, "
+        "       c.razon_social, "
+        "       COALESCE(au.nombre, au.username) AS tecnico_nombre "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+        " WHERE v.firma_supervisor_url IS NOT NULL "
+        "   AND v.firma_supervisor_url <> '' "
+        "   AND COALESCE(v.estado,'') <> 'cerrada' "
+        " ORDER BY v.firma_supervisor_at DESC, v.id DESC "
+        " LIMIT 500") or []
+
+    ots = []
+    for f in filas:
+        f = dict(f)
+        # Qué le habría exigido el cierre real, para saber si cerrarla hoy
+        # es trámite o requiere ir a buscar datos.
+        falta = []
+        _es_gar = (f.get("modalidad_cobro") or "").lower() == "garantia"
+        if not _es_gar and not (f.get("factura_nudo") or "").strip():
+            falta.append("documento de cobro")
+        if not (f.get("centro_costo") or "").strip():
+            falta.append("centro de costo")
+        if f.get("costo_proveedor") is None:
+            falta.append("costo del proveedor")
+        f["falta"] = falta
+        f["estado_label"] = (_OT2_ESTADO_META.get((f.get("estado") or "").lower())
+                             or [f.get("estado") or "—"])[0]
+        ots.append(f)
+
+    return render_template("mantenciones/ot_firmadas_sin_cerrar.html",
+                           ots=ots, total=len(ots))
+
+
 @app.route("/mantenciones/radar")
 @app.route("/servicio-tecnico/radar")
 @_mant_required

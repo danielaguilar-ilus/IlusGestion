@@ -1510,6 +1510,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-chk-serie-aviso{display:flex;align-items:flex-start;gap:7px;background:#f3f4f6;
   border:1px solid #e5e7eb;color:#4b5563;border-radius:8px;padding:7px 10px;
   font-size:.74rem;margin-bottom:6px}
+/* Tarea que exigía foto y la OT cerró sin ella (2026-09-05). Ámbar, no
+   rojo: es un hallazgo para auditar, no un error que alguien pueda ir a
+   corregir — la OT ya está sellada. */
+.otd-chk-sinfoto{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;
+  font-weight:800;color:#92400e;background:#fff8e1;border:1px solid #fde68a;
+  border-radius:999px;padding:4px 10px}
 .otd-chk-fotobtn{flex:none;display:inline-flex;align-items:center;gap:5px;min-height:38px;
   padding:0 12px;border-radius:9px;border:1.5px dashed #d1d5db;background:#fff;
   font-size:.72rem;font-weight:800;color:#374151;cursor:pointer}
@@ -6819,16 +6825,53 @@ function otdChkFotosHtml(t){
   if (!t.fotos || !t.fotos.length) return '';
   // Se abren en grande al tocarlas: con la OT cerrada, la foto es la única
   // evidencia que queda y una miniatura no deja verificar nada.
-  return `<div class="otd-chk-fotos">${t.fotos.map(f =>
+  // 🔍 2026-09-05 (Daniel: "cuando se seleccione, muestre la foto y navegar
+  // con flechas si hay más fotos"). Antes cada miniatura abría SOLO su
+  // propia foto: para ver las 3 evidencias de una tarea había que cerrar y
+  // volver a entrar tres veces. Ahora se abre la tarea completa en el visor
+  // y se pasa de una a otra con las flechas, sin salir.
+  return `<div class="otd-chk-fotos">${t.fotos.map((f, i) =>
     `<img src="${otdEsc(f.url)}" alt="Foto de ${otdEsc(t.titulo || 'la tarea')}"
-          loading="lazy" onclick="otdVerFotoGrande('${otdEsc(f.url)}')">`).join('')}</div>`;
+          loading="lazy" onclick="otdVerFotosTarea(this, ${i})">`).join('')}</div>`;
 }
+
+/* Abre TODAS las fotos de una tarea del checklist en el visor, empezando
+   por la que se tocó. Las URLs se leen del propio DOM (no de una copia en
+   JS) para que una foto recién subida entre a la galería sin recargar. El
+   pie identifica de qué tarea es: con 11 tareas por equipo, una foto sin
+   contexto no sirve como evidencia. */
+window.otdVerFotosTarea = function(imgEl, idx){
+  const cont = imgEl && imgEl.closest('.otd-chk-fotos');
+  if (!cont || typeof ilusLightbox !== 'function'){
+    if (imgEl && imgEl.src) window.otdVerFotoGrande(imgEl.src);
+    return;
+  }
+  const imgs = Array.from(cont.querySelectorAll('img'));
+  const tarea = (imgEl.getAttribute('alt') || 'Foto de la tarea').trim();
+  const fotos = imgs.map(function(el, i){
+    return { url: el.src, caption: tarea + (imgs.length > 1 ? ` · ${i + 1} de ${imgs.length}` : '') };
+  });
+  const i = (typeof idx === 'number' && idx >= 0) ? idx : Math.max(0, imgs.indexOf(imgEl));
+  ilusLightbox(fotos, i, tarea);
+};
 
 function otdChkFotoBtnHtml(t){
   // Con la OT cerrada no se agregan fotos. Las que ya están se muestran
   // igual (otdChkFotosHtml, aparte): "lo que sí se puede siempre es ver
   // las fotos; lo que no se puede es agregar más".
-  if (otdBloqueadaPorCierre()) return '';
+  // 🔍 2026-09-05 (Daniel: "tenemos un cuadro para fotos vacío, ¿cuál es
+  // el sentido?"). En una OT ya cerrada esto devolvía '' y, si la tarea
+  // tampoco tenía fotos, quedaba un hueco mudo: imposible distinguir
+  // "esta tarea nunca necesitó foto" de "se cerró debiendo una". Ahora la
+  // tarea que EXIGÍA foto y no la tiene lo dice — es un hallazgo de
+  // auditoría, no un espacio en blanco.
+  if (otdBloqueadaPorCierre()){
+    if (t.requiere_foto && !(t.fotos && t.fotos.length)){
+      return `<span class="otd-chk-sinfoto" title="La tarea exigía evidencia fotográfica y la OT se cerró sin ella">
+                <i class="bi bi-camera-video-off"></i> Cerró sin la foto exigida</span>`;
+    }
+    return '';
+  }
   if (!t.requiere_foto) return '';
   const need = !(t.fotos && t.fotos.length);
   return `<button type="button" class="otd-chk-fotobtn${need ? ' need' : ''}"

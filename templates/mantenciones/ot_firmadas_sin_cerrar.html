@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}OT firmadas sin cerrar — ILUS Fitness{% endblock %}
+
+{#-
+  ════════════════════════════════════════════════════════════════════
+  AUDITORÍA · OT firmadas por el responsable que nunca cerraron
+  ════════════════════════════════════════════════════════════════════
+  2026-09-05 (Daniel, tras el caso OT-2026-00133). Pantalla de SOLO
+  LECTURA: lista, explica y lleva a cada OT. No cierra, no re-firma, no
+  borra — una OT firmada es evidencia y quién la cierra es una decisión
+  de Daniel, caso por caso.
+
+  Pantalla interna: sidebar + .page-header, como el resto del módulo.
+-#}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h1 class="mb-1"><i class="bi bi-shield-exclamation me-2" style="color:#dc2626"></i>OT firmadas sin cerrar</h1>
+    <div class="text-muted" style="font-size:.86rem">
+      Tienen la firma del responsable, pero nunca pasaron por el cierre real.
+    </div>
+  </div>
+  <a href="{{ url_for('mant_index') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Volver a Mantenciones</a>
+</div>
+
+<div class="ofsc-explica">
+  <i class="bi bi-info-circle-fill"></i>
+  <div>
+    <b>Por qué existen.</b> Hasta el 5 de septiembre había dos formas de firmar como
+    responsable: el cierre real —que valida el documento, el centro de costo y el costo
+    del proveedor, deja la OT cerrada, promueve los equipos a la ficha del cliente,
+    notifica y sincroniza el ticket— y un pad de firma suelto que <b>solo estampaba la
+    firma</b>. Ese segundo camino ya está bloqueado, pero las OT que pasaron por ahí
+    quedaron a medio camino: se ven aprobadas y no lo están.
+    <div class="mt-1" style="font-size:.8rem;color:#64748b">
+      Esta pantalla no modifica nada. Abre cada OT y decide: si ya está todo, se cierra
+      desde «Firmar y cerrar OT»; si le falta algo, la columna <b>Qué le falta</b> lo dice.
+    </div>
+  </div>
+</div>
+
+{% if not ots %}
+<div class="ofsc-vacio">
+  <i class="bi bi-check-circle-fill"></i>
+  <div>
+    <b>No hay ninguna.</b>
+    Ninguna OT quedó firmada por el responsable sin cerrar. Nada que revisar acá.
+  </div>
+</div>
+{% else %}
+<div class="ofsc-resumen">
+  <b>{{ total }}</b> orden{{ 'es' if total != 1 else '' }} de trabajo en esta situación
+</div>
+
+<div class="table-responsive">
+  <table class="ofsc-tabla">
+    <thead>
+      <tr>
+        <th>OT</th>
+        <th>Cliente</th>
+        <th>Estado actual</th>
+        <th>Firmada por</th>
+        <th>Qué le falta para cerrar</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in ots %}
+      <tr>
+        <td>
+          <div class="ofsc-num">{{ o.numero_ot or ('OT #' ~ o.id) }}</div>
+          <div class="ofsc-sub">{{ (o.tipo or '')|replace('_',' ')|title }}</div>
+        </td>
+        <td>
+          <div>{{ o.razon_social or 'Trabajo interno' }}</div>
+          {% if o.tecnico_nombre %}<div class="ofsc-sub">Técnico: {{ o.tecnico_nombre }}</div>{% endif %}
+        </td>
+        <td><span class="ofsc-est">{{ o.estado_label }}</span></td>
+        <td>
+          <div>{{ o.firma_supervisor_nombre or '—' }}</div>
+          {% if o.firma_supervisor_at %}
+          <div class="ofsc-sub">{{ o.firma_supervisor_at | chile_fmt }}</div>
+          {% endif %}
+        </td>
+        <td>
+          {% if o.falta %}
+            {% for f in o.falta %}<span class="ofsc-falta">{{ f }}</span>{% endfor %}
+          {% else %}
+            <span class="ofsc-ok"><i class="bi bi-check-lg"></i> Nada — se puede cerrar</span>
+          {% endif %}
+        </td>
+        <td class="text-end">
+          <a class="btn btn-sm btn-dark" href="{{ url_for('ot2_detalle', vid=o.id) }}">
+            Abrir OT <i class="bi bi-arrow-right ms-1"></i></a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<style>
+.ofsc-explica{display:flex;gap:12px;align-items:flex-start;background:#fff8e1;
+  border:1px solid #fde68a;border-radius:12px;padding:14px 16px;margin-bottom:16px;
+  font-size:.85rem;line-height:1.55;color:#0f172a}
+.ofsc-explica > i{color:#f59e0b;font-size:1.2rem;flex:0 0 auto;margin-top:1px}
+.ofsc-vacio{display:flex;gap:12px;align-items:center;background:#f0fdf4;
+  border:1px solid #86efac;border-radius:12px;padding:16px;color:#166534;font-size:.9rem}
+.ofsc-vacio > i{font-size:1.4rem}
+.ofsc-resumen{font-size:.86rem;color:#475569;margin-bottom:8px}
+.ofsc-resumen b{color:#dc2626;font-size:1.05rem}
+.ofsc-tabla{width:100%;border-collapse:separate;border-spacing:0 6px;font-size:.84rem}
+.ofsc-tabla thead th{font-size:.66rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;color:#64748b;padding:0 12px 4px;text-align:left}
+.ofsc-tabla tbody tr{background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.ofsc-tabla tbody td{padding:11px 12px;border-top:1px solid #e5e7eb;
+  border-bottom:1px solid #e5e7eb;vertical-align:middle}
+.ofsc-tabla tbody td:first-child{border-left:1px solid #e5e7eb;
+  border-radius:10px 0 0 10px}
+.ofsc-tabla tbody td:last-child{border-right:1px solid #e5e7eb;
+  border-radius:0 10px 10px 0}
+.ofsc-num{font-weight:900;color:#0f172a}
+.ofsc-sub{font-size:.72rem;color:#94a3b8}
+.ofsc-est{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+  background:#f1f5f9;color:#475569;border-radius:999px;padding:3px 9px}
+.ofsc-falta{display:inline-block;font-size:.7rem;font-weight:700;background:#fee2e2;
+  color:#991b1b;border-radius:999px;padding:3px 9px;margin:2px 3px 2px 0}
+.ofsc-ok{font-size:.76rem;font-weight:800;color:#166534}
+@media (max-width:768px){
+  .ofsc-tabla thead{display:none}
+  .ofsc-tabla tbody td{display:block;border:0;padding:4px 12px}
+  .ofsc-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:12px;
+    padding:8px 0;margin-bottom:10px}
+  .ofsc-tabla tbody td:first-child,.ofsc-tabla tbody td:last-child{border-radius:0}
+}
+</style>
+{% endblock %}
