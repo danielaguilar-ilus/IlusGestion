@@ -420,3 +420,58 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
   .cot-b18-item{grid-template-columns:1fr auto;gap:6px}
   .cot-b18-item .sk{grid-column:1/-1}
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Vínculo Ticket ↔ Cotización + documentos ERP de respaldo (2026-09-05)
+
+   Daniel: "Multidocumento en tickets... puedo llamar una cotización de un
+   ticket y viceversa" + "necesito que todo esté relacionado a documento
+   para asociarlo a una salida legal de dinero".
+
+   Regla #15: los chips muestran el NOMBRE COMPLETO del documento
+   ("Factura 10599"), nunca truncado -- un documento que no se lee entero
+   no sirve para decidir con cuál se está trabajando.
+   ══════════════════════════════════════════════════════════════════════ */
+.cot-docs-n{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:22px;height:22px;padding:0 6px;border-radius:50px;
+  background:#0a0a0a;color:#fff;font-size:.66rem;font-weight:900;
+  vertical-align:middle;margin-right:6px;
+}
+.cot-docs-chips{display:inline-flex;flex-wrap:wrap;gap:4px;vertical-align:middle;}
+.cot-doc-chip{
+  display:inline-flex;align-items:center;gap:4px;
+  background:#dbeafe;color:#1e40af;border-radius:6px;
+  padding:2px 8px;font-size:.68rem;font-weight:700;white-space:nowrap;
+}
+.cot-docs-vacio{
+  display:inline-flex;align-items:center;gap:5px;
+  background:#fff8e1;color:#b45309;border:1px solid #fde68a;border-radius:7px;
+  padding:3px 9px;font-size:.68rem;font-weight:700;white-space:nowrap;
+}
+/* Asociar a un ticket que YA existe (distinto de "Generar ticket", que
+   crea uno nuevo). Borde rojo ILUS para diferenciarlo del gris de crear. */
+.tk-row-btn-linkticket{
+  border:1.5px solid #dc2626;border-radius:8px;background:#fff;color:#dc2626;
+  font-weight:800;font-size:.72rem;padding:7px 11px;white-space:nowrap;
+  cursor:pointer;transition:.15s;min-height:36px;margin-left:4px;
+}
+.tk-row-btn-linkticket:hover{background:#dc2626;color:#fff;}
+.tk-row-btn-linkticket:active{transform:scale(.96);}
+.tk-row-btn-linkticket:disabled{opacity:.5;cursor:not-allowed;}
+/* Desasociar: acción destructiva SOLO del vínculo (la cotización se
+   conserva siempre), por eso es un icono discreto y no un botón grande. */
+.tk-row-btn-unlink{
+  border:1px solid #e5e7eb;border-radius:7px;background:#fff;color:#9ca3af;
+  width:26px;height:26px;min-height:26px;line-height:1;padding:0;font-size:.66rem;
+  display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:.15s;margin-left:6px;vertical-align:middle;flex:0 0 auto;
+}
+.tk-row-btn-unlink:hover{background:#fee2e2;border-color:#fecaca;color:#dc2626;}
+.tk-row-btn-unlink:active{transform:scale(.94);}
+/* Mobile (Regla #3): en las cards la celda de documentos necesita respirar
+   y los botones táctiles deben mantener el alto mínimo usable. */
+@media (max-width:640px){
+  .cot-docs-chips{margin-top:4px;}
+  .tk-row-btn-unlink{width:34px;height:34px;min-height:34px;font-size:.8rem;}
+}

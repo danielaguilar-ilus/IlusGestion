@@ -117,6 +117,12 @@
           <th>Estado</th>
           <th>Fecha</th>
           <th class="text-end">Total</th>
+          {# 2026-09-05 (Daniel: "necesito que todo esté relacionado a
+             documento para asociarlo a una salida legal de dinero"). El dato
+             ya existía en tk_cotizacion_items.erp_tido/erp_nudo pero no se
+             veía en ninguna pantalla: había que abrir el PDF para saber con
+             qué documento se estaba trabajando. #}
+          <th>Documentos ERP</th>
           <th>Ticket</th>
           <th class="text-center">Acciones</th>
         </tr>
@@ -150,15 +156,56 @@
             <span class="tk-row-total cero">sin precio</span>
             {% endif %}
           </td>
+          {# Documentos ERP de respaldo — nombre COMPLETO del tipo ("Factura
+             10599"), nunca truncado (REGLA #15). Si no hay ninguno se dice
+             en ámbar: una cotización sin documento no se puede amarrar a una
+             salida legal de dinero, y eso hay que verlo, no adivinarlo. #}
+          <td data-label="Documentos ERP">
+            {% if c.docs_erp %}
+            <span class="cot-docs-n" title="Documentos del ERP que respaldan esta cotización">
+              {{ c.docs_erp|length }}
+            </span>
+            <span class="cot-docs-chips">
+              {% for dc in c.docs_erp %}
+              <span class="cot-doc-chip" title="{{ dc.tipo_label }} {{ dc.numero }} · {{ dc.lineas }} línea(s)">
+                <i class="bi bi-file-earmark-text"></i>{{ dc.tipo_label }} {{ dc.numero }}
+              </span>
+              {% endfor %}
+            </span>
+            {% else %}
+            <span class="cot-docs-vacio" title="Ninguna línea de esta cotización trae documento ERP de origen">
+              <i class="bi bi-exclamation-triangle-fill"></i>Sin documento
+            </span>
+            {% endif %}
+          </td>
           <td data-label="Ticket" style="white-space:nowrap;">
             {% if c.ticket_id %}
             <a class="tk-row-ticket-link" href="/tickets/{{ c.ticket_id }}" target="_blank" rel="noopener">
               <i class="bi bi-ticket-perforated-fill me-1"></i>{{ c.numero_ticket or ('Ticket #' ~ c.ticket_id) }}
             </a>
+            {# Desasociar: rompe SOLO el vínculo (ticket_id=NULL), la
+               cotización NUNCA se borra. Oculto para técnicos -- decidir a
+               qué ticket se imputa una cotización es financiero. #}
+            {% if not es_tecnico %}
+            <button type="button" class="tk-row-btn-unlink" title="Quitar esta cotización del ticket (no la elimina)"
+                    onclick="cotDesasociarTicket({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}', '{{ (c.numero_ticket or ('Ticket #' ~ c.ticket_id))|e }}')">
+              <i class="bi bi-x-lg"></i>
+            </button>
+            {% endif %}
             {% else %}
             <button type="button" class="tk-row-btn-ticket" onclick="cotGenerarTicket({{ c.id }}, this)">
               <i class="bi bi-ticket-perforated me-1"></i>Generar ticket
             </button>
+            {# 2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y
+               viceversa"): antes la única salida era CREAR un ticket nuevo.
+               Si el ticket ya existe (llegó por correo antes de cotizar),
+               esto los enlaza sin duplicar nada. #}
+            {% if not es_tecnico %}
+            <button type="button" class="tk-row-btn-linkticket" title="Asociar esta cotización a un ticket que ya existe"
+                    onclick="cotAsociarTicket({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')">
+              <i class="bi bi-link-45deg me-1"></i>Asociar
+            </button>
+            {% endif %}
             {% endif %}
           </td>
           <td data-label="Acciones" class="text-center" style="white-space:nowrap;">
@@ -633,6 +680,52 @@
   </div>
 </div>
 
+
+{# ══════════════ Modal ASOCIAR A UN TICKET EXISTENTE ══════════════
+   2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y
+   viceversa"). Espejo del picker de la ficha del ticket, en el sentido
+   contrario. Lenguaje visual de Retiros (REGLA #15): tarjetas con
+   step-circle numerado y datos COMPLETOS del ticket (número, título,
+   cliente) sin truncar -- si no se lee entero no se puede elegir bien. #}
+<div class="modal fade" id="cotAsociarTicketModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:16px;border:none;">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:16px 16px 0 0;">
+        <h6 class="modal-title fw-bold">
+          <i class="bi bi-link-45deg me-2"></i>Asociar <span id="cotAsocNum"></span> a un ticket
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="background:#f9fafb;">
+        <div style="background:#fff;border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex:0 0 auto;">1</span>
+            <span style="font-weight:800;font-size:.9rem;color:#0a0a0a;">Busca el ticket</span>
+          </div>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text" style="background:#fff;"><i class="bi bi-search"></i></span>
+            <input type="text" id="cotAsocTkQ" class="form-control"
+                   placeholder="Número (TK-2026-00123), título, empresa o RUT" autocomplete="off">
+          </div>
+          <div style="font-size:.72rem;color:#6b7280;margin-top:6px;">
+            Se precarga el cliente de esta cotización. Escribe para buscar en todos los tickets.
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex:0 0 auto;">2</span>
+            <span style="font-weight:800;font-size:.9rem;color:#0a0a0a;">Elige a cuál pertenece</span>
+          </div>
+          <div id="cotAsocTkResultados"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;"
+                data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# Modal compartido de búsqueda ERP (mode:'seleccionar'); NO tocar ese
    archivo -- ya está construido y compartido con catálogo/tickets. #}

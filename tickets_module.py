@@ -4032,9 +4032,15 @@ def register_tickets_routes(app, ctx):
         # nunca se rompe por esto.
         uf_info = _tk_uf_actual()
         _hoy = _chile_hoy()
+        # Documentos ERP que respaldan cada cotización (2026-09-05, Daniel:
+        # "necesito que todo esté relacionado a documento para asociarlo a
+        # una salida legal de dinero"). UNA sola consulta para las 100 filas
+        # -- ver _tk_cotiz_docs_erp.
+        docs_por_cot = _tk_cotiz_docs_erp([r.get("id") for r in rows])
         filas = []
         for r in rows:
             fila = _fmt_row(r)
+            fila["docs_erp"] = docs_por_cot.get(int(r.get("id")), [])
             fila["uf_total"] = _tk_total_a_uf(r.get("total"), uf_info)
             fila["editada_post_aprobacion"] = bool(r.get("editada_post_aprobacion"))
             # "Vencida" = pasó la validez y sigue en draft/sent (se calcula,
@@ -4651,6 +4657,298 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "id": tid, "numero_ticket": numero_ticket})
 
     # ═════════════════════════════════════════════════════════════════
+    #  Vínculo Ticket ↔ Cotización en LOS DOS SENTIDOS (2026-09-05)
+    #
+    #  Daniel: "Multidocumento en tickets... hay que relacionarlos de buena
+    #  manera, es decir, puedo llamar una cotización de un ticket y
+    #  viceversa" + "necesito que todo esté relacionado a documento para
+    #  asociarlo a una salida legal de dinero".
+    #
+    #  Lo que YA existía: la cotización que NACE de un ticket queda con
+    #  tk_cotizaciones.ticket_id (botón "Generar cotización" de la ficha) y
+    #  el ticket que NACE de una cotización (botón "Generar ticket" del
+    #  listado). Lo que faltaba: enlazar dos documentos que YA EXISTEN por
+    #  separado — el caso real del día a día (primero se cotizó, después
+    #  entró el reclamo por correo y se abrió el ticket).
+    #
+    #  NO se crea tabla nueva: tk_cotizaciones.ticket_id ya modela
+    #  "1 ticket ↔ N cotizaciones", que es la cardinalidad real (un ticket
+    #  puede tener varias cotizaciones; una cotización pertenece a un solo
+    #  ticket). Desasociar pone ticket_id=NULL y NUNCA borra la cotización.
+    # ═════════════════════════════════════════════════════════════════
+
+    # Etiquetas legibles de los TIDO del ERP (FCV → "Factura"). Se toman de
+    # app.py vía ctx en vez de reescribir la lista acá: si el Cubicador
+    # aprende un tipo nuevo, Tickets lo muestra solo. NVV no está en esa
+    # lista (VD/WEB/NVI mapean a NVV dentro del ERP) pero sí aparece en las
+    # líneas de cotización, así que se agrega como respaldo.
+    _TK_TIDO_LABEL = dict(ctx.get("TIPOS_DOC_CUBICADOR") or [])
+    _TK_TIDO_LABEL.setdefault("NVV", "Nota de Venta")
+
+    def _tk_tido_label(tido):
+        """'FCV' → 'Factura'. Un TIDO que no conocemos se devuelve TAL CUAL:
+        nunca se inventa un nombre para un tipo que el ERP no declara."""
+        _t = str(tido or "").strip().upper()
+        return _TK_TIDO_LABEL.get(_t, _t)
+
+    def _tk_cotiz_docs_erp(cids):
+        """Documentos ERP que respaldan cada cotización.
+
+        Las cotizaciones ya son multidocumento A NIVEL DE LÍNEA
+        (tk_cotizacion_items.erp_tido/erp_nudo, columnas agregadas por
+        migración — ver `alters` de tk_cotizacion_items), así que el
+        documento de respaldo se DEDUCE de las líneas, no se guarda aparte.
+
+        Devuelve {cotizacion_id: [{tipo, tipo_label, numero, lineas}]} con
+        UNA sola consulta para toda la página (no una por fila: el listado
+        trae hasta 100 cotizaciones).
+        """
+        try:
+            ids = sorted({int(c) for c in (cids or []) if c})
+        except Exception:
+            return {}
+        if not ids:
+            return {}
+        # El IN se arma con placeholders %s generados desde ints ya
+        # convertidos — nunca con datos del usuario concatenados (REGLA #4).
+        ph = ",".join(["%s"] * len(ids))
+        try:
+            rows = mysql_fetchall(
+                "SELECT cotizacion_id, COALESCE(erp_tido,'') AS erp_tido, "
+                "       erp_nudo, COUNT(*) AS lineas "
+                f"  FROM tk_cotizacion_items WHERE cotizacion_id IN ({ph}) "
+                "   AND erp_nudo IS NOT NULL AND TRIM(erp_nudo)<>'' "
+                " GROUP BY cotizacion_id, erp_tido, erp_nudo "
+                " ORDER BY erp_nudo", tuple(ids)) or []
+        except Exception as _e:
+            # Defensivo: si la migración de erp_tido/erp_nudo no corrió en
+            # este entorno, la pantalla se dibuja igual sin los chips.
+            print(f"[_tk_cotiz_docs_erp] {_e}", flush=True)
+            return {}
+        out = {}
+        for r in rows:
+            try:
+                _cid = int(r.get("cotizacion_id"))
+            except Exception:
+                continue
+            _tipo = str(r.get("erp_tido") or "").strip().upper()
+            out.setdefault(_cid, []).append({
+                "tipo": _tipo,
+                "tipo_label": _tk_tido_label(_tipo),
+                "numero": str(r.get("erp_nudo") or "").strip(),
+                "lineas": int(r.get("lineas") or 0),
+            })
+        return out
+    ctx["_tk_cotiz_docs_erp"] = _tk_cotiz_docs_erp
+
+    def _tk_es_tecnico():
+        """¿El usuario actual es de la familia 'tecnico'?
+
+        Reusa `_es_rol_tecnico()` de app.py (única fuente de verdad, ya
+        normaliza tecnico_externo/tecnico_jr) en vez de comparar el string
+        del rol acá. Si por algún motivo no está disponible, devuelve False
+        para NO quitarle acceso a nadie que hoy ya lo tiene (REGLA #4.2):
+        el gate financiero es una capa extra, no el único candado.
+        """
+        _f = ctx.get("_es_rol_tecnico")
+        if not _f:
+            return False
+        try:
+            return bool(_f())
+        except Exception:
+            return False
+
+    def _tk_vinculo_denegado():
+        """Respuesta 403 estándar cuando un técnico intenta cambiar el
+        vínculo. Decidir a qué ticket se le imputa una cotización ES una
+        decisión financiera (a qué salida legal de dinero queda amarrada),
+        no una tarea de terreno."""
+        return jsonify({
+            "ok": False,
+            "error": "Tu rol no puede cambiar el vínculo entre cotizaciones y tickets.",
+            "error_codigo": "SIN_PERMISO_VINCULO",
+        }), 403
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>/asociar-ticket", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_asociar_ticket(cid):
+        """Enlaza una cotización YA EXISTENTE a un ticket YA EXISTENTE.
+
+        Sirve a los dos sentidos con un solo endpoint: la ficha del ticket
+        manda {ticket_id: <este ticket>} después de elegir la cotización, y
+        el listado de Cotizaciones manda {ticket_id: <el que eligió>}.
+
+        Concurrencia: mismo patrón que tk_api_cotizacion_generar_ticket
+        (SELECT ... FOR UPDATE + `AND ticket_id IS NULL` de resguardo), para
+        que dos personas asociando la misma cotización a tickets distintos
+        no se pisen — la segunda recibe un 409 con el ticket que ganó.
+        """
+        if _tk_es_tecnico():
+            return _tk_vinculo_denegado()
+        d = request.get_json(silent=True) or {}
+        try:
+            tid = int(d.get("ticket_id") or 0)
+        except Exception:
+            tid = 0
+        if tid <= 0:
+            return jsonify({"ok": False, "error": "Falta indicar el ticket de destino"}), 400
+        tk = mysql_fetchone(
+            "SELECT id, numero_ticket FROM tk_tickets WHERE id=%s", (tid,))
+        if not tk:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        numero_ticket = tk.get("numero_ticket") or f"Ticket #{tid}"
+
+        user = current_username() or "sistema"
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, numero_cotizacion, ticket_id, estado, total "
+                    "FROM tk_cotizaciones WHERE id=%s AND COALESCE(eliminada,0)=0 "
+                    "FOR UPDATE", (cid,))
+                cot = cur.fetchone()
+                if not cot:
+                    conn.rollback()
+                    return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+                numero_cot = cot.get("numero_cotizacion") or f"#{cid}"
+                _actual = cot.get("ticket_id")
+                if _actual and int(_actual) == tid:
+                    # Idempotente a propósito: doble clic / dos pestañas no
+                    # deben devolver un error rojo por algo que ya está bien.
+                    conn.rollback()
+                    return jsonify({"ok": True, "ya_estaba": True, "ticket_id": tid,
+                                    "numero_ticket": numero_ticket,
+                                    "numero_cotizacion": numero_cot})
+                if _actual:
+                    conn.rollback()
+                    _otro = mysql_fetchone(
+                        "SELECT numero_ticket FROM tk_tickets WHERE id=%s", (_actual,)) or {}
+                    _otro_num = _otro.get("numero_ticket") or f"Ticket #{_actual}"
+                    return jsonify({
+                        "ok": False,
+                        "error": (f"La cotización {numero_cot} ya pertenece al ticket "
+                                  f"{_otro_num}. Desasóciala de ahí primero."),
+                        "error_codigo": "YA_TIENE_TICKET",
+                        "ticket_id": int(_actual), "numero_ticket": _otro_num,
+                    }), 409
+                cur.execute(
+                    "UPDATE tk_cotizaciones SET ticket_id=%s, updated_by=%s "
+                    "WHERE id=%s AND ticket_id IS NULL", (tid, user, cid))
+                if cur.rowcount == 0:
+                    conn.rollback()
+                    return jsonify({
+                        "ok": False,
+                        "error": "Otra persona acaba de asociar esta cotización a un ticket.",
+                        "error_codigo": "YA_TIENE_TICKET",
+                    }), 409
+            conn.commit()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"[tk_api_cotizacion_asociar_ticket] CRASH cid={cid} tid={tid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo asociar la cotización"}), 500
+        finally:
+            conn.close()
+
+        # Bitácora en LOS DOS lados: el hilo del ticket (tk_mensajes, que es
+        # lo que ve el ejecutivo) y el historial de la cotización
+        # (tk_cotizacion_log + audit central). Un vínculo que mueve plata no
+        # puede aparecer sin dejar quién y cuándo.
+        try:
+            _tk_log(tid, "otro",
+                    f"Cotización {numero_cot} asociada a este ticket.",
+                    usuario=user, metadata={"cotizacion_id": cid,
+                                            "numero_cotizacion": numero_cot,
+                                            "accion": "asociar_cotizacion"})
+        except Exception:
+            pass
+        try:
+            _tk_cotiz_log(cid, "asociar_ticket",
+                          {"ticket_id": tid, "numero_ticket": numero_ticket}, user)
+        except Exception:
+            pass
+        return jsonify({"ok": True, "cotizacion_id": cid, "numero_cotizacion": numero_cot,
+                        "ticket_id": tid, "numero_ticket": numero_ticket})
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>/desasociar-ticket", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_desasociar_ticket(cid):
+        """Rompe el vínculo cotización → ticket. SOLO el vínculo.
+
+        La cotización NO se elimina ni se toca en ningún otro campo: queda
+        libre para asociarse a otro ticket (o a ninguno). Queda registrado
+        de qué ticket salió, para poder reconstruir la historia.
+        """
+        if _tk_es_tecnico():
+            return _tk_vinculo_denegado()
+        cot = mysql_fetchone(
+            "SELECT id, numero_cotizacion, ticket_id FROM tk_cotizaciones "
+            "WHERE id=%s AND COALESCE(eliminada,0)=0", (cid,))
+        if not cot:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        tid_prev = cot.get("ticket_id")
+        numero_cot = cot.get("numero_cotizacion") or f"#{cid}"
+        if not tid_prev:
+            return jsonify({"ok": False,
+                            "error": "Esta cotización no está asociada a ningún ticket."}), 400
+        _tk_prev = mysql_fetchone(
+            "SELECT numero_ticket FROM tk_tickets WHERE id=%s", (tid_prev,)) or {}
+        numero_ticket = _tk_prev.get("numero_ticket") or f"Ticket #{tid_prev}"
+        user = current_username() or "sistema"
+        try:
+            mysql_execute(
+                "UPDATE tk_cotizaciones SET ticket_id=NULL, updated_by=%s "
+                "WHERE id=%s AND ticket_id=%s", (user, cid, tid_prev))
+        except Exception as e:
+            print(f"[tk_api_cotizacion_desasociar_ticket] cid={cid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo desasociar la cotización"}), 500
+        try:
+            _tk_log(tid_prev, "otro",
+                    f"Cotización {numero_cot} desasociada de este ticket "
+                    f"(la cotización sigue existiendo).",
+                    usuario=user, metadata={"cotizacion_id": cid,
+                                            "numero_cotizacion": numero_cot,
+                                            "accion": "desasociar_cotizacion"})
+        except Exception:
+            pass
+        try:
+            _tk_cotiz_log(cid, "desasociar_ticket",
+                          {"ticket_id": int(tid_prev), "numero_ticket": numero_ticket}, user)
+        except Exception:
+            pass
+        return jsonify({"ok": True, "cotizacion_id": cid, "numero_cotizacion": numero_cot,
+                        "ticket_id_anterior": int(tid_prev), "numero_ticket": numero_ticket})
+
+    @app.route("/tickets/api/tickets/buscar", methods=["GET"])
+    @_tickets_required
+    def tk_api_tickets_buscar():
+        """Búsqueda liviana de tickets (número / título / empresa / RUT) para
+        el selector "Asociar a un ticket" del listado de Cotizaciones.
+
+        No choca con /tickets/api/tickets/<int:tid>: el converter `int` no
+        acepta la palabra "buscar", así que Flask nunca ambigua las dos.
+        Solo lectura, sin mensajes ni adjuntos — el picker solo necesita
+        número, título y cliente para que la persona reconozca el ticket.
+        """
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "tickets": []})
+        like = f"%{q}%"
+        try:
+            limite = max(1, min(20, int(request.args.get("limit") or 10)))
+        except Exception:
+            limite = 10
+        rows = mysql_fetchall(
+            "SELECT id, numero_ticket, titulo, estado, empresa, rut, created_at "
+            "FROM tk_tickets "
+            "WHERE numero_ticket LIKE %s OR titulo LIKE %s OR empresa LIKE %s OR rut LIKE %s "
+            "ORDER BY created_at DESC LIMIT %s",
+            (like, like, like, like, limite)) or []
+        return jsonify({"ok": True, "tickets": [_fmt_row(r) for r in rows]})
+
+    # ═════════════════════════════════════════════════════════════════
     #  Cotizaciones v3 (2026-07-22): tabla inteligente -- ver/editar,
     #  aprobar/rechazar (superadmin), eliminar (soft, superadmin), enviar
     #  por correo multi-destinatario, historial. Todo con evidencia
@@ -4722,22 +5020,62 @@ def register_tickets_routes(app, ctx):
         """Búsqueda liviana de cotizaciones (número / empresa / RUT) para
         el selector de origen "Generar OT" (2026-08-12,
         /mantenciones/ots -- Daniel: "Cotización interna del sistema").
-        Solo lectura, top 8, sin ítems (para eso está el GET por id de
-        arriba) -- el caller solo necesita decidir a qué ticket o ficha
-        de cliente saltar."""
+        Solo lectura, sin ítems (para eso está el GET por id de arriba) --
+        el caller solo necesita decidir a qué ticket o ficha de cliente
+        saltar.
+
+        2026-09-05 (Daniel: "puedo llamar una cotización de un ticket"):
+        esta misma búsqueda alimenta ahora el picker "Asociar cotización
+        existente" de la ficha del ticket, así que devuelve además:
+          · total + estado           → para reconocer cuál es cuál,
+          · numero_ticket            → si ya pertenece a otro ticket (el
+                                       picker la muestra bloqueada en vez de
+                                       dejar intentar y fallar con un 409),
+          · docs_erp                 → qué documento(s) del ERP la respaldan.
+        `rut` permite listar las cotizaciones del cliente del ticket sin
+        escribir nada, y `limit` deja al caller pedir más de 8 sin cambiarle
+        el default al selector de "Generar OT" que ya existía."""
         q = (request.args.get("q") or "").strip()
-        if len(q) < 2:
+        rut = (request.args.get("rut") or "").strip()
+        try:
+            limite = max(1, min(30, int(request.args.get("limit") or 8)))
+        except Exception:
+            limite = 8
+        # LEFT JOIN a tk_tickets: sin esto el picker no puede distinguir
+        # "libre" de "ya asociada a otro ticket" y la persona descubre el
+        # choque recién al apretar Asociar.
+        base = ("SELECT c.id, c.numero_cotizacion, c.empresa, c.rut, c.estado, "
+                "       c.total, c.created_at, c.ticket_id, tk.numero_ticket "
+                "  FROM tk_cotizaciones c "
+                "  LEFT JOIN tk_tickets tk ON tk.id = c.ticket_id "
+                " WHERE COALESCE(c.eliminada,0)=0 ")
+        if len(q) >= 2:
+            like = f"%{q}%"
+            rows = mysql_fetchall(
+                base + "   AND (c.numero_cotizacion LIKE %s OR c.empresa LIKE %s OR c.rut LIKE %s) "
+                       " ORDER BY c.created_at DESC LIMIT %s",
+                (like, like, like, limite)) or []
+        elif rut:
+            # Sin texto pero con RUT: son "las cotizaciones de este cliente",
+            # la primera pantalla útil del picker (no una lista vacía).
+            _cuerpo = None
+            try:
+                _cuerpo = _rut_cuerpo(rut) if _rut_cuerpo else None
+            except Exception:
+                _cuerpo = None
+            _like_rut = f"%{_cuerpo or rut}%"
+            rows = mysql_fetchall(
+                base + "   AND c.rut LIKE %s ORDER BY c.created_at DESC LIMIT %s",
+                (_like_rut, limite)) or []
+        else:
             return jsonify({"ok": True, "cotizaciones": []})
-        like = f"%{q}%"
-        rows = mysql_fetchall(
-            "SELECT id, numero_cotizacion, empresa, rut, estado, ticket_id "
-            "FROM tk_cotizaciones "
-            "WHERE COALESCE(eliminada,0)=0 "
-            "  AND (numero_cotizacion LIKE %s OR empresa LIKE %s OR rut LIKE %s) "
-            "ORDER BY created_at DESC LIMIT 8",
-            (like, like, like)
-        ) or []
-        return jsonify({"ok": True, "cotizaciones": [dict(r) for r in rows]})
+        _docs = _tk_cotiz_docs_erp([r.get("id") for r in rows])
+        out = []
+        for r in rows:
+            _r = _fmt_row(r)
+            _r["docs_erp"] = _docs.get(int(r.get("id")), [])
+            out.append(_r)
+        return jsonify({"ok": True, "cotizaciones": out})
 
     @app.route("/tickets/api/catalogo/buscar", methods=["GET"])
     @_tickets_required
@@ -5653,7 +5991,8 @@ def register_tickets_routes(app, ctx):
         try:
             cotizaciones = mysql_fetchall(
                 "SELECT id, numero_cotizacion, estado, total, created_at "
-                "FROM tk_cotizaciones WHERE ticket_id=%s ORDER BY created_at DESC", (tid,))
+                "FROM tk_cotizaciones WHERE COALESCE(eliminada,0)=0 AND ticket_id=%s "
+                "ORDER BY created_at DESC", (tid,))
         except Exception:
             cotizaciones = []
         try:
@@ -5726,13 +6065,45 @@ def register_tickets_routes(app, ctx):
         ticket_out["sla_horas"], ticket_out["sla_vencido"] = _tk_sla_info(
             t.get("estado"), t.get("created_at"), sla_umbral)
 
+        # ── Trazabilidad documento ↔ dinero (2026-09-05, Daniel: "necesito
+        #    que todo esté relacionado a documento para asociarlo a una
+        #    salida legal de dinero"). Cada cotización del ticket viaja con
+        #    LOS documentos ERP que la respaldan, para poder decidir —
+        #    mirando el ticket — con qué documento se está trabajando antes
+        #    de generar la OT.
+        #
+        #    Gate de rol: un técnico NO ve plata (mismo criterio que el
+        #    resto de los endpoints financieros, vía _es_rol_tecnico()).
+        #    Se le sacan del JSON las cotizaciones completas y el `monto` de
+        #    los documentos — pero el documento en sí (tipo + número) SE
+        #    QUEDA: es dato operativo que el técnico ya usaba para saber de
+        #    qué factura/guía salió el equipo, y quitárselo sería sacarle una
+        #    herramienta en uso (REGLA #4.2). El front lo dice explícito en
+        #    vez de mentir con "no hay cotizaciones".
+        _finanzas_ocultas = _tk_es_tecnico()
+        cot_out = []
+        if not _finanzas_ocultas:
+            _docs_cot = _tk_cotiz_docs_erp([c.get("id") for c in (cotizaciones or [])])
+            for c in (cotizaciones or []):
+                _c = _fmt_row(c)
+                _c["docs_erp"] = _docs_cot.get(int(c.get("id")), [])
+                cot_out.append(_c)
+        docs_out = []
+        for r in (documentos or []):
+            _d = _fmt_row(r)
+            _d["tipo_label"] = _tk_tido_label(_d.get("erp_tido"))
+            if _finanzas_ocultas:
+                _d["monto"] = None
+            docs_out.append(_d)
+
         return jsonify({
             "ok": True,
             "ticket": ticket_out,
             "sla_umbral_horas": sla_umbral,
             "equipos": [dict(r) for r in equipos],
-            "documentos": [_fmt_row(r) for r in documentos],
-            "cotizaciones": [_fmt_row(r) for r in cotizaciones],
+            "documentos": docs_out,
+            "cotizaciones": cot_out,
+            "finanzas_ocultas": _finanzas_ocultas,
             "mensajes": [_fmt_row(r) for r in mensajes],
             "adjuntos": [_fmt_row(r) for r in adjuntos],
             "vistas": [_fmt_row(r) for r in vistas] if _puede_ver_actividad else [],

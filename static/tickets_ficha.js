@@ -968,11 +968,30 @@ async function cargar(){
   // Acciones — tarjeta "Orden de Trabajo" (Generar OT / ya vinculada)
   renderAccionesOT(t);
 
-  // Tarjeta "Cotización" — lista las generadas DESDE este ticket (número/estado/total)
-  renderCotizaciones(d.cotizaciones);
+  // RUT del cliente del ticket — lo usa el picker "Asociar cotización
+  // existente" para abrir ya mostrando las cotizaciones de ESTE cliente
+  // (2026-09-05). Si el ticket no tiene RUT, el picker parte vacío pidiendo
+  // que se escriba el número: nunca lista cotizaciones de otro cliente.
+  _tkRutTicket = t.rut || '';
+
+  // Tarjeta "Cotización" — lista las asociadas a este ticket (número/estado/
+  // total + documentos ERP que la respaldan). d.finanzas_ocultas viene en
+  // true para roles técnicos: ahí el backend no manda las cotizaciones y la
+  // tarjeta lo dice, en vez de mentir con "todavía no tiene cotizaciones".
+  renderCotizaciones(d.cotizaciones, d.finanzas_ocultas);
 
   // Documentos ERP del ticket — ahora renderizados dentro de la tarjeta Equipo(s)
   const ld = document.getElementById('listaDocs');
+  // 2026-09-05 (Daniel: "necesito que todo esté relacionado a documento
+  // para asociarlo a una salida legal de dinero"): contador visible en el
+  // título de la tarjeta -- cuántos documentos respaldan este ticket se
+  // responde de un vistazo, sin contar chips.
+  const ldCount = document.getElementById('docsCount');
+  if (ldCount){
+    const nDocs = (d.documentos || []).length;
+    ldCount.style.display = nDocs ? 'inline-block' : 'none';
+    ldCount.textContent = nDocs === 1 ? '1 documento' : (nDocs + ' documentos');
+  }
   ld.innerHTML = d.documentos.length ? d.documentos.map(function(x){
     // 2026-07-13 (Daniel, URGENTE): "0000-00-00" -- MySQL puede guardar una
     // fecha "cero" literal (no NULL) en columnas DATE cuando nunca se
@@ -981,8 +1000,15 @@ async function cargar(){
     const fechaOk = x.fecha && !/^0000-00-00/.test(String(x.fecha)) ? x.fecha : null;
     const meta = [fechaOk, (x.monto!=null && x.monto!=='') ? '$'+Number(x.monto).toLocaleString('es-CL') : null]
       .filter(Boolean).join(' · ');
-    return '<div class="tk-doc"><span class="doc-id"><i class="bi bi-file-earmark-text"></i>'
+    // tipo_label ("Factura", "Guía de Despacho"...) lo resuelve el backend
+    // desde la misma lista de tipos del Cubicador. Si el TIDO no está en esa
+    // lista viene el código crudo -- nunca un nombre inventado.
+    const tipoTxt = x.tipo_label || x.erp_tido || '';
+    return '<div class="tk-doc" title="'+esc(tipoTxt+' '+(x.erp_nudo||''))+'">'
+      + '<span class="doc-id"><i class="bi bi-file-earmark-text"></i>'
       + esc((x.erp_tido||'')+' '+(x.erp_nudo||''))+'</span>'
+      + (tipoTxt && tipoTxt !== (x.erp_tido||'')
+          ? '<span class="doc-meta">'+esc(tipoTxt)+'</span>' : '')
       + (meta?'<span class="doc-meta">'+esc(meta)+'</span>':'')+'</div>';
   }).join('') : '<div class="tk-empty-mini"><i class="bi bi-file-earmark-x"></i><span>Sin documentos ERP asociados a este ticket.</span></div>';
 
@@ -5591,10 +5617,51 @@ const COT_ESTADO_BG = {
   approved:'background:#dcfce7;color:#166534', rejected:'background:#fee2e2;color:#991b1b',
   expired:'background:#fef3c7;color:#92400e',
 };
-function renderCotizaciones(cots){
+// RUT del cliente del ticket abierto (lo llena cargar()). Sirve para que el
+// picker de "Asociar cotización existente" muestre de entrada las
+// cotizaciones de ESTE cliente en vez de una lista vacía.
+let _tkRutTicket = '';
+
+// Chips de los documentos ERP que respaldan una cotización (2026-09-05,
+// Daniel: "necesito que todo esté relacionado a documento para asociarlo a
+// una salida legal de dinero"). El dato ya existía en la BD
+// (tk_cotizacion_items.erp_tido/erp_nudo) pero no se veía en ninguna
+// pantalla. Nombre COMPLETO del tipo, sin truncar (REGLA #15).
+function tkCotDocsChips(docs){
+  if (!docs || !docs.length){
+    return '<div style="font-size:.68rem;color:#b45309;background:#fff8e1;border:1px solid #fde68a;'
+      + 'border-radius:7px;padding:3px 7px;margin-top:5px;display:inline-block;">'
+      + '<i class="bi bi-exclamation-triangle-fill me-1"></i>Sin documento ERP de respaldo</div>';
+  }
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;">'
+    + docs.map(function(dc){
+        const etiqueta = (dc.tipo_label || dc.tipo || '') + ' ' + (dc.numero || '');
+        return '<span title="' + esc(etiqueta.trim()) + '" '
+          + 'style="font-size:.64rem;font-weight:700;color:#1e40af;background:#dbeafe;'
+          + 'border-radius:6px;padding:2px 7px;white-space:nowrap;">'
+          + '<i class="bi bi-file-earmark-text me-1"></i>' + esc(etiqueta.trim()) + '</span>';
+      }).join('')
+    + '</div>';
+}
+
+function renderCotizaciones(cots, finanzasOcultas){
   const vacio = document.getElementById('cotSideVacio');
   const lista = document.getElementById('cotSideLista');
   if (!vacio || !lista) return;
+  const btnAsoc = document.getElementById('btnAsociarCotizacionSide');
+  // Rol técnico: el backend NO manda las cotizaciones (un técnico no ve
+  // montos). Se dice explícitamente en vez de mostrar "todavía no tiene
+  // cotizaciones", que sería FALSO y lo llevaría a generar una duplicada.
+  // El botón "Generar cotización" NO se toca: existe desde 2026-07-15 y
+  // quitárselo sería sacar una capacidad que ya tenía (REGLA #4.2).
+  if (finanzasOcultas){
+    vacio.style.display = 'block';
+    vacio.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Con tu rol no se muestran los montos '
+      + 'ni el detalle de las cotizaciones de este ticket.';
+    lista.innerHTML = '';
+    if (btnAsoc) btnAsoc.style.display = 'none';
+    return;
+  }
   if (!cots || !cots.length){
     vacio.style.display = 'block';
     lista.innerHTML = '';
@@ -5604,19 +5671,193 @@ function renderCotizaciones(cots){
   lista.innerHTML = cots.map(function(c){
     const bg = COT_ESTADO_BG[c.estado] || COT_ESTADO_BG.draft;
     const total = '$' + Number(c.total || 0).toLocaleString('es-CL');
-    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;'
-      + 'padding:9px 11px;border-radius:9px;background:#f9fafb;border:1px solid #eef0f3;margin-bottom:8px;">'
+    const num = c.numero_cotizacion || ('#' + c.id);
+    return '<div style="padding:9px 11px;border-radius:9px;background:#f9fafb;'
+      + 'border:1px solid #eef0f3;margin-bottom:8px;">'
+      + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">'
       + '<div style="min-width:0;">'
-      + '<div style="font-weight:800;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere;">' + esc(c.numero_cotizacion || ('#' + c.id)) + '</div>'
+      + '<a href="/tickets/cotizaciones/' + c.id + '/ver" target="_blank" rel="noopener" '
+      + 'style="font-weight:800;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere;text-decoration:none;">'
+      + esc(num) + ' <i class="bi bi-box-arrow-up-right" style="font-size:.66rem;color:#9ca3af;"></i></a>'
       + '<div style="font-size:.72rem;color:#6b7280;">' + esc(total) + '</div>'
       + '</div>'
+      + '<div style="display:flex;align-items:center;gap:6px;flex:0 0 auto;">'
       + '<span style="padding:3px 9px;border-radius:50px;font-size:.62rem;font-weight:800;text-transform:uppercase;white-space:nowrap;' + bg + ';">'
       + esc(COT_ESTADO_LABEL[c.estado] || c.estado) + '</span>'
+      // Desasociar: rompe SOLO el vínculo, la cotización sigue existiendo.
+      // Se ofrece únicamente si se puede asociar (mismo gate de rol: el
+      // botón "Asociar cotización existente" no se renderiza para técnicos).
+      + (btnAsoc
+          ? '<button type="button" title="Quitar esta cotización del ticket (no la elimina)" '
+            + 'onclick="tkDesasociarCotizacion(' + c.id + ', \'' + esc(num) + '\')" '
+            + 'style="border:1px solid #e5e7eb;background:#fff;color:#9ca3af;border-radius:7px;'
+            + 'width:26px;height:26px;line-height:1;padding:0;font-size:.72rem;">'
+            + '<i class="bi bi-link-45deg" style="text-decoration:line-through;"></i></button>'
+          : '')
+      + '</div>'
+      + '</div>'
+      + tkCotDocsChips(c.docs_erp)
       + '</div>';
   }).join('') + '<a href="/tickets/cotizaciones" target="_blank" rel="noopener" '
     + 'style="font-size:.74rem;font-weight:700;color:#6b7280;display:inline-block;margin-top:2px;">'
     + 'Ver en Cotizaciones <i class="bi bi-box-arrow-up-right"></i></a>';
 }
+
+// ══════════ Asociar / desasociar una cotización YA EXISTENTE ══════════
+// 2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y
+// viceversa"). Hasta hoy solo quedaba enlazada la cotización que NACÍA del
+// ticket. El vínculo real vive en tk_cotizaciones.ticket_id: no hay tabla
+// nueva, y desasociar pone ese campo en NULL sin borrar nunca la cotización.
+let _tkAsocCotTimer = null;
+
+function tkAsociarCotAbrir(){
+  const modalEl = document.getElementById('tkAsociarCotModal');
+  if (!modalEl) return;
+  const inp = document.getElementById('tkAsocCotQ');
+  if (inp) inp.value = '';
+  new bootstrap.Modal(modalEl).show();
+  // Primera pantalla útil: las cotizaciones de este cliente (por RUT).
+  tkAsociarCotBuscar();
+  setTimeout(function(){ if (inp) inp.focus(); }, 300);
+}
+
+async function tkAsociarCotBuscar(){
+  const cont = document.getElementById('tkAsocCotResultados');
+  if (!cont) return;
+  const q = (document.getElementById('tkAsocCotQ') || {}).value || '';
+  const params = new URLSearchParams({limit: '20'});
+  if (q.trim().length >= 2) params.set('q', q.trim());
+  else if (_tkRutTicket) params.set('rut', _tkRutTicket);
+  else {
+    cont.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-search"></i>'
+      + '<span>Escribe el número de la cotización, la empresa o el RUT.</span></div>';
+    return;
+  }
+  cont.innerHTML = '<div class="text-center text-muted py-3" style="font-size:.82rem;">Buscando…</div>';
+  let d;
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/buscar?' + params.toString());
+    d = await r.json();
+  }catch(e){
+    cont.innerHTML = '<div class="text-danger py-2" style="font-size:.82rem;">Error de conexión.</div>';
+    return;
+  }
+  if (!d || !d.ok){
+    cont.innerHTML = '<div class="text-danger py-2" style="font-size:.82rem;">'
+      + esc((d && d.error) || 'No se pudo buscar') + '</div>';
+    return;
+  }
+  const cots = d.cotizaciones || [];
+  if (!cots.length){
+    cont.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-file-earmark-x"></i>'
+      + '<span>Sin cotizaciones para esa búsqueda.</span></div>';
+    return;
+  }
+  cont.innerHTML = cots.map(function(c){
+    const num = c.numero_cotizacion || ('#' + c.id);
+    const bg = COT_ESTADO_BG[c.estado] || COT_ESTADO_BG.draft;
+    const total = '$' + Number(c.total || 0).toLocaleString('es-CL');
+    const yaEsDeEsteTicket = (c.ticket_id != null && Number(c.ticket_id) === Number(TID));
+    const ocupada = (c.ticket_id != null && !yaEsDeEsteTicket);
+    let accion;
+    if (yaEsDeEsteTicket){
+      accion = '<span style="font-size:.7rem;font-weight:800;color:#166534;background:#dcfce7;'
+        + 'border-radius:50px;padding:4px 10px;white-space:nowrap;">'
+        + '<i class="bi bi-check-circle-fill me-1"></i>Ya está en este ticket</span>';
+    } else if (ocupada){
+      accion = '<a href="/tickets/' + c.ticket_id + '" target="_blank" rel="noopener" '
+        + 'title="Desasóciala desde ese ticket para poder traerla acá" '
+        + 'style="font-size:.7rem;font-weight:800;color:#92400e;background:#fef3c7;'
+        + 'border-radius:50px;padding:4px 10px;white-space:nowrap;text-decoration:none;">'
+        + '<i class="bi bi-lock-fill me-1"></i>En ' + esc(c.numero_ticket || ('#' + c.ticket_id)) + '</a>';
+    } else {
+      accion = '<button type="button" class="btn btn-sm fw-bold" '
+        + 'style="background:#dc2626;color:#fff;border-radius:8px;min-height:34px;white-space:nowrap;" '
+        + 'onclick="tkAsociarCotAplicar(' + c.id + ', \'' + esc(num) + '\', this)">'
+        + '<i class="bi bi-link-45deg me-1"></i>Asociar</button>';
+    }
+    return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;'
+      + 'padding:11px 12px;border:1px solid #eef0f3;border-radius:11px;margin-bottom:8px;'
+      + 'background:' + (yaEsDeEsteTicket ? '#f0fdf4' : '#fff') + ';">'
+      + '<div style="min-width:0;">'
+      + '<div style="font-weight:800;font-size:.85rem;color:#0a0a0a;overflow-wrap:anywhere;">'
+      + esc(num)
+      + ' <span style="padding:2px 8px;border-radius:50px;font-size:.6rem;font-weight:800;'
+      + 'text-transform:uppercase;white-space:nowrap;' + bg + ';">'
+      + esc(COT_ESTADO_LABEL[c.estado] || c.estado) + '</span></div>'
+      // Nombre del cliente COMPLETO: sin line-clamp ni recortes (REGLA #15).
+      + '<div style="font-size:.76rem;color:#374151;overflow-wrap:anywhere;">'
+      + esc(c.empresa || c.rut || 'Sin cliente') + '</div>'
+      + '<div style="font-size:.72rem;color:#6b7280;">' + esc(total)
+      + (c.created_at ? ' · ' + esc(c.created_at) : '') + '</div>'
+      + tkCotDocsChips(c.docs_erp)
+      + '</div>'
+      + '<div style="flex:0 0 auto;">' + accion + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+async function tkAsociarCotAplicar(cid, numero, btn){
+  const ok = await ilusConfirm({
+    title: 'Asociar cotización',
+    message: '¿Enlazar la cotización ' + numero + ' a este ticket?',
+    sub: 'Queda amarrada al ticket para efectos de trazabilidad. Puedes deshacerlo después.',
+    okLabel: 'Asociar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const orig = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + cid + '/asociar-ticket', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ticket_id: TID}),
+    });
+    const d = await r.json();
+    if (!d.ok){
+      ilusToast(d.error || 'No se pudo asociar la cotización', {type:'error'});
+      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+      return;
+    }
+    ilusToast(d.ya_estaba ? '✓ Ya estaba asociada a este ticket'
+                          : '✓ Cotización ' + numero + ' asociada', {type:'success'});
+    const modalEl = document.getElementById('tkAsociarCotModal');
+    const inst = modalEl ? bootstrap.Modal.getInstance(modalEl) : null;
+    if (inst) inst.hide();
+    cargar();
+  }catch(e){
+    ilusToast('Error de conexión al asociar la cotización', {type:'error'});
+    if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+async function tkDesasociarCotizacion(cid, numero){
+  const ok = await ilusConfirm({
+    title: 'Quitar la cotización del ticket',
+    message: '¿Desasociar ' + numero + ' de este ticket?',
+    sub: 'La cotización NO se elimina: queda libre para asociarla a otro ticket. '
+       + 'El cambio queda registrado en el historial de ambos.',
+    okLabel: 'Desasociar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + cid + '/desasociar-ticket', {method: 'POST'});
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo desasociar', {type:'error'}); return; }
+    ilusToast('✓ ' + numero + ' ya no está asociada a este ticket', {type:'success'});
+    cargar();
+  }catch(e){
+    ilusToast('Error de conexión al desasociar', {type:'error'});
+  }
+}
+
+if (document.getElementById('btnAsociarCotizacionSide'))
+document.getElementById('btnAsociarCotizacionSide').addEventListener('click', tkAsociarCotAbrir);
+if (document.getElementById('tkAsocCotQ'))
+document.getElementById('tkAsocCotQ').addEventListener('input', function(){
+  // Debounce: la búsqueda pega a la BD; no una consulta por tecla.
+  clearTimeout(_tkAsocCotTimer);
+  _tkAsocCotTimer = setTimeout(tkAsociarCotBuscar, 320);
+});
 
 // 2026-08-10: en modo cliente (TID=null) no hay ticket que cargar --
 // cargar() solo pintaría "No se pudo cargar el ticket" sobre elementos

@@ -249,6 +249,18 @@
         <div id="cotSideLista"></div>
         <button class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarCotizacionSide" type="button" style="margin-top:4px;">
           <i class="bi bi-file-earmark-plus me-1"></i>Generar cotización</button>
+        {# 2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y
+           viceversa"): hasta hoy la ÚNICA forma de que una cotización
+           quedara pegada a un ticket era nacer desde él. El caso real es el
+           contrario -- primero se cotizó, después entró el reclamo y se
+           abrió el ticket. Este botón enlaza una que YA EXISTE. Se oculta
+           para técnicos: decidir a qué ticket se imputa una cotización es
+           una decisión financiera, no de terreno (el backend lo rechaza
+           igual con 403 -- esto es solo para no ofrecer lo que no se puede). #}
+        {% if not es_tecnico %}
+        <button class="btn btn-sm btn-ilus-outline w-100" id="btnAsociarCotizacionSide" type="button" style="margin-top:6px;">
+          <i class="bi bi-link-45deg me-1"></i>Asociar cotización existente</button>
+        {% endif %}
       </div>
 
       <!-- Estado y gestión — 2026-07-15: dejó de vivir arriba de todo,
@@ -300,7 +312,13 @@
            2026-07-15: se reubica a la columna lateral — Daniel: "el documento
            está arriba, debería estar en una columna". -->
       <div class="tk-card">
-        <h6><i class="bi bi-file-earmark-text"></i>Documentos ERP</h6>
+        {# 2026-09-05 (Daniel): el contador va en el título -- "con qué
+           documento estoy trabajando" se tiene que poder responder de un
+           vistazo, sin contar chips a ojo. #}
+        <h6 style="display:flex;align-items:center;gap:8px;">
+          <i class="bi bi-file-earmark-text"></i><span>Documentos ERP</span>
+          <span id="docsCount" style="display:none;margin-left:auto;background:#f3f4f6;color:#374151;border-radius:50px;padding:2px 9px;font-size:.66rem;font-weight:800;"></span>
+        </h6>
         <div id="listaDocs" class="tk-docs-en-equipo tk-docs-side"></div>
       </div>
 
@@ -476,6 +494,59 @@
     <div class="tk-lightbox-nav" id="tkLightboxNav" style="display:none;">
       <span class="tk-lightbox-navbtn" id="tkLightboxPrev" title="Anterior"><i class="bi bi-chevron-left"></i></span>
       <span class="tk-lightbox-navbtn" id="tkLightboxNext" title="Siguiente"><i class="bi bi-chevron-right"></i></span>
+    </div>
+  </div>
+</div>
+
+{# ══════════════ Modal "Asociar cotización existente" ══════════════
+   2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y
+   viceversa"). Lenguaje visual de Retiros (REGLA #15): tarjeta con
+   step-circle numerado, semáforo de estado por cotización y — importante —
+   el número, el cliente y los documentos ERP COMPLETOS, sin line-clamp:
+   una cotización que no se lee entera no se puede elegir con criterio.
+   Bootstrap modal (no ilusPrompt) porque no es un input: es un buscador
+   con lista de resultados (REGLA #8). Confirmaciones y avisos sí van por
+   los helpers ilus* (REGLA #1).
+   Se renderiza para todos, pero solo se abre desde #btnAsociarCotizacionSide,
+   que no existe para técnicos; el backend valida de nuevo igual. #}
+<div class="modal fade" id="tkAsociarCotModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:16px;border:none;">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:16px 16px 0 0;">
+        <h6 class="modal-title fw-bold"><i class="bi bi-link-45deg me-2"></i>Asociar una cotización existente</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="background:#f9fafb;">
+
+        <div style="background:#fff;border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex:0 0 auto;">1</span>
+            <span style="font-weight:800;font-size:.9rem;color:#0a0a0a;">Busca la cotización</span>
+          </div>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text" style="background:#fff;"><i class="bi bi-search"></i></span>
+            <input type="text" id="tkAsocCotQ" class="form-control"
+                   placeholder="Número (COT-000045, CTR-000048), empresa o RUT"
+                   autocomplete="off">
+          </div>
+          <div style="font-size:.72rem;color:#6b7280;margin-top:6px;" id="tkAsocCotHint">
+            Al abrir se listan las cotizaciones del cliente de este ticket. Escribe para buscar en todas.
+          </div>
+        </div>
+
+        <div style="background:#fff;border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span id="tkAsocCotStep2" style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex:0 0 auto;">2</span>
+            <span style="font-weight:800;font-size:.9rem;color:#0a0a0a;">Elige cuál asociar a este ticket</span>
+          </div>
+          <div id="tkAsocCotResultados"></div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;"
+                data-bs-dismiss="modal">Cerrar</button>
+      </div>
     </div>
   </div>
 </div>

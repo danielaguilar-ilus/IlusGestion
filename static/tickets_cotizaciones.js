@@ -2016,6 +2016,154 @@ async function cotGenerarTicket(cid, btn){
   }
 }
 
+// ══════════════ Asociar esta cotización a un TICKET QUE YA EXISTE ══════════════
+// 2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y viceversa").
+// "Generar ticket" (arriba) CREA uno nuevo; esto enlaza uno que ya existe --
+// el caso real cuando el reclamo entró por correo antes de que se cotizara.
+// El vínculo es tk_cotizaciones.ticket_id (no hay tabla nueva) y desasociar
+// solo lo pone en NULL: la cotización nunca se borra.
+let _cotAsocCid = null, _cotAsocNum = '', _cotAsocTkTimer = null;
+
+async function cotAsociarTicket(cid, numero){
+  _cotAsocCid = cid;
+  _cotAsocNum = numero || ('#' + cid);
+  const elNum = document.getElementById('cotAsocNum');
+  if (elNum) elNum.textContent = _cotAsocNum;
+  const inp = document.getElementById('cotAsocTkQ');
+  if (inp) inp.value = '';
+  const cont = document.getElementById('cotAsocTkResultados');
+  if (cont) cont.innerHTML = '<div class="text-center text-muted py-3" style="font-size:.82rem;">Cargando…</div>';
+  const modalEl = document.getElementById('cotAsociarTicketModal');
+  if (!modalEl) return;
+  new bootstrap.Modal(modalEl).show();
+  // Precarga con el cliente de la cotización: en la práctica el ticket que
+  // se busca es del mismo cliente casi siempre.
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + cid);
+    const d = await r.json();
+    if (d && d.ok && d.cotizacion && inp){
+      inp.value = d.cotizacion.empresa || d.cotizacion.rut || '';
+    }
+  }catch(e){ /* sin precarga: se busca a mano, no es un error que mostrar */ }
+  cotAsocTkBuscar();
+  setTimeout(function(){ if (inp) inp.focus(); }, 300);
+}
+
+async function cotAsocTkBuscar(){
+  const cont = document.getElementById('cotAsocTkResultados');
+  if (!cont) return;
+  const q = ((document.getElementById('cotAsocTkQ') || {}).value || '').trim();
+  if (q.length < 2){
+    cont.innerHTML = '<div class="text-muted py-2" style="font-size:.82rem;">'
+      + 'Escribe al menos 2 caracteres (número de ticket, título, empresa o RUT).</div>';
+    return;
+  }
+  cont.innerHTML = '<div class="text-center text-muted py-3" style="font-size:.82rem;">Buscando…</div>';
+  let d;
+  try{
+    const r = await fetch('/tickets/api/tickets/buscar?limit=20&q=' + encodeURIComponent(q));
+    d = await r.json();
+  }catch(e){
+    cont.innerHTML = '<div class="text-danger py-2" style="font-size:.82rem;">Error de conexión.</div>';
+    return;
+  }
+  if (!d || !d.ok){
+    cont.innerHTML = '<div class="text-danger py-2" style="font-size:.82rem;">'
+      + _cotEsc((d && d.error) || 'No se pudo buscar') + '</div>';
+    return;
+  }
+  const tks = d.tickets || [];
+  if (!tks.length){
+    cont.innerHTML = '<div class="text-muted py-2" style="font-size:.82rem;">'
+      + 'Sin tickets para esa búsqueda.</div>';
+    return;
+  }
+  cont.innerHTML = tks.map(function(t){
+    const num = t.numero_ticket || ('#' + t.id);
+    return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;'
+      + 'padding:11px 12px;border:1px solid #eef0f3;border-radius:11px;margin-bottom:8px;background:#fff;">'
+      + '<div style="min-width:0;">'
+      + '<div style="font-weight:800;font-size:.85rem;color:#0a0a0a;overflow-wrap:anywhere;">'
+      + _cotEsc(num) + '</div>'
+      // Título y cliente COMPLETOS, sin line-clamp (REGLA #15).
+      + '<div style="font-size:.78rem;color:#374151;overflow-wrap:anywhere;">'
+      + _cotEsc(t.titulo || 'Sin título') + '</div>'
+      + '<div style="font-size:.72rem;color:#6b7280;overflow-wrap:anywhere;">'
+      + _cotEsc(t.empresa || t.rut || 'Sin cliente')
+      + (t.created_at ? ' · ' + _cotEsc(t.created_at) : '') + '</div>'
+      + '</div>'
+      + '<button type="button" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;'
+      + 'border-radius:8px;min-height:34px;white-space:nowrap;flex:0 0 auto;" '
+      + 'onclick="cotAsocTkAplicar(' + t.id + ', \'' + _cotEsc(num) + '\', this)">'
+      + '<i class="bi bi-link-45deg me-1"></i>Asociar</button>'
+      + '</div>';
+  }).join('');
+}
+
+async function cotAsocTkAplicar(tid, numeroTicket, btn){
+  if (!_cotAsocCid) return;
+  const ok = await ilusConfirm({
+    title: 'Asociar cotización',
+    message: '¿Enlazar la cotización ' + _cotAsocNum + ' al ticket ' + numeroTicket + '?',
+    sub: 'Queda amarrada a ese ticket para efectos de trazabilidad. Puedes deshacerlo después.',
+    okLabel: 'Asociar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const orig = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + _cotAsocCid + '/asociar-ticket', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ticket_id: tid}),
+    });
+    const d = await r.json();
+    if (!d.ok){
+      ilusToast(d.error || 'No se pudo asociar la cotización', {type:'error'});
+      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+      return;
+    }
+    ilusToast(d.ya_estaba ? '✓ Ya estaba asociada a ese ticket'
+                          : '✓ Asociada a ' + numeroTicket, {type:'success'});
+    const modalEl = document.getElementById('cotAsociarTicketModal');
+    const inst = modalEl ? bootstrap.Modal.getInstance(modalEl) : null;
+    if (inst) inst.hide();
+    location.reload();
+  }catch(e){
+    ilusToast('Error de conexión al asociar la cotización', {type:'error'});
+    if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+async function cotDesasociarTicket(cid, numeroCot, numeroTicket){
+  const ok = await ilusConfirm({
+    title: 'Quitar la cotización del ticket',
+    message: '¿Desasociar ' + numeroCot + ' de ' + numeroTicket + '?',
+    sub: 'La cotización NO se elimina: queda libre para asociarla a otro ticket. '
+       + 'El cambio queda registrado en el historial de ambos.',
+    okLabel: 'Desasociar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + cid + '/desasociar-ticket', {method:'POST'});
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo desasociar', {type:'error'}); return; }
+    ilusToast('✓ ' + numeroCot + ' ya no está asociada a ' + numeroTicket, {type:'success'});
+    location.reload();
+  }catch(e){
+    ilusToast('Error de conexión al desasociar', {type:'error'});
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  const inp = document.getElementById('cotAsocTkQ');
+  if (!inp) return;
+  inp.addEventListener('input', function(){
+    // Debounce: la búsqueda pega a la BD; no una consulta por tecla.
+    clearTimeout(_cotAsocTkTimer);
+    _cotAsocTkTimer = setTimeout(cotAsocTkBuscar, 320);
+  });
+});
+
 // ══════════════ Cotizaciones v3 — tabla inteligente ══════════════
 // Clic en la fila (menos en un botón/link) entra a editar.
 function cotRowClick(e, id){
@@ -2167,14 +2315,17 @@ const _COT_HIST_ICONOS = {
   recalcular:'bi-arrow-repeat', recalcular_aprobada:'bi-arrow-repeat',
   aprobar:'bi-check-circle', rechazar:'bi-x-circle', reabrir:'bi-arrow-counterclockwise',
   enviar_correo:'bi-envelope', generar_ticket:'bi-ticket-perforated',
-  generar_ot:'bi-clipboard-check', eliminar:'bi-trash'
+  generar_ot:'bi-clipboard-check', eliminar:'bi-trash',
+  // 2026-09-05: vínculo con un ticket que ya existía (y su reverso).
+  asociar_ticket:'bi-link-45deg', desasociar_ticket:'bi-x-circle'
 };
 const _COT_HIST_LABEL = {
   crear:'Creada', editar:'Editada', editar_aprobada:'Editada (estaba aprobada)',
   recalcular:'Recotizada', recalcular_aprobada:'Recotizada (estaba aprobada)',
   aprobar:'Aprobada', rechazar:'Rechazada', reabrir:'Reabierta',
   enviar_correo:'Enviada por correo', generar_ticket:'Ticket generado',
-  generar_ot:'OT generada', eliminar:'Eliminada'
+  generar_ot:'OT generada', eliminar:'Eliminada',
+  asociar_ticket:'Asociada a un ticket', desasociar_ticket:'Desasociada del ticket'
 };
 async function cotVerHistorial(cid, numero){
   document.getElementById('cotHistNum').textContent = numero || '';
@@ -2203,6 +2354,10 @@ function _cotHistDetalle(accion, o){
     const ks = Object.keys(o.cambios); if (ks.length) return '(' + ks.join(', ') + ')';
   }
   if (accion === 'generar_ticket' && o.numero_ticket) return '→ ' + _cotEsc(o.numero_ticket);
+  // El historial tiene que decir DE QUÉ ticket se trata: "Desasociada" a
+  // secas no permite reconstruir la historia meses después.
+  if (accion === 'asociar_ticket' && o.numero_ticket) return '→ ' + _cotEsc(o.numero_ticket);
+  if (accion === 'desasociar_ticket' && o.numero_ticket) return '← ' + _cotEsc(o.numero_ticket);
   return '';
 }
 
