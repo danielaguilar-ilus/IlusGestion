@@ -52185,22 +52185,20 @@ def _puede_ot_accion(vid, accion, user=None):
     uid = user.get("id")
     username = user.get("username") or ""
 
-    # ── REGLA ABSOLUTA: superadmin SIEMPRE pasa ────────────────────
-    if role == "superadmin":
-        print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} -> ALLOWED (superadmin)", flush=True)
-        return True
-
-    # Sin user_id válido → denegar (sesión rota)
-    if not uid:
-        print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (sin uid)", flush=True)
-        return False
-
     # PERF 2026-05-22: cache request-scoped del fetch de mant_visitas.
     # ANTES: mant_ot_ejecutar llama `_puede_ot_accion(vid, ver/ejecutar/
     # aprobar/configurar)` = 4 queries idénticas al `mant_visitas` por
     # cada page-load. AHORA: la primera ejecución guarda en `g._perm_visita_cache`
     # y las siguientes 3 reusan el dict. Reduce 3 queries × cada acción extra.
     # `g` se limpia automáticamente al fin del request (Flask teardown).
+    #
+    # 🔒 FIX 2026-09-04 (Daniel, OT-2026-00133 — "es peligroso la alteración
+    # de evidencia... debe ser un proceso cerrado"): esta carga se movió de
+    # DESPUÉS de "superadmin siempre pasa" a ANTES, porque la regla absoluta
+    # de abajo ahora necesita saber si el responsable YA firmó antes de
+    # decidir. Sin este dato, superadmin (incluido Daniel) podía declarar
+    # garantía/finanzas o reasignar técnico sobre una OT que el ejecutivo
+    # SSTT ya había firmado y cerrado -- exactamente lo que pasó acá.
     try:
         _perm_cache = getattr(g, "_perm_visita_cache", None)
         if _perm_cache is None:
@@ -52248,6 +52246,43 @@ def _puede_ot_accion(vid, accion, user=None):
         _perm_cache[_cache_key] = v
     elif v is False:
         # Cachée previa indicó que la OT no existe.
+        return False
+
+    # ── REGLA ABSOLUTA: superadmin SIEMPRE pasa ──── salvo sobre una OT que
+    # el responsable/supervisor YA firmó (evidencia sellada de verdad).
+    #
+    # 🔒 FIX 2026-09-04 (Daniel, en vivo sobre OT-2026-00133): "cuando el
+    # administrador firma, ya la OT queda cerrada y es evidencia que tiene
+    # que quedarse ya... es peligroso la alteración de evidencia, debe ser
+    # un proceso cerrado". El candado maestro de superadmin (pensado para
+    # destrabar operación del día a día) no distinguía "antes de cerrar" de
+    # "ya cerrada y firmada" -- eso es justo lo que permitió declarar
+    # garantía/reasignar técnico sobre una OT que Aarón ya había firmado
+    # como responsable. `firma_supervisor_user_id` es la MISMA columna que
+    # `mant_ot_aprobar_cierre` escribe atómicamente junto con
+    # `estado='cerrada'` (un solo UPDATE, nunca queda una sin la otra) --
+    # es la señal de verdad de "ya hay una firma de cierre real", más
+    # confiable que leer `estado` solo (una OT puede volver a
+    # 'pendiente_aprobacion' por otros caminos sin que la firma se borre).
+    # Las acciones bloqueadas son las que ALTERAN contenido ya sellado
+    # (finanzas/garantía/documento, metadata como reasignar técnico o
+    # reagendar, re-ejecutar tareas, re-configurar la OT) -- 'ver' y el
+    # resto de acciones de solo lectura/auditoría NO se tocan: superadmin
+    # siempre debe poder auditar una OT cerrada, solo no alterarla.
+    _ot_firmada_por_responsable = bool(v.get("firma_supervisor_user_id"))
+    _acciones_bloqueadas_post_firma = ("cobertura", "metadata", "editar", "ejecutar", "configurar")
+    if role == "superadmin":
+        if _ot_firmada_por_responsable and accion in _acciones_bloqueadas_post_firma:
+            print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} "
+                  f"-> DENIED (OT ya firmada por el responsable — ni superadmin "
+                  f"altera evidencia sellada)", flush=True)
+            return False
+        print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} -> ALLOWED (superadmin)", flush=True)
+        return True
+
+    # Sin user_id válido → denegar (sesión rota)
+    if not uid:
+        print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (sin uid)", flush=True)
         return False
 
     tecnico_uid = v.get("tecnico_user_id")
