@@ -77193,6 +77193,69 @@ _OT2_LINEA_ZZ = {
 }
 
 
+def _ensure_mant_visita_documentos():
+    """Tabla puente OT ↔ documentos (multidocumento). Idempotente, corre
+    SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+
+    🆕 2026-09-05 (Daniel, caso real: "tengo la factura 11439, 11440 y
+    11441 que agregar en una instalación... además están incluidas dos
+    cotizaciones del sistema, la 45 y la 48"). Hasta hoy una OT tenía UN
+    solo documento (`mant_visitas.factura_tido/factura_nudo`): al asociar
+    el segundo, el primero se perdía. Esto ya estaba decidido desde el
+    29-ago y se había dejado a propósito sin construir hasta poder
+    diseñarlo con Daniel (era una decisión de modelo de datos, no de UI).
+
+    DOS TIPOS de documento, con pesos distintos — decisión de Daniel de hoy:
+      · origen='erp'        → factura/boleta/NVV real del ERP Random.
+                              `es_cobro=1`: sirve para cerrar la OT.
+      · origen='cotizacion' → cotización interna (tk_cotizaciones).
+                              `es_cobro=0`: es trazabilidad de dónde nació
+                              el trabajo, NO reemplaza al documento de
+                              cobro. Respeta la regla del 19-08 ("toda OT
+                              externa cierra con factura, boleta, NVV o
+                              garantía").
+
+    COMPATIBILIDAD: `mant_visitas.factura_tido/factura_nudo` NO desaparece
+    ni cambia de significado — sigue siendo el documento PRINCIPAL, el que
+    leen el candado de cierre (`_ot2_finanzas_estado`), el PDF, el margen y
+    los reportes. Esta tabla lo COMPLEMENTA: el principal se espeja acá
+    como una fila más, y los adicionales viven solo acá. Así nada de lo que
+    ya funciona cambia de comportamiento (REGLA #4.2).
+
+    Los datos del documento (monto, RUT, fecha) se CONGELAN al asociarlo:
+    el ERP es la fuente de verdad al momento de declarar, pero la OT es
+    evidencia y no puede quedar dependiendo de que ese documento siga
+    siendo consultable meses después.
+    """
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_visita_documentos (
+                id             INT AUTO_INCREMENT PRIMARY KEY,
+                visita_id      INT NOT NULL,
+                origen         ENUM('erp','cotizacion') NOT NULL DEFAULT 'erp',
+                es_cobro       TINYINT(1) NOT NULL DEFAULT 1,
+                es_principal   TINYINT(1) NOT NULL DEFAULT 0,
+                erp_tido       VARCHAR(10)  NULL,
+                erp_nudo       VARCHAR(30)  NULL,
+                cotizacion_id  INT          NULL,
+                etiqueta       VARCHAR(200) NULL,
+                monto          DECIMAL(14,2) NULL,
+                rut            VARCHAR(20)  NULL,
+                rut_ok         TINYINT(1)   NULL,
+                rut_justif     TEXT         NULL,
+                emitido_el     DATE         NULL,
+                asociado_por   VARCHAR(190) NULL,
+                created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (visita_id) REFERENCES mant_visitas(id) ON DELETE CASCADE,
+                INDEX idx_vd_visita (visita_id),
+                INDEX idx_vd_erp (erp_tido, erp_nudo),
+                INDEX idx_vd_cot (cotizacion_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_visita_documentos] {e}", flush=True)
+
+
 def _ensure_ot_finanzas_cols():
     """Columnas del paso de FINANZAS en mant_visitas — SIEMPRE, incluso con
     ILUS_SKIP_MIGRATIONS=1.
@@ -79664,6 +79727,279 @@ def _ot_alta_equipos_al_cerrar(vid, usuario=None):
     except Exception as e:
         print(f"[ot2_alta_auto] vid={vid} falló (la OT se cierra igual): {e}",
               flush=True)
+
+
+def _ot_docs_listar(vid):
+    """Documentos asociados a la OT, ya normalizados para la pantalla.
+
+    Incluye el documento PRINCIPAL aunque solo viva en
+    `mant_visitas.factura_*` (OT anteriores a la tabla puente): se sintetiza
+    una fila virtual con id=None para que la lista nunca mienta sobre lo que
+    la OT tiene declarado.
+    """
+    v = mysql_fetchone(
+        "SELECT factura_tido, factura_nudo, factura_monto, factura_rut, "
+        "       factura_rut_ok, factura_emitida_at "
+        "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    try:
+        filas = mysql_fetchall(
+            "SELECT d.*, c.numero_cotizacion, c.total AS cot_total, c.estado AS cot_estado "
+            "  FROM mant_visita_documentos d "
+            "  LEFT JOIN tk_cotizaciones c ON c.id = d.cotizacion_id "
+            " WHERE d.visita_id=%s ORDER BY d.es_principal DESC, d.id", (vid,)) or []
+    except Exception as e:
+        print(f"[ot_docs] listar vid={vid}: {e}", flush=True)
+        filas = []
+
+    docs = []
+    _erp_ya = set()
+    for f in filas:
+        f = dict(f)
+        if f.get("origen") == "cotizacion":
+            docs.append({
+                "id": f["id"], "origen": "cotizacion", "es_cobro": False,
+                "es_principal": False,
+                "titulo": f.get("numero_cotizacion") or f"Cotización #{f.get('cotizacion_id')}",
+                "etiqueta": f.get("etiqueta") or "",
+                "monto": float(f["cot_total"]) if f.get("cot_total") is not None else None,
+                "cotizacion_id": f.get("cotizacion_id"),
+                "estado": f.get("cot_estado") or "",
+            })
+        else:
+            _erp_ya.add((f.get("erp_tido") or "", f.get("erp_nudo") or ""))
+            docs.append({
+                "id": f["id"], "origen": "erp", "es_cobro": bool(f.get("es_cobro", 1)),
+                "es_principal": bool(f.get("es_principal")),
+                "titulo": f"{f.get('erp_tido') or 'FCV'} {f.get('erp_nudo') or ''}".strip(),
+                "etiqueta": f.get("etiqueta") or "",
+                "monto": float(f["monto"]) if f.get("monto") is not None else None,
+                "rut": f.get("rut") or "", "rut_ok": f.get("rut_ok"),
+                "emitido_el": str(f["emitido_el"])[:10] if f.get("emitido_el") else None,
+            })
+
+    # El principal legacy (solo en mant_visitas) se muestra igual.
+    _p_nudo = (v.get("factura_nudo") or "").strip()
+    if _p_nudo and (v.get("factura_tido") or "", _p_nudo) not in _erp_ya:
+        docs.insert(0, {
+            "id": None, "origen": "erp", "es_cobro": True, "es_principal": True,
+            "titulo": f"{v.get('factura_tido') or 'FCV'} {_p_nudo}".strip(),
+            "etiqueta": "", "solo_legacy": True,
+            "monto": float(v["factura_monto"]) if v.get("factura_monto") is not None else None,
+            "rut": v.get("factura_rut") or "", "rut_ok": v.get("factura_rut_ok"),
+            "emitido_el": str(v["factura_emitida_at"])[:10] if v.get("factura_emitida_at") else None,
+        })
+
+    _cobro = [d for d in docs if d.get("es_cobro")]
+    return {
+        "documentos": docs,
+        "n_cobro": len(_cobro),
+        "total_cobro": sum((d.get("monto") or 0) for d in _cobro),
+    }
+
+
+@app.route("/ot/api/<int:vid>/documentos", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_api_documentos_listar(vid):
+    """Lista los documentos de la OT (facturas del ERP + cotizaciones)."""
+    if _es_rol_tecnico():
+        # Mismo criterio que el resto de finanzas: el técnico no ve montos.
+        return jsonify({"ok": False, "error": "Sin permiso para ver documentos."}), 403
+    return jsonify({"ok": True, **_ot_docs_listar(vid)})
+
+
+@app.route("/ot/api/<int:vid>/documentos", methods=["POST"])
+@_mant_required
+@_ot_can_cobertura
+def ot2_api_documentos_agregar(vid):
+    """Asocia OTRO documento a la OT (multidocumento).
+
+    🆕 2026-09-05 (Daniel: "tengo la factura 11439, 11440 y 11441 que
+    agregar en una instalación... y dos cotizaciones del sistema").
+
+    body ERP:        {origen:'erp', tipo:'FCV', numero:'11439', etiqueta:'Instalación', justificacion?}
+    body cotización: {origen:'cotizacion', cotizacion:'COT-000045'|45, etiqueta:'Instalación'}
+
+    El PRIMER documento de cobro sigue espejándose en
+    `mant_visitas.factura_*` (es el que leen el candado de cierre, el PDF y
+    el margen). Los siguientes viven solo en la tabla puente: suman al total
+    y a la trazabilidad, pero no cambian lo que ya estaba declarado — así
+    agregar una segunda factura nunca pisa la primera, que es justo el bug
+    que Daniel encontró.
+    """
+    d = request.get_json(silent=True) or {}
+    origen = (d.get("origen") or "erp").strip().lower()
+    etiqueta = (d.get("etiqueta") or "").strip()[:200] or None
+
+    v = mysql_fetchone(
+        "SELECT v.id, v.factura_tido, v.factura_nudo, v.estado_facturacion, "
+        "       c.rut AS cli_rut, c.razon_social "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE v.id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+
+    # ── Cotización interna: referencia, NO documento de cobro ──────────
+    if origen == "cotizacion":
+        _ref = str(d.get("cotizacion") or "").strip()
+        if not _ref:
+            return jsonify({"ok": False, "error": "Indica el número de la cotización."}), 400
+        _num = re.sub(r"[^0-9]", "", _ref)
+        cot = mysql_fetchone(
+            "SELECT id, numero_cotizacion, total, estado FROM tk_cotizaciones "
+            " WHERE numero_cotizacion=%s OR id=%s "
+            "    OR numero_cotizacion=CONCAT('COT-', LPAD(%s,6,'0')) LIMIT 1",
+            (_ref, _num or 0, _num or 0))
+        if not cot:
+            return jsonify({
+                "ok": False,
+                "error": f"No encontramos la cotización «{_ref}» en el sistema.",
+            }), 404
+        _ya = mysql_fetchone(
+            "SELECT id FROM mant_visita_documentos "
+            " WHERE visita_id=%s AND cotizacion_id=%s", (vid, cot["id"]))
+        if _ya:
+            return jsonify({"ok": False,
+                            "error": f"La {cot['numero_cotizacion']} ya está asociada a esta OT."}), 409
+        mysql_execute(
+            "INSERT INTO mant_visita_documentos "
+            "  (visita_id, origen, es_cobro, es_principal, cotizacion_id, etiqueta, asociado_por) "
+            "VALUES (%s,'cotizacion',0,0,%s,%s,%s)",
+            (vid, cot["id"], etiqueta, current_username()))
+        try:
+            _mant_log("visita", vid, "documento_asociado",
+                      f"Cotización {cot['numero_cotizacion']} (referencia)"
+                      + (f" · {etiqueta}" if etiqueta else ""))
+        except Exception:
+            pass
+        return jsonify({"ok": True, **_ot_docs_listar(vid)})
+
+    # ── Documento del ERP (factura/boleta/NVV) ─────────────────────────
+    tipo = (d.get("tipo") or "FCV").strip().upper()[:5]
+    if tipo not in _OT_DOCS_CIERRE:
+        tipo = "FCV"
+    numero = re.sub(r"[^0-9]", "", str(d.get("numero") or ""))
+    if not numero:
+        return jsonify({"ok": False, "error": "Indica el número del documento."}), 400
+
+    doc, _fuente, _respondio, _erp_err = _erp_doc_lookup(tipo, numero)
+    if not doc:
+        if not _respondio:
+            return jsonify({
+                "ok": False,
+                "error": "El ERP de Random no está respondiendo. No es el número — "
+                         "reintenta en unos minutos.",
+            }), 502
+        return jsonify({
+            "ok": False,
+            "error": f"No encontramos la {tipo} N° {numero} en el ERP.",
+        }), 404
+
+    # La clave REAL de MAEEDO, no el atajo que tecleó el usuario (mismo
+    # criterio que mant_ot_asociar_factura: "VD"+"10460" no es buscable).
+    if tipo in erp_engine.TIDO_NUDO_MAP:
+        _tipo_real, _nudo_fn = erp_engine.TIDO_NUDO_MAP[tipo]
+        _numero_real = _nudo_fn(numero)
+    else:
+        _tipo_real, _numero_real = tipo, numero
+
+    _ya = mysql_fetchone(
+        "SELECT id FROM mant_visita_documentos "
+        " WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s",
+        (vid, _tipo_real, _numero_real[:30]))
+    if _ya or ((v.get("factura_tido") or "") == _tipo_real
+               and (v.get("factura_nudo") or "") == _numero_real[:30]):
+        return jsonify({"ok": False,
+                        "error": f"La {_tipo_real} {_numero_real} ya está asociada a esta OT."}), 409
+
+    rut_fact = (doc.get("cliente_rut") or "").strip()
+    analisis = _rut_analisis_comparacion(v.get("cli_rut"), rut_fact)
+    justif = (d.get("justificacion") or "").strip()[:1000]
+    if not analisis["match"] and not justif:
+        return jsonify({
+            "ok": False, "error_codigo": "RUT_NO_COINCIDE",
+            "error": "El RUT del documento no coincide con el del cliente. "
+                     "Explica por qué corresponde igual.",
+            "analisis": analisis,
+        }), 409
+    try:
+        _monto = float(doc.get("valor_bruto") or 0) or None
+    except (TypeError, ValueError):
+        _monto = None
+
+    # ¿Es el primero? Entonces además se espeja al campo principal, que es
+    # el que gobierna cierre/PDF/margen y ya existía desde siempre.
+    _es_primero = not (v.get("factura_nudo") or "").strip()
+    mysql_execute(
+        "INSERT INTO mant_visita_documentos "
+        "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
+        "   etiqueta, monto, rut, rut_ok, rut_justif, emitido_el, asociado_por) "
+        "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (vid, 1 if _es_primero else 0, _tipo_real, _numero_real[:30], etiqueta,
+         _monto, rut_fact[:20] or None, 1 if analisis["match"] else 0,
+         justif or None, (str(doc.get("fecha"))[:10] or None) if doc.get("fecha") else None,
+         current_username()))
+
+    if _es_primero:
+        _estado_fact = ("con_nota_venta" if _tipo_real in _OT_DOCS_NOTA_VENTA
+                        else "facturado")
+        try:
+            mysql_execute(
+                "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
+                "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
+                "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
+                "  factura_rut_justif=%s, factura_asociada_por=%s, "
+                "  costo=COALESCE(NULLIF(costo,0), %s), estado_facturacion=%s "
+                " WHERE id=%s",
+                (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
+                 1 if analisis["match"] else 0, justif or None,
+                 current_username(), _monto, _estado_fact, vid))
+        except Exception as e:
+            print(f"[ot_docs] espejo principal vid={vid}: {e}", flush=True)
+
+    try:
+        _mant_log("visita", vid, "documento_asociado",
+                  f"{_tipo_real} {_numero_real}"
+                  + (f" · ${_monto:,.0f}" if _monto else "")
+                  + (f" · {etiqueta}" if etiqueta else "")
+                  + (" · PRINCIPAL" if _es_primero else " · adicional"))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "es_principal": _es_primero, **_ot_docs_listar(vid)})
+
+
+@app.route("/ot/api/<int:vid>/documentos/<int:did>", methods=["DELETE"])
+@_mant_required
+@_ot_can_cobertura
+def ot2_api_documentos_quitar(vid, did):
+    """Quita un documento ADICIONAL de la OT.
+
+    El documento PRINCIPAL no se quita por acá a propósito: es el que
+    sostiene el cierre, el PDF y el margen, y sacarlo por una lista sería
+    exactamente el tipo de borrado silencioso que la OT no admite. Para
+    cambiarlo está el flujo de siempre (asociar factura / declarar
+    garantía), que deja su propio registro.
+    """
+    f = mysql_fetchone(
+        "SELECT id, es_principal, origen, erp_tido, erp_nudo, cotizacion_id "
+        "  FROM mant_visita_documentos WHERE id=%s AND visita_id=%s", (did, vid))
+    if not f:
+        return jsonify({"ok": False, "error": "Documento no encontrado en esta OT."}), 404
+    if f.get("es_principal"):
+        return jsonify({
+            "ok": False, "error_codigo": "ES_PRINCIPAL",
+            "error": "Ese es el documento principal de la OT: sostiene el cierre "
+                     "y el PDF. Cámbialo desde Finanzas (asociar documento o "
+                     "declarar garantía), no desde la lista.",
+        }), 409
+    mysql_execute("DELETE FROM mant_visita_documentos WHERE id=%s", (did,))
+    try:
+        _mant_log("visita", vid, "documento_quitado",
+                  (f"{f.get('erp_tido')} {f.get('erp_nudo')}" if f.get("origen") == "erp"
+                   else f"Cotización #{f.get('cotizacion_id')}"))
+    except Exception:
+        pass
+    return jsonify({"ok": True, **_ot_docs_listar(vid)})
 
 
 @app.route("/ot/api/<int:vid>/proveedor-del-tecnico", methods=["GET", "POST"])
@@ -117755,6 +118091,14 @@ try:
         _ensure_ot_finanzas_cols()
 except Exception as _ensure_fin_err:
     print(f"[ILUS][WARN] _ensure_ot_finanzas_cols: {_ensure_fin_err}", flush=True)
+
+# Multidocumento de la OT (varias facturas + cotizaciones de referencia),
+# Daniel 2026-09-05 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_visita_documentos()
+except Exception as _ensure_vdoc_err:
+    print(f"[ILUS][WARN] _ensure_mant_visita_documentos: {_ensure_vdoc_err}", flush=True)
 
 # RUT de la contraparte (quien recibe al técnico en sitio),
 # Daniel 2026-08-30 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

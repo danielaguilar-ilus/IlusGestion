@@ -1061,6 +1061,28 @@
 .otd-tabpanel{display:none}
 .otd-tabpanel.on{display:block}
 
+/* 📄 Multidocumento de la OT (2026-09-05) — lista de facturas/boletas +
+   cotizaciones de referencia. Cada fila dice de un vistazo qué es, para
+   qué, cuánto y si el RUT calzó, porque una OT facturada en tres
+   documentos se audita leyendo esa fila, no abriendo el ERP. */
+.otd-docs-lista{display:flex;flex-direction:column;gap:6px}
+.otd-doc{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;
+  border:1px solid var(--line);background:#fff}
+.otd-doc.cot{background:#f8fafc;border-style:dashed}
+.otd-doc .ico{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
+  flex:0 0 auto;color:#fff;font-size:.78rem;background:#0f172a}
+.otd-doc.cot .ico{background:#64748b}
+.otd-doc .tx{flex:1;min-width:0}
+.otd-doc .t{font-size:.79rem;font-weight:800;color:#0f172a}
+.otd-doc .s{font-size:.68rem;color:#64748b}
+.otd-doc .mo{font-size:.8rem;font-weight:800;color:#0f172a;white-space:nowrap}
+.otd-doc .pill{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;
+  padding:2px 6px;border-radius:999px;background:#dcfce7;color:#166534}
+.otd-doc .pill.ref{background:#e2e8f0;color:#475569}
+.otd-doc .pill.warn{background:#fef3c7;color:#92400e}
+.otd-doc .del{background:none;border:0;color:#cbd5e1;cursor:pointer;font-size:.85rem;padding:2px 4px}
+.otd-doc .del:hover{color:#dc2626}
+
 /* Evidencia — galería de fotos reales de la visita */
 .otd-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
   padding:14px 16px}
@@ -2979,6 +3001,49 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                         onclick="otdLeerLineasZz()">
                   <i class="bi bi-magic"></i> Leer documento</button>
               </div>
+            </div>
+          </div>
+
+          {# ── PASO 1.b: los OTROS documentos de la OT (multidocumento) ──
+             🆕 2026-09-05 (Daniel, caso real: "tengo la factura 11439,
+             11440 y 11441 que agregar en una instalación... además están
+             incluidas dos cotizaciones del sistema, la 45 y la 48").
+             El Paso 1 declara el documento PRINCIPAL (el que sostiene el
+             cierre, el PDF y el margen — no cambia). Acá se suman los
+             demás: una instalación facturada en tres documentos deja de
+             tener que elegir cuál "sacrificar", que es lo que pasaba antes
+             porque el segundo pisaba al primero.
+             Las cotizaciones entran como REFERENCIA (no cierran la OT,
+             decisión de Daniel de hoy): sirven para saber de dónde nació
+             el trabajo y con qué se cotizó. #}
+          <div class="otd-fpaso" id="otdDocsPaso">
+            <div class="hd"><span class="num">+</span> Otros documentos de esta OT
+              <span class="est" id="otdDocsResumen"></span></div>
+            <div class="bd">
+              <div id="otdDocsLista" class="otd-docs-lista">
+                <div class="text-muted" style="font-size:.76rem">Cargando…</div>
+              </div>
+              <div class="d-flex gap-1 mt-2 flex-wrap">
+                <select id="otdDocTipo" class="form-select form-select-sm" style="width:auto;min-width:104px">
+                  <option value="FCV">Factura</option>
+                  <option value="BLV">Boleta</option>
+                  <option value="NVV">Nota venta</option>
+                  <option value="NVI">NVI</option>
+                  <option value="__cot__">Cotización</option>
+                </select>
+                <input type="text" id="otdDocNum" class="form-control form-control-sm"
+                       style="width:auto;min-width:112px" placeholder="N° documento"
+                       inputmode="numeric">
+                <input type="text" id="otdDocEtiq" class="form-control form-control-sm"
+                       style="width:auto;min-width:126px" placeholder="Para qué (opcional)">
+                <button type="button" class="btn btn-dark btn-sm" onclick="otdDocAgregar()">
+                  <i class="bi bi-plus-lg"></i> Agregar</button>
+              </div>
+              <div class="small text-muted mt-1" style="font-size:.68rem">
+                Las facturas y boletas suman al total cobrado. Las cotizaciones quedan
+                como referencia: no reemplazan el documento de cobro.
+              </div>
+              <div class="small text-danger mt-1" id="otdDocErr" style="min-height:14px;font-size:.7rem"></div>
             </div>
           </div>
 
@@ -6578,6 +6643,131 @@ function otdEsc(s){
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   MULTIDOCUMENTO DE LA OT (2026-09-05)
+   Daniel: "cuando le damos factura o boleta, no puedo agregar más...
+   tengo la factura 11439, 11440 y 11441 que agregar en una instalación".
+   El Paso 1 sigue mandando el documento PRINCIPAL; esto administra los
+   adicionales contra /ot/api/<vid>/documentos.
+   ══════════════════════════════════════════════════════════════════════ */
+const OTD_VID = {{ v.id }};
+
+function otdDocFila(d){
+  const esCot = d.origen === 'cotizacion';
+  const monto = (d.monto || d.monto === 0)
+    ? '$' + Math.round(d.monto).toLocaleString('es-CL') : '';
+  // El RUT que no calzó se declara acá: es el dato que después nadie
+  // recuerda haber justificado.
+  const rutPill = (!esCot && d.rut_ok === 0)
+    ? '<span class="pill warn" title="Se asoció con justificación">RUT distinto</span>' : '';
+  const pill = esCot
+    ? '<span class="pill ref">Referencia</span>'
+    : (d.es_principal ? '<span class="pill">Principal</span>' : '');
+  const sub = [d.etiqueta, d.emitido_el ? ('Emitido ' + d.emitido_el) : '',
+               esCot && d.estado ? d.estado : ''].filter(Boolean).join(' · ');
+  const borrar = (d.id && !d.es_principal)
+    ? `<button type="button" class="del" title="Quitar de la OT"
+         onclick="otdDocQuitar(${d.id})"><i class="bi bi-x-lg"></i></button>` : '';
+  return `<div class="otd-doc ${esCot ? 'cot' : ''}">
+    <span class="ico"><i class="bi ${esCot ? 'bi-file-earmark-text' : 'bi-receipt'}"></i></span>
+    <span class="tx"><span class="t">${otdEsc(d.titulo)}</span>
+      ${sub ? `<div class="s">${otdEsc(sub)}</div>` : ''}</span>
+    ${pill}${rutPill}
+    <span class="mo">${monto}</span>${borrar}</div>`;
+}
+
+function otdDocPintar(data){
+  const cont = document.getElementById('otdDocsLista');
+  const res  = document.getElementById('otdDocsResumen');
+  if (!cont) return;
+  const docs = (data && data.documentos) || [];
+  cont.innerHTML = docs.length
+    ? docs.map(otdDocFila).join('')
+    : '<div class="text-muted" style="font-size:.76rem">Todavía no hay documentos asociados.</div>';
+  if (res){
+    const n = (data && data.n_cobro) || 0;
+    const tot = (data && data.total_cobro) || 0;
+    res.textContent = n
+      ? `${n} de cobro · $${Math.round(tot).toLocaleString('es-CL')}`
+      : '';
+  }
+}
+
+async function otdDocCargar(){
+  try {
+    const r = await fetch(`/ot/api/${OTD_VID}/documentos`);
+    const d = await r.json().catch(() => ({}));
+    if (d && d.ok) otdDocPintar(d);
+    else otdDocPintar({documentos: []});
+  } catch(e){ otdDocPintar({documentos: []}); }
+}
+
+async function otdDocAgregar(){
+  const err = document.getElementById('otdDocErr');
+  err.textContent = '';
+  const tipo = document.getElementById('otdDocTipo').value;
+  const num  = (document.getElementById('otdDocNum').value || '').trim();
+  const etiq = (document.getElementById('otdDocEtiq').value || '').trim();
+  if (!num){ err.textContent = 'Escribe el número.'; return; }
+  const body = (tipo === '__cot__')
+    ? {origen: 'cotizacion', cotizacion: num, etiqueta: etiq}
+    : {origen: 'erp', tipo: tipo, numero: num, etiqueta: etiq};
+  try {
+    let r = await fetch(`/ot/api/${OTD_VID}/documentos`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    let d = await r.json().catch(() => ({}));
+    // RUT distinto al del cliente: se pide justificación y se reintenta,
+    // igual que el flujo del documento principal -- no se asocia a ciegas.
+    if (!d.ok && d.error_codigo === 'RUT_NO_COINCIDE'){
+      const just = await ilusPrompt({
+        title: 'El RUT no coincide',
+        message: 'El RUT del documento no es el del cliente de esta OT.',
+        sub: 'Explica por qué corresponde igual. Queda guardado con tu usuario.',
+        placeholder: 'Ej: se facturó a la matriz, el servicio fue en la sucursal',
+        required: true, multiline: true, okLabel: 'Asociar igual',
+      });
+      if (!just || just.trim().length < 5){ err.textContent = 'Se canceló.'; return; }
+      body.justificacion = just.trim();
+      r = await fetch(`/ot/api/${OTD_VID}/documentos`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      d = await r.json().catch(() => ({}));
+    }
+    if (!d.ok){ err.textContent = d.error || 'No se pudo agregar.'; return; }
+    document.getElementById('otdDocNum').value = '';
+    document.getElementById('otdDocEtiq').value = '';
+    otdDocPintar(d);
+    ilusToast('✓ Documento asociado a la OT', {type:'success'});
+    // Si fue el primero, pasó a ser el principal: esa declaración cambia
+    // el candado de cierre y el margen, así que la pantalla se refresca.
+    if (d.es_principal) setTimeout(() => location.reload(), 900);
+  } catch(e){ err.textContent = 'Error de conexión.'; }
+}
+
+async function otdDocQuitar(did){
+  const ok = await ilusConfirm({
+    title: 'Quitar documento',
+    message: '¿Sacar este documento de la OT?',
+    sub: 'Queda registrado en la bitácora de la OT. El documento en sí no se toca.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/ot/api/${OTD_VID}/documentos/${did}`, {method: 'DELETE'});
+    const d = await r.json().catch(() => ({}));
+    if (!d.ok){ ilusToast(d.error || 'No se pudo quitar.', {type:'error'}); return; }
+    otdDocPintar(d);
+    ilusToast('Documento quitado', {type:'info'});
+  } catch(e){ ilusToast('Error de conexión.', {type:'error'}); }
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  if (document.getElementById('otdDocsLista')) otdDocCargar();
+});
 
 /* Abre una foto a pantalla completa.
    🔍 2026-09-04 (Daniel: "quiero verla con buena calidad, mover las fotos,
