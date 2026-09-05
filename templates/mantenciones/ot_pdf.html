@@ -544,31 +544,45 @@
     width: 22px; text-align: center; font-weight: 800;
     color: var(--ilus-red);
   }
+  {# 🎨 FIX 2026-09-05 (Daniel, viendo el PDF de la OT: "las OT no me gusta
+     cómo se ve, muy colorida"). El TIPO de respuesta de cada tarea (número,
+     sí/no, GPS, fecha, lista, texto, foto, verificación) se pintaba con NUEVE
+     colores distintos: ámbar, morado, turquesa, índigo, rosado, gris, naranjo,
+     verde y azul. Eso no comunicaba nada -- el tipo ya está escrito con
+     letras -- y convertía la tabla en un semáforo sin significado, justo en
+     el documento más formal que ve el cliente.
+     Ahora el tipo va en una sola escala neutra. El color queda reservado
+     para lo que SÍ es un estado: el resultado de la tarea (.pill-res, más
+     abajo) y el diagnóstico del equipo. Mismo criterio sobrio que las
+     cotizaciones, que es a donde Daniel pidió acercar la OT. #}
   table.chk .pill-tipo {
     display: inline-block; padding: 1px 6px;
     border-radius: 50px; font-size: 7pt; font-weight: 800;
-    background: #dbeafe; color: #1e40af;
+    background: #f3f4f6; color: #4b5563;
+    border: 1px solid #e5e7eb;
     text-transform: uppercase; letter-spacing: .02em;
     white-space: nowrap;
   }
-  table.chk .pill-tipo.numero { background: #fef3c7; color: #92400e; }
-  table.chk .pill-tipo.sino { background: #f3e8ff; color: #6b21a8; }
-  table.chk .pill-tipo.gps { background: #ccfbf1; color: #115e59; }
-  table.chk .pill-tipo.fecha_hora { background: #e0e7ff; color: #3730a3; }
-  table.chk .pill-tipo.lista { background: #fce7f3; color: #9d174d; }
-  table.chk .pill-tipo.texto { background: #f3f4f6; color: #374151; }
-  table.chk .pill-tipo.foto { background: #fed7aa; color: #9a3412; }
-  table.chk .pill-tipo.verificacion { background: #dcfce7; color: #166534; }
+  {# 🎨 2026-09-05, segunda parte del "muy colorida" de Daniel. El resultado
+     salía SIEMPRE en verde salvo excepción, y el backend manda 'ok' como
+     clase por defecto para cualquier valor -- así que un número ("3 mm"),
+     una fecha o una ubicación se pintaban igual de verdes que un
+     "Aprobado". Con 933 tareas eso es una página entera en verde donde el
+     color dejó de querer decir nada.
+     Ahora manda el principio inverso: lo NORMAL es neutro y solo se colorea
+     la excepción -- ámbar si hay observación, rojo si hay falla. En un
+     informe técnico lo que el ojo tiene que encontrar es lo que salió mal,
+     no confirmar 900 veces que todo estuvo bien. #}
   table.chk .pill-res {
     display: inline-block; padding: 1px 8px;
     border-radius: 50px; font-size: 7.5pt; font-weight: 800;
-    background: var(--ilus-ok-bg); color: var(--ilus-ok);
+    background: #f3f4f6; color: #374151;
+    border: 1px solid #e5e7eb;
     text-transform: uppercase; letter-spacing: .02em;
     white-space: nowrap;
   }
-  table.chk .pill-res.warn { background: #fef3c7; color: #92400e; }
-  table.chk .pill-res.err  { background: #fee2e2; color: #991b1b; }
-  table.chk .pill-res.txt  { background: #f3f4f6; color: #374151; }
+  table.chk .pill-res.warn { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+  table.chk .pill-res.err  { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
   table.chk .ico {
     color: var(--ilus-red); font-size: 10pt;
     text-align: center;
@@ -604,9 +618,12 @@
   {# 🎨 2026-09-04: los 4 mini-resumen usaban el mismo cuadrado rojo -- un
      color por categoría lee más rápido como panel de estado (mismo
      espíritu semáforo de REGLA #15), sin tocar la estructura. #}
-  .res-mini .rm-ico.ok   { background: var(--ilus-ok); }
-  .res-mini .rm-ico.dark { background: var(--ilus-black); }
-  .res-mini .rm-ico.mute { background: #64748b; }
+  {# 2026-09-05: los cuatro cuadros del resumen usaban rojo/verde/negro/gris,
+     un color por categoría. Como el tipo, eso no era estado: era decoración.
+     Quedan todos en negro de marca; el dato lo dice la cifra, no el color. #}
+  .res-mini .rm-ico.ok,
+  .res-mini .rm-ico.dark,
+  .res-mini .rm-ico.mute { background: var(--ilus-black); }
   .res-mini .rm-text { line-height: 1.3; }
   .res-mini .rm-val {
     font-size: 10.5pt; font-weight: 900;
