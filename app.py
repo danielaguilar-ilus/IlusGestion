@@ -71309,37 +71309,33 @@ def mant_visita_firmar(vid):
             except Exception:
                 pass
     elif tipo == "supervisor":
-        # admin/superadmin + creador de la OT (acción 'firmar_creador').
-        if not _puede_ot_accion(vid, "firmar_creador"):
-            return jsonify({"ok": False, "error": "Solo el supervisor que asignó esta OT (o un admin) puede firmar."}), 403
-        # 🔒 FIX 2026-09-04 (Daniel, tras perder la firma de Aarón en la
-        # OT-2026-00133: "las OT son evidencia y no se puede borrar ni pasar
-        # por encima de autorizaciones"). La firma del responsable es
-        # ESCRIBIR-UNA-VEZ: si ya hay una, este endpoint no la reemplaza.
-        # Antes el UPDATE de abajo pisaba sin preguntar -- una segunda
-        # llamada (otra persona, un reintento, una pestaña vieja) borraba la
-        # firma de quien realmente autorizó y estampaba otra en su lugar,
-        # sin dejar rastro de la anterior. Si de verdad hay que cambiarla,
-        # tiene que ser una decisión deliberada y visible, no un efecto
-        # secundario. Las firmas de técnico y cliente NO llevan este candado
-        # porque tienen un flujo legítimo de re-firma (rechazar-cierre las
-        # limpia a propósito para que el técnico rehaga el trabajo).
-        _firma_previa = mysql_fetchone(
-            "SELECT firma_supervisor_url, firma_supervisor_nombre, firma_supervisor_at "
-            "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
-        if (_firma_previa.get("firma_supervisor_url") or "").strip():
-            _quien = _firma_previa.get("firma_supervisor_nombre") or "el responsable"
-            _cuando = _firma_previa.get("firma_supervisor_at")
-            print(f"[SECURITY] intento de sobrescribir firma de responsable vid={vid} "
-                  f"por {current_username()} (firma previa de {_quien})", flush=True)
-            return jsonify({
-                "ok": False,
-                "error_codigo": "FIRMA_RESPONSABLE_YA_EXISTE",
-                "error": (f"Esta OT ya está firmada por {_quien}"
-                          + (f" el {chile_fmt_filter(_cuando)}" if _cuando else "")
-                          + ". La firma del responsable es evidencia: no se "
-                            "reemplaza."),
-            }), 409
+        # 🚧 CIERRE 2026-09-05 (Daniel, explícito: "sí, bloquéalo, que la
+        # única forma sea firmar y cerrar").
+        #
+        # POR QUÉ: firmar por acá NO cierra la OT ni dispara nada del cierre
+        # real -- solo estampa la firma. `/aprobar-cierre` sí: valida los
+        # candados (documento o garantía, centro de costo, costo del
+        # proveedor), pasa el estado a 'cerrada', promueve los equipos del
+        # levantamiento a la ficha del cliente, da de alta los equipos que
+        # vendió el documento, notifica al técnico y al cliente y sincroniza
+        # el ticket. Firmar por el camino corto dejaba la OT a medio camino:
+        # el tracker la dibujaba "Aprobada" (lee firma_supervisor_at) pero
+        # el estado seguía en 'pendiente_aprobacion' y ninguna de esas cosas
+        # ocurría -- fue justo lo que pasó en la OT-2026-00133.
+        #
+        # Las firmas de técnico y cliente NO se tocan: siguen entrando por
+        # acá igual que siempre.
+        return jsonify({
+            "ok": False,
+            "error_codigo": "USE_APROBAR_CIERRE",
+            "error": ("La firma del responsable se hace desde «Firmar y "
+                      "cerrar OT»: ahí se valida el documento, el centro de "
+                      "costo y el costo del proveedor, y la OT queda cerrada "
+                      "de verdad. Firmar por separado la dejaba a medio "
+                      "camino."),
+            "ir_a": url_for("ot2_detalle", vid=vid),
+        }), 409
+
     elif tipo == "cliente":
         # El cliente firma en el dispositivo del técnico → solo el técnico
         # asignado + superadmin pueden capturarla. Antes no se validaba y
@@ -71366,12 +71362,12 @@ def mant_visita_firmar(vid):
             "       firma_tecnico_nombre=%s, firma_tecnico_at=NOW() WHERE id=%s",
             (firma, uid, (nombre or _default_nom), vid)
         )
-    else:  # supervisor
-        mysql_execute(
-            "UPDATE mant_visitas SET firma_supervisor_url=%s, firma_supervisor_user_id=%s, "
-            "       firma_supervisor_nombre=%s, firma_supervisor_at=NOW() WHERE id=%s",
-            (firma, uid, (nombre or _default_nom), vid)
-        )
+    else:
+        # 2026-09-05: `supervisor` ya devolvió 409 arriba (la firma del
+        # responsable solo se escribe desde /aprobar-cierre). Este endpoint
+        # deja de tener cualquier vía para tocar firma_supervisor_*: es la
+        # diferencia entre "no lo usamos" y "no se puede".
+        return jsonify({"ok": False, "error": "Tipo de firma no soportado."}), 400
 
     try:
         mysql_execute(

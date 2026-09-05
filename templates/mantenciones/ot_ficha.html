@@ -1164,10 +1164,21 @@
               Solo admin puede firmar como supervisor
             {% endif %}
           </div>
+          {# 🚧 2026-09-05 (Daniel: "bloquéalo, que la única forma sea firmar
+             y cerrar"). Este pad estampaba la firma SIN cerrar la OT ni
+             validar documento/centro de costo/costo del proveedor, y sin
+             promover equipos ni notificar: la OT quedaba "Aprobada" en el
+             tracker pero a medio camino de verdad (caso OT-2026-00133). El
+             backend ya lo rechaza; acá se cambia el botón por el enlace al
+             cierre real para no dejar a nadie contra la pared. #}
           {% if _puede_firmar_sup and visita.estado != 'completada' %}
-          <button class="btn btn-sm btn-outline-secondary mt-2" onclick="abrirFirmaPad('supervisor')">
-            <i class="bi bi-pencil-square me-1"></i>Firmar como supervisor
-          </button>
+          <a class="btn btn-sm btn-outline-secondary mt-2"
+             href="{{ url_for('ot2_detalle', vid=visita.id) }}">
+            <i class="bi bi-shield-check me-1"></i>Firmar y cerrar OT
+          </a>
+          <div class="small text-muted text-center mt-1" style="font-size:.64rem">
+            La firma del responsable cierra la OT — se hace en la pantalla de cierre.
+          </div>
           {% endif %}
         {% endif %}
       </div>
