@@ -6651,7 +6651,9 @@ function otdEsc(s){
    El Paso 1 sigue mandando el documento PRINCIPAL; esto administra los
    adicionales contra /ot/api/<vid>/documentos.
    ══════════════════════════════════════════════════════════════════════ */
-const OTD_VID = {{ v.id }};
+/* OTD_VID ya está declarado más arriba (bloque de adjuntos) — se reusa.
+   Declararlo de nuevo rompía TODO el script de la pantalla con un
+   "Identifier 'OTD_VID' has already been declared". */
 
 function otdDocFila(d){
   const esCot = d.origen === 'cotizacion';
