@@ -26,6 +26,10 @@
     --ilus-bg:    #f9fafb;
     --ilus-ok:    #16a34a;
     --ilus-ok-bg: #dcfce7;
+    /* Gris de panel de las cajas de datos — mismo token que usa el PDF de
+       cotizaciones (.datos-box), agregado 2026-09-05 al unificar el
+       lenguaje visual de los dos documentos. */
+    --ilus-panel: #f0f0f0;
   }
 
   {# 🔧 FIX 2026-08-28 — causa raíz confirmada por DOS auditorías
@@ -45,10 +49,25 @@
      Laterales en 0 porque la banda negra va a sangre y el margen lateral real
      lo simula .sheet con su padding. La vista navegador (Ctrl+P, sin header
      nativo) conserva el margin:0 de siempre. #}
+  {# 🔧 FIX 2026-09-05 — segunda pasada del mismo bug, ahora MEDIDO con
+     Playwright + PyMuPDF sobre el PDF real (mismo harness con el que se
+     arreglaron las cotizaciones el mismo día):
+       · el header nativo `grande` NO mide 32mm sino 37,5mm — a los 32mm
+         de su propio contenido (caja SPHS 20mm + 5mm de padding arriba y
+         abajo + franja de 2mm) Chromium le suma ~5,3mm de offset propio
+         dentro de la caja del margen.
+       · con `margin: 36mm` las páginas de CONTINUACIÓN (las que no
+         arrancan un <section class="sheet">, o sea las que no reciben su
+         padding-top) empezaban a 36mm → el título de sección quedaba
+         fundido con la banda negra del header. Se veía clarísimo en
+         "CHECKLIST TÉCNICO DETALLADO".
+     42mm deja 4,5mm de aire limpio. Debe calzar con el `_pdf_margin` de
+     mant_visita_pdf (app.py) — en Chromium el @page es el que manda, el
+     de page.pdf() se mantiene igual solo por coherencia. #}
   @page {
     size: letter;
     {% if native_header_footer %}
-    margin: 36mm 0mm 16mm;
+    margin: 42mm 0mm 16mm;
     {% else %}
     margin: 0;
     {% endif %}
@@ -164,19 +183,35 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 
-  /* ───── Sección título "subrayado" ───── */
+  /* ───── Título de sección — BANDA NEGRA, igual que Cotizaciones ─────
+     🎨 2026-09-05 (Daniel, comparando los 3 PDF): "la orden de trabajo
+     tiene un formato interno; si bien es igual en el header, la
+     información está contenida de otra forma. La tabla sí me gusta, no
+     tengo ningún problema, está bien generada."
+     Traducción: el header/footer y la tabla del checklist ya están bien;
+     lo que desentonaba era TODO lo de alrededor. Este título pasa de
+     "texto negro con una rayita roja" a la MISMA banda negra
+     (`.barra-titulo`) que usan las dos cotizaciones -- ver
+     templates/tickets/cotizacion_pdf.html. Mismo tamaño (9pt/800), mismo
+     tracking, mismo padding de 2.5mm/4mm.
+     Se deja compacto a propósito (margin 3mm/2.5mm en vez de los 12px/6px
+     de antes): cada hoja de la OT es un <section> de alto fijo, así que
+     engordar los títulos empujaría contenido a una página extra --
+     verificado renderizando el PDF real antes y después (mismo número de
+     páginas). NO tocar la tabla `.chk`. */
   .sec-title {
-    font-size: 9.5pt; font-weight: 900;
-    color: var(--ilus-black); text-transform: uppercase;
-    letter-spacing: .05em;
-    margin: 12px 0 6px;
-    display: flex; align-items: center; gap: 6px;
+    background: var(--ilus-black); color: #fff;
+    padding: 2.2mm 4mm;
+    margin: 3mm 0 2.5mm;
+    font-size: 9pt; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .02em;
+    display: flex; align-items: center; justify-content: space-between;
+    page-break-inside: avoid; page-break-after: avoid;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  .sec-title::before {
-    content: ''; width: 3px; height: 14px;
-    background: var(--ilus-red); border-radius: 2px;
-    display: inline-block;
-  }
+  /* La primera sección de cada hoja no necesita aire arriba: el margen
+     de página (o el header incrustado) ya lo puso. */
+  .sheet > .sec-title:first-of-type { margin-top: 0; }
 
   /* ───── Datos generales: 3 columnas ───── */
   .info-3col {
@@ -185,11 +220,13 @@
     gap: 10px;
     margin-bottom: 8px;
   }
+  /* Mismas cajas de datos que "DATOS DEL CLIENTE" de las cotizaciones
+     (.datos-box): panel gris plano #f0f0f0, esquina de 2px, sin borde.
+     2026-09-05. */
   .info-card {
-    background: var(--ilus-bg);
-    border: 1px solid var(--ilus-line);
-    border-radius: 8px;
-    padding: 8px 10px;
+    background: var(--ilus-panel);
+    border-radius: 2px;
+    padding: 3mm 4mm;
     page-break-inside: avoid;
   }
   {# 🎨 FIX 2026-09-02 (Daniel: "tiene muchos monitos" -- comparando contra
@@ -199,12 +236,14 @@
      esta sección y se deja SOLO etiqueta en mayúscula + valor en negrita,
      igual que Cotizaciones. Nada de información se pierde, es puro
      recorte visual. #}
-  .info-card .ic-row { margin-bottom: 5px; }
+  .info-card .ic-row { margin-bottom: 1.2mm; }
   .info-card .ic-row:last-child { margin-bottom: 0; }
-  .info-card .ic-text { font-size: 8.5pt; line-height: 1.4; }
+  /* Tipografía de las filas: la misma escala que .dt-lbl/.dt-val de las
+     cotizaciones (7.8pt de valor, etiqueta chica en mayúscula). */
+  .info-card .ic-text { font-size: 7.8pt; line-height: 1.4; }
   .info-card .ic-text .lbl {
-    color: var(--ilus-mute); font-weight: 700;
-    text-transform: uppercase; font-size: 7pt;
+    color: var(--ilus-mute); font-weight: 800;
+    text-transform: uppercase; font-size: 6.6pt;
     letter-spacing: .04em; display: block;
   }
   .info-card .ic-text .val {
@@ -213,14 +252,17 @@
   }
 
   /* ───── Bloque ubicación ───── */
+  /* Franja de una línea, como .franja-meta de las cotizaciones (borde
+     fino + esquina de 2px), pero conservando el rojo claro que ya
+     distinguía la ubicación (Regla #4.2: se re-encuadra, no se pierde). */
   .ubic-box {
     background: var(--ilus-red-l);
     border: 1px solid #fca5a5;
-    border-radius: 8px;
-    padding: 8px 12px;
-    margin-bottom: 10px;
+    border-radius: 2px;
+    padding: 2.2mm 4mm;
+    margin-bottom: 2.5mm;
   }
-  .ubic-box .u-text { font-size: 9pt; line-height: 1.4; }
+  .ubic-box .u-text { font-size: 8pt; line-height: 1.4; }
   .ubic-box .u-text b { color: var(--ilus-red); }
 
   /* ───── Técnicos card ───── */
@@ -228,9 +270,9 @@
     display: flex; align-items: center; gap: 12px;
     background: var(--ilus-bg);
     border: 1px solid var(--ilus-line);
-    border-radius: 8px;
-    padding: 9px 12px;
-    margin-bottom: 8px;
+    border-radius: 3px;
+    padding: 2.4mm 4mm;
+    margin-bottom: 2.5mm;
   }
   .tec-card .ta-avatar {
     width: 38px; height: 38px;
@@ -249,41 +291,52 @@
   }
 
   /* ───── Logística (4 cards horizontales) ───── */
+  /* Mismas tarjetas que los KPI de las cotizaciones (.kpi-card): valor
+     grande arriba, etiqueta chica en mayúscula abajo, borde #d1d5db y
+     esquina de 3px. 2026-09-05. */
   .logist-4 {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr 1fr;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: 3mm;
+    margin-bottom: 3mm;
   }
   .log-card {
     background: #fff;
-    border: 1px solid var(--ilus-line);
-    border-radius: 8px;
-    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 3px;
+    padding: 2.4mm 3mm;
     text-align: center;
     page-break-inside: avoid;
-  }
-  .log-card .lc-lbl {
-    font-size: 7.5pt; color: var(--ilus-mute);
-    text-transform: uppercase; font-weight: 700;
-    letter-spacing: .03em;
+    /* column-reverse: en el HTML la etiqueta viene ANTES que el valor, y
+       en las cotizaciones el número va arriba. Se invierte por CSS para
+       no reordenar el marcado (Regla #4.2: cero riesgo de perder algo). */
+    display: flex; flex-direction: column-reverse; justify-content: flex-end;
   }
   .log-card .lc-val {
-    font-size: 10pt; font-weight: 900;
-    color: var(--ilus-ink); margin-top: 2px;
+    font-size: 12pt; font-weight: 900;
+    color: var(--ilus-black);
+  }
+  .log-card .lc-lbl {
+    font-size: 6.3pt; color: var(--ilus-mute);
+    text-transform: uppercase; font-weight: 700;
+    letter-spacing: .03em; margin-top: 1mm;
   }
   .log-card .lc-val.si { color: var(--ilus-ok); }
   .log-card .lc-val.no { color: var(--ilus-mute); }
 
   /* ───── Observación cliente ───── */
+  /* Mismo tratamiento que la franja "Datos para transferencia" de las
+     cotizaciones (.pago-strip): borde rojo de 3px a la izquierda y
+     esquina de 3px. */
   .obs-box {
     background: var(--ilus-bg);
-    border-left: 4px solid var(--ilus-red);
-    border-radius: 6px;
-    padding: 8px 12px;
-    margin-bottom: 12px;
+    border: 1px solid var(--ilus-line);
+    border-left: 3px solid var(--ilus-red);
+    border-radius: 3px;
+    padding: 2.2mm 4mm;
+    margin-bottom: 3mm;
   }
-  .obs-box .o-text { font-size: 9pt; line-height: 1.45; }
+  .obs-box .o-text { font-size: 8pt; line-height: 1.45; }
   .obs-box .o-text b { color: var(--ilus-red); }
 
   /* ───── Equipos cards grandes ─────
@@ -307,7 +360,9 @@
   .eq-card {
     background: #fff;
     border: 1px solid var(--ilus-line);
-    border-radius: 10px;
+    /* 3px = misma esquina que .alcance-box / .kpi-card de las
+       cotizaciones (antes 10px, que leia como "tarjeta de app"). */
+    border-radius: 3px;
     padding: 10px;
     margin-bottom: 10px;
     page-break-inside: avoid;
@@ -370,7 +425,7 @@
   .eq-card .eq-meta b { color: var(--ilus-ink); }
   .eq-card .eq-obs {
     background: var(--ilus-bg);
-    border-radius: 6px;
+    border-radius: 3px;
     padding: 6px 8px;
     font-size: 8.5pt; line-height: 1.4;
     color: var(--ilus-ink);
@@ -387,7 +442,7 @@
      aprobado, rojo cuando hay observación o falla que revisar. */
   .eq-card .eq-diag {
     background: var(--ilus-bg);
-    border-radius: 6px;
+    border-radius: 3px;
     padding: 6px 8px;
     font-size: 8.5pt; line-height: 1.4;
     color: var(--ilus-ink);
@@ -531,9 +586,9 @@
   }
   .res-mini {
     background: var(--ilus-bg);
-    border: 1px solid var(--ilus-line);
-    border-radius: 8px;
-    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 3px;
+    padding: 2.4mm 3mm;
     display: flex; align-items: center; gap: 10px;
     page-break-inside: avoid;
   }
@@ -541,7 +596,7 @@
     width: 28px; height: 28px;
     background: var(--ilus-red);
     color: #fff;
-    border-radius: 8px;
+    border-radius: 3px;
     display: flex; align-items: center; justify-content: center;
     font-weight: 900; font-size: 13pt;
     flex-shrink: 0;
@@ -558,7 +613,7 @@
     color: var(--ilus-ink);
   }
   .res-mini .rm-lbl {
-    font-size: 7.5pt; color: var(--ilus-mute);
+    font-size: 6.3pt; color: var(--ilus-mute);
     text-transform: uppercase; font-weight: 700;
     letter-spacing: .03em;
   }
@@ -570,12 +625,14 @@
     gap: 12px;
     margin-bottom: 10px;
   }
+  /* Caja de texto con el mismo encuadre que .alcance-box de las
+     cotizaciones (borde fino, esquina 3px, 3mm/4mm de padding). */
   .obs-gen {
     background: var(--ilus-bg);
     border: 1px solid var(--ilus-line);
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 9pt; line-height: 1.5;
+    border-radius: 3px;
+    padding: 3mm 4mm;
+    font-size: 8pt; line-height: 1.5;
   }
   .obs-gen .lbl {
     font-size: 7.5pt; color: var(--ilus-red);
@@ -611,11 +668,13 @@
     margin-top: 12px;
     page-break-inside: avoid;
   }
+  /* Mismo encuadre que .firma-box de las cotizaciones: borde gris medio
+     y esquina de 2px. Se conserva la sombra que Daniel aprobo el 04-09. */
   .fir {
     background: #fff;
-    border: 1px solid var(--ilus-line);
-    border-radius: 10px;
-    padding: 10px 8px;
+    border: 1px solid #9ca3af;
+    border-radius: 2px;
+    padding: 3mm 2.5mm;
     text-align: center;
     /* 🎨 2026-09-04: mismo trato de profundidad que .eq-card -- las 3
        firmas son el cierre "ceremonial" del documento, merecen leerse
@@ -698,14 +757,16 @@
   }
   {% if native_header_footer %}
   /* Camino Playwright (header/footer nativos, 2026-08-28): la identidad de
-     arriba ya la pone el header nativo dentro del margen de 36mm -- los
-     12mm de padding-top de .sheet acá serían aire doble solo en la primera
-     hoja física de cada grupo (las de continuación arrancan pegadas al
-     margen). Se baja a 4mm para que todas queden parejas. El Ctrl+P de la
-     vista previa (sin native_header_footer) no entra por acá y conserva
-     sus 12mm de siempre. */
+     arriba ya la pone el header nativo dentro del margen -- los 12mm de
+     padding-top de .sheet acá serían aire doble solo en la primera hoja
+     física de cada grupo (las de continuación arrancan pegadas al margen).
+     2026-09-05: con el margen ya en 42mm (ver el @page), el aire correcto
+     lo da el propio margen, así que este padding baja de 4mm a 0 y TODAS
+     las páginas -- primeras y de continuación -- arrancan exactamente a la
+     misma altura. El Ctrl+P de la vista previa (sin native_header_footer)
+     no entra por acá y conserva sus 12mm de siempre. */
   @media print {
-    .sheet { padding-top: 4mm; }
+    .sheet { padding-top: 0; }
   }
   {% endif %}
 

@@ -206,6 +206,52 @@ def _tk_cotiz_clase_no_cobrable(clase_producto):
     return str(clase_producto or "").strip().lower() in _TK_COTIZ_CLASES_NO_COBRABLES
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  Trazabilidad: documentos ERP de origen de una cotización (2026-09-05)
+#
+#  Daniel: "la cotización en ambos lados no menciona nunca la cantidad de
+#  documentos asociados... necesito que todo esté relacionado a documento
+#  para asociarlo a una salida legal de dinero."
+#
+#  Los nombres de los TIDO son los MISMOS de TIPOS_DOC_CUBICADOR (app.py):
+#  se copian acá (9 líneas) en vez de importarlos para no acoplar este
+#  módulo al orden de carga de app.py. Un TIDO desconocido se muestra tal
+#  cual viene del ERP -- nunca se traduce a un nombre inventado.
+# ══════════════════════════════════════════════════════════════════════
+_TK_TIDO_LABELS = {
+    "FCV": "Factura", "BLV": "Boleta", "GDV": "Guía de despacho",
+    "GDI": "Guía despacho interna", "GTI": "Guía traspaso interno",
+    "VD": "Nota de venta directa", "WEB": "Nota de venta web",
+    "NVI": "Nota de venta interna", "NVV": "Nota de venta",
+    "COV": "Cotización",
+}
+
+
+def _tk_docs_resumen(items):
+    """Agrupa las líneas ya normalizadas por documento ERP de origen.
+
+    Devuelve [{tipo, tipo_label, numero, lineas}] ordenado por número. La
+    clave del contador se llama `lineas` y NO `items` a propósito: en Jinja
+    `d.items` resuelve primero el MÉTODO items() del dict y la celda sale
+    vacía en el PDF (bug real visto al renderizar). Solo
+    incluye documentos REALES (con número); una cotización cuyas líneas no
+    traen documento devuelve lista vacía y el PDF lo dice explícitamente.
+    """
+    grupos = {}
+    for it in items or []:
+        numero = str((it or {}).get("documento") or "").strip()
+        if not numero or numero == "—":
+            continue
+        tipo = str((it or {}).get("documento_tido") or "").strip().upper()
+        clave = (tipo, numero)
+        if clave not in grupos:
+            grupos[clave] = {"tipo": tipo,
+                             "tipo_label": _TK_TIDO_LABELS.get(tipo, tipo),
+                             "numero": numero, "lineas": 0}
+        grupos[clave]["lineas"] += 1
+    return sorted(grupos.values(), key=lambda d: (d["numero"], d["tipo"]))
+
+
 def _tk_cotiz_unidades_cobrables(items):
     """Unidades físicas que pueden absorber el prorrateo de ruta."""
     total_unidades = 0.0
@@ -3261,13 +3307,18 @@ def register_tickets_routes(app, ctx):
             return "{:,.1f}".format(monto_clp / uf_valor).replace(",", "X").replace(".", ",").replace("X", ".")
 
         # Multidocumento (2026-07-22, Daniel): cada línea recuerda su
-        # documento ERP de origen. La columna "Documento" del PDF se muestra
-        # SOLO si la cotización mezcla >1 documento (si es de uno solo, no
-        # ensucia). doc_label = número del documento (el tido se conserva por
-        # si más adelante se quiere el nombre del tipo).
+        # documento ERP de origen.
+        #
+        # 2026-09-05 (Daniel, comparando COT vs CTR): la columna "Documento"
+        # se mostraba SOLO si la cotización mezclaba >1 documento, así que
+        # las de instalación normalmente salían sin ella. Ahora se muestra
+        # SIEMPRE que exista al menos un documento de origen -- es
+        # trazabilidad hacia "una salida legal de dinero", no ruido. Si
+        # ninguna línea trae documento, la columna sigue oculta (nunca se
+        # imprime una columna vacía ni un dato inventado).
         _docs_presentes = {(it.get("erp_nudo") or "").strip()
                            for it in items_rows if (it.get("erp_nudo") or "").strip()}
-        mostrar_col_documento = len(_docs_presentes) > 1
+        mostrar_col_documento = len(_docs_presentes) >= 1
 
         items = []
         suma_lineas = 0
@@ -3280,12 +3331,17 @@ def register_tickets_routes(app, ctx):
             tot = pu * cant
             suma_lineas += tot
             _nudo = (it.get("erp_nudo") or "").strip()
+            _tido = (it.get("erp_tido") or "").strip().upper()
             items.append({"sku": it.get("erp_kopr") or "", "descripcion": it.get("descripcion") or "",
                           "cantidad": cant, "precio_unitario": pu, "total": tot,
                           "precio_uf": _precio_uf_str(pu),
                           "clase_producto": it.get("clase_producto") or None,
                           "es_cobrable": es_cobrable,
-                          "documento": _nudo or "—"})
+                          "documento": _nudo or "—",
+                          # Tipo de documento ERP (FCV/NVV/GDV/...) — Daniel:
+                          # "necesito que venga qué tipo de documento siempre
+                          # estoy trabajando".
+                          "documento_tido": (_tido if _nudo else "")})
         subtotal_cab = int(cot.get("subtotal") or 0)
         # El residuo de redondeo va al primer equipo cobrable. Nunca se
         # inventa una cantidad ni se contamina un accesorio para hacer calzar
@@ -3569,6 +3625,11 @@ def register_tickets_routes(app, ctx):
                     "detalle_titulo": "Detalle Económico de la Instalación",
                 }
 
+        # Fechas/validez ANTES de los términos: el término "Validez" los usa.
+        _fecha_emision_date = _fecha_date(cot.get("created_at")) or _chile_hoy()
+        _valida_hasta_date = _fecha_date(cot.get("valida_hasta"))
+        validez_dias = (_valida_hasta_date - _fecha_emision_date).days if _valida_hasta_date else None
+
         terminos_pares = []
         _terminos_raw = _lineas(cot.get("terminos"))
         for _linea in _terminos_raw:
@@ -3578,15 +3639,36 @@ def register_tickets_routes(app, ctx):
             else:
                 terminos_pares.append((_linea, ""))
         if not terminos_pares:
+            # 2026-09-05 (Daniel: "los términos del PDF está mucho mejor los
+            # de transporte que los de instalación. Entonces quiero que le
+            # des una vuelta a eso"). Se adopta el estilo de transporte
+            # —"Servicio / Precio / Validez", que EXPLICAN qué se está
+            # comprando— SIN perder las condiciones que ya tenía servicio
+            # técnico (Plazo y Excluye siguen ahí, Regla #4.2): se fusionan
+            # las dos listas en una sola de 5 puntos.
+            _tipo_srv = cot.get("tipo_servicio")
+            _servicio_txt = {
+                "mantencion": ("mantención preventiva de los equipos individualizados en el detalle "
+                               "adjunto, ejecutada en las dependencias del cliente."),
+                "visita_tecnica": ("visita técnica de revisión y diagnóstico de los equipos "
+                                   "individualizados en el detalle adjunto."),
+                "instalacion": ("instalación, armado, nivelación y puesta en marcha de los equipos "
+                                "individualizados en el detalle adjunto."),
+                "venta_repuesto": ("suministro de los repuestos individualizados en el detalle adjunto."),
+            }.get(_tipo_srv, "servicio técnico sobre los ítems individualizados en el detalle adjunto.")
+            _validez_txt = (
+                f"esta cotización rige {validez_dias} día(s) desde su emisión."
+                if validez_dias else
+                "esta cotización rige hasta la fecha de validez indicada en la cabecera.")
+            if uf_info:
+                _validez_txt += (" Pasada esa fecha los valores se recalculan con la UF vigente.")
             terminos_pares = [
+                ("Servicio", _servicio_txt),
                 ("Precio", "valores netos en UF, convertidos a CLP con la UF vigente a la fecha de emisión."),
                 ("Plazo", "según coordinación con el cliente."),
+                ("Validez", _validez_txt),
                 ("Excluye", "repuestos y trabajos correctivos no listados en el detalle."),
             ]
-
-        _fecha_emision_date = _fecha_date(cot.get("created_at")) or _chile_hoy()
-        _valida_hasta_date = _fecha_date(cot.get("valida_hasta"))
-        validez_dias = (_valida_hasta_date - _fecha_emision_date).days if _valida_hasta_date else None
 
         numero_mostrar = cot.get("numero_cotizacion") or f"#{cid}"
 
@@ -3622,6 +3704,9 @@ def register_tickets_routes(app, ctx):
             "recomendacion_lineas": recomendacion_lineas,
             "terminos_pares": terminos_pares,
             "mostrar_col_documento": mostrar_col_documento,
+            # Bloque "Documentos asociados" del PDF (2026-09-05). Se deriva
+            # de las líneas ya normalizadas -- cero consultas extra.
+            "docs_resumen": _tk_docs_resumen(items),
         }
         ctx_pdf["logo_b64"] = _tk_cotiz_logo_b64()
         # BUG REAL (2026-08-25, Daniel: "los módulos se están cruzando"): el
@@ -3718,11 +3803,18 @@ def register_tickets_routes(app, ctx):
 
         pdf_bytes = _pw_pdf(
             html_doc, page_format="A4",
-            # top 36mm (antes 30mm): headroom extra para el espartano +60%
-            # (17.6mm de alto) -- verificado renderizando el PDF real que a
-            # 30mm el header nuevo se solapaba con la primera línea del
-            # contenido; a 36mm queda con margen limpio.
-            margin={"top": "36mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
+            # top 42mm (antes 36mm, antes 30mm) — 🔧 FIX 2026-09-05: medido
+            # con Playwright, el header nativo real (caja del logo SPHS de
+            # 20mm + 5mm de padding arriba y abajo + franja de 2mm, más el
+            # offset propio de Chromium) TERMINA en 37,5mm. Con 36mm el
+            # contenido de las páginas 2+ arrancaba DENTRO del header y el
+            # título de sección salía atravesado por la banda negra (la
+            # página 1 se salvaba por el padding de .sheet-pad).
+            # Este valor debe calzar con el `@page { margin }` de
+            # templates/tickets/cotizacion_pdf.html: en Chromium el de @page
+            # es el que realmente manda (ver la nota larga en ese archivo y
+            # en templates/mantenciones/ot_pdf.html).
+            margin={"top": "42mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
             header_template=header_tpl, footer_template=footer_tpl,
         )
         _emp = re.sub(r"[^A-Za-z0-9 _-]", "", (cot.get("empresa") or "cliente"))[:60].strip() or "cliente"

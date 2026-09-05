@@ -166,6 +166,48 @@ def _lc_money_round(x):
             return 0
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  Trazabilidad: documentos ERP de origen (2026-09-05)
+#
+#  Daniel: "necesito que todo este relacionado a documento para asociarlo
+#  a una salida legal de dinero". Gemelo exacto de _tk_docs_resumen /
+#  _TK_TIDO_LABELS en tickets_module.py -- se duplican esas ~15 lineas a
+#  proposito: este modulo NO importa tickets_module (son dos modulos
+#  independientes que solo comparten el TEMPLATE del PDF, ver el docstring
+#  del archivo), y acoplarlos por un diccionario de etiquetas seria peor
+#  que repetirlo. Los nombres salen de TIPOS_DOC_CUBICADOR (app.py).
+# ══════════════════════════════════════════════════════════════════════
+_LC_TIDO_LABELS = {
+    "FCV": "Factura", "BLV": "Boleta", "GDV": "Guía de despacho",
+    "GDI": "Guía despacho interna", "GTI": "Guía traspaso interno",
+    "VD": "Nota de venta directa", "WEB": "Nota de venta web",
+    "NVI": "Nota de venta interna", "NVV": "Nota de venta",
+    "COV": "Cotización",
+}
+
+
+def _lc_docs_resumen(items):
+    """Agrupa las lineas ya normalizadas por documento ERP de origen.
+    Devuelve [{tipo, tipo_label, numero, lineas}]. El contador se llama
+    `lineas` y NO `items` a proposito: en Jinja `d.items` resuelve primero
+    el metodo items() del dict y la celda sale vacia en el PDF (bug real
+    visto al renderizar). Un TIDO desconocido se muestra tal cual viene del
+    ERP -- nunca se inventa un nombre."""
+    grupos = {}
+    for it in items or []:
+        numero = str((it or {}).get("documento") or "").strip()
+        if not numero or numero == "—":
+            continue
+        tipo = str((it or {}).get("documento_tido") or "").strip().upper()
+        clave = (tipo, numero)
+        if clave not in grupos:
+            grupos[clave] = {"tipo": tipo,
+                             "tipo_label": _LC_TIDO_LABELS.get(tipo, tipo),
+                             "numero": numero, "lineas": 0}
+        grupos[clave]["lineas"] += 1
+    return sorted(grupos.values(), key=lambda d: (d["numero"], d["tipo"]))
+
+
 _LC_UNIDADES = ("", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
                 "diez", "once", "doce", "trece", "catorce", "quince", "dieciséis",
                 "diecisiete", "dieciocho", "diecinueve", "veinte")
@@ -1137,7 +1179,8 @@ def _lc_cotizacion_pdf_ctx(cid):
     if not cot:
         return None
     items_rows = mysql_fetchall(
-        "SELECT erp_kopr, erp_nudo, descripcion, cantidad, total "
+        "SELECT erp_kopr, erp_tido, erp_nudo, descripcion, cantidad, total, "
+        "       total_bultos, peso_kg "
         "FROM transport_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
     # UF EN VIVO (Regla: reusa el mismo cache/endpoint de indicadores
@@ -1164,12 +1207,14 @@ def _lc_cotizacion_pdf_ctx(cid):
             return None
         return "{:,.1f}".format(monto_clp / uf_valor).replace(",", "X").replace(".", ",").replace("X", ".")
 
-    # Multidocumento: la columna "Documento" del PDF solo se muestra si la
-    # cotizacion mezcla mas de 1 documento ERP de origen (mismo criterio
-    # que Servicio Tecnico).
+    # Multidocumento: la columna "Documento" del PDF se muestra siempre que
+    # haya AL MENOS un documento ERP de origen (2026-09-05, mismo criterio
+    # que Servicio Tecnico -- es trazabilidad hacia una salida legal de
+    # dinero, no ruido). Si ninguna linea trae documento, la columna se
+    # oculta: nunca se imprime una celda inventada.
     _docs_presentes = {(it.get("erp_nudo") or "").strip()
                         for it in items_rows if (it.get("erp_nudo") or "").strip()}
-    mostrar_col_documento = len(_docs_presentes) > 1
+    mostrar_col_documento = len(_docs_presentes) >= 1
 
     items = []
     for it in items_rows:
@@ -1181,13 +1226,21 @@ def _lc_cotizacion_pdf_ctx(cid):
         # se lee, no se prorratea de nuevo. precio unitario es SOLO derivado
         # para mostrar "Precio UF" (no se guarda en la BD).
         pu = _lc_money_round(tot / cant) if cant > 0 else tot
+        _nudo = (it.get("erp_nudo") or "").strip()
+        _tido = (it.get("erp_tido") or "").strip().upper()
         items.append({
             "sku": it.get("erp_kopr") or "",
             "descripcion": it.get("descripcion") or "",
             "cantidad": cant,
             "total": tot,
             "precio_uf": _precio_uf_str(pu),
-            "documento": (it.get("erp_nudo") or "").strip() or "—",
+            "documento": _nudo or "—",
+            # Tipo de documento ERP (FCV/NVV/GDV/...) -- Daniel:
+            # "necesito que venga que tipo de documento siempre estoy
+            # trabajando".
+            "documento_tido": (_tido if _nudo else ""),
+            "bultos": int(float(it.get("total_bultos") or 0)),
+            "peso_kg": float(it.get("peso_kg") or 0),
         })
 
     _rut_fmt = _h("rut_fmt_filter")
@@ -1221,11 +1274,97 @@ def _lc_cotizacion_pdf_ctx(cid):
         else:
             terminos_pares.append((_linea, ""))
     if not terminos_pares:
+        # 2026-09-05: los terminos de transporte ya eran los mejores del
+        # proyecto (Daniel dixit) -- se conservan TAL CUAL y ademas se les
+        # suman "Plazo" y "Excluye", que eran lo unico que aportaban de mas
+        # los de servicio tecnico. Ahora las dos cotizaciones tienen la
+        # MISMA estructura de 5 puntos (Regla #4.2: nada se pierde).
         terminos_pares = [
             ("Servicio", "transporte y distribución de la mercadería individualizada en el detalle adjunto."),
             ("Precio", "valores netos; incluye el flete cotizado con el courier más el margen de gestión ILUS."),
+            ("Plazo", "según coordinación con el cliente y los tiempos de tránsito del courier asignado."),
             ("Validez", "sujeta a la vigencia indicada; el valor del flete puede variar según el courier a la fecha del despacho."),
+            ("Excluye", "instalación, armado y retiro de embalajes, salvo que se coticen por separado."),
         ]
+
+    # ── Propuesta de Transporte y Distribución (2026-09-05) ──
+    # Daniel: "no tienes una propuesta de transporte, que tal vez nos cura
+    # en el ámbito legal y dé la explicación que da en la instalación, el
+    # alcance del transporte, la recomendación del servicio."
+    #
+    # Mismo bloque "rico" que ya usaba Servicio Tecnico (el template lo
+    # soporta desde 2026-07-24), pero con contenido PROPIO de transporte:
+    # nada copiado de instalación. Todos los numeros salen de datos que la
+    # cotizacion YA tiene (bultos, documentos, comuna, courier, peso
+    # facturable) -- si un dato no existe, esa linea/tarjeta simplemente no
+    # se dibuja, nunca se inventa una cifra.
+    _n_items = len(items)
+    _n_unidades = sum(i["cantidad"] for i in items)
+    _n_bultos = sum(i["bultos"] for i in items)
+    _n_docs = len(_docs_presentes)
+    _courier = (cot.get("courier_nombre") or "").strip()
+    _destino = (cot.get("comuna") or cot.get("comuna_resuelta") or "").strip()
+    try:
+        _peso_fact = float(cot.get("peso_facturable_kg") or 0)
+    except (TypeError, ValueError):
+        _peso_fact = 0.0
+
+    alcance_lineas = [
+        (f"Retiro de {_n_unidades} unidad(es) en bodega ILUS Fitness y verificación contra "
+         f"{'los documentos' if _n_docs != 1 else 'el documento'} de origen del detalle adjunto."
+         if _n_docs else
+         f"Retiro de {_n_unidades} unidad(es) en bodega ILUS Fitness y verificación contra el detalle adjunto."),
+        "Embalaje y protección de la carga para el traslado, y consolidación en los bultos declarados.",
+        (f"Traslado hasta {_destino}." if _destino else "Traslado hasta la dirección de despacho indicada por el cliente."),
+        (f"Coordinación y seguimiento del envío con {_courier}, con número de seguimiento asociado a la cotización."
+         if _courier else
+         "Coordinación y seguimiento del envío con el courier que se asigne, con número de seguimiento asociado a la cotización."),
+        "Entrega y descarga en la dirección de despacho, en el horario de recepción del cliente.",
+        "Prueba de entrega: registro de recepción conforme y trazabilidad del envío en el seguimiento público de ILUS Fitness.",
+    ]
+    recomendacion_lineas = [
+        "Confirmar con anticipación el horario de recepción y las condiciones de acceso del destino (altura, rampa, ascensor de carga).",
+        "Designar una persona de contacto en destino habilitada para recibir y firmar la entrega.",
+        "Revisar la carga al momento de la entrega y dejar constancia inmediata de cualquier daño o faltante en el documento de recepción.",
+        "Avisar los cambios de dirección o de fecha antes del despacho: una vez emitida la orden al courier, la tarifa puede variar.",
+    ]
+    if _destino:
+        recomendacion_lineas.insert(
+            0, f"Destino cotizado: {_destino}. Un cambio de comuna obliga a recotizar el flete.")
+
+    kpi_cards = []
+    if _n_bultos:
+        kpi_cards.append({"num": _n_bultos, "lbl": "Bultos a despachar"})
+    kpi_cards.append({"num": _n_unidades or _n_items, "lbl": "Unidades a trasladar"})
+    if _n_docs:
+        kpi_cards.append({"num": _n_docs, "lbl": "Documentos de origen"})
+    if _peso_fact > 0:
+        kpi_cards.append({"num": f"{_peso_fact:.0f}", "lbl": "Kg facturables"})
+
+    _parrafo_tr = (
+        "La presente propuesta corresponde al transporte y distribución de la mercadería "
+        "individualizada en el detalle adjunto, desde la bodega de ILUS Fitness hasta la "
+        "dirección de despacho indicada por el cliente"
+        + (f", en {_destino}" if _destino else "")
+        + ". El servicio comprende el retiro, el embalaje de protección, el traslado, la "
+          "coordinación con el courier y la entrega con prueba de recepción, de modo que cada "
+          "unidad quede trazada contra su documento de origen. "
+        + (f"El flete se ejecuta con {_courier} y " if _courier else "El flete ")
+        + "se cotiza sobre el peso facturable y el destino declarados: si cambian la dirección, "
+          "la fecha o el volumen de la carga, el valor debe recalcularse antes del despacho. "
+          "Los daños o faltantes deben quedar consignados en el documento de recepción al momento "
+          "de la entrega."
+    )
+    _sub_bultos = (f"{_n_bultos} bulto(s)" if _n_bultos else f"{_n_unidades or _n_items} unidad(es)")
+    rico_textos = {
+        "titulo": "Propuesta de Transporte y Distribución",
+        "bt_sub": "Valor del Servicio",
+        "parrafo": _parrafo_tr,
+        "alcance_titulo": "Alcance del Transporte",
+        "valor_unitario_titulo": "Valor del Transporte",
+        "detalle_titulo": "Detalle Económico del Transporte",
+        "detalle_sub": f"{_sub_bultos} · {_n_items} línea(s) de despacho",
+    }
 
     ctx_pdf = {
         "cot": {
@@ -1259,13 +1398,17 @@ def _lc_cotizacion_pdf_ctx(cid):
         "items": items,
         "total_en_palabras": _lc_monto_en_palabras(cot.get("total")),
         "uf_info": uf_info,
-        "modo_rico": False,
+        # 2026-09-05: transporte pasa a usar el bloque "rico" con su
+        # propuesta, alcance y recomendación PROPIAS (ver arriba).
+        "modo_rico": True,
         "kpis": None,
-        "rico_textos": None,
-        "alcance_lineas": [],
-        "recomendacion_lineas": [],
+        "kpi_cards": kpi_cards,
+        "rico_textos": rico_textos,
+        "alcance_lineas": alcance_lineas,
+        "recomendacion_lineas": recomendacion_lineas,
         "terminos_pares": terminos_pares,
         "mostrar_col_documento": mostrar_col_documento,
+        "docs_resumen": _lc_docs_resumen(items),
     }
     ctx_pdf["logo_b64"] = _lc_cotiz_logo_b64()
     # BUG REAL (2026-08-25, ver el mismo comentario en
@@ -1341,7 +1484,14 @@ def _lc_cotizacion_pdf_bytes(cid):
 
     pdf_bytes = _pw_pdf(
         html_doc, page_format="A4",
-        margin={"top": "36mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
+        # top 42mm (antes 36mm) — 🔧 FIX 2026-09-05: el header nativo real
+        # termina en 37,5mm (medido con Playwright), así que con 36mm el
+        # contenido de las páginas 2+ arrancaba DENTRO del header y el
+        # título de sección salía atravesado por la banda negra. Debe calzar
+        # con el `@page { margin }` de templates/tickets/cotizacion_pdf.html
+        # (en Chromium ese es el que realmente manda) y con el mismo valor
+        # en tickets_module.py.
+        margin={"top": "42mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
         header_template=header_tpl, footer_template=footer_tpl,
     )
     _emp = re.sub(r"[^A-Za-z0-9 _-]", "", (cot.get("empresa") or "cliente"))[:60].strip() or "cliente"

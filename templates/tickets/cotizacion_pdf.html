@@ -13,10 +13,12 @@
    page.pdf(header_template=..., footer_template=...) en
    tk_cotizacion_pdf() (tickets_module.py), que es el ÚNICO mecanismo
    que Chromium repite en TODAS las páginas sin importar cuántas tenga
-   la cotización. Por eso @page margin=0 acá: los márgenes reales los
-   define esa llamada (top/bottom grandes para el header/footer,
-   left/right en 0 para que el fondo negro del header sea full-bleed;
-   `.sheet-pad` recrea visualmente el margen lateral del CONTENIDO).
+   la cotización. Los márgenes van declarados en el @page de más abajo
+   (top/bottom grandes para dejarle sitio al header/footer, left/right en
+   0 para que el fondo negro del header sea full-bleed; `.sheet-pad`
+   recrea visualmente el margen lateral del CONTENIDO) y repetidos con el
+   MISMO valor en page.pdf() -- ver la nota del fix 2026-09-05 en el
+   @page: en Chromium el de @page es el que manda.
 
    Contrato de variables (las provee tk_cotizacion_pdf):
      cot: numero, fecha_emision, valida_hasta, validez_dias, empresa,
@@ -34,11 +36,22 @@
           simple -- Regla #4.2)
      kpis: {"equipos","categorias","mantenciones_anio","dias_habiles"} o
           None -- mantenciones_anio solo viene con valor para mantención
+     kpi_cards (opcional, 2026-09-05): [{"num","lbl"}, ...] -- tarjetas KPI
+          a medida. Si viene, reemplaza el render basado en `kpis`; sirve
+          para que transporte muestre bultos/documentos/kg en vez de
+          equipos y categorías. Sin ella, el render es el de siempre.
      rico_textos: {"titulo","bt_sub","parrafo","alcance_titulo",
           "valor_unitario_titulo","detalle_titulo"} o None -- textos del
-          bloque rico, redactados por tipo_servicio (2026-07-24)
+          bloque rico, redactados por tipo_servicio (2026-07-24).
+          "detalle_sub" (opcional) reemplaza el "N equipos · precios
+          unitarios en UF" del encabezado de la tabla.
      alcance_lineas / recomendacion_lineas: list[str] (bullets)
      terminos_pares: list[(clave, valor)]
+     docs_resumen (2026-09-05): [{"tipo","tipo_label","numero","lineas"}]
+          -- documentos ERP que respaldan la cotización, derivados de las
+          líneas. Lista vacía = el PDF dice explícitamente que no hay.
+          OJO: el contador se llama "lineas", NO "items" (en Jinja
+          `d.items` resuelve el método del dict y sale vacío).
      logo_b64 (opcional): PNG base64 del logo para fondo claro
      base_url (opcional): base absoluta para rutas relativas en Playwright
    ════════════════════════════════════════════════════════════════════ #}
@@ -57,12 +70,37 @@
     --ilus-panel: #f0f0f0;
   }
 
-  /* Los márgenes reales los pone page.pdf() (header/footer_template) --
-     ver nota arriba. Acá SOLO el tamaño de hoja: declarar "margin" en este
-     @page (aunque sea 0) hace que Chromium lo use en vez del margin que
-     manda page.pdf() -- overlap real comprobado empíricamente (el
-     contenido se pintaba encima del header). NO agregar margin acá. */
-  @page { size: A4; }
+  /* 🔧 FIX 2026-09-05 (Daniel, comparando los 3 PDF reales): en las
+     páginas 2 y 3 el título de sección ("DETALLE DE LA COTIZACIÓN",
+     "DATOS PARA TRANSFERENCIA") quedaba pegado/atravesado por la banda
+     negra del header.
+
+     Causa raíz — la MISMA que ya se documentó en
+     templates/mantenciones/ot_pdf.html (fix 2026-08-28): en Chromium el
+     `margin` de @page tiene PRECEDENCIA sobre el que manda page.pdf().
+     Acá antes NO se declaraba ningún margin (para "dejar mandar" al de
+     page.pdf), y el resultado medido con Playwright fue:
+       · header nativo real (caja SPHS 20mm + padding 5mm×2 + franja 2mm,
+         más el offset propio de Chromium) = termina en 37,5mm.
+       · margin.top de page.pdf() = 36mm  →  el contenido de las páginas
+         2+ arrancaba 1,5mm DENTRO del header.
+     La página 1 se salvaba de casualidad porque `.sheet-pad` le suma 6mm
+     de padding superior -- por eso el bug solo se veía de la 2 en adelante.
+
+     Solución (idéntica a ot_pdf.html): declarar el margin EXPLÍCITO acá,
+     con un valor que supere el alto real del header (42mm > 37,5mm deja
+     4,5mm de aire limpio), y dejar `page.pdf()` con el MISMO valor en
+     tickets_module.py y logistica_cotizaciones.py. Si alguien cambia el
+     tamaño de los logos del header, hay que re-medir y ajustar los tres.
+     El visor HTML (modo_visor) no tiene header nativo: ahí sigue en 0. */
+  @page {
+    size: A4;
+    {% if modo_visor %}
+    margin: 0;
+    {% else %}
+    margin: 42mm 0mm 16mm;
+    {% endif %}
+  }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -135,8 +173,16 @@
     box-shadow: 0 6px 22px rgba(0,0,0,.10);
   }
   /* Recrea el margen lateral de 12mm dentro del contenido (el @page real
-     va con margin 0 para que el header/footer de Playwright sea full-bleed). */
+     va con los laterales en 0 para que el header/footer de Playwright sea
+     full-bleed). */
   .sheet-pad { padding: 6mm 12mm 4mm; }
+  {% if not modo_visor %}
+  /* En el PDF el aire superior ya lo da el margin de @page (42mm, ver la
+     nota del fix de arriba). Si además dejáramos los 6mm de padding, la
+     página 1 arrancaría 6mm más abajo que las 2, 3, ... y el documento se
+     vería desalineado de página a página. */
+  .sheet-pad { padding-top: 0; }
+  {% endif %}
 
   /* ───── DATOS DE LA EMPRESA / DATOS DEL CLIENTE (solo pág. 1) ───── */
   .datos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin-bottom: 4mm; page-break-inside: avoid; }
@@ -152,6 +198,46 @@
     padding: 2.5mm 4mm; font-size: 8pt; margin-bottom: 4mm; page-break-inside: avoid;
   }
   .franja-meta b { color: var(--ilus-black); }
+
+  /* ───── Documentos asociados (trazabilidad ERP) ─────
+     2026-09-05, pedido textual de Daniel: "la cotización en ambos lados no
+     menciona nunca la cantidad de documentos asociados, y eso es
+     importante... necesito que venga qué tipo de documento siempre estoy
+     trabajando, el RUT, el cliente, la dirección, todo. Esto para que las
+     cotizaciones sirvan de filtro para hacer tickets... necesito que todo
+     esté relacionado a documento para asociarlo a una salida legal de
+     dinero."
+     Va en las DOS cotizaciones (servicio técnico y transporte) -- los
+     documentos se derivan de las líneas (erp_tido/erp_nudo), no se
+     inventa ninguno: si las líneas no traen documento, se dice
+     explícitamente que no hay. */
+  .docs-box { border: 1px solid var(--ilus-line); border-radius: 3px; margin-bottom: 4mm; page-break-inside: avoid; }
+  .docs-box .db-head {
+    background: var(--ilus-black); color: #fff; padding: 2mm 4mm;
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 8.5pt; font-weight: 800; text-transform: uppercase; letter-spacing: .02em;
+  }
+  .docs-box .db-head .db-sub { font-size: 7pt; font-weight: 700; color: #d1d5db; text-transform: none; letter-spacing: 0; white-space: nowrap; }
+  .docs-box .db-body { padding: 2.5mm 4mm 3mm; }
+  /* Grid 2×2 en vez de flex: con flex, "Dirección" (que es el dato largo)
+     empujaba a "Tipo de solicitud" a otra fila y las etiquetas quedaban
+     desalineadas entre sí. */
+  .docs-box .db-cli { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm 7mm; margin-bottom: 2.5mm; }
+  .docs-box .db-cli .db-f { min-width: 0; }
+  .docs-box .db-cli .db-k { display: block; font-size: 6.4pt; font-weight: 800; color: var(--ilus-mute); text-transform: uppercase; letter-spacing: .04em; }
+  /* Nombres y direcciones reales de ILUS son largos: NUNCA truncar
+     (REGLA #15) -- el dato completo se muestra aunque ocupe 2 líneas. */
+  .docs-box .db-cli .db-v { font-size: 8pt; font-weight: 700; color: var(--ilus-ink); word-break: break-word; }
+  .docs-box .db-chips { display: flex; flex-wrap: wrap; gap: 1.5mm 2mm; }
+  .doc-chip {
+    display: inline-flex; align-items: baseline; gap: 1.5mm;
+    border: 1px solid #d1d5db; border-left: 3px solid var(--ilus-red);
+    border-radius: 2px; padding: 1.2mm 2.5mm; background: var(--ilus-bg);
+  }
+  .doc-chip .dc-tipo { font-size: 6.4pt; font-weight: 800; color: var(--ilus-red); text-transform: uppercase; letter-spacing: .04em; }
+  .doc-chip .dc-num { font-size: 8.2pt; font-weight: 800; font-family: ui-monospace, Consolas, monospace; color: var(--ilus-black); }
+  .doc-chip .dc-n { font-size: 6.8pt; color: var(--ilus-mute); white-space: nowrap; }
+  .docs-box .db-vacio { font-size: 7.8pt; color: var(--ilus-mute); font-style: italic; }
 
   /* ───── Bloque rico: Propuesta de Mantención Preventiva ───── */
   .barra-titulo {
@@ -219,7 +305,10 @@
     line-height: 1.35;
   }
   table.items td.num  { width: 9mm; color: var(--ilus-mute); }
-  table.items td.doc  { width: 20mm; font-family: ui-monospace, Consolas, monospace; font-size: 7pt; color: var(--ilus-ink); white-space: nowrap; }
+  table.items td.doc  { width: 21mm; font-family: ui-monospace, Consolas, monospace; font-size: 7pt; color: var(--ilus-ink); white-space: nowrap; }
+  /* Tipo de documento ERP (FCV/NVV/GDV/...) sobre el número -- Daniel:
+     "necesito que venga qué tipo de documento siempre estoy trabajando". */
+  table.items td.doc .doc-tido { display: block; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 6pt; font-weight: 800; color: var(--ilus-red); text-transform: uppercase; letter-spacing: .04em; }
   table.items td.cant { width: 16mm; text-align: center; }
   table.items td.puf  { width: 20mm; text-align: right; white-space: nowrap; color: var(--ilus-mute); }
   table.items td.tot  { width: 26mm; text-align: right; font-weight: 700; white-space: nowrap; }
@@ -418,7 +507,50 @@
     <span><b>VALIDEZ:</b> {% if cot.validez_dias is not none %}{{ cot.validez_dias }} días{% else %}{{ cot.valida_hasta or '—' }}{% endif %}</span>
   </div>
 
-  {# ════════════ BLOQUE RICO: Propuesta (Mantención / Visita Técnica / Instalación) ════════════
+  {# ════════════ DOCUMENTOS ASOCIADOS (trazabilidad ERP) ════════════
+     2026-09-05. Bloque nuevo y COMÚN a las dos cotizaciones (servicio
+     técnico y transporte). Responde a lo que Daniel usa para decidir si
+     una cotización se convierte en OT o en ticket: cuántos documentos la
+     respaldan, cuáles son (tipo + número), y el cliente/RUT/dirección a
+     los que están asociados.
+     docs_resumen lo arman los context builders a partir de las líneas
+     (erp_tido/erp_nudo) -- ver _tk_cotizacion_pdf_ctx (tickets_module.py)
+     y _lc_cotizacion_pdf_ctx (logistica_cotizaciones.py). El guard
+     `is defined` es por si algún caller viejo del template compartido no
+     lo pasara: nunca rompe (Regla #4.2). #}
+  {% if docs_resumen is defined %}
+  <div class="docs-box">
+    <div class="db-head">
+      <span>Documentos asociados</span>
+      <span class="db-sub">
+        {% if docs_resumen %}{{ docs_resumen|length }} documento(s) de origen · {{ items|length }} línea(s){% else %}Sin documento de origen · {{ items|length }} línea(s){% endif %}
+      </span>
+    </div>
+    <div class="db-body">
+      <div class="db-cli">
+        <div class="db-f"><span class="db-k">Cliente</span><span class="db-v">{{ cot.empresa or '—' }}</span></div>
+        <div class="db-f"><span class="db-k">R.U.T.</span><span class="db-v">{{ cot.rut or '—' }}</span></div>
+        <div class="db-f"><span class="db-k">Dirección</span><span class="db-v">{{ cot.direccion or '—' }}{% if cot.comuna %}, {{ cot.comuna }}{% endif %}{% if cot.region %} · {{ cot.region }}{% endif %}</span></div>
+        <div class="db-f"><span class="db-k">Tipo de solicitud</span><span class="db-v">{{ cot.tipo_servicio_label or '—' }}</span></div>
+      </div>
+      {% if docs_resumen %}
+      <div class="db-chips">
+        {% for d in docs_resumen %}
+        <span class="doc-chip">
+          {% if d.tipo %}<span class="dc-tipo">{{ d.tipo }}</span>{% endif %}
+          <span class="dc-num">{{ d.numero }}</span>
+          <span class="dc-n">· {{ d.lineas }} línea(s)</span>
+        </span>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="db-vacio">Las líneas de esta cotización no traen documento de origen del ERP.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ════════════ BLOQUE RICO: Propuesta (Mantención / Visita Técnica / Instalación / Transporte) ════════════
      Solo si modo_rico=True (tipo_servicio en mantencion/visita_tecnica/
      instalacion Y alcance/recomendación cargados) -- cualquier otra
      cotización (incluidas TODAS las creadas antes de este cambio, y las de
@@ -430,11 +562,23 @@
   {% if modo_rico %}
   <div class="barra-titulo"><span>{{ rico_textos.titulo }}</span><span class="bt-sub">{{ rico_textos.bt_sub }}</span></div>
   <p class="parrafo-propuesta">{{ rico_textos.parrafo }}</p>
+  {# kpi_cards (2026-09-05): lista genérica [{num,lbl}] para que transporte
+     pueda mostrar SUS métricas (bultos, documentos de origen, kg
+     facturables) en vez de "equipos/categorías", que no significan nada
+     en un despacho. Si un caller no la manda, se conserva EXACTAMENTE el
+     render de siempre con el dict kpis (Regla #4.2: mantención, visita
+     técnica e instalación no cambian ni un pixel). #}
   <div class="kpi-row">
-    <div class="kpi-card"><div class="kpi-num">{{ kpis.equipos }}</div><div class="kpi-lbl">Equipos considerados</div></div>
-    <div class="kpi-card"><div class="kpi-num">{{ kpis.categorias }}</div><div class="kpi-lbl">Categorías de equipos</div></div>
-    {% if kpis.mantenciones_anio %}<div class="kpi-card"><div class="kpi-num">{{ kpis.mantenciones_anio }}</div><div class="kpi-lbl">Mantenciones al año</div></div>{% endif %}
-    {% if kpis.dias_habiles %}<div class="kpi-card"><div class="kpi-num">{{ kpis.dias_habiles }}</div><div class="kpi-lbl">Días hábiles estimados</div></div>{% endif %}
+    {% if kpi_cards %}
+      {% for k in kpi_cards %}
+      <div class="kpi-card"><div class="kpi-num">{{ k.num }}</div><div class="kpi-lbl">{{ k.lbl }}</div></div>
+      {% endfor %}
+    {% else %}
+      <div class="kpi-card"><div class="kpi-num">{{ kpis.equipos }}</div><div class="kpi-lbl">Equipos considerados</div></div>
+      <div class="kpi-card"><div class="kpi-num">{{ kpis.categorias }}</div><div class="kpi-lbl">Categorías de equipos</div></div>
+      {% if kpis.mantenciones_anio %}<div class="kpi-card"><div class="kpi-num">{{ kpis.mantenciones_anio }}</div><div class="kpi-lbl">Mantenciones al año</div></div>{% endif %}
+      {% if kpis.dias_habiles %}<div class="kpi-card"><div class="kpi-num">{{ kpis.dias_habiles }}</div><div class="kpi-lbl">Días hábiles estimados</div></div>{% endif %}
+    {% endif %}
   </div>
   <div class="rico-grid">
     <div class="alcance-box">
@@ -466,7 +610,9 @@
           <div class="lr-flex">
           {% if modo_rico %}
             <span>{{ rico_textos.detalle_titulo }}</span>
-            <span class="lr-sub">{{ kpis.equipos }} equipos · precios unitarios en UF</span>
+            {# detalle_sub permite que transporte diga "N bultos · ..." en
+               vez de "N equipos"; sin él se conserva el texto de siempre. #}
+            <span class="lr-sub">{{ rico_textos.detalle_sub or ((kpis.equipos ~ ' equipos · precios unitarios en UF') if kpis and kpis.equipos else (items|length ~ ' ítem(s)')) }}</span>
           {% else %}
             <span>Detalle de la Cotización</span>
             <span class="lr-sub">{{ items|length }} ítem(s)</span>
@@ -487,7 +633,12 @@
       {% for it in items %}
       <tr>
         <td class="num">{{ loop.index }}</td>
-        {% if mostrar_col_documento %}<td class="doc">{{ it.documento or '—' }}</td>{% endif %}
+        {% if mostrar_col_documento %}<td class="doc">
+          {%- if it.documento and it.documento != '—' -%}
+            {%- if it.documento_tido %}<span class="doc-tido">{{ it.documento_tido }}</span>{% endif -%}
+            {{ it.documento }}
+          {%- else -%}—{%- endif -%}
+        </td>{% endif %}
         <td>{{ it.descripcion }}</td>
         <td class="cant">{{ it.cantidad or 0 }}</td>
         <td class="puf">{{ it.precio_uf or '—' }}</td>

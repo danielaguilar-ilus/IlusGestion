@@ -93364,10 +93364,16 @@ def mant_visita_pdf(vid):
     # header compacto de antes (ese template define su propio @page y otro
     # frente de trabajo está sobre él ahora mismo -- no se le mueve nada).
     _hdr_tpl, _ftr_tpl = _ot_pdf_header_footer_native(ctx, grande=(not _es_informe_lev))
+    # 🔧 2026-09-05: 36mm → 42mm. Medido con Playwright sobre el PDF real,
+    # el header nativo `grande` termina en 37,5mm (sus 32mm de contenido +
+    # ~5,3mm de offset propio de Chromium dentro del margen), así que a
+    # 36mm las páginas de CONTINUACIÓN pintaban su primer título encima de
+    # la banda negra. Debe calzar con el @page de ot_pdf.html (ese es el
+    # que Chromium respeta). El informe de levantamiento no se toca.
     _pdf_margin = (
         {"top": "22mm", "bottom": "16mm", "left": "12mm", "right": "12mm"}
         if _es_informe_lev else
-        {"top": "36mm", "bottom": "16mm", "left": "0mm", "right": "0mm"}
+        {"top": "42mm", "bottom": "16mm", "left": "0mm", "right": "0mm"}
     )
     # 🔧 FIX 2026-09-02 (OT-2026-00058): un PDF "grande" no corre en paralelo
     # con otro PDF grande de la misma instancia -- ver _pdf_grande_lock.
