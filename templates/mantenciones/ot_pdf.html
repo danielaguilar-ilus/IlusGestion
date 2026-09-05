@@ -423,6 +423,29 @@
     margin-bottom: 6px; line-height: 1.5;
   }
   .eq-card .eq-meta b { color: var(--ilus-ink); }
+  {# Ficha de identificación del equipo (2026-09-05): pares etiqueta/valor
+     en dos columnas. La etiqueta va chica y en mayúscula arriba, el dato
+     abajo en negro -- se puede leer en diagonal buscando "N° de serie" sin
+     tener que descifrar una línea corrida. Dos columnas y no tres: los
+     nombres reales de ILUS son largos y con tres se cortarían, que es
+     justo lo que Daniel pidió eliminar. #}
+  .eq-card .eq-ident {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 3px 10px; margin-bottom: 6px;
+  }
+  .eq-card .eq-ident span {
+    display: block; font-size: 8.5pt; color: var(--ilus-ink);
+    line-height: 1.35; overflow-wrap: anywhere;
+  }
+  .eq-card .eq-ident b {
+    display: block; font-size: 6.5pt; font-weight: 800;
+    color: var(--ilus-mute); text-transform: uppercase;
+    letter-spacing: .04em; line-height: 1.2;
+  }
+  .eq-card .eq-checks .ec-cnt {
+    float: right; font-size: 7pt; color: var(--ilus-mute);
+    font-weight: 800; letter-spacing: 0;
+  }
   .eq-card .eq-obs {
     background: var(--ilus-bg);
     border-radius: 3px;
@@ -494,6 +517,10 @@
     margin-bottom: 3px; line-height: 1.3;
   }
   .eq-card .eq-checks .ec-item:last-child { margin-bottom: 0; }
+  .eq-card .eq-checks .ec-mas {
+    margin-top: 4px; padding-top: 3px; border-top: 1px dashed var(--ilus-line);
+    font-size: 7pt; color: var(--ilus-mute); font-style: italic;
+  }
   .eq-card .eq-checks .ec-ck {
     width: 12px; height: 12px;
     background: var(--ilus-ok); color: #fff;
@@ -537,6 +564,7 @@
   table.chk tbody tr:nth-child(even) { background: var(--ilus-bg); }
   table.chk tbody td {
     padding: 5px 6px; vertical-align: top;
+    overflow-wrap: anywhere;
     border-bottom: 1px solid var(--ilus-line);
     line-height: 1.35;
   }
@@ -579,16 +607,31 @@
     background: #f3f4f6; color: #374151;
     border: 1px solid #e5e7eb;
     text-transform: uppercase; letter-spacing: .02em;
-    white-space: nowrap;
+    /* Sin nowrap: el resultado puede ser una respuesta de TEXTO del
+       técnico, y ese texto es justamente la evidencia. */
+    overflow-wrap: anywhere; text-align: left;
   }
+  table.chk .res-texto {
+    font-size: 7.5pt; line-height: 1.4; color: var(--ilus-ink);
+    text-align: left; overflow-wrap: anywhere;
+    padding: 3px 6px; border-radius: 4px;
+    background: #f9fafb; border-left: 2px solid #d1d5db;
+  }
+  table.chk .res-texto.warn { background: #fffbeb; border-left-color: #f59e0b; }
+  table.chk .res-texto.err  { background: #fef2f2; border-left-color: #dc2626; }
   table.chk .pill-res.warn { background: #fef3c7; color: #92400e; border-color: #fde68a; }
   table.chk .pill-res.err  { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
   table.chk .ico {
     color: var(--ilus-red); font-size: 10pt;
     text-align: center;
   }
+  {# 2026-09-05 (Daniel: "hay texto como cortado"): estas dos columnas
+     tenían nowrap, así que una ubicación larga se salía de la celda o se
+     cortaba. En un PDF que es evidencia, el dato va completo aunque ocupe
+     dos líneas -- una ubicación a medias no sirve para respaldar nada. #}
   table.chk td.fecha, table.chk td.ubi {
-    color: var(--ilus-mute); font-size: 7.5pt; white-space: nowrap;
+    color: var(--ilus-mute); font-size: 7.5pt;
+    overflow-wrap: anywhere; line-height: 1.35;
   }
 
   /* ───── 4 mini-resumen cards ───── */
@@ -1056,10 +1099,22 @@
       </div>
       <div class="eq-body">
         <div class="eq-nom">{{ e.nombre }}</div>
-        <div class="eq-meta">
-          {% if e.sku %}<b>SKU:</b> {{ e.sku }}{% endif %}
-          {% if e.serie %}{% if e.sku %} · {% endif %}<b>Serie:</b> {{ e.serie }}{% endif %}
-          {% if e.marca %}<br><b>Marca/Modelo:</b> {{ e.marca }}{% if e.modelo %} {{ e.modelo }}{% endif %}{% endif %}
+        {# 🆔 2026-09-05 (Daniel: "cubrir la evidencia legal con calidad de
+           información, mostrando los equipos de manera ordenada y
+           entendible"). Antes esto era una línea corrida con SKU · Serie y
+           marca: identificaba a medias. La consulta YA traía ubicación,
+           año, voltaje y estado al recibir el equipo, pero no se imprimían
+           -- justo los datos que permiten decir CUÁL equipo es y en qué
+           condiciones se encontró. Ahora van como pares etiquetados, que se
+           leen de corrido y no dependen de que el lector adivine el orden. #}
+        <div class="eq-meta eq-ident">
+          {% if e.sku %}<span><b>SKU</b>{{ e.sku }}</span>{% endif %}
+          {% if e.serie %}<span><b>N° de serie</b>{{ e.serie }}</span>{% endif %}
+          {% if e.marca or e.modelo %}<span><b>Marca / Modelo</b>{{ e.marca or '' }}{% if e.modelo %} {{ e.modelo }}{% endif %}</span>{% endif %}
+          {% if e.ubicacion_sala %}<span><b>Ubicación</b>{{ e.ubicacion_sala }}</span>{% endif %}
+          {% if e.anio_fabricacion %}<span><b>Año</b>{{ e.anio_fabricacion }}</span>{% endif %}
+          {% if e.voltaje %}<span><b>Voltaje</b>{{ e.voltaje }}</span>{% endif %}
+          {% if e.estado_capturado %}<span><b>Estado al revisar</b>{{ e.estado_capturado|replace('_',' ')|capitalize }}</span>{% endif %}
         </div>
         {% if e.diagnostico_estado %}
         <div class="eq-diag {{ 'warn' if e.diagnostico_estado in ('observacion','falla') }}">
@@ -1091,14 +1146,26 @@
         {% endif %}
       </div>
       <div class="eq-checks">
-        <span class="ec-lbl">Checklist resumen</span>
+        {# 2026-09-05: decía "Checklist resumen" y mostraba 5 ítems de los
+           que hubiera. Un equipo con 16 tareas parecía tener 5. Ahora
+           declara cuántas son y cuántas se completaron, y avisa que el
+           resto está en el detalle -- que es donde de verdad están. #}
+        <span class="ec-lbl">Checklist
+          {% if _checks %}<span class="ec-cnt">{{ _checks|selectattr('ok')|list|length }}/{{ _checks|length }}</span>{% endif %}</span>
         {% if _checks %}
           {% for c in _checks[:5] %}
           <div class="ec-item">
             <span class="ec-ck {{ '' if c.ok else 'no' }}">{{ ic_check(9, '#fff' if c.ok else '#9ca3af') }}</span>
-            <span class="ec-txt">{{ c.titulo|truncate(40,true) }}</span>
+            <span class="ec-txt">{{ c.titulo }}</span>
           </div>
           {% endfor %}
+          {# La tarjeta muestra hasta 5; si hay más, se dice cuántas faltan y
+             dónde están. Callarlo hacía que un equipo con 16 tareas
+             pareciera tener 5 -- en un documento que respalda un servicio,
+             eso es información incompleta, no un resumen. #}
+          {% if _checks|length > 5 %}
+          <div class="ec-mas">+ {{ _checks|length - 5 }} tarea{{ 's' if (_checks|length - 5) != 1 }} más · ver «Checklist técnico detallado»</div>
+          {% endif %}
         {% else %}
           <div class="ec-item">
             <span class="ec-ck no">·</span>
@@ -1150,10 +1217,22 @@
       </div>
       <div class="eq-body">
         <div class="eq-nom">{{ e.nombre }}</div>
-        <div class="eq-meta">
-          {% if e.sku %}<b>SKU:</b> {{ e.sku }}{% endif %}
-          {% if e.serie %}{% if e.sku %} · {% endif %}<b>Serie:</b> {{ e.serie }}{% endif %}
-          {% if e.marca %}<br><b>Marca/Modelo:</b> {{ e.marca }}{% if e.modelo %} {{ e.modelo }}{% endif %}{% endif %}
+        {# 🆔 2026-09-05 (Daniel: "cubrir la evidencia legal con calidad de
+           información, mostrando los equipos de manera ordenada y
+           entendible"). Antes esto era una línea corrida con SKU · Serie y
+           marca: identificaba a medias. La consulta YA traía ubicación,
+           año, voltaje y estado al recibir el equipo, pero no se imprimían
+           -- justo los datos que permiten decir CUÁL equipo es y en qué
+           condiciones se encontró. Ahora van como pares etiquetados, que se
+           leen de corrido y no dependen de que el lector adivine el orden. #}
+        <div class="eq-meta eq-ident">
+          {% if e.sku %}<span><b>SKU</b>{{ e.sku }}</span>{% endif %}
+          {% if e.serie %}<span><b>N° de serie</b>{{ e.serie }}</span>{% endif %}
+          {% if e.marca or e.modelo %}<span><b>Marca / Modelo</b>{{ e.marca or '' }}{% if e.modelo %} {{ e.modelo }}{% endif %}</span>{% endif %}
+          {% if e.ubicacion_sala %}<span><b>Ubicación</b>{{ e.ubicacion_sala }}</span>{% endif %}
+          {% if e.anio_fabricacion %}<span><b>Año</b>{{ e.anio_fabricacion }}</span>{% endif %}
+          {% if e.voltaje %}<span><b>Voltaje</b>{{ e.voltaje }}</span>{% endif %}
+          {% if e.estado_capturado %}<span><b>Estado al revisar</b>{{ e.estado_capturado|replace('_',' ')|capitalize }}</span>{% endif %}
         </div>
         {% if e.diagnostico_estado %}
         <div class="eq-diag {{ 'warn' if e.diagnostico_estado in ('observacion','falla') }}">
@@ -1185,14 +1264,26 @@
         {% endif %}
       </div>
       <div class="eq-checks">
-        <span class="ec-lbl">Checklist resumen</span>
+        {# 2026-09-05: decía "Checklist resumen" y mostraba 5 ítems de los
+           que hubiera. Un equipo con 16 tareas parecía tener 5. Ahora
+           declara cuántas son y cuántas se completaron, y avisa que el
+           resto está en el detalle -- que es donde de verdad están. #}
+        <span class="ec-lbl">Checklist
+          {% if _checks %}<span class="ec-cnt">{{ _checks|selectattr('ok')|list|length }}/{{ _checks|length }}</span>{% endif %}</span>
         {% if _checks %}
           {% for c in _checks[:5] %}
           <div class="ec-item">
             <span class="ec-ck {{ '' if c.ok else 'no' }}">{{ ic_check(9, '#fff' if c.ok else '#9ca3af') }}</span>
-            <span class="ec-txt">{{ c.titulo|truncate(40,true) }}</span>
+            <span class="ec-txt">{{ c.titulo }}</span>
           </div>
           {% endfor %}
+          {# La tarjeta muestra hasta 5; si hay más, se dice cuántas faltan y
+             dónde están. Callarlo hacía que un equipo con 16 tareas
+             pareciera tener 5 -- en un documento que respalda un servicio,
+             eso es información incompleta, no un resumen. #}
+          {% if _checks|length > 5 %}
+          <div class="ec-mas">+ {{ _checks|length - 5 }} tarea{{ 's' if (_checks|length - 5) != 1 }} más · ver «Checklist técnico detallado»</div>
+          {% endif %}
         {% else %}
           <div class="ec-item">
             <span class="ec-ck no">·</span>
@@ -1216,11 +1307,11 @@
       <tr>
         <th class="num">#</th>
         <th>Tarea</th>
-        <th style="width:80px">Tipo</th>
-        <th style="width:80px">Resultado</th>
+        <th style="width:72px">Tipo</th>
+        <th style="width:110px">Resultado</th>
         <th style="width:30px">{{ ic_camera(11, '#fff') }}</th>
         <th style="width:80px">Fecha/Hora</th>
-        <th style="width:80px">Ubicación</th>
+        <th style="width:92px">Ubicación</th>
       </tr>
     </thead>
     <tbody>
@@ -1228,18 +1319,30 @@
       <tr>
         <td class="num">{{ loop.index }}</td>
         <td>
-          {{ t.titulo|truncate(56,true) }}
-          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre|truncate(36,true) }}</div>{% endif %}
+          {{ t.titulo }}
+          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre }}</div>{% endif %}
         </td>
         <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
         <td>
           {% set res = t.resultado_str or '' %}
           {% set rescls = t.resultado_clase or 'ok' %}
-          {% if res %}<span class="pill-res {{ rescls }}">{{ res|truncate(20,true) }}</span>{% else %}—{% endif %}
+          {# 2026-09-05: una respuesta de TEXTO del técnico puede ser una
+             frase completa, y meterla en una pastilla en mayúsculas la
+             volvía ilegible justo cuando más importa (es la evidencia de lo
+             que encontró). Sobre 28 caracteres deja de ser etiqueta y pasa a
+             ser texto: minúsculas, alineado a la izquierda, con el color
+             solo en un borde lateral cuando hay observación o falla. #}
+          {% if res %}
+            {% if res|length > 28 %}
+              <div class="res-texto {{ rescls }}">{{ res }}</div>
+            {% else %}
+              <span class="pill-res {{ rescls }}">{{ res }}</span>
+            {% endif %}
+          {% else %}—{% endif %}
         </td>
         <td class="ico">{% if t.tiene_foto %}{{ ic_camera(12, '#dc2626') }}{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
         <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
-        <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
+        <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -1374,11 +1477,11 @@
       <tr>
         <th class="num">#</th>
         <th>Tarea</th>
-        <th style="width:80px">Tipo</th>
-        <th style="width:80px">Resultado</th>
+        <th style="width:72px">Tipo</th>
+        <th style="width:110px">Resultado</th>
         <th style="width:30px">{{ ic_camera(11, '#fff') }}</th>
         <th style="width:80px">Fecha/Hora</th>
-        <th style="width:80px">Ubicación</th>
+        <th style="width:92px">Ubicación</th>
       </tr>
     </thead>
     <tbody>
@@ -1386,18 +1489,30 @@
       <tr>
         <td class="num">{{ loop.index }}</td>
         <td>
-          {{ t.titulo|truncate(56,true) }}
-          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre|truncate(36,true) }}</div>{% endif %}
+          {{ t.titulo }}
+          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre }}</div>{% endif %}
         </td>
         <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
         <td>
           {% set res = t.resultado_str or '' %}
           {% set rescls = t.resultado_clase or 'ok' %}
-          {% if res %}<span class="pill-res {{ rescls }}">{{ res|truncate(20,true) }}</span>{% else %}—{% endif %}
+          {# 2026-09-05: una respuesta de TEXTO del técnico puede ser una
+             frase completa, y meterla en una pastilla en mayúsculas la
+             volvía ilegible justo cuando más importa (es la evidencia de lo
+             que encontró). Sobre 28 caracteres deja de ser etiqueta y pasa a
+             ser texto: minúsculas, alineado a la izquierda, con el color
+             solo en un borde lateral cuando hay observación o falla. #}
+          {% if res %}
+            {% if res|length > 28 %}
+              <div class="res-texto {{ rescls }}">{{ res }}</div>
+            {% else %}
+              <span class="pill-res {{ rescls }}">{{ res }}</span>
+            {% endif %}
+          {% else %}—{% endif %}
         </td>
         <td class="ico">{% if t.tiene_foto %}{{ ic_camera(12, '#dc2626') }}{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
         <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
-        <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
+        <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
