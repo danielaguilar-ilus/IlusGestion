@@ -3422,7 +3422,15 @@
             <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() if v.estado else '—' }}</span>
           </td>
           <td class="py-2 pe-2 text-nowrap">
-            <a href="{{ url_for('mant_ot_ficha', vid=v.id) }}"
+            {# 🔀 2026-09-04 (Daniel, probando el cliente Kifit: "está genial
+               que lo identifique, pero lo está derivando a la orden de
+               trabajo antigua"). Toda salida "Abrir OT" de la ficha del
+               cliente apunta ahora a OT 2.0 (ot2_detalle) — la pantalla
+               clásica sigue existiendo, solo deja de ser el destino por
+               defecto desde acá. Mismo cambio en los 5 enlaces equivalentes
+               de static/mantenciones_ficha.js (próximas / siguientes /
+               últimas / reagendar / línea de tiempo). #}
+            <a href="{{ url_for('ot2_detalle', vid=v.id) }}"
                class="btn btn-xs btn-ilus" title="Abrir OT — Tareas, Fotos, Técnicos">
               <i class="bi bi-clipboard2-pulse"></i> Abrir OT
             </a>
@@ -3430,6 +3438,13 @@
             <button class="btn btn-xs btn-outline-secondary ms-1" onclick='editarVisita({{ v|tojson }})' title="Editar">
               <i class="bi bi-pencil"></i>
             </button>
+            {% endif %}
+            {# 🔒 2026-09-04 (Daniel: "el eliminar solamente lo deja al
+               superadministrador, con edición en el front por los roles").
+               El backend ya lo exigía (has_role_permission "mantenciones/
+               eliminar", nace apagado), pero el botón se dibujaba para todo
+               no-técnico y el 403 aparecía recién al apretarlo. #}
+            {% if permissions and (permissions.superadmin or permissions.mant_eliminar) %}
             {# 🆕 2026-08-28: 3er argumento con el número de OT -- el backend
                ahora exige `confirm_text` (REGLA #5) para el hard-delete;
                eliminarVisitaFromTabla() lo pide con ilusPrompt antes de

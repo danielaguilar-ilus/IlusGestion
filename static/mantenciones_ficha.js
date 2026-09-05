@@ -1929,7 +1929,7 @@ function abrirEmailManual() {
           ${prox.numero_ot ? `· <span class="font-monospace" style="font-weight:600">${prox.numero_ot}</span>` : ''}
         </div>
         <div class="d-flex gap-2 mt-2 flex-wrap">
-          <a href="/mantenciones/ot/${prox.id}" class="btn btn-sm ${atrasada?'btn-light':'btn-outline-secondary'}" style="font-size:.72rem">
+          <a href="/ot/${prox.id}" class="btn btn-sm ${atrasada?'btn-light':'btn-outline-secondary'}" style="font-size:.72rem">
             <i class="bi bi-arrow-right me-1"></i>Abrir OT
           </a>
           ${atrasada ? `
@@ -1949,7 +1949,7 @@ function abrirEmailManual() {
         const sStr = sd ? sd.toLocaleDateString('es-CL', {day:'2-digit', month:'short', year:'2-digit'}) : '—';
         const tipoS = (s.tipo || 'preventiva').replace(/_/g, ' ');
         const colorDot = _VIS_TIPO_COLOR[s.tipo] || '#9ca3af';
-        html += `<div class="vis-prox-sig-row" onclick="window.location.href='/mantenciones/ot/${s.id}'">
+        html += `<div class="vis-prox-sig-row" onclick="window.location.href='/ot/${s.id}'">
           <span class="vis-prox-sig-dot" style="background:${colorDot}"></span>
           <span style="font-weight:700;color:#374151;min-width:90px">${sStr}</span>
           <span style="flex:1;text-transform:capitalize">${_visEscHtml(tipoS)}</span>
@@ -2010,7 +2010,7 @@ function abrirEmailManual() {
       const histBadge = esHist
         ? `<span class="badge-historica" title="Registrada retroactivamente; realizada antes de que existiera el sistema">Histórica</span>`
         : '';
-      html += `<div class="vis-ult-item" ${esHist ? 'style="opacity:.72"' : ''} onclick="window.location.href='/mantenciones/ot/${v.id}'">
+      html += `<div class="vis-ult-item" ${esHist ? 'style="opacity:.72"' : ''} onclick="window.location.href='/ot/${v.id}'">
         <span class="vis-ult-dot" style="background:${col}"></span>
         <div class="vis-ult-body">
           <div class="vis-ult-titulo">${_visEscHtml(v.title || v.titulo || tipo)}</div>
@@ -2277,7 +2277,7 @@ function abrirEmailManual() {
   function visAbrirReagendar(vid){
     // Reusa el módulo de OT — abre la visita directamente para que el usuario
     // edite la fecha desde allí (no duplicamos un modal de reagendar).
-    window.location.href = `/mantenciones/ot/${vid}`;
+    window.location.href = `/ot/${vid}`;
   }
 
   // Arranque: cuando el usuario abre el tab Visitas (o si ya está visible)
@@ -2493,7 +2493,7 @@ function abrirEmailManual() {
 
   function visTlAbrirDetalle(vid){
     // Abre la OT en la misma pestaña (reusa la página existente).
-    window.location.href = `/mantenciones/ot/${vid}`;
+    window.location.href = `/ot/${vid}`;
   }
 
   // Re-render en resize para alternar mobile/desktop

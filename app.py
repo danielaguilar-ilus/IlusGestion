@@ -4548,6 +4548,17 @@ PERMS_KEYS = (
     # Nace en False para todos los roles hasta que Daniel lo prenda desde
     # /admin/roles (mismo patrón que mant_equipos_agregar_libre).
     "mant_equipos_baja",
+    # mant_eliminar — espejo en el FRONT del permiso que ya gobierna el
+    # borrado de OT/clientes en el backend (has_role_permission(rol,
+    # "mantenciones", "eliminar"), ver la rama 'eliminar' de
+    # _puede_ot_accion). El checkbox ya existía en /admin/roles y el
+    # servidor ya lo respetaba; lo que faltaba era que la PANTALLA supiera
+    # -- el botón de basurero se le dibujaba a todo el que no fuera
+    # técnico y recién al apretarlo aparecía un 403 (Daniel 2026-09-04:
+    # "el eliminar solamente lo deja al superadministrador, con edición
+    # en el front por los roles"). Nace en False: solo superadmin borra
+    # hasta que Daniel encienda el permiso para algún rol.
+    "mant_eliminar",
     # mant_ot_finanzas — gestionar el paso de Finanzas al cerrar una OT
     # (centro de costo, documento/garantia, cuanto cobro el proveedor):
     # aditivo 2026-09-04, Daniel: "a Victor le toco cerrar la OT 150 y le
@@ -4708,6 +4719,9 @@ def _build_perms_from_matrix(role):
     # (aditivo 2026-09-04, caso Victor / OT-150). Ver "mant_ot_finanzas" en
     # PERMS_KEYS.
     base["mant_ot_finanzas"] = bool(man.get("ot_finanzas"))
+    # Borrar OT/clientes — espejo en el front del permiso que el backend ya
+    # consulta (ver "mant_eliminar" en PERMS_KEYS).
+    base["mant_eliminar"] = bool(man.get("eliminar"))
     # 🆕 2026-09-02 — Reagendar / reasignar técnico (Daniel: "liberado para
     # todos y que se pueda bloquear por el front en los roles").
     # OJO al `not in`: son permisos de tipo BLOQUEO, o sea que la ausencia
