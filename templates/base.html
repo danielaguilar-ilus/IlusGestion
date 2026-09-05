@@ -1036,6 +1036,11 @@
 <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 <script defer src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 <script defer src="{{ url_for('static', filename='pdf_modal.js') }}"></script>
+{# Visor de imágenes global (zoom / girar / arrastrar / navegar). Se usa con
+   ilusLightbox(url) o ilusLightbox([{url,caption}], idx). Extraído de
+   Transporte el 2026-09-04 para que las fotos de la OT tengan el mismo
+   visor -- ver static/ilus_lightbox.js. #}
+<script defer src="{{ url_for('static', filename='ilus_lightbox.js') }}"></script>
 
 {# ══════════════════════════════════════════════════════════
    Google Maps Places API — carga LAZY (on-demand).

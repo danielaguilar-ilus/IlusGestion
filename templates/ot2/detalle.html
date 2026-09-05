@@ -1065,7 +1065,13 @@
 .otd-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
   padding:14px 16px}
 .otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc}
-.otd-ev-item img{width:100%;height:120px;object-fit:cover;display:block;background:#f3f4f6}
+/* 🔍 2026-09-04 (Daniel: "quiero verlas cuando presione, con buena
+   calidad, mover las fotos, si es necesario rotarla"). La miniatura ahora
+   abre el visor global (ilusLightbox — zoom/girar/arrastrar/navegar), así
+   que se comporta como algo apretable: cursor y un leve realce al pasar. */
+.otd-ev-item img{width:100%;height:120px;object-fit:cover;display:block;background:#f3f4f6;
+  cursor:zoom-in;transition:transform .15s ease,filter .15s ease}
+.otd-ev-item img:hover{transform:scale(1.03);filter:brightness(1.05)}
 .otd-ev-item .meta{padding:7px 9px}
 .otd-ev-item .tipo{font-size:.62rem;font-weight:900;text-transform:uppercase;
   letter-spacing:.04em;color:var(--ilus-red,#dc2626)}
@@ -2506,7 +2512,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% for f in fotos %}
               <div class="otd-ev-item">
                 {% if f.url %}
-                  <img src="{{ f.url }}" alt="" loading="lazy">
+                  <img src="{{ f.url }}" alt="" loading="lazy" onclick="otdVerFoto(this)">
                 {% else %}
                   <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
                     <i class="bi bi-image" style="font-size:1.6rem"></i></div>
@@ -6573,16 +6579,48 @@ function otdEsc(s){
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-/* Abre una foto a pantalla completa. Reusa ilusAlert (REGLA #1: nada de
-   window.open ni de visores nuevos) con subHtml, que es contenido que
-   armamos nosotros a partir de una URL ya escapada. */
+/* Abre una foto a pantalla completa.
+   🔍 2026-09-04 (Daniel: "quiero verla con buena calidad, mover las fotos,
+   si es necesario rotarla"). Antes esto era un ilusAlert con un <img>
+   adentro: se veía la foto, pero no se podía acercar, girar ni moverla --
+   con la OT cerrada esa foto es la única evidencia que queda y una imagen
+   fija no deja verificar un número de serie ni una etiqueta. Ahora usa el
+   visor global (static/ilus_lightbox.js, cargado desde base.html), el
+   mismo que ya se usaba en la evidencia de Transporte. El ilusAlert queda
+   como red de seguridad por si el visor no cargó. */
 window.otdVerFotoGrande = function(url){
+  if (typeof ilusLightbox === 'function'){ ilusLightbox(url, 0, 'Foto de la OT'); return; }
   ilusAlert({
     title: 'Foto de la OT',
     message: '',
     sub: `<img src="${url}" alt="" style="width:100%;border-radius:10px;display:block">`,
     subHtml: true, okLabel: 'Cerrar',
   });
+};
+
+/* Galería de la pestaña Información: al tocar una miniatura se abre el
+   visor con TODAS las fotos de la OT, empezando por la que se tocó, para
+   poder pasar de una a otra con las flechas sin volver a la grilla. Las
+   fotos se leen del DOM (no de una lista fija en JS) para que una foto
+   recién subida entre a la galería sin recargar la página. El pie de cada
+   foto reusa el texto que ya muestra la tarjeta (tipo · equipo · quién y
+   cuándo), así el visor no inventa datos nuevos. */
+window.otdVerFoto = function(imgEl){
+  const grid = document.getElementById('otdEvGrid');
+  if (!grid || typeof ilusLightbox !== 'function'){
+    if (imgEl && imgEl.src) window.otdVerFotoGrande(imgEl.src);
+    return;
+  }
+  const imgs = Array.from(grid.querySelectorAll('.otd-ev-item img'));
+  const fotos = imgs.map(function(el){
+    const item = el.closest('.otd-ev-item');
+    const tipo = (item?.querySelector('.tipo')?.textContent || '').trim();
+    const desc = (item?.querySelector('.desc')?.textContent || '').trim();
+    const who  = (item?.querySelector('.who')?.textContent || '').trim();
+    return { url: el.src, caption: [tipo, desc, who].filter(Boolean).join(' · ') };
+  });
+  const idx = Math.max(0, imgs.indexOf(imgEl));
+  ilusLightbox(fotos, idx, 'Foto de la OT');
 };
 
 function otdChkFotosHtml(t){

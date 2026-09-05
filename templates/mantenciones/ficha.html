@@ -3434,10 +3434,18 @@
                class="btn btn-xs btn-ilus" title="Abrir OT — Tareas, Fotos, Técnicos">
               <i class="bi bi-clipboard2-pulse"></i> Abrir OT
             </a>
+            {# ✏️ 2026-09-04 (Daniel: "que abra la OT en la 2.0"). Antes este
+               botón abría el modal de edición clásico (editarVisita), que
+               escribe por el PUT genérico de la visita -- un camino paralelo
+               a las reglas de OT 2.0 (candados de cierre, firmas, finanzas).
+               Ahora lleva a la misma pantalla donde se edita todo lo demás.
+               La función editarVisita() NO se elimina: la sigue usando el
+               resto de la ficha (REGLA #4.2). #}
             {% if not is_tecnico %}
-            <button class="btn btn-xs btn-outline-secondary ms-1" onclick='editarVisita({{ v|tojson }})' title="Editar">
+            <a href="{{ url_for('ot2_detalle', vid=v.id) }}"
+               class="btn btn-xs btn-outline-secondary ms-1" title="Editar en OT 2.0">
               <i class="bi bi-pencil"></i>
-            </button>
+            </a>
             {% endif %}
             {# 🔒 2026-09-04 (Daniel: "el eliminar solamente lo deja al
                superadministrador, con edición en el front por los roles").
