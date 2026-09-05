@@ -52283,7 +52283,15 @@ def _puede_ot_accion(vid, accion, user=None):
     # reagendar, re-ejecutar tareas, re-configurar la OT) -- 'ver' y el
     # resto de acciones de solo lectura/auditoría NO se tocan: superadmin
     # siempre debe poder auditar una OT cerrada, solo no alterarla.
-    _ot_firmada_por_responsable = bool(v.get("firma_supervisor_user_id"))
+    # 🔒 2026-09-04 (segunda pasada, Daniel: "efectivamente, que los botones de
+    # reagendar y reasignar técnico no se dibujen cuando esté cerrada").
+    # Se sella por DOS caminos, no solo por la firma: hay OT que llegaron a
+    # 'cerrada' por vías antiguas sin dejar firma_supervisor_user_id, y esas
+    # también son evidencia cerrada. Cualquiera de las dos condiciones basta.
+    _ot_firmada_por_responsable = (
+        bool(v.get("firma_supervisor_user_id"))
+        or (v.get("estado") or "").lower() == "cerrada"
+    )
     _acciones_bloqueadas_post_firma = ("cobertura", "metadata", "editar", "ejecutar", "configurar")
     if role == "superadmin":
         if _ot_firmada_por_responsable and accion in _acciones_bloqueadas_post_firma:
@@ -71304,6 +71312,34 @@ def mant_visita_firmar(vid):
         # admin/superadmin + creador de la OT (acción 'firmar_creador').
         if not _puede_ot_accion(vid, "firmar_creador"):
             return jsonify({"ok": False, "error": "Solo el supervisor que asignó esta OT (o un admin) puede firmar."}), 403
+        # 🔒 FIX 2026-09-04 (Daniel, tras perder la firma de Aarón en la
+        # OT-2026-00133: "las OT son evidencia y no se puede borrar ni pasar
+        # por encima de autorizaciones"). La firma del responsable es
+        # ESCRIBIR-UNA-VEZ: si ya hay una, este endpoint no la reemplaza.
+        # Antes el UPDATE de abajo pisaba sin preguntar -- una segunda
+        # llamada (otra persona, un reintento, una pestaña vieja) borraba la
+        # firma de quien realmente autorizó y estampaba otra en su lugar,
+        # sin dejar rastro de la anterior. Si de verdad hay que cambiarla,
+        # tiene que ser una decisión deliberada y visible, no un efecto
+        # secundario. Las firmas de técnico y cliente NO llevan este candado
+        # porque tienen un flujo legítimo de re-firma (rechazar-cierre las
+        # limpia a propósito para que el técnico rehaga el trabajo).
+        _firma_previa = mysql_fetchone(
+            "SELECT firma_supervisor_url, firma_supervisor_nombre, firma_supervisor_at "
+            "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        if (_firma_previa.get("firma_supervisor_url") or "").strip():
+            _quien = _firma_previa.get("firma_supervisor_nombre") or "el responsable"
+            _cuando = _firma_previa.get("firma_supervisor_at")
+            print(f"[SECURITY] intento de sobrescribir firma de responsable vid={vid} "
+                  f"por {current_username()} (firma previa de {_quien})", flush=True)
+            return jsonify({
+                "ok": False,
+                "error_codigo": "FIRMA_RESPONSABLE_YA_EXISTE",
+                "error": (f"Esta OT ya está firmada por {_quien}"
+                          + (f" el {chile_fmt_filter(_cuando)}" if _cuando else "")
+                          + ". La firma del responsable es evidencia: no se "
+                            "reemplaza."),
+            }), 409
     elif tipo == "cliente":
         # El cliente firma en el dispositivo del técnico → solo el técnico
         # asignado + superadmin pueden capturarla. Antes no se validaba y
