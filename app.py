@@ -79739,7 +79739,7 @@ def _ot_docs_listar(vid):
     """
     v = mysql_fetchone(
         "SELECT factura_tido, factura_nudo, factura_monto, factura_rut, "
-        "       factura_rut_ok, factura_emitida_at "
+        "       factura_rut_ok, factura_emitida_at, documentos_extra "
         "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
     try:
         filas = mysql_fetchall(
@@ -79788,6 +79788,31 @@ def _ot_docs_listar(vid):
             "rut": v.get("factura_rut") or "", "rut_ok": v.get("factura_rut_ok"),
             "emitido_el": str(v["factura_emitida_at"])[:10] if v.get("factura_emitida_at") else None,
         })
+
+    # OT creadas ANTES del 2026-09-05 guardaron sus documentos adicionales
+    # solo en el JSON `documentos_extra` del wizard, cuando todavía no
+    # existía la tabla puente. Se leen igual para que su historial no
+    # aparezca vacío -- son las mismas OT que Daniel iba a revisar cuando
+    # dijo "no vi que la OT fuera multidocumento".
+    try:
+        _extra_json = v.get("documentos_extra")
+        if _extra_json:
+            _lista = json.loads(_extra_json) if isinstance(_extra_json, str) else _extra_json
+            for _d in (_lista or []):
+                _par = ((_d.get("tido") or ""), (_d.get("nudo") or ""))
+                if not _par[1] or _par in _erp_ya:
+                    continue
+                _erp_ya.add(_par)
+                docs.append({
+                    "id": None, "origen": "erp", "es_cobro": True,
+                    "es_principal": False, "solo_wizard": True,
+                    "titulo": f"{_par[0] or 'FCV'} {_par[1]}".strip(),
+                    "etiqueta": _d.get("cliente_nombre") or "",
+                    "monto": None, "rut": _d.get("rut") or "", "rut_ok": None,
+                    "emitido_el": None,
+                })
+    except Exception as _e_dx:
+        print(f"[ot_docs] documentos_extra vid={vid}: {_e_dx}", flush=True)
 
     _cobro = [d for d in docs if d.get("es_cobro")]
     return {
@@ -80853,6 +80878,10 @@ def ot2_api_crear():
     # frontend; acá solo se guarda lo que ya vino validado, sin revalidar
     # contra el ERP de nuevo).
     _fin_docs_extra_json = None
+    # Lista normalizada, SIEMPRE definida: más abajo (tras el commit del
+    # INSERT) se espeja en mant_visita_documentos, y antes de esto quedaba
+    # sin declarar cuando el wizard no mandaba documentos extra.
+    _docs_extra_norm = []
     _docs_extra_raw = _fin.get("documentos_extra")
     if isinstance(_docs_extra_raw, list) and _docs_extra_raw:
         _docs_limpios = []
@@ -80870,6 +80899,7 @@ def ot2_api_crear():
             })
         if _docs_limpios:
             _fin_docs_extra_json = json.dumps(_docs_limpios, ensure_ascii=False)
+            _docs_extra_norm = _docs_limpios
     _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
     _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None
     _fin_prov_nombre = (str(_fin.get("proveedor_nombre") or "").strip()[:200]) or None
@@ -81151,6 +81181,32 @@ def ot2_api_crear():
             conn.rollback()
             return _ot2_err(
                 "El checklist elegido no tiene tareas.", "CHECKLIST_VACIO")
+
+        # 📄 UNIFICAR EL MULTIDOCUMENTO (2026-09-05). Daniel: "deben ser
+        # multidocumento, no vi que la OT fuera multidocumento" -- y tenía
+        # razón aunque el wizard SÍ los guardaba: quedaron dos mecanismos
+        # paralelos que no se hablaban. El wizard escribía
+        # `mant_visitas.documentos_extra` (JSON) y el detalle de la OT lee
+        # `mant_visita_documentos` (la tabla puente de hoy), así que los
+        # documentos agregados al crear no aparecían por ningún lado
+        # después. Se espejan acá, en la misma transacción: la tabla pasa a
+        # ser la fuente única y el JSON se conserva tal cual (REGLA #4.2, no
+        # se quita nada -- sigue siendo el registro de lo que se declaró en
+        # el momento de crear).
+        for _dx in _docs_extra_norm:
+            try:
+                cur.execute(
+                    "INSERT INTO mant_visita_documentos "
+                    "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
+                    "   rut, etiqueta, asociado_por) "
+                    "VALUES (%s,'erp',1,0,%s,%s,%s,%s,%s)",
+                    (vid, _dx["tido"], _dx["nudo"], _dx.get("rut") or None,
+                     _dx.get("cliente_nombre") or None, current_username()))
+            except Exception as _e_dx:
+                # Nunca tumba la creación: el JSON ya quedó guardado y el
+                # documento se puede reasociar desde el detalle.
+                print(f"[ot2_crear] doc extra {_dx.get('tido')} {_dx.get('nudo')}: {_e_dx}",
+                      flush=True)
 
         # Vínculo con el ticket de origen, si vino de ahí.
         # 🔧 FIX 2026-09-04 (Daniel: "el ticket no se asocia a la orden de
