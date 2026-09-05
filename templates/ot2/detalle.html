@@ -3516,10 +3516,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                está resuelto. #}
             <span class="num {{ 'ok' if (e.n_obl and e.n_obl_ok == e.n_obl) else ('go' if e.n_ok else 'pend') }}">
               {{ loop.index }}</span>
+            {# 🖼️ 2026-09-05 (Daniel, mirando la OT-319 cerrada: "aún se ven
+               sin fotos"). Esta miniatura sale de `mant_maquinas.foto_url`,
+               la foto de FICHA del equipo — que en la mayoría de los equipos
+               está vacía, así que quedaba un cuadro gris aunque el técnico
+               hubiera tomado fotos en terreno. Ahora, cuando la ficha no
+               tiene foto, se rellena con la primera evidencia REAL de ese
+               equipo en ESTA OT (ver otdEqFotosFallback más abajo). Se hace
+               en el navegador con los datos del checklist que ya se
+               descargan: no agrega ni una consulta al servidor. #}
             {% if e.foto_url %}
               <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
             {% else %}
-              <span class="th"><i class="bi bi-image"></i></span>
+              <span class="th" data-eqfoto="{{ e.id }}"><i class="bi bi-image"></i></span>
             {% endif %}
             <div class="nm">
               <b>{{ e.nombre or ('Equipo #' ~ e.id) }}</b>
@@ -6558,6 +6567,7 @@ async function otdCargarChecklistSiHaceFalta(){
     document.querySelectorAll('.otd-chk-mount').forEach(el => {
       otdRenderChecklistEquipo(el.dataset.mid);
     });
+    otdEqFotosFallback();
   } catch(e){
     document.querySelectorAll('.otd-chk-mount').forEach(el => {
       el.innerHTML = '<div class="otd-chk-fallback">Sin conexión — reintenta en un momento.</div>';
@@ -6565,6 +6575,51 @@ async function otdCargarChecklistSiHaceFalta(){
   } finally {
     OTD_CHK_LOADING = false;
   }
+}
+
+/* Rellena la miniatura de los equipos que NO tienen foto de ficha con la
+   primera evidencia real que el técnico tomó de ese equipo en esta OT.
+
+   🖼️ 2026-09-05 (Daniel, sobre la OT-319 ya cerrada: "aún se ven sin
+   fotos"). La tarjeta mostraba `mant_maquinas.foto_url` y, como casi
+   ningún equipo tiene foto de ficha cargada, quedaba un cuadro gris —
+   aunque la OT tuviera decenas de fotos tomadas en terreno. Eso era
+   justo lo contrario de lo que Daniel pidió cuando dijo "para eso están
+   las tarjetas, se verían más bonitas".
+
+   Se resuelve en el navegador con los datos del checklist que ya se
+   descargaron (cero consultas nuevas). La foto de ficha, cuando existe,
+   SIEMPRE gana: es la foto del equipo, no la de un momento puntual.
+   Al tocarla abre el visor, igual que el resto de las fotos. */
+function otdEqFotosFallback(){
+  if (!OTD_CHK_DATA) return;
+  document.querySelectorAll('[data-eqfoto]').forEach(function(ph){
+    const mid = ph.getAttribute('data-eqfoto');
+    const grupos = OTD_CHK_DATA[String(mid)] || [];
+    let url = '', desde = '';
+    for (const g of grupos){
+      for (const t of (g.tareas || [])){
+        if (t.fotos && t.fotos.length && t.fotos[0].url){
+          url = t.fotos[0].url; desde = t.titulo || '';
+          break;
+        }
+      }
+      if (url) break;
+    }
+    if (!url) return;   // sin evidencia todavía: se queda el ícono gris
+    const img = document.createElement('img');
+    img.className = 'th';
+    img.src = url;
+    img.loading = 'lazy';
+    img.alt = 'Evidencia del equipo';
+    img.title = desde ? ('Evidencia: ' + desde) : 'Evidencia de este equipo';
+    img.style.cursor = 'zoom-in';
+    img.addEventListener('click', function(ev){
+      ev.preventDefault(); ev.stopPropagation();   // no abrir/cerrar el <details>
+      if (typeof ilusLightbox === 'function') ilusLightbox(url, 0, 'Evidencia del equipo');
+    });
+    ph.replaceWith(img);
+  });
 }
 
 function otdRenderChecklistEquipo(mid){
