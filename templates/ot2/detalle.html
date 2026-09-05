@@ -1510,6 +1510,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-chk-serie-aviso{display:flex;align-items:flex-start;gap:7px;background:#f3f4f6;
   border:1px solid #e5e7eb;color:#4b5563;border-radius:8px;padding:7px 10px;
   font-size:.74rem;margin-bottom:6px}
+/* Equipo que aparece en la búsqueda porque coincide una de sus TAREAS,
+   no su nombre (2026-09-05). Se marca para que no parezca un resultado
+   equivocado: el motivo del match no está a la vista hasta abrirlo. */
+.otd-wk-item.match-tarea > summary{box-shadow:inset 3px 0 0 #f59e0b}
+.otd-wk-item.match-tarea > summary::after{content:"coincide en una tarea";
+  font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;
+  color:#92400e;background:#fff8e1;border:1px solid #fde68a;border-radius:999px;
+  padding:2px 8px;margin-left:8px;white-space:nowrap}
+
 /* Tarea que exigía foto y la OT cerró sin ella (2026-09-05). Ámbar, no
    rojo: es un hallazgo para auditar, no un error que alguien pueda ir a
    corregir — la OT ya está sellada. */
@@ -3469,7 +3478,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <div class="otd-wk-bar">
         <div class="buscar">
           <i class="bi bi-search"></i>
-          <input type="search" id="otdWkBuscar" placeholder="Buscar equipo por nombre, SKU o serie…"
+          <input type="search" id="otdWkBuscar" placeholder="Buscar equipo o tarea (nombre, SKU, serie o texto de la tarea)…"
                  autocomplete="off" oninput="otdWkFiltrar(this.value)">
           <button type="button" class="limpiar" id="otdWkLimpiar" style="display:none"
                   onclick="otdWkFiltrar(''); document.getElementById('otdWkBuscar').value='';"
@@ -4786,13 +4795,45 @@ window.otdVerAnexoPdf = function(aid){
    Todo del lado del navegador: los equipos ya vienen renderizados, esto
    solo filtra y navega. Sin fetch, sin esperas -- en un gimnasio con mala
    señal eso importa más que cualquier animación. */
+/* ¿Alguna TAREA de este equipo coincide con lo buscado?
+   🔎 2026-09-05 (Daniel, sobre la OT del Sport Francés: "hay una lista
+   gigantesca con SKU y descripción con tiempo; no lo veo necesario, a
+   menos que lo busques"). El buscador solo miraba nombre/SKU/serie del
+   EQUIPO. Con 93 equipos y 933 tareas, encontrar "la tarea del cable de
+   acero" obligaba a abrir equipo por equipo. Se busca contra
+   OTD_CHK_DATA (los datos), no contra el DOM, porque las tareas de un
+   equipo cerrado todavía no están dibujadas. */
+function _otdWkTareaCoincide(mid, term){
+  if (!term || !OTD_CHK_DATA) return false;
+  const grupos = OTD_CHK_DATA[String(mid)] || [];
+  for (const g of grupos){
+    if ((g.plantilla_nombre || '').toLowerCase().indexOf(term) >= 0) return true;
+    for (const t of (g.tareas || [])){
+      if ((t.titulo || '').toLowerCase().indexOf(term) >= 0) return true;
+      if ((t.descripcion || '').toLowerCase().indexOf(term) >= 0) return true;
+    }
+  }
+  return false;
+}
+
 window.otdWkFiltrar = function(q){
   const items = document.querySelectorAll('#otdWkCard .otd-wk-item');
   const term = (q || '').trim().toLowerCase();
-  let visibles = 0;
+  let visibles = 0, porTarea = 0;
   items.forEach(function(el){
-    const hay = !term || (el.dataset.buscar || '').indexOf(term) >= 0;
+    let hay = !term || (el.dataset.buscar || '').indexOf(term) >= 0;
+    // Si el equipo no calza por nombre/SKU/serie, se busca en sus tareas:
+    // el equipo se muestra igual y se avisa POR QUÉ aparece, para que
+    // nadie crea que el buscador se equivocó.
+    let esPorTarea = false;
+    if (!hay && term){
+      const mid = (el.querySelector('.otd-chk-mount') || {}).dataset;
+      if (mid && mid.mid && _otdWkTareaCoincide(mid.mid, term)){
+        hay = true; esPorTarea = true; porTarea++;
+      }
+    }
     el.style.display = hay ? '' : 'none';
+    el.classList.toggle('match-tarea', esPorTarea);
     if (hay) visibles++;
   });
   const vacio = document.getElementById('otdWkSinRes');
@@ -4802,7 +4843,10 @@ window.otdWkFiltrar = function(q){
   const info = document.getElementById('otdWkFiltroInfo');
   if (info){
     info.style.display = term ? '' : 'none';
-    info.textContent = term ? ' · ' + visibles + ' en pantalla' : '';
+    info.textContent = term
+      ? ' · ' + visibles + ' en pantalla'
+        + (porTarea ? ' (' + porTarea + ' por sus tareas)' : '')
+      : '';
   }
 };
 
