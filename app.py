@@ -92377,6 +92377,408 @@ def mant_seguimiento_vista():
 # PDF — Reporte completo de OT con firmas y fotos
 # ═════════════════════════════════════════════════════════════════════
 
+# ── Etiquetas humanas de los estados que llegan al PDF de la OT ────────
+# (2026-09-05) Los ENUM crudos ('no_encontrado', 'falla_detectada',
+# 'fuera_servicio') no pueden salir tal cual en un documento que firma y
+# guarda el cliente. Un solo mapa por concepto, usado únicamente por el
+# PDF; la app sigue con sus propias etiquetas (no se tocan).
+_OT_PDF_RAZON_SALTADO = {
+    "no_encontrado":      "No se encontró en el lugar",
+    "dado_de_baja":       "Equipo dado de baja",
+    "dañado_inaccesible": "Dañado o inaccesible",
+    "danado_inaccesible": "Dañado o inaccesible",
+    "cliente_lo_quito":   "El cliente lo retiró",
+    "otro":               "Otro motivo",
+}
+_OT_PDF_REVISION = {
+    "verificado":      ("Verificado", "ok"),
+    "con_cambios":     ("Verificado con cambios", "ok"),
+    "saltado":         ("No revisado", "err"),
+    "falla_detectada": ("Falla detectada", "err"),
+}
+_OT_PDF_CAUSA_RAIZ = {
+    "desgaste":         "Desgaste por uso",
+    "mal_uso":          "Mal uso",
+    "falta_mantencion": "Falta de mantención",
+    "defecto_fabrica":  "Defecto de fábrica",
+    "accidente":        "Accidente",
+    "otro":             "Otro",
+}
+_OT_PDF_TIPO_FOTO = {
+    "antes": "Antes", "durante": "Durante", "despues": "Después",
+    "serie": "N° de serie", "falla": "Falla", "reparacion": "Reparación",
+    "general": "General", "levantamiento": "Levantamiento",
+}
+_OT_PDF_ESTADO_CAPTURADO = {
+    "operativo": "Operativo", "advertencia": "Con advertencia",
+    "fuera_servicio": "Fuera de servicio", "en_reparacion": "En reparación",
+    "dado_baja": "Dado de baja", "no_encontrado": "No encontrado",
+}
+
+
+# Dominios corporativos: un correo de estos identifica públicamente a quien
+# firma. Un usuario que entra con un Gmail personal NO debe ver su correo
+# impreso en un documento que se entrega a terceros (privacidad del
+# trabajador); en ese caso se identifica por su cuenta ILUS (id interno),
+# que sigue siendo trazable para ILUS sin exponer nada personal.
+_OT_PDF_DOMINIOS_ILUS = ("@sphs.cl", "@ilusfitness.com")
+
+
+def _ot_pdf_ident_cuenta(email, uid=None):
+    """Identificación imprimible de una cuenta ILUS para el PDF de la OT."""
+    e = (email or "").strip()
+    if e and e.lower().endswith(_OT_PDF_DOMINIOS_ILUS):
+        return e
+    if uid:
+        return f"cuenta ILUS n.º {uid}"
+    return ""
+
+
+def _ot_pdf_hhmm(v):
+    """TIME de MySQL llega como timedelta (o time/str): siempre 'HH:MM'."""
+    if v is None or v == "":
+        return ""
+    try:
+        if hasattr(v, "total_seconds"):
+            s = int(v.total_seconds())
+            return f"{s // 3600:02d}:{(s % 3600) // 60:02d}"
+        if hasattr(v, "strftime"):
+            return v.strftime("%H:%M")
+    except Exception:
+        pass
+    return str(v)[:5]
+
+
+def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_cliente=None,
+                       usuarios=None):
+    """Capa PROBATORIA del PDF de la OT.
+
+    `usuarios`: {username_en_minúscula: {"id":…, "nombre":…}} resuelto por
+    _ot_pdf_context desde app_users. Sirve para imprimir NOMBRES (no
+    correos crudos) en "completada por" / "revisado por" / "foto tomada
+    por", y para identificar a los firmantes sin exponer correos
+    personales (ver _ot_pdf_ident_cuenta). Opcional: sin él se cae al
+    identificador de cuenta cuando es corporativo, o a nada.
+
+    2026-09-05, Daniel: "esto será la evidencia para empresas y debe quedar
+    bien... cubrir la evidencia legal con calidad de información mostrando
+    los equipos de manera ordenada y entendible".
+
+    Toma las filas que `_ot_pdf_context` YA consulta y deriva SOLO claves
+    nuevas (aditivas) para el template: quién/cuándo/dónde reales, los
+    hallazgos reunidos en un solo lugar, la numeración que une cada tarjeta
+    de equipo con sus filas del checklist, y el anexo fotográfico completo
+    con fecha/hora y autor de cada foto. No consulta ni escribe nada: es
+    pura transformación, y por eso se prueba aislada (harness Playwright)
+    sin Flask ni MySQL.
+
+    Efectos sobre lo que YA recibía el template (deliberados):
+      · `tareas_chk` vuelve RE-ORDENADO siguiendo el orden de las tarjetas
+        de equipo (1..N) en vez del maquina_id de creación, para que el
+        número de tarjeta y el tramo de filas del checklist coincidan. Las
+        tareas sin equipo van al final. Ninguna fila cambia de contenido;
+        solo se le agregan campos.
+      · a cada dict de `equipos` se le agregan `idx` y etiquetas de
+        revisión; no se quita ni se renombra nada.
+
+    OJO: este contexto alimenta también /ot-firmada/<token> (público, sin
+    login). Acá NO va ningún dato financiero: ni costos, ni márgenes, ni
+    modalidad de cobro. Solo hechos técnicos del servicio prestado.
+    """
+    visita = visita or {}
+    equipos = equipos or []
+    tareas = tareas or []
+    tareas_chk = tareas_chk or []
+    fotos = fotos or []
+
+    def _hecha(t):
+        # Mismo criterio que R1 de _ot_validar_cierre: cualquiera de los
+        # dos flags basta (el endpoint de completar escribe ambos).
+        return bool(t.get("completada")) or (t.get("estado_trabajo") or "") == "completada"
+
+    def _chile(v, fmt="%d/%m/%Y %H:%M"):
+        try:
+            return chile_fmt_filter(v, fmt) if v else ""
+        except Exception:
+            return str(v) if v else ""
+
+    _usuarios = {str(k).strip().lower(): (v or {}) for k, v in (usuarios or {}).items()}
+
+    def _quien(username):
+        """username (correo de login) → nombre visible; nunca un correo personal."""
+        u = (username or "").strip()
+        if not u:
+            return ""
+        info = _usuarios.get(u.lower()) or {}
+        return (info.get("nombre") or "").strip() or _ot_pdf_ident_cuenta(u, info.get("id"))
+
+    # ── 1) Numeración de equipos + estado de revisión EN ESTA visita ──
+    idx_por_maquina = {}
+    for i, e in enumerate(equipos, 1):
+        e["idx"] = i
+        idx_por_maquina[e.get("id")] = i
+        rev = (e.get("estado_revision") or "").strip().lower()
+        lbl, sev = _OT_PDF_REVISION.get(rev, ("", ""))
+        e["revision_label"] = lbl
+        e["revision_sev"] = sev
+        e["saltado"] = (rev == "saltado")
+        rz = (e.get("razon_saltado") or "").strip().lower()
+        e["razon_saltado_label"] = _OT_PDF_RAZON_SALTADO.get(
+            rz, rz.replace("_", " ").capitalize() if rz else "")
+        ec = (e.get("estado_capturado") or "").strip().lower()
+        e["estado_capturado_label"] = _OT_PDF_ESTADO_CAPTURADO.get(
+            ec, ec.replace("_", " ").capitalize() if ec else "")
+        e["revisado_at_str"] = _chile(e.get("revisado_at"))
+        e["revisado_por_str"] = _quien(e.get("revisado_por"))
+    saltados_ids = {e.get("id") for e in equipos if e.get("saltado")}
+
+    # ── 2) Filas del checklist: campos probatorios + orden por tarjeta ──
+    t_por_id = {t.get("id"): t for t in tareas}
+    for fila in tareas_chk:
+        t = t_por_id.get(fila.get("id")) or {}
+        mid = t.get("maquina_id")
+        fila["maquina_idx"] = idx_por_maquina.get(mid)
+        fila["obligatoria"] = bool(t.get("obligatoria"))
+        fila["requiere_foto"] = bool(t.get("requiere_foto"))
+        fila["hecha"] = _hecha(t)
+        fila["sin_foto_exigida"] = bool(t.get("requiere_foto")) and not fila.get("tiene_foto")
+        fila["completada_por"] = (t.get("completada_por") or "").strip()
+        # Solo se imprime en la fila cuando la completó ALGUIEN DISTINTO del
+        # técnico que firma (equipos de 2-3 técnicos): repetir 900 veces el
+        # mismo correo no aporta y engorda el documento; el firmante ya
+        # queda identificado en el bloque de firmas.
+        _firmante_tec = ((visita.get("firmante_tecnico_email") or visita.get("tecnico_email") or "")
+                         .strip().lower())
+        fila["completada_por_otro"] = (
+            _quien(fila["completada_por"]) if fila["completada_por"]
+            and fila["completada_por"].lower() != _firmante_tec else "")
+        fila["equipo_saltado"] = bool(mid) and mid in saltados_ids
+        # Una fila es "excepción" cuando el lector tiene que mirarla: falla o
+        # alerta en el resultado, foto exigida que no está, u obligatoria sin
+        # completar. Las de un equipo NO revisado no se cuentan una a una:
+        # el hallazgo es el equipo entero (se reporta una sola vez).
+        fila["exc"] = (
+            fila.get("resultado_clase") in ("warn", "err")
+            or fila["sin_foto_exigida"]
+            or (fila["obligatoria"] and not fila["hecha"])
+        ) and not fila["equipo_saltado"]
+    # Orden: tarjeta 1..N (tareas sin equipo al final). sorted() es estable,
+    # así que dentro de cada equipo se conserva plantilla/orden/id del SQL.
+    _sin_equipo = len(equipos) + 1
+    tareas_chk = sorted(tareas_chk, key=lambda f: (f.get("maquina_idx") or _sin_equipo))
+    eq_tareas_rango = {}
+    for n, fila in enumerate(tareas_chk, 1):
+        fila["num"] = n
+        mi = fila.get("maquina_idx")
+        if mi:
+            a, _b = eq_tareas_rango.get(mi, (n, n))
+            eq_tareas_rango[mi] = (a, n)
+    # Indexado por id de máquina: la tarjeta itera `e.id`, no el índice.
+    eq_tareas_rango_id = {}
+    for e in equipos:
+        if e.get("idx") in eq_tareas_rango:
+            eq_tareas_rango_id[e["id"]] = eq_tareas_rango[e["idx"]]
+
+    # ── 3) Equipos revisados de verdad (no "N de N" por definición) ──
+    hechas_por_maquina = {}
+    for t in tareas:
+        if t.get("maquina_id") and _hecha(t):
+            hechas_por_maquina[t["maquina_id"]] = hechas_por_maquina.get(t["maquina_id"], 0) + 1
+    equipos_sin_revisar = []
+    for e in equipos:
+        rev = (e.get("estado_revision") or "").strip().lower()
+        revisado = (not e.get("saltado")) and (
+            rev in ("verificado", "con_cambios", "falla_detectada")
+            or bool(e.get("diagnostico_estado"))
+            or hechas_por_maquina.get(e.get("id"), 0) > 0
+        )
+        e["revisado"] = revisado
+        if not revisado:
+            equipos_sin_revisar.append(e)
+    equipos_revisados_n = len(equipos) - len(equipos_sin_revisar)
+
+    # ── 4) Hallazgos y excepciones, reunidos en un solo lugar ──
+    hallazgos = []
+    for e in equipos:
+        ref = f"Equipo {e['idx']} · {e.get('nombre') or ''}"
+        if e.get("serie"):
+            ref += f" · Serie {e['serie']}"
+        de = (e.get("diagnostico_estado") or "").strip().lower()
+        obs_tec = (e.get("observacion_tecnico") or "").strip()
+        if e.get("saltado"):
+            det = " — ".join(x for x in (e.get("razon_saltado_label"), obs_tec) if x)
+            hallazgos.append({"sev": "err", "cat": "Equipo no revisado", "ref": ref, "detalle": det})
+        elif (e.get("estado_revision") or "") == "falla_detectada" and de != "falla":
+            hallazgos.append({"sev": "err", "cat": "Falla detectada", "ref": ref,
+                              "detalle": obs_tec or (e.get("diagnostico_texto") or "").strip()})
+        if de == "falla":
+            hallazgos.append({"sev": "err", "cat": "Diagnóstico: falla", "ref": ref,
+                              "detalle": (e.get("diagnostico_texto") or "").strip()})
+        elif de == "observacion":
+            hallazgos.append({"sev": "warn", "cat": "Diagnóstico: observación", "ref": ref,
+                              "detalle": (e.get("diagnostico_texto") or "").strip()})
+        elif not e.get("saltado") and not e.get("revisado"):
+            hallazgos.append({"sev": "warn", "cat": "Equipo sin revisión registrada", "ref": ref,
+                              "detalle": "Sin tareas completadas ni diagnóstico en esta OT."})
+    for fila in tareas_chk:
+        if not fila.get("exc"):
+            continue
+        ref = f"Tarea {fila['num']}"
+        if fila.get("maquina_idx"):
+            ref += f" · Equipo {fila['maquina_idx']}"
+        ref += f" · {fila.get('titulo') or ''}"
+        if fila.get("resultado_clase") == "err":
+            hallazgos.append({"sev": "err", "cat": "Resultado con falla", "ref": ref,
+                              "detalle": f"Resultado: {fila.get('resultado_str')}"})
+        elif fila.get("resultado_clase") == "warn":
+            hallazgos.append({"sev": "warn", "cat": "Resultado con alerta", "ref": ref,
+                              "detalle": f"Resultado: {fila.get('resultado_str')}"})
+        if fila.get("obligatoria") and not fila.get("hecha"):
+            hallazgos.append({"sev": "err", "cat": "Tarea obligatoria sin completar", "ref": ref, "detalle": ""})
+        if fila.get("sin_foto_exigida"):
+            hallazgos.append({"sev": "warn", "cat": "Foto exigida sin registrar", "ref": ref, "detalle": ""})
+    _orden_sev = {"err": 0, "warn": 1}
+    hallazgos.sort(key=lambda h: _orden_sev.get(h["sev"], 9))
+    hallazgos_err = sum(1 for h in hallazgos if h["sev"] == "err")
+    hallazgos_warn = sum(1 for h in hallazgos if h["sev"] == "warn")
+
+    tareas_saltadas_n = sum(1 for f in tareas_chk if f.get("equipo_saltado"))
+    tareas_no_hechas_n = sum(1 for f in tareas_chk if not f.get("hecha") and not f.get("equipo_saltado"))
+    tareas_oblig_pend_n = sum(1 for f in tareas_chk
+                              if f.get("obligatoria") and not f.get("hecha") and not f.get("equipo_saltado"))
+    tareas_sin_foto_n = sum(1 for f in tareas_chk if f.get("sin_foto_exigida") and not f.get("equipo_saltado"))
+
+    # ── 5) Quién / cuándo / dónde, ya formateado (hora Chile, REGLA #6) ──
+    def _dur(minutos):
+        try:
+            m = int(minutos)
+        except Exception:
+            return ""
+        h, r = divmod(max(m, 0), 60)
+        return f"{h} h {r:02d} min" if h else f"{r} min"
+
+    hri = visita.get("hora_real_inicio")
+    hrf = visita.get("hora_real_fin")
+    dur_min = visita.get("duracion_real_min")
+    if dur_min is None and hri and hrf:
+        try:
+            dur_min = max(0, int((hrf - hri).total_seconds() // 60))
+        except Exception:
+            dur_min = None
+    fp = visita.get("fecha_programada")
+    try:
+        fecha_prog_str = fp.strftime("%d/%m/%Y") if hasattr(fp, "strftime") else (str(fp) if fp else "")
+    except Exception:
+        fecha_prog_str = str(fp or "")
+    ff = visita.get("fecha_fin")
+    try:
+        fecha_fin_str = ff.strftime("%d/%m/%Y") if hasattr(ff, "strftime") else (str(ff) if ff else "")
+    except Exception:
+        fecha_fin_str = ""
+    lat, lng = visita.get("exec_gps_lat"), visita.get("exec_gps_lng")
+    gps_str = ""
+    if lat is not None and lng is not None:
+        try:
+            gps_str = f"{float(lat):.5f}, {float(lng):.5f}"
+        except Exception:
+            gps_str = f"{lat}, {lng}"
+    contacto_sitio = (visita.get("contacto_nombre") or "").strip()
+    if contacto_sitio and (visita.get("contacto_cargo") or "").strip():
+        contacto_sitio += f" ({visita['contacto_cargo'].strip()})"
+    contacto_sitio_tel = (visita.get("contacto_tel") or "").strip() if contacto_sitio else ""
+    if not contacto_sitio:
+        contacto_sitio = (visita.get("cli_contacto") or "").strip()
+        contacto_sitio_tel = (visita.get("cli_contacto_tel") or "").strip()
+    _tipo = (visita.get("tipo") or "").strip().lower()
+    _cr = (visita.get("causa_raiz") or "").strip().lower()
+    ot_datos = {
+        "tipo_label":        _TIPO_OT_LABEL.get(_tipo, _tipo.replace("_", " ").capitalize() if _tipo else "Servicio técnico"),
+        "titulo":            (visita.get("titulo") or "").strip(),
+        "cli_rut_fmt":       _formato_rut_chile(visita.get("cli_rut")) if visita.get("cli_rut") else "",
+        "fecha_prog_str":    fecha_prog_str,
+        "fecha_fin_str":     fecha_fin_str,
+        "hora_prog_str":     _ot_pdf_hhmm(visita.get("hora_inicio")),
+        "hora_prog_fin_str": _ot_pdf_hhmm(visita.get("hora_fin")),
+        "inicio_real_str":   _chile(hri),
+        "fin_real_str":      _chile(hrf),
+        "duracion_str":      _dur(dur_min) if dur_min is not None else "",
+        "pausada_str":       _dur(visita.get("pausada_total_min")) if (visita.get("pausada_total_min") or 0) > 0 else "",
+        "cerrada_str":       _chile(visita.get("cerrada_at")),
+        "gps_str":           gps_str,
+        "gps_at_str":        _chile(visita.get("exec_gps_at")),
+        "gps_direccion":     (visita.get("exec_gps_direccion") or "").strip(),
+        "contacto_sitio":    contacto_sitio,
+        "contacto_sitio_tel": contacto_sitio_tel,
+        "contacto_sitio_email": (visita.get("contacto_email") or "").strip() if visita.get("contacto_nombre") else "",
+        "acceso_piso":       (visita.get("acceso_piso") or "").strip(),
+        "acceso_notas":      (visita.get("acceso_notas") or "").strip(),
+        "causa_raiz_label":  _OT_PDF_CAUSA_RAIZ.get(_cr, _cr.replace("_", " ").capitalize() if _cr else ""),
+        "tecnico_firmante_email": (visita.get("firmante_tecnico_email") or visita.get("tecnico_email") or "").strip(),
+        "responsable_email": (visita.get("responsable_email") or "").strip(),
+        # Identificación IMPRIMIBLE de los firmantes internos: correo si es
+        # corporativo, "cuenta ILUS n.º X" si entró con un correo personal.
+        "tecnico_firmante_ident": _ot_pdf_ident_cuenta(
+            visita.get("firmante_tecnico_email") or visita.get("tecnico_email"),
+            visita.get("firma_tecnico_user_id") or visita.get("tecnico_user_id")),
+        "responsable_ident": _ot_pdf_ident_cuenta(
+            visita.get("responsable_email"), visita.get("firma_supervisor_user_id")),
+    }
+
+    # ── 6) Anexo fotográfico: TODAS las fotos, con equipo, tarea, tipo,
+    #       fecha/hora y autor. Las miniaturas de las tarjetas muestran 3
+    #       por equipo; lo declarado ("N fotos") tiene que poder verse. ──
+    titulo_tarea = {t.get("id"): (t.get("titulo") or "") for t in tareas}
+    nombre_maquina = {e.get("id"): (e.get("nombre") or "") for e in equipos}
+    fotos_anexo = []
+    for f in fotos:
+        if not f.get("url"):
+            continue
+        mid = f.get("maquina_id")
+        tf = (f.get("tipo_foto") or "").strip().lower()
+        fotos_anexo.append({
+            "url":           f.get("url"),
+            "equipo_idx":    idx_por_maquina.get(mid),
+            "equipo_nombre": nombre_maquina.get(mid, ""),
+            "tarea_titulo":  titulo_tarea.get(f.get("tarea_id"), ""),
+            "tipo_label":    _OT_PDF_TIPO_FOTO.get(tf, tf.capitalize() if tf else ""),
+            "tomada_str":    _chile(f.get("tomada_at")),
+            "tomada_por":    _quien(f.get("tomada_por")),
+            "descripcion":   (f.get("descripcion") or "").strip(),
+            "_orden":        (idx_por_maquina.get(mid) or _sin_equipo, str(f.get("tomada_at") or ""), f.get("id") or 0),
+        })
+    fotos_anexo.sort(key=lambda x: x["_orden"])
+    for n, fa in enumerate(fotos_anexo, 1):
+        fa["n"] = n
+        fa.pop("_orden", None)
+    n_fotos_por_equipo = {}
+    for fa in fotos_anexo:
+        if fa.get("equipo_idx"):
+            n_fotos_por_equipo[fa["equipo_idx"]] = n_fotos_por_equipo.get(fa["equipo_idx"], 0) + 1
+    for e in equipos:
+        e["n_fotos"] = n_fotos_por_equipo.get(e.get("idx"), 0)
+
+    fc = firmante_cliente or {}
+    return {
+        "tareas_chk":            tareas_chk,
+        "eq_tareas_rango":       eq_tareas_rango_id,
+        "hallazgos":             hallazgos,
+        "hallazgos_err":         hallazgos_err,
+        "hallazgos_warn":        hallazgos_warn,
+        "equipos_revisados_n":   equipos_revisados_n,
+        "equipos_sin_revisar":   equipos_sin_revisar,
+        "tareas_saltadas_n":     tareas_saltadas_n,
+        "tareas_no_hechas_n":    tareas_no_hechas_n,
+        "tareas_oblig_pend_n":   tareas_oblig_pend_n,
+        "tareas_sin_foto_n":     tareas_sin_foto_n,
+        "fotos_anexo":           fotos_anexo,
+        "ot_datos":              ot_datos,
+        "firmante_cliente_rut_fmt": _formato_rut_chile(fc.get("signer_rut")) if fc.get("signer_rut") else "",
+        "ilus_brand":            ILUS_BRAND,
+        "ilus_legal":            ILUS_LEGAL,
+        "ilus_rut":              ILUS_RUT,
+    }
+
+
 def _ot_pdf_context(vid, embed_images=False):
     """Construye el contexto COMPLETO para renderizar `mantenciones/ot_pdf.html`.
 
@@ -92416,11 +92818,16 @@ def _ot_pdf_context(vid, embed_images=False):
         "       COALESCE(u.nombre, u.username) AS tecnico_principal, "
         "       u.username AS tecnico_email, "
         "       COALESCE(us.nombre, us.username) AS responsable_nombre, "
-        "       us.username AS responsable_email "
+        "       us.username AS responsable_email, "
+        # 2026-09-05 (valor probatorio): correo del técnico que FIRMÓ, que
+        # puede no ser el asignado (firma_tecnico_user_id vs tecnico_user_id).
+        # La firma sin identificación del firmante vale poco.
+        "       uf.username AS firmante_tecnico_email "
         "  FROM mant_visitas v "
         "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         "  LEFT JOIN app_users u  ON u.id  = v.tecnico_user_id "
         "  LEFT JOIN app_users us ON us.id = v.firma_supervisor_user_id "
+        "  LEFT JOIN app_users uf ON uf.id = v.firma_tecnico_user_id "
         " WHERE v.id=%s",
         (vid,)
     )
@@ -92453,20 +92860,45 @@ def _ot_pdf_context(vid, embed_images=False):
     # nunca llegaba al PDF por más que el técnico lo hubiera completado.
     # LEFT JOIN (no INNER): un equipo sin fila en mant_visita_equipos
     # todavía debe listarse, solo sin diagnóstico.
-    equipos = mysql_fetchall(
-        "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
-        "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
-        "       m.ubicacion_sala, m.estado_capturado, m.observaciones, "
-        "       ve.diagnostico_estado, ve.diagnostico_texto "
+    # 2026-09-05 (valor probatorio): se suman las columnas de la revisión de
+    # ESTA visita (mant_visita_equipos.estado_revision / razon_saltado /
+    # observacion_tecnico / revisado_at / revisado_por). Sin ellas, un
+    # equipo que el técnico marcó "saltado: no se encontró" salía en el PDF
+    # como cualquier otro, con su checklist a medias y sin explicación --
+    # y m.observaciones (la ficha del equipo, de cualquier visita anterior)
+    # era lo único que se imprimía como "Observación". Con fallback a la
+    # consulta anterior por si algún entorno no tiene las columnas
+    # (ILUS_SKIP_MIGRATIONS=1).
+    _sql_equipos_base = (
         "  FROM mant_visita_tareas vt "
         "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
         "  LEFT JOIN mant_visita_equipos ve "
         "         ON ve.visita_id = vt.visita_id AND ve.maquina_id = m.id "
         " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
         "   AND COALESCE(m.estado,'activo') != 'baja' "
-        " ORDER BY m.nombre",
-        (vid,)
-    ) or []
+        " ORDER BY m.nombre"
+    )
+    try:
+        equipos = mysql_fetchall(
+            "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+            "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
+            "       m.ubicacion_sala, m.estado_capturado, m.observaciones, "
+            "       ve.diagnostico_estado, ve.diagnostico_texto, "
+            "       ve.estado_revision, ve.razon_saltado, ve.observacion_tecnico, "
+            "       ve.revisado_at, ve.revisado_por "
+            + _sql_equipos_base,
+            (vid,)
+        ) or []
+    except Exception as _e_eq_rev:
+        print(f"[_ot_pdf_context][equipos_revision] vid={vid}: {_e_eq_rev}", flush=True)
+        equipos = mysql_fetchall(
+            "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+            "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
+            "       m.ubicacion_sala, m.estado_capturado, m.observaciones, "
+            "       ve.diagnostico_estado, ve.diagnostico_texto "
+            + _sql_equipos_base,
+            (vid,)
+        ) or []
     equipos = [dict(e) for e in equipos]
 
     # ── Técnicos extras (legacy mant_visita_tecnicos) ────────────────
@@ -92490,6 +92922,9 @@ def _ot_pdf_context(vid, embed_images=False):
         "       t.valor_texto, t.valor_numero, t.valor_sino, "
         "       t.valor_verificacion, t.valor_lista, t.valor_fecha_hora, "
         "       t.valor_gps_lat, t.valor_gps_lng, "
+        # 2026-09-05 (valor probatorio): quién completó cada tarea y el
+        # estado de trabajo (mismo criterio que R1 de _ot_validar_cierre).
+        "       t.estado_trabajo, t.completada_por, "
         "       m.nombre AS maquina_nombre, "
         "       (SELECT COUNT(*) FROM mant_visita_fotos f WHERE f.tarea_id = t.id) AS n_fotos "
         "  FROM mant_visita_tareas t "
@@ -92502,8 +92937,11 @@ def _ot_pdf_context(vid, embed_images=False):
 
     # ── Fotos (con URL resuelta) ─────────────────────────────────────
     fotos_raw = mysql_fetchall(
+        # descripcion/tomada_por (2026-09-05): el anexo fotográfico del PDF
+        # imprime fecha/hora y autor de cada foto -- una foto sin esos datos
+        # no respalda nada. Ambas columnas existen desde el CREATE TABLE.
         "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
-        "       tipo_foto, tomada_at "
+        "       tipo_foto, tomada_at, descripcion, tomada_por "
         "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
         (vid,)
     ) or []
@@ -92625,8 +93063,12 @@ def _ot_pdf_context(vid, embed_images=False):
             except Exception:
                 return ("GPS OK", "ok")
         if tr == "texto":
+            # 2026-09-05: antes se cortaba a 18 caracteres con "…". La
+            # respuesta de texto del técnico ES la evidencia ("al encender
+            # huele a quemado, se desconectó...") y el template ya la pinta
+            # como texto corrido cuando es larga (REGLA #15: nada truncado).
             v = (t.get("valor_texto") or "").strip()
-            return ((v[:18] + "…" if len(v) > 18 else v) or "—", "txt")
+            return (v or "—", "txt")
         # check / foto / default
         return (("OK" if t.get("completada") else "—"), ("ok" if t.get("completada") else "txt"))
 
@@ -92637,8 +93079,13 @@ def _ot_pdf_context(vid, embed_images=False):
     for t in tareas:
         res_txt, res_cls = _fmt_resultado(t)
         ca = t.get("completada_at")
+        # 2026-09-05 (REGLA #6): completada_at es un NOW() de MySQL (UTC) y
+        # salía crudo en formato ISO ("2026-09-03 13:15") -- en la columna
+        # Fecha/Hora del checklist, o sea 3-4 horas corridas respecto de lo
+        # que el técnico y el cliente vivieron. En un documento probatorio
+        # la hora tiene que ser la de Chile, y en formato chileno.
         try:
-            ca_str = ca.strftime('%Y-%m-%d %H:%M') if ca else ""
+            ca_str = chile_fmt_filter(ca, '%d/%m/%Y %H:%M') if ca else ""
         except Exception:
             ca_str = str(ca) if ca else ""
         tareas_chk.append({
@@ -93014,6 +93461,50 @@ def _ot_pdf_context(vid, embed_images=False):
         # páginas al hacer Ctrl+P.
         "native_header_footer": embed_images,
     }
+    # ── Capa probatoria (2026-09-05): claves ADITIVAS -- ver
+    #    _ot_pdf_probatorio. Si algo falla, el PDF sale igual que antes con
+    #    valores vacíos seguros; el template guarda cada bloque nuevo con
+    #    `{% if %}` para no romper la vista.
+    try:
+        # Nombres visibles de quienes completaron tareas / revisaron equipos /
+        # tomaron fotos (esas columnas guardan el username de login). Best
+        # effort: si falla, el PDF sale igual con la identificación de cuenta.
+        _usuarios_pdf = {}
+        try:
+            _unames = set()
+            for _t in tareas:
+                if _t.get("completada_por"):
+                    _unames.add(str(_t["completada_por"]).strip())
+            for _e in equipos:
+                if _e.get("revisado_por"):
+                    _unames.add(str(_e["revisado_por"]).strip())
+            for _f in fotos:
+                if _f.get("tomada_por"):
+                    _unames.add(str(_f["tomada_por"]).strip())
+            _unames.discard("")
+            if _unames:
+                _ph_u = ",".join(["%s"] * len(_unames))
+                for _r in (mysql_fetchall(
+                        f"SELECT id, username, nombre FROM app_users WHERE username IN ({_ph_u})",
+                        tuple(_unames)) or []):
+                    if _r.get("username"):
+                        _usuarios_pdf[str(_r["username"]).strip().lower()] = {
+                            "id": _r.get("id"), "nombre": _r.get("nombre")}
+        except Exception as _e_usr:
+            print(f"[_ot_pdf_context][usuarios_pdf] vid={vid}: {_e_usr}", flush=True)
+        ctx.update(_ot_pdf_probatorio(
+            visita, equipos, tareas, tareas_chk, fotos, ctx.get("firmante_cliente"),
+            usuarios=_usuarios_pdf))
+    except Exception as _e_prob:
+        print(f"[_ot_pdf_context][probatorio] vid={vid}: {_e_prob}", flush=True)
+        ctx.update({
+            "eq_tareas_rango": {}, "hallazgos": [], "hallazgos_err": 0, "hallazgos_warn": 0,
+            "equipos_revisados_n": len(equipos), "equipos_sin_revisar": [],
+            "tareas_saltadas_n": 0, "tareas_no_hechas_n": 0, "tareas_oblig_pend_n": 0,
+            "tareas_sin_foto_n": 0, "fotos_anexo": [], "ot_datos": {},
+            "firmante_cliente_rut_fmt": "", "ilus_brand": ILUS_BRAND,
+            "ilus_legal": ILUS_LEGAL, "ilus_rut": ILUS_RUT,
+        })
     return ctx, "ok", []
 
 

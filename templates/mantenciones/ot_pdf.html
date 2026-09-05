@@ -803,6 +803,126 @@
     line-height: 1;
   }
 
+  /* ───── Capa probatoria (2026-09-05) ─────
+     Daniel: "esto será la evidencia para empresas y debe quedar bien...
+     cubrir la evidencia legal con calidad de información". Todo lo de
+     abajo es NUEVO y aditivo: no toca la tabla .chk (Daniel la aprobó)
+     ni el header/footer. Mismo lenguaje sobrio: neutro por defecto, el
+     color solo marca la excepción (ámbar observación, rojo falla). */
+  .info-card .ic-text .val .sub {
+    display: block; font-weight: 600; color: var(--ilus-mute); font-size: 7.2pt;
+  }
+  .ubic-box .u-gps {
+    font-size: 7.4pt; color: var(--ilus-mute); margin-top: 1mm; line-height: 1.4;
+  }
+  .ubic-box .u-gps b { color: var(--ilus-ink); }
+
+  /* Hallazgos y excepciones: lo que salió mal, junto y al principio. */
+  .hall-ok {
+    background: var(--ilus-ok-bg); border: 1px solid #86efac; border-radius: 3px;
+    padding: 2.2mm 4mm; font-size: 8pt; color: #166534; margin-bottom: 3mm;
+  }
+  .hall-ok b { color: var(--ilus-ok); }
+  .hall-resumen {
+    display: flex; gap: 3mm; flex-wrap: wrap; margin-bottom: 2mm; font-size: 7.6pt;
+    color: var(--ilus-mute);
+  }
+  .hall-resumen span { background: var(--ilus-panel); border-radius: 2px; padding: 1mm 2.5mm; }
+  .hall-resumen span b { color: var(--ilus-ink); }
+  .hall-resumen span.err b { color: var(--ilus-red); }
+  .hall-resumen span.warn b { color: #92400e; }
+  table.hall {
+    width: 100%; border-collapse: collapse; font-size: 7.8pt; margin-bottom: 3mm;
+  }
+  table.hall td {
+    padding: 1.6mm 2.5mm; vertical-align: top; border-bottom: 1px solid var(--ilus-line);
+    line-height: 1.35; overflow-wrap: anywhere;
+  }
+  table.hall tr { page-break-inside: avoid; }
+  table.hall td.sev { width: 30mm; font-weight: 800; text-transform: uppercase; font-size: 6.8pt; letter-spacing: .03em; }
+  table.hall tr.err td.sev { color: var(--ilus-red); border-left: 3px solid var(--ilus-red); }
+  table.hall tr.warn td.sev { color: #92400e; border-left: 3px solid #f59e0b; }
+  table.hall td.ref { width: 62mm; font-weight: 700; color: var(--ilus-ink); }
+  table.hall td.det { color: var(--ilus-ink); }
+  .hall-mas { font-size: 7pt; color: var(--ilus-mute); font-style: italic; margin: -1.5mm 0 3mm; }
+
+  /* Tarjeta de equipo: estado de revisión en ESTA visita. */
+  .eq-card .eq-rev {
+    background: #fef2f2; border-left: 3px solid var(--ilus-red); border-radius: 3px;
+    padding: 6px 8px; font-size: 8.5pt; line-height: 1.4; margin-bottom: 6px; color: var(--ilus-ink);
+  }
+  .eq-card .eq-rev .lbl {
+    font-weight: 800; color: var(--ilus-red); font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .04em; display: block; margin-bottom: 1px;
+  }
+  .eq-card .eq-diag.warn { border-left-color: #f59e0b; }
+  .eq-card .eq-diag.warn .lbl { color: #92400e; }
+  .eq-card .eq-diag.err { border-left-color: var(--ilus-red); }
+  .eq-card .eq-diag.err .lbl { color: var(--ilus-red); }
+  /* Observación de la FICHA del equipo (histórica, no de esta OT): se
+     distingue de la del técnico en esta visita para no confundirlas. */
+  .eq-card .eq-obs.ficha { border-left-color: #9ca3af; }
+  .eq-card .eq-obs.ficha .lbl { color: var(--ilus-mute); }
+  .eq-card .eq-meta-rev { font-size: 7.2pt; color: var(--ilus-mute); margin: -3px 0 5px; }
+  .eq-card .eq-checks .ec-rango {
+    margin-top: 4px; padding-top: 3px; border-top: 1px dashed var(--ilus-line);
+    font-size: 7pt; color: var(--ilus-mute);
+  }
+  .eq-card .eq-checks .ec-rango b { color: var(--ilus-ink); }
+
+  /* Checklist: marcas dentro de la celda Tarea (sin columnas nuevas). */
+  /* El N° de fila se partía en dos líneas desde el 10 ("1 0"): con 900
+     tareas eso deja la numeración ilegible. No es una columna nueva ni
+     cambia el ancho útil de la tabla: solo deja de partir el número. */
+  table.chk .num { white-space: nowrap; width: 28px; padding-left: 3px; padding-right: 3px; }
+  table.chk tbody tr.exc td.num { border-left: 3px solid var(--ilus-red); }
+  table.chk tbody tr.exc.warn-only td.num { border-left-color: #f59e0b; }
+  table.chk .chk-flag {
+    display: inline-block; margin-top: 2px; margin-right: 3px;
+    font-size: 6.6pt; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
+    padding: 0 4px; border-radius: 3px; border: 1px solid;
+  }
+  table.chk .chk-flag.err  { color: #991b1b; background: #fee2e2; border-color: #fecaca; }
+  table.chk .chk-flag.warn { color: #92400e; background: #fef3c7; border-color: #fde68a; }
+  table.chk .chk-flag.mute { color: #4b5563; background: #f3f4f6; border-color: #e5e7eb; }
+  table.chk td.fecha .por { display: block; font-size: 6.6pt; color: #9ca3af; overflow-wrap: anywhere; }
+  table.chk .chk-sin-equipo { color: var(--ilus-mute); font-size: 7pt; margin-top: 1px; font-style: italic; }
+
+  /* Resumen: el detalle bajo la cifra. El bloque Técnicos + Resumen mide
+     menos de 250px: se mantiene entero en una hoja (se vio partido 2+2
+     entre dos páginas en el render de prueba). */
+  .res-mini .rm-sub { font-size: 6.6pt; color: var(--ilus-red); font-weight: 700; }
+  .col-2 { page-break-inside: avoid; break-inside: avoid; }
+
+  /* Firmas: identificación del firmante + constancia del documento. */
+  .fir .fir-id { font-size: 7pt; color: var(--ilus-mute); margin-top: 1px; overflow-wrap: anywhere; }
+  .fir .fir-rol { font-size: 6.6pt; color: #9ca3af; text-transform: uppercase; letter-spacing: .04em; }
+  .prov {
+    margin-top: 3mm; padding: 2.2mm 4mm; border: 1px solid var(--ilus-line);
+    border-left: 3px solid var(--ilus-black); border-radius: 3px;
+    font-size: 7.2pt; line-height: 1.45; color: var(--ilus-mute); background: var(--ilus-bg);
+    page-break-inside: avoid;
+  }
+  .prov b { color: var(--ilus-ink); }
+
+  /* Anexo fotográfico: todas las fotos, numeradas y fechadas. */
+  .anexo-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; margin-bottom: 3mm;
+  }
+  .anexo-item {
+    page-break-inside: avoid; break-inside: avoid;
+    border: 1px solid var(--ilus-line); border-radius: 3px; padding: 1.5mm; background: #fff;
+  }
+  .anexo-item img {
+    width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 2px; display: block;
+    background: var(--ilus-bg);
+  }
+  .anexo-item .ax-cap { font-size: 6.6pt; line-height: 1.35; margin-top: 1.2mm; color: var(--ilus-ink); overflow-wrap: anywhere; }
+  .anexo-item .ax-cap b { color: var(--ilus-red); }
+  .anexo-item .ax-cap .m { color: var(--ilus-mute); display: block; }
+  .anexo-intro { font-size: 7.6pt; color: var(--ilus-mute); margin-bottom: 2.5mm; }
+  .anexo-sep { page-break-before: always; }
+
   /* ═════ @media print ═════ */
   @media print {
     body { background: #fff; }
@@ -865,6 +985,7 @@
 {% macro ic_check(size=12, color='#fff') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" fill="none" style="display:inline-block;vertical-align:-1px"><path d="M3.5 8.3 6.6 11.4 12.5 5" stroke="{{ color }}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endmacro %}
 {% macro ic_clipboard(size=14, color='#fff') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" fill="none" style="display:inline-block;vertical-align:-2px"><rect x="5" y="4" width="10" height="13" rx="1.6" stroke="{{ color }}" stroke-width="1.3"/><path d="M7.8 4V3.2A1.2 1.2 0 0 1 9 2h2a1.2 1.2 0 0 1 1.2 1.2V4" stroke="{{ color }}" stroke-width="1.3"/><path d="M7.6 10.3 9 11.7l3.4-3.4" stroke="{{ color }}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endmacro %}
 {% macro ic_pin(size=13, color='#9ca3af') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" fill="none" style="display:inline-block;vertical-align:-2px"><path d="M8 14.5S13 10 13 6.5a5 5 0 1 0-10 0C3 10 8 14.5 8 14.5Z" stroke="{{ color }}" stroke-width="1.3" stroke-linejoin="round"/><circle cx="8" cy="6.5" r="1.7" stroke="{{ color }}" stroke-width="1.3"/></svg>{% endmacro %}
+{% macro ic_alert(size=12, color='#dc2626') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" fill="none" style="display:inline-block;vertical-align:-2px"><path d="M8 2.2 14.3 13H1.7L8 2.2Z" stroke="{{ color }}" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.2v3.2" stroke="{{ color }}" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".8" fill="{{ color }}"/></svg>{% endmacro %}
 {% macro ic_printer(size=14, color='#0a0a0a') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" fill="none" style="display:inline-block;vertical-align:-2px"><path d="M6 8V3.5h8V8" stroke="{{ color }}" stroke-width="1.3" stroke-linejoin="round"/><rect x="3.5" y="8" width="13" height="6.5" rx="1.2" stroke="{{ color }}" stroke-width="1.3"/><rect x="6" y="12" width="8" height="4.5" rx=".6" stroke="{{ color }}" stroke-width="1.3"/></svg>{% endmacro %}
 
 {# ════════════ TOOLBAR (solo pantalla) ════════════ #}
@@ -942,6 +1063,85 @@
 {% endif %}
 {% endmacro %}
 
+{# ════════════ Macro: HALLAZGOS Y EXCEPCIONES (2026-09-05) ════════════
+   Daniel: "esto será la evidencia para empresas". Un informe donde lo malo
+   se esconde entre 900 líneas verdes no sirve como evidencia ni protege a
+   ILUS. Acá se reúne, en la primera hoja, todo lo que el lector tiene que
+   saber antes de leer el detalle: equipos no revisados (y por qué), fallas,
+   observaciones, tareas obligatorias sin completar, fotos exigidas que no
+   están y resultados con falla/alerta. Cada línea referencia el N° de
+   equipo y el N° de fila del checklist para poder ir a comprobarlo.
+   Datos: `hallazgos` (lista ordenada: fallas primero) de _ot_pdf_probatorio. #}
+{% macro hallazgos_block() %}
+{% set _h = hallazgos or [] %}
+<div class="sec-title">Hallazgos y excepciones
+  <span style="font-weight:700;font-size:7.5pt;opacity:.85">{{ _h|length }} registrado{{ 's' if _h|length != 1 }}</span></div>
+{% if not _h %}
+<div class="hall-ok"><b>Sin hallazgos.</b> Todos los equipos listados quedaron revisados, con diagnóstico aprobado y checklist completo; no hay tareas obligatorias pendientes ni fotos exigidas sin registrar.</div>
+{% else %}
+<div class="hall-resumen">
+  {% if hallazgos_err %}<span class="err"><b>{{ hallazgos_err }}</b> crítico{{ 's' if hallazgos_err != 1 }} (fallas, no revisados, obligatorias pendientes)</span>{% endif %}
+  {% if hallazgos_warn %}<span class="warn"><b>{{ hallazgos_warn }}</b> observaci{{ 'ones' if hallazgos_warn != 1 else 'ón' }} / alerta{{ 's' if hallazgos_warn != 1 }}</span>{% endif %}
+  {% if equipos_sin_revisar %}<span><b>{{ equipos_sin_revisar|length }}</b> de {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }} sin revisar</span>{% endif %}
+  {% if tareas_oblig_pend_n %}<span><b>{{ tareas_oblig_pend_n }}</b> obligatoria{{ 's' if tareas_oblig_pend_n != 1 }} sin completar</span>{% endif %}
+  {% if tareas_sin_foto_n %}<span><b>{{ tareas_sin_foto_n }}</b> foto{{ 's' if tareas_sin_foto_n != 1 }} exigida{{ 's' if tareas_sin_foto_n != 1 }} sin registrar</span>{% endif %}
+</div>
+{# Tope de 40 líneas en la primera hoja: con 900 tareas, una OT podría
+   traer cientos de "sin foto". Las cifras de arriba son completas; el
+   resto queda marcado fila por fila en el checklist. #}
+<table class="hall">
+  <tbody>
+  {% for h in _h[:40] %}
+  <tr class="{{ h.sev }}">
+    <td class="sev">{{ h.cat }}</td>
+    <td class="ref">{{ h.ref }}</td>
+    <td class="det">{{ h.detalle or '—' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if _h|length > 40 %}<div class="hall-mas">+ {{ _h|length - 40 }} hallazgo{{ 's' if (_h|length - 40) != 1 }} más — cada uno está marcado en su fila del «Checklist técnico detallado».</div>{% endif %}
+{% endif %}
+{% endmacro %}
+
+{# ════════════ Macro: CIERRE DEL DOCUMENTO (2026-09-05) ════════════
+   Constancia de emisión (quién emite, con qué razón social, cuándo se
+   generó y de qué registros) + anexo fotográfico completo. Va DESPUÉS de
+   las firmas: lo firmado es el cuerpo; el anexo respalda. Único lugar
+   donde aparece la razón social (REGLA #0: documento con efecto legal). #}
+{% macro cierre_block() %}
+<div class="prov">
+  <b>Constancia.</b> Documento generado electrónicamente por <b>{{ ilus_brand or 'ILUS Fitness' }}</b>
+  ({{ ilus_legal or 'Sport and Health Solutions SPA' }} · RUT {{ ilus_rut or '76.996.964-0' }})
+  el {{ generated_at }} (hora de Chile) a partir de los registros de la orden
+  <b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b>: {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }},
+  {{ chk_total or 0 }} tarea{{ 's' if (chk_total or 0) != 1 }} de checklist y {{ fotos|length }} foto{{ 's' if fotos|length != 1 }}.
+  Las firmas fueron capturadas digitalmente en las fechas y horas indicadas (hora de Chile);
+  la del cliente se identifica con nombre{% if firmante_cliente_rut_fmt %}, RUT{% endif %} y cargo declarados al firmar.
+  {% if ot_datos and ot_datos.gps_str %}Posición GPS registrada al iniciar la ejecución: {{ ot_datos.gps_str }}{% if ot_datos.gps_at_str %} ({{ ot_datos.gps_at_str }}){% endif %}.{% endif %}
+</div>
+{% if fotos_anexo %}
+<div class="anexo-sep"></div>
+<div class="sec-title">Anexo fotográfico
+  <span style="font-weight:700;font-size:7.5pt;opacity:.85">{{ fotos_anexo|length }} foto{{ 's' if fotos_anexo|length != 1 }}</span></div>
+<div class="anexo-intro">Todas las fotos registradas en esta orden, en el orden de los equipos. Cada una indica el equipo, la tarea a la que respalda, el tipo de registro, la fecha y hora de captura (hora de Chile) y quién la tomó.</div>
+<div class="anexo-grid">
+  {% for f in fotos_anexo %}
+  <div class="anexo-item">
+    <img src="{{ f.url }}" alt="">
+    <div class="ax-cap">
+      <b>Foto {{ f.n }}</b>{% if f.equipo_idx %} · Equipo {{ f.equipo_idx }}{% endif %}{% if f.tipo_label %} · {{ f.tipo_label }}{% endif %}
+      {% if f.equipo_nombre %}<span class="m">{{ f.equipo_nombre }}</span>{% endif %}
+      {% if f.tarea_titulo %}<span class="m">Tarea: {{ f.tarea_titulo }}</span>{% endif %}
+      {% if f.descripcion %}<span class="m">{{ f.descripcion }}</span>{% endif %}
+      <span class="m">{% if f.tomada_str %}{{ f.tomada_str }}{% else %}Sin fecha registrada{% endif %}{% if f.tomada_por %} · {{ f.tomada_por }}{% endif %}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
 {# Variables auxiliares calculadas en backend:
    - paginas_equipos: lista de listas — cada sublista son los equipos de esa página
    - tareas_chk: tareas formateadas con maquina_nombre, ubicacion_str, resultado
@@ -974,10 +1174,20 @@
       </div>
       <div class="ic-row">
         <div class="ic-text">
-          <span class="lbl">Ticket / Tipo</span>
-          <span class="val">{{ (visita.tipo or 'instalacion')|replace('_',' ')|title }}</span>
+          <span class="lbl">Tipo de servicio</span>
+          {# 2026-09-05: antes `tipo|title` imprimía el ENUM crudo
+             ("Revision_interna"). Etiqueta humana única de _TIPO_OT_LABEL. #}
+          <span class="val">{{ (ot_datos.tipo_label if ot_datos and ot_datos.tipo_label else ((visita.tipo or 'instalacion')|replace('_',' ')|title)) }}</span>
         </div>
       </div>
+      {% if ot_datos and ot_datos.titulo %}
+      <div class="ic-row">
+        <div class="ic-text">
+          <span class="lbl">Trabajo solicitado</span>
+          <span class="val">{{ ot_datos.titulo }}</span>
+        </div>
+      </div>
+      {% endif %}
       {% if visita.documento_erp_tido and visita.documento_erp_nudo %}
       <div class="ic-row">
         <div class="ic-text">
@@ -986,18 +1196,50 @@
         </div>
       </div>
       {% endif %}
+      {% if ot_datos and ot_datos.causa_raiz_label %}
+      <div class="ic-row">
+        <div class="ic-text">
+          <span class="lbl">Causa raíz</span>
+          <span class="val">{{ ot_datos.causa_raiz_label }}</span>
+        </div>
+      </div>
+      {% endif %}
     </div>
 
-    {# Col 2 – Fecha/Repuestos #}
+    {# Col 2 – Fechas reales / Repuestos #}
+    {# 2026-09-05 (valor probatorio): antes solo salía la fecha PROGRAMADA,
+       en ISO y con la hora cruda ("2026-09-03 a las 9:00:00"). Para
+       reconstruir qué pasó hace falta cuándo empezó y terminó DE VERDAD
+       (hora_real_inicio/fin, que ya se guardan) y cuándo se cerró. #}
     <div class="info-card">
       <div class="ic-row">
         <div class="ic-text">
-          <span class="lbl">Fecha</span>
+          <span class="lbl">Fecha programada</span>
           <span class="val">
-            {{ visita.fecha_programada or '—' }}{% if visita.hora_inicio %} a las {{ visita.hora_inicio }}{% endif %}
+            {% if ot_datos and ot_datos.fecha_prog_str %}{{ ot_datos.fecha_prog_str }}{% if ot_datos.hora_prog_str %} · {{ ot_datos.hora_prog_str }}{% if ot_datos.hora_prog_fin_str %}–{{ ot_datos.hora_prog_fin_str }}{% endif %}{% endif %}{% if ot_datos.fecha_fin_str and ot_datos.fecha_fin_str != ot_datos.fecha_prog_str %} al {{ ot_datos.fecha_fin_str }}{% endif %}
+            {% else %}{{ visita.fecha_programada or '—' }}{% if visita.hora_inicio %} a las {{ visita.hora_inicio }}{% endif %}{% endif %}
           </span>
         </div>
       </div>
+      <div class="ic-row">
+        <div class="ic-text">
+          <span class="lbl">Ejecución real</span>
+          <span class="val">
+            {% if ot_datos and (ot_datos.inicio_real_str or ot_datos.fin_real_str) %}
+              {{ ot_datos.inicio_real_str or '—' }} → {{ ot_datos.fin_real_str or '—' }}
+              {% if ot_datos.duracion_str %}<span class="sub">Duración {{ ot_datos.duracion_str }}{% if ot_datos.pausada_str %} · pausas {{ ot_datos.pausada_str }}{% endif %}</span>{% endif %}
+            {% else %}<span class="sub">Sin registro de inicio/término en terreno</span>{% endif %}
+          </span>
+        </div>
+      </div>
+      {% if ot_datos and ot_datos.cerrada_str %}
+      <div class="ic-row">
+        <div class="ic-text">
+          <span class="lbl">Cerrada el</span>
+          <span class="val">{{ ot_datos.cerrada_str }}</span>
+        </div>
+      </div>
+      {% endif %}
       <div class="ic-row">
         <div class="ic-text">
           <span class="lbl">Repuestos</span>
@@ -1011,10 +1253,19 @@
       <div class="ic-row">
         <div class="ic-text">
           <span class="lbl">Cliente</span>
-          <span class="val">{{ visita.razon_social }}</span>
+          <span class="val">{{ visita.razon_social or 'Trabajo interno ILUS Fitness' }}{% if ot_datos and ot_datos.cli_rut_fmt %}<span class="sub">RUT {{ ot_datos.cli_rut_fmt }}</span>{% endif %}</span>
         </div>
       </div>
-      {% if visita.cli_contacto_tel %}
+      {# 2026-09-05: quién recibió al técnico EN SITIO (contacto de la visita),
+         no solo el teléfono genérico del cliente. #}
+      {% if ot_datos and ot_datos.contacto_sitio %}
+      <div class="ic-row">
+        <div class="ic-text">
+          <span class="lbl">Recibe en sitio</span>
+          <span class="val">{{ ot_datos.contacto_sitio }}{% if ot_datos.contacto_sitio_tel %}<span class="sub">{{ ot_datos.contacto_sitio_tel }}</span>{% endif %}</span>
+        </div>
+      </div>
+      {% elif visita.cli_contacto_tel %}
       <div class="ic-row">
         <div class="ic-text">
           <span class="lbl">Contacto</span>
@@ -1034,12 +1285,22 @@
   </div>
 
   {# ── Bloque ubicación ── #}
-  {% if visita.direccion_visita or visita.cli_direccion %}
+  {% if visita.direccion_visita or visita.cli_direccion or (ot_datos and ot_datos.gps_str) %}
   <div class="ubic-box">
     <div class="u-text">
       <b>Ubicación:</b>
-      {{ visita.direccion_visita or visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}
+      {{ visita.direccion_visita or visita.cli_direccion or '—' }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}
+      {% if ot_datos and ot_datos.acceso_piso %} · {{ ot_datos.acceso_piso }}{% endif %}
     </div>
+    {# 2026-09-05 (valor probatorio): la posición GPS que el sistema tomó al
+       iniciar la ejecución ya existía (exec_gps_*) pero el PDF solo decía
+       "Validada". Las coordenadas y la hora son lo que prueba que el técnico
+       estuvo ahí. #}
+    {% if ot_datos and ot_datos.gps_str %}
+    <div class="u-gps"><b>Posición GPS al iniciar:</b> {{ ot_datos.gps_str }}{% if ot_datos.gps_at_str %} · {{ ot_datos.gps_at_str }}{% endif %}{% if ot_datos.gps_direccion %} · {{ ot_datos.gps_direccion }}{% endif %}</div>
+    {% elif ot_datos %}
+    <div class="u-gps">Sin posición GPS registrada al iniciar la ejecución.</div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -1082,6 +1343,17 @@
     </div>
   </div>
   {% endif %}
+  {% if ot_datos and ot_datos.acceso_notas %}
+  <div class="obs-box">
+    <div class="o-text">
+      <b>Notas de acceso:</b> {{ ot_datos.acceso_notas }}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Hallazgos y excepciones (2026-09-05): antes de los equipos, para que
+        lo que salió mal no haya que buscarlo. ── #}
+  {% if hallazgos is defined %}{{ hallazgos_block() }}{% endif %}
 
   {# ── Equipos informados (primera tanda) ── #}
   {% if paginas_equipos and paginas_equipos[0] %}
@@ -1114,10 +1386,33 @@
           {% if e.ubicacion_sala %}<span><b>Ubicación</b>{{ e.ubicacion_sala }}</span>{% endif %}
           {% if e.anio_fabricacion %}<span><b>Año</b>{{ e.anio_fabricacion }}</span>{% endif %}
           {% if e.voltaje %}<span><b>Voltaje</b>{{ e.voltaje }}</span>{% endif %}
-          {% if e.estado_capturado %}<span><b>Estado al revisar</b>{{ e.estado_capturado|replace('_',' ')|capitalize }}</span>{% endif %}
+          {# "Estado en ficha": es el último estado conocido del equipo en su
+             ficha (mant_maquinas), no una lectura de esta visita. Se omite
+             en un equipo no revisado para no contradecir el aviso. #}
+          {% if e.estado_capturado and not e.saltado %}<span><b>Estado en ficha</b>{{ e.estado_capturado_label or (e.estado_capturado|replace('_',' ')|capitalize) }}</span>{% endif %}
         </div>
+        {# 2026-09-05 (valor probatorio): estado de revisión EN ESTA visita.
+           Un equipo "saltado" (no encontrado, dado de baja, retirado por el
+           cliente) salía como cualquier otro, con checklist a medias y sin
+           explicación. Ahora lo dice en rojo, con el motivo y lo que
+           escribió el técnico. #}
+        {% if e.saltado %}
+        <div class="eq-rev">
+          <span class="lbl">No revisado en esta orden{% if e.razon_saltado_label %} — {{ e.razon_saltado_label }}{% endif %}</span>
+          {{ e.observacion_tecnico or 'El técnico marcó este equipo como no revisado.' }}
+          {% if e.revisado_at_str or e.revisado_por_str %}<div class="eq-meta-rev" style="margin:2px 0 0">Registrado {{ e.revisado_at_str }}{% if e.revisado_por_str %} · {{ e.revisado_por_str }}{% endif %}</div>{% endif %}
+        </div>
+        {% elif e.revision_label and e.revision_sev == 'err' %}
+        <div class="eq-rev">
+          <span class="lbl">{{ e.revision_label }}</span>
+          {{ e.observacion_tecnico or e.diagnostico_texto or 'El técnico registró una falla en este equipo.' }}
+          {% if e.revisado_at_str or e.revisado_por_str %}<div class="eq-meta-rev" style="margin:2px 0 0">Registrado {{ e.revisado_at_str }}{% if e.revisado_por_str %} · {{ e.revisado_por_str }}{% endif %}</div>{% endif %}
+        </div>
+        {% elif e.revision_label %}
+        <div class="eq-meta-rev">Revisión: <b>{{ e.revision_label }}</b>{% if e.revisado_at_str %} · {{ e.revisado_at_str }}{% endif %}{% if e.revisado_por_str %} · {{ e.revisado_por_str }}{% endif %}</div>
+        {% endif %}
         {% if e.diagnostico_estado %}
-        <div class="eq-diag {{ 'warn' if e.diagnostico_estado in ('observacion','falla') }}">
+        <div class="eq-diag {{ 'err' if e.diagnostico_estado == 'falla' else ('warn' if e.diagnostico_estado == 'observacion' else '') }}">
           <span class="lbl">Diagnóstico —
             {%- if e.diagnostico_estado == 'aprobado' %} Aprobado
             {%- elif e.diagnostico_estado == 'falla' %} Falla
@@ -1127,15 +1422,27 @@
           {{ e.diagnostico_texto or 'Sin detalle adicional.' }}
         </div>
         {% endif %}
-        {% if e.observaciones %}
+        {# 2026-09-05: dos observaciones distintas que antes se confundían.
+           `observacion_tecnico` es lo que el técnico escribió EN ESTA visita
+           (mant_visita_equipos); `e.observaciones` es la ficha histórica del
+           equipo (mant_maquinas), que puede venir de otra OT. Se etiquetan
+           por separado para que nadie atribuya a esta orden algo que no
+           pasó en ella. La del técnico no se repite si ya salió arriba. #}
+        {% if e.observacion_tecnico and not e.saltado and e.revision_sev != 'err' %}
         <div class="eq-obs">
-          <span class="lbl">Observación:</span>
+          <span class="lbl">Observación del técnico en esta orden:</span>
+          {{ e.observacion_tecnico }}
+        </div>
+        {% endif %}
+        {% if e.observaciones %}
+        <div class="eq-obs ficha">
+          <span class="lbl">Observación en la ficha del equipo (histórica):</span>
           {{ e.observaciones }}
         </div>
         {% endif %}
         {% if _fotos %}
         <div class="eq-thumbs">
-          <span class="th-lbl">Evidencia fotográfica (alta resolución)</span>
+          <span class="th-lbl">Evidencia fotográfica{% if e.n_fotos %} · {{ e.n_fotos }} foto{{ 's' if e.n_fotos != 1 }} de este equipo{% if e.n_fotos > 3 %} (3 aquí, todas en el anexo){% endif %}{% endif %}</span>
           {% for f in _fotos[:3] %}
           <img src="{{ f.url }}" alt="">
           {% endfor %}
@@ -1165,6 +1472,12 @@
              eso es información incompleta, no un resumen. #}
           {% if _checks|length > 5 %}
           <div class="ec-mas">+ {{ _checks|length - 5 }} tarea{{ 's' if (_checks|length - 5) != 1 }} más · ver «Checklist técnico detallado»</div>
+          {% endif %}
+          {# 2026-09-05: tramo de filas de este equipo en la tabla, para ir
+             de la tarjeta a sus tareas sin perderse (60 equipos / 900 filas). #}
+          {% if eq_tareas_rango and eq_tareas_rango.get(e.id) %}
+          {% set _rg = eq_tareas_rango.get(e.id) %}
+          <div class="ec-rango">Detalle: filas <b>{{ _rg[0] }}{% if _rg[1] != _rg[0] %}–{{ _rg[1] }}{% endif %}</b> del checklist</div>
           {% endif %}
         {% else %}
           <div class="ec-item">
@@ -1232,10 +1545,33 @@
           {% if e.ubicacion_sala %}<span><b>Ubicación</b>{{ e.ubicacion_sala }}</span>{% endif %}
           {% if e.anio_fabricacion %}<span><b>Año</b>{{ e.anio_fabricacion }}</span>{% endif %}
           {% if e.voltaje %}<span><b>Voltaje</b>{{ e.voltaje }}</span>{% endif %}
-          {% if e.estado_capturado %}<span><b>Estado al revisar</b>{{ e.estado_capturado|replace('_',' ')|capitalize }}</span>{% endif %}
+          {# "Estado en ficha": es el último estado conocido del equipo en su
+             ficha (mant_maquinas), no una lectura de esta visita. Se omite
+             en un equipo no revisado para no contradecir el aviso. #}
+          {% if e.estado_capturado and not e.saltado %}<span><b>Estado en ficha</b>{{ e.estado_capturado_label or (e.estado_capturado|replace('_',' ')|capitalize) }}</span>{% endif %}
         </div>
+        {# 2026-09-05 (valor probatorio): estado de revisión EN ESTA visita.
+           Un equipo "saltado" (no encontrado, dado de baja, retirado por el
+           cliente) salía como cualquier otro, con checklist a medias y sin
+           explicación. Ahora lo dice en rojo, con el motivo y lo que
+           escribió el técnico. #}
+        {% if e.saltado %}
+        <div class="eq-rev">
+          <span class="lbl">No revisado en esta orden{% if e.razon_saltado_label %} — {{ e.razon_saltado_label }}{% endif %}</span>
+          {{ e.observacion_tecnico or 'El técnico marcó este equipo como no revisado.' }}
+          {% if e.revisado_at_str or e.revisado_por_str %}<div class="eq-meta-rev" style="margin:2px 0 0">Registrado {{ e.revisado_at_str }}{% if e.revisado_por_str %} · {{ e.revisado_por_str }}{% endif %}</div>{% endif %}
+        </div>
+        {% elif e.revision_label and e.revision_sev == 'err' %}
+        <div class="eq-rev">
+          <span class="lbl">{{ e.revision_label }}</span>
+          {{ e.observacion_tecnico or e.diagnostico_texto or 'El técnico registró una falla en este equipo.' }}
+          {% if e.revisado_at_str or e.revisado_por_str %}<div class="eq-meta-rev" style="margin:2px 0 0">Registrado {{ e.revisado_at_str }}{% if e.revisado_por_str %} · {{ e.revisado_por_str }}{% endif %}</div>{% endif %}
+        </div>
+        {% elif e.revision_label %}
+        <div class="eq-meta-rev">Revisión: <b>{{ e.revision_label }}</b>{% if e.revisado_at_str %} · {{ e.revisado_at_str }}{% endif %}{% if e.revisado_por_str %} · {{ e.revisado_por_str }}{% endif %}</div>
+        {% endif %}
         {% if e.diagnostico_estado %}
-        <div class="eq-diag {{ 'warn' if e.diagnostico_estado in ('observacion','falla') }}">
+        <div class="eq-diag {{ 'err' if e.diagnostico_estado == 'falla' else ('warn' if e.diagnostico_estado == 'observacion' else '') }}">
           <span class="lbl">Diagnóstico —
             {%- if e.diagnostico_estado == 'aprobado' %} Aprobado
             {%- elif e.diagnostico_estado == 'falla' %} Falla
@@ -1245,15 +1581,27 @@
           {{ e.diagnostico_texto or 'Sin detalle adicional.' }}
         </div>
         {% endif %}
-        {% if e.observaciones %}
+        {# 2026-09-05: dos observaciones distintas que antes se confundían.
+           `observacion_tecnico` es lo que el técnico escribió EN ESTA visita
+           (mant_visita_equipos); `e.observaciones` es la ficha histórica del
+           equipo (mant_maquinas), que puede venir de otra OT. Se etiquetan
+           por separado para que nadie atribuya a esta orden algo que no
+           pasó en ella. La del técnico no se repite si ya salió arriba. #}
+        {% if e.observacion_tecnico and not e.saltado and e.revision_sev != 'err' %}
         <div class="eq-obs">
-          <span class="lbl">Observación:</span>
+          <span class="lbl">Observación del técnico en esta orden:</span>
+          {{ e.observacion_tecnico }}
+        </div>
+        {% endif %}
+        {% if e.observaciones %}
+        <div class="eq-obs ficha">
+          <span class="lbl">Observación en la ficha del equipo (histórica):</span>
           {{ e.observaciones }}
         </div>
         {% endif %}
         {% if _fotos %}
         <div class="eq-thumbs">
-          <span class="th-lbl">Evidencia fotográfica (alta resolución)</span>
+          <span class="th-lbl">Evidencia fotográfica{% if e.n_fotos %} · {{ e.n_fotos }} foto{{ 's' if e.n_fotos != 1 }} de este equipo{% if e.n_fotos > 3 %} (3 aquí, todas en el anexo){% endif %}{% endif %}</span>
           {% for f in _fotos[:3] %}
           <img src="{{ f.url }}" alt="">
           {% endfor %}
@@ -1283,6 +1631,12 @@
              eso es información incompleta, no un resumen. #}
           {% if _checks|length > 5 %}
           <div class="ec-mas">+ {{ _checks|length - 5 }} tarea{{ 's' if (_checks|length - 5) != 1 }} más · ver «Checklist técnico detallado»</div>
+          {% endif %}
+          {# 2026-09-05: tramo de filas de este equipo en la tabla, para ir
+             de la tarjeta a sus tareas sin perderse (60 equipos / 900 filas). #}
+          {% if eq_tareas_rango and eq_tareas_rango.get(e.id) %}
+          {% set _rg = eq_tareas_rango.get(e.id) %}
+          <div class="ec-rango">Detalle: filas <b>{{ _rg[0] }}{% if _rg[1] != _rg[0] %}–{{ _rg[1] }}{% endif %}</b> del checklist</div>
           {% endif %}
         {% else %}
           <div class="ec-item">
@@ -1316,11 +1670,18 @@
     </thead>
     <tbody>
       {% for t in tareas_chk %}
-      <tr>
-        <td class="num">{{ loop.index }}</td>
+      {# 2026-09-05 (valor probatorio, SIN tocar columnas): la fila que es
+         excepción lleva una marca lateral y, dentro de la celda Tarea, el
+         N° de equipo (para cruzar con las tarjetas) y las banderas
+         "obligatoria sin completar" / "foto exigida sin registrar". #}
+      <tr class="{% if t.exc %}exc{% if t.resultado_clase != 'err' and not (t.obligatoria and not t.hecha) %} warn-only{% endif %}{% endif %}">
+        <td class="num">{{ t.num or loop.index }}</td>
         <td>
           {{ t.titulo }}
-          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre }}</div>{% endif %}
+          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {% if t.maquina_idx %}Equipo {{ t.maquina_idx }} · {% endif %}{{ t.maquina_nombre }}</div>{% else %}<div class="chk-sin-equipo">Sin equipo asociado</div>{% endif %}
+          {% if t.equipo_saltado %}<span class="chk-flag mute">Equipo no revisado</span>{% endif %}
+          {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}
+          {% if t.sin_foto_exigida and not t.equipo_saltado %}<span class="chk-flag warn">Foto exigida · sin registrar</span>{% endif %}
         </td>
         <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
         <td>
@@ -1341,7 +1702,7 @@
           {% else %}—{% endif %}
         </td>
         <td class="ico">{% if t.tiene_foto %}{{ ic_camera(12, '#dc2626') }}{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
-        <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
+        <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}{% if t.completada_por_otro %}<span class="por">por {{ t.completada_por_otro }}</span>{% endif %}</td>
         <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
@@ -1358,7 +1719,8 @@
         <div class="ta-avatar">{{ (visita.tecnico_principal or 'T')[0]|upper }}</div>
         <div class="ta-text">
           <div class="ta-lbl">{{ (1 + (tecnicos_extra|length if tecnicos_extra else 0)) }} técnico{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }} involucrado{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }}</div>
-          <div class="ta-nom">{{ visita.tecnico_principal or '—' }}</div>
+          {# 2026-09-05: decía "2 técnicos involucrados" y nombraba a uno. #}
+          <div class="ta-nom">{{ visita.tecnico_principal or '—' }}{% if tecnicos_extra %}{% for t in tecnicos_extra %} · {{ t.nombre }}{% endfor %}{% endif %}</div>
         </div>
       </div>
     </div>
@@ -1368,22 +1730,25 @@
         <div class="res-mini">
           <div class="rm-ico">{{ ic_check(15, '#fff') }}</div>
           <div class="rm-text">
-            <div class="rm-val">{{ equipos|length }} de {{ equipos|length }}</div>
-            <div class="rm-lbl">Equipos revisados</div>
+            {# 2026-09-05: antes decía "N de N" por construcción. Ahora cuenta
+               los que de verdad tienen revisión (tareas hechas, diagnóstico o
+               estado de revisión) y descuenta los saltados. #}
+            <div class="rm-val">{{ (equipos_revisados_n if equipos_revisados_n is defined else equipos|length) }} de {{ equipos|length }}</div>
+            <div class="rm-lbl">Equipos revisados{% if equipos_sin_revisar %} <span class="rm-sub">· {{ equipos_sin_revisar|length }} sin revisar</span>{% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
           <div class="rm-ico ok">{{ ic_clipboard(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{% if chk_total %}{{ chk_pct }}%{% else %}—{% endif %}</div>
-            <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}</div>
+            <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}{% if tareas_saltadas_n %} <span class="rm-sub">· {{ tareas_saltadas_n }} de equipos no revisados</span>{% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
           <div class="rm-ico dark">{{ ic_camera(15, '#fff') }}</div>
           <div class="rm-text">
-            <div class="rm-val">{{ fotos|length }} fotos</div>
-            <div class="rm-lbl">Evidencia registrada</div>
+            <div class="rm-val">{{ fotos|length }} foto{{ 's' if fotos|length != 1 }}</div>
+            <div class="rm-lbl">Evidencia registrada{% if fotos_anexo %} · ver anexo{% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
@@ -1434,8 +1799,9 @@
         {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="">{% else %}—{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
-      {% if firmante_cliente and firmante_cliente.signer_rut %}<div class="fir-meta">RUT {{ firmante_cliente.signer_rut }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %}</div>{% endif %}
+      {% if firmante_cliente and firmante_cliente.signer_rut %}<div class="fir-meta">RUT {{ firmante_cliente_rut_fmt or firmante_cliente.signer_rut }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %}</div>{% endif %}
       <div class="fir-lbl">Aceptado Por</div>
+      <div class="fir-rol">Por el cliente{% if visita.razon_social %} · {{ visita.razon_social }}{% endif %}</div>
       {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
@@ -1443,7 +1809,11 @@
         {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="">{% else %}N/A{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_supervisor_nombre or visita.responsable_nombre or visita.cerrada_por or visita.created_by or '—' }}</div>
+      {# 2026-09-05: identificación del firmante (cuenta ILUS con la que
+         firmó). Una firma con nombre y sin identificación vale poco. #}
+      {% if ot_datos and ot_datos.responsable_ident %}<div class="fir-id">{{ ot_datos.responsable_ident }}</div>{% endif %}
       <div class="fir-lbl">Validado Por</div>
+      <div class="fir-rol">Responsable · ILUS Fitness</div>
       {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
@@ -1451,10 +1821,13 @@
         {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="">{% else %}—{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_tecnico_nombre or visita.tecnico_principal or '—' }}</div>
+      {% if ot_datos and ot_datos.tecnico_firmante_ident %}<div class="fir-id">{{ ot_datos.tecnico_firmante_ident }}</div>{% endif %}
       <div class="fir-lbl">Realizado Por</div>
+      <div class="fir-rol">Técnico ejecutor · ILUS Fitness</div>
       {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at | chile_fmt }}</div>{% endif %}
     </div>
   </div>
+  {% if ot_datos is defined %}{{ cierre_block() }}{% endif %}
   {% endif %}
 
   {{ footer_block(loop.index + 1, total_pg, continua=(not loop.last)) }}
@@ -1486,11 +1859,18 @@
     </thead>
     <tbody>
       {% for t in tareas_chk %}
-      <tr>
-        <td class="num">{{ loop.index }}</td>
+      {# 2026-09-05 (valor probatorio, SIN tocar columnas): la fila que es
+         excepción lleva una marca lateral y, dentro de la celda Tarea, el
+         N° de equipo (para cruzar con las tarjetas) y las banderas
+         "obligatoria sin completar" / "foto exigida sin registrar". #}
+      <tr class="{% if t.exc %}exc{% if t.resultado_clase != 'err' and not (t.obligatoria and not t.hecha) %} warn-only{% endif %}{% endif %}">
+        <td class="num">{{ t.num or loop.index }}</td>
         <td>
           {{ t.titulo }}
-          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre }}</div>{% endif %}
+          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {% if t.maquina_idx %}Equipo {{ t.maquina_idx }} · {% endif %}{{ t.maquina_nombre }}</div>{% else %}<div class="chk-sin-equipo">Sin equipo asociado</div>{% endif %}
+          {% if t.equipo_saltado %}<span class="chk-flag mute">Equipo no revisado</span>{% endif %}
+          {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}
+          {% if t.sin_foto_exigida and not t.equipo_saltado %}<span class="chk-flag warn">Foto exigida · sin registrar</span>{% endif %}
         </td>
         <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
         <td>
@@ -1511,7 +1891,7 @@
           {% else %}—{% endif %}
         </td>
         <td class="ico">{% if t.tiene_foto %}{{ ic_camera(12, '#dc2626') }}{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
-        <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
+        <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}{% if t.completada_por_otro %}<span class="por">por {{ t.completada_por_otro }}</span>{% endif %}</td>
         <td class="ubi">{{ ic_pin(10, '#9ca3af') }} {% if t.ubicacion_str %}{{ t.ubicacion_str }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
@@ -1526,7 +1906,8 @@
         <div class="ta-avatar">{{ (visita.tecnico_principal or 'T')[0]|upper }}</div>
         <div class="ta-text">
           <div class="ta-lbl">{{ (1 + (tecnicos_extra|length if tecnicos_extra else 0)) }} técnico{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }} involucrado{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }}</div>
-          <div class="ta-nom">{{ visita.tecnico_principal or '—' }}</div>
+          {# 2026-09-05: decía "2 técnicos involucrados" y nombraba a uno. #}
+          <div class="ta-nom">{{ visita.tecnico_principal or '—' }}{% if tecnicos_extra %}{% for t in tecnicos_extra %} · {{ t.nombre }}{% endfor %}{% endif %}</div>
         </div>
       </div>
     </div>
@@ -1536,22 +1917,25 @@
         <div class="res-mini">
           <div class="rm-ico">{{ ic_check(15, '#fff') }}</div>
           <div class="rm-text">
-            <div class="rm-val">{{ equipos|length }} de {{ equipos|length }}</div>
-            <div class="rm-lbl">Equipos revisados</div>
+            {# 2026-09-05: antes decía "N de N" por construcción. Ahora cuenta
+               los que de verdad tienen revisión (tareas hechas, diagnóstico o
+               estado de revisión) y descuenta los saltados. #}
+            <div class="rm-val">{{ (equipos_revisados_n if equipos_revisados_n is defined else equipos|length) }} de {{ equipos|length }}</div>
+            <div class="rm-lbl">Equipos revisados{% if equipos_sin_revisar %} <span class="rm-sub">· {{ equipos_sin_revisar|length }} sin revisar</span>{% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
           <div class="rm-ico ok">{{ ic_clipboard(15, '#fff') }}</div>
           <div class="rm-text">
             <div class="rm-val">{% if chk_total %}{{ chk_pct }}%{% else %}—{% endif %}</div>
-            <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}</div>
+            <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}{% if tareas_saltadas_n %} <span class="rm-sub">· {{ tareas_saltadas_n }} de equipos no revisados</span>{% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
           <div class="rm-ico dark">{{ ic_camera(15, '#fff') }}</div>
           <div class="rm-text">
-            <div class="rm-val">{{ fotos|length }} fotos</div>
-            <div class="rm-lbl">Evidencia registrada</div>
+            <div class="rm-val">{{ fotos|length }} foto{{ 's' if fotos|length != 1 }}</div>
+            <div class="rm-lbl">Evidencia registrada{% if fotos_anexo %} · ver anexo{% endif %}</div>
           </div>
         </div>
         <div class="res-mini">
@@ -1596,8 +1980,9 @@
         {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="">{% else %}—{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
-      {% if firmante_cliente and firmante_cliente.signer_rut %}<div class="fir-meta">RUT {{ firmante_cliente.signer_rut }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %}</div>{% endif %}
+      {% if firmante_cliente and firmante_cliente.signer_rut %}<div class="fir-meta">RUT {{ firmante_cliente_rut_fmt or firmante_cliente.signer_rut }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %}</div>{% endif %}
       <div class="fir-lbl">Aceptado Por</div>
+      <div class="fir-rol">Por el cliente{% if visita.razon_social %} · {{ visita.razon_social }}{% endif %}</div>
       {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
@@ -1605,7 +1990,11 @@
         {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="">{% else %}N/A{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_supervisor_nombre or visita.responsable_nombre or visita.cerrada_por or visita.created_by or '—' }}</div>
+      {# 2026-09-05: identificación del firmante (cuenta ILUS con la que
+         firmó). Una firma con nombre y sin identificación vale poco. #}
+      {% if ot_datos and ot_datos.responsable_ident %}<div class="fir-id">{{ ot_datos.responsable_ident }}</div>{% endif %}
       <div class="fir-lbl">Validado Por</div>
+      <div class="fir-rol">Responsable · ILUS Fitness</div>
       {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
@@ -1613,10 +2002,13 @@
         {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="">{% else %}—{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_tecnico_nombre or visita.tecnico_principal or '—' }}</div>
+      {% if ot_datos and ot_datos.tecnico_firmante_ident %}<div class="fir-id">{{ ot_datos.tecnico_firmante_ident }}</div>{% endif %}
       <div class="fir-lbl">Realizado Por</div>
+      <div class="fir-rol">Técnico ejecutor · ILUS Fitness</div>
       {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at | chile_fmt }}</div>{% endif %}
     </div>
   </div>
+  {% if ot_datos is defined %}{{ cierre_block() }}{% endif %}
 
   {{ footer_block(2, total_pg, continua=false) }}
 </section>
