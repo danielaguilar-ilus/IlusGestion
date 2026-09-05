@@ -3731,6 +3731,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   <div class="otd-bottom">
     <button type="button" class="b" onclick="otdVerPdf()">
       <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
+    {# 📸 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
+       aparte"). El PDF de la OT lleva una muestra del anexo; el completo
+       vive acá. Solo se ofrece si de verdad hay fotos: un botón que abre
+       un documento vacío es peor que no tenerlo. #}
+    {% if fotos %}
+    <button type="button" class="b" onclick="otdVerAnexoFotos()">
+      <i class="bi bi-images"></i> Anexo de fotos ({{ fotos|length }})</button>
+    {% endif %}
     {% if v.estado == 'pendiente_aprobacion' and puede_aprobar %}
     <button type="button" class="b pri" onclick="OT2F.abrirAprobacion()">
       <i class="bi bi-pen-fill"></i> Firmar y cerrar OT</button>
@@ -5372,6 +5380,19 @@ window.otdBuscarDocErp = async function(){
    definitivo, más impresión y descarga con progreso ya resueltas. Nunca
    copiar ese HTML acá -- solo llamar a openPdf(), como ya hace el resto
    del proyecto (cotizaciones, etiquetas, PDF de la OT clásica). */
+/* Anexo fotográfico completo: documento aparte del PDF de la OT (2026-09-05).
+   Se abre en el mismo visor de PDF del proyecto. Puede tardar más que la OT
+   -- son todas las fotos embebidas -- así que el mensaje de espera lo dice
+   en vez de dejar a alguien mirando una barra muda. */
+function otdVerAnexoFotos(){
+  openPdf(`/mantenciones/api/visitas/{{ v.id }}/anexo-fotografico`, {
+    title: 'Anexo fotográfico · OT {{ v.numero_ot or v.id }}',
+    downloadName: 'Anexo-fotografico-OT-{{ v.numero_ot or v.id }}.pdf',
+    loadingMessage: 'Armando el anexo con todas las fotos…',
+    safetyTimeout: 60000,
+  });
+}
+
 function otdVerPdf(){
   openPdf(`/mantenciones/api/visitas/{{ v.id }}/pdf`, {
     title: 'PDF de la OT {{ v.numero_ot or v.id }}',

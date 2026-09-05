@@ -1122,9 +1122,23 @@
 </div>
 {% if fotos_anexo %}
 <div class="anexo-sep"></div>
-<div class="sec-title">Anexo fotográfico
-  <span style="font-weight:700;font-size:7.5pt;opacity:.85">{{ fotos_anexo|length }} foto{{ 's' if fotos_anexo|length != 1 }}</span></div>
-<div class="anexo-intro">Todas las fotos registradas en esta orden, en el orden de los equipos. Cada una indica el equipo, la tarea a la que respalda, el tipo de registro, la fecha y hora de captura (hora de Chile) y quién la tomó.</div>
+<div class="sec-title">Anexo fotográfico{% if anexo_omitidas %} — muestra{% endif %}
+  <span style="font-weight:700;font-size:7.5pt;opacity:.85">{% if anexo_omitidas %}{{ fotos_anexo|length }} de {{ anexo_total }}{% else %}{{ fotos_anexo|length }}{% endif %} foto{{ 's' if anexo_total != 1 }}</span></div>
+{# 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
+   aparte"): el anexo del documento principal lleva una MUESTRA. Cuando
+   quedan fotos fuera se dice cuántas y dónde están -- un anexo recortado
+   en silencio haría dudar de todo el resto del documento. #}
+<div class="anexo-intro">
+  {% if anexo_omitidas %}
+    Muestra de <b>{{ fotos_anexo|length }}</b> de las <b>{{ anexo_total }}</b> fotos registradas
+    en esta orden. Las {{ anexo_omitidas }} restantes están en el
+    <b>anexo fotográfico completo</b>, que se descarga por separado desde la orden de trabajo
+    (se separó para que este documento siga siendo liviano de enviar y de abrir).
+  {% else %}
+    Todas las fotos registradas en esta orden, en el orden de los equipos.
+  {% endif %}
+  Cada una indica el equipo, la tarea a la que respalda, el tipo de registro, la fecha y hora de captura (hora de Chile) y quién la tomó.
+</div>
 <div class="anexo-grid">
   {% for f in fotos_anexo %}
   <div class="anexo-item">

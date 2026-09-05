@@ -1,0 +1,139 @@
+{#-
+  ════════════════════════════════════════════════════════════════════
+  ANEXO FOTOGRÁFICO COMPLETO DE LA OT — documento aparte
+  ════════════════════════════════════════════════════════════════════
+  2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
+  aparte"). El PDF de la OT lleva una muestra del anexo; este documento
+  lleva TODAS las fotos. Se separó porque una OT de 90 fotos embebidas
+  supera los 10 MB, y ese peso no puede vivir en el papel que se firma y
+  se manda por correo.
+
+  Usa EXACTAMENTE el mismo contexto que `ot_pdf.html` (`_ot_pdf_context`
+  con `anexo_completo=True`), así que no puede contradecirlo: mismas
+  fotos, mismo orden, mismos datos de captura.
+
+  El header y el footer los pone Chromium (header/footer nativos, ver
+  `_ot_pdf_header_footer_native`), igual que el PDF principal — por eso
+  acá no se dibuja ninguna banda propia.
+-#}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+{% if base_url %}<base href="{{ base_url }}">{% endif %}
+<title>Anexo fotográfico — {{ visita.numero_ot or ('OT-' ~ visita.id) }}</title>
+<style>
+  :root{
+    --ilus-red:#dc2626; --ilus-black:#0a0a0a; --ilus-ink:#0f172a;
+    --ilus-mute:#6b7280; --ilus-line:#e5e7eb; --ilus-bg:#f9fafb;
+  }
+  @page { size: letter; margin: 28mm 0mm 16mm; }
+  *{ box-sizing:border-box }
+  html,body{ margin:0; padding:0 }
+  body{
+    font-family:'Helvetica Neue',Arial,sans-serif; color:var(--ilus-ink);
+    font-size:10pt; line-height:1.5; background:#fff;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .sheet{ padding:4mm 14mm 0 }
+
+  .sec-title{
+    font-size:9.5pt; font-weight:900; color:var(--ilus-black);
+    text-transform:uppercase; letter-spacing:.05em;
+    margin:0 0 4px; display:flex; align-items:center; gap:6px;
+  }
+  .sec-title::before{
+    content:''; width:3px; height:14px; background:var(--ilus-red);
+    border-radius:2px; display:inline-block;
+  }
+  .intro{ font-size:8pt; color:var(--ilus-mute); margin-bottom:4mm; line-height:1.45 }
+  .intro b{ color:var(--ilus-ink) }
+
+  /* Ficha de cabecera: de qué OT es este anexo. Un anexo suelto sin
+     identificar no sirve como respaldo de nada. */
+  .ident{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:2mm 4mm;
+    background:var(--ilus-bg); border:1px solid var(--ilus-line);
+    border-radius:6px; padding:3mm 4mm; margin-bottom:5mm;
+  }
+  .ident div{ font-size:8.5pt; color:var(--ilus-ink); overflow-wrap:anywhere }
+  .ident b{
+    display:block; font-size:6.5pt; font-weight:800; color:var(--ilus-mute);
+    text-transform:uppercase; letter-spacing:.04em; line-height:1.2;
+  }
+
+  /* 3 por fila: la foto se ve lo bastante grande para verificar una
+     etiqueta o un número de serie, que es para lo que existe el anexo. */
+  .grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:4mm }
+  .item{
+    border:1px solid var(--ilus-line); border-radius:6px; padding:2mm;
+    page-break-inside:avoid; break-inside:avoid; background:#fff;
+  }
+  .item img{
+    width:100%; height:52mm; object-fit:cover;
+    border-radius:4px; background:var(--ilus-bg); display:block;
+  }
+  .cap{ font-size:6.8pt; line-height:1.4; margin-top:1.4mm; overflow-wrap:anywhere }
+  .cap b{ color:var(--ilus-red) }
+  .cap .m{ color:var(--ilus-mute); display:block }
+  .cierre{
+    margin-top:6mm; padding-top:3mm; border-top:1.5px solid var(--ilus-red);
+    font-size:7.5pt; color:var(--ilus-mute); line-height:1.5;
+  }
+  .cierre b{ color:var(--ilus-black) }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="sec-title">Anexo fotográfico
+    <span style="font-weight:700;font-size:7.5pt;opacity:.85">
+      {{ fotos_anexo|length }} foto{{ 's' if fotos_anexo|length != 1 }}</span></div>
+  <div class="intro">
+    Registro fotográfico completo de la orden de trabajo
+    <b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b>. Cada imagen indica el equipo
+    al que corresponde, la tarea que respalda, el tipo de registro, la fecha y hora de
+    captura en hora de Chile y quién la tomó. Este anexo acompaña a la orden de trabajo;
+    no la reemplaza.
+  </div>
+
+  <div class="ident">
+    <div><b>Orden de trabajo</b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</div>
+    <div><b>Cliente</b>{{ (visita.razon_social or '')|trim or 'Trabajo interno' }}</div>
+    {% if visita.cli_rut %}<div><b>RUT</b>{{ visita.cli_rut | rut_fmt }}</div>{% endif %}
+    <div><b>Técnico</b>{{ visita.tecnico_principal or '—' }}</div>
+    {% if visita.direccion_visita or visita.cli_direccion %}
+    <div style="grid-column:1/-1"><b>Dirección de la visita</b>{{ visita.direccion_visita or visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}</div>
+    {% endif %}
+  </div>
+
+  <div class="grid">
+    {% for f in fotos_anexo %}
+    <div class="item">
+      <img src="{{ f.url }}" alt="">
+      <div class="cap">
+        <b>Foto {{ f.n }}</b>{% if f.equipo_idx %} · Equipo {{ f.equipo_idx }}{% endif %}{% if f.tipo_label %} · {{ f.tipo_label }}{% endif %}
+        {% if f.equipo_nombre %}<span class="m">{{ f.equipo_nombre }}</span>{% endif %}
+        {% if f.tarea_titulo %}<span class="m">Tarea: {{ f.tarea_titulo }}</span>{% endif %}
+        {% if f.descripcion %}<span class="m">{{ f.descripcion }}</span>{% endif %}
+        <span class="m">{% if f.tomada_str %}{{ f.tomada_str }}{% else %}Sin fecha registrada{% endif %}{% if f.tomada_por %} · {{ f.tomada_por }}{% endif %}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# Constancia: la razón social va acá porque es un documento con valor
+     probatorio (REGLA #0 — la marca es ILUS Fitness, la entidad legal es
+     Sport and Health Solutions SPA). #}
+  <div class="cierre">
+    <b>{{ ILUS_LEGAL if ILUS_LEGAL is defined else 'Sport and Health Solutions SPA' }}</b>
+    {% if ILUS_RUT is defined %} · RUT {{ ILUS_RUT }}{% endif %}
+    · Anexo generado el {{ generated_at }}.
+    Contiene {{ fotos_anexo|length }} imagen{{ 'es' if fotos_anexo|length != 1 }} registrada{{ 's' if fotos_anexo|length != 1 }}
+    durante la ejecución de la orden de trabajo
+    <b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b>.
+  </div>
+
+</div>
+</body>
+</html>

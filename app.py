@@ -92813,8 +92813,23 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     for e in equipos:
         e["n_fotos"] = n_fotos_por_equipo.get(e.get("idx"), 0)
 
+    # Tope del anexo en el documento principal. `anexo_completo=True` lo
+    # desactiva: es lo que usa la descarga aparte del anexo, que sí lleva
+    # todo. El total y cuántas quedaron fuera viajan al template para que
+    # el documento lo DIGA -- un anexo recortado en silencio sería
+    # justamente el tipo de dato incompleto que esta OT no puede permitirse.
+    _anexo_total = len(fotos_anexo)
+    _anexo_max = 0 if anexo_completo else _ot_pdf_anexo_max()
+    _anexo_omitidas = 0
+    if not anexo_completo and _anexo_max >= 0 and _anexo_total > _anexo_max:
+        _anexo_omitidas = _anexo_total - _anexo_max
+        fotos_anexo = fotos_anexo[:_anexo_max]
+
     fc = firmante_cliente or {}
     return {
+        "anexo_total":           _anexo_total,
+        "anexo_omitidas":        _anexo_omitidas,
+        "anexo_completo":        bool(anexo_completo),
         "tareas_chk":            tareas_chk,
         "eq_tareas_rango":       eq_tareas_rango_id,
         "hallazgos":             hallazgos,
@@ -92835,7 +92850,32 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     }
 
 
-def _ot_pdf_context(vid, embed_images=False):
+_OT_PDF_ANEXO_MAX_DEFECTO = 12
+
+
+def _ot_pdf_anexo_max():
+    """Cuántas fotos entran al anexo del PDF principal.
+
+    🆕 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
+    aparte"). Cada foto embebida pesa ~120 KB, así que una OT de 90 fotos
+    producía un PDF de más de 10 MB: lento de generar, imposible de mandar
+    por correo y molesto de abrir en un teléfono. El documento principal
+    lleva una muestra y el anexo COMPLETO se descarga aparte
+    (`mant_visita_anexo_fotografico`).
+
+    Configurable sin deploy desde /mantenciones/configuracion, igual que
+    los candados de cierre: regla `ot_pdf_anexo_max`. En 0 se apaga el
+    anexo del PDF principal por completo.
+    """
+    try:
+        _v = _reglas_cargar().get("ot_pdf_anexo_max", _OT_PDF_ANEXO_MAX_DEFECTO)
+        _n = int(_v)
+        return _n if _n >= 0 else _OT_PDF_ANEXO_MAX_DEFECTO
+    except Exception:
+        return _OT_PDF_ANEXO_MAX_DEFECTO
+
+
+def _ot_pdf_context(vid, embed_images=False, anexo_completo=False):
     """Construye el contexto COMPLETO para renderizar `mantenciones/ot_pdf.html`.
 
     embed_images=True (2026-07-10, Daniel — urgente): usado SOLO por el
@@ -93783,6 +93823,64 @@ def _ot_pdf_incompleto_html(vid, razones):
         estado_label=estado_label,
         razones=razones or [],
     )
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/anexo-fotografico")
+@_mant_required
+@_ot_can_view
+def mant_visita_anexo_fotografico(vid):
+    """Anexo fotográfico COMPLETO de la OT, como PDF aparte.
+
+    🆕 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
+    aparte"). El PDF de la OT lleva una muestra del anexo (ver
+    `_ot_pdf_anexo_max`); acá van TODAS las fotos, sin tope. Es un
+    documento separado a propósito: una OT de 90 fotos pesa más de 10 MB
+    embebidas, y ese peso no puede vivir en el documento que se firma y se
+    manda por correo.
+
+    Reusa el MISMO contexto que el PDF principal (`_ot_pdf_context` con
+    `anexo_completo=True`), así que el anexo nunca puede contar una historia
+    distinta a la de la OT: son las mismas fotos, el mismo orden y los
+    mismos datos de captura.
+    """
+    ctx, status, razones = _ot_pdf_context(vid, embed_images=True, anexo_completo=True)
+    if status == "not_found":
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if status == "incompleto":
+        return _ot_pdf_incompleto_html(vid, razones)
+    if not ctx.get("fotos_anexo"):
+        return _ot_pdf_incompleto_html(
+            vid, ["Esta OT no tiene fotos registradas, así que no hay anexo que generar."])
+
+    html = render_template("mantenciones/ot_anexo_fotografico.html", **ctx)
+    _n = len(ctx.get("fotos_anexo") or [])
+    # Mismo criterio de holgura que el PDF principal: el anexo es, por
+    # definición, el documento con más imágenes de toda la app.
+    _grande = _n > 40
+    print(f"[ot_anexo] vid={vid} fotos={_n} grande={_grande} len_html={len(html)}", flush=True)
+    _hdr_tpl, _ftr_tpl = _ot_pdf_header_footer_native(ctx, grande=False)
+    _lock = _pdf_grande_lock() if _grande else _contextlib_pdf_lock.nullcontext()
+    try:
+        with _lock:
+            pdf_bytes = _pw_pdf(
+                html, page_format="Letter",
+                margin={"top": "28mm", "bottom": "16mm", "left": "0mm", "right": "0mm"},
+                header_template=_hdr_tpl, footer_template=_ftr_tpl,
+                wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
+                wait_timeout=5000,
+                action_timeout=200000 if _grande else 90000,
+                **({"queue_timeout": 260} if _grande else {}))
+    except Exception as e:
+        print(f"[ot_anexo] vid={vid} Playwright falló: {e}", flush=True)
+        # Mismo criterio que el PDF principal: antes de dejar a alguien sin
+        # su anexo, se entrega el HTML imprimible (Ctrl+P → Guardar como PDF).
+        return html
+
+    _num = str(ctx["visita"].get("numero_ot") or vid).strip()
+    _num_slug = re.sub(r"^OT[-_]?", "", _num, flags=re.IGNORECASE) or _num
+    fname = f"Anexo-fotografico-OT-{_num_slug}.pdf".replace(" ", "_")
+    return send_file(io.BytesIO(pdf_bytes), mimetype="application/pdf",
+                     as_attachment=False, download_name=fname)
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/pdf")
