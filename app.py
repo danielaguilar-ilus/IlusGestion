@@ -100310,17 +100310,30 @@ def _facprov_datos(desde, hasta):
             "instalacion": 0.0, "mantencion": 0.0, "otros": 0.0,
             "despacho": 0.0, "total": 0.0, "n_ot": 0,
             "cobrado": 0.0, "margen": 0.0, "n_sin_cobro": 0, "n_garantia": 0,
+            "pagado_comparable": 0.0, "n_comparable": 0,
+            "pagado_garantia": 0.0, "pagado_sin_declarar": 0.0,
         })
         pr[cat] += serv
         pr["despacho"] += desp
         pr["total"] += pagado
-        pr["cobrado"] += cobrado
-        pr["margen"] += margen
         pr["n_ot"] += 1
-        if sin_cobro:
-            pr["n_sin_cobro"] += 1
+        # 2026-09-06: el margen SOLO compara OT donde se conocen los dos
+        # lados. Sumar todo lo pagado contra solo lo cobrado que si esta
+        # declarado da un porcentaje sin sentido -- con datos reales de
+        # septiembre daba -747%, mezclando una garantia (que por definicion
+        # no cobra) con tres OT a las que simplemente les falta el dato.
+        # Cada hueco se muestra aparte, con su monto y su nombre.
         if es_garantia:
             pr["n_garantia"] += 1
+            pr["pagado_garantia"] += pagado
+        elif sin_cobro:
+            pr["n_sin_cobro"] += 1
+            pr["pagado_sin_declarar"] += pagado
+        else:
+            pr["cobrado"] += cobrado
+            pr["pagado_comparable"] += pagado
+            pr["margen"] += margen
+            pr["n_comparable"] += 1
 
         _doc = ""
         if (f.get("factura_nudo") or "").strip():
@@ -100355,6 +100368,10 @@ def _facprov_datos(desde, hasta):
         "margen":      sum(x["margen"] for x in lista),
         "n_sin_cobro": sum(x["n_sin_cobro"] for x in lista),
         "n_garantia":  sum(x["n_garantia"] for x in lista),
+        "n_comparable":        sum(x["n_comparable"] for x in lista),
+        "pagado_comparable":   sum(x["pagado_comparable"] for x in lista),
+        "pagado_garantia":     sum(x["pagado_garantia"] for x in lista),
+        "pagado_sin_declarar": sum(x["pagado_sin_declarar"] for x in lista),
     }
     # El porcentaje se calcula sobre lo cobrado, y solo si hay algo cobrado:
     # dividir por cero para mostrar un 0% seria inventar un dato.

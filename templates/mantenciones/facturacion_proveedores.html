@@ -56,23 +56,43 @@
 
 {#- Primero el negocio: cuánto entra, cuánto sale y qué queda. El
     desglose por servicio va debajo, que es el detalle. -#}
+{#- El margen compara SOLO las OT donde se conocen los dos lados. Las
+    otras dos situaciones son reales pero distintas, y van con su propio
+    monto: una garantía no cobra a propósito; una OT sin línea ZZ es un
+    dato que falta. Mezclarlas daba un porcentaje sin sentido. -#}
 <div class="fp-kpis fp-kpis-top">
   <div class="fp-kpi"><span class="k">Cobrado por el servicio</span><span class="v">{{ clp(tot.cobrado) }}</span></div>
-  <div class="fp-kpi"><span class="k">Pagado a proveedores</span><span class="v">{{ clp(tot.total) }}</span></div>
+  <div class="fp-kpi"><span class="k">Pagado en esas mismas OT</span><span class="v">{{ clp(tot.pagado_comparable) }}</span></div>
   <div class="fp-kpi {{ 'neg' if tot.margen < 0 else 'pos' }}">
-    <span class="k">Margen{% if tot.margen_pct is not none %} · {{ '%.1f'|format(tot.margen_pct) }}%{% endif %}</span>
+    <span class="k">Margen{% if tot.margen_pct is not none %} · {{ '%.1f'|format(tot.margen_pct) }}%{% endif %}
+      {% if tot.n_comparable %}· {{ tot.n_comparable }} OT{% endif %}</span>
     <span class="v">{{ clp(tot.margen) }}</span>
   </div>
 </div>
 
+{% if tot.pagado_garantia or tot.pagado_sin_declarar %}
+<div class="fp-fuera">
+  <span class="t">Fuera del margen</span>
+  {% if tot.pagado_garantia %}
+  <span class="b gar"><b>{{ clp(tot.pagado_garantia) }}</b>
+    {{ tot.n_garantia }} OT en garantía — se pagó al proveedor y no se cobra, a propósito</span>
+  {% endif %}
+  {% if tot.pagado_sin_declarar %}
+  <span class="b fal"><b>{{ clp(tot.pagado_sin_declarar) }}</b>
+    {{ tot.n_sin_cobro }} OT sin el cobro declarado — falta el dato, no es pérdida</span>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if tot.n_sin_cobro %}
 <div class="fp-aviso">
   <i class="bi bi-exclamation-triangle-fill"></i>
-  <div><b>{{ tot.n_sin_cobro }} OT sin cobro declarado.</b>
-    Tienen costo de proveedor pero ninguna línea ZZ de servicio declarada, así que el
-    margen de arriba está incompleto — no es que se haya perdido esa plata, es que
-    falta el dato. Están marcadas abajo.
-    {% if tot.n_garantia %}<span>Las {{ tot.n_garantia }} de garantía sí van con cobro cero a propósito y no se cuentan acá.</span>{% endif %}
+  <div><b>Hay {{ tot.n_sin_cobro }} OT cerrada{{ 's' if tot.n_sin_cobro != 1 }} sin el cobro del servicio declarado.</b>
+    Si no van en garantía, hay que cobrarlas: entra a cada una y declara su línea de
+    servicio (basta una nota de venta con el monto). Están marcadas
+    <b>Sin línea ZZ</b> abajo.
+    <span>Hasta que eso pase, su costo de proveedor queda fuera del margen — contarlo
+      como pérdida sería inventar un número.</span>
   </div>
 </div>
 {% endif %}
@@ -283,6 +303,13 @@ document.addEventListener('DOMContentLoaded', function(){ fpPaginar(1); });
 .fp-kpi.pos .v{color:#15803d}
 .fp-kpi.neg{border-left-color:#dc2626}
 .fp-kpi.neg .v{color:#b91c1c}
+.fp-fuera{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:-6px 0 16px;
+  font-size:.79rem;color:#0f172a}
+.fp-fuera .t{font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8}
+.fp-fuera .b{background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:5px 12px}
+.fp-fuera .b b{font-variant-numeric:tabular-nums;margin-right:5px}
+.fp-fuera .gar b{color:#1e40af}
+.fp-fuera .fal b{color:#92400e}
 .fp-margen{font-weight:900}
 .fp-margen.pos{color:#15803d}
 .fp-margen.neg{color:#b91c1c}
