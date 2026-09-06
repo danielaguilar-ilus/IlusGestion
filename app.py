@@ -78952,6 +78952,91 @@ def mant_clientes_fusionar_v2():
                     "destino_id": destino, "origen_id": origen})
 
 
+@app.route("/ot/api/producto/clasificar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_producto_clasificar():
+    """Elegir el checklist a mano CLASIFICA el producto en el catalogo.
+
+    DECISION DE DANIEL, 12-08-2026: "la clasificacion de productos y las
+    plantillas deben trabajar unidas para que una cosa alimente la otra,
+    asi como se hace en la cotizacion. Al momento de seleccionar un
+    producto sin plantilla, que quede grabado en el catalogo de productos".
+    Reconfirmada el 06-09-2026: "yo puedo seguir grabando y guardando desde
+    la creacion de ordenes de trabajo, al igual que con los catalogos...
+    esa es la intencion".
+
+    Por que importa: la sugerencia automatica de checklist viaja por
+    sku -> cat_productos.clase_producto -> cat_clases_producto.nombre ->
+    plantilla con ese nombre (ver _plantilla_por_clasificacion_sku). Cuando
+    el producto no tiene clase, esa cadena se corta y no hay sugerencia
+    para nadie, nunca. Esto cierra el circuito al reves: si la persona
+    eligio a mano una plantilla cuyo nombre ES una clase activa, se graba
+    esa clase en el producto -- y desde ahi la sugerencia funciona sola
+    para ese SKU, en todas las OT futuras y para todos los clientes. La
+    cobertura crece con el uso en vez de exigir una campana de limpieza
+    (medicion 12-08: 22%).
+
+    Tres candados:
+      · NUNCA pisa una clasificacion existente. Solo llena el hueco. Si el
+        producto ya tiene clase, la decision de cambiarla es del catalogo,
+        no de una OT.
+      · Solo graba si el nombre de la plantilla coincide EXACTO con una
+        clase activa. Si la persona eligio un checklist que no representa
+        una clase, no hay nada que aprender y se dice que no se guardo --
+        inventar un calce seria peor que no guardar.
+      · Queda firmado con updated_by (Daniel: "ojala que con trazabilidad").
+    """
+    d = request.get_json(silent=True) or {}
+    sku = (d.get("sku") or "").strip()[:100]
+    try:
+        pid = int(d.get("plantilla_id") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if not sku or not pid:
+        return jsonify({"ok": True, "guardado": False, "motivo": "sin_datos"})
+
+    try:
+        prod = mysql_fetchone(
+            "SELECT sku, COALESCE(TRIM(clase_producto),'') AS clase "
+            "  FROM cat_productos WHERE sku=%s LIMIT 1", (sku,))
+        if not prod:
+            return jsonify({"ok": True, "guardado": False, "motivo": "sku_fuera_de_catalogo"})
+        if prod["clase"]:
+            return jsonify({"ok": True, "guardado": False, "motivo": "ya_clasificado"})
+
+        plant = mysql_fetchone(
+            "SELECT nombre FROM mant_tarea_plantillas "
+            " WHERE id=%s AND COALESCE(activa,1)=1 LIMIT 1", (pid,))
+        if not plant or not (plant.get("nombre") or "").strip():
+            return jsonify({"ok": True, "guardado": False, "motivo": "plantilla_no_encontrada"})
+
+        clase = mysql_fetchone(
+            "SELECT slug, nombre FROM cat_clases_producto "
+            " WHERE nombre=%s AND activo=1 LIMIT 1", (plant["nombre"].strip(),))
+        if not clase:
+            # El checklist elegido no representa una clase del catalogo:
+            # no hay nada que aprender de ahi.
+            return jsonify({"ok": True, "guardado": False, "motivo": "plantilla_no_es_clase"})
+
+        mysql_execute(
+            "UPDATE cat_productos SET clase_producto=%s, updated_by=%s "
+            " WHERE sku=%s AND COALESCE(TRIM(clase_producto),'')=''",
+            (clase["slug"], current_username() or "sistema", sku))
+    except Exception as e:
+        print(f"[ot2_producto_clasificar] sku={sku!r} pid={pid}: {e}", flush=True)
+        return jsonify({"ok": True, "guardado": False, "motivo": "error"})
+
+    try:
+        _mant_log("catalogo", 0, "clasificado_desde_ot",
+                  f"SKU {sku} quedo clasificado como '{clase['nombre']}' al elegir "
+                  f"su checklist en una OT ({current_username() or 'sistema'}).")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "guardado": True,
+                    "clase": clase["nombre"], "slug": clase["slug"]})
+
+
 @app.route("/ot/api/cliente", methods=["POST"])
 @_mant_required
 def ot2_api_cliente_crear():

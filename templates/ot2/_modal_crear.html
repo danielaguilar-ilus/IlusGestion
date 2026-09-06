@@ -6478,6 +6478,39 @@ window.OT2C = (function(){
     if (e){ e.plantilla_id = pid ? parseInt(pid) : null; e.plantilla_sugerida = false; }
     // Elegir el checklist tampoco mueve la lista: se actualiza su fila.
     _o2mRefrescarFilaEquipo(mid); _o2mRefrescarBarraEq(); refrescarAnclas();
+    if (pid) _o2mAprenderClasificacion(mid, parseInt(pid));
+  }
+
+  /* Elegir el checklist a mano ENSEÑA al catálogo (Daniel, 12-08-2026:
+     "al momento de seleccionar un producto sin plantilla, que quede
+     grabado en el catálogo de productos"; reconfirmado el 06-09).
+
+     La sugerencia automática viaja por SKU -> clase del producto ->
+     plantilla con el nombre de esa clase. Si el producto no tiene clase,
+     esa cadena se corta y no hay sugerencia para nadie. Esto la cierra al
+     revés: la próxima OT con ese mismo SKU ya viene sugerida sola.
+
+     Nunca pisa una clasificación que ya exista, y si el checklist elegido
+     no corresponde a una clase del catálogo simplemente no guarda nada --
+     el backend decide, acá no se adivina. Si falla, se ignora en silencio:
+     enseñarle al catálogo es un beneficio, nunca un obstáculo para crear
+     la OT. */
+  function _o2mAprenderClasificacion(mid, pid){
+    var m = cacheEquipos.find(function(x){ return x.id === mid; });
+    if (!m || !m.sku) return;
+    fetch('/ot/api/producto/clasificar', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({sku: m.sku, plantilla_id: pid})
+    }).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (j && j.guardado && window.ilusToast){
+          ilusToast('Aprendido: «' + (m.nombre || m.sku) + '» queda clasificado como ' +
+                    j.clase + '. Su checklist se va a sugerir solo la próxima vez.',
+                    {type:'success', duration:5000});
+        }
+      })
+      .catch(function(){ /* no molesta al usuario: la OT sigue igual */ });
   }
 
   /* ── Auto-sugerencia de checklist por clasificación real del equipo
