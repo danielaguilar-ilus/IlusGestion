@@ -387,6 +387,20 @@
 .o2m-eq-noplan{font-size:0.8rem;font-weight:700;color:#b45309;background:#fffbeb;
   border:1px solid #fde68a;border-radius:50px;padding:1px 7px;white-space:nowrap}
 .o2m-eq-table th.plan, .o2m-eq-table td.plan{text-align:center;width:52px}
+/* 📄 2026-09-05: documento de origen y cantidad. El documento va primero
+   (trazabilidad: de qué factura salió este equipo) y en monoespaciado,
+   que es como se comparan números de documento sin equivocarse. */
+.o2m-eq-table th.doc, .o2m-eq-table td.doc{width:104px}
+.o2m-eq-table .o2m-eq-doc{font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:0.82rem;font-weight:700;color:#0f172a;background:#f1f5f9;
+  border:1px solid #e2e8f0;border-radius:5px;padding:2px 6px;
+  display:inline-block;white-space:nowrap}
+.o2m-eq-table th.cant, .o2m-eq-table td.cant{width:58px;text-align:center;
+  font-weight:800;font-variant-numeric:tabular-nums;color:#0f172a}
+@media (max-width:640px){
+  .o2m-eq-table th.doc, .o2m-eq-table td.doc{width:84px}
+  .o2m-eq-table .o2m-eq-doc{font-size:0.74rem;padding:1px 4px}
+}
 .o2m-eq-plan-btn{width:32px;height:32px;border-radius:50%;border:1px solid #e5e7eb;background:#f8fafc;
   color:#9ca3af;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
   font-size:1.12rem;transition:background .15s,border-color .15s,color .15s,transform .15s}
@@ -3562,6 +3576,29 @@ window.OT2C = (function(){
     document.head.appendChild(st);
   })();
 
+  /* 📄 2026-09-05 (Daniel: "tickets, cotización y orden de trabajo tienen
+     que llevar el documento involucrado siempre, para hacer esa
+     distinción... de hecho el número de serie podría estar relacionado a
+     la factura, y así tendríamos trazabilidad").
+     Devuelve la línea de origen de un SKU: de qué documento vino y en qué
+     cantidad. Sale de S.doc_lineas, que ya trae tido/nudo/qty por línea --
+     no se inventa nada ni se consulta de nuevo. Si el equipo no vino de un
+     documento (está en la ficha del cliente y punto), devuelve null y la
+     tabla lo dice con un guion, nunca con un dato supuesto. */
+  function _o2mLineaDeSku(sku){
+    if (!sku || !S.doc_lineas || !S.doc_lineas.length) return null;
+    var k = String(sku).trim().toUpperCase();
+    return S.doc_lineas.find(function(l){
+      return String(l.sku || '').trim().toUpperCase() === k;
+    }) || null;
+  }
+  function _o2mDocDeLinea(l){
+    if (l && l.nudo) return ((l.tido || 'FCV') + ' ' + l.nudo).trim();
+    if (S.doc_origen && S.doc_origen.nudo)
+      return ((S.doc_origen.tido || 'FCV') + ' ' + S.doc_origen.nudo).trim();
+    return '';
+  }
+
   function pintarListaEquipos(){
     var c = document.getElementById('o2mEqList'); if(!c) return;
     var equiposVista = _o2mEquiposVista();
@@ -3597,7 +3634,9 @@ window.OT2C = (function(){
           _o2mBarraPlan()+
         '</div>'+
         '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
-          '<th class="chk"></th><th>Equipo / SKU</th><th class="plan">Plan</th>'+
+          '<th class="chk"></th><th class="doc">Documento</th>'+
+          '<th>Producto</th><th class="cant">Cant.</th>'+
+          (_o2mPlanAplica() ? '<th class="plan">Plan</th>' : '')+
           '<th>Plantillas extra'+
             (cachePlantCategoria ? ' <span class="o2m-eq-cat">'+esc(_O2M_CATEGORIA_LABEL[cachePlantCategoria]||cachePlantCategoria)+'</span>' : '')+
           '</th>'+
@@ -3606,13 +3645,23 @@ window.OT2C = (function(){
           var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
           var cls = sel ? (sel.plantilla_id ? 'ok' : 'sel') : '';
           var enPlan = !!m.aplica_mantencion;
+          var _lin = _o2mLineaDeSku(m.sku);
+          var _docTxt = _o2mDocDeLinea(_lin);
+          var _cant = (_lin && _lin.qty) ? _lin.qty : '';
           return '<tr class="'+cls+'">'+
             '<td class="chk"><span class="o2m-chk'+(sel?' on':'')+'" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
               (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span></td>'+
-            '<td><span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+
-              (!enPlan ? ' <span class="o2m-eq-noplan">(sin mantención)</span>' : '')+'</span>'+
-              (m.sku ? '<span class="sku">'+esc(m.sku)+'</span>' : '')+
-              (m.serie ? '<span class="sku">S/N: '+esc(m.serie)+'</span>' : '')+'</td>'+
+            // Documento de origen: la trazabilidad que Daniel pide en los
+            // tres lados (ticket, cotización y OT). Sin documento, guion.
+            '<td class="doc">'+(_docTxt
+              ? '<span class="o2m-eq-doc">'+esc(_docTxt)+'</span>'
+              : '<span class="muted">—</span>')+'</td>'+
+            // El NOMBRE manda; SKU y serie van debajo, más chicos.
+            '<td><span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
+              (m.sku ? '<span class="sku">SKU '+esc(m.sku)+'</span>' : '')+
+              (m.serie ? '<span class="sku">S/N '+esc(m.serie)+'</span>' : '')+'</td>'+
+            '<td class="cant">'+(_cant ? esc(String(_cant)) : '<span class="muted">—</span>')+'</td>'+
+            (!_o2mPlanAplica() ? '' :
             '<td class="plan">'+(O2M_PUEDE_TOGGLE_PLAN
               ? '<button type="button" class="o2m-eq-plan-btn'+(enPlan?' on':'')+'" '+
                 'title="'+(enPlan?'Quitar del plan de mantención de este cliente':'Agregar al plan de mantención de este cliente')+'" '+
@@ -3620,7 +3669,7 @@ window.OT2C = (function(){
               : '<span class="o2m-eq-plan-btn" style="opacity:.4;cursor:not-allowed" '+
                 'title="Solo gestión puede modificar el plan de mantención"><i class="bi '+
                 (enPlan?'bi-shield-check':'bi-shield-slash')+'"></i></span>'
-            )+'</td>'+
+            )+'</td>')+
             '<td>'+(sel
               ? '<div class="o2m-combo">'+
                   '<input type="text" class="form-control form-control-sm o2m-combo-input" '+
