@@ -3687,10 +3687,18 @@ window.OT2C = (function(){
           '</tr>';
         }).join('')+
         '</tbody></table></div>'+
-        '<div class="o2m-eq-hint"><i class="bi bi-lightbulb me-1"></i>'+
-          '<b>Auto:</b> los equipos dentro del plan de mantención del cliente ya vienen marcados. '+
-          'Usa el ícono de escudo para agregar o quitar un equipo del plan — el cambio queda '+
-          'guardado en la ficha del cliente para siempre, no solo en esta OT.</div>'+
+        // 2026-09-06 (Daniel: "eso aparece en las instalaciones, donde no
+        // existe plan; lo puedes sacar solo al elegir instalación"). El
+        // aviso explica el escudo del plan, así que solo tiene sentido
+        // donde el plan existe -- en instalación era ruido que hablaba de
+        // algo que ni siquiera se muestra. Además ya no dice que los
+        // equipos "vienen marcados" por plan: eso dejó de ser cierto desde
+        // que la preselección la manda el documento de origen.
+        (_o2mPlanAplica()
+          ? '<div class="o2m-eq-hint"><i class="bi bi-lightbulb me-1"></i>'+
+            '<b>Plan de mantención:</b> el ícono de escudo agrega o quita un equipo del plan '+
+            'del cliente — el cambio queda guardado en su ficha para siempre, no solo en esta OT.</div>'
+          : '')+
       '</div>';
     // Repintar el <select> con el valor ya elegido
     S.equipos.forEach(function(e){
