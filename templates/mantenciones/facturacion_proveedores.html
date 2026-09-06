@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Facturación de proveedores — ILUS Fitness{% endblock %}
+
+{#-
+  ════════════════════════════════════════════════════════════════════
+  FACTURACIÓN DE PROVEEDORES EXTERNOS — lo que ILUS PAGA
+  ════════════════════════════════════════════════════════════════════
+  2026-09-06 (Daniel: "quisiera ir viendo un detalle de facturación
+  solamente para mí, donde voy a ver información de los proveedores
+  externos, qué servicios me han prestado en instalación y despacho,
+  asociados a qué cliente y qué factura" + "en el dashboard identificar
+  cuánto lleva cada proveedor en despachos, mantención e instalación...
+  para saber cuánto llevan en el mes facturado y poder bajar un detalle").
+
+  Solo OT CERRADAS: en una abierta el costo del proveedor todavía puede
+  cambiar y el total del mes se movería solo. Se agrupa por la fecha de
+  cierre, que es cuando el monto quedó firme.
+
+  Permiso `mant_facturacion_proveedores`, configurable por rol y apagado
+  para todos por defecto -- acá se ve el costo, y con él el margen.
+-#}
+
+{% macro clp(v) -%}${{ '{:,.0f}'.format(v or 0)|replace(',', '.') }}{%- endmacro %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>Facturación de proveedores</h1>
+    <div class="text-muted" style="font-size:.86rem">
+      Lo que ILUS pagó a sus proveedores externos, por servicio prestado.
+    </div>
+  </div>
+  <form method="get" class="d-flex gap-2 align-items-center">
+    <input type="month" name="mes" value="{{ mes }}" class="form-control form-control-sm"
+           style="width:auto" onchange="this.form.submit()">
+    <a class="btn btn-sm btn-dark" href="{{ url_for('mant_facturacion_proveedores_xlsx', mes=mes) }}">
+      <i class="bi bi-file-earmark-excel me-1"></i>Bajar detalle</a>
+  </form>
+</div>
+
+{% if not provs %}
+<div class="fp-vacio">
+  <i class="bi bi-inbox"></i>
+  <div>
+    <b>Sin movimientos en este mes.</b>
+    No hay órdenes de trabajo cerradas con costo de proveedor entre el
+    {{ desde.strftime('%d/%m/%Y') }} y el {{ hasta.strftime('%d/%m/%Y') }}.
+    <div class="mt-1" style="font-size:.8rem;color:#64748b">
+      Solo entran las OT <b>cerradas</b>: mientras una sigue abierta, su costo puede cambiar.
+    </div>
+  </div>
+</div>
+{% else %}
+
+<div class="fp-kpis">
+  <div class="fp-kpi"><span class="k">Instalación</span><span class="v">{{ clp(tot.instalacion) }}</span></div>
+  <div class="fp-kpi"><span class="k">Mantención</span><span class="v">{{ clp(tot.mantencion) }}</span></div>
+  <div class="fp-kpi"><span class="k">Despacho</span><span class="v">{{ clp(tot.despacho) }}</span></div>
+  {% if tot.otros %}<div class="fp-kpi"><span class="k">Otros servicios</span><span class="v">{{ clp(tot.otros) }}</span></div>{% endif %}
+  <div class="fp-kpi tot"><span class="k">Total pagado · {{ tot.n_ot }} OT</span><span class="v">{{ clp(tot.total) }}</span></div>
+</div>
+
+<div class="fp-sec">Por proveedor</div>
+<div class="table-responsive">
+  <table class="fp-tabla">
+    <thead>
+      <tr>
+        <th>Proveedor</th><th class="n">OT</th>
+        <th class="m">Instalación</th><th class="m">Mantención</th>
+        {% if tot.otros %}<th class="m">Otros</th>{% endif %}
+        <th class="m">Despacho</th><th class="m">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in provs %}
+      <tr>
+        <td>
+          <div class="fp-nom">{{ p.nombre }}</div>
+          {% if p.rut %}<div class="fp-sub">{{ p.rut | rut_fmt }}</div>{% endif %}
+        </td>
+        <td class="n">{{ p.n_ot }}</td>
+        <td class="m">{{ clp(p.instalacion) if p.instalacion else '—' }}</td>
+        <td class="m">{{ clp(p.mantencion) if p.mantencion else '—' }}</td>
+        {% if tot.otros %}<td class="m">{{ clp(p.otros) if p.otros else '—' }}</td>{% endif %}
+        <td class="m">{{ clp(p.despacho) if p.despacho else '—' }}</td>
+        <td class="m tot">{{ clp(p.total) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="fp-sec">Detalle por orden de trabajo</div>
+<div class="table-responsive">
+  <table class="fp-tabla">
+    <thead>
+      <tr>
+        <th>OT</th><th>Proveedor</th><th>Cliente</th><th>Servicio</th>
+        <th>Documento del cliente</th>
+        <th class="m">Servicio</th><th class="m">Despacho</th><th class="m">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in detalle %}
+      <tr>
+        <td>
+          <a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.vid) }}">{{ d.numero_ot }}</a>
+          <div class="fp-sub">Cerrada {{ d.cerrada }}</div>
+        </td>
+        <td>{{ d.proveedor }}</td>
+        <td>{{ d.cliente }}</td>
+        <td><span class="fp-tipo">{{ d.tipo_label }}</span></td>
+        <td>
+          {% if d.documento %}<span class="fp-doc">{{ d.documento }}</span>
+          {% else %}<span class="fp-sindoc">Sin documento</span>{% endif %}
+        </td>
+        <td class="m">{{ clp(d.servicio) if d.servicio else '—' }}</td>
+        <td class="m">{{ clp(d.despacho) if d.despacho else '—' }}</td>
+        <td class="m tot">{{ clp(d.total) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<style>
+.fp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+  gap:10px;margin-bottom:18px}
+.fp-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;
+  box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.fp-kpi .k{display:block;font-size:.66rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;color:#64748b}
+.fp-kpi .v{display:block;font-size:1.15rem;font-weight:900;color:#0f172a;margin-top:3px;
+  font-variant-numeric:tabular-nums}
+.fp-kpi.tot{background:#0a0a0a;border-color:#0a0a0a}
+.fp-kpi.tot .k{color:#9ca3af}
+.fp-kpi.tot .v{color:#fff}
+.fp-sec{font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;
+  color:#0f172a;margin:20px 0 8px;display:flex;align-items:center;gap:7px}
+.fp-sec::before{content:'';width:3px;height:13px;background:#dc2626;border-radius:2px}
+.fp-tabla{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:.83rem}
+.fp-tabla thead th{font-size:.63rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;color:#64748b;padding:0 10px 4px;text-align:left;white-space:nowrap}
+.fp-tabla th.m,.fp-tabla td.m{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fp-tabla th.n,.fp-tabla td.n{text-align:center;width:52px}
+.fp-tabla tbody tr{background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.fp-tabla tbody td{padding:9px 10px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;
+  vertical-align:middle}
+.fp-tabla tbody td:first-child{border-left:1px solid #e5e7eb;border-radius:9px 0 0 9px}
+.fp-tabla tbody td:last-child{border-right:1px solid #e5e7eb;border-radius:0 9px 9px 0}
+.fp-tabla td.tot{font-weight:900;color:#0f172a}
+.fp-nom{font-weight:800;color:#0f172a}
+.fp-sub{font-size:.7rem;color:#94a3b8}
+.fp-ot{font-weight:800;color:#dc2626;text-decoration:none}
+.fp-ot:hover{text-decoration:underline}
+.fp-tipo{font-size:.68rem;font-weight:800;background:#f1f5f9;color:#475569;
+  border-radius:999px;padding:3px 9px;white-space:nowrap}
+.fp-doc{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.76rem;font-weight:700;
+  background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;padding:2px 6px;white-space:nowrap}
+.fp-sindoc{font-size:.7rem;font-weight:800;color:#92400e;background:#fff8e1;
+  border:1px solid #fde68a;border-radius:999px;padding:2px 8px}
+.fp-vacio{display:flex;gap:12px;align-items:flex-start;background:#f8fafc;
+  border:1px solid #e2e8f0;border-radius:12px;padding:18px;color:#0f172a;font-size:.9rem}
+.fp-vacio > i{font-size:1.5rem;color:#94a3b8}
+@media (max-width:768px){
+  .fp-tabla thead{display:none}
+  .fp-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:12px;
+    padding:8px 0;margin-bottom:10px}
+  .fp-tabla tbody td{display:block;border:0;padding:3px 12px;text-align:left}
+  .fp-tabla th.m,.fp-tabla td.m{text-align:left}
+}
+</style>
+{% endblock %}

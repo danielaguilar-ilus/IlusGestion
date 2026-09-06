@@ -4576,6 +4576,19 @@ PERMS_KEYS = (
     # Nace en False para todos los roles hasta que Daniel lo prenda desde
     # /admin/roles (mismo patron que mant_equipos_baja / mant_equipos_agregar_libre).
     "mant_ot_finanzas",
+    # mant_facturacion_proveedores — ver el detalle de lo que ILUS le PAGA a
+    # sus proveedores externos (despacho, instalación, mantención), por mes,
+    # con el desglose por OT. Aditivo 2026-09-06, pedido de Daniel:
+    # "quisiera ir viendo un detalle de facturación solamente para mí, donde
+    # voy a ver información de los proveedores externos, qué servicios me han
+    # prestado en instalación y despacho, asociados a qué cliente y qué
+    # factura".
+    #
+    # Es el dato más sensible del módulo: no es lo que ILUS cobra, es lo que
+    # ILUS paga y su margen. Por eso nace en False para TODOS los roles y
+    # Daniel lo prende a quien corresponda desde /admin/roles -- superadmin
+    # entra siempre, sin depender del flag.
+    "mant_facturacion_proveedores",
     # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
     # liberado para todos y que se pueda bloquear por el front en los roles.
     # Igual el reasignar el técnico"). Son permisos de BLOQUEO: se asumen
@@ -4719,6 +4732,7 @@ def _build_perms_from_matrix(role):
     # (aditivo 2026-09-04, caso Victor / OT-150). Ver "mant_ot_finanzas" en
     # PERMS_KEYS.
     base["mant_ot_finanzas"] = bool(man.get("ot_finanzas"))
+    base["mant_facturacion_proveedores"] = bool(man.get("facturacion_proveedores"))
     # Borrar OT/clientes — espejo en el front del permiso que el backend ya
     # consulta (ver "mant_eliminar" en PERMS_KEYS).
     base["mant_eliminar"] = bool(man.get("eliminar"))
@@ -12718,6 +12732,7 @@ PERMISSIONS_MATRIX = {
                                    "equipos_agregar_libre",
                                    "equipos_baja",
                                    "ot_finanzas",
+                                   "facturacion_proveedores",
                                    # 🆕 2026-09-02 (Daniel: "reagendar, que
                                    # quede liberado para todos y que se pueda
                                    # bloquear por el front en los roles.
@@ -12794,6 +12809,9 @@ PERMISSIONS_META = {
         # 🆕 2026-09-04 (Daniel, caso Victor / OT-150: "no tiene las
         # credenciales para gestionar las finanzas... lo dejaria
         # controlable en el front"). Ver "mant_ot_finanzas".
+        "facturacion_proveedores": {
+            "label": "Ver facturación de proveedores externos (lo que ILUS paga)",
+            "tipo": "submodulo", "icon": "bi-receipt-cutoff"},
         "ot_finanzas": {"label": "Gestionar finanzas de la OT (centro de costo, documento, garantía)",
                          "tipo": "submodulo", "icon": "bi-cash-coin"},
         # 🆕 2026-09-02 (Daniel: "yo diría que se puede reagendar, que quede
@@ -59153,6 +59171,28 @@ def mant_index():
     _mant_actualizar_estado_contratos()
     hoy   = datetime.now().date()
 
+    # Proveedores externos del mes -- 2026-09-06 (Daniel: "en el dashboard
+    # quisiera identificar cuanto lleva cada proveedor en despachos y en
+    # mantencion y en instalacion, para saber cuanto llevan en el mes
+    # facturado y poder bajar un detalle").
+    #
+    # Se calcula FUERA del cache a proposito: el cache de esta portada se
+    # comparte por rol, y aca hay costos (y con ellos el margen). Prefiero
+    # pagarle una consulta extra a los pocos usuarios con el permiso antes
+    # que dejar montos guardados en una caja comun. Si algo falla, la
+    # portada de Mantenciones tiene que seguir abriendo igual.
+    facprov = None
+    if _facprov_puede():
+        try:
+            _fpd, _fph, _fpmes = _facprov_periodo()
+            _fplista, _fpdet, _fptot = _facprov_datos(_fpd, _fph)
+            if _fplista:
+                facprov = {"provs": _fplista[:5], "n_provs": len(_fplista),
+                           "tot": _fptot, "mes": _fpmes, "desde": _fpd}
+        except Exception as _e:
+            app.logger.warning("[FACPROV] bloque del dashboard: %s", _e)
+            facprov = None
+
     # Cache key por rol (todos los usuarios de un rol ven los mismos KPIs)
     role = (g.user.get("role") if g.user else "anon") or "anon"
     cache_key = role
@@ -59170,6 +59210,7 @@ def mant_index():
             alertas        = data["alertas"],
             sin_visita     = data["sin_visita"],
             hoy            = hoy,
+            facprov        = facprov,
         )
 
     # Cache miss — ejecutar las 7 queries
@@ -59227,6 +59268,7 @@ def mant_index():
         alertas        = data["alertas"],
         sin_visita     = data["sin_visita"],
         hoy            = hoy,
+        facprov        = facprov,
     )
 
 
@@ -100109,6 +100151,220 @@ def mant_configuracion():
         flash("Solo admin/superadmin pueden configurar el Agente.", "warning")
         return redirect(url_for("mant_index"))
     return render_template("mantenciones/configuracion.html")
+
+
+_FACPROV_TIPOS_MANT = ("preventiva", "correctiva", "garantia", "visita_tecnica",
+                       "inspeccion", "cambio_equipo", "desinstalacion")
+
+
+def _facprov_puede():
+    """Quien puede ver lo que ILUS le PAGA a sus proveedores.
+
+    Es el dato mas sensible del modulo: no es lo que se le cobra al cliente,
+    es el costo y por lo tanto el margen. superadmin siempre; el resto solo
+    si Daniel le encendio el permiso en /admin/roles (nace apagado).
+    """
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "").lower() == "superadmin":
+        return True
+    try:
+        return bool((getattr(g, "permissions", None) or {}).get("mant_facturacion_proveedores"))
+    except Exception:
+        return False
+
+
+def _facprov_datos(desde, hasta):
+    """Lo pagado a proveedores externos en OT CERRADAS dentro del periodo.
+
+    2026-09-06 (Daniel: "quisiera ir viendo un detalle de facturacion
+    solamente para mi, donde voy a ver informacion de los proveedores
+    externos, que servicios me han prestado en instalacion y despacho,
+    asociados a que cliente y que factura" + "en el dashboard identificar
+    cuanto lleva cada proveedor en despachos, mantencion e instalacion").
+
+    SOLO OT cerradas, decision de Daniel: en una OT abierta el costo del
+    proveedor todavia puede cambiar, y un total que se mueve solo no sirve
+    para revisar una factura. Se agrupa por `cerrada_at`, que es cuando el
+    monto quedo firme, no por la fecha de la visita.
+
+    El proveedor se identifica en este orden: la ficha de empresa del
+    tecnico externo (razon social real), el nombre declarado en la OT, y
+    como ultimo recurso el nombre del propio tecnico. Sin ese orden, el
+    mismo proveedor aparecia partido en tres filas distintas.
+    """
+    filas = mysql_fetchall(
+        "SELECT v.id, v.numero_ot, v.tipo, v.cerrada_at, "
+        "       v.costo_proveedor, v.costo_despacho, v.costo, "
+        "       v.factura_tido, v.factura_nudo, v.modalidad_cobro, "
+        "       v.proveedor_nombre, v.tecnico_user_id, "
+        "       c.razon_social AS cliente, "
+        "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+        "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+        "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = v.tecnico_user_id "
+        " WHERE v.estado = 'cerrada' "
+        "   AND v.cerrada_at >= %s AND v.cerrada_at < %s "
+        "   AND (COALESCE(v.costo_proveedor,0) > 0 OR COALESCE(v.costo_despacho,0) > 0) "
+        " ORDER BY v.cerrada_at DESC, v.id DESC",
+        (desde, hasta)) or []
+
+    provs = {}
+    detalle = []
+    for f in filas:
+        f = dict(f)
+        nombre = ((f.get("prov_ficha") or "").strip()
+                  or (f.get("proveedor_nombre") or "").strip()
+                  or (f.get("tecnico_nombre") or "").strip()
+                  or "Sin proveedor declarado")
+        tipo = (f.get("tipo") or "").lower()
+        serv = float(f.get("costo_proveedor") or 0)
+        desp = float(f.get("costo_despacho") or 0)
+
+        # El costo del servicio se imputa al tipo de la OT; el despacho va
+        # siempre a su propia bolsa aunque la OT sea de instalacion: son
+        # proveedores y facturas distintas, y mezclarlos impide conciliar.
+        if tipo == "instalacion":
+            cat = "instalacion"
+        elif tipo in _FACPROV_TIPOS_MANT:
+            cat = "mantencion"
+        else:
+            cat = "otros"
+
+        pr = provs.setdefault(nombre, {
+            "nombre": nombre, "rut": f.get("prov_rut") or "",
+            "instalacion": 0.0, "mantencion": 0.0, "otros": 0.0,
+            "despacho": 0.0, "total": 0.0, "n_ot": 0,
+        })
+        pr[cat] += serv
+        pr["despacho"] += desp
+        pr["total"] += serv + desp
+        pr["n_ot"] += 1
+
+        _doc = ""
+        if (f.get("factura_nudo") or "").strip():
+            _doc = "{} {}".format(f.get("factura_tido") or "FCV", f["factura_nudo"])
+        elif (f.get("modalidad_cobro") or "").lower() == "garantia":
+            _doc = "Garantia"
+
+        detalle.append({
+            "vid": f["id"],
+            "numero_ot": f.get("numero_ot") or ("OT #" + str(f["id"])),
+            "proveedor": nombre,
+            "cliente": f.get("cliente") or "Trabajo interno",
+            "tipo_label": _TIPO_OT_LABEL.get(tipo, (tipo or "-").replace("_", " ").title()),
+            "categoria": cat,
+            "servicio": serv, "despacho": desp, "total": serv + desp,
+            "documento": _doc,
+            "cobrado": float(f.get("costo") or 0),
+            "cerrada": chile_fmt_filter(f.get("cerrada_at"), "%d/%m/%Y") if f.get("cerrada_at") else "",
+        })
+
+    lista = sorted(provs.values(), key=lambda x: x["total"], reverse=True)
+    tot = {
+        "instalacion": sum(x["instalacion"] for x in lista),
+        "mantencion":  sum(x["mantencion"] for x in lista),
+        "otros":       sum(x["otros"] for x in lista),
+        "despacho":    sum(x["despacho"] for x in lista),
+        "total":       sum(x["total"] for x in lista),
+        "n_ot":        sum(x["n_ot"] for x in lista),
+    }
+    return lista, detalle, tot
+
+
+def _facprov_periodo():
+    """Mes pedido por querystring (?mes=YYYY-MM), o el mes en curso."""
+    try:
+        _hoy = _now_chile().date()
+    except Exception:
+        _hoy = datetime.utcnow().date()
+    _mes = (request.args.get("mes") or "").strip()
+    try:
+        anio, mes = int(_mes[:4]), int(_mes[5:7])
+        if not (1 <= mes <= 12):
+            raise ValueError
+    except Exception:
+        anio, mes = _hoy.year, _hoy.month
+    desde = date(anio, mes, 1)
+    hasta = date(anio + (1 if mes == 12 else 0), 1 if mes == 12 else mes + 1, 1)
+    return desde, hasta, "{:04d}-{:02d}".format(anio, mes)
+
+
+@app.route("/mantenciones/facturacion-proveedores")
+@app.route("/servicio-tecnico/facturacion-proveedores")
+@_mant_required
+@_no_tecnico
+def mant_facturacion_proveedores():
+    """Cuanto le pago ILUS a cada proveedor externo, por mes y por servicio."""
+    if not _facprov_puede():
+        flash("No tienes permiso para ver la facturacion de proveedores.", "warning")
+        return redirect(url_for("mant_index"))
+    desde, hasta, mes_txt = _facprov_periodo()
+    provs, detalle, tot = _facprov_datos(desde, hasta)
+    return render_template("mantenciones/facturacion_proveedores.html",
+                           provs=provs, detalle=detalle, tot=tot, mes=mes_txt,
+                           desde=desde, hasta=hasta)
+
+
+@app.route("/mantenciones/facturacion-proveedores.xlsx")
+@app.route("/servicio-tecnico/facturacion-proveedores.xlsx")
+@_mant_required
+@_no_tecnico
+def mant_facturacion_proveedores_xlsx():
+    """El mismo detalle, en Excel, para conciliar contra la factura real."""
+    if not _facprov_puede():
+        return jsonify({"ok": False, "error": "Sin permiso."}), 403
+    desde, hasta, mes_txt = _facprov_periodo()
+    provs, detalle, tot = _facprov_datos(desde, hasta)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    _fill = PatternFill("solid", fgColor="0A0A0A")
+    _font = Font(color="FFFFFF", bold=True, size=10)
+
+    def _encabezar(ws, cols):
+        ws.append(cols)
+        for i, _c in enumerate(cols, 1):
+            cel = ws.cell(row=1, column=i)
+            cel.fill = _fill
+            cel.font = _font
+            cel.alignment = Alignment(vertical="center")
+        ws.freeze_panes = "A2"
+
+    ws = wb.active
+    ws.title = "Resumen"
+    _encabezar(ws, ["Proveedor", "RUT", "OT", "Instalacion", "Mantencion",
+                    "Otros servicios", "Despacho", "Total pagado"])
+    for x in provs:
+        ws.append([x["nombre"], x["rut"], x["n_ot"], x["instalacion"],
+                   x["mantencion"], x["otros"], x["despacho"], x["total"]])
+    ws.append(["TOTAL", "", tot["n_ot"], tot["instalacion"], tot["mantencion"],
+               tot["otros"], tot["despacho"], tot["total"]])
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    for col, anchura in zip("ABCDEFGH", (34, 14, 7, 14, 14, 15, 13, 15)):
+        ws.column_dimensions[col].width = anchura
+
+    ws2 = wb.create_sheet("Detalle por OT")
+    _encabezar(ws2, ["OT", "Cerrada", "Proveedor", "Cliente", "Servicio",
+                     "Documento del cliente", "Costo servicio", "Costo despacho",
+                     "Total pagado", "Cobrado al cliente"])
+    for d in detalle:
+        ws2.append([d["numero_ot"], d["cerrada"], d["proveedor"], d["cliente"],
+                    d["tipo_label"], d["documento"], d["servicio"], d["despacho"],
+                    d["total"], d["cobrado"]])
+    for col, anchura in zip("ABCDEFGHIJ", (16, 11, 30, 30, 20, 20, 14, 14, 14, 16)):
+        ws2.column_dimensions[col].width = anchura
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(
+        buf, as_attachment=True,
+        download_name="Facturacion-proveedores-{}.xlsx".format(mes_txt),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.route("/mantenciones/ot-firmadas-sin-cerrar")

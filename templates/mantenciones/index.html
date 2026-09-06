@@ -281,6 +281,123 @@ async function ejecutarResetMantenciones(){
   </div>
 </div>
 
+{#- ══════════════════════════════════════════════════════════════
+    PROVEEDORES EXTERNOS DEL MES -- lo que ILUS PAGA
+    ══════════════════════════════════════════════════════════════
+    2026-09-06 (Daniel: "en el dashboard quisiera identificar cuánto
+    lleva cada proveedor en despachos y en mantención y en instalación,
+    esto como para saber cuánto llevan en el mes facturado y poder bajar
+    un detalle").
+
+    `facprov` llega solo si el usuario tiene el permiso
+    `mant_facturacion_proveedores` (superadmin siempre) -- acá se ve el
+    costo, y con el costo el margen. Si no lo tiene, el bloque no existe:
+    no se dibuja oculto ni con los montos en el HTML.
+
+    Solo OT CERRADAS: mientras una sigue abierta su costo puede cambiar
+    y el total del mes se movería solo.
+-#}
+{% if facprov %}
+{% set _MESES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+                 'agosto','septiembre','octubre','noviembre','diciembre'] %}
+{% macro _clp(v) -%}${{ '{:,.0f}'.format(v or 0)|replace(',', '.') }}{%- endmacro %}
+<div class="mfp-card">
+  <div class="mfp-head">
+    <div>
+      <div class="mfp-tit"><i class="bi bi-receipt-cutoff"></i>Proveedores externos</div>
+      <div class="mfp-sub">
+        Pagado en {{ _MESES[facprov.desde.month - 1] }} {{ facprov.desde.year }} ·
+        {{ facprov.n_provs }} proveedor{{ 'es' if facprov.n_provs != 1 }} ·
+        {{ facprov.tot.n_ot }} OT cerrada{{ 's' if facprov.tot.n_ot != 1 }}
+      </div>
+    </div>
+    <div class="mfp-acc">
+      <div class="mfp-total">
+        <span>Total del mes</span>
+        <b>{{ _clp(facprov.tot.total) }}</b>
+      </div>
+      <a class="mfp-btn" href="{{ url_for('mant_facturacion_proveedores') }}">
+        <i class="bi bi-list-ul"></i>Ver detalle</a>
+      <a class="mfp-btn dark" href="{{ url_for('mant_facturacion_proveedores_xlsx', mes=facprov.mes) }}">
+        <i class="bi bi-file-earmark-excel"></i>Bajar</a>
+    </div>
+  </div>
+
+  <div class="mfp-tabla-wrap">
+    <table class="mfp-tabla">
+      <thead>
+        <tr>
+          <th>Proveedor</th>
+          <th class="m">Instalación</th>
+          <th class="m">Mantención</th>
+          {% if facprov.tot.otros %}<th class="m">Otros</th>{% endif %}
+          <th class="m">Despacho</th>
+          <th class="m">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in facprov.provs %}
+        <tr>
+          <td>
+            <div class="mfp-nom">{{ p.nombre }}</div>
+            <div class="mfp-ot">{{ p.n_ot }} OT</div>
+          </td>
+          <td class="m">{{ _clp(p.instalacion) if p.instalacion else '—' }}</td>
+          <td class="m">{{ _clp(p.mantencion) if p.mantencion else '—' }}</td>
+          {% if facprov.tot.otros %}<td class="m">{{ _clp(p.otros) if p.otros else '—' }}</td>{% endif %}
+          <td class="m">{{ _clp(p.despacho) if p.despacho else '—' }}</td>
+          <td class="m tot">{{ _clp(p.total) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if facprov.n_provs > facprov.provs|length %}
+  <a class="mfp-mas" href="{{ url_for('mant_facturacion_proveedores') }}">
+    Ver los {{ facprov.n_provs - facprov.provs|length }} proveedor{{ 'es' if (facprov.n_provs - facprov.provs|length) != 1 }} restante{{ 's' if (facprov.n_provs - facprov.provs|length) != 1 }}
+    <i class="bi bi-arrow-right"></i></a>
+  {% endif %}
+</div>
+
+<style>
+.mfp-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px 18px;
+  margin-bottom:1.5rem;box-shadow:0 1px 3px rgba(15,23,42,.06);border-left:5px solid #0a0a0a}
+.mfp-head{display:flex;justify-content:space-between;align-items:flex-start;
+  flex-wrap:wrap;gap:12px;margin-bottom:12px}
+.mfp-tit{font-size:1rem;font-weight:900;color:#0f172a;display:flex;align-items:center;gap:8px}
+.mfp-tit i{color:#dc2626}
+.mfp-sub{font-size:.76rem;color:#64748b;margin-top:2px}
+.mfp-acc{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mfp-total{text-align:right;margin-right:4px}
+.mfp-total span{display:block;font-size:.62rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;color:#94a3b8}
+.mfp-total b{font-size:1.15rem;font-weight:900;color:#0f172a;font-variant-numeric:tabular-nums}
+.mfp-btn{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;font-weight:800;
+  padding:7px 12px;border-radius:8px;text-decoration:none;border:1px solid #d1d5db;
+  color:#374151;background:#fff;min-height:36px}
+.mfp-btn:hover{background:#f8fafc;color:#0f172a}
+.mfp-btn.dark{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.mfp-btn.dark:hover{background:#1f2937;color:#fff}
+.mfp-tabla-wrap{overflow-x:auto}
+.mfp-tabla{width:100%;border-collapse:collapse;font-size:.83rem}
+.mfp-tabla thead th{font-size:.62rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;color:#64748b;padding:0 10px 6px;text-align:left;white-space:nowrap}
+.mfp-tabla th.m,.mfp-tabla td.m{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mfp-tabla tbody td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:middle}
+.mfp-tabla td.tot{font-weight:900;color:#0f172a}
+.mfp-nom{font-weight:800;color:#0f172a}
+.mfp-ot{font-size:.7rem;color:#94a3b8}
+.mfp-mas{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.76rem;
+  font-weight:800;color:#dc2626;text-decoration:none}
+.mfp-mas:hover{text-decoration:underline;color:#b91c1c}
+@media (max-width:768px){
+  .mfp-acc{width:100%;justify-content:space-between}
+  .mfp-total{text-align:left;margin-right:0;width:100%}
+}
+</style>
+{% endif %}
+
 <div class="row g-3">
 
   {# ── Pendientes de facturar (Plan 2026-05-21 Capa 9-B) ── #}
