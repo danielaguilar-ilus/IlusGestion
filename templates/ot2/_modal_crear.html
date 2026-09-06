@@ -954,6 +954,10 @@ window.OT2C = (function(){
          // "ademas agregue documentos en el Paso 7" (donde hay que
          // SUMAR productos, jamas esconder el resto de la ficha).
          doc_lineas_fuente:false,
+         // Lineas ZZ leidas por documento ('TIDO NUDO' -> [lineas]).
+         // Es cache de lectura: evita volver a preguntarle al ERP por
+         // un documento que ya se consulto en esta misma OT.
+         doc_zz:{},
          // 2026-08-30 (Daniel, trazabilidad "bajo qué OT"): ids de
          // mant_maquinas creados POR ESTE WIZARD vía alta automática (ver
          // _o2mAltaAutoFaltantes) -- viajan en crear() para que
@@ -2974,8 +2978,12 @@ window.OT2C = (function(){
         '<span>Busca por N° de documento o por el RUT del cliente. '+
         'Los productos que no estén en su ficha se crean solos.</span>'+
       '</div>'+
-      '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>';
+      '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>'+
+      // Los costos van DEBAJO de la tabla y plegables: el bloque pesado
+      // arriba fue justo lo que Daniel pidio sacar el 05-09.
+      '<div id="o2mEqDocs"></div>';
     cargarEquipos();
+    _o2mEqZZCargar();
   }
 
   /* 2026-08-29 (Daniel: "mejora el acceso al lugar y separa ese paso del
@@ -3587,6 +3595,23 @@ window.OT2C = (function(){
     var st = document.createElement('style');
     st.id = 'o2mEqModosCss';
     st.textContent =
+      '.o2m-eqzz{margin-top:12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}' +
+      '.o2m-eqzz > summary{cursor:pointer;padding:10px 12px;font-weight:800;font-size:.82rem;color:#0f172a}' +
+      '.o2m-eqzz > summary span{font-weight:600;color:#64748b;font-size:.74rem;margin-left:6px}' +
+      '.o2m-eqzz-tot{display:flex;gap:8px;flex-wrap:wrap;padding:0 12px 10px}' +
+      '.o2m-eqzz-tot span{font-size:.76rem;background:#f1f5f9;border-radius:999px;padding:4px 10px;color:#0f172a}' +
+      '.o2m-eqzz-tot b{color:#dc2626;margin-right:4px}' +
+      '.o2m-eqzz-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;padding:0 12px 10px}' +
+      '.o2m-eqzz-doc{border:1px solid #f1f5f9;border-radius:8px;padding:8px 10px}' +
+      '.o2m-eqzz-tit b{font-size:.8rem;color:#0f172a}' +
+      '.o2m-eqzz-tit span{display:block;font-size:.72rem;color:#64748b;overflow-wrap:anywhere}' +
+      '.o2m-eqzz-doc ul{list-style:none;margin:6px 0 0;padding:0}' +
+      '.o2m-eqzz-doc li{display:flex;gap:6px;align-items:baseline;font-size:.76rem;padding:3px 0;border-top:1px solid #f8fafc}' +
+      '.o2m-eqzz-doc .cod{font-weight:800;color:#dc2626;white-space:nowrap}' +
+      '.o2m-eqzz-doc .des{color:#475569;flex:1;overflow-wrap:anywhere}' +
+      '.o2m-eqzz-doc .mon{font-weight:800;color:#0f172a;white-space:nowrap}' +
+      '.o2m-eqzz-vacio{font-size:.74rem;color:#94a3b8;margin-top:6px}' +
+      '.o2m-eqzz-nota{font-size:.72rem;color:#64748b;padding:0 12px 10px}' +
       '.o2m-eq-add{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 10px}' +
       '.o2m-eq-add > span{font-size:.76rem;color:#64748b;flex:1;min-width:200px}' +
       '.o2m-eq-modos{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:auto}' +
@@ -5076,6 +5101,109 @@ window.OT2C = (function(){
      _o2mDocExtraSeleccionado el 2026-09-06 para que el Paso 7 lo use
      tambien: un solo lugar que deduplica, avisa si el RUT no calza y
      repinta. Devuelve true si lo agrego, false si ya estaba. */
+  /* -- COSTOS ZZ DE LOS DOCUMENTOS DE LA OT --------------------------
+     2026-09-06 (Daniel: "en la parte 7 podemos agregar los documentos del
+     cliente que faltan y puede identificar los costos zz instalacion y zz
+     despachos y zz mantencion").
+
+     Precision que hay que tener a mano: "ZZ despacho" NO existe con ese
+     nombre en el ERP -- el codigo real del transporte es ZZENVIO. Aca no
+     se filtra por una lista de codigos: se muestra TODA linea cuyo SKU
+     empiece con ZZ, tal como la devuelve el endpoint, asi que si Random
+     inventa un codigo nuevo aparece igual.
+
+     Es un panel INFORMATIVO: muestra lo que el documento le cobra al
+     cliente. NO escribe en S.fin_* -- el paso de Costos tiene su propia
+     declaracion, editable y con motivo obligatorio cuando se cambia, y
+     pisarla desde aca borraria esa decision sin dejar rastro. */
+  var _o2mEqZZSeq = 0;
+
+  function _o2mEqZZCargar(){
+    var docs = (S.doc_extra || []).filter(function(d){ return d && d.tido && d.nudo; });
+    if (!docs.length){ _o2mEqZZPintar(); return; }
+    var seq = ++_o2mEqZZSeq;
+    var pendientes = docs.filter(function(d){
+      return !S.doc_zz[d.tido + ' ' + d.nudo];
+    });
+    if (!pendientes.length){ _o2mEqZZPintar(); return; }
+    _o2mEqZZPintar(true);
+    var listos = 0;
+    pendientes.forEach(function(d){
+      fetch('/ot/api/lineas-zz/' + encodeURIComponent(d.tido) + '/' + encodeURIComponent(d.nudo) +
+            '?tipo_ot=' + encodeURIComponent(S.tipo || ''), {credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          if (seq !== _o2mEqZZSeq) return;   // llego tarde: hubo otra carga
+          S.doc_zz[d.tido + ' ' + d.nudo] =
+            (j && j.ok && Array.isArray(j.lineas_zz)) ? j.lineas_zz : [];
+        })
+        .catch(function(){
+          if (seq !== _o2mEqZZSeq) return;
+          S.doc_zz[d.tido + ' ' + d.nudo] = [];
+        })
+        .then(function(){
+          if (seq !== _o2mEqZZSeq) return;
+          listos++;
+          if (listos === pendientes.length) _o2mEqZZPintar();
+        });
+    });
+  }
+
+  function _o2mEqZZPintar(cargando){
+    var c = document.getElementById('o2mEqDocs');
+    if (!c) return;
+    var docs = (S.doc_extra || []).filter(function(d){ return d && d.tido && d.nudo; });
+    if (!docs.length){ c.innerHTML = ''; return; }
+    if (cargando){
+      c.innerHTML = '<div class="o2m-eqzz"><div class="text-muted small">'+
+        '<span class="spinner-border spinner-border-sm me-1"></span>'+
+        'Leyendo los costos de los documentos…</div></div>';
+      return;
+    }
+    var totalPorCodigo = {}, hayAlguna = false;
+    var filas = docs.map(function(d){
+      var lns = S.doc_zz[d.tido + ' ' + d.nudo] || [];
+      lns.forEach(function(l){
+        var k = (l.sku || '').toUpperCase();
+        totalPorCodigo[k] = (totalPorCodigo[k] || 0) + (parseInt(l.monto, 10) || 0);
+        hayAlguna = true;
+      });
+      return '<div class="o2m-eqzz-doc">'+
+        '<div class="o2m-eqzz-tit"><b>'+esc(d.tido+' '+d.nudo)+'</b>'+
+          (d.cliente_nombre ? '<span>'+esc(d.cliente_nombre)+'</span>' : '')+'</div>'+
+        (lns.length
+          ? '<ul>'+lns.map(function(l){
+              return '<li><span class="cod">'+esc(l.sku||'')+'</span>'+
+                     '<span class="des">'+esc(l.descripcion||'')+'</span>'+
+                     '<span class="mon">'+_o2mCLP(l.monto)+'</span></li>';
+            }).join('')+'</ul>'
+          : '<div class="o2m-eqzz-vacio">Este documento no trae líneas de servicio.</div>')+
+      '</div>';
+    }).join('');
+
+    var resumen = '';
+    if (hayAlguna){
+      resumen = '<div class="o2m-eqzz-tot">'+
+        Object.keys(totalPorCodigo).sort().map(function(k){
+          return '<span><b>'+esc(k)+'</b> '+_o2mCLP(totalPorCodigo[k])+'</span>';
+        }).join('')+'</div>';
+    }
+
+    c.innerHTML = '<details class="o2m-eqzz"'+(hayAlguna ? ' open' : '')+'>'+
+      '<summary>Costos de los documentos <span>'+docs.length+' documento'+
+        (docs.length===1?'':'s')+'</span></summary>'+
+      resumen+
+      '<div class="o2m-eqzz-body">'+filas+'</div>'+
+      '<div class="o2m-eqzz-nota">Es lo que estos documentos le cobran al cliente. '+
+        'La declaración de la OT se hace en el paso de Costos — esto no la modifica.</div>'+
+    '</details>';
+  }
+
+  function _o2mCLP(v){
+    var n = parseInt(v, 10) || 0;
+    return '$' + n.toLocaleString('es-CL');
+  }
+
   function _o2mDocExtraRegistrar(doc, header){
     if (!doc || !doc.tido || !doc.nudo) return false;
     var yaEsta = S.doc_extra.some(function(d){ return d.tido===doc.tido && d.nudo===doc.nudo; });
@@ -5092,6 +5220,7 @@ window.OT2C = (function(){
                        (header && (header.cliente || header.razon_social || header.nombre)) || '')
     });
     _pintarDocExtraDom();
+    _o2mEqZZCargar();
     if (difiere && window.ilusToast){
       ilusToast('\u26a0 El RUT de ese documento ('+esc(rutDoc)+') no coincide con el del cliente de esta OT.',
         {type:'warning', duration:6000});
