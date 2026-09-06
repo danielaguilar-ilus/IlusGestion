@@ -81175,6 +81175,55 @@ def ot2_api_crear():
     else:
         _fin_modalidad, _fin_cubierto = "pagado", "cliente"
 
+    # ⛔ CHOQUE DE HORARIO — 2026-09-06 (Daniel, viendo a Lenin Urbina con
+    # dos OT el mismo día: OT-2026-00158 en Puente Alto 09:00-16:00 y
+    # OT-2026-00161 en Las Condes 09:00-16:30): "esto está prohibido... no
+    # puedo hacer dos tareas en el mismo lugar a la misma vez, por algo
+    # exigimos ubicación del GPS".
+    #
+    # El detector ya existía: `_validar_disponibilidad_visita`, que el wizard
+    # clásico usa desde hace meses. Este endpoint simplemente NUNCA lo
+    # llamaba, así que por acá se podían agendar solapes sin que nadie dijera
+    # nada. No se escribe un detector nuevo: se conecta el que hay.
+    #
+    # La regla de Daniel es que bloquea, y que solo el superadministrador
+    # puede pasar por encima "en situaciones extraordinarias". Por eso no
+    # basta con ser superadmin: hay que declararlo (`forzar_choque`), y queda
+    # registrado — un solape autorizado a conciencia es distinto de uno que
+    # se coló.
+    #
+    # Va ANTES de abrir la transacción, siguiendo el criterio de este mismo
+    # endpoint: todas las validaciones corren antes de tocar la base.
+    _choque_forzado_txt = None
+    if lider_id and _f:
+        try:
+            _adv_disp = _validar_disponibilidad_visita(
+                lider_id, _f, hora_ini, hora_fin)
+        except Exception as _e_disp:
+            # Un fallo del chequeo no puede impedir agendar: se registra y
+            # se sigue. Peor que un solape es no poder crear ninguna OT.
+            print(f"[ot2_crear] chequeo de choque de horario: {_e_disp}", flush=True)
+            _adv_disp = {}
+        _choque = (_adv_disp or {}).get("choque")
+        if _choque:
+            _u_ch = getattr(g, "user", None) or {}
+            _es_super_ch = (_u_ch.get("role") or "").lower() == "superadmin"
+            _forzar_ch = bool(d.get("forzar_choque"))
+            _det_ch = "; ".join(
+                "{} {}–{}".format(
+                    (_vc.get("numero_ot") or "OT"),
+                    (_vc.get("hora_inicio") or "")[:5] or "?",
+                    (_vc.get("hora_fin") or "")[:5] or "?")
+                for _vc in (_choque.get("visitas") or [])[:4])
+            if not (_es_super_ch and _forzar_ch):
+                return _ot2_err(
+                    "{} ya tiene trabajo agendado ese día en ese horario ({}). "
+                    "Nadie puede estar en dos lugares a la misma hora.".format(
+                        _choque.get("tecnico_nombre") or "El técnico", _det_ch),
+                    "CHOQUE_HORARIO", http=409,
+                    choque=_choque, puede_forzar=_es_super_ch)
+            _choque_forzado_txt = _det_ch
+
     # ── 8. ESCRITURA — una sola transacción ────────────────────────────
     conn = None
     try:
@@ -81239,6 +81288,19 @@ def ot2_api_crear():
              current_username() if _fin_declarada else None,
              current_username()))
         vid = cur.lastrowid
+
+        # El solape autorizado a mano queda registrado con nombre y apellido.
+        if _choque_forzado_txt:
+            try:
+                cur.execute(
+                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                    "VALUES ('visita',%s,'choque_horario_forzado',%s,%s)",
+                    (vid,
+                     "Se agendó pese al choque de horario del técnico ({}). "
+                     "Autorizado por superadministrador.".format(_choque_forzado_txt),
+                     current_username() or "sistema"))
+            except Exception:
+                pass
 
         # ── El levantamiento, y SOLO el levantamiento, crea su registro ──
         # Sin esta fila el técnico no tiene dónde guardar lo que captura en
