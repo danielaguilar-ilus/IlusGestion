@@ -234,6 +234,16 @@
     <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-arrow-left me-1"></i>Volver a OTs
     </a>
+    {# 06-09-2026 (Daniel: "¿cuáles son las plantillas vacías?"). El banner de
+       abajo solo mira si la plantilla EXISTE; esta pantalla cuenta los ítems
+       y dice cuáles están vacías, cuáles faltan y cuántos equipos dependen de
+       cada una. Es de solo lectura y de gestión: el destino es @_no_tecnico,
+       así que el botón tampoco se le dibuja a un técnico. #}
+    {% if not es_tecnico %}
+    <a href="{{ url_for('mant_plantillas_cobertura_page') }}" class="btn btn-sm btn-outline-danger fw-bold">
+      <i class="bi bi-clipboard2-x me-1"></i>Vacías y faltantes
+    </a>
+    {% endif %}
     {# 30-08-2026 (Daniel, superadmin, textual): "quiero un CRUD ahí en los
        trabajos internos". Gate doble -- este botón solo se DIBUJA si el
        usuario es superadmin (los otros roles ni lo ven), y cada endpoint
@@ -1715,6 +1725,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // obligarlo a encontrarlo él mismo entre los demás botones de la página).
   if (new URLSearchParams(location.search).get('abrir_tipos_interno') === '1' && typeof abrirTiposInterno === 'function'){
     abrirTiposInterno();
+  }
+  // 2026-09-06 — enlaces directos desde /mantenciones/plantillas/cobertura
+  // ("Plantillas vacías y faltantes"). Desde esa pantalla, cada celda lleva
+  // DIRECTO a la plantilla que hay que llenar (?abrir_plantilla=<id>) o al
+  // editor ya prellenado con el nombre exacto de la clase y su categoría
+  // (?crear_clase=<clase>&crear_cat=<categoria>), que es justo lo que
+  // conecta la plantilla con la clasificación del catálogo. Reusa las
+  // funciones que ya existen -- no duplica lógica de apertura.
+  const _plQS   = new URLSearchParams(location.search);
+  const _plPid  = parseInt(_plQS.get('abrir_plantilla') || '', 10);
+  const _plCls  = (_plQS.get('crear_clase') || '').trim();
+  const _plCat  = (_plQS.get('crear_cat') || '').trim();
+  if (_plPid > 0 && typeof abrirEditor === 'function'){
+    abrirEditor(_plPid);
+  } else if (_plCls && _plCat && typeof crearPlantillaParaClase === 'function'){
+    crearPlantillaParaClase(_plCls, _plCat);
   }
 });
 

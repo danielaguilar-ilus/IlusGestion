@@ -86246,6 +86246,366 @@ def mant_plantillas_cobertura_clases():
     })
 
 
+# ═════════════════════════════════════════════════════════════════════
+# COBERTURA REAL DE CHECKLISTS (clasificación x categoría) — 06-09-2026
+#
+# Daniel: *"¿cuáles son las plantillas vacías? El contenido de las
+# plantillas depende de un humano."*
+#
+# POR QUÉ EXISTE ESTA SEGUNDA MEDICIÓN (y no se toca la de arriba):
+# `mant_plantillas_cobertura_clases()` (el banner de /mantenciones/
+# plantillas) da una clase por CUBIERTA con solo comprobar que exista una
+# plantilla ACTIVA con ese nombre — su consulta es literalmente
+# `SELECT nombre, categoria_admin FROM mant_tarea_plantillas WHERE activa=1`:
+# NO cuenta ítems. Pero `_plantilla_por_clasificacion_sku()` —el motor que
+# de verdad elige el checklist al crear una OT— hace JOIN contra
+# `mant_tarea_plantilla_items` y EXIGE al menos 1 ítem. Una plantilla que
+# existe y está vacía deja al banner diciendo "cubierto" mientras el motor
+# devuelve None en silencio y la OT cae al checklist genérico.
+# Además el banner mira solo instalación y mantención (ver
+# _COBERTURA_CATEGORIAS_ESPERADAS): 'visitas' y 'trabajo_interno' quedan
+# fuera a propósito, así que un hueco ahí tampoco se ve.
+#
+# Esta pantalla mide lo MISMO que el motor: nombre exacto de la clase +
+# categoría + ítems > 0 + activa. Es SOLO LECTURA (no crea, no llena, no
+# borra) y no reemplaza ni modifica el banner viejo — REGLA #4.2.
+# ═════════════════════════════════════════════════════════════════════
+
+# Estados posibles de una celda (clase x categoría), en orden de dolor.
+_COBERTURA_ESTADO_LABEL = {
+    "falta": "No existe",
+    "vacia": "Existe pero VACÍA",
+    "lista": "Lista",
+}
+
+# Umbral de "checklist simbólico": el motor da por buena una plantilla con 1
+# solo ítem, pero la grilla de /mantenciones/plantillas ya pinta como VACÍA
+# todo lo que tenga <= 2 (PL_VACIA_MAX_ITEMS en plantillas.html: típicamente
+# solo el "N° de serie del equipo" suelto). Se respeta ese mismo número para
+# no darle dos verdades distintas a Daniel: la celda queda "lista" —porque el
+# motor SÍ la va a sugerir— pero avisa que su contenido es simbólico.
+_COBERTURA_ITEMS_MINIMOS = 2
+
+
+def _mant_cobertura_matriz_datos():
+    """Matriz REAL clasificación x categoría, con los ítems contados.
+
+    Devuelve, por cada clase ACTIVA de `cat_clases_producto` y por cada una
+    de las 4 categorías administrativas (instalación, mantención, visitas y
+    trabajo interno — NINGUNA se excluye), el veredicto tal como lo vería
+    `_plantilla_por_clasificacion_sku()`:
+
+      • `lista` — hay plantilla activa con ese nombre exacto en esa
+        categoría y tiene 1 ítem o más → el motor la va a sugerir.
+      • `vacia` — la plantilla existe y está activa, pero tiene 0 ítems →
+        el motor NO la encuentra (su JOIN a mant_tarea_plantilla_items la
+        descarta). Es el caso que el diagnóstico viejo da por cubierto.
+      • `falta` — no existe ninguna plantilla con ese nombre en esa
+        categoría, o la única que hay está desactivada (para el motor es lo
+        mismo: exige `COALESCE(p.activa,1)=1`).
+
+    El cruce se hace con `p.nombre = c.nombre` dentro del propio SQL —la
+    MISMA igualdad literal, y por lo tanto la misma collation, que usa el
+    motor—, no con el normalizado `_plant_texto_norm` del banner viejo: si
+    el nombre de la plantilla difiere del de la clase, el motor no la va a
+    encontrar y esta pantalla tiene que decirlo.
+
+    Además cuenta cuántos EQUIPOS ACTIVOS reales dependen de cada clase
+    (`mant_maquinas` cruzado por SKU contra `cat_productos`, mismo puente y
+    mismo filtro `estado <> 'baja'` que
+    /mantenciones/api/diagnostico/cobertura-clasificacion). Ese número es
+    el que convierte la lista en un plan de trabajo: primero se llena la
+    plantilla de la que dependen más equipos.
+
+    SOLO LECTURA. Nunca lanza: si una consulta falla devuelve
+    `disponible=False` y la pantalla lo dice en vez de romperse.
+    """
+    cats = list(_PLANT_CATEGORIAS_ADMIN)
+    datos = {
+        "disponible": False,
+        "categorias": cats,
+        "categoria_label": {k: _PLANT_CATEGORIA_LABEL.get(k, k) for k in cats},
+        "estado_label": dict(_COBERTURA_ESTADO_LABEL),
+        "clases": [],
+        "resumen": {
+            "total_clases": 0, "total_celdas": 0,
+            "listas": 0, "vacias": 0, "faltan": 0, "sin_revisar": 0, "minimas": 0,
+            "por_categoria": {k: {"listas": 0, "vacias": 0, "faltan": 0,
+                                  "equipos_sin_sugerencia": 0} for k in cats},
+            "equipos_activos": None,
+            "equipos_sin_clasificacion": None,
+            "equipos_en_clases_activas": 0,
+            "equipos_medidos": False,
+        },
+    }
+
+    # ── 1. Clases activas x plantillas con SU MISMO nombre (todas las
+    #       categorías, activas e inactivas) + ítems contados.
+    #       `p.*` en vez de una lista de columnas: `revisar_tecnico` es una
+    #       columna agregada por migración (_ensure_col_revisar_tecnico) y
+    #       un SELECT explícito reventaría en un ambiente donde todavía no
+    #       existiera. Las columnas de la clase van aliaseadas, así no
+    #       chocan con las de la plantilla.
+    try:
+        filas = mysql_fetchall("""
+            SELECT c.id     AS clase_id,
+                   c.nombre AS clase,
+                   c.slug   AS clase_slug,
+                   COALESCE(c.orden, 0) AS clase_orden,
+                   COALESCE(it.cnt, 0)  AS items,
+                   p.*
+              FROM cat_clases_producto c
+              LEFT JOIN mant_tarea_plantillas p
+                     ON p.nombre = c.nombre
+              LEFT JOIN (SELECT plantilla_id, COUNT(*) AS cnt
+                           FROM mant_tarea_plantilla_items
+                          GROUP BY plantilla_id) it
+                     ON it.plantilla_id = p.id
+             WHERE c.activo = 1
+             ORDER BY c.orden, c.nombre
+        """) or []
+    except Exception as e:
+        print(f"[cobertura_matriz] leer clases/plantillas falló: {e}", flush=True)
+        return datos
+
+    # ── 2. Equipos ACTIVOS por clase (el dato que prioriza el trabajo).
+    #       En su propio try: si esto falla, la matriz igual se muestra
+    #       (equipos queda en None y la pantalla pone "—" en vez de mentir).
+    equipos_por_clase, equipos_ok = {}, False
+    try:
+        for r in (mysql_fetchall("""
+                SELECT cp.id AS clase_id, COUNT(*) AS equipos
+                  FROM mant_maquinas m
+                  JOIN cat_productos p ON p.sku = m.sku
+                  JOIN cat_clases_producto cp
+                    ON cp.slug = p.clase_producto AND cp.activo = 1
+                 WHERE COALESCE(m.estado, 'activo') <> 'baja'
+                   AND COALESCE(TRIM(m.sku), '') <> ''
+                 GROUP BY cp.id""") or []):
+            equipos_por_clase[int(r["clase_id"])] = int(r["equipos"] or 0)
+        equipos_ok = True
+    except Exception as e:
+        print(f"[cobertura_matriz] contar equipos por clase falló: {e}", flush=True)
+
+    try:
+        tot = mysql_fetchone("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN cp.id IS NULL THEN 1 ELSE 0 END) AS sin_clase
+              FROM mant_maquinas m
+              LEFT JOIN cat_productos p ON p.sku = m.sku
+              LEFT JOIN cat_clases_producto cp
+                     ON cp.slug = p.clase_producto AND cp.activo = 1
+             WHERE COALESCE(m.estado, 'activo') <> 'baja'
+        """) or {}
+        datos["resumen"]["equipos_activos"] = int(tot.get("total") or 0)
+        datos["resumen"]["equipos_sin_clasificacion"] = int(tot.get("sin_clase") or 0)
+    except Exception as e:
+        print(f"[cobertura_matriz] total de equipos falló: {e}", flush=True)
+
+    # ── 3. Agrupar: una entrada por clase, con sus candidatas por categoría.
+    clases, orden_clases = {}, []
+    for f in filas:
+        cid = int(f["clase_id"])
+        if cid not in clases:
+            clases[cid] = {
+                "clase_id": cid,
+                "clase": (f.get("clase") or "").strip(),
+                "clase_slug": f.get("clase_slug") or "",
+                "equipos": (equipos_por_clase.get(cid, 0) if equipos_ok else None),
+                "_cand": {},          # categoria -> [plantillas candidatas]
+                "sin_categoria": 0,   # plantillas con su nombre y sin categoría válida
+            }
+            orden_clases.append(cid)
+        if not f.get("id"):
+            continue  # la clase no tiene NINGUNA plantilla con su nombre
+        cat = (f.get("categoria_admin") or "").strip().lower()
+        if cat not in cats:
+            # Plantilla que se llama igual que la clase pero vive en una
+            # categoría que el motor nunca va a pedir (categoría vacía).
+            clases[cid]["sin_categoria"] += 1
+            continue
+        clases[cid]["_cand"].setdefault(cat, []).append({
+            "id": int(f["id"]),
+            "items": int(f.get("items") or 0),
+            "activa": bool(f.get("activa") if f.get("activa") is not None else 1),
+            "es_sistema": bool(f.get("es_sistema")),
+            "revisar_tecnico": f.get("revisar_tecnico"),
+        })
+
+    # ── 4. Veredicto por celda, con el MISMO criterio del motor.
+    _CLAVE_RESUMEN = {"lista": "listas", "vacia": "vacias", "falta": "faltan"}
+    salida = []
+    for cid in orden_clases:
+        c = clases[cid]
+        celdas, n_lista, n_vacia, n_falta, n_sin_rev, n_minimas = {}, 0, 0, 0, 0, 0
+        for cat in cats:
+            cands = c["_cand"].get(cat) or []
+            activas = [x for x in cands if x["activa"]]
+            # La de más ítems manda: si por lo que sea hubiera dos con el
+            # mismo (nombre, categoría) —el índice único uq_plant_nombre_cat
+            # lo impide, pero no se asume— el motor usaría cualquiera y acá
+            # se muestra la mejor, avisando del duplicado.
+            con_items = sorted([x for x in activas if x["items"] > 0],
+                               key=lambda x: -x["items"])
+            if con_items:
+                elegida, estado = con_items[0], "lista"
+                n_lista += 1
+            elif activas:
+                elegida, estado = activas[0], "vacia"
+                n_vacia += 1
+            else:
+                elegida = cands[0] if cands else None
+                estado = "falta"
+                n_falta += 1
+            sin_revisar = bool(elegida and estado == "lista"
+                               and elegida.get("revisar_tecnico") == 1)
+            if sin_revisar:
+                n_sin_rev += 1
+            _items_celda = int((elegida or {}).get("items") or 0)
+            minima = bool(estado == "lista"
+                          and _items_celda <= _COBERTURA_ITEMS_MINIMOS)
+            if minima:
+                n_minimas += 1
+            celdas[cat] = {
+                "estado": estado,
+                "estado_label": _COBERTURA_ESTADO_LABEL[estado],
+                "plantilla_id": (elegida or {}).get("id"),
+                "items": _items_celda,
+                "desactivada": bool(elegida and estado == "falta"),
+                "es_sistema": bool((elegida or {}).get("es_sistema")),
+                "sin_revisar": sin_revisar,
+                "minima": minima,
+                "duplicadas": max(0, len(activas) - 1),
+            }
+            datos["resumen"]["por_categoria"][cat][_CLAVE_RESUMEN[estado]] += 1
+            if estado != "lista" and equipos_ok:
+                datos["resumen"]["por_categoria"][cat]["equipos_sin_sugerencia"] += \
+                    equipos_por_clase.get(cid, 0)
+        c.pop("_cand", None)
+        c["celdas"] = celdas
+        c["n_lista"], c["n_vacia"], c["n_falta"] = n_lista, n_vacia, n_falta
+        c["n_problemas"] = n_vacia + n_falta
+        c["n_sin_revisar"] = n_sin_rev
+        c["n_minimas"] = n_minimas
+        salida.append(c)
+        datos["resumen"]["listas"] += n_lista
+        datos["resumen"]["vacias"] += n_vacia
+        datos["resumen"]["faltan"] += n_falta
+        datos["resumen"]["sin_revisar"] += n_sin_rev
+        datos["resumen"]["minimas"] += n_minimas
+        if equipos_ok:
+            datos["resumen"]["equipos_en_clases_activas"] += equipos_por_clase.get(cid, 0)
+
+    # ── 5. Orden: primero lo que MÁS DUELE. Las clases con algún hueco
+    #       arriba y, dentro de ellas, por cantidad de equipos que dependen
+    #       (impacto real), después por celdas malas y por nombre.
+    salida.sort(key=lambda c: (
+        0 if c["n_problemas"] else 1,
+        -(c["equipos"] or 0),
+        -c["n_vacia"],
+        -c["n_problemas"],
+        (c["clase"] or "").lower(),
+    ))
+
+    datos["clases"] = salida
+    datos["disponible"] = True
+    datos["resumen"]["total_clases"] = len(salida)
+    datos["resumen"]["total_celdas"] = len(salida) * len(cats)
+    datos["resumen"]["equipos_medidos"] = equipos_ok
+    return datos
+
+
+@app.route("/mantenciones/plantillas/cobertura")
+@app.route("/servicio-tecnico/plantillas/cobertura")
+@_mant_required
+@_no_tecnico
+def mant_plantillas_cobertura_page():
+    """Pantalla SOLO LECTURA: qué plantillas están vacías y cuáles faltan.
+
+    Responde la pregunta literal de Daniel (06-09-2026): *"¿cuáles son las
+    plantillas vacías?"*. Ver `_mant_cobertura_matriz_datos()` para el
+    criterio — el mismo que usa el motor de sugerencia, contando ítems.
+
+    Paginada como Etiquetas (REGLA #4.3): pie con "Mostrando A–B de N",
+    selector de N por página y Anterior/Siguiente. Los filtros son links
+    GET, así que limpiar un filtro SIEMPRE recarga la tabla — nunca queda
+    mostrando el resultado anterior.
+
+    No escribe nada: ni crea plantillas, ni las llena, ni las borra. El
+    contenido de cada checklist lo escribe un humano que conoce el equipo.
+    """
+    datos = _mant_cobertura_matriz_datos()
+    clases = datos["clases"]
+
+    # ── Filtros (chips + búsqueda). Todo por querystring: al sacar el
+    #    filtro, el link vuelve a la URL base y la tabla se re-arma sola.
+    filtro = (request.args.get("f") or "").strip().lower()
+    if filtro not in ("problemas", "vacias", "faltan", "listas"):
+        filtro = ""
+    q = (request.args.get("q") or "").strip()
+    if filtro == "problemas":
+        clases = [c for c in clases if c["n_problemas"] > 0]
+    elif filtro == "vacias":
+        clases = [c for c in clases if c["n_vacia"] > 0]
+    elif filtro == "faltan":
+        clases = [c for c in clases if c["n_falta"] > 0]
+    elif filtro == "listas":
+        clases = [c for c in clases if c["n_problemas"] == 0]
+    if q:
+        _q = q.lower()
+        clases = [c for c in clases if _q in (c["clase"] or "").lower()]
+
+    # ── Paginación server-side sobre la lista final (REGLA #4.3).
+    try:
+        size = int(request.args.get("size") or 25)
+    except (TypeError, ValueError):
+        size = 25
+    if size not in (10, 25, 50, 100):
+        size = 25
+    try:
+        page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        page = 1
+    total = len(clases)
+    total_pages = max(1, (total + size - 1) // size)
+    page = max(1, min(page, total_pages))
+    desde = (page - 1) * size
+    pagina = clases[desde:desde + size]
+
+    return render_template(
+        "mantenciones/plantillas_cobertura.html",
+        datos=datos,
+        clases=pagina,
+        cats=datos["categorias"],
+        cat_label=datos["categoria_label"],
+        resumen=datos["resumen"],
+        filtro=filtro,
+        q=q,
+        page=page,
+        size=size,
+        total=total,
+        total_pages=total_pages,
+        desde=(desde + 1 if total else 0),
+        hasta=min(desde + size, total),
+        total_sin_filtro=len(datos["clases"]),
+    )
+
+
+@app.route("/mantenciones/api/plantillas/cobertura-matriz", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_plantillas_cobertura_matriz_api():
+    """JSON de la misma matriz que muestra /mantenciones/plantillas/cobertura.
+
+    Existe para poder AUDITAR el dato sin depender de la pantalla, y para
+    poder compararlo con /mantenciones/api/plantillas/cobertura-clases —que
+    mide distinto a propósito, ver el comentario de bloque de arriba—. Solo
+    lectura; nunca 500: si el dato no está disponible lo dice con
+    `disponible: false`."""
+    datos = _mant_cobertura_matriz_datos()
+    return jsonify({"ok": True, **datos})
+
+
 def _slugify_familia_checklist(texto):
     """slug ascii_minusculas_con_guion_bajo, máx 60 chars -- mismo criterio
     que _cat_slugify (catalogo_module.py, para las clases de producto

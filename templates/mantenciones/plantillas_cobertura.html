@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+{% block title %}Plantillas vacías y faltantes — ILUS Fitness{% endblock %}
+
+{#-
+  ════════════════════════════════════════════════════════════════════
+  DIAGNÓSTICO · Cobertura real de checklists por clasificación
+  ════════════════════════════════════════════════════════════════════
+  2026-09-06 (Daniel: "¿cuáles son las plantillas vacías? El contenido de
+  las plantillas depende de un humano").
+
+  Pantalla de SOLO LECTURA: dice qué plantilla existe, cuántos ítems tiene
+  de verdad y cuál es el veredicto del motor de sugerencia
+  (_plantilla_por_clasificacion_sku), que EXIGE al menos 1 ítem. No crea,
+  no llena y no borra nada — el checklist lo escribe un humano.
+
+  Pantalla interna: sidebar + .page-header, como el resto del módulo.
+  Tabla paginada server-side (REGLA #4.3) y nombres SIEMPRE completos,
+  nunca truncados (REGLA #15).
+-#}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h1 class="mb-1"><i class="bi bi-clipboard2-x me-2" style="color:#dc2626"></i>Plantillas vacías y faltantes</h1>
+    <div class="text-muted" style="font-size:.86rem">
+      Qué checklist tiene hoy cada clasificación de producto — contando los ítems de verdad.
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('mant_plantillas_page') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-list-check me-1"></i>Ir a Plantillas</a>
+    <a href="{{ url_for('mant_index') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left me-1"></i>Volver a Mantenciones</a>
+  </div>
+</div>
+
+<div class="pcv-explica">
+  <i class="bi bi-info-circle-fill"></i>
+  <div>
+    <b>Cómo se elige el checklist de una OT.</b> El equipo trae un SKU, el SKU trae su
+    clasificación del catálogo y esa clasificación busca una plantilla <b>activa</b>, con
+    el <b>nombre exacto de la clase</b>, en la <b>categoría</b> del tipo de OT y
+    <b>con al menos 1 ítem</b>. Si le falta cualquiera de esas cuatro cosas, el sistema
+    no sugiere nada y la OT cae al checklist genérico.
+    <div class="mt-1" style="font-size:.8rem;color:#64748b">
+      Por eso una plantilla que existe pero está <b>vacía</b> vale lo mismo que una que no
+      existe: el motor no la encuentra. Esta pantalla no modifica nada — abre la plantilla
+      y escribe los ítems quien conoce el equipo.
+    </div>
+  </div>
+</div>
+
+{% if not datos.disponible %}
+  <div class="pcv-error">
+    <i class="bi bi-exclamation-octagon-fill"></i>
+    <div>
+      <b>No se pudo medir.</b> La consulta a las clasificaciones o a las plantillas falló.
+      Nada se modificó — vuelve a intentar en un momento.
+    </div>
+  </div>
+{% else %}
+
+{# ══ Resumen: el semáforo de arriba ══════════════════════════════════ #}
+<div class="pcv-kpis">
+  <div class="pcv-kpi ok">
+    <div class="pcv-kpi-n">{{ resumen.listas }}</div>
+    <div class="pcv-kpi-t">Listas</div>
+    <div class="pcv-kpi-s">El motor las sugiere</div>
+  </div>
+  <div class="pcv-kpi warn">
+    <div class="pcv-kpi-n">{{ resumen.vacias }}</div>
+    <div class="pcv-kpi-t">Existen pero VACÍAS</div>
+    <div class="pcv-kpi-s">0 ítems — el motor no las usa</div>
+  </div>
+  <div class="pcv-kpi bad">
+    <div class="pcv-kpi-n">{{ resumen.faltan }}</div>
+    <div class="pcv-kpi-t">No existen</div>
+    <div class="pcv-kpi-s">Hay que crearlas</div>
+  </div>
+  <div class="pcv-kpi dark">
+    <div class="pcv-kpi-n">
+      {% if resumen.equipos_medidos %}{{ resumen.por_categoria['mantencion'].equipos_sin_sugerencia }}{% else %}—{% endif %}
+    </div>
+    <div class="pcv-kpi-t">Equipos sin sugerencia en Mantención</div>
+    <div class="pcv-kpi-s">
+      {% if resumen.equipos_medidos %}
+        {{ resumen.por_categoria['instalacion'].equipos_sin_sugerencia }} en Instalación
+      {% else %}No se pudo contar{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="pcv-nota">
+  <b>{{ resumen.total_clases }}</b> clasificacion{{ 'es' if resumen.total_clases != 1 else '' }}
+  activa{{ 's' if resumen.total_clases != 1 else '' }} × <b>{{ cats|length }}</b> categorías =
+  <b>{{ resumen.total_celdas }}</b> checklists posibles.
+  {% if resumen.sin_revisar %}
+    De las listas, <b>{{ resumen.sin_revisar }}</b> tienen contenido puesto por un seed automático
+    que <b>nadie revisó todavía</b>.
+  {% endif %}
+  {% if resumen.minimas %}
+    Otras <b>{{ resumen.minimas }}</b> cuentan como listas pero traen 1 o 2 ítems: el motor las
+    sugiere igual, aunque el checklist sea simbólico.
+  {% endif %}
+  {% if resumen.equipos_medidos %}
+    Hoy hay <b>{{ resumen.equipos_activos }}</b> equipos activos en las fichas;
+    <b>{{ resumen.equipos_sin_clasificacion }}</b> de ellos ni siquiera cruzan al catálogo
+    (sin SKU, SKU fuera del catálogo o producto sin clasificar), así que para esos nunca
+    hay sugerencia posible — eso no lo arregla una plantilla, se arregla clasificando el producto.
+  {% endif %}
+</div>
+
+{# ══ Detalle por categoría ═══════════════════════════════════════════ #}
+<div class="pcv-cats">
+  {% for c in cats %}
+  <div class="pcv-cat">
+    <div class="pcv-cat-t">{{ cat_label[c] }}</div>
+    <div class="pcv-cat-chips">
+      <span class="pcv-mini ok">{{ resumen.por_categoria[c].listas }} listas</span>
+      <span class="pcv-mini warn">{{ resumen.por_categoria[c].vacias }} vacías</span>
+      <span class="pcv-mini bad">{{ resumen.por_categoria[c].faltan }} sin crear</span>
+    </div>
+    <div class="pcv-cat-s">
+      {% if resumen.equipos_medidos %}
+        {{ resumen.por_categoria[c].equipos_sin_sugerencia }} equipos sin sugerencia
+      {% else %}Equipos no medidos{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# ══ Filtros — links GET: limpiar el filtro SIEMPRE recarga la tabla ══ #}
+<div class="pcv-filtros">
+  <div class="pcv-chips">
+    {% set _chips = [('', 'Todas', total_sin_filtro), ('problemas', 'Con huecos', none),
+                     ('vacias', 'Con vacías', none), ('faltan', 'Con faltantes', none),
+                     ('listas', 'Completas', none)] %}
+    {% for clave, texto, n in _chips %}
+      <a class="pcv-chip{{ ' active' if filtro == clave else '' }}"
+         href="{{ url_for('mant_plantillas_cobertura_page') }}?size={{ size }}{% if clave %}&f={{ clave }}{% endif %}{% if q %}&q={{ q|urlencode }}{% endif %}">
+        {{ texto }}{% if n is not none %} <span class="pcv-chip-n">{{ n }}</span>{% endif %}
+      </a>
+    {% endfor %}
+  </div>
+  <form class="pcv-buscar" method="get" action="{{ url_for('mant_plantillas_cobertura_page') }}">
+    {% if filtro %}<input type="hidden" name="f" value="{{ filtro }}">{% endif %}
+    <input type="hidden" name="size" value="{{ size }}">
+    <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm"
+           placeholder="Buscar clasificación…" aria-label="Buscar clasificación">
+    <button class="btn btn-sm btn-dark" type="submit"><i class="bi bi-search"></i></button>
+    {% if q %}
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('mant_plantillas_cobertura_page') }}?size={{ size }}{% if filtro %}&f={{ filtro }}{% endif %}">
+       Limpiar</a>
+    {% endif %}
+  </form>
+</div>
+
+{% if not clases %}
+  <div class="pcv-vacio">
+    <i class="bi bi-search"></i>
+    <div>
+      <b>Ninguna clasificación coincide</b> con este filtro.
+      <a href="{{ url_for('mant_plantillas_cobertura_page') }}">Ver todas</a>.
+    </div>
+  </div>
+{% else %}
+
+<div class="pcv-tabla-wrap">
+  <table class="pcv-tabla">
+    <thead>
+      <tr>
+        <th style="min-width:230px">Clasificación de producto</th>
+        <th style="width:110px">Equipos<br><span class="pcv-th-s">activos hoy</span></th>
+        {% for c in cats %}<th style="min-width:180px">{{ cat_label[c] }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for cl in clases %}
+      <tr class="{{ 'has-prob' if cl.n_problemas else '' }}">
+        <td data-label="Clasificación">
+          <div class="pcv-clase">{{ cl.clase }}</div>
+          <div class="pcv-sub">{{ cl.clase_slug }}</div>
+          {% if cl.sin_categoria %}
+          <div class="pcv-aviso">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            {{ cl.sin_categoria }} plantilla{{ 's' if cl.sin_categoria != 1 else '' }} con este
+            nombre está{{ 'n' if cl.sin_categoria != 1 else '' }} sin categoría: el motor nunca
+            la{{ 's' if cl.sin_categoria != 1 else '' }} va a pedir.
+          </div>
+          {% endif %}
+        </td>
+        <td data-label="Equipos activos">
+          {% if cl.equipos is none %}
+            <span class="pcv-sub">—</span>
+          {% else %}
+            <span class="pcv-equipos{{ ' cero' if not cl.equipos else '' }}">{{ cl.equipos }}</span>
+          {% endif %}
+        </td>
+        {% for c in cats %}
+        {% set celda = cl.celdas[c] %}
+        <td data-label="{{ cat_label[c] }}">
+          <div class="pcv-celda">
+            {% if celda.estado == 'lista' %}
+              <span class="pcv-est ok"><i class="bi bi-check-circle-fill"></i> Lista</span>
+              <span class="pcv-items">{{ celda['items'] }} ítem{{ 's' if celda['items'] != 1 else '' }}</span>
+              {% if celda.minima %}
+                {# El motor SÍ la sugiere (le basta 1 ítem), pero con 1 o 2 ítems
+                   el checklist es simbólico — mismo umbral que la grilla de
+                   plantillas usa para pintarla en ámbar. #}
+                <span class="pcv-flag min">Checklist simbólico</span>
+              {% endif %}
+              {% if celda.sin_revisar %}
+                <span class="pcv-flag">Seed sin revisar</span>
+              {% endif %}
+              {% if celda.duplicadas %}
+                <span class="pcv-flag dup">+{{ celda.duplicadas }} duplicada{{ 's' if celda.duplicadas != 1 else '' }}</span>
+              {% endif %}
+              <a class="pcv-link" href="{{ url_for('mant_plantillas_page') }}?abrir_plantilla={{ celda.plantilla_id }}">
+                Abrir <i class="bi bi-box-arrow-up-right"></i></a>
+            {% elif celda.estado == 'vacia' %}
+              <span class="pcv-est warn"><i class="bi bi-exclamation-triangle-fill"></i> Existe pero VACÍA</span>
+              <span class="pcv-items cero">0 ítems — no se sugiere</span>
+              <a class="pcv-link warn" href="{{ url_for('mant_plantillas_page') }}?abrir_plantilla={{ celda.plantilla_id }}">
+                Llenar checklist <i class="bi bi-box-arrow-up-right"></i></a>
+            {% else %}
+              <span class="pcv-est bad"><i class="bi bi-x-circle-fill"></i> No existe</span>
+              {% if celda.desactivada %}
+                <span class="pcv-items cero">Hay una desactivada ({{ celda['items'] }} ítem{{ 's' if celda['items'] != 1 else '' }})</span>
+                <a class="pcv-link bad" href="{{ url_for('mant_plantillas_page') }}?abrir_plantilla={{ celda.plantilla_id }}">
+                  Ver la desactivada <i class="bi bi-box-arrow-up-right"></i></a>
+              {% else %}
+                <a class="pcv-link bad" href="{{ url_for('mant_plantillas_page') }}?crear_clase={{ cl.clase|urlencode }}&crear_cat={{ c }}">
+                  Crearla <i class="bi bi-box-arrow-up-right"></i></a>
+              {% endif %}
+            {% endif %}
+          </div>
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}{# clases #}
+
+{# ══ Pie de tabla — REGLA #4.3 (mismo contrato que Etiquetas) ════════
+   Se dibuja SIEMPRE, incluso con 0 resultados: así el selector de "N por
+   página" nunca desaparece y el usuario no queda encerrado en un filtro
+   sin controles. #}
+{% set _qs_base = url_for('mant_plantillas_cobertura_page') ~ '?size=' ~ size ~ (('&f=' ~ filtro) if filtro else '') ~ (('&q=' ~ q|urlencode) if q else '') %}
+<div class="pcv-pag">
+  <div class="pcv-pag-info">
+    {% if total %}
+      Mostrando <b>{{ desde }}–{{ hasta }}</b> de <b>{{ total }}</b> clasificaciones
+      {% if filtro or q %}<span class="pcv-sub">(filtradas de {{ total_sin_filtro }})</span>{% endif %}
+    {% else %}
+      Sin resultados
+    {% endif %}
+  </div>
+  <div class="pcv-pag-ctrl">
+    <form method="get" action="{{ url_for('mant_plantillas_cobertura_page') }}" class="d-inline">
+      {% if filtro %}<input type="hidden" name="f" value="{{ filtro }}">{% endif %}
+      {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+      <input type="hidden" name="page" value="1">
+      <select name="size" class="form-select form-select-sm" style="width:auto;font-size:.78rem"
+              onchange="this.form.submit()" aria-label="Clasificaciones por página">
+        {% for s in [10, 25, 50, 100] %}
+        <option value="{{ s }}" {% if size == s %}selected{% endif %}>{{ s }} por página</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% if page > 1 %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ _qs_base }}&page={{ page - 1 }}">
+        <i class="bi bi-chevron-left"></i> Anterior</a>
+    {% else %}
+      <button class="btn btn-sm btn-outline-secondary" disabled style="opacity:.45">
+        <i class="bi bi-chevron-left"></i> Anterior</button>
+    {% endif %}
+    <span class="pcv-pag-badge">Página {{ page }} de {{ total_pages }}</span>
+    {% if page < total_pages %}
+      <a class="btn btn-sm btn-ilus" href="{{ _qs_base }}&page={{ page + 1 }}">
+        Siguiente <i class="bi bi-chevron-right"></i></a>
+    {% else %}
+      <button class="btn btn-sm btn-outline-secondary" disabled style="opacity:.45">
+        Siguiente <i class="bi bi-chevron-right"></i></button>
+    {% endif %}
+  </div>
+</div>
+{% endif %}{# disponible #}
+
+<style>
+.pcv-explica{display:flex;gap:12px;align-items:flex-start;background:#fff8e1;
+  border:1px solid #fde68a;border-radius:12px;padding:14px 16px;margin-bottom:16px;
+  font-size:.85rem;line-height:1.55;color:#0f172a}
+.pcv-explica > i{color:#f59e0b;font-size:1.2rem;flex:0 0 auto;margin-top:1px}
+.pcv-error{display:flex;gap:12px;align-items:center;background:#fee2e2;border:1px solid #fecaca;
+  border-radius:12px;padding:16px;color:#991b1b;font-size:.9rem}
+.pcv-error > i{font-size:1.4rem}
+
+/* ── Semáforo de arriba ── */
+.pcv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:12px;margin-bottom:12px}
+.pcv-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;
+  border-left:5px solid #94a3b8;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.pcv-kpi.ok{border-left-color:#16a34a}
+.pcv-kpi.warn{border-left-color:#f59e0b}
+.pcv-kpi.bad{border-left-color:#dc2626}
+.pcv-kpi.dark{border-left-color:#0a0a0a}
+.pcv-kpi-n{font-size:1.9rem;font-weight:900;line-height:1;color:#0f172a}
+.pcv-kpi.ok .pcv-kpi-n{color:#16a34a}
+.pcv-kpi.warn .pcv-kpi-n{color:#b45309}
+.pcv-kpi.bad .pcv-kpi-n{color:#dc2626}
+.pcv-kpi-t{font-size:.78rem;font-weight:800;color:#0f172a;margin-top:6px;line-height:1.3}
+.pcv-kpi-s{font-size:.72rem;color:#64748b;margin-top:2px;line-height:1.35}
+.pcv-nota{font-size:.82rem;color:#475569;line-height:1.6;margin-bottom:14px}
+
+/* ── Detalle por categoría ── */
+.pcv-cats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  gap:10px;margin-bottom:16px}
+.pcv-cat{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px}
+.pcv-cat-t{font-size:.8rem;font-weight:800;color:#0f172a}
+.pcv-cat-chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 4px}
+.pcv-cat-s{font-size:.72rem;color:#64748b}
+.pcv-mini{font-size:.68rem;font-weight:800;border-radius:999px;padding:2px 8px}
+.pcv-mini.ok{background:#dcfce7;color:#166534}
+.pcv-mini.warn{background:#fff8e1;color:#92400e}
+.pcv-mini.bad{background:#fee2e2;color:#991b1b}
+
+/* ── Filtros ── */
+.pcv-filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  justify-content:space-between;margin-bottom:10px}
+.pcv-chips{display:flex;flex-wrap:wrap;gap:6px}
+.pcv-chip{font-size:.76rem;font-weight:700;color:#475569;background:#fff;
+  border:1px solid #e5e7eb;border-radius:999px;padding:5px 12px;text-decoration:none;
+  min-height:34px;display:inline-flex;align-items:center;gap:6px}
+.pcv-chip:hover{border-color:#cbd5e1;color:#0f172a}
+.pcv-chip.active{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.pcv-chip-n{font-size:.7rem;font-weight:800;opacity:.75}
+.pcv-buscar{display:flex;gap:6px;align-items:center}
+.pcv-buscar input[type=search]{width:230px;font-size:.8rem}
+.pcv-vacio{display:flex;gap:12px;align-items:center;background:#f8fafc;border:1px solid #e5e7eb;
+  border-radius:12px;padding:16px;color:#475569;font-size:.86rem}
+.pcv-vacio > i{font-size:1.3rem;color:#94a3b8}
+
+/* ── Tabla ── */
+.pcv-tabla-wrap{overflow-x:auto}
+.pcv-tabla{width:100%;border-collapse:separate;border-spacing:0 6px;font-size:.84rem}
+.pcv-tabla thead th{font-size:.66rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.05em;color:#64748b;padding:0 12px 4px;text-align:left;vertical-align:bottom}
+.pcv-th-s{font-weight:700;text-transform:none;letter-spacing:0;color:#94a3b8}
+.pcv-tabla tbody tr{background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.pcv-tabla tbody td{padding:10px 12px;border-top:1px solid #e5e7eb;
+  border-bottom:1px solid #e5e7eb;vertical-align:top}
+.pcv-tabla tbody td:first-child{border-left:1px solid #e5e7eb;border-radius:10px 0 0 10px}
+.pcv-tabla tbody td:last-child{border-right:1px solid #e5e7eb;border-radius:0 10px 10px 0}
+.pcv-tabla tbody tr.has-prob td:first-child{border-left:4px solid #dc2626}
+/* REGLA #15: los nombres van COMPLETOS — nada de line-clamp ni ellipsis. */
+.pcv-clase{font-weight:800;color:#0f172a;line-height:1.35;white-space:normal;
+  overflow-wrap:anywhere}
+.pcv-sub{font-size:.72rem;color:#94a3b8;overflow-wrap:anywhere}
+.pcv-aviso{font-size:.7rem;color:#92400e;background:#fff8e1;border:1px solid #fde68a;
+  border-radius:8px;padding:4px 7px;margin-top:5px;line-height:1.4}
+.pcv-equipos{display:inline-block;font-size:.82rem;font-weight:900;color:#0f172a;
+  background:#f1f5f9;border-radius:8px;padding:3px 10px}
+.pcv-equipos.cero{color:#94a3b8;font-weight:700}
+.pcv-celda{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+.pcv-est{font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.02em;
+  border-radius:999px;padding:3px 9px;display:inline-flex;align-items:center;gap:5px}
+.pcv-est.ok{background:#dcfce7;color:#166534}
+.pcv-est.warn{background:#fff8e1;color:#92400e}
+.pcv-est.bad{background:#fee2e2;color:#991b1b}
+.pcv-items{font-size:.74rem;color:#475569;font-weight:700}
+.pcv-items.cero{color:#b45309}
+.pcv-flag{font-size:.66rem;font-weight:800;background:#dbeafe;color:#1e40af;
+  border-radius:999px;padding:2px 7px}
+.pcv-flag.dup{background:#f3f4f6;color:#4b5563}
+.pcv-flag.min{background:#fff8e1;color:#92400e}
+.pcv-link{font-size:.74rem;font-weight:800;color:#0f172a;text-decoration:none;
+  border-bottom:1px dashed #cbd5e1;padding:2px 0;min-height:22px}
+.pcv-link:hover{color:#dc2626;border-bottom-color:#dc2626}
+.pcv-link.warn{color:#b45309}
+.pcv-link.bad{color:#dc2626}
+
+/* ── Pie de paginación (REGLA #4.3) ── */
+.pcv-pag{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+  gap:10px;border-top:1px solid #e5e7eb;padding:10px 4px 0;margin-top:6px}
+.pcv-pag-info{font-size:.78rem;color:#475569}
+.pcv-pag-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pcv-pag-badge{background:#dc2626;color:#fff;font-size:.78rem;padding:6px 10px;
+  border-radius:6px;font-weight:700}
+
+@media (max-width:900px){
+  .pcv-tabla{border-spacing:0}
+  .pcv-tabla thead{display:none}
+  .pcv-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:12px;
+    padding:6px 0;margin-bottom:10px}
+  .pcv-tabla tbody td{display:block;border:0;padding:6px 12px}
+  .pcv-tabla tbody td:first-child,.pcv-tabla tbody td:last-child{border-radius:0}
+  .pcv-tabla tbody tr.has-prob td:first-child{border-left:0}
+  .pcv-tabla tbody tr.has-prob{border-left:4px solid #dc2626}
+  .pcv-tabla tbody td[data-label]::before{content:attr(data-label);display:block;
+    font-size:.64rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;
+    color:#94a3b8;margin-bottom:3px}
+  .pcv-celda{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px}
+  .pcv-buscar{width:100%}
+  .pcv-buscar input[type=search]{flex:1;width:auto;font-size:16px}
+}
+</style>
+{% endblock %}
