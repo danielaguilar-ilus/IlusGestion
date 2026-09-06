@@ -78155,11 +78155,30 @@ def ot2_detalle(vid):
                     _det = ""
                 elif "$" in _det:
                     _det = _RE_MONTO.sub("[oculto]", _det)
+            # 👤 2026-09-05 (Daniel: "agregar el movimiento del cliente a la
+            # actividad de la OT, no registra cuando el cliente firma"). Sí
+            # se registraba, pero con el protagonista equivocado: la línea
+            # decía "Isabel Milling registró la firma del cliente" -- la
+            # técnica que sostuvo el teléfono, no Camila, que es QUIEN
+            # firmó. En una OT que es evidencia, quien firma tiene que
+            # aparecer como quien firma.
+            # El nombre del firmante ya viaja en `firma_cliente_nombre`; acá
+            # solo se elige a quién mostrar. Se conserva quién la capturó en
+            # el detalle: las dos cosas importan y ninguna reemplaza a la
+            # otra. La firma a distancia no tiene usuario de sesión (es una
+            # página pública), así que ahí el cliente es el único actor real.
+            _usuario_fila = (_lg.get("usuario") or "sistema")
+            _es_firma_cli = _acc in ("firmada_cliente", "firmada_cliente_remoto")
+            _nom_cli_firma = (v.get("firma_cliente_nombre") or "").strip()
+            if _es_firma_cli and _nom_cli_firma:
+                if _acc == "firmada_cliente" and _lg.get("usuario"):
+                    _det = (_det + " · capturada por " + _lg["usuario"]).strip(" ·")
+                _usuario_fila = _nom_cli_firma
             actividad.append({
                 "accion": _acc, "label": _lbl, "icono": _ico,
                 "color": _col, "grupo": _grp,
                 "detalle": _det,
-                "usuario": (_lg.get("usuario") or "sistema"),
+                "usuario": _usuario_fila,
                 "cuando": chile_fmt_filter(_lg.get("created_at"), "%d/%m/%Y %H:%M")
                           if _lg.get("created_at") else "",
             })
