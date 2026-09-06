@@ -3443,8 +3443,14 @@ var _O2F_LINEA_ZZ = {
   instalacion: 'ZZINSTALACION',
   preventiva: 'ZZMANTENCION',
   correctiva: 'ZZMANTENCION',
-  visita_tecnica: 'ZZVISITA',
-  visita_correctiva: 'ZZVISITA'
+  // 2026-09-06: decia 'ZZVISITA', un codigo que NO existe en el ERP. El
+  // backend ya lo habia corregido a ZZSERVTEC el 30-08 (ver _OT2_LINEA_ZZ
+  // en app.py y su comentario), pero este mapa quedo atras -- y no es
+  // cosmetico: cuando el campo del formulario va vacio, este valor se
+  // ESCRIBE en mant_visitas.zz_codigo, asi que la OT quedaba guardada
+  // citando una linea de servicio inexistente.
+  visita_tecnica: 'ZZSERVTEC',
+  visita_correctiva: 'ZZSERVTEC'
 };
 
 function o2fFinToggleGarantia() {

@@ -84737,8 +84737,14 @@ def ot2_api_lineas_zz(tido, nudo):
             monto = 0
         zz.append({
             "sku": sku,
-            "descripcion": (ln.get("descripcion") or ln.get("nombre")
-                            or ln.get("DEEN") or "").strip()[:180],
+            # Las lineas normalizadas de _cubicador_fetch traen
+            # `descripcion_erp` y `nombre_app`; "descripcion"/"nombre"/"DEEN"
+            # no existen en ese dict, asi que esto devolvia SIEMPRE vacio y
+            # la pantalla mostraba el codigo ZZ pelado, sin decir que es.
+            # Mismo criterio ya aplicado en el endpoint hermano.
+            "descripcion": (ln.get("descripcion_erp") or ln.get("nombre_app")
+                            or ln.get("descripcion") or ln.get("nombre")
+                            or sku).strip()[:180],
             "monto": monto,
             "sugerida": bool(sugerido and sku == sugerido),
         })
@@ -84749,7 +84755,12 @@ def ot2_api_lineas_zz(tido, nudo):
 
     return jsonify({
         "ok": True, "tido": tido, "nudo": nudo,
-        "cliente": (header.get("cliente") or header.get("razon_social") or ""),
+        # El header de _cubicador_fetch usa `cliente_nombre`. Ni "cliente"
+        # ni "razon_social" existen ahi (razon_social es un alias que agrega
+        # OTRO normalizador, el del cubicador), asi que este campo salia
+        # vacio siempre.
+        "cliente": (header.get("cliente_nombre") or header.get("cliente")
+                    or header.get("razon_social") or ""),
         "lineas_zz": zz,
         "sugerido": sugerido,
         "total_lineas": len(lineas or []),

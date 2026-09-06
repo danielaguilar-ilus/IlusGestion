@@ -4896,7 +4896,10 @@ window.OT2C = (function(){
     var difiere = !!(rutDoc && rutCliente && _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
     S.doc_extra.push({
       tido: header.tido, nudo: header.nudo, rut: rutDoc,
-      cliente_nombre: header.razon_social || header.nombre || ''
+      // El header que arma el modal de busqueda usa la clave `cliente`
+      // (ver _tka_modal.html), no `razon_social` ni `nombre` -- por eso la
+      // etiqueta del documento llegaba vacia al guardar la OT.
+      cliente_nombre: header.cliente || header.razon_social || header.nombre || ''
     });
     _pintarDocExtraDom();
     if (difiere && window.ilusToast){
