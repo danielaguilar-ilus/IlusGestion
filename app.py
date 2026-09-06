@@ -59186,9 +59186,12 @@ def mant_index():
         try:
             _fpd, _fph, _fpmes = _facprov_periodo()
             _fplista, _fpdet, _fptot = _facprov_datos(_fpd, _fph)
-            if _fplista:
-                facprov = {"provs": _fplista[:5], "n_provs": len(_fplista),
-                           "tot": _fptot, "mes": _fpmes, "desde": _fpd}
+            # Se arma aunque el mes venga vacio: este bloque es la unica
+            # puerta de entrada a la pantalla de facturacion, y si se
+            # escondiera los meses sin movimiento la pantalla quedaria
+            # inalcanzable justo cuando uno quiere ir a mirar otro mes.
+            facprov = {"provs": _fplista[:5], "n_provs": len(_fplista),
+                       "tot": _fptot, "mes": _fpmes, "desde": _fpd}
         except Exception as _e:
             app.logger.warning("[FACPROV] bloque del dashboard: %s", _e)
             facprov = None

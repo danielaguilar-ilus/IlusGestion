@@ -312,10 +312,12 @@ async function ejecutarResetMantenciones(){
       </div>
     </div>
     <div class="mfp-acc">
+      {% if facprov.provs %}
       <div class="mfp-total">
         <span>Total del mes</span>
         <b>{{ _clp(facprov.tot.total) }}</b>
       </div>
+      {% endif %}
       <a class="mfp-btn" href="{{ url_for('mant_facturacion_proveedores') }}">
         <i class="bi bi-list-ul"></i>Ver detalle</a>
       <a class="mfp-btn dark" href="{{ url_for('mant_facturacion_proveedores_xlsx', mes=facprov.mes) }}">
@@ -323,6 +325,13 @@ async function ejecutarResetMantenciones(){
     </div>
   </div>
 
+  {% if not facprov.provs %}
+  <div class="mfp-vacio">
+    <i class="bi bi-inbox"></i>
+    <div>Sin órdenes de trabajo cerradas con costo de proveedor este mes.
+      <span>Solo entran las OT <b>cerradas</b>: mientras una sigue abierta su costo puede cambiar.</span></div>
+  </div>
+  {% else %}
   <div class="mfp-tabla-wrap">
     <table class="mfp-tabla">
       <thead>
@@ -352,6 +361,7 @@ async function ejecutarResetMantenciones(){
       </tbody>
     </table>
   </div>
+  {% endif %}
 
   {% if facprov.n_provs > facprov.provs|length %}
   <a class="mfp-mas" href="{{ url_for('mant_facturacion_proveedores') }}">
@@ -391,6 +401,10 @@ async function ejecutarResetMantenciones(){
 .mfp-mas{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.76rem;
   font-weight:800;color:#dc2626;text-decoration:none}
 .mfp-mas:hover{text-decoration:underline;color:#b91c1c}
+.mfp-vacio{display:flex;gap:10px;align-items:flex-start;background:#f8fafc;
+  border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;font-size:.83rem;color:#0f172a}
+.mfp-vacio > i{font-size:1.2rem;color:#94a3b8}
+.mfp-vacio span{display:block;font-size:.76rem;color:#64748b;margin-top:2px}
 @media (max-width:768px){
   .mfp-acc{width:100%;justify-content:space-between}
   .mfp-total{text-align:left;margin-right:0;width:100%}
