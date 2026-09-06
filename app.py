@@ -83936,13 +83936,34 @@ def ot2_api_anexo_pdf(aid):
                 "SELECT tipo FROM mant_visitas WHERE id=%s", (a["ot_id"],)) or {}
             _solo_plan = _ot_anexo_solo_plan(_v_tipo.get("tipo"))
             _sql_plan = " AND COALESCE(m.aplica_mantencion,0)=1 " if _solo_plan else ""
+            # 🔴 FIX 2026-09-06 (Daniel: "el anexo no está considerando las
+            # cantidades, a todo le pone uno"). El DISTINCT colapsaba las
+            # unidades: el alta crea UNA máquina por unidad, cada una con
+            # cantidad 1, así que dos unidades del mismo SKU se fundían en
+            # una sola fila que decía 1. El anexo terminaba declarándole al
+            # proveedor menos equipos de los que va a instalar.
+            #
+            # Ahora se cuentan las MÁQUINAS distintas y se suman por SKU.
+            # La subconsulta con DISTINCT sigue siendo necesaria por otra
+            # razón: una máquina tiene varias tareas, y sin ella el JOIN la
+            # multiplicaría por su cantidad de tareas.
+            #
+            # Las que no tienen SKU se agrupan por su id, no entre sí: dos
+            # equipos manuales distintos no son el mismo producto.
             productos = mysql_fetchall(
-                "SELECT DISTINCT m.sku, m.nombre, COALESCE(m.cantidad,1) AS cantidad "
-                "  FROM mant_visita_tareas t "
-                "  JOIN mant_maquinas m ON m.id = t.maquina_id "
-                " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL "
+                "SELECT MIN(x.sku) AS sku, MIN(x.nombre) AS nombre, "
+                "       SUM(x.cant) AS cantidad "
+                "  FROM (SELECT DISTINCT m.id, "
+                "               COALESCE(NULLIF(TRIM(m.sku),''), CONCAT('#', m.id)) AS clave, "
+                "               TRIM(COALESCE(m.sku,'')) AS sku, m.nombre, "
+                "               COALESCE(m.cantidad,1) AS cant "
+                "          FROM mant_visita_tareas t "
+                "          JOIN mant_maquinas m ON m.id = t.maquina_id "
+                "         WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL "
                 + _sql_plan +
-                " ORDER BY m.nombre", (a["ot_id"],)) or []
+                "       ) x "
+                " GROUP BY x.clave "
+                " ORDER BY MIN(x.nombre)", (a["ot_id"],)) or []
             productos = [dict(p) for p in productos]
         except Exception as e:
             print(f"[anexo_pdf] productos de la OT: {e}", flush=True)

@@ -5496,42 +5496,7 @@ window.OT2C = (function(){
        por SKU (o por nombre si el equipo no tiene SKU) y ordenada por
        cantidad. Se recalcula SIEMPRE -- no como el objetivo, que respeta lo
        que el usuario haya escrito a mano. */
-    (function(){
-      /* 🔴 2026-09-03 (Daniel: "en la generación de OT por mantención
-         correctiva, en la parte del anexo me agrega TODOS los equipos. Si
-         está filtrado por mantenciones, estas deberán agregar solo los
-         equipos del PLAN — el plan es exclusivo de las mantenciones y
-         visitas").
-         Por qué pasaba: la preselección por plan (`aplica_mantencion`)
-         solo corre cuando la OT arranca SIN equipos marcados. Si nace de
-         una factura, cotización o ticket, los equipos del documento ya
-         vienen todos marcados, así que ese filtro no llega a aplicarse y
-         el anexo terminaba listando el parque completo del cliente en un
-         documento que se le paga a un proveedor.
-         El anexo se queda solo con los del plan cuando el tipo lo usa
-         (mantenciones, visita e inspección). Instalación, cambio,
-         movimiento y desinstalación NO filtran: ahí el plan es
-         irrelevante y hay que dejar constancia de todo lo que se tocó.
-         Ojo: esto filtra el ANEXO, no la selección de equipos de la OT —
-         si alguien marcó a propósito un equipo fuera del plan, la OT
-         igual lo lleva. */
-      var TIPOS_CON_PLAN = ['preventiva','correctiva','visita_tecnica','inspeccion'];
-      var soloPlan = TIPOS_CON_PLAN.indexOf(S.tipo) >= 0;
-      var acc = {};
-      (S.equipos||[]).forEach(function(e){
-        var m = cacheEquipos.find(function(x){ return x.id === e.maquina_id; });
-        if (!m) return;
-        if (soloPlan && !m.aplica_mantencion) return;
-        var nombre = m.nombre || m.modelo || ('Equipo ' + m.id);
-        var sku = (m.sku || '').trim();
-        var k = sku || ('n:' + nombre);
-        if (!acc[k]) acc[k] = { sku: sku, nombre: nombre, cantidad: 0 };
-        acc[k].cantidad += 1;
-      });
-      a.productos = Object.keys(acc).map(function(k){ return acc[k]; })
-        .sort(function(x,y){ return y.cantidad - x.cantidad ||
-                                    String(x.nombre).localeCompare(String(y.nombre)); });
-    })();
+    _o2mAnexoProductosCalc();
     if (!a.fecha_inicio && S.fecha) a.fecha_inicio = S.fecha;
     if (!a.fecha_termino && S.fecha) a.fecha_termino = S.fecha;
     // Los ítems de precio son LOS MISMOS que ya se declararon en Finanzas
@@ -5630,12 +5595,76 @@ window.OT2C = (function(){
      el MISMO documento sin grabar nada en mant_anexos. Requiere solo lo
      mínimo que ese endpoint valida (proveedor + objetivo); si falta algo,
      avisa en vez de pedir un PDF vacío. */
+  /* 🔴 2026-09-06 (Daniel: "el anexo no está considerando las cantidades,
+     a todo le pone uno... y tampoco está involucrando todos los documentos,
+     veo que faltan muchísimo").
+
+     Las dos cosas eran el MISMO problema: esta tabla se calculaba solo al
+     PINTAR el paso del anexo. Si después agregabas productos en el Paso 7
+     -- que es justo lo que habilitamos hoy con el multidocumento -- el
+     anexo se quedaba con la foto vieja: menos productos y cantidades más
+     bajas. Ahora se recalcula también justo antes de usarla (vista previa
+     y creación), que es cuando tiene que ser verdad. */
+  function _o2mAnexoProductosCalc(){
+    var a = S.anexo;
+      /* 🔴 2026-09-03 (Daniel: "en la generación de OT por mantención
+         correctiva, en la parte del anexo me agrega TODOS los equipos. Si
+         está filtrado por mantenciones, estas deberán agregar solo los
+         equipos del PLAN — el plan es exclusivo de las mantenciones y
+         visitas").
+         Por qué pasaba: la preselección por plan (`aplica_mantencion`)
+         solo corre cuando la OT arranca SIN equipos marcados. Si nace de
+         una factura, cotización o ticket, los equipos del documento ya
+         vienen todos marcados, así que ese filtro no llega a aplicarse y
+         el anexo terminaba listando el parque completo del cliente en un
+         documento que se le paga a un proveedor.
+         El anexo se queda solo con los del plan cuando el tipo lo usa
+         (mantenciones, visita e inspección). Instalación, cambio,
+         movimiento y desinstalación NO filtran: ahí el plan es
+         irrelevante y hay que dejar constancia de todo lo que se tocó.
+         Ojo: esto filtra el ANEXO, no la selección de equipos de la OT —
+         si alguien marcó a propósito un equipo fuera del plan, la OT
+         igual lo lleva. */
+      var TIPOS_CON_PLAN = ['preventiva','correctiva','visita_tecnica','inspeccion'];
+      var soloPlan = TIPOS_CON_PLAN.indexOf(S.tipo) >= 0;
+      var acc = {};
+      (S.equipos||[]).forEach(function(e){
+        var m = cacheEquipos.find(function(x){ return x.id === e.maquina_id; });
+        if (!m) return;
+        if (soloPlan && !m.aplica_mantencion) return;
+        var nombre = m.nombre || m.modelo || ('Equipo ' + m.id);
+        var sku = (m.sku || '').trim();
+        var k = sku || ('n:' + nombre);
+        if (!acc[k]) acc[k] = { sku: sku, nombre: nombre, cantidad: 0 };
+        acc[k].cantidad += 1;
+      });
+      S.anexo.productos = Object.keys(acc).map(function(k){ return acc[k]; })
+        .sort(function(x,y){ return y.cantidad - x.cantidad ||
+                                    String(x.nombre).localeCompare(String(y.nombre)); });
+  }
+
   function anexoVerPdfPreview(){
+    // La tabla es un dato DERIVADO de los equipos marcados: se recalcula
+    // acá para que la vista previa muestre lo que hay ahora, no lo que
+    // había cuando se pintó el paso.
+    _o2mAnexoProductosCalc();
     var a = S.anexo;
     if (!a.proveedor_nombre.trim() || !a.objetivo_servicio.trim()){
       if (window.ilusToast) ilusToast('Completa proveedor y objetivo del servicio para ver la vista previa.', {type:'warning'});
       return;
     }
+    /* 2026-09-06 (Daniel: "cuando presione el botón de vista previa, me
+       gustaría que tuviera la barra de carga con el proceso de carga real,
+       hasta el cien por ciento"). El PDF lo arma Chromium en el servidor y
+       puede tardar varios segundos: sin señal, parece que no pasó nada.
+
+       La barra es REAL en su segunda mitad -- cuando el servidor empieza a
+       mandar el PDF, el avance sale de los bytes recibidos contra
+       Content-Length. La primera mitad no puede serlo: mientras Chromium
+       renderiza no llega ni un byte, así que ahí avanza despacio hasta 45%
+       y ESPERA. Nunca finge el 100%: el 100% se pone cuando el archivo
+       está completo. */
+    var _pg = _o2mProgresoAbrir('Generando la vista previa del anexo…');
     fetch('/ot/api/anexos/preview-pdf', {
       method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
@@ -5647,12 +5676,80 @@ window.OT2C = (function(){
       })
     }).then(function(r){
       if (!r.ok) return r.json().then(function(j){ throw new Error((j&&j.error)||'No se pudo generar la vista previa.'); });
-      return r.blob();
+      _pg.fase('Recibiendo el documento…');
+      var total = parseInt(r.headers.get('Content-Length') || '0', 10);
+      if (!r.body || !r.body.getReader || !total){
+        // Sin stream o sin Content-Length no se puede medir de verdad --
+        // se dice que está terminando, no se inventa un porcentaje.
+        _pg.indeterminado();
+        return r.blob();
+      }
+      var reader = r.body.getReader(), trozos = [], leido = 0;
+      return (function bombear(){
+        return reader.read().then(function(res){
+          if (res.done) return new Blob(trozos, {type:'application/pdf'});
+          trozos.push(res.value);
+          leido += res.value.length;
+          _pg.avance(45 + Math.round((leido / total) * 55));
+          return bombear();
+        });
+      })();
     }).then(function(blob){
+      _pg.completar();
       _o2mAbrirModalPdf(URL.createObjectURL(blob), 'anexo-vista-previa.pdf');
     }).catch(function(e){
+      _pg.cerrar();
       if (window.ilusToast) ilusToast(e.message || 'No se pudo generar la vista previa.', {type:'error'});
     });
+  }
+
+  /* Barra de progreso reutilizable para esperas largas del servidor. */
+  function _o2mProgresoAbrir(titulo){
+    var old = document.getElementById('o2mProgOverlay');
+    if (old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = 'o2mProgOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(10,10,10,.55);'+
+      'display:flex;align-items:center;justify-content:center;padding:6vw';
+    ov.innerHTML =
+      '<div style="background:#fff;border-radius:14px;padding:20px 22px;width:100%;max-width:420px;'+
+      'box-shadow:0 20px 60px rgba(0,0,0,.35)">'+
+        '<div style="font-weight:800;color:#0f172a;display:flex;align-items:center;gap:8px;font-size:.95rem">'+
+          '<i class="bi bi-file-earmark-pdf-fill" style="color:#dc2626"></i>'+
+          '<span id="o2mProgTit">'+esc(titulo||'Procesando…')+'</span></div>'+
+        '<div style="height:10px;background:#f1f5f9;border-radius:999px;overflow:hidden;margin:12px 0 6px">'+
+          '<div id="o2mProgBar" style="height:100%;width:4%;background:#dc2626;border-radius:999px;'+
+          'transition:width .25s ease"></div></div>'+
+        '<div id="o2mProgPct" style="font-size:.76rem;color:#64748b;font-variant-numeric:tabular-nums">4%</div>'+
+      '</div>';
+    document.body.appendChild(ov);
+    var bar = ov.querySelector('#o2mProgBar'), pct = ov.querySelector('#o2mProgPct');
+    var tit = ov.querySelector('#o2mProgTit'), valor = 4, timer = null, indet = false;
+    var pintar = function(v){
+      valor = Math.max(0, Math.min(100, v));
+      bar.style.width = valor + '%';
+      if (!indet) pct.textContent = valor + '%';
+    };
+    /* Mientras Chromium renderiza no llega ningún byte: se avanza despacio
+       y se FRENA en 45%. Prometer más sería mentir. */
+    timer = setInterval(function(){ if (valor < 45) pintar(valor + 1); }, 220);
+    return {
+      avance: pintar,
+      fase: function(t){ tit.textContent = t; },
+      indeterminado: function(){
+        indet = true; clearInterval(timer);
+        bar.style.width = '100%';
+        bar.style.background = 'linear-gradient(90deg,#dc2626,#f87171,#dc2626)';
+        pct.textContent = 'Terminando…';
+      },
+      completar: function(){
+        clearInterval(timer); indet = false;
+        bar.style.background = '#16a34a'; pintar(100);
+        pct.textContent = '100% · listo';
+        setTimeout(function(){ if (ov.parentNode) ov.remove(); }, 350);
+      },
+      cerrar: function(){ clearInterval(timer); if (ov.parentNode) ov.remove(); },
+    };
   }
   /* 2026-08-30 (Daniel: "cuando yo le dé a vista de PDF, quiero que me abra
      una ventana tipo modal, solamente para ver y cerrar, y posiblemente
@@ -7207,7 +7304,9 @@ window.OT2C = (function(){
               proveedor_nombre: S.anexo.proveedor_nombre,
               proveedor_rut: S.anexo.proveedor_rut,
               objetivo_servicio: S.anexo.objetivo_servicio,
-              productos: S.anexo.productos || [],
+              // Mismo motivo que en la vista previa: se recalcula al
+              // enviar, no se confia en lo que quedo pintado.
+              productos: (_o2mAnexoProductosCalc(), S.anexo.productos || []),
               precio_items: S.anexo.items,
               fecha_inicio: S.anexo.fecha_inicio || null,
               fecha_termino: S.anexo.fecha_termino || null,
