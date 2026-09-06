@@ -949,6 +949,11 @@ window.OT2C = (function(){
          // cliente (trazabilidad, ver crear()) y sus líneas de producto
          // (sugerencia informativa en la sección Equipos).
          doc_origen:null, doc_lineas:[],
+         // 2026-09-06: distingue "esta OT NACIO de un documento" (y por
+         // eso la tabla de equipos se limita a ese documento) de
+         // "ademas agregue documentos en el Paso 7" (donde hay que
+         // SUMAR productos, jamas esconder el resto de la ficha).
+         doc_lineas_fuente:false,
          // 2026-08-30 (Daniel, trazabilidad "bajo qué OT"): ids de
          // mant_maquinas creados POR ESTE WIZARD vía alta automática (ver
          // _o2mAltaAutoFaltantes) -- viajan en crear() para que
@@ -2951,6 +2956,24 @@ window.OT2C = (function(){
       // se dibuja justo abajo en #o2mEqList, con su selector y su cantidad:
       // con un documento real de 22 líneas empujaba el paso entero fuera de
       // pantalla antes de poder elegir un checklist. No se pierde nada.
+      // 2026-09-06 (Daniel: "definitivamente quiero agregar mas productos
+      // con el modal de documentos enfocado a Nro de documento y rut...
+      // esto para todas las modalidades"). Una sola linea, ARRIBA de la
+      // lista: el 05-09 un bloque de 22 lineas aca empujaba el paso entero
+      // fuera de pantalla y Daniel pidio sacarlo -- un boton no es eso.
+      // Va FUERA de #o2mEqList a proposito: pintarListaEquipos() corta
+      // temprano cuando la lista esta vacia, y ahi dentro el boton
+      // desapareceria justo con un cliente sin equipos, que es cuando mas
+      // se necesita. No se condiciona por tipo de OT: pintarEquipos ya
+      // desvia antes a los tipos internos, asi que todas las modalidades
+      // con cliente lo heredan solas.
+      '<div class="o2m-eq-add">'+
+        '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" '+
+        'onclick="OT2C.eqAgregarDoc()">'+
+        '<i class="bi bi-file-earmark-plus me-1"></i>Agregar productos de otro documento</button>'+
+        '<span>Busca por N° de documento o por el RUT del cliente. '+
+        'Los productos que no estén en su ficha se crean solos.</span>'+
+      '</div>'+
       '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>';
     cargarEquipos();
   }
@@ -3508,6 +3531,13 @@ window.OT2C = (function(){
   }
   /* Lista base: la ficha completa, o solo los SKU del documento de origen. */
   function _o2mEquiposBase(){
+    // 🔴 Antes esto preguntaba `if (!S.doc_lineas.length)`. Con eso, agregar
+    // un documento en el Paso 7 pasaba la lista de vacia a no-vacia y la
+    // tabla se reducia a los SKU de ese documento: al usuario le
+    // DESAPARECIAN el resto de los equipos del cliente. Ahora filtra solo
+    // cuando la OT nacio de una fuente (documento/cotizacion/ticket), que
+    // es donde "la seleccion es unica" fue la decision del 30-08.
+    if (!S.doc_lineas_fuente) return cacheEquipos;
     if (!S.doc_lineas || !S.doc_lineas.length) return cacheEquipos;
     var skusFuente = {};
     S.doc_lineas.forEach(function(l){ skusFuente[_o2mSkuNorm(l.sku)] = true; });
@@ -3557,6 +3587,8 @@ window.OT2C = (function(){
     var st = document.createElement('style');
     st.id = 'o2mEqModosCss';
     st.textContent =
+      '.o2m-eq-add{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 10px}' +
+      '.o2m-eq-add > span{font-size:.76rem;color:#64748b;flex:1;min-width:200px}' +
       '.o2m-eq-modos{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:auto}' +
       '.o2m-eq-modo{display:inline-flex;align-items:center;gap:8px;min-height:44px;' +
         'padding:7px 13px;border-radius:11px;border:1.5px solid #d1d5db;background:#fff;' +
@@ -3689,7 +3721,10 @@ window.OT2C = (function(){
     var _wrapPrev = c.querySelector('.o2m-eq-tablewrap');
     var _scrollPrev = _wrapPrev ? _wrapPrev.scrollTop : 0;
     var equiposVista = _o2mEquiposVista();
-    var esVistaFuente = equiposVista !== cacheEquipos;
+    // Comparar por identidad daba true tambien en modo 'plan' (que
+    // devuelve un filter nuevo), asi que la barra decia "productos de
+    // esta cotizacion" sin que hubiera ninguna.
+    var esVistaFuente = !!S.doc_lineas_fuente;
     if (!equiposVista.length){
       c.innerHTML = '<div class="o2m-aviso">'+
         (esVistaFuente
@@ -4881,30 +4916,198 @@ window.OT2C = (function(){
     }
     tkaOpen({ mode: 'seleccionar', tabs: ['doc', 'cli'], onSeleccionar: _o2mDocExtraSeleccionado });
   }
+  /* -- AGREGAR PRODUCTOS DE OTRO DOCUMENTO, DESDE EL PASO 7 -----------
+     2026-09-06 (Daniel: "definitivamente quiero agregar mas productos con
+     el modal de documentos enfocado a Nro de documento y rut, y si lo
+     abres por ahi haz la busqueda de rut para ver sus documentos y eso y
+     poderlos agregar... esto para todas las modalidades").
+
+     No se escribe un buscador nuevo: se abre el MISMO modal estandar del
+     proyecto (tkaOpen, templates/tickets/_tka_modal.html), que ya busca
+     por numero de documento y por RUT y ya cumple la REGLA #14. Lo unico
+     propio es a donde aterriza lo elegido. */
+  function _o2mTkaScrollGuard(){
+    // tka_modal flota por su cuenta y al cerrarse libera
+    // document.body.style.overflow sin saber que este wizard sigue abierto.
+    var tkaEl = document.getElementById('tkaModal');
+    if (!tkaEl || !window.MutationObserver) return;
+    var mo = new MutationObserver(function(){
+      if (!tkaEl.classList.contains('is-open')){
+        mo.disconnect();
+        var propio = document.getElementById('ot2ModalCrear');
+        if (propio && propio.classList.contains('show')) document.body.style.overflow = 'hidden';
+      }
+    });
+    mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
+  }
+
+  function _o2mEqAgregarDocumento(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador no esta disponible en esta pantalla.', {type:'error'});
+      return;
+    }
+    if (!S.cliente || !S.cliente.id){
+      if (window.ilusToast) ilusToast('Primero elige el cliente de la OT.', {type:'warning'});
+      return;
+    }
+    _o2mTkaScrollGuard();
+    /* El prefill del RUT solo se aplica si el input esta vacio, y
+       _tkaResetEstado no limpia el DOM: sin esto la segunda apertura
+       seguiria mostrando la busqueda anterior. */
+    var _inp = document.getElementById('tkaCliQ');
+    if (_inp) _inp.value = '';
+    tkaOpen({
+      mode: 'seleccionar',
+      // 'cli' primero: define la pestana activa, y el salto por rutPrefill
+      // se ignora si esa pestana no es la activa.
+      tabs: ['cli', 'doc'],
+      rutPrefill: (S.cliente.rut || ''),
+      onSeleccionar: _o2mEqDocSeleccionado
+    });
+  }
+
+  /* Marca en la tabla los equipos de las lineas recien agregadas. Sin esto
+     el usuario agrega un documento y no ve pasar nada: la premarcacion de
+     cargarEquipos() solo corre la primera vez, y el alta automatica solo
+     marca lo que ella misma crea -- los que YA existian en la ficha
+     quedarian desmarcados. */
+  function _o2mMarcarEquiposDeLineas(lineas){
+    var marcados = 0;
+    (lineas || []).forEach(function(l){
+      var skuN = _o2mSkuNorm(l.sku);
+      if (!skuN) return;
+      var cand = cacheEquipos.filter(function(m){ return _o2mSkuNorm(m.sku) === skuN; });
+      if (!cand.length) return;
+      // Con varios equipos del mismo SKU se prefiere el que ya viene de ese
+      // mismo documento; si no, el primero que no este marcado.
+      var docN = _o2mDocOrigenNorm((l.tido || '') + (l.nudo || ''));
+      var elegido = null;
+      if (docN){
+        elegido = cand.filter(function(m){
+          return _o2mDocOrigenNorm(m.doc_origen || '') === docN;
+        })[0] || null;
+      }
+      if (!elegido){
+        elegido = cand.filter(function(m){
+          return !S.equipos.some(function(e){ return e.maquina_id === m.id; });
+        })[0] || cand[0];
+      }
+      if (!elegido) return;
+      if (!S.equipos.some(function(e){ return e.maquina_id === elegido.id; })){
+        S.equipos.push({maquina_id: elegido.id, plantilla_id: null, plantilla_sugerida: false});
+        sugerirPlantillaEquipo(elegido.id);
+        marcados++;
+      }
+    });
+    pintarListaEquipos();
+    refrescarAnclas();
+    _o2mFinEstimar();
+    if (marcados && window.ilusToast){
+      ilusToast('Se marcaron ' + marcados + ' equipo' + (marcados === 1 ? '' : 's') +
+                ' del documento. Revisa que cada uno tenga su checklist.',
+                {type: 'success', duration: 5000});
+    }
+    return marcados;
+  }
+
+  function _o2mEqDocSeleccionado(items, header){
+    var lineas = (items || []).filter(function(it){ return it && it.sku; });
+    if (!lineas.length){
+      if (window.ilusToast) ilusToast('No seleccionaste ninguna linea con producto.', {type:'warning'});
+      return;
+    }
+    /* El documento se toma de CADA LINEA, no del header: en la pestana por
+       RUT el header guarda solo el ultimo documento expandido, asi que con
+       varias facturas a la vez el header miente. Las lineas si traen el
+       suyo. */
+    var nuevas = [], docs = {};
+    lineas.forEach(function(it){
+      var tido = it.tido || (header && header.tido) || null;
+      var nudo = it.nudo || (header && header.nudo) || null;
+      var skuN = _o2mSkuNorm(it.sku);
+      var docN = _o2mDocOrigenNorm((tido || '') + (nudo || ''));
+      var repetida = (S.doc_lineas || []).some(function(l){
+        return _o2mSkuNorm(l.sku) === skuN &&
+               _o2mDocOrigenNorm((l.tido || '') + (l.nudo || '')) === docN;
+      });
+      if (!repetida){
+        var linea = {sku: it.sku, nombre: it.nombre, qty: it.qty,
+                     tido: tido, nudo: nudo,
+                     fecha: it.fecha || (header && header.fecha) || null};
+        S.doc_lineas = (S.doc_lineas || []).concat([linea]);
+        nuevas.push(linea);
+      }
+      if (tido && nudo) docs[tido + '|' + nudo] = {tido: tido, nudo: nudo};
+    });
+
+    // Cada documento involucrado queda registrado en la OT, por el mismo
+    // mecanismo multidocumento que ya existe en el paso de Costos.
+    Object.keys(docs).forEach(function(k){
+      _o2mDocExtraRegistrar(docs[k], header);
+    });
+
+    if (!nuevas.length){
+      if (window.ilusToast) ilusToast('Esos productos ya estaban agregados.', {type:'info'});
+      _o2mMarcarEquiposDeLineas(lineas);
+      return;
+    }
+
+    /* En preventiva/correctiva el modo 'plan' filtra por aplica_mantencion,
+       y un accesorio recien creado nace fuera del plan: sin esto seria otra
+       vez "agregue el producto y no aparece". */
+    _o2mModoEq = 'todos';
+
+    var faltantes = _o2mEquiposFaltantesDeDoc();
+    if (faltantes.length){
+      // Los que no existen en la ficha se dan de alta por el MISMO camino de
+      // siempre (crea en mant_maquinas con su doc_origen y recarga la lista).
+      altaAutoFaltantesCtx = S.cliente.id + '::' +
+        (S.doc_lineas || []).map(function(l){ return _o2mSkuNorm(l.sku); }).sort().join(',');
+      _o2mAltaAutoFaltantes(faltantes);
+      // El alta recarga cacheEquipos de forma asincrona y marca lo que crea;
+      // los que YA existian se marcan cuando la lista esta lista.
+      setTimeout(function(){ _o2mMarcarEquiposDeLineas(nuevas); }, 900);
+    } else {
+      _o2mMarcarEquiposDeLineas(nuevas);
+    }
+  }
+
+  /* Registrar UN documento en la OT. Extraido de
+     _o2mDocExtraSeleccionado el 2026-09-06 para que el Paso 7 lo use
+     tambien: un solo lugar que deduplica, avisa si el RUT no calza y
+     repinta. Devuelve true si lo agrego, false si ya estaba. */
+  function _o2mDocExtraRegistrar(doc, header){
+    if (!doc || !doc.tido || !doc.nudo) return false;
+    var yaEsta = S.doc_extra.some(function(d){ return d.tido===doc.tido && d.nudo===doc.nudo; });
+    if (yaEsta) return false;
+    var rutDoc = (doc.rut || (header && header.rut) || '');
+    var rutCliente = (S.cliente && S.cliente.rut) || '';
+    var difiere = !!(rutDoc && rutCliente && _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
+    S.doc_extra.push({
+      tido: doc.tido, nudo: doc.nudo, rut: rutDoc,
+      // El header que arma el modal de busqueda usa la clave `cliente`
+      // (ver _tka_modal.html), no `razon_social` ni `nombre` -- por eso la
+      // etiqueta del documento llegaba vacia al guardar la OT.
+      cliente_nombre: (doc.cliente_nombre ||
+                       (header && (header.cliente || header.razon_social || header.nombre)) || '')
+    });
+    _pintarDocExtraDom();
+    if (difiere && window.ilusToast){
+      ilusToast('\u26a0 El RUT de ese documento ('+esc(rutDoc)+') no coincide con el del cliente de esta OT.',
+        {type:'warning', duration:6000});
+    }
+    return true;
+  }
+
   function _o2mDocExtraSeleccionado(items, header){
     if (!header || !header.tido || !header.nudo){
       if (window.ilusToast) ilusToast('Ese resultado no trae un documento identificable.', {type:'warning'});
       return;
     }
-    var yaEsta = S.doc_extra.some(function(d){ return d.tido===header.tido && d.nudo===header.nudo; });
-    if (yaEsta){
-      if (window.ilusToast) ilusToast('Ese documento ya está agregado.', {type:'warning'});
-      return;
-    }
-    var rutDoc = header.rut || '';
-    var rutCliente = (S.cliente && S.cliente.rut) || '';
-    var difiere = !!(rutDoc && rutCliente && _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
-    S.doc_extra.push({
-      tido: header.tido, nudo: header.nudo, rut: rutDoc,
-      // El header que arma el modal de busqueda usa la clave `cliente`
-      // (ver _tka_modal.html), no `razon_social` ni `nombre` -- por eso la
-      // etiqueta del documento llegaba vacia al guardar la OT.
-      cliente_nombre: header.cliente || header.razon_social || header.nombre || ''
-    });
-    _pintarDocExtraDom();
-    if (difiere && window.ilusToast){
-      ilusToast('⚠ El RUT de ese documento ('+esc(rutDoc)+') no coincide con el del cliente de esta OT.',
-        {type:'warning', duration:6000});
+    var agregado = _o2mDocExtraRegistrar(
+      {tido: header.tido, nudo: header.nudo, rut: header.rut || ''}, header);
+    if (!agregado && window.ilusToast){
+      ilusToast('Ese documento ya está agregado.', {type:'warning'});
     }
   }
   function quitarDocExtra(i){ S.doc_extra.splice(i,1); _pintarDocExtraDom(); }
@@ -5425,7 +5628,7 @@ window.OT2C = (function(){
       S.contraparte.direccion = ''; S.contraparte.comuna = ''; S.contraparte.region = '';
       S.contraparte._direccion_auto = false;
     }
-    if (v !== 'documento'){ S.doc_origen = null; S.doc_lineas = []; }
+    if (v !== 'documento'){ S.doc_origen = null; S.doc_lineas = []; S.doc_lineas_fuente = false; }
     if (v !== 'ticket'){ S.ticket_id = null; }
     // 30-08-2026: se dispara ANTES de pintar el formulario -- si el fetch
     // todavía no vuelve, pintarTipo() ya renderiza con lo que haya en TIPOS
@@ -5579,6 +5782,8 @@ window.OT2C = (function(){
     // fecha por ítem no existe en el origen (tk_cotizacion_items no la
     // guarda) -- `header.fecha` es la mejor real a mano (la propia fecha
     // de la cotización/documento), nunca se usa "hoy" como relleno.
+    // Este SI es el origen de la OT: la tabla se limita a su documento.
+    S.doc_lineas_fuente = true;
     S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; })
       .map(function(it){
         return {sku: it.sku, nombre: it.nombre, qty: it.qty,
@@ -6312,6 +6517,7 @@ window.OT2C = (function(){
     if (_cambioDeCliente && !(opts && opts.conservarDocs)){
       var _habiaDocs = !!(S.doc_lineas && S.doc_lineas.length);
       S.doc_lineas = [];
+      S.doc_lineas_fuente = false;
       S.doc_origen = null;
       altaAutoFaltantesCtx = null;
       preseleccionEqCliente = null;
@@ -6866,6 +7072,7 @@ window.OT2C = (function(){
           setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           eqModo:eqModo,
+          eqAgregarDoc:_o2mEqAgregarDocumento,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           _o2mAnexoPintarRutEstado:_o2mAnexoPintarRutEstado, anexoVerPdfPreview:anexoVerPdfPreview,
