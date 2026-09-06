@@ -532,6 +532,32 @@ def _sanitizar_html_mensaje(raw):
         return _html_mod.escape(str(raw))
 
 
+
+def _tk_doc_partes(txt):
+    """Saca (TIDO, NUDO) de un documento escrito como texto libre.
+
+    El campo `numero_documento` del ticket es texto: la gente escribe
+    "FCV-11439", "FCV 11439" o "11439" a secas. Solo se acepta lo que se
+    puede reconocer con certeza -- un tipo de documento conocido mas su
+    numero. Si viene un numero suelto NO se inventa el tipo: un cruce
+    equivocado entre documentos es peor que no tener cruce, porque manda
+    plata y equipos al cliente que no es.
+
+    Ejemplos:
+        "FCV-11439"  -> ("FCV", "11439")
+        "fcv 11439"  -> ("FCV", "11439")
+        "11439"      -> None   (no se sabe si es factura, boleta o nota)
+        ""           -> None
+    """
+    import re as _re
+    t = (txt or "").strip().upper()
+    if not t:
+        return None
+    m = _re.match(r"^([A-Z]{2,5})\s*[-/ ]?\s*(\d{1,20})$", t)
+    if not m:
+        return None
+    return (m.group(1)[:10], m.group(2)[:40])
+
 def register_tickets_routes(app, ctx):
     # ── Dependencias inyectadas desde app.py (globals) ──
     mysql_fetchone = ctx["mysql_fetchone"]
@@ -5991,10 +6017,26 @@ def register_tickets_routes(app, ctx):
                 # numero_documento a nivel de ticket. Mismo formato que
                 # tk_api_equipos_desde_documento ("TIDO-NUDO", ej. "VD-6162").
                 doc_ticket_fallback = (d.get("numero_documento") or "").strip()[:150] or None
+                # 2026-09-06 (Daniel: "necesito que los guarde, es necesario").
+                # Hasta hoy este camino -- la creacion normal del ticket, la
+                # que mas se usa -- dejaba el documento SOLO como texto libre
+                # en tk_tickets.numero_documento. Los otros tres caminos
+                # (crear desde documento, agregar equipos desde documento y
+                # el ticket automatico por ZZINSTALACION) si lo registran en
+                # tk_ticket_documentos, que es la tabla estructurada con
+                # tido/nudo. Sin ese registro, un ticket creado a mano no se
+                # puede cruzar con una cotizacion ni con una OT por su
+                # documento, que es justo la trazabilidad que se necesita.
+                _docs_ticket = {}
+                _d_par = _tk_doc_partes(doc_ticket_fallback)
+                if _d_par:
+                    _docs_ticket[_d_par] = True
                 for eq in (d.get("equipos") or []):
                     try:
                         eq_tido = (eq.get("tido") or "").strip().upper()
                         eq_nudo = (eq.get("nudo") or "").strip()
+                        if eq_tido and eq_nudo:
+                            _docs_ticket[(eq_tido[:10], eq_nudo[:40])] = True
                         doc_garantia = f"{eq_tido}-{eq_nudo}"[:150] if (eq_tido and eq_nudo) \
                             else doc_ticket_fallback
                         cur.execute(
@@ -6011,6 +6053,19 @@ def register_tickets_routes(app, ctx):
                         )
                     except Exception as _e:
                         print(f"[tk_api_create] equipo no insertado tid={tid}: {_e}", flush=True)
+                # Los documentos del ticket, en la misma transaccion que el
+                # resto. INSERT IGNORE por el UNIQUE (ticket, tido, nudo):
+                # que el mismo documento venga por el campo del ticket y por
+                # varios equipos es lo normal, no un error.
+                for _dt, _dn in _docs_ticket.keys():
+                    try:
+                        cur.execute(
+                            "INSERT IGNORE INTO tk_ticket_documentos "
+                            "(ticket_id, erp_tido, erp_nudo) VALUES (%s,%s,%s)",
+                            (tid, _dt, _dn))
+                    except Exception as _e:
+                        print(f"[tk_api_create] documento no registrado tid={tid} "
+                              f"{_dt}/{_dn}: {_e}", flush=True)
             conn.commit()
         finally:
             conn.close()
