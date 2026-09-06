@@ -1371,7 +1371,7 @@
 
   {# ── Equipos informados (primera tanda) ── #}
   {% if paginas_equipos and paginas_equipos[0] %}
-  <div class="sec-title">Equipos informados</div>
+  <div class="sec-title">Equipos informados<span style="margin-left:auto;font-weight:800;font-size:8pt;color:var(--ilus-mute)">{{ paginas_equipos[0]|length }} de {{ equipos|length }}</span></div>
   {% for e in paginas_equipos[0] %}
     {% set idx = loop.index %}
     {% set _fotos = eq_fotos_idx.get(e.id, []) %}
@@ -1504,9 +1504,15 @@
     </div>
     </div>
   {% endfor %}
-  <div class="eq-counter">
-    {{ paginas_equipos[0]|length }} de {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }}
-  </div>
+  {# 🔧 FIX 2026-09-05 (Daniel: "quedó con una hoja en blanco, ¿podemos
+     evitar eso?"). Medido sobre su PDF real (OT-2026-00152): la página 3
+     traía 218 caracteres -- solo este contador, más el encabezado y el pie
+     repetidos. Las tarjetas de equipo llevan page-break-inside:avoid, así
+     que cuando la última llenaba la hoja, el contador no cabía y se caía
+     SOLO a la página siguiente: una hoja que para cualquiera está en
+     blanco. El dato no se pierde ni se achica -- se movió al título de la
+     sección, donde además se lee antes de recorrer las tarjetas y ya no
+     puede quedar huérfano. #}
   {% endif %}
 
   {{ footer_block(1, total_pg, continua=true) }}
@@ -1519,7 +1525,6 @@
 <section class="sheet">
   {{ header_block(loop.index + 1, total_pg) }}
 
-  <div class="sec-title">Equipos informados</div>
   {# offset = cantidad de equipos en TODAS las páginas previas a esta
      (es decir, paginas_equipos[0..loop.index0], porque pg_eq itera
      sobre paginas_equipos[1:] y loop.index0 vale 0 para pg2). #}
@@ -1531,6 +1536,10 @@
     {% endif %}
   {% endfor %}
   {% set _start = _ns.start %}
+  {# El título va acá (no antes) porque recién con _start se sabe qué tramo
+     de equipos trae esta hoja. Antes el contador iba suelto al final y
+     podía caer solo a una página -- ver el fix del 2026-09-05 arriba. #}
+  <div class="sec-title">Equipos informados<span style="margin-left:auto;font-weight:800;font-size:8pt;color:var(--ilus-mute)">{{ _start + 1 }}–{{ _start + pg_eq|length }} de {{ equipos|length }}</span></div>
   {% for e in pg_eq %}
     {% set idx = _start + loop.index %}
     {% set _fotos = eq_fotos_idx.get(e.id, []) %}
@@ -1663,9 +1672,6 @@
     </div>
     </div>
   {% endfor %}
-  <div class="eq-counter">
-    {{ _start + pg_eq|length }} de {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }}
-  </div>
 
   {# ── Checklist técnico detallado (TABLA, solo en última pág) ── #}
   {% if loop.last and tareas_chk %}
