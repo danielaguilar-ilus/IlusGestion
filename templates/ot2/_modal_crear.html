@@ -942,7 +942,10 @@ window.OT2C = (function(){
          // ver _o2mResolverClienteYEquipos) y el usuario todavía no las
          // tocó -- así setOrigen() sabe que puede limpiarlas sin pisar un
          // dato que el usuario ya escribió o confirmó a mano/Places.
-         contraparte:{nombre:'', cargo:'', tel:'', email:'', rut:'', origen:'',
+         // `detalle` = edificio, local, oficina. Va APARTE de `direccion`
+         // a proposito: Places reescribe la direccion al confirmar y se
+         // llevaria puesto ese texto (ver onPlaceSelected).
+         contraparte:{nombre:'', cargo:'', tel:'', email:'', rut:'', origen:'', detalle:'',
                       direccion:'', lat:null, lng:null, place_id:'',
                       comuna:'', region:'', _direccion_auto:false},
          // Origen "Factura o boleta": documento ERP de donde salió el
@@ -3193,7 +3196,23 @@ window.OT2C = (function(){
         (dirOk
           ? '<span style="color:#16a34a"><i class="bi bi-geo-alt-fill me-1"></i>Dirección confirmada — el GPS del técnico va a validar contra este punto.</span>'
           : '<span style="color:#b45309"><i class="bi bi-exclamation-triangle me-1"></i>Elige una sugerencia para confirmar la ubicación. Sin esto el técnico no puede validar su llegada.</span>')+
-        '</div></div>'+
+        '</div>'+
+        // 📍 2026-09-06 (Daniel: "cómo haremos visible ese detalle de
+        // edificio y local para que no se pierda y el técnico le pegue en
+        // los ojos"). Google devuelve la calle normalizada y se come el
+        // "Edificio B, Local 03B 04B". Si eso se escribe en el campo de
+        // arriba, al elegir la sugerencia desaparece; y si se dejara pegado,
+        // el texto ya no coincidiría con lo que devolvió Places y el propio
+        // wizard invalidaría el lat/lng. Por eso va en su propio campo, que
+        // Places no toca: la ubicación la confirma Google, esto dice dónde
+        // tocar cuando llegas.
+        '<label class="fl mt-2">Edificio, local u oficina</label>'+
+        '<input class="form-control" id="o2mCpDetalle" maxlength="200" value="'+esc(cp.detalle||'')+'" '+
+        'placeholder="Ej: Edificio B, Local 03B 04B — lo que Google no trae" '+
+        'oninput="OT2C.setCpCampo(\'detalle\', this.value)">'+
+        '<div class="mt-1" style="font-size:.72rem;color:#64748b">'+
+        'Esto se le muestra al técnico junto a la dirección, para que sepa dónde tocar al llegar.</div>'+
+        '</div>'+
         // 2026-08-30 (Daniel: "la dirección en un campo y la comuna en
         // otro... cuando yo confirme la dirección del lugar, me va a
         // rellenar la comuna y la región de manera automática"). Queda
@@ -3214,6 +3233,29 @@ window.OT2C = (function(){
       ilusPlacesAutocomplete('o2mCpDir', {
         country: 'cl', types: ['geocode', 'establishment'],
         onPlaceSelected: function(p){
+          /* Rescate: si la persona escribió "Puerta Oriente, Edificio B,
+             Local 03B 04B" y Google devuelve solo "Puerta Oriente", ese
+             resto se perdía sin avisar. Se mueve al campo de detalle si
+             está vacío -- nunca se pisa lo que ya escribió ahí. */
+          try {
+            var _escrito = (document.getElementById('o2mCpDir') || {}).value || '';
+            var _norm = function(t){
+              return String(t||'').toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, ' ').trim();
+            };
+            var _dirG = _norm(p.direccion || '');
+            var _sobra = '';
+            _escrito.split(',').forEach(function(parte){
+              var pn = _norm(parte);
+              if (pn && _dirG.indexOf(pn) < 0) _sobra += (_sobra ? ', ' : '') + parte.trim();
+            });
+            if (_sobra && !(S.contraparte.detalle || '').trim()){
+              S.contraparte.detalle = _sobra.slice(0, 200);
+              if (window.ilusToast){
+                ilusToast('Guardé «' + _sobra + '» como detalle del lugar: Google no lo devuelve, '+
+                          'pero el técnico lo necesita para llegar.', {type:'info', duration:6000});
+              }
+            }
+          } catch(_e){ /* el rescate nunca puede impedir confirmar la dirección */ }
           S.contraparte.direccion = p.direccion || '';
           S.contraparte.lat = p.lat; S.contraparte.lng = p.lng;
           S.contraparte.place_id = p.place_id || '';
@@ -6621,9 +6663,17 @@ window.OT2C = (function(){
     }).then(function(r){ return r.json(); })
       .then(function(j){
         if (j && j.guardado && window.ilusToast){
-          ilusToast('Aprendido: «' + (m.nombre || m.sku) + '» queda clasificado como ' +
-                    j.clase + '. Su checklist se va a sugerir solo la próxima vez.',
-                    {type:'success', duration:5000});
+          /* 2026-09-06 (Daniel: "cuando guardamos los accesorios, quisiera
+             que dijera otro mensaje, mejor asociado"). El mensaje anterior
+             contaba lo que pasó pero no dejaba clara LA ASOCIACIÓN ni su
+             consecuencia. Ahora nombra las dos puntas -- producto y
+             checklist -- y dice qué gana de aquí en adelante. */
+          var _nom = m.nombre || m.sku;
+          var _chk = _o2mPlantNombre(pid) || j.clase;
+          ilusToast('«' + _nom + '» quedó asociado a ' + j.clase + ' → checklist «' + _chk + '». '+
+                    'De aquí en adelante, cualquier OT con ese producto lo trae puesto, '+
+                    'sin que tengas que elegirlo.',
+                    {type:'success', duration:7000});
         }
       })
       .catch(function(){ /* no molesta al usuario: la OT sigue igual */ });

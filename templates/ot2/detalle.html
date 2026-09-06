@@ -1867,6 +1867,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   .otd-cc b{font-size:.7rem}
   .otd-cc small{display:none}   /* subtítulo decorativo; el nombre queda entero */
 }
+
+/* Detalle de acceso: edificio, local, piso e indicaciones. Va destacado a
+   propósito -- es lo que el técnico necesita para ENCONTRAR el lugar, y
+   antes solo aparecía en el PDF, o sea después del trabajo. */
+.otd-acceso{display:block;margin-top:6px;background:#fff8e1;border:1px solid #fde68a;
+  border-left:3px solid #f59e0b;border-radius:8px;padding:7px 10px;font-size:.86rem;
+  color:#0f172a;line-height:1.45;overflow-wrap:anywhere}
+.otd-acceso > i{color:#f59e0b;margin-right:6px}
+.otd-acceso b{color:#92400e}
+.otd-acceso-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
+.otd-acceso-chips span{font-size:.72rem;font-weight:800;border-radius:999px;
+  padding:3px 9px;display:inline-flex;align-items:center;gap:4px}
+.otd-acceso-chips .si{background:#dcfce7;color:#166534}
+.otd-acceso-chips .no{background:#fee2e2;color:#991b1b}
 </style>
 
 <div class="ot2 otd">
@@ -2310,7 +2324,43 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <span class="val">{{ _dir_ot }}{% if v.cliente_comuna %}, {{ v.cliente_comuna }}{% endif %}
               <a class="acc" target="_blank" rel="noopener"
                  href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ ', ' ~ (v.cliente_comuna or '')) | urlencode }}">
-                <i class="bi bi-geo-alt-fill"></i> Abrir mapa</a></span></div>
+                <i class="bi bi-geo-alt-fill"></i> Abrir mapa</a>
+              {#- 📍 2026-09-06 (Daniel: "cómo haremos visible ese detalle de
+                  edificio y local para que no se pierda y el técnico le pegue
+                  en los ojos al gestionar la OT").
+
+                  El dato NO se perdía: se captura en el paso "Acceso al
+                  lugar" y se guarda. Lo que pasaba es que solo se mostraba en
+                  el PDF de la OT -- o sea, le llegaba al técnico después de
+                  hacer el trabajo, cuando ya no le sirve para llegar.
+
+                  Google Places devuelve la calle normalizada y se come el
+                  "Edificio B, Local 03B 04B", así que ese detalle vive aparte
+                  y hay que mostrarlo aparte, pegado a la dirección y no
+                  escondido en otra pestaña. -#}
+              {% if v.direccion_detalle or v.acceso_piso or v.acceso_notas %}
+              <span class="otd-acceso">
+                <i class="bi bi-signpost-split-fill"></i>
+                {%- if v.direccion_detalle %}<b>{{ v.direccion_detalle }}</b>{% endif -%}
+                {%- if v.direccion_detalle and (v.acceso_piso or v.acceso_notas) %} · {% endif -%}
+                {%- if v.acceso_piso %}Piso {{ v.acceso_piso }}{% endif -%}
+                {%- if v.acceso_piso and v.acceso_notas %} · {% endif -%}
+                {%- if v.acceso_notas %}{{ v.acceso_notas }}{% endif -%}
+              </span>
+              {% endif %}
+              {% if v.acceso_ascensor is not none or v.acceso_estacionamiento is not none %}
+              <span class="otd-acceso-chips">
+                {% if v.acceso_ascensor is not none %}
+                <span class="{{ 'si' if v.acceso_ascensor else 'no' }}">
+                  <i class="bi bi-{{ 'check-lg' if v.acceso_ascensor else 'x-lg' }}"></i>Ascensor</span>
+                {% endif %}
+                {% if v.acceso_estacionamiento is not none %}
+                <span class="{{ 'si' if v.acceso_estacionamiento else 'no' }}">
+                  <i class="bi bi-{{ 'check-lg' if v.acceso_estacionamiento else 'x-lg' }}"></i>Estacionamiento</span>
+                {% endif %}
+              </span>
+              {% endif %}
+            </span></div>
           {% endif %}
           <div class="fila"><span class="lbl">Fecha</span>
             <span class="val">{{ v.fecha_dia }}{% if v.hora_inicio %} · {{ (v.hora_inicio | string)[:5] }}{% if v.hora_fin %}–{{ (v.hora_fin | string)[:5] }}{% endif %}{% endif %}

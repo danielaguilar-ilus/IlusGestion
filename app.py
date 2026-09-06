@@ -77530,6 +77530,14 @@ def _ensure_ot_acceso_cols():
     _cols = [
         ("acceso_ascensor",       "TINYINT(1) NULL COMMENT 'Hay ascensor en el lugar (1/0). NULL = sin responder'"),
         ("acceso_estacionamiento","TINYINT(1) NULL COMMENT 'Hay estacionamiento (1/0). NULL = sin responder'"),
+        # 📍 2026-09-06 (Daniel: "cómo haremos visible ese detalle de
+        # edificio y local para que no se pierda"). Google Places devuelve
+        # la calle normalizada y se come el "Edificio B, Local 03B 04B":
+        # si ese detalle vive dentro del mismo campo de dirección, se borra
+        # justo al confirmar la ubicación. Por eso tiene columna propia --
+        # y por eso NO participa del lat/lng: la ubicación la sigue
+        # confirmando Places, esto solo dice dónde tocar cuando llegas.
+        ("direccion_detalle",     "VARCHAR(200) NULL COMMENT 'Edificio, local, oficina: el detalle que Places no devuelve'"),
         ("acceso_piso",           "SMALLINT NULL COMMENT 'Nivel/piso del equipo, -5 a 30. Opcional'"),
         ("acceso_notas",          "VARCHAR(500) NULL COMMENT 'Indicaciones de acceso para el tecnico'"),
     ]
@@ -80735,6 +80743,10 @@ def ot2_api_crear():
     # dirección confirmada acá es lo que hace que el "Llegada al lugar" del
     # técnico pueda ponerse verde.
     _cp_dir = (str(_cp.get("direccion") or "").strip())[:400] or None
+    # El detalle NO se concatena a la dirección: si se pegara ahí, el texto
+    # dejaría de coincidir con lo que devolvió Places y el propio wizard
+    # invalidaría el lat/lng (ver setCpDireccionTexto). Va aparte.
+    _cp_detalle = (str(_cp.get("detalle") or "").strip())[:200] or None
     try:
         _cp_lat = float(_cp.get("lat")) if _cp.get("lat") not in (None, "") else None
     except (TypeError, ValueError):
@@ -81196,7 +81208,8 @@ def ot2_api_crear():
             # 2026-08-29 — contraparte + dirección del lugar (ver bloque 4.5).
             # contacto_rut agregado 2026-08-30 (ver _ensure_ot_contacto_rut_col).
             "   contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_rut, "
-            "   contacto_origen, direccion_visita, direccion_lat, direccion_lng, "
+            "   contacto_origen, direccion_visita, direccion_detalle, "
+            "   direccion_lat, direccion_lng, "
             "   direccion_place_id, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
@@ -81204,7 +81217,7 @@ def ot2_api_crear():
             "        %s,%s,%s,%s,"
             "        %s,"
             "        %s,%s,%s,%s,%s,"
-            "        %s,%s,%s,%s,"
+            "        %s,%s,%s,%s,%s,"
             "        %s,"
             "        %s,%s,%s)",
             (numero_ot, cliente_id, titulo, descripcion, _f,
@@ -81218,7 +81231,7 @@ def ot2_api_crear():
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
              _fin_docs_extra_json,
              _cp_nombre, _cp_cargo, _cp_tel, _cp_email, _cp_rut,
-             _cp_origen, _cp_dir, _cp_lat, _cp_lng,
+             _cp_origen, _cp_dir, _cp_detalle, _cp_lat, _cp_lng,
              _cp_place,
              # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
              # conversión a hora Chile es cosa de la vista).
@@ -81395,14 +81408,52 @@ def ot2_api_crear():
         # ser la fuente única y el JSON se conserva tal cual (REGLA #4.2, no
         # se quita nada -- sigue siendo el registro de lo que se declaró en
         # el momento de crear).
+        # 🔴 FIX 2026-09-06 (Daniel: "no está asociando el 11439. Debe ser
+        # porque lo ingresé al seleccionar la OT arriba, cuando selecciono
+        # factura o boleta"). Tenía razón, y el diagnóstico era exacto: acá
+        # solo se registraban los documentos EXTRA. El documento con el que
+        # NACE la OT -- el que se elige arriba, en el origen, y el que se
+        # declara en Costos -- quedaba en `factura_tido/factura_nudo` y
+        # nunca entraba a esta tabla, así que la OT terminaba mostrando sus
+        # documentos secundarios y escondiendo el principal.
+        #
+        # Va PRIMERO y con es_principal=1: es el documento que sostiene la
+        # OT, no un anexo de ella. Y se deduplica contra los extra por si
+        # el mismo papel se agregó por los dos caminos.
+        _docs_a_registrar = []
+        _docs_vistos = set()
+
+        def _reg_doc(_t, _n, _rut, _etq, _principal):
+            _t = (str(_t or "").strip().upper())[:10]
+            _n = (str(_n or "").strip())[:30]
+            if not _t or not _n:
+                return
+            _k = (_t, re.sub(r"^0+", "", _n.upper()))
+            if _k in _docs_vistos:
+                return
+            _docs_vistos.add(_k)
+            _docs_a_registrar.append({
+                "tido": _t, "nudo": _n,
+                "rut": (str(_rut or "").strip())[:20] or None,
+                "cliente_nombre": (str(_etq or "").strip())[:200] or None,
+                "principal": 1 if _principal else 0,
+            })
+
+        # El documento declarado en Costos es el principal de la OT.
+        _reg_doc(_fin_tido, _fin_nudo, None, cliente_razon_social, True)
         for _dx in _docs_extra_norm:
+            _reg_doc(_dx["tido"], _dx["nudo"], _dx.get("rut"),
+                     _dx.get("cliente_nombre"), False)
+
+        for _dx in _docs_a_registrar:
             try:
                 cur.execute(
                     "INSERT INTO mant_visita_documentos "
                     "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
                     "   rut, etiqueta, asociado_por) "
-                    "VALUES (%s,'erp',1,0,%s,%s,%s,%s,%s)",
-                    (vid, _dx["tido"], _dx["nudo"], _dx.get("rut") or None,
+                    "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s)",
+                    (vid, _dx["principal"], _dx["tido"], _dx["nudo"],
+                     _dx.get("rut") or None,
                      _dx.get("cliente_nombre") or None, current_username()))
             except Exception as _e_dx:
                 # Nunca tumba la creación: el JSON ya quedó guardado y el
