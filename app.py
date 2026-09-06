@@ -77474,6 +77474,43 @@ def _ot2_finanzas_estado(v):
         if not tiene_doc:
             faltan.append("número de factura, boleta o nota de venta")
 
+        # 💰 2026-09-06 (Daniel: "o va valorizado con el documento o se
+        # declara como garantía"; "si no declara factura o garantía no
+        # avanza, o NVV -- claro, pero debe declarar ALGO").
+        #
+        # Hasta hoy bastaba el NÚMERO del documento. Con datos reales de
+        # septiembre, tres OT cerradas tenían su factura declarada
+        # (FCV 11382, FCV 11231, BLV 23375) y ninguna decía cuánto se
+        # cobró: $1.046.000 pagados a proveedores contra un ingreso que no
+        # consta en ninguna parte. El documento identifica; la valorización
+        # es la que permite saber si el trabajo dejó o no margen.
+        #
+        # La garantía sigue siendo lo único que anula esta exigencia -- ahí
+        # no se cobra a propósito, y su motivo ya se pide más arriba.
+        #
+        # Esto NO congela nada: la declaración es reversible hasta el
+        # cierre (ver `cobertura` en _puede_ot_accion), así que se puede
+        # corregir antes de firmar tantas veces como haga falta.
+        #
+        # Se exige SOLO si quien llama trajo el dato. Varias consultas de
+        # este archivo arman `v` con una lista corta de columnas, y el
+        # monitor evita los montos a propósito: sin esta guarda, un caller
+        # sin `zz_monto` haría fallar el gate SIEMPRE y trabaría todas las
+        # firmas en producción. Quien no puede ver montos manda el
+        # booleano `_fin_valorizada` ya calculado en SQL.
+        _valorizada = None
+        if "_fin_valorizada" in v:
+            _valorizada = bool(v.get("_fin_valorizada"))
+        elif ("zz_monto" in v) or ("zz_envio_monto" in v):
+            try:
+                _valorizada = (float(v.get("zz_monto") or 0)
+                               + float(v.get("zz_envio_monto") or 0)) > 0
+            except (TypeError, ValueError):
+                _valorizada = False
+        if _valorizada is False:
+            faltan.append("cuánto se cobra por el servicio "
+                          "(la línea del documento, o declarado a mano con su motivo)")
+
     return (not faltan), faltan
 
 
@@ -79169,7 +79206,7 @@ def ot2_api_finanzas(vid):
     """
     v = mysql_fetchone(
         "SELECT id, numero_ot, tipo, costo, costo_proveedor, costo_despacho, "
-        "       centro_costo, zz_codigo, zz_monto, "
+        "       centro_costo, zz_codigo, zz_monto, zz_envio_monto, "
         "       modalidad_cobro, cubierto_por, garantia_motivo, "
         "       factura_tido, factura_nudo, "
         "       estado_facturacion, finanzas_at, finanzas_por "
@@ -79308,7 +79345,9 @@ def ot2_api_finanzas(vid):
 
     v2 = mysql_fetchone(
         "SELECT centro_costo, modalidad_cobro, garantia_motivo, "
-        "       factura_tido, factura_nudo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        "       factura_tido, factura_nudo, zz_monto, zz_envio_monto, "
+        "       cubierto_por, tipo, costo "
+        "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
     ok, faltan = _ot2_finanzas_estado(v2)
     return jsonify({"ok": True, "completa": ok, "faltan": faltan,
                     "estado_facturacion": estado_fact})
@@ -81928,6 +81967,11 @@ _OT_TV_SELECT = (
     # se expone cuando incluir_finanzas=True (ver bloque más abajo).
     "       v.centro_costo, v.modalidad_cobro, v.cubierto_por, "
     "       v.factura_tido, v.factura_nudo, v.garantia_motivo, "
+    # 2026-09-06: la valorizacion entra como BOOLEANO, calculado en SQL.
+    # El gate necesita saber si la OT esta valorizada, pero esta pantalla
+    # evita los montos a proposito (ver el comentario de arriba): mandar
+    # zz_monto aca seria filtrar plata a un tablero que se proyecta.
+    "       (COALESCE(v.zz_monto,0) + COALESCE(v.zz_envio_monto,0) > 0) AS _fin_valorizada, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, "
     # 🔴 FIX 2026-08-27 (hallazgo de la verificación): antes esto era solo
