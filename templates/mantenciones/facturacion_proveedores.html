@@ -92,7 +92,7 @@
 
 <div class="fp-sec">Detalle por orden de trabajo</div>
 <div class="table-responsive">
-  <table class="fp-tabla">
+  <table class="fp-tabla" id="fpDetalle">
     <thead>
       <tr>
         <th>OT</th><th>Proveedor</th><th>Cliente</th><th>Servicio</th>
@@ -122,6 +122,61 @@
     </tbody>
   </table>
 </div>
+
+<div class="fp-pag" id="fpPag" hidden>
+  <div class="fp-pag-info" id="fpPagInfo"></div>
+  <div class="fp-pag-ctl">
+    <label>Por página
+      <select id="fpPagSize" onchange="fpPaginar(1)">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="0">Todas</option>
+      </select>
+    </label>
+    <button type="button" class="fp-pag-btn" id="fpPagPrev" onclick="fpPaginar(fpPagActual - 1)">
+      <i class="bi bi-chevron-left"></i>Anterior</button>
+    <span class="fp-pag-num" id="fpPagNum"></span>
+    <button type="button" class="fp-pag-btn" id="fpPagNext" onclick="fpPaginar(fpPagActual + 1)">
+      Siguiente<i class="bi bi-chevron-right"></i></button>
+  </div>
+</div>
+
+<script>
+/* Paginación del detalle por OT (REGLA #4.3: la tabla se contiene en la
+   pantalla, no se recorre con scroll). Las filas ya están en el DOM -- el
+   mes entero vino en una sola consulta -- así que acá solo se decide cuáles
+   se muestran. */
+var fpPagActual = 1;
+function fpPaginar(pag){
+  var filas = Array.prototype.slice.call(
+    document.querySelectorAll('#fpDetalle tbody tr'));
+  var total = filas.length;
+  var pie = document.getElementById('fpPag');
+  if (!total){ if (pie) pie.hidden = true; return; }
+
+  var tam = parseInt(document.getElementById('fpPagSize').value, 10) || 0;
+  if (tam <= 0) tam = total;                       // "Todas"
+  var paginas = Math.max(1, Math.ceil(total / tam));
+  pag = Math.min(Math.max(1, pag || 1), paginas);
+  fpPagActual = pag;
+
+  var desde = (pag - 1) * tam;
+  var hasta = Math.min(desde + tam, total);
+  filas.forEach(function(tr, i){
+    tr.style.display = (i >= desde && i < hasta) ? '' : 'none';
+  });
+
+  document.getElementById('fpPagInfo').textContent =
+    'Mostrando ' + (desde + 1) + '–' + hasta + ' de ' + total + ' órdenes de trabajo';
+  document.getElementById('fpPagNum').textContent = 'Página ' + pag + ' de ' + paginas;
+  document.getElementById('fpPagPrev').disabled = (pag <= 1);
+  document.getElementById('fpPagNext').disabled = (pag >= paginas);
+  /* Con una sola página el pie no aporta nada: se esconde. */
+  pie.hidden = (paginas <= 1 && total <= 25);
+}
+document.addEventListener('DOMContentLoaded', function(){ fpPaginar(1); });
+</script>
 {% endif %}
 
 <style>
@@ -160,6 +215,20 @@
   background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;padding:2px 6px;white-space:nowrap}
 .fp-sindoc{font-size:.7rem;font-weight:800;color:#92400e;background:#fff8e1;
   border:1px solid #fde68a;border-radius:999px;padding:2px 8px}
+.fp-pag{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;
+  gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb}
+.fp-pag-info{font-size:.78rem;color:#64748b;font-weight:600}
+.fp-pag-ctl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fp-pag-ctl label{font-size:.75rem;color:#64748b;font-weight:700;display:flex;
+  align-items:center;gap:5px;margin:0}
+.fp-pag-ctl select{font-size:.78rem;padding:5px 8px;border:1px solid #d1d5db;
+  border-radius:7px;background:#fff;color:#0f172a;min-height:34px}
+.fp-pag-num{font-size:.78rem;font-weight:800;color:#0f172a;min-width:104px;text-align:center}
+.fp-pag-btn{display:inline-flex;align-items:center;gap:4px;font-size:.76rem;font-weight:800;
+  padding:6px 11px;border-radius:7px;border:1px solid #d1d5db;background:#fff;color:#374151;
+  min-height:34px;cursor:pointer}
+.fp-pag-btn:hover:not(:disabled){background:#f8fafc;color:#0f172a}
+.fp-pag-btn:disabled{opacity:.45;cursor:default}
 .fp-vacio{display:flex;gap:12px;align-items:flex-start;background:#f8fafc;
   border:1px solid #e2e8f0;border-radius:12px;padding:18px;color:#0f172a;font-size:.9rem}
 .fp-vacio > i{font-size:1.5rem;color:#94a3b8}
