@@ -3599,56 +3599,51 @@ window.OT2C = (function(){
     return '';
   }
 
-  function pintarListaEquipos(){
-    var c = document.getElementById('o2mEqList'); if(!c) return;
-    var equiposVista = _o2mEquiposVista();
-    var esVistaFuente = equiposVista !== cacheEquipos;
-    if (!equiposVista.length){
-      c.innerHTML = '<div class="o2m-aviso">'+
-        (esVistaFuente
-          ? 'Los productos de la fuente todavía se están agregando a la ficha del cliente — un momento…'
-          : 'Este cliente no tiene equipos en su ficha. Un levantamiento por descubrimiento sirve justo para eso.')+
-        '</div>'; return;
-    }
-    var totalMarcados = equiposVista.filter(function(m){
+  /* ── Actualizacion quirurgica de la tabla de equipos ───────────────
+     2026-09-06 (Daniel, viendo el Paso 7 en vivo: "la tabla se sigue
+     actualizando cuando cambio algo" y antes "cuando hago cambios en la
+     tabla se reinicia y pierdo el producto").
+
+     Marcar un equipo o elegir su checklist NO cambia QUE equipos se ven
+     -- `_o2mEquiposVista()` depende del modo y del plan, no de lo que
+     este marcado. Repintar la tabla entera solo servia para mandar el
+     scroll al principio y hacerle perder de vista el equipo en el que
+     estaba trabajando. Se sigue el mismo camino que ya se abrio el
+     30-08 para los combos (_o2mActualizarSugerenciaFila): tocar la fila,
+     no la tabla. */
+  function _o2mRefrescarFilaEquipo(mid){
+    var tr = document.getElementById('o2mEqRow-'+mid);
+    var m = cacheEquipos.find(function(x){ return x.id===mid; });
+    if (!tr || !m){ pintarListaEquipos(); return; }   // sin fila, repinta como antes
+    tr.outerHTML = _o2mFilaEquipoHTML(m);
+  }
+  /* La cabecera SI depende de lo marcado: el boton "Marcar/Desmarcar
+     todos" y el aviso de "N fuera del plan marcados". */
+  function _o2mRefrescarBarraEq(){
+    var vista = _o2mEquiposVista();
+    var marcados = vista.filter(function(m){
       return S.equipos.some(function(e){ return e.maquina_id===m.id; });
     }).length;
-    var todosMarcados = totalMarcados > 0 && totalMarcados === equiposVista.length;
-    var rutTxt = (S.cliente && S.cliente.rut) ? esc(S.cliente.rut) : '';
+    var todos = marcados > 0 && marcados === vista.length;
+    var btn = document.querySelector('.o2m-eq-btn-todos');
+    if (btn) btn.innerHTML = todos
+      ? '<i class="bi bi-square me-1"></i>Desmarcar todos'
+      : '<i class="bi bi-check2-square me-1"></i>Marcar todos';
+    var barra = document.getElementById('o2mEqBarraPlan');
+    if (barra) barra.innerHTML = _o2mBarraPlan();
+  }
 
-    c.innerHTML =
-      '<div class="o2m-eq-card">'+
-        '<div class="o2m-eq-toolbar">'+
-          '<div class="o2m-eq-toolbar-txt">'+
-            '<i class="bi bi-info-circle me-1"></i>'+
-            (esVistaFuente ? 'Productos de esta cotización/ticket/documento' : 'Equipos de la ficha del cliente')+
-            (rutTxt ? ' · <span class="o2m-eq-rut">RUT '+rutTxt+'</span>' : '')+
-            '. Marca los que el técnico debe atender — cada uno puede tener su propia plantilla.'+
-          '</div>'+
-          '<button type="button" class="btn btn-sm btn-outline-dark o2m-eq-btn-todos" '+
-          'style="min-height:44px" onclick="OT2C.eqTogTodos()">'+
-          (todosMarcados
-            ? '<i class="bi bi-square me-1"></i>Desmarcar todos'
-            : '<i class="bi bi-check2-square me-1"></i>Marcar todos')+
-          '</button>'+
-          _o2mBarraPlan()+
-        '</div>'+
-        '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
-          '<th class="chk"></th><th class="doc">Documento</th>'+
-          '<th>Producto</th><th class="cant">Cant.</th>'+
-          (_o2mPlanAplica() ? '<th class="plan">Plan</th>' : '')+
-          '<th>Plantillas extra'+
-            (cachePlantCategoria ? ' <span class="o2m-eq-cat">'+esc(_O2M_CATEGORIA_LABEL[cachePlantCategoria]||cachePlantCategoria)+'</span>' : '')+
-          '</th>'+
-        '</tr></thead><tbody>'+
-        equiposVista.map(function(m){
+  /* HTML de UNA fila de la tabla de equipos. Vive aparte para que
+     marcar un equipo o elegir un checklist puedan actualizar SOLO su
+     fila, en vez de repintar la tabla entera. */
+  function _o2mFilaEquipoHTML(m){
           var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
           var cls = sel ? (sel.plantilla_id ? 'ok' : 'sel') : '';
           var enPlan = !!m.aplica_mantencion;
           var _lin = _o2mLineaDeSku(m.sku);
           var _docTxt = _o2mDocDeLinea(_lin);
           var _cant = (_lin && _lin.qty) ? _lin.qty : '';
-          return '<tr class="'+cls+'">'+
+          return '<tr id="o2mEqRow-'+m.id+'" class="'+cls+'">'+
             '<td class="chk"><span class="o2m-chk'+(sel?' on':'')+'" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
               (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span></td>'+
             // Documento de origen: la trazabilidad que Daniel pide en los
@@ -3685,7 +3680,55 @@ window.OT2C = (function(){
               : '<span class="muted"><i class="bi bi-lock-fill me-1"></i>marca el equipo</span>')+
             '</td>'+
           '</tr>';
-        }).join('')+
+  }
+
+  function pintarListaEquipos(){
+    var c = document.getElementById('o2mEqList'); if(!c) return;
+    // Los repintados que quedan (cambiar de modo, tocar el plan) si mueven
+    // la lista, pero no tienen por que mandar el scroll al principio.
+    var _wrapPrev = c.querySelector('.o2m-eq-tablewrap');
+    var _scrollPrev = _wrapPrev ? _wrapPrev.scrollTop : 0;
+    var equiposVista = _o2mEquiposVista();
+    var esVistaFuente = equiposVista !== cacheEquipos;
+    if (!equiposVista.length){
+      c.innerHTML = '<div class="o2m-aviso">'+
+        (esVistaFuente
+          ? 'Los productos de la fuente todavía se están agregando a la ficha del cliente — un momento…'
+          : 'Este cliente no tiene equipos en su ficha. Un levantamiento por descubrimiento sirve justo para eso.')+
+        '</div>'; return;
+    }
+    var totalMarcados = equiposVista.filter(function(m){
+      return S.equipos.some(function(e){ return e.maquina_id===m.id; });
+    }).length;
+    var todosMarcados = totalMarcados > 0 && totalMarcados === equiposVista.length;
+    var rutTxt = (S.cliente && S.cliente.rut) ? esc(S.cliente.rut) : '';
+
+    c.innerHTML =
+      '<div class="o2m-eq-card">'+
+        '<div class="o2m-eq-toolbar">'+
+          '<div class="o2m-eq-toolbar-txt">'+
+            '<i class="bi bi-info-circle me-1"></i>'+
+            (esVistaFuente ? 'Productos de esta cotización/ticket/documento' : 'Equipos de la ficha del cliente')+
+            (rutTxt ? ' · <span class="o2m-eq-rut">RUT '+rutTxt+'</span>' : '')+
+            '. Marca los que el técnico debe atender — cada uno puede tener su propia plantilla.'+
+          '</div>'+
+          '<button type="button" class="btn btn-sm btn-outline-dark o2m-eq-btn-todos" '+
+          'style="min-height:44px" onclick="OT2C.eqTogTodos()">'+
+          (todosMarcados
+            ? '<i class="bi bi-square me-1"></i>Desmarcar todos'
+            : '<i class="bi bi-check2-square me-1"></i>Marcar todos')+
+          '</button>'+
+          '<span id="o2mEqBarraPlan">'+_o2mBarraPlan()+'</span>'+
+        '</div>'+
+        '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
+          '<th class="chk"></th><th class="doc">Documento</th>'+
+          '<th>Producto</th><th class="cant">Cant.</th>'+
+          (_o2mPlanAplica() ? '<th class="plan">Plan</th>' : '')+
+          '<th>Plantillas extra'+
+            (cachePlantCategoria ? ' <span class="o2m-eq-cat">'+esc(_O2M_CATEGORIA_LABEL[cachePlantCategoria]||cachePlantCategoria)+'</span>' : '')+
+          '</th>'+
+        '</tr></thead><tbody>'+
+        equiposVista.map(_o2mFilaEquipoHTML).join('')+
         '</tbody></table></div>'+
         // 2026-09-06 (Daniel: "eso aparece en las instalaciones, donde no
         // existe plan; lo puedes sacar solo al elegir instalación"). El
@@ -3708,6 +3751,12 @@ window.OT2C = (function(){
         if (sels[i].getAttribute('onchange').indexOf('('+e.maquina_id+',')>=0) sels[i].value = e.plantilla_id;
       }
     });
+    // Devolver la lista a donde estaba: repintar no es motivo para
+    // hacerle perder de vista el equipo que estaba mirando.
+    if (_scrollPrev){
+      var _wrapNew = c.querySelector('.o2m-eq-tablewrap');
+      if (_wrapNew) _wrapNew.scrollTop = _scrollPrev;
+    }
   }
 
   /* 2026-08-30 (Daniel, dictado en vivo probando el wizard -- verbatim):
@@ -6004,7 +6053,8 @@ window.OT2C = (function(){
       S.equipos.push({maquina_id:mid, plantilla_id:null, plantilla_sugerida:false});
       sugerirPlantillaEquipo(mid);
     }
-    pintarListaEquipos(); refrescarAnclas();
+    // Solo cambia ESTA fila: marcar un equipo no altera cuales se muestran.
+    _o2mRefrescarFilaEquipo(mid); _o2mRefrescarBarraEq(); refrescarAnclas();
     // El estimado de Finanzas depende del SET de equipos -- se recalcula
     // cada vez que cambia (la sección ya está en el DOM, ver pintarFormulario).
     _o2mFinEstimar();
@@ -6080,7 +6130,8 @@ window.OT2C = (function(){
   function eqPlant(mid, pid){
     var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
     if (e){ e.plantilla_id = pid ? parseInt(pid) : null; e.plantilla_sugerida = false; }
-    pintarListaEquipos(); refrescarAnclas();
+    // Elegir el checklist tampoco mueve la lista: se actualiza su fila.
+    _o2mRefrescarFilaEquipo(mid); _o2mRefrescarBarraEq(); refrescarAnclas();
   }
 
   /* ── Auto-sugerencia de checklist por clasificación real del equipo
