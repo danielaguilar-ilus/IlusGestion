@@ -5608,7 +5608,9 @@ window.OT2C = (function(){
     // Mismo camino que elegir el cliente a mano: setCli() setea S.cliente y
     // entra al formulario único. header.rut es el RUT que trajo la propia
     // fuente -- ya está a mano, no hace falta otra llamada.
-    setCli(r.cliente.id, r.cliente.razon_social, header.rut);
+    // conservarDocs: las lineas del documento ya se cargaron arriba y son
+    // justamente las de ESTE cliente -- no hay nada que soltar.
+    setCli(r.cliente.id, r.cliente.razon_social, header.rut, {conservarDocs:true});
   }
 
   async function _o2mDocumentoSeleccionado(items, header){
@@ -6286,12 +6288,39 @@ window.OT2C = (function(){
      encontró la ficha; _o2mDocumentoSeleccionado: header.rut del documento
      ERP). Si algún caller futuro no lo tiene a mano, queda undefined y
      simplemente no se muestra -- no rompe nada. */
-  function setCli(id, nombre, rut){
+  /* `opts.conservarDocs` lo usa SOLO el camino que resuelve el cliente A
+     PARTIR de un documento (_o2mResolverClienteYEquipos): ahi las lineas
+     del documento se cargan ANTES de llamar aca, y limpiarlas seria borrar
+     justo lo que se acaba de traer. */
+  function setCli(id, nombre, rut, opts){
+    var _idAntes = S.cliente && S.cliente.id;
+    var _cambioDeCliente = !!(_idAntes && _idAntes !== id);
     S.cliente = {id:id, nombre:nombre, rut: rut || ''};
     S.equipos = [];
     // El modo vuelve a su default en cada OT nueva: cambiarlo es una
     // decision de ESA OT, no una preferencia que se quede pegada.
     _o2mModoEq = 'todos';
+
+    /* 🔴 2026-09-06: al cambiar de cliente, las lineas del documento del
+       cliente ANTERIOR se quedaban pegadas. Como la firma de
+       `altaAutoFaltantesCtx` es cliente.id + SKUs, cambiar de cliente la
+       hacia distinta y disparaba el alta automatica: se CREABAN en la
+       ficha del cliente nuevo los productos de un documento que no es
+       suyo, con su doc_origen ajeno. Escritura permanente, sin preguntar.
+       Al cambiar de cliente esos documentos se sueltan, y se avisa --
+       nada se borra en silencio (REGLA #4.2). */
+    if (_cambioDeCliente && !(opts && opts.conservarDocs)){
+      var _habiaDocs = !!(S.doc_lineas && S.doc_lineas.length);
+      S.doc_lineas = [];
+      S.doc_origen = null;
+      altaAutoFaltantesCtx = null;
+      preseleccionEqCliente = null;
+      if (_habiaDocs && window.ilusToast){
+        ilusToast('Cambiaste de cliente: los productos del documento anterior se soltaron. '+
+                  'Vuelve a elegir el documento si corresponde a este cliente.',
+                  {type:'warning', duration:6000});
+      }
+    }
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
     repintarSeccion('equipos');
