@@ -52,6 +52,29 @@
 </div>
 {% else %}
 
+{#- Primero el negocio: cuánto entra, cuánto sale y qué queda. El
+    desglose por servicio va debajo, que es el detalle. -#}
+<div class="fp-kpis fp-kpis-top">
+  <div class="fp-kpi"><span class="k">Cobrado al cliente</span><span class="v">{{ clp(tot.cobrado) }}</span></div>
+  <div class="fp-kpi"><span class="k">Pagado a proveedores</span><span class="v">{{ clp(tot.total) }}</span></div>
+  <div class="fp-kpi {{ 'neg' if tot.margen < 0 else 'pos' }}">
+    <span class="k">Margen{% if tot.margen_pct is not none %} · {{ '%.1f'|format(tot.margen_pct) }}%{% endif %}</span>
+    <span class="v">{{ clp(tot.margen) }}</span>
+  </div>
+</div>
+
+{% if tot.n_sin_cobro %}
+<div class="fp-aviso">
+  <i class="bi bi-exclamation-triangle-fill"></i>
+  <div><b>{{ tot.n_sin_cobro }} OT sin cobro declarado.</b>
+    Tienen costo de proveedor pero nada cobrado al cliente, así que el margen de arriba
+    está incompleto — no es que se haya perdido esa plata, es que falta el dato.
+    Están marcadas abajo.
+    {% if tot.n_garantia %}<span>Las {{ tot.n_garantia }} de garantía sí van con cobro cero a propósito y no se cuentan acá.</span>{% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="fp-kpis">
   <div class="fp-kpi"><span class="k">Instalación</span><span class="v">{{ clp(tot.instalacion) }}</span></div>
   <div class="fp-kpi"><span class="k">Mantención</span><span class="v">{{ clp(tot.mantencion) }}</span></div>
@@ -68,7 +91,8 @@
         <th>Proveedor</th><th class="n">OT</th>
         <th class="m">Instalación</th><th class="m">Mantención</th>
         {% if tot.otros %}<th class="m">Otros</th>{% endif %}
-        <th class="m">Despacho</th><th class="m">Total</th>
+        <th class="m">Despacho</th><th class="m">Pagado</th>
+        <th class="m">Cobrado</th><th class="m">Margen</th>
       </tr>
     </thead>
     <tbody>
@@ -84,6 +108,10 @@
         {% if tot.otros %}<td class="m">{{ clp(p.otros) if p.otros else '—' }}</td>{% endif %}
         <td class="m">{{ clp(p.despacho) if p.despacho else '—' }}</td>
         <td class="m tot">{{ clp(p.total) }}</td>
+        <td class="m">{{ clp(p.cobrado) if p.cobrado else '—' }}
+          {% if p.n_sin_cobro %}<div class="fp-sub">{{ p.n_sin_cobro }} sin declarar</div>{% endif %}</td>
+        <td class="m"><span class="fp-margen {{ 'neg' if p.margen < 0 else 'pos' }}">{{ clp(p.margen) }}</span>
+          {% if p.margen_pct is not none %}<div class="fp-sub">{{ '%.1f'|format(p.margen_pct) }}%</div>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -97,7 +125,8 @@
       <tr>
         <th>OT</th><th>Proveedor</th><th>Cliente</th><th>Servicio</th>
         <th>Documento del cliente</th>
-        <th class="m">Servicio</th><th class="m">Despacho</th><th class="m">Total</th>
+        <th class="m">Servicio</th><th class="m">Despacho</th><th class="m">Pagado</th>
+        <th class="m">Cobrado</th><th class="m">Margen</th>
       </tr>
     </thead>
     <tbody>
@@ -117,6 +146,24 @@
         <td class="m">{{ clp(d.servicio) if d.servicio else '—' }}</td>
         <td class="m">{{ clp(d.despacho) if d.despacho else '—' }}</td>
         <td class="m tot">{{ clp(d.total) }}</td>
+        <td class="m">
+          {%- if d.sin_cobro %}<span class="fp-sindoc">Sin declarar</span>
+          {%- elif d.garantia and not d.cobrado %}<span class="fp-gar">Garantía</span>
+          {%- else %}{{ clp(d.cobrado) }}
+            {# Se muestra de dónde salió: la línea ZZ del documento es el dato
+               bueno; el monto genérico de la OT es un respaldo y conviene
+               que se note cuál se está mirando. #}
+            {% if d.fuente_cobro == 'zz' and d.cobrado_envio %}
+              <div class="fp-sub">servicio {{ clp(d.cobrado_servicio) }} · envío {{ clp(d.cobrado_envio) }}</div>
+            {% elif d.fuente_cobro == 'costo' %}
+              <div class="fp-sub">monto genérico</div>
+            {% endif %}
+          {%- endif %}
+        </td>
+        <td class="m">
+          {%- if d.sin_cobro %}<span class="muted">—</span>
+          {%- else %}<span class="fp-margen {{ 'neg' if d.margen < 0 else 'pos' }}">{{ clp(d.margen) }}</span>{% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -229,6 +276,23 @@ document.addEventListener('DOMContentLoaded', function(){ fpPaginar(1); });
   min-height:34px;cursor:pointer}
 .fp-pag-btn:hover:not(:disabled){background:#f8fafc;color:#0f172a}
 .fp-pag-btn:disabled{opacity:.45;cursor:default}
+.fp-kpis-top .fp-kpi{border-left:4px solid #cbd5e1}
+.fp-kpis-top .fp-kpi:first-child{border-left-color:#16a34a}
+.fp-kpis-top .fp-kpi:nth-child(2){border-left-color:#dc2626}
+.fp-kpi.pos{border-left-color:#16a34a}
+.fp-kpi.pos .v{color:#15803d}
+.fp-kpi.neg{border-left-color:#dc2626}
+.fp-kpi.neg .v{color:#b91c1c}
+.fp-margen{font-weight:900}
+.fp-margen.pos{color:#15803d}
+.fp-margen.neg{color:#b91c1c}
+.fp-gar{font-size:.7rem;font-weight:800;color:#1e40af;background:#dbeafe;
+  border:1px solid #bfdbfe;border-radius:999px;padding:2px 8px}
+.fp-aviso{display:flex;gap:10px;align-items:flex-start;background:#fff8e1;
+  border:1px solid #fde68a;border-radius:10px;padding:11px 14px;margin-bottom:16px;
+  font-size:.83rem;color:#0f172a}
+.fp-aviso > i{color:#f59e0b;font-size:1.05rem}
+.fp-aviso span{display:block;margin-top:3px;color:#64748b;font-size:.78rem}
 .fp-vacio{display:flex;gap:12px;align-items:flex-start;background:#f8fafc;
   border:1px solid #e2e8f0;border-radius:12px;padding:18px;color:#0f172a;font-size:.9rem}
 .fp-vacio > i{font-size:1.5rem;color:#94a3b8}

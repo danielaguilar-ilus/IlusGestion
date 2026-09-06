@@ -100207,6 +100207,7 @@ def _facprov_datos(desde, hasta):
     filas = mysql_fetchall(
         "SELECT v.id, v.numero_ot, v.tipo, v.cerrada_at, "
         "       v.costo_proveedor, v.costo_despacho, v.costo, "
+        "       v.zz_monto, v.zz_envio_monto, "
         "       v.factura_tido, v.factura_nudo, v.modalidad_cobro, "
         "       v.proveedor_nombre, v.tecnico_user_id, "
         "       c.razon_social AS cliente, "
@@ -100234,6 +100235,29 @@ def _facprov_datos(desde, hasta):
         serv = float(f.get("costo_proveedor") or 0)
         desp = float(f.get("costo_despacho") or 0)
 
+        # Lo que se le COBRA al cliente. La fuente correcta son las lineas
+        # ZZ del documento: `zz_monto` es el servicio (ZZINSTALACION /
+        # ZZMANTENCION) y `zz_envio_monto` el transporte (ZZENVIO), y el
+        # propio esquema advierte que nunca se mezclan con costo_proveedor
+        # / costo_despacho porque tienen "signo contrario en el margen".
+        #
+        # `costo` queda solo como respaldo: es una columna generica que el
+        # codigo tambien reusa para valorizar trabajo interno que NO se
+        # cobra, asi que apoyar el margen ahi daria un numero falso.
+        zz_serv = float(f.get("zz_monto") or 0)
+        zz_env = float(f.get("zz_envio_monto") or 0)
+        cobrado = zz_serv + zz_env
+        fuente_cobro = "zz"
+        if cobrado <= 0:
+            cobrado = float(f.get("costo") or 0)
+            fuente_cobro = "costo" if cobrado > 0 else ""
+        es_garantia = (f.get("modalidad_cobro") or "").lower() == "garantia"
+        pagado = serv + desp
+        margen = cobrado - pagado
+        # Una OT sin cobro declarado NO es margen negativo: es un dato que
+        # falta. Se cuentan aparte para que el total no mienta.
+        sin_cobro = (cobrado <= 0 and not es_garantia)
+
         # El costo del servicio se imputa al tipo de la OT; el despacho va
         # siempre a su propia bolsa aunque la OT sea de instalacion: son
         # proveedores y facturas distintas, y mezclarlos impide conciliar.
@@ -100248,11 +100272,18 @@ def _facprov_datos(desde, hasta):
             "nombre": nombre, "rut": f.get("prov_rut") or "",
             "instalacion": 0.0, "mantencion": 0.0, "otros": 0.0,
             "despacho": 0.0, "total": 0.0, "n_ot": 0,
+            "cobrado": 0.0, "margen": 0.0, "n_sin_cobro": 0, "n_garantia": 0,
         })
         pr[cat] += serv
         pr["despacho"] += desp
-        pr["total"] += serv + desp
+        pr["total"] += pagado
+        pr["cobrado"] += cobrado
+        pr["margen"] += margen
         pr["n_ot"] += 1
+        if sin_cobro:
+            pr["n_sin_cobro"] += 1
+        if es_garantia:
+            pr["n_garantia"] += 1
 
         _doc = ""
         if (f.get("factura_nudo") or "").strip():
@@ -100267,9 +100298,11 @@ def _facprov_datos(desde, hasta):
             "cliente": f.get("cliente") or "Trabajo interno",
             "tipo_label": _TIPO_OT_LABEL.get(tipo, (tipo or "-").replace("_", " ").title()),
             "categoria": cat,
-            "servicio": serv, "despacho": desp, "total": serv + desp,
+            "servicio": serv, "despacho": desp, "total": pagado,
             "documento": _doc,
-            "cobrado": float(f.get("costo") or 0),
+            "cobrado": cobrado, "cobrado_servicio": zz_serv, "cobrado_envio": zz_env,
+            "fuente_cobro": fuente_cobro, "margen": margen,
+            "garantia": es_garantia, "sin_cobro": sin_cobro,
             "cerrada": chile_fmt_filter(f.get("cerrada_at"), "%d/%m/%Y") if f.get("cerrada_at") else "",
         })
 
@@ -100281,7 +100314,16 @@ def _facprov_datos(desde, hasta):
         "despacho":    sum(x["despacho"] for x in lista),
         "total":       sum(x["total"] for x in lista),
         "n_ot":        sum(x["n_ot"] for x in lista),
+        "cobrado":     sum(x["cobrado"] for x in lista),
+        "margen":      sum(x["margen"] for x in lista),
+        "n_sin_cobro": sum(x["n_sin_cobro"] for x in lista),
+        "n_garantia":  sum(x["n_garantia"] for x in lista),
     }
+    # El porcentaje se calcula sobre lo cobrado, y solo si hay algo cobrado:
+    # dividir por cero para mostrar un 0% seria inventar un dato.
+    tot["margen_pct"] = (tot["margen"] / tot["cobrado"] * 100.0) if tot["cobrado"] > 0 else None
+    for x in lista:
+        x["margen_pct"] = (x["margen"] / x["cobrado"] * 100.0) if x["cobrado"] > 0 else None
     return lista, detalle, tot
 
 
@@ -100307,6 +100349,25 @@ def _facprov_periodo():
 
 
 @app.route("/mantenciones/facturacion-proveedores")
+@_mant_required
+def mant_facturacion_proveedores_legacy():
+    """La URL vieja. El modulo se llama Servicio Tecnico, no Mantenciones
+    (Daniel, 06-09-2026: "el endpoint debe ser de SSTT y no de
+    mantenciones"), asi que la direccion buena es /servicio-tecnico/... y
+    esta queda solo redirigiendo -- no se borra, para no romper un link
+    que alguien ya haya guardado o compartido."""
+    return redirect(url_for("mant_facturacion_proveedores",
+                            mes=(request.args.get("mes") or None)))
+
+
+@app.route("/mantenciones/facturacion-proveedores.xlsx")
+@_mant_required
+def mant_facturacion_proveedores_xlsx_legacy():
+    """Misma redireccion para la descarga."""
+    return redirect(url_for("mant_facturacion_proveedores_xlsx",
+                            mes=(request.args.get("mes") or None)))
+
+
 @app.route("/servicio-tecnico/facturacion-proveedores")
 @_mant_required
 @_no_tecnico
@@ -100322,7 +100383,6 @@ def mant_facturacion_proveedores():
                            desde=desde, hasta=hasta)
 
 
-@app.route("/mantenciones/facturacion-proveedores.xlsx")
 @app.route("/servicio-tecnico/facturacion-proveedores.xlsx")
 @_mant_required
 @_no_tecnico
@@ -100351,26 +100411,43 @@ def mant_facturacion_proveedores_xlsx():
     ws = wb.active
     ws.title = "Resumen"
     _encabezar(ws, ["Proveedor", "RUT", "OT", "Instalacion", "Mantencion",
-                    "Otros servicios", "Despacho", "Total pagado"])
+                    "Otros servicios", "Despacho", "Total pagado",
+                    "Cobrado al cliente", "Margen", "Margen %",
+                    "OT sin cobro declarado"])
     for x in provs:
         ws.append([x["nombre"], x["rut"], x["n_ot"], x["instalacion"],
-                   x["mantencion"], x["otros"], x["despacho"], x["total"]])
+                   x["mantencion"], x["otros"], x["despacho"], x["total"],
+                   x["cobrado"], x["margen"],
+                   (round(x["margen_pct"], 1) if x.get("margen_pct") is not None else ""),
+                   x["n_sin_cobro"]])
     ws.append(["TOTAL", "", tot["n_ot"], tot["instalacion"], tot["mantencion"],
-               tot["otros"], tot["despacho"], tot["total"]])
+               tot["otros"], tot["despacho"], tot["total"], tot["cobrado"],
+               tot["margen"],
+               (round(tot["margen_pct"], 1) if tot.get("margen_pct") is not None else ""),
+               tot["n_sin_cobro"]])
     for c in ws[ws.max_row]:
         c.font = Font(bold=True)
-    for col, anchura in zip("ABCDEFGH", (34, 14, 7, 14, 14, 15, 13, 15)):
+    for col, anchura in zip("ABCDEFGHIJKL",
+                            (34, 14, 7, 14, 14, 15, 13, 15, 18, 14, 10, 20)):
         ws.column_dimensions[col].width = anchura
 
     ws2 = wb.create_sheet("Detalle por OT")
     _encabezar(ws2, ["OT", "Cerrada", "Proveedor", "Cliente", "Servicio",
                      "Documento del cliente", "Costo servicio", "Costo despacho",
-                     "Total pagado", "Cobrado al cliente"])
+                     "Total pagado", "Cobrado servicio (ZZ)",
+                     "Cobrado envio (ZZENVIO)", "Cobrado total", "Margen",
+                     "Origen del cobro"])
     for d in detalle:
+        _origen = ("Lineas ZZ del documento" if d["fuente_cobro"] == "zz"
+                   else "Garantia (no se cobra)" if d["garantia"]
+                   else "Monto generico de la OT" if d["fuente_cobro"] == "costo"
+                   else "SIN COBRO DECLARADO")
         ws2.append([d["numero_ot"], d["cerrada"], d["proveedor"], d["cliente"],
                     d["tipo_label"], d["documento"], d["servicio"], d["despacho"],
-                    d["total"], d["cobrado"]])
-    for col, anchura in zip("ABCDEFGHIJ", (16, 11, 30, 30, 20, 20, 14, 14, 14, 16)):
+                    d["total"], d["cobrado_servicio"], d["cobrado_envio"],
+                    d["cobrado"], d["margen"], _origen])
+    for col, anchura in zip("ABCDEFGHIJKLMN",
+                            (16, 11, 30, 30, 20, 20, 14, 14, 14, 18, 20, 14, 14, 24)):
         ws2.column_dimensions[col].width = anchura
 
     buf = io.BytesIO()
