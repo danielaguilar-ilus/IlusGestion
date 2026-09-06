@@ -92570,7 +92570,7 @@ def _ot_pdf_hhmm(v):
 
 
 def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_cliente=None,
-                       usuarios=None):
+                       usuarios=None, anexo_completo=False):
     """Capa PROBATORIA del PDF de la OT.
 
     `usuarios`: {username_en_minúscula: {"id":…, "nombre":…}} resuelto por
@@ -93654,9 +93654,18 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False):
             print(f"[_ot_pdf_context][usuarios_pdf] vid={vid}: {_e_usr}", flush=True)
         ctx.update(_ot_pdf_probatorio(
             visita, equipos, tareas, tareas_chk, fotos, ctx.get("firmante_cliente"),
-            usuarios=_usuarios_pdf))
+            usuarios=_usuarios_pdf, anexo_completo=anexo_completo))
     except Exception as _e_prob:
-        print(f"[_ot_pdf_context][probatorio] vid={vid}: {_e_prob}", flush=True)
+        # OJO: si esto se dispara, el PDF sale SIN anexo fotografico, sin
+        # hallazgos y sin conteos -- se ve bien pero es evidencia incompleta.
+        # Por eso el log grita, no susurra.
+        print(f"[_ot_pdf_context][probatorio] vid={vid}: EL PDF SALE SIN CAPA "
+              f"PROBATORIA (sin anexo de fotos ni hallazgos): {_e_prob}", flush=True)
+        try:
+            import traceback as _tb_prob
+            _tb_prob.print_exc()
+        except Exception:
+            pass
         ctx.update({
             "eq_tareas_rango": {}, "hallazgos": [], "hallazgos_err": 0, "hallazgos_warn": 0,
             "equipos_revisados_n": len(equipos), "equipos_sin_revisar": [],
@@ -100289,8 +100298,11 @@ def _facprov_periodo():
             raise ValueError
     except Exception:
         anio, mes = _hoy.year, _hoy.month
-    desde = date(anio, mes, 1)
-    hasta = date(anio + (1 if mes == 12 else 0), 1 if mes == 12 else mes + 1, 1)
+    # datetime, no date: app.py solo importa `datetime` (linea 12), y
+    # ademas `cerrada_at` es DATETIME -- comparar contra medianoche exacta
+    # es justo lo que se quiere para cortar el mes.
+    desde = datetime(anio, mes, 1)
+    hasta = datetime(anio + (1 if mes == 12 else 0), 1 if mes == 12 else mes + 1, 1)
     return desde, hasta, "{:04d}-{:02d}".format(anio, mes)
 
 
