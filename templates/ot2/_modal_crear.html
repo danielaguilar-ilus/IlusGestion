@@ -958,6 +958,8 @@ window.OT2C = (function(){
          // Es cache de lectura: evita volver a preguntarle al ERP por
          // un documento que ya se consulto en esta misma OT.
          doc_zz:{},
+         // Cuantos documentos se leyeron para sumar las lineas ZZ.
+         fin_zz_docs_n:0,
          // 2026-08-30 (Daniel, trazabilidad "bajo qué OT"): ids de
          // mant_maquinas creados POR ESTE WIZARD vía alta automática (ver
          // _o2mAltaAutoFaltantes) -- viajan en crear() para que
@@ -3595,6 +3597,7 @@ window.OT2C = (function(){
     var st = document.createElement('style');
     st.id = 'o2mEqModosCss';
     st.textContent =
+      '.o2m-fin-docsn{font-size:.76rem;color:#0f172a;background:#f1f5f9;border-radius:8px;padding:7px 10px;margin-bottom:8px}' +
       '.o2m-eqzz{margin-top:12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}' +
       '.o2m-eqzz > summary{cursor:pointer;padding:10px 12px;font-weight:800;font-size:.82rem;color:#0f172a}' +
       '.o2m-eqzz > summary span{font-weight:600;color:#64748b;font-size:.74rem;margin-left:6px}' +
@@ -4778,61 +4781,121 @@ window.OT2C = (function(){
      CUERPO de RUT que "Documentos asociados" (_o2mRutCuerpo, más abajo);
      solo avisa, NO bloquea (Daniel no lo pidió para este caso). */
   var _finZZSeq = 0;
+  /* Todos los documentos de esta OT, sin repetir: el de cobertura, el de
+     origen y los que se agregaron en el Paso 7. */
+  function _o2mFinDocsTodos(){
+    var out = [], vistos = {};
+    var push = function(d){
+      if (!d || !d.tido || !d.nudo) return;
+      var k = _o2mDocOrigenNorm(d.tido + d.nudo);
+      if (vistos[k]) return;
+      vistos[k] = 1;
+      out.push({tido: d.tido, nudo: d.nudo});
+    };
+    push(S.fin_doc);
+    push(S.doc_origen);
+    (S.doc_extra || []).forEach(push);
+    return out;
+  }
+
+  /* ── LÍNEAS ZZ DE TODOS LOS DOCUMENTOS DE LA OT ─────────────────────
+     2026-09-06 (Daniel: "si dejaste tres facturas identificadas, que pueda
+     identificar también que hay tres documentos y que uno de ellos trae la
+     instalación, o puede traerla en varios; si en varios, hay que sumarla.
+     Y después nosotros declaramos a mano cuánto cobró el transporte en
+     instalación y en despachos, si es que se cobró").
+
+     Antes esto arrancaba con `if (!S.fin_doc) return;` -- miraba UN solo
+     documento. Con las tres facturas de una instalación real, la línea de
+     servicio podía estar en la segunda y el transporte en la tercera, y la
+     OT se declaraba con lo de la primera nomás.
+
+     Ahora se leen TODOS y se suma por código: si ZZINSTALACION aparece en
+     dos facturas, el monto del servicio es la suma, y se muestra de qué
+     documentos salió. El monto sigue siendo editable a mano con su motivo
+     obligatorio, exactamente igual que antes. */
   function _o2mFinCargarZZ(){
-    if (!S.fin_doc) return;
+    var docs = _o2mFinDocsTodos();
+    if (!docs.length) return;
     var seq = ++_finZZSeq;
     var c = document.getElementById('o2mFinZZ');
-    if (c) c.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Buscando líneas del documento…</div>';
-    fetch('/ot/api/lineas-zz/'+encodeURIComponent(S.fin_doc.tido)+'/'+encodeURIComponent(S.fin_doc.nudo)+
-          '?tipo_ot='+encodeURIComponent(S.tipo||''), {credentials:'same-origin'})
-      .then(function(r){ return r.json(); })
-      .then(function(j){
-        if (seq !== _finZZSeq) return;
-        S.fin_zz_lineas = (j && j.ok && Array.isArray(j.lineas_zz)) ? j.lineas_zz : [];
-        var envioLn = S.fin_zz_lineas.find(function(l){ return (l.sku||'').toUpperCase() === 'ZZENVIO'; });
-        S.fin_zz_envio = envioLn ? {sku: envioLn.sku, monto: envioLn.monto} : null;
-        // 2026-08-30 (Daniel: "el ZZ envío... pueda ser también editable"):
-        // se guarda el monto ORIGINAL del documento aparte del vigente --
-        // _pintarFinZZDom compara ambos para saber si el usuario lo tocó.
-        S.fin_zz_envio_original = envioLn ? envioLn.monto : null;
-        // Auto-elige la sugerida (o la única que haya, EXCLUYENDO siempre
-        // ZZENVIO) sin pisar una elección manual ya hecha por el usuario.
-        var sug = null;
-        if (!S.fin_zz_codigo && S.fin_zz_lineas.length){
-          var candidatas = S.fin_zz_lineas.filter(function(l){ return l !== envioLn; });
-          sug = S.fin_zz_lineas.find(function(l){ return l.sugerida; }) || candidatas[0] || null;
-          if (sug){
-            S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto;
-            S.fin_zz_monto_original = sug.monto;   // ver comentario de fin_zz_envio_original arriba
+    if (c) c.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>'+
+      'Buscando líneas en ' + docs.length + ' documento' + (docs.length===1?'':'s') + '…</div>';
+
+    Promise.all(docs.map(function(d){
+      var k = d.tido + ' ' + d.nudo;
+      // Reusa lo que el Paso 7 ya leyó: mismo documento, misma OT.
+      if (S.doc_zz && S.doc_zz[k]) return Promise.resolve({doc: d, lineas: S.doc_zz[k]});
+      return fetch('/ot/api/lineas-zz/'+encodeURIComponent(d.tido)+'/'+encodeURIComponent(d.nudo)+
+                   '?tipo_ot='+encodeURIComponent(S.tipo||''), {credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          var lns = (j && j.ok && Array.isArray(j.lineas_zz)) ? j.lineas_zz : [];
+          if (S.doc_zz) S.doc_zz[k] = lns;
+          return {doc: d, lineas: lns};
+        })
+        .catch(function(){ return {doc: d, lineas: []}; });
+    })).then(function(res){
+      if (seq !== _finZZSeq) return;
+
+      // Sumar por código, guardando de qué documento salió cada parte.
+      var porCodigo = {};
+      res.forEach(function(r){
+        (r.lineas || []).forEach(function(l){
+          var sku = (l.sku || '').toUpperCase();
+          if (!sku) return;
+          if (!porCodigo[sku]){
+            porCodigo[sku] = {sku: sku, descripcion: l.descripcion || '', monto: 0,
+                              sugerida: false, origenes: []};
           }
-        }
-        // ¿La línea de servicio real (la que corresponde al tipo de OT) se
-        // identificó de este documento? Puede venir recién elegida (sug) o
-        // ya estar elegida de antes (el usuario reabrió el paso).
-        var actual = sug || S.fin_zz_lineas.find(function(l){ return l.sku === S.fin_zz_codigo; });
-        var lineaServicioEncontrada = !!(actual && actual.sugerida);
-        var rutDoc = (S.fin_doc && S.fin_doc.rut) || '';
-        var rutCliente = (S.cliente && S.cliente.rut) || '';
-        var _difieraAntes = S.fin_doc_rut_difiere;
-        S.fin_doc_rut_difiere = !!(lineaServicioEncontrada && rutDoc && rutCliente &&
-          _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
-        // Toast solo en la TRANSICIÓN a "no coincide" -- el aviso ámbar de
-        // _pintarFinZZDom queda visible de forma permanente mientras dure,
-        // así que no hace falta repetir el toast cada vez que este paso se
-        // vuelve a pintar (ej. el usuario navega a otro paso y vuelve).
-        if (S.fin_doc_rut_difiere && !_difieraAntes && window.ilusToast){
-          ilusToast('⚠ El RUT del documento ('+esc(rutDoc)+') no coincide con el del cliente de esta OT.',
-            {type:'warning', duration:6000});
-        }
-        _pintarFinZZDom();
-        _pintarFinMargenDom();
-      })
-      .catch(function(){
-        if (seq !== _finZZSeq) return;
-        S.fin_zz_lineas = [];
-        _pintarFinZZDom();
+          porCodigo[sku].monto += (parseInt(l.monto, 10) || 0);
+          porCodigo[sku].sugerida = porCodigo[sku].sugerida || !!l.sugerida;
+          if (!porCodigo[sku].descripcion && l.descripcion) porCodigo[sku].descripcion = l.descripcion;
+          porCodigo[sku].origenes.push({tido: r.doc.tido, nudo: r.doc.nudo,
+                                        monto: parseInt(l.monto, 10) || 0});
+        });
       });
+      S.fin_zz_lineas = Object.keys(porCodigo).map(function(k){ return porCodigo[k]; })
+        .sort(function(a, b){ return (a.sugerida === b.sugerida) ? (b.monto - a.monto) : (a.sugerida ? -1 : 1); });
+      S.fin_zz_docs_n = docs.length;
+
+      var envioLn = S.fin_zz_lineas.filter(function(l){ return l.sku === 'ZZENVIO'; })[0];
+      S.fin_zz_envio = envioLn ? {sku: envioLn.sku, monto: envioLn.monto} : null;
+      S.fin_zz_envio_original = envioLn ? envioLn.monto : null;
+
+      // Auto-elige la sugerida (o la única que haya, EXCLUYENDO ZZENVIO)
+      // sin pisar una elección manual ya hecha por el usuario.
+      var sug = null;
+      if (!S.fin_zz_codigo && S.fin_zz_lineas.length){
+        var candidatas = S.fin_zz_lineas.filter(function(l){ return l !== envioLn; });
+        sug = candidatas.filter(function(l){ return l.sugerida; })[0] || candidatas[0] || null;
+        if (sug){
+          S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto;
+          S.fin_zz_monto_original = sug.monto;
+        }
+      } else if (S.fin_zz_codigo){
+        // El usuario ya habia elegido un codigo: si ahora hay mas
+        // documentos, su monto de referencia es la suma nueva.
+        var act = S.fin_zz_lineas.filter(function(l){ return l.sku === S.fin_zz_codigo; })[0];
+        if (act) S.fin_zz_monto_original = act.monto;
+      }
+
+      var actual = sug || S.fin_zz_lineas.filter(function(l){ return l.sku === S.fin_zz_codigo; })[0];
+      var lineaServicioEncontrada = !!(actual && actual.sugerida);
+      var rutDoc = (S.fin_doc && S.fin_doc.rut) || '';
+      var rutCliente = (S.cliente && S.cliente.rut) || '';
+      var _difieraAntes = S.fin_doc_rut_difiere;
+      S.fin_doc_rut_difiere = !!(lineaServicioEncontrada && rutDoc && rutCliente &&
+        _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
+      if (S.fin_doc_rut_difiere && !_difieraAntes && window.ilusToast){
+        ilusToast('⚠ El RUT de ese documento ('+esc(rutDoc)+') no coincide con el del cliente de esta OT.',
+          {type:'warning', duration:6000});
+      }
+      _pintarFinZZDom();
+      _pintarFinMargenDom();
+    });
   }
+
   /* 2026-08-30 (Daniel: "si la mantención o instalación no trae esto se
      podrá declarar a mano, pero deberá reportarse con un argumento... hay
      que ser bien riguroso y detallista con esto... el ZZ envío necesito
@@ -4878,23 +4941,42 @@ window.OT2C = (function(){
         'cliente de esta OT — revísalo antes de avanzar con la documentación.</div>'
       : '';
     // ── Línea de servicio (ZZINSTALACION/ZZMANTENCION) ──────────────────
+    // De cuántos documentos se está leyendo: con una sola factura no dice
+    // nada nuevo, con tres es justo el dato que hay que ver.
+    var _nDocs = S.fin_zz_docs_n || 1;
+    var cabeceraDocs = (_nDocs > 1)
+      ? '<div class="o2m-fin-docsn"><i class="bi bi-files me-1"></i>Leyendo las líneas de '+
+        _nDocs+' documentos de esta OT. Si un mismo cobro viene en varios, se suman.</div>'
+      : '';
     var servicioHtml = seleccionables.length
-      ? '<label class="fl">Línea de servicio del documento</label>'+
+      ? cabeceraDocs+'<label class="fl">Línea de servicio '+(_nDocs>1?'(sumada)':'del documento')+'</label>'+
         seleccionables.map(function(l){
           var sel = (S.fin_zz_codigo === l.sku);
           return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.setFinZZ(\''+l.sku+'\','+l.monto+')">'+
             '<span class="o2m-chk">'+(sel?'<i class="bi bi-check"></i>':'')+'</span>'+
             '<span style="flex:1"><span class="nm">'+esc(l.sku)+(l.sugerida?' · sugerida':'')+'</span>'+
-            '<span class="mt d-block">'+esc(l.descripcion||'')+'</span></span>'+
+            '<span class="mt d-block">'+esc(l.descripcion||'')+'</span>'+
+            // Cuando el mismo codigo viene de varios documentos, se dice de
+            // cuales y con cuanto -- si no, el total sumado seria un numero
+            // sin explicacion.
+            ((l.origenes && l.origenes.length > 1)
+              ? '<span class="mt d-block" style="color:#dc2626">'+
+                l.origenes.map(function(o){
+                  return esc(o.tido+' '+o.nudo)+' $'+Math.round(o.monto).toLocaleString('es-CL');
+                }).join(' + ')+'</span>'
+              : '')+
+            '</span>'+
             '<b>$'+Math.round(l.monto).toLocaleString('es-CL')+'</b></div>';
         }).join('')+
         '<label class="fl mt-2">Monto del servicio'+(_o2mFinEsManual()?' <span style="color:#dc2626">(editado a mano)</span>':'')+'</label>'+
         '<input type="text" inputmode="numeric" class="form-control" '+
         'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" placeholder="Monto del servicio" '+
         'oninput="OT2C._o2mFinMontoServicioCambio(this)">'
-      : '<label class="fl">'+(S.fin_zz_lineas.length
-          ? 'El documento solo trae la línea de transporte (ZZENVIO) — ingresa el valor del servicio a mano'
-          : 'El documento no trae líneas de servicio (ZZ…) — ingresa el valor del servicio a mano')+'</label>'+
+      : cabeceraDocs+'<label class="fl">'+(S.fin_zz_lineas.length
+          ? ((_nDocs>1?'Ninguno de los '+_nDocs+' documentos':'El documento')+
+             ' trae línea de servicio, solo transporte (ZZENVIO) — ingresa el valor del servicio a mano')
+          : ((_nDocs>1?'Ninguno de los '+_nDocs+' documentos trae':'El documento no trae')+
+             ' líneas de servicio (ZZ…) — ingresa el valor del servicio a mano'))+'</label>'+
         '<input type="text" inputmode="numeric" class="form-control" '+
         'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" placeholder="Valor del servicio" '+
         'oninput="OT2C._o2mFinMontoServicioCambio(this)">';
