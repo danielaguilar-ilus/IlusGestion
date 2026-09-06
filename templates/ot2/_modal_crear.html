@@ -4987,6 +4987,13 @@ window.OT2C = (function(){
       // se ignora si esa pestana no es la activa.
       tabs: ['cli', 'doc'],
       rutPrefill: (S.cliente.rut || ''),
+      // Los documentos que esta OT ya tiene se muestran marcados y
+      // bloqueados: no se agregan dos veces y se ve de una cuales faltan.
+      docsYaAgregados: (S.doc_extra || []).map(function(d){
+        return {tido: d.tido, nudo: d.nudo};
+      }).concat((S.doc_origen && S.doc_origen.tido)
+        ? [{tido: S.doc_origen.tido, nudo: S.doc_origen.nudo}] : []),
+      docsYaAgregadosLabel: 'Ya en esta OT',
       onSeleccionar: _o2mEqDocSeleccionado
     });
   }

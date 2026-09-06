@@ -199,6 +199,10 @@
   @media(prefers-reduced-motion:reduce){.tka-doc-card{animation:none;opacity:1;transform:none}}
   .tka-doc-card:hover{border-color:#9ca3af;box-shadow:var(--tka-shadow-soft-2)}
   .tka-doc-card.is-already{opacity:.55;background:#f9fafb}
+  .tka-doc-pick{display:flex;align-items:center;justify-content:center;padding:0 4px 0 0;margin:0;cursor:pointer}
+  .tka-doc-pick input{width:20px;height:20px;cursor:pointer;accent-color:#dc2626}
+  .tka-doc-pick input:disabled{cursor:default}
+  .tka-doc-card.is-picked{background:#fef2f2;border-color:#fecaca}
   .tka-doc-card.is-no-saldo{border-color:#fdba74;background:linear-gradient(180deg,#fff8e1 0%, #fff 80%)}
   .tka-doc-head{
     padding:14px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:12px;
@@ -1292,6 +1296,16 @@ function tkaOpen(opts){
     // ticket desde /tickets, etc.). Solo debe traer un querystring
     // (arranca con '?'), nunca datos de usuario sin validar.
     redirectQuery: (typeof opts.redirectQuery === 'string') ? opts.redirectQuery : '',
+    // 2026-09-06 (Daniel, agregando las facturas 11439/11440/11441 de Aurum
+    // a una OT: "quisiera que me identificara que el 11439 ya esta agregado
+    // y poder seleccionar los demas que tienen saldo... creale como un
+    // checklist"). Documentos que el llamador YA tiene en su destino (la
+    // OT que se esta armando, por ejemplo): se marcan y se bloquean para
+    // no agregarlos dos veces. Aditivo -- quien no lo pasa no cambia en
+    // nada, que importa porque este modal lo comparten 12 pantallas.
+    docsYaAgregados: Array.isArray(opts.docsYaAgregados) ? opts.docsYaAgregados : [],
+    docsYaAgregadosLabel: (typeof opts.docsYaAgregadosLabel === 'string' && opts.docsYaAgregadosLabel)
+      ? opts.docsYaAgregadosLabel : 'Ya agregado',
   };
   _tkaApplyTabsFilter();
   // Daniel 2026-07-12: "siempre recomiende el RUT del dueño de la ficha...
@@ -1868,7 +1882,7 @@ function _tkaPrewarmDocs(docs){
 function tkaRenderCliDocs(docs, modo, fetchMs){
   const cont = document.getElementById('tkaCliResult');
   const modoTxt = { rut: 'RUT', numero: 'N° doc', nombre: 'Nombre' }[modo] || modo;
-  const _conSaldo = docs.filter(d => d.tiene_saldo && !d.ya_asociado).length;
+  const _conSaldo = docs.filter(d => d.tiene_saldo && !d.ya_asociado && !_tkaYaAgregado(d)).length;
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;font-size:.82rem">
     <div><strong>${docs.length}</strong> documento${docs.length===1?'':'s'} por <strong>${_tkaEsc(modoTxt)}</strong></div>
     <span style="color:#9ca3af;font-size:.72rem">${fetchMs} ms</span>
@@ -1885,7 +1899,8 @@ function tkaRenderCliDocs(docs, modo, fetchMs){
   html += '<div class="tka-results">';
   docs.forEach((doc, i) => {
     const clsArr = [];
-    if (doc.ya_asociado) clsArr.push('is-already');
+    const _yaEnDestino = _tkaYaAgregado(doc);
+    if (doc.ya_asociado || _yaEnDestino) clsArr.push('is-already');
     if (!doc.tiene_saldo) clsArr.push('is-no-saldo');
     const fecha = doc.fecha || '';
     const total = doc.valor_total ? '$' + Math.round(doc.valor_total).toLocaleString('es-CL') : '—';
@@ -1893,13 +1908,23 @@ function tkaRenderCliDocs(docs, modo, fetchMs){
       ? '<span class="badge-pill ok"><i class="bi bi-check-circle"></i>Con saldo</span>'
       : '<span class="badge-pill warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>';
     let alreadyBadge = '';
-    if (doc.ya_asociado){
+    if (_yaEnDestino){
+      alreadyBadge = `<span class="badge-pill lock"><i class="bi bi-check2-circle"></i>${_tkaEsc(_TKA.ctx.docsYaAgregadosLabel)}</span>`;
+    } else if (doc.ya_asociado){
       alreadyBadge = doc.asociado_es_este_ticket
         ? '<span class="badge-pill lock"><i class="bi bi-check2-circle"></i>Ya en este ticket</span>'
         : `<span class="badge-pill lock"><i class="bi bi-shield-lock"></i>En ${_tkaEsc(doc.asociado_numero_ticket || 'otro ticket')}</span>`;
     }
     html += `<div class="tka-doc-card ${clsArr.join(' ')}" data-cli-idx="${i}" style="animation-delay:${i*40}ms">
       <div class="tka-doc-head" onclick="tkaToggleDocCli(${i})">
+        ${_yaEnDestino
+          ? `<label class="tka-doc-pick" title="Ya está en el destino" onclick="event.stopPropagation()">
+               <input type="checkbox" checked disabled></label>`
+          : (doc.tiene_saldo
+              ? `<label class="tka-doc-pick" title="Agregar todo este documento" onclick="event.stopPropagation()">
+                   <input type="checkbox" id="tkaDocPick-${i}" onchange="tkaTogDocEntero(${i}, this)"></label>`
+              : `<label class="tka-doc-pick" title="Sin saldo: se eligen sus líneas una por una" onclick="event.stopPropagation()">
+                   <input type="checkbox" disabled></label>`)}
         <div class="tka-doc-num">
           <span class="badge-tipo">${_tkaEsc(doc.tido_display)}</span>${_tkaEsc(doc.nudo_display)}
         </div>
@@ -2146,9 +2171,77 @@ async function tkaAsociarDocCompleto(idx){
 // "Asociar todos con saldo": puebla la selección con TODAS las líneas
 // con saldo de los documentos aún no asociados, y dispara el flujo normal
 // de asociación final (una sola vía de salida, sin duplicar lógica).
+/* ¿Este documento ya esta en el destino del llamador (la OT, el ticket)?
+   Se compara normalizado: el ERP escribe el numero con y sin ceros a la
+   izquierda segun el camino, y "FCV 11439" y "FCV-011439" son el mismo
+   papel. */
+function _tkaDocNorm(t, n){
+  return String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, '') + '|' +
+         String(n || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
+}
+function _tkaYaAgregado(doc){
+  const lista = (_TKA.ctx && _TKA.ctx.docsYaAgregados) || [];
+  if (!lista.length) return false;
+  const k = _tkaDocNorm(doc.tido_display, doc.nudo_display);
+  return lista.some(d => _tkaDocNorm(d.tido, d.nudo) === k);
+}
+
+/* Marca o desmarca TODAS las lineas con saldo de un documento, cargandolas
+   si hace falta. Es el cuerpo que ya usaba "Asociar los N con saldo",
+   extraido para que el checkbox por documento no lo duplique. */
+async function _tkaSelDocCompleto(doc, idxDoc, marcar){
+  if (!marcar){
+    // Quitar todo lo de ese documento de la seleccion.
+    const pref = 'CLI|' + idxDoc + '|';
+    Array.from(_TKA.selCli.keys()).forEach(k => { if (k.indexOf(pref) === 0) _TKA.selCli.delete(k); });
+    return 0;
+  }
+  let n = 0;
+  try{
+    const r = await fetch('/api/erp/documento', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+    });
+    const d = await r.json();
+    if (d.error) return 0;
+    const lineas = (d.lineas || []).filter(l => !l.es_zz);
+    lineas.forEach((l, j) => {
+      const saldo = _tkaSaldoLinea(l);
+      if (saldo <= 0) return;
+      const sku = (l.sku || '').toUpperCase();
+      const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
+      _TKA.selCli.set(`CLI|${idxDoc}|${sku}|${j}`, {
+        tido: doc.tido_display, nudo: doc.nudo_display,
+        sku, nombre: nom, qty: saldo, saldo, marcada_sin_saldo: false,
+      });
+      n++;
+    });
+  }catch(_){ /* un documento que falla no aborta el resto */ }
+  return n;
+}
+
+/* El checkbox de la tarjeta del documento (pestana por RUT). */
+async function tkaTogDocEntero(idx, el){
+  const docs = (_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [];
+  const doc = docs[idx];
+  if (!doc) return;
+  const marcar = !!(el && el.checked);
+  if (el) el.disabled = true;
+  const card = document.querySelector('.tka-doc-card[data-cli-idx="' + idx + '"]');
+  if (card) card.classList.toggle('is-picked', marcar);
+  const n = await _tkaSelDocCompleto(doc, idx, marcar);
+  if (el) el.disabled = false;
+  if (marcar && !n && window.ilusToast){
+    ilusToast('Ese documento no tiene líneas con saldo para agregar.', {type:'info'});
+    if (el) el.checked = false;
+    if (card) card.classList.remove('is-picked');
+  }
+  tkaUpdateCounter();
+}
+
 async function tkaAsociarTodasConSaldo(){
   const docs = (_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [];
-  const objetivo = docs.filter(d => d.tiene_saldo && !d.ya_asociado);
+  const objetivo = docs.filter(d => d.tiene_saldo && !d.ya_asociado && !_tkaYaAgregado(d));
   if (!objetivo.length){ ilusToast('No hay documentos con saldo para asociar.', { type:'info' }); return; }
   const ok = await ilusConfirm({
     title: 'Asociar documentos con saldo',
@@ -2184,6 +2277,9 @@ async function tkaAsociarTodasConSaldo(){
           sku, nombre: nom, qty: saldo, saldo, marcada_sin_saldo: false,
         });
       });
+      // Deja el checkbox del documento coherente con lo que acaba de pasar.
+      const _chk = document.getElementById('tkaDocPick-' + docs.indexOf(doc));
+      if (_chk) _chk.checked = true;
     }catch(_){ /* doc individual falla -- seguimos con el resto */ }
   }
   if (btn){ btn.disabled = false; btn.innerHTML = _orig; }
