@@ -27,7 +27,9 @@
   <div>
     <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>Facturación de proveedores</h1>
     <div class="text-muted" style="font-size:.86rem">
-      Lo que ILUS pagó a sus proveedores externos, por servicio prestado.
+      Lo que ILUS pagó a sus proveedores externos, contra lo que le cobró al cliente
+      <b>por ese servicio</b> — las líneas ZZ del documento (instalación, mantención,
+      despacho), no el neto de la factura.
     </div>
   </div>
   <form method="get" class="d-flex gap-2 align-items-center">
@@ -55,7 +57,7 @@
 {#- Primero el negocio: cuánto entra, cuánto sale y qué queda. El
     desglose por servicio va debajo, que es el detalle. -#}
 <div class="fp-kpis fp-kpis-top">
-  <div class="fp-kpi"><span class="k">Cobrado al cliente</span><span class="v">{{ clp(tot.cobrado) }}</span></div>
+  <div class="fp-kpi"><span class="k">Cobrado por el servicio</span><span class="v">{{ clp(tot.cobrado) }}</span></div>
   <div class="fp-kpi"><span class="k">Pagado a proveedores</span><span class="v">{{ clp(tot.total) }}</span></div>
   <div class="fp-kpi {{ 'neg' if tot.margen < 0 else 'pos' }}">
     <span class="k">Margen{% if tot.margen_pct is not none %} · {{ '%.1f'|format(tot.margen_pct) }}%{% endif %}</span>
@@ -67,9 +69,9 @@
 <div class="fp-aviso">
   <i class="bi bi-exclamation-triangle-fill"></i>
   <div><b>{{ tot.n_sin_cobro }} OT sin cobro declarado.</b>
-    Tienen costo de proveedor pero nada cobrado al cliente, así que el margen de arriba
-    está incompleto — no es que se haya perdido esa plata, es que falta el dato.
-    Están marcadas abajo.
+    Tienen costo de proveedor pero ninguna línea ZZ de servicio declarada, así que el
+    margen de arriba está incompleto — no es que se haya perdido esa plata, es que
+    falta el dato. Están marcadas abajo.
     {% if tot.n_garantia %}<span>Las {{ tot.n_garantia }} de garantía sí van con cobro cero a propósito y no se cuentan acá.</span>{% endif %}
   </div>
 </div>
@@ -147,16 +149,14 @@
         <td class="m">{{ clp(d.despacho) if d.despacho else '—' }}</td>
         <td class="m tot">{{ clp(d.total) }}</td>
         <td class="m">
-          {%- if d.sin_cobro %}<span class="fp-sindoc">Sin declarar</span>
+          {%- if d.sin_cobro %}<span class="fp-sindoc">Sin línea ZZ</span>
           {%- elif d.garantia and not d.cobrado %}<span class="fp-gar">Garantía</span>
           {%- else %}{{ clp(d.cobrado) }}
             {# Se muestra de dónde salió: la línea ZZ del documento es el dato
                bueno; el monto genérico de la OT es un respaldo y conviene
                que se note cuál se está mirando. #}
-            {% if d.fuente_cobro == 'zz' and d.cobrado_envio %}
+            {% if d.cobrado_envio %}
               <div class="fp-sub">servicio {{ clp(d.cobrado_servicio) }} · envío {{ clp(d.cobrado_envio) }}</div>
-            {% elif d.fuente_cobro == 'costo' %}
-              <div class="fp-sub">monto genérico</div>
             {% endif %}
           {%- endif %}
         </td>

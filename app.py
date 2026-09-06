@@ -100269,13 +100269,25 @@ def _facprov_datos(desde, hasta):
         # `costo` queda solo como respaldo: es una columna generica que el
         # codigo tambien reusa para valorizar trabajo interno que NO se
         # cobra, asi que apoyar el margen ahi daria un numero falso.
+        # 2026-09-06 (Daniel: "lo que quiero considerar es el cobro de
+        # instalacion o despacho, no el neto de la factura").
+        #
+        # SOLO las lineas ZZ del documento: `zz_monto` es lo que se cobra por
+        # el servicio (ZZINSTALACION / ZZMANTENCION) y `zz_envio_monto` lo que
+        # se cobra por el transporte (ZZENVIO). El neto de la factura NO sirve
+        # para esto: incluye los equipos vendidos, que no son el servicio, y
+        # compararlo contra lo que ILUS le paga al proveedor daria un margen
+        # enorme y falso.
+        #
+        # Por eso tampoco se cae a `costo`: esa columna es generica (el codigo
+        # la reusa hasta para valorizar trabajo interno que no se cobra) y en
+        # algunas OT puede traer justamente el total del documento. Si no hay
+        # linea ZZ declarada, el cobro del servicio NO se sabe -- y eso se
+        # dice, no se rellena con el numero que haya a mano.
         zz_serv = float(f.get("zz_monto") or 0)
         zz_env = float(f.get("zz_envio_monto") or 0)
         cobrado = zz_serv + zz_env
-        fuente_cobro = "zz"
-        if cobrado <= 0:
-            cobrado = float(f.get("costo") or 0)
-            fuente_cobro = "costo" if cobrado > 0 else ""
+        fuente_cobro = "zz" if cobrado > 0 else ""
         es_garantia = (f.get("modalidad_cobro") or "").lower() == "garantia"
         pagado = serv + desp
         margen = cobrado - pagado
@@ -100465,8 +100477,7 @@ def mant_facturacion_proveedores_xlsx():
     for d in detalle:
         _origen = ("Lineas ZZ del documento" if d["fuente_cobro"] == "zz"
                    else "Garantia (no se cobra)" if d["garantia"]
-                   else "Monto generico de la OT" if d["fuente_cobro"] == "costo"
-                   else "SIN COBRO DECLARADO")
+                   else "SIN LINEA ZZ DECLARADA")
         ws2.append([d["numero_ot"], d["cerrada"], d["proveedor"], d["cliente"],
                     d["tipo_label"], d["documento"], d["servicio"], d["despacho"],
                     d["total"], d["cobrado_servicio"], d["cobrado_envio"],
