@@ -83729,12 +83729,12 @@ def ot2_api_anexo_enviar(aid):
                 _html_final = _comm_render_email_document(
                     _asunto_base, _cuerpo_tpl,
                     subtitle=f"Anexo N° {a['numero']}")
-                _send_ilus_email(email_destino, _brand_subject(_asunto_base), _html_final)
+                _env_ok = _send_ilus_email(email_destino, _brand_subject(_asunto_base), _html_final)
             else:
                 # Fallback hardcodeado histórico — se mantiene TAL CUAL (REGLA
                 # #4.2): garantiza que el correo SIEMPRE sale aunque la
                 # plantilla no exista, esté apagada, o el anexo no tenga OT.
-                _send_ilus_email(
+                _env_ok = _send_ilus_email(
                     email_destino,
                     _brand_subject(f"Nueva orden de trabajo — firma el Anexo N° {a['numero']}"),
                     f"<p>Hola,</p>"
@@ -83744,8 +83744,15 @@ def ot2_api_anexo_enviar(aid):
                     f"Mientras no esté firmado, no podrás ver ni iniciar la orden de trabajo.</p>"
                     f'<p><a href="{link}">Revisar y firmar el Anexo N° {a["numero"]}</a></p>'
                     f"<p>El enlace vence en 15 días.</p>")
-            enviado_correo = True
+            # 🔴 FIX 2026-09-06: esto ponía True a ciegas. `_send_ilus_email`
+            # NO lanza excepción cuando falla -- devuelve False (kill switch
+            # apagado, SMTP caído, módulo bloqueado). Resultado: la pantalla
+            # cantaba "correo enviado", el anexo quedaba en 'enviado' y la OT
+            # bloqueada, con el proveedor sin enterarse de nada. Ahora se
+            # mira el retorno de verdad.
+            enviado_correo = bool(_env_ok)
         except Exception as e:
+            enviado_correo = False
             print(f"[anexo_enviar] correo: {e}", flush=True)
 
     wa_link = None
@@ -83914,7 +83921,16 @@ def ot2_api_anexo_pdf(aid):
         firma = {
             "firmante_nombre": a.get("firmante_nombre") or a.get("proveedor_nombre"),
             "firmante_rut": a.get("firmante_rut") or a.get("proveedor_rut"),
-            "firma_url": a.get("firma_url"),
+            # 🔴 FIX 2026-09-06: acá iba la URL cruda ("/f/<key>"). El PDF
+            # se arma con page.set_content, donde una ruta RELATIVA no
+            # resuelve contra ningún origen: Chromium imprimía el recuadro
+            # de la firma en blanco, sin un solo error en los logs. O sea,
+            # el "anexo firmado" que se descarga traía nombre, RUT y fecha,
+            # y el espacio de la firma vacío -- justo la parte que prueba
+            # que el proveedor firmó. El PDF de la OT ya resolvía esto con
+            # `_img_a_data_uri`; el anexo nunca lo llamaba.
+            "firma_url": (_img_a_data_uri(a.get("firma_url"))
+                          if a.get("firma_url") else None),
             "firmado_en": chile_fmt_filter(a.get("firmado_at"), "%d/%m/%Y %H:%M") if a.get("firmado_at") else "",
         }
     # 🆕 2026-08-31 (Daniel: "los productos los estipulen en una tabla, que
@@ -84175,7 +84191,14 @@ def ot2_anexo_firma_submit(token):
     ua = (request.headers.get("User-Agent") or "")[:400]
 
     try:
-        mysql_execute(
+        # 🔴 FIX 2026-09-06: esto usaba `mysql_execute`, que no dice cuántas
+        # filas tocó. El UPDATE lleva `AND estado IN ('enviado','visto')`, así
+        # que si el anexo ya estaba firmado o anulado afectaba 0 filas -- y la
+        # pantalla igual respondía "Anexo firmado correctamente", se escribía
+        # el log y salía el aviso de firmado. Es el mismo patrón que ya costó
+        # datos en el móvil: declarar éxito sin haber guardado. La función que
+        # sí devuelve el rowcount ya existía y no se estaba usando.
+        _filas = mysql_execute_returning_rowcount(
             "UPDATE mant_anexos SET estado='firmado', documento_hash=%s, "
             "  documento_hash_cliente=%s, firmado_en_cliente=%s, "
             "  firmante_nombre=%s, firmante_rut=%s, firma_url=%s, "
@@ -84186,6 +84209,13 @@ def ot2_anexo_firma_submit(token):
     except Exception as e:
         print(f"[anexo_firmar] {e}", flush=True)
         return jsonify({"ok": False, "error": "No pudimos guardar la firma."}), 500
+    if not _filas:
+        # Alguien más lo firmó, o el anexo ya no está en un estado firmable.
+        # Se dice, en vez de festejar una firma que no ocurrió.
+        return jsonify({"ok": False,
+                        "error": "Este anexo ya no está disponible para firmar. "
+                                 "Puede que ya se haya firmado o anulado; "
+                                 "contáctate con ILUS Fitness."}), 409
 
     try:
         _mant_log("anexo", a["id"], "firmado",
@@ -84265,8 +84295,24 @@ def _anexo_bloquea_ot(vid):
     """
     try:
         row = mysql_fetchone(
+            # 🔴 FIX 2026-09-06: esto devolvía el primer anexo pendiente
+            # SIN mirar si ya había uno firmado. Si se manda el 160 con un
+            # precio equivocado y después se crea y firma el 161, la OT
+            # quedaba trabada para siempre por el 160 -- mientras la tarjeta,
+            # que lee el último anexo, decía "OT desbloqueada". Y no había
+            # salida: los estados 'rechazado', 'vencido' y 'anulado' existen
+            # en la tabla pero ningún punto del código los escribe.
+            #
+            # La regla de Daniel es "si no fue firmado, no puede realizar el
+            # trabajo". Con un anexo FIRMADO para esa OT, esa condición ya se
+            # cumplió: un pendiente que quedó de una vuelta anterior no
+            # debería seguir bloqueando el trabajo ya autorizado.
             "SELECT numero FROM mant_anexos WHERE ot_id=%s "
-            "  AND estado IN ('enviado','visto') LIMIT 1", (vid,))
+            "  AND estado IN ('enviado','visto') "
+            "  AND NOT EXISTS (SELECT 1 FROM mant_anexos f "
+            "                   WHERE f.ot_id = mant_anexos.ot_id "
+            "                     AND f.estado='firmado') "
+            " LIMIT 1", (vid,))
         if row:
             return row["numero"]
 
