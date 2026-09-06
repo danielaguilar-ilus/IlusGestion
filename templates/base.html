@@ -930,6 +930,15 @@
          class="sidebar-link{% if request.endpoint == 'admin_fichas_incompletas' %} active{% endif %}">
         <i class="bi bi-clipboard-x"></i><span>Fichas incompletas</span>
       </a>
+      {# Migración histórica de documentos de tickets (Daniel 2026-09-06:
+         "Los tickets deben guardar el documento y los productos
+         indexados"). Abre SIEMPRE en simulación: mirar no escribe nada.
+         Vive acá y no en la barra de Tickets porque es mantención de
+         datos, no operación diaria. #}
+      <a href="{{ url_for('tk_admin_migrar_documentos') }}"
+         class="sidebar-link{% if request.endpoint == 'tk_admin_migrar_documentos' %} active{% endif %}">
+        <i class="bi bi-folder-symlink"></i><span>Documentos de tickets</span>
+      </a>
       {% endif %}
 
       {# ── OCULTO (a pedido — disponible vía URL directa si se requiere) ──

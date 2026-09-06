@@ -533,7 +533,33 @@ def _sanitizar_html_mensaje(raw):
 
 
 
-def _tk_doc_partes(txt):
+# ─────────────────────────────────────────────────────────────────────────
+#  TIPOS DE DOCUMENTO (TIDO) del ERP Random que ILUS sabe nombrar.
+#
+#  Es la MISMA lista que app.py declara en ERP_TIDOS_DOCUMENTOS_CLIENTE,
+#  mas los tipos sueltos que usan otros modulos: RGI/NVR (importador
+#  forzado de Transporte), FCE/BLE (cierre de OT, _OT_DOCS_CIERRE) y
+#  GTR/GRD (_RANDOM_TIDOS_VENTA). Se declara ACA y no se importa de app.py
+#  a proposito: app.py importa este modulo, importarlo de vuelta seria
+#  circular -- y ademas asi el parser se puede testear sin levantar la app.
+#
+#  Si Random habilita un tipo nuevo, se agrega aca. Mientras no este en
+#  esta lista, el texto que lo mencione queda como "no reconocido" y se
+#  reporta: preferimos no cruzar antes que cruzar mal (ver docstring de
+#  _tk_doc_partes).
+# ─────────────────────────────────────────────────────────────────────────
+_TK_TIDOS_CONOCIDOS = frozenset({
+    # Venta / cobro
+    "FCV", "FCE", "BLV", "BLE", "NCV", "FCO", "COV",
+    # Notas de venta (VD/WEB viven como NVV en el ERP, pero el operador
+    # las escribe y las ve asi -- erp_engine.TIDO_NUDO_MAP las traduce).
+    "NVV", "NVI", "NVR", "VD", "WEB",
+    # Guias / movimiento de productos
+    "GDV", "GDP", "GDI", "GTI", "GTR", "GRD", "GR", "GRP", "GDB", "RI", "RGI",
+})
+
+
+def _tk_doc_partes(txt, solo_conocidos=False):
     """Saca (TIDO, NUDO) de un documento escrito como texto libre.
 
     El campo `numero_documento` del ticket es texto: la gente escribe
@@ -548,6 +574,11 @@ def _tk_doc_partes(txt):
         "fcv 11439"  -> ("FCV", "11439")
         "11439"      -> None   (no se sabe si es factura, boleta o nota)
         ""           -> None
+
+    solo_conocidos=True exige ademas que el tipo este en
+    _TK_TIDOS_CONOCIDOS (asi "GUIA 123" deja de pasar como TIDO='GUIA').
+    Default False para NO cambiar el comportamiento de los llamadores que
+    ya estaban en produccion -- la migracion historica si lo activa.
     """
     import re as _re
     t = (txt or "").strip().upper()
@@ -556,7 +587,100 @@ def _tk_doc_partes(txt):
     m = _re.match(r"^([A-Z]{2,5})\s*[-/ ]?\s*(\d{1,20})$", t)
     if not m:
         return None
-    return (m.group(1)[:10], m.group(2)[:40])
+    tido = m.group(1)[:10]
+    if solo_conocidos and tido not in _TK_TIDOS_CONOCIDOS:
+        return None
+    return (tido, m.group(2)[:40])
+
+
+# Un documento dentro de un texto mas largo. A diferencia de
+# _tk_doc_partes (que exige que el texto COMPLETO sea el documento), esta
+# expresion se usa para barrer textos historicos como
+# "FCV-11439, NVV-2233" (formato que escribe tk_api_crear_desde_documento)
+# o "FCV N° 11439". El tipo se valida despues contra _TK_TIDOS_CONOCIDOS.
+_TK_DOC_CAND_RE = re.compile(
+    r"(?<![A-Z0-9])"                    # el codigo no viene pegado a otra palabra/numero
+    r"([A-Z]{2,5})"                     # 1) TIDO candidato
+    r"("                                # 2) lo que separa el tipo del numero
+    r"[\s.\-/:]*"                       #    "FCV-11439", "FCV 11439", "FCV11439"
+    r"(?:N[°º]|NRO|NUM|NUMERO|#)?"      #    ruido humano: "FCV N° 11439"
+    r"[\s.\-/:]*"
+    r")"
+    r"(\d{1,20})"                       # 3) NUDO
+    r"(?![0-9])"
+)
+
+# Tope de documentos que se aceptan de UN texto. Un ticket con mas de esto
+# es casi siempre un campo usado como libreta (pegaron media planilla): no
+# se migra automatico, se reporta.
+_TK_DOCS_POR_TEXTO_MAX = 10
+
+
+def _tk_docs_desde_texto(txt):
+    """Lee un texto libre y devuelve TODOS los documentos que reconoce
+    con certeza, mas el veredicto sobre lo que NO pudo reconocer.
+
+    Devuelve:
+        {"estado": "vacio" | "ok" | "parcial" | "no_reconocido",
+         "docs":   [(TIDO, NUDO), ...]   # NUDO sin ceros a la izquierda
+         "sueltos": ["11440", ...],      # numeros que NO se pudieron atribuir
+         "texto":  "<el texto original, recortado>"}
+
+    Criterio (deliberadamente conservador, Daniel 2026-09-06):
+      · "ok"            -> todo numero del texto quedo explicado por un
+                           documento con tipo conocido. Es lo unico que la
+                           migracion escribe sin preguntar.
+      · "parcial"       -> se reconocio al menos uno, pero quedaron numeros
+                           sueltos ("FCV 11439 y 11440", "FCV 11439 del
+                           12/03/2026"). NO se migra por default: el 11440
+                           puede ser otra factura, una boleta o un monto.
+      · "no_reconocido" -> no hay ningun tipo conocido ("11439",
+                           "factura 11439 y 11440", "no lo tiene").
+      · "vacio"         -> el campo estaba en blanco.
+
+    Un cruce equivocado entre documentos manda plata y equipos al cliente
+    que no es: ante la duda NO se adivina, se reporta para que una persona
+    decida.
+    """
+    t = (txt or "").strip().upper()
+    if not t:
+        return {"estado": "vacio", "docs": [], "sueltos": [], "texto": ""}
+
+    docs, spans, truncado = [], [], False
+    for m in _TK_DOC_CAND_RE.finditer(t):
+        tido, joiner = m.group(1), m.group(2)
+        if tido not in _TK_TIDOS_CONOCIDOS:
+            continue                       # "GUIA 123" no es un TIDO: no se toca
+        if len(tido) == 2 and joiner == "":
+            # Los tipos de 2 letras (VD, GR, RI) pegados al numero se
+            # confunden con numeros de serie y modelos ("GR2024", "RI500").
+            # Con separador ("VD-6162", "GR 4455") si se aceptan.
+            continue
+        # El NUDO se guarda en formato DISPLAY (sin ceros a la izquierda),
+        # que es como lo escriben los otros caminos y como lo compara el
+        # candado de "documento ya asociado a otro ticket".
+        nudo = m.group(3).lstrip("0")
+        if not nudo:
+            continue                       # "FCV-0000" no es un numero de documento
+        par = (tido, nudo[:40])
+        spans.append((m.start(3), m.end(3)))
+        if par in docs:
+            continue
+        if len(docs) >= _TK_DOCS_POR_TEXTO_MAX:
+            truncado = True
+            continue
+        docs.append(par)
+
+    sueltos = [mm.group(0) for mm in re.finditer(r"\d+", t)
+               if not any(ini <= mm.start() and mm.end() <= fin for ini, fin in spans)]
+
+    if not docs:
+        return {"estado": "no_reconocido", "docs": [], "sueltos": sueltos[:20],
+                "texto": t[:300]}
+    if sueltos or truncado:
+        return {"estado": "parcial", "docs": docs, "sueltos": sueltos[:20],
+                "texto": t[:300]}
+    return {"estado": "ok", "docs": docs, "sueltos": [], "texto": t[:300]}
 
 def register_tickets_routes(app, ctx):
     # ── Dependencias inyectadas desde app.py (globals) ──
@@ -8347,42 +8471,47 @@ def register_tickets_routes(app, ctx):
         }})
 
     # ─────────────────────────────────────────────────────────────────
-    #  API — traer equipos a un ticket YA EXISTENTE desde un documento ERP
-    #  (Daniel 2026-07-11: "ya tenemos las conexiones a random, así que no
-    #  debería hacérsenos difícil"). Extendido 2026-07-12 para aceptar
-    #  seleccion GRANULAR de lineas (checkboxes del modal de busqueda
-    #  avanzada, con saldo por linea -- mismo motor que Retiros via
-    #  _tk_fetch_doc_lineas/_cubicador_fetch). Si no vienen `lineas`,
-    #  mantiene el comportamiento historico (todas las lineas no-ZZ).
+    #  NUCLEO COMPARTIDO "documento ERP -> equipos del ticket".
+    #
+    #  Vivia dentro de la ruta /equipos-desde-documento. Se saca aca tal
+    #  cual (2026-09-06) para que la MIGRACION de tickets historicos use
+    #  EXACTAMENTE este camino y no una copia: si mañana cambia la regla de
+    #  saldo, de ZZ o de documento_garantia, cambia para los dos. La ruta
+    #  de abajo quedo como una cascara que valida input y traduce el
+    #  resultado a JSON -- su comportamiento no cambio.
     # ─────────────────────────────────────────────────────────────────
-    @app.route("/tickets/api/tickets/<int:tid>/equipos-desde-documento", methods=["POST"])
-    @_tickets_required
-    def tk_api_equipos_desde_documento(tid):
-        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
-            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
-        d = request.get_json(silent=True) or {}
-        tido = (d.get("tido") or "").strip().upper()
-        nudo = (d.get("nudo") or "").strip()
-        if not (tido and nudo):
-            return jsonify({"ok": False, "error": "Falta tipo y número de documento"}), 400
+    def _tk_equipos_desde_doc_core(tid, tido, nudo, seleccion=None):
+        """Trae las lineas de un documento ERP (SOLO LECTURA) y las deja
+        como equipos del ticket + registra el documento en
+        tk_ticket_documentos.
 
+        Devuelve dict:
+            {ok, error, codigo, agregados, total_lineas, via, fecha}
+        codigo: 'no_encontrado' | 'sin_lineas' | None
+        `fecha` viene del ERP (sirve para registrar el documento aunque el
+        documento no aporte lineas de producto).
+        """
+        seleccion = seleccion or []
         hdr, lineas_reales, via = _tk_fetch_doc_lineas(tido, nudo)
         if not hdr:
-            return jsonify({"ok": False, "error": "Documento no encontrado en el ERP"}), 200
+            return {"ok": False, "error": "Documento no encontrado en el ERP",
+                    "codigo": "no_encontrado", "agregados": 0, "total_lineas": 0,
+                    "via": via, "fecha": None}
+        fecha_doc = str(hdr.get("fecha") or "")[:10] or None
 
-        seleccion = d.get("lineas") or []
-        if not isinstance(seleccion, list):
-            seleccion = []
         lineas = _tk_filtrar_lineas_seleccion(lineas_reales, seleccion)
         if not lineas:
-            return jsonify({"ok": False, "error": "El documento no tiene líneas de producto seleccionables"}), 200
+            return {"ok": False,
+                    "error": "El documento no tiene líneas de producto seleccionables",
+                    "codigo": "sin_lineas", "agregados": 0, "total_lineas": 0,
+                    "via": via, "fecha": fecha_doc}
 
         agregados = 0
         try:
             mysql_execute(
                 "INSERT IGNORE INTO tk_ticket_documentos (ticket_id, erp_tido, erp_nudo, fecha) "
                 "VALUES (%s,%s,%s,%s)",
-                (tid, tido[:10], nudo[:40], str(hdr.get("fecha") or "")[:10] or None))
+                (tid, tido[:10], nudo[:40], fecha_doc))
         except Exception as _e:
             print(f"[tk_equipos_desde_doc] documento no registrado tid={tid}: {_e}", flush=True)
         for ln in lineas:
@@ -8411,8 +8540,38 @@ def register_tickets_routes(app, ctx):
 
         _tk_log(tid, "otro", f"{agregados} equipo(s) agregado(s) desde documento ERP {tido}-{nudo}"
                 + (" (selección manual)" if seleccion else ""))
-        return jsonify({"ok": True, "agregados": agregados, "total_lineas": len(lineas),
-                         "seleccion_aplicada": bool(seleccion), "motor": via})
+        return {"ok": True, "error": None, "codigo": None, "agregados": agregados,
+                "total_lineas": len(lineas), "via": via, "fecha": fecha_doc}
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — traer equipos a un ticket YA EXISTENTE desde un documento ERP
+    #  (Daniel 2026-07-11: "ya tenemos las conexiones a random, así que no
+    #  debería hacérsenos difícil"). Extendido 2026-07-12 para aceptar
+    #  seleccion GRANULAR de lineas (checkboxes del modal de busqueda
+    #  avanzada, con saldo por linea -- mismo motor que Retiros via
+    #  _tk_fetch_doc_lineas/_cubicador_fetch). Si no vienen `lineas`,
+    #  mantiene el comportamiento historico (todas las lineas no-ZZ).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/tickets/<int:tid>/equipos-desde-documento", methods=["POST"])
+    @_tickets_required
+    def tk_api_equipos_desde_documento(tid):
+        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        d = request.get_json(silent=True) or {}
+        tido = (d.get("tido") or "").strip().upper()
+        nudo = (d.get("nudo") or "").strip()
+        if not (tido and nudo):
+            return jsonify({"ok": False, "error": "Falta tipo y número de documento"}), 400
+
+        seleccion = d.get("lineas") or []
+        if not isinstance(seleccion, list):
+            seleccion = []
+        res = _tk_equipos_desde_doc_core(tid, tido, nudo, seleccion=seleccion)
+        if not res["ok"]:
+            return jsonify({"ok": False, "error": res["error"]}), 200
+        return jsonify({"ok": True, "agregados": res["agregados"],
+                        "total_lineas": res["total_lineas"],
+                        "seleccion_aplicada": bool(seleccion), "motor": res["via"]})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — agregar equipos a un ticket YA EXISTENTE SIN documento ERP de
@@ -9825,6 +9984,394 @@ def register_tickets_routes(app, ctx):
 
     # exponer para tests / uso programatico
     app.config["_tk_import_desde_mant"] = _tk_import_desde_mant
+
+    # ─────────────────────────────────────────────────────────────────
+    #  MIGRACION DE DOCUMENTOS DE TICKETS HISTORICOS  (Daniel 2026-09-06:
+    #  "Si, es necesario. Por calidad de informacion... Los tickets deben
+    #  guardar el documento y los productos indexados").
+    #
+    #  QUE ARREGLA: hasta hoy el documento del ticket vivia como TEXTO
+    #  LIBRE en tk_tickets.numero_documento ("FCV-11439", "fcv 11439",
+    #  "11439"...). La tabla estructurada tk_ticket_documentos (tido/nudo)
+    #  solo la llenaban los caminos que nacen de un documento ERP. Sin esa
+    #  fila, un ticket no se puede cruzar con su cotizacion, con su OT ni
+    #  con el candado de "este documento ya tiene ticket".
+    #
+    #  DOS FUENTES por ticket, las dos texto:
+    #    · tk_tickets.numero_documento          (lo escribio una persona)
+    #    · tk_ticket_equipos.documento_garantia (1 por linea de equipo,
+    #      formato "TIDO-NUDO" cuando lo escribio el sistema)
+    #
+    #  REGLAS NO NEGOCIABLES DE ESTA MIGRACION:
+    #    1. Idempotente: INSERT IGNORE sobre el UNIQUE (ticket_id, tido,
+    #       nudo) que ya existe. Correrla dos veces no duplica nada.
+    #    2. Simula por default. Solo escribe con aplicar=True explicito.
+    #    3. Conservadora: si el texto no identifica el documento con
+    #       certeza NO se adivina (ver _tk_docs_desde_texto). Un cruce
+    #       equivocado manda plata y equipos al cliente que no es.
+    #    4. Auditable: una nota en la Actividad de CADA ticket tocado
+    #       (_tk_log) + un registro central (_audit) por corrida.
+    #    5. ERP: SOLO LECTURA (Regla #4.1). Se usa el mismo motor de
+    #       lectura que la pantalla (_tk_fetch_doc_lineas) y el mismo
+    #       nucleo de indexado de productos que el boton real
+    #       (_tk_equipos_desde_doc_core). Nada nuevo, nada duplicado.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_norm_par_doc(tido, nudo):
+        """(TIDO, NUDO) comparable: mayusculas y sin ceros a la izquierda.
+
+        Los caminos viejos guardaron el NUDO en formato DISPLAY (sin ceros)
+        pero alguien pudo escribir "FCV-011439" a mano. Se comparan
+        normalizados para no insertar la misma factura dos veces con dos
+        escrituras distintas.
+        """
+        t = (tido or "").strip().upper()[:10]
+        n = (nudo or "").strip()
+        n = (n.lstrip("0") or n)[:40]
+        return (t, n)
+
+    def _tk_docs_historicos_analizar(incluir_parciales=False):
+        """Lee la base y clasifica TODOS los tickets. No escribe ni toca
+        el ERP: es la foto que alimenta tanto la simulacion como la
+        aplicacion (que despues procesa solo los pendientes)."""
+        tickets = mysql_fetchall(
+            "SELECT id, numero_ticket, numero_documento "
+            "  FROM tk_tickets ORDER BY id DESC") or []
+
+        docs_ya = {}
+        for r in (mysql_fetchall(
+                "SELECT ticket_id, erp_tido, erp_nudo FROM tk_ticket_documentos") or []):
+            docs_ya.setdefault(r["ticket_id"], set()).add(
+                _tk_norm_par_doc(r.get("erp_tido"), r.get("erp_nudo")))
+
+        eq_n = {}
+        for r in (mysql_fetchall(
+                "SELECT ticket_id, COUNT(*) AS n FROM tk_ticket_equipos "
+                "GROUP BY ticket_id") or []):
+            eq_n[r["ticket_id"]] = int(r.get("n") or 0)
+
+        # documento_garantia entra por ALTER (_ensure_tk_ticket_equipos_
+        # garantia_columns). Si por lo que sea no estuviera, la migracion
+        # sigue funcionando con el texto del ticket en vez de caerse.
+        gar = {}
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT DISTINCT ticket_id, documento_garantia FROM tk_ticket_equipos "
+                    " WHERE documento_garantia IS NOT NULL "
+                    "   AND TRIM(documento_garantia) <> ''") or []):
+                gar.setdefault(r["ticket_id"], []).append(r["documento_garantia"])
+        except Exception as _e:
+            print(f"[tk_docs_migracion] documento_garantia no disponible: {_e}", flush=True)
+
+        registros = []
+        for t in tickets:
+            tid = t["id"]
+            textos = [(t.get("numero_documento") or "", "numero_documento")]
+            for _txt_gar in gar.get(tid, []):
+                textos.append((_txt_gar, "documento_garantia"))
+
+            docs_ok, docs_parcial, sueltos, no_reconocidos = [], [], [], []
+            for raw, fuente in textos:
+                an = _tk_docs_desde_texto(raw)
+                if an["estado"] == "vacio":
+                    continue
+                if an["estado"] == "ok":
+                    for p in an["docs"]:
+                        if p not in docs_ok:
+                            docs_ok.append(p)
+                elif an["estado"] == "parcial":
+                    for p in an["docs"]:
+                        if p not in docs_parcial:
+                            docs_parcial.append(p)
+                    sueltos.extend(an["sueltos"])
+                    no_reconocidos.append({"fuente": fuente, "texto": an["texto"],
+                                            "sueltos": an["sueltos"]})
+                else:
+                    no_reconocidos.append({"fuente": fuente, "texto": an["texto"],
+                                            "sueltos": an["sueltos"]})
+
+            if docs_ok:
+                estado = "ok"
+            elif docs_parcial:
+                estado = "parcial"
+            elif no_reconocidos:
+                estado = "no_reconocido"
+            else:
+                estado = "sin_texto"
+
+            elegidos = list(docs_ok)
+            if incluir_parciales:
+                for p in docs_parcial:
+                    if p not in elegidos:
+                        elegidos.append(p)
+
+            ya = docs_ya.get(tid, set())
+            pendientes = [p for p in elegidos if _tk_norm_par_doc(*p) not in ya]
+
+            registros.append({
+                "id": tid,
+                "numero": t.get("numero_ticket") or f"#{tid}",
+                "created_at": t.get("created_at"),
+                "estado": estado,
+                "docs": elegidos,
+                "docs_parcial": docs_parcial,
+                "pendientes": pendientes,
+                "ya_registrados": len(ya),
+                "sin_equipos": int(eq_n.get(tid, 0)) == 0,
+                "detalle_no_reconocido": no_reconocidos,
+            })
+        return registros
+
+    def _tk_migrar_documentos_historicos(aplicar=False, incluir_parciales=False,
+                                          verificar_erp=False, indexar_productos=False,
+                                          limit=200, muestra_max=200):
+        """Migra los documentos (y, si se pide, los productos) de los
+        tickets YA EXISTENTES. Ver el bloque de comentario de arriba.
+
+        aplicar=False (default) -> NO escribe: solo devuelve el diagnostico.
+        """
+        try:
+            limit = max(1, min(int(limit or 200), 1000))
+        except Exception:
+            limit = 200
+        if indexar_productos:
+            # No se puede indexar productos sin leer el documento en el ERP.
+            verificar_erp = True
+
+        registros = _tk_docs_historicos_analizar(incluir_parciales=incluir_parciales)
+        user = current_username() or "sistema"
+
+        res = {
+            "modo": "aplicado" if aplicar else "simulacion",
+            "opciones": {"incluir_parciales": bool(incluir_parciales),
+                         "verificar_erp": bool(verificar_erp),
+                         "indexar_productos": bool(indexar_productos),
+                         "limit": limit},
+            "tickets_total": len(registros),
+            "con_documento_reconocible": 0,
+            "parciales": 0,
+            "no_reconocidos": 0,
+            "sin_texto": 0,
+            "ya_completos": 0,
+            "tickets_pendientes": 0,
+            "documentos_a_insertar": 0,
+            "documentos_insertados": 0,
+            "documentos_no_en_erp": 0,
+            "tickets_sin_productos": 0,
+            "tickets_indexados": 0,
+            "productos_indexados": 0,
+            "tickets_procesados": 0,
+            "restantes": 0,
+            "errores": [],
+            "muestra_no_reconocidos": [],
+            "muestra_parciales": [],
+            "muestra_a_insertar": [],
+        }
+
+        pendientes = []
+        for r in registros:
+            if r["estado"] == "ok":
+                res["con_documento_reconocible"] += 1
+            elif r["estado"] == "parcial":
+                res["parciales"] += 1
+            elif r["estado"] == "no_reconocido":
+                res["no_reconocidos"] += 1
+            else:
+                res["sin_texto"] += 1
+
+            if r["estado"] == "parcial" and len(res["muestra_parciales"]) < muestra_max:
+                res["muestra_parciales"].append({
+                    "id": r["id"], "numero": r["numero"],
+                    "docs": [f"{a}-{b}" for a, b in r["docs_parcial"]],
+                    "detalle": r["detalle_no_reconocido"][:3]})
+            if r["estado"] == "no_reconocido" and len(res["muestra_no_reconocidos"]) < muestra_max:
+                res["muestra_no_reconocidos"].append({
+                    "id": r["id"], "numero": r["numero"],
+                    "detalle": r["detalle_no_reconocido"][:3]})
+
+            if r["docs"] and r["sin_equipos"]:
+                res["tickets_sin_productos"] += 1
+
+            necesita_docs = bool(r["pendientes"])
+            necesita_equipos = bool(indexar_productos and r["docs"] and r["sin_equipos"])
+            if necesita_docs:
+                res["documentos_a_insertar"] += len(r["pendientes"])
+                if len(res["muestra_a_insertar"]) < muestra_max:
+                    res["muestra_a_insertar"].append({
+                        "id": r["id"], "numero": r["numero"],
+                        "docs": [f"{a}-{b}" for a, b in r["pendientes"]],
+                        "sin_equipos": r["sin_equipos"]})
+            elif r["docs"]:
+                res["ya_completos"] += 1
+
+            if necesita_docs or necesita_equipos:
+                pendientes.append(r)
+
+        res["tickets_pendientes"] = len(pendientes)
+
+        if not aplicar:
+            res["restantes"] = len(pendientes)
+            return res
+
+        # ── A partir de aca SI se escribe (solo con aplicar=True) ───────
+        _exec_rc = ctx.get("mysql_execute_returning_rowcount")
+        lote = pendientes[:limit]
+        res["restantes"] = max(0, len(pendientes) - len(lote))
+
+        for r in lote:
+            tid = r["id"]
+            res["tickets_procesados"] += 1
+            insertados_aqui, indexados_aqui, no_erp_aqui = [], 0, []
+            pares = list(r["pendientes"])
+            # Para indexar hay que leer el documento igual, asi que se
+            # recorren TODOS los documentos del ticket (no solo los que
+            # faltan por registrar) cuando el ticket no tiene productos.
+            indexar_este = bool(indexar_productos and r["docs"] and r["sin_equipos"])
+            if indexar_este:
+                for p in r["docs"]:
+                    if p not in pares:
+                        pares.append(p)
+
+            for (tido, nudo) in pares[:10]:
+                try:
+                    fecha_doc = None
+                    if indexar_este:
+                        # MISMO nucleo que el boton "Buscar productos" de la
+                        # ficha: registra el documento Y trae sus lineas.
+                        core = _tk_equipos_desde_doc_core(tid, tido, nudo)
+                        fecha_doc = core.get("fecha")
+                        if core["ok"]:
+                            indexados_aqui += core["agregados"]
+                            # El core registra el documento con INSERT
+                            # IGNORE: solo se cuenta como nuevo si de
+                            # verdad faltaba (si no, se infla el reporte).
+                            if (tido, nudo) in r["pendientes"]:
+                                insertados_aqui.append(f"{tido}-{nudo}")
+                            continue
+                        if core.get("codigo") == "no_encontrado":
+                            no_erp_aqui.append(f"{tido}-{nudo}")
+                            continue
+                        # 'sin_lineas': el documento existe (solo servicios
+                        # ZZ, por ejemplo). El documento se registra igual.
+                    elif verificar_erp:
+                        hdr, _lineas, _via = _tk_fetch_doc_lineas(tido, nudo)
+                        if not hdr:
+                            no_erp_aqui.append(f"{tido}-{nudo}")
+                            continue
+                        fecha_doc = str(hdr.get("fecha") or "")[:10] or None
+
+                    sql = ("INSERT IGNORE INTO tk_ticket_documentos "
+                           "(ticket_id, erp_tido, erp_nudo, fecha) VALUES (%s,%s,%s,%s)")
+                    params = (tid, tido[:10], nudo[:40], fecha_doc)
+                    if _exec_rc:
+                        if int(_exec_rc(sql, params) or 0) > 0:
+                            insertados_aqui.append(f"{tido}-{nudo}")
+                    else:
+                        mysql_execute(sql, params)
+                        insertados_aqui.append(f"{tido}-{nudo}")
+                except Exception as _e:
+                    msg = f"ticket {r['numero']} doc {tido}-{nudo}: {str(_e)[:150]}"
+                    print(f"[tk_docs_migracion] {msg}", flush=True)
+                    if len(res["errores"]) < 50:
+                        res["errores"].append(msg)
+
+            res["documentos_insertados"] += len(insertados_aqui)
+            res["documentos_no_en_erp"] += len(no_erp_aqui)
+            if indexados_aqui:
+                res["tickets_indexados"] += 1
+                res["productos_indexados"] += indexados_aqui
+
+            # Auditoria por ticket: queda en la Actividad de la ficha, que
+            # es donde una persona la va a buscar (nota interna).
+            if insertados_aqui or indexados_aqui or no_erp_aqui:
+                partes = []
+                if insertados_aqui:
+                    partes.append("documento(s) registrado(s): " + ", ".join(insertados_aqui))
+                if indexados_aqui:
+                    partes.append(f"{indexados_aqui} producto(s) indexado(s) desde el ERP")
+                if no_erp_aqui:
+                    partes.append("no encontrado(s) en el ERP: " + ", ".join(no_erp_aqui))
+                try:
+                    _tk_log(tid, "otro",
+                            "🗂 Migración de documentos históricos — " + " · ".join(partes),
+                            usuario=user,
+                            metadata={"accion": "migracion_documentos",
+                                      "insertados": insertados_aqui,
+                                      "productos_indexados": indexados_aqui,
+                                      "no_en_erp": no_erp_aqui})
+                except Exception as _e:
+                    print(f"[tk_docs_migracion] log tid={tid}: {_e}", flush=True)
+
+        try:
+            _audit("tk_docs_migracion", target_type="tk_ticket",
+                   details={"tickets_procesados": res["tickets_procesados"],
+                            "documentos_insertados": res["documentos_insertados"],
+                            "productos_indexados": res["productos_indexados"],
+                            "no_en_erp": res["documentos_no_en_erp"],
+                            "restantes": res["restantes"],
+                            "opciones": res["opciones"]})
+        except Exception:
+            pass
+        print(f"[tk_docs_migracion] {user}: {res['documentos_insertados']} documento(s), "
+              f"{res['productos_indexados']} producto(s), quedan {res['restantes']} ticket(s)",
+              flush=True)
+        return res
+
+    # exponer para tests / uso programatico (mismo patron que el importador)
+    app.config["_tk_migrar_documentos_historicos"] = _tk_migrar_documentos_historicos
+
+    @app.route("/tickets/admin/migrar-documentos", methods=["GET"])
+    @_tickets_required
+    def tk_admin_migrar_documentos():
+        """Pantalla de la migracion. Entra en modo SIMULACION siempre: lo
+        que se ve al abrir la pagina no escribio nada."""
+        if not _tk_solo_superadmin():
+            msg = "Solo un superadministrador puede revisar la migración de documentos."
+            if _is_ajaxish():
+                return jsonify({"ok": False, "error": msg}), 403
+            return msg, 403
+        incluir_parciales = str(request.args.get("incluir_parciales", "0")).lower() in ("1", "true", "yes")
+        try:
+            resumen = _tk_migrar_documentos_historicos(
+                aplicar=False, incluir_parciales=incluir_parciales)
+            error = None
+        except Exception as _e:
+            print(f"[tk_docs_migracion] simulacion: {_e}", flush=True)
+            resumen, error = None, "No se pudo analizar los tickets. Revisa el log del servidor."
+        return render_template("tickets/admin_migrar_documentos.html",
+                               resumen=resumen, error=error,
+                               incluir_parciales=incluir_parciales)
+
+    @app.route("/tickets/api/admin/migrar-documentos", methods=["POST"])
+    @_tickets_required
+    def tk_api_migrar_documentos():
+        """Body JSON (todo opcional):
+             {aplicar:false, incluir_parciales:false, verificar_erp:false,
+              indexar_productos:false, limit:200}
+        Sin `aplicar:true` NO escribe nada -- solo devuelve el diagnostico.
+        """
+        if not _tk_solo_superadmin():
+            return jsonify({"ok": False,
+                            "error": "Solo un superadministrador puede correr esta migración."}), 403
+        d = request.get_json(silent=True) or {}
+
+        def _flag(nombre, default=False):
+            v = d.get(nombre, default)
+            if isinstance(v, str):
+                return v.strip().lower() in ("1", "true", "yes", "on", "si", "sí")
+            return bool(v)
+
+        try:
+            resumen = _tk_migrar_documentos_historicos(
+                aplicar=_flag("aplicar"),
+                incluir_parciales=_flag("incluir_parciales"),
+                verificar_erp=_flag("verificar_erp"),
+                indexar_productos=_flag("indexar_productos"),
+                limit=d.get("limit", 200))
+        except Exception as _e:
+            print(f"[tk_docs_migracion] api: {_e}", flush=True)
+            return jsonify({"ok": False,
+                            "error": "No se pudo completar la migración. Revisa el log del servidor."}), 500
+        return jsonify({"ok": True, "resumen": resumen})
 
     # ─────────────────────────────────────────────────────────────────
     #  IMPORTADOR CSV TRIPLE A — "la migracion" que pidio Daniel:

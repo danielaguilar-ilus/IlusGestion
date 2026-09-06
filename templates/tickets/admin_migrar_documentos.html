@@ -1,0 +1,506 @@
+{% extends "base.html" %}
+{% block title %}Documentos de tickets — ILUS Fitness{% endblock %}
+
+{#
+  MIGRACION DE DOCUMENTOS DE TICKETS HISTORICOS (Daniel 2026-09-06:
+  "Los tickets deben guardar el documento y los productos indexados").
+
+  Al ABRIR esta pagina NO se escribe nada: el backend corre siempre en
+  modo simulacion (aplicar=False). Escribir exige apretar el boton del
+  paso 2, que manda aplicar:true explicito.
+
+  Sigue el lenguaje visual de Retiros (REGLA #15): tarjetas con pasos
+  numerados rojo->verde, semaforo de estados y nombres/textos COMPLETOS
+  (el texto original del documento nunca se trunca con line-clamp: es
+  justo el dato que Daniel necesita leer para decidir).
+  Las tres tablas se paginan como Etiquetas (REGLA #4.3) y los avisos
+  usan ilusConfirm/ilusToast (REGLA #1).
+#}
+
+{% block content %}
+<style>
+  .tkm-wrap{max-width:1180px}
+  .tkm-note{background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;
+            padding:14px 16px;font-size:.86rem;color:#374151;line-height:1.55}
+  .tkm-note strong{color:#0a0a0a}
+
+  /* ── Semaforo de estados ───────────────────────────────────────── */
+  .tkm-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+            gap:12px;margin:16px 0 22px}
+  .tkm-kpi{background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;
+           padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .tkm-kpi .n{display:block;font-size:1.9rem;font-weight:900;line-height:1.05;
+              letter-spacing:-.02em;color:#0a0a0a}
+  .tkm-kpi .l{display:block;font-size:.76rem;font-weight:700;text-transform:uppercase;
+              letter-spacing:.04em;color:#6b7280;margin-top:4px}
+  .tkm-kpi .d{display:block;font-size:.78rem;color:#6b7280;margin-top:6px;line-height:1.4}
+  .tkm-kpi.ok{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 60%)}
+  .tkm-kpi.ok .n{color:#16a34a}
+  .tkm-kpi.warn{border-color:#f59e0b;background:linear-gradient(180deg,#fff8e1 0%,#fff 60%)}
+  .tkm-kpi.warn .n{color:#b45309}
+  .tkm-kpi.bad{border-color:#fca5a5;background:linear-gradient(180deg,#fee2e2 0%,#fff 60%)}
+  .tkm-kpi.bad .n{color:#dc2626}
+  .tkm-kpi.info{border-color:#93c5fd;background:linear-gradient(180deg,#dbeafe 0%,#fff 60%)}
+  .tkm-kpi.info .n{color:#1d4ed8}
+
+  /* ── Pasos numerados (patron Retiros: rojo -> verde con pulso) ──── */
+  .tkm-step{margin:0 0 20px;padding:22px 20px;background:#fff;border:1.5px solid #e5e7eb;
+            border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.05);position:relative;
+            overflow:hidden;transition:border-color .3s,background .3s}
+  .tkm-step::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+            background:linear-gradient(180deg,var(--ilus-red,#dc2626),#a60000);
+            opacity:1;transition:background .3s}
+  .tkm-step.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
+  .tkm-step.is-complete::before{background:linear-gradient(180deg,#16a34a,#15803d)}
+  .tkm-step-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:14px}
+  .tkm-circle{width:46px;height:46px;border-radius:14px;color:#fff;display:flex;
+            align-items:center;justify-content:center;font-size:1.4rem;font-weight:900;
+            flex-shrink:0;position:relative;
+            background:linear-gradient(150deg,var(--ilus-red,#dc2626) 0%,#a60000 100%);
+            box-shadow:0 10px 22px -6px rgba(220,38,38,.5);transition:all .35s ease}
+  .tkm-step.is-complete .tkm-circle{
+            background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+            box-shadow:0 10px 22px -6px rgba(22,163,74,.5)}
+  .tkm-step.is-complete .tkm-circle::after{content:'';position:absolute;inset:-4px;
+            border-radius:16px;border:2px solid #16a34a;opacity:.35;
+            animation:tkmPulse 1.6s ease-in-out 1}
+  @keyframes tkmPulse{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.25);opacity:0}}
+  .tkm-step h2{margin:0;font-size:1.1rem;font-weight:900;color:#0a0a0a;letter-spacing:-.02em}
+  .tkm-step .tkm-sub{margin:5px 0 0;font-size:.84rem;color:#6b7280;line-height:1.5}
+  .tkm-opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:10px;margin:14px 0}
+  .tkm-opt{border:1.5px solid #e5e7eb;border-radius:12px;padding:12px 14px;background:#fff}
+  .tkm-opt label{font-weight:700;font-size:.88rem;color:#0a0a0a;cursor:pointer}
+  .tkm-opt .h{display:block;font-size:.78rem;color:#6b7280;margin-top:4px;line-height:1.45}
+
+  /* ── Tablas (patron Etiquetas: paginadas, contenidas en pantalla) ─ */
+  .tkm-card{background:#fff;border:1.5px solid #e5e7eb;border-radius:16px;
+            overflow:hidden;margin-bottom:20px}
+  .tkm-card-h{padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;
+            align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .tkm-card-h h3{margin:0;font-size:.98rem;font-weight:900;color:#0a0a0a}
+  .tkm-card-h .hint{font-size:.79rem;color:#6b7280;margin-top:3px;line-height:1.45}
+  .tkm-table{width:100%;font-size:.85rem;margin:0}
+  .tkm-table th{background:#0a0a0a;color:#fff;font-size:.74rem;text-transform:uppercase;
+            letter-spacing:.04em;padding:9px 12px;text-align:left;white-space:nowrap}
+  .tkm-table td{padding:9px 12px;border-bottom:1px solid #f3f4f6;vertical-align:top}
+  /* El texto original NUNCA se corta: es el dato que hay que leer. */
+  .tkm-raw{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;
+            color:#374151;white-space:pre-wrap;word-break:break-word}
+  .tkm-chip{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:.78rem;
+            font-weight:700;padding:2px 8px;border-radius:999px;background:#f3f4f6;
+            color:#374151;margin:0 4px 4px 0}
+  .tkm-chip.g{background:#dcfce7;color:#166534}
+  .tkm-chip.a{background:#fff8e1;color:#b45309}
+  .tkm-chip.r{background:#fee2e2;color:#dc2626}
+  .tkm-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;
+            flex-wrap:wrap;padding:10px 14px;background:#f9fafb;border-top:1px solid #e5e7eb;
+            font-size:.82rem;color:#374151}
+  .tkm-foot select{font-size:.82rem;padding:3px 6px;border-radius:8px;border:1px solid #d1d5db}
+  .tkm-foot button{font-size:.82rem;padding:4px 10px;border-radius:8px;border:1px solid #d1d5db;
+            background:#fff;color:#374151;font-weight:700}
+  .tkm-foot button:disabled{opacity:.45;cursor:not-allowed}
+  .tkm-res{border:1.5px solid #93c5fd;background:#dbeafe;border-radius:14px;padding:16px;
+            font-size:.88rem;color:#1e3a8a;line-height:1.6}
+  .tkm-res b{color:#0a0a0a}
+  @media (max-width:640px){
+    .tkm-step{padding:18px 14px}
+    .tkm-circle{width:40px;height:40px;font-size:1.2rem}
+    .tkm-table{font-size:.8rem}
+    .tkm-table th,.tkm-table td{padding:8px}
+    .tkm-foot{justify-content:center;text-align:center}
+  }
+</style>
+
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-folder-symlink me-2"></i>Documentos de tickets</h4>
+    <div class="sub">Migración histórica — dejar el documento del ERP y los productos indexados en cada ticket</div>
+  </div>
+  <a href="{{ url_for('tk_list') }}" class="btn btn-ilus-outline">
+    <i class="bi bi-ticket-perforated me-1"></i>Ir a Tickets</a>
+</div>
+
+<div class="tkm-wrap">
+
+{% if error %}
+  <div class="alert alert-danger" style="border-radius:12px">{{ error }}</div>
+{% elif resumen %}
+
+  <div class="tkm-note mb-3">
+    <i class="bi bi-shield-check me-1" style="color:#16a34a"></i>
+    <strong>Abrir esta página no cambió nada.</strong> Lo que ves es una simulación sobre
+    {{ resumen.tickets_total }} ticket{{ 's' if resumen.tickets_total != 1 }}: se lee el texto que
+    quedó escrito en <em>Número de documento</em> y en el <em>documento de garantía</em> de cada
+    equipo, y se calcula qué se podría registrar en la tabla estructurada
+    (<span class="tkm-raw">tk_ticket_documentos</span>).
+    Un documento solo se da por bueno cuando el texto trae el <strong>tipo</strong> (FCV, BLV, NVV,
+    GDV…) <strong>y</strong> el número. Un “11439” suelto o un “factura 11439 y 11440”
+    <strong>no se adivina</strong>: cruzar mal dos documentos manda plata y equipos al cliente
+    equivocado.
+  </div>
+
+  <div class="tkm-kpis">
+    <div class="tkm-kpi ok">
+      <span class="n">{{ resumen.con_documento_reconocible }}</span>
+      <span class="l">Reconocidos</span>
+      <span class="d">Traen tipo + número. Son los que se migran.</span>
+    </div>
+    <div class="tkm-kpi warn">
+      <span class="n">{{ resumen.parciales }}</span>
+      <span class="l">Parciales</span>
+      <span class="d">Se reconoció uno, pero quedaron números sin explicar. No se migran salvo que lo pidas.</span>
+    </div>
+    <div class="tkm-kpi bad">
+      <span class="n">{{ resumen.no_reconocidos }}</span>
+      <span class="l">No reconocidos</span>
+      <span class="d">Hay texto, pero no permite identificar el documento.</span>
+    </div>
+    <div class="tkm-kpi">
+      <span class="n">{{ resumen.sin_texto }}</span>
+      <span class="l">Sin documento</span>
+      <span class="d">El ticket nunca tuvo número de documento escrito.</span>
+    </div>
+    <div class="tkm-kpi info">
+      <span class="n">{{ resumen.documentos_a_insertar }}</span>
+      <span class="l">Por registrar</span>
+      <span class="d">Filas nuevas en {{ resumen.tickets_pendientes }} ticket{{ 's' if resumen.tickets_pendientes != 1 }}. Ya estaban completos: {{ resumen.ya_completos }}.</span>
+    </div>
+    <div class="tkm-kpi info">
+      <span class="n">{{ resumen.tickets_sin_productos }}</span>
+      <span class="l">Sin productos</span>
+      <span class="d">Tienen documento reconocido pero ningún equipo cargado: candidatos a indexar desde el ERP.</span>
+    </div>
+  </div>
+
+  {# ── PASO 1 — simulación (ya corrió al abrir) ───────────────────── #}
+  <div class="tkm-step is-complete">
+    <div class="tkm-step-head">
+      <div class="tkm-circle"><i class="bi bi-check-lg"></i></div>
+      <div>
+        <h2>Simulación lista</h2>
+        <p class="tkm-sub">
+          Corrió sola al abrir la página y <strong>no escribió nada</strong>.
+          {% if incluir_parciales %}
+            Está incluyendo los <strong>parciales</strong> en lo que se migraría.
+          {% else %}
+            Los <strong>parciales</strong> quedan fuera del conteo de arriba.
+          {% endif %}
+        </p>
+      </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-sm btn-ilus-outline" href="{{ url_for('tk_admin_migrar_documentos') }}">
+        <i class="bi bi-arrow-repeat me-1"></i>Volver a simular</a>
+      {% if incluir_parciales %}
+      <a class="btn btn-sm btn-ilus-outline"
+         href="{{ url_for('tk_admin_migrar_documentos') }}">
+        <i class="bi bi-funnel me-1"></i>Simular sin los parciales</a>
+      {% else %}
+      <a class="btn btn-sm btn-ilus-outline"
+         href="{{ url_for('tk_admin_migrar_documentos', incluir_parciales=1) }}">
+        <i class="bi bi-funnel me-1"></i>Simular incluyendo los parciales</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── PASO 2 — aplicar ───────────────────────────────────────────── #}
+  <div class="tkm-step" id="tkmStep2">
+    <div class="tkm-step-head">
+      <div class="tkm-circle"><span id="tkmStep2Num">2</span></div>
+      <div>
+        <h2>Aplicar la migración</h2>
+        <p class="tkm-sub">
+          Escribe de verdad. Es <strong>idempotente</strong>: correrla dos veces no duplica nada
+          (la base tiene un candado único por ticket + documento). Se procesa por tandas;
+          si quedan pendientes, el botón te lo dice y lo aprietas de nuevo.
+        </p>
+      </div>
+    </div>
+
+    <div class="tkm-opts">
+      <div class="tkm-opt">
+        <label><input type="checkbox" id="tkmVerificar" checked> Confirmar cada documento en el ERP</label>
+        <span class="h">Antes de registrarlo, lo busca en Random (solo lectura) y guarda su fecha real.
+          Más lento, pero descarta cualquier número que no exista. Recomendado.</span>
+      </div>
+      <div class="tkm-opt">
+        <label><input type="checkbox" id="tkmIndexar" checked> Indexar los productos del documento</label>
+        <span class="h">Solo para tickets <strong>sin ningún equipo cargado</strong>: trae las líneas
+          del documento con el mismo motor que el botón “Buscar productos” de la ficha.
+          Nunca pisa equipos que ya existen.</span>
+      </div>
+      <div class="tkm-opt">
+        <label><input type="checkbox" id="tkmParciales"> Incluir también los parciales</label>
+        <span class="h">Los del semáforo ámbar: se reconoció un documento pero quedaron números
+          sueltos. Revísalos abajo antes de marcar esto.</span>
+      </div>
+      <div class="tkm-opt">
+        <label for="tkmLimit">Tickets por tanda</label>
+        <span class="h">Con confirmación en el ERP conviene dejarlo en 100 o menos.</span>
+        <input type="number" id="tkmLimit" class="form-control form-control-sm mt-2"
+               value="100" min="1" max="1000" style="max-width:130px">
+      </div>
+    </div>
+
+    <button class="btn btn-ilus" id="tkmAplicar">
+      <i class="bi bi-play-fill me-1"></i>Aplicar ahora</button>
+    <span id="tkmSpin" class="ms-2" style="display:none;font-size:.85rem;color:#6b7280">
+      <span class="spinner-border spinner-border-sm me-1"></span>Trabajando… no cierres la página.</span>
+
+    <div id="tkmResultado" class="tkm-res mt-3" style="display:none"></div>
+  </div>
+
+  {# ── TABLAS ─────────────────────────────────────────────────────── #}
+  <div class="tkm-card">
+    <div class="tkm-card-h">
+      <div>
+        <h3><i class="bi bi-check2-circle me-1" style="color:#16a34a"></i>Tickets por migrar</h3>
+        <div class="hint">Documento reconocido con certeza y todavía no registrado.</div>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="tkm-table">
+        <thead><tr><th>Ticket</th><th>Documentos que se registrarían</th><th>Productos</th></tr></thead>
+        <tbody id="tkmBodyIns"></tbody>
+      </table>
+    </div>
+    <div class="tkm-foot" data-foot="ins">
+      <span data-rango>—</span>
+      <span>
+        <label class="me-1">Por página</label>
+        <select data-size><option>25</option><option selected>50</option><option>100</option></select>
+      </span>
+      <span>
+        <button data-prev>Anterior</button>
+        <span data-pag class="mx-2">Página 1 de 1</span>
+        <button data-next>Siguiente</button>
+      </span>
+    </div>
+  </div>
+
+  <div class="tkm-card">
+    <div class="tkm-card-h">
+      <div>
+        <h3><i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>Parciales — revisar a mano</h3>
+        <div class="hint">Se reconoció un documento, pero el texto trae números que no se pueden atribuir
+          (otra factura, una fecha, un RUT, un monto). No se migran salvo que marques la opción de arriba.</div>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="tkm-table">
+        <thead><tr><th>Ticket</th><th>Se reconoció</th><th>Texto original</th><th>Números sueltos</th></tr></thead>
+        <tbody id="tkmBodyPar"></tbody>
+      </table>
+    </div>
+    <div class="tkm-foot" data-foot="par">
+      <span data-rango>—</span>
+      <span>
+        <label class="me-1">Por página</label>
+        <select data-size><option>25</option><option selected>50</option><option>100</option></select>
+      </span>
+      <span>
+        <button data-prev>Anterior</button>
+        <span data-pag class="mx-2">Página 1 de 1</span>
+        <button data-next>Siguiente</button>
+      </span>
+    </div>
+  </div>
+
+  <div class="tkm-card">
+    <div class="tkm-card-h">
+      <div>
+        <h3><i class="bi bi-x-octagon me-1" style="color:#dc2626"></i>No reconocidos</h3>
+        <div class="hint">Hay texto escrito, pero no identifica el documento. Se muestran tal cual quedaron
+          para que decidas: si aparece un formato real que se repite, se puede enseñar al lector.</div>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="tkm-table">
+        <thead><tr><th>Ticket</th><th>Dónde</th><th>Texto original</th></tr></thead>
+        <tbody id="tkmBodyNo"></tbody>
+      </table>
+    </div>
+    <div class="tkm-foot" data-foot="no">
+      <span data-rango>—</span>
+      <span>
+        <label class="me-1">Por página</label>
+        <select data-size><option>25</option><option selected>50</option><option>100</option></select>
+      </span>
+      <span>
+        <button data-prev>Anterior</button>
+        <span data-pag class="mx-2">Página 1 de 1</span>
+        <button data-next>Siguiente</button>
+      </span>
+    </div>
+  </div>
+
+{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if resumen %}
+<script>
+(function(){
+  const FICHA = "{{ url_for('tk_ficha', tid=0) }}";   // .../tickets/0 -> se reemplaza el 0
+  const DATA = {
+    ins: {{ resumen.muestra_a_insertar | tojson }},
+    par: {{ resumen.muestra_parciales   | tojson }},
+    no:  {{ resumen.muestra_no_reconocidos | tojson }}
+  };
+
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  }
+  function linkTicket(r){
+    const href = FICHA.replace(/0$/, String(r.id));
+    return '<a href="'+href+'" target="_blank" class="fw-bold">'+esc(r.numero)+'</a>';
+  }
+  function chips(arr, cls){
+    if(!arr || !arr.length) return '<span style="color:#9ca3af">—</span>';
+    return arr.map(x => '<span class="tkm-chip '+(cls||'')+'">'+esc(x)+'</span>').join('');
+  }
+
+  const RENDER = {
+    ins: r => '<tr><td>'+linkTicket(r)+'</td><td>'+chips(r.docs,'g')+'</td><td>'
+              + (r.sin_equipos
+                  ? '<span class="tkm-chip a">sin equipos cargados</span>'
+                  : '<span style="color:#6b7280">ya tiene equipos</span>')
+              + '</td></tr>',
+    par: r => {
+      const det = (r.detalle || []).map(d => '<div class="tkm-raw">'+esc(d.texto)+'</div>').join('');
+      const sue = [];
+      (r.detalle || []).forEach(d => (d.sueltos || []).forEach(s => sue.push(s)));
+      return '<tr><td>'+linkTicket(r)+'</td><td>'+chips(r.docs,'a')+'</td><td>'
+             + (det || '<span style="color:#9ca3af">—</span>') + '</td><td>'
+             + chips(sue.slice(0,12),'r') + '</td></tr>';
+    },
+    no: r => {
+      const filas = (r.detalle || []).map(d =>
+        '<div style="margin-bottom:4px"><span class="tkm-chip">'+esc(d.fuente)+'</span></div>').join('');
+      const txt = (r.detalle || []).map(d => '<div class="tkm-raw">'+esc(d.texto)+'</div>').join('');
+      return '<tr><td>'+linkTicket(r)+'</td><td>'+(filas||'—')+'</td><td>'
+             + (txt || '<span style="color:#9ca3af">(vacío)</span>') + '</td></tr>';
+    }
+  };
+
+  // Paginador estilo Etiquetas (REGLA #4.3): la tabla no scrollea la
+  // pagina, se cambia de pagina. Tamaño de pagina elegido por el usuario.
+  const BODY = { ins:'tkmBodyIns', par:'tkmBodyPar', no:'tkmBodyNo' };
+  const estado = {};
+
+  function pintar(k){
+    const foot = document.querySelector('[data-foot="'+k+'"]');
+    const body = document.getElementById(BODY[k]);
+    if(!foot || !body) return;
+    const rows = DATA[k] || [];
+    const st = estado[k];
+    const total = rows.length;
+    const paginas = Math.max(1, Math.ceil(total / st.size));
+    if(st.pag > paginas) st.pag = paginas;
+    const ini = (st.pag - 1) * st.size;
+    const trozo = rows.slice(ini, ini + st.size);
+    body.innerHTML = trozo.length
+      ? trozo.map(RENDER[k]).join('')
+      : '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:22px">Nada por acá.</td></tr>';
+    foot.querySelector('[data-rango]').textContent = total
+      ? ('Mostrando ' + (ini + 1) + '–' + Math.min(ini + st.size, total) + ' de ' + total)
+      : 'Sin resultados';
+    foot.querySelector('[data-pag]').textContent = 'Página ' + st.pag + ' de ' + paginas;
+    foot.querySelector('[data-prev]').disabled = st.pag <= 1;
+    foot.querySelector('[data-next]').disabled = st.pag >= paginas;
+  }
+
+  Object.keys(BODY).forEach(function(k){
+    const foot = document.querySelector('[data-foot="'+k+'"]');
+    if(!foot) return;
+    estado[k] = { pag:1, size: parseInt(foot.querySelector('[data-size]').value, 10) || 50 };
+    foot.querySelector('[data-size]').addEventListener('change', function(e){
+      estado[k].size = parseInt(e.target.value, 10) || 50;
+      estado[k].pag = 1; pintar(k);
+    });
+    foot.querySelector('[data-prev]').addEventListener('click', function(){
+      if(estado[k].pag > 1){ estado[k].pag--; pintar(k); }
+    });
+    foot.querySelector('[data-next]').addEventListener('click', function(){
+      estado[k].pag++; pintar(k);
+    });
+    pintar(k);
+  });
+
+  // ── Aplicar ─────────────────────────────────────────────────────
+  const btn = document.getElementById('tkmAplicar');
+  if(btn){
+    btn.addEventListener('click', async function(){
+      const verificar = document.getElementById('tkmVerificar').checked;
+      const indexar   = document.getElementById('tkmIndexar').checked;
+      const parciales = document.getElementById('tkmParciales').checked;
+      const limit     = parseInt(document.getElementById('tkmLimit').value, 10) || 100;
+
+      const detalle = [
+        'Tanda de hasta <strong>' + limit + '</strong> ticket(s).',
+        verificar ? 'Cada documento se confirma en el ERP antes de registrarlo.'
+                  : 'SIN confirmar contra el ERP (más rápido, pero registra lo que diga el texto).',
+        indexar   ? 'Se indexan los productos de los tickets que hoy no tienen ningún equipo.'
+                  : 'No se tocan los productos.',
+        parciales ? '<strong>Incluye los parciales</strong> (ámbar).' : 'Los parciales quedan fuera.'
+      ].join('<br>');
+
+      const ok = await ilusConfirm({
+        title: 'Aplicar la migración',
+        message: 'Se van a escribir los documentos reconocidos en los tickets históricos.',
+        sub: detalle,
+        subHtml: true,
+        okLabel: 'Aplicar', cancelLabel: 'Cancelar',
+        type: 'question'
+      });
+      if(!ok) return;
+
+      btn.disabled = true;
+      document.getElementById('tkmSpin').style.display = 'inline';
+      try{
+        const r = await fetch("{{ url_for('tk_api_migrar_documentos') }}", {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ aplicar: true, verificar_erp: verificar,
+                                 indexar_productos: indexar,
+                                 incluir_parciales: parciales, limit: limit })
+        });
+        const d = await r.json();
+        if(!d.ok){
+          ilusToast(d.error || 'No se pudo aplicar la migración.', {type:'error'});
+          return;
+        }
+        const s = d.resumen || {};
+        const box = document.getElementById('tkmResultado');
+        box.style.display = 'block';
+        box.innerHTML =
+          '<div class="mb-2"><b>Listo.</b> Se procesaron <b>' + (s.tickets_procesados||0) + '</b> ticket(s).</div>'
+          + '<div>· <b>' + (s.documentos_insertados||0) + '</b> documento(s) registrado(s).</div>'
+          + '<div>· <b>' + (s.productos_indexados||0) + '</b> producto(s) indexado(s) en '
+          + (s.tickets_indexados||0) + ' ticket(s).</div>'
+          + '<div>· <b>' + (s.documentos_no_en_erp||0) + '</b> no existían en el ERP (no se registraron).</div>'
+          + (s.restantes ? '<div class="mt-2">Quedan <b>' + s.restantes
+              + '</b> ticket(s) pendientes: aprieta “Aplicar ahora” otra vez para la siguiente tanda.</div>'
+            : '<div class="mt-2">No quedan tickets pendientes con esta configuración.</div>')
+          + ((s.errores && s.errores.length)
+              ? '<div class="mt-2" style="color:#dc2626">' + s.errores.length
+                + ' error(es) — revisa el log del servidor.</div>' : '');
+        document.getElementById('tkmStep2').classList.add('is-complete');
+        const num = document.getElementById('tkmStep2Num');
+        if(num) num.innerHTML = '<i class="bi bi-check-lg"></i>';
+        ilusToast('✓ Migración aplicada', {type:'success'});
+      }catch(e){
+        ilusToast('Error de red al aplicar la migración.', {type:'error'});
+      }finally{
+        btn.disabled = false;
+        document.getElementById('tkmSpin').style.display = 'none';
+      }
+    });
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}
