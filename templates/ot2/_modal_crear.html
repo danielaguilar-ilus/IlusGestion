@@ -2932,17 +2932,11 @@ window.OT2C = (function(){
       // se quedaba mudo justo para esos dos orígenes nuevos. Ahora se pinta
       // con cualquier S.doc_lineas, con el texto adaptado según haya o no
       // un documento ERP detrás.
-      (S.doc_lineas && S.doc_lineas.length
-        ? '<div class="o2m-aviso" style="background:#eff6ff;border-color:#93c5fd;color:#1e3a8a">'+
-          '<i class="bi bi-receipt me-1"></i>'+
-          (S.doc_origen
-            ? 'El documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+'</b> trae estos productos.'
-            : 'El origen de esta OT trae estos productos.')+
-          ' Los que no existían en la ficha del cliente se agregan solos, sin pasos extra.'+
-          '<ul>'+S.doc_lineas.map(function(l){
-            return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
-          }).join('')+'</ul></div>'
-        : '')+
+      // 🗑️ 2026-09-05 (Daniel, viendo el Paso 7 con 22 productos en viñetas:
+      // "eso no me gustó, quítalo"). Repetía la MISMA lista de equipos que
+      // se dibuja justo abajo en #o2mEqList, con su selector y su cantidad:
+      // con un documento real de 22 líneas empujaba el paso entero fuera de
+      // pantalla antes de poder elegir un checklist. No se pierde nada.
       '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>';
     cargarEquipos();
   }
@@ -3308,9 +3302,32 @@ window.OT2C = (function(){
           // 2026-09-03: sobre la VISTA, no sobre cacheEquipos. Con un
           // documento de origen, recorrer la ficha entera preseleccionaba
           // equipos que ni siquiera estan en ese documento.
-          var esInstalacion = (S.tipo === 'instalacion');
+          // 🔧 FIX 2026-09-05 (Daniel: "seleccioné la instalación y me está
+          // agregando los productos del plan... necesito que eso funcione
+          // para todo lo demás, EXCEPTO la instalación").
+          // Antes, instalación entraba por `|| esInstalacion` y se llevaba
+          // TODO lo que hubiera en la vista -- incluidas las máquinas que el
+          // cliente ya tenía en su plan de mantención. En una instalación
+          // esas máquinas no se están instalando: lo que se instala es lo
+          // que trae el DOCUMENTO. Preseleccionarlas obligaba a desmarcar a
+          // mano equipo por equipo.
+          // Ahora: instalación se guía por el documento (cuando hay
+          // documento, la vista YA está acotada a sus productos); sin
+          // documento no preselecciona nada y elige el usuario. El resto de
+          // los tipos conserva el criterio de siempre: solo lo que está en
+          // el plan.
+          // 2026-09-05 (Daniel, dos veces: "no apliques plan en los
+          // productos... tampoco en instalación"). El plan de mantención
+          // deja de decidir qué viene premarcado. Lo que manda ahora es el
+          // ORIGEN: si la OT nace de un documento, cotización o ticket, se
+          // premarcan los productos de esa fuente -- que es lo que se va a
+          // trabajar. Sin una fuente, no se premarca nada y elige el
+          // usuario. `aplica_mantencion` sigue existiendo y se sigue viendo
+          // y editando con el botón del escudo: dejó de ser un filtro
+          // automático, no dejó de ser un dato.
+          var hayFuente = !!(S.doc_origen || (S.doc_lineas && S.doc_lineas.length));
           _o2mEquiposVista().forEach(function(m){
-            if (m.aplica_mantencion || esInstalacion){
+            if (hayFuente){
               S.equipos.push({maquina_id:m.id, plantilla_id:null, plantilla_sugerida:false});
               sugerirPlantillaEquipo(m.id);
             }
@@ -3458,7 +3475,19 @@ window.OT2C = (function(){
      propósito: entrar a "voy por una máquina" arrastrando 81 equipos ya
      marcados es exactamente lo que hace que alguien mande una OT con el
      parque entero sin darse cuenta. */
-  var _o2mModoEq = 'plan';   // 'plan' | 'todos' | 'puntual'
+  /* 🔧 FIX 2026-09-05 (Daniel: "cuando hago cambios en la tabla se
+     reinicia y pierdo el producto" + "no apliques plan en los productos,
+     tampoco en instalación").
+     CAUSA de "pierdo el producto": en modo 'plan' la lista FILTRA por
+     `aplica_mantencion`. Al sacar un equipo del plan con el botón del
+     escudo, la fila desaparecía de la pantalla en el acto -- el producto
+     no se perdía de verdad, pero para quien lo está usando se esfumó, que
+     es lo mismo.
+     Ahora la vista arranca en 'todos': el producto SIEMPRE está a la
+     vista y el plan deja de decidir qué se ve. Los tres modos siguen
+     existiendo (REGLA #4.2, no se quita nada): quien quiera ver solo los
+     del plan sigue teniendo su chip. */
+  var _o2mModoEq = 'todos';   // 'plan' | 'todos' | 'puntual'
 
   function _o2mPlanAplica(){
     return O2M_TIPOS_CON_PLAN.indexOf(S.tipo) >= 0;
@@ -6151,7 +6180,7 @@ window.OT2C = (function(){
     S.equipos = [];
     // El modo vuelve a su default en cada OT nueva: cambiarlo es una
     // decision de ESA OT, no una preferencia que se quede pegada.
-    _o2mModoEq = 'plan';
+    _o2mModoEq = 'todos';
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
     repintarSeccion('equipos');
