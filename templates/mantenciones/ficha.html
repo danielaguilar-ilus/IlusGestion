@@ -42,9 +42,11 @@
         {# Badge tipo_cliente (Plan 2026-05-21 Capa 8 / regla CLAUDE.md paleta) #}
         {% set _tc = (cliente.tipo_cliente or 'mantencion')|lower %}
         {% set _tc_colors = {
-            'mantencion': ('#dc2626','#fff','bi-wrench-adjustable'),
-            'arriendo':   ('#0891b2','#fff','bi-calendar-range'),
-            'leasing':    ('#f59e0b','#fff','bi-bank'),
+            'mantencion':  ('#dc2626','#fff','bi-wrench-adjustable'),
+            'arriendo':    ('#0891b2','#fff','bi-calendar-range'),
+            'leasing':     ('#f59e0b','#fff','bi-bank'),
+            'instalacion': ('#0d9488','#fff','bi-tools'),
+            'prospecto':   ('#6b7280','#fff','bi-person-add'),
         } %}
         {% set _tc_def = _tc_colors.get(_tc, _tc_colors['mantencion']) %}
         <span class="cli-badge" title="Tipo de cliente"
@@ -264,6 +266,19 @@
         {% elif _tc_kpi == 'leasing' %}
           {% set tc_color = '#f59e0b' %}{% set tc_bg = '#fffbeb' %}
           {% set tc_lbl = 'Leasing' %}{% set tc_icon = 'cash-coin' %}
+        {# 2026-09-06 (Daniel: "debe decir Instalacion"). Faltaban estas dos
+           ramas: el ENUM tiene 5 valores desde el 12-jul, pero acá solo
+           había arriendo y leasing, así que una ficha de instalación o un
+           prospecto caían al {% else %} y la pantalla decía "Mantención"
+           aunque en la base dijera otra cosa. Etiquetas y colores copiados
+           de templates/mantenciones/clientes.html, que ya los tenía bien
+           resueltos para los cinco -- no se inventan acá. #}
+        {% elif _tc_kpi == 'instalacion' %}
+          {% set tc_color = '#0d9488' %}{% set tc_bg = '#f0fdfa' %}
+          {% set tc_lbl = 'Instalación' %}{% set tc_icon = 'tools' %}
+        {% elif _tc_kpi == 'prospecto' %}
+          {% set tc_color = '#6b7280' %}{% set tc_bg = '#f9fafb' %}
+          {% set tc_lbl = 'Prospecto' %}{% set tc_icon = 'person-add' %}
         {% else %}
           {% set tc_color = '#dc2626' %}{% set tc_bg = '#fef2f2' %}
           {% set tc_lbl = 'Mantención' %}{% set tc_icon = 'wrench-adjustable' %}
@@ -4232,9 +4247,19 @@
             <label class="form-label fw-semibold">Tipo cliente</label>
             <select id="ec_tipo_cliente" class="form-select">
               {% set _tc_cur = (cliente.tipo_cliente or 'mantencion')|lower %}
-              <option value="mantencion" {% if _tc_cur=='mantencion' %}selected{% endif %}>Mantención</option>
-              <option value="arriendo"   {% if _tc_cur=='arriendo'   %}selected{% endif %}>Arriendo</option>
-              <option value="leasing"    {% if _tc_cur=='leasing'    %}selected{% endif %}>Leasing</option>
+              {# 🔴 2026-09-06: este select tenía SOLO 3 opciones y el ENUM
+                 tiene 5. Un cliente en 'instalacion' o 'prospecto' no
+                 calzaba con ninguna, el navegador dejaba marcada la
+                 primera y al guardar CUALQUIER campo (un teléfono, una
+                 dirección) la clasificación se degradaba a Mantención sin
+                 avisar -- el backend la acepta como válida. Con las 5
+                 opciones, el valor real queda seleccionado y guardar deja
+                 de destruir el dato. #}
+              <option value="mantencion"  {% if _tc_cur=='mantencion'  %}selected{% endif %}>Mantención</option>
+              <option value="instalacion" {% if _tc_cur=='instalacion' %}selected{% endif %}>Instalación</option>
+              <option value="arriendo"    {% if _tc_cur=='arriendo'    %}selected{% endif %}>Arriendo</option>
+              <option value="leasing"     {% if _tc_cur=='leasing'     %}selected{% endif %}>Leasing</option>
+              <option value="prospecto"   {% if _tc_cur=='prospecto'   %}selected{% endif %}>Prospecto</option>
             </select>
             <small class="text-muted" style="font-size:.7rem">Define categoría comercial</small>
           </div>

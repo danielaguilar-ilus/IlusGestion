@@ -61103,10 +61103,16 @@ def mant_cliente_nuevo():
             # mismo cliente, sin importar como se haya tipeado.
             _cuerpo_nuevo = _rut_cuerpo(rut_norm)
             existing = mysql_fetchone(
+                # El RUT guardado trae el digito verificador y `_rut_cuerpo`
+                # lo quita, por eso se compara con comodin. Pero tiene que
+                # ser '_' (UN caracter: el DV), nunca '%': con '%' el cuerpo
+                # de 7 digitos '7699696' matcheaba '769969640', que es OTRO
+                # cliente, y la ficha ajena se daba por buena.
                 "SELECT id, razon_social FROM mant_clientes "
-                " WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') "
-                "       LIKE CONCAT(%s, '%%') LIMIT 1",
-                (_cuerpo_nuevo,)
+                " WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') = %s "
+                "    OR REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') "
+                "       LIKE CONCAT(%s, '_') LIMIT 1",
+                (_cuerpo_nuevo, _cuerpo_nuevo)
             ) if _cuerpo_nuevo else None
             if existing:
                 err = (f"Ya existe un cliente con ese RUT: "
@@ -78969,11 +78975,19 @@ def ot2_api_cliente_crear():
     cuerpo = _rut_cuerpo(rut) if rut else ""
     if cuerpo:
         ya = mysql_fetchone(
+            # 🔴 2026-09-06: el comodin era '%', que acepta cualquier cola.
+            # Un RUT de 7 digitos enganchaba con uno de 9 y el wizard decia
+            # "Ya existe una ficha para este RUT" mostrando la de OTRO
+            # cliente -- y desde ahi la OT y sus equipos quedaban colgando
+            # del cliente equivocado. Ahora '_' acepta exactamente el
+            # digito verificador, y se agrega la igualdad exacta para los
+            # RUT guardados sin DV.
             "SELECT id, razon_social, rut FROM mant_clientes "
-            " WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') "
-            "       LIKE CONCAT(%s, '%%') "
+            " WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') = %s "
+            "    OR REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') "
+            "       LIKE CONCAT(%s, '_') "
             " ORDER BY (estado='activo') DESC, id ASC LIMIT 1",
-            (cuerpo,))
+            (cuerpo, cuerpo))
         if ya:
             return jsonify({
                 "ok": True, "creado": False,
