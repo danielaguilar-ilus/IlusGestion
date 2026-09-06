@@ -3858,13 +3858,47 @@ window.OT2C = (function(){
   async function _o2mAltaAutoFaltantes(faltantes){
     var cid = S.cliente && S.cliente.id;
     if (!cid || !faltantes.length) return;
+
+    /* 2026-09-06 (Daniel, viendo dos filas del mismo SKU: "si compra seis
+       de un SKU, tiene que preguntar si duplican la fila o lo dejas así...
+       eso es indispensable, las cantidades").
+
+       No son un duplicado: cada fila es una MÁQUINA distinta con su propia
+       serie, y para una máquina eso es lo correcto -- el técnico revisa
+       cada una y firma por cada una. Pero para accesorios o piso, seis
+       unidades en seis filas es ruido. Como el sistema no puede saber cuál
+       es cuál sin clasificación (y hoy la cobertura es baja), se pregunta
+       UNA vez por lote en lugar de decidir por el usuario.
+
+       La respuesta aplica a todas las líneas de este lote. Si cancela el
+       diálogo se toma la opción conservadora -- una fila por unidad, que
+       es como venía funcionando (REGLA #4.2: sin respuesta, no se cambia
+       el comportamiento anterior). */
+    var _multi = faltantes.filter(function(l){ return (parseInt(l.qty, 10) || 1) > 1; });
+    var _unaFilaPorUnidad = true;
+    if (_multi.length && window.ilusConfirm){
+      var _tot = _multi.reduce(function(a, l){ return a + (parseInt(l.qty, 10) || 1); }, 0);
+      var _ej = _multi[0];
+      _unaFilaPorUnidad = await ilusConfirm({
+        title: '¿Una fila por unidad?',
+        message: 'Hay ' + _multi.length + ' producto' + (_multi.length === 1 ? '' : 's') +
+                 ' con más de una unidad (' + _tot + ' unidades en total). ' +
+                 'Por ejemplo: ' + ((_ej.nombre || _ej.sku) + ' × ' + (_ej.qty || 1)) + '.',
+        sub: 'Una fila por unidad le da a cada máquina su propia serie y su propio ' +
+             'checklist — es lo que corresponde a un equipo. Una sola fila por producto ' +
+             'es mejor para accesorios o piso, donde revisar seis veces lo mismo no aporta.',
+        okLabel: 'Una fila por unidad',
+        cancelLabel: 'Una sola fila por producto',
+      });
+    }
     var docOrigenTxt = S.doc_origen ? (S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '';
     var creadosIds = [];
     var errores = 0;
     for (var i = 0; i < faltantes.length; i++){
       var l = faltantes[i];
       try {
-        var body = {sku: l.sku, nombre: l.nombre || l.sku, cantidad: l.qty || 1};
+        var body = {sku: l.sku, nombre: l.nombre || l.sku,
+                    cantidad: _unaFilaPorUnidad ? (l.qty || 1) : 1};
         // 2026-08-30 (Daniel, trazabilidad -- "CON QUÉ DOC entró eso a la
         // ficha"): CADA línea puede tener su propio documento ERP real
         // (una cotización combina varias facturas) -- eso manda primero;
@@ -6554,6 +6588,17 @@ window.OT2C = (function(){
         '<small class="o2m-eq-sug"><i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>');
     } else if (!e.plantilla_sugerida && sug){
       sug.remove();
+    }
+    /* 🔴 2026-09-06 (Daniel: "está apareciendo como en rojo, no sé por
+       qué"). Esta función actualizaba el checklist y su aviso pero NUNCA
+       la clase de la fila. Rojo significa "marcado y todavía sin
+       checklist"; como la sugerencia llega por fetch DESPUÉS de pintar la
+       fila, quedaba roja para siempre aunque ya tuviera su checklist
+       puesto y visible. El color tiene que seguir al dato. */
+    var tr = celda.closest('tr');
+    if (tr){
+      tr.classList.remove('ok', 'sel');
+      tr.classList.add(e.plantilla_id ? 'ok' : 'sel');
     }
   }
   function sugerirPlantillaEquipo(mid){
