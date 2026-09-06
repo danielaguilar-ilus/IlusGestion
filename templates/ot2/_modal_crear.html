@@ -3639,6 +3639,7 @@ window.OT2C = (function(){
     var st = document.createElement('style');
     st.id = 'o2mEqModosCss';
     st.textContent =
+      '.o2m-cant-multi{display:inline-block;min-width:24px;padding:2px 7px;border-radius:999px;background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-weight:900}' +
       '.o2m-fin-docsn{font-size:.76rem;color:#0f172a;background:#f1f5f9;border-radius:8px;padding:7px 10px;margin-bottom:8px}' +
       '.o2m-eqzz{margin-top:12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}' +
       '.o2m-eqzz > summary{cursor:pointer;padding:10px 12px;font-weight:800;font-size:.82rem;color:#0f172a}' +
@@ -3757,7 +3758,17 @@ window.OT2C = (function(){
             '<td><span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
               (m.sku ? '<span class="sku">SKU '+esc(m.sku)+'</span>' : '')+
               (m.serie ? '<span class="sku">S/N '+esc(m.serie)+'</span>' : '')+'</td>'+
-            '<td class="cant">'+(_cant ? esc(String(_cant)) : '<span class="muted">—</span>')+'</td>'+
+            // 2026-09-06 (Daniel: "los productos que se repiten en cantidad
+            // va a ser un tema, la persona va a tener que revisar bien qué
+            // se repite... para no tener errores humanos"). Una cantidad
+            // mayor a 1 se destaca: es la que obliga a revisar si de verdad
+            // van dos, y un número suelto en gris no llama la atención.
+            '<td class="cant">'+(_cant
+              ? (parseInt(_cant, 10) > 1
+                  ? '<span class="o2m-cant-multi" title="Este producto va más de una vez — revisa que corresponda">'+
+                    esc(String(_cant))+'</span>'
+                  : esc(String(_cant)))
+              : '<span class="muted">—</span>')+'</td>'+
             (!_o2mPlanAplica() ? '' :
             '<td class="plan">'+(O2M_PUEDE_TOGGLE_PLAN
               ? '<button type="button" class="o2m-eq-plan-btn'+(enPlan?' on':'')+'" '+
@@ -5408,21 +5419,46 @@ window.OT2C = (function(){
   function _pintarDocExtraDom(){
     var c = document.getElementById('o2mDocExtra'); if (!c) return;
     var rutCliente = (S.cliente && S.cliente.rut) || '';
-    var filas = S.doc_extra.map(function(d,i){
+    /* 🔴 2026-09-06 (Daniel: "sigue excluyendo el documento que asocio en
+       primera instancia"). Esta lista mostraba SOLO los documentos extra,
+       así que el documento con el que nace la OT -- el que se elige arriba,
+       en el origen o en Costos -- no aparecía por ningún lado, y parecía
+       que no se había asociado. Sí se asocia (y desde hoy también se
+       registra en la tabla de documentos de la OT), pero había que verlo.
+       Va primero, marcado como principal y sin botón de quitar: sacarlo de
+       acá no lo desasociaría, y ofrecer un botón que no hace lo que dice
+       es peor que no tenerlo. Se quita cambiando el documento arriba. */
+    var _principal = null;
+    if (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo){
+      _principal = {tido: S.fin_doc.tido, nudo: S.fin_doc.nudo};
+    } else if (S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo){
+      _principal = {tido: S.doc_origen.tido, nudo: S.doc_origen.nudo};
+    }
+    var filaPrincipal = _principal
+      ? '<div class="o2m-docx-fila"><i class="bi bi-star-fill" style="color:#f59e0b"></i>'+
+        '<span class="tag">'+esc(_principal.tido)+' '+esc(_principal.nudo)+'</span>'+
+        '<span class="nm">Documento principal de la OT</span></div>'
+      : '';
+    var _pk = _principal ? _o2mDocOrigenNorm(_principal.tido + _principal.nudo) : '';
+    var filas = filaPrincipal + S.doc_extra.filter(function(d){
+      // Si el mismo papel está arriba y también como extra, no se repite.
+      return !_pk || _o2mDocOrigenNorm((d.tido||'') + (d.nudo||'')) !== _pk;
+    }).map(function(d,i){
       var difiere = !!(d.rut && rutCliente && _o2mRutCuerpo(d.rut) !== _o2mRutCuerpo(rutCliente));
       return '<div class="o2m-docx-fila'+(difiere?' warn':'')+'">'+
         (difiere ? '<i class="bi bi-exclamation-triangle-fill" title="RUT distinto al del cliente de esta OT"></i>' :
                    '<i class="bi bi-file-earmark-text"></i>')+
         '<span class="tag">'+esc(d.tido)+' '+esc(d.nudo)+'</span>'+
         (d.cliente_nombre ? '<span class="nm">'+esc(d.cliente_nombre)+'</span>' : '')+
-        '<button type="button" onclick="OT2C.quitarDocExtra('+i+')" title="Quitar"><i class="bi bi-x"></i></button>'+
+        '<button type="button" onclick="OT2C.quitarDocExtra('+S.doc_extra.indexOf(d)+')" '+
+        'title="Quitar"><i class="bi bi-x"></i></button>'+
       '</div>';
     }).join('');
     c.innerHTML = '<div class="o2m-docx">'+
       '<div class="o2m-docx-hd"><span>Documentos asociados</span>'+
         '<button type="button" class="o2m-docx-add" onclick="OT2C.abrirAgregarDocExtra()">'+
         '<i class="bi bi-plus-lg"></i> Agregar documento</button></div>'+
-      (filas || '<div class="o2m-docx-vacio">Sin documentos adicionales.</div>')+
+      (filas || '<div class="o2m-docx-vacio">Sin documentos asociados.</div>')+
     '</div>';
   }
   /* "Venta" de referencia para el margen: el monto REAL del documento si
@@ -5627,6 +5663,18 @@ window.OT2C = (function(){
          igual lo lleva. */
       var TIPOS_CON_PLAN = ['preventiva','correctiva','visita_tecnica','inspeccion'];
       var soloPlan = TIPOS_CON_PLAN.indexOf(S.tipo) >= 0;
+      /* 🔴 2026-09-06 (Daniel: "los productos siguen viniendo mal. Deberías
+         hacer una recolección de la tabla que está en la generación de la
+         OT: allí están todos los productos actualizados y ya los tenemos
+         capturados por documento, con todo. ¿No te parecería mejor tomarlos
+         de allí, con las cantidades y todo declarada?").
+
+         Tiene razón, y es la fuente correcta: esa tabla es la que él revisa
+         y valida antes de crear la OT. Antes acá se contaba 1 por máquina
+         marcada, que es OTRO número -- por eso el anexo y la pantalla no
+         coincidían. Ahora se leen las MISMAS filas que se muestran en el
+         Paso 7, con su documento y su cantidad declarada, y se agrupan por
+         producto. Si el anexo dice 2, es porque en la pantalla decía 2. */
       var acc = {};
       (S.equipos||[]).forEach(function(e){
         var m = cacheEquipos.find(function(x){ return x.id === e.maquina_id; });
@@ -5635,9 +5683,24 @@ window.OT2C = (function(){
         var nombre = m.nombre || m.modelo || ('Equipo ' + m.id);
         var sku = (m.sku || '').trim();
         var k = sku || ('n:' + nombre);
-        if (!acc[k]) acc[k] = { sku: sku, nombre: nombre, cantidad: 0 };
-        acc[k].cantidad += 1;
+        // La cantidad y el documento salen de la MISMA línea que pinta la
+        // fila del Paso 7 (_o2mLineaDeSku / _o2mDocDeLinea). Sin línea de
+        // documento detrás -- equipo de la ficha, no de una factura -- la
+        // unidad vale 1, que es lo que la tabla muestra.
+        var _lin = _o2mLineaDeSku(m.sku);
+        var _cant = (_lin && parseInt(_lin.qty, 10) > 0) ? parseInt(_lin.qty, 10) : 1;
+        var _doc = _o2mDocDeLinea(_lin) || '';
+        if (!acc[k]){
+          acc[k] = { sku: sku, nombre: nombre, cantidad: 0, documento: _doc, _uds: 0 };
+        }
+        if (_doc && !acc[k].documento) acc[k].documento = _doc;
+        acc[k]._uds += 1;
+        // Con línea de documento la cantidad la manda el documento (no se
+        // multiplica por cada unidad marcada); sin ella, se cuentan las
+        // unidades.
+        acc[k].cantidad = _lin ? _cant : acc[k]._uds;
       });
+      Object.keys(acc).forEach(function(k){ delete acc[k]._uds; });
       S.anexo.productos = Object.keys(acc).map(function(k){ return acc[k]; })
         .sort(function(x,y){ return y.cantidad - x.cantidad ||
                                     String(x.nombre).localeCompare(String(y.nombre)); });

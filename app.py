@@ -83438,6 +83438,11 @@ def _anexo_productos_norm(raw):
             "sku": str(it.get("sku") or "").strip()[:60],
             "nombre": nombre,
             "cantidad": max(1, cant),
+            # 2026-09-06 (Daniel: "ya tenemos esos datos capturados por
+            # documento, con todo"): de que factura/boleta viene cada
+            # producto. En un documento que se le paga a un proveedor, saber
+            # con que papel entro cada equipo es media trazabilidad.
+            "documento": str(it.get("documento") or "").strip()[:40],
         })
     return out
 

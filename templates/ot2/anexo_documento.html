@@ -165,10 +165,17 @@
      los equipos físicos de la OT a los que aplica el servicio. #}
   <p class="campo"><b>Productos / Equipos del Servicio:</b></p>
   <table class="precio">
-    <thead><tr><th>SKU</th><th>Descripción</th><th style="text-align:right">Cantidad</th></tr></thead>
+    {#- 2026-09-06 (Daniel: "ya tenemos esos datos capturados por documento,
+        con todo"). La columna solo aparece si algún producto trae documento:
+        en un anexo sin documentos detrás sería una columna de guiones. -#}
+    {% set _hay_doc = productos | selectattr('documento') | list | length > 0 %}
+    <thead><tr><th>SKU</th><th>Descripción</th>
+      {% if _hay_doc %}<th>Documento</th>{% endif %}
+      <th style="text-align:right">Cantidad</th></tr></thead>
     <tbody>
       {% for p in productos %}
       <tr><td>{{ p.sku or '—' }}</td><td>{{ p.nombre or '—' }}</td>
+          {% if _hay_doc %}<td>{{ p.documento or '—' }}</td>{% endif %}
           <td class="monto">{{ p.cantidad }}</td></tr>
       {% endfor %}
     </tbody>
