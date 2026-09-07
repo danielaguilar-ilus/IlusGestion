@@ -428,15 +428,51 @@ window.OT2ANX = (function(){
     if (DEF_OT && DEF_OT.direccion) t += ', en ' + DEF_OT.direccion +
       (DEF_OT.comuna ? ', ' + DEF_OT.comuna : '');
     t += '. Referencia: ' + (DEF_OT && DEF_OT.numero_ot ? DEF_OT.numero_ot : 'OT') + '.';
-    if (DEF_OT && DEF_OT.equipos && DEF_OT.equipos.length){
-      t += '\n\nEquipos considerados (' + DEF_OT.equipos.length + '):\n' +
-           DEF_OT.equipos.map(function(e){
-             return '· ' + e.nombre +
-               (e.sku ? ' — SKU ' + e.sku : '') +
-               (e.serie ? ' — Serie ' + e.serie : '');
-           }).join('\n');
-    }
+    /* 🔴 2026-09-07 (Daniel, viendo el Anexo N° 162: "en los objetivos el
+       servicio estaba agregando repetitivamente los SKU y los nombres de
+       los equipos; me gustaría que subieran a la tabla").
+
+       Acá se pegaba la lista completa de equipos DENTRO del objetivo, con
+       SKU y serie de cada uno. Es el mismo defecto que ya se había
+       corregido el 03-09 en el wizard de creación ("si hay más de 15
+       productos el objetivo se corrompe"), pero ESTE modal — el que se
+       abre desde la ficha de la OT, que es el camino que se usa a diario —
+       se quedó sin corregir. Resultado real: el objetivo del 162 era un
+       párrafo con dos equipos y sus series metidos a la fuerza.
+
+       El objetivo vuelve a ser UNA frase. Los equipos van a la tabla del
+       anexo, que es donde se leen ordenados (ver productosDesdeOT). */
     return t;
+  }
+
+  /* Los equipos de la OT, con el formato que espera la tabla del anexo
+     ([{sku, nombre, cantidad}], ver _anexo_productos_norm en app.py).
+
+     ⚠️ Antes este modal NO mandaba `productos`, así que `productos_json`
+     quedaba vacío: la pantalla de firma no mostraba ningún equipo (el
+     proveedor firmaba sin ver sobre qué máquinas es el trabajo) y el anexo
+     firmado tampoco congelaba la lista. Por eso los equipos NO pueden
+     simplemente sacarse del objetivo: hay que mandarlos por su camino.
+
+     Las máquinas CON serie van una por fila y con la serie en la
+     descripción: en una mantención correctiva la serie identifica la
+     máquina exacta y agruparlas por SKU la perdería. Las que no tienen
+     serie sí se agrupan y se cuentan. */
+  function productosDesdeOT(){
+    var eq = (DEF_OT && DEF_OT.equipos) || [];
+    var conSerie = [], sinSerie = {}, orden = [];
+    eq.forEach(function(e){
+      var nom = (e.nombre || 'Equipo').toString();
+      var sku = (e.sku || '').toString();
+      if (e.serie){
+        conSerie.push({sku: sku, nombre: nom + ' (Serie ' + e.serie + ')', cantidad: 1});
+      } else {
+        var k = sku + '|' + nom;
+        if (!sinSerie[k]){ sinSerie[k] = {sku: sku, nombre: nom, cantidad: 0}; orden.push(k); }
+        sinSerie[k].cantidad += 1;
+      }
+    });
+    return conSerie.concat(orden.map(function(k){ return sinSerie[k]; }));
   }
 
   function resetCrear(){
@@ -815,6 +851,10 @@ window.OT2ANX = (function(){
           proveedor_nombre: S.proveedor_nombre, proveedor_rut: S.proveedor_rut,
           proveedor_direccion: S.proveedor_direccion,
           cliente_nombre: S.cliente_nombre, objetivo_servicio: S.objetivo_servicio,
+          // Los equipos viajan como tabla, no dentro del objetivo. Sin esto
+          // el anexo nace sin productos: la pantalla de firma no muestra
+          // ninguno y el firmado no congela la lista.
+          productos: productosDesdeOT(),
           precio_items: items,
           fecha_inicio: S.fecha_inicio || null, fecha_termino: S.fecha_termino || null,
           niveles_servicio: S.niveles_servicio, hitos_pago: S.hitos_pago,
