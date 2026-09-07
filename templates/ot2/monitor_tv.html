@@ -847,6 +847,19 @@
     }
     .estado-ejecutando .av-pct{color:#4ade80}
     .estado-ejecutando .av-bar i{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
+    /* 📍 Barra de levantamiento (2026-09-07): rayas en movimiento, gris
+       azulado neutro. NO es un color del semáforo a propósito -- no dice
+       "bien" ni "mal", dice "esto avanza y no sabemos cuánto falta", que es
+       la verdad de un trabajo sin total conocido. */
+    .av-bar.av-bar-lev i,
+    .estado-ejecutando .av-bar.av-bar-lev i{
+      background:repeating-linear-gradient(115deg,
+        #64748b 0 10px, #94a3b8 10px 20px);
+      background-size:200% 100%;
+      animation:avLev 2.4s linear infinite;
+    }
+    @keyframes avLev{ from{background-position:0 0} to{background-position:-40px 0} }
+    @media (prefers-reduced-motion:reduce){ .av-bar.av-bar-lev i{animation:none} }
     @keyframes aliento{
       0%,100%{box-shadow:0 0 0 3px var(--green-500), 0 0 10px rgba(34,197,94,.35)}
       50%{box-shadow:0 0 0 3px var(--green-500), 0 0 30px rgba(34,197,94,.7)}
@@ -1975,12 +1988,50 @@
     // Avance
     const tieneCarga = (p.total_ot || 0) > 0 || (p.tareas_total || 0) > 0 || (p.bloques || []).length > 0;
     const pct = Math.max(0, Math.min(100, Math.round(p.avance_pct || 0)));
+    const elapsed = $('.av-elapsed', row);
+    const barra = $('.av-bar', row);
+
+    /* 📍 2026-09-07 (Daniel: "la OT por levantamiento nunca maneja un
+       total de máquinas, sino que se va agregando").
+
+       En un levantamiento no hay denominador, así que el porcentaje no es
+       un número mal calculado: es la pregunta equivocada. Mostraba 0% toda
+       la mañana con el técnico levantando 40 máquinas.
+
+       Se reemplaza por lo que SÍ se puede medir y es lo que Daniel quiere
+       saber a tres metros: cuántos lleva y hace cuánto registró el último.
+       La barra va a rayas en movimiento: dice "esto avanza" sin afirmar
+       cuánto falta. Llenarla o dejarla vacía serían las dos mentiras
+       posibles. */
+    if (p.avance_modo === 'levantamiento'){
+      setTexto($('.av-pct', row), (p.lev_equipos || 0) + '');
+      var _det = (p.lev_equipos === 1 ? 'equipo' : 'equipos');
+      if (p.lev_fotos) _det += ' · ' + p.lev_fotos + ' fotos';
+      setTexto($('.av-tareas', row), _det);
+      if (barra){
+        barra.classList.add('av-bar-lev');
+        var _i = $('.av-bar i', row);
+        if (_i) _i.style.width = '100%';
+      }
+      // El cronómetro pasa a contar desde el ÚLTIMO equipo registrado: en un
+      // levantamiento eso es lo que dice si sigue avanzando o se colgó.
+      if (p.lev_ultimo_iso){
+        elapsed.dataset.ini = p.lev_ultimo_iso;
+        elapsed.dataset.pre = 'último hace ';
+        pintarElapsed(elapsed);
+      } else {
+        delete elapsed.dataset.ini; delete elapsed.dataset.pre;
+        setTexto(elapsed, '');
+      }
+      return _avanceFilaListo(row, p);
+    }
+    if (barra) barra.classList.remove('av-bar-lev');
+    delete elapsed.dataset.pre;
     setTexto($('.av-pct', row), tieneCarga ? pct + '%' : '—');
     $('.av-bar i', row).style.width = tieneCarga ? pct + '%' : '0%';
     setTexto($('.av-tareas', row), (p.tareas_total || 0) > 0 ? (p.tareas_ok || 0) + '/' + p.tareas_total + ' tareas' : '');
 
     // Tiempo transcurrido — lo calcula el ticker local a partir de inicio_iso
-    const elapsed = $('.av-elapsed', row);
     if (est === 'ejecutando' && p.inicio_iso){
       elapsed.dataset.ini = p.inicio_iso;
       pintarElapsed(elapsed);
@@ -1989,6 +2040,14 @@
       setTexto(elapsed, '');
     }
 
+    return _avanceFilaListo(row, p);
+  }
+
+  /* El resto de la fila (línea de tiempo de la jornada) es igual en los dos
+     modos de avance, así que vive acá y lo llaman los dos caminos en vez de
+     duplicarse. */
+  function _avanceFilaListo(row, p){
+    const est = estadoNorm(p.estado, 'disponible');
     // Línea de tiempo de la jornada
     const tl = $('.p-tl', row);
     const bloques = p.bloques || [];
@@ -2826,7 +2885,10 @@
     if (isNaN(t)) return;
     let mins = Math.max(0, Math.floor((Date.now() - t.getTime()) / 60000));
     const h = Math.floor(mins / 60), m = mins % 60;
-    setTexto(nodo, h > 0 ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm');
+    // `data-pre` permite reusar este mismo cronómetro para "último hace 3m"
+    // (levantamiento) sin un fetch extra. Sin el atributo, igual que antes.
+    var _pre = nodo.dataset.pre || '';
+    setTexto(nodo, _pre + (h > 0 ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm'));
   }
 
   function tick(){

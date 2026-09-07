@@ -82543,19 +82543,84 @@ _OT_TV_WHERE_SOLAPE = (
 
 def _ot_tv_huella():
     """Huella barata del rango visible: si no cambió, el televisor no pide
-    nada más. Una sola consulta indexada (idx_fecha) de milisegundos —
-    esto es lo que hace que el monitor no cueste plata."""
+    nada más. Consultas indexadas de milisegundos — esto es lo que hace que
+    el monitor no cueste plata.
+
+    🔴 2026-09-07 (Daniel: "las OT 2.0 por levantamiento no se actualizan
+    en tiempo real; es por monitorear a ver en qué andan los chicos").
+
+    La huella miraba UNA sola tabla, `mant_visitas`. El problema es que el
+    trabajo del técnico NO vive ahí: los equipos de un levantamiento van a
+    `mant_levantamiento_items`, y marcar una tarea escribe en
+    `mant_visita_tareas`. Entre que la OT arranca y se cierra, su fila de
+    `mant_visitas` queda byte por byte igual — así que para el latido no
+    pasaba nada, y el tablero no se repintía.
+
+    Ojo con cómo se veía el síntoma, porque no era un congelamiento total:
+    la huella es GLOBAL del rango, no por OT. Cuando CUALQUIER otra OT
+    tocaba `mant_visitas` (alguien iniciaba, firmaba o cerraba), la huella
+    cambiaba y el tablero se repintaba entero, arrastrando de paso el
+    levantamiento. Por eso "a veces aparece" y a veces se queda pegado toda
+    la mañana.
+
+    Ahora son tres señales en una sola cadena. Cada bloque va en su propio
+    try/except: si una consulta falla, se conserva lo que se alcanzó a
+    juntar en vez de devolver "err" y dejar la pantalla ciega.
+
+    ⚠️ El bloque de las OT usa el MISMO criterio de solape que el tablero
+    (`_OT_TV_WHERE_SOLAPE`) y ya no `fecha_programada BETWEEN`. Eran
+    criterios distintos: una OT de varios días que empezó ayer se DIBUJA en
+    el monitor pero quedaba fuera del COUNT/MAX de la huella, así que ni
+    sus propios cambios movían el latido.
+    """
     hoy = _now_chile().date()
     fin = hoy + timedelta(days=_OT_TV_DIAS_PROX)
+    partes = []
+
+    # (1) Las OT del rango visible. Mismo criterio que el tablero.
     try:
         r = mysql_fetchone(
-            "SELECT COUNT(*) AS n, MAX(updated_at) AS m "
-            "  FROM mant_visitas WHERE fecha_programada BETWEEN %s AND %s",
-            (hoy, fin)) or {}
-        return f"{r.get('n') or 0}:{r.get('m') or ''}"
+            "SELECT COUNT(*) AS n, MAX(v.updated_at) AS m "
+            "  FROM mant_visitas v WHERE " + _OT_TV_WHERE_SOLAPE,
+            (fin, hoy)) or {}
+        partes.append(f"{r.get('n') or 0}:{r.get('m') or ''}")
     except Exception as e:
-        print(f"[ot_tv] huella: {e}", flush=True)
+        print(f"[ot_tv] huella visitas: {e}", flush=True)
+
+    # (2) El avance real del checklist. Marcar una tarea NO tocaba
+    #     `mant_visitas` salvo que fuera la primera o la última, así que el
+    #     avance de una mantención tampoco se veía moverse en vivo.
+    #     Se acota a las OT que tocan HOY: es lo único que cambia mientras
+    #     alguien mira la pantalla.
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n, MAX(t.completada_at) AS m "
+            "  FROM mant_visita_tareas t "
+            "  JOIN mant_visitas v ON v.id = t.visita_id "
+            " WHERE t.completada=1 AND " + _OT_TV_WHERE_SOLAPE,
+            (hoy, hoy)) or {}
+        partes.append(f"{r.get('n') or 0}:{r.get('m') or ''}")
+    except Exception as e:
+        print(f"[ot_tv] huella tareas: {e}", flush=True)
+
+    # (3) Los equipos que se van levantando. Se entra por `lv.visita_id`
+    #     (el vínculo reverse, con INDEX idx_visita) y no por
+    #     `v.levantamiento_id`: ese forward ya falló antes en este proyecto.
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n, MAX(li.updated_at) AS m "
+            "  FROM mant_levantamiento_items li "
+            "  JOIN mant_levantamientos lv ON lv.id = li.levantamiento_id "
+            "  JOIN mant_visitas v ON v.id = lv.visita_id "
+            " WHERE " + _OT_TV_WHERE_SOLAPE,
+            (hoy, hoy)) or {}
+        partes.append(f"{r.get('n') or 0}:{r.get('m') or ''}")
+    except Exception as e:
+        print(f"[ot_tv] huella levantamiento: {e}", flush=True)
+
+    if not partes:
         return "err"
+    return "|".join(partes)
 
 
 def _ot_tv_dia_tiene_ots(fecha):
@@ -82633,6 +82698,45 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
     # principal como a cada colaborador más abajo.
     colaboradores_por_visita = {}
     _vids = [f.get("id") for f in filas if f.get("id")]
+
+    # 📍 2026-09-07 (Daniel: "entiendo que la OT por levantamiento nunca
+    # maneja un total de máquinas, sino que se va agregando ¿qué me
+    # recomiendas?").
+    #
+    # Tenía razón, y el punto es más de fondo de lo que parece: en un
+    # levantamiento por descubrimiento el porcentaje no está MAL CALCULADO,
+    # es la MÉTRICA EQUIVOCADA. No hay denominador: el técnico descubre los
+    # equipos mientras trabaja. Hoy esas OT nacen con CERO tareas a
+    # propósito, así que `pct` cae siempre en 0 y el televisor muestra 0%
+    # toda la mañana aunque el técnico lleve 40 máquinas — y encima lo
+    # pinta ATRASADO, señalando en rojo a alguien que está trabajando.
+    #
+    # Lo que sí se puede medir es el RITMO: cuántos lleva, cuándo agregó el
+    # último y cuántas fotos sacó. Eso responde "¿en qué andan los chicos?",
+    # que es la pregunta real.
+    #
+    # Va como consulta APARTE y no como JOIN en _OT_TV_SELECT: ese SELECT lo
+    # comparten la vista semana/mes y otras pantallas, y un JOIN ahí les
+    # sube el costo a todas sin darles nada. Se entra por `lv.visita_id`
+    # (INDEX idx_visita), el vínculo reverse.
+    _lev_por_visita = {}
+    if _vids:
+        try:
+            _ph_lev = ",".join(["%s"] * len(_vids))
+            for _lr in (mysql_fetchall(
+                "SELECT lv.visita_id AS vid, COUNT(*) AS n, "
+                "       SUM(CASE WHEN COALESCE(li.completado,0)=1 THEN 1 ELSE 0 END) AS listos, "
+                "       SUM(COALESCE(li.n_fotos,0)) AS fotos, "
+                "       MAX(li.updated_at) AS ult "
+                "  FROM mant_levantamiento_items li "
+                "  JOIN mant_levantamientos lv ON lv.id = li.levantamiento_id "
+                f" WHERE lv.visita_id IN ({_ph_lev}) "
+                " GROUP BY lv.visita_id", tuple(_vids)) or []):
+                _lev_por_visita[_lr.get("vid")] = _lr
+        except Exception as e:
+            print(f"[ot_tv] levantamiento: {e}", flush=True)
+            _lev_por_visita = {}
+
     if _vids:
         try:
             _ph = ",".join(["%s"] * len(_vids))
@@ -82736,6 +82840,22 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         # tareas mostraba "100%" y la pantalla mentía sobre el avance.
         pct = (100 if (n_t and n_c >= n_t)
                else int(n_c * 100.0 / n_t) if n_t else 0)
+
+        # 📍 Modo de avance. Un levantamiento SIN checklist no se mide en
+        # porcentaje — no hay total contra el cual dividir. Se mide en
+        # equipos. El levantamiento "por ficha" (que sí nace con tareas) NO
+        # entra acá: ese tiene denominador real y hoy funciona bien.
+        _lev = _lev_por_visita.get(f.get("id")) or {}
+        _lev_n = int(_lev.get("n") or 0)
+        avance_modo = "tareas"
+        lev_equipos = lev_listos = lev_fotos = 0
+        lev_ultimo_iso = None
+        if n_t == 0 and _lev_n > 0:
+            avance_modo = "levantamiento"
+            lev_equipos = _lev_n
+            lev_listos = int(_lev.get("listos") or 0)
+            lev_fotos = int(_lev.get("fotos") or 0)
+            lev_ultimo_iso = _ot_tv_iso(_lev.get("ult"))
         h_ini = _ot_tv_hhmm(f.get("hora_inicio"))
         en_curso = estado in _OT_TV_EN_CURSO
         terminada = estado in _OT_TV_TERMINADAS
@@ -82751,6 +82871,12 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         trabajo_listo = bool(n_t) and n_c >= n_t
         atrasada = (es_hoy_real and not en_curso and not terminada
                     and not trabajo_listo and bool(h_ini) and h_ini < hora_ahora)
+        # 📍 Si hay equipos levantados, hubo trabajo: marcar ATRASADO a
+        # alguien que está registrando máquinas es señalar en rojo a quien
+        # sí está haciendo su pega. Antes pasaba siempre, porque un
+        # levantamiento nunca llega a tener `trabajo_listo`.
+        if avance_modo == "levantamiento":
+            atrasada = False
 
         if en_curso:
             resumen["en_ejecucion"] += 1
@@ -82894,6 +83020,11 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
                        "terminado" if terminada else
                        "atrasado" if atrasada else "pendiente"),
             "avance_pct": pct, "tipo": tipo_label,
+            # 📍 Ninguno es un monto: viajan también al televisor público
+            # sin romper la regla de "nunca lucas en pantalla pública".
+            "avance_modo": avance_modo,
+            "lev_equipos": lev_equipos, "lev_listos": lev_listos,
+            "lev_fotos": lev_fotos, "lev_ultimo_iso": lev_ultimo_iso,
             "firma_estado": firma_estado,
         }
 
@@ -82926,6 +83057,9 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
                 "direccion": dir_txt, "tipo": tipo_label,
                 "inicio_iso": _ot_tv_iso(f.get("hora_real_inicio")),
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+                "avance_modo": avance_modo, "lev_equipos": lev_equipos,
+                "lev_listos": lev_listos, "lev_fotos": lev_fotos,
+                "lev_ultimo_iso": lev_ultimo_iso,
             }
         elif not p["actual"] and not terminada:
             # Todavía no parte: se muestra lo próximo que le toca — el tipo
@@ -82936,6 +83070,9 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
                 "cliente": cliente_txt,
                 "direccion": dir_txt, "tipo": tipo_label, "inicio_iso": None,
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+                "avance_modo": avance_modo, "lev_equipos": lev_equipos,
+                "lev_listos": lev_listos, "lev_fotos": lev_fotos,
+                "lev_ultimo_iso": lev_ultimo_iso,
             }
 
         # 🔧 FIX 2026-08-28 (colaboradores en el monitor, ver comentario en
@@ -82968,12 +83105,18 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
                     "direccion": dir_txt, "tipo": tipo_label,
                     "inicio_iso": _ot_tv_iso(f.get("hora_real_inicio")),
                     "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+                    "avance_modo": avance_modo, "lev_equipos": lev_equipos,
+                    "lev_listos": lev_listos, "lev_fotos": lev_fotos,
+                    "lev_ultimo_iso": lev_ultimo_iso,
                 }
             elif not pc["actual"] and not terminada:
                 pc["actual"] = {
                     "numero": bloque["numero"], "cliente": cliente_txt,
                     "direccion": dir_txt, "tipo": tipo_label, "inicio_iso": None,
                     "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+                    "avance_modo": avance_modo, "lev_equipos": lev_equipos,
+                    "lev_listos": lev_listos, "lev_fotos": lev_fotos,
+                    "lev_ultimo_iso": lev_ultimo_iso,
                 }
 
     # Daniel primero pidió ocultar a quien no tenía carga hoy (la pantalla
