@@ -380,6 +380,22 @@
     .refresh-btn:active{transform:rotate(-25deg)}
     .refresh-btn:disabled{opacity:.7;cursor:default}
     .refresh-btn[hidden]{display:none}
+    /* Giro mientras carga + confirmación con hora (2026-09-06). */
+    .refresh-btn.girando{opacity:1;color:#e5e7eb}
+    .refresh-btn.girando > i{display:block;animation:actGiro .7s linear infinite}
+    @keyframes actGiro{to{transform:rotate(360deg)}}
+    .act-ok{
+      font-size:11px;font-weight:800;letter-spacing:.03em;color:#4ade80;
+      background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.25);
+      padding:3px 8px;border-radius:999px;white-space:nowrap;
+      animation:actOkIn .25s ease-out;
+    }
+    .act-ok[hidden]{display:none}
+    @keyframes actOkIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+    @media (prefers-reduced-motion:reduce){
+      .refresh-btn.girando > i{animation:none}
+      .act-ok{animation:none}
+    }
 
     .tv-right{display:flex;align-items:center;gap:8px}
     .kpi{padding:0 20px;text-align:center;position:relative}
@@ -1346,8 +1362,12 @@
              -- pasó de píldora roja a icono discreto, mismo lenguaje visual
              que #btnFullscreen (ver .refresh-btn). #}
           <button type="button" class="refresh-btn" id="btnActualizar" hidden
-                  title="Forzar actualización ahora" aria-label="Actualizar">
+                  title="Actualizar ahora (también refresca lo que ve el televisor)"
+                  aria-label="Actualizar">
             <i class="bi bi-arrow-clockwise"></i></button>
+          {# La confirmación con hora: sin esto, apretar el botón no se
+             distingue de que no pase nada. #}
+          <span class="act-ok" id="actOk" hidden aria-live="polite"></span>
           <div class="vista-sw" id="vistaSw" hidden>
             <button type="button" data-vista="dia" class="on">Día</button>
             <button type="button" data-vista="semana">Semana</button>
@@ -2705,13 +2725,19 @@
     if (hoyBtn) hoyBtn.hidden = esHoy;
   }
 
-  async function cargarFecha(fechaISO, vista){
+  async function cargarFecha(fechaISO, vista, fresco){
     if (!fechaISO || !DATOS_URL) return;
     const v = vista || state.vista || 'dia';
     try{
       const sep = DATOS_URL.includes('?') ? '&' : '?';
       let url = DATOS_URL + sep + 'fecha=' + encodeURIComponent(fechaISO);
       if (v !== 'dia') url += '&vista=' + encodeURIComponent(v);
+      /* fresco=1 solo en el botón manual: además de traer los datos, bota
+         la copia que sirve el televisor de la pared, que era lo que
+         seguía viejo después de hacer un cambio. En los latidos NO va: son
+         cada 8 segundos y botar la caché en cada uno la volvería inútil
+         para las dos pantallas. */
+      if (fresco) url += '&fresco=1';
       const datos = await fetchJson(url);
       state.vista = v;
       // El latido automático solo tiene sentido mirando HOY en vista de día.
@@ -2740,12 +2766,27 @@
      un solo camino para pedir datos frescos. */
   async function actualizarManual(){
     const btn = $('#btnActualizar');
-    if (btn) btn.disabled = true;
+    const ok  = $('#actOk');
+    /* 2026-09-06 (Daniel: "es como débil... no lo siento potente"). El
+       botón solo se deshabilitaba: sin giro, sin confirmación, sin nada.
+       Apretar algo y que no pase nada visible se siente como que no
+       funcionó, aunque los datos hayan llegado. */
+    if (btn){ btn.disabled = true; btn.classList.add('girando'); }
+    if (ok) ok.hidden = true;
     try{
       state.huella = null;   // por si el próximo latido llega antes de que el usuario suelte el click
-      await cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia');
+      await cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia', true);
+      if (ok){
+        const _h = ahoraChile();
+        ok.textContent = 'Actualizado ' + String(_h.getHours()).padStart(2,'0')
+                       + ':' + String(_h.getMinutes()).padStart(2,'0')
+                       + ':' + String(_h.getSeconds()).padStart(2,'0');
+        ok.hidden = false;
+        clearTimeout(actualizarManual._t);
+        actualizarManual._t = setTimeout(function(){ ok.hidden = true; }, 4000);
+      }
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn){ btn.disabled = false; btn.classList.remove('girando'); }
     }
   }
 

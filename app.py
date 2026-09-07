@@ -83164,6 +83164,23 @@ def ot2_monitor_datos():
     seguro que separar la caché por fecha para un uso que no es de alta
     frecuencia (nadie navega días 8 veces por segundo).
     """
+    # 🔄 2026-09-06 (Daniel: "el botón oculto de actualizar es como débil,
+    # quisiera que hasta refresque el caché... a veces hago cambios y no lo
+    # siento potente"). Esta ruta YA calculaba fresco (no usa la caché
+    # compartida, ver el comentario de más abajo), así que la pantalla de
+    # control siempre mostraba lo último. Lo que seguía viejo era el
+    # TELEVISOR de la pared: sirve su copia hasta que vence el TTL, o sea
+    # que Daniel cambiaba algo, actualizaba, lo veía en su pantalla... y el
+    # televisor seguía mostrando lo anterior. Esa era la sensación de "no
+    # es potente".
+    #
+    # Con ?fresco=1 se BOTA esa copia y el próximo latido del televisor
+    # recalcula. Botar la caché es seguro: el riesgo de fuga documentado
+    # abajo es ESCRIBIR ahí desde esta ruta (que trae finanzas), no
+    # vaciarla. Lo peor que puede pasar es una consulta de más.
+    if (request.args.get("fresco") or "") == "1":
+        _OT_TV_CACHE.pop("payload", None)
+
     _fecha_q = (request.args.get("fecha") or "").strip()
     _fecha_dt = None
     if _fecha_q:
