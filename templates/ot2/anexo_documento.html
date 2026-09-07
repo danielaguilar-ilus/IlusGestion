@@ -120,9 +120,33 @@
      que un firmante necesita para estampar la firma a mano si imprime el
      PDF, además del caso de la firma electrónica ya capturada. #}
   .firma-linea{ margin-top:14mm; }
+
+  /* Marca de agua de vista previa (2026-09-06). Fija y repetida para que
+     salga en TODAS las hojas del PDF, no solo en la primera. */
+  .wm-preview{ position:fixed; inset:0; z-index:0; pointer-events:none;
+    display:flex; flex-direction:column; justify-content:space-around;
+    align-items:center; overflow:hidden; }
+  .wm-preview span{ transform:rotate(-32deg); white-space:nowrap;
+    font-size:26pt; font-weight:900; letter-spacing:.06em;
+    color:rgba(220,38,38,.13); }
+  .doc-body{ position:relative; z-index:1; }
 </style>
 </head>
 <body>
+
+  {#- 🛑 2026-09-06 (Fase 1, blindaje del documento). La bandera
+      `es_vista_previa` ya se pasaba desde el endpoint de vista previa y la
+      plantilla no la usaba. Ahora se dibuja: sin esto, un PDF de prueba
+      impreso o reenviado es indistinguible del anexo real, y ya hubo datos
+      de prueba circulando. Va detrás del contenido y se repite por hoja. -#}
+  {% if es_vista_previa %}
+  <div class="wm-preview" aria-hidden="true">
+    <span>VISTA PREVIA — SIN VALIDEZ LEGAL</span>
+    <span>VISTA PREVIA — SIN VALIDEZ LEGAL</span>
+    <span>VISTA PREVIA — SIN VALIDEZ LEGAL</span>
+    <span>VISTA PREVIA — SIN VALIDEZ LEGAL</span>
+  </div>
+  {% endif %}
 
   <div class="doc-body">
 

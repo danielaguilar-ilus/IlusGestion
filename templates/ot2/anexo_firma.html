@@ -648,6 +648,15 @@
   @media (prefers-reduced-motion: reduce){
     *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
   }
+
+    /* Tabla de equipos dentro del documento que se firma (2026-09-06).
+       Sobria a propósito: es parte del contrato, no un panel. */
+    .tabla-eq{width:100%;border-collapse:collapse;margin-top:8px;font-size:.86rem}
+    .tabla-eq th{text-align:left;font-size:.7rem;text-transform:uppercase;
+      letter-spacing:.04em;color:#64748b;border-bottom:1px solid #cbd5e1;padding:6px 8px}
+    .tabla-eq td{padding:6px 8px;border-bottom:1px solid #f1f5f9;
+      color:#0f172a;overflow-wrap:anywhere}
+    .tabla-eq th.n,.tabla-eq td.n{text-align:right;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -820,6 +829,46 @@
           <div class="cl-titulo"><span class="ord">Sexto</span> Alcance del servicio</div>
           <div class="cl-cuerpo"><p>{{ anexo.alcance_servicio }}</p></div>
         </div>
+
+        {#- 🔴 2026-09-06. Hasta hoy el documento que el proveedor firmaba
+            TERMINABA acá, en "Sexto", mientras el PDF que se archiva traía
+            además las cláusulas adicionales y la tabla de equipos. O sea:
+            el firmante aceptaba seis cláusulas y el archivo decía que había
+            aceptado doce, incluidas las de responsabilidad e indemnidad.
+            Una cláusula que el firmante nunca vio no se sostiene si la
+            discute — y debilitaba también a las seis que sí vio.
+
+            Van DENTRO de #docLegal a propósito: la huella SHA-256 que firma
+            el navegador se calcula sobre el texto visible de ese bloque, así
+            que ahora la evidencia cubre todo el documento, no una parte. -#}
+        {% if anexo.clausulas_adicionales %}
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">Séptimo</span> Cláusulas adicionales</div>
+          <div class="cl-cuerpo"><p style="white-space:pre-line">{{ anexo.clausulas_adicionales }}</p></div>
+        </div>
+        {% endif %}
+
+        {% if anexo.productos %}
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">{{ 'Octavo' if anexo.clausulas_adicionales else 'Séptimo' }}</span>
+            Equipos objeto del servicio</div>
+          <div class="cl-cuerpo">
+            <p>El servicio comprende los siguientes equipos:</p>
+            <table class="tabla-eq">
+              <thead><tr><th>SKU</th><th>Descripción</th>
+                {% if productos_con_doc %}<th>Documento</th>{% endif %}
+                <th class="n">Cant.</th></tr></thead>
+              <tbody>
+                {% for p in anexo.productos %}
+                <tr><td>{{ p.sku or '—' }}</td><td>{{ p.nombre }}</td>
+                  {% if productos_con_doc %}<td>{{ p.documento or '—' }}</td>{% endif %}
+                  <td class="n">{{ p.cantidad }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- Pie de firma dentro del documento -->

@@ -83601,6 +83601,18 @@ def ot2_api_anexo_crear():
     proveedor = (d.get("proveedor_nombre") or "").strip()[:200]
     if not proveedor:
         return _ot2_err("Falta el nombre del proveedor.", "PROVEEDOR_REQUERIDO")
+    # 🛑 2026-09-06 (Fase 1, blindaje del documento). El anexo es un
+    # instrumento con efecto contractual: no puede salir a la firma de un
+    # proveedor real con un nombre de prueba. Hoy nada lo impedia, y en la
+    # base ya existe un "Daniel Aguilar Prueba" con RUT de prueba.
+    # La VISTA PREVIA si acepta datos de prueba a proposito -- para eso
+    # existe, y ademas sale con marca de agua. Lo que se bloquea es CREAR.
+    _prov_low = proveedor.lower()
+    if any(_p in _prov_low for _p in ("prueba", "test", "demo", "ejemplo")):
+        return _ot2_err(
+            'Ese nombre de proveedor parece de prueba ("{}"). El anexo es un '
+            "documento con efecto legal: corrige el nombre real antes de "
+            "crearlo.".format(proveedor), "PROVEEDOR_DE_PRUEBA")
     objetivo = (d.get("objetivo_servicio") or "").strip()
     if not objetivo:
         return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")
@@ -83857,6 +83869,37 @@ def _anexo_fecha_d(v):
         return "—"
 
 
+def _anexo_productos_guardados(a):
+    """Los equipos que quedaron CONGELADOS en el anexo al momento de crearlo.
+
+    🔴 2026-09-06. `productos_json` se escribia desde el 03-09 y no se leia
+    en ninguna parte: tanto la pantalla de firma como el PDF reconstruian la
+    tabla consultando la OT EN VIVO. Eso tiene dos consecuencias graves para
+    un documento con efecto contractual:
+
+      · El proveedor firmaba sin ver los equipos (la pantalla ni los
+        mostraba), y el PDF archivado si los traia.
+      · Si manana se agrega o se quita un equipo de la OT, el anexo firmado
+        AYER muestra otra lista. Un documento firmado que cambia solo no
+        sirve como prueba de nada.
+
+    Un anexo firmado tiene que decir lo que decia cuando se firmo. Esta
+    funcion devuelve eso; si el anexo es viejo y no alcanzo a guardar la
+    lista, devuelve None y el caller cae a la consulta en vivo (mejor una
+    tabla reconstruida que ninguna).
+    """
+    raw = (a or {}).get("productos_json")
+    if not raw:
+        return None
+    try:
+        datos = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(datos, list) or not datos:
+        return None
+    return _anexo_productos_norm(datos)
+
+
 def _anexo_publico_payload(a):
     return {
         "numero": a["numero"],
@@ -83873,6 +83916,11 @@ def _anexo_publico_payload(a):
         "hitos_pago": a.get("hitos_pago") or "",
         "alcance_servicio": a.get("alcance_servicio") or "",
         "clausulas_adicionales": a.get("clausulas_adicionales") or "",
+        # 🔴 2026-09-06: el firmante NO veia los equipos, y el PDF archivado
+        # si los traia. Ahora se le muestran los mismos que quedaron
+        # congelados en el anexo, para que lo que firma sea lo que se
+        # archiva -- y para que el hash del navegador los cubra.
+        "productos": _anexo_productos_guardados(a) or [],
     }
 
 
@@ -84017,8 +84065,13 @@ def ot2_api_anexo_pdf(aid):
     # app.py ~68765) en vez de pedirle a alguien que los vuelva a tipear a
     # mano -- si el anexo no tiene OT (proveedor sin OT ligada todavía),
     # simplemente no sale la tabla, no se inventa una captura manual nueva.
-    productos = []
-    if a.get("ot_id"):
+    # Un anexo FIRMADO muestra lo que se firmo, no lo que la OT tenga hoy.
+    # Mientras esta sin firmar sigue el estado vivo de la OT, que es lo
+    # correcto: todavia es un borrador que se esta acordando.
+    productos = _anexo_productos_guardados(a) if a.get("firmado_at") else None
+    if productos is None:
+        productos = []
+    if not productos and a.get("ot_id"):
         try:
             # 🔴 2026-09-03 — el filtro del PLAN (ver _ot_anexo_solo_plan).
             # Este es el anexo que Daniel abre: reconstruye la tabla desde
@@ -84221,6 +84274,10 @@ def ot2_anexo_firma_publica(token):
     return render_template(
         "ot2/anexo_firma.html", valido=True, ya_firmado=False,
         anexo=_anexo_publico_payload(a),
+        # La columna Documento solo aparece si algun equipo la trae: en un
+        # anexo sin documentos detras seria una columna de guiones.
+        productos_con_doc=any((x or {}).get("documento")
+                              for x in (_anexo_productos_guardados(a) or [])),
         submit_url=url_for("ot2_anexo_firma_submit", token=token))
 
 
