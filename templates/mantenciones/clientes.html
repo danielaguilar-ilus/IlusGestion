@@ -1340,6 +1340,30 @@ function aplicarKpiFiltro(tipo) {
   {% endfor %}
 </div><!-- /clientGrid -->
 
+{#- 🔍 2026-09-07 (caso real, medido en los logs de producción): Daniel
+    buscó "Aurum" durante casi una hora — 10:38 a 11:53 — y concluyó que el
+    sistema no había creado la ficha. La ficha existía desde el día anterior.
+    Lo que pasaba es que TODAS sus búsquedas iban con `estado=activo` puesto
+    (y una con `tipo=instalacion`), y una ficha recién creada nace
+    'prospecto': la tarjeta estaba en la página, escondida por el filtro,
+    y la pantalla decía "Sin resultados" sin mencionar que la tenía ahí.
+    Ojo: entrar a /clientes sin ningún parámetro también aplica
+    `estado=activo` por defecto (ver init()), así que el caso es de todos
+    los días, no una rareza.
+
+    Buscar por nombre es un acto deliberado: si lo que buscas existe, la
+    pantalla tiene que decirlo aunque no calce con los filtros. -#}
+<div id="fltOcultos" class="flt-ocultos" hidden>
+  <i class="bi bi-eye-slash-fill"></i>
+  <div>
+    <b id="fltOcultosTxt"></b>
+    <span>Los filtros activos los están escondiendo — por ejemplo, una ficha
+      recién creada entra como <b>prospecto</b>, no como activo.</span>
+  </div>
+  <button type="button" class="btn btn-sm" onclick="ILUSFilter.verOcultos()">
+    <i class="bi bi-eye-fill me-1"></i>Ver</button>
+</div>
+
 {# Estado vacío cuando el multifiltro no devuelve resultados (hay clientes
    en el universo pero ninguno coincide). Lo muestra/oculta ILUSFilter. #}
 <div id="fltEmpty" class="flt-empty" hidden>
@@ -1351,6 +1375,18 @@ function aplicarKpiFiltro(tipo) {
   </button>
 </div>
 <style>
+.flt-ocultos{display:flex;gap:11px;align-items:center;margin-bottom:14px;
+  padding:12px 14px;background:#fff8e1;border:1px solid #fde68a;border-radius:12px}
+.flt-ocultos > i{color:#f59e0b;font-size:1.15rem;flex:0 0 auto}
+.flt-ocultos > div{flex:1;min-width:0;line-height:1.4}
+.flt-ocultos b{display:block;font-size:.86rem;color:#92400e;font-weight:800}
+.flt-ocultos span{display:block;font-size:.76rem;color:#a16207}
+.flt-ocultos span b{display:inline;font-size:inherit}
+.flt-ocultos .btn{flex:0 0 auto;background:#f59e0b;border-color:#f59e0b;color:#fff;
+  font-weight:800;min-height:38px}
+.flt-ocultos .btn:hover{background:#d97706;border-color:#d97706;color:#fff}
+.flt-ocultos[hidden]{display:none}
+@media (max-width:640px){ .flt-ocultos{flex-wrap:wrap} .flt-ocultos .btn{width:100%} }
 .flt-empty{text-align:center;padding:48px 20px;background:#fff;border:1px dashed #e5e7eb;border-radius:14px}
 .flt-empty-icon{font-size:2.4rem;margin-bottom:6px;opacity:.7}
 .flt-empty-title{font-weight:800;color:#374151;margin:0 0 2px}
@@ -1486,6 +1522,26 @@ function aplicarKpiFiltro(tipo) {
     if (empty) empty.hidden = (tot !== 0);
     if (grid)  grid.style.display = (tot === 0) ? 'none' : '';
 
+    /* 🔍 2026-09-07. Cuántos coinciden con el TEXTO buscado pero quedan
+       fuera por los filtros de grupo. Si hay aunque sea uno, se dice: es
+       exactamente el caso que le hizo perder una hora a Daniel buscando una
+       ficha que estaba ahí, escondida por "Estado: Activo". */
+    const avisoOcultos = $('#fltOcultos');
+    if (avisoOcultos){
+      let ocultos = 0;
+      if (F.q){
+        ocultos = cards().filter(c =>
+          (c.dataset.search || '').includes(F.q) && !matchAll(c)).length;
+      }
+      avisoOcultos.hidden = (ocultos === 0);
+      const t = $('#fltOcultosTxt');
+      if (t && ocultos){
+        t.textContent = ocultos === 1
+          ? 'Hay 1 cliente que coincide con tu búsqueda y no se está mostrando'
+          : ('Hay ' + ocultos + ' clientes que coinciden con tu búsqueda y no se están mostrando');
+      }
+    }
+
     // Contador de resultados (barra de filtros)
     const res = $('#fltResult');
     if (res) {
@@ -1542,6 +1598,13 @@ function aplicarKpiFiltro(tipo) {
     clear() {
       F.q = ''; GROUPS.forEach(g => F[g] = '');
       const i = $('#searchInput'); if (i) i.value = '';
+      renderActivePills(); renderChips(); syncURL(); refresh(true);
+    },
+    /* Quita los filtros de grupo pero CONSERVA lo que la persona escribió.
+       `clear()` también borraba la búsqueda, que es justo lo único que acá
+       no hay que tocar: el usuario está buscando algo concreto. */
+    verOcultos() {
+      GROUPS.forEach(g => F[g] = '');
       renderActivePills(); renderChips(); syncURL(); refresh(true);
     },
   };
