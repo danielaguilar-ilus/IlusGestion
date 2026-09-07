@@ -142,6 +142,51 @@
   .tf-hero{padding:18px 18px;gap:14px}
   .tf-avatar{width:70px;height:70px;font-size:1.6rem}
 }
+
+/* Documentación del proveedor — Fase 5 (2026-09-06). Semáforo y nombres
+   COMPLETOS: son certificados con nombre legal, cortarlos con line-clamp
+   los vuelve indistinguibles entre sí (REGLA #15). */
+.pdoc-intro{font-size:.78rem;color:#6b7280;line-height:1.5;margin:0 0 12px}
+.pdoc-resumen{float:right;font-size:.68rem;font-weight:800;letter-spacing:.03em;
+  text-transform:uppercase;padding:3px 9px;border-radius:999px}
+.pdoc-resumen.ok{background:#dcfce7;color:#166534}
+.pdoc-resumen.warn{background:#fff8e1;color:#92400e}
+.pdoc-resumen.bad{background:#fee2e2;color:#991b1b}
+.pdoc-lista{display:flex;flex-direction:column;gap:8px}
+.pdoc-cargando{font-size:.8rem;color:#9ca3af;padding:10px}
+.pdoc-cargando > i{margin-right:6px}
+.pdoc-item{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;
+  border:1px solid #e5e7eb;border-left-width:4px;border-radius:10px;background:#fff}
+.pdoc-item.est-vigente{border-left-color:#16a34a}
+.pdoc-item.est-por_vencer{border-left-color:#f59e0b;background:#fffbeb}
+.pdoc-item.est-vencido{border-left-color:#dc2626;background:#fef2f2}
+.pdoc-item.est-falta{border-left-color:#d1d5db;background:#f9fafb}
+.pdoc-item.est-sin_vencimiento{border-left-color:#3b82f6}
+.pdoc-ico{font-size:1.05rem;flex:0 0 auto;margin-top:1px}
+.est-vigente .pdoc-ico,.est-sin_vencimiento .pdoc-ico{color:#16a34a}
+.est-por_vencer .pdoc-ico{color:#f59e0b}
+.est-vencido .pdoc-ico{color:#dc2626}
+.est-falta .pdoc-ico{color:#9ca3af}
+.pdoc-cuerpo{flex:1;min-width:0}
+.pdoc-nom{font-size:.82rem;font-weight:800;color:#0a0a0a;line-height:1.35;
+  overflow-wrap:anywhere}
+.pdoc-crit{display:inline-block;font-size:.6rem;font-weight:900;letter-spacing:.05em;
+  text-transform:uppercase;background:#fee2e2;color:#991b1b;padding:1px 6px;
+  border-radius:4px;margin-left:6px;vertical-align:1px}
+.pdoc-est{font-size:.72rem;font-weight:700;margin-top:2px}
+.est-vigente .pdoc-est,.est-sin_vencimiento .pdoc-est{color:#166534}
+.est-por_vencer .pdoc-est{color:#92400e}
+.est-vencido .pdoc-est{color:#991b1b}
+.est-falta .pdoc-est{color:#6b7280}
+.pdoc-ayuda-min{font-size:.72rem;color:#6b7280;line-height:1.45;margin-top:3px}
+.pdoc-acc{display:flex;gap:6px;flex:0 0 auto;align-items:center}
+.pdoc-acc .btn{min-height:32px;padding:3px 10px;font-size:.72rem}
+.pdoc-ayuda{font-size:.78rem;color:#374151;background:#f9fafb;border:1px solid #e5e7eb;
+  border-radius:8px;padding:9px 11px;line-height:1.5}
+@media (max-width:640px){
+  .pdoc-item{flex-wrap:wrap}
+  .pdoc-acc{width:100%;justify-content:flex-end}
+}
 </style>
 
 {# ════ HERO ═════════════════════════════════════════════════════════════ #}
@@ -457,6 +502,60 @@
       </div>
     </div>
   </div>
+
+  {#- ⚖️ FASE 5 (2026-09-06). Lo que un contrato NO cubre.
+      El anexo reparte responsabilidades entre ILUS y el proveedor, pero si
+      un trabajador del proveedor se accidenta en la faena de un cliente, o
+      el proveedor no paga imposiciones, no hay cláusula que salve a ILUS:
+      la Ley 20.123 la hace SOLIDARIAMENTE responsable. Esa responsabilidad
+      baja a subsidiaria solo si la empresa puede PROBAR que pidió los
+      certificados. Lo que protege acá no es una firma: es un archivo con
+      fecha. Por eso esto vive junto al contrato y no dentro del anexo. -#}
+  <div class="info-card" style="margin-top:14px">
+    <h6><i class="bi bi-shield-check"></i>Documentación del proveedor
+      <span class="pdoc-resumen" id="pdocResumen"></span></h6>
+    <p class="pdoc-intro">
+      Seguros, cumplimiento laboral y seguridad en faena. No bloquea el
+      trabajo: es para que la decisión de mandarlo a terreno se tome sabiendo
+      qué respaldo hay. Si un documento venció, lo que se pierde no es un
+      trámite — es la prueba de que ILUS lo exigió.
+    </p>
+    <div id="pdocLista" class="pdoc-lista">
+      <div class="pdoc-cargando"><i class="bi bi-hourglass-split"></i>Cargando…</div>
+    </div>
+  </div>
+</div>
+
+{# Formulario para registrar un documento. El archivo es OPCIONAL a
+   propósito: muchas veces el certificado llega por correo y lo que urge es
+   dejar anotada su vigencia. Obligar a subir el PDF hace que no se registre
+   nada, y un vencimiento anotado vale más que un archivo que nadie cargó. #}
+<div class="modal fade" id="pdocModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="pdocModalTitulo">Registrar documento</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="pdocTipo">
+        <div class="pdoc-ayuda" id="pdocAyuda"></div>
+        <label class="form-label small fw-bold mt-2">Vence el</label>
+        <input type="date" class="form-control form-control-sm" id="pdocVence">
+        <div class="form-text">Déjalo vacío si el documento no tiene vencimiento.</div>
+        <label class="form-label small fw-bold mt-3">Archivo <span class="fw-normal text-muted">(opcional, máx 25 MB)</span></label>
+        <input type="file" class="form-control form-control-sm" id="pdocArchivo">
+        <label class="form-label small fw-bold mt-3">Observación <span class="fw-normal text-muted">(opcional)</span></label>
+        <input class="form-control form-control-sm" id="pdocObs" maxlength="300"
+               placeholder="Ej: cubre hasta 500 UF">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger btn-sm fw-bold" id="pdocGuardar"
+                onclick="pdocGuardar()">Guardar</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 {# ─── PANEL NOTAS ─── #}
@@ -480,6 +579,150 @@
 
 <script>
 const EID = {{ tec.id }};
+
+/* ═══ Documentación del proveedor — Fase 5 (2026-09-06) ═══════════════
+   Se carga por fetch y no desde el render del servidor: así una sección
+   nueva no puede tumbar una ficha que ya funcionaba. Si la consulta falla,
+   la ficha entera sigue viva y solo esta tarjeta avisa. */
+const PDOC_EST = {
+  vigente:          { ico:'bi-check-circle-fill',        txt:'Vigente' },
+  sin_vencimiento:  { ico:'bi-check-circle-fill',        txt:'Registrado — sin vencimiento' },
+  por_vencer:       { ico:'bi-exclamation-triangle-fill',txt:'Por vencer' },
+  vencido:          { ico:'bi-x-octagon-fill',           txt:'VENCIDO' },
+  falta:            { ico:'bi-dash-circle',              txt:'Sin registrar' },
+};
+
+function pdocEsc(v){
+  const d = document.createElement('div');
+  d.textContent = (v == null ? '' : String(v));
+  return d.innerHTML;
+}
+
+async function pdocCargar(){
+  const cont = document.getElementById('pdocLista');
+  if (!cont) return;
+  try{
+    const r = await fetch('/mantenciones/api/tecnicos-externos/' + EID + '/documentos',
+                          { credentials:'same-origin', cache:'no-store' });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'error');
+    pdocPintar(j);
+  } catch(e){
+    cont.innerHTML = '<div class="pdoc-cargando">' +
+      '<i class="bi bi-exclamation-triangle"></i>No se pudo cargar la documentación. ' +
+      'Recarga la página para reintentar.</div>';
+  }
+}
+
+function pdocPintar(j){
+  const cont = document.getElementById('pdocLista');
+  const res  = document.getElementById('pdocResumen');
+  if (res){
+    /* El resumen dice el problema MAYOR primero: un vencido importa más
+       que tres por vencer, y un crítico faltante más que un opcional. */
+    let cls = 'ok', txt = 'Al día';
+    if (j.vencidos > 0){
+      cls = 'bad'; txt = j.vencidos + (j.vencidos === 1 ? ' vencido' : ' vencidos');
+    } else if (j.faltan_criticos > 0){
+      cls = 'bad'; txt = j.faltan_criticos + ' crítico' + (j.faltan_criticos === 1 ? '' : 's') + ' sin registrar';
+    } else if (j.por_vencer > 0){
+      cls = 'warn'; txt = j.por_vencer + ' por vencer';
+    }
+    res.className = 'pdoc-resumen ' + cls;
+    res.textContent = txt;
+  }
+  const filas = (j.docs || []).map(function(d){
+    const est = PDOC_EST[d.estado] || PDOC_EST.falta;
+    let detalle = est.txt;
+    if (d.vence_txt && d.estado !== 'falta') detalle += ' · vence ' + d.vence_txt;
+    return '' +
+      '<div class="pdoc-item est-' + d.estado + '">' +
+        '<i class="bi ' + est.ico + ' pdoc-ico"></i>' +
+        '<div class="pdoc-cuerpo">' +
+          '<div class="pdoc-nom">' + pdocEsc(d.label) +
+            (d.critico ? '<span class="pdoc-crit">Crítico</span>' : '') + '</div>' +
+          '<div class="pdoc-est">' + pdocEsc(detalle) + '</div>' +
+          (d.observacion ? '<div class="pdoc-ayuda-min">' + pdocEsc(d.observacion) + '</div>' : '') +
+          (d.estado === 'falta' ? '<div class="pdoc-ayuda-min">' + pdocEsc(d.ayuda) + '</div>' : '') +
+        '</div>' +
+        '<div class="pdoc-acc">' +
+          (d.url ? '<a class="btn btn-outline-success" target="_blank" rel="noopener" href="' +
+                   pdocEsc(d.url) + '"><i class="bi bi-eye"></i></a>' : '') +
+          '<button class="btn btn-outline-secondary" onclick="pdocAbrir(\'' + d.tipo + '\')">' +
+            (d.estado === 'falta' ? 'Registrar' : 'Actualizar') + '</button>' +
+          (d.id ? '<button class="btn btn-outline-danger" title="Quitar" ' +
+                  'onclick="pdocBorrar(' + d.id + ')"><i class="bi bi-trash"></i></button>' : '') +
+        '</div>' +
+      '</div>';
+  }).join('');
+  cont.innerHTML = filas || '<div class="pdoc-cargando">Sin tipos configurados.</div>';
+  window._pdocDatos = j;
+}
+
+function pdocAbrir(tipo){
+  const j = window._pdocDatos || {docs:[]};
+  const d = (j.docs || []).filter(function(x){ return x.tipo === tipo; })[0] || {};
+  document.getElementById('pdocTipo').value = tipo;
+  document.getElementById('pdocModalTitulo').textContent = d.label || 'Registrar documento';
+  document.getElementById('pdocAyuda').textContent = d.ayuda || '';
+  document.getElementById('pdocVence').value = '';
+  document.getElementById('pdocObs').value = '';
+  const f = document.getElementById('pdocArchivo'); if (f) f.value = '';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('pdocModal')).show();
+}
+
+async function pdocGuardar(){
+  const btn = document.getElementById('pdocGuardar');
+  const fd = new FormData();
+  fd.append('tipo', document.getElementById('pdocTipo').value);
+  fd.append('vence_at', document.getElementById('pdocVence').value || '');
+  fd.append('observacion', document.getElementById('pdocObs').value || '');
+  const f = document.getElementById('pdocArchivo');
+  if (f && f.files && f.files[0]) fd.append('archivo', f.files[0]);
+  btn.disabled = true;
+  const _t = btn.textContent; btn.textContent = 'Guardando…';
+  try{
+    const r = await fetch('/mantenciones/api/tecnicos-externos/' + EID + '/documentos',
+                          { method:'POST', credentials:'same-origin', body: fd });
+    const j = await r.json();
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo guardar el documento.', {type:'error'});
+      return;
+    }
+    pdocPintar(j);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('pdocModal')).hide();
+    ilusToast('✓ Documento registrado', {type:'success'});
+  } catch(e){
+    ilusToast('Error de conexión al guardar.', {type:'error'});
+  } finally {
+    btn.disabled = false; btn.textContent = _t;
+  }
+}
+
+async function pdocBorrar(did){
+  const ok = await ilusConfirm({
+    title: 'Quitar documento',
+    message: '¿Quitar este documento del proveedor?',
+    sub: 'Queda registrado en la bitácora: la documentación de un proveedor es justo lo que hay que poder demostrar después.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try{
+    const r = await fetch('/mantenciones/api/tecnicos-externos/' + EID + '/documentos/' + did,
+                          { method:'DELETE', credentials:'same-origin' });
+    const j = await r.json();
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo quitar.', {type:'error'});
+      return;
+    }
+    pdocPintar(j);
+    ilusToast('Documento quitado', {type:'success'});
+  } catch(e){
+    ilusToast('Error de conexión.', {type:'error'});
+  }
+}
+
+document.addEventListener('DOMContentLoaded', pdocCargar);
 
 // Tabs
 document.querySelectorAll('.tf-tab').forEach(t => {

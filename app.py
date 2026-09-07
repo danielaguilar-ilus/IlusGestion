@@ -66424,6 +66424,251 @@ def mant_tecnico_externo_subir_contrato(eid):
     return jsonify({"ok": True, "url": cloud_url, "size_kb": size_bytes // 1024})
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  DOCUMENTACIÓN DEL PROVEEDOR — Fase 5 (2026-09-06)
+#
+#  ⚖️ Por qué esto NO va en el anexo. El anexo es un contrato: sirve para
+#  repartir responsabilidades entre ILUS y el proveedor. Pero si un
+#  trabajador del proveedor se accidenta en la faena de un cliente, o el
+#  proveedor no le paga sus imposiciones, a ILUS no la salva ninguna
+#  cláusula: la Ley 20.123 de subcontratación hace a la empresa principal
+#  SOLIDARIAMENTE responsable de las obligaciones laborales y
+#  previsionales de sus contratistas. Esa responsabilidad baja a
+#  SUBSIDIARIA solo si la empresa ejerció su derecho a información y
+#  retención — es decir, si puede PROBAR que pidió los certificados.
+#
+#  O sea: lo que protege acá no es una firma, es un archivo con fecha.
+#  Eso es exactamente lo que este módulo guarda.
+#
+#  No bloquea nada a propósito. Es información para decidir, igual que el
+#  aviso de cláusulas sin cuantificar. Cortarle el trabajo a un proveedor
+#  porque venció un papel es una decisión de Daniel, no del sistema.
+# ══════════════════════════════════════════════════════════════════════
+
+# (clave, etiqueta, crítico, para qué sirve). Los tres críticos son los que
+# la ley pide de verdad en subcontratación; el resto es buena práctica de
+# seguridad en faena. Ninguno bloquea: 'crítico' solo cambia el color y el
+# orden del aviso.
+_PROV_DOCS_TIPOS = [
+    ("f30_1",      "F30-1 · Cumplimiento de obligaciones laborales y previsionales",
+     True,  "Lo emite la Dirección del Trabajo. Es EL documento que baja la "
+            "responsabilidad de ILUS de solidaria a subsidiaria (Ley 20.123). "
+            "Se pide por período trabajado, no una sola vez."),
+    ("ley_16744",  "Adhesión a mutualidad · Ley 16.744",
+     True,  "Prueba que los trabajadores del proveedor están cubiertos ante un "
+            "accidente del trabajo. Sin esto, un accidente en la faena de un "
+            "cliente llega igual a ILUS."),
+    ("seguro_rc",  "Seguro de responsabilidad civil",
+     True,  "Cubre los daños que el proveedor pueda causar en el recinto del "
+            "cliente. Es lo que evita que un equipo o un piso rotos los termine "
+            "pagando ILUS."),
+    ("f30",        "F30 · Antecedentes laborales y previsionales",
+     False, "Certificado de multas y deudas previsionales del proveedor. Sirve "
+            "para saber con quién se está trabajando antes de contratarlo."),
+    ("odi",        "ODI · Obligación de informar los riesgos",
+     False, "Registro de que se le informaron los riesgos del trabajo. Es la "
+            "base de cualquier defensa en un tema de seguridad."),
+    ("epp",        "Entrega de EPP",
+     False, "Registro de entrega de elementos de protección personal."),
+    ("induccion",  "Inducción de seguridad en faena",
+     False, "Constancia de la inducción antes de entrar al recinto del cliente."),
+    ("otro",       "Otro documento",
+     False, "Cualquier otro respaldo que convenga tener archivado."),
+]
+_PROV_DOCS_MAP = {k: (lbl, crit, ayuda) for k, lbl, crit, ayuda in _PROV_DOCS_TIPOS}
+# Días antes del vencimiento en que un documento pasa a "por vencer".
+_PROV_DOCS_AVISO_DIAS = 30
+
+
+def _ensure_mant_proveedor_docs():
+    """Tabla de documentos del proveedor. Idempotente y en el arranque:
+    producción corre con ILUS_SKIP_MIGRATIONS=1 (ver REGLA del proyecto),
+    así que una tabla que solo se cree en migraciones no existiría nunca."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_proveedor_docs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                tecnico_externo_id INT NOT NULL,
+                tipo VARCHAR(40) NOT NULL,
+                url VARCHAR(600) NULL COMMENT 'archivo en GCS; puede ir vacio si solo se registra la vigencia',
+                vence_at DATE NULL COMMENT 'NULL = no vence',
+                observacion VARCHAR(300) NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR(190),
+                INDEX idx_prov (tecnico_externo_id),
+                INDEX idx_prov_tipo (tecnico_externo_id, tipo),
+                INDEX idx_vence (vence_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        return True
+    except Exception as e:
+        print(f"[ensure_prov_docs] {e}", flush=True)
+        return False
+
+
+def _prov_doc_estado(vence_at, hoy=None):
+    """vigente / por_vencer / vencido / sin_vencimiento."""
+    if not vence_at:
+        return "sin_vencimiento"
+    hoy = hoy or _now_chile().date()
+    try:
+        dias = (vence_at - hoy).days
+    except Exception:
+        return "sin_vencimiento"
+    if dias < 0:
+        return "vencido"
+    return "por_vencer" if dias <= _PROV_DOCS_AVISO_DIAS else "vigente"
+
+
+def _prov_docs_resumen(eid):
+    """Lo que hay, lo que vence y lo que falta, para un proveedor.
+
+    Devuelve dict con `docs` (el más reciente por tipo, que es el que vale)
+    y `alerta`: qué contar en pantalla sin que nadie tenga que sumar. Si la
+    tabla todavía no existe, devuelve vacío en vez de reventar la ficha
+    entera -- una sección nueva no puede tumbar una pantalla que ya
+    funcionaba.
+    """
+    try:
+        filas = mysql_fetchall(
+            "SELECT d.* FROM mant_proveedor_docs d "
+            "  JOIN (SELECT tipo, MAX(id) AS mid FROM mant_proveedor_docs "
+            "         WHERE tecnico_externo_id=%s GROUP BY tipo) u ON u.mid = d.id "
+            " ORDER BY d.tipo", (eid,)) or []
+    except Exception as e:
+        print(f"[prov_docs] {e}", flush=True)
+        filas = []
+    porque = {}
+    for f in filas:
+        f = dict(f)
+        f["estado"] = _prov_doc_estado(f.get("vence_at"))
+        porque[f["tipo"]] = f
+    docs, vencidos, por_vencer, faltan_criticos = [], 0, 0, 0
+    for k, lbl, crit, ayuda in _PROV_DOCS_TIPOS:
+        if k == "otro":
+            continue
+        d = porque.get(k)
+        est = d["estado"] if d else "falta"
+        if est == "vencido":  vencidos += 1
+        elif est == "por_vencer": por_vencer += 1
+        elif est == "falta" and crit: faltan_criticos += 1
+        docs.append({
+            "tipo": k, "label": lbl, "critico": crit, "ayuda": ayuda,
+            "estado": est,
+            "id": (d or {}).get("id"),
+            "url": (d or {}).get("url"),
+            "observacion": (d or {}).get("observacion"),
+            "vence_at": (d or {}).get("vence_at"),
+            "vence_txt": (chile_fmt_filter((d or {}).get("vence_at"), "%d/%m/%Y")
+                          if (d or {}).get("vence_at") else ""),
+        })
+    otros = [dict(f, estado=_prov_doc_estado(f.get("vence_at")))
+             for f in [dict(x) for x in filas] if f["tipo"] == "otro"]
+    return {"docs": docs, "otros": otros, "vencidos": vencidos,
+            "por_vencer": por_vencer, "faltan_criticos": faltan_criticos,
+            "ok": (vencidos == 0 and faltan_criticos == 0)}
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/documentos", methods=["GET"])
+@_mant_required
+def mant_prov_docs_list(eid):
+    """Documentación vigente del proveedor (seguros, laboral, seguridad)."""
+    if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    r = _prov_docs_resumen(eid)
+    r["ok"] = True
+    return jsonify(r)
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/documentos", methods=["POST"])
+@_mant_required
+def mant_prov_docs_crear(eid):
+    """Registra un documento del proveedor.
+
+    El archivo es OPCIONAL a propósito: muchas veces el certificado llega
+    por correo y lo que urge es dejar registrada su vigencia. Obligar a
+    subir el PDF haría que no se registre nada -- y un vencimiento anotado
+    vale más que un archivo que nadie cargó.
+    """
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Solo administración."}), 403
+    if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    tipo = (request.form.get("tipo") or "").strip()
+    if tipo not in _PROV_DOCS_MAP:
+        return jsonify({"ok": False, "error": "Tipo de documento no válido."}), 400
+    vence = (request.form.get("vence_at") or "").strip() or None
+    if vence:
+        try:
+            datetime.strptime(vence, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"ok": False, "error": "Fecha de vencimiento inválida."}), 400
+    obs = (request.form.get("observacion") or "").strip()[:300] or None
+
+    cloud_url = None
+    f = request.files.get("archivo") or request.files.get("file")
+    if f and f.filename:
+        f.stream.seek(0, 2); size_bytes = f.stream.tell(); f.stream.seek(0)
+        if size_bytes > 25 * 1024 * 1024:
+            return jsonify({"ok": False, "error": "Archivo demasiado grande (máx 25 MB)."}), 413
+        try:
+            if _gcs_ready():
+                result = _uploader_upload(
+                    f,
+                    folder=f"ilus/tecnicos_externos/{eid}/documentos",
+                    public_id=f"doc_{eid}_{tipo}_{int(time.time())}",
+                    resource_type="raw",
+                )
+                cloud_url = result.get("secure_url")
+        except Exception as e:
+            print(f"[prov_docs] subida falló: {e}", flush=True)
+        if not cloud_url:
+            return jsonify({"ok": False, "error": "No se pudo subir el archivo. " + _STORAGE_OFF_MSG}), 500
+
+    _ensure_mant_proveedor_docs()
+    try:
+        mysql_execute(
+            "INSERT INTO mant_proveedor_docs "
+            "  (tecnico_externo_id, tipo, url, vence_at, observacion, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (eid, tipo, cloud_url, vence, obs, current_username()))
+    except Exception as e:
+        print(f"[prov_docs] insert: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el documento."}), 500
+    _mant_log("tecnico_externo", eid, "documento_registrado",
+              f"{_PROV_DOCS_MAP[tipo][0]}" + (f" · vence {vence}" if vence else " · sin vencimiento"))
+    r = _prov_docs_resumen(eid)
+    r["ok"] = True
+    return jsonify(r)
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/documentos/<int:did>",
+           methods=["DELETE"])
+@_mant_required
+def mant_prov_docs_borrar(eid, did):
+    """Quita un documento registrado. Queda en la bitácora: la
+    documentación de un proveedor es justamente lo que hay que poder
+    demostrar después, así que borrarla sin dejar rastro no corresponde."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Solo administración."}), 403
+    d = mysql_fetchone(
+        "SELECT * FROM mant_proveedor_docs WHERE id=%s AND tecnico_externo_id=%s",
+        (did, eid))
+    if not d:
+        return jsonify({"ok": False, "error": "Documento no encontrado"}), 404
+    try:
+        mysql_execute("DELETE FROM mant_proveedor_docs WHERE id=%s", (did,))
+    except Exception as e:
+        print(f"[prov_docs] delete: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo eliminar."}), 500
+    _mant_log("tecnico_externo", eid, "documento_eliminado",
+              f"{_PROV_DOCS_MAP.get(d['tipo'], (d['tipo'],))[0]}"
+              + (f" · vencía {d['vence_at']}" if d.get("vence_at") else ""))
+    r = _prov_docs_resumen(eid)
+    r["ok"] = True
+    return jsonify(r)
+
+
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/foto", methods=["POST"])
 @_mant_required
 def mant_tecnico_externo_subir_foto(eid):
@@ -120570,6 +120815,14 @@ try:
         _ensure_comm_template_plan_propuesto()
 except Exception as _ensure_pp_err:
     print(f"[ILUS][WARN] _ensure_comm_template_plan_propuesto: {_ensure_pp_err}", flush=True)
+
+# Documentación del proveedor (Fase 5): seguros, laboral y seguridad en
+# faena. Tabla nueva → tiene que crearse en el arranque, no en migraciones.
+try:
+    with app.app_context():
+        _ensure_mant_proveedor_docs()
+except Exception as _ensure_pd_err:
+    print(f"[ILUS][WARN] _ensure_mant_proveedor_docs: {_ensure_pd_err}", flush=True)
 
 # Plantilla editable 'anexo_nueva_ot' (mantenciones/email) SIEMPRE sembrada
 # (incluso skip-migrations) — la usa ot2_api_anexo_enviar cuando el Anexo de
