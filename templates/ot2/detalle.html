@@ -2919,6 +2919,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     onclick="otdVerAnexoPdf({{ anexo.id }})">
               <i class="bi bi-file-earmark-pdf-fill"></i>
               {{ 'Ver anexo firmado' if _anx_firmado else 'Ver borrador' }}</button>
+            {#- ✏️ 2026-09-07 (Daniel: "poder editarlo para que tome los
+                cambios, lo quiero enviar para corrección"). Solo mientras no
+                esté firmado: después el documento es evidencia. -#}
+            {% if not _anx_firmado %}
+            <button type="button" class="otd-btn" style="flex:1;justify-content:center"
+                    onclick="OT2ANX.abrirEditar({{ anexo.id }})">
+              <i class="bi bi-pencil-fill"></i> Editar</button>
+            {% endif %}
             {% if not _anx_firmado %}
             <button type="button" class="otd-btn pri" style="flex:1;justify-content:center"
                     onclick="OT2ANX.abrirEnviar({{ anexo.id }},

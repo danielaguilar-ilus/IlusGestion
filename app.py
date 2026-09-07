@@ -84148,6 +84148,179 @@ def ot2_api_anexo_crear():
     return jsonify({"ok": True, "anexo_id": aid, "numero": numero})
 
 
+# ── EDITAR UN ANEXO QUE TODAVIA NO SE FIRMA ────────────────────
+# ✏️ 2026-09-07 (Daniel: "y esto podrá cambiar antes de firmar si es
+# necesario" — pedido del 30-08, retomado hoy con el Anexo N° 162, que
+# quedó con la lista de equipos metida dentro del objetivo).
+#
+# Hasta ahora un anexo era inmutable desde el momento en que nacía: la
+# única salida ante un error de tipeo era anularlo y emitir otro, con otro
+# folio y otro link, molestando al proveedor que ya tenía el suyo.
+#
+# El límite es la FIRMA, no el envío. Un anexo enviado o abierto todavía
+# es un borrador que se está acordando; uno firmado es evidencia y no se
+# toca ni con superadmin (ver la doctrina de firmas del proyecto). Por eso
+# el estado va en el WHERE del UPDATE y no solo en un `if`: entre la
+# lectura y la escritura el proveedor pudo haber firmado.
+
+
+_ANEXO_EDITABLES = ("borrador", "enviado", "visto", "vencido")
+# Mismas palabras que bloquean la CREACIÓN (ver ot2_api_anexo_crear): un
+# anexo corregido no puede quedar con un proveedor de prueba.
+_ANEXO_PALABRAS_PRUEBA = ("prueba", "test", "demo", "ejemplo")
+
+
+def _anexo_fecha_input(v):
+    """DATE de MySQL → 'aaaa-mm-dd' para un <input type="date">."""
+    try:
+        return v.strftime("%Y-%m-%d") if v else ""
+    except Exception:
+        return str(v or "")[:10]
+
+
+@app.route("/ot/api/anexos/<int:aid>", methods=["GET"])
+@_mant_required
+def ot2_api_anexo_detalle(aid):
+    """Los campos de un anexo, para reabrirlo y corregirlo."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (aid,))
+    if not a:
+        return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
+    a = _anexo_dict(a)
+    return jsonify({
+        "ok": True,
+        "editable": a.get("estado") in _ANEXO_EDITABLES,
+        "estado": a.get("estado"),
+        "anexo": {
+            "id": a["id"], "numero": a.get("numero"), "ot_id": a.get("ot_id"),
+            "tecnico_externo_id": a.get("tecnico_externo_id"),
+            "proveedor_nombre": a.get("proveedor_nombre") or "",
+            "proveedor_rut": a.get("proveedor_rut") or "",
+            "proveedor_direccion": a.get("proveedor_direccion") or "",
+            "cliente_nombre": a.get("cliente_nombre") or "",
+            "objetivo_servicio": a.get("objetivo_servicio") or "",
+            "precio_items": a.get("precio_items") or [],
+            "productos": _anexo_productos_guardados(a) or [],
+            # Formato del <input type="date">: aaaa-mm-dd. Son columnas DATE
+            # puras, sin zona horaria que convertir (mismo criterio que
+            # `_anexo_fecha_d`).
+            "fecha_inicio": _anexo_fecha_input(a.get("fecha_inicio")),
+            "fecha_termino": _anexo_fecha_input(a.get("fecha_termino")),
+            "niveles_servicio": a.get("niveles_servicio") or "",
+            "hitos_pago": a.get("hitos_pago") or "",
+            "alcance_servicio": a.get("alcance_servicio") or "",
+            "enviado_email": a.get("enviado_email") or "",
+            "enviado_tel": a.get("enviado_tel") or "",
+        },
+    })
+
+
+@app.route("/ot/api/anexos/<int:aid>", methods=["PATCH", "POST"])
+@_mant_required
+def ot2_api_anexo_editar(aid):
+    """Corrige un anexo que aún no se firma. Mismo formulario que al crearlo.
+
+    Lo que NO se toca nunca: el número (es el folio, y el hash de
+    verificación lo usa), el estado, el token y todo lo de la firma. Se
+    corrige el CONTENIDO, no la identidad del documento ni su trazabilidad.
+    """
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (aid,))
+    if not a:
+        return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
+    if a["estado"] not in _ANEXO_EDITABLES:
+        _porque = {
+            "firmado": "Este anexo ya está firmado: no se puede modificar. "
+                       "Si cambiaron las condiciones, emite uno nuevo.",
+            "rechazado": "El proveedor rechazó este anexo. Crea uno nuevo.",
+            "anulado": "Este anexo está anulado.",
+        }.get(a["estado"], f"No se puede editar un anexo en estado '{a['estado']}'.")
+        return jsonify({"ok": False, "error": _porque}), 409
+
+    d = request.get_json(silent=True) or {}
+
+    # Mismas validaciones que al crear: un anexo corregido no puede quedar
+    # peor que uno nuevo.
+    proveedor = (d.get("proveedor_nombre") or "").strip()[:200]
+    if not proveedor:
+        return _ot2_err("Falta el nombre del proveedor.", "PROVEEDOR_REQUERIDO")
+    if any(_p in proveedor.lower() for _p in _ANEXO_PALABRAS_PRUEBA):
+        return _ot2_err(
+            'Ese nombre de proveedor parece de prueba ("{}"). El anexo es un '
+            "documento con efecto legal: corrige el nombre real.".format(proveedor),
+            "PROVEEDOR_DE_PRUEBA")
+    objetivo = (d.get("objetivo_servicio") or "").strip()
+    if not objetivo:
+        return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")
+    items = d.get("precio_items") or []
+    if not isinstance(items, list) or not items:
+        return _ot2_err("Agrega al menos un ítem de precio.", "PRECIO_REQUERIDO")
+    try:
+        items = [{"concepto": str(it.get("concepto") or "")[:120],
+                  "monto": int(it.get("monto") or 0)} for it in items]
+    except (TypeError, ValueError):
+        return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
+
+    import json as _json
+    try:
+        _filas = mysql_execute_returning_rowcount(
+            "UPDATE mant_anexos SET "
+            "  tecnico_externo_id=%s, proveedor_nombre=%s, proveedor_rut=%s, "
+            "  proveedor_direccion=%s, cliente_nombre=%s, objetivo_servicio=%s, "
+            "  precio_items_json=%s, productos_json=%s, "
+            "  fecha_inicio=%s, fecha_termino=%s, "
+            "  niveles_servicio=%s, hitos_pago=%s, alcance_servicio=%s "
+            " WHERE id=%s AND estado IN ('borrador','enviado','visto','vencido')",
+            (d.get("tecnico_externo_id") or None,
+             proveedor, (d.get("proveedor_rut") or "").strip()[:20] or None,
+             (d.get("proveedor_direccion") or "").strip()[:400] or None,
+             (d.get("cliente_nombre") or "").strip()[:200] or None,
+             objetivo, _json.dumps(items),
+             _json.dumps(_anexo_productos_norm(d.get("productos"))),
+             d.get("fecha_inicio") or None, d.get("fecha_termino") or None,
+             (d.get("niveles_servicio") or "").strip() or None,
+             (d.get("hitos_pago") or "").strip() or None,
+             (d.get("alcance_servicio") or "").strip() or None,
+             aid))
+    except Exception as e:
+        print(f"[anexo_editar] {e}", flush=True)
+        return _ot2_err("No pudimos guardar los cambios.", "ERROR_INTERNO", http=500)
+
+    if not _filas:
+        # El estado cambió entre que se leyó y se escribió -- típicamente
+        # porque el proveedor firmó justo ahora. Se dice, en vez de cantar
+        # un guardado que no ocurrió.
+        return jsonify({"ok": False,
+                        "error": "El anexo cambió de estado mientras lo editábas "
+                                 "(puede que el proveedor lo acabe de firmar). "
+                                 "Recarga la página para ver cómo quedó."}), 409
+
+    try:
+        _mant_log("anexo", aid, "editado",
+                  f"N° {a.get('numero')} · estado {a['estado']}"
+                  + (" · YA HABÍA SIDO ENVIADO: conviene reenviarlo"
+                     if a["estado"] in ("enviado", "visto") else ""))
+    except Exception:
+        pass
+    if a.get("ot_id"):
+        try:
+            _mant_log("visita", a["ot_id"], "anexo_editado",
+                      f"Anexo N° {a.get('numero')} corregido antes de la firma")
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok": True, "anexo_id": aid, "numero": a.get("numero"),
+        # Si ya se había mandado, el proveedor tiene en su correo un link a
+        # la versión vieja. El link no cambia, pero conviene avisarle.
+        "reenviar_sugerido": a["estado"] in ("enviado", "visto"),
+        "enviado_email": a.get("enviado_email") or "",
+        "enviado_tel": a.get("enviado_tel") or "",
+    })
+
+
 @app.route("/ot/api/anexos/<int:aid>/enviar", methods=["POST"])
 @_mant_required
 def ot2_api_anexo_enviar(aid):

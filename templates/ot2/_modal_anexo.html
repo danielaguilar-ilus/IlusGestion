@@ -136,6 +136,13 @@
   .oax-pdf-adj input{margin-top:3px;flex:0 0 auto;width:15px;height:15px;
     accent-color:#dc2626;cursor:pointer}
   .oax-pdf-adj b{display:block;font-size:.82rem;font-weight:800;color:#111827}
+
+  /* Aviso de modo corrección (2026-09-07). */
+  .oax-edit-aviso{display:flex;gap:9px;align-items:flex-start;margin-bottom:12px;
+    padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;
+    font-size:.78rem;color:#1e3a8a;line-height:1.45}
+  .oax-edit-aviso > i{color:#3b82f6;font-size:.95rem;margin-top:1px;flex:0 0 auto}
+  .oax-edit-aviso[hidden]{display:none}
 </style>
 
 <div class="modal fade oax" id="oaxModal" tabindex="-1" aria-hidden="true">
@@ -157,6 +164,10 @@
         <span class="bar"><i id="oaxProgBar"></i></span>
       </div>
       <div class="oax-body" id="oaxBodyCrear">
+        {# Aviso de modo corrección. Sin esto, el formulario lleno se ve
+           igual que uno nuevo y es facilisimo creer que se está creando
+           otro anexo. #}
+        <div class="oax-edit-aviso" id="oaxEditAviso" hidden></div>
 
         <div class="oax-sec" data-paso="proveedor">
           <div class="oax-sh">
@@ -485,8 +496,89 @@ window.OT2ANX = (function(){
       items: itemsDesdeOT(),
       fecha_inicio: DEF_FECHA_INI, fecha_termino: DEF_FECHA_FIN,
       niveles_servicio: DEF_NIVELES, hitos_pago: DEF_HITOS, alcance_servicio: DEF_ALCANCE,
+      productos: null,
+      // ✏️ 2026-09-07: cuando trae id, el formulario está CORRIGIENDO un
+      // anexo que ya existe en vez de creando uno nuevo (ver abrirEditar).
+      editando_id: null,
     };
     aid = null; lastLink = ''; creadoAlgo = false;
+  }
+
+  /* ✏️ 2026-09-07 (Daniel: "y esto podrá cambiar antes de firmar si es
+     necesario"). Reabre el MISMO formulario con los datos del anexo ya
+     emitido. El límite es la firma, no el envío: un anexo enviado o abierto
+     sigue siendo un borrador que se está acordando; uno firmado es
+     evidencia y el backend lo rechaza. */
+  async function abrirEditar(anexoId){
+    resetCrear();
+    _ofertaProvHecha = true;   // corrigiendo no se ofrece crear proveedor
+    var modalEl = document.getElementById('oaxModal');
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    fase('crear');
+    try {
+      const r = await fetch('/ot/api/anexos/' + anexoId, {credentials:'same-origin', cache:'no-store'});
+      const j = await r.json();
+      if (!r.ok || !j.ok){
+        ilusToast((j && j.error) || 'No pudimos abrir el anexo.', {type:'error'});
+        return;
+      }
+      if (!j.editable){
+        ilusToast('El anexo N° ' + (j.anexo && j.anexo.numero) +
+                  ' está ' + j.estado + ': ya no se puede modificar.', {type:'warning'});
+        return;
+      }
+      var a = j.anexo;
+      S.editando_id = a.id;
+      S.ot_id = a.ot_id || OT_ID;
+      S.tecnico_externo_id = a.tecnico_externo_id || null;
+      S.proveedor_nombre = a.proveedor_nombre || '';
+      S.proveedor_rut = a.proveedor_rut || '';
+      S.proveedor_direccion = a.proveedor_direccion || '';
+      S.cliente_nombre = a.cliente_nombre || DEF_CLIENTE;
+      /* 🧹 Los anexos emitidos antes del 07-09 traen la lista de equipos
+         pegada dentro del objetivo ("... Equipos considerados (2): · ...").
+         Al corregirlos se limpia sola: los equipos van a la tabla, que es
+         justo lo que se está arreglando. Se corta en el marcador exacto,
+         así que un objetivo escrito a mano no se toca. */
+      var _obj = a.objetivo_servicio || '';
+      var _iEq = _obj.indexOf('Equipos considerados (');
+      var _limpiado = false;
+      if (_iEq > 0){ _obj = _obj.slice(0, _iEq).trim(); _limpiado = true; }
+      S.objetivo_servicio = _obj;
+      S.items = (a.precio_items && a.precio_items.length)
+        ? a.precio_items.map(function(it){
+            return {concepto: it.concepto || '', monto: String(it.monto || '')}; })
+        : [{concepto:'', monto:''}];
+      /* Si el anexo se creó antes de que este modal mandara productos, la
+         lista viene vacía. Se rellena con los equipos de la OT: es
+         exactamente la corrección que hace falta en esos anexos. */
+      S.productos = (a.productos && a.productos.length) ? a.productos : productosDesdeOT();
+      S.fecha_inicio = a.fecha_inicio || DEF_FECHA_INI;
+      S.fecha_termino = a.fecha_termino || DEF_FECHA_FIN;
+      S.niveles_servicio = a.niveles_servicio || DEF_NIVELES;
+      S.hitos_pago = a.hitos_pago || DEF_HITOS;
+      S.alcance_servicio = a.alcance_servicio || DEF_ALCANCE;
+      S.email = a.enviado_email || '';
+      S.tel = a.enviado_tel || '';
+      var _btn = document.getElementById('oaxBtnCrear');
+      if (_btn) _btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Guardar cambios';
+      var _av = document.getElementById('oaxEditAviso');
+      if (_av){
+        _av.hidden = false;
+        _av.innerHTML = '<i class="bi bi-pencil-fill"></i><div>Estás corrigiendo el ' +
+          '<b>Anexo N° ' + a.numero + '</b>, que todavía no se firma. ' +
+          'Conserva su número y su link — al guardar conviene reenviarlo para que ' +
+          'el proveedor vea la versión corregida.' +
+          (_limpiado ? '<br><b>Se quitó del objetivo la lista de equipos:</b> ahora ' +
+                       'salen en la tabla del anexo.' : '') + '</div>';
+      }
+    } catch(e){
+      ilusToast('Error de conexión al abrir el anexo.', {type:'error'});
+      return;
+    }
+    pintarForm();
+    cargarProveedores();
+    pintarPasos();
   }
 
   /* Solo dos fases reales de FORMULARIO ("crear"/"enviar"); el tercer pie
@@ -844,8 +936,15 @@ window.OT2ANX = (function(){
     var btn = document.getElementById('oaxBtnCrear');
     btn.disabled = true;
     try {
-      const r = await fetch('/ot/api/anexos', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
+      // Corregir usa el MISMO formulario y el mismo cuerpo: si se separaran
+      // en dos caminos, uno terminaría validando distinto que el otro.
+      var _esEdicion = !!S.editando_id;
+      const r = await fetch(_esEdicion ? ('/ot/api/anexos/' + S.editando_id) : '/ot/api/anexos', {
+        // POST en los dos casos: es el metodo que el resto del modal ya
+        // usa sin problemas (la ruta de edicion acepta PATCH y POST).
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           ot_id: S.ot_id, tecnico_externo_id: S.tecnico_externo_id,
           proveedor_nombre: S.proveedor_nombre, proveedor_rut: S.proveedor_rut,
@@ -854,7 +953,7 @@ window.OT2ANX = (function(){
           // Los equipos viajan como tabla, no dentro del objetivo. Sin esto
           // el anexo nace sin productos: la pantalla de firma no muestra
           // ninguno y el firmado no congela la lista.
-          productos: productosDesdeOT(),
+          productos: (S.productos && S.productos.length) ? S.productos : productosDesdeOT(),
           precio_items: items,
           fecha_inicio: S.fecha_inicio || null, fecha_termino: S.fecha_termino || null,
           niveles_servicio: S.niveles_servicio, hitos_pago: S.hitos_pago,
@@ -866,12 +965,23 @@ window.OT2ANX = (function(){
         ilusToast(j.error || 'No se pudo crear el anexo.', {type:'error'});
         return;
       }
-      aid = j.anexo_id; creadoAlgo = true;
+      aid = _esEdicion ? S.editando_id : j.anexo_id;
+      creadoAlgo = true;
       document.getElementById('oaxNumeroCreado').textContent = j.numero;
+      if (_esEdicion){
+        ilusToast('✓ Anexo N° ' + j.numero + ' corregido', {type:'success'});
+        var _av2 = document.getElementById('oaxEditAviso');
+        if (_av2) _av2.hidden = true;
+        var _b2 = document.getElementById('oaxBtnCrear');
+        if (_b2) _b2.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear Anexo';
+        S.editando_id = null;
+      }
       // El modal se reutiliza sin recargar la página: si antes se usó para
       // reenviar, el sufijo quedó en "listo para enviar" y acá sí es nuevo.
       var _sufC = document.getElementById('oaxNumeroSufijo');
-      if (_sufC) _sufC.textContent = 'creado como borrador.';
+      if (_sufC) _sufC.textContent = _esEdicion
+        ? 'corregido — conviene reenviarlo al proveedor.'
+        : 'creado como borrador.';
       document.getElementById('oaxEmailDestino').value = S.email || '';
       document.getElementById('oaxTelDestino').value = S.tel || '';
       document.getElementById('oaxResultadoBox').style.display = 'none';
@@ -1009,7 +1119,7 @@ window.OT2ANX = (function(){
   });
 
   return {
-    abrir, abrirEnviar, crear, enviar, enviarPor, copiarLink,
+    abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink,
     onProveedorChange, toggleManual, toggleCondiciones,
     setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,
     agregarItem, quitarItem,
