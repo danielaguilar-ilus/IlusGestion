@@ -6359,7 +6359,11 @@ function iniciarRuta(app){
   // ── 2) Abrir YA, en el mismo tick del click ────────────────────
   let ventana = null;
   if (url){
-    try { ventana = window.open(url, '_blank', 'noopener'); } catch(e){ ventana = null; }
+    // Sin el tercer argumento a proposito: pasar 'noopener' en las features
+    // hace que window.open devuelva SIEMPRE null por especificacion, y el
+    // rescate de mas abajo se disparaba aunque Waze hubiera abierto bien.
+    // Los navegadores actuales ya aplican noopener solos en target=_blank.
+    try { ventana = window.open(url, '_blank'); } catch(e){ ventana = null; }
   }
 
   // ── 3) Recién ahora el registro, SIN esperarlo ────────────────
