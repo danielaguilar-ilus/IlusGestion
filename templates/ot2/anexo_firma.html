@@ -39,7 +39,26 @@
   /* ════════════════════════════════════════════════════════════════
      TOKENS — mismos del lenguaje visual ILUS (retiros_public_request)
      ════════════════════════════════════════════════════════════════ */
+  /* 🔴 2026-09-07 (Daniel, reportando a Isabel firmando el Anexo N° 163:
+     "está en fondo negro, se pierde la firma"). Su celular tiene el modo
+     oscuro FORZADO del navegador (Samsung Internet / Chrome Android), que
+     repinta cualquier página que no diga lo contrario: el recuadro blanco
+     de la firma se volvió gris oscuro y el trazo —casi negro, #111827—
+     quedó prácticamente invisible. Ella firmó sin ver lo que dibujaba.
+
+     `color-scheme: only light` es la forma estándar de decirle al navegador
+     que esta página NO se convierte. Y acá no es una preferencia estética:
+     es un documento con efecto contractual y tiene que verse igual para
+     todos los que lo firmen. Si el navegador lo repinta a su gusto, dos
+     personas están firmando cosas que se ven distintas.
+
+     ✅ La firma YA ARCHIVADA estaba bien: firmaComoDataUrl() exporta sobre
+     un canvas propio con fondo blanco, así que el PNG del anexo firmado
+     sale negro sobre blanco. Lo que estaba roto era lo que veía quien
+     firmaba — que no es un detalle menor: si no ve su trazo, no sabe qué
+     está firmando. */
   :root{
+    color-scheme: only light;
     --ilus-red:#dc2626; --ilus-red-dk:#a60000; --ink:#0a0a0a; --ink-2:#161616;
     --gray-1:#f3f4f6; --gray-2:#e5e7eb; --gray-3:#9ca3af; --gray-4:#374151;
     --green-500:#16a34a; --green-050:#dcfce7; --amber-500:#f59e0b;
@@ -1334,6 +1353,17 @@
   function redibujar(){
     var rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
+    /* Fondo blanco DENTRO del canvas, no solo en el CSS del contenedor.
+       Un navegador con modo oscuro forzado puede oscurecer el recuadro por
+       CSS, pero no repinta el mapa de bits de un canvas: así el trazo
+       queda oscuro sobre claro aunque `color-scheme` se ignore. Va acá
+       porque redibujar() es el único punto que limpia — lo llaman el
+       borrado, el resize y cada trazo nuevo.
+       No cambia lo que se archiva: firmaComoDataUrl() ya compone sobre su
+       propio fondo blanco. */
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.strokeStyle = '#111827';
     for (var i = 0; i < trazos.length; i++) dibujarTrazo(trazos[i]);
     if (trazoActual) dibujarTrazo(trazoActual);
   }
