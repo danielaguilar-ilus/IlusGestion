@@ -346,8 +346,19 @@
       <div class="oax-foot" id="oaxFootEnviar" style="display:none">
         <button type="button" class="btn btn-outline-secondary btn-sm px-3" data-bs-dismiss="modal">Enviar más tarde</button>
         <span class="sp"></span>
-        <button type="button" class="btn btn-danger btn-sm px-4 fw-bold" id="oaxBtnEnviar" onclick="OT2ANX.enviar()">
-          <i class="bi bi-send-fill me-1"></i>Enviar al proveedor</button>
+        {#- 💬 2026-09-07 (Daniel: "unos botones para gestionar el envío de
+            anexo por mail y whatsapp a los datos del proveedor"). Antes había
+            un solo botón que decidía solo: mandaba correo si había correo y
+            abría WhatsApp si había teléfono, sin que nadie eligiera. Con los
+            dos datos cargados no se podía mandar SOLO por uno, que es lo
+            normal cuando el proveedor contesta por WhatsApp y el correo lo
+            tiene abandonado. Ahora el canal lo elige la persona. -#}
+        <button type="button" class="btn btn-success btn-sm px-3 fw-bold" id="oaxBtnWaEnv"
+                onclick="OT2ANX.enviarPor('whatsapp')">
+          <i class="bi bi-whatsapp me-1"></i>WhatsApp</button>
+        <button type="button" class="btn btn-danger btn-sm px-3 fw-bold" id="oaxBtnEnviar"
+                onclick="OT2ANX.enviarPor('correo')">
+          <i class="bi bi-envelope-fill me-1"></i>Enviar por correo</button>
       </div>
       <div class="oax-foot" id="oaxFootListo" style="display:none">
         <button type="button" class="btn btn-outline-secondary btn-sm px-3" onclick="OT2ANX.copiarLink()">
@@ -834,9 +845,22 @@ window.OT2ANX = (function(){
     }
   }
 
-  async function enviar(){
+  /* El canal manda: 'correo' no toca el teléfono y 'whatsapp' no manda
+     correo. Así reenviar por un canal no vuelve a molestar por el otro. */
+  async function enviarPor(canal){ return enviar(canal); }
+
+  async function enviar(canal){
+    canal = canal || 'auto';
     var email = document.getElementById('oaxEmailDestino').value.trim();
     var tel = document.getElementById('oaxTelDestino').value.trim();
+    if (canal === 'correo' && !email){
+      ilusToast('Escribe el correo del proveedor para enviarlo por correo.', {type:'warning'});
+      return;
+    }
+    if (canal === 'whatsapp' && !tel){
+      ilusToast('Escribe el teléfono del proveedor para mandarlo por WhatsApp.', {type:'warning'});
+      return;
+    }
     if (!email && !tel){
       const ok = await ilusConfirm({
         title: 'Sin correo ni teléfono',
@@ -846,9 +870,20 @@ window.OT2ANX = (function(){
       if (!ok) return;
     }
     var adjChk = document.getElementById('oaxAdjuntarPdf');
-    var adjuntar = !!(adjChk && adjChk.checked && email);
-    var btn = document.getElementById('oaxBtnEnviar');
+    // El PDF viaja adjunto al CORREO; por WhatsApp va el link, no un archivo.
+    var adjuntar = !!(adjChk && adjChk.checked && email && canal !== 'whatsapp');
+    var btn = document.getElementById(canal === 'whatsapp' ? 'oaxBtnWaEnv' : 'oaxBtnEnviar');
     var btnHtml = btn.innerHTML;
+    /* 📲 La ventana de WhatsApp se reserva ANTES del fetch. El link de
+       firma solo existe después de que el servidor genera el token, pero si
+       se abriera recién ahí el navegador ya habría perdido la activación
+       del click y bloquearía la ventana en silencio -- el mismo bug que
+       acabamos de corregir en el botón de Waze. Es el patrón que ya usa
+       enviarFirmaWhatsApp() en la pantalla de ejecución. */
+    var winWa = null;
+    if (canal === 'whatsapp'){
+      try { winWa = window.open('', '_blank'); } catch(e){ winWa = null; }
+    }
     btn.disabled = true;
     // Armar el PDF toma varios segundos (Chromium). Sin decirlo, el botón
     // se queda mudo y parece que se colgó.
@@ -856,10 +891,15 @@ window.OT2ANX = (function(){
     try {
       const r = await fetch('/ot/api/anexos/' + aid + '/enviar', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: email, telefono: tel, adjuntar_pdf: adjuntar}),
+        body: JSON.stringify({
+          email: (canal === 'whatsapp') ? '' : email,
+          telefono: (canal === 'correo') ? '' : tel,
+          adjuntar_pdf: adjuntar,
+        }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok){
+        if (winWa){ try { winWa.close(); } catch(e){} }
         ilusToast(j.error || 'No se pudo enviar el anexo.', {type:'error'});
         return;
       }
@@ -871,11 +911,21 @@ window.OT2ANX = (function(){
       var waBtn = document.getElementById('oaxBtnWa');
       if (j.whatsapp_link){ waBtn.href = j.whatsapp_link; waBtn.style.display = ''; }
       else { waBtn.style.display = 'none'; }
+      // La ventana ya estaba abierta: solo se la lleva al link real.
+      if (winWa){
+        if (j.whatsapp_link){ try { winWa.location = j.whatsapp_link; } catch(e){} }
+        else { try { winWa.close(); } catch(e){} }
+      }
       creadoAlgo = true;
       // Se dice lo que pasó de verdad: si se pidió el PDF y no salió, se
       // avisa. Cantar "enviado con PDF" cuando no fue así es peor que no
       // ofrecer el adjunto — el proveedor después dice que nunca lo vio.
-      if (j.correo_enviado && j.pdf_adjunto){
+      if (canal === 'whatsapp'){
+        ilusToast(j.whatsapp_link
+          ? '✓ Anexo listo — se abrió WhatsApp con el mensaje escrito'
+          : 'Anexo enviado, pero no se pudo armar el link de WhatsApp — copia el link de abajo.',
+          {type: j.whatsapp_link ? 'success' : 'warning'});
+      } else if (j.correo_enviado && j.pdf_adjunto){
         ilusToast('✓ Correo enviado al proveedor, con el PDF adjunto', {type:'success'});
       } else if (j.correo_enviado && adjuntar){
         ilusToast('Correo enviado, pero SIN el PDF adjunto'
@@ -919,7 +969,7 @@ window.OT2ANX = (function(){
   });
 
   return {
-    abrir, abrirEnviar, crear, enviar, copiarLink,
+    abrir, abrirEnviar, crear, enviar, enviarPor, copiarLink,
     onProveedorChange, toggleManual, toggleCondiciones,
     setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,
     agregarItem, quitarItem,

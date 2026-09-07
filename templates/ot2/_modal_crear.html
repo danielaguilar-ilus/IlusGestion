@@ -7429,13 +7429,47 @@ window.OT2C = (function(){
                     : 'El anexo se creó, pero no se pudo enviar — envíalo desde el detalle de la OT.',
                   {type:(rb && rb.ok) ? (_pidioPdf && !_conPdf ? 'warning' : 'success') : 'warning',
                    duration:7000});
-                // 2026-08-29 (Daniel: "integra el anexo el envio por mail o
-                // whatsapp"): mismo patrón honesto que ya usa el backend --
-                // arma el link de WhatsApp con el mensaje ya escrito, pero
-                // es una PERSONA quien lo manda (no hay envío automático de
-                // WhatsApp en el proyecto, ver ot2_api_anexo_enviar). Se abre
-                // en pestaña nueva para no perder la navegación al detalle.
-                if (rb && rb.ok && rb.whatsapp_link) window.open(rb.whatsapp_link, '_blank');
+                /* 2026-08-29 (Daniel: "integra el anexo el envio por mail o
+                   whatsapp"): mismo patrón honesto que ya usa el backend --
+                   arma el link de WhatsApp con el mensaje ya escrito, pero es
+                   una PERSONA quien lo manda (no hay envío automático de
+                   WhatsApp en el proyecto, ver ot2_api_anexo_enviar).
+
+                   🔴 FIX 2026-09-07: acá había un `window.open` directo, y
+                   para cuando se ejecutaba ya habían pasado DOS peticiones al
+                   servidor (crear la OT y crear+enviar el anexo). El
+                   navegador ya no reconoce ese click como reciente y bloquea
+                   la ventana EN SILENCIO: WhatsApp no se abría y nadie se
+                   enteraba, con el anexo marcado como enviado. Es el mismo
+                   defecto que el botón de Waze.
+
+                   No se puede reservar la ventana de antemano como en el
+                   modal, porque acá no se sabe si va a haber WhatsApp hasta
+                   que responde el servidor. Así que se le entrega el enlace a
+                   la persona para que lo toque: un toque suyo sí abre. */
+                if (rb && rb.ok && rb.whatsapp_link){
+                  try {
+                    // Sin `await`: este callback de .then() no es async. Se
+                    // navega al detalle cuando la persona cierra el aviso.
+                    var _pWa = ilusAlert({
+                      title: 'Anexo N° ' + ra.numero + ' listo para enviar',
+                      message: 'Toca el enlace para abrir WhatsApp con el mensaje ya escrito.',
+                      sub: '<a href="' + rb.whatsapp_link + '" target="_blank" rel="noopener" ' +
+                           'style="display:inline-flex;align-items:center;gap:8px;min-height:44px;' +
+                           'padding:10px 18px;background:#16a34a;color:#fff;font-weight:800;' +
+                           'border-radius:10px;text-decoration:none">' +
+                           '<i class="bi bi-whatsapp"></i>Abrir WhatsApp</a>',
+                      subHtml: true,
+                      type: 'success',
+                    });
+                    if (_pWa && _pWa.then){
+                      _pWa.then(_o2mIrADetalle, _o2mIrADetalle);
+                      return;
+                    }
+                  } catch(e){
+                    if (window.ilusToast) ilusToast('El anexo quedó enviado. Abre WhatsApp desde el detalle de la OT.', {type:'info', duration:7000});
+                  }
+                }
                 _o2mIrADetalle();
               }).catch(function(){
                 if (window.ilusToast) ilusToast('El anexo se creó, pero no se pudo enviar — envíalo desde el detalle de la OT.', {type:'warning', duration:7000});

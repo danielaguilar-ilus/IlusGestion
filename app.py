@@ -84350,6 +84350,15 @@ def ot2_api_anexo_enviar(aid):
                f"el anexo:\n{link}\n\n— ILUS Fitness")
         wa_link = f"https://wa.me/{re.sub(r'[^0-9]', '', telefono)}?text={_up.quote(msg)}"
 
+    # 📎 Queda archivado en la OT el documento que se le mandó, con su
+    # fecha. Sirve para lo mismo que el adjunto del correo pero del lado de
+    # ILUS: poder demostrar qué condiciones se le comunicaron al proveedor
+    # y cuándo, sin depender de la bandeja de nadie.
+    try:
+        _anexo_archivar_en_ot(_anexo_dict(a), etapa="enviado")
+    except Exception as _e_arch:
+        print(f"[anexo_enviar] archivar en OT: {_e_arch}", flush=True)
+
     _pdf_fue = bool(_adjuntos) and enviado_correo
     try:
         _mant_log("anexo", aid, "enviado",
@@ -84656,6 +84665,84 @@ def _anexo_pdf_bytes(a):
     return data, fname
 
 
+def _anexo_archivar_en_ot(a, etapa="enviado"):
+    """Deja el PDF del anexo entre los documentos de la OT.
+
+    📎 2026-09-07 (Daniel: "después deberás enviarlo a que se guarde en la
+    OT y tener tracking"). El anexo existía solo dentro de `mant_anexos` y
+    se regeneraba al vuelo cada vez que alguien apretaba "Ver PDF". En la
+    pestaña Información de la OT, "Videos y documentos" decía 0: el
+    documento que gobierna el trabajo del proveedor no estaba entre los
+    documentos de esa OT. Ahora sí, con su fecha y quién lo generó.
+
+    `etapa` distingue el que se le mandó a firmar del que quedó firmado.
+    Son dos papeles distintos y los dos importan: uno prueba qué se le
+    comunicó y cuándo; el otro es el contrato.
+
+    Best-effort de principio a fin: si Chromium no está, si el
+    almacenamiento está caído o si la tabla no existe, se registra en el
+    log y se sigue. Archivar una copia NUNCA puede tumbar un envío ni,
+    mucho menos, una firma que el proveedor ya estampó.
+    """
+    vid = (a or {}).get("ot_id")
+    if not vid:
+        return None
+    try:
+        data, fname = _anexo_pdf_bytes(a)
+    except Exception as e:
+        print(f"[anexo_archivar] sin PDF (aid={a.get('id')}): {e}", flush=True)
+        return None
+
+    _etq = {"firmado": "firmado", "enviado": "enviado a firmar"}.get(etapa, etapa)
+    nombre = fname[:-4] if fname.lower().endswith(".pdf") else fname
+    nombre = f"{nombre} ({_etq}).pdf"[:300]
+
+    if not _gcs_ready():
+        print(f"[anexo_archivar] almacenamiento no disponible (aid={a.get('id')})", flush=True)
+        return None
+    try:
+        result = _uploader_upload(
+            data,
+            folder=f"ilus/visita_adjuntos/{vid}",
+            public_id=f"anexo_{a.get('id')}_{etapa}",
+            resource_type="raw",
+            filename=nombre,
+        )
+        url = (result or {}).get("secure_url")
+    except Exception as e:
+        print(f"[anexo_archivar] subida falló (aid={a.get('id')}): {e}", flush=True)
+        return None
+    if not url:
+        return None
+
+    try:
+        # Reemplaza la copia anterior de ESTA etapa en vez de acumular una
+        # por cada reenvío: el técnico no necesita ver seis PDF iguales.
+        mysql_execute(
+            "DELETE FROM mant_visita_adjuntos "
+            " WHERE visita_id=%s AND tipo='pdf' AND archivo_nombre=%s",
+            (vid, nombre))
+        mysql_execute(
+            "INSERT INTO mant_visita_adjuntos "
+            "  (visita_id, tipo, cloudinary_url, archivo_nombre, file_size_kb, "
+            "   mime_type, descripcion, subido_por) "
+            "VALUES (%s,'pdf',%s,%s,%s,'application/pdf',%s,%s)",
+            (vid, url, nombre, max(1, len(data) // 1024),
+             f"Anexo de servicios N° {a.get('numero') or a.get('id')} — {_etq}",
+             current_username() or "sistema"))
+    except Exception as e:
+        print(f"[anexo_archivar] no se pudo registrar (aid={a.get('id')}): {e}", flush=True)
+        return None
+
+    try:
+        _mant_log("visita", vid, "anexo_archivado",
+                  f"Anexo N° {a.get('numero') or a.get('id')} · {_etq} · "
+                  f"{len(data)//1024} KB")
+    except Exception:
+        pass
+    return url
+
+
 @app.route("/ot/api/anexos/<int:aid>/pdf", methods=["GET"])
 @_mant_required
 def ot2_api_anexo_pdf(aid):
@@ -84887,6 +84974,18 @@ def ot2_anexo_firma_submit(token):
                   f"hash_cli={(hash_cliente or '—')[:12]} · ip={ip} · {dispositivo}")
     except Exception:
         pass
+
+    # 📎 El anexo FIRMADO queda entre los documentos de la OT. Se relee la
+    # fila DESPUÉS del UPDATE a propósito: `a` se cargó antes de firmar, y
+    # con ella el PDF saldría sin la firma y con la lista de equipos viva
+    # en vez de la congelada. Archivar una copia jamás puede voltear una
+    # firma ya guardada, por eso todo va dentro del try.
+    try:
+        _a_firmado = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (a["id"],))
+        if _a_firmado:
+            _anexo_archivar_en_ot(_anexo_dict(_a_firmado), etapa="firmado")
+    except Exception as _e_arch:
+        print(f"[anexo_firmar] archivar en OT: {_e_arch}", flush=True)
 
     # 📧 2026-08-31 (Daniel, urgente: "que nos avise que ya se firmó el
     # anexo"): antes de esto, firmar el anexo no notificaba a NADIE -- la
