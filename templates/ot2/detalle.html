@@ -8840,7 +8840,49 @@ const OT2F = (function(){
     }
   }
 
+  /* ✍️ VALIDACIÓN PREVIA A FIRMAR — 2026-09-07 (Daniel: "dale con la
+     validación previa a firmar"). Cuarto hueco de OT 2.0 frente a la
+     clásica, y el que más duele cuando falta.
+
+     El problema que resuelve, en palabras de Daniel el 29-08: "eso no
+     puede seguir fallando, nos hace quedar mal". Sin esto, el servidor
+     recién opina DESPUÉS de que el técnico dibujó su firma: la pantalla
+     decía "listo para el cliente", el técnico firmaba DELANTE DEL CLIENTE,
+     y ahí aparecía el rechazo. Le pasó a Isabel, a Pulgar y a él mismo.
+
+     El endpoint corre los mismos candados que firmar-revision pero sin
+     escribir nada. FAIL-OPEN a propósito: si no responde, se deja pasar y
+     decide el candado real. Esto es una cortesia para el técnico, no un
+     permiso — quien manda sigue siendo firmar-revision. */
+  async function otdPreflightFirma(){
+    let d;
+    try {
+      const r = await fetch('/mantenciones/api/visitas/' + OTD_VID + '/puede-firmar',
+                            {credentials:'same-origin', cache:'no-store'});
+      d = await r.json();
+      if (!r.ok || !d || !d.ok) return true;
+    } catch(e){
+      return true;   // sin red: que decida el candado real
+    }
+    if (d.puede_firmar) return true;
+
+    var faltantes = Array.isArray(d.faltantes) ? d.faltantes : [];
+    var lista = faltantes.slice(0, 6).map(function(f){ return '· ' + otdEsc(f); }).join('<br>');
+    if (faltantes.length > 6) lista += '<br>· y ' + (faltantes.length - 6) + ' más';
+    await ilusAlert({
+      title: d.titulo || 'Falta algo antes de firmar',
+      message: d.detalle || 'Resuelve esto y vuelve a intentarlo.',
+      sub: lista || '', subHtml: true, type: 'warning',
+    });
+    return false;
+  }
+
   async function abrirFirmaTecnico(){
+    // Primero lo que BLOQUEA (lo dice el servidor), después lo opcional:
+    // no tiene sentido preguntar por tareas sueltas si igual no va a poder
+    // firmar.
+    if (!(await otdPreflightFirma())) return;
+
     const pendTotal = K_TAREAS - K_TAREAS_OK;
     const pendObl = Math.max(0, K_OBL - K_OBL_OK);
     const pendOpc = pendTotal - pendObl;
@@ -8848,7 +8890,8 @@ const OT2F = (function(){
       const ok = await ilusConfirm({
         title: 'Tareas sin completar',
         message: `Quedan ${pendOpc} tarea${pendOpc === 1 ? '' : 's'} opcional${pendOpc === 1 ? '' : 'es'} sin registrar.`,
-        sub: 'Podés firmar igual, pero los checklist quedarán incompletos en el informe.',
+        // 2026-09-07: decía "Podés". El proyecto usa español neutro (tú).
+        sub: 'Puedes firmar igual, pero los checklist quedarán incompletos en el informe.',
         okLabel: 'Firmar de todas formas', cancelLabel: 'Volver al checklist',
       });
       if (!ok) return;
