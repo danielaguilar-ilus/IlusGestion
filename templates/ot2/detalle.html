@@ -1976,6 +1976,31 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}
 }
 @media (prefers-reduced-motion:reduce){ .otd-gps-vivo .pulso{animation:none} }
+
+/* 📷 Fotos por equipo (2026-09-07). Tira horizontal: con 10 fotos no
+   puede empujar el checklist fuera de la pantalla. */
+.otd-fot{margin:10px 0;padding:10px 12px;background:#fff;
+  border:1px solid #e5e7eb;border-radius:11px}
+.otd-fot-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.otd-fot-head > span{flex:1;min-width:0;font-size:.68rem;font-weight:800;
+  letter-spacing:.06em;text-transform:uppercase;color:#64748b}
+.otd-fot-head b{color:#0a0a0a}
+.otd-fot-add{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;
+  min-height:40px;padding:6px 14px;border-radius:9px;border:1.5px solid #0a0a0a;
+  background:#0a0a0a;color:#fff;font-weight:800;font-size:.76rem;cursor:pointer}
+.otd-fot-add:hover{background:#dc2626;border-color:#dc2626}
+.otd-fot-add:disabled{opacity:.6;cursor:default}
+.otd-fot-tira{display:flex;gap:7px;overflow-x:auto;margin-top:9px;
+  padding-bottom:3px;scrollbar-width:thin}
+.otd-fot-tira:empty{display:none}
+.otd-fot-tira a{flex:0 0 auto;display:block;width:74px;height:74px;
+  border-radius:9px;overflow:hidden;border:1px solid #e5e7eb;background:#f3f4f6}
+.otd-fot-tira img{width:100%;height:100%;object-fit:cover;display:block}
+.otd-fot-tira .gal{position:relative}
+.otd-fot-tira .gal::after{content:'ficha';position:absolute;left:0;right:0;bottom:0;
+  font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+  background:rgba(10,10,10,.72);color:#fff;text-align:center;padding:1px 0}
+.otd-fot-vacio{font-size:.74rem;color:#9ca3af;margin-top:7px}
 </style>
 
 <div class="ot2 otd">
@@ -3788,6 +3813,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <div class="otd-wk-list">
         {% for e in equipos %}
         <details class="otd-wk-item{{ ' is-complete' if e.n_obl and e.n_obl_ok == e.n_obl }}"
+                 ontoggle="if(this.open) otdFotosCargar({{ e.id }})"
                  data-obl="{{ e.n_obl }}" data-oblok="{{ e.n_obl_ok }}"
                  data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
                  data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
@@ -3912,6 +3938,38 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               </div>
             </div>
             {% endif %}
+
+            {#- 📷 2026-09-07 (Daniel: "dale con las fotos por equipo").
+                Último hueco de OT 2.0 frente a la clásica.
+
+                Las fotos DE LA OT ya existían, pero iban todas a la misma
+                bolsa: al abrir el informe no se sabía cuál era de qué
+                máquina. Con siete equipos por OT, un álbum sin dueño no
+                prueba nada. Estas quedan atadas al equipo (maquina_id) y por
+                eso alimentan también su galería permanente.
+
+                Usa el MISMO endpoint que la clásica
+                (/equipo/<mid>/foto, tipo_foto=detalle): 'detalle' y no
+                'principal' a propósito -- la foto de catálogo de la máquina
+                no se pisa desde una OT de terreno.
+
+                Se cargan al ABRIR el equipo, no al entrar a la pantalla: con
+                varios equipos serían varias consultas de una vez para fotos
+                que quizá nadie mira. -#}
+            <div class="otd-fot" data-mid="{{ e.id }}">
+              <div class="otd-fot-head">
+                <span>Fotos de este equipo <b id="otdFotN-{{ e.id }}"></b></span>
+                {% if puede_ejecutar and not ot_solo_lectura %}
+                <button type="button" class="otd-fot-add"
+                        onclick="document.getElementById('otdFotIn-{{ e.id }}').click()">
+                  <i class="bi bi-camera-fill"></i> Tomar foto</button>
+                <input type="file" id="otdFotIn-{{ e.id }}" accept="image/*"
+                       capture="environment" style="display:none"
+                       onchange="otdFotoEquipoSubir({{ e.id }}, this)">
+                {% endif %}
+              </div>
+              <div class="otd-fot-tira" id="otdFotTira-{{ e.id }}"></div>
+            </div>
 
             {% if e.razon_saltado %}
             <div class="otd-wk-note">Saltado — motivo: {{ e.razon_saltado | replace('_',' ') | title }}</div>
@@ -4074,6 +4132,80 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   </div>
 </div>
 <script>
+/* 📷 FOTOS POR EQUIPO — 2026-09-07 ==============================
+   Mismo endpoint que la pantalla clásica. La lista mezcla dos fuentes que
+   el backend ya distingue: las de ESTA OT y las de la galería permanente
+   de la máquina (marcadas "ficha"), para que el técnico vea cómo estaba
+   el equipo antes sin salir de acá. */
+const _otdFotCargadas = {};
+
+async function otdFotosCargar(mid, forzar){
+  if (_otdFotCargadas[mid] && !forzar) return;
+  _otdFotCargadas[mid] = true;
+  var tira = document.getElementById('otdFotTira-' + mid);
+  var cnt = document.getElementById('otdFotN-' + mid);
+  if (!tira) return;
+  try {
+    const r = await fetch('/mantenciones/api/visitas/' + OTD_VID + '/equipo/' + mid + '/fotos',
+                          {credentials:'same-origin', cache:'no-store'});
+    const j = await r.json();
+    var fotos = (j && (j.fotos || j.items)) || [];
+    if (!Array.isArray(fotos)) fotos = [];
+    tira.innerHTML = fotos.map(function(f){
+      var u = f.url || f.cloudinary_url || f.archivo_path || '';
+      if (!u) return '';
+      var esGal = (f.fuente === 'galeria');
+      return '<a href="' + otdEsc(u) + '" target="_blank" rel="noopener"' +
+             (esGal ? ' class="gal"' : '') + '>' +
+             '<img src="' + otdEsc(u) + '" loading="lazy" alt=""></a>';
+    }).join('');
+    if (cnt) cnt.textContent = fotos.length ? ('(' + fotos.length + ')') : '';
+    if (!fotos.length){
+      tira.innerHTML = '<div class="otd-fot-vacio">Sin fotos de este equipo todavía.</div>';
+    }
+  } catch(e){
+    if (tira) tira.innerHTML = '<div class="otd-fot-vacio">No se pudieron cargar las fotos.</div>';
+  }
+}
+
+async function otdFotoEquipoSubir(mid, input){
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  input.value = '';   // permite volver a elegir la misma foto
+  if (file.size > 8 * 1024 * 1024){
+    ilusToast('La foto pesa ' + (file.size/(1024*1024)).toFixed(1) +
+              ' MB. El máximo es 8 MB.', {type:'warning'});
+    return;
+  }
+  var cont = document.querySelector('.otd-fot[data-mid="' + mid + '"]');
+  var btn = cont ? cont.querySelector('.otd-fot-add') : null;
+  if (btn) btn.disabled = true;
+  var t = ilusToast('Subiendo la foto…', {type:'info', duration:15000});
+  try {
+    var fd = new FormData();
+    fd.append('foto', file);
+    /* 'detalle' y no 'principal': la foto de catálogo de la máquina no se
+       pisa desde una OT de terreno. El backend igual degrada a detalle si
+       ya hay principal, pero mejor pedir lo correcto. */
+    fd.append('tipo_foto', 'detalle');
+    const r = await fetch('/mantenciones/api/visitas/' + OTD_VID + '/equipo/' + mid + '/foto',
+                          {method:'POST', credentials:'same-origin', body: fd});
+    const j = await r.json().catch(function(){ return {}; });
+    if (t && t.close) t.close();
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo subir la foto.', {type:'error'});
+      return;
+    }
+    ilusToast('✓ Foto guardada en este equipo', {type:'success'});
+    otdFotosCargar(mid, true);
+  } catch(e){
+    if (t && t.close) t.close();
+    ilusToast('Error de conexión al subir la foto.', {type:'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* 🩺 DIAGNÓSTICO POR EQUIPO — 2026-09-07 ==========================
    Mismo endpoint que la pantalla clásica. Reglas del backend que se
    respetan acá para no hacer viajar un rechazo seguro: 'aprobado' no
