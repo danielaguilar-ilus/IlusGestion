@@ -86153,9 +86153,9 @@ def mant_ots_list():
     🔐 SEGURIDAD 2026-05-18 (Daniel) — filtro por rol:
       - tecnico / tecnico_externo: SIEMPRE `solo_mias` (no puede ver
         ajenas — refuerzo doble; cualquier intento se ignora server-side).
-      - ejecutivo (ej. Aaron): por DEFAULT ve SOLO las OTs que él CREÓ
-        (`created_by = self.username`). Puede pasar `?todas=1` para ver
-        el resto del módulo (consultivo, sin ejecutar).
+      - ejecutivo (ej. Aaron): ve TODAS por default desde el 2026-09-07
+        (Daniel: "está generando problemas que solo pueda verlas yo").
+        Conserva `?mias=1` para filtrar solo las suyas.
       - admin / superadmin: ve TODAS por default. Puede usar `?solo_mias=1`
         para filtrar SOLO sus asignadas (raramente útil para ellos).
       - Otros roles (editor, lector, vendedor) → no llegan acá porque el
@@ -86167,6 +86167,10 @@ def mant_ots_list():
     cliente_id = request.args.get("cliente_id")
     q          = (request.args.get("q") or "").strip()
     solo_mias  = request.args.get("solo_mias") == "1"
+    # 🔴 2026-09-07: NO borrar esta línea. Al cambiar el default a "todas"
+    # dejó de usarse acá arriba, pero `ver_todas` se sigue leyendo más
+    # abajo (dos veces) para armar la vista. Quitarla tumbaba la pantalla
+    # entera con un NameError -- lo atrapó pyflakes antes de subirlo.
     ver_todas  = request.args.get("todas") == "1"
     # 🔎 FILTRO 2026-08-12 (Daniel, viendo el listado en vivo): "filtra lo
     # que se hace programado automáticamente... a menos que lo busque" --
@@ -86208,7 +86212,7 @@ def mant_ots_list():
     #    todas → comportamiento histórico completo (con su checkbox
     #            incluir_auto intacto — REGLA #4.2, nada se quita).
     #
-    #    DEFAULT: entrada "limpia" (sin ningún filtro en la URL) → mias.
+    #    DEFAULT: entrada "limpia" → todas (cambiado el 2026-09-07, ver abajo).
     #    Si la URL YA trae un filtro explícito (estado/tipo/técnico/
     #    cliente/q/todas=1) → todas, para NO romper los deep-links que el
     #    resto del sistema genera (correos de aprobación con ?estado=...,
@@ -86228,11 +86232,25 @@ def mant_ots_list():
     if es_tecnico or solo_mias:
         origen = ""
     elif not origen:
-        _hay_filtro_explicito = bool(
-            estado or tipo or tecnico_id or cliente_id or q or ver_todas
-            or request.args.get("mias") == "1" or incluir_auto
-        )
-        origen = "todas" if _hay_filtro_explicito else "mias"
+        # 🔄 2026-09-07 (Daniel: "está generando problemas que solo
+        # pueda verlas yo"). El default era "mias", pedido por él mismo el
+        # 14-08 ("cuando yo entro acá necesito que me salgan las órdenes
+        # que yo he hecho"). Con el módulo ya en manos del equipo ese
+        # default se dio vuelta en contra: cada persona entraba y veía SOLO
+        # lo suyo, así que las OT de uno resultaban invisibles para los
+        # demás y parecía que no existían. Medido hoy en producción: la
+        # pantalla mostraba 12 de 176.
+        #
+        # Ahora abre en TODAS, que además es lo que ya hacían los
+        # deep-links con filtro (el caso que la condición anterior
+        # protegia). El chip "Mis OT" sigue ahí, a un clic -- REGLA #4.2:
+        # no se quita nada, cambia cuál viene puesto de entrada.
+        #
+        # ⚠️ NO afecta al técnico: su restricción va por `solo_mias`, que
+        # se fuerza más arriba y es seguridad (refuerzo IDOR), no una
+        # preferencia de vista. Tampoco toca el opt-in `?mias=1` del
+        # ejecutivo, que sigue funcionando igual.
+        origen = "todas"
 
     # ── SOLO OT REALES (Daniel 2026-08-16, viendo el listado): "en Mis OT
     #    me dice que tengo veinte, pero no me filtra las que son orden de
