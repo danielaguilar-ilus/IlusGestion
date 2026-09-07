@@ -119,6 +119,23 @@
   .oax-clx-aviso b{color:#92400e}
   .oax-clx-aviso span{display:block;margin-top:3px;color:#92400e;opacity:.9}
   .oax-clx-aviso a{color:#92400e;font-weight:800;text-decoration:underline}
+
+  /* Control del PDF en el envío (2026-09-06). Dos acciones distintas:
+     mirar el documento definitivo, y decidir si viaja con el correo. */
+  .oax-pdf-ctl{margin-top:12px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden}
+  .oax-pdf-ver{display:flex;align-items:center;gap:10px;padding:10px 12px;
+    background:#fef2f2;border-bottom:1px solid #fee2e2;color:#7f1d1d;
+    text-decoration:none;transition:background .15s}
+  .oax-pdf-ver:hover{background:#fee2e2;color:#7f1d1d}
+  .oax-pdf-ver > i:first-child{font-size:1.15rem;color:#dc2626;flex:0 0 auto}
+  .oax-pdf-ver b{display:block;font-size:.82rem;font-weight:800}
+  .oax-pdf-ver small,.oax-pdf-adj small{display:block;font-size:.72rem;opacity:.85;
+    line-height:1.35;margin-top:1px}
+  .oax-pdf-adj{display:flex;align-items:flex-start;gap:9px;padding:10px 12px;
+    margin:0;cursor:pointer;color:#374151}
+  .oax-pdf-adj input{margin-top:3px;flex:0 0 auto;width:15px;height:15px;
+    accent-color:#dc2626;cursor:pointer}
+  .oax-pdf-adj b{display:block;font-size:.82rem;font-weight:800;color:#111827}
 </style>
 
 <div class="modal fade oax" id="oaxModal" tabindex="-1" aria-hidden="true">
@@ -285,6 +302,29 @@
                  placeholder="correo@proveedor.cl">
           <label class="fl" style="margin-top:10px">Teléfono <span style="font-weight:500;opacity:.7">(opcional, para WhatsApp)</span></label>
           <input class="form-control form-control-sm" id="oaxTelDestino" placeholder="+56 9 ...">
+
+          {#- 📎 2026-09-06 (Daniel: "quiero controlar enviar en el modal el
+              PDF"). Hasta acá el anexo se mandaba a ciegas: al proveedor le
+              llegaba un link y desde el modal no había forma de ver el
+              documento ya creado — la vista previa solo existía ANTES de
+              crearlo, así que nadie revisaba el papel definitivo, el que
+              lleva el N° de anexo real. Son dos controles distintos a
+              propósito: uno para MIRAR lo que se va a mandar, otro para
+              decidir si el documento viaja con el correo. -#}
+          <div class="oax-pdf-ctl">
+            <a class="oax-pdf-ver" id="oaxVerPdf" target="_blank" rel="noopener">
+              <i class="bi bi-file-earmark-pdf-fill"></i>
+              <span><b>Ver el PDF del anexo</b>
+                <small>El documento definitivo, con su N° real. Revísalo antes de mandarlo.</small></span>
+              <i class="bi bi-box-arrow-up-right ms-auto"></i>
+            </a>
+            <label class="oax-pdf-adj">
+              <input type="checkbox" id="oaxAdjuntarPdf" checked>
+              <span><b>Adjuntar el PDF al correo</b>
+                <small>Le llega el documento, no solo el link — y le queda archivado
+                en su bandeja con fecha. Tarda unos segundos más en enviarse.</small></span>
+            </label>
+          </div>
         </div>
         <div class="oax-sec" id="oaxResultadoBox" style="display:none">
           <div class="oax-ok"><i class="bi bi-send-check-fill"></i> Enlace de firma listo.</div>
@@ -760,6 +800,9 @@ window.OT2ANX = (function(){
       }
       aid = j.anexo_id; creadoAlgo = true;
       document.getElementById('oaxNumeroCreado').textContent = j.numero;
+      // El botón de ver el PDF necesita el id del anexo RECÉN creado.
+      var _vp = document.getElementById('oaxVerPdf');
+      if (_vp) _vp.href = '/ot/api/anexos/' + aid + '/pdf';
       document.getElementById('oaxEmailDestino').value = S.email || '';
       document.getElementById('oaxTelDestino').value = S.tel || '';
       document.getElementById('oaxResultadoBox').style.display = 'none';
@@ -784,12 +827,18 @@ window.OT2ANX = (function(){
       });
       if (!ok) return;
     }
+    var adjChk = document.getElementById('oaxAdjuntarPdf');
+    var adjuntar = !!(adjChk && adjChk.checked && email);
     var btn = document.getElementById('oaxBtnEnviar');
+    var btnHtml = btn.innerHTML;
     btn.disabled = true;
+    // Armar el PDF toma varios segundos (Chromium). Sin decirlo, el botón
+    // se queda mudo y parece que se colgó.
+    if (adjuntar) btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Generando el PDF…';
     try {
       const r = await fetch('/ot/api/anexos/' + aid + '/enviar', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: email, telefono: tel}),
+        body: JSON.stringify({email: email, telefono: tel, adjuntar_pdf: adjuntar}),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok){
@@ -805,11 +854,25 @@ window.OT2ANX = (function(){
       if (j.whatsapp_link){ waBtn.href = j.whatsapp_link; waBtn.style.display = ''; }
       else { waBtn.style.display = 'none'; }
       creadoAlgo = true;
-      ilusToast(j.correo_enviado ? '✓ Correo enviado al proveedor' : 'Anexo enviado — comparte el link tú mismo', {type:'success'});
+      // Se dice lo que pasó de verdad: si se pidió el PDF y no salió, se
+      // avisa. Cantar "enviado con PDF" cuando no fue así es peor que no
+      // ofrecer el adjunto — el proveedor después dice que nunca lo vio.
+      if (j.correo_enviado && j.pdf_adjunto){
+        ilusToast('✓ Correo enviado al proveedor, con el PDF adjunto', {type:'success'});
+      } else if (j.correo_enviado && adjuntar){
+        ilusToast('Correo enviado, pero SIN el PDF adjunto'
+                  + (j.pdf_error ? ' (' + j.pdf_error + ')' : '')
+                  + '. El link de firma sí va.', {type:'warning'});
+      } else if (j.correo_enviado){
+        ilusToast('✓ Correo enviado al proveedor', {type:'success'});
+      } else {
+        ilusToast('Anexo enviado — comparte el link tú mismo', {type:'success'});
+      }
     } catch(e){
       ilusToast('Error de conexión al enviar el anexo.', {type:'error'});
     } finally {
       btn.disabled = false;
+      btn.innerHTML = btnHtml;
     }
   }
 

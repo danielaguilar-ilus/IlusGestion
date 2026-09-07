@@ -83950,6 +83950,32 @@ def ot2_api_anexo_enviar(aid):
         except Exception as _e_tpl:
             print(f"[anexo_enviar] plantilla no disponible, uso HTML inline: {_e_tpl}", flush=True)
 
+    # 📎 2026-09-06 (Daniel: "quiero controlar enviar en el modal el PDF").
+    # Hasta hoy al proveedor le llegaba un link y nada más: para saber qué
+    # estaba por firmar tenía que abrir el navegador. Ahora el correo puede
+    # llevar el documento mismo, que además le queda archivado en su bandeja
+    # — evidencia de que se le comunicaron las condiciones, con fecha.
+    #
+    # El adjunto NUNCA puede hacer caer el envío: lo que desbloquea la OT es
+    # el LINK. Si Chromium no está o el render falla, el correo sale igual
+    # sin adjunto y se le dice al usuario — no se le miente diciendo que fue
+    # con PDF. Ojo: `_send_ilus_email` con attachments NO usa la cola, manda
+    # síncrono (ver el bloque de encolado ~8810), que es justo lo que se
+    # quiere acá: si el correo falla, se sabe ahora.
+    _adjuntos = None
+    _pdf_pedido = bool(d.get("adjuntar_pdf"))
+    _pdf_error = ""
+    if _pdf_pedido and email_destino:
+        try:
+            _pdf_bytes, _pdf_nombre = _anexo_pdf_bytes(a)
+            _adjuntos = [(_pdf_nombre, _pdf_bytes, "application/pdf")]
+        except PDFEngineUnavailable as _e_pdf:
+            _pdf_error = "el motor de PDF no está disponible"
+            print(f"[anexo_enviar] sin adjunto (motor PDF): {_e_pdf}", flush=True)
+        except Exception as _e_pdf:
+            _pdf_error = "no se pudo generar el PDF"
+            print(f"[anexo_enviar] sin adjunto aid={aid}: {_e_pdf}", flush=True)
+
     enviado_correo = False
     if email_destino:
         try:
@@ -83960,7 +83986,8 @@ def ot2_api_anexo_enviar(aid):
                 _html_final = _comm_render_email_document(
                     _asunto_base, _cuerpo_tpl,
                     subtitle=f"Anexo N° {a['numero']}")
-                _env_ok = _send_ilus_email(email_destino, _brand_subject(_asunto_base), _html_final)
+                _env_ok = _send_ilus_email(email_destino, _brand_subject(_asunto_base),
+                                            _html_final, attachments=_adjuntos)
             else:
                 # Fallback hardcodeado histórico — se mantiene TAL CUAL (REGLA
                 # #4.2): garantiza que el correo SIEMPRE sale aunque la
@@ -83974,7 +84001,8 @@ def ot2_api_anexo_enviar(aid):
                     f"el Anexo de Servicios N° {a['numero']} con las condiciones del trabajo. "
                     f"Mientras no esté firmado, no podrás ver ni iniciar la orden de trabajo.</p>"
                     f'<p><a href="{link}">Revisar y firmar el Anexo N° {a["numero"]}</a></p>'
-                    f"<p>El enlace vence en 15 días.</p>")
+                    f"<p>El enlace vence en 15 días.</p>",
+                    attachments=_adjuntos)
             # 🔴 FIX 2026-09-06: esto ponía True a ciegas. `_send_ilus_email`
             # NO lanza excepción cuando falla -- devuelve False (kill switch
             # apagado, SMTP caído, módulo bloqueado). Resultado: la pantalla
@@ -83994,13 +84022,20 @@ def ot2_api_anexo_enviar(aid):
                f"el anexo:\n{link}\n\n— ILUS Fitness")
         wa_link = f"https://wa.me/{re.sub(r'[^0-9]', '', telefono)}?text={_up.quote(msg)}"
 
+    _pdf_fue = bool(_adjuntos) and enviado_correo
     try:
         _mant_log("anexo", aid, "enviado",
-                  f"correo={'sí' if enviado_correo else 'no'} · wa_link={'sí' if wa_link else 'no'}")
+                  f"correo={'sí' if enviado_correo else 'no'} · wa_link={'sí' if wa_link else 'no'}"
+                  + (" · con PDF adjunto" if _pdf_fue
+                     else (f" · SIN PDF ({_pdf_error})" if _pdf_pedido and _pdf_error else "")))
     except Exception:
         pass
     return jsonify({"ok": True, "link": link, "correo_enviado": enviado_correo,
-                    "whatsapp_link": wa_link})
+                    "whatsapp_link": wa_link,
+                    # La pantalla necesita poder decir la verdad: si el PDF se
+                    # pidió y no salió, avisarlo en vez de cantar victoria.
+                    "pdf_adjunto": _pdf_fue,
+                    "pdf_error": (_pdf_error if _pdf_pedido else "")})
 
 
 def _anexo_fecha_d(v):
@@ -84163,10 +84198,23 @@ def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
     return header_html, footer_html
 
 
-@app.route("/ot/api/anexos/<int:aid>/pdf", methods=["GET"])
-@_mant_required
-def ot2_api_anexo_pdf(aid):
-    """Descarga el Anexo en PDF con fidelidad al Word real que Daniel firma
+def _anexo_pdf_bytes(a):
+    """El Anexo en PDF → (bytes, nombre de archivo).
+
+    📎 2026-09-06 (Daniel: "quiero controlar enviar en el modal el PDF").
+    Este cuerpo vivía dentro de la ruta de descarga, así que el PDF solo
+    existía si una persona apretaba "descargar": el correo al proveedor
+    salía con un link y nada más. Extraído tal cual — misma plantilla,
+    mismo header/footer nativo, mismo motor — para poder adjuntarlo al
+    correo sin escribir una segunda versión del documento que se pueda
+    desincronizar de esta. Un anexo con dos generadores distintos es un
+    anexo que algún día dice dos cosas distintas.
+
+    Levanta PDFEngineUnavailable si Chromium no está: el caller decide
+    qué hacer (la descarga responde 503; el envío manda el correo igual,
+    sin adjunto, porque lo que desbloquea la OT es el link).
+
+    Descarga el Anexo en PDF con fidelidad al Word real que Daniel firma
     hoy con los proveedores (Isabel Milling, Daniel Pulgar): fecha arriba a
     la derecha, título centrado, párrafos justificados Objetivo/Precio/
     Duración/Niveles/Hitos/Alcance, firma al pie -- MISMO layout, no una
@@ -84176,11 +84224,6 @@ def ot2_api_anexo_pdf(aid):
     experiencia de FIRMA del proveedor, diseñada con Fable -- no se toca).
     Este PDF es el documento para archivo/contabilidad, generado con el
     mismo motor Playwright que ya usa el resto del proyecto (_pw_pdf)."""
-    if _es_rol_tecnico():
-        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
-    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (aid,))
-    if not a:
-        return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
     a = _anexo_dict(a)
     payload = _anexo_publico_payload(a)
     firma = None
@@ -84264,28 +84307,17 @@ def ot2_api_anexo_pdf(aid):
         productos=productos,
         generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
     )
-    try:
-        # 2026-08-30 (Daniel: "el header no continúa... la página dos no
-        # tiene header, así que esto se tiene que repetir constante por
-        # hojas"): header/footer nativos de Chromium (ver
-        # _anexo_pdf_header_footer_native) -- se repiten en TODA página
-        # física real, no solo en la primera. margin.top ~26mm da espacio
-        # real al header (~20mm de alto); bottom 14mm al footer de una
-        # línea (mismas medidas ya probadas en el compacto de la OT).
-        _hdr, _ftr = _anexo_pdf_header_footer_native(a.get("numero"), a.get("cliente_nombre"))
-        data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
-                        header_template=_hdr, footer_template=_ftr)
-    except PDFEngineUnavailable as e:
-        return (f"Motor PDF no disponible: {e}", 503)
-    except Exception as e:
-        print(f"[anexo_pdf] {e}", flush=True)
-        return ("No pudimos generar el PDF del anexo.", 500)
-
-    try:
-        _mant_log("anexo", aid, "pdf_descargado", f"N°{a['numero']}")
-    except Exception:
-        pass
+    # 2026-08-30 (Daniel: "el header no continúa... la página dos no
+    # tiene header, así que esto se tiene que repetir constante por
+    # hojas"): header/footer nativos de Chromium (ver
+    # _anexo_pdf_header_footer_native) -- se repiten en TODA página
+    # física real, no solo en la primera. margin.top ~26mm da espacio
+    # real al header (~20mm de alto); bottom 14mm al footer de una
+    # línea (mismas medidas ya probadas en el compacto de la OT).
+    _hdr, _ftr = _anexo_pdf_header_footer_native(a.get("numero"), a.get("cliente_nombre"))
+    data = _pw_pdf(html, page_format="Letter",
+                    margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
+                    header_template=_hdr, footer_template=_ftr)
     # 🔴 2026-08-31 (Daniel: "el nombre no ayuda en nada... necesito que
     # diga anexo, ILUS, número tal"): nombre genérico "anexo-servicios-148"
     # no dice a qué OT/cliente pertenece cuando hay varios PDF descargados
@@ -84293,6 +84325,30 @@ def ot2_api_anexo_pdf(aid):
     # para familias de checklist, reutilizado acá).
     _cli_slug = _slugify_familia_checklist(a.get("cliente_nombre") or "")
     fname = f"Anexo-ILUS-{a['numero']}" + (f"-{_cli_slug}" if _cli_slug else "") + ".pdf"
+    return data, fname
+
+
+@app.route("/ot/api/anexos/<int:aid>/pdf", methods=["GET"])
+@_mant_required
+def ot2_api_anexo_pdf(aid):
+    """Descarga/vista del PDF del anexo. El documento lo arma
+    `_anexo_pdf_bytes`, compartido con el envío por correo."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (aid,))
+    if not a:
+        return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
+    try:
+        data, fname = _anexo_pdf_bytes(a)
+    except PDFEngineUnavailable as e:
+        return (f"Motor PDF no disponible: {e}", 503)
+    except Exception as e:
+        print(f"[anexo_pdf] {e}", flush=True)
+        return ("No pudimos generar el PDF del anexo.", 500)
+    try:
+        _mant_log("anexo", aid, "pdf_descargado", f"N°{a['numero']}")
+    except Exception:
+        pass
     return Response(data, mimetype="application/pdf",
                      headers={"Content-Disposition": f'inline; filename="{fname}"'})
 
