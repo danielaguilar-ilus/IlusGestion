@@ -2429,7 +2429,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <div class="fila"><span class="lbl">Dirección</span>
             <span class="val">{{ _dir_ot }}{% if v.cliente_comuna %}, {{ v.cliente_comuna }}{% endif %}
               <a class="acc" target="_blank" rel="noopener"
-                 href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ ', ' ~ (v.cliente_comuna or '')) | urlencode }}">
+                 {#- Misma corrección que en el botón Ruta: la comuna del cliente
+                     solo se agrega si la dirección sale de su ficha. Con una
+                     `direccion_visita` propia, concatenarla manda el mapa a otra
+                     región. -#}
+                 href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ ('' if v.direccion_visita else (', ' ~ v.cliente_comuna if v.cliente_comuna else ''))) | urlencode }}">
                 <i class="bi bi-geo-alt-fill"></i> Abrir mapa</a>
               {#- 📍 2026-09-06 (Daniel: "cómo haremos visible ese detalle de
                   edificio y local para que no se pierda y el técnico le pegue
@@ -3968,7 +3972,14 @@ const OTD_RUTA = {
   lat:  {{ (v.direccion_lat | float) | tojson if v.direccion_lat else 'null' }},
   lng:  {{ (v.direccion_lng | float) | tojson if v.direccion_lng else 'null' }},
   dir:  {{ (v.direccion_visita or v.cliente_direccion or '') | tojson }},
-  comuna: {{ (v.cliente_comuna or '') | tojson }},
+  {#- ⚠️ 2026-09-07, encontrado verificando la OT-2026-00171 en producción.
+      La comuna del CLIENTE solo corresponde si la dirección TAMBIÉN sale de
+      su ficha. Cuando la OT trae su propia `direccion_visita`, pegarle la
+      comuna del cliente arma un destino imposible: en esa OT la visita es
+      en "C/ Prta Ote., Colina, Región Metropolitana" y la ficha del cliente
+      dice COLCHANE — que está en Tarapacá, a 1.900 km. Iba a quedar
+      "...Colina, Región Metropolitana, COLCHANE, Chile". -#}
+  comuna: {{ ('' if v.direccion_visita else (v.cliente_comuna or '')) | tojson }},
 };
 
 /* La dirección SOLA no le sirve a Waze: "Puerta Oriente, Local 03B" no
