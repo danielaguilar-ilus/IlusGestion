@@ -1063,7 +1063,7 @@ window.OT2C = (function(){
          // vuelven a preguntar (ver _o2mAnexoSyncItems()).
          anexo:{proveedor_nombre:'', proveedor_rut:'', objetivo_servicio:'',
                 fecha_inicio:'', fecha_termino:'', items:[], productos:[],
-                email_destino:'', telefono:'', enviar_ahora:true},
+                email_destino:'', telefono:'', enviar_ahora:true, adjuntar_pdf:true},
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
@@ -5611,6 +5611,20 @@ window.OT2C = (function(){
         'onchange="OT2C.setAnexoCampo(\'enviar_ahora\',this.checked)">'+
         '<label class="form-check-label small" for="o2mAnexoEnviar">Enviar el anexo apenas se cree la OT '+
         '(si dejas esto sin marcar, el anexo queda como borrador — lo envías después desde el detalle de la OT).</label>'+
+      '</div>'+
+      /* 📎 2026-09-06 (Daniel: "poder dejar enviado el anexo creando la
+         OT... se debería enviar el anexo por correo"). El envío desde acá
+         ya existía, pero mandaba SOLO el link: el proveedor recibía un
+         correo sin el documento. Mismo control que el modal del anexo en
+         el detalle, para que el anexo se comporte igual se cree por donde
+         se cree. Va indentado bajo el anterior porque solo tiene sentido
+         si el anexo se manda ahora. */
+      '<div class="form-check" style="margin-left:22px">'+
+        '<input class="form-check-input" type="checkbox" id="o2mAnexoPdf" '+(a.adjuntar_pdf?'checked':'')+' '+
+        'onchange="OT2C.setAnexoCampo(\'adjuntar_pdf\',this.checked)">'+
+        '<label class="form-check-label small" for="o2mAnexoPdf">Adjuntar el PDF al correo '+
+        '(le llega el documento, no solo el link — y le queda archivado con fecha). '+
+        'Tarda unos segundos más.</label>'+
       '</div>';
   }
   function setAnexoCampo(k,v){ S.anexo[k] = v; refrescarAnclas(); }
@@ -7393,16 +7407,28 @@ window.OT2C = (function(){
                 ((S.anexo.email_destino || '').trim() || (S.anexo.telefono || '').trim())){
               fetch('/ot/api/anexos/'+ra.anexo_id+'/enviar', {
                 method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({email: S.anexo.email_destino, telefono: S.anexo.telefono})
+                body: JSON.stringify({email: S.anexo.email_destino, telefono: S.anexo.telefono,
+                                      adjuntar_pdf: !!(S.anexo.adjuntar_pdf &&
+                                                       (S.anexo.email_destino||'').trim())})
               }).then(function(r2){ return r2.json(); }).then(function(rb){
+                /* Si se pidió el PDF y no salió, se dice. Cantar "enviado"
+                   cuando el proveedor recibió un correo sin documento es
+                   justo lo que después nadie puede explicar. */
+                var _conPdf = !!(rb && rb.pdf_adjunto);
+                var _pidioPdf = !!(S.anexo.adjuntar_pdf && (S.anexo.email_destino||'').trim());
                 if (window.ilusToast) ilusToast(
                   (rb && rb.ok)
                     ? ('✓ Anexo N°'+ra.numero+' listo — '
                        + ((S.anexo.email_destino||'').trim()
-                          ? ('enviado a '+S.anexo.email_destino)
+                          ? ('enviado a '+S.anexo.email_destino
+                             + (_conPdf ? ' con el PDF adjunto'
+                                        : (_pidioPdf ? ' pero SIN el PDF'
+                                             + (rb.pdf_error ? ' ('+rb.pdf_error+')' : '')
+                                             + ' — el link de firma sí va' : '')))
                           : 'abre WhatsApp para mandarle el link'))
                     : 'El anexo se creó, pero no se pudo enviar — envíalo desde el detalle de la OT.',
-                  {type:(rb && rb.ok)?'success':'warning', duration:7000});
+                  {type:(rb && rb.ok) ? (_pidioPdf && !_conPdf ? 'warning' : 'success') : 'warning',
+                   duration:7000});
                 // 2026-08-29 (Daniel: "integra el anexo el envio por mail o
                 // whatsapp"): mismo patrón honesto que ya usa el backend --
                 // arma el link de WhatsApp con el mensaje ya escrito, pero
