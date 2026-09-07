@@ -1953,6 +1953,29 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-dx-save:hover{background:#dc2626}
 .otd-dx-save:disabled{opacity:.6;cursor:default}
 @media (max-width:420px){ .otd-dx-btns{grid-template-columns:1fr} }
+
+/* 📍 Aviso de ubicación en vivo (2026-09-07). Fijo abajo para que se
+   vea sin importar dónde esté scrolleado, y con el botón de cortar a mano. */
+.otd-gps-vivo{position:fixed;left:12px;right:12px;bottom:12px;z-index:1035;
+  display:flex;align-items:center;gap:10px;max-width:520px;margin:0 auto;
+  padding:10px 12px;background:#0a0a0a;color:#fff;border-radius:12px;
+  box-shadow:0 6px 24px rgba(0,0,0,.28)}
+.otd-gps-vivo[hidden]{display:none}
+.otd-gps-vivo > div{flex:1;min-width:0;line-height:1.3}
+.otd-gps-vivo b{display:block;font-size:.82rem;font-weight:800}
+.otd-gps-vivo small{display:block;font-size:.72rem;color:#cbd5e1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.otd-gps-vivo button{flex:0 0 auto;min-height:38px;padding:6px 14px;border:0;
+  border-radius:9px;background:#dc2626;color:#fff;font-weight:800;
+  font-size:.76rem;cursor:pointer}
+.otd-gps-vivo .pulso{flex:0 0 auto;width:10px;height:10px;border-radius:50%;
+  background:#4ade80;box-shadow:0 0 0 0 rgba(74,222,128,.7);
+  animation:otdGpsPulso 1.8s infinite}
+@keyframes otdGpsPulso{
+  70%{box-shadow:0 0 0 9px rgba(74,222,128,0)}
+  100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}
+}
+@media (prefers-reduced-motion:reduce){ .otd-gps-vivo .pulso{animation:none} }
 </style>
 
 <div class="ot2 otd">
@@ -2202,6 +2225,23 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       </div>
     </div>
     {% endif %}
+
+    {#- 📍 2026-09-07 (Daniel: "dale con el GPS y el ping de ruta").
+        Segundo y tercer hueco de OT 2.0 frente a la pantalla clásica.
+
+        El aviso NO es decorativo: mientras el sistema manda la posición del
+        técnico cada medio minuto, él tiene que verlo y poder cortarlo. Una
+        app que rastrea en silencio a quien la usa es exactamente lo que no
+        queremos, y además el técnico que se entera de casualidad deja de
+        confiar en la herramienta completa. -#}
+    <div class="otd-gps-vivo" id="otdGpsVivo" hidden>
+      <span class="pulso"></span>
+      <div>
+        <b>Compartiendo tu ubicación</b>
+        <small id="otdGpsVivoSub">Para que la oficina vea que vas en camino.</small>
+      </div>
+      <button type="button" onclick="otdPingDetener(true)">Detener</button>
+    </div>
 
     {#- Modal de ruta de OT 2.0. Mismas tres opciones que la pantalla
         clásica (Google / Waze / ya estoy acá), pero con el patrón de
@@ -4179,6 +4219,90 @@ function otdAbrirRuta(){
   bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalRuta')).show();
 }
 
+/* 📍 GPS DE EJECUCIÓN Y PING DE RUTA — 2026-09-07 ==================
+   Los dos usan los endpoints que ya existen y que alimentó siempre la
+   pantalla clásica, así que el monitor y el seguimiento en vivo empiezan
+   a ver las OT 2.0 sin tocar nada del backend:
+
+     exec-gps  → dónde estaba el técnico al empezar. El backend guarda solo
+                 la PRIMERA captura, así que reintentar no pisa el dato.
+     ping-ruta → su posición mientras va en camino (mant_ruta_pings).
+
+   Cuidados de batería y datos, calcados de la clásica: precisión baja,
+   posición cacheada hasta 25 s, un ping cada 30 s, y NADA mientras la
+   pestaña está en segundo plano. */
+const OTD_PING_MS = 30000;
+let _otdPingTimer = null;
+
+function otdGpsPos(opts){
+  return new Promise(function(resolve, reject){
+    if (!navigator.geolocation){ reject(new Error('sin geolocalización')); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, opts || {
+      enableHighAccuracy: false, timeout: 8000, maximumAge: 25000,
+    });
+  });
+}
+
+/* Dónde estaba el técnico al empezar. Best-effort a propósito: si niega el
+   permiso o el GPS falla, NO se le bloquea el trabajo -- eso ya nos pasó
+   con la geocerca y terminó trabando a gente que sí estaba en el sitio. */
+async function otdGpsCheckin(){
+  try {
+    const pos = await otdGpsPos({enableHighAccuracy: true, timeout: 10000, maximumAge: 0});
+    await fetch('/mantenciones/api/visitas/' + OTD_VID + '/exec-gps', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        lat: pos.coords.latitude, lng: pos.coords.longitude, direccion: '',
+      }),
+    }).catch(function(){});
+    return true;
+  } catch(e){
+    console.log('[otd] sin GPS al iniciar:', e && e.message);
+    return false;
+  }
+}
+
+function otdPingIniciar(){
+  if (_otdPingTimer || !navigator.geolocation) return;
+  var aviso = document.getElementById('otdGpsVivo');
+  if (aviso) aviso.hidden = false;
+
+  function ping(){
+    // En segundo plano no se pinguea: gasta batería del técnico y no
+    // aporta nada -- si el celular está en el bolsillo, igual va en camino.
+    if (document.hidden) return;
+    otdGpsPos().then(function(pos){
+      fetch('/mantenciones/api/visitas/' + OTD_VID + '/ping-ruta', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          lat: pos.coords.latitude, lng: pos.coords.longitude,
+          speed: pos.coords.speed, accuracy: pos.coords.accuracy,
+        }), keepalive: true,
+      }).catch(function(){});
+      var sub = document.getElementById('otdGpsVivoSub');
+      if (sub){
+        var h = new Date();
+        sub.textContent = 'Último envío ' + String(h.getHours()).padStart(2,'0') +
+                          ':' + String(h.getMinutes()).padStart(2,'0') +
+                          ':' + String(h.getSeconds()).padStart(2,'0');
+      }
+    }).catch(function(){ /* una lectura fallida no corta el ciclo */ });
+  }
+  ping();
+  _otdPingTimer = setInterval(ping, OTD_PING_MS);
+}
+
+function otdPingDetener(avisar){
+  if (_otdPingTimer){ clearInterval(_otdPingTimer); _otdPingTimer = null; }
+  var aviso = document.getElementById('otdGpsVivo');
+  if (aviso) aviso.hidden = true;
+  if (avisar && window.ilusToast)
+    ilusToast('Dejaste de compartir tu ubicación.', {type:'info'});
+}
+window.addEventListener('beforeunload', function(){ otdPingDetener(false); });
+
 function otdIniciarRuta(app){
   // 1) La URL primero: nada de esperas antes de abrir.
   let url = '';
@@ -4213,11 +4337,17 @@ function otdIniciarRuta(app){
     }).catch(function(){});
   } catch(e){}
 
+  /* El check-in va en los TRES caminos, incluido "ya estoy en el lugar":
+     esa es justamente la vez que más importa saber desde dónde se
+     empezó. El ping en cambio solo tiene sentido si va en camino. */
+  otdGpsCheckin();
+
   if (app === 'saltado'){
     bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalRuta')).hide();
     ilusToast('OK, comienza a trabajar', {type:'success'});
     return;
   }
+  otdPingIniciar();
 
   // 4) Si el navegador igual bloqueó, no quedarse mudo.
   const resc = document.getElementById('otdRutaRescate');
