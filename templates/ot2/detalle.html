@@ -2001,6 +2001,21 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
   background:rgba(10,10,10,.72);color:#fff;text-align:center;padding:1px 0}
 .otd-fot-vacio{font-size:.74rem;color:#9ca3af;margin-top:7px}
+
+/* 🔧 Observación y salto por equipo (2026-09-07) */
+.otd-obs{margin:10px 0;padding:10px 12px;background:#fff;
+  border:1px solid #e5e7eb;border-radius:11px}
+.otd-obs label{display:block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:#64748b;margin-bottom:6px}
+.otd-obs textarea{width:100%;font-size:16px;padding:9px 11px;border-radius:9px;
+  border:1px solid #d1d5db;resize:vertical;font-family:inherit;line-height:1.45}
+.otd-obs-pie{display:flex;align-items:center;gap:10px;margin-top:7px;flex-wrap:wrap}
+.otd-obs-pie small{flex:1;min-width:140px;font-size:.7rem;color:#9ca3af}
+.otd-obs-pie small.ok{color:#166534;font-weight:700}
+.otd-saltar-btn{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;
+  min-height:40px;padding:6px 13px;border-radius:9px;border:1.5px solid #f59e0b;
+  background:#fff8e1;color:#92400e;font-weight:800;font-size:.75rem;cursor:pointer}
+.otd-saltar-btn:hover{background:#fde68a}
 </style>
 
 <div class="ot2 otd">
@@ -3956,6 +3971,36 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 Se cargan al ABRIR el equipo, no al entrar a la pantalla: con
                 varios equipos serían varias consultas de una vez para fotos
                 que quizá nadie mira. -#}
+            {#- 🔧 2026-09-07 (Daniel: "la gestión de los técnicos se pueda
+                hacer idéntica a las OT normales"). Faltaban las dos acciones
+                por equipo que el técnico usa a diario y que la pantalla
+                clásica sí tiene: dejar una observación, y saltar un equipo
+                que no pudo revisar.
+
+                Saltar NO es lo mismo que reprobar: es "no lo pude ver, y
+                esta es la razón". Sin esa salida, el técnico que encuentra
+                una máquina inaccesible tiene que elegir entre mentir
+                (marcarla aprobada) o dejar la OT incompleta para siempre. -#}
+            {% if puede_ejecutar and not ot_solo_lectura %}
+            <div class="otd-obs" data-mid="{{ e.id }}">
+              <label for="otdObs-{{ e.id }}">Observación del técnico</label>
+              {#- Autoguarda al salir del campo, igual que la clásica: si
+                  hubiera que apretar "guardar", se pierde lo escrito cuando
+                  el técnico cambia de equipo -- y eso ya nos costó datos. -#}
+              <textarea id="otdObs-{{ e.id }}" rows="2" maxlength="2000"
+                        placeholder="Algo que valga la pena dejar anotado de este equipo"
+                        onblur="otdObsGuardar({{ e.id }}, this)"
+                        >{{ e.observacion_tecnico or '' }}</textarea>
+              <div class="otd-obs-pie">
+                <small id="otdObsEstado-{{ e.id }}">Se guarda solo al salir del campo.</small>
+                {% if not e.razon_saltado %}
+                <button type="button" class="otd-saltar-btn" onclick="otdSaltarEquipo({{ e.id }})">
+                  <i class="bi bi-skip-forward-fill"></i> No pude revisarlo</button>
+                {% endif %}
+              </div>
+            </div>
+            {% endif %}
+
             <div class="otd-fot" data-mid="{{ e.id }}">
               <div class="otd-fot-head">
                 <span>Fotos de este equipo <b id="otdFotN-{{ e.id }}"></b></span>
@@ -4132,6 +4177,93 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   </div>
 </div>
 <script>
+/* 🔧 OBSERVACIÓN Y SALTO POR EQUIPO — 2026-09-07 ==================
+   Mismos endpoints que la pantalla clásica. */
+const OTD_SALTO_RAZONES = [
+  ['sin_acceso',        'No había acceso al equipo'],
+  ['equipo_en_uso',     'Estaba en uso por un socio'],
+  ['cliente_no_permite','El cliente no permitió intervenirlo'],
+  ['no_encontrado',     'No lo encontré en el recinto'],
+  ['danado_inaccesible','Dañado o inaccesible'],
+  ['sin_energia',       'Sin energía'],
+  ['requiere_repuesto', 'Necesita un repuesto que no tengo'],
+  ['reagendar',         'Hay que reagendarlo'],
+  ['dado_de_baja',      'El cliente lo dio de baja'],
+  ['otro',              'Otro motivo'],
+];
+
+async function otdObsGuardar(mid, ta){
+  var est = document.getElementById('otdObsEstado-' + mid);
+  var txt = (ta.value || '').trim();
+  if (txt === (ta.dataset.guardado || '')) return;   // nada cambió
+  if (est){ est.textContent = 'Guardando…'; est.classList.remove('ok'); }
+  try {
+    const r = await fetch('/mantenciones/api/visitas/' + OTD_VID +
+                          '/equipos/' + mid + '/observacion', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({observacion: txt}), keepalive: true,
+    });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){
+      if (est) est.textContent = 'No se pudo guardar. Vuelve a intentarlo.';
+      return;
+    }
+    ta.dataset.guardado = txt;
+    if (est){
+      var h = new Date();
+      est.textContent = 'Guardado ' + String(h.getHours()).padStart(2,'0') +
+                        ':' + String(h.getMinutes()).padStart(2,'0');
+      est.classList.add('ok');
+    }
+  } catch(e){
+    if (est) est.textContent = 'Sin conexión: no se guardó.';
+  }
+}
+
+/* Saltar un equipo NO es reprobarlo: es "no lo pude revisar, y esta es la
+   razón". El backend exige el motivo escrito (10 caracteres) además de la
+   causal, y tiene toda la razón: "sin acceso" sin explicación no le sirve
+   a nadie cuando haya que volver. */
+async function otdSaltarEquipo(mid){
+  var opciones = OTD_SALTO_RAZONES.map(function(r){
+    return '<option value="' + r[0] + '">' + r[1] + '</option>';
+  }).join('');
+  var razon = await ilusPrompt({
+    title: 'No pude revisar este equipo',
+    message: '¿Por qué no se pudo?',
+    sub: '<select id="otdSaltoRazon" class="form-select form-select-sm" ' +
+         'style="margin-top:8px">' + opciones + '</select>',
+    subHtml: true,
+    placeholder: 'Cuéntanos qué pasó (mínimo 10 caracteres)',
+    required: true,
+    validate: function(v){
+      return (v || '').trim().length >= 10
+        ? null : 'Escribe al menos 10 caracteres: quien vuelva necesita saber qué pasó.';
+    },
+  });
+  if (!razon) return;
+  var sel = document.getElementById('otdSaltoRazon');
+  var causal = sel ? sel.value : 'otro';
+  try {
+    const r = await fetch('/mantenciones/api/visitas/' + OTD_VID +
+                          '/equipos/' + mid + '/saltar', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({razon: causal, observacion: razon}),
+    });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo registrar.', {type:'error'});
+      return;
+    }
+    ilusToast('✓ Equipo marcado como no revisado', {type:'success'});
+    setTimeout(function(){ location.reload(); }, 900);
+  } catch(e){
+    ilusToast('Error de conexión.', {type:'error'});
+  }
+}
+
 /* 📷 FOTOS POR EQUIPO — 2026-09-07 ==============================
    Mismo endpoint que la pantalla clásica. La lista mezcla dos fuentes que
    el backend ya distingue: las de ESTA OT y las de la galería permanente
@@ -4277,9 +4409,9 @@ async function otdDxEnviar(mid, estado, txt){
       return;
     }
     var _lbl = {aprobado:'Aprobado', observacion:'Con observación', falla:'Con falla'}[estado] || estado;
-    ilusToast('\u2713 Diagnóstico guardado: ' + _lbl, {type:'success'});
+    ilusToast('✓ Diagnóstico guardado: ' + _lbl, {type:'success'});
     /* La nota bajo el equipo se actualiza en el momento: si hay que
-       recargar para verlo, el técnico no sabe si quedó guardado \u2014 y ese
+       recargar para verlo, el técnico no sabe si quedó guardado — y ese
        es justo el patrón que ya nos hizo perder datos en el móvil. */
     if (cont){
       var nota = cont.parentElement
@@ -6450,7 +6582,7 @@ let _otdEqmErrorCarga = false;
 const _otdEqmSugCache = {};
 
 const _otdEqmNorm = s => (s || '').toString().toLowerCase()
-  .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  .normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 function _otdEqmConstruirGrupos(maquinas){
   const porClave = new Map();
