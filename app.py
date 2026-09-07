@@ -79300,6 +79300,40 @@ def ot2_api_producto_clasificar():
                     "clase": clase["nombre"], "slug": clase["slug"]})
 
 
+# Etiquetas legibles de `mant_clientes.tipo_cliente`, para la bitácora.
+_TIPO_CLIENTE_LABEL = {
+    "mantencion": "Mantención", "arriendo": "Arriendo", "leasing": "Leasing",
+    "instalacion": "Instalación", "prospecto": "Prospecto",
+}
+
+
+def _tipo_cliente_por_motivo(motivo):
+    """Tipo de OT → `mant_clientes.tipo_cliente`.
+
+    🔧 FIX 2026-08-27 (Daniel: "no sé si son mantenciones o instalación...
+    hay que crearlo según la necesidad de la OT"). Igual que en el flujo de
+    Tickets: sin declarar `tipo_cliente`, TODA ficha nueva caía en el
+    default 'mantencion' y el filtro "Instalación" mostraba 0 clientes.
+
+    🏷️ 2026-09-07: extraído a función porque ahora lo usan DOS lugares
+    — este endpoint y `ot2_api_crear`. Tenía que haber una sola tabla de
+    equivalencias: dos copias que se separen darian un cliente clasificado
+    de una forma al crear la ficha y de otra al crear la OT.
+
+    OJO con las dos columnas homónimas (ya documentado en
+    `_ensure_mant_clientes_tipo_relacion`): 'prospecto' existe tanto en
+    `estado` (aún no es cliente activo) como en `tipo_cliente` (aún no es
+    instalación/mantención/leasing/arriendo). Acá se devuelve el segundo.
+    """
+    m = (motivo or "").strip().lower()
+    if m == "instalacion":
+        return "instalacion"
+    if m in ("levantamiento", "inspeccion", "control_calidad",
+             "capacitacion", "visita_tecnica"):
+        return "prospecto"
+    return "mantencion"
+
+
 @app.route("/ot/api/cliente", methods=["POST"])
 @_mant_required
 def ot2_api_cliente_crear():
@@ -79398,16 +79432,7 @@ def ot2_api_cliente_crear():
             })
 
     _motivo_txt = _TIPO_OT_LABEL.get(motivo, motivo.replace("_", " ").title()) if motivo else ""
-    # 🔧 FIX 2026-08-27 (Daniel: "no sé si son mantenciones o instalación...
-    # hay que crearlo según la necesidad de la OT"). Igual que en el flujo de
-    # Tickets: sin declarar `tipo_cliente`, TODA ficha nueva caía en el
-    # default 'mantencion' y el filtro "Instalación" mostraba 0 clientes.
-    _tipo_cli = "mantencion"
-    if motivo == "instalacion":
-        _tipo_cli = "instalacion"
-    elif motivo in ("levantamiento", "inspeccion", "control_calidad",
-                    "capacitacion", "visita_tecnica"):
-        _tipo_cli = "prospecto"
+    _tipo_cli = _tipo_cliente_por_motivo(motivo)
     try:
         mysql_execute(
             "INSERT INTO mant_clientes "
@@ -81857,6 +81882,47 @@ def ot2_api_crear():
                   f"{numero_ot} · {tipo_ot} · OT 2.0 · {n_tareas} tareas")
     except Exception as e:
         print(f"[ot2_crear] log: {e}", flush=True)
+
+    # 🏷️ 2026-09-07 (Daniel, sobre la OT-2026-00171 de Aurum: "es necesario
+    # que se cree el cliente... debería crearlo como Instalación y prospecto
+    # de mantención").
+    #
+    # La ficha SÍ se creaba — medido en producción: Aurum Fit Girls Spa
+    # (id 259) nació el 06-09 desde esta OT. El problema era el TIPO: quedó
+    # 'mantencion' teniendo una OT de instalación. La causa es el ORDEN del
+    # wizard: el cliente se resuelve al elegir el documento de origen
+    # (_o2mResolverClienteYEquipos), y en ese momento el tipo de OT todavía
+    # no se eligió — peor aún, cambiar el origen lo RESETEA a null
+    # (_modal_crear.html ~6111). Así que a /ot/api/cliente le llega
+    # motivo='' y cae en el default 'mantencion' del ENUM.
+    #
+    # Acá el tipo ya es DEFINITIVO: es el único punto del flujo donde se
+    # puede afirmar de qué es la OT. Por eso el ajuste vive acá y no en el
+    # frontend — arreglarlo allá obligaría a adivinar el tipo antes de que
+    # el usuario lo elija.
+    #
+    # Solo toca fichas en estado 'prospecto' y cuyo tipo sea uno de los dos
+    # que pone el sistema por defecto. Una clasificación hecha a mano
+    # (arriendo, leasing, o una instalación ya declarada) NO se pisa, y un
+    # cliente activo o con contrato tampoco: ahí manda la persona.
+    # Tampoco degrada: una OT de levantamiento no baja a 'prospecto' un
+    # cliente que ya estaba clasificado.
+    if cliente_id and tipo_ot:
+        _tc = _tipo_cliente_por_motivo(tipo_ot)
+        if _tc in ("instalacion", "mantencion"):
+            try:
+                _n_tc = mysql_execute_returning_rowcount(
+                    "UPDATE mant_clientes SET tipo_cliente=%s "
+                    " WHERE id=%s AND estado='prospecto' "
+                    "   AND tipo_cliente IN ('mantencion','prospecto') "
+                    "   AND tipo_cliente <> %s",
+                    (_tc, cliente_id, _tc))
+                if _n_tc:
+                    _mant_log("cliente", cliente_id, "tipo_actualizado",
+                              f"→ {_TIPO_CLIENTE_LABEL.get(_tc, _tc)} "
+                              f"· por {numero_ot} ({tipo_ot})")
+            except Exception as e:
+                print(f"[ot2_crear] tipo_cliente: {e}", flush=True)
     if lider_id:
         try:
             _notificar_ot_asignada_interna(vid, lider_id, motivo="asignada")
