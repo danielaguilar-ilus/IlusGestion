@@ -78444,7 +78444,7 @@ def ot2_detalle(vid):
         # 🆕 2026-09-02: a quién y cuántas veces se mandó el link. Sin esto
         # el reenvío obligaba a recordar el correo de memoria.
         anexo = mysql_fetchone(
-            _ANEXO_SEL_BASE + ", enviado_email, enviado_tel, envios_n "
+            _ANEXO_SEL_BASE + ", enviado_email, enviado_tel, envios_n, visto_at "
             "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,))
     except Exception as _e_anx_col:
         # REGLA #5: estas tres columnas se agregan por ALTER idempotente en
@@ -83305,6 +83305,14 @@ def _ensure_mant_anexos():
                                   "COMMENT 'ultimo telefono usado para el link de WhatsApp'"),
                 ("envios_n",      "ALTER TABLE mant_anexos ADD COLUMN envios_n INT NOT NULL DEFAULT 0 "
                                   "COMMENT 'cuantas veces se mando el link'"),
+                # 👁️ 2026-09-06 (Daniel: "debe tener el anexo un tracking a
+                # ver si firmo el proveedor"). El estado 'visto' ya se
+                # marcaba al abrir el link, pero SIN hora: la tarjeta decia
+                # "Enviado" igual si el proveedor lo habia abierto que si
+                # nunca lo vio. Esa diferencia es justamente la que dice si
+                # hay que perseguir el correo o llamar al proveedor.
+                ("visto_at",      "ALTER TABLE mant_anexos ADD COLUMN visto_at DATETIME NULL "
+                                  "COMMENT 'cuando el proveedor abrio el link de firma por primera vez'"),
                 # 📋 2026-09-03 (Daniel: "deja PRODUCTOS ASOCIADOS con una
                 # tablita: SKU, descripcion y cantidad"). Antes los equipos
                 # iban embutidos como texto dentro de objetivo_servicio, y
@@ -84202,10 +84210,14 @@ def ot2_anexo_firma_publica(token):
 
     if a["estado"] == "enviado":
         try:
-            mysql_execute("UPDATE mant_anexos SET estado='visto' WHERE id=%s AND estado='enviado'",
-                         (a["id"],))
-        except Exception:
-            pass
+            # COALESCE: queda la PRIMERA apertura, no la ultima. Para saber
+            # si el proveedor esta al tanto importa cuando se entero, no
+            # cuantas veces volvio a mirar.
+            mysql_execute(
+                "UPDATE mant_anexos SET estado='visto', visto_at=COALESCE(visto_at, NOW()) "
+                " WHERE id=%s AND estado='enviado'", (a["id"],))
+        except Exception as _e_visto:
+            print(f"[anexo_firma] no se pudo marcar visto aid={a['id']}: {_e_visto}", flush=True)
     return render_template(
         "ot2/anexo_firma.html", valido=True, ya_firmado=False,
         anexo=_anexo_publico_payload(a),

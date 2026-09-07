@@ -1881,6 +1881,21 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   padding:3px 9px;display:inline-flex;align-items:center;gap:4px}
 .otd-acceso-chips .si{background:#dcfce7;color:#166534}
 .otd-acceso-chips .no{background:#fee2e2;color:#991b1b}
+
+/* Línea de tiempo del anexo (2026-09-06). Tres hitos: enviado, abierto,
+   firmado. Los cumplidos en verde; los pendientes en gris, sin alarma --
+   que el proveedor no haya firmado todavía no es un error, es un estado. */
+.otd-anx-tl{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.otd-anx-tl .p{background:#f8fafc;border:1px solid #e5e7eb;border-radius:9px;
+  padding:8px 10px;text-align:center}
+.otd-anx-tl .p.ok{background:#f0fdf4;border-color:#bbf7d0}
+.otd-anx-tl .p > i{display:block;font-size:1rem;color:#94a3b8;margin-bottom:2px}
+.otd-anx-tl .p.ok > i{color:#16a34a}
+.otd-anx-tl .p span{display:block;font-size:.66rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.04em;color:#64748b}
+.otd-anx-tl .p b{display:block;font-size:.8rem;color:#0f172a;margin-top:2px}
+.otd-anx-tl .p.ok b{color:#166534}
+.otd-anx-tl .p small{display:block;font-size:.66rem;color:#94a3b8}
 </style>
 
 <div class="ot2 otd">
@@ -2706,12 +2721,22 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <i class="bi bi-file-earmark-plus-fill"></i> Crear anexo de servicios</button>
           {% else %}
           {% set _anx_firmado = anexo.firmado_at is not none %}
+          {# 👁️ 2026-09-06 (Daniel: "debe tener el anexo un tracking a ver si
+             firmó el proveedor"). Antes decía "Enviado — esperando firma"
+             tanto si el proveedor lo había abierto como si nunca lo vio, y
+             esa es justo la diferencia que dice qué hacer: si no lo abrió,
+             el problema es el correo; si lo abrió y no firmó, hay que
+             llamarlo. El estado 'visto' ya se marcaba al abrir el link;
+             faltaba guardar la hora y mostrarlo. #}
+          {% set _anx_visto = anexo.visto_at is defined and anexo.visto_at %}
           <div class="otd-anx-est {{ 'ok' if _anx_firmado else ('go' if anexo.enviado_at else 'pend') }}">
             <i class="bi {{ 'bi-patch-check-fill' if _anx_firmado
-                            else ('bi-send-check-fill' if anexo.enviado_at else 'bi-hourglass-split') }}"></i>
+                            else ('bi-eye-fill' if _anx_visto
+                                  else ('bi-send-check-fill' if anexo.enviado_at else 'bi-hourglass-split')) }}"></i>
             <div>
               <b>{{ 'Firmado' if _anx_firmado
-                    else ('Enviado — esperando firma' if anexo.enviado_at else 'Borrador — sin enviar') }}</b>
+                    else ('Lo abrió y aún no firma' if _anx_visto
+                          else ('Enviado — sin abrir todavía' if anexo.enviado_at else 'Borrador — sin enviar')) }}</b>
               <small>
                 {%- if _anx_firmado %}
                   {{ anexo.firmante_nombre or anexo.proveedor_nombre or 'Proveedor' }}
@@ -2728,6 +2753,43 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               </small>
             </div>
           </div>
+
+          {# Línea de tiempo del anexo: los tres momentos que importan, con
+             su fecha. Un estado suelto dice dónde está; esto dice cómo
+             llegó hasta ahí, que es lo que se necesita para reclamarle a
+             alguien. #}
+          {% if anexo.enviado_at or _anx_visto or _anx_firmado %}
+          <div class="otd-anx-tl">
+            <div class="p {{ 'ok' if anexo.enviado_at }}">
+              <i class="bi bi-send-fill"></i>
+              <span>Enviado</span>
+              <b>{{ anexo.enviado_at | chile_fmt('%d/%m %H:%M') if anexo.enviado_at else '—' }}</b>
+              {% if anexo.envios_n is defined and anexo.envios_n and anexo.envios_n > 1 %}
+              <small>{{ anexo.envios_n }} envíos</small>{% endif %}
+            </div>
+            <div class="p {{ 'ok' if _anx_visto }}">
+              <i class="bi bi-eye-fill"></i>
+              <span>Lo abrió</span>
+              <b>{{ anexo.visto_at | chile_fmt('%d/%m %H:%M') if _anx_visto else 'sin abrir' }}</b>
+            </div>
+            <div class="p {{ 'ok' if _anx_firmado }}">
+              <i class="bi bi-pen-fill"></i>
+              <span>Firmó</span>
+              <b>{{ anexo.firmado_at | chile_fmt('%d/%m %H:%M') if _anx_firmado else 'pendiente' }}</b>
+            </div>
+          </div>
+          {% if anexo.enviado_at and not _anx_visto and not _anx_firmado %}
+          <div class="otf-hint" style="margin:-4px 0 10px">
+            Todavía no abre el link. Antes de insistir, revisa que el correo
+            {% if anexo.enviado_email %}(<b>{{ anexo.enviado_email }}</b>){% endif %}
+            sea el correcto — la mayoría de las veces el problema es ese, no el proveedor.
+          </div>
+          {% elif _anx_visto and not _anx_firmado %}
+          <div class="otf-hint" style="margin:-4px 0 10px">
+            Lo abrió pero no ha firmado. Acá ya no es el correo: conviene llamarlo.
+          </div>
+          {% endif %}
+          {% endif %}
 
           {# 🔒 2026-09-02 (Daniel: "la firma del anexo es restringible para
              que se desbloquee la OT. Si no firma el anexo, no puede ver la
