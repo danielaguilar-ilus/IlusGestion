@@ -2828,7 +2828,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <button type="button" class="otd-btn pri" style="flex:1;justify-content:center"
                     onclick="OT2ANX.abrirEnviar({{ anexo.id }},
                              {{ (anexo.get('enviado_email') or '') | tojson }},
-                             {{ (anexo.get('enviado_tel') or '') | tojson }})">
+                             {{ (anexo.get('enviado_tel') or '') | tojson }},
+                             {{ (anexo.numero or '') | tojson }})">
               <i class="bi bi-send-fill"></i>
               {{ 'Reenviar' if anexo.enviado_at else 'Enviar a firmar' }}</button>
             {% endif %}

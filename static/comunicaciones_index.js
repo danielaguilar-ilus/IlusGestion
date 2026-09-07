@@ -602,6 +602,20 @@ const TPL_ESTADOS_MANTENCIONES = [
   // que Daniel no podía verla ni editarla desde /comunicaciones.
   { key:'plan_propuesto',      label:'Propuesta de plan anual', icon:'bi-calendar2-week', grupo:'mantencion',
     color:'#0a0a0a', desc:'Propuesta de fechas de mantención del año enviada desde la ficha del cliente' },
+  // 📎 2026-09-06 (Daniel: "debe estar conectada plantilla en SSTT de una
+  // Plantilla de envío de Anexo, por favor, en comunicaciones"). MISMO caso
+  // que 'plan_propuesto' arriba: la plantilla 'anexo_nueva_ot' existe hace
+  // rato, se siembra sola al arrancar (_ensure_comm_template_ot2_anexo) y
+  // ot2_api_anexo_enviar la usa DE VERDAD en cada envío... pero faltaba en
+  // esta lista, así que no aparecía en /comunicaciones y Daniel no podía
+  // verla ni editarla. Para él, una plantilla que no se ve no existe.
+  //
+  // Grupo propio 'anexo' a propósito: este correo NO tiene las variables de
+  // una OT normal ({{ot}}, {{tecnico}}, {{maquina}}). Ofrecerle esas sería
+  // invitarlo a insertar campos que van a salir vacíos en un correo que
+  // acompaña un documento contractual.
+  { key:'anexo_nueva_ot',      label:'Anexo de servicios al proveedor', icon:'bi-file-earmark-check', grupo:'anexo',
+    color:'#dc2626', desc:'Aviso de OT nueva + link para que el proveedor firme el Anexo de Servicios' },
 ];
 
 const TPL_ESTADOS_COMUNICACION_INTERNA = [
@@ -736,6 +750,18 @@ const TPL_VARS = {
     { v:'{{direccion}}',        label:'Dirección visita' },
     { v:'{{tipo_mantencion}}',  label:'Tipo de mantención' },
     { v:'{{maquina}}',          label:'Equipo / Máquina' },
+    { v:'{{link_ot}}',          label:'Link a la OT' },
+  ],
+  // Variables REALES que arma ot2_api_anexo_enviar (_variables_anexo). Si
+  // esta lista y esa se separan, Daniel inserta un campo que nunca se
+  // reemplaza y el proveedor recibe un correo con "{{numero_anexo}}" crudo.
+  anexo: [
+    { v:'{{proveedor_nombre}}', label:'Nombre del proveedor' },
+    { v:'{{numero_anexo}}',     label:'N° de anexo' },
+    { v:'{{numero_ot}}',        label:'N° de OT' },
+    { v:'{{ot_titulo}}',        label:'Título de la OT' },
+    { v:'{{cliente_nombre}}',   label:'Razón social del cliente' },
+    { v:'{{link_anexo}}',       label:'Link para firmar el anexo' },
     { v:'{{link_ot}}',          label:'Link a la OT' },
   ],
   interna: [
@@ -1376,6 +1402,7 @@ const GRUPO_LABELS = {
   sistema:    { label:'Sistema',              icon:'bi-gear' },
   retiro:     { label:'Retiros',              icon:'bi-box-arrow-up' },
   mantencion: { label:'Servicio Técnico',     icon:'bi-wrench-adjustable' },
+  anexo:      { label:'Anexo de servicios',   icon:'bi-file-earmark-check' },
   interna:    { label:'Comunicación interna', icon:'bi-people' },
   general:    { label:'General',              icon:'bi-megaphone' },
   tickets:    { label:'Tickets',              icon:'bi-ticket-perforated' },

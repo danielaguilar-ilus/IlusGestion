@@ -296,7 +296,8 @@
       <div class="oax-body" id="oaxBodyEnviar" style="display:none">
         <div class="oax-sec">
           <div class="oax-ok"><i class="bi bi-check-circle-fill"></i>
-            Anexo N° <b id="oaxNumeroCreado">—</b> creado como borrador.</div>
+            Anexo N° <b id="oaxNumeroCreado">—</b>
+            <span id="oaxNumeroSufijo">creado como borrador.</span></div>
           <label class="fl">Correo del proveedor</label>
           <input type="email" class="form-control form-control-sm" id="oaxEmailDestino"
                  placeholder="correo@proveedor.cl">
@@ -448,6 +449,16 @@ window.OT2ANX = (function(){
   function fase(nombre){
     document.getElementById('oaxBodyCrear').style.display  = (nombre === 'crear')  ? '' : 'none';
     document.getElementById('oaxBodyEnviar').style.display = (nombre === 'enviar') ? '' : 'none';
+    /* 📎 2026-09-06. El link del PDF se arma ACÁ, al entrar al paso, y
+       no en crear(): al paso "Enviar" se llega por dos caminos — recién
+       creado el anexo, o por "Reenviar" desde la OT (abrirEnviar), que es
+       justo el que Daniel pidió poder usar. Si se seteara solo en crear(),
+       al reenviar el botón "Ver el PDF" quedaría sin destino: un botón que
+       se ve pero no hace nada, que es peor que no tenerlo. */
+    if (nombre === 'enviar'){
+      var _vp = document.getElementById('oaxVerPdf');
+      if (_vp && aid) _vp.href = '/ot/api/anexos/' + aid + '/pdf';
+    }
     document.getElementById('oaxFootCrear').style.display  = (nombre === 'crear')  ? 'flex' : 'none';
     document.getElementById('oaxFootEnviar').style.display = (nombre === 'enviar') ? 'flex' : 'none';
     document.getElementById('oaxFootListo').style.display  = 'none';
@@ -739,9 +750,15 @@ window.OT2ANX = (function(){
      al reenviar había que acordarse del correo del proveedor de memoria, y
      si se dejaba vacío el reenvío salía sin destinatario -- silencioso, y
      con la OT bloqueada para el proveedor mientras tanto. */
-  function abrirEnviar(anexoId, email, tel){
+  function abrirEnviar(anexoId, email, tel, numero){
     aid = anexoId; creadoAlgo = false;   // ya existía -- no gatilla el "se creó algo nuevo" en el toast, pero SÍ recarga al cerrar si se envía
-    document.getElementById('oaxNumeroCreado').textContent = '—';
+    /* 2026-09-06. Acá decía siempre "Anexo N° — creado como borrador",
+       incluso al REENVIAR uno que ya se había mandado: dos datos falsos en
+       la misma línea. El número lo pasa la ficha de la OT, que lo tiene. */
+    document.getElementById('oaxNumeroCreado').textContent = numero || '—';
+    var _suf = document.getElementById('oaxNumeroSufijo');
+    if (_suf) _suf.textContent = numero
+      ? 'listo para enviar al proveedor.' : 'creado como borrador.';
     document.getElementById('oaxEmailDestino').value = email || '';
     document.getElementById('oaxTelDestino').value = tel || '';
     document.getElementById('oaxResultadoBox').style.display = 'none';
@@ -800,9 +817,10 @@ window.OT2ANX = (function(){
       }
       aid = j.anexo_id; creadoAlgo = true;
       document.getElementById('oaxNumeroCreado').textContent = j.numero;
-      // El botón de ver el PDF necesita el id del anexo RECÉN creado.
-      var _vp = document.getElementById('oaxVerPdf');
-      if (_vp) _vp.href = '/ot/api/anexos/' + aid + '/pdf';
+      // El modal se reutiliza sin recargar la página: si antes se usó para
+      // reenviar, el sufijo quedó en "listo para enviar" y acá sí es nuevo.
+      var _sufC = document.getElementById('oaxNumeroSufijo');
+      if (_sufC) _sufC.textContent = 'creado como borrador.';
       document.getElementById('oaxEmailDestino').value = S.email || '';
       document.getElementById('oaxTelDestino').value = S.tel || '';
       document.getElementById('oaxResultadoBox').style.display = 'none';
