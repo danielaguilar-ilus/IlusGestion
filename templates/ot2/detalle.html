@@ -2016,6 +2016,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   min-height:40px;padding:6px 13px;border-radius:9px;border:1.5px solid #f59e0b;
   background:#fff8e1;color:#92400e;font-weight:800;font-size:.75rem;cursor:pointer}
 .otd-saltar-btn:hover{background:#fde68a}
+
+/* 🏷️ Estado de la revisión (2026-09-07) */
+.otd-rev{margin-top:9px}
+.otd-rev label{display:block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:#64748b;margin-bottom:5px}
+.otd-rev select{width:100%;min-height:44px;font-size:16px;padding:8px 11px;
+  border-radius:9px;border:1px solid #d1d5db;background:#fff;color:#0f172a;
+  font-family:inherit}
+.otd-rev select:disabled{opacity:.6}
 </style>
 
 <div class="ot2 otd">
@@ -3991,6 +4000,29 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                         placeholder="Algo que valga la pena dejar anotado de este equipo"
                         onblur="otdObsGuardar({{ e.id }}, this)"
                         >{{ e.observacion_tecnico or '' }}</textarea>
+              {#- 🏷️ 2026-09-07 (Daniel: "dale con el botón de marcar estado
+                  también"). Completa la paridad con las OT normales.
+
+                  OJO con la diferencia, que es real y conviene tener clara:
+                  el DIAGNÓSTICO (arriba) es el veredicto técnico sobre la
+                  máquina — cómo quedó. El ESTADO DE LA REVISIÓN es en qué
+                  quedó el trabajo sobre ella en esta visita. Una máquina
+                  puede estar "verificada" y con diagnóstico de falla: la
+                  revisé completa, y está mala.
+
+                  'Saltado' y 'falla detectada' piden motivo, como exige el
+                  backend: un estado que cambia el cierre de la OT sin
+                  explicación no le sirve a quien lo lea después. -#}
+              <div class="otd-rev">
+                <label for="otdRev-{{ e.id }}">Estado de la revisión</label>
+                <select id="otdRev-{{ e.id }}" onchange="otdMarcarEstado({{ e.id }}, this)">
+                  <option value="">— sin marcar —</option>
+                  <option value="verificado"{{ ' selected' if e.estado_revision == 'verificado' }}>Verificado</option>
+                  <option value="con_cambios"{{ ' selected' if e.estado_revision == 'con_cambios' }}>Verificado, con cambios</option>
+                  <option value="falla_detectada"{{ ' selected' if e.estado_revision == 'falla_detectada' }}>Falla detectada</option>
+                  <option value="saltado"{{ ' selected' if e.estado_revision == 'saltado' }}>No se revisó</option>
+                </select>
+              </div>
               <div class="otd-obs-pie">
                 <small id="otdObsEstado-{{ e.id }}">Se guarda solo al salir del campo.</small>
                 {% if not e.razon_saltado %}
@@ -4191,6 +4223,51 @@ const OTD_SALTO_RAZONES = [
   ['dado_de_baja',      'El cliente lo dio de baja'],
   ['otro',              'Otro motivo'],
 ];
+
+/* Marca el estado de revisión del equipo. Mismo endpoint que la clásica.
+   Los estados que cambian el cierre de la OT ('saltado', 'falla
+   detectada') piden motivo: el backend lo exige y acá se pide antes, para
+   no hacer viajar un rechazo seguro. */
+async function otdMarcarEstado(mid, sel){
+  var estado = sel.value;
+  if (!estado){ sel.value = sel.dataset.previo || ''; return; }
+  var obs = '';
+  if (estado === 'saltado' || estado === 'falla_detectada'){
+    obs = await ilusPrompt({
+      title: estado === 'saltado' ? 'No se revisó este equipo' : 'Falla detectada',
+      message: '¿Qué pasó? Queda en la OT para quien la lea después.',
+      placeholder: 'Mínimo 10 caracteres',
+      required: true,
+      validate: function(v){
+        return (v || '').trim().length >= 10 ? null : 'Escribe al menos 10 caracteres.';
+      },
+    });
+    if (!obs){ sel.value = sel.dataset.previo || ''; return; }
+  }
+  sel.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/visitas/' + OTD_VID +
+                          '/equipos/' + mid + '/marcar', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({estado_revision: estado, observacion: obs}),
+    });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo marcar el estado.', {type:'error'});
+      sel.value = sel.dataset.previo || '';
+      return;
+    }
+    sel.dataset.previo = estado;
+    ilusToast('✓ Estado guardado: ' + (sel.options[sel.selectedIndex] || {}).text,
+              {type:'success'});
+  } catch(e){
+    ilusToast('Error de conexión al marcar el estado.', {type:'error'});
+    sel.value = sel.dataset.previo || '';
+  } finally {
+    sel.disabled = false;
+  }
+}
 
 async function otdObsGuardar(mid, ta){
   var est = document.getElementById('otdObsEstado-' + mid);
