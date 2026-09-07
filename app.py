@@ -84453,6 +84453,10 @@ def _anexo_precio_texto(items):
 
 
 def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
+    # 🏷️ 2026-09-07: el parámetro se sigue llamando `cliente_nombre` por
+    # compatibilidad, pero lo que se imprime ahora es el PROVEEDOR (ver el
+    # caller). El anexo es entre ILUS y quien ejecuta; el cliente es el
+    # destinatario del servicio, no una parte del acuerdo.
     """Header/footer NATIVOS de Playwright para el PDF del Anexo de Servicios
     -- MISMO mecanismo que ya usa `_ot_pdf_header_footer_native` (ver ese
     comentario, OT-2026-00058): `display_header_footer` + header_template/
@@ -84651,7 +84655,8 @@ def _anexo_pdf_bytes(a):
     # física real, no solo en la primera. margin.top ~26mm da espacio
     # real al header (~20mm de alto); bottom 14mm al footer de una
     # línea (mismas medidas ya probadas en el compacto de la OT).
-    _hdr, _ftr = _anexo_pdf_header_footer_native(a.get("numero"), a.get("cliente_nombre"))
+    _hdr, _ftr = _anexo_pdf_header_footer_native(
+        a.get("numero"), a.get("proveedor_nombre") or a.get("cliente_nombre"))
     data = _pw_pdf(html, page_format="Letter",
                     margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
                     header_template=_hdr, footer_template=_ftr)

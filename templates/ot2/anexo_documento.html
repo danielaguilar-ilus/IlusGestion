@@ -121,14 +121,39 @@
      PDF, además del caso de la firma electrónica ya capturada. #}
   .firma-linea{ margin-top:14mm; }
 
+  /* 🎨 2026-09-07 (Daniel: "arregla el formato para que se vea más
+     lindo"). Tres cosas: que se distinga dónde empieza cada sección, que
+     las cláusulas se lean una por una, y que la firma tenga una línea
+     recta de verdad. Nada de esto cambia el TEXTO del anexo. */
+  .subtitulo{ text-align:center; font-size:12.5pt; font-weight:700; color:#0a0a0a;
+    margin:-3mm 0 8mm; letter-spacing:.01em; }
+  /* La etiqueta evita que el nombre quede colgando sin decir de quien es. */
+  .subtitulo span{ display:block; font-size:8pt; font-weight:700; color:#9ca3af;
+    text-transform:uppercase; letter-spacing:.14em; margin-bottom:.8mm; }
+  .sec-titulo{ font-size:10pt; font-weight:700; text-transform:uppercase;
+    letter-spacing:.08em; color:#0a0a0a; margin:8mm 0 2.5mm;
+    padding-bottom:1.2mm; border-bottom:0.5mm solid #dc2626; }
+  .clausulas{ margin-bottom:4mm; }
+  p.cl{ text-align:justify; margin:0 0 3.2mm; line-height:1.5; }
+  p.cl b{ font-weight:700; color:#0a0a0a; }
+  /* La firma: espacio real para estampar, y una raya pareja. */
+  .firma-espacio{ height:20mm; }
+  .firma-linea-real{ width:72mm; margin:0 auto 2mm;
+    border-bottom:0.4mm solid #0a0a0a; }
+  .firma-pie{ font-size:9.5pt; text-transform:uppercase; letter-spacing:.08em;
+    color:#6b7280; margin-top:1.5mm; }
+
   /* Marca de agua de vista previa (2026-09-06). Fija y repetida para que
      salga en TODAS las hojas del PDF, no solo en la primera. */
   .wm-preview{ position:fixed; inset:0; z-index:0; pointer-events:none;
     display:flex; flex-direction:column; justify-content:space-around;
     align-items:center; overflow:hidden; }
-  .wm-preview span{ transform:rotate(-32deg); white-space:nowrap;
-    font-size:26pt; font-weight:900; letter-spacing:.06em;
-    color:rgba(220,38,38,.13); }
+  {# 2026-09-07: a 26pt el texto rotado se salía de la hoja y en el PDF
+     aparecía cortado ("VISTA PREVIA — SIN VALIDEZ" sin el final). Se baja
+     el cuerpo para que la diagonal entre completa. #}
+  .wm-preview span{ transform:rotate(-30deg); white-space:nowrap;
+    font-size:19pt; font-weight:900; letter-spacing:.05em;
+    color:rgba(220,38,38,.12); }
   .doc-body{ position:relative; z-index:1; }
 </style>
 </head>
@@ -157,7 +182,17 @@
      (anexo.numero) es el mismo que ya usa _anexo_render_canonico() para el
      hash de verificación de anexos YA FIRMADOS; tocar ESE valor invalidaría
      firmas existentes. Acá solo se agrega el cliente al título visible. #}
-  <div class="titulo">Anexo de Servicios N° {{ anexo.numero }}{% if anexo.cliente_nombre %} — {{ anexo.cliente_nombre }}{% endif %}</div>
+  {#- 🏷️ 2026-09-07 (Daniel: "sácale el nombre y deja solo el del
+      proveedor"). El título llevaba el nombre del CLIENTE, y el header lo
+      repetía en cada hoja. Este anexo no es un contrato con el cliente: es
+      entre ILUS Fitness y el PROVEEDOR que va a ejecutar. Ponerle el
+      nombre del cliente arriba lo hace parecer parte del acuerdo, cuando
+      es el destinatario del servicio. El cliente no se pierde: sigue
+      nombrado en el Objetivo del Servicio, que es donde corresponde. -#}
+  <div class="titulo">Anexo de Servicios N° {{ anexo.numero }}</div>
+  {% if anexo.proveedor_nombre %}
+  <div class="subtitulo"><span>Proveedor</span>{{ anexo.proveedor_nombre }}</div>
+  {% endif %}
 
   <p class="intro">El presente Anexo es parte integrante de Contrato Marco de
     Prestación de Servicios y tiene por objeto describir los servicios,
@@ -187,7 +222,7 @@
      me pueda evidenciar tanto SKU, descripción y cantidad") -- distinto
      de la tabla de Precio (por concepto de cobro, más abajo): esto son
      los equipos físicos de la OT a los que aplica el servicio. #}
-  <p class="campo"><b>Productos / Equipos del Servicio:</b></p>
+  <div class="sec-titulo">Productos / Equipos del Servicio</div>
   <table class="precio">
     {#- 2026-09-06 (Daniel: "ya tenemos esos datos capturados por documento,
         con todo"). La columna solo aparece si algún producto trae documento:
@@ -211,15 +246,38 @@
      sección nueva, agregada aparte de los 6 campos originales del Anexo
      que redactó Félix; ver _ANEXO_CLAUSULAS_DEFECTO en app.py. Borrador
      pendiente de revisión legal, NO asesoría certificada. #}
-  <p class="campo"><b>Cláusulas Adicionales:</b></p>
-  <p class="campo" style="white-space:pre-line">{{ anexo.clausulas_adicionales }}</p>
+  <div class="sec-titulo">Cláusulas Adicionales</div>
+  {#- ✒️ 2026-09-07 (Daniel: "que las cláusulas estén en negrita"). Antes
+      todo el clausulado salía como UN bloque de texto corrido con
+      `white-space:pre-line`: siete cláusulas indistinguibles entre sí, y
+      quien firma no encontraba dónde empieza cada una. Ahora cada numeral
+      es su propio párrafo y su encabezado va destacado.
+
+      El corte es por el PRIMER ":" de cada numeral, que es como están
+      redactadas ("3. Limitación de responsabilidad: ..."). Si un numeral
+      no calza con ese patrón — sin dos puntos, o con un encabezado
+      larguísimo que en realidad ya es texto — se imprime tal cual, sin
+      inventar una negrita en medio de una frase. -#}
+  <div class="clausulas">
+    {% for _cl in (anexo.clausulas_adicionales or '').split('\n\n') %}
+      {% set _txt = _cl.strip() %}
+      {% if _txt %}
+        {% set _pt = _txt.split(':', 1) %}
+        {% if _pt | length == 2 and _pt[0] | length <= 90 %}
+        <p class="cl"><b>{{ _pt[0] }}:</b>{{ _pt[1] }}</p>
+        {% else %}
+        <p class="cl">{{ _txt }}</p>
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+  </div>
   {% endif %}
 
   {# 2026-08-30 (Daniel: "los productos tienen que estar como en una tabla
      al final"): el Precio pasa de párrafo a tabla, movido al final --
      justo antes de la firma. #}
   {% if anexo.precio_items %}
-  <p class="campo"><b>Precio:</b></p>
+  <div class="sec-titulo">Precio</div>
   <table class="precio">
     <thead><tr><th>Concepto</th><th style="text-align:right">Monto</th></tr></thead>
     <tbody>
@@ -261,11 +319,16 @@
          agrega el RUT del proveedor (mismo dato ya declarado en el paso
          Anexo del wizard) con el mismo estilo `.firma-rut` centrado que
          usa el bloque firmado. #}
-      <div class="firma-nombre" style="margin-top:14mm">Nombre: {{ anexo.proveedor_nombre }}</div>
+      {#- 2026-09-07: la raya de guiones bajos se rompía en el salto de
+          línea y quedaba despareja. Una caja con borde inferior da una
+          línea recta y del mismo ancho siempre. -#}
+      <div class="firma-espacio"></div>
+      <div class="firma-linea-real"></div>
+      <div class="firma-nombre">{{ anexo.proveedor_nombre }}</div>
       {% if anexo.proveedor_rut %}
-      <div class="firma-rut"><b>RUT Empresa: {{ anexo.proveedor_rut }}</b></div>
+      <div class="firma-rut">RUT Empresa: {{ anexo.proveedor_rut }}</div>
       {% endif %}
-      <div class="firma-linea">Firma: ______________________</div>
+      <div class="firma-pie">Firma del Proveedor</div>
     {% endif %}
   </div>
 
