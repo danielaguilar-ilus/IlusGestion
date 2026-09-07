@@ -6305,32 +6305,105 @@ function abrirModalRuta(){
   new bootstrap.Modal(document.getElementById('modalRuta')).show();
 }
 
-async function iniciarRuta(app){
+/* 🔴 FIX 2026-09-07 (Daniel, urgente: "cuando el técnico quiere entrar a
+   gestionar la ruta no está funcionando el botón de Waze").
+
+   CAUSA RAÍZ: `window.open()` vivía DESPUÉS de `await fetch(...)`. Un
+   navegador solo deja abrir una ventana dentro del mismo tick del gesto que
+   la pidió; pasado un `await`, esa activación se perdió y la apertura queda
+   BLOQUEADA EN SILENCIO -- sin error, sin aviso, sin nada en consola. Para
+   el técnico eso es exactamente "aprieto Waze y no pasa nada".
+
+   Y era INTERMITENTE, que es lo que más confunde: si el POST contestaba en
+   milisegundos (oficina, wifi) alcanzaba a abrir; en terreno, con red móvil
+   lenta, no. De ahí que "a veces funciona".
+
+   Ahora la URL se calcula y se abre PRIMERO, con la activación del click
+   todavía viva. El registro del inicio de ruta sale después con
+   `keepalive:true`, que existe justamente para que un request sobreviva a
+   que la página se vaya a otra app: se sigue registrando igual, no se
+   pierde el dato ni el badge.
+
+   Se mantiene `window.open` (y NO `location.href`) a propósito: si el
+   técnico no tiene Waze instalado, `location.href` le reemplazaría la
+   pantalla de la OT por waze.com y perdería el trabajo en curso -- el
+   patrón de pérdida de datos en móvil que ya nos costó caro antes.
+
+   Y si aun así el navegador bloquea la ventana (iOS es estricto), ya no se
+   queda mudo: aparece un botón real para abrirlo a mano. Un botón que no
+   hace nada y encima no dice nada es lo que hay que eliminar. */
+function iniciarRuta(app){
   bootstrap.Modal.getInstance(document.getElementById('modalRuta'))?.hide();
+
+  // ── 1) La URL, ANTES de cualquier espera ───────────────────────
+  // `!= null` cubre null y undefined de una vez. La condición anterior era
+  // `DESTINO_LAT && DESTINO_LNG`, que ademas descartaba una coordenada 0.
+  const _hayCoords = (DESTINO_LAT != null && DESTINO_LNG != null);
+  const _dir = DESTINO_DIR || '';
+  let url = '';
+  if (app === 'google'){
+    const dest = _hayCoords ? `${DESTINO_LAT},${DESTINO_LNG}` : encodeURIComponent(_dir);
+    url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+  } else if (app === 'waze'){
+    url = _hayCoords
+      ? `https://www.waze.com/ul?ll=${DESTINO_LAT}%2C${DESTINO_LNG}&navigate=yes`
+      : `https://www.waze.com/ul?q=${encodeURIComponent(_dir)}&navigate=yes`;
+  }
+  // Sin coordenadas Y sin direccion no hay a donde navegar: mejor decirlo
+  // que abrir un mapa vacio.
+  if (url && !_hayCoords && !_dir){
+    ilusToast('Esta OT no tiene dirección ni coordenadas para navegar.', { type:'warning' });
+    url = '';
+  }
+
+  // ── 2) Abrir YA, en el mismo tick del click ────────────────────
+  let ventana = null;
+  if (url){
+    try { ventana = window.open(url, '_blank', 'noopener'); } catch(e){ ventana = null; }
+  }
+
+  // ── 3) Recién ahora el registro, SIN esperarlo ────────────────
+  // Mismo endpoint, mismo cuerpo y mismos headers que antes (para no tocar
+  // nada del backend ni del CSRF); lo unico que cambia es que ya no se
+  // espera, y que `keepalive` lo deja terminar aunque saltemos a otra app.
   const lat = window.__execOrigenLat || null;
   const lng = window.__execOrigenLng || null;
   try {
-    await fetch(`/mantenciones/api/visitas/${VID}/iniciar-ruta`, {
+    fetch(`/mantenciones/api/visitas/${VID}/iniciar-ruta`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ app, lat, lng })
-    });
+      body: JSON.stringify({ app, lat, lng }), keepalive: true
+    }).catch(function(){});
   } catch(e) {}
+
   const btn = document.getElementById('btnRuta');
   if (btn){
     btn.classList.add('iniciada');
     btn.innerHTML = `<i class="bi bi-check-circle-fill"></i> Ruta iniciada · ${app.toUpperCase()}`;
   }
   if (app === 'saltado'){ ilusToast('OK, comienza a trabajar', { type:'success' }); return; }
-  const dest = (DESTINO_LAT && DESTINO_LNG) ? `${DESTINO_LAT},${DESTINO_LNG}` : encodeURIComponent(DESTINO_DIR);
-  let url = '';
-  if (app === 'google'){
-    url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
-  } else if (app === 'waze'){
-    url = (DESTINO_LAT && DESTINO_LNG)
-      ? `https://www.waze.com/ul?ll=${DESTINO_LAT}%2C${DESTINO_LNG}&navigate=yes`
-      : `https://www.waze.com/ul?q=${encodeURIComponent(DESTINO_DIR)}&navigate=yes`;
+
+  // ── 4) Si el navegador igual lo bloqueó, darle una salida real ─────
+  if (url && !ventana){
+    let a = document.getElementById('btnRutaManual');
+    if (!a){
+      a = document.createElement('a');
+      a.id = 'btnRutaManual';
+      a.className = 'btn btn-warning w-100 fw-bold';
+      a.style.cssText = 'min-height:48px;display:flex;align-items:center;justify-content:center;gap:8px;margin:8px 0';
+      a.target = '_blank'; a.rel = 'noopener';
+      if (btn && btn.parentNode) btn.parentNode.insertBefore(a, btn.nextSibling);
+      else document.body.appendChild(a);
+    }
+    a.href = url;
+    const _nom = (app === 'waze') ? 'Waze' : 'Google Maps';
+    a.innerHTML = `<i class="bi bi-box-arrow-up-right"></i> Abrir ${_nom}`;
+    ilusToast(`El navegador bloqueó la apertura automática. Toca el botón amarillo para abrir ${_nom}.`,
+              { type:'warning' });
+  } else if (url && ventana){
+    // Si en un intento anterior quedó el botón de rescate, ya no hace falta.
+    const _viejo = document.getElementById('btnRutaManual');
+    if (_viejo && _viejo.parentNode) _viejo.parentNode.removeChild(_viejo);
   }
-  if (url) window.open(url, '_blank');
 }
 
 let _pingInterval = null;
