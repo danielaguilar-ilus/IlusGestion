@@ -109,6 +109,16 @@
   .oax .modal-content{border-radius:0;min-height:100dvh}
   .oax-body{max-height:none}
 }
+
+  /* Aviso de cláusulas sin cuantificar (2026-09-06). Ámbar, no rojo: no es
+     un error ni bloquea nada — es una decisión comercial pendiente. */
+  .oax-clx-aviso{display:flex;gap:9px;align-items:flex-start;margin-bottom:12px;
+    padding:10px 12px;background:#fff8e1;border:1px solid #fde68a;
+    border-radius:9px;font-size:.78rem;color:#78350f;line-height:1.45}
+  .oax-clx-aviso > i{color:#f59e0b;font-size:.95rem;margin-top:1px;flex:0 0 auto}
+  .oax-clx-aviso b{color:#92400e}
+  .oax-clx-aviso span{display:block;margin-top:3px;color:#92400e;opacity:.9}
+  .oax-clx-aviso a{color:#92400e;font-weight:800;text-decoration:underline}
 </style>
 
 <div class="modal fade oax" id="oaxModal" tabindex="-1" aria-hidden="true">
@@ -230,6 +240,27 @@
             <i class="bi bi-chevron-right"></i> Condiciones estándar del servicio (editable)
           </button>
           <div id="oaxCondBox" style="display:none;margin-top:10px">
+            {#- ⚖️ 2026-09-06, Fase 2. Estas tres cláusulas dicen lo correcto
+                pero, sin números, no se le pueden exigir a nadie: "rapidez y
+                eficacia" no se mide, "posteriormente se emitirá documentación
+                para el pago" no compromete fecha, y una penalización sin
+                monto ni tope no se puede cobrar. Los montos son decisión
+                comercial, no del sistema, así que el anexo se emite igual —
+                pero quien lo firma tiene que saber qué quedó sin cuantificar
+                ANTES, no el día que quiera cobrar una penalidad. -#}
+            {% if anexo_defaults.pendientes %}
+            <div class="oax-clx-aviso">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <div>
+                <b>Este anexo se firma sin cuantificar:</b>
+                {{ anexo_defaults.pendientes | join('; ') }}.
+                <span>Se puede emitir igual, pero lo que no tiene número no se
+                le puede exigir al proveedor. Se define una sola vez en
+                <a href="/mantenciones/configuracion" target="_blank">Configuración →
+                Anexo de servicios</a> y queda para todos los anexos nuevos.</span>
+              </div>
+            </div>
+            {% endif %}
             <label class="fl">Niveles de Servicio</label>
             <textarea class="form-control form-control-sm" id="oaxNiveles" rows="2"
                       oninput="OT2ANX.setCond('niveles_servicio', this.value)"></textarea>

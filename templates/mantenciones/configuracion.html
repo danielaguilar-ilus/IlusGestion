@@ -25,6 +25,7 @@
   .cat-descuento .chip{background:#fef3c7;color:#92400e}
   .cat-alerta    .chip{background:#fee2e2;color:#991b1b}
   .cat-politica  .chip{background:#ede9fe;color:#5b21b6}
+  .cat-anexo     .chip{background:#fee2e2;color:#991b1b}
   .cat-texto     .chip{background:#f3f4f6;color:#374151}
   .cat-otros     .chip{background:#f3f4f6;color:#374151}
 
@@ -186,8 +187,9 @@ const CAT_META = {
   politica:   {icon:'📜', label:'Política'},
   texto:      {icon:'📝', label:'Texto'},
   terreno:    {icon:'📍', label:'Terreno (GPS y tiempos)'},
+  anexo:      {icon:'⚖️', label:'Anexo de servicios (proveedores)'},
 };
-const CAT_ORDER = ['frecuencia','precio','descuento','alerta','politica','terreno','texto'];
+const CAT_ORDER = ['frecuencia','precio','descuento','alerta','politica','anexo','terreno','texto'];
 
 let _reglas = [];                 // [{clave,valor,tipo_dato,...}]
 const _original = {};             // clave -> valor original (string)

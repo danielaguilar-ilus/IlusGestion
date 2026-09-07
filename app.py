@@ -78505,9 +78505,19 @@ def ot2_detalle(vid):
         # se pasan al modal para que el borrador salga pre-llenado y editable,
         # en vez de duplicar estas constantes dentro del template.
         anexo_defaults={
-            "niveles": _ANEXO_NIVELES_DEFECTO,
-            "hitos": _ANEXO_HITOS_DEFECTO,
-            "alcance": _ANEXO_ALCANCE_DEFECTO,
+            # ⚖️ 2026-09-06, Fase 2. Antes se pasaban las constantes crudas.
+            # Desde que las cláusulas pueden llevar plazos y penalidad
+            # cuantificada (parámetros de /mantenciones/configuración), pasar
+            # la constante haría que el modal muestre un texto y el anexo
+            # nazca con otro — en un documento contractual eso no es un
+            # detalle de pantalla. Se pasa lo mismo que usa el INSERT.
+            "niveles": _anexo_clausulas_defecto()["niveles_servicio"],
+            "hitos": _anexo_clausulas_defecto()["hitos_pago"],
+            "alcance": _anexo_clausulas_defecto()["alcance_servicio"],
+            # Qué le falta al anexo para poder EXIGIRSE. No bloquea nada:
+            # es para que Daniel sepa qué está firmando sin cuantificar, en
+            # vez de enterarse el día que quiera cobrar una penalidad.
+            "pendientes": _anexo_clausulas_pendientes(),
             # 🆕 2026-09-02 (Daniel: "lo que quiero hacer es que crees un
             # anexo con todos los datos que tiene la orden de trabajo...
             # tenemos que tener toda la evidencia contable con la orden
@@ -83498,6 +83508,116 @@ _ANEXO_ALCANCE_DEFECTO = (
     "incumplimiento del servicio y el principio de reportabilidad tanto para "
     "el inicio del trabajo como para el término."
 )
+
+
+def _anexo_num_txt(v):
+    """2,5 / 3 — número en formato chileno, sin decimales si no los tiene."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return ""
+    return (str(int(f)) if f == int(f) else ("%.2f" % f).rstrip("0").rstrip("."))\
+        .replace(".", ",")
+
+
+def _anexo_clausulas_defecto():
+    """Las cláusulas con las que nace un anexo nuevo.
+
+    ⚖️ 2026-09-06, Fase 2 y 3. Devuelve los cuatro textos ya armados. La
+    regla que gobierna todo esto: **si Daniel no ha fijado los números, no
+    se inventa ninguno** — el anexo sale palabra por palabra como lo
+    diseñó Félix Gálvez. Un monto inventado por el sistema quedaría
+    congelado dentro de un documento firmado, y eso es peor que no tener
+    monto.
+
+    Cuando los números SÍ están configurados, cada texto se vuelve
+    exigible sin reescribir lo que ya decía: se le agrega el plazo, la
+    fecha de pago o la penalidad cuantificada al final del párrafo
+    original.
+
+    Los textos quedan CONGELADOS en el anexo al crearse (columnas
+    niveles_servicio / hitos_pago / alcance_servicio / clausulas_adicionales),
+    así que cambiar un parámetro nunca altera un anexo ya emitido.
+    """
+    r = _reglas_cargar() or {}
+    niveles = _ANEXO_NIVELES_DEFECTO
+    hitos   = _ANEXO_HITOS_DEFECTO
+    alcance = _ANEXO_ALCANCE_DEFECTO
+
+    # — Niveles de servicio: de "rapidez y eficacia" a un plazo medible —
+    try:
+        _rep = int(r.get("anexo_reporte_min") or 0)
+    except (TypeError, ValueError):
+        _rep = 0
+    if _rep > 0:
+        niveles += (
+            " El Proveedor deberá reportar el inicio del trabajo dentro de "
+            "los {n} minutos siguientes a la hora agendada, y su término "
+            "dentro de los {n} minutos siguientes a la finalización, por el "
+            "canal que ILUS Fitness indique. El servicio se entiende conforme "
+            "cuando la Orden de Trabajo queda completa —checklist, evidencia "
+            "fotográfica y diagnóstico— y firmada por el Cliente."
+        ).format(n=_rep)
+
+    # — Hitos de pago: el proveedor tiene que saber cuándo le pagan —
+    try:
+        _dias = int(r.get("anexo_pago_dias") or 0)
+    except (TypeError, ValueError):
+        _dias = 0
+    if _dias > 0:
+        hitos += (
+            " El pago se efectuará dentro de {d} días corridos contados desde "
+            "la recepción conforme del documento tributario, siempre que la "
+            "Orden de Trabajo se encuentre completa y firmada por el Cliente."
+        ).format(d=_dias)
+
+    # — Alcance: la penalidad, con monto Y con techo —
+    # Se exigen los DOS parámetros a propósito: una penalidad diaria sin
+    # tope crece sin límite y es justo la que se cae en tribunales. Si
+    # falta el tope, no se cuantifica nada y el texto queda como estaba.
+    try:
+        _pct  = float(r.get("anexo_penalidad_pct_dia") or 0)
+        _tope = float(r.get("anexo_penalidad_tope_pct") or 0)
+    except (TypeError, ValueError):
+        _pct = _tope = 0.0
+    if _pct > 0 and _tope > 0:
+        alcance += (
+            " La penalidad por incumplimiento de los plazos comprometidos "
+            "será de un {p}% del valor total de este Anexo por cada día "
+            "corrido de atraso, con un tope máximo acumulado de {t}% de "
+            "dicho valor. Su aplicación será notificada por escrito al "
+            "Proveedor, quien dispondrá de 5 días hábiles para presentar sus "
+            "descargos antes de que se haga efectiva, y se descontará del "
+            "pago del servicio."
+        ).format(p=_anexo_num_txt(_pct), t=_anexo_num_txt(_tope))
+
+    return {
+        "niveles_servicio": niveles,
+        "hitos_pago": hitos,
+        "alcance_servicio": alcance,
+        "clausulas_adicionales": _ANEXO_CLAUSULAS_DEFECTO,
+    }
+
+
+def _anexo_clausulas_pendientes():
+    """Qué le falta al anexo para ser exigible — para avisarlo en pantalla.
+
+    No bloquea nada: el anexo se puede emitir igual. Es información para
+    que Daniel sepa qué está firmando sin cuantificar, en vez de
+    enterarse el día que quiera cobrar una penalidad.
+    """
+    r = _reglas_cargar() or {}
+    faltan = []
+    def _num(k):
+        try: return float(r.get(k) or 0)
+        except (TypeError, ValueError): return 0.0
+    if _num("anexo_reporte_min") <= 0:
+        faltan.append("el plazo para reportar inicio y término")
+    if _num("anexo_pago_dias") <= 0:
+        faltan.append("el plazo de pago al proveedor")
+    if _num("anexo_penalidad_pct_dia") <= 0 or _num("anexo_penalidad_tope_pct") <= 0:
+        faltan.append("la penalidad por atraso (monto por día y tope máximo)")
+    return faltan
 # 2026-08-30 (Daniel, textual: "hay que colocar las cláusulas y poder
 # cuidarnos... si alguien muere, si alguien le pasa algo, excluirme a mí y
 # a la empresa de cualquier acción legal en contra de nosotros... pero sin
@@ -83556,7 +83676,28 @@ _ANEXO_CLAUSULAS_DEFECTO = (
     "19.799 sobre Documentos Electrónicos, Firma Electrónica y Servicios "
     "de Certificación de dicha Firma, sirviendo el registro de fecha, "
     "hora, dirección IP y dispositivo como respaldo de la manifestación "
-    "de voluntad del firmante."
+    "de voluntad del firmante.\n\n"
+    # ⚖️ 2026-09-06, Fase 3. Hasta acá el anexo era de una sola vía: seis
+    # cláusulas donde el proveedor se obliga, se limita la responsabilidad
+    # de ILUS y el proveedor la mantiene indemne — y ni una sola obligación
+    # de ILUS. Eso NO protege más a la empresa: un contrato desequilibrado
+    # es justamente el que se ataca por abusivo, y arrastra en su caída a
+    # las cláusulas que sí le sirven a ILUS (la 3 y la 4). El numeral (iv)
+    # es el que vuelve DEFENDIBLE la penalidad del "Alcance": una penalidad
+    # que reconoce causas no imputables se puede cobrar; una que castiga
+    # pase lo que pase, no.
+    "7. Obligaciones de ILUS Fitness: Sport and Health Solutions SPA "
+    "(ILUS Fitness) se obliga, por su parte, a: (i) entregar oportunamente "
+    "al Proveedor la información del servicio, la dirección, los datos de "
+    "contacto y las condiciones de acceso necesarias para su ejecución; "
+    "(ii) coordinar con el Cliente la disponibilidad del recinto y de los "
+    "equipos en la fecha acordada; (iii) pagar el precio convenido en los "
+    "términos señalados en los Hitos de Pago de este Anexo; y (iv) no "
+    "aplicar penalidad alguna cuando el retraso o incumplimiento tenga por "
+    "causa hechos no imputables al Proveedor, tales como caso fortuito o "
+    "fuerza mayor, imposibilidad de acceso al recinto, indisponibilidad del "
+    "equipo, o información incompleta o errónea proporcionada por ILUS "
+    "Fitness."
 )
 
 
@@ -83637,6 +83778,9 @@ def ot2_api_anexo_crear():
         conn.autocommit(False)
         cur = conn.cursor()
         numero = _next_anexo_numero_atomic(conn)
+        # Cláusulas vigentes al momento de crear ESTE anexo. Se congelan en
+        # sus columnas: cambiar un parámetro después no toca lo ya emitido.
+        _clx = _anexo_clausulas_defecto()
         cur.execute(
             "INSERT INTO mant_anexos "
             "  (numero, ot_id, tecnico_externo_id, proveedor_nombre, proveedor_rut, "
@@ -83652,10 +83796,10 @@ def ot2_api_anexo_crear():
              objetivo, _json.dumps(items),
              _json.dumps(_anexo_productos_norm(d.get("productos"))),
              d.get("fecha_inicio") or None, d.get("fecha_termino") or None,
-             (d.get("niveles_servicio") or "").strip() or _ANEXO_NIVELES_DEFECTO,
-             (d.get("hitos_pago") or "").strip() or _ANEXO_HITOS_DEFECTO,
-             (d.get("alcance_servicio") or "").strip() or _ANEXO_ALCANCE_DEFECTO,
-             (d.get("clausulas_adicionales") or "").strip() or _ANEXO_CLAUSULAS_DEFECTO,
+             (d.get("niveles_servicio") or "").strip() or _clx["niveles_servicio"],
+             (d.get("hitos_pago") or "").strip() or _clx["hitos_pago"],
+             (d.get("alcance_servicio") or "").strip() or _clx["alcance_servicio"],
+             (d.get("clausulas_adicionales") or "").strip() or _clx["clausulas_adicionales"],
              current_username()))
         aid = cur.lastrowid
         conn.commit()
@@ -84204,10 +84348,10 @@ def ot2_api_anexo_preview_pdf():
         "precio_items": items,
         "fecha_inicio": _iso_a_dmy(d.get("fecha_inicio")),
         "fecha_termino": _iso_a_dmy(d.get("fecha_termino")),
-        "niveles_servicio": _ANEXO_NIVELES_DEFECTO,
-        "hitos_pago": _ANEXO_HITOS_DEFECTO,
-        "alcance_servicio": _ANEXO_ALCANCE_DEFECTO,
-        "clausulas_adicionales": _ANEXO_CLAUSULAS_DEFECTO,
+        # La vista previa tiene que mostrar EXACTAMENTE las cláusulas con
+        # las que va a nacer el anexo real, no las constantes crudas: si no,
+        # Daniel revisa un documento y se emite otro.
+        **_anexo_clausulas_defecto(),
     }
     html = render_template(
         "ot2/anexo_documento.html",
@@ -99237,6 +99381,26 @@ _REGLAS_DEFAULTS = {
     # En 0 se desactiva el corte por HORA — el control por DÍA se mantiene
     # siempre (esa era la intención real: que no se trabaje otro día).
     "ot_ventana_tolerancia_min": ("240", "int", "terreno", "Margen en minutos para iniciar una OT fuera de su horario (0 = sin control de hora; el control por día se mantiene)", "reloj"),
+
+    # ⚖️ ANEXO DE SERVICIOS — Fase 2 (2026-09-06). Las tres cláusulas
+    # que el anexo trae de fábrica dicen lo correcto pero no son EXIGIBLES:
+    #   · "Niveles de Servicio" habla de calidad, rapidez y eficacia, sin
+    #     ningún plazo que se pueda medir → no hay incumplimiento posible.
+    #   · "Hitos de Pago" no compromete NINGUNA fecha de pago → el proveedor
+    #     no sabe cuándo le pagan y a ILUS le reclaman cuando quieran.
+    #   · "Alcance" dice "se asumen penalizaciones monetarias" SIN monto y
+    #     SIN tope → una penalidad que no está cuantificada no se puede
+    #     cobrar, y encima una sin techo es justo la que un tribunal mira
+    #     mal. Cuantificarla PROTEGE a la empresa, no la expone.
+    #
+    # Los montos son decisión comercial de Daniel, no de este código: por
+    # eso nacen todos en 0 = "sin definir", y mientras estén en 0 el anexo
+    # sale con EXACTAMENTE el texto que diseñó Félix Gálvez, sin una coma
+    # de más. Se llenan desde /mantenciones/configuración, sin deploy.
+    "anexo_reporte_min":        ("0", "int",   "anexo", "Minutos que tiene el proveedor para reportar inicio y término del trabajo (0 = sin plazo exigible)", "reloj"),
+    "anexo_pago_dias":          ("0", "int",   "anexo", "Días corridos para pagar al proveedor desde el documento conforme (0 = sin plazo comprometido)", "calendario"),
+    "anexo_penalidad_pct_dia":  ("0", "float", "anexo", "Penalidad por cada día de atraso, como % del valor del anexo (0 = sin penalidad cuantificada)", "%"),
+    "anexo_penalidad_tope_pct": ("0", "float", "anexo", "Tope máximo acumulado de penalidades, como % del valor del anexo (obligatorio si hay penalidad diaria)", "%"),
 }
 _REGLAS_CACHE = None
 
