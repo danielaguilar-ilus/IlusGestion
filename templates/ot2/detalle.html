@@ -1927,6 +1927,32 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 #otdRutaRescate a{display:flex;align-items:center;justify-content:center;gap:8px;
   min-height:48px;background:#f59e0b;color:#fff;font-weight:800;border-radius:10px;
   text-decoration:none;margin-top:4px}
+
+/* 🩺 Diagnóstico por equipo (2026-09-07). Semáforo grande: lo usa un
+   técnico de pie, con guantes y en el celular. 44px de alto (REGLA #3). */
+.otd-dx{margin:10px 0;padding:11px 12px;background:#f8fafc;
+  border:1px solid #e5e7eb;border-radius:11px}
+.otd-dx-tit{font-size:.68rem;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:#64748b;margin-bottom:8px}
+.otd-dx-btns{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.otd-dx-b{display:flex;align-items:center;justify-content:center;gap:6px;
+  min-height:44px;padding:6px 8px;border-radius:9px;font-size:.76rem;
+  font-weight:800;background:#fff;border:1.5px solid #e5e7eb;color:#64748b;
+  cursor:pointer;transition:all .15s;text-align:center;line-height:1.15}
+.otd-dx-b > i{font-size:.9rem}
+.otd-dx-b:hover{border-color:#cbd5e1}
+.otd-dx-b.ok.on{background:#dcfce7;border-color:#16a34a;color:#166534}
+.otd-dx-b.obs.on{background:#fff8e1;border-color:#f59e0b;color:#92400e}
+.otd-dx-b.fail.on{background:#fee2e2;border-color:#dc2626;color:#991b1b}
+.otd-dx-txt{margin-top:9px}
+.otd-dx-txt[hidden]{display:none}
+.otd-dx-txt textarea{width:100%;font-size:16px;padding:9px 11px;border-radius:9px;
+  border:1px solid #d1d5db;resize:vertical;font-family:inherit;line-height:1.45}
+.otd-dx-save{margin-top:7px;min-height:44px;width:100%;border-radius:9px;
+  background:#0a0a0a;color:#fff;border:0;font-weight:800;font-size:.8rem;cursor:pointer}
+.otd-dx-save:hover{background:#dc2626}
+.otd-dx-save:disabled{opacity:.6;cursor:default}
+@media (max-width:420px){ .otd-dx-btns{grid-template-columns:1fr} }
 </style>
 
 <div class="ot2 otd">
@@ -3804,6 +3830,49 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% endif %}
             </div>
 
+            {#- 🩺 2026-09-07 (Daniel: "dale con el diagnóstico por equipo").
+                Era lo primero que le faltaba a OT 2.0 para poder reemplazar a
+                la pantalla clásica: acá el diagnóstico se MOSTRABA pero no se
+                podía registrar, así que un técnico del piloto tenía que
+                volver a la pantalla vieja solo para eso. Y es un dato que
+                Daniel llamó "muy importante": cada máquina con su propio
+                veredicto, además del diagnóstico general de la OT.
+
+                Usa el MISMO endpoint que la pantalla clásica
+                (/mantenciones/api/visitas/<vid>/equipos/<mid>/diagnostico):
+                cero lógica nueva en el backend, y las dos pantallas no pueden
+                divergir en las reglas. El backend exige texto (≥10
+                caracteres) para observación y falla; acá se pide antes de
+                mandar, para no hacer viajar un rechazo seguro.
+
+                OJO: `diagnostico_estado` NO es lo mismo que
+                `estado_revision` (saltar/verificar). Este es el veredicto
+                técnico sobre la máquina. -#}
+            {% if puede_ejecutar and not ot_solo_lectura %}
+            <div class="otd-dx" data-mid="{{ e.id }}">
+              <div class="otd-dx-tit">Diagnóstico de este equipo</div>
+              <div class="otd-dx-btns">
+                <button type="button" class="otd-dx-b ok{{ ' on' if e.diagnostico_estado == 'aprobado' }}"
+                        data-dx="aprobado" onclick="otdDx({{ e.id }}, 'aprobado')">
+                  <i class="bi bi-check-circle-fill"></i> Aprobado</button>
+                <button type="button" class="otd-dx-b obs{{ ' on' if e.diagnostico_estado == 'observacion' }}"
+                        data-dx="observacion" onclick="otdDx({{ e.id }}, 'observacion')">
+                  <i class="bi bi-exclamation-triangle-fill"></i> Con observación</button>
+                <button type="button" class="otd-dx-b fail{{ ' on' if e.diagnostico_estado == 'falla' }}"
+                        data-dx="falla" onclick="otdDx({{ e.id }}, 'falla')">
+                  <i class="bi bi-x-octagon-fill"></i> Con falla</button>
+              </div>
+              <div class="otd-dx-txt" id="otdDxBox-{{ e.id }}"
+                   {% if e.diagnostico_estado not in ('observacion','falla') %}hidden{% endif %}>
+                <textarea id="otdDxT-{{ e.id }}" rows="2" maxlength="3000"
+                          placeholder="Describe qué observaste (mínimo 10 caracteres)"
+                          >{{ e.diagnostico_texto or '' }}</textarea>
+                <button type="button" class="otd-dx-save" onclick="otdDxGuardar({{ e.id }})">
+                  <i class="bi bi-save me-1"></i>Guardar diagnóstico</button>
+              </div>
+            </div>
+            {% endif %}
+
             {% if e.razon_saltado %}
             <div class="otd-wk-note">Saltado — motivo: {{ e.razon_saltado | replace('_',' ') | title }}</div>
             {% endif %}
@@ -3965,6 +4034,102 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   </div>
 </div>
 <script>
+/* 🩺 DIAGNÓSTICO POR EQUIPO — 2026-09-07 ==========================
+   Mismo endpoint que la pantalla clásica. Reglas del backend que se
+   respetan acá para no hacer viajar un rechazo seguro: 'aprobado' no
+   necesita texto; 'observacion' y 'falla' exigen 10 caracteres. */
+const OTD_DX_MIN = 10;
+const _otdDxSel = {};   // mid -> estado elegido pero todavia sin guardar
+
+function otdDx(mid, estado){
+  _otdDxSel[mid] = estado;
+  var cont = document.querySelector('.otd-dx[data-mid="' + mid + '"]');
+  if (cont){
+    cont.querySelectorAll('.otd-dx-b').forEach(function(b){
+      b.classList.toggle('on', b.dataset.dx === estado);
+    });
+  }
+  var box = document.getElementById('otdDxBox-' + mid);
+  if (estado === 'aprobado'){
+    /* Aprobado se guarda de inmediato: es el caso comun y pedirle un clic
+       mas al tecnico por cada maquina es justo lo que hace que no lo
+       registre. El texto se conserva por si vuelve a observacion. */
+    if (box) box.hidden = true;
+    otdDxEnviar(mid, 'aprobado', '');
+    return;
+  }
+  if (box){
+    box.hidden = false;
+    var t = document.getElementById('otdDxT-' + mid);
+    if (t) t.focus();
+  }
+}
+
+function otdDxGuardar(mid){
+  var estado = _otdDxSel[mid];
+  if (!estado){
+    // Puede venir de un diagnostico ya guardado: se toma el boton marcado.
+    var on = document.querySelector('.otd-dx[data-mid="' + mid + '"] .otd-dx-b.on');
+    estado = on ? on.dataset.dx : '';
+  }
+  if (!estado){
+    ilusToast('Elige primero si el equipo queda aprobado, con observación o con falla.',
+              {type:'warning'});
+    return;
+  }
+  var t = document.getElementById('otdDxT-' + mid);
+  var txt = t ? t.value.trim() : '';
+  if (estado !== 'aprobado' && txt.length < OTD_DX_MIN){
+    ilusToast('Describe el diagnóstico: al menos ' + OTD_DX_MIN + ' caracteres.',
+              {type:'warning'});
+    if (t) t.focus();
+    return;
+  }
+  otdDxEnviar(mid, estado, txt);
+}
+
+async function otdDxEnviar(mid, estado, txt){
+  var cont = document.querySelector('.otd-dx[data-mid="' + mid + '"]');
+  var btnSave = cont ? cont.querySelector('.otd-dx-save') : null;
+  if (btnSave) btnSave.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/visitas/' + OTD_VID +
+                          '/equipos/' + mid + '/diagnostico', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({estado: estado, texto: txt}),
+    });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo guardar el diagnóstico.', {type:'error'});
+      return;
+    }
+    var _lbl = {aprobado:'Aprobado', observacion:'Con observación', falla:'Con falla'}[estado] || estado;
+    ilusToast('\u2713 Diagnóstico guardado: ' + _lbl, {type:'success'});
+    /* La nota bajo el equipo se actualiza en el momento: si hay que
+       recargar para verlo, el técnico no sabe si quedó guardado \u2014 y ese
+       es justo el patrón que ya nos hizo perder datos en el móvil. */
+    if (cont){
+      var nota = cont.parentElement
+        ? cont.parentElement.querySelector('.otd-wk-note.otd-dx-nota') : null;
+      if (!nota && cont.parentElement){
+        nota = document.createElement('div');
+        nota.className = 'otd-wk-note otd-dx-nota';
+        cont.parentElement.insertBefore(nota, cont.nextSibling);
+      }
+      if (nota){
+        nota.textContent = txt || _lbl;
+        nota.classList.toggle('falla', estado === 'falla');
+        nota.hidden = false;
+      }
+    }
+  } catch(e){
+    ilusToast('Error de conexión al guardar el diagnóstico.', {type:'error'});
+  } finally {
+    if (btnSave) btnSave.disabled = false;
+  }
+}
+
 /* 🛣️ RUTA EN OT 2.0 — 2026-09-07 ==================================
    El patrón de apertura es el punto delicado y por eso va comentado: la
    ventana se abre en el MISMO tick del toque. Un navegador solo permite
