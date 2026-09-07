@@ -1896,6 +1896,37 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-anx-tl .p b{display:block;font-size:.8rem;color:#0f172a;margin-top:2px}
 .otd-anx-tl .p.ok b{color:#166534}
 .otd-anx-tl .p small{display:block;font-size:.66rem;color:#94a3b8}
+
+/* 🛣️ Ruta en OT 2.0 (2026-09-07) */
+.otd-qabtn.ruta{background:#1e3a8a;border-color:#1e3a8a;color:#fff;cursor:pointer}
+.otd-qabtn.ruta:hover{background:#1e40af;border-color:#1e40af;color:#fff}
+.otd-ruta-head{background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff;border:0}
+.otd-ruta-dest{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;
+  padding:10px 12px;margin-bottom:12px}
+.otd-ruta-dest small{display:block;font-size:.66rem;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:#94a3b8}
+.otd-ruta-dest > div{font-weight:700;color:#0f172a;font-size:.88rem;
+  line-height:1.4;overflow-wrap:anywhere}
+.otd-ruta-detalle{margin-top:5px;font-size:.78rem;font-weight:700;color:#92400e;
+  background:#fff8e1;border:1px solid #fde68a;border-radius:7px;padding:5px 8px}
+.otd-ruta-detalle > i{margin-right:5px}
+.otd-ruta-app{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;padding:11px 13px;
+  margin-bottom:9px;min-height:56px;transition:border-color .15s,box-shadow .15s}
+.otd-ruta-app:hover{border-color:#cbd5e1;box-shadow:0 2px 10px rgba(15,23,42,.07)}
+.otd-ruta-app .lg{flex:0 0 auto;width:36px;height:36px;border-radius:9px;display:grid;
+  place-items:center;color:#fff;font-weight:900;font-size:1rem}
+.otd-ruta-app.g .lg{background:linear-gradient(135deg,#4285f4,#34a853)}
+.otd-ruta-app.w .lg{background:linear-gradient(135deg,#33ccff,#0099cc)}
+.otd-ruta-app.s .lg{background:#94a3b8}
+.otd-ruta-app .tx{flex:1;min-width:0}
+.otd-ruta-app .tx b{display:block;font-size:.86rem;color:#0f172a}
+.otd-ruta-app .tx small{display:block;font-size:.73rem;color:#94a3b8}
+.otd-ruta-app > i{color:#cbd5e1;flex:0 0 auto}
+#otdRutaRescate[hidden]{display:none}
+#otdRutaRescate a{display:flex;align-items:center;justify-content:center;gap:8px;
+  min-height:48px;background:#f59e0b;color:#fff;font-weight:800;border-radius:10px;
+  text-decoration:none;margin-top:4px}
 </style>
 
 <div class="ot2 otd">
@@ -2146,6 +2177,45 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     </div>
     {% endif %}
 
+    {#- Modal de ruta de OT 2.0. Mismas tres opciones que la pantalla
+        clásica (Google / Waze / ya estoy acá), pero con el patrón de
+        apertura correcto desde el día uno: ver otdIniciarRuta(). -#}
+    <div class="modal fade" id="otdModalRuta" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius:14px;overflow:hidden">
+          <div class="modal-header otd-ruta-head">
+            <h5 class="modal-title fw-bold">
+              <i class="bi bi-signpost-split-fill me-2"></i>Iniciar ruta</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                    aria-label="Cerrar"></button>
+          </div>
+          <div class="modal-body">
+            <div class="otd-ruta-dest">
+              <small>Destino</small>
+              <div id="otdRutaDestino"></div>
+              {% if v.direccion_detalle %}
+              <div class="otd-ruta-detalle">
+                <i class="bi bi-building"></i>{{ v.direccion_detalle }}</div>
+              {% endif %}
+            </div>
+            <button type="button" class="otd-ruta-app g" onclick="otdIniciarRuta('google')">
+              <span class="lg">G</span>
+              <span class="tx"><b>Google Maps</b><small>Navegación paso a paso</small></span>
+              <i class="bi bi-chevron-right"></i></button>
+            <button type="button" class="otd-ruta-app w" onclick="otdIniciarRuta('waze')">
+              <span class="lg">W</span>
+              <span class="tx"><b>Waze</b><small>Alertas de tráfico</small></span>
+              <i class="bi bi-chevron-right"></i></button>
+            <button type="button" class="otd-ruta-app s" onclick="otdIniciarRuta('saltado')">
+              <span class="lg"><i class="bi bi-skip-forward-fill"></i></span>
+              <span class="tx"><b>Ya estoy en el lugar</b><small>No abrir navegador</small></span>
+              <i class="bi bi-chevron-right"></i></button>
+            <div id="otdRutaRescate" hidden></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     {# ── Acciones rápidas: contraparte (Llamar/WhatsApp/Correo) + CTA verde ── #}
     <div class="otd-qa">
       {% if v.contacto_tel %}
@@ -2160,6 +2230,27 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% if v.contacto_email %}
       <a class="otd-qabtn mail" href="mailto:{{ v.contacto_email }}">
         <i class="bi bi-envelope-fill"></i> Correo</a>
+      {% endif %}
+
+      {#- 🛣️ 2026-09-07 (Daniel, urgente: "cuando el técnico quiere entrar a
+          gestionar la ruta no están juntos, no está funcionando el botón de
+          Waze").
+
+          Tenía razón en las dos cosas, y la segunda era peor de lo que
+          parecía: OT 2.0 NO TENÍA botón de Waze. El único del proyecto vive
+          en la pantalla clásica (ot_ejecutar.html), y el 30-08 se quitaron
+          los enlaces de OT 2.0 hacia ella — así que el técnico del piloto
+          se quedó sin ninguna forma de llegar al modal de ruta. Lo único
+          que tenía acá era un "Abrir mapa" perdido en la pestaña
+          Información, que además abre un PIN DE BÚSQUEDA, no navegación.
+
+          "No están juntos" era literal: la acción de mapa estaba en otra
+          tarjeta y otra pestaña que Llamar/WhatsApp. Por eso este botón va
+          acá, en la misma fila, que es donde el técnico ya mira. -#}
+      {% set _ruta_dir = v.direccion_visita or v.cliente_direccion %}
+      {% if _ruta_dir or (v.direccion_lat and v.direccion_lng) %}
+      <button type="button" class="otd-qabtn ruta" onclick="otdAbrirRuta()">
+        <i class="bi bi-signpost-split-fill"></i> Ruta</button>
       {% endif %}
 
       {# 🔀 2026-09-02 (Daniel: "esos botones colócalo al lado del botón de
@@ -3862,6 +3953,102 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   </div>
 </div>
 <script>
+/* 🛣️ RUTA EN OT 2.0 — 2026-09-07 ==================================
+   El patrón de apertura es el punto delicado y por eso va comentado: la
+   ventana se abre en el MISMO tick del toque. Un navegador solo permite
+   abrir una ventana mientras dura la "activación" que da el gesto del
+   usuario; si antes se hace `await` de red, en iOS se pierde SIEMPRE y en
+   Android se pierde cuando la red va lenta -- y el bloqueo es mudo, sin
+   error ni aviso. Ese fue exactamente el bug de la pantalla clásica.
+
+   El registro del inicio de ruta sale después, con keepalive, que existe
+   para que el request sobreviva a que la pantalla salte a otra app. */
+const OTD_RUTA = {
+  vid:  {{ v.id }},
+  lat:  {{ (v.direccion_lat | float) | tojson if v.direccion_lat else 'null' }},
+  lng:  {{ (v.direccion_lng | float) | tojson if v.direccion_lng else 'null' }},
+  dir:  {{ (v.direccion_visita or v.cliente_direccion or '') | tojson }},
+  comuna: {{ (v.cliente_comuna or '') | tojson }},
+};
+
+/* La dirección SOLA no le sirve a Waze: "Puerta Oriente, Local 03B" no
+   existe en ninguna parte sin su comuna. Se agrega comuna y país, cuidando
+   de no repetirlos si el texto ya los trae. */
+function otdDestinoTexto(){
+  let d = (OTD_RUTA.dir || '').trim();
+  const c = (OTD_RUTA.comuna || '').trim();
+  if (!d) return '';
+  if (c && d.toLowerCase().indexOf(c.toLowerCase()) === -1) d += ', ' + c;
+  if (!/chile\s*$/i.test(d)) d += ', Chile';
+  return d;
+}
+function otdHayCoords(){ return OTD_RUTA.lat != null && OTD_RUTA.lng != null; }
+
+function otdAbrirRuta(){
+  const txt = otdHayCoords()
+    ? (otdDestinoTexto() || (OTD_RUTA.lat + ', ' + OTD_RUTA.lng))
+    : otdDestinoTexto();
+  const cont = document.getElementById('otdRutaDestino');
+  if (cont) cont.textContent = txt || 'Sin dirección registrada';
+  const resc = document.getElementById('otdRutaRescate');
+  if (resc){ resc.hidden = true; resc.innerHTML = ''; }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalRuta')).show();
+}
+
+function otdIniciarRuta(app){
+  // 1) La URL primero: nada de esperas antes de abrir.
+  let url = '';
+  if (app !== 'saltado'){
+    const txt = otdDestinoTexto();
+    if (app === 'google'){
+      const dest = otdHayCoords() ? (OTD_RUTA.lat + ',' + OTD_RUTA.lng)
+                                  : encodeURIComponent(txt);
+      url = 'https://www.google.com/maps/dir/?api=1&destination=' + dest + '&travelmode=driving';
+    } else {
+      url = otdHayCoords()
+        ? ('https://www.waze.com/ul?ll=' + OTD_RUTA.lat + '%2C' + OTD_RUTA.lng + '&navigate=yes')
+        : ('https://www.waze.com/ul?q=' + encodeURIComponent(txt) + '&navigate=yes');
+    }
+    if (!otdHayCoords() && !txt){
+      ilusToast('Esta OT no tiene dirección ni coordenadas para navegar.', {type:'warning'});
+      return;
+    }
+  }
+
+  // 2) Abrir YA, con la activación del toque viva.
+  let ventana = null;
+  if (url){ try { ventana = window.open(url, '_blank'); } catch(e){ ventana = null; } }
+
+  // 3) Recién ahora el registro, sin esperarlo. Sin esto el cronómetro y
+  //    el seguimiento en vivo del monitor no se enteran de que salió.
+  try {
+    fetch('/mantenciones/api/visitas/' + OTD_RUTA.vid + '/iniciar-ruta', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ app: app, lat: null, lng: null }), keepalive: true
+    }).catch(function(){});
+  } catch(e){}
+
+  if (app === 'saltado'){
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalRuta')).hide();
+    ilusToast('OK, comienza a trabajar', {type:'success'});
+    return;
+  }
+
+  // 4) Si el navegador igual bloqueó, no quedarse mudo.
+  const resc = document.getElementById('otdRutaRescate');
+  if (url && !ventana && resc){
+    const nom = (app === 'waze') ? 'Waze' : 'Google Maps';
+    resc.innerHTML = '<a target="_blank" rel="noopener" href="' + url + '">' +
+      '<i class="bi bi-box-arrow-up-right"></i>Abrir ' + nom + '</a>';
+    resc.hidden = false;
+    ilusToast('El navegador bloqueó la apertura. Toca el botón amarillo.', {type:'warning'});
+    return;
+  }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalRuta')).hide();
+  ilusToast('Ruta iniciada · ' + (app === 'waze' ? 'Waze' : 'Google Maps'), {type:'success'});
+}
+
   /* La barra fija tapa el final de la página: se compensa con padding en
      el contenedor, y solo cuando la barra existe de verdad. */
   document.querySelector('.ot2.otd')?.classList.add('has-bottombar');
