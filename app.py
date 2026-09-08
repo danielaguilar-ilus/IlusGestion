@@ -293,6 +293,21 @@ def _hoy_chile_rango_utc(fecha=None):
 
 app = Flask(__name__)
 
+# 🔒 2026-09-08 (Daniel: "revisa la ciberseguridad de ese link... que esté
+# blindada"). Auditando /firmar-anexo/<token>: `_subir_firma_storage` decodifica
+# el `firma_png` (dataURL base64) que manda CUALQUIERA con el token, sin
+# ningún límite de tamaño -- ni acá, ni en request.form/request.files en
+# general, porque MAX_CONTENT_LENGTH nunca se había fijado en toda la app.
+# Sin este techo, un POST con un cuerpo gigante (firma, foto, lo que sea)
+# se acepta entero antes de que el código de cada endpoint alcance a
+# revisar nada -- memoria del proceso agotada por una sola request. 60MB
+# cubre con margen el caso real más grande conocido (varias fotos de
+# equipo en una sola subida, cada una hasta ~20MB) sin abrir la puerta a
+# un cuerpo sin límite. Los límites MÁS chicos de cada endpoint (ej. 20MB
+# por foto) se mantienen intactos: este es el techo duro de respaldo, no
+# el reemplazo de esos.
+app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024
+
 # ── Cloud Run / proxy inverso ──────────────────────────────────────────────
 # Cloud Run termina el TLS en su proxy y reenvía al contenedor por HTTP. Sin
 # esto, request.scheme="http" → url_for(_external=True) genera enlaces "http://"
@@ -85806,9 +85821,18 @@ def ot2_api_anexo_preview_pdf():
                      headers={"Content-Disposition": f'inline; filename="{_fname_prev}"'})
 
 
+_ANEXO_ERR_MSG = {
+    "declaracion": "Falta aceptar la declaración del anexo antes de firmar.",
+    "datos": "Falta tu nombre o tu RUT para poder firmar.",
+    "firma": "No se recibió tu firma dibujada — vuelve a intentarlo.",
+    "guardado": "No pudimos guardar la firma — vuelve a intentarlo.",
+}
+
+
 @app.route("/firmar-anexo/<token>", methods=["GET"])
 def ot2_anexo_firma_publica(token):
     """Página pública (sin login) donde el proveedor lee y firma el anexo."""
+    _error_envio = _ANEXO_ERR_MSG.get((request.args.get("err") or "").strip())
     if not _ot_tv_token_valido(token):
         return render_template("ot2/anexo_firma.html", valido=False, ya_firmado=False)
     a = mysql_fetchone("SELECT * FROM mant_anexos WHERE token=%s", (token,))
@@ -85844,7 +85868,8 @@ def ot2_anexo_firma_publica(token):
         # anexo sin documentos detras seria una columna de guiones.
         productos_con_doc=any((x or {}).get("documento")
                               for x in (_anexo_productos_guardados(a) or [])),
-        submit_url=url_for("ot2_anexo_firma_submit", token=token))
+        submit_url=url_for("ot2_anexo_firma_submit", token=token),
+        error_envio=_error_envio)
 
 
 @app.route("/firmar-anexo/<token>", methods=["POST"])
@@ -85857,16 +85882,31 @@ def ot2_anexo_firma_submit(token):
     firma_png (dataURL), doc_hash (SHA-256 calculado en el navegador sobre
     el texto que el firmante realmente leyó), firmado_en_iso, dispositivo,
     declaracion_aceptada.
+
+    🔴 FIX 2026-09-08 (Daniel: "cuando terminás de firmar el anexo me deja
+    un mensaje como un JSON... corrige eso y déjale un mensaje de cierre").
+    `window.onAnexoFirmado` -- el único gancho que haría que la página
+    intercepte este POST por fetch y maneje la respuesta JSON -- NUNCA se
+    define en ningún lado de este proyecto (se busca con `typeof ===
+    'function'`, pero nadie lo asigna). O sea: TODA firma real cae por el
+    <form> tradicional, y el navegador navega derecho al JSON crudo que
+    este endpoint devolvía. No era un caso raro, era el 100% de las firmas.
+    Ahora responde con una REDIRECCIÓN a la misma página pública (GET),
+    que ya sabe pintar "ya firmado" con la firma fresca, o el motivo con
+    `?err=` para los pocos casos que no son "ya firmado".
     """
+    def _volver(err=None):
+        return redirect(url_for("ot2_anexo_firma_publica", token=token, err=err))
+
     if not _ot_tv_token_valido(token):
-        return jsonify({"ok": False, "error": "Enlace inválido."}), 400
+        return _volver()
     a = mysql_fetchone("SELECT * FROM mant_anexos WHERE token=%s", (token,))
     if not a:
-        return jsonify({"ok": False, "error": "Enlace inválido."}), 404
+        return _volver()
     if a["estado"] == "firmado":
-        return jsonify({"ok": False, "error": "Este anexo ya fue firmado."}), 400
+        return _volver()
     if a.get("token_expira_at") and datetime.utcnow() > a["token_expira_at"]:
-        return jsonify({"ok": False, "error": "El enlace venció."}), 400
+        return _volver()
 
     d = request.form or {}
     nombre = (d.get("firmante_nombre") or "").strip()[:200]
@@ -85876,11 +85916,17 @@ def ot2_anexo_firma_submit(token):
     firmado_cliente = (d.get("firmado_en_iso") or "").strip()[:60]
     dispositivo = (d.get("dispositivo") or "").strip()[:200]
     if not str(d.get("declaracion_aceptada") or "").strip():
-        return jsonify({"ok": False, "error": "Falta aceptar la declaración del anexo."}), 400
+        return _volver("declaracion")
     if not nombre or not rut:
-        return jsonify({"ok": False, "error": "Falta nombre o RUT de quien firma."}), 400
+        return _volver("datos")
     if not firma_data_url.startswith("data:"):
-        return jsonify({"ok": False, "error": "Falta la firma."}), 400
+        return _volver("firma")
+    # 🔒 2026-09-08: un trazo de firma en un <canvas> nunca pesa más que
+    # unos cientos de KB -- 3MB de texto base64 ya es más de lo que una
+    # firma real produce. Cualquier cosa por sobre eso no es una firma que
+    # se olvidó de comprimir, es un payload que no debería procesarse.
+    if len(firma_data_url) > 3 * 1024 * 1024:
+        return _volver("firma")
 
     a_full = _anexo_dict(a)
     # Dos huellas con propósito distinto -- no son redundantes:
@@ -85910,14 +85956,12 @@ def ot2_anexo_firma_submit(token):
              nombre, rut, firma_url, ip, ua, a["id"]))
     except Exception as e:
         print(f"[anexo_firmar] {e}", flush=True)
-        return jsonify({"ok": False, "error": "No pudimos guardar la firma."}), 500
+        return _volver("guardado")
     if not _filas:
         # Alguien más lo firmó, o el anexo ya no está en un estado firmable.
-        # Se dice, en vez de festejar una firma que no ocurrió.
-        return jsonify({"ok": False,
-                        "error": "Este anexo ya no está disponible para firmar. "
-                                 "Puede que ya se haya firmado o anulado; "
-                                 "contáctate con ILUS Fitness."}), 409
+        # La redirección a la GET pública ya resuelve cuál es el caso real
+        # (normalmente "ya firmado" por la otra petición que sí alcanzó).
+        return _volver()
 
     try:
         _mant_log("anexo", a["id"], "firmado",
@@ -85950,7 +85994,9 @@ def ot2_anexo_firma_submit(token):
         if "@" not in _dest_aviso:
             _brand_aviso = _get_brand_cfg()
             _dest_aviso = _brand_aviso.get("support_email") or "soportetec@sphs.cl"
-        _ot_link_aviso = url_for("mant_ot_ficha", vid=a["ot_id"], _external=True) if a.get("ot_id") else None
+        # 🔴 FIX 2026-09-08: mismo hallazgo del link a la ficha clasica que
+        # ya se corrigio en ot2_api_crear y ot2_api_anexo_enviar.
+        _ot_link_aviso = url_for("ot2_detalle", vid=a["ot_id"], _external=True) if a.get("ot_id") else None
         _cuerpo_aviso = (
             _mant_email_hero("Anexo firmado",
                              f"N° {a['numero']}",
@@ -85972,7 +86018,7 @@ def ot2_anexo_firma_submit(token):
     except Exception as _e_aviso:
         print(f"[anexo_firmar] aviso de firma no se pudo enviar: {_e_aviso}", flush=True)
 
-    return jsonify({"ok": True, "mensaje": "Anexo firmado correctamente."})
+    return _volver()
 
 
 # 🔒 2026-09-02 — Desde esta fecha, una OT de proveedor EXTERNO exige
