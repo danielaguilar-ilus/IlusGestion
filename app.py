@@ -43373,6 +43373,163 @@ def tr_simpliroute_rescatar_congeladas():
     })
 
 
+@app.route("/transporte/api/simpliroute/buscar-visita-real", methods=["POST"])
+@_tr_required
+def tr_simpliroute_buscar_visita_real():
+    """Búsqueda profunda BAJO DEMANDA (nunca desde el poller automático de
+    cada 10 min) de la visita REAL de un item que sigue 'pending' para
+    siempre mientras el documento ya fue entregado por el courier bajo OTRA
+    visita — el mismo problema que _simpliroute_poll_batch ya sabe resolver
+    (prioriza la visita con reference igual y más avanzada), pero esa
+    función solo mira 3 fechas: la del manifiesto, hoy, y un índice perezoso
+    de los ÚLTIMOS 7 DÍAS DESDE HOY (ver _indice_7d ahí mismo). Si la visita
+    real quedó en una fecha fuera de esas tres, el poller nunca la ve —
+    caso real confirmado 2026-09-08 (Daniel, con captura del portal propio
+    de Felca): FCV 11151 entregado el 25-ago, ILUS seguía mostrando
+    'pending' porque esa fecha no calzaba con ninguno de los 3 buckets.
+
+    Barre día por día desde la fecha del manifiesto hasta HOY (tope 90 días,
+    1 request por día — carísimo para correr cada 10 min, aceptable para una
+    acción manual ocasional desde el panel "Visitas sin planificar").
+    Reusa el MISMO patrón exacto que ya usa el poller para el swap: prioriza
+    reference igual (con o sin prefijo de tido) y más avanzada que la
+    guardada, respeta _sr_visita_pertenece_a_otro_manifiesto, y aplica el
+    estado real con _tr_apply_carrier_status (mismo choke-point, no se
+    reimplementa) — notify_cliente=False porque es una re-vinculación: el
+    cliente ya vivió su entrega, un correo ahora solo confunde (mismo
+    criterio ya usado en el poller para este caso exacto).
+    """
+    import simpliroute_client as _src
+
+    body = request.get_json(silent=True) or {}
+    try:
+        item_id = int(body.get("item_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "item_id inválido."}), 400
+
+    fila = mysql_fetchone("""
+        SELECT mi.id AS item_id, mi.simpliroute_visit_id, mi.manifest_id, mi.commitment_id,
+               mi.estado_entrega, tm.courier, tm.fecha AS fecha_manifiesto, c.tido, c.nudo
+        FROM transport_manifest_items mi
+        JOIN transport_manifests tm ON tm.id = mi.manifest_id
+        LEFT JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.id=%s
+    """, (item_id,))
+    if not fila:
+        return jsonify({"ok": False, "error": "Item no encontrado."}), 404
+
+    vid_actual = (fila.get("simpliroute_visit_id") or "").strip()
+    if not vid_actual:
+        return jsonify({"ok": False, "error": "Este item no tiene visita SimpliRoute guardada."}), 400
+    token = _simpliroute_token_for_courier(fila.get("courier"))
+    if not token:
+        return jsonify({"ok": False, "error": "Sin token configurado para este courier."}), 400
+
+    ref_con_tido = _sr_normalizar_reference(
+        f"{(fila.get('tido') or '').strip()}-{(fila.get('nudo') or '').strip()}".strip("-"))
+    ref_pelada = _sr_normalizar_reference((fila.get("nudo") or "").strip())
+    refs_buscadas = {r for r in (ref_con_tido, ref_pelada) if r}
+    if not refs_buscadas:
+        return jsonify({"ok": False, "error": "No se pudo determinar la referencia de este documento."}), 400
+
+    def _rank(v):
+        # MISMA lógica que el _sr_rank interno de _simpliroute_poll_batch
+        # (no se puede importar: vive como closure ahí -- ver ese docstring
+        # para el porqué del criterio: terminal > checkout > pending > resto).
+        st = (v.get("status") or "").lower()
+        if st in (_src.SR_STATUS_COMPLETED, _src.SR_STATUS_FAILED, _src.SR_STATUS_PARTIAL):
+            return 2
+        if v.get("checkout_time"):
+            return 2
+        return 1 if st == _src.SR_STATUS_PENDING else 0
+
+    hoy = _now_chile().date()
+    fm = fila.get("fecha_manifiesto")
+    try:
+        desde = fm if hasattr(fm, "year") and not hasattr(fm, "hour") else fm.date()
+    except Exception:
+        desde = None
+    if desde is None:
+        try:
+            desde = datetime.strptime(str(fm)[:10], "%Y-%m-%d").date()
+        except Exception:
+            desde = hoy - timedelta(days=90)
+    dias_totales = max(1, min((hoy - desde).days + 1, 90))
+
+    mejor = None
+    mejor_rank = 1  # solo interesa algo MÁS AVANZADO que 'pending' (rank 1)
+    dias_revisados = 0
+    for delta in range(dias_totales):
+        f = hoy - timedelta(days=delta)
+        if f < desde:
+            break
+        dias_revisados += 1
+        r = _simpliroute_request(
+            "GET", f"{_src.EP_VISITS}?planned_date={f.isoformat()}", token, timeout=30)
+        if not r.get("ok"):
+            continue
+        visitas = r.get("data")
+        for v in (visitas if isinstance(visitas, list) else []):
+            if not isinstance(v, dict):
+                continue
+            if str(v.get("id")) == vid_actual:
+                continue  # es la misma que ya tenemos guardada, no cuenta
+            ref_v = _sr_normalizar_reference((v.get("reference") or "").strip())
+            if ref_v not in refs_buscadas:
+                continue
+            rk = _rank(v)
+            if rk > mejor_rank:
+                mejor_rank = rk
+                mejor = v
+
+    if mejor is None:
+        return jsonify({
+            "ok": True, "encontrada": False, "dias_revisados": dias_revisados,
+            "mensaje": f"No se encontró una visita más avanzada revisando {dias_revisados} día(s) "
+                       f"(desde {desde.isoformat()} hasta hoy). Puede que el courier realmente "
+                       f"todavía no la haya entregado.",
+        })
+
+    nuevo_id = str(mejor.get("id") or "")
+    if _sr_visita_pertenece_a_otro_manifiesto(
+            fila.get("commitment_id"), fila.get("manifest_id"), nuevo_id):
+        return jsonify({
+            "ok": True, "encontrada": False, "dias_revisados": dias_revisados,
+            "mensaje": "Se encontró una visita más avanzada, pero ya pertenece a OTRA fila "
+                       "de manifiesto de este mismo documento -- no se tocó.",
+        })
+
+    try:
+        mysql_execute(
+            "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+            "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW() WHERE id=%s",
+            (nuevo_id, mejor.get("tracking_id") or "", item_id))
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Se encontró la visita pero no se pudo guardar: {e}"}), 500
+
+    _tr_log("manifest_item", item_id, "visita SimpliRoute reconciliada (búsqueda manual)",
+            f"visit_id viejo {vid_actual} seguía sin avanzar; encontrada {nuevo_id} más "
+            f"avanzada (planned_date {mejor.get('planned_date')}), revisando "
+            f"{dias_revisados} día(s) hacia atrás")
+
+    estado_ilus, comentario = _src.estado_ilus_from_visit(mejor)
+    estado_aplicado = False
+    if estado_ilus:
+        try:
+            res = _tr_apply_carrier_status(
+                item_id, estado_ilus, fuente="simpliroute", tracking_number=None,
+                comentario=comentario, notify_cliente=False)
+            estado_aplicado = bool(res.get("changed"))
+        except Exception as e:
+            print(f"[sr-buscar-real] no se pudo aplicar estado a item {item_id}: {e}", flush=True)
+
+    return jsonify({
+        "ok": True, "encontrada": True, "visit_id": nuevo_id,
+        "planned_date": mejor.get("planned_date"), "estado": estado_ilus,
+        "estado_aplicado": estado_aplicado, "dias_revisados": dias_revisados,
+    })
+
+
 def _sr_planned_date_hoy():
     """La fecha con que nace una visita nueva en SimpliRoute: HOY, hora Chile.
 
@@ -82260,7 +82417,12 @@ def ot2_api_crear():
 
     return jsonify({
         "ok": True, "visita_id": vid, "numero_ot": numero_ot,
-        "ot_url": url_for("mant_ot_ficha", vid=vid),
+        # 🔴 FIX 2026-09-08 (Daniel: "cuando presiono crear la orden de
+        # trabajo, me lleva a las órdenes de trabajo antigua"). Apuntaba a
+        # mant_ot_ficha (/mantenciones/ot/<vid>, la ficha clásica) -- residuo
+        # de antes de que existiera ot2_detalle (/ot/<vid>). El wizard vive
+        # en OT 2.0; tiene que aterrizar en OT 2.0.
+        "ot_url": url_for("ot2_detalle", vid=vid),
         "n_tareas": n_tareas, "avisos": avisos,
     })
 

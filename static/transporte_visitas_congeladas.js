@@ -82,6 +82,15 @@
       +   '<td class="vc-num">' + fechaCL(c.planned_date) + '</td>'
       +   '<td class="vc-num"><span class="vc-dias" style="color:' + tono + '">'
       +     txtDias + '</span></td>'
+      +   '<td class="vc-num">'
+      +     '<button type="button" class="btn btn-sm btn-outline-dark vc-btn-buscar" '
+      +       'data-item-id="' + esc(c.item_id) + '" '
+      +       'title="Revisa día por día si el courier ya la entregó bajo OTRA visita, '
+      +       'desde la fecha del manifiesto hasta hoy">'
+      +       '<i class="bi bi-search"></i> Buscar entrega real'
+      +     '</button>'
+      +     '<div class="vc-sub vc-buscar-resultado" data-item-id="' + esc(c.item_id) + '"></div>'
+      +   '</td>'
       + '</tr>';
   }
 
@@ -147,6 +156,7 @@
       +     '<th class="vc-check"><input type="checkbox" class="form-check-input" id="vcTodas" checked></th>'
       +     '<th>Documento</th><th>Cliente</th><th>Courier</th>'
       +     '<th class="vc-num">Programada</th><th class="vc-num">Atraso</th>'
+      +     '<th class="vc-num">Entrega real</th>'
       +   '</tr></thead><tbody>'
       +   _cong.map(filaHtml).join('')
       + '</tbody></table></div>';
@@ -160,6 +170,9 @@
     }
     document.querySelectorAll('.vc-sel').forEach(function (ch) {
       ch.addEventListener('change', refrescarContador);
+    });
+    document.querySelectorAll('.vc-btn-buscar').forEach(function (b) {
+      b.addEventListener('click', function () { buscarEntregaReal(b); });
     });
 
     if (pie) pie.classList.remove('d-none');
@@ -285,6 +298,61 @@
     var pie = document.getElementById('vcPie');
     if (pie) pie.classList.add('d-none');
     if (d.rescatadas) ilusToast('✓ ' + d.rescatadas + ' visita(s) reprogramada(s)', { type: 'success' });
+  }
+
+  // ── Búsqueda profunda por item (2026-09-08) ─────────────────────────────
+  // Caso real (Daniel, con captura del portal propio de Felca): FCV 11151
+  // entregado el 25-ago, ILUS seguía mostrando "pending" porque el
+  // reprogramado de arriba solo mueve la MISMA visita fantasma -- si el
+  // courier entregó bajo OTRA visita, esto es lo único que la encuentra.
+  async function buscarEntregaReal(btn) {
+    var itemId = parseInt(btn.getAttribute('data-item-id'), 10);
+    if (!itemId) return;
+    var resDiv = document.querySelector('.vc-buscar-resultado[data-item-id="' + itemId + '"]');
+    var htmlOrig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Revisando…';
+    if (resDiv) resDiv.textContent = '';
+
+    var d;
+    try {
+      var r = await fetch('/transporte/api/simpliroute/buscar-visita-real', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId }),
+      });
+      d = await r.json();
+    } catch (e) {
+      d = null;
+    }
+
+    btn.disabled = false;
+    if (!d || !d.ok) {
+      btn.innerHTML = htmlOrig;
+      ilusToast((d && d.error) || 'No se pudo revisar. Intenta de nuevo.', { type: 'error' });
+      return;
+    }
+
+    if (!d.encontrada) {
+      btn.innerHTML = '<i class="bi bi-search"></i> Buscar entrega real';
+      if (resDiv) {
+        resDiv.textContent = 'Revisadas ' + d.dias_revisados + ' fecha(s), nada más avanzado.';
+      }
+      ilusToast(d.mensaje || 'No se encontró una entrega más avanzada.', { type: 'info' });
+      return;
+    }
+
+    // Encontrada y reconciliada: la fila ya no aplica más (se resolvió) --
+    // se saca de la lista en pantalla sin tener que recargar todo el panel.
+    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Resuelto';
+    btn.classList.remove('btn-outline-dark');
+    btn.classList.add('btn-success', 'disabled');
+    if (resDiv) {
+      resDiv.textContent = (d.estado || 'Estado actualizado') + ' · '
+        + fechaCL(d.planned_date) + ' (revisando ' + d.dias_revisados + ' fecha[s])';
+    }
+    ilusToast('✓ Entrega real encontrada' + (d.estado_aplicado ? ' y estado actualizado' : ''),
+               { type: 'success' });
   }
 
   // ── Enganche ─────────────────────────────────────────────────────────
