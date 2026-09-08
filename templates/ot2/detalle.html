@@ -1558,6 +1558,16 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-chk-gps-result.ok{background:#dcfce7;color:#15803d}
 .otd-chk-gps-result.baja{background:#fff8e1;color:#92400e}
 .otd-chk-gps-result small{font-weight:600;opacity:.85;font-size:.68rem}
+/* 🆕 2026-09-08 (Daniel, Bug 1): distancia REAL contra la dirección de la
+   OT -- dato aparte de la precisión del GPS (arriba), nunca deben
+   confundirse. Ver otdGpsResultadoHtml. */
+.otd-chk-gps-dist{display:flex;flex-direction:column;gap:2px;border-radius:8px;
+  padding:8px 10px;font-size:.76rem;font-weight:700;margin-top:6px}
+.otd-chk-gps-dist.ok{background:#dbeafe;color:#1d4ed8}
+.otd-chk-gps-dist.warn{background:#fff8e1;color:#92400e}
+.otd-chk-gps-dist.far{background:#fee2e2;color:#b91c1c}
+.otd-chk-gps-dist.na{background:#f3f4f6;color:#6b7280;font-weight:600}
+.otd-chk-gps-dist small{font-weight:600;opacity:.85;font-size:.68rem}
 
 /* Videos y documentos (adjuntos) — 2026-08-30 */
 .otd-adj-list{display:flex;flex-direction:column;gap:8px;padding:0 16px 14px}
@@ -8051,11 +8061,34 @@ function otdGpsResultadoHtml(t){
   const acc = (v.accuracy != null && isFinite(v.accuracy)) ? Number(v.accuracy) : null;
   const baja = !!(acc && acc > 500);
   const accTxt = acc != null ? ` — precisión ±${Math.round(acc)}m` : '';
-  return `<div class="otd-chk-gps-result ${baja ? 'baja' : 'ok'}">
+  const accHtml = `<div class="otd-chk-gps-result ${baja ? 'baja' : 'ok'}">
     <span><i class="bi bi-${baja ? 'exclamation-triangle-fill' : 'check-circle-fill'}"></i>
       Ubicación capturada${accTxt}</span>
     <small>${lat.toFixed(5)}, ${lng.toFixed(5)}</small>
   </div>`;
+  // 🆕 2026-09-08 (Daniel, Bug 1 en vivo: "pensé que ±12m era mi distancia
+  // a la instalación, pero era la precisión del GPS -- estaba en Colón y
+  // la OT es en Pucón camino al volcán y el sistema no me avisó"). Este
+  // bloque es la comparación REAL contra direccion_lat/lng de la OT
+  // (calculada en el backend, mant_visita_tarea_respuesta) -- separado a
+  // propósito de accHtml de arriba, con su propia etiqueta, para que
+  // nunca se puedan confundir precisión del GPS con distancia al sitio.
+  const dist = (v.dist_destino_m != null && isFinite(Number(v.dist_destino_m))) ? Number(v.dist_destino_m) : null;
+  let distHtml = '';
+  if (dist != null){
+    const distTxt = dist >= 1000 ? `${(dist/1000).toFixed(1)} km` : `${Math.round(dist)} m`;
+    const clase = dist > 3000 ? 'far' : (dist > 500 ? 'warn' : 'ok');
+    const icono = clase === 'far' ? 'exclamation-octagon-fill' : (clase === 'warn' ? 'exclamation-triangle-fill' : 'geo-fill');
+    distHtml = `<div class="otd-chk-gps-dist ${clase}">
+      <span><i class="bi bi-${icono}"></i> Estás a ${distTxt} de la dirección de la visita</span>
+      ${clase === 'far' ? '<small>Revisa que estés en el sitio correcto, o que la dirección del cliente esté bien cargada.</small>' : ''}
+    </div>`;
+  } else {
+    distHtml = `<div class="otd-chk-gps-dist na">
+      <span><i class="bi bi-question-circle"></i> Sin dirección registrada para comparar la distancia</span>
+    </div>`;
+  }
+  return accHtml + distHtml;
 }
 
 // Ayuda simplificada para permiso denegado -- versión trasplantada y
@@ -8120,11 +8153,32 @@ async function otdCapturarGps(tid){
     }
     const acc = r.accuracy;
     const baja = !!(acc && acc > 500);
-    await otdChkGuardar(tid, { lat: r.lat, lng: r.lng, accuracy: acc, source: r.method });
+    const gd = await otdChkGuardar(tid, { lat: r.lat, lng: r.lng, accuracy: acc, source: r.method });
+    // 🔴 FIX 2026-09-08 (Bug 1, Daniel en vivo): el toast de abajo SOLO
+    // hablaba de `accuracy` (precisión del GPS del dispositivo) y Daniel lo
+    // entendió como "distancia a la instalación" -- nunca lo fue. Ahora, si
+    // el backend pudo comparar contra la dirección real de la OT
+    // (dist_destino_m -- ver mant_visita_tarea_respuesta), se lo decimos
+    // aparte y explícito. Lejos de verdad (>3km, el caso real fue Colón vs.
+    // Pucón, cientos de km) usa ilusAlert -- amerita que el técnico lo
+    // confirme leído, no un toast que se puede perder.
+    const dist = (gd && gd.valor_norm && gd.valor_norm.dist_destino_m != null)
+      ? Number(gd.valor_norm.dist_destino_m) : null;
+    const distTxt = dist != null ? (dist >= 1000 ? `${(dist/1000).toFixed(1)} km` : `${Math.round(dist)} m`) : null;
     if (baja){
       ilusToast(`📍 Ubicación guardada con precisión baja (±${Math.round(acc)}m). Si puedes, sal un momento y vuelve a capturar para afinarla.`, {type:'warning', duration:6000});
     } else {
       ilusToast(`📍 GPS guardado (±${Math.round(acc||0)}m)`, {type:'success', duration:3500});
+    }
+    if (dist != null && dist > 3000){
+      await ilusAlert({
+        title: '📍 Estás lejos de la dirección de la visita',
+        message: `Tu ubicación quedó guardada, pero está a ${distTxt} de la dirección registrada para esta OT.`,
+        sub: 'Verifica que estés en el sitio correcto, o que la dirección del cliente esté bien cargada en la ficha.',
+        type: 'warning',
+      });
+    } else if (distTxt){
+      ilusToast(`Estás a ${distTxt} de la dirección de la visita`, {type: dist > 500 ? 'warning' : 'info', duration:4000});
     }
   } catch(err){
     clearInterval(tick);
@@ -8915,6 +8969,9 @@ async function otdChkGuardar(tid, valorCrudo){
     if (d.warning) ilusToast(d.warning, {type:'warning'});
     else if (d.completada) ilusToast('✓ Guardado', {type:'success', duration:1200});
     otdRenderChecklistEquipo(mid);
+    return d;   // 🆕 2026-09-08 (Bug 1): otdCapturarGps necesita leer
+                // d.valor_norm.dist_destino_m para avisar de inmediato si
+                // la captura quedó lejos de la dirección de la visita.
   } catch(e){
     // 🆕 2026-09-02: acá se PERDÍA la respuesta. Ahora se guarda en el
     // teléfono y se reintenta sola. El técnico ve la marca puesta en

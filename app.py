@@ -73482,18 +73482,39 @@ def mant_visita_equipo_diagnostico(vid, mid):
     texto = texto[:3000]
 
     user = current_username()
+    # 🔴 FIX 2026-09-08 (Bug 2, Daniel en vivo: "marco fuera de servicio, no
+    # lo pude revisar, guardo el diagnóstico... y me sigue pidiendo el
+    # equipo para poder firmar"). Causa raíz real: este endpoint SIEMPRE
+    # dejaba `estado_revision='verificado'` (INSERT) o ni lo tocaba (UPDATE),
+    # sin importar el veredicto. El único candado que de verdad excluye un
+    # equipo de las tareas obligatorias que bloquean la firma es
+    # `estado_revision IN ('saltado','falla_detectada')` (ver
+    # _ot_maquinas_excluidas_cierre) -- y 'falla_detectada' existe en el
+    # ENUM justo para este caso ("gestionado, con incidencia registrada"),
+    # pero nunca se conectaba con el diagnóstico 'falla' que el técnico sí
+    # llenaba. Ahora: diagnóstico='falla' eleva estado_revision a
+    # 'falla_detectada' automáticamente -- una sola acción del técnico
+    # (elegir "Con falla" + escribir el motivo) alcanza para dejar de
+    # bloquear la OT, sin pedirle un segundo trámite aparte. Nunca se
+    # DEGRADA un estado ya más específico (saltado/falla_detectada) puesto
+    # a mano por otra vía (ej. "No pude revisarlo").
+    _er_ins = "falla_detectada" if estado == "falla" else "verificado"
     try:
         mysql_execute(
             "INSERT INTO mant_visita_equipos "
             "  (visita_id, maquina_id, estado_revision, "
             "   diagnostico_estado, diagnostico_texto, revisado_at, revisado_por) "
-            "VALUES (%s, %s, 'verificado', %s, %s, NOW(), %s) "
+            "VALUES (%s, %s, %s, %s, %s, NOW(), %s) "
             "ON DUPLICATE KEY UPDATE "
+            "  estado_revision = CASE "
+            "    WHEN estado_revision IN ('saltado','falla_detectada') THEN estado_revision "
+            "    WHEN %s='falla' THEN 'falla_detectada' "
+            "    ELSE estado_revision END, "
             "  diagnostico_estado=VALUES(diagnostico_estado), "
             "  diagnostico_texto=VALUES(diagnostico_texto), "
             "  revisado_at=NOW(), "
             "  revisado_por=VALUES(revisado_por)",
-            (vid, mid, estado, (texto or None), user)
+            (vid, mid, _er_ins, estado, (texto or None), user, estado)
         )
     except Exception as e:
         print(f"[visita_equipo_diagnostico] error vid={vid} mid={mid}: {e}", flush=True)
@@ -81280,6 +81301,40 @@ def ot2_api_equipo_fuera_servicio(vid, mid):
     except Exception as e:
         print(f"[fuera_servicio] marcar mid={mid}: {e}", flush=True)
         return _ot2_err("No pudimos marcar el equipo.", "ERROR_INTERNO", http=500)
+
+    # 🔴 FIX 2026-09-08 (Bug 2, Daniel en vivo): marcar un equipo "fuera de
+    # servicio" es, en los hechos, un veredicto de que la máquina tiene una
+    # falla real -- pero este endpoint solo tocaba `mant_maquinas` (la ficha
+    # del cliente), nunca `mant_visita_equipos.estado_revision` (que es lo
+    # único que de verdad excluye las tareas obligatorias de ese equipo del
+    # candado de firma, ver _ot_maquinas_excluidas_cierre). El técnico
+    # marcaba fuera de servicio + escribía el motivo, y la OT le seguía
+    # pidiendo el checklist de un equipo que, por definición, no puede
+    # revisar porque está detenido. Reusa el MISMO motivo que ya escribió
+    # (no le pide un segundo texto aparte -- "más conciso" fue el pedido
+    # explícito de Daniel) y solo ELEVA el estado: si ya estaba
+    # 'saltado'/'falla_detectada' por otra vía, no lo pisa.
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, razon_saltado, "
+            "   observacion_tecnico, revisado_at, revisado_por) "
+            "VALUES (%s, %s, 'falla_detectada', 'fuera_de_servicio', %s, NOW(), %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "  estado_revision = CASE "
+            "    WHEN estado_revision IN ('saltado','falla_detectada') THEN estado_revision "
+            "    ELSE 'falla_detectada' END, "
+            "  razon_saltado = COALESCE(razon_saltado, 'fuera_de_servicio'), "
+            "  observacion_tecnico = COALESCE(observacion_tecnico, VALUES(observacion_tecnico)), "
+            "  revisado_at=NOW(), "
+            "  revisado_por=VALUES(revisado_por)",
+            (vid, mid, motivo, current_username() or "sistema")
+        )
+    except Exception as e:
+        # Si esto falla, el equipo YA quedó marcado fuera de servicio arriba
+        # -- no se pierde el dato principal, pero avisamos en log para poder
+        # investigar por qué la OT podría seguir bloqueada para firmar.
+        print(f"[fuera_servicio] estado_revision vid={vid} mid={mid}: {e}", flush=True)
 
     # ── Urgencia: ticket de reparación, prioridad urgente ──────────────
     ticket_num = None
@@ -94355,6 +94410,31 @@ def mant_visita_tarea_respuesta(vid, tid):
                 valor_norm["precision_baja"] = True
         # source siempre se normaliza a 'gps' (rechazamos otros arriba)
         valor_norm["source"] = "gps"
+        # 🔴 FIX 2026-09-08 (Daniel, probando en vivo -- Bug 1): "estaba en
+        # Colón, la instalación es en Pucón camino al volcán, y el sistema
+        # me mostró algo como ±12m que entendí como que estaba a 12m del
+        # sitio". Ese ±12m SIEMPRE fue la `accuracy` (precisión que reporta
+        # el GPS del dispositivo sobre SU PROPIA lectura) -- nunca hubo acá
+        # ningún cálculo comparando la posición capturada contra la
+        # dirección real de la OT. Se agrega esa comparación real, con
+        # Haversine, reusando el mismo patrón que ya usa la geocerca del
+        # levantamiento (_ot_destino_coords + _haversine_m, ver
+        # _lev_gate_finalizar más abajo en este archivo) -- NUNCA bloquea
+        # (política 2026-08-30: "nunca lo limites, solo dime a cuántos
+        # metros está"), solo se guarda y se muestra como dato aparte de
+        # accuracy, con su propia etiqueta, para que no se puedan confundir.
+        try:
+            _v_gps = mysql_fetchone(
+                "SELECT cliente_id, direccion_lat, direccion_lng "
+                "  FROM mant_visitas WHERE id=%s", (vid,)
+            ) or {}
+            _dlat, _dlng = _ot_destino_coords(_v_gps)
+            if _dlat is not None and _dlng is not None:
+                _dist = _haversine_m(lat, lng, _dlat, _dlng)
+                if _dist is not None:
+                    valor_norm["dist_destino_m"] = int(round(_dist))
+        except Exception as _e_dist:
+            print(f"[tarea_respuesta gps dist_destino] vid={vid} tid={tid}: {_e_dist}", flush=True)
     elif tipo == "asistencia":
         # 🆕 2026-08-30 (Daniel — checklist "Capacitación": lista de asistencia
         # inteligente. "utiliza los objetos varios que tenemos... con fotos
@@ -94918,6 +94998,7 @@ _OT_PDF_RAZON_SALTADO = {
     "dañado_inaccesible": "Dañado o inaccesible",
     "danado_inaccesible": "Dañado o inaccesible",
     "cliente_lo_quito":   "El cliente lo retiró",
+    "fuera_de_servicio":  "Marcado fuera de servicio",
     "otro":               "Otro motivo",
 }
 _OT_PDF_REVISION = {
