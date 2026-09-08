@@ -8288,6 +8288,13 @@ function otdChkTareaHtml(t, nro){
         Solo se acepta GPS real del dispositivo para validar tu posición.</div>
       ${otdGpsResultadoHtml(t)}
     </div>`;
+  } else if (tipo === 'foto'){
+    // 🔴 FIX 2026-09-08: faltaba este case por completo -- caía al fallback
+    // de abajo y el técnico veía "Tipo de respuesta no disponible" encima
+    // de su propia foto ya subida. El botón/galería (otdChkFotoBtnHtml/
+    // otdChkFotosHtml, más abajo en el bodyc) ya cubren TODA la interacción
+    // de una tarea tipo foto -- acá no hay nada más que dibujar.
+    body = '';
   } else {
     // Tipos verdaderamente exóticos, ninguno emitido hoy por las plantillas
     // reales -- ya no ofrece una salida hacia pantallas fuera de OT 2.0.
@@ -8301,6 +8308,7 @@ function otdChkTareaHtml(t, nro){
   const CH_TIPO = {
     serie:'N° de serie', sino:'Sí / No', numero:'Número', texto:'Texto',
     lista:'Lista', fecha_hora:'Fecha', gps:'GPS', verificacion:'Verificación',
+    foto:'Foto',
   };
   const chips = [];
   if (t.obligatoria) chips.push('<span class="ch obl">Obligatoria</span>');
@@ -8978,6 +8986,39 @@ async function otdChkSubirFoto(input, tid){
     const fo = (j.fotos && j.fotos[0]) || { id: null, url: j.url };
     t.fotos = t.fotos || [];
     if (fo.url) t.fotos.push({ id: fo.id, url: fo.url });
+    // 🔴 FIX 2026-09-08 (Lenin, OT-2026-00161: subió las 5 fotos exigidas y
+    // la tarea seguía "pendiente"). Esta pantalla nunca marcaba completada
+    // una tarea tipo 'foto' -- solo guardaba la foto. La pantalla clásica
+    // (subirFotoTarea, mantenciones_ot_ejecutar.js) SÍ lo hace: después de
+    // subir, manda un segundo PATCH completada=1. Acá faltaba ese segundo
+    // paso por completo, así que la tarea quedaba con evidencia real y
+    // 0% de avance para siempre -- ninguna cantidad de fotos la cerraba.
+    const tipoNorm = (t.tipo_respuesta || '').toLowerCase();
+    if (tipoNorm === 'foto' && !t.completada){
+      try {
+        const rc = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ completada: 1, version: t.version || 0 })
+        });
+        if (rc.status === 409){
+          ilusToast('Otro técnico ya la marcó — actualizando…', {type:'warning'});
+          await otdChkRecargar(true);
+          return;
+        }
+        const resc = await otdRespuestaAfirmativa(rc);
+        if (rc.status === 401 || rc.status === 403 || resc.noJson){
+          await otdChkEncolar(t, mid, tid, 1, 'toggle', null, true,
+                              rc.status === 403 ? 'permiso' : 'sesion');
+        } else if (resc.ok){
+          t.completada = true;
+          if (typeof resc.d.version === 'number') t.version = resc.d.version;
+        } else {
+          ilusToast('La foto quedó guardada, pero no pudimos cerrar la tarea — reintenta.', {type:'warning'});
+        }
+      } catch(e){
+        await otdChkEncolar(t, mid, tid, 1, 'toggle', null, true);
+      }
+    }
     otdRenderChecklistEquipo(mid);
   } catch(e){
     if (toastSub && toastSub.close) toastSub.close();
