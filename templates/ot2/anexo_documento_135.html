@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Anexo de Servicios N° {{ anexo.numero }}</title>
+<style>
+  @page { size: Letter; }
+  * { box-sizing: border-box; }
+  /* Mismo resguardo que anexo_firma.html (fix 2026-09-07, Anexo N°163):
+     esta fuente HTML también puede abrirse suelta fuera de Playwright
+     (vista previa manual, depuración) — sin esto, un modo oscuro forzado
+     la pinta con texto oscuro sobre fondo oscuro. */
+  :root { color-scheme: only light; }
+  body { margin:0; background:#fff; font-family:Arial,sans-serif; font-size:11pt; line-height:1.4; color:#111; }
+  .fecha { text-align:right; margin:0 0 12mm; }
+  h1 { font-size:14pt; text-align:center; margin:0 0 9mm; }
+  .anexo-135 p { margin:0 0 4mm; text-align:justify; overflow-wrap:anywhere; }
+  .productos-135 { width:100%; border-collapse:collapse; margin:3mm 0 6mm; font-size:10pt; table-layout:fixed; }
+  .productos-135 th,.productos-135 td { padding:2mm; text-align:left; border:1px solid #bbb; overflow-wrap:anywhere; }
+  .productos-135 th:first-child { width:23%; }
+  .productos-135 th:last-child { width:16%; }
+  .productos-135 thead { display:table-header-group; }
+  .productos-135 tr { break-inside:avoid; }
+  .firma { margin-top:10mm; break-inside:avoid; text-align:center; }
+  .firma p { margin:2mm 0; overflow-wrap:anywhere; }
+  .firma img { max-width:65mm; max-height:20mm; display:block; margin:4mm auto; }
+  .firma-espacio { height:16mm; }
+  .traza { font-size:9pt; }
+  .preview { position:fixed; top:40%; left:0; width:100%; text-align:center; color:rgba(150,0,0,.13); font-size:22pt; transform:rotate(-25deg); pointer-events:none; }
+</style>
+</head>
+<body>
+{% if es_vista_previa %}<div class="preview">VISTA PREVIA — SIN VALIDEZ LEGAL</div>{% endif %}
+<div class="fecha">{{ anexo.fecha }}</div>
+<h1>Anexo de Servicios N° {{ anexo.numero }}</h1>
+{% include "ot2/_anexo_contenido_135.html" %}
+<div class="firma">
+  <p>Nombre: {{ firma.firmante_nombre if firma else anexo.proveedor_nombre }}</p>
+  {% if anexo.proveedor_rut %}<p>RUT Empresa: {{ anexo.proveedor_rut }}</p>{% endif %}
+  {% if firma and firma.firmante_rut and firma.firmante_rut != anexo.proveedor_rut %}<p>RUT Representante: {{ firma.firmante_rut }}</p>{% endif %}
+  <p>Firma:</p>
+  {% if firma and firma.firma_url %}<img src="{{ firma.firma_url }}" alt="Firma del proveedor">{% else %}<div class="firma-espacio"></div>{% endif %}
+  {% if firma %}<p class="traza">Firmado el {{ firma.firmado_en }} · firma electrónica simple.</p>{% endif %}
+</div>
+</body>
+</html>
