@@ -234,6 +234,16 @@ jobs:
           fi
 
       # --- DEPLOY a Cloud Run (mismo comando que el manual) ---
+      # 🔴 2026-09-08 (incidente real: la app entera daba 504, hasta
+      # /favicon.ico, por saturación de concurrencia). --concurrency 16
+      # tiene que calzar con el Dockerfile (gunicorn --workers 2 --threads 8
+      # = 16 peticiones reales por contenedor). Sin este flag, gcloud vuelve
+      # al default (80/160) en el próximo deploy: Cloud Run cree que caben
+      # muchas más peticiones de las que gunicorn puede atender, las apila
+      # todas en una instancia y nunca escala a las otras 3 que
+      # --max-instances ya permite. Ver incidente_concurrencia_cloud_run_2026_09_08
+      # en memoria -- si se cambia el número de workers/threads del
+      # Dockerfile, este valor debe cambiar junto con él.
       - name: Deploy to Cloud Run
         id: deploy
         run: |
@@ -248,6 +258,7 @@ jobs:
             --memory 2Gi \
             --cpu 2 \
             --timeout 300 \
+            --concurrency 16 \
             --env-vars-file /tmp/env.yaml \
             --quiet
 
