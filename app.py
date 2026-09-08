@@ -36634,7 +36634,7 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
              WHERE (mi.simpliroute_visit_id IS NULL OR mi.simpliroute_visit_id = '')
                AND (mi.estado_entrega IS NULL
                     OR mi.estado_entrega NOT IN ('Entregado','Devolución'))
-               AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+               AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
                AND NOT EXISTS (
                     SELECT 1 FROM transport_manifest_items mi2
                      WHERE mi2.commitment_id = mi.commitment_id
@@ -36749,6 +36749,22 @@ def _simpliroute_poll_batch(limit=400, dry=False):
     except Exception as e:
         out["huerfanos"] = {"ok": False, "error": f"reconciliacion fallo: {e}"}
     try:
+        # FIX 2026-09-08 (Daniel, caso BLV 22744 / FCV 11151 — capturado en
+        # vivo: la app decia "pending / 41 dias en manos del courier" y el
+        # portal propio del courier ya mostraba "Entrega exitosa" desde hace
+        # semanas). La ventana ERA de 7 dias. Un manifiesto de mas de 7 dias
+        # de antiguedad quedaba EXCLUIDO de este candidato para siempre, sin
+        # aviso -- ni el poller ni el reemplazo por 'reference' (mas abajo,
+        # el que resuelve el caso de "SimpliRoute tiene DOS visitas vivas
+        # con la misma reference") volvian a mirarlo. El item se quedaba
+        # apuntando al visit_id VIEJO y abandonado (el que crea la subida
+        # por API) mientras la entrega real ocurria bajo OTRO visit_id (el
+        # que crea el courier), invisible para siempre.
+        # Ventana ampliada a 90 dias, mismo criterio ya validado en el panel
+        # "Visitas sin entregar" (tr_simpliroute_visitas_congeladas): los
+        # casos mas viejos son los mas urgentes, no los que hay que dejar de
+        # mirar. Se ordena por fecha ASC (antes DESC) para que el backlog
+        # viejo no quede atras del LIMIT detras del trafico del dia.
         cands = mysql_fetchall("""
             SELECT mi.id AS item_id, mi.manifest_id, mi.commitment_id, mi.simpliroute_visit_id,
                    mi.estado_entrega, tm.fecha, tm.courier, c.tido, c.nudo
@@ -36759,8 +36775,8 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                AND mi.simpliroute_visit_id <> ''
                AND (mi.estado_entrega IS NULL
                     OR mi.estado_entrega NOT IN ('Entregado','Devolución'))
-               AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-             ORDER BY tm.fecha DESC, mi.id ASC
+               AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+             ORDER BY tm.fecha ASC, mi.id ASC
              LIMIT %s
         """, (int(limit),)) or []
     except Exception as e:
