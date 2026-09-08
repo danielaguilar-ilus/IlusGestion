@@ -65,10 +65,13 @@ class TestReconciliadorYaNoCruzaManifiestos(unittest.TestCase):
 
     def test_el_resto_del_filtro_original_sigue_intacto(self):
         """El fix agrega una condición, no reemplaza las que ya evitaban
-        tocar items entregados o de hace mas de 7 dias."""
+        tocar items entregados o (desde el FIX 2026-09-08, caso BLV 22744 /
+        FCV 11151) de hace mas de 90 dias -- antes eran 7, y esa ventana
+        angosta era la causa de que un manifiesto viejo dejara de revisarse
+        para siempre aunque siguiera sin entregarse de verdad."""
         f = _fn("_simpliroute_reconciliar_huerfanos")
         self.assertIn("'Entregado','Devolución'", f.replace('"', "'"))
-        self.assertIn("INTERVAL 7 DAY", f)
+        self.assertIn("INTERVAL 90 DAY", f)
 
 
 class TestGuardaCompartida(unittest.TestCase):
