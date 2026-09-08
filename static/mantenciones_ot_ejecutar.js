@@ -69,10 +69,237 @@ function cloudTx(url, kind){
   return prefix + tx + '/' + rest;
 }
 
+// ════════════════════════════════════════════════════════
+//  🔴 FIX 2026-09-08 (Daniel, probando en vivo la ejecución de una OT en
+//  el celular: "cuando sube la foto, sobre todo las subidas del celular,
+//  como que las pone de lado"). Causa: los tres compresores de este
+//  archivo (_compressImageBeforeUpload, _comprimirImagen, _levdComprimir)
+//  redibujaban el bitmap CRUDO del sensor en un <canvas> sin leer el tag
+//  EXIF "Orientation" (1-8) que el celular graba junto a la foto para
+//  decirle al visor cómo rotarla/reflejarla. canvas.toBlob() NO conserva
+//  metadata EXIF -- si la rotación no se aplica ANTES de exportar, se
+//  pierde para siempre y la foto queda "de lado" en Cloudinary.
+//
+//  Los tres compresores ahora comparten estos helpers en vez de resolver
+//  el mismo problema por su cuenta tres veces:
+//   - _ilusLeerOrientacionExif(file): lee el tag 0x0112 del JPEG a mano
+//     (128KB iniciales bastan -- el EXIF vive al principio del archivo).
+//     Devuelve 1 (normal) para PNG/WebP o si no encuentra el tag.
+//   - _ilusDecodificarOrientado(file): decodifica la imagen y decide si
+//     TODAVÍA hace falta rotarla a mano.
+//     ⚠️ Probado en vivo (Chromium real, no solo ast.parse): pedirle a
+//     createImageBitmap() `imageOrientation:'none'` -- o poner
+//     `image-orientation:none` en un <img> -- NO logra "modo crudo" en los
+//     navegadores actuales; el motor auto-corrige igual, ignorando la
+//     opción. Si además nosotros aplicábamos la rotación a mano "por si
+//     las dudas", la foto quedaba rotada DOS veces (peor que el bug
+//     original). Por eso esto NO fuerza ningún modo: decodifica normal y
+//     usa _ilusProbeAutoOrientaBitmap()/_ilusProbeAutoOrientaImg() -- una
+//     sonda de 2x1 píxeles con EXIF Orientation=6 hecha una sola vez y
+//     memoizada -- para saber si ESTE navegador ya vino con la rotación
+//     aplicada. Si ya vino aplicada, no tocamos nada (orientation queda
+//     en 1); si no, la aplicamos nosotros con el tag real leído del
+//     archivo. Así siempre se rota UNA sola vez, nunca cero, nunca dos,
+//     sin importar qué haga el navegador de turno por su cuenta.
+//   - _ilusAplicarOrientacionCanvas / _ilusPintarOrientadoEnCanvas: arman
+//     el canvas ya "hacia arriba" para los 8 valores del estándar EXIF
+//     (no solo el caso obvio de 90°).
+// ════════════════════════════════════════════════════════
+
+// Probe de 2x1 px (rojo|azul) con EXIF Orientation=6 -- si el navegador
+// auto-orienta, decodifica a 1x2 (swap de ejes); si no, queda 2x1 (crudo).
+const _ILUS_EXIF_PROBE_B64 =
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/4QAiRXhpZgAATU0AKgAAAAgAAQESAAMAAAABAAYAAAAA' +
+  'AAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQ' +
+  'ERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQ' +
+  'UFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAIDASIAAhEBAxEB/' +
+  '8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9' +
+  'AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY' +
+  '3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmq' +
+  'KjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+' +
+  'Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQA' +
+  'AQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJyg' +
+  'pKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZ' +
+  'aXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09' +
+  'fb3+Pn6/9oADAMBAAIRAxEAPwD4H8Q/8h/Uv+vmX/0M0UUV/ptkP/Ipwn/XuH/pKPAzr/kZ4' +
+  'r/r5P8A9KZ//9k=';
+
+function _ilusProbeBytes(){
+  const bin = atob(_ILUS_EXIF_PROBE_B64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+let _ilusProbeBitmapCache = null;
+function _ilusProbeAutoOrientaBitmap(){
+  if (_ilusProbeBitmapCache) return _ilusProbeBitmapCache;
+  _ilusProbeBitmapCache = (async () => {
+    try {
+      const blob = new Blob([_ilusProbeBytes()], { type: 'image/jpeg' });
+      const bmp = await createImageBitmap(blob);
+      const ok = (bmp.width === 1 && bmp.height === 2);
+      if (bmp.close) bmp.close();
+      return ok;
+    } catch(_e){ return false; } // ante la duda, la rotamos nosotros (más seguro)
+  })();
+  return _ilusProbeBitmapCache;
+}
+
+let _ilusProbeImgCache = null;
+function _ilusProbeAutoOrientaImg(){
+  if (_ilusProbeImgCache) return _ilusProbeImgCache;
+  _ilusProbeImgCache = (async () => {
+    let url;
+    try {
+      const blob = new Blob([_ilusProbeBytes()], { type: 'image/jpeg' });
+      url = URL.createObjectURL(blob);
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = url;
+      });
+      return (img.naturalWidth === 1 && img.naturalHeight === 2);
+    } catch(_e){ return false; }
+    finally { if (url) URL.revokeObjectURL(url); }
+  })();
+  return _ilusProbeImgCache;
+}
+
+/** Lee el tag EXIF Orientation (0x0112) de un JPEG. 1-8, default 1. */
+function _ilusLeerOrientacionExif(file){
+  return new Promise((resolve) => {
+    if (!file || !/^image\/jpe?g$/i.test(file.type || '')){ resolve(1); return; }
+    const reader = new FileReader();
+    reader.onerror = () => resolve(1);
+    reader.onload = (ev) => resolve(_ilusParseExifOrientation(ev.target.result));
+    // El EXIF vive al principio del archivo -- no hace falta leerlo entero.
+    reader.readAsArrayBuffer(file.slice(0, 128 * 1024));
+  });
+}
+
+function _ilusParseExifOrientation(buffer){
+  try {
+    const view = new DataView(buffer);
+    if (view.byteLength < 4 || view.getUint16(0, false) !== 0xFFD8) return 1; // no es JPEG
+    let offset = 2;
+    while (offset + 4 <= view.byteLength){
+      const marker = view.getUint16(offset, false);
+      if ((marker & 0xFF00) !== 0xFF00) break; // marcador inválido -- corta
+      offset += 2;
+      if (marker === 0xFFD8 || marker === 0xFFD9 || (marker >= 0xFFD0 && marker <= 0xFFD7)){
+        continue; // SOI/EOI/RST -- sin campo de longitud
+      }
+      if (offset + 2 > view.byteLength) break;
+      const segLen = view.getUint16(offset, false); // incluye los 2 bytes de longitud
+      if (marker === 0xFFE1){ // APP1 -- candidato a EXIF
+        const segStart = offset + 2;
+        if (segStart + 6 <= view.byteLength && view.getUint32(segStart, false) === 0x45786966){
+          const tiffStart = segStart + 6;
+          if (tiffStart + 8 <= view.byteLength){
+            const little = view.getUint16(tiffStart, false) === 0x4949;
+            const firstIfdOffset = view.getUint32(tiffStart + 4, little);
+            const dirStart = tiffStart + firstIfdOffset;
+            if (dirStart + 2 <= view.byteLength){
+              const numEntries = view.getUint16(dirStart, little);
+              for (let i = 0; i < numEntries; i++){
+                const entryOffset = dirStart + 2 + i * 12;
+                if (entryOffset + 10 > view.byteLength) break;
+                if (view.getUint16(entryOffset, little) === 0x0112){
+                  const val = view.getUint16(entryOffset + 8, little);
+                  return (val >= 1 && val <= 8) ? val : 1;
+                }
+              }
+            }
+          }
+        }
+        return 1; // APP1 sin EXIF válido -- es el único lugar donde vive
+      }
+      if (marker === 0xFFDA) break; // Start of Scan -- no hay más metadata después
+      offset += segLen;
+    }
+  } catch(_e){ /* buffer corrupto/formato inesperado -- usar default */ }
+  return 1;
+}
+
+/** Matriz de transformación canvas para cada uno de los 8 valores EXIF.
+ *  sw,sh = tamaño (YA escalado) que se le pasará a drawImage, SIN rotar. */
+function _ilusAplicarOrientacionCanvas(ctx, orientation, sw, sh){
+  switch (orientation){
+    case 2: ctx.transform(-1, 0, 0, 1, sw, 0); break;   // espejo horizontal
+    case 3: ctx.transform(-1, 0, 0, -1, sw, sh); break; // 180°
+    case 4: ctx.transform(1, 0, 0, -1, 0, sh); break;   // espejo vertical
+    case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;     // espejo + 90° CCW
+    case 6: ctx.transform(0, 1, -1, 0, sh, 0); break;   // 90° CW
+    case 7: ctx.transform(0, -1, -1, 0, sh, sw); break; // espejo + 90° CW
+    case 8: ctx.transform(0, -1, 1, 0, 0, sw); break;   // 90° CCW
+    default: break; // 1 (o desconocida): sin transformar
+  }
+}
+
+/** Decodifica `file` y devuelve la orientación EFECTIVA a aplicar (0 si el
+ *  navegador ya vino con la rotación puesta -- ver sonda _ilusProbe* arriba
+ *  y el comentario grande al inicio de este bloque). Devuelve
+ *  { source, sw, sh, orientation, isBitmap, _url }. */
+async function _ilusDecodificarOrientado(file){
+  const orientation = await _ilusLeerOrientacionExif(file);
+  if (window.createImageBitmap){
+    try {
+      const [bmp, autoOrienta] = await Promise.all([
+        createImageBitmap(file),
+        _ilusProbeAutoOrientaBitmap(),
+      ]);
+      return { source: bmp, sw: bmp.width, sh: bmp.height,
+                orientation: autoOrienta ? 1 : orientation, isBitmap: true };
+    } catch(_e){ /* este archivo no lo soporta createImageBitmap -- cae a <img> */ }
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const [img, autoOrienta] = await Promise.all([
+      new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = url;
+      }),
+      _ilusProbeAutoOrientaImg(),
+    ]);
+    return { source: img, sw: img.naturalWidth, sh: img.naturalHeight,
+              orientation: autoOrienta ? 1 : orientation, isBitmap: false, _url: url };
+  } catch(e){
+    URL.revokeObjectURL(url);
+    throw e;
+  }
+}
+
+/** Pinta `decoded` en un <canvas> nuevo, ya orientado hacia arriba y
+ *  reescalado para que el lado mayor mida como máximo maxDim. Libera el
+ *  ImageBitmap/object URL usados. */
+function _ilusPintarOrientadoEnCanvas(decoded, maxDim){
+  const { source, sw: sw0, sh: sh0, orientation } = decoded;
+  const scale = Math.min(1, maxDim / Math.max(sw0, sh0));
+  const sw = Math.max(1, Math.round(sw0 * scale)); // tamaño para drawImage, SIN rotar
+  const sh = Math.max(1, Math.round(sh0 * scale));
+  const swapEjes = orientation >= 5 && orientation <= 8;
+  const canvas = document.createElement('canvas');
+  canvas.width  = swapEjes ? sh : sw;
+  canvas.height = swapEjes ? sw : sh;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  _ilusAplicarOrientacionCanvas(ctx, orientation, sw, sh);
+  ctx.drawImage(source, 0, 0, sw, sh);
+  if (decoded.isBitmap && source.close) source.close();
+  if (decoded._url) URL.revokeObjectURL(decoded._url);
+  return canvas;
+}
+
 /**
  * Comprime una imagen en cliente antes de subirla a Cloudinary.
  * - Si pesa <500KB o ya es WebP/AVIF/HEIC: skip.
- * - Si no: redibuja a max 1920px de ancho, JPG quality=0.85.
+ * - Si no: redibuja a max 1920px de ancho, JPG quality=0.85 -- YA orientada
+ *   según su tag EXIF (ver bloque de helpers arriba).
  * - Reduce ~70-90% el peso (iPhone 4032×3024 ≈ 4.5MB → ~400KB).
  *
  * @param {File} file  archivo input (image/*)
@@ -88,26 +315,8 @@ async function _compressImageBeforeUpload(file){
     return file;
   }
   try {
-    const bitmap = await (window.createImageBitmap
-      ? createImageBitmap(file).catch(() => null)
-      : Promise.resolve(null));
-    const w0 = bitmap ? bitmap.width  : 0;
-    const h0 = bitmap ? bitmap.height : 0;
-    if (!w0 || !h0){
-      // createImageBitmap no soportado → fallback con <img>.
-      return await _compressImageViaImgFallback(file);
-    }
-    const MAX_W = 1920;
-    let w = w0, h = h0;
-    if (w > MAX_W){
-      h = Math.round(h * (MAX_W / w));
-      w = MAX_W;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    if (bitmap.close) bitmap.close();
+    const decoded = await _ilusDecodificarOrientado(file);
+    const canvas = _ilusPintarOrientadoEnCanvas(decoded, 1920);
     const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
     if (!blob) return file;
     // Si el resultado es MAYOR que el original (caso raro: PNG pequeño con
@@ -5465,34 +5674,23 @@ async function otToggleMantencion(mid){
 
 async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
   if (file.size < 600 * 1024) return file;
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
-    reader.onload = () => {
-      img.onerror = () => reject(new Error('Decode error'));
-      img.onload = () => {
-        let w = img.width, h = img.height;
-        const ratio = Math.min(maxDim / Math.max(w, h), 1);
-        const nw = Math.round(w * ratio), nh = Math.round(h * ratio);
-        const canvas = document.createElement('canvas');
-        canvas.width = nw; canvas.height = nh;
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, nw, nh);
-        canvas.toBlob((blob) => {
-          if (!blob) return reject(new Error('toBlob falló'));
-          if (blob.size >= file.size) { resolve(file); return; }
-          resolve(new File([blob], file.name.replace(/\.(jpg|jpeg|png|webp)$/i, '.jpg'), {
-            type: 'image/jpeg', lastModified: Date.now(),
-          }));
-        }, 'image/jpeg', quality);
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
+  try {
+    // Ya orientada según su tag EXIF (ver bloque de helpers arriba) --
+    // este era el compresor detrás de subirFotoTarea() en el checklist de
+    // ejecución, el sospechoso #1 del bug "la foto queda de lado".
+    const decoded = await _ilusDecodificarOrientado(file);
+    const canvas = _ilusPintarOrientadoEnCanvas(decoded, maxDim);
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => b ? resolve(b) : reject(new Error('toBlob falló')), 'image/jpeg', quality);
+    });
+    if (blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.(jpg|jpeg|png|webp)$/i, '.jpg'), {
+      type: 'image/jpeg', lastModified: Date.now(),
+    });
+  } catch(e){
+    console.warn('[_comprimirImagen] fallback a original:', e && e.message);
+    return file;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -7559,28 +7757,15 @@ async function levdDocVerificar(){
 
 // ── Fotos: compresión en el navegador (4G friendly) ──
 function _levdComprimir(file){
-  return new Promise((resolve) => {
-    try {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => {
-        try {
-          const MAX = 1600;
-          let w = img.width, h = img.height;
-          if (w > MAX || h > MAX){
-            const k = Math.min(MAX / w, MAX / h);
-            w = Math.round(w * k); h = Math.round(h * k);
-          }
-          const cv = document.createElement('canvas');
-          cv.width = w; cv.height = h;
-          cv.getContext('2d').drawImage(img, 0, 0, w, h);
-          cv.toBlob(b => { URL.revokeObjectURL(url); resolve(b || file); }, 'image/jpeg', 0.82);
-        } catch(_e){ URL.revokeObjectURL(url); resolve(file); }
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
-      img.src = url;
-    } catch(_e){ resolve(file); }
-  });
+  // Misma corrección de orientación EXIF que _comprimirImagen/
+  // _compressImageBeforeUpload (ver bloque de helpers _ilus* arriba) --
+  // este compresor alimenta las fotos del flujo de Levantamiento.
+  return _ilusDecodificarOrientado(file).then((decoded) => {
+    const cv = _ilusPintarOrientadoEnCanvas(decoded, 1600);
+    return new Promise((resolve) => {
+      cv.toBlob(b => resolve(b || file), 'image/jpeg', 0.82);
+    });
+  }).catch(() => file);
 }
 
 function _levdRenderFotos(){
