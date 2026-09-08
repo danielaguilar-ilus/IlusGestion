@@ -82420,6 +82420,166 @@ def ot2_api_crear():
     except Exception as e:
         print(f"[ot2_crear] log: {e}", flush=True)
 
+    # ═════════════════════════════════════════════════════════════════
+    # ANEXO AUTOMÁTICO PARA PROVEEDOR EXTERNO (2026-09-08)
+    #
+    # Daniel: "cuando la creo [la OT], no me crea el bendito anexo...
+    # necesito que se cree y se envíe por correo... tiene que enviar el
+    # link al correo, es indudable". Y después, sobre los datos faltantes
+    # de un proveedor nuevo: "esos datos ya los tiene la OT" + confirmó
+    # (pregunta explícita) que si algo falta, la OT se crea igual y el
+    # anexo queda pendiente avisado -- nunca bloquea la creación.
+    #
+    # Reusa `_anexo_bloquea_ot(vid)` como ÚNICA fuente de "esta OT
+    # necesita anexo" -- la misma función que ya decide el candado real,
+    # nunca una definición paralela de "es externo". Justo creada, sin
+    # anexo, esa función devuelve 'SIN_ANEXO' si y solo si aplica.
+    #
+    # Los datos salen de lo que YA se juntó en este mismo wizard: ficha
+    # del proveedor externo (razón social/RUT/contacto), dirección de la
+    # visita (_cp_dir, ya confirmada por Google Places) y el costo que se
+    # declaró en el paso Costos (_fin_costo_prov/_fin_costo_desp -- lo que
+    # ILUS le paga al proveedor, que es justo lo que el Anexo declara).
+    # Si falta algo indispensable, NO se crea nada a medias: se avisa el
+    # motivo exacto en `avisos` y el anexo queda para completarse a mano
+    # desde la ficha de la OT (mismo camino manual de siempre).
+    try:
+        import json
+        if _anexo_bloquea_ot(vid) == "SIN_ANEXO":
+            _te = mysql_fetchone(
+                "SELECT id, razon_social, rut_empresa, direccion_empresa, "
+                "       contacto_nombre, contacto_tel, contacto_email "
+                "  FROM mant_tecnicos_externos "
+                " WHERE user_id=%s "
+                " UNION "
+                "SELECT id, razon_social, rut_empresa, direccion_empresa, "
+                "       contacto_nombre, contacto_tel, contacto_email "
+                "  FROM mant_tecnicos_externos "
+                " WHERE user_id IS NULL "
+                "   AND LOWER(TRIM(COALESCE(razon_social,''))) = LOWER(TRIM(%s)) "
+                " LIMIT 1",
+                (lider_id, tecnico_nombre or ""))
+            _prov_nombre = ((_te or {}).get("razon_social") or "").strip()[:200]
+            _prov_rut = ((_te or {}).get("rut_empresa") or "").strip()[:20]
+            _prov_dir = ((_te or {}).get("direccion_empresa") or "").strip()[:400]
+            _prov_email = ((_te or {}).get("contacto_email") or "").strip()[:200]
+
+            _items_auto = []
+            if _fin_costo_prov:
+                _items_auto.append({
+                    "concepto": _TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title())[:120],
+                    "monto": int(round(_fin_costo_prov))})
+            if _fin_costo_desp:
+                _items_auto.append({"concepto": "Despacho", "monto": int(round(_fin_costo_desp))})
+
+            _objetivo_auto = (
+                f"Ejecutar servicio de {_TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title()).lower()} "
+                f"para el cliente {cliente_razon_social or '—'}"
+                + (f", en {_cp_dir}" if _cp_dir else "")
+                + f". Referencia: {numero_ot}.")
+
+            _faltan = []
+            if not _prov_nombre: _faltan.append("razón social del proveedor")
+            if not _prov_rut: _faltan.append("RUT del proveedor")
+            if not _items_auto: _faltan.append("el costo del proveedor (paso Costos)")
+
+            if _faltan:
+                avisos.append(
+                    "Anexo de Servicios pendiente: falta " + ", ".join(_faltan) +
+                    ". Complétalo desde 'Anexo de Servicios' en la ficha de la OT — "
+                    "el proveedor no podrá trabajarla hasta que quede firmado.")
+            else:
+                _aid_auto, _num_auto = None, None
+                try:
+                    _conn2 = get_mysql()
+                    _conn2.autocommit(False)
+                    _cur2 = _conn2.cursor()
+                    _num_auto = _next_anexo_numero_atomic(_conn2)
+                    _clx_auto = _anexo_clausulas_defecto()
+                    _cur2.execute(
+                        "INSERT INTO mant_anexos "
+                        "  (numero, ot_id, tecnico_externo_id, proveedor_nombre, proveedor_rut, "
+                        "   proveedor_direccion, cliente_nombre, objetivo_servicio, "
+                        "   precio_items_json, productos_json, fecha_inicio, fecha_termino, "
+                        "   niveles_servicio, hitos_pago, alcance_servicio, "
+                        "   clausulas_adicionales, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (_num_auto, vid, (_te or {}).get("id"), _prov_nombre, _prov_rut or None,
+                         _prov_dir or None, cliente_razon_social, _objetivo_auto,
+                         json.dumps(_items_auto), json.dumps([]),
+                         _f, _f,
+                         _clx_auto["niveles_servicio"], _clx_auto["hitos_pago"],
+                         _clx_auto["alcance_servicio"], _clx_auto["clausulas_adicionales"],
+                         current_username()))
+                    _aid_auto = _cur2.lastrowid
+                    _conn2.commit()
+                except Exception as _e_ax:
+                    try: _conn2.rollback()
+                    except Exception: pass
+                    print(f"[ot2_crear][anexo_auto] crear: {_e_ax}", flush=True)
+                    avisos.append(
+                        "No se pudo crear el Anexo de Servicios automáticamente — "
+                        "créalo a mano desde la ficha de la OT.")
+                finally:
+                    try: _conn2.close()
+                    except Exception: pass
+
+                if _aid_auto:
+                    try:
+                        _mant_log("anexo", _aid_auto, "creado",
+                                  f"N°{_num_auto} · {_prov_nombre} · OT {numero_ot} (automático al crear)")
+                    except Exception:
+                        pass
+                    _tok_auto = secrets.token_urlsafe(30)[:40]
+                    _exp_auto = datetime.utcnow() + timedelta(days=15)
+                    _correo_ok = False
+                    try:
+                        mysql_execute(
+                            "UPDATE mant_anexos SET token=%s, token_expira_at=%s, estado='enviado', "
+                            "  enviado_at=NOW(), enviado_por=%s, "
+                            "  enviado_email=%s, envios_n=COALESCE(envios_n,0)+1 "
+                            " WHERE id=%s",
+                            (_tok_auto, _exp_auto, current_username(),
+                             _prov_email or None, _aid_auto))
+                        if _prov_email:
+                            _link_auto = url_for("ot2_anexo_firma_publica", token=_tok_auto, _external=True)
+                            _correo_ok = bool(_send_ilus_email(
+                                _prov_email,
+                                _brand_subject(f"Nueva orden de trabajo — firma el Anexo N° {_num_auto}"),
+                                f"<p>Hola,</p>"
+                                f"<p>Se te asignó la orden de trabajo <b>{numero_ot}</b>"
+                                + (f" — {titulo}" if titulo else "")
+                                + (f" (cliente: {cliente_razon_social})" if cliente_razon_social else "")
+                                + ".</p>"
+                                f"<p><b>Antes de poder empezar</b> necesitamos que revises y firmes "
+                                f"el Anexo de Servicios N° {_num_auto} con las condiciones del trabajo. "
+                                f"Mientras no esté firmado, no podrás ver ni iniciar la orden de trabajo.</p>"
+                                f'<p><a href="{_link_auto}">Revisar y firmar el Anexo N° {_num_auto}</a></p>'
+                                f"<p>El enlace vence en 15 días.</p>"))
+                    except Exception as _e_env:
+                        print(f"[ot2_crear][anexo_auto] enviar: {_e_env}", flush=True)
+                    try:
+                        _mant_log("visita", vid,
+                                  "anexo_enviado" if _correo_ok else "anexo_creado_sin_enviar",
+                                  f"Anexo N° {_num_auto} "
+                                  + (f"a {_prov_email} (automático)" if _correo_ok
+                                     else "— sin correo del proveedor, revisar ficha"))
+                    except Exception:
+                        pass
+                    if _correo_ok:
+                        avisos.append(
+                            f"Anexo de Servicios N° {_num_auto} creado y enviado por correo a {_prov_email}.")
+                    elif _prov_email:
+                        avisos.append(
+                            f"Anexo de Servicios N° {_num_auto} creado, pero el correo a {_prov_email} "
+                            "no se pudo enviar — reenvíalo desde la ficha de la OT.")
+                    else:
+                        avisos.append(
+                            f"Anexo de Servicios N° {_num_auto} creado, pero el proveedor no tiene correo "
+                            "registrado — envíalo a mano (correo o WhatsApp) desde la ficha de la OT.")
+    except Exception as e:
+        print(f"[ot2_crear][anexo_auto] {e}", flush=True)
+
     # 🏷️ 2026-09-07 (Daniel, sobre la OT-2026-00171 de Aurum: "es necesario
     # que se cree el cliente... debería crearlo como Instalación y prospecto
     # de mantención").

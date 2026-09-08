@@ -201,11 +201,14 @@
               <div class="col-6"><label class="fl">Nombre / Razón social</label>
                 <input class="form-control form-control-sm" id="oaxManNombre"></div>
               <div class="col-6"><label class="fl">RUT</label>
-                <input class="form-control form-control-sm" id="oaxManRut"></div>
+                <input class="form-control form-control-sm" id="oaxManRut" placeholder="12.345.678-9"
+                       oninput="oaxValidarCampoManual(this,'rut')"></div>
               <div class="col-6"><label class="fl">Correo de contacto</label>
-                <input type="email" class="form-control form-control-sm" id="oaxManEmail"></div>
+                <input type="email" class="form-control form-control-sm" id="oaxManEmail"
+                       oninput="oaxValidarCampoManual(this,'email')"></div>
               <div class="col-6"><label class="fl">Teléfono</label>
-                <input class="form-control form-control-sm" id="oaxManTel"></div>
+                <input class="form-control form-control-sm" id="oaxManTel" placeholder="+56 9 1234 5678"
+                       oninput="oaxValidarCampoManual(this,'tel')"></div>
               <div class="col-12"><label class="fl">Dirección</label>
                 <input class="form-control form-control-sm" id="oaxManDireccion"></div>
             </div>
@@ -817,6 +820,46 @@ window.OT2ANX = (function(){
     pintarItems(); pintarPasos();
   }
 
+  /* ── Validación del proveedor manual (2026-09-08) ──────────────────
+     Mismo algoritmo (módulo 11) que ya usa qfRutValidar en
+     mantenciones_cliente_wizard.js -- copiado acá en vez de depender de
+     que ese script esté cargado en esta página (no lo está siempre). */
+  function _oaxRutValido(rut){
+    var limpio = String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+    if (limpio.length < 7 || limpio.length > 9) return false;
+    var cuerpo = limpio.slice(0,-1), dv = limpio.slice(-1);
+    var suma = 0, mult = 2;
+    for (var i = cuerpo.length - 1; i >= 0; i--){
+      suma += parseInt(cuerpo[i]) * mult;
+      mult = mult === 7 ? 2 : mult + 1;
+    }
+    var resto = 11 - (suma % 11);
+    var dvOk = resto === 11 ? '0' : resto === 10 ? 'K' : String(resto);
+    return dv === dvOk;
+  }
+  /* Acepta +56912345678, 56 9 1234 5678, 912345678, 9-1234-5678, etc. --
+     cualquier forma con puros dígitos (y +56/56/0 opcional al inicio) que
+     al limpiarse quede en un móvil chileno de 9 dígitos partiendo en 9.
+     Devuelve la forma normalizada "+56 9 XXXX XXXX" o null si no calza. */
+  function _oaxTelChileNormalizar(v){
+    var d = String(v||'').replace(/[^0-9]/g,'');
+    if (d.indexOf('56') === 0 && d.length > 9) d = d.slice(2);
+    if (d.indexOf('0') === 0) d = d.slice(1);
+    if (d.length === 9 && d[0] === '9')
+      return '+56 9 ' + d.slice(1,5) + ' ' + d.slice(5);
+    return null;
+  }
+  function oaxValidarCampoManual(input, tipo){
+    var v = (input.value || '').trim();
+    var ok = true;
+    if (v){
+      if (tipo === 'rut') ok = _oaxRutValido(v);
+      else if (tipo === 'email') ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      else if (tipo === 'tel') ok = !!_oaxTelChileNormalizar(v);
+    }
+    input.style.borderColor = v ? (ok ? '#16a34a' : '#dc2626') : '';
+  }
+
   /* ── Semáforo de los 4 pasos obligatorios (REGLA #15) ──────────────
      Las mismas condiciones que valida `crear()` antes de mandar al
      servidor. Esa es la gracia: lo que la pantalla pinta en verde es
@@ -920,6 +963,28 @@ window.OT2ANX = (function(){
     if (!S.proveedor_nombre){
       ilusToast('Falta el nombre del proveedor.', {type:'warning'});
       return;
+    }
+    // 🔴 FIX 2026-09-08 (Daniel: "no me verifica ni el RUT ni el correo...
+    // el teléfono tiene que acomodar lo que sea un teléfono chileno...
+    // eso es una regla del sistema"). Antes cualquier texto pasaba: un RUT
+    // sin dígito verificador real, un correo sin arroba, un teléfono sin
+    // forma reconocible. El anexo es un documento con efecto legal -- estos
+    // datos identifican a la contraparte, no se aceptan a medias.
+    if (S.proveedor_rut && !_oaxRutValido(S.proveedor_rut)){
+      ilusToast('El RUT del proveedor no es válido — revisa el dígito verificador.', {type:'warning'});
+      return;
+    }
+    if (S.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(S.email)){
+      ilusToast('El correo del proveedor no tiene un formato válido.', {type:'warning'});
+      return;
+    }
+    if (S.tel){
+      var _telNorm = _oaxTelChileNormalizar(S.tel);
+      if (!_telNorm){
+        ilusToast('El teléfono no parece un número chileno válido (ej: +56 9 1234 5678).', {type:'warning'});
+        return;
+      }
+      S.tel = _telNorm;
     }
     if (!S.objetivo_servicio || !S.objetivo_servicio.trim()){
       ilusToast('Falta el objetivo del servicio.', {type:'warning'});
