@@ -140,33 +140,208 @@
     });
   }
 
+  /* 🔴 FIX 2026-09-08 -- mismo bug/solución que static/mantenciones_ot_ejecutar.js
+     (ver ese archivo para la explicación completa): fotos de celular con
+     orientación EXIF (1-8) quedaban "de lado" al comprimirse acá porque se
+     redibujaba el bitmap crudo del sensor en un <canvas> sin leer ese tag.
+     Estos helpers leen el tag a mano y orientan el canvas ANTES de
+     exportar (canvas.toBlob() no conserva metadata EXIF).
+     ⚠️ Probado en vivo (Chromium real): pedir "modo crudo" explícito
+     (imageOrientation:'none' en createImageBitmap, o image-orientation:none
+     en un <img>) NO funciona -- el navegador auto-corrige igual, ignorando
+     la opción. Por eso NO se fuerza ningún modo: se decodifica normal y se
+     usa una sonda (imagen de 2x1 px con EXIF Orientation=6, una sola vez,
+     memoizada) para saber si ESTE navegador ya vino con la rotación
+     aplicada. Si ya vino aplicada no se toca nada; si no, se aplica a mano
+     con el tag real del archivo -- así se rota siempre UNA sola vez. */
+
+  // Sonda 2x1 px (rojo|azul) con EXIF Orientation=6 -- si el navegador
+  // auto-orienta, decodifica a 1x2 (swap de ejes); si no, queda 2x1 (crudo).
+  var _IFE_EXIF_PROBE_B64 =
+    '/9j/4AAQSkZJRgABAQAAAQABAAD/4QAiRXhpZgAATU0AKgAAAAgAAQESAAMAAAABAAYAAAAA' +
+    'AAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQ' +
+    'ERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQ' +
+    'UFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAIDASIAAhEBAxEB/' +
+    '8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9' +
+    'AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY' +
+    '3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmq' +
+    'KjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+' +
+    'Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQA' +
+    'AQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJyg' +
+    'pKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZ' +
+    'aXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09' +
+    'fb3+Pn6/9oADAMBAAIRAxEAPwD4H8Q/8h/Uv+vmX/0M0UUV/ptkP/Ipwn/XuH/pKPAzr/kZ4' +
+    'r/r5P8A9KZ//9k=';
+
+  function _ifeProbeBytes() {
+    var bin = atob(_IFE_EXIF_PROBE_B64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  var _ifeProbeBitmapCache = null;
+  function _ifeProbeAutoOrientaBitmap() {
+    if (_ifeProbeBitmapCache) return _ifeProbeBitmapCache;
+    _ifeProbeBitmapCache = Promise.resolve().then(function () {
+      var blob = new Blob([_ifeProbeBytes()], { type: 'image/jpeg' });
+      return createImageBitmap(blob).then(function (bmp) {
+        var ok = (bmp.width === 1 && bmp.height === 2);
+        if (bmp.close) bmp.close();
+        return ok;
+      });
+    }).catch(function () { return false; }); // ante la duda, la rotamos nosotros (más seguro)
+    return _ifeProbeBitmapCache;
+  }
+
+  var _ifeProbeImgCache = null;
+  function _ifeProbeAutoOrientaImg() {
+    if (_ifeProbeImgCache) return _ifeProbeImgCache;
+    var url;
+    _ifeProbeImgCache = Promise.resolve().then(function () {
+      var blob = new Blob([_ifeProbeBytes()], { type: 'image/jpeg' });
+      url = URL.createObjectURL(blob);
+      return loadImg(url).then(function (img) {
+        return (img.naturalWidth === 1 && img.naturalHeight === 2);
+      });
+    }).catch(function () {
+      return false;
+    }).then(function (r) {
+      if (url) URL.revokeObjectURL(url);
+      return r;
+    });
+    return _ifeProbeImgCache;
+  }
+
+  /* Lee el tag EXIF Orientation (0x0112) de un JPEG. Devuelve 1-8, default 1. */
+  function _ifeLeerOrientacionExif(file) {
+    return new Promise(function (resolve) {
+      if (!file || !/^image\/jpe?g$/i.test(file.type || '')) { resolve(1); return; }
+      var reader = new FileReader();
+      reader.onerror = function () { resolve(1); };
+      reader.onload = function (ev) { resolve(_ifeParseExifOrientation(ev.target.result)); };
+      reader.readAsArrayBuffer(file.slice(0, 128 * 1024));
+    });
+  }
+
+  function _ifeParseExifOrientation(buffer) {
+    try {
+      var view = new DataView(buffer);
+      if (view.byteLength < 4 || view.getUint16(0, false) !== 0xFFD8) return 1;
+      var offset = 2, marker, segLen, segStart, tiffStart, little, firstIfdOffset, dirStart, numEntries, i, entryOffset, val;
+      while (offset + 4 <= view.byteLength) {
+        marker = view.getUint16(offset, false);
+        if ((marker & 0xFF00) !== 0xFF00) break;
+        offset += 2;
+        if (marker === 0xFFD8 || marker === 0xFFD9 || (marker >= 0xFFD0 && marker <= 0xFFD7)) continue;
+        if (offset + 2 > view.byteLength) break;
+        segLen = view.getUint16(offset, false);
+        if (marker === 0xFFE1) {
+          segStart = offset + 2;
+          if (segStart + 6 <= view.byteLength && view.getUint32(segStart, false) === 0x45786966) {
+            tiffStart = segStart + 6;
+            if (tiffStart + 8 <= view.byteLength) {
+              little = view.getUint16(tiffStart, false) === 0x4949;
+              firstIfdOffset = view.getUint32(tiffStart + 4, little);
+              dirStart = tiffStart + firstIfdOffset;
+              if (dirStart + 2 <= view.byteLength) {
+                numEntries = view.getUint16(dirStart, little);
+                for (i = 0; i < numEntries; i++) {
+                  entryOffset = dirStart + 2 + i * 12;
+                  if (entryOffset + 10 > view.byteLength) break;
+                  if (view.getUint16(entryOffset, little) === 0x0112) {
+                    val = view.getUint16(entryOffset + 8, little);
+                    return (val >= 1 && val <= 8) ? val : 1;
+                  }
+                }
+              }
+            }
+          }
+          return 1;
+        }
+        if (marker === 0xFFDA) break;
+        offset += segLen;
+      }
+    } catch (_e) { /* buffer corrupto/formato inesperado -- usar default */ }
+    return 1;
+  }
+
+  /* sw,sh = tamaño (YA escalado) que se le pasará a drawImage, SIN rotar. */
+  function _ifeAplicarOrientacionCanvas(ctx, orientation, sw, sh) {
+    switch (orientation) {
+      case 2: ctx.transform(-1, 0, 0, 1, sw, 0); break;
+      case 3: ctx.transform(-1, 0, 0, -1, sw, sh); break;
+      case 4: ctx.transform(1, 0, 0, -1, 0, sh); break;
+      case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
+      case 6: ctx.transform(0, 1, -1, 0, sh, 0); break;
+      case 7: ctx.transform(0, -1, -1, 0, sh, sw); break;
+      case 8: ctx.transform(0, -1, 1, 0, 0, sw); break;
+      default: break;
+    }
+  }
+
+  /* Decodifica la imagen y devuelve la orientación EFECTIVA a aplicar (1 si
+     el navegador ya vino con la rotación puesta -- ver sondas arriba). */
+  function _ifeDecodificarOrientado(file) {
+    return _ifeLeerOrientacionExif(file).then(function (orientation) {
+      if (window.createImageBitmap) {
+        return Promise.all([
+          createImageBitmap(file),
+          _ifeProbeAutoOrientaBitmap(),
+        ]).then(function (r) {
+          var bmp = r[0], autoOrienta = r[1];
+          return { source: bmp, sw: bmp.width, sh: bmp.height,
+                   orientation: autoOrienta ? 1 : orientation, isBitmap: true };
+        }).catch(function () {
+          return _ifeDecodificarViaImg(file, orientation);
+        });
+      }
+      return _ifeDecodificarViaImg(file, orientation);
+    });
+  }
+
+  function _ifeDecodificarViaImg(file, orientation) {
+    var url = URL.createObjectURL(file);
+    return Promise.all([loadImg(url), _ifeProbeAutoOrientaImg()]).then(function (r) {
+      var img = r[0], autoOrienta = r[1];
+      return { source: img, sw: img.naturalWidth, sh: img.naturalHeight,
+               orientation: autoOrienta ? 1 : orientation, isBitmap: false, url: url };
+    }).catch(function (e) {
+      URL.revokeObjectURL(url);
+      throw e;
+    });
+  }
+
   /* Comprime en el navegador ANTES de subir: lado mayor 1600px, JPEG 0.85.
-     Si no conviene (GIF, no-imagen, o queda más pesada) sube el original. */
+     Si no conviene (GIF, no-imagen, o queda más pesada) sube el original.
+     Ya orientada según su tag EXIF (ver helpers _ife* arriba). */
   function compressForUpload(file) {
     if (!/^image\//.test(file.type) || file.type === 'image/gif') {
       return Promise.resolve({ blob: file, name: file.name });
     }
-    var url = URL.createObjectURL(file);
-    return loadImg(url).then(function (img) {
+    return _ifeDecodificarOrientado(file).then(function (decoded) {
       var MAX = 1600;
-      var w = img.naturalWidth, h = img.naturalHeight;
-      var sc = Math.min(1, MAX / Math.max(w, h));
-      var cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+      var sc = Math.min(1, MAX / Math.max(decoded.sw, decoded.sh));
+      var sw = Math.max(1, Math.round(decoded.sw * sc));
+      var sh = Math.max(1, Math.round(decoded.sh * sc));
+      var swap = decoded.orientation >= 5 && decoded.orientation <= 8;
       var cv = document.createElement('canvas');
-      cv.width = cw; cv.height = ch;
+      cv.width = swap ? sh : sw;
+      cv.height = swap ? sw : sh;
       var cctx = cv.getContext('2d');
       cctx.fillStyle = '#fff';           // PNG transparente -> fondo blanco
-      cctx.fillRect(0, 0, cw, ch);
-      cctx.drawImage(img, 0, 0, cw, ch);
+      cctx.fillRect(0, 0, cv.width, cv.height);
+      _ifeAplicarOrientacionCanvas(cctx, decoded.orientation, sw, sh);
+      cctx.drawImage(decoded.source, 0, 0, sw, sh);
+      if (decoded.isBitmap && decoded.source.close) decoded.source.close();
+      if (decoded.url) URL.revokeObjectURL(decoded.url);
       return new Promise(function (res) {
         cv.toBlob(function (blob) {
-          URL.revokeObjectURL(url);
           if (!blob || blob.size >= file.size) { res({ blob: file, name: file.name }); }
           else { res({ blob: blob, name: 'foto.jpg' }); }
         }, 'image/jpeg', 0.85);
       });
     }).catch(function () {
-      URL.revokeObjectURL(url);
       return { blob: file, name: file.name };
     });
   }
