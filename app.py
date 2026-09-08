@@ -53199,6 +53199,25 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
         or request.headers.get("X-Requested-With") == "XMLHttpRequest"
         or (request.headers.get("Accept") or "").startswith("application/json")
     )
+    # 🔴 FIX 2026-09-08 (Daniel: "el técnico intenta acceder y no le permite...
+    # dice que no tiene acceso, pero tampoco le avisa [por qué]"). El candado
+    # del Anexo de Servicios (_anexo_bloquea_ot, más abajo en app.py) corta
+    # ANTES de cualquier accion -- ver/ejecutar/configurar/firmar quedan
+    # todas con el mismo False genérico, y este 403 nunca distinguía esa
+    # causa de un permiso de rol real. El técnico bloqueado por su propio
+    # anexo sin firmar merece un mensaje que se lo diga, no "no tienes
+    # acceso" a secas -- eso suena a error del sistema, no a "te falta un
+    # paso tuyo".
+    if role == "tecnico":
+        _anexo_num = _anexo_bloquea_ot(vid)
+        if _anexo_num:
+            msg = ("Debes firmar el Anexo de Servicios antes de trabajar esta OT. "
+                   "Si no te llegó, pide que te reenvíen el link para firmarlo.")
+            if is_api:
+                return jsonify({"ok": False, "error": msg,
+                                "error_codigo": "ANEXO_SIN_FIRMAR"}), 403
+            flash(msg, "warning")
+            return redirect(url_for("mant_ots_list"))
     if is_api:
         if accion == "ejecutar":
             msg = "Solo el técnico asignado puede gestionar esta OT."
@@ -85026,7 +85045,10 @@ def ot2_api_anexo_enviar(aid):
     # de acceso sin sesión para esto.
     _tpl_anexo = None
     if a.get("ot_id") and _v:
-        _link_ot = url_for("mant_ot_ficha", vid=a["ot_id"], _external=True)
+        # 🔴 FIX 2026-09-08 (mismo hallazgo que ot2_api_crear): apuntaba a la
+        # ficha clasica en vez de OT 2.0. El candado _anexo_bloquea_ot protege
+        # ambas pantallas por igual, asi que el cambio es solo de destino.
+        _link_ot = url_for("ot2_detalle", vid=a["ot_id"], _external=True)
         _variables_anexo = {
             "proveedor_nombre": a.get("proveedor_nombre") or "",
             "numero_anexo": a["numero"],
