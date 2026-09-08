@@ -291,6 +291,29 @@
 
   <div class="trx-card-body">
 
+    {# ── KPIs de valor (2026-09-08, Daniel/Alison: reporte de gerencia
+       "en términos de valor") — fila propia arriba de los 4 operacionales,
+       mismo componente trx-kpi para no inventar un estilo nuevo. ── #}
+    <div class="trx-kpis mb-3">
+      <div class="trx-kpi trx-kpi-ok">
+        <div class="trx-kpi-k"><i class="bi bi-cash-stack"></i>Total cobrado (ZZ Envío)</div>
+        <div class="trx-kpi-v">${{ "{:,.0f}".format(kpis.valor.cobrado).replace(",", ".") }}</div>
+        <div class="trx-kpi-d">{{ kpis.valor.sub }}</div>
+      </div>
+      <div class="trx-kpi trx-kpi-warn">
+        <div class="trx-kpi-k"><i class="bi bi-truck"></i>Total costo courier</div>
+        <div class="trx-kpi-v">${{ "{:,.0f}".format(kpis.valor.costo).replace(",", ".") }}</div>
+        <div class="trx-kpi-d">Lo que ILUS pagó a los couriers en el periodo.</div>
+      </div>
+      <div class="trx-kpi {{ 'trx-kpi-dang' if kpis.valor.margen < 0 else 'trx-kpi-ok' }}">
+        <div class="trx-kpi-k"><i class="bi bi-graph-up-arrow"></i>Margen</div>
+        <div class="trx-kpi-v">${{ "{:,.0f}".format(kpis.valor.margen).replace(",", ".") }}</div>
+        <div class="trx-kpi-d">
+          {% if kpis.valor.margen_pct is not none %}{{ "%.1f"|format(kpis.valor.margen_pct) }}% sobre lo cobrado{% else %}Sin cobros en el periodo.{% endif %}
+        </div>
+      </div>
+    </div>
+
     {# ── KPIs del periodo ── #}
     <div class="trx-kpis">
       <div class="trx-kpi" style="border-left:4px solid var(--trx-info)">
@@ -349,6 +372,7 @@
     {# ── Filtros del periodo ── #}
     <div class="dh-filters">
       <div class="dh-chip-periodo mb-2">
+        <a href="{{ url_for('tr_dashboard_hoy', periodo='semana') }}" class="{{ 'active' if hist_filtros.periodo=='semana' else '' }}">Esta semana</a>
         <a href="{{ url_for('tr_dashboard_hoy', periodo='mes') }}" class="{{ 'active' if hist_filtros.periodo=='mes' or not hist_filtros.periodo else '' }}">Último mes</a>
         <a href="{{ url_for('tr_dashboard_hoy', periodo='3m') }}" class="{{ 'active' if hist_filtros.periodo=='3m' else '' }}">Últimos 3 meses</a>
         <a href="{{ url_for('tr_dashboard_hoy', periodo='año') }}" class="{{ 'active' if hist_filtros.periodo=='año' else '' }}">Este año</a>
@@ -395,6 +419,11 @@
           </button>
           <a href="{{ url_for('tr_dashboard_hoy') }}" class="btn btn-outline-secondary" style="min-height:44px;">
             <i class="bi bi-x-lg me-1"></i>Limpiar
+          </a>
+          <a href="{{ url_for('tr_dashboard_export_xlsx', periodo=hist_filtros.periodo, desde=hist_filtros.desde, hasta=hist_filtros.hasta, estado=hist_filtros.estado, courier=hist_filtros.courier, comuna=hist_filtros.comuna, q=hist_filtros.q) }}"
+             class="btn btn-outline-success fw-bold" style="min-height:44px;"
+             title="Descarga el resumen y el detalle de ESTOS mismos filtros en Excel">
+            <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
           </a>
         </div>
       </form>

@@ -38367,7 +38367,7 @@ def tr_dashboard_hoy():
     except (TypeError, ValueError):
         hist_page = 1
 
-    kpis = _calcular_kpis(desde, hasta)
+    kpis = _calcular_kpis(desde, hasta, hist_courier)
     compromisos, hist_total, hist_page, hist_total_pages = _listar_compromisos(
         desde, hasta, hist_estado, hist_courier, hist_comuna, hist_q, hist_page
     )
@@ -38390,6 +38390,126 @@ def tr_dashboard_hoy():
                            estados=ESTADOS_COMPROMISO,
                            couriers=_nombres_couriers_activos(),
                            estado_colors=ESTADO_COLORS)
+
+
+@app.route("/transporte/dashboard/export.xlsx")
+@_tr_required
+def tr_dashboard_export_xlsx():
+    """Excel de gestión para gerencia (2026-09-08, Daniel/Alison: "reporte...
+    en términos de courriers, fecha, valor, entregas... fill rate... algo
+    atómico... exportar un excel con calidad de datos para realizar
+    cálculos, reportes y seguimientos").
+
+    Reusa EXACTAMENTE los mismos filtros del Historial del Dashboard
+    (querystring: periodo/desde/hasta/estado/courier/comuna/q) -- el Excel
+    siempre coincide con lo que el operador está viendo en pantalla al
+    apretar el botón, nunca un reporte "aparte" con su propia lógica.
+
+    2 hojas: Resumen (los mismos 5 KPI del Dashboard) + Detalle (una fila
+    por documento, con cobrado/costo/margen/fill rate/días en tránsito --
+    todo como NÚMERO real, no texto formateado, para que Excel pueda sumar
+    y pivotear directo sin reprocesar nada).
+    """
+    from logistica_kpi import (_rango_fechas, _calcular_kpis, _listar_compromisos_export,
+                                _EXPORT_MAX_FILAS)
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        flash("Falta la librería openpyxl para generar el Excel.", "danger")
+        return redirect(url_for("tr_dashboard_hoy"))
+    from io import BytesIO
+    from flask import send_file
+
+    periodo, desde, hasta = _rango_fechas()
+    estado = (request.args.get("estado", "") or "").strip()
+    courier = (request.args.get("courier", "") or "").strip()
+    comuna = (request.args.get("comuna", "") or "").strip()
+    q = (request.args.get("q", "") or "").strip()
+
+    kpis = _calcular_kpis(desde, hasta, courier)
+    filas, truncado = _listar_compromisos_export(desde, hasta, estado, courier, comuna, q)
+
+    wb = openpyxl.Workbook()
+    HDR_FILL = PatternFill("solid", fgColor="0A0A0A")   # REGLA #2: negro ILUS
+    HDR_FONT = Font(color="FFFFFF", bold=True)
+
+    def _hdr_row(ws, headers):
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(1, ci, h)
+            cell.font = HDR_FONT
+            cell.fill = HDR_FILL
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        ws.freeze_panes = "A2"
+
+    # ── Hoja 1: Resumen ──────────────────────────────────────────────
+    ws1 = wb.active
+    ws1.title = "Resumen"
+    ws1.append(["Reporte de gestión — Transporte ILUS"])
+    ws1["A1"].font = Font(bold=True, size=14)
+    rango_txt = f"{desde} a {hasta}" if (desde and hasta) else "Todo el historial"
+    ws1.append([f"Periodo: {rango_txt}" + (f" · Courier: {courier}" if courier else "")])
+    ws1.append([f"Generado: {_now_chile().strftime('%d/%m/%Y %H:%M')} · por {current_username()}"])
+    ws1.append([])
+    _hdr_row(ws1, ["Métrica", "Valor", "Detalle"])
+    v = kpis["valor"]
+    ws1.append(["Total cobrado (ZZ Envío)", v["cobrado"], v["sub"]])
+    ws1.append(["Total costo courier", v["costo"], ""])
+    ws1.append(["Margen", v["margen"],
+                f"{v['margen_pct']:.1f}% sobre lo cobrado" if v["margen_pct"] is not None else ""])
+    fr = kpis["fill_rate"]
+    ws1.append(["Fill rate por línea (%)", fr["valor"], fr["sub"]])
+    te = kpis["tasa_entrega"]
+    ws1.append(["Tasa de entrega exitosa (%)", te["valor"], te["sub"]])
+    ti = kpis["tasa_incidencias"]
+    ws1.append(["Tasa de incidencias (%)", ti["valor"], ti["sub"]])
+    lt = kpis["lead_time"]
+    ws1.append(["Lead time promedio (días)", lt["dias"], lt["sub"]])
+    ws1.append([])
+    if truncado:
+        ws1.append([f"⚠ El detalle se topó en {_EXPORT_MAX_FILAS} filas — "
+                     "acota el rango de fechas o el courier para ver todo."])
+        ws1["A" + str(ws1.max_row)].font = Font(color="B45309", bold=True)
+    for col, width in (("A", 32), ("B", 16), ("C", 55)):
+        ws1.column_dimensions[col].width = width
+
+    # ── Hoja 2: Detalle ──────────────────────────────────────────────
+    ws2 = wb.create_sheet("Detalle")
+    headers = ["Documento", "Cliente", "Comuna", "Courier", "Estado documento",
+               "Estado entrega", "Manifiesto", "Fecha emisión", "Fecha manifiesto",
+               "Entregado", "Cobrado", "Costo courier", "Margen",
+               "Cant. comprada", "Cant. despachada", "Fill rate %", "Días en tránsito"]
+    _hdr_row(ws2, headers)
+    for r in filas:
+        ws2.append([
+            f"{r.get('tido') or ''} {r.get('nudo_display') or ''}".strip(),
+            r.get("cliente_nombre") or "",
+            r.get("comuna") or "",
+            r.get("courier") or "",
+            r.get("estado") or "",
+            r.get("estado_entrega") or "",
+            r.get("manifiesto_correlativo") or "",
+            r.get("fecha_emision"),
+            r.get("fecha_manifiesto"),
+            r.get("delivered_at"),
+            float(r.get("cobrado") or 0),
+            float(r.get("costo") or 0),
+            float(r.get("margen") or 0),
+            float(r.get("cant_comprada") or 0) if r.get("cant_comprada") is not None else None,
+            float(r.get("cant_despachada") or 0) if r.get("cant_despachada") is not None else None,
+            r.get("fill_rate_pct"),
+            r.get("dias_transito"),
+        ])
+    for i in range(1, len(headers) + 1):
+        ws2.column_dimensions[get_column_letter(i)].width = 16
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nombre = f"reporte_transporte_{desde or 'inicio'}_a_{hasta or 'hoy'}.xlsx".replace(" ", "_")
+    return send_file(buf, as_attachment=True, download_name=nombre,
+                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.route("/transporte/monitor")

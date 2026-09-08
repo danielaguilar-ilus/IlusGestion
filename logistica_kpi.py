@@ -107,7 +107,16 @@ def _rango_fechas():
     default_desde = (hoy - timedelta(days=30)).strftime("%Y-%m-%d")
     default_hasta = hoy.strftime("%Y-%m-%d")
 
-    if periodo == "mes":
+    if periodo == "semana":
+        # 2026-09-08 (Daniel/Alison: reporte de gerencia "filtrando fechas
+        # o semana o mes"). Ventana MÓVIL de 7 días, mismo criterio que
+        # "mes" (móvil de 30, no calendario) -- consistente entre ambos
+        # atajos, y evita el mismo bug que ya se corrigió acá el 2026-08-01
+        # para "mes": un atajo de calendario colapsa a "casi nada" el
+        # primer día de cada periodo (ver tr_manifiestos, mismo comentario).
+        desde = (hoy - timedelta(days=7)).strftime("%Y-%m-%d")
+        hasta = default_hasta
+    elif periodo == "mes":
         desde, hasta = default_desde, default_hasta
     elif periodo == "3m":
         desde = (hoy - timedelta(days=90)).strftime("%Y-%m-%d")
@@ -130,7 +139,23 @@ def _rango_fechas():
 #  propias de ILUS en MySQL Clever Cloud.
 # ──────────────────────────────────────────────────────────────────────
 
-def _calcular_kpis(desde, hasta):
+def _courier_subfiltro(courier, alias="c"):
+    """Fragmento reusable (2026-09-08, reporte de gerencia por courier):
+    filtra transport_commitments por el courier de SU manifiesto -- courier
+    vive en transport_manifests, no en transport_commitments. Match EXACTO,
+    mismo criterio que ya usa _listar_compromisos() más abajo en este mismo
+    archivo (el courier llega de un <select> con los nombres registrados en
+    transport_couriers, nunca texto libre -- no hace falta LIKE tolerante
+    acá). Se define UNA vez para no repetir la subquery en cada KPI."""
+    if not courier:
+        return "", ()
+    return (
+        f" AND {alias}.id IN (SELECT mi.commitment_id FROM transport_manifest_items mi "
+        f"JOIN transport_manifests m3 ON m3.id = mi.manifest_id WHERE m3.courier = %s)"
+    ), (courier,)
+
+
+def _calcular_kpis(desde, hasta, courier=None):
     mysql_fetchone = _h("mysql_fetchone")
 
     where_fecha = ""
@@ -141,6 +166,9 @@ def _calcular_kpis(desde, hasta):
     if hasta:
         where_fecha += " AND c.fecha_emision <= %s"
         params_fecha += (hasta,)
+    where_courier, params_courier = _courier_subfiltro(courier, "c")
+    where_fecha += where_courier
+    params_fecha += params_courier
 
     # 1) Fill rate por línea (columnas verificadas: app.py:2438-2454)
     r1 = mysql_fetchone(
@@ -165,6 +193,9 @@ def _calcular_kpis(desde, hasta):
     if hasta:
         where_fecha_m += " AND m.fecha <= %s"
         params_fecha_m += (hasta,)
+    if courier:
+        where_fecha_m += " AND m.courier = %s"
+        params_fecha_m += (courier,)
     r2 = mysql_fetchone(
         "SELECT COUNT(*) AS total, "
         "       SUM(CASE WHEN mi.estado_entrega='Entregado' THEN 1 ELSE 0 END) AS entregados, "
@@ -192,7 +223,37 @@ def _calcular_kpis(desde, hasta):
     lead_time = round(float(lead_raw), 1) if lead_raw is not None else None
     lead_n = int(r3.get("n") or 0)
 
+    # 5) Valor: cobrado / costo / margen (2026-09-08, Daniel/Alison: reporte
+    # de gerencia "en términos de valor"). zz_envio/costo_courier viven UNA
+    # vez por DOCUMENTO en transport_commitments (columnas verificadas: ver
+    # tr_manifiesto_detalle, app.py ~30469/30483) -- se suma por DISTINCT
+    # commitment_id del periodo (vía manifest_items/manifiestos, igual que
+    # #2/#3), nunca por fila de manifest_item: un documento con 2 ramos
+    # (despacho + instalación) en el mismo periodo NO debe duplicar su
+    # propio cobro/costo.
+    r4 = mysql_fetchone(
+        "SELECT COALESCE(SUM(c.zz_envio),0) AS cobrado, "
+        "       COALESCE(SUM(c.costo_courier),0) AS costo, "
+        "       COUNT(*) AS docs "
+        "FROM transport_commitments c "
+        "WHERE c.id IN (SELECT DISTINCT mi.commitment_id "
+        "               FROM transport_manifest_items mi "
+        "               JOIN transport_manifests m ON m.id = mi.manifest_id "
+        "               WHERE 1=1" + where_fecha_m + ")",
+        params_fecha_m,
+    ) or {}
+    cobrado = float(r4.get("cobrado") or 0)
+    costo = float(r4.get("costo") or 0)
+    margen = cobrado - costo
+    docs = int(r4.get("docs") or 0)
+
     return {
+        "valor": {
+            "cobrado": cobrado, "costo": costo, "margen": margen, "docs": docs,
+            "margen_pct": round((margen / cobrado) * 100, 1) if cobrado > 0 else None,
+            "sub": (f"{docs} documento(s) despachado(s) en el periodo"
+                    if docs > 0 else "Sin documentos despachados en el periodo."),
+        },
         "fill_rate": {
             "valor": fill_rate, "pedido": pedido, "despachado": despachado,
             "sub": (f"{despachado:,.0f} de {pedido:,.0f} unidades despachadas"
@@ -227,11 +288,20 @@ def _calcular_kpis(desde, hasta):
 
 _PAGE_SIZE = 50
 
+# Techo del export (2026-09-08): un reporte de gerencia puede pedir "todo el
+# año", pero un .xlsx de decenas de miles de filas es un archivo que ni Excel
+# abre bien. Mismo espíritu que otros topes de este proyecto (LIMIT 500/800
+# en Transporte) -- self-explanatory: si se llega al techo, el Resumen del
+# Excel lo dice, no se calla (misma lección que la ventana de "visitas sin
+# entregar", ver memoria del proyecto: "si una herramienta acota su
+# cobertura, tiene que decirlo").
+_EXPORT_MAX_FILAS = 5000
 
-def _listar_compromisos(desde, hasta, estado, courier, comuna, q, page):
-    mysql_fetchall = _h("mysql_fetchall")
-    mysql_fetchone = _h("mysql_fetchone")
 
+def _compromisos_where(desde, hasta, estado, courier, comuna, q):
+    """Fragmento WHERE + params reusado por _listar_compromisos (paginado,
+    para pantalla) y _listar_compromisos_export (todo el rango, para Excel)
+    -- una sola definición del filtro, dos consumidores (Regla #4.2)."""
     where = ["1=1"]
     params = []
 
@@ -257,7 +327,6 @@ def _listar_compromisos(desde, hasta, estado, courier, comuna, q, page):
             where.append("m2.courier = %s"); params.append(courier)
 
     where_sql = " AND ".join(where)
-
     base_from = (
         "FROM transport_commitments c "
         "LEFT JOIN ( "
@@ -267,6 +336,14 @@ def _listar_compromisos(desde, hasta, estado, courier, comuna, q, page):
         "LEFT JOIN transport_manifest_items mi2 ON mi2.id = lmx.max_id "
         "LEFT JOIN transport_manifests m2 ON m2.id = mi2.manifest_id "
     )
+    return where_sql, params, base_from
+
+
+def _listar_compromisos(desde, hasta, estado, courier, comuna, q, page):
+    mysql_fetchall = _h("mysql_fetchall")
+    mysql_fetchone = _h("mysql_fetchone")
+
+    where_sql, params, base_from = _compromisos_where(desde, hasta, estado, courier, comuna, q)
 
     total_row = mysql_fetchone(
         f"SELECT COUNT(*) AS n {base_from} WHERE {where_sql}", tuple(params)
@@ -298,3 +375,74 @@ def _listar_compromisos(desde, hasta, estado, courier, comuna, q, page):
         r["nudo_display"] = nudo.lstrip("0") or nudo
 
     return rows, total, page, total_pages
+
+
+def _listar_compromisos_export(desde, hasta, estado, courier, comuna, q):
+    """Fila por documento, SIN paginar, para el Excel de gerencia
+    (2026-09-08, Daniel/Alison: "exportar un excel con calidad de datos
+    para realizar cálculos, reportes y seguimientos"). Mismo filtro exacto
+    que ve el operador en pantalla (_compromisos_where) + los campos de
+    valor y fill rate que la tabla en pantalla no necesita mostrar pero un
+    análisis en Excel sí: cobrado/costo/margen (transport_commitments,
+    verificado en tr_manifiesto_detalle) y cantidad/despachado por línea
+    (transport_commitment_lines, mismo origen que el KPI de fill rate de
+    _calcular_kpis) -- agregados con subqueries LEFT JOIN, no por fila en
+    Python, para que 5.000 filas no signifiquen 5.000 round-trips.
+
+    Devuelve (rows, truncado: bool) -- truncado=True si había más
+    resultados que _EXPORT_MAX_FILAS (el Resumen del Excel debe decirlo,
+    nunca callarlo — ver comentario del tope arriba).
+    """
+    mysql_fetchall = _h("mysql_fetchall")
+    mysql_fetchone = _h("mysql_fetchone")
+
+    where_sql, params, base_from = _compromisos_where(desde, hasta, estado, courier, comuna, q)
+
+    total_row = mysql_fetchone(
+        f"SELECT COUNT(*) AS n {base_from} WHERE {where_sql}", tuple(params)
+    ) or {}
+    total = int(total_row.get("n") or 0)
+
+    extra_joins = (
+        "LEFT JOIN (SELECT commitment_id, SUM(cantidad) AS cant_comprada, "
+        "                  SUM(cant_despachada) AS cant_despachada "
+        "           FROM transport_commitment_lines GROUP BY commitment_id) fr "
+        "       ON fr.commitment_id = c.id "
+        "LEFT JOIN (SELECT commitment_id, "
+        "                  MIN(CASE WHEN estado='Entregado a transporte' THEN ts_utc END) AS en_courier_at, "
+        "                  MAX(CASE WHEN estado='Entregado' THEN ts_utc END) AS entregado_at "
+        "           FROM transport_tracking_events GROUP BY commitment_id) ev "
+        "       ON ev.commitment_id = c.id "
+    )
+    rows = mysql_fetchall(
+        f"SELECT c.id, c.tido, c.nudo, c.cliente_nombre, c.comuna, c.estado, "
+        f"       c.fecha_emision, c.fecha_agenda, c.delivered_at, "
+        f"       COALESCE(c.zz_envio,0) AS cobrado, COALESCE(c.costo_courier,0) AS costo, "
+        f"       m2.courier AS courier, mi2.estado_entrega AS estado_entrega, "
+        f"       m2.correlativo AS manifiesto_correlativo, m2.fecha AS fecha_manifiesto, "
+        f"       fr.cant_comprada, fr.cant_despachada, "
+        f"       ev.en_courier_at, ev.entregado_at "
+        f"{base_from} {extra_joins}"
+        f"WHERE {where_sql} "
+        f"ORDER BY c.fecha_emision DESC, c.id DESC "
+        f"LIMIT %s",
+        tuple(params) + (_EXPORT_MAX_FILAS,),
+    ) or []
+
+    for r in rows:
+        nudo = str(r.get("nudo") or "")
+        r["nudo_display"] = nudo.lstrip("0") or nudo
+        cobrado = float(r.get("cobrado") or 0)
+        costo = float(r.get("costo") or 0)
+        r["margen"] = cobrado - costo
+        cant_comprada = float(r.get("cant_comprada") or 0)
+        cant_despachada = float(r.get("cant_despachada") or 0)
+        r["fill_rate_pct"] = round((cant_despachada / cant_comprada) * 100, 1) if cant_comprada > 0 else None
+        en_courier_at = r.get("en_courier_at")
+        entregado_at = r.get("entregado_at")
+        if en_courier_at and entregado_at:
+            r["dias_transito"] = round((entregado_at - en_courier_at).total_seconds() / 86400, 1)
+        else:
+            r["dias_transito"] = None
+
+    return rows, (total > _EXPORT_MAX_FILAS)
