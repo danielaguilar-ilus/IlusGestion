@@ -20313,10 +20313,17 @@ def api_asignar_documento():
     # de N por enviar), usar ESE valor en vez del total crudo del ERP. Si nunca
     # se editó, comportamiento idéntico a hoy (valor del ERP tal cual).
     zzenvio_es_saldo = False
+    # Valor ORIGINAL sin prorratear -- se preserva para que el front pueda
+    # recalcular un prorrateo de despacho parcial (2026-09-08) siempre desde
+    # el 100% real, nunca desde un saldo ya reducido (eso compone el
+    # descuento cada vez que se reprorratea -- bug real encontrado probando
+    # en vivo BLV 23313: 117.349 → 20% → 23.470 → 20% otra vez → 4.694).
+    zzenvio_original = zzenvio_valor
     _zz_row = _zz_saldo_get(tido, nudo)
     if _zz_row is not None:
         zzenvio_valor    = float(_zz_row.get("zz_envio_saldo") or 0)
         zzenvio_es_saldo = True
+        zzenvio_original = float(_zz_row.get("zz_envio_original") or zzenvio_original)
 
     # Saldo de CANTIDAD por línea (2026-09-08, Daniel: despacho parcial por
     # quiebre de stock) — si ya se declaró un despacho parcial de este
@@ -20551,6 +20558,7 @@ def api_asignar_documento():
         "tipos_doc":       TIPOS_DOC_CUBICADOR,
         "zzenvio_valor":   round(zzenvio_valor, 0),
         "zzenvio_es_saldo": zzenvio_es_saldo,
+        "zzenvio_original": round(zzenvio_original, 0),
         "from_cache":      _from_cache,
     })
 

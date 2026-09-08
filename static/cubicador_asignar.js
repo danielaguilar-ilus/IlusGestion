@@ -1232,7 +1232,14 @@ function actualizarZzEnvioProrateado(){
   });
   if(sumaOriginal <= 0 || sumaDeclarada >= sumaOriginal) return;  // nada que proratear
   const factor  = sumaDeclarada / sumaOriginal;
-  const zzBase  = _docData._zzenvioValorAlCargar || _docData.zzenvio_valor || 0;
+  // BUG REAL encontrado probando en vivo (BLV 23313, 2026-09-08): usar
+  // _zzenvioValorAlCargar/zzenvio_valor como base componía el descuento en
+  // cada reprorrateo (117.349 → 20% → 23.470 → 20% otra vez → 4.694), porque
+  // esos campos YA reflejan el último saldo guardado, no el 100% real.
+  // zzenvio_original lo manda el backend SIN prorratear y nunca cambia
+  // durante la sesión (mismo dato que transport_zz_saldo.zz_envio_original) —
+  // el prorrateo siempre se calcula desde ahí, nunca desde el saldo actual.
+  const zzBase  = _docData.zzenvio_original || 0;
   const nuevoZz = Math.round(zzBase * factor);
   const el = document.getElementById('cli-zzenvio');
   if(el) el.value = nuevoZz;

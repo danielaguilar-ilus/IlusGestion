@@ -174,7 +174,7 @@ class TestUIDespachoParcial(unittest.TestCase):
     def test_prorratea_el_flete_reusando_el_mecanismo_existente(self):
         i = JS_SRC.find("function actualizarZzEnvioProrateado")
         self.assertGreater(i, 0)
-        bloque = JS_SRC[i:i + 1000]
+        bloque = JS_SRC[i:i + 1600]
         # Reusa guardarZzEnvioSaldo -- no duplica la persistencia del $.
         self.assertIn("guardarZzEnvioSaldo", bloque)
 
@@ -183,6 +183,28 @@ class TestUIDespachoParcial(unittest.TestCase):
         self.assertGreater(i, 0)
         bloque = JS_SRC[max(0, i - 300):i + 200]
         self.assertIn("_cantDeclarada", bloque)
+
+    def test_prorratea_siempre_desde_el_original_no_desde_el_saldo_actual(self):
+        # BUG REAL encontrado probando en vivo (BLV 23313, 2026-09-08): usar
+        # el saldo YA guardado como base componía el descuento en cada
+        # reprorrateo (117.349 -> 20% -> 23.470 -> 20% otra vez -> 4.694).
+        # zzenvio_original es inmutable durante la sesión -- debe ser
+        # SIEMPRE la base, nunca zzenvio_valor/_zzenvioValorAlCargar (que
+        # reflejan el último saldo guardado).
+        i = JS_SRC.find("function actualizarZzEnvioProrateado")
+        self.assertGreater(i, 0)
+        bloque = JS_SRC[i:i + 1600]
+        i_base = bloque.find("const zzBase")
+        self.assertGreater(i_base, 0)
+        linea_zzbase = bloque[i_base:bloque.find("\n", i_base)]
+        self.assertIn("zzenvio_original", linea_zzbase)
+        self.assertNotIn("_zzenvioValorAlCargar", linea_zzbase)
+        self.assertNotIn("zzenvio_valor", linea_zzbase.replace("zzenvio_original", ""))
+
+    def test_backend_expone_zzenvio_original_inmutable(self):
+        f = _fn("api_asignar_documento")
+        self.assertIn("zzenvio_original", f)
+        self.assertIn("zz_envio_original", f)  # se lee de transport_zz_saldo, no se reinventa
 
     def test_recotiza_couriers_al_cambiar_la_cantidad(self):
         # Hallazgo real probando en vivo (BLV 23313, 2026-09-08): al bajar
