@@ -1017,6 +1017,16 @@ function renderCubaje(){
   let rows = '';
   lineas.forEach((l, idx) => {
     const qty = parseFloat(l.cantidad) || 0;
+    // Despacho parcial (Daniel 2026-09-08): techo = lo que YA se declaró
+    // como pendiente en un despacho parcial anterior (cantidad_pendiente_ilus),
+    // o la cantidad comprada si nunca se declaró uno. `_cantDeclarada` es lo
+    // que el operador acaba de escribir en ESTA sesión (puede ser < techo).
+    const techoParcial = (l.cantidad_pendiente_ilus != null) ? parseFloat(l.cantidad_pendiente_ilus) : qty;
+    const qtyDeclarada = (l._cantDeclarada != null) ? parseFloat(l._cantDeclarada) : techoParcial;
+    // Factor de escala sobre los TOTALES ya calculados por el backend (NO
+    // recalcular peso_u*qty acá: los productos vendidos de a par se
+    // inflarían al doble, mismo gotcha documentado arriba en pred_tot).
+    const factorParcial = qty > 0 ? (qtyDeclarada / qty) : 1;
     const sf  = !l.tiene_bultos;
     const tipo = sf
       ? '<span class="pill-sf">s/f</span>'
@@ -1044,12 +1054,15 @@ function renderCubaje(){
     // mancuernas) se facturan en piezas sueltas pero se empacan de a 2, y
     // recalcular acá inflaba el total al doble aunque la fila mostrara el
     // valor correcto (2026-08-07, caso FCV 11225). pred_tot ya se leía así.
-    tQty  += qty;
-    tKg   += (parseFloat(l.peso_kg_tot)  || 0);
-    tPv   += (parseFloat(l.peso_vol_tot) || 0);
-    tVol  += (parseFloat(l.vol_tot)      || 0);
-    tPred += (parseFloat(l.pred_tot)     || 0);
-    tBult += (parseInt(l.bultos_tot)   || 0);
+    // Despacho parcial (2026-09-08): se escala por factorParcial (relación
+    // qtyDeclarada/qty), NO recalculando desde peso_u -- mismo cuidado que
+    // el comentario de arriba, por la misma razón (piezas vendidas de a par).
+    tQty  += qtyDeclarada;
+    tKg   += (parseFloat(l.peso_kg_tot)  || 0) * factorParcial;
+    tPv   += (parseFloat(l.peso_vol_tot) || 0) * factorParcial;
+    tVol  += (parseFloat(l.vol_tot)      || 0) * factorParcial;
+    tPred += (parseFloat(l.pred_tot)     || 0) * factorParcial;
+    tBult += Math.round((parseInt(l.bultos_tot) || 0) * factorParcial);
 
     // Datos para los botones de medidas/etiquetas (reusa el mismo mecanismo
     // global de static/cubicador_tabs.js que ya usan index.html/ficha.html —
@@ -1060,17 +1073,27 @@ function renderCubaje(){
     const _appIdAttr  = l.app_id != null ? l.app_id : '';
     const _bultosAttr = sf ? 0 : (parseInt(l.total_bultos) || 0);
 
+    const _predTotEfectivo = (parseFloat(l.pred_tot) || 0) * factorParcial;
+    const _cantCell = qtyDeclarada < qty
+      ? `<input type="number" class="cube-cant-input" data-idx="${idx}" min="1" max="${techoParcial}"
+                 value="${qtyDeclarada}" style="width:56px;text-align:center"
+                 onchange="cambiarCantidadDespacho(${idx}, this)">
+         <div style="font-size:.68rem;color:#f59e0b;white-space:nowrap" title="${escHtml(l._motivoParcial || l.cantidad_ilus_motivo || '')}">de ${parseInt(qty)} · parcial</div>`
+      : `<input type="number" class="cube-cant-input" data-idx="${idx}" min="1" max="${techoParcial}"
+                 value="${qtyDeclarada}" style="width:56px;text-align:center"
+                 onchange="cambiarCantidadDespacho(${idx}, this)">`;
+
     rows += `<tr class="cub-row" data-sku="${_skuAttr}" data-app-id="${_appIdAttr}" data-qty="${parseInt(qty)}" data-uxv="${l.unidades_por_venta || 1}">
       <td class="tc" data-label=""><input type="checkbox" class="cube-chk" data-idx="${idx}" onchange="actualizarBotonEliminarSeleccionados()"></td>
       <td class="mono" data-label="SKU" data-cell="sku">${l.sku}</td>
       <td class="cube-desc" data-label="Descripción" style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}${_bodegaChip(l)}</td>
-      <td class="tc" data-label="Cant.">${parseInt(qty)}</td>
+      <td class="tc" data-label="Cant.">${_cantCell}</td>
       <td class="tc" data-label="Bultos/u" data-cell="bultos">${bultosCell}</td>
       <td class="tr" data-label="KG Real/u" data-cell="kg-u">${sf?'<span class="sf">—</span>':fCl(l.peso_kg_u)}</td>
       <td class="tr" data-label="KG Vol/u" data-cell="pv-u">${sf?'<span class="sf">—</span>':fCl(l.peso_vol_u)}</td>
       <td class="tr" data-label="Vol. m³/u" data-cell="vol-u" style="font-size:.78rem;color:#555">${sf?'<span class="sf">—</span>':fVol(l.vol_u)}</td>
       <td class="tr pred-u" data-label="Predom./u" data-cell="pred-u">${sf?'<span class="sf">—</span>':fCl(l.pred_u)}</td>
-      <td class="tr pred-tot" data-label="Total Predom." data-cell="pred-tot">${sf?'<span class="sf">—</span>':fCl(l.pred_tot)}</td>
+      <td class="tr pred-tot" data-label="Total Predom." data-cell="pred-tot">${sf?'<span class="sf">—</span>':fCl(_predTotEfectivo)}</td>
       <td class="tc" data-label="Tipo">${tipo}</td>
       <td class="tc" data-label="Saldo">${_saldoBadge(l)}</td>
       <td class="tc cube-act" data-label="Acción">
@@ -1138,6 +1161,72 @@ function renderCubaje(){
 
   // Alerta límite físico FedEx (68kg/bulto) — no bloqueante, solo aviso.
   _renderFedexAlertBanner(overweightFedex);
+}
+
+// ════════════════════════════════════════════════════════════
+//  DESPACHO PARCIAL (Daniel 2026-09-08): "que podamos despachar solo 20
+//  de 100 en caso de quiebres de stock o flexibilidad ante alguna
+//  desviación" — nunca más de lo comprado, solo menos.
+// ════════════════════════════════════════════════════════════
+async function cambiarCantidadDespacho(idx, input){
+  const l = _docData?.lineas?.[idx];
+  if(!l) return;
+  const qtyOriginal = parseFloat(l.cantidad) || 0;
+  const techo = (l.cantidad_pendiente_ilus != null) ? parseFloat(l.cantidad_pendiente_ilus) : qtyOriginal;
+  let val = parseFloat(input.value);
+  if(!(val > 0) || val > techo){
+    // No se permite 0, negativo ni superar el techo (comprado o saldo
+    // previo, el que aplique) — REGLA "solo en términos menores".
+    if(window.ilusToast) ilusToast(`Solo puedes despachar entre 1 y ${techo} unidades de ${l.sku}.`, {type:'warning'});
+    val = l._cantDeclarada != null ? l._cantDeclarada : techo;
+    input.value = val;
+    return;
+  }
+  if(val < techo){
+    const motivo = await ilusPrompt({
+      title: 'Despacho parcial',
+      message: `Vas a declarar ${val} de ${techo} unidad(es) pendiente(s) de "${l.descripcion_erp || l.sku}".`,
+      sub: '¿Por qué se despacha menos ahora? (quiebre de stock, flexibilidad operativa, etc.)',
+      placeholder: 'Ej: quiebre de stock, quedan 80 en bodega',
+      required: true,
+    });
+    if(!motivo){
+      // Canceló el motivo -- no se aplica el cambio, vuelve al valor anterior.
+      input.value = l._cantDeclarada != null ? l._cantDeclarada : techo;
+      return;
+    }
+    l._motivoParcial = motivo;
+  } else {
+    l._motivoParcial = '';
+  }
+  l._cantDeclarada = val;
+  renderCubaje();          // recalcula bultos/peso/predominante con lo declarado
+  actualizarZzEnvioProrateado();
+}
+
+// Prorratea el ZZ Envío según cuánto de la carga total se está despachando
+// ahora (Daniel: "prorratear según % despachado") y lo guarda con el MISMO
+// mecanismo manual que ya existe (guardarZzEnvioSaldo) — no se duplica la
+// lógica de persistencia del saldo en dinero, solo se calcula el número.
+function actualizarZzEnvioProrateado(){
+  if(!_docData || !Array.isArray(_docData.lineas)) return;
+  let sumaOriginal = 0, sumaDeclarada = 0;
+  _docData.lineas.forEach(l => {
+    if((l.sku || '').toUpperCase() === 'ZZENVIO') return;
+    const orig = parseFloat(l.cantidad) || 0;
+    const techo = (l.cantidad_pendiente_ilus != null) ? parseFloat(l.cantidad_pendiente_ilus) : orig;
+    const decl = (l._cantDeclarada != null) ? l._cantDeclarada : techo;
+    sumaOriginal += orig;
+    sumaDeclarada += decl;
+  });
+  if(sumaOriginal <= 0 || sumaDeclarada >= sumaOriginal) return;  // nada que proratear
+  const factor  = sumaDeclarada / sumaOriginal;
+  const zzBase  = _docData._zzenvioValorAlCargar || _docData.zzenvio_valor || 0;
+  const nuevoZz = Math.round(zzBase * factor);
+  const el = document.getElementById('cli-zzenvio');
+  if(el) el.value = nuevoZz;
+  actualizarZzEnvioManual(nuevoZz);
+  if(typeof guardarZzEnvioSaldo === 'function') guardarZzEnvioSaldo();
 }
 
 // Daniel (2026-07-25): "necesito poder acceder a las etiquetas y rellenarlo
@@ -3257,6 +3346,13 @@ async function enviarAManifiesto(){
     nombre:   l.descripcion_erp || l.nombre_app || '',
     cantidad: l.cantidad || 0,
     saldo:    (l.saldo === undefined ? null : l.saldo),
+    // Despacho parcial (2026-09-08): solo se manda si el operador declaró
+    // menos de lo pendiente para esta línea -- si nunca tocó el campo,
+    // _cantDeclarada queda undefined y el backend no hace nada especial.
+    cantidad_a_despachar: (l._cantDeclarada != null
+      && l._cantDeclarada < ((l.cantidad_pendiente_ilus != null) ? l.cantidad_pendiente_ilus : l.cantidad))
+        ? l._cantDeclarada : undefined,
+    motivo_parcial: l._motivoParcial || undefined,
   }));
   const payload = {
     tido, nudo,
