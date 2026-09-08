@@ -20318,6 +20318,12 @@ def api_asignar_documento():
         zzenvio_valor    = float(_zz_row.get("zz_envio_saldo") or 0)
         zzenvio_es_saldo = True
 
+    # Saldo de CANTIDAD por línea (2026-09-08, Daniel: despacho parcial por
+    # quiebre de stock) — si ya se declaró un despacho parcial de este
+    # documento antes, el front debe partir mostrando lo que QUEDA
+    # pendiente, no la cantidad cruda del ERP (que ya se despachó en parte).
+    _cant_saldo_map = _cantidad_saldo_get_map(tido, nudo)
+
     lineas_out = []
     tot_qty = tot_kg = tot_pv = tot_vol = tot_pred = tot_bultos = 0.0
 
@@ -20381,6 +20387,15 @@ def api_asignar_documento():
                                     if l.get("saldo") is not None else None),
             "cantidad_despachada": (round(float(l["cantidad_despachada"]), 3)
                                     if l.get("cantidad_despachada") is not None else None),
+            # Saldo de UNIDADES declarado por ILUS (2026-09-08): distinto del
+            # "saldo" de arriba (ese es el oficial de Random, solo se mueve
+            # con una guía real). Este es cuánto declaró ILUS que quedaba
+            # pendiente la última vez que se despachó una parte desde acá.
+            # None = nunca se declaró un despacho parcial de esta línea; el
+            # front usa la cantidad del ERP como techo, igual que hoy.
+            "cantidad_pendiente_ilus": (round(float(_cant_saldo_map[l["sku"]]["cantidad_saldo"]), 3)
+                                        if l["sku"] in _cant_saldo_map else None),
+            "cantidad_ilus_motivo":    (_cant_saldo_map.get(l["sku"], {}) or {}).get("motivo"),
         })
 
     # ── Enriquecer header desde OBSERVACIONES (OBDO) cuando el ERP dejó campos
@@ -40454,6 +40469,90 @@ def _zz_saldo_get(tido, nudo):
         return None
 
 
+def _ensure_transport_cantidad_saldo_table():
+    """Tabla NUEVA (2026-09-08, Daniel: "podamos despachar solo 20 de 100
+    por quiebre de stock") — saldo de UNIDADES por línea declarado desde
+    Asignar y Cotizar, cuando lo que se despacha HOY es menos que lo
+    comprado. Mismo patrón que transport_zz_saldo: se crea SIEMPRE, incluso
+    con ILUS_SKIP_MIGRATIONS=1 (no depende de init_transporte_tables).
+
+    Por qué es una tabla APARTE de transport_commitment_lines: esa tabla se
+    borra y reconstruye ENTERA en cada sync del ERP (DELETE+INSERT por
+    commitment_id) porque refleja el saldo oficial de Random (guías de
+    despacho reales) -- cualquier cosa que ILUS escribiera ahí se perdería
+    en el siguiente sync. Este saldo es la intención LOGÍSTICA de ILUS
+    (cuánto se metió al camión), independiente de cuándo Random registre la
+    guía parcial correspondiente -- ver REGLA de negocio "el saldo lo
+    definen los productos físicos".
+    """
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_cantidad_saldo (
+                    id                 INT AUTO_INCREMENT PRIMARY KEY,
+                    tido               VARCHAR(5)   NOT NULL,
+                    nudo               VARCHAR(15)  NOT NULL,
+                    koprct             VARCHAR(40)  NOT NULL,
+                    cantidad_original  DECIMAL(12,3) DEFAULT 0 COMMENT 'Cantidad comprada segun el ERP la 1a vez que se declaro un despacho parcial de esta linea',
+                    cantidad_saldo     DECIMAL(12,3) DEFAULT 0 COMMENT 'Cuanto queda pendiente de despachar de esta linea, segun lo que ILUS ha declarado -- 0 = ya se despacho todo',
+                    motivo             VARCHAR(300) COMMENT 'Motivo del ultimo despacho parcial (obligatorio mientras quede saldo > 0)',
+                    updated_by         VARCHAR(190),
+                    created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_linea (tido, nudo, koprct)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _dp_validar_linea_parcial(koprct, cant_desp, techo, motivo):
+    """Valida una declaración de despacho parcial de UNA línea. Pura -- sin
+    Flask ni DB -- para poder testearla directo (mismo patrón que
+    simpliroute_client.py: la lógica de negocio se separa del wiring HTTP).
+
+    REGLA de Daniel (2026-09-08): "solo en términos menores" -- nunca se
+    puede declarar más que el techo (lo comprado la primera vez, o lo que
+    ya quedaba pendiente de un despacho parcial anterior). El motivo es
+    obligatorio SOLO si queda saldo > 0 después de esta declaración -- si
+    se despacha el techo completo, no hay nada que explicar.
+
+    Devuelve (ok: bool, error: str|None, saldo_nuevo: float|None).
+    """
+    try:
+        cant_desp = float(cant_desp)
+        techo = float(techo)
+    except (TypeError, ValueError):
+        return False, f"'{koprct}': cantidad inválida.", None
+    if cant_desp <= 0 or cant_desp > techo + 0.001:
+        return False, (f"'{koprct}': solo puedes despachar entre 1 y {techo:g} unidades "
+                        f"(lo que queda pendiente de esta línea)."), None
+    saldo_nuevo = round(techo - cant_desp, 3)
+    if saldo_nuevo > 0 and not (motivo or "").strip():
+        return False, (f"'{koprct}': indica el motivo del despacho parcial "
+                        f"(quiebre de stock, etc.) antes de enviar."), None
+    return True, None, saldo_nuevo
+
+
+def _cantidad_saldo_get_map(tido, nudo):
+    """Devuelve {koprct: {cantidad_original, cantidad_saldo, motivo}} con
+    todas las líneas de este documento que ya tuvieron un despacho parcial
+    declarado. Vacío si nunca se declaró ninguno (comportamiento idéntico a
+    hoy: el front usa la cantidad cruda del ERP como techo)."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT koprct, cantidad_original, cantidad_saldo, motivo "
+            "FROM transport_cantidad_saldo WHERE tido=%s AND nudo=%s",
+            (tido, nudo)
+        ) or []
+        return {f["koprct"]: f for f in filas}
+    except Exception as e:
+        print(f"[cantidad-saldo] lookup falló {tido}/{nudo}: {e}", flush=True)
+        return {}
+
+
 # ── TRAZABILIDAD POR PRODUCTO: índices de soporte (Fase 1, 2026-07-29) ──────
 # Daniel: "trazabilidad épica de producto" — filtrar por SKU y ver cuántas
 # veces se ha despachado, con documentos/clientes/cantidades/estado. La
@@ -45027,6 +45126,92 @@ def tr_cubicador_enviar_manifiesto():
             )
     except Exception as e_prod:
         print(f"[cub_enviar_manif] no se pudo guardar productos: {e_prod}", flush=True)
+
+    # 2g) Despacho parcial por línea (2026-09-08, Daniel: "que podamos
+    #     despachar solo 20 de 100 en caso de quiebres de stock o
+    #     flexibilidad ante alguna desviación"). Cada producto puede traer
+    #     `cantidad_a_despachar` (< cantidad comprada) + `motivo` -- este es
+    #     el momento real en que se sabe qué se metió al camión, así que acá
+    #     (y no en un endpoint aparte) es donde se valida y se guarda.
+    #
+    #     El techo NUNCA es el número que manda el cliente: es
+    #     transport_cantidad_saldo (si ya hubo un despacho parcial antes de
+    #     esta misma línea) o, la primera vez, la cantidad real que
+    #     transport_commitment_lines trajo del ERP recién sincronizado en el
+    #     paso 1 -- así una persona no puede "resetear" el saldo mandando de
+    #     nuevo la cantidad original del documento.
+    #
+    #     Bloqueante (400): esto es dinero y trazabilidad de despacho real,
+    #     no un dato cosmético -- si algo no cuadra, se corta ACÁ, antes de
+    #     tocar el manifiesto.
+    if isinstance(_prods, list) and _prods:
+        try:
+            _erp_cant_map = {
+                r["koprct"]: float(r.get("cantidad") or 0)
+                for r in (mysql_fetchall(
+                    "SELECT koprct, cantidad FROM transport_commitment_lines WHERE commitment_id=%s",
+                    (comm_id,)) or [])
+            }
+        except Exception as e_erpq:
+            print(f"[cub_enviar_manif] no se pudo leer cantidad ERP para despacho parcial: {e_erpq}", flush=True)
+            _erp_cant_map = {}
+        _saldo_map_previo = _cantidad_saldo_get_map(tido, nudo)
+
+        _parciales = []
+        for p in _prods[:200]:
+            if not isinstance(p, dict):
+                continue
+            koprct = str(p.get("sku") or p.get("koprct") or "")[:40]
+            if not koprct or p.get("cantidad_a_despachar") in (None, ""):
+                continue
+            try:
+                cant_desp = float(p.get("cantidad_a_despachar"))
+            except (TypeError, ValueError):
+                return jsonify({"error": f"Cantidad a despachar inválida en {koprct}."}), 400
+
+            _prev = _saldo_map_previo.get(koprct)
+            if _prev is not None:
+                techo = float(_prev["cantidad_saldo"])
+                cant_original = float(_prev["cantidad_original"])
+            else:
+                cant_original = _erp_cant_map.get(koprct)
+                if cant_original is None:
+                    continue  # línea sin cantidad ERP conocida (ej. servicio) -- no aplica
+                techo = cant_original
+
+            motivo = (p.get("motivo_parcial") or "").strip()[:300]
+            _ok, _err, nuevo_saldo = _dp_validar_linea_parcial(koprct, cant_desp, techo, motivo)
+            if not _ok:
+                return jsonify({"error": _err}), 400
+            _parciales.append({
+                "koprct": koprct, "cant_original": cant_original,
+                "cant_desp": cant_desp, "nuevo_saldo": nuevo_saldo, "motivo": motivo,
+            })
+
+        if _parciales:
+            try:
+                conn_p = get_db()
+                with conn_p.cursor() as cur_p:
+                    for pp in _parciales:
+                        cur_p.execute(
+                            "INSERT INTO transport_cantidad_saldo "
+                            "  (tido, nudo, koprct, cantidad_original, cantidad_saldo, motivo, updated_by) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s) "
+                            "ON DUPLICATE KEY UPDATE "
+                            "  cantidad_saldo = VALUES(cantidad_saldo), "
+                            "  motivo         = VALUES(motivo), "
+                            "  updated_by     = VALUES(updated_by)",
+                            (tido, nudo, pp["koprct"], pp["cant_original"],
+                             pp["nuevo_saldo"], pp["motivo"] or None, current_username())
+                        )
+                conn_p.commit()
+                for pp in _parciales:
+                    _tr_log("documento", f"{tido}{nudo}", "despacho parcial declarado",
+                            f"sku={pp['koprct']} despachado={pp['cant_desp']:g} de {pp['cant_original']:g} "
+                            f"· saldo restante={pp['nuevo_saldo']:g} · motivo={pp['motivo'] or '(saldo en 0)'}")
+            except Exception as e_parcial:
+                print(f"[cub_enviar_manif] no se pudo guardar despacho parcial: {e_parcial}", flush=True)
+                return jsonify({"error": "No se pudo guardar el despacho parcial declarado."}), 500
 
     # 2b) Persistir notas de entrega (visible para el courier; alimenta la
     #     columna "Notas" del export SimplyRoute). No es fatal si falla.
@@ -121308,6 +121493,14 @@ try:
     _ensure_transport_zz_saldo_table()
 except Exception as _ensure_zz_err:
     print(f"[ILUS][WARN] tabla transport_zz_saldo: {_ensure_zz_err}", flush=True)
+
+# Saldo de CANTIDAD por línea, despacho parcial (2026-09-08, Daniel) —
+# SIEMPRE, incluso skip-migrations: tabla nueva, no depende de
+# init_transporte_tables.
+try:
+    _ensure_transport_cantidad_saldo_table()
+except Exception as _ensure_cant_err:
+    print(f"[ILUS][WARN] tabla transport_cantidad_saldo: {_ensure_cant_err}", flush=True)
 
 # Columnas geo (lat/lng/place_id) en transport_commitments (2026-07-22,
 # Daniel) — SIEMPRE, incluso skip-migrations.
