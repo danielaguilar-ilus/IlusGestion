@@ -83981,16 +83981,6 @@ _ANEXO_ALCANCE_DEFECTO = (
 )
 
 
-def _anexo_num_txt(v):
-    """2,5 / 3 — número en formato chileno, sin decimales si no los tiene."""
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return ""
-    return (str(int(f)) if f == int(f) else ("%.2f" % f).rstrip("0").rstrip("."))\
-        .replace(".", ",")
-
-
 def _anexo_clausulas_defecto():
     """Texto base del Anexo 135. Solo se aplica a documentos nuevos.
 
@@ -84003,16 +83993,6 @@ def _anexo_clausulas_defecto():
         "alcance_servicio": "Se debe realizar el servicio de los equipos informados, y entregar el trabajo en perfectas condiciones, garantizando la conformidad del cliente. También se debe asumir penalizaciones monetarias por incumplimiento del servicio y el principio de reportabilidad tanto para el inicio del trabajo como para el término.",
         "clausulas_adicionales": "",
     }
-
-
-def _anexo_formato(a):
-    """Versión visual persistida en el JSON existente; nunca inferir por fecha.
-
-    Las filas sin marca conservan el documento histórico, incluso al descargar.
-    La marca sobrevive a la firma y no cambia la canonicalización histórica.
-    """
-    items = a.get("precio_items") or []
-    return "135-v1" if items and items[0].get("formato_anexo") == "135-v1" else "legacy"
 
 
 def _anexo_clausulas_pendientes():
@@ -84182,8 +84162,6 @@ def ot2_api_anexo_crear():
     except (TypeError, ValueError):
         return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
 
-    items[0]["formato_anexo"] = "135-v1"
-
     vid = d.get("ot_id")
     try:
         vid = int(vid) if vid else None
@@ -84352,9 +84330,6 @@ def ot2_api_anexo_editar(aid):
                   "monto": int(it.get("monto") or 0)} for it in items]
     except (TypeError, ValueError):
         return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
-
-    if _anexo_formato(_anexo_dict(a)) == "135-v1":
-        items[0]["formato_anexo"] = "135-v1"
 
     import json as _json
     try:
@@ -84684,7 +84659,6 @@ def _anexo_productos_guardados(a):
 
 def _anexo_publico_payload(a):
     return {
-        "formato": _anexo_formato(a),
         "numero": a["numero"],
         "fecha": chile_fmt_filter(a.get("created_at"), "%d/%m/%Y") if a.get("created_at") else "—",
         "proveedor_nombre": a.get("proveedor_nombre") or "",
@@ -84717,22 +84691,6 @@ def _anexo_precio_texto(items):
     return " - ".join(
         f"${int(it.get('monto') or 0):,}".replace(",", ".") + f" ({it.get('concepto','')})"
         for it in items) or "—"
-
-
-def _anexo_pdf_header_135():
-    """Encabezado compacto: banda de 18 mm dentro del margen superior de 25 mm."""
-    import html
-    logos = "".join(
-        '<img src="{}" style="max-height:12mm;max-width:28mm;object-fit:contain;">'.format(html.escape(src, quote=True))
-        for src in (_logo_shs_pdf_data_url(), _logo_ilus_black_data_url()) if src
-    )
-    return (
-        '<div style="width:100%;height:18mm;padding:0 30mm;box-sizing:border-box;'
-        'display:flex;align-items:center;gap:3mm;font-family:Arial,sans-serif;">'
-        + logos + '<div style="font-size:8px;line-height:1.3;">'
-        '<b>ILUS Fitness</b><br>Sport and Health Solutions SPA<br>RUT 76.996.964-0'
-        '</div></div>'
-    )
 
 
 def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
@@ -84879,10 +84837,10 @@ def _anexo_pdf_bytes(a):
     # Un anexo FIRMADO muestra lo que se firmo, no lo que la OT tenga hoy.
     # Mientras esta sin firmar sigue el estado vivo de la OT, que es lo
     # correcto: todavia es un borrador que se esta acordando.
-    productos = _anexo_productos_guardados(a) if (a.get("firmado_at") or _anexo_formato(a) == "135-v1") else None
+    productos = _anexo_productos_guardados(a) if a.get("firmado_at") else None
     if productos is None:
         productos = []
-    if not productos and a.get("ot_id") and _anexo_formato(a) != "135-v1":
+    if not productos and a.get("ot_id"):
         try:
             # 🔴 2026-09-03 — el filtro del PLAN (ver _ot_anexo_solo_plan).
             # Este es el anexo que Daniel abre: reconstruye la tabla desde
@@ -84940,11 +84898,9 @@ def _anexo_pdf_bytes(a):
     # línea (mismas medidas ya probadas en el compacto de la OT).
     _hdr, _ftr = _anexo_pdf_header_footer_native(
         a.get("numero"), a.get("proveedor_nombre") or a.get("cliente_nombre"))
-    _nuevo = _anexo_formato(a) == "135-v1"
     data = _pw_pdf(html, page_format="Letter",
-                    margin=({"top": "25mm", "right": "30mm", "bottom": "25mm", "left": "30mm"}
-                            if _nuevo else {"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"}),
-                    header_template=_anexo_pdf_header_135() if _nuevo else _hdr, footer_template=_ftr)
+                    margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
+                    header_template=_hdr, footer_template=_ftr)
     # 🔴 2026-08-31 (Daniel: "el nombre no ayuda en nada... necesito que
     # diga anexo, ILUS, número tal"): nombre genérico "anexo-servicios-148"
     # no dice a qué OT/cliente pertenece cuando hay varios PDF descargados
@@ -85100,7 +85056,6 @@ def ot2_api_anexo_preview_pdf():
     # "¿con que N° va a salir?" sin consumir un folio de verdad.
     _prox = _anexo_proximo_numero_sin_consumir()
     payload = {
-        "formato": "135-v1",
         "numero": (f"{_prox} (vista previa)" if _prox else "(vista previa)"),
         "fecha": _now_chile_str("%d/%m/%Y"),
         "proveedor_nombre": proveedor,
@@ -85108,7 +85063,6 @@ def ot2_api_anexo_preview_pdf():
         "objetivo_servicio": objetivo,
         "cliente_nombre": (d.get("cliente_nombre") or "").strip()[:200],
         "precio_items": items,
-        "productos": _anexo_productos_norm(d.get("productos")),
         "fecha_inicio": _iso_a_dmy(d.get("fecha_inicio")),
         "fecha_termino": _iso_a_dmy(d.get("fecha_termino")),
         # La vista previa tiene que mostrar EXACTAMENTE las cláusulas con
@@ -85134,8 +85088,8 @@ def ot2_api_anexo_preview_pdf():
     try:
         _hdr, _ftr = _anexo_pdf_header_footer_native("(vista previa)", payload.get("cliente_nombre"))
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "25mm", "right": "30mm", "bottom": "25mm", "left": "30mm"},
-                        header_template=_anexo_pdf_header_135(), footer_template=_ftr)
+                        margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
+                        header_template=_hdr, footer_template=_ftr)
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)
     except Exception as e:

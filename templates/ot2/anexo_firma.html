@@ -676,12 +676,6 @@
     .tabla-eq td{padding:6px 8px;border-bottom:1px solid #f1f5f9;
       color:#0f172a;overflow-wrap:anywhere}
     .tabla-eq th.n,.tabla-eq td.n{text-align:right;white-space:nowrap}
-/* Formato 135: contenido compartido con el PDF, tabla legible en móvil. */
-  .anexo-135 { overflow-wrap:anywhere; }
-  .productos-135 { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
-  .productos-135 th,.productos-135 td { border:1px solid #ddd; padding:8px; text-align:left; overflow-wrap:anywhere; }
-  .productos-135 th:first-child { width:23%; }
-  .productos-135 th:last-child { width:24%; }
 </style>
 </head>
 <body>
@@ -781,9 +775,6 @@
       {% if ya_firmado %}<div class="stamp" aria-hidden="true">Firmado</div>{% endif %}
 
       <div class="contrato" id="docLegal">
-        {% if anexo.formato == "135-v1" %}
-        {% include "ot2/_anexo_contenido_135.html" %}
-        {% else %}
         {#- Razón social obligatoria en documentos con efecto legal (REGLA #0):
             la marca es ILUS Fitness, la entidad que contrata es la SPA. -#}
         <p class="partes">
@@ -896,7 +887,6 @@
             </table>
           </div>
         </div>
-        {% endif %}
         {% endif %}
       </div>
 
