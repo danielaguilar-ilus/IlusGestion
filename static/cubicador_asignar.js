@@ -1202,6 +1202,17 @@ async function cambiarCantidadDespacho(idx, input){
   l._cantDeclarada = val;
   renderCubaje();          // recalcula bultos/peso/predominante con lo declarado
   actualizarZzEnvioProrateado();
+  // El precio de los couriers depende del cubicaje (bultos/peso) -- si ya
+  // se había cotizado antes, re-cotiza sola. MISMO patrón que
+  // 'cubicador:medidas-guardadas': sin esto, la tarjeta de couriers se
+  // queda mostrando la tarifa de los 100 originales aunque la pantalla ya
+  // diga 20 -- exactamente el patrón de falla "el sistema calcula bien y
+  // la pantalla muestra otra cosa" que este módulo ya sufrió antes.
+  const _cardCouriers = document.getElementById('cardCouriers');
+  if (_cardCouriers && _cardCouriers.style.display !== 'none'
+      && typeof actualizarTarifas === 'function') {
+    actualizarTarifas();
+  }
 }
 
 // Prorratea el ZZ Envío según cuánto de la carga total se está despachando

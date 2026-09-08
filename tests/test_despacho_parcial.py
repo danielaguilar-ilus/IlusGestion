@@ -184,6 +184,16 @@ class TestUIDespachoParcial(unittest.TestCase):
         bloque = JS_SRC[max(0, i - 300):i + 200]
         self.assertIn("_cantDeclarada", bloque)
 
+    def test_recotiza_couriers_al_cambiar_la_cantidad(self):
+        # Hallazgo real probando en vivo (BLV 23313, 2026-09-08): al bajar
+        # la cantidad, la tarjeta de couriers se quedaba con la tarifa de
+        # los 100 originales -- exactamente el patrón "el sistema calcula
+        # bien y la pantalla muestra otra cosa" ya sufrido en este módulo.
+        i = JS_SRC.find("async function cambiarCantidadDespacho")
+        self.assertGreater(i, 0)
+        bloque = JS_SRC[i:i + 2200]
+        self.assertIn("actualizarTarifas", bloque)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
