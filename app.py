@@ -80632,34 +80632,66 @@ def _ot_equipos_desde_doc_core(vid, confirmar=False, usuario=None):
         # Una fila de ficha POR UNIDAD: dos trotadoras iguales son dos
         # máquinas distintas, cada una con su serie y su historial. Es el
         # mismo criterio del wizard de clientes.
-        for _ in range(int(c["cantidad"])):
-            try:
+        #
+        # 🔴 FIX 2026-09-08 (Daniel, viendo dos filas del mismo SKU en el
+        # wizard de crear OT: una con serie y la otra sin -- "deberías
+        # asignarle serial a todos, eso es una regla"). _generar_serie_ilus()
+        # elige la serie mirando las YA EXISTENTES; llamarla de nuevo por
+        # cada unidad del MISMO lote, antes de que el INSERT anterior se
+        # vea reflejado, hacía que la 2a unidad calculara la MISMA serie que
+        # la 1a. El INSERT chocaba contra la UNIQUE (cliente_id, serie) y el
+        # except de acá se limitaba a dejar serie=None en vez de reintentar
+        # -- mismo problema que ya se había corregido en mant_maquina_add
+        # (2026-07-08), nunca replicado en este otro punto de alta.
+        # Se arma la serie base UNA vez por SKU y se incrementa en memoria
+        # dentro del lote -- única por construcción -- con reintento (mismo
+        # mecanismo `_intento` que ya documenta _generar_serie_ilus) como
+        # red de seguridad si choca con una serie creada por OTRA request
+        # en paralelo.
+        _pref_lote, _seq_lote = None, None
+        try:
+            _serie_base = _generar_serie_ilus(cid, c["sku"])
+            _pref_lote, _suf_lote = _serie_base.rsplit("-", 1)
+            _seq_lote = int(_suf_lote)
+        except Exception:
+            pass
+        for _i_unidad in range(int(c["cantidad"])):
+            _serie = (f"{_pref_lote}-{_seq_lote + _i_unidad}"
+                      if _pref_lote is not None else None)
+            _mid = None
+            for _intento_ins in range(5):
                 try:
-                    _serie = _generar_serie_ilus(cid, c["sku"])
-                except Exception:
-                    _serie = None
-                mysql_execute(
-                    "INSERT INTO mant_maquinas "
-                    "  (cliente_id, sku, nombre, serie, cantidad, doc_origen, "
-                    "   doc_fecha, fecha_instalacion, estado, notas, "
-                    "   origen_ot_id, created_by) "
-                    "VALUES (%s,%s,%s,%s,1,%s,%s,%s,'activo',%s,%s,%s)",
-                    (cid, c["sku"][:100], c["nombre"], _serie,
-                     _doc_key, _doc_fecha, _fecha_inst,
-                     f"Alta desde {_tipo_lbl} {v.get('numero_ot') or vid}",
-                     vid, _usuario))
-                _row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}
-                _mid = _row.get("id")
-                if _mid:
-                    creados.append(_mid)
-                    _mant_log("maquina", _mid, "creada_por_ot",
-                              f"Alta desde {_tipo_lbl} "
-                              f"{v.get('numero_ot') or vid} · documento {_doc_key}"
-                              + (f" · instalada el {str(_fecha_inst)[:10]}"
-                                 if _fecha_inst else ""))
-            except Exception as e:
-                print(f"[ot2_equipos_doc] alta {c['sku']} vid={vid}: {e}", flush=True)
-                errores.append(f"{c['sku']}: {str(e)[:120]}")
+                    mysql_execute(
+                        "INSERT INTO mant_maquinas "
+                        "  (cliente_id, sku, nombre, serie, cantidad, doc_origen, "
+                        "   doc_fecha, fecha_instalacion, estado, notas, "
+                        "   origen_ot_id, created_by) "
+                        "VALUES (%s,%s,%s,%s,1,%s,%s,%s,'activo',%s,%s,%s)",
+                        (cid, c["sku"][:100], c["nombre"], _serie,
+                         _doc_key, _doc_fecha, _fecha_inst,
+                         f"Alta desde {_tipo_lbl} {v.get('numero_ot') or vid}",
+                         vid, _usuario))
+                    _row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}
+                    _mid = _row.get("id")
+                    break
+                except Exception as e:
+                    _msg = str(e)
+                    if ("1062" in _msg or "Duplicate entry" in _msg) and _intento_ins < 4:
+                        try:
+                            _serie = _generar_serie_ilus(cid, c["sku"], _intento=_intento_ins + 1)
+                            continue
+                        except Exception:
+                            pass
+                    print(f"[ot2_equipos_doc] alta {c['sku']} vid={vid}: {e}", flush=True)
+                    errores.append(f"{c['sku']}: {_msg[:120]}")
+                    break
+            if _mid:
+                creados.append(_mid)
+                _mant_log("maquina", _mid, "creada_por_ot",
+                          f"Alta desde {_tipo_lbl} "
+                          f"{v.get('numero_ot') or vid} · documento {_doc_key}"
+                          + (f" · instalada el {str(_fecha_inst)[:10]}"
+                             if _fecha_inst else ""))
 
     try:
         _mant_log("visita", vid, "equipos_alta_desde_documento",
