@@ -1425,24 +1425,51 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      verde  = respondida
      ámbar  = obligatoria pendiente  → es lo que traba la firma
      gris   = opcional pendiente     → no traba nada                     */
-.otd-chk-item{display:grid;grid-template-columns:30px 1fr 46px;gap:0 10px;
-  align-items:start;border:1px solid var(--line);border-left:4px solid #d1d5db;
+.otd-chk-item{display:grid;grid-template-columns:34px 1fr 46px;gap:0 10px;
+  align-items:start;border:1.5px solid var(--line);border-left:5px solid #d1d5db;
   border-radius:10px;padding:11px 12px;margin-bottom:8px;background:#fff;
-  transition:border-color .2s,background .2s}
-.otd-chk-item.is-obl{border-left-color:#f59e0b;background:#fffdf7}
+  transition:border-color .2s,background .2s,box-shadow .2s}
+.otd-chk-item.is-obl{border-left-color:#f59e0b;background:#fffbeb}
 .otd-chk-item.is-ok{border-color:#bbf7d0;border-left-color:#16a34a;background:#f0fdf4}
+/* 🔴🟢 2026-09-08 (Daniel, viendo la OT-2026-00179: "no se entiende, como
+   todo es blanco... no veo cuáles son los pasos de qué equipo... ya
+   pasaste al paso uno, ahora fotos del equipo, eso es lo que necesito").
+   `.is-next` es NUEVO: marca la PRÓXIMA tarea sin responder de la
+   plantilla (calculada en otdRenderChecklistEquipo) con el rojo ILUS --
+   el "estás aquí" que el técnico pedía, para no tener que leer cada línea
+   para saber en qué paso va. */
+.otd-chk-item.is-next{border-left-color:var(--ilus-red,#dc2626);background:#fff5f5;
+  box-shadow:0 0 0 1px rgba(220,38,38,.14) inset}
 .otd-chk-item.is-locked{opacity:.6}
-/* Columna 1 — el número, como en la pantalla clásica ("01", "02"…) */
-.otd-chk-item > .nm{grid-column:1;grid-row:1/span 5;font-size:.68rem;font-weight:900;
-  color:#9ca3af;font-variant-numeric:tabular-nums;padding-top:2px;text-align:right}
-.otd-chk-item.is-ok > .nm{color:#16a34a}
-.otd-chk-item.is-obl > .nm{color:#b45309}
-/* Columna 3 — el check circular grande */
+/* Columna 1 — numeración CON semáforo: círculo relleno, mismo lenguaje que
+   ya usa el número de cada equipo (.otd-wk-item summary .num, más abajo) y
+   que el step-circle de /retiros/solicitar (REGLA #15) -- antes era solo
+   texto gris a la derecha del número, se leía plano y no destacaba el
+   estado de un vistazo. */
+.otd-chk-item > .nm{grid-column:1;grid-row:1/span 5;width:26px;height:26px;
+  border-radius:50%;display:grid;place-items:center;margin-top:1px;
+  font-size:.72rem;font-weight:900;font-variant-numeric:tabular-nums;
+  color:#9ca3af;background:#f3f4f6;border:2px solid currentColor;
+  transition:background .2s,color .2s}
+.otd-chk-item.is-ok > .nm{color:#16a34a;background:#dcfce7}
+.otd-chk-item.is-obl > .nm{color:#d97706;background:#fff8e1}
+.otd-chk-item.is-next > .nm{color:#dc2626;background:#fee2e2}
+/* Columna 3 — el check circular grande: semáforo rojo (próximo) →
+   ámbar (obligatoria pendiente) → verde con pulso al completarse, mismo
+   lenguaje que /retiros/solicitar. */
 .otd-chk-item > .tk{grid-column:3;grid-row:1/span 5;width:38px;height:38px;border-radius:50%;
   display:grid;place-items:center;background:#f3f4f6;color:#d1d5db;font-size:1.05rem;
   justify-self:end;transition:background .2s,color .2s}
-.otd-chk-item.is-ok > .tk{background:#16a34a;color:#fff}
+.otd-chk-item.is-ok > .tk{background:#16a34a;color:#fff;animation:otdChkPulseOk .6s ease-out 1}
 .otd-chk-item.is-obl > .tk{background:#fef3c7;color:#d97706}
+.otd-chk-item.is-next > .tk{background:#fee2e2;color:#dc2626}
+@keyframes otdChkPulseOk{
+  0%{box-shadow:0 0 0 0 rgba(22,163,74,.55)}
+  100%{box-shadow:0 0 0 9px rgba(22,163,74,0)}
+}
+@media (prefers-reduced-motion:reduce){
+  .otd-chk-item.is-ok > .tk{animation:none}
+}
 /* Columna 2 — el contenido */
 .otd-chk-item .hd{grid-column:2;display:flex;align-items:flex-start;gap:8px}
 .otd-chk-item .hd b{flex:1;min-width:0;font-size:.86rem;color:#0a0a0a;font-weight:800;
@@ -1455,6 +1482,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-chk-item .ch.tipo{background:#eef2ff;color:#4338ca}
 .otd-chk-item .ch.foto{background:#fff8e1;color:#92400e}
 .otd-chk-item .ch.foto.ok{background:#dcfce7;color:#15803d}
+/* Chip "Paso actual" — la próxima tarea sin responder de la plantilla,
+   ver .is-next arriba. Relleno sólido a propósito: tiene que ganarle el
+   ojo a los demás chips de contorno suave. */
+.otd-chk-item .ch.next{background:var(--ilus-red,#dc2626);color:#fff}
 /* Sello de autoría — la trazabilidad que Daniel pide ver en la tarea */
 .otd-chk-item .sello{grid-column:2;display:inline-flex;align-items:center;gap:5px;
   margin-top:7px;font-size:.66rem;font-weight:700;color:#475569;background:#f1f5f9;
@@ -1464,8 +1495,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-chk-item .bodyc{grid-column:2}
 @media (max-width:640px){
   /* En el teléfono el número y el check se comen ancho que hace falta para
-     el control de respuesta: el semáforo ya lo da la franja de color. */
-  .otd-chk-item{grid-template-columns:24px 1fr 34px;gap:0 8px;padding:11px 10px}
+     el control de respuesta -- se angostan un poco, pero SIGUEN siendo
+     círculos de semáforo (2026-09-08): no vuelven a texto plano. */
+  .otd-chk-item{grid-template-columns:26px 1fr 34px;gap:0 8px;padding:11px 10px}
+  .otd-chk-item > .nm{width:22px;height:22px;font-size:.64rem}
   .otd-chk-item > .tk{width:30px;height:30px;font-size:.85rem}
 }
 /* 🔒 Aviso de OT sellada — 2026-09-03 */
@@ -2725,6 +2758,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          presionó "Iniciar tarea" se usa la primera tarea COMPLETADA y se
          marca con ≈. Un cronómetro que finge precisión no sirve para medir
          a nadie. #}
+      {# 🙈 2026-09-08 (Daniel, en vivo viendo la OT-2026-00179: "los técnicos
+         no necesitan tanta información en la orden de trabajo... los
+         tiempos del técnico no los necesita ver"). Se oculta SOLO para el
+         rol técnico (interno o externo) -- admin/supervisor/ejecutivo/
+         superadmin la siguen viendo exactamente igual (REGLA #4.2: nada se
+         borra, la tarjeta y el bloque que la alimenta en el backend siguen
+         intactos, solo se le pone un gate de rol). #}
+      {% if not es_tecnico %}
       <div class="otd-crono">
         <div class="hd">
           <span class="t"><i class="bi bi-stopwatch-fill"></i> Tiempos del técnico</span>
@@ -2774,6 +2815,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         </div>
         {% endif %}
       </div>
+      {% endif %}
       {# 📸 2026-09-02 (Daniel: "¿sabes que me gustaría que sacaras la
          parte de evidencia de fotos? Sácala de ahí... así se queda un
          poco más compacta, la idea es que no sea tan necesario darle
@@ -3083,6 +3125,17 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          Estados espejo de la barra `.tx-bottom` de ot_ejecutar.html
          (mismo criterio, sin el geofence de check-in GPS -- eso es propio
          de la ejecución en terreno, no de esta vista de gestión). #}
+      {# 🙈 2026-09-08 (Daniel, viendo la OT-2026-00179: "el botón de firmar
+         y cerrar me gustaría que estuviera abajo... pueden compartir esa
+         parte del footer: el PDF, ver PDF, y finalizar y cerrar la OT").
+         Para el rol técnico esta tarjeta entera se oculta de acá -- la
+         misma acción (mismos endpoints OT2F.*, cero lógica nueva) se
+         replica en la BARRA INFERIOR FIJA (ver más abajo), que es donde
+         Daniel la quiere para el técnico. Admin/supervisor/ejecutivo/
+         superadmin NO cambian: siguen viendo esta tarjeta completa, tal
+         cual, en el mismo lugar de siempre (REGLA #4.2 -- no se borra
+         nada, solo se le agrega un gate de rol). #}
+      {% if not es_tecnico %}
       <div class="otd-card">
         <h3><i class="bi bi-vector-pen"></i> Firmar y cerrar OT</h3>
         <div style="padding:14px 16px" id="otfWrap">
@@ -3157,6 +3210,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% endif %}
         </div>
       </div>
+      {% endif %}
 
 
       {# 🆕 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del
@@ -3605,6 +3659,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          acoplar esta pantalla al CSS de Tickets.
          El dato NO es nuevo: `mant_logs` ya registraba todo esto; lo que
          faltaba era mostrarlo. #}
+      {# 🙈 2026-09-08 (Daniel: "la actividad de la OT tampoco es necesario
+         que la vea [el técnico]"). Mismo gate que Tiempos del técnico
+         arriba -- oculto SOLO para es_tecnico, nada se borra (REGLA #4.2):
+         admin/supervisor/ejecutivo/superadmin siguen viendo la bitácora
+         completa igual que siempre. #}
+      {% if not es_tecnico %}
       <div class="otd-card" id="otdCardActividad">
         <h3><i class="bi bi-activity"></i> Actividad de la OT
           <span class="n">{{ actividad | length }}</span></h3>
@@ -3650,6 +3710,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% endif %}
         </div>
       </div>
+      {% endif %}
 
   </div>
   {# ══ /INFORMACIÓN ══ #}
@@ -3920,66 +3981,33 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% endif %}
             </div>
 
-            {#- 🩺 2026-09-07 (Daniel: "dale con el diagnóstico por equipo").
-                Era lo primero que le faltaba a OT 2.0 para poder reemplazar a
-                la pantalla clásica: acá el diagnóstico se MOSTRABA pero no se
-                podía registrar, así que un técnico del piloto tenía que
-                volver a la pantalla vieja solo para eso. Y es un dato que
-                Daniel llamó "muy importante": cada máquina con su propio
-                veredicto, además del diagnóstico general de la OT.
+            {#- 🔀 2026-09-08 (Daniel, viendo la OT-2026-00179: "en la
+                observación del técnico, estado, el diagnóstico... yo lo
+                dejaría muy fuera de las plantillas, me confundió, y eso que
+                lo hice contigo... está bien que esté primero [el chequeo de
+                existencia], porque si no existe el producto, lo marcamos
+                como que no se pudo revisar, y se deja un argumento -- eso
+                invalida la plantilla. Después ejecutamos la plantilla, al
+                final tenemos que dar un diagnóstico y aprobar que el equipo
+                está o no está en servicio, para que esto mueva la orden de
+                trabajo y la ficha del cliente").
 
-                Usa el MISMO endpoint que la pantalla clásica
-                (/mantenciones/api/visitas/<vid>/equipos/<mid>/diagnostico):
-                cero lógica nueva en el backend, y las dos pantallas no pueden
-                divergir en las reglas. El backend exige texto (≥10
-                caracteres) para observación y falla; acá se pide antes de
-                mandar, para no hacer viajar un rechazo seguro.
-
-                OJO: `diagnostico_estado` NO es lo mismo que
-                `estado_revision` (saltar/verificar). Este es el veredicto
-                técnico sobre la máquina. -#}
-            {% if puede_ejecutar and not ot_solo_lectura %}
-            <div class="otd-dx" data-mid="{{ e.id }}">
-              <div class="otd-dx-tit">Diagnóstico de este equipo</div>
-              <div class="otd-dx-btns">
-                <button type="button" class="otd-dx-b ok{{ ' on' if e.diagnostico_estado == 'aprobado' }}"
-                        data-dx="aprobado" onclick="otdDx({{ e.id }}, 'aprobado')">
-                  <i class="bi bi-check-circle-fill"></i> Aprobado</button>
-                <button type="button" class="otd-dx-b obs{{ ' on' if e.diagnostico_estado == 'observacion' }}"
-                        data-dx="observacion" onclick="otdDx({{ e.id }}, 'observacion')">
-                  <i class="bi bi-exclamation-triangle-fill"></i> Con observación</button>
-                <button type="button" class="otd-dx-b fail{{ ' on' if e.diagnostico_estado == 'falla' }}"
-                        data-dx="falla" onclick="otdDx({{ e.id }}, 'falla')">
-                  <i class="bi bi-x-octagon-fill"></i> Con falla</button>
-              </div>
-              <div class="otd-dx-txt" id="otdDxBox-{{ e.id }}"
-                   {% if e.diagnostico_estado not in ('observacion','falla') %}hidden{% endif %}>
-                <textarea id="otdDxT-{{ e.id }}" rows="2" maxlength="3000"
-                          placeholder="Describe qué observaste (mínimo 10 caracteres)"
-                          >{{ e.diagnostico_texto or '' }}</textarea>
-                <button type="button" class="otd-dx-save" onclick="otdDxGuardar({{ e.id }})">
-                  <i class="bi bi-save me-1"></i>Guardar diagnóstico</button>
-              </div>
-            </div>
-            {% endif %}
-
-            {#- 📷 2026-09-07 (Daniel: "dale con las fotos por equipo").
-                Último hueco de OT 2.0 frente a la clásica.
-
-                Las fotos DE LA OT ya existían, pero iban todas a la misma
-                bolsa: al abrir el informe no se sabía cuál era de qué
-                máquina. Con siete equipos por OT, un álbum sin dueño no
-                prueba nada. Estas quedan atadas al equipo (maquina_id) y por
-                eso alimentan también su galería permanente.
-
-                Usa el MISMO endpoint que la clásica
-                (/equipo/<mid>/foto, tipo_foto=detalle): 'detalle' y no
-                'principal' a propósito -- la foto de catálogo de la máquina
-                no se pisa desde una OT de terreno.
-
-                Se cargan al ABRIR el equipo, no al entrar a la pantalla: con
-                varios equipos serían varias consultas de una vez para fotos
-                que quizá nadie mira. -#}
+                Se reordena la secuencia del equipo en 3 tramos, sin tocar un
+                solo endpoint ni campo nuevo (los mecanismos YA EXISTÍAN,
+                solo cambian de lugar en la pantalla):
+                  1° PRIMERO -- "¿existe/se puede revisar?": Observación +
+                     Estado de la revisión + "No pude revisarlo" (.otd-obs/
+                     .otd-rev, mismo bloque de siempre). Saltar el equipo acá
+                     invalida la plantilla para él.
+                  2° La plantilla/checklist se ejecuta normal (fotos, cambiar
+                     plantilla, tareas de .otd-chk-mount).
+                  3° AL FINAL, después del checklist -- el diagnóstico/
+                     aprobación de si el equipo queda en servicio (.otd-dx,
+                     justo antes de "Siguiente equipo", más abajo).
+                Antes los tres vivían pegados ANTES de la plantilla (el
+                diagnóstico incluso iba primero), que es justo lo que
+                confundió a Daniel: parecía parte del formulario de la
+                plantilla en vez de ser el veredicto posterior. -#}
             {#- 🔧 2026-09-07 (Daniel: "la gestión de los técnicos se pueda
                 hacer idéntica a las OT normales"). Faltaban las dos acciones
                 por equipo que el técnico usa a diario y que la pantalla
@@ -4004,11 +4032,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                   también"). Completa la paridad con las OT normales.
 
                   OJO con la diferencia, que es real y conviene tener clara:
-                  el DIAGNÓSTICO (arriba) es el veredicto técnico sobre la
-                  máquina — cómo quedó. El ESTADO DE LA REVISIÓN es en qué
-                  quedó el trabajo sobre ella en esta visita. Una máquina
-                  puede estar "verificada" y con diagnóstico de falla: la
-                  revisé completa, y está mala.
+                  el DIAGNÓSTICO (al final del equipo, ver más abajo) es el
+                  veredicto técnico sobre la máquina — cómo quedó. El ESTADO
+                  DE LA REVISIÓN es en qué quedó el trabajo sobre ella en
+                  esta visita. Una máquina puede estar "verificada" y con
+                  diagnóstico de falla: la revisé completa, y está mala.
 
                   'Saltado' y 'falla detectada' piden motivo, como exige el
                   backend: un estado que cambia el cierre de la OT sin
@@ -4032,7 +4060,30 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               </div>
             </div>
             {% endif %}
+            {% if e.razon_saltado %}
+            <div class="otd-wk-note">Saltado — motivo: {{ e.razon_saltado | replace('_',' ') | title }}</div>
+            {% endif %}
+            {% if e.observacion_tecnico %}
+            <div class="otd-wk-note">Observación del técnico: {{ e.observacion_tecnico }}</div>
+            {% endif %}
 
+            {#- 📷 2026-09-07 (Daniel: "dale con las fotos por equipo").
+                Último hueco de OT 2.0 frente a la clásica.
+
+                Las fotos DE LA OT ya existían, pero iban todas a la misma
+                bolsa: al abrir el informe no se sabía cuál era de qué
+                máquina. Con siete equipos por OT, un álbum sin dueño no
+                prueba nada. Estas quedan atadas al equipo (maquina_id) y por
+                eso alimentan también su galería permanente.
+
+                Usa el MISMO endpoint que la clásica
+                (/equipo/<mid>/foto, tipo_foto=detalle): 'detalle' y no
+                'principal' a propósito -- la foto de catálogo de la máquina
+                no se pisa desde una OT de terreno.
+
+                Se cargan al ABRIR el equipo, no al entrar a la pantalla: con
+                varios equipos serían varias consultas de una vez para fotos
+                que quizá nadie mira. -#}
             <div class="otd-fot" data-mid="{{ e.id }}">
               <div class="otd-fot-head">
                 <span>Fotos de este equipo <b id="otdFotN-{{ e.id }}"></b></span>
@@ -4048,15 +4099,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <div class="otd-fot-tira" id="otdFotTira-{{ e.id }}"></div>
             </div>
 
-            {% if e.razon_saltado %}
-            <div class="otd-wk-note">Saltado — motivo: {{ e.razon_saltado | replace('_',' ') | title }}</div>
-            {% endif %}
-            {% if e.diagnostico_texto %}
-            <div class="otd-wk-note {{ 'falla' if e.diagnostico_estado == 'falla' }}">{{ e.diagnostico_texto }}</div>
-            {% endif %}
-            {% if e.observacion_tecnico %}
-            <div class="otd-wk-note">Observación del técnico: {{ e.observacion_tecnico }}</div>
-            {% endif %}
             {# 🆕 2026-08-28 (Daniel): "no veo qué plantilla tienen los
                equipos... quiero poder cambiarlas". Un equipo puede tener
                más de una plantilla (grupo por plantilla_id) -- se lista
@@ -4095,6 +4137,52 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <div class="otd-chk-mount" data-mid="{{ e.id }}">
               <div class="otd-chk-skel"><i></i><i></i></div>
             </div>
+
+            {#- 🩺 2026-09-07 (Daniel: "dale con el diagnóstico por equipo").
+                🔀 2026-09-08: se muda AL FINAL a propósito (ver comentario de
+                arriba) -- es el veredicto sobre el equipo DESPUÉS de
+                ejecutar la plantilla completa: "al final tenemos que dar un
+                diagnóstico y aprobar que el equipo está o no está en
+                servicio, para que esto mueva la orden de trabajo y la ficha
+                del cliente".
+
+                Usa el MISMO endpoint que la pantalla clásica
+                (/mantenciones/api/visitas/<vid>/equipos/<mid>/diagnostico):
+                cero lógica nueva en el backend, y las dos pantallas no pueden
+                divergir en las reglas. El backend exige texto (≥10
+                caracteres) para observación y falla; acá se pide antes de
+                mandar, para no hacer viajar un rechazo seguro.
+
+                OJO: `diagnostico_estado` NO es lo mismo que
+                `estado_revision` (saltar/verificar, arriba). Este es el
+                veredicto técnico sobre la máquina. -#}
+            {% if puede_ejecutar and not ot_solo_lectura %}
+            <div class="otd-dx" data-mid="{{ e.id }}">
+              <div class="otd-dx-tit">Diagnóstico de este equipo</div>
+              <div class="otd-dx-btns">
+                <button type="button" class="otd-dx-b ok{{ ' on' if e.diagnostico_estado == 'aprobado' }}"
+                        data-dx="aprobado" onclick="otdDx({{ e.id }}, 'aprobado')">
+                  <i class="bi bi-check-circle-fill"></i> Aprobado</button>
+                <button type="button" class="otd-dx-b obs{{ ' on' if e.diagnostico_estado == 'observacion' }}"
+                        data-dx="observacion" onclick="otdDx({{ e.id }}, 'observacion')">
+                  <i class="bi bi-exclamation-triangle-fill"></i> Con observación</button>
+                <button type="button" class="otd-dx-b fail{{ ' on' if e.diagnostico_estado == 'falla' }}"
+                        data-dx="falla" onclick="otdDx({{ e.id }}, 'falla')">
+                  <i class="bi bi-x-octagon-fill"></i> Con falla</button>
+              </div>
+              <div class="otd-dx-txt" id="otdDxBox-{{ e.id }}"
+                   {% if e.diagnostico_estado not in ('observacion','falla') %}hidden{% endif %}>
+                <textarea id="otdDxT-{{ e.id }}" rows="2" maxlength="3000"
+                          placeholder="Describe qué observaste (mínimo 10 caracteres)"
+                          >{{ e.diagnostico_texto or '' }}</textarea>
+                <button type="button" class="otd-dx-save" onclick="otdDxGuardar({{ e.id }})">
+                  <i class="bi bi-save me-1"></i>Guardar diagnóstico</button>
+              </div>
+            </div>
+            {% endif %}
+            {% if e.diagnostico_texto %}
+            <div class="otd-wk-note {{ 'falla' if e.diagnostico_estado == 'falla' }}">{{ e.diagnostico_texto }}</div>
+            {% endif %}
 
             {# ➡️ 2026-09-02 (Daniel: "que dentro del formulario pueda
                avanzar a la siguiente máquina"). Con muchos equipos, cerrar
@@ -4205,6 +4293,26 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     {% elif v.estado == 'firmada_tecnico' and puede_firmar_cliente %}
     <button type="button" class="b pri" onclick="OT2F.abrirFirmaCliente()">
       <i class="bi bi-vector-pen"></i> Firma del cliente</button>
+    {# 🙈 2026-09-08 (Daniel: footer del técnico = PDF + finalizar y cerrar).
+       La tarjeta "Firmar y cerrar OT" (arriba, oculta para es_tecnico) además
+       ofrecía enviar el link de firma por WhatsApp/correo (no solo en
+       persona) cuando el cliente no está presente -- eso NO se pierde
+       (REGLA #4.2): se agrega acá, mismo endpoint OT2F.enviarFirmaAmbos()
+       que ya usa el botón "Enviar por WhatsApp y correo a la vez" del hub. #}
+    {% if es_tecnico %}
+    <button type="button" class="b" onclick="OT2F.enviarFirmaAmbos()">
+      <i class="bi bi-send-check-fill"></i> Enviar firma (WhatsApp/correo)</button>
+    {% endif %}
+    {% elif es_tecnico and puede_ejecutar
+          and v.estado not in ('cerrada','completada','pendiente_aprobacion','firmada_tecnico') %}
+    {# 🙈 2026-09-08 — réplica exacta del botón "Firmar como técnico" de la
+       tarjeta oculta arriba: mismo endpoint (OT2F.abrirFirmaTecnico()),
+       mismo candado de obligatorias, cero lógica nueva -- solo cambia de
+       lugar para vivir en el footer, como pidió Daniel. #}
+    {% set _obl_falta_bar = kpis.obl - kpis.obl_ok %}
+    <button type="button" class="b pri" onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta_bar > 0 }}>
+      <i class="bi bi-{{ 'lock-fill' if _obl_falta_bar > 0 else 'pen-fill' }}"></i>
+      {{ 'Faltan obligatorias para firmar' if _obl_falta_bar > 0 else 'Firmar como técnico' }}</button>
     {% endif %}
   </div>
 </div>
@@ -7616,6 +7724,12 @@ function otdRenderChecklistEquipo(mid){
     const segs = g.tareas.map(t =>
       `<i class="${t.completada ? 'ok' : (t.obligatoria ? 'obl' : '')}"></i>`).join('');
     const cerrado = oblT > 0 && oblO >= oblT;
+    // 🔴 2026-09-08 (Daniel: "ya pasaste al paso uno, ahora fotos del
+    // equipo -- eso es lo que necesito"): la PRÓXIMA tarea sin responder
+    // de esta plantilla, para pintarla como "estás aquí" (ver .is-next en
+    // el CSS). Es solo la primera sin completar en el orden de siempre --
+    // no cambia el orden ni inventa una regla de bloqueo nueva.
+    const idxSiguiente = g.tareas.findIndex(t => !t.completada);
     return `
     <div class="otd-chk-plant">
       <div class="otd-chk-plant-nm"><i class="bi bi-list-check"></i> ${otdEsc(g.plantilla_nombre)}
@@ -7627,7 +7741,7 @@ function otdRenderChecklistEquipo(mid){
                 : (cerrado ? 'obligatorias completas ✓'
                            : `faltan ${oblT - oblO} obligatoria${oblT - oblO === 1 ? '' : 's'}`)}</span>
       </div>
-      ${g.tareas.map((t, i) => otdChkTareaHtml(t, i + 1)).join('')}
+      ${g.tareas.map((t, i) => otdChkTareaHtml(t, i + 1, i === idxSiguiente)).join('')}
     </div>`;
   }).join('');
   // Actualiza los resúmenes de la cabecera del equipo (n_ok/n_tareas,
@@ -8171,7 +8285,7 @@ async function otdCapturarGps(tid){
   }
 }
 
-function otdChkTareaHtml(t, nro){
+function otdChkTareaHtml(t, nro, esSiguiente){
   const tipo = (t.tipo_respuesta || 'check').toLowerCase();
   const bloqueada = otdChkEstaBloqueada(t);
   const oblBadge = '';   // pasó a los chips de abajo (rediseño 2026-09-03)
@@ -8311,6 +8425,12 @@ function otdChkTareaHtml(t, nro){
     foto:'Foto',
   };
   const chips = [];
+  // 🔴 2026-09-08 (Daniel: "ya pasaste al paso uno... eso es lo que
+  // necesito"): el chip va PRIMERO a propósito -- es lo primero que el
+  // ojo debe encontrar en la tarea, antes que "Obligatoria" o el tipo.
+  if (!t.completada && esSiguiente){
+    chips.push('<span class="ch next"><i class="bi bi-arrow-right-circle-fill"></i> Paso actual</span>');
+  }
   if (t.obligatoria) chips.push('<span class="ch obl">Obligatoria</span>');
   if (CH_TIPO[tipo]) chips.push(`<span class="ch tipo">${CH_TIPO[tipo]}</span>`);
   if (t.requiere_foto){
@@ -8326,7 +8446,8 @@ function otdChkTareaHtml(t, nro){
       `${t.completada_por ? otdEsc(t.completada_por) : 'Respondida'}` +
       `${t.completada_at ? ' · ' + otdChkCuando(t.completada_at) : ''}</div>`
     : '';
-  const clase = t.completada ? ' is-ok' : (t.obligatoria ? ' is-obl' : '');
+  const clase = t.completada ? ' is-ok'
+    : ((esSiguiente ? ' is-next' : '') + (t.obligatoria ? ' is-obl' : ''));
 
   return `<div class="otd-chk-item${clase}${bloqueada ? ' is-locked' : ''}" id="otdChkItem-${t.id}">
     <span class="nm">${String(nro || 0).padStart(2, '0')}</span>
