@@ -3181,7 +3181,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          cual, en el mismo lugar de siempre (REGLA #4.2 -- no se borra
          nada, solo se le agrega un gate de rol). #}
       {% if not es_tecnico %}
-      <div class="otd-card">
+      <div class="otd-card" id="otdCardFirmar">
         <h3><i class="bi bi-vector-pen"></i> Firmar y cerrar OT</h3>
         <div style="padding:14px 16px" id="otfWrap">
           {% if v.estado == 'cerrada' %}
@@ -4382,6 +4382,17 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     <button type="button" class="b pri" onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta_bar > 0 }}>
       <i class="bi bi-{{ 'lock-fill' if _obl_falta_bar > 0 else 'pen-fill' }}"></i>
       {{ 'Faltan obligatorias para firmar' if _obl_falta_bar > 0 else 'Firmar como técnico' }}</button>
+    {% elif not es_tecnico and v.estado not in ('cerrada','completada') %}
+    {# 🔴 2026-09-09 (Daniel, en vivo, celular: "no tiene botón para firmar
+       cuando se completan... colócalo abajo" / "¿dónde firmo?"). Los dos
+       ramas de arriba cubren pendiente_aprobacion/firmada_tecnico -- para
+       cualquier estado más temprano (programada/ejecutando) gestión no
+       tenía NINGÚN botón acá, solo Ver PDF y Anexo de fotos. No abre el
+       canvas de firma directo (esa acción es del técnico, no de quien
+       gestiona) -- lleva a la tarjeta completa en Información, mismo
+       patrón que otdIrAFinanzas. #}
+    <button type="button" class="b pri" onclick="otdIrAFirmar()">
+      <i class="bi bi-vector-pen"></i> Ir a Firmar y cerrar OT</button>
     {% endif %}
   </div>
 </div>
@@ -6372,6 +6383,31 @@ window.otdIrAFinanzas = function(){
     setTimeout(() => card.classList.remove('otd-flash'), 2600);
     const primero = document.getElementById('otdErpDocQ');
     if (primero) setTimeout(() => primero.focus({preventScroll: true}), 420);
+  });
+};
+
+/* 🔴 2026-09-09 (Daniel, en vivo, celular: "no tiene botón para firmar
+   cuando se completan... colócalo abajo" / "¿dónde firmo?"). La barra
+   inferior fija (más abajo, .otd-bottom) YA tiene un botón real de firma
+   -- pero es EXCLUSIVO de es_tecnico (la tarjeta de arriba, oculta para
+   técnico, es su equivalente en gestión). Viendo la OT como gestión
+   (admin/supervisor/ejecutivo/superadmin) esa barra no ofrecía NADA para
+   llegar a firmar sin antes encontrar la pestaña Información a mano.
+   Mismo patrón que otdIrAFinanzas: cambia a Información y hace scroll a
+   la tarjeta -- NO abre el canvas de firma solo, porque quien gestiona no
+   es quien firma como técnico (evita el riesgo de que gestión estampe sin
+   querer una firma que no es suya). */
+window.otdIrAFirmar = function(){
+  const tabInfo = document.querySelector('#otdTabs .otd-tab[data-tab="info"]');
+  if (tabInfo && !tabInfo.classList.contains('on')) tabInfo.click();
+  const card = document.getElementById('otdCardFirmar');
+  if (!card) return;
+  requestAnimationFrame(function(){
+    card.scrollIntoView({behavior: 'smooth', block: 'start'});
+    card.classList.remove('otd-flash');
+    void card.offsetWidth;
+    card.classList.add('otd-flash');
+    setTimeout(() => card.classList.remove('otd-flash'), 2600);
   });
 };
 
