@@ -4781,12 +4781,21 @@ def _build_perms_from_matrix(role):
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
-    # Antes solo miraba "ver" → si la operadora marcaba cubicador/asignar/
-    # manifiestos/couriers pero al guardar "ver" quedó desmarcado, todo el
-    # módulo rebotaba. Simétrico al fix de "cubicador" abajo.
+    # Antes solo miraba "ver" → si la operadora marcaba manifiestos/couriers
+    # pero al guardar "ver" quedó desmarcado, todo el módulo rebotaba.
+    #
+    # 🔒 FIX 2026-09-09 (Daniel, urgente: "le di permiso para el cubicador y
+    # al brindar el permiso este le dio acceso completo a transporte"):
+    # "cubicador" y "asignar" SALEN de este OR. Son pantallas angostas
+    # (Cubicador/Asignar y Cotizar) con su propio gate dedicado
+    # (g.permissions["cubicador"], ver dos líneas más abajo) — pero al
+    # sumar también aquí, marcar SOLO "Cubicador" en la matriz de un rol
+    # (ej. el ejecutivo SSTT) encendía el flag coarse y con él Monitor,
+    # Manifiestos, Couriers, Configuración y Facturas Proveedor completos,
+    # que @_tr_required protege con este mismo flag. El caso Alison seguía
+    # cubierto con "ver"/"manifiestos"/"couriers" solos.
     base["transporte"]     = bool(
-        tra.get("ver") or tra.get("cubicador") or tra.get("asignar")
-        or tra.get("manifiestos") or tra.get("couriers")
+        tra.get("ver") or tra.get("manifiestos") or tra.get("couriers")
     )
     # /cubicador y /asignar comparten el gate g.permissions["cubicador"].
     # La matriz tiene acciones separadas "cubicador" y "asignar" — ambas

@@ -2629,6 +2629,15 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/<int:tid>")
     @_tickets_required
+    # 🔒 2026-09-09 (Daniel, urgente: "el técnico externo está pudiendo ver
+    # el botón de generar OT"): tk_list (la lista) ya bloqueaba al técnico
+    # externo con este mismo decorador desde el 8-sep, pero la ficha
+    # individual (esta vista) se quedó afuera -- entrando por la URL
+    # directa (o un link guardado) el proveedor externo llegaba igual a
+    # ficha.html, que muestra "Generar OT" sin ningún gate de rol propio.
+    # Mismo criterio que _es_tecnico_externo/_no_tecnico_externo ya
+    # documentan: el técnico INTERNO no se ve afectado.
+    @_no_tecnico_externo
     def tk_ficha(tid):
         t = _row("SELECT id FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
