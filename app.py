@@ -86443,6 +86443,21 @@ def ot2_reporte_xlsx():
     igual criterio que el resto de los endpoints financieros de esta noche.
     El botón "Reporte Excel" del panel se oculta a técnico en el template
     para no mostrar un link que el backend va a rechazar.
+
+    🆕 2026-09-08 (Daniel, mirando en vivo "Finanzas de la OT"): "si
+    valorizamos todo, deberemos poder tener reportes de cuánto se va a los
+    centros de costos, cuánto es la mantención y cuánto es en instalación,
+    por períodos de tiempo, y todo". Ya existían las hojas "Por centro de
+    costo" y "Resumen" (con el filtro `desde`/`hasta`/`periodo` de
+    `_ot2_filtros_export`, que ya soportaba rango de fechas aunque el panel
+    solo exponía "todo"/"mes actual"). Lo que faltaba era la mitad "por
+    tipo de trabajo" -- se agrega la hoja "Por tipo" (misma forma que "Por
+    centro de costo") y el panel ahora deja elegir un rango de fechas
+    (desde/hasta) además del selector de período. Aprovechando el cambio,
+    se corrigió que "Por técnico"/"Por centro de costo" sumaban `zz_monto
+    or costo` para "monto asociado" mientras la Hoja 1 calcula el margen
+    con `costo` a secas -- dos definiciones de "cobrado" en el mismo
+    archivo. Ahora las tres hojas usan la misma variable (`_precio`).
     """
     try:
         import openpyxl
@@ -86555,7 +86570,14 @@ def ot2_reporte_xlsx():
     # etiqueta legible ("Servicio Técnico") en la Hoja 1 también, en vez
     # del código crudo ("sstt") que mostraba antes.
     _LBL_CC = dict(_OT2_CENTROS_COSTO)
-    por_tecnico, por_centro = {}, {}
+    # 2026-09-08 (Daniel, dictando frente a la pantalla de Finanzas de la
+    # OT): "si valorizamos todo, deberemos poder tener reportes de cuánto
+    # se va a los centros de costos, cuánto es la mantención y cuánto es en
+    # instalación, por períodos de tiempo". `por_centro` ya existía (hoja
+    # "Por centro de costo", 2026-08-27); `por_tipo` es la mitad que
+    # faltaba -- misma forma de acumulador, agrupado por `v.tipo` en vez de
+    # `v.centro_costo`, para la nueva hoja "Por tipo".
+    por_tecnico, por_centro, por_tipo = {}, {}, {}
     # Totales globales para la hoja "Resumen" (Daniel, 27-08-2026): "cuánto
     # dinero total está fuera de Servicio Técnico". "sstt" es el único
     # centro que Daniel SÍ considera propio de Servicio Técnico -- vacío/
@@ -86684,6 +86706,18 @@ def ot2_reporte_xlsx():
 
         # Agregados en Python — sin consultas extra. Reusa _cprov/_cdesp ya
         # calculados arriba para el margen (evita divergencia entre hojas).
+        #
+        # 🔧 FIX 2026-09-08: el "monto" de estas dos hojas usaba
+        # `zz_monto or costo` -- una definición de "cobrado" DISTINTA de la
+        # que usa el margen de la Hoja 1 (`_precio`, la variable de arriba,
+        # que es `costo`). Con eso el mismo reporte podía mostrar un
+        # "Monto asociado" que no cuadraba con Cobrado−Margen de la propia
+        # fila. `costo` ya es, por diseño (ver el INSERT de `ot2_api_crear`,
+        # 2026-09-02), el precio final al cliente -- para una OT de cliente
+        # ya trae zz_monto+zz_envio_monto sumados; para trabajo interno es
+        # el costo estimado de referencia. Usar SIEMPRE la misma variable
+        # (`_precio`) evita que esta hoja y la Hoja 1 cuenten "cobrado" de
+        # dos maneras distintas.
         k = (tec, "Externo" if externo else "Interno")
         a = por_tecnico.setdefault(k, {"total": 0, "cerradas": 0, "abiertas": 0,
                                        "tareas_ok": 0, "tareas_tot": 0, "monto": 0.0,
@@ -86691,7 +86725,7 @@ def ot2_reporte_xlsx():
         a["total"] += 1
         a["tareas_ok"] += n_c
         a["tareas_tot"] += n_t
-        a["monto"] += float(f.get("zz_monto") or f.get("costo") or 0)
+        a["monto"] += _precio
         if margen is not None:
             a["margen"] += margen
         if estado in ("cerrada", "completada"):
@@ -86704,7 +86738,7 @@ def ot2_reporte_xlsx():
                                        "costo_proveedor": 0.0, "costo_despacho": 0.0,
                                        "margen": 0.0, "con_margen": 0})
         b["total"] += 1
-        b["monto"] += float(f.get("zz_monto") or f.get("costo") or 0)
+        b["monto"] += _precio
         b["costo_proveedor"] += _cprov
         b["costo_despacho"] += _cdesp
         if margen is not None:
@@ -86712,6 +86746,23 @@ def ot2_reporte_xlsx():
             b["con_margen"] += 1
         if (f.get("cubierto_por") or "").lower() == "garantia":
             b["garantia"] += 1
+
+        # 🆕 2026-09-08 — hoja "Por tipo" (Daniel: "cuánto es la mantención
+        # y cuánto es en instalación"). Mismo acumulador que `por_centro`,
+        # agrupado por `v.tipo` en vez de `v.centro_costo`.
+        tp = f.get("tipo") or "(sin tipo)"
+        t = por_tipo.setdefault(tp, {"total": 0, "monto": 0.0, "garantia": 0,
+                                     "costo_proveedor": 0.0, "costo_despacho": 0.0,
+                                     "margen": 0.0, "con_margen": 0})
+        t["total"] += 1
+        t["monto"] += _precio
+        t["costo_proveedor"] += _cprov
+        t["costo_despacho"] += _cdesp
+        if margen is not None:
+            t["margen"] += margen
+            t["con_margen"] += 1
+        if (f.get("cubierto_por") or "").lower() == "garantia":
+            t["garantia"] += 1
 
     widths = [15, 12, 30, 13, 15, 34, 30, 18, 11, 16, 14, 22, 10, 15, 8, 15,
               9, 9, 16, 16, 13, 13, 14, 14, 14, 11, 12, 17, 16, 16, 16, 16, 40]
@@ -86796,7 +86847,54 @@ def ot2_reporte_xlsx():
         ws3.column_dimensions[get_column_letter(ci)].width = w
     ws3.freeze_panes = "A2"
 
-    # ── Hoja 4: Resumen ───────────────────────────────────────────────
+    # ── Hoja 4: Por tipo de trabajo ────────────────────────────────────
+    # 2026-09-08 (Daniel, viendo Finanzas de la OT): "cuánto es la
+    # mantención y cuánto es en instalación, por períodos de tiempo".
+    # Misma estructura que "Por centro de costo", agrupada por `v.tipo`
+    # (mantención preventiva/correctiva, instalación, inspección, garantía,
+    # trabajo de bodega, etc. -- ver _TIPO_OT_LABEL).
+    ws3b = wb.create_sheet("Por tipo")
+    h3b = ["Tipo de OT", "OT", "Monto cobrado", "Costo proveedor",
+           "Costo despacho", "Margen total", "En garantía"]
+    for ci, h in enumerate(h3b, 1):
+        _hdr(ws3b.cell(row=1, column=ci), h)
+    r3b = 2
+    for tp, t in sorted(por_tipo.items(), key=lambda x: -x[1]["monto"]):
+        _lbl_tp = _TIPO_OT_LABEL.get(tp, tp) if tp != "(sin tipo)" else tp
+        for ci, val in enumerate([_lbl_tp, t["total"], t["monto"],
+                                  t["costo_proveedor"], t["costo_despacho"],
+                                  t["margen"], t["garantia"]], 1):
+            c = ws3b.cell(row=r3b, column=ci, value=val)
+            c.font = Font(size=9, bold=(ci == 1))
+            c.border = border
+            c.fill = PatternFill("solid", fgColor=(
+                REDL if tp == "(sin tipo)" else
+                LGRAY if r3b % 2 == 0 else "FFFFFF"))
+            if ci in (3, 4, 5, 6):
+                c.number_format = '"$"#,##0'
+        r3b += 1
+    r3b += 1
+    _tot_tipo = {"total": sum(t["total"] for t in por_tipo.values()),
+                 "monto": sum(t["monto"] for t in por_tipo.values()),
+                 "costo_proveedor": sum(t["costo_proveedor"] for t in por_tipo.values()),
+                 "costo_despacho": sum(t["costo_despacho"] for t in por_tipo.values()),
+                 "margen": sum(t["margen"] for t in por_tipo.values()),
+                 "garantia": sum(t["garantia"] for t in por_tipo.values())}
+    for ci, val in enumerate(
+        ["TOTAL", _tot_tipo["total"], _tot_tipo["monto"],
+         _tot_tipo["costo_proveedor"], _tot_tipo["costo_despacho"],
+         _tot_tipo["margen"], _tot_tipo["garantia"]], 1):
+        c = ws3b.cell(row=r3b, column=ci, value=val)
+        c.font = Font(size=10, bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="0A0A0A")
+        c.border = border
+        if ci in (3, 4, 5, 6):
+            c.number_format = '"$"#,##0'
+    for ci, w in enumerate([26, 10, 16, 16, 16, 14, 13], 1):
+        ws3b.column_dimensions[get_column_letter(ci)].width = w
+    ws3b.freeze_panes = "A2"
+
+    # ── Hoja 5: Resumen ───────────────────────────────────────────────
     ws4 = wb.create_sheet("Resumen")
     filas_res = [
         ("— Alcance —", ""),

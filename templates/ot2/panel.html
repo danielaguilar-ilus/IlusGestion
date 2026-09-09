@@ -423,6 +423,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
          más un selector de período (Todo / Mes actual, `periodo=mes`)
          que ajusta ambos links sin recargar la página. #}
       {% if not es_tecnico %}
+      {# 🆕 2026-09-08 (Daniel, "Finanzas de la OT": "reportes... por
+         períodos de tiempo"). El backend (`_ot2_filtros_export`) ya
+         aceptaba `desde`/`hasta` desde el 27-08 -- solo el panel nunca
+         ofrecía más que "todo" o "mes actual". Un rango de fechas manda
+         por sobre el selector de período (igual criterio que el backend);
+         dejar cualquiera de los dos vacío no filtra por ese lado. #}
+      <input type="date" id="ot2RepDesde" class="form-control form-control-sm" style="width:auto"
+             title="Reporte Excel: desde (opcional)">
+      <input type="date" id="ot2RepHasta" class="form-control form-control-sm" style="width:auto"
+             title="Reporte Excel: hasta (opcional)">
       <select id="ot2RepPeriodo" class="form-select form-select-sm" style="width:auto"
               title="Período del reporte Excel">
         <option value="">Período: todo</option>
@@ -431,7 +441,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
       <a id="ot2RepGeneral"
          href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}"
          class="btn btn-sm btn-outline-light"
-         title="Descargar Excel con las OT del filtro actual">
+         title="Descargar Excel con las OT del filtro actual (hojas: OT, Por técnico, Por centro de costo, Por tipo, Resumen)">
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
       </a>
       {# 🔴 2026-08-31 (Daniel: "cuando entro en las horas de trabajo, quisiera
@@ -443,13 +453,23 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
       <script>
       (function(){
         var sel = document.getElementById('ot2RepPeriodo');
+        var d1  = document.getElementById('ot2RepDesde');
+        var d2  = document.getElementById('ot2RepHasta');
         var a1  = document.getElementById('ot2RepGeneral');
         if (!sel || !a1) return;
         var base1 = a1.getAttribute('href');
-        sel.addEventListener('change', function(){
-          var p = sel.value ? ('&periodo=' + encodeURIComponent(sel.value)) : '';
-          a1.setAttribute('href', base1 + p);
-        });
+        function actualizar(){
+          var qs = '';
+          if (d1 && d1.value) qs += '&desde=' + encodeURIComponent(d1.value);
+          if (d2 && d2.value) qs += '&hasta=' + encodeURIComponent(d2.value);
+          // El rango de fechas manda -- si hay desde/hasta, el período
+          // (todo/mes actual) no se manda (mismo criterio que el backend).
+          if (!qs && sel.value) qs = '&periodo=' + encodeURIComponent(sel.value);
+          a1.setAttribute('href', base1 + qs);
+        }
+        sel.addEventListener('change', actualizar);
+        if (d1) d1.addEventListener('change', actualizar);
+        if (d2) d2.addEventListener('change', actualizar);
       })();
       </script>
       {% endif %}
