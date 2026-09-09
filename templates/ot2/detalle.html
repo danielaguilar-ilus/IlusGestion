@@ -6670,7 +6670,16 @@ async function otdCompartirWa(){
   const btn = document.getElementById('otdBtnWa');
   if (btn && btn.dataset.busy === '1') return;   // anti doble click
   if (btn){ btn.dataset.busy = '1'; btn.style.opacity = '.6'; }
-  const win = window.open('', '_blank');
+  // 🔴 FIX 2026-09-09 (Daniel, iPhone real: "me envía a Safari, a una
+  // página que dice about:blank, y después entra el WhatsApp... debes
+  // llevarme directo a la app"). Antes se abría una pestaña nueva en
+  // blanco ANTES de saber el link (para esquivar el bloqueo de pop-ups),
+  // y ese hueco entre abrir la pestaña y ponerle la URL real es justo el
+  // "about:blank" que se ve. Navegar la MISMA pestaña con
+  // window.location.href no tiene ese problema: no es una ventana nueva,
+  // ningún navegador la bloquea aunque pase después de un await, e iOS
+  // entrega el link a la app de WhatsApp sin pestaña en blanco de por
+  // medio. Incluye el mismo camino (sub-flujo cuando falta el teléfono).
   try {
     let tel = '';
     const r0 = await fetch('/mantenciones/api/visitas/{{ v.id }}/compartir-wa', {
@@ -6679,7 +6688,6 @@ async function otdCompartirWa(){
     });
     let d = await r0.json().catch(()=>({}));
     if (!d.ok && d.error === 'TELEFONO_FALTA'){
-      if (win) win.close();
       tel = await ilusPrompt({
         title:'Enviar la OT al cliente',
         message:'Teléfono del cliente:',
@@ -6691,30 +6699,25 @@ async function otdCompartirWa(){
         sanitize: (typeof ilusTelSanitize === 'function') ? ilusTelSanitize : null,
         validate: (typeof ilusTelChileno === 'function') ? ilusTelChileno : null });
       if (!tel){ if(btn){btn.dataset.busy='0';btn.style.opacity='';} return; }
-      const win2 = window.open('', '_blank');
       const r1 = await fetch('/mantenciones/api/visitas/{{ v.id }}/compartir-wa', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({telefono: tel}) });
       d = await r1.json().catch(()=>({}));
-      if (d.ok && d.wa_link){ if (win2) win2.location.href = d.wa_link; }
-      else { if (win2) win2.close();
-        await ilusAlert({title:'No se pudo', message:d.error||'Error', type:'error'}); }
+      if (d.ok && d.wa_link){ window.location.href = d.wa_link; }
+      else { await ilusAlert({title:'No se pudo', message:d.error||'Error', type:'error'}); }
       if(btn){btn.dataset.busy='0';btn.style.opacity='';}
       return;
     }
     if (!d.ok){
-      if (win) win.close();
       await ilusAlert({title:'No se pudo enviar', message:d.error||'Error', type:'error'});
-    } else if (win){
-      win.location.href = d.wa_link;
-      ilusToast('✓ Abriendo WhatsApp con la OT firmada…', {type:'success'});
+    } else if (d.wa_link){
+      window.location.href = d.wa_link;
     } else {
       await ilusAlert({title:'Link generado',
-        message:'El navegador bloqueó la ventana. Copia este enlace:',
-        sub:d.wa_link, type:'warning'});
+        message:'No se pudo generar el link de WhatsApp. Copia este enlace:',
+        sub:d.wa_link || '', type:'warning'});
     }
   } catch(e){
-    if (win) win.close();
     await ilusAlert({title:'Error de red', message:e.message, type:'error'});
   } finally {
     if (btn){ btn.dataset.busy = '0'; btn.style.opacity = ''; }
@@ -9883,7 +9886,6 @@ const OT2F = (function(){
       });
       if (!tel) return;
     }
-    const winRef = window.open('', '_blank');
     try {
       const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -9891,20 +9893,22 @@ const OT2F = (function(){
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok){
-        if (winRef) winRef.close();
         await ilusAlert({title:'No se pudo', message:(d.error||'Error'), type:'error'});
         return;
       }
-      if (winRef){
-        winRef.location.href = d.wa_link;
-        ilusToast('✓ Abriendo WhatsApp con el link de firma…', {type:'success'});
-      } else {
-        await ilusAlert({title:'Link de WhatsApp generado',
-          message:'El navegador bloqueó la ventana emergente. Abre este link manualmente:',
-          sub:d.wa_link, type:'warning'});
-      }
+      // 🔴 FIX 2026-09-09 (Daniel, iPhone real: "me envía a Safari, a una
+      // página que dice about:blank, y después entra el WhatsApp... yo
+      // pienso que me debes de llevar directo a la aplicación de
+      // WhatsApp"). Antes se abría una pestaña nueva en blanco (para
+      // esquivar el bloqueo de pop-ups de Safari) y RECIÉN al terminar el
+      // fetch se le ponía la URL -- ese hueco entre abrir la pestaña y
+      // saber el link es justo el "about:blank" que Daniel ve. Navegar la
+      // MISMA pestaña (sin abrir una nueva) no tiene ese problema: no es
+      // una ventana nueva, así que no lo bloquea ningún navegador aunque
+      // pase después de un await, y iOS entrega el link a la app de
+      // WhatsApp sin pasar por una pestaña en blanco de por medio.
+      window.location.href = d.wa_link;
     } catch(e){
-      if (winRef) winRef.close();
       await ilusAlert({title:'Error de red', message:e.message, type:'error'});
     }
   }
@@ -9920,7 +9924,6 @@ const OT2F = (function(){
       });
       if (tel === null) return;
     }
-    const winRef = tel ? window.open('', '_blank') : null;
     try {
       const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -9928,15 +9931,18 @@ const OT2F = (function(){
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok){
-        if (winRef) winRef.close();
         await ilusAlert({title:'No se pudo', message:(d.error||'Error'), type:'error'});
         return;
       }
-      if (winRef && d.wa_link) winRef.location.href = d.wa_link;
-      else if (winRef) winRef.close();
+      // 🔴 FIX 2026-09-09 (Daniel, iPhone real: mismo hueco de "about:blank"
+      // que enviarFirmaWhatsApp -- ver ese comentario). Acá además hay que
+      // avisar que el correo YA salió antes de irse de la página, así que
+      // el aviso se muestra PRIMERO (el usuario lo cierra) y RECIÉN
+      // entonces se navega a WhatsApp en la misma pestaña -- nunca se abre
+      // una pestaña nueva en blanco.
       await ilusAlert({title:'✅ Firma enviada', message:d.mensaje || 'Listo.', type:'success'});
+      if (d.wa_link) window.location.href = d.wa_link;
     } catch(e){
-      if (winRef) winRef.close();
       await ilusAlert({title:'Error de red', message:e.message, type:'error'});
     }
   }
