@@ -14555,6 +14555,100 @@ def admin_backfill_series_maquinas_aplicar():
     })
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  REPARACIÓN RETROACTIVA DE TAREAS "FOTO" CON EVIDENCIA PERO SIN MARCAR
+#  (2026-09-09, caso real OT-2026-00161)
+#
+#  Bug histórico (ya corregido de raíz en otdChkSubirFoto, detalle.html):
+#  subir una foto a una tarea tipo 'foto' no disparaba el PATCH que la
+#  marca completada -- el técnico veía "Foto lista" (chip client-side,
+#  con foto) pero el backend seguía viendo completada=0, bloqueando la
+#  firma con "faltan obligatorias" pese a tener la evidencia. El fix ya
+#  está en producción para fotos NUEVAS; esto repara las tareas que
+#  quedaron atascadas con fotos subidas ANTES del fix.
+#
+#  Mismo criterio que "Foto lista" en el frontend (detalle.html,
+#  otdChkTareaHtml): con AL MENOS 1 foto vinculada, la tarea se considera
+#  resuelta -- no exige un mínimo por más que el título diga "sus 4 lados".
+#
+#  GET  /admin/sstt/backfill-tareas-foto          -> diagnóstico (solo lectura)
+#  POST /admin/sstt/backfill-tareas-foto/aplicar  -> ejecuta la reparación real
+# ─────────────────────────────────────────────────────────────────────
+
+def _backfill_tareas_foto_diagnostico():
+    """Solo lectura. Tareas tipo_respuesta='foto' con completada=0 que YA
+    tienen al menos una foto vinculada en mant_visita_fotos."""
+    return mysql_fetchall(
+        "SELECT t.id, t.visita_id, t.titulo, v.numero_ot, "
+        "       c.razon_social, "
+        "       (SELECT COUNT(*) FROM mant_visita_fotos f WHERE f.tarea_id=t.id) AS n_fotos "
+        "  FROM mant_visita_tareas t "
+        "  JOIN mant_visitas v ON v.id = t.visita_id "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        " WHERE t.tipo_respuesta='foto' AND t.completada=0 "
+        "   AND EXISTS (SELECT 1 FROM mant_visita_fotos f WHERE f.tarea_id=t.id) "
+        " ORDER BY t.visita_id, t.id"
+    ) or []
+
+
+@app.route("/admin/sstt/backfill-tareas-foto")
+@_require_superadmin
+def admin_backfill_tareas_foto():
+    """Diagnóstico (dry-run) -- ver _backfill_tareas_foto_diagnostico()."""
+    plan = _backfill_tareas_foto_diagnostico()
+    return render_template("admin/backfill_tareas_foto.html", plan=plan)
+
+
+@app.route("/admin/sstt/backfill-tareas-foto/aplicar", methods=["POST"])
+@_require_superadmin
+def admin_backfill_tareas_foto_aplicar():
+    """Ejecuta la reparación real: UPDATE puntual por id (guard
+    completada=0, idempotente), con log en mant_logs por cada tarea y un
+    resumen global."""
+    plan = _backfill_tareas_foto_diagnostico()
+    if not plan:
+        return jsonify({"ok": True, "reparados": 0, "mensaje": "No hay tareas reparables."})
+
+    motivo = (
+        "Reparación retroactiva 2026-09-09 (caso OT-2026-00161): la tarea "
+        "tenía foto(s) subida(s) pero nunca quedó marcada completada por un "
+        "bug histórico ya corregido (otdChkSubirFoto no disparaba el PATCH "
+        "de completado tras subir la foto). Mismo criterio que el chip "
+        "'Foto lista' del frontend: 1+ foto vinculada basta."
+    )
+    reparados, fallidos = [], []
+    for p in plan:
+        try:
+            filas = mysql_execute_returning_rowcount(
+                "UPDATE mant_visita_tareas SET completada=1, completada_at=NOW(), "
+                "  completada_por=%s, version=COALESCE(version,0)+1 "
+                " WHERE id=%s AND completada=0",
+                (current_username(), p["id"])
+            )
+            if filas:
+                reparados.append(p)
+                try:
+                    _mant_log("visita", p["visita_id"], "tarea_foto_backfill_historico",
+                              f"Tarea #{p['id']} ({p['titulo']}) con {p['n_fotos']} foto(s) -- {motivo}")
+                except Exception:
+                    pass
+        except Exception as e:
+            fallidos.append({"id": p["id"], "error": str(e)[:200]})
+
+    try:
+        _mant_log("sistema", 0, "backfill_tareas_foto_historico",
+                  f"{len(reparados)} tarea(s) reparadas, {len(fallidos)} fallida(s). {motivo}")
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True, "reparados": len(reparados), "fallidos": len(fallidos),
+        "detalle_reparados": [{"id": p["id"], "numero_ot": p["numero_ot"],
+                                "titulo": p["titulo"]} for p in reparados],
+        "detalle_fallidos": fallidos,
+    })
+
+
 # ═══════════════════════════════════════════════════════════════
 #  MÓDULO CUBICADOR
 #  Busca documentos de venta en el ERP Random y cruza con
