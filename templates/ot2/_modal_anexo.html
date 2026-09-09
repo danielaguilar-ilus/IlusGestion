@@ -422,8 +422,29 @@ window.OT2ANX = (function(){
   var DEF_HITOS   = {{ anexo_defaults.hitos | tojson }};
   var DEF_ALCANCE = {{ anexo_defaults.alcance | tojson }};
   var DEF_CLIENTE = {{ (v.razon_social or '') | tojson }};
+  {# 🔴 2026-09-09 -- investigado a fondo (Daniel: "las fechas del anexo
+     salen vacías"): se descartó columna faltante en el SELECT (v.* ya trae
+     fecha_programada), se descartó un encoder JSON custom (no existe
+     ninguno -- Flask serializa `date` a ISO automático), y se descartó que
+     `v` se reasigne en algún loop antes de este include (no hay ninguno).
+     La única explicación que queda, y la más simple: esta OT en particular
+     no tiene `fecha_programada` en la base (una OT sin agendar todavía, o
+     un levantamiento por descubrimiento). No es un bug de este archivo --
+     es un dato real que falta. Daniel bajó la prioridad de esto ("ya no
+     debería importar tanto"), así que en vez de seguir cazando una causa
+     que ya no está acá, se agrega un fallback razonable: si la OT no trae
+     fecha, el anexo por defecto arranca HOY -- mejor que dejarlo vacío
+     esperando a que alguien note el hueco. #}
   var DEF_FECHA_INI = {{ (v.fecha_programada or '') | tojson }};
   var DEF_FECHA_FIN = {{ (v.fecha_fin or v.fecha_programada or '') | tojson }};
+  (function(){
+    if (DEF_FECHA_INI && DEF_FECHA_FIN) return;
+    var _hoy = new Date();
+    var _iso = _hoy.getFullYear() + '-' + String(_hoy.getMonth() + 1).padStart(2, '0')
+              + '-' + String(_hoy.getDate()).padStart(2, '0');
+    if (!DEF_FECHA_INI) DEF_FECHA_INI = _iso;
+    if (!DEF_FECHA_FIN) DEF_FECHA_FIN = DEF_FECHA_INI;
+  })();
   var OT_ID = {{ v.id }};
   /* 🆕 2026-09-02 (Daniel: "crees un anexo con todos los datos que tiene la
      orden de trabajo... la orden valorizada, los montos declarados, el RUT

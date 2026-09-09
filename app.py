@@ -78379,13 +78379,31 @@ def _ot2_finanzas_estado(v):
         # sin `zz_monto` haría fallar el gate SIEMPRE y trabaría todas las
         # firmas en producción. Quien no puede ver montos manda el
         # booleano `_fin_valorizada` ya calculado en SQL.
+        # 🔴 FIX 2026-09-09 (hallazgo al investigar el reporte financiero:
+        # "cuánto se va a los centros de costo... por períodos"). Esta OT es
+        # de cliente (no interna) y llega hasta acá -- existen DOS caminos
+        # reales para declarar "cuánto se cobra", que escriben columnas
+        # distintas:
+        #   1) El paso de cierre (guardarCosto() -> /ot/api/finanzas/<vid>)
+        #      SÍ manda zz_monto (lo trae leyendo el documento del ERP).
+        #   2) La pestaña Información (otdGuardarFinanzas() -> PUT
+        #      /mantenciones/api/visitas/<vid>) guarda `costo` a secas --
+        #      nunca toca zz_monto/zz_envio_monto, ni existe hoy forma de
+        #      declarar el envío por separado fuera del wizard de creación.
+        # Con solo zz_monto+zz_envio_monto, una OT declarada por el camino
+        # (2) sin haber pasado nunca por el (1) queda con las dos columnas
+        # en NULL -- este gate decía "falta declarar cuánto se cobra" pese
+        # a que `costo` SÍ estaba puesto, trabando la firma sin motivo real.
+        # Se agrega `costo` como evidencia alternativa -- puramente aditivo,
+        # nunca puede volver a bloquear una OT que hoy pasa.
         _valorizada = None
         if "_fin_valorizada" in v:
             _valorizada = bool(v.get("_fin_valorizada"))
-        elif ("zz_monto" in v) or ("zz_envio_monto" in v):
+        elif ("zz_monto" in v) or ("zz_envio_monto" in v) or ("costo" in v):
             try:
-                _valorizada = (float(v.get("zz_monto") or 0)
-                               + float(v.get("zz_envio_monto") or 0)) > 0
+                _valorizada = ((float(v.get("zz_monto") or 0)
+                                + float(v.get("zz_envio_monto") or 0)) > 0
+                               or float(v.get("costo") or 0) > 0)
             except (TypeError, ValueError):
                 _valorizada = False
         if _valorizada is False:
