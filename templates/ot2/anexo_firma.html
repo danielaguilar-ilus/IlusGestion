@@ -731,7 +731,7 @@
       <div>
         <h2>Documento firmado el <span class="sf-fecha">{{ firma.firmado_en }}</span></h2>
         <p>
-          Firmado por <strong style="color:#fff">{{ firma.firmante_nombre }}</strong> (RUT {{ firma.firmante_rut }}).
+          Firmado por <strong style="color:#fff">{{ firma.firmante_nombre }}</strong> (RUT {{ firma.firmante_rut | rut_fmt }}).
           Este documento quedó sellado junto a su evidencia de firma y <strong style="color:#fff">ya no admite modificaciones</strong>.
           Conserva este enlace como comprobante.
         </p>
@@ -773,7 +773,7 @@
       <div class="dh-meta">
         <span>Fecha de emisión: <b>{{ anexo.fecha }}</b></span>
         <span>Proveedor: <b>{{ anexo.proveedor_nombre }}</b></span>
-        <span>RUT: <b>{{ anexo.proveedor_rut }}</b></span>
+        <span>RUT: <b>{{ anexo.proveedor_rut | rut_fmt }}</b></span>
       </div>
     </section>
 
@@ -791,7 +791,7 @@
           El presente Anexo de Servicios forma parte integrante del Contrato Marco de
           Prestación de Servicios suscrito entre <strong>Sport and Health Solutions SPA</strong>
           (ILUS Fitness), RUT 76.996.964-0, en adelante «ILUS», y
-          <strong>{{ anexo.proveedor_nombre }}</strong>, RUT {{ anexo.proveedor_rut }},
+          <strong>{{ anexo.proveedor_nombre }}</strong>, RUT {{ anexo.proveedor_rut | rut_fmt }},
           en adelante «el Proveedor», y tiene por objeto describir los servicios,
           condiciones, precio y alcance que se prestarán.
         </p>
@@ -910,7 +910,7 @@
           </span>
           <span class="fp-datos">
             <b>{{ firma.firmante_nombre }}</b>
-            <span>RUT {{ firma.firmante_rut }} · Firmado electrónicamente el {{ firma.firmado_en }}</span>
+            <span>RUT {{ firma.firmante_rut | rut_fmt }} · Firmado electrónicamente el {{ firma.firmado_en }}</span>
           </span>
         </div>
         {% else %}
@@ -1019,7 +1019,7 @@
           </div>
           <div class="campo">
             <label for="inpRut">RUT <span class="req">*</span></label>
-            <input type="text" id="inpRut" value="{{ anexo.proveedor_rut }}"
+            <input type="text" id="inpRut" value="{{ anexo.proveedor_rut | rut_fmt }}"
                    placeholder="12.345.678-9" inputmode="text" autocomplete="off" maxlength="12">
             <div class="ayuda">Con dígito verificador. Se formatea solo.</div>
             <div class="error-msg" id="errRut">El RUT no es válido — revisa el dígito verificador.</div>

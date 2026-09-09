@@ -318,11 +318,16 @@
          pensaba que faltaba el RUT correcto. El de empresa (anexo.
          proveedor_rut) va primero y en negrita por ser el prioritario; el
          del representante se deja igual, como dato secundario. #}
+      {# 🔧 FIX 2026-09-09 (Daniel: "repara el formato"): `anexo.proveedor_rut`
+         se imprimía crudo (ej. "78065371-k") mientras `firma.firmante_rut`
+         salía justo abajo ya con puntos ("78.065.371-K") — dos formatos
+         distintos para el mismo tipo de dato, uno al lado del otro. REGLA
+         #7: todo RUT en UI pasa por `rut_fmt`. #}
       {% if anexo.proveedor_rut %}
-      <div class="firma-rut"><b>RUT Empresa: {{ anexo.proveedor_rut }}</b></div>
+      <div class="firma-rut"><b>RUT Empresa: {{ anexo.proveedor_rut | rut_fmt }}</b></div>
       {% endif %}
       {% if firma.firmante_rut and firma.firmante_rut != anexo.proveedor_rut %}
-      <div class="firma-rut">RUT Representante: {{ firma.firmante_rut }}</div>
+      <div class="firma-rut">RUT Representante: {{ firma.firmante_rut | rut_fmt }}</div>
       {% endif %}
       <div class="firma-linea">Firma: {% if not firma.firma_url %}______________________{% endif %}</div>
       <div class="firma-rut">Firmado el {{ firma.firmado_en }} · firma electrónica simple
@@ -342,7 +347,7 @@
       <div class="firma-linea-real"></div>
       <div class="firma-nombre">{{ anexo.proveedor_nombre }}</div>
       {% if anexo.proveedor_rut %}
-      <div class="firma-rut">RUT Empresa: {{ anexo.proveedor_rut }}</div>
+      <div class="firma-rut">RUT Empresa: {{ anexo.proveedor_rut | rut_fmt }}</div>
       {% endif %}
       <div class="firma-pie">Firma del Proveedor</div>
     {% endif %}
