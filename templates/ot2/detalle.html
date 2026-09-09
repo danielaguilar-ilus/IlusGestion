@@ -3193,6 +3193,22 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     onclick="OT2F.liberarFirmaTecnico()">
               <i class="bi bi-arrow-counterclockwise"></i> Liberar firma del técnico (re-firmar)</button>
             {% endif %}
+            {# 🆕 2026-09-09 (Daniel: "que se pueda declarar la garantía apenas
+               firma el técnico"). Antes, con el técnico ya firmado y el
+               cliente aún sin firmar, gestión no tenía ninguna forma de
+               declarar centro de costo, documento o garantía -- el modal
+               de cierre (ver más abajo, `otfModalAprobacion`) solo existía
+               en pendiente_aprobacion. Mismo modal, mismo botón de siempre
+               (OT2F.abrirAprobacion(), cero lógica nueva) -- solo que ahora
+               también se renderiza en este estado, con el paso de firma del
+               supervisor y el cierre real ocultos hasta que el cliente
+               también firme. #}
+            {% if puede_cobertura %}
+            <button type="button" class="otd-btn" style="width:100%;justify-content:center;margin-bottom:10px;
+                    background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a"
+                    onclick="OT2F.abrirAprobacion()">
+              <i class="bi bi-cash-coin"></i> Gestionar documentos, montos y garantía</button>
+            {% endif %}
             {% if puede_firmar_cliente %}
             <div class="tx-sign-hub" id="otfSignHub">
               <div class="tx-sign-hub-head">
@@ -5025,8 +5041,27 @@ function otdIniciarRuta(app){
    agregó ahí mismo hoy (centro de costo inline, quitar garantía) y el
    candado factura↔OT / garantía. Mismos endpoints: /cobertura,
    /asociar-factura, /aprobar-cierre, /rechazar-cierre, PUT visita.
-   ═════════════════════════════════════════════════════════════════════ #}
-{% if v.estado == 'pendiente_aprobacion' and puede_aprobar %}
+
+   🆕 2026-09-09 (Daniel, caso real Víctor — OT-135/142: "que se pueda
+   declarar la garantía apenas firma el técnico"). Antes este modal entero
+   (centro de costo, documento o garantía, costo proveedor) solo existía
+   en el DOM con `v.estado == 'pendiente_aprobacion'` -- es decir, recién
+   cuando el CLIENTE también ya había firmado. Si el técnico firmaba antes
+   que el cliente, gestión quedaba sin ninguna forma de declarar nada:
+   ni garantía, ni documento, ni el costo del proveedor.
+   El backend YA permitía declarar cobertura/garantía en cualquier estado
+   abierto (`_ot_can_cobertura`, "vale hasta que la OT se cierre de
+   verdad" — fix del 19-ago para el caso Aaron/OT-098) y `guardarCosto()`
+   tampoco toca `v.estado` -- el único bloqueo real era este `{% raw %}{% if %}{% endraw %}` del
+   frontend. Se amplía para que el modal también exista en
+   `firmada_tecnico` (mismo permiso `puede_cobertura` que ya gatea cada
+   paso adentro); el paso de FIRMA DEL SUPERVISOR y el botón que cierra
+   la OT (`/aprobar-cierre`) siguen exigiendo `pendiente_aprobacion` de
+   verdad -- ver el segundo candado, redundante a propósito, más abajo
+   en este mismo modal y en el backend (`mant_ot_aprobar_cierre` ya
+   rechaza con 400 si el estado no es ese). #}
+{% set _otf_puede_cerrar_ahora = (v.estado == 'pendiente_aprobacion') %}
+{% if (v.estado == 'pendiente_aprobacion' and puede_aprobar) or (v.estado == 'firmada_tecnico' and puede_cobertura) %}
 <div class="modal fade firma-modal" id="otfModalAprobacion" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
     <div class="modal-content">
@@ -5039,11 +5074,20 @@ function otdIniciarRuta(app){
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        {% if _otf_puede_cerrar_ahora %}
         <div class="alert py-2 small mb-3" style="background:#dcfce7;color:#15803d;border:1px solid #16a34a">
           <i class="bi bi-info-circle me-1"></i>
           Al firmar, la OT pasa a <strong>"Cerrada"</strong>. Se enviará la confirmación al cliente
           y el PDF quedará disponible para descarga.
         </div>
+        {% else %}
+        <div class="alert py-2 small mb-3" style="background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe">
+          <i class="bi bi-info-circle me-1"></i>
+          El técnico ya firmó. Aún falta que <strong>firme el cliente</strong> para poder cerrar
+          esta OT — mientras tanto puedes declarar el centro de costo, el documento o la
+          garantía, y el costo del proveedor: queda todo guardado para cuando llegue esa firma.
+        </div>
+        {% endif %}
 
         {# ══ PASO 1 — FINANZAS Y DOCUMENTO ═══════════════════════════════
            🆕 2026-09-02 (Daniel: "ese modal quiero que lo diseñes con el
@@ -5071,6 +5115,13 @@ function otdIniciarRuta(app){
         {% set _es_int = (not v.cliente_id)
                          or (v.modalidad_cobro or '')|lower == 'interno'
                          or v.tipo == 'revision_interna' %}
+        {# 🐛 2026-09-09: `_mod_cobro` se usaba más abajo (Paso 2, semáforo)
+           sin declararse nunca en este template ni pasarse desde Python —
+           Jinja lo trataba como Undefined, que en comparaciones ('in'/'==')
+           siempre da False. Efecto real: una OT YA declarada como garantía
+           seguía mostrando el candado "falta documento" y el bloque de
+           "asociar factura" en vez de reconocer la cobertura vigente. #}
+        {% set _mod_cobro = (v.modalidad_cobro or '')|lower %}
         {% set _falta_cc  = (not _es_int) and (not v.centro_costo) %}
         {% set _falta_doc = (not _es_int)
                             and _mod_cobro not in ('garantia', 'sin_costo')
@@ -5090,7 +5141,7 @@ function otdIniciarRuta(app){
             <i class="bi bi-{{ 'check-lg' if _listo_cierre else 'exclamation-triangle-fill' }}"></i>
           </span>
           <div class="tx">
-            {% if _listo_cierre %}
+            {% if _listo_cierre and _otf_puede_cerrar_ahora %}
               <div class="tt">Todo listo — puedes firmar y cerrar</div>
               <div class="sb">
                 {% if _es_int %}Trabajo interno: no requiere documento de cobro.
@@ -5098,6 +5149,15 @@ function otdIniciarRuta(app){
                   {{ 'cobertura resuelta' if _mod_cobro in ('garantia','sin_costo') else 'documento asociado' }}.
                 {% endif %}
                 Firma abajo para dejarla cerrada.
+              </div>
+            {% elif _listo_cierre %}
+              <div class="tt">Finanzas listas — falta la firma del cliente</div>
+              <div class="sb">
+                {% if _es_int %}Trabajo interno: no requiere documento de cobro.
+                {% else %}Centro de costo declarado y
+                  {{ 'cobertura resuelta' if _mod_cobro in ('garantia','sin_costo') else 'documento asociado' }}.
+                {% endif %}
+                En cuanto firme el cliente, esta OT queda lista para cerrarse.
               </div>
             {% else %}
               <div class="tt">Falta {{ _n_falta }} {{ 'cosa' if _n_falta == 1 else 'cosas' }} para poder cerrar</div>
@@ -5486,6 +5546,7 @@ function otdIniciarRuta(app){
           </div>
         </div>
 
+        {% if _otf_puede_cerrar_ahora %}
         <div class="resp-firma-card">
           <div class="resp-firma-head">
             <i class="bi bi-shield-check"></i>
@@ -5557,8 +5618,20 @@ function otdIniciarRuta(app){
           </div>
         </div>
         {# ══ /PASO 3 ══ #}
+        {% else %}
+        {# 🆕 2026-09-09: en `firmada_tecnico` este modal solo declara
+           finanzas/garantía -- la firma del supervisor y el cierre real
+           siguen exigiendo `pendiente_aprobacion` (cliente firmado),
+           reforzado también en el backend (`mant_ot_aprobar_cierre`). #}
+        <div class="otf-msg otf-wait" style="margin-top:4px">
+          <i class="bi bi-clock-history"></i>
+          Cuando el cliente firme, vuelve a abrir <b>Firmar y cerrar OT</b> para
+          certificar el cierre con tu firma de supervisor.
+        </div>
+        {% endif %}
       </div>
       <div class="modal-footer" style="background:#fafafa;border-top:1px solid #e5e7eb;flex-wrap:wrap;gap:6px">
+        {% if _otf_puede_cerrar_ahora %}
         <button type="button" class="btn btn-outline-danger fw-bold" id="otfBtnRechazarAprob"
                 onclick="OT2F.rechazarAprobacion()">
           <i class="bi bi-x-circle me-1"></i>Rechazar y devolver
@@ -5571,6 +5644,12 @@ function otdIniciarRuta(app){
                 onclick="OT2F.intentarCerrar()" style="padding:.6rem 1.4rem;font-size:.95rem">
           <i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT
         </button>
+        {% else %}
+        <div class="flex-grow-1"></div>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-arrow-left me-1"></i>Cerrar
+        </button>
+        {% endif %}
       </div>
     </div>
   </div>
