@@ -84712,6 +84712,20 @@ def _ensure_mant_anexos():
                 # con 15+ productos ese parrafo quedaba ilegible.
                 ("productos_json", "ALTER TABLE mant_anexos ADD COLUMN productos_json TEXT NULL "
                                    "COMMENT '[{sku,nombre,cantidad}] equipos del servicio'"),
+                # 📍 2026-09-09 (Daniel: "ve con eso" -- validar la Dirección
+                # del proveedor manual contra Google Places). El proveedor
+                # manual del Anexo NO toca mant_tecnicos_externos (queda
+                # suelto en estas mismas columnas de texto), así que las 3
+                # columnas de geocodificación van acá, no en la ficha del
+                # técnico externo. Mismos tipos que mant_tecnicos_externos/
+                # mant_clientes/mant_sucursales (DECIMAL(10,7) / VARCHAR(200)).
+                ("proveedor_direccion_lat", "ALTER TABLE mant_anexos ADD COLUMN "
+                                            "proveedor_direccion_lat DECIMAL(10,7) NULL"),
+                ("proveedor_direccion_lng", "ALTER TABLE mant_anexos ADD COLUMN "
+                                            "proveedor_direccion_lng DECIMAL(10,7) NULL"),
+                ("proveedor_direccion_place_id", "ALTER TABLE mant_anexos ADD COLUMN "
+                                                 "proveedor_direccion_place_id VARCHAR(200) NULL "
+                                                 "COMMENT 'Google Places place_id (verificado, opcional)'"),
             ):
                 try:
                     cur.execute(
@@ -85080,6 +85094,25 @@ def ot2_api_anexo_crear():
     except (TypeError, ValueError):
         vid = None
 
+    # 📍 2026-09-09: lat/lng/place_id de la dirección del proveedor, si el
+    # usuario eligió una sugerencia de Google Places (ilusPlacesAutocomplete
+    # en oaxManDireccion). SUGERIDO, no bloqueante -- ver comentario junto a
+    # oaxManDireccion en _modal_anexo.html: el mismo criterio que Daniel ya
+    # fijó en Transporte "Asignar y Cotizar" (2026-07-29), donde exigir la
+    # geocodificación (no solo el texto) dejaba a la operadora bloqueada
+    # cuando Google no reconocía una dirección real. Si no viene par
+    # completo, se guarda todo en None (dirección quedó como texto libre).
+    try:
+        _prov_lat = float(d.get("proveedor_direccion_lat")) \
+            if d.get("proveedor_direccion_lat") not in (None, "") else None
+        _prov_lng = float(d.get("proveedor_direccion_lng")) \
+            if d.get("proveedor_direccion_lng") not in (None, "") else None
+    except (TypeError, ValueError):
+        _prov_lat = _prov_lng = None
+    _prov_place_id = (d.get("proveedor_direccion_place_id") or "").strip()[:200] or None
+    if _prov_lat is None or _prov_lng is None:
+        _prov_lat = _prov_lng = _prov_place_id = None
+
     import json as _json
     try:
         conn = get_mysql()
@@ -85092,14 +85125,16 @@ def ot2_api_anexo_crear():
         cur.execute(
             "INSERT INTO mant_anexos "
             "  (numero, ot_id, tecnico_externo_id, proveedor_nombre, proveedor_rut, "
-            "   proveedor_direccion, "
+            "   proveedor_direccion, proveedor_direccion_lat, proveedor_direccion_lng, "
+            "   proveedor_direccion_place_id, "
             "   cliente_nombre, objetivo_servicio, precio_items_json, productos_json, "
             "   fecha_inicio, fecha_termino, niveles_servicio, hitos_pago, "
             "   alcance_servicio, clausulas_adicionales, created_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (numero, vid, d.get("tecnico_externo_id") or None,
              proveedor, (d.get("proveedor_rut") or "").strip()[:20] or None,
              (d.get("proveedor_direccion") or "").strip()[:400] or None,
+             _prov_lat, _prov_lng, _prov_place_id,
              (d.get("cliente_nombre") or "").strip()[:200] or None,
              objetivo, _json.dumps(items),
              _json.dumps(_anexo_productos_norm(d.get("productos"))),
@@ -85178,6 +85213,14 @@ def ot2_api_anexo_detalle(aid):
             "proveedor_nombre": a.get("proveedor_nombre") or "",
             "proveedor_rut": a.get("proveedor_rut") or "",
             "proveedor_direccion": a.get("proveedor_direccion") or "",
+            # DECIMAL(10,7) llega como Decimal desde pymysql -- jsonify no lo
+            # serializa solo (mismo patrón que el resto del proyecto, ej.
+            # línea ~66554: convertir a float explícito antes de jsonify).
+            "proveedor_direccion_lat": float(a["proveedor_direccion_lat"])
+                if a.get("proveedor_direccion_lat") is not None else None,
+            "proveedor_direccion_lng": float(a["proveedor_direccion_lng"])
+                if a.get("proveedor_direccion_lng") is not None else None,
+            "proveedor_direccion_place_id": a.get("proveedor_direccion_place_id") or "",
             "cliente_nombre": a.get("cliente_nombre") or "",
             "objetivo_servicio": a.get("objetivo_servicio") or "",
             "precio_items": a.get("precio_items") or [],
@@ -85243,12 +85286,26 @@ def ot2_api_anexo_editar(aid):
     except (TypeError, ValueError):
         return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
 
+    # Mismo criterio SUGERIDO (no bloqueante) de ot2_api_anexo_crear -- ver
+    # comentario ahí y en oaxManDireccion (_modal_anexo.html).
+    try:
+        _prov_lat = float(d.get("proveedor_direccion_lat")) \
+            if d.get("proveedor_direccion_lat") not in (None, "") else None
+        _prov_lng = float(d.get("proveedor_direccion_lng")) \
+            if d.get("proveedor_direccion_lng") not in (None, "") else None
+    except (TypeError, ValueError):
+        _prov_lat = _prov_lng = None
+    _prov_place_id = (d.get("proveedor_direccion_place_id") or "").strip()[:200] or None
+    if _prov_lat is None or _prov_lng is None:
+        _prov_lat = _prov_lng = _prov_place_id = None
+
     import json as _json
     try:
         _filas = mysql_execute_returning_rowcount(
             "UPDATE mant_anexos SET "
             "  tecnico_externo_id=%s, proveedor_nombre=%s, proveedor_rut=%s, "
-            "  proveedor_direccion=%s, cliente_nombre=%s, objetivo_servicio=%s, "
+            "  proveedor_direccion=%s, proveedor_direccion_lat=%s, proveedor_direccion_lng=%s, "
+            "  proveedor_direccion_place_id=%s, cliente_nombre=%s, objetivo_servicio=%s, "
             "  precio_items_json=%s, productos_json=%s, "
             "  fecha_inicio=%s, fecha_termino=%s, "
             "  niveles_servicio=%s, hitos_pago=%s, alcance_servicio=%s "
@@ -85256,6 +85313,7 @@ def ot2_api_anexo_editar(aid):
             (d.get("tecnico_externo_id") or None,
              proveedor, (d.get("proveedor_rut") or "").strip()[:20] or None,
              (d.get("proveedor_direccion") or "").strip()[:400] or None,
+             _prov_lat, _prov_lng, _prov_place_id,
              (d.get("cliente_nombre") or "").strip()[:200] or None,
              objetivo, _json.dumps(items),
              _json.dumps(_anexo_productos_norm(d.get("productos"))),
