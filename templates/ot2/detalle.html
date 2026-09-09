@@ -4191,7 +4191,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             </div>
             {% endif %}
             {% if e.diagnostico_texto %}
-            <div class="otd-wk-note {{ 'falla' if e.diagnostico_estado == 'falla' }}">{{ e.diagnostico_texto }}</div>
+            <div class="otd-wk-note otd-dx-nota{{ ' falla' if e.diagnostico_estado == 'falla' }}">{{ e.diagnostico_texto }}</div>
             {% endif %}
 
             {# ➡️ 2026-09-02 (Daniel: "que dentro del formulario pueda
