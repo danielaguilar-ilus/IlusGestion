@@ -439,9 +439,24 @@
 @media (max-width:640px){
   /* En móvil sí ocupan el ancho: ahí el pulgar agradece el área grande
      (REGLA #3, touch >=44px), pero sin el bloque gigante de escritorio. */
-  .otd-bottom{justify-content:stretch}
-  .otd-bottom .b{flex:1;min-height:44px;font-size:.84rem;padding:0 10px}
+  .otd-bottom{justify-content:stretch;flex-wrap:wrap}
+  .otd-bottom .b{flex:1 1 auto;min-height:44px;font-size:.84rem;padding:0 10px;white-space:nowrap}
   .otd.has-bottombar{padding-bottom:74px}
+}
+/* 🔴 FIX 2026-09-09 (Daniel, en vivo desde el celular: "necesito que todos
+   los botones... hablen de una manera responsiva a todas las pantallas
+   chicas... que tenga un footer como corresponde con todo alineado y el
+   mismo tamaño"). En pantallas angostas (celular real, ~360-414px) dos o
+   más botones de texto largo ("Enviar firma (WhatsApp/correo)") no caben
+   en una fila sin partirse a la mitad -- el resultado era la grilla
+   descompensada que Daniel mostró en capturas reales. Se apilan en
+   columna, cada uno a ancho completo y misma altura: siempre queda
+   alineado sin importar cuántos botones queden (1, 2 o 3) ni cuán largo
+   sea el texto de cada uno. */
+@media (max-width:480px){
+  .otd-bottom{flex-direction:column;align-items:stretch;gap:6px}
+  .otd-bottom .b{width:100%;white-space:normal;text-align:center}
+  .otd.has-bottombar{padding-bottom:132px}
 }
 
 /* ══ ACTIVIDAD DE LA OT — bitácora estilo "Actividad del ticket" ══════
@@ -4352,6 +4367,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      El botón de firmar reusa OT2F.abrirAprobacion(), el MISMO flujo de la
      card "Firmar y cerrar OT" -- no hay una segunda ruta de cierre. #}
   <div class="otd-bottom">
+    {# 🔴 FIX 2026-09-09 (Daniel, en vivo desde el celular, viendo la barra
+       con 4 botones descompensada: "sácale anexo de fotos, saca el PDF
+       para el técnico y deja nada más el envío y firma"). Ver PDF/Anexo de
+       fotos son herramientas de gestión (revisar el documento, auditar
+       evidencia) -- el técnico ya vive las fotos en la pestaña Trabajo
+       mientras ejecuta, y el PDF le sirve poco antes de que la OT esté
+       cerrada. Quitárselos de ACÁ dejaba como máximo 2 botones para
+       técnico (nunca 3+), que es lo que permite alinearlos bien abajo. #}
+    {% if not es_tecnico %}
     <button type="button" class="b" onclick="otdVerPdf()">
       <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
     {# 📸 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
@@ -4361,6 +4385,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     {% if fotos %}
     <button type="button" class="b" onclick="otdVerAnexoFotos()">
       <i class="bi bi-images"></i> Anexo de fotos ({{ fotos|length }})</button>
+    {% endif %}
     {% endif %}
     {% if v.estado == 'pendiente_aprobacion' and puede_aprobar %}
     <button type="button" class="b pri" onclick="OT2F.abrirAprobacion()">
