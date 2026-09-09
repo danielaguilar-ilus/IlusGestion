@@ -8212,14 +8212,23 @@ function otdChkFotoBtnHtml(t){
   // "esta tarea nunca necesitó foto" de "se cerró debiendo una". Ahora la
   // tarea que EXIGÍA foto y no la tiene lo dice — es un hallazgo de
   // auditoría, no un espacio en blanco.
+  //
+  // 🔴 FIX 2026-09-09 (Isabel, en terreno: "no puedo subir fotos" — caso
+  // real: tarea tipo_respuesta='foto' con requiere_foto=0 en la plantilla,
+  // un desacople de configuración que deja la tarea sin ningún control
+  // para responderla). Una tarea CUYO TIPO DE RESPUESTA ES FOTO no tiene
+  // otra forma de completarse — el botón ya no depende solo de
+  // `requiere_foto` (pensado para "texto/número que además pide foto de
+  // respaldo"), sino también de `t.tipo === 'foto'`.
+  const exigeFoto = !!(t.requiere_foto || (t.tipo_respuesta || '').toLowerCase() === 'foto');
   if (otdBloqueadaPorCierre()){
-    if (t.requiere_foto && !(t.fotos && t.fotos.length)){
+    if (exigeFoto && !(t.fotos && t.fotos.length)){
       return `<span class="otd-chk-sinfoto" title="La tarea exigía evidencia fotográfica y la OT se cerró sin ella">
                 <i class="bi bi-camera-video-off"></i> Cerró sin la foto exigida</span>`;
     }
     return '';
   }
-  if (!t.requiere_foto) return '';
+  if (!exigeFoto) return '';
   const need = !(t.fotos && t.fotos.length);
   return `<button type="button" class="otd-chk-fotobtn${need ? ' need' : ''}"
             onclick="otdChkAbrirFoto(${t.id}, ${t.maquina_id})">
@@ -8635,7 +8644,10 @@ function otdChkTareaHtml(t, nro, esSiguiente){
   }
   if (t.obligatoria) chips.push('<span class="ch obl">Obligatoria</span>');
   if (CH_TIPO[tipo]) chips.push(`<span class="ch tipo">${CH_TIPO[tipo]}</span>`);
-  if (t.requiere_foto){
+  // 🔴 FIX 2026-09-09: mismo desacople que otdChkFotoBtnHtml -- una tarea
+  // tipo_respuesta='foto' exige foto aunque requiere_foto haya quedado en
+  // 0 en la plantilla.
+  if (t.requiere_foto || tipo === 'foto'){
     const conFoto = !!(t.fotos && t.fotos.length);
     chips.push(`<span class="ch foto${conFoto ? ' ok' : ''}">` +
                (conFoto ? 'Foto lista' : 'Necesita foto') + '</span>');
