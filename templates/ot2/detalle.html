@@ -3324,7 +3324,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           </button>
           <input type="file" id="otdAdjVideoCam" accept="video/*" capture="environment"
                  style="display:none" onchange="otdSubirAdjunto(this)">
-          <input type="file" id="otdAdjArchivo" accept="video/*,application/pdf,.doc,.docx,.xls,.xlsx,image/*"
+          {# 🔧 2026-09-09 (Daniel, OT de Rafael: "al entrar [a agregar
+             evidencia] te lleva a los documentos... tienes que tener
+             acceso a la galería de fotos, o por lo menos pedir acceso...
+             o la cámara"). Antes la única forma de dejar una FOTO acá era
+             "Subir un archivo" (otdAdjArchivo, accept mezclando
+             video/pdf/doc/xls/imagen) -- con tipos tan distintos mezclados
+             en un solo accept, el celular abre el gestor de archivos
+             genérico en vez de ofrecer Cámara/Galería. Input propio, solo
+             imágenes (sin capture, para que el SO ofrezca cámara Y
+             galería) -- mismo patrón que ya usa el resto del archivo
+             (otdFotoCam/otdFotoGal, otdFotIn, otdChkFotoInp). #}
+          <input type="file" id="otdAdjFoto" accept="image/*,image/heic,image/heif"
+                 style="display:none" onchange="otdSubirAdjunto(this)">
+          <input type="file" id="otdAdjArchivo" accept="application/pdf,.doc,.docx,.xls,.xlsx"
                  style="display:none" onchange="otdSubirAdjunto(this)">
         </div>
         {% endif %}
@@ -7747,7 +7760,7 @@ async function otdCargarAdjuntos(){
 
 async function otdAbrirSheetAdjunto(){
   if (typeof ilusActionSheet !== 'function'){
-    document.getElementById('otdAdjArchivo')?.click();
+    document.getElementById('otdAdjFoto')?.click();
     return;
   }
   const choice = await ilusActionSheet({
@@ -7755,11 +7768,13 @@ async function otdAbrirSheetAdjunto(){
     message: 'Elige qué quieres agregar',
     options: [
       { label:'Grabar video con la cámara', icon:'bi-camera-reels-fill', value:'video',   style:'dark' },
-      { label:'Subir un archivo',            icon:'bi-upload',           value:'archivo', style:'secondary' },
+      { label:'Agregar foto (cámara o galería)', icon:'bi-image-fill',   value:'foto',    style:'dark' },
+      { label:'Subir un documento (PDF, Word, Excel)', icon:'bi-upload', value:'archivo', style:'secondary' },
     ],
   });
   if (!choice) return;
-  const inp = document.getElementById(choice === 'video' ? 'otdAdjVideoCam' : 'otdAdjArchivo');
+  const inpId = choice === 'video' ? 'otdAdjVideoCam' : (choice === 'foto' ? 'otdAdjFoto' : 'otdAdjArchivo');
+  const inp = document.getElementById(inpId);
   if (!inp) return;
   try { inp.value = ''; } catch(e){}
   inp.click();
@@ -9851,10 +9866,24 @@ const OT2F = (function(){
   }
 
   async function enviarFirmaRemota(){
+    // 🔧 2026-09-09 (Daniel: "agregar o modificar tanto correo como
+    // WhatsApp... eso no pasaría a llevar el contacto que se agrega en la
+    // OT, sino que sería un contacto adicional"): antes solo se preguntaba
+    // el correo cuando la OT NO tenía uno cargado -- si ya tenía, se
+    // mandaba directo sin que el técnico viera ni pudiera ajustar a dónde.
+    // Ahora SIEMPRE se muestra (precargado con el de la OT si existe) para
+    // poder revisarlo o usar uno distinto solo para este envío -- nunca se
+    // toca el contacto guardado de la OT, es un destino puntual. El canal
+    // y el destino usado quedan en la bitácora de la OT (mant_logs, ver
+    // mant_ot_enviar_firma_remota en app.py).
+    const _emailOt = {{ (v.contacto_email or '') | tojson }};
     const email = await ilusPrompt({
       title: 'Enviar firma al cliente',
-      message: 'Correo del cliente para enviarle el link de firma:',
-      sub: 'Déjalo vacío para usar el correo registrado del cliente. El link vence en 5 días; al firmar nos avisa a todos.',
+      message: 'Correo para este envío:',
+      sub: _emailOt
+        ? 'Ya viene con el correo de contacto de la OT — puedes usar otro solo para este envío, sin modificar el contacto de la OT.'
+        : 'Déjalo vacío para usar el correo registrado del cliente. El link vence en 5 días; al firmar nos avisa a todos.',
+      defaultValue: _emailOt || '',
       placeholder: 'cliente@correo.cl', inputType: 'email', required: false,
     });
     if (email === null) return;
@@ -9874,18 +9903,25 @@ const OT2F = (function(){
   }
 
   async function enviarFirmaWhatsApp(){
-    let tel = {{ (v.contacto_tel or '') | tojson }};
-    if (!tel){
-      tel = await ilusPrompt({
-        title: 'Enviar firma por WhatsApp',
-        message: 'Teléfono del cliente:',
-        sub: 'La OT no tiene un teléfono de contacto cargado — escríbelo para generar el link.',
-        placeholder: '+56 9 1234 5678', required: true, inputType: 'tel',
-        sanitize: (typeof ilusTelSanitize === 'function') ? ilusTelSanitize : null,
-        validate: (typeof ilusTelChileno === 'function') ? ilusTelChileno : null,
-      });
-      if (!tel) return;
-    }
+    // 🔧 2026-09-09 (mismo pedido de enviarFirmaRemota, ver ese comentario):
+    // SIEMPRE se pregunta el teléfono (precargado con el de la OT si
+    // existe) en vez de solo cuando falta -- así el técnico puede revisar
+    // o usar otro número solo para este envío, sin tocar el contacto
+    // guardado de la OT. Queda en la bitácora (mant_logs) el número real
+    // con el que se generó el link.
+    const _telOt = {{ (v.contacto_tel or '') | tojson }};
+    const tel = await ilusPrompt({
+      title: 'Enviar firma por WhatsApp',
+      message: 'Teléfono para este envío:',
+      sub: _telOt
+        ? 'Ya viene con el teléfono de contacto de la OT — puedes usar otro solo para este envío, sin modificar el contacto de la OT.'
+        : 'La OT no tiene un teléfono de contacto cargado — escríbelo para generar el link.',
+      defaultValue: _telOt || '',
+      placeholder: '+56 9 1234 5678', required: true, inputType: 'tel',
+      sanitize: (typeof ilusTelSanitize === 'function') ? ilusTelSanitize : null,
+      validate: (typeof ilusTelChileno === 'function') ? ilusTelChileno : null,
+    });
+    if (!tel) return;
     try {
       const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -9914,20 +9950,38 @@ const OT2F = (function(){
   }
 
   async function enviarFirmaAmbos(){
-    let tel = {{ (v.contacto_tel or '') | tojson }};
-    if (!tel){
-      tel = await ilusPrompt({
-        title: 'Enviar firma por ambos canales',
-        message: 'Teléfono del cliente (con o sin +56):',
-        sub: 'Se manda el mismo link de firma por WhatsApp y por correo. Si no hay teléfono, se manda solo por correo.',
-        placeholder: '+56 9 1234 5678', required: false,
-      });
-      if (tel === null) return;
-    }
+    // 🔧 2026-09-09 (mismo pedido de enviarFirmaRemota/enviarFirmaWhatsApp,
+    // ver esos comentarios): se pregunta SIEMPRE teléfono Y correo
+    // (precargados con los de la OT si existen), no solo cuando faltan --
+    // el técnico puede revisarlos o usar otros solo para este envío, sin
+    // tocar el contacto guardado de la OT. Ambos destinos quedan en la
+    // bitácora de la OT.
+    const _telOt = {{ (v.contacto_tel or '') | tojson }};
+    const _emailOt = {{ (v.contacto_email or '') | tojson }};
+    const tel = await ilusPrompt({
+      title: 'Enviar firma por ambos canales',
+      message: 'Teléfono para este envío (con o sin +56):',
+      sub: _telOt
+        ? 'Ya viene con el teléfono de contacto de la OT — puedes usar otro solo para este envío. Déjalo vacío si no quieres mandar por WhatsApp.'
+        : 'Se manda el mismo link de firma por WhatsApp y por correo. Si no hay teléfono, se manda solo por correo.',
+      defaultValue: _telOt || '',
+      placeholder: '+56 9 1234 5678', required: false,
+    });
+    if (tel === null) return;
+    const email = await ilusPrompt({
+      title: 'Enviar firma por ambos canales',
+      message: 'Correo para este envío:',
+      sub: _emailOt
+        ? 'Ya viene con el correo de contacto de la OT — puedes usar otro solo para este envío.'
+        : 'Déjalo vacío para usar el correo registrado del cliente, si tiene uno.',
+      defaultValue: _emailOt || '',
+      placeholder: 'cliente@correo.cl', inputType: 'email', required: false,
+    });
+    if (email === null) return;
     try {
       const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ canal:'ambos', telefono: tel }),
+        body: JSON.stringify({ canal:'ambos', telefono: tel, email: (email||'').trim() }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok){
