@@ -66,6 +66,16 @@
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
       </button>
       {% endif %}
+      {# 🆕 2026-09-09 -- reparación retroactiva de N° de serie faltantes
+         (bug histórico ya corregido de raíz). Solo superadmin: escribe en
+         la base de datos de producción. #}
+      {% if permissions.superadmin %}
+      <a href="{{ url_for('admin_backfill_series_maquinas') }}" class="btn fw-bold px-3"
+         style="background:#92400e;color:#fff;border:0"
+         title="Diagnóstico + reparación de equipos que quedaron sin N° de serie por un bug ya corregido">
+        <i class="bi bi-upc-scan me-1"></i>Reparar N° de serie
+      </a>
+      {% endif %}
       {# Plan 2026-05-21 Capa 9-C: dashboard puede cargar visitas históricas
          eligiendo el cliente vía autocomplete. #}
       <button type="button" class="btn btn-outline-secondary" onclick="abrirVisitaHistDashboard()"

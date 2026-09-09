@@ -14371,6 +14371,190 @@ def admin_storage_migrar_cloudinary_gcs():
     })
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  REPARACIÓN RETROACTIVA DE N° DE SERIE FALTANTES (2026-09-09)
+#
+#  Bug histórico (ya corregido de raíz, ver _insert_con_retry en
+#  mant_maquina_add y en el alta-de-equipos-al-cerrar-OT): alta de equipos
+#  en bloque con condición de carrera + `except: serie=None` silencioso
+#  dejaba algunos equipos sin N° de serie mientras el resto del mismo lote
+#  sí lo recibía. Existe un script CLI equivalente
+#  (_admin_backfill_series_maquinas.py, mismo algoritmo) para correr fuera
+#  de un navegador -- este endpoint es la MISMA lógica, pero corriendo
+#  DENTRO de la app (que ya tiene las credenciales reales en Cloud Run),
+#  para que Daniel pueda dispararlo él mismo con su sesión, sin que nadie
+#  tenga que tocar contraseñas de base de datos.
+#
+#  GET  /admin/mantenciones/backfill-series-maquinas          -> diagnóstico (solo lectura)
+#  POST /admin/mantenciones/backfill-series-maquinas/aplicar   -> ejecuta la reparación real
+# ─────────────────────────────────────────────────────────────────────
+
+def _backfill_series_diagnostico():
+    """Solo lectura. Agrupa mant_maquinas con serie NULL/vacía por
+    cliente+SKU y calcula, EN MEMORIA (mismo algoritmo que
+    _generar_serie_ilus/_series_sugeridas_bulk), qué serie le tocaría a
+    cada equipo reparable. No escribe nada."""
+    todas = mysql_fetchall(
+        "SELECT m.id, m.cliente_id, m.sku, m.nombre, m.serie, "
+        "       c.razon_social, c.rut "
+        "  FROM mant_maquinas m "
+        "  LEFT JOIN mant_clientes c ON c.id = m.cliente_id "
+        " WHERE (m.serie IS NULL OR TRIM(m.serie) = '') "
+        " ORDER BY m.cliente_id, m.sku, m.id"
+    ) or []
+
+    reparables, manual_sin_sku, manual_sin_rut = [], [], []
+    _rut_cache = {}
+
+    def _rut_limpio(cid, rut_crudo):
+        if cid in _rut_cache:
+            return _rut_cache[cid]
+        rc = None
+        if rut_crudo:
+            raw = str(rut_crudo).replace(".", "").replace(" ", "").replace("-", "").upper()
+            if len(raw) >= 8:
+                rc = raw[:-1]
+        _rut_cache[cid] = rc
+        return rc
+
+    for m in todas:
+        sku = (m.get("sku") or "").strip()
+        if not sku:
+            manual_sin_sku.append(m)
+            continue
+        rut_clean = _rut_limpio(m["cliente_id"], m.get("rut"))
+        if not rut_clean:
+            manual_sin_rut.append(m)
+            continue
+        sku_clean = "".join(ch for ch in sku.upper() if ch.isalnum())
+        sku4 = sku_clean[-4:] if len(sku_clean) >= 4 else sku_clean.rjust(4, "0")
+        reparables.append({**m, "sku": sku, "base": f"{rut_clean}-{sku4}"})
+
+    plan, usados_por_base = [], {}
+    for r in reparables:
+        base = r["base"]
+        if base not in usados_por_base:
+            rows = mysql_fetchall(
+                "SELECT serie FROM mant_maquinas WHERE cliente_id=%s AND serie LIKE %s",
+                (r["cliente_id"], f"{base}-%")
+            ) or []
+            usados = set()
+            for row in rows:
+                try:
+                    usados.add(int((row.get("serie") or "").rsplit("-", 1)[-1]))
+                except Exception:
+                    pass
+            usados_por_base[base] = usados
+        usados = usados_por_base[base]
+        seq = 1
+        while seq in usados:
+            seq += 1
+        usados.add(seq)
+        plan.append({
+            "id": r["id"], "cliente_id": r["cliente_id"],
+            "cliente_nombre": r.get("razon_social") or f"cliente_id={r['cliente_id']}",
+            "sku": r["sku"], "nombre": r.get("nombre") or "—",
+            "serie_anterior": r.get("serie") or "",
+            "serie_nueva": f"{base}-{seq}",
+        })
+    return {"plan": plan, "manual_sin_sku": manual_sin_sku, "manual_sin_rut": manual_sin_rut}
+
+
+@app.route("/admin/mantenciones/backfill-series-maquinas")
+@_require_superadmin
+def admin_backfill_series_maquinas():
+    """Página de diagnóstico (dry-run) -- ver _backfill_series_diagnostico().
+    Solo lectura: no repara nada por sí sola, el botón de la página llama
+    al POST de abajo, con confirmación explícita (ilusConfirm)."""
+    diag = _backfill_series_diagnostico()
+    return render_template("admin/backfill_series.html",
+                           plan=diag["plan"],
+                           manual_sin_sku=diag["manual_sin_sku"],
+                           manual_sin_rut=diag["manual_sin_rut"])
+
+
+@app.route("/admin/mantenciones/backfill-series-maquinas/aplicar", methods=["POST"])
+@_require_superadmin
+def admin_backfill_series_maquinas_aplicar():
+    """Ejecuta la reparación real: UPDATE puntual por id (nunca un WHERE
+    genérico) + auditoría completa (mant_maquina_audit + mant_logs), mismo
+    patrón que el script CLI equivalente. Idempotente: cada UPDATE lleva
+    el guard `serie IS NULL OR TRIM(serie)=''`, así que un id que ya
+    recibió serie por otra vía (o en una corrida anterior) no se toca."""
+    import random
+    diag = _backfill_series_diagnostico()
+    plan = diag["plan"]
+    if not plan:
+        return jsonify({"ok": True, "reparados": 0, "fallidos": 0, "sin_cambios": 0,
+                        "mensaje": "No hay equipos reparables -- nada que hacer."})
+
+    motivo = (
+        "Reparación retroactiva 2026-09-09 (autorización de Daniel: 've con "
+        "eso'). Bug histórico: alta multi-unidad con condición de carrera + "
+        "`except: serie=None` silencioso dejaba equipos sin serie mientras "
+        "el resto del mismo lote sí la recibía. El fix de raíz ya está en "
+        "producción (patrón _insert_con_retry); este endpoint solo repara "
+        "equipos preexistentes con serie NULL/vacía."
+    )
+    reparados, fallidos, sin_cambios = [], [], []
+    for p in plan:
+        serie = p["serie_nueva"]
+        resultado = None
+        for intento in range(5):
+            try:
+                filas = mysql_execute_returning_rowcount(
+                    "UPDATE mant_maquinas SET serie=%s "
+                    " WHERE id=%s AND (serie IS NULL OR TRIM(serie)='')",
+                    (serie, p["id"])
+                )
+                resultado = "ok" if filas else "skip"
+                break
+            except Exception as e:
+                msg = str(e)
+                if ("1062" in msg or "Duplicate entry" in msg) and intento < 4:
+                    base, seq_actual = serie.rsplit("-", 1)
+                    serie = f"{base}-{int(seq_actual) + random.randint(intento + 1, (intento + 1) * 10)}"
+                    continue
+                fallidos.append({"id": p["id"], "error": msg[:200]})
+                resultado = "error"
+                break
+        if resultado == "ok":
+            p["serie_nueva"] = serie
+            reparados.append(p)
+            try:
+                mysql_execute(
+                    "INSERT INTO mant_maquina_audit "
+                    "  (maquina_id, cliente_id, campo, valor_antes, valor_nuevo, motivo, usuario) "
+                    "  VALUES (%s,%s,'serie',%s,%s,%s,%s)",
+                    (p["id"], p["cliente_id"], p["serie_anterior"] or None,
+                     p["serie_nueva"], motivo, current_username())
+                )
+            except Exception as e:
+                print(f"[backfill_series] audit id={p['id']}: {e}", flush=True)
+            try:
+                _mant_log("maquina", p["id"], "serie_backfill_historico",
+                          f"'{p['serie_anterior'] or '(vacía)'}' -> '{p['serie_nueva']}'. {motivo}")
+            except Exception:
+                pass
+        elif resultado == "skip":
+            sin_cambios.append(p)
+
+    try:
+        _mant_log("sistema", 0, "backfill_series_maquinas_historico",
+                  f"{len(reparados)} equipo(s) reparados, {len(fallidos)} fallido(s), "
+                  f"{len(sin_cambios)} sin cambios, {len(diag['manual_sin_sku'])} sin SKU, "
+                  f"{len(diag['manual_sin_rut'])} con cliente sin RUT usable. {motivo}")
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True, "reparados": len(reparados), "fallidos": len(fallidos),
+        "sin_cambios": len(sin_cambios), "detalle_fallidos": fallidos,
+        "detalle_reparados": [{"id": p["id"], "cliente_nombre": p["cliente_nombre"],
+                                "serie_nueva": p["serie_nueva"]} for p in reparados],
+    })
+
+
 # ═══════════════════════════════════════════════════════════════
 #  MÓDULO CUBICADOR
 #  Busca documentos de venta en el ERP Random y cruza con

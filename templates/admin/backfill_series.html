@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Reparar N° de serie — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-upc-scan me-2"></i>Reparar N° de serie faltantes</h4>
+    <div class="sub">Equipos que quedaron sin serie por un bug histórico ya corregido</div>
+  </div>
+  <a href="{{ url_for('mant_index') }}" class="btn btn-ilus-outline">
+    <i class="bi bi-arrow-left me-1"></i>Volver</a>
+</div>
+
+<div class="alert alert-secondary" style="font-size:.85rem;border-radius:10px">
+  <i class="bi bi-shield-lock me-1"></i>
+  Esta página <strong>solo muestra el diagnóstico</strong> al cargarla: no repara nada hasta que
+  aprietes el botón de abajo, y ese botón te pide confirmar antes de tocar la base de datos.
+</div>
+
+{% if plan %}
+<div class="alert" style="background:#fff8e1;border:1px solid #f59e0b;border-radius:10px;font-size:.87rem">
+  <div class="fw-bold mb-1">
+    <i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>
+    {{ plan|length }} equipo{{ 's' if plan|length != 1 else '' }} sin N° de serie, listo{{ 's' if plan|length != 1 else '' }} para reparar
+  </div>
+  Cada equipo recibe una serie nueva ({{ '"RUT-SKU4-N"' }}, el mismo formato que usa el sistema
+  siempre) y queda registrado en la Actividad de su ficha.
+</div>
+
+<div class="ilus-card mb-3">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" style="font-size:.86rem">
+      <thead style="background:var(--ilus-black,#0a0a0a);color:#fff">
+        <tr>
+          <th>Cliente</th>
+          <th>SKU</th>
+          <th>Equipo</th>
+          <th>Serie propuesta</th>
+        </tr>
+      </thead>
+      <tbody id="bsPlanBody">
+        {% for p in plan %}
+        <tr data-id="{{ p.id }}">
+          <td>{{ p.cliente_nombre }}</td>
+          <td class="font-monospace">{{ p.sku }}</td>
+          <td>{{ p.nombre }}</td>
+          <td class="font-monospace fw-bold" style="color:#16a34a" data-serie>{{ p.serie_nueva }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<button type="button" class="btn btn-ilus fw-bold" id="bsBtnAplicar" onclick="bsAplicar()">
+  <i class="bi bi-check2-circle me-1"></i>Ejecutar reparación real ({{ plan|length }} equipo{{ 's' if plan|length != 1 else '' }})
+</button>
+<div id="bsResultado" class="mt-3" style="display:none"></div>
+
+{% else %}
+<div class="ilus-card text-center py-5">
+  <div style="font-size:2.4rem;color:#16a34a"><i class="bi bi-check-circle-fill"></i></div>
+  <div class="fw-bold mt-2" style="font-size:1.05rem">No hay nada que reparar</div>
+  <div class="text-muted mt-1" style="font-size:.88rem">
+    Todos los equipos con SKU y cliente con RUT usable ya tienen su N° de serie.
+  </div>
+</div>
+{% endif %}
+
+{% if manual_sin_sku or manual_sin_rut %}
+<div class="ilus-card mt-3">
+  <div class="p-3">
+    <div class="fw-bold mb-2" style="font-size:.92rem">
+      <i class="bi bi-eye me-1"></i>Para revisar a mano ({{ (manual_sin_sku|length) + (manual_sin_rut|length) }})
+    </div>
+    <div class="text-muted mb-3" style="font-size:.8rem">
+      Estos NO se tocan automáticamente: sin SKU no hay con qué construir una serie con sentido,
+      y sin el RUT del cliente la serie llevaría un prefijo genérico que no identifica a nadie.
+    </div>
+    {% if manual_sin_sku %}
+    <div class="mb-2" style="font-size:.82rem"><b>Sin SKU ({{ manual_sin_sku|length }}):</b>
+      {% for m in manual_sin_sku %}
+      <div class="text-muted">· #{{ m.id }} — {{ m.razon_social or 'cliente ' ~ m.cliente_id }} — {{ m.nombre or '—' }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if manual_sin_rut %}
+    <div style="font-size:.82rem"><b>Cliente sin RUT usable ({{ manual_sin_rut|length }}):</b>
+      {% for m in manual_sin_rut %}
+      <div class="text-muted">· #{{ m.id }} — {{ m.razon_social or 'cliente ' ~ m.cliente_id }} — SKU {{ m.sku or '—' }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<script>
+async function bsAplicar(){
+  const n = {{ plan|length }};
+  const ok = await ilusConfirm({
+    title: 'Reparar ' + n + ' equipo' + (n === 1 ? '' : 's'),
+    message: 'Se les va a asignar la serie que se ve en la tabla de arriba. Cada uno queda registrado en su Actividad, por si hay que revertirlo.',
+    sub: 'Esta acción escribe en la base de datos de producción.',
+    okLabel: 'Reparar ahora', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const btn = document.getElementById('bsBtnAplicar');
+  const html0 = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Reparando…';
+  try {
+    const r = await fetch('{{ url_for("admin_backfill_series_maquinas_aplicar") }}', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+    });
+    const j = await r.json().catch(() => ({}));
+    const box = document.getElementById('bsResultado');
+    box.style.display = '';
+    if (!r.ok || j.ok === false){
+      box.innerHTML = '<div class="alert alert-danger">No se pudo completar: ' +
+        (j.error || 'error desconocido') + '</div>';
+      ilusToast('Hubo un problema — revisa el detalle abajo', {type:'error'});
+      return;
+    }
+    box.innerHTML = '<div class="alert alert-success">' +
+      '<i class="bi bi-check-circle-fill me-1"></i><b>' + j.reparados + '</b> equipo(s) reparados' +
+      (j.sin_cambios ? ', ' + j.sin_cambios + ' ya tenían serie (sin cambios)' : '') +
+      (j.fallidos ? ', <span style="color:#dc2626">' + j.fallidos + ' fallaron</span>' : '') +
+      '.</div>';
+    ilusToast('✓ Reparación completada', {type:'success'});
+    btn.style.display = 'none';
+    setTimeout(() => location.reload(), 1800);
+  } catch(e){
+    ilusToast('Error de conexión al reparar', {type:'error'});
+    btn.disabled = false;
+    btn.innerHTML = html0;
+  }
+}
+</script>
+
+{% endblock %}
