@@ -107535,7 +107535,17 @@ def repstock_crear():
     ERP, no hacer doble trabajo"). En ambos casos el SKU llega por una
     ACCIÓN del sistema (auto-generar o elegir un resultado verificado),
     nunca por texto libre del usuario -- no contradice el bloqueo del 07.
-    Obligatorios: descripción, cantidad y stock mínimo. Costo opcional."""
+    Obligatorios: descripción, cantidad, stock mínimo y ubicación. Costo
+    opcional.
+
+    🔒 2026-09-09 (Daniel: "están agregando repuestos sin ubicación...
+    que no nos permita agregar una ubicación a mano de momento... si no
+    tiene la ubicación declarada, tomada por el código de barra, no
+    puede avanzar"): ubicacion_id ahora es obligatorio, igual que
+    descripción/cantidad/stock_minimo. El frontend (rbGuardar) ya solo
+    permite fijarlo escaneando el código de barras de una ubicación
+    REAL (mant_repuestos_ubicaciones) -- este check es el respaldo de
+    servidor, no la única barrera."""
     d = request.get_json(silent=True) or {}
     descripcion = (d.get("descripcion") or "").strip()[:400]
     if not descripcion:
@@ -107560,7 +107570,20 @@ def repstock_crear():
             "SELECT nombre, proveedor_id FROM mant_repuestos_marcas WHERE id=%s", (marca_id,))
         marca_nombre = (_m or {}).get("nombre")
         marca_proveedor_id = (_m or {}).get("proveedor_id")
-    ubicacion_id = d.get("ubicacion_id") or None
+    # 🔒 2026-09-09: validación real, no solo "truthy" -- "not d.get(...)"
+    # a secas dejaba pasar ubicacion_id="0" (string no vacío, pero un id
+    # imposible ya que AUTO_INCREMENT parte en 1) sin que nada lo pillara,
+    # porque ubicacion_id NO tiene FK real en la base (columna "conceptual").
+    # Se exige un id entero que exista y siga activo.
+    ubicacion_id = d.get("ubicacion_id")
+    try:
+        ubicacion_id = int(ubicacion_id) if ubicacion_id not in (None, "", "null") else None
+    except (TypeError, ValueError):
+        ubicacion_id = None
+    if not ubicacion_id or not mysql_fetchone(
+        "SELECT id FROM mant_repuestos_ubicaciones WHERE id=%s AND activo=1", (ubicacion_id,)
+    ):
+        return jsonify({"ok": False, "error": "La ubicación es obligatoria"}), 400
     cliente_id = d.get("cliente_id") or None
     ticket_id = d.get("ticket_id") or None
     # Proveedor: si el caller no mandó uno explícito, se hereda el de la
@@ -107635,6 +107658,14 @@ def repstock_editar(rid):
         d["descripcion"] = (d.get("descripcion") or "").strip()[:400]
         if not d["descripcion"]:
             return jsonify({"ok": False, "error": "La descripción no puede quedar vacía"}), 400
+    # 🔒 2026-09-09 (mismo criterio que descripción, arriba): el modal ya
+    # no deja guardar sin ubicación (Daniel: "que no nos permita agregar
+    # una ubicación a mano de momento... si no tiene la ubicación
+    # declarada... no puede avanzar"), así que el contrato del endpoint
+    # tampoco debe permitir vaciarla en silencio si algún día lo llama
+    # algo distinto del modal.
+    if "ubicacion_id" in d and not d.get("ubicacion_id"):
+        return jsonify({"ok": False, "error": "La ubicación no puede quedar vacía"}), 400
     allowed = ["descripcion", "cantidad", "ubicacion_id", "marca_id", "proveedor_id",
                "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
                "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg", "bultos",
@@ -108427,10 +108458,18 @@ def repstock_buscar_ubicaciones():
     q = (request.args.get("q") or "").strip()
     if q:
         like = f"%{q}%"
+        # 🔒 2026-09-09 (hallazgo de revisión adversarial del cambio de
+        # ubicación obligatoria en repuestos): el escaneo de un código de
+        # barras busca el match EXACTO dentro de este mismo LIMIT 15 -- con
+        # solo "ORDER BY codigo", si había 15+ ubicaciones cuyo código o
+        # nombre contuvieran el substring escaneado, la ubicación real
+        # podía quedar fuera del corte y el sistema le decía al técnico que
+        # "no existe" aunque sí estuviera registrada. "(codigo = %s) DESC"
+        # garantiza que un match exacto de código siempre va primero.
         rows = mysql_fetchall(
             "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones "
             " WHERE activo=1 AND (codigo LIKE %s OR nombre LIKE %s) "
-            " ORDER BY codigo LIMIT 15", (like, like)) or []
+            " ORDER BY (codigo = %s) DESC, codigo LIMIT 15", (like, like, q)) or []
     else:
         rows = mysql_fetchall(
             "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones "

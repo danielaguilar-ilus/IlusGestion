@@ -503,7 +503,7 @@
             <div class="rb-step-sub">Cuánto hay y dónde está</div>
           </div>
           <div class="rb-step-body">
-            <p class="rb-input-help mt-0 mb-2">Cuántas unidades hay y dónde están en la bodega — la ubicación se puede escanear.</p>
+            <p class="rb-input-help mt-0 mb-2">Cuántas unidades hay y dónde están en la bodega — escanea el código de la ubicación (pegado en el estante/gaveta).</p>
             <div class="row g-3">
               <div class="col-md-4">
                 <label class="form-label small fw-semibold">Cantidad <span class="rb-req">*</span></label>
@@ -519,18 +519,40 @@
                        onfocus="rbCostoFoco(this)" onblur="rbCostoFormatear(this)">
               </div>
               <div class="col-12">
-                <label class="form-label small fw-semibold">Ubicación</label>
+                <label class="form-label small fw-semibold">Ubicación <span class="rb-req">*</span></label>
                 <input type="hidden" id="rbUbicacion">
-                <div class="d-flex gap-1">
+                {# 🔒 2026-09-09 (Daniel: "que no nos permita agregar una
+                   ubicación a mano de momento... que tome el escáner de la
+                   ubicación... si no tiene la ubicación declarada, tomada
+                   por el código de barra, no puede avanzar"). Escanear es
+                   la vía PRINCIPAL y la única que puede FIJAR la ubicación
+                   de un repuesto -- la búsqueda por texto queda oculta por
+                   defecto, solo como respaldo si la cámara falla (revisa
+                   rbUbicacionMostrarBusquedaManual más abajo), y esa
+                   búsqueda ya NO ofrece "crear ubicación nueva" (ver
+                   rbBuscarUbicaciones). Es TEMPORAL ("después la
+                   liberamos") -- para reabrir la creación rápida desde
+                   acá, restaurar el bloque comentado en rbBuscarUbicaciones
+                   que llama a rbCrearUbicacionRapida() (función intacta,
+                   solo sin llamadores por ahora). #}
+                <div id="rbUbicacionVacia">
+                  <button type="button" class="btn btn-dark w-100" id="rbBtnEscanear" onclick="rbEscanearUbicacion(this)" style="min-height:44px">
+                    <i class="bi bi-upc-scan me-2"></i>Escanear ubicación
+                  </button>
+                  <div class="text-center mt-1">
+                    <button type="button" class="btn btn-link btn-sm p-0" onclick="rbUbicacionMostrarBusquedaManual()">¿No puedes escanear? Buscar por texto</button>
+                  </div>
+                </div>
+                <div id="rbUbicacionSeleccionada" class="mt-1"></div>
+                <div class="d-flex gap-1 mt-1" id="rbUbicacionManualWrap" style="display:none">
                   <div class="rb-modelo-resultados flex-grow-1">
-                    <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
+                    <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Buscar ubicación ya registrada: A-01-03..." autocomplete="off">
                     <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
                   </div>
-                  <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras">
+                  <button type="button" class="btn btn-outline-dark" onclick="rbEscanearUbicacion(this)" title="Escanear código de barras" style="min-height:44px">
                     <i class="bi bi-upc-scan"></i>
                   </button>
                 </div>
-                <div id="rbUbicacionSeleccionada" class="mt-1"></div>
               </div>
             </div>
             {# 2026-08-25 (Daniel): medidas físicas + peso, para que se
@@ -1232,6 +1254,20 @@ async function rbGuardar(crearOtro){
   if (!descripcion){ ilusToast('La descripción es obligatoria', {type:'warning'}); document.getElementById('rbDescripcion').focus(); return; }
   if (cantidad === '' || Number(cantidad) < 0){ ilusToast('Indica la cantidad', {type:'warning'}); document.getElementById('rbCantidad').focus(); return; }
   if (stockMin === '' || Number(stockMin) < 0){ ilusToast('Indica el stock mínimo', {type:'warning'}); document.getElementById('rbStockMinimo').focus(); return; }
+  // 🔒 2026-09-09 (Daniel: "están agregando repuestos sin ubicación...
+  // que no nos permita agregar una ubicación a mano de momento... si no
+  // tiene la ubicación declarada, tomada por el código de barra, no
+  // puede avanzar"): sin ubicación escaneada no se puede guardar -- ni
+  // para crear ni para editar (mismo criterio que el paso 4 de Modelos,
+  // que ya bloqueaba el guardado hasta declarar un modelo o "pendiente
+  // de identificar"). El backend (repstock_crear) refuerza esto mismo
+  // al crear.
+  const ubicacionId = document.getElementById('rbUbicacion').value;
+  if (!ubicacionId){
+    ilusToast('Escanea la ubicación del repuesto para poder guardar', {type:'warning'});
+    document.getElementById('rbBtnEscanear').scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
   // 2026-08-08 (Daniel: "necesito que sea obligatorio el paso cuatro...
   // para no tener que pasar dos veces... por último, dejar que sea una
   // máquina"): al menos 1 modelo asociado (guardado O pendiente de
@@ -1662,9 +1698,24 @@ function rbUbicacionInputDebounced(){
 async function rbBuscarUbicaciones(){
   const q = document.getElementById('rbUbicacionBuscar').value.trim();
   const list = document.getElementById('rbUbicacionResultadosList');
-  const r = await fetch('/mantenciones/api/repuestos-stock/buscar-ubicaciones?q=' + encodeURIComponent(q));
-  const d = await r.json().catch(() => ({ubicaciones:[]}));
-  RB_UBIC_RESULTS = d.ubicaciones || [];
+  // 🔧 2026-09-09 (hallazgo de revision adversarial): antes un fallo de
+  // red o de servidor (wifi debil en la bodega, sesion vencida) caia en
+  // el MISMO catch que "sin resultados" -- rbUbicacionResolverEscaneo
+  // terminaba diciendole al tecnico "ese codigo no existe, pide que lo
+  // registren" aunque la ubicacion SI existiera y el problema fuera solo
+  // de conexion. RB_UBIC_RESULTS=null (distinto de []) marca ese caso
+  // para que quien llama pueda distinguirlo.
+  try{
+    const r = await fetch('/mantenciones/api/repuestos-stock/buscar-ubicaciones?q=' + encodeURIComponent(q));
+    if (!r.ok) throw new Error('http_' + r.status);
+    const d = await r.json();
+    RB_UBIC_RESULTS = d.ubicaciones || [];
+  }catch(e){
+    RB_UBIC_RESULTS = null;
+    list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">No se pudo buscar — revisa tu conexión e intenta de nuevo</div>';
+    list.style.display = 'block';
+    return;
+  }
   let html = RB_UBIC_RESULTS.map((u, i) =>
     '<div class="rb-modelo-resultado-item d-flex justify-content-between align-items-center" onclick="rbPickUbicacion(' + i + ')">' +
     '<span><strong>' + escHtmlRb(u.codigo) + '</strong>' +
@@ -1672,12 +1723,17 @@ async function rbBuscarUbicaciones(){
     '<i class="bi bi-trash text-muted" style="font-size:.72rem;padding:2px 4px" title="Quitar de la lista" onclick="rbCatBorrarUbicacion(event,' + i + ')"></i>' +
     '</div>'
   ).join('');
-  const existe = RB_UBIC_RESULTS.some(u => u.codigo.toLowerCase() === q.toLowerCase());
-  if (q.length >= 1 && !existe){
-    html += '<div class="rb-modelo-resultado-item" style="color:#dc2626;font-weight:600" onclick="rbCrearUbicacionRapida()">' +
-            '<i class="bi bi-plus-circle me-1"></i>Crear ubicación "' + escHtmlRb(q) + '"</div>';
-  }
-  if (!html) html = '<div class="rb-modelo-resultado-item text-muted">Sin ubicaciones — escribe el código para crear la primera</div>';
+  // 🔒 2026-09-09 (Daniel: "que no nos permita agregar una ubicación a
+  // mano de momento"): ya NO se ofrece "Crear ubicación <texto>" acá.
+  // Una ubicación nueva se declara en Repuestos → Ubicaciones (ficha
+  // dedicada, con su propio modal de creación e impresión de etiqueta,
+  // sin permiso especial de supervisor -- cualquier técnico interno ya
+  // puede entrar ahí) — desde el modal de repuesto solo se elige o se
+  // escanea una que YA exista. Es TEMPORAL: para reactivar la creación
+  // rápida desde acá, restaurar el bloque que llamaba a
+  // rbCrearUbicacionRapida() (función conservada más abajo, intacta,
+  // sin llamadores por ahora).
+  if (!html) html = '<div class="rb-modelo-resultado-item text-muted">Sin ubicaciones registradas con ese código — créala en Repuestos → Ubicaciones</div>';
   list.innerHTML = html;
   list.style.display = 'block';
 }
@@ -1686,6 +1742,9 @@ function rbPickUbicacion(i){
   if (u) rbSetUbicacion(u.id, u.codigo + (u.nombre ? ' — ' + u.nombre : ''));
   document.getElementById('rbUbicacionResultadosList').style.display = 'none';
 }
+// Sin llamadores desde 2026-09-09 (ver comentario en rbBuscarUbicaciones)
+// -- se conserva intacta para reactivarla apenas Daniel libere la
+// creación rápida de ubicaciones desde el modal de repuesto.
 async function rbCrearUbicacionRapida(){
   const codigo = document.getElementById('rbUbicacionBuscar').value.trim();
   document.getElementById('rbUbicacionResultadosList').style.display = 'none';
@@ -1723,11 +1782,27 @@ async function rbCatBorrarUbicacion(ev, i){
 function rbSetUbicacion(id, texto){
   document.getElementById('rbUbicacion').value = id || '';
   document.getElementById('rbUbicacionBuscar').value = '';
+  // Con ubicación puesta se oculta el botón de escanear y el respaldo
+  // manual (si estaba abierto) -- al quitarla (id=null) vuelven a
+  // aparecer para poder escanear de nuevo.
+  const vacia = document.getElementById('rbUbicacionVacia');
+  const manual = document.getElementById('rbUbicacionManualWrap');
+  if (vacia) vacia.style.display = id ? 'none' : '';
+  if (manual) manual.style.display = 'none';
   document.getElementById('rbUbicacionSeleccionada').innerHTML = id
     ? '<span class="rb-modelo-chip" style="background:#dbeafe"><i class="bi bi-geo-alt me-1"></i>' + escHtmlRb(texto) +
       '<button type="button" onclick="rbSetUbicacion(null,\'\')" title="Quitar">&times;</button></span>'
     : '';
   rbRefreshStepStates();
+}
+function rbUbicacionMostrarBusquedaManual(){
+  // El respaldo REEMPLAZA al boton de escanear (no se apilan los dos) --
+  // el respaldo manual ya trae su propio icono de escanear si el usuario
+  // cambia de opinion.
+  document.getElementById('rbUbicacionVacia').style.display = 'none';
+  document.getElementById('rbUbicacionManualWrap').style.display = '';
+  document.getElementById('rbUbicacionBuscar').focus();
+  rbBuscarUbicaciones();
 }
 
 // ── Escáner de código de barras para Ubicación (Daniel 2026-08-08:
@@ -1786,8 +1861,17 @@ function rbInicializarEscaner(){
     rbLoadDetectorPolyfill().catch(() => {});
   });
 }
-async function rbEscanearUbicacion(){
-  const btn = document.getElementById('rbBtnEscanear');
+// 🔧 2026-09-09 (hallazgo de revision adversarial): hay DOS botones que
+// llaman a esta funcion (el grande de "Escanear ubicacion" y el chico
+// del respaldo manual) -- recibe el boton realmente tocado en vez de
+// asumir un id fijo, y RB_ESCANEANDO evita que un segundo tap (en
+// cualquiera de los dos) abra una segunda camara/overlay mientras la
+// primera sigue corriendo.
+let RB_ESCANEANDO = false;
+async function rbEscanearUbicacion(btnEl){
+  if (RB_ESCANEANDO) return;
+  RB_ESCANEANDO = true;
+  const btn = btnEl || document.getElementById('rbBtnEscanear');
   const original = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
@@ -1795,6 +1879,7 @@ async function rbEscanearUbicacion(){
   btn.disabled = false;
   btn.innerHTML = original;
   if (!ok){
+    RB_ESCANEANDO = false;
     ilusToast('No se pudo activar el escáner (sin internet o navegador muy antiguo) — usa la búsqueda por texto', {type:'warning'});
     return;
   }
@@ -1830,9 +1915,7 @@ async function rbEscanearUbicacion(){
           if (valor){
             activo = false;
             rbCerrarEscaner();
-            document.getElementById('rbUbicacionBuscar').value = valor;
-            await rbBuscarUbicaciones();
-            ilusToast('Código leído: ' + valor, {type:'success'});
+            await rbUbicacionResolverEscaneo(valor);
             return;
           }
         }
@@ -1841,7 +1924,35 @@ async function rbEscanearUbicacion(){
     }
   })();
 }
+// 🔒 2026-09-09 (Daniel: "que tome el escáner de la ubicación... si no
+// tiene la ubicación declarada, tomada por el código de barra, no puede
+// avanzar"): un escaneo exitoso ASIGNA la ubicación de una -- antes solo
+// rellenaba el buscador y había que tocar el resultado igual. Si el
+// código no calza con ninguna ubicación real, NO se crea nada (esa es
+// justo la puerta que se cerró): se avisa y se manda a pedirla en
+// Repuestos → Ubicaciones.
+async function rbUbicacionResolverEscaneo(valor){
+  document.getElementById('rbUbicacionBuscar').value = valor;
+  await rbBuscarUbicaciones();
+  // RB_UBIC_RESULTS===null = fallo de red/servidor (ver rbBuscarUbicaciones)
+  // -- NO es lo mismo que "el código no existe", así que no se avisa igual.
+  if (RB_UBIC_RESULTS === null){
+    document.getElementById('rbUbicacionBuscar').value = '';
+    ilusToast('No se pudo verificar el código por un problema de conexión — intenta escanear de nuevo', {type:'error'});
+    return;
+  }
+  const match = RB_UBIC_RESULTS.find(u => (u.codigo || '').toLowerCase() === valor.toLowerCase());
+  if (match){
+    rbSetUbicacion(match.id, match.codigo + (match.nombre ? ' — ' + match.nombre : ''));
+    ilusToast('✓ Ubicación "' + match.codigo + '" asignada', {type:'success'});
+  } else {
+    document.getElementById('rbUbicacionBuscar').value = '';
+    document.getElementById('rbUbicacionResultadosList').style.display = 'none';
+    ilusToast('El código "' + valor + '" no corresponde a ninguna ubicación registrada. Créala en Repuestos → Ubicaciones.', {type:'error'});
+  }
+}
 function rbCerrarEscaner(){
+  RB_ESCANEANDO = false;
   if (RB_ESCANER_STREAM){
     RB_ESCANER_STREAM.getTracks().forEach(t => t.stop());
     RB_ESCANER_STREAM = null;
@@ -1927,7 +2038,8 @@ async function rbEscanearBusquedaPrincipal(){
 const RB_STEP_RULES = {
   1: () => document.getElementById('rbDescripcion').value.trim().length > 0,
   2: () => document.getElementById('rbCantidad').value !== '' && Number(document.getElementById('rbCantidad').value) >= 0 &&
-           document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0,
+           document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0 &&
+           !!document.getElementById('rbUbicacion').value,
   3: () => !!document.getElementById('rbMarca').value || !!document.getElementById('rbProveedor').value,
   4: () => (RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0,
 };
