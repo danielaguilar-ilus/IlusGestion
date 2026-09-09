@@ -3696,7 +3696,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% if finanzas and finanzas.faltan %}
           <div class="otd-warn" style="margin-top:10px">
             <i class="bi bi-exclamation-triangle-fill"></i>
-            <div>Falta declarar antes de pedir la firma:
+            {# 🔴 FIX 2026-09-09 (Daniel, confusión real viendo OT-2026-00161:
+               "el técnico no tiene por qué detenerse por esto... esto lo
+               tiene que ver Juan Martínez, Aarón o Víctor"). "Antes de pedir
+               la firma" no decía DE QUIÉN -- se leía como si bloqueara la
+               firma del técnico, que nunca la exige (ver firmar-revision):
+               esto es SOLO el candado del cierre final (aprobar-cierre),
+               que resuelve gestión. #}
+            <div>Falta declarar para poder <b>cerrar</b> esta OT (lo resuelve
+              gestión — no bloquea la firma del técnico ni del cliente):
               {{ finanzas.faltan | join(', ') }}.</div>
           </div>
           {% endif %}
