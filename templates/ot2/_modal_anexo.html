@@ -210,7 +210,27 @@
                 <input class="form-control form-control-sm" id="oaxManTel" placeholder="+56 9 1234 5678"
                        oninput="oaxValidarCampoManual(this,'tel')"></div>
               <div class="col-12"><label class="fl">Dirección</label>
-                <input class="form-control form-control-sm" id="oaxManDireccion"></div>
+                <input class="form-control form-control-sm" id="oaxManDireccion" autocomplete="off"
+                       placeholder="Empieza a escribir y elige una sugerencia…">
+                {#- 📍 2026-09-09 (Daniel: "ve con eso"). Google Places SUGIERE
+                   la dirección, no la exige: mismo criterio que Daniel ya fijó
+                   en Transporte "Asignar y Cotizar" (2026-07-29) -- exigir la
+                   georreferenciación (no solo el texto) dejaba a la operadora
+                   bloqueada cuando Google no reconocía una dirección real que
+                   sí existía. RUT/correo/teléfono de este mismo formulario SÍ
+                   bloquean por FORMATO inválido (FIX 2026-09-08), pero ninguno
+                   de los 5 campos manuales es OBLIGATORIO hoy (solo el nombre
+                   lo es, ver pasoListo) -- exigir la dirección sería la única
+                   asimetría nueva, así que se deja igual de opcional que el
+                   resto. #}
+                <input type="hidden" id="oaxManDireccionLat">
+                <input type="hidden" id="oaxManDireccionLng">
+                <input type="hidden" id="oaxManDireccionPlaceId">
+                <small id="oaxManDireccionHint" class="text-muted d-block mt-1" style="font-size:.72rem">
+                  <i class="bi bi-info-circle"></i> Elige una sugerencia de Google para
+                  georreferenciarla (recomendado, no obligatorio).
+                </small>
+              </div>
             </div>
           </div>
           {# 🆕 2026-08-31 (Daniel: "hay que ver a que empresa pertenece, el
@@ -532,6 +552,11 @@ window.OT2ANX = (function(){
       ot_id: OT_ID,
       tecnico_externo_id: null,
       proveedor_nombre: '', proveedor_rut: '', proveedor_direccion: '', email: '', tel: '',
+      // 📍 2026-09-09: georreferenciación OPCIONAL de proveedor_direccion
+      // (ver _wireOaxDireccionPlaces). null/'' = dirección sin validar con
+      // Google -- se manda igual, el backend la guarda como texto libre.
+      proveedor_direccion_lat: null, proveedor_direccion_lng: null,
+      proveedor_direccion_place_id: '',
       objetivo_servicio: objetivoDesdeOT(),
       cliente_nombre: DEF_CLIENTE,
       items: itemsDesdeOT(),
@@ -575,6 +600,13 @@ window.OT2ANX = (function(){
       S.proveedor_nombre = a.proveedor_nombre || '';
       S.proveedor_rut = a.proveedor_rut || '';
       S.proveedor_direccion = a.proveedor_direccion || '';
+      // 📍 Se conserva la georreferenciación ya guardada aunque el input
+      // visible se limpie (ver pintarForm) -- si el operador NO toca el
+      // proveedor manual al corregir, crear() no la sobreescribe y viaja
+      // igual en el guardado.
+      S.proveedor_direccion_lat = (a.proveedor_direccion_lat != null) ? a.proveedor_direccion_lat : null;
+      S.proveedor_direccion_lng = (a.proveedor_direccion_lng != null) ? a.proveedor_direccion_lng : null;
+      S.proveedor_direccion_place_id = a.proveedor_direccion_place_id || '';
       S.cliente_nombre = a.cliente_nombre || DEF_CLIENTE;
       /* 🧹 Los anexos emitidos antes del 07-09 traen la lista de equipos
          pegada dentro del objetivo ("... Equipos considerados (2): · ...").
@@ -663,6 +695,14 @@ window.OT2ANX = (function(){
     document.getElementById('oaxProveedorManualBox').style.display = 'none';
     document.getElementById('oaxProveedorDirWrap').style.display = 'none';
     ['oaxManNombre','oaxManRut','oaxManEmail','oaxManTel','oaxManDireccion'].forEach(id => document.getElementById(id).value = '');
+    // Hidden de georreferenciación + su hint: se limpian visualmente igual
+    // que el resto del formulario manual (S ya guarda el valor real -- ver
+    // abrirEditar -- así que reabrir el modal no pierde nada al guardar).
+    ['oaxManDireccionLat','oaxManDireccionLng','oaxManDireccionPlaceId'].forEach(id => document.getElementById(id).value = '');
+    delete document.getElementById('oaxManDireccion').dataset.validatedValue;
+    var _dirHint = document.getElementById('oaxManDireccionHint');
+    if (_dirHint) _dirHint.innerHTML = '<i class="bi bi-info-circle"></i> Elige una sugerencia de ' +
+      'Google para georreferenciarla (recomendado, no obligatorio).';
     var condBox = document.getElementById('oaxCondBox');
     condBox.style.display = 'none';
     document.getElementById('oaxCondToggle').classList.remove('on');
@@ -819,6 +859,12 @@ window.OT2ANX = (function(){
       // (no hacia falta columna nueva ahi) -- solo faltaba jalarla acá,
       // igual que el RUT, en vez de dejarla fuera del anexo.
       S.proveedor_direccion = p.direccion_empresa || '';
+      // La ficha del proveedor NO trae lat/lng en este listado ligero
+      // (mant_tecnicos_externos_list_api no las selecciona) -- se limpia la
+      // georreferenciación manual para no dejarle a un proveedor CON ficha
+      // el lat/lng de un proveedor manual anterior que quedó a medio llenar.
+      S.proveedor_direccion_lat = null; S.proveedor_direccion_lng = null;
+      S.proveedor_direccion_place_id = '';
       S.email = p.contacto_email || '';
       S.tel = p.contacto_tel || '';
       if (dirWrap){
@@ -828,6 +874,8 @@ window.OT2ANX = (function(){
     } else {
       S.tecnico_externo_id = null;
       S.proveedor_direccion = '';
+      S.proveedor_direccion_lat = null; S.proveedor_direccion_lng = null;
+      S.proveedor_direccion_place_id = '';
       if (dirWrap) dirWrap.style.display = 'none';
     }
   }
@@ -953,6 +1001,7 @@ window.OT2ANX = (function(){
     pintarForm();
     cargarProveedores();
     pintarPasos();
+    _wireOaxDireccionPlaces();   // por si el DOMContentLoaded ya pasó sin el SDK listo
     // Red de seguridad: cualquier cambio dentro del formulario repinta el
     // semáforo, incluidos los campos del proveedor manual, que no tienen
     // handler propio. Se registra UNA vez (marca en el dataset) para no
@@ -994,6 +1043,15 @@ window.OT2ANX = (function(){
       S.proveedor_nombre = document.getElementById('oaxManNombre').value.trim();
       S.proveedor_rut = document.getElementById('oaxManRut').value.trim();
       S.proveedor_direccion = document.getElementById('oaxManDireccion').value.trim();
+      // 📍 Solo viajan si Google confirmó ESTA dirección (ver
+      // _wireOaxDireccionPlaces -- se limpian solos si el texto cambió
+      // después de elegir la sugerencia). Vacíos = dirección sin verificar,
+      // se manda igual como texto libre (SUGERIDO, no obligatorio).
+      var _dLat = document.getElementById('oaxManDireccionLat').value;
+      var _dLng = document.getElementById('oaxManDireccionLng').value;
+      S.proveedor_direccion_lat = _dLat ? Number(_dLat) : null;
+      S.proveedor_direccion_lng = _dLng ? Number(_dLng) : null;
+      S.proveedor_direccion_place_id = document.getElementById('oaxManDireccionPlaceId').value || '';
       S.email = document.getElementById('oaxManEmail').value.trim();
       S.tel = document.getElementById('oaxManTel').value.trim();
       S.tecnico_externo_id = null;
@@ -1052,6 +1110,9 @@ window.OT2ANX = (function(){
           ot_id: S.ot_id, tecnico_externo_id: S.tecnico_externo_id,
           proveedor_nombre: S.proveedor_nombre, proveedor_rut: S.proveedor_rut,
           proveedor_direccion: S.proveedor_direccion,
+          proveedor_direccion_lat: S.proveedor_direccion_lat,
+          proveedor_direccion_lng: S.proveedor_direccion_lng,
+          proveedor_direccion_place_id: S.proveedor_direccion_place_id,
           cliente_nombre: S.cliente_nombre, objetivo_servicio: S.objetivo_servicio,
           // Los equipos viajan como tabla, no dentro del objetivo. Sin esto
           // el anexo nace sin productos: la pantalla de firma no muestra
@@ -1218,7 +1279,61 @@ window.OT2ANX = (function(){
     }
   }
 
+  /* ── Google Places para la Dirección del proveedor manual (2026-09-09) ──
+     Mismo patrón que static/cubicador_asignar.js (_wireDireccionPlaces,
+     Transporte "Asignar y Cotizar") y templates/mantenciones/cliente_form.html:
+     ilusPlacesAutocomplete() vive en ilus_ui.js y hace lazy-load del SDK de
+     Google Maps solo cuando se usa (ensureGmapsSdk). base.html ya inyecta la
+     API key en window.__ILUS_GMAPS_KEY -- detalle.html extiende base.html,
+     así que no hace falta cargar el script acá.
+     Si el operador escribe DESPUÉS de elegir una sugerencia, se invalida la
+     georreferenciación (para no dejar un lat/lng viejo pegado a un texto que
+     ya cambió) -- pero el texto en sí NUNCA se bloquea: ver el comentario
+     junto a oaxManDireccion sobre por qué esto es SUGERIDO, no obligatorio. */
+  function _wireOaxDireccionPlaces(){
+    var dirInput = document.getElementById('oaxManDireccion');
+    if (!dirInput || dirInput.dataset.placesWired) return;
+    function initDir(){
+      if (typeof ilusPlacesAutocomplete !== 'function'){
+        if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(initDir);
+        return;
+      }
+      dirInput.dataset.placesWired = '1';
+      ilusPlacesAutocomplete('oaxManDireccion', {
+        country: 'cl',
+        types: ['address'],
+        onPlaceSelected: function(place){
+          document.getElementById('oaxManDireccionLat').value = place.lat;
+          document.getElementById('oaxManDireccionLng').value = place.lng;
+          document.getElementById('oaxManDireccionPlaceId').value = place.place_id || '';
+          dirInput.dataset.validatedValue = dirInput.value;
+          var hint = document.getElementById('oaxManDireccionHint');
+          if (hint){
+            hint.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> ' +
+              'Dirección verificada con Google Maps · ' +
+              place.lat.toFixed(4) + ', ' + place.lng.toFixed(4);
+          }
+          pintarPasos();
+        }
+      });
+    }
+    initDir();
+    dirInput.addEventListener('input', function(){
+      if (dirInput.dataset.validatedValue && dirInput.value !== dirInput.dataset.validatedValue){
+        document.getElementById('oaxManDireccionLat').value = '';
+        document.getElementById('oaxManDireccionLng').value = '';
+        document.getElementById('oaxManDireccionPlaceId').value = '';
+        var hint = document.getElementById('oaxManDireccionHint');
+        if (hint){
+          hint.innerHTML = '<i class="bi bi-info-circle"></i> Elige una sugerencia de Google ' +
+            'para georreferenciarla (recomendado, no obligatorio).';
+        }
+      }
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
+    _wireOaxDireccionPlaces();
     var modalEl = document.getElementById('oaxModal');
     if (!modalEl) return;
     modalEl.addEventListener('hidden.bs.modal', () => {
