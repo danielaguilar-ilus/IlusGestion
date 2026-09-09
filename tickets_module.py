@@ -684,6 +684,12 @@ def _tk_docs_desde_texto(txt):
 
 def register_tickets_routes(app, ctx):
     # ── Dependencias inyectadas desde app.py (globals) ──
+    # 🔴 2026-09-09 (Daniel, urgente: "el técnico externo puede ver
+    # tickets... bloquéalo"). Mismo helper/decorador que ya bloquea el
+    # Taller para el proveedor externo (2026-09-08) -- deliberadamente más
+    # estrecho que _es_rol_tecnico (que junta interno+externo en la misma
+    # familia): el técnico interno no pierde nada de lo que ya tenía.
+    _no_tecnico_externo = ctx.get("_no_tecnico_externo")
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
     mysql_execute = ctx["mysql_execute"]
@@ -2598,6 +2604,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets")
     @_tickets_required
+    @_no_tecnico_externo
     def tk_list():
         # BUG FIX 2026-07-11: tk_tipos_publicos NO se estaba pasando -> el modal
         # renderizaba CERO pastillas de tipo, y como el tipo es obligatorio era
@@ -4249,6 +4256,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/cotizaciones")
     @_tickets_required
+    @_no_tecnico_externo
     def tk_cotizaciones_list():
         # LEFT JOIN a tk_tickets para poder pintar "Ver ticket TK-..." cuando
         # ya existe (flujo inverso, Daniel 2026-07-15) y decidir si el boton

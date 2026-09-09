@@ -575,8 +575,15 @@
        (_tickets_required en tickets_module.py acepta el mismo OR), pero el
        link del sidebar nunca aparecia porque le faltaba esa misma condicion.
        Alineado ahora con el gate real del backend. #}
+    {# 🔴 2026-09-09 (Daniel, urgente: "el técnico externo puede ver
+       tickets... bloquéalo"). `is_tecnico` compara el string exacto
+       "tecnico" y no reconoce "tecnico_externo" -- el link SÍ aparecía
+       para el proveedor externo aunque el técnico interno estuviera bien
+       oculto. El backend (tk_list) ya quedó bloqueado con
+       @_no_tecnico_externo; esto es solo la parte visual. #}
     {% if (permissions.mantenciones or permissions.superadmin or permissions.tk_ver
-           or permissions.tk_es_tecnico or permissions.tk_es_ejecutivo) and not is_tecnico %}
+           or permissions.tk_es_tecnico or permissions.tk_es_ejecutivo) and not is_tecnico
+          and not (current_user and current_user.role and current_user.role.startswith('tecnico_externo')) %}
     <a href="{{ url_for('tk_list') }}"
        class="sidebar-link{% if request.endpoint in ['tk_list','tk_ficha','tk_nuevo'] %} active{% endif %}">
       <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
@@ -598,10 +605,17 @@
        también sigue intacta (Regla #4.2 -- nada se borra, solo se
        desenlaza del menú). El "Calendario" de Retiros de más abajo
        (pickup_calendar) es OTRO módulo y no se toca. #}
+    {# 🔴 2026-09-09 (Daniel: "el técnico externo puede ver catálogo...
+       bloquéalo"). El técnico interno SIGUE viendo este link igual que
+       siempre (no fue lo que se pidió, REGLA #4.2) -- solo se cierra para
+       el proveedor externo. Backend ya bloqueado con @_no_tecnico_externo
+       en cat_list. #}
+    {% if not (current_user and current_user.role and current_user.role.startswith('tecnico_externo')) %}
     <a href="{{ url_for('cat_list') }}"
        class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
       <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
     </a>
+    {% endif %}
     {% if not is_tecnico %}
     {# 2026-07-12 (Daniel): "el radar, el plan, el agente... se esta
        perdiendo... son necesarios en el menu de clientes" -- Clientes
@@ -633,7 +647,13 @@
       {% endif %}
     </div>
     {% endif %}
-    {% if current_user and current_user.role != 'tecnico' %}
+    {# 🔴 2026-09-09 (Daniel: "el técnico externo puede ver cotizaciones...
+       bloquéalo"). `role != 'tecnico'` es comparación literal -- no
+       reconoce "tecnico_externo", así que el link SÍ aparecía para el
+       proveedor externo. Backend ya bloqueado con @_no_tecnico_externo en
+       tk_cotizaciones_list. #}
+    {% if current_user and current_user.role != 'tecnico'
+          and not (current_user.role or '').startswith('tecnico_externo') %}
     {# 2026-07-23 (Daniel, feedback en vivo: "le das crear cotizaciones,
        te lleva como a otra tabla de cotizaciones, y no puedes volver").
        Causa real: este link apuntaba a cotizaciones_hub_list (un hub

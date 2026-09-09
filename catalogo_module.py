@@ -123,6 +123,11 @@ def _shopify_descargar_imagen(url, timeout=15):
 
 def register_catalogo_routes(app, ctx):
     # ── Dependencias inyectadas desde app.py (globals) ──
+    # 🔴 2026-09-09 (Daniel, urgente: "el técnico externo puede ver
+    # catálogo... bloquéalo"). Mismo helper/decorador que ya bloquea el
+    # Taller para el proveedor externo (2026-09-08) -- el técnico interno
+    # no pierde nada de lo que ya tenía.
+    _no_tecnico_externo = ctx.get("_no_tecnico_externo")
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
     mysql_execute = ctx["mysql_execute"]
@@ -918,6 +923,7 @@ def register_catalogo_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo")
     @_catalogo_required
+    @_no_tecnico_externo
     def cat_list():
         return render_template("catalogo/list.html")
 

@@ -42,7 +42,13 @@
          title="Tus OTs de hoy + semana + por aprobar">
         <i class="bi bi-sun-fill me-1"></i>Mi día
       </a>
-      <a href="{{ url_for('mant_ots_list') }}" class="btn btn-dark fw-bold px-3"
+      {#- 🔴 FIX 2026-09-09 (Daniel: "en el dashboard está apuntando un
+          botón que dice órdenes de trabajo, y lo envía a las órdenes de
+          trabajo normal, debe ser a las 2.0"). Apuntaba a mant_ots_list
+          (listado clásico) -- ahora va al panel de OT 2.0. mant_ots_list
+          NO se borra (Regla #4.2), sigue viva para quien la tenga
+          enlazada; solo se cambia a dónde lleva este botón. -#}
+      <a href="{{ url_for('ot2_panel') }}" class="btn btn-dark fw-bold px-3"
          style="background:linear-gradient(135deg,#0a0a0a,#2a0d0d);border:0">
         <i class="bi bi-clipboard2-pulse me-1"></i>Órdenes de Trabajo
       </a>
