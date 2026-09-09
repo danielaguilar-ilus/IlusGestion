@@ -109,7 +109,23 @@
   table.precio td.monto{ text-align:right; font-variant-numeric:tabular-nums; }
   table.precio tr.total td{ font-weight:700; background:#fef2f2; color:#991b1b;
     border-top:0.4mm solid #dc2626; }
-  .firma-bloque{ margin-top:16mm; text-align:center; }
+  {# 🔴 FIX 2026-09-08 (Daniel, en vivo, viendo el borrador del Anexo N°167:
+     "el formato sigue estando mal... no hay ni espacio pa firmar"). Causa
+     raíz: nada en este archivo le decía a Chromium que este bloque es
+     ATÓMICO. Si el resto del documento dejaba, digamos, 15mm libres al
+     final de una página y el bloque de firma completo (20mm de espacio +
+     línea + nombre + RUT + etiqueta) no cabía entero, el motor de
+     impresión lo partía a la mitad: el espacio en blanco + la línea para
+     firmar se quedaban en la página anterior (o se descartaban) y esta
+     página arrancaba directo con el nombre/RUT/"Firma del Proveedor" --
+     exactamente lo que se ve en la captura: la etiqueta sin ninguna línea
+     arriba para firmar, seguida de una hoja casi vacía porque ya no queda
+     nada más que imprimir después. `break-inside:avoid` (+ el prefijo
+     `page-break-inside` que Chromium todavía respeta) obliga a que este
+     bloque completo se mueva ENTERO a la página siguiente si no cabe --
+     nunca partido. #}
+  .firma-bloque{ margin-top:16mm; text-align:center;
+    break-inside: avoid; page-break-inside: avoid; }
   .firma-img{ display:block; max-height:22mm; max-width:70mm; margin:0 auto 2mm; }
   .firma-nombre{ margin-top: 2mm; font-size:13pt; font-weight:700; }
   .firma-rut{ font-size:11.5pt; color:#333; }
