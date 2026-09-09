@@ -367,6 +367,23 @@
             dos datos cargados no se podía mandar SOLO por uno, que es lo
             normal cuando el proveedor contesta por WhatsApp y el correo lo
             tiene abandonado. Ahora el canal lo elige la persona. -#}
+        {#- 🔴 FIX 2026-09-08 (Daniel, urgente, OT-175: "no puedo enviar el
+            anexo, dame 3 opciones bien bonitas: whts, mail, link"). El anexo
+            auto-creado a veces nace sin correo ni teléfono del proveedor
+            (dato incompleto en el momento de crear la OT -- se deja
+            pendiente a propósito, ver "ANEXO AUTOMÁTICO" en ot2_api_crear),
+            y los dos botones de arriba EXIGEN su campo (correo pide correo,
+            WhatsApp pide teléfono) -- sin ninguno de los dos, no había forma
+            de avanzar desde acá. El backend YA generaba el link igual
+            aunque ninguno de los dos datos viniera (ver ot2_api_anexo_enviar:
+            `link` se arma siempre, el correo/WhatsApp son opcionales) -- solo
+            faltaba un botón que lo pidiera así. Comparte el MISMO
+            seguimiento que los otros dos canales (mismo endpoint /enviar,
+            mismo token, mismo enviado_at/envios_n): no es un camino nuevo,
+            es el mismo con los dos campos de contacto vacíos a propósito. -#}
+        <button type="button" class="btn btn-outline-dark btn-sm px-3 fw-bold" id="oaxBtnLink"
+                onclick="OT2ANX.enviarPor('link')" title="Genera el link de firma sin mandarlo por ningún canal — lo compartes tú.">
+          <i class="bi bi-link-45deg me-1"></i>Solo el link</button>
         <button type="button" class="btn btn-success btn-sm px-3 fw-bold" id="oaxBtnWaEnv"
                 onclick="OT2ANX.enviarPor('whatsapp')">
           <i class="bi bi-whatsapp me-1"></i>WhatsApp</button>
@@ -1076,7 +1093,10 @@ window.OT2ANX = (function(){
       ilusToast('Escribe el teléfono del proveedor para mandarlo por WhatsApp.', {type:'warning'});
       return;
     }
-    if (!email && !tel){
+    // 🔴 FIX 2026-09-08: canal 'link' es EXACTAMENTE el caso que este aviso
+    // describía -- generar el link sin mandarlo por ningún canal -- así que
+    // acá no es un descuido que haya que confirmar, es lo que se pidió.
+    if (!email && !tel && canal !== 'link'){
       const ok = await ilusConfirm({
         title: 'Sin correo ni teléfono',
         message: 'No pusiste correo ni teléfono de contacto. El anexo va a quedar enviado, pero vas a tener que compartir el link tú mismo.',
@@ -1084,10 +1104,15 @@ window.OT2ANX = (function(){
       });
       if (!ok) return;
     }
+    // El botón "Solo el link" nunca dispara correo ni WhatsApp, aunque los
+    // campos tengan algo cargado (ej: el proveedor ya tiene correo guardado
+    // de un envío anterior, pero esta vez la persona solo quiere el link).
+    if (canal === 'link'){ email = ''; tel = ''; }
     var adjChk = document.getElementById('oaxAdjuntarPdf');
     // El PDF viaja adjunto al CORREO; por WhatsApp va el link, no un archivo.
     var adjuntar = !!(adjChk && adjChk.checked && email && canal !== 'whatsapp');
-    var btn = document.getElementById(canal === 'whatsapp' ? 'oaxBtnWaEnv' : 'oaxBtnEnviar');
+    var btn = document.getElementById(
+      canal === 'whatsapp' ? 'oaxBtnWaEnv' : (canal === 'link' ? 'oaxBtnLink' : 'oaxBtnEnviar'));
     var btnHtml = btn.innerHTML;
     /* 📲 La ventana de WhatsApp se reserva ANTES del fetch. El link de
        firma solo existe después de que el servidor genera el token, pero si
