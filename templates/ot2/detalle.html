@@ -9586,6 +9586,48 @@ const OT2F = (function(){
     }
     if (d.puede_firmar) return true;
 
+    // 🔴 2026-09-09 (Daniel, urgente — Lenin trabado en OT-2026-00161: "no
+    // le da la opción para avanzar... que el proceso sea fluido"). Cuando
+    // lo único que falta es el diagnóstico, en vez de un aviso mudo se
+    // pide acá mismo -- el técnico escribe una línea, se guarda
+    // (POST diagnostico-tecnico, el único camino que él SÍ puede usar,
+    // ver ese endpoint) y sigue directo a firmar, sin salir de este flujo.
+    if (d.falta_diagnostico){
+      const _diagMin = d.diagnostico_min || 20;
+      const texto = await ilusPrompt({
+        title: d.titulo || 'Falta el diagnóstico de la visita',
+        message: d.detalle || 'Cuéntanos en una línea qué encontraste y qué hiciste.',
+        sub: `Mínimo ${_diagMin} caracteres.`,
+        placeholder: 'Ej: Se revisaron los equipos, sin novedad. Se ajustó tensión de correa en cinta 2.',
+        multiline: true,
+        validate: function(v){
+          return v.trim().length < _diagMin
+            ? {ok:false, error:`Cuenta un poco más — mínimo ${_diagMin} caracteres.`}
+            : {ok:true, valor: v.trim()};
+        },
+      });
+      if (!texto) return false;
+      const limpio = texto.trim();
+      try {
+        const r2 = await fetch('/mantenciones/api/visitas/' + OTD_VID + '/diagnostico-tecnico', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({diagnostico: limpio}),
+        });
+        const j2 = await r2.json().catch(() => ({}));
+        if (!r2.ok || j2.ok === false){
+          ilusToast(j2.error || 'No se pudo guardar el diagnóstico.', {type:'error'});
+          return false;
+        }
+        ilusToast('✓ Diagnóstico guardado', {type:'success'});
+        // Re-consulta: si además faltaban fotos, que lo diga AHORA (mismo
+        // espíritu del preflight — avisar ANTES del canvas, nunca después).
+        return await otdPreflightFirma();
+      } catch(e){
+        ilusToast('Error de conexión al guardar el diagnóstico.', {type:'error'});
+        return false;
+      }
+    }
+
     var faltantes = Array.isArray(d.faltantes) ? d.faltantes : [];
     var lista = faltantes.slice(0, 6).map(function(f){ return '· ' + otdEsc(f); }).join('<br>');
     if (faltantes.length > 6) lista += '<br>· y ' + (faltantes.length - 6) + ' más';

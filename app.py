@@ -97565,6 +97565,45 @@ def mant_ot_puede_firmar(vid):
         return jsonify({"ok": True, "puede_firmar": True, "preflight_fallo": True})
 
 
+@app.route("/mantenciones/api/visitas/<int:vid>/diagnostico-tecnico", methods=["POST"])
+@_mant_required
+@_tecnico_owns_visita
+def mant_ot_guardar_diagnostico_tecnico(vid):
+    """El TÉCNICO deja el diagnóstico de la visita (mant_visitas.diagnostico)
+    en el momento mismo en que /puede-firmar le avisa que falta.
+
+    🔴 2026-09-09 (Daniel, urgente — Lenin trabado en OT-2026-00161: "no le
+    da la opción [de escribirlo]... que el proceso sea fluido"). El PUT
+    genérico de la visita (`mant_visita_update`) YA acepta "diagnostico" en
+    su whitelist, pero está detrás de `@_ot_can_metadata`, que EXCLUYE a
+    técnico a propósito (matriz de permisos) — exactamente el candado que
+    dejaba a Lenin viendo un aviso sin ningún botón para resolverlo: el
+    campo existía, pero él no podía escribirlo por ningún camino.
+
+    Este endpoint es angosto a propósito (un solo campo, mismo dueño-de-la-
+    visita que ejecuta el resto de la OT) — no abre la puerta a que el
+    técnico edite fecha/técnico/cliente/etc., que siguen exigiendo gestión.
+    """
+    d = request.get_json(silent=True) or {}
+    texto = (d.get("diagnostico") or "").strip()
+    if len(texto) < _OT_DIAG_MIN_CHARS:
+        return jsonify({
+            "ok": False,
+            "error": f"Cuenta qué encontraste y qué hiciste (mínimo {_OT_DIAG_MIN_CHARS} caracteres).",
+        }), 400
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET diagnostico=%s WHERE id=%s",
+            (texto[:5000], vid)
+        )
+        _mant_log("visita", vid, "diagnostico_tecnico",
+                  f"{current_username() or '?'}: {texto[:200]}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[diagnostico-tecnico] vid={vid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el diagnóstico."}), 500
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firma-estado", methods=["GET"])
 @_mant_required
 @_ot_can_view
