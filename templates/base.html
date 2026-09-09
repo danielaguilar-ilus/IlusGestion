@@ -698,7 +698,17 @@
        2026-08-08: el acordeón ya NO se esconde completo para técnicos --
        adentro Repuestos/Bodega de Repuestos SÍ deben verse (levantamiento
        de terreno); Plantillas/Proveedores siguen ocultos por su propio
-       "if" interno, sin cambios ahí. #}
+       "if" interno, sin cambios ahí.
+       2026-09-08 (Daniel, urgente, en vivo: "bloquea de manera inmediata
+       el taller para los técnicos externos... son externos y no deben
+       ver información sensible"): el acordeón SÍ se esconde completo
+       para el PROVEEDOR EXTERNO -- distinto del 2026-08-08 de arriba, que
+       hablaba de técnicos en general. El técnico INTERNO no se toca (ver
+       _es_tecnico_externo en app.py: deliberadamente más estrecho que
+       is_tecnico/_es_rol_tecnico, que junta interno+externo en la misma
+       familia). Cada página de acá adentro también quedó bloqueada en el
+       backend (@_no_tecnico_externo) -- esto no es solo ocultar el link. #}
+    {% if not (current_user and current_user.role and current_user.role.startswith('tecnico_externo')) %}
     <button class="sg-subtoggle" data-sgsub="st-taller">
       <i class="bi bi-tools sg-subico"></i><span>Taller</span>
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -773,6 +783,7 @@
         <i class="bi bi-exclamation-triangle"></i><span>Incidencias</span>
       </a>
     </div>
+    {% endif %}
     {% endif %}
 
     {# ══ LOGÍSTICA ══ #}

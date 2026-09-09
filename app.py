@@ -4618,6 +4618,11 @@ PERMS_KEYS = (
     # trabada en la OT-125), así que se enciende cuando él lo decida, con
     # un clic y sin desplegar. Ver el redirect en `ot2_detalle`.
     "mant_ot2_tecnico",
+    # mant_taller — ver comentario junto a "taller" en PERMISSIONS_META /
+    # _PERMS_CONCEDIDOS_POR_OMISION (2026-09-08). Bloqueo: nace concedido
+    # para todos: el candado real para tecnico_externo es duro en código
+    # (_es_tecnico_externo), no depende de este flag.
+    "mant_taller",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -4762,6 +4767,14 @@ def _build_perms_from_matrix(role):
                               or bool(man.get("reagendar")))
     base["mant_reasignar_tecnico"] = (man.get("reasignar_tecnico") is None
                                       or bool(man.get("reasignar_tecnico")))
+    # 🔴 2026-09-08 — Taller (Plantillas/Proveedores/Repuestos/Ubicaciones/
+    # Técnicos/Incidencias). Mismo patrón BLOQUEO que reagendar arriba:
+    # ausencia de llave = CONCEDIDO. El candado real para tecnico_externo
+    # NO depende de este flag (ver _es_tecnico_externo, duro en código) --
+    # esto solo deja la puerta abierta para que Daniel cierre el Taller a
+    # OTRO rol adicional desde /admin/roles sin pedir otro deploy.
+    base["mant_taller"] = (man.get("taller") is None
+                            or bool(man.get("taller")))
     # 🆕 2026-09-02 — acceso del TÉCNICO a la pantalla de OT 2.0. Este NO es
     # de tipo bloqueo: nace apagado y hay que encenderlo a propósito.
     base["mant_ot2_tecnico"] = bool(man.get("ot2_tecnico"))
@@ -12753,7 +12766,7 @@ PERMISSIONS_MATRIX = {
                                    # bloquear por el front en los roles.
                                    # Igual el reasignar el técnico").
                                    "reagendar", "reasignar_tecnico",
-                                   "ot2_tecnico"]},
+                                   "ot2_tecnico", "taller"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -12848,6 +12861,15 @@ PERMISSIONS_META = {
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
         "cotizaciones_eliminar_item": {"label": "Quitar producto de una cotización",
                          "tipo": "bloqueo", "icon": "bi-x-circle"},
+        # 🔴 2026-09-08 (Daniel, urgente: "bloquea de manera inmediata el
+        # taller para los técnicos externos... no deben ver información
+        # sensible"). El candado real para tecnico_externo es duro en
+        # código (no depende de este chip, ver comentario en
+        # _PERMS_CONCEDIDOS_POR_OMISION) -- este flag es la parte
+        # "déjalo en los roles" del pedido: visibilidad + la posibilidad
+        # de cerrarlo a otro rol distinto sin otro deploy.
+        "taller": {"label": "Taller (Plantillas, Proveedores, Repuestos, Ubicaciones, Técnicos, Incidencias)",
+                         "tipo": "bloqueo", "icon": "bi-tools"},
     },
     "retiros": {
         "ver":       {"label": "Monitor de retiros",  "tipo": "submodulo", "icon": "bi-eye"},
@@ -12951,6 +12973,15 @@ def _es_rol_valido(slug):
 _PERMS_CONCEDIDOS_POR_OMISION = {
     ("mantenciones", "reagendar"),
     ("mantenciones", "reasignar_tecnico"),
+    # taller — aditivo 2026-09-08 (Daniel, urgente: "bloquea de manera
+    # inmediata el taller para los técnicos externos... déjalo en los
+    # roles"). Nace CONCEDIDO para todos (nadie más pierde nada) porque el
+    # bloqueo real para el proveedor externo NO depende de este flag -- es
+    # un candado duro en código (_es_tecnico_externo/@_no_tecnico_externo,
+    # ver app.py) que no se puede apagar por accidente desde /admin/roles.
+    # Este permiso solo queda visible/editable para que Daniel pueda, en el
+    # futuro, cerrar el Taller a OTRO rol adicional sin pedir otro deploy.
+    ("mantenciones", "taller"),
 }
 
 
@@ -52457,6 +52488,68 @@ def _no_tecnico(view):
     return wrapped
 
 
+def _es_tecnico_externo(user=None):
+    """True si `user` (o g.user si no se pasa) es un proveedor externo
+    (role='tecnico_externo' o cualquier variante, ej. 'tecnico_externo_jr').
+
+    Deliberadamente MÁS ESTRECHO que _es_rol_tecnico()/_rol_familia(): ese
+    normaliza tecnico_externo dentro de la familia genérica 'tecnico', lo
+    cual sirve para "¿es técnico de cualquier tipo?" pero NO alcanza para
+    distinguir interno de externo. Acá SÍ importa la distinción: Daniel
+    (2026-09-08, en vivo, urgente) pidió bloquear el Taller (Plantillas,
+    Proveedores, Repuestos, Ubicaciones, ficha de Técnicos, Incidencias)
+    SOLO para el proveedor externo -- el técnico INTERNO (Lenin, Dave,
+    Jaizer) sigue con el mismo acceso de siempre, sin tocar nada de lo que
+    ya tenía (Regla #4.2). "Ellos son externos y no deben ver información
+    sensible" -- ficha de otros proveedores, costos/stock de repuestos,
+    configuración de plantillas de checklist.
+    """
+    try:
+        if user is None:
+            user = getattr(g, "user", None)
+        role = ((user["role"] if user else "") or "").strip().lower()
+    except Exception:
+        role = ""
+    return role.startswith("tecnico_externo")
+
+
+def _no_tecnico_externo(view):
+    """Decorador: bloquea el acceso a usuarios con role='tecnico_externo*'.
+
+    Hermano de @_no_tecnico, pero SOLO para el proveedor externo -- el
+    técnico interno no se ve afectado. Se aplica a las pantallas del
+    "Taller" (sidebar) que Daniel pidió blindar 2026-09-08: exponen
+    información de OTROS proveedores, costos internos o configuración
+    que un proveedor externo no debe ver, más allá de lo que ya bloqueaba
+    @_no_tecnico en Proveedores/Incidencias (esas normalizan tecnico y
+    tecnico_externo por igual, vía _rol_familia -- sin cambios ahí).
+
+    Mismo contrato que @_no_tecnico: 403 JSON en AJAX, redirect+flash en
+    GET normal. Se aplica DESPUÉS de @_mant_required (misma convención).
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if _es_tecnico_externo():
+            is_ajax = (
+                request.headers.get("X-Wizard") == "1"
+                or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or (request.headers.get("Accept") or "").startswith("application/json")
+                or request.is_json
+                or request.path.startswith("/mantenciones/api/")
+                or request.path.startswith("/repuestos")
+            )
+            if is_ajax:
+                return jsonify({
+                    "ok": False,
+                    "error": "Acceso restringido. Gestiona tus Órdenes de Trabajo desde el panel.",
+                    "error_codigo": "PROVEEDOR_SIN_ACCESO",
+                }), 403
+            flash("Como proveedor externo, solo puedes ver las Órdenes de Trabajo asignadas a ti.", "warning")
+            return redirect(url_for("mant_ots_list"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def _puede_gestionar_clasificacion(user=None):
     """¿Puede este usuario administrar la CLASIFICACIÓN de producto?
 
@@ -63164,6 +63257,7 @@ def mant_api_incidencias_importar():
 
 @app.route("/repuestos")
 @_mant_required
+@_no_tecnico_externo
 def repuestos_hub_list():
     # 2026-08-08 (Daniel, levantamiento con Juan Pablo): los técnicos SÍ
     # deben poder ver y cargar la Bodega de Repuestos -- es el trabajo de
@@ -66371,6 +66465,7 @@ def _ext_row_to_dict(r):
 @app.route("/mantenciones/tecnicos-externos")
 @app.route("/servicio-tecnico/tecnicos-externos")
 @_mant_required
+@_no_tecnico_externo
 def mant_tecnicos_externos_index():
     """Listado de técnicos externos (cards grandes con foto, especialidades, rating)."""
     rows = mysql_fetchall(
@@ -87635,6 +87730,7 @@ def mant_ots_list():
 @app.route("/mantenciones/plantillas")
 @app.route("/servicio-tecnico/plantillas")
 @_mant_required
+@_no_tecnico_externo
 def mant_plantillas_page():
     """Página de gestión de plantillas de checklist."""
     return render_template("mantenciones/plantillas.html")
@@ -89181,6 +89277,7 @@ def _plantilla_error_nombre_duplicado(ex, nombre, tipo_visita):
 
 @app.route("/mantenciones/api/plantillas", methods=["POST"])
 @_mant_required
+@_no_tecnico_externo
 def mant_plantilla_crear():
     """Crea una plantilla con sus items en un solo POST.
     Body: { nombre, descripcion, tipo_visita, tiempo_estimado_min, items: [...] }
@@ -89269,6 +89366,7 @@ def mant_plantilla_crear():
 
 @app.route("/mantenciones/api/plantillas/<int:pid>", methods=["PUT"])
 @_mant_required
+@_no_tecnico_externo
 def mant_plantilla_actualizar(pid):
     """Actualiza la plantilla (header) y REEMPLAZA todos los items.
 
@@ -89402,6 +89500,7 @@ def mant_plantilla_actualizar(pid):
 
 @app.route("/mantenciones/api/plantillas/<int:pid>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico_externo
 def mant_plantilla_eliminar(pid):
     """Borra (soft) una plantilla. Las del sistema no se pueden borrar; solo
     desactivarse (activa=0).
@@ -106512,6 +106611,7 @@ def _ubi_zonas_agrupar(rows):
 
 @app.route("/repuestos/ubicaciones")
 @_mant_required
+@_no_tecnico_externo
 def repuestos_ubicaciones_page():
     """Repositorio de ubicaciones físicas de la Bodega de Repuestos
     (2026-08-27, Daniel: "un botón que nos lleve a las ubicaciones, para
@@ -106793,6 +106893,7 @@ def _repstock_contexto_bodega():
 
 @app.route("/repuestos/bodega")
 @_mant_required
+@_no_tecnico_externo
 def repuestos_bodega_list():
     """Bodega de repuestos como PÁGINA propia. Se conserva (Regla #4.2)
     aunque el acceso real hoy es la pestaña "Bodega" dentro de /repuestos
@@ -107888,6 +107989,7 @@ def repstock_modelo_quitar(rid, producto_id):
 
 @app.route("/repuestos/bodega/etiquetas")
 @_mant_required
+@_no_tecnico_externo
 def repstock_etiquetas():
     """Imprime etiquetas de repuestos (SKU + descripción + ubicación +
     barcode) — motor propio del módulo de repuestos, NO el de Catálogo/
@@ -107941,6 +108043,7 @@ def repstock_etiquetas():
 
 @app.route("/repuestos/bodega/imprimir")
 @_mant_required
+@_no_tecnico_externo
 def repuestos_print_labels():
     """Vista previa de impresión de etiquetas de repuestos -- mismo patrón
     UX que print_labels.html (Etiquetas/Catálogo): toolbar + vista previa
