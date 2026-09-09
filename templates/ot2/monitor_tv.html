@@ -1261,6 +1261,41 @@
     @media (prefers-reduced-motion:reduce){
       .tvm-firma{animation:none !important}
     }
+    /* 🆕 2026-09-09 (Daniel: "que la barra vaya avanzando, palpitante,
+       dinámico... algo impactante... integrar desde crear la OT hasta que
+       se firmó, con los pasos bien adecuados"). Reemplaza la barra de
+       avance de tareas + la píldora de firma sueltas (arriba) por UN solo
+       recorrido conectado: Ejecución -> Firma técnico -> Firma cliente ->
+       Cierre. Mismo lenguaje que el resto del monitor: verde = etapa
+       resuelta, rojo = LO ÚNICO que pulsa -- la etapa que está pasando
+       ahora mismo ("EJECUTANDO es lo único saturado y lo único que late",
+       ver el comentario grande al inicio de este archivo). Ver
+       renderEtapas() más abajo. */
+    .tvm-stepper{display:flex;align-items:flex-start;margin-top:14px;padding:2px 2px 0}
+    .tvm-step{display:flex;flex-direction:column;align-items:center;gap:7px;flex:none;width:56px}
+    .tvm-step-dot{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
+      justify-content:center;font-size:14px;background:rgba(255,255,255,.06);
+      border:2px solid rgba(255,255,255,.16);color:var(--txt-3);
+      transition:background .4s ease,border-color .4s ease,color .4s ease}
+    .tvm-step-lbl{font-size:10.5px;font-weight:800;letter-spacing:.01em;text-align:center;
+      color:var(--txt-3);line-height:1.15;transition:color .4s ease}
+    .tvm-step-line{flex:1;height:3px;border-radius:99px;background:rgba(255,255,255,.1);
+      margin:13px -6px 0;transition:background .5s ease}
+    .tvm-step-line.is-done{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
+    .tvm-step.is-done .tvm-step-dot{background:linear-gradient(135deg,var(--green-500),var(--green-600));
+      border-color:var(--green-400);color:#fff}
+    .tvm-step.is-done .tvm-step-lbl{color:#86efac}
+    .tvm-step.is-current .tvm-step-dot{background:rgba(230,0,0,.16);border-color:var(--ilus-red);
+      color:#ff8080;animation:tvmStepPulse 1.8s ease-in-out infinite}
+    .tvm-step.is-current .tvm-step-lbl{color:#fff}
+    @keyframes tvmStepPulse{
+      0%,100%{box-shadow:0 0 0 0 rgba(230,0,0,.5)}
+      50%{box-shadow:0 0 0 7px rgba(230,0,0,0)}
+    }
+    .tvm-stepper-sub{margin-top:7px;font-size:12.5px;font-weight:700;color:var(--txt-3)}
+    @media (prefers-reduced-motion:reduce){
+      .tvm-step.is-current .tvm-step-dot{animation:none}
+    }
     /* 🆕 2026-09-02 (Daniel: "involucrar los documentos... factura o
        boleta... a la hora de cerrar"): mismo lenguaje visual de las
        píldoras de firma (.tvm-firma-*) de arriba -- verde ya resuelto,
@@ -1588,13 +1623,54 @@
     pendiente:  'Pendiente',   // solo lo usan los bloques/modal, no las personas
   };
 
-  // 🆕 2026-08-29 — píldora de estado de firma (ver comentario en el forEach
-  // de bloques). Colores: ámbar = falta alguien todavía, verde = cerrada.
-  const FIRMA_PILL = {
-    tecnico:  { icon: 'bi-pen-fill',           txt: 'Firmó el técnico — falta el cliente' },
-    cliente:  { icon: 'bi-check2-circle',      txt: 'Firmó el cliente — falta cerrar' },
-    cerrada:  { icon: 'bi-patch-check-fill',   txt: 'Cerrada — las 3 firmas completas' },
-  };
+  // 🆕 2026-09-09 (Daniel: "algo impactante... integrar desde crear la OT
+  // hasta que se firmó, con los pasos bien adecuados" -- ver el comentario
+  // grande de .tvm-stepper en el <style>). Reemplaza la vieja píldora
+  // suelta de firma (ámbar/verde, sin conexión con el avance de tareas)
+  // por un recorrido de 4 etapas. `firma_estado` sigue viniendo de
+  // _ot_tv_datos (misma columna que ya gobierna firmar-revision/
+  // firmar-cliente/aprobar-cierre) -- nunca se desincroniza del back.
+  const ETAPAS_OT = [
+    { icon: 'bi-tools',            lbl: 'Ejecución' },
+    { icon: 'bi-pen-fill',         lbl: 'Firma técnico' },
+    { icon: 'bi-check2-circle',    lbl: 'Firma cliente' },
+    { icon: 'bi-patch-check-fill', lbl: 'Cierre' },
+  ];
+  // Índice (0-3) de la etapa donde está la OT AHORA MISMO -- la primera
+  // que todavía no se resolvió. Con 'cerrada' las 4 quedan resueltas.
+  function _etapaActualOt(b){
+    const fe = b.firma_estado || null;
+    if (fe === 'cerrada') return 4;
+    if (fe === 'cliente') return 2;
+    if (fe === 'tecnico') return 1;
+    return 0;
+  }
+  function renderEtapas(b, be){
+    const etapaAct = _etapaActualOt(b);
+    const cerrada = etapaAct === 4;
+    let html = '<div class="tvm-stepper">';
+    ETAPAS_OT.forEach((e, i) => {
+      const done = cerrada || i < etapaAct;
+      const current = !cerrada && i === etapaAct;
+      let cls = 'tvm-step';
+      if (done) cls += ' is-done'; else if (current) cls += ' is-current';
+      html += '<div class="' + cls + '"><div class="tvm-step-dot">' +
+        (done ? '<i class="bi bi-check-lg"></i>' : '<i class="bi ' + e.icon + '"></i>') +
+        '</div><span class="tvm-step-lbl">' + e.lbl + '</span></div>';
+      if (i < ETAPAS_OT.length - 1){
+        html += '<div class="tvm-step-line' + ((done || i < etapaAct) ? ' is-done' : '') + '"></div>';
+      }
+    });
+    html += '</div>';
+    // Mientras está en Ejecución, el % de tareas sigue siendo un dato útil
+    // (cuánto falta para poder firmar) -- se muestra chico, bajo el
+    // recorrido, en vez de como una barra grande compitiendo por atención.
+    if (!cerrada && etapaAct === 0){
+      const pct = Math.max(0, Math.min(100, Math.round(b.avance_pct || (be === 'terminado' ? 100 : 0))));
+      html += '<div class="tvm-stepper-sub">' + pct + '% de tareas completadas</div>';
+    }
+    return html;
+  }
 
   // 🆕 2026-09-08 — píldora del Anexo de Servicios (ver bloque.anexo, armado
   // en _ot_tv_datos desde mant_anexos). 'borrador' no dibuja nada a
@@ -2389,25 +2465,16 @@
         ot.appendChild(dir);
       }
 
-      const av = el('div', 'tvm-ot-av');
-      const bpct = Math.max(0, Math.min(100, Math.round(b.avance_pct || (be === 'terminado' ? 100 : 0))));
-      av.innerHTML = '<div class="av-bar"><i style="width:' + bpct + '%"></i></div><b>' + bpct + '% avance</b>';
-      ot.appendChild(av);
-
-      // 🆕 2026-08-29 (Daniel: "cuando quede al cien por ciento, no sabemos
-      // el estado de la firma... si firmó el técnico, si firmó el cliente o
-      // si se cerró completamente... si lo hace espectacular dentro de la
-      // burbuja, excelente"). El checklist en 100% no cuenta nada del ciclo
-      // de firmas -- esta píldora es la traducción visual de
-      // bloque.firma_estado (armado en _ot_tv_datos desde v.estado, la
-      // misma columna que ya gobierna firmar-revision/firmar-cliente/
-      // aprobar-cierre, así que nunca puede desincronizarse del back).
-      if (FIRMA_PILL[b.firma_estado]){
-        const fp = FIRMA_PILL[b.firma_estado];
-        const pill = el('div', 'tvm-firma tvm-firma-' + b.firma_estado);
-        pill.innerHTML = '<i class="bi ' + fp.icon + '"></i><span>' + fp.txt + '</span>';
-        ot.appendChild(pill);
-      }
+      // 🆕 2026-09-09 (Daniel: "algo impactante... desde crear la OT hasta
+      // que se firmó, con los pasos bien adecuados" -- ver el comentario
+      // grande junto a .tvm-stepper en el <style>). Antes esto era una
+      // barra de avance de tareas SUELTA (bpct) más, si aplicaba, una
+      // píldora de firma aparte y sin conexión visual entre ambas -- dos
+      // datos del mismo viaje contados por separado. Ahora es UN solo
+      // recorrido: Ejecución -> Firma técnico -> Firma cliente -> Cierre.
+      const jornada = el('div', 'tvm-ot-jornada');
+      jornada.innerHTML = renderEtapas(b, be);
+      ot.appendChild(jornada);
 
       // 🆕 2026-09-08 (Daniel: "en el monitor... si se envió el anexo o si
       // está firmado esa etapa"). Mismo criterio que la píldora de firma de
