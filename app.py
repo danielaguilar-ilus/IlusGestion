@@ -82905,7 +82905,16 @@ def ot2_api_crear():
     # motivo exacto en `avisos` y el anexo queda para completarse a mano
     # desde la ficha de la OT (mismo camino manual de siempre).
     try:
-        import json
+        # 🔴 FIX 2026-09-09 (urgente, producción caída: "error del servidor
+        # al crear OT"): este `import json` local convertía `json` en
+        # variable LOCAL para TODA la función ot2_api_crear (así funciona
+        # el scoping de Python -- no importa en qué línea esté el import,
+        # si existe uno local en cualquier parte del cuerpo, ninguna
+        # referencia anterior a `json` puede usar la del módulo). Eso
+        # rompía `json.dumps` más arriba en esta misma función
+        # (_fin_docs_extra_json) con UnboundLocalError, tumbando CADA
+        # creación de OT. `json` ya se importa a nivel de módulo (línea 4)
+        # -- este import sobraba y nunca debió agregarse acá.
         if _anexo_bloquea_ot(vid) == "SIN_ANEXO":
             _te = mysql_fetchone(
                 "SELECT id, razon_social, rut_empresa, direccion_empresa, "
