@@ -619,6 +619,20 @@
   cursor:pointer;padding:2px 0;text-decoration:none;white-space:nowrap;min-height:24px}
 .otd-d .edit:hover{color:#fff;text-decoration:underline}
 
+/* 🖊️ 2026-09-09 (Aaron, vía Daniel: "en la ficha de cliente podía
+   modificar el título de la OT... es un tema de él para su control").
+   El lápiz de la ficha de cliente apuntaba antes a un modal clásico que
+   sí lo dejaba renombrar (editarVisita); desde el 4-sep ese lápiz abre
+   esta pantalla (ot2_detalle) en su lugar -- pero acá el título nunca se
+   mostraba ni se podía tocar. Mismo patrón visual que el lápiz de
+   Reagendar/Reasignar de arriba. */
+.otd-titulo{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  color:#cbd5e1;font-size:.82rem;font-weight:600;margin:0 0 4px}
+.otd-titulo .edit{display:inline-flex;align-items:center;gap:3px;
+  background:none;border:0;color:#fca5a5;font-size:.66rem;font-weight:800;
+  cursor:pointer;padding:2px 0;text-decoration:none;white-space:nowrap;min-height:24px}
+.otd-titulo .edit:hover{color:#fff;text-decoration:underline}
+
 /* Caja de edición (Reagendar / Reasignar) — versión OSCURA de la caja
    gris que ya existe en ot_ejecutar.html, para que flote bien sobre el
    hero negro. Los inputs/selects de Bootstrap se dejan con su fondo
@@ -2117,6 +2131,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         <span class="otd-tipo"><i class="bi {{ v.tipo_icon }}"></i>{{ v.tipo_label }}</span>
         <h2 class="otd-num">{{ v.numero_ot or ('OT #' ~ v.id) }}</h2>
         <p class="otd-cli">{{ v.razon_social or 'Sin cliente asignado' }}</p>
+        <div class="otd-titulo">
+          <span id="otdTituloTxt">{{ v.titulo or '—' }}</span>
+          {% if puede_metadata %}
+          <button type="button" class="edit" onclick="otdAbrirEditarTitulo()">
+            <i class="bi bi-pencil"></i> Editar título</button>
+          {% endif %}
+        </div>
         <div class="otd-dir">
           {% if v.cliente_direccion %}
             <i class="bi bi-geo-alt-fill"></i>
@@ -6775,6 +6796,40 @@ window.otdConfirmarReagendar = async function(){
     }
   } catch(e){
     ilusToast('Error de conexión al reagendar.', {type:'error'});
+  }
+};
+
+// 🖊️ 2026-09-09 (Aaron, vía Daniel): mismo endpoint PUT que Reagendar/
+// Reasignar (@_ot_can_metadata ya acepta "titulo" en su whitelist desde
+// siempre -- el hueco era puramente de frontend, esta pantalla nunca lo
+// mostraba ni tenía cómo editarlo). REGLA #1: ilusPrompt, no prompt() nativo.
+window.otdAbrirEditarTitulo = async function(){
+  const actual = (document.getElementById('otdTituloTxt')?.textContent || '').trim();
+  const nuevo = await ilusPrompt({
+    title: 'Editar título de la OT',
+    message: 'Este texto es solo para tu control interno — no afecta el checklist ni las tareas.',
+    placeholder: 'Ej: Mantención preventiva sept. — sala de musculación',
+    defaultValue: actual === '—' ? '' : actual,
+  });
+  if (nuevo === null) return;
+  const limpio = nuevo.trim();
+  if (!limpio){ ilusToast('El título no puede quedar vacío.', {type:'warning'}); return; }
+  if (limpio === actual) return;
+  try {
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({titulo: limpio}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      const txt = document.getElementById('otdTituloTxt');
+      if (txt) txt.textContent = limpio;
+      ilusToast('✓ Título actualizado', {type:'success'});
+    } else {
+      ilusToast(j.error || 'No se pudo actualizar el título.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al actualizar el título.', {type:'error'});
   }
 };
 
