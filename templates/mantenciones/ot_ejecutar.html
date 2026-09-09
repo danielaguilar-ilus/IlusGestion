@@ -1937,7 +1937,15 @@
       {% set n_fotos_eq = fotos_por_equipo_count.get(eq.id, 0) %}
       <div class="eq-foto-wrap{% if n_fotos_eq %} tiene-fotos{% endif %}"
            {% if n_fotos_eq %}
-           onclick="event.stopPropagation(); abrirGaleriaEquipo({{ eq.id }}, {{ (eq.nombre or 'Equipo') | tojson }})"
+           {#- 🔴 FIX 2026-09-08: mismo bug que el botón "Enviar a firmar" del
+               Anexo en OT 2.0 -- `tojson` deja sus comillas envolventes tal
+               cual (pensadas para vivir dentro de un <script>, no de un
+               atributo HTML), así que puestas directo en un onclick="..."
+               cortaban el atributo en la primera comilla del JSON: el click
+               en la miniatura de un equipo con fotos no hacía nada, para
+               CUALQUIER equipo, en silencio. `forceescape` las vuelve a
+               escapar a &#34;, válidas dentro del atributo. -#}
+           onclick="event.stopPropagation(); abrirGaleriaEquipo({{ eq.id }}, {{ (eq.nombre or 'Equipo') | tojson | forceescape }})"
            role="button" tabindex="0" title="Ver {{ n_fotos_eq }} foto{{ 's' if n_fotos_eq != 1 else '' }} de este equipo"
            {% endif %}>
         {% if eq.foto_url %}

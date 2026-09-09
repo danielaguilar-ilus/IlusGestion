@@ -3095,11 +3095,25 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <i class="bi bi-pencil-fill"></i> Editar</button>
             {% endif %}
             {% if not _anx_firmado %}
+            {#- 🔴 FIX 2026-09-08 (Daniel, en vivo, OT-175: "enviar a firmar no
+                funciona"). Causa raíz real: `tojson` deja las comillas dobles
+                que envuelven todo string TAL CUAL (Flask solo las escapa para
+                que vivan seguras dentro de un <script>, no dentro de un
+                atributo HTML) -- puesto directo dentro de un onclick="..."
+                entre comillas dobles, el HTML se corta en la primera comilla
+                del JSON. El botón quedaba con un onclick roto a la mitad
+                (`OT2ANX.abrirEnviar(167, ` sin cerrar) para CUALQUIER anexo,
+                sin importar el contenido de sus datos -- fallaba en
+                silencio, sin ningún error visible para Daniel. `forceescape`
+                vuelve a escapar esas comillas a `&#34;` para que sobrevivan
+                como atributo HTML válido; el navegador las decodifica de
+                vuelta a `"` antes de ejecutar el JS, así que el JSON se
+                reconstituye intacto. -#}
             <button type="button" class="otd-btn pri" style="flex:1;justify-content:center"
                     onclick="OT2ANX.abrirEnviar({{ anexo.id }},
-                             {{ (anexo.get('enviado_email') or '') | tojson }},
-                             {{ (anexo.get('enviado_tel') or '') | tojson }},
-                             {{ (anexo.numero or '') | tojson }})">
+                             {{ (anexo.get('enviado_email') or '') | tojson | forceescape }},
+                             {{ (anexo.get('enviado_tel') or '') | tojson | forceescape }},
+                             {{ (anexo.numero or '') | tojson | forceescape }})">
               <i class="bi bi-send-fill"></i>
               {{ 'Reenviar' if anexo.enviado_at else 'Enviar a firmar' }}</button>
             {% endif %}
