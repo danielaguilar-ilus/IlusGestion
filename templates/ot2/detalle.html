@@ -3257,13 +3257,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             {% endif %}
           {% else %}
             {% if puede_ejecutar %}
+              {# 🔴 FIX 2026-09-09 (Daniel, explícito: "ese botón no debería
+                 estar allí, debería estar abajo... eliminaría el botón de
+                 información y dejaría solo el de abajo"). El botón vivía
+                 DUPLICADO acá y en la barra inferior fija (.otd-bottom,
+                 siempre visible) -- con la barra ya abriendo el mismo modal
+                 directo (OT2F.abrirFirmaTecnico()), este quedaba pisándose
+                 con el de abajo sin aportar nada nuevo. Se deja solo el
+                 aviso de qué falta -- la ACCIÓN vive únicamente abajo. #}
               {% set _obl_falta = kpis.obl - kpis.obl_ok %}
-              <button type="button" class="otd-btn pri" id="otfBtnFirmar" style="width:100%;justify-content:center"
-                      onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta > 0 }}>
-                <i class="bi bi-{{ 'lock-fill' if _obl_falta > 0 else 'pen-fill' }}"></i>
-                {{ 'Faltan obligatorias para firmar' if _obl_falta > 0 else 'Firmar como técnico' }}</button>
               {% if _obl_falta > 0 %}
-              <div class="otf-hint">Faltan {{ _obl_falta }} tarea{{ 's' if _obl_falta != 1 }} obligatoria{{ 's' if _obl_falta != 1 }} — revisa la pestaña Trabajo.</div>
+              <div class="otf-hint">Faltan {{ _obl_falta }} tarea{{ 's' if _obl_falta != 1 }} obligatoria{{ 's' if _obl_falta != 1 }} — revisa la pestaña Trabajo. Cuando termines, firma con el botón de abajo.</div>
+              {% else %}
+              <div class="otf-msg otf-ok"><i class="bi bi-check-circle-fill"></i> Todo listo — firma con el botón de abajo.</div>
               {% endif %}
             {% else %}
             <div class="otf-msg otf-wait"><i class="bi bi-eye"></i> Solo lectura — no puedes ejecutar esta OT.</div>
@@ -4372,27 +4378,25 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     <button type="button" class="b" onclick="OT2F.enviarFirmaAmbos()">
       <i class="bi bi-send-check-fill"></i> Enviar firma (WhatsApp/correo)</button>
     {% endif %}
-    {% elif es_tecnico and puede_ejecutar
+    {% elif puede_ejecutar
           and v.estado not in ('cerrada','completada','pendiente_aprobacion','firmada_tecnico') %}
     {# 🙈 2026-09-08 — réplica exacta del botón "Firmar como técnico" de la
        tarjeta oculta arriba: mismo endpoint (OT2F.abrirFirmaTecnico()),
        mismo candado de obligatorias, cero lógica nueva -- solo cambia de
-       lugar para vivir en el footer, como pidió Daniel. #}
+       lugar para vivir en el footer, como pidió Daniel.
+       🔴 2026-09-09 (Daniel, en vivo, celular: "quiero que cuando presione
+       me abra el modal para firmar"): antes decía `es_tecnico and
+       puede_ejecutar` -- eso dejaba a gestión (superadmin, el único no-
+       técnico con puede_ejecutar=true, ver matriz de permisos) sin nada
+       acá cuando la OT estaba en un estado temprano, ni siquiera un
+       redirect. Se quita `es_tecnico`: `puede_ejecutar` YA distingue
+       correctamente quién puede firmar (técnico asignado o superadmin) --
+       el candado real sigue viviendo en firmar-revision, este botón no
+       abre ninguna puerta que el backend no abriera ya. #}
     {% set _obl_falta_bar = kpis.obl - kpis.obl_ok %}
     <button type="button" class="b pri" onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta_bar > 0 }}>
       <i class="bi bi-{{ 'lock-fill' if _obl_falta_bar > 0 else 'pen-fill' }}"></i>
       {{ 'Faltan obligatorias para firmar' if _obl_falta_bar > 0 else 'Firmar como técnico' }}</button>
-    {% elif not es_tecnico and v.estado not in ('cerrada','completada') %}
-    {# 🔴 2026-09-09 (Daniel, en vivo, celular: "no tiene botón para firmar
-       cuando se completan... colócalo abajo" / "¿dónde firmo?"). Los dos
-       ramas de arriba cubren pendiente_aprobacion/firmada_tecnico -- para
-       cualquier estado más temprano (programada/ejecutando) gestión no
-       tenía NINGÚN botón acá, solo Ver PDF y Anexo de fotos. No abre el
-       canvas de firma directo (esa acción es del técnico, no de quien
-       gestiona) -- lleva a la tarjeta completa en Información, mismo
-       patrón que otdIrAFinanzas. #}
-    <button type="button" class="b pri" onclick="otdIrAFirmar()">
-      <i class="bi bi-vector-pen"></i> Ir a Firmar y cerrar OT</button>
     {% endif %}
   </div>
 </div>
@@ -4945,13 +4949,19 @@ function otdIniciarRuta(app){
           Al firmar como técnico, la OT pasa a <strong>"Firmada por técnico"</strong>. El ejecutivo SSTT podrá revisar/corregir antes de la firma del cliente.
         </div>
 
-          </div>
-        </div>
-        {# ══ PASO 2 — QUÉ ESTÁS CERTIFICANDO ═════════════════════════════ #}
-        <div class="otd-fpaso listo">
-          <div class="hd"><span class="num">2</span> Qué estás certificando</div>
-          <div class="bd">
-
+        {# 🔴 FIX 2026-09-09 (Daniel, en vivo desde el celular: "la vista
+           responsiva se ve pésima... en la firma"). Acá había DOS </div>
+           de más que cerraban .modal-body y .modal-content justo después
+           de este aviso -- todo lo que sigue (compromisos, firma del
+           técnico, firma del cliente, footer) quedaba renderizando FUERA
+           de .modal-content, como hermano de .modal-dialog en vez de hijo:
+           Bootstrap nunca le daba el fondo/padding/ancho del modal, así
+           que en mobile se veía partido/superpuesto. También se quita el
+           wrapper "Paso 2" (un envoltorio suelto, sin Paso 1 en ningún
+           lado de este modal -- copiado a medias de otfModalAprobacion,
+           que sí es de varios pasos) que dejaba el cierre real de
+           .modal-body colgando después del footer. Nada de contenido se
+           quita, solo se reordena el cierre de los divs. #}
         <div class="resp-firma-card">
           <div class="resp-firma-head">
             <i class="bi bi-file-earmark-check"></i>
