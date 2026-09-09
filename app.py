@@ -82285,10 +82285,19 @@ def ot2_api_crear():
     _fin_centro = (_fin.get("centro_costo") or "").strip().lower() or None
     if _fin_centro and _fin_centro not in [c for c, _ in _OT2_CENTROS_COSTO]:
         return _ot2_err("Ese centro de costo no existe.", "CENTRO_INVALIDO")
-    # Daniel 2026-08-26: por defecto Servicio Técnico. El centro sirve para
-    # rendir el dinero que se pierde por decisiones que NO son de SSTT
-    # (convenios de Comercial, costos de Logística) — sin un valor por
-    # defecto todo quedaba en NULL y no se podía atribuir nada.
+    # 🔒 2026-09-09 (Daniel, explícito: "los documentos y las finanzas deben
+    # ser requisito indispensable... con datos persistentes en la OT"): para
+    # OT de CLIENTE el centro de costo ya no se puede dejar en blanco y
+    # rellenar solo con 'sstt' en silencio -- ese default servía de red de
+    # seguridad, pero permitía crear una OT sin que nadie decidiera a quién
+    # se le imputa (caso real: OT-2026-00156, creada con TODA la sección
+    # Finanzas vacía porque el frontend ya lo exige pero el backend nunca lo
+    # revalidaba). El default sigue existiendo solo para trabajo interno,
+    # que de todos modos queda exento del resto de este bloque.
+    if not es_interna and not _fin_centro:
+        return _ot2_err("Elige el centro de costo antes de crear la OT.",
+                        "FINANZAS_SIN_CENTRO_COSTO")
+    # Daniel 2026-08-26: por defecto Servicio Técnico para trabajo interno.
     _fin_centro = _fin_centro or "sstt"
 
     _fin_gar = bool(_fin.get("garantia_aplica"))
@@ -82304,6 +82313,30 @@ def ot2_api_crear():
         _fin_zzm = int(_fin.get("zz_monto")) if str(_fin.get("zz_monto") or "").strip() else None
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
+    # 🔒 2026-09-09 (Daniel, mismo pedido de arriba): documento-o-garantía y
+    # el monto estimado también pasan a ser indispensables para crear una OT
+    # de cliente -- antes solo los exigía el wizard (completo('finanzas') en
+    # _modal_crear.html), nunca el backend. Mismo criterio que ya usan
+    # aprobar-cierre y mant_ot_declarar_cobertura (exento solo trabajo
+    # interno; garantía exige motivo ≥10 caracteres, igual que declarar
+    # cobertura después). El monto acepta la línea ZZ real del documento O
+    # un valor declarado a mano (zz_monto de todos modos, ver
+    # o2fFinPayload/crear() en _modal_crear.html) — nunca queda en blanco.
+    if not es_interna:
+        if not _fin_gar and not (_fin_tido and _fin_nudo):
+            return _ot2_err(
+                "Asocia el documento del ERP (factura, boleta o nota de "
+                "venta) o declara la OT como garantía antes de crear.",
+                "FINANZAS_SIN_COBERTURA")
+        if _fin_gar and (not _fin_motivo or len(_fin_motivo) < 10):
+            return _ot2_err(
+                "Explica por qué esta OT va por garantía (mínimo 10 "
+                "caracteres).", "FINANZAS_GARANTIA_SIN_MOTIVO")
+        if _fin_zzm is None or _fin_zzm <= 0:
+            return _ot2_err(
+                "Falta declarar el monto estimado del servicio (línea del "
+                "documento, cotización asociada, o un valor a mano).",
+                "FINANZAS_SIN_MONTO")
     # 2026-08-30 (Daniel: "el ZZ envío por si hay despacho... identifícalo
     # ... que no se pierda ni se mezcle con el valor del servicio"): la
     # línea ZZENVIO del MISMO documento se guarda APARTE de zz_codigo/

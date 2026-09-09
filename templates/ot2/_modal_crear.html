@@ -1281,6 +1281,16 @@ window.OT2C = (function(){
       case 'finanzas':
         if (!S.fin_centro) return false;
         if (!(S.fin_garantia || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo))) return false;
+        // 🔒 2026-09-09 (Daniel, explícito: "los documentos y las finanzas
+        // deben ser requisito indispensable... con datos persistentes en la
+        // OT"): antes el monto en sí quedaba deliberadamente fuera de esta
+        // validación -- ahora el backend (ot2_api_crear) también lo exige,
+        // así que dejarlo pasar acá solo produciría un 400 sorpresa al
+        // apretar "Crear orden". _ventaActual() ya resuelve la MISMA
+        // prioridad que usa crear() para armar el payload: línea ZZ real →
+        // cotización interna → estimado automático por clasificación.
+        if (!(_ventaActual() > 0)) return false;
+        if (S.fin_garantia && (S.fin_garantia_motivo||'').trim().length < 10) return false;
         // 2026-08-30 (Daniel: "si no trae esto se podrá declarar a mano,
         // pero deberá reportarse con un argumento... hay que ser bien
         // riguroso y detallista con esto"): esto SÍ bloquea -- a diferencia
@@ -7264,6 +7274,20 @@ window.OT2C = (function(){
         body.finanzas.zz_codigo = S.fin_zz_codigo || null;
         body.finanzas.zz_monto = S.fin_zz_monto;
         if (_o2mFinEsManual()) body.finanzas.zz_motivo_manual = S.fin_zz_motivo_manual || '';
+      } else if (S.fin_cotizacion && S.fin_cotizacion.total != null){
+        // 🔒 2026-09-09 (Daniel: "las finanzas... requisito indispensable y
+        // con datos persistentes"): _ventaActual() ya usaba este total para
+        // pintar el margen en pantalla, pero nunca viajaba al backend -- una
+        // OT valorizada con "Buscar cotización" (garantía o sin documento
+        // todavía) se creaba sin ningún monto guardado. El backend ahora
+        // exige un monto siempre (ver ot2_api_crear), así que esto deja de
+        // ser opcional.
+        body.finanzas.zz_monto = Math.round(S.fin_cotizacion.total);
+        body.finanzas.zz_motivo_manual = 'Valorizado con cotización ' +
+          (S.fin_cotizacion.numero || ('#' + S.fin_cotizacion.id));
+      } else if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
+        body.finanzas.zz_monto = Math.round(S.fin_costo_estimado.total_neto);
+        body.finanzas.zz_motivo_manual = 'Estimado automático por clasificación del producto';
       }
       // ZZENVIO: aparte, en columnas propias (zz_envio_codigo/zz_envio_monto)
       // -- nunca dentro de costo_proveedor/costo_despacho, que son lo que le

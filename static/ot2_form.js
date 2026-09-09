@@ -2991,6 +2991,42 @@ async function o2fGenerar(){
     if(_O2F.eqPlantillas[key] && _O2F.eqPlantillas[key].size > 0) plantillasPorEq[key] = Array.from(_O2F.eqPlantillas[key]);
   });
 
+  // 🔒 2026-09-09 (Daniel, explícito: "todas las OT deben al crearse dejar
+  // evidencia y trazabilidad documental y los costos declarados"). El Paso
+  // 8 (Finanzas) de este modal nació opcional (20-08-2026) y esa promesa
+  // de "obligatorio al firmar" nunca se implementó -- caso real:
+  // OT-2026-00156, creada desde un ticket con Finanzas 100% vacía y
+  // firmada por el técnico sin que nadie lo notara. Mismo criterio que
+  // completo('finanzas') en _modal_crear.html y que ahora también exige el
+  // backend (ot2_api_crear) -- exento solo trabajo interno.
+  if(!esInterno){
+    const _finGar = !!(document.getElementById('o2fFinGarantia')||{}).checked;
+    const _finMotivo = (document.getElementById('o2fFinGarMotivo')?.value || '').trim();
+    const _finMontoGar = (document.getElementById('o2fFinMontoGar')?.value || '').trim();
+    const _finNudo = (document.getElementById('o2fFinNudo')?.value || '').trim();
+    const _finMonto = (document.getElementById('o2fFinMonto')?.value || '').trim();
+    if(!_o2fCentroCosto){
+      ilusToast('Elige el centro de costo antes de crear la OT (paso Finanzas).', {type:'warning'});
+      document.getElementById('o2fStep8')?.scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+    if(!_finGar && !_finNudo){
+      ilusToast('Asocia el documento del ERP o declara la OT como garantía (paso Finanzas).', {type:'warning'});
+      document.getElementById('o2fStep8')?.scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+    if(_finGar && _finMotivo.length < 10){
+      ilusToast('Explica por qué esta OT va por garantía (mínimo 10 caracteres).', {type:'warning'});
+      document.getElementById('o2fFinGarMotivo')?.focus();
+      return;
+    }
+    if(!(_finGar ? _finMontoGar : _finMonto)){
+      ilusToast('Falta el monto estimado del servicio (paso Finanzas).', {type:'warning'});
+      document.getElementById('o2fStep8')?.scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+  }
+
   const btn = document.getElementById('o2fBtnCrear');
   const btnHTMLOrig = btn.innerHTML;
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando OT…';
@@ -3466,6 +3502,10 @@ function o2fFinToggleGarantia() {
     ['o2fFinTido', 'o2fFinNudo', 'o2fFinMonto'].forEach(function (id) {
       var el = document.getElementById(id); if (el) el.value = '';
     });
+  } else {
+    ['o2fFinGarMotivo', 'o2fFinMontoGar'].forEach(function (id) {
+      var el = document.getElementById(id); if (el) el.value = '';
+    });
   }
   o2fFinRefrescar();
 }
@@ -3482,16 +3522,21 @@ function o2fFinSetCentro(cc) {
   o2fFinRefrescar();
 }
 
-/* El paso se pinta verde cuando queda completo, aunque no sea obligatorio
-   todavia: da la señal de que ya no hay nada pendiente ahi. */
+/* 🔒 2026-09-09 (Daniel: "todas las OT deben al crearse dejar evidencia y
+   trazabilidad documental y los costos declarados"): este paso YA NO es
+   opcional (ver o2fGenerar, que ahora bloquea de verdad) -- el semáforo
+   verde acá refleja el mismo criterio real: centro de costo + (garantía
+   con motivo Y monto, o documento con N° Y monto). */
 function o2fFinRefrescar() {
   var card = document.getElementById('o2fStep8');
   if (!card) return;
   var sw = document.getElementById('o2fFinGarantia');
   var completo = !!_o2fCentroCosto && (
     (sw && sw.checked)
-      ? !!(document.getElementById('o2fFinGarMotivo') || {}).value
+      ? !!(document.getElementById('o2fFinGarMotivo') || {}).value.trim()
+        && !!(document.getElementById('o2fFinMontoGar') || {}).value
       : !!(document.getElementById('o2fFinNudo') || {}).value
+        && !!(document.getElementById('o2fFinMonto') || {}).value
   );
   card.classList.toggle('is-complete', completo);
 }
@@ -3505,7 +3550,10 @@ function o2fFinSugerirZZ() {
   zz.placeholder = _O2F_LINEA_ZZ[tipo] || 'ZZ…';
 }
 
-/* Lo que se manda al crear. Todo opcional en esta etapa. */
+/* Lo que se manda al crear. 🔒 2026-09-09: ya no es opcional (ver
+   o2fGenerar) -- el backend (ot2_api_crear) también lo exige para OT de
+   cliente. El monto de garantía (o2fFinMontoGar) viaja igual como
+   zz_monto: el backend no distingue la fuente, solo exige que exista. */
 function o2fFinPayload() {
   var sw = document.getElementById('o2fFinGarantia');
   var g = !!(sw && sw.checked);
@@ -3518,7 +3566,7 @@ function o2fFinPayload() {
     factura_tido: g ? null : (v('o2fFinTido') || null),
     factura_nudo: g ? null : (v('o2fFinNudo') || null),
     zz_codigo: g ? null : (v('o2fFinZZ') || _O2F_LINEA_ZZ[tipo] || null),
-    zz_monto: g ? null : (v('o2fFinMonto') || null)
+    zz_monto: g ? (v('o2fFinMontoGar') || null) : (v('o2fFinMonto') || null)
   };
 }
 

@@ -716,10 +716,17 @@
 
         {# ─── Paso 8: FINANZAS ───────────────────────────────────────────
            Daniel (20-08-2026): "al principio que sea opcional en el modal,
-           pero al solicitar la firma debe ir de manera obligatoria".
-           Por eso nace .is-optional: no bloquea "Generar OT". Lo que sí
-           bloquea es pedir la firma sin esto declarado. Es reversible. #}
-        <div class="lev-step-card is-optional" id="o2fStep8">
+           pero al solicitar la firma debe ir de manera obligatoria". Esa
+           promesa nunca se implementó de verdad (ni el backend de firma ni
+           este modal la exigían) -- caso real: OT-2026-00156, creada desde
+           un ticket con esta sección 100% vacía y firmada por el técnico
+           sin que nadie lo notara.
+           🔒 2026-09-09 (Daniel, explícito: "todas las OT deben al crearse
+           dejar evidencia y trazabilidad documental y los costos
+           declarados"): deja de ser opcional. Mismo criterio que
+           completo('finanzas') en _modal_crear.html y que ahora también
+           exige el backend (ot2_api_crear) -- exento solo trabajo interno. #}
+        <div class="lev-step-card" id="o2fStep8">
           <div class="lev-step-header">
             <div class="lev-step-circle-wrap">
               <div class="lev-step-circle-label">Paso 8</div>
@@ -730,17 +737,17 @@
             </div>
             <div class="lev-step-titles">
               <div class="lev-step-title">Finanzas
-                <span class="badge bg-secondary ms-1"
-                      style="font-size:.6rem;vertical-align:middle">OPCIONAL AHORA</span></div>
-              <div class="lev-step-sub">Cómo se cubre este trabajo — se puede completar después</div>
+                <span class="badge bg-danger ms-1"
+                      style="font-size:.6rem;vertical-align:middle">OBLIGATORIO</span></div>
+              <div class="lev-step-sub">Cómo se cubre este trabajo — centro de costo, documento o garantía, y el monto</div>
             </div>
           </div>
           <div class="lev-step-body">
 
             <div class="alert alert-light border d-flex gap-2 py-2 mb-3" style="font-size:.78rem">
               <i class="bi bi-info-circle-fill text-primary"></i>
-              <div>Puedes dejarlo para después: <b>al pedir la firma será obligatorio</b>
-                declarar si va con garantía o con documento.</div>
+              <div>Elige el centro de costo, declara si va con documento o con garantía, y el monto estimado —
+                sin esto no se puede crear la OT.</div>
             </div>
 
             <div class="d-flex align-items-center gap-2 p-2 rounded mb-3"
@@ -760,7 +767,7 @@
             <div id="o2fFinDocBox">
               <div class="row g-2">
                 <div class="col-md-3">
-                  <label class="form-label small fw-semibold">Tipo de documento</label>
+                  <label class="form-label small fw-semibold">Tipo de documento *</label>
                   <select class="form-select form-select-sm" id="o2fFinTido">
                     <option value="">Sin declarar</option>
                     <option value="FCV">Factura</option>
@@ -770,7 +777,7 @@
                   </select>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label small fw-semibold">N° del documento</label>
+                  <label class="form-label small fw-semibold">N° del documento *</label>
                   <input class="form-control form-control-sm" id="o2fFinNudo"
                          placeholder="Ej: 12345" maxlength="20">
                 </div>
@@ -781,7 +788,7 @@
                   <small class="text-muted" style="font-size:.68rem">Se sugiere según el tipo</small>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label small fw-semibold">Monto del servicio</label>
+                  <label class="form-label small fw-semibold">Monto del servicio *</label>
                   <input type="number" class="form-control form-control-sm" id="o2fFinMonto"
                          placeholder="0" min="0">
                 </div>
@@ -795,11 +802,17 @@
               <small class="text-muted" style="font-size:.7rem">
                 Queda registrado: es lo que permite defender después por qué no se cobró.
               </small>
+              <label class="form-label small fw-semibold mt-2">Monto estimado del servicio *</label>
+              <input type="number" class="form-control form-control-sm" id="o2fFinMontoGar"
+                     placeholder="0" min="0">
+              <small class="text-muted" style="font-size:.7rem">
+                Aunque no se cobre, queda para medir cuánto se entregó en garantía.
+              </small>
             </div>
 
             <hr class="my-3">
 
-            <label class="form-label small fw-semibold">Centro de costo</label>
+            <label class="form-label small fw-semibold">Centro de costo *</label>
             <div class="d-flex gap-2 flex-wrap" id="o2fFinCentro">
               <button type="button" class="btn btn-sm btn-outline-secondary o2f-cc"
                       data-cc="sstt" style="min-height:40px">
