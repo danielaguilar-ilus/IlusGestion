@@ -88275,12 +88275,22 @@ def mant_ots_list():
 # PLANTILLAS DE CHECKLIST — UI
 # ═════════════════════════════════════════════════════════════════════
 
-@app.route("/mantenciones/plantillas")
 @app.route("/servicio-tecnico/plantillas")
+@app.route("/mantenciones/plantillas")
 @_mant_required
 @_no_tecnico_externo
 def mant_plantillas_page():
-    """Página de gestión de plantillas de checklist."""
+    """Página de gestión de plantillas de checklist.
+
+    🔒 2026-09-09 (Daniel: "la plantilla está en el link de mantenciones,
+    tiene que estar en el link de servicio técnico"): las dos URLs ya
+    existían y las dos siguen funcionando -- lo que cambió es el ORDEN de
+    los decoradores. Flask usa el PRIMER @app.route registrado como el
+    canónico para url_for(), así que con /mantenciones/plantillas primero
+    el sidebar (url_for('mant_plantillas_page')) siempre terminaba
+    generando esa URL aunque /servicio-tecnico/plantillas ya estuviera ahí
+    desde antes. /mantenciones/plantillas se conserva como alias (Regla
+    #4.2: nunca se rompe un link ya repartido/guardado)."""
     return render_template("mantenciones/plantillas.html")
 
 
