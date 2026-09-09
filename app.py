@@ -83604,6 +83604,33 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             print(f"[ot_tv] levantamiento: {e}", flush=True)
             _lev_por_visita = {}
 
+    # 🆕 2026-09-08 (Daniel, en vivo, tras el bug de envío de la OT-175:
+    # "también me gustaría que en el monitor pudiera saber si se envió el
+    # anexo o si está firmado"). El Anexo de Servicios (proveedor externo)
+    # es un ciclo de firma DISTINTO del `firma_estado` de arriba (que es
+    # técnico → cliente → cierre de la OT misma) -- una OT puede estar
+    # 100% bloqueada esperando SOLO el anexo, y hasta hoy el monitor no
+    # decía nada de eso. Mismo patrón batched que _lev_por_visita: una sola
+    # consulta para todas las OT visibles, no una por fila.
+    # Una OT puede tener más de un anexo en su historia (se anula/rechaza y
+    # se crea otro) -- solo importa el ÚLTIMO. `ORDER BY id DESC` +
+    # `setdefault` se queda con la primera fila que ve por ot_id, que es la
+    # de mayor id gracias al orden.
+    _anexo_por_visita = {}
+    if _vids:
+        try:
+            _ph_anx = ",".join(["%s"] * len(_vids))
+            for _ar in (mysql_fetchall(
+                "SELECT ot_id, numero, estado, enviado_at, visto_at, firmado_at, "
+                "       proveedor_nombre "
+                "  FROM mant_anexos "
+                f" WHERE ot_id IN ({_ph_anx}) "
+                " ORDER BY id DESC", tuple(_vids)) or []):
+                _anexo_por_visita.setdefault(_ar.get("ot_id"), _ar)
+        except Exception as e:
+            print(f"[ot_tv] anexo: {e}", flush=True)
+            _anexo_por_visita = {}
+
     if _vids:
         try:
             _ph = ",".join(["%s"] * len(_vids))
@@ -83777,6 +83804,23 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         else:
             firma_estado = None           # todavía no hay nada que mostrar
 
+        # 🆕 2026-09-08 (Daniel, en vivo: "también me gustaría que en el
+        # monitor pudiera saber si se envió el anexo o si está firmado esa
+        # etapa"). Ciclo DISTINTO del firma_estado de arriba: ese es
+        # técnico/cliente/cierre de la OT; esto es el proveedor EXTERNO
+        # firmando el Anexo de Servicios antes de poder trabajarla (ver
+        # _anexo_bloquea_ot). Sin anexo asociado (OT interna, o proveedor
+        # propio) queda en None y el template no dibuja nada.
+        _anx = _anexo_por_visita.get(f.get("id"))
+        anexo_info = ({
+            "numero": _anx.get("numero"),
+            "estado": (_anx.get("estado") or "").lower(),
+            "enviado_at": _ot_tv_iso(_anx.get("enviado_at")),
+            "visto_at": _ot_tv_iso(_anx.get("visto_at")),
+            "firmado_at": _ot_tv_iso(_anx.get("firmado_at")),
+            "proveedor_nombre": (_anx.get("proveedor_nombre") or "")[:60],
+        } if _anx else None)
+
         # 2026-08-27 (Daniel: "quisiera saber qué van a hacer, si es una
         # instalación, una mantención, una visita... todo eso necesito que
         # lo capturemos"): el tipo ya se guarda y ya se consulta (v.tipo),
@@ -83893,6 +83937,7 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             "lev_equipos": lev_equipos, "lev_listos": lev_listos,
             "lev_fotos": lev_fotos, "lev_ultimo_iso": lev_ultimo_iso,
             "firma_estado": firma_estado,
+            "anexo": anexo_info,
         }
 
         tid = f.get("tec_id")
