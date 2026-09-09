@@ -14385,8 +14385,8 @@ def admin_storage_migrar_cloudinary_gcs():
 #  para que Daniel pueda dispararlo él mismo con su sesión, sin que nadie
 #  tenga que tocar contraseñas de base de datos.
 #
-#  GET  /admin/mantenciones/backfill-series-maquinas          -> diagnóstico (solo lectura)
-#  POST /admin/mantenciones/backfill-series-maquinas/aplicar   -> ejecuta la reparación real
+#  GET  /admin/sstt/backfill-series-maquinas          -> diagnóstico (solo lectura)
+#  POST /admin/sstt/backfill-series-maquinas/aplicar   -> ejecuta la reparación real
 # ─────────────────────────────────────────────────────────────────────
 
 def _backfill_series_diagnostico():
@@ -14460,7 +14460,7 @@ def _backfill_series_diagnostico():
     return {"plan": plan, "manual_sin_sku": manual_sin_sku, "manual_sin_rut": manual_sin_rut}
 
 
-@app.route("/admin/mantenciones/backfill-series-maquinas")
+@app.route("/admin/sstt/backfill-series-maquinas")
 @_require_superadmin
 def admin_backfill_series_maquinas():
     """Página de diagnóstico (dry-run) -- ver _backfill_series_diagnostico().
@@ -14473,7 +14473,7 @@ def admin_backfill_series_maquinas():
                            manual_sin_rut=diag["manual_sin_rut"])
 
 
-@app.route("/admin/mantenciones/backfill-series-maquinas/aplicar", methods=["POST"])
+@app.route("/admin/sstt/backfill-series-maquinas/aplicar", methods=["POST"])
 @_require_superadmin
 def admin_backfill_series_maquinas_aplicar():
     """Ejecuta la reparación real: UPDATE puntual por id (nunca un WHERE
