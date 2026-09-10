@@ -79307,13 +79307,34 @@ def ot2_detalle(vid):
     # dados de baja, que no se dibujan en ninguna parte y por lo tanto
     # nadie puede completar (caso OT-2026-00058).
     # La regla vive en UN solo lugar; acá se llama, no se reimplementa.
-    _tar = mysql_fetchone(
+    # 🔴 FIX 2026-09-09 (Daniel, OT-2026-00179, técnico: "el saltado también
+    # tiene que invalidar el checklist"). Este contador alimenta `kpis.obl`/
+    # `kpis.obl_ok`, que a su vez es el candado del botón "Firmar como
+    # técnico" (`_obl_falta`/`_obl_falta_bar` en detalle.html). Hasta hoy
+    # solo excluía equipos DE BAJA -- no los marcados 'saltado' o
+    # 'falla_detectada' vía _ot_maquinas_excluidas_cierre(), que es la
+    # exclusión que SÍ usa el cierre real (_ot_validar_cierre). Resultado:
+    # un técnico saltaba una máquina (con motivo, foto, todo documentado) y
+    # el botón de firmar seguía bloqueado por esa tarea, mientras un
+    # superadmin -- que cierra por otra ruta -- no veía ningún problema.
+    # Misma regla que ya se unificó 3 veces antes (ver el comentario de
+    # _ot_maquinas_excluidas_cierre, caso OT-56): esta pantalla era la
+    # cuarta copia con el criterio viejo.
+    excluir_maquinas_kpi = _ot_maquinas_excluidas_cierre(vid)
+    _tar_sql = (
         "SELECT COUNT(*) AS n, "
         "       SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS ok, "
         "       SUM(CASE WHEN obligatoria=1 THEN 1 ELSE 0 END) AS obl, "
         "       SUM(CASE WHEN obligatoria=1 AND completada=1 THEN 1 ELSE 0 END) AS obl_ok "
         "  FROM mant_visita_tareas WHERE visita_id=%s"
-        + _ot_tarea_no_trabajable_sql(), (vid,)) or {}
+        + _ot_tarea_no_trabajable_sql()
+    )
+    _tar_params = [vid]
+    if excluir_maquinas_kpi:
+        _ph_kpi = ",".join(["%s"] * len(excluir_maquinas_kpi))
+        _tar_sql += f" AND (maquina_id IS NULL OR maquina_id NOT IN ({_ph_kpi}))"
+        _tar_params.extend(excluir_maquinas_kpi)
+    _tar = mysql_fetchone(_tar_sql, tuple(_tar_params)) or {}
     _fotos = mysql_fetchone(
         "SELECT COUNT(*) AS n FROM mant_visita_fotos WHERE visita_id=%s", (vid,)) or {}
     _obl = int(_tar.get("obl") or 0)
