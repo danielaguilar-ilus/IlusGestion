@@ -1300,9 +1300,26 @@
       background:linear-gradient(90deg,var(--green-500),var(--green-400));
       transform-origin:left center;animation:tvmLineGrow .65s cubic-bezier(.22,1,.36,1) both;
       animation-delay:var(--tvm-delay,0ms)}
+    /* 🎨 2026-09-09 (Daniel: "más color... en las transiciones"): cada
+       tramo recorrido lleva el color de las dos etapas que conecta (ámbar
+       Ejecución, azul Firma técnico, morado Firma cliente, verde Cierre)
+       en vez de un verde plano de punta a punta -- el "semáforo" (verde =
+       etapa YA resuelta, ver .tvm-step.is-done más abajo) no cambia. */
+    .tvm-step-line[data-seg="0"].is-done::after{background:linear-gradient(90deg,var(--amber-500),var(--blue-500))}
+    .tvm-step-line[data-seg="1"].is-done::after{background:linear-gradient(90deg,var(--blue-500),#a855f7)}
+    .tvm-step-line[data-seg="2"].is-done::after{background:linear-gradient(90deg,#a855f7,var(--green-500))}
     .tvm-step.is-done .tvm-step-dot{background:linear-gradient(135deg,var(--green-500),var(--green-600));
       border-color:var(--green-400);color:#fff;box-shadow:0 2px 10px rgba(22,163,74,.4);
       animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both;animation-delay:var(--tvm-delay,0ms)}
+    /* Badge de "hecho": el ícono propio de la etapa (llave, lápiz, check,
+       escudo) se conserva SIEMPRE -- este badge chico en la esquina es lo
+       que confirma "resuelta", sin que 4 etapas terminadas se vean como 4
+       círculos verdes idénticos sin ninguna identidad. */
+    .tvm-step-dot{position:relative}
+    .tvm-step-badge{position:absolute;bottom:-3px;right:-3px;width:15px;height:15px;
+      border-radius:50%;background:#fff;color:#16a34a;border:2px solid #0a0a0c;
+      display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;
+      box-shadow:0 1px 3px rgba(0,0,0,.4)}
     .tvm-step.is-done .tvm-step-lbl{color:#86efac}
     .tvm-step.is-current .tvm-step-dot{animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both;
       animation-delay:var(--tvm-delay,0ms)}
@@ -1699,13 +1716,26 @@
       let cls = 'tvm-step';
       if (done) cls += ' is-done'; else if (current) cls += ' is-current';
       const delayNodo = (done || current) ? (i * 160) : 0;
+      // 🎨 2026-09-09 (Daniel, viendo una OT ya cerrada: "quisiera agregarle
+      // más color y con íconos las transiciones y los colores de semáforo
+      // está ok"): con las 4 etapas resueltas, el check genérico borraba el
+      // ícono propio de cada una -- 4 círculos verdes idénticos, sin
+      // ninguna huella de "esto fue ejecución, esto fue firma técnico...".
+      // El ícono de la etapa se queda SIEMPRE (resuelta o no); un badge
+      // chico con el check confirma "hecho" sin comerse la identidad de
+      // cada paso. El semáforo (verde=hecho) no cambia.
       html += '<div class="' + cls + '" data-stage="' + i + '" style="--tvm-delay:' + delayNodo + 'ms"><div class="tvm-step-dot">' +
-        (done ? '<i class="bi bi-check-lg"></i>' : '<i class="bi ' + e.icon + '"></i>') +
+        '<i class="bi ' + e.icon + '"></i>' +
+        (done ? '<span class="tvm-step-badge"><i class="bi bi-check-lg"></i></span>' : '') +
         '</div><span class="tvm-step-lbl">' + e.lbl + '</span></div>';
       if (i < ETAPAS_OT.length - 1){
         const lineaDone = done || i < etapaAct;
         const delayLinea = lineaDone ? (i * 160 + 80) : 0;
-        html += '<div class="tvm-step-line' + (lineaDone ? ' is-done' : '') + '" style="--tvm-delay:' + delayLinea + 'ms"></div>';
+        // data-seg identifica el tramo (0=Ejecución→Técnico, 1=Técnico→
+        // Cliente, 2=Cliente→Cierre) para que cada tramo recorrido lleve
+        // el color de las dos etapas que conecta, no un verde plano -- eso
+        // es lo que pidió Daniel al decir "más color... en las transiciones".
+        html += '<div class="tvm-step-line' + (lineaDone ? ' is-done' : '') + '" data-seg="' + i + '" style="--tvm-delay:' + delayLinea + 'ms"></div>';
       }
     });
     html += '</div>';
