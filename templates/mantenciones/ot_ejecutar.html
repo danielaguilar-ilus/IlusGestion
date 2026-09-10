@@ -2389,18 +2389,39 @@
            va a salir el link ANTES de elegir el canal, y si falta alguno lo
            sabe de antemano en vez de descubrirlo con un error. Datos que ya
            vienen en la visita — no se consulta nada nuevo. #}
+        {# ✏️ 2026-09-10 (Daniel: "necesito que al enviar el anexo y la OT me
+           deje poder cambiar el número o el correo"). Antes esto era TEXTO
+           FIJO: mostraba a dónde iba a salir el link, pero si el teléfono
+           estaba mal escrito o era el de otra persona no había forma de
+           corregirlo desde acá -- el envío por WhatsApp/ambos ni siquiera
+           preguntaba cuando la OT ya traía un teléfono cargado.
+           Ahora son campos editables. Se editan ACÁ y no con un ilusPrompt a
+           propósito: los botones de WhatsApp abren la app con
+           window.open() y eso SOLO funciona dentro del gesto del click (ver
+           el fix del 12-08 y el de iPhone del 08-09). Un prompt con await
+           antes del window.open pierde la "user activation" y iOS bloquea la
+           ventana -- leer un input es sincrónico y no rompe nada.
+           Corregir acá NO modifica el contacto de la OT: aplica solo a este
+           envío, igual que los prompts de la pantalla nueva. #}
         <div class="tx-sign-dest">
           <span class="tx-sign-dest-lbl">Se enviará a</span>
-          {% if visita.contacto_tel %}
-            <span class="tx-sign-dest-item"><i class="bi bi-whatsapp"></i>{{ visita.contacto_tel }}</span>
-          {% else %}
-            <span class="tx-sign-dest-item is-falta"><i class="bi bi-whatsapp"></i>sin teléfono registrado</span>
-          {% endif %}
-          {% if visita.contacto_email %}
-            <span class="tx-sign-dest-item"><i class="bi bi-envelope-fill"></i>{{ visita.contacto_email }}</span>
-          {% else %}
-            <span class="tx-sign-dest-item is-falta"><i class="bi bi-envelope-fill"></i>sin correo registrado</span>
-          {% endif %}
+          <label class="tx-sign-dest-fld{{ '' if visita.contacto_tel else ' is-falta' }}">
+            <i class="bi bi-whatsapp"></i>
+            <input type="tel" id="txFirmaTel" inputmode="tel" autocomplete="off"
+                   value="{{ visita.contacto_tel or '' }}"
+                   placeholder="Teléfono — escríbelo"
+                   aria-label="Teléfono al que se envía el link de firma">
+          </label>
+          <label class="tx-sign-dest-fld{{ '' if visita.contacto_email else ' is-falta' }}">
+            <i class="bi bi-envelope-fill"></i>
+            <input type="email" id="txFirmaEmail" autocomplete="off"
+                   value="{{ visita.contacto_email or '' }}"
+                   placeholder="Correo — escríbelo"
+                   aria-label="Correo al que se envía el link de firma">
+          </label>
+          <span class="tx-sign-dest-nota">
+            <i class="bi bi-pencil-fill"></i>Puedes corregirlos — solo aplica a este envío
+          </span>
         </div>
         <div class="tx-channel-grid">
           <button type="button" class="tx-channel-card is-presencial" id="btnFirmarCliente"

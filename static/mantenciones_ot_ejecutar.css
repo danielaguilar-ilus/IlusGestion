@@ -2717,6 +2717,40 @@
 .tx-sign-dest-item.is-falta{color:#fca5a5;background:rgba(220,38,38,.10);font-style:italic}
 .tx-sign-dest-item.is-falta i{color:#f87171}
 
+/* ✏️ 2026-09-10 (Daniel: "que al enviar el anexo y la OT me deje poder
+   cambiar el numero o el correo"). Los destinos pasan de texto fijo a
+   campos editables, sin cambiar la piel del bloque: se ven como las
+   pildoras de antes (.tx-sign-dest-item) pero se pueden escribir. */
+.tx-sign-dest-fld{
+  display:inline-flex;align-items:center;gap:6px;flex:1 1 190px;min-width:0;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);
+  border-radius:8px;padding:3px 9px;cursor:text;
+  transition:border-color .15s,background .15s;
+}
+.tx-sign-dest-fld:focus-within{
+  border-color:rgba(74,222,128,.55);background:rgba(255,255,255,.09);
+}
+.tx-sign-dest-fld > i{color:#4ade80;font-size:.9rem;flex:0 0 auto}
+.tx-sign-dest-fld.is-falta > i{color:#f87171}
+.tx-sign-dest-fld input{
+  flex:1 1 auto;min-width:0;width:100%;
+  background:transparent;border:0;outline:0;padding:3px 0;
+  color:#e5e7eb;font-family:inherit;font-size:.78rem;font-weight:600;
+}
+.tx-sign-dest-fld input::placeholder{color:#9ca3af;font-weight:500;font-style:italic}
+.tx-sign-dest-nota{
+  display:inline-flex;align-items:center;gap:5px;flex:1 1 100%;
+  font-size:.66rem;font-weight:600;color:#9ca3af;
+}
+.tx-sign-dest-nota i{font-size:.62rem;color:#9ca3af}
+/* REGLA #3 -- 16px en movil: con menos, iOS hace auto-zoom al enfocar el
+   campo y descuadra toda la barra de firma justo cuando el tecnico esta
+   corrigiendo el numero en terreno. */
+@media (max-width:640px){
+  .tx-sign-dest-fld{flex:1 1 100%}
+  .tx-sign-dest-fld input{font-size:16px}
+}
+
 /* ── El recorrido: la insignia ✓ del hito completado, en CUALQUIER ancho ──
    Antes, al completarse un hito su icono propio se reemplazaba por un
    check generico, asi que todos los circulos terminaban identicos (Daniel,

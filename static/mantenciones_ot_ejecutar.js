@@ -6887,15 +6887,56 @@ async function liberarFirmaTecnico(){
   } catch (e){ await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' }); }
 }
 
+/* ✏️ 2026-09-10 (Daniel: "necesito que al enviar el anexo y la OT me deje
+   poder cambiar el número o el correo"). Los destinos ahora son campos
+   editables dentro del hub de firma (#txFirmaTel / #txFirmaEmail, ver
+   .tx-sign-dest en ot_ejecutar.html) en vez del texto fijo de antes.
+   Se leen SINCRÓNICAMENTE a propósito: los botones de WhatsApp abren la app
+   con window.open() y eso solo funciona dentro del gesto del click -- un
+   prompt con await antes perdería la activación y iOS bloquearía la ventana
+   (mismo motivo del fix del 12-08 y del de iPhone del 08-09).
+   El fallback a los globales/prompt se conserva para cualquier ruta donde
+   estos campos no existan en el DOM. Corregir el dato acá NO modifica el
+   contacto de la OT: aplica solo a este envío. */
+function _txDestinoFirma(){
+  const elTel = document.getElementById('txFirmaTel');
+  const elMail = document.getElementById('txFirmaEmail');
+  return {
+    hayCampos: !!(elTel || elMail),
+    tel: elTel ? (elTel.value || '').trim()
+               : ((typeof VISITA_CONTACTO_TEL !== 'undefined' && VISITA_CONTACTO_TEL) || ''),
+    email: elMail ? (elMail.value || '').trim() : '',
+  };
+}
+
+/* Chequeo de forma del correo, no de existencia: un correo mal tipeado
+   ("cliente@gmail" sin punto) el servidor lo acepta y el mensaje se pierde
+   en un bounce que nadie mira -- el técnico se queda esperando una firma que
+   nunca iba a llegar. Vacío es válido: significa "usa el correo registrado
+   del cliente" (ver mant_ot_enviar_firma_remota). */
+function _txEmailFirmaOk(email){
+  if (!email) return true;
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email)) return true;
+  ilusToast('Ese correo está incompleto — revísalo.', {type:'warning'});
+  const f = document.getElementById('txFirmaEmail');
+  if (f) f.focus();
+  return false;
+}
+
 // Enviar al cliente un link para firmar la OT a distancia (cuando no está en sitio).
 async function enviarFirmaRemota(){
-  const email = await ilusPrompt({
-    title: 'Enviar firma al cliente',
-    message: 'Correo del cliente para enviarle el link de firma:',
-    sub: 'Déjalo vacío para usar el correo registrado del cliente. El link vence en 5 días; al firmar nos avisa a todos.',
-    placeholder: 'cliente@correo.cl', inputType: 'email', required: false,
-  });
-  if (email === null) return;
+  const dest = _txDestinoFirma();
+  let email = dest.email;
+  if (dest.hayCampos && !_txEmailFirmaOk(email)) return;
+  if (!dest.hayCampos){
+    email = await ilusPrompt({
+      title: 'Enviar firma al cliente',
+      message: 'Correo del cliente para enviarle el link de firma:',
+      sub: 'Déjalo vacío para usar el correo registrado del cliente. El link vence en 5 días; al firmar nos avisa a todos.',
+      placeholder: 'cliente@correo.cl', inputType: 'email', required: false,
+    });
+    if (email === null) return;
+  }
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -6920,7 +6961,22 @@ async function enviarFirmaRemota(){
 // Business API sigue dado de baja (ver CLAUDE.md — incidente de US$20 con el
 // sandbox), así que este botón no depende de ningún proveedor de pago.
 async function enviarFirmaWhatsApp(){
-  let tel = (typeof VISITA_CONTACTO_TEL !== 'undefined' && VISITA_CONTACTO_TEL) || '';
+  const _destWa = _txDestinoFirma();
+  let tel = _destWa.tel;
+  // 2026-09-10: si el técnico corrigió el número en el campo, se valida ACÁ
+  // mismo (sincrónico, sin perder el gesto del click) en vez de dejar que el
+  // servidor lo rechace después de haber abierto una pestaña en blanco.
+  // ilusTelChileno devuelve {ok, error, valor} (ver ilus_ui.js) -- la
+  // autoridad sigue siendo validar_telefono_chileno() en el servidor.
+  if (tel && _destWa.hayCampos && typeof ilusTelChileno === 'function'){
+    const _v = ilusTelChileno(tel) || {};
+    if (_v.ok === false){
+      ilusToast(_v.error || 'Ese teléfono no es válido — revísalo.', {type:'warning'});
+      const _f = document.getElementById('txFirmaTel');
+      if (_f) _f.focus();
+      return;
+    }
+  }
   if (!tel){
     // 2026-08-21 (Daniel): valida teléfono chileno EN EL MOMENTO y bloquea
     // letras al escribir, en vez de dejar que el servidor lo rechace
@@ -6979,8 +7035,23 @@ async function enviarFirmaWhatsApp(){
 // de firma en una sola pasada. Reusa el mismo patrón anti-bloqueo de popup
 // que enviarFirmaWhatsApp() (abrir la pestaña dentro del gesto de click).
 async function enviarFirmaAmbos(){
-  let tel = (typeof VISITA_CONTACTO_TEL !== 'undefined' && VISITA_CONTACTO_TEL) || '';
-  if (!tel){
+  // 2026-09-10: el correo también sale de los campos editables. Antes esta
+  // función NUNCA preguntaba por el correo -- mandaba al registrado del
+  // cliente sin decirlo ni dejar corregirlo.
+  const _destAmb = _txDestinoFirma();
+  let tel = _destAmb.tel;
+  const emailAmb = _destAmb.email;
+  if (_destAmb.hayCampos && !_txEmailFirmaOk(emailAmb)) return;
+  if (tel && _destAmb.hayCampos && typeof ilusTelChileno === 'function'){
+    const _v = ilusTelChileno(tel) || {};
+    if (_v.ok === false){
+      ilusToast(_v.error || 'Ese teléfono no es válido — revísalo.', {type:'warning'});
+      const _f = document.getElementById('txFirmaTel');
+      if (_f) _f.focus();
+      return;
+    }
+  }
+  if (!tel && !_destAmb.hayCampos){
     tel = await ilusPrompt({
       title: 'Enviar firma por ambos canales',
       message: 'Teléfono del cliente (con o sin +56):',
@@ -6993,7 +7064,7 @@ async function enviarFirmaAmbos(){
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ canal: 'ambos', telefono: tel }),
+      body: JSON.stringify({ canal: 'ambos', telefono: tel, email: emailAmb }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok){
