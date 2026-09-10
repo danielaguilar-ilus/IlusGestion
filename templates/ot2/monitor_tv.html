@@ -1268,88 +1268,78 @@
        recorrido conectado: Ejecución -> Firma técnico -> Firma cliente ->
        Cierre. Ver renderEtapas() más abajo.
 
-       🎨 2026-09-09 (Daniel, viendo la primera versión: "está terrible el
-       diseño del tracking, colócale color, dinamismo, que cuando lo abra
-       se vea el progreso de la barra hasta donde llegó, colócale unos
-       logos a color... algo llamativo, elegante"). Segunda pasada:
-       - Cada etapa tiene su PROPIO color de acento cuando está EN CURSO
-         (ámbar=ejecutando, azul=firma técnico, morado=firma cliente,
-         verde=cierre) -- ya no todo pulsa en rojo por igual, cada tramo
-         del viaje se siente distinto. Lo YA resuelto sigue siendo verde
-         universal (el lenguaje ya establecido de "verde = hecho" no se
-         toca) con un check.
-       - Al insertarse en el DOM (cada vez que se abre la burbuja de una
-         OT), el relleno de las líneas ya resueltas se anima de izquierda
-         a derecha (tvmLineGrow) con un pequeño delay en cascada por
-         segmento (ver el `style` inline que pone renderEtapas), y el nodo
-         que corresponde "aparece" con un pequeño rebote (tvmNodePop) justo
-         cuando el relleno lo alcanza -- así se ve LITERALMENTE el avance
-         llegando hasta donde está la OT, no un estado estático. */
-    .tvm-stepper{display:flex;align-items:flex-start;margin-top:14px;padding:2px 2px 0}
-    .tvm-step{display:flex;flex-direction:column;align-items:center;gap:7px;flex:none;width:56px}
-    .tvm-step-dot{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
-      justify-content:center;font-size:14px;background:rgba(255,255,255,.06);
-      border:2px solid rgba(255,255,255,.16);color:var(--txt-3);
-      box-shadow:0 2px 8px rgba(0,0,0,.35);
-      transition:background .4s ease,border-color .4s ease,color .4s ease}
-    .tvm-step-lbl{font-size:10.5px;font-weight:800;letter-spacing:.01em;text-align:center;
-      color:var(--txt-3);line-height:1.15;transition:color .4s ease}
-    .tvm-step-line{position:relative;flex:1;height:3px;border-radius:99px;
-      background:rgba(255,255,255,.1);margin:14px -6px 0;overflow:hidden}
+       🎨 v3 -- 2026-09-09 (Daniel, en vivo, mandando de referencia directa
+       la captura del tracking de envíos de Retiros -- círculos blancos,
+       íconos a color, anillo y check verdes -- y el pedido explícito: "la
+       línea tiene que ser o roja o o verde... colócale los logos o los
+       íconos de colores... ponle toda la inteligencia posible... se ve
+       horrible"). El v2 pintaba cada tramo YA recorrido con un degradé de
+       2-3 colores (ámbar→azul→morado→verde): se veía sucio y no se leía
+       de un vistazo qué estaba hecho y qué no. v3 vuelve el semáforo
+       binario, igual que el tracking de Retiros:
+       - Nodo PENDIENTE: círculo blanco, ícono apagado (gris, poca opacidad).
+       - Nodo ACTUAL: círculo blanco, ícono y anillo en rojo ILUS con pulso
+         -- "esto necesita atención ahora mismo".
+       - Nodo HECHO: círculo blanco, anillo verde + charm de check verde
+         en la esquina; el ÍCONO conserva su propio color de etapa (ámbar/
+         azul/morado/verde -- pedido de la vuelta anterior: "colócale unos
+         logos a color") para que 4 etapas resueltas no se vean como 4
+         copias idénticas. El check dice "resuelta"; el color dice "cuál".
+       - Línea entre nodos: VERDE si el tramo ya se recorrió, ROJA si no
+         -- nunca gris, nunca un degradé de varios colores.
+       Se conserva la animación de llegada (tvmLineGrow/tvmNodePop en
+       cascada, ver renderEtapas): el relleno sigue viajando de izquierda a
+       derecha hasta donde está la OT de verdad. */
+    .tvm-stepper{display:flex;align-items:flex-start;margin-top:18px;padding:6px 4px 0}
+    .tvm-step{display:flex;flex-direction:column;align-items:center;gap:9px;flex:none;width:72px}
+    .tvm-step-dot{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;
+      justify-content:center;font-size:19px;background:#f4f4f5;
+      border:3px solid rgba(255,255,255,.18);color:#b0b3bb;
+      box-shadow:0 3px 10px rgba(0,0,0,.4);
+      transition:background .4s ease,border-color .4s ease,color .4s ease,box-shadow .4s ease}
+    .tvm-step-lbl{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-align:center;
+      text-transform:uppercase;color:var(--txt-3);line-height:1.15;transition:color .4s ease}
+    .tvm-step-line{position:relative;flex:1;height:4px;border-radius:99px;
+      background:rgba(220,38,38,.32);margin:22px -8px 0;overflow:hidden}
+    .tvm-step-line.is-done{background:rgba(34,197,94,.24)}
     .tvm-step-line.is-done::after{content:'';position:absolute;inset:0;border-radius:99px;
       background:linear-gradient(90deg,var(--green-500),var(--green-400));
       transform-origin:left center;animation:tvmLineGrow .65s cubic-bezier(.22,1,.36,1) both;
       animation-delay:var(--tvm-delay,0ms)}
-    /* 🎨 2026-09-09 (Daniel: "más color... en las transiciones"): cada
-       tramo recorrido lleva el color de las dos etapas que conecta (ámbar
-       Ejecución, azul Firma técnico, morado Firma cliente, verde Cierre)
-       en vez de un verde plano de punta a punta -- el "semáforo" (verde =
-       etapa YA resuelta, ver .tvm-step.is-done más abajo) no cambia. */
-    .tvm-step-line[data-seg="0"].is-done::after{background:linear-gradient(90deg,var(--amber-500),var(--blue-500))}
-    .tvm-step-line[data-seg="1"].is-done::after{background:linear-gradient(90deg,var(--blue-500),#a855f7)}
-    .tvm-step-line[data-seg="2"].is-done::after{background:linear-gradient(90deg,#a855f7,var(--green-500))}
-    .tvm-step.is-done .tvm-step-dot{background:linear-gradient(135deg,var(--green-500),var(--green-600));
-      border-color:var(--green-400);color:#fff;box-shadow:0 2px 10px rgba(22,163,74,.4);
+    .tvm-step.is-done .tvm-step-dot{background:#fff;
+      border-color:var(--green-400);
+      box-shadow:0 3px 14px rgba(22,163,74,.4),0 0 0 3px rgba(34,197,94,.14);
       animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both;animation-delay:var(--tvm-delay,0ms)}
-    /* Badge de "hecho": el ícono propio de la etapa (llave, lápiz, check,
-       escudo) se conserva SIEMPRE -- este badge chico en la esquina es lo
+    /* Charm de "hecho": el ícono propio de la etapa (llave, lápiz, check,
+       escudo) se conserva SIEMPRE -- este charm chico en la esquina es lo
        que confirma "resuelta", sin que 4 etapas terminadas se vean como 4
-       círculos verdes idénticos sin ninguna identidad. */
+       círculos idénticos sin ninguna identidad. */
     .tvm-step-dot{position:relative}
-    .tvm-step-badge{position:absolute;bottom:-3px;right:-3px;width:15px;height:15px;
-      border-radius:50%;background:#fff;color:#16a34a;border:2px solid #0a0a0c;
-      display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;
+    .tvm-step-badge{position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;
+      border-radius:50%;background:var(--green-500);color:#fff;border:2px solid #0a0a0c;
+      display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;
       box-shadow:0 1px 3px rgba(0,0,0,.4)}
     .tvm-step.is-done .tvm-step-lbl{color:#86efac}
-    .tvm-step.is-current .tvm-step-dot{animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both;
-      animation-delay:var(--tvm-delay,0ms)}
+    /* Colores propios por etapa (data-stage="0..3") -- se mantienen SIEMPRE
+       que el ícono sea visible, resuelta o pendiente; solo se apagan
+       (opacity/grayscale) mientras la etapa todavía no llega. Pedido
+       explícito de Daniel en la vuelta anterior ("colócale unos logos a
+       color"), que v3 no le quita -- solo arregla la línea (REGLA #4.2). */
+    .tvm-step[data-stage="0"] .tvm-step-dot i{color:var(--amber-500)}
+    .tvm-step[data-stage="1"] .tvm-step-dot i{color:var(--blue-500)}
+    .tvm-step[data-stage="2"] .tvm-step-dot i{color:#a855f7}
+    .tvm-step[data-stage="3"] .tvm-step-dot i{color:var(--green-500)}
+    .tvm-step:not(.is-done):not(.is-current) .tvm-step-dot i{opacity:.4;filter:grayscale(.5)}
+    .tvm-step.is-current .tvm-step-dot{background:#fff;border-color:var(--ilus-red);
+      box-shadow:0 0 0 0 rgba(220,38,38,.55),0 3px 14px rgba(220,38,38,.35);
+      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseRoja 1.7s ease-in-out infinite;
+      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
+    .tvm-step.is-current .tvm-step-dot i{color:var(--ilus-red) !important;opacity:1;filter:none}
     .tvm-step.is-current .tvm-step-lbl{color:#fff}
+    @keyframes tvmPulseRoja{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}50%{box-shadow:0 0 0 9px rgba(220,38,38,0)}}
     @keyframes tvmLineGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
     @keyframes tvmNodePop{0%{transform:scale(.45);opacity:0}65%{transform:scale(1.18)}100%{transform:scale(1);opacity:1}}
-    /* Acento de color por etapa (data-stage="0..3", puesto por renderEtapas) --
-       "vida real": cada tipo de paso tiene su propio color, como un
-       tracking de despacho. Solo aplica mientras la etapa está EN CURSO. */
-    .tvm-step[data-stage="0"].is-current .tvm-step-dot{background:rgba(245,158,11,.18);
-      border-color:var(--amber-500);color:#fed7aa;box-shadow:0 0 0 0 rgba(245,158,11,.5),0 2px 10px rgba(245,158,11,.3);
-      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseAmbar 1.8s ease-in-out infinite;
-      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
-    .tvm-step[data-stage="1"].is-current .tvm-step-dot{background:rgba(59,130,246,.18);
-      border-color:var(--blue-500);color:#bfdbfe;box-shadow:0 0 0 0 rgba(59,130,246,.5),0 2px 10px rgba(59,130,246,.3);
-      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseAzul 1.8s ease-in-out infinite;
-      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
-    .tvm-step[data-stage="2"].is-current .tvm-step-dot{background:rgba(168,85,247,.18);
-      border-color:#a855f7;color:#e9d5ff;box-shadow:0 0 0 0 rgba(168,85,247,.5),0 2px 10px rgba(168,85,247,.3);
-      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseMorado 1.8s ease-in-out infinite;
-      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
-    .tvm-step[data-stage="3"].is-current .tvm-step-dot{background:rgba(34,197,94,.18);
-      border-color:var(--green-500);color:#bbf7d0;box-shadow:0 0 0 0 rgba(34,197,94,.5),0 2px 10px rgba(34,197,94,.3);
-      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseVerde 1.8s ease-in-out infinite;
-      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
-    @keyframes tvmPulseAmbar{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}50%{box-shadow:0 0 0 7px rgba(245,158,11,0)}}
-    @keyframes tvmPulseAzul{0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.5)}50%{box-shadow:0 0 0 7px rgba(59,130,246,0)}}
-    @keyframes tvmPulseMorado{0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,.5)}50%{box-shadow:0 0 0 7px rgba(168,85,247,0)}}
-    @keyframes tvmPulseVerde{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
-    .tvm-stepper-sub{margin-top:7px;font-size:12.5px;font-weight:700;color:var(--txt-3)}
+    .tvm-stepper-sub{margin-top:9px;font-size:12.5px;font-weight:700;color:var(--txt-3)}
     @media (prefers-reduced-motion:reduce){
       .tvm-step-dot,.tvm-step-line.is-done::after{animation:none !important}
     }
@@ -1731,10 +1721,9 @@
       if (i < ETAPAS_OT.length - 1){
         const lineaDone = done || i < etapaAct;
         const delayLinea = lineaDone ? (i * 160 + 80) : 0;
-        // data-seg identifica el tramo (0=Ejecución→Técnico, 1=Técnico→
-        // Cliente, 2=Cliente→Cierre) para que cada tramo recorrido lleve
-        // el color de las dos etapas que conecta, no un verde plano -- eso
-        // es lo que pidió Daniel al decir "más color... en las transiciones".
+        // v3 -- la línea ya es binaria (verde recorrida / roja pendiente,
+        // ver .tvm-step-line en el <style>): data-seg ya no cambia color,
+        // se deja solo por si sirve para depurar en el DOM.
         html += '<div class="tvm-step-line' + (lineaDone ? ' is-done' : '') + '" data-seg="' + i + '" style="--tvm-delay:' + delayLinea + 'ms"></div>';
       }
     });
