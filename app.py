@@ -99798,8 +99798,26 @@ def _mant_ot_creacion_variables(vid):
     mant_visita_enviar_email, para que ambos caminos (manual y
     automático) le muestren al lector la misma información con el mismo
     formato. Devuelve (v, variables) o (None, None) si la visita no existe."""
+    # 🔴 FIX 2026-09-10 (Daniel: "y cuando realizo la OT también" -- sobre
+    # poder decidir a qué correo sale el aviso). `mant_visitas` TAMBIÉN tiene
+    # contacto_email/contacto_nombre (los del paso Contraparte del wizard, ver
+    # el INSERT de ot2_api_crear), así que al traer `v.*` y después
+    # `c.contacto_email`/`c.contacto_nombre` sin alias, la columna del CLIENTE
+    # pisaba la de la OT en el dict del cursor: el correo que la persona
+    # acababa de escribir para ESTA OT quedaba invisible acá.
+    # Efecto medido: el "fallback" al contacto de la OT (más abajo, en
+    # _mant_ot_email_cliente_creacion) era código muerto -- solo corría
+    # cuando la ficha del cliente no tenía correos, y en ese caso
+    # c.contacto_email también venía vacío, así que no avisaba a nadie. Y el
+    # saludo del correo usaba el contacto de la FICHA en vez de la
+    # contraparte real de la visita.
+    # Se alias solo las dos columnas que chocaban; direccion/comuna/region no
+    # existen en mant_visitas (la OT usa direccion_visita), así que esas
+    # siguen resolviendo al cliente como siempre.
     v = mysql_fetchone(
-        """SELECT v.*, c.razon_social, c.contacto_email, c.contacto_nombre,
+        """SELECT v.*, c.razon_social,
+                  c.contacto_email  AS cli_contacto_email,
+                  c.contacto_nombre AS cli_contacto_nombre,
                   c.direccion, c.comuna, c.region
              FROM mant_visitas v
              LEFT JOIN mant_clientes c ON c.id = v.cliente_id
@@ -99858,9 +99876,24 @@ def _mant_ot_email_cliente_creacion(vid):
         v, variables = _mant_ot_creacion_variables(vid)
         if not v or not v.get("cliente_id"):
             return
-        destinos = _mant_get_cliente_emails(v["cliente_id"])
-        if not destinos and (v.get("contacto_email") or "").strip():
-            destinos = [(v.get("contacto_email") or "").strip()]
+        # 🔴 FIX 2026-09-10 (Daniel: "y cuando realizo la OT también"). El
+        # wizard YA pide el correo de la contraparte en su propio paso
+        # (obligatorio y validado, ver S.contraparte en _modal_crear.html) y
+        # ot2_api_crear lo guarda en mant_visitas.contacto_email -- pero acá
+        # ese dato era el ÚLTIMO recurso, detrás de los correos de la ficha
+        # del cliente. O sea: la persona que se acababa de elegir para ESTA
+        # OT no recibía el aviso, y se iba a los correos administrativos de
+        # la ficha. Ahora el contacto de la OT va PRIMERO.
+        # Los de la ficha se CONSERVAN detrás (REGLA #4.2: no se le quita el
+        # correo a nadie que hoy lo recibe), sin repetidos. Mismo criterio de
+        # validez que _mant_get_cliente_emails para no mandar a basura.
+        destinos = []
+        _cont_ot = (v.get("contacto_email") or "").strip().lower()
+        if _cont_ot and "@" in _cont_ot and 6 <= len(_cont_ot) <= 180:
+            destinos.append(_cont_ot)
+        for _e_cli in _mant_get_cliente_emails(v["cliente_id"]):
+            if _e_cli not in destinos:
+                destinos.append(_e_cli)
         if not destinos:
             return
         tpl = None
@@ -99874,7 +99907,8 @@ def _mant_ot_email_cliente_creacion(vid):
         else:
             asunto = f"Visita técnica programada — {variables['ot']} ({variables['fecha']})"
             cuerpo = (
-                f"<p style=\"font-size:14px;color:#374151\">Estimado/a {v.get('contacto_nombre') or variables['cliente']},</p>"
+                f"<p style=\"font-size:14px;color:#374151\">Estimado/a "
+                f"{v.get('contacto_nombre') or v.get('cli_contacto_nombre') or variables['cliente']},</p>"
                 f"<p style=\"font-size:14px;color:#374151\">Te informamos que se ha programado una visita técnica en tus dependencias:</p>"
                 f"<table style=\"width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px\">"
                 f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">N° de Orden</td>"

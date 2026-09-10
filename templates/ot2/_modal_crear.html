@@ -3205,7 +3205,16 @@ window.OT2C = (function(){
         '<input class="form-control" id="o2mCpEmail" maxlength="200" value="'+esc(cp.email)+'" '+
         'type="email" placeholder="contacto@cliente.cl" '+
         'oninput="OT2C.setCpCampo(\'email\', this.value)">'+
-        '<div id="o2mCpEmailEstado" class="mt-1" style="font-size:.72rem"></div></div>'+
+        '<div id="o2mCpEmailEstado" class="mt-1" style="font-size:.72rem"></div>'+
+        /* 📮 2026-09-10 (Daniel: "y cuando realizo la OT también" -- sobre
+           poder elegir el correo al que sale el aviso). El campo ya existía,
+           pero nada en pantalla decía que ESTE es el correo que recibe el
+           aviso de la OT y después el link de firma; hasta hoy además el
+           backend lo ignoraba y avisaba a los correos de la ficha del
+           cliente (ver el fix en _mant_ot_email_cliente_creacion). */
+        '<div class="mt-1" style="font-size:.7rem;color:#6b7280">'+
+        '<i class="bi bi-envelope-check me-1"></i>A este correo llega el aviso de la OT '+
+        'y, más adelante, el link para firmarla.</div></div>'+
         '<div class="col-12"><label class="fl">Dirección del lugar *</label>'+
         '<input class="form-control" id="o2mCpDir" maxlength="400" value="'+esc(cp.direccion)+'" '+
         'placeholder="Empieza a escribir y elige la sugerencia" '+
