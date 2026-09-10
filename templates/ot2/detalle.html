@@ -217,6 +217,17 @@
 .otd-fpaso.listo .hd .num{font-size:.68rem}
 .otd-fpaso .bd{padding:11px 12px}
 
+/* Sub-sección DENTRO de un paso (hoy solo "Otros documentos" en el Paso
+   1) -- más liviana que el header rojo/verde de un paso real: es un dato
+   adicional del MISMO paso, no un paso nuevo que competir por la grilla
+   2x2 (ver comentario grande en detalle.html, Paso 1). */
+.otd-fin-sub{margin-top:14px;padding-top:12px;border-top:1px dashed #e5e7eb}
+.otd-fin-sub-hd{display:flex;align-items:center;gap:8px;font-size:.74rem;
+  font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;
+  margin-bottom:8px}
+.otd-fin-sub-hd .est{margin-left:auto;font-size:.66rem;font-weight:800;
+  text-transform:none;letter-spacing:normal;color:#374151}
+
 /* ══════════════════════════════════════════════════════════════
    MODAL DE CIERRE — semáforo (2026-09-03, Daniel: "ese modal se puede
    modificar al formato de Retiros, enumerado, con tarjetas, con
@@ -3496,49 +3507,55 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                         onclick="otdLeerLineasZz()">
                   <i class="bi bi-magic"></i> Leer documento</button>
               </div>
-            </div>
-          </div>
 
-          {# ── PASO 1.b: los OTROS documentos de la OT (multidocumento) ──
-             🆕 2026-09-05 (Daniel, caso real: "tengo la factura 11439,
-             11440 y 11441 que agregar en una instalación... además están
-             incluidas dos cotizaciones del sistema, la 45 y la 48").
-             El Paso 1 declara el documento PRINCIPAL (el que sostiene el
-             cierre, el PDF y el margen — no cambia). Acá se suman los
-             demás: una instalación facturada en tres documentos deja de
-             tener que elegir cuál "sacrificar", que es lo que pasaba antes
-             porque el segundo pisaba al primero.
-             Las cotizaciones entran como REFERENCIA (no cierran la OT,
-             decisión de Daniel de hoy): sirven para saber de dónde nació
-             el trabajo y con qué se cotizó. #}
-          <div class="otd-fpaso" id="otdDocsPaso">
-            <div class="hd"><span class="num">+</span> Otros documentos de esta OT
-              <span class="est" id="otdDocsResumen"></span></div>
-            <div class="bd">
-              <div id="otdDocsLista" class="otd-docs-lista">
-                <div class="text-muted" style="font-size:.76rem">Cargando…</div>
+              {# ── Sub-sección: los OTROS documentos de la OT (multidocumento) ──
+                 🔧 2026-09-09 (Daniel, viendo la tarjeta en vivo: "algo más
+                 estructurado"). Esto vivía como una tarjeta HERMANA con su
+                 propio número ("+"), compitiendo por espacio en la grilla
+                 2x2 con los pasos 1-4 -- desde que se agregó (2026-09-05)
+                 la grilla dejó de leerse "1-2 arriba, 3-4 abajo" (quedaba
+                 "1, +Otros / 2, 3 / 4 solo"), y además desalineó SILENCIOSA
+                 Y REALMENTE el pintado en verde de los 4 pasos: el JS que
+                 marca "listo" (más abajo, la IIFE de otdFinCosto/etc.) lee
+                 `#otdCardFinanzas .otd-fpaso` por ÍNDICE (0=documento,
+                 1=costo cliente, 2=costo nuestro, 3=centro de costo) contra
+                 un arreglo de 4 posiciones -- con "Otros documentos" colado
+                 como una 5ta tarjeta en el medio, cada paso real terminaba
+                 pintándose con el checklist del SIGUIENTE (el Paso 4 nunca
+                 llegaba a ponerse verde: el arreglo no tiene índice 4).
+                 Es lo mismo que se pregunta en el Paso 1 ("qué documento(s)
+                 respalda esta OT") -- vuelve a vivir ADENTRO de esa misma
+                 tarjeta, como sub-sección, no como paso aparte. Con eso la
+                 grilla vuelve a ser 1-2/3-4 y el arreglo de 4 posiciones
+                 vuelve a corresponder 1:1 con los 4 pasos reales. #}
+              <div class="otd-fin-sub">
+                <div class="otd-fin-sub-hd">Otros documentos de esta OT
+                  <span class="est" id="otdDocsResumen"></span></div>
+                <div id="otdDocsLista" class="otd-docs-lista">
+                  <div class="text-muted" style="font-size:.76rem">Cargando…</div>
+                </div>
+                <div class="d-flex gap-1 mt-2 flex-wrap">
+                  <select id="otdDocTipo" class="form-select form-select-sm" style="width:auto;min-width:104px">
+                    <option value="FCV">Factura</option>
+                    <option value="BLV">Boleta</option>
+                    <option value="NVV">Nota venta</option>
+                    <option value="NVI">NVI</option>
+                    <option value="__cot__">Cotización</option>
+                  </select>
+                  <input type="text" id="otdDocNum" class="form-control form-control-sm"
+                         style="width:auto;min-width:112px" placeholder="N° documento"
+                         inputmode="numeric">
+                  <input type="text" id="otdDocEtiq" class="form-control form-control-sm"
+                         style="width:auto;min-width:126px" placeholder="Para qué (opcional)">
+                  <button type="button" class="btn btn-dark btn-sm" onclick="otdDocAgregar()">
+                    <i class="bi bi-plus-lg"></i> Agregar</button>
+                </div>
+                <div class="small text-muted mt-1" style="font-size:.68rem">
+                  Las facturas y boletas suman al total cobrado. Las cotizaciones quedan
+                  como referencia: no reemplazan el documento de cobro.
+                </div>
+                <div class="small text-danger mt-1" id="otdDocErr" style="min-height:14px;font-size:.7rem"></div>
               </div>
-              <div class="d-flex gap-1 mt-2 flex-wrap">
-                <select id="otdDocTipo" class="form-select form-select-sm" style="width:auto;min-width:104px">
-                  <option value="FCV">Factura</option>
-                  <option value="BLV">Boleta</option>
-                  <option value="NVV">Nota venta</option>
-                  <option value="NVI">NVI</option>
-                  <option value="__cot__">Cotización</option>
-                </select>
-                <input type="text" id="otdDocNum" class="form-control form-control-sm"
-                       style="width:auto;min-width:112px" placeholder="N° documento"
-                       inputmode="numeric">
-                <input type="text" id="otdDocEtiq" class="form-control form-control-sm"
-                       style="width:auto;min-width:126px" placeholder="Para qué (opcional)">
-                <button type="button" class="btn btn-dark btn-sm" onclick="otdDocAgregar()">
-                  <i class="bi bi-plus-lg"></i> Agregar</button>
-              </div>
-              <div class="small text-muted mt-1" style="font-size:.68rem">
-                Las facturas y boletas suman al total cobrado. Las cotizaciones quedan
-                como referencia: no reemplazan el documento de cobro.
-              </div>
-              <div class="small text-danger mt-1" id="otdDocErr" style="min-height:14px;font-size:.7rem"></div>
             </div>
           </div>
 
