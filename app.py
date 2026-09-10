@@ -83182,6 +83182,22 @@ def ot2_api_crear():
             _notificar_ot_asignada_interna(vid, lider_id, motivo="asignada")
         except Exception as e:
             print(f"[ot2_crear] notif: {e}", flush=True)
+        # 🔔 2026-09-09 (Daniel: "cuando se crea la OT, sí deberíamos
+        # considerar enviar un mail al cliente y enviar un mail al
+        # técnico. Pienso que debería ser los mail distintos por el
+        # contenido de la información"). Cada uno con su propia
+        # plantilla de comm_templates (editable por Daniel desde el
+        # front, REGLA que él mismo pidió: "controlar las cosas por el
+        # front") -- ver el bloque grande "CORREOS AUTOMÁTICOS AL CREAR
+        # UNA OT" (_mant_ot_email_tecnico_creacion/_mant_ot_email_
+        # cliente_creacion, junto a mant_visita_enviar_email). Nunca
+        # rompe la creación de la OT por un fallo de correo: la OT ya
+        # quedó comprometida en la transacción de arriba.
+        try: _mant_ot_email_tecnico_creacion(vid)
+        except Exception as _e_emt: print(f"[ot2_crear] email-tecnico: {_e_emt}", flush=True)
+    if not es_interna:
+        try: _mant_ot_email_cliente_creacion(vid)
+        except Exception as _e_emc: print(f"[ot2_crear] email-cliente: {_e_emc}", flush=True)
 
     return jsonify({
         "ok": True, "visita_id": vid, "numero_ot": numero_ot,
@@ -99659,6 +99675,180 @@ def mant_visita_enviar_email(vid):
     return jsonify({"error": "No se pudo enviar el email. Revisa la configuración SMTP.",
                     "enviados": [], "bloqueados": 0,
                     "fallidos": res["fallidos"]}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  CORREOS AUTOMÁTICOS AL CREAR UNA OT (2026-09-09)
+#
+#  Daniel, textual: "también debemos crear el flujo de correos cuando se
+#  crea la OT... no a todas las personas, pero cuando se crea la OT sí
+#  deberíamos considerar enviar un mail al cliente y enviar un mail al
+#  técnico. Pienso que debería ser los mail distintos por el contenido
+#  de la información".
+#
+#  Ambas plantillas ('visita_agendada' para el cliente, 'ot_asignada'
+#  para el técnico) YA EXISTÍAN sembradas en comm_templates
+#  (_mantenciones_tpl_seed / _ensure_comm_template_mantenciones, corre
+#  SIEMPRE incluso con ILUS_SKIP_MIGRATIONS=1) -- 'visita_agendada' ya
+#  la consumía el endpoint MANUAL de arriba (mant_visita_enviar_email),
+#  pero 'ot_asignada' estaba huérfana: nadie la leía nunca. Ninguna de
+#  las dos se disparaba SOLA al crear la OT.
+#
+#  Estas dos funciones son DELIBERADAMENTE independientes del endpoint
+#  manual de arriba (no lo tocan, no cambian su comportamiento -- ese
+#  sigue mezclando cliente+técnico en un solo envío para quien lo use a
+#  mano): son el disparo AUTOMÁTICO, con el cliente y el técnico
+#  recibiendo cada uno SU PROPIA plantilla/contenido. Se llaman desde
+#  ot2_api_crear, siempre best-effort (jamás rompen la creación de la
+#  OT por un fallo de correo).
+# ══════════════════════════════════════════════════════════════════════
+
+def _mant_ot_creacion_variables(vid):
+    """Variables comunes {{ot}}/{{cliente}}/{{tecnico}}/{{fecha}}/{{horario}}/
+    {{direccion}}/{{tipo_mantencion}}/{{maquina}}/{{link_ot}} para los
+    correos automáticos de creación -- MISMO cálculo que ya usa
+    mant_visita_enviar_email, para que ambos caminos (manual y
+    automático) le muestren al lector la misma información con el mismo
+    formato. Devuelve (v, variables) o (None, None) si la visita no existe."""
+    v = mysql_fetchone(
+        """SELECT v.*, c.razon_social, c.contacto_email, c.contacto_nombre,
+                  c.direccion, c.comuna, c.region
+             FROM mant_visitas v
+             LEFT JOIN mant_clientes c ON c.id = v.cliente_id
+            WHERE v.id=%s""",
+        (vid,)
+    )
+    if not v:
+        return None, None
+    tecs = mysql_fetchall(
+        """SELECT t.nombre FROM mant_visita_tecnicos vt
+             JOIN mant_tecnicos t ON t.id=vt.tecnico_id
+            WHERE vt.visita_id=%s""",
+        (vid,)
+    ) or []
+    tecs_html = ", ".join(t["nombre"] for t in tecs) if tecs else (v.get("tecnico") or "Por confirmar")
+    ot = v.get("numero_ot") or f"V-{int(vid):05d}"
+    fecha_str = v["fecha_programada"].strftime("%d/%m/%Y") if v.get("fecha_programada") else "por confirmar"
+    horario = ""
+    if v.get("hora_inicio"):
+        h_ini = str(v["hora_inicio"])[:5]
+        h_fin = str(v["hora_fin"])[:5] if v.get("hora_fin") else ""
+        horario = f"{h_ini}{(' – ' + h_fin) if h_fin else ''}"
+    dir_full = ", ".join(p for p in [(v.get("direccion_visita") or v.get("direccion") or "").strip(),
+                                     (v.get("comuna") or "").strip()] if p) or "—"
+    try:
+        _eq_rows = mysql_fetchall(
+            "SELECT m.nombre FROM mant_visita_equipos ve "
+            "  JOIN mant_maquinas m ON m.id = ve.maquina_id "
+            " WHERE ve.visita_id=%s LIMIT 5",
+            (vid,)
+        ) or []
+        maquina_str = ", ".join(
+            (r.get("nombre") or "").strip() for r in _eq_rows if (r.get("nombre") or "").strip()
+        ) or "—"
+    except Exception:
+        maquina_str = "—"
+    variables = {
+        "ot": ot,
+        "cliente": v.get("razon_social") or "Trabajo interno",
+        "tecnico": tecs_html,
+        "fecha": fecha_str,
+        "horario": horario or "por confirmar",
+        "direccion": dir_full,
+        "tipo_mantencion": _TIPO_OT_LABEL.get((v.get("tipo") or "").lower(), v.get("tipo") or "Visita"),
+        "maquina": maquina_str,
+        "link_ot": f"{_public_base_url()}/mantenciones/ot/{int(vid)}",
+    }
+    return v, variables
+
+
+def _mant_ot_email_cliente_creacion(vid):
+    """Correo al CLIENTE apenas se crea la OT (plantilla 'visita_agendada',
+    ya sembrada). Solo aplica a OT con cliente real -- trabajo interno no
+    tiene a quién avisar. Best-effort: nunca lanza."""
+    try:
+        v, variables = _mant_ot_creacion_variables(vid)
+        if not v or not v.get("cliente_id"):
+            return
+        destinos = _mant_get_cliente_emails(v["cliente_id"])
+        if not destinos and (v.get("contacto_email") or "").strip():
+            destinos = [(v.get("contacto_email") or "").strip()]
+        if not destinos:
+            return
+        tpl = None
+        try:
+            tpl = _render_comm_template("visita_agendada", "email", variables, modulo="mantenciones")
+        except Exception as _e_tpl:
+            print(f"[ot-email-cliente] plantilla no disponible vid={vid}: {_e_tpl}", flush=True)
+        if tpl:
+            asunto, cuerpo = tpl
+            asunto = (asunto or "").strip() or f"Visita técnica programada — {variables['ot']} ({variables['fecha']})"
+        else:
+            asunto = f"Visita técnica programada — {variables['ot']} ({variables['fecha']})"
+            cuerpo = (
+                f"<p style=\"font-size:14px;color:#374151\">Estimado/a {v.get('contacto_nombre') or variables['cliente']},</p>"
+                f"<p style=\"font-size:14px;color:#374151\">Te informamos que se ha programado una visita técnica en tus dependencias:</p>"
+                f"<table style=\"width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px\">"
+                f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">N° de Orden</td>"
+                f"<td style=\"padding:7px 10px;font-family:monospace;color:#dc2626;font-weight:700\">{variables['ot']}</td></tr>"
+                f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Tipo</td><td style=\"padding:7px 10px\">{variables['tipo_mantencion']}</td></tr>"
+                f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Fecha</td><td style=\"padding:7px 10px\"><strong>{variables['fecha']}</strong> · {variables['horario']}</td></tr>"
+                f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Técnico(s)</td><td style=\"padding:7px 10px\">{variables['tecnico']}</td></tr>"
+                f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Dirección</td><td style=\"padding:7px 10px\">{variables['direccion']}</td></tr>"
+                f"</table>"
+                f"<p style=\"font-size:13px;color:#6b7280;margin-top:18px\">Si necesitas reagendar o cancelar la visita, responde este correo o comunícate con tu ejecutivo asignado.</p>"
+            )
+        html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
+        res = _mant_send_email_multi(v["cliente_id"], asunto, html,
+                                     evento="visita_agendada", emails=destinos)
+        if res["enviados"]:
+            _mant_log("visita", vid, "email_creacion_cliente", f"a {', '.join(res['enviados'])} — OT {variables['ot']}")
+    except Exception as e:
+        print(f"[ot-email-cliente-creacion] vid={vid}: {e}", flush=True)
+
+
+def _mant_ot_email_tecnico_creacion(vid):
+    """Correo al TÉCNICO apenas se le asigna la OT (plantilla 'ot_asignada',
+    ya sembrada, hasta ahora huérfana -- nadie la leía). Distinto en
+    contenido del correo al cliente: acá importa la dirección/equipo/
+    link para IR a trabajar, no una confirmación de servicio. Best-effort:
+    nunca lanza."""
+    try:
+        v, variables = _mant_ot_creacion_variables(vid)
+        if not v:
+            return
+        destinos = _mant_get_tecnico_emails(vid)
+        if not destinos:
+            return
+        tpl = None
+        try:
+            tpl = _render_comm_template("ot_asignada", "email", variables, modulo="mantenciones")
+        except Exception as _e_tpl:
+            print(f"[ot-email-tecnico] plantilla no disponible vid={vid}: {_e_tpl}", flush=True)
+        if tpl:
+            asunto, cuerpo = tpl
+            asunto = (asunto or "").strip() or f"Nueva OT asignada — {variables['ot']}"
+        else:
+            asunto = f"Nueva OT asignada — {variables['ot']}"
+            cuerpo = (
+                f"<p style=\"margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700\">Hola {variables['tecnico']}</p>"
+                f"<p style=\"margin:0 0 14px;font-size:14px;color:#444;line-height:1.65\">Se te asignó una nueva orden de trabajo. Revisa los detalles abajo.</p>"
+                f"<table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"background:#f5f5f7;border-left:4px solid #f59e0b;border-radius:4px;padding:14px 18px;margin:18px 0\">"
+                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">OT:</strong>&nbsp; <span style=\"color:#dc2626;font-weight:700\">{variables['ot']}</span></td></tr>"
+                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Cliente:</strong>&nbsp; {variables['cliente']}</td></tr>"
+                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Tipo:</strong>&nbsp; {variables['tipo_mantencion']}</td></tr>"
+                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Fecha visita:</strong>&nbsp; {variables['fecha']} · {variables['horario']}</td></tr>"
+                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Equipo:</strong>&nbsp; {variables['maquina']}</td></tr>"
+                f"</table>"
+                f"<p style=\"margin:14px 0 0;font-size:13px\"><a href=\"{variables['link_ot']}\" style=\"background:#dc2626;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block\">Ver orden de trabajo</a></p>"
+            )
+        html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
+        res = _mant_send_email_multi(v.get("cliente_id"), asunto, html,
+                                     evento="ot_asignada", emails=destinos)
+        if res["enviados"]:
+            _mant_log("visita", vid, "email_creacion_tecnico", f"a {', '.join(res['enviados'])} — OT {variables['ot']}")
+    except Exception as e:
+        print(f"[ot-email-tecnico-creacion] vid={vid}: {e}", flush=True)
 
 
 # ── PROPUESTA DE PLAN DE MANTENCIÓN POR EMAIL (2026-06-11) ────────────
