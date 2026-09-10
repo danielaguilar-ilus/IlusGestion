@@ -87816,8 +87816,39 @@ def ot2_api_lineas_zz(tido, nudo):
     # probable queda arriba sin esconder el resto.
     zz.sort(key=lambda x: (not x["sugerida"], -x["monto"]))
 
+    # 💰 2026-09-10 (Daniel, explicando el caso que le contó Víctor: una OT
+    # que nace de un TICKET arrastra una nota de venta con PRODUCTOS y sin
+    # línea de servicio, así que no hay ZZ que extraer y la OT se queda sin
+    # valorizar. "Lo único que nos interese de allí es obtener el valor total
+    # del documento... si son varios, lo suma").
+    # Se devuelve el total del documento COMPLETO (productos + servicios), que
+    # es lo que el documento le cobra al cliente. Se calcula sumando las
+    # líneas con el MISMO campo normalizado que ya usan las líneas ZZ acá
+    # arriba (`vaneli`, ver el fix del 2026-08-30 sobre VATOLI/VANELI) para no
+    # inventar una segunda forma de leer el valor; si el header trae un total
+    # propio se usa ese, que ya viene con impuestos resueltos.
+    _total_doc = 0
+    for ln in (lineas or []):
+        try:
+            _total_doc += int(round(float(ln.get("vaneli") or ln.get("VANELI")
+                                          or ln.get("valor") or 0)))
+        except (TypeError, ValueError):
+            continue
+    for _campo_tot in ("valor_bruto", "total", "monto_total", "valor_total"):
+        _cab = header.get(_campo_tot)
+        if _cab:
+            try:
+                _total_doc = int(round(float(_cab)))
+                break
+            except (TypeError, ValueError):
+                pass
+
     return jsonify({
         "ok": True, "tido": tido, "nudo": nudo,
+        # Total de lo que ESTE documento le cobra al cliente. Sirve para
+        # valorizar la OT cuando el documento no trae líneas ZZ (el caso de
+        # las notas de venta que vienen de un ticket).
+        "total_documento": _total_doc,
         # El header de _cubicador_fetch usa `cliente_nombre`. Ni "cliente"
         # ni "razon_social" existen ahi (razon_social es un alias que agrega
         # OTRO normalizador, el del cubicador), asi que este campo salia
