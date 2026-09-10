@@ -872,6 +872,14 @@ window.OT2C = (function(){
   // y el backend lo rechazaba en silencio.
   var O2M_PUEDE_TOGGLE_PLAN = {{ (not es_tecnico or permissions.cat_clasificacion) | tojson }};
   var fase = 'origen';   // 'origen' → pantalla de origen. 'form' → formulario único con scroll.
+  // 📮 2026-09-10 (Daniel: "debes avisar que los correos estan bloqueados
+  // desde comunicaciones... podrás avanzar, y más adelante que ofrezca
+  // link"). Aviso NO bloqueante: si la llave de paso global de email está
+  // apagada, el anexo/las notificaciones de esta OT quedarán en el aire sin
+  // que nadie se entere hasta reclamar por WhatsApp. Default `true`
+  // (no mostrar nada) mientras la llamada resuelve -- nunca alarmar en
+  // falso por una respuesta lenta.
+  var _o2mKillswitchEmail = true;
   // Qué pasos ya estaban "listos" la última vez que se pintaron las anclas
   // -- para que el pulso verde de la tarjeta (.o2m-step-circle.pulse) se
   // dispare SOLO al pasar de pendiente a completo, nunca en cada repintado.
@@ -5635,6 +5643,20 @@ window.OT2C = (function(){
         '<div class="col-md-5"><input class="form-control" value="'+esc(a.telefono)+'" '+
         'placeholder="Teléfono (opcional)" oninput="OT2C.setAnexoCampo(\'telefono\',this.value)"></div>'+
       '</div>'+
+      (!_o2mKillswitchEmail ?
+      /* 📮 2026-09-10 (Daniel: "debes avisar que los correos estan
+         bloqueados desde comunicaciones... podrás avanzar"). Aviso NO
+         bloqueante: la llave de paso global de email (/comunicaciones)
+         está apagada, así que este anexo (y las notificaciones de la OT)
+         no saldrán aunque se marquen las casillas de abajo -- mejor
+         saberlo ahora que enterarse por un reclamo. */
+      '<div class="alert mt-2 mb-2" style="background:#fff8e1;border:1px solid #f59e0b;color:#92400e;'+
+        'padding:.6rem .85rem;border-radius:8px;font-size:.82rem;display:flex;gap:8px;align-items:flex-start">'+
+        '<i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>'+
+        '<span><b>Los correos están bloqueados desde Comunicaciones.</b> Puedes crear la OT igual, '+
+        'pero el anexo y los avisos por correo no se enviarán hasta que se reactiven '+
+        '(<a href="/comunicaciones" target="_blank" rel="noopener">abrir Comunicaciones</a>).</span>'+
+      '</div>' : '') +
       '<div class="form-check mt-2">'+
         '<input class="form-check-input" type="checkbox" id="o2mAnexoEnviar" '+(a.enviar_ahora?'checked':'')+' '+
         'onchange="OT2C.setAnexoCampo(\'enviar_ahora\',this.checked)">'+
@@ -7613,6 +7635,23 @@ window.OT2C = (function(){
 
     modal = modal || new bootstrap.Modal(document.getElementById('ot2ModalCrear'));
     pintar(); modal.show();
+    _o2mCargarKillswitch();
+  }
+
+  // 📮 2026-09-10 -- ver declaración de _o2mKillswitchEmail arriba. Solo
+  // lee el estado GLOBAL (misma fuente que /admin/comunicaciones); el
+  // candado fino por-módulo de Servicio Técnico queda para una vuelta
+  // futura si hace falta. Silencioso ante error de red: preferible no
+  // avisar a avisar mal.
+  function _o2mCargarKillswitch(){
+    fetch('/comunicaciones/kill-switch', {credentials:'same-origin'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        var antes = _o2mKillswitchEmail;
+        _o2mKillswitchEmail = !d || d.email !== false;
+        if (_o2mKillswitchEmail !== antes && fase === 'form') pintar();
+      })
+      .catch(function(){ /* silencioso -- ver comentario arriba */ });
   }
 
   // Cierra el wizard por JS -- lo necesita abrirDesdeTicket para volver al
