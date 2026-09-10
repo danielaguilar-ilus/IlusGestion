@@ -6051,8 +6051,12 @@ window.otdActToggleTodo = function(btn){
    está firmado, ESTE es "el documento guardado en la OT" que Daniel pide:
    el PDF lleva la firma capturada incrustada. */
 window.otdVerAnexoPdf = function(aid){
+  // 🔧 2026-09-09 (Daniel: "esos modales... dan el nombre de OT dos veces"):
+  // el título del modal repetía el número de OT que el propio documento ya
+  // muestra bien visible en su encabezado/chip -- se saca del título del
+  // modal, se deja solo la descripción de qué es.
   openPdf('/ot/api/anexos/' + aid + '/pdf', {
-    title: 'Anexo de servicios · OT {{ v.numero_ot or v.id }}',
+    title: 'Anexo de servicios',
     downloadName: 'Anexo-OT-{{ v.numero_ot or v.id }}.pdf',
   });
 };
@@ -6663,9 +6667,15 @@ window.otdBuscarDocErp = async function(){
    Se abre en el mismo visor de PDF del proyecto. Puede tardar más que la OT
    -- son todas las fotos embebidas -- así que el mensaje de espera lo dice
    en vez de dejar a alguien mirando una barra muda. */
+// 🔧 2026-09-09 (Daniel: "esos modales y el del PDF dan el nombre de OT
+// dos veces"): en los tres visores de documento de esta OT (este, el
+// anexo fotográfico de arriba y el anexo de servicios más arriba), el
+// título del modal repetía el número de OT que el propio documento ya
+// muestra bien visible en su encabezado/chip -- se saca del título del
+// modal, se deja solo la descripción de qué documento es.
 function otdVerAnexoFotos(){
   openPdf(`/mantenciones/api/visitas/{{ v.id }}/anexo-fotografico`, {
-    title: 'Anexo fotográfico · OT {{ v.numero_ot or v.id }}',
+    title: 'Anexo fotográfico',
     downloadName: 'Anexo-fotografico-OT-{{ v.numero_ot or v.id }}.pdf',
     loadingMessage: 'Armando el anexo con todas las fotos…',
     safetyTimeout: 60000,
@@ -6674,7 +6684,7 @@ function otdVerAnexoFotos(){
 
 function otdVerPdf(){
   openPdf(`/mantenciones/api/visitas/{{ v.id }}/pdf`, {
-    title: 'PDF de la OT {{ v.numero_ot or v.id }}',
+    title: 'PDF de la OT',
     downloadName: 'OT-{{ v.numero_ot or v.id }}.pdf',
   });
 }
