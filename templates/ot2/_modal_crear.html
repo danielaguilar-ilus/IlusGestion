@@ -5536,7 +5536,26 @@ window.OT2C = (function(){
          objetivo vuelve a ser UNA frase; los equipos pasan a su propia
          tabla del anexo (ver `productos` más abajo y la tabla en
          ot2/anexo_documento.html). */
-      a.objetivo_servicio = 'Ejecutar servicio de ' + (tInfo ? tInfo.n.toLowerCase() : S.tipo) + cliTxt + '.';
+      // 🆕 2026-09-09 (Daniel: "si seleccionas despacho en costos entonces
+      // necesito que lo agregues como objetivo del servicio, que sea bien
+      // variable"): el objetivo solo nombraba el tipo de OT (ej.
+      // "instalación"), aunque el proveedor también estuviera cobrando
+      // despacho (S.fin_costo_despacho, que ya se lista aparte en la tabla
+      // PRECIO del anexo -- ver `items` más abajo, MISMA fuente de
+      // verdad). El contrato decía "instalación" pero también cobraba el
+      // transporte sin nombrarlo en el objetivo. Se arma la lista de
+      // conceptos y se unen naturalmente con "y" -- variable de verdad:
+      // "instalación", "despacho", o "instalación y despacho" según
+      // corresponda, nunca una frase fija.
+      var _conceptosObj = [(tInfo ? tInfo.n.toLowerCase() : S.tipo)];
+      var _cdObj = parseFloat(S.fin_costo_despacho);
+      if (isFinite(_cdObj) && _cdObj > 0 && _conceptosObj.indexOf('despacho') === -1){
+        _conceptosObj.push('despacho');
+      }
+      var _conceptosObjTxt = _conceptosObj.length > 1
+        ? _conceptosObj.slice(0, -1).join(', ') + ' y ' + _conceptosObj[_conceptosObj.length - 1]
+        : _conceptosObj[0];
+      a.objetivo_servicio = 'Ejecutar servicio de ' + _conceptosObjTxt + cliTxt + '.';
     }
     /* Tabla de productos del anexo: SKU · descripción · cantidad, agrupada
        por SKU (o por nombre si el equipo no tiene SKU) y ordenada por

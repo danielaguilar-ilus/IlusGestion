@@ -494,7 +494,24 @@ window.OT2ANX = (function(){
   function objetivoDesdeOT(){
     if (!DEF_CLIENTE) return '';
     var t = 'Ejecutar servicio';
-    if (DEF_OT && DEF_OT.tipo_label) t += ' de ' + DEF_OT.tipo_label.toLowerCase();
+    // 🆕 2026-09-09 (Daniel: "si seleccionas despacho en costos entonces
+    // necesito que lo agregues como objetivo del servicio, que sea bien
+    // variable"): antes el objetivo solo nombraba el tipo de OT (ej.
+    // "instalación"), aunque el proveedor también estuviera cobrando
+    // despacho (itemsDesdeOT, arriba, YA lista "Despacho" en la tabla de
+    // PRECIO usando esta misma fuente: DEF_OT.costo_despacho). El
+    // contrato decía "instalación" pero también cobraba el transporte sin
+    // nombrarlo en el objetivo. Se arma la lista de conceptos y se unen
+    // naturalmente con "y" -- variable de verdad, no una frase fija.
+    var _conceptosObj = [];
+    if (DEF_OT && DEF_OT.tipo_label) _conceptosObj.push(DEF_OT.tipo_label.toLowerCase());
+    if (DEF_OT && DEF_OT.costo_despacho && _conceptosObj.indexOf('despacho') === -1){
+      _conceptosObj.push('despacho');
+    }
+    if (_conceptosObj.length === 1) t += ' de ' + _conceptosObj[0];
+    else if (_conceptosObj.length > 1){
+      t += ' de ' + _conceptosObj.slice(0, -1).join(', ') + ' y ' + _conceptosObj[_conceptosObj.length - 1];
+    }
     t += ' para el cliente ' + DEF_CLIENTE;
     if (DEF_OT && DEF_OT.cliente_rut) t += ' (RUT ' + DEF_OT.cliente_rut + ')';
     if (DEF_OT && DEF_OT.direccion) t += ', en ' + DEF_OT.direccion +
