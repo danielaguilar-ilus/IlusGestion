@@ -7083,6 +7083,31 @@ def _logo_data_url():
 
 
 @_functools_mod.lru_cache(maxsize=1)
+def _logo_ilus_recortado_data_url():
+    """Logo ILUS RECORTADO (static/Logo_recortado.png, 1195x547px) — mismo
+    casco rojo + "ILUS." que `_logo_data_url()`, pero SIN el margen negro
+    muerto que trae `Logo.png` (ese archivo es un canvas de 1536x1024 con
+    fondo negro opaco y la marca real ocupando solo ~71% ancho / ~48% alto,
+    centrada; contra un header también negro ese margen se funde invisible
+    y agrandar el contenedor en mm no cambiaba el tamaño VISUAL real del
+    logo). Uso: SOLO el header nativo del Anexo de Servicios
+    (`_anexo_pdf_header_footer_native`) — Daniel pidió 2026-09-09 agrandar
+    el logo ahí un 80%; con el archivo recortado el `height` en mm por fin
+    se traduce 1:1 a tamaño visual. NO reemplaza a `_logo_data_url()` en
+    los otros 13 usos del proyecto — ese archivo/función se queda igual.
+    Si el recorte no existiera por algún motivo, cae al logo original."""
+    path = os.path.join(BASE_DIR, "static", "Logo_recortado.png")
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+    return _logo_data_url()
+
+
+@_functools_mod.lru_cache(maxsize=1)
 def _logo_ilus_black_data_url():
     """Logo ILUS en NEGRO sobre transparente, para headers de fondo CLARO
     (ej. la etiqueta de despacho, que es blanca). `_logo_data_url()` de arriba
@@ -77019,6 +77044,26 @@ def mant_visita_update(vid):
                      "por el flujo correspondiente, no editando el campo directo.",
             "error_codigo": "ESTADO_PROTEGIDO",
         }), 400
+    # 🔒 2026-09-09 (Daniel, viendo la OT-2026-00181 ya cerrada en el
+    # monitor de control: "puedo manipular los días haciendo que ya está
+    # cerrada... eso tiene que quedar cerrado, no la puedes tirar ni
+    # nada"): reagendar una OT que ya completó su ciclo (3 firmas + cierre
+    # auditado) puede desincronizar la fecha contra un Anexo/documento que
+    # ya se firmó citando esa fecha. El monitor (templates/ot2/
+    # monitor_tv.html) ya deja de ofrecer los botones "correr días" cuando
+    # la OT está cerrada, pero el candado real tiene que vivir acá —
+    # mismo criterio que ya usan modalidad_cobro/garantía un poco más
+    # arriba en esta misma función: la UI ayuda, el backend es quien de
+    # verdad lo impide.
+    if any(k in d for k in ("fecha_programada", "fecha_fin", "hora_inicio", "hora_fin")):
+        _row_fecha_cerr = mysql_fetchone(
+            "SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
+        if (_row_fecha_cerr or {}).get("estado") == "cerrada":
+            return jsonify({
+                "ok": False,
+                "error": "Esta OT ya está cerrada — no se puede cambiar su fecha/hora.",
+                "error_codigo": "OT_CERRADA",
+            }), 400
     # 2026-07-15 (agendador tipo clínica, Tickets §2.6): "fecha_fin" habilita
     # reprogramar el término de una OT multi-día desde el mini-formulario
     # inline del popover (antes solo se podía fijar al CREAR la OT).
@@ -86037,7 +86082,7 @@ def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
     import html as _html
     numero_txt = _html.escape(str(numero or ""))
     cliente_txt = _html.escape((cliente_nombre or "").strip())
-    logo_ilus = _logo_data_url() or ""
+    logo_ilus = _logo_ilus_recortado_data_url() or ""
     logo_shs = _logo_shs_pdf_data_url() or ""
 
     # 🔴 2026-08-31 (Daniel: "el logo de ILUS sale desproporcionado, sale
@@ -86053,17 +86098,30 @@ def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
     # altura de contenedor se ve más chico -- para compensar eso de raíz
     # habría que recortar el archivo de imagen (fuera del alcance de un
     # cambio de código); mientras tanto se sube la altura del contenedor.
+    # 🔴 2026-09-09 (Daniel, pedido explícito: "el logo de Ilus hacerlo
+    # ochenta por ciento más grande, igual el logo [de Sports Health
+    # Solutions] también"): la solución de raíz llegó -- `Logo.png` tenía
+    # el margen negro muerto descrito arriba (canvas 1536x1024, marca real
+    # ~71%x48% centrada), y contra este header negro ese margen se fundía
+    # invisible, así que subir el contenedor en mm nunca cambiaba el
+    # tamaño VISUAL real del logo. Se recortó el archivo a
+    # `static/Logo_recortado.png` (1195x547, sin el margen muerto) y ahora
+    # el header lo usa vía `_logo_ilus_recortado_data_url()`. Con el
+    # margen muerto fuera del camino, 30mm→27mm ya se ve "80% más grande"
+    # de verdad (antes 30mm de contenedor rendía ~48% de marca real, o
+    # sea ~14.4mm visuales -- 27mm del logo recortado rinden 27mm
+    # visuales completos, casi el doble). SHS sube a la par: 26mm→28mm.
     _ilus_logo_html = (
-        f'<img src="{logo_ilus}" style="height:28mm;max-width:90mm;object-fit:contain;">'
+        f'<img src="{logo_ilus}" style="height:27mm;max-width:90mm;object-fit:contain;">'
         if logo_ilus else
         '<span style="font-weight:900;font-size:15px;color:#ffffff;'
         'letter-spacing:.02em;">ILUS<span style="color:#dc2626;">.</span></span>'
     )
     _shs_logo_html = (
-        '<div style="height:26mm;background:#ffffff;border-radius:1mm;'
+        '<div style="height:28mm;background:#ffffff;border-radius:1mm;'
         'box-sizing:border-box;padding:1.5mm 3mm;display:flex;align-items:center;'
         f'justify-content:center;"><img src="{logo_shs}" '
-        'style="height:22mm;width:auto;object-fit:contain;"></div>'
+        'style="height:24mm;width:auto;object-fit:contain;"></div>'
         if logo_shs else ""
     )
     header_html = (
@@ -86074,11 +86132,11 @@ def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
         f'<div style="display:flex;align-items:center;gap:3mm;">'
         f'{_shs_logo_html}{_ilus_logo_html}</div>'
         '<div style="text-align:right;max-width:100mm;min-width:0;overflow:hidden;">'
-        '<div style="font-size:10px;font-weight:800;color:#ffffff;'
+        '<div style="font-size:13px;font-weight:800;color:#ffffff;'
         'letter-spacing:-.01em;">ANEXO DE SERVICIOS</div>'
-        f'<div style="font-size:13px;font-weight:900;color:#dc2626;'
+        f'<div style="font-size:19px;font-weight:900;color:#dc2626;'
         f'line-height:1.15;">N&#176; {numero_txt}</div>'
-        + (f'<div style="font-size:8.5px;font-weight:700;color:#e5e7eb;'
+        + (f'<div style="font-size:11.5px;font-weight:700;color:#e5e7eb;'
            'line-height:1.2;margin-top:.5mm;white-space:nowrap;overflow:hidden;'
            f'text-overflow:ellipsis;">{cliente_txt}</div>' if cliente_txt else '') +
         '</div></div>'
@@ -86216,10 +86274,24 @@ def _anexo_pdf_bytes(a):
     # física real, no solo en la primera. margin.top ~26mm da espacio
     # real al header (~20mm de alto); bottom 14mm al footer de una
     # línea (mismas medidas ya probadas en el compacto de la OT).
+    # 🔴 FIX 2026-09-09 (Daniel, mirando el Anexo N°169 real: "la tabla...
+    # sigue arrancando pegada, sin ningún margen, contra el header negro
+    # que se repite arriba... parece un manchón negro"). Causa raíz: el
+    # header renderizado (logos + texto + franja) mide ~37-38mm de alto
+    # real (padding 4mm+4mm + logo/contenedor de hasta 28mm + franja
+    # 1.4mm), y Chromium reserva para el header_template EXACTAMENTE el
+    # espacio de `margin.top` en cada página -- con 40mm quedaba menos de
+    # 3mm de aire real entre el borde del header y el inicio del
+    # contenido (el <thead> oscuro de la tabla de productos, que además
+    # es del mismo negro del header): a simple vista, dos negros con un
+    # hilo blanco entre medio se ven como UNO SOLO. Subido a 50mm -- deja
+    # un respiro blanco claro (~12mm) en TODA página, no solo la primera,
+    # y con margen para que el logo/texto más grandes del fix de arriba
+    # (punto 1 y 2 del pedido de Daniel) no vuelvan a comerse ese aire.
     _hdr, _ftr = _anexo_pdf_header_footer_native(
         a.get("numero"), a.get("proveedor_nombre") or a.get("cliente_nombre"))
     data = _pw_pdf(html, page_format="Letter",
-                    margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
+                    margin={"top": "50mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
                     header_template=_hdr, footer_template=_ftr)
     # 🔴 2026-08-31 (Daniel: "el nombre no ayuda en nada... necesito que
     # diga anexo, ILUS, número tal"): nombre genérico "anexo-servicios-148"
@@ -86407,8 +86479,12 @@ def ot2_api_anexo_preview_pdf():
     )
     try:
         _hdr, _ftr = _anexo_pdf_header_footer_native("(vista previa)", payload.get("cliente_nombre"))
+        # 🔴 FIX 2026-09-09: mismo margin.top que `_anexo_pdf_bytes` (ver el
+        # comentario extenso ahí) -- la vista previa tiene que mostrar
+        # EXACTAMENTE el documento que se va a generar de verdad, "manchón
+        # negro" incluido si no se corrige acá también.
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
+                        margin={"top": "50mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
                         header_template=_hdr, footer_template=_ftr)
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)

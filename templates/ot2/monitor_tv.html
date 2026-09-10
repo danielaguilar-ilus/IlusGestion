@@ -1266,35 +1266,75 @@
        se firmó, con los pasos bien adecuados"). Reemplaza la barra de
        avance de tareas + la píldora de firma sueltas (arriba) por UN solo
        recorrido conectado: Ejecución -> Firma técnico -> Firma cliente ->
-       Cierre. Mismo lenguaje que el resto del monitor: verde = etapa
-       resuelta, rojo = LO ÚNICO que pulsa -- la etapa que está pasando
-       ahora mismo ("EJECUTANDO es lo único saturado y lo único que late",
-       ver el comentario grande al inicio de este archivo). Ver
-       renderEtapas() más abajo. */
+       Cierre. Ver renderEtapas() más abajo.
+
+       🎨 2026-09-09 (Daniel, viendo la primera versión: "está terrible el
+       diseño del tracking, colócale color, dinamismo, que cuando lo abra
+       se vea el progreso de la barra hasta donde llegó, colócale unos
+       logos a color... algo llamativo, elegante"). Segunda pasada:
+       - Cada etapa tiene su PROPIO color de acento cuando está EN CURSO
+         (ámbar=ejecutando, azul=firma técnico, morado=firma cliente,
+         verde=cierre) -- ya no todo pulsa en rojo por igual, cada tramo
+         del viaje se siente distinto. Lo YA resuelto sigue siendo verde
+         universal (el lenguaje ya establecido de "verde = hecho" no se
+         toca) con un check.
+       - Al insertarse en el DOM (cada vez que se abre la burbuja de una
+         OT), el relleno de las líneas ya resueltas se anima de izquierda
+         a derecha (tvmLineGrow) con un pequeño delay en cascada por
+         segmento (ver el `style` inline que pone renderEtapas), y el nodo
+         que corresponde "aparece" con un pequeño rebote (tvmNodePop) justo
+         cuando el relleno lo alcanza -- así se ve LITERALMENTE el avance
+         llegando hasta donde está la OT, no un estado estático. */
     .tvm-stepper{display:flex;align-items:flex-start;margin-top:14px;padding:2px 2px 0}
     .tvm-step{display:flex;flex-direction:column;align-items:center;gap:7px;flex:none;width:56px}
-    .tvm-step-dot{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
+    .tvm-step-dot{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
       justify-content:center;font-size:14px;background:rgba(255,255,255,.06);
       border:2px solid rgba(255,255,255,.16);color:var(--txt-3);
+      box-shadow:0 2px 8px rgba(0,0,0,.35);
       transition:background .4s ease,border-color .4s ease,color .4s ease}
     .tvm-step-lbl{font-size:10.5px;font-weight:800;letter-spacing:.01em;text-align:center;
       color:var(--txt-3);line-height:1.15;transition:color .4s ease}
-    .tvm-step-line{flex:1;height:3px;border-radius:99px;background:rgba(255,255,255,.1);
-      margin:13px -6px 0;transition:background .5s ease}
-    .tvm-step-line.is-done{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
+    .tvm-step-line{position:relative;flex:1;height:3px;border-radius:99px;
+      background:rgba(255,255,255,.1);margin:14px -6px 0;overflow:hidden}
+    .tvm-step-line.is-done::after{content:'';position:absolute;inset:0;border-radius:99px;
+      background:linear-gradient(90deg,var(--green-500),var(--green-400));
+      transform-origin:left center;animation:tvmLineGrow .65s cubic-bezier(.22,1,.36,1) both;
+      animation-delay:var(--tvm-delay,0ms)}
     .tvm-step.is-done .tvm-step-dot{background:linear-gradient(135deg,var(--green-500),var(--green-600));
-      border-color:var(--green-400);color:#fff}
+      border-color:var(--green-400);color:#fff;box-shadow:0 2px 10px rgba(22,163,74,.4);
+      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both;animation-delay:var(--tvm-delay,0ms)}
     .tvm-step.is-done .tvm-step-lbl{color:#86efac}
-    .tvm-step.is-current .tvm-step-dot{background:rgba(230,0,0,.16);border-color:var(--ilus-red);
-      color:#ff8080;animation:tvmStepPulse 1.8s ease-in-out infinite}
+    .tvm-step.is-current .tvm-step-dot{animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both;
+      animation-delay:var(--tvm-delay,0ms)}
     .tvm-step.is-current .tvm-step-lbl{color:#fff}
-    @keyframes tvmStepPulse{
-      0%,100%{box-shadow:0 0 0 0 rgba(230,0,0,.5)}
-      50%{box-shadow:0 0 0 7px rgba(230,0,0,0)}
-    }
+    @keyframes tvmLineGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+    @keyframes tvmNodePop{0%{transform:scale(.45);opacity:0}65%{transform:scale(1.18)}100%{transform:scale(1);opacity:1}}
+    /* Acento de color por etapa (data-stage="0..3", puesto por renderEtapas) --
+       "vida real": cada tipo de paso tiene su propio color, como un
+       tracking de despacho. Solo aplica mientras la etapa está EN CURSO. */
+    .tvm-step[data-stage="0"].is-current .tvm-step-dot{background:rgba(245,158,11,.18);
+      border-color:var(--amber-500);color:#fed7aa;box-shadow:0 0 0 0 rgba(245,158,11,.5),0 2px 10px rgba(245,158,11,.3);
+      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseAmbar 1.8s ease-in-out infinite;
+      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
+    .tvm-step[data-stage="1"].is-current .tvm-step-dot{background:rgba(59,130,246,.18);
+      border-color:var(--blue-500);color:#bfdbfe;box-shadow:0 0 0 0 rgba(59,130,246,.5),0 2px 10px rgba(59,130,246,.3);
+      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseAzul 1.8s ease-in-out infinite;
+      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
+    .tvm-step[data-stage="2"].is-current .tvm-step-dot{background:rgba(168,85,247,.18);
+      border-color:#a855f7;color:#e9d5ff;box-shadow:0 0 0 0 rgba(168,85,247,.5),0 2px 10px rgba(168,85,247,.3);
+      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseMorado 1.8s ease-in-out infinite;
+      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
+    .tvm-step[data-stage="3"].is-current .tvm-step-dot{background:rgba(34,197,94,.18);
+      border-color:var(--green-500);color:#bbf7d0;box-shadow:0 0 0 0 rgba(34,197,94,.5),0 2px 10px rgba(34,197,94,.3);
+      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseVerde 1.8s ease-in-out infinite;
+      animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
+    @keyframes tvmPulseAmbar{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}50%{box-shadow:0 0 0 7px rgba(245,158,11,0)}}
+    @keyframes tvmPulseAzul{0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.5)}50%{box-shadow:0 0 0 7px rgba(59,130,246,0)}}
+    @keyframes tvmPulseMorado{0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,.5)}50%{box-shadow:0 0 0 7px rgba(168,85,247,0)}}
+    @keyframes tvmPulseVerde{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
     .tvm-stepper-sub{margin-top:7px;font-size:12.5px;font-weight:700;color:var(--txt-3)}
     @media (prefers-reduced-motion:reduce){
-      .tvm-step.is-current .tvm-step-dot{animation:none}
+      .tvm-step-dot,.tvm-step-line.is-done::after{animation:none !important}
     }
     /* 🆕 2026-09-02 (Daniel: "involucrar los documentos... factura o
        boleta... a la hora de cerrar"): mismo lenguaje visual de las
@@ -1649,16 +1689,23 @@
     const etapaAct = _etapaActualOt(b);
     const cerrada = etapaAct === 4;
     let html = '<div class="tvm-stepper">';
+    // Delay en cascada (ver @keyframes tvmLineGrow/tvmNodePop en el <style>):
+    // cada segmento/nodo se anima un poco más tarde que el anterior, así el
+    // relleno se ve "viajar" de izquierda a derecha hasta donde llegó la OT
+    // de verdad, en vez de aparecer todo de golpe.
     ETAPAS_OT.forEach((e, i) => {
       const done = cerrada || i < etapaAct;
       const current = !cerrada && i === etapaAct;
       let cls = 'tvm-step';
       if (done) cls += ' is-done'; else if (current) cls += ' is-current';
-      html += '<div class="' + cls + '"><div class="tvm-step-dot">' +
+      const delayNodo = (done || current) ? (i * 160) : 0;
+      html += '<div class="' + cls + '" data-stage="' + i + '" style="--tvm-delay:' + delayNodo + 'ms"><div class="tvm-step-dot">' +
         (done ? '<i class="bi bi-check-lg"></i>' : '<i class="bi ' + e.icon + '"></i>') +
         '</div><span class="tvm-step-lbl">' + e.lbl + '</span></div>';
       if (i < ETAPAS_OT.length - 1){
-        html += '<div class="tvm-step-line' + ((done || i < etapaAct) ? ' is-done' : '') + '"></div>';
+        const lineaDone = done || i < etapaAct;
+        const delayLinea = lineaDone ? (i * 160 + 80) : 0;
+        html += '<div class="tvm-step-line' + (lineaDone ? ' is-done' : '') + '" style="--tvm-delay:' + delayLinea + 'ms"></div>';
       }
     });
     html += '</div>';
@@ -2543,12 +2590,22 @@
       // que van a rechazar. Correr días es lo más frecuente en terreno:
       // un clic, sin escribir fechas a mano.
       if (PUEDE_EDITAR && b.vid){
+        // 🔒 2026-09-09 (Daniel, viendo la OT-2026-00181 -- ya CERRADA, las
+        // 4 etapas en verde -- "puedo manipular los días haciendo que ya
+        // está cerrada... eso tiene que quedar cerrado, no la puedes tirar
+        // ni nada"). Reagendar una OT que ya terminó su ciclo completo de
+        // firmas no tiene sentido y puede desincronizar fechas contra un
+        // anexo/documento ya firmado -- los botones de correr días
+        // desaparecen cuando _etapaActualOt(b) llega a 4 (cerrada);
+        // "Abrir OT" se conserva siempre, ver la OT nunca se bloquea.
+        const _cerradaAcc = _etapaActualOt(b) === 4;
         const acc = el('div', 'tvm-ot-acc');
         acc.innerHTML =
-          '<button type="button" data-d="1">+1 día</button>' +
-          '<button type="button" data-d="2">+2</button>' +
-          '<button type="button" data-d="7">+1 semana</button>' +
-          '<button type="button" data-d="-1">−1 día</button>' +
+          (_cerradaAcc ? '' :
+            '<button type="button" data-d="1">+1 día</button>' +
+            '<button type="button" data-d="2">+2</button>' +
+            '<button type="button" data-d="7">+1 semana</button>' +
+            '<button type="button" data-d="-1">−1 día</button>') +
           // 🐛 FIX 2026-09-02 (Daniel: "en el monitor, al abrir la OT me
           // lleva a las OT normales"): este link mandaba a
           // /mantenciones/ot/<id>/ejecutar, la pantalla LEGACY. El monitor

@@ -2321,6 +2321,40 @@ function _tkotPintarBotonPlantilla(key){
   }
 }
 
+// ── Buscador de "Plantillas extra" (Daniel, 2026-09-09: "necesito que me
+// ayude con esa búsqueda, porque creo que la elíptica tiene otro nombre,
+// pero quiero buscarla por las plantillas") -- filtra en vivo por NOMBRE,
+// sin distinguir tildes (el nombre real puede no ser el literal que el
+// usuario tiene en mente). Oculta filas con CSS (nunca las remueve del
+// DOM) para no perder la selección de checkboxes ya marcados mientras se
+// escribe/borra el filtro -- o2fGuardarMultiPlantilla lee TODO
+// #multiPlantillaList, filtrado o no.
+function _o2fNorm(s){
+  return (s == null ? '' : String(s))
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+}
+function _o2fFiltrarMultiPlantilla(valor){
+  const cont = document.getElementById('multiPlantillaList');
+  if(!cont) return;
+  const q = _o2fNorm(valor).trim();
+  let visibles = 0;
+  Array.from(cont.querySelectorAll('.mp-item')).forEach(function(el){
+    const match = !q || (el.dataset.nombre || '').indexOf(q) !== -1;
+    el.style.display = match ? '' : 'none';
+    if(match) visibles++;
+  });
+  const sinRes = document.getElementById('mpSinResultados');
+  if(sinRes){
+    if(q && !visibles){
+      sinRes.textContent = 'Sin resultados para "' + valor + '"';
+      sinRes.style.display = '';
+    } else {
+      sinRes.style.display = 'none';
+    }
+  }
+}
+
 // ── Multi-plantilla por equipo (idéntico a Mantenciones, clave = _tkotEqKey) ──
 async function o2fAbrirMultiPlantilla(key, eqNombre){
   const todas = _O2F.plantillas.all || [];
@@ -2361,16 +2395,23 @@ async function o2fAbrirMultiPlantilla(key, eqNombre){
     + '<div class="modal-body"><div class="alert alert-info py-2 small mb-2"><i class="bi bi-info-circle me-1"></i>'
     + 'La plantilla del tipo de OT ('+esc(tipoActual||'—')+') ya se aplica automáticamente. '
     + 'Aquí puedes agregar plantillas <strong>adicionales</strong> para este equipo.'+_catAviso+'</div>'
+    + (plantillas.length ? (
+        '<div class="mb-2"><input type="text" id="mpBuscador" class="form-control form-control-sm" '
+        + 'placeholder="Buscar plantilla por nombre..." oninput="_o2fFiltrarMultiPlantilla(this.value)">'
+        + '</div>'
+      ) : '')
     + (plantillas.length ? '' : '<div class="text-muted small text-center py-3">No hay plantillas extra en esta categoría.</div>')
     + '<div id="multiPlantillaList">' + plantillas.map(function(p){
-        return '<label class="d-flex align-items-start gap-2 p-2 mb-1 border rounded" style="cursor:pointer;background:'+(seleccionadas.has(p.id)?'#eff6ff':'#fff')+'">'
+        return '<label class="mp-item d-flex align-items-start gap-2 p-2 mb-1 border rounded" data-nombre="'+esc(_o2fNorm(p.nombre))+'" style="cursor:pointer;background:'+(seleccionadas.has(p.id)?'#eff6ff':'#fff')+'">'
           + '<input type="checkbox" class="mp-chk" data-pid="'+p.id+'" '+(seleccionadas.has(p.id)?'checked':'')+' style="margin-top:3px">'
           + '<div class="flex-grow-1"><div class="fw-bold small">'+esc(p.nombre)+'</div>'
           + '<div class="text-muted" style="font-size:.7rem">'
           + (p.tipo_visita?'<span class="badge bg-secondary me-1">'+esc(p.tipo_visita)+'</span>':'')
           + (p.items_count||0)+' tarea(s)'
           + (p.descripcion?' · '+esc(p.descripcion.substring(0,80)):'') + '</div></div></label>';
-      }).join('') + '</div></div>'
+      }).join('') + '</div>'
+    + '<div id="mpSinResultados" class="text-muted small text-center py-3" style="display:none"></div>'
+    + '</div>'
     + '<div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>'
     + '<button type="button" class="btn btn-primary" onclick="o2fGuardarMultiPlantilla(\''+esc(key)+'\')">'
     + '<i class="bi bi-check-lg me-1"></i>Guardar selección</button></div></div></div>';
