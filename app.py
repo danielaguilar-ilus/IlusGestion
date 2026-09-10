@@ -83799,6 +83799,15 @@ _OT_TV_SELECT = (
     # pasó el 26-ago) volvían a salir entre los INTERNOS. Ahora los dos
     # caminos usan el mismo criterio.
     "       COALESCE(te.id, ten.id) AS tecnico_proveedor_id, "
+    # 🆕 2026-09-10 (Daniel, sobre el recorrido del monitor: "indicando
+    # cuándo fue creado, la hora también... la firma, cuándo firmó, cada
+    # quién"). Las MISMAS columnas que ya alimentan el recorrido de la ficha
+    # (_OT2_HITOS) y su tarjeta de firmas -- acá solo faltaban en el SELECT
+    # del monitor, que mostraba las etapas sin ninguna hora.
+    "       v.created_at, v.cerrada_at, "
+    "       v.firma_tecnico_at,    v.firma_tecnico_nombre, "
+    "       v.firma_cliente_at,    v.firma_cliente_nombre, "
+    "       v.firma_supervisor_at, v.firma_supervisor_nombre, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas "
     "  FROM mant_visitas v "
@@ -84367,6 +84376,45 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             "lev_fotos": lev_fotos, "lev_ultimo_iso": lev_ultimo_iso,
             "firma_estado": firma_estado,
             "anexo": anexo_info,
+            # 🆕 2026-09-10 (Daniel: "indicando cuándo fue creado, la hora
+            # también... las tareas del checklist, un porcentaje, la firma,
+            # cuándo firmó, cada quién"). El recorrido del monitor mostraba
+            # las etapas SIN una sola hora; ahora cada hito viaja con su
+            # marca real -- las MISMAS columnas que la ficha (_OT2_HITOS).
+            # `quien` (el nombre de quien firmó) va solo en la pantalla de
+            # CONTROL: el televisor público no necesita nombres de personas
+            # firmando, y el modal donde se lee esto no existe allá (no hay
+            # mouse). Las horas sí viajan siempre -- no son dato personal.
+            # Formato dd/mm HH:MM en hora Chile (REGLA #6), armado acá y no
+            # en el JS para no repetir el manejo de zonas en el frontend.
+            "recorrido": {
+                "creada": {
+                    "at": _ot_tv_iso(f.get("created_at")),
+                    "txt": chile_fmt_filter(f.get("created_at"), "%d/%m %H:%M") if f.get("created_at") else "",
+                    "quien": None,
+                },
+                "f_tecnico": {
+                    "at": _ot_tv_iso(f.get("firma_tecnico_at")),
+                    "txt": chile_fmt_filter(f.get("firma_tecnico_at"), "%d/%m %H:%M") if f.get("firma_tecnico_at") else "",
+                    "quien": (f.get("firma_tecnico_nombre") or None) if incluir_finanzas else None,
+                },
+                "f_cliente": {
+                    "at": _ot_tv_iso(f.get("firma_cliente_at")),
+                    "txt": chile_fmt_filter(f.get("firma_cliente_at"), "%d/%m %H:%M") if f.get("firma_cliente_at") else "",
+                    "quien": (f.get("firma_cliente_nombre") or None) if incluir_finanzas else None,
+                },
+                "cierre": {
+                    "at": _ot_tv_iso(f.get("firma_supervisor_at") or f.get("cerrada_at")),
+                    "txt": (chile_fmt_filter(f.get("firma_supervisor_at") or f.get("cerrada_at"), "%d/%m %H:%M")
+                            if (f.get("firma_supervisor_at") or f.get("cerrada_at")) else ""),
+                    "quien": (f.get("firma_supervisor_nombre") or None) if incluir_finanzas else None,
+                },
+            },
+            # Checklist como dato propio de la tarjeta (píldora), no solo
+            # como % suelto: Daniel pidió "las tareas del checklist, un
+            # porcentaje". Ya se calculaban acá arriba (n_c/n_t) -- solo
+            # faltaba que viajaran en el bloque, como ya viajan en `actual`.
+            "tareas_ok": n_c, "tareas_total": n_t,
         }
 
         tid = f.get("tec_id")

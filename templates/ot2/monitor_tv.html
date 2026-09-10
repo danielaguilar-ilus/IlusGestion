@@ -1322,7 +1322,10 @@
        avance necesito que sea en verde, y que esté en rojo todo lo que no
        esté gestionado") y que repitió anoche. */
     .tvm-stepper{display:flex;align-items:flex-start;margin-top:18px;padding:6px 4px 0}
-    .tvm-step{display:flex;flex-direction:column;align-items:center;gap:9px;flex:none;width:72px}
+    /* gap chico: bajo el disco ahora van etiqueta + hora + quién firmó, y
+       con 9px de separación la tarjeta de la OT crecía de más. */
+    .tvm-step{display:flex;flex-direction:column;align-items:center;gap:4px;flex:none;width:72px}
+    .tvm-step .tvm-step-dot{margin-bottom:4px}
     .tvm-step-dot{position:relative;width:48px;height:48px;border-radius:50%;
       display:grid;place-items:center;font-size:23px;z-index:1;
       background:radial-gradient(circle at 32% 24%,rgba(255,255,255,.16) 0%,rgba(255,255,255,.05) 52%,rgba(0,0,0,.28) 100%),#1c1c20;
@@ -1380,6 +1383,40 @@
     @keyframes tvmRespira{0%,100%{opacity:.88;transform:scale(1)}50%{opacity:1;transform:scale(1.07)}}
     @keyframes tvmLineGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
     @keyframes tvmNodePop{0%{transform:scale(.45);opacity:0}65%{transform:scale(1.18)}100%{transform:scale(1);opacity:1}}
+    /* 🕒 2026-09-10 -- hora real de cada hito y quién firmó (ver
+       b.recorrido en _ot_tv_datos). Tamaños chicos a propósito: el que
+       manda a la distancia sigue siendo el ícono a color y el aro; la hora
+       es el dato que se lee al acercarse a mirar una OT puntual. */
+    .tvm-step-ts{font-size:9.5px;font-weight:700;color:var(--txt-4,#6b6b73);
+      font-variant-numeric:tabular-nums;letter-spacing:.01em;line-height:1.1}
+    .tvm-step.is-done .tvm-step-ts{color:#86efac}
+    .tvm-step.is-current .tvm-step-ts{color:#fca5a5}
+    .tvm-step-who{font-size:9px;font-weight:700;color:var(--txt-4,#6b6b73);
+      line-height:1.1;max-width:72px;overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap;display:block}
+    .tvm-step.is-done .tvm-step-who{color:#8b8b93}
+    /* 💊 Píldora de checklist -- mismo lenguaje que .tvm-anexo/.tvm-doc:
+       verde resuelto, ámbar falta algo. Incluye la barra de avance real
+       para que el porcentaje no sea solo un número. */
+    .tvm-chk{
+      display:flex;align-items:center;gap:9px;margin-top:12px;padding:7px 12px;
+      border-radius:10px;font-size:13.5px;font-weight:800;letter-spacing:-.01em;
+    }
+    .tvm-chk i.bi{font-size:15px;flex:none}
+    .tvm-chk b{font-variant-numeric:tabular-nums;flex:none}
+    .tvm-chk-bar{flex:1;min-width:44px;height:5px;border-radius:99px;
+      background:rgba(255,255,255,.12);overflow:hidden;display:block}
+    .tvm-chk-bar > i{display:block;height:100%;border-radius:99px;
+      background:linear-gradient(90deg,var(--green-500),var(--green-400));
+      transform-origin:left center;animation:tvmLineGrow .7s cubic-bezier(.22,1,.36,1) both}
+    .tvm-chk-ok{
+      background:linear-gradient(135deg,rgba(34,197,94,.22),rgba(21,128,61,.16));
+      border:1px solid rgba(74,222,128,.5);color:#86efac;
+    }
+    .tvm-chk-falta{
+      background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.4);color:#fbbf24;
+    }
+    .tvm-chk-falta .tvm-chk-bar > i{background:linear-gradient(90deg,#b45309,var(--amber-500))}
     .tvm-stepper-sub{margin-top:9px;font-size:12.5px;font-weight:700;color:var(--txt-3)}
     @media (prefers-reduced-motion:reduce){
       .tvm-step-dot,.tvm-step-dot i,
@@ -1724,24 +1761,52 @@
   // lenguaje -- antes acá vivían otros 4 íconos y otros 4 colores inventados
   // aparte. `hc` es el color propio de la etapa (viaja como --tvm-hc y pinta
   // SOLO el ícono; el aro y la línea son el semáforo verde/rojo).
+  // 🆕 2026-09-10 (Daniel: "indicando cuándo fue creado, la hora también...
+  // no agregar tanto paso tampoco sino los reales de la orden de trabajo").
+  // Se suma "Creada" como primera etapa -- es el único hito con marca de
+  // tiempo GARANTIZADA (created_at) y es justo la hora que pidió ver. No se
+  // suman las 6 de la ficha: "Aprobada" y "Cerrada" se leen como una sola
+  // en el monitor. `key` apunta al hito correspondiente en b.recorrido
+  // (armado en _ot_tv_datos); "Ejecución" no tiene marca fiable
+  // (hora_real_inicio casi nunca se llena, el geofence está OFF) así que en
+  // su lugar muestra el avance real del checklist.
   const ETAPAS_OT = [
-    { icon: 'bi-wrench-adjustable', lbl: 'Ejecución',     hc: '#fbbf24' },
-    { icon: 'bi-pen-fill',          lbl: 'Firma técnico', hc: '#c084fc' },
-    { icon: 'bi-person-check-fill', lbl: 'Firma cliente', hc: '#22d3ee' },
-    { icon: 'bi-lock-fill',         lbl: 'Cierre',        hc: '#4ade80' },
+    { key: 'creada',    icon: 'bi-clipboard2-plus-fill', lbl: 'Creada',        hc: '#60a5fa' },
+    { key: null,        icon: 'bi-wrench-adjustable',    lbl: 'Ejecución',     hc: '#fbbf24' },
+    { key: 'f_tecnico', icon: 'bi-pen-fill',             lbl: 'Firma técnico', hc: '#c084fc' },
+    { key: 'f_cliente', icon: 'bi-person-check-fill',    lbl: 'Firma cliente', hc: '#22d3ee' },
+    { key: 'cierre',    icon: 'bi-lock-fill',            lbl: 'Cierre',        hc: '#4ade80' },
   ];
-  // Índice (0-3) de la etapa donde está la OT AHORA MISMO -- la primera
-  // que todavía no se resolvió. Con 'cerrada' las 4 quedan resueltas.
+  // "Ya terminó su ciclo completo de firmas". Se pregunta por el ESTADO, no
+  // por el índice de la etapa: antes esto se leía como `_etapaActualOt(b)===4`
+  // en dos lugares y al sumar la etapa "Creada" ese 4 pasó a significar otra
+  // cosa -- justo la clase de acople que rompe cosas en silencio.
+  function _otCerrada(b){ return (b.firma_estado || null) === 'cerrada'; }
+  // El nombre de quien firmó lo escribe una PERSONA al firmar
+  // (firma_tecnico_nombre / firma_cliente_nombre / firma_supervisor_nombre) y
+  // acá se inyecta como HTML -- se escapa siempre (REGLA #4). Este archivo no
+  // tenía ningún helper de escape: `setTexto` usa textContent y no sirve para
+  // strings que se concatenan en innerHTML.
+  function _tvmEsc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  // Índice de la etapa donde está la OT AHORA MISMO -- la primera que
+  // todavía no se resolvió. Con 'cerrada' las 5 quedan resueltas.
   function _etapaActualOt(b){
     const fe = b.firma_estado || null;
-    if (fe === 'cerrada') return 4;
-    if (fe === 'cliente') return 2;
-    if (fe === 'tecnico') return 1;
-    return 0;
+    if (fe === 'cerrada') return 5;   // todo resuelto
+    if (fe === 'cliente') return 4;   // firmó el cliente -> falta el cierre
+    if (fe === 'tecnico') return 3;   // firmó el técnico -> falta el cliente
+    return 1;                          // creada ya está: va en ejecución
   }
   function renderEtapas(b, be){
     const etapaAct = _etapaActualOt(b);
-    const cerrada = etapaAct === 4;
+    const cerrada = _otCerrada(b);
+    const rec = b.recorrido || {};
+    const nT = Number(b.tareas_total || 0);
+    const nOk = Number(b.tareas_ok || 0);
     let html = '<div class="tvm-stepper">';
     // Delay en cascada (ver @keyframes tvmLineGrow/tvmNodePop en el <style>):
     // cada segmento/nodo se anima un poco más tarde que el anterior, así el
@@ -1761,11 +1826,31 @@
       // El ícono de la etapa se queda SIEMPRE (resuelta o no); un badge
       // chico con el check confirma "hecho" sin comerse la identidad de
       // cada paso. El semáforo (verde=hecho) no cambia.
+      // 🕒 2026-09-10 (Daniel: "indicando cuándo fue creado, la hora
+      // también... la firma, cuándo firmó, cada quién"). Bajo cada etapa va
+      // su marca real (dd/mm HH:MM en hora Chile, ya formateada por el
+      // backend en b.recorrido) y, en las firmas, QUIÉN firmó. Lo que
+      // todavía no pasó muestra un guion -- nunca una hora inventada.
+      // "Ejecución" no tiene marca fiable, así que ahí va el avance real
+      // del checklist, que es el dato que de verdad importa en esa etapa.
+      const h = e.key ? (rec[e.key] || {}) : null;
+      let sub = '';
+      if (e.key){
+        sub = h.txt || '—';
+      } else if (nT){
+        sub = nOk + '/' + nT;
+      } else {
+        sub = '—';
+      }
+      const quien = (h && h.quien) ? h.quien : '';
       html += '<div class="' + cls + '" data-stage="' + i + '"' +
         ' style="--tvm-delay:' + delayNodo + 'ms;--tvm-hc:' + e.hc + '"><div class="tvm-step-dot">' +
         '<i class="bi ' + e.icon + '"></i>' +
         (done ? '<span class="tvm-step-badge"><i class="bi bi-check-lg"></i></span>' : '') +
-        '</div><span class="tvm-step-lbl">' + e.lbl + '</span></div>';
+        '</div><span class="tvm-step-lbl">' + e.lbl + '</span>' +
+        '<span class="tvm-step-ts">' + sub + '</span>' +
+        (quien ? '<span class="tvm-step-who" title="' + _tvmEsc(quien) + '">' + _tvmEsc(quien) + '</span>' : '') +
+        '</div>';
       if (i < ETAPAS_OT.length - 1){
         const lineaDone = done || i < etapaAct;
         // v4 -- el tramo que ENTRA al nodo actual se degrada verde -> rojo
@@ -1778,12 +1863,24 @@
       }
     });
     html += '</div>';
-    // Mientras está en Ejecución, el % de tareas sigue siendo un dato útil
-    // (cuánto falta para poder firmar) -- se muestra chico, bajo el
-    // recorrido, en vez de como una barra grande compitiendo por atención.
-    if (!cerrada && etapaAct === 0){
+    // 💊 2026-09-10 (Daniel: "algo las tarjetas tipo píldora... por lo menos
+    // las tareas del checklist, un porcentaje"). Antes esto era un texto
+    // suelto que SOLO aparecía mientras la OT estaba en ejecución -- o sea,
+    // justo desaparecía cuando uno quiere revisar qué quedó hecho. Ahora es
+    // una píldora con el mismo lenguaje que las de anexo/documento (verde
+    // resuelto, ámbar falta algo) y se muestra siempre que haya checklist.
+    if (nT > 0){
+      const pct = Math.max(0, Math.min(100, Math.round(nOk * 100 / nT)));
+      const full = nOk >= nT;
+      html += '<div class="tvm-chk ' + (full ? 'tvm-chk-ok' : 'tvm-chk-falta') + '">' +
+        '<i class="bi ' + (full ? 'bi-list-check' : 'bi-list-task') + '"></i>' +
+        '<span>Checklist ' + nOk + '/' + nT + '</span>' +
+        '<b>' + pct + '%</b>' +
+        '<i class="tvm-chk-bar"><i style="width:' + pct + '%"></i></i>' +
+      '</div>';
+    } else {
       const pct = Math.max(0, Math.min(100, Math.round(b.avance_pct || (be === 'terminado' ? 100 : 0))));
-      html += '<div class="tvm-stepper-sub">' + pct + '% de tareas completadas</div>';
+      if (pct) html += '<div class="tvm-stepper-sub">' + pct + '% de avance</div>';
     }
     return html;
   }
@@ -2667,7 +2764,12 @@
         // anexo/documento ya firmado -- los botones de correr días
         // desaparecen cuando _etapaActualOt(b) llega a 4 (cerrada);
         // "Abrir OT" se conserva siempre, ver la OT nunca se bloquea.
-        const _cerradaAcc = _etapaActualOt(b) === 4;
+        // 2026-09-10: se pregunta por el estado (_otCerrada), no por el
+        // índice. Al sumar la etapa "Creada" el índice de "cerrada" pasó de
+        // 4 a 5 -- con el `=== 4` viejo este candado habría empezado a
+        // bloquear las OT que recién firmó el cliente y a dejar suelta la
+        // que ya está cerrada, exactamente al revés de lo pedido.
+        const _cerradaAcc = _otCerrada(b);
         const acc = el('div', 'tvm-ot-acc');
         acc.innerHTML =
           (_cerradaAcc ? '' :
