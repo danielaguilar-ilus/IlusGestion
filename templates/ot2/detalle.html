@@ -4460,16 +4460,26 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     <button type="button" class="b pri" onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta_bar > 0 }}>
       <i class="bi bi-{{ 'lock-fill' if _obl_falta_bar > 0 else 'pen-fill' }}"></i>
       {{ 'Faltan obligatorias para firmar' if _obl_falta_bar > 0 else 'Firmar como técnico' }}</button>
-    {% elif puede_ejecutar %}
+    {% elif puede_ejecutar or es_tecnico %}
     {# 🔴 FIX 2026-09-09 (Daniel, celular, OT-179: "no se ve el boton
        aunquesea bloqueado... como Super admin me deja firmar, me deja
        hacer de todo"). Antes de este bloque, si el estado era
        'pendiente_aprobacion' (ya firmó y quedó esperando al supervisor) o
        'firmada_tecnico' sin `puede_firmar_cliente` (esperando al cliente),
        el técnico se quedaba sin NINGÚN botón acá -- ni siquiera bloqueado.
-       Se agrega este último `elif` como red de contención: siempre que el
-       técnico pueda ejecutar la OT, ve algo abajo que explica en qué
-       quedó, nunca una barra vacía. #}
+       🔴 2026-09-10 (auditoría con agentes, confirmado con evidencia de
+       código): el primer intento de este fix condicionaba el `elif` a
+       `puede_ejecutar` -- pero `puede_ejecutar` (_puede_ot_accion(vid,
+       'ejecutar')) es JUSTAMENTE lo que se pone en False para el técnico
+       apenas la OT queda "sellada" (cliente firmó / pendiente_aprobacion /
+       completada / cerrada, ver app.py ~53309-53315) -- exactamente los
+       estados que este bloque necesita cubrir. El `elif` nunca se
+       disparaba para el caso que motivó el fix. Se agrega `or es_tecnico`:
+       cualquier técnico que llegó a ver esta OT (ya pasó _ot_can_view)
+       ve algo abajo pase lo que pase con puede_ejecutar, nunca una barra
+       vacía. Para todo el resto de roles (gestión/superadmin) el
+       comportamiento no cambia -- siguen dependiendo solo de
+       puede_ejecutar, como antes. #}
     {% set _bar_msg = {
         'pendiente_aprobacion': ('bi-hourglass-split', 'Firmada — esperando aprobación del supervisor'),
         'firmada_tecnico': ('bi-hourglass-split', 'Firmada — esperando firma del cliente'),
