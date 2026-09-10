@@ -1251,8 +1251,20 @@
   font-variant-numeric:tabular-nums}
 .otd-crono .paso.ok span{color:#0f172a}
 .otd-crono .maqs{padding:12px 14px;border-top:1px solid #f1f3f5}
+/* 📏 2026-09-10 -- el detalle por máquina nace PLEGADO (ver el <details> en
+   el HTML): con un gimnasio completo eran 20+ filas empujando la página. */
 .otd-crono .maqs .ttl{font-size:.68rem;font-weight:900;text-transform:uppercase;
-  letter-spacing:.06em;color:#6b7280;margin-bottom:8px}
+  letter-spacing:.06em;color:#6b7280;margin-bottom:8px;
+  display:flex;align-items:center;gap:7px;cursor:pointer;list-style:none;
+  user-select:none}
+.otd-crono .maqs .ttl::-webkit-details-marker{display:none}
+.otd-crono .maqs .ttl:hover{color:#0f172a}
+.otd-crono .maqs .ttl > i{font-size:.8rem;transition:transform .18s ease;color:#9ca3af}
+.otd-crono .maqs[open] .ttl > i{transform:rotate(90deg)}
+.otd-crono .maqs[open] .ttl{margin-bottom:10px}
+.otd-crono .maqs .ttl .cnt{margin-left:auto;font-weight:700;text-transform:none;
+  letter-spacing:0;color:#9ca3af;font-size:.7rem}
+.otd-crono .maqs .ttl:focus-visible{outline:2px solid #dc2626;outline-offset:3px;border-radius:4px}
 .otd-crono .mq{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
   padding:7px 0;border-bottom:1px solid #f6f7f8}
 .otd-crono .mq:last-of-type{border-bottom:0}
@@ -2851,8 +2863,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         </div>
 
         {% if cronometro.por_maquina %}
-        <div class="maqs">
-          <div class="ttl">Cuánto tomó cada máquina</div>
+        {# 📏 2026-09-10 (Daniel, viendo una OT con 20+ equipos: "esa lista
+           gigante no la requiero, dejémosla que si la queremos se expanda").
+           Con un gimnasio completo esto eran 20 filas de "0/10 tareas —" que
+           empujaban todo lo demás fuera de pantalla. Se pliega: el resumen
+           (cuántas máquinas, cuántas con tiempo medido) siempre visible, el
+           detalle a un clic. <details> nativo -- sin JS, sin estado que
+           sincronizar, y el buscador del navegador igual lo encuentra. #}
+        {% set _maqs_con_tiempo = cronometro.por_maquina | selectattr('duracion') | list | length %}
+        <details class="maqs">
+          <summary class="ttl">
+            <i class="bi bi-chevron-right"></i>
+            Cuánto tomó cada máquina
+            <span class="cnt">{{ cronometro.por_maquina | length }} equipo{{ '' if cronometro.por_maquina|length == 1 else 's' }}{% if _maqs_con_tiempo %} · {{ _maqs_con_tiempo }} con tiempo medido{% endif %}</span>
+          </summary>
           {% for m in cronometro.por_maquina %}
           <div class="mq">
             <span class="nm">{{ m.nombre }}</span>
@@ -2868,7 +2892,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             completada, porque no se registró el "iniciar". Para medir con
             precisión, el técnico tiene que iniciar la tarea al empezarla.
           </div>
-        </div>
+        </details>
         {% endif %}
         {% else %}
         <div class="otd-vacio" style="padding:18px 12px">
@@ -5488,25 +5512,32 @@ function otdIniciarRuta(app){
                 <i class="bi bi-lock-fill me-1"></i>Sin esto no se puede firmar el cierre
               </div>
               <div class="small mb-2" style="color:#7f1d1d">
-                Asocia el documento del ERP — factura, boleta o nota de venta — o declara
-                la OT como garantía. El RUT debe coincidir con el del cliente
+                Asocia la <b>factura o boleta</b> del ERP, o declara la OT como
+                garantía. El RUT debe coincidir con el del cliente
                 ({{ (v.cliente_rut or '—') }}); si no coincide, deberás explicar por qué.
               </div>
               <div class="d-flex gap-2 flex-wrap align-items-end">
                 <div>
                   <label class="form-label small fw-semibold mb-1">Tipo</label>
+                  {# 🔒 2026-09-10 (Daniel, explícito: "vamos a bloquear las notas de
+                     venta en el modal que sale al final cuando toca firmar el
+                     aprobador... solamente vamos a tener factura o boleta, porque
+                     tiene que estar cobrado el servicio").
+                     Se quitan NVV/NVI/VD/WEB de ESTE selector -- el del candado de
+                     cierre. Una nota de venta es una promesa de cobro, no un cobro:
+                     cerrar la OT contra ella deja el servicio ejecutado y sin
+                     facturar, que es justo lo que se quiere evitar.
+                     OJO, alcance real de este cambio: aplica al momento de CERRAR
+                     cuando la OT todavía no tiene documento. Una OT que ya venía con
+                     nota de venta asociada (desde el wizard o la tarjeta de Finanzas)
+                     entra por la otra rama de este modal y hoy sigue pudiendo
+                     cerrarse -- esa regla vive en el backend (_OT_DOCS_NOTA_VENTA /
+                     estado 'con_nota_venta') y cambiarla bloquearía OT ya en curso,
+                     así que queda pendiente de tu confirmación. #}
                   <select id="otfFactTipo" class="form-select form-select-sm" style="width:auto">
-                    <optgroup label="Factura / boleta">
-                      <option value="FCV" selected>FCV — Factura</option>
-                      <option value="FCE">FCE — Factura exenta</option>
-                      <option value="BLV">BLV — Boleta</option>
-                    </optgroup>
-                    <optgroup label="Nota de venta (facturable después)">
-                      <option value="NVV">NVV — Nota de venta</option>
-                      <option value="NVI">NVI — Nota de venta instalación</option>
-                      <option value="VD">VD — Nota de venta directa (Nro. VDxxxxxxxx)</option>
-                      <option value="WEB">WEB — Nota de venta web (Nro. WEBxxxxxxx)</option>
-                    </optgroup>
+                    <option value="FCV" selected>FCV — Factura</option>
+                    <option value="FCE">FCE — Factura exenta</option>
+                    <option value="BLV">BLV — Boleta</option>
                   </select>
                 </div>
                 <div style="flex:1;min-width:150px">
