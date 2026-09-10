@@ -17,6 +17,19 @@
      helper de ILUS SOLO acá — el televisor no debe cargar JS de más. #}
   <script src="{{ url_for('static', filename='ilus_ui.js') }}" defer></script>{% endif %}
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
+  {# 🔴 FIX 2026-09-10 (Daniel, tercera vuelta pidiendo "íconos a color" en el
+     recorrido del Monitor): esta plantilla es STANDALONE y su <head> solo
+     cargaba favicon + tipografías -- Bootstrap Icons NUNCA se cargó acá. O
+     sea: TODOS los <i class="bi bi-..."> de esta pantalla (los nodos del
+     recorrido, el ícono de "Anexo firmado", el del documento de cierre, el
+     botón de refrescar) venían rindiendo espacio en blanco desde siempre.
+     La versión con discos verdes lo disimulaba porque el color venía del
+     círculo, no del ícono; al pasar los discos a blanco quedaron vacíos y
+     recién ahí se hizo evidente.
+     Se usa la copia LOCAL (static/bootstrap-icons.css + static/fonts/) en vez
+     del CDN de base.html: el televisor está encendido 24/7 y no debe depender
+     de jsdelivr para dibujar sus íconos. #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap-icons.css') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
@@ -1290,58 +1303,87 @@
        Se conserva la animación de llegada (tvmLineGrow/tvmNodePop en
        cascada, ver renderEtapas): el relleno sigue viajando de izquierda a
        derecha hasta donde está la OT de verdad. */
+    /* 🎨 v4 -- 2026-09-10. El v3 pintó los discos de BLANCO para parecerse al
+       tracking de Retiros... y quedaron vacíos, porque en esta pantalla el
+       ícono nunca se dibujaba (ver el FIX del <head>: faltaba Bootstrap
+       Icons). Con la fuente cargada, v4 deja de inventar un cuarto diseño y
+       PORTA el nodo que Daniel ya aprobó en la ficha de la OT (.otd-h .p en
+       detalle.html, iterado con él el 02, 03 y 04 de septiembre):
+         · disco OSCURO con degradado radial + brillo interior -> volumen,
+           y el ícono de color se despega en vez de perderse;
+         · ícono = color propio de la etapa (--tvm-hc, los mismos valores de
+           _OT2_HITOS en app.py, para que Monitor y ficha hablen igual);
+         · aro = semáforo: verde hecho / rojo pleno y latiendo el actual /
+           rojo tenue lo que falta;
+         · línea = avance: verde lo recorrido, rojo tenue lo que falta, y el
+           tramo que ENTRA al nodo actual se degrada verde -> rojo.
+       Esa es, textual, la regla que dictó Daniel el 02-09 ("los logos eran
+       los que iban a color; la línea, el contorno circular y la línea de
+       avance necesito que sea en verde, y que esté en rojo todo lo que no
+       esté gestionado") y que repitió anoche. */
     .tvm-stepper{display:flex;align-items:flex-start;margin-top:18px;padding:6px 4px 0}
     .tvm-step{display:flex;flex-direction:column;align-items:center;gap:9px;flex:none;width:72px}
-    .tvm-step-dot{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;
-      justify-content:center;font-size:19px;background:#f4f4f5;
-      border:3px solid rgba(255,255,255,.18);color:#b0b3bb;
-      box-shadow:0 3px 10px rgba(0,0,0,.4);
-      transition:background .4s ease,border-color .4s ease,color .4s ease,box-shadow .4s ease}
+    .tvm-step-dot{position:relative;width:48px;height:48px;border-radius:50%;
+      display:grid;place-items:center;font-size:23px;z-index:1;
+      background:radial-gradient(circle at 32% 24%,rgba(255,255,255,.16) 0%,rgba(255,255,255,.05) 52%,rgba(0,0,0,.28) 100%),#1c1c20;
+      border:3px solid rgba(220,38,38,.28);color:#52525b;
+      transition:border-color .5s ease,color .5s ease,box-shadow .5s ease}
+    /* Brillo interior -- el "con profundidad" que pidió para la ficha. */
+    .tvm-step-dot::before{content:'';position:absolute;inset:2px;border-radius:50%;
+      background:linear-gradient(180deg,rgba(255,255,255,.10) 0%,transparent 42%);
+      pointer-events:none}
+    .tvm-step-dot i{position:relative;line-height:1}
     .tvm-step-lbl{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-align:center;
-      text-transform:uppercase;color:var(--txt-3);line-height:1.15;transition:color .4s ease}
-    .tvm-step-line{position:relative;flex:1;height:4px;border-radius:99px;
-      background:rgba(220,38,38,.32);margin:22px -8px 0;overflow:hidden}
-    .tvm-step-line.is-done{background:rgba(34,197,94,.24)}
+      text-transform:uppercase;color:var(--txt-4,#6b6b73);line-height:1.15;transition:color .4s ease}
+    .tvm-step-line{position:relative;flex:1;height:3px;border-radius:99px;
+      background:rgba(220,38,38,.28);margin:25px -8px 0;overflow:hidden}
+    .tvm-step-line.is-done{background:rgba(34,197,94,.22)}
     .tvm-step-line.is-done::after{content:'';position:absolute;inset:0;border-radius:99px;
       background:linear-gradient(90deg,var(--green-500),var(--green-400));
       transform-origin:left center;animation:tvmLineGrow .65s cubic-bezier(.22,1,.36,1) both;
       animation-delay:var(--tvm-delay,0ms)}
-    .tvm-step.is-done .tvm-step-dot{background:#fff;
-      border-color:var(--green-400);
-      box-shadow:0 3px 14px rgba(22,163,74,.4),0 0 0 3px rgba(34,197,94,.14);
+    /* Tramo que ENTRA a la etapa actual: hasta acá llegó la OT, de acá
+       en adelante falta -- mismo degradé que .otd-h.ok + .otd-h.now. */
+    .tvm-step-line.is-entra::after{content:'';position:absolute;inset:0;border-radius:99px;
+      background:linear-gradient(90deg,var(--green-500) 0%,var(--green-500) 45%,var(--ilus-red) 100%);
+      transform-origin:left center;animation:tvmLineGrow .65s cubic-bezier(.22,1,.36,1) both;
+      animation-delay:var(--tvm-delay,0ms)}
+    /* HECHO: aro verde + ícono en SU color + brillo verde. */
+    .tvm-step.is-done .tvm-step-dot{border-color:var(--green-500);color:var(--tvm-hc,#4ade80);
+      box-shadow:0 0 0 3px rgba(22,163,74,.12),
+                 0 8px 20px -10px rgba(22,163,74,.7),
+                 inset 0 0 16px -8px rgba(22,163,74,.3);
       animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both;animation-delay:var(--tvm-delay,0ms)}
-    /* Charm de "hecho": el ícono propio de la etapa (llave, lápiz, check,
-       escudo) se conserva SIEMPRE -- este charm chico en la esquina es lo
-       que confirma "resuelta", sin que 4 etapas terminadas se vean como 4
-       círculos idénticos sin ninguna identidad. */
-    .tvm-step-dot{position:relative}
+    /* Charm de "hecho": el ícono propio de la etapa se conserva SIEMPRE --
+       este charm chico en la esquina es lo que confirma "resuelta", sin que
+       4 etapas terminadas se vean como 4 círculos idénticos. */
     .tvm-step-badge{position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;
-      border-radius:50%;background:var(--green-500);color:#fff;border:2px solid #0a0a0c;
-      display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;
+      border-radius:50%;background:var(--green-400);color:#fff;border:2px solid #0a0a0c;
+      display:grid;place-items:center;font-size:10px;font-weight:900;
       box-shadow:0 1px 3px rgba(0,0,0,.4)}
     .tvm-step.is-done .tvm-step-lbl{color:#86efac}
-    /* Colores propios por etapa (data-stage="0..3") -- se mantienen SIEMPRE
-       que el ícono sea visible, resuelta o pendiente; solo se apagan
-       (opacity/grayscale) mientras la etapa todavía no llega. Pedido
-       explícito de Daniel en la vuelta anterior ("colócale unos logos a
-       color"), que v3 no le quita -- solo arregla la línea (REGLA #4.2). */
-    .tvm-step[data-stage="0"] .tvm-step-dot i{color:var(--amber-500)}
-    .tvm-step[data-stage="1"] .tvm-step-dot i{color:var(--blue-500)}
-    .tvm-step[data-stage="2"] .tvm-step-dot i{color:#a855f7}
-    .tvm-step[data-stage="3"] .tvm-step-dot i{color:var(--green-500)}
-    .tvm-step:not(.is-done):not(.is-current) .tvm-step-dot i{opacity:.4;filter:grayscale(.5)}
-    .tvm-step.is-current .tvm-step-dot{background:#fff;border-color:var(--ilus-red);
-      box-shadow:0 0 0 0 rgba(220,38,38,.55),0 3px 14px rgba(220,38,38,.35);
-      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmPulseRoja 1.7s ease-in-out infinite;
+    /* ACTUAL: aro rojo pleno, ícono a color pleno con halo, y late. Es lo
+       primero que hay que mirar al abrir la burbuja del técnico. */
+    .tvm-step.is-current .tvm-step-dot{border-color:var(--ilus-red);color:var(--tvm-hc,#f87171);
+      box-shadow:0 0 0 4px rgba(220,38,38,.14),
+                 0 10px 24px -10px rgba(220,38,38,.75),
+                 inset 0 0 20px -8px rgba(220,38,38,.35);
+      animation:tvmNodePop .55s cubic-bezier(.34,1.56,.64,1) both,tvmLatido 2s ease-in-out infinite;
       animation-delay:var(--tvm-delay,0ms),calc(var(--tvm-delay,0ms) + .55s)}
-    .tvm-step.is-current .tvm-step-dot i{color:var(--ilus-red) !important;opacity:1;filter:none}
+    .tvm-step.is-current .tvm-step-dot i{filter:drop-shadow(0 0 7px currentColor);
+      animation:tvmRespira 2s ease-in-out infinite}
     .tvm-step.is-current .tvm-step-lbl{color:#fff}
-    @keyframes tvmPulseRoja{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}50%{box-shadow:0 0 0 9px rgba(220,38,38,0)}}
+    /* PENDIENTE: el ícono se apaga (no desaparece) -- se sigue leyendo de
+       qué paso se trata, sin competirle al actual. */
+    .tvm-step:not(.is-done):not(.is-current) .tvm-step-dot i{opacity:.5}
+    @keyframes tvmLatido{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+    @keyframes tvmRespira{0%,100%{opacity:.88;transform:scale(1)}50%{opacity:1;transform:scale(1.07)}}
     @keyframes tvmLineGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
     @keyframes tvmNodePop{0%{transform:scale(.45);opacity:0}65%{transform:scale(1.18)}100%{transform:scale(1);opacity:1}}
     .tvm-stepper-sub{margin-top:9px;font-size:12.5px;font-weight:700;color:var(--txt-3)}
     @media (prefers-reduced-motion:reduce){
-      .tvm-step-dot,.tvm-step-line.is-done::after{animation:none !important}
+      .tvm-step-dot,.tvm-step-dot i,
+      .tvm-step-line.is-done::after,.tvm-step-line.is-entra::after{animation:none !important}
     }
     /* 🆕 2026-09-02 (Daniel: "involucrar los documentos... factura o
        boleta... a la hora de cerrar"): mismo lenguaje visual de las
@@ -1677,11 +1719,16 @@
   // por un recorrido de 4 etapas. `firma_estado` sigue viniendo de
   // _ot_tv_datos (misma columna que ya gobierna firmar-revision/
   // firmar-cliente/aprobar-cierre) -- nunca se desincroniza del back.
+  // 🎨 v4 (2026-09-10): íconos y colores TOMADOS DE _OT2_HITOS (app.py) para
+  // que el Monitor y la ficha de la OT cuenten el mismo viaje con el mismo
+  // lenguaje -- antes acá vivían otros 4 íconos y otros 4 colores inventados
+  // aparte. `hc` es el color propio de la etapa (viaja como --tvm-hc y pinta
+  // SOLO el ícono; el aro y la línea son el semáforo verde/rojo).
   const ETAPAS_OT = [
-    { icon: 'bi-tools',            lbl: 'Ejecución' },
-    { icon: 'bi-pen-fill',         lbl: 'Firma técnico' },
-    { icon: 'bi-check2-circle',    lbl: 'Firma cliente' },
-    { icon: 'bi-patch-check-fill', lbl: 'Cierre' },
+    { icon: 'bi-wrench-adjustable', lbl: 'Ejecución',     hc: '#fbbf24' },
+    { icon: 'bi-pen-fill',          lbl: 'Firma técnico', hc: '#c084fc' },
+    { icon: 'bi-person-check-fill', lbl: 'Firma cliente', hc: '#22d3ee' },
+    { icon: 'bi-lock-fill',         lbl: 'Cierre',        hc: '#4ade80' },
   ];
   // Índice (0-3) de la etapa donde está la OT AHORA MISMO -- la primera
   // que todavía no se resolvió. Con 'cerrada' las 4 quedan resueltas.
@@ -1714,17 +1761,20 @@
       // El ícono de la etapa se queda SIEMPRE (resuelta o no); un badge
       // chico con el check confirma "hecho" sin comerse la identidad de
       // cada paso. El semáforo (verde=hecho) no cambia.
-      html += '<div class="' + cls + '" data-stage="' + i + '" style="--tvm-delay:' + delayNodo + 'ms"><div class="tvm-step-dot">' +
+      html += '<div class="' + cls + '" data-stage="' + i + '"' +
+        ' style="--tvm-delay:' + delayNodo + 'ms;--tvm-hc:' + e.hc + '"><div class="tvm-step-dot">' +
         '<i class="bi ' + e.icon + '"></i>' +
         (done ? '<span class="tvm-step-badge"><i class="bi bi-check-lg"></i></span>' : '') +
         '</div><span class="tvm-step-lbl">' + e.lbl + '</span></div>';
       if (i < ETAPAS_OT.length - 1){
         const lineaDone = done || i < etapaAct;
-        const delayLinea = lineaDone ? (i * 160 + 80) : 0;
-        // v3 -- la línea ya es binaria (verde recorrida / roja pendiente,
-        // ver .tvm-step-line en el <style>): data-seg ya no cambia color,
-        // se deja solo por si sirve para depurar en el DOM.
-        html += '<div class="tvm-step-line' + (lineaDone ? ' is-done' : '') + '" data-seg="' + i + '" style="--tvm-delay:' + delayLinea + 'ms"></div>';
+        // v4 -- el tramo que ENTRA al nodo actual se degrada verde -> rojo
+        // ("hasta acá llegó la OT"), igual que en la ficha; el resto es
+        // binario: verde recorrido / rojo tenue pendiente.
+        const lineaEntra = !cerrada && (i + 1) === etapaAct && etapaAct > 0;
+        const delayLinea = (lineaDone || lineaEntra) ? (i * 160 + 80) : 0;
+        const clsLinea = lineaEntra ? ' is-entra' : (lineaDone ? ' is-done' : '');
+        html += '<div class="tvm-step-line' + clsLinea + '" data-seg="' + i + '" style="--tvm-delay:' + delayLinea + 'ms"></div>';
       }
     });
     html += '</div>';
