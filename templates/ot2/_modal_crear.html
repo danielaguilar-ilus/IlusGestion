@@ -7380,6 +7380,30 @@ window.OT2C = (function(){
         body.finanzas.documentos_extra = S.doc_extra;
       }
     }
+    /* 🔴 FIX 2026-09-10 (Daniel: "arregla el anexo que se envía dos veces").
+       El anexo se estaba creando y enviando DOS veces al crear una OT con
+       técnico externo:
+         1. ot2_api_crear, al ver que la OT necesita anexo y no tiene ninguno,
+            creaba uno automático y le mandaba el link al correo de la FICHA
+            del proveedor (bloque "ANEXO AUTOMÁTICO PARA PROVEEDOR EXTERNO");
+         2. este wizard, al recibir la respuesta, creaba OTRO con los datos
+            que la persona acababa de escribir y lo mandaba al correo que ella
+            tipeó en el paso Anexo.
+       Dos anexos con números distintos, dos correos, dos destinatarios.
+       El del wizard es el bueno: lleva objetivo, ítems, fechas, productos y
+       el destino que la persona eligió. El automático del backend es la red
+       de seguridad para cuando el wizard NO trae nada.
+       Así que se declara la intención ANTES de crear: si el paso Anexo está
+       completo (misma condición exacta que dispara el POST /ot/api/anexos más
+       abajo), el backend no crea el suyo. Se manda además el correo/teléfono
+       tipeados, para que si el automático SÍ corre (paso Anexo vacío) al
+       menos vaya al destino que la persona indicó y no a la ficha. */
+    var _tecExtPre = _primerTecnicoExterno();
+    body.anexo_delegado = !!(_tecExtPre && S.anexo.proveedor_nombre.trim() &&
+                             S.anexo.objetivo_servicio.trim() && S.anexo.items.length);
+    body.anexo_email_destino = (S.anexo.email_destino || '').trim();
+    body.anexo_telefono = (S.anexo.telefono || '').trim();
+
     var sig = document.getElementById('o2mSig');
     var _origSig = sig.innerHTML;
     sig.disabled = true; sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';

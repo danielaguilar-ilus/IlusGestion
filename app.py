@@ -83151,7 +83151,20 @@ def ot2_api_crear():
         # (_fin_docs_extra_json) con UnboundLocalError, tumbando CADA
         # creación de OT. `json` ya se importa a nivel de módulo (línea 4)
         # -- este import sobraba y nunca debió agregarse acá.
-        if _anexo_bloquea_ot(vid) == "SIN_ANEXO":
+        # 🔴 FIX 2026-09-10 (Daniel: "arregla el anexo que se envía dos
+        # veces"). Si el wizard ya trae el paso Anexo completo, ÉL crea el
+        # anexo (con objetivo, ítems, fechas, productos y el destino que la
+        # persona escribió) en cuanto recibe esta respuesta. Este bloque
+        # automático creaba otro en paralelo: dos anexos con números
+        # distintos y dos correos, uno a la ficha del proveedor y otro al
+        # correo tipeado. Sigue siendo la red de seguridad para cuando el
+        # wizard NO trae nada -- que es justo el caso que lo motivó ("cuando
+        # la creo no me crea el bendito anexo").
+        _anexo_delegado = bool(d.get("anexo_delegado"))
+        if _anexo_delegado:
+            print(f"[ot2_crear][anexo_auto] vid={vid}: lo crea el wizard "
+                  f"(anexo_delegado) — no se crea el automático", flush=True)
+        if not _anexo_delegado and _anexo_bloquea_ot(vid) == "SIN_ANEXO":
             _te = mysql_fetchone(
                 "SELECT id, razon_social, rut_empresa, direccion_empresa, "
                 "       contacto_nombre, contacto_tel, contacto_email "
@@ -83168,7 +83181,14 @@ def ot2_api_crear():
             _prov_nombre = ((_te or {}).get("razon_social") or "").strip()[:200]
             _prov_rut = ((_te or {}).get("rut_empresa") or "").strip()[:20]
             _prov_dir = ((_te or {}).get("direccion_empresa") or "").strip()[:400]
-            _prov_email = ((_te or {}).get("contacto_email") or "").strip()[:200]
+            # 📮 2026-09-10: si la persona escribió un correo en el paso
+            # Anexo del wizard, ESE manda -- es el que acaba de elegir para
+            # este proveedor. El de la ficha queda como respaldo. Antes se
+            # usaba siempre el de la ficha y el correo tipeado no participaba
+            # de este envío (parte del mismo pedido: "que me deje cambiar el
+            # número o el correo").
+            _prov_email = ((d.get("anexo_email_destino") or "").strip()
+                           or ((_te or {}).get("contacto_email") or "").strip())[:200]
 
             _items_auto = []
             if _fin_costo_prov:
@@ -85698,6 +85718,40 @@ def ot2_api_anexo_crear():
         vid = int(vid) if vid else None
     except (TypeError, ValueError):
         vid = None
+
+    # 🔒 IDEMPOTENCIA 2026-09-10 (Daniel: "arregla el anexo que se envía dos
+    # veces"). La causa principal era que el wizard y ot2_api_crear creaban
+    # cada uno el suyo -- eso ya se corta en el origen con `anexo_delegado`.
+    # Este candado es la segunda línea: una OT no puede terminar con DOS
+    # anexos VIVOS por ningún camino (un doble clic en "Crear", un wizard
+    # viejo cacheado sin la bandera, o cualquier ruta futura).
+    # Se devuelve el que YA existe en vez de un error: quien llamó quiere
+    # "que esta OT tenga su anexo", y ese anexo ya está -- así el wizard
+    # sigue su flujo normal (lo envía al correo que la persona escribió)
+    # sobre el anexo bueno, sin crear un gemelo con otro número.
+    # 'rechazado'/'anulado' NO cuentan como vivos: si el proveedor rechazó
+    # el anexo, hay que poder emitir uno nuevo.
+    if vid:
+        try:
+            _ax_previo = mysql_fetchone(
+                "SELECT id, numero, estado FROM mant_anexos "
+                " WHERE ot_id=%s AND COALESCE(estado,'') NOT IN ('rechazado','anulado') "
+                " ORDER BY id DESC LIMIT 1", (vid,))
+        except Exception as _e_ax_prev:
+            print(f"[anexo_crear] chequeo de duplicado vid={vid}: {_e_ax_prev}", flush=True)
+            _ax_previo = None
+        if _ax_previo:
+            print(f"[anexo_crear] vid={vid} ya tenía el anexo "
+                  f"N°{_ax_previo.get('numero')} (id={_ax_previo['id']}, "
+                  f"estado={_ax_previo.get('estado')}) — se devuelve ese, no se crea otro",
+                  flush=True)
+            return jsonify({
+                "ok": True,
+                "ya_existia": True,
+                "anexo_id": _ax_previo["id"],
+                "numero": _ax_previo.get("numero"),
+                "estado": _ax_previo.get("estado"),
+            })
 
     # 📍 2026-09-09: lat/lng/place_id de la dirección del proveedor, si el
     # usuario eligió una sugerencia de Google Places (ilusPlacesAutocomplete
@@ -99926,22 +99980,24 @@ def _mant_ot_creacion_variables(vid):
     mant_visita_enviar_email, para que ambos caminos (manual y
     automático) le muestren al lector la misma información con el mismo
     formato. Devuelve (v, variables) o (None, None) si la visita no existe."""
-    # 🔴 FIX 2026-09-10 (Daniel: "y cuando realizo la OT también" -- sobre
-    # poder decidir a qué correo sale el aviso). `mant_visitas` TAMBIÉN tiene
-    # contacto_email/contacto_nombre (los del paso Contraparte del wizard, ver
-    # el INSERT de ot2_api_crear), así que al traer `v.*` y después
-    # `c.contacto_email`/`c.contacto_nombre` sin alias, la columna del CLIENTE
-    # pisaba la de la OT en el dict del cursor: el correo que la persona
-    # acababa de escribir para ESTA OT quedaba invisible acá.
-    # Efecto medido: el "fallback" al contacto de la OT (más abajo, en
-    # _mant_ot_email_cliente_creacion) era código muerto -- solo corría
-    # cuando la ficha del cliente no tenía correos, y en ese caso
-    # c.contacto_email también venía vacío, así que no avisaba a nadie. Y el
-    # saludo del correo usaba el contacto de la FICHA en vez de la
-    # contraparte real de la visita.
-    # Se alias solo las dos columnas que chocaban; direccion/comuna/region no
-    # existen en mant_visitas (la OT usa direccion_visita), así que esas
-    # siguen resolviendo al cliente como siempre.
+    # 📝 2026-09-10 — ALIAS EXPLÍCITO de las dos columnas que se repiten.
+    # `mant_visitas` y `mant_clientes` tienen las DOS contacto_email y
+    # contacto_nombre, así que este SELECT (v.* + c.contacto_*) traía el mismo
+    # nombre dos veces.
+    # ⚠️ CORRECCIÓN de lo que decía este comentario en su primera versión (y
+    # que era FALSO): la columna del cliente NO pisaba la de la OT. pymysql
+    # (DictCursorMixin._do_get_result, verificado en la 1.4.6 instalada)
+    # renombra el DUPLICADO a 'tabla.columna', así que la PRIMERA aparición
+    # -- la de mant_visitas, que entra por `v.*` -- conserva el nombre pelado.
+    # O sea: v["contacto_email"] siempre fue el de la OT y el saludo siempre
+    # usó la contraparte de la visita.
+    # El alias se mantiene igual porque depender de ese renombrado silencioso
+    # es una trampa para el próximo que lea (y para un cambio de versión):
+    # ahora el nombre dice de qué tabla viene cada uno. Pero es CLARIDAD, no
+    # un arreglo de comportamiento -- el único bug real estaba en el ORDEN de
+    # los destinatarios, más abajo en _mant_ot_email_cliente_creacion.
+    # direccion/comuna/region no se aliasan: no existen en mant_visitas (la OT
+    # usa direccion_visita), así que resuelven al cliente como siempre.
     v = mysql_fetchone(
         """SELECT v.*, c.razon_social,
                   c.contacto_email  AS cli_contacto_email,
@@ -100004,14 +100060,14 @@ def _mant_ot_email_cliente_creacion(vid):
         v, variables = _mant_ot_creacion_variables(vid)
         if not v or not v.get("cliente_id"):
             return
-        # 🔴 FIX 2026-09-10 (Daniel: "y cuando realizo la OT también"). El
-        # wizard YA pide el correo de la contraparte en su propio paso
-        # (obligatorio y validado, ver S.contraparte en _modal_crear.html) y
-        # ot2_api_crear lo guarda en mant_visitas.contacto_email -- pero acá
-        # ese dato era el ÚLTIMO recurso, detrás de los correos de la ficha
-        # del cliente. O sea: la persona que se acababa de elegir para ESTA
-        # OT no recibía el aviso, y se iba a los correos administrativos de
-        # la ficha. Ahora el contacto de la OT va PRIMERO.
+        # 🔴 FIX 2026-09-10 (Daniel: "y cuando realizo la OT también"). ESTE
+        # era el bug real: el ORDEN de los destinatarios. El wizard ya pide el
+        # correo de la contraparte en su propio paso y ot2_api_crear lo guarda
+        # en mant_visitas.contacto_email, pero acá ese dato era el ÚLTIMO
+        # recurso -- solo se usaba si la ficha del cliente no tenía NINGÚN
+        # correo válido. O sea: bastaba que la ficha tuviera un correo
+        # administrativo para que la persona que se acababa de elegir para
+        # ESTA OT no recibiera nada. Ahora el contacto de la OT va PRIMERO.
         # Los de la ficha se CONSERVAN detrás (REGLA #4.2: no se le quita el
         # correo a nadie que hoy lo recibe), sin repetidos. Mismo criterio de
         # validez que _mant_get_cliente_emails para no mandar a basura.
