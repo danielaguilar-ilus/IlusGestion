@@ -80698,8 +80698,23 @@ def ot2_api_finanzas(vid):
     # justificar cada edición convertiría el guardar en un trámite y Daniel
     # ya perdió tiempo con candados así. Pero cuando viene, se guarda -- es
     # lo que después explica un margen raro en el informe.
-    zz_motivo_man = (d.get("zz_motivo_manual") or "").strip()[:500] or None
-    zz_env_motivo_man = (d.get("zz_envio_motivo_manual") or "").strip()[:500] or None
+    # 🔴 FIX 2026-09-10, MISMO DÍA: la primera versión de este bloque (hace
+    # unas horas) escribía los dos motivos SIN COALESCE, y eso reintroducía
+    # exactamente el bug que este endpoint ya tuvo dos veces: `guardarCosto()`
+    # del modal de aprobación reenvía a mano lo que hay declarado para que el
+    # UPDATE completo no lo borre... pero no manda los motivos, porque no
+    # existían cuando se escribió. Resultado: declarabas "se instaló solo la
+    # mitad" en Finanzas y al guardar después el costo del técnico desde el
+    # modal, esa explicación desaparecía sin que nadie se enterara.
+    # Ahora la regla es la de costo_proveedor/costo_despacho: la columna se
+    # toca SOLO si el campo vino en esta petición. Y se distingue "no vino"
+    # (no tocar) de "vino vacío" (limpiar a propósito), que con COALESCE a
+    # secas no se podría: borrar un motivo sería imposible.
+    _set_motivos, _params_motivos = "", []
+    for _campo_mm in ("zz_motivo_manual", "zz_envio_motivo_manual"):
+        if _campo_mm in d:
+            _set_motivos += f"  {_campo_mm}=%s, "
+            _params_motivos.append((d.get(_campo_mm) or "").strip()[:500] or None)
 
     # 🔧 FIX 2026-09-04 (Daniel, Aarón trabado en el modal de cierre: "lo
     # declara, pero no lo guarda"). guardarCosto() en ot2/detalle.html manda
@@ -80755,7 +80770,7 @@ def ot2_api_finanzas(vid):
             "UPDATE mant_visitas SET "
             "  centro_costo=%s, zz_codigo=%s, zz_monto=%s, costo=COALESCE(%s, costo), "
             "  zz_envio_monto=COALESCE(%s, zz_envio_monto), "
-            "  zz_motivo_manual=%s, zz_envio_motivo_manual=%s, "
+            + _set_motivos +
             "  costo_proveedor=COALESCE(%s, costo_proveedor), "
             "  costo_despacho=COALESCE(%s, costo_despacho), "
             "  modalidad_cobro=%s, cubierto_por=%s, garantia_motivo=%s, "
@@ -80763,7 +80778,7 @@ def ot2_api_finanzas(vid):
             "  finanzas_at=NOW(), finanzas_por=%s "
             " WHERE id=%s" + _where_lock,
             (centro, zz_cod, zz_monto, costo,
-             zz_envio_monto, zz_motivo_man, zz_env_motivo_man,
+             zz_envio_monto, *_params_motivos,
              costo_proveedor, costo_despacho,
              'garantia' if garantia else 'pagado',
              'garantia' if garantia else 'cliente',
