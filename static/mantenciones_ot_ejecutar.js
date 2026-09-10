@@ -6999,7 +6999,14 @@ async function enviarFirmaWhatsApp(){
   // cuando llega la respuesta del servidor. Si se abre DESPUÉS del
   // fetch/await, Safari/iOS y otros navegadores estrictos bloquean el popup
   // por haber perdido la "user activation" del click original.
-  const winRef = window.open('', '_blank');
+  // 📱 2026-09-10 (Daniel, iPhone con ILUS instalada como app: "me abre un
+  // Safari y te deja un about:blank"): en la app instalada esa reserva es
+  // justo lo que saca al usuario de la app, así que ahí NO se reserva nada
+  // y el salto se hace con location.href (iOS lo trata como cambio de app).
+  // Ver ilusReservarVentana/ilusIrADeepLink en ilus_ui.js.
+  const winRef = (typeof ilusReservarVentana === 'function')
+    ? ilusReservarVentana()
+    : window.open('', '_blank');
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7011,15 +7018,17 @@ async function enviarFirmaWhatsApp(){
       await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' });
       return;
     }
-    if (winRef){
-      winRef.location.href = d.wa_link;
+    const _fue = (typeof ilusIrADeepLink === 'function')
+      ? ilusIrADeepLink(winRef, d.wa_link)
+      : (winRef ? (winRef.location.href = d.wa_link, true) : false);
+    if (_fue){
       ilusToast('✓ Abriendo WhatsApp con el link de firma…', { type: 'success' });
     } else {
-      // El navegador bloqueó igual la ventana en blanco (bloqueadores muy
+      // Ni pestaña reservada ni navegación posible (bloqueadores muy
       // estrictos) -- no dejar al técnico sin salida: mostrar el link.
       await ilusAlert({
         title: 'Link de WhatsApp generado',
-        message: 'El navegador bloqueó la ventana emergente. Abre este link manualmente:',
+        message: 'No se pudo abrir WhatsApp solo. Abre este link manualmente:',
         sub: d.wa_link,
         type: 'warning',
       });
@@ -7060,7 +7069,12 @@ async function enviarFirmaAmbos(){
     });
     if (tel === null) return;
   }
-  const winRef = tel ? window.open('', '_blank') : null;
+  // 📱 2026-09-10 -- mismo criterio que enviarFirmaWhatsApp: en la app
+  // instalada no se reserva pestaña (saca al usuario a Safari), se navega
+  // directo al wa.me. Ver ilus_ui.js.
+  const winRef = tel
+    ? ((typeof ilusReservarVentana === 'function') ? ilusReservarVentana() : window.open('', '_blank'))
+    : null;
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7072,12 +7086,21 @@ async function enviarFirmaAmbos(){
       await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' });
       return;
     }
-    if (winRef && d.wa_link){
-      winRef.location.href = d.wa_link;
-    } else if (winRef){
-      winRef.close();
+    const _linkWa = d.wa_link || '';
+    if (winRef){
+      // Pestaña reservada (navegador normal): se la lleva al link y el
+      // resumen del envío se lee acá, en la página que se queda.
+      if (typeof ilusIrADeepLink === 'function') ilusIrADeepLink(winRef, _linkWa);
+      else if (_linkWa) winRef.location.href = _linkWa;
+      else winRef.close();
+      await ilusAlert({ title: '✅ Firma enviada', message: d.mensaje || 'Listo.', type: 'success' });
+    } else {
+      // App instalada: acá el salto a WhatsApp se hace en la propia ventana,
+      // así que el resumen se muestra ANTES -- si navegáramos primero, el
+      // aviso de "salió por correo también" no se llegaría a leer nunca.
+      await ilusAlert({ title: '✅ Firma enviada', message: d.mensaje || 'Listo.', type: 'success' });
+      if (_linkWa && typeof ilusIrADeepLink === 'function') ilusIrADeepLink(null, _linkWa);
     }
-    await ilusAlert({ title: '✅ Firma enviada', message: d.mensaje || 'Listo.', type: 'success' });
   } catch (e){
     if (winRef) winRef.close();
     await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' });

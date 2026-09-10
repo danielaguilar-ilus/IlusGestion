@@ -1180,4 +1180,69 @@
   };
   global.ilusLoader = ilusLoader;
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  DEEP-LINKS (WhatsApp) — 2026-09-10
+  //  Daniel, desde el iPhone con ILUS instalada como app: "cuando lo
+  //  envías al proveedor me abre un Safari y te deja un about:blank... lo
+  //  quiero es que vaya al WhatsApp directo, no que abra Safari y después
+  //  WhatsApp".
+  //
+  //  Por qué pasaba: el link de WhatsApp (wa.me) solo existe DESPUÉS de que
+  //  el servidor genera el token, y si se abriera recién ahí el navegador ya
+  //  perdió la "user activation" del click y bloquea la ventana. La solución
+  //  histórica fue reservar la pestaña ANTES del fetch con
+  //  window.open('', '_blank') y recién asignarle destino al volver.
+  //  Eso está bien en un navegador normal... pero en una PWA instalada en
+  //  iOS, window.open SACA al usuario de la app: abre Safari en about:blank
+  //  y ahí recién salta a WhatsApp. Dos pantallas de más y la sensación de
+  //  que la app "se sale sola".
+  //
+  //  En la app instalada no hace falta reservar nada: asignar
+  //  location.href a un wa.me no es una navegación normal, iOS lo trata como
+  //  cambio de aplicación (la PWA queda atrás intacta) y no hay bloqueador
+  //  de popups que esquivar. Así que ahí se navega directo y no se abre
+  //  ninguna pestaña.
+  // ══════════════════════════════════════════════════════════════════════
+
+  //  ¿Estamos dentro de la app instalada (icono en el escritorio) y no en
+  //  una pestaña del navegador? `navigator.standalone` es lo de Safari/iOS;
+  //  display-mode cubre Android/Chrome y iPadOS.
+  function ilusEsAppInstalada(){
+    try {
+      if (global.navigator && global.navigator.standalone === true) return true;
+      if (global.matchMedia){
+        if (global.matchMedia('(display-mode: standalone)').matches) return true;
+        if (global.matchMedia('(display-mode: minimal-ui)').matches) return true;
+      }
+    } catch (e){ /* navegador raro: se asume pestaña normal */ }
+    return false;
+  }
+
+  //  Reserva una pestaña para un deep-link que todavía no existe. Llamar
+  //  SIEMPRE dentro del click, antes del fetch. Devuelve null en la app
+  //  instalada (ahí no se reserva nada a propósito) o si el navegador la
+  //  bloqueó -- ilusIrADeepLink() maneja los dos casos.
+  function ilusReservarVentana(){
+    if (ilusEsAppInstalada()) return null;
+    try { return global.open('', '_blank'); } catch (e){ return null; }
+  }
+
+  //  Lleva al usuario al deep-link. Usa la pestaña reservada si existe; si
+  //  no (app instalada o popup bloqueado), navega en la ventana actual.
+  //  Devuelve true si logró llevarlo a alguna parte.
+  function ilusIrADeepLink(win, url){
+    if (!url){
+      if (win){ try { win.close(); } catch (e){} }
+      return false;
+    }
+    if (win){
+      try { win.location.href = url; return true; } catch (e){ /* sigue abajo */ }
+    }
+    try { global.location.href = url; return true; } catch (e){ return false; }
+  }
+
+  global.ilusEsAppInstalada = ilusEsAppInstalada;
+  global.ilusReservarVentana = ilusReservarVentana;
+  global.ilusIrADeepLink = ilusIrADeepLink;
+
 })(window);
