@@ -445,6 +445,14 @@
 .otd-bottom .b:hover{background:#f9fafb;border-color:#d1d5db;color:#111827}
 .otd-bottom .b.pri{border-color:#15803d;background:#15803d;color:#fff}
 .otd-bottom .b.pri:hover{background:#166534;border-color:#166534;color:#fff}
+/* 🔴 FIX 2026-09-09 (Daniel, celular, viendo su propia OT como técnico:
+   "no se ve el boton aunque sea bloqueado... como superadmin me deja
+   firmar, me deja hacer de todo"): el botón de abajo desaparecía del
+   todo para el técnico en estados donde no le tocaba actuar (esperando
+   aprobación del supervisor, esperando firma del cliente) -- ver el
+   nuevo bloque final "elif puede_ejecutar" de abajo. Bloqueado y gris,
+   nunca invisible. */
+.otd-bottom .b:disabled{opacity:.6;cursor:not-allowed;background:#f3f4f6;color:#9ca3af}
 /* El contenido de la página no puede quedar tapado por la barra. */
 .otd.has-bottombar{padding-bottom:64px}
 @media (max-width:640px){
@@ -4452,6 +4460,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     <button type="button" class="b pri" onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta_bar > 0 }}>
       <i class="bi bi-{{ 'lock-fill' if _obl_falta_bar > 0 else 'pen-fill' }}"></i>
       {{ 'Faltan obligatorias para firmar' if _obl_falta_bar > 0 else 'Firmar como técnico' }}</button>
+    {% elif puede_ejecutar %}
+    {# 🔴 FIX 2026-09-09 (Daniel, celular, OT-179: "no se ve el boton
+       aunquesea bloqueado... como Super admin me deja firmar, me deja
+       hacer de todo"). Antes de este bloque, si el estado era
+       'pendiente_aprobacion' (ya firmó y quedó esperando al supervisor) o
+       'firmada_tecnico' sin `puede_firmar_cliente` (esperando al cliente),
+       el técnico se quedaba sin NINGÚN botón acá -- ni siquiera bloqueado.
+       Se agrega este último `elif` como red de contención: siempre que el
+       técnico pueda ejecutar la OT, ve algo abajo que explica en qué
+       quedó, nunca una barra vacía. #}
+    {% set _bar_msg = {
+        'pendiente_aprobacion': ('bi-hourglass-split', 'Firmada — esperando aprobación del supervisor'),
+        'firmada_tecnico': ('bi-hourglass-split', 'Firmada — esperando firma del cliente'),
+        'cerrada': ('bi-check2-circle', 'OT cerrada'),
+        'completada': ('bi-check2-circle', 'OT cerrada'),
+      }.get(v.estado, ('bi-lock-fill', 'No hay acciones pendientes para ti')) %}
+    <button type="button" class="b" disabled>
+      <i class="bi {{ _bar_msg[0] }}"></i> {{ _bar_msg[1] }}</button>
     {% endif %}
   </div>
 </div>
