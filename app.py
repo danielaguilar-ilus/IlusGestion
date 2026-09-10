@@ -110684,14 +110684,43 @@ def _ot_dar_alta_equipo_automatica(cid, et, nombre_et, tipo_ot, ticket_id):
     """Crea la ficha del equipo en mant_maquinas + trazabilidad en
     mant_logs. Retorna el id nuevo, o None si el alta falla (el caller
     cae al camino de exclusión/cliente_nuevo de siempre, sin romper la OT
-    por esto)."""
+    por esto).
+
+    🔴 FIX 2026-09-09 (Daniel, viendo el Anexo de la OT-2026-00181: "los
+    productos no se están seriando todos, hay [varios] sin número de
+    serie"). Causa raíz: `tk_ticket_equipos` (donde vive `et`, el equipo
+    declarado en el ticket) NUNCA guarda una columna `serie` -- ni
+    `_tk_equipos_desde_doc_core` ni `tk_api_equipos_manual`
+    (tickets_module.py ~8500/~8605) la escriben -- así que `et.get("serie")`
+    es casi siempre vacío. Esta función lo pasaba directo a `mant_maquinas`
+    sin red de seguridad, a diferencia de LAS OTRAS DOS altas de equipo que
+    ya existían (`mant_maquina_add`, app.py ~65412, y el materializador de
+    Levantamiento, ~59248): esas dos, si el campo llega vacío, generan una
+    serie con `_generar_serie_ilus()` (mismo formato en las 3, editable
+    después por el real de fábrica). Acá faltaba ese mismo fallback -- por
+    eso un equipo nuevo dado de alta automáticamente desde un ticket
+    (instalación, correctiva, etc.) quedaba sin serie mientras un equipo
+    del MISMO tipo agregado a mano a la ficha sí la recibía: no era una
+    decisión de negocio, era que a esta 3ra vía de alta le faltaba la
+    misma protección que las otras dos ya tienen. Se replica el mismo
+    criterio (placeholder humano tratado como vacío, ver
+    _LEV_SERIE_PLACEHOLDERS) para las 3 vías queden a la par."""
+    _serie_et = (et.get("serie") or "").strip()[:100]
+    _serie_norm = re.sub(r"[^a-z0-9]", "", _serie_et.lower())
+    if not _serie_et or _serie_norm in _LEV_SERIE_PLACEHOLDERS:
+        try:
+            _serie_et = _generar_serie_ilus(cid, (et.get("sku") or "").strip())
+        except Exception as _e_serie:
+            print(f"[lev_crear] no se pudo generar serie automática para "
+                  f"'{nombre_et}': {_e_serie}", flush=True)
+            _serie_et = None
     try:
         mysql_execute(
             "INSERT INTO mant_maquinas "
             "(cliente_id, sku, nombre, serie, cantidad, estado, created_by) "
             "VALUES (%s,%s,%s,%s,1,'activo',%s)",
             (cid, (et.get("sku") or "").strip()[:100] or None, nombre_et,
-             (et.get("serie") or "").strip()[:100] or None,
+             _serie_et or None,
              current_username() or "sistema")
         )
         row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id")
