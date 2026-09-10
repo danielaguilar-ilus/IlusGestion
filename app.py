@@ -76966,6 +76966,29 @@ def mant_visita_update(vid):
             d["costo_despacho"] = max(0.0, float(d.get("costo_despacho") or 0)) or None
         except (TypeError, ValueError):
             d["costo_despacho"] = None
+    # 💰 2026-09-10 (Daniel, caso OT-2026-00157 -- instalación parcial: "que
+    # me diga claramente qué cobro yo por despacho y que sea modificable").
+    # Lo que se le COBRA al cliente, separado en sus dos mitades: zz_monto
+    # (instalación/servicio) y zz_envio_monto (despacho). Son ENTEROS (INT en
+    # la tabla, a diferencia de costo_proveedor/costo_despacho que son
+    # DECIMAL) y llegan del ERP o escritos a mano desde el Paso 2 de la
+    # tarjeta de Finanzas. 0 se guarda como 0 -- "el despacho no se cobra" es
+    # un dato declarado, distinto de "todavía nadie lo declaró" (NULL).
+    for _campo_zz in ("zz_monto", "zz_envio_monto"):
+        if _campo_zz in d:
+            _crudo_zz = str(d.get(_campo_zz) if d.get(_campo_zz) is not None else "").strip()
+            if _crudo_zz == "":
+                d[_campo_zz] = None
+            else:
+                try:
+                    d[_campo_zz] = max(0, int(round(float(_crudo_zz))))
+                except (TypeError, ValueError):
+                    d[_campo_zz] = None
+    # El por qué de un monto declarado a mano (instalación a medias, despacho
+    # absorbido, concesión comercial). Texto libre acotado a la columna.
+    for _campo_mot in ("zz_motivo_manual", "zz_envio_motivo_manual"):
+        if _campo_mot in d:
+            d[_campo_mot] = (str(d.get(_campo_mot) or "").strip()[:500]) or None
     if "proveedor_nombre" in d:
         d["proveedor_nombre"] = (str(d.get("proveedor_nombre") or "").strip()[:200]) or None
     # Documento ERP asociado (NVI/NVV) — Daniel 2026-08-08: "al documento de
@@ -77014,6 +77037,13 @@ def mant_visita_update(vid):
                "cubierto_por","estado_facturacion","garantia_motivo",
                # Finanzas (margen por servicio)
                "costo_proveedor","proveedor_tipo","proveedor_nombre","costo_despacho",
+               # 💰 2026-09-10 — lo COBRADO al cliente, separado: instalación
+               # (zz_monto) y despacho (zz_envio_monto), más el motivo cuando
+               # se declaran distinto de lo que trajo el documento. Hasta hoy
+               # estas 4 columnas no estaban en la lista, así que la tarjeta
+               # de Finanzas las mandaba y el PUT las descartaba en silencio
+               # -- el mismo patrón del bug de costo_proveedor de sept-04.
+               "zz_monto","zz_envio_monto","zz_motivo_manual","zz_envio_motivo_manual",
                # Documento ERP de origen (NVI/NVV), solo administrativo
                "documento_erp_tido","documento_erp_nudo",
                # Espejo de trazabilidad (ver comentario arriba, 2026-08-30):
@@ -80640,6 +80670,37 @@ def ot2_api_finanzas(vid):
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
 
+    # 💰 2026-09-10 (Daniel, caso OT-2026-00157 -- instalación PARCIAL:
+    # "quiero que me diga claramente qué cobro yo por despacho y que sea
+    # modificable... y que después también nosotros declaremos los precios de
+    # la instalación y de despacho").
+    # Las columnas zz_envio_monto y los dos *_motivo_manual ya existen: las
+    # crea _ensure_ot_finanzas_cols(), que corre SIEMPRE (incluso con
+    # ILUS_SKIP_MIGRATIONS=1, ver el bloque de arranque al final del archivo),
+    # así que están en producción. Lo que faltaba es que este endpoint -- el
+    # único dueño de la fila financiera -- las escribiera: nunca lo hizo, y
+    # el despacho al cliente solo entraba leyéndolo del ERP y no había forma
+    # de corregirlo cuando lo cobrado NO es lo que dice el documento (que es
+    # justo lo que pasa con una instalación a medias).
+    # `None` = "no vino en esta petición, no tocar la columna" (el UPDATE usa
+    # COALESCE), igual que costo_proveedor/costo_despacho. 0 sí se guarda: un
+    # despacho que no se cobra es un dato, no un campo sin llenar.
+    try:
+        if "zz_envio_monto" in d and str(d.get("zz_envio_monto") or "").strip() != "":
+            zz_envio_monto = int(round(float(d.get("zz_envio_monto"))))
+        else:
+            zz_envio_monto = None
+    except (TypeError, ValueError):
+        return _ot2_err("El monto del despacho no es válido.", "ZZ_ENVIO_INVALIDO")
+
+    # El "por qué" de un monto declarado a mano (instalación parcial,
+    # concesión comercial, despacho absorbido...). No se exige: obligar a
+    # justificar cada edición convertiría el guardar en un trámite y Daniel
+    # ya perdió tiempo con candados así. Pero cuando viene, se guarda -- es
+    # lo que después explica un margen raro en el informe.
+    zz_motivo_man = (d.get("zz_motivo_manual") or "").strip()[:500] or None
+    zz_env_motivo_man = (d.get("zz_envio_motivo_manual") or "").strip()[:500] or None
+
     # 🔧 FIX 2026-09-04 (Daniel, Aarón trabado en el modal de cierre: "lo
     # declara, pero no lo guarda"). guardarCosto() en ot2/detalle.html manda
     # costo_proveedor/costo_despacho a ESTE endpoint desde que se escribió
@@ -80693,13 +80754,17 @@ def ot2_api_finanzas(vid):
         _n_upd = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET "
             "  centro_costo=%s, zz_codigo=%s, zz_monto=%s, costo=COALESCE(%s, costo), "
+            "  zz_envio_monto=COALESCE(%s, zz_envio_monto), "
+            "  zz_motivo_manual=%s, zz_envio_motivo_manual=%s, "
             "  costo_proveedor=COALESCE(%s, costo_proveedor), "
             "  costo_despacho=COALESCE(%s, costo_despacho), "
             "  modalidad_cobro=%s, cubierto_por=%s, garantia_motivo=%s, "
             "  factura_tido=%s, factura_nudo=%s, estado_facturacion=%s, "
             "  finanzas_at=NOW(), finanzas_por=%s "
             " WHERE id=%s" + _where_lock,
-            (centro, zz_cod, zz_monto, costo, costo_proveedor, costo_despacho,
+            (centro, zz_cod, zz_monto, costo,
+             zz_envio_monto, zz_motivo_man, zz_env_motivo_man,
+             costo_proveedor, costo_despacho,
              'garantia' if garantia else 'pagado',
              'garantia' if garantia else 'cliente',
              motivo, f_tido, f_nudo, estado_fact,

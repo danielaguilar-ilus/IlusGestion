@@ -3417,10 +3417,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <span class="tot">Total <b>${{ '{:,.0f}'.format(_zz_serv + _zz_env)|replace(',','.') }}</b></span>
             </div>
             {% if puede_metadata %}
+            {# 💰 2026-09-10: además del total viajan las dos mitades, para
+               que el botón pueda llenar los dos campos del Paso 2 (ver
+               otdAplicarTotalZz). #}
             <button type="button" class="usar" id="otdZzUsar"
                     data-total="{{ (_zz_serv + _zz_env)|int }}"
+                    data-serv="{{ _zz_serv|int }}" data-envio="{{ _zz_env|int }}"
                     onclick="otdUsarPrecioDocumento(this)">
-              <i class="bi bi-arrow-down-circle-fill"></i> Usar como precio al cliente</button>
+              <i class="bi bi-arrow-down-circle-fill"></i> Usar estos montos</button>
             {% endif %}
           </div>
           {% endif %}
@@ -3580,12 +3584,64 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 Presiona <b>Leer documento</b> y traigo las líneas de servicio
                 (ZZ instalación, ZZ mantención, ZZ envío…) directo del ERP.
               </div>
-              <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
+              {# 💰 2026-09-10 (Daniel, caso OT-2026-00157 -- la instalación se
+                 hizo A MEDIAS: "quiero que me diga claramente qué cobro yo
+                 por despacho y que sea modificable... y que después también
+                 nosotros declaremos los precios de la instalación y de
+                 despacho"). Antes acá había UN solo campo (Precio al
+                 cliente) y las dos líneas del ERP se leían arriba en modo
+                 lectura: si lo cobrado no era lo que decía el documento --
+                 justo lo que pasa con una instalación parcial -- no había
+                 dónde corregirlo, y el despacho al cliente (zz_envio_monto)
+                 no se podía tocar por ninguna parte de la app.
+                 Ahora se declara cada mitad por separado y el total es la
+                 suma: tres números que puedan contradecirse serían peores
+                 que uno. El total sigue guardándose en `costo`, que es lo
+                 que leen el margen, el informe y el gate del cierre. #}
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Instalación / servicio (CLP)</label>
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="text" id="otdFinZzServ" class="form-control" data-money="1"
+                           inputmode="numeric" autocomplete="off" placeholder="0"
+                           value="{{ '{:,.0f}'.format(v.zz_monto|float)|replace(',','.') if v.zz_monto is not none else '' }}">
+                  </div>
+                  <div id="otdFinZzServErp" class="small text-muted mt-1" style="font-size:.7rem"></div>
+                </div>
+                <div>
+                  <label class="form-label small fw-semibold mb-1">Despacho al cliente (CLP)</label>
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="text" id="otdFinZzEnvio" class="form-control" data-money="1"
+                           inputmode="numeric" autocomplete="off" placeholder="0"
+                           value="{{ '{:,.0f}'.format(v.zz_envio_monto|float)|replace(',','.') if v.zz_envio_monto is not none else '' }}">
+                  </div>
+                  <div id="otdFinZzEnvioErp" class="small text-muted mt-1" style="font-size:.7rem"></div>
+                </div>
+              </div>
+              {# El motivo aparece SOLO cuando lo declarado no cuadra con lo
+                 que trajo el documento. No bloquea guardar (Daniel ya perdió
+                 tiempo con candados así) pero queda escrito: es lo que
+                 después explica un margen raro en el informe. #}
+              <div id="otdFinZzMotivoBox" style="display:none;margin-top:10px">
+                <label class="form-label small fw-semibold mb-1">
+                  ¿Por qué no es lo que dice el documento?</label>
+                <input type="text" id="otdFinZzMotivo" class="form-control form-control-sm"
+                       maxlength="500" autocomplete="off"
+                       placeholder="Ej: se instaló solo la mitad de las máquinas; el resto queda para otra visita"
+                       value="{{ (v.zz_motivo_manual or '')|e }}">
+              </div>
+              <label class="form-label small fw-semibold mb-1 mt-3">Total al cliente (CLP)</label>
               <div class="input-group input-group-sm">
                 <span class="input-group-text">$</span>
                 <input type="text" id="otdFinCosto" class="form-control" data-money="1"
                        inputmode="numeric" autocomplete="off"
                        value="{{ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '' }}">
+              </div>
+              <div class="small text-muted mt-1" style="font-size:.7rem">
+                <i class="bi bi-calculator me-1"></i>Se calcula solo al llenar los dos de arriba.
+                Puedes escribirlo a mano si el cobro no se separa así.
               </div>
             </div>
           </div>
@@ -3596,16 +3652,23 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <div class="bd">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                 <div>
-                  <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
+                  {# 🏷️ 2026-09-10 (Daniel: "y que después también nosotros
+                     declaremos los precios de la instalación y de
+                     despacho"). Los dos campos ya existían; lo que faltaba
+                     era que dijeran de qué mitad habla cada uno, en espejo
+                     con el Paso 2 (allá es lo que COBRAMOS, acá lo que nos
+                     CUESTA). El id no cambia -- sigue siendo costo_proveedor. #}
+                  <label class="form-label small fw-semibold mb-1">Nos cuesta la instalación (CLP)</label>
                   <div class="input-group input-group-sm">
                     <span class="input-group-text">$</span>
                     <input type="text" id="otdFinCostoProveedor" class="form-control" data-money="1"
                            inputmode="numeric" autocomplete="off"
                            value="{{ '{:,.0f}'.format(v.costo_proveedor|float)|replace(',','.') if v.costo_proveedor is not none else '' }}">
                   </div>
+                  <div class="small text-muted mt-1" style="font-size:.7rem">Lo que le pagamos al técnico o proveedor.</div>
                 </div>
                 <div>
-                  <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
+                  <label class="form-label small fw-semibold mb-1">Nos cuesta el despacho (CLP)</label>
                   <div class="input-group input-group-sm">
                     <span class="input-group-text">$</span>
                     <input type="text" id="otdFinCostoDespacho" class="form-control" data-money="1"
@@ -5914,6 +5977,17 @@ window.otdMoneyFmt = function(n){
   if (n === null || n === undefined || n === '') return '';
   return Number(n).toLocaleString('es-CL');
 };
+/* La REGLA de arriba dice "una sola función lee, una sola escribe"... pero la
+   que escribe no existía: cada lugar que necesitaba poner un monto en un
+   campo hacía su propio `.value = ...toLocaleString()`. 2026-09-10: acá está,
+   y la usan el total auto-calculado del Paso 2 y los botones que traen los
+   montos del ERP. */
+window.otdMoneySet = function(id, n){
+  const el = document.getElementById(id);
+  if (!el) return false;
+  el.value = window.otdMoneyFmt(n);
+  return true;
+};
 (function(){
   function formatear(el){
     const soloDigitos = String(el.value || '').replace(/[^\d]/g, '');
@@ -6009,19 +6083,85 @@ window.otdMoneyFmt = function(n){
       elMargenWarn.style.display = avisar ? 'flex' : 'none';
     }
   }
+  /* 💰 2026-09-10 (Daniel, OT-2026-00157 instalada a medias). El Paso 2
+     ahora declara las dos mitades de lo COBRADO (instalación + despacho) y
+     el total se calcula solo. Reglas:
+     · Si el usuario toca alguna de las dos mitades, el total se recalcula.
+     · Si escribe el total a mano, se respeta (hay cobros que no se separan
+       así) y deja de auto-calcularse hasta que vuelva a tocar una mitad.
+     · Al lado de cada mitad se dice qué monto trajo el ERP, y si lo
+       declarado no coincide aparece el campo del motivo -- visible, no
+       bloqueante. */
+  const elZzServ = document.getElementById('otdFinZzServ');
+  const elZzEnvio = document.getElementById('otdFinZzEnvio');
+  const elZzMotivoBox = document.getElementById('otdFinZzMotivoBox');
+  let _totalAMano = false;
+
+  function _otdErpRef(idRef, montoErp, montoDeclarado){
+    const ref = document.getElementById(idRef);
+    if (!ref) return false;
+    if (montoErp === null || montoErp === undefined || montoErp === ''){
+      ref.textContent = '';
+      return false;
+    }
+    const diff = Math.round(montoErp) !== Math.round(montoDeclarado || 0);
+    ref.innerHTML = diff
+      ? '<span style="color:#b45309"><i class="bi bi-exclamation-triangle-fill me-1"></i>' +
+        'El documento dice ' + fmtCLP(montoErp) + '</span>'
+      : '<span style="color:#16a34a"><i class="bi bi-check2 me-1"></i>Igual al documento</span>';
+    return diff;
+  }
+
+  function _otdSincronizarZz(veniaDeMitad){
+    const serv = window.otdMoneyVal('otdFinZzServ');
+    const envio = window.otdMoneyVal('otdFinZzEnvio');
+    if (veniaDeMitad) _totalAMano = false;
+    // El total solo se pisa si NO lo escribieron a mano y hay algo que sumar.
+    if (!_totalAMano && (serv !== null || envio !== null) && window.otdMoneySet){
+      window.otdMoneySet('otdFinCosto', (serv || 0) + (envio || 0));
+    }
+    // Referencia al ERP: los montos leídos del documento los deja
+    // otdAplicarMontosZz() en estos data-* (o vienen del último guardado).
+    const erpServ = elZzServ && elZzServ.dataset.erp !== undefined && elZzServ.dataset.erp !== ''
+      ? Number(elZzServ.dataset.erp) : null;
+    const erpEnvio = elZzEnvio && elZzEnvio.dataset.erp !== undefined && elZzEnvio.dataset.erp !== ''
+      ? Number(elZzEnvio.dataset.erp) : null;
+    const d1 = _otdErpRef('otdFinZzServErp', erpServ, serv);
+    const d2 = _otdErpRef('otdFinZzEnvioErp', erpEnvio, envio);
+    if (elZzMotivoBox){
+      const yaEscrito = (document.getElementById('otdFinZzMotivo') || {}).value;
+      elZzMotivoBox.style.display = (d1 || d2 || (yaEscrito || '').trim()) ? '' : 'none';
+    }
+    recalcularOtdFin();
+  }
+  window.otdSincronizarZz = _otdSincronizarZz;
+
+  [elZzServ, elZzEnvio].forEach(function(el){
+    if (el) el.addEventListener('input', function(){ _otdSincronizarZz(true); });
+  });
+  if (elCosto) elCosto.addEventListener('input', function(){ _totalAMano = true; });
+
   [elCosto, elCostoProv, elCostoDespacho].forEach(function(el){
     if (el) el.addEventListener('input', recalcularOtdFin);
   });
   const ccSel = document.getElementById('otdFinCentroCosto');
   if (ccSel) ccSel.addEventListener('change', recalcularOtdFin);
-  recalcularOtdFin();
+  _otdSincronizarZz(false);
 })();
 
 window.otdGuardarFinanzas = async function(){
   // 2026-09-02: SIEMPRE por otdMoneyVal -- los campos muestran "352.029" y
   // al backend tiene que viajar 352029. Leer .value crudo mandaría 352.
+  // 💰 2026-09-10: viajan también las dos mitades de lo COBRADO al cliente
+  // (instalación y despacho) y el motivo si se declararon distinto de lo que
+  // dice el documento. El PUT las acepta desde hoy -- antes se mandaban al
+  // vacío. `null` = campo vacío, "no declarado" (≠ 0, que es "no se cobra").
+  const _zzMotivo = (document.getElementById('otdFinZzMotivo') || {}).value || '';
   const body = {
     costo: window.otdMoneyVal('otdFinCosto'),
+    zz_monto: window.otdMoneyVal('otdFinZzServ'),
+    zz_envio_monto: window.otdMoneyVal('otdFinZzEnvio'),
+    zz_motivo_manual: _zzMotivo.trim(),
     costo_proveedor: window.otdMoneyVal('otdFinCostoProveedor') || 0,
     costo_despacho: window.otdMoneyVal('otdFinCostoDespacho') || 0,
     proveedor_tipo: document.getElementById('otdFinProveedorTipo').value || '',
@@ -6570,12 +6710,21 @@ window.otdLeerLineasZz = async function(){
               '<span class="cod">' + l.codigo + '</span>' + tag + nom +
               '<span class="mon">' + fmt(l.monto) + '</span></div>';
     });
+    /* 💰 2026-09-10: el botón ya no trae solo el total -- trae las dos
+       mitades por separado (instalación/servicio y envío) para poder llenar
+       los dos campos del Paso 2. Es la misma clasificación que ya usa la
+       lista de arriba (l.es_envio), no un criterio nuevo. */
+    const _zzServ = j.zz.filter(l => !l.es_envio)
+                        .reduce((a, l) => a + (Number(l.monto) || 0), 0);
+    const _zzEnvio = j.zz.filter(l => l.es_envio)
+                         .reduce((a, l) => a + (Number(l.monto) || 0), 0);
     html += '<div class="tot-zz"><span>Total al cliente</span>' +
             '<span class="mon">' + fmt(j.total) + '</span></div>' +
             '<button type="button" class="aplicar" data-total="' + Math.round(j.total) + '" ' +
+            'data-serv="' + Math.round(_zzServ) + '" data-envio="' + Math.round(_zzEnvio) + '" ' +
             'onclick="otdAplicarTotalZz(this)">' +
-            '<i class="bi bi-check2-circle"></i> Usar ' + fmt(j.total) +
-            ' como precio al cliente</button></div>';
+            '<i class="bi bi-check2-circle"></i> Usar estos montos ' +
+            '(' + fmt(_zzServ) + ' instalación + ' + fmt(_zzEnvio) + ' despacho)</button></div>';
     cont.innerHTML = html;
     cont.style.display = '';
     let detalle = j.documento.cliente_nombre
@@ -6604,12 +6753,24 @@ window.otdAplicarTotalZz = function(btn){
   const total = parseFloat(btn.dataset.total || 0) || 0;
   const el = document.getElementById('otdFinCosto');
   if (!el || !total) return;
+  /* 💰 2026-09-10: además del total se llenan las dos mitades del Paso 2 y
+     se recuerda en cada campo (dataset.erp) qué dijo el documento -- así, si
+     después se corrige un monto (instalación parcial, despacho absorbido),
+     la pantalla puede decir "el documento decía otra cosa" y pedir el
+     motivo, en vez de perder la referencia. */
+  const serv = parseFloat(btn.dataset.serv || 0) || 0;
+  const envio = parseFloat(btn.dataset.envio || 0) || 0;
+  const elServ = document.getElementById('otdFinZzServ');
+  const elEnvio = document.getElementById('otdFinZzEnvio');
+  if (elServ){ elServ.dataset.erp = String(Math.round(serv)); window.otdMoneySet('otdFinZzServ', serv); }
+  if (elEnvio){ elEnvio.dataset.erp = String(Math.round(envio)); window.otdMoneySet('otdFinZzEnvio', envio); }
   // 2026-09-02: el campo lleva separador de miles -- se escribe formateado
   // para que lo que se ve coincida con lo que se va a guardar.
   el.value = window.otdMoneyFmt(total);
+  if (window.otdSincronizarZz) window.otdSincronizarZz(true);
   el.dispatchEvent(new Event('input', {bubbles: true}));
-  el.focus();
-  if (window.ilusToast) ilusToast('Precio traído del documento — revisa y presiona Guardar', {type:'success'});
+  (elServ || el).focus();
+  if (window.ilusToast) ilusToast('Montos traídos del documento — revisa y presiona Guardar', {type:'success'});
 };
 
 /* Marca en verde los pasos que ya tienen su dato. Puramente visual: no
@@ -6640,16 +6801,13 @@ window.otdAplicarTotalZz = function(btn){
    al cliente". No guarda solo: deja el número puesto, recalcula el margen
    al instante y deja que Daniel presione Guardar -- escribir dinero sin
    que nadie lo confirme sería peor que el bug original. */
+/* 💰 2026-09-10: este botón (el de la caja de arriba, con lo que quedó
+   guardado del documento) hacía lo mismo que otdAplicarTotalZz pero solo con
+   el total. Ahora delega en esa función, que además llena las dos mitades
+   del Paso 2 -- una sola forma de traer los montos del documento, no dos que
+   se van desincronizando. */
 window.otdUsarPrecioDocumento = function(btn){
-  const total = parseFloat(btn.dataset.total || 0) || 0;
-  const el = document.getElementById('otdFinCosto');
-  if (!el || !total) return;
-  // 2026-09-02: formateado con miles, igual que el otro botón que escribe
-  // este campo -- lo que se ve tiene que ser lo que se guarda.
-  el.value = window.otdMoneyFmt(total);
-  el.dispatchEvent(new Event('input', {bubbles: true}));  // recalcula el margen
-  el.focus();
-  if (window.ilusToast) ilusToast('Precio traído del documento — revisa y presiona Guardar', {type:'info'});
+  return window.otdAplicarTotalZz(btn);
 };
 
 window.otdBuscarDocErp = async function(){
