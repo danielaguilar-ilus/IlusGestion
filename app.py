@@ -91214,6 +91214,24 @@ def mant_ot_ejecutar(vid):
     plantillas_por_maquina = {str(k): v for k, v in plantillas_por_maquina.items()}
     stats_por_maquina = {str(k): v for k, v in stats_por_maquina.items()}
 
+    # 🔴 FIX 2026-09-09 (Daniel, en vivo, OT-2026-00179: "el saltado no me
+    # permite ni editarlo ni cerrarla... el saltado también tiene que
+    # invalidar el checklist de ser necesario"). Esta pantalla (la
+    # "clásica"/ot_ejecutar.html, la que de verdad usa el técnico en esta
+    # OT) calcula el contador global de "obligatorias" que destraba el
+    # botón de firmar en Jinja, TRES veces (nsh/_stg/ns en el template,
+    # namespace por namespace) recorriendo `plantillas_por_maquina` -- que
+    # ya excluye equipos de baja (ver el FIX 2026-08-20 de acá abajo) pero
+    # NUNCA excluyó equipos marcados 'saltado'/'falla_detectada', que es
+    # la MISMA exclusión que ya usa el validador real de cierre
+    # (_ot_validar_cierre / _ot_maquinas_excluidas_cierre, caso OT-56).
+    # Mismo bug, mismo síntoma, ya arreglado hoy en ot2_detalle -- esta
+    # pantalla clásica es OTRA copia independiente que había quedado
+    # desalineada. Se pasa el set de ids (como STRING, ya que
+    # plantillas_por_maquina quedó stringificado arriba) para que las 3
+    # cuentas Jinja lo descuenten sin duplicar la consulta.
+    excluir_maquinas_obl = {str(x) for x in _ot_maquinas_excluidas_cierre(vid)}
+
     # ════════════════════════════════════════════════════════════════
     # FIX 2026-08-20 — UNA sola fuente para "qué tareas cuentan".
     # Caso OT-2026-00058 Vitacura (Daniel: "sigue solicitando las 36
@@ -91368,6 +91386,7 @@ def mant_ot_ejecutar(vid):
         grupos=grupos,
         plantillas_por_maquina=plantillas_por_maquina,
         stats_por_maquina=stats_por_maquina,
+        excluir_maquinas_obl=excluir_maquinas_obl,
         equipos_estado_revision=equipos_estado_revision,
         fotos=fotos,
         fotos_js=fotos_js,

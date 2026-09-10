@@ -177,12 +177,20 @@
            calcula acá arriba con namespace porque el header se renderiza
            ANTES del bloque de tareas; el espejo en vivo lo mantiene
            txDeskSync). Ocultas <1200px por .tx-desk. #}
+        {# 🔴 FIX 2026-09-09 (Daniel, OT-2026-00179: "el saltado también
+           tiene que invalidar el checklist"): se descuentan las tareas de
+           equipos marcados 'saltado'/'falla_detectada' (excluir_maquinas_obl,
+           MISMA exclusión que ya usa el cierre real) -- antes esta cuenta
+           bloqueaba el botón de firmar con una tarea que el sistema ya
+           había decidido ignorar. #}
         {% set nsh = namespace(oblTot=0, oblComp=0) %}
         {% for _mid, _pls in plantillas_por_maquina.items() %}
+          {% if _mid not in excluir_maquinas_obl %}
           {% for _p in _pls %}{% for _t in _p.tareas %}{% if _t.obligatoria %}
             {% set nsh.oblTot = nsh.oblTot + 1 %}
             {% if _t.completada %}{% set nsh.oblComp = nsh.oblComp + 1 %}{% endif %}
           {% endif %}{% endfor %}{% endfor %}
+          {% endif %}
         {% endfor %}
         <div class="hm tx-desk">
           <span class="v">{{ equipos|length }}</span>
@@ -1306,8 +1314,11 @@
      Vive ANTES de #crumbs para quedar visible en las 4 vistas del
      drill-down (SPA de setView() — este panel no se reemplaza al
      navegar entre Máquinas/Plantillas/Tareas/Resumen). #}
+  {# 🔴 FIX 2026-09-09 -- misma exclusión de equipos saltados/con falla que
+     nsh (arriba) y ns (más abajo), ver excluir_maquinas_obl. #}
   {% set _stg = namespace(oblTot=0, oblComp=0, eqTot=equipos|length, eqDone=0) %}
   {% for _mid, _pls in plantillas_por_maquina.items() %}
+    {% if _mid not in excluir_maquinas_obl %}
     {% for _p in _pls %}
       {% for _t in _p.tareas %}
         {% if _t.obligatoria %}
@@ -1316,6 +1327,7 @@
         {% endif %}
       {% endfor %}
     {% endfor %}
+    {% endif %}
   {% endfor %}
   {% for _eq in equipos %}
     {% set _s = stats_por_maquina.get(_eq.id|string, {}) %}
@@ -1385,13 +1397,17 @@
        Sin namespace, total_global y comp_global SIEMPRE quedan en 0.
        2026-05-18 (Mejora UX firma): además calculamos obligatorias/completas_obligatorias
        para mostrar el progreso real que destraba el botón "Firmar OT". #}
+    {# 🔴 FIX 2026-09-09 -- "Total tareas" (ns.total/ns.comp) se deja tal
+       cual, informativo. "Obligatorias" (ns.oblTot/ns.oblComp) SÍ excluye
+       equipos saltados/con falla (excluir_maquinas_obl) porque es lo que
+       destraba "Firmar OT" -- misma exclusión que nsh/_stg arriba. #}
     {% set ns = namespace(total=0, comp=0, oblTot=0, oblComp=0) %}
     {% for mid, pls in plantillas_por_maquina.items() %}
       {% for p in pls %}
         {% set ns.total = ns.total + p.total %}
         {% set ns.comp = ns.comp + p.completas %}
         {% for t in p.tareas %}
-          {% if t.obligatoria %}
+          {% if t.obligatoria and mid not in excluir_maquinas_obl %}
             {% set ns.oblTot = ns.oblTot + 1 %}
             {% if t.completada %}{% set ns.oblComp = ns.oblComp + 1 %}{% endif %}
           {% endif %}
