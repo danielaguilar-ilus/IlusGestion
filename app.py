@@ -81427,6 +81427,52 @@ def ot2_api_documentos_listar(vid):
     return jsonify({"ok": True, **_ot_docs_listar(vid)})
 
 
+def _erp_fecha_a_date(raw):
+    """La fecha de emisión de un documento del ERP, lista para una columna DATE.
+
+    🐛 FIX 2026-09-10 (Daniel, OT-2026-00157: "Error interno del servidor.
+    Intenta de nuevo en un momento." al agregar la factura 11004). El ERP
+    entrega la fecha del documento como TEXTO en formato chileno
+    ('26/06/2026') y el INSERT la pasaba tal cual con `str(...)[:10]`. MySQL
+    rechaza eso en una columna DATE — error 1292 "Incorrect date value" — y
+    la excepción salía por el handler de 500, o sea el usuario veía un error
+    interno genérico y el documento NO se asociaba.
+    Medido en los logs de Cloud Run: no era algo raro de esa factura, fallaba
+    CUALQUIER documento cuya fecha llegara en ese formato.
+
+    Acepta lo que el ERP devuelve de verdad: objetos datetime/date, ISO
+    (con o sin hora) y dd/mm/yyyy (con / o -). Si no reconoce el formato
+    devuelve None: la columna es NULL-able y quedarse sin la fecha del
+    documento es mucho mejor que perder la asociación completa.
+    """
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw.date()
+    # Objeto `date` puro (sin hora). No se usa isinstance(raw, date) porque
+    # `date` no está importado a nivel de módulo (ver el import de app.py:12).
+    if hasattr(raw, "isoformat") and not hasattr(raw, "hour"):
+        return raw
+    s = str(raw).strip()
+    if not s:
+        return None
+    _m_iso = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if _m_iso:
+        try:
+            return datetime(int(_m_iso.group(1)), int(_m_iso.group(2)),
+                            int(_m_iso.group(3))).date()
+        except ValueError:
+            return None
+    _m_cl = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})", s)
+    if _m_cl:
+        try:
+            return datetime(int(_m_cl.group(3)), int(_m_cl.group(2)),
+                            int(_m_cl.group(1))).date()
+        except ValueError:
+            return None
+    return None
+
+
 @app.route("/ot/api/<int:vid>/documentos", methods=["POST"])
 @_mant_required
 @_ot_can_cobertura
@@ -81549,15 +81595,32 @@ def ot2_api_documentos_agregar(vid):
     # ¿Es el primero? Entonces además se espeja al campo principal, que es
     # el que gobierna cierre/PDF/margen y ya existía desde siempre.
     _es_primero = not (v.get("factura_nudo") or "").strip()
-    mysql_execute(
-        "INSERT INTO mant_visita_documentos "
-        "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
-        "   etiqueta, monto, rut, rut_ok, rut_justif, emitido_el, asociado_por) "
-        "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-        (vid, 1 if _es_primero else 0, _tipo_real, _numero_real[:30], etiqueta,
-         _monto, rut_fact[:20] or None, 1 if analisis["match"] else 0,
-         justif or None, (str(doc.get("fecha"))[:10] or None) if doc.get("fecha") else None,
-         current_username()))
+    # 🐛 2026-09-10: la fecha pasa por _erp_fecha_a_date (ver su docstring).
+    # Antes iba `str(doc.get("fecha"))[:10]` y una fecha chilena del ERP
+    # ('26/06/2026') hacía que MySQL rechazara el INSERT completo con un 500.
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_documentos "
+            "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
+            "   etiqueta, monto, rut, rut_ok, rut_justif, emitido_el, asociado_por) "
+            "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (vid, 1 if _es_primero else 0, _tipo_real, _numero_real[:30], etiqueta,
+             _monto, rut_fact[:20] or None, 1 if analisis["match"] else 0,
+             justif or None, _erp_fecha_a_date(doc.get("fecha")),
+             current_username()))
+    except Exception as _e_ins:
+        # Defensa en profundidad: si algún otro dato del documento no le
+        # calza a su columna, el usuario tiene que leer QUÉ pasó con su
+        # documento, no un "Error interno del servidor" del handler de 500
+        # (REGLA #4: mensaje amigable afuera, detalle en el log).
+        print(f"[ot_docs] INSERT falló vid={vid} {_tipo_real} {_numero_real}: "
+              f"{type(_e_ins).__name__}: {_e_ins}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": f"No pudimos asociar la {_tipo_real} {_numero_real}: la base de "
+                     f"datos rechazó uno de los datos del documento. Quedó registrado "
+                     f"en el log para revisarlo.",
+        }), 500
 
     if _es_primero:
         _estado_fact = ("con_nota_venta" if _tipo_real in _OT_DOCS_NOTA_VENTA
