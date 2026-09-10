@@ -105,6 +105,16 @@
   table.precio th, table.precio td{ border-bottom:0.25mm solid #e5e7eb; padding:2.6mm 3.5mm; }
   table.precio th{ background:#0a0a0a; color:#fff; text-align:left; font-weight:700;
     font-size:9.5pt; text-transform:uppercase; letter-spacing:.02em; border-bottom:0; }
+  {# 🔴 FIX 2026-09-09 (Daniel: "hay que tener el corte también entre las
+     tablas, cuando una tabla pasa hacia otra hoja"): sin esto, Chromium
+     podía cortar una FILA a la mitad justo en el salto de página -- media
+     fila de un producto en una hoja, la otra media en la siguiente. Junto
+     con el margin-top más grande del header (ver
+     `_anexo_pdf_header_footer_native`/`_anexo_pdf_bytes` en app.py), esto
+     evita que el primer contenido de la página 2 en adelante sea un
+     fragmento de fila pegado al techo de la hoja. #}
+  table.precio tr{ page-break-inside: avoid; break-inside: avoid; }
+  table.precio thead{ display: table-header-group; }
   table.precio tbody tr:nth-child(even){ background:#f9fafb; }
   table.precio td.monto{ text-align:right; font-variant-numeric:tabular-nums; }
   table.precio tr.total td{ font-weight:700; background:#fef2f2; color:#991b1b;
@@ -310,6 +320,15 @@
   <div class="firma-bloque">
     {% if firma %}
       {% if firma.firma_url %}<img class="firma-img" src="{{ firma.firma_url }}" alt="Firma">{% endif %}
+      {#- 🔴 2026-09-09 (Daniel, pedido explícito: "veo que la firma tiene
+         nombres, ahora podemos poner una rayita"): falta la línea
+         convencional de firma -- con la imagen dibujada, el nombre quedaba
+         flotando debajo sin nada que marque dónde "apoya" la firma. Se
+         reusa `.firma-linea-real` (misma línea de 72mm centrada que ya usa
+         el caso SIN firmar más abajo) para que ambos casos compartan el
+         mismo lenguaje visual: con imagen, la firma dibujada queda apoyada
+         sobre la raya; sin imagen, la raya sola ya marca dónde firmar. -#}
+      <div class="firma-linea-real"></div>
       <div class="firma-nombre">Nombre: {{ firma.firmante_nombre }}</div>
       {# 🔧 FIX 2026-08-31 (Daniel: "necesito que el RUT de la empresa, más
          que el de la persona" -- confirmado tras confusión real en vivo:
