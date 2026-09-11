@@ -79543,7 +79543,19 @@ def ot2_detalle(vid):
         "obl": _obl, "obl_ok": _obl_ok,
         "pct": int(round(_obl_ok * 100.0 / _obl)) if _obl else 0,
         "fotos": int(_fotos.get("n") or 0),
-        "equipos_listos": sum(1 for e in equipos if e["sello_cls"] == "eq-ok"),
+        # 🔴 FIX 2026-09-11 (Daniel: "el doble contador de equipos listos").
+        # Este chip (header, "Equipos X/Y") y la barra de progreso de la
+        # pestaña Trabajo (_eq_listos, ver detalle.html) contaban "listo"
+        # con DOS criterios distintos: acá exigía sello_cls=='eq-ok' (TODAS
+        # las tareas, incluidas las opcionales); la barra de abajo exige
+        # solo n_obl_falta==0 (las OBLIGATORIAS). Un equipo con sus
+        # obligatorias completas pero una tarea opcional pendiente salía
+        # "listo" en un lado y "no listo" en el otro -- para la misma OT.
+        # Se unifica al criterio de OBLIGATORIAS: es el mismo que de verdad
+        # bloquea firmar (ver _obl_falta/kpis.obl_ok en el botón de firma),
+        # así que "equipo listo" pasa a significar lo mismo que "ya no
+        # frena el cierre de la OT", no "no le queda ni una tarea suelta".
+        "equipos_listos": sum(1 for e in equipos if not e.get("n_obl_falta")),
     }
 
     firmas = [
