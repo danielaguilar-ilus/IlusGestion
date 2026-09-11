@@ -1267,17 +1267,27 @@ window.OT2C = (function(){
       // 2026-08-29: nombre + teléfono para poder llamar al llegar, y la
       // dirección CONFIRMADA (con lat/lng de Places, no texto suelto) --
       // ese punto es contra el que el GPS del técnico valida su llegada.
-      // El correo queda opcional: no todos los contactos de terreno tienen.
+      // 🔴 2026-09-11: el correo YA NO es opcional (ver el fix de abajo) --
+      // este comentario decía lo contrario y quedó desactualizado.
       case 'contraparte':
         // 2026-08-30 (Daniel: "necesito que valides... el RUT... el
         // teléfono... el correo"): nombre/teléfono/dirección siguen siendo
         // obligatorios (sin cambios); lo nuevo es que, si hay algo escrito
         // en RUT/teléfono/correo, tiene que tener el FORMATO correcto --
-        // los 3 validadores devuelven true también cuando el campo está
+        // los validadores devuelven true también cuando el campo está
         // vacío, así que esto nunca bloquea por un campo opcional sin
-        // llenar, solo por uno llenado mal.
+        // llenar, solo por uno llenado mal. (El correo dejó de ser
+        // "opcional sin llenar" el 2026-09-11: ver el fix de abajo.)
+        // 📮 FASE 3 -- 2026-09-11 (hallazgo del mapeo con agentes: "el correo
+        // es opcional... se puede crear una OT sin correo de contraparte").
+        // Se agrega `!!(S.contraparte.email||'').trim()` a la lista -- antes
+        // solo se exigía el TELÉFONO; la persona podía crear la OT sin
+        // correo y el aviso de creación (o el link de firma, más adelante)
+        // no tenía a dónde salir. Mismo criterio que ya se exige en el modal
+        // de Tickets (_modal_generar_ot.html), que este wizard no igualaba.
         return !!(S.contraparte.nombre||'').trim() &&
                !!(S.contraparte.tel||'').trim() &&
+               !!(S.contraparte.email||'').trim() &&
                !!(S.contraparte.direccion||'').trim() &&
                S.contraparte.lat !== null && S.contraparte.lng !== null &&
                _o2mValidarRut(S.contraparte.rut) &&
@@ -3201,7 +3211,7 @@ window.OT2C = (function(){
         'inputmode="tel" placeholder="+56 9 1234 5678" '+
         'oninput="OT2C.setCpCampo(\'tel\', this.value)">'+
         '<div id="o2mCpTelEstado" class="mt-1" style="font-size:.72rem"></div></div>'+
-        '<div class="col-md-4"><label class="fl">Correo</label>'+
+        '<div class="col-md-4"><label class="fl">Correo *</label>'+
         '<input class="form-control" id="o2mCpEmail" maxlength="200" value="'+esc(cp.email)+'" '+
         'type="email" placeholder="contacto@cliente.cl" '+
         'oninput="OT2C.setCpCampo(\'email\', this.value)">'+
