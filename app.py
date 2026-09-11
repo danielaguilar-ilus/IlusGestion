@@ -112552,6 +112552,29 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 print(f"[lev_crear] sync estado ticket (ot_generated) fallo "
                       f"(ticket_id={ticket_id}): {e}", flush=True)
 
+        # 📮 FASE 3 -- 2026-09-11 (hallazgo al revisar esta pantalla:
+        # "cuando se crea la OT, sí deberíamos considerar enviar un mail al
+        # cliente y enviar un mail al técnico" -- pedido original del
+        # 2026-09-09, implementado ese día SOLO en ot2_api_crear).
+        # Este es el núcleo compartido de creación por CLIENTE (modal
+        # #modalLevSelector de Mantenciones) y por TICKET (este modal) --
+        # ninguna OT creada por cualquiera de las dos nunca mandó el correo
+        # de creación, aunque el ticket tenga contacto obligatorio (arriba,
+        # "Contacto en sitio... *") y datos completos. Mismas dos funciones
+        # que ya usa ot2_api_crear, mismo criterio best-effort (nunca rompe
+        # la creación por un fallo de correo: la OT ya quedó comprometida en
+        # la transacción de arriba).
+        if visita_id:
+            if tecnico_principal:
+                try:
+                    _mant_ot_email_tecnico_creacion(visita_id)
+                except Exception as _e_emt:
+                    print(f"[lev_crear] email-tecnico vid={visita_id}: {_e_emt}", flush=True)
+            try:
+                _mant_ot_email_cliente_creacion(visita_id)
+            except Exception as _e_emc:
+                print(f"[lev_crear] email-cliente vid={visita_id}: {_e_emc}", flush=True)
+
         items_plantilla = _ot_resolver_checklist(
             cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo_ids,
             plantilla_id_override, plantillas_por_equipo, plantillas_por_ticket_equipo,
