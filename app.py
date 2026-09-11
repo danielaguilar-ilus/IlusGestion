@@ -4901,6 +4901,32 @@ def permission_set(role):
     return perms
 
 
+def _permisos_override_usuario(user_id):
+    """Overrides de permiso individuales de ESTE usuario (tabla
+    usuario_permisos), ya en formato {llave_de_PERMS_KEYS: bool}.
+
+    2026-09-11 (Daniel: "roles desordenados... Jaizer comparte rol con
+    Dave y Lenin"). Se aplica DESPUÉS de permission_set(role) -- el rol
+    sigue siendo la base, esto solo pisa las llaves puntuales que tengan
+    fila acá. Sin filas para este usuario, devuelve {} y g.permissions
+    queda exactamente como estaba (cero riesgo para el resto de la base
+    de usuarios). Nunca puede tumbar el login: cualquier error de BD
+    devuelve {} silenciosamente, igual que el resto de los helpers de
+    permisos de esta zona del archivo.
+    """
+    if not user_id:
+        return {}
+    try:
+        rows = mysql_fetchall(
+            "SELECT permiso, permitido FROM usuario_permisos WHERE user_id=%s",
+            (user_id,)
+        ) or []
+        return {r["permiso"]: bool(r["permitido"]) for r in rows if r.get("permiso")}
+    except Exception as e:
+        print(f"[permisos_override] user_id={user_id}: {e}", flush=True)
+        return {}
+
+
 def invalidate_role_cache(role=None):
     """Borra el caché de permisos de un rol (o todos si role=None).
     Debe llamarse después de guardar la matriz de un rol.
@@ -5288,6 +5314,12 @@ def load_current_user():
             # ────────────────────────────────────────────────────────
             g.user = cached
             g.permissions = permission_set(cached["role"])
+            # 2026-09-11: overrides por usuario -- van DENTRO del mismo
+            # caché de sesión (cached["ov"], escrito abajo al refrescar),
+            # así que en el camino de cache-hit esto es un dict ya en
+            # memoria, CERO query nueva por request.
+            if cached.get("ov"):
+                g.permissions.update(cached["ov"])
             # Heartbeat last_seen_at (throttle 60s en memoria del proceso)
             _update_last_seen(cached.get("id"))
             return
@@ -5324,6 +5356,12 @@ def load_current_user():
     # ────────────────────────────────────────────────────────────
     g.user = user
     g.permissions = permission_set(user["role"])
+    # 2026-09-11: overrides por usuario (ver _permisos_override_usuario) --
+    # UNA query acá, en el camino que solo corre cuando el TTL expiró
+    # (10-60s), no en cada request.
+    _ov_usuario = _permisos_override_usuario(user["id"])
+    if _ov_usuario:
+        g.permissions.update(_ov_usuario)
 
     # Renovar cache con timestamp
     session["_uc"] = {
@@ -5334,6 +5372,7 @@ def load_current_user():
         "active":   user["active"],
         "ts":       time.time(),
         "ae":       _current_auth_epoch(),   # época de auth al momento de cachear
+        "ov":       _ov_usuario,             # overrides de permiso individuales
     }
 
     # Heartbeat last_seen_at (throttle 60s en memoria del proceso) —
@@ -13206,6 +13245,84 @@ def admin_roles_update(uid):
         return jsonify({"ok":True})
     finally:
         conn.close()
+
+
+@app.route("/admin/usuarios/<int:uid>/permisos", methods=["GET"])
+@require_permission("admin")
+def admin_usuario_permisos_get(uid):
+    """Permisos INDIVIDUALES de un usuario -- 2026-09-11 (Daniel: "roles
+    desordenados... Jaizer comparte rol con Dave y Lenin").
+
+    Devuelve, para ESTE usuario puntual: el rol y sus permisos base (lo
+    que le tocaría por rol, sin overrides), los overrides que ya tiene
+    guardados, y el efectivo (base con los overrides ya aplicados encima
+    -- exactamente lo que calcula load_current_user()). El frontend pinta
+    checkboxes con el EFECTIVO; al guardar solo se manda la diferencia
+    contra el BASE (ver admin_usuario_permisos_set).
+    """
+    u = mysql_fetchone(f"SELECT id, username, nombre, role FROM `{AUTH_TABLE}` WHERE id=%s", (uid,))
+    if not u:
+        return jsonify({"ok": False, "error": "Usuario no encontrado"}), 404
+    base = permission_set(u["role"])
+    overrides = _permisos_override_usuario(uid)
+    efectivo = dict(base)
+    efectivo.update(overrides)
+    return jsonify({
+        "ok": True,
+        "usuario": {"id": u["id"], "username": u["username"], "nombre": u.get("nombre") or u["username"], "role": u["role"]},
+        "permisos": sorted(PERMS_KEYS),
+        "base": base, "overrides": overrides, "efectivo": efectivo,
+    })
+
+
+@app.route("/admin/usuarios/<int:uid>/permisos", methods=["PUT"])
+@require_permission("admin")
+def admin_usuario_permisos_set(uid):
+    """Guarda overrides de permiso individuales de un usuario.
+
+    Body: {"overrides": {"<permiso>": true|false|null, ...}}. `null` (o la
+    llave ausente del body si se manda solo lo que cambió) BORRA el
+    override -- el usuario vuelve a heredar 100% de su rol para esa
+    llave. No es necesario mandar TODAS las llaves: solo se tocan las que
+    vienen en el body, el resto de sus overrides existentes queda intacto.
+    """
+    u = mysql_fetchone(f"SELECT id, role FROM `{AUTH_TABLE}` WHERE id=%s", (uid,))
+    if not u:
+        return jsonify({"ok": False, "error": "Usuario no encontrado"}), 404
+    d = request.get_json(silent=True) or {}
+    cambios = d.get("overrides") if isinstance(d.get("overrides"), dict) else {}
+    if not cambios:
+        return jsonify({"ok": False, "error": "Nada que guardar"}), 400
+    quien = current_username()
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for permiso, valor in cambios.items():
+                if permiso not in PERMS_KEYS:
+                    continue   # llave desconocida: se ignora, no se inventa una columna
+                if valor is None:
+                    cur.execute(
+                        "DELETE FROM usuario_permisos WHERE user_id=%s AND permiso=%s",
+                        (uid, permiso))
+                else:
+                    cur.execute(
+                        "INSERT INTO usuario_permisos (user_id, permiso, permitido, updated_by) "
+                        "VALUES (%s,%s,%s,%s) "
+                        "ON DUPLICATE KEY UPDATE permitido=VALUES(permitido), updated_by=VALUES(updated_by)",
+                        (uid, permiso, 1 if valor else 0, quien))
+        conn.commit()
+    finally:
+        conn.close()
+    # Mismo mecanismo que admin_roles_update: el usuario afectado re-lee
+    # permisos frescos en su próxima navegación, sin tener que desloguearse.
+    try: _cache_signal_bump("auth")
+    except Exception: pass
+    try:
+        _audit("user_permisos_override", target_type="user", target_id=uid,
+               details={"cambios": cambios})
+    except Exception:
+        pass
+    return jsonify({"ok": True})
 
 
 @app.route("/admin/roles/matrix")
@@ -56815,6 +56932,35 @@ def init_mantenciones_tables():
                     permitido TINYINT(1) DEFAULT 0,
                     UNIQUE KEY unique_perm (rol_slug, modulo, accion),
                     INDEX idx_rol (rol_slug)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Permisos individuales por USUARIO (2026-09-11) ─────────────
+            # Daniel: "roles desordenados... Jaizer comparte rol con Dave y
+            # Lenin" -- hasta hoy `rol_permisos` es la ÚNICA fuente de
+            # permisos, así que darle un permiso distinto a UNA persona
+            # obligaba a crear un rol nuevo casi-duplicado solo para ella
+            # (o resignarse a que los tres tengan exactamente lo mismo).
+            # Esta tabla es un override ADITIVO por encima del rol: cada fila
+            # dice "para ESTE usuario, ESTE permiso puntual queda así",
+            # pisando lo que su rol diga solo para esa llave. Sin fila acá,
+            # el usuario sigue heredando 100% de su rol -- CERO usuarios
+            # existentes cambian de comportamiento el día que se crea esta
+            # tabla vacía. `permiso` es una de las llaves planas de
+            # PERMS_KEYS (las mismas que ya vive g.permissions), no un
+            # (modulo,accion) de rol_permisos -- se resuelve DESPUÉS de que
+            # permission_set() ya armó el dict plano, así que no hay que
+            # tocar el mapeo modulo→llave que ya existe.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS usuario_permisos (
+                    id         INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id    INT NOT NULL,
+                    permiso    VARCHAR(60) NOT NULL,
+                    permitido  TINYINT(1) NOT NULL,
+                    updated_by VARCHAR(190) NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_usuario_permiso (user_id, permiso),
+                    INDEX idx_up_user (user_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 

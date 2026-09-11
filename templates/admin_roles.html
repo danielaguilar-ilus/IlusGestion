@@ -163,6 +163,7 @@
           <th>Rol actual</th>
           <th style="width:240px">Cambiar rol</th>
           <th style="width:80px">Estado</th>
+          <th style="width:70px">Individual</th>
         </tr>
       </thead>
       <tbody>
@@ -208,6 +209,19 @@
           {% else %}
           <span style="background:#f3f4f6;color:#6b7280;font-size:.65rem;padding:2px 9px;border-radius:50px;font-weight:700">Inactivo</span>
           {% endif %}
+        </td>
+        <td>
+          {# 🆕 2026-09-11 (Daniel: "roles desordenados... Jaizer comparte
+             rol con Dave y Lenin"). Permisos INDIVIDUALES por encima del
+             rol -- ver usuario_permisos / admin_usuario_permisos_get/set
+             en app.py. No reemplaza el rol: el rol sigue siendo la base,
+             esto solo permite pisar puntualmente una llave para ESTA
+             persona sin tocar a nadie más de su rol. #}
+          <button type="button" class="btn btn-sm btn-outline-secondary px-2"
+                  title="Permisos individuales de {{ u.nombre or u.username }}"
+                  onclick="abrirPermisosIndividuales({{ u.id }}, '{{ (u.nombre or u.username) | e }}')">
+            <i class="bi bi-person-gear"></i>
+          </button>
         </td>
       </tr>
       {% endfor %}
@@ -381,6 +395,38 @@
   </div>
 </div>
 
+{# 🆕 2026-09-11 (Daniel: "roles desordenados... Jaizer comparte rol con
+   Dave y Lenin"). Overrides de permiso INDIVIDUALES por encima del rol --
+   el checklist se llena por JS con lo EFECTIVO del usuario (rol + sus
+   overrides ya aplicados); al guardar solo se manda lo que el admin tocó
+   respecto del valor BASE de su rol (ver guardarPermisosIndividuales). #}
+<div class="modal fade" id="modalPermisosInd" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0f172a;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-person-gear me-2"></i>Permisos individuales
+          <small id="piNombre" style="opacity:.75;font-weight:500"></small></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="small text-muted mb-2">
+          Esto NO reemplaza el rol de esta persona -- solo pisa, para ELLA sola,
+          las llaves puntuales que marques distinto. El resto sigue viniendo de su rol.
+        </div>
+        <div id="piLista" style="max-height:55vh;overflow-y:auto">
+          <div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Cargando…</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus" id="piBtnGuardar" onclick="guardarPermisosIndividuales()">
+          <i class="bi bi-check-lg me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast-stack" id="toastStack"></div>
 {% endblock %}
 
@@ -466,6 +512,89 @@ async function cambiarRol(uid) {
     }
   } catch(e) {
     showToast('Error de conexión', 'error');
+  }
+}
+
+// ─── Permisos individuales por usuario (2026-09-11) ───────────────────
+// El BASE de cada llave (lo que le toca por rol, sin overrides) viaja
+// pegado a cada checkbox como data-base -- así, al guardar, solo se manda
+// lo que el admin dejó DISTINTO del rol (o null si lo volvió a igualar,
+// que es la forma de "borrar el override y volver a heredar del rol").
+let _piUid = null;
+async function abrirPermisosIndividuales(uid, nombre) {
+  _piUid = uid;
+  document.getElementById('piNombre').textContent = '— ' + nombre;
+  const lista = document.getElementById('piLista');
+  lista.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Cargando…</div>';
+  new bootstrap.Modal(document.getElementById('modalPermisosInd')).show();
+  try {
+    const r = await fetch(`/admin/usuarios/${uid}/permisos`);
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      lista.innerHTML = '<div class="text-danger small">' + (d.error || 'No se pudo cargar.') + '</div>';
+      return;
+    }
+    lista.innerHTML = d.permisos.map(function(p) {
+      const efectivo = !!d.efectivo[p];
+      const tieneOverride = Object.prototype.hasOwnProperty.call(d.overrides, p);
+      const base = !!d.base[p];
+      return `<div class="form-check d-flex align-items-center justify-content-between py-1"
+                   style="border-bottom:1px solid #f1f5f9">
+                <label class="form-check-label font-monospace" style="font-size:.8rem" for="pi-${p}">${p}</label>
+                <span class="d-flex align-items-center gap-2">
+                  ${tieneOverride ? '<span class="badge text-bg-warning" style="font-size:.6rem" title="Distinto de su rol">override</span>' : ''}
+                  <input class="form-check-input" type="checkbox" role="switch" id="pi-${p}"
+                         data-permiso="${p}" data-base="${base ? '1':'0'}" ${efectivo ? 'checked' : ''}>
+                </span>
+              </div>`;
+    }).join('');
+  } catch (e) {
+    lista.innerHTML = '<div class="text-danger small">Error de conexión.</div>';
+  }
+}
+
+async function guardarPermisosIndividuales() {
+  if (!_piUid) return;
+  const overrides = {};
+  document.querySelectorAll('#piLista input[data-permiso]').forEach(function(inp) {
+    const permiso = inp.dataset.permiso;
+    const base = inp.dataset.base === '1';
+    const marcado = inp.checked;
+    // Solo se manda lo que QUEDÓ distinto del rol. Si el admin lo tocó y
+    // lo volvió a dejar igual al valor base, se manda `null` para borrar
+    // un override viejo que pudiera existir -- nunca se asume que "no
+    // cambió nada" significa "bórralo", por eso se manda siempre el
+    // estado final de las 3 posibilidades (igual al base sin override
+    // previo = no se manda; igual al base CON override previo = null;
+    // distinto del base = el valor).
+    if (marcado !== base) {
+      overrides[permiso] = marcado;
+    } else if (inp.closest('.form-check').querySelector('.badge')) {
+      overrides[permiso] = null;
+    }
+  });
+  if (!Object.keys(overrides).length) {
+    showToast('No hay cambios que guardar', 'error');
+    return;
+  }
+  const btn = document.getElementById('piBtnGuardar');
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/admin/usuarios/${_piUid}/permisos`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({overrides: overrides}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      showToast('Permisos individuales guardados', 'success');
+      bootstrap.Modal.getInstance(document.getElementById('modalPermisosInd')).hide();
+    } else {
+      showToast(d.error || 'No se pudo guardar', 'error');
+    }
+  } catch (e) {
+    showToast('Error de conexión', 'error');
+  } finally {
+    btn.disabled = false;
   }
 }
 
