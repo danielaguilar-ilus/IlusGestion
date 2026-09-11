@@ -94852,8 +94852,11 @@ def mant_ot_aprobar_cierre(vid):
         # SIN_COSTO_PROVEEDOR los lee, y `tipo` lo necesita _ot_es_interna
         # para reconocer las OT de revision interna (sin el, esa rama del
         # chequeo era letra muerta y una OT interna podia quedar trabada).
-        "SELECT estado, modalidad_cobro, factura_nudo, cliente_id, centro_costo, "
-        "       costo_proveedor, tipo FROM mant_visitas WHERE id=%s",
+        # zz_monto/zz_envio_monto/costo incluidos (2026-09-11) -- el gate
+        # nuevo SIN_VALORIZAR los necesita (ver más abajo).
+        "SELECT estado, modalidad_cobro, factura_nudo, factura_tido, cliente_id, "
+        "       centro_costo, costo_proveedor, tipo, zz_monto, zz_envio_monto, costo "
+        "  FROM mant_visitas WHERE id=%s",
         (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -94885,6 +94888,28 @@ def mant_ot_aprobar_cierre(vid):
             "error_codigo": "SIN_FACTURA",
             "error": "Esta OT es cobrable y aún NO tiene factura asociada. "
                      "Asocia la factura (o marca la OT como garantía) antes de firmar el cierre.",
+        }), 400
+    # 🔒 2026-09-11 (Fase 4, Daniel: "toda OT valorizada" como exigencia MÁS
+    # FUERTE que solo tener un documento asociado). SIN_FACTURA de arriba
+    # exige que exista un NÚMERO de documento -- no mira si lo que ese
+    # documento declara cobrado (zz_monto/zz_envio_monto, o `costo` cuando
+    # no hay línea ZZ) quedó en cero. El propio Daniel documentó el caso
+    # real el 2026-09-06: 3 OT (FCV 11382, FCV 11231, BLV 23375) cerraron
+    # con factura asociada y NINGUNA decía cuánto se cobró -- "$1.046.000
+    # pagados a proveedores contra un ingreso que no consta en ninguna
+    # parte". Mismo cálculo que ya usa _ot2_finanzas_estado (ahí solo
+    # informativo, nunca bloqueaba); acá pasa a ser un candado real. Exento
+    # igual que el resto: interna, garantía, sin_costo (ninguna de esas
+    # cobra por definición).
+    if (_gate_on and not _ot_es_interna(v)
+            and _mod_cobro not in ("garantia", "sin_costo")
+            and not ((float(v.get("zz_monto") or 0) + float(v.get("zz_envio_monto") or 0)) > 0
+                     or float(v.get("costo") or 0) > 0)):
+        return jsonify({
+            "ok": False,
+            "error_codigo": "SIN_VALORIZAR",
+            "error": "Esta OT tiene documento asociado pero el monto cobrado quedó en $0. "
+                     "Declara cuánto se le cobró al cliente (paso Costos) antes de firmar el cierre.",
         }), 400
     # 🔒 FIX 2026-08-27 (Daniel, autorizado explícitamente esta noche —
     # "endurece el candado de cierre"): el centro de costo se exige SIEMPRE
