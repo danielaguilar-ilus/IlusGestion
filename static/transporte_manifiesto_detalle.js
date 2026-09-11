@@ -3672,7 +3672,15 @@ async function mrEnviarWhatsapp() {
   var tel = (document.getElementById('mrChoferTelefono').value || '').replace(/[^\d+]/g, '');
   var msg = 'Hola, por favor confirma el retiro de este manifiesto firmando desde tu celular: ' + _mrLinkFirma;
   var url = 'https://wa.me/' + (tel ? tel.replace(/^\+/, '') : '') + '?text=' + encodeURIComponent(msg);
-  window.open(url, '_blank');
+  // 🔴 FIX 2026-09-11 (Daniel: mismo bug de la PWA ya corregido en otras
+  // partes -- ver el bloque "DEEP-LINKS (WhatsApp)" en ilus_ui.js). Acá
+  // window.open(url,'_blank') SIN pasar por ilusReservarVentana/
+  // ilusIrADeepLink hacía que, en la app instalada en iOS, se abriera
+  // Safari con un about:blank en vez de WhatsApp directo. Se reutiliza el
+  // MISMO mecanismo, no uno nuevo: en navegador normal sigue abriendo
+  // pestaña nueva.
+  var ventana = ilusReservarVentana();
+  ilusIrADeepLink(ventana, url);
 }
 
 function mrMostrarReadonly(retiro) {
