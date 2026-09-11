@@ -94704,6 +94704,35 @@ def mant_ot_aprobar_cierre(vid):
                      "Sin ese dato el margen de la OT queda inflado y el "
                      "informe de resultados sale mal.",
         }), 400
+    # 🔒 2026-09-11 (Daniel, explícito: "vamos a bloquear las notas de venta
+    # en el modal... solamente factura o boleta, porque tiene que estar
+    # cobrado el servicio". Sobre las OT que ya venían con nota de venta
+    # asociada: "sí, bloqueala, excepto por el superadmin").
+    # El selector del modal de cierre ya no OFRECE nota de venta para OT
+    # nuevas (2026-09-10), pero el candado real de cierre vivía acá, y hasta
+    # hoy SIN_FACTURA solo miraba si había ALGÚN número asociado (factura_
+    # nudo), sin importar el tipo -- una NVV/NVI/VD/WEB pasaba igual de bien
+    # que una FCV. Una nota de venta es una promesa de cobro, no un cobro: el
+    # servicio quedaría ejecutado y cerrado sin estar facturado de verdad.
+    # Excepción explícita para superadmin: OT viejas que ya traen nota de
+    # venta desde antes de este cambio no deben quedar trabadas para
+    # siempre -- Daniel decide caso a caso cuándo forzar el cierre mientras
+    # se re-emite el documento real.
+    # Mismo kill-switch que los otros tres candados de este bloque.
+    if (_gate_on and not _ot_es_interna(v)
+            and (_mod_cobro not in ("garantia", "sin_costo"))
+            and ((v.get("factura_tido") or "").upper() in _OT_DOCS_NOTA_VENTA)):
+        _u_cierre = getattr(g, "user", None) or {}
+        _es_superadmin_cierre = (_u_cierre.get("role") or "").lower() == "superadmin"
+        if not _es_superadmin_cierre:
+            return jsonify({
+                "ok": False,
+                "error_codigo": "SOLO_NOTA_VENTA",
+                "error": f"Esta OT solo tiene una nota de venta asociada "
+                         f"({v.get('factura_tido')} {v.get('factura_nudo')}) -- eso "
+                         f"es una promesa de cobro, no un cobro. Asocia la factura o "
+                         f"boleta real antes de firmar el cierre.",
+            }), 400
     # En trabajo INTERNO la firma del administrativo que revisa es la ÚNICA
     # contraparte del técnico (no hay cliente). Daniel 2026-08-08: "que un
     # trabajo interno sea bien revisado y que ahí esté la firma del
