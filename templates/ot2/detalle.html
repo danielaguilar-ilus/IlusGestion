@@ -6201,9 +6201,24 @@ window.otdGuardarFinanzas = async function(){
     documento_erp_nudo: document.getElementById('otdFinDocErpNudo').value.trim(),
     centro_costo: document.getElementById('otdFinCentroCosto').value || '',
   };
+  /* 🔀 FASE 2 — 2026-09-11 (Daniel: "cámbialo"). Esta tarjeta guardaba por
+     el PUT genérico de la visita, mientras /ot/api/finanzas se declaraba "el
+     dueño de la fila financiera": dos dueños para la misma plata, y de ahí
+     salieron tres bugs del tipo "lo declaro y no se guarda" (cada vez que se
+     agregaba una columna, había que acordarse de sumarla a la lista `allowed`
+     del PUT... y dos veces no pasó).
+     Ahora hay un solo dueño. El cambio se pudo hacer porque en el mismo
+     movimiento ese endpoint dejó de reescribir la fila completa (ahora toca
+     SOLO las columnas que vienen en la petición) y aprendió los cuatro
+     campos que le faltaban: proveedor_tipo, proveedor_nombre y el documento
+     ERP. Sin esas dos cosas, apuntar acá habría borrado la factura y las
+     garantías -- por eso no se hizo a la primera.
+     Ventaja extra: /ot/api/finanzas va gateado por `cobertura` (el permiso
+     del dinero, el mismo del modal de cierre) y rechaza con un mensaje claro
+     si la OT ya está cerrada, en vez de guardar en silencio. */
   try {
-    const r = await fetch(`/mantenciones/api/visitas/{{ v.id }}`, {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
+    const r = await fetch(`/ot/api/finanzas/{{ v.id }}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => ({}));

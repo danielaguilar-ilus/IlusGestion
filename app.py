@@ -80740,6 +80740,23 @@ def ot2_api_finanzas(vid):
     costo_proveedor = _parse_costo_opt(d.get("costo_proveedor")) if "costo_proveedor" in d else None
     costo_despacho = _parse_costo_opt(d.get("costo_despacho")) if "costo_despacho" in d else None
 
+    # 🆕 FASE 2 (2026-09-11): cuatro columnas que la tarjeta de Finanzas ya
+    # mandaba a este endpoint y que este endpoint NO conocía -- por eso la
+    # tarjeta tenía que guardar por el PUT genérico de la visita. Para que
+    # este sea de verdad el único dueño de la fila financiera, tiene que
+    # saber escribirlas. Mismas validaciones que el PUT ya aplicaba, para no
+    # tener dos criterios para la misma columna.
+    _prov_tipo = None
+    if "proveedor_tipo" in d:
+        _pt_raw = (d.get("proveedor_tipo") or "").strip().lower()
+        _prov_tipo = _pt_raw if _pt_raw in ("interno", "externo") else None
+    _prov_nombre = ((d.get("proveedor_nombre") or "").strip()[:200] or None
+                    if "proveedor_nombre" in d else None)
+    _doc_erp_tido = ((d.get("documento_erp_tido") or "").strip().upper()[:5] or None
+                     if "documento_erp_tido" in d else None)
+    _doc_erp_nudo = ((d.get("documento_erp_nudo") or "").strip()[:20] or None
+                     if "documento_erp_nudo" in d else None)
+
     zz_cod = (d.get("zz_codigo") or "").strip().upper()[:30] or None
     # Si no lo indican, se sugiere la línea que corresponde al tipo.
     if not zz_cod and not garantia:
@@ -80765,25 +80782,96 @@ def ot2_api_finanzas(vid):
     _es_superadmin_req = (_u_req.get("role") or "").lower() == "superadmin"
     _where_lock = "" if _es_superadmin_req else (
         " AND estado NOT IN ('completada','cerrada','cancelada','anulada')")
+    # ══════════════════════════════════════════════════════════════════
+    # FASE 2 — 2026-09-11 (Daniel: "cámbialo", sobre que la tarjeta de
+    # Finanzas guardara por el PUT genérico y no por acá).
+    #
+    # Este endpoint se llamaba a sí mismo "el dueño de la fila financiera",
+    # pero era un dueño PELIGROSO: asignaba nueve columnas sin protección
+    # (centro_costo, zz_codigo, zz_monto, modalidad_cobro, cubierto_por,
+    # garantia_motivo, factura_tido, factura_nudo, estado_facturacion), así
+    # que cualquier caller que no reenviara TODO borraba lo que no mandó.
+    # De ahí salieron tres bugs distintos del tipo "lo declaro y no se
+    # guarda" (costo_proveedor el 04-09, las columnas ZZ y los motivos el
+    # 10-09), y de ahí venía que `guardarCosto()` tenga que reenviar a mano
+    # la factura, el centro de costo y la garantía para no perderlos --
+    # un patrón que falla solo cuando se agrega una columna nueva y alguien
+    # se olvida de sumarla a esa lista. Ya pasó dos veces.
+    #
+    # Ahora la regla es UNA y es la misma para todo: **una columna se toca
+    # solo si la petición habla de ella.** El SET se arma acá (nombres de
+    # columna propios del código, valores SIEMPRE por %s -- REGLA #4).
+    # Lo que NO cambia: la garantía sigue anulando el documento (regla de
+    # negocio explícita de Daniel, no un efecto colateral), sigue exigiendo
+    # motivo, y `estado_facturacion` sigue derivándose en vez de pedirse.
+    # ══════════════════════════════════════════════════════════════════
+    _sets, _params = [], []
+
+    def _set_col(col, val):
+        _sets.append(f"  {col}=%s")
+        _params.append(val)
+
+    if "centro_costo" in d:
+        _set_col("centro_costo", centro)
+
+    # zz_codigo y zz_monto son un par: un código sin monto no dice nada, y
+    # la inferencia por tipo de OT (más arriba) solo tiene sentido cuando la
+    # petición está declarando la línea de servicio.
+    if ("zz_monto" in d) or ("zz_codigo" in d):
+        _set_col("zz_codigo", zz_cod)
+        _set_col("zz_monto", zz_monto)
+
+    # Estas cuatro ya eran no destructivas (COALESCE / SET condicional).
+    _sets.append("  costo=COALESCE(%s, costo)")
+    _params.append(costo)
+    _sets.append("  zz_envio_monto=COALESCE(%s, zz_envio_monto)")
+    _params.append(zz_envio_monto)
+    if _set_motivos:
+        _sets.append(_set_motivos.rstrip(", "))
+        _params.extend(_params_motivos)
+    _sets.append("  costo_proveedor=COALESCE(%s, costo_proveedor)")
+    _params.append(costo_proveedor)
+    _sets.append("  costo_despacho=COALESCE(%s, costo_despacho)")
+    _params.append(costo_despacho)
+
+    # Quién ejecutó (proveedor) y el documento ERP administrativo de origen.
+    if "proveedor_tipo" in d:
+        _set_col("proveedor_tipo", _prov_tipo)
+    if "proveedor_nombre" in d:
+        _set_col("proveedor_nombre", _prov_nombre)
+    if "documento_erp_tido" in d:
+        _set_col("documento_erp_tido", _doc_erp_tido)
+    if "documento_erp_nudo" in d:
+        _set_col("documento_erp_nudo", _doc_erp_nudo)
+
+    # ¿De qué habla esta petición? El documento y la garantía son
+    # excluyentes, así que se tratan como un solo tema de cobertura.
+    _habla_garantia = "garantia_aplica" in d
+    _habla_doc = ("factura_tido" in d) or ("factura_nudo" in d)
+
+    if _habla_garantia:
+        _set_col("modalidad_cobro", 'garantia' if garantia else 'pagado')
+        _set_col("cubierto_por", 'garantia' if garantia else 'cliente')
+        _set_col("garantia_motivo", motivo)
+
+    # El documento se escribe si la petición lo trae, o si se está
+    # declarando garantía -- ahí se limpia a propósito (excluyentes).
+    # Retractarse de la garantía (garantia_aplica=false) ya NO borra el
+    # documento: antes sí, y eso dejaba la OT sin cobertura de golpe.
+    if _habla_doc or (_habla_garantia and garantia):
+        _set_col("factura_tido", f_tido)
+        _set_col("factura_nudo", f_nudo)
+    if _habla_doc or _habla_garantia:
+        _set_col("estado_facturacion", estado_fact)
+
+    _sets.append("  finanzas_at=NOW()")
+    _set_col("finanzas_por", current_username())
+
     try:
         _n_upd = mysql_execute_returning_rowcount(
-            "UPDATE mant_visitas SET "
-            "  centro_costo=%s, zz_codigo=%s, zz_monto=%s, costo=COALESCE(%s, costo), "
-            "  zz_envio_monto=COALESCE(%s, zz_envio_monto), "
-            + _set_motivos +
-            "  costo_proveedor=COALESCE(%s, costo_proveedor), "
-            "  costo_despacho=COALESCE(%s, costo_despacho), "
-            "  modalidad_cobro=%s, cubierto_por=%s, garantia_motivo=%s, "
-            "  factura_tido=%s, factura_nudo=%s, estado_facturacion=%s, "
-            "  finanzas_at=NOW(), finanzas_por=%s "
-            " WHERE id=%s" + _where_lock,
-            (centro, zz_cod, zz_monto, costo,
-             zz_envio_monto, *_params_motivos,
-             costo_proveedor, costo_despacho,
-             'garantia' if garantia else 'pagado',
-             'garantia' if garantia else 'cliente',
-             motivo, f_tido, f_nudo, estado_fact,
-             current_username(), vid))
+            "UPDATE mant_visitas SET " + ", ".join(_sets)
+            + " WHERE id=%s" + _where_lock,
+            (*_params, vid))
     except Exception as e:
         print(f"[ot2_finanzas] vid={vid}: {e}", flush=True)
         return _ot2_err("No pudimos guardar la información financiera.",
