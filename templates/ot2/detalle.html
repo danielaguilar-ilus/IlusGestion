@@ -1736,6 +1736,16 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
 .otd-card > h3 i{color:var(--ilus-red,#dc2626);font-size:.9rem}
 .otd-card > h3 .n{margin-left:auto;font-size:.7rem;color:#9ca3af;font-weight:800}
+/* 📮 FASE 3 -- 2026-09-11: lápiz de "Editar/Agregar" dentro del header de
+   una .otd-card (fondo blanco) -- el .edit que ya existía (.otd-d .edit) se
+   diseñó para el hero oscuro (rojo claro sobre negro) y quedaría casi
+   invisible acá. Mismo lenguaje del resto del proyecto (texto rojo ILUS,
+   sin fondo), adaptado al card claro. */
+.otd-card > h3 .edit{display:inline-flex;align-items:center;gap:4px;
+  background:none;border:0;color:var(--ilus-red,#dc2626);font-size:.68rem;
+  font-weight:800;text-transform:none;letter-spacing:normal;cursor:pointer;
+  padding:2px 0;min-height:24px}
+.otd-card > h3 .edit:hover{text-decoration:underline}
 
 /* Equipos — lo ÚNICO que scrollea, y dentro de su caja */
 .otd-eqs{max-height:min(56vh,520px);overflow-y:auto}
@@ -2726,9 +2736,22 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          PROPIAS de mant_visitas, ver el alias cli_contacto_* de arriba
          para no confundirlas con el contacto registrado en la ficha del
          cliente). #}
-      {% if v.contacto_nombre %}
+      {# 📮 FASE 3 -- 2026-09-11 (hallazgo del mapeo con agentes: "no existe
+         forma de corregir de manera permanente el correo/teléfono de una OT
+         ya creada... el detalle los muestra en solo-lectura"). La tarjeta
+         ahora se ve aunque no haya contraparte todavía (para poder AGREGARLA,
+         no solo corregirla) cuando quien mira puede editar metadata; para
+         quien no puede (técnico), sigue oculta si no hay nada que mostrar --
+         mismo comportamiento de siempre. #}
+      {% if v.contacto_nombre or puede_metadata %}
       <div class="otd-card">
-        <h3><i class="bi bi-person-vcard-fill"></i> Contraparte en sitio</h3>
+        <h3><i class="bi bi-person-vcard-fill"></i> Contraparte en sitio
+          {% if puede_metadata %}
+          <button type="button" class="edit" onclick="otdAbrirContraparte()" style="margin-left:auto">
+            <i class="bi bi-pencil-fill"></i> {{ 'Editar' if v.contacto_nombre else 'Agregar' }}</button>
+          {% endif %}
+        </h3>
+        {% if v.contacto_nombre %}
         <div class="otd-din">
           <div class="row"><span>Nombre</span><b>{{ v.contacto_nombre }}</b></div>
           {% if v.contacto_cargo %}
@@ -2757,6 +2780,45 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <a href="mailto:{{ v.contacto_email }}" class="otd-lbtn mail">
             <i class="bi bi-envelope-fill"></i> Email</a>
           {% endif %}
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="otd-vacio" style="padding:14px 16px">Sin contraparte registrada en esta OT.</div>
+        {% endif %}
+
+        {% if puede_metadata %}
+        <div class="otd-editbox" id="otdContraparteBox" style="margin:0 16px 16px">
+          <div class="row">
+            <div style="flex:1 1 200px">
+              <label>Nombre</label>
+              <input type="text" id="otdCpNombre" class="form-control form-control-sm" maxlength="200"
+                     value="{{ v.contacto_nombre or '' }}" placeholder="Quién recibe en terreno">
+            </div>
+            <div style="flex:1 1 150px">
+              <label>Cargo <span style="opacity:.7;font-weight:500">(opcional)</span></label>
+              <input type="text" id="otdCpCargo" class="form-control form-control-sm" maxlength="120"
+                     value="{{ v.contacto_cargo or '' }}" placeholder="Ej: Jefe de sala">
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <div style="flex:1 1 170px">
+              <label>Teléfono</label>
+              <input type="tel" id="otdCpTel" class="form-control form-control-sm"
+                     value="{{ v.contacto_tel or '' }}" placeholder="+56 9 1234 5678">
+            </div>
+            <div style="flex:1 1 200px">
+              <label>Correo</label>
+              <input type="email" id="otdCpEmail" class="form-control form-control-sm" maxlength="200"
+                     value="{{ v.contacto_email or '' }}" placeholder="contacto@cliente.cl">
+              <div class="hint" style="margin-top:4px">A este correo llega el aviso de la OT y el link de firma.</div>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" class="otd-btn pri" onclick="otdConfirmarContraparte()">
+              <i class="bi bi-check2"></i> Guardar</button>
+            <button type="button" class="otd-btn" onclick="otdCerrarContraparte()">Cancelar</button>
+          </div>
+          <div class="hint">Corrige solo el dato de contacto de esta OT — no cambia la ficha del cliente.</div>
         </div>
         {% endif %}
       </div>
@@ -7192,6 +7254,48 @@ window.otdAbrirEditarTitulo = async function(){
     }
   } catch(e){
     ilusToast('Error de conexión al actualizar el título.', {type:'error'});
+  }
+};
+
+// 📮 FASE 3 -- 2026-09-11. Mismo endpoint PUT que Reagendar/Reasignar/
+// Título; el hueco era que ni el backend aceptaba estos 4 campos ni la
+// pantalla tenía dónde escribirlos -- ver el fix en app.py (allowed list de
+// mant_visita_update) para la validación real de teléfono/correo.
+window.otdAbrirContraparte = function(){
+  const box = document.getElementById('otdContraparteBox');
+  if (!box) return;
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+  const primero = document.getElementById('otdCpNombre');
+  if (primero) primero.focus();
+};
+window.otdCerrarContraparte = function(){
+  const box = document.getElementById('otdContraparteBox');
+  if (box) box.style.display = 'none';
+};
+window.otdConfirmarContraparte = async function(){
+  const nombre = (document.getElementById('otdCpNombre').value || '').trim();
+  const cargo  = (document.getElementById('otdCpCargo').value || '').trim();
+  const tel    = (document.getElementById('otdCpTel').value || '').trim();
+  const email  = (document.getElementById('otdCpEmail').value || '').trim();
+  if (!nombre){ ilusToast('Escribe el nombre de la contraparte.', {type:'warning'}); return; }
+  try {
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        contacto_nombre: nombre, contacto_cargo: cargo,
+        contacto_tel: tel, contacto_email: email,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ Contraparte guardada', {type:'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo guardar la contraparte.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al guardar la contraparte.', {type:'error'});
   }
 };
 

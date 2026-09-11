@@ -77028,6 +77028,44 @@ def mant_visita_update(vid):
     if "centro_costo" in d:
         _cc = (str(d.get("centro_costo") or "").strip().lower())
         d["centro_costo"] = _cc if _cc in dict(_OT2_CENTROS_COSTO) else None
+
+    # 📮 FASE 3 — 2026-09-11 (hallazgo del mapeo con agentes: "NO existe
+    # forma de corregir de manera permanente el correo/teléfono de una OT ya
+    # creada — no hay UPDATE de mant_visitas.contacto_tel/contacto_email en
+    # ninguna parte de app.py, y el detalle los muestra en solo-lectura").
+    # Se escriben SOLO si vienen en la petición (mismo criterio de toda esta
+    # función: no inventar un valor para un campo que no se tocó).
+    # Nombre y cargo no se validan más allá del largo -- son un dato libre.
+    # Teléfono y correo sí, con los MISMOS helpers que ya usa el resto del
+    # proyecto (normalizar_telefono/validar_telefono_chileno, el mismo
+    # criterio que valida el paso Contraparte del wizard) para no inventar
+    # una segunda regla de "qué es un teléfono/correo válido". Vacío borra a
+    # propósito -- corregir "me equivoqué, no tiene correo" tiene que ser
+    # posible, no solo agregar uno nuevo.
+    if "contacto_nombre" in d:
+        d["contacto_nombre"] = (d.get("contacto_nombre") or "").strip()[:200] or None
+    if "contacto_cargo" in d:
+        d["contacto_cargo"] = (d.get("contacto_cargo") or "").strip()[:120] or None
+    if "contacto_tel" in d:
+        _tel_c = (d.get("contacto_tel") or "").strip()
+        if not _tel_c:
+            d["contacto_tel"] = None
+        else:
+            _tel_ok, _tel_norm = validar_telefono_chileno(_tel_c)
+            if not _tel_ok:
+                return jsonify({"ok": False, "error": _tel_norm,
+                                "error_codigo": "TELEFONO_INVALIDO"}), 400
+            d["contacto_tel"] = _tel_norm
+    if "contacto_email" in d:
+        _email_c = (d.get("contacto_email") or "").strip()
+        if not _email_c:
+            d["contacto_email"] = None
+        elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$", _email_c):
+            return jsonify({"ok": False, "error": "Ese correo no es válido.",
+                            "error_codigo": "EMAIL_INVALIDO"}), 400
+        else:
+            d["contacto_email"] = _email_c[:200]
+
     allowed = ["titulo","fecha_programada","fecha_fin","fecha_realizada","hora_inicio","hora_fin",
                "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
                "costo","contrato_id",
