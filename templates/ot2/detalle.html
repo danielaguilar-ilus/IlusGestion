@@ -373,6 +373,13 @@
   font-size:.82rem;font-weight:800;cursor:pointer;display:flex;align-items:center;
   justify-content:center;gap:7px}
 .otd-zzl .aplicar:hover{background:#15803d}
+/* 💰 FASE 1 -- 2026-09-11: aviso de saldo por línea, dentro de la lista que
+   trae "Leer documento" -- ámbar normal (informa), rojo si entre todas las
+   OT que ya declararon contra este documento se pasaron del monto real. */
+.otd-zzl .row-zz-saldo{padding:4px 11px 8px 11px;margin-top:-8px;font-size:.7rem;
+  font-weight:700;background:inherit;border-bottom:1px solid #dcfce7;color:#92400e}
+.otd-zzl .row-zz-saldo.neg{color:#dc2626}
+.otd-zzl .row-zz.envio + .row-zz-saldo{border-bottom-color:#dbeafe}
 
 /* Estado del Anexo de servicios — 2026-09-02. Semáforo (REGLA #15): ámbar
    borrador, azul enviado/esperando, verde firmado. */
@@ -3694,6 +3701,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                            value="{{ '{:,.0f}'.format(v.zz_monto|float)|replace(',','.') if v.zz_monto is not none else '' }}">
                   </div>
                   <div id="otdFinZzServErp" class="small text-muted mt-1" style="font-size:.7rem"></div>
+                  {# 💰 FASE 1 -- 2026-09-11: saldo del documento para este
+                     concepto (línea real del ERP menos lo que ya declararon
+                     OTRAS OT contra el mismo documento). Solo se llena tras
+                     "Leer documento"/"Usar estos montos" -- ver
+                     otdAplicarTotalZz/_otdSaldoRef. #}
+                  <div id="otdFinZzServSaldo" class="small mt-1" style="font-size:.7rem"></div>
                 </div>
                 <div>
                   <label class="form-label small fw-semibold mb-1">Despacho al cliente (CLP)</label>
@@ -3704,6 +3717,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                            value="{{ '{:,.0f}'.format(v.zz_envio_monto|float)|replace(',','.') if v.zz_envio_monto is not none else '' }}">
                   </div>
                   <div id="otdFinZzEnvioErp" class="small text-muted mt-1" style="font-size:.7rem"></div>
+                  <div id="otdFinZzEnvioSaldo" class="small mt-1" style="font-size:.7rem"></div>
                 </div>
               </div>
               {# El motivo aparece SOLO cuando lo declarado no cuadra con lo
@@ -6205,6 +6219,28 @@ window.otdMoneySet = function(id, n){
     return diff;
   }
 
+  /* 💰 FASE 1 -- 2026-09-11 (Daniel: "si mando la mitad y después la mitad,
+     tengo que poder identificar que me queda un saldo... se deja declarar
+     igual, pero se marca en rojo" -- NO bloquea, solo avisa).
+     `dataset.saldo` lo deja otdAplicarTotalZz() con lo que quedaba del
+     documento ANTES de escribir en este campo (línea real menos lo que ya
+     declararon otras OT). Acá se resta lo que la persona está escribiendo
+     AHORA para decir cuánto queda después de ESTA declaración. */
+  function _otdSaldoRef(idRef, elCampo, montoDeclarado){
+    const ref = document.getElementById(idRef);
+    if (!ref || !elCampo) return;
+    const saldoStr = elCampo.dataset.saldo;
+    if (saldoStr === undefined || saldoStr === ''){ ref.innerHTML = ''; return; }
+    const saldoDisponible = Number(saldoStr);
+    if (!isFinite(saldoDisponible)){ ref.innerHTML = ''; return; }
+    const restante = saldoDisponible - (montoDeclarado || 0);
+    ref.innerHTML = restante < 0
+      ? '<span style="color:#dc2626;font-weight:800"><i class="bi bi-exclamation-octagon-fill me-1"></i>' +
+        'Te pasaste por ' + fmtCLP(Math.abs(restante)) + ' del saldo de este documento</span>'
+      : '<span style="color:#6b7280"><i class="bi bi-pie-chart-fill me-1"></i>' +
+        'Saldo del documento tras esto: ' + fmtCLP(restante) + '</span>';
+  }
+
   function _otdSincronizarZz(veniaDeMitad){
     const serv = window.otdMoneyVal('otdFinZzServ');
     const envio = window.otdMoneyVal('otdFinZzEnvio');
@@ -6221,6 +6257,8 @@ window.otdMoneySet = function(id, n){
       ? Number(elZzEnvio.dataset.erp) : null;
     const d1 = _otdErpRef('otdFinZzServErp', erpServ, serv);
     const d2 = _otdErpRef('otdFinZzEnvioErp', erpEnvio, envio);
+    _otdSaldoRef('otdFinZzServSaldo', elZzServ, serv);
+    _otdSaldoRef('otdFinZzEnvioSaldo', elZzEnvio, envio);
     if (elZzMotivoBox){
       const yaEscrito = (document.getElementById('otdFinZzMotivo') || {}).value;
       elZzMotivoBox.style.display = (d1 || d2 || (yaEscrito || '').trim()) ? '' : 'none';
@@ -6817,6 +6855,20 @@ window.otdLeerLineasZz = async function(){
       html += '<div class="row-zz' + (l.es_envio ? ' envio' : '') + '">' +
               '<span class="cod">' + l.codigo + '</span>' + tag + nom +
               '<span class="mon">' + fmt(l.monto) + '</span></div>';
+      /* 💰 FASE 1 -- 2026-09-11 (Daniel, con su propio ejemplo del millón
+         partido en dos envíos: "tengo que poder identificar que me queda
+         un saldo"). Si OTRAS OT ya consumieron parte de esta línea, se dice
+         acá mismo -- antes del total, junto a la línea que corresponde. */
+      if (l.ya_declarado_otras_ot > 0){
+        const saldoNeg = l.saldo < 0;
+        html += '<div class="row-zz-saldo' + (saldoNeg ? ' neg' : '') + '">' +
+          '<i class="bi ' + (saldoNeg ? 'bi-exclamation-triangle-fill' : 'bi-pie-chart-fill') + '"></i>' +
+          'Otras OT ya declararon ' + fmt(l.ya_declarado_otras_ot) + ' de este código — ' +
+          (saldoNeg
+            ? 'entre todas ya se pasaron por ' + fmt(Math.abs(l.saldo))
+            : 'queda ' + fmt(l.saldo)) +
+          '</div>';
+      }
     });
     /* 💰 2026-09-10: el botón ya no trae solo el total -- trae las dos
        mitades por separado (instalación/servicio y envío) para poder llenar
@@ -6826,10 +6878,18 @@ window.otdLeerLineasZz = async function(){
                         .reduce((a, l) => a + (Number(l.monto) || 0), 0);
     const _zzEnvio = j.zz.filter(l => l.es_envio)
                          .reduce((a, l) => a + (Number(l.monto) || 0), 0);
+    // 💰 FASE 1 -- saldo TOTAL disponible por concepto (línea real menos lo
+    // que ya declararon otras OT), para que el botón deje precargado no solo
+    // "cuánto dice el documento" sino "cuánto queda para esta OT".
+    const _saldoServ = j.zz.filter(l => !l.es_envio)
+                           .reduce((a, l) => a + (Number(l.saldo ?? l.monto) || 0), 0);
+    const _saldoEnvio = j.zz.filter(l => l.es_envio)
+                            .reduce((a, l) => a + (Number(l.saldo ?? l.monto) || 0), 0);
     html += '<div class="tot-zz"><span>Total al cliente</span>' +
             '<span class="mon">' + fmt(j.total) + '</span></div>' +
             '<button type="button" class="aplicar" data-total="' + Math.round(j.total) + '" ' +
             'data-serv="' + Math.round(_zzServ) + '" data-envio="' + Math.round(_zzEnvio) + '" ' +
+            'data-saldo-serv="' + Math.round(_saldoServ) + '" data-saldo-envio="' + Math.round(_saldoEnvio) + '" ' +
             'onclick="otdAplicarTotalZz(this)">' +
             '<i class="bi bi-check2-circle"></i> Usar estos montos ' +
             '(' + fmt(_zzServ) + ' instalación + ' + fmt(_zzEnvio) + ' despacho)</button></div>';
@@ -6872,6 +6932,12 @@ window.otdAplicarTotalZz = function(btn){
   const elEnvio = document.getElementById('otdFinZzEnvio');
   if (elServ){ elServ.dataset.erp = String(Math.round(serv)); window.otdMoneySet('otdFinZzServ', serv); }
   if (elEnvio){ elEnvio.dataset.erp = String(Math.round(envio)); window.otdMoneySet('otdFinZzEnvio', envio); }
+  // 💰 FASE 1 -- 2026-09-11: se recuerda también el SALDO disponible (línea
+  // real del documento menos lo que ya declararon otras OT), para que al
+  // escribir un monto la pantalla pueda avisar "te pasaste por $X" contra
+  // lo que de verdad queda -- no solo contra el total del documento.
+  if (elServ) elServ.dataset.saldo = btn.dataset.saldoServ || '';
+  if (elEnvio) elEnvio.dataset.saldo = btn.dataset.saldoEnvio || '';
   // 2026-09-02: el campo lleva separador de miles -- se escribe formateado
   // para que lo que se ve coincida con lo que se va a guardar.
   el.value = window.otdMoneyFmt(total);

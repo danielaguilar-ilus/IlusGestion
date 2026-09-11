@@ -81197,6 +81197,12 @@ def ot2_api_finanzas_lineas_zz(vid):
             f"No encontramos {tido} N° {nudo} en el ERP. Revisa el número.",
             "DOC_NO_EXISTE", http=404)
 
+    # 💰 FASE 1 — 2026-09-11: cuánto de ESTE documento ya declararon otras
+    # OT, para poder mostrar el saldo (ver _ot2_zz_ya_declarado). Se excluye
+    # esta misma OT: lo que ELLA ya tenga declarado no es "otra" que le come
+    # saldo a sí misma.
+    _ya_por_codigo, _ya_envio = _ot2_zz_ya_declarado(tido, nudo, vid)
+
     zz, total_servicio, total_envio = [], 0.0, 0.0
     for ln in (lineas or []):
         _sku = (ln.get("sku") or "").strip().upper()
@@ -81212,6 +81218,7 @@ def ot2_api_finanzas_lineas_zz(vid):
         except (TypeError, ValueError):
             _monto = 0.0
         _es_envio = (_sku == "ZZENVIO")
+        _ya_declarado = _ya_envio if _es_envio else _ya_por_codigo.get(_sku, 0.0)
         zz.append({
             "codigo": _sku,
             # OJO: las líneas del ERP NO traen "nombre"/"descripcion" --
@@ -81226,6 +81233,13 @@ def ot2_api_finanzas_lineas_zz(vid):
             # ZZMANTENCION). Es una sugerencia, no un filtro: las demás
             # igual se devuelven.
             "sugerida": bool(_zz_esperada and _sku == _zz_esperada),
+            # 💰 FASE 1 -- cuánto de ESTA línea ya declararon OTRAS OT contra
+            # el mismo documento, y lo que queda. Puede dar negativo si entre
+            # todas las OT ya se pasaron del monto real -- eso NO se bloquea
+            # (Daniel: "se deja declarar igual, pero se marca en rojo"), el
+            # frontend es quien lo pinta en rojo con el faltante.
+            "ya_declarado_otras_ot": _ya_declarado,
+            "saldo": _monto - _ya_declarado,
         })
         if _es_envio:
             total_envio += _monto
@@ -81251,6 +81265,60 @@ def ot2_api_finanzas_lineas_zz(vid):
         # pantalla en blanco.
         "sin_zz": not zz,
     })
+
+
+def _ot2_zz_ya_declarado(tido, nudo, excluir_vid):
+    """Cuánto de este documento ya declararon OTRAS OT, por concepto.
+
+    FASE 1 — 2026-09-11 (Daniel, con su propio ejemplo: "si tengo una
+    factura de un millón, quinientos mil despacho, quinientos mil
+    instalación... y mando la mitad y después la mitad, tengo que poder
+    identificar que me queda un saldo de doscientos cincuenta y doscientos
+    cincuenta. Así de inteligente necesito que se construya este módulo").
+
+    Respondió las 3 preguntas de diseño: el saldo es POR DOCUMENTO (no por
+    cliente) — dos OT que consumen la misma factura ven cada una cuánto
+    queda de ESE documento, no de la relación completa con el cliente.
+
+    Mismo espíritu que `_asignados_por_sku` (que ya hace esto para
+    EQUIPOS/productos de un documento, caso OT2-alta-automática) pero para
+    PLATA: agrupa por zz_codigo (instalación/mantención/lo que sea, cada
+    código es su propio saldo) y aparte por zz_envio_monto (el despacho,
+    que vive en su propia columna desde el fix del 10-09).
+
+    Matchea por el PAR EXACTO (factura_tido, factura_nudo) tal como quedó
+    guardado en cada OT -- es el mismo criterio de identidad de documento
+    que ya usa el candado "usado_en_otra_ot" de ot2_api_finanzas_buscar_erp,
+    no uno nuevo.
+
+    Devuelve: ({zz_codigo_upper: monto_ya_declarado}, envio_ya_declarado)
+    """
+    por_codigo = {}
+    envio = 0.0
+    if not tido or not nudo:
+        return por_codigo, envio
+    try:
+        for r in (mysql_fetchall(
+            "SELECT UPPER(TRIM(zz_codigo)) AS cod, SUM(zz_monto) AS total "
+            "  FROM mant_visitas "
+            " WHERE factura_tido=%s AND factura_nudo=%s AND id<>%s "
+            "   AND zz_monto IS NOT NULL AND zz_monto > 0 "
+            " GROUP BY UPPER(TRIM(zz_codigo))",
+            (tido, nudo, excluir_vid)
+        ) or []):
+            cod = r.get("cod")
+            if cod:
+                por_codigo[cod] = float(r.get("total") or 0)
+        _r_env = mysql_fetchone(
+            "SELECT SUM(zz_envio_monto) AS total FROM mant_visitas "
+            " WHERE factura_tido=%s AND factura_nudo=%s AND id<>%s "
+            "   AND zz_envio_monto IS NOT NULL AND zz_envio_monto > 0",
+            (tido, nudo, excluir_vid)
+        ) or {}
+        envio = float(_r_env.get("total") or 0)
+    except Exception as e:
+        print(f"[ot2_saldo_zz] {tido} {nudo}: {e}", flush=True)
+    return por_codigo, envio
 
 
 def _ot_equipos_desde_doc_core(vid, confirmar=False, usuario=None):
