@@ -99596,6 +99596,37 @@ def _mant_get_tecnico_emails(vid):
             _add(r.get("email"))
     except Exception as _e:
         print(f"[mant-tec-emails:user] {_e}", flush=True)
+    # 📮 Vía 3 — FASE 3, 2026-09-11. Técnico EXTERNO: su correo real de
+    # contacto vive en mant_tecnicos_externos.contacto_email, que puede ser
+    # DISTINTO de app_users.username (la vía 2). Para Milling, Pulgar o
+    # Naranjo, el username es su cuenta de acceso al sistema; el correo por
+    # donde de verdad se les escribe es el de su ficha de proveedor -- es el
+    # que ya usa el Anexo de Servicios (ver el bloque de anexo automático en
+    # ot2_api_crear). Sin esta vía, el aviso de "nueva OT asignada" podía
+    # salir a una dirección que el proveedor no lee, o a ninguna si su ficha
+    # no tiene user_id.
+    # Se SUMA, no reemplaza: si el proveedor tiene cuenta en el sistema, le
+    # llega por los dos lados y el dedupe evita repetirlo.
+    # Se cruza por user_id Y por nombre, el mismo doble criterio que ya usa
+    # el anexo -- las fichas de Milling y Pulgar tienen user_id NULL.
+    try:
+        for r in (mysql_fetchall(
+            "SELECT te.contacto_email AS email "
+            "  FROM mant_visitas v "
+            "  JOIN app_users u ON u.id = v.tecnico_user_id "
+            "  JOIN mant_tecnicos_externos te ON te.user_id = u.id "
+            " WHERE v.id=%s "
+            " UNION "
+            "SELECT te2.contacto_email AS email "
+            "  FROM mant_visitas v2 "
+            "  JOIN mant_tecnicos_externos te2 "
+            "    ON te2.user_id IS NULL "
+            "   AND LOWER(TRIM(COALESCE(te2.razon_social,''))) = LOWER(TRIM(COALESCE(v2.tecnico,''))) "
+            " WHERE v2.id=%s", (int(vid), int(vid))
+        ) or []):
+            _add(r.get("email"))
+    except Exception as _e:
+        print(f"[mant-tec-emails:externo] {_e}", flush=True)
     return out
 
 
