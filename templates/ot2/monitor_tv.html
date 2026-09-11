@@ -1321,16 +1321,27 @@
        los que iban a color; la línea, el contorno circular y la línea de
        avance necesito que sea en verde, y que esté en rojo todo lo que no
        esté gestionado") y que repitió anoche. */
-    .tvm-stepper{display:flex;align-items:flex-start;margin-top:18px;padding:6px 4px 0}
+    /* 🔎 v5 -- 2026-09-11 (Daniel, viendo el modal en vivo: "no toqué eso,
+       es el tracking... sería bueno colocar tarjetas más chicas y el color
+       está ok en semáforo pero el ícono podría estar a color para
+       agregarle un contraste"). El aro semáforo (verde/rojo) NO cambia --
+       eso ya quedó aprobado. Lo que cambia:
+       · Nodo más chico (48px -> 38px, ícono 23px -> 17px) para que el
+         recorrido ocupe menos alto dentro de la tarjeta de la OT.
+       · Cada ícono suma un halo de SU propio color (drop-shadow con
+         currentColor) SIEMPRE, no solo en la etapa actual -- es lo que lo
+         despega del disco oscuro y le da el contraste que pidió. */
+    .tvm-stepper{display:flex;align-items:flex-start;margin-top:14px;padding:5px 4px 0}
     /* gap chico: bajo el disco ahora van etiqueta + hora + quién firmó, y
        con 9px de separación la tarjeta de la OT crecía de más. */
-    .tvm-step{display:flex;flex-direction:column;align-items:center;gap:4px;flex:none;width:72px}
-    .tvm-step .tvm-step-dot{margin-bottom:4px}
-    .tvm-step-dot{position:relative;width:48px;height:48px;border-radius:50%;
-      display:grid;place-items:center;font-size:23px;z-index:1;
+    .tvm-step{display:flex;flex-direction:column;align-items:center;gap:3px;flex:none;width:58px}
+    .tvm-step .tvm-step-dot{margin-bottom:3px}
+    .tvm-step-dot{position:relative;width:38px;height:38px;border-radius:50%;
+      display:grid;place-items:center;font-size:17px;z-index:1;
       background:radial-gradient(circle at 32% 24%,rgba(255,255,255,.16) 0%,rgba(255,255,255,.05) 52%,rgba(0,0,0,.28) 100%),#1c1c20;
-      border:3px solid rgba(220,38,38,.28);color:#52525b;
+      border:2.5px solid rgba(220,38,38,.28);color:#52525b;
       transition:border-color .5s ease,color .5s ease,box-shadow .5s ease}
+    .tvm-step-dot i{filter:drop-shadow(0 0 4px currentColor)}
     /* Brillo interior -- el "con profundidad" que pidió para la ficha. */
     .tvm-step-dot::before{content:'';position:absolute;inset:2px;border-radius:50%;
       background:linear-gradient(180deg,rgba(255,255,255,.10) 0%,transparent 42%);
