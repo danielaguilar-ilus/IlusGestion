@@ -2686,15 +2686,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <span class="val mono">{{ v.cliente_rut | rut_fmt }}</span></div>
           {% endif %}
           {% set _dir_ot = v.direccion_visita or v.cliente_direccion %}
+          {# 🔴 FIX 2026-09-11 (Daniel: "comuna/región... el backend las
+             descarta"): ahora que mant_visitas SÍ guarda su propia comuna
+             (ver migración direccion_comuna/direccion_region), se prefiere
+             esa por sobre la del cliente cuando la dirección es propia de
+             la visita -- MISMA regla que ya usa el botón Ruta (OTD_RUTA.comuna,
+             más abajo en este archivo), ahora con el dato real disponible
+             en vez de dejarla vacía a propósito. #}
+          {% set _comuna_ot = (v.direccion_comuna if v.direccion_visita else v.cliente_comuna) %}
           {% if _dir_ot %}
           <div class="fila"><span class="lbl">Dirección</span>
-            <span class="val">{{ _dir_ot }}{% if v.cliente_comuna %}, {{ v.cliente_comuna }}{% endif %}
+            <span class="val">{{ _dir_ot }}{% if _comuna_ot %}, {{ _comuna_ot }}{% endif %}
               <a class="acc" target="_blank" rel="noopener"
-                 {#- Misma corrección que en el botón Ruta: la comuna del cliente
-                     solo se agrega si la dirección sale de su ficha. Con una
-                     `direccion_visita` propia, concatenarla manda el mapa a otra
-                     región. -#}
-                 href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ ('' if v.direccion_visita else (', ' ~ v.cliente_comuna if v.cliente_comuna else ''))) | urlencode }}">
+                 href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ (', ' ~ _comuna_ot if _comuna_ot else '')) | urlencode }}">
                 <i class="bi bi-geo-alt-fill"></i> Abrir mapa</a>
               {# 🆕 2026-09-11 (Daniel, viendo la OT en el celular: "a las OT
                  les faltaría poder editar la ubicación"). Mismo patrón que
@@ -5079,8 +5083,13 @@ const OTD_RUTA = {
       comuna del cliente arma un destino imposible: en esa OT la visita es
       en "C/ Prta Ote., Colina, Región Metropolitana" y la ficha del cliente
       dice COLCHANE — que está en Tarapacá, a 1.900 km. Iba a quedar
-      "...Colina, Región Metropolitana, COLCHANE, Chile". -#}
-  comuna: {{ ('' if v.direccion_visita else (v.cliente_comuna or '')) | tojson }},
+      "...Colina, Región Metropolitana, COLCHANE, Chile".
+      🔴 2026-09-11: antes eso significaba dejar la comuna VACÍA cuando la
+      OT tenía direccion_visita propia (mejor nada que una comuna ajena).
+      Ahora que mant_visitas guarda SU PROPIA comuna (direccion_comuna,
+      capturada por el mismo Google Places del paso Contraparte), se usa
+      esa en vez de quedar en blanco. -#}
+  comuna: {{ ((v.direccion_comuna if v.direccion_visita else v.cliente_comuna) or '') | tojson }},
 };
 
 /* La dirección SOLA no le sirve a Waze: "Puerta Oriente, Local 03B" no
@@ -7543,7 +7552,25 @@ window.otdAbrirDireccion = function(){
     _otdDirPlacesInit = true;
     ilusPlacesAutocomplete('otdDirVal', {
       country: 'cl', types: ['geocode', 'establishment'],
-      onPlaceSelected: function(p){ _otdDirNuevoPlace = p; },
+      onPlaceSelected: function(p){
+        // 🔴 FIX 2026-09-11 (Daniel: "comuna/región... el backend las
+        // descarta"). MISMO parseo que ya usa el wizard de creación
+        // (_modal_crear.html, "cuando yo confirme la dirección del lugar,
+        // me va a rellenar la comuna y la región de manera automática") --
+        // no se inventa un segundo criterio.
+        var comps = p.componentes || [];
+        var pick = function(){
+          for (var i = 0; i < arguments.length; i++){
+            var t = arguments[i];
+            var c = comps.find(function(x){ return (x.types || []).indexOf(t) >= 0; });
+            if (c) return c.long_name;
+          }
+          return '';
+        };
+        p.region = pick('administrative_area_level_1');
+        p.comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+        _otdDirNuevoPlace = p;
+      },
     });
   }
 };
@@ -7568,6 +7595,8 @@ window.otdConfirmarDireccion = async function(){
     body.direccion_lat = _otdDirNuevoPlace.lat;
     body.direccion_lng = _otdDirNuevoPlace.lng;
     body.direccion_place_id = _otdDirNuevoPlace.place_id;
+    body.direccion_comuna = _otdDirNuevoPlace.comuna || '';
+    body.direccion_region = _otdDirNuevoPlace.region || '';
   }
   try {
     const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {

@@ -55372,6 +55372,16 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_lat DECIMAL(10,7) NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_place_id VARCHAR(200) NULL COMMENT 'Google Places place_id de la dirección'",
+                # 🔴 2026-09-11 (Daniel: "comuna/región que se capturan en el
+                # paso de Contraparte pero el backend las descarta"). Google
+                # Places YA las devuelve (ver el `pick()` del wizard, mismo
+                # parseo que tickets_cotizaciones.js) y el campo Comuna del
+                # paso Contraparte las muestra -- pero mant_visitas nunca tuvo
+                # dónde guardarlas, así que se perdían al crear la OT. Estas
+                # SON de la visita, no de mant_clientes.region/comuna (que es
+                # la ficha del cliente, no necesariamente la misma sede).
+                "ALTER TABLE mant_visitas ADD COLUMN direccion_comuna VARCHAR(100) NULL COMMENT 'Comuna de direccion_visita (Google Places), NO la del cliente'",
+                "ALTER TABLE mant_visitas ADD COLUMN direccion_region VARCHAR(100) NULL COMMENT 'Región de direccion_visita (Google Places)'",
                 # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Contacto/contraparte por OT.
                 # Cuando se crea la OT, el admin elige quién recibe al técnico
@@ -77075,7 +77085,8 @@ def mant_visita_update(vid):
     # direccion_detalle VARCHAR(200), acceso_piso VARCHAR(50),
     # acceso_notas TEXT (sin límite práctico, se deja un tope generoso).
     _DIR_MAXLEN = {"direccion_visita": 400, "direccion_detalle": 200,
-                   "acceso_piso": 50, "acceso_notas": 2000}
+                   "acceso_piso": 50, "acceso_notas": 2000,
+                   "direccion_comuna": 100, "direccion_region": 100}
     for _campo_dir, _max_dir in _DIR_MAXLEN.items():
         if _campo_dir in d:
             d[_campo_dir] = (d.get(_campo_dir) or "").strip()[:_max_dir] or None
@@ -77102,7 +77113,8 @@ def mant_visita_update(vid):
                # 📍 2026-09-11 -- edición de dirección/acceso desde el
                # detalle de la OT (ver validación arriba).
                "direccion_visita","direccion_detalle","direccion_lat","direccion_lng",
-               "direccion_place_id","acceso_piso","acceso_notas",
+               "direccion_place_id","direccion_comuna","direccion_region",
+               "acceso_piso","acceso_notas",
                "costo","contrato_id",
                # FASE 1 — modelo Fracttal
                "modalidad_cobro","prioridad","diagnostico",
@@ -82577,6 +82589,12 @@ def ot2_api_crear():
     except (TypeError, ValueError):
         _cp_lng = None
     _cp_place = (str(_cp.get("place_id") or "").strip())[:200] or None
+    # 🔴 FIX 2026-09-11 (Daniel: "comuna/región que se capturan en el paso
+    # de Contraparte pero el backend las descarta"). El wizard YA las
+    # manda (pick() sobre address_components de Google Places, ver
+    # _modal_crear.html) desde el 2026-08-30 -- nunca se leían acá.
+    _cp_comuna = (str(_cp.get("comuna") or "").strip())[:100] or None
+    _cp_region = (str(_cp.get("region") or "").strip())[:100] or None
     # Coordenadas fuera de rango = dato corrupto, mejor sin coordenadas que
     # con una geocerca que mande al técnico a otro continente.
     if _cp_lat is not None and not (-90 <= _cp_lat <= 90):
@@ -83113,7 +83131,7 @@ def ot2_api_crear():
             "   contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_rut, "
             "   contacto_origen, direccion_visita, direccion_detalle, "
             "   direccion_lat, direccion_lng, "
-            "   direccion_place_id, "
+            "   direccion_place_id, direccion_comuna, direccion_region, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
@@ -83121,7 +83139,7 @@ def ot2_api_crear():
             "        %s,"
             "        %s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,%s,"
-            "        %s,"
+            "        %s,%s,%s,"
             "        %s,%s,%s)",
             (numero_ot, cliente_id, titulo, descripcion, _f,
              hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
@@ -83135,7 +83153,7 @@ def ot2_api_crear():
              _fin_docs_extra_json,
              _cp_nombre, _cp_cargo, _cp_tel, _cp_email, _cp_rut,
              _cp_origen, _cp_dir, _cp_detalle, _cp_lat, _cp_lng,
-             _cp_place,
+             _cp_place, _cp_comuna, _cp_region,
              # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
              # conversión a hora Chile es cosa de la vista).
              datetime.utcnow() if _fin_declarada else None,
