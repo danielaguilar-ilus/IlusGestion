@@ -79235,6 +79235,88 @@ def ot2_detalle(vid):
         for e in equipos:
             e["plantillas"] = []
 
+    # 🔧 2026-09-11 (Daniel: "los técnicos internos no pueden realizar
+    # trabajos [en OT 2.0] ya que no muestra los equipos en la pantalla").
+    # El SELECT de `equipos` de arriba nace de `mant_maquinas` -- una OT de
+    # trabajo interno (sin cliente_id) NUNCA tiene una máquina real detrás,
+    # así que esta pestaña quedaba SIEMPRE vacía para ese tipo de OT, aunque
+    # sí tuviera tareas reales (la observación "Trabajo de bodega", o
+    # productos agregados sin ficha vía item_manual_id). La pantalla
+    # clásica (mant_ot_ejecutar, ver su comentario "tarjetas sintéticas de
+    # PRODUCTO para trabajo interno") ya resuelve exactamente este caso
+    # sintetizando una tarjeta por item_manual_id -- mismo criterio acá,
+    # porque el piloto de técnicos internos (Lenin, Dave, Jaizer) usa
+    # OT 2.0, no la clásica, y las dos no pueden seguir divergiendo.
+    # `and not equipos`: igual que mant_ot_ejecutar, JAMÁS se mezcla un
+    # equipo real con uno sintético en la misma lista -- un item_manual_id
+    # podría coincidir numéricamente con un mant_maquinas.id real.
+    if not v.get("cliente_id") and not equipos:
+        try:
+            _tareas_sin_maquina = mysql_fetchall(
+                "SELECT id, item_manual_id, item_manual_sku, plantilla_id, titulo, "
+                "       completada, obligatoria "
+                "  FROM mant_visita_tareas "
+                " WHERE visita_id=%s AND maquina_id IS NULL",
+                (vid,)
+            ) or []
+        except Exception as _e_tsm:
+            print(f"[ot2_detalle] tareas sin maquina vid={vid}: {_e_tsm}", flush=True)
+            _tareas_sin_maquina = []
+        _grupos_interno = {}
+        for t in _tareas_sin_maquina:
+            _mid = t.get("item_manual_id") or 0
+            _grp = _grupos_interno.setdefault(_mid, {
+                "titulo": None, "sku": None, "n": 0, "ok": 0, "obl": 0, "obl_ok": 0,
+            })
+            _grp["n"] += 1
+            if t.get("completada"):
+                _grp["ok"] += 1
+            if t.get("obligatoria"):
+                _grp["obl"] += 1
+                if t.get("completada"):
+                    _grp["obl_ok"] += 1
+            # La tarea-ancla (la que NO vino de copiar una plantilla) trae
+            # el título/SKU reales del producto -- mismo criterio que
+            # mant_ot_ejecutar.
+            if not t.get("plantilla_id") and not _grp["titulo"]:
+                _grp["titulo"] = t.get("titulo")
+                _grp["sku"] = t.get("item_manual_sku")
+        for _mid, _grp in _grupos_interno.items():
+            _n, _ok = _grp["n"], _grp["ok"]
+            _obl, _obl_ok = _grp["obl"], _grp["obl_ok"]
+            if _n and _ok >= _n:
+                _sello, _sello_cls = "Listo", "eq-ok"
+            elif _ok:
+                _sello, _sello_cls = "En curso", "eq-go"
+            else:
+                _sello, _sello_cls = "Pendiente", "eq-pend"
+            equipos.append({
+                "id": _mid,
+                "nombre": _grp["titulo"] or ("Trabajo interno" if _mid == 0 else f"Producto #{_mid}"),
+                "sku": _grp["sku"], "serie": None, "marca": None, "foto_url": None,
+                "estado_capturado": None,
+                "n_tareas": _n, "n_ok": _ok, "pct": int(round(_ok * 100.0 / _n)) if _n else 0,
+                "n_obl": _obl, "n_obl_ok": _obl_ok, "n_obl_falta": max(0, _obl - _obl_ok),
+                "estado_revision_label": "", "diagnostico_label": "",
+                "diagnostico_estado": None, "diagnostico_texto": None,
+                "sello": _sello, "sello_cls": _sello_cls,
+                "serie_lleva_individual": False,
+                "serie_no_aplica_motivo": "Trabajo interno -- sin ficha de equipo.",
+                "serie_sugerida": None,
+                "plantillas": [],
+                # 🔴 CRÍTICO (igual que mant_ot_ejecutar): este `id` es un
+                # item_manual_id, NUNCA un mant_maquinas.id real -- las
+                # acciones que operan sobre la ficha real (diagnóstico,
+                # álbum de fotos por equipo) se esconden en el template con
+                # `{% if not e._interno %}` porque mant_maquinas.id es un
+                # autoincrement GLOBAL: un click ahí podría tocar la ficha
+                # de una máquina real de OTRO cliente que comparta el mismo
+                # número.
+                "_interno": True,
+            })
+        if _grupos_interno:
+            equipos.sort(key=lambda e: (e.get("id") != 0, e.get("nombre") or ""))
+
     # Lista de plantillas activas para el selector de "cambiar plantilla"
     # -- SIN filtrar por tipo/clasificación (Daniel, 2026-08-28: "de
     # momento déjalas libres, quiero ver las plantillas... para tener la

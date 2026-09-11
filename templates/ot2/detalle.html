@@ -2313,7 +2313,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <span class="v">{{ kpis.fotos }}</span></div></div>
       <div class="otd-d d-ava"><i class="bi bi-check2-square"></i>
         <div class="in"><span class="k">Obligatorias</span>
-          <span class="v">{{ kpis.obl_ok }}/{{ kpis.obl }}</span></div></div>
+          <span class="v" id="otdHdrOblV">{{ kpis.obl_ok }}/{{ kpis.obl }}</span></div></div>
       {# 🆕 Autoguardado -- todo lo que se toca en Ejecutar (tareas, fotos,
          firmas) ya se guarda de inmediato contra el backend; este chip solo
          lo hace VISIBLE, no agrega comportamiento nuevo. #}
@@ -3412,11 +3412,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                  con el de abajo sin aportar nada nuevo. Se deja solo el
                  aviso de qué falta -- la ACCIÓN vive únicamente abajo. #}
               {% set _obl_falta = kpis.obl - kpis.obl_ok %}
-              {% if _obl_falta > 0 %}
-              <div class="otf-hint">Faltan {{ _obl_falta }} tarea{{ 's' if _obl_falta != 1 }} obligatoria{{ 's' if _obl_falta != 1 }} — revisa la pestaña Trabajo. Cuando termines, firma con el botón de abajo.</div>
-              {% else %}
-              <div class="otf-msg otf-ok"><i class="bi bi-check-circle-fill"></i> Todo listo — firma con el botón de abajo.</div>
-              {% endif %}
+              {# 🔴 FIX 2026-09-11 (Daniel, caso Isabel: "debe salir de la OT
+                 cuando ya tiene las tareas listas" para que el botón de
+                 firmar se habilite -- completaba el checklist y seguía
+                 bloqueado hasta recargar). kpis.obl/obl_ok solo llegan UNA
+                 vez, al cargar la página; otdWkCheckAllComplete() (ver JS,
+                 dispara con cada respuesta del checklist) ahora sincroniza
+                 estos dos bloques y el botón de la barra de abajo con el
+                 mismo conteo en vivo que ya usa el banner "Todo listo" de
+                 arriba -- por eso los DOS estados se renderizan siempre y
+                 solo se ocultan con `hidden`, en vez de un if/else que
+                 obligaría a la carga inicial para siempre. #}
+              <div class="otf-hint" id="otdOblHintFalta" {{ 'hidden' if _obl_falta <= 0 }}>Faltan {{ _obl_falta }} tarea{{ 's' if _obl_falta != 1 }} obligatoria{{ 's' if _obl_falta != 1 }} — revisa la pestaña Trabajo. Cuando termines, firma con el botón de abajo.</div>
+              <div class="otf-msg otf-ok" id="otdOblHintOk" {{ 'hidden' if _obl_falta > 0 }}><i class="bi bi-check-circle-fill"></i> Todo listo — firma con el botón de abajo.</div>
             {% else %}
             <div class="otf-msg otf-wait"><i class="bi bi-eye"></i> Solo lectura — no puedes ejecutar esta OT.</div>
             {% endif %}
@@ -4208,7 +4216,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <div class="otd-wk-list">
         {% for e in equipos %}
         <details class="otd-wk-item{{ ' is-complete' if e.n_obl and e.n_obl_ok == e.n_obl }}"
-                 ontoggle="if(this.open) otdFotosCargar({{ e.id }})"
+                 {% if not e._interno %}ontoggle="if(this.open) otdFotosCargar({{ e.id }})"{% endif %}
                  data-obl="{{ e.n_obl }}" data-oblok="{{ e.n_obl_ok }}"
                  data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
                  data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
@@ -4269,6 +4277,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                SIGUE siendo suya: hay que verla, arreglarla y cobrarla. Por
                eso esto marca `fuera de servicio`, no `baja`. #}
             {% set _fs = (e.estado_capturado or '') == 'fuera_servicio' %}
+            {# 🔒 2026-09-11: "fuera de servicio" marca el estado del EQUIPO
+               DEL CLIENTE en su ficha real -- no aplica a una tarjeta
+               sintética de trabajo interno (e._interno), que no tiene
+               ficha. #}
+            {% if not e._interno %}
             <div class="otd-fs-row" data-mid="{{ e.id }}">
               {% if _fs %}
               <div class="otd-fs-badge">
@@ -4290,6 +4303,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% endif %}
               {% endif %}
             </div>
+            {% endif %}
 
             {#- 🔀 2026-09-08 (Daniel, viendo la OT-2026-00179: "en la
                 observación del técnico, estado, el diagnóstico... yo lo
@@ -4327,8 +4341,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 Saltar NO es lo mismo que reprobar: es "no lo pude ver, y
                 esta es la razón". Sin esa salida, el técnico que encuentra
                 una máquina inaccesible tiene que elegir entre mentir
-                (marcarla aprobada) o dejar la OT incompleta para siempre. -#}
-            {% if puede_ejecutar and not ot_solo_lectura %}
+                (marcarla aprobada) o dejar la OT incompleta para siempre.
+
+                🔒 2026-09-11: observación/estado de revisión/saltar viven en
+                mant_visita_equipos, keyed por maquina_id real -- mismo
+                candado `not e._interno` que el resto de las acciones de
+                ficha de esta tarjeta. El trabajo interno deja su propia
+                evidencia en el checklist (fotos por tarea + firmas), no acá. -#}
+            {% if puede_ejecutar and not ot_solo_lectura and not e._interno %}
             <div class="otd-obs" data-mid="{{ e.id }}">
               <label for="otdObs-{{ e.id }}">Observación del técnico</label>
               {#- Autoguarda al salir del campo, igual que la clásica: si
@@ -4393,7 +4413,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 
                 Se cargan al ABRIR el equipo, no al entrar a la pantalla: con
                 varios equipos serían varias consultas de una vez para fotos
-                que quizá nadie mira. -#}
+                que quizá nadie mira.
+
+                🔒 2026-09-11: se esconde para tarjetas sintéticas de
+                trabajo interno (`e._interno`) -- este álbum usa
+                mant_maquinas.id como FK real; un item_manual_id (numeración
+                propia de la OT, ver el comentario "CRÍTICO" en
+                ot2_detalle) podría coincidir por casualidad con la ficha de
+                una máquina real de OTRO cliente. -#}
+            {% if not e._interno %}
             <div class="otd-fot" data-mid="{{ e.id }}">
               <div class="otd-fot-head">
                 <span>Fotos de este equipo <b id="otdFotN-{{ e.id }}"></b></span>
@@ -4408,6 +4436,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               </div>
               <div class="otd-fot-tira" id="otdFotTira-{{ e.id }}"></div>
             </div>
+            {% endif %}
 
             {# 🆕 2026-08-28 (Daniel): "no veo qué plantilla tienen los
                equipos... quiero poder cambiarlas". Un equipo puede tener
@@ -4465,8 +4494,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 
                 OJO: `diagnostico_estado` NO es lo mismo que
                 `estado_revision` (saltar/verificar, arriba). Este es el
-                veredicto técnico sobre la máquina. -#}
-            {% if puede_ejecutar and not ot_solo_lectura %}
+                veredicto técnico sobre la máquina.
+
+                🔒 2026-09-11: mismo candado que el álbum de fotos de
+                arriba -- `e._interno` no tiene ficha real que aprobar. -#}
+            {% if puede_ejecutar and not ot_solo_lectura and not e._interno %}
             <div class="otd-dx" data-mid="{{ e.id }}">
               <div class="otd-dx-tit">Diagnóstico de este equipo</div>
               <div class="otd-dx-btns">
@@ -4639,7 +4671,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
        el candado real sigue viviendo en firmar-revision, este botón no
        abre ninguna puerta que el backend no abriera ya. #}
     {% set _obl_falta_bar = kpis.obl - kpis.obl_ok %}
-    <button type="button" class="b pri" onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta_bar > 0 }}>
+    {# 🔴 FIX 2026-09-11 (Daniel, caso Isabel) -- ver comentario gemelo más
+       arriba, junto a otdOblHintFalta: este `disabled` también quedaba
+       congelado en el valor de carga. id agregado para que
+       otdWkCheckAllComplete() lo destrabe solo, sin recargar. #}
+    <button type="button" class="b pri" id="otdBtnFirmarBar" onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta_bar > 0 }}>
       <i class="bi bi-{{ 'lock-fill' if _obl_falta_bar > 0 else 'pen-fill' }}"></i>
       {{ 'Faltan obligatorias para firmar' if _obl_falta_bar > 0 else 'Firmar como técnico' }}</button>
     {% elif puede_ejecutar or es_tecnico %}
@@ -8507,15 +8543,55 @@ function otdWkCheckAllComplete(){
   const items = document.querySelectorAll('.otd-wk-item');
   if (!items.length) return;
   let todasOk = true;
+  let oblTotal = 0, oblOkTotal = 0;
   items.forEach(it => {
     const obl = parseInt(it.dataset.obl || '0', 10);
     const oblOk = parseInt(it.dataset.oblok || '0', 10);
+    oblTotal += obl; oblOkTotal += oblOk;
     if (!(obl > 0 && oblOk >= obl)) todasOk = false;
   });
   const banner = document.getElementById('otdWkBannerOk');
   const card = document.getElementById('otdWkCard');
   if (banner) banner.style.display = todasOk ? 'flex' : 'none';
   if (card) card.classList.toggle('all-complete', todasOk);
+  _otdSincronizarFirmaGate(oblTotal, oblOkTotal);
+}
+
+/* 🔴 FIX 2026-09-11 (Daniel, caso Isabel: "debe salir de la OT cuando ya
+   tiene las tareas listas" -- completaba el checklist y el botón de
+   firmar seguía bloqueado hasta recargar). El chip "Obligatorias" del
+   header, el aviso de la tarjeta "Firmar y cerrar OT" y el botón de la
+   barra inferior se armaban SOLO al cargar la página, desde
+   kpis.obl/kpis.obl_ok -- nada los volvía a mirar cuando el técnico
+   marcaba la última tarea vía AJAX. Se sincronizan acá con el MISMO dato
+   (data-obl/data-oblok de cada .otd-wk-item) que ya usa el banner "Todo
+   listo" de arriba, para no inventar un tercer conteo que pueda discrepar
+   del que el técnico está viendo tarjeta por tarjeta. */
+function _otdSincronizarFirmaGate(oblTotal, oblOkTotal){
+  const falta = Math.max(0, oblTotal - oblOkTotal);
+  const hdr = document.getElementById('otdHdrOblV');
+  if (hdr) hdr.textContent = `${oblOkTotal}/${oblTotal}`;
+  const btn = document.getElementById('otdBtnFirmarBar');
+  if (btn){
+    btn.disabled = falta > 0;
+    btn.innerHTML = falta > 0
+      ? '<i class="bi bi-lock-fill"></i> Faltan obligatorias para firmar'
+      : '<i class="bi bi-pen-fill"></i> Firmar como técnico';
+  }
+  const hintFalta = document.getElementById('otdOblHintFalta');
+  const hintOk = document.getElementById('otdOblHintOk');
+  if (hintFalta){
+    hintFalta.hidden = !(falta > 0);
+    if (falta > 0){
+      hintFalta.textContent = `Faltan ${falta} tarea${falta === 1 ? '' : 's'} ` +
+        `obligatoria${falta === 1 ? '' : 's'} — revisa la pestaña Trabajo. ` +
+        `Cuando termines, firma con el botón de abajo.`;
+    }
+  }
+  if (hintOk) hintOk.hidden = falta > 0;
+  // K_OBL/K_OBL_OK alimentan el aviso de "tareas opcionales sin registrar"
+  // dentro de abrirFirmaTecnico() -- se mantienen al día por el mismo motivo.
+  K_OBL = oblTotal; K_OBL_OK = oblOkTotal;
 }
 
 function otdChkEstaBloqueada(t){
@@ -9988,8 +10064,14 @@ const OT2F = (function(){
   // no lo tiene).
   const K_TAREAS = {{ kpis.tareas | tojson }};
   const K_TAREAS_OK = {{ kpis.tareas_ok | tojson }};
-  const K_OBL = {{ kpis.obl | tojson }};
-  const K_OBL_OK = {{ kpis.obl_ok | tojson }};
+  // 🔴 FIX 2026-09-11 (Daniel, caso Isabel): estos dos pasan de `const` a
+  // `let` porque otdWkCheckAllComplete() (ver más abajo) los mantiene al
+  // día con lo que el técnico va marcando en el checklist -- si no,
+  // abrirFirmaTecnico() seguiría preguntando por "tareas opcionales sin
+  // registrar" con el conteo de cuando cargó la página, aunque ya no
+  // quedara ninguna.
+  let K_OBL = {{ kpis.obl | tojson }};
+  let K_OBL_OK = {{ kpis.obl_ok | tojson }};
 
   const _sig = {};
   let _firmaStage = 'tecnico';
