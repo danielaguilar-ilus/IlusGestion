@@ -5191,41 +5191,79 @@ function otdPingDetener(avisar){
 }
 window.addEventListener('beforeunload', function(){ otdPingDetener(false); });
 
+/* 🔴 FIX 2026-09-11, ronda 2 (Daniel, probando en su iPhone: "el waze aun
+   no se repara, lo veo igual" -- pide dejarlo "impecable" con Google Y
+   Waze). La primera vuelta reutilizó el arreglo de WhatsApp
+   (ilusReservarVentana/ilusIrADeepLink = navegar la pestaña actual con
+   `location.href` al link UNIVERSAL, https://www.waze.com/ul?...). Eso
+   basta para WhatsApp, pero Waze es distinto: iOS resuelve los links
+   universales de forma más estricta dentro del WKWebView de una PWA
+   instalada -- a veces solo carga la página web de Waze, o se queda sin
+   hacer nada, en vez de abrir la app.
+
+   La técnica que SÍ es confiable ahí (la misma que usan apps reales como
+   Uber/Waze mismo en sus propias integraciones) es distinta: navegar
+   primero al SCHEME PROPIO de la app (waze://, comgooglemaps://) -- eso
+   NO es una URL que el navegador intente cargar, es algo que el SISTEMA
+   OPERATIVO intercepta ANTES de llegar al webview, así que no depende de
+   si viene de una pestaña nueva, de la PWA o de qué tan "de verdad" luzca
+   el click. Si la app no está instalada, el scheme no hace NADA visible
+   (ni error) -- por eso se arma con un rescate por tiempo: si a los 1.2s
+   seguimos viendo la página (nadie nos sacó a otra app), recién ahí se
+   navega al link universal/web de siempre. */
+function _otdEsIOS(){
+  return /iP(hone|ad|od)/.test(navigator.userAgent || '') ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
 function otdIniciarRuta(app){
-  // 1) La URL primero: nada de esperas antes de abrir.
-  let url = '';
+  // 1) Las URLs primero: nada de esperas antes de abrir. `urlNativo` es el
+  // scheme propio de la app (solo tiene sentido armarlo en iOS -- Android
+  // resuelve bien los links https de Waze/Maps desde JS, no necesita este
+  // rodeo); `url` es el link universal/web, el que siempre funciona como
+  // último recurso.
+  let url = '', urlNativo = '';
+  const _esIOS = _otdEsIOS();
   if (app !== 'saltado'){
     const txt = otdDestinoTexto();
+    const conCoords = otdHayCoords();
     if (app === 'google'){
-      const dest = otdHayCoords() ? (OTD_RUTA.lat + ',' + OTD_RUTA.lng)
-                                  : encodeURIComponent(txt);
+      const dest = conCoords ? (OTD_RUTA.lat + ',' + OTD_RUTA.lng) : encodeURIComponent(txt);
       url = 'https://www.google.com/maps/dir/?api=1&destination=' + dest + '&travelmode=driving';
+      if (_esIOS) urlNativo = 'comgooglemaps://?daddr=' + dest + '&directionsmode=driving';
     } else {
-      url = otdHayCoords()
+      url = conCoords
         ? ('https://www.waze.com/ul?ll=' + OTD_RUTA.lat + '%2C' + OTD_RUTA.lng + '&navigate=yes')
         : ('https://www.waze.com/ul?q=' + encodeURIComponent(txt) + '&navigate=yes');
+      if (_esIOS){
+        urlNativo = conCoords
+          ? ('waze://?ll=' + OTD_RUTA.lat + ',' + OTD_RUTA.lng + '&navigate=yes')
+          : ('waze://?q=' + encodeURIComponent(txt) + '&navigate=yes');
+      }
     }
-    if (!otdHayCoords() && !txt){
+    if (!conCoords && !txt){
       ilusToast('Esta OT no tiene dirección ni coordenadas para navegar.', {type:'warning'});
       return;
     }
   }
 
   // 2) Abrir YA, con la activación del toque viva.
-  // 🔴 FIX 2026-09-11 (Daniel, viendo un técnico en su iPhone: "el botón de
-  // ruta... no está funcionando" -- MISMO bug ya corregido para WhatsApp
-  // (ver el bloque "DEEP-LINKS" en ilus_ui.js): en la app instalada en
-  // iOS, `window.open(url, '_blank')` saca al técnico de la PWA hacia
-  // Safari con una pestaña about:blank en vez de abrir Waze/Google Maps
-  // directo -- el usuario ve que "no pasa nada". Se reutiliza el MISMO
-  // mecanismo (ilusReservarVentana/ilusIrADeepLink), no se inventa uno
-  // nuevo: en un navegador normal sigue abriendo una pestaña nueva; en la
-  // app instalada navega esta misma pestaña, que iOS trata como cambio de
-  // app (la PWA queda atrás intacta).
   let ventana = null, _rutaOk = true;
   if (url){
     ventana = ilusReservarVentana();
-    _rutaOk = ilusIrADeepLink(ventana, url);
+    if (urlNativo && !ventana){
+      // App instalada en iOS (o Safari ahí sin pestaña reservada): probar
+      // el scheme nativo con rescate. `document.hidden` es la señal
+      // estándar de que el sistema SÍ nos sacó a la otra app -- si a los
+      // 1.2s seguimos visibles, no había Waze/Maps instalado o el scheme
+      // no prendió, y se cae al link universal en la MISMA pestaña.
+      try { window.location.href = urlNativo; } catch(e){}
+      setTimeout(function(){
+        if (!document.hidden) ilusIrADeepLink(null, url);
+      }, 1200);
+    } else {
+      _rutaOk = ilusIrADeepLink(ventana, url);
+    }
   }
 
   // 3) Recién ahora el registro, sin esperarlo. Sin esto el cronómetro y
