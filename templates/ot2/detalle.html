@@ -3784,6 +3784,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                      "Leer documento"/"Usar estos montos" -- ver
                      otdAplicarTotalZz/_otdSaldoRef. #}
                   <div id="otdFinZzServSaldo" class="small mt-1" style="font-size:.7rem"></div>
+                  {# 💰 Fase 4 -- 2026-09-11 (Daniel: "usar la cotización como
+                     sugerencia cuando no hay documento"). Se llena por JS
+                     (otdSugerirCotizacion, llamada desde otdDocCargar) SOLO
+                     cuando esta OT todavía no tiene documento ERP asociado
+                     Y sí tiene una cotización interna con monto > 0 --
+                     mismo patrón "sugerencia de un clic" que otdAplicarTotalZz. #}
+                  <div id="otdFinCotSug" class="small mt-1" style="font-size:.7rem"></div>
                 </div>
                 <div>
                   <label class="form-label small fw-semibold mb-1">Despacho al cliente (CLP)</label>
@@ -8879,8 +8886,54 @@ async function otdDocCargar(){
     const d = await r.json().catch(() => ({}));
     if (d && d.ok) otdDocPintar(d);
     else otdDocPintar({documentos: []});
+    // 💰 Fase 4 -- 2026-09-11: la MISMA lista que ya se pidió para "Otros
+    // documentos" alcanza para ofrecer la cotización como sugerencia --
+    // no hace falta un segundo fetch.
+    otdSugerirCotizacion((d && d.documentos) || []);
   } catch(e){ otdDocPintar({documentos: []}); }
 }
+
+/* 💰 Fase 4 -- 2026-09-11 (Daniel: "usar la cotización como sugerencia
+   cuando no hay documento"). Solo se ofrece cuando la OT TODAVÍA no tiene
+   documento ERP asociado (el documento real, cuando llega, siempre manda
+   sobre una cotización interna) y existe al menos una cotización con
+   monto > 0. Nunca se aplica sola -- mismo criterio que el resto de
+   sugerencias de este paso (otdAplicarTotalZz, _otdSaldoRef). */
+function otdSugerirCotizacion(documentos){
+  const cont = document.getElementById('otdFinCotSug');
+  if (!cont) return;
+  const tieneDoc = !!((document.getElementById('otdFinDocErpNudo') || {}).value || '').trim();
+  if (tieneDoc){ cont.innerHTML = ''; return; }
+  const cot = (documentos || []).find(function(x){ return x.origen === 'cotizacion' && (x.monto || 0) > 0; });
+  if (!cot){ cont.innerHTML = ''; return; }
+  // Estilo inline a propósito: esta caja vive fuera de .otd-zzl (el
+  // contenedor que renderiza otdLeerLineasZz), así que la clase .aplicar
+  // de ese CSS no la alcanza -- se autocontiene en vez de depender de un
+  // selector de otro bloque.
+  cont.innerHTML =
+    '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;' +
+    'padding:6px 9px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+    '<span style="color:#1e40af;flex:1 1 auto">Sin documento todavía — <b>' +
+    otdEsc(cot.titulo || 'cotización') + '</b> sugiere $' +
+    Math.round(cot.monto).toLocaleString('es-CL') + '</span>' +
+    '<button type="button" data-monto="' + cot.monto + '" onclick="otdAplicarCotizacion(this)" ' +
+    'style="border:0;background:#16a34a;color:#fff;font-weight:700;border-radius:6px;' +
+    'padding:4px 10px;font-size:.72rem;white-space:nowrap">Usar este valor</button>' +
+    '</div>';
+}
+
+/* Aplica el monto de la cotización sugerida al campo de servicio. Calca
+   otdAplicarTotalZz de abajo: deja el número puesto y espera el Guardar. */
+window.otdAplicarCotizacion = function(btn){
+  const monto = parseFloat(btn.dataset.monto || 0) || 0;
+  const elServ = document.getElementById('otdFinZzServ');
+  if (!elServ || !monto) return;
+  window.otdMoneySet('otdFinZzServ', monto);
+  if (window.otdSincronizarZz) window.otdSincronizarZz(true);
+  elServ.dispatchEvent(new Event('input', {bubbles: true}));
+  elServ.focus();
+  if (window.ilusToast) ilusToast('Monto de la cotización aplicado — revisa y presiona Guardar', {type:'success'});
+};
 
 async function otdDocAgregar(){
   const err = document.getElementById('otdDocErr');
