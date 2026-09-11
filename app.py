@@ -96177,7 +96177,8 @@ def mant_visita_checklist_get(vid):
     u = getattr(g, "user", None) or {}
     es_superadmin = (_rol_familia((u.get("role") or "").lower()) == "superadmin")
     tareas = mysql_fetchall(
-        "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, t.descripcion, "
+        "SELECT t.id, t.maquina_id, t.item_manual_id, t.plantilla_id, t.orden, "
+        "       t.titulo, t.descripcion, "
         "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, t.target_field, "
         "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
         "       t.completada, t.completada_at, t.observaciones, t.valor_json, "
@@ -96186,7 +96187,7 @@ def mant_visita_checklist_get(vid):
         "  FROM mant_visita_tareas t "
         "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
         " WHERE t.visita_id=%s "
-        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
+        " ORDER BY t.maquina_id, t.item_manual_id, t.plantilla_id, t.orden, t.id",
         (vid,)
     ) or []
     tareas = [dict(t) for t in tareas]
@@ -96233,7 +96234,15 @@ def mant_visita_checklist_get(vid):
     grupos = []
     grupo_idx = {}
     for t in tareas:
-        mid = t.get("maquina_id") or 0
+        # 🔴 FIX 2026-09-11 (Daniel, caso Lenin/OT-365 "Perno para cable"):
+        # esto agrupaba TODA tarea de trabajo interno (maquina_id NULL) bajo
+        # una sola clave "0", sin mirar item_manual_id -- con un solo
+        # producto en la OT "coincidía por casualidad" con la tarjeta
+        # sintética que arma ot2_detalle (ver equipos.append allá), pero con
+        # DOS productos distintos sus tareas se mezclaban en un mismo grupo.
+        # Mismo criterio que ya usa mant_ot_ejecutar para su propio
+        # agrupamiento (`t.get("maquina_id") or t.get("item_manual_id") or 0`).
+        mid = t.get("maquina_id") or t.get("item_manual_id") or 0
         pid = t.get("plantilla_id") or 0
         key = (mid, pid)
         if key not in grupo_idx:
