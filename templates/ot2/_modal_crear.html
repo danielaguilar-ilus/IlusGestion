@@ -969,8 +969,16 @@ window.OT2C = (function(){
          // Es cache de lectura: evita volver a preguntarle al ERP por
          // un documento que ya se consulto en esta misma OT.
          doc_zz:{},
+         // Total de cada documento ('TIDO NUDO' -> $), lo que ya devuelve
+         // /ot/api/lineas-zz aunque el documento no traiga ninguna linea ZZ
+         // (caso Victor: nota de venta de un ticket, solo con productos).
+         doc_total:{},
          // Cuantos documentos se leyeron para sumar las lineas ZZ.
          fin_zz_docs_n:0,
+         // Suma de doc_total cuando NINGUN documento de la OT trae linea de
+         // servicio (ZZ...) -- unica situacion en la que tiene sentido
+         // ofrecerlo como sugerencia de "valor del servicio".
+         fin_doc_total_sugerido:0,
          // 2026-08-30 (Daniel, trazabilidad "bajo qué OT"): ids de
          // mant_maquinas creados POR ESTE WIZARD vía alta automática (ver
          // _o2mAltaAutoFaltantes) -- viajan en crear() para que
@@ -4915,16 +4923,18 @@ window.OT2C = (function(){
     Promise.all(docs.map(function(d){
       var k = d.tido + ' ' + d.nudo;
       // Reusa lo que el Paso 7 ya leyó: mismo documento, misma OT.
-      if (S.doc_zz && S.doc_zz[k]) return Promise.resolve({doc: d, lineas: S.doc_zz[k]});
+      if (S.doc_zz && S.doc_zz[k]) return Promise.resolve({doc: d, lineas: S.doc_zz[k], total: (S.doc_total||{})[k] || 0});
       return fetch('/ot/api/lineas-zz/'+encodeURIComponent(d.tido)+'/'+encodeURIComponent(d.nudo)+
                    '?tipo_ot='+encodeURIComponent(S.tipo||''), {credentials:'same-origin'})
         .then(function(r){ return r.json(); })
         .then(function(j){
           var lns = (j && j.ok && Array.isArray(j.lineas_zz)) ? j.lineas_zz : [];
+          var tot = (j && j.ok && parseInt(j.total_documento, 10)) || 0;
           if (S.doc_zz) S.doc_zz[k] = lns;
-          return {doc: d, lineas: lns};
+          if (S.doc_total) S.doc_total[k] = tot;
+          return {doc: d, lineas: lns, total: tot};
         })
-        .catch(function(){ return {doc: d, lineas: []}; });
+        .catch(function(){ return {doc: d, lineas: [], total: 0}; });
     })).then(function(res){
       if (seq !== _finZZSeq) return;
 
@@ -4948,6 +4958,15 @@ window.OT2C = (function(){
       S.fin_zz_lineas = Object.keys(porCodigo).map(function(k){ return porCodigo[k]; })
         .sort(function(a, b){ return (a.sugerida === b.sugerida) ? (b.monto - a.monto) : (a.sugerida ? -1 : 1); });
       S.fin_zz_docs_n = docs.length;
+
+      // 💰 2026-09-11 (Daniel, caso de Víctor: un ticket arrastra una nota
+      // de venta con solo productos, sin ninguna línea ZZ que extraer -- el
+      // modal enfocado a servicio "no es muy útil" ahí). Si NINGÚN
+      // documento de la OT trajo una sola línea ZZ, la única cifra real que
+      // el ERP puede ofrecer es el total del/los documento(s) completo(s)
+      // ("si son varias facturas... sumarlo").
+      S.fin_doc_total_sugerido = S.fin_zz_lineas.length ? 0 :
+        res.reduce(function(acc, r){ return acc + (r.total || 0); }, 0);
 
       var envioLn = S.fin_zz_lineas.filter(function(l){ return l.sku === 'ZZENVIO'; })[0];
       S.fin_zz_envio = envioLn ? {sku: envioLn.sku, monto: envioLn.monto} : null;
@@ -5066,7 +5085,20 @@ window.OT2C = (function(){
           ? ((_nDocs>1?'Ninguno de los '+_nDocs+' documentos':'El documento')+
              ' trae línea de servicio, solo transporte (ZZENVIO) — ingresa el valor del servicio a mano')
           : ((_nDocs>1?'Ninguno de los '+_nDocs+' documentos trae':'El documento no trae')+
-             ' líneas de servicio (ZZ…) — ingresa el valor del servicio a mano'))+'</label>'+
+             ' líneas de servicio (ZZ…) — solo productos'))+'</label>'+
+        // 💰 2026-09-11 (caso Víctor): sin ninguna línea ZZ que extraer, lo
+        // único que el ERP puede ofrecer es el total del documento completo
+        // (productos + lo que sea). Se muestra como SUGERENCIA de un clic,
+        // no se aplica sola -- el usuario sigue decidiendo si ese total es
+        // realmente "el servicio" de esta OT.
+        ((!S.fin_zz_lineas.length && S.fin_doc_total_sugerido > 0 && S.fin_zz_monto !== S.fin_doc_total_sugerido)
+          ? '<div class="o2m-aviso" style="background:#eff6ff;border-color:#bfdbfe;color:#1e40af;'+
+            'display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0">'+
+            '<span><i class="bi bi-info-circle-fill me-1"></i>'+(_nDocs>1?'Suma de los '+_nDocs+' documentos':'Total del documento')+
+            ': <b>$'+Math.round(S.fin_doc_total_sugerido).toLocaleString('es-CL')+'</b></span>'+
+            '<button type="button" class="btn btn-sm btn-outline-primary" style="white-space:nowrap" '+
+            'onclick="OT2C.usarTotalDocumentoComoServicio()">Usar este valor</button></div>'
+          : '')+
         '<input type="text" inputmode="numeric" class="form-control" '+
         'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" placeholder="Valor del servicio" '+
         'oninput="OT2C._o2mFinMontoServicioCambio(this)">';
@@ -5096,6 +5128,17 @@ window.OT2C = (function(){
       '</div>';
     }
     c.innerHTML = servicioHtml + motivoServicioHtml + envioHtml + avisoRut;
+  }
+  /* 💰 2026-09-11 (caso Víctor, ver _o2mFinCargarZZ): aplica el total del
+     documento como monto del servicio. No cuenta como "declarado a mano"
+     -- el número sale del ERP, igual que elegir una línea ZZ real -- por
+     eso NO pide motivo (ver _o2mFinEsManual). */
+  function usarTotalDocumentoComoServicio(){
+    if (!S.fin_doc_total_sugerido) return;
+    S.fin_zz_monto = S.fin_doc_total_sugerido;
+    S.fin_zz_monto_original = S.fin_doc_total_sugerido;
+    S.fin_zz_motivo_manual = '';
+    _pintarFinZZDom(); _pintarFinMargenDom();
   }
   function setFinZZ(sku, monto){
     S.fin_zz_codigo = sku; S.fin_zz_monto = monto;
@@ -7784,6 +7827,7 @@ window.OT2C = (function(){
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
           setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
           abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,
+          usarTotalDocumentoComoServicio:usarTotalDocumentoComoServicio,
           abrirBusquedaFinCotizacion:abrirBusquedaFinCotizacion, limpiarFinCotizacion:limpiarFinCotizacion,
           setFinCostoProveedor:setFinCostoProveedor, setFinCostoDespacho:setFinCostoDespacho,
           _o2mFinMontoServicioCambio:_o2mFinMontoServicioCambio, _o2mFinMontoEnvioCambio:_o2mFinMontoEnvioCambio,
