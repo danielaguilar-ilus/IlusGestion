@@ -77066,8 +77066,43 @@ def mant_visita_update(vid):
         else:
             d["contacto_email"] = _email_c[:200]
 
+    # 📍 2026-09-11 (Daniel: "a las OT les faltaría poder editar la
+    # ubicación"). Mismo criterio que contacto_*: vacío borra a propósito
+    # (permite corregir "quedó mal escrita"), lat/lng se normalizan a float
+    # o None -- nunca se guarda un texto donde va un número.
+    # Largos calcados de sus columnas reales (ver _ensure_ot_finanzas_cols /
+    # el ALTER de acceso_piso -- REGLA #5): direccion_visita VARCHAR(400),
+    # direccion_detalle VARCHAR(200), acceso_piso VARCHAR(50),
+    # acceso_notas TEXT (sin límite práctico, se deja un tope generoso).
+    _DIR_MAXLEN = {"direccion_visita": 400, "direccion_detalle": 200,
+                   "acceso_piso": 50, "acceso_notas": 2000}
+    for _campo_dir, _max_dir in _DIR_MAXLEN.items():
+        if _campo_dir in d:
+            d[_campo_dir] = (d.get(_campo_dir) or "").strip()[:_max_dir] or None
+    for _campo_ll in ("direccion_lat", "direccion_lng"):
+        if _campo_ll in d:
+            try:
+                d[_campo_ll] = float(d[_campo_ll]) if str(d.get(_campo_ll) or "").strip() else None
+            except (TypeError, ValueError):
+                d[_campo_ll] = None
+    if "direccion_place_id" in d:
+        d["direccion_place_id"] = (d.get("direccion_place_id") or "").strip()[:200] or None
+
     allowed = ["titulo","fecha_programada","fecha_fin","fecha_realizada","hora_inicio","hora_fin",
                "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
+               # 🔒 FIX 2026-09-11 (bug real encontrado verificando el fix de
+               # arriba): estos 4 campos se VALIDABAN (ver bloque de arriba,
+               # agregado el 2026-09-11 para "Contraparte en sitio") pero
+               # nunca estuvieron en `allowed` -- el PUT devolvía {"ok":true}
+               # y el frontend mostraba "✓ Contraparte guardada" sin haber
+               # escrito una sola columna. `sets`/`vals` (más abajo) se arman
+               # filtrando por ESTA lista, así que faltar acá es lo mismo que
+               # no validar nada.
+               "contacto_nombre","contacto_cargo","contacto_tel","contacto_email",
+               # 📍 2026-09-11 -- edición de dirección/acceso desde el
+               # detalle de la OT (ver validación arriba).
+               "direccion_visita","direccion_detalle","direccion_lat","direccion_lng",
+               "direccion_place_id","acceso_piso","acceso_notas",
                "costo","contrato_id",
                # FASE 1 — modelo Fracttal
                "modalidad_cobro","prioridad","diagnostico",

@@ -2696,6 +2696,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                      región. -#}
                  href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ ('' if v.direccion_visita else (', ' ~ v.cliente_comuna if v.cliente_comuna else ''))) | urlencode }}">
                 <i class="bi bi-geo-alt-fill"></i> Abrir mapa</a>
+              {# 🆕 2026-09-11 (Daniel, viendo la OT en el celular: "a las OT
+                 les faltaría poder editar la ubicación"). Mismo patrón que
+                 Reagendar/Reasignar de al lado: un botón .acc abre una caja
+                 editable propia (otdDireccionBox, más abajo en esta misma
+                 tarjeta). #}
+              {% if puede_metadata %}
+              <button type="button" class="acc" onclick="otdAbrirDireccion()">
+                <i class="bi bi-pencil-fill"></i> Editar</button>
+              {% endif %}
               {#- 📍 2026-09-06 (Daniel: "cómo haremos visible ese detalle de
                   edificio y local para que no se pierda y el técnico le pegue
                   en los ojos al gestionar la OT").
@@ -2732,6 +2741,43 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               </span>
               {% endif %}
             </span></div>
+          {% endif %}
+          {% if puede_metadata %}
+          <div class="otd-editbox" id="otdDireccionBox" style="margin:0 0 10px">
+            <div class="row">
+              <div style="flex:1 1 260px">
+                <label>Dirección</label>
+                <input type="text" id="otdDirVal" class="form-control form-control-sm" maxlength="400"
+                       value="{{ v.direccion_visita or v.cliente_direccion or '' }}"
+                       placeholder="Empieza a escribir para buscar…" autocomplete="off">
+              </div>
+            </div>
+            <div class="row">
+              <div style="flex:1 1 200px">
+                <label>Edificio / local <span style="opacity:.7;font-weight:500">(opcional)</span></label>
+                <input type="text" id="otdDirDetalle" class="form-control form-control-sm" maxlength="200"
+                       value="{{ v.direccion_detalle or '' }}" placeholder="Ej: Torre B, oficina 402">
+              </div>
+              <div style="flex:1 1 100px">
+                <label>Piso <span style="opacity:.7;font-weight:500">(opcional)</span></label>
+                <input type="text" id="otdDirPiso" class="form-control form-control-sm" maxlength="50"
+                       value="{{ v.acceso_piso or '' }}" placeholder="Ej: 11">
+              </div>
+            </div>
+            <div class="row">
+              <div style="flex:1 1 260px">
+                <label>Notas de acceso <span style="opacity:.7;font-weight:500">(opcional)</span></label>
+                <input type="text" id="otdDirNotas" class="form-control form-control-sm" maxlength="300"
+                       value="{{ v.acceso_notas or '' }}" placeholder="Ej: portón lateral, timbre 2">
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" class="otd-btn pri" onclick="otdConfirmarDireccion()">
+                <i class="bi bi-check2"></i> Guardar</button>
+              <button type="button" class="otd-btn" onclick="otdCerrarDireccion()">Cancelar</button>
+            </div>
+            <div class="hint">El técnico usa este dato para llegar y para el botón "Ruta" — no cambia la ficha del cliente.</div>
+          </div>
           {% endif %}
           <div class="fila"><span class="lbl">Fecha</span>
             <span class="val">{{ v.fecha_dia }}{% if v.hora_inicio %} · {{ (v.hora_inicio | string)[:5] }}{% if v.hora_fin %}–{{ (v.hora_fin | string)[:5] }}{% endif %}{% endif %}
@@ -5166,8 +5212,21 @@ function otdIniciarRuta(app){
   }
 
   // 2) Abrir YA, con la activación del toque viva.
-  let ventana = null;
-  if (url){ try { ventana = window.open(url, '_blank'); } catch(e){ ventana = null; } }
+  // 🔴 FIX 2026-09-11 (Daniel, viendo un técnico en su iPhone: "el botón de
+  // ruta... no está funcionando" -- MISMO bug ya corregido para WhatsApp
+  // (ver el bloque "DEEP-LINKS" en ilus_ui.js): en la app instalada en
+  // iOS, `window.open(url, '_blank')` saca al técnico de la PWA hacia
+  // Safari con una pestaña about:blank en vez de abrir Waze/Google Maps
+  // directo -- el usuario ve que "no pasa nada". Se reutiliza el MISMO
+  // mecanismo (ilusReservarVentana/ilusIrADeepLink), no se inventa uno
+  // nuevo: en un navegador normal sigue abriendo una pestaña nueva; en la
+  // app instalada navega esta misma pestaña, que iOS trata como cambio de
+  // app (la PWA queda atrás intacta).
+  let ventana = null, _rutaOk = true;
+  if (url){
+    ventana = ilusReservarVentana();
+    _rutaOk = ilusIrADeepLink(ventana, url);
+  }
 
   // 3) Recién ahora el registro, sin esperarlo. Sin esto el cronómetro y
   //    el seguimiento en vivo del monitor no se enteran de que salió.
@@ -5192,8 +5251,12 @@ function otdIniciarRuta(app){
   otdPingIniciar();
 
   // 4) Si el navegador igual bloqueó, no quedarse mudo.
+  // OJO: `!ventana` YA NO sirve para detectar esto -- en la app instalada
+  // `ventana` es null A PROPÓSITO (ilusReservarVentana) aunque
+  // ilusIrADeepLink haya navegado bien. `_rutaOk` es lo que de verdad dice
+  // si se logró llevar al técnico a algún lado.
   const resc = document.getElementById('otdRutaRescate');
-  if (url && !ventana && resc){
+  if (url && !_rutaOk && resc){
     const nom = (app === 'waze') ? 'Waze' : 'Google Maps';
     resc.innerHTML = '<a target="_blank" rel="noopener" href="' + url + '">' +
       '<i class="bi bi-box-arrow-up-right"></i>Abrir ' + nom + '</a>';
@@ -7417,6 +7480,71 @@ window.otdConfirmarContraparte = async function(){
     }
   } catch(e){
     ilusToast('Error de conexión al guardar la contraparte.', {type:'error'});
+  }
+};
+
+// 📍 2026-09-11 (Daniel, en el celular: "a las OT les faltaría poder editar
+// la ubicación"). Mismo patrón que otdAbrir/Cerrar/ConfirmarContraparte de
+// arriba -- una caja propia dentro de "Datos de la OT". El input de
+// dirección usa el MISMO autocompletado de Google Places que ya usa el
+// wizard de creación (ilusPlacesAutocomplete, ver REGLA de memoria
+// "Daniel es logístico -> validar direcciones con Google Places"): cuando
+// se elige una sugerencia, lat/lng viajan junto con el texto -- eso es lo
+// que alimenta el botón "Ruta" (otdIniciarRuta) y el mapa. Si el técnico
+// deja el texto escrito a mano sin elegir sugerencia, se guarda igual
+// (backend no exige geocodificación), solo que sin coordenadas nuevas.
+let _otdDirPlacesInit = false, _otdDirNuevoPlace = null;
+window.otdAbrirDireccion = function(){
+  const box = document.getElementById('otdDireccionBox');
+  if (!box) return;
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+  const inp = document.getElementById('otdDirVal');
+  if (inp) inp.focus();
+  if (!_otdDirPlacesInit && typeof ilusPlacesAutocomplete === 'function'){
+    _otdDirPlacesInit = true;
+    ilusPlacesAutocomplete('otdDirVal', {
+      country: 'cl', types: ['geocode', 'establishment'],
+      onPlaceSelected: function(p){ _otdDirNuevoPlace = p; },
+    });
+  }
+};
+window.otdCerrarDireccion = function(){
+  const box = document.getElementById('otdDireccionBox');
+  if (box) box.style.display = 'none';
+};
+window.otdConfirmarDireccion = async function(){
+  const dir = (document.getElementById('otdDirVal').value || '').trim();
+  const detalle = (document.getElementById('otdDirDetalle').value || '').trim();
+  const piso = (document.getElementById('otdDirPiso').value || '').trim();
+  const notas = (document.getElementById('otdDirNotas').value || '').trim();
+  if (!dir){ ilusToast('Escribe la dirección.', {type:'warning'}); return; }
+  const body = {
+    direccion_visita: dir, direccion_detalle: detalle,
+    acceso_piso: piso, acceso_notas: notas,
+  };
+  // Solo manda lat/lng/place_id si la dirección escrita AHORA sigue siendo
+  // la que Google confirmó -- si el técnico la tocó después de elegir la
+  // sugerencia, esas coordenadas ya no le corresponden a este texto.
+  if (_otdDirNuevoPlace && _otdDirNuevoPlace.direccion === dir){
+    body.direccion_lat = _otdDirNuevoPlace.lat;
+    body.direccion_lng = _otdDirNuevoPlace.lng;
+    body.direccion_place_id = _otdDirNuevoPlace.place_id;
+  }
+  try {
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ Dirección guardada', {type:'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo guardar la dirección.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al guardar la dirección.', {type:'error'});
   }
 };
 
