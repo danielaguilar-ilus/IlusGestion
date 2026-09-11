@@ -79463,6 +79463,18 @@ def ot2_detalle(vid):
     doc_header = {"label": _doc_label, "tipo": _doc_tipo,
                   "ok": bool(_fin_ok), "faltan": _fin_faltan}
 
+    # 💰 2026-09-11 (Daniel, dictando el módulo de costos: "yo pienso que
+    # debe verse bien... una esquinita el valor de todo el proyecto y
+    # sumarlo, si son varias facturas"). Reusa _ot_docs_listar (misma
+    # función que ya alimenta "Otros documentos" en Finanzas) para no
+    # inventar una segunda forma de sumar documentos -- total_cobro YA
+    # suma solo los documentos de COBRO (es_cobro=1: facturas/boletas/NVV
+    # reales, nunca cotizaciones), y ya trae el despacho adentro cuando
+    # viene en el mismo documento (monto = valor_bruto del documento
+    # completo, no una línea suelta).
+    _docs_proyecto = _ot_docs_listar(vid)
+    valor_proyecto = {"n": _docs_proyecto["n_cobro"], "total": _docs_proyecto["total_cobro"]}
+
     # ═══════════════════════════════════════════════════════════════════
     # 🆕 2026-09-02 — ACTIVIDAD DE LA OT (Daniel, urgente: "necesito algo
     # parecido a una trazabilidad como esta, la de los tickets... tiene que
@@ -79804,6 +79816,8 @@ def ot2_detalle(vid):
         finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
         # 2026-09-02 — chip de documento en el header (ver doc_header arriba).
         doc_header=doc_header,
+        # 2026-09-11 — chip "Valor del proyecto" en el header (ver arriba).
+        valor_proyecto=valor_proyecto,
         # 2026-09-02 — bitácora de la OT, estilo "Actividad del ticket".
         actividad=actividad,
         # 2026-09-02 — cronómetro del técnico (ver el bloque `cronometro`).

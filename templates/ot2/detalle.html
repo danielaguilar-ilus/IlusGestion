@@ -606,6 +606,11 @@
 .d-fec{--dc:#60a5fa} .d-hor{--dc:#c084fc} .d-tec{--dc:#4ade80}
 .d-eq{--dc:#fbbf24}  .d-fot{--dc:#f472b6} .d-ava{--dc:#dc2626}
 .d-con{--dc:#22d3ee} .d-auto{--dc:#4ade80}
+/* 💰 "Valor del proyecto" (2026-09-11) -- mismo verde de plata que el resto
+   de Costos (ver .row-zz-saldo/getFinanzas), no el verde de "resuelto" del
+   chip Documento de al lado para no confundir ambas semánticas. */
+.d-valproy{--dc:#facc15}
+.d-valproy .v{font-variant-numeric:tabular-nums;white-space:nowrap}
 
 /* 🆕 2026-09-02 — chip de DOCUMENTO en el header (Daniel: "tiene que estar
    aprobado sí o sí, o que diga garantía, o trabajo interno"). Semáforo
@@ -2284,6 +2289,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% endif %}
           <span class="k">Documento</span>
           <span class="v">{{ doc_header.label }}</span>
+        </div></div>
+      {% endif %}
+      {# 💰 2026-09-11 (Daniel: "una esquinita el valor de todo el proyecto
+         y sumarlo, si son varias facturas"). Suma SOLO documentos de cobro
+         reales (nunca cotizaciones) -- ver valor_proyecto en ot2_detalle.
+         Mismo click-to-Finanzas que el chip de Documento, de al lado. #}
+      {% if not es_tecnico and valor_proyecto and valor_proyecto.n %}
+      <div class="otd-d d-valproy" role="button" tabindex="0"
+           onclick="otdIrAFinanzas()" onkeydown="if(event.key==='Enter')otdIrAFinanzas()"
+           title="{{ valor_proyecto.n }} documento{{ '' if valor_proyecto.n==1 else 's' }} de cobro -- ir a Finanzas">
+        <i class="bi bi-cash-stack"></i>
+        <div class="in">
+          <span class="k">Valor del proyecto{% if valor_proyecto.n > 1 %} ({{ valor_proyecto.n }} doc.){% endif %}</span>
+          <span class="v">${{ '{:,.0f}'.format(valor_proyecto.total).replace(',', '.') }}</span>
         </div></div>
       {% endif %}
       <div class="otd-d d-eq"><i class="bi bi-boxes"></i>
