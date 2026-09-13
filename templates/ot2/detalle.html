@@ -2150,6 +2150,73 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   border-radius:9px;border:1px solid #d1d5db;background:#fff;color:#0f172a;
   font-family:inherit}
 .otd-rev select:disabled{opacity:.6}
+/* 🔭 Levantamiento en terreno (2026-09-13) -- lenguaje de Retiros: tarjetas,
+   semáforo en la franja izquierda, nombres completos (REGLA #15). */
+.otd-d.d-lev{--dc:#fca5a5}
+.otd-lev-hdr-alerta{font-size:.68rem;color:#fbbf24;font-weight:900;margin-left:4px}
+.otd-lev-est{font-size:.62rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;
+  border-radius:999px;padding:3px 9px;margin-left:8px}
+.otd-lev-est.ok{background:#dcfce7;color:#15803d}
+.otd-lev-est.go{background:#fee2e2;color:#b91c1c;animation:otdLevPulso 1.6s ease-in-out infinite}
+@keyframes otdLevPulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.35)}50%{box-shadow:0 0 0 6px rgba(220,38,38,0)}}
+.otd-lev-res{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;
+  padding:12px 16px;border-bottom:1px solid var(--line)}
+.otd-lev-kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:9px 11px;
+  display:flex;flex-direction:column;gap:2px;min-width:0}
+.otd-lev-kpi b{font-size:1.35rem;font-weight:900;color:#0a0a0a;line-height:1;font-variant-numeric:tabular-nums}
+.otd-lev-kpi span{font-size:.64rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+.otd-lev-kpi.ok{background:#f0fdf4;border-color:#bbf7d0}.otd-lev-kpi.ok b{color:#15803d}
+.otd-lev-kpi.warn{background:#fffbeb;border-color:#fde68a}.otd-lev-kpi.warn b{color:#b45309}
+.otd-lev-kpi.bad{background:#fef2f2;border-color:#fecaca}.otd-lev-kpi.bad b{color:#b91c1c}
+.otd-lev-aviso{display:flex;gap:10px;align-items:flex-start;padding:10px 16px;
+  background:#fffbeb;border-bottom:1px solid #fde68a;color:#78350f;font-size:.8rem;line-height:1.4}
+.otd-lev-aviso i{color:#d97706;font-size:1rem;flex:none;margin-top:1px}
+.otd-lev-filtros{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 16px;
+  border-bottom:1px solid var(--line)}
+.otd-lev-filtros button{min-height:32px;border-radius:999px;border:1px solid #d1d5db;background:#fff;
+  color:#374151;font-size:.72rem;font-weight:800;padding:4px 11px;cursor:pointer;font-family:inherit}
+.otd-lev-filtros button.on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.otd-lev-filtros button span{opacity:.7;font-weight:700}
+.otd-lev-filtros input{margin-left:auto;min-height:36px;font-size:16px;padding:6px 11px;
+  border:1px solid #d1d5db;border-radius:9px;min-width:180px;flex:1 1 180px;max-width:320px;font-family:inherit}
+.otd-lev-lista{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;
+  padding:12px 16px;max-height:min(64vh,640px);overflow-y:auto}
+.otd-lev-it{display:flex;gap:12px;align-items:flex-start;background:#fff;border:1.5px solid #e5e7eb;
+  border-left:4px solid #16a34a;border-radius:12px;padding:11px 13px;min-height:76px;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);transition:box-shadow .15s,transform .15s}
+.otd-lev-it:hover{box-shadow:0 4px 14px rgba(0,0,0,.08);transform:translateY(-1px)}
+.otd-lev-it.warn{border-left-color:#f59e0b}
+.otd-lev-it.bad{border-left-color:#dc2626}
+.otd-lev-it.gris{border-left-color:#9ca3af;opacity:.85}
+.otd-lev-it .ph{width:60px;height:60px;border-radius:9px;flex:none;overflow:hidden;background:#f3f4f6;
+  display:grid;place-items:center;color:#c7cbd1;font-size:1.3rem;position:relative}
+.otd-lev-it .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.otd-lev-it .ph .mas{position:absolute;right:2px;bottom:2px;background:rgba(10,10,10,.8);color:#fff;
+  font-size:.6rem;font-weight:900;border-radius:6px;padding:1px 5px}
+.otd-lev-it .inf{flex:1;min-width:0}
+.otd-lev-it .inf b.nm{display:block;font-size:.88rem;color:#0a0a0a;font-weight:800;
+  overflow-wrap:break-word;white-space:normal;line-height:1.25}
+.otd-lev-it .inf small{display:block;font-size:.7rem;color:#6b7280;margin-top:3px;
+  font-variant-numeric:tabular-nums;overflow-wrap:break-word;white-space:normal}
+.otd-lev-it .inf small.dano{color:#b91c1c;font-weight:700}
+.otd-lev-it .inf small.obs{color:#374151}
+.otd-lev-bd{display:inline-block;font-size:.58rem;font-weight:900;letter-spacing:.05em;
+  text-transform:uppercase;border-radius:999px;padding:2px 7px;margin-left:5px;vertical-align:middle}
+.otd-lev-bd.dano{background:#fee2e2;color:#b91c1c}
+.otd-lev-bd.fs{background:#fff8e1;color:#a16207}
+.otd-lev-bd.noesta{background:#f3f4f6;color:#6b7280}
+.otd-lev-bd.sinficha{background:#fee2e2;color:#b91c1c}
+.otd-lev-bd.borr{background:#ede9fe;color:#6d28d9}
+.otd-lev-bd.ficha{background:#dcfce7;color:#15803d}
+.otd-lev-it .inf a{color:#dc2626;font-weight:800;text-decoration:none}
+.otd-lev-it .inf a:hover{text-decoration:underline}
+.otd-lev-galeria{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.otd-lev-galeria a{width:44px;height:44px;border-radius:7px;overflow:hidden;background:#f3f4f6;display:block}
+.otd-lev-galeria a img{width:100%;height:100%;object-fit:cover;display:block}
+@media (max-width:640px){
+  .otd-lev-lista{grid-template-columns:1fr;max-height:none;overflow:visible}
+  .otd-lev-filtros input{margin-left:0;max-width:none}
+}
 </style>
 
 <div class="ot2 otd">
@@ -2308,9 +2375,31 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <div class="otd-d d-eq"><i class="bi bi-boxes"></i>
         <div class="in"><span class="k">Equipos</span>
           <span class="v">{{ kpis.equipos_listos }}/{{ kpis.equipos }}</span></div></div>
+      {#- 🔭 2026-09-13 (Daniel, OT-2026-00158: "no está mostrando el
+          resultado en las OT 2.0"). Un levantamiento vive en
+          mant_levantamiento_items, no en el checklist: este chip es lo que
+          hace visible desde el header cuántos equipos se capturaron. Se
+          AGREGA junto a "Equipos" (que sigue contando el checklist) -- no lo
+          reemplaza. Clic -> baja a la sección del levantamiento. -#}
+      {% if lev and lev.n %}
+      <div class="otd-d d-lev" role="button" tabindex="0"
+           onclick="otdLevIr()" onkeydown="if(event.key==='Enter')otdLevIr()"
+           title="Levantamiento en terreno: {{ lev.n }} equipo{{ '' if lev.n == 1 else 's' }} capturado{{ '' if lev.n == 1 else 's' }} · {{ lev.en_ficha }} ya en la ficha del cliente{% if lev.huerfanos %} · {{ lev.huerfanos }} sin materializar{% endif %}{% if lev.borradores %} · {{ lev.borradores }} en borrador{% endif %}">
+        <i class="bi bi-binoculars-fill"></i>
+        <div class="in"><span class="k">Levantamiento</span>
+          <span class="v">{{ lev.n }} equipos{% if lev.huerfanos or lev.borradores %} <span class="otd-lev-hdr-alerta" title="{{ lev.huerfanos + lev.borradores }} sin llegar a la ficha">⚠ {{ lev.huerfanos + lev.borradores }}</span>{% endif %}</span></div></div>
+      {% endif %}
       <div class="otd-d d-fot"><i class="bi bi-camera-fill"></i>
         <div class="in"><span class="k">Fotos</span>
-          <span class="v">{{ kpis.fotos }}</span></div></div>
+          {#- Las fotos del levantamiento SON fotos de esta OT: "0" con 36
+              fotos sacadas por la técnica era mentir. El desglose va en el
+              tooltip para no perder la distinción. -#}
+          {% if lev and lev.fotos %}
+          <span class="v" title="{{ lev.fotos }} del levantamiento{% if kpis.fotos %} + {{ kpis.fotos }} de la OT{% endif %}">{{ kpis.fotos + lev.fotos }}</span>
+          {% else %}
+          <span class="v">{{ kpis.fotos }}</span>
+          {% endif %}
+        </div></div>
       <div class="otd-d d-ava"><i class="bi bi-check2-square"></i>
         <div class="in"><span class="k">Obligatorias</span>
           <span class="v" id="otdHdrOblV">{{ kpis.obl_ok }}/{{ kpis.obl }}</span></div></div>
@@ -4115,6 +4204,78 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      y Daniel la valida a fondo. #}
   <div class="otd-tabpanel" data-tab="trabajo">
 
+    {#- 🔭 LEVANTAMIENTO EN TERRENO -- 2026-09-13 (Daniel, OT-2026-00158:
+        "no está mostrando el resultado en las OT 2.0 ¿por qué será si ya el
+        levantamiento se realizó?").
+
+        Lo que Isabel capturó (34 equipos, 36 fotos) vivía solo en la
+        pantalla clásica ("Equipos descubiertos en terreno"). Acá se muestra
+        el RESULTADO completo: cada equipo con su foto, serie, estado
+        capturado, daño y si ya llegó a la ficha del cliente. Es lectura:
+        el levantamiento se captura en terreno y se congela al firmar
+        (misma regla de la clásica). Lo único accionable es "Reparar", que
+        llama al MISMO endpoint /rematerializar que ya existe, con el mismo
+        permiso (aprobar).
+
+        Va ANTES del checklist a propósito: en una OT de levantamiento esto
+        ES el trabajo; el checklist de abajo se conserva tal cual. -#}
+    {% if lev %}
+    <div class="otd-card otd-lev" id="otdLevCard"
+         data-lev-id="{{ lev.id }}" data-lev-n="{{ lev.n }}">
+      <h3><i class="bi bi-binoculars-fill"></i> Levantamiento en terreno
+        <span class="otd-lev-est {{ 'ok' if lev.estado == 'cerrado' else 'go' }}">
+          {{ 'Terminado' if lev.estado == 'cerrado' else 'En curso' }}</span>
+        {% if lev.huerfanos and lev.puede_reparar %}
+        <button type="button" class="edit" style="margin-left:auto" id="otdLevBtnReparar"
+                onclick="otdLevReparar()"
+                title="Vuelve a intentar crear en la ficha del cliente los equipos que quedaron sin materializar">
+          <i class="bi bi-tools"></i> Reparar {{ lev.huerfanos }} sin ficha</button>
+        {% endif %}
+      </h3>
+
+      <div class="otd-lev-res">
+        <div class="otd-lev-kpi"><b>{{ lev.n }}</b><span>equipo{{ '' if lev.n == 1 else 's' }} capturado{{ '' if lev.n == 1 else 's' }}</span></div>
+        <div class="otd-lev-kpi"><b>{{ lev.fotos }}</b><span>foto{{ '' if lev.fotos == 1 else 's' }}</span></div>
+        <div class="otd-lev-kpi ok"><b>{{ lev.en_ficha }}</b><span>en la ficha del cliente</span></div>
+        {% if lev.fuera %}<div class="otd-lev-kpi warn"><b>{{ lev.fuera }}</b><span>fuera de servicio</span></div>{% endif %}
+        {% if lev.con_dano %}<div class="otd-lev-kpi warn"><b>{{ lev.con_dano }}</b><span>con daño</span></div>{% endif %}
+        {% if lev.no_encontrados %}<div class="otd-lev-kpi"><b>{{ lev.no_encontrados }}</b><span>no estaba{{ '' if lev.no_encontrados == 1 else 'n' }}</span></div>{% endif %}
+        {% if lev.huerfanos %}<div class="otd-lev-kpi bad"><b>{{ lev.huerfanos }}</b><span>sin materializar</span></div>{% endif %}
+        {% if lev.borradores %}<div class="otd-lev-kpi bad"><b>{{ lev.borradores }}</b><span>en borrador</span></div>{% endif %}
+      </div>
+
+      {% if lev.huerfanos or lev.borradores %}
+      <div class="otd-lev-aviso">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <div>
+          {% if lev.huerfanos %}<b>{{ lev.huerfanos }} equipo{{ '' if lev.huerfanos == 1 else 's' }} no llegó a la ficha del cliente</b> (la serie chocó con una existente al crearlos).
+            {% if lev.puede_reparar %}Usa <b>Reparar</b>; si vuelve a fallar, el detalle queda en la actividad de la OT.{% else %}Gestión puede repararlo desde esta misma pantalla.{% endif %}{% endif %}
+          {% if lev.borradores %}{% if lev.huerfanos %}<br>{% endif %}<b>{{ lev.borradores }} en borrador</b>: se capturaron sin validar la ubicación GPS, así que no se crean en la ficha. Quedan acá como evidencia.{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if lev.n %}
+      <div class="otd-lev-filtros" id="otdLevFiltros">
+        <button type="button" class="on" data-f="todos" onclick="otdLevFiltro(this)">Todos <span id="otdLevFTodos"></span></button>
+        <button type="button" data-f="ficha" onclick="otdLevFiltro(this)">En la ficha</button>
+        {% if lev.fuera %}<button type="button" data-f="fuera" onclick="otdLevFiltro(this)">Fuera de servicio</button>{% endif %}
+        {% if lev.con_dano %}<button type="button" data-f="dano" onclick="otdLevFiltro(this)">Con daño</button>{% endif %}
+        {% if lev.huerfanos or lev.borradores %}<button type="button" data-f="sinficha" onclick="otdLevFiltro(this)">Sin ficha</button>{% endif %}
+        <input type="search" id="otdLevBuscar" placeholder="Buscar equipo o serie…" oninput="otdLevRender()" aria-label="Buscar en el levantamiento">
+      </div>
+      <div class="otd-lev-lista" id="otdLevLista">
+        <div class="otd-vacio"><i class="bi bi-hourglass-split"></i> Cargando el levantamiento…</div>
+      </div>
+      {% else %}
+      <div class="otd-vacio">
+        <i class="bi bi-binoculars"></i> Todavía no se captura ningún equipo en terreno.
+        {% if lev.estado != 'cerrado' %}El técnico los va agregando desde su pantalla de ejecución.{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <div class="otd-card" id="otdWkCard">
       {# 🔒 2026-09-03 — Aviso de OT sellada. Daniel, tras cerrar la
          OT-2026-00127: "todo tiene que quedar cerrado... es peligroso que
@@ -4826,6 +4987,181 @@ async function otdMarcarEstado(mid, sel){
     sel.disabled = false;
   }
 }
+
+/* 🔭 LEVANTAMIENTO EN TERRENO (2026-09-13) -- lectura del mismo endpoint que
+   usa la pantalla clásica (/mantenciones/api/levantamientos/<lid>), que ya
+   aplica _lev_puede_accion. Se pinta una tarjeta por equipo capturado; el
+   semáforo de la franja dice lo que importa a tres metros: verde = en la
+   ficha, ámbar = con daño / fuera de servicio, rojo = no llegó a la ficha,
+   gris = no estaba. */
+var _otdLevItems = null, _otdLevFiltroActual = 'todos', _otdLevCargando = false;
+
+function otdLevIr(){
+  var tab = document.querySelector('#otdTabs [data-tab="trabajo"]');
+  if (tab) tab.click();
+  var card = document.getElementById('otdLevCard');
+  if (card) setTimeout(function(){ card.scrollIntoView({behavior:'smooth', block:'start'}); }, 80);
+}
+
+async function otdLevCargar(){
+  var card = document.getElementById('otdLevCard');
+  if (!card || _otdLevCargando) return;
+  var lid = card.dataset.levId;
+  if (!lid || !(parseInt(card.dataset.levN || '0', 10) > 0)) return;
+  _otdLevCargando = true;
+  try {
+    var r = await fetch('/mantenciones/api/levantamientos/' + lid, {credentials:'same-origin'});
+    var j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){
+      var l0 = document.getElementById('otdLevLista');
+      if (l0) l0.innerHTML = '<div class="otd-vacio"><i class="bi bi-wifi-off"></i> ' +
+        otdEsc((j && j.error) || 'No se pudo cargar el levantamiento.') + '</div>';
+      return;
+    }
+    _otdLevItems = (j.items || []).filter(function(it){
+      return (it.nombre_snap || '').trim() || it.estado_capturado === 'no_encontrado';
+    });
+    otdLevRender();
+  } catch(e){
+    var l1 = document.getElementById('otdLevLista');
+    if (l1) l1.innerHTML = '<div class="otd-vacio"><i class="bi bi-wifi-off"></i> Sin conexión: no se pudo cargar el levantamiento.</div>';
+  } finally {
+    _otdLevCargando = false;
+  }
+}
+
+function _otdLevClasif(it){
+  // Devuelve {sem, etiquetas[]} -- una sola fuente para el color y las pastillas.
+  var et = [], sem = 'ok';
+  var noEsta = (it.estado_capturado === 'no_encontrado');
+  var fs = ['fuera_servicio','en_reparacion','dado_baja'].indexOf(it.estado_capturado || '') >= 0;
+  var dano = !!(it.anomalias || '').trim();
+  var borr = !!it.es_borrador;
+  var sinFicha = !it.maquina_id && !borr && !noEsta;
+  if (noEsta){ sem = 'gris'; et.push(['noesta','No estaba']); }
+  else {
+    if (dano) et.push(['dano','Daño']);
+    if (fs) et.push(['fs', it.estado_label || 'Fuera de servicio']);
+    if (borr) et.push(['borr','Borrador']);
+    if (sinFicha) et.push(['sinficha','Sin ficha']);
+    if (it.maquina_id) et.push(['ficha','En la ficha']);
+    if (borr || sinFicha) sem = 'bad';
+    else if (dano || fs) sem = 'warn';
+  }
+  return {sem: sem, et: et, noEsta: noEsta, fs: fs, dano: dano, borr: borr, sinFicha: sinFicha};
+}
+
+function otdLevFiltro(btn){
+  _otdLevFiltroActual = btn.dataset.f || 'todos';
+  document.querySelectorAll('#otdLevFiltros button').forEach(function(b){ b.classList.toggle('on', b === btn); });
+  otdLevRender();
+}
+
+function otdLevRender(){
+  var lista = document.getElementById('otdLevLista');
+  if (!lista || !_otdLevItems) return;
+  var q = ((document.getElementById('otdLevBuscar') || {}).value || '').trim().toLowerCase();
+  var tot = document.getElementById('otdLevFTodos');
+  if (tot) tot.textContent = '(' + _otdLevItems.length + ')';
+  var vis = _otdLevItems.filter(function(it){
+    var c = _otdLevClasif(it);
+    if (_otdLevFiltroActual === 'ficha' && !it.maquina_id) return false;
+    if (_otdLevFiltroActual === 'fuera' && !c.fs) return false;
+    if (_otdLevFiltroActual === 'dano' && !c.dano) return false;
+    if (_otdLevFiltroActual === 'sinficha' && !(c.sinFicha || c.borr)) return false;
+    if (q){
+      var hay = [it.nombre_snap, it.serie_snap, it.sku_snap, it.ubicacion, it.observaciones, it.anomalias]
+        .join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  if (!vis.length){
+    lista.innerHTML = '<div class="otd-vacio"><i class="bi bi-search"></i> Ningún equipo calza con ese filtro.</div>';
+    return;
+  }
+  lista.innerHTML = vis.map(function(it, idx){
+    var c = _otdLevClasif(it);
+    var fotos = it.fotos || [];
+    var f0 = fotos.length ? fotos[0].url : '';
+    var ph = f0
+      ? '<a class="ph" href="' + otdEsc(f0) + '" target="_blank" rel="noopener" title="Abrir foto">' +
+          '<img src="' + otdEsc(f0) + '" alt="" loading="lazy">' +
+          (fotos.length > 1 ? '<span class="mas">+' + (fotos.length - 1) + '</span>' : '') + '</a>'
+      : '<div class="ph"><i class="bi bi-camera"></i></div>';
+    var meta = [];
+    if (it.serie_snap) meta.push('Serie ' + otdEsc(it.serie_snap));
+    if (it.sku_snap) meta.push('SKU ' + otdEsc(it.sku_snap));
+    meta.push(fotos.length + ' foto' + (fotos.length === 1 ? '' : 's'));
+    if (it.doc_origen) meta.push('🧾 ' + otdEsc(it.doc_origen));
+    if (it.ubicacion) meta.push('📍 ' + otdEsc(it.ubicacion));
+    var galeria = fotos.length > 1
+      ? '<div class="otd-lev-galeria">' + fotos.slice(1, 7).map(function(f){
+          return '<a href="' + otdEsc(f.url) + '" target="_blank" rel="noopener"><img src="' + otdEsc(f.url) + '" alt="" loading="lazy"></a>';
+        }).join('') + '</div>'
+      : '';
+    var ficha = it.maquina_id
+      ? '<small><a href="/servicio-tecnico/maquinas/' + parseInt(it.maquina_id, 10) + '" target="_blank" rel="noopener">' +
+          '<i class="bi bi-box-arrow-up-right"></i> Ver ficha del equipo</a></small>'
+      : '';
+    var quien = it.created_at ? '<small>' + otdEsc(it.created_at) +
+      (it.modificado_por ? ' · editado por ' + otdEsc(it.modificado_por) : '') + '</small>' : '';
+    return '<div class="otd-lev-it ' + c.sem + '">' + ph +
+      '<div class="inf">' +
+        '<b class="nm">' + (idx + 1) + '. ' + otdEsc(it.nombre_snap || (c.noEsta ? 'Equipo no encontrado' : 'Equipo')) +
+          c.et.map(function(e){ return '<span class="otd-lev-bd ' + e[0] + '">' + otdEsc(e[1]) + '</span>'; }).join('') +
+        '</b>' +
+        '<small>' + meta.join(' · ') + '</small>' +
+        ((it.observaciones || '').trim() ? '<small class="obs">' + otdEsc(it.observaciones.trim()) + '</small>' : '') +
+        (c.dano ? '<small class="dano">Daño: ' + otdEsc(it.anomalias.trim()) + '</small>' : '') +
+        galeria + ficha + quien +
+      '</div></div>';
+  }).join('');
+}
+
+async function otdLevReparar(){
+  var card = document.getElementById('otdLevCard');
+  var btn = document.getElementById('otdLevBtnReparar');
+  if (!card || !btn) return;
+  var ok = await ilusConfirm({
+    title: 'Reparar equipos sin ficha',
+    message: 'Vuelvo a intentar crear en la ficha del cliente los equipos del levantamiento que quedaron sin materializar.',
+    sub: 'No toca los que ya están en la ficha ni los que están en borrador.',
+    okLabel: 'Reparar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    var r = await fetch('/mantenciones/api/levantamientos/' + card.dataset.levId + '/rematerializar', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:'{}'
+    });
+    var j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo reparar.', {type:'error'});
+      return;
+    }
+    if (j.creados){
+      ilusToast('✓ ' + j.creados + ' equipo' + (j.creados === 1 ? '' : 's') + ' creado' + (j.creados === 1 ? '' : 's') +
+        ' en la ficha' + (j.errores ? ' · ' + j.errores + ' siguen fallando' : ''), {type: j.errores ? 'warning' : 'success'});
+      setTimeout(function(){ location.reload(); }, 1200);
+    } else if (j.errores){
+      await ilusAlert({
+        title: 'Siguen sin poder crearse',
+        message: j.errores + ' equipo' + (j.errores === 1 ? '' : 's') + ' volvi' + (j.errores === 1 ? 'ó' : 'eron') + ' a fallar.',
+        sub: 'El motivo exacto queda en la actividad de la OT. Si el equipo ya existe en la ficha del cliente con otra serie, no hace falta repararlo: está duplicado, no perdido.',
+        type: 'warning',
+      });
+    } else {
+      ilusToast(j.mensaje || 'No había nada pendiente de reparar.', {type:'info'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al reparar.', {type:'error'});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', otdLevCargar);
 
 async function otdObsGuardar(mid, ta){
   var est = document.getElementById('otdObsEstado-' + mid);

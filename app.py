@@ -59370,6 +59370,11 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
 
         user = usuario or "sistema"
         doc_origen = f"Levantamiento {v.get('numero_ot') or ('#' + str(lev_id))}"[:80]
+        # Series que ESTE recorrido ya insertó: la conexión pooleada que lee
+        # `usados` en _generar_serie_ilus puede no verlas aún (snapshot
+        # REPEATABLE READ), y dos items del mismo modelo terminaban
+        # chocando entre sí dentro del mismo cierre.
+        _series_propias = set()
         for it in items:
             # ══ CLAIM ATÓMICO v2 (2026-07-10) ═══════════════════════════
             # v1 (2026-07-08) reclamaba el item ANTES de crear la máquina
@@ -59464,13 +59469,35 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                             # instancias concurrentes (ej. boot en frío del
                             # backfill). Reintenta UNA vez con serie generada
                             # en vez de perder el equipo silenciosamente.
-                            if "uq_cliente_serie" in str(_e_ins):
-                                serie = _generar_serie_ilus(cid, sku or "", _intento=1)
-                                vals[cols.index("serie")] = serie
-                                cur.execute(insert_sql, tuple(vals))
-                            else:
+                            if "uq_cliente_serie" not in str(_e_ins):
                                 raise
+                            # 🔴 2026-09-13 (OT-2026-00158): UN solo reintento no
+                            # bastaba -- tres items de esa OT nacieron con la
+                            # MISMA serie sugerida (LEV333-014) y el reintento
+                            # aleatorio chocaba una y otra vez. Hasta 3 intentos,
+                            # cada uno esquivando lo ocupado y lo que este mismo
+                            # recorrido ya insertó. Si aun así choca, el item
+                            # queda huérfano y reintentable, como antes.
+                            _ins_ok = False
+                            for _intento_serie in (1, 2, 3):
+                                serie = _generar_serie_ilus(cid, sku or "",
+                                                            _intento=_intento_serie,
+                                                            evitar=_series_propias)
+                                vals[cols.index("serie")] = serie
+                                try:
+                                    cur.execute(insert_sql, tuple(vals))
+                                    _ins_ok = True
+                                    break
+                                except Exception as _e_re:
+                                    if "uq_cliente_serie" not in str(_e_re):
+                                        raise
+                                    print(f"[lev_materializar] vid={vid} item={it['id']} "
+                                          f"serie {serie} ocupada (intento {_intento_serie})",
+                                          flush=True)
+                            if not _ins_ok:
+                                raise _e_ins
                         mid_new = cur.lastrowid
+                        _series_propias.add(serie)
                         # CLAIM: el item apunta a la máquina nueva SOLO si
                         # sigue sin materializar (maquina_id IS NULL). Si
                         # otra instancia ganó la carrera → rowcount=0 →
@@ -65186,10 +65213,16 @@ def mant_cliente_delete(cid):
 
 # ── MÁQUINAS ──────────────────────────────────────────────────────────
 
-def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0) -> str:
+def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0,
+                        evitar=None) -> str:
     """
     Genera un N° Serie único para un equipo físico cuando el fabricante no
     proporciona uno.
+
+    `evitar` (2026-09-13): series que el caller YA insertó en este mismo
+    proceso y que la lectura de `usados` puede no ver todavía (la conexión
+    pooleada por-request congela su snapshot en la primera lectura —
+    REPEATABLE READ, ver _next_ot_number). Se tratan como ocupadas.
 
     Formato amigable: {RUT}-{SKU4}-{n}
       RUT  = RUT del cliente sin DV ni puntos (ej: 65206047)
@@ -65232,13 +65265,24 @@ def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0) -> str:
         suf = (r.get("serie") or "").rsplit("-", 1)[-1]
         try: usados.add(int(suf))
         except Exception: pass
+    evitar = set(evitar or ())
     seq = 1
-    while seq in usados:
+    while seq in usados or f"{base}-{seq}" in evitar:
         seq += 1
     # Si es reintento por colisión concurrente, agregar offset aleatorio para
     # evitar volver a chocar con el mismo número que otro worker eligió
     if _intento > 0:
         seq += random.randint(_intento, _intento * 10)
+        # 🔴 FIX 2026-09-13 (OT-2026-00158, Gymathius): el offset aleatorio
+        # se sumaba al PRIMER libre sin volver a mirar `usados`. Caso real: el
+        # cliente tenía AUTO-2..AUTO-11 y AUTO-1 libre -> seq=1, y el reintento
+        # caía SIEMPRE en 2..11, todos ocupados. Aarón apretó "rematerializar"
+        # 20 veces y las 20 fallaron con Duplicate entry, con AUTO-1 libre
+        # todo el rato. Tras el offset se vuelve a saltar lo ocupado: el azar
+        # sigue separando a dos workers concurrentes, pero ya no puede
+        # aterrizar en una serie que YA sabemos tomada.
+        while seq in usados or f"{base}-{seq}" in evitar:
+            seq += 1
     return f"{base}-{seq}"
 
 
@@ -80092,9 +80136,73 @@ def ot2_detalle(vid):
         for e in equipos
     }
 
+    # 🔭 2026-09-13 (Daniel, OT-2026-00158: "no está mostrando el resultado
+    # en las OT 2.0 ¿por qué será si ya el levantamiento se realizó?").
+    # Esta pantalla nunca miró mant_levantamiento_items: la pestaña Trabajo
+    # nace de mant_maquinas + checklist, y las fotos del levantamiento viven
+    # en mant_levantamiento_fotos. Un levantamiento hecho y firmado (34
+    # equipos, 36 fotos) se veía como "0/23 · 0 % · 0 fotos". Acá va el
+    # RESUMEN (chips del header y cabecera de la sección); el detalle por
+    # equipo lo carga el navegador desde /mantenciones/api/levantamientos/
+    # <lid>, el mismo endpoint (y el mismo _lev_puede_accion) que ya usa la
+    # pantalla clásica. Nada de esto toca el checklist ni los KPIs de
+    # siempre: se agrega, no se reemplaza.
+    lev = None
+    try:
+        _lev_id_det = _ot_levantamiento_de(v)
+        if _lev_id_det:
+            _lr = mysql_fetchone(
+                "SELECT id, estado, fecha_cierre, closed_by "
+                "  FROM mant_levantamientos WHERE id=%s", (_lev_id_det,)) or {}
+            _sql_li = (
+                "SELECT COUNT(*) AS n, "
+                "       SUM(CASE WHEN maquina_id IS NOT NULL THEN 1 ELSE 0 END) AS en_ficha, "
+                "       SUM(CASE WHEN COALESCE(es_borrador,0)=1 THEN 1 ELSE 0 END) AS borradores, "
+                "       SUM(CASE WHEN COALESCE(estado_capturado,'')='no_encontrado' THEN 1 ELSE 0 END) AS no_encontrados, "
+                "       SUM(CASE WHEN maquina_id IS NULL AND COALESCE(es_borrador,0)=0 "
+                "                 AND COALESCE(estado_capturado,'')<>'no_encontrado' THEN 1 ELSE 0 END) AS huerfanos, "
+                "       SUM(CASE WHEN COALESCE(estado_capturado,'') IN ('fuera_servicio','en_reparacion','dado_baja') THEN 1 ELSE 0 END) AS fuera, "
+                "       SUM(CASE WHEN COALESCE(anomalias,'')<>'' THEN 1 ELSE 0 END) AS con_dano "
+                "  FROM mant_levantamiento_items "
+                " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'')<>''"
+            )
+            try:
+                _li = mysql_fetchone(_sql_li, (_lev_id_det,)) or {}
+            except Exception as _e_li:
+                # Prod con ILUS_SKIP_MIGRATIONS=1 puede no tener es_borrador
+                # todavía en algún proceso -- mismo fallback que el
+                # materializador. Sin la columna, nada está en borrador.
+                if "es_borrador" not in str(_e_li).lower():
+                    raise
+                _li = mysql_fetchone(
+                    _sql_li.replace("COALESCE(es_borrador,0)", "0"), (_lev_id_det,)) or {}
+            _lf = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_levantamiento_fotos "
+                " WHERE levantamiento_id=%s", (_lev_id_det,)) or {}
+            lev = {
+                "id": _lev_id_det,
+                "estado": _lr.get("estado") or "",
+                "cerrado_at": _lr.get("fecha_cierre"),
+                "n": int(_li.get("n") or 0),
+                "en_ficha": int(_li.get("en_ficha") or 0),
+                "borradores": int(_li.get("borradores") or 0),
+                "no_encontrados": int(_li.get("no_encontrados") or 0),
+                "huerfanos": int(_li.get("huerfanos") or 0),
+                "fuera": int(_li.get("fuera") or 0),
+                "con_dano": int(_li.get("con_dano") or 0),
+                "fotos": int(_lf.get("n") or 0),
+                # Reparar = el mismo permiso que ya exige el endpoint
+                # /rematerializar (aprobar). El botón no inventa un permiso.
+                "puede_reparar": bool(puede_aprobar),
+            }
+    except Exception as _e_lev_det:
+        print(f"[ot2_detalle] resumen levantamiento vid={vid}: {_e_lev_det}", flush=True)
+        lev = None
+
     return render_template(
         "ot2/detalle.html",
         v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
+        lev=lev,
         equipos_serie_map=equipos_serie_map,
         # 2026-09-02 — ver el bloque `equipos_ocultos_baja` más arriba:
         # distingue "esta OT nunca tuvo equipos" de "sus equipos están
@@ -91588,7 +91696,14 @@ def mant_ot_ejecutar(vid):
     # 4 cards (una por equipo) con su tarea base de captura de fotos.
     # Idempotente: solo inserta si COUNT==0.
     # ════════════════════════════════════════════════════════════════
-    if _lev_id:
+    # 🔴 FIX 2026-09-13 (OT-2026-00158, Gymathius): esta red existe para
+    # destrabar a un técnico que ABRE la OT y no tiene checklist. Corría
+    # también sobre una OT ya firmada: Aarón abrió la 158 dos horas después
+    # de que Isabel firmara, y se crearon 23 tareas "Documentar"
+    # obligatorias y pendientes sobre trabajo ya terminado -- OT 2.0 y el
+    # monitor pasaron a mostrar 0 % y 0/23 para siempre. Solo aplica
+    # mientras la OT sigue en un estado en que todavía se ejecuta.
+    if _lev_id and (visita.get("estado") in _LEV_ESTADOS_EDITABLES):
         try:
             _has_tareas = mysql_fetchone(
                 "SELECT COUNT(*) AS n FROM mant_visita_tareas WHERE visita_id=%s",
