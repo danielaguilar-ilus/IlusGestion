@@ -2387,7 +2387,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
            title="Levantamiento en terreno: {{ lev.n }} equipo{{ '' if lev.n == 1 else 's' }} capturado{{ '' if lev.n == 1 else 's' }} · {{ lev.en_ficha }} ya en la ficha del cliente{% if lev.huerfanos %} · {{ lev.huerfanos }} sin materializar{% endif %}{% if lev.borradores %} · {{ lev.borradores }} en borrador{% endif %}">
         <i class="bi bi-binoculars-fill"></i>
         <div class="in"><span class="k">Levantamiento</span>
-          <span class="v">{{ lev.n }} equipos{% if lev.huerfanos or lev.borradores %} <span class="otd-lev-hdr-alerta" title="{{ lev.huerfanos + lev.borradores }} sin llegar a la ficha">⚠ {{ lev.huerfanos + lev.borradores }}</span>{% endif %}</span></div></div>
+          <span class="v">{{ lev.n }} eq.{% if lev.huerfanos or lev.borradores %} <span class="otd-lev-hdr-alerta" title="{{ lev.huerfanos + lev.borradores }} sin llegar a la ficha">⚠{{ lev.huerfanos + lev.borradores }}</span>{% endif %}</span></div></div>
       {% endif %}
       <div class="otd-d d-fot"><i class="bi bi-camera-fill"></i>
         <div class="in"><span class="k">Fotos</span>
@@ -4248,7 +4248,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <div class="otd-lev-aviso">
         <i class="bi bi-exclamation-triangle-fill"></i>
         <div>
-          {% if lev.huerfanos %}<b>{{ lev.huerfanos }} equipo{{ '' if lev.huerfanos == 1 else 's' }} no llegó a la ficha del cliente</b> (la serie chocó con una existente al crearlos).
+          {% if lev.huerfanos %}<b>{{ lev.huerfanos }} equipo{{ '' if lev.huerfanos == 1 else 's' }} no {{ 'llegó' if lev.huerfanos == 1 else 'llegaron' }} a la ficha del cliente</b> (la serie chocó con una existente al crearlos).
             {% if lev.puede_reparar %}Usa <b>Reparar</b>; si vuelve a fallar, el detalle queda en la actividad de la OT.{% else %}Gestión puede repararlo desde esta misma pantalla.{% endif %}{% endif %}
           {% if lev.borradores %}{% if lev.huerfanos %}<br>{% endif %}<b>{{ lev.borradores }} en borrador</b>: se capturaron sin validar la ubicación GPS, así que no se crean en la ficha. Quedan acá como evidencia.{% endif %}
         </div>
