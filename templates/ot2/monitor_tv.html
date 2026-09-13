@@ -1870,9 +1870,11 @@
     // interno"). Sin esto, una OT interna mostraba "Firma cliente" en
     // gris con un guion para siempre (nadie iba a firmarla nunca) o, peor,
     // marcada "hecha" sin que nadie hubiera firmado nada -- ver el punto
-    // (*) mas abajo. `b.es_interna` ya viaja en el payload desde antes
-    // (_ot_tv_datos), solo faltaba que este stepper lo mirara.
-    const esInterna = !!b.es_interna;
+    // (*) mas abajo. El dato ya viaja en el payload desde antes
+    // (_ot_tv_datos), pero anidado dentro de `doc_cierre` (que solo llega
+    // poblado en esta pantalla de control, incluir_finanzas=True) -- NO
+    // en la raiz del bloque como un campo `es_interna` suelto.
+    const esInterna = !!(b.doc_cierre && b.doc_cierre.es_interna);
     const etapas = esInterna ? ETAPAS_OT.filter(e => e.key !== 'f_cliente') : ETAPAS_OT;
     let etapaAct = _etapaActualOt(b);
     // (*) _etapaActualOt() devuelve el INDICE dentro de ETAPAS_OT (5
@@ -2908,7 +2910,9 @@
         const precio = Number(b.precio || 0);
         const fin = el('div', 'tvm-ot-fin');
         const fmt = (n) => '$' + Math.round(n).toLocaleString('es-CL');
-        if (b.es_interna){
+        // `es_interna` viaja anidado en doc_cierre (ver el mismo fix en
+        // renderEtapas más arriba) -- no como campo suelto del bloque.
+        if (b.doc_cierre && b.doc_cierre.es_interna){
           // 🔧 2026-09-13 (Daniel: "aplicar la misma regla que ya usa la
           // ficha de la OT"). Un trabajo interno no vende nada -- el monto
           // es un costo ESTIMADO de bodega, solo para valorizacion interna
