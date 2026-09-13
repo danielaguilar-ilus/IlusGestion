@@ -1131,10 +1131,13 @@
     body.interactivo .tl-bloque:hover{box-shadow:0 0 0 2.5px rgba(220,38,38,.55), var(--shadow-md)}
 
     /* ── Modal de detalle — mismo mundo visual (tarjeta oscura elevada
-         + banda de cabecera receta .form-head). Vive DENTRO de #stage
-         para heredar la escala del televisor/preview. ── */
+         + banda de cabecera receta .form-head). Vive FUERA de #stage
+         (ver asegurarModal): es la unica pieza interactiva de esta
+         pantalla, y el lienzo de 1920x1080 escalado para el televisor la
+         encogia en cualquier notebook (0.6-0.7x), dejando texto y
+         botones bajo el tamano legible/tactil real. 🔧 2026-09-13. ── */
     .tvm{
-      position:absolute;inset:0;z-index:80;
+      position:fixed;inset:0;z-index:80;
       display:flex;align-items:center;justify-content:center;
     }
     .tvm[hidden]{display:none}
@@ -1188,6 +1191,10 @@
     .tvm-lista{
       flex:1;min-height:0;overflow-y:auto;
       padding:18px 26px;display:flex;flex-direction:column;gap:12px;
+      /* 🆕 2026-09-13: la ultima tarjeta se cortaba seca contra el borde
+         sin ningun aviso de que seguia mas abajo. */
+      mask-image:linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+      -webkit-mask-image:linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
     }
     .tvm-lista .tvm-nada{font-size:16px;font-weight:600;font-style:italic;color:var(--txt-3);padding:12px 4px}
     .tvm-ot{
@@ -1208,9 +1215,14 @@
       font-size:14px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
       padding:2px 10px;border-radius:50px;border:1.5px solid transparent;
     }
+    /* 🆕 2026-09-13: mismo punto de color que el badge de la persona
+       (.p-badge i) -- antes eran dos formas distintas para el mismo dato. */
+    .tvm-ot-chip i{width:8px;height:8px;border-radius:50%;flex:none;background:currentColor}
+    .tvm-ot-md{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18);color:#cbd5e1}
     .tvm-ot-horas{margin-left:auto;font-size:16px;font-weight:800;color:var(--txt-2);white-space:nowrap}
-    .tvm-ot-cli{margin-top:6px;font-size:19px;font-weight:800;color:var(--ink);letter-spacing:-.01em}
-    .tvm-ot-dir{margin-top:2px;font-size:15px;font-weight:600;color:var(--txt-3)}
+    .tvm-ot-cli{margin-top:6px;font-size:19px;font-weight:800;color:var(--ink);letter-spacing:-.01em;overflow-wrap:anywhere}
+    .tvm-ot-dir{margin-top:2px;font-size:15px;font-weight:600;color:var(--txt-3);overflow-wrap:anywhere;display:flex;gap:6px;align-items:flex-start}
+    .tvm-ot-comuna-nota{margin-top:2px;font-size:11.5px;font-weight:600;color:var(--txt-4)}
     /* 2026-08-31 (Daniel: "las lucas" -- solo pantalla de control) */
     /* 🔉 2026-09-03 (Daniel: "los costos no son tan importantes ahí por
        esta vez"). Antes competía en peso con el documento y el avance:
@@ -1231,9 +1243,15 @@
     .tvm-ot.o-ejecutando .av-bar i{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
     .tvm-ot.o-pendiente::before{background:#94a3b8}
     .tvm-ot.o-pendiente .tvm-ot-chip{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.16);color:#9ca3af}
-    .tvm-ot.o-terminado::before{background:rgba(96,165,250,.75)}
-    .tvm-ot.o-terminado .tvm-ot-chip{background:rgba(59,130,246,.13);border-color:rgba(96,165,250,.42);color:#93c5fd}
-    .tvm-ot.o-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),#60a5fa)}
+    /* 🔧 2026-09-13: TERMINADO paso a verde en toda la pantalla el
+       2026-08-27 (Daniel: "el azul leia como informativo, no como
+       logrado") -- .estado-terminado (persona), .tl-bloque.b-terminado y
+       .cd-ot.e-terminado ya se movieron entonces; esta tarjeta se creo un
+       dia antes y quedo con la paleta azul vieja por descuido. Mismos
+       valores que .estado-terminado. */
+    .tvm-ot.o-terminado::before{background:rgba(74,222,128,.62)}
+    .tvm-ot.o-terminado .tvm-ot-chip{background:rgba(22,163,74,.16);border-color:rgba(74,222,128,.4);color:#86efac}
+    .tvm-ot.o-terminado .av-bar i{background:linear-gradient(90deg,#15803d,#4ade80)}
     .tvm-ot.o-atrasado::before{background:var(--amber-500)}
     .tvm-ot.o-atrasado .tvm-ot-chip{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);color:#fbbf24}
     .tvm-ot.o-atrasado .av-bar i{background:linear-gradient(90deg,#b45309,var(--amber-500))}
@@ -1474,15 +1492,23 @@
       border:1px solid rgba(74,222,128,.5);color:#86efac;
     }
     /* Acciones por OT dentro del modal (solo pantalla de control) */
-    .tvm-ot-acc{display:flex;align-items:center;gap:7px;margin-top:12px;flex-wrap:wrap;
+    .tvm-ot-acc{display:flex;align-items:center;gap:0;margin-top:12px;flex-wrap:wrap;
       padding-top:11px;border-top:1px solid var(--line-1)}
+    /* 🆕 2026-09-13: los 4 botones de reagendar se agrupan bajo un
+       rotulo, como un solo control segmentado, en vez de 4 botones
+       sueltos al mismo peso que "Abrir OT". */
+    .tvm-acc-k{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+      color:var(--txt-4);font-weight:800;margin-right:8px}
     .tvm-ot-acc button{
       cursor:pointer;border:1px solid var(--line-2);background:rgba(255,255,255,.05);
-      color:var(--txt-2);border-radius:9px;padding:6px 13px;font-size:14px;font-weight:800;
+      color:var(--txt-2);border-radius:0;margin-left:-1px;padding:6px 13px;font-size:14px;font-weight:800;
       transition:background .15s,color .15s,border-color .15s;
     }
+    .tvm-ot-acc button:first-of-type{border-radius:9px 0 0 9px;margin-left:0}
+    .tvm-ot-acc button:last-of-type{border-radius:0 9px 9px 0;margin-right:auto}
     .tvm-ot-acc button:hover{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.3)}
     .tvm-ot-acc button:disabled{opacity:.45;cursor:default}
+    .tvm-ot-lock{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--txt-4)}
     .tvm-ot-abrir{
       margin-left:auto;text-decoration:none;color:#fca5a5;font-size:14px;font-weight:800;
       padding:6px 13px;border-radius:9px;border:1px solid rgba(220,38,38,.45);
@@ -1504,6 +1530,22 @@
     }
     .tvm-cerrar:hover{transform:translateY(-1px);box-shadow:0 14px 28px -6px rgba(230,0,0,.6)}
     .tvm-cerrar:active{transform:scale(.97)}
+
+    /* 🆕 2026-09-13 -- REGLA #3 (mobile-first, touch 44px). En escritorio
+       se deja el tamano actual (Daniel 2026-09-11 pidio tarjetas mas
+       chicas, no mas grandes); en un dispositivo tactil los tres botones
+       suben a 44px reales. */
+    @media (pointer:coarse){
+      .tvm-ot-acc button, .tvm-ot-abrir, .tvm-cerrar{ min-height:44px; font-size:16px; }
+    }
+    /* Modal responsive: en pantallas angostas ocupa todo el alto, sin
+       esquinas ni "aire" perdido en los costados. */
+    @media (max-width:640px){
+      .tvm-card{ width:100%; max-width:100%; max-height:100dvh; border-radius:0; }
+      .tvm-foot{ padding-bottom:calc(14px + env(safe-area-inset-bottom)); }
+      .tvm-ot-acc{ display:grid; grid-template-columns:1fr 1fr; }
+      .tvm-ot-abrir{ grid-column:1 / -1; margin-left:0; text-align:center; }
+    }
 
     /* Entrada del encendido para barras superior/inferior */
     body.boot .tv-top{animation:rowIn .5s var(--ease-out) both}
@@ -1691,6 +1733,7 @@
     timerOkPill: null,
     modalAbierto: false,     // con el modal abierto NADA se repinta debajo
     datosPendientes: null,   // datos que llegaron mientras el modal estaba abierto
+    focoOrigen: null,        // 🆕 2026-09-13: elemento con foco antes de abrir el modal
     // Navegación por días (solo INTERACTIVO) — hoyReal se fija UNA vez al
     // cargar, con la fecha que mandó el servidor al render inicial.
     hoyReal: (DATOS_INICIALES && DATOS_INICIALES.fecha) || null,
@@ -2214,6 +2257,16 @@
     // Modo interactivo: la franja completa abre el modal de la persona
     if (INTERACTIVO){
       row.addEventListener('click', () => { if (row.__p) abrirModal(row.__p, null); });
+      // 🆕 2026-09-13: accesible por teclado -- Tab la alcanza, Enter/
+      // Espacio la activan (antes solo el mouse podia abrir el modal).
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' '){
+          ev.preventDefault();
+          if (row.__p) abrirModal(row.__p, null);
+        }
+      });
     }
     return row;
   }
@@ -2613,12 +2666,22 @@
           '<button class="tvm-cerrar" type="button">Cerrar</button>' +
         '</footer>' +
       '</div>';
-    $('#stage').appendChild(m);
+    document.body.appendChild(m);   // 🔧 2026-09-13: fuera del lienzo escalado
     // Cierres: botón ✕, botón Cerrar y clic fuera de la tarjeta
     $('.tvm-x', m).addEventListener('click', cerrarModal);
     $('.tvm-cerrar', m).addEventListener('click', cerrarModal);
+    // 🔧 2026-09-13: antes escuchaba solo "click" -- si el gesto empieza
+    // DENTRO de la tarjeta (seleccionando el texto de una direccion larga)
+    // y el mouse se suelta afuera, el navegador igual dispara "click" en
+    // .tvm y el modal se cerraba en mitad de la seleccion. Ahora solo
+    // cuenta un clic que EMPIEZA y TERMINA afuera.
+    let _downFuera = false;
+    m.addEventListener('pointerdown', (ev) => {
+      _downFuera = !ev.target.closest('.tvm-card');
+    });
     m.addEventListener('click', (ev) => {
-      if (!ev.target.closest('.tvm-card')) cerrarModal();
+      if (_downFuera && !ev.target.closest('.tvm-card')) cerrarModal();
+      _downFuera = false;
     });
     return m;
   }
@@ -2629,6 +2692,10 @@
     const est = estadoNorm(p.estado, 'disponible');
     const card = $('.tvm-card', m);
     card.className = 'tvm-card estado-' + est;   // hereda la paleta del estado
+    // 🆕 2026-09-13: foco -- se guarda quien lo tenia (la fila clicada)
+    // para devolverselo al cerrar, y la tarjeta pasa a ser destino de Tab.
+    state.focoOrigen = document.activeElement;
+    card.tabIndex = -1;
 
     const avatarModal = $('.p-avatar', card);
     setTexto(avatarModal, inicialesDe(p));
@@ -2644,20 +2711,47 @@
     setTexto($('.tvm-meta', card), partes.join(' · '));
 
     // Estadística de avance del día
-    const tieneCarga = (p.total_ot || 0) > 0 || (p.tareas_total || 0) > 0 || bloques.length > 0;
-    const pct = Math.max(0, Math.min(100, Math.round(p.avance_pct || 0)));
-    setTexto($('.tvm-stats .av-pct', card), tieneCarga ? pct + '%' : '—');
-    $('.tvm-stats .av-bar i', card).style.width = tieneCarga ? pct + '%' : '0%';
-    setTexto($('.tvm-tareas', card), (p.tareas_total || 0) > 0
-      ? (p.tareas_ok || 0) + '/' + p.tareas_total + ' tareas del día'
-      : 'Sin tareas registradas');
+    const statsBarra = $('.tvm-stats .av-bar', card);
     const elapsed = $('.tvm-stats .av-elapsed', card);
-    if (est === 'ejecutando' && p.inicio_iso){
-      elapsed.dataset.ini = p.inicio_iso;
-      pintarElapsed(elapsed);
+    // 🔧 2026-09-13: mismo criterio que la fila (2026-09-07, Daniel: "el
+    // levantamiento se mide en equipos y en ritmo, no en porcentaje") --
+    // estos campos ya viajan en `p` (ver fix en app.py) pero el modal
+    // nunca los leia y mostraba "0% - Sin tareas registradas" aunque el
+    // tecnico llevara 40 equipos levantados.
+    if (p.avance_modo === 'levantamiento'){
+      setTexto($('.tvm-stats .av-pct', card), (p.lev_equipos || 0) + '');
+      let det = (p.lev_equipos === 1 ? 'equipo' : 'equipos') + ' levantados';
+      if (p.lev_fotos) det += ' · ' + p.lev_fotos + ' fotos';
+      setTexto($('.tvm-tareas', card), det);
+      if (statsBarra){
+        statsBarra.classList.add('av-bar-lev');
+        const _i = $('.av-bar i', card); if (_i) _i.style.width = '100%';
+      }
+      if (p.lev_ultimo_iso){
+        elapsed.dataset.ini = p.lev_ultimo_iso;
+        elapsed.dataset.pre = 'último hace ';
+        pintarElapsed(elapsed);
+      } else {
+        delete elapsed.dataset.ini; delete elapsed.dataset.pre;
+        setTexto(elapsed, '');
+      }
     } else {
-      delete elapsed.dataset.ini;
-      setTexto(elapsed, '');
+      if (statsBarra) statsBarra.classList.remove('av-bar-lev');
+      delete elapsed.dataset.pre;
+      const tieneCarga = (p.total_ot || 0) > 0 || (p.tareas_total || 0) > 0 || bloques.length > 0;
+      const pct = Math.max(0, Math.min(100, Math.round(p.avance_pct || 0)));
+      setTexto($('.tvm-stats .av-pct', card), tieneCarga ? pct + '%' : '—');
+      $('.tvm-stats .av-bar i', card).style.width = tieneCarga ? pct + '%' : '0%';
+      setTexto($('.tvm-tareas', card), (p.tareas_total || 0) > 0
+        ? (p.tareas_ok || 0) + '/' + p.tareas_total + ' tareas del día'
+        : 'Sin tareas registradas');
+      if (est === 'ejecutando' && p.inicio_iso){
+        elapsed.dataset.ini = p.inicio_iso;
+        pintarElapsed(elapsed);
+      } else {
+        delete elapsed.dataset.ini;
+        setTexto(elapsed, '');
+      }
     }
 
     // Lista de OT del día — todo sale del mismo contrato (bloques[])
@@ -2666,27 +2760,66 @@
     if (!bloques.length){
       lista.innerHTML = '<div class="tvm-nada">Sin OT asignadas hoy — disponible para programar.</div>';
     }
+    // 🆕 2026-09-13: orden por urgencia SOLO dentro del modal (el
+    // televisor no se toca, sigue en el orden que llega del SQL). Con 3+
+    // OT, las ya cerradas competian por el mismo espacio visual que la
+    // que de verdad hay que gestionar hoy.
+    const _prioridad = { ejecutando: 0, atrasado: 1, pendiente: 2, terminado: 3 };
+    const bloquesOrden = bloques.slice().sort((a, b2) =>
+      (_prioridad[estadoNorm(a.estado, 'pendiente')] ?? 9) -
+      (_prioridad[estadoNorm(b2.estado, 'pendiente')] ?? 9));
     let nodoFoco = null;
-    bloques.forEach(b => {
+    let nodoPrioritario = null;
+    bloquesOrden.forEach(b => {
       const be = estadoNorm(b.estado, 'pendiente');
       const ot = el('div', 'tvm-ot o-' + be);
       const esFoco = focoKey != null && claveBloque(b) === focoKey;
       if (esFoco) ot.classList.add('foco');
+      // Si se abrio desde la fila (sin foco puntual), la primera OT que
+      // aun no esta terminada es la que de verdad hay que mirar.
+      if (!nodoPrioritario && be !== 'terminado') nodoPrioritario = ot;
 
       const l1 = el('div', 'tvm-ot-l1');
       const num = el('b', 'tvm-ot-num'); num.textContent = b.numero || 'OT sin número';
-      const chip = el('span', 'tvm-ot-chip'); chip.textContent = BADGE_TXT[be] || be;
+      // 🔧 2026-09-13: mismo chip que el badge de la persona (punto +
+      // texto) -- antes el chip de la OT era solo texto, dos formas
+      // distintas para el mismo dato.
+      const chip = el('span', 'tvm-ot-chip');
+      chip.innerHTML = '<i></i><span>' + (BADGE_TXT[be] || be) + '</span>';
+      l1.appendChild(num); l1.appendChild(chip);
+      // 🆕 2026-09-13: OT de varios dias -- sin esto, un tramo de 4
+      // jornadas se veia igual que una OT de un dia, y "0/176" en
+      // Ejecucion se leia como atraso en vez de "recien empieza la
+      // jornada 2 de 4".
+      if (b.dias_total > 1){
+        const md = el('span', 'tvm-ot-chip tvm-ot-md');
+        md.textContent = 'Día ' + b.dia_n + ' de ' + b.dias_total;
+        if (b.fecha_inicio_real && b.fecha_fin_real){
+          md.title = b.fecha_inicio_real.split('-').reverse().join('/') +
+            ' → ' + b.fecha_fin_real.split('-').reverse().join('/');
+        }
+        l1.appendChild(md);
+      }
       const horas = el('span', 'tvm-ot-horas'); horas.textContent = (b.ini || '—') + ' – ' + (b.fin || '—');
-      l1.appendChild(num); l1.appendChild(chip); l1.appendChild(horas);
+      l1.appendChild(horas);
       ot.appendChild(l1);
 
       const cli = el('div', 'tvm-ot-cli'); cli.textContent = b.cliente || '—';
       ot.appendChild(cli);
-      // La dirección viene a nivel de persona (su cliente actual): solo se
-      // muestra en la OT que corresponde — no se inventa para las demás.
-      if (p.direccion && b.cliente && b.cliente === p.cliente){
-        const dir = el('div', 'tvm-ot-dir'); dir.textContent = p.direccion;
+      // 🔧 2026-09-13: antes comparaba b.cliente (recortado a 44) contra
+      // p.cliente (completo) -- con nombres largos el "===" fallaba
+      // siempre y la direccion no se pintaba en NINGUNA tarjeta, en
+      // silencio. Cada bloque trae ahora su propia direccion.
+      if (b.direccion){
+        const dir = el('div', 'tvm-ot-dir');
+        dir.innerHTML = '<i class="bi bi-geo-alt-fill" style="color:#f87171"></i><span></span>';
+        dir.querySelector('span').textContent = b.direccion;
         ot.appendChild(dir);
+        if (b.comuna && b.direccion.toLowerCase().indexOf(b.comuna.toLowerCase()) === -1){
+          const nota = el('div', 'tvm-ot-comuna-nota');
+          nota.textContent = 'Comuna en ficha del cliente: ' + b.comuna;
+          ot.appendChild(nota);
+        }
       }
 
       // 🆕 2026-09-09 (Daniel: "algo impactante... desde crear la OT hasta
@@ -2782,12 +2915,17 @@
         // que ya está cerrada, exactamente al revés de lo pedido.
         const _cerradaAcc = _otCerrada(b);
         const acc = el('div', 'tvm-ot-acc');
+        // 🔧 2026-09-13: rotulados bajo "Reagendar", −1 primero, "+2"
+        // pasa a decir "+2 días", y una OT cerrada explica por qué no hay
+        // botones en vez de dejar el espacio vacío.
         acc.innerHTML =
-          (_cerradaAcc ? '' :
-            '<button type="button" data-d="1">+1 día</button>' +
-            '<button type="button" data-d="2">+2</button>' +
-            '<button type="button" data-d="7">+1 semana</button>' +
-            '<button type="button" data-d="-1">−1 día</button>') +
+          (_cerradaAcc
+            ? '<span class="tvm-ot-lock"><i class="bi bi-lock-fill"></i> Cerrada — no se reagenda</span>'
+            : '<span class="tvm-acc-k">Reagendar</span>' +
+              '<button type="button" data-d="-1" title="Adelantar un día">−1 día</button>' +
+              '<button type="button" data-d="1">+1 día</button>' +
+              '<button type="button" data-d="2">+2 días</button>' +
+              '<button type="button" data-d="7">+1 semana</button>') +
           // 🐛 FIX 2026-09-02 (Daniel: "en el monitor, al abrir la OT me
           // lleva a las OT normales"): este link mandaba a
           // /mantenciones/ot/<id>/ejecutar, la pantalla LEGACY. El monitor
@@ -2813,7 +2951,9 @@
 
     state.modalAbierto = true;
     m.hidden = false;
+    card.focus({ preventScroll: true });
     if (nodoFoco) nodoFoco.scrollIntoView({ block: 'center' });
+    else if (nodoPrioritario) nodoPrioritario.scrollIntoView({ block: 'start' });
     else lista.scrollTop = 0;
   }
 
@@ -2899,6 +3039,11 @@
     if (!m || m.hidden) return;
     m.hidden = true;
     state.modalAbierto = false;
+    // 🆕 2026-09-13: devolver el foco a quien lo tenia antes de abrir.
+    if (state.focoOrigen && typeof state.focoOrigen.focus === 'function'){
+      state.focoOrigen.focus();
+    }
+    state.focoOrigen = null;
     // Aplicar recién ahora lo que llegó mientras Daniel disertaba
     if (state.datosPendientes){
       const datos = state.datosPendientes;
@@ -3526,7 +3671,12 @@
     // Modo interactivo: Escape cierra el modal desde cualquier parte
     if (INTERACTIVO){
       document.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape') cerrarModal();
+        // 🔧 2026-09-13: ilusConfirm/ilusAlert (static/ilus_ui.js)
+        // registran su PROPIO listener de Escape. Sin este guard, cancelar
+        // con Esc el aviso "Mover la orden de trabajo" cerraba tambien el
+        // modal completo detras -- se perdian de vista las demas OT por
+        // cancelar un solo movimiento.
+        if (ev.key === 'Escape' && !document.querySelector('.ilus-overlay')) cerrarModal();
       });
 
       // Navegación por días (solo pantalla de control) — botones ‹ › y

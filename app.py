@@ -84991,9 +84991,14 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         if atrasada:
             resumen["atrasadas"] += 1
 
+        _dv = (f.get("direccion_visita") or f.get("cliente_direccion") or "").strip()
+        _cc = (f.get("cliente_comuna") or "").strip()
+        # 🔧 2026-09-13: antes repetia la comuna aunque ya viniera
+        # incluida en la propia direccion de Google Places ("...Vitacura,
+        # Region Metropolitana - Santiago", dos comunas distintas en la
+        # misma linea sin avisar).
         dir_txt = " · ".join([p for p in (
-            (f.get("direccion_visita") or f.get("cliente_direccion") or "").strip(),
-            (f.get("cliente_comuna") or "").strip()) if p])
+            _dv, (_cc if _cc and _cc.lower() not in _dv.lower() else "")) if p])
 
         # 🆕 2026-08-29 (Daniel: "cuando quede al cien por ciento, no sabemos
         # el estado de la firma... si firmó el técnico, si firmó el cliente o
@@ -85090,7 +85095,14 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
                       if hasattr(f.get("fecha_programada"), "isoformat")
                       else str(f.get("fecha_programada") or "")[:10]),
             "numero": f.get("numero_ot") or f"#{f.get('id')}",
-            "cliente": cliente_txt[:44],
+            # 🔧 2026-09-13: se quita el recorte a 44 caracteres -- REGLA
+            # #15 (formato Retiros: nombres SIEMPRE completos, nunca
+            # truncados). Ademas esta misma comparacion (mas abajo, en el
+            # modal) decidia si se pintaba la direccion comparando este
+            # nombre recortado contra el nombre completo de la persona: con
+            # cualquier cliente de nombre largo la comparacion fallaba
+            # siempre y la direccion no aparecia en NINGUNA tarjeta.
+            "cliente": cliente_txt,
             "ticket": f.get("numero_ticket") or None,
             "documento": _doc or None,
             # 🆕 2026-09-02: estado del documento de CIERRE (factura/boleta/
@@ -85114,6 +85126,12 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             # timeline. Sin dirección completa a propósito (pantalla
             # pública, se ve de lejos): solo la comuna, que es lo que pidió.
             "comuna": (f.get("cliente_comuna") or "").strip() or None,
+            # 🆕 2026-09-13: direccion completa por CADA bloque (antes solo
+            # viajaba en la OT "actual" de la persona, comparando nombres
+            # de cliente para decidir si mostrarla -- ver fix arriba en
+            # `cliente_txt`). SOLO pantalla de control (incluir_finanzas),
+            # mismo criterio que precio/costo mas abajo.
+            "direccion": (dir_txt if incluir_finanzas else None),
             # 🔧 FIX 2026-08-27 (OT-2026-00133 volvía a "desaparecer" al
             # navegar a su 2°/3°/4° día): `correrDias()` en monitor_tv.html
             # YA traía escrita la lógica de mover fecha_programada Y
@@ -85331,6 +85349,20 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             "tareas_ok": act.get("tareas_ok") or 0,
             "tareas_total": act.get("tareas_total") or 0,
             "inicio_iso": act.get("inicio_iso"),
+            # 🔧 2026-09-13 (panel de diseno del modal): estos 5 campos YA
+            # viajaban en `act` (mas arriba, al armar p["actual"]) y en cada
+            # bloque, pero nunca se copiaban aca -- la rama de levantamiento
+            # de la fila (monitor_tv.html, actualizarFila, 2026-09-07)
+            # llevaba desde entonces leyendo un valor que nunca llegaba a la
+            # persona. Un tecnico con 40 maquinas levantadas se veia en la
+            # fila y en el modal igual que uno sin nada ("0% - Sin tareas
+            # registradas"). Se completa para que el criterio de Daniel
+            # ("se mide en equipos, no en porcentaje") funcione tambien acá.
+            "avance_modo": act.get("avance_modo") or "tareas",
+            "lev_equipos": act.get("lev_equipos") or 0,
+            "lev_listos": act.get("lev_listos") or 0,
+            "lev_fotos": act.get("lev_fotos") or 0,
+            "lev_ultimo_iso": act.get("lev_ultimo_iso"),
             "total_ot": p["total_ot"], "bloques": p["bloques"],
         })
 
