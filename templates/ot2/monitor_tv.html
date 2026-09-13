@@ -1509,6 +1509,13 @@
     .tvm-ot-acc button:hover{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.3)}
     .tvm-ot-acc button:disabled{opacity:.45;cursor:default}
     .tvm-ot-lock{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--txt-4)}
+    /* 🆕 2026-09-13: tarjeta movida a otro día -- se atenúa, la acción ya
+       se resolvió y lo que sigue relevante es "Ver el día nuevo". */
+    .tvm-ot.tvm-ot-movida{opacity:.55}
+    .tvm-ot-vernuevo{cursor:pointer;border:1px solid var(--line-2);background:rgba(255,255,255,.05);
+      color:var(--txt-2);border-radius:9px;padding:6px 13px;font-size:14px;font-weight:800;
+      transition:background .15s,color .15s,border-color .15s}
+    .tvm-ot-vernuevo:hover{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.3)}
     .tvm-ot-abrir{
       margin-left:auto;text-decoration:none;color:#fca5a5;font-size:14px;font-weight:800;
       padding:6px 13px;border-radius:9px;border:1px solid rgba(220,38,38,.45);
@@ -1856,7 +1863,24 @@
     return 1;                          // creada ya está: va en ejecución
   }
   function renderEtapas(b, be){
-    const etapaAct = _etapaActualOt(b);
+    // 🔧 2026-09-13 (Daniel: "aplicar la misma regla que ya usa la ficha de
+    // la OT" -- ver `_ot_es_interna` en app.py, que desde el 2026-09-03
+    // saca el hito "Firma cliente" del recorrido para un trabajo interno:
+    // "sería estúpido buscar la firma de un cliente en un trabajo
+    // interno"). Sin esto, una OT interna mostraba "Firma cliente" en
+    // gris con un guion para siempre (nadie iba a firmarla nunca) o, peor,
+    // marcada "hecha" sin que nadie hubiera firmado nada -- ver el punto
+    // (*) mas abajo. `b.es_interna` ya viaja en el payload desde antes
+    // (_ot_tv_datos), solo faltaba que este stepper lo mirara.
+    const esInterna = !!b.es_interna;
+    const etapas = esInterna ? ETAPAS_OT.filter(e => e.key !== 'f_cliente') : ETAPAS_OT;
+    let etapaAct = _etapaActualOt(b);
+    // (*) _etapaActualOt() devuelve el INDICE dentro de ETAPAS_OT (5
+    // pasos). Para una interna, el paso "Cierre" bajo un puesto al
+    // filtrar "Firma cliente" -- sin este ajuste, un indice >3 (que ya
+    // significaba "cliente firmo" o "cerrada") apuntaria al hito
+    // equivocado o se saldria del arreglo filtrado.
+    if (esInterna && etapaAct > 3) etapaAct -= 1;
     const cerrada = _otCerrada(b);
     const rec = b.recorrido || {};
     const nT = Number(b.tareas_total || 0);
@@ -1866,7 +1890,7 @@
     // cada segmento/nodo se anima un poco más tarde que el anterior, así el
     // relleno se ve "viajar" de izquierda a derecha hasta donde llegó la OT
     // de verdad, en vez de aparecer todo de golpe.
-    ETAPAS_OT.forEach((e, i) => {
+    etapas.forEach((e, i) => {
       const done = cerrada || i < etapaAct;
       const current = !cerrada && i === etapaAct;
       let cls = 'tvm-step';
@@ -1905,7 +1929,7 @@
         '<span class="tvm-step-ts">' + sub + '</span>' +
         (quien ? '<span class="tvm-step-who" title="' + _tvmEsc(quien) + '">' + _tvmEsc(quien) + '</span>' : '') +
         '</div>';
-      if (i < ETAPAS_OT.length - 1){
+      if (i < etapas.length - 1){
         const lineaDone = done || i < etapaAct;
         // v4 -- el tramo que ENTRA al nodo actual se degrada verde -> rojo
         // ("hasta acá llegó la OT"), igual que en la ficha; el resto es
@@ -2882,15 +2906,28 @@
       // despacho), mismo criterio ya usado en la card "Finanzas de la OT".
       if (b.precio != null || b.costo_proveedor != null){
         const precio = Number(b.precio || 0);
-        const costoTot = Number(b.costo_proveedor || 0) + Number(b.costo_despacho || 0);
-        const margen = precio - costoTot;
         const fin = el('div', 'tvm-ot-fin');
         const fmt = (n) => '$' + Math.round(n).toLocaleString('es-CL');
-        // Se rotula: "$10.000 +$10.000" a secas no decía qué era cada cifra.
-        fin.innerHTML = '<span style="opacity:.75">Valorizado</span>' +
-          '<span>' + fmt(precio) + '</span>' +
-          '<b style="color:' + (margen < 0 ? '#dc2626' : '#16a34a') + '">' +
-          (margen < 0 ? '−' : '+') + fmt(Math.abs(margen)) + '</b>';
+        if (b.es_interna){
+          // 🔧 2026-09-13 (Daniel: "aplicar la misma regla que ya usa la
+          // ficha de la OT"). Un trabajo interno no vende nada -- el monto
+          // es un costo ESTIMADO de bodega, solo para valorizacion interna
+          // (ver _ot2_finanzas_estado en app.py: "esto no se cobra, ya que
+          // son trabajos internos... costo estimado, referencial, no se
+          // factura"). Antes se veia en VERDE con "+", exactamente como si
+          // hubiera dejado plata.
+          fin.innerHTML = '<span style="opacity:.75">Costo estimado interno</span>' +
+            '<span>' + fmt(precio) + '</span>' +
+            '<b style="opacity:.55;font-weight:700">no se factura</b>';
+        } else {
+          const costoTot = Number(b.costo_proveedor || 0) + Number(b.costo_despacho || 0);
+          const margen = precio - costoTot;
+          // Se rotula: "$10.000 +$10.000" a secas no decía qué era cada cifra.
+          fin.innerHTML = '<span style="opacity:.75">Valorizado</span>' +
+            '<span>' + fmt(precio) + '</span>' +
+            '<b style="color:' + (margen < 0 ? '#dc2626' : '#16a34a') + '">' +
+            (margen < 0 ? '−' : '+') + fmt(Math.abs(margen)) + '</b>';
+        }
         ot.appendChild(fin);
       }
 
@@ -3019,13 +3056,56 @@
         return;
       }
       if (typeof ilusToast === 'function') ilusToast('✓ OT movida a ' + d2 + '/' + m2, {type: 'success'});
-      cerrarModal();
+      // 🔧 2026-09-13 (Daniel: "debería quedarse abierto mostrando el
+      // cambio" -- con varias OT en el modal, como Dave con 3, cerrarse de
+      // golpe hacía perder de vista las demás). El modal se queda abierto:
+      // la tarjeta movida se marca en gris con un botón para saltar al día
+      // nuevo, y el resto de la ventana NO se repinta solo -- se piden
+      // datos frescos pero se guardan en `datosPendientes`, exactamente
+      // igual que hace latido() cuando el modal está abierto (ver más
+      // abajo), y se aplican recién cuando Daniel cierre el modal por
+      // cualquiera de sus 4 caminos.
+      const cardMovida = btn ? btn.closest('.tvm-ot') : null;
+      if (cardMovida){
+        cardMovida.classList.add('tvm-ot-movida');
+        const accMovida = cardMovida.querySelector('.tvm-ot-acc');
+        if (accMovida){
+          const _hrefAbrir = (accMovida.querySelector('.tvm-ot-abrir') || {}).href
+            || ('/ot/' + b.vid);
+          accMovida.innerHTML =
+            '<span class="tvm-ot-lock"><i class="bi bi-arrow-right-circle-fill"></i> Movida ' +
+            txt + ' → ' + d2 + '/' + m2 + '</span>' +
+            '<button type="button" class="tvm-ot-vernuevo">Ver el día nuevo</button>' +
+            '<a class="tvm-ot-abrir" target="_blank" rel="noopener" href="' + _hrefAbrir + '">Abrir OT ↗</a>';
+          const _btnVer = accMovida.querySelector('.tvm-ot-vernuevo');
+          if (_btnVer) _btnVer.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            cerrarModal();
+            cargarFecha(nueva, state.vista || 'dia');
+          });
+        }
+      }
       state.huella = null;             // fuerza refresco en el próximo latido
-      // Se espera un pelo más que el TTL de la caché compartida (6 s): sin
-      // esto, el refresco inmediato puede leer el payload viejo y la OT
-      // parece seguir en el día de origen — "apreté y no pasó nada".
-      setTimeout(() => cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia'), 6500);
-      cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia');
+      // 🔧 Antes esto llamaba a cargarFecha(), que pinta la pantalla
+      // COMPLETA (renderAll) sin mirar si el modal sigue abierto -- justo
+      // lo que hay que evitar ahora. Se pide el mismo payload a mano y se
+      // aplica con el mismo cuidado que latido(). Se espera un pelo más
+      // que el TTL de la caché compartida (6 s): sin esto, el refresco
+      // inmediato puede leer el payload viejo.
+      const _fechaTrasMover = state.fechaVista || state.hoyReal;
+      const _vistaTrasMover = state.vista || 'dia';
+      const _pedirFrescoTrasMover = async () => {
+        try{
+          const sep = DATOS_URL.includes('?') ? '&' : '?';
+          const url = DATOS_URL + sep + 'fecha=' + encodeURIComponent(_fechaTrasMover) +
+            (_vistaTrasMover !== 'dia' ? '&vista=' + encodeURIComponent(_vistaTrasMover) : '');
+          const datos = await fetchJson(url);
+          if (state.modalAbierto) state.datosPendientes = datos;
+          else renderAll(datos);
+        } catch(_e){ /* el latido normal ya reintenta solo */ }
+      };
+      setTimeout(_pedirFrescoTrasMover, 6500);
+      _pedirFrescoTrasMover();
     } catch(e){
       const msg = 'Error de conexión al mover la OT.';
       if (typeof ilusToast === 'function') ilusToast(msg, {type: 'error'});

@@ -85338,7 +85338,25 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         # dice "no hizo nada", que es exactamente lo contrario de lo que
         # paso. Si termino todas sus OT del dia, su avance del dia es 100:
         # es el mismo criterio que ya usa cada burbuja terminada.
-        _avance = act.get("avance_pct") or 0
+        #
+        # 🔧 2026-09-13 (panel de diseno del modal, decision de Daniel:
+        # "corregir en fila + TV + modal"). Esta cifra -- la mas grande de
+        # la fila y del modal -- seguia saliendo de `act` (la OT actual o
+        # proxima), NO del dia completo. Caso real: Dave con 2 OT ya
+        # cerradas (12/12 cada una) + 1 pendiente (2/3) mostraba "66% ·
+        # 2/3" cuando su dia real era 26/27 (96%). Se suma sobre TODOS los
+        # bloques del dia -- cada uno YA trae su propio tareas_ok/
+        # tareas_total (ver el comentario "Checklist como dato propio de la
+        # tarjeta" mas arriba, junto a `bloque = {...}`) -- una sola fuente
+        # para fila, television y modal (los tres leen estos mismos 3
+        # campos del dict de la persona, sin tocar la plantilla). Los
+        # bloques en modo levantamiento aportan 0/0 a proposito (se miden
+        # aparte via avance_modo/lev_equipos, ver el fix de arriba): no
+        # distorsionan el porcentaje de checklist del resto del dia.
+        _dia_ok = sum(int(b.get("tareas_ok") or 0) for b in p["bloques"])
+        _dia_total = sum(int(b.get("tareas_total") or 0) for b in p["bloques"])
+        _avance = (int(round(_dia_ok * 100.0 / _dia_total)) if _dia_total
+                   else (act.get("avance_pct") or 0))
         if est == "terminado":
             _avance = 100
         grupos["externo" if p["externo"] else "interno"].append({
@@ -85346,8 +85364,8 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             "cliente": act.get("cliente"), "direccion": act.get("direccion"),
             "tipo": act.get("tipo"),
             "avance_pct": _avance,
-            "tareas_ok": act.get("tareas_ok") or 0,
-            "tareas_total": act.get("tareas_total") or 0,
+            "tareas_ok": _dia_ok,
+            "tareas_total": _dia_total,
             "inicio_iso": act.get("inicio_iso"),
             # 🔧 2026-09-13 (panel de diseno del modal): estos 5 campos YA
             # viajaban en `act` (mas arriba, al armar p["actual"]) y en cada
