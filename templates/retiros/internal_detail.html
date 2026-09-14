@@ -877,49 +877,53 @@
                  botones "Aceptar como propuesta" / "Modificar" de la card. Si el
                  cliente NO pidió hora (sin card) se muestra de inmediato. #}
               <div id="iwManualPicker"{% if req.requested_date %} style="display:none"{% endif %}>
-              <div class="row g-2 mb-3">
-                <div class="col-md-6">
-                  <label class="form-label fw-bold mb-1" style="font-size:.92rem">Día del retiro</label>
-                  <input type="date" id="iwProposeDate" class="form-control form-control-sm iw-date-ilus" required>
-                  <small class="text-muted" style="font-size:.82rem">Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (13:00–14:00) para facturas grandes.</small>
-                </div>
-                <div class="col-md-6">
-                  <label class="form-label fw-bold mb-1" style="font-size:.92rem">Motivo (opcional)</label>
+              {# Daniel 2026-09-14 ("así quiero los calendarios de todo el
+                 módulo de retiros"): MISMO layout que el Paso 4 de
+                 /retiros/solicitar — col-md-5 calendario mensual + col-md-7
+                 bloques. El input date nativo queda como RESPALDO oculto (se
+                 muestra solo si falla el API, vía onLoadFail), igual que
+                 #calFallback en el público. El "Motivo" baja bajo el
+                 calendario para no romper las dos columnas. #}
+              <div class="row g-3 mb-2">
+                <div class="col-md-5">
+                  <label class="ilus-cal-col-label">Fecha del retiro <span class="req">*</span></label>
+                  {# Mini-calendario MENSUAL — se activa pasando monthContainer al
+                     mount() en _mountProposeCalendar() (retiros_internal_detail.js). #}
+                  <div id="iwProposeMonth" class="ilus-cal-month"></div>
+                  <div id="iwProposeDateFallback" style="display:none">
+                    <input type="date" id="iwProposeDate" class="form-control form-control-sm iw-date-ilus" required>
+                  </div>
+
+                  {# ════════════════════════════════════════════════════════
+                     SUGERENCIAS DE DÍAS CON CUPOS — Daniel 2026-05-24
+                     ─────────────────────────────────────────────────────
+                     Si el día seleccionado tiene TODOS los cupos ocupados,
+                     mostramos chips clickeables con los próximos 3 días con
+                     disponibilidad real para que el operador no tenga que
+                     navegar a ciegas. Se llena dinámicamente vía JS leyendo
+                     el payload del calendario.
+                     ════════════════════════════════════════════════════════ #}
+                  <div id="iwSuggestedDays" class="smart-hint is-warn" style="display:none; margin:10px 0 0;">
+                    <i class="bi bi-calendar2-week"></i>
+                    <div style="flex:1">
+                      <strong style="font-size:.92rem">El día seleccionado tiene todos los cupos ocupados.</strong>
+                      <div class="small mt-1" style="font-size:.82rem;color:#555">
+                        Considera estos días con disponibilidad:
+                      </div>
+                      <div id="iwSuggestedDaysChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+                    </div>
+                  </div>
+
+                  <label class="form-label fw-bold mb-1 mt-3" style="font-size:.86rem">Motivo (opcional)</label>
                   <input type="text" id="iwProposeReason" class="form-control form-control-sm" placeholder="Disponibilidad, flujo, cierre..." maxlength="200" style="font-size:.95rem">
                 </div>
-              </div>
-
-              {# ════════════════════════════════════════════════════════
-                 SUGERENCIAS DE DÍAS CON CUPOS — Daniel 2026-05-24
-                 ─────────────────────────────────────────────────────
-                 Si el día seleccionado tiene TODOS los cupos ocupados,
-                 mostramos chips clickeables con los próximos 3 días con
-                 disponibilidad real para que el operador no tenga que
-                 navegar a ciegas. Se llena dinámicamente vía JS leyendo
-                 el payload del calendario.
-                 ════════════════════════════════════════════════════════ #}
-              <div id="iwSuggestedDays" class="smart-hint is-warn" style="display:none; margin-bottom:10px;">
-                <i class="bi bi-calendar2-week"></i>
-                <div style="flex:1">
-                  <strong style="font-size:.92rem">El día seleccionado tiene todos los cupos ocupados.</strong>
-                  <div class="small mt-1" style="font-size:.82rem;color:#555">
-                    Considera estos días con disponibilidad:
-                  </div>
-                  <div id="iwSuggestedDaysChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
-                </div>
-              </div>
-
-              {# Mini-calendario MENSUAL con densidad de cupos (heatmap) —
-                 Daniel 2026-09-14: "tan potente como las OT". Mismo patrón
-                 que #nriMonth en internal_dashboard.html: vive ANTES del
-                 .ilus-cal-wrap, y se activa pasando monthContainer al
-                 mount() en _mountProposeCalendar() (retiros_internal_detail.js). #}
-              <div id="iwProposeMonth" class="ilus-cal-month"></div>
+                <div class="col-md-7">
+                  <label class="ilus-cal-col-label">Bloque horario <span class="req">*</span></label>
 
               <div class="ilus-cal-wrap mb-2">
                 <div class="ilus-cal-head">
                   <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
-                    <strong style="font-size:.92rem">Bloque horario</strong>
+                    <strong style="font-size:.84rem">Toca la hora de llegada del cliente</strong>
                     {% if req.tiempo_estimado_min %}
                     <span class="iw-est-chip" title="Calculado por peso/volumen del retiro">
                       <i class="bi bi-stopwatch-fill"></i>~{{ req.tiempo_estimado_min }} min
@@ -929,11 +933,11 @@
                       <i class="bi bi-clock-fill"></i>1 bloque (30 min)
                     </span>
                   </div>
-                  <div class="legend" style="font-size:.78rem">
+                  <div class="legend" style="font-size:.72rem">
                     <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-                    <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
-                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
-                    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Medio cupo ½</span>
+                    <span><span class="dot" style="background:var(--ilus-red)"></span>Tu selección</span>
+                    <span><span class="dot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>Sin cupos 🔒</span>
                     {% if req.requested_date %}
                     <span><span class="dot" style="background:#dbeafe;border:1.5px dashed #3b82f6"></span>Pedido por cliente</span>
                     {% endif %}
@@ -958,6 +962,8 @@
                   <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
                 </div>
               </div>
+                </div>{# /col-md-7 #}
+              </div>{# /row (calendario + bloques) #}
               </div>{# /#iwManualPicker — fin del picker manual toggleable #}
 
               <input type="hidden" name="date" id="iwProposeHidDate">

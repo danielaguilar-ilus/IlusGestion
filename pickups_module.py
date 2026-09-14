@@ -9056,7 +9056,15 @@ def register_pickup_routes(app, ctx):
             d_from = single_date_obj
             d_to   = single_date_obj
         else:
-            d_from = _dt.now().date() + _td(days=1)  # Mañana en adelante
+            # Cliente público: mañana en adelante (min_notice). Operador
+            # (include_owners, nunca cacheado): desde HOY — el widget interno
+            # se monta con allowToday=true ("el operador puede agendar para
+            # HOY", Daniel 2026-05-24) pero el payload nunca traía el día de
+            # hoy, así que en el mini-calendario mensual (2026-09-14) hoy
+            # salía como "fuera de rango". Los bloques de hoy ya pasados
+            # igual salen no_disponible ("El horario ya pasó", más abajo).
+            _hoy_cl = _now_chile().date()
+            d_from = _hoy_cl if include_owners else (_hoy_cl + _td(days=1))
             d_to   = d_from + _td(days=30)
 
         # Capacidades: parallel_capacity (default 2) sustituye a

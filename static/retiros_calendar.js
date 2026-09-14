@@ -126,6 +126,10 @@
       enableMultiBlock: false,
       // Daniel 2026-09-14: mini-calendario mensual opcional (ver doc arriba).
       monthContainer: null,
+      // Texto de ayuda fijo bajo el calendario mensual (el formulario público
+      // muestra "Necesitamos mínimo 24 horas de anticipación…"; el operador
+      // interno puede poner otro, o nada).
+      monthHelp: '',
     }, opts || {});
 
     const grid     = (typeof cfg.container === 'string') ? _qs(cfg.container) : cfg.container;
@@ -178,7 +182,8 @@
       let libres = 0, total = 0;
       slots.forEach(s => {
         const e = _estadoDeSlot(s);
-        if (e === 'colacion') return;   // colación no cuenta como cupo perdido
+        // Colación y "ya pasó"/min_notice no son cupos perdidos: no cuentan.
+        if (e === 'colacion' || e === 'no_disponible' || e === 'fuera_horario') return;
         total++;
         if (e === 'disponible') libres++;
       });
@@ -193,6 +198,23 @@
     }
     const _MES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
                       'agosto','septiembre','octubre','noviembre','diciembre'];
+    // Línea de estado bajo el calendario — mismo texto/colores que
+    // #cal_fecha_msg en el formulario público (onFechaChange).
+    function _monthMsgHtml(){
+      const f = state.currentDate;
+      if (!f || !state.payload) return '';
+      const dias = state.payload.dias || {};
+      if (!Object.prototype.hasOwnProperty.call(dias, f)){
+        return '<span style="color:#dc2626">Fecha fuera del rango agendable</span>';
+      }
+      const dia = dias[f];
+      if (!dia || !dia.disponible){
+        return '<span style="color:#dc2626">' + _esc((dia && dia.razon) || 'Día sin cupos') + '</span>';
+      }
+      const libres = (dia.slots || []).filter(s => s.puede_iniciar).length;
+      const txt = libres + ' bloque' + (libres === 1 ? '' : 's') + ' libre' + (libres === 1 ? '' : 's') + ' este día';
+      return '<span style="color:' + (libres > 0 ? '#16a34a' : '#dc2626') + '">' + txt + '</span>';
+    }
     function renderMonthGrid(){
       if (!monthEl) return;
       if (!state.month.anio){
@@ -207,12 +229,21 @@
       if (offset < 0) offset = 6;
       const hoyStr = new Date().toISOString().slice(0, 10);
       const diasPayload = (state.payload && state.payload.dias) || {};
-      let html = '<div class="ilus-cal-month-head">'
-        + '<button type="button" class="ilus-cal-month-nav" data-cal-month-nav="-1" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>'
-        + '<span class="ilus-cal-month-label">' + _esc(_MES_ES[m - 1]) + ' ' + a + '</span>'
-        + '<button type="button" class="ilus-cal-month-nav" data-cal-month-nav="1" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>'
+      // Navegación acotada al horizonte del payload (igual que el formulario
+      // público): fuera de [from, to] no hay datos que mostrar.
+      const _mk = (y, mo) => y * 100 + mo;
+      const _fromKey = state.payload && state.payload.from ? _mk(+state.payload.from.slice(0, 4), +state.payload.from.slice(5, 7)) : null;
+      const _toKey   = state.payload && state.payload.to   ? _mk(+state.payload.to.slice(0, 4),   +state.payload.to.slice(5, 7))   : null;
+      const _curKey  = _mk(a, m);
+      const prevDis = (_fromKey !== null && _curKey <= _fromKey) ? ' disabled' : '';
+      const nextDis = (_toKey   !== null && _curKey >= _toKey)   ? ' disabled' : '';
+      let html = '<div class="ilus-cal-month-box" role="group" aria-label="Calendario de fechas disponibles">'
+        + '<div class="ilus-cal-month-head">'
+        + '<button type="button" class="ilus-cal-month-nav" data-cal-month-nav="-1" aria-label="Mes anterior"' + prevDis + '><i class="bi bi-chevron-left"></i></button>'
+        + '<span class="ilus-cal-month-label" aria-live="polite">' + _esc(_MES_ES[m - 1]) + ' ' + a + '</span>'
+        + '<button type="button" class="ilus-cal-month-nav" data-cal-month-nav="1" aria-label="Mes siguiente"' + nextDis + '><i class="bi bi-chevron-right"></i></button>'
         + '</div>'
-        + '<div class="ilus-cal-month-dow">' + ['L','M','X','J','V','S','D'].map(d => '<span>' + d + '</span>').join('') + '</div>'
+        + '<div class="ilus-cal-month-dow" aria-hidden="true">' + ['Lu','Ma','Mi','Ju','Vi','Sá','Do'].map(d => '<span>' + d + '</span>').join('') + '</div>'
         + '<div class="ilus-cal-month-grid">';
       for (let i = 0; i < offset; i++) html += '<span class="ilus-cal-month-day is-blank" aria-hidden="true"></span>';
       for (let d = 1; d <= nDias; d++){
@@ -243,8 +274,13 @@
         + '<span><i class="dot" style="background:#16a34a"></i>Libre</span>'
         + '<span><i class="dot" style="background:#f59e0b"></i>Medio</span>'
         + '<span><i class="dot" style="background:#dc2626"></i>Lleno</span>'
-        + '<span><i class="bi bi-lock-fill" style="color:#9ca3af;font-size:.68rem"></i>No disponible</span>'
-        + '</div>';
+        + '<span><i class="bi bi-lock-fill" style="color:#9ca3af;font-size:.7rem"></i>&nbsp;No disponible</span>'
+        + '</div>'
+        + '</div>'
+        // Mismo par de líneas que el formulario público bajo el calendario:
+        // ayuda fija (configurable por mount) + estado del día elegido.
+        + (cfg.monthHelp ? '<div class="ilus-cal-month-help">' + _esc(cfg.monthHelp) + '</div>' : '')
+        + '<small class="ilus-cal-month-msg" aria-live="polite">' + _monthMsgHtml() + '</small>';
       monthEl.innerHTML = html;
       monthEl.querySelectorAll('[data-cal-month-nav]').forEach(b => {
         b.addEventListener('click', () => {
@@ -337,6 +373,11 @@
         } else if (estado === 'bloqueado'){
           cls.push('is-blocked', 'is-disabled');
           title = internalView ? (s.razon || 'Franja bloqueada') : 'Hora no disponible';
+        } else if (estado === 'no_disponible' || estado === 'fuera_horario'){
+          // "El horario ya pasó" (hoy, operador) o min_notice (cliente). Antes
+          // caía al else y se pintaba como libre — y era clickeable.
+          cls.push('is-blocked', 'is-disabled');
+          title = internalView ? (s.razon || 'No disponible') : 'Hora no disponible';
         } else if (estado === 'ocupado'){
           if (internalView){
             cls.push('is-busy');
@@ -521,7 +562,7 @@
           else { invalido = 'colacion'; break; }
         }
         if (ek === 'completo'){ invalido = 'completo'; break; }
-        if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
+        if (ek === 'bloqueado' || ek === 'no_disponible' || ek === 'fuera_horario'){ invalido = 'bloqueado'; break; }
         if (!internalView && ek === 'ocupado'){ invalido = 'completo'; break; }
       }
       if (invalido){
@@ -555,6 +596,12 @@
       const estado = _estadoDeSlot(s);
       const internalView = !!cfg.includeOwners;
 
+      // Pasado / min_notice: no seleccionable en ninguna vista (el backend
+      // igual lo rechazaría en el POST; mejor avisar aquí).
+      if (estado === 'no_disponible' || estado === 'fuera_horario'){
+        _toast(internalView ? (s.razon || 'Ese bloque ya no está disponible.') : 'Esa hora no está disponible. Elige otro bloque.', 'warning');
+        return;
+      }
       // Vista PÚBLICA (cliente externo): cualquier slot no plenamente
       // libre se rechaza con mensaje genérico.
       if (!internalView){
@@ -625,7 +672,8 @@
         let ok = true;
         for (let k = i; k <= endIdx; k++){
           const ek = _estadoDeSlot(state.slots[k]);
-          if (ek === 'colacion' || ek === 'completo' || ek === 'bloqueado'){ ok = false; break; }
+          if (ek === 'colacion' || ek === 'completo' || ek === 'bloqueado' ||
+              ek === 'no_disponible' || ek === 'fuera_horario'){ ok = false; break; }
           if (!internalView && ek === 'ocupado'){ ok = false; break; }
         }
         if (ok){ foundStart = i; foundEnd = endIdx; break; }
@@ -739,7 +787,18 @@
     function setDate(fecha){
       state.currentDate = fecha || null;
       state.startIdx = state.endIdx = null;
-      if (dateInp && dateInp.value !== fecha) dateInp.value = fecha || '';
+      if (dateInp && dateInp.value !== fecha){
+        dateInp.value = fecha || '';
+        // Al elegir un día desde el mini-calendario (o por API) el input
+        // cambia por JS y NO emite 'change' solo — los listeners externos
+        // (hint de cupos del modal, preview del mensaje, semáforo de pasos)
+        // se quedaban con el día anterior. Lo emitimos nosotros; el propio
+        // listener del widget lo ignora vía _silenciarChange.
+        state._silenciarChange = true;
+        try { dateInp.dispatchEvent(new Event('change', { bubbles: true })); }
+        catch(_){}
+        finally { state._silenciarChange = false; }
+      }
       // Mini-calendario: si el día cae en otro mes, salta ahí; siempre
       // repinta para reflejar la nueva selección (independiente de si el
       // día resulta agendable o no — cualquier salida abajo debe verse).
@@ -806,7 +865,10 @@
 
     // ── Bindings ────────────────────────────────────────────────────
     if (dateInp){
-      dateInp.addEventListener('change', () => setDate(dateInp.value));
+      dateInp.addEventListener('change', () => {
+        if (state._silenciarChange) return;   // lo emitió setDate() — ya está renderizado
+        setDate(dateInp.value);
+      });
     }
     if (quickEl){
       // Si trae chips con data-ilus-cal-quick="N" los conectamos

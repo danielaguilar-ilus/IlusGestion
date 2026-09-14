@@ -251,26 +251,36 @@
                 <div class="nri-step-sub">Mira el mes completo por densidad de cupos y elige el bloque</div>
               </div>
             </div>
-            <div class="row g-2">
-              <div class="col-12 col-md-5">
-                <label class="form-label small fw-semibold">Día del retiro *</label>
-                <input id="nri_date" type="date" class="form-control form-control-sm" required style="font-weight:700;border-radius:10px">
-                {# Hint informativo de cupos del día (se llena por JS) #}
+            {# Daniel 2026-09-14 ("así quiero los calendarios de todo el módulo
+               de retiros"): MISMO layout que el Paso 4 de /retiros/solicitar —
+               col-md-5 calendario mensual + col-md-7 bloques. El input date
+               nativo queda como RESPALDO oculto (se muestra solo si falla el
+               API, vía onLoadFail), igual que #calFallback en el público. #}
+            <div class="row g-3">
+              <div class="col-md-5">
+                <label class="ilus-cal-col-label">Fecha del retiro <span class="req">*</span></label>
+                <div id="nriMonth" class="ilus-cal-month"></div>
+                <div id="nriDateFallback" style="display:none">
+                  <input id="nri_date" type="date" class="form-control form-control-sm" required style="font-weight:700;border-radius:10px">
+                </div>
+                {# Hint informativo de cupos del día (se llena por JS). Con el
+                   calendario mensual montado, el widget ya muestra el conteo
+                   bajo el calendario y este hint queda como respaldo. #}
                 <div id="nriDispoHint" class="small mt-1" style="display:none"></div>
               </div>
-              <div class="col-12">
-                <div id="nriMonth" class="ilus-cal-month"></div>
-                <div class="ilus-cal-wrap mt-1">
+              <div class="col-md-7">
+                <label class="ilus-cal-col-label">Bloque horario <span class="req">*</span></label>
+                <div class="ilus-cal-wrap">
                   <div class="ilus-cal-head">
                     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
-                      <strong style="font-size:.9rem">Bloque horario</strong>
+                      <strong style="font-size:.84rem">Toca la hora de llegada del cliente</strong>
                       <span style="display:inline-flex;align-items:center;gap:4px;background:#16a34a;color:#fff;font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:50px" title="Cada retiro ocupa un bloque de 30 minutos"><i class="bi bi-clock-fill"></i>1 bloque (30 min)</span>
                     </div>
-                    <div class="legend" style="font-size:.76rem">
+                    <div class="legend" style="font-size:.72rem">
                       <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-                      <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Seleccionado</span>
-                      <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
-                      <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                      <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Medio cupo ½</span>
+                      <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Tu selección</span>
+                      <span><span class="dot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>Sin cupos 🔒</span>
                     </div>
                   </div>
                   <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
@@ -373,6 +383,11 @@
   async function nriCargarDisponibilidad(fecha){
     const hint = document.getElementById('nriDispoHint');
     if (!hint) return;
+    // 2026-09-14: con el calendario mensual montado, el widget ya muestra
+    // "N bloques libres este día" bajo el calendario (mismo texto que el
+    // formulario público). Este hint queda como RESPALDO solo si el widget
+    // no montó (API caído → input date nativo visible).
+    if (window._nriCalInstance){ hint.style.display = 'none'; return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha || '')){ hint.style.display = 'none'; return; }
     hint.style.display = '';
     hint.style.color = '#6b7280';
@@ -457,6 +472,10 @@
           hiddenTimeFrom: '#nriHidTf',
           hiddenTimeTo:   '#nriHidTt',
           monthContainer: '#nriMonth', // FIX 2026-09-14: mini-calendario mensual con densidad de cupos
+          monthHelp: 'Como operador puedes agendar desde hoy. Si necesitas, puedes cruzar la colación para facturas grandes.',
+          // Si el API falla, mostramos el input date nativo como respaldo
+          // (mismo patrón que #calFallback en el formulario público).
+          onLoadFail: function(){ const fb = document.getElementById('nriDateFallback'); if (fb) fb.style.display = ''; },
           includeOwners:    true,   // operador: ve 1/2 y quién comparte cupo
           allowToday:       true,   // backoffice puede agendar HOY
           allowCrossLunch:  true,   // puede cruzar colación (aviso amarillo)
@@ -476,6 +495,10 @@
       } else if (window._nriCalInstance.reload){
         window._nriCalInstance.reload();  // refrescar cupos al reabrir
       }
+      // El widget ya muestra el conteo bajo el calendario: el hint del
+      // primer show.bs.modal (que corrió antes de montar) se retira.
+      const _h = document.getElementById('nriDispoHint');
+      if (_h && window._nriCalInstance) _h.style.display = 'none';
       nriRefreshSteps();
     } catch(e){ console.warn('nri calendar mount', e); }
   });

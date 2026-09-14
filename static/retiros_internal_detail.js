@@ -1327,6 +1327,10 @@ function _mountProposeCalendar(){
     hiddenTimeFrom: '#iwProposeHidTf',
     hiddenTimeTo:   '#iwProposeHidTt',
     monthContainer: '#iwProposeMonth', // Daniel 2026-09-14: mini-calendario mensual con densidad de cupos (modal "Proponer fecha")
+    monthHelp: 'Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (13:00–14:00) para facturas grandes.',
+    // Si el API falla, mostramos el input date nativo como respaldo
+    // (mismo patrón que #calFallback en el formulario público).
+    onLoadFail: function(){ const fb = document.getElementById('iwProposeDateFallback'); if (fb) fb.style.display = ''; },
     includeOwners:  true,
     // Daniel 2026-05-24: el OPERADOR manda — puede agendar hoy mismo y
     // cruzar colación si la factura es grande. El cliente público NO
