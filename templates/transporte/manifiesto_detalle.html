@@ -44,7 +44,7 @@
           onclick='abrirEditarEstado({{ manifiesto.id }}, {{ item_id }}, {{ estado|tojson }})'
           title="Click para cambiar el estado"
           {%- else -%}
-          title="El cambio manual del estado de entrega es solo para administradores · las APIs de transporte lo actualizan automáticamente"
+          title="El cambio manual del estado de entrega requiere el permiso &quot;Cambiar estado de entrega a mano&quot; (Usuarios y roles) · las APIs de transporte lo actualizan automáticamente"
           {%- endif %}>
     <i class="bi {{ m.icon }}"></i>
     <span>{{ estado }}</span>
@@ -64,9 +64,14 @@
    2026-07-25 (Daniel): las APIs (FedEx Track, SimpliRoute, chofer) toman el
    control del estado una vez el pedido sale a transporte — el cambio MANUAL
    queda restringido a admin/superadmin para CUALQUIER courier (antes solo se
-   exigía para FedEx; se amplía la regla de 2026-06-14). #}
+   exigía para FedEx; se amplía la regla de 2026-06-14).
+   FIX 2026-09-14 (Daniel, caso Alison): además de admin/superadmin, ahora
+   también puede quien tenga el flag granular tr_cambiar_estado prendido
+   desde /admin/roles — mismo espejo que el candado real del backend
+   (tr_estado_entrega). Todo cambio sigue quedando en "Trazabilidad del
+   manifiesto" más abajo, con el usuario real que lo hizo. #}
 {% set _es_admin = (current_user and (current_user.role in ('admin','superadmin'))) %}
-{% set puede_editar_estado = _es_admin %}
+{% set puede_editar_estado = _es_admin or permissions.tr_cambiar_estado %}
 
 {# ── Totales financieros del manifiesto ── #}
 {% set tot_cobrado = items|sum(attribute='zz_envio') %}

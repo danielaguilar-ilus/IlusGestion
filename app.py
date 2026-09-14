@@ -4478,6 +4478,22 @@ PERMS_KEYS = (
     # de superadmin+confirm_text, sin excepción. tr_eliminar solo abre la
     # puerta para lo que NUNCA tocó a un courier ni tiene entrega firmada.
     "tr_eliminar",
+    # tr_cambiar_estado — flag del módulo Transporte (aditivo 2026-09-14,
+    # Daniel: "quiero que le habilitemos de igual manera por el front que
+    # [Alison] pueda cambiar los diferentes estados por el front... ella
+    # debe administrar los estados con completa trazabilidad"). El gate
+    # real (tr_estado_entrega) exigía el ROL EXACTO admin/superadmin para
+    # cambiar a mano el estado de entrega de un pedido (En preparación /
+    # Entregado a transporte / En ruta / Entregado / Problema / Devolución)
+    # -- Alison, con rol "transporte", quedaba afuera sin que hubiera un
+    # flag para dársela sin volverla admin. Ahora acepta también este flag
+    # vía OR (mismo patrón que tr_eliminar): nace en False para todos los
+    # roles hasta que Daniel lo prenda desde /admin/roles. La trazabilidad
+    # NO es nueva -- _tr_apply_carrier_status ya deja cada cambio en
+    # transport_logs con `usuario` (current_username()), visible en la
+    # sección "Trazabilidad del manifiesto" de la ficha; este flag solo
+    # abre la puerta de ENTRADA, no toca el registro de salida.
+    "tr_cambiar_estado",
     # cotiz_eliminar_item — flag del módulo Cotizaciones (aditivo 2026-08-28,
     # Daniel en vivo, tras encontrar la causa raíz de OT-2026-00125: "estos
     # gallos [la] eliminan [la línea] en vez de clasificarla... ahora que no
@@ -4845,6 +4861,9 @@ def _build_perms_from_matrix(role):
     # cat_clases_producto Y el toggle "aplica al plan de mantención" por equipo.
     base["cat_clasificacion"] = bool(cat.get("clasificacion"))
     base["tr_eliminar"]   = bool(tra.get("eliminar"))
+    # Cambiar a mano el estado de entrega sin ser admin/superadmin (aditivo
+    # 2026-09-14, caso Alison). Ver "tr_cambiar_estado" en PERMS_KEYS.
+    base["tr_cambiar_estado"] = bool(tra.get("cambiar_estado"))
     base["cotiz_eliminar_item"] = bool(man.get("cotizaciones_eliminar_item"))
 
     base["superadmin"] = False
@@ -12843,7 +12862,8 @@ PERMISSIONS_MATRIX = {
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
-                       "acciones":["ver","cubicador","asignar","manifiestos","couriers","eliminar"]},
+                       "acciones":["ver","cubicador","asignar","manifiestos","couriers",
+                                   "eliminar","cambiar_estado"]},
     "comunicaciones": {"label":"Comunicaciones", "icon":"bi-chat-dots",
                        "acciones":["ver","configurar","enviar","plantillas","kill_switch"]},
     "admin":          {"label":"Administración", "icon":"bi-gear-wide-connected",
@@ -12957,6 +12977,7 @@ PERMISSIONS_META = {
         "manifiestos": {"label": "Manifiestos",       "tipo": "submodulo", "icon": "bi-file-earmark-text"},
         "couriers":    {"label": "Couriers / tarifas","tipo": "submodulo", "icon": "bi-cash-coin"},
         "eliminar":    {"label": "Eliminar manifiestos y pedidos", "tipo": "bloqueo", "icon": "bi-trash"},
+        "cambiar_estado": {"label": "Cambiar estado de entrega a mano", "tipo": "bloqueo", "icon": "bi-arrow-repeat"},
     },
     "comunicaciones": {
         "ver":         {"label": "Ver historial",         "tipo": "submodulo", "icon": "bi-chat-dots"},
@@ -33392,13 +33413,26 @@ def tr_estado_entrega(mid, item_id):
     # pasan por este endpoint — actualizan estado_entrega vía
     # `_tr_apply_carrier_status()` con fuente='fedex'/'chofer'/'sistema', así
     # que no quedan bloqueados por esta guarda.
+    #
+    # FIX 2026-09-14 (Daniel, caso Alison: "que pueda cambiar los diferentes
+    # estados por el front... ella debe administrar los estados con completa
+    # trazabilidad"). El candado de rol exacto de arriba se mantiene intacto
+    # -- admin/superadmin siempre pasan -- pero ahora también acepta el flag
+    # granular g.permissions['tr_cambiar_estado'] (matriz /admin/roles,
+    # módulo "transporte" → acción "Cambiar estado de entrega a mano"),
+    # aditivo y apagado por defecto para todos los roles hasta que Daniel lo
+    # prenda. La trazabilidad no cambia: `_tr_apply_carrier_status()` sigue
+    # dejando cada cambio en transport_logs con el usuario real
+    # (current_username()), visible en "Trazabilidad del manifiesto".
     _u = getattr(g, "user", None) or {}
-    if (_u.get("role") or "") not in ("admin", "superadmin"):
+    if ((_u.get("role") or "") not in ("admin", "superadmin")
+            and not g.permissions.get("tr_cambiar_estado")):
         return jsonify({
             "ok": False,
             "error": ("El cambio manual del estado de entrega es exclusivo de "
-                      "un supervisor (admin/superadmin). Las APIs de transporte "
-                      "actualizan el estado automáticamente."),
+                      "un supervisor (admin/superadmin) o de quien tenga habilitado "
+                      "\"Cambiar estado de entrega a mano\" en Usuarios y roles. "
+                      "Las APIs de transporte actualizan el estado automáticamente."),
         }), 403
 
     comentario = (body.get("comentario") or "").strip() or None
