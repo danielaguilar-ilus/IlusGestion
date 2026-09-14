@@ -1799,41 +1799,63 @@ input[type="password"]::-ms-clear { display: none !important; width: 0 !importan
 .ilus-cal-quick-chip.clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
 
 /* ── Mini-calendario mensual (Daniel 2026-09-14: "calendario tan potente
-   como el de las OT", después "quiero un diseño así... en todos lados algo
-   bien atractivo" con referencia visual propia: número + punto de color
-   debajo, círculo sólido rojo para el día elegido, candado para no
-   disponible -- SIN cajas/bordes en el estado normal, minimalista). Mismo
-   payload de 30 días que ya usa la vista de día suelto, cero llamadas
-   nuevas al backend. ── */
-.ilus-cal-month{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px 12px;margin-bottom:14px}
-.ilus-cal-month-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.ilus-cal-month-label{font-size:.86rem;font-weight:800;text-transform:capitalize;color:#0a0a0a;letter-spacing:.01em}
-.ilus-cal-month-nav{width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#374151;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:.8rem;transition:all .15s}
-.ilus-cal-month-nav:hover{background:var(--ilus-red,#dc2626);border-color:var(--ilus-red,#dc2626);color:#fff}
-.ilus-cal-month-dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;font-size:.64rem;font-weight:800;color:#9ca3af;text-align:center;text-transform:uppercase;margin-bottom:4px}
-.ilus-cal-month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px 2px}
-.ilus-cal-month-day{
-  position:relative;aspect-ratio:1;min-width:0;border:none;background:transparent;border-radius:50%;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0;
-  cursor:pointer;font-size:.82rem;font-weight:700;color:#111827;transition:background .15s,color .15s,box-shadow .15s;
+   como el de las OT", después "quiero un diseño así" mostrando el propio
+   calendario de /retiros/solicitar como referencia — "en todos lados algo
+   bien atractivo"). Mismos valores exactos que .ilus-cal-day en
+   static/retiros_public_request.css, con prefijo -month- propio porque
+   este widget vive en páginas que no cargan esa hoja de estilos (modales
+   internos). Mismo payload de 30 días de siempre, cero llamadas nuevas. ── */
+.ilus-cal-month{
+  background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+  border:1.5px solid #e5e7eb;border-radius:var(--r-md,10px);padding:14px;
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.03);margin-bottom:14px;
 }
-.ilus-cal-month-day.is-blank{visibility:hidden;cursor:default}
-.ilus-cal-month-day .d{line-height:1}
-.ilus-cal-month-day .mark{width:5px;height:5px;border-radius:50%;background:transparent}
+.ilus-cal-month-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.ilus-cal-month-label{font-weight:900;font-size:.92rem;color:#0a0a0a;letter-spacing:-.01em;text-transform:capitalize}
+.ilus-cal-month-nav{
+  width:36px;height:36px;min-height:36px;border-radius:9px;border:1.5px solid #e5e7eb;
+  background:#fff;color:#374151;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;font-size:.9rem;flex-shrink:0;transition:border-color .16s,color .16s,background .16s;
+}
+.ilus-cal-month-nav:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626);background:#fff5f5}
+.ilus-cal-month-dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-bottom:4px}
+.ilus-cal-month-dow span{text-align:center;font-size:.64rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;padding:4px 0}
+.ilus-cal-month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.ilus-cal-month-day{
+  position:relative;min-height:40px;border-radius:9px;
+  background:#fff;border:1.5px solid #eef0f2;color:#1f2937;font-weight:800;font-size:.82rem;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  cursor:pointer;padding:3px 2px;font-variant-numeric:tabular-nums;
+  transition:transform .16s cubic-bezier(.4,0,.2,1),border-color .15s,background .15s,box-shadow .15s;
+}
+.ilus-cal-month-day:not(.is-disabled):not(.is-selected):not(.is-out):hover{
+  border-color:var(--ilus-red,#dc2626);background:#fff5f5;transform:translateY(-1px);
+  box-shadow:0 6px 12px -4px rgba(220,38,38,.2);
+}
+.ilus-cal-month-day.is-blank{visibility:hidden;pointer-events:none;border:none;background:transparent}
+.ilus-cal-month-day.is-out{background:transparent;border-color:transparent;color:#d1d5db;cursor:default;font-weight:600}
+.ilus-cal-month-day.is-closed{background:#f3f4f6;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed;font-weight:600}
+.ilus-cal-month-day .mark-lock{font-size:.58rem;line-height:1;color:#9ca3af}
+.ilus-cal-month-day.is-today:not(.is-selected){box-shadow:inset 0 0 0 1.5px rgba(220,38,38,.45)}
+.ilus-cal-month-day.is-disabled{cursor:not-allowed}
+.ilus-cal-month-day.is-selected{
+  background:linear-gradient(160deg,#ff2d2d 0%,var(--ilus-red,#dc2626) 55%,#b30000 100%);
+  border-color:var(--ilus-red,#dc2626);color:#fff;
+  box-shadow:0 8px 18px -6px rgba(220,38,38,.55),0 1px 0 rgba(255,255,255,.3) inset;
+  transform:translateY(-1px);
+}
+.ilus-cal-month-day .mark{width:6px;height:6px;border-radius:50%;display:block;flex-shrink:0;background:transparent}
 .ilus-cal-month-day.is-open .mark{background:#16a34a}
 .ilus-cal-month-day.is-tight .mark{background:#f59e0b}
 .ilus-cal-month-day.is-full .mark{background:#dc2626}
-.ilus-cal-month-day .mark-lock{font-size:.56rem;color:#c1c7d0}
-.ilus-cal-month-day.is-closed{color:#c1c7d0}
-.ilus-cal-month-day.is-out{color:#dfe3e8;cursor:default}
-.ilus-cal-month-day.is-disabled{cursor:not-allowed}
-.ilus-cal-month-day.is-today:not(.is-selected){box-shadow:0 0 0 1.5px var(--ilus-red,#dc2626) inset;color:var(--ilus-red,#dc2626)}
-.ilus-cal-month-day:not(.is-disabled):not(.is-selected):hover{background:#f3f4f6}
-.ilus-cal-month-day.is-selected{background:var(--ilus-red,#dc2626);color:#fff;box-shadow:0 4px 12px rgba(220,38,38,.35)}
-.ilus-cal-month-day.is-selected .mark{background:rgba(255,255,255,.85)}
-.ilus-cal-month-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;padding-top:10px;border-top:1px dashed #f1f5f9;font-size:.7rem;color:#6b7280;font-weight:600}
+.ilus-cal-month-day.is-selected .mark{background:#fff !important}
+.ilus-cal-month-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:.66rem;color:#6b7280;font-weight:600}
 .ilus-cal-month-legend span{display:inline-flex;align-items:center;gap:5px}
-.ilus-cal-month-legend .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.ilus-cal-month-legend .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+@media(prefers-reduced-motion:reduce){
+  .ilus-cal-month-day{transition:none}
+  .ilus-cal-month-day:not(.is-disabled):not(.is-selected):not(.is-out):hover{transform:none}
+}
 
 @media(prefers-reduced-motion: reduce){
   .ilus-cal-slot{transition:none}

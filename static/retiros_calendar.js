@@ -183,8 +183,12 @@
         if (e === 'disponible') libres++;
       });
       if (total === 0) return { cls: 'is-closed', libres, total };
-      const ratio = libres / total;
-      const cls = ratio === 0 ? 'is-full' : (ratio < 0.5 ? 'is-tight' : 'is-open');
+      // Mismos umbrales que el calendario del formulario público
+      // (static/retiros_public_request.js, dia.ocupacion_pct): >=80% ocupado
+      // -> rojo, >=40% -> ámbar, si no -> verde. Acá lo derivamos de
+      // libres/total porque este payload no trae ocupacion_pct por día.
+      const pctOcupado = 1 - (libres / total);
+      const cls = pctOcupado >= 0.80 ? 'is-full' : (pctOcupado >= 0.40 ? 'is-tight' : 'is-open');
       return { cls, libres, total };
     }
     const _MES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
