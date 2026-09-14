@@ -79802,6 +79802,36 @@ def ot2_detalle(vid):
     for f in firmas:
         f["cuando"] = chile_fmt_filter(f["at"], "%d/%m/%Y %H:%M") if f.get("at") else ""
 
+    # 🔎 2026-09-14 (OT-2026-00135): si el puntero vivo quedó vacío (p.ej.
+    # tras "liberar firma técnico" o un rechazo de cierre) pero existe una
+    # firma anterior en el historial de auditoría, se muestra igual --
+    # nadie debe confundir "se liberó para re-firmar" con "se perdió".
+    _tipo_por_rol = {"Técnico": "tecnico", "Cliente": "cliente", "Responsable": "supervisor"}
+    _roles_sin_firma = [f["rol"] for f in firmas if not f.get("url") and f["rol"] in _tipo_por_rol]
+    if _roles_sin_firma:
+        _tipos_buscar = [_tipo_por_rol[r] for r in _roles_sin_firma]
+        _ph = ",".join(["%s"] * len(_tipos_buscar))
+        _hist_rows = mysql_fetchall(
+            f"SELECT tipo_firma, signer_name, signature_url, signed_at "
+            f"  FROM mant_ot_signatures "
+            f" WHERE ot_id=%s AND tipo_firma IN ({_ph}) "
+            f" ORDER BY signed_at DESC",
+            (vid, *_tipos_buscar)
+        ) or []
+        _hist_por_tipo = {}
+        for r in _hist_rows:
+            _t = r.get("tipo_firma")
+            if _t not in _hist_por_tipo:   # ya viene ordenado DESC: la 1ª es la más reciente
+                _hist_por_tipo[_t] = r
+        for f in firmas:
+            _h = _hist_por_tipo.get(_tipo_por_rol.get(f["rol"]))
+            if not f.get("url") and _h:
+                f["historial"] = {
+                    "url": _h.get("signature_url"),
+                    "nombre": _h.get("signer_name"),
+                    "cuando": chile_fmt_filter(_h.get("signed_at"), "%d/%m/%Y %H:%M") if _h.get("signed_at") else "",
+                }
+
     # OJO: _ot2_finanzas_estado devuelve una TUPLA (ok, faltan), no un dict.
     _fin_ok, _fin_faltan = _ot2_finanzas_estado(v)
 
@@ -93743,6 +93773,25 @@ def mant_ot_firmar_revision(vid):
                 "error": "Esta OT ya quedó firmada por el técnico (otra "
                          "pestaña o intento se adelantó).",
             }), 409
+        # 🔒 2026-09-14 (OT-2026-00135): copia de auditoría, append-only --
+        # a diferencia de firma_tecnico_url en mant_visitas (un puntero
+        # vivo que liberar-firma-tecnico / rechazar-cierre pueden limpiar
+        # por diseño), esta fila NUNCA se borra ni se pisa. Es la fuente
+        # que sobrevive aunque el puntero se libere para re-firmar.
+        # Best-effort: un fallo acá no puede impedir una firma ya válida.
+        try:
+            _ua_tec = (request.headers.get("User-Agent") or "")[:400]
+            _ip_tec = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+                       or request.remote_addr or "")[:64]
+            mysql_execute(
+                "INSERT INTO mant_ot_signatures "
+                "(ot_id, tipo_firma, signer_name, signature_url, "
+                " signed_by_technician_id, ip, user_agent) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (vid, "tecnico", nombre_tec, firma_tec_url, uid, _ip_tec, _ua_tec)
+            )
+        except Exception as _e_sig_tec:
+            print(f"[firmar-revision] no se guardó copia de auditoría vid={vid}: {_e_sig_tec}", flush=True)
         # Marcar levantamiento como cerrado si la OT tenía uno (la captura de
         # datos del equipo ya terminó; las correcciones de la ventana editan
         # mant_visita_equipos/mant_maquinas directamente, no dependen de esto).
@@ -93793,7 +93842,9 @@ def mant_ot_liberar_firma_tecnico(vid):
             " WHERE id=%s", (vid,))
         _mant_log("visita", vid, "firma_tecnico_liberada",
                   f"Superadmin {current_username()} liberó la firma del técnico "
-                  f"({v.get('firma_tecnico_nombre') or '—'}); OT vuelve a en_ejecucion para re-firmar.")
+                  f"({v.get('firma_tecnico_nombre') or '—'}); OT vuelve a en_ejecucion para "
+                  f"re-firmar. El trazo original queda preservado en el historial de firmas "
+                  f"(mant_ot_signatures) -- no se pierde, solo deja de ser la firma vigente.")
         return jsonify({"ok": True, "estado": "en_ejecucion"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -93901,11 +93952,11 @@ def mant_ot_firmar_cliente(vid):
                    or request.remote_addr or "")[:64]
             mysql_execute(
                 "INSERT INTO mant_ot_signatures "
-                "(ot_id, suggested_contact_name, suggested_contact_rut, "
+                "(ot_id, tipo_firma, suggested_contact_name, suggested_contact_rut, "
                 " signer_name, signer_rut, signer_role, signer_phone, signer_email, "
                 " signature_url, signed_by_technician_id, ip, user_agent) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (vid, sug_nombre, sug_rut, nombre_cli, rut_cli_norm, cargo_cli,
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, "cliente", sug_nombre, sug_rut, nombre_cli, rut_cli_norm, cargo_cli,
                  tel_cli, email_cli, firma_cli_url, uid, _ip, _ua)
             )
         except Exception as _e_sig:
@@ -94484,9 +94535,9 @@ def ot_firma_publica_submit(token):
                    or request.remote_addr or "")[:64]
             mysql_execute(
                 "INSERT INTO mant_ot_signatures "
-                "(ot_id, signer_name, signer_rut, signer_role, signature_url, ip, user_agent) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                (vid, nombre, rut_norm, "cliente_remoto", firma_url, _ip, _ua))
+                "(ot_id, tipo_firma, signer_name, signer_rut, signer_role, signature_url, ip, user_agent) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, "cliente_remoto", nombre, rut_norm, "cliente_remoto", firma_url, _ip, _ua))
         except Exception as _e:
             print(f"[firma-remota] audit fail vid={vid}: {_e}", flush=True)
         _mant_log("visita", vid, "firmada_cliente_remoto",
@@ -95373,6 +95424,21 @@ def mant_ot_aprobar_cierre(vid):
                 "error": "Esta OT ya fue cerrada o rechazada por otra "
                          "sesión — recarga para ver el estado actual.",
             }), 409
+        # 🔒 2026-09-14 (mismo fix que firmar-revision, OT-2026-00135):
+        # copia de auditoría append-only de la firma del supervisor. Solo
+        # si de verdad firmó (OT de cliente sin contraparte firmante puede
+        # cerrar sin firma_sup, ver el gate más arriba).
+        if firma_sup_url:
+            try:
+                mysql_execute(
+                    "INSERT INTO mant_ot_signatures "
+                    "(ot_id, tipo_firma, signer_name, signature_url, "
+                    " signed_by_technician_id) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (vid, "supervisor", firma_sup_nombre, firma_sup_url, uid)
+                )
+            except Exception as _e_sig_sup:
+                print(f"[aprobar-cierre] no se guardó copia de auditoría vid={vid}: {_e_sig_sup}", flush=True)
         try: _mant_log("visita", vid, "aprobada_supervisor",
                        f"{current_username()}{' · ' + comentario if comentario else ''}")
         except Exception: pass
@@ -121044,6 +121110,93 @@ def _ensure_mant_visitas_choque_index():
         pass  # ya existe
 
 
+def _ensure_mant_ot_signatures_tipo_firma():
+    """🔒 2026-09-14 (Daniel, OT-2026-00135: Aarón reportó "no se guardó
+    la firma"). Causa real: firmar-revision (técnico) y aprobar-cierre
+    (supervisor) SOLO escriben el puntero vivo en mant_visitas
+    (firma_tecnico_url / firma_supervisor_url) -- a diferencia de
+    firmar-cliente y la firma remota, que además dejan copia en
+    mant_ot_signatures (tabla de auditoría, append-only, nunca se borra).
+    Cuando liberar-firma-tecnico o rechazar-cierre limpian ese puntero (por
+    diseño, para permitir re-firmar), la firma del técnico no queda en
+    NINGÚN otro lado -- se pierde de verdad, sin rastro recuperable. Eso
+    fue lo que le pasó a la OT-135: Lenin firmó el 27/08, Daniel liberó la
+    firma el 09/09 para que se re-firmara, y el trazo original nunca tuvo
+    dónde sobrevivir.
+
+    Fix: TODA firma (técnico/cliente/cliente_remoto/supervisor) deja copia
+    en mant_ot_signatures desde el instante en que se captura, ANTES de
+    que cualquier acción correctiva pueda limpiar el puntero vivo.
+    `tipo_firma` distingue el rol; las filas viejas (todas eran de
+    cliente) quedan correctas con el DEFAULT, sin backfill necesario.
+
+    SIEMPRE en boot, incluso con ILUS_SKIP_MIGRATIONS=1 (mismo patrón que
+    el resto de _ensure_*, Regla #5). Recrea la tabla si hiciera falta
+    (defensivo -- init_mantenciones_tables(), donde nació originalmente,
+    NO corre en producción)."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_signatures (
+                id                      INT AUTO_INCREMENT PRIMARY KEY,
+                ot_id                   INT NOT NULL,
+                suggested_contact_name  VARCHAR(200) NULL,
+                suggested_contact_rut   VARCHAR(20)  NULL,
+                signer_name             VARCHAR(200) NOT NULL,
+                signer_rut              VARCHAR(20)  NULL,
+                signer_role             VARCHAR(120) NULL,
+                signer_phone            VARCHAR(40)  NULL,
+                signer_email            VARCHAR(190) NULL,
+                signature_url           TEXT NULL,
+                signed_at               DATETIME DEFAULT CURRENT_TIMESTAMP,
+                signed_by_technician_id INT NULL,
+                ip                      VARCHAR(64)  NULL,
+                user_agent              VARCHAR(400) NULL,
+                created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ot_id) REFERENCES mant_visitas(id) ON DELETE CASCADE,
+                INDEX idx_ot  (ot_id),
+                INDEX idx_rut (signer_rut)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_signatures] CREATE TABLE: {e}", flush=True)
+
+    try:
+        cols = {
+            (r.get("COLUMN_NAME") or "").lower(): r
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME, IS_NULLABLE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_signatures'"
+            ) or [])
+        }
+    except Exception as e:
+        print(f"[ensure_ot_signatures] no se pudo leer columnas: {e}", flush=True)
+        return
+
+    if "tipo_firma" not in cols:
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_ot_signatures ADD COLUMN tipo_firma VARCHAR(20) "
+                "NOT NULL DEFAULT 'cliente' COMMENT "
+                "'tecnico | cliente | cliente_remoto | supervisor' AFTER ot_id")
+            mysql_execute(
+                "ALTER TABLE mant_ot_signatures ADD INDEX idx_ot_tipo (ot_id, tipo_firma)")
+            print("[ensure_ot_signatures] columna tipo_firma agregada", flush=True)
+        except Exception as e:
+            print(f"[ensure_ot_signatures] ALTER tipo_firma: {e}", flush=True)
+
+    # signer_rut nació NOT NULL (pensado para la identidad del cliente,
+    # validada con RUT chileno) -- el técnico/supervisor es un usuario
+    # interno ya autenticado, no siempre hay un RUT que pedirle en el
+    # momento de firmar. Se relaja para poder reusar la misma tabla.
+    if (cols.get("signer_rut") or {}).get("IS_NULLABLE") == "NO":
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_ot_signatures MODIFY COLUMN signer_rut VARCHAR(20) NULL")
+            print("[ensure_ot_signatures] signer_rut ahora NULLABLE", flush=True)
+        except Exception as e:
+            print(f"[ensure_ot_signatures] MODIFY signer_rut: {e}", flush=True)
+
+
 def _ensure_mant_intel_tables():
     """Garantiza tablas/columnas del Agente de Inteligencia SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Idempotente. CERO IA."""
@@ -123787,6 +123940,17 @@ try:
         _ensure_mant_ot_secuencia()
 except Exception as _seq_err:
     print(f"[ILUS][WARN] _ensure_mant_ot_secuencia: {_seq_err}", flush=True)
+
+# CRÍTICO: mant_ot_signatures + columna tipo_firma -- toda firma (técnico/
+# cliente/supervisor) queda con copia de auditoría propia, nunca solo en el
+# puntero vivo de mant_visitas (caso real OT-2026-00135, 2026-09-14: la
+# firma del técnico se liberó para re-firmar y no quedó rastro en ningún
+# lado). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_ot_signatures_tipo_firma()
+except Exception as _sig_err:
+    print(f"[ILUS][WARN] _ensure_mant_ot_signatures_tipo_firma: {_sig_err}", flush=True)
 
 # Columnas de trazabilidad de EDICIÓN de equipos descubiertos (Daniel 2026-07-06).
 try:

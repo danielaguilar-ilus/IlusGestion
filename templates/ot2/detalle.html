@@ -3258,6 +3258,16 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <div class="tinta"><img src="{{ f.url }}" alt="Firma de {{ f.nombre or f.rol }}" loading="lazy"></div>
             <div class="quien">{{ f.nombre or '—' }}</div>
             <div class="cuando">{{ f.cuando or '' }}</div>
+            {% elif f.historial %}
+            {# 🔎 2026-09-14 (OT-2026-00135): la firma se liberó para volver a
+               firmar -- no está vigente, pero tampoco se perdió. Se muestra
+               atenuada para no confundirla con la vigente. #}
+            <div class="tinta" style="opacity:.55;filter:grayscale(.4)">
+              <img src="{{ f.historial.url }}" alt="Firma anterior de {{ f.historial.nombre or f.rol }}" loading="lazy">
+            </div>
+            <div class="quien" style="font-size:.72rem">
+              <i class="bi bi-clock-history"></i> Liberada — {{ f.historial.nombre or '—' }}</div>
+            <div class="cuando">Firmó el {{ f.historial.cuando }} · pendiente de re-firmar</div>
             {% else %}
             <div class="tinta vacia"><i class="bi bi-hourglass-split"></i></div>
             <div class="quien">Pendiente</div>
