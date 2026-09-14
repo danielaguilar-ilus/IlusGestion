@@ -351,6 +351,167 @@
   </div>
 </div>
 
+{# ════════════════════════════════════════════════════════════════════
+   MODAL: REAGENDAR desde el Monitor (Daniel 2026-09-14: "aplica el mismo
+   calendario al modal de Reagendar del monitor"). Se abre desde el menú ⋮
+   de la lista y desde el "⋮ Mover a…" del Kanban. Mismo picker de dos
+   columnas (mes + bloques) del widget compartido y mismo endpoint que la
+   Agenda (/retiros/<rid>/proposal): el cliente recibe la propuesta para
+   aceptar o contraproponer. El picker se re-crea desde <template> en cada
+   apertura para montar el widget con el currentRequestId del retiro.
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalReagendarMonitor" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content" style="border:2px solid var(--ilus-red);border-radius:14px;overflow:hidden;box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <div>
+          <h5 class="modal-title fw-bold mb-0">
+            <i class="bi bi-calendar-plus me-2" style="color:var(--ilus-red)"></i>Reagendar <span id="rgmCode" style="opacity:.85;font-weight:700"></span>
+          </h5>
+          <small class="d-block mt-1" style="opacity:.8">Elige día y bloque. El cliente recibirá una propuesta para aceptar o contraproponer.</small>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="background:#fafafa">
+        <input type="hidden" id="rgmRid">
+        <div id="rgmPicker"></div>
+        <template id="rgmPickerTpl">
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="ilus-cal-col-label">Fecha del retiro <span class="req">*</span></label>
+              <div id="rgmMonth" class="ilus-cal-month"></div>
+              <div id="rgmDateFallback" style="display:none">
+                <input type="date" id="rgmDate" class="form-control form-control-sm" style="font-size:16px">
+              </div>
+            </div>
+            <div class="col-md-7">
+              <label class="ilus-cal-col-label">Bloque horario <span class="req">*</span></label>
+              <div class="ilus-cal-wrap">
+                <div class="ilus-cal-head">
+                  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+                    <strong style="font-size:.84rem">Toca la hora de llegada del cliente</strong>
+                    <span style="display:inline-flex;align-items:center;gap:4px;background:#16a34a;color:#fff;font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:50px"><i class="bi bi-clock-fill"></i>1 bloque (30 min)</span>
+                  </div>
+                  <div class="legend" style="font-size:.72rem">
+                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Medio cupo ½</span>
+                    <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Tu selección</span>
+                    <span><span class="dot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>Sin cupos 🔒</span>
+                  </div>
+                </div>
+                <div id="rgmGrid"><div class="ilus-cal-skel" aria-hidden="true">{% for _ in range(10) %}<div></div>{% endfor %}</div></div>
+                <div class="ilus-cal-quick-actions" id="rgmQuick" style="display:none">
+                  <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
+                </div>
+                <div class="ilus-cal-summary mt-2" id="rgmSummary">
+                  <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
+                </div>
+              </div>
+              <input type="hidden" id="rgmTf">
+              <input type="hidden" id="rgmTt">
+            </div>
+          </div>
+        </template>
+        <label class="form-label small fw-bold mt-3">Mensaje al cliente (opcional)</label>
+        <textarea id="rgmMsg" class="form-control" rows="3" placeholder="Hola, te proponemos esta nueva fecha porque…" style="font-size:.88rem"></textarea>
+        <div class="form-text mt-2" style="font-size:.74rem">
+          <i class="bi bi-info-circle me-1 text-primary"></i>
+          Se enviará una propuesta al cliente. Puede aceptarla o contraproponer otra fecha desde su link de seguimiento.
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#fafafa">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="rgmEnviar">
+          <i class="bi bi-send-fill me-1"></i>Enviar propuesta al cliente
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const modalEl = document.getElementById('modalReagendarMonitor');
+  if (!modalEl) return;
+  let _cal = null;
+  let _fechaInicial = '';
+  window.abrirReagendarMonitor = function(rid, code, fechaActual){
+    document.getElementById('rgmRid').value = rid;
+    document.getElementById('rgmMsg').value = '';
+    const codeEl = document.getElementById('rgmCode');
+    if (codeEl) codeEl.textContent = code ? ('· ' + code) : '';
+    // Picker fresco por apertura (mata listeners del retiro anterior con su DOM)
+    const host = document.getElementById('rgmPicker');
+    const tpl  = document.getElementById('rgmPickerTpl');
+    if (host && tpl){ host.innerHTML = ''; host.appendChild(tpl.content.cloneNode(true)); }
+    _cal = null;
+    const hoy = new Date();
+    const hoyStr = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+    _fechaInicial = (fechaActual && fechaActual >= hoyStr) ? fechaActual : hoyStr;
+    const dateInp = document.getElementById('rgmDate');
+    if (dateInp) dateInp.value = _fechaInicial;
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  };
+  modalEl.addEventListener('shown.bs.modal', function(){
+    if (_cal || !window.IlusRetirosCalendar) return;
+    const rid = parseInt(document.getElementById('rgmRid').value, 10) || null;
+    _cal = window.IlusRetirosCalendar.mount({
+      container:      '#rgmGrid',
+      dateInput:      '#rgmDate',
+      summaryEl:      '#rgmSummary',
+      quickActionsEl: '#rgmQuick',
+      hiddenTimeFrom: '#rgmTf',
+      hiddenTimeTo:   '#rgmTt',
+      monthContainer: '#rgmMonth',
+      monthHelp:      'Como operador puedes elegir cualquier fecha desde hoy.',
+      onLoadFail:     function(){ const fb = document.getElementById('rgmDateFallback'); if (fb) fb.style.display = ''; },
+      includeOwners:  true,
+      allowToday:     true,
+      allowCrossLunch: true,
+      currentRequestId: rid,
+      enableDragSelect: false,
+      enableMultiBlock: false,
+      suggestedDurationMin: 30,
+    });
+  });
+  document.getElementById('rgmEnviar').addEventListener('click', async function(){
+    const btn = this;
+    const rid   = document.getElementById('rgmRid').value;
+    const fecha = (document.getElementById('rgmDate') || {}).value || '';
+    const tf    = (document.getElementById('rgmTf') || {}).value || '';
+    const tt    = (document.getElementById('rgmTt') || {}).value || '';
+    const msg   = document.getElementById('rgmMsg').value;
+    if (!rid || !fecha || !tf || !tt){
+      ilusToast('Toca el bloque horario del retiro en el calendario.', { type:'warning' });
+      const g = document.getElementById('rgmGrid'); if (g && g.scrollIntoView) g.scrollIntoView({ behavior:'smooth', block:'center' });
+      return;
+    }
+    btn.disabled = true;
+    const _orig = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
+    try {
+      const r = await fetch(`/retiros/${rid}/proposal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+        body: `date=${encodeURIComponent(fecha)}&time_from=${encodeURIComponent(tf)}&time_to=${encodeURIComponent(tt)}&message=${encodeURIComponent(msg)}`,
+      });
+      let d = {};
+      try { d = await r.json(); } catch(_){}
+      if (r.ok && d.ok){
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+        ilusToast('✓ Propuesta enviada al cliente', { type:'success' });
+        setTimeout(() => window.location.reload(), 900);
+      } else {
+        ilusToast(d.error || 'No se pudo enviar la propuesta', { type:'error' });
+      }
+    } catch(e){
+      ilusToast('Error de red: ' + e.message, { type:'error' });
+    } finally {
+      btn.disabled = false; btn.innerHTML = _orig;
+    }
+  });
+})();
+</script>
+
 {# Daniel 2026-06-16: widget de calendario (mismo del formulario público / Paso 4) #}
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
 <script>
@@ -699,8 +860,10 @@
         {% for r in rows if r.status in group.statuses %}
           {% set colcards.n = colcards.n + 1 %}
           {% set b = status_badge(r.status) %}
+          {% set _fch = r.confirmed_date or r.proposed_date or r.requested_date %}
           <div class="ilus-card p-3 mb-2 kanban-card" draggable="true" tabindex="0" role="link"
                data-rid="{{ r.id }}" data-code="{{ r.code }}" data-status="{{ r.status }}"
+               data-fecha="{{ (_fch|string)[:10] if _fch else '' }}"
                data-href="{{ url_for('pickup_detail', rid=r.id) }}"
                style="border-left:4px solid {{ group.accent }}">
             <div class="d-flex justify-content-between align-items-start">
@@ -933,6 +1096,12 @@
   async function abrirMenuMover(card){
     if (!card) return;
     const opciones = [];
+    // Daniel 2026-09-14: "Reagendar" desde el Monitor — abre el mismo picker
+    // de dos columnas (mes + bloques) que la Agenda y envía la propuesta.
+    const _terminal = ['retirada','cerrada','rechazada','fallida'];
+    if (_terminal.indexOf(card.dataset.status) === -1){
+      opciones.push({ label: 'Reagendar / Proponer otra fecha', icon: 'bi-calendar-plus', value: '__reagendar', style: 'danger' });
+    }
     board.querySelectorAll('.ilus-pipeline-col').forEach(function(col){
       const target = DROP_TARGETS[col.dataset.group];
       if (!target || target === card.dataset.status) return;
@@ -952,6 +1121,10 @@
       options: opciones,
     });
     if (!grupo) return;
+    if (grupo === '__reagendar'){
+      if (typeof abrirReagendarMonitor === 'function') abrirReagendarMonitor(parseInt(card.dataset.rid, 10), card.dataset.code, card.dataset.fecha || '');
+      return;
+    }
     const colDestino = board.querySelector('.ilus-pipeline-col[data-group="' + grupo + '"]');
     if (colDestino) moverCard(card, colDestino, DROP_TARGETS[grupo]);
   }
@@ -1026,6 +1199,12 @@
                 <li><a class="dropdown-item" href="{{ url_for('pickup_public_tracking', token=r.public_token) }}" target="_blank">
                   <i class="bi bi-link-45deg me-1 text-success"></i>Link cliente
                 </a></li>
+                {% if r.status not in ['retirada','cerrada','rechazada','fallida'] %}
+                {% set _fch = r.confirmed_date or r.proposed_date or r.requested_date %}
+                <li><button type="button" class="dropdown-item" onclick="abrirReagendarMonitor({{ r.id }}, '{{ r.code }}', '{{ (_fch|string)[:10] if _fch else '' }}')">
+                  <i class="bi bi-calendar-plus me-1 text-danger"></i>Reagendar / Proponer otra fecha
+                </button></li>
+                {% endif %}
                 {% if current_user and current_user.role == 'superadmin' %}
                 <li><hr class="dropdown-divider"></li>
                 <li><button type="button" class="dropdown-item text-danger" onclick="eliminarSolicitudDesdeMonitor({{ r.id }}, '{{ r.code }}', '{{ r.customer_name|e }}')">
