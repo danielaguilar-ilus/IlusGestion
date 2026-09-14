@@ -24,6 +24,14 @@
  *     includeOwners:    true,               // solo interno
  *     suggestedDurationMin: 30,             // sugerencia inicial (auto-pick N slots)
  *     onChange: (selection) => {...},       // callback al cambiar selección
+ *     monthContainer:   '#mi-mes',          // OPCIONAL (Daniel 2026-09-14: "calendario
+ *                                            // tan potente como el de las OT"): mini-
+ *                                            // calendario mensual con densidad de cupos
+ *                                            // (heatmap verde/ámbar/rojo por día) — clic
+ *                                            // en un día = setDate(ese día). Si se omite,
+ *                                            // el widget se comporta EXACTAMENTE como
+ *                                            // antes (día suelto vía dateInput), cero
+ *                                            // impacto en los mounts existentes.
  *   });
  *   cal.suggestDurationMinutes(60);    // recálculo cuando cambia el tiempo estimado
  *   cal.reload();                       // forzar refresh del endpoint
@@ -116,6 +124,8 @@
       // false → SIEMPRE un solo bloque de 30 min. El código de rango queda
       // intacto y reversible (REGLA #4.2), solo se desactiva por flag.
       enableMultiBlock: false,
+      // Daniel 2026-09-14: mini-calendario mensual opcional (ver doc arriba).
+      monthContainer: null,
     }, opts || {});
 
     const grid     = (typeof cfg.container === 'string') ? _qs(cfg.container) : cfg.container;
@@ -125,6 +135,7 @@
     const hidDate  = (typeof cfg.hiddenDate === 'string') ? _qs(cfg.hiddenDate) : cfg.hiddenDate;
     const hidTf    = (typeof cfg.hiddenTimeFrom === 'string') ? _qs(cfg.hiddenTimeFrom) : cfg.hiddenTimeFrom;
     const hidTt    = (typeof cfg.hiddenTimeTo === 'string') ? _qs(cfg.hiddenTimeTo) : cfg.hiddenTimeTo;
+    const monthEl  = (typeof cfg.monthContainer === 'string') ? _qs(cfg.monthContainer) : cfg.monthContainer;
     if (!grid){
       console.warn('[ILUS-cal] mount: contenedor no encontrado', cfg);
       return null;
@@ -139,6 +150,7 @@
       currentDate: null,
       suggestedMin: cfg.suggestedDurationMin || 30,
       loading: false,
+      month: { anio: null, mes: null },   // mes visible del mini-calendario
     };
 
     // ── Render helpers ───────────────────────────────────────────────
@@ -152,6 +164,84 @@
       for (let i = 0; i < 10; i++) html += '<div></div>';
       html += '</div>';
       grid.innerHTML = html;
+    }
+
+    // ── Mini-calendario mensual (Daniel 2026-09-14: "tan potente como el
+    // de las OT") ────────────────────────────────────────────────────
+    // Densidad de cupos por día (heatmap), navegación mes a mes sobre los
+    // 30 días que ya trae `state.payload.dias` (mismo payload que usa el
+    // día suelto — CERO llamadas nuevas al backend). Clic en un día =
+    // setDate(ese día), que sigue siendo la MISMA función de siempre.
+    function _diaHeat(dia){
+      if (!dia || !dia.disponible) return { cls: 'is-closed', libres: 0, total: 0 };
+      const slots = dia.slots || [];
+      let libres = 0, total = 0;
+      slots.forEach(s => {
+        const e = _estadoDeSlot(s);
+        if (e === 'colacion') return;   // colación no cuenta como cupo perdido
+        total++;
+        if (e === 'disponible') libres++;
+      });
+      if (total === 0) return { cls: 'is-closed', libres, total };
+      const ratio = libres / total;
+      const cls = ratio === 0 ? 'is-full' : (ratio < 0.5 ? 'is-tight' : 'is-open');
+      return { cls, libres, total };
+    }
+    const _MES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+                      'agosto','septiembre','octubre','noviembre','diciembre'];
+    function renderMonthGrid(){
+      if (!monthEl) return;
+      if (!state.month.anio){
+        const base = state.currentDate ? new Date(state.currentDate + 'T00:00:00') : new Date();
+        state.month.anio = base.getFullYear();
+        state.month.mes  = base.getMonth() + 1;
+      }
+      const a = state.month.anio, m = state.month.mes;
+      const primerDia = new Date(a, m - 1, 1);
+      const nDias = new Date(a, m, 0).getDate();
+      let offset = primerDia.getDay() - 1;
+      if (offset < 0) offset = 6;
+      const hoyStr = new Date().toISOString().slice(0, 10);
+      const diasPayload = (state.payload && state.payload.dias) || {};
+      let html = '<div class="ilus-cal-month-head">'
+        + '<button type="button" class="ilus-cal-month-nav" data-cal-month-nav="-1" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>'
+        + '<span class="ilus-cal-month-label">' + _esc(_MES_ES[m - 1]) + ' ' + a + '</span>'
+        + '<button type="button" class="ilus-cal-month-nav" data-cal-month-nav="1" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>'
+        + '</div>'
+        + '<div class="ilus-cal-month-dow">' + ['L','M','X','J','V','S','D'].map(d => '<span>' + d + '</span>').join('') + '</div>'
+        + '<div class="ilus-cal-month-grid">';
+      for (let i = 0; i < offset; i++) html += '<span class="ilus-cal-month-day is-blank" aria-hidden="true"></span>';
+      for (let d = 1; d <= nDias; d++){
+        const fecha = a + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        const inRange = Object.prototype.hasOwnProperty.call(diasPayload, fecha);
+        const heat = inRange ? _diaHeat(diasPayload[fecha]) : { cls: 'is-out', libres: 0, total: 0 };
+        const cls = ['ilus-cal-month-day', heat.cls];
+        if (fecha === hoyStr) cls.push('is-today');
+        if (fecha === state.currentDate) cls.push('is-selected');
+        const clickable = inRange && heat.cls !== 'is-closed';
+        if (!clickable) cls.push('is-disabled');
+        const aria = fecha + (!inRange ? ' — fuera de rango' : heat.cls === 'is-closed' ? ' — cerrado' : (' — ' + heat.libres + ' de ' + heat.total + ' bloques libres'));
+        html += '<button type="button" class="' + cls.join(' ') + '"'
+          + (clickable ? (' data-cal-month-day="' + fecha + '"') : ' disabled')
+          + ' aria-label="' + _esc(aria) + '">'
+          + '<span class="d">' + d + '</span>'
+          + (clickable ? ('<span class="hbar"><i style="width:' + Math.round((heat.total ? heat.libres / heat.total : 0) * 100) + '%"></i></span>') : '')
+          + '</button>';
+      }
+      html += '</div>';
+      monthEl.innerHTML = html;
+      monthEl.querySelectorAll('[data-cal-month-nav]').forEach(b => {
+        b.addEventListener('click', () => {
+          const dir = parseInt(b.dataset.calMonthNav, 10);
+          let mm = state.month.mes + dir, aa = state.month.anio;
+          if (mm < 1){ mm = 12; aa--; } else if (mm > 12){ mm = 1; aa++; }
+          state.month.mes = mm; state.month.anio = aa;
+          renderMonthGrid();
+        });
+      });
+      monthEl.querySelectorAll('[data-cal-month-day]').forEach(b => {
+        b.addEventListener('click', () => setDate(b.dataset.calMonthDay));
+      });
     }
 
     function renderGrid(){
@@ -634,6 +724,15 @@
       state.currentDate = fecha || null;
       state.startIdx = state.endIdx = null;
       if (dateInp && dateInp.value !== fecha) dateInp.value = fecha || '';
+      // Mini-calendario: si el día cae en otro mes, salta ahí; siempre
+      // repinta para reflejar la nueva selección (independiente de si el
+      // día resulta agendable o no — cualquier salida abajo debe verse).
+      if (fecha){
+        const d0 = new Date(fecha + 'T00:00:00');
+        state.month.anio = d0.getFullYear();
+        state.month.mes  = d0.getMonth() + 1;
+      }
+      renderMonthGrid();
 
       if (!fecha){ renderEmpty('Selecciona una fecha primero.'); return; }
       // Defense in depth: el cliente público necesita ≥24h; el operador
@@ -709,7 +808,7 @@
     loadPayload().then(() => {
       const initial = (dateInp && dateInp.value) || null;
       if (initial) setDate(initial);
-      else renderEmpty('Selecciona una fecha para ver los bloques disponibles.');
+      else { renderEmpty('Selecciona una fecha para ver los bloques disponibles.'); renderMonthGrid(); }
     }).catch(() => {});
 
     // API pública de la instancia
@@ -722,7 +821,9 @@
       reload: () => {
         state.payload = null;
         renderSkeleton();
-        return loadPayload(true).then(() => { if (state.currentDate) setDate(state.currentDate); });
+        return loadPayload(true).then(() => {
+          if (state.currentDate) setDate(state.currentDate); else renderMonthGrid();
+        });
       },
       // Atajos para debug
       _state: () => Object.assign({}, state),

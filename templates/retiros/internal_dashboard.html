@@ -23,8 +23,51 @@
    Confirmación directa: el cliente ya aceptó por un canal → agenda_confirmada.
    Bootstrap modal (>5 campos, según CLAUDE.md regla #8).
    ════════════════════════════════════════════════════════════════════ #}
+<style>
+/* ── Nuevo retiro interno: pasos numerados con semáforo rojo→verde
+   (Daniel 2026-09-14: mismo lenguaje visual de Retiros — REGLA #15 de
+   CLAUDE.md). Prefijo .nri-* propio del módulo (convención del proyecto:
+   cada modal que adopta el patrón usa su propio prefijo — .lev-* en el
+   modal de OT, .step-* en la ficha del retiro — nunca clases compartidas
+   sin namespacing). ── */
+.nri-step-card{
+  margin:0 0 14px;padding:16px 18px;background:#fff;
+  border:1.5px solid #e5e7eb;border-radius:14px;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+  transition:border-color .25s ease,background .25s ease,box-shadow .25s ease;
+}
+.nri-step-card.is-complete{
+  border-color:#86efac;
+  background:linear-gradient(180deg,#f0fdf4 0%,#ffffff 55%);
+  box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -10px rgba(22,163,74,.35);
+}
+.nri-step-header{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
+.nri-step-circle-wrap{display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;min-width:46px}
+.nri-step-circle-label{font-size:.58rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:var(--ilus-red,#dc2626);line-height:1}
+.nri-step-card.is-complete .nri-step-circle-label{color:#16a34a}
+.nri-step-circle{
+  width:38px;height:38px;border-radius:50%;background:var(--ilus-red,#dc2626);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.05rem;
+  box-shadow:0 4px 10px rgba(220,38,38,.3);position:relative;border:2px solid #fff;
+  transition:all .3s cubic-bezier(.4,0,.2,1);
+}
+.nri-step-card.is-complete .nri-step-circle{background:#16a34a;box-shadow:0 4px 10px rgba(22,163,74,.32);transform:scale(1.04)}
+.nri-step-card.is-complete .nri-step-circle::after{
+  content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid #16a34a;opacity:.35;
+  animation:nriPulseGreen 1.4s ease-in-out 1;
+}
+@keyframes nriPulseGreen{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.25);opacity:0}}
+.nri-step-circle .nri-step-check{display:none;font-size:1.1rem;font-weight:900}
+.nri-step-card.is-complete .nri-step-circle .nri-step-num-text{display:none}
+.nri-step-card.is-complete .nri-step-circle .nri-step-check{display:block}
+.nri-step-titles{flex:1;min-width:0;padding-top:2px}
+.nri-step-titles .nri-step-title{margin:0;font-size:.94rem;font-weight:800;color:#0a0a0a}
+.nri-step-titles .nri-step-sub{margin:2px 0 0;font-size:.74rem;color:#6b7280}
+.nri-step-opt{font-weight:600;text-transform:none;color:#9ca3af;font-size:.72rem}
+@media(prefers-reduced-motion:reduce){.nri-step-card{transition:none}.nri-step-card.is-complete .nri-step-circle::after{animation:none}}
+</style>
 <div class="modal fade" id="modalNuevoRetiroInterno" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
     <div class="modal-content" style="border:2px solid var(--ilus-red);box-shadow:0 0 40px rgba(0,0,0,.25)">
       <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
         <h5 class="modal-title fw-bold">
@@ -39,157 +82,253 @@
           queda <strong>confirmado al instante</strong> (respetando capacidad y sin fechas pasadas).</div>
         </div>
         <form id="formNuevoRetiroInterno">
-          <div class="row g-2">
-            {# Documento (OPCIONAL — Daniel 2026-06-19: se puede crear el retiro
-               sin factura y asociarla después por cliente/rubro) #}
-            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-1"><i class="bi bi-file-earmark-text me-1"></i>Documento <span class="fw-normal text-lowercase">(opcional)</span></div></div>
-            <div class="col-6 col-md-4">
-              <label class="form-label small fw-semibold">Tipo</label>
-              <select name="document_type" class="form-select form-select-sm">
-                <option value="">— Sin factura aún —</option>
-                <option value="factura">Factura</option>
-                <option value="boleta">Boleta</option>
-                <option value="nota_venta">Nota de venta</option>
-                <option value="pedido">Pedido</option>
-                <option value="guia">Guía de despacho</option>
-              </select>
-            </div>
-            <div class="col-6 col-md-4">
-              <label class="form-label small fw-semibold">N° documento</label>
-              <input name="document_number" class="form-control form-control-sm" maxlength="60" placeholder="Opcional">
-            </div>
-            <div class="col-12 col-md-4 d-flex align-items-end pb-1">
-              <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-info-circle me-1"></i>Puedes crear el retiro sin factura y asociarla luego por cliente/rubro desde la ficha.</div>
-            </div>
 
-            {# Cliente #}
-            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-building me-1"></i>Cliente</div></div>
-            <div class="col-12 col-md-6">
-              <label class="form-label small fw-semibold">Nombre / Razón social *</label>
-              <input name="customer_name" class="form-control form-control-sm" maxlength="200" required>
+          {# ── Paso 1: Documento (OPCIONAL — Daniel 2026-06-19: se puede crear
+             el retiro sin factura y asociarla después por cliente/rubro).
+             Sin campos .nri-req -> nace en verde (nada que bloquee). ── #}
+          <div class="nri-step-card is-complete" id="nriStep1">
+            <div class="nri-step-header">
+              <div class="nri-step-circle-wrap">
+                <span class="nri-step-circle-label">Paso 1</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">1</span><i class="bi bi-check-lg nri-step-check"></i></div>
+              </div>
+              <div class="nri-step-titles">
+                <div class="nri-step-title">Documento <span class="nri-step-opt">(opcional)</span></div>
+                <div class="nri-step-sub">Puedes asociarlo ahora o después desde la ficha</div>
+              </div>
             </div>
-            <div class="col-6 col-md-3">
-              <label class="form-label small fw-semibold">RUT</label>
-              <input name="customer_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9">
+            <div class="row g-2">
+              <div class="col-6 col-md-4">
+                <label class="form-label small fw-semibold">Tipo</label>
+                <select name="document_type" class="form-select form-select-sm">
+                  <option value="">— Sin factura aún —</option>
+                  <option value="factura">Factura</option>
+                  <option value="boleta">Boleta</option>
+                  <option value="nota_venta">Nota de venta</option>
+                  <option value="pedido">Pedido</option>
+                  <option value="guia">Guía de despacho</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-4">
+                <label class="form-label small fw-semibold">N° documento</label>
+                <input name="document_number" class="form-control form-control-sm" maxlength="60" placeholder="Opcional">
+              </div>
+              <div class="col-12 col-md-4 d-flex align-items-end pb-1">
+                <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-info-circle me-1"></i>Puedes crear el retiro sin factura y asociarla luego por cliente/rubro desde la ficha.</div>
+              </div>
             </div>
-            <div class="col-6 col-md-3">
-              <label class="form-label small fw-semibold">Teléfono</label>
-              <input name="contact_phone" class="form-control form-control-sm" maxlength="40" placeholder="+56 9 ...">
-            </div>
-            <div class="col-12 col-md-6">
-              <label class="form-label small fw-semibold">Email (opcional — para avisarle)</label>
-              <input name="contact_email" type="email" class="form-control form-control-sm" maxlength="180" placeholder="cliente@correo.cl">
-            </div>
+          </div>
 
-            {# Persona que retira #}
-            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-person-badge me-1"></i>Persona que retira</div></div>
-            <div class="col-12 col-md-5">
-              <label class="form-label small fw-semibold">Nombre *</label>
-              <input name="pickup_person_name" class="form-control form-control-sm" maxlength="200" required>
+          {# ── Paso 2: Cliente ── #}
+          <div class="nri-step-card" id="nriStep2">
+            <div class="nri-step-header">
+              <div class="nri-step-circle-wrap">
+                <span class="nri-step-circle-label">Paso 2</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">2</span><i class="bi bi-check-lg nri-step-check"></i></div>
+              </div>
+              <div class="nri-step-titles">
+                <div class="nri-step-title">Cliente</div>
+                <div class="nri-step-sub">¿A nombre de quién queda el retiro?</div>
+              </div>
             </div>
-            <div class="col-6 col-md-3">
-              <label class="form-label small fw-semibold">RUT</label>
-              <input name="pickup_person_rut" class="form-control form-control-sm" maxlength="20">
+            <div class="row g-2">
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Nombre / Razón social *</label>
+                <input name="customer_name" class="form-control form-control-sm nri-req" maxlength="200" required>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">RUT</label>
+                <input name="customer_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Teléfono</label>
+                <input name="contact_phone" class="form-control form-control-sm" maxlength="40" placeholder="+56 9 ...">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Email (opcional — para avisarle)</label>
+                <input name="contact_email" type="email" class="form-control form-control-sm" maxlength="180" placeholder="cliente@correo.cl">
+              </div>
             </div>
-            <div class="col-6 col-md-4">
-              <label class="form-label small fw-semibold">Relación</label>
-              <select name="pickup_person_relation" class="form-select form-select-sm">
-                <option value="dueno">Dueño / titular</option>
-                <option value="comprador">Comprador</option>
-                <option value="chofer">Chofer</option>
-                <option value="transporte">Transporte</option>
-                <option value="autorizado">Autorizado</option>
-                <option value="otro" selected>Otro</option>
-              </select>
-            </div>
+          </div>
 
-            {# Responsable del retiro (OBLIGATORIO — Daniel 2026-06-19) #}
-            <div class="col-12"><div class="fw-bold small text-uppercase mt-2" style="color:var(--ilus-red)"><i class="bi bi-person-check me-1"></i>Responsable del retiro *</div></div>
-            <div class="col-12 col-md-7">
-              <label class="form-label small fw-semibold">¿Quién se responsabiliza de entregar este pedido? *</label>
-              <select name="responsable_user_id" id="nriResponsable" class="form-select form-select-sm" required>
-                <option value="">Cargando responsables…</option>
-              </select>
+          {# ── Paso 3: Persona que retira ── #}
+          <div class="nri-step-card" id="nriStep3">
+            <div class="nri-step-header">
+              <div class="nri-step-circle-wrap">
+                <span class="nri-step-circle-label">Paso 3</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">3</span><i class="bi bi-check-lg nri-step-check"></i></div>
+              </div>
+              <div class="nri-step-titles">
+                <div class="nri-step-title">Persona que retira</div>
+                <div class="nri-step-sub">Quién llega a bodega a buscar la carga</div>
+              </div>
             </div>
+            <div class="row g-2">
+              <div class="col-12 col-md-5">
+                <label class="form-label small fw-semibold">Nombre *</label>
+                <input name="pickup_person_name" class="form-control form-control-sm nri-req" maxlength="200" required>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">RUT</label>
+                <input name="pickup_person_rut" class="form-control form-control-sm" maxlength="20">
+              </div>
+              <div class="col-6 col-md-4">
+                <label class="form-label small fw-semibold">Relación</label>
+                <select name="pickup_person_relation" class="form-select form-select-sm">
+                  <option value="dueno">Dueño / titular</option>
+                  <option value="comprador">Comprador</option>
+                  <option value="chofer">Chofer</option>
+                  <option value="transporte">Transporte</option>
+                  <option value="autorizado">Autorizado</option>
+                  <option value="otro" selected>Otro</option>
+                </select>
+              </div>
+            </div>
+          </div>
 
-            {# Carga #}
-            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-box-seam me-1"></i>Carga</div></div>
-            <div class="col-4 col-md-3">
-              <label class="form-label small fw-semibold">Bultos</label>
-              <input name="total_packages" type="number" min="1" value="1" class="form-control form-control-sm">
+          {# ── Paso 4: Responsable del retiro (OBLIGATORIO — Daniel 2026-06-19) ── #}
+          <div class="nri-step-card" id="nriStep4">
+            <div class="nri-step-header">
+              <div class="nri-step-circle-wrap">
+                <span class="nri-step-circle-label">Paso 4</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">4</span><i class="bi bi-check-lg nri-step-check"></i></div>
+              </div>
+              <div class="nri-step-titles">
+                <div class="nri-step-title">Responsable del retiro</div>
+                <div class="nri-step-sub">¿Quién se responsabiliza de entregar este pedido?</div>
+              </div>
             </div>
-            <div class="col-4 col-md-3">
-              <label class="form-label small fw-semibold">Peso real (kg)</label>
-              <input name="total_weight_kg" type="number" min="0" step="0.01" value="0" class="form-control form-control-sm">
+            <div class="row g-2">
+              <div class="col-12 col-md-7">
+                <select name="responsable_user_id" id="nriResponsable" class="form-select form-select-sm nri-req" required>
+                  <option value="">Cargando responsables…</option>
+                </select>
+              </div>
             </div>
-            <div class="col-4 col-md-3">
-              <label class="form-label small fw-semibold">Volumen (m³)</label>
-              <input name="total_volume_m3" type="number" min="0" step="0.001" value="0" class="form-control form-control-sm">
-            </div>
+          </div>
 
-            {# Agenda — Daniel 2026-06-16: MISMO slot-picker del formulario público
-               / Paso 4 (window.IlusRetirosCalendar). Bloque único, cupos y medio
-               cupo reales del módulo (endpoint /retiros/api/disponibilidad-publica).
-               Reemplaza los inputs Desde/Hasta nativos. #}
-            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-calendar-check me-1"></i>Agenda (entrega)</div></div>
-            <div class="col-12 col-md-5">
-              <label class="form-label small fw-semibold">Día del retiro *</label>
-              <input id="nri_date" type="date" class="form-control form-control-sm" required style="font-weight:700;border-radius:10px">
-              {# Hint informativo de cupos del día (se llena por JS) #}
-              <div id="nriDispoHint" class="small mt-1" style="display:none"></div>
+          {# ── Paso 5: Carga (opcional) ── #}
+          <div class="nri-step-card is-complete" id="nriStep5">
+            <div class="nri-step-header">
+              <div class="nri-step-circle-wrap">
+                <span class="nri-step-circle-label">Paso 5</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">5</span><i class="bi bi-check-lg nri-step-check"></i></div>
+              </div>
+              <div class="nri-step-titles">
+                <div class="nri-step-title">Carga <span class="nri-step-opt">(opcional)</span></div>
+                <div class="nri-step-sub">Puedes ajustarla después si no la tienes a mano</div>
+              </div>
             </div>
-            <div class="col-12">
-              <div class="ilus-cal-wrap mt-1">
-                <div class="ilus-cal-head">
-                  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
-                    <strong style="font-size:.9rem">Bloque horario</strong>
-                    <span style="display:inline-flex;align-items:center;gap:4px;background:#16a34a;color:#fff;font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:50px" title="Cada retiro ocupa un bloque de 30 minutos"><i class="bi bi-clock-fill"></i>1 bloque (30 min)</span>
+            <div class="row g-2">
+              <div class="col-4 col-md-3">
+                <label class="form-label small fw-semibold">Bultos</label>
+                <input name="total_packages" type="number" min="1" value="1" class="form-control form-control-sm">
+              </div>
+              <div class="col-4 col-md-3">
+                <label class="form-label small fw-semibold">Peso real (kg)</label>
+                <input name="total_weight_kg" type="number" min="0" step="0.01" value="0" class="form-control form-control-sm">
+              </div>
+              <div class="col-4 col-md-3">
+                <label class="form-label small fw-semibold">Volumen (m³)</label>
+                <input name="total_volume_m3" type="number" min="0" step="0.001" value="0" class="form-control form-control-sm">
+              </div>
+            </div>
+          </div>
+
+          {# ── Paso 6: Agenda — Daniel 2026-06-16: MISMO slot-picker del
+             formulario público (window.IlusRetirosCalendar). Bloque único,
+             cupos y medio cupo reales. FIX 2026-09-14: + mini-calendario
+             mensual con densidad de cupos (Daniel: "tan potente como las
+             OT") vía #nriMonth (ver mount() en el <script> de abajo). ── #}
+          <div class="nri-step-card" id="nriStep6">
+            <div class="nri-step-header">
+              <div class="nri-step-circle-wrap">
+                <span class="nri-step-circle-label">Paso 6</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">6</span><i class="bi bi-check-lg nri-step-check"></i></div>
+              </div>
+              <div class="nri-step-titles">
+                <div class="nri-step-title">Agenda (entrega)</div>
+                <div class="nri-step-sub">Mira el mes completo por densidad de cupos y elige el bloque</div>
+              </div>
+            </div>
+            <div class="row g-2">
+              <div class="col-12 col-md-5">
+                <label class="form-label small fw-semibold">Día del retiro *</label>
+                <input id="nri_date" type="date" class="form-control form-control-sm" required style="font-weight:700;border-radius:10px">
+                {# Hint informativo de cupos del día (se llena por JS) #}
+                <div id="nriDispoHint" class="small mt-1" style="display:none"></div>
+              </div>
+              <div class="col-12">
+                <div id="nriMonth" class="ilus-cal-month"></div>
+                <div class="ilus-cal-wrap mt-1">
+                  <div class="ilus-cal-head">
+                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+                      <strong style="font-size:.9rem">Bloque horario</strong>
+                      <span style="display:inline-flex;align-items:center;gap:4px;background:#16a34a;color:#fff;font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:50px" title="Cada retiro ocupa un bloque de 30 minutos"><i class="bi bi-clock-fill"></i>1 bloque (30 min)</span>
+                    </div>
+                    <div class="legend" style="font-size:.76rem">
+                      <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                      <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Seleccionado</span>
+                      <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
+                      <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                    </div>
                   </div>
-                  <div class="legend" style="font-size:.76rem">
-                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-                    <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Seleccionado</span>
-                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
-                    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                  <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                    <i class="bi bi-lightbulb-fill" style="color:#f59e0b"></i>
+                    <span><strong>Tip:</strong> toca la media hora a la que el cliente llegará. Si un bloque está a ½ cupo, verás quién tiene la otra mitad.</span>
                   </div>
-                </div>
-                <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-                  <i class="bi bi-lightbulb-fill" style="color:#f59e0b"></i>
-                  <span><strong>Tip:</strong> toca la media hora a la que el cliente llegará. Si un bloque está a ½ cupo, verás quién tiene la otra mitad.</span>
-                </div>
-                <div id="nriGrid">
-                  <div class="ilus-cal-skel" aria-hidden="true">
-                    {% for _ in range(10) %}<div></div>{% endfor %}
+                  <div id="nriGrid">
+                    <div class="ilus-cal-skel" aria-hidden="true">
+                      {% for _ in range(10) %}<div></div>{% endfor %}
+                    </div>
                   </div>
-                </div>
-                <div class="ilus-cal-quick-actions" id="nriQuick" style="display:none">
-                  <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
-                </div>
-                <div class="ilus-cal-summary mt-2" id="nriSummary">
-                  <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
+                  <div class="ilus-cal-quick-actions" id="nriQuick" style="display:none">
+                    <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
+                  </div>
+                  <div class="ilus-cal-summary mt-2" id="nriSummary">
+                    <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
+                  </div>
                 </div>
               </div>
             </div>
-            {# hidden inputs que el widget sincroniza — MISMOS names que espera pickup_create_internal #}
-            <input type="hidden" name="date" id="nriHidDate">
-            <input type="hidden" name="time_from" id="nriHidTf">
+            {# hidden inputs que el widget sincroniza — MISMOS names que espera
+               pickup_create_internal. nri-req: sin evento input/change nativo
+               (el widget los llena por JS), por eso el onChange del calendario
+               llama nriRefreshSteps() a mano — ver <script> de abajo. #}
+            <input type="hidden" name="date" id="nriHidDate" class="nri-req">
+            <input type="hidden" name="time_from" id="nriHidTf" class="nri-req">
             <input type="hidden" name="time_to" id="nriHidTt">
+          </div>
 
-            {# Canal de aceptación (obligatorio para confirmar directo) #}
-            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-check2-circle me-1"></i>El cliente ya aceptó por</div></div>
-            <div class="col-12 col-md-6">
-              <select name="canal" class="form-select form-select-sm" required>
-                <option value="" selected disabled>Elige el canal…</option>
-                <option value="telefono">Teléfono</option>
-                <option value="correo">Correo</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="presencial">Presencial</option>
-              </select>
+          {# ── Paso 7: Canal de aceptación (obligatorio para confirmar directo) ── #}
+          <div class="nri-step-card" id="nriStep7">
+            <div class="nri-step-header">
+              <div class="nri-step-circle-wrap">
+                <span class="nri-step-circle-label">Paso 7</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">7</span><i class="bi bi-check-lg nri-step-check"></i></div>
+              </div>
+              <div class="nri-step-titles">
+                <div class="nri-step-title">El cliente ya aceptó por</div>
+                <div class="nri-step-sub">Canal de confirmación + notas para bodega</div>
+              </div>
             </div>
-            <div class="col-12">
-              <label class="form-label small fw-semibold mt-1">Observación interna</label>
-              <textarea name="observations" class="form-control form-control-sm" rows="2" maxlength="2000" placeholder="Notas para el equipo de bodega…"></textarea>
+            <div class="row g-2">
+              <div class="col-12 col-md-6">
+                <select name="canal" class="form-select form-select-sm nri-req" required>
+                  <option value="" selected disabled>Elige el canal…</option>
+                  <option value="telefono">Teléfono</option>
+                  <option value="correo">Correo</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="presencial">Presencial</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold mt-1">Observación interna</label>
+                <textarea name="observations" class="form-control form-control-sm" rows="2" maxlength="2000" placeholder="Notas para el equipo de bodega…"></textarea>
+              </div>
             </div>
           </div>
+
         </form>
       </div>
       <div class="modal-footer" style="background:#fafafa">
@@ -209,6 +348,24 @@
 (function(){
   const modalEl = document.getElementById('modalNuevoRetiroInterno');
   if (!modalEl) return;
+
+  // ── Semáforo de pasos (Daniel 2026-09-14): cada .nri-step-card se pone
+  // verde cuando TODOS sus .nri-req tienen valor. Sin .nri-req -> el paso
+  // es opcional y nace en verde (Documento, Carga). Genérico a propósito:
+  // agregar un paso nuevo solo requiere marcar sus campos con .nri-req,
+  // sin tocar esta función.
+  function nriRefreshSteps(){
+    modalEl.querySelectorAll('.nri-step-card').forEach(function(card){
+      const reqs = card.querySelectorAll('.nri-req');
+      if (!reqs.length) { card.classList.add('is-complete'); return; }
+      let ok = true;
+      reqs.forEach(function(el){ if (!String(el.value || '').trim()) ok = false; });
+      card.classList.toggle('is-complete', ok);
+    });
+  }
+  const _formNri = document.getElementById('formNuevoRetiroInterno');
+  _formNri?.addEventListener('input', nriRefreshSteps);
+  _formNri?.addEventListener('change', nriRefreshSteps);
 
   // ── Hint de cupos del día (responsive_retiros 2026-06-09) ──
   // Solo informativo: muestra bloques libres vs llenos del día elegido.
@@ -283,6 +440,7 @@
           const opts = (d.responsables||[]).map(u => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('');
           sel.innerHTML = '<option value="">Selecciona un responsable…</option>' + opts;
           sel.dataset.loaded = '1';
+          nriRefreshSteps();
         })
         .catch(() => { sel.innerHTML = '<option value="">(error de red — reintenta)</option>'; });
     })();
@@ -298,6 +456,7 @@
           hiddenDate:     '#nriHidDate',
           hiddenTimeFrom: '#nriHidTf',
           hiddenTimeTo:   '#nriHidTt',
+          monthContainer: '#nriMonth', // FIX 2026-09-14: mini-calendario mensual con densidad de cupos
           includeOwners:    true,   // operador: ve 1/2 y quién comparte cupo
           allowToday:       true,   // backoffice puede agendar HOY
           allowCrossLunch:  true,   // puede cruzar colación (aviso amarillo)
@@ -306,6 +465,9 @@
           currentRequestId: null,   // retiro NUEVO: aún sin id
           requestedRange:   null,
           suggestedDurationMin: 30,
+          // Los hidden inputs los llena el widget por JS (sin evento nativo
+          // input/change) -> el paso 6 solo sabe que cambió si se lo avisamos.
+          onChange: function(){ nriRefreshSteps(); },
         });
         // Pintar el día actual ya con cupos.
         if (window._nriCalInstance && window._nriCalInstance.setDate && inp && inp.value){
@@ -314,6 +476,7 @@
       } else if (window._nriCalInstance.reload){
         window._nriCalInstance.reload();  // refrescar cupos al reabrir
       }
+      nriRefreshSteps();
     } catch(e){ console.warn('nri calendar mount', e); }
   });
 
