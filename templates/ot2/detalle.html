@@ -122,6 +122,13 @@
 .otd-badge-est.e-ejec{background:#fee2e2;color:#991b1b}
 .otd-badge-est.e-comp{background:#dcfce7;color:#166534}
 .otd-badge-est.e-cerr{background:#fef3c7;color:#92400e}
+/* 🔴 2026-09-14: aviso de rango multi-día -- ver el comentario grande junto
+   a la fila "Fecha" más abajo. Ámbar, mismo lenguaje que el resto de los
+   avisos "hay que mirar esto" del archivo (#fff8e1/#92400e). */
+.otd-multidia{display:inline-flex;align-items:center;gap:5px;margin-left:8px;
+  background:#fff8e1;color:#92400e;border:1px solid #fcd34d;border-radius:99px;
+  padding:2px 9px;font-size:.7rem;font-weight:800}
+.otd-multidia i{font-size:.78rem}
 
 /* ══ FIRMAS CON EL TRAZO REAL ═════════════════════════════════════════
    🖊️ 2026-09-02 (Daniel, comparando con la pantalla clásica: "necesito ver
@@ -2458,7 +2465,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                  value="{{ v.fecha_programada }}" style="max-width:170px">
         </div>
         <div>
-          <label>Término <span style="opacity:.7;font-weight:500">(si son varios días)</span></label>
+          <label>Término <span style="opacity:.7;font-weight:500">(SOLO si son varios días)</span></label>
           <input type="date" id="otdReagFechaFin" class="form-control form-control-sm"
                  value="{{ v.fecha_fin if v.fecha_fin and v.fecha_fin != v.fecha_programada else '' }}"
                  style="max-width:170px">
@@ -2492,7 +2499,9 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <i class="bi bi-check2"></i> Guardar</button>
         <button type="button" class="otd-btn" onclick="otdCerrarReagendar()">Cancelar</button>
       </div>
-      <div class="hint">Queda registrado en el historial de la OT con tu usuario, la fecha anterior y cuántos días se movió.</div>
+      <div class="hint">Queda registrado en el historial de la OT con tu usuario, la fecha anterior y cuántos días se movió.
+        Si "Término" queda vacío, la OT vuelve a ser de un solo día — mientras tenga una fecha, bloquea la agenda completa
+        del técnico en <b>cada</b> uno de esos días, sin mirar la hora.</div>
     </div>
 
     {# ── Caja Reasignar técnico ── #}
@@ -2874,6 +2883,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% endif %}
           <div class="fila"><span class="lbl">Fecha</span>
             <span class="val">{{ v.fecha_dia }}{% if v.hora_inicio %} · {{ (v.hora_inicio | string)[:5] }}{% if v.hora_fin %}–{{ (v.hora_fin | string)[:5] }}{% endif %}{% endif %}
+              {#- 🔴 2026-09-14 (Aaron/Daniel, OT-2026-00025: no podía agendar
+                  a Lenin Urbina 9-13 porque el sistema decía que ya tenía
+                  trabajo esa hora, citando una OT de 18:00-18:01 que a
+                  simple vista no se solapa con nada). Causa real: esa OT
+                  tenía fecha_fin=17/09 en la base -- un rango de VARIOS
+                  DÍAS que esta ficha nunca mostraba en ningún lado. El
+                  detector de choques (_validar_disponibilidad_visita)
+                  bloquea el DÍA COMPLETO en cada día de un rango así, sin
+                  mirar la hora, porque no existe un dato de qué hora ocupa
+                  cada día intermedio -- esa sí es la regla correcta para un
+                  rango real, el problema es que el rango era invisible.
+                  Este badge existe para que un rango multi-día NUNCA vuelva
+                  a quedar escondido: si fecha_fin es distinto del día de
+                  arriba, se ve acá, siempre. -#}
+              {% if v.fecha_fin and v.fecha_fin != v.fecha_programada %}
+              <span class="otd-multidia" title="Esta OT reserva la agenda del técnico completa en cada uno de estos días, sin mirar la hora exacta">
+                <i class="bi bi-calendar-range"></i> hasta {{ v.fecha_fin.strftime('%d/%m') }}</span>
+              {% endif %}
               {% if puede_metadata and permissions.mant_reagendar %}
               <button type="button" class="acc" onclick="otdAbrirReagendar()">
                 <i class="bi bi-calendar-event"></i> Reagendar</button>
@@ -7796,6 +7823,28 @@ window.otdConfirmarReagendar = async function(){
     ilusToast('Error de conexión al reagendar.', {type:'error'});
   }
 };
+
+/* 🔴 2026-09-14 (OT-2026-00025, Aaron/Daniel: "no me deja agendar a Lenin
+   9-13 sabiendo que sus otros servicios no le chocan"). Causa raíz real:
+   el campo "Término" arriba se precarga (ver el atributo value del input,
+   más arriba en este mismo archivo) con la fecha_fin QUE YA TENÍA la OT.
+   Si alguien solo quería mover el DÍA de inicio y no tocó "Término" a
+   propósito, esa
+   fecha vieja se volvía a guardar tal cual -- convirtiendo silenciosamente
+   una OT que se veía de un solo día en un rango de varios días que bloquea
+   la agenda completa del técnico en cada uno de esos días (ver el aviso
+   ámbar nuevo junto a "Fecha" más abajo, y el comentario grande de
+   _validar_disponibilidad_visita en app.py sobre por qué eso es a
+   propósito para un rango real). Se corrige en el origen: cambiar la
+   fecha de INICIO limpia "Término" -- quien de verdad quiere un rango de
+   varios días tiene que volver a escribirlo a propósito, cada vez. */
+document.addEventListener('DOMContentLoaded', function(){
+  var _reagFecha = document.getElementById('otdReagFecha');
+  var _reagFechaFin = document.getElementById('otdReagFechaFin');
+  if (_reagFecha && _reagFechaFin){
+    _reagFecha.addEventListener('change', function(){ _reagFechaFin.value = ''; });
+  }
+});
 
 // 🖊️ 2026-09-09 (Aaron, vía Daniel): mismo endpoint PUT que Reagendar/
 // Reasignar (@_ot_can_metadata ya acepta "titulo" en su whitelist desde
