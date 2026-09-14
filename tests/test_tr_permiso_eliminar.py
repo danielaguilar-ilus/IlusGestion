@@ -98,6 +98,13 @@ class TestElFlagExisteYNaceEnFalse(unittest.TestCase):
         # _empty_perms() y _legacy_permission_set() dependen de PERMS_KEYS
         # via closure de modulo -- se inyecta en el namespace de ejecucion.
         ns["PERMS_KEYS"] = cls.PERMS_KEYS
+        # FIX 2026-09-14: _empty_perms() referencia ademas
+        # _PERMS_CONCEDIDOS_POR_DEFECTO (agregada 2026-09-02, DESPUES de que
+        # este test se escribiera) -- sin inyectarla acá, la extraccion por
+        # AST revienta con NameError en cada corrida, aunque el codigo real
+        # en app.py funcione perfecto (bug detectado al escribir el test
+        # hermano de tr_cambiar_estado, mismo patron exacto).
+        ns["_PERMS_CONCEDIDOS_POR_DEFECTO"] = _modulo_leer("_PERMS_CONCEDIDOS_POR_DEFECTO")
         exec(compile(ast.Module(body=[_nodo("_empty_perms")], type_ignores=[]),
                      "<app.py>", "exec"), ns)
         exec(compile(ast.Module(body=[_nodo("_legacy_permission_set")], type_ignores=[]),
