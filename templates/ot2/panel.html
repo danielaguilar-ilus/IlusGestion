@@ -504,20 +504,20 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {% set vista_lista = 'tabla' %}
   <div class="ot2-kpis">
     <a class="ot2-kpi k-pend {{ 'on' if fase=='pend' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='pend' else 'pend') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='pend' else 'pend') }}">
       <span class="num">{{ kpis.pend }}</span><span class="lbl">Pendientes</span>
     </a>
     <a class="ot2-kpi k-ejec {{ 'on' if fase=='ejec' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='ejec' else 'ejec') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='ejec' else 'ejec') }}">
       <span class="num">{{ kpis.ejec }}</span>
       <span class="lbl">{% if kpis.ejec %}<span class="ot2-dot"></span>{% endif %}En ejecución</span>
     </a>
     <a class="ot2-kpi k-comp {{ 'on' if fase=='comp' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='comp' else 'comp') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='comp' else 'comp') }}">
       <span class="num">{{ kpis.comp }}</span><span class="lbl">Completadas</span>
     </a>
     <a class="ot2-kpi k-cerr {{ 'on' if fase=='cerr' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='cerr' else 'cerr') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='cerr' else 'cerr') }}">
       <span class="num">{{ kpis.cerr }}</span><span class="lbl">Cerradas</span>
     </a>
   </div>
@@ -570,6 +570,21 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
       <option value="1" {{ 'selected' if f_interna == '1' }}>Solo trabajo interno</option>
       <option value="0" {{ 'selected' if f_interna == '0' }}>Solo de cliente</option>
     </select>
+    {# 🆕 2026-09-14 (Juan Pablo, en la reunión: "¿se puede agregar una
+       búsqueda de anexo?"). El buscador de arriba (q) ya empareja N° de
+       anexo y proveedor externo; este select además deja aislar por
+       estado -- el primer paso para identificar qué OT de proveedor
+       externo todavía no tienen su anexo (control de cobros a externos,
+       pedido el mismo día por Daniel). #}
+    <select name="anexo" class="form-select form-select-sm" style="min-height:44px;max-width:190px"
+            onchange="this.form.submit()" aria-label="Filtrar por anexo de servicios">
+      <option value="">Todos los anexos</option>
+      <option value="sin_anexo" {{ 'selected' if f_anexo == 'sin_anexo' }}>Sin anexo</option>
+      <option value="borrador" {{ 'selected' if f_anexo == 'borrador' }}>Anexo en borrador</option>
+      <option value="enviado" {{ 'selected' if f_anexo == 'enviado' }}>Anexo enviado</option>
+      <option value="visto" {{ 'selected' if f_anexo == 'visto' }}>Anexo visto, sin firmar</option>
+      <option value="firmado" {{ 'selected' if f_anexo == 'firmado' }}>Anexo firmado</option>
+    </select>
 
     {# El orden viaja en el formulario para no perderse al buscar #}
     <input type="hidden" name="orden" value="{{ orden }}">
@@ -578,7 +593,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
       <i class="bi bi-funnel me-1"></i>Buscar
     </button>
-    {% if q or fase or f_tipo or f_tec or f_interna %}
+    {% if q or fase or f_tipo or f_tec or f_interna or f_anexo %}
     <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px"
        href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
       <i class="bi bi-x-lg me-1"></i>Limpiar
@@ -586,16 +601,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     {% endif %}
   </form>
 
-  {% if q or fase or f_tipo or f_tec or f_interna %}
+  {% if q or fase or f_tipo or f_tec or f_interna or f_anexo %}
   <p class="ot2-nota">
     <i class="bi bi-info-circle-fill text-primary"></i>
-    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}
+    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}{% if f_anexo %} · anexo <b>{{ {'sin_anexo':'sin anexo','borrador':'en borrador','enviado':'enviado','visto':'visto, sin firmar','firmado':'firmado'}[f_anexo] }}</b>{% endif %}
   </p>
   {% endif %}
 
   {# ── Selector de vista ───────────────────────────────────────────── #}
   <nav class="ot2-vistas" aria-label="Tipo de vista">
-    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None) }}">
       <i class="bi bi-table"></i><span>Tabla</span></a>
     {# 2026-08-20 (Daniel): la vista "Tarjetas" se quitó a pedido suyo --
        "cuando lo cambio a tabla y tarjeta no hace nada". Y era cierto: el
@@ -603,9 +618,9 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
        Tarjetas renderizaba EXACTAMENTE la tabla. Nunca se implementó como
        vista propia; existía solo el botón. Se elimina el botón en vez de
        dejar una opción que promete algo que no ocurre. #}
-    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None) }}">
       <i class="bi bi-kanban-fill"></i><span>Kanban</span></a>
-    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None) }}">
       <i class="bi bi-calendar3"></i><span>Calendario</span></a>
   </nav>
 

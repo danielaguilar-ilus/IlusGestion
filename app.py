@@ -78184,6 +78184,23 @@ def ot2_panel():
         f_tec = int(request.args.get("tecnico") or 0) or None
     except (TypeError, ValueError):
         f_tec = None
+    # 🔧 2026-09-14: el <select name="interna"> ya existía en el template
+    # (y en el docstring de arriba) pero el backend nunca lo leía -- elegir
+    # "Solo trabajo interno" no filtraba nada. Mismo criterio que
+    # _ot_es_interna() (única fuente de verdad), traducido a SQL porque acá
+    # se filtra ANTES de traer las filas, no fila por fila en Python.
+    f_interna = (request.args.get("interna") or "").strip()
+    if f_interna not in ("0", "1"):
+        f_interna = ""
+
+    # 🆕 2026-09-14 (Juan Pablo: "¿se puede agregar una búsqueda de anexo?").
+    # `q` ya busca por N° OT/cliente/técnico; ahora también empareja N° de
+    # anexo y nombre del proveedor externo. Además, filtro dedicado por
+    # estado del anexo -- primer paso hacia "identificar qué OT no tienen
+    # su anexo resuelto" (control de cobros a externos, pedido el mismo día).
+    f_anexo = (request.args.get("anexo") or "").strip().lower()
+    if f_anexo not in ("sin_anexo", "borrador", "enviado", "visto", "firmado"):
+        f_anexo = ""
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -78229,12 +78246,19 @@ def ot2_panel():
     # solo q (fase no aplica en esas dos vistas, ver arriba).
     extra_where_q, extra_params_q = [], []
     if q:
+        # 🆕 2026-09-14 (Juan Pablo, cumpleaños: "¿se puede agregar una
+        # búsqueda de anexo?"): el mismo buscador ahora también empareja
+        # el N° de anexo y el nombre del proveedor externo, vía EXISTS --
+        # un anexo puede no existir para la OT (LEFT JOIN multiplicaría
+        # filas si hubiera más de uno; EXISTS no).
         extra_where_q.append(
             "(v.numero_ot LIKE %s OR c.razon_social LIKE %s "
-            " OR COALESCE(au.nombre, au.username) LIKE %s)"
+            " OR COALESCE(au.nombre, au.username) LIKE %s "
+            " OR EXISTS (SELECT 1 FROM mant_anexos anx_q WHERE anx_q.ot_id = v.id "
+            "            AND (anx_q.numero LIKE %s OR anx_q.proveedor_nombre LIKE %s)))"
         )
         like = f"%{q}%"
-        extra_params_q.extend([like, like, like])
+        extra_params_q.extend([like, like, like, like, like])
     # Tipo y técnico entran junto con q (afectan el universo de las 4
     # vistas, no solo el listado): un Kanban filtrado por técnico tiene
     # tanto sentido como una tabla filtrada por técnico.
@@ -78244,6 +78268,24 @@ def ot2_panel():
     if f_tec:
         extra_where_q.append("v.tecnico_user_id = %s")
         extra_params_q.append(f_tec)
+    if f_interna:
+        # Espejo SQL de _ot_es_interna() -- ver el comentario junto a esa
+        # función: única fuente de verdad, mantener en sync si cambia.
+        _cond_interna = ("(v.modalidad_cobro='interno' OR v.tipo='revision_interna' "
+                          " OR v.cliente_id IS NULL)")
+        extra_where_q.append(_cond_interna if f_interna == "1" else f"NOT {_cond_interna}")
+    if f_anexo:
+        if f_anexo == "sin_anexo":
+            extra_where_q.append(
+                "NOT EXISTS (SELECT 1 FROM mant_anexos anx_f WHERE anx_f.ot_id = v.id "
+                "            AND anx_f.estado <> 'anulado')"
+            )
+        else:
+            extra_where_q.append(
+                "EXISTS (SELECT 1 FROM mant_anexos anx_f WHERE anx_f.ot_id = v.id "
+                "        AND anx_f.estado = %s)"
+            )
+            extra_params_q.append(f_anexo)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -78552,6 +78594,7 @@ def ot2_panel():
         per_page_opciones=_OT2_PER_PAGE_OPCIONES, error=error,
         kanban_cols=kanban_cols,
         orden=orden, dir=dir_.lower(), f_tipo=f_tipo, f_tec=f_tec,
+        f_interna=f_interna, f_anexo=f_anexo,
         tipos_opts=tipos_opts, tecnicos_opts=tecnicos_opts,
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
