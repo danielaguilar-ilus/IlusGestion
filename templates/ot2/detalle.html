@@ -3695,6 +3695,32 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
        con sus 4 pasos en 2x2 -- la única tarjeta que de verdad
        aprovecha el ancho de esta pantalla. Ver REGLA #16. #}
       {% if not es_tecnico %}
+      {# 💸 2026-09-14 (Daniel: "controlar los cobros de los externos").
+         Estado del pago al proveedor externo -- viene de Facturas de
+         proveedor (SSTT). Solo lectura acá: se gestiona allá. Macro porque
+         va tanto en la versión editable (paso 3) como en la de solo lectura
+         (OT cerrada -- que es justo la que se factura). #}
+      {% macro facprov_bloque(fp, fp_aplica) %}
+        {% if fp %}
+        <div class="otd-facprov {{ 'pagada' if fp.estado_pago == 'pagada' else 'pend' }}">
+          <i class="bi {{ 'bi-check-circle-fill' if fp.estado_pago == 'pagada' else 'bi-receipt-cutoff' }}"></i>
+          <div>
+            <b>{% if fp.estado_pago == 'pagada' %}Pagada al proveedor{% else %}Facturada por el proveedor, pendiente de pago{% endif %}</b>
+            <span>{{ fp.proveedor_nombre }} · {{ {'factura':'Factura','boleta_honorarios':'Boleta de honorarios','otro':'Documento'}[fp.tipo_documento] }}
+              N° {{ fp.numero_documento }} · ${{ '{:,.0f}'.format(fp.monto or 0)|replace(',', '.') }}
+              {% if fp.estado_pago == 'pagada' and fp.pagada_at %}· pagada el {{ fp.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}</span>
+          </div>
+          <a href="{{ url_for('mant_factura_proveedor_detalle', fid=fp.id) }}" class="ver">Ver factura</a>
+        </div>
+        {% elif fp_aplica %}
+        <div class="otd-facprov sin">
+          <i class="bi bi-hourglass-split"></i>
+          <div><b>Por facturar por el proveedor</b>
+            <span>Todavía ninguna factura de proveedor cobra esta OT. Se registra en Facturas proveedor (Taller).</span></div>
+          <a href="{{ url_for('mant_facturas_proveedor') }}" class="ver">Ir</a>
+        </div>
+        {% endif %}
+      {% endmacro %}
       <div class="otd-card" id="otdCardFinanzas">
         <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT</h3>
         <div style="padding:14px 16px">
@@ -4032,28 +4058,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                          value="{{ v.proveedor_nombre or '' }}">
                 </div>
               </div>
-              {# 💸 2026-09-14 (Daniel: "controlar los cobros de los externos").
-                 Estado del pago al proveedor -- viene de Facturas de
-                 proveedor (SSTT). Solo lectura acá: se gestiona allá. #}
-              {% if factura_prov is defined and factura_prov %}
-              <div class="otd-facprov {{ 'pagada' if factura_prov.estado_pago == 'pagada' else 'pend' }}">
-                <i class="bi {{ 'bi-check-circle-fill' if factura_prov.estado_pago == 'pagada' else 'bi-receipt-cutoff' }}"></i>
-                <div>
-                  <b>{% if factura_prov.estado_pago == 'pagada' %}Pagada al proveedor{% else %}Facturada por el proveedor, pendiente de pago{% endif %}</b>
-                  <span>{{ factura_prov.proveedor_nombre }} · {{ {'factura':'Factura','boleta_honorarios':'Boleta de honorarios','otro':'Documento'}[factura_prov.tipo_documento] }}
-                    N° {{ factura_prov.numero_documento }} · ${{ '{:,.0f}'.format(factura_prov.monto or 0)|replace(',', '.') }}
-                    {% if factura_prov.estado_pago == 'pagada' and factura_prov.pagada_at %}· pagada el {{ factura_prov.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}</span>
-                </div>
-                <a href="{{ url_for('mant_factura_proveedor_detalle', fid=factura_prov.id) }}" class="ver">Ver factura</a>
-              </div>
-              {% elif factura_prov is defined and factura_prov_aplica %}
-              <div class="otd-facprov sin">
-                <i class="bi bi-hourglass-split"></i>
-                <div><b>Por facturar por el proveedor</b>
-                  <span>Todavía ninguna factura de proveedor cobra esta OT. Se registra en Facturas proveedor (Taller).</span></div>
-                <a href="{{ url_for('mant_facturas_proveedor') }}" class="ver">Ir</a>
-              </div>
-              {% endif %}
+              {{ facprov_bloque(factura_prov if factura_prov is defined else none, factura_prov_aplica if factura_prov_aplica is defined else false) }}
             </div>
           </div>
 
@@ -4157,7 +4162,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <div class="row"><span>Documento</span>
               <b>{{ _doc_tido_ro2 or 'DOC' }} {{ _doc_nudo_ro2 }}</b></div>
             {% endif %}
+            {# 💸 Lo que le pagamos al proveedor externo (antes esta vista de
+               solo lectura no lo mostraba y una OT cerrada quedaba sin ese dato) #}
+            {% if v.costo_proveedor or v.costo_despacho %}
+            <div class="row"><span>Costo proveedor</span>
+              <b>${{ '{:,.0f}'.format((v.costo_proveedor or 0)|float)|replace(',', '.') }}{% if v.costo_despacho %} + despacho ${{ '{:,.0f}'.format((v.costo_despacho or 0)|float)|replace(',', '.') }}{% endif %}
+                {% if v.proveedor_nombre %}<small class="text-muted">· {{ v.proveedor_nombre }}</small>{% endif %}</b></div>
+            {% endif %}
           </div>
+          {{ facprov_bloque(factura_prov if factura_prov is defined else none, factura_prov_aplica if factura_prov_aplica is defined else false) }}
           {% endif %}
           {% if finanzas and finanzas.faltan %}
           <div class="otd-warn" style="margin-top:10px">
