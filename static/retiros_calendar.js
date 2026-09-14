@@ -130,6 +130,10 @@
       // muestra "Necesitamos mínimo 24 horas de anticipación…"; el operador
       // interno puede poner otro, o nada).
       monthHelp: '',
+      // Cliente público (seguimiento): token de SU retiro para que su propia
+      // reserva no cuente contra el cupo (backend: ?exclude_token=). El
+      // operador usa currentRequestId + include_owners en su lugar.
+      excludeToken: null,
     }, opts || {});
 
     const grid     = (typeof cfg.container === 'string') ? _qs(cfg.container) : cfg.container;
@@ -757,6 +761,8 @@
           if (cfg.currentRequestId){
             url += '&exclude_id=' + encodeURIComponent(cfg.currentRequestId);
           }
+        } else if (cfg.excludeToken){
+          url += (url.indexOf('?') >= 0 ? '&' : '?') + 'exclude_token=' + encodeURIComponent(cfg.excludeToken);
         }
         const r = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
         if (!r.ok) throw new Error('HTTP ' + r.status);

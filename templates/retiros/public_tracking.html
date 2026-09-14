@@ -14,6 +14,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="{{ url_for('static', filename='retiros_public_tracking.css') }}">
+  {# Widget de calendario compartido (mismo diseño que el formulario público) —
+     lo usa el modal "Proponer otra fecha". Daniel 2026-09-14. #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='retiros_calendar.css') }}">
 </head>
 <body>
 
@@ -626,11 +629,20 @@
        al MISMO endpoint que existía (action=counter) — backend ya valida
        defense in depth.
      ════════════════════════════════════════════════════════════════ #}
+  {# Daniel 2026-09-14 ("aplica el mismo calendario al modal 'Proponer otra
+     fecha' del cliente"): el picker propio de este modal (input date +
+     grilla + atajos 1h/2h/3h) se reemplaza por el widget compartido
+     IlusRetirosCalendar (static/retiros_calendar.js) con el MISMO layout de
+     dos columnas del Paso 4 de /retiros/solicitar: mes con densidad de
+     cupos a la izquierda, bloques a la derecha. Un solo bloque de 30 min
+     ("Elige una sola hora de llegada", misma regla que el formulario). El
+     input date nativo queda como RESPALDO oculto si falla el API. Los
+     inputs ocultos counter_* y el submit no cambian: el backend valida igual. #}
   <div class="modal fade" id="counterModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
       <form method="post" class="modal-content" id="counterForm" novalidate>
         <input type="hidden" name="action" value="counter">
-        {# Inputs reales que se envían al backend (ocultos — los puebla el JS) #}
+        {# Inputs reales que se envían al backend (ocultos — los puebla el widget) #}
         <input type="hidden" name="counter_date"      id="cnt_date_input">
         <input type="hidden" name="counter_time_from" id="cnt_tf_input">
         <input type="hidden" name="counter_time_to"   id="cnt_tt_input">
@@ -649,51 +661,45 @@
             <i class="bi bi-info-circle-fill"></i>
             <div>
               <strong>ILUS te propuso:</strong>
-              {{ pending[0].date }} de {{ pending[0].time_from|hm }} a {{ pending[0].time_to|hm }}.
+              {{ pending[0].date | chile_fmt('%d-%m-%Y') }} de {{ pending[0].time_from|hm }} a {{ pending[0].time_to|hm }}.
               Si no te acomoda, elige otra fecha y horario aquí abajo.
             </div>
           </div>
           {% endif %}
 
-          {# Fecha #}
-          <div class="mb-3">
-            <label class="form-label small fw-bold mb-1" for="cnt_fecha_picker">
-              Nueva fecha del retiro <span class="text-danger">*</span>
-            </label>
-            <input type="date" id="cnt_fecha_picker" class="form-control" required>
-            <small class="cnt-fecha-msg text-muted" id="cnt_fecha_msg">
-              <i class="bi bi-calendar3 me-1"></i>Selecciona un día desde mañana.
-            </small>
-          </div>
-
-          {# Bloque horario inteligente #}
-          <div class="mb-2">
-            <label class="form-label small fw-bold mb-1">
-              Bloque horario <span class="text-danger">*</span>
-            </label>
-            <div class="cnt-slot-picker">
-              <div class="cnt-slot-head">
-                <strong>Toca uno o más bloques contiguos</strong>
-                <div class="cnt-slot-legend">
-                  <span><span class="ldot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-                  <span><span class="ldot" style="background:#dc2626"></span>Tu selección</span>
-                  <span><span class="ldot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>No disponible 🔒</span>
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="ilus-cal-col-label">Nueva fecha del retiro <span class="req">*</span></label>
+              <div id="cnt_month" class="ilus-cal-month"></div>
+              {# Respaldo: input nativo, visible solo si falla el API (onLoadFail) #}
+              <div id="cnt_fecha_fallback" style="display:none">
+                <input type="date" id="cnt_fecha_picker" class="form-control" required>
+                <small class="cnt-fecha-msg text-muted" id="cnt_fecha_msg">
+                  <i class="bi bi-calendar3 me-1"></i>Selecciona un día desde mañana.
+                </small>
+              </div>
+            </div>
+            <div class="col-md-7">
+              <label class="ilus-cal-col-label">Bloque horario <span class="req">*</span></label>
+              <div class="ilus-cal-wrap">
+                <div class="ilus-cal-head">
+                  <strong style="font-size:.84rem">Toca tu hora de llegada</strong>
+                  <div class="legend">
+                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                    <span><span class="dot" style="background:#dc2626"></span>Tu selección</span>
+                    <span><span class="dot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>Sin cupos 🔒</span>
+                  </div>
                 </div>
-              </div>
-              <div id="cnt_slot_grid">
-                <div class="text-center text-muted small py-3">
-                  <i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero
+                <div id="cnt_slot_grid">
+                  <div class="ilus-cal-empty"><i class="bi bi-calendar3"></i>Selecciona una fecha primero</div>
                 </div>
-              </div>
-              <div class="cnt-slot-actions" id="cnt_slot_quick_wrap" style="display:none">
-                <span class="text-muted small me-2">Atajo:</span>
-                <span class="cnt-slot-quick" data-cnt-quick="1">1 hora</span>
-                <span class="cnt-slot-quick" data-cnt-quick="2">2 horas</span>
-                <span class="cnt-slot-quick" data-cnt-quick="3">3 horas</span>
-                <span class="cnt-slot-quick cnt-slot-clear" id="cnt_slot_clear_btn">Limpiar</span>
-              </div>
-              <div class="cnt-slot-summary" id="cnt_slot_summary">
-                <div id="cnt_slot_summary_text" class="sum-empty">No has seleccionado bloque aún</div>
+                <div class="ilus-cal-quick-actions" id="cnt_slot_quick_wrap" style="display:none">
+                  <span class="text-muted small me-2"><i class="bi bi-info-circle me-1"></i>Elige <strong>una sola hora</strong> de llegada</span>
+                  <span class="ilus-cal-quick-chip clear" id="cnt_slot_clear_btn" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar</span>
+                </div>
+                <div class="ilus-cal-summary mt-2" id="cnt_slot_summary">
+                  <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>No has seleccionado bloque aún</span>
+                </div>
               </div>
             </div>
           </div>
@@ -772,6 +778,8 @@
       currentStatus: '{{ req.status }}'
     };
   </script>
+  {# El widget va ANTES del JS de la página (ambos defer → se ejecutan en orden) #}
+  <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
   <script defer src="{{ url_for('static', filename='retiros_public_tracking.js') }}"></script>
 
   {# 2026-07-29 (Daniel: "sácale lo de los mensajes... deshabilitémoslo,

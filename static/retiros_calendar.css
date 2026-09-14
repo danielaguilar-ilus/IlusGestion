@@ -1,0 +1,194 @@
+/* ══════════════════════════════════════════════════════════════
+   ILUS · RETIROS — CALENDARIO REUSABLE (retiros_calendar.js)
+   Estilos del widget único de selección de fecha + bloque. Mismo
+   aspecto en los modales internos, la agenda, la ficha del retiro y el
+   modal "Proponer otra fecha" del seguimiento público del cliente.
+   2026-09-14: extraído de style.css a su propio archivo para que las
+   páginas públicas (que NO cargan style.css) puedan usar el widget.
+   Se carga en base.html (después de style.css) y en
+   templates/retiros/public_tracking.html.
+══════════════════════════════════════════════════════════════ */
+/* = .slot-picker del formulario público (mismo degradado/borde/radio) */
+.ilus-cal-wrap{background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);border:1.5px solid #e5e7eb;border-radius:var(--r-md,10px);padding:18px;box-shadow:inset 0 1px 2px rgba(15,23,42,.03)}
+.ilus-cal-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:.82rem}
+.ilus-cal-head .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:.7rem;color:#6b7280}
+.ilus-cal-head .legend span{display:inline-flex;align-items:center;gap:4px}
+.ilus-cal-head .legend .dot{width:11px;height:11px;border-radius:3px;display:inline-block;vertical-align:middle;flex-shrink:0}
+
+.ilus-cal-grid{display:flex;flex-direction:column;gap:8px}
+.ilus-cal-section{font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;padding:6px 0 2px;border-bottom:1px dashed #e5e7eb;margin:6px 0 2px}
+.ilus-cal-slots-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px 8px}
+@media(max-width:600px){.ilus-cal-slots-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 6px}}
+@media(max-width:380px){.ilus-cal-slots-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.ilus-cal-slot{
+  padding:13px 6px;border-radius:8px;background:#fff;border:1.5px solid #e5e7eb;
+  font-size:.88rem;font-weight:700;color:#0a0a0a;text-align:center;cursor:pointer;
+  transition:transform .15s cubic-bezier(.4,0,.2,1), box-shadow .15s cubic-bezier(.4,0,.2,1),
+             background .15s cubic-bezier(.4,0,.2,1), border-color .15s cubic-bezier(.4,0,.2,1);
+  font-variant-numeric:tabular-nums;user-select:none;position:relative;
+  min-height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+}
+.ilus-cal-slot:hover:not(.is-disabled){border-color:var(--ilus-red,#dc2626);background:#fff5f5;transform:translateY(-1px);box-shadow:0 4px 10px rgba(220,38,38,.12)}
+.ilus-cal-slot:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(220,38,38,.30)}
+
+.ilus-cal-slot .ilus-cal-hora{font-size:.88rem;font-weight:800;letter-spacing:.02em;line-height:1.1}
+.ilus-cal-slot .ilus-cal-owner-line{font-size:.58rem;font-weight:700;color:#6b7280;line-height:1.1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px;text-transform:uppercase;letter-spacing:.04em}
+.ilus-cal-slot.is-selected .ilus-cal-owner-line{color:rgba(255,255,255,.92)}
+
+.ilus-cal-slot.is-lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa;cursor:not-allowed;opacity:.6}
+.ilus-cal-slot.is-lunch::after{content:'☕';position:absolute;top:3px;right:5px;font-size:.78rem;opacity:.85}
+.ilus-cal-slot.is-lunch:hover{transform:none;box-shadow:none;background:#fff7ed;border-color:#fed7aa}
+.ilus-cal-slot.is-busy{
+  background:linear-gradient(180deg,#fff7ed 0%, #fff 100%);
+  color:#c2410c;border-color:#fdba74;
+  box-shadow:inset 0 0 0 1px rgba(251,146,60,.10);
+}
+.ilus-cal-slot.is-busy::before{
+  content:'';position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;
+  background:#f97316;box-shadow:0 0 8px rgba(249,115,22,.6);
+  animation:ilusCalBusyPulse 1.8s ease-in-out infinite;
+}
+@keyframes ilusCalBusyPulse{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:1;transform:scale(1.25)}}
+.ilus-cal-slot.is-busy:hover{background:linear-gradient(180deg,#ffedd5 0%, #fff8f0 100%);border-color:#fb923c}
+.ilus-cal-badge{position:absolute;top:-8px;right:-4px;background:#f97316;color:#fff;font-size:.58rem;padding:2px 6px;border-radius:50px;font-weight:800;letter-spacing:.04em;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+/* ✦✦ Lleno (2/2) — ROJO BRILLANTE + candado + pulse · "la magia" Daniel mayo 2026 ✦✦ */
+.ilus-cal-slot.is-full{
+  background:linear-gradient(180deg,#fef2f2 0%, #fee2e2 100%);
+  color:#7f1d1d;border-color:#dc2626;cursor:not-allowed;opacity:.95;
+  box-shadow:
+    inset 0 0 0 1px rgba(220,38,38,.18),
+    inset 0 -8px 16px -8px rgba(220,38,38,.24),
+    0 1px 2px rgba(220,38,38,.10);
+  font-weight:900;
+  animation:ilusCalFullPulse 2.6s cubic-bezier(.65,0,.35,1) infinite;
+}
+@keyframes ilusCalFullPulse{
+  0%,100%{box-shadow:inset 0 0 0 1px rgba(220,38,38,.18), inset 0 -8px 16px -8px rgba(220,38,38,.24), 0 1px 2px rgba(220,38,38,.10), 0 0 0 0 rgba(220,38,38,.40)}
+  50%   {box-shadow:inset 0 0 0 1px rgba(220,38,38,.34), inset 0 -8px 16px -8px rgba(220,38,38,.42), 0 1px 2px rgba(220,38,38,.20), 0 0 0 6px rgba(220,38,38,.07)}
+}
+.ilus-cal-slot.is-full::after{
+  content:'🔒';position:absolute;top:3px;right:5px;font-size:.86rem;
+  filter:drop-shadow(0 1px 2px rgba(220,38,38,.4));
+}
+.ilus-cal-slot.is-full:hover{
+  transform:none;
+  background:linear-gradient(180deg,#fef2f2 0%, #fee2e2 100%);
+  border-color:#dc2626;
+  box-shadow:inset 0 0 0 1px rgba(220,38,38,.32), inset 0 -8px 16px -8px rgba(220,38,38,.42), 0 4px 12px rgba(220,38,38,.25);
+}
+.ilus-cal-slot.is-blocked{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;cursor:not-allowed;opacity:.6;text-decoration:line-through}
+.ilus-cal-slot.is-disabled{cursor:not-allowed}
+
+.ilus-cal-slot.is-selected{background:var(--ilus-red,#dc2626);color:#fff;border-color:var(--ilus-red,#dc2626);box-shadow:0 4px 12px rgba(220,38,38,.3);transform:translateY(-1px);opacity:1}
+.ilus-cal-slot.is-selected:hover{background:#b91c1c;border-color:#b91c1c}
+.ilus-cal-slot.is-in-range{background:linear-gradient(180deg,rgba(220,38,38,.18) 0%,rgba(220,38,38,.06) 100%);color:var(--ilus-red,#dc2626);border-color:#fecaca;font-weight:800}
+.ilus-cal-slot.is-in-range:hover{background:rgba(220,38,38,.22);border-color:#fca5a5}
+.ilus-cal-slot.is-start::before{content:'INICIO';position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fff;font-size:.55rem;padding:2px 7px;border-radius:50px;letter-spacing:.06em;font-weight:800;box-shadow:0 2px 4px rgba(0,0,0,.18);white-space:nowrap;z-index:2}
+.ilus-cal-slot.is-end:not(.is-start)::before{content:'FIN';position:absolute;bottom:-9px;top:auto;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fff;font-size:.55rem;padding:2px 7px;border-radius:50px;letter-spacing:.06em;font-weight:800;box-shadow:0 2px 4px rgba(0,0,0,.18);white-space:nowrap;z-index:2}
+.ilus-cal-slot.is-start.is-end::before{content:'INICIO · FIN';font-size:.5rem;padding:2px 6px}
+
+.ilus-cal-empty{padding:32px 14px;text-align:center;color:#9ca3af;font-size:.85rem}
+.ilus-cal-empty i{font-size:1.6rem;display:block;margin-bottom:6px;opacity:.6}
+.ilus-cal-skel{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.ilus-cal-skel div{
+  height:52px;border-radius:10px;
+  background:linear-gradient(90deg,#f3f4f6 0%,#fafafa 50%,#f3f4f6 100%);
+  background-size:200% 100%;
+  animation:ilusCalSkel 1.5s cubic-bezier(.4,0,.2,1) infinite;
+  box-shadow:0 1px 0 rgba(255,255,255,.6) inset, 0 1px 2px rgba(15,23,42,.04);
+}
+.ilus-cal-skel div:nth-child(odd){animation-delay:.08s}
+.ilus-cal-skel div:nth-child(3n) {animation-delay:.16s}
+.ilus-cal-skel div:nth-child(5n) {animation-delay:.24s}
+@keyframes ilusCalSkel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+.ilus-cal-summary{margin-top:14px;padding:14px 18px;background:#0a0a0a;color:#fff;border-radius:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:.92rem;border-left:4px solid var(--ilus-red,#dc2626);transition:background .25s,border-color .25s}
+.ilus-cal-summary.is-active{background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);border-left-color:#16a34a}
+.ilus-cal-summary .ilus-cal-sum-empty{color:#9ca3af;font-style:italic}
+.ilus-cal-summary .ilus-cal-sum-range{font-weight:800;font-size:1.02rem}
+.ilus-cal-summary .ilus-cal-sum-dur{display:inline-flex;align-items:center;gap:6px;background:rgba(220,38,38,.25);color:#fff;padding:4px 11px;border-radius:50px;font-size:.78rem;font-weight:700;margin-left:8px}
+
+.ilus-cal-quick-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;align-items:center}
+.ilus-cal-quick-chip{padding:6px 14px;background:#fff;border:1.5px solid #e5e7eb;border-radius:50px;font-size:.76rem;font-weight:700;cursor:pointer;color:#374151;transition:all .15s cubic-bezier(.4,0,.2,1);user-select:none}
+.ilus-cal-quick-chip:hover{background:var(--ilus-red,#dc2626);color:#fff;border-color:var(--ilus-red,#dc2626);transform:translateY(-1px);box-shadow:0 4px 10px rgba(220,38,38,.2)}
+.ilus-cal-quick-chip.clear{background:transparent;border-color:#d1d5db;color:#6b7280}
+.ilus-cal-quick-chip.clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+
+/* ── Mini-calendario mensual (Daniel 2026-09-14: "calendario tan potente
+   como el de las OT", después "quiero un diseño así" mostrando el propio
+   calendario de /retiros/solicitar como referencia — "en todos lados algo
+   bien atractivo"). Mismos valores exactos que .ilus-cal-day en
+   static/retiros_public_request.css, con prefijo -month- propio porque
+   este widget vive en páginas que no cargan esa hoja de estilos (modales
+   internos). Mismo payload de 30 días de siempre, cero llamadas nuevas. ── */
+.ilus-cal-month{margin-bottom:6px}
+.ilus-cal-month-box{
+  background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+  border:1.5px solid #e5e7eb;border-radius:var(--r-md,10px);padding:14px;
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.03);
+}
+.ilus-cal-month-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.ilus-cal-month-label{font-weight:900;font-size:.92rem;color:#0a0a0a;letter-spacing:-.01em;text-transform:capitalize}
+.ilus-cal-month-nav{
+  width:44px;height:44px;min-height:44px;border-radius:10px;border:1.5px solid #e5e7eb;
+  background:#fff;color:#374151;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;font-size:1rem;flex-shrink:0;transition:border-color .16s,color .16s,background .16s;
+}
+.ilus-cal-month-nav:hover:not(:disabled){border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626);background:#fff5f5}
+.ilus-cal-month-nav:disabled{opacity:.35;cursor:not-allowed}
+/* Par de líneas bajo el calendario (= .input-help / #cal_fecha_msg del público) */
+.ilus-cal-month-help{font-size:.73rem;color:#6b7280;margin-top:8px;line-height:1.45;display:flex;align-items:center;gap:7px}
+.ilus-cal-month-help::before{content:'';width:3px;height:13px;background:linear-gradient(180deg,#d1d5db,#e5e7eb);border-radius:2px;flex-shrink:0}
+.ilus-cal-month-msg{display:block;font-size:.73rem;font-weight:700;margin-top:5px;line-height:1.45;min-height:1em}
+/* Etiqueta de columna "Fecha del retiro *" / "Bloque horario *" (= form-label del público) */
+.ilus-cal-col-label{display:block;font-size:.8rem;font-weight:800;color:#111827;margin-bottom:6px}
+.ilus-cal-col-label .req{color:var(--ilus-red,#dc2626);margin-left:2px}
+.ilus-cal-month-dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-bottom:4px}
+.ilus-cal-month-dow span{text-align:center;font-size:.64rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;padding:4px 0}
+.ilus-cal-month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.ilus-cal-month-day{
+  position:relative;min-height:40px;border-radius:9px;
+  background:#fff;border:1.5px solid #eef0f2;color:#1f2937;font-weight:800;font-size:.82rem;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  cursor:pointer;padding:3px 2px;font-variant-numeric:tabular-nums;
+  transition:transform .16s cubic-bezier(.4,0,.2,1),border-color .15s,background .15s,box-shadow .15s;
+}
+.ilus-cal-month-day:not(.is-disabled):not(.is-selected):not(.is-out):hover{
+  border-color:var(--ilus-red,#dc2626);background:#fff5f5;transform:translateY(-1px);
+  box-shadow:0 6px 12px -4px rgba(220,38,38,.2);
+}
+.ilus-cal-month-day.is-blank{visibility:hidden;pointer-events:none;border:none;background:transparent}
+.ilus-cal-month-day.is-out{background:transparent;border-color:transparent;color:#d1d5db;cursor:default;font-weight:600}
+.ilus-cal-month-day.is-closed{background:#f3f4f6;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed;font-weight:600}
+.ilus-cal-month-day .mark-lock{font-size:.58rem;line-height:1;color:#9ca3af}
+.ilus-cal-month-day.is-today:not(.is-selected){box-shadow:inset 0 0 0 1.5px rgba(220,38,38,.45)}
+.ilus-cal-month-day.is-disabled{cursor:not-allowed}
+.ilus-cal-month-day.is-selected{
+  background:linear-gradient(160deg,#ff2d2d 0%,var(--ilus-red,#dc2626) 55%,#b30000 100%);
+  border-color:var(--ilus-red,#dc2626);color:#fff;
+  box-shadow:0 8px 18px -6px rgba(220,38,38,.55),0 1px 0 rgba(255,255,255,.3) inset;
+  transform:translateY(-1px);
+}
+.ilus-cal-month-day .mark{width:6px;height:6px;border-radius:50%;display:block;flex-shrink:0;background:transparent}
+.ilus-cal-month-day.is-open .mark{background:#16a34a}
+.ilus-cal-month-day.is-tight .mark{background:#f59e0b}
+.ilus-cal-month-day.is-full .mark{background:#dc2626}
+.ilus-cal-month-day.is-selected .mark{background:#fff !important}
+.ilus-cal-month-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:.66rem;color:#6b7280;font-weight:600}
+.ilus-cal-month-legend span{display:inline-flex;align-items:center;gap:5px}
+.ilus-cal-month-legend .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+@media(prefers-reduced-motion:reduce){
+  .ilus-cal-month-day{transition:none}
+  .ilus-cal-month-day:not(.is-disabled):not(.is-selected):not(.is-out):hover{transform:none}
+}
+
+@media(prefers-reduced-motion: reduce){
+  .ilus-cal-slot{transition:none}
+  .ilus-cal-slot:hover:not(.is-disabled){transform:none}
+  .ilus-cal-slot.is-selected{transform:none}
+  .ilus-cal-slot.is-full{animation:none}
+  .ilus-cal-slot.is-busy::before{animation:none}
+  .ilus-cal-skel div{animation:none;background:#f3f4f6}
+  .ilus-cal-summary{transition:none}
+}

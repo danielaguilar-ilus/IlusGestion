@@ -461,348 +461,94 @@
   })();
 
   // ════════════════════════════════════════════════════════════════
-  //  MODAL "Proponer otra fecha" — CALENDARIO INTELIGENTE
+  //  MODAL "Proponer otra fecha" — CALENDARIO COMPARTIDO
   //  Daniel 2026-05-23 (Bug #2): replica el calendario del formulario
-  //  público dentro del modal. Misma seguridad: no permite pasado,
-  //  ni slot ocupado, ni colación. Fuente única de verdad:
-  //  endpoint /retiros/api/disponibilidad-publica.
+  //  público dentro del modal. Misma seguridad: no permite pasado, ni
+  //  slot ocupado, ni colación. Fuente única de verdad: endpoint
+  //  /retiros/api/disponibilidad-publica.
+  //  2026-09-14 (Daniel: "aplica el mismo calendario al modal del
+  //  cliente"): el picker propio (~350 líneas: grilla, atajos 1h/2h/3h,
+  //  rangos) se reemplaza por el widget compartido IlusRetirosCalendar
+  //  (static/retiros_calendar.js) con mes + bloques en dos columnas,
+  //  UN solo bloque de 30 min (misma regla que el formulario público).
+  //  El widget llena los hidden counter_date / counter_time_from /
+  //  counter_time_to; el submit y el backend no cambiaron. La propia
+  //  reserva del cliente se excluye del cupo vía exclude_token.
   // ════════════════════════════════════════════════════════════════
   (function(){
     'use strict';
 
-    const API_URL = '/retiros/api/disponibilidad-publica';
-    let _cntDisponibilidad = null;   // payload completo del endpoint
-    let _cntSlotsDelDia    = [];     // slots del día seleccionado
-    let _cntStartIdx       = null;
-    let _cntEndIdx         = null;
-    let _cntLoaded         = false;  // lazy load: solo cargamos al abrir modal
-
-    function _hmToMin(hm){
-      const p = String(hm || '').split(':').map(Number);
-      return (p[0] || 0) * 60 + (p[1] || 0);
-    }
-    function _minToHM(min){
-      return `${String(Math.floor(min/60)).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
-    }
+    const TRK = window.TRK_DATA || {};
+    let _cal = null;
 
     function _toast(msg, type){
-      // Usar helper ILUS si existe, fallback a alert nativo (que en ILUS
-      // también está shimmeado vía ilus_ui.js, así que igual sale bonito)
       if (typeof window.ilusToast === 'function') {
         try { return window.ilusToast(msg, { type: type || 'info', duration: 4500 }); } catch(_){}
       }
       try { window.alert(msg); } catch(_){}
     }
 
-    async function _loadDisponibilidad(){
-      if (_cntLoaded && _cntDisponibilidad) return _cntDisponibilidad;
-      try {
-        const r = await fetch(API_URL, { credentials:'same-origin', cache:'no-store' });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        _cntDisponibilidad = await r.json();
-        _cntLoaded = true;
-        return _cntDisponibilidad;
-      } catch (e){
-        const msgEl = document.getElementById('cnt_fecha_msg');
-        if (msgEl){
-          msgEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1 text-danger"></i>No se pudo cargar disponibilidad. Reintenta en unos segundos.';
-          msgEl.style.color = '#dc2626';
-        }
-        return null;
-      }
-    }
-
-    function _setMinMax(){
-      const inp = document.getElementById('cnt_fecha_picker');
-      if (!inp || !_cntDisponibilidad) return;
-      const tomorrow = new Date(Date.now() + 24*3600*1000);
-      const tomorrowStr = tomorrow.toISOString().slice(0,10);
-      inp.min = (_cntDisponibilidad.from < tomorrowStr) ? tomorrowStr : _cntDisponibilidad.from;
-      inp.max = _cntDisponibilidad.to;
-    }
-
-    function _onFechaChange(){
-      const inp  = document.getElementById('cnt_fecha_picker');
-      const msg  = document.getElementById('cnt_fecha_msg');
-      const grid = document.getElementById('cnt_slot_grid');
-      const quick= document.getElementById('cnt_slot_quick_wrap');
-      const fecha = inp.value;
-      _cntClearSelection();
-
-      if (!fecha || !_cntDisponibilidad){
-        grid.innerHTML = '<div class="text-center text-muted small py-3"><i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero</div>';
-        quick.style.display = 'none';
-        return;
-      }
-      // Defense in depth: nunca aceptar fecha de hoy/pasado
-      const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
-      if (new Date(fecha + 'T00:00:00') < minDate){
-        msg.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Necesitamos mínimo 24 horas de anticipación';
-        msg.style.color = '#dc2626';
-        grid.innerHTML = '<div class="text-center py-3" style="color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde mañana</div>';
-        quick.style.display = 'none';
-        return;
-      }
-      const dia = (_cntDisponibilidad.dias || {})[fecha];
-      if (!dia || !dia.disponible){
-        const razon = (dia && dia.razon) || 'Día sin cupos';
-        msg.innerHTML = '<i class="bi bi-x-circle me-1"></i>' + razon;
-        msg.style.color = '#dc2626';
-        grid.innerHTML = `<div class="text-center py-3" style="color:#dc2626"><i class="bi bi-x-circle me-1"></i>${razon}</div>`;
-        quick.style.display = 'none';
-        return;
-      }
-      _cntSlotsDelDia = dia.slots || [];
-      const libres = _cntSlotsDelDia.filter(s => s.puede_iniciar).length;
-      msg.innerHTML = `<i class="bi bi-check-circle me-1" style="color:${libres>0?'#16a34a':'#dc2626'}"></i>${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este día`;
-      msg.style.color = libres > 0 ? '#16a34a' : '#dc2626';
-      _renderGrid();
-      quick.style.display = libres > 0 ? 'flex' : 'none';
-    }
-
-    function _renderGrid(){
-      const grid = document.getElementById('cnt_slot_grid');
-      if (!_cntSlotsDelDia.length){
-        grid.innerHTML = '<div class="text-center text-muted small py-3">Sin bloques disponibles</div>';
-        return;
-      }
-      const lunchStart = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) ? _cntDisponibilidad.lunch_start : '12:30';
-      const lunchStartMin = _hmToMin(lunchStart);
-
-      const slotHtml = (s, i) => {
-        const cls = ['cnt-slot-item'];
-        let badge = '';
-        let title = '';
-        let estado = s.estado;
-        if (!estado){
-          if (s.lunch) estado = 'colacion';
-          else if (s.razon && !s.disponible) estado = 'bloqueado';
-          else if (!s.disponible) estado = 'completo';
-          else if ((s.ocupados || 0) > 0 && (s.ocupados || 0) < (s.max || 2)) estado = 'ocupado';
-          else estado = 'disponible';
-        }
-        // Daniel 2026-05-24: vista cliente unificada — cualquier slot no
-        // plenamente libre se ve como candado, sin info extra (ni cupos
-        // numéricos ni razón). El cliente solo elige entre libre / no libre.
-        if (estado === 'colacion'){
-          cls.push('is-lunch', 'is-disabled');
-          title = 'Hora no disponible';
-        } else if (estado === 'completo' || estado === 'ocupado'){
-          cls.push('is-full', 'is-disabled');
-          title = 'Hora no disponible';
-        } else if (estado === 'bloqueado'){
-          cls.push('is-blocked', 'is-disabled');
-          title = 'Hora no disponible';
-        } else {
-          title = 'Disponible';
-        }
-        if (_cntStartIdx !== null && _cntEndIdx !== null){
-          if (i === _cntStartIdx && i === _cntEndIdx){
-            cls.push('is-selected', 'is-start', 'is-end');
-          } else if (i === _cntStartIdx){
-            cls.push('is-selected', 'is-start');
-          } else if (i === _cntEndIdx){
-            cls.push('is-selected', 'is-end');
-          } else if (i > _cntStartIdx && i < _cntEndIdx){
-            cls.push('is-in-range');
-          }
-        }
-        const hora = s.time_from || s.hora || '';
-        return `<div class="${cls.join(' ')}" data-cnt-idx="${i}" title="${title}">${badge}${hora}</div>`;
-      };
-
-      let postLunchIdx = -1;
-      for (let i = 0; i < _cntSlotsDelDia.length; i++){
-        const s = _cntSlotsDelDia[i];
-        const startMin = _hmToMin(s.time_from || s.hora || '00:00');
-        const isLunch = (s.estado === 'colacion') || s.lunch;
-        if (!isLunch && startMin >= lunchStartMin){ postLunchIdx = i; break; }
-      }
-      const hasMorning   = _cntSlotsDelDia.some((s, i) => postLunchIdx === -1 ? true : i < postLunchIdx);
-      const hasAfternoon = postLunchIdx !== -1;
-
-      let html = '';
-      if (hasMorning && hasAfternoon){
-        html += '<div class="cnt-slot-section-title">☀️ Mañana</div>';
-        html += '<div class="cnt-slot-grid-inner">' + _cntSlotsDelDia.slice(0, postLunchIdx).map((s, i) => slotHtml(s, i)).join('') + '</div>';
-        html += '<div class="cnt-slot-section-title">🌤 Tarde</div>';
-        html += '<div class="cnt-slot-grid-inner">' + _cntSlotsDelDia.slice(postLunchIdx).map((s, j) => slotHtml(s, postLunchIdx + j)).join('') + '</div>';
-      } else {
-        html = '<div class="cnt-slot-grid-inner">' + _cntSlotsDelDia.map((s, i) => slotHtml(s, i)).join('') + '</div>';
-      }
-      grid.innerHTML = html;
-
-      // Event delegation
-      grid.querySelectorAll('[data-cnt-idx]').forEach(el => {
-        el.addEventListener('click', () => _onSlotClick(parseInt(el.dataset.cntIdx, 10)));
-      });
-    }
-
-    function _estadoDeSlot(s){
-      let e = s.estado;
-      if (!e){
-        if (s.lunch) e = 'colacion';
-        else if (s.razon && !s.disponible) e = 'bloqueado';
-        else if (!s.disponible) e = 'completo';
-        else if ((s.ocupados || 0) > 0 && (s.ocupados || 0) < (s.max || 2)) e = 'ocupado';
-        else e = 'disponible';
-      }
-      return e;
-    }
-
-    function _onSlotClick(i){
-      const s = _cntSlotsDelDia[i];
-      if (!s) return;
-      const estado = _estadoDeSlot(s);
-      // Daniel 2026-05-24: mensaje genérico, sin detalle interno.
-      if (estado === 'colacion' || estado === 'completo' ||
-          estado === 'ocupado' || estado === 'bloqueado'){
-        _toast('Esa hora no está disponible. Elige otro bloque.', 'warning');
-        return;
-      }
-
-      if (_cntStartIdx === null){
-        _cntStartIdx = _cntEndIdx = i;
-      } else if (_cntStartIdx === i && _cntEndIdx === i){
-        _cntStartIdx = _cntEndIdx = null;
-      } else {
-        const from = Math.min(_cntStartIdx, i);
-        const to   = Math.max(_cntStartIdx, i);
-        let invalido = false;
-        for (let k = from; k <= to; k++){
-          const ek = _estadoDeSlot(_cntSlotsDelDia[k]);
-          if (ek === 'colacion' || ek === 'completo' ||
-              ek === 'ocupado' || ek === 'bloqueado'){
-            invalido = true; break;
-          }
-        }
-        if (invalido){
-          _toast('El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
-          _cntStartIdx = _cntEndIdx = i;
-        } else {
-          _cntStartIdx = from; _cntEndIdx = to;
-        }
-      }
-      _updateSummary();
-      _renderGrid();
-    }
-
-    function _setQuickRange(hours){
-      if (!hours || hours <= 0) { _cntClearSelection(); return; }
-      const slotMin = (_cntDisponibilidad && _cntDisponibilidad.slot_minutes) ? _cntDisponibilidad.slot_minutes : 30;
-      const slotsNeeded = Math.max(1, Math.round(hours * 60 / slotMin));
-      let foundStart = -1, foundEnd = -1;
-      for (let i = 0; i < _cntSlotsDelDia.length; i++){
-        const s0 = _cntSlotsDelDia[i];
-        // Solo aceptar slots PLENAMENTE libres (sin ocupación).
-        const ocup0 = (s0.ocupados || 0);
-        const puedeIni = s0.disponible && !s0.lunch && ocup0 === 0;
-        if (!puedeIni) continue;
-        const endIdx = i + slotsNeeded - 1;
-        if (endIdx >= _cntSlotsDelDia.length) continue;
-        let ok = true;
-        for (let k = i; k <= endIdx; k++){
-          const ek = _estadoDeSlot(_cntSlotsDelDia[k]);
-          if (ek === 'colacion' || ek === 'completo' ||
-              ek === 'ocupado' || ek === 'bloqueado'){ ok = false; break; }
-        }
-        if (ok){ foundStart = i; foundEnd = endIdx; break; }
-      }
-      if (foundStart < 0){
-        _toast(`No hay ${hours} hora${hours===1?'':'s'} contiguas libres este día. Prueba otra fecha o menos tiempo.`, 'warning');
-        return;
-      }
-      _cntStartIdx = foundStart; _cntEndIdx = foundEnd;
-      _updateSummary(); _renderGrid();
-    }
-
-    function _cntClearSelection(){
-      _cntStartIdx = _cntEndIdx = null;
-      _updateSummary();
-      _renderGrid();
-    }
-
-    function _updateSummary(){
-      const txt = document.getElementById('cnt_slot_summary_text');
-      const sumBox = document.getElementById('cnt_slot_summary');
+    function _mountCal(){
+      if (_cal || typeof window.IlusRetirosCalendar === 'undefined') return;
       const subBtn = document.getElementById('cnt_submit_btn');
-      const inpTf  = document.getElementById('cnt_tf_input');
-      const inpTt  = document.getElementById('cnt_tt_input');
-      const inpD   = document.getElementById('cnt_date_input');
-      const fecha  = document.getElementById('cnt_fecha_picker').value;
-
-      if (_cntStartIdx === null){
-        txt.className = 'sum-empty';
-        txt.textContent = 'No has seleccionado bloque aún';
-        if (sumBox) sumBox.classList.remove('is-active');
-        if (subBtn) subBtn.disabled = true;
-        if (inpTf) inpTf.value = '';
-        if (inpTt) inpTt.value = '';
-        if (inpD)  inpD.value  = fecha || '';
-        return;
-      }
-      const slotMin = (_cntDisponibilidad && _cntDisponibilidad.slot_minutes) ? _cntDisponibilidad.slot_minutes : 30;
-      const sS = _cntSlotsDelDia[_cntStartIdx];
-      const sE = _cntSlotsDelDia[_cntEndIdx];
-      const startStr = sS.time_from || sS.hora;
-      let endStr = sE.time_to;
-      if (!endStr){
-        const baseMin = _hmToMin(sE.time_from || sE.hora);
-        endStr = _minToHM(baseMin + slotMin);
-      }
-      const nBlocks = _cntEndIdx - _cntStartIdx + 1;
-      const totalMin = nBlocks * slotMin;
-      let durTxt;
-      if (totalMin < 60) durTxt = `${totalMin} min`;
-      else if (totalMin % 60 === 0) durTxt = `${totalMin/60} h`;
-      else durTxt = `${(totalMin/60).toFixed(1)} h`;
-
-      txt.className = '';
-      txt.innerHTML = `<i class="bi bi-clock-fill me-2" style="color:#16a34a"></i><span class="sum-range">${startStr} – ${endStr}</span><span class="sum-dur"><i class="bi bi-stopwatch me-1"></i>${durTxt}</span>`;
-      if (sumBox) sumBox.classList.add('is-active');
-      if (subBtn) subBtn.disabled = !fecha;
-      if (inpTf) inpTf.value = startStr;
-      if (inpTt) inpTt.value = endStr;
-      if (inpD)  inpD.value  = fecha || '';
+      _cal = window.IlusRetirosCalendar.mount({
+        container:      '#cnt_slot_grid',
+        dateInput:      '#cnt_fecha_picker',
+        summaryEl:      '#cnt_slot_summary',
+        quickActionsEl: '#cnt_slot_quick_wrap',
+        hiddenDate:     '#cnt_date_input',
+        hiddenTimeFrom: '#cnt_tf_input',
+        hiddenTimeTo:   '#cnt_tt_input',
+        monthContainer: '#cnt_month',
+        monthHelp:      'Necesitamos mínimo 24 horas de anticipación para preparar tu pedido.',
+        apiUrl:         TRK.dispUrl || '/retiros/api/disponibilidad-publica',
+        excludeToken:   TRK.selfToken || null,
+        includeOwners:  false,   // cliente: sin nombres ni cupos internos
+        allowToday:     false,   // cliente: desde mañana (min_notice)
+        allowCrossLunch: false,
+        enableDragSelect: false,
+        enableMultiBlock: false, // una sola hora de llegada
+        suggestedDurationMin: 30,
+        onLoadFail: function(){
+          const fb = document.getElementById('cnt_fecha_fallback');
+          if (fb) fb.style.display = '';
+          const msgEl = document.getElementById('cnt_fecha_msg');
+          if (msgEl){
+            msgEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1 text-danger"></i>No se pudo cargar disponibilidad. Reintenta en unos segundos.';
+            msgEl.style.color = '#dc2626';
+          }
+        },
+        onChange: function(sel){
+          if (subBtn) subBtn.disabled = !sel;
+        },
+      });
     }
 
     function _initModal(){
       const modalEl = document.getElementById('counterModal');
       if (!modalEl) return;
       const formEl  = document.getElementById('counterForm');
-      const inpFecha= document.getElementById('cnt_fecha_picker');
-      const clearBtn= document.getElementById('cnt_slot_clear_btn');
-      const quicks  = document.querySelectorAll('[data-cnt-quick]');
 
-      modalEl.addEventListener('shown.bs.modal', async () => {
-        // Lazy load: pedimos disponibilidad solo cuando el cliente abre el modal
-        await _loadDisponibilidad();
-        _setMinMax();
-        // Reset visual
-        _cntClearSelection();
-        if (inpFecha) inpFecha.value = '';
-        const msg = document.getElementById('cnt_fecha_msg');
-        if (msg){
-          msg.innerHTML = '<i class="bi bi-calendar3 me-1"></i>Selecciona un día desde mañana.';
-          msg.style.color = '';
-        }
+      modalEl.addEventListener('shown.bs.modal', () => {
+        // Lazy: montamos recién cuando el modal está visible (el grid mide
+        // mal en display:none). Al reabrir, refrescamos cupos.
+        if (!_cal) _mountCal();
+        else if (_cal.reload) _cal.reload();
       });
       modalEl.addEventListener('hidden.bs.modal', () => {
         // Limpiamos selección y submit al cerrar para evitar resubmit accidental
-        _cntClearSelection();
+        if (_cal && _cal.clearSelection) _cal.clearSelection();
+        const subBtn = document.getElementById('cnt_submit_btn');
+        if (subBtn) subBtn.disabled = true;
       });
-
-      if (inpFecha) inpFecha.addEventListener('change', _onFechaChange);
-      if (clearBtn) clearBtn.addEventListener('click', _cntClearSelection);
-      quicks.forEach(b => b.addEventListener('click', () => _setQuickRange(parseInt(b.dataset.cntQuick, 10))));
 
       // Validación al enviar — defense in depth
       if (formEl) formEl.addEventListener('submit', (e) => {
-        const fecha = (inpFecha && inpFecha.value) || '';
-        const tf    = document.getElementById('cnt_tf_input').value;
-        const tt    = document.getElementById('cnt_tt_input').value;
+        const fecha = (document.getElementById('cnt_date_input') || {}).value || '';
+        const tf    = (document.getElementById('cnt_tf_input') || {}).value || '';
+        const tt    = (document.getElementById('cnt_tt_input') || {}).value || '';
         if (!fecha){ e.preventDefault(); _toast('Elige una fecha primero.', 'warning'); return false; }
-        if (!tf || !tt){ e.preventDefault(); _toast('Selecciona uno o más bloques horarios.', 'warning'); return false; }
+        if (!tf || !tt){ e.preventDefault(); _toast('Toca tu hora de llegada en el calendario.', 'warning'); return false; }
         // Anti-pasado redundante
         const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
         if (new Date(fecha + 'T00:00:00') < minDate){
