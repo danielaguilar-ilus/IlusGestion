@@ -291,8 +291,8 @@ function o2fToggleTecnico(tid){
 // CALENDARIO EMBEBIDO (Paso 4) + choque de horario en vivo
 // Daniel: "algo 2026/2027, parecido al de retiros, bien estructurado...
 // para ver quien esta agendado, con que OT, panorama general del mes,
-// sin salir del modal". Consume GET /mantenciones/api/calendario/mes/
-// <anio>/<mes> y GET /mantenciones/api/calendario/choque?tecnico_id=X&
+// sin salir del modal". Consume GET /servicio-tecnico/api/calendario/mes/
+// <anio>/<mes> y GET /servicio-tecnico/api/calendario/choque?tecnico_id=X&
 // fecha=Y&hora_ini=Z&hora_fin=W -- contratos construidos EN PARALELO por
 // otro agente sobre app.py (no se toca app.py desde este archivo). Si el
 // endpoint aun no existe al momento de probar, el catch de cada función
@@ -349,7 +349,7 @@ async function o2fCalCargarMes(){
   const grid = document.getElementById('o2fLevCalGrid');
   if(grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando…</div>';
   try{
-    const r = await fetch('/mantenciones/api/calendario/mes/' + a + '/' + m);
+    const r = await fetch('/servicio-tecnico/api/calendario/mes/' + a + '/' + m);
     if(!r.ok) throw new Error('http ' + r.status);
     const d = await r.json();
     _O2F.cal.cache[key] = _tkotCalNormalizarMes(d);
@@ -708,7 +708,7 @@ function o2fdayPaso(delta){
 //    mínima 18px y borde derecho punteado con .sin-fin)
 //
 // DATOS: el MISMO caché _O2F.cal.cache que llena _tkotCalNormalizarMes con
-// GET /mantenciones/api/calendario/mes/<anio>/<mes>. Cero backend nuevo:
+// GET /servicio-tecnico/api/calendario/mes/<anio>/<mes>. Cero backend nuevo:
 // el timeline es solo otra vista del mismo mapa[fecha].
 // ════════════════════════════════════════════════════════════
 const TKDAY_START = 8 * 60;      // 480
@@ -1284,7 +1284,7 @@ function _tkdayAutoScroll(){
 }
 
 // ── Repinta SOLO las clases de choque (sin reconstruir el día) tras la
-//    respuesta de /mantenciones/api/calendario/choque. ──
+//    respuesta de /servicio-tecnico/api/calendario/choque. ──
 function o2fdayAplicarChoque(){
   const blks = document.getElementById('o2fLevDayBlks');
   if(!blks) return;
@@ -1575,7 +1575,7 @@ async function _tkdayReprogChequearChoque(v){
     if(horaIni) qs.set('hora_ini', horaIni);
     if(horaFin) qs.set('hora_fin', horaFin);
     if(fechaFin && fechaFin > fecha) qs.set('fecha_fin', fechaFin);
-    const r = await fetch('/mantenciones/api/calendario/choque?' + qs.toString());
+    const r = await fetch('/servicio-tecnico/api/calendario/choque?' + qs.toString());
     const d = r.ok ? await r.json() : null;
     const lista = (d && Array.isArray(d.tecnicos)) ? d.tecnicos : [];
     const entry = lista.find(function(t){ return String(t.tecnico_id) === String(v.tecnico_id); }) || lista[0];
@@ -1746,7 +1746,7 @@ async function o2fChequearChoque(){
       if(horaIni) qs.set('hora_ini', horaIni);
       if(horaFin) qs.set('hora_fin', horaFin);
       if(rangoAct) qs.set('fecha_fin', rangoAct.fin);
-      return fetch('/mantenciones/api/calendario/choque?' + qs.toString())
+      return fetch('/servicio-tecnico/api/calendario/choque?' + qs.toString())
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(d){ return { tid: tid, d: d }; })
         .catch(function(){ return { tid: tid, d: null }; });
@@ -1759,7 +1759,7 @@ async function o2fChequearChoque(){
     const choqueKeys = new Set();
     resultados.forEach(function(res){
       const d = res.d;
-      // Contrato real del backend (/mantenciones/api/calendario/choque):
+      // Contrato real del backend (/servicio-tecnico/api/calendario/choque):
       // { tecnicos: [{tecnico_id, tecnico_nombre, choque:bool, visitas_choque:[...]}] }
       // -- se pide 1 tecnico_id por request, así que el técnico buscado
       // está en tecnicos[0] (o se busca por id como refuerzo).
@@ -1799,7 +1799,7 @@ async function o2fChequearChoque(){
 // §4A (cont.) — orquestación de "Sugerir horario": dos puntos de entrada
 // (chip de la cabecera + botón del banner de choque) llaman a la MISMA
 // o2fdaySugerirHueco(). Cero backend nuevo: _tkdayAsegurarMesCache() reusa
-// el mismo GET /mantenciones/api/calendario/mes/<anio>/<mes> que ya usa
+// el mismo GET /servicio-tecnico/api/calendario/mes/<anio>/<mes> que ya usa
 // o2fCalCargarMes(), solo que sin tocar _O2F.cal.anio/mes (no mueve el
 // mes visible mientras busca "de reojo" hacia adelante).
 // ════════════════════════════════════════════════════════════
@@ -1812,7 +1812,7 @@ async function _tkdayAsegurarMesCache(anio, mes){
   const key = _tkotCalKey(anio, mes);
   if(_O2F.cal.cache[key]) return _O2F.cal.cache[key];
   try{
-    const r = await fetch('/mantenciones/api/calendario/mes/' + anio + '/' + mes);
+    const r = await fetch('/servicio-tecnico/api/calendario/mes/' + anio + '/' + mes);
     if(!r.ok) throw new Error('http ' + r.status);
     const d = await r.json();
     _O2F.cal.cache[key] = _tkotCalNormalizarMes(d);

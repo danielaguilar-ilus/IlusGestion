@@ -1961,8 +1961,8 @@ window.OT2C = (function(){
      CALENDARIO EMBEBIDO DEL PASO "AGENDA" (mini-mes + línea de tiempo del
      día) + choque de horario en vivo. Portado de static/tickets_ficha.js
      (_TKOT.cal, _TKOT.day, funciones tkotCal.../tkday...) -- mismo backend SIN
-     cambios (GET /mantenciones/api/calendario/mes/<anio>/<mes> y GET
-     /mantenciones/api/calendario/choque), pero leyendo/escribiendo
+     cambios (GET /servicio-tecnico/api/calendario/mes/<anio>/<mes> y GET
+     /servicio-tecnico/api/calendario/choque), pero leyendo/escribiendo
      S.fecha/S.hini/S.hfin/S.tecnicos (el mismo estado que ya lee crear())
      en vez de _TKOT.* -- acá no hay "estado propio" del calendario aparte
      de la vista (mes que se mira, día que se mira, caché, choque).
@@ -2021,7 +2021,7 @@ window.OT2C = (function(){
 
   function _o2mCalKey(a,m){ return a+'-'+String(m).padStart(2,'0'); }
 
-  // Normaliza la respuesta de /mantenciones/api/calendario/mes/<a>/<m> a
+  // Normaliza la respuesta de /servicio-tecnico/api/calendario/mes/<a>/<m> a
   // { "YYYY-MM-DD": [visitas] }. El contrato real hoy es dias={fecha:{visitas:[...]}}
   // pero se tolera también dias=[] y visitas=[] sueltas (mismo criterio
   // defensivo del origen, _tkotCalNormalizarMes en tickets_ficha.js).
@@ -2056,7 +2056,7 @@ window.OT2C = (function(){
     }
     var grid = document.getElementById('o2mCalGrid');
     if (grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando…</div>';
-    return fetch('/mantenciones/api/calendario/mes/'+a+'/'+m, {credentials:'same-origin'})
+    return fetch('/servicio-tecnico/api/calendario/mes/'+a+'/'+m, {credentials:'same-origin'})
       .then(function(r){ if (!r.ok) throw new Error('http '+r.status); return r.json(); })
       .then(function(d){
         o2mCal.cache[key] = _o2mCalNormalizarMes(d);
@@ -2690,7 +2690,7 @@ window.OT2C = (function(){
   }
 
   // ── Repinta SOLO las clases de choque (sin reconstruir el día) tras la
-  //    respuesta de /mantenciones/api/calendario/choque. ─────────────────
+  //    respuesta de /servicio-tecnico/api/calendario/choque. ─────────────────
   function o2mDayAplicarChoque(){
     var blks = document.getElementById('o2mDayBlks');
     if (!blks) return;
@@ -2751,7 +2751,7 @@ window.OT2C = (function(){
       var qs = new URLSearchParams({tecnico_id:String(tid), fecha:fecha});
       if (horaIni) qs.set('hora_ini', horaIni);
       if (horaFin) qs.set('hora_fin', horaFin);
-      return fetch('/mantenciones/api/calendario/choque?'+qs.toString(), {credentials:'same-origin'})
+      return fetch('/servicio-tecnico/api/calendario/choque?'+qs.toString(), {credentials:'same-origin'})
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(d){ return {tid:tid, d:d}; })
         .catch(function(){ return {tid:tid, d:null}; });
@@ -2797,7 +2797,7 @@ window.OT2C = (function(){
   function _o2mDayAsegurarMesCache(anio, mes){
     var key = _o2mCalKey(anio, mes);
     if (o2mCal.cache[key]) return Promise.resolve(o2mCal.cache[key]);
-    return fetch('/mantenciones/api/calendario/mes/'+anio+'/'+mes, {credentials:'same-origin'})
+    return fetch('/servicio-tecnico/api/calendario/mes/'+anio+'/'+mes, {credentials:'same-origin'})
       .then(function(r){ if (!r.ok) throw new Error('http '+r.status); return r.json(); })
       .then(function(d){
         o2mCal.cache[key] = _o2mCalNormalizarMes(d);

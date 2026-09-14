@@ -71750,6 +71750,7 @@ def mant_calendario_dia_drill(fecha):
         return jsonify({"ok": False, "error": f"Error al consultar: {e}"}), 500
 
 
+@app.route("/servicio-tecnico/api/calendario/mes/<int:anio>/<int:mes>", methods=["GET"])
 @app.route("/mantenciones/api/calendario/mes/<int:anio>/<int:mes>", methods=["GET"])
 @_mant_required
 def mant_calendario_mes(anio, mes):
@@ -71759,6 +71760,13 @@ def mant_calendario_mes(anio, mes):
     `mant_calendario_dia_drill` vía `_mant_calendario_role_where()`,
     extendida a un rango `fecha_programada BETWEEN primer..ultimo día del
     mes` — no duplica la query de seguridad (Regla #5).
+
+    🔒 2026-09-14 (Daniel: "el endpoint debe estar con SSTT y no
+    mantenciones"): las dos URLs ya existían -- lo que cambia es el ORDEN
+    de los decoradores. Flask usa el PRIMER @app.route registrado como el
+    canónico para url_for(), así que /servicio-tecnico/... pasa a ser la
+    ruta de verdad; /mantenciones/... se conserva como alias (Regla #4.2,
+    mismo patrón ya aplicado a Plantillas en el commit ad3e604).
 
     Path params: anio (int), mes (int, 1-12).
 
@@ -71901,6 +71909,7 @@ def mant_calendario_mes(anio, mes):
         return jsonify({"ok": False, "error": f"Error al consultar calendario del mes: {e}"}), 500
 
 
+@app.route("/servicio-tecnico/api/calendario/choque", methods=["GET"])
 @app.route("/mantenciones/api/calendario/choque", methods=["GET"])
 @_mant_required
 def mant_calendario_choque():
@@ -71910,6 +71919,12 @@ def mant_calendario_choque():
     en caso de no chocar los calendarios"). Reusa `_validar_disponibilidad_visita`
     (línea ~38233, ya existente) por cada técnico solicitado — Regla #5, no
     se duplica la query de solapamiento.
+
+    🔒 2026-09-14 (Daniel: "el endpoint debe estar con SSTT y no
+    mantenciones"): mismo fix que /calendario/mes justo arriba --
+    /servicio-tecnico/... pasa a ser la ruta canónica (primer @app.route,
+    la que usa url_for()); /mantenciones/... se conserva como alias, nunca
+    se rompe un link ya guardado (Regla #4.2).
 
     Query params (GET):
       tecnico_ids        CSV de IDs de técnico (app_users.id), ej. "7,9,12"
