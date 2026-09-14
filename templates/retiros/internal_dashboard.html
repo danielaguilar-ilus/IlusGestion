@@ -780,7 +780,7 @@
       <div class="ilus-card p-3 mb-2" style="border-left:4px solid var(--ilus-red)">
         <div class="d-flex justify-content-between flex-wrap gap-2">
           <div>
-            <div class="fw-bold">{{ r.requested_date }} · {{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div>
+            <div class="fw-bold">{{ r.requested_date | chile_fmt('%d-%m-%Y') }} · {{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div>
             <div>{{ r.customer_name }}</div>
             <div class="small text-muted">{{ r.code }} · {{ r.document_type|upper }} {{ r.document_number }} · Retira: {{ r.pickup_person_name }}</div>
           </div>
@@ -819,7 +819,7 @@
           <td data-label="Cliente">{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></td>
           <td data-label="Documento">{% if r.document_number %}{{ r.document_type|upper }} {{ r.document_number }}{% else %}<span class="text-muted fst-italic">Sin factura</span>{% endif %}</td>
           <td data-label="Responsable">{% if r.responsable_nombre %}<i class="bi bi-person-check me-1 text-success"></i>{{ r.responsable_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-          <td data-label="Fecha solicitada">{{ r.requested_date }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
+          <td data-label="Fecha solicitada">{{ r.requested_date | chile_fmt('%d-%m-%Y') }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
           <td data-label="Estado"><span class="badge bg-{{ b.color }}">{{ b.label }}</span></td>
           <td data-label="Calidad">
             <div class="progress" style="height:7px"><div class="progress-bar bg-{{ 'success' if r.information_quality_score>=80 else ('warning' if r.information_quality_score>=60 else 'danger') }}" style="width:{{ r.information_quality_score }}%"></div></div>

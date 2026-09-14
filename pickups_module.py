@@ -113,6 +113,17 @@ def pickup_email_stepper_html(active_idx):
     HTML normal para cualquier cliente que no entienda comentarios
     condicionales de Outlook, así que Gmail/Apple Mail/Outlook.com lo
     renderizan igual que antes). Verde=hecho, rojo=actual, gris=pendiente.
+
+    FIX 2026-09-14 (Daniel de nuevo: "en Outlook se ve horrible"): el div de
+    fallback y los conectores usaban SOLO `background` por CSS — el motor de
+    Word de Outlook clásico puede ignorar `background`/`height` en un `<div>`
+    suelto (sin contenido de texto real), dejando el círculo blanco/vacío y
+    el emoji (que SÍ es a color nativo: 📩📅✅📦🎉) como lo único visible —
+    de ahí el efecto "cada círculo de un color distinto" que no tenía
+    relación con el estado real. Fix: patrón "bulletproof" (tabla +
+    atributo HTML `bgcolor`, no solo CSS) tanto para el círculo como para
+    las barras conectoras — es la técnica que de verdad sostiene el color
+    de fondo en cualquier build de Outlook, con o sin motor Word.
     """
     try:
         pasos = [(p["emoji"], p["label"]) for p in PICKUP_JOURNEY]
@@ -133,17 +144,25 @@ def pickup_email_stepper_html(active_idx):
                 f'font-size:15px;font-weight:900;line-height:34px">{ic}</center></v:textbox></v:oval>'
                 '<![endif]-->'
                 '<!--[if !mso]><!-->'
-                f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
-                f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;font-size:15px;'
-                f'font-weight:900;text-align:center;margin:0 auto;{ex}">{ic}</div>'
+                f'<table cellpadding="0" cellspacing="0" border="0" role="presentation" width="34" height="34" '
+                f'style="width:34px;height:34px;border-collapse:collapse;margin:0 auto"><tr>'
+                f'<td width="34" height="34" align="center" valign="middle" bgcolor="{bg}" '
+                f'style="width:34px;height:34px;border-radius:17px;background:{bg};color:{fg};'
+                f'font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:900;text-align:center;{ex}">{ic}</td>'
+                '</tr></table>'
                 '<!--<![endif]-->'
             )
             celdas.append(f'<td align="center" valign="middle" width="11%" style="padding:0">{circulo}</td>')
             if i < n - 1:
                 leg = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#e5e7eb")
                 celdas.append(
-                    f'<td valign="middle" width="11.5%" style="padding:0 2px"><div style="height:4px;'
-                    f'background:{leg};border-radius:2px;font-size:0;line-height:0">&nbsp;</div></td>')
+                    f'<td valign="middle" width="11.5%" style="padding:0 2px">'
+                    f'<table cellpadding="0" cellspacing="0" border="0" role="presentation" width="100%" height="4" '
+                    f'style="border-collapse:collapse"><tr>'
+                    f'<td height="4" bgcolor="{leg}" '
+                    f'style="height:4px;line-height:4px;font-size:0;background:{leg};border-radius:2px">&nbsp;</td>'
+                    '</tr></table>'
+                    '</td>')
             lc = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
             lw = "800" if i == active_idx else "600"
             labels.append(
@@ -2070,6 +2089,18 @@ def register_pickup_routes(app, ctx):
                                 # va a la lista configurable en Comunicaciones → Retiros
                                 # → "Avisar por email a" (notify_emails, editable desde
                                 # el front, sin tocar código) + soporte como respaldo.
+                                # FIX 2026-09-14 (Daniel: "dejemos de disparar correos
+                                # a todos lados, solo al cliente y al usuario
+                                # responsable"): el correo interno va EXCLUSIVAMENTE
+                                # al responsable asignado del retiro. Ya NO se suma
+                                # comm_templates.copia_interna_emails ni se cae a un
+                                # respaldo (notify_emails + soporte) cuando no hay
+                                # responsable — ese ancho de banda de broadcast es
+                                # justo lo que Daniel pidió eliminar. El cliente sigue
+                                # recibiendo su propio correo por `notify()` (otro
+                                # call-site, no este). Si el retiro AÚN no tiene
+                                # responsable asignado, no sale email interno — queda
+                                # la campanita in-app (arriba) como aviso al equipo.
                                 dests = []
                                 _resp_email = None
                                 try:
@@ -2087,64 +2118,8 @@ def register_pickup_routes(app, ctx):
                                             _resp_email = _cand
                                 except Exception as _e_resp:
                                     print(f"[ILUS][PICKUP TEAM NOTIF] responsable lookup: {_e_resp}", flush=True)
-
-                                # Daniel 2026-08-24: "dejarle el control por el front a
-                                # comunicaciones... cada plantilla, pueda yo agregar
-                                # cuáles son las copias". Además del responsable, suma
-                                # la copia interna configurada en /comunicaciones para
-                                # la plantilla que corresponde a ESTE evento (columna
-                                # comm_templates.copia_interna_emails). Best-effort:
-                                # si el módulo de tipo no tiene un estado equivalente
-                                # de cara al cliente, simplemente no aporta nada acá.
-                                _TIPO_A_ESTADO = {
-                                    "retiro_nuevo":       "solicitud_recibida",
-                                    "retiro_confirmado":  "agenda_confirmada",
-                                    "retiro_respuesta":   "agenda_confirmada",
-                                    "retiro_preparacion": "en_preparacion",
-                                    "retiro_listo":       "en_preparacion",
-                                    "retiro_cerrado":     "retirada",
-                                }
-                                _tpl_dests = []
-                                try:
-                                    _est_tpl = _TIPO_A_ESTADO.get(tipo_snap)
-                                    if _est_tpl:
-                                        _tpl_row = mysql_fetchone(
-                                            "SELECT copia_interna_emails FROM comm_templates "
-                                            "WHERE modulo='retiros' AND estado=%s AND canal='email' LIMIT 1",
-                                            (_est_tpl,)) or {}
-                                        _ci = (_tpl_row.get("copia_interna_emails") or "")
-                                        for em in _ci.split(","):
-                                            em = em.strip().lower()
-                                            if em and is_valid_email(em) and em not in _tpl_dests:
-                                                _tpl_dests.append(em)
-                                except Exception as _e_tpl:
-                                    print(f"[ILUS][PICKUP TEAM NOTIF] copia_interna_emails: {_e_tpl}", flush=True)
-
-                                # dests = responsable asignado (si hay) UNIÓN copia
-                                # configurada por plantilla (si hay). Si NINGUNA de
-                                # las dos aporta nada, cae al respaldo global
-                                # (notify_emails + soporte) — igual que antes.
                                 if _resp_email:
                                     dests.append(_resp_email)
-                                for em in _tpl_dests:
-                                    if em not in dests:
-                                        dests.append(em)
-                                if not dests:
-                                    try:
-                                        cfg_n = settings() or {}
-                                        for em in str(cfg_n.get("notify_emails") or "").replace(";", ",").split(","):
-                                            em = em.strip().lower()
-                                            if em and is_valid_email(em) and em not in dests:
-                                                dests.append(em)
-                                    except Exception:
-                                        pass
-                                    try:
-                                        brand_cfg = _get_brand_cfg() or {}
-                                        _sup = (brand_cfg.get("support_email") or "").strip().lower()
-                                        if _sup and _sup not in dests:
-                                            dests.append(_sup)
-                                    except Exception:
-                                        pass
                                 if dests:
                                     import html as _html_esc
                                     link = _public_base_url() + f"/retiros/{rid_snap}"
@@ -5562,37 +5537,37 @@ def register_pickup_routes(app, ctx):
             email_doc = ""  # no es email válido
         added_by = g.user["nombre"] if getattr(g, "user", None) else "interno"
 
-        # ── Calcular saldo ZZ del documento (Daniel 2026-05-23 wizard) ──
-        # Sumamos saldo de las líneas ZZ (despacho/retiro): CAPRCO1 - CAPRAD1.
-        # Si > 0: el doc tiene saldo disponible → con_saldo=1
-        # Si = 0 y hay líneas ZZ: doc ya despachado → con_saldo=0 (bloqueado)
-        # Si NO hay líneas ZZ: asumimos con_saldo=1 (no es bloqueante).
+        # ── Calcular saldo del documento (Daniel 2026-05-23 wizard) ──
+        # 🔧 FIX 2026-09-14 (bug real: boleta 23501 mostraba "Sin saldo"
+        # teniendo saldo en ERP): la versión original sumaba líneas ZZ
+        # leyendo `saldo_zz`/`CAPRCO1`/`cantidad_total`, claves que NUNCA
+        # existen en el dict que arma `_cubicador_fetch` (ahí la línea
+        # trae `saldo`, `cantidad`, `cantidad_despachada`) — el resultado
+        # daba siempre con_saldo=0 para cualquier doc con línea ZZ.
+        # Alineado con el criterio ya validado en `pickup_buscar_erp`
+        # (pickups_module.py ~6680): productos reales (no ZZ, no
+        # descuento), usando el campo `saldo` que `_cubicador_fetch` ya
+        # calcula bien (CAPRCO1-CAPRAD1-CAPREX1-CAPRNC1, con override
+        # ESLIDO — ver app.py ~17753).
         # Tolerante a fallos: si no se puede calcular, queda NULL → UI advierte.
         con_saldo_val = None      # NULL = no se pudo verificar
         saldo_zz_val  = None
         try:
             saldo_total = 0.0
-            tiene_zz = False
+            tiene_producto = False
             for ln in (lineas or []):
-                if not ln.get("es_zz"):
+                if ln.get("es_zz") or ln.get("es_descuento"):
                     continue
-                tiene_zz = True
-                # Algunas implementaciones guardan saldo_zz; otras calculamos
-                # de CAPRCO1 - CAPRAD1 si están disponibles en la línea.
-                ln_saldo = ln.get("saldo_zz")
-                if ln_saldo is None:
-                    cc = float(ln.get("CAPRCO1") or ln.get("cantidad_total") or 0)
-                    ca = float(ln.get("CAPRAD1") or ln.get("cantidad_despachada") or 0)
-                    ln_saldo = max(0.0, cc - ca)
+                tiene_producto = True
                 try:
-                    saldo_total += float(ln_saldo or 0)
+                    saldo_total += float(ln.get("saldo") or 0)
                 except Exception:
                     pass
-            if tiene_zz:
+            if tiene_producto:
                 saldo_zz_val = saldo_total
                 con_saldo_val = 1 if saldo_total > 0 else 0
             else:
-                # Sin líneas ZZ → asumimos OK (no podemos detectar bloqueo)
+                # Sin líneas de producto → no podemos detectar bloqueo
                 saldo_zz_val = None
                 con_saldo_val = 1
         except Exception:

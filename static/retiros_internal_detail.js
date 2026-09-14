@@ -1344,7 +1344,10 @@ function _mountProposeCalendar(){
       const ttIn = document.getElementById('iwProposeHidTt');
       const fechaRes = document.getElementById('resumenFecha');
       if (fechaRes && fIn && fIn.value && tfIn && tfIn.value && ttIn && ttIn.value){
-        fechaRes.textContent = `${fIn.value} · ${tfIn.value}–${ttIn.value}`;
+        // Bug Daniel 2026-09-14: el input oculto trae ISO (YYYY-MM-DD) y se
+        // mostraba tal cual al usuario — debe verse día-mes-año.
+        const _dmy = fIn.value.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3-$2-$1');
+        fechaRes.textContent = `${_dmy} · ${tfIn.value}–${ttIn.value}`;
       }
       // Daniel 2026-05-24: chequear sugerencias de días con cupos
       _refreshSuggestedDays();
