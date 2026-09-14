@@ -948,28 +948,6 @@
          class="sidebar-link{% if request.endpoint == 'admin_integraciones' %} active{% endif %}">
         <i class="bi bi-plug"></i><span>Integraciones</span>
       </a>
-      {# Pantallas del monitor de oficina (modo TV), Daniel 2026-08-26.
-         Emitir/revocar el enlace de un televisor es configuración, no
-         operación diaria — por eso vive acá y solo lo ve superadmin. #}
-      <a href="{{ url_for('admin_pantallas') }}"
-         class="sidebar-link{% if request.endpoint and request.endpoint.startswith('admin_pantallas') %} active{% endif %}">
-        <i class="bi bi-tv"></i><span>Pantallas (monitor)</span>
-      </a>
-      {# Fichas de producto que no cumplen las reglas de Etiquetas (caso
-         BBV9.0, ago-2026). Solo lectura: lista y explica, no corrige. #}
-      <a href="{{ url_for('admin_fichas_incompletas') }}"
-         class="sidebar-link{% if request.endpoint == 'admin_fichas_incompletas' %} active{% endif %}">
-        <i class="bi bi-clipboard-x"></i><span>Fichas incompletas</span>
-      </a>
-      {# Migración histórica de documentos de tickets (Daniel 2026-09-06:
-         "Los tickets deben guardar el documento y los productos
-         indexados"). Abre SIEMPRE en simulación: mirar no escribe nada.
-         Vive acá y no en la barra de Tickets porque es mantención de
-         datos, no operación diaria. #}
-      <a href="{{ url_for('tk_admin_migrar_documentos') }}"
-         class="sidebar-link{% if request.endpoint == 'tk_admin_migrar_documentos' %} active{% endif %}">
-        <i class="bi bi-folder-symlink"></i><span>Documentos de tickets</span>
-      </a>
       {% endif %}
 
       {# ── OCULTO (a pedido — disponible vía URL directa si se requiere) ──
@@ -978,6 +956,10 @@
          · Preguntas genéricas → /admin/preguntas-genericas
          · Log de emails      → integrado en Comunicaciones → tab Historial
          · Roles y permisos   → integrado en Usuarios → tab Roles
+         · Pantallas (monitor) → /admin/pantallas (Daniel 2026-09-14: "no lo
+           veo completamente necesario de momento")
+         · Fichas incompletas  → /admin/fichas-incompletas (ídem)
+         · Documentos de tickets → /tickets/admin/migrar-documentos (ídem)
       #}
     </div>
   </div>
