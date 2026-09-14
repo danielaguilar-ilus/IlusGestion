@@ -1958,6 +1958,20 @@ def serve_archivo(key):
             # si el vid existe o si solo le faltó el token correcto.
             return "No autorizado", 403
 
+    # 💸 2026-09-14: el respaldo de una factura de PROVEEDOR (montos, RUT,
+    # datos bancarios del externo) solo lo ve quien puede ver la pantalla
+    # de Facturas de proveedor -- mismo permiso que el resto del módulo
+    # (_facprov_puede). Sin sesión, 403 seco, igual que las firmas.
+    if key.startswith("ilus/sstt/facturas_proveedor/"):
+        _ok_fp = False
+        if getattr(g, "user", None):
+            try:
+                _ok_fp = bool(_facprov_puede())
+            except Exception:
+                _ok_fp = False
+        if not _ok_fp:
+            return "No autorizado", 403
+
     # Ancho pedido (solo de la lista blanca; cualquier otro valor se ignora
     # y se sirve el original, que es el comportamiento historico).
     try:
@@ -77608,6 +77622,27 @@ def mant_visita_del(vid):
         }), 404
 
     numero_ot = v_info.get("numero_ot") or f"V-{vid}"
+    # 💸 2026-09-14: una OT que ya está en una factura de proveedor externo
+    # no se borra -- ni superadmin. Borrarla dejaría una factura cobrando
+    # un trabajo que "no existe" y rompería la trazabilidad del pago. Hay
+    # que quitarla de la factura primero (y eso solo se puede si la
+    # factura sigue pendiente).
+    try:
+        _fac = mysql_fetchone(
+            "SELECT fp.id, fp.numero_documento, fp.proveedor_nombre, fp.estado_pago "
+            "  FROM mant_factura_proveedor_items fpi "
+            "  JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+            " WHERE fpi.visita_id=%s LIMIT 1", (vid,))
+    except Exception:
+        _fac = None
+    if _fac:
+        return jsonify({
+            "ok": False, "error_codigo": "OT_EN_FACTURA_PROVEEDOR",
+            "error": (f"La {numero_ot} está en la factura de proveedor #{_fac['id']} "
+                      f"({_fac.get('proveedor_nombre')} {_fac.get('numero_documento')}, "
+                      f"{_fac.get('estado_pago')}). Quítala de esa factura antes de eliminarla."),
+            "factura_id": _fac["id"],
+        }), 409
     d = request.get_json(silent=True) or {}
     confirm = (d.get("confirm_text") or "").strip().lower()
     # 🔒 REGLA #5 -- hard-delete exige confirm_text. Cuando la OT SÍ tiene
@@ -78235,6 +78270,14 @@ def ot2_panel():
     f_anexo = (request.args.get("anexo") or "").strip().lower()
     if f_anexo not in ("sin_anexo", "borrador", "enviado", "visto", "firmado"):
         f_anexo = ""
+    # 💸 2026-09-14 (Daniel: "identificar las OT que no tengan una factura o
+    # esté pendiente de cobro"): estado del pago al proveedor externo.
+    f_pago = (request.args.get("pago_prov") or "").strip().lower()
+    if f_pago not in ("sin_costo", "por_facturar", "facturada", "pagada"):
+        f_pago = ""
+    # El permiso vive en el backend, no solo en el <select> del template.
+    if f_pago and not _facprov_puede():
+        f_pago = ""
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -78320,6 +78363,34 @@ def ot2_panel():
                 "        AND anx_f.estado = %s)"
             )
             extra_params_q.append(f_anexo)
+    if f_pago:
+        # Mismo criterio de "OT de externo" que Facturas de proveedor
+        # (_MFP_SQL_OT_EXTERNA usa los alias v/au/te que ya están en el
+        # FROM de este panel). Subconsultas EXISTS: no se agrega JOIN al
+        # universo del panel para no multiplicar filas.
+        _fpi_en = ("EXISTS (SELECT 1 FROM mant_factura_proveedor_items fpx "
+                   "        JOIN mant_facturas_proveedor fpy ON fpy.id = fpx.factura_proveedor_id "
+                   "        WHERE fpx.visita_id = v.id AND fpy.estado_pago = %s)")
+        if f_pago == "sin_costo":
+            extra_where_q.append(_MFP_SQL_OT_EXTERNA +
+                                 " AND (COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) = 0")
+        elif f_pago == "por_facturar":
+            # Mismo criterio que la lista "OT por facturar" de Facturas de
+            # proveedor: externa + costo declarado + estado facturable +
+            # sin factura. Si no, el panel mostraría OT que la API rechaza.
+            _ph_est = ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES))
+            extra_where_q.append(_MFP_SQL_OT_EXTERNA +
+                                 " AND (COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0"
+                                 f" AND v.estado IN ({_ph_est})"
+                                 " AND NOT EXISTS (SELECT 1 FROM mant_factura_proveedor_items fpx "
+                                 "                 WHERE fpx.visita_id = v.id)")
+            extra_params_q.extend(_MFP_ESTADOS_FACTURABLES)
+        elif f_pago == "facturada":
+            extra_where_q.append(_fpi_en)
+            extra_params_q.append("pendiente")
+        elif f_pago == "pagada":
+            extra_where_q.append(_fpi_en)
+            extra_params_q.append("pagada")
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -78628,7 +78699,7 @@ def ot2_panel():
         per_page_opciones=_OT2_PER_PAGE_OPCIONES, error=error,
         kanban_cols=kanban_cols,
         orden=orden, dir=dir_.lower(), f_tipo=f_tipo, f_tec=f_tec,
-        f_interna=f_interna, f_anexo=f_anexo,
+        f_interna=f_interna, f_anexo=f_anexo, f_pago=f_pago,
         tipos_opts=tipos_opts, tecnicos_opts=tecnicos_opts,
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
@@ -80340,9 +80411,33 @@ def ot2_detalle(vid):
         print(f"[ot2_detalle] resumen levantamiento vid={vid}: {_e_lev_det}", flush=True)
         lev = None
 
+    # 💸 2026-09-14: pago al proveedor externo (Facturas de proveedor,
+    # SSTT). Solo lectura en la ficha; se gestiona en su propia pantalla.
+    # `factura_prov_aplica` = es OT de externo con costo declarado, o sea
+    # una que en algún momento debería aparecer en una factura.
+    factura_prov, factura_prov_aplica = None, False
+    if _facprov_puede():
+        try:
+            factura_prov = mysql_fetchone(
+                "SELECT fp.id, fp.proveedor_nombre, fp.tipo_documento, fp.numero_documento, "
+                "       fp.estado_pago, fp.pagada_at, fpi.monto "
+                "  FROM mant_factura_proveedor_items fpi "
+                "  JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+                " WHERE fpi.visita_id=%s LIMIT 1", (vid,))
+            if not factura_prov:
+                _fpa = mysql_fetchone(
+                    "SELECT 1 AS ok " + _MFP_JOINS_OT +
+                    " WHERE v.id=%s AND " + _MFP_SQL_OT_EXTERNA +
+                    "   AND (COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0",
+                    (vid,))
+                factura_prov_aplica = bool(_fpa)
+        except Exception as _e_fp:
+            print(f"[ot2_detalle] factura proveedor vid={vid}: {_e_fp}", flush=True)
+
     return render_template(
         "ot2/detalle.html",
         v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
+        factura_prov=factura_prov, factura_prov_aplica=factura_prov_aplica,
         lev=lev,
         equipos_serie_map=equipos_serie_map,
         # 2026-09-02 — ver el bloque `equipos_ocultos_baja` más arriba:
@@ -105139,6 +105234,770 @@ def _facprov_periodo():
     return desde, hasta, "{:04d}-{:02d}".format(anio, mes)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  💸 FACTURAS DE PROVEEDOR EXTERNO — cuentas por pagar de Servicio Técnico
+#  2026-09-14 (Daniel: "controlar los cobros de los externos mediante la
+#  herramienta... identificar las OT que no tengan una factura o esté
+#  pendiente de cobro... una vez que se haga el cobro, reservar esta
+#  información para asignar una factura bien ordenadita y evitar
+#  duplicidad de cobro").
+#
+#  Modelo (ver _ensure_mant_facturas_proveedor_tables): una cabecera por
+#  documento que el proveedor le emite a ILUS + N ítems = las OT que ese
+#  documento cobra. UNIQUE(visita_id) hace imposible a nivel MySQL que la
+#  misma OT se pague dos veces; 'pagada' congela la factura.
+#
+#  Rutas canónicas bajo /servicio-tecnico/ (Daniel 2026-09-06 y 2026-09-14:
+#  "el endpoint debe ser de SSTT y no de mantenciones"); el alias
+#  /mantenciones/ se registra SEGUNDO, solo para no romper links.
+# ══════════════════════════════════════════════════════════════════════
+
+# Espejo SQL de "esta OT la ejecutó un proveedor externo". Necesita los
+# alias v (mant_visitas), au (app_users del técnico) y te
+# (mant_tecnicos_externos por user_id) en el FROM. Mismo criterio que
+# _ot2_enriquecer_fila usa para pintar el chip EXT.
+_MFP_SQL_OT_EXTERNA = (
+    "(v.proveedor_tipo = 'externo' "
+    " OR LEFT(LOWER(COALESCE(au.role,'')), 15) = 'tecnico_externo' "
+    " OR te.id IS NOT NULL)"
+)
+# Solo se le paga al proveedor cuando el cliente ya firmó (o la OT ya
+# cerró): es lo que dice el propio anexo en "Hitos de pago".
+_MFP_ESTADOS_FACTURABLES = ("pendiente_aprobacion", "completada", "cerrada")
+_MFP_PER_PAGE = (10, 25, 50, 100)
+_MFP_JOINS_OT = (
+    "  FROM mant_visitas v "
+    "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+    "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+    "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = v.tecnico_user_id "
+    "  LEFT JOIN mant_factura_proveedor_items fpi ON fpi.visita_id = v.id "
+    "  LEFT JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+)
+_MFP_SELECT_OT = (
+    "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, v.cerrada_at, "
+    "       v.costo_proveedor, v.costo_despacho, v.proveedor_nombre, "
+    "       c.razon_social AS cliente, "
+    "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+    "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id, "
+    "       fp.id AS fac_id, fp.numero_documento AS fac_numero, fp.estado_pago AS fac_estado, "
+    "       fpi.monto AS fac_monto "
+)
+
+
+def _mfp_nombre_proveedor_ot(f):
+    """Mismo orden que _facprov_datos: ficha de empresa → nombre declarado
+    en la OT → nombre del técnico. Sin este orden el mismo proveedor
+    aparece partido en tres."""
+    return ((f.get("prov_ficha") or "").strip()
+            or (f.get("proveedor_nombre") or "").strip()
+            or (f.get("tecnico_nombre") or "").strip()
+            or "Sin proveedor declarado")
+
+
+def _mfp_fila_ot(f):
+    f = dict(f)
+    serv = float(f.get("costo_proveedor") or 0)
+    desp = float(f.get("costo_despacho") or 0)
+    tipo = (f.get("tipo") or "").lower()
+    _fecha = f.get("cerrada_at") or f.get("fecha_programada")
+    return {
+        "id": f["id"],
+        "numero_ot": f.get("numero_ot") or ("OT #" + str(f["id"])),
+        "cliente": f.get("cliente") or "Trabajo interno",
+        "tipo_label": _TIPO_OT_LABEL.get(tipo, (tipo or "-").replace("_", " ").title()),
+        "estado": f.get("estado") or "",
+        "fecha": chile_fmt_filter(_fecha, "%d/%m/%Y") if _fecha else "",
+        "proveedor": _mfp_nombre_proveedor_ot(f),
+        "proveedor_rut": f.get("prov_rut") or "",
+        "servicio": serv, "despacho": desp, "sugerido": serv + desp,
+        "fac_id": f.get("fac_id"), "fac_numero": f.get("fac_numero"),
+        "fac_estado": f.get("fac_estado"),
+        "fac_monto": float(f["fac_monto"]) if f.get("fac_monto") is not None else None,
+    }
+
+
+def _mfp_cargar(fid):
+    return mysql_fetchone("SELECT * FROM mant_facturas_proveedor WHERE id=%s", (fid,))
+
+
+def _mfp_items(fid):
+    rows = mysql_fetchall(
+        _MFP_SELECT_OT + ", fpi.observacion AS fac_obs, fpi.usuario AS fac_usuario, "
+        "       fpi.created_at AS fac_asignada_at "
+        + _MFP_JOINS_OT +
+        " WHERE fpi.factura_proveedor_id=%s "
+        " ORDER BY fpi.created_at ASC, v.id ASC", (fid,)) or []
+    out = []
+    for r in rows:
+        it = _mfp_fila_ot(r)
+        it["observacion"] = r.get("fac_obs") or ""
+        it["usuario"] = r.get("fac_usuario") or ""
+        it["asignada"] = chile_fmt_filter(r.get("fac_asignada_at"), "%d/%m/%Y %H:%M") if r.get("fac_asignada_at") else ""
+        out.append(it)
+    return out
+
+
+def _mfp_por_facturar(limit=None, proveedor=None):
+    """OT de proveedor externo, con costo declarado, en estado facturable,
+    que todavía NO están en ninguna factura de proveedor. Es la lista que
+    Daniel pidió mirar primero: "las OT que no tengan una factura"."""
+    where = [
+        _MFP_SQL_OT_EXTERNA,
+        "v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ")",
+        "(COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0",
+        "fpi.id IS NULL",
+    ]
+    params = list(_MFP_ESTADOS_FACTURABLES)
+    if proveedor:
+        like = f"%{proveedor}%"
+        where.append("(te.razon_social LIKE %s OR v.proveedor_nombre LIKE %s "
+                     " OR COALESCE(au.nombre, au.username) LIKE %s)")
+        params.extend([like, like, like])
+    sql = (_MFP_SELECT_OT + _MFP_JOINS_OT +
+           " WHERE " + " AND ".join(where) +
+           " ORDER BY COALESCE(v.cerrada_at, v.fecha_programada) DESC, v.id DESC")
+    if limit:
+        sql += " LIMIT %s"
+        params.append(int(limit))
+    return [_mfp_fila_ot(r) for r in (mysql_fetchall(sql, tuple(params)) or [])]
+
+
+def _mfp_resumen():
+    """Tres números para la cabecera: cuánto hay por facturar (OT sin
+    factura), cuánto está facturado y sin pagar, y cuánto se pagó en el
+    mes en curso. Cada uno es una consulta chica e indexada."""
+    out = {"por_facturar_n": 0, "por_facturar_monto": 0.0,
+           "pendiente_n": 0, "pendiente_monto": 0.0,
+           "pagado_mes_n": 0, "pagado_mes_monto": 0.0}
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n, "
+            "       COALESCE(SUM(COALESCE(v.costo_proveedor,0)+COALESCE(v.costo_despacho,0)),0) AS m "
+            + _MFP_JOINS_OT +
+            " WHERE " + _MFP_SQL_OT_EXTERNA +
+            "   AND v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ") "
+            "   AND (COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0 "
+            "   AND fpi.id IS NULL",
+            tuple(_MFP_ESTADOS_FACTURABLES)) or {}
+        out["por_facturar_n"] = int(r.get("n") or 0)
+        out["por_facturar_monto"] = float(r.get("m") or 0)
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(monto_total),0) AS m "
+            "  FROM mant_facturas_proveedor WHERE estado_pago='pendiente'") or {}
+        out["pendiente_n"] = int(r.get("n") or 0)
+        out["pendiente_monto"] = float(r.get("m") or 0)
+        # pagada_at se guarda con NOW() (UTC, REGLA #6): los cortes del mes
+        # en hora Chile se convierten a UTC antes de comparar.
+        from zoneinfo import ZoneInfo as _ZI
+        from datetime import timezone as _tz
+        _d, _h, _ = _facprov_periodo()
+        _d = _d.replace(tzinfo=_ZI("America/Santiago")).astimezone(_tz.utc).replace(tzinfo=None)
+        _h = _h.replace(tzinfo=_ZI("America/Santiago")).astimezone(_tz.utc).replace(tzinfo=None)
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(monto_total),0) AS m "
+            "  FROM mant_facturas_proveedor "
+            " WHERE estado_pago='pagada' AND pagada_at >= %s AND pagada_at < %s",
+            (_d, _h)) or {}
+        out["pagado_mes_n"] = int(r.get("n") or 0)
+        out["pagado_mes_monto"] = float(r.get("m") or 0)
+    except Exception as e:
+        print(f"[facprov] resumen: {e}", flush=True)
+    return out
+
+
+def _mfp_validar_cabecera(d, excluir_id=None):
+    """Valida el body de crear/editar. Devuelve (datos, error)."""
+    nombre = (d.get("proveedor_nombre") or "").strip()[:200]
+    if not nombre:
+        return None, "Falta el nombre del proveedor."
+    rut = (d.get("proveedor_rut") or "").strip()
+    rut_norm = None
+    if rut:
+        ok, res = validar_rut(rut)
+        if not ok:
+            return None, f"RUT del proveedor inválido: {res}"
+        rut_norm = (_formato_rut_chile(res) or res)[:20]
+    tipo_doc = (d.get("tipo_documento") or "factura").strip().lower()
+    if tipo_doc not in ("factura", "boleta_honorarios", "otro"):
+        tipo_doc = "factura"
+    numero = (d.get("numero_documento") or "").strip()[:80]
+    if not numero:
+        return None, "Falta el número del documento del proveedor."
+    fecha = (d.get("fecha") or "").strip()[:10]
+    try:
+        datetime.strptime(fecha, "%Y-%m-%d")
+    except Exception:
+        return None, "La fecha debe venir como AAAA-MM-DD."
+    try:
+        monto = float(str(d.get("monto_total") if d.get("monto_total") not in (None, "") else 0)
+                      .replace(".", "").replace(",", ".")) \
+            if isinstance(d.get("monto_total"), str) else float(d.get("monto_total") or 0)
+    except Exception:
+        return None, "El monto total no es un número."
+    if monto < 0:
+        return None, "El monto total no puede ser negativo."
+    notas = (d.get("notas") or "").strip()[:2000] or None
+    try:
+        tecnico_externo_id = int(d.get("tecnico_externo_id") or 0) or None
+    except (TypeError, ValueError):
+        tecnico_externo_id = None
+    # Misma factura física registrada dos veces (el hueco que Transporte
+    # dejó abierto): mismo proveedor (sin importar mayúsculas/espacios) +
+    # mismo número, y que no esté anulada.
+    dup = mysql_fetchone(
+        "SELECT id FROM mant_facturas_proveedor "
+        " WHERE LOWER(TRIM(proveedor_nombre)) = LOWER(%s) AND numero_documento = %s "
+        "   AND estado_pago <> 'anulada' " +
+        ("   AND id <> %s " if excluir_id else "") +
+        " LIMIT 1",
+        (nombre, numero, excluir_id) if excluir_id else (nombre, numero))
+    if dup:
+        return None, (f"El documento N° {numero} de {nombre} ya está registrado "
+                      f"(factura #{dup['id']}). Ábrela en vez de crear otra.")
+    return {
+        "proveedor_nombre": nombre, "proveedor_rut": rut_norm,
+        "tecnico_externo_id": tecnico_externo_id, "tipo_documento": tipo_doc,
+        "numero_documento": numero, "fecha": fecha, "monto_total": monto, "notas": notas,
+    }, None
+
+
+def _mfp_403():
+    return jsonify({"ok": False, "error": "No tienes permiso para ver la facturación de proveedores.",
+                    "error_codigo": "SIN_PERMISO"}), 403
+
+
+@app.route("/servicio-tecnico/facturas-proveedor")
+@app.route("/mantenciones/facturas-proveedor")
+@_mant_required
+@_no_tecnico
+def mant_facturas_proveedor():
+    """Listado de facturas de proveedor externo + las OT que todavía no
+    tienen factura (lo primero que Daniel quiere ver)."""
+    if not _facprov_puede():
+        flash("No tienes permiso para ver la facturación de proveedores.", "warning")
+        return redirect(url_for("mant_index"))
+    f_prov = (request.args.get("proveedor") or "").strip()[:120]
+    f_estado = (request.args.get("estado") or "").strip().lower()
+    if f_estado not in ("pendiente", "pagada", "anulada"):
+        f_estado = ""
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page", 25))
+    except (TypeError, ValueError):
+        per_page = 25
+    if per_page not in _MFP_PER_PAGE:
+        per_page = 25
+
+    where, params = ["1=1"], []
+    if f_prov:
+        where.append("f.proveedor_nombre LIKE %s")
+        params.append(f"%{f_prov}%")
+    if f_estado:
+        where.append("f.estado_pago = %s")
+        params.append(f_estado)
+    where_sql = " WHERE " + " AND ".join(where)
+
+    facturas, total, provs_sugeridos = [], 0, []
+    try:
+        total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_facturas_proveedor f" + where_sql,
+            tuple(params)) or {}).get("n") or 0)
+        total_paginas = max(1, -(-total // per_page))
+        if page > total_paginas:
+            page = total_paginas
+        facturas = mysql_fetchall(
+            "SELECT f.*, "
+            "       COUNT(i.id) AS n_ot, COALESCE(SUM(i.monto),0) AS total_asignado "
+            "  FROM mant_facturas_proveedor f "
+            "  LEFT JOIN mant_factura_proveedor_items i ON i.factura_proveedor_id = f.id "
+            + where_sql +
+            " GROUP BY f.id "
+            " ORDER BY FIELD(f.estado_pago,'pendiente','pagada','anulada'), f.fecha DESC, f.id DESC "
+            " LIMIT %s OFFSET %s",
+            tuple(params) + (per_page, (page - 1) * per_page)) or []
+        facturas = [dict(x) for x in facturas]
+        for x in facturas:
+            x["total_asignado"] = float(x.get("total_asignado") or 0)
+            x["monto_total"] = float(x.get("monto_total") or 0)
+            x["diferencia"] = x["monto_total"] - x["total_asignado"]
+    except Exception as e:
+        print(f"[facprov] listado: {e}", flush=True)
+        total_paginas = 1
+
+    # Nombres para el autocompletar del formulario: primero las FICHAS de
+    # proveedor externo (traen id + RUT reales), después los nombres que ya
+    # tienen factura. En su propio try: un fallo acá no puede romper la
+    # paginación de arriba. mant_tecnicos_externos NO tiene columna
+    # `activo` (esa es de la tabla legacy mant_tecnicos): usa `estado`.
+    try:
+        vistos = set()
+        for r in (mysql_fetchall(
+                "SELECT id, razon_social AS n, rut_empresa AS r FROM mant_tecnicos_externos "
+                " WHERE COALESCE(estado,'activo') <> 'baja' ORDER BY razon_social") or []):
+            k = (r.get("n") or "").strip().lower()
+            if k and k not in vistos:
+                vistos.add(k)
+                provs_sugeridos.append({"nombre": r.get("n"), "rut": r.get("r") or "", "id": r.get("id")})
+        for r in (mysql_fetchall(
+                "SELECT DISTINCT proveedor_nombre AS n, proveedor_rut AS r, tecnico_externo_id AS t "
+                "  FROM mant_facturas_proveedor ORDER BY proveedor_nombre") or []):
+            k = (r.get("n") or "").strip().lower()
+            if k and k not in vistos:
+                vistos.add(k)
+                provs_sugeridos.append({"nombre": r.get("n"), "rut": r.get("r") or "", "id": r.get("t")})
+    except Exception as e:
+        print(f"[facprov] proveedores sugeridos: {e}", flush=True)
+
+    # "OT por facturar": paginada aparte (REGLA #4.3), con sus propios
+    # parámetros para no pisar la paginación de las facturas.
+    try:
+        pf_page = max(1, int(request.args.get("pf_page", 1)))
+    except (TypeError, ValueError):
+        pf_page = 1
+    try:
+        pf_per_page = int(request.args.get("pf_per_page", 25))
+    except (TypeError, ValueError):
+        pf_per_page = 25
+    if pf_per_page not in _MFP_PER_PAGE:
+        pf_per_page = 25
+    por_facturar_todas = _mfp_por_facturar(proveedor=f_prov or None)
+    pf_total = len(por_facturar_todas)
+    pf_total_paginas = max(1, -(-pf_total // pf_per_page))
+    if pf_page > pf_total_paginas:
+        pf_page = pf_total_paginas
+    por_facturar = por_facturar_todas[(pf_page - 1) * pf_per_page: pf_page * pf_per_page]
+
+    return render_template(
+        "mantenciones/facturas_proveedor.html",
+        facturas=facturas, total=total, page=page, per_page=per_page,
+        total_paginas=total_paginas, per_page_opciones=_MFP_PER_PAGE,
+        f_prov=f_prov, f_estado=f_estado,
+        resumen=_mfp_resumen(), por_facturar=por_facturar,
+        pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
+        pf_total_paginas=pf_total_paginas,
+        provs_sugeridos=provs_sugeridos,
+    )
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor", methods=["POST"])
+@app.route("/mantenciones/api/facturas-proveedor", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_facturas_proveedor_crear():
+    if not _facprov_puede():
+        return _mfp_403()
+    d = request.get_json(silent=True) or {}
+    datos, err = _mfp_validar_cabecera(d)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_facturas_proveedor "
+                "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
+                " numero_documento, fecha, monto_total, notas, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (datos["proveedor_nombre"], datos["proveedor_rut"], datos["tecnico_externo_id"],
+                 datos["tipo_documento"], datos["numero_documento"], datos["fecha"],
+                 datos["monto_total"], datos["notas"], current_username()))
+            fid = cur.lastrowid
+        conn.commit()
+    except Exception as e:
+        print(f"[facprov] crear: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo registrar la factura."}), 500
+    _mant_log("factura_proveedor", fid, "creada",
+              f"{datos['proveedor_nombre']} · {datos['tipo_documento']} {datos['numero_documento']} · "
+              f"${datos['monto_total']:,.0f}")
+    return jsonify({"ok": True, "id": fid})
+
+
+@app.route("/servicio-tecnico/facturas-proveedor/<int:fid>")
+@app.route("/mantenciones/facturas-proveedor/<int:fid>")
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_detalle(fid):
+    if not _facprov_puede():
+        flash("No tienes permiso para ver la facturación de proveedores.", "warning")
+        return redirect(url_for("mant_index"))
+    factura = _mfp_cargar(fid)
+    if not factura:
+        flash("Factura de proveedor no encontrada.", "warning")
+        return redirect(url_for("mant_facturas_proveedor"))
+    factura = dict(factura)
+    factura["monto_total"] = float(factura.get("monto_total") or 0)
+    items = _mfp_items(fid)
+    total_asignado = sum(i["sugerido"] if i["fac_monto"] is None else i["fac_monto"] for i in items)
+    return render_template(
+        "mantenciones/factura_proveedor_detalle.html",
+        factura=factura, items=items, total_asignado=total_asignado,
+        diferencia=factura["monto_total"] - total_asignado,
+        es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
+    )
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>", methods=["PUT"])
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_editar(fid):
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pendiente":
+        return jsonify({"ok": False, "error_codigo": "FACTURA_NO_EDITABLE",
+                        "error": f"La factura está {f.get('estado_pago')}: no se edita. "
+                                 "Un superadministrador puede reabrirla."}), 409
+    d = request.get_json(silent=True) or {}
+    # El modal de edición no maneja la ficha del proveedor: si el body no
+    # trae tecnico_externo_id se CONSERVA el actual -- salvo que hayan
+    # cambiado el nombre del proveedor, en cuyo caso el vínculo viejo ya
+    # no corresponde y se suelta.
+    if "tecnico_externo_id" not in d:
+        _mismo_nombre = ((d.get("proveedor_nombre") or "").strip().lower()
+                         == (f.get("proveedor_nombre") or "").strip().lower())
+        d["tecnico_externo_id"] = f.get("tecnico_externo_id") if _mismo_nombre else None
+    datos, err = _mfp_validar_cabecera(d, excluir_id=fid)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    mysql_execute(
+        "UPDATE mant_facturas_proveedor SET proveedor_nombre=%s, proveedor_rut=%s, "
+        "  tecnico_externo_id=%s, tipo_documento=%s, numero_documento=%s, fecha=%s, "
+        "  monto_total=%s, notas=%s WHERE id=%s AND estado_pago='pendiente'",
+        (datos["proveedor_nombre"], datos["proveedor_rut"], datos["tecnico_externo_id"],
+         datos["tipo_documento"], datos["numero_documento"], datos["fecha"],
+         datos["monto_total"], datos["notas"], fid))
+    _mant_log("factura_proveedor", fid, "editada",
+              f"{datos['proveedor_nombre']} · {datos['numero_documento']} · ${datos['monto_total']:,.0f}")
+    return jsonify({"ok": True})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/ot-disponibles")
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/ot-disponibles")
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_ot_disponibles(fid):
+    """OT candidatas para esta factura. Por defecto solo las del MISMO
+    proveedor (por ficha, nombre declarado o nombre del técnico);
+    ?todas=1 muestra todas las de externos. Las que ya están en otra
+    factura se muestran igual, marcadas -- pero asignarlas devuelve 409:
+    primero hay que quitarlas de donde están."""
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    q = (request.args.get("q") or "").strip()[:120]
+    desde = (request.args.get("desde") or "").strip()[:10]
+    hasta = (request.args.get("hasta") or "").strip()[:10]
+    todas = (request.args.get("todas") or "") == "1"
+
+    where = [
+        _MFP_SQL_OT_EXTERNA,
+        "v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ")",
+        "(COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0",
+    ]
+    params = list(_MFP_ESTADOS_FACTURABLES)
+    if not todas:
+        prov = (f.get("proveedor_nombre") or "").strip()
+        conds, like = [], f"%{prov}%"
+        if f.get("tecnico_externo_id"):
+            conds.append("te.id = %s")
+            params.append(int(f["tecnico_externo_id"]))
+        conds.append("te.razon_social LIKE %s")
+        conds.append("v.proveedor_nombre LIKE %s")
+        conds.append("COALESCE(au.nombre, au.username) LIKE %s")
+        params.extend([like, like, like])
+        where.append("(" + " OR ".join(conds) + ")")
+    if q:
+        like = f"%{q}%"
+        where.append("(v.numero_ot LIKE %s OR c.razon_social LIKE %s)")
+        params.extend([like, like])
+    if desde:
+        where.append("COALESCE(v.cerrada_at, v.fecha_programada) >= %s")
+        params.append(desde)
+    if hasta:
+        where.append("COALESCE(v.cerrada_at, v.fecha_programada) < DATE_ADD(%s, INTERVAL 1 DAY)")
+        params.append(hasta)
+    rows = mysql_fetchall(
+        _MFP_SELECT_OT + _MFP_JOINS_OT +
+        " WHERE " + " AND ".join(where) +
+        " ORDER BY (fpi.id IS NULL) DESC, COALESCE(v.cerrada_at, v.fecha_programada) DESC, v.id DESC "
+        " LIMIT 200",
+        tuple(params)) or []
+    out = []
+    for r in rows:
+        it = _mfp_fila_ot(r)
+        it["en_esta"] = (r.get("fac_id") == fid)
+        out.append(it)
+    return jsonify({"ok": True, "ots": out, "todas": todas,
+                    "proveedor": f.get("proveedor_nombre")})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/asignar", methods=["POST"])
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/asignar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_asignar(fid):
+    """Mete una OT en esta factura. INSERT plano sobre UNIQUE(visita_id):
+    si la OT ya está en otra factura, 409 con el número de esa factura.
+    Nunca se mueve sola (a diferencia del ON DUPLICATE KEY UPDATE de
+    Transporte) -- ese es el candado anti-duplicidad que pidió Daniel."""
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pendiente":
+        return jsonify({"ok": False, "error_codigo": "FACTURA_NO_EDITABLE",
+                        "error": f"La factura está {f.get('estado_pago')}: no se le pueden agregar OT."}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        vid = int(d.get("visita_id") or 0)
+    except (TypeError, ValueError):
+        vid = 0
+    if not vid:
+        return jsonify({"ok": False, "error": "Falta la OT."}), 400
+    try:
+        monto = float(d.get("monto") if d.get("monto") not in (None, "") else 0)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "El monto no es un número."}), 400
+    observacion = (d.get("observacion") or "").strip()[:1000] or None
+
+    row = mysql_fetchone(
+        _MFP_SELECT_OT + _MFP_JOINS_OT + " WHERE v.id=%s", (vid,))
+    if not row:
+        return jsonify({"ok": False, "error": "La OT no existe."}), 404
+    # Mismo universo que ot-disponibles: solo OT ejecutadas por un
+    # externo. La API no acepta lo que la pantalla no ofrece -- si no, se
+    # podría "pagar a un proveedor" una OT de Lenin o Dave.
+    _es_ext = mysql_fetchone(
+        "SELECT 1 AS ok " + _MFP_JOINS_OT + " WHERE v.id=%s AND " + _MFP_SQL_OT_EXTERNA, (vid,))
+    if not _es_ext:
+        return jsonify({"ok": False, "error_codigo": "OT_NO_EXTERNA",
+                        "error": "Esa OT no la ejecutó un proveedor externo: no corresponde "
+                                 "a una factura de proveedor."}), 400
+    ot = _mfp_fila_ot(row)
+    if ot["fac_id"]:
+        return jsonify({
+            "ok": False, "error_codigo": "OT_YA_FACTURADA",
+            "error": (f"La {ot['numero_ot']} ya está en la factura #{ot['fac_id']} "
+                      f"({ot['fac_numero']}, {ot['fac_estado']}). Para moverla, quítala "
+                      f"primero de esa factura."),
+            "factura_id": ot["fac_id"],
+        }), 409
+    if ot["estado"] not in _MFP_ESTADOS_FACTURABLES:
+        return jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
+                        "error": (f"La {ot['numero_ot']} está '{ot['estado']}': al proveedor se le "
+                                  "paga cuando el cliente ya firmó o la OT está cerrada.")}), 400
+    if monto <= 0:
+        monto = ot["sugerido"]
+    if monto <= 0:
+        return jsonify({"ok": False, "error": "Indica el monto que esta factura cobra por la OT."}), 400
+    try:
+        mysql_execute(
+            "INSERT INTO mant_factura_proveedor_items "
+            "(factura_proveedor_id, visita_id, monto, observacion, usuario) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            (fid, vid, monto, observacion, current_username()))
+    except Exception as e:
+        # Carrera: otra pestaña la asignó entre el SELECT y el INSERT. El
+        # UNIQUE la frenó -- se informa igual que arriba.
+        if "Duplicate entry" in str(e) or "uq_mfpi_visita" in str(e):
+            return jsonify({"ok": False, "error_codigo": "OT_YA_FACTURADA",
+                            "error": f"La {ot['numero_ot']} acaba de ser asignada a otra factura."}), 409
+        print(f"[facprov] asignar vid={vid} fid={fid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo asignar la OT."}), 500
+    _mant_log("factura_proveedor", fid, "ot_asignada",
+              f"{ot['numero_ot']} · ${monto:,.0f}{' · ' + observacion if observacion else ''}")
+    _mant_log("visita", vid, "factura_proveedor_asignada",
+              f"Factura #{fid} ({f.get('proveedor_nombre')} {f.get('numero_documento')}) · ${monto:,.0f}")
+    return jsonify({"ok": True, "monto": monto})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/items/<int:vid>", methods=["DELETE"])
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/items/<int:vid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_desasignar(fid, vid):
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pendiente":
+        return jsonify({"ok": False, "error_codigo": "FACTURA_NO_EDITABLE",
+                        "error": f"La factura está {f.get('estado_pago')}: no se le pueden quitar OT."}), 409
+    n = mysql_execute_returning_rowcount(
+        "DELETE FROM mant_factura_proveedor_items WHERE factura_proveedor_id=%s AND visita_id=%s",
+        (fid, vid))
+    if not n:
+        return jsonify({"ok": False, "error": "Esa OT no está en esta factura."}), 404
+    _v = mysql_fetchone("SELECT numero_ot FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    _num = _v.get("numero_ot") or f"OT #{vid}"
+    _mant_log("factura_proveedor", fid, "ot_quitada", _num)
+    _mant_log("visita", vid, "factura_proveedor_quitada",
+              f"Sale de la factura #{fid} ({f.get('proveedor_nombre')} {f.get('numero_documento')})")
+    return jsonify({"ok": True})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/pagar", methods=["POST"])
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/pagar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_pagar(fid):
+    """Marca la factura como pagada y la congela. Desde acá ninguna de sus
+    OT puede salir ni entrar a otra factura: es la "reserva" que evita el
+    doble cobro."""
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pendiente":
+        return jsonify({"ok": False, "error": f"La factura ya está {f.get('estado_pago')}."}), 409
+    n_items = int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_factura_proveedor_items WHERE factura_proveedor_id=%s",
+        (fid,)) or {}).get("n") or 0)
+    if not n_items:
+        return jsonify({"ok": False, "error_codigo": "SIN_OT",
+                        "error": "La factura no tiene ninguna OT asignada. Asigna primero qué "
+                                 "trabajos cobra antes de marcarla pagada."}), 400
+    d = request.get_json(silent=True) or {}
+    ref = (d.get("pago_referencia") or "").strip()[:120] or None
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_facturas_proveedor SET estado_pago='pagada', pagada_at=NOW(), "
+        "  pagada_por=%s, pago_referencia=%s "
+        " WHERE id=%s AND estado_pago='pendiente'",
+        (current_username(), ref, fid))
+    if not n:
+        return jsonify({"ok": False, "error": "La factura cambió de estado en otra pestaña."}), 409
+    _mant_log("factura_proveedor", fid, "pagada",
+              f"{f.get('proveedor_nombre')} {f.get('numero_documento')} · {n_items} OT"
+              f"{' · ref ' + ref if ref else ''}")
+    return jsonify({"ok": True})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/reabrir", methods=["POST"])
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/reabrir", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_reabrir(fid):
+    """Solo superadmin, con motivo: vuelve una factura pagada a pendiente.
+    Queda en la bitácora -- es evidencia contable."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede reabrir una factura pagada."}), 403
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pagada":
+        return jsonify({"ok": False, "error": f"La factura está {f.get('estado_pago')}, no pagada."}), 409
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:500]
+    if not motivo:
+        return jsonify({"ok": False, "error": "Indica el motivo para reabrirla."}), 400
+    mysql_execute(
+        "UPDATE mant_facturas_proveedor SET estado_pago='pendiente', pagada_at=NULL, "
+        "  pagada_por=NULL WHERE id=%s AND estado_pago='pagada'", (fid,))
+    _mant_log("factura_proveedor", fid, "reabierta",
+              f"Superadmin {current_username()} · antes pagada el "
+              f"{chile_fmt_filter(f.get('pagada_at')) if f.get('pagada_at') else '—'} "
+              f"por {f.get('pagada_por') or '—'} · motivo: {motivo}")
+    return jsonify({"ok": True})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/anular", methods=["POST"])
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/anular", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_anular(fid):
+    """Anula una factura pendiente SIN OT (si tiene, hay que quitarlas
+    antes -- así ninguna OT queda 'facturada' en una factura muerta).
+    Nunca se borra: queda como evidencia de que se registró."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede anular una factura."}), 403
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pendiente":
+        return jsonify({"ok": False, "error": f"Solo se anula una factura pendiente (está {f.get('estado_pago')})."}), 409
+    n_items = int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_factura_proveedor_items WHERE factura_proveedor_id=%s",
+        (fid,)) or {}).get("n") or 0)
+    if n_items:
+        return jsonify({"ok": False, "error_codigo": "CON_OT",
+                        "error": f"La factura tiene {n_items} OT asignada(s). Quítalas primero."}), 400
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:500]
+    if not motivo:
+        return jsonify({"ok": False, "error": "Indica el motivo de la anulación."}), 400
+    mysql_execute(
+        "UPDATE mant_facturas_proveedor SET estado_pago='anulada', notas=CONCAT(COALESCE(notas,''), %s) "
+        " WHERE id=%s AND estado_pago='pendiente'",
+        (f"\n[ANULADA por {current_username()}: {motivo}]", fid))
+    _mant_log("factura_proveedor", fid, "anulada", f"{current_username()} · {motivo}")
+    return jsonify({"ok": True})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/archivo", methods=["POST"])
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/archivo", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_archivo(fid):
+    """Sube el PDF/foto del documento del proveedor a GCS. Se permite
+    también con la factura pagada: el respaldo puede llegar después."""
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") == "anulada":
+        return jsonify({"ok": False, "error": "La factura está anulada."}), 409
+    arch = request.files.get("archivo")
+    if not arch or not arch.filename:
+        return jsonify({"ok": False, "error": "Sin archivo."}), 400
+    ext = (arch.filename.rsplit(".", 1)[-1].lower() if "." in arch.filename else "")
+    if ext not in ("pdf", "jpg", "jpeg", "png"):
+        return jsonify({"ok": False, "error": "Solo PDF, JPG o PNG."}), 400
+    try:
+        arch.stream.seek(0, 2)
+        size = arch.stream.tell()
+        arch.stream.seek(0)
+    except Exception:
+        size = 0
+    if size > 15 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "El archivo supera los 15 MB."}), 400
+    if not _gcs_ready():
+        return jsonify({"ok": False, "error": _STORAGE_OFF_MSG,
+                        "error_codigo": "ALMACENAMIENTO_NO_DISPONIBLE"}), 503
+    # Clave NO adivinable (fid + epoch es un espacio chico, la misma
+    # lección de las firmas en la auditoría OT2-P0-04) + candado por
+    # prefijo en serve_archivo. Dos capas, como allá.
+    import secrets as _sec
+    try:
+        res = _cloud_upload_raw(arch, public_id=f"facprov_{fid}_{int(time.time())}_{_sec.token_hex(8)}",
+                                folder="ilus/sstt/facturas_proveedor")
+    except Exception as e:
+        print(f"[facprov] archivo fid={fid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el archivo."}), 502
+    # El respaldo anterior deja de servir: se borra del bucket (best-effort).
+    if f.get("archivo_url"):
+        try:
+            _cloud_delete(f["archivo_url"])
+        except Exception as _e_del:
+            print(f"[facprov] no se pudo borrar respaldo anterior fid={fid}: {_e_del}", flush=True)
+    mysql_execute(
+        "UPDATE mant_facturas_proveedor SET archivo_url=%s, archivo_nombre=%s WHERE id=%s",
+        (res["url"], arch.filename[:300], fid))
+    _mant_log("factura_proveedor", fid, "archivo_subido", arch.filename[:300])
+    return jsonify({"ok": True, "url": res["url"], "nombre": arch.filename[:300]})
+
+
 @app.route("/mantenciones/facturacion-proveedores")
 @_mant_required
 def mant_facturacion_proveedores_legacy():
@@ -121274,6 +122133,79 @@ def _ensure_mant_ot_signatures_tipo_firma():
             print(f"[ensure_ot_signatures] MODIFY signer_rut: {e}", flush=True)
 
 
+def _ensure_mant_facturas_proveedor_tables():
+    """💸 2026-09-14 (Daniel: "controlar los cobros de los externos mediante
+    la herramienta... identificar las OT que no tengan una factura o esté
+    pendiente de cobro... una vez que se haga el cobro, reservar esta
+    información para asignar una factura bien ordenadita y evitar
+    duplicidad de cobro").
+
+    Cuentas por pagar a PROVEEDORES EXTERNOS de Servicio Técnico. Es el
+    mismo patrón que ya usa Transporte con los couriers
+    (transport_facturas_proveedor + _items, 2026-07-26): una cabecera por
+    documento que el proveedor le emite a ILUS, y N ítems = las OT que
+    ese documento cubre. La unidad es la OT, no el documento del ERP.
+
+    Tres diferencias a propósito respecto del de Transporte, todas para
+    cerrar huecos que allá quedaron abiertos:
+      1. UNIQUE (visita_id) + INSERT plano (no ON DUPLICATE KEY UPDATE):
+         una OT vive en UNA sola factura y reasignarla exige desasignar
+         primero, con confirmación y bitácora -- nunca se mueve sola.
+      2. estado_pago: 'pendiente' -> 'pagada' congela la factura (ni
+         asignar, ni quitar, ni editar). Es el "reservar la información"
+         que pidió Daniel.
+      3. archivo_url se llena de verdad (GCS vía _cloud_upload_raw, que en
+         julio todavía no existía).
+
+    SIEMPRE en boot, incluso con ILUS_SKIP_MIGRATIONS=1 (Regla #5)."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_facturas_proveedor (
+                id                 INT AUTO_INCREMENT PRIMARY KEY,
+                proveedor_nombre   VARCHAR(200) NOT NULL,
+                proveedor_rut      VARCHAR(20)  NULL,
+                tecnico_externo_id INT NULL COMMENT 'mant_tecnicos_externos.id si existe ficha (sin FK: en prod la tabla puede estar vacia)',
+                tipo_documento     ENUM('factura','boleta_honorarios','otro') NOT NULL DEFAULT 'factura',
+                numero_documento   VARCHAR(80)  NOT NULL,
+                fecha              DATE NOT NULL,
+                monto_total        DECIMAL(12,2) NOT NULL DEFAULT 0,
+                estado_pago        ENUM('pendiente','pagada','anulada') NOT NULL DEFAULT 'pendiente',
+                pagada_at          DATETIME NULL,
+                pagada_por         VARCHAR(190) NULL,
+                pago_referencia    VARCHAR(120) NULL COMMENT 'N transferencia, cheque, etc.',
+                archivo_url        VARCHAR(500) NULL,
+                archivo_nombre     VARCHAR(300) NULL,
+                notas              TEXT NULL,
+                created_by         VARCHAR(190) NULL,
+                created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_mfp_prov_fecha (proveedor_nombre, fecha),
+                INDEX idx_mfp_estado (estado_pago),
+                INDEX idx_mfp_numero (numero_documento)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_facturas_proveedor] cabecera: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_factura_proveedor_items (
+                id                   INT AUTO_INCREMENT PRIMARY KEY,
+                factura_proveedor_id INT NOT NULL,
+                visita_id            INT NOT NULL COMMENT 'mant_visitas.id -- la OT que este documento cobra',
+                monto                DECIMAL(12,2) NOT NULL,
+                observacion          TEXT NULL,
+                usuario              VARCHAR(190) NULL,
+                created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_mfpi_visita (visita_id),
+                INDEX idx_mfpi_factura (factura_proveedor_id),
+                CONSTRAINT fk_mfpi_factura FOREIGN KEY (factura_proveedor_id)
+                    REFERENCES mant_facturas_proveedor(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_facturas_proveedor] items: {e}", flush=True)
+
+
 def _ensure_mant_intel_tables():
     """Garantiza tablas/columnas del Agente de Inteligencia SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Idempotente. CERO IA."""
@@ -124028,6 +124960,14 @@ try:
         _ensure_mant_ot_signatures_tipo_firma()
 except Exception as _sig_err:
     print(f"[ILUS][WARN] _ensure_mant_ot_signatures_tipo_firma: {_sig_err}", flush=True)
+
+# 💸 Facturas de proveedor externo (cuentas por pagar de Servicio Técnico,
+# Daniel 2026-09-14). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_facturas_proveedor_tables()
+except Exception as _mfp_err:
+    print(f"[ILUS][WARN] _ensure_mant_facturas_proveedor_tables: {_mfp_err}", flush=True)
 
 # Columnas de trazabilidad de EDICIÓN de equipos descubiertos (Daniel 2026-07-06).
 try:

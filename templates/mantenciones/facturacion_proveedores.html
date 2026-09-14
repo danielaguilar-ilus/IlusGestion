@@ -32,11 +32,15 @@
       despacho), no el neto de la factura.
     </div>
   </div>
-  <form method="get" class="d-flex gap-2 align-items-center">
+  <form method="get" class="d-flex gap-2 align-items-center flex-wrap">
     <input type="month" name="mes" value="{{ mes }}" class="form-control form-control-sm"
            style="width:auto" onchange="this.form.submit()">
     <a class="btn btn-sm btn-dark" href="{{ url_for('mant_facturacion_proveedores_xlsx', mes=mes) }}">
       <i class="bi bi-file-earmark-excel me-1"></i>Bajar detalle</a>
+    {# 💸 2026-09-14: de aquí se pasa a registrar las facturas reales del
+       proveedor y a ver qué OT siguen sin factura. #}
+    <a class="btn btn-sm btn-danger fw-bold" href="{{ url_for('mant_facturas_proveedor') }}">
+      <i class="bi bi-receipt-cutoff me-1"></i>Facturas proveedor</a>
   </form>
 </div>
 

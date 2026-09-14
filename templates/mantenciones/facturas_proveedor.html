@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+{% block title %}Facturas de proveedor — ILUS Fitness{% endblock %}
+
+{#-
+  ════════════════════════════════════════════════════════════════════
+  FACTURAS DE PROVEEDOR EXTERNO — cuentas por pagar de Servicio Técnico
+  ════════════════════════════════════════════════════════════════════
+  2026-09-14 (Daniel: "controlar los cobros de los externos mediante la
+  herramienta... identificar las OT que no tengan una factura o esté
+  pendiente de cobro... una vez que se haga el cobro, reservar esta
+  información para asignar una factura bien ordenadita y evitar
+  duplicidad de cobro").
+
+  Mismo patrón que Facturas Proveedor de Transporte (couriers), con la
+  OT como unidad. Decisiones confirmadas por Daniel el mismo día:
+    · una OT entra a factura solo con firma del cliente o cerrada;
+    · 'pagada' congela la factura (solo superadmin reabre, con motivo);
+    · mismo permiso que el reporte "Facturación de proveedores".
+  Lenguaje visual: el del reporte hermano (fp-*), REGLA #15.
+-#}
+
+{% macro clp(v) -%}${{ '{:,.0f}'.format(v or 0)|replace(',', '.') }}{%- endmacro %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>Facturas de proveedor</h1>
+    <div class="text-muted" style="font-size:.86rem">
+      Lo que los proveedores externos nos facturan por sus OT. Cada OT vive en <b>una sola</b>
+      factura: el sistema no deja cobrarla dos veces.
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-dark" style="min-height:44px;display:inline-flex;align-items:center"
+       href="{{ url_for('mant_facturacion_proveedores') }}">
+      <i class="bi bi-bar-chart-line me-1"></i>Facturación del mes</a>
+    <button type="button" class="btn btn-sm btn-danger fw-bold" style="min-height:44px"
+            onclick="fpvAbrirNueva()">
+      <i class="bi bi-plus-lg me-1"></i>Nueva factura</button>
+  </div>
+</div>
+
+{# ── Tres números que importan ─────────────────────────────────────── #}
+<div class="fp-kpis fp-kpis-top">
+  <div class="fp-kpi {{ 'warn' if resumen.por_facturar_n else 'ok' }}">
+    <span class="k">Por facturar · {{ resumen.por_facturar_n }} OT</span>
+    <span class="v">{{ clp(resumen.por_facturar_monto) }}</span>
+    <span class="s">OT de externos con costo declarado y sin factura del proveedor</span>
+  </div>
+  <div class="fp-kpi {{ 'warn' if resumen.pendiente_n else 'ok' }}">
+    <span class="k">Facturado, sin pagar · {{ resumen.pendiente_n }}</span>
+    <span class="v">{{ clp(resumen.pendiente_monto) }}</span>
+    <span class="s">Facturas registradas que todavía no se marcan pagadas</span>
+  </div>
+  <div class="fp-kpi tot">
+    <span class="k">Pagado este mes · {{ resumen.pagado_mes_n }}</span>
+    <span class="v">{{ clp(resumen.pagado_mes_monto) }}</span>
+    <span class="s">Facturas marcadas pagadas en el mes en curso</span>
+  </div>
+</div>
+
+{# ── Filtros ───────────────────────────────────────────────────────── #}
+<form method="get" class="fpv-filtros">
+  <input type="hidden" name="per_page" value="{{ per_page }}">
+  <div class="fpv-search">
+    <i class="bi bi-search text-muted"></i>
+    <input type="search" name="proveedor" value="{{ f_prov }}" placeholder="Buscar proveedor…"
+           aria-label="Buscar proveedor">
+  </div>
+  <select name="estado" class="form-select form-select-sm" style="min-height:44px;max-width:220px"
+          onchange="this.form.submit()" aria-label="Estado de pago">
+    <option value="">Todos los estados</option>
+    <option value="pendiente" {{ 'selected' if f_estado == 'pendiente' }}>Pendientes de pago</option>
+    <option value="pagada" {{ 'selected' if f_estado == 'pagada' }}>Pagadas</option>
+    <option value="anulada" {{ 'selected' if f_estado == 'anulada' }}>Anuladas</option>
+  </select>
+  <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
+    <i class="bi bi-funnel me-1"></i>Buscar</button>
+  {% if f_prov or f_estado %}
+  <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px;display:inline-flex;align-items:center"
+     href="{{ url_for('mant_facturas_proveedor') }}"><i class="bi bi-x-lg me-1"></i>Limpiar</a>
+  {% endif %}
+</form>
+
+{# ── OT por facturar: lo primero que Daniel pidió mirar ────────────── #}
+<div class="fp-sec">OT por facturar{% if f_prov %} · {{ f_prov }}{% endif %}</div>
+{% if not por_facturar %}
+<div class="fp-vacio">
+  <i class="bi bi-check2-circle" style="color:#16a34a"></i>
+  <div><b>No hay OT de proveedor externo esperando factura.</b>
+    Entran acá las OT ejecutadas por un externo, con costo declarado, cuando el
+    cliente ya firmó o la OT está cerrada.</div>
+</div>
+{% else %}
+<div class="fp-aviso">
+  <i class="bi bi-exclamation-triangle-fill"></i>
+  <div><b>{{ pf_total }} OT de proveedor externo con costo declarado y sin factura del proveedor.</b>
+    <span>Cuando llegue la factura del proveedor, regístrala con "Nueva factura" y asígnale estas OT
+      desde su detalle.</span></div>
+</div>
+<div class="table-responsive">
+  <table class="fp-tabla">
+    <thead>
+      <tr>
+        <th>OT</th><th>Proveedor</th><th>Cliente</th><th>Servicio</th><th>Estado</th>
+        <th class="m">Instalación</th><th class="m">Despacho</th><th class="m">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in por_facturar %}
+      <tr>
+        <td data-label="OT"><a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.id) }}">{{ d.numero_ot }}</a>
+          <div class="fp-sub">{{ d.fecha }}</div></td>
+        <td data-label="Proveedor"><div class="fp-nom">{{ d.proveedor }}</div>
+          {% if d.proveedor_rut %}<div class="fp-sub">{{ d.proveedor_rut | rut_fmt }}</div>{% endif %}</td>
+        <td data-label="Cliente">{{ d.cliente }}</td>
+        <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span></td>
+        <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span></td>
+        <td class="m" data-label="Instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
+        <td class="m" data-label="Despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
+        <td class="m tot" data-label="Total">{{ clp(d.sugerido) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{# Paginación propia (REGLA #4.3), sin pisar la de las facturas #}
+<div class="fp-pag">
+  <div class="fp-pag-info">
+    Mostrando {{ (pf_page - 1) * pf_per_page + 1 }}–{{ [pf_page * pf_per_page, pf_total] | min }} de {{ pf_total }} OT por facturar
+  </div>
+  <div class="fp-pag-ctl">
+    <form method="get" class="d-inline">
+      <input type="hidden" name="proveedor" value="{{ f_prov }}">
+      <input type="hidden" name="estado" value="{{ f_estado }}">
+      <input type="hidden" name="per_page" value="{{ per_page }}">
+      <input type="hidden" name="page" value="{{ page }}">
+      <label>Por página
+        <select name="pf_per_page" onchange="this.form.submit()">
+          {% for n in per_page_opciones %}<option value="{{ n }}" {{ 'selected' if n == pf_per_page }}>{{ n }}</option>{% endfor %}
+        </select>
+      </label>
+    </form>
+    <a class="fp-pag-btn {{ 'dis' if pf_page <= 1 }}"
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1) if pf_page > 1 else '#' }}">
+      <i class="bi bi-chevron-left"></i>Anterior</a>
+    <span class="fp-pag-num">Página {{ pf_page }} de {{ pf_total_paginas }}</span>
+    <a class="fp-pag-btn {{ 'dis' if pf_page >= pf_total_paginas }}"
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1) if pf_page < pf_total_paginas else '#' }}">
+      Siguiente<i class="bi bi-chevron-right"></i></a>
+  </div>
+</div>
+{% endif %}
+
+{# ── Facturas registradas ──────────────────────────────────────────── #}
+<div class="fp-sec">Facturas registradas{% if total %} · {{ total }}{% endif %}</div>
+{% if not facturas %}
+<div class="fp-vacio">
+  <i class="bi bi-inbox"></i>
+  <div><b>{{ 'Ninguna factura coincide con el filtro.' if (f_prov or f_estado) else 'Aún no hay facturas de proveedor registradas.' }}</b>
+    Registra la primera con "Nueva factura": proveedor, N° de documento, fecha y monto.
+    Después le asignas las OT que cobra.</div>
+</div>
+{% else %}
+<div class="table-responsive">
+  <table class="fp-tabla fpv-clic">
+    <thead>
+      <tr>
+        <th>Proveedor</th><th>Documento</th><th>Fecha</th><th class="n">OT</th>
+        <th class="m">Monto factura</th><th class="m">Asignado en OT</th><th class="m">Diferencia</th>
+        <th>Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in facturas %}
+      <tr onclick="window.location='{{ url_for('mant_factura_proveedor_detalle', fid=f.id) }}'">
+        <td data-label="Proveedor"><div class="fp-nom">{{ f.proveedor_nombre }}</div>
+          {% if f.proveedor_rut %}<div class="fp-sub">{{ f.proveedor_rut | rut_fmt }}</div>{% endif %}</td>
+        <td data-label="Documento"><span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>
+          {% if f.archivo_url %}<div class="fp-sub"><i class="bi bi-paperclip"></i> con respaldo</div>{% endif %}</td>
+        <td data-label="Fecha">{{ f.fecha | chile_fmt('%d/%m/%Y') if f.fecha else '—' }}</td>
+        <td class="n" data-label="OT asignadas"><span class="fp-chip {{ 'ok' if f.n_ot else '' }}">{{ f.n_ot or 0 }}</span></td>
+        <td class="m tot" data-label="Monto factura">{{ clp(f.monto_total) }}</td>
+        <td class="m" data-label="Asignado en OT">{{ clp(f.total_asignado) }}</td>
+        <td class="m" data-label="Diferencia">
+          {% if f.n_ot and f.diferencia|round(0) == 0 %}<span class="fp-margen pos">Cuadra</span>
+          {% elif not f.n_ot %}<span class="muted">—</span>
+          {% else %}<span class="fp-margen {{ 'neg' if f.diferencia < 0 else 'warn' }}">{{ '+' if f.diferencia > 0 else '' }}{{ clp(f.diferencia) }}</span>{% endif %}
+        </td>
+        <td data-label="Estado"><span class="fp-pago pago-{{ f.estado_pago }}">
+          {% if f.estado_pago == 'pagada' %}<i class="bi bi-check-circle-fill"></i> Pagada
+          {% elif f.estado_pago == 'anulada' %}<i class="bi bi-slash-circle"></i> Anulada
+          {% else %}<i class="bi bi-hourglass-split"></i> Pendiente de pago{% endif %}</span>
+          {% if f.estado_pago == 'pagada' and f.pagada_at %}<div class="fp-sub">{{ f.pagada_at | chile_fmt('%d/%m/%Y') }}</div>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# Paginación REGLA #4.3 #}
+<div class="fp-pag">
+  <div class="fp-pag-info">
+    Mostrando {{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total] | min }} de {{ total }}
+  </div>
+  <div class="fp-pag-ctl">
+    <form method="get" class="d-inline">
+      <input type="hidden" name="proveedor" value="{{ f_prov }}">
+      <input type="hidden" name="estado" value="{{ f_estado }}">
+      <input type="hidden" name="pf_per_page" value="{{ pf_per_page }}">
+      <input type="hidden" name="pf_page" value="{{ pf_page }}">
+      <label>Por página
+        <select name="per_page" onchange="this.form.submit()">
+          {% for n in per_page_opciones %}<option value="{{ n }}" {{ 'selected' if n == per_page }}>{{ n }}</option>{% endfor %}
+        </select>
+      </label>
+    </form>
+    <a class="fp-pag-btn {{ 'dis' if page <= 1 }}"
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
+      <i class="bi bi-chevron-left"></i>Anterior</a>
+    <span class="fp-pag-num">Página {{ page }} de {{ total_paginas }}</span>
+    <a class="fp-pag-btn {{ 'dis' if page >= total_paginas }}"
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
+      Siguiente<i class="bi bi-chevron-right"></i></a>
+  </div>
+</div>
+{% endif %}
+
+{# ── Modal: nueva factura (6 campos → Bootstrap modal, REGLA #8) ─────── #}
+<div class="modal fade" id="fpvModalNueva" tabindex="-1" aria-labelledby="fpvModalNuevaTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;border:0">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:14px 14px 0 0">
+        <h5 class="modal-title" id="fpvModalNuevaTitulo"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>Nueva factura de proveedor</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        {# Pasos numerados rojo→verde (estándar del modal de Repuestos, REGLA #15) #}
+        <section class="fpv-step" id="fpvStep1">
+          <div class="fpv-step-hd">
+            <div class="fpv-circle"><span class="n">1</span><span class="ok"><i class="bi bi-check-lg"></i></span></div>
+            <div><div class="fpv-step-t">¿Quién factura?</div><div class="fpv-step-s">El proveedor externo que emitió el documento</div></div>
+          </div>
+          <div class="fpv-step-bd">
+            <label class="fpv-lbl" for="fpvProv">Proveedor <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="fpvProv" list="fpvProvLista" placeholder="Ej: Isabel Milling" autocomplete="off" oninput="fpvRefreshSteps()">
+            <datalist id="fpvProvLista">
+              {% for p in provs_sugeridos %}<option value="{{ p.nombre }}" data-rut="{{ p.rut }}" data-id="{{ p.id or '' }}">{{ p.rut | rut_fmt if p.rut else '' }}</option>{% endfor %}
+            </datalist>
+            <input type="hidden" id="fpvProvId" value="">
+            <label class="fpv-lbl mt-2" for="fpvRut">RUT del proveedor</label>
+            <input type="text" class="form-control" id="fpvRut" placeholder="12.345.678-9">
+          </div>
+        </section>
+        <section class="fpv-step" id="fpvStep2">
+          <div class="fpv-step-hd">
+            <div class="fpv-circle"><span class="n">2</span><span class="ok"><i class="bi bi-check-lg"></i></span></div>
+            <div><div class="fpv-step-t">¿Qué documento?</div><div class="fpv-step-s">Tipo, número y fecha de emisión</div></div>
+          </div>
+          <div class="fpv-step-bd">
+            <div class="row g-2">
+              <div class="col-12 col-sm-4">
+                <label class="fpv-lbl" for="fpvTipo">Tipo</label>
+                <select class="form-select" id="fpvTipo">
+                  <option value="factura">Factura</option>
+                  <option value="boleta_honorarios">Boleta de honorarios</option>
+                  <option value="otro">Otro</option>
+                </select>
+              </div>
+              <div class="col-6 col-sm-4">
+                <label class="fpv-lbl" for="fpvNumero">N° <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="fpvNumero" placeholder="Ej: 1234" oninput="fpvRefreshSteps()">
+              </div>
+              <div class="col-6 col-sm-4">
+                <label class="fpv-lbl" for="fpvFecha">Fecha <span class="text-danger">*</span></label>
+                <input type="date" class="form-control" id="fpvFecha" onchange="fpvRefreshSteps()">
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="fpv-step" id="fpvStep3">
+          <div class="fpv-step-hd">
+            <div class="fpv-circle"><span class="n">3</span><span class="ok"><i class="bi bi-check-lg"></i></span></div>
+            <div><div class="fpv-step-t">¿Cuánto?</div><div class="fpv-step-s">Monto total del documento; después se cuadra contra las OT</div></div>
+          </div>
+          <div class="fpv-step-bd">
+            <label class="fpv-lbl" for="fpvMonto">Monto total (CLP) <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input type="text" inputmode="numeric" class="form-control" id="fpvMonto" placeholder="0">
+            </div>
+            <label class="fpv-lbl mt-2" for="fpvNotas">Notas</label>
+            <textarea class="form-control" id="fpvNotas" rows="2" placeholder="Opcional"></textarea>
+          </div>
+        </section>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cancelar</button>
+        <button type="button" class="btn btn-danger fw-bold" id="fpvBtnCrear" onclick="fpvCrear()" style="min-height:44px">
+          <i class="bi bi-check-lg me-1"></i>Registrar factura</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function fpvAbrirNueva(){
+  const m = new bootstrap.Modal(document.getElementById('fpvModalNueva'));
+  const hoy = new Date();
+  document.getElementById('fpvFecha').value = hoy.getFullYear() + '-' +
+    String(hoy.getMonth()+1).padStart(2,'0') + '-' + String(hoy.getDate()).padStart(2,'0');
+  m.show();
+  setTimeout(() => document.getElementById('fpvProv').focus(), 250);
+}
+// Al elegir un proveedor conocido, se completa solo el RUT y la ficha.
+document.getElementById('fpvProv').addEventListener('input', function(){
+  const opts = document.getElementById('fpvProvLista').options;
+  for (const o of opts){
+    if (o.value === this.value){
+      if (o.dataset.rut) document.getElementById('fpvRut').value = o.dataset.rut;
+      document.getElementById('fpvProvId').value = o.dataset.id || '';
+      return;
+    }
+  }
+  document.getElementById('fpvProvId').value = '';
+});
+document.getElementById('fpvMonto').addEventListener('input', function(){
+  const n = (this.value || '').replace(/\D/g,'');
+  this.value = n ? Number(n).toLocaleString('es-CL') : '';
+  fpvRefreshSteps();
+});
+// Círculo rojo → verde con check cuando el paso quedó completo (mismo
+// lenguaje que el modal de Repuestos / formulario de Retiros).
+function fpvRefreshSteps(){
+  const v = id => (document.getElementById(id).value || '').trim();
+  const listo = {
+    fpvStep1: !!v('fpvProv'),
+    fpvStep2: !!v('fpvNumero') && !!v('fpvFecha'),
+    fpvStep3: Number(v('fpvMonto').replace(/\D/g,'')) > 0,
+  };
+  for (const k in listo) document.getElementById(k).classList.toggle('listo', listo[k]);
+}
+async function fpvCrear(){
+  const btn = document.getElementById('fpvBtnCrear');
+  const body = {
+    proveedor_nombre: document.getElementById('fpvProv').value.trim(),
+    proveedor_rut: document.getElementById('fpvRut').value.trim(),
+    tecnico_externo_id: document.getElementById('fpvProvId').value || null,
+    tipo_documento: document.getElementById('fpvTipo').value,
+    numero_documento: document.getElementById('fpvNumero').value.trim(),
+    fecha: document.getElementById('fpvFecha').value,
+    monto_total: Number((document.getElementById('fpvMonto').value || '0').replace(/\D/g,'')) || 0,
+    notas: document.getElementById('fpvNotas').value.trim(),
+  };
+  if (!body.proveedor_nombre){ ilusToast('Falta el nombre del proveedor', {type:'warning'}); return; }
+  if (!body.numero_documento){ ilusToast('Falta el N° del documento', {type:'warning'}); return; }
+  if (!body.fecha){ ilusToast('Falta la fecha', {type:'warning'}); return; }
+  btn.disabled = true;
+  try{
+    const r = await fetch('{{ url_for("mant_facturas_proveedor_crear") }}', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false){
+      ilusToast(d.error || 'No se pudo registrar la factura', {type:'error'});
+      btn.disabled = false; return;
+    }
+    ilusToast('✓ Factura registrada — ahora asígnale las OT', {type:'success'});
+    window.location = '/servicio-tecnico/facturas-proveedor/' + d.id;
+  }catch(e){
+    ilusToast('Error de conexión', {type:'error'});
+    btn.disabled = false;
+  }
+}
+</script>
+
+<style>
+.fp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:18px}
+.fp-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;
+  box-shadow:0 1px 2px rgba(15,23,42,.05);border-left:4px solid #cbd5e1}
+.fp-kpi .k{display:block;font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b}
+.fp-kpi .v{display:block;font-size:1.25rem;font-weight:900;color:#0f172a;margin-top:3px;font-variant-numeric:tabular-nums}
+.fp-kpi .s{display:block;font-size:.7rem;color:#94a3b8;margin-top:3px}
+.fp-kpi.ok{border-left-color:#16a34a}
+.fp-kpi.warn{border-left-color:#f59e0b}.fp-kpi.warn .v{color:#b45309}
+.fp-kpi.tot{background:#0a0a0a;border-color:#0a0a0a;border-left-color:#dc2626}
+.fp-kpi.tot .k,.fp-kpi.tot .s{color:#9ca3af}.fp-kpi.tot .v{color:#fff}
+.fpv-filtros{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.fpv-search{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #d1d5db;
+  border-radius:8px;padding:0 12px;min-height:44px;flex:1 1 220px;max-width:360px}
+.fpv-search input{border:0;outline:0;flex:1;font-size:16px;background:transparent;min-height:42px}
+.fp-sec{font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;
+  color:#0f172a;margin:20px 0 8px;display:flex;align-items:center;gap:7px}
+.fp-sec::before{content:'';width:3px;height:13px;background:#dc2626;border-radius:2px}
+.fp-tabla{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:.83rem}
+.fp-tabla thead th{font-size:.63rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;
+  color:#64748b;padding:0 10px 4px;text-align:left;white-space:nowrap}
+.fp-tabla th.m,.fp-tabla td.m{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fp-tabla th.n,.fp-tabla td.n{text-align:center;width:52px}
+.fp-tabla tbody tr{background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.fpv-clic tbody tr{cursor:pointer}.fpv-clic tbody tr:hover td{background:#fafafa}
+.fp-tabla tbody td{padding:9px 10px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;vertical-align:middle}
+.fp-tabla tbody td:first-child{border-left:1px solid #e5e7eb;border-radius:9px 0 0 9px}
+.fp-tabla tbody td:last-child{border-right:1px solid #e5e7eb;border-radius:0 9px 9px 0}
+.fp-tabla td.tot{font-weight:900;color:#0f172a}
+.fp-nom{font-weight:800;color:#0f172a}
+.fp-sub{font-size:.7rem;color:#94a3b8}
+.fp-ot{font-weight:800;color:#dc2626;text-decoration:none}.fp-ot:hover{text-decoration:underline}
+.fp-tipo{font-size:.68rem;font-weight:800;background:#f1f5f9;color:#475569;border-radius:999px;padding:3px 9px;white-space:nowrap}
+.fp-est{font-size:.66rem;font-weight:800;border-radius:999px;padding:3px 9px;white-space:nowrap;text-transform:capitalize;
+  background:#f1f5f9;color:#475569}
+.fp-est.est-cerrada{background:#dcfce7;color:#166534}
+.fp-est.est-completada,.fp-est.est-pendiente_aprobacion{background:#dbeafe;color:#1e40af}
+.fp-doc{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.76rem;font-weight:700;
+  background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;padding:2px 6px;white-space:nowrap}
+.fp-chip{display:inline-block;min-width:26px;font-size:.72rem;font-weight:900;border-radius:999px;padding:2px 8px;background:#f1f5f9;color:#64748b}
+.fp-chip.ok{background:#dcfce7;color:#166534}
+.fp-margen{font-weight:900}.fp-margen.pos{color:#15803d}.fp-margen.neg{color:#b91c1c}.fp-margen.warn{color:#b45309}
+.fp-pago{font-size:.7rem;font-weight:800;border-radius:999px;padding:3px 9px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
+.fp-pago.pago-pendiente{background:#fff8e1;color:#92400e;border:1px solid #fde68a}
+.fp-pago.pago-pagada{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+.fp-pago.pago-anulada{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0;text-decoration:line-through}
+.fp-aviso{display:flex;gap:10px;align-items:flex-start;background:#fff8e1;border:1px solid #fde68a;
+  border-radius:10px;padding:11px 14px;margin-bottom:10px;font-size:.83rem;color:#0f172a}
+.fp-aviso > i{color:#f59e0b;font-size:1.05rem}
+.fp-aviso span{display:block;margin-top:3px;color:#64748b;font-size:.78rem}
+.fp-vacio{display:flex;gap:12px;align-items:flex-start;background:#f8fafc;border:1px solid #e2e8f0;
+  border-radius:12px;padding:18px;color:#0f172a;font-size:.9rem}
+.fp-vacio > i{font-size:1.5rem;color:#94a3b8}
+.fp-pag{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px;
+  padding-top:10px;border-top:1px solid #e5e7eb}
+.fp-pag-info{font-size:.78rem;color:#64748b;font-weight:600}
+.fp-pag-ctl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fp-pag-ctl label{font-size:.75rem;color:#64748b;font-weight:700;display:flex;align-items:center;gap:5px;margin:0}
+.fp-pag-ctl select{font-size:.78rem;padding:5px 8px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#0f172a;min-height:34px}
+.fp-pag-num{font-size:.78rem;font-weight:800;color:#0f172a;min-width:104px;text-align:center}
+.fp-pag-btn{display:inline-flex;align-items:center;gap:4px;font-size:.76rem;font-weight:800;padding:6px 11px;
+  border-radius:7px;border:1px solid #d1d5db;background:#fff;color:#374151;min-height:34px;text-decoration:none}
+.fp-pag-btn:hover{background:#f8fafc;color:#0f172a}
+.fp-pag-btn.dis{opacity:.45;pointer-events:none}
+.fpv-lbl{font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:3px;display:block}
+#fpvModalNueva .form-control,#fpvModalNueva .form-select{font-size:16px;min-height:44px}
+/* Pasos numerados del modal (estándar Repuestos / Retiros) */
+.fpv-step{border:1px solid #e5e7eb;border-radius:11px;margin-bottom:10px;overflow:hidden;transition:border-color .2s}
+.fpv-step-hd{display:flex;align-items:center;gap:10px;padding:9px 12px;background:#fafbfc;border-bottom:1px solid #eef2f7}
+.fpv-step-t{font-size:.84rem;font-weight:800;color:#0f172a}
+.fpv-step-s{font-size:.7rem;color:#64748b}
+.fpv-step-bd{padding:11px 12px}
+.fpv-circle{width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;
+  justify-content:center;font-size:.8rem;font-weight:900;flex:0 0 auto;transition:background .2s}
+.fpv-circle .ok{display:none}
+.fpv-step.listo{border-color:#bbf7d0}
+.fpv-step.listo .fpv-step-hd{background:#f0fdf4;border-bottom-color:#dcfce7}
+.fpv-step.listo .fpv-circle{background:#16a34a;animation:fpvPulso .5s ease-out 1}
+.fpv-step.listo .fpv-circle .n{display:none}
+.fpv-step.listo .fpv-circle .ok{display:inline}
+@keyframes fpvPulso{0%{box-shadow:0 0 0 0 rgba(22,163,74,.45)}100%{box-shadow:0 0 0 10px rgba(22,163,74,0)}}
+@media (max-width:768px){
+  .fp-tabla thead{display:none}
+  .fp-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:12px;padding:8px 0;margin-bottom:10px}
+  .fp-tabla tbody td{display:block;border:0;padding:3px 12px;text-align:left}
+  .fp-tabla th.m,.fp-tabla td.m{text-align:left}
+  /* Apilada en tarjeta, cada cifra lleva su nombre (REGLA #15) */
+  .fp-tabla tbody td[data-label]::before{content:attr(data-label);display:block;font-size:.62rem;font-weight:900;
+    text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
+  /* REGLA #3: 44px en lo que se toca con el dedo y no es .btn */
+  .fp-pag-btn,.fp-pag-ctl select{min-height:44px}
+}
+</style>
+{% endblock %}

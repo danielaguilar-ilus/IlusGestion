@@ -504,20 +504,20 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {% set vista_lista = 'tabla' %}
   <div class="ot2-kpis">
     <a class="ot2-kpi k-pend {{ 'on' if fase=='pend' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='pend' else 'pend') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='pend' else 'pend') }}">
       <span class="num">{{ kpis.pend }}</span><span class="lbl">Pendientes</span>
     </a>
     <a class="ot2-kpi k-ejec {{ 'on' if fase=='ejec' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='ejec' else 'ejec') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='ejec' else 'ejec') }}">
       <span class="num">{{ kpis.ejec }}</span>
       <span class="lbl">{% if kpis.ejec %}<span class="ot2-dot"></span>{% endif %}En ejecución</span>
     </a>
     <a class="ot2-kpi k-comp {{ 'on' if fase=='comp' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='comp' else 'comp') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='comp' else 'comp') }}">
       <span class="num">{{ kpis.comp }}</span><span class="lbl">Completadas</span>
     </a>
     <a class="ot2-kpi k-cerr {{ 'on' if fase=='cerr' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, fase=None if fase=='cerr' else 'cerr') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='cerr' else 'cerr') }}">
       <span class="num">{{ kpis.cerr }}</span><span class="lbl">Cerradas</span>
     </a>
   </div>
@@ -585,6 +585,20 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
       <option value="visto" {{ 'selected' if f_anexo == 'visto' }}>Anexo visto, sin firmar</option>
       <option value="firmado" {{ 'selected' if f_anexo == 'firmado' }}>Anexo firmado</option>
     </select>
+    {# 💸 2026-09-14 (Daniel: "identificar las OT que no tengan una factura
+       o esté pendiente de cobro"). Estado del pago al proveedor externo,
+       alimentado por Facturas de proveedor (SSTT). Solo tiene sentido para
+       OT ejecutadas por externos; las internas no entran en ninguna opción. #}
+    {% if permissions and (permissions.mant_facturacion_proveedores or permissions.superadmin) %}
+    <select name="pago_prov" class="form-select form-select-sm" style="min-height:44px;max-width:210px"
+            onchange="this.form.submit()" aria-label="Filtrar por pago al proveedor">
+      <option value="">Pago a proveedor: todas</option>
+      <option value="sin_costo" {{ 'selected' if f_pago == 'sin_costo' }}>Externo sin costo declarado</option>
+      <option value="por_facturar" {{ 'selected' if f_pago == 'por_facturar' }}>Por facturar (sin factura)</option>
+      <option value="facturada" {{ 'selected' if f_pago == 'facturada' }}>Facturada, sin pagar</option>
+      <option value="pagada" {{ 'selected' if f_pago == 'pagada' }}>Pagada al proveedor</option>
+    </select>
+    {% endif %}
 
     {# El orden viaja en el formulario para no perderse al buscar #}
     <input type="hidden" name="orden" value="{{ orden }}">
@@ -593,7 +607,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
       <i class="bi bi-funnel me-1"></i>Buscar
     </button>
-    {% if q or fase or f_tipo or f_tec or f_interna or f_anexo %}
+    {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago %}
     <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px"
        href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
       <i class="bi bi-x-lg me-1"></i>Limpiar
@@ -601,16 +615,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     {% endif %}
   </form>
 
-  {% if q or fase or f_tipo or f_tec or f_interna or f_anexo %}
+  {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago %}
   <p class="ot2-nota">
     <i class="bi bi-info-circle-fill text-primary"></i>
-    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}{% if f_anexo %} · anexo <b>{{ {'sin_anexo':'sin anexo','borrador':'en borrador','enviado':'enviado','visto':'visto, sin firmar','firmado':'firmado'}[f_anexo] }}</b>{% endif %}
+    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}{% if f_anexo %} · anexo <b>{{ {'sin_anexo':'sin anexo','borrador':'en borrador','enviado':'enviado','visto':'visto, sin firmar','firmado':'firmado'}[f_anexo] }}</b>{% endif %}{% if f_pago %} · pago a proveedor <b>{{ {'sin_costo':'sin costo declarado','por_facturar':'por facturar','facturada':'facturada, sin pagar','pagada':'pagada'}[f_pago] }}</b>{% endif %}
   </p>
   {% endif %}
 
   {# ── Selector de vista ───────────────────────────────────────────── #}
   <nav class="ot2-vistas" aria-label="Tipo de vista">
-    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None) }}">
       <i class="bi bi-table"></i><span>Tabla</span></a>
     {# 2026-08-20 (Daniel): la vista "Tarjetas" se quitó a pedido suyo --
        "cuando lo cambio a tabla y tarjeta no hace nada". Y era cierto: el
@@ -618,9 +632,9 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
        Tarjetas renderizaba EXACTAMENTE la tabla. Nunca se implementó como
        vista propia; existía solo el botón. Se elimina el botón en vez de
        dejar una opción que promete algo que no ocurre. #}
-    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None) }}">
       <i class="bi bi-kanban-fill"></i><span>Kanban</span></a>
-    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None) }}">
       <i class="bi bi-calendar3"></i><span>Calendario</span></a>
   </nav>
 
@@ -640,7 +654,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
               <a class="ot2-th {{ 'act' if act }}"
                  href="{{ url_for('ot2_panel', origen=origen, vista=vista, q=q or None,
                                   fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None,
-                                  interna=f_interna or None,
+                                  interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None,
                                   per_page=per_page, orden=col,
                                   dir=('asc' if act and dir=='desc' else 'desc')) }}">
                 {{ label }}
@@ -732,16 +746,19 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
         <span>Mostrando <b>{{ ((page-1)*per_page + 1) }}–{{ [(page*per_page), total_filtrado] | min }}</b> de <b>{{ total_filtrado }}</b></span>
         <div class="ot2-pp">
           {% for opt in per_page_opciones %}
-          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None) }}">{{ opt }}</a>
+          {# 🔧 2026-09-14: los links del pie llevaban solo q/fase -- al pasar
+             de página se perdían tipo/técnico/interna/anexo/pago y el orden,
+             y la página 2 salía sin filtro (REGLA #4.3). Ahora viajan todos. #}
+          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, orden=orden, dir=dir) }}">{{ opt }}</a>
           {% endfor %}
         </div>
         <div class="ot2-nav">
           <a class="ot2-nb {{ 'off' if page <= 1 }}"
-             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None) if page > 1 else '#' }}">
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, orden=orden, dir=dir) if page > 1 else '#' }}">
             <i class="bi bi-chevron-left"></i> Anterior</a>
           <span style="font-weight:800">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
           <a class="ot2-nb {{ 'off' if page >= total_paginas }}"
-             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None) if page < total_paginas else '#' }}">
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, orden=orden, dir=dir) if page < total_paginas else '#' }}">
             Siguiente <i class="bi bi-chevron-right"></i></a>
         </div>
       </footer>
