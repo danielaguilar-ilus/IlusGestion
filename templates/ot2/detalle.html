@@ -7803,7 +7803,16 @@ window.otdConfirmarReagendar = async function(){
     ilusToast('La hora de término debe ser posterior a la de inicio.', {type:'warning'});
     return;
   }
-  const body = {fecha_programada: fecha, fecha_fin: fechaFin || fecha};
+  // 🔴 FIX 2026-09-14 (OT-2026-00025, Lenin Urbina): antes mandaba
+  // `fechaFin || fecha` -- con "Término" vacío, igual mandaba fecha_fin
+  // NO NULO (la misma fecha de inicio). El backend guarda eso tal cual
+  // (columna NO NULL, sin diferencia con NULL para el caller), y
+  // _validar_disponibilidad_visita trataba CUALQUIER fecha_fin no nulo
+  // como rango multi-día real -- apagando el chequeo por hora para
+  // siempre en cada OT reagendada por este cuadro, aunque fuera de un
+  // solo día. Ahora manda `fechaFin` tal cual: NULL de verdad cuando
+  // "Término" queda vacío, la fecha real cuando sí se llenó.
+  const body = {fecha_programada: fecha, fecha_fin: fechaFin};
   if (ini) body.hora_inicio = ini;
   if (fin) body.hora_fin = fin;
   const mot = document.getElementById('otdReagMotivo');

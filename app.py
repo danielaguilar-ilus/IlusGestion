@@ -59845,6 +59845,25 @@ def _validar_disponibilidad_visita(tecnico_user_id, fecha_programada,
     sigue acotando tecnico_user_id + límite superior de fecha_programada;
     el filtro por fecha_fin ya no es 100% sargable contra ese índice pero
     el volumen por técnico es chico, ver reporte del fix 2026-07-15).
+
+    🔴 FIX 2026-09-14 (OT-2026-00025, Lenin Urbina: Aaron no podía
+    agendarlo 9-13 porque el sistema citaba una OT de 18:00-18:01 que a
+    simple vista no se solapaba con nada). Causa real: la rama de "ignorar
+    la hora, tratar el día completo como ocupado" comparaba
+    `fecha_fin IS NOT NULL` -- es decir, CUALQUIER visita con la columna
+    fecha_fin poblada, aunque ese valor fuera IGUAL a fecha_programada (un
+    solo día real, no un rango). Y esa columna se puebla con un valor no
+    nulo cada vez que alguien reagenda desde el cuadro "Reagendar" de la
+    ficha (templates/ot2/detalle.html, otdConfirmarReagendar) sin llenar
+    "Término": el JS mandaba `fecha_fin: fechaFin || fecha`, nunca NULL.
+    El resultado: CUALQUIER OT alguna vez reagendada por ese cuadro quedaba
+    "envenenada" para siempre -- el chequeo de hora se apagaba en cada
+    reagendo futuro, aunque la OT siguiera siendo de un solo día. Ahora la
+    condición exige que fecha_fin sea distinto de fecha_programada para
+    contar como rango real; un fecha_fin no nulo pero igual al día de
+    inicio ya NO desactiva el chequeo por hora. Arreglado también en el
+    origen (ver otdConfirmarReagendar): ese cuadro ahora manda NULL de
+    verdad cuando "Término" queda vacío, en vez de repetir la fecha.
     """
     from datetime import date as _date
     from cl_feriados import es_dia_habil, feriados_chile
@@ -59881,7 +59900,7 @@ def _validar_disponibilidad_visita(tecnico_user_id, fecha_programada,
             "   AND fecha_programada <= %s "
             "   AND COALESCE(fecha_fin, fecha_programada) >= %s "
             "   AND ("
-            "        fecha_fin IS NOT NULL "
+            "        (fecha_fin IS NOT NULL AND fecha_fin <> fecha_programada) "
             "        OR %s <> %s "
             "        OR hora_inicio IS NULL OR hora_fin IS NULL "
             "        OR %s IS NULL OR %s IS NULL "
