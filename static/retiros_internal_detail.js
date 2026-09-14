@@ -1183,20 +1183,27 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState){
     DATE_IN.max = max;
   }
   DATE_IN.addEventListener('change', () => _loadDia(DATE_IN.value));
+  // Daniel 2026-09-14: el mini-calendario mensual (widget compartido, ver
+  // más abajo) sigue a los botones ‹ › Hoy — le avisamos a mano porque
+  // estos handlers cambian el input por JS sin emitir 'change'.
+  const _syncMonth = () => { try { if (window._icdMonthCal) window._icdMonthCal.setDate(DATE_IN.value); } catch(_){} };
   document.getElementById('icdCalPrev').addEventListener('click', () => {
     if (!DATE_IN.value) return;
     DATE_IN.value = _addDays(DATE_IN.value, -1);
     _loadDia(DATE_IN.value);
+    _syncMonth();
   });
   document.getElementById('icdCalNext').addEventListener('click', () => {
     if (!DATE_IN.value) return;
     DATE_IN.value = _addDays(DATE_IN.value, 1);
     _loadDia(DATE_IN.value);
+    _syncMonth();
   });
   document.getElementById('icdCalToday').addEventListener('click', () => {
     const tomorrow = new Date(Date.now() + 24*3600*1000).toISOString().slice(0,10);
     DATE_IN.value = tomorrow;
     _loadDia(tomorrow);
+    _syncMonth();
   });
   document.getElementById('icdCalRefresh').addEventListener('click', () => {
     if (DATE_IN.value) _loadDia(DATE_IN.value);
@@ -1205,6 +1212,31 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState){
   const initial = DATE_IN.value || (new Date(Date.now() + 24*3600*1000)).toISOString().slice(0,10);
   DATE_IN.value = initial;
   _loadDia(initial);
+
+  // Mini-calendario mensual a la izquierda de los bloques (mismo diseño que
+  // /retiros/solicitar). Solo NAVEGACIÓN: clic en un día → setDate() del
+  // widget → emite 'change' en #icdCalDate → _loadDia() pinta la grilla icd
+  // de siempre a la derecha. La grilla propia del widget va oculta
+  // (#icdMonthGrid). retiros_calendar.js carga con defer → DOMContentLoaded.
+  document.addEventListener('DOMContentLoaded', function(){
+    if (window._icdMonthCal || !window.IlusRetirosCalendar) return;
+    if (!document.getElementById('icdMonth')) return;
+    try {
+      window._icdMonthCal = window.IlusRetirosCalendar.mount({
+        container:      '#icdMonthGrid',
+        dateInput:      '#icdCalDate',
+        monthContainer: '#icdMonth',
+        monthHelp:      'Clic en un día para ver sus bloques. El punto muestra la carga del día.',
+        includeOwners:  true,
+        allowToday:     true,
+        allowCrossLunch: true,
+        currentRequestId: RETIROS_DETAIL_DATA.reqId,
+        enableDragSelect: false,
+        enableMultiBlock: false,
+        suggestedDurationMin: 30,
+      });
+    } catch(e){ console.warn('icd month mount', e); }
+  });
 })();
 
 // ════════════════════════════════════════════════════════════════════

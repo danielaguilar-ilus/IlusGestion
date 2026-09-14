@@ -118,6 +118,17 @@
 }
 .agi-legend-chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
 
+/* ── Mini-calendario mensual (widget compartido, 2026-09-14) ─────────── */
+.agi-month-card{
+  background:#fff;border:1px solid var(--ilus-line);border-radius:12px;padding:12px 14px 10px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);height:100%;
+}
+.agi-month-card .ilus-cal-month{margin-bottom:0}
+/* Día elegido en el mes → columna resaltada en la semana */
+.agi-week-head.picked{box-shadow:inset 0 -3px 0 var(--ilus-red);}
+.agi-week-head.picked .agi-day{color:var(--ilus-red);}
+.agi-slot.picked:not(.drag-over):not(.drag-over-invalid){box-shadow:inset 3px 0 0 rgba(220,38,38,.35);}
+
 /* ── Calendario semanal ─────────────────────────────────────────────── */
 .agi-week{
   display:grid;grid-template-columns:78px repeat(7, minmax(0, 1fr));gap:1px;
@@ -548,6 +559,26 @@
   </div>
 </div>
 
+{# Daniel 2026-09-14 ("aplica el mismo calendario al calendario del módulo"):
+   el mini-calendario mensual del widget compartido (mismo diseño que
+   /retiros/solicitar y los modales internos) va arriba a la izquierda,
+   con las estadísticas/toolbar/leyenda/filtros a su derecha. Clic en un
+   día = ir a esa semana y resaltar la columna. La grilla semanal de abajo
+   sigue a ancho completo, intacta (drag&drop, drawer, polling). #}
+<div class="row g-3 mb-3">
+  <div class="col-lg-4 col-xl-3">
+    <div class="agi-month-card">
+      <label class="ilus-cal-col-label"><i class="bi bi-calendar3 me-1" style="color:var(--ilus-red)"></i>Ir a un día</label>
+      <div id="agiMonth" class="ilus-cal-month"></div>
+      {# El widget necesita un input date + contenedor de bloques: acá son
+         solo "motor" (ocultos) — la agenda usa el mes para navegar y la
+         grilla semanal de abajo para los bloques. #}
+      <input type="date" id="agiMonthDate" style="display:none" aria-hidden="true">
+      <div id="agiMonthGrid" style="display:none" aria-hidden="true"></div>
+    </div>
+  </div>
+  <div class="col-lg-8 col-xl-9">
+
 {# ── Stats globales ── #}
 <div class="agi-stats" id="agiStats">
   <div class="agi-stat">
@@ -636,6 +667,9 @@
   </div>
 </div>
 
+  </div>{# /col derecha (stats + toolbar + leyenda + filtros) #}
+</div>{# /row calendario mensual + panel #}
+
 {# ── Loader (skeleton) ── #}
 <div id="agiLoader" style="display:none">
   <div class="agi-skel-row">
@@ -707,33 +741,69 @@
   </div>
 </div>
 
-{# ── Modal selector de fecha (mobile-only para reagendar sin DnD) ── #}
+{# ── Modal REAGENDAR (desde el drawer, desktop y móvil) ──
+   Daniel 2026-09-14: antes era un selector nativo fecha/hora solo para
+   móvil (y en desktop se inyectaban inputs nativos en el modal de mover).
+   Ahora ambos usan el MISMO picker de dos columnas del widget compartido
+   (calendario mensual + bloques), igual que /retiros/solicitar. Los ids
+   #agi-pm-date / #agi-pm-tf / #agi-pm-tt siguen existiendo (ocultos, los
+   llena el widget) — agiConfirmarMoverMobile() no cambió. El picker se
+   RE-CREA en cada apertura desde <template> para poder montar el widget
+   con el currentRequestId del retiro que se está moviendo (excluirse a
+   sí mismo del conteo de cupos + bandera ★). #}
 <div class="modal fade" id="agiModalPickerMobile" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
     <div class="modal-content" style="border:none;border-radius:14px;overflow:hidden">
-      <div class="modal-header" style="background:var(--ilus-ink);color:#fff;border:none">
-        <h5 class="modal-title" style="font-weight:900">
-          <i class="bi bi-calendar-plus me-2"></i>Reagendar
-        </h5>
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-ink) 0%,#1a1a1a 100%);color:#fff;border:none;border-bottom:3px solid var(--ilus-red)">
+        <div>
+          <h5 class="modal-title mb-0" style="font-weight:900">
+            <i class="bi bi-calendar-plus me-2" style="color:var(--ilus-red)"></i>Reagendar <span id="agi-pm-code" style="opacity:.85;font-weight:700"></span>
+          </h5>
+          <small class="d-block mt-1" style="opacity:.8">Elige día y bloque. El cliente recibirá una propuesta para aceptar o contraproponer.</small>
+        </div>
         <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body" style="background:#fafafa">
         <input type="hidden" id="agi-pm-rid">
-        <div class="mb-2">
-          <label class="form-label small fw-bold">Nueva fecha</label>
-          <input type="date" id="agi-pm-date" class="form-control" style="font-size:16px">
-        </div>
-        <div class="row g-2">
-          <div class="col-6">
-            <label class="form-label small fw-bold">Desde</label>
-            <input type="time" id="agi-pm-tf" class="form-control" style="font-size:16px">
+        <div id="agiPmPicker"></div>
+        <template id="agiPmPickerTpl">
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="ilus-cal-col-label">Fecha del retiro <span class="req">*</span></label>
+              <div id="agiPmMonth" class="ilus-cal-month"></div>
+              <div id="agiPmDateFallback" style="display:none">
+                <input type="date" id="agi-pm-date" class="form-control" style="font-size:16px">
+              </div>
+            </div>
+            <div class="col-md-7">
+              <label class="ilus-cal-col-label">Bloque horario <span class="req">*</span></label>
+              <div class="ilus-cal-wrap">
+                <div class="ilus-cal-head">
+                  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+                    <strong style="font-size:.84rem">Toca la hora de llegada del cliente</strong>
+                    <span style="display:inline-flex;align-items:center;gap:4px;background:#16a34a;color:#fff;font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:50px"><i class="bi bi-clock-fill"></i>1 bloque (30 min)</span>
+                  </div>
+                  <div class="legend" style="font-size:.72rem">
+                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Medio cupo ½</span>
+                    <span><span class="dot" style="background:var(--ilus-red)"></span>Tu selección</span>
+                    <span><span class="dot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>Sin cupos 🔒</span>
+                  </div>
+                </div>
+                <div id="agiPmGrid"><div class="ilus-cal-skel" aria-hidden="true">{% for _ in range(10) %}<div></div>{% endfor %}</div></div>
+                <div class="ilus-cal-quick-actions" id="agiPmQuick" style="display:none">
+                  <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
+                </div>
+                <div class="ilus-cal-summary mt-2" id="agiPmSummary">
+                  <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
+                </div>
+              </div>
+              <input type="hidden" id="agi-pm-tf">
+              <input type="hidden" id="agi-pm-tt">
+            </div>
           </div>
-          <div class="col-6">
-            <label class="form-label small fw-bold">Hasta</label>
-            <input type="time" id="agi-pm-tt" class="form-control" style="font-size:16px">
-          </div>
-        </div>
-        <label class="form-label small fw-bold mt-2">Mensaje al cliente (opcional)</label>
+        </template>
+        <label class="form-label small fw-bold mt-3">Mensaje al cliente (opcional)</label>
         <textarea id="agi-pm-msg" class="form-control" rows="3"
           style="font-size:.88rem"></textarea>
       </div>
@@ -973,6 +1043,7 @@ function agiRenderWeek(){
 
   cont.innerHTML = html;
   cont.style.display = '';
+  if (typeof agiPintarDiaElegido === 'function') agiPintarDiaElegido();
 
   // Bind drag-and-drop
   cont.querySelectorAll('.agi-pick').forEach(el => {
@@ -1053,7 +1124,7 @@ function agiRenderList(){
       ? ` <span style="font-size:.58rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;background:rgba(255,255,255,.18);padding:1px 8px;border-radius:50px">${w.label}</span>`
       : '';
 
-    html += `<div class="agi-list-day">
+    html += `<div class="agi-list-day" data-fecha="${fecha}">
       <div class="agi-list-day-head${isToday?' today':''}">
         <div>
           <div class="agi-list-day-name">${dayNames[dayIdx]}${isToday?' · HOY':''}${nohabilTag}</div>
@@ -1103,6 +1174,7 @@ function agiRenderList(){
   cont.innerHTML = html;
   // Mantener filtros activos tras cada refresh (polling incluido)
   agiApplyFilters();
+  if (typeof agiPintarDiaElegido === 'function') agiPintarDiaElegido();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1269,14 +1341,53 @@ async function agiConfirmarMover(){
 }
 
 // ── Modal PICKER mobile (sin DnD) ─────────────────────────────────────
-function agiAbrirPickerMobile(rid, currentDate){
+// Daniel 2026-09-14: ya no es solo móvil — desktop también entra aquí desde
+// el drawer (antes inyectaba inputs nativos en el modal de mover). El picker
+// se re-crea desde <template> en cada apertura y el widget se monta en
+// shown.bs.modal con el currentRequestId del retiro (excluirse del conteo).
+let _agiPmCal = null;
+let _agiPmFechaInicial = '';
+function agiAbrirPickerMobile(rid, currentDate, code){
   document.getElementById('agi-pm-rid').value = rid;
-  document.getElementById('agi-pm-date').value = currentDate || '';
-  document.getElementById('agi-pm-tf').value = '09:00';
-  document.getElementById('agi-pm-tt').value = '09:30';
   document.getElementById('agi-pm-msg').value = '';
+  const codeEl = document.getElementById('agi-pm-code');
+  if (codeEl) codeEl.textContent = code ? ('· ' + code) : '';
+  // Picker fresco (mata listeners del retiro anterior junto con su DOM).
+  const host = document.getElementById('agiPmPicker');
+  const tpl  = document.getElementById('agiPmPickerTpl');
+  if (host && tpl){ host.innerHTML = ''; host.appendChild(tpl.content.cloneNode(true)); }
+  _agiPmCal = null;
+  _agiPmFechaInicial = currentDate || agiFmt(new Date());
+  const dateInp = document.getElementById('agi-pm-date');
+  if (dateInp) dateInp.value = _agiPmFechaInicial;
   new bootstrap.Modal(document.getElementById('agiModalPickerMobile')).show();
 }
+(function(){
+  const m = document.getElementById('agiModalPickerMobile');
+  if (!m) return;
+  m.addEventListener('shown.bs.modal', function(){
+    if (_agiPmCal || !window.IlusRetirosCalendar) return;
+    const rid = parseInt(document.getElementById('agi-pm-rid').value, 10) || null;
+    _agiPmCal = window.IlusRetirosCalendar.mount({
+      container:      '#agiPmGrid',
+      dateInput:      '#agi-pm-date',
+      summaryEl:      '#agiPmSummary',
+      quickActionsEl: '#agiPmQuick',
+      hiddenTimeFrom: '#agi-pm-tf',
+      hiddenTimeTo:   '#agi-pm-tt',
+      monthContainer: '#agiPmMonth',
+      monthHelp:      'Como operador puedes elegir cualquier fecha desde hoy.',
+      onLoadFail:     function(){ const fb = document.getElementById('agiPmDateFallback'); if (fb) fb.style.display = ''; },
+      includeOwners:  true,
+      allowToday:     true,
+      allowCrossLunch: true,
+      currentRequestId: rid,
+      enableDragSelect: false,
+      enableMultiBlock: false,
+      suggestedDurationMin: 30,
+    });
+  });
+})();
 async function agiConfirmarMoverMobile(){
   const rid = document.getElementById('agi-pm-rid').value;
   const fecha = document.getElementById('agi-pm-date').value;
@@ -1528,9 +1639,10 @@ function agiRenderDrawer(d){
   // ── ACTIONS: botones principales (grandes, touch-friendly) ────
   const phonePref = d.contact_phone || d.pickup_person_phone || '';
   const emailPref = d.contact_email || '';
-  const moverFn = _AGI_IS_MOBILE()
-    ? `agiAbrirPickerMobile(${d.id}, '${agiEsc(d.confirmed_date || d.proposed_date || d.requested_date || '')}')`
-    : `agiAbrirMoverDesdeDrawer(${d.id})`;
+  // Daniel 2026-09-14: desktop y móvil usan el MISMO picker (calendario
+  // mensual + bloques del widget compartido). agiAbrirMoverDesdeDrawer()
+  // queda disponible pero ya no es el camino por defecto.
+  const moverFn = `agiAbrirPickerMobile(${d.id}, '${agiEsc(d.confirmed_date || d.proposed_date || d.requested_date || '')}', '${agiEsc(d.code || '')}')`;
 
   let actHtml = '';
   if (phonePref){
@@ -1789,9 +1901,80 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Iniciar
+// ══════════════════════════════════════════════════════════════════════
+//  MINI-CALENDARIO MENSUAL (widget compartido) — Daniel 2026-09-14
+//  "aplica el mismo calendario al calendario del módulo". Mismo diseño que
+//  /retiros/solicitar y los modales internos. Aquí el mes es NAVEGACIÓN:
+//  clic en un día → ir a esa semana y resaltar la columna; prev/next de
+//  la semana mueven el mes a la vista sin seleccionar nada.
+// ══════════════════════════════════════════════════════════════════════
+let _agiMonthCal = null;
+let _agiPickedDay = null;
+function agiMountMonth(){
+  if (_agiMonthCal || !window.IlusRetirosCalendar) return;
+  const inp = document.getElementById('agiMonthDate');
+  if (!inp) return;
+  // El listener va ANTES del mount: el widget emite 'change' al elegir día.
+  inp.addEventListener('change', () => { if (inp.value) agiIrADia(inp.value); });
+  _agiMonthCal = window.IlusRetirosCalendar.mount({
+    container:      '#agiMonthGrid',      // oculto: la grilla semanal muestra los bloques
+    dateInput:      '#agiMonthDate',
+    monthContainer: '#agiMonth',
+    monthHelp:      'Clic en un día para ir a esa semana. El punto muestra la carga del día.',
+    includeOwners:  true,
+    allowToday:     true,
+    allowCrossLunch: true,
+    enableDragSelect: false,
+    enableMultiBlock: false,
+    suggestedDurationMin: 30,
+  });
+  if (_agiMonthCal && _agiMonthCal.showMonth) _agiMonthCal.showMonth(agiFmt(_agiRangeFrom || new Date()));
+}
+// Arranca con HOY elegido en el mes (el input ya trae hoy antes del mount,
+// así el init del widget lo selecciona sin disparar una recarga extra).
+(function(){
+  const inp = document.getElementById('agiMonthDate');
+  if (inp && !inp.value){ inp.value = agiFmt(new Date()); _agiPickedDay = inp.value; }
+})();
+let _agiScrollPendiente = false;   // scroll a la lista móvil solo tras un clic, no en cada polling
+function agiIrADia(fecha){
+  _agiPickedDay = fecha;
+  _agiScrollPendiente = true;
+  const d = new Date(fecha + 'T00:00:00');
+  if (isNaN(d)) return;
+  const sow = agiSOW(d);
+  if (!_agiRangeFrom || agiFmt(sow) !== agiFmt(_agiRangeFrom)){
+    _agiRangeFrom = sow;
+    _agiRangeTo = new Date(_agiRangeFrom);
+    _agiRangeTo.setDate(_agiRangeTo.getDate() + 6);
+    agiCargar();          // agiRenderWeek/agiRenderList pintan el día elegido
+  } else {
+    agiPintarDiaElegido();
+  }
+}
+function agiPintarDiaElegido(){
+  document.querySelectorAll('.agi-week-head.picked, .agi-slot.picked').forEach(el => el.classList.remove('picked'));
+  if (!_agiPickedDay) return;
+  document.querySelectorAll(`.agi-week-head[data-fecha="${_agiPickedDay}"], .agi-slot[data-fecha="${_agiPickedDay}"]`)
+    .forEach(el => el.classList.add('picked'));
+  if (_agiScrollPendiente && _AGI_IS_MOBILE()){
+    const dl = document.querySelector(`.agi-list-day[data-fecha="${_agiPickedDay}"]`);
+    if (dl){ dl.scrollIntoView({ behavior:'smooth', block:'start' }); _agiScrollPendiente = false; }
+  }
+}
+// El mes sigue a la semana al navegar con ‹ Hoy ›
+(function(){
+  const _wrap = (name, fn) => { const orig = window[name]; window[name] = function(){ const r = orig.apply(this, arguments); try { fn(); } catch(_){} return r; }; };
+  _wrap('agiPrev',  () => _agiMonthCal && _agiMonthCal.showMonth(agiFmt(_agiRangeFrom)));
+  _wrap('agiNext',  () => _agiMonthCal && _agiMonthCal.showMonth(agiFmt(_agiRangeFrom)));
+  _wrap('agiToday', () => { if (_agiMonthCal){ _agiPickedDay = agiFmt(new Date()); _agiMonthCal.setDate(_agiPickedDay); } });
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
   agiToday();
   agiStartPoll();
+  agiMountMonth();   // retiros_calendar.js carga con defer → ya está disponible aquí
 });
 </script>
+<script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
 {% endblock %}

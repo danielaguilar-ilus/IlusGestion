@@ -892,6 +892,16 @@
     // API pública de la instancia
     return {
       setDate,
+      // Mostrar el mes de una fecha SIN seleccionarla (la agenda interna lo
+      // usa al navegar semana a semana: el mini-calendario sigue la semana).
+      showMonth: (fecha) => {
+        if (!fecha) return;
+        const d0 = new Date(String(fecha).slice(0, 10) + 'T00:00:00');
+        if (isNaN(d0)) return;
+        state.month.anio = d0.getFullYear();
+        state.month.mes  = d0.getMonth() + 1;
+        renderMonthGrid();
+      },
       setQuickRange,
       clearSelection,
       getSelection,

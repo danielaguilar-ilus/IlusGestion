@@ -1271,17 +1271,32 @@
     <button type="button" class="btn-mini" id="icdCalRefresh" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
     <span class="ms-auto small text-muted" id="icdCalSummary" style="font-size:.78rem"></span>
   </div>
-  <div class="icd-cal-legend">
-    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
-    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
-    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
-    <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Bloqueado</span>
-    <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Este retiro</span>
-  </div>
-  <div class="icd-slot-grid" id="icdSlotGrid">
-    <div class="icd-cal-skel" aria-hidden="true">
-      {% for _ in range(10) %}<div></div>{% endfor %}
+  {# Daniel 2026-09-14 ("así quiero los calendarios de todo el módulo"):
+     mismo layout de dos columnas que /retiros/solicitar — mes a la
+     izquierda (widget compartido, solo como navegación: clic en un día
+     carga ese día a la derecha), bloques del día a la derecha (la grilla
+     icd de siempre, con su modal de "quién tiene el bloque", intacta). #}
+  <div class="row g-3">
+    <div class="col-md-5">
+      <label class="ilus-cal-col-label">Fecha</label>
+      <div id="icdMonth" class="ilus-cal-month"></div>
+      <div id="icdMonthGrid" style="display:none" aria-hidden="true"></div>
+    </div>
+    <div class="col-md-7">
+      <label class="ilus-cal-col-label">Bloques del día</label>
+      <div class="icd-cal-legend">
+        <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+        <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
+        <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+        <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
+        <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Bloqueado</span>
+        <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Este retiro</span>
+      </div>
+      <div class="icd-slot-grid" id="icdSlotGrid">
+        <div class="icd-cal-skel" aria-hidden="true">
+          {% for _ in range(10) %}<div></div>{% endfor %}
+        </div>
+      </div>
     </div>
   </div>
 </div>
