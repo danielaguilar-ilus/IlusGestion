@@ -1799,29 +1799,41 @@ input[type="password"]::-ms-clear { display: none !important; width: 0 !importan
 .ilus-cal-quick-chip.clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
 
 /* ── Mini-calendario mensual (Daniel 2026-09-14: "calendario tan potente
-   como el de las OT") -- heatmap de densidad de cupos por día, mismo
-   payload de 30 días que ya usa la vista de día suelto. ── */
-.ilus-cal-month{background:#fafafa;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;margin-bottom:14px}
-.ilus-cal-month-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.ilus-cal-month-label{font-size:.8rem;font-weight:800;text-transform:capitalize;color:#0a0a0a;letter-spacing:.02em}
-.ilus-cal-month-nav{width:26px;height:26px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#374151;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:.78rem;transition:all .15s}
+   como el de las OT", después "quiero un diseño así... en todos lados algo
+   bien atractivo" con referencia visual propia: número + punto de color
+   debajo, círculo sólido rojo para el día elegido, candado para no
+   disponible -- SIN cajas/bordes en el estado normal, minimalista). Mismo
+   payload de 30 días que ya usa la vista de día suelto, cero llamadas
+   nuevas al backend. ── */
+.ilus-cal-month{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px 12px;margin-bottom:14px}
+.ilus-cal-month-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ilus-cal-month-label{font-size:.86rem;font-weight:800;text-transform:capitalize;color:#0a0a0a;letter-spacing:.01em}
+.ilus-cal-month-nav{width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#374151;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:.8rem;transition:all .15s}
 .ilus-cal-month-nav:hover{background:var(--ilus-red,#dc2626);border-color:var(--ilus-red,#dc2626);color:#fff}
-.ilus-cal-month-dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;font-size:.62rem;font-weight:800;color:#9ca3af;text-align:center;text-transform:uppercase;margin-bottom:3px}
-.ilus-cal-month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
-.ilus-cal-month-day{position:relative;aspect-ratio:1;border:1px solid #e5e7eb;background:#fff;border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:2px 0;cursor:pointer;font-size:.72rem;font-weight:700;color:#374151;transition:all .15s}
-.ilus-cal-month-day.is-blank{visibility:hidden;border:none}
+.ilus-cal-month-dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;font-size:.64rem;font-weight:800;color:#9ca3af;text-align:center;text-transform:uppercase;margin-bottom:4px}
+.ilus-cal-month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px 2px}
+.ilus-cal-month-day{
+  position:relative;aspect-ratio:1;min-width:0;border:none;background:transparent;border-radius:50%;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0;
+  cursor:pointer;font-size:.82rem;font-weight:700;color:#111827;transition:background .15s,color .15s,box-shadow .15s;
+}
+.ilus-cal-month-day.is-blank{visibility:hidden;cursor:default}
 .ilus-cal-month-day .d{line-height:1}
-.ilus-cal-month-day .hbar{width:62%;height:3px;border-radius:2px;background:#e5e7eb;overflow:hidden}
-.ilus-cal-month-day .hbar i{display:block;height:100%;background:currentColor;border-radius:2px}
-.ilus-cal-month-day.is-open{border-color:#bbf7d0;background:#f0fdf4;color:#15803d}
-.ilus-cal-month-day.is-tight{border-color:#fde68a;background:#fffbeb;color:#b45309}
-.ilus-cal-month-day.is-full{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
-.ilus-cal-month-day.is-closed,.ilus-cal-month-day.is-out{border-color:#e5e7eb;background:#f9fafb;color:#c1c7d0;cursor:not-allowed}
-.ilus-cal-month-day.is-disabled{cursor:not-allowed;opacity:.55}
-.ilus-cal-month-day.is-today{box-shadow:0 0 0 2px #0a0a0a inset}
-.ilus-cal-month-day.is-selected{background:var(--ilus-red,#dc2626);border-color:var(--ilus-red,#dc2626);color:#fff}
-.ilus-cal-month-day.is-selected .hbar{background:rgba(255,255,255,.35)}
-.ilus-cal-month-day:not(.is-disabled):not(.is-selected):hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.1)}
+.ilus-cal-month-day .mark{width:5px;height:5px;border-radius:50%;background:transparent}
+.ilus-cal-month-day.is-open .mark{background:#16a34a}
+.ilus-cal-month-day.is-tight .mark{background:#f59e0b}
+.ilus-cal-month-day.is-full .mark{background:#dc2626}
+.ilus-cal-month-day .mark-lock{font-size:.56rem;color:#c1c7d0}
+.ilus-cal-month-day.is-closed{color:#c1c7d0}
+.ilus-cal-month-day.is-out{color:#dfe3e8;cursor:default}
+.ilus-cal-month-day.is-disabled{cursor:not-allowed}
+.ilus-cal-month-day.is-today:not(.is-selected){box-shadow:0 0 0 1.5px var(--ilus-red,#dc2626) inset;color:var(--ilus-red,#dc2626)}
+.ilus-cal-month-day:not(.is-disabled):not(.is-selected):hover{background:#f3f4f6}
+.ilus-cal-month-day.is-selected{background:var(--ilus-red,#dc2626);color:#fff;box-shadow:0 4px 12px rgba(220,38,38,.35)}
+.ilus-cal-month-day.is-selected .mark{background:rgba(255,255,255,.85)}
+.ilus-cal-month-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;padding-top:10px;border-top:1px dashed #f1f5f9;font-size:.7rem;color:#6b7280;font-weight:600}
+.ilus-cal-month-legend span{display:inline-flex;align-items:center;gap:5px}
+.ilus-cal-month-legend .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 
 @media(prefers-reduced-motion: reduce){
   .ilus-cal-slot{transition:none}

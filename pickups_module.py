@@ -7265,19 +7265,19 @@ def register_pickup_routes(app, ctx):
         for e in _re_emails.split(r"[,;\s]+", extras):
             _add(e)
 
-        # 3) Emails capturados desde el ERP por doc asociado
-        try:
-            doc_emails = mysql_fetchall(
-                "SELECT DISTINCT email_cliente_erp FROM pickup_request_docs "
-                "WHERE request_id=%s AND email_cliente_erp IS NOT NULL "
-                "AND email_cliente_erp <> ''",
-                (rid,)
-            ) or []
-            for d in doc_emails:
-                _add(d.get("email_cliente_erp"))
-        except Exception:
-            pass  # columna puede no existir aún (migration pendiente)
-
+        # FIX 2026-09-14 (bug real, reportado por Daniel): el email que trae
+        # un documento del ERP (`email_cliente_erp`, capturado al asociar el
+        # doc — ver pickup_doc_agregar) YA NO se suma automáticamente al
+        # envío real. Antes sí se sumaba aquí, pero la UI (cargarSugerenciasEmail
+        # en retiros_internal_detail.js) lo presenta como "Detectados en ERP —
+        # click para agregar", dando a entender que hace falta ese click. El
+        # backend lo mandaba igual sin él: al asociar la boleta BLV 23501
+        # (titular real en ERP: Jeremías Aravena) a un retiro cuyo contacto
+        # declarado era Juan Espinosa, el siguiente aviso de estado salió
+        # también a Jeremías, sin que nadie lo pidiera en ese envío. Ahora
+        # esos emails solo entran a la lista real si el operador los agrega
+        # a extra_emails con ese mismo botón (punto 2 arriba) — el backend
+        # por fin coincide con lo que la UI ya prometía.
         return sorted(emails)
 
     # Endpoint para que la UI sepa qué emails están activos + sugerencias

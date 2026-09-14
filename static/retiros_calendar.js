@@ -216,19 +216,31 @@
         const inRange = Object.prototype.hasOwnProperty.call(diasPayload, fecha);
         const heat = inRange ? _diaHeat(diasPayload[fecha]) : { cls: 'is-out', libres: 0, total: 0 };
         const cls = ['ilus-cal-month-day', heat.cls];
-        if (fecha === hoyStr) cls.push('is-today');
-        if (fecha === state.currentDate) cls.push('is-selected');
+        const isToday = fecha === hoyStr;
+        const isSelected = fecha === state.currentDate;
+        if (isToday) cls.push('is-today');
+        if (isSelected) cls.push('is-selected');
         const clickable = inRange && heat.cls !== 'is-closed';
         if (!clickable) cls.push('is-disabled');
-        const aria = fecha + (!inRange ? ' — fuera de rango' : heat.cls === 'is-closed' ? ' — cerrado' : (' — ' + heat.libres + ' de ' + heat.total + ' bloques libres'));
+        const aria = fecha + (!inRange ? ' — fuera de rango' : heat.cls === 'is-closed' ? ' — no disponible' : (' — ' + heat.libres + ' de ' + heat.total + ' bloques libres'));
+        // Marca bajo el número: punto de color (libre/medio/lleno), candado
+        // (cerrado/fin de semana) o nada (fuera de los 30 días con datos).
+        let mark = '<span class="mark"></span>';
+        if (heat.cls === 'is-closed') mark = '<i class="bi bi-lock-fill mark-lock"></i>';
+        else if (heat.cls === 'is-out') mark = '';
         html += '<button type="button" class="' + cls.join(' ') + '"'
           + (clickable ? (' data-cal-month-day="' + fecha + '"') : ' disabled')
           + ' aria-label="' + _esc(aria) + '">'
-          + '<span class="d">' + d + '</span>'
-          + (clickable ? ('<span class="hbar"><i style="width:' + Math.round((heat.total ? heat.libres / heat.total : 0) * 100) + '%"></i></span>') : '')
+          + '<span class="d">' + d + '</span>' + mark
           + '</button>';
       }
-      html += '</div>';
+      html += '</div>'
+        + '<div class="ilus-cal-month-legend">'
+        + '<span><i class="dot" style="background:#16a34a"></i>Libre</span>'
+        + '<span><i class="dot" style="background:#f59e0b"></i>Medio</span>'
+        + '<span><i class="dot" style="background:#dc2626"></i>Lleno</span>'
+        + '<span><i class="bi bi-lock-fill" style="color:#9ca3af;font-size:.68rem"></i>No disponible</span>'
+        + '</div>';
       monthEl.innerHTML = html;
       monthEl.querySelectorAll('[data-cal-month-nav]').forEach(b => {
         b.addEventListener('click', () => {
