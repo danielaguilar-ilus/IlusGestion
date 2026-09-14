@@ -695,181 +695,320 @@
         </div>
         {% endif %}
 
-        <div id="iwProposeForm" {% if _step4_done or _n_docs_inicial == 0 %}style="display:none"{% endif %}>
-          <form id="iwProposeFormEl" novalidate>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-            {# ════════════════════════════════════════════════════════════
-               CARD — "EL CLIENTE PIDIÓ" (Daniel 2026-05-24)
-               ─────────────────────────────────────────────────────────
-               Muestra arriba del calendario la fecha+hora que pidió el
-               cliente. Botón verde "Aceptar como propuesta" → pre-llena
-               selección (si está disponible). Botón "Modificar" cierra
-               la card y deja al operador elegir libremente.
-               Solo aparece si hay requested_date — si el cliente NO eligió
-               hora (raro), se omite directamente.
-               ════════════════════════════════════════════════════════ #}
-            {% if req.requested_date %}
-            {% set _req_date_iso = (req.requested_date|string)[:10] %}
-            {% set _req_tf = req.requested_time_from|hm %}
-            {% set _req_tt = req.requested_time_to|hm %}
-            <div id="iwClientCard" class="iw-client-card"
-                 data-req-date="{{ _req_date_iso }}"
-                 data-req-tf="{{ _req_tf }}"
-                 data-req-tt="{{ _req_tt }}">
-              <div class="iw-client-card-ico"><i class="bi bi-person-raised-hand"></i></div>
-              <div class="iw-client-card-body">
-                <div class="iw-client-card-label">El cliente pidió</div>
-                <div class="iw-client-card-time">
-                  <strong>{{ req.requested_date | chile_fmt('%A %d/%m') }}</strong>
-                  entre <strong>{{ _req_tf }}</strong> y <strong>{{ _req_tt }}</strong>
-                </div>
-                <div class="iw-client-card-sub">
-                  Cliente: <strong>{{ req.customer_name or req.contact_name }}</strong>
-                  · puedes aceptar tal cual, o ajustar abajo
-                </div>
-              </div>
-              <div class="iw-client-card-actions">
-                <button type="button" class="btn-accept-req" id="iwBtnAcceptClient">
-                  <i class="bi bi-check-circle-fill"></i><span>Aceptar como propuesta</span>
-                </button>
-                <button type="button" class="btn-modify-req" id="iwBtnModifyClient">
-                  <i class="bi bi-pencil"></i><span>Modificar</span>
-                </button>
-              </div>
-            </div>
-            {% endif %}
-
-            {# Daniel 2026-06-15: el picker manual (fecha + calendario) arranca
-               OCULTO cuando el cliente pidió una hora — el operador usa los
-               botones "Aceptar como propuesta" / "Modificar" de la card. Si el
-               cliente NO pidió hora (sin card) se muestra de inmediato. #}
-            <div id="iwManualPicker"{% if req.requested_date %} style="display:none"{% endif %}>
-            <div class="row g-2 mb-3">
-              <div class="col-md-6">
-                <label class="form-label fw-bold mb-1" style="font-size:.92rem">Día del retiro</label>
-                <input type="date" id="iwProposeDate" class="form-control form-control-sm iw-date-ilus" required>
-                <small class="text-muted" style="font-size:.82rem">Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (13:00–14:00) para facturas grandes.</small>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label fw-bold mb-1" style="font-size:.92rem">Motivo (opcional)</label>
-                <input type="text" id="iwProposeReason" class="form-control form-control-sm" placeholder="Disponibilidad, flujo, cierre..." maxlength="200" style="font-size:.95rem">
-              </div>
-            </div>
-
-            {# ════════════════════════════════════════════════════════
-               SUGERENCIAS DE DÍAS CON CUPOS — Daniel 2026-05-24
-               ─────────────────────────────────────────────────────
-               Si el día seleccionado tiene TODOS los cupos ocupados,
-               mostramos chips clickeables con los próximos 3 días con
-               disponibilidad real para que el operador no tenga que
-               navegar a ciegas. Se llena dinámicamente vía JS leyendo
-               el payload del calendario.
-               ════════════════════════════════════════════════════════ #}
-            <div id="iwSuggestedDays" class="smart-hint is-warn" style="display:none; margin-bottom:10px;">
-              <i class="bi bi-calendar2-week"></i>
-              <div style="flex:1">
-                <strong style="font-size:.92rem">El día seleccionado tiene todos los cupos ocupados.</strong>
-                <div class="small mt-1" style="font-size:.82rem;color:#555">
-                  Considera estos días con disponibilidad:
-                </div>
-                <div id="iwSuggestedDaysChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
-              </div>
-            </div>
-
-            <div class="ilus-cal-wrap mb-2">
-              <div class="ilus-cal-head">
-                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
-                  <strong style="font-size:.92rem">Bloque horario</strong>
-                  {% if req.tiempo_estimado_min %}
-                  <span class="iw-est-chip" title="Calculado por peso/volumen del retiro">
-                    <i class="bi bi-stopwatch-fill"></i>~{{ req.tiempo_estimado_min }} min
-                  </span>
-                  {% endif %}
-                  <span class="iw-est-chip" style="background:#16a34a" title="Cada retiro ocupa un bloque de 30 minutos — escoge uno solo">
-                    <i class="bi bi-clock-fill"></i>1 bloque (30 min)
-                  </span>
-                </div>
-                <div class="legend" style="font-size:.78rem">
-                  <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-                  <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
-                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
-                  <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
-                  {% if req.requested_date %}
-                  <span><span class="dot" style="background:#dbeafe;border:1.5px dashed #3b82f6"></span>Pedido por cliente</span>
-                  {% endif %}
-                </div>
-              </div>
-              <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-                <i class="bi bi-lightbulb-fill" style="color:#f59e0b"></i>
-                <span><strong>Tip:</strong> toca el bloque de la hora a la que el cliente <strong>llegará</strong>. Cada retiro ocupa <strong>una media hora</strong>. Si un bloque está a ½ cupo, verás quién tiene la otra mitad.</span>
-              </div>
-              <div id="iwProposeGrid">
-                <div class="ilus-cal-skel" aria-hidden="true">
-                  {% for _ in range(10) %}<div></div>{% endfor %}
-                </div>
-              </div>
-              {# Daniel 2026-06-15: SIEMPRE un solo bloque. Quitamos los chips de
-                 duración (30 min/1 h/2 h) que armaban rangos; dejamos solo
-                 "Limpiar" para deshacer una selección equivocada. #}
-              <div class="ilus-cal-quick-actions" id="iwProposeQuick" style="display:none">
-                <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
-              </div>
-              <div class="ilus-cal-summary mt-2" id="iwProposeSummary">
-                <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
-              </div>
-            </div>
-            </div>{# /#iwManualPicker — fin del picker manual toggleable #}
-
-            <input type="hidden" name="date" id="iwProposeHidDate">
-            <input type="hidden" name="time_from" id="iwProposeHidTf">
-            <input type="hidden" name="time_to" id="iwProposeHidTt">
-
-            {# ════════════════════════════════════════════════════════════
-               MENSAJE PARA EL CLIENTE — Daniel 2026-05-24
-               ─────────────────────────────────────────────────────────
-               Plantillas predefinidas con auto-relleno de {nombre},
-               {fecha}, {hora_inicio} y {hora_fin}. Preview en vivo de
-               cómo lo verá el cliente. Foto adjunta opcional (placeholder
-               visual — el upload real al cloudinary queda BONUS).
-               ════════════════════════════════════════════════════════ #}
-            <div class="iw-msg-wrap">
-              <div class="iw-msg-tools">
-                <label>Mensaje para el cliente <span class="text-muted" style="font-weight:600">(opcional)</span></label>
-                <div class="iw-msg-templates" role="group" aria-label="Plantillas">
-                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="amistoso" title="Confirmación amistosa">
-                    <i class="bi bi-emoji-smile"></i>Amistoso
-                  </button>
-                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="reagendado" title="Aviso de reagendamiento">
-                    <i class="bi bi-arrow-repeat"></i>Reagendado
-                  </button>
-                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="formal" title="Confirmación formal">
-                    <i class="bi bi-briefcase"></i>Formal
-                  </button>
-                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="" title="Limpiar (escribir desde cero)">
-                    <i class="bi bi-pencil"></i>Vacío
-                  </button>
-                </div>
-              </div>
-              <textarea id="iwProposeMessage" class="form-control form-control-sm" rows="3" placeholder="Ej: Te confirmamos disponibilidad para mañana. Trae tu vehículo a la bodega de Quilicura."></textarea>
-              <div class="iw-msg-preview" id="iwMsgPreview" style="display:none"></div>
-            </div>
-
-            <div id="iwProposeFeedback" class="small mb-2"></div>
-
-            {# Botón principal — envía la propuesta. SIEMPRE visible en el form
-               (cuando el form está visible). Esto cubre el caso "re-proponer"
-               donde el form vuelve a aparecer aunque ya había propuesta antes. #}
-            <button type="button" id="btnEnviarPropuesta" class="submit-btn-internal" onclick="enviarPropuestaWizard()">
-              <i class="bi bi-send-check"></i><span>Enviar propuesta al cliente</span>
-            </button>
-            <div class="text-center mt-2 small text-muted">
-              <i class="bi bi-shield-lock me-1"></i>El cliente recibirá un email con un link privado para aceptar o contraproponer.
-            </div>
-          </form>
+        {# ════════════════════════════════════════════════════════════════
+           Daniel (pre-vacaciones, 2026-09-14): "cuando voy a proponer una
+           fecha, también me agregue un modal, así como los de las OT, bien
+           inteligente, bien intuitivo, y que me tolere [traiga] la
+           información para poder gestionarla con la gente de transporte".
+           Este botón ABRE el modal #modalProponerFecha (definido después de
+           cerrar este </section>). Antes este bloque ERA el
+           <div id="iwProposeForm"> completo, siempre visible inline — ahora
+           es solo el disparador. Todo el contenido de ese form (card "el
+           cliente pidió" + picker manual + calendario + mensaje + botón de
+           envío) se movió TAL CUAL dentro del modal, mismos ids, mismo JS.
+           ════════════════════════════════════════════════════════════════ #}
+        <div id="iwProposeCta" {% if _step4_done or _n_docs_inicial == 0 %}style="display:none"{% endif %}>
+          <button type="button" class="submit-btn-internal" id="btnAbrirProponerFecha"
+                  data-bs-toggle="modal" data-bs-target="#modalProponerFecha">
+            <i class="bi bi-calendar2-plus"></i><span>Proponer fecha y hora al cliente</span>
+          </button>
         </div>
       </div>
     </section>
+
+    {# ════════════════════════════════════════════════════════════════════
+       MODAL — Proponer fecha y hora al cliente (#modalProponerFecha)
+       ────────────────────────────────────────────────────────────────────
+       Mismo lenguaje visual que el modal "Generar Orden de Trabajo"
+       (templates/tickets/_modal_generar_ot.html) y que "Nuevo retiro
+       interno" (templates/retiros/internal_dashboard.html, commit
+       6cd95ea1): header degradado negro→rojo, modal-xl scrollable, y el
+       calendario mensual con densidad de cupos (monthContainer) que se
+       monta recién cuando el modal ya está VISIBLE (shown.bs.modal) — ver
+       retiros_internal_detail.js. Montar el widget con el modal todavía
+       oculto (display:none nativo de Bootstrap) mide mal el grid.
+
+       Reutiliza las clases .ficha-rapida-*/.ficha-card/.carga-strip/
+       .td-pill que YA existen en static/retiros_internal_detail.css (esta
+       misma página las carga) — sin prefijo nuevo, a diferencia de
+       #modalNuevoRetiroInterno (otra página, sin este CSS, por eso ahí sí
+       usó prefijo .nri-*).
+
+       Tarjeta de "info para transporte" (Daniel: "que me traiga la
+       información para poder gestionarla con la gente de transporte"):
+       cliente, contacto, quién retira (con su relación — se destaca en
+       rojo si es 'transporte'/'chofer', señal de que interviene un
+       tercero), documentos asociados y carga (peso/volumen/tiempo). Es
+       de solo lectura — sin data-inline-edit, no dispara el JS de edición
+       inline de la ficha rápida de arriba.
+       ════════════════════════════════════════════════════════════════════ #}
+    <div class="modal fade" id="modalProponerFecha" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+        <div class="modal-content" style="border-radius:14px;overflow:hidden;border:2px solid var(--ilus-red);box-shadow:0 0 40px rgba(0,0,0,.25)">
+          <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black,#0a0a0a) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+            <div>
+              <h5 class="modal-title fw-bold mb-0">
+                <i class="bi bi-calendar2-plus me-2" style="color:var(--ilus-red)"></i>Proponer fecha y hora al cliente
+              </h5>
+              <small class="d-block mt-1" style="opacity:.85">
+                Elige día y bloque horario en el calendario inteligente. El cliente recibirá email para aceptar o contraproponer.
+              </small>
+            </div>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+          </div>
+          <div class="modal-body" style="background:#fafafa">
+
+            <div class="ficha-rapida-wrap" style="margin:0 0 18px">
+              <div class="ficha-rapida-head">
+                <i class="bi bi-truck" style="color:var(--ilus-red)"></i>
+                <span><strong>Info para coordinar con transporte</strong> — de un vistazo, sin salir del modal</span>
+              </div>
+              <div class="ficha-rapida-grid">
+                <div class="ficha-card">
+                  <div class="ficha-lbl"><i class="bi bi-building"></i>Cliente</div>
+                  <div class="ficha-val">{{ req.customer_name or '—' }}</div>
+                  {% if req.customer_rut %}<div class="ficha-sub">RUT {{ req.customer_rut }}</div>{% endif %}
+                </div>
+                <div class="ficha-card">
+                  <div class="ficha-lbl"><i class="bi bi-person-lines-fill"></i>Contacto</div>
+                  <div class="ficha-val">{{ req.contact_name or '—' }}</div>
+                  <div class="ficha-sub">
+                    {% if req.contact_phone %}<i class="bi bi-telephone"></i> <a href="tel:{{ req.contact_phone }}">{{ req.contact_phone }}</a>{% else %}Sin teléfono{% endif %}
+                  </div>
+                </div>
+                {% set _rel = (req.pickup_person_relation or '')|lower %}
+                <div class="ficha-card">
+                  <div class="ficha-lbl"><i class="bi bi-person-badge"></i>Retira</div>
+                  <div class="ficha-val">{{ req.pickup_person_name or '—' }}</div>
+                  <div class="ficha-sub" style="flex-wrap:wrap">
+                    {% if req.pickup_person_phone %}<span><i class="bi bi-telephone"></i> <a href="tel:{{ req.pickup_person_phone }}">{{ req.pickup_person_phone }}</a></span>{% endif %}
+                    {% if req.pickup_person_relation %}
+                    <span class="td-pill {% if _rel in ['transporte','chofer'] %}td-pill-red{% else %}td-pill-dark{% endif %}" style="text-transform:capitalize">
+                      {% if _rel in ['transporte','chofer'] %}<i class="bi bi-truck"></i>{% endif %}{{ req.pickup_person_relation }}
+                    </span>
+                    {% endif %}
+                  </div>
+                  {% if _rel in ['transporte','chofer'] %}
+                  <div class="ficha-sub" style="color:#991b1b;font-weight:700;margin-top:4px"><i class="bi bi-exclamation-triangle-fill"></i>Retira un tercero de transporte — coordina con ellos, no solo con el cliente.</div>
+                  {% endif %}
+                </div>
+                <div class="ficha-card ficha-card-wide">
+                  <div class="ficha-lbl"><i class="bi bi-files"></i>Documento{{ 's' if _n_docs_inicial != 1 else '' }} asociado{{ 's' if _n_docs_inicial != 1 else '' }}</div>
+                  <div class="ficha-sub" style="flex-wrap:wrap;gap:6px">
+                    {% if docs_asociados %}
+                      {% for d in docs_asociados %}
+                      <span class="td-pill td-pill-dark">{{ d.document_type|upper }} {{ d.document_number }}</span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="text-muted">Sin documentos asociados todavía</span>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+              <div class="carga-strip" style="margin-top:12px">
+                <div class="carga-cell">
+                  <div class="lbl"><i class="bi bi-archive me-1"></i>Documentos</div>
+                  <div class="val accent">{{ _n_docs_inicial }}</div>
+                </div>
+                <div class="carga-cell">
+                  <div class="lbl"><i class="bi bi-box-seam me-1"></i>Peso real</div>
+                  <div class="val">{{ "%.1f"|format(req.peso_real_kg|float) }} kg</div>
+                </div>
+                <div class="carga-cell">
+                  <div class="lbl"><i class="bi bi-bounding-box me-1"></i>Volumen</div>
+                  <div class="val">{{ "%.3f"|format(req.total_volume_m3|float) }} m³</div>
+                </div>
+                <div class="carga-cell">
+                  <div class="lbl"><i class="bi bi-stopwatch me-1"></i>Tiempo est.</div>
+                  <div class="val">{{ req.tiempo_estimado_min or '—' }} min</div>
+                </div>
+              </div>
+            </div>
+
+            {# ── A partir de aquí: EXACTAMENTE lo que antes vivía en
+               #iwProposeForm (inline en la página) — mismos ids, mismo
+               marcado, solo relocado dentro del modal. ── #}
+            <form id="iwProposeFormEl" novalidate>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+              {# ════════════════════════════════════════════════════════════
+                 CARD — "EL CLIENTE PIDIÓ" (Daniel 2026-05-24)
+                 ─────────────────────────────────────────────────────────
+                 Muestra arriba del calendario la fecha+hora que pidió el
+                 cliente. Botón verde "Aceptar como propuesta" → pre-llena
+                 selección (si está disponible). Botón "Modificar" cierra
+                 la card y deja al operador elegir libremente.
+                 Solo aparece si hay requested_date — si el cliente NO eligió
+                 hora (raro), se omite directamente.
+                 ════════════════════════════════════════════════════════ #}
+              {% if req.requested_date %}
+              {% set _req_date_iso = (req.requested_date|string)[:10] %}
+              {% set _req_tf = req.requested_time_from|hm %}
+              {% set _req_tt = req.requested_time_to|hm %}
+              <div id="iwClientCard" class="iw-client-card"
+                   data-req-date="{{ _req_date_iso }}"
+                   data-req-tf="{{ _req_tf }}"
+                   data-req-tt="{{ _req_tt }}">
+                <div class="iw-client-card-ico"><i class="bi bi-person-raised-hand"></i></div>
+                <div class="iw-client-card-body">
+                  <div class="iw-client-card-label">El cliente pidió</div>
+                  <div class="iw-client-card-time">
+                    <strong>{{ req.requested_date | chile_fmt('%A %d/%m') }}</strong>
+                    entre <strong>{{ _req_tf }}</strong> y <strong>{{ _req_tt }}</strong>
+                  </div>
+                  <div class="iw-client-card-sub">
+                    Cliente: <strong>{{ req.customer_name or req.contact_name }}</strong>
+                    · puedes aceptar tal cual, o ajustar abajo
+                  </div>
+                </div>
+                <div class="iw-client-card-actions">
+                  <button type="button" class="btn-accept-req" id="iwBtnAcceptClient">
+                    <i class="bi bi-check-circle-fill"></i><span>Aceptar como propuesta</span>
+                  </button>
+                  <button type="button" class="btn-modify-req" id="iwBtnModifyClient">
+                    <i class="bi bi-pencil"></i><span>Modificar</span>
+                  </button>
+                </div>
+              </div>
+              {% endif %}
+
+              {# Daniel 2026-06-15: el picker manual (fecha + calendario) arranca
+                 OCULTO cuando el cliente pidió una hora — el operador usa los
+                 botones "Aceptar como propuesta" / "Modificar" de la card. Si el
+                 cliente NO pidió hora (sin card) se muestra de inmediato. #}
+              <div id="iwManualPicker"{% if req.requested_date %} style="display:none"{% endif %}>
+              <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-bold mb-1" style="font-size:.92rem">Día del retiro</label>
+                  <input type="date" id="iwProposeDate" class="form-control form-control-sm iw-date-ilus" required>
+                  <small class="text-muted" style="font-size:.82rem">Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (13:00–14:00) para facturas grandes.</small>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold mb-1" style="font-size:.92rem">Motivo (opcional)</label>
+                  <input type="text" id="iwProposeReason" class="form-control form-control-sm" placeholder="Disponibilidad, flujo, cierre..." maxlength="200" style="font-size:.95rem">
+                </div>
+              </div>
+
+              {# ════════════════════════════════════════════════════════
+                 SUGERENCIAS DE DÍAS CON CUPOS — Daniel 2026-05-24
+                 ─────────────────────────────────────────────────────
+                 Si el día seleccionado tiene TODOS los cupos ocupados,
+                 mostramos chips clickeables con los próximos 3 días con
+                 disponibilidad real para que el operador no tenga que
+                 navegar a ciegas. Se llena dinámicamente vía JS leyendo
+                 el payload del calendario.
+                 ════════════════════════════════════════════════════════ #}
+              <div id="iwSuggestedDays" class="smart-hint is-warn" style="display:none; margin-bottom:10px;">
+                <i class="bi bi-calendar2-week"></i>
+                <div style="flex:1">
+                  <strong style="font-size:.92rem">El día seleccionado tiene todos los cupos ocupados.</strong>
+                  <div class="small mt-1" style="font-size:.82rem;color:#555">
+                    Considera estos días con disponibilidad:
+                  </div>
+                  <div id="iwSuggestedDaysChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+                </div>
+              </div>
+
+              {# Mini-calendario MENSUAL con densidad de cupos (heatmap) —
+                 Daniel 2026-09-14: "tan potente como las OT". Mismo patrón
+                 que #nriMonth en internal_dashboard.html: vive ANTES del
+                 .ilus-cal-wrap, y se activa pasando monthContainer al
+                 mount() en _mountProposeCalendar() (retiros_internal_detail.js). #}
+              <div id="iwProposeMonth" class="ilus-cal-month"></div>
+
+              <div class="ilus-cal-wrap mb-2">
+                <div class="ilus-cal-head">
+                  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+                    <strong style="font-size:.92rem">Bloque horario</strong>
+                    {% if req.tiempo_estimado_min %}
+                    <span class="iw-est-chip" title="Calculado por peso/volumen del retiro">
+                      <i class="bi bi-stopwatch-fill"></i>~{{ req.tiempo_estimado_min }} min
+                    </span>
+                    {% endif %}
+                    <span class="iw-est-chip" style="background:#16a34a" title="Cada retiro ocupa un bloque de 30 minutos — escoge uno solo">
+                      <i class="bi bi-clock-fill"></i>1 bloque (30 min)
+                    </span>
+                  </div>
+                  <div class="legend" style="font-size:.78rem">
+                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                    <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
+                    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                    {% if req.requested_date %}
+                    <span><span class="dot" style="background:#dbeafe;border:1.5px dashed #3b82f6"></span>Pedido por cliente</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                  <i class="bi bi-lightbulb-fill" style="color:#f59e0b"></i>
+                  <span><strong>Tip:</strong> toca el bloque de la hora a la que el cliente <strong>llegará</strong>. Cada retiro ocupa <strong>una media hora</strong>. Si un bloque está a ½ cupo, verás quién tiene la otra mitad.</span>
+                </div>
+                <div id="iwProposeGrid">
+                  <div class="ilus-cal-skel" aria-hidden="true">
+                    {% for _ in range(10) %}<div></div>{% endfor %}
+                  </div>
+                </div>
+                {# Daniel 2026-06-15: SIEMPRE un solo bloque. Quitamos los chips de
+                   duración (30 min/1 h/2 h) que armaban rangos; dejamos solo
+                   "Limpiar" para deshacer una selección equivocada. #}
+                <div class="ilus-cal-quick-actions" id="iwProposeQuick" style="display:none">
+                  <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
+                </div>
+                <div class="ilus-cal-summary mt-2" id="iwProposeSummary">
+                  <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
+                </div>
+              </div>
+              </div>{# /#iwManualPicker — fin del picker manual toggleable #}
+
+              <input type="hidden" name="date" id="iwProposeHidDate">
+              <input type="hidden" name="time_from" id="iwProposeHidTf">
+              <input type="hidden" name="time_to" id="iwProposeHidTt">
+
+              {# ════════════════════════════════════════════════════════════
+                 MENSAJE PARA EL CLIENTE — Daniel 2026-05-24
+                 ─────────────────────────────────────────────────────────
+                 Plantillas predefinidas con auto-relleno de {nombre},
+                 {fecha}, {hora_inicio} y {hora_fin}. Preview en vivo de
+                 cómo lo verá el cliente. Foto adjunta opcional (placeholder
+                 visual — el upload real al cloudinary queda BONUS).
+                 ════════════════════════════════════════════════════════ #}
+              <div class="iw-msg-wrap">
+                <div class="iw-msg-tools">
+                  <label>Mensaje para el cliente <span class="text-muted" style="font-weight:600">(opcional)</span></label>
+                  <div class="iw-msg-templates" role="group" aria-label="Plantillas">
+                    <button type="button" class="iw-msg-template-chip" data-iw-tpl="amistoso" title="Confirmación amistosa">
+                      <i class="bi bi-emoji-smile"></i>Amistoso
+                    </button>
+                    <button type="button" class="iw-msg-template-chip" data-iw-tpl="reagendado" title="Aviso de reagendamiento">
+                      <i class="bi bi-arrow-repeat"></i>Reagendado
+                    </button>
+                    <button type="button" class="iw-msg-template-chip" data-iw-tpl="formal" title="Confirmación formal">
+                      <i class="bi bi-briefcase"></i>Formal
+                    </button>
+                    <button type="button" class="iw-msg-template-chip" data-iw-tpl="" title="Limpiar (escribir desde cero)">
+                      <i class="bi bi-pencil"></i>Vacío
+                    </button>
+                  </div>
+                </div>
+                <textarea id="iwProposeMessage" class="form-control form-control-sm" rows="3" placeholder="Ej: Te confirmamos disponibilidad para mañana. Trae tu vehículo a la bodega de Quilicura."></textarea>
+                <div class="iw-msg-preview" id="iwMsgPreview" style="display:none"></div>
+              </div>
+
+              <div id="iwProposeFeedback" class="small mb-2"></div>
+            </form>
+          </div>
+          <div class="modal-footer" style="background:#fff;border-top:1px solid #f1f5f9;flex-wrap:wrap;gap:10px">
+            <div class="text-muted small me-auto" style="font-size:.76rem;max-width:360px">
+              <i class="bi bi-shield-lock me-1"></i>El cliente recibirá un email con un link privado para aceptar o contraproponer.
+            </div>
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" id="btnEnviarPropuesta" class="submit-btn-internal" style="width:auto;flex:1 1 260px" onclick="enviarPropuestaWizard()">
+              <i class="bi bi-send-check"></i><span>Enviar propuesta al cliente</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     {# ═════════ PASO 5 — Enviar propuesta ═════════
        Daniel 2026-05-23: este paso NUNCA está "blocked" — el operador

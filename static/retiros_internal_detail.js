@@ -981,14 +981,23 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState){
   if (p4){
     p4.classList.toggle('is-blocked', ndocs === 0);
     p4.classList.toggle('is-complete', !!requestState.step4_done);
-    // Mostrar/ocultar form: basta con tener al menos UN doc asociado
-    const form = document.getElementById('iwProposeForm');
-    if (form){
-      form.style.display = (ndocs > 0 && !requestState.step4_done) ? '' : 'none';
-      if (ndocs > 0 && !requestState.step4_done && !window._calMounted){
-        _mountProposeCalendar();
-        window._calMounted = true;
-      }
+    // Mostrar/ocultar el botón que abre el modal de propuesta (2026-09-14:
+    // antes esto mostraba/ocultaba el #iwProposeForm inline; ese form ahora
+    // vive DENTRO de #modalProponerFecha, así que solo togglea el CTA que
+    // lo abre — basta con tener al menos UN doc asociado).
+    const cta = document.getElementById('iwProposeCta');
+    if (cta){
+      cta.style.display = (ndocs > 0 && !requestState.step4_done) ? '' : 'none';
+    }
+    // Montar el calendario SOLO si el modal ya está abierto en pantalla. Si
+    // está cerrado, el listener shown.bs.modal de #modalProponerFecha se
+    // encarga al abrirlo — montar el widget con el modal oculto (display:none
+    // nativo de Bootstrap hasta que se muestra) mide mal el grid.
+    const modalPF = document.getElementById('modalProponerFecha');
+    const modalPFVisible = !!(modalPF && modalPF.classList.contains('show'));
+    if (modalPFVisible && ndocs > 0 && !requestState.step4_done && !window._calMounted){
+      _mountProposeCalendar();
+      window._calMounted = true;
     }
     // Toggle hints inteligentes en el paso 4
     const hintBlock = document.getElementById('paso4HintBloqueo');
@@ -1317,6 +1326,7 @@ function _mountProposeCalendar(){
     hiddenDate:     '#iwProposeHidDate',
     hiddenTimeFrom: '#iwProposeHidTf',
     hiddenTimeTo:   '#iwProposeHidTt',
+    monthContainer: '#iwProposeMonth', // Daniel 2026-09-14: mini-calendario mensual con densidad de cupos (modal "Proponer fecha")
     includeOwners:  true,
     // Daniel 2026-05-24: el OPERADOR manda — puede agendar hoy mismo y
     // cruzar colación si la factura es grande. El cliente público NO
@@ -1513,17 +1523,52 @@ function _iwRefreshPreview(){
   }
 })();
 
-// Inicial: mount si el form está visible y aún no se propuso.
-// Daniel 2026-05-24: ahora basta con tener al menos UN doc asociado
-// (no requiere con_saldo verificado por ERP, que a veces falla).
-// ⚡ PERF (Juan Daniel 2026-06-03): retiros_calendar.js ahora carga con
-// `defer` para no bloquear el parseo de la ficha (34.6KB). En este punto
-// del parseo la librería todavía NO cargó, así que NO montamos aquí —
-// solo fijamos la intención (booleano evaluado por Jinja). El montaje
-// real ocurre en DOMContentLoaded, cuando el script diferido ya existe.
+// Intención de montar el calendario en cuanto se pueda (booleano evaluado
+// por Jinja: hay doc asociado y aún no se propuso). Daniel 2026-05-24.
+// 2026-09-14: el form (y su calendario) ahora vive DENTRO de
+// #modalProponerFecha, oculto por Bootstrap hasta que se abre — así que ya
+// NO montamos en DOMContentLoaded (mediría mal el grid con el modal oculto).
+// El montaje real ocurre en el listener shown.bs.modal de más abajo.
 window._shouldMountProposeCal = RETIROS_DETAIL_DATA.shouldMountProposeCal;
 
-// Re-proponer
+// ════════════════════════════════════════════════════════════════════
+//  MODAL "Proponer fecha y hora" (2026-09-14) — montaje del calendario
+//  ────────────────────────────────────────────────────────────────────
+//  Mismo patrón que #modalNuevoRetiroInterno en internal_dashboard.html
+//  (commit 6cd95ea1): el widget IlusRetirosCalendar se monta SOLO cuando
+//  el modal ya está visible (shown.bs.modal), nunca antes — mide mal el
+//  grid si el contenedor está en display:none. Si ya estaba montado
+//  (reabrir el modal), solo recarga cupos con .reload().
+// ════════════════════════════════════════════════════════════════════
+(function(){
+  const modalPF = document.getElementById('modalProponerFecha');
+  if (!modalPF) return;
+  modalPF.addEventListener('shown.bs.modal', function(){
+    try {
+      const hasClientCard = !!document.getElementById('iwClientCard');
+      const forceManual = !!window._iwForceManualOnOpen;
+      window._iwForceManualOnOpen = false;
+      if (!window._calMounted){
+        // Sin card "el cliente pidió" → el picker manual ya está visible de
+        // entrada, se monta de inmediato (mismo criterio que antes tenía
+        // el DOMContentLoaded). Con card, el montaje sigue siendo lazy (al
+        // pulsar "Modificar" — ver más arriba) salvo que "Re-proponer" haya
+        // forzado ir directo al picker manual.
+        if (!hasClientCard || forceManual){
+          _mountProposeCalendar();
+          window._calMounted = true;
+        }
+      } else if (window._proposeCalInstance && window._proposeCalInstance.reload){
+        window._proposeCalInstance.reload();  // refrescar cupos al reabrir
+      }
+    } catch(e){ console.warn('propose calendar mount', e); }
+  });
+})();
+
+// Re-proponer — Daniel 2026-09-14: ahora ABRE EL MODAL (antes revelaba el
+// form inline en la página). El resumen "Propuesta enviada" (#iwStep4Summary)
+// se queda visible en la página detrás del modal — no hace falta ocultarlo,
+// la página se recarga sola al enviar con éxito (enviarPropuestaWizard).
 const _reproBtn = document.getElementById('iwShowReproposeBtn');
 if (_reproBtn){
   _reproBtn.addEventListener('click', async () => {
@@ -1534,16 +1579,15 @@ if (_reproBtn){
       okLabel: 'Sí, re-proponer',
     });
     if (!ok) return;
-    const form = document.getElementById('iwProposeForm');
-    if (form) form.style.display = '';
-    const summary = document.getElementById('iwStep4Summary');
-    if (summary) summary.style.display = 'none';
-    // Re-proponer = elegir nueva fecha → revelar el picker manual y montar.
+    // Re-proponer = elegir nueva fecha → revelar el picker manual (bypassa
+    // la card "el cliente pidió", si la hay) y forzar el montaje al abrir.
     const picker = document.getElementById('iwManualPicker');
     if (picker) picker.style.display = '';
-    _mountProposeCalendar();
-    window._calMounted = true;
-    if (form && form.scrollIntoView){ form.scrollIntoView({behavior:'smooth', block:'center'}); }
+    window._iwForceManualOnOpen = true;
+    const modalPF = document.getElementById('modalProponerFecha');
+    if (modalPF && window.bootstrap){
+      bootstrap.Modal.getOrCreateInstance(modalPF).show();
+    }
   });
 }
 
@@ -1609,8 +1653,12 @@ async function enviarPropuestaWizard(){
   const fb = document.getElementById('iwProposeFeedback');
 
   if (!date || !tf || !tt){
-    ilusToast('Selecciona día y bloque horario en el paso 4 antes de enviar.', { type:'warning' });
-    document.getElementById('paso-4').scrollIntoView({behavior:'smooth', block:'center'});
+    // 2026-09-14: el calendario ahora vive DENTRO del modal — scrollear
+    // #paso-4 (la página, detrás del modal) ya no sirve de nada. Scrolleamos
+    // al calendario dentro del propio modal-dialog-scrollable.
+    ilusToast('Selecciona día y bloque horario en el calendario antes de enviar.', { type:'warning' });
+    const _calEl = document.getElementById('iwProposeGrid');
+    if (_calEl && _calEl.scrollIntoView) _calEl.scrollIntoView({behavior:'smooth', block:'center'});
     return;
   }
 
@@ -1653,6 +1701,15 @@ async function enviarPropuestaWizard(){
       : 'Propuesta registrada, pero el correo al cliente no salió. Revisa la llave de correo de Retiros.');
     if (fb) fb.innerHTML = `<div class="smart-hint ${_emailOk ? 'is-success' : 'is-warn'}" style="margin:0"><i class="bi bi-${_emailOk ? 'check-circle' : 'exclamation-triangle'}"></i><div>${_esc(_msgTxt)}</div></div>`;
     ilusToast((_emailOk ? '✓ ' : '⚠ ') + _msgTxt, { type: _emailOk ? 'success' : 'warning' });
+    // 2026-09-14: el form vive dentro de #modalProponerFecha — cerrarlo tras
+    // un envío exitoso (registrado en ERP, salga o no el correo) para que el
+    // operador no se quede mirando el modal mientras la página recarga
+    // detrás. La recarga (abajo) igual refleja el estado nuevo.
+    try {
+      const _modalPF = document.getElementById('modalProponerFecha');
+      const _modalPFInst = _modalPF && window.bootstrap ? bootstrap.Modal.getInstance(_modalPF) : null;
+      if (_modalPFInst) _modalPFInst.hide();
+    } catch(_){}
     setTimeout(() => { window.location.reload(); }, _emailOk ? 1200 : 2800);
   } catch(err){
     if (fb) fb.innerHTML = `<div class="smart-hint is-danger" style="margin:0"><i class="bi bi-x-circle"></i><div>Error de red: ${_esc(err.message)}</div></div>`;
@@ -3005,19 +3062,12 @@ document.addEventListener('DOMContentLoaded', function(){
   //    segundo plano. El operador ya tiene la ficha completa a la vista.
   _deferLoad(() => cargarSaldoCliente(_RID), 2000);
 
-  // 4) Calendario de propuesta, solo si la solicitud está en ese paso.
-  //    retiros_calendar.js carga con `defer`, por lo que para este punto
-  //    (DOMContentLoaded) ya está disponible. Antes esto se montaba en
-  //    pleno parseo y bloqueaba; ahora va después del primer paint.
-  if (window._shouldMountProposeCal && !window._calMounted){
-    // Daniel 2026-06-15: si hay card "El cliente pidió", el calendario arranca
-    // OCULTO y se monta al pulsar "Modificar" (lazy). Si NO hay card (cliente
-    // sin hora exacta), el picker ya está visible → montamos de inmediato.
-    var _hasClientCard = !!document.getElementById('iwClientCard');
-    if (!_hasClientCard){
-      try { _mountProposeCalendar(); window._calMounted = true; } catch(_e){}
-    }
-  }
+  // 4) Calendario de propuesta — 2026-09-14: el form (y su calendario) ahora
+  //    vive DENTRO de #modalProponerFecha, oculto por Bootstrap hasta que se
+  //    abre. Montarlo aquí (con el modal todavía en display:none) mediría
+  //    mal el grid, así que el montaje se movió al listener shown.bs.modal
+  //    de #modalProponerFecha (ver bloque "MODAL 'Proponer fecha y hora'"
+  //    más arriba en este archivo). Nada que hacer acá.
 
   // Hint de peso (instantáneo, sin red).
   const pesoInicial = RETIROS_DETAIL_DATA.pesoInicial;
