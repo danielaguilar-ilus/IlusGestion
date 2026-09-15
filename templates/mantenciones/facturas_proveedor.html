@@ -78,7 +78,7 @@
     <i class="bi bi-funnel me-1"></i>Buscar</button>
   {% if f_prov or f_estado %}
   <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px;display:inline-flex;align-items:center"
-     href="{{ url_for('mant_facturas_proveedor') }}"><i class="bi bi-x-lg me-1"></i>Limpiar</a>
+     href="/servicio-tecnico/facturas-proveedor"><i class="bi bi-x-lg me-1"></i>Limpiar</a>
   {% endif %}
 </form>
 
@@ -173,7 +173,7 @@
     </thead>
     <tbody>
       {% for f in facturas %}
-      <tr onclick="window.location='{{ url_for('mant_factura_proveedor_detalle', fid=f.id) }}'">
+      <tr onclick="window.location='/servicio-tecnico/facturas-proveedor/{{ f.id }}'">
         <td data-label="Proveedor"><div class="fp-nom">{{ f.proveedor_nombre }}</div>
           {% if f.proveedor_rut %}<div class="fp-sub">{{ f.proveedor_rut | rut_fmt }}</div>{% endif %}</td>
         <td data-label="Documento"><span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>

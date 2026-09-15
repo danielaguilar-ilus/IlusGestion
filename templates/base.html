@@ -768,7 +768,7 @@
          con candado anti doble cobro. Mismo permiso que el reporte
          "Facturación de proveedores" (ver _facprov_puede). #}
       {% if permissions and (permissions.mant_facturacion_proveedores or permissions.superadmin) %}
-      <a href="{{ url_for('mant_facturas_proveedor') }}"
+      <a href="/servicio-tecnico/facturas-proveedor"
          class="sidebar-link{% if request.endpoint in ['mant_facturas_proveedor', 'mant_factura_proveedor_detalle'] %} active{% endif %}">
         <i class="bi bi-receipt-cutoff"></i><span>Facturas proveedor</span>
       </a>

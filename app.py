@@ -105466,8 +105466,8 @@ def _mfp_403():
                     "error_codigo": "SIN_PERMISO"}), 403
 
 
-@app.route("/servicio-tecnico/facturas-proveedor")
 @app.route("/mantenciones/facturas-proveedor")
+@app.route("/servicio-tecnico/facturas-proveedor")
 @_mant_required
 @_no_tecnico
 def mant_facturas_proveedor():
@@ -105582,8 +105582,8 @@ def mant_facturas_proveedor():
     )
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor", methods=["POST"])
 @app.route("/mantenciones/api/facturas-proveedor", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor", methods=["POST"])
 @_mant_required
 @_no_tecnico
 def mant_facturas_proveedor_crear():
@@ -105615,8 +105615,8 @@ def mant_facturas_proveedor_crear():
     return jsonify({"ok": True, "id": fid})
 
 
-@app.route("/servicio-tecnico/facturas-proveedor/<int:fid>")
 @app.route("/mantenciones/facturas-proveedor/<int:fid>")
+@app.route("/servicio-tecnico/facturas-proveedor/<int:fid>")
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_detalle(fid):
@@ -105639,8 +105639,8 @@ def mant_factura_proveedor_detalle(fid):
     )
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>", methods=["PUT"])
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>", methods=["PUT"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>", methods=["PUT"])
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_editar(fid):
@@ -105677,8 +105677,8 @@ def mant_factura_proveedor_editar(fid):
     return jsonify({"ok": True})
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/ot-disponibles")
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/ot-disponibles")
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/ot-disponibles")
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_ot_disponibles(fid):
@@ -105739,8 +105739,8 @@ def mant_factura_proveedor_ot_disponibles(fid):
                     "proveedor": f.get("proveedor_nombre")})
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/asignar", methods=["POST"])
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/asignar", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/asignar", methods=["POST"])
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_asignar(fid):
@@ -105820,8 +105820,8 @@ def mant_factura_proveedor_asignar(fid):
     return jsonify({"ok": True, "monto": monto})
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/items/<int:vid>", methods=["DELETE"])
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/items/<int:vid>", methods=["DELETE"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/items/<int:vid>", methods=["DELETE"])
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_desasignar(fid, vid):
@@ -105846,8 +105846,8 @@ def mant_factura_proveedor_desasignar(fid, vid):
     return jsonify({"ok": True})
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/pagar", methods=["POST"])
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/pagar", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/pagar", methods=["POST"])
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_pagar(fid):
@@ -105883,8 +105883,8 @@ def mant_factura_proveedor_pagar(fid):
     return jsonify({"ok": True})
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/reabrir", methods=["POST"])
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/reabrir", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/reabrir", methods=["POST"])
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_reabrir(fid):
@@ -105911,8 +105911,8 @@ def mant_factura_proveedor_reabrir(fid):
     return jsonify({"ok": True})
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/anular", methods=["POST"])
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/anular", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/anular", methods=["POST"])
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_anular(fid):
@@ -105944,8 +105944,8 @@ def mant_factura_proveedor_anular(fid):
     return jsonify({"ok": True})
 
 
-@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/archivo", methods=["POST"])
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/archivo", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/archivo", methods=["POST"])
 @_mant_required
 @_no_tecnico
 def mant_factura_proveedor_archivo(fid):

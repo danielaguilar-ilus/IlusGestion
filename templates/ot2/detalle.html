@@ -3710,14 +3710,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               N° {{ fp.numero_documento }} · ${{ '{:,.0f}'.format(fp.monto or 0)|replace(',', '.') }}
               {% if fp.estado_pago == 'pagada' and fp.pagada_at %}· pagada el {{ fp.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}</span>
           </div>
-          <a href="{{ url_for('mant_factura_proveedor_detalle', fid=fp.id) }}" class="ver">Ver factura</a>
+          <a href="/servicio-tecnico/facturas-proveedor/{{ fp.id }}" class="ver">Ver factura</a>
         </div>
         {% elif fp_aplica %}
         <div class="otd-facprov sin">
           <i class="bi bi-hourglass-split"></i>
           <div><b>Por facturar por el proveedor</b>
             <span>Todavía ninguna factura de proveedor cobra esta OT. Se registra en Facturas proveedor (Taller).</span></div>
-          <a href="{{ url_for('mant_facturas_proveedor') }}" class="ver">Ir</a>
+          <a href="/servicio-tecnico/facturas-proveedor" class="ver">Ir</a>
         </div>
         {% endif %}
       {% endmacro %}
