@@ -1,0 +1,1600 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ILUS Fitness · Retiros · "Nuevo retiro interno" POTENTE (2026-09-15)
+   ───────────────────────────────────────────────────────────────────────
+   Complementa el modal #modalNuevoRetiroInterno de
+   templates/retiros/internal_dashboard.html. Es 100% ADITIVO: no toca el
+   flujo de siempre (el operador puede seguir llenando todo a mano); solo
+   le pone encima el ERP Random como asistente:
+
+     · Paso 1 — Documento: autobúsqueda al escribir el N°, buscador
+       estándar (tickets/_tka_modal.html) y lista "Documentos del retiro".
+     · Paso 2 — Cliente: RUT con formato/DV en vivo, ficha del cliente
+       desde el ERP (/retiros/api/cliente/<rut>/ficha), documentos con
+       saldo pendiente con checkbox + "Seleccionar/deseleccionar todo"
+       (REGLA #14) y autocompletar por razón social.
+     · Paso 5 — Carga: kg / m³ / bultos calculados desde las fichas
+       logísticas de las líneas seleccionadas (el backend valida la
+       capacidad del bloque con esos números).
+     · Crear = asociar de verdad: tras POST /retiros/nuevo, cada documento
+       de window._nriDocs se asocia con POST /retiros/<id>/docs/agregar.
+
+   Decisión de Daniel (2026-09-15, caso Jeremías): el EMAIL NUNCA se
+   autocompleta — siempre va como chip "Detectado en ERP → usar". El
+   titular del documento recibiría el correo de confirmación si no es la
+   misma persona que retira.
+
+   Todo lo que consulta al ERP pasa por endpoints ya existentes (REGLA
+   #4.1: solo lectura). Nada de alert/confirm/prompt nativos (REGLA #1).
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  /* ── Mapa de tipos: réplica JS de PICKUP_TIDO_INVERSO (pickups_module.py).
+     Sirve para setear el <select name="document_type"> del Paso 1 a partir
+     del TIDO que devuelve el ERP. NVI (factura electrónica de importación)
+     se muestra como factura. ── */
+  window.NRI_TIDO_INVERSO = window.NRI_TIDO_INVERSO || {
+    FCV: 'factura', BLV: 'boleta', GDV: 'guia', VD: 'nota_venta',
+    NVV: 'nota_venta', WEB: 'pedido', NVI: 'factura',
+  };
+  var NRI_TIDO_INVERSO = window.NRI_TIDO_INVERSO;
+  /* tipo del <select> → TIDOs del ERP que le corresponden (para filtrar
+     candidatos de la autobúsqueda). */
+  var NRI_TIPO_A_TIDOS = {
+    factura: ['FCV', 'NVI'], boleta: ['BLV'], guia: ['GDV'],
+    guia_despacho: ['GDV'], nota_venta: ['VD', 'NVV'], venta_directa: ['VD'],
+    pedido: ['WEB'], cotizacion: ['COV'],
+  };
+  var NRI_TIDO_LABEL = {
+    FCV: 'Factura', BLV: 'Boleta', GDV: 'Guía de despacho', VD: 'Nota de venta',
+    NVV: 'Nota de venta', WEB: 'Pedido web', NVI: 'Factura (importación)', COV: 'Cotización',
+  };
+  var NRI_PLACEHOLDERS = [
+    'cliente no informado por erp', 'consumidor final', 'boleta', 'particular',
+    'cliente', 'sin nombre', 'n/a', '-', '—',
+  ];
+
+  var modalEl = document.getElementById('modalNuevoRetiroInterno');
+  var form    = document.getElementById('formNuevoRetiroInterno');
+  if (!modalEl || !form) return;
+
+  /* ═══════════════════ Helpers genéricos ═══════════════════ */
+  function $(id){ return document.getElementById(id); }
+  function campo(name){ return form.querySelector('[name="' + name + '"]'); }
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[<>&"']/g, function(c){
+      return { '<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function debounce(fn, ms){
+    var t = null;
+    return function(){
+      var args = arguments, self = this;
+      clearTimeout(t);
+      t = setTimeout(function(){ fn.apply(self, args); }, ms);
+    };
+  }
+  function toast(msg, type){
+    if (window.ilusToast) window.ilusToast(msg, { type: type || 'info' });
+    else console.log('[nri]', msg);
+  }
+  function refreshSteps(){
+    try { if (typeof window.nriRefreshSteps === 'function') window.nriRefreshSteps(); } catch(_){}
+  }
+  function esPlaceholder(nombre){
+    var n = String(nombre || '').trim().toLowerCase();
+    if (!n) return true;
+    return NRI_PLACEHOLDERS.indexOf(n) !== -1;
+  }
+  function num(v){ var n = Number(v); return isFinite(n) ? n : 0; }
+  function fmtKg(v){ return (Math.round(num(v) * 100) / 100).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
+  function fmtCLP(v){ return Math.round(num(v)).toLocaleString('es-CL'); }
+
+  /* fetch que SIEMPRE devuelve algo legible. Si el servidor responde HTML
+     (sesión expirada → página de login) r.json() falla: lo traducimos a un
+     error entendible en vez de "Unexpected token '<'". */
+  async function fetchJson(url, opts){
+    opts = opts || {};
+    opts.credentials = opts.credentials || 'same-origin';
+    opts.headers = Object.assign({ 'X-Requested-With': 'XMLHttpRequest' }, opts.headers || {});
+    var r = await fetch(url, opts);
+    var d = null;
+    try { d = await r.json(); }
+    catch(_){
+      if (r.status === 401 || r.status === 403 || r.redirected){
+        throw new Error('Tu sesión expiró — vuelve a iniciar sesión y reintenta.');
+      }
+      throw new Error('Respuesta inválida del servidor (HTTP ' + r.status + ').');
+    }
+    return { r: r, d: d || {} };
+  }
+  function postJson(url, body){
+    return fetchJson(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+  }
+
+  /* ═══════════════════ RUT chileno (módulo 11) ═══════════════════
+     Copiado de static/retiros_public_request.js (cleanRUT/calcDV/isValidRUT/
+     formatRUT) para no cargar ese archivo en el dashboard. */
+  function cleanRUT(rut){ return String(rut || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
+  function calcDV(numStr){
+    var suma = 0, mul = 2;
+    for (var i = numStr.length - 1; i >= 0; i--){
+      suma += parseInt(numStr[i], 10) * mul;
+      mul = mul === 7 ? 2 : mul + 1;
+    }
+    var r = 11 - (suma % 11);
+    if (r === 11) return '0';
+    if (r === 10) return 'K';
+    return String(r);
+  }
+  function isValidRUT(rut){
+    var c = cleanRUT(rut);
+    if (c.length < 8 || c.length > 9) return false;
+    return /^\d+$/.test(c.slice(0, -1)) && calcDV(c.slice(0, -1)) === c.slice(-1);
+  }
+  function formatRUTStr(rut){
+    var c = cleanRUT(rut);
+    if (c.length < 2) return c;
+    var numStr = c.slice(0, -1), dv = c.slice(-1);
+    var f = '', rev = numStr.split('').reverse().join('');
+    for (var i = 0; i < rev.length; i++){
+      f = rev[i] + f;
+      if ((i + 1) % 3 === 0 && i !== rev.length - 1) f = '.' + f;
+    }
+    return f + '-' + dv;
+  }
+  /* ¿El texto trae el DV explícito? Sí cuando viene con guion, termina en K
+     o tiene 9 caracteres (un cuerpo chileno tiene máximo 8 dígitos). Un
+     string de 7-8 dígitos pelados es AMBIGUO: lo tipeado por una persona
+     suele ser cuerpo+DV, lo que devuelve el ERP (MAEEN.RTEN, ENDO, campo
+     `rut` de buscar-erp) es SIEMPRE el cuerpo sin DV. */
+  function traeDV(raw){
+    var s = String(raw || '').trim(), c = cleanRUT(s);
+    return s.indexOf('-') !== -1 || /K$/.test(c) || c.length === 9;
+  }
+  /* RUT COMPLETO (lo que tipea el operador o ya viene con guion): valida el
+     DV; si no cuadra devuelve ''. NO adivina cuerpos. */
+  function rutCompleto(conDV){
+    var c = cleanRUT(conDV);
+    if (!c) return '';
+    return isValidRUT(c) ? formatRUTStr(c) : '';
+  }
+  /* RUT DESDE EL ERP (FIX revisor B2): el valor es el CUERPO sin DV — se le
+     calcula SIEMPRE el DV. Antes se probaba isValidRUT primero y 1 de cada
+     11 cuerpos de 8 dígitos "validaba" como RUT ajeno ('76990018' →
+     '7.699.001-8' en vez de '76.990.018-7'). Si el ERP igual mandó guion/K/9
+     chars (resolver de cliente), se respeta como completo. */
+  function rutDesdeCuerpoErp(cuerpoErp){
+    var raw = String(cuerpoErp || '').trim(), c = cleanRUT(raw);
+    if (!c) return '';
+    if (traeDV(raw)) return rutCompleto(c);
+    if (/^\d{6,8}$/.test(c)) return formatRUTStr(c + calcDV(c));
+    return '';
+  }
+  /* Cuerpo sin DV para COMPARAR (FIX revisor B3): corta el último char solo
+     si el texto trae DV; un cuerpo pelado del ERP se usa entero. `esErp`
+     fuerza la lectura "cuerpo". */
+  function rutClave(rut, esErp){
+    var raw = String(rut || '').trim(), c = cleanRUT(raw);
+    if (!c) return '';
+    if (esErp && !traeDV(raw)) return c;
+    if (traeDV(raw)) return c.slice(0, -1);
+    /* FIX revisor 2: lo TIPEADO de 8 chars sin guion con DV válido es
+       cuerpo(7)+DV — igual que asume isValidRUT — no un cuerpo de 8. Sin
+       esto, '76990018' (tipeado) y '7.699.001-8' (formateado en blur) daban
+       claves distintas y el semáforo nunca reconocía al cliente. */
+    if (c.length === 8 && isValidRUT(c)) return c.slice(0, -1);
+    return c;
+  }
+  /* Teléfono chileno: +56 9 XXXX XXXX (móvil) o +56 2 XXXX XXXX (fijo) =
+     9 dígitos tras quitar el código de país. */
+  function fonoChilenoOk(v){
+    var d = String(v || '').replace(/\D/g, '');
+    if (!d) return true;
+    if (d.length === 11 && d.slice(0, 2) === '56') d = d.slice(2);
+    if (d.length === 10 && d[0] === '0') d = d.slice(1);
+    return /^[2-9]\d{8}$/.test(d);
+  }
+  function emailOk(v){
+    var s = String(v || '').trim();
+    if (!s) return true;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
+  }
+
+  /* ═══════════════════ Estado único ═══════════════════
+     window._nriDocs: Map(key 'TIDO|nudo' → {tido, nudo_display, hdr, lineas,
+     seleccion:{sku→cantidad_seleccionada}}). */
+  window._nriDocs = window._nriDocs || new Map();
+  var DOCS = window._nriDocs;
+  var docCache   = new Map();   // key → PROMESA de /api/erp/documento (M5: dos pedidos del mismo doc comparten un solo fetch)
+  var docLoading = new Set();   // keys con fetch en vuelo
+  var dirty = { total_packages: false, total_weight_kg: false, total_volume_m3: false };
+  var ultimoRutConsultado = '';
+  var sugerenciasActuales = [];   // candidatos del Paso 1 (buscar-erp)
+  var rutDocsActuales     = [];   // docs con saldo del Paso 2 (saldo-pendiente)
+  /* B5: qué (tipo, número) escribió el ASISTENTE en el Paso 1. Al quitar el
+     último documento se limpian solo si siguen con ese valor — lo que tipeó
+     el operador a mano nunca se borra. */
+  var asistenteEscribio = { tipo: null, numero: null };
+  /* Capa de inteligencia (I1-I4): lo que sabemos del cliente para el semáforo. */
+  var fichaCliente   = null;   // {claveRut, razon_social} de la última ficha ERP exitosa
+  var retirosActivos = null;   // {claveRut, lista:[{id,code,status,status_label,fecha,url}]}
+  var mantenerDistinto = {};   // key doc → true cuando el operador dijo "Mantener" al aviso RUT distinto
+  var ultimaEvaluacion = null; // resultado de nriEvaluarPasos() (lo usa nriPreCrear)
+
+  function docKey(tido, nudo){
+    return String(tido || '').toUpperCase().trim() + '|' + String(nudo || '').replace(/^0+/, '').trim();
+  }
+  function nudoLimpio(n){ return String(n || '').trim().replace(/^0+/, '') || '0'; }
+
+  /* Cola de fetch al ERP: máximo 3 concurrentes (patrón CHUNK=3 de
+     retiros_internal_detail.js — la pool de pymssql es chica). */
+  var _enVuelo = 0, _cola = [];
+  function conCupo(fn){
+    return new Promise(function(resolve, reject){
+      _cola.push(function(){
+        _enVuelo++;
+        Promise.resolve().then(fn).then(resolve, reject).then(function(){
+          _enVuelo--; _drenar();
+        });
+      });
+      _drenar();
+    });
+  }
+  function _drenar(){ while (_enVuelo < 3 && _cola.length) _cola.shift()(); }
+
+  /* M5: la caché guarda la PROMESA, así dos llamadas simultáneas del mismo
+     documento (checkbox del Paso 2 + "Usar este documento" del Paso 1)
+     comparten un único fetch. Si falla, se saca de la caché para reintentar. */
+  function fetchDocumento(tido, nudo){
+    var key = docKey(tido, nudo);
+    if (docCache.has(key)) return docCache.get(key);
+    var p = conCupo(function(){ return postJson('/api/erp/documento', { tido: tido, nudo: nudoLimpio(nudo) }); })
+      .then(function(res){
+        if (!res.r.ok || res.d.error){
+          var e = new Error(res.d.error || (res.r.status === 404 ? 'Documento no encontrado en el ERP' : 'ERP no responde'));
+          e.status = res.r.status;
+          throw e;
+        }
+        return res.d;
+      });
+    p.catch(function(){ if (docCache.get(key) === p) docCache.delete(key); });
+    docCache.set(key, p);
+    return p;
+  }
+
+  /* ═══════════════════ PASO 1 — DOCUMENTO ═══════════════════ */
+  var selTipo   = campo('document_type');
+  var inpNumero = campo('document_number');
+
+  function seleccionPorDefecto(lineas){
+    var sel = {};
+    (lineas || []).forEach(function(l){
+      if (l.es_zz || l.es_descuento) return;
+      var saldo = num(l.saldo);
+      if (saldo > 0) sel[l.sku] = saldo;
+    });
+    return sel;
+  }
+
+  /* Agrega (o actualiza) un documento al estado. `seleccion` opcional
+     {sku→cantidad}: viene del modal estándar; si no, se arma por defecto. */
+  async function agregarDoc(tido, nudo, opts){
+    opts = opts || {};
+    tido = String(tido || '').toUpperCase().trim();
+    var key = docKey(tido, nudo);
+    if (!tido || !nudoLimpio(nudo)) return null;
+    if (DOCS.has(key) && !opts.seleccion){
+      if (!opts.silencioso) toast('El documento ' + tido + ' ' + nudoLimpio(nudo) + ' ya está en este retiro.', 'info');
+      return DOCS.get(key);
+    }
+    docLoading.add(key);
+    renderDocsSel();
+    try {
+      var d = await fetchDocumento(tido, nudo);
+      var lineas = d.lineas || [];
+      var sel;
+      if (opts.seleccion){
+        sel = {};
+        lineas.forEach(function(l){
+          if (l.es_zz || l.es_descuento) return;
+          if (Object.prototype.hasOwnProperty.call(opts.seleccion, l.sku)){
+            var q = num(opts.seleccion[l.sku]);
+            if (q > 0) sel[l.sku] = q;
+          }
+        });
+        if (!Object.keys(sel).length) sel = seleccionPorDefecto(lineas);
+      } else {
+        sel = seleccionPorDefecto(lineas);
+      }
+      /* M3: qué SKUs marcó el operador "sin saldo" en el modal tka (línea
+         que el ERP reporta entregada pero igual se retira). Viaja a
+         /docs/agregar como marcada_sin_saldo por línea. */
+      var sinSaldo = {};
+      if (opts.sinSaldo){
+        Object.keys(opts.sinSaldo).forEach(function(sku){ if (opts.sinSaldo[sku] && sel[sku] != null) sinSaldo[sku] = true; });
+      }
+      var entry = {
+        tido: tido,
+        nudo_display: nudoLimpio(nudo),
+        hdr: d.hdr || {},
+        lineas: lineas,
+        seleccion: sel,
+        sinSaldo: sinSaldo,
+        meta: opts.meta || null,   // fila del buscador (fecha, tiene_saldo, ya_tiene_retiro, ya_tiene_retiro_code/id…)
+      };
+      DOCS.set(key, entry);
+      docLoading.delete(key);
+      alCambiarDocs();
+      return entry;
+    } catch(e){
+      docLoading.delete(key);
+      renderDocsSel();
+      toast('No se pudo traer ' + tido + ' ' + nudoLimpio(nudo) + ': ' + (e.message || 'error'), 'error');
+      return null;
+    }
+  }
+  function quitarDoc(key){
+    if (!DOCS.has(key)) return;
+    DOCS.delete(key);
+    alCambiarDocs();
+  }
+  window.nriAgregarDoc = agregarDoc;
+  window.nriQuitarDoc  = quitarDoc;
+
+  /* Todo lo que depende del conjunto de documentos se refresca acá. */
+  function alCambiarDocs(){
+    renderDocsSel();
+    sincronizarPaso1DesdeDocs();
+    proponerClienteDesdeDocs();
+    recalcularCarga();
+    sincronizarChecksRutDocs();
+    marcarSugerencias();
+    refreshSteps();
+  }
+
+  function sincronizarPaso1DesdeDocs(){
+    var badge = $('nriDocBadge');
+    var n = DOCS.size;
+    if (badge){
+      if (n){
+        badge.style.display = '';
+        badge.innerHTML = '<i class="bi bi-patch-check-fill"></i>' + n + ' documento' + (n === 1 ? '' : 's') + ' verificado' + (n === 1 ? '' : 's') + ' en ERP';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+    if (!n){
+      /* B5: al quitar el ÚLTIMO documento, tipo/número del Paso 1 se limpian
+         SOLO si siguen con lo que escribió el asistente. Si el operador los
+         cambió a mano después, se respetan (el retiro nace "con documento"
+         porque él lo quiso así). */
+      if (selTipo && asistenteEscribio.tipo != null && selTipo.value === asistenteEscribio.tipo) selTipo.value = '';
+      if (inpNumero && asistenteEscribio.numero != null && (inpNumero.value || '').trim() === asistenteEscribio.numero) inpNumero.value = '';
+      asistenteEscribio = { tipo: null, numero: null };
+      return;
+    }
+    /* pickup_requests guarda UN documento: va el PRIMERO con tipo "humano"
+       (M4: NVI/COV no tienen opción en el <select>; si el primero es de
+       esos, se prefiere el primer doc que sí mapee); el resto se asocia con
+       /docs/agregar al crear. */
+    var principal = null, tipo = '';
+    DOCS.forEach(function(e){
+      if (principal) return;
+      var t = NRI_TIDO_INVERSO[e.tido] || '';
+      if (t && selTipo && selTipo.querySelector('option[value="' + t + '"]')){ principal = e; tipo = t; }
+    });
+    if (!principal){
+      principal = DOCS.values().next().value;
+      tipo = '';   // sin tipo humano exacto: el <select> queda vacío, no se inventa
+    }
+    if (selTipo){
+      var tipoActual = selTipo.value;
+      /* Solo pisamos el select si está vacío o si lo escribió el asistente. */
+      if (tipo){
+        if (!tipoActual || tipoActual === asistenteEscribio.tipo){ selTipo.value = tipo; asistenteEscribio.tipo = tipo; }
+      } else if (tipoActual && tipoActual === asistenteEscribio.tipo){
+        selTipo.value = ''; asistenteEscribio.tipo = null;
+      }
+    }
+    if (inpNumero){
+      /* Revisor 2: el número solo se escribe si el campo está vacío o si lo
+         escribió el asistente — nunca se pisa un N° tipeado a mano (si es
+         otro, el semáforo ya avisa "no es ninguno de los verificados"). Y
+         sin tipo humano (NVI/COV) no se deja un número huérfano: la
+         cabecera quedaría 'sin_documento' + N°; el doc igual se asocia con
+         /docs/agregar al crear. */
+      var numActual = (inpNumero.value || '').trim();
+      var esDelAsistente = asistenteEscribio.numero != null && numActual === asistenteEscribio.numero;
+      if (!tipo){
+        if (esDelAsistente){ inpNumero.value = ''; asistenteEscribio.numero = null; }
+      } else if (!numActual || esDelAsistente){
+        inpNumero.value = principal.nudo_display;
+        asistenteEscribio.numero = principal.nudo_display;
+      }
+    }
+  }
+  function algunDocConNumero(numero){
+    var n = nudoLimpio(numero);
+    var hay = false;
+    DOCS.forEach(function(e){ if (e.nudo_display === n) hay = true; });
+    return hay;
+  }
+
+  /* Cliente del documento (nombre / RUT formateado / clave de comparación).
+     hdr.cliente_rut y meta.rut vienen del ERP → lectura "cuerpo" (B2). */
+  function docNombreCliente(e){
+    var h = e.hdr || {}, m = e.meta || {};
+    if (!esPlaceholder(h.cliente_nombre)) return h.cliente_nombre;
+    if (!esPlaceholder(m.razon_social)) return m.razon_social;
+    if (!esPlaceholder(m.cliente)) return m.cliente;
+    return '';
+  }
+  function docRutCliente(e){
+    var h = e.hdr || {}, m = e.meta || {};
+    return rutDesdeCuerpoErp(h.cliente_rut || m.rut || '');
+  }
+  function docClaveRut(e){ return rutClave(docRutCliente(e)); }
+  /* Badge candado "Ya tiene retiro" — con link a la ficha si el backend
+     entrega ya_tiene_retiro_code / ya_tiene_retiro_id (I2a; contrato con el
+     agente de backend, falla suave: sin esos campos solo el texto). */
+  function retiroExistenteInfo(m){
+    m = m || {};
+    var code = m.ya_tiene_retiro_code || '', id = m.ya_tiene_retiro_id;
+    var url = m.ya_tiene_retiro_url || (id ? '/retiros/' + encodeURIComponent(id) : '');
+    return { code: code, id: id, url: url };
+  }
+  function pillYaRetiro(m){
+    var info = retiroExistenteInfo(m);
+    var txt = info.code ? 'Ya está en ' + esc(info.code) : 'Ya tiene retiro';
+    if (info.url) return '<a class="nri-pill lock" href="' + esc(info.url) + '" target="_blank" rel="noopener" title="Abrir el retiro existente" style="text-decoration:none"><i class="bi bi-lock-fill"></i>' + txt + '</a>';
+    return '<span class="nri-pill lock"><i class="bi bi-lock-fill"></i>' + txt + '</span>';
+  }
+
+  function lineasResumen(entry){
+    var conSaldo = 0, kg = 0, total = 0;
+    (entry.lineas || []).forEach(function(l){
+      if (l.es_zz || l.es_descuento) return;
+      total++;
+      if (num(l.saldo) > 0) conSaldo++;
+      var sel = num(entry.seleccion[l.sku]);
+      if (sel > 0 && l.tiene_ficha && l.tiene_bultos){
+        var cant = num(l.cantidad);
+        kg += num(l.peso_kg_tot) * (cant > 0 ? sel / cant : 1);
+      }
+    });
+    return { conSaldo: conSaldo, total: total, kg: kg, seleccionadas: Object.keys(entry.seleccion).length };
+  }
+
+  function renderDocsSel(){
+    var wrap = $('nriDocsSelWrap'), cont = $('nriDocsSel'), cnt = $('nriDocsSelCount');
+    if (!wrap || !cont) return;
+    var keys = Array.from(DOCS.keys());
+    var cargando = Array.from(docLoading).filter(function(k){ return !DOCS.has(k); });
+    if (!keys.length && !cargando.length){ wrap.style.display = 'none'; cont.innerHTML = ''; return; }
+    wrap.style.display = '';
+    if (cnt) cnt.textContent = keys.length;
+    var html = keys.map(function(k){
+      var e = DOCS.get(k), h = e.hdr || {}, m = e.meta || {};
+      var r = lineasResumen(e);
+      var nombre = docNombreCliente(e);
+      var rut = docRutCliente(e);
+      var yaRetiro = !!m.ya_tiene_retiro;
+      var conSaldo = m.tiene_saldo != null ? !!m.tiene_saldo : r.conSaldo > 0;
+      var badgeSaldo = conSaldo
+        ? '<span class="nri-pill ok"><i class="bi bi-check-circle"></i>Con saldo</span>'
+        : '<span class="nri-pill warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>';
+      var badgeRetiro = yaRetiro ? pillYaRetiro(m) : '';
+      return '<div class="nri-doc-card" data-key="' + esc(k) + '">' +
+        '<div class="nri-doc-num">' + esc(e.tido) + ' ' + esc(e.nudo_display) + '<small>' + esc(NRI_TIDO_LABEL[e.tido] || '') + '</small></div>' +
+        '<div class="nri-doc-meta">' +
+          '<span class="ddate">' + esc(h.fecha || m.fecha || '') + (rut ? ' · RUT ' + esc(rut) : '') + '</span>' +
+          '<span class="dcli">' + esc(nombre || 'Cliente no informado por ERP') + '</span>' +
+          '<span class="dlin">' + r.seleccionadas + ' de ' + r.total + ' línea' + (r.total === 1 ? '' : 's') + ' seleccionada' + (r.seleccionadas === 1 ? '' : 's') + ' · ' + r.conSaldo + ' con saldo · ' + fmtKg(r.kg) + ' kg estimados</span>' +
+        '</div>' +
+        '<div class="nri-doc-totals">' + badgeSaldo + badgeRetiro + '</div>' +
+        '<button type="button" class="nri-doc-quitar" data-quitar="' + esc(k) + '" title="Quitar del retiro"><i class="bi bi-x-lg"></i>Quitar</button>' +
+      '</div>';
+    }).join('');
+    html += cargando.map(function(k){
+      var p = k.split('|');
+      return '<div class="nri-doc-card is-loading"><div class="nri-doc-num">' + esc(p[0]) + ' ' + esc(p[1]) + '</div>' +
+        '<div class="nri-doc-meta"><span class="dcli"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP Random…</span></div></div>';
+    }).join('');
+    cont.innerHTML = html;
+  }
+  $('nriDocsSel') && $('nriDocsSel').addEventListener('click', function(ev){
+    var b = ev.target.closest('[data-quitar]');
+    if (b) quitarDoc(b.getAttribute('data-quitar'));
+  });
+
+  /* ── Autobúsqueda al escribir el N° (debounce 450 ms, ≥3 chars, secuencia
+     anti-race, 1 request en vuelo con re-disparo si el texto cambió). ── */
+  var busqSeq = 0, busqEnVuelo = false, busqPendiente = null;
+  /* FIX revisor B1: el CSS tenía display:none y acá se "mostraba" con
+     display:'' → nunca se veía. Ahora: inline-flex visible / none oculto. */
+  function setDocStatus(html, tipo){
+    var el = $('nriDocStatus'); if (!el) return;
+    el.className = 'nri-doc-status' + (tipo ? ' is-' + tipo : '');
+    el.innerHTML = html || '';
+    el.style.display = html ? 'inline-flex' : 'none';
+  }
+  async function buscarPorNumero(q){
+    if (busqEnVuelo){ busqPendiente = q; return; }
+    var seq = ++busqSeq;
+    busqEnVuelo = true;
+    setDocStatus('<span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP Random…', 'loading');
+    try {
+      var res = await postJson('/retiros/api/buscar-erp', { q: q });
+      if (seq !== busqSeq) return;
+      var d = res.d;
+      if (!res.r.ok || d.sin_conexion){
+        setDocStatus('<i class="bi bi-plug me-1"></i>ERP no conectado — puedes seguir a mano.', 'warn');
+        renderSugerencias([]);
+        return;
+      }
+      if (d.modo === 'rut'){
+        setDocStatus('<i class="bi bi-info-circle me-1"></i>Eso parece un RUT. Escríbelo en el Paso 2 para ver los documentos del cliente.', 'info');
+        renderSugerencias([]);
+        return;
+      }
+      var docs = d.documentos || [];
+      var tipo = selTipo ? selTipo.value : '';
+      var tidosOk = NRI_TIPO_A_TIDOS[tipo] || null;
+      var filtrados = tidosOk ? docs.filter(function(x){ return tidosOk.indexOf(x.tido_display) !== -1; }) : docs;
+      var nota = '';
+      if (tidosOk && !filtrados.length && docs.length){
+        filtrados = docs;
+        nota = 'Ninguno es del tipo elegido — se muestran todos los que coinciden con el número.';
+      }
+      if (!filtrados.length){
+        setDocStatus('<i class="bi bi-search me-1"></i>Sin documentos con ese número. Puedes seguir a mano o usar "Buscar en el ERP".', 'info');
+      } else {
+        setDocStatus('<i class="bi bi-check2-circle me-1"></i>' + filtrados.length + ' candidato' + (filtrados.length === 1 ? '' : 's') + ' en el ERP' + (nota ? ' · ' + esc(nota) : ''), 'ok');
+      }
+      renderSugerencias(filtrados);
+    } catch(e){
+      if (seq !== busqSeq) return;
+      setDocStatus('<i class="bi bi-plug me-1"></i>ERP no conectado — puedes seguir a mano.', 'warn');
+      renderSugerencias([]);
+    } finally {
+      busqEnVuelo = false;
+      if (busqPendiente != null && busqPendiente !== q){ var p = busqPendiente; busqPendiente = null; buscarPorNumero(p); }
+      else busqPendiente = null;
+    }
+  }
+  var buscarPorNumeroDeb = debounce(function(){
+    var q = (inpNumero.value || '').trim();
+    if (q.length < 3){ busqSeq++; setDocStatus(''); renderSugerencias([]); return; }
+    buscarPorNumero(q);
+  }, 450);
+  inpNumero && inpNumero.addEventListener('input', buscarPorNumeroDeb);
+  selTipo && selTipo.addEventListener('change', function(){
+    if (inpNumero && (inpNumero.value || '').trim().length >= 3) buscarPorNumeroDeb();
+  });
+
+  function renderSugerencias(docs){
+    sugerenciasActuales = docs || [];
+    var cont = $('nriDocSugerencias'); if (!cont) return;
+    if (!sugerenciasActuales.length){ cont.innerHTML = ''; cont.style.display = 'none'; return; }
+    cont.style.display = '';
+    cont.innerHTML = sugerenciasActuales.map(function(doc, i){
+      var k = docKey(doc.tido_display, doc.nudo_display);
+      var ya = DOCS.has(k);
+      var badgeSaldo = doc.tiene_saldo
+        ? '<span class="nri-pill ok"><i class="bi bi-check-circle"></i>Con saldo</span>'
+        : '<span class="nri-pill warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>';
+      var badgeRetiro = doc.ya_tiene_retiro ? pillYaRetiro(doc) : '';
+      return '<div class="nri-doc-card is-sug' + (ya ? ' is-already' : '') + '" data-key="' + esc(k) + '">' +
+        '<div class="nri-doc-num">' + esc(doc.tido_display) + ' ' + esc(doc.nudo_display) + '<small>' + esc(NRI_TIDO_LABEL[doc.tido_display] || '') + '</small></div>' +
+        '<div class="nri-doc-meta">' +
+          '<span class="ddate">' + esc(doc.fecha || '') + (doc.rut ? ' · RUT ' + esc(rutDesdeCuerpoErp(doc.rut) || doc.rut) : '') + '</span>' +
+          '<span class="dcli">' + esc(doc.razon_social || 'Cliente no informado por ERP') + '</span>' +
+          '<span class="dlin">' + (doc.n_lineas || 0) + ' línea' + (doc.n_lineas === 1 ? '' : 's') + ' · $' + fmtCLP(doc.valor_total) + '</span>' +
+        '</div>' +
+        '<div class="nri-doc-totals">' + badgeSaldo + badgeRetiro + '</div>' +
+        (ya
+          ? '<button type="button" class="nri-erp-btn is-done" disabled><i class="bi bi-check"></i>En el retiro</button>'
+          : '<button type="button" class="nri-erp-btn" data-usar="' + i + '"><i class="bi bi-plus-lg"></i>Usar este documento</button>') +
+      '</div>';
+    }).join('');
+  }
+  function marcarSugerencias(){ if (sugerenciasActuales.length) renderSugerencias(sugerenciasActuales); }
+  $('nriDocSugerencias') && $('nriDocSugerencias').addEventListener('click', async function(ev){
+    var b = ev.target.closest('[data-usar]');
+    if (!b) return;
+    var doc = sugerenciasActuales[parseInt(b.getAttribute('data-usar'), 10)];
+    if (!doc) return;
+    if (doc.ya_tiene_retiro){
+      var infoYa = retiroExistenteInfo(doc);
+      toast('Ojo: ' + doc.tido_display + ' ' + doc.nudo_display + ' ya está en ' + (infoYa.code || 'otro retiro') + '.', 'warning');
+    }
+    b.disabled = true; b.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    var agregado = await agregarDoc(doc.tido_display, doc.nudo_display, { meta: doc });
+    /* M1: si /api/erp/documento falló, agregarDoc devuelve null y ya mostró
+       el toast — se re-renderizan las sugerencias para que el botón vuelva
+       a "Usar este documento" en vez de quedar con el spinner. */
+    if (!agregado) marcarSugerencias();
+  });
+
+  /* ── Modal estándar de búsqueda ERP (tickets/_tka_modal.html) ── */
+  function abrirBuscadorErp(){
+    if (typeof window.tkaOpen !== 'function'){
+      toast('El buscador de documentos ERP no está disponible en esta pantalla.', 'error');
+      return;
+    }
+    /* tkaClose() libera document.body.style.overflow sin saber que este
+       modal Bootstrap sigue abierto detrás. Se observa el cierre de tka
+       (clase is-open) para devolverle el scroll-lock a este modal (patrón
+       de templates/ot2/_modal_crear.html). */
+    var tkaEl = $('tkaModal');
+    if (tkaEl && window.MutationObserver){
+      var mo = new MutationObserver(function(){
+        if (!tkaEl.classList.contains('is-open')){
+          mo.disconnect();
+          if (modalEl.classList.contains('show')) document.body.style.overflow = 'hidden';
+        }
+      });
+      mo.observe(tkaEl, { attributes: true, attributeFilter: ['class'] });
+    }
+    var yaAgregados = Array.from(DOCS.values()).map(function(e){ return { tido: e.tido, nudo: e.nudo_display }; });
+    window.tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['doc'],                       // solo "Por documento": la pestaña por RUT exige permiso Tickets
+      docsYaAgregados: yaAgregados,
+      docsYaAgregadosLabel: 'Ya en este retiro',
+      onSeleccionar: onSeleccionTka,
+    });
+    /* Pre-carga: si el N° ya está escrito, buscamos de una (patrón de
+       templates/transporte/_modal_cotizacion_logistica.html). tkaOpen ya
+       corrió _tkaResetEstado() de forma síncrona, así que seteamos después. */
+    var n = (inpNumero && inpNumero.value || '').trim();
+    if (n && /^[0-9]+$/.test(n)){
+      var tidos = NRI_TIPO_A_TIDOS[selTipo ? selTipo.value : ''] || [];
+      var selT = $('tkaDocTido'), inpN = $('tkaDocNudo');
+      if (selT && tidos.length && selT.querySelector('option[value="' + tidos[0] + '"]')) selT.value = tidos[0];
+      if (inpN){ inpN.value = n; }
+      if (typeof window.tkaBuscarPorDoc === 'function') setTimeout(function(){ try { window.tkaBuscarPorDoc(); } catch(_){} }, 60);
+    }
+  }
+  $('nriDocErpBtn') && $('nriDocErpBtn').addEventListener('click', abrirBuscadorErp);
+
+  /* items: [{tido, nudo, sku, nombre, qty, marcada_sin_saldo}]. Se agrupa
+     por documento y para CADA doc se pide /api/erp/documento (el header
+     que manda tka puede ser null o de otro documento — no se confía). */
+  async function onSeleccionTka(items){
+    if (!items || !items.length) return;
+    var porDoc = {};
+    items.forEach(function(it){
+      if (!it.tido || !it.nudo) return;
+      var k = docKey(it.tido, it.nudo);
+      var g = porDoc[k] = porDoc[k] || { tido: String(it.tido).toUpperCase(), nudo: nudoLimpio(it.nudo), sel: {}, sinSaldo: {} };
+      var q = num(it.qty);
+      if (q > 0 && it.sku){
+        g.sel[it.sku] = (g.sel[it.sku] || 0) + q;
+        if (it.marcada_sin_saldo) g.sinSaldo[it.sku] = true;   // M3: viaja hasta /docs/agregar
+      }
+    });
+    var grupos = Object.keys(porDoc).map(function(k){ return porDoc[k]; });
+    if (!grupos.length){ toast('La selección no traía documentos del ERP.', 'warning'); return; }
+    var repetidos = grupos.filter(function(g){ return DOCS.has(docKey(g.tido, g.nudo)); });
+    if (repetidos.length) toast(repetidos.map(function(g){ return g.tido + ' ' + g.nudo; }).join(', ') + ' ya estaba en el retiro — se actualizó la selección de líneas.', 'info');
+    await Promise.all(grupos.map(function(g){ return agregarDoc(g.tido, g.nudo, { seleccion: g.sel, sinSaldo: g.sinSaldo, silencioso: true }); }));
+    toast('✓ ' + grupos.length + ' documento' + (grupos.length === 1 ? '' : 's') + ' agregado' + (grupos.length === 1 ? '' : 's') + ' al retiro', 'success');
+  }
+
+  /* ═══════════════════ PASO 2 — CLIENTE ═══════════════════ */
+  var inpNombre = campo('customer_name');
+  var inpRut    = campo('customer_rut');
+  var inpFono   = campo('contact_phone');
+  var inpEmail  = campo('contact_email');
+
+  function setCliStatus(html, tipo){   // B1: inline-flex visible / none oculto
+    var el = $('nriCliStatus'); if (!el) return;
+    el.className = 'nri-doc-status' + (tipo ? ' is-' + tipo : '');
+    el.innerHTML = html || '';
+    el.style.display = html ? 'inline-flex' : 'none';
+  }
+
+  /* Chips "Detectado en ERP → usar". Dedup por campo+valor; al usarlo se
+     escribe el campo y el chip desaparece. */
+  var chips = new Map();   // key campo|valor → {campo, valor, origen}
+  var CHIP_LABEL = { customer_name: 'Razón social', customer_rut: 'RUT', contact_phone: 'Teléfono', contact_email: 'Email' };
+  function proponerChip(campoName, valor, origen){
+    valor = String(valor || '').trim();
+    if (!valor) return;
+    var inp = campo(campoName); if (!inp) return;
+    var actual = String(inp.value || '').trim();
+    if (campoName === 'customer_rut'){
+      if (rutClave(actual) === rutClave(valor)) return;
+    } else if (actual.toLowerCase() === valor.toLowerCase()) return;
+    chips.set(campoName + '|' + valor.toLowerCase(), { campo: campoName, valor: valor, origen: origen || 'ERP' });
+    renderChips();
+  }
+  /* Precarga si el campo está vacío; si ya hay algo distinto, queda como
+     chip. El email NUNCA se precarga (decisión de Daniel 2026-09-15). */
+  function precargarOChip(campoName, valor, origen){
+    valor = String(valor || '').trim();
+    if (!valor) return false;
+    var inp = campo(campoName); if (!inp) return false;
+    if (campoName === 'contact_email'){ proponerChip(campoName, valor, origen); return false; }
+    if (!String(inp.value || '').trim()){
+      inp.value = campoName === 'customer_rut' ? (rutCompleto(valor) || valor) : valor;
+      inp.classList.add('nri-precargado');
+      setTimeout(function(){ inp.classList.remove('nri-precargado'); }, 1800);
+      return true;
+    }
+    proponerChip(campoName, valor, origen);
+    return false;
+  }
+  function renderChips(){
+    var cont = $('nriCliChips'); if (!cont) return;
+    // Descartar chips cuyo valor ya quedó en el campo
+    Array.from(chips.entries()).forEach(function(kv){
+      var c = kv[1], inp = campo(c.campo);
+      if (!inp) return;
+      var actual = String(inp.value || '').trim();
+      var igual = c.campo === 'customer_rut' ? rutClave(actual) === rutClave(c.valor) : actual.toLowerCase() === c.valor.toLowerCase();
+      if (igual) chips.delete(kv[0]);
+    });
+    if (!chips.size){ cont.innerHTML = ''; cont.style.display = 'none'; return; }
+    cont.style.display = '';
+    cont.innerHTML = Array.from(chips.entries()).map(function(kv){
+      var c = kv[1];
+      var val = c.campo === 'customer_rut' ? (rutCompleto(c.valor) || c.valor) : c.valor;
+      return '<button type="button" class="nri-chip" data-chip="' + esc(kv[0]) + '" title="Reemplaza el campo ' + esc(CHIP_LABEL[c.campo] || c.campo) + '">' +
+        '<i class="bi bi-cpu"></i><span class="lbl">' + esc(CHIP_LABEL[c.campo] || c.campo) + ' detectado en ERP' + (c.origen ? ' <em>(' + esc(c.origen) + ')</em>' : '') + '</span>' +
+        '<span class="val">' + esc(val) + '</span><span class="usar">→ usar</span></button>';
+    }).join('');
+  }
+  $('nriCliChips') && $('nriCliChips').addEventListener('click', function(ev){
+    var b = ev.target.closest('[data-chip]'); if (!b) return;
+    var c = chips.get(b.getAttribute('data-chip')); if (!c) return;
+    var inp = campo(c.campo); if (!inp) return;
+    inp.value = c.campo === 'customer_rut' ? (rutCompleto(c.valor) || c.valor) : c.valor;
+    chips.delete(b.getAttribute('data-chip'));
+    renderChips();
+    refreshSteps();
+    if (c.campo === 'customer_rut') consultarRutSiValido();
+  });
+
+  /* ── RUT: validación DV en vivo, formato al salir del campo (M6: formatear
+     en cada tecla movía el cursor al final y no dejaba corregir al medio) ── */
+  function pintarValidezRut(inp){
+    if (!inp) return;
+    inp.classList.remove('is-valid', 'is-invalid');
+    var c = cleanRUT(inp.value);
+    if (c.length >= 8) inp.classList.add(isValidRUT(c) ? 'is-valid' : 'is-invalid');
+  }
+  inpRut && inpRut.addEventListener('input', function(){
+    pintarValidezRut(inpRut);
+    var c = cleanRUT(inpRut.value);
+    if (!c) setCliStatus('');
+    consultarRutDeb();
+  });
+  inpRut && inpRut.addEventListener('blur', function(){
+    var c = cleanRUT(inpRut.value);
+    if (c.length >= 2) inpRut.value = formatRUTStr(inpRut.value);
+    pintarValidezRut(inpRut);
+    if (c && !isValidRUT(c)){
+      inpRut.classList.add('is-invalid');
+      setCliStatus('<i class="bi bi-exclamation-triangle me-1"></i>El dígito verificador no cuadra — revisa el RUT.', 'warn');
+    }
+    renderChips();   // un chip "RUT detectado" cuyo valor ya coincide se retira al formatear
+    refreshSteps();
+  });
+  var consultarRutDeb = debounce(consultarRutSiValido, 400);
+
+  function consultarRutSiValido(){
+    var c = cleanRUT(inpRut ? inpRut.value : '');
+    if (!isValidRUT(c)){
+      if (!c) { ultimoRutConsultado = ''; fichaCliente = null; retirosActivos = null; renderRutDocs([]); setCliStatus(''); refreshSteps(); }
+      return;
+    }
+    if (c === ultimoRutConsultado) return;
+    ultimoRutConsultado = c;
+    fichaCliente = null; retirosActivos = null;
+    consultarFichaCliente(c);
+    consultarSaldoCliente(c);
+    consultarRetirosActivos(c);
+  }
+
+  /* ── I3: retiros ACTIVOS del cliente (GET /retiros/api/cliente/<rut>/retiros-activos).
+     Contrato: 200 {ok, retiros:[{id, code, status, status_label, fecha, url}]}
+     ([] si ninguno) · 400 RUT inválido. Lo construye el backend en paralelo:
+     si aún no existe (404) o falla (500) se ignora en silencio. ── */
+  var activosSeq = 0;
+  async function consultarRetirosActivos(rutClean){
+    var seq = ++activosSeq;
+    try {
+      var res = await fetchJson('/retiros/api/cliente/' + encodeURIComponent(formatRUTStr(rutClean)) + '/retiros-activos');
+      if (seq !== activosSeq) return;
+      if (!res.r.ok || !res.d.ok) return;   // falla suave
+      var lista = Array.isArray(res.d.retiros) ? res.d.retiros : [];
+      retirosActivos = { claveRut: rutClave(rutClean), lista: lista.map(function(r){
+        return {
+          id: r.id, code: r.code || ('#' + r.id), status: r.status || '',
+          status_label: r.status_label || r.status || '', fecha: r.fecha || '',
+          url: r.url || (r.id ? '/retiros/' + encodeURIComponent(r.id) : ''),
+        };
+      }) };
+      refreshSteps();
+    } catch(_){ /* falla suave */ }
+  }
+
+  var fichaSeq = 0;
+  async function consultarFichaCliente(rutClean){
+    var seq = ++fichaSeq;
+    setCliStatus('<span class="spinner-border spinner-border-sm me-1"></span>Consultando ficha del cliente en ERP Random…', 'loading');
+    try {
+      /* B4: el RUT viaja CON guion (igual que saldo-pendiente). Sin guion, un
+         RUT de 8 chars el backend lo lee como cuerpo de 8 dígitos → ficha de
+         OTRO cliente. */
+      var res = await fetchJson('/retiros/api/cliente/' + encodeURIComponent(formatRUTStr(rutClean)) + '/ficha');
+      if (seq !== fichaSeq) return;
+      var d = res.d;
+      if (res.r.status === 404 || (!d.ok && /no encontrado/i.test(d.error || ''))){
+        setCliStatus('<i class="bi bi-person-x me-1"></i>RUT sin ficha en ERP — completa a mano.', 'info');
+        refreshSteps();
+        return;
+      }
+      if (res.r.status === 503 || !res.r.ok || !d.ok){
+        setCliStatus('<i class="bi bi-plug me-1"></i>' + esc(d.error || 'ERP no responde') + ' — completa a mano.', 'warn');
+        refreshSteps();
+        return;
+      }
+      var c = d.cliente || {};
+      fichaCliente = { claveRut: rutClave(rutClean), razon_social: c.razon_social || '' };
+      var precargados = [];
+      if (!c.placeholder && c.razon_social && precargarOChip('customer_name', c.razon_social, 'ficha ERP')) precargados.push('razón social');
+      if (c.telefono && precargarOChip('contact_phone', c.telefono, 'ficha ERP')) precargados.push('teléfono');
+      if (c.email) proponerChip('contact_email', c.email, 'ficha ERP');
+      var extra = [];
+      if (c.comuna) extra.push(esc(c.comuna));
+      if (c.giro) extra.push(esc(c.giro));
+      setCliStatus('<i class="bi bi-person-check-fill me-1"></i>Ficha ERP: <strong>' + esc(c.razon_social || 'sin razón social') + '</strong>' +
+        (extra.length ? ' · ' + extra.join(' · ') : '') +
+        (precargados.length ? ' · precargado: ' + precargados.join(', ') : '') +
+        (c.email ? ' · email disponible como chip' : ''), 'ok');
+      refreshSteps();
+    } catch(e){
+      if (seq !== fichaSeq) return;
+      setCliStatus('<i class="bi bi-plug me-1"></i>ERP no responde — completa a mano.', 'warn');
+    }
+  }
+
+  /* ── Documentos con saldo pendiente del cliente (checkbox + toggle-all) ── */
+  var saldoSeq = 0;
+  async function consultarSaldoCliente(rutClean){
+    var seq = ++saldoSeq;
+    var wrap = $('nriRutDocsWrap'), cont = $('nriRutDocs');
+    if (!wrap || !cont) return;
+    wrap.style.display = '';
+    setRutDocsHint('', '');
+    cont.innerHTML = '<div class="nri-skel"><div></div><div></div></div><div class="nri-loading-text"><span class="spinner-border spinner-border-sm me-1"></span>Consultando documentos con saldo pendiente en ERP Random…</div>';
+    try {
+      var res = await fetchJson('/retiros/api/cliente/' + encodeURIComponent(formatRUTStr(rutClean)) + '/saldo-pendiente?dias=90&solo_con_saldo=1');
+      if (seq !== saldoSeq) return;
+      var d = res.d;
+      if (d.hint) setRutDocsHint(d.hint, (d.resumen && d.resumen.con_saldo > 0) ? '' : 'is-warn');
+      if (!res.r.ok || (d.error && !(d.docs || []).length)){
+        cont.innerHTML = '<div class="nri-loading-text"><i class="bi bi-plug me-1"></i>' + esc(d.error || 'ERP no responde') + ' — puedes seguir a mano.</div>';
+        rutDocsActuales = [];
+        return;
+      }
+      renderRutDocs(d.docs || []);
+    } catch(e){
+      if (seq !== saldoSeq) return;
+      cont.innerHTML = '<div class="nri-loading-text"><i class="bi bi-plug me-1"></i>ERP no responde — puedes seguir a mano.</div>';
+      rutDocsActuales = [];
+    }
+  }
+  function setRutDocsHint(msg, clase){
+    var h = $('nriRutDocsHint'), m = $('nriRutDocsHintMsg');
+    if (!h || !m) return;
+    if (!msg){ h.style.display = 'none'; return; }
+    h.className = 'nri-smart-hint ' + (clase || '');
+    m.innerHTML = esc(msg);
+    h.style.display = 'flex';
+  }
+  function renderRutDocs(docs){
+    rutDocsActuales = docs || [];
+    var wrap = $('nriRutDocsWrap'), cont = $('nriRutDocs'), btnAll = $('nriRutDocsToggleAll');
+    if (!wrap || !cont) return;
+    if (!rutDocsActuales.length){
+      if (ultimoRutConsultado){
+        cont.innerHTML = '<div class="nri-loading-text"><i class="bi bi-info-circle me-1"></i>Sin documentos con saldo pendiente en los últimos 90 días. Si tienes el N°, escríbelo en el Paso 1.</div>';
+        if (btnAll) btnAll.style.display = 'none';
+      } else {
+        wrap.style.display = 'none'; cont.innerHTML = '';
+      }
+      return;
+    }
+    wrap.style.display = '';
+    if (btnAll) btnAll.style.display = '';
+    cont.innerHTML = rutDocsActuales.map(function(doc, i){
+      var k = docKey(doc.tido_display, doc.nudo_display);
+      var marcado = DOCS.has(k);
+      var lock = !!doc.ya_tiene_retiro;
+      return '<label class="nri-doc-card is-check' + (lock ? ' is-lock' : '') + (marcado ? ' is-on' : '') + '" data-key="' + esc(k) + '">' +
+        '<input type="checkbox" class="form-check-input nri-rutdoc-chk" data-idx="' + i + '"' + (marcado ? ' checked' : '') + (lock ? ' data-lock="1"' : '') + '>' +
+        '<div class="nri-doc-num">' + esc(doc.tido_display) + ' ' + esc(doc.nudo_display) + '<small>' + esc(NRI_TIDO_LABEL[doc.tido_display] || '') + '</small></div>' +
+        '<div class="nri-doc-meta">' +
+          '<span class="ddate">' + esc(doc.fecha || '') + '</span>' +
+          '<span class="dcli">' + esc(doc.cliente || '') + '</span>' +
+          '<span class="dlin">' + (doc.n_lineas || 0) + ' línea' + (doc.n_lineas === 1 ? '' : 's') + ' · $' + fmtCLP(doc.total) + '</span>' +
+        '</div>' +
+        '<div class="nri-doc-totals">' +
+          (doc.tiene_saldo ? '<span class="nri-pill ok"><i class="bi bi-check-circle"></i>Con saldo</span>' : '<span class="nri-pill warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>') +
+          (lock ? pillYaRetiro(doc) : '') +
+        '</div>' +
+      '</label>';
+    }).join('');
+  }
+  $('nriRutDocs') && $('nriRutDocs').addEventListener('change', async function(ev){
+    var chk = ev.target.closest('.nri-rutdoc-chk'); if (!chk) return;
+    var doc = rutDocsActuales[parseInt(chk.getAttribute('data-idx'), 10)]; if (!doc) return;
+    var k = docKey(doc.tido_display, doc.nudo_display);
+    var card = chk.closest('.nri-doc-card');
+    if (chk.checked){
+      if (doc.ya_tiene_retiro){
+        var infoYa2 = retiroExistenteInfo(doc);
+        toast('Ojo: ' + doc.tido_display + ' ' + doc.nudo_display + ' ya está en ' + (infoYa2.code || 'otro retiro') + '. Se agrega igual porque lo marcaste tú.', 'warning');
+      }
+      if (card) card.classList.add('is-on');
+      var e = await agregarDoc(doc.tido_display, doc.nudo_display, { meta: doc, silencioso: true });
+      if (!e){ chk.checked = false; if (card) card.classList.remove('is-on'); }
+    } else {
+      if (card) card.classList.remove('is-on');
+      quitarDoc(k);
+    }
+  });
+  function sincronizarChecksRutDocs(){
+    var cont = $('nriRutDocs'); if (!cont) return;
+    cont.querySelectorAll('.nri-doc-card.is-check').forEach(function(card){
+      var on = DOCS.has(card.getAttribute('data-key'));
+      var chk = card.querySelector('.nri-rutdoc-chk');
+      if (chk) chk.checked = on;
+      card.classList.toggle('is-on', on);
+    });
+  }
+  /* REGLA #14 — toggle único: si ALGUNO (no bloqueado) está sin marcar,
+     marca todos; si ya están todos, los desmarca. Los "Ya tiene retiro"
+     quedan fuera del marcar-todo a propósito (variante tkaToggleAllDoc);
+     se marcan uno a uno con aviso. Reutiliza el flujo por fila (dispara
+     'change' en cada checkbox) para no duplicar lógica. */
+  $('nriRutDocsToggleAll') && $('nriRutDocsToggleAll').addEventListener('click', function(){
+    var chks = Array.from(document.querySelectorAll('#nriRutDocs .nri-rutdoc-chk:not([data-lock])'));
+    if (!chks.length){ toast('Todos los documentos de la lista ya tienen retiro — márcalos uno a uno si igual corresponde.', 'info'); return; }
+    var marcar = chks.some(function(c){ return !c.checked; });
+    chks.forEach(function(c){
+      if (c.checked === marcar) return;
+      c.checked = marcar;
+      c.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+
+  /* ── Autocompletar por razón social (dropdown .nri-ac) ── */
+  var acBox = $('nriNombreAc');
+  var acSeq = 0, acItems = [], acHi = -1;
+  var buscarNombreDeb = debounce(async function(){
+    var q = (inpNombre.value || '').trim();
+    if (q.length < 3 || /^[0-9.\-kK\s]+$/.test(q)){ cerrarAc(); return; }
+    var seq = ++acSeq;
+    try {
+      var res = await postJson('/retiros/api/buscar-erp', { q: q });
+      if (seq !== acSeq) return;
+      var d = res.d;
+      if (!res.r.ok || d.sin_conexion || d.modo !== 'nombre'){ cerrarAc(); return; }
+      /* B2/B3: doc.rut es el CUERPO sin DV (ENDO del ERP) → rutDesdeCuerpoErp
+         y rutClave(…, true). Antes rutClave cortaba el último dígito del
+         cuerpo, colapsaba clientes distintos y el contador daba siempre 0. */
+      var vistos = {}, lista = [];
+      (d.documentos || []).forEach(function(doc){
+        var rk = rutClave(doc.rut, true);
+        if (!rk || vistos[rk]) return;
+        vistos[rk] = true;
+        lista.push({ razon_social: doc.razon_social || '', rut: rutDesdeCuerpoErp(doc.rut) || doc.rut, clave: rk, n: 0 });
+      });
+      (d.documentos || []).forEach(function(doc){
+        var rk = rutClave(doc.rut, true);
+        lista.forEach(function(it){ if (it.clave === rk) it.n++; });
+      });
+      renderAc(lista.slice(0, 12));
+    } catch(_){ if (seq === acSeq) cerrarAc(); }
+  }, 350);
+  function renderAc(lista){
+    acItems = lista || []; acHi = -1;
+    if (!acBox) return;
+    if (!acItems.length){
+      acBox.innerHTML = '<div class="nri-ac-empty">Sin coincidencias en el ERP — puedes escribir el nombre a mano.</div>';
+      acBox.classList.add('open');
+      return;
+    }
+    acBox.innerHTML = acItems.map(function(it, i){
+      return '<div class="nri-ac-item" data-i="' + i + '">' +
+        '<div class="nom">' + esc(it.razon_social || 'Cliente no informado por ERP') + '</div>' +
+        '<div class="sub"><span class="rut">' + esc(it.rut) + '</span> · ' + it.n + ' documento' + (it.n === 1 ? '' : 's') + ' recientes</div>' +
+      '</div>';
+    }).join('');
+    acBox.classList.add('open');
+  }
+  function cerrarAc(){ if (acBox){ acBox.classList.remove('open'); acBox.innerHTML = ''; } acItems = []; acHi = -1; }
+  function elegirAc(i){
+    var it = acItems[i]; if (!it) return;
+    if (inpNombre && !esPlaceholder(it.razon_social)) inpNombre.value = it.razon_social;
+    if (inpRut && it.rut){
+      /* it.rut ya viene con DV calculado (rutDesdeCuerpoErp); si no pudo
+         (cuerpo raro), se deja tal cual y el semáforo avisa. */
+      inpRut.value = rutCompleto(it.rut) || it.rut;
+      pintarValidezRut(inpRut);
+    }
+    cerrarAc();
+    renderChips();
+    refreshSteps();
+    consultarRutSiValido();
+  }
+  if (inpNombre){
+    inpNombre.setAttribute('autocomplete', 'off');
+    inpNombre.addEventListener('input', buscarNombreDeb);
+    inpNombre.addEventListener('keydown', function(ev){
+      if (!acBox || !acBox.classList.contains('open')) return;
+      if (ev.key === 'ArrowDown'){ ev.preventDefault(); acHi = Math.min(acItems.length - 1, acHi + 1); pintarHi(); }
+      else if (ev.key === 'ArrowUp'){ ev.preventDefault(); acHi = Math.max(0, acHi - 1); pintarHi(); }
+      else if (ev.key === 'Enter' && acHi >= 0){ ev.preventDefault(); elegirAc(acHi); }
+      else if (ev.key === 'Escape'){ cerrarAc(); }
+    });
+    inpNombre.addEventListener('blur', function(){ setTimeout(cerrarAc, 180); });
+  }
+  function pintarHi(){
+    if (!acBox) return;
+    acBox.querySelectorAll('.nri-ac-item').forEach(function(el, i){ el.classList.toggle('hi', i === acHi); });
+  }
+  acBox && acBox.addEventListener('mousedown', function(ev){
+    var it = ev.target.closest('.nri-ac-item'); if (!it) return;
+    ev.preventDefault();
+    elegirAc(parseInt(it.getAttribute('data-i'), 10));
+  });
+
+  /* ── Datos del cliente desde los documentos elegidos (punto 8) ── */
+  function proponerClienteDesdeDocs(){
+    if (!DOCS.size) return;
+    var primero = DOCS.values().next().value;
+    var h = primero.hdr || {};
+    var origen = 'documento ' + primero.tido + ' ' + primero.nudo_display;
+    var nombre = docNombreCliente(primero);
+    var rut = docRutCliente(primero);   // B2: cuerpo del ERP → siempre cuerpo + DV calculado
+    if (nombre) precargarOChip('customer_name', nombre, origen);
+    if (rut) precargarOChip('customer_rut', rut, origen);
+    if (h.telefono) precargarOChip('contact_phone', h.telefono, origen);
+    if (h.email) proponerChip('contact_email', h.email, origen);
+    renderChips();
+    if (rut && inpRut && rutClave(inpRut.value) === rutClave(rut)){
+      inpRut.classList.remove('is-invalid'); inpRut.classList.add('is-valid');
+      consultarRutSiValido();
+    }
+  }
+
+  /* ═══════════════════ PASO 5 — CARGA PRECARGADA ═══════════════════ */
+  var inpBultos = campo('total_packages'), inpKg = campo('total_weight_kg'), inpM3 = campo('total_volume_m3');
+  [['total_packages', inpBultos], ['total_weight_kg', inpKg], ['total_volume_m3', inpM3]].forEach(function(p){
+    if (!p[1]) return;
+    p[1].addEventListener('input', function(){ dirty[p[0]] = true; pintarCargaInfo(ultimoCalculo); });
+  });
+  var ultimoCalculo = null;
+
+  function recalcularCarga(){
+    if (!DOCS.size){
+      // Sin documentos: los campos que el operador NO tocó vuelven a los
+      // valores por defecto del form (1 bulto / 0 kg / 0 m³) para no dejar
+      // colgado el último cálculo de un documento que ya quitó.
+      if (ultimoCalculo){
+        if (inpBultos && !dirty.total_packages) inpBultos.value = '1';
+        if (inpKg && !dirty.total_weight_kg) inpKg.value = '0';
+        if (inpM3 && !dirty.total_volume_m3) inpM3.value = '0';
+      }
+      ultimoCalculo = null; pintarCargaInfo(null); return;
+    }
+    var kg = 0, m3 = 0, bultos = 0, N = 0, M = 0, sinFicha = [];
+    DOCS.forEach(function(e){
+      (e.lineas || []).forEach(function(l){
+        if (l.es_zz || l.es_descuento) return;
+        var sel = num(e.seleccion[l.sku]);
+        if (sel <= 0) return;
+        M++;
+        if (l.tiene_ficha && l.tiene_bultos){
+          N++;
+          var cant = num(l.cantidad), ratio = cant > 0 ? sel / cant : 1;
+          kg += num(l.peso_kg_tot) * ratio;
+          m3 += (num(l.vol_tot) / 1e6) * ratio;
+          bultos += num(l.total_bultos) * ratio;
+        } else {
+          sinFicha.push(l.nombre || l.descripcion_erp || l.sku);
+        }
+      });
+    });
+    var bultosFinal = bultos > 0 ? Math.max(1, Math.ceil(bultos - 1e-9)) : (N > 0 ? N : 0);
+    ultimoCalculo = { kg: kg, m3: m3, bultos: bultosFinal, N: N, M: M, sinFicha: sinFicha };
+    if (inpKg && !dirty.total_weight_kg) inpKg.value = (Math.round(kg * 100) / 100).toFixed(2);
+    if (inpM3 && !dirty.total_volume_m3) inpM3.value = (Math.round(m3 * 1000) / 1000).toFixed(3);
+    if (inpBultos && !dirty.total_packages && bultosFinal > 0) inpBultos.value = String(bultosFinal);
+    pintarCargaInfo(ultimoCalculo);
+  }
+  function pintarCargaInfo(c){
+    var el = $('nriCargaInfo'); if (!el) return;
+    if (!c){ el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    var editados = Object.keys(dirty).filter(function(k){ return dirty[k]; });
+    var html = '<div class="nri-carga-line' + (c.N < c.M ? ' is-warn' : ' is-ok') + '">' +
+      '<i class="bi ' + (c.N < c.M ? 'bi-exclamation-triangle-fill' : 'bi-box-seam-fill') + '"></i>' +
+      '<div><strong>Calculado desde el ERP:</strong> ' + c.N + ' de ' + c.M + ' línea' + (c.M === 1 ? '' : 's') + ' con ficha logística → ' +
+      fmtKg(c.kg) + ' kg · ' + (Math.round(c.m3 * 1000) / 1000).toFixed(3) + ' m³ · ' + c.bultos + ' bulto' + (c.bultos === 1 ? '' : 's') +
+      (c.N < c.M ? '<div class="sub">Las otras ' + (c.M - c.N) + ' no suman peso ni volumen (sin ficha logística): ' + esc(c.sinFicha.slice(0, 4).join(' · ')) + (c.sinFicha.length > 4 ? ' · …' : '') + '. Ajusta a mano si hace falta.</div>' : '') +
+      /* M2: no prometer que el manual se respeta al final — /retiros/nuevo
+         toma tus valores para validar capacidad, pero /docs/agregar
+         recalcula el m³ desde las fichas al asociar cada documento. */
+      (editados.length ? '<div class="sub">Editaste ' + editados.map(function(k){ return { total_packages: 'bultos', total_weight_kg: 'peso', total_volume_m3: 'volumen' }[k]; }).join(', ') + ' a mano — así se envía al crear. Ojo: al asociar los documentos, la ficha del retiro recalcula el m³ desde las fichas logísticas. <a href="#" data-recalc="1">Volver al cálculo del ERP</a></div>' : '') +
+      '</div></div>';
+    el.innerHTML = html;
+  }
+  $('nriCargaInfo') && $('nriCargaInfo').addEventListener('click', function(ev){
+    var a = ev.target.closest('[data-recalc]'); if (!a) return;
+    ev.preventDefault();
+    dirty = { total_packages: false, total_weight_kg: false, total_volume_m3: false };
+    recalcularCarga();
+    refreshSteps();
+  });
+
+  /* ═══════════════════ CREAR = ASOCIAR DE VERDAD ═══════════════════
+     Lo llama el handler de #btnGuardarRetiroInterno (template) tras el
+     POST /retiros/nuevo exitoso y ANTES del redirect. Devuelve
+     {fallos:[...]} y, si hubo fallos, ya mostró el ilusAlert con el
+     detalle — nunca en silencio. */
+  window.nriAsociarDocsTrasCrear = async function(d, btn){
+    var fallos = [];
+    var docs = Array.from(DOCS.values());
+    if (!docs.length || !d || !d.id) return { fallos: fallos, asociados: 0 };
+    var okN = 0;
+    for (var i = 0; i < docs.length; i++){
+      var e = docs[i];
+      if (btn) btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Asociando ' + (i + 1) + '/' + docs.length + '…';
+      var lineas = Object.keys(e.seleccion).map(function(sku){
+        // M3: marcada_sin_saldo por SKU tal como lo marcó el operador en el modal tka
+        return { sku: sku, cantidad_seleccionada: num(e.seleccion[sku]), incluida: true, marcada_sin_saldo: !!(e.sinSaldo && e.sinSaldo[sku]) };
+      });
+      try {
+        var res = await postJson('/retiros/' + encodeURIComponent(d.id) + '/docs/agregar', {
+          document_type: e.tido, document_number: e.nudo_display, lineas: lineas,
+        });
+        if (res.r.ok && res.d.ok){ okN++; continue; }
+        if (res.r.status === 409 || res.d.code === 'DUPLICATE'){ okN++; continue; }   // ya estaba: OK
+        fallos.push(e.tido + ' ' + e.nudo_display + ': ' + (res.d.error || ('HTTP ' + res.r.status)));
+      } catch(err){
+        fallos.push(e.tido + ' ' + e.nudo_display + ': ' + (err.message || 'error de red'));
+      }
+    }
+    if (fallos.length && window.ilusAlert){
+      await window.ilusAlert({
+        title: 'Retiro creado, pero faltó asociar documentos',
+        message: 'El retiro ' + (d.code || '') + ' se creó' + (okN ? ' y se asociaron ' + okN + ' documento' + (okN === 1 ? '' : 's') : '') +
+          '; no se pudo asociar: ' + fallos.join(' · ') + '. Complétalo en la ficha del retiro.',
+        type: 'warning',
+      });
+    }
+    return { fallos: fallos, asociados: okN };
+  };
+
+  /* ═══════════════════ CAPA DE INTELIGENCIA (Daniel 2026-09-15) ═══════════
+     "que el modal sea lo suficientemente inteligente para que identifique
+     patrones, repetidos y guíe al usuario con un semáforo hasta que los
+     datos y el contorno del objeto estén en verde".
+
+     · nriEvaluarPasos(): evaluador central. Por paso devuelve
+       {idx, estado:'rojo'|'ambar'|'verde', faltan:[], avisos:[{txt, html?}], ok}
+       y PINTA: borde/círculo de la tarjeta (.is-complete / .is-warn / nada),
+       la línea .nri-step-estado con lo que falta o está raro, los avisos con
+       acción (#nriDocAvisos / #nriCliAvisos) y el progreso del header.
+       La llama nriRefreshSteps() del template (aditivo: el semáforo binario
+       de siempre sigue corriendo debajo).
+     · nriPreCrear(): pre-chequeo del botón "Crear y confirmar". NUNCA
+       deshabilita el botón (regla de Daniel: proponer, no bloquear): con
+       rojos hace scroll + resalte + toast; con solo ámbar pide confirmación.
+     ═══════════════════════════════════════════════════════════════════════ */
+  var inpPersona = campo('pickup_person_name'), inpPersonaRut = campo('pickup_person_rut'), selRelacion = campo('pickup_person_relation');
+  var selResponsable = campo('responsable_user_id'), selCanal = campo('canal');
+  var btnCrear = $('btnGuardarRetiroInterno');
+  var ICONO_ESTADO = { rojo: 'bi-x-circle-fill', ambar: 'bi-exclamation-triangle-fill', verde: 'bi-check-circle-fill' };
+
+  function val(inp){ return inp ? String(inp.value || '').trim() : ''; }
+  function textoOpcion(sel){
+    if (!sel || !sel.value) return '';
+    var o = sel.options[sel.selectedIndex];
+    return o ? String(o.textContent || '').trim() : sel.value;
+  }
+  function fmtFechaISO(iso){
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
+    return m ? m[3] + '/' + m[2] + '/' + m[1] : String(iso || '');
+  }
+  /* ¿Ese texto es un RUT completo con DV que cuadra? (8-9 chars) */
+  function esRutPlausible(txt){
+    var c = cleanRUT(txt);
+    return c.length >= 8 && c.length <= 9 && /^\d+[\dK]$/.test(c) && isValidRUT(c);
+  }
+  /* HTML de un aviso con acción. acts: [{act, label, primary, key}] */
+  function avisoHtml(icono, innerHtml, acts){
+    var botones = (acts || []).map(function(a){
+      return '<button type="button" class="nri-aviso-btn' + (a.primary ? ' is-primary' : '') + '" data-act="' + esc(a.act) + '"' + (a.key != null ? ' data-key="' + esc(a.key) + '"' : '') + '>' + esc(a.label) + '</button>';
+    }).join('');
+    return '<div class="nri-aviso"><i class="bi ' + esc(icono) + '"></i><div class="txt">' + innerHtml + '</div>' + (botones ? '<div class="acts">' + botones + '</div>' : '') + '</div>';
+  }
+  function plural(n, uno, varios){ return n === 1 ? uno : varios; }
+
+  /* ── Paso 1 · Documento (opcional) ── */
+  function evalPaso1(){
+    var r = { faltan: [], avisos: [], ok: '' };
+    var numero = val(inpNumero), n = DOCS.size;
+    if (!n){
+      if (!numero){ r.ok = 'Sin documento (opcional)'; return r; }
+      if (esRutPlausible(numero)){
+        /* I2d: 8-9 dígitos con DV válido → probablemente es un RUT */
+        r.avisos.push({
+          txt: '¿' + formatRUTStr(numero) + ' es un RUT? Va en el Paso 2',
+          html: avisoHtml('bi-person-badge', '<strong>' + esc(formatRUTStr(numero)) + '</strong> parece un RUT, no un N° de documento.',
+            [{ act: 'numero-a-rut', label: 'Es un RUT → buscar cliente', primary: true }]),
+        });
+      } else {
+        r.avisos.push({ txt: 'N° escrito pero no verificado en el ERP — usa Buscar o elige un candidato' });
+      }
+      return r;
+    }
+    r.ok = n + ' documento' + plural(n, '', 's') + ' verificado' + plural(n, '', 's') + ' en ERP';
+    if (numero && !algunDocConNumero(numero)) r.avisos.push({ txt: 'El N° ' + numero + ' no es ninguno de los documentos verificados' });
+    var claves = {};
+    DOCS.forEach(function(e){
+      var lbl = e.tido + ' ' + e.nudo_display, m = e.meta || {};
+      var rr = lineasResumen(e);
+      var conSaldo = m.tiene_saldo != null ? !!m.tiene_saldo : rr.conSaldo > 0;
+      if (!conSaldo) r.avisos.push({ txt: lbl + ' sin saldo (ya despachado)' });
+      if (m.ya_tiene_retiro){
+        /* I2a: repetido — ya está asociado a otro retiro */
+        var info = retiroExistenteInfo(m);
+        r.avisos.push({
+          txt: lbl + ' ya está en ' + (info.code || 'otro retiro'),
+          html: avisoHtml('bi-lock-fill', '<strong>' + esc(lbl) + '</strong> ya está en <strong>' + esc(info.code || 'otro retiro') + '</strong>.' +
+            (info.url ? ' <a href="' + esc(info.url) + '" target="_blank" rel="noopener">ver retiro</a>' : '') + ' Se asocia igual porque lo elegiste tú.', []),
+        });
+      }
+      var ck = docClaveRut(e);
+      if (ck) claves[ck] = (claves[ck] || 0) + 1;
+    });
+    var nRuts = Object.keys(claves).length;
+    if (nRuts > 1) r.avisos.push({ txt: 'Los documentos son de ' + nRuts + ' clientes (RUT) distintos' });   // I2c
+    return r;
+  }
+
+  /* ── Paso 2 · Cliente ── */
+  function evalPaso2(){
+    var r = { faltan: [], avisos: [], ok: '' };
+    var nombre = val(inpNombre), rut = val(inpRut), fono = val(inpFono), email = val(inpEmail);
+    if (!nombre) r.faltan.push('nombre / razón social');
+    else if (/^[0-9.\-kK\s]+$/.test(nombre) && esRutPlausible(nombre)){
+      /* I2e: el "nombre" es un RUT */
+      r.avisos.push({
+        txt: 'El nombre parece un RUT',
+        html: avisoHtml('bi-person-badge', 'El nombre <strong>' + esc(nombre) + '</strong> parece un RUT.',
+          [{ act: 'nombre-a-rut', label: 'Es un RUT → buscar cliente', primary: true }]),
+      });
+    } else if (/^\d+$/.test(nombre)) r.avisos.push({ txt: 'El nombre tiene solo dígitos' });
+    if (rut && !isValidRUT(rut)) r.avisos.push({ txt: 'RUT: dígito verificador no cuadra' });
+    if (fono && !fonoChilenoOk(fono)) r.avisos.push({ txt: 'Teléfono no parece chileno (+56 9 XXXX XXXX)' });
+    if (email && !emailOk(email)) r.avisos.push({ txt: 'Email con formato inválido' });
+    var claveCli = rut ? rutClave(rut) : '';
+
+    /* I3: cliente con retiro(s) ACTIVO(s) */
+    if (retirosActivos && claveCli && retirosActivos.claveRut === claveCli && retirosActivos.lista.length){
+      var L = retirosActivos.lista;
+      var cab = 'Este cliente ya tiene ' + L.length + ' retiro' + plural(L.length, '', 's') + ' activo' + plural(L.length, '', 's');
+      r.avisos.push({
+        txt: cab + ': ' + L.map(function(x){ return x.code + (x.status_label ? ' (' + x.status_label + ')' : ''); }).join(', '),
+        html: avisoHtml('bi-arrow-repeat', '<strong>' + esc(cab) + '</strong>: ' + L.map(function(x){
+          return (x.url ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener">' + esc(x.code) + '</a>' : esc(x.code)) +
+            (x.status_label ? ' (' + esc(x.status_label) + ')' : '') + (x.fecha ? ' · ' + esc(x.fecha) : '') + ' · <a href="' + esc(x.url || '#') + '" target="_blank" rel="noopener">ver</a>';
+        }).join(' &nbsp;|&nbsp; ') + '. Revisa que no sea el mismo antes de crear otro.', []),
+      });
+    }
+
+    /* I2b: RUT del/los documentos distinto al RUT escrito */
+    if (claveCli){
+      DOCS.forEach(function(e, key){
+        var ck = docClaveRut(e);
+        if (!ck || ck === claveCli || mantenerDistinto[key]) return;
+        var lbl = e.tido + ' ' + e.nudo_display, nomDoc = docNombreCliente(e) || 'cliente no informado por ERP', rutDoc = docRutCliente(e);
+        var quien = nombre || formatRUTStr(rut);
+        r.avisos.push({
+          txt: lbl + ' es de ' + nomDoc + ' (' + rutDoc + '), distinto a ' + quien,
+          html: avisoHtml('bi-people-fill', '<strong>' + esc(lbl) + '</strong> es de <strong>' + esc(nomDoc) + '</strong> (' + esc(rutDoc) + '), distinto a <strong>' + esc(quien) + '</strong>. ' +
+            'El dueño del documento es el cliente oficial; quien declaraste puede quedar como persona que retira.',
+            [{ act: 'usar-cliente-doc', key: key, label: 'Usar cliente del documento', primary: true }, { act: 'mantener-distinto', key: key, label: 'Mantener' }]),
+        });
+      });
+    }
+    if (!r.faltan.length){
+      r.ok = (fichaCliente && claveCli && fichaCliente.claveRut === claveCli) ? 'Cliente verificado en ERP' : 'Cliente completo';
+    }
+    return r;
+  }
+
+  /* ── Paso 3 · Persona que retira ── */
+  function evalPaso3(){
+    var r = { faltan: [], avisos: [], ok: '' };
+    var nombre = val(inpPersona), rut = val(inpPersonaRut);
+    if (!nombre) r.faltan.push('nombre de quien retira');
+    if (rut && !isValidRUT(rut)) r.avisos.push({ txt: 'RUT: dígito verificador no cuadra' });
+    var nomCli = val(inpNombre), rutCli = val(inpRut);
+    /* I2g: mismo nombre que el cliente pero sin RUT → sugerir el chip */
+    if (nombre && nomCli && nombre.toLowerCase() === nomCli.toLowerCase() && !rut && rutCli){
+      r.avisos.push({ txt: 'Mismo nombre que el cliente — usa "Es el mismo cliente" para copiar el RUT' });
+    }
+    if (!r.faltan.length) r.ok = 'Retira ' + nombre + (rut && isValidRUT(rut) ? ' · ' + formatRUTStr(rut) : '');
+    return r;
+  }
+
+  /* ── Paso 4 · Responsable ── */
+  function evalPaso4(){
+    var r = { faltan: [], avisos: [], ok: '' };
+    if (!val(selResponsable)) r.faltan.push('responsable');
+    else r.ok = 'Responsable: ' + textoOpcion(selResponsable);
+    return r;
+  }
+
+  /* ── Paso 5 · Carga (opcional) ── */
+  function evalPaso5(){
+    var r = { faltan: [], avisos: [], ok: '' };
+    var kg = num(val(inpKg)), m3 = num(val(inpM3)), bultos = num(val(inpBultos));
+    if (kg > 0){
+      r.ok = fmtKg(kg) + ' kg · ' + (Math.round(m3 * 1000) / 1000).toFixed(3) + ' m³ · ' + bultos + ' bulto' + plural(bultos, '', 's');
+      return r;
+    }
+    if (DOCS.size){
+      var c = ultimoCalculo, sin = c ? Math.max(0, c.M - c.N) : 0;
+      r.avisos.push({ txt: sin ? sin + ' línea' + plural(sin, '', 's') + ' sin ficha logística → peso 0, revisa' : 'Documentos asociados pero peso 0 — revisa la carga' });
+    } else if (kg <= 0 && m3 <= 0){
+      r.avisos.push({ txt: 'Sin carga declarada' });
+    }
+    r.ok = 'Carga declarada';
+    return r;
+  }
+
+  /* ── Paso 6 · Agenda ── */
+  function evalPaso6(){
+    var r = { faltan: [], avisos: [], ok: '' };
+    var f = val($('nriHidDate')), tf = val($('nriHidTf')), tt = val($('nriHidTt'));
+    if (!f && !tf) r.faltan.push('fecha y bloque horario');
+    else if (!f) r.faltan.push('fecha');
+    else if (!tf) r.faltan.push('bloque horario');
+    if (!r.faltan.length) r.ok = 'Día ' + fmtFechaISO(f) + ' · ' + tf + (tt ? '–' + tt : '');
+    return r;
+  }
+
+  /* ── Paso 7 · Canal ── */
+  function evalPaso7(){
+    var r = { faltan: [], avisos: [], ok: '' };
+    if (!val(selCanal)) r.faltan.push('canal por el que aceptó el cliente');
+    else r.ok = 'Aceptó por ' + textoOpcion(selCanal);
+    return r;
+  }
+
+  function pintarPaso(idx, r){
+    var card = $('nriStep' + idx), linea = $('nriStepEstado' + idx);
+    var estado = r.faltan.length ? 'rojo' : (r.avisos.length ? 'ambar' : 'verde');
+    r.idx = idx; r.estado = estado;
+    if (card){
+      card.classList.toggle('is-complete', estado === 'verde');
+      card.classList.toggle('is-warn', estado === 'ambar');
+    }
+    if (linea){
+      var txt;
+      if (estado === 'rojo') txt = 'Falta: ' + r.faltan.join(' · ') + (r.avisos.length ? ' · ' + r.avisos.map(function(a){ return a.txt; }).join(' · ') : '');
+      else if (estado === 'ambar') txt = r.avisos.map(function(a){ return a.txt; }).join(' · ');
+      else txt = r.ok;
+      linea.innerHTML = txt ? '<i class="bi ' + ICONO_ESTADO[estado] + '"></i><span>' + esc(txt) + '</span>' : '';
+    }
+    var contAvisos = idx === 1 ? $('nriDocAvisos') : (idx === 2 ? $('nriCliAvisos') : null);
+    if (contAvisos){
+      var html = r.avisos.filter(function(a){ return a.html; }).map(function(a){ return a.html; }).join('');
+      if (contAvisos.innerHTML !== html) contAvisos.innerHTML = html;
+    }
+  }
+  function pintarProgreso(res){
+    var verdes = 0, rojos = 0, avisos = 0;
+    res.forEach(function(r){ if (r.estado === 'verde') verdes++; if (r.estado === 'rojo') rojos++; avisos += r.avisos.length; });
+    var txt = $('nriProgresoTxt'), bar = $('nriProgresoBar'), av = $('nriProgresoAvisos');
+    if (txt) txt.textContent = verdes + ' de ' + res.length + ' pasos listos';
+    if (bar) bar.style.width = Math.round(verdes / Math.max(1, res.length) * 100) + '%';
+    if (av) av.textContent = avisos ? '· ' + avisos + ' aviso' + plural(avisos, '', 's') : '';
+    if (btnCrear) btnCrear.classList.toggle('is-pending', rojos > 0);
+  }
+
+  /* Evaluador central. Cada paso va en su try/catch: un dato raro en uno no
+     puede apagar el semáforo de los demás. */
+  window.nriEvaluarPasos = function(){
+    var evals = [evalPaso1, evalPaso2, evalPaso3, evalPaso4, evalPaso5, evalPaso6, evalPaso7];
+    var res = evals.map(function(fn, i){
+      var r;
+      try { r = fn(); } catch(e){ console.warn('[nri] evalPaso' + (i + 1), e); r = { faltan: [], avisos: [], ok: '' }; }
+      pintarPaso(i + 1, r);
+      return r;
+    });
+    pintarProgreso(res);
+    ultimaEvaluacion = res;
+    return res;
+  };
+
+  /* ── Pre-chequeo de "Crear y confirmar" (I4) ── */
+  window.nriPreCrear = async function(){
+    var res = window.nriEvaluarPasos();
+    var rojos = res.filter(function(r){ return r.estado === 'rojo'; });
+    if (rojos.length){
+      var card = $('nriStep' + rojos[0].idx);
+      if (card){
+        try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_){ card.scrollIntoView(); }
+        card.classList.remove('nri-flash'); void card.offsetWidth; card.classList.add('nri-flash');
+        setTimeout(function(){ card.classList.remove('nri-flash'); }, 1300);
+        var f = card.querySelector('.nri-req:not([type="hidden"])');
+        if (f) try { f.focus({ preventScroll: true }); } catch(_){}
+      }
+      toast('Falta: ' + rojos.map(function(r){ return 'Paso ' + r.idx + ' → ' + r.faltan.join(', '); }).join(' · '), 'warning');
+      return false;
+    }
+    var avisos = [];
+    res.forEach(function(r){ r.avisos.forEach(function(a){ avisos.push('Paso ' + r.idx + ': ' + a.txt); }); });
+    if (!avisos.length) return true;
+    if (typeof window.ilusConfirm !== 'function') return true;
+    return !!(await window.ilusConfirm({
+      title: 'Hay ' + avisos.length + ' advertencia' + plural(avisos.length, '', 's'),
+      message: '¿Crear el retiro igual?',
+      sub: avisos.map(function(a){ return '<div>• ' + esc(a) + '</div>'; }).join(''),
+      subHtml: true,
+      okLabel: 'Crear igual', cancelLabel: 'Revisar',
+      type: 'warning',
+    }));
+  };
+
+  /* ── Acciones de los avisos (delegación en #nriDocAvisos y #nriCliAvisos) ── */
+  function scrollAPaso(idx){
+    var card = $('nriStep' + idx);
+    if (card) try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch(_){}
+  }
+  /* Mueve un texto que en realidad es un RUT al campo RUT del Paso 2 y
+     dispara la ficha. Si el RUT ya tiene otro valor, se ofrece como chip. */
+  function moverARutCliente(txt, origen, limpiar){
+    var rut = formatRUTStr(txt);
+    if (!inpRut) return;
+    var actual = val(inpRut);
+    if (!actual || rutClave(actual) === rutClave(rut)){
+      inpRut.value = rut;
+      inpRut.classList.add('nri-precargado'); setTimeout(function(){ inpRut.classList.remove('nri-precargado'); }, 1800);
+    } else {
+      proponerChip('customer_rut', rut, origen);
+    }
+    if (limpiar) limpiar();
+    pintarValidezRut(inpRut);
+    renderChips();
+    consultarRutSiValido();
+    refreshSteps();
+    scrollAPaso(2);
+    toast('RUT movido al Paso 2 — consultando la ficha del cliente en el ERP…', 'info');
+  }
+  async function usarClienteDelDoc(key){
+    var e = DOCS.get(key); if (!e) return;
+    var declarado = { nombre: val(inpNombre), rut: val(inpRut), fono: val(inpFono) };
+    var nomDoc = docNombreCliente(e), rutDoc = docRutCliente(e), h = e.hdr || {};
+    if (nomDoc && inpNombre) inpNombre.value = nomDoc;
+    if (rutDoc && inpRut){ inpRut.value = rutDoc; pintarValidezRut(inpRut); }
+    if (h.telefono && inpFono && !val(inpFono)) inpFono.value = h.telefono;
+    [inpNombre, inpRut].forEach(function(i){ if (i){ i.classList.add('nri-precargado'); setTimeout(function(){ i.classList.remove('nri-precargado'); }, 1800); } });
+    renderChips();
+    consultarRutSiValido();
+    refreshSteps();
+    /* Regla de Daniel: dueño del documento = cliente oficial; el declarado
+       puede quedar como persona que retira → se OFRECE, no se hace solo. */
+    var nombreDistinto = declarado.nombre && nomDoc && declarado.nombre.toLowerCase() !== nomDoc.toLowerCase();
+    if (nombreDistinto && inpPersona && !val(inpPersona) && typeof window.ilusConfirm === 'function'){
+      var ok = await window.ilusConfirm({
+        title: 'Persona que retira',
+        message: '¿Dejar a ' + declarado.nombre + ' como la persona que retira (Paso 3)?',
+        sub: 'El cliente oficial queda ' + nomDoc + (rutDoc ? ' (' + rutDoc + ')' : '') + '.',
+        okLabel: 'Sí, como persona que retira', cancelLabel: 'No',
+        type: 'question',
+      });
+      if (ok){
+        inpPersona.value = declarado.nombre;
+        if (inpPersonaRut && declarado.rut && isValidRUT(declarado.rut) && !val(inpPersonaRut)) inpPersonaRut.value = formatRUTStr(declarado.rut);
+        if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="autorizado"]')) selRelacion.value = 'autorizado';
+        pintarValidezRut(inpPersonaRut);
+        refreshSteps();
+      }
+    }
+    toast('✓ Cliente tomado del documento ' + e.tido + ' ' + e.nudo_display, 'success');
+  }
+  function onAccionAviso(ev){
+    var b = ev.target.closest('[data-act]'); if (!b) return;
+    var act = b.getAttribute('data-act'), key = b.getAttribute('data-key');
+    if (act === 'numero-a-rut'){
+      var n = val(inpNumero);
+      moverARutCliente(n, 'N° documento', function(){
+        if (inpNumero) inpNumero.value = '';
+        asistenteEscribio.numero = null;
+        busqSeq++; setDocStatus(''); renderSugerencias([]);
+      });
+    } else if (act === 'nombre-a-rut'){
+      var nm = val(inpNombre);
+      moverARutCliente(nm, 'campo nombre', function(){ if (inpNombre) inpNombre.value = ''; cerrarAc(); });
+    } else if (act === 'usar-cliente-doc'){
+      usarClienteDelDoc(key);
+    } else if (act === 'mantener-distinto'){
+      mantenerDistinto[key] = true;
+      refreshSteps();
+      toast('Se mantiene el cliente que escribiste; el documento queda asociado igual.', 'info');
+    }
+  }
+  $('nriDocAvisos') && $('nriDocAvisos').addEventListener('click', onAccionAviso);
+  $('nriCliAvisos') && $('nriCliAvisos').addEventListener('click', onAccionAviso);
+
+  /* ── Paso 3 · chip "Es el mismo cliente" + RUT de quien retira ── */
+  async function copiarMismoCliente(){
+    var nom = val(inpNombre), rut = val(inpRut);
+    if (!nom && !rut){ toast('Primero completa el cliente en el Paso 2.', 'info'); scrollAPaso(2); return; }
+    var pNom = val(inpPersona), pRut = val(inpPersonaRut);
+    var pisa = (pNom && nom && pNom.toLowerCase() !== nom.toLowerCase()) || (pRut && rut && rutClave(pRut) !== rutClave(rut));
+    if (pisa && typeof window.ilusConfirm === 'function'){
+      var ok = await window.ilusConfirm({
+        title: 'Reemplazar persona que retira',
+        message: 'Ya escribiste ' + (pNom || pRut) + ' en el Paso 3. ¿Reemplazarlo por el cliente ' + (nom || rut) + '?',
+        okLabel: 'Reemplazar', cancelLabel: 'Cancelar', type: 'question',
+      });
+      if (!ok) return;
+    }
+    if (nom && inpPersona) inpPersona.value = nom;
+    if (rut && inpPersonaRut) inpPersonaRut.value = formatRUTStr(rut);
+    if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="dueno"]')) selRelacion.value = 'dueno';
+    [inpPersona, inpPersonaRut].forEach(function(i){ if (i){ i.classList.add('nri-precargado'); setTimeout(function(){ i.classList.remove('nri-precargado'); }, 1800); } });
+    pintarValidezRut(inpPersonaRut);
+    refreshSteps();
+    toast('✓ Persona que retira = el mismo cliente (relación: Dueño / titular)', 'success');
+  }
+  $('nriMismoCliente') && $('nriMismoCliente').addEventListener('click', copiarMismoCliente);
+  inpPersonaRut && inpPersonaRut.addEventListener('input', function(){ pintarValidezRut(inpPersonaRut); });
+  inpPersonaRut && inpPersonaRut.addEventListener('blur', function(){
+    if (cleanRUT(inpPersonaRut.value).length >= 2) inpPersonaRut.value = formatRUTStr(inpPersonaRut.value);
+    pintarValidezRut(inpPersonaRut);
+    refreshSteps();
+  });
+
+  /* ═══════════════════ Reset al cerrar sin crear ═══════════════════
+     Bootstrap no resetea el form al cerrar, y el operador puede reabrir
+     para seguir; el estado se conserva mientras la página viva. Si el
+     form se resetea explícitamente (form.reset()), limpiamos también. */
+  form.addEventListener('reset', function(){
+    DOCS.clear(); chips.clear(); dirty = { total_packages: false, total_weight_kg: false, total_volume_m3: false };
+    ultimoRutConsultado = ''; sugerenciasActuales = []; rutDocsActuales = [];
+    asistenteEscribio = { tipo: null, numero: null };
+    fichaCliente = null; retirosActivos = null; mantenerDistinto = {}; ultimaEvaluacion = null;
+    setDocStatus(''); setCliStatus(''); renderChips(); renderSugerencias([]); renderRutDocs([]); renderDocsSel(); pintarCargaInfo(null);
+    /* form.reset() restaura los .value de forma asíncrona respecto a este
+       evento: se re-evalúa en el siguiente tick para pintar el semáforo limpio. */
+    setTimeout(refreshSteps, 0);
+  });
+
+  /* Valores iniciales ya presentes (p.ej. reapertura) */
+  renderDocsSel();
+  if (inpRut && isValidRUT(inpRut.value)) consultarRutSiValido();
+  /* Primera pintada del semáforo de tres estados (I5): window.nriRefreshSteps
+     ya existe porque el <script> inline del template corre antes que este
+     archivo (defer). */
+  refreshSteps();
+})();

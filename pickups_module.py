@@ -92,6 +92,94 @@ def pickup_journey_idx(status):
     return PICKUP_JOURNEY_IDX.get(status or "", 0)
 
 
+# ════════════════════════════════════════════════════════════════════
+#  MAPA ÚNICO document_type (ILUS) ↔ TIDO (ERP Random) — 2026-09-15
+#  pickup_requests.document_type guarda el tipo "humano" ('factura',
+#  'boleta', 'nota_venta', 'pedido', 'guia'); el ERP y pickup_request_docs
+#  hablan en TIDO ('FCV', 'BLV', 'VD', 'WEB', 'GDV'). Este es el ÚNICO
+#  lugar del proyecto donde vive la traducción: lo usan pickup_api_full,
+#  el cruce "ya_tiene_retiro" de saldo-pendiente y el frontend del wizard
+#  (que replica PICKUP_TIDO_INVERSO en la constante JS NRI_TIDO_INVERSO
+#  para setear el <select name="document_type"> del Paso 1).
+#  NVI = factura electrónica de importación: se muestra como factura.
+#  NVV = nota de venta cuyo NUDO puede traer prefijo 'VD…' o 'WEB…'.
+# ════════════════════════════════════════════════════════════════════
+PICKUP_TIDO_MAP = {
+    "factura":       "FCV",
+    "boleta":        "BLV",
+    "guia":          "GDV",
+    "guia_despacho": "GDV",
+    "nota_venta":    "VD",
+    "venta_directa": "VD",
+    "pedido":        "WEB",
+    "cotizacion":    "COV",
+}
+PICKUP_TIDO_INVERSO = {
+    "FCV": "factura",
+    "BLV": "boleta",
+    "GDV": "guia",
+    "VD":  "nota_venta",
+    "NVV": "nota_venta",
+    "WEB": "pedido",
+    "NVI": "factura",
+}
+
+
+def pickup_doc_type_to_tido(document_type):
+    """'factura' → 'FCV'. Si ya viene como TIDO ('FCV', 'vd') lo devuelve en
+    mayúsculas tal cual. Vacío → ''. Sirve para llevar el document_type de
+    pickup_requests al mismo dominio que pickup_request_docs / el ERP."""
+    dt = (document_type or "").strip().lower().replace(" ", "_")
+    if not dt:
+        return ""
+    return PICKUP_TIDO_MAP.get(dt) or dt.upper()
+
+
+def pickup_tido_equivalentes(tido):
+    """TIDOs que representan el MISMO tipo de documento para el operador.
+    Ej.: 'FCV' → {'FCV', 'NVI'}; 'VD' → {'VD', 'NVV'}; 'WEB' → {'WEB'}.
+    Se usa al cruzar claves TIDO|numero: un retiro guardado como 'nota_venta'
+    debe reconocer tanto el folio 'VD' como el 'NVV' del ERP."""
+    t = (tido or "").strip().upper()
+    if not t:
+        return set()
+    humano = PICKUP_TIDO_INVERSO.get(t)
+    if not humano:
+        return {t}
+    return {t} | {k for k, v in PICKUP_TIDO_INVERSO.items() if v == humano}
+
+
+def pickup_erp_doc_display(tido_raw, nudo_raw):
+    """(tido_display, nudo_display) a partir del TIDO/NUDO crudos del ERP.
+    El NUDO viene padded ('0000000123') y, en NVV, con prefijo 'VD…'/'WEB…'.
+    MISMA lógica que el formateo de saldo-pendiente y buscar-erp — se
+    centraliza para que el cruce "ya_tiene_retiro" use exactamente la misma
+    clave que la que se muestra en pantalla."""
+    tido_raw = (tido_raw or "").strip().upper()
+    nudo_raw = (nudo_raw or "").strip()
+    if tido_raw == "NVV" and nudo_raw.upper().startswith("VD"):
+        return "VD", (nudo_raw[2:].lstrip("0") or "0")
+    if tido_raw == "NVV" and nudo_raw.upper().startswith("WEB"):
+        return "WEB", (nudo_raw[3:].lstrip("0") or "0")
+    if not nudo_raw:
+        return tido_raw, ""
+    return tido_raw, (nudo_raw.lstrip("0") or "0")
+
+
+def pickup_doc_number_display(numero):
+    """Normaliza un document_number guardado en ILUS al formato display del
+    ERP: sin espacios, sin prefijo 'VD'/'WEB' y sin ceros a la izquierda.
+    '0000000123' → '123'; 'VD00001234' → '1234'; '' → ''."""
+    n = str(numero or "").strip().upper().replace(" ", "")
+    if not n:
+        return ""
+    if n.startswith("WEB"):
+        n = n[3:]
+    elif n.startswith("VD"):
+        n = n[2:]
+    return n.lstrip("0") or "0"
+
+
 def pickup_email_stepper_html(active_idx):
     """Stepper de 5 hitos email-safe (tabla) — FUENTE ÚNICA para el tracking
     dentro de un correo. La usan tanto el correo al CLIENTE (_ret_stepper en
@@ -269,6 +357,28 @@ def is_valid_rut(rut: str) -> bool:
         return False
     num, dv = c[:-1], c[-1]
     return num.isdigit() and _calc_dv(num) == dv
+
+
+def _pickup_rut_cuerpo(raw) -> str:
+    """Cuerpo del RUT (sin puntos, guion ni DV) — espejo local de
+    `_rut_cuerpo` de app.py, que es el helper canónico (se usa aquel vía ctx
+    cuando está disponible; este es solo el fallback). MAEEN.RTEN guarda el
+    cuerpo SIN dígito verificador, así que toda búsqueda por RUT en el ERP
+    debe hacerse con el cuerpo.
+        '77.017.350-K' → '77017350' ; '770173509' → '77017350'
+        '77017350K'    → '77017350' ; '77017350'  → '77017350'
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip().upper()
+    if "-" in s:
+        return re.sub(r"[^0-9K]", "", s.split("-", 1)[0])
+    s = re.sub(r"[^0-9K]", "", s)
+    if s.endswith("K"):
+        return s[:-1]
+    if len(s) >= 9:
+        return s[:-1]
+    return s
 
 
 def format_rut(rut: str) -> str:
@@ -2410,6 +2520,12 @@ def register_pickup_routes(app, ctx):
     _SALDO_CACHE: dict = {}      # key (rut+dias+solo_con_saldo) → (payload, ts)
     _SALDO_TTL = 60.0            # segundos
 
+    # ⚡ PERF 2026-09-15: cache de la FICHA del cliente en el ERP (MAEEN) por
+    # cuerpo de RUT. El wizard consulta la ficha al tipear/pegar el RUT y al
+    # elegir un documento; los datos maestros del cliente no cambian en 60s.
+    _FICHA_CACHE: dict = {}      # rut_cuerpo → (payload, ts)
+    _FICHA_TTL = 60.0            # segundos
+
     # ⚡ PERF: cache para /retiros/<rid>/docs polled muchas veces durante
     # un wizard activo. Versionado por updated_at del registro.
     _DOCS_CACHE: dict = {}       # rid → (payload, ts, version_hash)
@@ -4193,6 +4309,26 @@ def register_pickup_routes(app, ctx):
             return _err("El email del cliente no es válido. Usa el formato nombre@dominio.cl "
                         "(o déjalo vacío si no quieres notificarlo).")
 
+        # ── Normalización de RUT y teléfonos SIN bloquear (2026-09-15) ──
+        # Mismos helpers que pickup_public_request (is_valid_rut/format_rut,
+        # is_valid_cl_phone/format_cl_phone), pero acá NO se rechaza nada:
+        # Daniel: "no bloquear al operador". Si el dato es válido se guarda
+        # normalizado ('12.345.678-9', '+56 9 1234 5678') para que el ERP, el
+        # candado de duplicados y los correos lo lean parejo; si no es válido
+        # se guarda tal cual lo tecleó el operador (antes: siempre crudo).
+        customer_rut_in = (f.get("customer_rut") or "").strip()[:20]
+        if customer_rut_in and is_valid_rut(customer_rut_in):
+            customer_rut_in = format_rut(customer_rut_in)[:20]
+        contact_phone_in = (f.get("contact_phone") or "").strip()[:40]
+        if contact_phone_in and is_valid_cl_phone(contact_phone_in):
+            contact_phone_in = format_cl_phone(contact_phone_in)[:40]
+        pickup_person_rut_in = (f.get("pickup_person_rut") or "").strip()[:20]
+        if pickup_person_rut_in and is_valid_rut(pickup_person_rut_in):
+            pickup_person_rut_in = format_rut(pickup_person_rut_in)[:20]
+        pickup_person_phone_in = (f.get("pickup_person_phone") or "").strip()[:40]
+        if pickup_person_phone_in and is_valid_cl_phone(pickup_person_phone_in):
+            pickup_person_phone_in = format_cl_phone(pickup_person_phone_in)[:40]
+
         cfg = settings()
         # Validación temporal central (modo interno: NO exige min_notice y
         # permite cruzar colación, pero NUNCA fecha/hora pasada).
@@ -4250,11 +4386,11 @@ def register_pickup_routes(app, ctx):
                                 %s,%s,'pendiente',%s,%s,
                                 %s,%s)""",
                     (code, uid, uname, now_cl,
-                     document_type, document_number, customer_name, (f.get("customer_rut") or "").strip()[:20],
+                     document_type, document_number, customer_name, customer_rut_in,
                      (f.get("contact_name") or pickup_person_name)[:180],
-                     contact_email, (f.get("contact_phone") or "").strip()[:40],
-                     pickup_person_name, (f.get("pickup_person_rut") or "").strip()[:20],
-                     (f.get("pickup_person_phone") or "").strip()[:40], (f.get("pickup_person_relation") or "otro")[:30],
+                     contact_email, contact_phone_in,
+                     pickup_person_name, pickup_person_rut_in,
+                     pickup_person_phone_in, (f.get("pickup_person_relation") or "otro")[:30],
                      date, tf, tt,  date, tf, tt,  date, tf, tt,
                      bultos, wkg, pv, m3,
                      (f.get("observations") or "").strip()[:2000], token,
@@ -6463,6 +6599,418 @@ def register_pickup_routes(app, ctx):
         })
 
     # ══════════════════════════════════════════════════════════════════
+    #  FICHA ERP — Datos maestros del cliente (MAEEN) por RUT — 2026-09-15
+    #  Alimenta el Paso 1 del wizard "Nuevo retiro interno": el operador
+    #  pega el RUT (o elige un documento) y el formulario se completa solo
+    #  con razón social, correo, teléfono, dirección y comuna del ERP.
+    #  READ-ONLY ABSOLUTO (REGLA #4.1): solo SELECT vía _random_sql_query.
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/api/cliente/<rut>/ficha", methods=["GET"])
+    @require_permission("view")
+    def pickup_cliente_ficha_erp(rut):
+        """Ficha del cliente en el ERP Random (tabla MAEEN) a partir del RUT.
+
+        `<rut>` acepta cualquier formato: '12.345.678-9', '12345678-9',
+        '123456789' o solo el cuerpo '12345678'. Se normaliza con
+        `_rut_cuerpo` (app.py) porque MAEEN.RTEN guarda el cuerpo SIN DV.
+
+        Respuestas (contrato compartido con el frontend del wizard):
+          200 {ok:true, cliente:{razon_social, rut_cuerpo, rut_dv, rut_fmt,
+                                 email, telefono, direccion, comuna, giro,
+                                 placeholder}}
+          400 {ok:false, error:"RUT inválido"}
+          404 {ok:false, error:"Cliente no encontrado en ERP"}  (MAEEN vacío)
+          503 {ok:false, error:"ERP no responde"}               (consulta falló)
+
+        Query clonada de /mantenciones/api/clientes/enriquecer (app.py):
+        SELECT ... FROM MAEEN WHERE LTRIM(RTRIM(RTEN)) = %s. Si el RUT tiene
+        varias filas (sucursales) se prefiere la que traiga EMAIL/teléfono.
+        Distinguimos "consulta falló" (None) de "sin filas" ([]) igual que
+        hace _random_sql_query: None = error de conexión/pool → 503.
+        """
+        rut_raw = str(rut or "").strip()
+        rut_limpio = _clean_rut(rut_raw)
+        if not rut_limpio or len(rut_limpio) < 7:
+            return jsonify({"ok": False, "error": "RUT inválido"}), 400
+
+        # Cuerpo del RUT con el helper canónico de app.py (vía ctx = globals()
+        # de app.py). Fallback local con la MISMA regla (_pickup_rut_cuerpo)
+        # por si el ctx viniera recortado (tests).
+        _rut_cuerpo = ctx.get("_rut_cuerpo") or _pickup_rut_cuerpo
+        cuerpo = re.sub(r"[^0-9]", "", str(_rut_cuerpo(rut_raw) or ""))
+        if not cuerpo or len(cuerpo) < 6:
+            return jsonify({"ok": False, "error": "RUT inválido"}), 400
+
+        # Candidatos a consultar en MAEEN, en orden. Un RUT de 8 caracteres
+        # SIN separador es ambiguo ('7654321-0' pegado = '76543210'):
+        # _rut_cuerpo lo trata como cuerpo de 8 dígitos, pero si además es un
+        # RUT VÁLIDO leído como cuerpo de 7 + DV, esa lectura va PRIMERO
+        # (2026-09-15): un string de 8 chars cuyo DV cuadra es casi siempre
+        # un RUT de 7 dígitos con su verificador pegado (personas y empresas
+        # antiguas), no un cuerpo de 8 sin DV. El cuerpo de 8 queda como
+        # segundo intento para no perder ese caso.
+        candidatos = [cuerpo]
+        if "-" not in rut_raw and len(rut_limpio) == 8 and rut_limpio[:-1].isdigit():
+            _alt = rut_limpio[:-1]
+            if _alt != cuerpo and _calc_dv(_alt) == rut_limpio[-1]:
+                candidatos.insert(0, _alt)
+
+        import time as _time_ficha
+        _cache_key = "|".join(candidatos)
+        _hit = _FICHA_CACHE.get(_cache_key)
+        if _hit and (_time_ficha.time() - _hit[1]) < _FICHA_TTL:
+            return jsonify(_hit[0])
+
+        # Motor ERP vía ctx — mismo helper que saldo-pendiente (REGLA #4.1)
+        _random_sql_query = ctx.get("_random_sql_query")
+        _random_sql_pool = ctx.get("_random_sql_pool")
+        if not _random_sql_query or not _random_sql_pool or _random_sql_pool() is None:
+            return jsonify({"ok": False, "error": "ERP no responde",
+                            "motivo": "Motor ERP no configurado en este entorno"}), 503
+
+        # Query MODELO (clon de mant_enriquecer_cliente, app.py). TOP 20 sin
+        # ORDER BY: la preferencia por la fila con EMAIL/teléfono se decide
+        # en Python (más simple de leer y sin sorpresas de dialecto).
+        sql_ficha = (
+            "SELECT TOP 20 "
+            "       LTRIM(RTRIM(COALESCE(RTEN,      ''))) AS RTEN, "
+            "       LTRIM(RTRIM(COALESCE(NOKOEN,    ''))) AS NOKOEN, "
+            "       LTRIM(RTRIM(COALESCE(NOKOENAMP, ''))) AS NOKOENAMP, "
+            "       LTRIM(RTRIM(COALESCE(EMAIL,     ''))) AS EMAIL, "
+            "       LTRIM(RTRIM(COALESCE(FOEN,      ''))) AS FOEN, "
+            "       LTRIM(RTRIM(COALESCE(FAEN,      ''))) AS FAEN, "
+            "       LTRIM(RTRIM(COALESCE(DIEN,      ''))) AS DIEN, "
+            "       LTRIM(RTRIM(COALESCE(CMEN,      ''))) AS CMEN, "
+            "       LTRIM(RTRIM(COALESCE(CIEN,      ''))) AS CIEN, "
+            "       LTRIM(RTRIM(COALESCE(GIEN,      ''))) AS GIEN "
+            "  FROM MAEEN "
+            " WHERE LTRIM(RTRIM(RTEN)) = %s"
+        )
+        filas = []
+        cuerpo_usado = cuerpo
+        for _cand in candidatos:
+            try:
+                _res = _random_sql_query(sql_ficha, (_cand,), max_rows=20)
+            except PermissionError as _pe:
+                print(f"[pickup-ficha-erp] bloqueado por seguridad: {_pe}", flush=True)
+                return jsonify({"ok": False, "error": "ERP no responde"}), 503
+            except Exception as _exc:
+                # Sin datos personales en el log (REGLA #4): no imprimimos el RUT.
+                print(f"[pickup-ficha-erp] error consultando MAEEN: "
+                      f"{type(_exc).__name__}: {str(_exc)[:160]}", flush=True)
+                return jsonify({"ok": False, "error": "ERP no responde"}), 503
+            if _res is None:
+                # None = pool agotado / conexión caída (ver _random_sql_query).
+                print("[pickup-ficha-erp] _random_sql_query devolvió None (ERP sin respuesta)",
+                      flush=True)
+                return jsonify({"ok": False, "error": "ERP no responde"}), 503
+            if _res:
+                filas = _res
+                cuerpo_usado = _cand
+                break
+
+        if not filas:
+            return jsonify({"ok": False, "error": "Cliente no encontrado en ERP"}), 404
+
+        # Preferir la fila (sucursal) con EMAIL y teléfono; luego con alguno;
+        # si ninguna trae contacto, la primera tal cual.
+        def _score(fila):
+            _tiene_email = 1 if (fila.get("EMAIL") or "").strip() else 0
+            _tiene_tel = 1 if ((fila.get("FOEN") or "").strip() or (fila.get("FAEN") or "").strip()) else 0
+            _tiene_nombre = 1 if ((fila.get("NOKOENAMP") or fila.get("NOKOEN") or "").strip()) else 0
+            return (_tiene_email + _tiene_tel, _tiene_nombre)
+        row = max(filas, key=_score)   # max conserva el primero en caso de empate
+
+        # Helpers de normalización de app.py (vía ctx), con fallbacks locales.
+        _erpe = ctx.get("erp_engine")
+        if _erpe is None:
+            try:
+                import erp_engine as _erpe
+            except Exception:
+                _erpe = None
+        _fix_yen = getattr(_erpe, "fix_yen_to_n", None) or (lambda s: s or "")
+        _norm_tel = (ctx.get("_normalize_phone_cl") or ctx.get("normalize_phone_cl")
+                     or (lambda s: format_cl_phone(s) if is_valid_cl_phone(s) else (s or "")))
+        _resolve_comuna = ctx.get("_resolve_comuna_erp")
+        _cmen_to_comuna = ctx.get("_cmen_to_comuna")
+        _es_placeholder = ctx.get("_erp_is_placeholder_name")
+        _es_cf = ctx.get("_is_cf_name")
+
+        nombre_largo = (row.get("NOKOENAMP") or "").strip()
+        nombre_corto = (row.get("NOKOEN") or "").strip()
+        nombre_crudo = nombre_largo or nombre_corto
+        es_placeholder = False
+        try:
+            if _es_placeholder and _es_placeholder(nombre_crudo):
+                es_placeholder = True
+            elif _es_cf and _es_cf(nombre_crudo):
+                es_placeholder = True
+            elif not nombre_crudo:
+                es_placeholder = True
+        except Exception:
+            es_placeholder = not nombre_crudo
+        razon_social = "" if es_placeholder else _fix_yen(nombre_crudo).title()
+
+        cien = (row.get("CIEN") or "").strip()
+        cmen = (row.get("CMEN") or "").strip()
+        comuna = ""
+        try:
+            if _resolve_comuna:
+                comuna = _resolve_comuna(cmen, cien) or ""
+            elif _cmen_to_comuna:
+                comuna = _cmen_to_comuna(cien, cmen) or ""
+            else:
+                comuna = cmen
+        except Exception:
+            comuna = cmen
+        comuna = _fix_yen(comuna).title() if comuna else ""
+
+        raw_tel = (row.get("FOEN") or row.get("FAEN") or "").strip()
+        try:
+            telefono = _norm_tel(raw_tel) if raw_tel else ""
+        except Exception:
+            telefono = raw_tel
+
+        rut_dv = _calc_dv(cuerpo_usado)
+        payload = {
+            "ok": True,
+            "cliente": {
+                "razon_social": razon_social,
+                "placeholder":  es_placeholder,
+                "rut_cuerpo":   cuerpo_usado,
+                "rut_dv":       rut_dv,
+                "rut_fmt":      format_rut(cuerpo_usado + rut_dv),
+                "email":        (row.get("EMAIL") or "").strip().lower(),
+                "telefono":     telefono or "",
+                "direccion":    _fix_yen(row.get("DIEN") or "").title(),
+                "comuna":       comuna,
+                "giro":         _fix_yen(row.get("GIEN") or "").strip(),
+                "sucursales":   len(filas),
+                "fuente":       "sql_server",
+            },
+        }
+        try:
+            _FICHA_CACHE[_cache_key] = (payload, _time_ficha.time())
+            if len(_FICHA_CACHE) > 300:
+                _cutoff = _time_ficha.time() - (_FICHA_TTL * 3)
+                for _k in list(_FICHA_CACHE.keys()):
+                    if _FICHA_CACHE[_k][1] < _cutoff:
+                        _FICHA_CACHE.pop(_k, None)
+        except Exception:
+            pass
+        return jsonify(payload)
+
+    # ══════════════════════════════════════════════════════════════════
+    #  RETIROS ACTIVOS DEL CLIENTE (MySQL propio) — 2026-09-15
+    #  Alimenta el asistente del wizard "Nuevo retiro interno": al pegar el
+    #  RUT, el operador ve si el cliente YA tiene retiros en curso y puede
+    #  abrirlos en vez de duplicar. Solo lectura sobre pickup_requests.
+    #  El asistente PROPONE: el frontend muestra la lista, nunca bloquea.
+    # ══════════════════════════════════════════════════════════════════
+    _PICKUP_STATUS_FUERA_DE_FLUJO = ("rechazada", "fallida", "cerrada")
+
+    def _pickup_fecha_ddmmaaaa(valor):
+        """DATE de MySQL (date/datetime o str ISO) → 'dd-mm-aaaa'. '' si no hay."""
+        if not valor:
+            return ""
+        try:
+            if hasattr(valor, "strftime"):
+                return valor.strftime("%d-%m-%Y")
+            _s = str(valor).strip()[:10]
+            return datetime.strptime(_s, "%Y-%m-%d").strftime("%d-%m-%Y")
+        except Exception:
+            return str(valor)
+
+    @app.route("/retiros/api/cliente/<rut>/retiros-activos", methods=["GET"])
+    @require_permission("view")
+    def pickup_cliente_retiros_activos(rut):
+        """Retiros EN CURSO del cliente identificado por RUT (tablas ILUS, no ERP).
+
+        `<rut>` acepta cualquier formato ('12.345.678-9', '12345678-9',
+        '123456789' o solo el cuerpo '12345678'): se normaliza al CUERPO con
+        `_rut_cuerpo` (app.py, fallback local `_pickup_rut_cuerpo`).
+
+        `customer_rut` se guarda a veces formateado ('12.345.678-9') y a veces
+        crudo ('123456789'), así que el SQL compara sin puntos/guion con un
+        LIKE 'cuerpo%%' (parametrizado) y luego Python exige cuerpo EXACTO —
+        el LIKE solo es el prefiltro (un cuerpo de 7 dígitos también es
+        prefijo de RUTs de 8 que empiezan igual).
+
+        Se excluyen los estados terminales rechazada/fallida/cerrada/retirada:
+        esos ya no son "activos" para el operador.
+
+        Respuestas:
+          200 {ok:true, total, retiros:[{id, code, status, status_label,
+                                         fecha (dd-mm-aaaa), fecha_iso, url}]}
+              ordenados por fecha desc, máximo 10.
+          400 {ok:false, error:"RUT invalido"} si el cuerpo tiene < 7 dígitos.
+        """
+        rut_raw = str(rut or "").strip()
+        _rut_cuerpo = ctx.get("_rut_cuerpo") or _pickup_rut_cuerpo
+        cuerpo = re.sub(r"[^0-9]", "", str(_rut_cuerpo(rut_raw) or ""))
+        if not cuerpo or len(cuerpo) < 7:
+            return jsonify({"ok": False, "error": "RUT invalido", "retiros": []}), 400
+
+        estados_excluidos = _PICKUP_STATUS_FUERA_DE_FLUJO + ("retirada",)
+        ph_estados = ",".join(["%s"] * len(estados_excluidos))
+        try:
+            rows = mysql_fetchall(
+                f"SELECT id, code, status, customer_rut, "
+                f"       confirmed_date, proposed_date, requested_date "
+                f"  FROM `{REQ}` "
+                f" WHERE REPLACE(REPLACE(REPLACE(COALESCE(customer_rut,''),'.',''),'-',''),' ','') LIKE %s "
+                f"   AND status NOT IN ({ph_estados}) "
+                f" ORDER BY COALESCE(confirmed_date, proposed_date, requested_date) DESC, id DESC "
+                f" LIMIT 60",
+                (f"{cuerpo}%",) + estados_excluidos,
+            ) or []
+        except Exception as _exc:
+            # Sin datos personales en el log (REGLA #4): ni el RUT ni filas.
+            print(f"[pickup-retiros-activos] consulta falló: "
+                  f"{type(_exc).__name__}: {str(_exc)[:160]}", flush=True)
+            return jsonify({"ok": True, "retiros": [], "total": 0,
+                            "error": "No se pudo consultar los retiros del cliente"})
+
+        # Filtro EXACTO por cuerpo en Python. Tolerancia para el registro
+        # guardado como 7 dígitos + DV pegado sin guion (8 chars): también
+        # cuenta si equivale a cuerpo + DV calculado.
+        dv_cuerpo = _calc_dv(cuerpo) if cuerpo.isdigit() else ""
+        retiros = []
+        for r in rows:
+            _cr = str(r.get("customer_rut") or "")
+            _cr_cuerpo = re.sub(r"[^0-9]", "", str(_rut_cuerpo(_cr) or ""))
+            _cr_limpio = _clean_rut(_cr)
+            if _cr_cuerpo != cuerpo and not (
+                len(_cr_limpio) == 8 and dv_cuerpo and _cr_limpio == cuerpo + dv_cuerpo
+            ):
+                continue
+            _fecha = r.get("confirmed_date") or r.get("proposed_date") or r.get("requested_date")
+            _st = r.get("status") or ""
+            retiros.append({
+                "id":           r.get("id"),
+                "code":         r.get("code") or "",
+                "status":       _st,
+                "status_label": PICKUP_STATUS.get(_st, _st),
+                "fecha":        _pickup_fecha_ddmmaaaa(_fecha),
+                "fecha_iso":    (_fecha.strftime("%Y-%m-%d") if hasattr(_fecha, "strftime")
+                                 else (str(_fecha)[:10] if _fecha else "")),
+                "url":          f"/retiros/{r.get('id')}",
+            })
+
+        # Orden por fecha desc (sin fecha al final); desempate por id desc.
+        retiros.sort(key=lambda x: (x["fecha_iso"] or "", x["id"] or 0), reverse=True)
+        retiros = retiros[:10]
+        return jsonify({"ok": True, "retiros": retiros, "total": len(retiros)})
+
+    # ══════════════════════════════════════════════════════════════════
+    #  CANDADO UNIFICADO "ya_tiene_retiro" — 2026-09-15
+    #  Un solo lugar para decidir si un documento del ERP ya está en un
+    #  retiro EN FLUJO. Lo usan saldo-pendiente Y buscar-erp (antes cada uno
+    #  tenía su copia y buscar-erp arrastraba la versión vieja: sin excluir
+    #  estados terminales, sin mirar la cabecera de pickup_requests y con la
+    #  clave 'FACTURA|123' que nunca cruzaba con 'FCV|123').
+    # ══════════════════════════════════════════════════════════════════
+    def _pickup_docs_ya_asociados(claves_display, nudos_extra=None):
+        """Dado un iterable de claves 'TIDO_display|nudo_display' (tal como se
+        muestran en pantalla: 'FCV|123', 'VD|1234', 'WEB|55'), devuelve
+        {clave: {"request_id", "code", "status"}} SOLO para las claves que ya
+        están asociadas a un retiro en flujo (no rechazado/fallido/cerrado).
+
+        Fuentes, en el mismo dominio TIDO|display en ambos lados:
+          (a) pickup_request_docs (multidocumento) JOIN pickup_requests —
+              document_type ya es TIDO ('FCV','VD','WEB');
+          (b) pickup_requests.document_type / document_number (cabecera) —
+              'factura'/'boleta'/... se traduce con pickup_doc_type_to_tido y
+              el número se normaliza con pickup_doc_number_display.
+        En ambos casos se expanden los TIDO equivalentes (FCV≈NVI, VD≈NVV)
+        con pickup_tido_equivalentes. Si el mismo documento aparece en más de
+        un retiro, gana el retiro más reciente (id mayor).
+
+        `nudos_extra`: números adicionales a incluir en el IN del SQL (ej. el
+        NUDO padded crudo del ERP, por si un registro antiguo lo guardó así).
+        El cruce final siempre se hace sobre el número en formato display.
+
+        Para no depender del caller, el IN incluye además las variantes
+        padded con que el ERP escribe el NUDO (misma regla que buscar-erp en
+        modo número): '0000000123', 'VD00001234', 'WEB0000055'. Así un
+        registro antiguo guardado con el NUDO crudo también cruza.
+
+        Nunca lanza: ante error de MySQL loguea (sin datos personales) y
+        devuelve lo que alcanzó a cruzar.
+        """
+        claves = {str(k or "").strip().upper() for k in (claves_display or []) if k}
+        claves.discard("")
+        if not claves:
+            return {}
+        nudos_busqueda = set()
+        for k in claves:
+            _tido_k, _, _num = k.partition("|")
+            if not _num:
+                continue
+            nudos_busqueda.add(_num)
+            nudos_busqueda.add(_num.zfill(10))
+            if _tido_k in ("VD", "NVV"):
+                nudos_busqueda.add("VD" + _num.zfill(8))
+            if _tido_k in ("WEB", "NVV"):
+                nudos_busqueda.add("WEB" + _num.zfill(7))
+        for n in (nudos_extra or []):
+            n = str(n or "").strip()
+            if n:
+                nudos_busqueda.add(n)
+        if not nudos_busqueda:
+            return {}
+
+        placeholders = ",".join(["%s"] * len(nudos_busqueda))
+        ph_estados = ",".join(["%s"] * len(_PICKUP_STATUS_FUERA_DE_FLUJO))
+        params = tuple(nudos_busqueda) + _PICKUP_STATUS_FUERA_DE_FLUJO
+        resultado = {}
+
+        def _cruzar(doc_type, doc_number, request_id, code, status):
+            _tido_base = pickup_doc_type_to_tido(doc_type)
+            _num = pickup_doc_number_display(doc_number)
+            if not _tido_base or not _num:
+                return
+            for _t_eq in pickup_tido_equivalentes(_tido_base):
+                _k = f"{_t_eq}|{_num}"
+                if _k not in claves:
+                    continue
+                _prev = resultado.get(_k)
+                if _prev is None or (request_id or 0) > (_prev.get("request_id") or 0):
+                    resultado[_k] = {"request_id": request_id, "code": code or "", "status": status or ""}
+
+        try:
+            # (b) retiros con documento "cabecera" (pickup_requests)
+            rows_pr = mysql_fetchall(
+                f"SELECT id, code, status, document_type, document_number FROM `{REQ}` "
+                f"WHERE document_number IN ({placeholders}) "
+                f"  AND status NOT IN ({ph_estados})",
+                params
+            ) or []
+            for r in rows_pr:
+                _cruzar(r.get("document_type"), r.get("document_number"),
+                        r.get("id"), r.get("code"), r.get("status"))
+        except Exception as _e1:
+            print(f"[pickup-ya-asociados] cabecera falló: "
+                  f"{type(_e1).__name__}: {str(_e1)[:160]}", flush=True)
+        try:
+            # (a) documentos asociados (multidocumento, pickup_request_docs)
+            rows_prd = mysql_fetchall(
+                f"SELECT r.id, r.code, r.status, d.document_type, d.document_number "
+                f"  FROM pickup_request_docs d "
+                f"  JOIN `{REQ}` r ON r.id = d.request_id "
+                f" WHERE d.document_number IN ({placeholders}) "
+                f"   AND r.status NOT IN ({ph_estados})",
+                params
+            ) or []
+            for r in rows_prd:
+                _cruzar(r.get("document_type"), r.get("document_number"),
+                        r.get("id"), r.get("code"), r.get("status"))
+        except Exception as _e2:
+            print(f"[pickup-ya-asociados] multidocumento falló: "
+                  f"{type(_e2).__name__}: {str(_e2)[:160]}", flush=True)
+        return resultado
+
+    # ══════════════════════════════════════════════════════════════════
     #  SALDO ERP — Documentos pendientes de despacho del cliente
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/cliente/<rut>/saldo-pendiente", methods=["GET"])
@@ -6544,6 +7092,19 @@ def register_pickup_routes(app, ctx):
 
         # ZZ SKUs típicos de despacho/retiro (ver erp_engine / transporte)
         # Para no duplicar lógica, usamos el patrón LIKE 'ZZ%' que cubre todos.
+        #
+        # 🔧 FIX Daniel 2026-05-24 (subquery saldo_real_unidades): saldo REAL
+        # de productos (no ZZ) con fórmula oficial Random. Antes solo se
+        # miraba el saldo de servicios ZZ → docs aparecían "con saldo" aunque
+        # todos los productos estuvieran ya despachados (incoherente).
+        #
+        # ⚠️ FIX 2026-09-15: ese comentario vivía DENTRO del SQL como
+        # `/* ... */`. `_random_sql_validate` (Capa 2, app.py) prohíbe los
+        # tokens '/*' y '*/' → lanzaba PermissionError en CADA llamada, el
+        # except de abajo lo tragaba y el endpoint respondía siempre
+        # {"docs": [], "error": "No se pudo consultar el ERP"}. El comentario
+        # se movió aquí (Python) y el SQL quedó limpio. NUNCA comentar con
+        # /* */ dentro de una query al ERP.
         sql = f"""
             SELECT TOP 100
                 e.IDMAEEDO,
@@ -6568,10 +7129,6 @@ def register_pickup_routes(app, ctx):
                    FROM MAEDDO d
                   WHERE d.IDMAEEDO = e.IDMAEEDO
                     AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
-                /* 🔧 FIX Daniel 2026-05-24: saldo REAL de productos (no ZZ)
-                   con fórmula oficial Random. Antes solo se miraba el saldo
-                   de servicios ZZ → docs aparecían "con saldo" aunque todos
-                   los productos estuvieran ya despachados (incoherente). */
                 (SELECT COALESCE(SUM(
                            CASE WHEN UPPER(LTRIM(RTRIM(COALESCE(d3.ESLIDO,'')))) NOT IN ('C','T','TOTAL','CERRADO','DESPACHADO')
                                  AND (d3.CAPRCO1 - COALESCE(d3.CAPRAD1,0) - COALESCE(d3.CAPREX1,0) - COALESCE(d3.CAPRNC1,0)) > 0
@@ -6596,40 +7153,85 @@ def register_pickup_routes(app, ctx):
             ORDER BY e.FEEMDO DESC
         """
         try:
-            rows = _random_sql_query(sql, (f"{rut_base}%", fecha_desde), max_rows=100) or []
+            rows = _random_sql_query(sql, (f"{rut_base}%", fecha_desde), max_rows=100)
         except Exception as exc:
             print(f"[pickup-saldo-erp] error: {exc}", flush=True)
             return jsonify({"ok": True, "docs": [], "error": "No se pudo consultar el ERP"})
 
+        # 2026-09-15: _random_sql_query devuelve None cuando el pool está
+        # agotado o la conexión al ERP se cayó — distinto de [] (consulta OK
+        # sin filas). Antes ambos caían en "docs: []" y el operador veía
+        # "sin documentos" cuando en realidad el ERP no respondió. No se
+        # cachea: el siguiente intento debe volver a consultar.
+        if rows is None:
+            print("[pickup-saldo-erp] _random_sql_query devolvió None (ERP sin respuesta)",
+                  flush=True)
+            return jsonify({
+                "ok": True, "docs": [], "total": 0,
+                "error": "ERP no responde",
+                "hint": "El ERP no respondió; intenta de nuevo en unos segundos.",
+            })
+
         if not rows:
             return jsonify({"ok": True, "docs": [], "total": 0})
 
-        # Cruzar con retiros ya asociados (en pickup_requests por document_number
-        # o en pickup_request_docs)
-        nudos_raw = [str(r.get("NUDO") or "").strip() for r in rows]
-        nudos_raw = [n for n in nudos_raw if n]
-        ya_asociados = set()
-        if nudos_raw:
-            # Buscamos también las variantes "limpias" (sin ceros a la izquierda y sin VD/WEB prefix)
-            placeholders = ",".join(["%s"] * len(nudos_raw))
-            try:
-                rows_pr = mysql_fetchall(
-                    f"SELECT document_type, document_number FROM `{REQ}` "
-                    f"WHERE document_number IN ({placeholders}) "
-                    f"  AND status NOT IN ('rechazada','cerrada','fallida')",
-                    tuple(nudos_raw)
-                ) or []
-                for r in rows_pr:
-                    ya_asociados.add(f"{(r.get('document_type') or '').upper()}|{r.get('document_number')}")
-                rows_prd = mysql_fetchall(
-                    f"SELECT document_type, document_number FROM pickup_request_docs "
-                    f"WHERE document_number IN ({placeholders})",
-                    tuple(nudos_raw)
-                ) or []
-                for r in rows_prd:
-                    ya_asociados.add(f"{(r.get('document_type') or '').upper()}|{r.get('document_number')}")
-            except Exception as _e2:
-                pass
+        # ── Deduplicar filas (el LEFT JOIN MAEEN multiplica por sucursal) ──
+        # FIX 2026-09-15: un RUT con N entidades/sucursales en MAEEN devolvía
+        # el mismo IDMAEEDO N veces → el mismo documento salía repetido en el
+        # wizard. Se conserva la PRIMERA fila por IDMAEEDO y, de paso, por
+        # clave tido_display|nudo_display (por si el ERP trajera el mismo
+        # folio con IDMAEEDO distinto). El TOP 100 sigue aplicando antes del
+        # dedup (limitación conocida, igual que en buscar-erp).
+        _seen_ids, _seen_keys, _rows_unicas = set(), set(), []
+        for r in rows:
+            _idm = r.get("IDMAEEDO")
+            _td, _nd = pickup_erp_doc_display(r.get("TIDO"), r.get("NUDO"))
+            _k = f"{_td}|{_nd}"
+            if (_idm is not None and _idm in _seen_ids) or _k in _seen_keys:
+                continue
+            if _idm is not None:
+                _seen_ids.add(_idm)
+            _seen_keys.add(_k)
+            _rows_unicas.append(r)
+        rows = _rows_unicas
+
+        # ── Cruzar con retiros ya asociados (candado "ya_tiene_retiro") ──
+        # FIX 2026-09-15 — mismo bug que ya se corrigió en /retiros/api/buscar-erp:
+        #   (1) se buscaba el NUDO padded del ERP ('0000000123') contra
+        #       document_number, que ILUS guarda en formato display ('123');
+        #   (2) pickup_requests.document_type guarda 'factura'/'boleta'/... y
+        #       la clave se armaba 'FACTURA|123' contra 'FCV|123' del ERP.
+        # Resultado: ya_tiene_retiro daba False casi siempre. Ahora la clave es
+        # TIDO_display|nudo_display en AMBOS lados:
+        #   (a) pickup_request_docs.document_type ya es TIDO ('FCV','VD','WEB'),
+        #       se une a pickup_requests para excluir retiros fuera de flujo;
+        #   (b) pickup_requests.document_type se traduce con PICKUP_TIDO_MAP
+        #       (pickup_doc_type_to_tido) y su document_number se normaliza a
+        #       display (pickup_doc_number_display);
+        # y en ambos casos se expanden los TIDO equivalentes (FCV≈NVI, VD≈NVV)
+        # con pickup_tido_equivalentes. Se excluyen retiros en estado
+        # rechazada/fallida/cerrada: ya no están "en flujo", el documento
+        # vuelve a estar disponible para un retiro nuevo.
+        # 2026-09-15: toda esa lógica vive ahora en _pickup_docs_ya_asociados
+        # (helper compartido con buscar-erp). Devuelve {clave: {request_id,
+        # code, status}} — la clave sigue siendo TIDO_display|nudo_display.
+        claves_erp = set()
+        nudos_raw_extra = set()
+        for r in rows:
+            nudo_raw = (r.get("NUDO") or "").strip()
+            _td, _nd = pickup_erp_doc_display(r.get("TIDO"), nudo_raw)
+            if _nd:
+                claves_erp.add(f"{_td}|{_nd}")
+            if nudo_raw:
+                # Por si algún registro antiguo guardó el NUDO padded del ERP
+                nudos_raw_extra.add(nudo_raw)
+        try:
+            ya_asociados = _pickup_docs_ya_asociados(claves_erp, nudos_extra=nudos_raw_extra)
+        except Exception as _e2:
+            # Sin datos personales en el log (REGLA #4): solo el tipo/mensaje.
+            print(f"[pickup-saldo-erp] cruce ya_tiene_retiro falló: "
+                  f"{type(_e2).__name__}: {str(_e2)[:160]}", flush=True)
+            ya_asociados = {}
 
         # Construir lista de respuesta
         out = []
@@ -6656,7 +7258,8 @@ def register_pickup_routes(app, ctx):
             # reales pendientes (líneas no-ZZ con saldo > 0), no en servicios.
             n_lineas = int(r.get("n_lineas") or 0)
             key = f"{tido_display}|{nudo_display}"
-            ya_tiene_retiro = key in ya_asociados
+            _asoc = ya_asociados.get(key) or {}
+            ya_tiene_retiro = bool(_asoc)
 
             tiene_saldo = saldo_real_unidades > 0
             if tiene_saldo: n_con_saldo += 1
@@ -6684,6 +7287,11 @@ def register_pickup_routes(app, ctx):
                 "estado_pago":           (r.get("ESPGDO") or "").strip(),
                 "n_lineas":              n_lineas,
                 "ya_tiene_retiro":       ya_tiene_retiro,
+                # 2026-09-15 (aditivo): QUÉ retiro ya tiene el documento, para
+                # que el asistente proponga abrirlo en vez de duplicar.
+                "ya_tiene_retiro_id":     _asoc.get("request_id") if _asoc else None,
+                "ya_tiene_retiro_code":   _asoc.get("code") if _asoc else None,
+                "ya_tiene_retiro_status": _asoc.get("status") if _asoc else None,
             })
 
         # Hint inteligente para el operador (Daniel: "tiene que enseñar")
@@ -7002,35 +7610,28 @@ def register_pickup_routes(app, ctx):
         # display (sin padding de ceros del ERP), no el NUDO raw. Antes
         # comparábamos NUDO padded (`0000000123`) con document_number (`123`)
         # → NUNCA matcheaba y la marca de candado no aparecía.
-        # Calculamos el display IGUAL que la sección de formateo de abajo.
-        ya_asociados = set()
+        # 2026-09-15: unificado con saldo-pendiente vía _pickup_docs_ya_asociados
+        # (misma clave TIDO_display|nudo_display, misma exclusión de retiros
+        # rechazados/fallidos/cerrados, mira cabecera + multidocumento y
+        # expande equivalentes FCV≈NVI / VD≈NVV). Esta versión arrastraba la
+        # lógica vieja: solo pickup_request_docs, sin filtrar estado.
+        ya_asociados = {}
         try:
-            nudos_display = []
+            claves_erp = set()
+            nudos_raw_extra = set()
             for r in docs:
                 nudo_raw = (r.get("NUDO") or "").strip()
-                tido_raw = (r.get("TIDO") or "").strip()
                 if not nudo_raw:
                     continue
-                if tido_raw == "NVV" and nudo_raw.startswith("VD"):
-                    nd = nudo_raw[2:].lstrip("0") or "0"
-                elif tido_raw == "NVV" and nudo_raw.startswith("WEB"):
-                    nd = nudo_raw[3:].lstrip("0") or "0"
-                else:
-                    nd = nudo_raw.lstrip("0") or "0"
-                if nd:
-                    nudos_display.append(nd)
-            if nudos_display:
-                placeholders = ",".join(["%s"] * len(nudos_display))
-                rows_prd = mysql_fetchall(
-                    f"SELECT DISTINCT document_type, document_number "
-                    f"FROM pickup_request_docs WHERE document_number IN ({placeholders})",
-                    tuple(nudos_display)
-                ) or []
-                for r in rows_prd:
-                    ya_asociados.add(f"{(r.get('document_type') or '').upper()}|"
-                                     f"{(r.get('document_number') or '').strip()}")
+                _td, _nd = pickup_erp_doc_display(r.get("TIDO"), nudo_raw)
+                if _nd:
+                    claves_erp.add(f"{_td}|{_nd}")
+                nudos_raw_extra.add(nudo_raw)
+            ya_asociados = _pickup_docs_ya_asociados(claves_erp, nudos_extra=nudos_raw_extra)
         except Exception as e:
-            print(f"[pickup-buscar-erp] ya_asociados fallback: {e}", flush=True)
+            print(f"[pickup-buscar-erp] ya_asociados fallback: {type(e).__name__}: {str(e)[:160]}",
+                  flush=True)
+            ya_asociados = {}
 
         # ── Formatear respuesta ────────────────────────────────────
         out = []
@@ -7061,6 +7662,7 @@ def register_pickup_routes(app, ctx):
             # SALDO" por servicios ZZ pero todas las líneas mostraban
             # "sin saldo" → inconsistencia que confundía al operador.
             tiene_saldo_real = saldo_real_unidades > 0
+            _asoc = ya_asociados.get(key) or {}
 
             out.append({
                 "idmaeedo":     r.get("IDMAEEDO"),
@@ -7079,7 +7681,11 @@ def register_pickup_routes(app, ctx):
                 "saldo_real_unidades":  saldo_real_unidades,
                 "tiene_saldo":          tiene_saldo_real,
                 "n_lineas":             int(r.get("n_lineas") or 0),
-                "ya_tiene_retiro":      key in ya_asociados,
+                "ya_tiene_retiro":      bool(_asoc),
+                # 2026-09-15 (aditivo): QUÉ retiro ya tiene el documento.
+                "ya_tiene_retiro_id":     _asoc.get("request_id") if _asoc else None,
+                "ya_tiene_retiro_code":   _asoc.get("code") if _asoc else None,
+                "ya_tiene_retiro_status": _asoc.get("status") if _asoc else None,
             })
 
         return jsonify({
@@ -7463,12 +8069,15 @@ def register_pickup_routes(app, ctx):
             "interno"
         )
 
+        # FIX 2026-09-15: _now_chile_str vive en app.py, no en este módulo
+        # (pyflakes: undefined name) → NameError tras guardar el campo: el
+        # UPDATE ya había corrido pero la ficha recibía 500 y mostraba error.
         return jsonify({
             "ok": True,
             "field": field,
             "value": new_norm or "",
             "changed": True,
-            "saved_at": _now_chile_str(),
+            "saved_at": _now_chile().strftime("%d-%m-%Y %H:%M"),
         })
 
     # ══════════════════════════════════════════════════════════════════
@@ -9503,17 +10112,10 @@ def register_pickup_routes(app, ctx):
         # Intentar enriquecer con ERP (best-effort, sin romper si falla)
         d["erp"] = None
         try:
-            # Mapping document_type → TIDO ERP (normalizado, sin duplicados)
-            tido_map = {
-                "factura":     "FCV",
-                "boleta":      "BLV",
-                "guia":        "GDV",
-                "guia_despacho":"GDV",
-                "nota_venta":  "VD",
-                "venta_directa":"VD",
-                "pedido":      "WEB",
-                "cotizacion":  "COV",
-            }
+            # Mapping document_type → TIDO ERP (normalizado, sin duplicados).
+            # 2026-09-15: el dict local pasó a ser la constante de módulo
+            # PICKUP_TIDO_MAP (único mapa del proyecto) — mismo contenido.
+            tido_map = PICKUP_TIDO_MAP
             doc_type = (d.get("document_type") or "").lower().replace(" ", "_")
             tido = tido_map.get(doc_type)
             nudo = (d.get("document_number") or "").strip()

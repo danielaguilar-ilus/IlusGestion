@@ -65,6 +65,178 @@
 .nri-step-titles .nri-step-sub{margin:2px 0 0;font-size:.74rem;color:#6b7280}
 .nri-step-opt{font-weight:600;text-transform:none;color:#9ca3af;font-size:.72rem}
 @media(prefers-reduced-motion:reduce){.nri-step-card{transition:none}.nri-step-card.is-complete .nri-step-circle::after{animation:none}}
+
+/* ── Semáforo de TRES estados (Daniel 2026-09-15: "que identifique patrones,
+   repetidos y guíe al usuario con un semáforo hasta que los datos y el
+   contorno del objeto estén en verde"). Rojo = falta algo obligatorio
+   (sin clase), ÁMBAR = completo pero con advertencia (.is-warn), verde =
+   completo y verificado (.is-complete). Lo pinta nriEvaluarPasos() en
+   static/retiros_nuevo_interno.js; nriRefreshSteps() (abajo) lo invoca. ── */
+.nri-step-card.is-warn{
+  border-color:#f59e0b;
+  background:linear-gradient(180deg,#fffbeb 0%,#ffffff 55%);
+  box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -10px rgba(245,158,11,.4);
+}
+.nri-step-card.is-warn .nri-step-circle-label{color:#b45309}
+.nri-step-card.is-warn .nri-step-circle{background:#f59e0b;box-shadow:0 4px 10px rgba(245,158,11,.35)}
+.nri-step-card.is-warn .nri-step-circle .nri-step-num-text{display:none}
+.nri-step-card.is-warn .nri-step-circle::before{content:'!';font-size:1.25rem;font-weight:900;line-height:1}
+/* Línea de estado bajo el subtítulo: dice EXACTAMENTE qué falta o qué está raro */
+.nri-step-estado{display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px 6px;margin-top:5px;font-size:.74rem;font-weight:700;line-height:1.35;color:#b91c1c;word-break:break-word}
+.nri-step-estado i{flex-shrink:0;margin-top:1px}
+.nri-step-estado:empty{display:none}
+.nri-step-card.is-complete .nri-step-estado{color:#15803d}
+.nri-step-card.is-warn .nri-step-estado{color:#b45309}
+/* Avisos con acción (repetidos / patrones): "Usar cliente del documento",
+   "¿Es un RUT?", "Ya está en RET-XXX", retiros activos del cliente */
+.nri-avisos{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.nri-avisos:empty{display:none}
+.nri-aviso{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px 10px;background:#fffbeb;border:1.5px solid #fde68a;border-left:4px solid #f59e0b;border-radius:10px;padding:8px 12px;font-size:.78rem;color:#78350f;line-height:1.4}
+.nri-aviso > i{color:#b45309;font-size:1rem;flex-shrink:0;margin-top:1px}
+.nri-aviso .txt{flex:1;min-width:200px;word-break:break-word}
+.nri-aviso .txt strong{color:#0a0a0a}
+.nri-aviso .acts{display:flex;gap:6px;flex-wrap:wrap}
+.nri-aviso a{color:#92400e;font-weight:800;text-decoration:underline}
+.nri-aviso-btn{background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:8px;padding:5px 10px;min-height:32px;font-size:.72rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:all .15s}
+.nri-aviso-btn:hover{background:#f9fafb;border-color:#9ca3af}
+.nri-aviso-btn.is-primary{background:#16a34a;color:#fff;border-color:#16a34a}
+.nri-aviso-btn.is-primary:hover{background:#15803d}
+/* Chip "Es el mismo cliente" (Paso 3) */
+.nri-chip-mismo{display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:10px;padding:6px 11px;min-height:36px;font-size:.76rem;font-weight:800;cursor:pointer;transition:all .15s}
+.nri-chip-mismo:hover{background:#dcfce7;border-color:#16a34a}
+/* Progreso global en el header del modal */
+.nri-progreso{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;margin-right:12px;font-size:.74rem;font-weight:700;color:#e5e7eb}
+.nri-progreso .bar{width:120px;height:7px;border-radius:50px;background:rgba(255,255,255,.18);overflow:hidden}
+.nri-progreso .bar > span{display:block;height:100%;width:0;background:#16a34a;border-radius:50px;transition:width .3s ease}
+.nri-progreso .avisos{color:#fbbf24}
+.nri-progreso .avisos:empty{display:none}
+/* Botón "Crear y confirmar": NO se deshabilita (regla de Daniel: no bloquear),
+   solo se atenúa mientras haya pasos en rojo */
+#btnGuardarRetiroInterno.is-pending{opacity:.62;filter:saturate(.7)}
+/* Resalte breve del primer paso rojo al intentar crear */
+.nri-step-card.nri-flash{animation:nriFlashRed 1.1s ease-in-out 1}
+@keyframes nriFlashRed{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}35%{box-shadow:0 0 0 5px rgba(220,38,38,.35);border-color:#dc2626}}
+@media(max-width:768px){
+  #modalNuevoRetiroInterno .modal-header{flex-wrap:wrap}
+  .nri-progreso{margin:6px 0 0;width:100%}
+  .nri-progreso .bar{flex:1;min-width:80px}
+  .nri-aviso .acts{width:100%}
+  .nri-aviso-btn{flex:1;justify-content:center;min-height:40px}
+  .nri-chip-mismo{width:100%;justify-content:center;min-height:44px}
+}
+@media(prefers-reduced-motion:reduce){.nri-step-card.nri-flash{animation:none}}
+
+/* ── Nuevo retiro interno POTENTE (2026-09-15): asistente ERP en los pasos
+   1/2/5. CSS mínimo copiado de static/retiros_internal_detail.css
+   (.erp-doc-card / .badge-pill / .smart-hint) y del .tk-ac de
+   templates/tickets/nuevo.html, con prefijo .nri- para no colisionar. La
+   lógica vive en static/retiros_nuevo_interno.js. ── */
+.nri-hdr-badge{display:inline-flex;align-items:center;gap:5px;margin-left:8px;background:#dcfce7;color:#166534;border:1px solid #86efac;
+  border-radius:50px;padding:2px 9px;font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;vertical-align:middle}
+.nri-doc-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.nri-erp-btn{background:#16a34a;color:#fff;border:none;border-radius:8px;padding:8px 14px;min-height:38px;
+  font-size:.78rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;letter-spacing:.02em;transition:all .15s;flex-shrink:0}
+.nri-erp-btn:hover{background:#15803d;transform:translateY(-1px);box-shadow:0 4px 10px rgba(22,163,74,.3)}
+.nri-erp-btn:disabled{background:#9ca3af;cursor:not-allowed;transform:none;box-shadow:none}
+.nri-erp-btn.is-done{background:#6b7280;cursor:default}
+.nri-erp-btn.is-outline{background:#fff;color:#374151;border:1px solid #d1d5db}
+.nri-erp-btn.is-outline:hover{background:#f9fafb;box-shadow:none;transform:none}
+/* FIX 2026-09-15 (revisor B1): antes tenía display:none fijo y el JS lo
+   "mostraba" con style.display='' -> nunca se veía ningún mensaje. Ahora el
+   estado visible es inline-flex y el JS lo esconde con [hidden]/'none'. */
+.nri-doc-status{font-size:.76rem;color:#6b7280;display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px;line-height:1.35}
+.nri-doc-status:empty{display:none}
+.nri-doc-status.is-ok{color:#15803d}.nri-doc-status.is-warn{color:#b45309}.nri-doc-status.is-info{color:#1d4ed8}.nri-doc-status.is-loading{color:#6b7280}
+.nri-list-title{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:14px 0 8px;
+  font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#374151}
+.nri-list-title i{color:var(--ilus-red,#dc2626);margin-right:5px}
+.nri-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;margin-left:6px;
+  border-radius:50px;background:#0a0a0a;color:#fff;font-size:.66rem;font-weight:800}
+.nri-docs-list,.nri-doc-sug{display:flex;flex-direction:column;gap:8px}
+.nri-doc-sug{margin-top:10px}
+.nri-doc-card{
+  background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:12px 14px;
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+  transition:border-color .15s,box-shadow .15s,background .15s;
+}
+.nri-doc-card:hover{border-color:#9ca3af;box-shadow:0 4px 10px rgba(0,0,0,.05)}
+.nri-doc-card.is-sug{border-style:dashed;background:#fafafa}
+.nri-doc-card.is-already{opacity:.6}
+.nri-doc-card.is-loading{opacity:.75;border-style:dashed}
+.nri-doc-card.is-check{cursor:pointer;margin:0;user-select:none}
+.nri-doc-card.is-check .nri-rutdoc-chk{width:20px;height:20px;margin:0;flex-shrink:0;cursor:pointer}
+.nri-doc-card.is-check.is-on{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%)}
+.nri-doc-card.is-check.is-lock{background:#f9fafb}
+.nri-docs-list .nri-doc-card:not(.is-sug):not(.is-check):not(.is-loading){border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%)}
+.nri-doc-num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;color:var(--ilus-red,#dc2626);font-size:.95rem;flex-shrink:0;min-width:120px;display:flex;flex-direction:column;line-height:1.15}
+.nri-doc-num small{font-family:inherit;font-size:.62rem;color:#9ca3af;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+/* Nombres SIEMPRE completos, nunca truncados (REGLA #15) */
+.nri-doc-meta{flex:1;min-width:160px;display:flex;flex-direction:column;gap:2px;word-break:break-word}
+.nri-doc-meta .ddate{font-size:.72rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+.nri-doc-meta .dcli{font-size:.86rem;color:#0a0a0a;font-weight:700}
+.nri-doc-meta .dlin{font-size:.74rem;color:#4b5563}
+.nri-doc-totals{display:flex;gap:6px;flex-wrap:wrap}
+.nri-pill{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;border-radius:50px;padding:3px 9px;font-weight:700;font-size:.66rem;
+  text-transform:uppercase;letter-spacing:.04em;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.nri-pill.ok{background:#dcfce7;color:#166534;border-color:#86efac}
+.nri-pill.warn{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.nri-pill.lock{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.nri-doc-quitar{background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:6px 10px;min-height:36px;font-size:.74rem;font-weight:800;
+  cursor:pointer;display:inline-flex;align-items:center;gap:4px;flex-shrink:0;transition:all .15s}
+.nri-doc-quitar:hover{background:#fee2e2;border-color:#dc2626}
+.nri-skel{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.nri-skel div{height:52px;border-radius:12px;background:linear-gradient(90deg,#f3f4f6 25%,#e5e7eb 50%,#f3f4f6 75%);background-size:200% 100%;animation:nriShimmer 1.2s infinite}
+@keyframes nriShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.nri-loading-text{font-size:.78rem;color:#6b7280;padding:6px 2px}
+.nri-smart-hint{
+  background:linear-gradient(135deg,#dbeafe 0%,#e0e7ff 100%);border:1.5px solid #93c5fd;border-radius:12px;padding:10px 14px;margin:0 0 10px;
+  display:flex;align-items:flex-start;gap:10px;font-size:.8rem;color:#1e3a8a;position:relative;overflow:hidden;
+}
+.nri-smart-hint::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:#3b82f6}
+.nri-smart-hint i{color:#1d4ed8;font-size:1.15rem;flex-shrink:0}
+.nri-smart-hint.is-warn{background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border-color:#f59e0b;color:#78350f}
+.nri-smart-hint.is-warn::before{background:#f59e0b}
+.nri-smart-hint.is-warn i{color:#b45309}
+/* Chips "Detectado en ERP → usar" */
+.nri-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.nri-chip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:10px;
+  padding:7px 11px;min-height:38px;font-size:.78rem;font-weight:600;cursor:pointer;text-align:left;transition:all .15s;max-width:100%}
+.nri-chip:hover{background:#dcfce7;border-color:#16a34a}
+.nri-chip .lbl{color:#15803d;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;font-weight:800}
+.nri-chip .lbl em{font-style:normal;text-transform:none;letter-spacing:0;color:#4b7a5a;font-weight:600}
+.nri-chip .val{color:#0a0a0a;font-weight:800;word-break:break-all}
+.nri-chip .usar{color:#fff;background:#16a34a;border-radius:50px;padding:2px 9px;font-size:.68rem;font-weight:800}
+.nri-precargado{box-shadow:0 0 0 3px rgba(22,163,74,.25)!important;border-color:#16a34a!important;transition:box-shadow .6s}
+/* Autocompletar razón social */
+.nri-ac-wrap{position:relative}
+.nri-ac{position:absolute;z-index:50;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;border-radius:9px;
+  box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:280px;overflow:auto;margin-top:3px;display:none}
+.nri-ac.open{display:block}
+.nri-ac-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.85rem}
+.nri-ac-item:last-child{border-bottom:none}
+.nri-ac-item:hover,.nri-ac-item.hi{background:#fef2f2}
+.nri-ac-item .nom{font-weight:700;color:#0a0a0a}
+.nri-ac-item .sub{font-size:.74rem;color:#6b7280;margin-top:1px}
+.nri-ac-item .rut{color:#dc2626;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem}
+.nri-ac-empty{padding:12px;color:#94a3b8;font-size:.82rem;text-align:center}
+/* Paso 5: línea "Calculado desde el ERP" */
+.nri-carga-info{margin-top:10px}
+.nri-carga-line{display:flex;align-items:flex-start;gap:10px;border-radius:10px;padding:10px 12px;font-size:.8rem;line-height:1.4}
+.nri-carga-line i{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+.nri-carga-line.is-ok{background:#f0fdf4;border:1px solid #86efac;color:#166534}
+.nri-carga-line.is-ok i{color:#16a34a}
+.nri-carga-line.is-warn{background:#fff8e1;border:1px solid #fde68a;color:#78350f}
+.nri-carga-line.is-warn i{color:#f59e0b}
+.nri-carga-line .sub{margin-top:4px;font-size:.74rem;color:inherit;opacity:.9}
+.nri-carga-line a{color:inherit;font-weight:800;text-decoration:underline}
+@media(max-width:768px){
+  .nri-doc-card{padding:12px}
+  .nri-doc-num{min-width:0;width:100%}
+  .nri-doc-meta{min-width:0;flex-basis:100%}
+  .nri-doc-quitar,.nri-doc-card .nri-erp-btn{width:100%;justify-content:center;min-height:44px}
+  .nri-erp-btn{min-height:44px}
+  .nri-chip{width:100%}
+}
 </style>
 <div class="modal fade" id="modalNuevoRetiroInterno" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
@@ -73,6 +245,13 @@
         <h5 class="modal-title fw-bold">
           <i class="bi bi-plus-circle me-2" style="color:var(--ilus-red)"></i>Nuevo retiro interno
         </h5>
+        {# 2026-09-15: progreso global "N de 7 pasos listos" + contador de avisos
+           (lo pinta nriEvaluarPasos() en static/retiros_nuevo_interno.js) #}
+        <div class="nri-progreso" id="nriProgreso" aria-live="polite">
+          <span id="nriProgresoTxt">0 de 7 pasos listos</span>
+          <span class="bar"><span id="nriProgresoBar"></span></span>
+          <span class="avisos" id="nriProgresoAvisos"></span>
+        </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
@@ -93,8 +272,12 @@
                 <div class="nri-step-circle"><span class="nri-step-num-text">1</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">Documento <span class="nri-step-opt">(opcional)</span></div>
-                <div class="nri-step-sub">Puedes asociarlo ahora o después desde la ficha</div>
+                <div class="nri-step-title">Documento <span class="nri-step-opt">(opcional)</span>
+                  {# 2026-09-15: badge "N documento(s) verificados en ERP" (lo llena retiros_nuevo_interno.js) #}
+                  <span class="nri-hdr-badge" id="nriDocBadge" style="display:none"></span>
+                </div>
+                <div class="nri-step-sub">Escribe el N° y te mostramos los candidatos del ERP, o búscalo con el modal estándar</div>
+                <div class="nri-step-estado" id="nriStepEstado1"></div>
               </div>
             </div>
             <div class="row g-2">
@@ -111,11 +294,32 @@
               </div>
               <div class="col-6 col-md-4">
                 <label class="form-label small fw-semibold">N° documento</label>
-                <input name="document_number" class="form-control form-control-sm" maxlength="60" placeholder="Opcional">
+                <input name="document_number" class="form-control form-control-sm" maxlength="60" placeholder="Opcional" inputmode="numeric" autocomplete="off">
               </div>
               <div class="col-12 col-md-4 d-flex align-items-end pb-1">
                 <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-info-circle me-1"></i>Puedes crear el retiro sin factura y asociarla luego por cliente/rubro desde la ficha.</div>
               </div>
+            </div>
+            {# ── Asistente ERP del Paso 1 (2026-09-15, retiros_nuevo_interno.js):
+               botón al modal estándar tickets/_tka_modal.html (incluido al final
+               del bloque, FUERA de este modal y del form), candidatos de la
+               autobúsqueda por N° y lista de documentos que quedarán asociados
+               al crear (POST /retiros/<id>/docs/agregar). ── #}
+            <div class="nri-doc-tools">
+              <button type="button" class="nri-erp-btn" id="nriDocErpBtn" title="Abrir el buscador estándar de documentos del ERP Random">
+                <i class="bi bi-search"></i>Buscar en el ERP
+              </button>
+              <span class="nri-doc-status" id="nriDocStatus"></span>
+            </div>
+            {# 2026-09-15: avisos con acción del Paso 1 (¿es un RUT?, ya está en RET-XXX, varios RUT) #}
+            <div id="nriDocAvisos" class="nri-avisos"></div>
+            <div id="nriDocSugerencias" class="nri-doc-sug" style="display:none"></div>
+            <div id="nriDocsSelWrap" style="display:none">
+              <div class="nri-list-title">
+                <span><i class="bi bi-receipt-cutoff"></i>Documentos del retiro<span class="nri-count" id="nriDocsSelCount">0</span></span>
+                <span class="text-muted fw-normal text-lowercase" style="letter-spacing:0;font-size:.7rem">se asocian al crear · el primero queda como documento principal</span>
+              </div>
+              <div id="nriDocsSel" class="nri-docs-list"></div>
             </div>
           </div>
 
@@ -128,17 +332,22 @@
               </div>
               <div class="nri-step-titles">
                 <div class="nri-step-title">Cliente</div>
-                <div class="nri-step-sub">¿A nombre de quién queda el retiro?</div>
+                <div class="nri-step-sub">¿A nombre de quién queda el retiro? Escribe el RUT o el nombre y el ERP te propone el resto</div>
+                <div class="nri-step-estado" id="nriStepEstado2"></div>
               </div>
             </div>
             <div class="row g-2">
               <div class="col-12 col-md-6">
                 <label class="form-label small fw-semibold">Nombre / Razón social *</label>
-                <input name="customer_name" class="form-control form-control-sm nri-req" maxlength="200" required>
+                {# 2026-09-15: wrapper relativo para el dropdown de autocompletar por razón social (retiros_nuevo_interno.js) #}
+                <div class="nri-ac-wrap">
+                  <input name="customer_name" class="form-control form-control-sm nri-req" maxlength="200" required autocomplete="off">
+                  <div id="nriNombreAc" class="nri-ac" role="listbox"></div>
+                </div>
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">RUT</label>
-                <input name="customer_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9">
+                <input name="customer_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9" autocomplete="off">
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Teléfono</label>
@@ -147,7 +356,33 @@
               <div class="col-12 col-md-6">
                 <label class="form-label small fw-semibold">Email (opcional — para avisarle)</label>
                 <input name="contact_email" type="email" class="form-control form-control-sm" maxlength="180" placeholder="cliente@correo.cl">
+                {# El email NUNCA se autocompleta desde el ERP (Daniel 2026-09-15, caso Jeremías):
+                   solo llega como chip "Detectado en ERP → usar" en #nriCliChips. #}
               </div>
+            </div>
+            {# ── Asistente ERP del Paso 2 (2026-09-15, retiros_nuevo_interno.js):
+               estado de la ficha (/retiros/api/cliente/<rut>/ficha), chips
+               "Detectado en ERP → usar" y documentos con saldo pendiente del
+               cliente (/retiros/api/cliente/<rut>/saldo-pendiente) con checkbox
+               + "Seleccionar/deseleccionar todo" (REGLA #14). ── #}
+            <div class="nri-doc-tools" style="margin-top:8px">
+              <span class="nri-doc-status" id="nriCliStatus"></span>
+            </div>
+            <div id="nriCliChips" class="nri-chips" style="display:none"></div>
+            {# 2026-09-15: avisos con acción del Paso 2 — RUT del documento distinto
+               al cliente escrito ("Usar cliente del documento" / "Mantener"),
+               cliente con retiros ACTIVOS (/retiros/api/cliente/<rut>/retiros-activos),
+               nombre que en realidad es un RUT. Los pinta nriEvaluarPasos(). #}
+            <div id="nriCliAvisos" class="nri-avisos"></div>
+            <div id="nriRutDocsWrap" style="display:none">
+              <div class="nri-list-title">
+                <span><i class="bi bi-wallet2"></i>Documentos con saldo pendiente de este cliente</span>
+                <button type="button" class="nri-erp-btn is-outline" id="nriRutDocsToggleAll" style="min-height:34px;padding:5px 11px" title="Marca todos los documentos con saldo; los que ya tienen retiro se marcan uno a uno">
+                  <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo
+                </button>
+              </div>
+              <div id="nriRutDocsHint" class="nri-smart-hint" style="display:none"><i class="bi bi-lightbulb-fill"></i><div id="nriRutDocsHintMsg"></div></div>
+              <div id="nriRutDocs" class="nri-docs-list"></div>
             </div>
           </div>
 
@@ -161,7 +396,15 @@
               <div class="nri-step-titles">
                 <div class="nri-step-title">Persona que retira</div>
                 <div class="nri-step-sub">Quién llega a bodega a buscar la carga</div>
+                <div class="nri-step-estado" id="nriStepEstado3"></div>
               </div>
+            </div>
+            {# 2026-09-15: chip "Es el mismo cliente" — copia nombre/RUT del Paso 2
+               (solo si están vacíos; si hay otro valor, pide confirmación). #}
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              <button type="button" class="nri-chip-mismo" id="nriMismoCliente" title="Copiar el nombre y RUT del cliente del Paso 2">
+                <i class="bi bi-person-check-fill"></i>Es el mismo cliente
+              </button>
             </div>
             <div class="row g-2">
               <div class="col-12 col-md-5">
@@ -170,7 +413,7 @@
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">RUT</label>
-                <input name="pickup_person_rut" class="form-control form-control-sm" maxlength="20">
+                <input name="pickup_person_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9" autocomplete="off">
               </div>
               <div class="col-6 col-md-4">
                 <label class="form-label small fw-semibold">Relación</label>
@@ -196,6 +439,7 @@
               <div class="nri-step-titles">
                 <div class="nri-step-title">Responsable del retiro</div>
                 <div class="nri-step-sub">¿Quién se responsabiliza de entregar este pedido?</div>
+                <div class="nri-step-estado" id="nriStepEstado4"></div>
               </div>
             </div>
             <div class="row g-2">
@@ -217,6 +461,7 @@
               <div class="nri-step-titles">
                 <div class="nri-step-title">Carga <span class="nri-step-opt">(opcional)</span></div>
                 <div class="nri-step-sub">Puedes ajustarla después si no la tienes a mano</div>
+                <div class="nri-step-estado" id="nriStepEstado5"></div>
               </div>
             </div>
             <div class="row g-2">
@@ -233,6 +478,10 @@
                 <input name="total_volume_m3" type="number" min="0" step="0.001" value="0" class="form-control form-control-sm">
               </div>
             </div>
+            {# 2026-09-15: "Calculado desde el ERP: N de M líneas con ficha logística"
+               (retiros_nuevo_interno.js). /retiros/nuevo valida la capacidad del
+               bloque con estos kg/m³, por eso se precargan desde las fichas. #}
+            <div id="nriCargaInfo" class="nri-carga-info" style="display:none"></div>
           </div>
 
           {# ── Paso 6: Agenda — Daniel 2026-06-16: MISMO slot-picker del
@@ -249,6 +498,7 @@
               <div class="nri-step-titles">
                 <div class="nri-step-title">Agenda (entrega)</div>
                 <div class="nri-step-sub">Mira el mes completo por densidad de cupos y elige el bloque</div>
+                <div class="nri-step-estado" id="nriStepEstado6"></div>
               </div>
             </div>
             {# Daniel 2026-09-14 ("así quiero los calendarios de todo el módulo
@@ -320,6 +570,7 @@
               <div class="nri-step-titles">
                 <div class="nri-step-title">El cliente ya aceptó por</div>
                 <div class="nri-step-sub">Canal de confirmación + notas para bodega</div>
+                <div class="nri-step-estado" id="nriStepEstado7"></div>
               </div>
             </div>
             <div class="row g-2">
@@ -514,6 +765,11 @@
 
 {# Daniel 2026-06-16: widget de calendario (mismo del formulario público / Paso 4) #}
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
+{# 2026-09-15: asistente ERP del modal "Nuevo retiro interno" (Paso 1 documento
+   potente, Paso 2 cliente potente, Paso 5 carga precargada, crear = asociar).
+   defer → corre después del <script> inline de abajo, que ya expuso
+   window.nriRefreshSteps. #}
+<script defer src="{{ url_for('static', filename='retiros_nuevo_interno.js') }}"></script>
 <script>
 // ── Nuevo retiro interno / backoffice (Daniel 2026-05-29) ──
 (function(){
@@ -533,10 +789,19 @@
       reqs.forEach(function(el){ if (!String(el.value || '').trim()) ok = false; });
       card.classList.toggle('is-complete', ok);
     });
+    // 2026-09-15 (Daniel: "semáforo hasta que todo esté en verde"): encima
+    // del binario rojo/verde de arriba corre el evaluador de TRES estados
+    // (rojo / ámbar / verde + línea "qué falta") de retiros_nuevo_interno.js.
+    // Aditivo: si el archivo no cargó, el semáforo binario sigue funcionando.
+    try { if (typeof window.nriEvaluarPasos === 'function') window.nriEvaluarPasos(); } catch(_e){ console.warn('nriEvaluarPasos', _e); }
   }
   const _formNri = document.getElementById('formNuevoRetiroInterno');
   _formNri?.addEventListener('input', nriRefreshSteps);
   _formNri?.addEventListener('change', nriRefreshSteps);
+  // 2026-09-15: expuesta para static/retiros_nuevo_interno.js — los .value
+  // que asigna por JS (precargas desde el ERP) no disparan 'input', así que
+  // el asistente la llama a mano después de cada precarga. Aditivo.
+  window.nriRefreshSteps = nriRefreshSteps;
 
   // ── Hint de cupos del día (responsive_retiros 2026-06-09) ──
   // Solo informativo: muestra bloques libres vs llenos del día elegido.
@@ -685,6 +950,15 @@
   const btn = document.getElementById('btnGuardarRetiroInterno');
   btn?.addEventListener('click', async function(){
     const form = document.getElementById('formNuevoRetiroInterno');
+    // 2026-09-15: pre-chequeo del semáforo (retiros_nuevo_interno.js). Con
+    // pasos en ROJO: scroll + resalte + toast con lo que falta y no sigue.
+    // Con solo ÁMBAR: ilusConfirm "¿Crear igual?". Todo verde: sigue directo.
+    // El botón NUNCA se deshabilita (regla de Daniel: proponer, no bloquear).
+    if (typeof window.nriPreCrear === 'function'){
+      let _sigue = true;
+      try { _sigue = await window.nriPreCrear(); } catch(_ePre){ _sigue = true; }
+      if (!_sigue) return;
+    }
     if (!form.reportValidity()) return;   // valida required nativos
     // Daniel 2026-06-16: exigir bloque horario seleccionado en el calendario
     // (el widget en bloque único NO auto-selecciona; el operador toca uno).
@@ -705,7 +979,20 @@
         await ilusAlert({ title:'No se pudo crear', message: d.error || 'Error desconocido.', type:'error' });
         return;
       }
-      ilusToast('✓ ' + (d.message || 'Retiro creado y confirmado'), { type:'success' });
+      // 2026-09-15 — CREAR = ASOCIAR DE VERDAD: antes del redirect, cada
+      // documento elegido en el Paso 1/2 (window._nriDocs) se asocia con
+      // POST /retiros/<id>/docs/agregar (static/retiros_nuevo_interno.js).
+      // Si algo falla, el asistente ya mostró un ilusAlert con el detalle;
+      // igual se redirige a la ficha para completarlo — nunca en silencio.
+      let _asoc = { fallos: [], asociados: 0 };
+      if (typeof window.nriAsociarDocsTrasCrear === 'function'){
+        try { _asoc = await window.nriAsociarDocsTrasCrear(d, btn) || _asoc; }
+        catch(_eAsoc){ _asoc = { fallos: [String(_eAsoc && _eAsoc.message || _eAsoc)], asociados: 0 }; }
+      }
+      if (!_asoc.fallos.length){
+        ilusToast('✓ ' + (d.message || 'Retiro creado y confirmado')
+          + (_asoc.asociados ? ' · ' + _asoc.asociados + ' documento' + (_asoc.asociados === 1 ? '' : 's') + ' asociado' + (_asoc.asociados === 1 ? '' : 's') : ''), { type:'success' });
+      }
       setTimeout(()=>{ window.location.href = d.redirect_url || '/retiros'; }, 700);
     } catch(e) {
       await ilusAlert({ title:'Error de red', message: e.message || 'No se pudo contactar al servidor.', type:'error' });
@@ -1452,4 +1739,14 @@ async function eliminarSolicitudDesdeMonitor(rid, code, cliente){
   };
 })();
 </script>
+
+{# Buscador avanzado de documentos ERP COMPARTIDO (namespace _TKA/tkaOpen) --
+   el mismo componente que ya usan Tickets/Repuestos/Cotizaciones/OT 2.0.
+   Lo abre el botón "Buscar en el ERP" del Paso 1 del modal "Nuevo retiro
+   interno" (static/retiros_nuevo_interno.js, mode:'seleccionar', solo la
+   pestaña 'doc'). Va FUERA de #modalNuevoRetiroInterno y de su <form>
+   (patrón templates/ot2/panel.html): tiene z-index 1085/1086 propio para
+   flotar encima del modal Bootstrap. Solo lectura contra el ERP Random
+   (REGLA #4.1) -- ver templates/tickets/_tka_modal.html. #}
+{% include "tickets/_tka_modal.html" %}
 {% endblock %}
