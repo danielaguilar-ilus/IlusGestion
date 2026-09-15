@@ -105588,6 +105588,8 @@ def mant_facturas_proveedor():
         pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
         pf_total_paginas=pf_total_paginas,
         provs_sugeridos=provs_sugeridos,
+        es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
+        hoy_iso=_now_chile().date().isoformat(),
     )
 
 
@@ -106005,6 +106007,400 @@ def mant_factura_proveedor_archivo(fid):
         (res["url"], arch.filename[:300], fid))
     _mant_log("factura_proveedor", fid, "archivo_subido", arch.filename[:300])
     return jsonify({"ok": True, "url": res["url"], "nombre": arch.filename[:300]})
+
+
+def _mfp_xl_dt(dt):
+    """DATETIME guardado en UTC (NOW()) → datetime naive en hora Chile para
+    escribirlo como fecha real en Excel (REGLA #6). None si viene vacío."""
+    if not dt:
+        return None
+    try:
+        from zoneinfo import ZoneInfo as _ZI
+        from datetime import timezone as _tz
+        return dt.replace(tzinfo=_tz.utc).astimezone(_ZI("America/Santiago")).replace(tzinfo=None)
+    except Exception:
+        return dt
+
+
+@app.route("/mantenciones/facturas-proveedor.xlsx")
+@app.route("/servicio-tecnico/facturas-proveedor.xlsx")
+@_mant_required
+@_no_tecnico
+def mant_facturas_proveedor_xlsx():
+    """📊 Control de cobros a externos en Excel — SOLO superadmin.
+
+    Daniel (15-sep-2026): "quiero consultar y obtener los valores de los
+    couriers [proveedores externos] de forma independiente... reportes con
+    trazabilidad donde podamos definir hasta la factura con la que se cobró
+    el courier, para evitar duplicidad en cobros... dejemos de momento ese
+    control para el superadmin e imprime un reporte en Excel". Mandó su
+    planilla manual como ejemplo: una fila por instalación con fecha,
+    semana, documento del cliente, técnico, cliente, comuna, estado, OT,
+    anexo, protocolo, observaciones, retornos, cobro/pago de instalación y
+    flete, ganancia, y al final la factura del proveedor con la que se pagó.
+
+    Decisiones de Daniel (AskUserQuestion, mismo día): la fecha que manda
+    es la PROGRAMADA de la OT; "Retornos" = visitas de vuelta al mismo
+    cliente en los 30 días siguientes; "Cumplimiento de protocolos" =
+    checklist obligatorio completo + firma técnico + firma cliente; solo
+    proveedores EXTERNOS. Fechas día-mes-año y hora Chile, siempre.
+
+    Tres hojas: Detalle (una fila por OT), Por proveedor (totales) y
+    Facturas (cada documento del proveedor con quién lo registró/pagó y
+    cuándo). Filtros: desde/hasta (fecha programada), proveedor, estado
+    del pago al proveedor.
+    """
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede bajar este control."}), 403
+
+    import io as _io
+    from datetime import date as _date, timedelta as _td
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    # ── Filtros ─────────────────────────────────────────────────────────
+    try:
+        _hoy = _now_chile().date()
+    except Exception:
+        _hoy = datetime.utcnow().date()
+
+    def _parse_d(raw, default):
+        try:
+            return datetime.strptime((raw or "").strip()[:10], "%Y-%m-%d").date()
+        except Exception:
+            return default
+    desde = _parse_d(request.args.get("desde"), _hoy.replace(day=1))
+    hasta = _parse_d(request.args.get("hasta"), _hoy)
+    if hasta < desde:
+        desde, hasta = hasta, desde
+    f_prov = (request.args.get("proveedor") or "").strip()[:120]
+    f_estado = (request.args.get("estado") or "").strip().lower()
+    if f_estado not in ("sin_factura", "facturada", "pagada"):
+        f_estado = ""
+
+    where = [_MFP_SQL_OT_EXTERNA, "v.fecha_programada BETWEEN %s AND %s"]
+    params = [desde, hasta]
+    if f_prov:
+        like = f"%{f_prov}%"
+        where.append("(te.razon_social LIKE %s OR v.proveedor_nombre LIKE %s "
+                     " OR COALESCE(au.nombre, au.username) LIKE %s)")
+        params.extend([like, like, like])
+    if f_estado == "sin_factura":
+        where.append("fpi.id IS NULL")
+    elif f_estado == "facturada":
+        where.append("fp.estado_pago = 'pendiente'")
+    elif f_estado == "pagada":
+        where.append("fp.estado_pago = 'pagada'")
+
+    filas = mysql_fetchall(
+        "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, v.hora_inicio, v.cerrada_at, "
+        "       v.cliente_id, c.razon_social, COALESCE(NULLIF(v.direccion_comuna,''), c.comuna) AS comuna, "
+        "       v.factura_tido, v.factura_nudo, v.documentos_extra, "
+        "       v.zz_monto, v.zz_envio_monto, v.costo_proveedor, v.costo_despacho, v.costo, "
+        "       v.modalidad_cobro, v.cubierto_por, v.garantia_motivo, v.zz_motivo_manual, "
+        "       v.diagnostico, v.proveedor_nombre, "
+        "       v.firma_tecnico_at, v.firma_cliente_at, v.firma_supervisor_at, "
+        "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+        "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, "
+        "       anx.numero AS anexo_numero, anx.estado AS anexo_estado, anx.firmado_at AS anexo_firmado_at, "
+        "       COALESCE(tar.n_obl, 0) AS n_obl, COALESCE(tar.n_obl_ok, 0) AS n_obl_ok, "
+        "       fp.id AS fac_id, fp.tipo_documento AS fac_tipo, fp.numero_documento AS fac_numero, "
+        "       fp.fecha AS fac_fecha, fp.estado_pago AS fac_estado, fp.monto_total AS fac_total, "
+        "       fp.created_at AS fac_created_at, fp.created_by AS fac_created_by, "
+        "       fp.pagada_at AS fac_pagada_at, fp.pagada_por AS fac_pagada_por, "
+        "       fp.pago_referencia AS fac_ref, fp.archivo_url AS fac_archivo, "
+        "       fpi.monto AS fac_monto, fpi.observacion AS fac_obs "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+        "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = v.tecnico_user_id "
+        "  LEFT JOIN mant_factura_proveedor_items fpi ON fpi.visita_id = v.id "
+        "  LEFT JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+        "  LEFT JOIN (SELECT ot_id, MAX(id) AS id FROM mant_anexos "
+        "              WHERE ot_id IS NOT NULL AND estado <> 'anulado' GROUP BY ot_id) anx_ult "
+        "         ON anx_ult.ot_id = v.id "
+        "  LEFT JOIN mant_anexos anx ON anx.id = anx_ult.id "
+        "  LEFT JOIN (SELECT visita_id, "
+        "                    SUM(CASE WHEN COALESCE(obligatoria,0)=1 THEN 1 ELSE 0 END) AS n_obl, "
+        "                    SUM(CASE WHEN COALESCE(obligatoria,0)=1 AND COALESCE(completada,0)=1 THEN 1 ELSE 0 END) AS n_obl_ok "
+        "               FROM mant_visita_tareas GROUP BY visita_id) tar ON tar.visita_id = v.id "
+        " WHERE " + " AND ".join(where) +
+        " ORDER BY v.fecha_programada ASC, v.id ASC",
+        tuple(params)) or []
+    filas = [dict(r) for r in filas]
+
+    # ── Retornos: visitas de vuelta al mismo cliente en los 30 días siguientes ──
+    retornos = {}
+    _cids = sorted({int(r["cliente_id"]) for r in filas if r.get("cliente_id")})
+    if _cids:
+        _ph = ",".join(["%s"] * len(_cids))
+        _vuelta = mysql_fetchall(
+            "SELECT id, cliente_id, fecha_programada FROM mant_visitas "
+            " WHERE cliente_id IN (" + _ph + ") "
+            "   AND tipo IN ('correctiva','visita_tecnica','visita_correctiva','garantia') "
+            "   AND fecha_programada BETWEEN %s AND %s",
+            tuple(_cids) + (desde, hasta + _td(days=30))) or []
+        por_cli = {}
+        for x in _vuelta:
+            por_cli.setdefault(int(x["cliente_id"]), []).append((x["fecha_programada"], int(x["id"])))
+        for r in filas:
+            f0, cid, vid0 = r.get("fecha_programada"), r.get("cliente_id"), int(r["id"])
+            if not (f0 and cid):
+                retornos[vid0] = 0
+                continue
+            retornos[vid0] = sum(1 for (fx, ix) in por_cli.get(int(cid), [])
+                                 if ix != vid0 and fx and f0 < fx <= f0 + _td(days=30))
+
+    # ── Armado del libro ────────────────────────────────────────────────
+    wb = Workbook()
+    _fill = PatternFill("solid", fgColor="0A0A0A")
+    _font = Font(color="FFFFFF", bold=True, size=10)
+    _rojo = Font(color="B91C1C", bold=True)
+    _verde = Font(color="15803D", bold=True)
+    _FMT_CLP = '"$"#,##0;[Red]-"$"#,##0'
+    _FMT_D = "DD-MM-YYYY"
+    _FMT_DT = "DD-MM-YYYY HH:MM"
+
+    def _encabezar(ws, cols, anchos):
+        ws.append(cols)
+        for i, _c in enumerate(cols, 1):
+            cel = ws.cell(row=1, column=i)
+            cel.fill = _fill
+            cel.font = _font
+            cel.alignment = Alignment(vertical="center", wrap_text=True)
+            ws.column_dimensions[get_column_letter(i)].width = anchos[i - 1] if i - 1 < len(anchos) else 14
+        ws.freeze_panes = "A2"
+        ws.row_dimensions[1].height = 30
+
+    def _fmt_fila(ws, fila_idx, cols_clp=(), cols_d=(), cols_dt=()):
+        for c in cols_clp:
+            ws.cell(row=fila_idx, column=c).number_format = _FMT_CLP
+        for c in cols_d:
+            ws.cell(row=fila_idx, column=c).number_format = _FMT_D
+        for c in cols_dt:
+            ws.cell(row=fila_idx, column=c).number_format = _FMT_DT
+
+    _TIPO_DOC_LBL = {"factura": "Factura", "boleta_honorarios": "Boleta de honorarios", "otro": "Documento"}
+
+    # ═══ Hoja 1 · Detalle ═══
+    ws = wb.active
+    ws.title = "Detalle"
+    cols = ["Fecha de instalación", "Sem", "Documento del cliente", "Técnico asignado", "Cliente", "Comuna",
+            "Estado", "Estado OT", "N° OT", "Tipo", "Anexo", "N° Anexo", "Agendada", "Cumplimiento de protocolos",
+            "Observaciones", "Retornos",
+            "Cobro al cliente instalación", "Pago al técnico instalación", "Cobro al cliente flete", "Pago al técnico flete",
+            "Total pago al técnico", "Cobro total al cliente", "Ganancia",
+            "Observaciones de cobro",
+            "Factura del proveedor", "Estado del pago", "Monto en la factura", "Registrada", "Registrada por",
+            "Pagada", "Pagada por", "Referencia de pago", "Respaldo"]
+    anchos = [14, 6, 22, 20, 34, 16, 11, 16, 16, 20, 12, 10, 18, 26, 40, 9,
+              16, 16, 16, 16, 16, 16, 14, 40, 22, 16, 16, 17, 20, 17, 20, 18, 10]
+    _encabezar(ws, cols, anchos)
+
+    prov_tot = {}
+    for r in filas:
+        vid = int(r["id"])
+        fecha = r.get("fecha_programada")
+        sem = fecha.isocalendar()[1] if fecha else None
+        docs = []
+        if (r.get("factura_nudo") or "").strip():
+            docs.append(f"{r.get('factura_tido') or 'FCV'} {r['factura_nudo']}")
+        try:
+            for dx in (json.loads(r.get("documentos_extra") or "[]") or []):
+                if dx.get("nudo"):
+                    docs.append(f"{dx.get('tido') or ''} {dx['nudo']}".strip())
+        except Exception:
+            pass
+        proveedor = _mfp_nombre_proveedor_ot(r)
+        estado_ot = (r.get("estado") or "").lower()
+        logrado = "Logrado" if estado_ot in ("cerrada", "completada") else "Pendiente"
+        tipo = (r.get("tipo") or "").lower()
+        es_gar = ((r.get("modalidad_cobro") or "").lower() == "garantia"
+                  or (r.get("cubierto_por") or "").lower() == "garantia")
+        zz_inst = float(r.get("zz_monto") or 0)
+        zz_flete = float(r.get("zz_envio_monto") or 0)
+        cobro_inst = 0.0 if es_gar else zz_inst
+        cobro_flete = 0.0 if es_gar else zz_flete
+        pago_inst = float(r.get("costo_proveedor") or 0)
+        pago_flete = float(r.get("costo_despacho") or 0)
+        pago_total = pago_inst + pago_flete
+        cobro_total = cobro_inst + cobro_flete
+        ganancia = cobro_total - pago_total
+
+        # Protocolo: checklist obligatorio + firmas técnico y cliente
+        faltas = []
+        if int(r.get("n_obl") or 0) and int(r.get("n_obl_ok") or 0) < int(r.get("n_obl") or 0):
+            faltas.append(f"checklist {int(r.get('n_obl_ok') or 0)}/{int(r.get('n_obl') or 0)}")
+        if not r.get("firma_tecnico_at"):
+            faltas.append("falta firma técnico")
+        if not r.get("firma_cliente_at"):
+            faltas.append("falta firma cliente")
+        protocolo = "OK" if not faltas else " · ".join(faltas)
+
+        anexo_txt = ""
+        if r.get("anexo_numero"):
+            anexo_txt = {"firmado": "Firmado", "enviado": "Enviado", "visto": "Visto, sin firmar",
+                         "borrador": "Borrador", "rechazado": "Rechazado", "vencido": "Vencido"}.get(
+                (r.get("anexo_estado") or "").lower(), r.get("anexo_estado") or "")
+        agendada = None
+        if fecha:
+            try:
+                _h = r.get("hora_inicio")
+                if _h is not None and hasattr(_h, "seconds"):
+                    agendada = datetime.combine(fecha, (datetime.min + _h).time())
+                else:
+                    agendada = datetime.combine(fecha, datetime.min.time())
+            except Exception:
+                agendada = datetime.combine(fecha, datetime.min.time())
+        obs_cobro = " · ".join(x for x in [
+            (f"Garantía: {r['garantia_motivo']}" if es_gar and r.get("garantia_motivo") else ("Garantía" if es_gar else "")),
+            (r.get("zz_motivo_manual") or ""), (r.get("fac_obs") or "")] if x)
+
+        fac_txt = ""
+        if r.get("fac_id"):
+            fac_txt = f"{_TIPO_DOC_LBL.get(r.get('fac_tipo') or 'factura', 'Documento')} N° {r.get('fac_numero')}"
+        fac_estado = {"pendiente": "Facturada, sin pagar", "pagada": "Pagada", "anulada": "Anulada"}.get(
+            (r.get("fac_estado") or "").lower(), "Sin factura del proveedor")
+
+        ws.append([
+            fecha, sem, "; ".join(docs) or "", proveedor, r.get("razon_social") or "Trabajo interno",
+            r.get("comuna") or "", logrado, _OT2_ESTADO_META.get(estado_ot, (estado_ot,))[0] if estado_ot in _OT2_ESTADO_META else estado_ot,
+            r.get("numero_ot") or f"OT #{vid}", _TIPO_OT_LABEL.get(tipo, tipo),
+            anexo_txt or "Sin anexo", (f"N° {r['anexo_numero']}" if r.get("anexo_numero") else ""),
+            agendada, protocolo, (r.get("diagnostico") or "")[:1000], retornos.get(vid, 0),
+            cobro_inst, pago_inst, cobro_flete, pago_flete, pago_total, cobro_total, ganancia,
+            obs_cobro,
+            fac_txt, fac_estado, (float(r["fac_monto"]) if r.get("fac_monto") is not None else None),
+            _mfp_xl_dt(r.get("fac_created_at")), r.get("fac_created_by") or "",
+            _mfp_xl_dt(r.get("fac_pagada_at")), r.get("fac_pagada_por") or "",
+            r.get("fac_ref") or "", ("Sí" if r.get("fac_archivo") else ""),
+        ])
+        ri = ws.max_row
+        _fmt_fila(ws, ri, cols_clp=(17, 18, 19, 20, 21, 22, 23, 27), cols_d=(1,), cols_dt=(13, 28, 30))
+        ws.cell(row=ri, column=23).font = _rojo if ganancia < 0 else _verde
+        if fac_estado == "Sin factura del proveedor":
+            ws.cell(row=ri, column=26).font = Font(color="92400E", bold=True)
+
+        pt = prov_tot.setdefault(proveedor, {
+            "rut": r.get("prov_rut") or "", "n": 0, "pago_inst": 0.0, "pago_flete": 0.0, "pago_total": 0.0,
+            "cobro_total": 0.0, "ganancia": 0.0, "n_gar": 0,
+            "n_sin": 0, "m_sin": 0.0, "n_fact": 0, "m_fact": 0.0, "n_pag": 0, "m_pag": 0.0})
+        pt["n"] += 1
+        pt["pago_inst"] += pago_inst
+        pt["pago_flete"] += pago_flete
+        pt["pago_total"] += pago_total
+        pt["cobro_total"] += cobro_total
+        pt["ganancia"] += ganancia
+        pt["n_gar"] += 1 if es_gar else 0
+        _fe = (r.get("fac_estado") or "").lower()
+        if not r.get("fac_id"):
+            pt["n_sin"] += 1
+            pt["m_sin"] += pago_total
+        elif _fe == "pendiente":
+            pt["n_fact"] += 1
+            pt["m_fact"] += float(r.get("fac_monto") or pago_total)
+        elif _fe == "pagada":
+            pt["n_pag"] += 1
+            pt["m_pag"] += float(r.get("fac_monto") or pago_total)
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{max(ws.max_row, 1)}"
+
+    # ═══ Hoja 2 · Por proveedor ═══
+    ws2 = wb.create_sheet("Por proveedor")
+    cols2 = ["Proveedor", "RUT", "N° OT", "En garantía", "Pago instalación", "Pago flete", "Total pago al técnico",
+             "Cobro total al cliente", "Ganancia",
+             "OT sin factura", "$ sin factura", "OT facturadas sin pagar", "$ facturado sin pagar",
+             "OT pagadas", "$ pagado"]
+    _encabezar(ws2, cols2, [34, 14, 8, 10, 16, 14, 18, 18, 14, 12, 16, 16, 18, 10, 16])
+    for nombre, pt in sorted(prov_tot.items(), key=lambda kv: kv[1]["pago_total"], reverse=True):
+        ws2.append([nombre, pt["rut"], pt["n"], pt["n_gar"], pt["pago_inst"], pt["pago_flete"], pt["pago_total"],
+                    pt["cobro_total"], pt["ganancia"], pt["n_sin"], pt["m_sin"], pt["n_fact"], pt["m_fact"],
+                    pt["n_pag"], pt["m_pag"]])
+        ri = ws2.max_row
+        _fmt_fila(ws2, ri, cols_clp=(5, 6, 7, 8, 9, 11, 13, 15))
+        ws2.cell(row=ri, column=9).font = _rojo if pt["ganancia"] < 0 else _verde
+    if prov_tot:
+        ws2.append(["TOTAL", "", sum(p["n"] for p in prov_tot.values()), sum(p["n_gar"] for p in prov_tot.values()),
+                    sum(p["pago_inst"] for p in prov_tot.values()), sum(p["pago_flete"] for p in prov_tot.values()),
+                    sum(p["pago_total"] for p in prov_tot.values()), sum(p["cobro_total"] for p in prov_tot.values()),
+                    sum(p["ganancia"] for p in prov_tot.values()), sum(p["n_sin"] for p in prov_tot.values()),
+                    sum(p["m_sin"] for p in prov_tot.values()), sum(p["n_fact"] for p in prov_tot.values()),
+                    sum(p["m_fact"] for p in prov_tot.values()), sum(p["n_pag"] for p in prov_tot.values()),
+                    sum(p["m_pag"] for p in prov_tot.values())])
+        ri = ws2.max_row
+        _fmt_fila(ws2, ri, cols_clp=(5, 6, 7, 8, 9, 11, 13, 15))
+        for c in range(1, len(cols2) + 1):
+            ws2.cell(row=ri, column=c).font = Font(bold=True)
+
+    # ═══ Hoja 3 · Facturas del proveedor ═══
+    ws3 = wb.create_sheet("Facturas")
+    cols3 = ["Proveedor", "RUT", "Tipo", "N° documento", "Fecha documento", "Monto documento",
+             "OT que cobra", "Suma asignada en OT", "Diferencia", "Estado del pago",
+             "Registrada", "Registrada por", "Pagada", "Pagada por", "Referencia de pago", "Respaldo", "Notas"]
+    _encabezar(ws3, cols3, [34, 14, 18, 14, 14, 16, 30, 18, 14, 18, 17, 20, 17, 20, 18, 10, 40])
+    fwhere, fparams = ["f.fecha BETWEEN %s AND %s"], [desde, hasta]
+    if f_prov:
+        fwhere.append("f.proveedor_nombre LIKE %s")
+        fparams.append(f"%{f_prov}%")
+    if f_estado == "facturada":
+        fwhere.append("f.estado_pago = 'pendiente'")
+    elif f_estado == "pagada":
+        fwhere.append("f.estado_pago = 'pagada'")
+    facturas = mysql_fetchall(
+        "SELECT f.*, COUNT(i.id) AS n_ot, COALESCE(SUM(i.monto),0) AS suma, "
+        "       GROUP_CONCAT(COALESCE(v.numero_ot, CONCAT('OT #', v.id)) ORDER BY v.id SEPARATOR ', ') AS ots "
+        "  FROM mant_facturas_proveedor f "
+        "  LEFT JOIN mant_factura_proveedor_items i ON i.factura_proveedor_id = f.id "
+        "  LEFT JOIN mant_visitas v ON v.id = i.visita_id "
+        " WHERE " + " AND ".join(fwhere) +
+        " GROUP BY f.id ORDER BY f.fecha ASC, f.id ASC",
+        tuple(fparams)) or []
+    for f in facturas:
+        monto = float(f.get("monto_total") or 0)
+        suma = float(f.get("suma") or 0)
+        ws3.append([
+            f.get("proveedor_nombre"), f.get("proveedor_rut") or "",
+            _TIPO_DOC_LBL.get(f.get("tipo_documento") or "factura", "Documento"), f.get("numero_documento"),
+            f.get("fecha"), monto, f.get("ots") or "", suma, monto - suma,
+            {"pendiente": "Pendiente de pago", "pagada": "Pagada", "anulada": "Anulada"}.get(
+                (f.get("estado_pago") or "").lower(), f.get("estado_pago") or ""),
+            _mfp_xl_dt(f.get("created_at")), f.get("created_by") or "",
+            _mfp_xl_dt(f.get("pagada_at")), f.get("pagada_por") or "",
+            f.get("pago_referencia") or "", ("Sí" if f.get("archivo_url") else ""), (f.get("notas") or "")[:500],
+        ])
+        ri = ws3.max_row
+        _fmt_fila(ws3, ri, cols_clp=(6, 8, 9), cols_d=(5,), cols_dt=(11, 13))
+        if int(f.get("n_ot") or 0) and round(monto - suma) != 0:
+            ws3.cell(row=ri, column=9).font = _rojo
+    ws3.auto_filter.ref = f"A1:{get_column_letter(len(cols3))}{max(ws3.max_row, 1)}"
+
+    # ═══ Hoja 4 · Filtros usados (para que el archivo se explique solo) ═══
+    ws4 = wb.create_sheet("Filtros")
+    ws4.append(["Generado", _mfp_xl_dt(datetime.utcnow())])
+    ws4.cell(row=1, column=2).number_format = _FMT_DT
+    ws4.append(["Generado por", current_username() or ""])
+    ws4.append(["Desde (fecha programada)", desde]); ws4.cell(row=3, column=2).number_format = _FMT_D
+    ws4.append(["Hasta (fecha programada)", hasta]); ws4.cell(row=4, column=2).number_format = _FMT_D
+    ws4.append(["Proveedor", f_prov or "Todos"])
+    ws4.append(["Estado del pago", {"": "Todos", "sin_factura": "Sin factura del proveedor",
+                                    "facturada": "Facturadas sin pagar", "pagada": "Pagadas"}[f_estado]])
+    ws4.append(["Alcance", "Solo OT ejecutadas por proveedores externos"])
+    ws4.append(["Retornos", "Visitas correctivas/técnicas al mismo cliente en los 30 días siguientes"])
+    ws4.append(["Cumplimiento de protocolos", "Checklist obligatorio completo + firma técnico + firma cliente"])
+    ws4.column_dimensions["A"].width = 28
+    ws4.column_dimensions["B"].width = 60
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    _mant_log("factura_proveedor", 0, "excel_control",
+              f"{current_username()} · {desde.strftime('%d-%m-%Y')} a {hasta.strftime('%d-%m-%Y')}"
+              f"{' · ' + f_prov if f_prov else ''}{' · ' + f_estado if f_estado else ''} · {len(filas)} OT")
+    nombre = f"control_cobros_externos_{desde.strftime('%d-%m-%Y')}_a_{hasta.strftime('%d-%m-%Y')}.xlsx"
+    return Response(
+        buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
 
 
 @app.route("/mantenciones/facturacion-proveedores")

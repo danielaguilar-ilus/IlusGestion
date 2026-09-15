@@ -34,11 +34,67 @@
     <a class="btn btn-sm btn-outline-dark" style="min-height:44px;display:inline-flex;align-items:center"
        href="{{ url_for('mant_facturacion_proveedores') }}">
       <i class="bi bi-bar-chart-line me-1"></i>Facturación del mes</a>
+    {% if es_superadmin %}
+    {# 📊 2026-09-15 (Daniel): control de cobros a externos en Excel, con la
+       forma de su planilla y la factura del proveedor de cada OT. Solo
+       superadmin por ahora. #}
+    <button type="button" class="btn btn-sm btn-dark fw-bold" style="min-height:44px" onclick="fpvAbrirExcel()">
+      <i class="bi bi-file-earmark-excel me-1"></i>Bajar Excel</button>
+    {% endif %}
     <button type="button" class="btn btn-sm btn-danger fw-bold" style="min-height:44px"
             onclick="fpvAbrirNueva()">
       <i class="bi bi-plus-lg me-1"></i>Nueva factura</button>
   </div>
 </div>
+
+{% if es_superadmin %}
+<div class="modal fade" id="fpvModalExcel" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;border:0">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:14px 14px 0 0">
+        <h5 class="modal-title"><i class="bi bi-file-earmark-excel me-2" style="color:#16a34a"></i>Control de cobros a externos</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="fp-sub mb-3" style="font-size:.8rem;color:#475569">
+          Una fila por OT de proveedor externo (fecha, documento del cliente, cobro y pago de instalación y flete,
+          ganancia, y con qué factura del proveedor se pagó), más totales por proveedor y el detalle de cada factura.
+          Fechas día-mes-año, hora Chile.
+        </div>
+        <div class="row g-2 mb-2">
+          <div class="col-6">
+            <label class="fpv-lbl" for="fpxDesde">Desde (fecha programada)</label>
+            <input type="date" class="form-control" id="fpxDesde" value="{{ hoy_iso[:8] }}01">
+          </div>
+          <div class="col-6">
+            <label class="fpv-lbl" for="fpxHasta">Hasta</label>
+            <input type="date" class="form-control" id="fpxHasta" value="{{ hoy_iso }}">
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="fpv-lbl" for="fpxProv">Proveedor (opcional)</label>
+          <input type="text" class="form-control" id="fpxProv" list="fpvProvLista" value="{{ f_prov }}"
+                 placeholder="Todos los proveedores" autocomplete="off">
+        </div>
+        <div class="mb-1">
+          <label class="fpv-lbl" for="fpxEstado">Estado del pago al proveedor</label>
+          <select class="form-select" id="fpxEstado">
+            <option value="">Todas las OT</option>
+            <option value="sin_factura">Sin factura del proveedor</option>
+            <option value="facturada" {{ 'selected' if f_estado == 'pendiente' }}>Facturadas, sin pagar</option>
+            <option value="pagada" {{ 'selected' if f_estado == 'pagada' }}>Pagadas</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cancelar</button>
+        <button type="button" class="btn btn-dark fw-bold" style="min-height:44px" onclick="fpvBajarExcel()">
+          <i class="bi bi-download me-1"></i>Bajar Excel</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {# ── Tres números que importan ─────────────────────────────────────── #}
 <div class="fp-kpis fp-kpis-top">
@@ -305,6 +361,20 @@
 </div>
 
 <script>
+{% if es_superadmin %}
+function fpvAbrirExcel(){ new bootstrap.Modal(document.getElementById('fpvModalExcel')).show(); }
+function fpvBajarExcel(){
+  const d1 = document.getElementById('fpxDesde').value, d2 = document.getElementById('fpxHasta').value;
+  if (!d1 || !d2){ ilusToast('Indica desde y hasta', {type:'warning'}); return; }
+  const p = new URLSearchParams({desde: d1, hasta: d2});
+  const prov = document.getElementById('fpxProv').value.trim();
+  if (prov) p.set('proveedor', prov);
+  const est = document.getElementById('fpxEstado').value;
+  if (est) p.set('estado', est);
+  window.location = '/servicio-tecnico/facturas-proveedor.xlsx?' + p.toString();
+  ilusToast('Generando el Excel…', {type:'info'});
+}
+{% endif %}
 function fpvAbrirNueva(){
   const m = new bootstrap.Modal(document.getElementById('fpvModalNueva'));
   const hoy = new Date();
@@ -439,7 +509,8 @@ async function fpvCrear(){
 .fp-pag-btn:hover{background:#f8fafc;color:#0f172a}
 .fp-pag-btn.dis{opacity:.45;pointer-events:none}
 .fpv-lbl{font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:3px;display:block}
-#fpvModalNueva .form-control,#fpvModalNueva .form-select{font-size:16px;min-height:44px}
+#fpvModalNueva .form-control,#fpvModalNueva .form-select,
+#fpvModalExcel .form-control,#fpvModalExcel .form-select{font-size:16px;min-height:44px}
 /* Pasos numerados del modal (estándar Repuestos / Retiros) */
 .fpv-step{border:1px solid #e5e7eb;border-radius:11px;margin-bottom:10px;overflow:hidden;transition:border-color .2s}
 .fpv-step-hd{display:flex;align-items:center;gap:10px;padding:9px 12px;background:#fafbfc;border-bottom:1px solid #eef2f7}
