@@ -66697,7 +66697,14 @@ def mant_tecnicos_list_api():
            # 2961) pero este endpoint nunca la exponía. Ver
            # _o2mAnexoAutoRellenar en _modal_crear.html.
            "       au.rut AS rut, "
-           "       NULL AS tarifa_visita, "
+           # 💰 2026-09-15 (Daniel, chip "Costo del proveedor: valor de
+           # visita" en el paso Costos del wizard): antes era un literal
+           # `NULL AS tarifa_visita`. Ahora sale de la ficha del proveedor
+           # (mant_tecnicos_externos.valor_visita), por cualquiera de los
+           # dos cruces de abajo (user_id o nombre). Sigue NULL para los
+           # internos o si la ficha no lo tiene -- el chip simplemente no
+           # se muestra.
+           "       COALESCE(te.valor_visita, ten.valor_visita) AS tarifa_visita, "
            "       au.active AS activo, "
            "       IF(COALESCE(te.id, ten.id) IS NOT NULL "
            "          OR au.role='tecnico_externo', 1, 0) AS es_externo "
@@ -66713,7 +66720,18 @@ def mant_tecnicos_list_api():
         sql += " AND au.active=1"
     sql += " ORDER BY nombre"
     rows = mysql_fetchall(sql, ("tecnico%",)) or []
-    return jsonify([dict(r) for r in rows])
+    out = []
+    for r in rows:
+        r = dict(r)
+        # DECIMAL → número (Flask serializa Decimal como string "80000.00";
+        # el wizard lo suma/formatea, así que va como float o null).
+        try:
+            r["tarifa_visita"] = (float(r["tarifa_visita"])
+                                  if r.get("tarifa_visita") is not None else None)
+        except (TypeError, ValueError):
+            r["tarifa_visita"] = None
+        out.append(r)
+    return jsonify(out)
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tecnicos/<int:vt_id>", methods=["DELETE"])
@@ -78922,6 +78940,31 @@ _OT2_CENTROS_COSTO = (
     ("comercial", "Comercial"),
 )
 
+# 💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o no...
+# si no hay línea ZZ se declara un SUPUESTO... se guarda el ORIGEN del
+# valor"). De dónde salió el número que quedó en mant_visitas.zz_monto
+# (o en `costo` para trabajo interno). Hasta hoy el origen solo vivía como
+# texto libre dentro de zz_motivo_manual ('Valorizado con cotización N',
+# 'Estimado automático por clasificación...'), imposible de agrupar en un
+# reporte. Vocabulario compartido con el wizard (_modal_crear.html) -- si
+# se agrega un origen nuevo, va acá y en el frontend, nunca solo en uno.
+#   zz         → línea ZZ real del documento del ERP
+#   doc_total  → total del documento (sin línea de servicio, caso NVV de ticket)
+#   cotizacion → cotización interna asociada
+#   contrato   → valorización del cliente (definido por gerencia / contrato / tarifa base)
+#   estimado   → estimador por clasificación de producto (/ot/api/estimar-costo)
+#   supuesto   → sin referencia: el usuario declaró cuánto vale (exige motivo)
+#   manual     → había una referencia pero el usuario la editó a mano (exige motivo)
+#   interno    → trabajo interno: horas de agenda × tarifa hora técnica
+_OT2_VALOR_ORIGENES = (
+    "zz", "doc_total", "cotizacion", "contrato", "estimado",
+    "supuesto", "manual", "interno",
+)
+# Orígenes que NO vienen de un dato del sistema: el usuario puso el número,
+# así que debe explicar en qué se basó (Daniel 2026-08-30: "hay que ser
+# bien riguroso y detallista con esto").
+_OT2_VALOR_ORIGENES_CON_MOTIVO = ("supuesto", "manual")
+
 # Línea de servicio del ERP que corresponde a cada tipo de OT. Es el mismo
 # patrón de ZZENVIO en Transporte: el cobro viene DENTRO del documento, no
 # como documento aparte. Se LEE del ERP, nunca se escribe (REGLA #4.1).
@@ -79080,6 +79123,35 @@ def _ensure_ot_finanzas_cols():
             print(f"[ensure_ot_finanzas] {_nombre}: {e}", flush=True)
 
 
+def _ensure_ot_valor_origen_col():
+    """`mant_visitas.valor_origen` -- de dónde salió el valor de la OT.
+
+    💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o no
+    (garantía incluida), para saber cuánto se le atribuye a cada centro de
+    costo; si no hay línea ZZ se declara un SUPUESTO... se guarda el ORIGEN
+    del valor"). Hasta hoy el origen solo se podía adivinar leyendo el
+    texto libre de zz_motivo_manual; con una columna estructurada el
+    reporte por centro de costo puede separar "valor leído del ERP" de
+    "supuesto declarado por una persona". Vocabulario: _OT2_VALOR_ORIGENES.
+
+    Mismo patrón idempotente de _ensure_ot_finanzas_cols() -- SIEMPRE,
+    incluso con ILUS_SKIP_MIGRATIONS=1 (producción corre así: si esto
+    viviera en init_mantenciones_tables no se ejecutaría nunca).
+    """
+    try:
+        _r = mysql_fetchone(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "   AND COLUMN_NAME='valor_origen'")
+        if not _r:
+            mysql_execute(
+                "ALTER TABLE mant_visitas ADD COLUMN valor_origen VARCHAR(20) NULL "
+                "COMMENT 'zz|doc_total|cotizacion|contrato|estimado|supuesto|manual|interno'")
+            print("[ensure_ot_valor_origen] +valor_origen", flush=True)
+    except Exception as e:
+        print(f"[ensure_ot_valor_origen] valor_origen: {e}", flush=True)
+
+
 def _ensure_maquina_origen_ot_col():
     """`mant_maquinas.origen_ot_id` — de qué OT nació la ficha del equipo.
 
@@ -79163,8 +79235,21 @@ def _ot2_finanzas_estado(v):
     # siquiera eso bloquea: es un "falta" más en la lista, igual que el
     # resto de esta función (de solo lectura, no decide nada).
     if _ot_es_interna(v):
-        if v.get("costo") in (None, ""):
-            faltan.append("costo estimado (referencial, no se factura)")
+        # 💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o
+        # no... el trabajo interno también se valoriza obligatoriamente"):
+        # deja de ser un dato informativo y pasa a ser un faltante real --
+        # y un `costo` en 0 cuenta como no valorizado, igual que en la OT
+        # de cliente. Sigue siendo de solo lectura (esta función no
+        # bloquea nada); el candado al CREAR vive en ot2_api_crear
+        # (FINANZAS_SIN_VALOR_INTERNO). Si el caller no trajo `costo`, no
+        # se exige -- misma guarda que la valorización de cliente.
+        if "costo" in v:
+            try:
+                _costo_int = float(v.get("costo") or 0)
+            except (TypeError, ValueError):
+                _costo_int = 0.0
+            if _costo_int <= 0:
+                faltan.append("cuánto vale esta OT (referencial, no se factura)")
         return (not faltan), faltan
 
     # OJO: mant_visitas NO tiene una columna `garantia_aplica` -- esa vive
@@ -81311,6 +81396,8 @@ def ot2_api_finanzas(vid):
         "       centro_costo, zz_codigo, zz_monto, zz_envio_monto, "
         "       modalidad_cobro, cubierto_por, garantia_motivo, "
         "       factura_tido, factura_nudo, "
+        # valor_origen 2026-09-15 (columna de _ensure_ot_valor_origen_col).
+        "       valor_origen, "
         "       estado_facturacion, finanzas_at, finanzas_por "
         "  FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
@@ -81454,6 +81541,15 @@ def ot2_api_finanzas(vid):
     if not zz_cod and not garantia:
         zz_cod = _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower())
 
+    # 💰 2026-09-15 -- origen del valor (ver _OT2_VALOR_ORIGENES). Misma
+    # regla que el resto de este endpoint: se toca solo si la petición lo
+    # trae; vacío = limpiar a propósito; fuera de la lista = error.
+    _valor_origen = None
+    if "valor_origen" in d:
+        _valor_origen = (str(d.get("valor_origen") or "").strip().lower()) or None
+        if _valor_origen and _valor_origen not in _OT2_VALOR_ORIGENES:
+            return _ot2_err("El origen del valor no es válido.", "VALOR_ORIGEN_INVALIDO")
+
     # estado_facturacion se deriva, no se pide: la pantalla no debería
     # tener que saber el vocabulario interno del pipeline comercial.
     if garantia:
@@ -81512,6 +81608,8 @@ def ot2_api_finanzas(vid):
     if ("zz_monto" in d) or ("zz_codigo" in d):
         _set_col("zz_codigo", zz_cod)
         _set_col("zz_monto", zz_monto)
+    if "valor_origen" in d:
+        _set_col("valor_origen", _valor_origen)
 
     # Estas cuatro ya eran no destructivas (COALESCE / SET condicional).
     _sets.append("  costo=COALESCE(%s, costo)")
@@ -83370,7 +83468,20 @@ def ot2_api_crear():
         return _ot2_err("Elige el centro de costo antes de crear la OT.",
                         "FINANZAS_SIN_CENTRO_COSTO")
     # Daniel 2026-08-26: por defecto Servicio Técnico para trabajo interno.
+    # 💰 2026-09-15: el trabajo interno también ELIGE centro de costo desde
+    # el wizard (Daniel: "cualquier tipo de OT me va a valorizar por centro
+    # de costo"). Si el wizard lo manda, ya quedó validado contra
+    # _OT2_CENTROS_COSTO más arriba y se respeta; el default 'sstt' queda
+    # solo como red para callers viejos que no lo mandan.
     _fin_centro = _fin_centro or "sstt"
+
+    # 💰 2026-09-15 -- ORIGEN del valor (ver _OT2_VALOR_ORIGENES y
+    # _ensure_ot_valor_origen_col). Opcional para no romper callers que no
+    # lo mandan, pero si viene tiene que ser uno de la lista: un origen
+    # inventado en el reporte por centro de costo vale menos que ninguno.
+    _fin_valor_origen = (str(_fin.get("valor_origen") or "").strip().lower()) or None
+    if _fin_valor_origen and _fin_valor_origen not in _OT2_VALOR_ORIGENES:
+        return _ot2_err("El origen del valor no es válido.", "VALOR_ORIGEN_INVALIDO")
 
     _fin_gar = bool(_fin.get("garantia_aplica"))
     _fin_motivo = (_fin.get("garantia_motivo") or "").strip()[:500] or None
@@ -83431,6 +83542,21 @@ def ot2_api_crear():
     # botón Crear orden, que no se habilita hasta que completo() sea true).
     _fin_zz_motivo_manual = (_fin.get("zz_motivo_manual") or "").strip()[:500] or None
     _fin_zz_envio_motivo_manual = (_fin.get("zz_envio_motivo_manual") or "").strip()[:500] or None
+    # 💰 2026-09-15 (Daniel: "si no hay línea ZZ, se declara un SUPUESTO
+    # bien presentado... los valores son editables"). Ahora que el origen
+    # viaja estructurado, el backend SÍ revalida lo que hasta hoy se le
+    # confiaba al front: un valor que puso una persona (supuesto, o editado
+    # a mano sobre una referencia) tiene que venir con su "en qué me baso".
+    # Sin esto, un wizard viejo cacheado o un caller directo podían dejar un
+    # supuesto sin explicación, que es justo lo que un reporte por centro de
+    # costo no puede defender. Solo para OT de cliente: el trabajo interno
+    # tiene su propio valor (costo_interno) y su propio origen ('interno' o
+    # 'manual'), y ahí el motivo no se exige -- es referencial, no se cobra.
+    if (not es_interna and _fin_valor_origen in _OT2_VALOR_ORIGENES_CON_MOTIVO
+            and not _fin_zz_motivo_manual):
+        return _ot2_err(
+            "Explica en qué te basas para ese valor (es un supuesto o lo "
+            "editaste a mano).", "FINANZAS_SUPUESTO_SIN_MOTIVO")
     if not _fin_zz_envio_c:
         _fin_zz_envio_m = None
     # 2026-08-28 (Daniel, trabajo interno de bodega: "debería hacer un
@@ -83447,6 +83573,18 @@ def ot2_api_crear():
             _fin_costo_int = None
     except (TypeError, ValueError):
         return _ot2_err("El costo estimado no es válido.", "COSTO_INTERNO_INVALIDO")
+    # 💰 2026-09-15 (Daniel, decisión tomada: "el trabajo INTERNO también se
+    # valoriza obligatoriamente y elige centro de costo"). Hasta hoy el
+    # costo interno era opcional ("Costo estimado (opcional)" en el paso
+    # Trabajo del wizard) y una OT de bodega podía nacer sin ningún valor:
+    # en el reporte por centro de costo aportaba $0 en silencio. Ahora
+    # tiene que venir y ser > 0 -- sigue siendo referencial (no se factura,
+    # no entra a estado_facturacion ni a garantía), pero tiene que existir.
+    if es_interna and (_fin_costo_int is None or _fin_costo_int <= 0):
+        return _ot2_err(
+            "Indica cuánto vale este trabajo interno (referencial, no se "
+            "factura): así el centro de costo sabe cuánto trabajo absorbe.",
+            "FINANZAS_SIN_VALOR_INTERNO")
     # 2026-08-29 (wizard OT 2.0, Daniel: "los costos y lo que nos cobra el
     # proveedor... % de margen sí o sí"): mant_visitas.costo_proveedor/
     # proveedor_tipo/proveedor_nombre/costo_despacho ya existen desde
@@ -83456,14 +83594,24 @@ def ot2_api_crear():
     # (por eso el margen quedaba siempre en blanco para toda OT creada por
     # este wizard) -- mismo criterio de validación que ese otro caller,
     # para no tener dos reglas distintas para la misma columna.
+    # 🔴 FIX 2026-09-15: un `0` declarado se convertía en NULL por un
+    # `or None` al final de cada expresión. "Nos costó $0" (técnico interno,
+    # proveedor que no cobró) es un DATO, no un campo sin llenar -- y con
+    # NULL la OT disparaba SIN_COSTO_PROVEEDOR al cerrar aunque el usuario
+    # ya lo hubiera declarado en el wizard. Mismo criterio que ya aplica
+    # ot2_api_finanzas (_parse_costo_opt): vacío = no viene = NULL; 0 = 0.
+    # OJO: `x or ""` también se tragaba el 0 numérico (0 es falsy) -- por
+    # eso se mira None/"" explícitamente y no la "verdad" del valor.
+    def _fin_costo_opcional(raw):
+        if raw is None or str(raw).strip() == "":
+            return None
+        return max(0.0, float(raw))
     try:
-        _fin_costo_prov = (max(0.0, float(_fin.get("costo_proveedor")))
-                            if str(_fin.get("costo_proveedor") or "").strip() else None) or None
+        _fin_costo_prov = _fin_costo_opcional(_fin.get("costo_proveedor"))
     except (TypeError, ValueError):
         return _ot2_err("El costo del proveedor no es válido.", "COSTO_PROVEEDOR_INVALIDO")
     try:
-        _fin_costo_desp = (max(0.0, float(_fin.get("costo_despacho")))
-                            if str(_fin.get("costo_despacho") or "").strip() else None) or None
+        _fin_costo_desp = _fin_costo_opcional(_fin.get("costo_despacho"))
     except (TypeError, ValueError):
         return _ot2_err("El costo de despacho no es válido.", "COSTO_DESPACHO_INVALIDO")
     # 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan poderse
@@ -83516,7 +83664,14 @@ def ot2_api_crear():
         _fin_estado_fact = "no_aplica"
     else:
         _fin_estado_fact = "sin_cotizar"
-    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int or _fin_costo_prov)
+    # 2026-09-15: `_fin_costo_prov is not None` en vez de su "verdad" -- un
+    # costo de proveedor declarado en $0 también es una declaración.
+    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int
+                          or _fin_costo_prov is not None or _fin_valor_origen)
+    # Si el wizard no mandó valor_origen (caller viejo, wizard cacheado),
+    # la columna queda NULL a propósito: el texto libre de zz_motivo_manual
+    # no alcanza para inferirlo sin equivocarse (cotización y estimado
+    # también mandaban motivo), y "no sé" es mejor que un origen inventado.
 
     # 🐛 FIX 2026-09-02 (Daniel, OT-2026-00149: "no me guardó las finanzas...
     # recuerdo que me trajo el precio final en servicio de despacho y de
@@ -83636,7 +83791,8 @@ def ot2_api_crear():
             "   costo, modalidad_cobro, cubierto_por, "
             "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
             "   costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
-            "   documentos_extra, "
+            # valor_origen agregado 2026-09-15 (ver _ensure_ot_valor_origen_col).
+            "   documentos_extra, valor_origen, "
             # 2026-08-29 — contraparte + dirección del lugar (ver bloque 4.5).
             # contacto_rut agregado 2026-08-30 (ver _ensure_ot_contacto_rut_col).
             "   contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_rut, "
@@ -83647,7 +83803,7 @@ def ot2_api_crear():
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,"
-            "        %s,"
+            "        %s,%s,"
             "        %s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,%s,"
             "        %s,%s,%s,"
@@ -83661,7 +83817,7 @@ def ot2_api_crear():
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
-             _fin_docs_extra_json,
+             _fin_docs_extra_json, _fin_valor_origen,
              _cp_nombre, _cp_cargo, _cp_tel, _cp_email, _cp_rut,
              _cp_origen, _cp_dir, _cp_detalle, _cp_lat, _cp_lng,
              _cp_place, _cp_comuna, _cp_region,
@@ -84059,13 +84215,38 @@ def ot2_api_crear():
             _prov_email = ((d.get("anexo_email_destino") or "").strip()
                            or ((_te or {}).get("contacto_email") or "").strip())[:200]
 
+            # 💰 2026-09-15 (Daniel: "el anexo debe ser flexible bajo
+            # responsabilidad del usuario"; decisión: los montos del Anexo
+            # se prellenan desde Costos pero quedan editables y NO se
+            # vuelven a pisar). Si el wizard mandó `anexo.precio_items` con
+            # ítems > 0, esos son los que la persona dejó (editados o no) y
+            # se usan TAL CUAL. Recalcular desde costo_proveedor acá sería
+            # pisar en el servidor lo que el usuario ya corrigió en pantalla.
+            # El cálculo automático queda solo como respaldo cuando no
+            # vino nada.
             _items_auto = []
-            if _fin_costo_prov:
-                _items_auto.append({
-                    "concepto": _TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title())[:120],
-                    "monto": int(round(_fin_costo_prov))})
-            if _fin_costo_desp:
-                _items_auto.append({"concepto": "Despacho", "monto": int(round(_fin_costo_desp))})
+            _anexo_body = d.get("anexo") if isinstance(d.get("anexo"), dict) else {}
+            _items_wizard = _anexo_body.get("precio_items")
+            if isinstance(_items_wizard, list):
+                for _it in _items_wizard[:30]:
+                    if not isinstance(_it, dict):
+                        continue
+                    try:
+                        _m_it = int(round(float(_it.get("monto") or 0)))
+                    except (TypeError, ValueError):
+                        continue
+                    if _m_it <= 0:
+                        continue
+                    _items_auto.append({
+                        "concepto": str(_it.get("concepto") or "Servicio").strip()[:120] or "Servicio",
+                        "monto": _m_it})
+            if not _items_auto:
+                if _fin_costo_prov:
+                    _items_auto.append({
+                        "concepto": _TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title())[:120],
+                        "monto": int(round(_fin_costo_prov))})
+                if _fin_costo_desp:
+                    _items_auto.append({"concepto": "Despacho", "monto": int(round(_fin_costo_desp))})
 
             _objetivo_auto = (
                 f"Ejecutar servicio de {_TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title()).lower()} "
@@ -84803,7 +84984,14 @@ _OT_TV_SELECT = (
     # El gate necesita saber si la OT esta valorizada, pero esta pantalla
     # evita los montos a proposito (ver el comentario de arriba): mandar
     # zz_monto aca seria filtrar plata a un tablero que se proyecta.
-    "       (COALESCE(v.zz_monto,0) + COALESCE(v.zz_envio_monto,0) > 0) AS _fin_valorizada, "
+    # 🔴 FIX 2026-09-15: este booleano omitía `costo`, mientras el gate real
+    # de cierre (mant_ot_aprobar_cierre, SIN_VALORIZAR) y el cálculo Python
+    # de _ot2_finanzas_estado SÍ lo cuentan. Una OT valorizada solo por
+    # `costo` (camino PUT /mantenciones/api/visitas/<vid>, pestaña
+    # Información) salía "falta cuánto se cobra" en el Monitor pero pasaba
+    # el cierre. Ahora las tres definiciones son la misma.
+    "       (COALESCE(v.zz_monto,0) + COALESCE(v.zz_envio_monto,0) > 0 "
+    "        OR COALESCE(v.costo,0) > 0) AS _fin_valorizada, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, "
     # 🔴 FIX 2026-08-27 (hallazgo de la verificación): antes esto era solo
@@ -125496,6 +125684,15 @@ try:
         _ensure_ot_finanzas_cols()
 except Exception as _ensure_fin_err:
     print(f"[ILUS][WARN] _ensure_ot_finanzas_cols: {_ensure_fin_err}", flush=True)
+
+# Origen del valor de la OT (zz|doc_total|cotizacion|contrato|estimado|
+# supuesto|manual|interno), Daniel 2026-09-15 — SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1: sin la columna, el INSERT de ot2_api_crear falla.
+try:
+    with app.app_context():
+        _ensure_ot_valor_origen_col()
+except Exception as _ensure_vo_err:
+    print(f"[ILUS][WARN] _ensure_ot_valor_origen_col: {_ensure_vo_err}", flush=True)
 
 # Multidocumento de la OT (varias facturas + cotizaciones de referencia),
 # Daniel 2026-09-05 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
