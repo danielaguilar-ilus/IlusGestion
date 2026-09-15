@@ -641,14 +641,18 @@
 /* Anexo: tabla de precio EDITABLE (2026-09-15, Daniel: "el anexo debe
    ser flexible bajo responsabilidad del usuario"). */
 .o2m-anx-items{border:1px solid #eaecf0;border-radius:10px;overflow:hidden;margin-top:12px}
-.o2m-anx-row{display:grid;grid-template-columns:1fr 170px 40px;gap:8px;align-items:center;
+/* 2026-09-15 (revisión): objetivo táctil de 44px en la fila (REGLA #3,
+   Apple HIG) -- el botón Quitar no lleva .btn, así que mobile.css no lo
+   subía solo; los inputs de la fila van a la misma altura para que la X
+   no quede pegada a un campo más chico. */
+.o2m-anx-row{display:grid;grid-template-columns:1fr 170px 44px;gap:8px;align-items:center;
   padding:8px 10px;border-bottom:1px solid #f1f5f9;background:#fff}
 .o2m-anx-row:last-child{border-bottom:0}
-.o2m-anx-row input.form-control{min-height:40px}
-.o2m-anx-row .o2m-money.sm input{height:40px;font-size:1rem}
+.o2m-anx-row input.form-control{min-height:44px}
+.o2m-anx-row .o2m-money.sm input{height:44px;min-height:44px;font-size:1rem}
 .o2m-anx-row .o2m-money.sm .pre{font-size:.9rem;padding:0 10px}
 .o2m-anx-row .del{border:0;background:none;color:#c7cbd1;cursor:pointer;font-size:1.15rem;
-  min-height:40px;min-width:40px;border-radius:8px}
+  min-height:44px;min-width:44px;border-radius:8px}
 .o2m-anx-row .del:hover{color:var(--ilus-red,#dc2626);background:#fef2f2}
 .o2m-anx-total{display:flex;justify-content:space-between;gap:10px;padding:10px 12px;
   background:#f8fafc;font-weight:800;color:#374151}
@@ -668,7 +672,7 @@
   .o2m-fchip{flex:1 1 calc(50% - 4px)}
   .o2m-money input{height:48px;font-size:1.25rem}
   .o2m-gar-resumen{grid-template-columns:1fr}
-  .o2m-anx-row{grid-template-columns:1fr 40px;grid-template-areas:"c d" "m d"}
+  .o2m-anx-row{grid-template-columns:1fr 44px;grid-template-areas:"c d" "m d"}
   .o2m-anx-row > .c{grid-area:c} .o2m-anx-row > .m{grid-area:m} .o2m-anx-row > .del{grid-area:d}
 }
 @media (max-width:400px){
@@ -1682,7 +1686,13 @@ window.OT2C = (function(){
     // exacto (late + scroll + toast con su propio estado) en vez del aviso
     // genérico -- el paso más denso del wizard no puede quedar en "falta
     // algo" sin decir qué.
-    if (idx > 0 && ps[idx-1].k === 'finanzas' && _o2mFinSenalarPendiente()) return;
+    // 2026-09-15 (revisión): SOLO si Costos es el paso ACTIVO (el primero
+    // incompleto). Si lo que falta es un paso anterior (Acceso, Equipos…),
+    // Costos todavía está bloqueado/inert y señalar su sub-paso mandaba al
+    // usuario a un control gris que no puede tocar, con un toast que le
+    // pedía elegir un centro de costo en vez de completar el paso real.
+    var actIdx = pasoActualIndex();
+    if (idx > actIdx && ps[actIdx] && ps[actIdx].k === 'finanzas' && _o2mFinSenalarPendiente()) return;
     if (window.ilusToast) ilusToast(
       anterior ? 'Completa "'+anterior+'" antes de continuar' : 'Completa el paso anterior antes de continuar',
       {type:'warning'});
@@ -5019,7 +5029,12 @@ window.OT2C = (function(){
     // Trabajo interno: centro preseleccionado en Servicio Técnico (mismo
     // default que ya aplicaba el backend en silencio) -- ahora se VE y se
     // puede cambiar.
-    if (interno && !S.fin_centro) S.fin_centro = 'sstt';
+    // 2026-09-15 (revisión): el default queda MARCADO como automático
+    // (S._finCentroAuto) para que, si el usuario vuelve con "Atrás" y
+    // cambia a un origen de cliente, setOrigen()/setTipo() lo suelten y la
+    // OT de cliente no nazca imputada a Servicio Técnico sin que nadie lo
+    // haya decidido (candado FINANZAS_SIN_CENTRO_COSTO del backend).
+    if (interno && !S.fin_centro){ S.fin_centro = 'sstt'; S._finCentroAuto = true; }
     // 2026-08-30 (Daniel, viendo este paso en vivo): "primero lo primero
     // que tenemos que hacer es seleccionar el centro de costo" --
     // progressive disclosure SOLO visual: mientras no hay centro elegido,
@@ -5046,7 +5061,8 @@ window.OT2C = (function(){
         '<div class="o2m-valor-hero"><label class="fl" for="o2mFinValorInput">Esta OT vale *</label>'+
           '<div class="o2m-money"><span class="pre">$</span>'+
           '<input type="text" inputmode="numeric" id="o2mFinValorInput" placeholder="Ej: 45.000" '+
-          'value="'+esc(_o2mFormatearMiles(S.costo_interno))+'" oninput="OT2C._o2mFinCostoInternoHeroCambio(this)"></div>'+
+          'value="'+esc(_o2mFormatearMiles(S.costo_interno))+'" oninput="OT2C._o2mFinCostoInternoHeroCambio(this)" '+
+          'onblur="OT2C._o2mFinHeroBlur()"></div>'+
           '<div class="o2m-valor-origen" id="o2mFinOrigen"></div></div>'+
         '<div class="o2m-fin-hint" style="margin-bottom:0">Solo para valorización interna (informe de costos por centro): '+
         'este trabajo no se factura ni se cobra.</div>';
@@ -5056,7 +5072,8 @@ window.OT2C = (function(){
         '<div class="o2m-valor-hero"><label class="fl" for="o2mFinValorInput">Esta OT vale *</label>'+
           '<div class="o2m-money"><span class="pre">$</span>'+
           '<input type="text" inputmode="numeric" id="o2mFinValorInput" placeholder="Ej: 45.000" '+
-          'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" oninput="OT2C._o2mFinMontoServicioCambio(this)"></div>'+
+          'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" oninput="OT2C._o2mFinMontoServicioCambio(this)" '+
+          'onblur="OT2C._o2mFinHeroBlur()"></div>'+
           '<div class="o2m-valor-origen" id="o2mFinOrigen"></div></div>'+
         '<div id="o2mFinMotivo"></div>'+
         '<div id="o2mFinZZ"></div>'+
@@ -5161,7 +5178,7 @@ window.OT2C = (function(){
     }
     _o2mFinEstadosDom();
   }
-  function setFinCentro(v){ S.fin_centro = v; repintarSeccion('finanzas'); refrescarAnclas(); }
+  function setFinCentro(v){ S.fin_centro = v; S._finCentroAuto = false; repintarSeccion('finanzas'); refrescarAnclas(); }
   /* Sub-paso 3 como dos tarjetas: 'doc' = Sí, con documento · 'gar' = No,
      va por garantía. Si se elige documento y todavía no hay uno, se abre
      el buscador del ERP de una (es lo único que falta para resolverlo). */
@@ -5192,6 +5209,10 @@ window.OT2C = (function(){
   function limpiarFinDoc(){
     S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
     S.fin_zz_envio = null; S.fin_doc_rut_difiere = false; S.fin_doc_total_sugerido = 0;
+    // 2026-09-15 (revisión): invalida la lectura de líneas ZZ que pueda
+    // seguir en vuelo -- si el ERP respondía después de "cambiar", volvía
+    // a poblar líneas, hero y origen 'zz' de un documento ya quitado.
+    ++_finZZSeq; S.fin_zz_cargando = false;
     _o2mFinResetValor();
     repintarSeccion('finanzas');
     refrescarAnclas();
@@ -5244,11 +5265,16 @@ window.OT2C = (function(){
     if (_o2mFinContratoAplica()){
       if (S.fin_contrato_cargando){
         out.push({src:'contrato', ico:'bi-file-earmark-check', nm:'Contrato del cliente', estado:'cargando'});
-      } else if (S.fin_contrato && S.fin_contrato.neto > 0){
-        var origenTxt = {definido:'Definido por gerencia', contrato:'Contrato vigente', tarifa_base:'Tarifa base ILUS'}[S.fin_contrato.origen_precio] || 'Contrato del cliente';
+      } else if (S.fin_contrato && S.fin_contrato.neto > 0 && _o2mFinContratoEsReal(S.fin_contrato.origen_precio)){
+        var origenTxt = {definido:'Definido por gerencia', contrato:'Contrato vigente'}[S.fin_contrato.origen_precio] || 'Contrato del cliente';
         out.push({src:'contrato', ico:'bi-file-earmark-check', nm:'Contrato del cliente', sb:origenTxt,
                   monto:S.fin_contrato.neto, estado:'ok'});
       } else {
+        // 2026-09-15 (revisión): con origen_precio 'tarifa_base' el neto que
+        // devuelve /inteligencia es la tarifa base ILUS menos el descuento
+        // comercial sugerido -- NO es un contrato. Se muestra vacío ("sin
+        // contrato vigente"), no se auto-selecciona y jamás se guarda como
+        // valor_origen='contrato'.
         out.push({src:'contrato', ico:'bi-file-earmark-check', nm:'Contrato del cliente', sb:'sin contrato vigente', estado:'vacio'});
       }
     }
@@ -5332,6 +5358,16 @@ window.OT2C = (function(){
     var prioAct = S.fin_valor_origen ? (_O2M_FUENTE_PRIORIDAD[S.fin_valor_origen] || 9) : 99;
     var prioNueva = _O2M_FUENTE_PRIORIDAD[mejor.src] || 9;
     if (S.fin_valor_tocado){
+      // 2026-09-15 (revisión): si el usuario escribió el valor mientras las
+      // referencias todavía cargaban, quedó como 'supuesto' ("sin
+      // referencia"). Ahora que SÍ llegó una fuente ok, ese dato es falso:
+      // pasa a 'manual' (el motivo sigue siendo obligatorio) y se repinta la
+      // línea de origen + el label del textarea. Los callers repintan igual
+      // después; se hace acá también por si alguno no lo hace.
+      if (S.fin_valor_origen === 'supuesto' && _o2mFinEsManual()){
+        S.fin_valor_origen = 'manual';
+        _pintarFinValorDom(); _o2mFinEstadosDom();
+      }
       if (prioNueva < prioAct && S.fin_zz_monto !== Math.round(mejor.monto) && !_o2mFinToastOfrecido[mejor.src] && window.ilusToast){
         _o2mFinToastOfrecido[mejor.src] = 1;
         ilusToast(mejor.nm + ' trae ' + $o2mPesos(mejor.monto) + '. Tócalo si quieres usarlo.', {type:'info', duration:6000});
@@ -5343,10 +5379,19 @@ window.OT2C = (function(){
       _o2mFinAplicarFuente(mejor, true);
     }
   }
-  /* Chip "Contrato del cliente" -- solo tipos preventiva/correctiva (es un
-     precio por mantención; no sirve para instalación). */
+  /* Chip "Contrato del cliente" -- SOLO tipo preventiva. 2026-09-15
+     (revisión): el neto de /inteligencia (valorizacion.neto) es el precio
+     por MANTENCIÓN PREVENTIVA del contrato (costo_por_mant / valor definido
+     por gerencia); no es tarifa de correctiva ni de instalación, así que
+     ofrecerlo ahí valorizaba una OT con un número de otro servicio. */
   function _o2mFinContratoAplica(){
-    return !!(S.cliente && S.cliente.id && ['preventiva','correctiva'].indexOf(S.tipo) >= 0);
+    return !!(S.cliente && S.cliente.id && S.tipo === 'preventiva');
+  }
+  /* Solo cuenta como contrato un precio 'definido' (gerencia) o 'contrato'
+     (contrato vigente). 'tarifa_base' es la propuesta comercial genérica
+     de ILUS para un cliente SIN contrato -- no es dato del cliente. */
+  function _o2mFinContratoEsReal(origenPrecio){
+    return origenPrecio === 'definido' || origenPrecio === 'contrato';
   }
   var _finContratoSeq = 0;
   function _o2mFinCargarContrato(){
@@ -5397,7 +5442,10 @@ window.OT2C = (function(){
         cO.textContent = !(n > 0) ? 'Declara cuánto vale este trabajo aunque no se cobre.'
           : (manual ? 'Editado a mano' : 'Tomado de: horas de agenda × tarifa hora técnica');
       }
-      if (inp && document.activeElement !== inp) inp.value = _o2mFormatearMiles(S.costo_interno);
+      // 2026-09-15 (revisión): si el input tiene el foco pero el usuario NO
+      // ha escrito (no es manual), el valor que llega por horas × tarifa se
+      // escribe igual -- si no, el estado tenía monto y el hero quedaba vacío.
+      if (inp && (document.activeElement !== inp || !manual) && !inp._o2mAnim) inp.value = _o2mFormatearMiles(S.costo_interno);
       return;
     }
     var fuentes = _o2mFinFuentes();
@@ -5447,7 +5495,7 @@ window.OT2C = (function(){
           case 'zz': txt = 'Tomado de: Línea '+(ln ? ln.sku : 'ZZ')+' de '+(_o2mFinDocTxt() || 'los documentos'); cls = 'erp'; break;
           case 'doc_total': txt = 'Tomado de: Total del documento '+(_o2mFinDocTxt() || ''); cls = 'erp'; break;
           case 'cotizacion': txt = 'Tomado de: Cotización '+((S.fin_cotizacion && (S.fin_cotizacion.numero || ('#'+S.fin_cotizacion.id))) || ''); cls = 'ref'; break;
-          case 'contrato': txt = 'Tomado de: Contrato del cliente ('+(({definido:'definido por gerencia', contrato:'contrato vigente', tarifa_base:'tarifa base ILUS'})[(S.fin_contrato||{}).origen_precio] || 'referencia')+')'; cls = 'ref'; break;
+          case 'contrato': txt = 'Tomado de: Contrato del cliente ('+(({definido:'definido por gerencia', contrato:'contrato vigente'})[(S.fin_contrato||{}).origen_precio] || 'referencia')+')'; cls = 'ref'; break;
           case 'estimado': txt = 'Tomado de: Estimado por clasificación de los equipos'; cls = 'ref'; break;
           default: txt = 'Valor declarado'; cls = 'ref';
         }
@@ -5467,11 +5515,19 @@ window.OT2C = (function(){
           'oninput="OT2C.setFinMotivoManual(this.value)">'+esc(S.fin_zz_motivo_manual)+'</textarea>';
       }
     }
-    if (inp && document.activeElement !== inp){
+    // 2026-09-15 (revisión): el input se protege SOLO mientras el usuario
+    // escribe en él (foco + S.fin_valor_tocado). Si hizo clic en el campo y
+    // se quedó esperando "Consultando referencias…", la auto-selección que
+    // llega después tiene que verse en el hero -- antes el chip quedaba
+    // seleccionado, el sub-paso en "Listo" y el número grande en blanco.
+    if (inp && (document.activeElement !== inp || !S.fin_valor_tocado)){
       if (desde != null && S.fin_zz_monto != null && desde !== S.fin_zz_monto) _o2mCountUp(inp, desde, S.fin_zz_monto);
       else if (!inp._o2mAnim) inp.value = _o2mFormatearMiles(S.fin_zz_monto);
     }
   }
+  /* 2026-09-15 (revisión): al salir del hero se resincroniza con el estado
+     (cubre cualquier auto-selección que haya llegado mientras tenía el foco). */
+  function _o2mFinHeroBlur(){ _pintarFinValorDom(); }
   /* Count-up de 250 ms del hero al aplicar un chip (directo si
      prefers-reduced-motion). */
   function _o2mCountUp(inp, desde, hasta){
@@ -5577,6 +5633,12 @@ window.OT2C = (function(){
         if (interno) return _o2mCostoInternoNum() > 0 ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
         if (!(S.fin_zz_monto > 0)) return {cls:'falta', txt:'Pendiente'};
         if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
+        // 2026-09-15 (revisión): el motivo del ZZENVIO editado a mano se
+        // exige ACÁ, no en 'cobro' -- el input de transporte y su textarea
+        // se pintan en #o2mFinZZ, dentro de este sub-paso. Antes el
+        // señalador mandaba al usuario al sub-paso 3, donde no había nada
+        // que llenar.
+        if (_o2mFinEnvioEsManual() && !(S.fin_zz_envio_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo del transporte'};
         return {cls:'listo', txt:'Listo'};
       case 'cobro':
         if (S.fin_garantia){
@@ -5585,7 +5647,6 @@ window.OT2C = (function(){
         } else {
           if (!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)) return {cls:'falta', txt:'Pendiente'};
         }
-        if (_o2mFinEnvioEsManual() && !(S.fin_zz_envio_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
         return {cls:'listo', txt:'Listo'};
       case 'costo':
         return (String(S.fin_costo_proveedor||'').trim() !== '' || String(S.fin_costo_despacho||'').trim() !== '')
@@ -5877,14 +5938,46 @@ window.OT2C = (function(){
     _pintarFinZZDom(); _pintarFinValorDom(); _pintarFinGarResumenDom(); _pintarFinMargenDom();
     _o2mFinEstadosDom(); refrescarAnclas();
   }
+  /* 2026-09-15 (revisión): al editar el ZZENVIO ya NO se reconstruye
+     #o2mFinZZ entero (el input perdía el foco en cada tecla): se conserva
+     el cursor como en el hero, se repinta SOLO la etiqueta "(editado a
+     mano)" y el bloque del motivo (ver _o2mFinEnvioPintarMotivoDom), y se
+     refrescan margen, estados de sub-pasos y anclas -- antes el sub-paso
+     seguía en "Listo" y el semáforo con el monto viejo hasta tocar otra
+     cosa. */
   function _o2mFinMontoEnvioCambio(el){
     var digitos = _o2mLimpiarNumero(el.value);
     var monto = digitos ? parseInt(digitos, 10) : null;
+    var antes = el.value, resto = antes.length - el.selectionStart;
     if (!S.fin_zz_envio) S.fin_zz_envio = {sku:'ZZENVIO', monto:null};
     S.fin_zz_envio.monto = monto;
     el.value = _o2mFormatearMiles(digitos);
+    try { var pos = Math.max(0, el.value.length - resto); el.setSelectionRange(pos, pos); } catch(e){}
     if (!_o2mFinEnvioEsManual()) S.fin_zz_envio_motivo_manual = '';
-    _pintarFinZZDom();
+    if (document.activeElement === el) _o2mFinEnvioPintarMotivoDom();
+    else _pintarFinZZDom();
+    _pintarFinMargenDom(); _o2mFinEstadosDom(); refrescarAnclas();
+  }
+  function _o2mFinEnvioMotivoHtml(){
+    return _o2mFinEnvioEsManual()
+      ? '<label class="fl mt-2">¿Por qué se declara a mano? *</label>'+
+        '<textarea class="form-control" rows="2" maxlength="500" '+
+        'placeholder="Ej: se absorbió el despacho, concesión comercial…" '+
+        'oninput="OT2C.setFinEnvioMotivoManual(this.value)">'+esc(S.fin_zz_envio_motivo_manual)+'</textarea>'
+      : '';
+  }
+  function _o2mFinEnvioPintarMotivoDom(){
+    var manual = _o2mFinEnvioEsManual();
+    var tag = document.getElementById('o2mFinEnvioEdit');
+    if (tag) tag.innerHTML = manual ? ' <span style="color:#dc2626">(editado a mano)</span>' : '';
+    var cM = document.getElementById('o2mFinEnvioMotivo');
+    if (cM){
+      var modo = manual ? 'manual' : '';
+      if (cM.getAttribute('data-modo') !== modo){
+        cM.setAttribute('data-modo', modo);
+        cM.innerHTML = _o2mFinEnvioMotivoHtml();
+      }
+    }
   }
   function setFinMotivoManual(v){ S.fin_zz_motivo_manual = v; _o2mFinEstadosDom(); refrescarAnclas(); }
   function setFinEnvioMotivoManual(v){ S.fin_zz_envio_motivo_manual = v; _o2mFinEstadosDom(); refrescarAnclas(); }
@@ -5946,20 +6039,16 @@ window.OT2C = (function(){
     // ── Línea de transporte (ZZENVIO), editable aparte ──────────────────
     var envioHtml = '';
     if (S.fin_zz_envio){
+      var envioManual = _o2mFinEnvioEsManual();
       envioHtml = '<div class="mt-3" style="padding-top:10px;border-top:1px dashed #e5e7eb">'+
-        '<label class="fl"><i class="bi bi-truck me-1"></i>Transporte (ZZENVIO del documento)'+
-        (_o2mFinEnvioEsManual()?' <span style="color:#dc2626">(editado a mano)</span>':'')+'</label>'+
-        '<input type="text" inputmode="numeric" class="form-control" '+
+        '<label class="fl" for="o2mFinEnvioInput"><i class="bi bi-truck me-1"></i>Transporte (ZZENVIO del documento)'+
+        '<span id="o2mFinEnvioEdit">'+(envioManual?' <span style="color:#dc2626">(editado a mano)</span>':'')+'</span></label>'+
+        '<input type="text" inputmode="numeric" class="form-control" id="o2mFinEnvioInput" '+
         'value="'+esc(_o2mFormatearMiles(S.fin_zz_envio.monto))+'" placeholder="Monto de transporte" '+
         'oninput="OT2C._o2mFinMontoEnvioCambio(this)">'+
         '<div class="text-muted" style="font-size:.72rem;margin-top:4px">Lo que el documento le cobra al cliente por transporte — '+
         'se reconoce aparte, no se mezcla con el valor del servicio.</div>'+
-        (_o2mFinEnvioEsManual()
-          ? '<label class="fl mt-2">¿Por qué se declara a mano? *</label>'+
-            '<textarea class="form-control" rows="2" maxlength="500" '+
-            'placeholder="Ej: se absorbió el despacho, concesión comercial…" '+
-            'oninput="OT2C.setFinEnvioMotivoManual(this.value)">'+esc(S.fin_zz_envio_motivo_manual)+'</textarea>'
-          : '')+
+        '<div id="o2mFinEnvioMotivo" data-modo="'+(envioManual?'manual':'')+'">'+_o2mFinEnvioMotivoHtml()+'</div>'+
       '</div>';
     }
     c.innerHTML = servicioHtml + motivoServicioHtml + envioHtml + avisoRut;
@@ -7159,6 +7248,14 @@ window.OT2C = (function(){
   }
 
   /* ── Acciones ─────────────────────────────────────────────────────── */
+  /* 2026-09-15 (revisión): si el centro de costo vigente es el default
+     automático del trabajo interno ('sstt', ver pintarFinanzas) y la OT
+     deja de ser interna, se suelta -- una OT de cliente exige que una
+     persona elija el centro (candado FINANZAS_SIN_CENTRO_COSTO). Un centro
+     elegido a mano (S._finCentroAuto false) nunca se toca. */
+  function _o2mFinSoltarCentroAuto(){
+    if (S._finCentroAuto && !esInterno()){ S.fin_centro = null; S._finCentroAuto = false; }
+  }
   function setOrigen(v){
     S.origen = v;
     // El documento de origen solo tiene sentido mientras el origen siga
@@ -7194,6 +7291,7 @@ window.OT2C = (function(){
         S.fin_doc.tido === S.doc_origen.tido && S.fin_doc.nudo === S.doc_origen.nudo){
       S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null;
       S.fin_zz_monto = null; S.fin_zz_envio = null; S.fin_doc_rut_difiere = false;
+      ++_finZZSeq; S.fin_zz_cargando = false;   // 2026-09-15 (revisión): ver limpiarFinDoc
       _o2mFinResetValor();   // 2026-09-15: el origen del valor también se suelta
     }
     if (S.contraparte._direccion_auto){
@@ -7213,6 +7311,7 @@ window.OT2C = (function(){
     // (ej. traía 'instalacion' y el usuario retrocede a elegir 'cliente'),
     // se limpia en vez de quedar seleccionado pero invisible en la grilla.
     if (S.tipo && !tipoValidoParaOrigen(TIPOS.find(function(t){return t.v===S.tipo;})||{}, v)) S.tipo = null;
+    _o2mFinSoltarCentroAuto();   // 2026-09-15: el 'sstt' automático no se arrastra a una OT de cliente
 
     // "Factura o boleta": en vez de pedir el cliente a mano, se abre el
     // buscador ERP compartido (el mismo de Tickets/Repuestos/Cotizaciones,
@@ -7558,6 +7657,7 @@ window.OT2C = (function(){
   function setTipo(i){
     var t = TIPOS[i]; S.tipo = t.v; S.descubrimiento = !!t.descubrimiento;
     if (t.interno) S.origen = 'interno';
+    _o2mFinSoltarCentroAuto();   // 2026-09-15: ver setOrigen
     // La plantilla de checklist sugerida es POR TIPO -- si el tipo cambia,
     // una plantilla elegida para el tipo anterior ya no aplica (28-08-2026).
     // 30-08-2026: si el tipo trae una plantilla asignada desde el CRUD de
@@ -7756,7 +7856,7 @@ window.OT2C = (function(){
   var _o2mTarifaHoraCache = null;
   var _o2mSkuManualSeq = 1;
   async function _o2mCostoInternoAutoCalc(){
-    if (!esInterno() || S._costoInternoManual) return;
+    if (!esInterno()) return;
     if (!S.hini || !S.hfin) return;
     var el = document.getElementById('o2mCostoInterno');
     // 2026-09-15: el hero del paso Costos (interno) es el segundo lugar
@@ -7764,10 +7864,22 @@ window.OT2C = (function(){
     var elHero = document.getElementById('o2mFinValorInput');
     if (!el && !elHero) return;   // paso todavía no está pintado
     try {
+      // 2026-09-15 (revisión): la tarifa se carga SIEMPRE que la OT sea
+      // interna, aunque el usuario ya haya escrito el costo a mano -- antes
+      // el return por _costoInternoManual venía antes del fetch y el chip
+      // "Horas de agenda × tarifa" quedaba para siempre en "calculando con
+      // la tarifa hora técnica…" sin forma de volver al cálculo automático.
+      // Lo que se salta cuando es manual es solo la ASIGNACIÓN del monto.
       if (_o2mTarifaHoraCache === null){
         var r = await fetch('/mantenciones/api/tarifa-hora-tecnica');
         var j = await r.json();
         _o2mTarifaHoraCache = (j && j.valor_hh) || 20000;
+      }
+      if (S._costoInternoManual){
+        // Solo repinta el chip (ya con tarifa, deja el esqueleto y se puede
+        // tocar para aplicar horas × tarifa); no pisa el monto manual.
+        _pintarFinValorDom();
+        return;
       }
       var mIni = parseInt(S.hini.slice(0,2),10)*60 + parseInt(S.hini.slice(3,5),10);
       var mFin = parseInt(S.hfin.slice(0,2),10)*60 + parseInt(S.hfin.slice(3,5),10);
@@ -7776,7 +7888,11 @@ window.OT2C = (function(){
       var costo = Math.round(horas * _o2mTarifaHoraCache);
       S.costo_interno = costo;
       if (el) el.value = costo;
-      if (elHero && document.activeElement !== elHero) elHero.value = _o2mFormatearMiles(costo);
+      // 2026-09-15 (revisión, hallazgo "hero en blanco con el foco"): el
+      // cálculo llega de forma asíncrona; si el usuario tiene el foco en el
+      // hero pero NO ha escrito nada (no es manual), el número se escribe
+      // igual -- si no, S.costo_interno queda con valor y el campo vacío.
+      if (elHero && !elHero._o2mAnim) elHero.value = _o2mFormatearMiles(costo);
       _pintarFinValorDom(); _o2mFinEstadosDom(); refrescarAnclas();
     } catch(e){ /* best-effort -- el campo sigue editable a mano si esto falla */ }
   }
@@ -8460,6 +8576,24 @@ window.OT2C = (function(){
       if (S.doc_extra.length){
         body.finanzas.documentos_extra = S.doc_extra;
       }
+      // 💰 2026-09-15 (revisión): en garantía el documento elegido en Costos
+      // queda como REFERENCIA del valor ("se conserva el documento como
+      // referencia, no se cobra") -- pero factura_tido/nudo no viajan (el
+      // backend los anula igual), así que sin esto la OT se creaba con
+      // valor_origen='zz' y zz_codigo sin ningún documento asociado del que
+      // salieran. Se manda por documentos_extra (sin duplicar si ya estaba)
+      // para que ot2_api_crear lo espeje en mant_visita_documentos y la
+      // ficha lo muestre en "Otros documentos".
+      if (S.fin_garantia && S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo){
+        var _refK = _o2mDocOrigenNorm(S.fin_doc.tido + S.fin_doc.nudo);
+        var _refYa = (S.doc_extra || []).some(function(d){ return _o2mDocOrigenNorm((d.tido||'') + (d.nudo||'')) === _refK; });
+        if (!_refYa){
+          body.finanzas.documentos_extra = (body.finanzas.documentos_extra || []).concat([{
+            tido: S.fin_doc.tido, nudo: S.fin_doc.nudo, rut: S.fin_doc.rut || '',
+            cliente_nombre: (S.cliente && S.cliente.nombre) || ''
+          }]);
+        }
+      }
     }
     /* 🔴 FIX 2026-09-10 (Daniel: "arregla el anexo que se envía dos veces").
        El anexo se estaba creando y enviando DOS veces al crear una OT con
@@ -8487,6 +8621,16 @@ window.OT2C = (function(){
                              S.anexo.objetivo_servicio.trim() && _o2mAnexoItemsValidos().length);
     body.anexo_email_destino = (S.anexo.email_destino || '').trim();
     body.anexo_telefono = (S.anexo.telefono || '').trim();
+    // 💰 2026-09-15 (revisión): ot2_api_crear lee `anexo.precio_items` para
+    // armar el anexo automático de respaldo con los montos TAL CUAL los
+    // dejó el usuario en la tabla del Anexo (editados o no). Sin esta clave
+    // el backend recalculaba siempre desde costo_proveedor/costo_despacho y
+    // el proveedor firmaba un anexo con montos distintos a los que la
+    // persona vio en pantalla (caso: editó ítems pero dejó vacío el
+    // objetivo, así que anexo_delegado viaja false).
+    if (_tecExtPre){
+      body.anexo = { precio_items: _o2mAnexoItemsValidos() };
+    }
 
     var sig = document.getElementById('o2mSig');
     var _origSig = sig.innerHTML;
@@ -8868,6 +9012,7 @@ window.OT2C = (function(){
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)
           setFinCobro:setFinCobro, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor,
           _o2mFinCostoInternoHeroCambio:_o2mFinCostoInternoHeroCambio, usarCostoInternoAuto:usarCostoInternoAuto,
+          _o2mFinHeroBlur:_o2mFinHeroBlur,
           setAnexoItemMonto:setAnexoItemMonto, setAnexoItemConcepto:setAnexoItemConcepto,
           anexoAgregarItem:anexoAgregarItem, anexoQuitarItem:anexoQuitarItem, anexoRestaurarItems:anexoRestaurarItems,
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
