@@ -8447,8 +8447,10 @@ async function declararGarantia(){
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo declarar la garantía');
     if (d.warning){
-      // Caso real: tipo='levantamiento' no admite garantía — el backend la
-      // degrada a servicio pagado y hay que decirlo, no fingir que resultó.
+      // Si el backend degradó la garantía (tipo excluido en
+      // _OT_TIPOS_SIN_GARANTIA -- desde el 2026-09-15 ninguno, Daniel:
+      // "todos los tipos de OT permiten garantía") hay que decirlo, no
+      // fingir que resultó.
       await ilusAlert({ title: 'Garantía no aplicable', message: d.warning, type: 'warning' });
     } else {
       ilusToast(d.documento_anulado

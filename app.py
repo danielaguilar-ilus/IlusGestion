@@ -76613,9 +76613,17 @@ _OT_MODALIDADES = ("pagado", "garantia", "sin_costo", "interno")
 _OT_PRIORIDADES = ("baja", "media", "alta", "urgente")
 
 # Tipos de OT que NO pueden ser cobrados por garantía (regla ILUS).
-# El levantamiento fotográfico es un registro inicial del activo: no genera
-# costo ni garantía. Si llega garantia → se fuerza a sin_costo.
-_OT_TIPOS_SIN_GARANTIA = ("levantamiento",)
+#
+# Hasta el 2026-09-15 traía ("levantamiento",): "el levantamiento fotográfico
+# es un registro inicial del activo, no genera costo ni garantía" (regla del
+# 14-may, modelo Fracttal). Ese supuesto quedó viejo: hoy el levantamiento es
+# un servicio real con costo y proveedor (OT-2026-00158/00175, Isabel
+# Milling). Daniel, 2026-09-15, tras el caso que reportó Aarón en "Firmar y
+# cerrar OT": "Todos los documentos permiten garantía. Todos los tipos de OT.
+# Estamos empoderando nuevamente la ficha de levantamiento". Queda VACÍA: el
+# mecanismo se conserva por si algún día hay que excluir otro tipo, pero
+# ninguna OT se degrada en silencio de garantía a pagado/sin_costo.
+_OT_TIPOS_SIN_GARANTIA = ()
 
 # Documentos del ERP que sirven para CERRAR una OT cobrable (Daniel
 # 2026-08-19). La nota de venta entró con el mismo peso que la factura;
@@ -76646,7 +76654,7 @@ def _normalizar_modalidad_cobro(tipo, modalidad_raw):
     m = (modalidad_raw or "").strip().lower()
     if m not in _OT_MODALIDADES:
         m = "pagado"  # default seguro
-    # Regla ILUS: levantamiento NUNCA puede ser garantía
+    # Tipos excluidos de garantía (hoy ninguno -- ver _OT_TIPOS_SIN_GARANTIA)
     if tipo in _OT_TIPOS_SIN_GARANTIA and m == "garantia":
         return ("sin_costo",
                 "Levantamiento fotográfico no admite modalidad 'garantía'. "
@@ -76688,9 +76696,11 @@ def _mapear_garantia_a_cobertura(garantia_aplica, tipo):
                          estado_facturacion='sin_cotizar' (PENDIENTE DE FACTURAR
                          hasta ligar una factura del ERP).
 
-    Regla dura: tipo='levantamiento' NUNCA puede ir a garantía. Si llega
-    APLICA con ese tipo, se degrada a servicio PAGO (consistente con
-    _normalizar_modalidad_cobro) y se devuelve un warning.
+    Si el tipo está en _OT_TIPOS_SIN_GARANTIA (hoy: ninguno -- Daniel
+    2026-09-15: "todos los tipos de OT permiten garantía"), se degrada a
+    servicio PAGO con warning. Hasta el 2026-09-15 eso le pasaba al
+    levantamiento, y Aarón no podía cerrar uno en garantía sin inventar
+    un documento.
 
     Devuelve (dict_de_campos, warning_or_None). El dict solo trae las
     columnas a setear; el caller decide cómo aplicarlas (INSERT o UPDATE).
@@ -76700,13 +76710,12 @@ def _mapear_garantia_a_cobertura(garantia_aplica, tipo):
         return ({}, None)
     if garantia_aplica:
         if tipo_l in _OT_TIPOS_SIN_GARANTIA:
-            # Levantamiento no admite garantía → cae a PAGO pendiente.
             return ({
                 "cubierto_por": "cliente",
                 "modalidad_cobro": "pagado",
                 "estado_facturacion": "sin_cotizar",
-            }, "El levantamiento no admite garantía. Quedó como servicio pagado "
-               "(pendiente de facturar).")
+            }, f"Una OT de tipo '{tipo_l}' no admite garantía. Quedó como servicio "
+               "pagado (pendiente de facturar).")
         return ({
             "cubierto_por": "garantia",
             "modalidad_cobro": "garantia",
@@ -77183,9 +77192,9 @@ def mant_visita_update(vid):
             _row_gar_actual.get("cubierto_por") == "garantia"
             or _row_gar_actual.get("modalidad_cobro") == "garantia"
         )
-        # La regla dura "levantamiento nunca admite garantía" sigue aplicando
-        # ANTES de evaluar retroactividad — para ese tipo, _mapear_garantia_a_
-        # cobertura ya degrada automáticamente a pagado con warning.
+        # Si el tipo estuviera excluido de garantía (_OT_TIPOS_SIN_GARANTIA,
+        # hoy vacía), _mapear_garantia_a_cobertura ya lo degrada con warning
+        # y no tiene sentido evaluar retroactividad.
         _es_retroactivo = (
             tipo_final not in _OT_TIPOS_SIN_GARANTIA
             and _gar_bool_actual != gar_aplica_upd
