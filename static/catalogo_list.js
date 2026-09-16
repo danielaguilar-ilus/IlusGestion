@@ -161,10 +161,48 @@ function catParamsFiltros(conOrden){
   return p;
 }
 
+// 2026-09-16 (Daniel: "necesito datos de cuándo se creó, con quién y quién
+// lo modificó por última vez y cuándo. Siempre quién y cuándo. Eso es muy
+// necesario para la trazabilidad"): la columna "Actualizado" (solo fecha)
+// pasa a DOS columnas ordenables -- "Creado" (created_at, ya existía en
+// SORT_COLS del backend) y "Última modificación" (updated_at, sigue siendo
+// el orden por defecto desc). Cada celda: fecha+hora arriba y la persona
+// abajo (catCeldaQuienCuando).
 const CAT_COLS = [
   ['Foto',''], ['SKU','sku'], ['Nombre','nombre'], ['Familia','familia'], ['Clase','clase_producto'],
-  ['Fotos','total_fotos'], ['Manual',''], ['Estado',''], ['Actualizado','updated_at'], ['Acciones',''],
+  ['Fotos','total_fotos'], ['Manual',''], ['Estado',''],
+  ['Creado','created_at'], ['Última modificación','updated_at'], ['Acciones',''],
 ];
+
+// Celda "quién y cuándo": línea 1 fecha/hora dd/mm/yyyy hh:mm (el backend ya
+// la manda en hora Chile, Regla #6), línea 2 el nombre visible de la persona
+// (created_by_nombre / updated_by_nombre -- los alias de sistema ya vienen
+// traducidos por _cat_nombre_visible en catalogo_module.py). Nunca se
+// trunca (Regla #15): nombres completos.
+function catCeldaQuienCuando(fecha, quien){
+  return '<div class="cat-qc">'
+    + '<div class="cat-qc-fecha">'+esc(fmtFecha(fecha))+'</div>'
+    + (quien ? '<div class="cat-qc-quien"><i class="bi bi-person"></i>'+esc(quien)+'</div>' : '')
+    + '</div>';
+}
+
+// Chips de estado del MODELO (2026-09-16, decisiones de Daniel):
+//  - "Descontinuado": propiedad del modelo de equipo (cat_productos), la
+//    marca un supervisor+ desde Repuestos. GRIS a propósito: ámbar ya
+//    significa "pendiente" y rojo "bajo mínimo" en esa tabla.
+//  - "Manual · no está en ERP": producto creado a mano desde Repuestos
+//    (origen='manual') porque el equipo no existe en Random. No aparece
+//    en el buscador de productos de Cotizaciones/Tickets.
+function catChipsModelo(row){
+  let out = '';
+  if(row.descontinuado){
+    out += '<span class="cat-chip-modelo descontinuado" title="Modelo declarado como descontinuado por un supervisor"><i class="bi bi-archive-fill"></i>Descontinuado</span>';
+  }
+  if(row.origen === 'manual'){
+    out += '<span class="cat-chip-modelo manual" title="Modelo escrito a mano desde Repuestos: no existe en el ERP Random"><i class="bi bi-pencil-square"></i>Manual · no está en ERP</span>';
+  }
+  return out ? '<div class="cat-chips-modelo">'+out+'</div>' : '';
+}
 function catTheadHtml(){
   // 2026-07-24 (Daniel, voz: "quiero tener un checkbox... para
   // seleccionar y borrar rápido... como super administrador"): columna
@@ -369,13 +407,15 @@ function catFilaHtml(row){
     + chkTd
     + '<td>'+foto+'</td>'
     + '<td><span class="cat-sku">'+esc(row.sku)+'</span></td>'
-    + '<td><div class="cat-nombre">'+esc(row.nombre)+'</div></td>'
+    + '<td><div class="cat-nombre">'+esc(row.nombre)+'</div>'+catChipsModelo(row)+'</td>'
     + '<td>'+(row.familia?esc(row.familia):'<span class="text-muted">—</span>')+'</td>'
     + '<td>'+clase+'</td>'
     + '<td>'+badgeFotos+'</td>'
     + '<td>'+manualIc+'</td>'
     + '<td>'+badgeReg+'</td>'
-    + '<td>'+esc(fmtFecha(row.updated_at))+'</td>'
+    // 2026-09-16: "siempre quién y cuándo" -- Creado / Última modificación
+    + '<td>'+catCeldaQuienCuando(row.created_at, row.created_by_nombre || row.created_by)+'</td>'
+    + '<td>'+catCeldaQuienCuando(row.updated_at, row.updated_by_nombre || row.updated_by)+'</td>'
     + '<td>'+catAccionesCelda(row)+'</td>'
     + '</tr>';
 }
@@ -786,19 +826,28 @@ async function catfCargar(){
   document.getElementById('catfBtnEliminar').style.display = CAN_ELIMINAR_CATALOGO ? 'inline-block' : 'none';
   document.getElementById('catfBtnEliminarDef').style.display = IS_SUPERADMIN ? 'inline-block' : 'none';
 
-  // Auditoría: solo superadmin. El backend (cat_api_detalle) ya omite
-  // created_by/updated_by del JSON para cualquier otro rol -- este bloque
-  // solo decide si se MUESTRA, con esos mismos campos si llegaron.
+  // Auditoría ("siempre quién y cuándo"). 2026-09-16 (Daniel: "necesito
+  // datos de cuándo se creó, con quién y quién lo modificó por última vez
+  // y cuándo... Eso es muy necesario para la trazabilidad"): ANTES
+  // (2026-07-21) esta sección era solo para superadmin y el backend
+  // omitía created_by/updated_by para el resto. Decisión del 16-sep:
+  // TODOS los que ven el Catálogo la ven. cat_api_detalle manda además
+  // created_by_nombre / updated_by_nombre (alias de sistema traducidos,
+  // ej. 'sistema-erp-sync' -> "Sincronización ERP"). La sección NO se
+  // borra (Regla #4.2), solo se abre a todos.
   const audSec = document.getElementById('catfAuditoriaSection');
-  if(IS_SUPERADMIN && (p.created_by || p.updated_by)){
-    const creado = p.created_by
-      ? 'Creado por <b>'+esc(p.created_by)+'</b>'+(p.created_at ? ' el '+esc(p.created_at) : '')
+  const _creadoPor = p.created_by_nombre || p.created_by;
+  const _modifPor = p.updated_by_nombre || p.updated_by;
+  if(p.created_at || p.updated_at || _creadoPor || _modifPor){
+    const creado = _creadoPor
+      ? 'Creado por <b>'+esc(_creadoPor)+'</b>'+(p.created_at ? ' el '+esc(p.created_at) : '')
       : (p.created_at ? 'Creado el '+esc(p.created_at) : '');
-    const actualizado = p.updated_by
-      ? 'Última actualización por <b>'+esc(p.updated_by)+'</b>'+(p.updated_at ? ' el '+esc(p.updated_at) : '')
-      : (p.updated_at ? 'Última actualización el '+esc(p.updated_at) : '');
+    const actualizado = _modifPor
+      ? 'Última modificación por <b>'+esc(_modifPor)+'</b>'+(p.updated_at ? ' el '+esc(p.updated_at) : '')
+      : (p.updated_at ? 'Última modificación el '+esc(p.updated_at) : '');
     document.getElementById('catfAuditoriaBody').innerHTML =
-      (creado ? '<div>'+creado+'</div>' : '') + (actualizado ? '<div>'+actualizado+'</div>' : '');
+      (creado ? '<div>'+creado+'</div>' : '') + (actualizado ? '<div>'+actualizado+'</div>' : '')
+      + catChipsModelo(p);
     audSec.style.display = '';
   } else {
     audSec.style.display = 'none';

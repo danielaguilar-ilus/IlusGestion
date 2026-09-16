@@ -773,6 +773,89 @@ def register_catalogo_routes(app, ctx):
                 d[k] = _fmt_dt(d[k])
         return d
 
+    # ─────────────────────────────────────────────────────────────────
+    #  Trazabilidad "siempre quién y cuándo" (2026-09-16, Daniel:
+    #  "necesito datos de cuándo se creó, con quién y quién lo modificó
+    #  por última vez y cuándo. Siempre quién y cuándo. Eso es muy
+    #  necesario para la trazabilidad").
+    #  Decisión del mismo día: TODOS los que ven el Catálogo ven quién
+    #  creó / quién modificó (fechas + persona) -- ya no es solo superadmin.
+    # ─────────────────────────────────────────────────────────────────
+    # Actores automáticos que escriben en cat_productos: se muestran con un
+    # nombre legible en vez del alias técnico. Cualquier otro valor es una
+    # persona y se resuelve contra la tabla de usuarios.
+    _CAT_NOMBRES_SISTEMA = {
+        "sistema-erp-sync": "Sincronización ERP",
+        "sistema": "Sistema",
+        "sistema-ecommerce": "Fotos e-commerce (automático)",
+    }
+
+    def _cat_nombre_visible(username):
+        """Nombre completo legible para un created_by/updated_by.
+
+        current_username() (app.py) guarda g.user["nombre"] -- el nombre
+        visible, no el login -- así que en la práctica la mayoría de las
+        filas ya traen el nombre. Igual se cruza contra app_users por
+        username O nombre (filas viejas o escritas por otros módulos pueden
+        traer el login) y se cae al valor crudo si no hay match. Caché por
+        request en g para no repetir el SELECT por cada fila de la lista."""
+        if username is None:
+            return None
+        u = str(username).strip()
+        if not u:
+            return None
+        fijo = _CAT_NOMBRES_SISTEMA.get(u.lower())
+        if fijo:
+            return fijo
+        cache = None
+        try:
+            cache = getattr(g, "_cat_nombres_cache", None)
+            if cache is None:
+                cache = {}
+                g._cat_nombres_cache = cache
+        except RuntimeError:
+            cache = {}  # fuera de request (hilos de fondo): sin caché, sigue funcionando
+        if u in cache:
+            return cache[u]
+        nombre = u
+        try:
+            row = mysql_fetchone(
+                "SELECT COALESCE(NULLIF(TRIM(nombre),''), username) AS nombre "
+                "FROM app_users WHERE username=%s OR nombre=%s LIMIT 1", (u, u))
+            if row and row.get("nombre"):
+                nombre = row["nombre"]
+        except Exception as _e:
+            print(f"[_cat_nombre_visible] error resolviendo '{u}': {_e}", flush=True)
+        cache[u] = nombre
+        return nombre
+
+    def _cat_agregar_nombres_visibles(d):
+        """Agrega created_by_nombre / updated_by_nombre a un dict de producto
+        (misma clave cruda + versión legible, para que el front no tenga que
+        adivinar quién es 'sistema-erp-sync')."""
+        d["created_by_nombre"] = _cat_nombre_visible(d.get("created_by"))
+        d["updated_by_nombre"] = _cat_nombre_visible(d.get("updated_by"))
+        return d
+
+    def _cat_touch_producto(pid, username=None):
+        """Marca al producto como modificado (quién + cuándo).
+
+        2026-09-16: hasta hoy, subir/quitar fotos y manuales, o crear/editar/
+        eliminar piolas y sus fotos, escribían SOLO en la tabla hija --
+        cat_productos.updated_at/updated_by no se movían y la "última
+        modificación" del producto mentía. Se llama DESPUÉS de cada escritura
+        exitosa en una tabla hija. updated_at=NOW() va EXPLÍCITO: el ON UPDATE
+        CURRENT_TIMESTAMP de la columna no se dispara si ninguna columna
+        cambia de valor (ej. el mismo usuario dos veces seguidas).
+        Best-effort: la escritura principal ya ocurrió, esto nunca la deshace."""
+        actor = username or current_username() or "sistema"
+        try:
+            mysql_execute(
+                "UPDATE cat_productos SET updated_by=%s, updated_at=NOW() WHERE id=%s",
+                (actor, pid))
+        except Exception as _e:
+            print(f"[_cat_touch_producto] pid={pid} actor={actor}: {_e}", flush=True)
+
     _CAT_CLASES_CACHE = {"data": None, "ts": 0.0}
     _CAT_CLASES_CACHE_TTL_S = 30
 
@@ -1445,14 +1528,23 @@ def register_catalogo_routes(app, ctx):
                 f"SELECT COUNT(*) AS n FROM cat_productos p WHERE {where_sql_base}",
                 tuple(params_base)) or {}).get("n") or 0)
 
-        # 2026-07-21: a propósito NO se seleccionan p.created_by/p.updated_by
-        # acá -- el listado nunca debe exponer el username de quién creó/editó
-        # cada fila (eso vive SOLO en la sección "Auditoría" del modal de
-        # ficha, gateada a superadmin en cat_api_detalle). Si algún día se
-        # agregan a este SELECT, hay que replicar el mismo filtro que ahí.
+        # 2026-09-16 (Daniel: "necesito datos de cuándo se creó, con quién y
+        # quién lo modificó por última vez y cuándo. Siempre quién y cuándo.
+        # Eso es muy necesario para la trazabilidad"): se REVIERTE la
+        # decisión del 2026-07-21 (que escondía created_by/updated_by del
+        # listado y los dejaba solo para superadmin en la ficha). Ahora
+        # TODOS los que ven el Catálogo ven quién creó / quién modificó y
+        # cuándo, en la tabla y en la ficha. Los alias de sistema se
+        # traducen a un nombre legible con _cat_nombre_visible.
+        # descontinuado / origen: columnas nuevas de cat_productos (mismo
+        # día, las crea el bloque ensure de este archivo al boot) -- el
+        # COALESCE cubre filas viejas mientras corre la migración.
         rows = mysql_fetchall(
             f"""
-            SELECT p.id, p.sku, p.nombre, p.familia, p.clase_producto, p.activo, p.updated_at,
+            SELECT p.id, p.sku, p.nombre, p.familia, p.clase_producto, p.activo,
+                   p.created_at, p.updated_at, p.created_by, p.updated_by,
+                   COALESCE(p.descontinuado,0) AS descontinuado,
+                   COALESCE(p.origen,'erp') AS origen,
                    (SELECT COUNT(*) FROM cat_producto_fotos f WHERE f.producto_id=p.id) AS total_fotos,
                    (SELECT f2.gcs_key FROM cat_producto_fotos f2
                       WHERE f2.producto_id=p.id ORDER BY f2.orden LIMIT 1) AS foto_thumb_key,
@@ -1469,7 +1561,13 @@ def register_catalogo_routes(app, ctx):
 
         rows_out = []
         for r in rows:
-            row = _fmt_row(r)
+            row = _fmt_row(r)  # Regla #6: created_at/updated_at a hora Chile
+            _cat_agregar_nombres_visibles(row)  # 2026-09-16: quién creó / quién modificó, legible
+            try:
+                row["descontinuado"] = int(row.get("descontinuado") or 0)
+            except Exception:
+                row["descontinuado"] = 0
+            row["origen"] = (row.get("origen") or "erp")
             # foto_thumb_url: misma convención "/f/<key>" que ya usa
             # cat_api_detalle para las fotos (gcs_key -> URL pública).
             _key = row.pop("foto_thumb_key", None)
@@ -1558,14 +1656,19 @@ def register_catalogo_routes(app, ctx):
         # "piola".
         tiene_clasificacion = bool((producto.get("clase_producto") or "").strip())
         producto["registrado"] = tiene_clasificacion or len(piolas) > 0 or tiene_manual_alguno
-        # 2026-07-21 (Daniel, Etapa 2 "acciones unificadas"): la sección
-        # "Auditoría" (quién creó/editó el producto) es SOLO para superadmin.
-        # No alcanza con ocultarla en el frontend -- el network tab expondría
-        # igual el username a cualquier rol con acceso al catálogo -- así que
-        # se quita del payload acá si el que pide no es superadmin.
-        if not bool((g.get("permissions") or {}).get("superadmin")):
-            producto.pop("created_by", None)
-            producto.pop("updated_by", None)
+        # 2026-09-16 (Daniel: "Siempre quién y cuándo. Eso es muy necesario
+        # para la trazabilidad"): ANTES (2026-07-21) created_by/updated_by se
+        # quitaban del payload para cualquier rol que no fuera superadmin y
+        # la sección "Auditoría" de la ficha era solo para él. Decisión del
+        # 16-sep: todos los que ven el Catálogo ven quién creó / quién
+        # modificó y cuándo -- se dejan en el payload y se agrega la versión
+        # legible (*_nombre) para los alias de sistema.
+        _cat_agregar_nombres_visibles(producto)
+        try:
+            producto["descontinuado"] = int(producto.get("descontinuado") or 0)
+        except Exception:
+            producto["descontinuado"] = 0
+        producto["origen"] = (producto.get("origen") or "erp")
         return jsonify({
             "ok": True,
             "producto": producto,
@@ -1616,6 +1719,11 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "Sin cambios validos"}), 400
         sets.append("updated_by=%s")
         params.append(current_username() or "sistema")
+        # 2026-09-16 (trazabilidad "siempre quién y cuándo"): updated_at
+        # EXPLÍCITO -- el ON UPDATE CURRENT_TIMESTAMP de la columna no se
+        # dispara si ninguna columna cambia de valor (ej. el mismo usuario
+        # vuelve a guardar el mismo dato), y la fecha quedaría vieja.
+        sets.append("updated_at=NOW()")
         params.append(pid)
         try:
             mysql_execute(f"UPDATE cat_productos SET {', '.join(sets)} WHERE id=%s", tuple(params))
@@ -1670,7 +1778,7 @@ def register_catalogo_routes(app, ctx):
 
         # Soft delete por defecto (Regla #5).
         mysql_execute(
-            "UPDATE cat_productos SET activo=0, updated_by=%s WHERE id=%s",
+            "UPDATE cat_productos SET activo=0, updated_by=%s, updated_at=NOW() WHERE id=%s",  # 2026-09-16: fecha explícita (trazabilidad)
             (current_username() or "sistema", pid))
         return jsonify({"ok": True, "hard_delete": False})
 
@@ -1709,7 +1817,7 @@ def register_catalogo_routes(app, ctx):
         user = current_username() or "sistema"
         ph2 = ",".join(["%s"] * len(ids_reales))
         mysql_execute(
-            f"UPDATE cat_productos SET activo=0, updated_by=%s WHERE id IN ({ph2})",
+            f"UPDATE cat_productos SET activo=0, updated_by=%s, updated_at=NOW() WHERE id IN ({ph2})",  # 2026-09-16: fecha explícita (trazabilidad)
             tuple([user] + ids_reales))
 
         if _audit:
@@ -1795,6 +1903,10 @@ def register_catalogo_routes(app, ctx):
                     pass
             return jsonify({"ok": False, "error": "No se pudo registrar la foto"}), 500
 
+        # 2026-09-16 (trazabilidad): una foto nueva ES una modificación del
+        # producto -- antes solo se escribía en cat_producto_fotos y la
+        # "última modificación" del producto no se movía.
+        _cat_touch_producto(pid)
         row = mysql_fetchone(
             "SELECT id FROM cat_producto_fotos WHERE producto_id=%s AND gcs_key=%s "
             "ORDER BY id DESC LIMIT 1", (pid, key))
@@ -1809,6 +1921,7 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
         mysql_execute(
             "DELETE FROM cat_producto_fotos WHERE id=%s AND producto_id=%s", (foto_id, pid))
+        _cat_touch_producto(pid)  # 2026-09-16 (trazabilidad): quitar una foto modifica el producto
         if _uploader_destroy:
             try:
                 _uploader_destroy(foto["gcs_key"])
@@ -1858,10 +1971,15 @@ def register_catalogo_routes(app, ctx):
             pass
 
         old_key = prev.get("manual_pdf_key")
+        # 2026-09-16 (trazabilidad "siempre quién y cuándo"): antes este
+        # UPDATE no registraba updated_by -- el manual cambiaba y nadie
+        # quedaba como autor. updated_at explícito por la misma razón que
+        # en _cat_touch_producto.
         mysql_execute(
-            "UPDATE cat_productos SET manual_pdf_key=%s, manual_pdf_nombre=%s, manual_pdf_size_kb=%s "
+            "UPDATE cat_productos SET manual_pdf_key=%s, manual_pdf_nombre=%s, manual_pdf_size_kb=%s, "
+            "updated_by=%s, updated_at=NOW() "
             "WHERE id=%s",
-            (key, f.filename[:300], size_kb, pid))
+            (key, f.filename[:300], size_kb, current_username() or "sistema", pid))
         if old_key and _uploader_destroy:
             try:
                 _uploader_destroy(old_key)
@@ -1876,9 +1994,11 @@ def register_catalogo_routes(app, ctx):
         if not prev:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         key = prev.get("manual_pdf_key")
+        # 2026-09-16 (trazabilidad): quitar el manual también deja quién y cuándo.
         mysql_execute(
             "UPDATE cat_productos SET manual_pdf_key=NULL, manual_pdf_nombre=NULL, "
-            "manual_pdf_size_kb=NULL WHERE id=%s", (pid,))
+            "manual_pdf_size_kb=NULL, updated_by=%s, updated_at=NOW() WHERE id=%s",
+            (current_username() or "sistema", pid))
         if key and _uploader_destroy:
             try:
                 _uploader_destroy(key)
@@ -2045,6 +2165,7 @@ def register_catalogo_routes(app, ctx):
             print(f"[cat_piolas_crear] error pid={pid}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo crear la piola"}), 500
 
+        _cat_touch_producto(pid, user)  # 2026-09-16 (trazabilidad): una piola nueva modifica el producto
         row = mysql_fetchone(
             "SELECT id, orden FROM cat_producto_piolas WHERE producto_id=%s "
             "ORDER BY id DESC LIMIT 1", (pid,))
@@ -2126,6 +2247,7 @@ def register_catalogo_routes(app, ctx):
             print(f"[cat_piolas_editar] error pid={pid} piola={piola_id}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo actualizar la piola"}), 500
 
+        _cat_touch_producto(pid)  # 2026-09-16 (trazabilidad): editar una piola modifica el producto
         if _audit:
             _audit("cat_piola_editar", target_type="cat_producto_piola", target_id=piola_id,
                    details={"producto_id": pid, "sku": prod.get("sku"), **detalle})
@@ -2147,6 +2269,7 @@ def register_catalogo_routes(app, ctx):
         mysql_execute(
             "UPDATE cat_producto_piolas SET activo=0, updated_by=%s WHERE id=%s AND producto_id=%s",
             (current_username() or "sistema", piola_id, pid))
+        _cat_touch_producto(pid)  # 2026-09-16 (trazabilidad): eliminar una piola modifica el producto
 
         if _audit:
             # 2026-07-24: usar _piola_serializar (mismo shape que list/detalle)
@@ -2236,6 +2359,7 @@ def register_catalogo_routes(app, ctx):
                     pass
             return jsonify({"ok": False, "error": "No se pudo registrar la foto"}), 500
 
+        _cat_touch_producto(pid)  # 2026-09-16 (trazabilidad): la foto de una piola modifica el producto
         if old_key and old_key != key and _uploader_destroy:
             try:
                 _uploader_destroy(old_key)
@@ -2260,6 +2384,7 @@ def register_catalogo_routes(app, ctx):
         mysql_execute(
             f"UPDATE cat_producto_piolas SET {col_foto}=NULL, updated_by=%s WHERE id=%s AND producto_id=%s",
             (current_username() or "sistema", piola_id, pid))
+        _cat_touch_producto(pid)  # 2026-09-16 (trazabilidad): quitar la foto de una piola modifica el producto
         if key and _uploader_destroy:
             try:
                 _uploader_destroy(key)
@@ -2377,6 +2502,7 @@ def register_catalogo_routes(app, ctx):
                     pass
             return jsonify({"ok": False, "error": "No se pudo registrar el manual"}), 500
 
+        _cat_touch_producto(pid, user)  # 2026-09-16 (trazabilidad): un manual nuevo modifica el producto
         row = mysql_fetchone(
             "SELECT id FROM cat_producto_manuales WHERE producto_id=%s AND gcs_key=%s "
             "ORDER BY id DESC LIMIT 1", (pid, key))
@@ -2391,6 +2517,7 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "Manual no encontrado"}), 404
         mysql_execute(
             "DELETE FROM cat_producto_manuales WHERE id=%s AND producto_id=%s", (manual_id, pid))
+        _cat_touch_producto(pid)  # 2026-09-16 (trazabilidad): quitar un manual modifica el producto
         if _uploader_destroy:
             try:
                 _uploader_destroy(m["gcs_key"])
@@ -2560,6 +2687,12 @@ def register_catalogo_routes(app, ctx):
                     except Exception:
                         pass
                 return "error"
+            # 2026-09-16 (trazabilidad): la foto automática también deja
+            # rastro, con actor 'sistema-ecommerce' (se muestra como "Fotos
+            # e-commerce (automático)" vía _cat_nombre_visible) -- así nadie
+            # cree que una persona la subió. Puede correr en hilo de fondo
+            # sin request: por eso el actor va explícito y no current_username().
+            _cat_touch_producto(producto_id, "sistema-ecommerce")
             return "ok"
         except Exception as _e:
             print(f"[_intentar_foto_ecommerce] pid={producto_id} sku={sku}: {_e}", flush=True)

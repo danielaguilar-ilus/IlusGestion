@@ -237,15 +237,18 @@
 
         </div>
 
-        {# 2026-07-21: sección "Auditoría" -- SOLO superadmin (Daniel:
-           "eliminarlo solamente para el superadministrador"). created_by/
-           updated_by ya existen en cat_productos; el backend (cat_api_detalle)
-           los omite del JSON para cualquier rol que no sea superadmin, así
-           que este bloque queda vacío/oculto de forma segura para el resto
-           (no depende solo de este display:none del frontend). NO es una
-           de las 3 etapas -- es metadata secundaria (2026-07-24). #}
+        {# Sección "Auditoría" -- quién creó / quién modificó y cuándo.
+           2026-09-16 (Daniel: "necesito datos de cuándo se creó, con quién
+           y quién lo modificó por última vez y cuándo. Siempre quién y
+           cuándo. Eso es muy necesario para la trazabilidad"): ANTES
+           (2026-07-21) era SOLO superadmin y cat_api_detalle omitía
+           created_by/updated_by para el resto. Decisión del 16-sep: la ven
+           TODOS los que ven el Catálogo, con nombres legibles
+           (created_by_nombre / updated_by_nombre). El display:none inicial
+           es solo hasta que catfCargar la llena. NO es una de las 3 etapas
+           -- es metadata secundaria (2026-07-24). #}
         <div class="catf-section catf-section-meta" id="catfAuditoriaSection" style="display:none;">
-          <h6><i class="bi bi-shield-lock me-1"></i>Auditoría</h6>
+          <h6><i class="bi bi-clock-history me-1"></i>Auditoría · quién y cuándo</h6>
           <div id="catfAuditoriaBody" class="text-muted small"></div>
         </div>
       </div>
