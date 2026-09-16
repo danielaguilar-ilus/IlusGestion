@@ -110411,15 +110411,24 @@ def _repstock_next_sku_modelo_manual(conn):
     algún día una marca llamada "Mod" compartiera la fila 'MOD' de la
     secuencia, lo peor que pasaría son huecos en la numeración, nunca un
     SKU duplicado (uq_cat_sku lo impediría igual)."""
+    # Revisión 2026-09-16: si alguien creó a mano desde el Catálogo un SKU
+    # con la forma MOD-000N, la secuencia lo salta (si no, uq_cat_sku haría
+    # fallar el INSERT, el rollback devolvería el correlativo y el siguiente
+    # intento chocaría con el MISMO número para siempre).
     with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO mant_repstock_secuencia (prefijo, n) VALUES ('MOD', LAST_INSERT_ID(1)) "
-            "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)"
-        )
-        cur.execute("SELECT LAST_INSERT_ID() AS n")
-        row = cur.fetchone()
-        n = int(row["n"]) if row and row.get("n") else 1
-    return f"MOD-{n:04d}"
+        for _intento in range(50):
+            cur.execute(
+                "INSERT INTO mant_repstock_secuencia (prefijo, n) VALUES ('MOD', LAST_INSERT_ID(1)) "
+                "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)"
+            )
+            cur.execute("SELECT LAST_INSERT_ID() AS n")
+            row = cur.fetchone()
+            n = int(row["n"]) if row and row.get("n") else 1
+            sku = f"MOD-{n:04d}"
+            cur.execute("SELECT 1 AS x FROM cat_productos WHERE sku=%s LIMIT 1", (sku,))
+            if not cur.fetchone():
+                return sku
+    raise RuntimeError("No se pudo obtener un SKU MOD- libre tras 50 intentos")
 
 
 # 2026-09-16 -- fragmento SQL compartido entre la lista de Bodega
@@ -110561,14 +110570,20 @@ def _repstock_contexto_bodega():
             f"SELECT rm.repuesto_id, p.id AS producto_id, p.sku AS producto_sku, "
             f"       p.nombre AS producto_nombre, p.clase_producto, "
             f"       COALESCE(p.descontinuado,0) AS descontinuado, "
-            f"       COALESCE(p.origen,'erp') AS origen "
+            f"       COALESCE(p.origen,'erp') AS origen, "
+            f"       p.descontinuado_at, p.descontinuado_by "
             f"  FROM mant_repuestos_stock_modelos rm "
             f"  JOIN cat_productos p ON p.id = rm.producto_id "
             f" WHERE rm.repuesto_id IN ({ph}) ORDER BY p.nombre",
             tuple(ids)
         ) or []
         for m in mrows:
-            modelos_por_repuesto.setdefault(m["repuesto_id"], []).append(dict(m))
+            m = dict(m)
+            # Revisión 2026-09-16: el chip del modal muestra "desde … por …";
+            # la fecha va a hora Chile (REGLA #6) y como texto, porque la
+            # fila viaja al JS con |tojson (un datetime crudo lo rompería).
+            m["descontinuado_at"] = chile_fmt_filter(m.get("descontinuado_at")) if m.get("descontinuado_at") else None
+            modelos_por_repuesto.setdefault(m["repuesto_id"], []).append(m)
         frows = mysql_fetchall(
             f"SELECT id, repuesto_id, gcs_key, orden FROM mant_repuestos_stock_fotos "
             f" WHERE repuesto_id IN ({ph}) ORDER BY repuesto_id, orden",
@@ -111762,6 +111777,18 @@ def repstock_modelo_asociar(rid):
     lo hacía -- corregido 2026-09-16.
     """
     d = request.get_json(silent=True) or {}
+    # 🔧 2026-09-16 (revisión): el repuesto y el tope de 5 se validan ANTES
+    # de resolver/crear el producto. Antes la rama manual insertaba el
+    # MOD-xxxx en el catálogo (y su log) y recién después respondía 404 o
+    # 'Máximo 5' -- quedaba un modelo huérfano por cada intento fallido.
+    rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    n_actual = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_stock_modelos WHERE repuesto_id=%s", (rid,)
+    ) or {}).get("n", 0)
+    if n_actual >= REPSTOCK_MAX_MODELOS:
+        return jsonify({"ok": False, "error": f"Máximo {REPSTOCK_MAX_MODELOS} modelos por repuesto"}), 400
     producto_id = None
     if d.get("producto_id") not in (None, ""):
         try:
@@ -111820,23 +111847,16 @@ def repstock_modelo_asociar(rid):
     else:
         return jsonify({"ok": False, "error": "Falta producto_id, sku o nombre manual"}), 400
 
-    rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
-    if not rep:
-        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
     # origen/descontinuado SIEMPRE en la respuesta (2026-09-16): el modal
     # los guarda en RB_MODELOS_ACTUALES para pintar el chip gris sin
-    # recargar la página.
+    # recargar la página. activo=1: un producto borrado del catálogo no se
+    # puede atar a un repuesto (revisión 2026-09-16).
     prod = mysql_fetchone(
         "SELECT id, sku, nombre, COALESCE(origen,'erp') AS origen, "
         "       COALESCE(descontinuado,0) AS descontinuado "
-        "  FROM cat_productos WHERE id=%s", (producto_id,))
+        "  FROM cat_productos WHERE id=%s AND activo=1", (producto_id,))
     if not prod:
-        return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo"}), 404
-    n_actual = (mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_repuestos_stock_modelos WHERE repuesto_id=%s", (rid,)
-    ) or {}).get("n", 0)
-    if n_actual >= REPSTOCK_MAX_MODELOS:
-        return jsonify({"ok": False, "error": f"Máximo {REPSTOCK_MAX_MODELOS} modelos por repuesto"}), 400
+        return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo (o fue eliminado)"}), 404
     mysql_execute(
         "INSERT IGNORE INTO mant_repuestos_stock_modelos (repuesto_id, producto_id) VALUES (%s,%s)",
         (rid, producto_id)
@@ -111878,12 +111898,14 @@ def repstock_modelo_descontinuado(producto_id):
                         "error": "Solo un supervisor o superior puede declarar un equipo como descontinuado"}), 403
     d = request.get_json(silent=True) or {}
     marcar = bool(d.get("descontinuado"))
+    # activo=1 (revisión 2026-09-16): no se marca/reactiva un producto que
+    # ya fue borrado del catálogo.
     prod = mysql_fetchone(
         "SELECT id, sku, nombre, COALESCE(origen,'erp') AS origen, "
         "       COALESCE(descontinuado,0) AS descontinuado "
-        "  FROM cat_productos WHERE id=%s", (producto_id,))
+        "  FROM cat_productos WHERE id=%s AND activo=1", (producto_id,))
     if not prod:
-        return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo"}), 404
+        return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo (o fue eliminado)"}), 404
     usr = current_username() or "sistema"
     try:
         if marcar:

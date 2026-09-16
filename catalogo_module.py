@@ -501,6 +501,11 @@ def register_catalogo_routes(app, ctx):
              "AFTER descontinuado_by",
              "ALTER TABLE cat_productos ADD INDEX idx_cat_origen (origen)"),
         )
+        # ⚠️ Si este ALTER falla (permisos, lock), las consultas nuevas que
+        # nombran estas columnas (Bodega, Catálogo, buscador de Tickets)
+        # fallan hasta que exista la columna: COALESCE NO cubre una columna
+        # inexistente. Vigilar el log '[ensure_catalogo] columna ... creada'
+        # en el primer deploy.
         for _nombre_col, _sql_add, _sql_idx in _cols_desc:
             try:
                 _col_d = mysql_fetchone(
@@ -509,11 +514,25 @@ def register_catalogo_routes(app, ctx):
                     "  AND COLUMN_NAME=%s LIMIT 1", (_nombre_col,))
                 if not _col_d:
                     mysql_execute(_sql_add)
-                    if _sql_idx:
-                        mysql_execute(_sql_idx)
                     print(f"[ensure_catalogo] columna {_nombre_col} creada", flush=True)
             except Exception as _e_desc:
                 print(f"[ILUS][WARN] cat_productos.{_nombre_col}: {_e_desc}", flush=True)
+            # El índice se verifica APARTE por INDEX_NAME (revisión
+            # 2026-09-16): si la columna ya nació pero el ADD INDEX falló,
+            # el próximo boot lo reintenta -- mismo guard que
+            # idx_cat_activo_familia más arriba.
+            if _sql_idx:
+                try:
+                    _idx_nombre = _sql_idx.split("ADD INDEX ", 1)[1].split(" ", 1)[0]
+                    _idx_d = mysql_fetchone(
+                        "SELECT 1 AS x FROM information_schema.STATISTICS "
+                        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cat_productos' "
+                        "  AND INDEX_NAME=%s LIMIT 1", (_idx_nombre,))
+                    if not _idx_d:
+                        mysql_execute(_sql_idx)
+                        print(f"[ensure_catalogo] índice {_idx_nombre} creado", flush=True)
+                except Exception as _e_idx2:
+                    print(f"[ILUS][WARN] índice de cat_productos.{_nombre_col}: {_e_idx2}", flush=True)
 
         try:
             _col2 = mysql_fetchone(
@@ -1646,7 +1665,11 @@ def register_catalogo_routes(app, ctx):
         manuales = mysql_fetchall(
             "SELECT id, gcs_key, nombre_archivo, size_kb, orden FROM cat_producto_manuales "
             "WHERE producto_id=%s ORDER BY orden", (pid,))
-        producto = _fmt_row(p)  # Regla #6: created_at/updated_at a hora Chile
+        # Regla #6: fechas a hora Chile (descontinuado_at incluido -- revisión
+        # 2026-09-16: antes salía como datetime crudo en inglés/UTC).
+        producto = _fmt_row(p, dt_keys=("created_at", "updated_at", "descontinuado_at"))
+        producto["descontinuado_by_nombre"] = (
+            _cat_nombre_visible(producto.get("descontinuado_by")) if producto.get("descontinuado_by") else None)
         producto["clase_producto_label"] = _cat_clases_map().get(producto.get("clase_producto") or "")
         manual_key = producto.pop("manual_pdf_key", None)
         tiene_manual_alguno = bool(manual_key) or len(manuales) > 0
@@ -2687,12 +2710,13 @@ def register_catalogo_routes(app, ctx):
                     except Exception:
                         pass
                 return "error"
-            # 2026-09-16 (trazabilidad): la foto automática también deja
-            # rastro, con actor 'sistema-ecommerce' (se muestra como "Fotos
-            # e-commerce (automático)" vía _cat_nombre_visible) -- así nadie
-            # cree que una persona la subió. Puede correr en hilo de fondo
-            # sin request: por eso el actor va explícito y no current_username().
-            _cat_touch_producto(producto_id, "sistema-ecommerce")
+            # 2026-09-16 (revisión): la foto automática de e-commerce NO toca
+            # updated_by/updated_at del producto. El backfill masivo (hasta
+            # 200 productos por clic) pisaría la última modificación HUMANA
+            # ("clasificado por Dave el 10/09") con 'Fotos e-commerce
+            # (automático)', que es justo lo contrario de la trazabilidad
+            # que pidió Daniel ("siempre quién y cuándo"). La foto queda en
+            # cat_producto_fotos con su propia fecha; eso ya es su rastro.
             return "ok"
         except Exception as _e:
             print(f"[_intentar_foto_ecommerce] pid={producto_id} sku={sku}: {_e}", flush=True)

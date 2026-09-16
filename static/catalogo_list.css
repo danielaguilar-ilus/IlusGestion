@@ -66,7 +66,10 @@ table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#f87171;}
    (Creado + Última modificación en vez de "Actualizado"); el wrap ya
    tiene overflow:auto, así que en móvil la tabla sigue contenida y
    scrollea horizontal DENTRO del wrap, no la página. */
-table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:1040px;}
+/* Revisión 2026-09-16: a 1280px el ancho útil con sidebar es ~965px; con
+   1040 la columna Acciones quedaba fuera de vista. 960 cabe (Creado y
+   Última modificación se estrechan a 100px, fecha y hora en dos líneas). */
+table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:960px;}
 /* 2026-07-23 (Daniel, insiste: "quiero ver una tabla con el diseño...
    estandarizado que tenemos en la página"): el thead vivía en gris claro
    (#f8f9fb) -- el mismo patrón "Triple A" viejo que ya se reemplazó en
@@ -100,8 +103,8 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .cat-chip-modelo.manual{background:#f9fafb;color:#6b7280;border-color:#e5e7eb;}
 /* Celda "quién y cuándo" (Creado / Última modificación), 2026-09-16 (Daniel:
    "siempre quién y cuándo"): fecha arriba, persona abajo en muted, sin truncar. */
-.cat-qc{display:flex;flex-direction:column;gap:1px;min-width:120px;}
-.cat-qc-fecha{white-space:nowrap;color:#0f172a;font-weight:600;font-size:.78rem;}
+.cat-qc{display:flex;flex-direction:column;gap:1px;min-width:100px;}
+.cat-qc-fecha{white-space:normal;color:#0f172a;font-weight:600;font-size:.78rem;line-height:1.25;}
 .cat-qc-quien{color:#6b7280;font-size:.7rem;display:inline-flex;align-items:center;gap:3px;
   white-space:normal;overflow-wrap:anywhere;line-height:1.2;}
 .cat-qc-quien i{font-size:.7rem;opacity:.7;}
