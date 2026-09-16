@@ -207,13 +207,13 @@
             <div class="row g-2">
               <div class="col-md-4"><label class="fl">RUT</label>
                 <input class="form-control form-control-sm" id="oaxSelRut" placeholder="12.345.678-9"
-                       oninput="OT2ANX.setContactoSel('rut', this.value); oaxValidarCampoManual(this,'rut')"></div>
+                       oninput="OT2ANX.setContactoSel('rut', this.value); OT2ANX.oaxValidarCampoManual(this,'rut')"></div>
               <div class="col-md-4"><label class="fl">Correo de contacto</label>
                 <input type="email" class="form-control form-control-sm" id="oaxSelEmail"
-                       oninput="OT2ANX.setContactoSel('email', this.value); oaxValidarCampoManual(this,'email')"></div>
+                       oninput="OT2ANX.setContactoSel('email', this.value); OT2ANX.oaxValidarCampoManual(this,'email')"></div>
               <div class="col-md-4"><label class="fl">Teléfono</label>
                 <input class="form-control form-control-sm" id="oaxSelTel" placeholder="+56 9 1234 5678"
-                       oninput="OT2ANX.setContactoSel('tel', this.value); oaxValidarCampoManual(this,'tel')"></div>
+                       oninput="OT2ANX.setContactoSel('tel', this.value); OT2ANX.oaxValidarCampoManual(this,'tel')"></div>
             </div>
             <small class="text-muted d-block mt-1" style="font-size:.72rem">Si corriges algo acá, queda guardado en la ficha de este proveedor para los próximos anexos.</small>
           </div>
@@ -227,13 +227,13 @@
                 <input class="form-control form-control-sm" id="oaxManNombre"></div>
               <div class="col-6"><label class="fl">RUT</label>
                 <input class="form-control form-control-sm" id="oaxManRut" placeholder="12.345.678-9"
-                       oninput="oaxValidarCampoManual(this,'rut')"></div>
+                       oninput="OT2ANX.oaxValidarCampoManual(this,'rut')"></div>
               <div class="col-6"><label class="fl">Correo de contacto</label>
                 <input type="email" class="form-control form-control-sm" id="oaxManEmail"
-                       oninput="oaxValidarCampoManual(this,'email')"></div>
+                       oninput="OT2ANX.oaxValidarCampoManual(this,'email')"></div>
               <div class="col-6"><label class="fl">Teléfono</label>
                 <input class="form-control form-control-sm" id="oaxManTel" placeholder="+56 9 1234 5678"
-                       oninput="oaxValidarCampoManual(this,'tel')"></div>
+                       oninput="OT2ANX.oaxValidarCampoManual(this,'tel')"></div>
               <div class="col-12"><label class="fl">Dirección</label>
                 <input class="form-control form-control-sm" id="oaxManDireccion" autocomplete="off"
                        placeholder="Empieza a escribir y elige una sugerencia…">
@@ -1489,6 +1489,7 @@ window.OT2ANX = (function(){
   return {
     abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink,
     onProveedorChange, toggleManual, toggleCondiciones, setContactoSel,
+    oaxValidarCampoManual,
     setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,
     agregarItem, quitarItem,
   };
