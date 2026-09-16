@@ -388,6 +388,144 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   .ot2-abrir{min-height:44px;width:100%;justify-content:center}
   .ot2-det{display:none !important}   /* el detalle expandido no aporta en celular; ya está todo en la tarjeta */
 }
+
+/* ══════════════ SELECCIÓN + ELIMINAR EN LOTE (solo superadmin) ══════════════
+   2026-09-16 (Daniel, textual): "quisiera poder tener un check en cada OT
+   para poder eliminarlas. Quiero además seleccionar y deseleccionar todas
+   las OT y poder borrar en lote, sobre todo las que no han comenzado...
+   Necesito ese tipo de control para borrar las cantidades de OT que se
+   han realizado como prueba a mi nombre."
+   Columna de checkboxes al inicio de la tabla + barra flotante abajo +
+   modal de confirmación. Nada de esto se renderiza para no-superadmin. */
+.ot2-tabla th.ot2-selth{width:52px;padding:6px 8px;text-align:center}
+.ot2-tabla td.ot2-seltd{width:52px;padding:0 6px;text-align:center;cursor:default}
+/* Área táctil de 44×44 (REGLA #3) con el input de 20px adentro. */
+.ot2-chk{display:inline-flex;align-items:center;justify-content:center;
+  width:44px;height:44px;margin:0;cursor:pointer;border-radius:10px;transition:background .14s}
+.ot2-chk:hover{background:rgba(220,38,38,.08)}
+.ot2-tabla thead .ot2-chk:hover{background:rgba(255,255,255,.12)}
+.ot2-chk input{width:20px;height:20px;margin:0;cursor:pointer;accent-color:var(--ilus-red,#dc2626)}
+.ot2-tabla tbody tr.ot2-marcada{background:#fff5f5}
+.ot2-tabla tbody tr.ot2-marcada:hover{background:#ffecec}
+
+/* Barra flotante: aparece solo con ≥1 OT marcada. Píldora negra con borde
+   rojo (misma familia que la barra de equipos de la ficha del cliente),
+   centrada en el área de contenido (respeta el sidebar en escritorio). */
+.ot2-selbar{position:fixed;bottom:18px;left:0;right:0;z-index:1040;
+  display:flex;justify-content:center;pointer-events:none;
+  padding:0 12px calc(env(safe-area-inset-bottom,0px))}
+@media (min-width:992px){.ot2-selbar{left:var(--sidebar-w,250px)}}
+.ot2-selbar[hidden]{display:none}
+.ot2-selbar-in{pointer-events:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  justify-content:center;max-width:100%;
+  background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);color:#fff;
+  border:2px solid var(--ilus-red,#dc2626);border-radius:50px;
+  padding:10px 18px;box-shadow:0 12px 34px rgba(0,0,0,.38);
+  font-family:'Inter',system-ui,sans-serif;font-size:.88rem;font-weight:600}
+.ot2-selbar-n{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.ot2-selbar-n i{color:var(--ilus-red,#dc2626);font-size:1.15rem}
+.ot2-selbar-n b{font-size:1.05rem;font-variant-numeric:tabular-nums}
+.ot2-selbar-chip{min-height:44px;padding:0 15px;border-radius:50px;
+  border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;
+  font-size:.8rem;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  transition:background .14s,border-color .14s;white-space:nowrap}
+.ot2-selbar-chip:hover{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.5)}
+.ot2-selbar-del{min-height:44px;padding:0 18px;border-radius:50px;border:0;
+  background:var(--ilus-red,#dc2626);color:#fff;font-size:.82rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.03em;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;white-space:nowrap;
+  box-shadow:0 6px 16px rgba(220,38,38,.4);transition:transform .14s,background .14s}
+.ot2-selbar-del:hover{background:#b91c1c;transform:translateY(-1px)}
+
+/* Modal "Eliminar N OT definitivamente".
+   .modal-content ya es flex-column (Bootstrap); el CUERPO es el que
+   scrollea y cabecera/pie quedan siempre a la vista -- en celular
+   mobile.css fuerza height:100dvh y sin esto el botón Eliminar quedaba
+   fuera de pantalla sin forma de llegar a él (probado a 390px). */
+#ot2ModalLote .modal-content{border:0;border-radius:15px;overflow:hidden;
+  max-height:calc(100dvh - 3.5rem)}
+.ot2-lote-head{background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;
+  padding:16px 22px;display:flex;align-items:center;gap:13px;flex:none;
+  border-bottom:3px solid var(--ilus-red,#dc2626)}
+.ot2-lote-head i.ic{font-size:1.5rem;color:var(--ilus-red,#dc2626)}
+.ot2-lote-head h5{margin:0;font-weight:800}
+.ot2-lote-head .sub{font-size:.78rem;color:rgba(255,255,255,.62)}
+.ot2-lote-x{margin-left:auto;background:transparent;border:0;color:rgba(255,255,255,.7);
+  font-size:1.5rem;line-height:1;min-width:44px;min-height:44px}
+.ot2-lote-body{padding:16px 20px;flex:1 1 auto;min-height:0;overflow-y:auto;
+  -webkit-overflow-scrolling:touch}
+.ot2-lote-chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}
+.ot2-lote-chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;
+  padding:5px 12px;font-size:.76rem;font-weight:800;border:1.5px solid transparent}
+.ot2-lote-chip b{font-size:.9rem;font-variant-numeric:tabular-nums}
+.ot2-lote-chip.c-pend{background:#dcfce7;color:#15803d;border-color:#bbf7d0}
+.ot2-lote-chip.c-ejec{background:#fff8e1;color:#b45309;border-color:#fde68a}
+.ot2-lote-chip.c-otras{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
+.ot2-lote-chip.c-cancel{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.ot2-lote-chip.c-firma,.ot2-lote-chip.c-cerr{background:#fee2e2;color:#b91c1c;border-color:#fecaca}
+.ot2-lote-chip.c-fact{background:#f3f4f6;color:#6b7280;border-color:#d1d5db;text-decoration:line-through}
+.ot2-lote-aviso{display:flex;gap:10px;align-items:flex-start;border-radius:10px;
+  padding:10px 13px;font-size:.84rem;font-weight:600;margin-bottom:12px;line-height:1.45}
+.ot2-lote-aviso.rojo{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+.ot2-lote-aviso.gris{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb}
+.ot2-lote-aviso i{font-size:1.1rem;flex:none;margin-top:1px}
+.ot2-lote-lista{max-height:38vh;overflow-y:auto;border:1px solid #eaecf0;border-radius:11px}
+.ot2-lote-it{--c:#6b7280;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+  gap:4px 12px;align-items:center;padding:9px 12px;border-left:4px solid var(--c);
+  border-bottom:1px solid #f0f2f4;font-size:.85rem}
+.ot2-lote-it:last-child{border-bottom:0}
+.ot2-lote-it.f-pend{--c:var(--ot-pend)} .ot2-lote-it.f-ejec{--c:var(--ot-ejec)}
+.ot2-lote-it.f-comp{--c:var(--ot-comp)} .ot2-lote-it.f-cerr{--c:var(--ot-cerr)}
+.ot2-lote-it.f-cancel{--c:var(--ot-cancel)}
+.ot2-lote-it .nu{font-weight:900;color:#0a0a0a;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* REGLA #15: el nombre del cliente va COMPLETO, nunca truncado. */
+.ot2-lote-it .cl{font-weight:700;color:#0a0a0a;overflow-wrap:anywhere}
+.ot2-lote-it .mt{grid-column:2;font-size:.74rem;color:#6b7280}
+.ot2-lote-it .es{font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--c);border:1.5px solid var(--c);border-radius:999px;padding:3px 9px;white-space:nowrap}
+.ot2-lote-it .tag{display:inline-flex;align-items:center;gap:4px;font-size:.68rem;font-weight:800;
+  border-radius:6px;padding:2px 7px;margin-right:5px}
+.ot2-lote-it .tag.firma{background:#fee2e2;color:#b91c1c}
+.ot2-lote-it .tag.fact{background:#e5e7eb;color:#4b5563}
+.ot2-lote-it.omitida{opacity:.55;background:#fafafa}
+.ot2-lote-it.omitida .nu,.ot2-lote-it.omitida .cl{text-decoration:line-through}
+.ot2-lote-conf{margin-top:14px}
+.ot2-lote-conf label{font-size:.78rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.05em;color:#374151;margin-bottom:6px;display:block}
+.ot2-lote-conf input{width:100%;font-size:16px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;min-height:48px;border:2px solid #d1d5db;border-radius:10px;
+  padding:0 14px;text-align:center;outline:0;transition:border-color .14s,box-shadow .14s}
+.ot2-lote-conf input:focus{border-color:var(--ilus-red,#dc2626);box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+.ot2-lote-conf input.ok{border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.15)}
+.ot2-lote-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;
+  border-top:1px solid #eaecf0;background:#fafbfc;flex-wrap:wrap;flex:none}
+.ot2-lote-btn{min-height:44px;padding:0 18px;border-radius:9px;font-weight:800;font-size:.84rem;
+  display:inline-flex;align-items:center;gap:8px;cursor:pointer;border:1px solid #d1d5db;
+  background:#fff;color:#374151;transition:background .14s,transform .14s}
+.ot2-lote-btn:hover{background:#f3f4f6}
+.ot2-lote-btn.del{border-color:var(--ilus-red,#dc2626);background:var(--ilus-red,#dc2626);color:#fff;
+  text-transform:uppercase;letter-spacing:.03em}
+.ot2-lote-btn.del:hover{background:#b91c1c}
+.ot2-lote-btn.del:disabled{opacity:.45;cursor:not-allowed;transform:none}
+@media (max-width:760px){
+  /* En celular la tabla ya es una pila de tarjetas: el check se ancla
+     arriba a la derecha de cada tarjeta, y la celda del N° OT deja
+     espacio para que el número no quede debajo. */
+  .ot2-tabla tbody tr{position:relative}
+  .ot2-tabla td.ot2-seltd{position:absolute;top:2px;right:4px;width:48px;height:48px;
+    padding:0;border:0 !important;min-height:0;justify-content:center;z-index:2}
+  .ot2-tabla td.ot2-seltd::before{display:none}
+  .ot2-tabla td.ot2-seltd + td{padding-right:58px}
+  .ot2-selbar{bottom:0;padding:0 0 calc(env(safe-area-inset-bottom,0px))}
+  .ot2-selbar-in{width:100%;border-radius:18px 18px 0 0;border-bottom:0;padding:12px 14px}
+  .ot2-selbar-chip,.ot2-selbar-del{flex:1 1 auto;justify-content:center}
+  #ot2ModalLote .modal-content{max-height:100dvh}
+  .ot2-lote-lista{max-height:none}   /* en celular scrollea el cuerpo entero, no una lista adentro de otra */
+  .ot2-lote-it{grid-template-columns:auto minmax(0,1fr)}
+  .ot2-lote-it .es{grid-column:2;justify-self:start}
+  .ot2-lote-foot{padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+  .ot2-lote-foot .ot2-lote-btn{flex:1 1 auto;justify-content:center}
+}
 </style>
 
 <div class="ot2">
@@ -663,8 +801,21 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
               </a>
             </th>
           {% endmacro %}
+          {# 2026-09-16 (Daniel): columna de selección + eliminar en lote,
+             SOLO superadmin (decisión 1). Para cualquier otro rol la tabla
+             es exactamente la de siempre: ni checkboxes, ni barra, ni modal. #}
+          {% set puede_lote = permissions and permissions.superadmin %}
           <thead>
             <tr>
+              {% if puede_lote %}
+              <th class="ot2-selth">
+                {# Toggle maestro (REGLA #14): si alguna visible está sin
+                   marcar, marca todas; si ya están todas, las desmarca. #}
+                <label class="ot2-chk" title="Seleccionar/deseleccionar todo">
+                  <input type="checkbox" id="ot2SelAll" aria-label="Seleccionar/deseleccionar todo">
+                </label>
+              </th>
+              {% endif %}
               {{ th('ot','N° OT') }}{{ th('cliente','Cliente') }}{{ th('tipo','Tipo') }}
               {{ th('estado','Estado') }}{{ th('tecnico','Técnico') }}{{ th('fecha','Fecha') }}
               <th>Avance</th><th></th>
@@ -673,6 +824,19 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
           <tbody>
             {% for f in filas %}
             <tr class="f-{{ f.estado_fase or 'cancel' }}" onclick="location.href='{{ url_for('ot2_detalle', vid=f.id) }}'">
+              {% if puede_lote %}
+              {# La fila entera navega a la ficha (onclick del <tr>): la celda
+                 y el input cortan la propagación para que marcar no abra la OT. #}
+              <td class="ot2-seltd" data-label="" onclick="event.stopPropagation()">
+                <label class="ot2-chk">
+                  <input type="checkbox" class="ot2-sel" value="{{ f.id }}"
+                         data-numero="{% if f.numero_ot %}{{ f.numero_ot }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}"
+                         data-estado="{{ f.estado or '' }}" data-fase="{{ f.estado_fase or 'cancel' }}"
+                         onclick="event.stopPropagation()"
+                         aria-label="Seleccionar {% if f.numero_ot %}{{ f.numero_ot }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}">
+                </label>
+              </td>
+              {% endif %}
               <td data-label="N° OT">
                 <span class="ot2-num">
                   {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
@@ -711,7 +875,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                en su propia pastilla de color, como la tabla de Etiquetas
                (Daniel: "lo quiero más colorido"). #}
             <tr class="ot2-det f-{{ f.estado_fase or 'cancel' }}">
-              <td colspan="8">
+              <td colspan="{{ 9 if puede_lote else 8 }}">
                 <div class="ot2-det-in">
                   <span class="dp dp-trab"><i class="bi bi-card-text"></i>
                     <b>{{ f.titulo or 'Sin título' }}</b></span>
@@ -1289,4 +1453,329 @@ window.OT2D = (function(){
   });
 })();
 </script>
+
+{# ══════════════ ELIMINAR EN LOTE (solo superadmin, solo vista tabla) ══════════════
+   2026-09-16 (Daniel, textual): "quisiera poder tener un check en cada OT
+   para poder eliminarlas. Quiero además seleccionar y deseleccionar todas
+   las OT y poder borrar en lote, sobre todo las que no han comenzado... de
+   momento puedo borrarlas todas. Necesito ese tipo de control para borrar
+   las cantidades de OT que se han realizado como prueba a mi nombre."
+   Decisiones cerradas: solo superadmin · confirmación de un paso con la
+   palabra ELIMINAR · cualquier estado, pero el modal muestra el desglose y
+   avisa firmas/cerradas · las OT en factura de proveedor se omiten.
+   Kanban y calendario no cambian. #}
+{% if vista == 'tabla' and filas and permissions and permissions.superadmin %}
+<div id="ot2SelBar" class="ot2-selbar" hidden>
+  <div class="ot2-selbar-in" role="region" aria-label="OT seleccionadas">
+    <span class="ot2-selbar-n"><i class="bi bi-check2-square"></i><b id="ot2SelN">0</b> <span id="ot2SelTxt">OT seleccionadas</span></span>
+    <button type="button" class="ot2-selbar-chip" id="ot2SelSoloPend"
+            title="Deja marcadas solo las OT que todavía no arrancan (creada, programada, asignada, reagendada)">
+      <i class="bi bi-hourglass"></i>Solo las que no han comenzado
+    </button>
+    <button type="button" class="ot2-selbar-chip" id="ot2SelQuitar">
+      <i class="bi bi-x-lg"></i>Quitar selección
+    </button>
+    <button type="button" class="ot2-selbar-del" id="ot2SelEliminar">
+      <i class="bi bi-trash3-fill"></i>Eliminar seleccionadas
+    </button>
+  </div>
+</div>
+
+{# Modal Bootstrap (REGLA #8: lista larga + campo de confirmación). #}
+<div class="modal fade" id="ot2ModalLote" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="ot2-lote-head">
+        <i class="bi bi-trash3-fill ic"></i>
+        <div>
+          <h5 id="ot2LoteTit">Eliminar OT definitivamente</h5>
+          <div class="sub">Esta acción no se puede deshacer. Revisa la lista antes de confirmar.</div>
+        </div>
+        <button type="button" class="ot2-lote-x" data-bs-dismiss="modal" aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="ot2-lote-body">
+        <div class="ot2-lote-chips" id="ot2LoteChips"></div>
+        <div id="ot2LoteAvisos"></div>
+        <div class="ot2-lote-lista" id="ot2LoteLista"></div>
+        <div class="ot2-lote-conf">
+          <label for="ot2LoteConfirm">Escribe ELIMINAR para confirmar</label>
+          <input type="text" id="ot2LoteConfirm" autocomplete="off" autocapitalize="characters"
+                 spellcheck="false" placeholder="ELIMINAR" inputmode="text">
+        </div>
+      </div>
+      <div class="ot2-lote-foot">
+        <button type="button" class="ot2-lote-btn" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="ot2-lote-btn del" id="ot2LoteBtn" disabled>
+          <i class="bi bi-trash3-fill"></i><span id="ot2LoteBtnTxt">Eliminar</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Selección múltiple + eliminar en lote (2026-09-16, pedido de Daniel
+   citado arriba). Solo existe en el DOM para superadmin en la vista tabla.
+   Todo el borrado real lo hace el backend (/ot/api/eliminar-lote), que
+   vuelve a validar superadmin, la palabra ELIMINAR y el candado de
+   factura de proveedor OT por OT. Cero alert/confirm/prompt nativos
+   (REGLA #1). */
+(function(){
+  var selAll   = document.getElementById('ot2SelAll');
+  var bar      = document.getElementById('ot2SelBar');
+  var nEl      = document.getElementById('ot2SelN');
+  var txtEl    = document.getElementById('ot2SelTxt');
+  var btnPend  = document.getElementById('ot2SelSoloPend');
+  var btnQuit  = document.getElementById('ot2SelQuitar');
+  var btnDel   = document.getElementById('ot2SelEliminar');
+  var modalEl  = document.getElementById('ot2ModalLote');
+  var confIn   = document.getElementById('ot2LoteConfirm');
+  var loteBtn  = document.getElementById('ot2LoteBtn');
+  var loteTxt  = document.getElementById('ot2LoteBtnTxt');
+  var loteTit  = document.getElementById('ot2LoteTit');
+  var chipsEl  = document.getElementById('ot2LoteChips');
+  var avisosEl = document.getElementById('ot2LoteAvisos');
+  var listaEl  = document.getElementById('ot2LoteLista');
+  if (!selAll || !bar || !btnDel || !modalEl) return;
+
+  var URL_PREVIEW = {{ url_for('ot2_api_eliminar_lote_preview') | tojson }};
+  var URL_LOTE    = {{ url_for('ot2_api_eliminar_lote') | tojson }};
+  // Fases que "no han comenzado": mismo bucket 'pend' de _OT2_ESTADO_META
+  // (creada / programada / asignada / reagendada).
+  var FASE_NO_COMENZADA = 'pend';
+  var idsAEliminar = [];   // los que el modal va a mandar (sin las omitibles)
+  var enviando = false;
+
+  function checks(){ return Array.prototype.slice.call(document.querySelectorAll('input.ot2-sel')); }
+  function marcados(){ return checks().filter(function(c){ return c.checked; }); }
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+    });
+  }
+
+  // Un solo lugar que marca/desmarca una fila (REGLA #14: el "todo"
+  // reutiliza el toggle individual, nunca una lógica aparte).
+  function setFila(chk, on){
+    chk.checked = !!on;
+    var tr = chk.closest('tr');
+    if (tr) tr.classList.toggle('ot2-marcada', !!on);
+  }
+
+  function refrescar(){
+    var todos = checks(), m = marcados();
+    nEl.textContent = m.length;
+    txtEl.textContent = m.length === 1 ? 'OT seleccionada' : 'OT seleccionadas';
+    bar.hidden = (m.length === 0);
+    selAll.checked = todos.length > 0 && m.length === todos.length;
+    selAll.indeterminate = m.length > 0 && m.length < todos.length;
+    // Que la barra no tape el pie de la tabla cuando está visible (en
+    // celular los 3 botones se apilan y mide más: se mide, no se adivina).
+    var inner = bar.querySelector('.ot2-selbar-in');
+    document.body.style.paddingBottom = m.length && inner ? (inner.offsetHeight + 28) + 'px' : '';
+  }
+
+  // Toggle maestro: si ALGUNA visible está sin marcar → marca todas;
+  // si ya están todas → desmarca todas.
+  selAll.addEventListener('click', function(e){
+    e.stopPropagation();
+    var todos = checks();
+    var faltan = todos.some(function(c){ return !c.checked; });
+    todos.forEach(function(c){ setFila(c, faltan); });
+    refrescar();
+  });
+
+  document.addEventListener('change', function(e){
+    var c = e.target;
+    if (!c || !c.classList || !c.classList.contains('ot2-sel')) return;
+    setFila(c, c.checked);
+    refrescar();
+  });
+
+  btnPend.addEventListener('click', function(){
+    var antes = marcados().length;
+    checks().forEach(function(c){
+      setFila(c, c.dataset.fase === FASE_NO_COMENZADA);
+    });
+    refrescar();
+    var ahora = marcados().length;
+    if (window.ilusToast) {
+      ilusToast(ahora
+        ? ('Quedan marcadas ' + ahora + ' OT que no han comenzado' + (antes ? ' (de ' + antes + ' que tenías)' : '') + '.')
+        : 'En esta página no hay OT sin comenzar.', {type: ahora ? 'info' : 'warning'});
+    }
+  });
+
+  btnQuit.addEventListener('click', function(){
+    checks().forEach(function(c){ setFila(c, false); });
+    refrescar();
+  });
+
+  // ── Modal de confirmación ─────────────────────────────────────────
+  function chip(clase, icono, n, texto){
+    return '<span class="ot2-lote-chip ' + clase + '"><i class="bi ' + icono + '"></i><b>' + n + '</b> ' + esc(texto) + '</span>';
+  }
+  function plural(n, uno, varios){ return n === 1 ? uno : varios; }
+
+  function pintarPreview(data){
+    var items = data.items || [], r = data.resumen || {};
+    idsAEliminar = items.filter(function(it){ return !it.en_factura_proveedor; })
+                        .map(function(it){ return it.id; });
+    var n = idsAEliminar.length;
+    loteTit.textContent = 'Eliminar ' + n + ' OT definitivamente';
+    loteTxt.textContent = 'Eliminar ' + n + ' OT';
+
+    var chips = '';
+    if (r.programada) chips += chip('c-pend',  'bi-calendar2-event', r.programada, plural(r.programada, 'programada (sin comenzar)', 'programadas (sin comenzar)'));
+    if (r.en_curso)   chips += chip('c-ejec',  'bi-lightning-charge-fill', r.en_curso, 'en ejecución');
+    if (r.otras)      chips += chip('c-otras', 'bi-hourglass-split', r.otras, plural(r.otras, 'completada / por aprobar', 'completadas / por aprobar'));
+    if (r.firmadas)   chips += chip('c-firma', 'bi-pen-fill', r.firmadas, 'con firma de cliente');
+    if (r.cerradas)   chips += chip('c-cerr',  'bi-lock-fill', r.cerradas, plural(r.cerradas, 'cerrada', 'cerradas'));
+    if (r.canceladas) chips += chip('c-cancel','bi-x-circle', r.canceladas, plural(r.canceladas, 'cancelada / anulada', 'canceladas / anuladas'));
+    if (r.en_factura) chips += chip('c-fact',  'bi-receipt', r.en_factura, 'en factura de proveedor (se omiten)');
+    chipsEl.innerHTML = chips || chip('c-cancel', 'bi-question-circle', 0, 'sin detalle');
+
+    var avisos = '';
+    var conEvidencia = (r.con_firma_cliente || 0);
+    if (conEvidencia || r.cerradas) {
+      avisos += '<div class="ot2-lote-aviso rojo"><i class="bi bi-exclamation-octagon-fill"></i><div>'
+        + (conEvidencia ? ('<b>' + conEvidencia + ' ' + plural(conEvidencia, 'OT tiene', 'OT tienen') + ' firma de cliente</b>: se ' + plural(conEvidencia, 'borra', 'borran') + ' con su evidencia (firmas, fotos, checklist). ') : '')
+        + (r.cerradas ? ('<b>' + r.cerradas + ' ' + plural(r.cerradas, 'está cerrada', 'están cerradas') + '</b>: ya son historial del cliente. ') : '')
+        + 'Si no son pruebas, cancela y revísalas una por una.</div></div>';
+    }
+    if (r.en_factura) {
+      avisos += '<div class="ot2-lote-aviso gris"><i class="bi bi-receipt"></i><div><b>'
+        + r.en_factura + ' ' + plural(r.en_factura, 'OT está', 'OT están') + ' en una factura de proveedor</b> y no se '
+        + plural(r.en_factura, 'borrará', 'borrarán') + ' (aparecen tachadas). Para eliminarlas hay que quitarlas primero de esa factura.</div></div>';
+    }
+    if (r.no_encontradas) {
+      avisos += '<div class="ot2-lote-aviso gris"><i class="bi bi-info-circle"></i><div>'
+        + r.no_encontradas + ' de las OT marcadas ya no ' + plural(r.no_encontradas, 'existe', 'existen') + ' (alguien las borró hace un momento). Se ignoran.</div></div>';
+    }
+    avisosEl.innerHTML = avisos;
+
+    listaEl.innerHTML = items.map(function(it){
+      var tags = '';
+      if (it.tiene_firma_cliente) tags += '<span class="tag firma"><i class="bi bi-pen-fill"></i>Firma cliente</span>';
+      if (it.en_factura_proveedor) tags += '<span class="tag fact"><i class="bi bi-receipt"></i>En factura · se omite</span>';
+      return '<div class="ot2-lote-it f-' + esc(it.fase || 'cancel') + (it.en_factura_proveedor ? ' omitida' : '') + '">'
+        + '<span class="nu">' + esc(it.numero_ot) + '</span>'
+        + '<span class="cl">' + esc(it.cliente) + '</span>'
+        + '<span class="es">' + esc(it.estado_label) + '</span>'
+        + '<span class="mt">' + tags + '<i class="bi bi-calendar2-event"></i> ' + esc(it.fecha_dia) + '</span>'
+        + '</div>';
+    }).join('') || '<div class="ot2-lote-it f-cancel"><span class="nu">—</span><span class="cl">Ninguna de las OT marcadas existe ya.</span></div>';
+
+    confIn.value = '';
+    confIn.classList.remove('ok');
+    loteBtn.disabled = true;
+    loteBtn.dataset.listo = (n > 0) ? '1' : '';
+  }
+
+  function abrirModal(){
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+  // El foco va al campo ELIMINAR recién cuando Bootstrap terminó de abrir
+  // (antes, su focus-trap se lo quedaba y había que hacer clic en el campo).
+  modalEl.addEventListener('shown.bs.modal', function(){
+    try { confIn.focus(); } catch(_){}
+  });
+
+  btnDel.addEventListener('click', async function(){
+    var ids = marcados().map(function(c){ return parseInt(c.value, 10); }).filter(function(x){ return x > 0; });
+    if (!ids.length) return;
+    btnDel.disabled = true;
+    try {
+      var resp = await fetch(URL_PREVIEW, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: JSON.stringify({ids: ids})
+      });
+      var data = null;
+      try { data = await resp.json(); } catch(_){ data = null; }
+      if (!resp.ok || !data || !data.ok) {
+        var msg = (data && data.error) || 'No se pudo revisar la selección. Inténtalo de nuevo.';
+        if (window.ilusAlert) await ilusAlert({title: 'No se pudo continuar', message: msg, type: 'error'});
+        return;
+      }
+      pintarPreview(data);
+      abrirModal();
+    } catch (err) {
+      if (window.ilusToast) ilusToast('Sin conexión con el servidor. Revisa tu red e inténtalo de nuevo.', {type: 'error'});
+    } finally {
+      btnDel.disabled = false;
+    }
+  });
+
+  // El botón rojo solo se habilita cuando el texto coincide (mayúsculas/
+  // minúsculas indistinto; el backend vuelve a exigirlo).
+  confIn.addEventListener('input', function(){
+    var ok = confIn.value.trim().toUpperCase() === 'ELIMINAR' && loteBtn.dataset.listo === '1';
+    confIn.classList.toggle('ok', ok);
+    loteBtn.disabled = !ok || enviando;
+  });
+  confIn.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && !loteBtn.disabled) { e.preventDefault(); loteBtn.click(); }
+  });
+
+  loteBtn.addEventListener('click', async function(){
+    if (enviando || loteBtn.disabled || !idsAEliminar.length) return;
+    enviando = true;
+    loteBtn.disabled = true;
+    var htmlAntes = loteBtn.innerHTML;
+    loteBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Eliminando ' + idsAEliminar.length + ' OT…';
+    try {
+      var resp = await fetch(URL_LOTE, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: JSON.stringify({ids: idsAEliminar, confirm_text: confIn.value.trim()})
+      });
+      var data = null;
+      try { data = await resp.json(); } catch(_){ data = null; }
+      if (!resp.ok || !data || !data.ok) {
+        var msg = (data && data.error) || 'No se pudo eliminar el lote. Inténtalo de nuevo.';
+        if (window.ilusAlert) await ilusAlert({title: 'No se eliminó nada', message: msg, type: 'error'});
+        return;
+      }
+      var el = data.eliminadas || [], om = data.omitidas || [];
+      try { bootstrap.Modal.getOrCreateInstance(modalEl).hide(); } catch(_){}
+      var sub = '';
+      if (om.length) {
+        sub = '<div style="text-align:left;margin-top:6px"><b>' + om.length + ' ' + plural(om.length, 'omitida', 'omitidas') + ':</b><ul style="margin:6px 0 0;padding-left:18px">'
+          + om.map(function(o){ return '<li><b>' + esc(o.numero_ot) + '</b> — ' + esc(o.motivo) + '</li>'; }).join('')
+          + '</ul></div>';
+      }
+      if (window.ilusAlert) {
+        await ilusAlert({
+          title: el.length + ' ' + plural(el.length, 'OT eliminada', 'OT eliminadas'),
+          message: el.length
+            ? ('Se eliminaron definitivamente: ' + el.map(function(x){ return x.numero_ot; }).join(', ') + '.')
+            : 'No se eliminó ninguna OT.',
+          sub: sub, subHtml: true,
+          type: el.length ? 'success' : 'warning',
+        });
+      }
+      location.reload();
+    } catch (err) {
+      if (window.ilusToast) ilusToast('Sin conexión con el servidor. Revisa tu red e inténtalo de nuevo.', {type: 'error'});
+    } finally {
+      enviando = false;
+      loteBtn.innerHTML = htmlAntes;
+      loteBtn.disabled = !(confIn.value.trim().toUpperCase() === 'ELIMINAR' && loteBtn.dataset.listo === '1');
+    }
+  });
+
+  // Al cerrar el modal sin confirmar, la selección se conserva (puede
+  // querer ajustar y volver a intentar).
+  modalEl.addEventListener('hidden.bs.modal', function(){
+    confIn.value = '';
+    confIn.classList.remove('ok');
+    loteBtn.disabled = true;
+  });
+
+  refrescar();
+})();
+</script>
+{% endif %}
 {% endblock %}
