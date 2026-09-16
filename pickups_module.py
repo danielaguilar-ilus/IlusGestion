@@ -6455,6 +6455,20 @@ def register_pickup_routes(app, ctx):
                     _eq = _empaques_equivalentes(qty, _ln_snap)
                     peso_tot  = float(r.get("peso_total_kg") or (peso_unit * _eq))
                     vol_tot   = float(r.get("vol_total_m3") or (vol_unit * _eq))
+                    # FIX 2026-09-16 (Daniel: "51 kg por un lado, 25 kg por
+                    # otro" en la misma fila): peso_unit_kg/vol_unit_m3
+                    # guardados en pickup_doc_lineas son el peso DE LA FICHA
+                    # (el del PAR, en productos que se empacan de a 2 — ver
+                    # _empaques_equivalentes arriba) mientras que peso_total
+                    # ya viene dividido por unidades_por_venta cuando
+                    # cantidad son piezas sueltas. Mostrar el "unitario" tal
+                    # cual no cuadraba con "unitario × cantidad = total" en
+                    # la tabla que ve el operador. Se recalcula el unitario
+                    # A MOSTRAR desde el total (siempre consistente); el
+                    # peso_total real (el que manda para la capacidad del
+                    # slot) no cambia.
+                    peso_unit_mostrar = (peso_tot / qty) if qty else peso_unit
+                    vol_unit_mostrar  = (vol_tot / qty) if qty else vol_unit
                     lineas_out.append({
                         "sku":               (r.get("sku") or "").strip(),
                         "descripcion":       (r.get("descripcion") or "").strip(),
@@ -6462,8 +6476,8 @@ def register_pickup_routes(app, ctx):
                         "doc_numero":        doc_numero,
                         "doc_id":            doc_id,
                         "cantidad":          qty,
-                        "peso_unit_kg":      peso_unit,
-                        "vol_unit_m3":       vol_unit,
+                        "peso_unit_kg":      peso_unit_mostrar,
+                        "vol_unit_m3":       vol_unit_mostrar,
                         "peso_total":        peso_tot,
                         "vol_total":         vol_tot,
                         "marcada_sin_saldo": bool(r.get("marcada_sin_saldo")),
@@ -6493,6 +6507,12 @@ def register_pickup_routes(app, ctx):
                     _eq = _empaques_equivalentes(qty, ln)
                     peso_tot = peso_unit * _eq
                     vol_tot  = vol_unit_m3 * _eq
+                    # FIX 2026-09-16 — mismo criterio que la rama con
+                    # selección granular arriba: mostrar el unitario
+                    # derivado del total (consistente con "cantidad"),
+                    # no el peso de la ficha del PAR sin dividir.
+                    peso_unit_mostrar = (peso_tot / qty) if qty else peso_unit
+                    vol_unit_mostrar  = (vol_tot / qty) if qty else vol_unit_m3
                     lineas_out.append({
                         "sku":               sku,
                         "descripcion":       desc,
@@ -6500,8 +6520,8 @@ def register_pickup_routes(app, ctx):
                         "doc_numero":        doc_numero,
                         "doc_id":            doc_id,
                         "cantidad":          qty,
-                        "peso_unit_kg":      peso_unit,
-                        "vol_unit_m3":       vol_unit_m3,
+                        "peso_unit_kg":      peso_unit_mostrar,
+                        "vol_unit_m3":       vol_unit_mostrar,
                         "peso_total":        peso_tot,
                         "vol_total":         vol_tot,
                         "marcada_sin_saldo": False,  # snapshot completo = ERP en orden
