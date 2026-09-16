@@ -2197,31 +2197,41 @@ function rbaOpen(){
   md.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
 
-  // Focus input según tab activo + pre-poblar RUT sin DV
-  // FIX Daniel 2026-05-23: el RUT del cliente actual (ej. "25.547.065-5")
+  // Focus input según tab activo. FIX Daniel 2026-05-23 (y 2026-09-16, tras
+  // reportar el campo vacío): el RUT del cliente actual (ej. "25.547.065-5")
   // se pre-pobla en el tab "Por RUT/nombre" SIN dígito verificador ni puntos
-  // (ej. "25547065"), editable, para arrancar la búsqueda más rápido.
+  // (ej. "25547065" — "despreocúpate por el código verificador", el
+  // backend igual lo trata como cuerpo). El bug: esta pre-carga SOLO vivía
+  // acá, gateada a `_RBA.tab !== 'doc'` — pero _rbaResetEstado() siempre
+  // deja _RBA.tab='doc' al abrir, así que el operador SIEMPRE llega con la
+  // pestaña "Por documento" activa y nunca disparaba este branch; recién se
+  // notaba vacío al cambiar de pestaña a mano con rbaSetTab('cli'), que no
+  // tenía esta lógica. Ahora es una función propia, llamada desde AMBOS
+  // lugares (acá, por si algún día se abre directo en 'cli', y desde
+  // rbaSetTab).
   setTimeout(()=>{
     if (_RBA.tab === 'doc'){
       const i = document.getElementById('rbaDocNudo');
       if (i) i.focus();
     } else {
-      const i = document.getElementById('rbaCliQ');
-      if (i){
-        // Pre-poblar SOLO si está vacío (no sobrescribir si el operador ya escribió)
-        if (!i.value && _RUT_CLI){
-          const clean = String(_RUT_CLI).replace(/[.\-\s]/g, '');
-          // Si >= 8 chars asumimos que el último es DV y lo quitamos
-          const rutBase = clean.length >= 8 ? clean.slice(0, -1) : clean;
-          i.value = rutBase;
-          // Auto-buscar al abrir (sin esperar Enter)
-          setTimeout(()=> rbaBuscarPorCliente(), 100);
-        }
-        i.focus();
-        i.select();
-      }
+      _rbaPrefillCliRut();
     }
   }, 350);
+}
+function _rbaPrefillCliRut(){
+  const i = document.getElementById('rbaCliQ');
+  if (!i) return;
+  // Pre-poblar SOLO si está vacío (no sobrescribir si el operador ya escribió)
+  if (!i.value && _RUT_CLI){
+    const clean = String(_RUT_CLI).replace(/[.\-\s]/g, '');
+    // Si >= 8 chars asumimos que el último es DV y lo quitamos
+    const rutBase = clean.length >= 8 ? clean.slice(0, -1) : clean;
+    i.value = rutBase;
+    // Auto-buscar al llegar al tab (sin esperar Enter)
+    setTimeout(()=> rbaBuscarPorCliente(), 100);
+  }
+  i.focus();
+  i.select();
 }
 function rbaClose(){
   _RBA.open = false;
@@ -2256,6 +2266,11 @@ function rbaSetTab(tab){
   document.getElementById('rbaTabCli').classList.toggle('is-active', tab === 'cli');
   document.getElementById('rbaPanelDoc').style.display = tab === 'doc' ? '' : 'none';
   document.getElementById('rbaPanelCli').style.display = tab === 'cli' ? '' : 'none';
+  // FIX Daniel 2026-09-16: al cambiar A "Por RUT/nombre" con un clic (el
+  // camino real, ya que el modal siempre abre en "Por documento"),
+  // adelantarse con el RUT del cliente del retiro — mismo criterio que
+  // rbaOpen()/_rbaPrefillCliRut: sin DV, solo si el campo sigue vacío.
+  if (tab === 'cli') _rbaPrefillCliRut();
 }
 
 // Skeleton premium para resultados
