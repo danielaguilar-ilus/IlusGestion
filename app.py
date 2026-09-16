@@ -76920,6 +76920,15 @@ def _mant_visita_crear_core(d):
                     tecnico_user_id = None
         except (TypeError, ValueError):
             tecnico_user_id = None
+    # 🔒 2026-09-16 (Daniel: "están creando OT sin técnicos, deja eso
+    # completamente prohibido"): misma regla que ot2_api_crear
+    # (TECNICO_OBLIGATORIO). Se acepta el técnico por id de usuario o, por
+    # compatibilidad con el modal clásico, por nombre en texto -- pero
+    # vacío ya no. Las visitas que generan el plan anual / calendario
+    # automático no pasan por este núcleo y no se tocan aquí.
+    if not tecnico_user_id and not (tecnico_txt or "").strip():
+        return {"error": "Toda OT debe salir con un técnico responsable asignado.",
+                "error_codigo": "TECNICO_OBLIGATORIO"}, 400
 
     # FASE 1 — modalidad de cobro + prioridad (con validación de regla)
     tipo_ot = (d.get("tipo") or "preventiva").lower()
@@ -83428,12 +83437,27 @@ def ot2_api_crear():
     if lider_id and lider_id not in tec_ids:
         tec_ids.append(lider_id)
 
+    # 🔒 2026-09-16 (Daniel: "están creando OT sin técnicos, deja eso
+    # completamente prohibido... debe ser motivo de bloqueo"): antes
+    # lider_id podía quedar None y la OT nacía "Sin asignar". Ahora es un
+    # error de validación, ANTES de tocar la base (misma política que el
+    # resto de este endpoint). El wizard ya lo exige por su lado
+    # (completo('tecnicos')); esto cubre a cualquier cliente que salte el
+    # front. Se valida también que el técnico exista de verdad.
+    if not lider_id:
+        return _ot2_err(
+            "Toda OT debe salir con un técnico responsable asignado. "
+            "Elige al menos uno en el paso Técnicos.",
+            "TECNICO_OBLIGATORIO")
     tecnico_nombre = None
-    if lider_id:
-        _t = mysql_fetchone(
-            "SELECT COALESCE(nombre, username) AS n FROM app_users WHERE id=%s",
-            (lider_id,))
-        tecnico_nombre = (_t or {}).get("n")
+    _t = mysql_fetchone(
+        "SELECT COALESCE(nombre, username) AS n FROM app_users WHERE id=%s",
+        (lider_id,))
+    tecnico_nombre = (_t or {}).get("n")
+    if not tecnico_nombre:
+        return _ot2_err(
+            "El técnico elegido ya no existe. Vuelve a elegirlo en el paso Técnicos.",
+            "TECNICO_INEXISTENTE")
 
     # ── 7. RESTO DE CAMPOS ─────────────────────────────────────────────
     # 2026-08-28 (Daniel: "quiero que salga N° y Cliente... se vería más

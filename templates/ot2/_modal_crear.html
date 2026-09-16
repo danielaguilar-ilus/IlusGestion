@@ -501,7 +501,10 @@
 @keyframes o2mLatido{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}
   35%{box-shadow:0 0 0 6px rgba(220,38,38,.22)}}
 .o2m-fpaso.senala{animation:o2mLatido 1s ease 2}
-@media (prefers-reduced-motion:reduce){ .o2m-fpaso.senala{animation:none} }
+/* 2026-09-16: la tarjeta de paso completa (ej. Técnicos) también late
+   al intentar crear sin completarla -- ver senalarPaso(). */
+.o2m-sec.senala{animation:o2mLatido 1s ease 2;border-color:#dc2626}
+@media (prefers-reduced-motion:reduce){ .o2m-fpaso.senala,.o2m-sec.senala{animation:none} }
 /* Hint de apoyo de un sub-paso: legible (no .text-muted small, regla de
    este archivo -- ver _pintarFinMargenDom). */
 .o2m-fin-hint{font-size:.85rem;color:#6b7280;line-height:1.4;margin-bottom:10px}
@@ -1483,7 +1486,13 @@ window.OT2C = (function(){
       // (ya recorre completo() de todos los pasos) y la tarjeta del paso
       // queda en rojo, sin necesidad de una validación aparte.
       case 'agenda':   return !!S.fecha && S.fecha >= _o2mHoyStr();
-      case 'tecnicos': return true;                       // asignar después es válido
+      // 🔒 2026-09-16 (Daniel: "están creando OT sin técnicos, deja eso
+      // completamente prohibido... debe ser motivo de bloqueo"): el paso
+      // Técnicos deja de ser permisivo. Sin al menos un técnico marcado la
+      // OT no se crea, y como el wizard bloquea en secuencia, tampoco se
+      // avanza a Agenda. El backend (ot2_api_crear, TECNICO_OBLIGATORIO)
+      // exige lo mismo por si alguien salta el front.
+      case 'tecnicos': return !!(S.tecnicos && S.tecnicos.length > 0);
       case 'equipos':
         // 26-08-2026: "Trabajo interno" ya no es un solo criterio genérico.
         // 28-08-2026: plantilla_id_interno (checklist de trabajo interno)
@@ -1603,7 +1612,9 @@ window.OT2C = (function(){
       // descripción tiene un mínimo real (ver completo('detalle')), el
       // semáforo puede seguir la regla general (ok/pendiente), igual que
       // tipo/cliente/agenda/equipos/finanzas.
-      case 'tecnicos': return (S.tecnicos && S.tecnicos.length > 0) ? 'ok' : 'neutro';
+      // 2026-09-16: 'tecnicos' dejó de ser opcional (ver completo()), así
+      // que sigue la regla general: verde con técnico, rojo sin él. El
+      // ámbar "neutro" ya no aplica a ningún paso.
       default:         return completo(k) ? 'ok' : 'pendiente';
     }
   }
@@ -1704,6 +1715,19 @@ window.OT2C = (function(){
      estricto -- ya no se puede saltar a un paso sin completar los
      anteriores. Los pasos ya completados (antes del actual) SÍ se pueden
      revisitar libremente para corregir algo. */
+  /* 2026-09-16: scroll al paso que falta + la tarjeta entera late dos
+     veces (misma animación o2mLatido que ya usan los sub-pasos de
+     Costos). Se usa desde validarTodo() al intentar crear con algo
+     pendiente -- el usuario ve exactamente qué tarjeta lo detiene. */
+  function senalarPaso(k){
+    irAncla(k);
+    var el = document.getElementById('o2mSec-'+k);
+    if (!el) return;
+    el.classList.remove('senala');
+    void el.offsetWidth;   // reinicia la animación si ya estaba puesta
+    el.classList.add('senala');
+    setTimeout(function(){ el.classList.remove('senala'); }, 2200);
+  }
   function irAncla(k){
     if (k === 'origen'){ irAOrigen(); return; }
     var ps = pasos(), idx = ps.findIndex(function(p){ return p.k===k; });
@@ -3206,7 +3230,9 @@ window.OT2C = (function(){
 
   function pintarTecnicos(b){
     b.innerHTML = '<h6 class="t">Técnicos asignados</h6>'+
-      '<p class="d">Puedes dejarlo sin asignar y decidirlo después. El primero que marques queda como líder. '+
+      // 2026-09-16 (Daniel): toda OT sale con técnico; el texto viejo
+      // ("puedes dejarlo sin asignar y decidirlo después") ya no es cierto.
+      '<p class="d"><strong>Obligatorio:</strong> toda OT sale con al menos un técnico responsable. El primero que marques queda como líder. '+
       'Va antes que Agenda para ver el horario ya pensando en ellos.</p>'+
       '<div id="o2mTecList" class="o2m-grid"><div class="p-3 text-muted small">Cargando…</div></div>';
     fetch('/mantenciones/api/tecnicos', {credentials:'same-origin'})
@@ -8404,8 +8430,17 @@ window.OT2C = (function(){
         // 💰 2026-09-15: en "Costos" se señala el sub-paso exacto que falta
         // (late + scroll + toast con el texto de su estado).
         if (ps[i].k === 'finanzas' && _o2mFinSenalarPendiente()) return false;
+        // 🔒 2026-09-16 (Daniel: "si no se selecciona se lleva a esa parte
+        // de la pantalla y se indica que eso es lo que falta"): Técnicos
+        // tiene su propio aviso, en rojo, y la tarjeta late para que no
+        // quede duda de dónde está el problema.
+        if (ps[i].k === 'tecnicos'){
+          if (window.ilusToast) ilusToast('Falta asignar el técnico: ninguna OT sale sin un técnico responsable', {type:'error'});
+          senalarPaso('tecnicos');
+          return false;
+        }
         if (window.ilusToast) ilusToast('Falta completar "'+ps[i].n+'"', {type:'warning'});
-        irAncla(ps[i].k);
+        senalarPaso(ps[i].k);
         return false;
       }
     }
