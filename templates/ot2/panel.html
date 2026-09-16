@@ -404,6 +404,14 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   width:44px;height:44px;margin:0;cursor:pointer;border-radius:10px;transition:background .14s}
 .ot2-chk:hover{background:rgba(220,38,38,.08)}
 .ot2-tabla thead .ot2-chk:hover{background:rgba(255,255,255,.12)}
+/* Solo visible en la vista de tarjetas (<=760px, ver el @media de
+   .ot2-tabla thead{display:none} más arriba) -- en escritorio el
+   maestro del &lt;thead&gt; ya cumple esta función. */
+.ot2-selmobile{display:none}
+@media (max-width:760px){
+  .ot2-selmobile{display:flex;align-items:center;gap:8px;margin:12px 10px 0;
+    padding:6px 10px 6px 2px;font-size:.82rem;font-weight:700;color:#374151}
+}
 .ot2-chk input{width:20px;height:20px;margin:0;cursor:pointer;accent-color:var(--ilus-red,#dc2626)}
 .ot2-tabla tbody tr.ot2-marcada{background:#fff5f5}
 .ot2-tabla tbody tr.ot2-marcada:hover{background:#ffecec}
@@ -414,7 +422,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-selbar{position:fixed;bottom:18px;left:0;right:0;z-index:1040;
   display:flex;justify-content:center;pointer-events:none;
   padding:0 12px calc(env(safe-area-inset-bottom,0px))}
-@media (min-width:992px){.ot2-selbar{left:var(--sidebar-w,250px)}}
+@media (min-width:768px){.ot2-selbar{left:var(--sidebar-w,250px)}}
 .ot2-selbar[hidden]{display:none}
 .ot2-selbar-in{pointer-events:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   justify-content:center;max-width:100%;
@@ -516,7 +524,10 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     padding:0;border:0 !important;min-height:0;justify-content:center;z-index:2}
   .ot2-tabla td.ot2-seltd::before{display:none}
   .ot2-tabla td.ot2-seltd + td{padding-right:58px}
-  .ot2-selbar{bottom:0;padding:0 0 calc(env(safe-area-inset-bottom,0px))}
+  /* Revisión 2026-09-16: por debajo del overlay oscuro del menú lateral
+     (.sidebar-overlay, mobile.css, también z-index 1040) -- si no, la
+     barra de borrado seguía visible y tocable sobre el menú abierto. */
+  .ot2-selbar{bottom:0;z-index:1030;padding:0 0 calc(env(safe-area-inset-bottom,0px))}
   .ot2-selbar-in{width:100%;border-radius:18px 18px 0 0;border-bottom:0;padding:12px 14px}
   .ot2-selbar-chip,.ot2-selbar-del{flex:1 1 auto;justify-content:center}
   #ot2ModalLote .modal-content{max-height:100dvh}
@@ -779,6 +790,12 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {# ══════════════════ TABLA ══════════════════ #}
   {% if vista == 'tabla' %}
     {% if filas %}
+    {% if puede_lote %}
+    <div class="ot2-selmobile" id="ot2SelMobile">
+      <label class="ot2-chk"><input type="checkbox" id="ot2SelAllMobile" autocomplete="off" aria-label="Seleccionar/deseleccionar todo"></label>
+      <span>Seleccionar todo</span>
+    </div>
+    {% endif %}
     <div class="ot2-tabla-wrap">
       <div class="ot2-scroll">
         <table class="ot2-tabla">
@@ -812,7 +829,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 {# Toggle maestro (REGLA #14): si alguna visible está sin
                    marcar, marca todas; si ya están todas, las desmarca. #}
                 <label class="ot2-chk" title="Seleccionar/deseleccionar todo">
-                  <input type="checkbox" id="ot2SelAll" aria-label="Seleccionar/deseleccionar todo">
+                  <input type="checkbox" id="ot2SelAll" autocomplete="off" aria-label="Seleccionar/deseleccionar todo">
                 </label>
               </th>
               {% endif %}
@@ -829,7 +846,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                  y el input cortan la propagación para que marcar no abra la OT. #}
               <td class="ot2-seltd" data-label="" onclick="event.stopPropagation()">
                 <label class="ot2-chk">
-                  <input type="checkbox" class="ot2-sel" value="{{ f.id }}"
+                  <input type="checkbox" class="ot2-sel" autocomplete="off" value="{{ f.id }}"
                          data-numero="{% if f.numero_ot %}{{ f.numero_ot }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}"
                          data-estado="{{ f.estado or '' }}" data-fase="{{ f.estado_fase or 'cancel' }}"
                          onclick="event.stopPropagation()"
@@ -1522,6 +1539,7 @@ window.OT2D = (function(){
    (REGLA #1). */
 (function(){
   var selAll   = document.getElementById('ot2SelAll');
+  var selAllM  = document.getElementById('ot2SelAllMobile');
   var bar      = document.getElementById('ot2SelBar');
   var nEl      = document.getElementById('ot2SelN');
   var txtEl    = document.getElementById('ot2SelTxt');
@@ -1543,7 +1561,8 @@ window.OT2D = (function(){
   // Fases que "no han comenzado": mismo bucket 'pend' de _OT2_ESTADO_META
   // (creada / programada / asignada / reagendada).
   var FASE_NO_COMENZADA = 'pend';
-  var idsAEliminar = [];   // los que el modal va a mandar (sin las omitibles)
+  var idsAEliminar = [];   // los que de verdad se van a borrar (sin las omitibles) -- solo para el título/botón
+  var idsMarcados = [];    // TODOS los que el usuario marcó -- lo que se manda al backend
   var enviando = false;
 
   function checks(){ return Array.prototype.slice.call(document.querySelectorAll('input.ot2-sel')); }
@@ -1570,21 +1589,28 @@ window.OT2D = (function(){
     bar.hidden = (m.length === 0);
     selAll.checked = todos.length > 0 && m.length === todos.length;
     selAll.indeterminate = m.length > 0 && m.length < todos.length;
+    if (selAllM) {
+      selAllM.checked = selAll.checked;
+      selAllM.indeterminate = selAll.indeterminate;
+    }
     // Que la barra no tape el pie de la tabla cuando está visible (en
     // celular los 3 botones se apilan y mide más: se mide, no se adivina).
     var inner = bar.querySelector('.ot2-selbar-in');
     document.body.style.paddingBottom = m.length && inner ? (inner.offsetHeight + 28) + 'px' : '';
   }
 
-  // Toggle maestro: si ALGUNA visible está sin marcar → marca todas;
-  // si ya están todas → desmarca todas.
-  selAll.addEventListener('click', function(e){
-    e.stopPropagation();
+  // Toggle maestro (REGLA #14): si ALGUNA visible está sin marcar →
+  // marca todas; si ya están todas → desmarca todas. Un solo lugar para
+  // el maestro de escritorio (thead) y el de móvil (#ot2SelMobile,
+  // visible cuando la tabla se convierte en tarjetas).
+  function toggleTodos(){
     var todos = checks();
     var faltan = todos.some(function(c){ return !c.checked; });
     todos.forEach(function(c){ setFila(c, faltan); });
     refrescar();
-  });
+  }
+  selAll.addEventListener('click', function(e){ e.stopPropagation(); toggleTodos(); });
+  if (selAllM) selAllM.addEventListener('click', function(e){ e.stopPropagation(); toggleTodos(); });
 
   document.addEventListener('change', function(e){
     var c = e.target;
@@ -1595,15 +1621,30 @@ window.OT2D = (function(){
 
   btnPend.addEventListener('click', function(){
     var antes = marcados().length;
+    // Revisión 2026-09-16: si YA había algo marcado, este botón debe
+    // FILTRAR esa selección -- antes ignoraba lo marcado y marcaba TODAS
+    // las 'pend' de la página (podían ser decenas de OT de clientes
+    // reales que el usuario nunca tocó). Sin nada marcado, sigue
+    // sirviendo de atajo: marca todas las que no han comenzado.
+    var habiaAlgoMarcado = antes > 0;
     checks().forEach(function(c){
-      setFila(c, c.dataset.fase === FASE_NO_COMENZADA);
+      var esNoComenzada = c.dataset.fase === FASE_NO_COMENZADA;
+      setFila(c, habiaAlgoMarcado ? (c.checked && esNoComenzada) : esNoComenzada);
     });
     refrescar();
     var ahora = marcados().length;
     if (window.ilusToast) {
-      ilusToast(ahora
-        ? ('Quedan marcadas ' + ahora + ' OT que no han comenzado' + (antes ? ' (de ' + antes + ' que tenías)' : '') + '.')
-        : 'En esta página no hay OT sin comenzar.', {type: ahora ? 'info' : 'warning'});
+      var msg;
+      if (habiaAlgoMarcado) {
+        msg = ahora
+          ? ('Quedan ' + ahora + ' de las ' + antes + ' que tenías marcadas: las que no han comenzado.')
+          : 'Ninguna de las OT que tenías marcadas está sin comenzar.';
+      } else {
+        msg = ahora
+          ? ('Marcadas ' + ahora + ' OT que no han comenzado.')
+          : 'En esta página no hay OT sin comenzar.';
+      }
+      ilusToast(msg, {type: ahora ? 'info' : 'warning'});
     }
   });
 
@@ -1620,6 +1661,12 @@ window.OT2D = (function(){
 
   function pintarPreview(data){
     var items = data.items || [], r = data.resumen || {};
+    // Revisión 2026-09-16: idsMarcados = TODOS los que el usuario marcó
+    // (se mandan todos al backend, que vuelve a aplicar el candado de
+    // factura OT por OT y las devuelve en `omitidas` con su motivo -- así
+    // el resultado final SÍ informa de las que quedaron fuera). n / el
+    // título del modal solo cuentan las que de verdad se van a borrar.
+    idsMarcados = items.map(function(it){ return it.id; });
     idsAEliminar = items.filter(function(it){ return !it.en_factura_proveedor; })
                         .map(function(it){ return it.id; });
     var n = idsAEliminar.length;
@@ -1637,10 +1684,14 @@ window.OT2D = (function(){
     chipsEl.innerHTML = chips || chip('c-cancel', 'bi-question-circle', 0, 'sin detalle');
 
     var avisos = '';
-    var conEvidencia = (r.con_firma_cliente || 0);
+    // Revisión 2026-09-16: r.con_firma cuenta CUALQUIER firma (cliente,
+    // técnico o supervisor) -- antes solo miraba la del cliente y una OT
+    // firmada_tecnico (evidencia real ya registrada) no disparaba este
+    // aviso.
+    var conEvidencia = (r.con_firma || 0);
     if (conEvidencia || r.cerradas) {
       avisos += '<div class="ot2-lote-aviso rojo"><i class="bi bi-exclamation-octagon-fill"></i><div>'
-        + (conEvidencia ? ('<b>' + conEvidencia + ' ' + plural(conEvidencia, 'OT tiene', 'OT tienen') + ' firma de cliente</b>: se ' + plural(conEvidencia, 'borra', 'borran') + ' con su evidencia (firmas, fotos, checklist). ') : '')
+        + (conEvidencia ? ('<b>' + conEvidencia + ' ' + plural(conEvidencia, 'OT tiene', 'OT tienen') + ' firma registrada</b>: se ' + plural(conEvidencia, 'borra', 'borran') + ' con su evidencia (firmas, fotos, checklist). ') : '')
         + (r.cerradas ? ('<b>' + r.cerradas + ' ' + plural(r.cerradas, 'está cerrada', 'están cerradas') + '</b>: ya son historial del cliente. ') : '')
         + 'Si no son pruebas, cancela y revísalas una por una.</div></div>';
     }
@@ -1689,6 +1740,7 @@ window.OT2D = (function(){
     try {
       var resp = await fetch(URL_PREVIEW, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: JSON.stringify({ids: ids})
       });
@@ -1728,8 +1780,9 @@ window.OT2D = (function(){
     try {
       var resp = await fetch(URL_LOTE, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: JSON.stringify({ids: idsAEliminar, confirm_text: confIn.value.trim()})
+        body: JSON.stringify({ids: idsMarcados, confirm_text: confIn.value.trim()})
       });
       var data = null;
       try { data = await resp.json(); } catch(_){ data = null; }
@@ -1756,6 +1809,11 @@ window.OT2D = (function(){
           type: el.length ? 'success' : 'warning',
         });
       }
+      // Revisión 2026-09-16: limpiar ANTES de recargar -- Chrome/Firefox
+      // restauran checkboxes por posición en un reload, no por OT; sin
+      // esto, las primeras filas de la tabla recargada (que ahora son
+      // OTRAS OT) podían quedar marcadas solas.
+      checks().forEach(function(c){ setFila(c, false); });
       location.reload();
     } catch (err) {
       if (window.ilusToast) ilusToast('Sin conexión con el servidor. Revisa tu red e inténtalo de nuevo.', {type: 'error'});

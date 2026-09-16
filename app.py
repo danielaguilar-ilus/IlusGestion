@@ -77650,6 +77650,11 @@ def mant_visita_update(vid):
         conn.close()
 
 
+# Revisión 2026-09-16: distingue "consultado, no hay factura" (None) de
+# "no se pudo consultar" (este centinela) -- ver _mant_visita_factura_proveedor.
+_FACTURA_CHECK_ERROR = object()
+
+
 def _mant_visita_factura_proveedor(vid):
     """Factura de proveedor externo que ya cobra esta OT, o None.
 
@@ -77661,8 +77666,16 @@ def _mant_visita_factura_proveedor(vid):
 
     2026-09-16: extraído de `mant_visita_del` para que el borrado de a una
     y el borrado en lote (`ot2_api_eliminar_lote`) miren el MISMO candado
-    -- 1 regla, 1 lugar. Solo lectura; ante un error de BD devuelve None
-    (mismo criterio tolerante que tenía el original inline).
+    -- 1 regla, 1 lugar. Solo lectura.
+
+    🔧 Revisión 2026-09-16: el criterio original (`except Exception: return
+    None`) era FAIL-OPEN -- un error transitorio de MySQL a mitad de un
+    lote de 100+ OT se leía como "no está en ninguna factura" y la OT SE
+    BORRABA igual, justo la que el candado existe para proteger. Ahora un
+    error de BD se distingue de "no hay factura" con un centinela propio
+    (`_FacturaCheckError`) que el caller trata como bloqueo, no como luz
+    verde -- más falsos "no se pudo borrar" es aceptable; una OT facturada
+    borrada por error no lo es.
     """
     try:
         return mysql_fetchone(
@@ -77670,11 +77683,12 @@ def _mant_visita_factura_proveedor(vid):
             "  FROM mant_factura_proveedor_items fpi "
             "  JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
             " WHERE fpi.visita_id=%s LIMIT 1", (vid,))
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"[_mant_visita_factura_proveedor] vid={vid} no se pudo verificar: {e}", flush=True)
+        return _FACTURA_CHECK_ERROR
 
 
-def _mant_visita_eliminar_core(vid, actor_desc=""):
+def _mant_visita_eliminar_core(vid, actor_desc="", conn=None):
     """Núcleo del hard-delete de una OT (fila de mant_visitas).
 
     SIN permisos, SIN confirm_text, SIN HTTP: eso lo resuelve cada puerta
@@ -77699,6 +77713,14 @@ def _mant_visita_eliminar_core(vid, actor_desc=""):
 
     `actor_desc` (opcional) se agrega al detalle del log de la visita
     para distinguir en mant_logs un borrado de a una de uno en lote.
+
+    `conn` (opcional, revisión 2026-09-16): conexión MySQL ya abierta,
+    para que el lote reuse UNA sola en vez de abrir una nueva por OT
+    (`get_mysql()` es la conexión directa, no el pool -- 200 aperturas
+    secuenciales en un solo request podían tardar decenas de segundos).
+    Si viene, esta función NO la cierra -- es responsabilidad del caller.
+    El borrado individual sigue sin pasarla y se comporta exactamente
+    igual que antes (abre y cierra su propia conexión).
     """
     # Capturar info ANTES de borrar: para el log y para encontrar el
     # levantamiento asociado.
@@ -77715,7 +77737,17 @@ def _mant_visita_eliminar_core(vid, actor_desc=""):
 
     numero_ot = v_info.get("numero_ot") or f"V-{vid}"
     # 💸 Candado de factura de proveedor -- ver _mant_visita_factura_proveedor.
+    # Revisión 2026-09-16: si no se pudo verificar (error de BD), se trata
+    # como bloqueo -- fail-CLOSED, nunca se borra sin saber si está
+    # facturada.
     _fac = _mant_visita_factura_proveedor(vid)
+    if _fac is _FACTURA_CHECK_ERROR:
+        return {
+            "ok": False, "error_codigo": "FACTURA_NO_VERIFICABLE",
+            "error": f"No se pudo verificar si la {numero_ot} está en una factura de proveedor. "
+                     "Inténtalo de nuevo; no se eliminó.",
+            "numero_ot": numero_ot,
+        }
     if _fac:
         return {
             "ok": False, "error_codigo": "OT_EN_FACTURA_PROVEEDOR",
@@ -77733,7 +77765,9 @@ def _mant_visita_eliminar_core(vid, actor_desc=""):
     # sentidos; se calcula ANTES del DELETE porque el sentido reverse depende
     # de mant_levantamientos.visita_id, que no se toca al borrar la visita.
     _lev_id_del = _ot_levantamiento_de(vid)
-    conn = get_mysql()
+    _conn_propia = conn is None
+    if _conn_propia:
+        conn = get_mysql()
     try:
         with conn.cursor() as cur:
             # Sincronizar: si la OT tiene un levantamiento asociado, marcarlo cancelado
@@ -77748,6 +77782,21 @@ def _mant_visita_eliminar_core(vid, actor_desc=""):
                     )
                 except Exception as _e_sync:
                     print(f"[visita_del] sync levantamiento falló: {_e_sync}", flush=True)
+            # Revisión 2026-09-16: mant_notificaciones.visita_id y
+            # mant_repuestos.visita_id NO tienen FK (son módulos aparte,
+            # de solo lectura best-effort acá) -- sin esto, la OT borrada
+            # deja una notificación en la campana que abre un 404 al
+            # tocarla, y una fila de repuestos solicitados apuntando a
+            # nada. Se limpia en la MISMA transacción del DELETE: si algo
+            # falla, mejor que se revierta todo junto.
+            try:
+                cur.execute("DELETE FROM mant_notificaciones WHERE visita_id=%s", (vid,))
+            except Exception as _e_notif:
+                print(f"[visita_del] limpiar notificaciones falló: {_e_notif}", flush=True)
+            try:
+                cur.execute("UPDATE mant_repuestos SET visita_id=NULL WHERE visita_id=%s", (vid,))
+            except Exception as _e_rep:
+                print(f"[visita_del] desvincular repuestos falló: {_e_rep}", flush=True)
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
         _detalle = f"{numero_ot} — {v_info.get('titulo') or ''}"
@@ -77762,7 +77811,8 @@ def _mant_visita_eliminar_core(vid, actor_desc=""):
             "cliente_id": v_info.get("cliente_id"),
         }
     finally:
-        conn.close()
+        if _conn_propia:
+            conn.close()
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["DELETE"])
@@ -77806,6 +77856,12 @@ def mant_visita_del(vid):
     # como siempre, para que el front pueda avisar "está en una factura"
     # sin pedirle al usuario que escriba el número primero.
     _fac = _mant_visita_factura_proveedor(vid)
+    if _fac is _FACTURA_CHECK_ERROR:
+        return jsonify({
+            "ok": False, "error_codigo": "FACTURA_NO_VERIFICABLE",
+            "error": f"No se pudo verificar si la {numero_ot} está en una factura de proveedor. "
+                     "Inténtalo de nuevo.",
+        }), 409
     if _fac:
         return jsonify({
             "ok": False, "error_codigo": "OT_EN_FACTURA_PROVEEDOR",
@@ -78907,11 +78963,21 @@ def _ot2_lote_parse_ids(raw):
         return None, "Selecciona al menos una OT para eliminar."
     ids, vistos = [], set()
     for x in raw:
-        # Estricto: entero o cadena de dígitos. int() a secas aceptaría
-        # True (=1) o 10.7 (=10) y borraría una OT que nadie marcó.
-        if isinstance(x, bool) or not (isinstance(x, int) or (isinstance(x, str) and x.strip().isdigit())):
+        # Estricto: entero o cadena de dígitos ASCII. int() a secas
+        # aceptaría True (=1) o 10.7 (=10); y `str.isdigit()` a secas
+        # acepta dígitos NO ascii ('²', '١٢') -- algunos ni siquiera son
+        # convertibles (int('²') revienta con ValueError -> 500 crudo).
+        # Revisión 2026-09-16: se exige además `.isascii()` y se envuelve
+        # el int() por si igual se cuela algo raro.
+        if isinstance(x, bool) or not (
+            isinstance(x, int)
+            or (isinstance(x, str) and x.strip().isascii() and x.strip().isdigit())
+        ):
             return None, "La selección trae un identificador inválido. Recarga la pantalla e inténtalo de nuevo."
-        n = int(x)
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            return None, "La selección trae un identificador inválido. Recarga la pantalla e inténtalo de nuevo."
         if n <= 0:
             return None, "La selección trae un identificador inválido. Recarga la pantalla e inténtalo de nuevo."
         if n not in vistos:
@@ -78950,9 +79016,14 @@ def ot2_api_eliminar_lote_preview():
     try:
         filas = mysql_fetchall(
             "SELECT v.id, v.numero_ot, v.estado, v.fecha_programada, c.razon_social, "
-            # firma_cliente_url es LONGTEXT (puede traer un data URL enorme):
-            # se pregunta si existe, nunca se trae entera.
+            # Las 3 firmas son LONGTEXT (pueden traer un data URL enorme):
+            # se pregunta si existen, nunca se traen enteras. Revisión
+            # 2026-09-16: antes solo se miraba la del cliente -- una OT
+            # 'firmada_tecnico' (evidencia real: fotos, checklist, la
+            # firma del técnico) se veía como un chip azul inocuo.
             "       (v.firma_cliente_url IS NOT NULL AND v.firma_cliente_url <> '') AS tiene_firma_cliente, "
+            "       (v.firma_tecnico_url IS NOT NULL AND v.firma_tecnico_url <> '') AS tiene_firma_tecnico, "
+            "       (v.firma_supervisor_url IS NOT NULL AND v.firma_supervisor_url <> '') AS tiene_firma_supervisor, "
             "       EXISTS (SELECT 1 FROM mant_factura_proveedor_items fpi "
             "               WHERE fpi.visita_id = v.id) AS en_factura_proveedor "
             "  FROM mant_visitas v "
@@ -78970,7 +79041,7 @@ def ot2_api_eliminar_lote_preview():
     items = []
     resumen = {"programada": 0, "en_curso": 0, "firmadas": 0, "cerradas": 0,
                "canceladas": 0, "otras": 0, "en_factura": 0,
-               "con_firma_cliente": 0, "no_encontradas": 0, "total": 0}
+               "con_firma_cliente": 0, "con_firma": 0, "no_encontradas": 0, "total": 0}
     # Se recorre en el orden pedido por el front (el de la tabla), no en
     # el que devolvió MySQL.
     for vid in ids:
@@ -78983,6 +79054,10 @@ def ot2_api_eliminar_lote_preview():
         estado_label = meta[0] if meta else (estado or "—").replace("_", " ").title()
         fase = meta[3] if meta else None
         tiene_firma = bool(f.get("tiene_firma_cliente"))
+        # Revisión 2026-09-16: CUALQUIER firma (cliente, técnico o
+        # supervisor) es evidencia real ya registrada -- no solo la del
+        # cliente.
+        tiene_alguna_firma = tiene_firma or bool(f.get("tiene_firma_tecnico")) or bool(f.get("tiene_firma_supervisor"))
         cerrada = (estado == "cerrada")
         en_factura = bool(f.get("en_factura_proveedor"))
         fp = f.get("fecha_programada")
@@ -79004,12 +79079,20 @@ def ot2_api_eliminar_lote_preview():
             resumen["en_factura"] += 1
         if tiene_firma:
             resumen["con_firma_cliente"] += 1
-        # Buckets EXCLUYENTES para los chips del modal (cada OT cae en uno
-        # solo): cerrada manda, después la firma del cliente (evidencia),
-        # después la fase.
-        if cerrada:
+        if tiene_alguna_firma:
+            resumen["con_firma"] += 1
+        # Revisión 2026-09-16: los buckets de abajo (chips + título del
+        # modal) se calculan SOLO sobre lo que de verdad se va a borrar --
+        # una OT en factura de proveedor se omite siempre, así que antes
+        # aparecía sumada en 'cerradas'/'firmadas' y el aviso rojo hablaba
+        # de OT que en realidad quedaban intactas. Buckets EXCLUYENTES:
+        # cerrada manda, después cualquier firma (evidencia), después la
+        # fase.
+        if en_factura:
+            pass
+        elif cerrada:
             resumen["cerradas"] += 1
-        elif tiene_firma:
+        elif tiene_alguna_firma:
             resumen["firmadas"] += 1
         elif fase == "pend":
             resumen["programada"] += 1
@@ -79073,41 +79156,67 @@ def ot2_api_eliminar_lote():
 
     username = _u.get("username") or current_username() or "?"
     actor_desc = f"eliminada en lote por {username}"
+    # Revisión 2026-09-16: una sola conexión para TODO el lote -- antes
+    # cada OT abría la suya propia (get_mysql() es la conexión directa,
+    # no el pool; con 100-200 OT eran igual cantidad de handshakes nuevos
+    # y un lote grande podía tardar decenas de segundos solo en conectar).
+    # El commit sigue siendo POR OT (dentro del core), así que una OT que
+    # falla no deshace a las que ya se borraron.
+    try:
+        _conn_lote = get_mysql()
+    except Exception as e:
+        print(f"[ot2_lote] no se pudo abrir conexión: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo conectar a la base de datos. Inténtalo de nuevo.",
+                        "error_codigo": "ERROR_INESPERADO"}), 500
     eliminadas, omitidas = [], []
-    for vid in ids:
-        # Etiqueta como la ve Daniel en la tabla (OT-2026-00210 o VS-00012
-        # para automáticas); el core devuelve "V-12" en ese caso porque así
-        # lo registra el log individual de siempre -- acá manda la pantalla.
-        etiqueta = etiquetas.get(vid) or f"VS-{vid:05d}"
-        try:
-            res = _mant_visita_eliminar_core(vid, actor_desc=actor_desc)
-        except Exception as e:
-            # Nunca se filtra el detalle técnico al cliente (REGLA #4):
-            # al log completo, a la pantalla un motivo amable.
-            print(f"[ot2_lote] vid={vid} {type(e).__name__}: {e}", flush=True)
-            omitidas.append({
-                "id": vid, "numero_ot": etiqueta,
-                "motivo": "Error inesperado al eliminar esta OT. Inténtalo de nuevo; "
-                          "si persiste, avisa al administrador.",
-                "error_codigo": "ERROR_INESPERADO",
-            })
-            continue
-        if res.get("ok"):
-            eliminadas.append({"id": vid, "numero_ot": etiqueta})
-        else:
-            omitidas.append({
-                "id": vid,
-                "numero_ot": etiqueta,
-                "motivo": res.get("error") or "No se pudo eliminar.",
-                "error_codigo": res.get("error_codigo") or "ERROR",
-            })
+    try:
+        for vid in ids:
+            # Etiqueta como la ve Daniel en la tabla (OT-2026-00210 o VS-00012
+            # para automáticas); el core devuelve "V-12" en ese caso porque así
+            # lo registra el log individual de siempre -- acá manda la pantalla.
+            etiqueta = etiquetas.get(vid) or f"VS-{vid:05d}"
+            try:
+                res = _mant_visita_eliminar_core(vid, actor_desc=actor_desc, conn=_conn_lote)
+            except Exception as e:
+                # Nunca se filtra el detalle técnico al cliente (REGLA #4):
+                # al log completo, a la pantalla un motivo amable.
+                print(f"[ot2_lote] vid={vid} {type(e).__name__}: {e}", flush=True)
+                omitidas.append({
+                    "id": vid, "numero_ot": etiqueta,
+                    "motivo": "Error inesperado al eliminar esta OT. Inténtalo de nuevo; "
+                              "si persiste, avisa al administrador.",
+                    "error_codigo": "ERROR_INESPERADO",
+                })
+                continue
+            if res.get("ok"):
+                eliminadas.append({"id": vid, "numero_ot": etiqueta})
+            else:
+                omitidas.append({
+                    "id": vid,
+                    "numero_ot": etiqueta,
+                    "motivo": res.get("error") or "No se pudo eliminar.",
+                    "error_codigo": res.get("error_codigo") or "ERROR",
+                })
+    finally:
+        _conn_lote.close()
 
     # Rastro del LOTE como tal (cada OT ya dejó su propio log 'eliminada'
     # dentro del core). entidad_id=0 porque no es una visita puntual.
-    _nums = ", ".join(x["numero_ot"] for x in eliminadas)
-    _detalle = (f"{len(eliminadas)} eliminadas, {len(omitidas)} omitidas por "
-                f"{username}: {_nums}")
-    _mant_log("visita", 0, "eliminadas_lote", _detalle[:500])
+    # Revisión 2026-09-16: antes se cortaba a 500 chars -- con OT tipo
+    # 'OT-2026-00210, ' (~16 chars) un lote de 100+ perdía la mayoría de
+    # los números del rastro. mant_logs.detalle es TEXT (65.535 chars).
+    _cabecera = f"{len(eliminadas)} eliminadas, {len(omitidas)} omitidas por {username}: "
+    _incluidos, _largo = [], len(_cabecera)
+    for _x in eliminadas:
+        _pieza = (", " if _incluidos else "") + _x["numero_ot"]
+        if _largo + len(_pieza) > 8000:
+            break
+        _incluidos.append(_x["numero_ot"])
+        _largo += len(_pieza)
+    _resto = len(eliminadas) - len(_incluidos)
+    _detalle = _cabecera + ", ".join(_incluidos) + (f" … (+{_resto} más)" if _resto else "")
+    _mant_log("visita", 0, "eliminadas_lote", _detalle)
     print(f"[ot2_lote] {username}: {len(eliminadas)} eliminadas, "
           f"{len(omitidas)} omitidas de {len(ids)}", flush=True)
     return jsonify({
