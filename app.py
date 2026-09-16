@@ -81888,7 +81888,7 @@ def ot2_api_finanzas(vid):
         "       modalidad_cobro, cubierto_por, garantia_motivo, "
         "       factura_tido, factura_nudo, "
         # valor_origen 2026-09-15 (columna de _ensure_ot_valor_origen_col).
-        "       valor_origen, "
+        "       valor_origen, cliente_id, "
         "       estado_facturacion, finanzas_at, finanzas_por "
         "  FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
@@ -82171,6 +82171,46 @@ def ot2_api_finanzas(vid):
                   + (f" · {zz_cod}" if zz_cod else ""))
     except Exception:
         pass
+
+    # 💰 2026-09-16 (Daniel: "que el sistema le diga al usuario que
+    # lamentablemente se cobró mal" -- pedido tras revisar el paso Costos
+    # del wizard, decisión confirmada por AskUserQuestion: "sí, avísame
+    # después"). Si la OT nació con Estimado por clasificación (o un
+    # supuesto a mano) y ESTA misma llamada trae un origen REAL (documento,
+    # cotización o contrato) con un monto bien distinto, se avisa -- nunca
+    # bloquea, nunca corrige solo, solo notifica para que alguien revise.
+    # Umbral: 20% Y al menos $30.000 de diferencia (evita ruido en OT
+    # chicas donde un 20% son $2.000). No es una migración de columnas: usa
+    # mant_notificaciones ya existente, tipo 'otro' (sin ALTER al ENUM),
+    # broadcast (destino_user_id=None) -- _mant_notificar es idempotente
+    # por (tipo, cliente_id, visita_id), así que reintentos no duplican.
+    try:
+        _origen_antes = (v.get("valor_origen") or "").lower()
+        _zz_antes = v.get("zz_monto")
+        if (_origen_antes in ("estimado", "supuesto")
+                and "valor_origen" in d and _valor_origen in ("zz", "doc_total", "cotizacion", "contrato")
+                and "zz_monto" in d and zz_monto and zz_monto > 0
+                and _zz_antes and float(_zz_antes) > 0):
+            _zz_antes_f = float(_zz_antes)
+            _dif_abs = abs(zz_monto - _zz_antes_f)
+            _dif_pct = _dif_abs / _zz_antes_f
+            if _dif_pct >= 0.20 and _dif_abs >= 30000:
+                _numero_ot_n = v.get("numero_ot") or f"VS-{vid:05d}"
+                _origen_nombre = {
+                    "zz": "un documento real", "doc_total": "el total de un documento",
+                    "cotizacion": "una cotización real", "contrato": "el contrato del cliente",
+                }.get(_valor_origen, "un valor real")
+                _signo = "más" if zz_monto > _zz_antes_f else "menos"
+                _mant_notificar(
+                    None, "otro",
+                    titulo=f"{_numero_ot_n}: el estimado quedó lejos del valor real",
+                    cuerpo=(f"Se declaró con Estimado por clasificación en ${_zz_antes_f:,.0f}".replace(",", ".")
+                            + f" y ahora, con {_origen_nombre}, vale ${zz_monto:,.0f}".replace(",", ".")
+                            + f" — un {_dif_pct * 100:.0f}% {_signo}. Revisa si corresponde ajustar algo."),
+                    url_accion=f"/ot/{vid}", prioridad="alta",
+                    cliente_id=v.get("cliente_id"), visita_id=vid)
+    except Exception as _e_recon:
+        print(f"[ot2_finanzas] alerta estimado-vs-real vid={vid}: {_e_recon}", flush=True)
 
     v2 = mysql_fetchone(
         "SELECT centro_costo, modalidad_cobro, garantia_motivo, "
@@ -87314,6 +87354,24 @@ def ot2_api_anexo_crear():
             'Ese nombre de proveedor parece de prueba ("{}"). El anexo es un '
             "documento con efecto legal: corrige el nombre real antes de "
             "crearlo.".format(proveedor), "PROVEEDOR_DE_PRUEBA")
+    # 🔴 2026-09-16 (Daniel, en vivo: "es importante que estos detalles no
+    # permitan generar el anexo... debe ser obligatorio... que el anexo no
+    # le falte información al momento de crearse"). El propio paso 1 del
+    # modal ya dice "Sin su RUT no hay contraparte" -- antes eso era solo
+    # texto, el RUT viajaba `or None` sin exigirse ni validarse acá. REGLA
+    # #4: nunca confiar solo en el frontend (que ya bloquea esto también,
+    # ver crear() en _modal_anexo.html) para un documento con efecto legal.
+    _prov_rut_in = (d.get("proveedor_rut") or "").strip()
+    if not _prov_rut_in:
+        return _ot2_err(
+            "Falta el RUT del proveedor — sin él no hay contraparte "
+            "identificada en el anexo.", "PROVEEDOR_RUT_REQUERIDO")
+    _rut_ok, _rut_norm_o_err = validar_rut(_prov_rut_in)
+    if not _rut_ok:
+        return _ot2_err(
+            f"El RUT del proveedor no es válido ({_rut_norm_o_err}).",
+            "PROVEEDOR_RUT_INVALIDO")
+    d["proveedor_rut"] = _rut_norm_o_err   # normalizado con DV, mismo criterio que el resto del proyecto
     objetivo = (d.get("objetivo_servicio") or "").strip()
     if not objetivo:
         return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")
@@ -87546,6 +87604,20 @@ def ot2_api_anexo_editar(aid):
             'Ese nombre de proveedor parece de prueba ("{}"). El anexo es un '
             "documento con efecto legal: corrige el nombre real.".format(proveedor),
             "PROVEEDOR_DE_PRUEBA")
+    # 2026-09-16: mismo candado que ot2_api_anexo_crear -- "un anexo
+    # corregido no puede quedar peor que uno nuevo" ya lo decía este mismo
+    # comentario, pero el RUT no se exigía.
+    _prov_rut_in = (d.get("proveedor_rut") or "").strip()
+    if not _prov_rut_in:
+        return _ot2_err(
+            "Falta el RUT del proveedor — sin él no hay contraparte "
+            "identificada en el anexo.", "PROVEEDOR_RUT_REQUERIDO")
+    _rut_ok, _rut_norm_o_err = validar_rut(_prov_rut_in)
+    if not _rut_ok:
+        return _ot2_err(
+            f"El RUT del proveedor no es válido ({_rut_norm_o_err}).",
+            "PROVEEDOR_RUT_INVALIDO")
+    d["proveedor_rut"] = _rut_norm_o_err
     objetivo = (d.get("objetivo_servicio") or "").strip()
     if not objetivo:
         return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")

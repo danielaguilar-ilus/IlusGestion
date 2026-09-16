@@ -841,6 +841,24 @@
                 <span><small>Término del servicio</small><b>{{ anexo.fecha_termino }}</b></span>
               </div>
             </div>
+            {#- ⚖️ 2026-09-16 (Daniel: "si la orden de trabajo se extiende
+                más de un día... hay que dejar todo bien cubierto en lo
+                legal"). El Anexo queda hash-sellado e INMUTABLE apenas se
+                firma (ot2_api_anexo_editar bloquea con "ya está firmado: no
+                se puede modificar") -- por diseño, y así debe seguir: un
+                documento firmado no se edita después. La cobertura legal
+                para una ejecución que se alarga no va en el DATO (no se
+                reabre el documento), va en la REDACCIÓN: esta frase deja
+                las fechas explícitamente como programadas y ata el cierre
+                real al cierre de la propia OT, así un anexo firmado el
+                día 1 YA cubre una extensión a varios días sin necesidad de
+                volver a firmar nada. Texto borrador -- no reemplaza una
+                revisión de abogado (ver contratos_ilus_3modelos, ningún
+                modelo del proyecto tiene esa revisión todavía). -#}
+            <p class="precio-nota" style="margin-top:8px">Las fechas indicadas son programadas según la Orden de
+              Trabajo asociada y podrán extenderse por razones operativas propias del servicio. El presente Anexo
+              mantiene su vigencia durante toda la ejecución real del servicio, quedando formalmente concluido con
+              el cierre de la Orden de Trabajo correspondiente.</p>
           </div>
         </div>
 

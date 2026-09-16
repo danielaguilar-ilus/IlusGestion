@@ -890,11 +890,16 @@ window.OT2ANX = (function(){
       }
     } else {
       S.tecnico_externo_id = null;
+      S.proveedor_nombre = ''; S.proveedor_rut = ''; S.email = ''; S.tel = '';
       S.proveedor_direccion = '';
       S.proveedor_direccion_lat = null; S.proveedor_direccion_lng = null;
       S.proveedor_direccion_place_id = '';
       if (dirWrap) dirWrap.style.display = 'none';
     }
+    // 2026-09-16: faltaba -- el paso 1 ("¿Quién ejecuta?") ahora depende de
+    // RUT/contacto además del nombre (ver pasoListo), y sin este llamado el
+    // check se quedaba en rojo hasta el próximo cambio en OTRO campo.
+    pintarPasos();
   }
 
   function toggleManual(){
@@ -971,12 +976,24 @@ window.OT2ANX = (function(){
   function pasoListo(paso){
     if (!S) return false;
     if (paso === 'proveedor'){
+      // 2026-09-16: el semáforo tiene que reflejar EXACTAMENTE lo que
+      // crear() va a exigir (nombre + RUT + al menos un contacto) -- si
+      // no, el paso se pinta verde con datos que igual van a rebotar al
+      // apretar "Crear Anexo".
       var manual = document.getElementById('oaxProveedorManual');
+      var nombre, rut, email, tel;
       if (manual && manual.checked){
-        var n = (document.getElementById('oaxManNombre').value || '').trim();
-        return !!n;
+        nombre = (document.getElementById('oaxManNombre').value || '').trim();
+        rut = (document.getElementById('oaxManRut').value || '').trim();
+        email = (document.getElementById('oaxManEmail').value || '').trim();
+        tel = (document.getElementById('oaxManTel').value || '').trim();
+      } else {
+        nombre = (S.proveedor_nombre || '').trim();
+        rut = (S.proveedor_rut || '').trim();
+        email = (S.email || '').trim();
+        tel = (S.tel || '').trim();
       }
-      return !!(S.proveedor_nombre || '').trim();
+      return !!(nombre && rut && (email || tel));
     }
     if (paso === 'objetivo') return !!(S.objetivo_servicio || '').trim();
     if (paso === 'precio')
@@ -1083,6 +1100,20 @@ window.OT2ANX = (function(){
     // sin dígito verificador real, un correo sin arroba, un teléfono sin
     // forma reconocible. El anexo es un documento con efecto legal -- estos
     // datos identifican a la contraparte, no se aceptan a medias.
+    //
+    // 🔴 2026-09-16 (Daniel, en vivo: "es importante que estos detalles no
+    // permitan generar el anexo... debe ser obligatorio... no quiero que
+    // el anexo le falte información al momento de crearse"). Antes RUT/
+    // email/teléfono solo se VALIDABAN si venían -- un anexo podía salir
+    // sin RUT y sin ninguna forma de contactar al proveedor, contradiciendo
+    // el propio texto de este paso ("Sin su RUT no hay contraparte"). Ahora
+    // el RUT es obligatorio siempre, y se exige AL MENOS un correo o un
+    // teléfono (no los dos: un proveedor puede no tener uno de los dos,
+    // pero no ninguno -- hay que poder mandarle el anexo a firmar).
+    if (!S.proveedor_rut){
+      ilusToast('Falta el RUT del proveedor — sin él no hay contraparte identificada en el anexo.', {type:'warning'});
+      return;
+    }
     if (S.proveedor_rut && !_oaxRutValido(S.proveedor_rut)){
       ilusToast('El RUT del proveedor no es válido — revisa el dígito verificador.', {type:'warning'});
       return;
@@ -1098,6 +1129,10 @@ window.OT2ANX = (function(){
         return;
       }
       S.tel = _telNorm;
+    }
+    if (!S.email && !S.tel){
+      ilusToast('Falta un correo o un teléfono del proveedor — sin al menos uno no hay cómo mandarle el anexo a firmar.', {type:'warning'});
+      return;
     }
     if (!S.objetivo_servicio || !S.objetivo_servicio.trim()){
       ilusToast('Falta el objetivo del servicio.', {type:'warning'});

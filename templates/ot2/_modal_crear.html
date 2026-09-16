@@ -560,6 +560,14 @@
 .o2m-fchip.is-vacio .sb{color:#b0b5bc}
 .o2m-fchip.is-supuesto{border-style:dashed;border-color:#fcd34d;background:#fffbeb;color:#92400e}
 .o2m-fchip.is-supuesto > i,.o2m-fchip.is-supuesto .nm{color:#92400e}
+/* 2026-09-16: chip "Cotización real" -- azul a propósito (nunca rojo,
+   que ya significa "elegido", ni gris, que ya significa "vacío"): se lee
+   como una acción disponible, no como un estado. */
+.o2m-fchip.is-accion{border-color:#93c5fd;background:#eff6ff}
+.o2m-fchip.is-accion:hover{border-color:#60a5fa;background:#dbeafe}
+.o2m-fchip.is-accion > i:first-child{color:#2563eb}
+.o2m-fchip.is-accion .nm{color:#1d4ed8}
+.o2m-fchip.is-accion .mt{color:#60a5fa;margin-left:auto;font-size:1rem}
 @media (prefers-reduced-motion:reduce){ .o2m-fchip.is-sel{animation:none} }
 
 /* Campo único "Esta OT vale": el número más grande del paso. */
@@ -5287,6 +5295,21 @@ window.OT2C = (function(){
     if (S.fin_cotizacion && S.fin_cotizacion.total > 0){
       out.push({src:'cotizacion', ico:'bi-calculator-fill', nm:'Cotización interna',
                 sb:S.fin_cotizacion.numero || ('#'+S.fin_cotizacion.id), monto:S.fin_cotizacion.total, estado:'ok'});
+    } else if (S.cliente && S.cliente.id) {
+      // 2026-09-16 (Daniel, revisando el paso en vivo: "yo pienso que no
+      // es algo opcional... debo saber cuánto en realidad valdrían esos
+      // documentos cotizados por el sistema" -- decisión confirmada por
+      // AskUserQuestion: "más visible, sigue sin ser obligatoria"). Antes
+      // "Buscar/Generar cotización" vivía SOLO como botones chicos debajo
+      // del campo de valor (_o2mFinCotizacionHtml, que sigue intacta) --
+      // fácil de no ver nunca. Ahora aparece acá mismo, al lado de
+      // "Estimado por clasificación", del mismo tamaño que los demás
+      // chips -- pero es una ACCIÓN (abre el buscador), no una referencia
+      // seleccionable: por eso `estado:'accion'` en vez de 'ok'/'vacio'.
+      // Desaparece solo cuando SÍ hay una cotización elegida (rama de
+      // arriba la reemplaza).
+      out.push({src:'_buscar_cotizacion', ico:'bi-search', nm:'Cotización real',
+                sb:'Búscala o créala aquí — más confiable que un estimado', estado:'accion'});
     }
     if (_o2mFinContratoAplica()){
       if (S.fin_contrato_cargando){
@@ -5475,37 +5498,59 @@ window.OT2C = (function(){
       return;
     }
     var fuentes = _o2mFinFuentes();
+    // 2026-09-16: 'accion' (el chip "Cotización real") NO cuenta como
+    // referencia -- es una invitación a buscar/crear una, no un valor. Si
+    // es lo único que hay, sigue siendo "sin referencia" para efectos del
+    // aviso de supuesto, pero el chip de acción se agrega IGUAL a ese
+    // bloque (ver más abajo) para que nunca desaparezca en el caso donde
+    // más falta hace.
     var hayOk = fuentes.some(function(f){ return f.estado === 'ok'; });
     var cargando = fuentes.some(function(f){ return f.estado === 'cargando'; });
     var manualAhora = _o2mFinEsManual();
     var origen = S.fin_valor_origen;
+    function _o2mFinChipHtml(f){
+      var sel = (f.estado === 'ok' && origen === f.src && !manualAhora);
+      if (f.estado === 'cargando'){
+        return '<div class="o2m-fchip is-cargando"><span class="spinner-border spinner-border-sm"></span>'+
+          '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">Consultando…</span></span></div>';
+      }
+      if (f.estado === 'vacio'){
+        return '<div class="o2m-fchip is-vacio"><i class="bi '+f.ico+'"></i>'+
+          '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span></span></div>';
+      }
+      // 2026-09-16 (Daniel: "no es algo opcional... debo saber cuánto en
+      // realidad valdrían esos documentos cotizados"): chip-ACCIÓN, mismo
+      // tamaño que una referencia pero azul (nunca rojo "elegido" ni gris
+      // "vacío") y abre el buscador en vez de fijar un valor.
+      if (f.estado === 'accion'){
+        return '<button type="button" class="o2m-fchip is-accion" onclick="OT2C.abrirBusquedaFinCotizacion()">'+
+          '<i class="bi '+f.ico+'"></i>'+
+          '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span></span>'+
+          '<i class="bi bi-chevron-right mt"></i></button>';
+      }
+      return '<button type="button" class="o2m-fchip'+(sel?' is-sel':'')+'" onclick="OT2C.usarFuenteValor(\''+f.src+'\')">'+
+        '<i class="bi '+(sel?'bi-check-circle-fill':f.ico)+'"></i>'+
+        '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span></span>'+
+        '<b class="mt">'+$o2mPesos(f.monto)+'</b></button>';
+    }
     if (cF){
       if (!hayOk && !cargando){
         // "Supuesto": ninguna referencia disponible -- en lugar de la fila
-        // de chips, y el campo queda vacío para que se declare.
+        // de chips, y el campo queda vacío para que se declare. El chip de
+        // acción (si corresponde) se agrega ARRIBA del aviso -- es
+        // justo cuando más vale la pena ofrecer "búscala/créala" antes de
+        // resignarse a un supuesto.
         var tInfo = TIPOS.find(function(x){ return x.v === S.tipo; });
         var vacios = fuentes.filter(function(f){ return f.estado === 'vacio'; }).map(function(f){ return f.nm.toLowerCase()+' ('+f.sb+')'; });
-        cF.innerHTML = '<div class="o2m-supuesto"><i class="bi bi-lightbulb-fill"></i><div>'+
+        var accionF = fuentes.filter(function(f){ return f.estado === 'accion'; });
+        cF.innerHTML = (accionF.length ? '<div class="o2m-fuentes" style="margin-bottom:8px">'+accionF.map(_o2mFinChipHtml).join('')+'</div>' : '')
+          + '<div class="o2m-supuesto"><i class="bi bi-lightbulb-fill"></i><div>'+
           '<b>No encontré una referencia de precio para esta OT.</b>'+
           '<span>Tipo "'+esc(tInfo ? tInfo.n : (S.tipo||''))+'"'+(vacios.length ? ': '+esc(vacios.join(', '))+'.' : '.')+
           ' Declara un supuesto: cuánto vale este trabajo aunque se cobre $0. Queda registrado como supuesto y se puede corregir después en la ficha.</span>'+
           '</div></div>';
       } else {
-        cF.innerHTML = '<div class="o2m-fuentes">'+fuentes.map(function(f){
-          var sel = (f.estado === 'ok' && origen === f.src && !manualAhora);
-          if (f.estado === 'cargando'){
-            return '<div class="o2m-fchip is-cargando"><span class="spinner-border spinner-border-sm"></span>'+
-              '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">Consultando…</span></span></div>';
-          }
-          if (f.estado === 'vacio'){
-            return '<div class="o2m-fchip is-vacio"><i class="bi '+f.ico+'"></i>'+
-              '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span></span></div>';
-          }
-          return '<button type="button" class="o2m-fchip'+(sel?' is-sel':'')+'" onclick="OT2C.usarFuenteValor(\''+f.src+'\')">'+
-            '<i class="bi '+(sel?'bi-check-circle-fill':f.ico)+'"></i>'+
-            '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span></span>'+
-            '<b class="mt">'+$o2mPesos(f.monto)+'</b></button>';
-        }).join('')+'</div>';
+        cF.innerHTML = '<div class="o2m-fuentes">'+fuentes.map(_o2mFinChipHtml).join('')+'</div>';
       }
     }
     if (cO){
