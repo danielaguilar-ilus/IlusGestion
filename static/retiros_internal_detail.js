@@ -170,6 +170,52 @@ let _erpLineas = [];
 
 function _esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+// ════════════════════════════════════════════════════════════════════
+//  Daniel 2026-09-16 — helpers para la tabla extendida "Documentos
+//  asociados" del Paso 2 (columnas Emisión/Total/Asociado por, orden
+//  por columna, buscador y selección múltiple).
+// ════════════════════════════════════════════════════════════════════
+
+// Convierte un timestamp 'YYYY-MM-DD HH:MM:SS' tal como lo devuelve MySQL
+// (naive, guardado en UTC vía NOW() — REGLA #6) a hora de Chile. El filtro
+// Jinja `chile_fmt` hace esto server-side con zoneinfo; acá usamos Intl con
+// timeZone America/Santiago, que también resuelve el horario de verano
+// automáticamente (igual criterio, sin duplicar tablas de DST a mano).
+function _chileFmtStr(raw){
+  if (!raw) return '—';
+  try {
+    const s = String(raw).trim();
+    const iso = s.includes('T') ? s : s.replace(' ', 'T');
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+    if (isNaN(d.getTime())) return _esc(s);
+    return new Intl.DateTimeFormat('es-CL', {
+      timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(d).replace(',', '');
+  } catch(e){ return _esc(String(raw)); }
+}
+
+// Clave ordenable AAAAMMDD para la columna "Emisión". fecha_emision puede
+// venir 'dd-mm-aaaa' (formato típico de doc.fecha del ERP, ver rbaRenderCliDocs)
+// o 'aaaa-mm-dd' (ISO). Si no matchea ninguno, se ordena por el texto tal cual
+// (best-effort, nunca rompe el sort).
+function _dateSortVal(raw){
+  if (!raw) return '';
+  const s = String(raw).trim();
+  // dd-mm-aaaa (chile_fmt, propuesta/confirmada/added_at ya formateadas)
+  let m = s.match(/^(\d{2})-(\d{2})-(\d{4})/);
+  if (m) return m[3] + m[1] + m[2];
+  // aaaa-mm-dd (ISO, por si algo llega crudo)
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + m[2] + m[3];
+  // FIX revisor 2026-09-16: fecha_emision viene del ERP como "dd/mm/aaaa"
+  // (con barras, _cubicador_fetch) — sin este patrón, ordenar por "Emisión"
+  // caía al fallback de texto crudo y agrupaba por día del mes, no por fecha.
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return m[3] + m[2] + m[1];
+  return s;
+}
+
 /* ════════════════════════════════════════════════════════════════════
    _fetchJsonSafe(url, opts)
    ────────────────────────────────────────────────────────────────────
@@ -544,23 +590,25 @@ function _renderTablaDocsAsociados(docs){
   if (badge) badge.textContent = docs.length;
   if (!docs.length){
     body.innerHTML = `<tr class="ilus-tabla-empty-row" id="rowDocsVacio">
-      <td colspan="8">
+      <td colspan="12">
         <div class="ilus-tabla-empty">
           <i class="bi bi-inbox"></i>
           <strong>Aún no hay documentos asociados</strong>
-          <small>Haz click en el botón rojo de arriba para buscar y agregar facturas/boletas.</small>
+          <small>Haz click en "Asociar documento" arriba para buscar y agregar facturas/boletas.</small>
         </div>
       </td>
     </tr>`;
+    _docsTablaUpdateSeleccion();
     return;
   }
   body.innerHTML = docs.map((d, idx) => {
-    let saldoPill;
-    if (d.con_saldo === 1) saldoPill = '<span class="td-pill td-pill-ok"><i class="bi bi-check-circle"></i>Con saldo</span>';
-    else if (d.con_saldo === 0) saldoPill = '<span class="td-pill td-pill-warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>';
-    else saldoPill = '<span class="td-pill"><i class="bi bi-question-circle"></i>No verif.</span>';
+    let saldoPill, saldoSort;
+    if (d.con_saldo === 1){ saldoPill = '<span class="td-pill td-pill-ok"><i class="bi bi-check-circle"></i>Con saldo</span>'; saldoSort = 'Con saldo'; }
+    else if (d.con_saldo === 0){ saldoPill = '<span class="td-pill td-pill-warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>'; saldoSort = 'Sin saldo'; }
+    else { saldoPill = '<span class="td-pill"><i class="bi bi-question-circle"></i>No verif.</span>'; saldoSort = 'No verificado'; }
     const tipoUp = String(d.document_type || '').toUpperCase();
     const numero = d.document_number || '';
+    const numeroSort = parseInt(numero, 10) || 0;
     // 🔧 FIX Daniel 2026-05-24: mostrar "X / Y" cuando hay selección parcial
     // para que el operador vea cuántas líneas REALMENTE se asociaron.
     const _totalLn = d.n_lineas || 0;
@@ -568,19 +616,47 @@ function _renderTablaDocsAsociados(docs){
     const _lineasCell = (d.has_seleccion_lineas && _selLn !== null)
       ? `<strong style="color:#92400e">${_selLn}</strong><small style="color:#9ca3af"> / ${_totalLn}</small>`
       : `<strong>${_totalLn}</strong>`;
+    // 🆕 Daniel 2026-09-16: Emisión/Total — mismo criterio ya usado en
+    // rbaRenderCliDocs (doc.fecha, doc.valor_total del ERP): se muestran
+    // TAL CUAL vienen, sin reparsear la fecha (el ERP ya la formatea).
+    // OJO: si GET /retiros/<rid>/docs aún no devuelve fecha_emision/
+    // valor_total, quedan en blanco sin romper el render (fallback '—').
+    const fechaRaw  = d.fecha_emision || '';
+    const fechaDisp = fechaRaw ? _esc(String(fechaRaw)) : '—';
+    const valorNum  = (d.valor_total !== null && d.valor_total !== undefined && d.valor_total !== '') ? parseFloat(d.valor_total) : NaN;
+    const totalDisp = isFinite(valorNum) ? '$' + Math.round(valorNum).toLocaleString('es-CL') : '—';
+    const addedByDisp = d.added_by ? _esc(d.added_by) : '—';
+    const addedAtDisp = d.added_at ? _chileFmtStr(d.added_at) : '—';
+    const otroRutBadge = d.motivo_otro_rut ? `<details class="otro-rut-badge">
+          <summary><i class="bi bi-exclamation-triangle-fill"></i> Otro RUT</summary>
+          <div class="otro-rut-detail">
+            <strong>Motivo:</strong> ${_esc(d.motivo_otro_rut)}<br>
+            <strong>Justificado por:</strong> ${_esc(d.otro_rut_por || '—')}${d.otro_rut_en ? ' · ' + _chileFmtStr(d.otro_rut_en) : ''}
+          </div>
+        </details>` : '';
     return `<tr data-doc-id="${d.id}">
+      <td data-label="" class="td-check"><input type="checkbox" class="doc-row-check" value="${d.id}" onchange="_docsTablaUpdateSeleccion()"></td>
       <td data-label="#">${idx + 1}</td>
-      <td data-label="Tipo"><span class="td-pill td-pill-dark">${_esc(tipoUp)}</span></td>
-      <td data-label="Nº" class="mono">${_esc(numero)}</td>
+      <td data-label="Tipo" data-sort-key="tipo" data-sort-value="${_esc(tipoUp)}"><span class="td-pill td-pill-dark">${_esc(tipoUp)}</span></td>
+      <td data-label="Nº" class="mono" data-sort-key="numero" data-sort-value="${numeroSort}">${_esc(numero)}</td>
+      <td data-label="Emisión" data-sort-key="fecha" data-sort-value="${_esc(String(fechaRaw))}">${fechaDisp}</td>
       <td data-label="Cliente">
         <div class="td-cli">
           <strong>${_esc(d.cliente_nombre || '—')}</strong>
           <small class="mono">${_esc(d.cliente_rut || '—')}</small>
         </div>
       </td>
-      <td data-label="Líneas" class="num" title="${d.has_seleccion_lineas?'Líneas seleccionadas / total del documento':'Total de líneas'}">${_lineasCell}</td>
-      <td data-label="Peso" class="num">${parseFloat(d.peso_real_kg||0).toFixed(1)} kg</td>
-      <td data-label="Saldo">${saldoPill}</td>
+      <td data-label="Líneas" class="num" data-sort-key="lineas" data-sort-value="${_totalLn}" title="${d.has_seleccion_lineas?'Líneas seleccionadas / total del documento':'Total de líneas'}">${_lineasCell}</td>
+      <td data-label="Peso" class="num" data-sort-key="peso" data-sort-value="${parseFloat(d.peso_real_kg||0)}">${parseFloat(d.peso_real_kg||0).toFixed(1)} kg</td>
+      <td data-label="Total" class="num" data-sort-key="total" data-sort-value="${isFinite(valorNum)?valorNum:0}">${totalDisp}</td>
+      <td data-label="Saldo" data-sort-key="saldo" data-sort-value="${saldoSort}">${saldoPill}</td>
+      <td data-label="Asociado por" data-sort-key="asociado" data-sort-value="${_esc(d.added_by||'')}">
+        <div class="td-asoc">
+          <strong>${addedByDisp}</strong>
+          <small>${addedAtDisp}</small>
+          ${otroRutBadge}
+        </div>
+      </td>
       <td data-label="Acciones" class="acciones">
         <button type="button" class="td-btn td-btn-prods"
                 onclick="abrirSeleccionProductos(${d.id}, '${_esc(tipoUp)}', '${_esc(numero)}')"
@@ -595,6 +671,160 @@ function _renderTablaDocsAsociados(docs){
       </td>
     </tr>`;
   }).join('');
+  _docsTablaApplySort();
+  _docsTablaUpdateSeleccion();
+  const searchInp = document.getElementById('tabDocsBuscar');
+  if (searchInp && searchInp.value) _docsTablaFiltrar(searchInp.value);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Daniel 2026-09-16 — orden por columna, buscador y selección múltiple
+//  de la tabla "Documentos asociados". Aplica tanto al render inicial
+//  (Jinja, en el HTML servido) como a cada re-render vía
+//  _renderTablaDocsAsociados (llamado desde refrescarDocsAsociados).
+// ════════════════════════════════════════════════════════════════════
+let _docsSortState = { key: null, dir: 1, type: 'str' };
+
+function _docsTablaSort(key, type){
+  if (_docsSortState.key === key) _docsSortState.dir *= -1;
+  else { _docsSortState.key = key; _docsSortState.dir = 1; _docsSortState.type = type; }
+  _docsTablaApplySort();
+}
+
+function _docsTablaApplySort(){
+  const { key, dir, type } = _docsSortState;
+  if (!key) return;
+  const tbody = document.getElementById('tabDocsAsociadosBody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr[data-doc-id]'));
+  if (!rows.length) return;
+  rows.sort((a, b) => {
+    const va = _docsSortCellVal(a, key, type);
+    const vb = _docsSortCellVal(b, key, type);
+    if (type === 'num') return (va - vb) * dir;
+    return String(va).localeCompare(String(vb), 'es', { numeric: true, sensitivity: 'base' }) * dir;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+  _docsTablaUpdateSortIcons();
+}
+
+function _docsSortCellVal(row, key, type){
+  const cell = row.querySelector(`td[data-sort-key="${key}"]`);
+  if (!cell) return type === 'num' ? 0 : '';
+  let raw = cell.getAttribute('data-sort-value');
+  if (raw === null) raw = cell.textContent.trim();
+  // La columna Emisión puede traer 'dd-mm-aaaa' (ERP) o 'aaaa-mm-dd' (ISO) —
+  // se normaliza a clave AAAAMMDD recién acá, tanto para filas Jinja (SSR)
+  // como para las que arma _renderTablaDocsAsociados.
+  if (key === 'fecha') return _dateSortVal(raw);
+  return type === 'num' ? (parseFloat(raw) || 0) : raw;
+}
+
+function _docsTablaUpdateSortIcons(){
+  document.querySelectorAll('#tabDocsAsociados thead th[data-sort-key]').forEach(th => {
+    const ico = th.querySelector('.th-sort-ico');
+    if (!ico) return;
+    if (th.dataset.sortKey === _docsSortState.key){
+      ico.textContent = _docsSortState.dir === 1 ? '▲' : '▼';
+      ico.classList.add('is-active');
+    } else {
+      ico.textContent = '↕';
+      ico.classList.remove('is-active');
+    }
+  });
+}
+
+// Buscador rápido — filtra filas por texto visible (tipo, número, cliente,
+// asociado por, etc.), sin recargar. REGLA #4.3: al vaciar el campo, la
+// tabla se re-muestra completa (no queda pegada al último filtro).
+function _docsTablaFiltrar(q){
+  const term = (q || '').trim().toLowerCase();
+  const tbody = document.getElementById('tabDocsAsociadosBody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr[data-doc-id]'));
+  let visibles = 0;
+  rows.forEach(r => {
+    const match = !term || r.textContent.toLowerCase().includes(term);
+    r.style.display = match ? '' : 'none';
+    if (match) visibles++;
+  });
+  let emptyRow = document.getElementById('rowDocsFiltroVacio');
+  if (rows.length && term && visibles === 0){
+    if (!emptyRow){
+      emptyRow = document.createElement('tr');
+      emptyRow.id = 'rowDocsFiltroVacio';
+      emptyRow.className = 'ilus-tabla-empty-row';
+      tbody.appendChild(emptyRow);
+    }
+    emptyRow.innerHTML = `<td colspan="12"><div class="ilus-tabla-empty">
+      <i class="bi bi-search"></i>
+      <strong>Sin resultados para "${_esc(q)}"</strong>
+      <small>Prueba con otro tipo, número o nombre de cliente.</small>
+    </div></td>`;
+  } else if (emptyRow){
+    emptyRow.remove();
+  }
+  _docsTablaUpdateSeleccion();
+}
+
+// "Seleccionar/deseleccionar todo" — REGLA #14. Header checkbox, mismo
+// patrón que tkaToggleAllDoc (templates/tickets/_tka_modal.html): el
+// nuevo estado del checkbox del header decide si se marcan o desmarcan
+// TODAS las filas visibles (respeta el filtro de búsqueda activo).
+function _docsTablaToggleAll(checked){
+  document.querySelectorAll('#tabDocsAsociadosBody .doc-row-check').forEach(cb => {
+    const tr = cb.closest('tr');
+    if (tr && tr.style.display === 'none') return;
+    cb.checked = checked;
+  });
+  _docsTablaUpdateSeleccion();
+}
+
+function _docsTablaUpdateSeleccion(){
+  const all = Array.from(document.querySelectorAll('#tabDocsAsociadosBody .doc-row-check'));
+  const visibles = all.filter(cb => { const tr = cb.closest('tr'); return !tr || tr.style.display !== 'none'; });
+  const checked = all.filter(cb => cb.checked);
+  const nSpan = document.getElementById('nSeleccionados');
+  const btn = document.getElementById('btnQuitarSeleccionados');
+  if (nSpan) nSpan.textContent = `(${checked.length})`;
+  if (btn) btn.disabled = checked.length === 0;
+  const headerChk = document.getElementById('tabDocsCheckAll');
+  if (headerChk){
+    const visiblesChecked = visibles.filter(cb => cb.checked);
+    headerChk.checked = visibles.length > 0 && visiblesChecked.length === visibles.length;
+    headerChk.indeterminate = visiblesChecked.length > 0 && visiblesChecked.length < visibles.length;
+  }
+}
+
+// "Quitar seleccionados" — reutiliza el mismo DELETE que ya usa quitarDoc
+// fila por fila, con UN solo ilusConfirm de resumen antes (REGLA #1).
+async function _docsTablaQuitarSeleccionados(){
+  const checks = Array.from(document.querySelectorAll('#tabDocsAsociadosBody .doc-row-check:checked'));
+  if (!checks.length) return;
+  const n = checks.length;
+  const ok = await ilusConfirm({
+    title: 'Quitar documentos',
+    message: `¿Quitar ${n} documento${n===1?'':'s'} de este retiro?`,
+    sub: 'Esto NO elimina los documentos del ERP, solo los saca de este retiro.',
+    okLabel: 'Sí, quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const btn = document.getElementById('btnQuitarSeleccionados');
+  const _orig = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Quitando...'; }
+  let okN = 0, errN = 0;
+  for (const cb of checks){
+    try {
+      const r = await fetch(`/retiros/${_RID}/docs/${cb.value}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.ok) okN++; else errN++;
+    } catch(e){ errN++; }
+  }
+  if (okN) ilusToast(`✓ ${okN} documento${okN===1?'':'s'} quitado${okN===1?'':'s'}`, { type:'success' });
+  if (errN) ilusToast(`⚠ ${errN} no se pudo${errN===1?'':'ieron'} quitar`, { type:'warning' });
+  await refrescarDocsAsociados(_RID);
+  cargarSaldoCliente(_RID);
+  if (btn){ btn.disabled = false; btn.innerHTML = _orig || '<i class="bi bi-trash3"></i>Quitar seleccionados <span id="nSeleccionados">(0)</span>'; }
 }
 
 async function refrescarTablaProductos(){
@@ -688,47 +918,9 @@ function _fmtNum(n, dec){
   return v.toFixed(dec == null ? 2 : dec);
 }
 
-function _renderDocAsoCard(d){
-  let cls = 'no-verif', badge = '<span class="badge-pill"><i class="bi bi-question-circle me-1"></i>No verificado</span>';
-  if (d.con_saldo === 1){
-    cls = '';
-    badge = '<span class="badge-pill" style="background:#dcfce7;color:#166534;border-color:#86efac"><i class="bi bi-check-circle me-1"></i>Con saldo</span>';
-  } else if (d.con_saldo === 0){
-    cls = 'no-saldo';
-    badge = '<span class="badge-pill" style="background:#fef3c7;color:#92400e;border-color:#fde68a"><i class="bi bi-exclamation-triangle me-1"></i>Sin saldo</span>';
-  }
-  // Daniel 2026-05-23: badge si tiene selección granular
-  const hasSel = d.has_seleccion_lineas ? `<span class="badge-pill" style="background:#fef3c7;color:#92400e;border-color:#fde68a" title="Solo retira líneas seleccionadas"><i class="bi bi-funnel-fill me-1"></i>Selección parcial</span>` : '';
-  // 🔧 FIX Daniel 2026-05-24: mostrar "X / Y líneas" cuando hay selección
-  // granular. Antes mostraba "10 líneas" siempre → el operador creía que
-  // se asociaba el doc completo. Ahora se ve claramente "2 / 10".
-  const _tot = d.n_lineas || 0;
-  const _sel = (d.n_lineas_seleccionadas != null) ? d.n_lineas_seleccionadas : null;
-  const _lineasBadge = (d.has_seleccion_lineas && _sel !== null)
-    ? `<span class="badge-pill" title="Solo se retira la selección marcada" style="background:#fef3c7;color:#92400e;border-color:#fde68a;font-weight:700">${_sel} / ${_tot} líneas</span>`
-    : `<span class="badge-pill" title="Total de líneas del documento">${_tot} líneas</span>`;
-  return `<div class="doc-aso ${cls}" data-doc-id="${d.id}">
-    <div class="da-num">${_esc(d.document_type)} ${_esc(d.document_number)}</div>
-    <div class="da-cli">
-      <div class="dnom">${_esc(d.cliente_nombre || '—')}</div>
-      <div class="drut">${_esc(d.cliente_rut || '—')}</div>
-    </div>
-    <div class="da-totals">
-      ${badge}
-      ${hasSel}
-      <span class="badge-pill weight">${parseFloat(d.peso_real_kg||0).toFixed(1)} kg</span>
-      ${_lineasBadge}
-    </div>
-    <div class="da-actions">
-      <button type="button" class="da-prods" onclick="abrirSeleccionProductos(${d.id}, '${_esc(d.document_type)}', '${_esc(d.document_number)}')" title="Seleccionar productos específicos a retirar">
-        <i class="bi bi-funnel"></i>Productos
-      </button>
-      <button type="button" class="da-quitar" onclick="quitarDoc(${_RID}, ${d.id}, '${_esc(d.document_type)} ${_esc(d.document_number)}')">
-        <i class="bi bi-x-lg"></i>Quitar
-      </button>
-    </div>
-  </div>`;
-}
+// _renderDocAsoCard (chips verdes de #docsAsociadosLista) se eliminó el
+// 2026-09-16: Daniel autorizó explícitamente fusionar esa lista duplicada
+// dentro de la tabla #tabDocsAsociados (única fuente de verdad ahora).
 
 // ════════════════════════════════════════════════════════════════════
 //  SELECCIÓN GRANULAR DE PRODUCTOS POR DOC (Daniel 2026-05-23)
@@ -916,17 +1108,15 @@ async function refrescarDocsAsociados(rid){
     const r = await fetch(`/retiros/${rid}/docs`);
     const d = await r.json();
     if (!d.ok) return;
-    const lista = document.getElementById('docsAsociadosLista');
-    const badge = document.getElementById('badgeNDocs');
     const ndocs = (d.docs || []).length;
     const ncons = (d.saldo_summary && d.saldo_summary.con_saldo) || 0;
-    if (badge) badge.textContent = ndocs;
-    if (!d.docs || d.docs.length === 0){
-      lista.innerHTML = `<div style="padding:16px 18px;text-align:center;color:#9ca3af;font-size:.85rem;background:#fafafa;border:1.5px dashed var(--gray-2);border-radius:10px"><i class="bi bi-inbox me-1"></i>Aún no hay documentos asociados.</div>`;
-    } else {
-      lista.innerHTML = d.docs.map(doc => _renderDocAsoCard(doc)).join('');
-    }
+    // Daniel 2026-09-16: nOtroRut alimenta el semáforo ámbar del paso 2
+    // (_refrescarEstadoPasos) — docs asociados desde un RUT distinto al
+    // cliente del retiro, con motivo justificado pero pendientes de ojo.
+    const nOtroRut = (d.docs || []).filter(doc => !!doc.motivo_otro_rut).length;
     // Daniel 2026-05-24: refrescar tabla 1 (docs asociados) + tabla 2 (productos)
+    // 🔧 2026-09-16: la lista de chips #docsAsociadosLista se eliminó (Daniel
+    // autorizó fusionarla con la tabla) — la tabla es la única fuente de verdad.
     _renderTablaDocsAsociados(d.docs || []);
     refrescarTablaProductos();
     // Refrescar Paso 3 — carga total
@@ -956,7 +1146,7 @@ async function refrescarDocsAsociados(rid){
       hintPeso.style.display = parseFloat(t.peso_real_kg || 0) > 100 ? 'flex' : 'none';
     }
     // Actualizar estado de cada paso visualmente
-    _refrescarEstadoPasos(ndocs, ncons, d.request_state || {});
+    _refrescarEstadoPasos(ndocs, ncons, d.request_state || {}, nOtroRut);
   } catch(e){
     console.error('refrescarDocsAsociados', e);
   }
@@ -968,12 +1158,61 @@ async function refrescarDocsAsociados(rid){
 // al operador atrapado cuando el ERP no podía verificar el saldo ZZ
 // (boletas sin línea ZZ, timeout, etc.). El warning de "sin saldo
 // verificado" se muestra dentro del paso pero NO bloquea.
-function _refrescarEstadoPasos(ndocs, ncons, requestState){
+function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
+  nOtroRut = nOtroRut || 0;
   const p2 = document.getElementById('paso-2');
   const p3 = document.getElementById('paso-3');
   const p4 = document.getElementById('paso-4');
   const p5 = document.getElementById('paso-5');
-  if (p2){ p2.classList.toggle('is-complete', ndocs > 0); }
+  if (p2){
+    // Daniel 2026-09-16: semáforo de 3 estados — ámbar (is-warn) cuando hay
+    // docs pero NINGUNO con saldo confirmado, o cuando alguno viene de un
+    // RUT distinto (motivo_otro_rut) pendiente de revisar; verde cuando al
+    // menos uno tiene saldo y no hay "otro RUT" pendiente; gris si no hay docs.
+    const isWarn = ndocs > 0 && (ncons === 0 || nOtroRut > 0);
+    p2.classList.toggle('is-warn', isWarn);
+    p2.classList.toggle('is-complete', ndocs > 0 && !isWarn);
+    const statusLine = document.getElementById('paso2StatusLine');
+    if (statusLine){
+      statusLine.classList.toggle('is-warn', isWarn);
+      statusLine.classList.toggle('is-ok', ndocs > 0 && !isWarn);
+      if (ndocs === 0){
+        statusLine.textContent = 'Aún no hay documentos asociados.';
+      } else if (nOtroRut > 0){
+        statusLine.textContent = `${ndocs} documento${ndocs===1?'':'s'} · atención: ${nOtroRut} de otro RUT`;
+      } else {
+        statusLine.textContent = `${ndocs} documento${ndocs===1?'':'s'} · ${ncons} con saldo`;
+      }
+    }
+    // Badge del header del paso (step-badge-ok / step-badge-warn)
+    const badgeOk = p2.querySelector('.step-badge-ok');
+    const badgeWarn = p2.querySelector('.step-badge-warn');
+    const badgeTxt = `${ndocs} asociado${ndocs===1?'':'s'}`;
+    if (ndocs === 0){
+      if (badgeOk) badgeOk.remove();
+      if (badgeWarn) badgeWarn.remove();
+    } else if (isWarn){
+      if (badgeOk) badgeOk.remove();
+      const actions = p2.querySelector('.paso2-head-actions');
+      let b = p2.querySelector('.step-badge-warn');
+      if (!b && actions){
+        b = document.createElement('span');
+        b.className = 'step-badge-warn';
+        actions.insertBefore(b, actions.firstChild);
+      }
+      if (b) b.innerHTML = `<i class="bi bi-exclamation-triangle"></i>${badgeTxt}`;
+    } else {
+      if (badgeWarn) badgeWarn.remove();
+      const actions = p2.querySelector('.paso2-head-actions');
+      let b = p2.querySelector('.step-badge-ok');
+      if (!b && actions){
+        b = document.createElement('span');
+        b.className = 'step-badge-ok';
+        actions.insertBefore(b, actions.firstChild);
+      }
+      if (b) b.innerHTML = `<i class="bi bi-files"></i>${badgeTxt}`;
+    }
+  }
   if (p3){
     p3.classList.toggle('is-blocked', ndocs === 0);
     p3.classList.toggle('is-complete', ndocs > 0);  // si hay docs, totales se calcularon
@@ -2633,16 +2872,50 @@ function rbaCambiarQtyCli(inp){
   _RBA.selCli.set(key, item);
   rbaUpdateCounter();
 }
+// ════════════════════════════════════════════════════════════════════
+//  Daniel 2026-09-16 — motivo obligatorio para asociar un documento de
+//  un RUT distinto al cliente del retiro.
+//  ─────────────────────────────────────────────────────────────────
+//  Único punto de entrada para POST /retiros/<rid>/docs/agregar desde los
+//  3 call sites del modal RBA (rbaAsociarDocCompleto, rbaAsociarTodasConSaldo,
+//  rbaAsociarSeleccion). Si el backend responde 409 {code:"MOTIVO_REQUERIDO"}
+//  (documento a nombre de un RUT distinto al del cliente de este retiro),
+//  pide el motivo con ilusPrompt (REGLA #1 — nunca prompt() nativo) y
+//  reintenta el MISMO POST agregando motivo_otro_rut. Si el operador
+//  cancela el prompt, devuelve {ok:false, cancelled:true} SIN reintentar —
+//  el caller debe tratarlo como "no hacer nada" (sin toast de error).
+// ════════════════════════════════════════════════════════════════════
+async function _rbaPostDocsAgregar(body){
+  const doPost = (payload) => _fetchJsonSafe(`/retiros/${_RID}/docs/agregar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  let d = await doPost(body);
+  if (d._http_status === 409 && d.code === 'MOTIVO_REQUERIDO'){
+    const docLabel = `${_esc(d.doc_cliente_nombre || 'el documento')} (${_esc(d.doc_cliente_rut || '—')})`;
+    const reqLabel = `${_esc(d.req_cliente_nombre || 'el cliente de este retiro')} (${_esc(d.req_cliente_rut || '—')})`;
+    const motivo = await ilusPrompt({
+      title: 'Documento de otro cliente',
+      message: `Este documento figura a nombre de ${docLabel}, distinto de ${reqLabel}. Indica el motivo para asociarlo igual:`,
+      placeholder: 'Ej: el cliente autorizó el retiro conjunto...',
+      required: true,
+    });
+    if (!motivo){
+      return { ok: false, cancelled: true };
+    }
+    d = await doPost(Object.assign({}, body, { motivo_otro_rut: motivo }));
+  }
+  return d;
+}
+
 async function rbaAsociarDocCompleto(idx){
   const doc = ((_RBA.loaded.cliQuery && _RBA.loaded.cliQuery.docs) || [])[idx];
   if (!doc) return;
   // Atajo: usar el endpoint existente que asocia el doc entero
   try {
-    const d = await _fetchJsonSafe(`/retiros/${_RID}/docs/agregar`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ document_type: doc.tido_display, document_number: doc.nudo_display })
-    });
+    const d = await _rbaPostDocsAgregar({ document_type: doc.tido_display, document_number: doc.nudo_display });
+    if (d.cancelled) return;
     if (d._http_status === 409){
       ilusToast(`Ya estaba en este retiro`, { type:'warning' });
       return;
@@ -2676,15 +2949,16 @@ async function rbaAsociarTodasConSaldo(){
   const btn = document.getElementById('rbaAsocTodasBtn');
   const _orig = btn ? btn.innerHTML : '';
   if (btn) btn.disabled = true;
-  let okN = 0, dupN = 0, errN = 0, i = 0;
+  // Daniel 2026-09-16: cancelN cuenta los docs que el operador saltó porque
+  // canceló el prompt de motivo (RUT distinto) — el lote sigue con el resto,
+  // no se aborta (REGLA de negocio: "seguir con los demás sin abortar todo").
+  let okN = 0, dupN = 0, errN = 0, cancelN = 0, i = 0;
   for (const doc of objetivo){
     i++;
     if (btn) btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Asociando ${i}/${objetivo.length}…`;
     try {
-      const d = await _fetchJsonSafe(`/retiros/${_RID}/docs/agregar`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ document_type: doc.tido_display, document_number: doc.nudo_display })
-      });
+      const d = await _rbaPostDocsAgregar({ document_type: doc.tido_display, document_number: doc.nudo_display });
+      if (d.cancelled){ cancelN++; continue; }
       if (d._http_status === 409) dupN++;
       else if (d.ok) okN++;
       else errN++;
@@ -2695,6 +2969,7 @@ async function rbaAsociarTodasConSaldo(){
   if (btn){ btn.disabled = false; btn.innerHTML = _orig; }
   let msg = `✓ ${okN} factura(s) asociada(s)`;
   if (dupN) msg += ` · ${dupN} ya estaban`;
+  if (cancelN) msg += ` · ${cancelN} omitida(s) (sin motivo)`;
   if (errN) msg += ` · ${errN} con error`;
   ilusToast(msg, { type: errN ? 'warning' : 'success' });
 }
@@ -2787,6 +3062,7 @@ async function rbaAsociarSeleccion(){
   const okList = [];     // docs asociados OK
   const dupList = [];    // docs ya asociados (409 DUPLICATE)
   const errList = [];    // docs con error real (con detalle)
+  const cancelList = []; // docs omitidos: operador canceló el motivo de "otro RUT"
   const otrosN = [];
 
   for (const [, info] of docsToAdd){
@@ -2807,26 +3083,23 @@ async function rbaAsociarSeleccion(){
           // mostrar badge ámbar "ya rebajado en ERP" en la tabla externa.
           marcada_sin_saldo: !!ln.marcada_sin_saldo,
         }));
-      const r = await fetch(`/retiros/${_RID}/docs/agregar`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          document_type: info.tido,
-          document_number: info.nudo,
-          lineas: lineas_payload,  // 🆕 selección granular en mismo POST
-        })
+      // 🆕 Daniel 2026-09-16: pasa por _rbaPostDocsAgregar — si el doc es de
+      // un RUT distinto al del cliente del retiro, pide el motivo con
+      // ilusPrompt y reintenta sola con motivo_otro_rut adentro.
+      const d = await _rbaPostDocsAgregar({
+        document_type: info.tido,
+        document_number: info.nudo,
+        lineas: lineas_payload,  // 🆕 selección granular en mismo POST
       });
-      let d;
-      try { d = await r.json(); }
-      catch(_){
-        errList.push({ label, motivo: `Backend respondió HTML (status ${r.status}). ¿Sesión expirada?` });
+      if (d.cancelled){
+        cancelList.push(label);
         continue;
       }
-      if (r.status === 409 || d.code === 'DUPLICATE'){
+      if (d._not_json){
+        errList.push({ label, motivo: `Backend respondió HTML (status ${d._http_status}). ¿Sesión expirada?` });
+        continue;
+      }
+      if (d._http_status === 409 || d.code === 'DUPLICATE'){
         // Caso DUPLICATE sin líneas → 409 estándar (mantiene compat).
         // Si vinieron líneas, el backend lo procesa como UPDATE silencioso
         // y devuelve 200 con duplicate_updated=true (no llega acá).
@@ -2834,7 +3107,7 @@ async function rbaAsociarSeleccion(){
         continue;
       }
       if (!d.ok){
-        const motivo = (d.error || `HTTP ${r.status}`).toString().substring(0, 140);
+        const motivo = (d.error || `HTTP ${d._http_status}`).toString().substring(0, 140);
         errList.push({ label, motivo });
         continue;
       }
@@ -2857,10 +3130,12 @@ async function rbaAsociarSeleccion(){
   const okN = okList.length;
   const dupN = dupList.length;
   const errN = errList.length;
+  const cancelN = cancelList.length;
 
   if (okN){
     let msg = `✓ ${okN} documento${okN===1?'':'s'} asociado${okN===1?'':'s'}`;
     if (dupN) msg += ` · ${dupN} ya estaban`;
+    if (cancelN) msg += ` · ${cancelN} omitido${cancelN===1?'':'s'} (sin motivo)`;
     if (errN) msg += ` · ${errN} con error`;
     ilusToast(msg, { type: 'success', duration: 5000 });
     if (otrosN.length){
@@ -2884,8 +3159,13 @@ async function rbaAsociarSeleccion(){
     ilusToast(`Los ${dupN} documento${dupN===1?'':'s'} ya estaban asociado${dupN===1?'':'s'}: ${dupList.join(', ')}`, {
       type:'warning', duration: 6000
     });
-  } else {
-    // 100% error — mostrar TODOS los motivos
+  } else if (cancelN && !errN && !dupN){
+    // El operador canceló el/los prompt(s) de motivo — no hay error real que mostrar.
+    ilusToast(`Operación cancelada: no se ingresó motivo para ${cancelN} documento${cancelN===1?'':'s'} de otro RUT.`, {
+      type:'info', duration: 5000
+    });
+  } else if (errN){
+    // Hubo al menos un error real — mostrar TODOS los motivos
     const detalle = errList.map(e => `${e.label}: ${e.motivo}`).join('\n');
     ilusAlert({
       type: 'error',

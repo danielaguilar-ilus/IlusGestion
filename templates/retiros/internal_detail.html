@@ -20,6 +20,103 @@
 ══════════════════════════════════════════════════════════════════════ #}
 <link rel="stylesheet" href="{{ url_for('static', filename='retiros_internal_detail.css') }}">
 
+{# ════════════════════════════════════════════════════════════════════
+   Daniel 2026-09-16 — Paso 2: botón compacto "Asociar documento" (con
+   chip ERP), semáforo ámbar del paso, y extensión de la tabla de
+   documentos asociados (búsqueda, orden por columna, selección múltiple).
+   Este bloque va inline porque la tarea solo autoriza tocar este template
+   y static/retiros_internal_detail.js — no static/retiros_internal_detail.css.
+   ════════════════════════════════════════════════════════════════════ #}
+<style>
+  /* Semáforo ámbar del paso 2 — mismo espíritu que .step-section.is-complete
+     (verde) pero para "hay documentos pero sin saldo confirmado / con
+     alguno de otro RUT sin revisar". */
+  .step-section.is-warn{
+    border-color:#fcd34d;
+    background:linear-gradient(180deg,#fffbeb 0%, rgba(255,255,255,.96) 50%);
+    box-shadow:0 1px 0 rgba(255,255,255,.7) inset, 0 1px 3px rgba(245,158,11,.10), 0 14px 32px -12px rgba(245,158,11,.20);
+  }
+  .step-section.is-warn .step-circle-label{color:#b45309}
+  .step-section.is-warn .step-circle{
+    background:#f59e0b;
+    box-shadow:0 8px 22px rgba(245,158,11,.38), 0 0 0 4px rgba(245,158,11,.12);
+  }
+  .step-sub-status{margin:6px 0 0;font-size:.8rem;font-weight:700;color:#6b7280}
+  .step-sub-status.is-ok{color:#166534}
+  .step-sub-status.is-warn{color:#92400e}
+
+  /* Botón compacto de asociar documentos — Daniel 2026-09-16: reemplaza
+     el banner grande. Pill rojo sólido + chip "ERP Random" para dejar
+     claro que busca en el sistema del ERP. */
+  .paso2-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;margin-top:14px}
+  .btn-asociar-compact{
+    display:inline-flex;align-items:center;gap:8px;
+    background:var(--ilus-red);color:#fff;border:none;border-radius:50px;
+    padding:9px 16px 9px 14px;font-size:.84rem;font-weight:800;cursor:pointer;
+    box-shadow:0 4px 14px rgba(220,38,38,.30);transition:all .15s ease;
+  }
+  .btn-asociar-compact:hover{background:#b91c1c;transform:translateY(-1px);box-shadow:0 6px 18px rgba(220,38,38,.38);color:#fff}
+  .btn-asociar-compact .erp-chip{
+    display:inline-flex;align-items:center;gap:3px;
+    background:rgba(255,255,255,.22);color:#fff;border-radius:50px;
+    padding:2px 8px;font-size:.6rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase;
+  }
+  @media(max-width:768px){
+    .paso2-head-actions{width:100%;align-items:stretch}
+    .btn-asociar-compact{justify-content:center;min-height:44px}
+  }
+
+  /* Barra de herramientas de la tabla — buscador + quitar seleccionados */
+  .docs-tabla-toolbar{
+    display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;
+    padding:10px 14px;background:#fafafa;border-bottom:1.5px solid var(--gray-2);
+  }
+  .dtt-search{
+    display:flex;align-items:center;gap:6px;background:#fff;border:1.5px solid var(--gray-2);
+    border-radius:10px;padding:6px 10px;flex:1;min-width:200px;max-width:360px;
+  }
+  .dtt-search i{color:#9ca3af}
+  .dtt-search input{border:none;outline:none;font-size:.84rem;width:100%;background:transparent}
+  .dtt-btn-quitar{
+    display:inline-flex;align-items:center;gap:6px;
+    background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;border-radius:10px;
+    padding:7px 14px;font-size:.8rem;font-weight:700;cursor:pointer;transition:all .15s ease;
+    min-height:36px;
+  }
+  .dtt-btn-quitar:disabled{opacity:.45;cursor:not-allowed}
+  .dtt-btn-quitar:not(:disabled):hover{background:#dc2626;color:#fff;border-color:#dc2626}
+
+  /* Orden por columna (▲▼) */
+  .ilus-tabla thead th.th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+  .ilus-tabla thead th.th-sort:hover{opacity:.85}
+  .th-sort-ico{font-size:.68rem;opacity:.6;margin-left:3px}
+  .th-sort-ico.is-active{opacity:1}
+  .td-check{width:32px;text-align:center !important}
+  .td-check input[type="checkbox"], #tabDocsCheckAll{width:17px;height:17px;cursor:pointer}
+
+  /* Columna "Asociado por" + badge de "otro RUT" */
+  .td-asoc{display:flex;flex-direction:column;gap:1px;min-width:120px}
+  .td-asoc strong{font-size:.8rem;color:#0a0a0a}
+  .td-asoc small{font-size:.68rem;color:#9ca3af}
+  .otro-rut-badge{margin-top:4px}
+  .otro-rut-badge summary{
+    list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:4px;
+    background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:50px;
+    padding:2px 8px;font-size:.64rem;font-weight:800;letter-spacing:.02em;
+  }
+  .otro-rut-badge summary::-webkit-details-marker{display:none}
+  .otro-rut-detail{
+    margin-top:5px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;
+    border-radius:8px;font-size:.72rem;color:#78350f;line-height:1.5;max-width:260px;
+  }
+
+  @media(max-width:768px){
+    .docs-tabla-toolbar{flex-direction:column;align-items:stretch}
+    .dtt-search{max-width:none}
+    .dtt-btn-quitar{justify-content:center;min-height:44px}
+  }
+</style>
+
 {# ──────────────────────────────────────────────────────────────
    HEADER + KPIs
    ────────────────────────────────────────────────────────────── #}
@@ -315,7 +412,11 @@
     </section>
 
     {# ═════════ PASO 2 — Cargar facturas/boletas pendientes ═════════ #}
-    <section class="step-section {% if _n_docs_inicial > 0 %}is-complete{% endif %}" id="paso-2" data-step="2">
+    {% set _docs_list = docs_asociados or [] %}
+    {% set _docs_con_saldo_n = _docs_list | selectattr('con_saldo', 'equalto', 1) | list | length %}
+    {% set _docs_otro_rut_n = _docs_list | selectattr('motivo_otro_rut') | list | length %}
+    {% set _paso2_is_warn = _n_docs_inicial > 0 and (_docs_con_saldo_n == 0 or _docs_otro_rut_n > 0) %}
+    <section class="step-section {% if _paso2_is_warn %}is-warn{% elif _n_docs_inicial > 0 %}is-complete{% endif %}" id="paso-2" data-step="2">
       <div class="step-header">
         <div class="step-circle-wrap">
           <span class="step-circle-label">Paso 2</span>
@@ -327,10 +428,35 @@
         <div class="step-titles">
           <h5>Cargar facturas o boletas pendientes</h5>
           <p class="step-sub">Asocia los documentos que vienen a retirar. Solo mostramos los que tienen <strong>saldo pendiente</strong> en ERP — los ya despachados quedan ocultos.</p>
+          {# Daniel 2026-09-16: resumen corto de estado, semáforo ámbar/verde según saldo y RUTs pendientes de revisar #}
+          <p class="step-sub-status {% if _paso2_is_warn %}is-warn{% elif _n_docs_inicial > 0 %}is-ok{% endif %}" id="paso2StatusLine">
+            {% if _n_docs_inicial == 0 %}Aún no hay documentos asociados.
+            {% elif _docs_otro_rut_n > 0 %}{{ _n_docs_inicial }} documento{{ '' if _n_docs_inicial == 1 else 's' }} · atención: {{ _docs_otro_rut_n }} de otro RUT
+            {% else %}{{ _n_docs_inicial }} documento{{ '' if _n_docs_inicial == 1 else 's' }} · {{ _docs_con_saldo_n }} con saldo
+            {% endif %}
+          </p>
         </div>
-        {% if _n_docs_inicial > 0 %}
-          <span class="step-badge-ok"><i class="bi bi-files"></i>{{ _n_docs_inicial }} asociado{{ '' if _n_docs_inicial == 1 else 's' }}</span>
-        {% endif %}
+        <div class="paso2-head-actions">
+          {% if _n_docs_inicial > 0 %}
+            {% if _paso2_is_warn %}
+              <span class="step-badge-warn"><i class="bi bi-exclamation-triangle"></i>{{ _n_docs_inicial }} asociado{{ '' if _n_docs_inicial == 1 else 's' }}</span>
+            {% else %}
+              <span class="step-badge-ok"><i class="bi bi-files"></i>{{ _n_docs_inicial }} asociado{{ '' if _n_docs_inicial == 1 else 's' }}</span>
+            {% endif %}
+          {% endif %}
+          {# ═══════════════════════════════════════════════════════════
+             BOTÓN COMPACTO — ASOCIAR DOCUMENTOS (Daniel 2026-09-16: más
+             chico que el banner anterior, con chip "ERP Random" como señal
+             de que busca en el sistema del ERP). Abre el mismo modal de
+             siempre (rbaOpen, 2 motores: por documento y por RUT/nombre).
+             ═══════════════════════════════════════════════════════════ #}
+          <button type="button" class="btn-asociar-compact" onclick="rbaOpen()"
+                  title="Buscar en el ERP Random por número de documento o por RUT/nombre del cliente">
+            <i class="bi bi-search"></i>
+            <span>Asociar documento</span>
+            <span class="erp-chip"><i class="bi bi-database-fill-gear"></i>ERP Random</span>
+          </button>
+        </div>
       </div>
       <div class="step-content">
 
@@ -338,40 +464,6 @@
         <div id="hintSaldo" class="smart-hint" style="display:none">
           <i class="bi bi-info-circle-fill"></i>
           <div id="hintSaldoMsg">Cargando…</div>
-        </div>
-
-        {# Docs ya asociados — chips verdes #}
-        <div style="font-size:.74rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a0a0a;margin:6px 0 8px">
-          <i class="bi bi-files me-1"></i>Documentos del retiro
-          <span id="badgeNDocs" class="badge bg-dark ms-1" style="font-size:.66rem">{{ _n_docs_inicial }}</span>
-        </div>
-        <div id="docsAsociadosLista" class="docs-asociados">
-          {% if docs_asociados %}
-            {% for d in docs_asociados %}
-            <div class="doc-aso {% if d.con_saldo == 0 %}no-saldo{% elif d.con_saldo is none %}no-verif{% endif %}" data-doc-id="{{ d.id }}">
-              <div class="da-num">{{ d.document_type|upper }} {{ d.document_number }}</div>
-              <div class="da-cli">
-                <div class="dnom">{{ d.cliente_nombre or '—' }}</div>
-                <div class="drut">{{ d.cliente_rut or '—' }}</div>
-              </div>
-              <div class="da-totals">
-                {% if d.con_saldo == 1 %}<span class="badge-pill" style="background:#dcfce7;color:#166534;border-color:#86efac"><i class="bi bi-check-circle me-1"></i>Con saldo</span>
-                {% elif d.con_saldo == 0 %}<span class="badge-pill" style="background:#fef3c7;color:#92400e;border-color:#fde68a"><i class="bi bi-exclamation-triangle me-1"></i>Sin saldo</span>
-                {% else %}<span class="badge-pill"><i class="bi bi-question-circle me-1"></i>No verificado</span>
-                {% endif %}
-                <span class="badge-pill weight">{{ "%.1f"|format(d.peso_real_kg|float) }} kg</span>
-                <span class="badge-pill">{{ d.n_lineas }} líneas</span>
-              </div>
-              <button type="button" class="da-quitar" onclick="quitarDoc({{ req.id }}, {{ d.id }}, '{{ d.document_type|upper }} {{ d.document_number }}')">
-                <i class="bi bi-x-lg"></i>Quitar
-              </button>
-            </div>
-            {% endfor %}
-          {% else %}
-            <div style="padding:16px 18px;text-align:center;color:#9ca3af;font-size:.85rem;background:#fafafa;border:1.5px dashed var(--gray-2);border-radius:10px">
-              <i class="bi bi-inbox me-1"></i>Aún no hay documentos asociados.
-            </div>
-          {% endif %}
         </div>
 
         {# Sugerencias del cliente — docs con saldo en ERP #}
@@ -393,27 +485,17 @@
           <div class="text-muted small py-2"><i class="bi bi-hourglass-split me-1"></i>Cargando documentos del cliente...</div>
         </div>
 
-        {# ═════════════════════════════════════════════════════════════
-           BOTÓN PRINCIPAL — ASOCIAR DOCUMENTOS (único motor: avanzado)
-           Daniel 2026-05-24: el buscador manual era confuso. Ahora hay
-           UN solo punto de entrada — abre el modal con 2 motores
-           (por documento y por RUT/nombre).
-           ═════════════════════════════════════════════════════════════ #}
-        <button type="button" class="btn-asociar-docs" onclick="rbaOpen()"
-                title="Abrir buscador con 2 motores: por documento y por RUT/nombre">
-          <span class="ba-icon"><i class="bi bi-plus-lg"></i></span>
-          <span class="ba-text">
-            <strong>Asociar documentos del retiro</strong>
-            <small>Busca por número de factura/boleta o por RUT del cliente</small>
-          </span>
-          <span class="ba-cta"><i class="bi bi-arrow-right"></i></span>
-        </button>
         <div id="erpResult" style="margin-top:8px"></div>
 
         {# ═════════════════════════════════════════════════════════════
            TABLA 1 — FACTURAS / DOCUMENTOS ASOCIADOS AL RETIRO
            Daniel 2026-05-24: vista tipo "carrito" para que el operador
            vea de un vistazo qué documentos están dentro.
+           Daniel 2026-09-16: se le agregan columnas Emisión/Total/Asociado
+           por, orden por columna, buscador y selección múltiple con
+           "Quitar seleccionados" (REGLA #14 — seleccionar/deseleccionar
+           todo va en el checkbox del header, mismo patrón que
+           tkaToggleAllDoc en templates/tickets/_tka_modal.html).
            ═════════════════════════════════════════════════════════════ #}
         <div class="ilus-tabla-wrap" style="margin-top:22px">
           <div class="ilus-tabla-head">
@@ -421,17 +503,32 @@
             <strong>Facturas y documentos asociados</strong>
             <span class="ilus-tabla-badge" id="tabDocsBadge">{{ _n_docs_inicial }}</span>
           </div>
+          <div class="docs-tabla-toolbar">
+            <div class="dtt-search">
+              <i class="bi bi-search"></i>
+              <input type="text" id="tabDocsBuscar" placeholder="Buscar por tipo, número o cliente..."
+                     autocomplete="off" oninput="_docsTablaFiltrar(this.value)">
+            </div>
+            <button type="button" class="dtt-btn-quitar" id="btnQuitarSeleccionados"
+                    onclick="_docsTablaQuitarSeleccionados()" disabled>
+              <i class="bi bi-trash3"></i>Quitar seleccionados <span id="nSeleccionados">(0)</span>
+            </button>
+          </div>
           <div class="ilus-tabla-scroll">
             <table class="ilus-tabla" id="tabDocsAsociados">
               <thead>
                 <tr>
+                  <th class="td-check"><input type="checkbox" id="tabDocsCheckAll" onchange="_docsTablaToggleAll(this.checked)" title="Seleccionar/deseleccionar todo"></th>
                   <th style="width:36px">#</th>
-                  <th>Tipo</th>
-                  <th>Nº doc</th>
-                  <th>Cliente (del doc)</th>
-                  <th class="num">Líneas sel.</th>
-                  <th class="num">Total peso</th>
-                  <th>Saldo</th>
+                  <th class="th-sort" data-sort-key="tipo" onclick="_docsTablaSort('tipo','str')">Tipo <span class="th-sort-ico">↕</span></th>
+                  <th class="th-sort" data-sort-key="numero" onclick="_docsTablaSort('numero','num')">Nº doc <span class="th-sort-ico">↕</span></th>
+                  <th class="th-sort" data-sort-key="fecha" onclick="_docsTablaSort('fecha','str')">Emisión <span class="th-sort-ico">↕</span></th>
+                  <th class="th-sort" data-sort-key="cliente" onclick="_docsTablaSort('cliente','str')">Cliente (del doc) <span class="th-sort-ico">↕</span></th>
+                  <th class="num th-sort" data-sort-key="lineas" onclick="_docsTablaSort('lineas','num')">Líneas sel. <span class="th-sort-ico">↕</span></th>
+                  <th class="num th-sort" data-sort-key="peso" onclick="_docsTablaSort('peso','num')">Total peso <span class="th-sort-ico">↕</span></th>
+                  <th class="num th-sort" data-sort-key="total" onclick="_docsTablaSort('total','num')">Total <span class="th-sort-ico">↕</span></th>
+                  <th class="th-sort" data-sort-key="saldo" onclick="_docsTablaSort('saldo','str')">Saldo <span class="th-sort-ico">↕</span></th>
+                  <th class="th-sort" data-sort-key="asociado" onclick="_docsTablaSort('asociado','str')">Asociado por <span class="th-sort-ico">↕</span></th>
                   <th class="acciones">Acciones</th>
                 </tr>
               </thead>
@@ -439,18 +536,31 @@
                 {% if docs_asociados %}
                   {% for d in docs_asociados %}
                   <tr data-doc-id="{{ d.id }}">
+                    <td data-label="" class="td-check"><input type="checkbox" class="doc-row-check" value="{{ d.id }}" onchange="_docsTablaUpdateSeleccion()"></td>
                     <td data-label="#">{{ loop.index }}</td>
-                    <td data-label="Tipo"><span class="td-pill td-pill-dark">{{ d.document_type|upper }}</span></td>
-                    <td data-label="Nº" class="mono">{{ d.document_number }}</td>
+                    <td data-label="Tipo" data-sort-key="tipo" data-sort-value="{{ d.document_type|upper }}"><span class="td-pill td-pill-dark">{{ d.document_type|upper }}</span></td>
+                    <td data-label="Nº" class="mono" data-sort-key="numero" data-sort-value="{{ d.document_number|int(0) }}">{{ d.document_number }}</td>
+                    <td data-label="Emisión" data-sort-key="fecha" data-sort-value="{{ d.fecha_emision or '' }}">
+                      {%- if d.fecha_emision -%}
+                        {%- if d.fecha_emision is string -%}
+                          {{ d.fecha_emision }}
+                        {%- else -%}
+                          {{ d.fecha_emision | chile_fmt('%d-%m-%Y') }}
+                        {%- endif -%}
+                      {%- else -%}—{%- endif -%}
+                    </td>
                     <td data-label="Cliente">
                       <div class="td-cli">
                         <strong>{{ d.cliente_nombre or '—' }}</strong>
                         <small class="mono">{{ d.cliente_rut or '—' }}</small>
                       </div>
                     </td>
-                    <td data-label="Líneas" class="num"><strong>{{ d.n_lineas or 0 }}</strong></td>
-                    <td data-label="Peso" class="num">{{ "%.1f"|format(d.peso_real_kg|float) }} kg</td>
-                    <td data-label="Saldo">
+                    <td data-label="Líneas" class="num" data-sort-key="lineas" data-sort-value="{{ d.n_lineas or 0 }}"><strong>{{ d.n_lineas or 0 }}</strong></td>
+                    <td data-label="Peso" class="num" data-sort-key="peso" data-sort-value="{{ d.peso_real_kg|float }}">{{ "%.1f"|format(d.peso_real_kg|float) }} kg</td>
+                    <td data-label="Total" class="num" data-sort-key="total" data-sort-value="{{ d.valor_total|float if d.valor_total else 0 }}">
+                      {{- "${:,.0f}".format(d.valor_total)|replace(",", ".") if d.valor_total else '—' -}}
+                    </td>
+                    <td data-label="Saldo" data-sort-key="saldo" data-sort-value="{{ 'Con saldo' if d.con_saldo == 1 else ('Sin saldo' if d.con_saldo == 0 else 'No verificado') }}">
                       {% if d.con_saldo == 1 %}
                         <span class="td-pill td-pill-ok"><i class="bi bi-check-circle"></i>Con saldo</span>
                       {% elif d.con_saldo == 0 %}
@@ -458,6 +568,21 @@
                       {% else %}
                         <span class="td-pill"><i class="bi bi-question-circle"></i>No verif.</span>
                       {% endif %}
+                    </td>
+                    <td data-label="Asociado por" data-sort-key="asociado" data-sort-value="{{ d.added_by or '' }}">
+                      <div class="td-asoc">
+                        <strong>{{ d.added_by or '—' }}</strong>
+                        <small>{{ d.added_at | chile_fmt if d.added_at else '—' }}</small>
+                        {% if d.motivo_otro_rut %}
+                        <details class="otro-rut-badge">
+                          <summary><i class="bi bi-exclamation-triangle-fill"></i> Otro RUT</summary>
+                          <div class="otro-rut-detail">
+                            <strong>Motivo:</strong> {{ d.motivo_otro_rut }}<br>
+                            <strong>Justificado por:</strong> {{ d.otro_rut_por or '—' }}{% if d.otro_rut_en %} · {{ d.otro_rut_en | chile_fmt }}{% endif %}
+                          </div>
+                        </details>
+                        {% endif %}
+                      </div>
                     </td>
                     <td data-label="Acciones" class="acciones">
                       <button type="button" class="td-btn td-btn-prods"
@@ -475,11 +600,11 @@
                   {% endfor %}
                 {% else %}
                   <tr class="ilus-tabla-empty-row" id="rowDocsVacio">
-                    <td colspan="8">
+                    <td colspan="12">
                       <div class="ilus-tabla-empty">
                         <i class="bi bi-inbox"></i>
                         <strong>Aún no hay documentos asociados</strong>
-                        <small>Haz click en el botón rojo de arriba para buscar y agregar facturas/boletas.</small>
+                        <small>Haz click en "Asociar documento" arriba para buscar y agregar facturas/boletas.</small>
                       </div>
                     </td>
                   </tr>

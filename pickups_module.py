@@ -606,6 +606,14 @@ def register_pickup_routes(app, ctx):
             "ALTER TABLE pickup_request_docs ADD COLUMN has_seleccion_lineas TINYINT(1) "
             "NOT NULL DEFAULT 0 "
             "COMMENT 'Si 1, solo se retiran las líneas marcadas en pickup_doc_lineas'",
+            # 🆕 Daniel — "doc de otro RUT": motivo obligatorio cuando el
+            # documento asociado es de un cliente distinto al del retiro.
+            "ALTER TABLE pickup_request_docs ADD COLUMN motivo_otro_rut VARCHAR(300) NULL "
+            "COMMENT 'Motivo declarado por el operador cuando el doc es de un RUT distinto al del retiro'",
+            "ALTER TABLE pickup_request_docs ADD COLUMN otro_rut_por VARCHAR(160) NULL "
+            "COMMENT 'Quién dejó el motivo de RUT distinto'",
+            "ALTER TABLE pickup_request_docs ADD COLUMN otro_rut_en DATETIME NULL "
+            "COMMENT 'Cuándo se dejó el motivo de RUT distinto'",
             "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_cliente_rut (cliente_rut)",
             "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_doc (document_type, document_number)",
         ]:
@@ -4562,7 +4570,8 @@ def register_pickup_routes(app, ctx):
                 docs_asociados = mysql_fetchall(
                     """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
                               observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                              n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                              n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at,
+                              erp_snapshot, motivo_otro_rut, otro_rut_por, otro_rut_en
                          FROM pickup_request_docs
                         WHERE request_id=%s
                         ORDER BY id ASC""",
@@ -4573,7 +4582,8 @@ def register_pickup_routes(app, ctx):
                     docs_asociados = mysql_fetchall(
                         """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
                                   observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                                  n_lineas, added_by, added_at
+                                  n_lineas, added_by, added_at, erp_snapshot,
+                                  motivo_otro_rut, otro_rut_por, otro_rut_en
                              FROM pickup_request_docs
                             WHERE request_id=%s
                             ORDER BY id ASC""",
@@ -4582,6 +4592,31 @@ def register_pickup_routes(app, ctx):
                 except Exception as _e_docs2:
                     print(f"[pickup_detail] docs_asociados skip: {_e_docs2}", flush=True)
                     docs_asociados = []
+
+            # Enriquecer cada doc con datos leídos del snapshot ERP (fecha de
+            # emisión y valor del documento). erp_snapshot guarda hdr["fecha"]
+            # tal como lo arma _cubicador_fetch (app.py) — YA viene formateado
+            # "dd/mm/aaaa" (ver erp_engine.fetch_document y el fallback SQL
+            # _cubicador_fetch_doc_via_sql: ambos hacen strftime("%d/%m/%Y")
+            # antes de guardarlo), así que NO se reformatea acá (REGLA #6 ya
+            # cumplida en origen) — se deja tal cual vino, o None si no hay dato.
+            import json as _json_detail
+            for _d in docs_asociados:
+                _d["fecha_emision"] = None
+                _d["valor_total"] = None
+                _snap_raw = _d.get("erp_snapshot")
+                if not _snap_raw:
+                    continue
+                try:
+                    _snap = _json_detail.loads(_snap_raw)
+                    _hdr_snap = (_snap or {}).get("hdr") or {}
+                    _d["fecha_emision"] = _hdr_snap.get("fecha") or None
+                    _valor_snap = _hdr_snap.get("valor_bruto") or _hdr_snap.get("valor_neto")
+                    _d["valor_total"] = (
+                        float(_valor_snap) if _valor_snap not in (None, "") else None
+                    )
+                except Exception:
+                    pass  # snapshot ausente/corrupto → fecha_emision/valor_total quedan None
 
             return render_template(
                 "retiros/internal_detail.html",
@@ -5139,12 +5174,17 @@ def register_pickup_routes(app, ctx):
         _hit = _DOCS_CACHE.get(rid)
         if _hit and (_time_docs.time() - _hit[1]) < _DOCS_TTL:
             return jsonify(_hit[0])
+        # FIX revisor (2026-09-16): este endpoint alimenta refrescarDocsAsociados()
+        # tras CADA asociar/quitar (sin recargar la página) — sin estas columnas,
+        # la tabla se veía completa al cargar (SSR de pickup_detail) pero perdía
+        # Emisión/Total/"Asociado por"/badge "Otro RUT" en cada refresh en vivo.
         try:
             rows = mysql_fetchall(
                 """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
                           observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
                           n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at,
-                          has_seleccion_lineas
+                          has_seleccion_lineas, erp_snapshot,
+                          motivo_otro_rut, otro_rut_por, otro_rut_en
                      FROM pickup_request_docs
                     WHERE request_id=%s
                     ORDER BY id ASC""",
@@ -5156,22 +5196,34 @@ def register_pickup_routes(app, ctx):
                 rows = mysql_fetchall(
                     """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
                               observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                              n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                              n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at,
+                              has_seleccion_lineas, erp_snapshot
                          FROM pickup_request_docs
                         WHERE request_id=%s
                         ORDER BY id ASC""",
                     (rid,)
                 ) or []
             except Exception:
-                rows = mysql_fetchall(
-                    """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
-                              observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                              n_lineas, added_by, added_at
-                         FROM pickup_request_docs
-                        WHERE request_id=%s
-                        ORDER BY id ASC""",
-                    (rid,)
-                ) or []
+                try:
+                    rows = mysql_fetchall(
+                        """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                                  observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                                  n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                             FROM pickup_request_docs
+                            WHERE request_id=%s
+                            ORDER BY id ASC""",
+                        (rid,)
+                    ) or []
+                except Exception:
+                    rows = mysql_fetchall(
+                        """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                                  observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                                  n_lineas, added_by, added_at
+                             FROM pickup_request_docs
+                            WHERE request_id=%s
+                            ORDER BY id ASC""",
+                        (rid,)
+                    ) or []
         out = []
         # 🔧 FIX Daniel 2026-05-24: para docs con selección granular, contar
         # cuántas líneas el operador realmente marcó (incluida=1). Antes el
@@ -5200,9 +5252,25 @@ def register_pickup_routes(app, ctx):
                 d["added_at"] = str(d["added_at"])[:19]
             if d.get("saldo_checked_at"):
                 d["saldo_checked_at"] = str(d["saldo_checked_at"])[:19]
+            if d.get("otro_rut_en"):
+                d["otro_rut_en"] = str(d["otro_rut_en"])[:19]
             d["has_seleccion_lineas"] = bool(d.get("has_seleccion_lineas"))
             # Líneas realmente incluidas (solo si hay selección granular)
             d["n_lineas_seleccionadas"] = sel_counts.get(d.get("id"))
+            # Emisión/Total desde el snapshot ERP guardado al asociar — mismo
+            # enrichment que pickup_detail (fuente única: erp_snapshot.hdr).
+            d["fecha_emision"] = None
+            d["valor_total"] = None
+            _snap_raw = d.pop("erp_snapshot", None)
+            if _snap_raw:
+                try:
+                    import json as _json_pdl
+                    _hdr_snap = (_json_pdl.loads(_snap_raw) or {}).get("hdr") or {}
+                    d["fecha_emision"] = _hdr_snap.get("fecha") or None
+                    _valor_snap = _hdr_snap.get("valor_bruto") or _hdr_snap.get("valor_neto")
+                    d["valor_total"] = float(_valor_snap) if _valor_snap not in (None, "") else None
+                except Exception:
+                    pass  # snapshot ausente/corrupto → quedan None
             out.append(d)
         totales = _pickup_recalc_totales(rid)
         # Conteo de docs con saldo (para habilitar el paso 4 del wizard)
@@ -5442,7 +5510,13 @@ def register_pickup_routes(app, ctx):
             print(f"[pickup_doc_agregar] ensure tables falló: {_e_ensure}", flush=True)
         _lap("ensure_tables")
 
-        req = mysql_fetchone(f"SELECT id, code FROM `{REQ}` WHERE id=%s", (rid,))
+        # customer_rut/customer_name/status agregados (Daniel — regla "doc de
+        # otro RUT") para poder comparar contra el RUT del documento del ERP
+        # y para el log_event de trazabilidad más abajo.
+        req = mysql_fetchone(
+            f"SELECT id, code, customer_rut, customer_name, status FROM `{REQ}` WHERE id=%s",
+            (rid,)
+        )
         if not req:
             return jsonify({"ok": False, "error": "Retiro no existe"}), 404
         body = request.get_json(silent=True) or {}
@@ -5673,6 +5747,48 @@ def register_pickup_routes(app, ctx):
             email_doc = ""  # no es email válido
         added_by = g.user["nombre"] if getattr(g, "user", None) else "interno"
 
+        # ── Motivo obligatorio si el doc es de un RUT distinto al del retiro ──
+        # (Daniel — "doc de otro cliente"): comparamos el CUERPO del RUT (sin
+        # DV) del documento del ERP contra el cuerpo del RUT declarado en el
+        # retiro. Reusa el MISMO helper de normalización que ya usan /ficha y
+        # /retiros-activos (ctx["_rut_cuerpo"] de app.py; fallback local
+        # _pickup_rut_cuerpo más arriba en este archivo) — NO se reinventa
+        # lógica de limpieza de RUT.
+        _rut_cuerpo_fn = ctx.get("_rut_cuerpo") or _pickup_rut_cuerpo
+        _doc_rut_cuerpo = _rut_cuerpo_fn(cliente_rut) or ""
+        _req_rut_cuerpo = _rut_cuerpo_fn(req.get("customer_rut") or "") or ""
+        motivo_otro_rut_in = (body.get("motivo_otro_rut") or "").strip()[:300]
+        motivo_otro_rut_val = None
+        otro_rut_por_val = None
+        otro_rut_en_val = None
+        if _doc_rut_cuerpo and _req_rut_cuerpo and _doc_rut_cuerpo != _req_rut_cuerpo:
+            if not motivo_otro_rut_in:
+                # Bloquea el INSERT — el frontend pide el motivo con ilusPrompt
+                # (REGLA #1, nunca prompt() nativo) y reintenta el mismo POST
+                # agregando motivo_otro_rut al body.
+                return jsonify({
+                    "ok": False,
+                    "error": "MOTIVO_REQUERIDO",
+                    "code": "MOTIVO_REQUERIDO",
+                    "doc_cliente_nombre": cliente_nombre,
+                    "doc_cliente_rut": format_rut(cliente_rut) if cliente_rut else "",
+                    "req_cliente_nombre": req.get("customer_name") or "",
+                    "req_cliente_rut": req.get("customer_rut") or "",
+                }), 409
+            # Motivo presente → se asocia igual, dejando trazabilidad.
+            # FIX revisor (2026-09-16): guardar en UTC, NO en hora Chile —
+            # el template/JS lo muestran con chile_fmt/_chileFmtStr, que
+            # RESTAN el offset de Chile asumiendo que el crudo es UTC (mismo
+            # criterio que added_at/saldo_checked_at, REGLA #6). Con
+            # _now_chile() ya convertida, el offset se restaba DOS veces y
+            # la hora mostrada quedaba ~3-4h antes de la real.
+            motivo_otro_rut_val = motivo_otro_rut_in
+            otro_rut_por_val = g.user["nombre"] if getattr(g, "user", None) else "interno"
+            otro_rut_en_val = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        # Si el RUT coincide (o no se pudo determinar el RUT de alguno de los
+        # dos lados) → comportamiento actual sin cambios: los 3 quedan None
+        # y el INSERT los graba NULL.
+
         # ── Calcular saldo del documento (Daniel 2026-05-23 wizard) ──
         # 🔧 FIX 2026-09-14 (bug real: boleta 23501 mostraba "Sin saldo"
         # teniendo saldo en ERP): la versión original sumaba líneas ZZ
@@ -5790,13 +5906,16 @@ def register_pickup_routes(app, ctx):
                           cliente_rut, cliente_nombre, observaciones_erp,
                           peso_real_kg, peso_vol_kg, volumen_m3, n_lineas,
                           erp_snapshot, added_by, con_saldo, saldo_zz, saldo_checked_at,
-                          email_cliente_erp, has_seleccion_lineas)
-                       VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,NOW(), %s, %s)""",
+                          email_cliente_erp, has_seleccion_lineas,
+                          motivo_otro_rut, otro_rut_por, otro_rut_en)
+                       VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,NOW(), %s, %s,
+                               %s,%s,%s)""",
                     (rid, tipo, numero,
                      cliente_rut, cliente_nombre, obs,
                      total_kg, total_vol_kg, total_m3, len(lineas or []),
                      snapshot_json, added_by, con_saldo_val, saldo_zz_val,
-                     email_doc or None, has_sel_initial)
+                     email_doc or None, has_sel_initial,
+                     motivo_otro_rut_val, otro_rut_por_val, otro_rut_en_val)
                 )
                 new_doc_id = _cur_doc.lastrowid
                 # ⚡ UPSERT líneas en la MISMA transacción (si vinieron en body)
@@ -5879,6 +5998,23 @@ def register_pickup_routes(app, ctx):
         _lap("insert_doc")
         if upsert_rows:
             _lap("upsert_lineas_inline")
+
+        # Trazabilidad (Daniel — "doc de otro RUT"): si se asoció con motivo,
+        # dejar constancia en el tab Historial de la ficha (ya existe, no se
+        # toca — solo se agrega este log_event). Síncrono porque log_event
+        # usa mysql_execute() con contexto Flask (no puede ir al thread
+        # daemon de abajo, que corre fuera del request context).
+        if motivo_otro_rut_val:
+            try:
+                log_event(
+                    rid, "doc_otro_rut", req.get("status"), req.get("status"),
+                    f"Asoció {tipo} {numero} de un RUT distinto al cliente "
+                    f"({motivo_otro_rut_val[:200]})",
+                    "interno", otro_rut_por_val,
+                )
+            except Exception as _e_log_rut:
+                print(f"[pickup_doc_agregar] log_event doc_otro_rut falló: {_e_log_rut}",
+                      flush=True)
 
         # ⚡ PERF: invalidar caches AHORA (antes del thread). Si el operador
         # hace polling enseguida, debe ver el nuevo doc. Costo: <1ms (pops
