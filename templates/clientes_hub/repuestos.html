@@ -345,7 +345,11 @@ document.addEventListener('DOMContentLoaded', function(){
   // de Bodega o #bodega, gana Bodega. Si no, la última que usaste.
   const p = new URLSearchParams(location.search);
   const tieneSeg = p.get('q') || p.get('estado') || p.get('ticket') || (p.get('orden') && p.get('orden') !== 'fecha_desc');
-  const tieneBod = p.get('bq') || p.get('marca_id') || p.get('ubicacion_id') || p.get('bajo_minimo') || p.get('bpage');
+  // 2026-09-16: sin_costo/sin_modelo/pendiente_modelo/descontinuado tambien
+  // son filtros de Bodega -- si no se listan aca, al filtrar por ellos la
+  // pagina podia abrir en la pestana Seguimiento y el filtro "no hacia nada".
+  const tieneBod = p.get('bq') || p.get('marca_id') || p.get('ubicacion_id') || p.get('bajo_minimo') ||
+                   p.get('sin_costo') || p.get('sin_modelo') || p.get('pendiente_modelo') || p.get('descontinuado') || p.get('bpage');
   let elegida = 'bodega';
   if (location.hash === '#bodega' || tieneBod) elegida = 'bodega';
   else if (tieneSeg) elegida = 'seguimiento';
