@@ -62,7 +62,11 @@ table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#f87171;}
    el scroll del propio wrap, no contra la página. */
 .cat-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;
   overflow:auto;max-height:calc(100vh - 300px);box-shadow:0 1px 3px rgba(0,0,0,.04);}
-table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:900px;}
+/* 2026-09-16: min-width sube de 900 a 1040 por la columna extra
+   (Creado + Última modificación en vez de "Actualizado"); el wrap ya
+   tiene overflow:auto, así que en móvil la tabla sigue contenida y
+   scrollea horizontal DENTRO del wrap, no la página. */
+table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:1040px;}
 /* 2026-07-23 (Daniel, insiste: "quiero ver una tabla con el diseño...
    estandarizado que tenemos en la página"): el thead vivía en gris claro
    (#f8f9fb) -- el mismo patrón "Triple A" viejo que ya se reemplazó en
@@ -80,7 +84,27 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .cat-thumb-ph{width:40px;height:40px;border-radius:8px;background:#f3f4f6;border:1px solid #eaecf0;
   display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:1.05rem;}
 .cat-sku{font-family:'JetBrains Mono',monospace;font-size:.76rem;font-weight:800;color:#0f172a;}
-.cat-nombre{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;}
+/* 2026-09-16 (Regla #15, "nombres siempre completos, nunca truncados"):
+   antes el nombre iba en nowrap + ellipsis a 260px y los modelos largos de
+   ILUS quedaban cortados. Ahora envuelve en 2-3 líneas dentro de un ancho
+   acotado -- se lee entero sin ensanchar la tabla. */
+.cat-nombre{font-weight:700;color:#0f172a;white-space:normal;overflow:visible;text-overflow:clip;
+  min-width:200px;max-width:320px;line-height:1.25;overflow-wrap:anywhere;}
+/* Chips del modelo bajo el nombre (2026-09-16): "Descontinuado" en GRIS a
+   propósito (ámbar = pendiente, rojo = bajo mínimo en Repuestos) y
+   "Manual · no está en ERP" en gris más claro. */
+.cat-chips-modelo{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;}
+.cat-chip-modelo{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:50px;
+  font-size:.64rem;font-weight:800;white-space:nowrap;border:1px solid #d1d5db;background:#f3f4f6;color:#6b7280;}
+.cat-chip-modelo.descontinuado{background:#f3f4f6;color:#6b7280;border-color:#d1d5db;}
+.cat-chip-modelo.manual{background:#f9fafb;color:#6b7280;border-color:#e5e7eb;}
+/* Celda "quién y cuándo" (Creado / Última modificación), 2026-09-16 (Daniel:
+   "siempre quién y cuándo"): fecha arriba, persona abajo en muted, sin truncar. */
+.cat-qc{display:flex;flex-direction:column;gap:1px;min-width:120px;}
+.cat-qc-fecha{white-space:nowrap;color:#0f172a;font-weight:600;font-size:.78rem;}
+.cat-qc-quien{color:#6b7280;font-size:.7rem;display:inline-flex;align-items:center;gap:3px;
+  white-space:normal;overflow-wrap:anywhere;line-height:1.2;}
+.cat-qc-quien i{font-size:.7rem;opacity:.7;}
 .cat-badge-fotos{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.7rem;font-weight:800;white-space:nowrap;}
 .cat-badge-fotos.full{background:#dcfce7;color:#166534;}
 .cat-manual-ic{font-size:1.05rem;}
