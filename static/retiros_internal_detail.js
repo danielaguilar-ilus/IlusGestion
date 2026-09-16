@@ -865,12 +865,22 @@ async function refrescarTablaProductos(){
       // 🆕 Daniel 2026-05-24: badge ámbar para líneas marcadas SIN saldo en ERP
       // (el operador las incluyó manualmente aunque Random las reporte como ya
       // entregadas). Da aviso visual sin bloquear la operación.
-      const sinSaldoBadge = ln.marcada_sin_saldo
-        ? '<span class="td-sin-saldo-badge" title="Esta línea ya estaba rebajada en el ERP Random (figura como entregada). El operador la incluyó igualmente porque el cliente viene a retirarla.">'
+      // 2026-09-16: si hay motivo_sin_saldo guardado (trazabilidad, mismo
+      // patrón que "Otro RUT" en la tabla de documentos), el badge se
+      // expande a un <details> con motivo + quién + cuándo. Líneas viejas
+      // (asociadas antes de este fix) no tienen motivo -- badge simple.
+      const sinSaldoBadge = !ln.marcada_sin_saldo ? '' : (ln.motivo_sin_saldo
+        ? `<details class="td-sin-saldo-badge td-sin-saldo-badge-details">
+            <summary><i class="bi bi-exclamation-triangle-fill"></i> Ya rebajado en ERP</summary>
+            <div class="otro-rut-detail">
+              <strong>Motivo:</strong> ${_esc(ln.motivo_sin_saldo)}<br>
+              <strong>Justificado por:</strong> ${_esc(ln.sin_saldo_por || '—')}${ln.sin_saldo_en ? ' · ' + _chileFmtStr(ln.sin_saldo_en) : ''}
+            </div>
+          </details>`
+        : '<span class="td-sin-saldo-badge" title="Esta línea ya estaba rebajada en el ERP Random (figura como entregada). El operador la incluyó igualmente porque el cliente viene a retirarla.">'
           + '<i class="bi bi-exclamation-triangle-fill"></i>'
           + '<span>Ya rebajado en ERP</span>'
-          + '</span>'
-        : '';
+          + '</span>');
       const rowCls = ln.marcada_sin_saldo ? ' class="td-row-sin-saldo"' : '';
       return `<tr${rowCls}>
         <td data-label="SKU" class="mono">${_esc(ln.sku || '—')}</td>
@@ -2119,6 +2129,10 @@ const _RBA = {
   selCli: new Map(),    // key=`${tipo}|${nudo}` -> {tido, nudo, sku, nombre, qty, saldo}
   loaded: { docHeader: null, cliQuery: null },
   _liveTimer: null,
+  // 🆕 Daniel 2026-09-16: último motivo declarado para una línea sin saldo,
+  // ofrecido para reutilizar en el resto del lote (mismo patrón que _TKA en
+  // el modal de Tickets, _tkaPedirMotivoSinSaldo).
+  ultimoMotivoSinSaldo: '',
 };
 
 // 🔧 BUG FIX Daniel 2026-05-24: helper que deja el modal en estado LIMPIO.
@@ -2133,6 +2147,7 @@ function _rbaResetEstado(){
   _RBA.loaded.docHeader = null;
   _RBA.loaded.cliQuery = null;
   _RBA.tab = 'doc';  // siempre arrancar en tab "Por documento"
+  _RBA.ultimoMotivoSinSaldo = '';
 
   // 2. Inputs
   const inpNudo = document.getElementById('rbaDocNudo');
@@ -2521,29 +2536,57 @@ function _rbaStockBadge(l){
     + '<i class="bi bi-info-circle-fill"></i>' + _esc(texto) + '</span>';
 }
 
-function rbaToggleAllDoc(checked){
-  // FIX Daniel 2026-05-24: el label dice "Seleccionar todas las líneas con
-  // saldo" → debemos respetarlo. Antes marcaba TODAS (incluso las sin saldo)
-  // y disparaba 5+ toasts en cascada de "ya fue rebajado". Ahora:
-  //   - Al marcar (checked=true): solo toca las con saldo (isZero=0).
-  //   - Al desmarcar (checked=false): desmarca TODAS (consistente con UX).
-  const inputs = document.querySelectorAll('#rbaDocResult input[type="checkbox"][data-line-key]');
-  let nAffected = 0;
-  inputs.forEach(inp => {
-    if (inp.disabled) return;
-    const isZero = inp.dataset.isZero === '1';
-    // FIX 2026-08-03: tampoco marcar por encima una línea sin stock en
-    // bodega 02 al usar "seleccionar todas" -- mismo criterio que "sin saldo".
-    const sinStockBod = inp.dataset.sinStock === '1';
-    if (checked && (isZero || sinStockBod)) return;   // ← no marcar las sin saldo/sin stock al usar "todas"
-    if (inp.checked === checked) return;  // ya está como queremos
-    inp.checked = checked;
-    rbaToggleLineaDoc(inp, /*silent=*/true);  // silent: este es un cambio masivo, no manual
-    nAffected++;
+// 🆕 Daniel 2026-09-16: "es peligroso... si una persona está generando algo
+// que ya tiene una guía y que se entregó" -- justificación obligatoria con
+// trazabilidad (quién/cuándo/por qué) al incluir una línea sin saldo ERP.
+// Espejo exacto de _tkaPedirMotivoSinSaldo (templates/tickets/_tka_modal.html):
+// autoReuse=true (usado solo desde el flujo de selección masiva) ofrece
+// reutilizar el motivo del producto anterior sin volver a preguntar "¿reusar?"
+// -- fuera de ese flujo (click manual línea por línea) SIEMPRE se confirma.
+async function _rbaPedirMotivoSinSaldo(nombre, autoReuse){
+  if (autoReuse && _RBA.ultimoMotivoSinSaldo){
+    return _RBA.ultimoMotivoSinSaldo;
+  }
+  if (_RBA.ultimoMotivoSinSaldo){
+    const reusar = await ilusConfirm({
+      title: 'Producto sin saldo disponible',
+      message: `"${nombre}" tampoco tiene saldo. ¿Usar el mismo motivo declarado para los equipos anteriores?`,
+      sub: `"${_esc(_RBA.ultimoMotivoSinSaldo)}"`,
+      subHtml: true,
+      okLabel: 'Usar el mismo motivo', cancelLabel: 'Escribir uno distinto',
+      type: 'warning',
+    });
+    if (reusar) return _RBA.ultimoMotivoSinSaldo;
+  }
+  const motivo = await ilusPrompt({
+    title: 'Producto sin saldo disponible',
+    message: `"${nombre}" ya fue rebajado del sistema (aparentemente ya tiene guía/entrega). Explica por qué se debe incluir igual:`,
+    placeholder: 'Ej: cliente reporta que nunca llegó, se reemplaza por garantía…',
+    required: true, type: 'warning',
   });
+  if (motivo) _RBA.ultimoMotivoSinSaldo = motivo;
+  return motivo;
+}
+// 2026-09-16 (Daniel): antes este botón saltaba a propósito las líneas sin
+// saldo -- ahora las incluye pidiendo motivo (secuencial, no en paralelo,
+// para que "pedir motivo, ofrecer reutilizarlo en las siguientes" funcione
+// igual que si el usuario las marcara una por una). Sin stock en bodega 02
+// sigue excluido del "todas" -- es un problema de bodega, no de saldo ERP.
+async function rbaToggleAllDoc(checked){
+  const inputs = Array.from(document.querySelectorAll('#rbaDocResult input[type="checkbox"][data-line-key]'));
+  let nAffected = 0;
+  for (const inp of inputs){
+    if (inp.disabled) continue;
+    const sinStockBod = inp.dataset.sinStock === '1';
+    if (checked && sinStockBod) continue;
+    if (inp.checked === checked) continue;  // ya está como queremos
+    inp.checked = checked;
+    await rbaToggleLineaDoc(inp, /*silent=*/false, /*autoReuse=*/true);
+    nAffected++;
+  }
   console.log('[rba] toggleAll:', checked, '— líneas afectadas:', nAffected);
 }
-function rbaToggleLineaDoc(inp, silent){
+async function rbaToggleLineaDoc(inp, silent, autoReuse){
   const chkBox = inp.closest('.rba-chk');
   const row = inp.closest('.rba-line');
   const key = inp.dataset.lineKey;
@@ -2551,13 +2594,13 @@ function rbaToggleLineaDoc(inp, silent){
   const nombre = inp.dataset.nombre;
   const isZero = inp.dataset.isZero === '1';
   const qtyInp = document.querySelector(`#rbaDocResult input.ln-qty-input[data-line-key="${key}"]`);
-  // Daniel 2026-05-24: si la línea NO tiene saldo y el operador la marca,
-  // mostrar aviso amable y dejar marcado (no bloquear).
-  // silent=true desactiva el toast (usado por auto-poblado post-render y toggleAll).
+  let motivo = (_RBA.selDoc.get(key) || {}).motivo_sin_saldo || '';
+  // Daniel 2026-05-24 → 2026-09-16: si la línea NO tiene saldo, ya no basta
+  // el aviso amable -- se pide motivo obligatorio (con trazabilidad) antes
+  // de dejarla marcada. silent=true (auto-poblado post-render) no pregunta.
   if (inp.checked && isZero && !silent){
-    ilusToast(`ℹ "${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, {
-      type: 'info', duration: 4500
-    });
+    motivo = await _rbaPedirMotivoSinSaldo(nombre, autoReuse);
+    if (!motivo){ inp.checked = false; return; }
     if (qtyInp && parseFloat(qtyInp.value || 0) === 0){
       qtyInp.value = 1;
     }
@@ -2574,6 +2617,9 @@ function rbaToggleLineaDoc(inp, silent){
       // 🆕 Daniel 2026-05-24: persistir "ya rebajado en ERP" para badge
       // ámbar en tabla externa después de asociar.
       marcada_sin_saldo: isZero,
+      // 🆕 Daniel 2026-09-16: motivo obligatorio + trazabilidad (backend
+      // agrega quién/cuándo) -- ver _apply_lineas_seleccion_inline.
+      motivo_sin_saldo: isZero ? motivo : '',
     });
     if (!silent) console.log('[rba] línea marcada: SKU=', sku, 'qty=', qty, isZero?'(sin saldo ERP)':'');
   } else {
@@ -2838,23 +2884,24 @@ async function rbaToggleDocCli(idx){
     body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_esc(e.message)}</div>`;
   }
 }
-function rbaToggleLineaCli(inp, silent){
+async function rbaToggleLineaCli(inp, silent, autoReuse){
+  const key = inp.dataset.lineKey;
+  const isZero = inp.dataset.isZero === '1';
+  const nombre = inp.dataset.nombre;
+  let motivo = (_RBA.selCli.get(key) || {}).motivo_sin_saldo || '';
+  // Daniel 2026-05-24 → 2026-09-16: motivo obligatorio (mismo criterio que
+  // rbaToggleLineaDoc, ver _rbaPedirMotivoSinSaldo) al marcar una línea sin
+  // saldo. silent=true desactiva el prompt (usado por auto-poblado post-render).
+  if (inp.checked && isZero && !silent){
+    motivo = await _rbaPedirMotivoSinSaldo(nombre, autoReuse);
+    if (!motivo){ inp.checked = false; return; }
+    const qtyInpZ = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
+    if (qtyInpZ && parseFloat(qtyInpZ.value || 0) === 0) qtyInpZ.value = 1;
+  }
   const chkBox = inp.closest('.rba-chk');
   if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
   const row = inp.closest('.rba-line');
   if (row) row.classList.toggle('is-selected', inp.checked);
-  const key = inp.dataset.lineKey;
-  const isZero = inp.dataset.isZero === '1';
-  const nombre = inp.dataset.nombre;
-  // Daniel 2026-05-24: aviso amable si marca una línea sin saldo (entregada)
-  // silent=true desactiva el toast (usado por auto-poblado post-render)
-  if (inp.checked && isZero && !silent){
-    ilusToast(`ℹ "${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, {
-      type: 'info', duration: 4500
-    });
-    const qtyInpZ = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
-    if (qtyInpZ && parseFloat(qtyInpZ.value || 0) === 0) qtyInpZ.value = 1;
-  }
   // qty actual: tomar del input si existe (puede haberse editado)
   const qtyInp = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
   const qtyEff = qtyInp ? (parseFloat(qtyInp.value || 0) || 0) : (parseFloat(inp.dataset.qty) || 0);
@@ -2869,6 +2916,8 @@ function rbaToggleLineaCli(inp, silent){
       // 🆕 Daniel 2026-05-24: persistir "ya rebajado en ERP" para badge
       // ámbar en tabla externa después de asociar.
       marcada_sin_saldo: isZero,
+      // 🆕 Daniel 2026-09-16: motivo obligatorio + trazabilidad.
+      motivo_sin_saldo: isZero ? motivo : '',
     });
   } else {
     _RBA.selCli.delete(key);
@@ -3040,6 +3089,7 @@ async function rbaAsociarSeleccion(){
         lineas.push({
           sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo,
           marcada_sin_saldo: !!it.marcada_sin_saldo,
+          motivo_sin_saldo: it.motivo_sin_saldo || '',
         });
       }
     });
@@ -3059,6 +3109,7 @@ async function rbaAsociarSeleccion(){
     docsToAdd.get(key).lineas.push({
       sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo,
       marcada_sin_saldo: !!it.marcada_sin_saldo,
+      motivo_sin_saldo: it.motivo_sin_saldo || '',
     });
   });
 
@@ -3097,6 +3148,9 @@ async function rbaAsociarSeleccion(){
           // 🆕 Daniel 2026-05-24: el backend guarda esta flag por línea para
           // mostrar badge ámbar "ya rebajado en ERP" en la tabla externa.
           marcada_sin_saldo: !!ln.marcada_sin_saldo,
+          // 🆕 Daniel 2026-09-16: motivo obligatorio + trazabilidad (el
+          // backend agrega quién/cuándo — ver _apply_lineas_seleccion_inline).
+          motivo_sin_saldo: ln.motivo_sin_saldo || '',
         }));
       // 🆕 Daniel 2026-09-16: pasa por _rbaPostDocsAgregar — si el doc es de
       // un RUT distinto al del cliente del retiro, pide el motivo con

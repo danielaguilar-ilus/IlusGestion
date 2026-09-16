@@ -755,6 +755,23 @@
   @media (max-width: 768px){
     .td-sin-saldo-badge{margin-top:4px;font-size:.68rem}
   }
+  /* 🆕 Daniel 2026-09-16: variante <details> del badge -- motivo + quién +
+     cuándo, mismo criterio que "Otro RUT" en la tabla de documentos
+     (.otro-rut-badge/.otro-rut-detail en internal_detail.html). */
+  details.td-sin-saldo-badge-details{
+    display:inline-block;background:none;border:none;box-shadow:none;
+    padding:0;margin-top:6px;white-space:normal;
+  }
+  details.td-sin-saldo-badge-details summary{
+    list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    background:linear-gradient(180deg,#fff8e1 0%,#fef3c7 100%);
+    border:1px solid #fcd34d;border-radius:50px;
+    padding:3px 9px;font-size:.7rem;font-weight:800;color:#92400e;
+    letter-spacing:.01em;box-shadow:0 1px 2px rgba(245,158,11,.18);
+  }
+  details.td-sin-saldo-badge-details summary::-webkit-details-marker{display:none}
+  details.td-sin-saldo-badge-details summary i{font-size:.78rem;color:#d97706}
+  details.td-sin-saldo-badge-details .otro-rut-detail{max-width:280px}
 
   .ilus-tabla-empty-row td{background:#fafafa !important;padding:0 !important}
   .ilus-tabla-empty{

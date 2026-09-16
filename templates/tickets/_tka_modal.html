@@ -1677,9 +1677,9 @@ function tkaRenderDocLineas(lineas, fetchMs){
   html += `<div class="tka-master-bar">
     <label>
       <span class="tka-chk" id="tkaMasterChkDoc"><input type="checkbox" onchange="tkaToggleAllDoc(this.checked)"><span class="tka-chk-mark">✓</span></span>
-      Seleccionar todas las líneas con saldo
+      Seleccionar todas las líneas
     </label>
-    <span class="tka-master-info">${lineas.filter(l => _tkaSaldoLinea(l) > 0).length} con saldo · ${lineas.filter(l => _tkaSaldoLinea(l) === 0).length} sin saldo</span>
+    <span class="tka-master-info">${lineas.filter(l => _tkaSaldoLinea(l) > 0).length} con saldo · ${lineas.filter(l => _tkaSaldoLinea(l) === 0).length} sin saldo${lineas.some(l => _tkaSaldoLinea(l) === 0) ? ' (piden motivo)' : ''}</span>
   </div>`;
   html += '<div>';
   lineas.forEach((l, i) => {
@@ -1744,22 +1744,31 @@ function tkaRenderDocLineas(lineas, fetchMs){
     });
   }, 50);
 }
-function tkaToggleAllDoc(checked){
-  const inputs = document.querySelectorAll('#tkaDocResult input[type="checkbox"][data-line-key]');
-  inputs.forEach(inp => {
-    if (inp.disabled) return;
-    const isZero = inp.dataset.isZero === '1';
-    // FIX 2026-08-03: "Seleccionar todas las líneas con saldo" tampoco debe
-    // marcar por encima una línea sin stock en bodega 02 -- mismo criterio
-    // que ya aplica para "sin saldo".
+// 2026-09-16 (Daniel, viendo esta pestaña sin saldo bloqueado): "para
+// seleccionar todo yo pediría un argumento también... que se lo marquemos
+// a los que ingresemos". Antes este botón saltaba a propósito las líneas
+// sin saldo (ver comentario viejo más abajo en tkaToggleAllCli, que queda
+// desactualizado); ahora sigue el MISMO patrón que ya existía en la
+// pestaña "Por RUT/nombre" (tkaToggleAllCli): secuencial, no en paralelo,
+// para que "pedir motivo, ofrecer reutilizarlo en las siguientes"
+// (_tkaPedirMotivoSinSaldo, autoReuse=true) funcione igual que si el
+// usuario las marcara una por una. Sin stock en bodega 02 (sinStockBod)
+// sigue excluido del "todo" -- es un problema de bodega, no de saldo ERP,
+// y no tiene motivo asociado.
+async function tkaToggleAllDoc(checked){
+  const inputs = Array.from(document.querySelectorAll('#tkaDocResult input[type="checkbox"][data-line-key]'));
+  for (const inp of inputs){
+    if (inp.disabled) continue;
     const sinStockBod = inp.dataset.sinStock === '1';
-    if (checked && (isZero || sinStockBod)) return;
-    if (inp.checked === checked) return;
+    if (checked && sinStockBod) continue;
+    if (inp.checked === checked) continue;
     inp.checked = checked;
-    tkaToggleLineaDoc(inp, /*silent=*/true);
-  });
+    await tkaToggleLineaDoc(inp, /*silent=*/false, /*autoReuse=*/true);
+    // Si el usuario canceló el motivo de una línea sin saldo, tkaToggleLineaDoc
+    // ya la dejó destildada -- no se aborta el resto de la selección masiva.
+  }
 }
-async function tkaToggleLineaDoc(inp, silent){
+async function tkaToggleLineaDoc(inp, silent, autoReuse){
   const chkBox = inp.closest('.tka-chk');
   const row = inp.closest('.tka-line');
   const key = inp.dataset.lineKey;
@@ -1771,7 +1780,7 @@ async function tkaToggleLineaDoc(inp, silent){
   if (inp.checked && isZero && !silent){
     // Daniel 2026-07-12: justificación obligatoria, con opción de reutilizar
     // el mismo motivo entre varios equipos sin saldo (_tkaPedirMotivoSinSaldo).
-    motivo = await _tkaPedirMotivoSinSaldo(nombre);
+    motivo = await _tkaPedirMotivoSinSaldo(nombre, autoReuse);
     if (!motivo){ inp.checked = false; return; }
     if (qtyInp && parseFloat(qtyInp.value || 0) === 0) qtyInp.value = 1;
   }
@@ -1957,15 +1966,14 @@ function tkaRenderCliDocs(docs, modo, fetchMs){
 }
 // 2026-08-28 (Daniel, en vivo -- "coloca un checkbox donde puedas
 // seleccionar y deseleccionar todos los productos del documento que
-// tenga abierto"): a diferencia de "Seleccionar todas las líneas con
-// saldo" de la pestaña "Por documento" (tkaToggleAllDoc, que a propósito
-// NUNCA marca las sin saldo), este botón es el "caso extremo" que Daniel
-// pidió explícitamente: marca TODO, incluidas las sin saldo -- para eso
+// tenga abierto"): marca TODO, incluidas las sin saldo -- para eso
 // reutiliza tkaToggleLineaCli línea por línea (secuencial, no en
 // paralelo) para que el flujo de "pedir motivo, ofrecer reusarlo en las
 // siguientes" (_tkaPedirMotivoSinSaldo) siga funcionando exactamente
 // igual que si el usuario las marcara una por una. Es un TOGGLE: si ya
-// están todas marcadas, el mismo botón las desmarca todas.
+// están todas marcadas, el mismo botón las desmarca todas. Desde
+// 2026-09-16 la pestaña "Por documento" (tkaToggleAllDoc) sigue el
+// mismo criterio -- ver comentario ahí.
 async function tkaToggleAllCli(idx){
   const body = document.getElementById('tkaCliBody-' + idx);
   if (!body) return;
