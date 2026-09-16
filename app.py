@@ -87332,6 +87332,54 @@ def ot2_anexos_list(vid):
     return jsonify({"ok": True, "anexos": [dict(r) for r in rows]})
 
 
+def _anexo_sync_proveedor_ficha(tecnico_externo_id, rut, email, tel):
+    """Corrige RUT/correo/teléfono en la FICHA del proveedor
+    (mant_tecnicos_externos) cuando se editaron desde el modal del Anexo.
+
+    2026-09-16 (Daniel, en vivo, con un dato malo en la ficha de un
+    proveedor: "no me deja editar el teléfono... es muy difícil hacer
+    eso"). El modal ahora deja corregir RUT/correo/teléfono de un
+    proveedor YA elegido (oaxProveedorContactoBox) -- sin esto, la
+    corrección quedaba solo en ESTE anexo y el próximo volvía a tropezar
+    con el mismo dato malo.
+
+    Best-effort y NUNCA bloquea la creación/edición del anexo: si algo
+    falla acá (ej. el RUT corregido choca con otro proveedor por la
+    restricción UNIQUE), se loguea y se sigue -- el anexo ya se guardó
+    bien, lo único que no se propagó fue la corrección a la ficha.
+    Solo escribe un campo si viene un valor y es DISTINTO del que ya
+    tiene la ficha -- nunca lo deja vacío por las dudas (contacto_tel/
+    contacto_email son NOT NULL en mant_tecnicos_externos)."""
+    if not tecnico_externo_id:
+        return
+    try:
+        actual = mysql_fetchone(
+            "SELECT rut_empresa, contacto_tel, contacto_email "
+            "  FROM mant_tecnicos_externos WHERE id=%s", (tecnico_externo_id,))
+        if not actual:
+            return
+        sets, params = [], []
+        if rut and rut != (actual.get("rut_empresa") or ""):
+            sets.append("rut_empresa=%s"); params.append(rut)
+        tel_norm = None
+        if tel:
+            _tel_ok, tel_norm = validar_telefono_chileno(tel)
+            if _tel_ok and tel_norm != (actual.get("contacto_tel") or ""):
+                sets.append("contacto_tel=%s"); params.append(tel_norm)
+        if email and email != (actual.get("contacto_email") or ""):
+            sets.append("contacto_email=%s"); params.append(email)
+        if not sets:
+            return
+        params.append(tecnico_externo_id)
+        mysql_execute(
+            f"UPDATE mant_tecnicos_externos SET {', '.join(sets)} WHERE id=%s",
+            tuple(params))
+        _mant_log("tecnico_externo", tecnico_externo_id, "ficha_corregida_desde_anexo",
+                  f"campos: {', '.join(s.split('=')[0] for s in sets)}")
+    except Exception as e:
+        print(f"[_anexo_sync_proveedor_ficha] tecnico_externo_id={tecnico_externo_id}: {e}", flush=True)
+
+
 @app.route("/ot/api/anexos", methods=["POST"])
 @_mant_required
 def ot2_api_anexo_crear():
@@ -87372,6 +87420,13 @@ def ot2_api_anexo_crear():
             f"El RUT del proveedor no es válido ({_rut_norm_o_err}).",
             "PROVEEDOR_RUT_INVALIDO")
     d["proveedor_rut"] = _rut_norm_o_err   # normalizado con DV, mismo criterio que el resto del proyecto
+    # 2026-09-16: si el RUT/correo/teléfono se corrigieron acá (ver
+    # oaxProveedorContactoBox), la corrección queda también en la ficha del
+    # proveedor -- ver _anexo_sync_proveedor_ficha. Best-effort, nunca
+    # bloquea la creación del anexo.
+    _anexo_sync_proveedor_ficha(
+        d.get("tecnico_externo_id"), _rut_norm_o_err,
+        (d.get("email") or "").strip(), (d.get("tel") or "").strip())
     objetivo = (d.get("objetivo_servicio") or "").strip()
     if not objetivo:
         return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")
@@ -87618,6 +87673,11 @@ def ot2_api_anexo_editar(aid):
             f"El RUT del proveedor no es válido ({_rut_norm_o_err}).",
             "PROVEEDOR_RUT_INVALIDO")
     d["proveedor_rut"] = _rut_norm_o_err
+    # 2026-09-16: mismo sync que ot2_api_anexo_crear -- ver
+    # _anexo_sync_proveedor_ficha.
+    _anexo_sync_proveedor_ficha(
+        d.get("tecnico_externo_id"), _rut_norm_o_err,
+        (d.get("email") or "").strip(), (d.get("tel") or "").strip())
     objetivo = (d.get("objetivo_servicio") or "").strip()
     if not objetivo:
         return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")

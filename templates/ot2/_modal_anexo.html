@@ -192,6 +192,31 @@
             El anexo la necesita para identificar a la contraparte del contrato.
             Puedes cargarla acá abajo y quedará en este anexo.
           </div>
+          {#- 🔴 2026-09-16 (Daniel, en vivo, con un RUT/teléfono de ficha
+              inválido: "no me deja editar el teléfono... es muy difícil
+              hacer eso"). Elegir un proveedor de la lista dejaba su
+              RUT/correo/teléfono de SOLO LECTURA -- si la ficha tenía un
+              dato malo (como en este caso), no había forma de corregirlo
+              sin salir del anexo, ir a Proveedores, arreglarlo y volver.
+              Ahora, con cualquier proveedor de la lista elegido, estos
+              tres campos quedan editables acá mismo; si se corrigen,
+              ot2_api_anexo_crear/editar los guarda TAMBIÉN en la ficha del
+              proveedor (mant_tecnicos_externos) para que no se repita el
+              mismo tropiezo en el próximo anexo. -#}
+          <div id="oaxProveedorContactoBox" style="display:none;margin-top:10px">
+            <div class="row g-2">
+              <div class="col-md-4"><label class="fl">RUT</label>
+                <input class="form-control form-control-sm" id="oaxSelRut" placeholder="12.345.678-9"
+                       oninput="OT2ANX.setContactoSel('rut', this.value); oaxValidarCampoManual(this,'rut')"></div>
+              <div class="col-md-4"><label class="fl">Correo de contacto</label>
+                <input type="email" class="form-control form-control-sm" id="oaxSelEmail"
+                       oninput="OT2ANX.setContactoSel('email', this.value); oaxValidarCampoManual(this,'email')"></div>
+              <div class="col-md-4"><label class="fl">Teléfono</label>
+                <input class="form-control form-control-sm" id="oaxSelTel" placeholder="+56 9 1234 5678"
+                       oninput="OT2ANX.setContactoSel('tel', this.value); oaxValidarCampoManual(this,'tel')"></div>
+            </div>
+            <small class="text-muted d-block mt-1" style="font-size:.72rem">Si corriges algo acá, queda guardado en la ficha de este proveedor para los próximos anexos.</small>
+          </div>
           <div class="oax-check">
             <input type="checkbox" id="oaxProveedorManual" onchange="OT2ANX.toggleManual()">
             <label for="oaxProveedorManual">Proveedor nuevo, no está en la lista</label>
@@ -455,8 +480,20 @@ window.OT2ANX = (function(){
      que ya no está acá, se agrega un fallback razonable: si la OT no trae
      fecha, el anexo por defecto arranca HOY -- mejor que dejarlo vacío
      esperando a que alguien note el hueco. #}
-  var DEF_FECHA_INI = {{ (v.fecha_programada or '') | tojson }};
-  var DEF_FECHA_FIN = {{ (v.fecha_fin or v.fecha_programada or '') | tojson }};
+  {#- 🔴 FIX 2026-09-16 (Daniel, en vivo: "tampoco se basa en el horario de
+      la orden de trabajo" -- los campos salían vacíos aunque la etiqueta
+      dice "Vienen de la fecha de la OT"). v.fecha_programada es un objeto
+      date/datetime de Python: el filtro tojson lo pasa por el serializador
+      JSON de Flask, que para fechas usa formato HTTP ("Wed, 16 Sep 2026,
+      00:00:00 GMT") -- NO "aaaa-mm-dd", el único formato que un campo
+      <input type="date"> acepta. El navegador rechaza ese valor en
+      silencio y el campo queda vacío. El Reagendar de esta misma pantalla
+      (detalle.html, caja otdReagendarBox) no tiene este problema porque
+      interpola el objeto directo con una llave doble simple -- str(date)
+      da ISO solo -- en vez de pasarlo por tojson; acá se logra lo mismo
+      formateando a mano con strftime ANTES de tojson. -#}
+  var DEF_FECHA_INI = {{ (v.fecha_programada.strftime('%Y-%m-%d') if v.fecha_programada else '') | tojson }};
+  var DEF_FECHA_FIN = {{ ((v.fecha_fin or v.fecha_programada).strftime('%Y-%m-%d') if (v.fecha_fin or v.fecha_programada) else '') | tojson }};
   (function(){
     if (DEF_FECHA_INI && DEF_FECHA_FIN) return;
     var _hoy = new Date();
@@ -888,6 +925,17 @@ window.OT2ANX = (function(){
         dirWrap.style.display = S.proveedor_direccion ? '' : 'none';
         if (dirLectura) dirLectura.value = S.proveedor_direccion;
       }
+      // 2026-09-16: RUT/correo/teléfono de la ficha quedan editables acá
+      // mismo (ver oaxProveedorContactoBox) -- se pintan tal cual vienen,
+      // aunque estén vacíos o mal formados, para que se puedan corregir
+      // sin salir del anexo.
+      var cBox = document.getElementById('oaxProveedorContactoBox');
+      if (cBox){
+        cBox.style.display = '';
+        document.getElementById('oaxSelRut').value = S.proveedor_rut;
+        document.getElementById('oaxSelEmail').value = S.email;
+        document.getElementById('oaxSelTel').value = S.tel;
+      }
     } else {
       S.tecnico_externo_id = null;
       S.proveedor_nombre = ''; S.proveedor_rut = ''; S.email = ''; S.tel = '';
@@ -895,6 +943,8 @@ window.OT2ANX = (function(){
       S.proveedor_direccion_lat = null; S.proveedor_direccion_lng = null;
       S.proveedor_direccion_place_id = '';
       if (dirWrap) dirWrap.style.display = 'none';
+      var cBox2 = document.getElementById('oaxProveedorContactoBox');
+      if (cBox2) cBox2.style.display = 'none';
     }
     // 2026-09-16: faltaba -- el paso 1 ("¿Quién ejecuta?") ahora depende de
     // RUT/contacto además del nombre (ver pasoListo), y sin este llamado el
@@ -902,10 +952,27 @@ window.OT2ANX = (function(){
     pintarPasos();
   }
 
+  // 2026-09-16: input de RUT/correo/teléfono de un proveedor YA elegido de
+  // la lista (oaxProveedorContactoBox) -- misma idea que setCond, aplicada
+  // a estos tres campos en vez de uno por función.
+  function setContactoSel(campo, v){
+    v = (v || '').trim();
+    if (campo === 'rut') S.proveedor_rut = v;
+    else if (campo === 'email') S.email = v;
+    else if (campo === 'tel') S.tel = v;
+    pintarPasos();
+  }
+
   function toggleManual(){
     var on = document.getElementById('oaxProveedorManual').checked;
     document.getElementById('oaxProveedorManualBox').style.display = on ? '' : 'none';
     document.getElementById('oaxProveedorSel').disabled = on;
+    // 2026-09-16: los dos formularios de RUT/correo/teléfono (el de la
+    // ficha elegida y el manual) no se muestran juntos -- al pasar a
+    // manual se esconde el de la ficha; al volver, onProveedorChange lo
+    // restaura solo si sigue habiendo un proveedor elegido.
+    var cBox = document.getElementById('oaxProveedorContactoBox');
+    if (cBox) cBox.style.display = (on || !S.tecnico_externo_id) ? 'none' : '';
   }
 
   function toggleCondiciones(){
@@ -1161,6 +1228,11 @@ window.OT2ANX = (function(){
         body: JSON.stringify({
           ot_id: S.ot_id, tecnico_externo_id: S.tecnico_externo_id,
           proveedor_nombre: S.proveedor_nombre, proveedor_rut: S.proveedor_rut,
+          // 2026-09-16: viajan aunque mant_anexos no tenga columna para
+          // ellos -- el backend los usa para corregir la FICHA del
+          // proveedor (mant_tecnicos_externos) si se editaron acá, ver
+          // _anexo_sync_proveedor_ficha.
+          email: S.email, tel: S.tel,
           proveedor_direccion: S.proveedor_direccion,
           proveedor_direccion_lat: S.proveedor_direccion_lat,
           proveedor_direccion_lng: S.proveedor_direccion_lng,
@@ -1416,7 +1488,7 @@ window.OT2ANX = (function(){
 
   return {
     abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink,
-    onProveedorChange, toggleManual, toggleCondiciones,
+    onProveedorChange, toggleManual, toggleCondiciones, setContactoSel,
     setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,
     agregarItem, quitarItem,
   };
