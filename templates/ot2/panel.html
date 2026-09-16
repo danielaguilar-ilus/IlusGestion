@@ -790,7 +790,11 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {# ══════════════════ TABLA ══════════════════ #}
   {% if vista == 'tabla' %}
     {% if filas %}
-    {% if puede_lote %}
+    {# 2026-09-16: NO se puede usar `puede_lote` acá -- ese {% set %} vive
+       más abajo, dentro del <thead>, y todavía no existe en este punto del
+       template (Jinja lo trata como Undefined/falso y el bloque entero se
+       saltaba en silencio, verificado en vivo). Misma condición inline. #}
+    {% if permissions and permissions.superadmin %}
     <div class="ot2-selmobile" id="ot2SelMobile">
       <label class="ot2-chk"><input type="checkbox" id="ot2SelAllMobile" autocomplete="off" aria-label="Seleccionar/deseleccionar todo"></label>
       <span>Seleccionar todo</span>
