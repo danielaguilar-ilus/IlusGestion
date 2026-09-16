@@ -80,6 +80,31 @@
 #modalRepStock .modal-body.rb-body-has-avatar{padding-top:54px}
 .rb-modelo-chip{display:inline-flex;align-items:center;gap:6px;background:#f3f4f6;border-radius:50px;padding:3px 6px 3px 12px;font-size:.78rem;margin:2px 4px 2px 0}
 .rb-modelo-chip button{border:none;background:#e5e7eb;color:#374151;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;padding:0;font-size:.7rem;cursor:pointer}
+/* ── 2026-09-16: equipos DESCONTINUADOS y modelos escritos A MANO.
+   Daniel: "descontinuado es propiedad del MODELO de equipo, no del
+   repuesto". El chip del modelo descontinuado va en GRIS a proposito: en
+   esta misma tabla el ambar ya significa "pendiente de identificar" y el
+   rojo "bajo minimo" -- un tercer color caliente confundiria. Gris +
+   icono de archivo se lee como "esto ya no se vende", sin alarma.
+   .rb-chip-tag es el sufijo chico ("Manual") que acompana al nombre sin
+   truncarlo (REGLA #15). Vale tanto para los chips del modal como para
+   los .rb-chip de la celda "Modelos compatibles" de la tabla. ── */
+.rb-modelo-chip.is-descontinuado,
+.rb-chip.is-descontinuado{background:#f3f4f6 !important;color:#6b7280 !important;border:1px solid #d1d5db}
+.rb-modelo-chip.is-descontinuado .bi-archive-fill,
+.rb-chip.is-descontinuado .bi-archive-fill{color:#6b7280;margin-right:4px}
+.rb-chip-tag{display:inline-block;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;
+  background:#e5e7eb;color:#6b7280;padding:1px 6px;border-radius:50px;margin-left:5px;vertical-align:middle;white-space:nowrap}
+.rb-chip.is-descontinuado .rb-chip-tag,
+.rb-modelo-chip.is-descontinuado .rb-chip-tag{background:#d1d5db;color:#4b5563}
+/* Boton extra del chip (marcar descontinuado / volver a vigente): solo lo
+   ve un supervisor o superior. En escritorio es un circulo apenas mas
+   grande que la "x" para que se distinga; en celular sube a 44px (REGLA #3). */
+.rb-modelo-chip button.rb-chip-btn-desc{width:22px;height:22px;line-height:22px;font-size:.72rem;background:#e5e7eb;color:#4b5563}
+.rb-modelo-chip button.rb-chip-btn-desc:hover{background:#d1d5db;color:#111827}
+.rb-modelo-chip.is-descontinuado button.rb-chip-btn-desc{background:#dcfce7;color:#166534}
+.rb-modelo-chip.is-descontinuado button.rb-chip-btn-desc:hover{background:#bbf7d0}
+.rb-modelo-chip button[disabled]{opacity:.5;cursor:wait}
 .rb-modelo-resultados{position:relative}
 .rb-modelo-resultados-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;z-index:20;display:none}
 .rb-modelo-resultado-item{padding:8px 12px;font-size:.82rem;cursor:pointer;border-bottom:1px solid #f3f4f6}
@@ -208,6 +233,12 @@
   #modalRepStock .rb-sondeo-desc{font-size:.84rem}
   #modalRepStock .rb-modelo-chip{min-height:36px;padding:6px 8px 6px 14px;font-size:.85rem}
   #modalRepStock .rb-modelo-chip button{width:28px;height:28px;line-height:28px;font-size:.95rem}
+  /* 2026-09-16: el boton "marcar descontinuado / volver a vigente" es una
+     accion con confirmacion y consecuencias (afecta a todos los repuestos
+     del modelo) -- no puede quedar de 28px al lado de la "x". Area tactil
+     de 44px (REGLA #3) sin agrandar el chip entero: el alto extra lo
+     absorbe el propio boton con margin negativo. */
+  #modalRepStock .rb-modelo-chip button.rb-chip-btn-desc{width:44px;height:44px;line-height:44px;margin:-6px 0;font-size:1rem}
   #modalRepStock .modal-header .btn-close{width:44px;height:44px;background-size:16px 16px;padding:0;margin:0}
 
   /* Avatar foto principal: más chico en celular (menos alto que ganarle
@@ -283,6 +314,17 @@
     Pendiente de identificar
     <span class="rb-chip" style="background:#fff8e1;color:#92400e">{{ bod_count_pendiente_modelo }}</span>
   </label>
+  {# 2026-09-16 (Daniel: "descontinuado es propiedad del MODELO de equipo,
+     no del repuesto"). Este filtro NO mira una columna del repuesto: trae
+     los repuestos que sirven a AL MENOS UN modelo marcado como
+     descontinuado en cat_productos (los de hoy y los que se carguen
+     despues, porque la marca vive en el modelo). Badge GRIS a proposito:
+     ambar ya es "pendiente" y rojo "bajo minimo" en esta misma barra. #}
+  <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
+    <input type="checkbox" name="descontinuado" value="1" {% if bod_descontinuado %}checked{% endif %}>
+    Equipo descontinuado
+    <span class="rb-chip" style="background:#f3f4f6;color:#6b7280;border:1px solid #d1d5db"><i class="bi bi-archive-fill me-1"></i>{{ bod_count_descontinuado }}</span>
+  </label>
   <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
   <a href="/repuestos" class="btn btn-sm btn-outline-secondary">Limpiar</a>
 </form>
@@ -299,7 +341,7 @@
        falta). Mismo patrón de querystring que _repuestos_bodega_pag.html
        (_b_filtros): bq/marca_id/ubicacion_id/bajo_minimo/sin_costo/
        sin_modelo, para que "descargar" traiga lo mismo que se está viendo. #}
-    {% set rb_export_qs = '?bq=' ~ (bod_q or '')|urlencode ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') ~ ('&pendiente_modelo=1' if bod_pendiente_modelo else '') %}
+    {% set rb_export_qs = '?bq=' ~ (bod_q or '')|urlencode ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') ~ ('&pendiente_modelo=1' if bod_pendiente_modelo else '') ~ ('&descontinuado=1' if bod_descontinuado else '') %}
     <a class="btn btn-sm btn-outline-success" href="{{ url_for('repstock_exportar_excel') }}{{ rb_export_qs }}"
        title="Descargar Excel con los repuestos del filtro actual (incluye fotos)">
       <i class="bi bi-file-earmark-excel me-1"></i>Descargar Excel
@@ -375,17 +417,30 @@
       <td>{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td>{% if r.marca_nombre %}{{ r.marca_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td>
-        {% for mod in modelos_por_repuesto.get(r.id, []) %}
-          <span class="rb-chip rb-chip-clase">{{ mod.producto_nombre }}</span>
-        {% else %}
-          {% if r.modelo_pendiente %}
+        {# 2026-09-16: cada chip sabe si su modelo esta DESCONTINUADO (gris +
+           archivo, viene de cat_productos via mod.descontinuado) y si fue
+           escrito A MANO por un supervisor (tag "Manual", mod.origen). El
+           nombre va completo siempre (REGLA #15). #}
+        {% set _mods = modelos_por_repuesto.get(r.id, []) %}
+        {% for mod in _mods %}
+          {% if mod.descontinuado %}
+          <span class="rb-chip is-descontinuado" title="Equipo descontinuado"><i class="bi bi-archive-fill"></i>{{ mod.producto_nombre }}{% if mod.origen == 'manual' %}<span class="rb-chip-tag">Manual</span>{% endif %}</span>
+          {% else %}
+          <span class="rb-chip rb-chip-clase">{{ mod.producto_nombre }}{% if mod.origen == 'manual' %}<span class="rb-chip-tag">Manual</span>{% endif %}</span>
+          {% endif %}
+        {% endfor %}
+        {# 🔧 FIX 2026-09-16: "Pendiente de identificar" iba en el else del
+           for, asi que un repuesto con modelos Y ademas marcado pendiente
+           (se puede: el tecnico asocio uno y dejo la duda abierta) no
+           mostraba la deuda. Ahora se pinta DESPUES del loop, siempre que
+           r.modelo_pendiente, tenga o no tenga modelos. #}
+        {% if r.modelo_pendiente %}
           <span class="rb-chip" style="background:#fff8e1;color:#92400e;border:1px solid #fcd34d"
                 title="El técnico lo dejó marcado para identificar después">
             <i class="bi bi-question-circle-fill me-1"></i>Pendiente de identificar</span>
-          {% else %}
+        {% elif not _mods %}
           <span class="text-muted" style="font-size:.78rem">sin asociar</span>
-          {% endif %}
-        {% endfor %}
+        {% endif %}
       </td>
       <td>
         {% if r.cliente_nombre %}<span class="rb-chip" style="background:#dcfce7;color:#166534">{{ r.cliente_nombre }}</span>{% endif %}
@@ -433,7 +488,10 @@
 {% else %}
 <div class="rb-empty">
   <i class="bi bi-box-seam" style="font-size:2rem;display:block;margin-bottom:8px"></i>
-  {% if bod_q or bod_marca_id or bod_ubicacion_id or bod_bajo_minimo or bod_sin_costo or bod_sin_modelo %}
+  {# 🔧 FIX 2026-09-16: faltaban pendiente_modelo y descontinuado en esta
+     lista -- con "Pendiente de identificar" como unico filtro activo y
+     cero resultados decia "Aun no hay repuestos cargados", que es falso. #}
+  {% if bod_q or bod_marca_id or bod_ubicacion_id or bod_bajo_minimo or bod_sin_costo or bod_sin_modelo or bod_pendiente_modelo or bod_descontinuado %}
     Sin resultados para este filtro.
   {% else %}
     Aún no hay repuestos cargados — usa "Nuevo repuesto" para empezar el levantamiento.
@@ -783,14 +841,26 @@
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 const RB_ES_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
+// 2026-09-16 (Daniel: "solo supervisor o superior puede marcar descontinuado
+// y escribir modelos a mano; el resto solo lo ve"). Lo calcula el backend
+// con _repstock_puede_gestionar_modelos() (familia de rol superadmin/admin/
+// supervisor) -- aca solo decide que botones/filas se PINTAN. El gate real
+// esta en los endpoints (403), esto es cortesia de UI, no seguridad.
+const RB_PUEDE_GESTIONAR_MODELOS = {{ 'true' if bod_puede_gestionar_modelos else 'false' }};
 const RB_CSRF = {{ csrf_token()|tojson }};
 let RB_MODAL = null;
 let RB_PROVEEDOR_MODAL = null;
+// Cada item: {producto_id, producto_nombre, sku, origen ('erp'|'manual'),
+// descontinuado (0|1), descontinuado_at, descontinuado_by}. Los tres
+// ultimos llegan desde 2026-09-16 (equipos descontinuados / modelos a mano).
 let RB_MODELOS_ACTUALES = [];
 // 2026-08-08 (Daniel: "no me diga guarda el repuesto primero para poder
 // asociarle un modelo... quiero que esto quede de primera mano"): modelos
 // elegidos ANTES de guardar, mismo patrón que RB_FOTOS_PENDIENTES -- se
 // suben en bloque justo después de crear el repuesto (rbSubirModelosPendientes).
+// Cada item es {sku, nombre} (viene del ERP) o {manual:true, nombre}
+// (escrito a mano por un supervisor, 2026-09-16) -- el body del POST se
+// manda tal cual, el backend distingue por la clave "manual".
 let RB_MODELOS_PENDIENTES = [];
 /* 2026-09-03 (Daniel: "si bien es obligatorio declarar un producto,
    podriamos dejar 'pendiente de declarar' por default para que los
@@ -1043,7 +1113,7 @@ function rbDraftGuardar(){
   const _chip = id => { const el = document.getElementById(id); return el ? el.textContent.trim() : ''; };
   const vacio = !_get('rbDescripcion') && !_get('rbCantidad') && !_get('rbNotas') &&
                 !_get('rbMarca') && !_get('rbUbicacion') && !_get('rbProveedor') &&
-                RB_MODELOS_PENDIENTES.length === 0;
+                RB_MODELOS_PENDIENTES.length === 0 && !RB_MODELO_PENDIENTE;
   if (vacio){ rbDraftLimpiar(); return; }   // nada que proteger todavia
   const draft = {
     ts: Date.now(),
@@ -1058,6 +1128,9 @@ function rbDraftGuardar(){
     cliente_id: _get('rbClienteId'), cliente_nombre: _chip('rbClienteSeleccionado'),
     ticket_id: _get('rbTicketId'), ticket_numero: _chip('rbTicketSeleccionado'),
     modelos_pendientes: RB_MODELOS_PENDIENTES,
+    // 🔧 FIX 2026-09-16: la declaracion "pendiente de identificar" no se
+    // guardaba en el borrador -- al recuperar, el paso 4 volvia a bloquear.
+    modelo_pendiente: RB_MODELO_PENDIENTE ? 1 : 0,
   };
   try { localStorage.setItem(RB_DRAFT_KEY, JSON.stringify(draft)); } catch(e){ /* localStorage lleno o deshabilitado -- no es critico, se sigue sin borrador */ }
 }
@@ -1095,6 +1168,7 @@ function rbDraftAplicar(d){
   if (d.cliente_id) rbSetCliente(d.cliente_id, d.cliente_nombre);
   if (d.ticket_id) rbSetTicket(d.ticket_id, d.ticket_numero);
   RB_MODELOS_PENDIENTES = d.modelos_pendientes || [];
+  RB_MODELO_PENDIENTE = !!(d.modelo_pendiente == 1);
   rbRenderModelosChips();
   rbRefreshStepStates();
 }
@@ -1190,7 +1264,14 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbNotas').value = r.notas || '';
   rbSetCliente(r.cliente_id || null, r.cliente_nombre || '');
   rbSetTicket(r.ticket_id || null, r.ticket_numero || '');
-  RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre, sku: m.producto_sku}));
+  // 2026-09-16: origen/descontinuado vienen del JOIN con cat_productos
+  // (modelos_por_repuesto) -- se conservan para pintar el chip gris y el
+  // tag "Manual" sin otra consulta.
+  RB_MODELOS_ACTUALES = (modelos || []).map(m => rbModeloItem({
+    producto_id: m.producto_id, producto_nombre: m.producto_nombre, sku: m.producto_sku,
+    origen: m.origen, descontinuado: m.descontinuado,
+    descontinuado_at: m.descontinuado_at, descontinuado_by: m.descontinuado_by,
+  }));
   RB_MODELOS_PENDIENTES = [];
   RB_MODELO_PENDIENTE = !!(r && (r.modelo_pendiente == 1 || r.modelo_pendiente === true));
   rbRenderModelosChips();
@@ -2041,7 +2122,11 @@ const RB_STEP_RULES = {
            document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0 &&
            !!document.getElementById('rbUbicacion').value,
   3: () => !!document.getElementById('rbMarca').value || !!document.getElementById('rbProveedor').value,
-  4: () => (RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0,
+  // 🔧 FIX 2026-09-16: "Pendiente de identificar" ya dejaba GUARDAR (gate
+  // de rbGuardar) pero el paso seguia pintado en rojo -- el tecnico veia
+  // un paso incompleto que en realidad estaba resuelto. Mismo criterio
+  // que el gate: la declaracion honesta cuenta como paso cumplido.
+  4: () => (RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0 || RB_MODELO_PENDIENTE,
 };
 function rbRefreshStepStates(){
   Object.keys(RB_STEP_RULES).forEach(function(n){
@@ -2278,12 +2363,56 @@ async function rbFotoMarcarPrincipal(fid){
   }
 }
 
+/* 2026-09-16: normaliza lo que llega del backend (producto de la respuesta
+   de asociar, o fila de modelos_por_repuesto) a la forma unica que usa
+   RB_MODELOS_ACTUALES. descontinuado puede venir 0/1/true/"1" segun de
+   donde salga -- aqui queda SIEMPRE 0|1. */
+function rbModeloItem(src){
+  src = src || {};
+  return {
+    producto_id: src.producto_id != null ? src.producto_id : src.id,
+    producto_nombre: src.producto_nombre != null ? src.producto_nombre : src.nombre,
+    sku: src.sku || '',
+    origen: src.origen === 'manual' ? 'manual' : 'erp',
+    descontinuado: (src.descontinuado == 1 || src.descontinuado === true) ? 1 : 0,
+    descontinuado_at: src.descontinuado_at || null,
+    descontinuado_by: src.descontinuado_by || null,
+  };
+}
+/* Sufijo "Manual" (modelo escrito a mano, no existe en el ERP). Va DESPUES
+   del nombre completo, nunca en lugar de -- REGLA #15. */
+function rbChipTagManual(origen){
+  return origen === 'manual' ? '<span class="rb-chip-tag" title="Escrito a mano, no está en el ERP">Manual</span>' : '';
+}
+
 function rbRenderModelosChips(){
   const cont = document.getElementById('rbModelosChips');
-  const chipsGuardados = RB_MODELOS_ACTUALES.map(m =>
-    '<span class="rb-modelo-chip">' + escHtmlRb(m.producto_nombre) +
-    '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>'
-  ).join('');
+  const chipsGuardados = RB_MODELOS_ACTUALES.map(m => {
+    const desc = m.descontinuado == 1;
+    /* Chip GRIS + archivo cuando el MODELO esta descontinuado (Daniel
+       2026-09-16: es propiedad del modelo, no del repuesto). El title
+       cuenta desde cuando y quien, si el backend lo trae. */
+    let title = '';
+    if (desc){
+      title = 'Equipo descontinuado';
+      if (m.descontinuado_at) title += ' desde ' + m.descontinuado_at;
+      if (m.descontinuado_by) title += ' por ' + m.descontinuado_by;
+    }
+    /* Boton extra solo para supervisor+ y solo en chips YA guardados
+       (tienen producto_id): marcar descontinuado / volver a vigente. */
+    const btnDesc = (RB_PUEDE_GESTIONAR_MODELOS && m.producto_id)
+      ? '<button type="button" class="rb-chip-btn-desc" onclick="rbToggleDescontinuado(' + m.producto_id + ')" ' +
+          'title="' + (desc ? 'Volver a vigente' : 'Marcar descontinuado') + '" ' +
+          'aria-label="' + (desc ? 'Volver a vigente' : 'Marcar como equipo descontinuado') + '">' +
+          '<i class="bi ' + (desc ? 'bi-arrow-counterclockwise' : 'bi-archive') + '"></i></button>'
+      : '';
+    return '<span class="rb-modelo-chip' + (desc ? ' is-descontinuado' : '') + '"' +
+             (title ? ' title="' + escHtmlRb(title) + '"' : '') + '>' +
+      (desc ? '<i class="bi bi-archive-fill"></i>' : '') +
+      escHtmlRb(m.producto_nombre) + rbChipTagManual(m.origen) +
+      btnDesc +
+      '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>';
+  }).join('');
   /* 🔧 2026-09-03 (Daniel: "en el paso 4 de modelos compatibles necesito
      que me propongas dejar NO PENDIENTE sino COLOCAR").
      Estos chips se veían con borde punteado y el texto "(sin guardar)".
@@ -2293,7 +2422,9 @@ function rbRenderModelosChips(){
      quedó puesto o no -- y el paso 4 encima es obligatorio para guardar.
      Se ven igual que los ya guardados, que es lo que de verdad pasa. */
   const chipsPendientes = RB_MODELOS_PENDIENTES.map((m, i) =>
-    '<span class="rb-modelo-chip">' + escHtmlRb(m.nombre) +
+    '<span class="rb-modelo-chip' + (m.descontinuado == 1 ? ' is-descontinuado' : '') + '">' +
+    (m.descontinuado == 1 ? '<i class="bi bi-archive-fill"></i>' : '') +
+    escHtmlRb(m.nombre) + rbChipTagManual(m.manual ? 'manual' : m.origen) +
     '<button type="button" onclick="rbModeloPendienteQuitar(' + i + ')" title="Quitar">&times;</button></span>'
   ).join('');
   /* Chip de "pendiente de identificar" -- ambar, no verde: no es un
@@ -2345,15 +2476,29 @@ async function rbBuscarModelos(){
   if (q.length < 2){ list.style.display = 'none'; return; }
   list.innerHTML = '<div class="rb-modelo-resultado-item text-muted"><i class="bi bi-hourglass-split me-1"></i>Buscando en bodega 02...</div>';
   list.style.display = 'block';
-  const r = await fetch('/mantenciones/api/repuestos-stock/sondeo-modelos-erp?q=' + encodeURIComponent(q));
-  const d = await r.json().catch(() => ({ok:false, productos:[]}));
+  let d;
+  try{
+    const r = await fetch('/mantenciones/api/repuestos-stock/sondeo-modelos-erp?q=' + encodeURIComponent(q));
+    d = await r.json().catch(() => ({ok:false, productos:[]}));
+  }catch(e){ d = {ok:false, productos:[]}; }
+  /* 2026-09-16: si el ERP falla el backend igual responde ok:true con los
+     modelos manuales locales + erp_error (contrato E) -- asi un supervisor
+     puede escribir el modelo a mano aunque Random este caido. El ok:false
+     queda solo para un error de red/servidor real, y aun asi se pinta la
+     fila "escribir a mano" para no dejar al usuario sin salida. */
   if (d.ok === false){
-    list.innerHTML = '<div class="rb-modelo-resultado-item text-danger">' + escHtmlRb(d.error || 'No se pudo consultar el ERP') + '</div>';
-    return;
+    d.erp_error = d.error || d.erp_error || 'No se pudo consultar el ERP. Reintenta.';
+    d.productos = d.productos || [];
   }
+  // El usuario escribio otra cosa mientras esperabamos: no pisar la lista
+  // con una respuesta vieja.
+  if (document.getElementById('rbModelosBuscar').value.trim() !== q) return;
   RB_MODELOS_RESULTS = (d.productos || []).filter(p =>
     !RB_MODELOS_ACTUALES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()) &&
-    !RB_MODELOS_PENDIENTES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()));
+    !RB_MODELOS_PENDIENTES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()) &&
+    // Un manual solo se reconoce por nombre (los pendientes a mano no
+    // tienen SKU todavia).
+    !(p.origen === 'manual' && rbModeloYaEsta(p.descripcion)));
   /* 🔧 2026-09-03 (Daniel, mirandolo en el telefono: "necesito que separe
      un poco el SKU, ya que se encuentra muy montado del nombre... seria
      bueno dejarlo en una segunda linea").
@@ -2362,18 +2507,53 @@ async function rbBuscarModelos(){
      cosa y el tecnico no distingue donde termina el nombre. Ahora el
      nombre manda en su linea y el SKU baja a la suya, en monoespaciada y
      mas apagado -- que es como se lee un codigo. */
-  const filaModelo = (p, i) =>
-    '<div class="rb-modelo-resultado-item" onclick="rbPickModelo(' + i + ')">' +
-      '<div style="font-weight:700;line-height:1.3">' + escHtmlRb(p.descripcion) + '</div>' +
+  /* 2026-09-16: cada fila avisa si el modelo esta DESCONTINUADO (tag gris,
+     igual se puede asociar -- el repuesto sigue existiendo) y si es un
+     modelo MANUAL (no esta en el ERP, no muestra "en bodega" porque no
+     tiene bodega). */
+  const filaModelo = (p, i) => {
+    const esManual = p.origen === 'manual';
+    const desc = p.descontinuado == 1;
+    return '<div class="rb-modelo-resultado-item" onclick="rbPickModelo(' + i + ')">' +
+      '<div style="font-weight:700;line-height:1.3' + (desc ? ';color:#6b7280' : '') + '">' +
+        (desc ? '<i class="bi bi-archive-fill me-1" style="color:#6b7280"></i>' : '') +
+        escHtmlRb(p.descripcion) +
+        (desc ? '<span class="rb-chip-tag" title="Equipo descontinuado">Descontinuado</span>' : '') +
+        (esManual ? '<span class="rb-chip-tag" title="Modelo escrito a mano">Manual · no está en ERP</span>' : '') +
+      '</div>' +
       '<div style="font-size:.72rem;color:#6b7280;margin-top:2px;' +
            'font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.02em">' +
         escHtmlRb(p.sku || '—') +
-        (p.cantidad > 0
+        (!esManual && p.cantidad > 0
           ? '<span style="font-family:inherit;color:#15803d;font-weight:700"> · '
             + rbCantidadFmt(p.cantidad) + ' en bodega</span>'
           : '') +
       '</div>' +
     '</div>';
+  };
+  /* Fila de aviso cuando el ERP no respondio (contrato E: erp_error). Va
+     PRIMERO para que se entienda por que faltan los de bodega 02, y lo que
+     si llego (manuales) se pinta igual debajo. */
+  const filaErpError = d.erp_error
+    ? '<div class="rb-modelo-resultado-item text-muted" style="cursor:default;background:#fff8e1;color:#92400e !important">' +
+        '<i class="bi bi-exclamation-triangle-fill me-1"></i>' + escHtmlRb(d.erp_error) + '</div>'
+    : '';
+  /* 2026-09-16 (Daniel: "solo supervisor o superior puede escribir modelos
+     a mano; el resto solo lo ve"). Fila "Escribir a mano" SIEMPRE al final
+     de los resultados, con o sin resultados, justo ANTES de "Pendiente de
+     identificar": es la salida cuando el equipo no esta en el ERP (viejo,
+     descontinuado, de otra marca). Si no tiene permiso, ve una fila muda
+     que le dice a quien pedirselo -- no un boton que le rebota con 403. */
+  const filaManual = RB_PUEDE_GESTIONAR_MODELOS
+    ? '<div class="rb-modelo-resultado-item" onclick="rbPedirModeloManual()" ' +
+           'style="background:#f9fafb;border-top:1px dashed #d1d5db">' +
+        '<div style="font-weight:700;color:#374151;line-height:1.3">' +
+          '<i class="bi bi-pencil-fill me-1"></i>Escribir a mano: «' + escHtmlRb(q) + '»</div>' +
+        '<div style="font-size:.72rem;color:#6b7280;margin-top:2px">' +
+          'Para equipos que no están en el ERP. Queda solo para repuestos, no sale en cotizaciones.</div>' +
+      '</div>'
+    : '<div class="rb-modelo-resultado-item text-muted" style="cursor:default;background:#f9fafb;border-top:1px dashed #d1d5db">' +
+        '<i class="bi bi-lock-fill me-1"></i>¿No aparece? Un supervisor puede crearlo a mano</div>';
   /* La salida de emergencia va SIEMPRE al final, tambien cuando no hubo
      resultados: es justo cuando mas se necesita (no aparece nada porque
      nadie sabe todavia que pieza es). */
@@ -2386,12 +2566,150 @@ async function rbBuscarModelos(){
         'Guarda el repuesto ahora y queda en la lista de pendientes por identificar.</div>' +
     '</div>';
   if (!RB_MODELOS_RESULTS.length){
-    list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados en bodega 02</div>'
-      + filaPendiente;
+    list.innerHTML = filaErpError
+      + (d.erp_error ? '' : '<div class="rb-modelo-resultado-item text-muted">Sin resultados en bodega 02</div>')
+      + filaManual + filaPendiente;
   } else {
-    list.innerHTML = RB_MODELOS_RESULTS.map(filaModelo).join('') + filaPendiente;
+    list.innerHTML = filaErpError + RB_MODELOS_RESULTS.map(filaModelo).join('') + filaManual + filaPendiente;
   }
   list.style.display = 'block';
+}
+
+/* ── Modelo escrito A MANO (2026-09-16) ─────────────────────────────────
+   Daniel: "solo supervisor o superior puede escribir modelos a mano". El
+   nombre se pide con ilusPrompt (REGLA #1) precargado con lo que ya tecleo
+   en el buscador, para no escribirlo dos veces. */
+function rbModeloYaEsta(nombre){
+  const n = (nombre || '').trim().toLowerCase();
+  if (!n) return false;
+  return RB_MODELOS_ACTUALES.some(m => (m.producto_nombre || '').trim().toLowerCase() === n) ||
+         RB_MODELOS_PENDIENTES.some(m => (m.nombre || '').trim().toLowerCase() === n);
+}
+async function rbPedirModeloManual(){
+  const q = document.getElementById('rbModelosBuscar').value.trim();
+  document.getElementById('rbModelosResultadosList').style.display = 'none';
+  const nombre = await ilusPrompt({
+    title: 'Modelo a mano',
+    message: 'Escribe el nombre completo del equipo (marca + modelo), tal como lo conoce el taller.',
+    placeholder: 'Ej: Life Fitness 95T Trotadora',
+    defaultValue: q,
+    required: true,
+    okLabel: 'Agregar modelo', cancelLabel: 'Cancelar',
+  });
+  if (!nombre) return;   // null = cancelo
+  await rbAgregarModeloManual(nombre.trim());
+}
+async function rbAgregarModeloManual(nombre){
+  if (!nombre) return;
+  if (!RB_PUEDE_GESTIONAR_MODELOS){
+    ilusToast('Solo un supervisor o superior puede escribir modelos a mano', {type:'warning'});
+    return;
+  }
+  const id = document.getElementById('rbId').value;
+  document.getElementById('rbModelosResultadosList').style.display = 'none';
+  document.getElementById('rbModelosBuscar').value = '';
+  const total = RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length;
+  if (total >= RB_MAX_MODELOS){
+    ilusToast('Máximo ' + RB_MAX_MODELOS + ' modelos por repuesto', {type:'warning'});
+    return;
+  }
+  if (rbModeloYaEsta(nombre)){
+    ilusToast('"' + nombre + '" ya está asociado a este repuesto', {type:'warning'});
+    return;
+  }
+  RB_MODELO_PENDIENTE = false;   // ya sabemos a que sirve
+  if (!id){
+    RB_MODELOS_PENDIENTES.push({manual: true, nombre: nombre});
+    rbRenderModelosChips();
+    rbDraftGuardar();
+    return;
+  }
+  let r, d;
+  try{
+    r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/modelos', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({manual: true, nombre: nombre})
+    });
+    d = await r.json().catch(() => ({}));
+  }catch(e){
+    ilusToast('Sin conexión: no se pudo asociar el modelo', {type:'error'});
+    return;
+  }
+  if (r.ok && d.ok !== false && d.producto){
+    RB_MODELOS_ACTUALES.push(rbModeloItem(d.producto));
+    RB_DIRTY = true;
+    rbRenderModelosChips();
+    ilusToast('Modelo "' + (d.producto.nombre || nombre) + '" creado a mano y asociado', {type:'success'});
+  } else if (r.status === 403){
+    ilusToast(d.error || 'Solo un supervisor o superior puede escribir modelos a mano', {type:'warning'});
+  } else {
+    ilusToast(d.error || 'No se pudo asociar', {type:'error'});
+  }
+}
+
+/* ── Marcar / desmarcar DESCONTINUADO (2026-09-16) ──────────────────────
+   Daniel: "descontinuado es propiedad del MODELO de equipo, no del
+   repuesto" -> el POST va contra el producto (contrato C) y afecta a TODOS
+   los repuestos que sirven a ese modelo, por eso la confirmacion lo dice
+   con todas sus letras. Solo supervisor+ ve el boton; el 403 igual se
+   maneja por si el rol cambio con el modal abierto. */
+async function rbToggleDescontinuado(producto_id){
+  const m = RB_MODELOS_ACTUALES.find(x => x.producto_id === producto_id);
+  if (!m) return;
+  const nombre = m.producto_nombre || 'este modelo';
+  const marcar = !(m.descontinuado == 1);
+  const ok = marcar
+    ? await ilusConfirm({
+        title: 'Marcar equipo descontinuado',
+        message: 'Se marcará ' + nombre + ' como equipo descontinuado',
+        sub: 'Todos los repuestos que sirven a este modelo quedarán identificados como de equipo descontinuado (los de hoy y los que se carguen después).',
+        okLabel: 'Marcar descontinuado', cancelLabel: 'Cancelar',
+        type: 'warning',
+      })
+    : await ilusConfirm({
+        title: 'Volver a vigente',
+        message: nombre + ' volverá a figurar como equipo vigente',
+        sub: 'Sus repuestos dejan de aparecer en el filtro "Equipo descontinuado".',
+        okLabel: 'Volver a vigente', cancelLabel: 'Cancelar',
+        type: 'question',
+      });
+  if (!ok) return;
+  // Bloquea el boton mientras responde el servidor (evita doble click).
+  document.querySelectorAll('#rbModelosChips button.rb-chip-btn-desc').forEach(b => b.disabled = true);
+  let r, d;
+  try{
+    r = await fetch('/mantenciones/api/repuestos-stock/modelos/' + producto_id + '/descontinuado', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({descontinuado: marcar})
+    });
+    d = await r.json().catch(() => ({}));
+  }catch(e){
+    rbRenderModelosChips();
+    ilusToast('Sin conexión: no se pudo cambiar el estado del modelo', {type:'error'});
+    return;
+  }
+  if (r.ok && d.ok !== false && d.producto){
+    const p = d.producto;
+    m.descontinuado = (p.descontinuado == 1) ? 1 : 0;
+    m.descontinuado_at = p.descontinuado_at || null;
+    m.descontinuado_by = p.descontinuado_by || null;
+    if (p.origen) m.origen = p.origen;
+    if (p.nombre) m.producto_nombre = p.nombre;
+    RB_DIRTY = true;   // la tabla de atras cambia (chips grises + contador del filtro)
+    rbRenderModelosChips();
+    const n = Number(d.repuestos_afectados || 0);
+    const cuenta = n === 1 ? '1 repuesto identificado' : n + ' repuestos identificados';
+    if (m.descontinuado == 1){
+      ilusToast(m.producto_nombre + ' marcado como descontinuado — ' + cuenta, {type:'success'});
+    } else {
+      ilusToast(m.producto_nombre + ' vuelve a estar vigente — ' + cuenta, {type:'info'});
+    }
+  } else {
+    rbRenderModelosChips();
+    if (r.status === 403){
+      ilusToast(d.error || 'Solo un supervisor o superior puede declarar un equipo como descontinuado', {type:'warning'});
+    } else {
+      ilusToast(d.error || 'No se pudo cambiar el estado del modelo', {type:'error'});
+    }
+  }
 }
 /* Marca el repuesto como "no sabemos todavia a que sirve". Deja pasar el
    paso 4 y lo deja filtrable despues -- que es exactamente lo que Daniel
@@ -2410,10 +2728,16 @@ function rbQuitarPendiente(){
 
 function rbPickModelo(i){
   const p = RB_MODELOS_RESULTS[i];
-  if (p) rbAgregarModelo(p.sku, p.descripcion);
+  if (!p) return;
+  // 2026-09-16: un modelo manual que YA existe en cat_productos viene del
+  // sondeo con su SKU (MOD-0001), asi que se asocia por la rama normal por
+  // sku -- eso lo puede hacer cualquiera que cargue repuestos. La rama
+  // {manual:true} (crear uno nuevo) es la unica con gate supervisor+.
+  rbAgregarModelo(p.sku, p.descripcion, {origen: p.origen, descontinuado: p.descontinuado});
 }
 const RB_MAX_MODELOS = 5;   // Daniel 2026-08-07: "hasta tres" -> 2026-08-08: "tiene que ser a cinco máquinas"
-async function rbAgregarModelo(sku, nombre){
+async function rbAgregarModelo(sku, nombre, extra){
+  extra = extra || {};
   const id = document.getElementById('rbId').value;
   document.getElementById('rbModelosResultadosList').style.display = 'none';
   document.getElementById('rbModelosBuscar').value = '';
@@ -2430,7 +2754,9 @@ async function rbAgregarModelo(sku, nombre){
   // nadie se acuerde de sacar el chip a mano.
   RB_MODELO_PENDIENTE = false;
   if (!id){
-    RB_MODELOS_PENDIENTES.push({sku, nombre});
+    // origen/descontinuado son solo para PINTAR el chip antes de guardar;
+    // el body del POST se arma en rbSubirModelosPendientes con sku+nombre.
+    RB_MODELOS_PENDIENTES.push({sku, nombre, origen: extra.origen || 'erp', descontinuado: (extra.descontinuado == 1) ? 1 : 0});
     rbRenderModelosChips();
     return;
   }
@@ -2443,7 +2769,9 @@ async function rbAgregarModelo(sku, nombre){
   });
   const d = await r.json().catch(() => ({}));
   if (r.ok && d.ok !== false && d.producto){
-    RB_MODELOS_ACTUALES.push({producto_id: d.producto.id, producto_nombre: d.producto.nombre, sku: d.producto.sku});
+    // 2026-09-16: el producto de la respuesta trae origen + descontinuado
+    // (contrato D) -> el chip nace gris si el modelo ya estaba descontinuado.
+    RB_MODELOS_ACTUALES.push(rbModeloItem(d.producto));
     rbRenderModelosChips();
     ilusToast('Modelo asociado', {type:'success'});
   } else {
@@ -2460,12 +2788,18 @@ async function rbSubirModelosPendientes(id){
   RB_MODELOS_PENDIENTES = [];
   for (const p of pendientes){
     try{
+      // 2026-09-16: el body va en la forma exacta del contrato D --
+      // {manual:true, nombre} para los escritos a mano, {sku, nombre} para
+      // los del ERP. origen/descontinuado del item eran solo para pintar.
+      const body = p.manual ? {manual: true, nombre: p.nombre} : {sku: p.sku, nombre: p.nombre};
       const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/modelos', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sku: p.sku, nombre: p.nombre})
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
       });
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.ok !== false && d.producto){
-        RB_MODELOS_ACTUALES.push({producto_id: d.producto.id, producto_nombre: d.producto.nombre, sku: d.producto.sku});
+        RB_MODELOS_ACTUALES.push(rbModeloItem(d.producto));
+      } else if (r.status === 403){
+        ilusToast(d.error || ((p.nombre || 'Un modelo') + ': solo un supervisor puede crearlo a mano'), {type:'warning'});
       } else {
         ilusToast((p.nombre || 'Un modelo') + ' no se pudo asociar', {type:'warning'});
       }
