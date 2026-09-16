@@ -5363,10 +5363,16 @@ def register_tickets_routes(app, ctx):
         # se perdían en la página. Se prioriza SKU exacto > empieza con >
         # resto, y se sube el límite -- sin filtrar ningún tipo de producto,
         # el maestro sigue trayendo de todos lados (máquinas Y repuestos).
+        # 2026-09-16 (decisión Daniel): los modelos escritos A MANO desde la
+        # Bodega de repuestos (cat_productos.origen='manual', SKU MOD-0001)
+        # NO aparecen acá. Existen solo para atar repuestos a un equipo que
+        # no está en el ERP; no tienen precio ni stock en Random y cotizarlos
+        # generaría una línea que Random no reconoce.
         rows = mysql_fetchall(
             "SELECT id, sku, nombre, familia "
-            "FROM cat_productos "
+            "FROM cat_productos p "
             "WHERE COALESCE(activo,1)=1 AND (sku LIKE %s OR nombre LIKE %s) "
+            "  AND COALESCE(p.origen,'erp')<>'manual' "
             "ORDER BY "
             "  CASE WHEN sku=%s THEN 0 "
             "       WHEN sku LIKE %s THEN 1 "

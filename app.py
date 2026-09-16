@@ -53064,6 +53064,30 @@ def _puede_gestionar_clasificacion(user=None):
         return False          # fail-closed: ante la duda, no deja editar
 
 
+def _repstock_puede_gestionar_modelos(user=None):
+    """¿Puede este usuario declarar un MODELO de equipo como descontinuado
+    (o reactivarlo) y escribir modelos a mano en la Bodega de repuestos?
+
+    Decisión de Daniel (2026-09-16): solo SUPERVISOR O SUPERIOR. Ejecutivo
+    y técnico lo VEN (badge gris "Descontinuado" en la lista, chip en el
+    modal) pero no lo cambian: declarar que un fabricante dejó de producir
+    un equipo afecta a todos los repuestos asociados y a lo que se cotiza,
+    no es una decisión de terreno.
+
+    Se resuelve por FAMILIA de rol (_rol_familia) para que los roles
+    dinámicos creados desde /admin/roles ('supervisor_sstt',
+    'admin_logistica', ...) caigan donde corresponde sin lista fija.
+    Fail-closed: sin usuario o sin rol reconocible -> False.
+    """
+    try:
+        if user is None:
+            user = getattr(g, "user", None)
+        role = (user["role"] if user else "") or ""
+    except Exception:
+        role = ""
+    return _rol_familia(role) in ("superadmin", "admin", "supervisor")
+
+
 def _requiere_permiso_clasificacion(view):
     """Decorador: exige _puede_gestionar_clasificacion() para entrar.
 
@@ -110350,6 +110374,43 @@ def _repstock_next_sku(marca_nombre, conn):
     return f"REP-{pref}-{n:04d}"
 
 
+def _repstock_next_sku_modelo_manual(conn):
+    """SKU automático MOD-0001 para un MODELO DE EQUIPO escrito a mano
+    (2026-09-16, Daniel: los supervisores pueden declarar un modelo que no
+    está en el ERP -- "Trotadora Life Fitness 95T" -- para asociarle
+    repuestos). Misma secuencia atómica que _repstock_next_sku
+    (mant_repstock_secuencia, prefijo 'MOD', INSERT ... ON DUPLICATE KEY
+    UPDATE n=LAST_INSERT_ID(n+1)): jamás SELECT MAX(). Exige la MISMA
+    conexión transaccional que el INSERT en cat_productos, así un rollback
+    devuelve también el correlativo. Los prefijos de marca producen
+    REP-<MARCA>-NNNN y este MOD-NNNN: distinto formato, así que aunque
+    algún día una marca llamada "Mod" compartiera la fila 'MOD' de la
+    secuencia, lo peor que pasaría son huecos en la numeración, nunca un
+    SKU duplicado (uq_cat_sku lo impediría igual)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO mant_repstock_secuencia (prefijo, n) VALUES ('MOD', LAST_INSERT_ID(1)) "
+            "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)"
+        )
+        cur.execute("SELECT LAST_INSERT_ID() AS n")
+        row = cur.fetchone()
+        n = int(row["n"]) if row and row.get("n") else 1
+    return f"MOD-{n:04d}"
+
+
+# 2026-09-16 -- fragmento SQL compartido entre la lista de Bodega
+# (_repstock_contexto_bodega) y su Excel (repstock_exportar_excel):
+# "este repuesto tiene AL MENOS un modelo de equipo descontinuado". Vive en
+# un solo lugar para que la pantalla y la descarga nunca discrepen (deuda
+# conocida del módulo: "el sistema calcula bien y la pantalla muestra otra
+# cosa"). Se apoya en el alias `r` de mant_repuestos_stock.
+REPSTOCK_SQL_DESCONTINUADO = (
+    "EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm "
+    "          JOIN cat_productos p ON p.id = rm.producto_id "
+    "         WHERE rm.repuesto_id = r.id AND COALESCE(p.descontinuado,0)=1)"
+)
+
+
 def _repstock_contexto_bodega():
     """Todo lo que la pestaña "Bodega" necesita para pintarse. Se llama
     tanto desde /repuestos (donde vive de verdad, Daniel 2026-08-07) como
@@ -110371,6 +110432,13 @@ def _repstock_contexto_bodega():
     # no tenga modelos -- puede ser un descuido. Este es el que alguien
     # marco A PROPOSITO porque no se pudo identificar en el momento.
     solo_pendiente_modelo = request.args.get("pendiente_modelo") == "1"
+    # 2026-09-16 (Daniel: "descontinuado es propiedad del MODELO de equipo,
+    # no del repuesto"): filtro "repuestos de equipos descontinuados". La
+    # bandera vive en cat_productos.descontinuado; acá se pregunta si ALGUNO
+    # de los modelos asociados al repuesto está descontinuado. Un repuesto
+    # con un modelo descontinuado y otro vigente SÍ aparece: sirve para
+    # saber qué stock quedó atado a un equipo que ya no se fabrica.
+    solo_descontinuado = request.args.get("descontinuado") == "1"
     try:
         page = max(1, int(request.args.get("bpage") or 1))
     except (TypeError, ValueError):
@@ -110416,6 +110484,12 @@ def _repstock_contexto_bodega():
         f"SELECT COUNT(*) AS n FROM mant_repuestos_stock r WHERE {where_base_sql} "
         f"AND COALESCE(r.modelo_pendiente,0)=1", tuple(params)
     ) or {}).get("n", 0)
+    # Cuantos repuestos tienen al menos un modelo descontinuado bajo el
+    # filtro actual (mismo criterio de badge que los tres anteriores).
+    bod_count_descontinuado = (mysql_fetchone(
+        f"SELECT COUNT(*) AS n FROM mant_repuestos_stock r WHERE {where_base_sql} "
+        f"AND {REPSTOCK_SQL_DESCONTINUADO}", tuple(params)
+    ) or {}).get("n", 0)
 
     if solo_sin_costo:
         where.append("(r.costo_unitario IS NULL OR r.costo_unitario = 0)")
@@ -110423,6 +110497,8 @@ def _repstock_contexto_bodega():
         where.append("NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)")
     if solo_pendiente_modelo:
         where.append("COALESCE(r.modelo_pendiente,0)=1")
+    if solo_descontinuado:
+        where.append(REPSTOCK_SQL_DESCONTINUADO)
     where_sql = " AND ".join(where)
 
     total = (mysql_fetchone(
@@ -110454,9 +110530,14 @@ def _repstock_contexto_bodega():
     ids = [r["id"] for r in bod_repuestos]
     if ids:
         ph = ",".join(["%s"] * len(ids))
+        # 2026-09-16: la plantilla lee mod.descontinuado / mod.origen para
+        # pintar el chip gris "Descontinuado" y distinguir modelos escritos
+        # a mano (origen='manual', SKU MOD-0001) de los del ERP.
         mrows = mysql_fetchall(
             f"SELECT rm.repuesto_id, p.id AS producto_id, p.sku AS producto_sku, "
-            f"       p.nombre AS producto_nombre, p.clase_producto "
+            f"       p.nombre AS producto_nombre, p.clase_producto, "
+            f"       COALESCE(p.descontinuado,0) AS descontinuado, "
+            f"       COALESCE(p.origen,'erp') AS origen "
             f"  FROM mant_repuestos_stock_modelos rm "
             f"  JOIN cat_productos p ON p.id = rm.producto_id "
             f" WHERE rm.repuesto_id IN ({ph}) ORDER BY p.nombre",
@@ -110488,8 +110569,14 @@ def _repstock_contexto_bodega():
         "bod_bajo_minimo": solo_bajo_minimo,
         "bod_sin_costo": solo_sin_costo, "bod_sin_modelo": solo_sin_modelo,
         "bod_pendiente_modelo": solo_pendiente_modelo,
+        "bod_descontinuado": solo_descontinuado,
         "bod_count_sin_costo": bod_count_sin_costo, "bod_count_sin_modelo": bod_count_sin_modelo,
         "bod_count_pendiente_modelo": bod_count_pendiente_modelo,
+        "bod_count_descontinuado": bod_count_descontinuado,
+        # Solo supervisor+ marca descontinuado / escribe modelos a mano
+        # (decisión Daniel 2026-09-16). La plantilla lo expone como
+        # RB_PUEDE_GESTIONAR_MODELOS; el backend lo vuelve a exigir igual.
+        "bod_puede_gestionar_modelos": _repstock_puede_gestionar_modelos(),
         "bod_page": page, "bod_page_size": page_size,
         "bod_total": total, "bod_total_pages": total_pages,
     }
@@ -111228,15 +111315,21 @@ def repstock_sondeo_modelos_erp():
     )
     params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%", q_like)
 
+    # 2026-09-16: si el ERP falla, la respuesta sigue siendo ok:true con
+    # `erp_error` y la lista de modelos MANUALES locales. Antes era ok:false
+    # a secas y el usuario quedaba sin poder hacer nada; ahora un supervisor
+    # puede escribir el modelo a mano aunque Random esté caído (que desde
+    # agosto pasa seguido con el REST -- ver memoria erp_api_random).
+    erp_error = None
+    filas = None
     try:
         filas = _random_sql_query(sql, params, max_rows=30)
     except Exception as e:
         print(f"[repstock_sondeo_modelos_erp] ERP Random falló (q={q[:40]!r}): {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."})
-
-    if filas is None:
+        erp_error = "No se pudo consultar el ERP. Reintenta."
+    if filas is None and not erp_error:
         print(f"[repstock_sondeo_modelos_erp] ERP Random no respondió (q={q[:40]!r})", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."})
+        erp_error = "No se pudo consultar el ERP. Reintenta."
 
     def _num(v):
         try:
@@ -111245,12 +111338,65 @@ def repstock_sondeo_modelos_erp():
             return 0.0
 
     productos = [{
-        "sku":         (f.get("sku") or "").strip(),
-        "descripcion": (f.get("descripcion") or "").strip(),
-        "cantidad":    _num(f.get("cantidad")),
-    } for f in filas]
+        "sku":           (f.get("sku") or "").strip(),
+        "descripcion":   (f.get("descripcion") or "").strip(),
+        "cantidad":      _num(f.get("cantidad")),
+        "origen":        "erp",
+        "descontinuado": 0,
+    } for f in (filas or [])]
 
-    return jsonify({"ok": True, "productos": productos})
+    # Enriquecer los del ERP con lo que ILUS ya sabe del modelo (un solo
+    # SELECT local por lista de SKUs): si el catálogo lo tiene marcado como
+    # descontinuado, el modal lo muestra en gris ANTES de asociarlo -- no
+    # tiene sentido atar un repuesto nuevo a un equipo que ya no se fabrica
+    # sin avisar. Best-effort: un error local no tumba el sondeo del ERP.
+    skus_erp = sorted({p["sku"].upper() for p in productos if p["sku"]})
+    if skus_erp:
+        try:
+            ph = ",".join(["%s"] * len(skus_erp))
+            locales = mysql_fetchall(
+                f"SELECT UPPER(sku) AS sku, COALESCE(descontinuado,0) AS descontinuado, "
+                f"       COALESCE(origen,'erp') AS origen "
+                f"  FROM cat_productos WHERE UPPER(sku) IN ({ph})",
+                tuple(skus_erp)
+            ) or []
+            por_sku = {(l.get("sku") or ""): l for l in locales}
+            for p in productos:
+                loc = por_sku.get(p["sku"].upper())
+                if loc:
+                    p["descontinuado"] = 1 if loc.get("descontinuado") else 0
+                    p["origen"] = loc.get("origen") or "erp"
+        except Exception as e_loc:
+            print(f"[repstock_sondeo_modelos_erp] enriquecer desde cat_productos: {e_loc}", flush=True)
+
+    # Después de los del ERP, hasta 10 modelos MANUALES locales (escritos a
+    # mano por un supervisor+, SKU MOD-0001, origen='manual'). Cantidad 0
+    # porque no existen en Random: no hay stock que consultar. Los del ERP
+    # ya se buscan arriba; acá solo entran los manuales para no duplicar.
+    try:
+        manuales = mysql_fetchall(
+            "SELECT id, sku, nombre, COALESCE(descontinuado,0) AS descontinuado "
+            "  FROM cat_productos "
+            " WHERE activo=1 AND origen='manual' AND nombre LIKE %s "
+            " ORDER BY nombre LIMIT 10",
+            (f"%{q[:60]}%",)
+        ) or []
+    except Exception as e_man:
+        print(f"[repstock_sondeo_modelos_erp] modelos manuales: {e_man}", flush=True)
+        manuales = []
+    for m in manuales:
+        productos.append({
+            "sku":           (m.get("sku") or "").strip(),
+            "descripcion":   (m.get("nombre") or "").strip(),
+            "cantidad":      0.0,
+            "origen":        "manual",
+            "descontinuado": 1 if m.get("descontinuado") else 0,
+        })
+
+    out = {"ok": True, "productos": productos}
+    if erp_error:
+        out["erp_error"] = erp_error
+    return jsonify(out)
 
 
 REPSTOCK_MAX_FOTOS = 3
@@ -111578,6 +111724,18 @@ def repstock_modelo_asociar(rid):
         traer_foto=False: esto corre dentro del POST que Daniel está
         esperando: la foto de e-commerce se resuelve en background, igual
         que en Cotizaciones (Daniel: "colgaba el request... cargando y nada").
+      - {"manual": true, "nombre": "Trotadora Life Fitness 95T"} -- 2026-09-16:
+        modelo que NO está en el ERP, escrito a mano. SOLO supervisor o
+        superior (_repstock_puede_gestionar_modelos); ejecutivo/técnico
+        reciben 403 amable. Reusa un manual existente con el mismo nombre
+        (LOWER(TRIM)) o crea uno nuevo con SKU MOD-0001 (secuencia atómica)
+        y origen='manual'. Los manuales NO entran al buscador de
+        Cotizaciones/Tickets (decisión Daniel): son solo para atar repuestos.
+
+    En TODAS las ramas, asociar un modelo apaga r.modelo_pendiente (el
+    técnico declaró "no sé a qué máquina sirve"; ya se sabe). Antes el
+    comentario de _ensure_repuestos_stock prometía esto pero ninguna rama
+    lo hacía -- corregido 2026-09-16.
     """
     d = request.get_json(silent=True) or {}
     producto_id = None
@@ -111586,6 +111744,45 @@ def repstock_modelo_asociar(rid):
             producto_id = int(d.get("producto_id"))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "producto_id inválido"}), 400
+    elif d.get("manual"):
+        if not _repstock_puede_gestionar_modelos():
+            return jsonify({"ok": False,
+                            "error": "Solo un supervisor o superior puede escribir un modelo a mano. "
+                                     "Busca el equipo en el ERP o pide a tu supervisor que lo declare."}), 403
+        # Nombre COMPLETO, sin truncar (REGLA #15) -- solo se colapsan
+        # espacios repetidos y se respeta el largo físico de la columna
+        # (cat_productos.nombre es VARCHAR(300)).
+        nombre_manual = re.sub(r"\s+", " ", str(d.get("nombre") or "")).strip()[:300]
+        if len(nombre_manual) < 3:
+            return jsonify({"ok": False, "error": "Escribe el nombre completo del modelo (mínimo 3 caracteres)"}), 400
+        existente = mysql_fetchone(
+            "SELECT id FROM cat_productos "
+            " WHERE activo=1 AND origen='manual' AND LOWER(TRIM(nombre)) = LOWER(%s) LIMIT 1",
+            (nombre_manual,))
+        if existente:
+            producto_id = existente["id"]
+        else:
+            # SKU y INSERT en la MISMA transacción (conexión directa, igual
+            # que repstock_crear): si el INSERT falla, el correlativo vuelve.
+            conn = get_mysql()
+            try:
+                sku_manual = _repstock_next_sku_modelo_manual(conn)
+                usr = current_username() or "sistema"
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO cat_productos (sku, nombre, origen, created_by, updated_by) "
+                        "VALUES (%s,%s,'manual',%s,%s)",
+                        (sku_manual, nombre_manual, usr, usr))
+                    producto_id = cur.lastrowid
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                print(f"[repstock_modelo_asociar] crear modelo manual {nombre_manual!r}: {e}", flush=True)
+                return jsonify({"ok": False, "error": "No se pudo registrar el modelo escrito a mano. Reintenta."}), 400
+            finally:
+                conn.close()
+            _mant_log("catalogo_producto", producto_id, "crear_manual",
+                      f"{sku_manual} {nombre_manual} -- modelo escrito a mano desde Bodega")
     elif (d.get("sku") or "").strip():
         try:
             resuelto = _cat_crear_o_reusar_producto_desde_erp(
@@ -111597,12 +111794,18 @@ def repstock_modelo_asociar(rid):
             return jsonify({"ok": False, "error": (resuelto or {}).get("error") or "No se pudo registrar el modelo"}), 502
         producto_id = resuelto["id"]
     else:
-        return jsonify({"ok": False, "error": "Falta producto_id o sku"}), 400
+        return jsonify({"ok": False, "error": "Falta producto_id, sku o nombre manual"}), 400
 
     rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
     if not rep:
         return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
-    prod = mysql_fetchone("SELECT id, sku, nombre FROM cat_productos WHERE id=%s", (producto_id,))
+    # origen/descontinuado SIEMPRE en la respuesta (2026-09-16): el modal
+    # los guarda en RB_MODELOS_ACTUALES para pintar el chip gris sin
+    # recargar la página.
+    prod = mysql_fetchone(
+        "SELECT id, sku, nombre, COALESCE(origen,'erp') AS origen, "
+        "       COALESCE(descontinuado,0) AS descontinuado "
+        "  FROM cat_productos WHERE id=%s", (producto_id,))
     if not prod:
         return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo"}), 404
     n_actual = (mysql_fetchone(
@@ -111614,9 +111817,83 @@ def repstock_modelo_asociar(rid):
         "INSERT IGNORE INTO mant_repuestos_stock_modelos (repuesto_id, producto_id) VALUES (%s,%s)",
         (rid, producto_id)
     )
+    # El repuesto ya tiene a qué máquina sirve: se apaga "pendiente de
+    # identificar" solo (Daniel 2026-09-03: dejar de estar pendiente no es
+    # una acción aparte que alguien tenga que acordarse de hacer).
+    try:
+        mysql_execute(
+            "UPDATE mant_repuestos_stock SET modelo_pendiente=0 WHERE id=%s AND COALESCE(modelo_pendiente,0)=1",
+            (rid,))
+    except Exception as e_pend:
+        print(f"[repstock_modelo_asociar] apagar modelo_pendiente rid={rid}: {e_pend}", flush=True)
     _mant_log("repuesto_stock", rid, "asociar_modelo",
               f"{rep.get('sku') or ''} -> {prod.get('nombre') or prod.get('sku') or producto_id}")
-    return jsonify({"ok": True, "producto": dict(prod)})
+    prod_out = dict(prod)
+    prod_out["descontinuado"] = 1 if prod_out.get("descontinuado") else 0
+    return jsonify({"ok": True, "producto": prod_out})
+
+
+@app.route("/mantenciones/api/repuestos-stock/modelos/<int:producto_id>/descontinuado", methods=["POST"])
+@_mant_required
+def repstock_modelo_descontinuado(producto_id):
+    """Marca (o desmarca) un MODELO de equipo del catálogo como descontinuado.
+
+    2026-09-16, decisiones de Daniel: "descontinuado" es propiedad del
+    MODELO (cat_productos), no del repuesto -- si el fabricante dejó de
+    producir la Trotadora X, TODOS los repuestos atados a ella heredan el
+    aviso de una vez, sin marcar uno por uno. Solo supervisor o superior
+    puede cambiarlo (_repstock_puede_gestionar_modelos); el resto lo ve.
+
+    Body: {"descontinuado": true|false}. Al reactivar, descontinuado_at/by
+    vuelven a NULL (no se conserva "quién lo había marcado" en la fila; eso
+    queda en mant_logs, que es la evidencia). No se usa `activo`: activo=0
+    es borrado del catálogo y un modelo descontinuado sigue vivo.
+    """
+    if not _repstock_puede_gestionar_modelos():
+        return jsonify({"ok": False,
+                        "error": "Solo un supervisor o superior puede declarar un equipo como descontinuado"}), 403
+    d = request.get_json(silent=True) or {}
+    marcar = bool(d.get("descontinuado"))
+    prod = mysql_fetchone(
+        "SELECT id, sku, nombre, COALESCE(origen,'erp') AS origen, "
+        "       COALESCE(descontinuado,0) AS descontinuado "
+        "  FROM cat_productos WHERE id=%s", (producto_id,))
+    if not prod:
+        return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo"}), 404
+    usr = current_username() or "sistema"
+    try:
+        if marcar:
+            mysql_execute(
+                "UPDATE cat_productos SET descontinuado=1, descontinuado_at=NOW(), "
+                "       descontinuado_by=%s, updated_by=%s WHERE id=%s",
+                (usr, usr, producto_id))
+        else:
+            mysql_execute(
+                "UPDATE cat_productos SET descontinuado=0, descontinuado_at=NULL, "
+                "       descontinuado_by=NULL, updated_by=%s WHERE id=%s",
+                (usr, producto_id))
+    except Exception as e:
+        print(f"[repstock_modelo_descontinuado] producto_id={producto_id} marcar={marcar}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el cambio. Reintenta."}), 400
+    n_afectados = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_stock_modelos WHERE producto_id=%s", (producto_id,)
+    ) or {}).get("n", 0) or 0
+    _mant_log("catalogo_producto", producto_id, "descontinuar" if marcar else "reactivar",
+              f"{prod.get('sku') or ''} {prod.get('nombre') or ''} -- {n_afectados} repuestos")
+    fresco = mysql_fetchone(
+        "SELECT id, sku, nombre, COALESCE(origen,'erp') AS origen, "
+        "       COALESCE(descontinuado,0) AS descontinuado, descontinuado_at, descontinuado_by "
+        "  FROM cat_productos WHERE id=%s", (producto_id,)) or {}
+    return jsonify({"ok": True, "producto": {
+        "id": fresco.get("id", producto_id),
+        "sku": fresco.get("sku") or "",
+        "nombre": fresco.get("nombre") or "",
+        "origen": fresco.get("origen") or "erp",
+        "descontinuado": 1 if fresco.get("descontinuado") else 0,
+        # REGLA #6: NOW() de MySQL es UTC -> hora Chile dd/mm/yyyy hh:mm
+        "descontinuado_at": chile_fmt_filter(fresco["descontinuado_at"]) if fresco.get("descontinuado_at") else None,
+        "descontinuado_by": fresco.get("descontinuado_by") or None,
+    }, "repuestos_afectados": int(n_afectados)})
 
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/modelos/<int:producto_id>", methods=["DELETE"])
@@ -111771,6 +112048,9 @@ def repstock_exportar_excel():
     solo_sin_modelo = request.args.get("sin_modelo") == "1"
     # El Excel tiene que traer lo MISMO que se esta viendo en pantalla.
     solo_pendiente_modelo = request.args.get("pendiente_modelo") == "1"
+    # 2026-09-16: mismo filtro "equipo descontinuado" que la pantalla
+    # (REPSTOCK_SQL_DESCONTINUADO, un solo fragmento para ambos).
+    solo_descontinuado = request.args.get("descontinuado") == "1"
 
     where = ["r.activo=1"]
     params = []
@@ -111790,6 +112070,8 @@ def repstock_exportar_excel():
         where.append("NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)")
     if solo_pendiente_modelo:
         where.append("COALESCE(r.modelo_pendiente,0)=1")
+    if solo_descontinuado:
+        where.append(REPSTOCK_SQL_DESCONTINUADO)
     where_sql = " AND ".join(where)
 
     rows = mysql_fetchall(
@@ -111811,17 +112093,23 @@ def repstock_exportar_excel():
     ids = [r["id"] for r in rows]
     modelos_por_repuesto = {}
     fotos_por_repuesto = {}
+    descontinuado_por_repuesto = set()
     if ids:
         ph = ",".join(["%s"] * len(ids))
         mrows = mysql_fetchall(
-            f"SELECT rm.repuesto_id, p.nombre AS producto_nombre "
+            f"SELECT rm.repuesto_id, p.nombre AS producto_nombre, "
+            f"       COALESCE(p.descontinuado,0) AS descontinuado "
             f"  FROM mant_repuestos_stock_modelos rm "
             f"  JOIN cat_productos p ON p.id = rm.producto_id "
             f" WHERE rm.repuesto_id IN ({ph}) ORDER BY p.nombre",
             tuple(ids)
         ) or []
+        # 2026-09-16: qué repuestos tienen al menos un modelo descontinuado
+        # (columna "Equipo descontinuado" al final del Excel).
         for m in mrows:
             modelos_por_repuesto.setdefault(m["repuesto_id"], []).append(m["producto_nombre"])
+            if m.get("descontinuado"):
+                descontinuado_por_repuesto.add(m["repuesto_id"])
         # Ordenadas por 'orden' -> la [0] de cada repuesto es la foto principal
         # (mismo criterio que usa la tabla en pantalla, rfotos[0]).
         frows = mysql_fetchall(
@@ -111868,6 +112156,13 @@ def repstock_exportar_excel():
         filtros_desc.append("sin costo")
     if solo_sin_modelo:
         filtros_desc.append("sin modelo asociado")
+    # 2026-09-16: pendiente_modelo ya filtraba el Excel desde el 2026-09-03
+    # pero no se describía en el título (hueco conocido) -- ahora sí, junto
+    # con el filtro nuevo de equipos descontinuados.
+    if solo_pendiente_modelo:
+        filtros_desc.append("pendiente de identificar modelo")
+    if solo_descontinuado:
+        filtros_desc.append("equipo descontinuado")
     alcance_txt = (" · ".join(filtros_desc)) if filtros_desc else "todos los repuestos activos"
 
     wb = openpyxl.Workbook()
@@ -111884,7 +112179,10 @@ def repstock_exportar_excel():
         ["Foto 1", "Foto 2", "Foto 3"] +
         ["SKU", "Descripción", "Código fabricante", "Cantidad (un.)", "Stock mínimo (un.)",
          "Ubicación", "Marca", "Costo unitario", "Proveedor", "Modelos compatibles",
-         "Cliente asociado", "Ticket asociado", "Notas", "Creado por", "Fecha creación"]
+         "Cliente asociado", "Ticket asociado", "Notas", "Creado por", "Fecha creación",
+         # 2026-09-16: AL FINAL a propósito -- los índices de columna de
+         # abajo (7, 8, 11, 13, 16...) son posicionales y no se mueven.
+         "Equipo descontinuado"]
     )
     NCOLS = len(headers)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
@@ -111972,6 +112270,7 @@ def repstock_exportar_excel():
             rep.get("notas") or "",
             rep.get("created_by") or "",
             creado_fmt,
+            "Sí" if rep["id"] in descontinuado_por_repuesto else "No",
         ]
         bg = LGRAY if r_idx % 2 == 0 else "FFFFFF"
         # Columnas Foto 1/2/3: border+fill parejo con el resto de la fila
@@ -111986,7 +112285,7 @@ def repstock_exportar_excel():
             cell = ws.cell(row=r_idx, column=ci, value=val)
             cell.font = Font(size=9)
             cell.alignment = Alignment(
-                horizontal="center" if ci in (7, 8, 11) else "left",
+                horizontal="center" if ci in (7, 8, 11, 19) else "left",
                 vertical="center", wrap_text=(ci in (5, 13, 16)))
             cell.border = border
             fill = REDL if (ci == 7 and bajo_minimo) else bg
@@ -112024,7 +112323,7 @@ def repstock_exportar_excel():
 
         r_idx += 1
 
-    widths = [10, 10, 10, 20, 40, 18, 14, 16, 16, 18, 14, 22, 30, 22, 14, 30, 16, 16]
+    widths = [10, 10, 10, 20, 40, 18, 14, 16, 16, 18, 14, 22, 30, 22, 14, 30, 16, 16, 18]
     for ci, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "B3"
@@ -123742,8 +124041,12 @@ def _ensure_repuestos_bodega_tables():
     # que es de quien es la duda, y no ensucia nada mas.
     #
     # Se apaga sola cuando el repuesto recibe su primer modelo real (ver
-    # repstock_modelo_agregar): dejar de estar pendiente no es una accion
-    # aparte que alguien tenga que acordarse de hacer.
+    # repstock_modelo_asociar -- el nombre real de la función; el comentario
+    # citaba un "repstock_modelo_agregar" que nunca existió y, peor, ese
+    # apagado automático NO estaba implementado en ninguna rama. Corregido
+    # 2026-09-16: hoy TODAS las ramas de asociar hacen el UPDATE): dejar de
+    # estar pendiente no es una accion aparte que alguien tenga que
+    # acordarse de hacer.
     try:
         _cols_pend = {
             (r.get("COLUMN_NAME") or "").lower()

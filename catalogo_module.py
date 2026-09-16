@@ -467,6 +467,54 @@ def register_catalogo_routes(app, ctx):
         except Exception as _e_clase:
             print(f"[ILUS][WARN] clase_producto: {_e_clase}", flush=True)
 
+        # 2026-09-16 — Modelos de equipo "descontinuados" + modelos escritos a
+        # mano desde Bodega de repuestos (decisión de Daniel: "descontinuado
+        # es propiedad del MODELO, no del repuesto"). Cuatro columnas nuevas
+        # en cat_productos, idempotentes vía information_schema como
+        # clase_producto arriba:
+        #   descontinuado     : 1 = el fabricante ya no lo produce. NO se
+        #                       reutiliza `activo` porque activo=0 significa
+        #                       BORRADO (soft-delete del catálogo) y un modelo
+        #                       descontinuado sigue vivo: tiene repuestos
+        #                       asociados, fichas de equipos y OT que lo citan.
+        #   descontinuado_at  : cuándo se marcó (NULL al reactivar).
+        #   descontinuado_by  : quién lo marcó (NULL al reactivar).
+        #   origen            : 'erp' (sincronizado desde Random) o 'manual'
+        #                       (escrito por un supervisor+ en Bodega, SKU
+        #                       MOD-0001). Los manuales NO entran al buscador
+        #                       de Cotizaciones/Tickets.
+        _cols_desc = (
+            ("descontinuado",
+             "ALTER TABLE cat_productos ADD COLUMN descontinuado TINYINT(1) NOT NULL DEFAULT 0 "
+             "AFTER activo",
+             "ALTER TABLE cat_productos ADD INDEX idx_cat_descontinuado (descontinuado)"),
+            ("descontinuado_at",
+             "ALTER TABLE cat_productos ADD COLUMN descontinuado_at DATETIME NULL "
+             "AFTER descontinuado",
+             None),
+            ("descontinuado_by",
+             "ALTER TABLE cat_productos ADD COLUMN descontinuado_by VARCHAR(190) NULL "
+             "AFTER descontinuado_at",
+             None),
+            ("origen",
+             "ALTER TABLE cat_productos ADD COLUMN origen VARCHAR(10) NOT NULL DEFAULT 'erp' "
+             "AFTER descontinuado_by",
+             "ALTER TABLE cat_productos ADD INDEX idx_cat_origen (origen)"),
+        )
+        for _nombre_col, _sql_add, _sql_idx in _cols_desc:
+            try:
+                _col_d = mysql_fetchone(
+                    "SELECT 1 AS x FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cat_productos' "
+                    "  AND COLUMN_NAME=%s LIMIT 1", (_nombre_col,))
+                if not _col_d:
+                    mysql_execute(_sql_add)
+                    if _sql_idx:
+                        mysql_execute(_sql_idx)
+                    print(f"[ensure_catalogo] columna {_nombre_col} creada", flush=True)
+            except Exception as _e_desc:
+                print(f"[ILUS][WARN] cat_productos.{_nombre_col}: {_e_desc}", flush=True)
+
         try:
             _col2 = mysql_fetchone(
                 "SELECT 1 AS x FROM information_schema.COLUMNS "
