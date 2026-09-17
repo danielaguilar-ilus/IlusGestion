@@ -77061,6 +77061,23 @@ def _mant_visita_crear_core(d):
                 # estado_facturacion. Por eso aquí volvemos al set mínimo de
                 # columnas históricas (sin garantía): si las nuevas tampoco
                 # existen, este INSERT igual funciona y la OT queda creada.
+                #
+                # 🔒 2026-09-17 (revisión, tras extraer _ot_validar_normalizar_
+                # finanzas): este fallback DROPEA todas las columnas de
+                # finanzas -- correcto para su caso original (columna
+                # `created_by_user_id` inexistente en una DB vieja), pero un
+                # `except Exception` amplio también atrapaba CUALQUIER otro
+                # bug real (un tipo de dato malo en alguno de los 21 campos
+                # de finanzas, por ejemplo) y creaba la OT igual, SIN
+                # finanzas y sin que nadie se enterara -- exactamente lo que
+                # esta regla existe para evitar ("no se crean OT sin
+                # finanzas"). Ahora solo se reintenta si el error es
+                # específicamente "columna desconocida" (MySQL 1054);
+                # cualquier otro error se re-lanza y cae al `except` de más
+                # abajo (rollback + 500 real, REGLA #4 -- nunca una OT
+                # creada a medias en silencio).
+                if "1054" not in str(_e_ins_full) and "unknown column" not in str(_e_ins_full).lower():
+                    raise
                 print(f"[crear-ot] INSERT con created_by_user_id falló ({_e_ins_full}); reintentando sin la columna", flush=True)
                 cur.execute(
                     """INSERT INTO mant_visitas
