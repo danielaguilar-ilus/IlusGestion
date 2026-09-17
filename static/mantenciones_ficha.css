@@ -1181,6 +1181,27 @@ a.eq-origen:hover{background:var(--c);color:#fff;}
 .gar-note.show{display:flex;}
 .gar-note i{flex-shrink:0;margin-top:1px;}
 
+/* ── Sección "Costos" del modal #modalVisita (2026-09-17, Daniel: "ni que
+   se creen las OT sin las finanzas... siempre debe declarar documento,
+   finanzas y tecnico") — mismo lenguaje visual que se replica en
+   templates/mantenciones/calendario.html (esa página no carga este CSS,
+   así que tiene su propia copia de este bloque para verse IGUAL). ── */
+.vi-fin-box{border:1.5px solid #fecaca;border-radius:12px;padding:14px 16px;
+  background:linear-gradient(180deg,#fef2f2 0%,#fff 70px);margin-top:6px;}
+.vi-fin-box-tit{font-weight:800;font-size:.85rem;color:#991b1b;margin-bottom:10px;
+  display:flex;align-items:center;gap:7px;}
+.vi-cc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:4px;}
+.vi-cc{border:2px solid #e5e7eb;border-radius:10px;padding:10px 6px;text-align:center;
+  cursor:pointer;background:#fff;transition:all .14s;min-height:44px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;}
+.vi-cc:hover{border-color:#fca5a5;transform:translateY(-1px);}
+.vi-cc.sel{border-color:var(--ilus-red);background:linear-gradient(135deg,#fef2f2,#fff);
+  box-shadow:0 2px 10px rgba(220,38,38,.15);}
+.vi-cc i{font-size:1.2rem;color:#9ca3af;}
+.vi-cc.sel i{color:var(--ilus-red);}
+.vi-cc span{font-weight:700;font-size:.74rem;color:#374151;line-height:1.15;}
+.vi-cc.sel span{color:#991b1b;}
+
 /* ==== from ficha.html lines 5081-5105 ==== */
 .doc-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;
           display:flex;gap:14px;align-items:center;margin-bottom:8px;
