@@ -7119,11 +7119,16 @@ window.OT2C = (function(){
         '<i class="bi bi-search me-1"></i>Buscar cotización</button>';
     var linkNueva = (S.cliente && S.cliente.id)
       ? '<a href="/tickets/cotizaciones?desde_cliente='+encodeURIComponent(S.cliente.id)+'" target="_blank" rel="noopener" '+
+        'onclick="OT2C._o2mFinCotArmarEspera()" '+
         'class="btn btn-sm btn-outline-secondary"><i class="bi bi-box-arrow-up-right me-1"></i>Generar cotización nueva</a>'
       : '';
     return '<div class="o2m-fuentes-acciones">'+btnDoc+btnCot+linkNueva+'</div>'+
       (linkNueva && !S.fin_cotizacion
-        ? '<div class="o2m-fin-hint" style="margin:6px 0 0">Cuando la tengas, vuelve a este paso y búscala arriba.</div>' : '');
+        // 2026-09-17 (Daniel: "ahí se podría cotizar con el motor de las
+        // cotizaciones"): ya no hay que volver a buscarla a mano -- al
+        // volver a esta pestaña, si se detecta una cotización nueva para
+        // este cliente, se ofrece sola (ver _o2mFinCotArmarEspera).
+        ? '<div class="o2m-fin-hint" style="margin:6px 0 0">Al crearla y volver a esta pestaña, te la ofrecemos solos -- no hace falta buscarla.</div>' : '');
   }
   function abrirBusquedaFinCotizacion(){
     if (typeof tkaOpen !== 'function'){
@@ -7156,6 +7161,68 @@ window.OT2C = (function(){
     // aplica como valor de la OT aunque haya una fuente de mayor prioridad
     // (esa se ofrece con toast cuando llegue, ver _o2mFinAutoSeleccionar).
     usarFuenteValor('cotizacion');
+  }
+
+  /* ── "Vuelta automática" del cotizador (2026-09-17, Daniel: "ahí se
+     podría cotizar con el motor de las cotizaciones") ──────────────────
+     No se embebe el cotizador real (wizard grande, GPS/Places, ejecutivo,
+     clasificación de ítems -- ver comentario de _o2mFinCotizacionHtml):
+     sigue abriéndose en pestaña nueva, tal cual. Lo que cambia es que ya
+     no hay que volver a buscarla a mano -- se toma una FOTO de las
+     cotizaciones que ya existen para el RUT de este cliente ANTES de
+     abrir la pestaña, y al volver a esta (visibilitychange) se vuelve a
+     pedir la misma lista: lo que aparece y no estaba en la foto es la
+     que se acaba de crear. Sin comparar fechas (created_at viaja ya
+     formateado a hora Chile, "dd/mm/aaaa hh:mm" -- no es un valor que se
+     pueda parsear con Date() de forma confiable). Reusa el MISMO
+     endpoint que ya usa "Buscar cotización" (GET /tickets/api/
+     cotizaciones/buscar) -- ningún permiso ni ruta nueva. */
+  async function _o2mFinCotArmarEspera(){
+    if (!S.cliente || !S.cliente.id || !S.cliente.rut) return;
+    try{
+      var r = await fetch('/tickets/api/cotizaciones/buscar?rut='+encodeURIComponent(S.cliente.rut)+'&limit=30', {credentials:'same-origin'});
+      var d = await r.json();
+      var vistos = ((d && d.cotizaciones) || []).map(function(c){ return c.id; });
+      S.fin_cotizacion_esperando = {rut: S.cliente.rut, vistos: vistos};
+      _o2mFinCotRegistrarWatcher();
+    }catch(e){
+      // Si falla la foto "antes", no se activa la vuelta automática --
+      // mejor no ofrecer nada que arriesgar comparar contra una lista
+      // vacía y ofrecer como "nueva" una cotización vieja del cliente.
+    }
+  }
+  function _o2mFinCotRegistrarWatcher(){
+    if (window.__o2mCotWatcherOn) return;
+    window.__o2mCotWatcherOn = true;
+    document.addEventListener('visibilitychange', function(){
+      if (document.visibilityState === 'visible') _o2mFinCotRevisarAlVolver();
+    });
+  }
+  async function _o2mFinCotRevisarAlVolver(){
+    var esp = S.fin_cotizacion_esperando;
+    if (!esp) return;
+    // Se consulta una sola vez por cada "Generar cotización nueva" --
+    // si el usuario cambia de pestaña varias veces sin haber terminado
+    // de crearla, no se le pregunta de nuevo por la misma espera.
+    S.fin_cotizacion_esperando = null;
+    var modal = document.getElementById('ot2ModalCrear');
+    if (!modal || !modal.classList.contains('show')) return;
+    try{
+      var r = await fetch('/tickets/api/cotizaciones/buscar?rut='+encodeURIComponent(esp.rut)+'&limit=30', {credentials:'same-origin'});
+      var d = await r.json();
+      var lista = (d && d.cotizaciones) || [];
+      var nueva = lista.find(function(c){ return esp.vistos.indexOf(c.id) === -1; });
+      if (!nueva) return;
+      var monto = Number(nueva.total || 0);
+      var ok = window.ilusConfirm ? await ilusConfirm({
+        title: 'Cotización creada',
+        message: 'Se detectó '+(nueva.numero_cotizacion || ('#'+nueva.id))+' para este cliente'
+          +(monto > 0 ? (', por $'+Math.round(monto).toLocaleString('es-CL')) : '')+'.',
+        sub: '¿La usamos como el valor de esta OT?',
+        okLabel: 'Sí, usarla', cancelLabel: 'No, gracias',
+      }) : true;
+      if (ok) _o2mFinCotizacionSeleccionada([], {id: nueva.id, numero_cotizacion: nueva.numero_cotizacion, total: monto});
+    }catch(e){ /* silencioso -- no es crítico, sigue disponible "Buscar cotización" */ }
   }
   function limpiarFinCotizacion(){
     S.fin_cotizacion = null;
@@ -9094,6 +9161,7 @@ window.OT2C = (function(){
           abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,
           usarTotalDocumentoComoServicio:usarTotalDocumentoComoServicio,
           abrirBusquedaFinCotizacion:abrirBusquedaFinCotizacion, limpiarFinCotizacion:limpiarFinCotizacion,
+          _o2mFinCotArmarEspera:_o2mFinCotArmarEspera,
           setFinCostoProveedor:setFinCostoProveedor, setFinCostoDespacho:setFinCostoDespacho,
           _o2mFinMontoServicioCambio:_o2mFinMontoServicioCambio, _o2mFinMontoEnvioCambio:_o2mFinMontoEnvioCambio,
           setFinMotivoManual:setFinMotivoManual, setFinEnvioMotivoManual:setFinEnvioMotivoManual,
