@@ -2516,6 +2516,9 @@ const _TKOT = {
   // equipo) filtre por la MISMA categoría del tipo de OT elegido en el
   // Paso 1, en vez de listar TODAS las plantillas del sistema mezcladas.
   categoriaMap: null,
+  // Paso 8 (2026-09-17): documento/cotización detectado en el ticket para
+  // ofrecerlo como chip "Usar este dato" -- ver _tkotCargarRefFinanzas().
+  finDetectado: null,
 };
 
 // ── Clave estable por fila de equipo: usa maquina_id si existe (para que
@@ -4847,10 +4850,135 @@ async function _tkotSubirAdjuntos(vid){
   return {ok, fail};
 }
 
+// ── Paso 8: Costos y cobertura (2026-09-17, Daniel: "ni que se creen las
+//    OT sin las finanzas, vengan de donde vengan... siempre debe declarar
+//    documento, finanzas y técnico, siento que estamos expuestos") ──
+// Mismo mecanismo de chip exclusivo que tkotSetAccesoYN (data-target +
+// data-val), aplicado a 3 grupos (centro de costo, origen del valor,
+// cobertura) en vez de un solo Sí/No -- por eso NO se reusa .lev-yn-btn
+// (esa clase pinta verde/rojo con semántica de "Sí"/"No", que acá no
+// aplica) sino .lev-dur-chip, el mismo chip que ya usa el Paso 4
+// ("Duración") para elegir 1 de N opciones.
+function _tkotFinAplicarChip(target, val){
+  const hidden = document.getElementById(target);
+  if(!hidden) return;
+  hidden.value = val;
+  document.querySelectorAll('.lev-dur-chip[data-target="'+target+'"]').forEach(function(b){
+    const on = b.dataset.val === val;
+    b.classList.toggle('act', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function tkotFinSetChip(btn){
+  _tkotFinAplicarChip(btn.dataset.target, btn.dataset.val);
+  tkotFinOrigenUI();
+  tkotFinCoberturaUI();
+  tkotRefreshStepStates();
+}
+// El motivo manual ("¿En qué te basas?"/"¿Por qué se declara a mano?")
+// solo se pide cuando el origen NO es una referencia real (documento,
+// cotización, contrato, estimado) -- mismo criterio que OT2.0
+// (templates/ot2/_modal_crear.html, _o2mFinPintar).
+function tkotFinOrigenUI(){
+  const v = document.getElementById('finOrigenValor').value;
+  const need = (v === 'supuesto' || v === 'manual');
+  const wrap = document.getElementById('finMotivoManualWrap');
+  if(wrap) wrap.style.display = need ? '' : 'none';
+  const lbl = document.getElementById('finMotivoManualLbl');
+  if(lbl) lbl.textContent = v === 'supuesto' ? '¿En qué te basas? *' : '¿Por qué se declara a mano? *';
+}
+function tkotFinCoberturaUI(){
+  const v = document.getElementById('finCobertura').value;
+  const wd = document.getElementById('finDocWrap');
+  if(wd) wd.style.display = (v === 'documento') ? '' : 'none';
+  const wg = document.getElementById('finGarantiaWrap');
+  if(wg) wg.style.display = (v === 'garantia') ? '' : 'none';
+}
+function tkotResetFinanzas(){
+  ['finCentroCosto', 'finOrigenValor', 'finCobertura'].forEach(function(id){
+    const h = document.getElementById(id);
+    if(h) h.value = '';
+  });
+  document.querySelectorAll('#tkotStep8 .lev-dur-chip').forEach(function(b){
+    b.classList.remove('act');
+    b.setAttribute('aria-pressed', 'false');
+  });
+  ['finValorOT', 'finMotivoManual', 'finDocTipo', 'finDocNumero', 'finGarantiaMotivo'].forEach(function(id){
+    const e = document.getElementById(id);
+    if(e) e.value = '';
+  });
+  tkotFinOrigenUI();
+  tkotFinCoberturaUI();
+  const box = document.getElementById('finDetectadoBox');
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+  _TKOT.finDetectado = null;
+}
+// ── Referencia: SOLO propone, nunca autocompleta en silencio (mismo
+//    criterio que el chip "Detectado en ERP → usar" de Retiros -- caso
+//    real BLV 23501/Jeremías: un dato de documento tomado solo, sin que
+//    el operador lo confirmara, mandó un correo a quien no correspondía).
+//    Prioridad: documento real con monto > cotización del ticket >
+//    documento real sin monto visible (rol técnico, finanzas_ocultas).
+//    Solo aplica en modo ticket -- en modo cliente (TID null) no hay
+//    ticket del que sacar documentos/cotizaciones. Falla en silencio: es
+//    un adorno informativo, nunca debe bloquear el modal. ──
+async function _tkotCargarRefFinanzas(){
+  const box = document.getElementById('finDetectadoBox');
+  if(!box) return;
+  box.style.display = 'none';
+  box.innerHTML = '';
+  _TKOT.finDetectado = null;
+  if(_TKOT_MODO_CLIENTE || !TID) return;
+  try{
+    const r = await fetch('/tickets/api/tickets/' + TID);
+    const d = await r.json();
+    if(!d || !d.ok) return;
+    const docs = (d.documentos || []).filter(function(x){ return x && x.erp_tido && x.erp_nudo; });
+    const cots = (d.cotizaciones || []).filter(function(x){ return x && x.total > 0; });
+    const docConMonto = docs.find(function(x){ return x.monto != null && x.monto > 0; });
+    let candidato = null;
+    if(docConMonto){
+      candidato = {tipo:'documento', tido:docConMonto.erp_tido, nudo:docConMonto.erp_nudo, monto:docConMonto.monto};
+    } else if(cots.length){
+      candidato = {tipo:'cotizacion', numero:cots[0].numero_cotizacion, id:cots[0].id, monto:cots[0].total};
+    } else if(docs.length){
+      candidato = {tipo:'documento', tido:docs[0].erp_tido, nudo:docs[0].erp_nudo, monto:null};
+    }
+    if(!candidato) return;
+    _TKOT.finDetectado = candidato;
+    const desc = candidato.tipo === 'cotizacion'
+      ? ('Cotización ' + esc(candidato.numero || ('#'+candidato.id)) + (candidato.monto ? ' · $'+Number(candidato.monto).toLocaleString('es-CL') : ''))
+      : (esc(candidato.tido) + ' ' + esc(candidato.nudo) + (candidato.monto ? ' · $'+Number(candidato.monto).toLocaleString('es-CL') : ''));
+    box.style.cssText = 'background:#eff6ff;color:#1e3a8a;border:1px solid #93c5fd;border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between';
+    box.innerHTML = '<span><i class="bi bi-magic me-1"></i>Detectado en este ticket: <strong>' + desc + '</strong></span>'
+      + '<button type="button" class="btn btn-sm btn-primary" onclick="tkotFinUsarDetectado()">Usar este dato</button>';
+    box.style.display = '';
+  }catch(e){ /* referencia opcional -- nunca bloquea el modal */ }
+}
+function tkotFinUsarDetectado(){
+  const c = _TKOT.finDetectado;
+  if(!c) return;
+  if(c.tipo === 'cotizacion'){
+    _tkotFinAplicarChip('finOrigenValor', 'cotizacion');
+  } else {
+    _tkotFinAplicarChip('finOrigenValor', 'zz');
+    const dt = document.getElementById('finDocTipo'); if(dt) dt.value = c.tido || '';
+    const dn = document.getElementById('finDocNumero'); if(dn) dn.value = c.nudo || '';
+    _tkotFinAplicarChip('finCobertura', 'documento');
+  }
+  if(c.monto != null){
+    const v = document.getElementById('finValorOT');
+    if(v) v.value = Math.round(c.monto);
+  }
+  tkotFinOrigenUI();
+  tkotFinCoberturaUI();
+  tkotRefreshStepStates();
+}
+
 // ════════════════════════════════════════════════════════════════════
-// ESTADO VISUAL DE LOS 7 PASOS (2026-08-12)
+// ESTADO VISUAL DE LOS 8 PASOS (2026-08-12, Paso 8 agregado 2026-09-17)
 // ════════════════════════════════════════════════════════════════════
-// Hasta ahora las tarjetas del modal "Generar OT" eran mudas: los 7 pasos
+// Hasta ahora las tarjetas del modal "Generar OT" eran mudas: los pasos
 // se veían igual estuvieran llenos o vacíos, así que había que recorrerlos
 // uno por uno para saber qué faltaba. Ahora cada tarjeta se pinta verde
 // (borde + cabecera + círculo con ✓) apenas cumple su regla, igual que
@@ -4870,6 +4998,12 @@ async function _tkotSubirAdjuntos(vid){
 //                 (los captura el técnico en terreno) -> cuenta completo
 //   6 Acceso    · OPCIONAL (no bloquea el envío)
 //   7 Documentos· OPCIONAL (no bloquea el envío)
+//   8 Costos    · centro de costo + monto>0 + origen del valor (+ motivo
+//                 si es supuesto/manual) + cobertura (documento con
+//                 tipo/número, o garantía con motivo >=10 caracteres).
+//                 OBLIGATORIO (Daniel 2026-09-17: "siempre debe declarar
+//                 documento, finanzas y técnico, siento que estamos
+//                 expuestos") -- NO nace con .is-optional.
 // Los pasos 6 y 7 nacen con .is-optional (punteado gris) desde el HTML;
 // si el usuario los llena pasan a verde, si los vacía vuelven a punteado.
 // CERO cambio funcional: esto no valida, no bloquea y no toca el submit.
@@ -4910,6 +5044,18 @@ const TKOT_STEP_RULES = {
     return !!(val('acceso_ascensor') || val('acceso_estacionamiento') || val('acceso_piso') || val('acceso_notas'));
   },
   7: function(){ return (_TKOT.adjuntos || []).length > 0; },
+  8: function(){
+    const val = function(id){ const e = document.getElementById(id); return (e && e.value || '').trim(); };
+    if(!val('finCentroCosto')) return false;
+    if(!(parseFloat(val('finValorOT')) > 0)) return false;
+    const origen = val('finOrigenValor');
+    if(!origen) return false;
+    if((origen === 'supuesto' || origen === 'manual') && !val('finMotivoManual')) return false;
+    const cobertura = val('finCobertura');
+    if(!cobertura) return false;
+    if(cobertura === 'documento') return !!(val('finDocTipo') && val('finDocNumero'));
+    return val('finGarantiaMotivo').length >= 10;
+  },
 };
 const TKOT_STEPS_OPCIONALES = { 6: true, 7: true };
 
@@ -5128,6 +5274,7 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
 
   tkotResetAccesoLogistica();
   tkotResetAdjuntos();
+  tkotResetFinanzas();
 
   tkotRenderEquipos();
   tkotAplicarForzadoInstalacion();
@@ -5142,14 +5289,18 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
     document.getElementById('levTecnicosBox').innerHTML = '<span class="text-danger small">⚠ No se pudieron cargar los técnicos</span>';
   }
 
-  // Estado inicial de los 7 pasos (2026-08-12): se calcula al final, con
-  // todo ya prellenado (tipo, dirección, contacto, fecha, equipos).
+  // Estado inicial de los 8 pasos (2026-08-12, Paso 8 agregado 2026-09-17):
+  // se calcula al final, con todo ya prellenado (tipo, dirección, contacto,
+  // fecha, equipos).
   tkotRefreshStepStates();
 
   // Referencia de la cotización de origen (selector de /mantenciones/ots,
   // 2026-08-12) — puramente informativa, no toca equipo_ids/payload.
   // No se espera (no debe demorar la apertura del modal).
   _tkotMostrarRefCotizacion();
+  // Referencia de documento/cotización ya asociados al ticket para el
+  // Paso 8 (2026-09-17) -- mismo criterio: no bloquea, no se espera.
+  _tkotCargarRefFinanzas();
 });
 
 // ── Referencia de solo lectura: si esta OT nace de una cotización
@@ -5260,6 +5411,48 @@ async function tkotGenerar(){
     return;
   }
 
+  // ── Paso 8: Costos y cobertura (2026-09-17, Daniel: "ni que se creen
+  //    las OT sin las finanzas, vengan de donde vengan... siempre debe
+  //    declarar documento, finanzas y técnico, siento que estamos
+  //    expuestos") -- OBLIGATORIO en TODOS los caminos, mismo criterio
+  //    que técnico/fecha más arriba. Mismo contrato `finanzas` que ya usa
+  //    el wizard OT2.0 (templates/ot2/_modal_crear.html).
+  const finCentroCosto = (document.getElementById('finCentroCosto')?.value || '').trim();
+  if(!finCentroCosto){ ilusToast('Selecciona el centro de costo de la OT', {type:'warning'}); return; }
+  const finValorOT = parseFloat(document.getElementById('finValorOT')?.value || '');
+  if(!(finValorOT > 0)){
+    ilusToast('Indica cuánto vale esta OT (debe ser mayor a 0)', {type:'warning'});
+    document.getElementById('finValorOT')?.focus();
+    return;
+  }
+  const finOrigenValor = (document.getElementById('finOrigenValor')?.value || '').trim();
+  if(!finOrigenValor){ ilusToast('Indica de dónde sale ese valor', {type:'warning'}); return; }
+  const finMotivoManual = (document.getElementById('finMotivoManual')?.value || '').trim();
+  if((finOrigenValor === 'supuesto' || finOrigenValor === 'manual') && !finMotivoManual){
+    ilusToast(finOrigenValor === 'supuesto' ? 'Explica en qué te basas para ese valor' : 'Explica por qué se declara ese valor a mano', {type:'warning'});
+    document.getElementById('finMotivoManual')?.focus();
+    return;
+  }
+  const finCobertura = (document.getElementById('finCobertura')?.value || '').trim();
+  if(!finCobertura){ ilusToast('Indica si esta OT se le cobra al cliente o va por garantía', {type:'warning'}); return; }
+  let finFacturaTido = '', finFacturaNudo = '', finGarantiaMotivo = '';
+  if(finCobertura === 'documento'){
+    finFacturaTido = (document.getElementById('finDocTipo')?.value || '').trim();
+    finFacturaNudo = (document.getElementById('finDocNumero')?.value || '').trim();
+    if(!finFacturaTido || !finFacturaNudo){
+      ilusToast('Indica el tipo y número del documento con el que se cobra', {type:'warning'});
+      document.getElementById('finDocTipo')?.focus();
+      return;
+    }
+  } else {
+    finGarantiaMotivo = (document.getElementById('finGarantiaMotivo')?.value || '').trim();
+    if(finGarantiaMotivo.length < 10){
+      ilusToast('Explica el motivo de la garantía (mínimo 10 caracteres)', {type:'warning'});
+      document.getElementById('finGarantiaMotivo')?.focus();
+      return;
+    }
+  }
+
   // Equipos: separa los que ya tienen maquina_id (ficha real) de los que
   // solo existen en el ticket (sin ficha aún) -- el backend necesita ambos
   // caminos para poder crear la OT de instalación-sin-ficha.
@@ -5322,6 +5515,22 @@ async function tkotGenerar(){
       forzar_choque: false,
       forzar_crear_cliente: false,
       cliente_id_confirmado: null,
+      // Paso 8 (2026-09-17): mismo contrato `finanzas` que el wizard OT2.0
+      // (templates/ot2/_modal_crear.html) -- construido y validado arriba.
+      // costo_proveedor/costo_despacho son opcionales y este modal no los
+      // captura (sin campos para eso) -- viajan null a propósito.
+      finanzas: {
+        centro_costo: finCentroCosto,
+        valor_origen: finOrigenValor,
+        zz_monto: finValorOT,
+        garantia_aplica: finCobertura === 'garantia',
+        garantia_motivo: finCobertura === 'garantia' ? finGarantiaMotivo : '',
+        factura_tido: finCobertura === 'documento' ? finFacturaTido : '',
+        factura_nudo: finCobertura === 'documento' ? finFacturaNudo : '',
+        zz_motivo_manual: (finOrigenValor === 'supuesto' || finOrigenValor === 'manual') ? finMotivoManual : '',
+        costo_proveedor: null,
+        costo_despacho: null,
+      },
     };
     // FIX 2026-08-11: el selector de plantilla del Paso 1 se retiró (quedaba
     // duplicado con "Plantillas extra" del Paso 5, por equipo). Ya no se
@@ -5513,6 +5722,7 @@ async function tkotGenerar(){
     });
     tkotResetAccesoLogistica();
     tkotResetAdjuntos();
+    tkotResetFinanzas();
     // Modo ticket: recarga la ficha del ticket (ahora con visita_id).
     // Modo cliente: el admin permanece en la ficha -- la OT ya quedó
     // creada, mismo comportamiento que tenía el modal viejo
