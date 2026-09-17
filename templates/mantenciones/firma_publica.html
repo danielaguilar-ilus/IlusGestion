@@ -247,6 +247,7 @@
       font-weight:800;letter-spacing:-.005em;margin:0 0 6px;
     }
     .req{color:var(--ilus-red);font-weight:900}
+    .opt{color:#9ca3af;font-weight:700;font-size:.78rem;letter-spacing:0}
     .field input[type=text]{
       width:100%;background:#fff;border:1.5px solid #e5e7eb;border-radius:var(--r-sm);
       color:#111827;font-size:16px;padding:12px 13px;min-height:48px;outline:none;
@@ -557,7 +558,7 @@
             </div>
             <div class="step-titles">
               <h2>Identifícate</h2>
-              <p class="step-sub">Nombre y RUT de quien firma. Con esto tu firma queda <strong>respaldada legalmente</strong>.</p>
+              <p class="step-sub">Nombre de quien firma. Con esto tu firma queda <strong>respaldada legalmente</strong>; el RUT es opcional, si lo tienes a mano.</p>
             </div>
           </div>
           <div class="field-grid">
@@ -567,7 +568,7 @@
               <div class="input-help">Tal como aparece en tu cédula de identidad.</div>
             </div>
             <div class="field">
-              <label for="fRut">Tu RUT <span class="req">*</span></label>
+              <label for="fRut">Tu RUT <span class="opt">(opcional)</span></label>
               <input type="text" id="fRut" placeholder="12.345.678-5" inputmode="text" autocomplete="off"
                      oninput="_fmtRutInput(this)" maxlength="12">
               <div class="input-help">Con dígito verificador. Ej: 12.345.678-5</div>
@@ -602,7 +603,7 @@
                   <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-.5V4.5A3.5 3.5 0 0 0 8 1zm2 5H6V4.5a2 2 0 1 1 4 0V6z"/></svg>
                 </span>
                 <span class="sig-lock-txt">Primero identifícate para poder firmar</span>
-                <span class="sig-lock-sub">Completa el paso 2 con tu nombre y RUT y este espacio se habilita solo.</span>
+                <span class="sig-lock-sub">Completa tu nombre en el paso 2 y este espacio se habilita solo.</span>
               </div>
             </div>
             <div class="sig-tools">
@@ -800,7 +801,9 @@
       const rut = document.getElementById('fRut').value.trim();
       const err = document.getElementById('err'); err.textContent = '';
       if(!nombre){ err.textContent = 'Escribe tu nombre.'; return; }
-      if(!rut){ err.textContent = 'Escribe tu RUT.'; return; }
+      // 2026-09-17 (Lenin): el RUT ya no es obligatorio -- si lo escribiste,
+      // sí debe parecer válido (el servidor lo valida igual).
+      if(rut && !_rutValidoJs(rut)){ err.textContent = 'El RUT no es válido — revisa el dígito verificador, o bórralo si no lo tienes.'; return; }
       if(!has){ err.textContent = 'Falta tu firma.'; return; }
       const btn = document.getElementById('btnFirmar');
       btn.disabled = true; btn.textContent = 'Enviando…';
@@ -885,7 +888,9 @@
     }
     function _syncSteps(){
       const nombreOk = fNombre.value.trim().length >= 2;
-      const rutOk = _rutValidoJs(fRut.value);
+      // RUT opcional (Lenin, 2026-09-17): si está vacío no bloquea; si
+      // escribieron algo, tiene que ser un RUT válido de verdad.
+      const rutOk = !fRut.value.trim() || _rutValidoJs(fRut.value);
       fNombre.classList.toggle('field-valid', nombreOk);
       _setStep(2, nombreOk && rutOk);
       _setSigLock(!(nombreOk && rutOk));

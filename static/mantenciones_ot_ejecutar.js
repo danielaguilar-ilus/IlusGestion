@@ -7165,7 +7165,10 @@ async function _enviarFirmaCliente(btn){
   const cliNombre = (cliNombreEl && cliNombreEl.value || '').trim();
   const cliRut = ((document.getElementById('firmaCliRut') || {}).value || '').trim();
   if (!cliNombre){ ilusToast('Falta el nombre de quien firma por el cliente', { type:'warning' }); return; }
-  if (cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('Falta el RUT de quien firma (RUT chileno válido)', { type:'warning' }); return; }
+  // 2026-09-17 (Lenin): el RUT ya no es obligatorio para firmar -- si el
+  // cliente no lo tiene a mano se puede dejar vacío. Si se escribe algo,
+  // sí debe parecer un RUT real (el backend valida el dígito verificador).
+  if (cliRut && cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('El RUT ingresado no parece válido (o déjalo vacío)', { type:'warning' }); return; }
   const firmaCli = cvCli.toDataURL('image/png');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
   try {

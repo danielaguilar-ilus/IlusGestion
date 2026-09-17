@@ -5882,7 +5882,7 @@ function otdIniciarRuta(app){
              porque este modal vive en un archivo/scope JS distinto. Valida
              en vivo mientras escribe y formatea al perder el foco. #}
           <input type="text" id="otfFirmaCliRut" class="form-control mb-1"
-                 placeholder="RUT de quien firma (ej: 12.345.678-9)"
+                 placeholder="RUT de quien firma (opcional, ej: 12.345.678-9)"
                  oninput="otdPintarValidacionRutCli()" onblur="otdFormatearRutCliSiValido()">
           <div id="otfFirmaCliRutEstado" class="mb-2" style="font-size:.76rem;min-height:1.1em"></div>
           <div class="row g-2 mb-1">
@@ -11299,7 +11299,10 @@ const OT2F = (function(){
     const cliNombre = (cliNombreEl && cliNombreEl.value || '').trim();
     const cliRut = ((document.getElementById('otfFirmaCliRut') || {}).value || '').trim();
     if (!cliNombre){ ilusToast('Falta el nombre de quien firma por el cliente', {type:'warning'}); return; }
-    if (cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('Falta el RUT de quien firma (RUT chileno válido)', {type:'warning'}); return; }
+    // 2026-09-17 (Lenin): el RUT ya no es obligatorio para firmar -- si el
+    // cliente no lo tiene a mano se puede dejar vacío. Si se escribe algo,
+    // sí debe parecer un RUT real (el backend valida el dígito verificador).
+    if (cliRut && cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('El RUT ingresado no parece válido (o déjalo vacío)', {type:'warning'}); return; }
     const firmaCli = cvCli.toDataURL('image/png');
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
     try {

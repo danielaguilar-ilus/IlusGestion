@@ -95110,18 +95110,25 @@ def mant_ot_firmar_cliente(vid):
 
     if not firma_cli:
         return jsonify({"ok": False, "error": "Falta la firma del cliente"}), 400
-    # Identidad del firmante REAL: nombre + RUT chileno válido (puede recibir
-    # otra persona: encargado, conserjería, administración, etc.).
+    # Identidad del firmante REAL: nombre obligatorio (puede recibir otra
+    # persona: encargado, conserjería, administración, etc.).
     if not nombre_cli:
         return jsonify({"ok": False,
                         "error": "Falta el NOMBRE de quien firma por el cliente.",
                         "error_codigo": "FIRMANTE_SIN_NOMBRE"}), 400
-    _ok_rut, _rut_res = validar_rut(rut_cli)
-    if not _ok_rut:
-        return jsonify({"ok": False,
-                        "error": f"RUT del firmante inválido: {_rut_res}",
-                        "error_codigo": "FIRMANTE_RUT_INVALIDO"}), 400
-    rut_cli_norm = _formato_rut_chile(_rut_res) or _rut_res
+    # 🔧 2026-09-17 (Lenin, piloto OT 2.0): el RUT del firmante deja de ser
+    # obligatorio -- en terreno muchos clientes no lo traen o no quieren
+    # darlo, y eso trababa la firma. El nombre sigue siendo obligatorio
+    # (identifica al firmante). Si SÍ se declara un RUT, se sigue validando
+    # -- no se acepta uno inválido, solo se deja de exigirlo.
+    rut_cli_norm = None
+    if rut_cli:
+        _ok_rut, _rut_res = validar_rut(rut_cli)
+        if not _ok_rut:
+            return jsonify({"ok": False,
+                            "error": f"RUT del firmante inválido: {_rut_res}",
+                            "error_codigo": "FIRMANTE_RUT_INVALIDO"}), 400
+        rut_cli_norm = _formato_rut_chile(_rut_res) or _rut_res
 
     # El técnico debe haber firmado primero (orden: técnico → cliente).
     v = mysql_fetchone(
@@ -95734,10 +95741,14 @@ def ot_firma_publica_submit(token):
         return jsonify({"ok": False, "error": "Falta tu firma."}), 400
     if not nombre:
         return jsonify({"ok": False, "error": "Falta tu nombre."}), 400
-    _ok_rut, _rut_res = validar_rut(rut)
-    if not _ok_rut:
-        return jsonify({"ok": False, "error": f"RUT inválido: {_rut_res}"}), 400
-    rut_norm = _formato_rut_chile(_rut_res) or _rut_res
+    # 🔧 2026-09-17 (Lenin): el RUT deja de ser obligatorio para firmar --
+    # solo se valida si el cliente decide declararlo.
+    rut_norm = None
+    if rut:
+        _ok_rut, _rut_res = validar_rut(rut)
+        if not _ok_rut:
+            return jsonify({"ok": False, "error": f"RUT inválido: {_rut_res}"}), 400
+        rut_norm = _formato_rut_chile(_rut_res) or _rut_res
     v = mysql_fetchone("SELECT estado, firma_tecnico_url, firma_cliente_url FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada."}), 404
