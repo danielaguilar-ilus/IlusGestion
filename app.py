@@ -76930,26 +76930,64 @@ def _mant_visita_crear_core(d):
         return {"error": "Toda OT debe salir con un técnico responsable asignado.",
                 "error_codigo": "TECNICO_OBLIGATORIO"}, 400
 
-    # FASE 1 — modalidad de cobro + prioridad (con validación de regla)
+    # FASE 1 — tipo + prioridad
     tipo_ot = (d.get("tipo") or "preventiva").lower()
-    modalidad, warn_mod = _normalizar_modalidad_cobro(tipo_ot, d.get("modalidad_cobro"))
     prioridad = (d.get("prioridad") or "media").lower()
     if prioridad not in _OT_PRIORIDADES:
         prioridad = "media"
 
-    # GARANTÍA TRANSVERSAL (Daniel 2026-05-30): interruptor Aplica/No aplica
-    # independiente del tipo. Si llega `garantia_aplica`, MANDA sobre cualquier
-    # modalidad_cobro suelta que pudiera venir del frontend legacy.
-    cubierto_por_ins = "contrato"   # default histórico de la columna
-    estado_factur_ins = "sin_cotizar"
-    gar_aplica = _parse_garantia_aplica(d.get("garantia_aplica"))
-    cobertura_map, warn_gar = _mapear_garantia_a_cobertura(gar_aplica, tipo_ot)
-    if cobertura_map:
-        modalidad = cobertura_map["modalidad_cobro"]
-        cubierto_por_ins = cobertura_map["cubierto_por"]
-        estado_factur_ins = cobertura_map["estado_facturacion"]
-        if warn_gar:
-            warn_mod = warn_gar
+    # 💰 2026-09-17 (Daniel, viendo una OT "Ejecutando" sin documento ni
+    # finanzas declaradas: "ni que se creen las OT sin las finanzas, vengan
+    # de donde vengan... siento que estamos expuestos"): esta OT "clásica"
+    # nunca exigía centro de costo, documento/garantía ni monto al crearse
+    # -- solo un puñado de campos SUELTOS y opcionales (garantia_aplica,
+    # costo_proveedor...). Ahora pasa por el MISMO validador que ya usa el
+    # wizard OT 2.0 (_ot_validar_normalizar_finanzas, ver su docstring) --
+    # una sola regla de negocio, no tres copias divergiendo con el tiempo.
+    # El contrato es IDÉNTICO al de ot2_api_crear: un sub-dict `finanzas`
+    # en el body. Los 3 callers de HOY (calendario.html modal rápido,
+    # ots_list.html "Trabajo interno", mant_ficha.js modal de ficha)
+    # todavía mandan los campos SUELTOS de antes (garantia_aplica,
+    # costo_proveedor...) -- se arman acá dentro de un dict `finanzas`
+    # mientras el frontend no migra, para no perder ese dato en silencio;
+    # pero sin centro de costo/documento/monto (que NINGÚN caller de hoy
+    # manda todavía) la validación rechaza la creación -- es el
+    # comportamiento querido: "no se crean OT sin finanzas, vengan de
+    # donde vengan". La GARANTÍA TRANSVERSAL (Daniel 2026-05-30) sigue
+    # siendo el mismo interruptor de siempre, solo que ahora vive DENTRO
+    # de `finanzas` y exige motivo (≥10 caracteres) desde el momento de
+    # crear -- antes ese motivo solo se exigía al CORREGIRLA (PUT).
+    _fin_in = d.get("finanzas")
+    if not isinstance(_fin_in, dict):
+        _fin_in = {
+            "centro_costo": d.get("centro_costo"),
+            "valor_origen": d.get("valor_origen"),
+            "garantia_aplica": d.get("garantia_aplica"),
+            "garantia_motivo": d.get("garantia_motivo"),
+            "factura_tido": d.get("factura_tido") or d.get("documento_erp_tido"),
+            "factura_nudo": d.get("factura_nudo") or d.get("documento_erp_nudo"),
+            "zz_monto": d.get("zz_monto"),
+            "zz_envio_monto": d.get("zz_envio_monto"),
+            "zz_envio_codigo": d.get("zz_envio_codigo"),
+            "zz_motivo_manual": d.get("zz_motivo_manual"),
+            "zz_envio_motivo_manual": d.get("zz_envio_motivo_manual"),
+            "costo_interno": d.get("costo_interno"),
+            "costo_proveedor": d.get("costo_proveedor"),
+            "costo_despacho": d.get("costo_despacho"),
+            "proveedor_tipo": d.get("proveedor_tipo"),
+            "proveedor_nombre": d.get("proveedor_nombre"),
+        }
+    _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
+        _fin_in, tipo_ot, _cliente_opcional)
+    if _fin_err:
+        return {"error": _fin_err["error"],
+                "error_codigo": _fin_err["error_codigo"]}, 400
+
+    modalidad = _fin_campos["modalidad_cobro"]
+    cubierto_por_ins = _fin_campos["cubierto_por"]
+    estado_factur_ins = _fin_campos["estado_facturacion"]
+    gar_aplica = _fin_campos["garantia_aplica"]
+    warn_mod = None
 
     # 2026-05-22 (Aaron Urbina) — capturamos el user_id del creador como
     # FUENTE DE VERDAD para el filtro del listado. `created_by` queda como
@@ -76969,14 +77007,13 @@ def _mant_visita_crear_core(d):
             # INSERT con created_by_user_id. Si la migración aún no corrió en
             # esta instancia, hacemos fallback al INSERT legacy sin la columna.
             # FINANZAS 2026-06-10: costo del proveedor + tipo/nombre (margen).
-            _cprov_ins = None
-            try:
-                _cprov_ins = max(0.0, float(d.get("costo_proveedor") or 0)) or None
-            except (TypeError, ValueError):
-                _cprov_ins = None
-            _ptipo_ins = (d.get("proveedor_tipo") or "").strip().lower()
-            _ptipo_ins = _ptipo_ins if _ptipo_ins in ("interno", "externo") else None
-            _pnom_ins = (str(d.get("proveedor_nombre") or "").strip()[:200]) or None
+            # 🔧 2026-09-17: estos 3 ya no se recalculan acá -- ya salieron
+            # validados/normalizados de _ot_validar_normalizar_finanzas
+            # (mismo criterio que costo_despacho, centro_costo, etc. más
+            # abajo) para no tener dos lugares calculando lo mismo.
+            _cprov_ins = _fin_campos["costo_proveedor"]
+            _ptipo_ins = _fin_campos["proveedor_tipo"]
+            _pnom_ins = _fin_campos["proveedor_nombre"]
             try:
                 cur.execute(
                     """INSERT INTO mant_visitas
@@ -76984,18 +77021,38 @@ def _mant_visita_crear_core(d):
                         tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
                         modalidad_cobro,cubierto_por,estado_facturacion,
                         prioridad,created_by,created_by_user_id,
-                        costo_proveedor,proveedor_tipo,proveedor_nombre)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        costo_proveedor,proveedor_tipo,proveedor_nombre,costo_despacho,
+                        centro_costo,valor_origen,zz_codigo,zz_monto,
+                        zz_envio_codigo,zz_envio_monto,
+                        zz_motivo_manual,zz_envio_motivo_manual,
+                        garantia_motivo,factura_tido,factura_nudo,documentos_extra,
+                        finanzas_at,finanzas_por)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                               %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (d.get("cliente_id"), d.get("contrato_id") or None,
                      d.get("titulo","Mantención"), d["fecha_programada"],
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
                      tecnico_txt, tecnico_user_id,
                      tipo_ot,
                      d.get("estado","programada"), d.get("descripcion",""),
-                     float(d.get("costo",0) or 0),
+                     # 💰 2026-09-17: `costo` (precio al cliente / valor del
+                     # trabajo interno) ya NO se lee suelto de d.get("costo")
+                     # -- sale de finanzas.costo_cliente, la MISMA derivación
+                     # que usa ot2_api_crear (zz_monto+zz_envio_monto para
+                     # cliente, costo_interno para interna). Single source
+                     # of truth (ver docstring de _ot_validar_normalizar_finanzas).
+                     _fin_campos["costo_cliente"] if _fin_campos["costo_cliente"] is not None else 0,
                      modalidad, cubierto_por_ins, estado_factur_ins,
                      prioridad, current_username(), creador_user_id,
-                     _cprov_ins, _ptipo_ins, _pnom_ins)
+                     _cprov_ins, _ptipo_ins, _pnom_ins, _fin_campos["costo_despacho"],
+                     _fin_campos["centro_costo"], _fin_campos["valor_origen"],
+                     _fin_campos["zz_codigo"], _fin_campos["zz_monto"],
+                     _fin_campos["zz_envio_codigo"], _fin_campos["zz_envio_monto"],
+                     _fin_campos["zz_motivo_manual"], _fin_campos["zz_envio_motivo_manual"],
+                     _fin_campos["garantia_motivo"], _fin_campos["factura_tido"],
+                     _fin_campos["factura_nudo"], _fin_campos["documentos_extra_json"],
+                     datetime.utcnow() if _fin_campos["finanzas_declarada"] else None,
+                     current_username() if _fin_campos["finanzas_declarada"] else None)
                 )
             except Exception as _e_ins_full:
                 # Fallback (DB sin la migración nueva todavía). Este path solo se
@@ -77021,6 +77078,34 @@ def _mant_visita_crear_core(d):
                      modalidad, prioridad, current_username())
                 )
             vid = cur.lastrowid
+
+            # 📄 2026-09-17 -- mismo espejo que ot2_api_crear: los
+            # documentos ERP declarados en `finanzas.documentos_extra`
+            # (además del principal, ya guardado arriba en factura_tido/
+            # nudo) quedan también en mant_visita_documentos, que es lo
+            # que lee el detalle de la OT. Best-effort -- nunca tumba la
+            # creación (el JSON crudo ya quedó en documentos_extra).
+            _fin_doc_principal = (_fin_campos["factura_tido"], _fin_campos["factura_nudo"])
+            _fin_docs_a_espejar = list(_fin_campos["documentos_extra_norm"])
+            if _fin_doc_principal[0] and _fin_doc_principal[1]:
+                _fin_docs_a_espejar = [{
+                    "tido": _fin_doc_principal[0], "nudo": _fin_doc_principal[1],
+                    "rut": None, "cliente_nombre": None, "_principal": True,
+                }] + _fin_docs_a_espejar
+            for _fdx in _fin_docs_a_espejar:
+                try:
+                    cur.execute(
+                        "INSERT INTO mant_visita_documentos "
+                        "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
+                        "   rut, etiqueta, asociado_por) "
+                        "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s)",
+                        (vid, 1 if _fdx.get("_principal") else 0,
+                         _fdx["tido"], _fdx["nudo"],
+                         _fdx.get("rut") or None, _fdx.get("cliente_nombre") or None,
+                         current_username()))
+                except Exception as _e_fdx:
+                    print(f"[crear-ot] documento finanzas {_fdx.get('tido')} "
+                          f"{_fdx.get('nudo')}: {_e_fdx}", flush=True)
         conn.commit()
         _mant_log("visita", vid, "creada",
                   f"{d.get('titulo','')} · tipo={tipo_ot} · modalidad={modalidad}"
@@ -83532,6 +83617,347 @@ def ot2_api_equipos_desde_documento(vid):
     return jsonify({"ok": True, **data})
 
 
+def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna):
+    """Valida y normaliza el bloque 'finanzas' de una OT nueva -- MISMA
+    lógica que ot2_api_crear exige desde 2026-09-09/2026-09-15 (Daniel:
+    "los documentos y las finanzas deben ser requisito indispensable...
+    con datos persistentes en la OT"). Extraída 2026-09-17 (Daniel, viendo
+    una OT "Ejecutando" sin documento/finanzas declaradas: "ni que se
+    creen las OT sin las finanzas, vengan de donde vengan... siento que
+    estamos expuestos") para que los otros 2 núcleos de creación de OT
+    (_mant_visita_crear_core, _ot_crear_registro/_mant_lev_crear_ot_core)
+    exijan EXACTAMENTE lo mismo -- un solo lugar versionado (REGLA #4 de
+    CLAUDE.md), nunca tres copias de la misma regla de negocio
+    divergiendo con el tiempo. La LÓGICA es idéntica a la que vivía
+    inline en ot2_api_crear -- esto solo la mueve a una función, no
+    cambia una coma de cómo valida.
+
+    Args:
+        fin_dict: el sub-dict `finanzas` del body (mismo contrato que ya
+            usa ot2_api_crear / static/ot2_form.js `o2fFinPayload()`).
+            Puede venir None/vacío/mal formado -- se trata como {}.
+        tipo_ot: tipo de la OT (para sugerir zz_codigo por defecto).
+        es_interna: True si es trabajo interno (bodega/capacitación/
+            control de calidad) -- exento de documento/garantía/cliente,
+            pero exige costo_interno > 0 igual.
+
+    Devuelve (error:dict|None, campos:dict|None). Si error no es None,
+    el caller debe cortar YA sin tocar la base de datos (campos viene
+    None en ese caso) -- cada caller decide su propio envoltorio:
+    jsonify(...), status para un endpoint Flask directo (ot2_api_crear),
+    o el formato (payload, status) que ya usan _mant_visita_crear_core /
+    _mant_lev_crear_ot_core. Esta función NUNCA llama jsonify ni conoce
+    Flask -- error es siempre {"error": mensaje_amigable, "error_codigo":
+    codigo_estable}.
+
+    `campos` (solo si error es None) trae TODAS las columnas listas para
+    el INSERT: centro_costo, valor_origen, garantia_aplica,
+    garantia_motivo, factura_tido, factura_nudo, zz_codigo, zz_monto,
+    zz_envio_monto, zz_envio_codigo, zz_motivo_manual,
+    zz_envio_motivo_manual, costo_interno, costo_proveedor,
+    costo_despacho, documentos_extra_json, documentos_extra_norm (lista,
+    para espejar en mant_visita_documentos tras el INSERT),
+    proveedor_tipo, proveedor_nombre, estado_facturacion,
+    finanzas_declarada (bool), costo_cliente, modalidad_cobro,
+    cubierto_por.
+    """
+    def _ferr(msg, cod):
+        return {"error": msg, "error_codigo": cod}
+
+    _fin = fin_dict or {}
+    if not isinstance(_fin, dict):
+        _fin = {}
+    _fin_centro = (_fin.get("centro_costo") or "").strip().lower() or None
+    if _fin_centro and _fin_centro not in [c for c, _ in _OT2_CENTROS_COSTO]:
+        return _ferr("Ese centro de costo no existe.", "CENTRO_INVALIDO"), None
+    # 🔒 2026-09-09 (Daniel, explícito: "los documentos y las finanzas deben
+    # ser requisito indispensable... con datos persistentes en la OT"): para
+    # OT de CLIENTE el centro de costo ya no se puede dejar en blanco y
+    # rellenar solo con 'sstt' en silencio -- ese default servía de red de
+    # seguridad, pero permitía crear una OT sin que nadie decidiera a quién
+    # se le imputa (caso real: OT-2026-00156, creada con TODA la sección
+    # Finanzas vacía porque el frontend ya lo exige pero el backend nunca lo
+    # revalidaba). El default sigue existiendo solo para trabajo interno,
+    # que de todos modos queda exento del resto de este bloque.
+    if not es_interna and not _fin_centro:
+        return _ferr("Elige el centro de costo antes de crear la OT.",
+                        "FINANZAS_SIN_CENTRO_COSTO"), None
+    # Daniel 2026-08-26: por defecto Servicio Técnico para trabajo interno.
+    # 💰 2026-09-15: el trabajo interno también ELIGE centro de costo desde
+    # el wizard (Daniel: "cualquier tipo de OT me va a valorizar por centro
+    # de costo"). Si el wizard lo manda, ya quedó validado contra
+    # _OT2_CENTROS_COSTO más arriba y se respeta; el default 'sstt' queda
+    # solo como red para callers viejos que no lo mandan.
+    _fin_centro = _fin_centro or "sstt"
+
+    # 💰 2026-09-15 -- ORIGEN del valor (ver _OT2_VALOR_ORIGENES y
+    # _ensure_ot_valor_origen_col). Opcional para no romper callers que no
+    # lo mandan, pero si viene tiene que ser uno de la lista: un origen
+    # inventado en el reporte por centro de costo vale menos que ninguno.
+    _fin_valor_origen = (str(_fin.get("valor_origen") or "").strip().lower()) or None
+    if _fin_valor_origen and _fin_valor_origen not in _OT2_VALOR_ORIGENES:
+        return _ferr("El origen del valor no es válido.", "VALOR_ORIGEN_INVALIDO"), None
+
+    _fin_gar = bool(_fin.get("garantia_aplica"))
+    _fin_motivo = (_fin.get("garantia_motivo") or "").strip()[:500] or None
+    # Garantía y documento son EXCLUYENTES (misma regla que ot2_api_finanzas).
+    if _fin_gar:
+        _fin_tido, _fin_nudo = None, None
+    else:
+        _fin_tido = (_fin.get("factura_tido") or "").strip()[:5].upper() or None
+        _fin_nudo = (_fin.get("factura_nudo") or "").strip()[:20] or None
+        _fin_motivo = None
+    try:
+        _fin_zzm = int(_fin.get("zz_monto")) if str(_fin.get("zz_monto") or "").strip() else None
+    except (TypeError, ValueError):
+        return _ferr("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO"), None
+    # 🔒 2026-09-09 (Daniel, mismo pedido de arriba): documento-o-garantía y
+    # el monto estimado también pasan a ser indispensables para crear una OT
+    # de cliente -- antes solo los exigía el wizard (completo('finanzas') en
+    # _modal_crear.html), nunca el backend. Mismo criterio que ya usan
+    # aprobar-cierre y mant_ot_declarar_cobertura (exento solo trabajo
+    # interno; garantía exige motivo ≥10 caracteres, igual que declarar
+    # cobertura después). El monto acepta la línea ZZ real del documento O
+    # un valor declarado a mano (zz_monto de todos modos, ver
+    # o2fFinPayload/crear() en _modal_crear.html) — nunca queda en blanco.
+    if not es_interna:
+        if not _fin_gar and not (_fin_tido and _fin_nudo):
+            return _ferr(
+                "Asocia el documento del ERP (factura, boleta o nota de "
+                "venta) o declara la OT como garantía antes de crear.",
+                "FINANZAS_SIN_COBERTURA"), None
+        if _fin_gar and (not _fin_motivo or len(_fin_motivo) < 10):
+            return _ferr(
+                "Explica por qué esta OT va por garantía (mínimo 10 "
+                "caracteres).", "FINANZAS_GARANTIA_SIN_MOTIVO"), None
+        if _fin_zzm is None or _fin_zzm <= 0:
+            return _ferr(
+                "Falta declarar el monto estimado del servicio (línea del "
+                "documento, cotización asociada, o un valor a mano).",
+                "FINANZAS_SIN_MONTO"), None
+    # 2026-08-30 (Daniel: "el ZZ envío por si hay despacho... identifícalo
+    # ... que no se pierda ni se mezcle con el valor del servicio"): la
+    # línea ZZENVIO del MISMO documento se guarda APARTE de zz_codigo/
+    # zz_monto -- es lo que el documento le cobra al cliente por
+    # transporte (venta), nunca se mezcla con costo_proveedor/
+    # costo_despacho (lo que ILUS le paga a un proveedor -- signo
+    # contrario en el margen).
+    try:
+        _fin_zz_envio_m = (int(_fin.get("zz_envio_monto"))
+                           if str(_fin.get("zz_envio_monto") or "").strip() else None)
+    except (TypeError, ValueError):
+        return _ferr("El monto de la línea de envío no es válido.", "ZZ_ENVIO_INVALIDO"), None
+    _fin_zz_envio_c = (_fin.get("zz_envio_codigo") or "").strip().upper()[:30] or None
+    # 2026-08-30 (Daniel: "deberá reportarse con un argumento... hay que
+    # ser bien riguroso y detallista con esto"): el frontend ya bloquea
+    # crear() sin este texto cuando el monto se declaró/editó a mano (ver
+    # completo('finanzas') en _modal_crear.html) -- acá solo se persiste,
+    # sin repetir la validación (confiar en el front sería un hueco, pero
+    # el candado real de "no se puede crear sin esto" ya vive en el propio
+    # botón Crear orden, que no se habilita hasta que completo() sea true).
+    _fin_zz_motivo_manual = (_fin.get("zz_motivo_manual") or "").strip()[:500] or None
+    _fin_zz_envio_motivo_manual = (_fin.get("zz_envio_motivo_manual") or "").strip()[:500] or None
+    # 💰 2026-09-15 (Daniel: "si no hay línea ZZ, se declara un SUPUESTO
+    # bien presentado... los valores son editables"). Ahora que el origen
+    # viaja estructurado, el backend SÍ revalida lo que hasta hoy se le
+    # confiaba al front: un valor que puso una persona (supuesto, o editado
+    # a mano sobre una referencia) tiene que venir con su "en qué me baso".
+    # Sin esto, un wizard viejo cacheado o un caller directo podían dejar un
+    # supuesto sin explicación, que es justo lo que un reporte por centro de
+    # costo no puede defender. Solo para OT de cliente: el trabajo interno
+    # tiene su propio valor (costo_interno) y su propio origen ('interno' o
+    # 'manual'), y ahí el motivo no se exige -- es referencial, no se cobra.
+    if (not es_interna and _fin_valor_origen in _OT2_VALOR_ORIGENES_CON_MOTIVO
+            and not _fin_zz_motivo_manual):
+        return _ferr(
+            "Explica en qué te basas para ese valor (es un supuesto o lo "
+            "editaste a mano).", "FINANZAS_SUPUESTO_SIN_MOTIVO"), None
+    if not _fin_zz_envio_c:
+        _fin_zz_envio_m = None
+    # 2026-08-28 (Daniel, trabajo interno de bodega: "debería hacer un
+    # cálculo o por lo menos pedir los costos... solo para valorizarlo,
+    # esto no se cobra"): reusa la columna `costo` genérica de mant_visitas
+    # (preexistente, sin semántica de facturación) -- NUNCA zz_monto/
+    # zz_codigo, que están atados a una línea real del ERP y a un documento
+    # que un trabajo de bodega no tiene. Es un estimado de referencia, no
+    # un cobro: no participa de estado_facturacion ni de garantía.
+    try:
+        _fin_costo_int = (float(_fin.get("costo_interno"))
+                           if str(_fin.get("costo_interno") or "").strip() else None)
+        if _fin_costo_int is not None and _fin_costo_int < 0:
+            _fin_costo_int = None
+    except (TypeError, ValueError):
+        return _ferr("El costo estimado no es válido.", "COSTO_INTERNO_INVALIDO"), None
+    # 💰 2026-09-15 (Daniel, decisión tomada: "el trabajo INTERNO también se
+    # valoriza obligatoriamente y elige centro de costo"). Hasta hoy el
+    # costo interno era opcional ("Costo estimado (opcional)" en el paso
+    # Trabajo del wizard) y una OT de bodega podía nacer sin ningún valor:
+    # en el reporte por centro de costo aportaba $0 en silencio. Ahora
+    # tiene que venir y ser > 0 -- sigue siendo referencial (no se factura,
+    # no entra a estado_facturacion ni a garantía), pero tiene que existir.
+    if es_interna and (_fin_costo_int is None or _fin_costo_int <= 0):
+        return _ferr(
+            "Indica cuánto vale este trabajo interno (referencial, no se "
+            "factura): así el centro de costo sabe cuánto trabajo absorbe.",
+            "FINANZAS_SIN_VALOR_INTERNO"), None
+    # 2026-08-29 (wizard OT 2.0, Daniel: "los costos y lo que nos cobra el
+    # proveedor... % de margen sí o sí"): mant_visitas.costo_proveedor/
+    # proveedor_tipo/proveedor_nombre/costo_despacho ya existen desde
+    # 2026-06-10/2026-08-27 -- son las columnas REALES que ya alimentan el
+    # reporte de margen (_cliente_inteligencia, /mantenciones/finanzas) vía
+    # _mant_visita_crear_core. ot2_api_crear nunca las escribía todavía
+    # (por eso el margen quedaba siempre en blanco para toda OT creada por
+    # este wizard) -- mismo criterio de validación que ese otro caller,
+    # para no tener dos reglas distintas para la misma columna.
+    # 🔴 FIX 2026-09-15: un `0` declarado se convertía en NULL por un
+    # `or None` al final de cada expresión. "Nos costó $0" (técnico interno,
+    # proveedor que no cobró) es un DATO, no un campo sin llenar -- y con
+    # NULL la OT disparaba SIN_COSTO_PROVEEDOR al cerrar aunque el usuario
+    # ya lo hubiera declarado en el wizard. Mismo criterio que ya aplica
+    # ot2_api_finanzas (_parse_costo_opt): vacío = no viene = NULL; 0 = 0.
+    # OJO: `x or ""` también se tragaba el 0 numérico (0 es falsy) -- por
+    # eso se mira None/"" explícitamente y no la "verdad" del valor.
+    def _fin_costo_opcional(raw):
+        if raw is None or str(raw).strip() == "":
+            return None
+        return max(0.0, float(raw))
+    try:
+        _fin_costo_prov = _fin_costo_opcional(_fin.get("costo_proveedor"))
+    except (TypeError, ValueError):
+        return _ferr("El costo del proveedor no es válido.", "COSTO_PROVEEDOR_INVALIDO"), None
+    try:
+        _fin_costo_desp = _fin_costo_opcional(_fin.get("costo_despacho"))
+    except (TypeError, ValueError):
+        return _ferr("El costo de despacho no es válido.", "COSTO_DESPACHO_INVALIDO"), None
+    # 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan poderse
+    # agregar documentos... es necesario que sea multidocumento las ordenes
+    # de trabajo"). MVP en JSON (ver comentario de la columna y memoria
+    # ot2_anexo_multidocumento_decision) -- documentos ERP que el usuario
+    # asocio a mano desde el wizard, con el rut que traian al momento de
+    # agregarlos (para el aviso de "rut distinto" que ya se resuelve en el
+    # frontend; acá solo se guarda lo que ya vino validado, sin revalidar
+    # contra el ERP de nuevo).
+    _fin_docs_extra_json = None
+    # Lista normalizada, SIEMPRE definida: más abajo (tras el commit del
+    # INSERT) se espeja en mant_visita_documentos, y antes de esto quedaba
+    # sin declarar cuando el wizard no mandaba documentos extra.
+    _docs_extra_norm = []
+    _docs_extra_raw = _fin.get("documentos_extra")
+    if isinstance(_docs_extra_raw, list) and _docs_extra_raw:
+        _docs_limpios = []
+        for _d in _docs_extra_raw[:20]:
+            if not isinstance(_d, dict):
+                continue
+            _tido = str(_d.get("tido") or "").strip().upper()[:10]
+            _nudo = str(_d.get("nudo") or "").strip()[:30]
+            if not _tido or not _nudo:
+                continue
+            _docs_limpios.append({
+                "tido": _tido, "nudo": _nudo,
+                "rut": str(_d.get("rut") or "").strip()[:20],
+                "cliente_nombre": str(_d.get("cliente_nombre") or "").strip()[:200],
+            })
+        if _docs_limpios:
+            _fin_docs_extra_json = json.dumps(_docs_limpios, ensure_ascii=False)
+            _docs_extra_norm = _docs_limpios
+    _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
+    _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None
+    _fin_prov_nombre = (str(_fin.get("proveedor_nombre") or "").strip()[:200]) or None
+    _fin_zzc = (_fin.get("zz_codigo") or "").strip().upper()[:30] or None
+    if not _fin_zzc and not _fin_gar:
+        # Sugerencia por tipo: instalación → ZZINSTALACION, mantención →
+        # ZZMANTENCION (Daniel 2026-08-26).
+        _fin_zzc = _OT2_LINEA_ZZ.get(tipo_ot)
+    if _fin_gar:
+        _fin_estado_fact = "no_aplica"
+    elif _fin_nudo and (_fin_tido or "").upper() in ("NVV", "NVI"):
+        _fin_estado_fact = "con_nota_venta"
+    elif _fin_nudo:
+        _fin_estado_fact = "facturado"
+    elif es_interna:
+        # Trabajo de bodega/capacitación: no hay a quién facturarle.
+        _fin_estado_fact = "no_aplica"
+    else:
+        _fin_estado_fact = "sin_cotizar"
+    # 2026-09-15: `_fin_costo_prov is not None` en vez de su "verdad" -- un
+    # costo de proveedor declarado en $0 también es una declaración.
+    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int
+                          or _fin_costo_prov is not None or _fin_valor_origen)
+    # Si el wizard no mandó valor_origen (caller viejo, wizard cacheado),
+    # la columna queda NULL a propósito: el texto libre de zz_motivo_manual
+    # no alcanza para inferirlo sin equivocarse (cotización y estimado
+    # también mandaban motivo), y "no sé" es mejor que un origen inventado.
+
+    # 🐛 FIX 2026-09-02 (Daniel, OT-2026-00149: "no me guardó las finanzas...
+    # recuerdo que me trajo el precio final en servicio de despacho y de
+    # instalación, pero no lo guardó porque me está tirando a pérdida").
+    #
+    # El dato NUNCA se perdió: quedó guardado en zz_monto (línea
+    # ZZINSTALACION/ZZMANTENCION del documento) y zz_envio_monto (línea
+    # ZZENVIO). Lo que estaba mal es que la columna `costo` -- la que la
+    # tarjeta "Finanzas de la OT" muestra como "Precio al cliente" y la
+    # única que entra al cálculo del margen -- solo recibía
+    # `costo_interno`, un campo pensado para el trabajo de bodega
+    # ("valorizarlo, esto no se cobra", 2026-08-28). En una OT de CLIENTE
+    # ese campo viene vacío, así que `costo` quedaba NULL mientras
+    # costo_proveedor/costo_despacho sí traían valores → margen negativo
+    # siempre. Toda OT de cliente creada por este wizard nacía "a pérdida".
+    #
+    # Ahora, para una OT de cliente, el precio al cliente es lo que el
+    # DOCUMENTO le cobra: servicio + envío. Es el mismo número que Daniel
+    # vio en el wizard, y el que hace que el margen signifique algo:
+    #   margen = (zz_monto + zz_envio_monto) − (costo_proveedor + costo_despacho)
+    # El trabajo interno conserva su costo_interno, que es otra cosa
+    # (estimado de referencia, no un cobro).
+    if es_interna:
+        _fin_costo_cliente = _fin_costo_int
+    else:
+        _fin_costo_cliente = _fin_costo_int
+        if _fin_costo_cliente is None:
+            _zz_total = (_fin_zzm or 0) + (_fin_zz_envio_m or 0)
+            _fin_costo_cliente = float(_zz_total) if _zz_total else None
+
+    # Modalidad de cobro: una OT interna NO nace cobrable al cliente
+    # (`pagado` significa "facturable", no "ya pagado" — ver el comentario
+    # de la columna). Sin esto, el trabajo de bodega entraba al pipeline
+    # comercial como si hubiera que cobrárselo a alguien.
+    if _fin_gar:
+        _fin_modalidad, _fin_cubierto = "garantia", "garantia"
+    elif es_interna:
+        _fin_modalidad, _fin_cubierto = "interno", "contrato"
+    else:
+        _fin_modalidad, _fin_cubierto = "pagado", "cliente"
+
+    campos = {
+        "centro_costo": _fin_centro,
+        "valor_origen": _fin_valor_origen,
+        "garantia_aplica": _fin_gar,
+        "garantia_motivo": _fin_motivo,
+        "factura_tido": _fin_tido,
+        "factura_nudo": _fin_nudo,
+        "zz_codigo": _fin_zzc,
+        "zz_monto": _fin_zzm,
+        "zz_envio_monto": _fin_zz_envio_m,
+        "zz_envio_codigo": _fin_zz_envio_c,
+        "zz_motivo_manual": _fin_zz_motivo_manual,
+        "zz_envio_motivo_manual": _fin_zz_envio_motivo_manual,
+        "costo_interno": _fin_costo_int,
+        "costo_proveedor": _fin_costo_prov,
+        "costo_despacho": _fin_costo_desp,
+        "documentos_extra_json": _fin_docs_extra_json,
+        "documentos_extra_norm": _docs_extra_norm,
+        "proveedor_tipo": _fin_prov_tipo,
+        "proveedor_nombre": _fin_prov_nombre,
+        "estado_facturacion": _fin_estado_fact,
+        "finanzas_declarada": _fin_declarada,
+        "costo_cliente": _fin_costo_cliente,
+        "modalidad_cobro": _fin_modalidad,
+        "cubierto_por": _fin_cubierto,
+    }
+    return None, campos
+
+
+
 @app.route("/ot/api/crear", methods=["POST"])
 @_mant_required
 def ot2_api_crear():
@@ -83995,269 +84421,43 @@ def ot2_api_crear():
     #
     # Se valida acá, ANTES de abrir la transacción, igual que el resto:
     # "si algo falta, la OT no se empieza a crear a medias".
-    _fin = d.get("finanzas") or {}
-    if not isinstance(_fin, dict):
-        _fin = {}
-    _fin_centro = (_fin.get("centro_costo") or "").strip().lower() or None
-    if _fin_centro and _fin_centro not in [c for c, _ in _OT2_CENTROS_COSTO]:
-        return _ot2_err("Ese centro de costo no existe.", "CENTRO_INVALIDO")
-    # 🔒 2026-09-09 (Daniel, explícito: "los documentos y las finanzas deben
-    # ser requisito indispensable... con datos persistentes en la OT"): para
-    # OT de CLIENTE el centro de costo ya no se puede dejar en blanco y
-    # rellenar solo con 'sstt' en silencio -- ese default servía de red de
-    # seguridad, pero permitía crear una OT sin que nadie decidiera a quién
-    # se le imputa (caso real: OT-2026-00156, creada con TODA la sección
-    # Finanzas vacía porque el frontend ya lo exige pero el backend nunca lo
-    # revalidaba). El default sigue existiendo solo para trabajo interno,
-    # que de todos modos queda exento del resto de este bloque.
-    if not es_interna and not _fin_centro:
-        return _ot2_err("Elige el centro de costo antes de crear la OT.",
-                        "FINANZAS_SIN_CENTRO_COSTO")
-    # Daniel 2026-08-26: por defecto Servicio Técnico para trabajo interno.
-    # 💰 2026-09-15: el trabajo interno también ELIGE centro de costo desde
-    # el wizard (Daniel: "cualquier tipo de OT me va a valorizar por centro
-    # de costo"). Si el wizard lo manda, ya quedó validado contra
-    # _OT2_CENTROS_COSTO más arriba y se respeta; el default 'sstt' queda
-    # solo como red para callers viejos que no lo mandan.
-    _fin_centro = _fin_centro or "sstt"
-
-    # 💰 2026-09-15 -- ORIGEN del valor (ver _OT2_VALOR_ORIGENES y
-    # _ensure_ot_valor_origen_col). Opcional para no romper callers que no
-    # lo mandan, pero si viene tiene que ser uno de la lista: un origen
-    # inventado en el reporte por centro de costo vale menos que ninguno.
-    _fin_valor_origen = (str(_fin.get("valor_origen") or "").strip().lower()) or None
-    if _fin_valor_origen and _fin_valor_origen not in _OT2_VALOR_ORIGENES:
-        return _ot2_err("El origen del valor no es válido.", "VALOR_ORIGEN_INVALIDO")
-
-    _fin_gar = bool(_fin.get("garantia_aplica"))
-    _fin_motivo = (_fin.get("garantia_motivo") or "").strip()[:500] or None
-    # Garantía y documento son EXCLUYENTES (misma regla que ot2_api_finanzas).
-    if _fin_gar:
-        _fin_tido, _fin_nudo = None, None
-    else:
-        _fin_tido = (_fin.get("factura_tido") or "").strip()[:5].upper() or None
-        _fin_nudo = (_fin.get("factura_nudo") or "").strip()[:20] or None
-        _fin_motivo = None
-    try:
-        _fin_zzm = int(_fin.get("zz_monto")) if str(_fin.get("zz_monto") or "").strip() else None
-    except (TypeError, ValueError):
-        return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
-    # 🔒 2026-09-09 (Daniel, mismo pedido de arriba): documento-o-garantía y
-    # el monto estimado también pasan a ser indispensables para crear una OT
-    # de cliente -- antes solo los exigía el wizard (completo('finanzas') en
-    # _modal_crear.html), nunca el backend. Mismo criterio que ya usan
-    # aprobar-cierre y mant_ot_declarar_cobertura (exento solo trabajo
-    # interno; garantía exige motivo ≥10 caracteres, igual que declarar
-    # cobertura después). El monto acepta la línea ZZ real del documento O
-    # un valor declarado a mano (zz_monto de todos modos, ver
-    # o2fFinPayload/crear() en _modal_crear.html) — nunca queda en blanco.
-    if not es_interna:
-        if not _fin_gar and not (_fin_tido and _fin_nudo):
-            return _ot2_err(
-                "Asocia el documento del ERP (factura, boleta o nota de "
-                "venta) o declara la OT como garantía antes de crear.",
-                "FINANZAS_SIN_COBERTURA")
-        if _fin_gar and (not _fin_motivo or len(_fin_motivo) < 10):
-            return _ot2_err(
-                "Explica por qué esta OT va por garantía (mínimo 10 "
-                "caracteres).", "FINANZAS_GARANTIA_SIN_MOTIVO")
-        if _fin_zzm is None or _fin_zzm <= 0:
-            return _ot2_err(
-                "Falta declarar el monto estimado del servicio (línea del "
-                "documento, cotización asociada, o un valor a mano).",
-                "FINANZAS_SIN_MONTO")
-    # 2026-08-30 (Daniel: "el ZZ envío por si hay despacho... identifícalo
-    # ... que no se pierda ni se mezcle con el valor del servicio"): la
-    # línea ZZENVIO del MISMO documento se guarda APARTE de zz_codigo/
-    # zz_monto -- es lo que el documento le cobra al cliente por
-    # transporte (venta), nunca se mezcla con costo_proveedor/
-    # costo_despacho (lo que ILUS le paga a un proveedor -- signo
-    # contrario en el margen).
-    try:
-        _fin_zz_envio_m = (int(_fin.get("zz_envio_monto"))
-                           if str(_fin.get("zz_envio_monto") or "").strip() else None)
-    except (TypeError, ValueError):
-        return _ot2_err("El monto de la línea de envío no es válido.", "ZZ_ENVIO_INVALIDO")
-    _fin_zz_envio_c = (_fin.get("zz_envio_codigo") or "").strip().upper()[:30] or None
-    # 2026-08-30 (Daniel: "deberá reportarse con un argumento... hay que
-    # ser bien riguroso y detallista con esto"): el frontend ya bloquea
-    # crear() sin este texto cuando el monto se declaró/editó a mano (ver
-    # completo('finanzas') en _modal_crear.html) -- acá solo se persiste,
-    # sin repetir la validación (confiar en el front sería un hueco, pero
-    # el candado real de "no se puede crear sin esto" ya vive en el propio
-    # botón Crear orden, que no se habilita hasta que completo() sea true).
-    _fin_zz_motivo_manual = (_fin.get("zz_motivo_manual") or "").strip()[:500] or None
-    _fin_zz_envio_motivo_manual = (_fin.get("zz_envio_motivo_manual") or "").strip()[:500] or None
-    # 💰 2026-09-15 (Daniel: "si no hay línea ZZ, se declara un SUPUESTO
-    # bien presentado... los valores son editables"). Ahora que el origen
-    # viaja estructurado, el backend SÍ revalida lo que hasta hoy se le
-    # confiaba al front: un valor que puso una persona (supuesto, o editado
-    # a mano sobre una referencia) tiene que venir con su "en qué me baso".
-    # Sin esto, un wizard viejo cacheado o un caller directo podían dejar un
-    # supuesto sin explicación, que es justo lo que un reporte por centro de
-    # costo no puede defender. Solo para OT de cliente: el trabajo interno
-    # tiene su propio valor (costo_interno) y su propio origen ('interno' o
-    # 'manual'), y ahí el motivo no se exige -- es referencial, no se cobra.
-    if (not es_interna and _fin_valor_origen in _OT2_VALOR_ORIGENES_CON_MOTIVO
-            and not _fin_zz_motivo_manual):
-        return _ot2_err(
-            "Explica en qué te basas para ese valor (es un supuesto o lo "
-            "editaste a mano).", "FINANZAS_SUPUESTO_SIN_MOTIVO")
-    if not _fin_zz_envio_c:
-        _fin_zz_envio_m = None
-    # 2026-08-28 (Daniel, trabajo interno de bodega: "debería hacer un
-    # cálculo o por lo menos pedir los costos... solo para valorizarlo,
-    # esto no se cobra"): reusa la columna `costo` genérica de mant_visitas
-    # (preexistente, sin semántica de facturación) -- NUNCA zz_monto/
-    # zz_codigo, que están atados a una línea real del ERP y a un documento
-    # que un trabajo de bodega no tiene. Es un estimado de referencia, no
-    # un cobro: no participa de estado_facturacion ni de garantía.
-    try:
-        _fin_costo_int = (float(_fin.get("costo_interno"))
-                           if str(_fin.get("costo_interno") or "").strip() else None)
-        if _fin_costo_int is not None and _fin_costo_int < 0:
-            _fin_costo_int = None
-    except (TypeError, ValueError):
-        return _ot2_err("El costo estimado no es válido.", "COSTO_INTERNO_INVALIDO")
-    # 💰 2026-09-15 (Daniel, decisión tomada: "el trabajo INTERNO también se
-    # valoriza obligatoriamente y elige centro de costo"). Hasta hoy el
-    # costo interno era opcional ("Costo estimado (opcional)" en el paso
-    # Trabajo del wizard) y una OT de bodega podía nacer sin ningún valor:
-    # en el reporte por centro de costo aportaba $0 en silencio. Ahora
-    # tiene que venir y ser > 0 -- sigue siendo referencial (no se factura,
-    # no entra a estado_facturacion ni a garantía), pero tiene que existir.
-    if es_interna and (_fin_costo_int is None or _fin_costo_int <= 0):
-        return _ot2_err(
-            "Indica cuánto vale este trabajo interno (referencial, no se "
-            "factura): así el centro de costo sabe cuánto trabajo absorbe.",
-            "FINANZAS_SIN_VALOR_INTERNO")
-    # 2026-08-29 (wizard OT 2.0, Daniel: "los costos y lo que nos cobra el
-    # proveedor... % de margen sí o sí"): mant_visitas.costo_proveedor/
-    # proveedor_tipo/proveedor_nombre/costo_despacho ya existen desde
-    # 2026-06-10/2026-08-27 -- son las columnas REALES que ya alimentan el
-    # reporte de margen (_cliente_inteligencia, /mantenciones/finanzas) vía
-    # _mant_visita_crear_core. ot2_api_crear nunca las escribía todavía
-    # (por eso el margen quedaba siempre en blanco para toda OT creada por
-    # este wizard) -- mismo criterio de validación que ese otro caller,
-    # para no tener dos reglas distintas para la misma columna.
-    # 🔴 FIX 2026-09-15: un `0` declarado se convertía en NULL por un
-    # `or None` al final de cada expresión. "Nos costó $0" (técnico interno,
-    # proveedor que no cobró) es un DATO, no un campo sin llenar -- y con
-    # NULL la OT disparaba SIN_COSTO_PROVEEDOR al cerrar aunque el usuario
-    # ya lo hubiera declarado en el wizard. Mismo criterio que ya aplica
-    # ot2_api_finanzas (_parse_costo_opt): vacío = no viene = NULL; 0 = 0.
-    # OJO: `x or ""` también se tragaba el 0 numérico (0 es falsy) -- por
-    # eso se mira None/"" explícitamente y no la "verdad" del valor.
-    def _fin_costo_opcional(raw):
-        if raw is None or str(raw).strip() == "":
-            return None
-        return max(0.0, float(raw))
-    try:
-        _fin_costo_prov = _fin_costo_opcional(_fin.get("costo_proveedor"))
-    except (TypeError, ValueError):
-        return _ot2_err("El costo del proveedor no es válido.", "COSTO_PROVEEDOR_INVALIDO")
-    try:
-        _fin_costo_desp = _fin_costo_opcional(_fin.get("costo_despacho"))
-    except (TypeError, ValueError):
-        return _ot2_err("El costo de despacho no es válido.", "COSTO_DESPACHO_INVALIDO")
-    # 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan poderse
-    # agregar documentos... es necesario que sea multidocumento las ordenes
-    # de trabajo"). MVP en JSON (ver comentario de la columna y memoria
-    # ot2_anexo_multidocumento_decision) -- documentos ERP que el usuario
-    # asocio a mano desde el wizard, con el rut que traian al momento de
-    # agregarlos (para el aviso de "rut distinto" que ya se resuelve en el
-    # frontend; acá solo se guarda lo que ya vino validado, sin revalidar
-    # contra el ERP de nuevo).
-    _fin_docs_extra_json = None
-    # Lista normalizada, SIEMPRE definida: más abajo (tras el commit del
-    # INSERT) se espeja en mant_visita_documentos, y antes de esto quedaba
-    # sin declarar cuando el wizard no mandaba documentos extra.
-    _docs_extra_norm = []
-    _docs_extra_raw = _fin.get("documentos_extra")
-    if isinstance(_docs_extra_raw, list) and _docs_extra_raw:
-        _docs_limpios = []
-        for _d in _docs_extra_raw[:20]:
-            if not isinstance(_d, dict):
-                continue
-            _tido = str(_d.get("tido") or "").strip().upper()[:10]
-            _nudo = str(_d.get("nudo") or "").strip()[:30]
-            if not _tido or not _nudo:
-                continue
-            _docs_limpios.append({
-                "tido": _tido, "nudo": _nudo,
-                "rut": str(_d.get("rut") or "").strip()[:20],
-                "cliente_nombre": str(_d.get("cliente_nombre") or "").strip()[:200],
-            })
-        if _docs_limpios:
-            _fin_docs_extra_json = json.dumps(_docs_limpios, ensure_ascii=False)
-            _docs_extra_norm = _docs_limpios
-    _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
-    _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None
-    _fin_prov_nombre = (str(_fin.get("proveedor_nombre") or "").strip()[:200]) or None
-    _fin_zzc = (_fin.get("zz_codigo") or "").strip().upper()[:30] or None
-    if not _fin_zzc and not _fin_gar:
-        # Sugerencia por tipo: instalación → ZZINSTALACION, mantención →
-        # ZZMANTENCION (Daniel 2026-08-26).
-        _fin_zzc = _OT2_LINEA_ZZ.get(tipo_ot)
-    if _fin_gar:
-        _fin_estado_fact = "no_aplica"
-    elif _fin_nudo and (_fin_tido or "").upper() in ("NVV", "NVI"):
-        _fin_estado_fact = "con_nota_venta"
-    elif _fin_nudo:
-        _fin_estado_fact = "facturado"
-    elif es_interna:
-        # Trabajo de bodega/capacitación: no hay a quién facturarle.
-        _fin_estado_fact = "no_aplica"
-    else:
-        _fin_estado_fact = "sin_cotizar"
-    # 2026-09-15: `_fin_costo_prov is not None` en vez de su "verdad" -- un
-    # costo de proveedor declarado en $0 también es una declaración.
-    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int
-                          or _fin_costo_prov is not None or _fin_valor_origen)
-    # Si el wizard no mandó valor_origen (caller viejo, wizard cacheado),
-    # la columna queda NULL a propósito: el texto libre de zz_motivo_manual
-    # no alcanza para inferirlo sin equivocarse (cotización y estimado
-    # también mandaban motivo), y "no sé" es mejor que un origen inventado.
-
-    # 🐛 FIX 2026-09-02 (Daniel, OT-2026-00149: "no me guardó las finanzas...
-    # recuerdo que me trajo el precio final en servicio de despacho y de
-    # instalación, pero no lo guardó porque me está tirando a pérdida").
     #
-    # El dato NUNCA se perdió: quedó guardado en zz_monto (línea
-    # ZZINSTALACION/ZZMANTENCION del documento) y zz_envio_monto (línea
-    # ZZENVIO). Lo que estaba mal es que la columna `costo` -- la que la
-    # tarjeta "Finanzas de la OT" muestra como "Precio al cliente" y la
-    # única que entra al cálculo del margen -- solo recibía
-    # `costo_interno`, un campo pensado para el trabajo de bodega
-    # ("valorizarlo, esto no se cobra", 2026-08-28). En una OT de CLIENTE
-    # ese campo viene vacío, así que `costo` quedaba NULL mientras
-    # costo_proveedor/costo_despacho sí traían valores → margen negativo
-    # siempre. Toda OT de cliente creada por este wizard nacía "a pérdida".
-    #
-    # Ahora, para una OT de cliente, el precio al cliente es lo que el
-    # DOCUMENTO le cobra: servicio + envío. Es el mismo número que Daniel
-    # vio en el wizard, y el que hace que el margen signifique algo:
-    #   margen = (zz_monto + zz_envio_monto) − (costo_proveedor + costo_despacho)
-    # El trabajo interno conserva su costo_interno, que es otra cosa
-    # (estimado de referencia, no un cobro).
-    if es_interna:
-        _fin_costo_cliente = _fin_costo_int
-    else:
-        _fin_costo_cliente = _fin_costo_int
-        if _fin_costo_cliente is None:
-            _zz_total = (_fin_zzm or 0) + (_fin_zz_envio_m or 0)
-            _fin_costo_cliente = float(_zz_total) if _zz_total else None
-
-    # Modalidad de cobro: una OT interna NO nace cobrable al cliente
-    # (`pagado` significa "facturable", no "ya pagado" — ver el comentario
-    # de la columna). Sin esto, el trabajo de bodega entraba al pipeline
-    # comercial como si hubiera que cobrárselo a alguien.
-    if _fin_gar:
-        _fin_modalidad, _fin_cubierto = "garantia", "garantia"
-    elif es_interna:
-        _fin_modalidad, _fin_cubierto = "interno", "contrato"
-    else:
-        _fin_modalidad, _fin_cubierto = "pagado", "cliente"
+    # 🔧 2026-09-17 -- la validación/normalización se movió a
+    # _ot_validar_normalizar_finanzas() (arriba de este endpoint, junto a
+    # las constantes _OT2_CENTROS_COSTO/_OT2_VALOR_ORIGENES/_OT2_LINEA_ZZ
+    # que usa) para que los otros núcleos de creación de OT
+    # (_mant_visita_crear_core, _ot_crear_registro/_mant_lev_crear_ot_core)
+    # exijan EXACTAMENTE la misma regla -- ver su docstring. El
+    # comportamiento de ESTE endpoint no cambia ni un bit: mismos códigos
+    # de error, mismo orden de validación, mismo INSERT final -- solo
+    # cambia de dónde salen las variables.
+    _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
+        d.get("finanzas"), tipo_ot, es_interna)
+    if _fin_err:
+        return _ot2_err(_fin_err["error"], _fin_err["error_codigo"])
+    _fin_centro = _fin_campos["centro_costo"]
+    _fin_valor_origen = _fin_campos["valor_origen"]
+    _fin_gar = _fin_campos["garantia_aplica"]
+    _fin_motivo = _fin_campos["garantia_motivo"]
+    _fin_tido = _fin_campos["factura_tido"]
+    _fin_nudo = _fin_campos["factura_nudo"]
+    _fin_zzc = _fin_campos["zz_codigo"]
+    _fin_zzm = _fin_campos["zz_monto"]
+    _fin_zz_envio_m = _fin_campos["zz_envio_monto"]
+    _fin_zz_envio_c = _fin_campos["zz_envio_codigo"]
+    _fin_zz_motivo_manual = _fin_campos["zz_motivo_manual"]
+    _fin_zz_envio_motivo_manual = _fin_campos["zz_envio_motivo_manual"]
+    _fin_costo_prov = _fin_campos["costo_proveedor"]
+    _fin_costo_desp = _fin_campos["costo_despacho"]
+    _fin_docs_extra_json = _fin_campos["documentos_extra_json"]
+    _docs_extra_norm = _fin_campos["documentos_extra_norm"]
+    _fin_prov_tipo = _fin_campos["proveedor_tipo"]
+    _fin_prov_nombre = _fin_campos["proveedor_nombre"]
+    _fin_estado_fact = _fin_campos["estado_facturacion"]
+    _fin_declarada = _fin_campos["finanzas_declarada"]
+    _fin_costo_cliente = _fin_campos["costo_cliente"]
+    _fin_modalidad = _fin_campos["modalidad_cobro"]
+    _fin_cubierto = _fin_campos["cubierto_por"]
 
     # ⛔ CHOQUE DE HORARIO — 2026-09-06 (Daniel, viendo a Lenin Urbina con
     # dos OT el mismo día: OT-2026-00158 en Puente Alto 09:00-16:00 y
@@ -115347,12 +115547,17 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
 
 def _ot_crear_registro(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, descubrimiento,
                         equipo_ids, equipos_ticket_clean, agenda, tecnico_ids,
-                        tecnico_principal, aplica_garantia, dir_contacto):
+                        tecnico_principal, aplica_garantia, dir_contacto, fin_campos):
     """Corre DENTRO de la transacción principal (mismo cursor `cur`, mismo
     `conn` que hace conn.commit()/rollback() el caller). Crea, si aplica,
     mant_levantamientos + items, y SIEMPRE la OT espejo en mant_visitas +
     multi-técnico. Retorna dict: visita_id, lev_id, numero_ot, maquinas,
     n_items.
+
+    `fin_campos`: el dict que devuelve _ot_validar_normalizar_finanzas
+    (ya validado por el caller, _mant_lev_crear_ot_core, ANTES de abrir
+    esta transacción -- 2026-09-17). Se reenvía tal cual a
+    _ot_crear_visita_espejo, que es quien realmente lo persiste.
 
     DOS FASES CON MANEJO DE ERRORES DISTINTO (bug real encontrado por
     verificación adversarial 2026-08-13 -- ver git blame/historial de este
@@ -115452,7 +115657,7 @@ def _ot_crear_registro(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, descu
         visita_id = _ot_crear_visita_espejo(
             conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, n_items,
             numero_ot, agenda, tecnico_ids, tecnico_principal, lev_id,
-            aplica_garantia, dir_contacto,
+            aplica_garantia, dir_contacto, fin_campos,
         )
     except Exception as e_ot:
         print(f"[lev_crear] no se pudo crear OT espejo: {e_ot}", flush=True)
@@ -115466,12 +115671,22 @@ def _ot_crear_registro(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, descu
 
 def _ot_crear_visita_espejo(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, n_items,
                              numero_ot, agenda, tecnico_ids, tecnico_principal, lev_id,
-                             aplica_garantia, dir_contacto):
+                             aplica_garantia, dir_contacto, fin_campos):
     """FASE 2 de _ot_crear_registro, extraída aparte para que su try/except
     "blando" (en el caller) tenga un límite claro y visible: TODO lo de
     acá adentro es tolerante a fallos desde la perspectiva del caller,
     NADA de la Fase 1 (levantamiento/items, ya ejecutada antes de
-    llamar a esta función) lo es. Retorna visita_id (lastrowid)."""
+    llamar a esta función) lo es. Retorna visita_id (lastrowid).
+
+    `fin_campos`: dict que ya devolvió _ot_validar_normalizar_finanzas,
+    validado por el caller de _mant_lev_crear_ot_core ANTES de abrir la
+    transacción (2026-09-17, ver ese núcleo) -- acá solo se persiste, sin
+    revalidar. `modalidad` (cubrable/garantía/sin_costo, calculada abajo
+    con la lógica ORIGINAL de este espejo, sin tocar -- REGLA #4.2) sigue
+    siendo la de siempre; lo NUEVO es cubierto_por/estado_facturacion (que
+    esta función nunca fijaba, quedaban en el default de la columna) más
+    todas las columnas de finanzas (centro_costo, zz_monto, documento,
+    etc.) que tampoco existían acá."""
     tipo_prefix = _OT_TIPO_PREFIJO.get(tipo_ot, '[OT]')
     if aplica_garantia:
         tipo_prefix = tipo_prefix + ' 🛡️'
@@ -115499,6 +115714,33 @@ def _ot_crear_visita_espejo(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, 
     # deben mezclar con los %s reales: escribir el SQL a mano acá, en vez
     # de armar el conteo de placeholders con una fórmula genérica, es lo
     # que evita que ese detalle se pierda en un futuro cambio.
+    # 💰 2026-09-17 -- columnas de finanzas (ver _ot_validar_normalizar_finanzas
+    # y REGLA nueva de Daniel: "ni que se creen las OT sin las finanzas").
+    # `fin_campos` ya viene validado por el caller; acá solo se persiste.
+    _fin_declarada = bool((fin_campos or {}).get("finanzas_declarada"))
+    _visita_vals_fin = (
+        (fin_campos or {}).get("costo_cliente"),
+        (fin_campos or {}).get("cubierto_por") or "contrato",
+        (fin_campos or {}).get("estado_facturacion") or "sin_cotizar",
+        (fin_campos or {}).get("centro_costo"),
+        (fin_campos or {}).get("valor_origen"),
+        (fin_campos or {}).get("zz_codigo"),
+        (fin_campos or {}).get("zz_monto"),
+        (fin_campos or {}).get("zz_envio_codigo"),
+        (fin_campos or {}).get("zz_envio_monto"),
+        (fin_campos or {}).get("zz_motivo_manual"),
+        (fin_campos or {}).get("zz_envio_motivo_manual"),
+        (fin_campos or {}).get("garantia_motivo"),
+        (fin_campos or {}).get("factura_tido"),
+        (fin_campos or {}).get("factura_nudo"),
+        (fin_campos or {}).get("costo_proveedor"),
+        (fin_campos or {}).get("proveedor_tipo"),
+        (fin_campos or {}).get("proveedor_nombre"),
+        (fin_campos or {}).get("costo_despacho"),
+        (fin_campos or {}).get("documentos_extra_json"),
+        datetime.utcnow() if _fin_declarada else None,
+        current_username() if _fin_declarada else None,
+    )
     _visita_vals_base = (
         numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
         agenda["fecha_prog"], agenda["fecha_fin"], agenda["hora_ini"], agenda["hora_fin"],
@@ -115510,7 +115752,16 @@ def _ot_crear_visita_espejo(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, 
         dir_contacto["contacto_tel"], dir_contacto["contacto_email"], dir_contacto["contacto_origen"],
         dir_contacto["acceso_ascensor"], dir_contacto["acceso_estacionamiento"],
         dir_contacto["acceso_piso"], dir_contacto["acceso_notas"],
+    ) + _visita_vals_fin
+    _FIN_COLS_SQL = (
+        " costo, cubierto_por, estado_facturacion, centro_costo, valor_origen, "
+        " zz_codigo, zz_monto, zz_envio_codigo, zz_envio_monto, "
+        " zz_motivo_manual, zz_envio_motivo_manual, "
+        " garantia_motivo, factura_tido, factura_nudo, "
+        " costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
+        " documentos_extra, finanzas_at, finanzas_por) "
     )
+    _FIN_VALS_SQL = " %s,%s,%s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s,%s)"
     try:
         # created_by_user_id: FK estable a app_users.id (2026-05-22). Si la
         # migración no corrió aún en este entorno, cae al INSERT sin esa
@@ -115523,13 +115774,15 @@ def _ot_crear_visita_espejo(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, 
             " descripcion, tecnico_user_id, levantamiento_id, created_by, created_by_user_id, "
             " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
             " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
-            " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
+            " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas,"
+            + _FIN_COLS_SQL +
             "VALUES (%s,%s,%s,%s,NULL,%s,%s,%s,"
             " %s,'programada',%s,'media',"
             " %s,%s,%s,%s,%s,"
             " %s,%s,%s,%s,"
             " %s,%s,%s,%s,%s,"
-            " %s,%s,%s,%s)",
+            " %s,%s,%s,%s,"
+            + _FIN_VALS_SQL,
             # created_by_user_id va DESPUÉS de created_by en la lista de
             # columnas (no después de modalidad_cobro) -- índice 13 de
             # _visita_vals_base es current_username() (created_by).
@@ -115546,18 +115799,49 @@ def _ot_crear_visita_espejo(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, 
             " descripcion, tecnico_user_id, levantamiento_id, created_by, "
             " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
             " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
-            " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
+            " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas,"
+            + _FIN_COLS_SQL +
             "VALUES (%s,%s,%s,%s,NULL,%s,%s,%s,"
             " %s,'programada',%s,'media',"
             " %s,%s,%s,%s,"
             " %s,%s,%s,%s,"
             " %s,%s,%s,%s,%s,"
-            " %s,%s,%s,%s)",
+            " %s,%s,%s,%s,"
+            + _FIN_VALS_SQL,
             _visita_vals_base
         )
     visita_id = cur.lastrowid
     if lev_id:
         cur.execute("UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s", (visita_id, lev_id))
+
+    # 📄 2026-09-17 -- mismo espejo que ot2_api_crear/_mant_visita_crear_core:
+    # el documento principal (factura_tido/nudo) y los documentos extra
+    # declarados en finanzas.documentos_extra también quedan en
+    # mant_visita_documentos, que es lo que lee el detalle de la OT.
+    # Best-effort -- nunca tumba la creación (el JSON crudo ya quedó en
+    # la columna documentos_extra de mant_visitas).
+    _fin_tido_esp = (fin_campos or {}).get("factura_tido")
+    _fin_nudo_esp = (fin_campos or {}).get("factura_nudo")
+    _fin_docs_esp = list((fin_campos or {}).get("documentos_extra_norm") or [])
+    if _fin_tido_esp and _fin_nudo_esp:
+        _fin_docs_esp = [{
+            "tido": _fin_tido_esp, "nudo": _fin_nudo_esp,
+            "rut": None, "cliente_nombre": None, "_principal": True,
+        }] + _fin_docs_esp
+    for _fdx in _fin_docs_esp:
+        try:
+            cur.execute(
+                "INSERT INTO mant_visita_documentos "
+                "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
+                "   rut, etiqueta, asociado_por) "
+                "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s)",
+                (visita_id, 1 if _fdx.get("_principal") else 0,
+                 _fdx["tido"], _fdx["nudo"],
+                 _fdx.get("rut") or None, _fdx.get("cliente_nombre") or None,
+                 current_username()))
+        except Exception as _e_fdx:
+            print(f"[lev_crear] documento finanzas {_fdx.get('tido')} "
+                  f"{_fdx.get('nudo')}: {_e_fdx}", flush=True)
 
     if tecnico_ids:
         for tuid in tecnico_ids:
@@ -115620,6 +115904,27 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
 
     agenda = _ot_resolver_agenda(data)
     tecnico_ids, tecnico_principal = _ot_resolver_tecnicos(data)
+    # 🔒 2026-09-17 (Daniel, mismo pedido que ot2_api_crear/
+    # _mant_visita_crear_core: "están creando OT sin técnicos, deja eso
+    # completamente prohibido... debe ser motivo de bloqueo" -- confirmado
+    # explícito para este camino, incluido el Levantamiento por
+    # DESCUBRIMIENTO: "sí, igual que cualquier OT"). _ot_resolver_tecnicos
+    # NUNCA bloqueaba -- solo devolvía (lista_vacía, None). Hasta hoy el
+    # único candado vivía DUPLICADO dentro de tk_api_generar_ot
+    # (tickets_module.py, ~7820), que cubre "Generar OT" desde un Ticket
+    # pero NO al modal de Levantamiento llamado DIRECTO
+    # (#modalLevSelector, POST /mantenciones/api/clientes/<cid>/
+    # levantamientos, sin pasar por un Ticket). Se mueve acá, al núcleo
+    # compartido por los dos caminos, para que ninguno se escape. El
+    # chequeo gemelo de tickets_module.py se deja como defensa en
+    # profundidad (no estorba, y cubre por si algún día ese endpoint deja
+    # de pasar por este núcleo).
+    if not tecnico_principal:
+        return {
+            "ok": False,
+            "error": "Toda OT debe salir con un técnico responsable asignado.",
+            "error_codigo": "TECNICO_OBLIGATORIO",
+        }, 400
     plantilla_id_override = _ot_resolver_plantilla_override(data)
     plantillas_por_equipo, plantillas_por_ticket_equipo = _ot_resolver_plantillas_payload(data)
     # El usuario elige la plantilla ANTES de que exista ficha (key teq_<id>,
@@ -115632,6 +115937,46 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             plantillas_por_equipo[_mid_nuevo] = plantillas_por_ticket_equipo.pop(_teq_previo)
     aplica_garantia = bool(data.get("aplica_garantia")) and tipo_ot != 'levantamiento'
     dir_contacto = _ot_resolver_direccion_contacto_acceso(data)
+
+    # 💰 2026-09-17 (Daniel, viendo una OT "Ejecutando" sin documento ni
+    # finanzas declaradas: "ni que se creen las OT sin las finanzas, vengan
+    # de donde vengan... siento que estamos expuestos"): este camino
+    # (Levantamiento directo desde la ficha del cliente, o "Generar OT"
+    # desde un Ticket) tampoco exigía centro de costo, documento/garantía
+    # ni monto -- ni siquiera el Levantamiento por DESCUBRIMIENTO, que
+    # Daniel confirmó explícitamente SIN excepción ("el valor puede
+    # declararse como supuesto con motivo si aún no se sabe -- eso YA
+    # existe como opción válida en el wizard"). Mismo validador que
+    # ot2_api_crear / _mant_visita_crear_core -- ver su docstring, una
+    # sola regla de negocio. `es_interna=False` SIEMPRE acá: "trabajo
+    # interno" (bodega/capacitación/control de calidad) es un concepto
+    # EXCLUSIVO del wizard OT 2.0 -- este camino siempre crea una OT DE
+    # CLIENTE (tiene `cid`).
+    #
+    # CONTRATO (nuevo -- para el frontend que construya esto, misma forma
+    # EXACTA que ya usa ot2_api_crear / `o2fFinPayload()` en
+    # templates/ot2/_modal_crear.html, para que ese código sirva de
+    # referencia directa a quien construya el formulario de Levantamiento
+    # y el de "Generar OT" desde un Ticket):
+    #   data.finanzas = {
+    #     centro_costo, valor_origen, zz_monto,
+    #     garantia_aplica, garantia_motivo,
+    #     factura_tido, factura_nudo, zz_motivo_manual,
+    #     costo_interno, costo_proveedor, costo_despacho,
+    #     zz_envio_monto, zz_envio_codigo, zz_envio_motivo_manual,
+    #     documentos_extra,
+    #   }
+    # Se valida ANTES de tocar la base de datos -- si falta algo, ni el
+    # levantamiento ni la OT se empiezan a crear (mismo criterio que ya
+    # usa esta función para "Debes seleccionar al menos 1 equipo").
+    _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
+        data.get("finanzas"), tipo_ot, False)
+    if _fin_err:
+        return {
+            "ok": False,
+            "error": _fin_err["error"],
+            "error_codigo": _fin_err["error_codigo"],
+        }, 400
 
     # 2026-08-13 (Daniel, en vivo: "no quiero nada automático, todo lo debe
     # escoger el usuario y si no escoge no lo debe dejar avanzar"): valida
@@ -115660,7 +116005,7 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             registro = _ot_crear_registro(
                 conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, descubrimiento,
                 equipo_ids, equipos_ticket_clean, agenda, tecnico_ids,
-                tecnico_principal, aplica_garantia, dir_contacto,
+                tecnico_principal, aplica_garantia, dir_contacto, _fin_campos,
             )
             visita_id = registro["visita_id"]
             lev_id = registro["lev_id"]
