@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Factura {{ factura.numero_documento }} · {{ factura.proveedor_nombre }} — ILUS Fitness{% endblock %}
+{% block title %}Factura {{ factura.numero_documento or 'sin N°' }} · {{ factura.proveedor_nombre }} — ILUS Fitness{% endblock %}
 
 {#- Detalle de una factura de proveedor externo (SSTT). Ver el comentario
     de cabecera en facturas_proveedor.html. Acá se asignan las OT que el
@@ -19,15 +19,23 @@
     <div>
       <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.6)">
         <a href="/servicio-tecnico/facturas-proveedor" style="color:inherit;text-decoration:none">Facturas de proveedor</a> ›
-        {{ tipo_lbl }} {{ factura.numero_documento }}</div>
+        {{ tipo_lbl }} {{ factura.numero_documento or '(sin N°)' }}</div>
       <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>{{ factura.proveedor_nombre }}
         <span class="fp-pago pago-{{ factura.estado_pago }}" style="vertical-align:middle;margin-left:6px">
           {% if factura.estado_pago == 'pagada' %}<i class="bi bi-check-circle-fill"></i> Pagada
           {% elif factura.estado_pago == 'anulada' %}<i class="bi bi-slash-circle"></i> Anulada
-          {% else %}<i class="bi bi-hourglass-split"></i> Pendiente de pago{% endif %}</span></h1>
+          {% else %}<i class="bi bi-hourglass-split"></i> Pendiente de pago{% endif %}</span>
+        {% if not factura.numero_documento %}
+        <span class="fp-pago" style="vertical-align:middle;margin-left:4px;background:#fff8e1;color:#92400e;border:1px solid #fde68a">
+          <i class="bi bi-hourglass-split"></i> Sin factura — pendiente de completar</span>
+        {% endif %}</h1>
       <div style="font-size:.86rem;color:rgba(255,255,255,.78)">
+        {% if factura.numero_documento %}
         {{ tipo_lbl }} <b>N° {{ factura.numero_documento }}</b>
         · {{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }}
+        {% else %}
+        <b>Todavía no llega el documento del proveedor</b> — el pago ya está reconocido y congelado.
+        {% endif %}
         {% if factura.proveedor_rut %} · RUT {{ factura.proveedor_rut | rut_fmt }}{% endif %}
         {% if factura.notas %}<div class="fp-sub" style="white-space:pre-line">{{ factura.notas }}</div>{% endif %}
       </div>
@@ -47,6 +55,10 @@
             {% if not items %}disabled title="Asigna al menos una OT antes de marcarla pagada"{% endif %}>
       <i class="bi bi-check2-circle me-1"></i>Marcar pagada</button>
     {% elif factura.estado_pago == 'pagada' and es_superadmin %}
+      {% if not factura.numero_documento %}
+      <button type="button" class="btn btn-sm btn-dark fw-bold" style="min-height:44px" onclick="fpdCompletar()">
+        <i class="bi bi-file-earmark-plus me-1"></i>Completar factura</button>
+      {% endif %}
     <button type="button" class="btn btn-sm btn-outline-danger" style="min-height:44px" onclick="fpdReabrir()">
       <i class="bi bi-unlock me-1"></i>Reabrir</button>
     {% endif %}
@@ -195,7 +207,7 @@
                   <option value="otro" {{ 'selected' if factura.tipo_documento == 'otro' }}>Otro</option>
                 </select></div>
               <div class="col-6 col-sm-4"><label class="fpv-lbl">N° <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" id="fpeNumero" value="{{ factura.numero_documento }}" oninput="fpeRefreshSteps()"></div>
+                <input type="text" class="form-control" id="fpeNumero" value="{{ factura.numero_documento or '' }}" oninput="fpeRefreshSteps()"></div>
               <div class="col-6 col-sm-4"><label class="fpv-lbl">Fecha <span class="text-danger">*</span></label>
                 <input type="date" class="form-control" id="fpeFecha" value="{{ factura.fecha.strftime('%Y-%m-%d') if factura.fecha else '' }}" onchange="fpeRefreshSteps()"></div>
             </div>
@@ -219,6 +231,59 @@
         <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cancelar</button>
         <button type="button" class="btn btn-danger fw-bold" style="min-height:44px" onclick="fpdGuardarEdicion()">
           <i class="bi bi-check-lg me-1"></i>Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Modal completar factura (2026-09-17): le pone N°/fecha a un pago que
+   ya está "pagada" pero se registró sin documento -- NO reabre, NO pide
+   motivo, no toca las OT asignadas. Solo aparece si de verdad falta. #}
+{% if factura.estado_pago == 'pagada' and es_superadmin and not factura.numero_documento %}
+<div class="modal fade" id="fpdModalCompletar" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;border:0">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:14px 14px 0 0">
+        <h5 class="modal-title"><i class="bi bi-file-earmark-plus me-2" style="color:#16a34a"></i>Completar con la factura real</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="fp-sub mb-2" style="font-size:.8rem">
+          El pago ya quedó registrado como hecho para {{ factura.proveedor_nombre }}. Esto solo agrega el N° y la
+          fecha del documento real cuando llegue — no cambia el estado ni las OT que ya cubre.
+        </div>
+        <div class="row g-2">
+          <div class="col-12 col-sm-4">
+            <label class="fpv-lbl">Tipo</label>
+            <select class="form-select" id="fpcTipo">
+              <option value="factura">Factura</option>
+              <option value="boleta_honorarios">Boleta de honorarios</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          <div class="col-6 col-sm-4">
+            <label class="fpv-lbl">N° <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="fpcNumero" placeholder="Ej: 1234">
+          </div>
+          <div class="col-6 col-sm-4">
+            <label class="fpv-lbl">Fecha <span class="text-danger">*</span></label>
+            <input type="date" class="form-control" id="fpcFecha">
+          </div>
+        </div>
+        <label class="fpv-lbl mt-2">Monto total (CLP)</label>
+        <div class="input-group">
+          <span class="input-group-text">$</span>
+          <input type="text" inputmode="numeric" class="form-control" id="fpcMonto"
+                 value="{{ '{:,.0f}'.format(factura.monto_total or 0)|replace(',', '.') }}">
+        </div>
+        <div class="fp-sub mt-1">Déjalo tal cual si coincide con lo que ya se declaró, o ajústalo al monto real de
+          la factura para que cuadre.</div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cancelar</button>
+        <button type="button" class="btn btn-dark fw-bold" style="min-height:44px" onclick="fpdGuardarCompletar()">
+          <i class="bi bi-check-lg me-1"></i>Guardar factura</button>
       </div>
     </div>
   </div>
@@ -360,6 +425,30 @@ async function fpdPagar(){
   if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo marcar pagada', {type:'error'}); return; }
   ilusToast('✓ Factura pagada y congelada', {type:'success'});
   setTimeout(() => window.location.reload(), 500);
+}
+function fpdCompletar(){
+  new bootstrap.Modal(document.getElementById('fpdModalCompletar')).show();
+  setTimeout(() => document.getElementById('fpcNumero').focus(), 250);
+}
+document.getElementById('fpcMonto') && document.getElementById('fpcMonto').addEventListener('input', function(){
+  const n = (this.value || '').replace(/\D/g,''); this.value = n ? Number(n).toLocaleString('es-CL') : '';
+});
+async function fpdGuardarCompletar(){
+  const numero = document.getElementById('fpcNumero').value.trim();
+  const fecha = document.getElementById('fpcFecha').value;
+  if (!numero){ ilusToast('Falta el N° del documento', {type:'warning'}); return; }
+  if (!fecha){ ilusToast('Falta la fecha', {type:'warning'}); return; }
+  const body = {
+    tipo_documento: document.getElementById('fpcTipo').value,
+    numero_documento: numero,
+    fecha: fecha,
+    monto_total: Number((document.getElementById('fpcMonto').value || '0').replace(/\D/g,'')) || 0,
+  };
+  const r = await fetch(FPD_URL_BASE + '/completar', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo completar', {type:'error'}); return; }
+  ilusToast('✓ Factura completada', {type:'success'});
+  setTimeout(() => window.location.reload(), 400);
 }
 async function fpdReabrir(){
   const motivo = await ilusPrompt({title:'Reabrir factura pagada', message:'Explica por qué se reabre (queda en la bitácora).',

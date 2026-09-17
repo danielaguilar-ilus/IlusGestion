@@ -154,10 +154,20 @@
     <span>Cuando llegue la factura del proveedor, regístrala con "Nueva factura" y asígnale estas OT
       desde su detalle.</span></div>
 </div>
+{# 💸 2026-09-17 (Daniel: "necesito que todo lo del 15 para atrás me lo
+   marques como pagado, de momento sin factura"): seleccionar OT de un
+   mismo proveedor y marcarlas pagadas sin N° de documento todavía. Solo
+   tiene sentido con la lista ya acotada a UN proveedor (REGLA de este
+   endpoint: todas las OT del lote deben ser del mismo proveedor) -- por
+   eso el checkbox de selección solo aparece filtrando por proveedor. #}
+{% set puede_marcar_sin_factura = es_superadmin and f_prov %}
 <div class="table-responsive">
   <table class="fp-tabla">
     <thead>
       <tr>
+        {% if puede_marcar_sin_factura %}
+        <th style="width:38px"><span class="fp-chk-wrap"><input type="checkbox" id="fpvOtCheckAll" onchange="fpvOtToggleAll(this.checked)" aria-label="Seleccionar todas"></span></th>
+        {% endif %}
         <th>OT</th><th>Proveedor</th><th>Cliente</th><th>Servicio</th><th>Estado</th>
         <th class="m">Instalación</th><th class="m">Despacho</th><th class="m">Total</th>
       </tr>
@@ -165,6 +175,9 @@
     <tbody>
       {% for d in por_facturar %}
       <tr>
+        {% if puede_marcar_sin_factura %}
+        <td data-label=""><span class="fp-chk-wrap"><input type="checkbox" class="fpv-ot-chk" value="{{ d.id }}" data-monto="{{ d.sugerido }}" data-numero="{{ d.numero_ot }}" onchange="fpvOtRefreshBar()"></span></td>
+        {% endif %}
         <td data-label="OT"><a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.id) }}">{{ d.numero_ot }}</a>
           <div class="fp-sub">{{ d.fecha }}</div></td>
         <td data-label="Proveedor"><div class="fp-nom">{{ d.proveedor }}</div>
@@ -180,6 +193,13 @@
     </tbody>
   </table>
 </div>
+{% if puede_marcar_sin_factura %}
+<div class="fpv-otbar" id="fpvOtBar">
+  <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT seleccionadas · <span id="fpvOtBarMonto">$0</span></div>
+  <button type="button" class="btn btn-dark fw-bold" style="min-height:44px" onclick="fpvOtMarcarPagado()">
+    <i class="bi bi-check2-circle me-1"></i>Marcar pagado (sin factura, completar después)</button>
+</div>
+{% endif %}
 {# Paginación propia (REGLA #4.3), sin pisar la de las facturas #}
 <div class="fp-pag">
   <div class="fp-pag-info">
@@ -232,7 +252,12 @@
       <tr onclick="window.location='/servicio-tecnico/facturas-proveedor/{{ f.id }}'">
         <td data-label="Proveedor"><div class="fp-nom">{{ f.proveedor_nombre }}</div>
           {% if f.proveedor_rut %}<div class="fp-sub">{{ f.proveedor_rut | rut_fmt }}</div>{% endif %}</td>
-        <td data-label="Documento"><span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>
+        <td data-label="Documento">
+          {% if f.numero_documento %}
+          <span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>
+          {% else %}
+          <span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin factura — pendiente</span>
+          {% endif %}
           {% if f.archivo_url %}<div class="fp-sub"><i class="bi bi-paperclip"></i> con respaldo</div>{% endif %}</td>
         <td data-label="Fecha">{{ f.fecha | chile_fmt('%d/%m/%Y') if f.fecha else '—' }}</td>
         <td class="n" data-label="OT asignadas"><span class="fp-chip {{ 'ok' if f.n_ot else '' }}">{{ f.n_ot or 0 }}</span></td>
@@ -361,6 +386,7 @@
 </div>
 
 <script>
+const FPV_PROVEEDOR = {{ f_prov | tojson }};
 {% if es_superadmin %}
 function fpvAbrirExcel(){ new bootstrap.Modal(document.getElementById('fpvModalExcel')).show(); }
 function fpvBajarExcel(){
@@ -442,6 +468,57 @@ async function fpvCrear(){
     btn.disabled = false;
   }
 }
+
+// ── Marcar pagado sin factura (2026-09-17) — REGLA #14: toggle único de
+// marcar/desmarcar todo, mismo criterio que el resto del proyecto: si
+// ALGUNA fila visible está sin marcar, la acción las marca todas; si ya
+// están todas marcadas, las desmarca todas.
+function fpvOtToggleAll(checked){
+  document.querySelectorAll('.fpv-ot-chk').forEach(function(cb){ cb.checked = checked; });
+  fpvOtRefreshBar();
+}
+function fpvOtRefreshBar(){
+  const bar = document.getElementById('fpvOtBar');
+  if (!bar) return;
+  const chks = Array.from(document.querySelectorAll('.fpv-ot-chk:checked'));
+  const n = chks.length;
+  const monto = chks.reduce(function(s, cb){ return s + (Number(cb.dataset.monto) || 0); }, 0);
+  document.getElementById('fpvOtBarN').textContent = n;
+  document.getElementById('fpvOtBarMonto').textContent = '$' + Math.round(monto).toLocaleString('es-CL');
+  bar.classList.toggle('on', n > 0);
+  const master = document.getElementById('fpvOtCheckAll');
+  const todas = document.querySelectorAll('.fpv-ot-chk');
+  if (master) master.checked = todas.length > 0 && n === todas.length;
+}
+async function fpvOtMarcarPagado(){
+  const chks = Array.from(document.querySelectorAll('.fpv-ot-chk:checked'));
+  if (!chks.length){ ilusToast('Selecciona al menos una OT', {type:'warning'}); return; }
+  const ids = chks.map(function(cb){ return Number(cb.value); });
+  const monto = chks.reduce(function(s, cb){ return s + (Number(cb.dataset.monto) || 0); }, 0);
+  const numeros = chks.map(function(cb){ return cb.dataset.numero; }).slice(0, 6).join(', ');
+  const ok = await ilusConfirm({
+    title: 'Marcar pagado sin factura',
+    message: `¿Confirmas que ya se le pagó a ${FPV_PROVEEDOR || 'este proveedor'} por ${ids.length} OT (${numeros}${ids.length > 6 ? '…' : ''}), por un total de $${Math.round(monto).toLocaleString('es-CL')}?`,
+    sub: 'Queda registrado como pagado, sin N° de documento todavía. Podrás completarlo con el N° y la fecha real de la factura cuando llegue (botón "Completar factura" en el detalle).',
+    okLabel: 'Sí, marcar pagado', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  try{
+    const r = await fetch('{{ url_for("mant_facturas_proveedor_marcar_pagado_sin_factura") }}', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({visita_ids: ids}),
+    });
+    const d = await r.json().catch(function(){ return {}; });
+    if (!r.ok || d.ok === false){
+      ilusToast(d.error || 'No se pudo registrar el pago', {type:'error'});
+      return;
+    }
+    ilusToast('✓ Marcado pagado — ' + d.n_ot + ' OT, $' + Math.round(d.monto_total).toLocaleString('es-CL'), {type:'success'});
+    window.location = '/servicio-tecnico/facturas-proveedor/' + d.id;
+  }catch(e){
+    ilusToast('Error de conexión', {type:'error'});
+  }
+}
 </script>
 
 <style>
@@ -483,6 +560,7 @@ async function fpvCrear(){
 .fp-est.est-completada,.fp-est.est-pendiente_aprobacion{background:#dbeafe;color:#1e40af}
 .fp-doc{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.76rem;font-weight:700;
   background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;padding:2px 6px;white-space:nowrap}
+.fp-doc-falta{font-family:inherit;color:#b45309;background:#fff8e1;border-color:#fde68a}
 .fp-chip{display:inline-block;min-width:26px;font-size:.72rem;font-weight:900;border-radius:999px;padding:2px 8px;background:#f1f5f9;color:#64748b}
 .fp-chip.ok{background:#dcfce7;color:#166534}
 .fp-margen{font-weight:900}.fp-margen.pos{color:#15803d}.fp-margen.neg{color:#b91c1c}.fp-margen.warn{color:#b45309}
@@ -508,6 +586,14 @@ async function fpvCrear(){
   border-radius:7px;border:1px solid #d1d5db;background:#fff;color:#374151;min-height:34px;text-decoration:none}
 .fp-pag-btn:hover{background:#f8fafc;color:#0f172a}
 .fp-pag-btn.dis{opacity:.45;pointer-events:none}
+.fp-chk-wrap{display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px}
+.fp-chk-wrap input[type=checkbox]{width:20px;height:20px;accent-color:#dc2626;cursor:pointer}
+.fpv-otbar{position:sticky;bottom:0;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  background:#0a0a0a;color:#fff;border-radius:12px;padding:11px 14px;margin-top:10px;
+  box-shadow:0 -4px 14px rgba(0,0,0,.15);opacity:.4;pointer-events:none;transition:opacity .15s}
+.fpv-otbar.on{opacity:1;pointer-events:auto}
+.fpv-otbar-info{font-size:.84rem;font-weight:700}
+.fpv-otbar-info span{font-weight:900}
 .fpv-lbl{font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:3px;display:block}
 #fpvModalNueva .form-control,#fpvModalNueva .form-select,
 #fpvModalExcel .form-control,#fpvModalExcel .form-select{font-size:16px;min-height:44px}

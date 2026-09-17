@@ -428,6 +428,130 @@ async function ejecutarResetMantenciones(){
 </style>
 {% endif %}
 
+{#- ══════════════════════════════════════════════════════════════
+    COSTOS POR TÉCNICO -- solo superadministrador
+    ══════════════════════════════════════════════════════════════
+    2026-09-17 (Daniel: "necesito que en el dashboard me deje una sección
+    de costos donde yo pueda filtrar el técnico y me pueda decir qué
+    trabajo llevamos pendiente y si llevamos ganancia o pérdida... no se
+    puede trabajar a pérdida a menos que haya desviación").
+
+    Filtro interactivo (fetch, sin recargar la página) -- a diferencia del
+    bloque de "Proveedores externos" de arriba, acá no hay un técnico
+    "por defecto" que mostrar: se elige uno a la vez.
+-#}
+{% if permissions.superadmin %}
+<div class="mfp-card" id="cptCard" style="border-left-color:#dc2626">
+  <div class="mfp-head">
+    <div>
+      <div class="mfp-tit"><i class="bi bi-graph-up-arrow"></i>Costos por técnico</div>
+      <div class="mfp-sub">Trabajo pendiente y resultado (ganancia o pérdida) acumulado de siempre.</div>
+    </div>
+    <div class="mfp-acc">
+      <select id="cptTecnico" class="form-select form-select-sm" style="min-height:44px;min-width:220px" onchange="cptCargar()">
+        <option value="">Elige un técnico…</option>
+      </select>
+    </div>
+  </div>
+  <div id="cptBody">
+    <div class="mfp-vacio">
+      <i class="bi bi-person-check"></i>
+      <div>Elige un técnico arriba para ver su trabajo pendiente y su resultado.</div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  fetch('{{ url_for("mant_tecnicos_list_api") }}?all=1').then(r => r.json()).then(function(d){
+    const arr = Array.isArray(d) ? d : (d.tecnicos || []);
+    const sel = document.getElementById('cptTecnico');
+    arr.forEach(function(t){
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.nombre + (t.es_externo ? ' (externo)' : '');
+      sel.appendChild(opt);
+    });
+  }).catch(function(){});
+})();
+function cptClp(n){ return '$' + Math.round(Number(n) || 0).toLocaleString('es-CL'); }
+async function cptCargar(){
+  const id = document.getElementById('cptTecnico').value;
+  const body = document.getElementById('cptBody');
+  if (!id){
+    body.innerHTML = '<div class="mfp-vacio"><i class="bi bi-person-check"></i><div>Elige un técnico arriba para ver su trabajo pendiente y su resultado.</div></div>';
+    return;
+  }
+  body.innerHTML = '<div class="text-muted py-3 text-center small"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  try{
+    const r = await fetch('{{ url_for("mant_dashboard_costos_tecnico") }}?tecnico=' + encodeURIComponent(id));
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false){
+      body.innerHTML = '<div class="mfp-vacio"><i class="bi bi-x-circle" style="color:#dc2626"></i><div>' +
+        (d.error || 'No se pudo cargar') + '</div></div>';
+      return;
+    }
+    const res = d.resultado, p = d.pendientes;
+    let sem;
+    if (!res.venta_total && !res.costo_total){
+      sem = ['neutro','bi-hourglass-split','Sin costos declarados todavía','Este técnico no tiene OT con valor u costo declarado.'];
+    } else if (res.margen < 0){
+      sem = ['cpt-neg','bi-graph-down-arrow','Pérdida ' + cptClp(Math.abs(res.margen)) + (res.margen_pct !== null ? ' · ' + res.margen_pct + '%' : ''),
+             'No se puede trabajar a pérdida salvo desviación justificada -- revisar.'];
+    } else {
+      sem = ['cpt-pos','bi-graph-up-arrow','Ganancia ' + cptClp(res.margen) + (res.margen_pct !== null ? ' · ' + res.margen_pct + '%' : ''),
+             'Se cobró ' + cptClp(res.venta_total) + ' y costó ' + cptClp(res.costo_total) + '.'];
+    }
+    let html = '<div class="cpt-sem ' + sem[0] + '"><span class="ic"><i class="bi ' + sem[1] + '"></i></span>' +
+      '<div class="tx"><div class="tt">' + sem[2] + '</div><div class="sb">' + sem[3] + '</div></div></div>';
+    html += '<div class="cpt-nums">' +
+      '<div class="cpt-cell"><div class="l">OT pendientes</div><div class="v">' + p.n + '</div></div>' +
+      '<div class="cpt-cell"><div class="l">Vendido histórico</div><div class="v">' + cptClp(res.venta_total) + '</div></div>' +
+      '<div class="cpt-cell"><div class="l">Costo histórico</div><div class="v">' + cptClp(res.costo_total) + '</div></div>' +
+      '<div class="cpt-cell"><div class="l">Total OT (siempre)</div><div class="v">' + d.n_total_ot + '</div></div>' +
+    '</div>';
+    if (p.n){
+      html += '<div class="cpt-subtit">Trabajo pendiente de ' + escCpt(d.tecnico.nombre) + '</div>';
+      html += '<div class="mfp-tabla-wrap"><table class="mfp-tabla cpt-pend"><thead><tr><th>OT</th><th>Cliente</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>' +
+        p.ots.map(function(o){
+          return '<tr><td data-label="OT"><a href="/ot/' + o.id + '" style="font-weight:800;color:#dc2626;text-decoration:none">' + escCpt(o.numero_ot) + '</a></td>' +
+            '<td data-label="Cliente">' + escCpt(o.cliente) + '</td>' +
+            '<td data-label="Estado" style="text-transform:capitalize">' + escCpt((o.estado || '').replace(/_/g,' ')) + '</td>' +
+            '<td data-label="Fecha">' + escCpt(o.fecha) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+      if (p.n > p.ots.length){
+        html += '<div class="mfp-sub">Mostrando ' + p.ots.length + ' de ' + p.n + ' OT pendientes.</div>';
+      }
+    }
+    body.innerHTML = html;
+  }catch(e){
+    body.innerHTML = '<div class="mfp-vacio"><i class="bi bi-x-circle" style="color:#dc2626"></i><div>Error de conexión.</div></div>';
+  }
+}
+function escCpt(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+</script>
+<style>
+.cpt-sem{display:flex;gap:10px;align-items:center;border-radius:10px;padding:11px 14px;font-size:.85rem}
+.cpt-sem .ic{font-size:1.3rem;flex:0 0 auto}
+.cpt-sem .tt{font-weight:900;color:#0f172a}
+.cpt-sem .sb{font-size:.76rem;color:#64748b;margin-top:2px}
+.cpt-sem.neutro{background:#f8fafc;border:1px solid #e2e8f0}.cpt-sem.neutro .ic{color:#94a3b8}
+.cpt-sem.cpt-pos{background:#f0fdf4;border:1px solid #bbf7d0}.cpt-sem.cpt-pos .ic{color:#16a34a}
+.cpt-sem.cpt-neg{background:#fef2f2;border:1px solid #fecaca}.cpt-sem.cpt-neg .ic{color:#dc2626}
+.cpt-nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:12px}
+.cpt-cell{background:#f8fafc;border:1px solid #eef2f7;border-radius:10px;padding:10px 12px}
+.cpt-cell .l{font-size:.64rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8}
+.cpt-cell .v{font-size:1.1rem;font-weight:900;color:#0f172a;margin-top:2px;font-variant-numeric:tabular-nums}
+.cpt-subtit{font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#0f172a;margin:16px 0 8px}
+@media (max-width:768px){
+  .cpt-pend thead{display:none}
+  .cpt-pend tbody tr{display:block;border:1px solid #e5e7eb;border-radius:10px;padding:6px 0;margin-bottom:8px}
+  .cpt-pend tbody td{display:block;border:0;padding:2px 10px;text-align:left}
+  .cpt-pend tbody td[data-label]::before{content:attr(data-label);display:block;font-size:.6rem;font-weight:900;
+    text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
+}
+</style>
+{% endif %}
+
 <div class="row g-3">
 
   {# ── Pendientes de facturar (Plan 2026-05-21 Capa 9-B) ── #}

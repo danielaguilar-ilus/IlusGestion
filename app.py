@@ -60555,6 +60555,79 @@ def mant_index():
     )
 
 
+@app.route("/mantenciones/api/dashboard/costos-tecnico")
+@app.route("/servicio-tecnico/api/dashboard/costos-tecnico")
+@_mant_required
+def mant_dashboard_costos_tecnico():
+    """💰 2026-09-17 (Daniel: "necesito que en el dashboard me deje una
+    sección de costos donde yo pueda filtrar el técnico y me pueda decir
+    qué trabajo llevamos pendiente y si llevamos ganancia o pérdida...
+    no se puede trabajar a pérdida a menos que haya desviación"). Solo
+    superadmin (mismo criterio que el resto de lo que expone montos/
+    márgenes, ver REGLA de _facprov_puede). Dos números por técnico:
+
+      · pendientes: OT que ese técnico todavía tiene abiertas (no
+        cerradas/canceladas/anuladas) -- lo que falta por resolver.
+      · margen histórico acumulado: venta - costo de TODAS sus OT, de
+        siempre. Misma fórmula que ya usa el paso Costos de OT 2.0
+        (_pintarFinMargenDom, templates/ot2/_modal_crear.html): venta =
+        zz_monto si se declaró (>0), si no el costo_cliente ya guardado
+        en `costo`; más zz_envio_monto aparte. Costo = costo_proveedor +
+        costo_despacho. Mismos nombres de columna, ningún cálculo nuevo
+        que pueda dar un número distinto al que ya se ve por OT."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador ve esta sección."}), 403
+    try:
+        tecnico_id = int(request.args.get("tecnico") or 0)
+    except (TypeError, ValueError):
+        tecnico_id = 0
+    if not tecnico_id:
+        return jsonify({"ok": False, "error": "Indica un técnico."}), 400
+
+    tec = mysql_fetchone(
+        "SELECT id, COALESCE(nombre, username) AS nombre FROM app_users WHERE id=%s", (tecnico_id,))
+    if not tec:
+        return jsonify({"ok": False, "error": "Técnico no encontrado."}), 404
+
+    row = mysql_fetchone(
+        "SELECT "
+        "  SUM(CASE WHEN estado NOT IN ('cerrada','cancelada','anulada') THEN 1 ELSE 0 END) AS n_abiertas, "
+        "  SUM(CASE WHEN COALESCE(zz_monto,0) > 0 THEN zz_monto ELSE COALESCE(costo,0) END) AS venta_serv, "
+        "  SUM(COALESCE(zz_envio_monto,0)) AS venta_envio, "
+        "  SUM(COALESCE(costo_proveedor,0)) AS costo_prov, "
+        "  SUM(COALESCE(costo_despacho,0)) AS costo_desp, "
+        "  COUNT(*) AS n_total "
+        "  FROM mant_visitas WHERE tecnico_user_id=%s", (tecnico_id,)) or {}
+    pendientes = mysql_fetchall(
+        "SELECT id, numero_ot, tipo, estado, fecha_programada, cliente_id, "
+        "       (SELECT razon_social FROM mant_clientes WHERE id=mant_visitas.cliente_id) AS cliente "
+        "  FROM mant_visitas "
+        " WHERE tecnico_user_id=%s AND estado NOT IN ('cerrada','cancelada','anulada') "
+        " ORDER BY fecha_programada ASC LIMIT 30", (tecnico_id,)) or []
+
+    venta_total = float(row.get("venta_serv") or 0) + float(row.get("venta_envio") or 0)
+    costo_total = float(row.get("costo_prov") or 0) + float(row.get("costo_desp") or 0)
+    return jsonify({
+        "ok": True,
+        "tecnico": {"id": tec["id"], "nombre": tec["nombre"]},
+        "n_total_ot": int(row.get("n_total") or 0),
+        "pendientes": {
+            "n": int(row.get("n_abiertas") or 0),
+            "ots": [{
+                "id": p["id"], "numero_ot": p.get("numero_ot") or f"OT #{p['id']}",
+                "tipo": p.get("tipo") or "", "estado": p.get("estado") or "",
+                "cliente": p.get("cliente") or "Trabajo interno",
+                "fecha": chile_fmt_filter(p.get("fecha_programada"), "%d/%m/%Y") if p.get("fecha_programada") else "",
+            } for p in pendientes],
+        },
+        "resultado": {
+            "venta_total": venta_total, "costo_total": costo_total,
+            "margen": venta_total - costo_total,
+            "margen_pct": round((venta_total - costo_total) / venta_total * 100) if venta_total > 0 else None,
+        },
+    })
+
+
 @app.route("/servicio-tecnico/clientes")
 @app.route("/mantenciones/clientes")
 @_mant_required
@@ -77935,7 +78008,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None):
         return {
             "ok": False, "error_codigo": "OT_EN_FACTURA_PROVEEDOR",
             "error": (f"La {numero_ot} está en la factura de proveedor #{_fac['id']} "
-                      f"({_fac.get('proveedor_nombre')} {_fac.get('numero_documento')}, "
+                      f"({_fac.get('proveedor_nombre')} {_fac.get('numero_documento') or 'sin N° todavía'}, "
                       f"{_fac.get('estado_pago')}). Quítala de esa factura antes de eliminarla."),
             "factura_id": _fac["id"],
             "numero_ot": numero_ot,
@@ -78049,7 +78122,7 @@ def mant_visita_del(vid):
         return jsonify({
             "ok": False, "error_codigo": "OT_EN_FACTURA_PROVEEDOR",
             "error": (f"La {numero_ot} está en la factura de proveedor #{_fac['id']} "
-                      f"({_fac.get('proveedor_nombre')} {_fac.get('numero_documento')}, "
+                      f"({_fac.get('proveedor_nombre')} {_fac.get('numero_documento') or 'sin N° todavía'}, "
                       f"{_fac.get('estado_pago')}). Quítala de esa factura antes de eliminarla."),
             "factura_id": _fac["id"],
         }), 409
@@ -106549,8 +106622,14 @@ def _mfp_resumen():
     return out
 
 
-def _mfp_validar_cabecera(d, excluir_id=None):
-    """Valida el body de crear/editar. Devuelve (datos, error)."""
+def _mfp_validar_cabecera(d, excluir_id=None, sin_factura=False):
+    """Valida el body de crear/editar. Devuelve (datos, error).
+
+    sin_factura=True (2026-09-17, ver _ensure_mant_facturas_proveedor_tables):
+    el pago ya se reconoce como hecho pero todavía no llega el documento
+    físico del proveedor -- numero_documento/fecha quedan en None, para
+    completarlos después con _mfp_completar_con_factura_real() sin perder
+    la evidencia de que el pago ya está hecho."""
     nombre = (d.get("proveedor_nombre") or "").strip()[:200]
     if not nombre:
         return None, "Falta el nombre del proveedor."
@@ -106564,14 +106643,19 @@ def _mfp_validar_cabecera(d, excluir_id=None):
     tipo_doc = (d.get("tipo_documento") or "factura").strip().lower()
     if tipo_doc not in ("factura", "boleta_honorarios", "otro"):
         tipo_doc = "factura"
-    numero = (d.get("numero_documento") or "").strip()[:80]
-    if not numero:
+    numero = (d.get("numero_documento") or "").strip()[:80] or None
+    if not numero and not sin_factura:
         return None, "Falta el número del documento del proveedor."
-    fecha = (d.get("fecha") or "").strip()[:10]
-    try:
-        datetime.strptime(fecha, "%Y-%m-%d")
-    except Exception:
-        return None, "La fecha debe venir como AAAA-MM-DD."
+    fecha_raw = (d.get("fecha") or "").strip()[:10]
+    fecha = None
+    if fecha_raw:
+        try:
+            datetime.strptime(fecha_raw, "%Y-%m-%d")
+            fecha = fecha_raw
+        except Exception:
+            return None, "La fecha debe venir como AAAA-MM-DD."
+    elif not sin_factura:
+        return None, "Falta la fecha del documento."
     try:
         monto = float(str(d.get("monto_total") if d.get("monto_total") not in (None, "") else 0)
                       .replace(".", "").replace(",", ".")) \
@@ -106587,17 +106671,20 @@ def _mfp_validar_cabecera(d, excluir_id=None):
         tecnico_externo_id = None
     # Misma factura física registrada dos veces (el hueco que Transporte
     # dejó abierto): mismo proveedor (sin importar mayúsculas/espacios) +
-    # mismo número, y que no esté anulada.
-    dup = mysql_fetchone(
-        "SELECT id FROM mant_facturas_proveedor "
-        " WHERE LOWER(TRIM(proveedor_nombre)) = LOWER(%s) AND numero_documento = %s "
-        "   AND estado_pago <> 'anulada' " +
-        ("   AND id <> %s " if excluir_id else "") +
-        " LIMIT 1",
-        (nombre, numero, excluir_id) if excluir_id else (nombre, numero))
-    if dup:
-        return None, (f"El documento N° {numero} de {nombre} ya está registrado "
-                      f"(factura #{dup['id']}). Ábrela en vez de crear otra.")
+    # mismo número, y que no esté anulada. Sin número (sin_factura=True) no
+    # hay nada que deduplicar todavía -- puede haber más de un pago "sin
+    # factura" pendiente de completar para el mismo proveedor.
+    if numero:
+        dup = mysql_fetchone(
+            "SELECT id FROM mant_facturas_proveedor "
+            " WHERE LOWER(TRIM(proveedor_nombre)) = LOWER(%s) AND numero_documento = %s "
+            "   AND estado_pago <> 'anulada' " +
+            ("   AND id <> %s " if excluir_id else "") +
+            " LIMIT 1",
+            (nombre, numero, excluir_id) if excluir_id else (nombre, numero))
+        if dup:
+            return None, (f"El documento N° {numero} de {nombre} ya está registrado "
+                          f"(factura #{dup['id']}). Ábrela en vez de crear otra.")
     return {
         "proveedor_nombre": nombre, "proveedor_rut": rut_norm,
         "tecnico_externo_id": tecnico_externo_id, "tipo_documento": tipo_doc,
@@ -107087,6 +107174,159 @@ def mant_factura_proveedor_anular(fid):
         " WHERE id=%s AND estado_pago='pendiente'",
         (f"\n[ANULADA por {current_username()}: {motivo}]", fid))
     _mant_log("factura_proveedor", fid, "anulada", f"{current_username()} · {motivo}")
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/facturas-proveedor/marcar-pagado-sin-factura", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/marcar-pagado-sin-factura", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_facturas_proveedor_marcar_pagado_sin_factura():
+    """💸 2026-09-17 (Daniel: "tenemos un pago pendiente a Transportes
+    Milling, a Rafa y a Daniel... necesito que todo lo del 15 para atrás me
+    lo marques como pagado, de momento sin factura, pero lo ideal es que
+    podamos asignarle una factura, un número y una fecha de emisión
+    después"): junta N OT de UN MISMO proveedor en una sola factura
+    'pagada', sin número de documento todavía -- se completa después con
+    /completar. Solo superadmin: es reconocer una deuda como saldada sin
+    el papel en la mano, tiene que quedar en manos de quien de verdad va a
+    hacer el pago."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede marcar OT como "
+                        "pagadas sin factura."}), 403
+    d = request.get_json(silent=True) or {}
+    visita_ids_in = d.get("visita_ids")
+    if not isinstance(visita_ids_in, list) or not visita_ids_in:
+        return jsonify({"ok": False, "error": "No se recibió ninguna OT seleccionada."}), 400
+    try:
+        visita_ids = sorted({int(v) for v in visita_ids_in})
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Hay un id de OT inválido."}), 400
+    if len(visita_ids) > 300:
+        return jsonify({"ok": False, "error": "Selecciona como máximo 300 OT por tanda."}), 400
+
+    ph = ",".join(["%s"] * len(visita_ids))
+    rows = mysql_fetchall(
+        _MFP_SELECT_OT + _MFP_JOINS_OT +
+        " WHERE v.id IN (" + ph + ") AND " + _MFP_SQL_OT_EXTERNA,
+        tuple(visita_ids))
+    filas = {r["id"]: _mfp_fila_ot(r) for r in (rows or [])}
+    faltan = [vid for vid in visita_ids if vid not in filas]
+    if faltan:
+        return jsonify({"ok": False, "error_codigo": "OT_NO_EXTERNA",
+                        "error": f"{len(faltan)} OT no existen o no son de proveedor externo: "
+                                 f"{', '.join(str(v) for v in faltan[:10])}"}), 400
+    ya_facturadas = [f["numero_ot"] for f in filas.values() if f["fac_id"]]
+    if ya_facturadas:
+        return jsonify({"ok": False, "error_codigo": "OT_YA_FACTURADA",
+                        "error": f"{len(ya_facturadas)} OT ya están en otra factura: "
+                                 f"{', '.join(ya_facturadas[:10])}. Quítalas de ahí primero."}), 409
+    no_facturables = [f["numero_ot"] for f in filas.values() if f["estado"] not in _MFP_ESTADOS_FACTURABLES]
+    if no_facturables:
+        return jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
+                        "error": f"{len(no_facturables)} OT no están listas para pagarle al proveedor "
+                                 f"(falta firma del cliente o cierre): {', '.join(no_facturables[:10])}"}), 400
+
+    # Mismo proveedor para todas -- si no, se mezclarían deudas de dos
+    # personas/empresas distintas en un solo pago. Mismo criterio de
+    # nombre que ya usa el resto del módulo (_mfp_nombre_proveedor_ot).
+    nombres = {(f["proveedor"] or "").strip().lower() for f in filas.values()}
+    if len(nombres) > 1:
+        return jsonify({"ok": False, "error_codigo": "PROVEEDORES_MEZCLADOS",
+                        "error": "Las OT seleccionadas son de más de un proveedor "
+                                 "(" + ", ".join(sorted({f['proveedor'] for f in filas.values()})) + "). "
+                                 "Selecciona las de un solo proveedor a la vez."}), 400
+    primero = next(iter(filas.values()))
+    proveedor_nombre = primero["proveedor"]
+    proveedor_rut = primero["proveedor_rut"] or None
+    # tecnico_externo_id viaja aparte porque _mfp_fila_ot no lo expone --
+    # se saca de la fila cruda original.
+    prov_ficha_id = None
+    for r in rows:
+        if r.get("prov_ficha_id"):
+            prov_ficha_id = int(r["prov_ficha_id"])
+            break
+
+    monto_total = sum(f["sugerido"] for f in filas.values())
+    if monto_total <= 0:
+        return jsonify({"ok": False, "error": "El monto total quedó en $0 -- revisa el costo declarado de esas OT."}), 400
+
+    user = current_username() or "sistema"
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_facturas_proveedor "
+                "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
+                " numero_documento, fecha, monto_total, estado_pago, pagada_at, pagada_por, notas, created_by) "
+                "VALUES (%s,%s,%s,'factura',NULL,NULL,%s,'pagada',NOW(),%s,%s,%s)",
+                (proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, user,
+                 f"Pago reconocido sin factura del proveedor (aún no llega el documento) -- "
+                 f"{len(visita_ids)} OT, marcado por {user}. Completar con /completar cuando "
+                 f"llegue la factura real.",
+                 user))
+            fid = cur.lastrowid
+            for vid, f in filas.items():
+                cur.execute(
+                    "INSERT INTO mant_factura_proveedor_items "
+                    "(factura_proveedor_id, visita_id, monto, observacion, usuario) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (fid, vid, f["sugerido"], "Pagado sin factura -- pendiente completar N° y fecha reales.", user))
+        conn.commit()
+    except Exception as e:
+        print(f"[facprov] marcar-pagado-sin-factura: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo registrar el pago."}), 500
+
+    _mant_log("factura_proveedor", fid, "creada_pagada_sin_factura",
+              f"{proveedor_nombre} · {len(visita_ids)} OT · ${monto_total:,.0f} · por {user}")
+    for vid, f in filas.items():
+        _mant_log("visita", vid, "factura_proveedor_asignada",
+                  f"Factura #{fid} ({proveedor_nombre}, sin N° todavía) · ${f['sugerido']:,.0f}")
+    return jsonify({"ok": True, "id": fid, "proveedor": proveedor_nombre,
+                    "n_ot": len(visita_ids), "monto_total": monto_total})
+
+
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/completar", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/completar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_completar(fid):
+    """Le pone N° de documento y fecha real a una factura que se marcó
+    'pagada sin factura' (ver marcar-pagado-sin-factura). A propósito NO
+    es lo mismo que /reabrir: no vuelve a 'pendiente' ni pide motivo --
+    nada de lo pagado ni las OT asignadas cambian, solo se completa el
+    dato que faltaba. Si alguna vez hay que tocar el monto o las OT de una
+    factura YA completa, para eso sigue estando /reabrir."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede completar esta factura."}), 403
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("numero_documento"):
+        return jsonify({"ok": False, "error_codigo": "YA_TIENE_NUMERO",
+                        "error": "Esta factura ya tiene número de documento. Para corregirlo, "
+                                 "reábrela primero."}), 409
+    if f.get("estado_pago") != "pagada":
+        return jsonify({"ok": False, "error": f"Esta factura está '{f.get('estado_pago')}', no "
+                                 "'pagada sin factura'."}), 409
+    d = request.get_json(silent=True) or {}
+    merged = dict(f)
+    merged["numero_documento"] = d.get("numero_documento")
+    merged["fecha"] = d.get("fecha")
+    merged["tipo_documento"] = d.get("tipo_documento") or f.get("tipo_documento")
+    merged["monto_total"] = d.get("monto_total") if d.get("monto_total") not in (None, "") else f.get("monto_total")
+    datos, err = _mfp_validar_cabecera(merged, excluir_id=fid, sin_factura=False)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_facturas_proveedor SET tipo_documento=%s, numero_documento=%s, fecha=%s, "
+        "  monto_total=%s WHERE id=%s AND estado_pago='pagada' AND numero_documento IS NULL",
+        (datos["tipo_documento"], datos["numero_documento"], datos["fecha"], datos["monto_total"], fid))
+    if not n:
+        return jsonify({"ok": False, "error": "Esta factura cambió justo ahora en otra pestaña."}), 409
+    _mant_log("factura_proveedor", fid, "completada_con_factura_real",
+              f"{datos['tipo_documento']} {datos['numero_documento']} · {datos['fecha']} · "
+              f"${datos['monto_total']:,.0f} · por {current_username()}")
     return jsonify({"ok": True})
 
 
@@ -124186,6 +124426,34 @@ def _ensure_mant_facturas_proveedor_tables():
         """)
     except Exception as e:
         print(f"[ensure_facturas_proveedor] items: {e}", flush=True)
+
+    # 💸 2026-09-17 (Daniel: "necesito que todo lo del 15 para atrás... me lo
+    # marques como pagado, de momento sin factura, pero lo ideal es que
+    # podamos asignarle una factura, un número y una fecha de emisión
+    # después"): numero_documento/fecha nacieron NOT NULL porque toda
+    # factura normal SÍ los trae de entrada. El caso nuevo es un pago que
+    # se sabe que ya se hizo (o se está reconociendo como saldado) antes de
+    # tener el documento físico en la mano -- se completa más tarde, sin
+    # perder la evidencia de que el pago ya está hecho. Ver
+    # _mfp_marcar_pagado_sin_factura() / _mfp_completar_con_factura_real().
+    try:
+        cols = {
+            (r.get("COLUMN_NAME") or "").lower(): r
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME, IS_NULLABLE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_facturas_proveedor'"
+            ) or [])
+        }
+        if (cols.get("numero_documento") or {}).get("IS_NULLABLE") == "NO":
+            mysql_execute(
+                "ALTER TABLE mant_facturas_proveedor MODIFY COLUMN numero_documento VARCHAR(80) NULL")
+            print("[ensure_facturas_proveedor] numero_documento ahora NULLABLE", flush=True)
+        if (cols.get("fecha") or {}).get("IS_NULLABLE") == "NO":
+            mysql_execute(
+                "ALTER TABLE mant_facturas_proveedor MODIFY COLUMN fecha DATE NULL")
+            print("[ensure_facturas_proveedor] fecha ahora NULLABLE", flush=True)
+    except Exception as e:
+        print(f"[ensure_facturas_proveedor] nullable numero_documento/fecha: {e}", flush=True)
 
 
 def _ensure_mant_intel_tables():
