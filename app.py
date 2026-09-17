@@ -37135,7 +37135,7 @@ def _sr_visita_pertenece_a_otro_manifiesto(commitment_id, manifest_id_actual, vi
     return bool(fila)
 
 
-def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
+def _simpliroute_reconciliar_huerfanos(limit=200, dry=False, dias_ventana=2):
     """Vincula items SIN simpliroute_visit_id a una visita que YA EXISTE en
     SimpliRoute, buscándola por 'reference' (tido-nudo, ver
     simpliroute_client.build_visit_payload) en las visitas de HOY y AYER de
@@ -37150,6 +37150,17 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
     actualizaciones, aunque el chofer sí esté entregando en vivo).
 
     dry=True → solo reporta qué encontraría, no escribe nada.
+
+    FIX 2026-09-17 (Daniel, en vivo: "hay 19 manifiestos ya entregados... hay
+    que hacer una pasada"): dias_ventana estaba CLAVADO en 2 (hoy/ayer) --
+    correcto para el poller automático (que corre cada 10 min y por eso nunca
+    acumula atraso), pero si un despacho lleva MÁS de 2 días sin que ILUS le
+    conociera el visit_id (ej. Rafael lo cargó por su cuenta hace una semana),
+    esta función jamás lo encontraba: quedaba huérfano para siempre, sin
+    aviso. `dias_ventana` permite un barrido manual hacia atrás (ver
+    `tr_simpliroute_reconciliar_huerfanos_manual`) sin tocar el
+    comportamiento del poller automático, que sigue llamando esta función
+    sin el parámetro (default=2, idéntico a antes).
 
     BUG REAL (2026-08-10, Daniel: caso FCV 11240 / manifiesto 17 vs 41 —
     "no puede decir entregado en el manifiesto antiguo... como lo actualicé
@@ -37208,8 +37219,12 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
 
     # 2026-07-31: misma fecha Chile (no UTC) que el fix de _simpliroute_poll_batch,
     # mismo motivo (near-medianoche UTC ya rodo al dia siguiente en Chile).
+    # 2026-09-17: dias_ventana reemplaza el [hoy, ayer] clavado -- ver el
+    # docstring. El poller automático sigue pasando dias_ventana=2 (default),
+    # así que para él esta lista queda IDÉNTICA a la de siempre.
     _hoy_cl = _now_chile().date()
-    fechas = [_hoy_cl.isoformat(), (_hoy_cl - _dt.timedelta(days=1)).isoformat()]
+    _dv = max(1, min(int(dias_ventana), 90))
+    fechas = [(_hoy_cl - _dt.timedelta(days=n)).isoformat() for n in range(_dv)]
 
     for courier, items in por_courier.items():
         token = _simpliroute_token_for_courier(courier)
@@ -37280,10 +37295,19 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
     return out
 
 
-def _simpliroute_poll_batch(limit=400, dry=False):
+def _simpliroute_poll_batch(limit=400, dry=False, dias_ventana=2):
     """Un ciclo de polling. Devuelve dict con el resumen (nunca lanza).
 
     dry=True → solo reporta qué haría, no escribe nada.
+
+    dias_ventana (2026-09-17): se pasa tal cual a _simpliroute_reconciliar_
+    huerfanos -- el poller automático (cron/webhook) sigue llamando esta
+    función sin tocar el parámetro (default=2, comportamiento idéntico a
+    antes). Un barrido manual más ancho (ver tr_simpliroute_reparar_
+    entregados) puede pasar más días: como los candidatos recién vinculados
+    se escriben ANTES de que este mismo ciclo relea `cands` más abajo,
+    quedan disponibles para la MISMA pasada -- no hay que esperar al
+    siguiente ciclo de 10 minutos para que el estado real se aplique.
     """
     import simpliroute_client as _src
     import datetime as _dt_mod
@@ -37291,7 +37315,7 @@ def _simpliroute_poll_batch(limit=400, dry=False):
            "grupos": 0, "errores": [], "items": [],
            "huerfanos": {}}
     try:
-        out["huerfanos"] = _simpliroute_reconciliar_huerfanos(dry=dry)
+        out["huerfanos"] = _simpliroute_reconciliar_huerfanos(dry=dry, dias_ventana=dias_ventana)
     except Exception as e:
         out["huerfanos"] = {"ok": False, "error": f"reconciliacion fallo: {e}"}
     try:
@@ -37929,6 +37953,63 @@ def tr_cron_simpliroute_poll():
         limit = 400
     dry = (request.args.get("dry") or "") in ("1", "true", "yes")
     res = _simpliroute_poll_batch(limit=limit, dry=dry)
+    return jsonify(res), (200 if res.get("ok") else 502)
+
+
+@app.route("/transporte/api/simpliroute/reparar-entregados", methods=["POST"])
+@_tr_required
+def tr_simpliroute_reparar_entregados():
+    """Barrido MANUAL, superadmin, de items sin simpliroute_visit_id que en
+    realidad ya tienen una visita en SimpliRoute -- entregada o no.
+
+    FIX 2026-09-17 (Daniel, en vivo: "hay 19 manifiestos ya entregados... hay
+    que hacer una pasada y ver si en realidad podemos actualizarlo"). Ya se
+    había verificado que el poller automático NO tiene ningún dato nuevo para
+    los items que SÍ tienen visit_id guardado (se re-consultó cada uno a mano
+    contra la API real y ninguno cambió) -- la sospecha confirmada es la
+    OTRA mitad: _simpliroute_reconciliar_huerfanos (el que vincula un item
+    SIN visit_id a una visita que el courier ya cargó por su cuenta) tenía la
+    ventana de búsqueda clavada en HOY/AYER. Un despacho de Felca que Rafael
+    cargó a SimpliRoute hace más de 2 días -- y que por lo tanto nunca generó
+    un visit_id conocido por ILUS -- quedaba huérfano para siempre, aunque el
+    courier lo tuviera marcado como entregado hace rato.
+
+    Este endpoint corre el MISMO motor del poller (_simpliroute_poll_batch),
+    con `dias_ventana` ampliable, así que en una sola pasada: (1) busca esos
+    huérfanos hacia atrás la cantidad de días pedida, (2) vincula el
+    visit_id real que encuentre, y (3) sin esperar al próximo ciclo de 10
+    min, vuelve a consultar el estado de TODOS los candidatos (incluidos los
+    recién vinculados) y aplica el real vía el mismo _tr_apply_carrier_status
+    de siempre -- misma trazabilidad, mismo aviso al cliente, nada especial.
+
+    Body/query JSON: {"dias": 30, "ejecutar": true}
+      - dias: ventana hacia atrás, 1-90 (default 30).
+      - ejecutar: false (default) = solo vista previa, no escribe nada.
+    """
+    if not bool(g.permissions.get("superadmin")):
+        return jsonify({
+            "ok": False,
+            "error": "Este barrido es exclusivo de un superadministrador.",
+        }), 403
+
+    body = request.get_json(silent=True) or {}
+    try:
+        dias = int(body.get("dias") or request.args.get("dias") or 30)
+    except (TypeError, ValueError):
+        dias = 30
+    dias = max(1, min(dias, 90))
+    ejecutar = bool(body.get("ejecutar")) or (request.args.get("ejecutar") in ("1", "true", "yes"))
+
+    res = _simpliroute_poll_batch(limit=800, dry=not ejecutar, dias_ventana=dias)
+    res["dias_ventana"] = dias
+    res["modo"] = "ejecutado" if ejecutar else "vista_previa"
+    if ejecutar:
+        try:
+            _tr_log("commitment", 0, "reparar_entregados_simpliroute",
+                    f"dias_ventana={dias} vinculados={(res.get('huerfanos') or {}).get('vinculados', 0)} "
+                    f"actualizados={res.get('actualizados', 0)} pod={res.get('pod', 0)}")
+        except Exception:
+            pass
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
