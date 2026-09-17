@@ -413,6 +413,42 @@
   color:#991b1b;border-radius:10px;padding:9px 13px;font-weight:800;font-size:.84rem;
   margin-bottom:12px;
 }
+
+/* ── COSTOS (2026-09-17, Daniel: "ni que se creen las OT sin las
+   finanzas, vengan de donde vengan... siempre debe declarar documento,
+   finanzas y tecnico, siento que estamos expuestos") — exigido AL CREAR
+   una OT clásica desde el calendario. Mismo lenguaje visual que el resto
+   del proyecto (paleta REGLA #2, .gar-seg ya usado en la ficha del
+   cliente vía static/mantenciones_ficha.css -- esta página no carga ese
+   CSS, así que se replica acá mismo para verse IGUAL en ambos modales). */
+.vi-fin-box{border:1.5px solid #fecaca;border-radius:12px;padding:14px 16px;
+  background:linear-gradient(180deg,#fef2f2 0%,#fff 70px);margin-top:6px;}
+.vi-fin-box-tit{font-weight:800;font-size:.85rem;color:#991b1b;margin-bottom:10px;
+  display:flex;align-items:center;gap:7px;}
+.vi-cc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:4px;}
+.vi-cc{border:2px solid #e5e7eb;border-radius:10px;padding:10px 6px;text-align:center;
+  cursor:pointer;background:#fff;transition:all .14s;min-height:44px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;}
+.vi-cc:hover{border-color:#fca5a5;transform:translateY(-1px);}
+.vi-cc.sel{border-color:var(--ilus-red);background:linear-gradient(135deg,#fef2f2,#fff);
+  box-shadow:0 2px 10px rgba(220,38,38,.15);}
+.vi-cc i{font-size:1.2rem;color:#9ca3af;}
+.vi-cc.sel i{color:var(--ilus-red);}
+.vi-cc span{font-weight:700;font-size:.74rem;color:#374151;line-height:1.15;}
+.vi-cc.sel span{color:#991b1b;}
+.gar-seg{display:flex;gap:8px;}
+.gar-seg .gar-opt{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+  min-height:44px;padding:8px 10px;border:2px solid #e5e7eb;border-radius:10px;
+  background:#fff;cursor:pointer;font-weight:700;font-size:.82rem;color:#475569;
+  transition:all .18s cubic-bezier(.4,0,.2,1);user-select:none;text-align:center;line-height:1.1;}
+.gar-seg .gar-opt:hover{border-color:#cbd5e1;}
+.gar-seg .gar-opt:active{transform:scale(.97);}
+.gar-seg input[type=radio]{position:absolute;opacity:0;width:0;height:0;}
+.gar-seg input[type=radio]:checked + .gar-opt.gar-si{
+  border-color:#16a34a;background:#dcfce7;color:#166534;box-shadow:0 2px 8px rgba(22,163,74,.18);}
+.gar-seg input[type=radio]:checked + .gar-opt.gar-no{
+  border-color:var(--ilus-red);background:#fee2e2;color:#991b1b;box-shadow:0 2px 8px rgba(220,38,38,.18);}
+.gar-seg input[type=radio]:focus-visible + .gar-opt{outline:2px solid var(--ilus-red);outline-offset:2px;}
 </style>
 
 {# ─────────── HEADER NEGRO ─────────── #}
@@ -743,11 +779,88 @@
                 <option value="reagendada">Reagendada</option>
               </select>
             </div>
-            <div class="col-12 col-md-6">
-              <label class="form-label fw-semibold small">Costo (CLP)</label>
-              <div class="input-group">
-                <span class="input-group-text">$</span>
-                <input type="number" id="vi_costo" class="form-control" min="0" step="1000">
+            {# ═══════════════════════════════════════════════════════════
+               COSTOS (2026-09-17, Daniel: "ni que se creen las OT sin las
+               finanzas, vengan de donde vengan... siempre debe declarar
+               documento, finanzas y tecnico, siento que estamos
+               expuestos"). Exigido SOLO al CREAR (vi_id vacío) — ver
+               validación en guardarVisita() más abajo. Mismo contrato
+               `finanzas` que ot2_api_crear (templates/ot2/_modal_crear.html):
+               centro_costo, valor_origen, zz_monto, garantia_aplica/motivo,
+               factura_tido/nudo, zz_motivo_manual. ═══════════════════════ #}
+            <div class="col-12">
+              <div class="vi-fin-box">
+                <div class="vi-fin-box-tit"><i class="bi bi-cash-stack"></i>Costos</div>
+
+                <label class="form-label fw-semibold small">Centro de costo <span class="text-danger">*</span></label>
+                <div class="vi-cc-grid" id="viFinCentroGrid">
+                  <div class="vi-cc" data-cc="sstt" onclick="viFinSeleccionarCentro(this)">
+                    <i class="bi bi-wrench-adjustable-circle-fill"></i><span>Servicio Técnico</span>
+                  </div>
+                  <div class="vi-cc" data-cc="logistica" onclick="viFinSeleccionarCentro(this)">
+                    <i class="bi bi-truck"></i><span>Logística</span>
+                  </div>
+                  <div class="vi-cc" data-cc="comercial" onclick="viFinSeleccionarCentro(this)">
+                    <i class="bi bi-briefcase-fill"></i><span>Comercial</span>
+                  </div>
+                </div>
+                <input type="hidden" id="vi_fin_centro" value="">
+
+                <div class="row g-3 mt-1">
+                  <div class="col-12 col-md-6">
+                    <label class="form-label fw-semibold small">Esta OT vale $ <span class="text-danger">*</span></label>
+                    <input type="number" id="vi_costo" class="form-control" min="0" step="1000" placeholder="0">
+                  </div>
+                  <div class="col-12 col-md-6">
+                    <label class="form-label fw-semibold small">¿De dónde sale ese valor? <span class="text-danger">*</span></label>
+                    <select id="vi_fin_origen" class="form-select" onchange="viFinOrigenToggle()">
+                      <option value="">— Selecciona —</option>
+                      <option value="zz">Línea/documento real</option>
+                      <option value="cotizacion">Cotización</option>
+                      <option value="contrato">Contrato del cliente</option>
+                      <option value="estimado">Estimado por clasificación</option>
+                      <option value="supuesto">Supuesto</option>
+                      <option value="manual">Editado a mano</option>
+                    </select>
+                  </div>
+                  <div class="col-12" id="vi_fin_origen_motivo_wrap" style="display:none">
+                    <label class="form-label fw-semibold small">¿En qué te basas? <span class="text-danger">*</span></label>
+                    <textarea id="vi_fin_origen_motivo" class="form-control" rows="2" maxlength="500"
+                              placeholder="Ej: tarifa habitual de visita técnica, valor promedio de OT similares…"></textarea>
+                  </div>
+                </div>
+
+                <label class="form-label fw-semibold small mt-3 d-flex align-items-center gap-2">
+                  <i class="bi bi-receipt" style="color:var(--ilus-red)"></i>¿Se le cobra al cliente? <span class="text-danger">*</span>
+                </label>
+                <div class="gar-seg" id="vi_gar_seg">
+                  <input type="radio" name="vi_garantia" id="vi_gar_no" value="0" checked
+                         onchange="viFinCobroToggle()">
+                  <label class="gar-opt gar-no" for="vi_gar_no">
+                    <i class="bi bi-receipt"></i>Sí, con documento
+                  </label>
+                  <input type="radio" name="vi_garantia" id="vi_gar_si" value="1"
+                         onchange="viFinCobroToggle()">
+                  <label class="gar-opt gar-si" for="vi_gar_si">
+                    <i class="bi bi-shield-fill-check"></i>No, va por garantía
+                  </label>
+                </div>
+                <div class="row g-3 mt-1" id="vi_fin_doc_wrap">
+                  <div class="col-6">
+                    <label class="form-label fw-semibold small">Tipo de documento <span class="text-danger">*</span></label>
+                    <input type="text" id="vi_fin_doc_tipo" class="form-control" placeholder="Ej: FCV, BLV, NVV"
+                           maxlength="5" style="text-transform:uppercase">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label fw-semibold small">Número de documento <span class="text-danger">*</span></label>
+                    <input type="text" id="vi_fin_doc_numero" class="form-control" placeholder="Ej: 12345" maxlength="20">
+                  </div>
+                </div>
+                <div class="mt-1" id="vi_fin_gar_motivo_wrap" style="display:none">
+                  <label class="form-label fw-semibold small">Motivo de la garantía <span class="text-danger">*</span></label>
+                  <textarea id="vi_fin_gar_motivo" class="form-control" rows="2" maxlength="500"
+                            placeholder="Por qué queda cubierto sin cobrar (mínimo 10 caracteres)…"></textarea>
+                </div>
               </div>
             </div>
             <div class="col-12">
@@ -1490,6 +1603,21 @@ function abrirVisitaModal(vid){
   document.getElementById('vi_tecnico').value = ev.tecnicos.map(t => t.nombre).join(', ');
   document.getElementById('vi_descripcion').value = ev.descripcion || '';
 
+  // ── Costos (2026-09-17): esta sección NO se exige al editar (solo al
+  // crear, ver guardarVisita()) -- se resetea para no arrastrar datos de
+  // un intento anterior, pero queda opcional acá.
+  document.querySelectorAll('#viFinCentroGrid .vi-cc').forEach(c => c.classList.remove('sel'));
+  document.getElementById('vi_fin_centro').value = '';
+  document.getElementById('vi_fin_origen').value = '';
+  document.getElementById('vi_fin_origen_motivo').value = '';
+  document.getElementById('vi_fin_doc_tipo').value = '';
+  document.getElementById('vi_fin_doc_numero').value = '';
+  document.getElementById('vi_fin_gar_motivo').value = '';
+  document.getElementById('vi_gar_no').checked = true;
+  document.getElementById('vi_gar_si').checked = false;
+  viFinOrigenToggle();
+  viFinCobroToggle();
+
   // ── Vista informativa (siempre poblada, es lo primero que se ve) ──
   const est = _DIA_EST[ev.estado] || {label: (ev.estado || '—'), badge: 'programada'};
   const badge = document.getElementById('vi_info_estado');
@@ -1595,6 +1723,19 @@ function abrirNuevaVisita(){
   // Fecha por defecto: hoy + 2 días
   const f = new Date(); f.setDate(f.getDate()+2);
   document.getElementById('vi_fecha').value = f.toISOString().slice(0,10);
+  // ── Costos (2026-09-17): reset del bloque nuevo cada vez que se abre
+  // en modo "nueva visita" -- nunca arrastrar datos de un intento anterior.
+  document.querySelectorAll('#viFinCentroGrid .vi-cc').forEach(c => c.classList.remove('sel'));
+  document.getElementById('vi_fin_centro').value = '';
+  document.getElementById('vi_fin_origen').value = '';
+  document.getElementById('vi_fin_origen_motivo').value = '';
+  document.getElementById('vi_fin_doc_tipo').value = '';
+  document.getElementById('vi_fin_doc_numero').value = '';
+  document.getElementById('vi_fin_gar_motivo').value = '';
+  document.getElementById('vi_gar_no').checked = true;
+  document.getElementById('vi_gar_si').checked = false;
+  viFinOrigenToggle();
+  viFinCobroToggle();
   // Reactivar inputs (en caso de que abrirVisitaModal los haya disabled)
   ['vi_cliente','vi_tipo','vi_titulo','vi_fecha',
    'vi_hora_inicio','vi_hora_fin','vi_estado','vi_costo',
@@ -1619,6 +1760,32 @@ function nuevaVisitaEnSlot(fecha, hora){
   document.getElementById('vi_hora_inicio').value = hora;
 }
 
+// Selección del centro de costo (grid de 3 tarjetas, mismos valores que
+// _OT2_CENTROS_COSTO en app.py: sstt/logistica/comercial).
+function viFinSeleccionarCentro(el){
+  document.querySelectorAll('#viFinCentroGrid .vi-cc').forEach(c => c.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('vi_fin_centro').value = el.dataset.cc;
+}
+// "supuesto"/"manual" son los únicos orígenes de valor SIN referencia en
+// el sistema -- exigen que la persona explique en qué se basó (mismo
+// criterio que _O2M_VALOR_ORIGENES_CON_MOTIVO del wizard OT 2.0).
+function viFinOrigenToggle(){
+  const v = document.getElementById('vi_fin_origen').value;
+  const wrap = document.getElementById('vi_fin_origen_motivo_wrap');
+  if (wrap) wrap.style.display = (v === 'supuesto' || v === 'manual') ? '' : 'none';
+}
+// "Sí, con documento" (vi_gar_no) pide Tipo+Número; "No, va por garantía"
+// (vi_gar_si) pide el motivo obligatorio -- mismo campo garantia_aplica
+// que ya usaba este modal, solo que ahora ambos caminos quedan completos.
+function viFinCobroToggle(){
+  const esGarantia = document.getElementById('vi_gar_si').checked;
+  const docWrap = document.getElementById('vi_fin_doc_wrap');
+  const motivoWrap = document.getElementById('vi_fin_gar_motivo_wrap');
+  if (docWrap) docWrap.style.display = esGarantia ? 'none' : '';
+  if (motivoWrap) motivoWrap.style.display = esGarantia ? '' : 'none';
+}
+
 async function guardarVisita(){
   const vid = document.getElementById('vi_id').value;
   const cli = document.getElementById('vi_cliente').value;
@@ -1626,6 +1793,44 @@ async function guardarVisita(){
   if (!cli || !fecha) {
     if (window.ilusToast) ilusToast('Cliente y fecha son obligatorios', { type:'warning' });
     return;
+  }
+  const costoVal    = parseFloat(document.getElementById('vi_costo').value || 0) || 0;
+  const finCentro   = document.getElementById('vi_fin_centro').value;
+  const finOrigen   = document.getElementById('vi_fin_origen').value;
+  const finOrigenMotivo = document.getElementById('vi_fin_origen_motivo').value.trim();
+  const esGarantia  = document.getElementById('vi_gar_si').checked;
+  const finGarMotivo = document.getElementById('vi_fin_gar_motivo').value.trim();
+  const finDocTipo    = document.getElementById('vi_fin_doc_tipo').value.trim().toUpperCase();
+  const finDocNumero  = document.getElementById('vi_fin_doc_numero').value.trim();
+  // ── Costos: obligatorio SOLO al CREAR (vid vacío) — Daniel 2026-09-17:
+  // "siempre debe declarar documento, finanzas y tecnico". Al editar una
+  // OT ya creada no se vuelve a exigir (eso lo maneja el backend con sus
+  // propios candados de edición, no este formulario).
+  if (!vid) {
+    if (!finCentro) {
+      if (window.ilusToast) ilusToast('Elige el centro de costo (sección Costos)', { type:'warning' });
+      return;
+    }
+    if (!(costoVal > 0)) {
+      if (window.ilusToast) ilusToast('Indica cuánto vale esta OT (sección Costos)', { type:'warning' });
+      return;
+    }
+    if (!finOrigen) {
+      if (window.ilusToast) ilusToast('Indica de dónde sale ese valor (sección Costos)', { type:'warning' });
+      return;
+    }
+    if ((finOrigen === 'supuesto' || finOrigen === 'manual') && !finOrigenMotivo) {
+      if (window.ilusToast) ilusToast('Explica en qué te basas para ese valor (sección Costos)', { type:'warning' });
+      return;
+    }
+    if (esGarantia && finGarMotivo.length < 10) {
+      if (window.ilusToast) ilusToast('El motivo de la garantía debe tener al menos 10 caracteres', { type:'warning' });
+      return;
+    }
+    if (!esGarantia && (!finDocTipo || !finDocNumero)) {
+      if (window.ilusToast) ilusToast('Indica el tipo y número del documento con el que se cobra', { type:'warning' });
+      return;
+    }
   }
   const body = {
     cliente_id: cli,
@@ -1637,7 +1842,23 @@ async function guardarVisita(){
     estado:      document.getElementById('vi_estado').value,
     tecnico:     document.getElementById('vi_tecnico').value.trim(),
     descripcion: document.getElementById('vi_descripcion').value.trim(),
-    costo:       parseFloat(document.getElementById('vi_costo').value || 0) || 0,
+    costo:       costoVal,
+    // Garantía transversal, mismo campo que ya lee _mant_visita_crear_core.
+    garantia_aplica: esGarantia,
+    garantia_motivo: esGarantia ? finGarMotivo : null,
+  };
+  // FINANZAS (2026-09-17) -- contrato nuevo, mismo que ot2_api_crear
+  // (templates/ot2/_modal_crear.html): centro_costo, valor_origen,
+  // zz_monto, garantia_aplica/motivo, factura_tido/nudo, zz_motivo_manual.
+  body.finanzas = {
+    centro_costo: finCentro || null,
+    valor_origen: finOrigen || null,
+    zz_monto: costoVal,
+    garantia_aplica: esGarantia,
+    garantia_motivo: esGarantia ? finGarMotivo : '',
+    factura_tido: esGarantia ? null : (finDocTipo || null),
+    factura_nudo: esGarantia ? null : (finDocNumero || null),
+    zz_motivo_manual: (finOrigen === 'supuesto' || finOrigen === 'manual') ? finOrigenMotivo : '',
   };
   const btn = document.getElementById('btnGuardarVisita');
   const original = btn ? btn.innerHTML : '';

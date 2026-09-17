@@ -759,6 +759,23 @@ function editarVisita(v) {
   // usuario está CORRIGIENDO retroactivamente la garantía (la OT ya tenía
   // otra cobertura declarada) y exigir un motivo antes de guardar.
   document.getElementById('vi_id').dataset.garantiaOriginal = _garActual ? '1' : '0';
+  // ── Costos (2026-09-17): esta sección NO se exige al editar (solo al
+  // crear, ver guardarVisita()) -- se resetea para no arrastrar datos de
+  // un intento anterior; si el backend ya trae los campos nuevos, se
+  // precargan best-effort (no rompe si vienen undefined).
+  document.querySelectorAll('#viFinCentroGrid .vi-cc').forEach(c => c.classList.remove('sel'));
+  const _ccEl = v.centro_costo ? document.querySelector('#viFinCentroGrid .vi-cc[data-cc="' + v.centro_costo + '"]') : null;
+  if (_ccEl) _ccEl.classList.add('sel');
+  document.getElementById('vi_fin_centro').value = v.centro_costo || '';
+  document.getElementById('vi_fin_origen').value = v.valor_origen || '';
+  document.getElementById('vi_fin_origen_motivo').value = v.zz_motivo_manual || '';
+  document.getElementById('vi_fin_doc_tipo').value = v.factura_tido || '';
+  document.getElementById('vi_fin_doc_numero').value = v.factura_nudo || '';
+  document.getElementById('vi_fin_gar_motivo').value = v.garantia_motivo || '';
+  const _cd = document.getElementById('vi_costo_desp');
+  if (_cd) _cd.value = (v.costo_despacho != null ? v.costo_despacho : '');
+  viFinOrigenToggle();
+  viFinCobroToggle();
   document.getElementById('btnEliminarVisita').style.display = '';
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
 }
@@ -768,6 +785,35 @@ function viProvToggleNombre() {
   const t = document.getElementById('vi_prov_tipo');
   const w = document.getElementById('vi_prov_nombre_wrap');
   if (w) w.style.display = (t && t.value === 'externo') ? '' : 'none';
+}
+
+// ── Costos (2026-09-17) ────────────────────────────────────────────────
+// Selección del centro de costo (grid de 3 tarjetas, mismos valores que
+// _OT2_CENTROS_COSTO en app.py: sstt/logistica/comercial).
+function viFinSeleccionarCentro(el) {
+  document.querySelectorAll('#viFinCentroGrid .vi-cc').forEach(c => c.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('vi_fin_centro').value = el.dataset.cc;
+}
+// "supuesto"/"manual" son los únicos orígenes de valor SIN referencia en
+// el sistema -- exigen que la persona explique en qué se basó (mismo
+// criterio que _OT2_VALOR_ORIGENES_CON_MOTIVO, app.py).
+function viFinOrigenToggle() {
+  const el = document.getElementById('vi_fin_origen');
+  const v = el ? el.value : '';
+  const wrap = document.getElementById('vi_fin_origen_motivo_wrap');
+  if (wrap) wrap.style.display = (v === 'supuesto' || v === 'manual') ? '' : 'none';
+}
+// "Sí, con documento" (vi_gar_no) pide Tipo+Número; "No, va por garantía"
+// (vi_gar_si) pide el motivo obligatorio -- se ejecuta EN PARALELO al
+// viGarToggleNota() ya existente (static/mantenciones_ficha.js), que sigue
+// controlando la nota informativa de "Pendiente de facturar".
+function viFinCobroToggle() {
+  const esGarantia = document.getElementById('vi_gar_si')?.checked;
+  const docWrap = document.getElementById('vi_fin_doc_wrap');
+  const motivoWrap = document.getElementById('vi_fin_gar_motivo_wrap');
+  if (docWrap) docWrap.style.display = esGarantia ? 'none' : '';
+  if (motivoWrap) motivoWrap.style.display = esGarantia ? '' : 'none';
 }
 
 // ── ¿Aplica mantención? (2026-06-10, Daniel) ─────────────────────────
@@ -5051,6 +5097,44 @@ async function guardarVisita() {
     garantiaMotivo = garantiaMotivo.trim();
   }
 
+  // ── Costos (2026-09-17, Daniel: "ni que se creen las OT sin las
+  // finanzas, vengan de donde vengan... siempre debe declarar documento,
+  // finanzas y tecnico, siento que estamos expuestos"). Obligatorio SOLO
+  // al CREAR (!vid) -- al editar no se vuelve a exigir acá (candados de
+  // edición propios del backend/OT 2.0).
+  const costoVal = parseFloat(document.getElementById('vi_costo').value) || 0;
+  const finCentro = document.getElementById('vi_fin_centro').value;
+  const finOrigen = document.getElementById('vi_fin_origen').value;
+  const finOrigenMotivo = document.getElementById('vi_fin_origen_motivo').value.trim();
+  const finGarMotivoPersistente = document.getElementById('vi_fin_gar_motivo').value.trim();
+  const finDocTipo = document.getElementById('vi_fin_doc_tipo').value.trim().toUpperCase();
+  const finDocNumero = document.getElementById('vi_fin_doc_numero').value.trim();
+  if (!vid) {
+    if (!finCentro) {
+      ilusToast('Elige el centro de costo (sección Costos)', { type:'warning' }); return;
+    }
+    if (!(costoVal > 0)) {
+      ilusToast('Indica cuánto vale esta OT (sección Costos)', { type:'warning' }); return;
+    }
+    if (!finOrigen) {
+      ilusToast('Indica de dónde sale ese valor (sección Costos)', { type:'warning' }); return;
+    }
+    if ((finOrigen === 'supuesto' || finOrigen === 'manual') && !finOrigenMotivo) {
+      ilusToast('Explica en qué te basas para ese valor (sección Costos)', { type:'warning' }); return;
+    }
+    if (garNueva && finGarMotivoPersistente.length < 10) {
+      ilusToast('El motivo de la garantía debe tener al menos 10 caracteres', { type:'warning' }); return;
+    }
+    if (!garNueva && (!finDocTipo || !finDocNumero)) {
+      ilusToast('Indica el tipo y número del documento con el que se cobra', { type:'warning' }); return;
+    }
+  }
+  // El motivo que viaja en el campo plano `garantia_motivo` (legacy, lo lee
+  // _mant_visita_crear_core desde 2026-05-30): prioriza la corrección
+  // retroactiva (edición) si existe, sino el campo persistente nuevo
+  // (creación) -- nunca los dos a la vez.
+  const garantiaMotivoFinal = garantiaMotivo || (garNueva ? finGarMotivoPersistente : null);
+
   const data = {
     cliente_id:      CID,
     titulo:          document.getElementById('vi_titulo').value.trim(),
@@ -5060,18 +5144,35 @@ async function guardarVisita() {
     hora_inicio:     document.getElementById('vi_hora_inicio').value || null,
     hora_fin:        document.getElementById('vi_hora_fin').value || null,
     tecnico:         document.getElementById('vi_tecnico').value.trim(),
-    costo:           parseFloat(document.getElementById('vi_costo').value) || 0,
+    costo:           costoVal,
     descripcion:     document.getElementById('vi_descripcion').value.trim(),
     // Garantía transversal (Aplica/No aplica) — independiente del tipo.
     garantia_aplica: garNueva,
-    // Motivo obligatorio SOLO si es corrección retroactiva (ver arriba).
-    // El backend lo exige/valida igual; lo mandamos siempre que exista.
-    garantia_motivo: garantiaMotivo,
+    // Motivo: corrección retroactiva (edición) o campo persistente (creación).
+    garantia_motivo: garantiaMotivoFinal,
     // FINANZAS (2026-06-10): margen = cobrado - costo proveedor.
     costo_proveedor: parseFloat(document.getElementById('vi_costo_prov')?.value) || null,
     proveedor_tipo:  document.getElementById('vi_prov_tipo')?.value || null,
     proveedor_nombre: (document.getElementById('vi_prov_nombre')?.value || '').trim() || null,
   };
+  // FINANZAS (2026-09-17) -- contrato nuevo, mismo que ot2_api_crear
+  // (templates/ot2/_modal_crear.html): centro_costo, valor_origen,
+  // zz_monto, garantia_aplica/motivo, factura_tido/nudo, zz_motivo_manual,
+  // costo_proveedor/costo_despacho.
+  data.finanzas = {
+    centro_costo: finCentro || null,
+    valor_origen: finOrigen || null,
+    zz_monto: costoVal,
+    garantia_aplica: garNueva,
+    garantia_motivo: garNueva ? (garantiaMotivoFinal || '') : '',
+    factura_tido: garNueva ? null : (finDocTipo || null),
+    factura_nudo: garNueva ? null : (finDocNumero || null),
+    zz_motivo_manual: (finOrigen === 'supuesto' || finOrigen === 'manual') ? finOrigenMotivo : '',
+  };
+  const _cdVal = parseFloat(document.getElementById('vi_costo_desp')?.value);
+  if (!isNaN(_cdVal)) data.finanzas.costo_despacho = _cdVal;
+  const _cpVal = parseFloat(document.getElementById('vi_costo_prov')?.value);
+  if (!isNaN(_cpVal)) data.finanzas.costo_proveedor = _cpVal;
   let url = '/mantenciones/api/visitas', method = 'POST';
   if (vid) { url = `/mantenciones/api/visitas/${vid}`; method = 'PUT'; }
   const r = await fetch(url, {
@@ -6841,8 +6942,24 @@ function agendarDesdeProyeccion(fechaISO, ctid) {
   document.getElementById('vi_estado').value = 'programada';
   document.getElementById('vi_titulo').value = 'Mantención preventiva programada';
   document.getElementById('vi_descripcion').value = '';
+  document.getElementById('vi_costo').value = '';
+  const _cpEl = document.getElementById('vi_costo_prov'); if (_cpEl) _cpEl.value = '';
+  const _cdEl = document.getElementById('vi_costo_desp'); if (_cdEl) _cdEl.value = '';
+  const _ptEl = document.getElementById('vi_prov_tipo'); if (_ptEl) _ptEl.value = '';
+  viProvToggleNombre();
   // Garantía: default "No aplica" (visita nueva desde proyección de contrato)
   _viSetGarantia(false);
+  // ── Costos (2026-09-17): reset del bloque nuevo, obligatorio al crear
+  // (ver guardarVisita()) -- nunca arrastrar datos de un intento anterior.
+  document.querySelectorAll('#viFinCentroGrid .vi-cc').forEach(c => c.classList.remove('sel'));
+  document.getElementById('vi_fin_centro').value = '';
+  document.getElementById('vi_fin_origen').value = '';
+  document.getElementById('vi_fin_origen_motivo').value = '';
+  document.getElementById('vi_fin_doc_tipo').value = '';
+  document.getElementById('vi_fin_doc_numero').value = '';
+  document.getElementById('vi_fin_gar_motivo').value = '';
+  viFinOrigenToggle();
+  viFinCobroToggle();
   const btnDel = document.getElementById('btnEliminarVisita');
   if (btnDel) btnDel.style.display = 'none';
   const modal = new bootstrap.Modal(document.getElementById('modalVisita'));

@@ -5703,49 +5703,124 @@
             <label class="form-label fw-semibold">Técnico</label>
             <input type="text" id="vi_tecnico" class="form-control" placeholder="Nombre del técnico">
           </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Valor cobrado al cliente ($)</label>
-            <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
-          </div>
-          {# ── FINANZAS (2026-06-10, Daniel): costo del proveedor → margen ── #}
-          <div class="col-6">
-            <label class="form-label fw-semibold">Costo proveedor/técnico ($)</label>
-            <input type="number" id="vi_costo_prov" class="form-control" placeholder="0" min="0" step="1000">
-            <div class="form-text" style="font-size:.72rem">Lo que te cobra quien ejecuta (para calcular tu margen).</div>
-          </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Ejecutado por</label>
-            <select id="vi_prov_tipo" class="form-select" onchange="viProvToggleNombre()">
-              <option value="">— No definido —</option>
-              <option value="interno">Técnico interno ILUS</option>
-              <option value="externo">Proveedor externo</option>
-            </select>
-          </div>
-          <div class="col-6" id="vi_prov_nombre_wrap" style="display:none">
-            <label class="form-label fw-semibold">Nombre del proveedor</label>
-            <input type="text" id="vi_prov_nombre" class="form-control" placeholder="Ej: Servitec SpA" maxlength="200">
-          </div>
-          {# ── GARANTÍA (interruptor transversal, separado del tipo) ── #}
+          {# ═══════════════════════════════════════════════════════════
+             COSTOS (2026-09-17, Daniel: "ni que se creen las OT sin las
+             finanzas, vengan de donde vengan... siempre debe declarar
+             documento, finanzas y tecnico, siento que estamos expuestos").
+             Exigido SOLO al CREAR (vi_id vacío -- ver validación en
+             guardarVisita(), static/mant_ficha.js). Mismo contrato
+             `finanzas` que ot2_api_crear (templates/ot2/_modal_crear.html):
+             centro_costo, valor_origen, zz_monto, garantia_aplica/motivo,
+             factura_tido/nudo, zz_motivo_manual, costo_proveedor/despacho.
+             Este modal se abre HOY desde "Agendar" en la proyección del
+             Plan Anual (agendarDesdeProyeccion/agendarDesdeContrato) y al
+             editar una visita existente (editarVisita) -- "Nueva visita"
+             normal redirige al wizard potente (abrirGenerarOT). ═══════ #}
           <div class="col-12">
-            <label class="form-label fw-semibold d-flex align-items-center gap-2">
-              <i class="bi bi-shield-check" style="color:var(--ilus-red)"></i>Garantía
-            </label>
-            <div class="gar-seg" id="vi_gar_seg">
-              <input type="radio" name="vi_garantia" id="vi_gar_no" value="0" checked
-                     onchange="viGarToggleNota()">
-              <label class="gar-opt gar-no" for="vi_gar_no">
-                <i class="bi bi-cash-coin"></i>No aplica (pago)
+            <div class="vi-fin-box">
+              <div class="vi-fin-box-tit"><i class="bi bi-cash-stack"></i>Costos</div>
+
+              <label class="form-label fw-semibold small">Centro de costo <span class="text-danger">*</span></label>
+              <div class="vi-cc-grid" id="viFinCentroGrid">
+                <div class="vi-cc" data-cc="sstt" onclick="viFinSeleccionarCentro(this)">
+                  <i class="bi bi-wrench-adjustable-circle-fill"></i><span>Servicio Técnico</span>
+                </div>
+                <div class="vi-cc" data-cc="logistica" onclick="viFinSeleccionarCentro(this)">
+                  <i class="bi bi-truck"></i><span>Logística</span>
+                </div>
+                <div class="vi-cc" data-cc="comercial" onclick="viFinSeleccionarCentro(this)">
+                  <i class="bi bi-briefcase-fill"></i><span>Comercial</span>
+                </div>
+              </div>
+              <input type="hidden" id="vi_fin_centro" value="">
+
+              <div class="row g-3 mt-1">
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Esta OT vale $ <span class="text-danger">*</span></label>
+                  <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">¿De dónde sale ese valor? <span class="text-danger">*</span></label>
+                  <select id="vi_fin_origen" class="form-select" onchange="viFinOrigenToggle()">
+                    <option value="">— Selecciona —</option>
+                    <option value="zz">Línea/documento real</option>
+                    <option value="cotizacion">Cotización</option>
+                    <option value="contrato">Contrato del cliente</option>
+                    <option value="estimado">Estimado por clasificación</option>
+                    <option value="supuesto">Supuesto</option>
+                    <option value="manual">Editado a mano</option>
+                  </select>
+                </div>
+                <div class="col-12" id="vi_fin_origen_motivo_wrap" style="display:none">
+                  <label class="form-label fw-semibold small">¿En qué te basas? <span class="text-danger">*</span></label>
+                  <textarea id="vi_fin_origen_motivo" class="form-control" rows="2" maxlength="500"
+                            placeholder="Ej: tarifa habitual de visita técnica, valor promedio de OT similares…"></textarea>
+                </div>
+              </div>
+
+              {# ── FINANZAS (2026-06-10, Daniel): costo del proveedor → margen ── #}
+              <div class="row g-3 mt-1">
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Costo proveedor/técnico ($)</label>
+                  <input type="number" id="vi_costo_prov" class="form-control" placeholder="0" min="0" step="1000">
+                  <div class="form-text" style="font-size:.72rem">Lo que te cobra quien ejecuta (para calcular tu margen).</div>
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Costo despacho ($) <span class="text-muted fw-normal">(opcional)</span></label>
+                  <input type="number" id="vi_costo_desp" class="form-control" placeholder="Solo si hay despacho" min="0" step="1000">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Ejecutado por</label>
+                  <select id="vi_prov_tipo" class="form-select" onchange="viProvToggleNombre()">
+                    <option value="">— No definido —</option>
+                    <option value="interno">Técnico interno ILUS</option>
+                    <option value="externo">Proveedor externo</option>
+                  </select>
+                </div>
+                <div class="col-6" id="vi_prov_nombre_wrap" style="display:none">
+                  <label class="form-label fw-semibold small">Nombre del proveedor</label>
+                  <input type="text" id="vi_prov_nombre" class="form-control" placeholder="Ej: Servitec SpA" maxlength="200">
+                </div>
+              </div>
+
+              {# ── ¿SE LE COBRA AL CLIENTE? (mismo campo garantia_aplica de
+                 siempre, solo relabeled: antes decía "Garantía") ── #}
+              <label class="form-label fw-semibold small mt-3 d-flex align-items-center gap-2">
+                <i class="bi bi-receipt" style="color:var(--ilus-red)"></i>¿Se le cobra al cliente? <span class="text-danger">*</span>
               </label>
-              <input type="radio" name="vi_garantia" id="vi_gar_si" value="1"
-                     onchange="viGarToggleNota()">
-              <label class="gar-opt gar-si" for="vi_gar_si">
-                <i class="bi bi-shield-fill-check"></i>Aplica (cubierto)
-              </label>
-            </div>
-            <div class="gar-note" id="vi_gar_nota">
-              <i class="bi bi-exclamation-triangle-fill"></i>
-              <span>Deberás asociar una factura del ERP para cerrar; mientras tanto queda
-                <strong>Pendiente de facturar</strong>.</span>
+              <div class="gar-seg" id="vi_gar_seg">
+                <input type="radio" name="vi_garantia" id="vi_gar_no" value="0" checked
+                       onchange="viGarToggleNota(); viFinCobroToggle()">
+                <label class="gar-opt gar-no" for="vi_gar_no">
+                  <i class="bi bi-receipt"></i>Sí, con documento
+                </label>
+                <input type="radio" name="vi_garantia" id="vi_gar_si" value="1"
+                       onchange="viGarToggleNota(); viFinCobroToggle()">
+                <label class="gar-opt gar-si" for="vi_gar_si">
+                  <i class="bi bi-shield-fill-check"></i>No, va por garantía
+                </label>
+              </div>
+              <div class="gar-note" id="vi_gar_nota">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <span>El documento queda registrado en la OT; si cambia (ej. al recibir la
+                  factura definitiva), podrás actualizarlo después con <strong>Asociar factura</strong>.</span>
+              </div>
+              <div class="row g-3 mt-1" id="vi_fin_doc_wrap">
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Tipo de documento <span class="text-danger">*</span></label>
+                  <input type="text" id="vi_fin_doc_tipo" class="form-control" placeholder="Ej: FCV, BLV, NVV"
+                         maxlength="5" style="text-transform:uppercase">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Número de documento <span class="text-danger">*</span></label>
+                  <input type="text" id="vi_fin_doc_numero" class="form-control" placeholder="Ej: 12345" maxlength="20">
+                </div>
+              </div>
+              <div class="mt-1" id="vi_fin_gar_motivo_wrap" style="display:none">
+                <label class="form-label fw-semibold small">Motivo de la garantía <span class="text-danger">*</span></label>
+                <textarea id="vi_fin_gar_motivo" class="form-control" rows="2" maxlength="500"
+                          placeholder="Por qué queda cubierto sin cobrar (mínimo 10 caracteres)…"></textarea>
+              </div>
             </div>
           </div>
           <div class="col-12">

@@ -433,6 +433,14 @@
 
 /* Selector de plantilla — pastilla ⭐ = recomendada */
 .oti-plant-opt.rec::after{content:' ⭐';}
+
+/* Paso 5 — Costos (2026-09-17, Daniel: "ni que se creen las OT sin las
+   finanzas, vengan de donde vengan... siempre debe declarar documento,
+   finanzas y tecnico, siento que estamos expuestos"). Centro de costo:
+   mismo grid/tarjeta que el Paso 1 (.oti-tipo-grid/.oti-tipo-card), solo
+   fijo a 3 columnas -- son siempre 3 opciones (sstt/logistica/comercial,
+   igual que _OT2_CENTROS_COSTO en app.py). */
+.oti-cc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 </style>
 
 <div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -2390,6 +2398,50 @@ async function otogIrACotizacion(cotId, ticketId){
           </div>
         </section>
 
+        {# ─── Paso 5: Costos (2026-09-17, Daniel: "ni que se creen las OT
+           sin las finanzas, vengan de donde vengan... siempre debe
+           declarar documento, finanzas y tecnico, siento que estamos
+           expuestos"). Trabajo interno NO se factura ni se cobra -- solo
+           centro de costo + valor referencial (mismo criterio que el paso
+           "Costos" del wizard OT 2.0 para esInterno(), ver
+           templates/ot2/_modal_crear.html: sub-pasos 'centro' y 'valor'
+           únicamente, sin 'cobro' ni 'costo'). ─── #}
+        <section class="oti-step" id="otiStep5">
+          <div class="oti-step-header">
+            <div class="oti-step-circle"><span class="oti-step-num">5</span><span class="oti-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="oti-step-title">Costos</div>
+            <div class="oti-step-sub">Centro de costo y valor referencial</div>
+          </div>
+          <div class="oti-step-body">
+            <label class="form-label small fw-semibold">Centro de costo <span class="oti-req">*</span></label>
+            <div class="oti-cc-grid mb-3" id="otiCentroGrid">
+              <div class="oti-tipo-card" data-cc="sstt" onclick="otiSeleccionarCentro(this)">
+                <div class="ico"><i class="bi bi-wrench-adjustable-circle-fill"></i></div>
+                <div class="lbl">Servicio Técnico</div>
+              </div>
+              <div class="oti-tipo-card" data-cc="logistica" onclick="otiSeleccionarCentro(this)">
+                <div class="ico"><i class="bi bi-truck"></i></div>
+                <div class="lbl">Logística</div>
+              </div>
+              <div class="oti-tipo-card" data-cc="comercial" onclick="otiSeleccionarCentro(this)">
+                <div class="ico"><i class="bi bi-briefcase-fill"></i></div>
+                <div class="lbl">Comercial</div>
+              </div>
+            </div>
+            <input type="hidden" id="otiCentro" value="">
+
+            <label class="form-label small fw-semibold">¿Cuánto vale este trabajo? (referencial, no se factura) <span class="oti-req">*</span></label>
+            <div class="input-group input-group-sm" style="max-width:220px">
+              <span class="input-group-text">$</span>
+              <input type="number" id="otiCostoInterno" class="form-control" min="0" step="1000" placeholder="0">
+            </div>
+            <small class="text-muted d-block mt-1" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>
+              No se cobra a nadie: sirve para saber cuánto cuesta este trabajo interno al centro de costo.
+            </small>
+          </div>
+        </section>
+
       </div>
       <div class="modal-footer" style="background:#fff;border-top:1px solid #f1f5f9">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">
@@ -2431,6 +2483,19 @@ function otiRefreshStepStates(){
   document.getElementById('otiStep1').classList.toggle('is-complete', !!document.getElementById('otiTipo').value);
   document.getElementById('otiStep2').classList.toggle('is-complete', !!document.getElementById('otiTitulo').value.trim());
   document.getElementById('otiStep3').classList.toggle('is-complete', !!document.getElementById('otiFecha').value);
+  const _otiCostoOk = (parseFloat(document.getElementById('otiCostoInterno').value) || 0) > 0;
+  document.getElementById('otiStep5').classList.toggle('is-complete',
+    !!document.getElementById('otiCentro').value && _otiCostoOk);
+}
+
+// Selección del centro de costo (Paso 5, mismas 3 opciones y valores que
+// _OT2_CENTROS_COSTO en app.py: sstt/logistica/comercial). Reusa la MISMA
+// tarjeta .oti-tipo-card del Paso 1 -- selección única, sin default.
+function otiSeleccionarCentro(el){
+  document.querySelectorAll('#otiCentroGrid .oti-tipo-card').forEach(c => c.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('otiCentro').value = el.dataset.cc;
+  otiRefreshStepStates();
 }
 
 async function abrirModalOTInterna(){
@@ -2443,6 +2508,11 @@ async function abrirModalOTInterna(){
   document.getElementById('otiHoraFin').value = '13:00';
   document.getElementById('otiTecnico').value = '';
   document.getElementById('otiPlantilla').innerHTML = '<option value="">Elige un tipo primero…</option>';
+  // Costos (2026-09-17): reset del Paso 5 -- nunca arrastrar datos de un
+  // intento anterior (mismo criterio que el resto de este formulario).
+  document.querySelectorAll('#otiCentroGrid .oti-tipo-card').forEach(c => c.classList.remove('sel'));
+  document.getElementById('otiCentro').value = '';
+  document.getElementById('otiCostoInterno').value = '';
   otiRefreshStepStates();
 
   if (!_modalOTInterna) _modalOTInterna = new bootstrap.Modal(document.getElementById('modalOTInterna'));
@@ -2522,6 +2592,21 @@ async function otiCrearOT(){
     ilusToast('La fecha programada es obligatoria (paso 3).', { type: 'warning' });
     return;
   }
+  // ── Costos (2026-09-17, Daniel: "ni que se creen las OT sin las
+  // finanzas, vengan de donde vengan... siempre debe declarar documento,
+  // finanzas y tecnico, siento que estamos expuestos") -- para trabajo
+  // interno no hay documento ni cliente que pague, pero el centro de
+  // costo y el valor referencial SÍ son obligatorios.
+  const centro = document.getElementById('otiCentro').value;
+  const costoInterno = parseFloat(document.getElementById('otiCostoInterno').value);
+  if (!centro){
+    ilusToast('Elige el centro de costo (paso 5).', { type: 'warning' });
+    return;
+  }
+  if (!(costoInterno > 0)){
+    ilusToast('Indica cuánto vale este trabajo (paso 5).', { type: 'warning' });
+    return;
+  }
   const body = {
     tipo,
     titulo,
@@ -2530,6 +2615,13 @@ async function otiCrearOT(){
     hora_inicio: document.getElementById('otiHoraIni').value || null,
     hora_fin: document.getElementById('otiHoraFin').value || null,
     tecnico_user_id: document.getElementById('otiTecnico').value || null,
+    // FINANZAS (2026-09-17) -- contrato nuevo, mismo que ot2_api_crear
+    // para esInterno() (templates/ot2/_modal_crear.html): centro_costo +
+    // costo_interno, sin documento ni garantía (no aplica a interno).
+    finanzas: {
+      centro_costo: centro,
+      costo_interno: costoInterno,
+    },
   };
   const plantillaId = document.getElementById('otiPlantilla').value;
   if (plantillaId) body.plantilla_id = plantillaId;
@@ -2564,9 +2656,9 @@ async function otiCrearOT(){
   }
 }
 
-// Refresco en vivo del check verde de los pasos 2/3 al tipear
+// Refresco en vivo del check verde de los pasos 2/3/5 al tipear
 document.addEventListener('DOMContentLoaded', () => {
-  ['otiTitulo', 'otiFecha'].forEach(id => {
+  ['otiTitulo', 'otiFecha', 'otiCostoInterno'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', otiRefreshStepStates);
   });
