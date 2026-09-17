@@ -5777,7 +5777,12 @@ window.OT2C = (function(){
       });
       mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
     }
-    tkaOpen({ mode: 'seleccionar', tabs: ['doc', 'cli'], onSeleccionar: _o2mFinDocumentoSeleccionado });
+    // 2026-09-17 (Daniel, NV 10618 con solo ZZINSTALACION -- "muy
+    // importante"): este paso solo usa el header (tido/nudo/rut) para
+    // buscar las líneas ZZ por su cuenta (_o2mFinCargarZZ) -- nunca usa
+    // items físicos, así que un documento de puro servicio/flete (el caso
+    // NORMAL de una instalación/mantención) no debe bloquearse.
+    tkaOpen({ mode: 'seleccionar', tabs: ['doc', 'cli'], soloHeader: true, onSeleccionar: _o2mFinDocumentoSeleccionado });
   }
   function _o2mFinDocumentoSeleccionado(items, header){
     if (!header || !header.tido || !header.nudo){
@@ -6191,7 +6196,10 @@ window.OT2C = (function(){
       });
       mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
     }
-    tkaOpen({ mode: 'seleccionar', tabs: ['doc', 'cli'], onSeleccionar: _o2mDocExtraSeleccionado });
+    // 2026-09-17: mismo caso que abrirBusquedaFinDoc -- "Documentos
+    // asociados" también solo guarda el header (tido/nudo/rut), nunca
+    // productos físicos (ver _o2mDocExtraSeleccionado).
+    tkaOpen({ mode: 'seleccionar', tabs: ['doc', 'cli'], soloHeader: true, onSeleccionar: _o2mDocExtraSeleccionado });
   }
   /* -- AGREGAR PRODUCTOS DE OTRO DOCUMENTO, DESDE EL PASO 7 -----------
      2026-09-06 (Daniel: "definitivamente quiero agregar mas productos con
