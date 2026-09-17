@@ -723,6 +723,105 @@
           </div>
         </div>
 
+        {# ─── Paso 8: Costos y cobertura ───
+           Pedido explícito de Daniel (2026-09-17): "ni que se creen las OT
+           sin las finanzas, vengan de donde vengan... siempre debe declarar
+           documento, finanzas y técnico, siento que estamos expuestos" --
+           OBLIGATORIO (sin .is-optional), mismo criterio que Técnicos/Fecha.
+           El backend (tk_api_generar_ot / _mant_lev_crear_ot_core) exige el
+           mismo objeto `finanzas` que ya usa el wizard OT2.0
+           (templates/ot2/_modal_crear.html): centro_costo, valor_origen,
+           zz_monto, garantia_aplica, garantia_motivo, factura_tido/nudo,
+           zz_motivo_manual. Mismos strings de valor_origen que allá (zz,
+           cotizacion, contrato, estimado, supuesto, manual) -- no se
+           inventan valores nuevos. Reutiliza el patrón de chips
+           .lev-dur-chip (Paso 4, "Duración") en vez de un componente
+           nuevo -- consistencia con el resto del modal (Daniel: prioriza
+           el lenguaje visual YA usado acá antes que el de Retiros). #}
+        <div class="lev-step-card" id="tkotStep8">
+          <div class="lev-step-header">
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 8</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">8</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Costos y cobertura</div>
+              <div class="lev-step-sub">Toda OT declara cuánto vale, de dónde sale ese valor y quién la cubre</div>
+            </div>
+          </div>
+          <div class="lev-step-body">
+            {# Referencia -- SOLO un botón "Usar este dato" (nunca autocompleta
+               solo): mismo criterio que el chip "Detectado en ERP → usar" de
+               Retiros (memoria feedback_email_erp_solo_sugerencia) -- el
+               asistente propone, no pisa. Lo llena _tkotCargarRefFinanzas(). #}
+            <div id="finDetectadoBox" style="display:none;margin-bottom:12px"></div>
+
+            <label class="form-label small fw-semibold d-block mb-2">
+              <i class="bi bi-diagram-3 text-primary me-1"></i>Centro de costo *
+            </label>
+            <div class="lev-dur-row mb-3" role="group" aria-label="Centro de costo">
+              <button type="button" class="lev-dur-chip" data-target="finCentroCosto" data-val="sstt" aria-pressed="false" onclick="tkotFinSetChip(this)">Servicio Técnico</button>
+              <button type="button" class="lev-dur-chip" data-target="finCentroCosto" data-val="logistica" aria-pressed="false" onclick="tkotFinSetChip(this)">Logística</button>
+              <button type="button" class="lev-dur-chip" data-target="finCentroCosto" data-val="comercial" aria-pressed="false" onclick="tkotFinSetChip(this)">Comercial</button>
+            </div>
+            <input type="hidden" id="finCentroCosto" value="">
+
+            <label class="form-label small fw-semibold" for="finValorOT">Esta OT vale $ *</label>
+            <div class="input-group input-group-sm mb-3" style="max-width:260px">
+              <span class="input-group-text">$</span>
+              <input type="number" id="finValorOT" class="form-control" min="1" step="1000" placeholder="0">
+            </div>
+
+            <label class="form-label small fw-semibold d-block mb-2">
+              <i class="bi bi-signpost-split text-primary me-1"></i>¿De dónde sale ese valor? *
+            </label>
+            <div class="lev-dur-row mb-2" role="group" aria-label="Origen del valor" id="finOrigenGroup">
+              <button type="button" class="lev-dur-chip" data-target="finOrigenValor" data-val="zz" aria-pressed="false" onclick="tkotFinSetChip(this)">Línea/documento real</button>
+              <button type="button" class="lev-dur-chip" data-target="finOrigenValor" data-val="cotizacion" aria-pressed="false" onclick="tkotFinSetChip(this)">Cotización</button>
+              <button type="button" class="lev-dur-chip" data-target="finOrigenValor" data-val="contrato" aria-pressed="false" onclick="tkotFinSetChip(this)">Contrato del cliente</button>
+              <button type="button" class="lev-dur-chip" data-target="finOrigenValor" data-val="estimado" aria-pressed="false" onclick="tkotFinSetChip(this)">Estimado por clasificación</button>
+              <button type="button" class="lev-dur-chip" data-target="finOrigenValor" data-val="supuesto" aria-pressed="false" onclick="tkotFinSetChip(this)">Supuesto</button>
+              <button type="button" class="lev-dur-chip" data-target="finOrigenValor" data-val="manual" aria-pressed="false" onclick="tkotFinSetChip(this)">Editado a mano</button>
+            </div>
+            <input type="hidden" id="finOrigenValor" value="">
+            <div id="finMotivoManualWrap" class="mb-3" style="display:none">
+              <label class="form-label small fw-semibold" id="finMotivoManualLbl" for="finMotivoManual">¿En qué te basas? *</label>
+              <input type="text" id="finMotivoManual" class="form-control form-control-sm" maxlength="500"
+                     placeholder="Ej: tarifa habitual de visita técnica, valor promedio de OT similares…">
+            </div>
+
+            <label class="form-label small fw-semibold d-block mb-2">
+              <i class="bi bi-cash-coin text-primary me-1"></i>¿Se le cobra al cliente? *
+            </label>
+            <div class="lev-dur-row mb-2" role="group" aria-label="Cobertura" id="finCoberturaGroup">
+              <button type="button" class="lev-dur-chip" data-target="finCobertura" data-val="documento" aria-pressed="false" onclick="tkotFinSetChip(this)">Sí, con documento</button>
+              <button type="button" class="lev-dur-chip" data-target="finCobertura" data-val="garantia" aria-pressed="false" onclick="tkotFinSetChip(this)">No, va por garantía</button>
+            </div>
+            <input type="hidden" id="finCobertura" value="">
+
+            <div id="finDocWrap" class="row g-2 mt-1" style="display:none">
+              <div class="col-6">
+                <label class="form-label small fw-semibold" for="finDocTipo">Tipo de documento *</label>
+                <input type="text" id="finDocTipo" class="form-control form-control-sm" maxlength="20"
+                       placeholder="Ej: Factura, Boleta, NVV">
+              </div>
+              <div class="col-6">
+                <label class="form-label small fw-semibold" for="finDocNumero">N° de documento *</label>
+                <input type="text" id="finDocNumero" class="form-control form-control-sm" maxlength="40"
+                       placeholder="Ej: 11439">
+              </div>
+            </div>
+            <div id="finGarantiaWrap" class="mt-1" style="display:none">
+              <label class="form-label small fw-semibold" for="finGarantiaMotivo">Motivo de la garantía * <small class="text-muted" style="font-weight:400">(mínimo 10 caracteres)</small></label>
+              <textarea id="finGarantiaMotivo" class="form-control form-control-sm" rows="2" maxlength="2000"
+                        placeholder="Ej: falla de fábrica cubierta por el proveedor, sin costo para el cliente"></textarea>
+            </div>
+          </div>
+        </div>
+
       </div>
       <div class="modal-footer" style="background:#fff;border-top:1px solid #f1f5f9">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">
