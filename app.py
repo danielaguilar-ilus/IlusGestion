@@ -96639,8 +96639,11 @@ def mant_ot_aprobar_cierre(vid):
         # chequeo era letra muerta y una OT interna podia quedar trabada).
         # zz_monto/zz_envio_monto/costo incluidos (2026-09-11) -- el gate
         # nuevo SIN_VALORIZAR los necesita (ver más abajo).
+        # costo_despacho + tecnico_user_id incluidos (2026-09-17) -- el gate
+        # nuevo ANEXO_DESACTUALIZADO los necesita (ver más abajo).
         "SELECT estado, modalidad_cobro, factura_nudo, factura_tido, cliente_id, "
-        "       centro_costo, costo_proveedor, tipo, zz_monto, zz_envio_monto, costo "
+        "       centro_costo, costo_proveedor, costo_despacho, tecnico_user_id, "
+        "       tipo, zz_monto, zz_envio_monto, costo "
         "  FROM mant_visitas WHERE id=%s",
         (vid,))
     if not v:
@@ -96743,6 +96746,57 @@ def mant_ot_aprobar_cierre(vid):
                      "Sin ese dato el margen de la OT queda inflado y el "
                      "informe de resultados sale mal.",
         }), 400
+    # 🔒 2026-09-17 (Daniel, dictando el diseño: "si cambian los valores...
+    # eso estaría alterando lo que es el anexo, entonces yo propondría
+    # volverlo a firmar... y si hay garantía obviamente [no hace falta],
+    # y no altera los costos [tampoco]"). El Anexo de Servicios es el
+    # compromiso de pago CON EL PROVEEDOR EXTERNO, no con el cliente --
+    # así que el candado mira solo si cambió lo que le pagamos a él
+    # (costo_proveedor + costo_despacho), nunca lo que le cobramos al
+    # cliente. Si el último Anexo firmado quedó desactualizado respecto a
+    # ese monto, se exige uno nuevo antes de poder cerrar -- garantía y
+    # trabajo interno quedan exentos (mismo criterio que los gates de
+    # arriba: ahí no hay proveedor externo al que pagarle distinto).
+    if _gate_on and not _ot_es_interna(v) and _mod_cobro not in ("garantia", "sin_costo"):
+        try:
+            _v_ext_cierre = mysql_fetchone(
+                "SELECT COALESCE(au.role,'') AS rol_tec, "
+                "       (SELECT COUNT(*) FROM mant_tecnicos_externos te "
+                "         WHERE te.user_id=au.id) AS es_ext_ficha "
+                "  FROM app_users au WHERE au.id=%s", (v.get("tecnico_user_id"),))
+            _es_ext_cierre = bool(_v_ext_cierre) and (
+                int(_v_ext_cierre.get("es_ext_ficha") or 0) > 0
+                or (_v_ext_cierre.get("rol_tec") or "").lower() == "tecnico_externo")
+        except Exception:
+            _es_ext_cierre = False
+        if _es_ext_cierre:
+            try:
+                _anx_firmado_cierre = mysql_fetchone(
+                    "SELECT numero, precio_items_json FROM mant_anexos "
+                    " WHERE ot_id=%s AND estado='firmado' "
+                    " ORDER BY firmado_at DESC, id DESC LIMIT 1", (vid,))
+            except Exception:
+                _anx_firmado_cierre = None
+            if _anx_firmado_cierre:
+                try:
+                    import json as _json_anx_cierre
+                    _items_anx = _json_anx_cierre.loads(_anx_firmado_cierre.get("precio_items_json") or "[]")
+                    _monto_anexo_cierre = sum(float(it.get("monto") or 0) for it in _items_anx)
+                except Exception:
+                    _monto_anexo_cierre = None
+                if _monto_anexo_cierre is not None:
+                    _monto_prov_actual = float(v.get("costo_proveedor") or 0) + float(v.get("costo_despacho") or 0)
+                    if abs(_monto_anexo_cierre - _monto_prov_actual) > 1:
+                        return jsonify({
+                            "ok": False,
+                            "error_codigo": "ANEXO_DESACTUALIZADO",
+                            "error": (
+                                f"Lo que se le paga al proveedor cambió desde que firmó el Anexo N° "
+                                f"{_anx_firmado_cierre.get('numero')} (firmó ${_monto_anexo_cierre:,.0f}, "
+                                f"la OT ahora declara ${_monto_prov_actual:,.0f}). Genera y firma un "
+                                f"Anexo nuevo con el monto correcto antes de cerrar."
+                            ),
+                        }), 400
     # 🔒 2026-09-11 (Daniel, explícito: "vamos a bloquear las notas de venta
     # en el modal... solamente factura o boleta, porque tiene que estar
     # cobrado el servicio". Sobre las OT que ya venían con nota de venta
