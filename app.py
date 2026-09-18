@@ -60628,8 +60628,8 @@ def mant_dashboard_costos_tecnico():
     })
 
 
-@app.route("/servicio-tecnico/clientes")
 @app.route("/mantenciones/clientes")
+@app.route("/servicio-tecnico/clientes")
 @_mant_required
 @_no_tecnico
 def mant_clientes():
@@ -61274,8 +61274,8 @@ def mant_clientes_reporte_xlsx():
     )
 
 
-@app.route("/servicio-tecnico/clientes/wizard")
 @app.route("/mantenciones/clientes/wizard")
+@app.route("/servicio-tecnico/clientes/wizard")
 @_mant_required
 def mant_cliente_wizard():
     """Wizard inteligente de 4 pasos para crear cliente de mantención."""
@@ -62395,8 +62395,8 @@ def mant_contrato_ai_editar(ctid):
 # (mant_adjunto_subir y mant_adjunto_ver migrados a mant_contrato_adjuntos — ver sección ADJUNTOS)
 
 
-@app.route("/servicio-tecnico/clientes/nuevo", methods=["GET", "POST"])
 @app.route("/mantenciones/clientes/nuevo", methods=["GET", "POST"])
+@app.route("/servicio-tecnico/clientes/nuevo", methods=["GET", "POST"])
 @_mant_required
 @_no_tecnico
 def mant_cliente_nuevo():
@@ -63466,8 +63466,8 @@ def mant_api_incidencias_conciliacion():
     })
 
 
-@app.route("/servicio-tecnico/incidencias")
 @app.route("/mantenciones/incidencias")
+@app.route("/servicio-tecnico/incidencias")
 @_mant_required
 @_no_tecnico
 def mant_incidencias_page():
@@ -64093,8 +64093,8 @@ def repuestos_hub_list():
     )
 
 
-@app.route("/servicio-tecnico/clientes/<int:cid>")
 @app.route("/mantenciones/clientes/<int:cid>")
+@app.route("/servicio-tecnico/clientes/<int:cid>")
 @_mant_required
 @_no_tecnico
 def mant_ficha(cid):
@@ -67237,8 +67237,8 @@ def _ext_row_to_dict(r):
     return d
 
 
-@app.route("/servicio-tecnico/tecnicos-externos")
 @app.route("/mantenciones/tecnicos-externos")
+@app.route("/servicio-tecnico/tecnicos-externos")
 @_mant_required
 @_no_tecnico_externo
 def mant_tecnicos_externos_index():
@@ -67267,16 +67267,16 @@ def mant_tecnicos_externos_index():
     )
 
 
-@app.route("/servicio-tecnico/tecnicos-externos/nuevo")
 @app.route("/mantenciones/tecnicos-externos/nuevo")
+@app.route("/servicio-tecnico/tecnicos-externos/nuevo")
 @_mant_required
 def mant_tecnico_externo_wizard():
     """Wizard de alta de técnico externo (4 pasos)."""
     return render_template("mantenciones/tecnico_externo_wizard.html")
 
 
-@app.route("/servicio-tecnico/tecnicos-externos/<int:eid>")
 @app.route("/mantenciones/tecnicos-externos/<int:eid>")
+@app.route("/servicio-tecnico/tecnicos-externos/<int:eid>")
 @_mant_required
 def mant_tecnico_externo_ficha(eid):
     """Ficha detalle del técnico externo (tabs: General · Facturación · Historial · Contrato · Notas)."""
@@ -72013,8 +72013,8 @@ def mant_calendario_dia_drill(fecha):
         return jsonify({"ok": False, "error": f"Error al consultar: {e}"}), 500
 
 
-@app.route("/servicio-tecnico/api/calendario/mes/<int:anio>/<int:mes>", methods=["GET"])
 @app.route("/mantenciones/api/calendario/mes/<int:anio>/<int:mes>", methods=["GET"])
+@app.route("/servicio-tecnico/api/calendario/mes/<int:anio>/<int:mes>", methods=["GET"])
 @_mant_required
 def mant_calendario_mes(anio, mes):
     """Calendario MENSUAL para el mini-calendario del modal "Generar OT" de
@@ -72172,8 +72172,8 @@ def mant_calendario_mes(anio, mes):
         return jsonify({"ok": False, "error": f"Error al consultar calendario del mes: {e}"}), 500
 
 
-@app.route("/servicio-tecnico/api/calendario/choque", methods=["GET"])
 @app.route("/mantenciones/api/calendario/choque", methods=["GET"])
+@app.route("/servicio-tecnico/api/calendario/choque", methods=["GET"])
 @_mant_required
 def mant_calendario_choque():
     """Detección de choque de horario para 1 o MÁS técnicos a la vez, dado
@@ -75788,8 +75788,8 @@ def mant_ots_auto_creadas_count():
     return jsonify({"ok": True, "count": n})
 
 
-@app.route("/servicio-tecnico/ots/auto-creadas")
 @app.route("/mantenciones/ots/auto-creadas")
+@app.route("/servicio-tecnico/ots/auto-creadas")
 @_mant_required
 @_no_tecnico
 def mant_ots_auto_creadas_page():
@@ -76785,8 +76785,8 @@ def mant_sugerencia_ignorar(sid):
     return jsonify({"ok": True})
 
 
-@app.route("/servicio-tecnico/sugerencias")
 @app.route("/mantenciones/sugerencias")
+@app.route("/servicio-tecnico/sugerencias")
 @_mant_required
 def mant_sugerencias_page():
     """Página de sugerencias con evidencia.
@@ -90151,8 +90151,8 @@ def admin_pantallas_reemparejar(pid):
     return redirect(url_for("admin_pantallas"))
 
 
-@app.route("/servicio-tecnico/ots")
 @app.route("/mantenciones/ots")
+@app.route("/servicio-tecnico/ots")
 @_mant_required
 def mant_ots_list():
     """Listado global de Órdenes de Trabajo (visitas) con filtros.
@@ -90765,8 +90765,8 @@ def mant_ots_list():
 # PLANTILLAS DE CHECKLIST — UI
 # ═════════════════════════════════════════════════════════════════════
 
-@app.route("/servicio-tecnico/plantillas")
 @app.route("/mantenciones/plantillas")
+@app.route("/servicio-tecnico/plantillas")
 @_mant_required
 @_no_tecnico_externo
 def mant_plantillas_page():
@@ -91610,8 +91610,8 @@ def _mant_cobertura_matriz_datos():
     return datos
 
 
-@app.route("/servicio-tecnico/plantillas/cobertura")
 @app.route("/mantenciones/plantillas/cobertura")
+@app.route("/servicio-tecnico/plantillas/cobertura")
 @_mant_required
 @_no_tecnico
 def mant_plantillas_cobertura_page():
@@ -92897,8 +92897,8 @@ def mant_tarea_responder(vid, tid):
 # OT — PÁGINA FICHA (ficha completa con tabs)
 # ═════════════════════════════════════════════════════════════════════
 
-@app.route("/servicio-tecnico/ot/<int:vid>")
 @app.route("/mantenciones/ot/<int:vid>")
+@app.route("/servicio-tecnico/ot/<int:vid>")
 @_mant_required
 @_ot_can_view
 def mant_ot_ficha(vid):
@@ -93016,8 +93016,8 @@ def mant_ot_ficha(vid):
 # revisión" para que el supervisor la apruebe/cierre.
 # ═════════════════════════════════════════════════════════════════════
 
-@app.route("/servicio-tecnico/ot/<int:vid>/ejecutar")
 @app.route("/mantenciones/ot/<int:vid>/ejecutar")
+@app.route("/servicio-tecnico/ot/<int:vid>/ejecutar")
 @_mant_required
 def mant_ot_ejecutar(vid):
     """Vista simplificada de ejecución de OT (modo técnico)."""
@@ -98255,8 +98255,8 @@ def mant_seguimiento_activos():
         return jsonify({"ok": False, "error": "No se pudo obtener activos"}), 500
 
 
-@app.route("/servicio-tecnico/seguimiento")
 @app.route("/mantenciones/seguimiento")
+@app.route("/servicio-tecnico/seguimiento")
 @_mant_required
 def mant_seguimiento_vista():
     """Vista admin con mapa de Google embebido + lista de técnicos activos."""
@@ -100351,8 +100351,8 @@ def mant_ot_compartir_wa(vid):
                     "wa_link": f"https://wa.me/{tel_norm.lstrip('+')}?text={_url_quote(mensaje)}"})
 
 
-@app.route("/servicio-tecnico/ot/<int:vid>/pdf")
 @app.route("/mantenciones/ot/<int:vid>/pdf")
+@app.route("/servicio-tecnico/ot/<int:vid>/pdf")
 @_mant_required
 @_ot_can_view
 def mant_ot_pdf_render(vid):
@@ -102600,8 +102600,8 @@ def mant_cliente_proponer_plan_email(cid):
 
 # ── CALENDARIO ────────────────────────────────────────────────────────
 
-@app.route("/servicio-tecnico/calendario")
 @app.route("/mantenciones/calendario")
+@app.route("/servicio-tecnico/calendario")
 @_mant_required
 def mant_calendario():
     clientes = mysql_fetchall(
@@ -102643,8 +102643,8 @@ def mant_calendario():
 #   · Proyección próxima semana (ocupación)
 # ══════════════════════════════════════════════════════════════════════
 
-@app.route("/servicio-tecnico/analytics")
 @app.route("/mantenciones/analytics")
+@app.route("/servicio-tecnico/analytics")
 @_mant_required
 def mant_analytics_page():
     """Renderiza la página HTML del dashboard. Los datos se cargan vía AJAX."""
@@ -103123,8 +103123,8 @@ def mant_analytics_data():
 
 # ── ANÁLISIS ECONÓMICO ────────────────────────────────────────────────
 
-@app.route("/servicio-tecnico/analisis")
 @app.route("/mantenciones/analisis")
+@app.route("/servicio-tecnico/analisis")
 @_mant_required
 def mant_analisis():
     # Ingresos por contrato (12 meses)
@@ -106127,8 +106127,8 @@ def mant_planificador_generar_ots():
         return jsonify({"error": "No se pudieron generar las OTs."}), 500
 
 
-@app.route("/servicio-tecnico/planificador")
 @app.route("/mantenciones/planificador")
+@app.route("/servicio-tecnico/planificador")
 @_mant_required
 @_no_tecnico
 def mant_planificador_page():
@@ -106228,8 +106228,8 @@ def mant_feriados_api():
         return jsonify({}), 200   # fail-open: el calendario sigue sin feriados
 
 
-@app.route("/servicio-tecnico/configuracion")
 @app.route("/mantenciones/configuracion")
+@app.route("/servicio-tecnico/configuracion")
 @_mant_required
 @_no_tecnico
 def mant_configuracion():
@@ -107888,8 +107888,8 @@ def mant_facturacion_proveedores_xlsx():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-@app.route("/servicio-tecnico/ot-firmadas-sin-cerrar")
 @app.route("/mantenciones/ot-firmadas-sin-cerrar")
+@app.route("/servicio-tecnico/ot-firmadas-sin-cerrar")
 @_mant_required
 @_no_tecnico
 def mant_ot_firmadas_sin_cerrar():
@@ -107947,8 +107947,8 @@ def mant_ot_firmadas_sin_cerrar():
                            ots=ots, total=len(ots))
 
 
-@app.route("/servicio-tecnico/radar")
 @app.route("/mantenciones/radar")
+@app.route("/servicio-tecnico/radar")
 @_mant_required
 @_no_tecnico
 def mant_radar_page():
@@ -109587,8 +109587,8 @@ def _informe_ficha_html(d, ct, cliente, auto_print=True):
 </body></html>"""
 
 
-@app.route("/servicio-tecnico/api/clientes/<int:cid>/informe-ficha", methods=["GET"])
 @app.route("/mantenciones/api/clientes/<int:cid>/informe-ficha", methods=["GET"])
+@app.route("/servicio-tecnico/api/clientes/<int:cid>/informe-ficha", methods=["GET"])
 @_mant_required
 def mant_informe_ficha(cid):
     """Informe de gestión del cliente (Agente ILUS determinista). Vista imprimible → PDF."""
@@ -109892,8 +109892,8 @@ def _informe_postservicio_html(visita, cliente, equipos, analisis, auto_print=Tr
 </body></html>"""
 
 
-@app.route("/servicio-tecnico/api/visitas/<int:vid>/informe-postservicio", methods=["GET"])
 @app.route("/mantenciones/api/visitas/<int:vid>/informe-postservicio", methods=["GET"])
+@app.route("/servicio-tecnico/api/visitas/<int:vid>/informe-postservicio", methods=["GET"])
 @_mant_required
 @_ot_can_view
 def mant_informe_postservicio(vid):
@@ -110146,8 +110146,8 @@ def _contrato_analisis_to_pdf_html(ct, cliente, auto_print=True):
 </body></html>"""
 
 
-@app.route("/servicio-tecnico/api/contratos/<int:ctid>/analisis/pdf", methods=["GET"])
 @app.route("/mantenciones/api/contratos/<int:ctid>/analisis/pdf", methods=["GET"])
+@app.route("/servicio-tecnico/api/contratos/<int:ctid>/analisis/pdf", methods=["GET"])
 @_mant_required
 def mant_contrato_analisis_pdf(ctid):
     """Vista imprimible del Análisis 360° del contrato (el navegador genera el PDF)."""
@@ -110317,8 +110317,8 @@ def mant_reporte_word(rid):
     return resp
 
 
-@app.route("/servicio-tecnico/api/reportes/<int:rid>/html", methods=["GET"])
 @app.route("/mantenciones/api/reportes/<int:rid>/html", methods=["GET"])
+@app.route("/servicio-tecnico/api/reportes/<int:rid>/html", methods=["GET"])
 @_mant_required
 def mant_reporte_html(rid):
     """Devuelve preview HTML del reporte (mismo formato corporativo que el PDF)."""
@@ -111295,8 +111295,8 @@ def mant_repuesto_estado_seguimiento(rid):
         return jsonify({"ok": False, "error": "Error interno"}), 500
 
 
-@app.route("/servicio-tecnico/proveedores")
 @app.route("/mantenciones/proveedores")
+@app.route("/servicio-tecnico/proveedores")
 @_mant_required
 @_no_tecnico
 def mant_proveedores_repuesto_page():
@@ -114316,8 +114316,8 @@ def mant_notif_enviar(nid):
         return jsonify({"error":str(e)}), 500
 
 
-@app.route("/servicio-tecnico/notificaciones")
 @app.route("/mantenciones/notificaciones")
+@app.route("/servicio-tecnico/notificaciones")
 @_mant_required
 def mant_notificaciones_centro():
     """Centro de notificaciones global."""
@@ -117818,8 +117818,8 @@ def mant_maquinas_etiquetas_pdf():
     return resp
 
 
-@app.route("/servicio-tecnico/maquinas/imprimir")
 @app.route("/mantenciones/maquinas/imprimir")
+@app.route("/servicio-tecnico/maquinas/imprimir")
 @_mant_required
 def mant_maquinas_print_labels():
     """Vista previa de impresión de etiquetas de equipo -- mismo patrón UX
@@ -117857,8 +117857,8 @@ def mant_maquinas_print_labels():
     return response
 
 
-@app.route("/servicio-tecnico/maquinas/<int:mid>")
 @app.route("/mantenciones/maquinas/<int:mid>")
+@app.route("/servicio-tecnico/maquinas/<int:mid>")
 @_mant_required
 def mant_maquina_ficha(mid):
     """Ficha completa del equipo del cliente con:
@@ -129621,8 +129621,8 @@ def api_diagnostico_gps_list():
     return jsonify({"ok": True, "diagnosticos": out, "total": len(out)})
 
 
-@app.route("/servicio-tecnico/diagnostico-gps")
 @app.route("/mantenciones/diagnostico-gps")
+@app.route("/servicio-tecnico/diagnostico-gps")
 @login_required
 def mant_diagnostico_gps_view():
     """Vista admin: tabla con los últimos 50 diagnósticos GPS.
