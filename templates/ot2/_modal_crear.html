@@ -1583,7 +1583,15 @@ window.OT2C = (function(){
         // ESCRIBE el valor en S.fin_zz_monto -- ese es el único "Esta OT
         // vale". _ventaActual() se mantiene como respaldo del margen, pero
         // acá manda el campo declarado.
-        if (!(S.fin_zz_monto > 0)) return false;
+        // 🔴 FIX 2026-09-18 (Daniel: "cuando son garantías le tienen que
+        // poner precio" -- no debería). En garantía no se le cobra NADA
+        // al cliente por definición, así que exigir un "monto cobrado" > 0
+        // acá obligaba a inventar una cifra solo para poder avanzar. El
+        // gate de CIERRE (_ot2_finanzas_estado) ya eximía bien a garantía
+        // de este monto -- este quedó mal copiado. Lo que sí corresponde
+        // exigir en garantía (costo_proveedor/costo_despacho) sigue
+        // obligatorio más abajo, sin cambios.
+        if (!S.fin_garantia && !(S.fin_zz_monto > 0)) return false;
         if (S.fin_garantia && (S.fin_garantia_motivo||'').trim().length < 10) return false;
         // 2026-08-30 (Daniel: "si no trae esto se podrá declarar a mano,
         // pero deberá reportarse con un argumento... hay que ser bien
@@ -5702,6 +5710,15 @@ window.OT2C = (function(){
       case 'centro': return S.fin_centro ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
       case 'valor':
         if (interno) return _o2mCostoInternoNum() > 0 ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
+        // 🔴 FIX 2026-09-18: en garantía no se cobra nada al cliente, así
+        // que este sub-paso no puede seguir pidiendo el monto (ver el
+        // mismo fix en el gate de 'finanzas' más arriba en este archivo).
+        // Si igual se declaró un valor de referencia a mano, el motivo
+        // sigue exigiéndose -- mismo criterio que completo('finanzas').
+        if (S.fin_garantia){
+          if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
+          return {cls:'opcional', txt:'Opcional'};
+        }
         if (!(S.fin_zz_monto > 0)) return {cls:'falta', txt:'Pendiente'};
         if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
         // 2026-09-15 (revisión): el motivo del ZZENVIO editado a mano se
@@ -5713,7 +5730,9 @@ window.OT2C = (function(){
         return {cls:'listo', txt:'Listo'};
       case 'cobro':
         if (S.fin_garantia){
-          if (!(S.fin_zz_monto > 0)) return {cls:'falta', txt:'Falta el valor'};
+          // 🔴 FIX 2026-09-18: en garantía no se le cobra al cliente, así
+          // que este sub-paso ya no exige el monto -- solo el motivo de
+          // la garantía (mismo fix que en 'valor', más arriba).
           if ((S.fin_garantia_motivo||'').trim().length < 10) return {cls:'falta', txt:'Falta el motivo'};
         } else {
           if (!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)) return {cls:'falta', txt:'Pendiente'};

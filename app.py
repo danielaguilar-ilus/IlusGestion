@@ -83901,7 +83901,14 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna):
             return _ferr(
                 "Explica por qué esta OT va por garantía (mínimo 10 "
                 "caracteres).", "FINANZAS_GARANTIA_SIN_MOTIVO"), None
-        if _fin_zzm is None or _fin_zzm <= 0:
+        # 🔴 FIX 2026-09-18 (Daniel: "cuando son garantías le tienen que
+        # poner precio" -- no debería). En garantía no se le cobra NADA al
+        # cliente por definición; exigir zz_monto > 0 acá obligaba a
+        # inventar una cifra solo para poder crear la OT. El gate de
+        # CIERRE (_ot2_finanzas_estado) ya eximía bien a garantía de este
+        # monto -- este quedó mal copiado el 2026-09-09. Mismo fix en
+        # completo('finanzas') de _modal_crear.html.
+        if not _fin_gar and (_fin_zzm is None or _fin_zzm <= 0):
             return _ferr(
                 "Falta declarar el monto estimado del servicio (línea del "
                 "documento, cotización asociada, o un valor a mano).",

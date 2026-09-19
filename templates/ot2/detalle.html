@@ -2635,7 +2635,16 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <button type="button" class="otd-qabtn wa" id="otdBtnWa" onclick="otdCompartirWa()">
         <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
       {% endif %}
-      {% if v.estado not in ('programada','en_curso','en_ejecucion') %}
+      {# 🔀 2026-09-18 (Daniel, viendo la barra duplicada: "revisa los
+         botones repetidos"). Este "Ver PDF" y el de la barra inferior
+         fija (.otd-bottom, más abajo) llamaban a la misma función para
+         la misma audiencia -- pero NO son 100% la misma audiencia: la
+         barra inferior está oculta para es_tecnico a propósito (fix
+         2026-09-09, ver comentario ahí), así que este de acá sigue
+         siendo la ÚNICA forma que tiene un técnico de ver el PDF. Se
+         restringe a es_tecnico (en vez de borrarlo) para no quitarle
+         esa opción -- gestión ya lo tiene siempre disponible abajo. #}
+      {% if es_tecnico and v.estado not in ('programada','en_curso','en_ejecucion') %}
       <button type="button" class="otd-qabtn" onclick="otdVerPdf()">
         <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
       {% endif %}
