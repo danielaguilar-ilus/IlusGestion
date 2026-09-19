@@ -235,6 +235,13 @@
 {% if puede_marcar_sin_factura %}
 <div class="fpv-otbar" id="fpvOtBar">
   <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT seleccionadas · <span id="fpvOtBarMonto">$0</span></div>
+  {# 🔴 2026-09-19 (Daniel, en vivo: "filtrar todas las OT pendientes,
+     seleccionar en completo, y agrupar para solicitar la orden de compra
+     de manera global"). Hermano del botón de "marcar pagado" -- mismo
+     checkbox/seleccionar-todo de arriba, pero para el paso ANTERIOR al
+     pago: pedir la OC, no reconocer que ya se pagó. #}
+  <button type="button" class="btn btn-outline-dark fw-bold" style="min-height:44px" onclick="fpvOtSolicitarOC()">
+    <i class="bi bi-file-earmark-text me-1"></i>Solicitar orden de compra</button>
   <button type="button" class="btn btn-dark fw-bold" style="min-height:44px" onclick="fpvOtMarcarPagado()">
     <i class="bi bi-check2-circle me-1"></i>Marcar pagado (sin factura, completar después)</button>
 </div>
@@ -299,6 +306,7 @@
           {% else %}
           <span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin factura — pendiente</span>
           {% endif %}
+          {% if f.numero_oc %}<div class="fp-sub"><i class="bi bi-file-earmark-text"></i> OC {{ f.numero_oc }}</div>{% endif %}
           {% if f.archivo_url %}<div class="fp-sub"><i class="bi bi-paperclip"></i> con respaldo</div>{% endif %}</td>
         <td data-label="Fecha">{{ f.fecha | chile_fmt('%d/%m/%Y') if f.fecha else '—' }}</td>
         <td class="n" data-label="OT asignadas"><span class="fp-chip {{ 'ok' if f.n_ot else '' }}">{{ f.n_ot or 0 }}</span></td>
@@ -406,6 +414,8 @@
                 <input type="date" class="form-control" id="fpvFecha" onchange="fpvRefreshSteps()">
               </div>
             </div>
+            <label class="fpv-lbl mt-2" for="fpvOC">N° de orden de compra (opcional)</label>
+            <input type="text" class="form-control" id="fpvOC" placeholder="Ej: OC-2026-045">
           </div>
         </section>
         <section class="fpv-step" id="fpvStep3">
@@ -515,6 +525,7 @@ async function fpvCrear(){
     fecha: document.getElementById('fpvFecha').value,
     monto_total: Number((document.getElementById('fpvMonto').value || '0').replace(/\D/g,'')) || 0,
     notas: document.getElementById('fpvNotas').value.trim(),
+    numero_oc: document.getElementById('fpvOC').value.trim(),
   };
   if (!body.proveedor_nombre){ ilusToast('Falta el nombre del proveedor', {type:'warning'}); return; }
   if (!body.numero_documento){ ilusToast('Falta el N° del documento', {type:'warning'}); return; }
@@ -581,6 +592,35 @@ async function fpvOtMarcarPagado(){
       return;
     }
     ilusToast('✓ Marcado pagado — ' + d.n_ot + ' OT, $' + Math.round(d.monto_total).toLocaleString('es-CL'), {type:'success'});
+    window.location = '/servicio-tecnico/facturas-proveedor/' + d.id;
+  }catch(e){
+    ilusToast('Error de conexión', {type:'error'});
+  }
+}
+async function fpvOtSolicitarOC(){
+  const chks = Array.from(document.querySelectorAll('.fpv-ot-chk:checked'));
+  if (!chks.length){ ilusToast('Selecciona al menos una OT', {type:'warning'}); return; }
+  const ids = chks.map(function(cb){ return Number(cb.value); });
+  const monto = chks.reduce(function(s, cb){ return s + (Number(cb.dataset.monto) || 0); }, 0);
+  const numeros = chks.map(function(cb){ return cb.dataset.numero; }).slice(0, 6).join(', ');
+  const numeroOC = await ilusPrompt({
+    title: 'Solicitar orden de compra',
+    message: `Agrupando ${ids.length} OT de ${FPV_PROVEEDOR || 'este proveedor'} (${numeros}${ids.length > 6 ? '…' : ''}) por $${Math.round(monto).toLocaleString('es-CL')}. Si ya tienes el N° de OC, escríbelo -- si no, déjalo en blanco y lo completas después.`,
+    placeholder: 'N° de orden de compra (opcional)',
+    required: false,
+  });
+  if (numeroOC === null) return; // canceló
+  try{
+    const r = await fetch('{{ url_for("mant_facturas_proveedor_solicitar_oc") }}', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({visita_ids: ids, numero_oc: numeroOC}),
+    });
+    const d = await r.json().catch(function(){ return {}; });
+    if (!r.ok || d.ok === false){
+      ilusToast(d.error || 'No se pudo registrar la solicitud', {type:'error'});
+      return;
+    }
+    ilusToast('✓ Orden de compra solicitada — ' + d.n_ot + ' OT, $' + Math.round(d.monto_total).toLocaleString('es-CL'), {type:'success'});
     window.location = '/servicio-tecnico/facturas-proveedor/' + d.id;
   }catch(e){
     ilusToast('Error de conexión', {type:'error'});

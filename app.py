@@ -107161,6 +107161,9 @@ def _mfp_validar_cabecera(d, excluir_id=None, sin_factura=False):
     if monto < 0:
         return None, "El monto total no puede ser negativo."
     notas = (d.get("notas") or "").strip()[:2000] or None
+    # N° de orden de compra propia (ILUS -> proveedor) -- siempre opcional,
+    # independiente de numero_documento (el N° que EMITE el proveedor).
+    numero_oc = (d.get("numero_oc") or "").strip()[:80] or None
     try:
         tecnico_externo_id = int(d.get("tecnico_externo_id") or 0) or None
     except (TypeError, ValueError):
@@ -107185,6 +107188,7 @@ def _mfp_validar_cabecera(d, excluir_id=None, sin_factura=False):
         "proveedor_nombre": nombre, "proveedor_rut": rut_norm,
         "tecnico_externo_id": tecnico_externo_id, "tipo_documento": tipo_doc,
         "numero_documento": numero, "fecha": fecha, "monto_total": monto, "notas": notas,
+        "numero_oc": numero_oc,
     }, None
 
 
@@ -107363,11 +107367,11 @@ def mant_facturas_proveedor_crear():
             cur.execute(
                 "INSERT INTO mant_facturas_proveedor "
                 "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
-                " numero_documento, fecha, monto_total, notas, created_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                " numero_documento, fecha, monto_total, notas, numero_oc, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (datos["proveedor_nombre"], datos["proveedor_rut"], datos["tecnico_externo_id"],
                  datos["tipo_documento"], datos["numero_documento"], datos["fecha"],
-                 datos["monto_total"], datos["notas"], current_username()))
+                 datos["monto_total"], datos["notas"], datos["numero_oc"], current_username()))
             fid = cur.lastrowid
         conn.commit()
     except Exception as e:
@@ -107439,10 +107443,10 @@ def mant_factura_proveedor_editar(fid):
     mysql_execute(
         "UPDATE mant_facturas_proveedor SET proveedor_nombre=%s, proveedor_rut=%s, "
         "  tecnico_externo_id=%s, tipo_documento=%s, numero_documento=%s, fecha=%s, "
-        "  monto_total=%s, notas=%s WHERE id=%s AND estado_pago='pendiente'",
+        "  monto_total=%s, notas=%s, numero_oc=%s WHERE id=%s AND estado_pago='pendiente'",
         (datos["proveedor_nombre"], datos["proveedor_rut"], datos["tecnico_externo_id"],
          datos["tipo_documento"], datos["numero_documento"], datos["fecha"],
-         datos["monto_total"], datos["notas"], fid))
+         datos["monto_total"], datos["notas"], datos["numero_oc"], fid))
     _mant_log("factura_proveedor", fid, "editada",
               f"{datos['proveedor_nombre']} · {datos['numero_documento']} · ${datos['monto_total']:,.0f}")
     return jsonify({"ok": True})
@@ -107716,6 +107720,69 @@ def mant_factura_proveedor_anular(fid):
     return jsonify({"ok": True})
 
 
+def _mfp_validar_lote_ot(visita_ids_in):
+    """Valida un lote de OT para agrupar en UNA factura de proveedor (usado
+    por marcar-pagado-sin-factura y solicitar-oc, REGLA #4: un solo lugar
+    con esta lógica, nunca duplicada). Devuelve (filas, proveedor_nombre,
+    proveedor_rut, prov_ficha_id, monto_total, error_response_or_None) --
+    si el último es no-None, el caller debe retornarlo tal cual."""
+    if not isinstance(visita_ids_in, list) or not visita_ids_in:
+        return None, None, None, None, None, (jsonify({"ok": False, "error": "No se recibió ninguna OT seleccionada."}), 400)
+    try:
+        visita_ids = sorted({int(v) for v in visita_ids_in})
+    except (TypeError, ValueError):
+        return None, None, None, None, None, (jsonify({"ok": False, "error": "Hay un id de OT inválido."}), 400)
+    if len(visita_ids) > 300:
+        return None, None, None, None, None, (jsonify({"ok": False, "error": "Selecciona como máximo 300 OT por tanda."}), 400)
+
+    ph = ",".join(["%s"] * len(visita_ids))
+    rows = mysql_fetchall(
+        _MFP_SELECT_OT + _MFP_JOINS_OT +
+        " WHERE v.id IN (" + ph + ") AND " + _MFP_SQL_OT_EXTERNA,
+        tuple(visita_ids))
+    filas = {r["id"]: _mfp_fila_ot(r) for r in (rows or [])}
+    faltan = [vid for vid in visita_ids if vid not in filas]
+    if faltan:
+        return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "OT_NO_EXTERNA",
+                        "error": f"{len(faltan)} OT no existen o no son de proveedor externo: "
+                                 f"{', '.join(str(v) for v in faltan[:10])}"}), 400)
+    ya_facturadas = [f["numero_ot"] for f in filas.values() if f["fac_id"]]
+    if ya_facturadas:
+        return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "OT_YA_FACTURADA",
+                        "error": f"{len(ya_facturadas)} OT ya están en otra factura: "
+                                 f"{', '.join(ya_facturadas[:10])}. Quítalas de ahí primero."}), 409)
+    no_facturables = [f["numero_ot"] for f in filas.values() if f["estado"] not in _MFP_ESTADOS_FACTURABLES]
+    if no_facturables:
+        return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
+                        "error": f"{len(no_facturables)} OT no están listas para pagarle al proveedor "
+                                 f"(falta firma del cliente o cierre): {', '.join(no_facturables[:10])}"}), 400)
+
+    # Mismo proveedor para todas -- si no, se mezclarían deudas de dos
+    # personas/empresas distintas en un solo pago/solicitud. Mismo criterio
+    # de nombre que ya usa el resto del módulo (_mfp_nombre_proveedor_ot).
+    nombres = {(f["proveedor"] or "").strip().lower() for f in filas.values()}
+    if len(nombres) > 1:
+        return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "PROVEEDORES_MEZCLADOS",
+                        "error": "Las OT seleccionadas son de más de un proveedor "
+                                 "(" + ", ".join(sorted({f['proveedor'] for f in filas.values()})) + "). "
+                                 "Selecciona las de un solo proveedor a la vez."}), 400)
+    primero = next(iter(filas.values()))
+    proveedor_nombre = primero["proveedor"]
+    proveedor_rut = primero["proveedor_rut"] or None
+    # tecnico_externo_id viaja aparte porque _mfp_fila_ot no lo expone --
+    # se saca de la fila cruda original.
+    prov_ficha_id = None
+    for r in rows:
+        if r.get("prov_ficha_id"):
+            prov_ficha_id = int(r["prov_ficha_id"])
+            break
+
+    monto_total = sum(f["sugerido"] for f in filas.values())
+    if monto_total <= 0:
+        return None, None, None, None, None, (jsonify({"ok": False, "error": "El monto total quedó en $0 -- revisa el costo declarado de esas OT."}), 400)
+    return filas, proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, None
+
+
 @app.route("/mantenciones/api/facturas-proveedor/marcar-pagado-sin-factura", methods=["POST"])
 @app.route("/servicio-tecnico/api/facturas-proveedor/marcar-pagado-sin-factura", methods=["POST"])
 @_mant_required
@@ -107734,61 +107801,10 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
         return jsonify({"ok": False, "error": "Solo el superadministrador puede marcar OT como "
                         "pagadas sin factura."}), 403
     d = request.get_json(silent=True) or {}
-    visita_ids_in = d.get("visita_ids")
-    if not isinstance(visita_ids_in, list) or not visita_ids_in:
-        return jsonify({"ok": False, "error": "No se recibió ninguna OT seleccionada."}), 400
-    try:
-        visita_ids = sorted({int(v) for v in visita_ids_in})
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Hay un id de OT inválido."}), 400
-    if len(visita_ids) > 300:
-        return jsonify({"ok": False, "error": "Selecciona como máximo 300 OT por tanda."}), 400
-
-    ph = ",".join(["%s"] * len(visita_ids))
-    rows = mysql_fetchall(
-        _MFP_SELECT_OT + _MFP_JOINS_OT +
-        " WHERE v.id IN (" + ph + ") AND " + _MFP_SQL_OT_EXTERNA,
-        tuple(visita_ids))
-    filas = {r["id"]: _mfp_fila_ot(r) for r in (rows or [])}
-    faltan = [vid for vid in visita_ids if vid not in filas]
-    if faltan:
-        return jsonify({"ok": False, "error_codigo": "OT_NO_EXTERNA",
-                        "error": f"{len(faltan)} OT no existen o no son de proveedor externo: "
-                                 f"{', '.join(str(v) for v in faltan[:10])}"}), 400
-    ya_facturadas = [f["numero_ot"] for f in filas.values() if f["fac_id"]]
-    if ya_facturadas:
-        return jsonify({"ok": False, "error_codigo": "OT_YA_FACTURADA",
-                        "error": f"{len(ya_facturadas)} OT ya están en otra factura: "
-                                 f"{', '.join(ya_facturadas[:10])}. Quítalas de ahí primero."}), 409
-    no_facturables = [f["numero_ot"] for f in filas.values() if f["estado"] not in _MFP_ESTADOS_FACTURABLES]
-    if no_facturables:
-        return jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
-                        "error": f"{len(no_facturables)} OT no están listas para pagarle al proveedor "
-                                 f"(falta firma del cliente o cierre): {', '.join(no_facturables[:10])}"}), 400
-
-    # Mismo proveedor para todas -- si no, se mezclarían deudas de dos
-    # personas/empresas distintas en un solo pago. Mismo criterio de
-    # nombre que ya usa el resto del módulo (_mfp_nombre_proveedor_ot).
-    nombres = {(f["proveedor"] or "").strip().lower() for f in filas.values()}
-    if len(nombres) > 1:
-        return jsonify({"ok": False, "error_codigo": "PROVEEDORES_MEZCLADOS",
-                        "error": "Las OT seleccionadas son de más de un proveedor "
-                                 "(" + ", ".join(sorted({f['proveedor'] for f in filas.values()})) + "). "
-                                 "Selecciona las de un solo proveedor a la vez."}), 400
-    primero = next(iter(filas.values()))
-    proveedor_nombre = primero["proveedor"]
-    proveedor_rut = primero["proveedor_rut"] or None
-    # tecnico_externo_id viaja aparte porque _mfp_fila_ot no lo expone --
-    # se saca de la fila cruda original.
-    prov_ficha_id = None
-    for r in rows:
-        if r.get("prov_ficha_id"):
-            prov_ficha_id = int(r["prov_ficha_id"])
-            break
-
-    monto_total = sum(f["sugerido"] for f in filas.values())
-    if monto_total <= 0:
-        return jsonify({"ok": False, "error": "El monto total quedó en $0 -- revisa el costo declarado de esas OT."}), 400
+    filas, proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, err = \
+        _mfp_validar_lote_ot(d.get("visita_ids"))
+    if err:
+        return err
 
     user = current_username() or "sistema"
     try:
@@ -107801,7 +107817,7 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
                 "VALUES (%s,%s,%s,'factura',NULL,NULL,%s,'pagada',NOW(),%s,%s,%s)",
                 (proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, user,
                  f"Pago reconocido sin factura del proveedor (aún no llega el documento) -- "
-                 f"{len(visita_ids)} OT, marcado por {user}. Completar con /completar cuando "
+                 f"{len(filas)} OT, marcado por {user}. Completar con /completar cuando "
                  f"llegue la factura real.",
                  user))
             fid = cur.lastrowid
@@ -107817,12 +107833,73 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
         return jsonify({"ok": False, "error": "No se pudo registrar el pago."}), 500
 
     _mant_log("factura_proveedor", fid, "creada_pagada_sin_factura",
-              f"{proveedor_nombre} · {len(visita_ids)} OT · ${monto_total:,.0f} · por {user}")
+              f"{proveedor_nombre} · {len(filas)} OT · ${monto_total:,.0f} · por {user}")
     for vid, f in filas.items():
         _mant_log("visita", vid, "factura_proveedor_asignada",
                   f"Factura #{fid} ({proveedor_nombre}, sin N° todavía) · ${f['sugerido']:,.0f}")
     return jsonify({"ok": True, "id": fid, "proveedor": proveedor_nombre,
-                    "n_ot": len(visita_ids), "monto_total": monto_total})
+                    "n_ot": len(filas), "monto_total": monto_total})
+
+
+@app.route("/mantenciones/api/facturas-proveedor/solicitar-oc", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/solicitar-oc", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_facturas_proveedor_solicitar_oc():
+    """💸 2026-09-19 (Daniel, en vivo, viendo "Nueva factura de proveedor"):
+    "voy a poder filtrar por cualquiera de los proveedores y voy a colocar
+    una orden de compra, solicitud de orden de compra, y va a quedar
+    pendiente el número de orden de compra y el número de factura para
+    asociar a todo ese lote... filtrar todas las OT pendientes, seleccionar
+    en completo, y agrupar para solicitar la orden de compra de manera
+    global." Hermana de marcar-pagado-sin-factura (misma validación vía
+    _mfp_validar_lote_ot -- REGLA #4), pero para el momento ANTERIOR al
+    pago: se está pidiendo la orden de compra, no reconociendo que ya se
+    pagó. Nace estado_pago='pendiente' (NO 'pagada'), numero_oc opcional
+    ya en este paso, numero_documento/fecha se completan después con
+    /completar cuando llega la factura real -- y recién ahí, aparte, se
+    marca pagada con /pagar."""
+    if not _facprov_puede():
+        return _mfp_403()
+    d = request.get_json(silent=True) or {}
+    numero_oc = (d.get("numero_oc") or "").strip()[:80] or None
+    filas, proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, err = \
+        _mfp_validar_lote_ot(d.get("visita_ids"))
+    if err:
+        return err
+
+    user = current_username() or "sistema"
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_facturas_proveedor "
+                "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
+                " numero_documento, fecha, monto_total, estado_pago, numero_oc, notas, created_by) "
+                "VALUES (%s,%s,%s,'factura',NULL,NULL,%s,'pendiente',%s,%s,%s)",
+                (proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, numero_oc,
+                 f"Solicitud de orden de compra -- {len(filas)} OT, generada por {user}. "
+                 f"Completar con /completar cuando llegue la factura real, y con /pagar cuando se pague.",
+                 user))
+            fid = cur.lastrowid
+            for vid, f in filas.items():
+                cur.execute(
+                    "INSERT INTO mant_factura_proveedor_items "
+                    "(factura_proveedor_id, visita_id, monto, observacion, usuario) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (fid, vid, f["sugerido"], "Agrupado en solicitud de orden de compra.", user))
+        conn.commit()
+    except Exception as e:
+        print(f"[facprov] solicitar-oc: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo registrar la solicitud."}), 500
+
+    _mant_log("factura_proveedor", fid, "solicitud_oc_creada",
+              f"{proveedor_nombre} · {len(filas)} OT · ${monto_total:,.0f} · OC {numero_oc or '(pendiente)'} · por {user}")
+    for vid, f in filas.items():
+        _mant_log("visita", vid, "factura_proveedor_asignada",
+                  f"Solicitud de OC #{fid} ({proveedor_nombre}) · ${f['sugerido']:,.0f}")
+    return jsonify({"ok": True, "id": fid, "proveedor": proveedor_nombre,
+                    "n_ot": len(filas), "monto_total": monto_total})
 
 
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/completar", methods=["POST"])
@@ -107831,11 +107908,16 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
 @_no_tecnico
 def mant_factura_proveedor_completar(fid):
     """Le pone N° de documento y fecha real a una factura que se marcó
-    'pagada sin factura' (ver marcar-pagado-sin-factura). A propósito NO
-    es lo mismo que /reabrir: no vuelve a 'pendiente' ni pide motivo --
-    nada de lo pagado ni las OT asignadas cambian, solo se completa el
-    dato que faltaba. Si alguna vez hay que tocar el monto o las OT de una
-    factura YA completa, para eso sigue estando /reabrir."""
+    'pagada sin factura' (ver marcar-pagado-sin-factura) O a una
+    'solicitud de orden de compra' aún pendiente de pago (ver
+    mant_facturas_proveedor_solicitar_oc) -- ambas nacen sin
+    numero_documento. A propósito NO es lo mismo que /reabrir: no cambia
+    estado_pago ni pide motivo -- nada de lo pagado (o por pagar) ni las
+    OT asignadas cambian, solo se completa el dato que faltaba. También
+    acepta completar/corregir numero_oc acá (2026-09-19, Daniel: "va a
+    quedar pendiente el número de orden de compra y el número de factura
+    para asociar a todo ese lote"). Si alguna vez hay que tocar el monto o
+    las OT de una factura YA completa, para eso sigue estando /reabrir."""
     if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
         return jsonify({"ok": False, "error": "Solo el superadministrador puede completar esta factura."}), 403
     f = _mfp_cargar(fid)
@@ -107845,22 +107927,25 @@ def mant_factura_proveedor_completar(fid):
         return jsonify({"ok": False, "error_codigo": "YA_TIENE_NUMERO",
                         "error": "Esta factura ya tiene número de documento. Para corregirlo, "
                                  "reábrela primero."}), 409
-    if f.get("estado_pago") != "pagada":
+    if f.get("estado_pago") not in ("pagada", "pendiente"):
         return jsonify({"ok": False, "error": f"Esta factura está '{f.get('estado_pago')}', no "
-                                 "'pagada sin factura'."}), 409
+                                 "'pagada sin factura' ni una solicitud de OC pendiente."}), 409
     d = request.get_json(silent=True) or {}
     merged = dict(f)
     merged["numero_documento"] = d.get("numero_documento")
     merged["fecha"] = d.get("fecha")
     merged["tipo_documento"] = d.get("tipo_documento") or f.get("tipo_documento")
     merged["monto_total"] = d.get("monto_total") if d.get("monto_total") not in (None, "") else f.get("monto_total")
+    merged["numero_oc"] = d.get("numero_oc") if d.get("numero_oc") not in (None, "") else f.get("numero_oc")
     datos, err = _mfp_validar_cabecera(merged, excluir_id=fid, sin_factura=False)
     if err:
         return jsonify({"ok": False, "error": err}), 400
     n = mysql_execute_returning_rowcount(
         "UPDATE mant_facturas_proveedor SET tipo_documento=%s, numero_documento=%s, fecha=%s, "
-        "  monto_total=%s WHERE id=%s AND estado_pago='pagada' AND numero_documento IS NULL",
-        (datos["tipo_documento"], datos["numero_documento"], datos["fecha"], datos["monto_total"], fid))
+        "  monto_total=%s, numero_oc=%s WHERE id=%s AND estado_pago IN ('pagada','pendiente') "
+        "  AND numero_documento IS NULL",
+        (datos["tipo_documento"], datos["numero_documento"], datos["fecha"], datos["monto_total"],
+         datos["numero_oc"], fid))
     if not n:
         return jsonify({"ok": False, "error": "Esta factura cambió justo ahora en otra pestaña."}), 409
     _mant_log("factura_proveedor", fid, "completada_con_factura_real",
@@ -125138,8 +125223,19 @@ def _ensure_mant_facturas_proveedor_tables():
             mysql_execute(
                 "ALTER TABLE mant_facturas_proveedor MODIFY COLUMN fecha DATE NULL")
             print("[ensure_facturas_proveedor] fecha ahora NULLABLE", flush=True)
+        # 🔴 2026-09-19 (Daniel, en vivo: "voy a colocar una orden de compra,
+        # solicitud de orden de compra, y va a quedar pendiente el número de
+        # orden de compra y el número de factura para asociar a todo ese
+        # lote"). Mismo espíritu que numero_documento arriba: nace NULL,
+        # se completa cuando la OC real vuelve del proveedor -- ver
+        # mant_facturas_proveedor_solicitar_oc() / /completar.
+        if "numero_oc" not in cols:
+            mysql_execute(
+                "ALTER TABLE mant_facturas_proveedor ADD COLUMN numero_oc VARCHAR(80) NULL "
+                "COMMENT 'N de orden de compra propia (ILUS -> proveedor), independiente del N de factura'")
+            print("[ensure_facturas_proveedor] numero_oc agregada", flush=True)
     except Exception as e:
-        print(f"[ensure_facturas_proveedor] nullable numero_documento/fecha: {e}", flush=True)
+        print(f"[ensure_facturas_proveedor] nullable numero_documento/fecha/numero_oc: {e}", flush=True)
 
 
 def _ensure_mant_intel_tables():

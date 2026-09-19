@@ -28,13 +28,19 @@
         {% if not factura.numero_documento %}
         <span class="fp-pago" style="vertical-align:middle;margin-left:4px;background:#fff8e1;color:#92400e;border:1px solid #fde68a">
           <i class="bi bi-hourglass-split"></i> Sin factura — pendiente de completar</span>
+        {% endif %}
+        {% if factura.numero_oc %}
+        <span class="fp-pago" style="vertical-align:middle;margin-left:4px;background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe">
+          <i class="bi bi-file-earmark-text"></i> OC {{ factura.numero_oc }}</span>
         {% endif %}</h1>
       <div style="font-size:.86rem;color:rgba(255,255,255,.78)">
         {% if factura.numero_documento %}
         {{ tipo_lbl }} <b>N° {{ factura.numero_documento }}</b>
         · {{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }}
-        {% else %}
+        {% elif factura.estado_pago == 'pagada' %}
         <b>Todavía no llega el documento del proveedor</b> — el pago ya está reconocido y congelado.
+        {% else %}
+        <b>Solicitud de orden de compra</b> — todavía no se le paga al proveedor, se está esperando la factura real.
         {% endif %}
         {% if factura.proveedor_rut %} · RUT {{ factura.proveedor_rut | rut_fmt }}{% endif %}
         {% if factura.notas %}<div class="fp-sub" style="white-space:pre-line">{{ factura.notas }}</div>{% endif %}
@@ -229,6 +235,8 @@
               <div class="col-6 col-sm-4"><label class="fpv-lbl">Fecha <span class="text-danger">*</span></label>
                 <input type="date" class="form-control" id="fpeFecha" value="{{ factura.fecha.strftime('%Y-%m-%d') if factura.fecha else '' }}" onchange="fpeRefreshSteps()"></div>
             </div>
+            <label class="fpv-lbl mt-2">N° de orden de compra (opcional)</label>
+            <input type="text" class="form-control" id="fpeOC" value="{{ factura.numero_oc or '' }}">
           </div>
         </section>
         <section class="fpv-step {{ 'listo' if factura.monto_total }}" id="fpeStep3">
@@ -527,6 +535,7 @@ async function fpdGuardarEdicion(){
     fecha: document.getElementById('fpeFecha').value,
     monto_total: Number((document.getElementById('fpeMonto').value || '0').replace(/\D/g,'')) || 0,
     notas: document.getElementById('fpeNotas').value.trim(),
+    numero_oc: document.getElementById('fpeOC').value.trim(),
   };
   const r = await fetch(FPD_URL_BASE, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   const d = await r.json().catch(() => ({}));
