@@ -184,7 +184,8 @@
         <td data-label="Proveedor"><div class="fp-nom">{{ d.proveedor }}</div>
           {% if d.proveedor_rut %}<div class="fp-sub">{{ d.proveedor_rut | rut_fmt }}</div>{% endif %}</td>
         <td data-label="Cliente">{{ d.cliente }}</td>
-        <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span></td>
+        <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span>
+          {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
         <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span></td>
         <td class="m" data-label="Instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
         <td class="m" data-label="Despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
@@ -559,6 +560,8 @@ async function fpvOtMarcarPagado(){
 .fp-tabla td.tot{font-weight:900;color:#0f172a}
 .fp-margen-pos{color:#15803d;font-weight:800}
 .fp-margen-neg{color:#b91c1c;font-weight:800}
+.fp-gar{display:inline-block;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+  background:#fff8e1;color:#92400e;border:1px solid #fde68a;border-radius:999px;padding:2px 8px;margin-left:5px;white-space:nowrap}
 .fp-nom{font-weight:800;color:#0f172a}
 .fp-sub{font-size:.7rem;color:#94a3b8}
 .fp-ot{font-weight:800;color:#dc2626;text-decoration:none}.fp-ot:hover{text-decoration:underline}

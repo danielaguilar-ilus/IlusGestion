@@ -1077,6 +1077,11 @@
    Transporte el 2026-09-04 para que las fotos de la OT tengan el mismo
    visor -- ver static/ilus_lightbox.js. #}
 <script defer src="{{ url_for('static', filename='ilus_lightbox.js') }}"></script>
+{# Compresión + corrección de rotación EXIF antes de subir fotos, compartida
+   (2026-09-19, ver comentario de cabecera en static/ilus_img_compress.js).
+   Expone ilusComprimirImagen(file). Usada hoy por OT 2.0 (templates/ot2/
+   detalle.html); la pantalla clásica sigue con sus propios wrappers. #}
+<script defer src="{{ url_for('static', filename='ilus_img_compress.js') }}"></script>
 
 {# ══════════════════════════════════════════════════════════
    Google Maps Places API — carga LAZY (on-demand).

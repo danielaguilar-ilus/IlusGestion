@@ -5378,6 +5378,9 @@ async function otdFotoEquipoSubir(mid, input){
   if (btn) btn.disabled = true;
   var t = ilusToast('Subiendo la foto…', {type:'info', duration:15000});
   try {
+    /* 2026-09-19: comprime + corrige rotación EXIF antes de subir (mismo
+       comportamiento que la pantalla clásica, ver static/ilus_img_compress.js). */
+    if (window.ilusComprimirImagen) file = await ilusComprimirImagen(file);
     var fd = new FormData();
     fd.append('foto', file);
     /* 'detalle' y no 'principal': la foto de catálogo de la máquina no se
@@ -8780,10 +8783,11 @@ window.otdQuitarColaborador = async function(vtId, nombre){
    2026-08-27 (Daniel: "los técnicos no sabían que podían dejar
    evidencia"). Mismo endpoint que ot_ejecutar.html (/fotos/subir), sin
    tarea_id ni maquina_id -- una foto GENERAL de la OT, tipo_foto=general.
-   No se reimplementa la compresión/HEIC/retry de ot_ejecutar.html (esa
-   pantalla la ejecuta un técnico en terreno con mala señal muy seguido;
-   acá el caso de uso es puntual) -- si a futuro se vuelve un problema
-   real, esa lógica ya existe en mantenciones_ot_ejecutar.js para portar.
+   2026-09-19: SÍ comprime y corrige rotación EXIF, igual que
+   ot_ejecutar.html -- ver static/ilus_img_compress.js (ilusComprimirImagen)
+   y el comentario de cabecera ahí. No reimplementa el retry de reintentos
+   de mala señal de ot_ejecutar.html; si eso se vuelve un problema real acá
+   también, esa lógica queda para portar después.
    ══════════════════════════════════════════════════════════════ */
 async function otdAbrirSheetFoto(){
   if (typeof ilusActionSheet !== 'function'){
@@ -8807,7 +8811,7 @@ async function otdAbrirSheetFoto(){
 
 async function otdSubirFoto(input){
   if (!input.files || !input.files[0]) return;
-  const file = input.files[0];
+  let file = input.files[0];
   if (file.size > 20 * 1024 * 1024){
     ilusToast(`Foto demasiado grande (${(file.size/(1024*1024)).toFixed(2)} MB). Máx 20 MB.`, {type:'warning'});
     return;
@@ -8816,6 +8820,9 @@ async function otdSubirFoto(input){
   if (btn){ btn.disabled = true; }
   const toastSub = ilusToast('Subiendo foto…', {type:'info', duration:6000});
   try {
+    /* 2026-09-19: comprime + corrige rotación EXIF antes de subir (mismo
+       comportamiento que la pantalla clásica, ver static/ilus_img_compress.js). */
+    if (window.ilusComprimirImagen) file = await ilusComprimirImagen(file);
     const fd = new FormData();
     fd.append('foto', file);
     fd.append('tipo_foto', 'general');
@@ -8936,7 +8943,7 @@ async function otdAbrirSheetAdjunto(){
 
 async function otdSubirAdjunto(input){
   if (!input.files || !input.files[0]) return;
-  const file = input.files[0];
+  let file = input.files[0];
   if (file.size > 100 * 1024 * 1024){
     ilusToast(`Archivo demasiado grande (${(file.size/(1024*1024)).toFixed(1)} MB). Máx 100 MB para video.`, {type:'warning'});
     return;
@@ -8945,6 +8952,9 @@ async function otdSubirAdjunto(input){
   if (btn) btn.disabled = true;
   const toastSub = ilusToast('Subiendo…', {type:'info', duration:15000});
   try {
+    /* 2026-09-19: si es foto, comprime + corrige rotación EXIF antes de
+       subir (los videos pasan intactos -- ver ilus_img_compress.js). */
+    if (window.ilusComprimirImagen) file = await ilusComprimirImagen(file);
     const fd = new FormData();
     fd.append('archivo', file);
     const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/adjuntos`, {method:'POST', body: fd});
@@ -10638,13 +10648,16 @@ async function otdChkSubirFoto(input, tid){
   const found = otdChkFindTarea(tid);
   if (!found) return;
   const { t, mid } = found;
-  const file = input.files[0];
+  let file = input.files[0];
   if (file.size > 20 * 1024 * 1024){
     ilusToast(`Foto demasiado grande (${(file.size/(1024*1024)).toFixed(2)} MB). Máx 20 MB.`, {type:'warning'});
     return;
   }
   const toastSub = ilusToast('Subiendo foto…', {type:'info', duration:6000});
   try {
+    /* 2026-09-19: comprime + corrige rotación EXIF antes de subir (mismo
+       comportamiento que la pantalla clásica, ver static/ilus_img_compress.js). */
+    if (window.ilusComprimirImagen) file = await ilusComprimirImagen(file);
     const fd = new FormData();
     fd.append('foto', file);
     fd.append('tipo_foto', 'general');

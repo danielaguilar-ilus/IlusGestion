@@ -106555,7 +106555,7 @@ _MFP_SELECT_OT = (
     "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, v.cerrada_at, "
     "       v.costo_proveedor, v.costo_despacho, v.proveedor_nombre, "
     "       v.costo AS cliente_costo, v.zz_monto AS cliente_zz_monto, "
-    "       v.zz_envio_monto AS cliente_zz_envio_monto, "
+    "       v.zz_envio_monto AS cliente_zz_envio_monto, v.modalidad_cobro, "
     "       c.razon_social AS cliente, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id, "
@@ -106604,6 +106604,13 @@ def _mfp_fila_ot(f):
         "proveedor_rut": f.get("prov_rut") or "",
         "servicio": serv, "despacho": desp, "sugerido": serv + desp,
         "cobrado_cliente": cobrado_cliente, "margen": cobrado_cliente - pagado_proveedor,
+        # 💰 2026-09-19 (Daniel: "si es una instalación, una mantención, o
+        # si se trata de una garantía"). Es la condición comercial de la
+        # OT (modalidad_cobro), NO el tipo de trabajo (tipo_label) -- una
+        # instalación puede ir por garantía igual que una mantención.
+        # Sin esto un margen negativo se lee como error cuando en
+        # realidad es una cobertura ya autorizada.
+        "es_garantia": (f.get("modalidad_cobro") or "").lower() == "garantia",
         "fac_id": f.get("fac_id"), "fac_numero": f.get("fac_numero"),
         "fac_estado": f.get("fac_estado"),
         "fac_monto": float(f["fac_monto"]) if f.get("fac_monto") is not None else None,
