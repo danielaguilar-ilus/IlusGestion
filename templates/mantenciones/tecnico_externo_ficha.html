@@ -242,6 +242,17 @@
       {% elif tec.estado == 'suspendido' %}<i class="bi bi-play-fill"></i>Reactivar
       {% else %}<i class="bi bi-arrow-clockwise"></i>Restaurar{% endif %}
     </button>
+    {# 🗑️ 2026-09-19 (Daniel: "cómo elimino a un técnico"): el backend ya
+       tenía DELETE /mantenciones/api/tecnicos-externos/<eid> (soft-delete a
+       estado='baja', REGLA #5) pero ningún botón de esta ficha lo llamaba
+       -- "Suspender" es otra cosa, reversible sin perder el estado activo.
+       Se agrega el botón que faltaba; no reemplaza a Suspender, es una
+       opción más fuerte y separada. #}
+    {% if tec.estado != 'baja' %}
+    <button class="btn btn-sm btn-outline-danger" onclick="darDeBaja()">
+      <i class="bi bi-trash3-fill"></i>Dar de baja
+    </button>
+    {% endif %}
   </div>
 </div>
 
@@ -794,6 +805,26 @@ async function cambiarEstado(){
     const d = await r.json();
     if (d.ok){
       ilusToast(`✓ Estado: ${target}`, { type:'success' });
+      setTimeout(() => location.reload(), 800);
+    } else {
+      ilusToast(d.error || 'Error', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+async function darDeBaja(){
+  const ok = await ilusConfirm({
+    title: 'Dar de baja a este técnico',
+    message: '¿Dar de baja a ' + {{ tec.razon_social | tojson }} + '?',
+    sub: 'Deja de aparecer para asignar OT nuevas. No se borra nada de su historial -- se puede restaurar después desde esta misma ficha.',
+    okLabel: 'Dar de baja', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}`, { method: 'DELETE', credentials: 'same-origin' });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Técnico dado de baja', { type:'success' });
       setTimeout(() => location.reload(), 800);
     } else {
       ilusToast(d.error || 'Error', { type:'error' });
