@@ -2165,6 +2165,7 @@ window.OT2C = (function(){
             '<span class="o2m-day-legend"><span><i class="k ag"></i>Agendada</span>'+
             '<span><i class="k mine"></i>Tu OT</span></span>'+
           '</div>'+
+          '<div id="o2mDayCarrilesLegend" style="display:flex;flex-wrap:wrap;gap:.4rem;margin:-.35rem 0 .5rem"></div>'+
           '<div class="o2m-day-scroll" id="o2mDayScroll">'+
             '<div class="o2m-day-inner" id="o2mDayInner">'+
               '<div id="o2mDayGutter"></div>'+
@@ -2721,6 +2722,55 @@ window.OT2C = (function(){
     ghost.style.display = 'none';
   }
 
+  // 🔴 2026-09-19 (Daniel, en vivo: "el calendario deberá igual asignar por
+  // técnico para evitar desorden"). El layout viejo agrupaba por SOLAPE DE
+  // HORARIO (tipo Google Calendar): dos técnicos con OT a horas distintas
+  // podían caer en la MISMA columna en otro momento del día, y el bloque
+  // "Tu OT" se dibujaba ocupando el 100% del ancho (sin columna reservada)
+  // -- de un vistazo parecía que Tu OT chocaba con CUALQUIER OT del día,
+  // aunque fuera de un técnico totalmente distinto (probado en vivo:
+  // Isabel Milling, Lenin Urbina y Rafael Naranjo en columnas sueltas sin
+  // indicar de quién eran, con el bloque rojo de Tu OT atravesándolas).
+  // Ahora cada técnico tiene un CARRIL FIJO -- mismo índice de columna
+  // todo el día, sea cual sea la hora -- y Tu OT se dibuja SOLO en el
+  // carril del técnico líder elegido. Se recalcula siempre en vivo (nunca
+  // se cachea) porque S.lider/S.tecnicos cambian sin recargar el mes.
+  function _o2mDayTecId(v){ return v.tecnico_id!=null ? String(v.tecnico_id) : ('n:'+(v.tecnico_nombre||v.tecnico||'')); }
+  function _o2mDayCarriles(visitas){
+    var ids = [], out = [];
+    (visitas||[]).forEach(function(v){
+      var tid = _o2mDayTecId(v);
+      if (ids.indexOf(tid)===-1){
+        ids.push(tid);
+        out.push({tecId:tid, tecIdRaw:v.tecnico_id, nombre:v.tecnico_nombre||v.tecnico||'Sin técnico'});
+      }
+    });
+    // Reserva un carril propio para el técnico LÍDER de "Tu OT" aunque hoy
+    // no tenga ninguna otra OT -- si no, su bloque no tendría dónde ubicarse.
+    if (S.lider!=null){
+      var tidLider = String(S.lider);
+      if (ids.indexOf(tidLider)===-1){
+        var tLider = (cacheTec||[]).filter(function(x){ return String(x.id)===tidLider; })[0];
+        ids.push(tidLider);
+        out.push({tecId:tidLider, tecIdRaw:S.lider, nombre: tLider ? tLider.nombre : 'Tu técnico'});
+      }
+    }
+    return out;
+  }
+  function _o2mDayPintarLeyendaCarriles(carriles){
+    var el = document.getElementById('o2mDayCarrilesLegend');
+    if (!el) return;
+    if (carriles.length < 2){ el.innerHTML = ''; return; }
+    el.innerHTML = carriles.map(function(c){
+      var pal = _o2mDayColor(c.tecIdRaw);
+      var esLider = S.lider!=null && String(S.lider)===c.tecId;
+      return '<span style="display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;'+
+        'padding:.15rem .5rem;border-radius:999px;border:1px solid '+pal[0]+';background:'+pal[1]+
+        (esLider ? ';font-weight:700' : '')+'">'+
+        '<i class="bi bi-square-fill" style="color:'+pal[0]+';font-size:.5rem"></i>'+
+        esc(c.nombre)+(esLider ? ' · tu OT' : '')+'</span>';
+    }).join('');
+  }
   function o2mDayRender(fecha, opts){
     opts = opts || {};
     var canvas = document.getElementById('o2mDayCanvas');
@@ -2752,13 +2802,30 @@ window.OT2C = (function(){
       if (!g) return;
       items.push({idx:idx, ini:g.iniRaw, fin:g.finRaw, finLay:g.finLay, g:g, v:v});
     });
-    var puestos = _o2mDayLayout(items);
+    // Carril fijo por técnico (ver comentario arriba de _o2mDayCarriles):
+    // el algoritmo greedy original (_o2mDayLayout) se sigue usando, pero
+    // ACOTADO a las OTs de UN MISMO técnico -- así el choque real (mismo
+    // técnico, 2 OTs a la vez) se sigue partiendo en sub-columnas dentro
+    // de su propio carril, sin mezclarse con los carriles de los demás.
+    var carriles = _o2mDayCarriles(visitas);
+    _o2mDayPintarLeyendaCarriles(carriles);
+    var nCarr = Math.max(carriles.length, 1);
+    var puestos = [];
+    carriles.forEach(function(carril, ci){
+      var itemsCarril = items.filter(function(it){ return _o2mDayTecId(it.v) === carril.tecId; });
+      _o2mDayLayout(itemsCarril).forEach(function(p){
+        p.carrilIdx = ci; p.nCarr = nCarr;
+        puestos.push(p);
+      });
+    });
     var choqueKeys = o2mDay.choqueKeys;
     var aplicaChoque = !!(choqueKeys && o2mDay.choqueFecha && o2mDay.choqueFecha===fecha);
     var html = '';
     puestos.forEach(function(p){
-      var w = 'calc('+(100/p.nCols)+'% - 4px)';
-      var l = (p.col*(100/p.nCols))+'%';
+      var carrilW = 100/p.nCarr;
+      var subW = carrilW/p.nCols;
+      var w = 'calc('+subW+'% - 4px)';
+      var l = (p.carrilIdx*carrilW + p.col*subW)+'%';
       if (p.grupo){
         var gg = _o2mDayGeom(_o2mDayHHMM(p.ini), _o2mDayHHMM(p.fin));
         var h = gg ? gg.height : 18;
@@ -2875,6 +2942,18 @@ window.OT2C = (function(){
     mine.style.display = '';
     mine.style.top = g.top+'px';
     mine.style.height = g.height+'px';
+
+    // 🔴 2026-09-19: Tu OT vive en el carril del técnico LÍDER, no en todo
+    // el ancho -- mismo mapa de carriles que o2mDayRender (ver comentario
+    // arriba de _o2mDayCarriles). Se recalcula siempre en vivo porque
+    // S.lider puede cambiar sin que el mes/día se vuelva a cargar.
+    var carriles = _o2mDayCarriles(o2mDay.visitas||[]);
+    var nCarr = Math.max(carriles.length, 1);
+    var ci = S.lider!=null ? carriles.map(function(c){ return c.tecId; }).indexOf(String(S.lider)) : -1;
+    if (ci===-1) ci = 0;
+    var carrilW = 100/nCarr;
+    mine.style.left = (ci*carrilW)+'%';
+    mine.style.width = 'calc('+carrilW+'% - 4px)';
 
     var nTec = (S.tecnicos||[]).length;
     var rangoTxt = (hi||'--') + (hf && !g.sinFin ? '–'+hf : '');
