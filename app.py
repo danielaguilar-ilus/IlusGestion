@@ -67603,8 +67603,9 @@ def mant_tecnicos_externos_usuarios_disponibles():
         "  FROM `" + AUTH_TABLE + "` u "
         "  LEFT JOIN mant_tecnico_externo_usuarios teu ON teu.user_id = u.id "
         "  LEFT JOIN mant_tecnicos_externos te ON te.id = teu.tecnico_externo_id "
-        " WHERE u.role LIKE 'tecnico_externo%' "
-        " ORDER BY u.nombre"
+        " WHERE u.role LIKE %s "
+        " ORDER BY u.nombre",
+        ("tecnico_externo%",)
     ) or []
     return jsonify({"ok": True, "usuarios": [dict(r) for r in rows]})
 
