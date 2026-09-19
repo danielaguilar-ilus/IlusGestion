@@ -77152,8 +77152,19 @@ def _mant_visita_crear_core(d):
             "proveedor_tipo": d.get("proveedor_tipo"),
             "proveedor_nombre": d.get("proveedor_nombre"),
         }
+    # 🔴 2026-09-19: RUT del cliente para el tope real de _ot_validar_
+    # normalizar_finanzas (_ot_zz_topes_reales) -- sin esto no puede
+    # excluir un documento asociado que sea de OTRO cliente.
+    _cliente_rut_fin = None
+    if not _cliente_opcional and d.get("cliente_id"):
+        try:
+            _cli_fin = mysql_fetchone(
+                "SELECT rut FROM mant_clientes WHERE id=%s", (d.get("cliente_id"),))
+            _cliente_rut_fin = _cli_fin.get("rut") if _cli_fin else None
+        except Exception:
+            _cliente_rut_fin = None
     _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
-        _fin_in, tipo_ot, _cliente_opcional)
+        _fin_in, tipo_ot, _cliente_opcional, cliente_rut=_cliente_rut_fin)
     if _fin_err:
         return {"error": _fin_err["error"],
                 "error_codigo": _fin_err["error_codigo"]}, 400
@@ -82309,6 +82320,43 @@ def ot2_api_finanzas(vid):
     if not zz_cod and not garantia:
         zz_cod = _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower())
 
+    # 🔴 2026-09-19 (Daniel, checklist de finanzas): mismo tope real que
+    # _ot_validar_normalizar_finanzas (creación) -- este endpoint es el
+    # OTRO lugar donde se puede reescribir zz_monto/zz_envio_monto después
+    # de creada la OT, con su propia validación inline (no pasa por la
+    # función compartida). Sin este tope acá, alguien podía corregir la
+    # OT hacia un número inflado incluso si al crearla quedó bien topada.
+    # Solo aplica si esta misma petición trae un documento real (f_tido/
+    # f_nudo) y está tocando el monto -- si no viene, no hay contra qué
+    # topear (ni se está cambiando nada).
+    if not garantia and f_tido and f_nudo and (zz_monto is not None or zz_envio_monto is not None):
+        _cli_rut_fin2 = None
+        if v.get("cliente_id"):
+            try:
+                _cli2 = mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (v.get("cliente_id"),))
+                _cli_rut_fin2 = _cli2.get("rut") if _cli2 else None
+            except Exception:
+                _cli_rut_fin2 = None
+        _topes2 = _ot_zz_topes_reales(f_tido, f_nudo, None, _cli_rut_fin2)
+        if _topes2["excluidos"] and not _topes2["documentos"]:
+            _mot2 = _topes2["excluidos"][0]["motivo"]
+            return _ot2_err(f"No pudimos validar el documento: {_mot2}",
+                            "ZZ_TOPE_SIN_DOCUMENTO_VALIDO")
+        def _clp2(n):
+            return "{:,.0f}".format(n).replace(",", ".")
+        if zz_monto is not None and zz_monto > _topes2["tope_servicio"]:
+            return _ot2_err(
+                f"El monto de servicio (${_clp2(zz_monto)}) supera lo que dice "
+                f"el documento (${_clp2(_topes2['tope_servicio'])}). Puedes bajarlo, "
+                "nunca subirlo por encima del documento real.",
+                "ZZ_MONTO_SUPERA_DOCUMENTO")
+        if zz_envio_monto is not None and zz_envio_monto > _topes2["tope_despacho"]:
+            return _ot2_err(
+                f"El monto de despacho (${_clp2(zz_envio_monto)}) supera lo que dice "
+                f"el documento (${_clp2(_topes2['tope_despacho'])}). Puedes bajarlo, "
+                "nunca subirlo por encima del documento real.",
+                "ZZ_ENVIO_SUPERA_DOCUMENTO")
+
     # 💰 2026-09-15 -- origen del valor (ver _OT2_VALOR_ORIGENES). Misma
     # regla que el resto de este endpoint: se toca solo si la petición lo
     # trae; vacío = limpiar a propósito; fuera de la lista = error.
@@ -83809,7 +83857,7 @@ def ot2_api_equipos_desde_documento(vid):
     return jsonify({"ok": True, **data})
 
 
-def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna):
+def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=None):
     """Valida y normaliza el bloque 'finanzas' de una OT nueva -- MISMA
     lógica que ot2_api_crear exige desde 2026-09-09/2026-09-15 (Daniel:
     "los documentos y las finanzas deben ser requisito indispensable...
@@ -83832,6 +83880,11 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna):
         es_interna: True si es trabajo interno (bodega/capacitación/
             control de calidad) -- exento de documento/garantía/cliente,
             pero exige costo_interno > 0 igual.
+        cliente_rut: RUT del cliente de la OT (mant_clientes.rut), o None
+            si no se conoce todavía. Se usa SOLO para el tope real de
+            2026-09-19 (ver _ot_zz_topes_reales) -- sin esto, el tope no
+            puede excluir un documento de OTRO cliente, así que el caller
+            debería mandarlo siempre que exista cliente_id.
 
     Devuelve (error:dict|None, campos:dict|None). Si error no es None,
     el caller debe cortar YA sin tocar la base de datos (campos viene
@@ -84059,6 +84112,45 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna):
         if _docs_limpios:
             _fin_docs_extra_json = json.dumps(_docs_limpios, ensure_ascii=False)
             _docs_extra_norm = _docs_limpios
+
+    # 🔴 2026-09-19 (Daniel, checklist de finanzas: "debe ser real para
+    # controlar qué cobramos y qué no"). Hasta acá, zz_monto/zz_envio_monto
+    # son un número plano que mandó el frontend -- _o2mFinCargarZZ() en
+    # _modal_crear.html ya suma las líneas ZZ de los documentos asociados,
+    # pero esa suma vive SOLO en JS. Nada impedía que un caller (o un bug
+    # de UI) mandara un monto mayor a lo que los documentos realmente
+    # cobran. Acá se vuelve a leer el ERP -- servidor, no confía en el
+    # front, mismo criterio que ya usa este archivo para candados de
+    # dinero -- y se tope cada categoría a la SUMA real de todos los
+    # documentos asociados a esta OT ("si tengo dos facturas con despacho
+    # por 100 mil cada una, el tope es 200 mil"). Solo aplica cuando hay
+    # al menos un documento asociado: sin documento (garantía, o el hueco
+    # de "supuesto" que sigue existiendo mientras no se resuelva el caso de
+    # "factura no ha llegado todavía"), no hay contra qué topear.
+    if not es_interna and not _fin_gar and (_fin_tido and _fin_nudo or _docs_extra_norm):
+        _topes = _ot_zz_topes_reales(_fin_tido, _fin_nudo, _docs_extra_norm, cliente_rut)
+        if _topes["excluidos"] and not _topes["documentos"]:
+            # Todos los documentos declarados fallaron o son de otro cliente:
+            # no hay NINGÚN tope real que validar -- mejor cortar acá que
+            # dejar pasar un monto sin ninguna referencia detrás.
+            _mot = _topes["excluidos"][0]["motivo"]
+            return _ferr(f"No pudimos validar el documento asociado: {_mot}",
+                         "ZZ_TOPE_SIN_DOCUMENTO_VALIDO"), None
+        def _clp(n):
+            return "{:,.0f}".format(n).replace(",", ".")
+        if _fin_zzm is not None and _fin_zzm > _topes["tope_servicio"]:
+            return _ferr(
+                f"El monto de servicio (${_clp(_fin_zzm)}) supera lo que dicen "
+                f"los documentos asociados (${_clp(_topes['tope_servicio'])}). "
+                "Puedes bajarlo, nunca subirlo por encima del documento real.",
+                "ZZ_MONTO_SUPERA_DOCUMENTO"), None
+        if _fin_zz_envio_m is not None and _fin_zz_envio_m > _topes["tope_despacho"]:
+            return _ferr(
+                f"El monto de despacho (${_clp(_fin_zz_envio_m)}) supera lo que dicen "
+                f"los documentos asociados (${_clp(_topes['tope_despacho'])}). "
+                "Puedes bajarlo, nunca subirlo por encima del documento real.",
+                "ZZ_ENVIO_SUPERA_DOCUMENTO"), None
+
     _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
     _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None
     _fin_prov_nombre = (str(_fin.get("proveedor_nombre") or "").strip()[:200]) or None
@@ -84631,7 +84723,8 @@ def ot2_api_crear():
     # de error, mismo orden de validación, mismo INSERT final -- solo
     # cambia de dónde salen las variables.
     _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
-        d.get("finanzas"), tipo_ot, es_interna)
+        d.get("finanzas"), tipo_ot, es_interna,
+        cliente_rut=(_cli.get("rut") if cliente_id and _cli else None))
     if _fin_err:
         return _ot2_err(_fin_err["error"], _fin_err["error_codigo"])
     _fin_centro = _fin_campos["centro_costo"]
@@ -89863,6 +89956,113 @@ def ot2_reporte_xlsx():
         as_attachment=True, download_name=fname)
 
 
+def _erp_zz_lineas(tido, nudo):
+    """Solo lectura del ERP (REGLA #4.1): header + líneas ZZ normalizadas +
+    total del documento. Extraída 2026-09-19 de lo que antes vivía inline
+    en ot2_api_lineas_zz, para que el tope real server-side
+    (_ot_zz_topes_reales) lea el ERP con EXACTAMENTE la misma lógica que ya
+    ve el usuario en el wizard -- dos parseos distintos del mismo dato es
+    la forma más fácil de que un tope "real" termine sumando otra cosa.
+
+    Devuelve (header, lineas_zz, total_documento). header es None si el
+    documento no existe o el ERP no respondió.
+    """
+    header, lineas = _mant_erp_doc_cached(tido, nudo)
+    if not header:
+        return None, [], 0
+
+    zz = []
+    for ln in (lineas or []):
+        sku = (ln.get("sku") or "").strip().upper()
+        if not sku.startswith("ZZ"):
+            continue
+        try:
+            # Ver fix 2026-08-30 (caso FCV 11382): el campo normalizado de
+            # _cubicador_fetch es `vaneli` en minúscula -- "VATOLI"/"VANELI"
+            # en mayúscula son nombres de columna SQL Server crudos que
+            # nunca existieron en este dict.
+            monto = int(round(float(ln.get("vaneli") or ln.get("VANELI")
+                                    or ln.get("valor") or 0)))
+        except (TypeError, ValueError):
+            monto = 0
+        zz.append({
+            "sku": sku,
+            "descripcion": (ln.get("descripcion_erp") or ln.get("nombre_app")
+                            or ln.get("descripcion") or ln.get("nombre")
+                            or sku).strip()[:180],
+            "monto": monto,
+        })
+
+    _total_doc = 0
+    for ln in (lineas or []):
+        try:
+            _total_doc += int(round(float(ln.get("vaneli") or ln.get("VANELI")
+                                          or ln.get("valor") or 0)))
+        except (TypeError, ValueError):
+            continue
+    for _campo_tot in ("valor_bruto", "total", "monto_total", "valor_total"):
+        _cab = header.get(_campo_tot)
+        if _cab:
+            try:
+                _total_doc = int(round(float(_cab)))
+                break
+            except (TypeError, ValueError):
+                pass
+    return header, zz, _total_doc
+
+
+def _ot_zz_topes_reales(tido_principal, nudo_principal, documentos_extra, cliente_rut):
+    """Tope REAL de cuánto se le puede cobrar al cliente por esta OT, sumando
+    server-side las líneas ZZ (servicio) y ZZENVIO (despacho) de TODOS los
+    documentos asociados -- sin confiar en el número que mande el frontend.
+
+    Daniel (2026-09-19, checklist de finanzas): "el tope sería la suma del
+    mismo servicio... si tengo dos facturas con despacho por 100 mil cada
+    una, el tope es 200 mil, la suma" -- y "tendría que ser el mismo
+    cliente": un documento de OTRO cliente se excluye de la suma (mismo
+    criterio de _rut_analisis_comparacion que ya usa el sello de cierre de
+    OT) y se reporta en `excluidos`, no se descarta en silencio.
+
+    Devuelve dict: {tope_servicio, tope_despacho, documentos, excluidos}.
+    `documentos`/`excluidos` sirven para el mensaje de error del caller --
+    esta función nunca lanza, un documento ilegible simplemente se excluye.
+    """
+    docs, vistos = [], set()
+    if tido_principal and nudo_principal:
+        docs.append((tido_principal, nudo_principal))
+    for d in (documentos_extra or []):
+        t = (d.get("tido") or "").strip().upper()[:10]
+        n = (d.get("nudo") or "").strip()[:30]
+        if t and n:
+            docs.append((t, n))
+
+    tope_servicio, tope_despacho = 0, 0
+    detalle, excluidos = [], []
+    for tido, nudo in docs:
+        key = (tido, nudo)
+        if key in vistos:
+            continue
+        vistos.add(key)
+        header, zz, _ = _erp_zz_lineas(tido, nudo)
+        if not header:
+            excluidos.append({"tido": tido, "nudo": nudo,
+                               "motivo": "No se pudo leer este documento en el ERP."})
+            continue
+        if cliente_rut:
+            _cmp = _rut_analisis_comparacion(cliente_rut, header.get("cliente_rut"))
+            if not _cmp.get("match"):
+                excluidos.append({"tido": tido, "nudo": nudo,
+                                   "motivo": "Este documento es de otro cliente."})
+                continue
+        _serv = sum(l["monto"] for l in zz if l["sku"] != "ZZENVIO")
+        _desp = sum(l["monto"] for l in zz if l["sku"] == "ZZENVIO")
+        tope_servicio += _serv
+        tope_despacho += _desp
+        detalle.append({"tido": tido, "nudo": nudo, "servicio": _serv, "despacho": _desp})
+    return {"tope_servicio": tope_servicio, "tope_despacho": tope_despacho,
+            "documentos": detalle, "excluidos": excluidos}
+
+
 @app.route("/ot/api/lineas-zz/<tido>/<nudo>", methods=["GET"])
 @_mant_required
 def ot2_api_lineas_zz(tido, nudo):
@@ -89899,7 +90099,7 @@ def ot2_api_lineas_zz(tido, nudo):
     sugerido = _OT2_LINEA_ZZ.get(tipo_ot)
 
     try:
-        header, lineas = _mant_erp_doc_cached(tido, nudo)
+        header, zz, _total_doc = _erp_zz_lineas(tido, nudo)
     except Exception as e:
         print(f"[ot2_lineas_zz] {tido} {nudo}: {e}", flush=True)
         return _ot2_err("No pudimos consultar el documento en Random.",
@@ -89908,69 +90108,11 @@ def ot2_api_lineas_zz(tido, nudo):
         return _ot2_err(f"No encontramos el documento {tido} {nudo} en Random.",
                         "DOC_NO_ENCONTRADO", http=404)
 
-    zz = []
-    for ln in (lineas or []):
-        sku = (ln.get("sku") or "").strip().upper()
-        if not sku.startswith("ZZ"):
-            continue
-        try:
-            # 2026-08-30 (Daniel, caso real FCV 11382 — ZZINSTALACION y
-            # ZZenvio llegaban en $0): esto leía "VATOLI"/"VANELI" en
-            # MAYÚSCULA, que son nombres de columna SQL Server crudos —
-            # pero `lineas` acá NO es la fila cruda de MAEDDO, es el dict
-            # YA NORMALIZADO que arma _cubicador_fetch(), cuyo contrato
-            # (ver docstring "NO TOCAR" de esa función) documenta el campo
-            # de valor como `vaneli` en MINÚSCULA. "VATOLI" nunca existió
-            # en ninguna otra parte del proyecto -- por eso esto SIEMPRE
-            # devolvía 0, para cualquier documento, desde que se escribió.
-            monto = int(round(float(ln.get("vaneli") or ln.get("VANELI")
-                                    or ln.get("valor") or 0)))
-        except (TypeError, ValueError):
-            monto = 0
-        zz.append({
-            "sku": sku,
-            # Las lineas normalizadas de _cubicador_fetch traen
-            # `descripcion_erp` y `nombre_app`; "descripcion"/"nombre"/"DEEN"
-            # no existen en ese dict, asi que esto devolvia SIEMPRE vacio y
-            # la pantalla mostraba el codigo ZZ pelado, sin decir que es.
-            # Mismo criterio ya aplicado en el endpoint hermano.
-            "descripcion": (ln.get("descripcion_erp") or ln.get("nombre_app")
-                            or ln.get("descripcion") or ln.get("nombre")
-                            or sku).strip()[:180],
-            "monto": monto,
-            "sugerida": bool(sugerido and sku == sugerido),
-        })
-
+    for l in zz:
+        l["sugerida"] = bool(sugerido and l["sku"] == sugerido)
     # La sugerida primero, después por monto de mayor a menor: lo más
     # probable queda arriba sin esconder el resto.
     zz.sort(key=lambda x: (not x["sugerida"], -x["monto"]))
-
-    # 💰 2026-09-10 (Daniel, explicando el caso que le contó Víctor: una OT
-    # que nace de un TICKET arrastra una nota de venta con PRODUCTOS y sin
-    # línea de servicio, así que no hay ZZ que extraer y la OT se queda sin
-    # valorizar. "Lo único que nos interese de allí es obtener el valor total
-    # del documento... si son varios, lo suma").
-    # Se devuelve el total del documento COMPLETO (productos + servicios), que
-    # es lo que el documento le cobra al cliente. Se calcula sumando las
-    # líneas con el MISMO campo normalizado que ya usan las líneas ZZ acá
-    # arriba (`vaneli`, ver el fix del 2026-08-30 sobre VATOLI/VANELI) para no
-    # inventar una segunda forma de leer el valor; si el header trae un total
-    # propio se usa ese, que ya viene con impuestos resueltos.
-    _total_doc = 0
-    for ln in (lineas or []):
-        try:
-            _total_doc += int(round(float(ln.get("vaneli") or ln.get("VANELI")
-                                          or ln.get("valor") or 0)))
-        except (TypeError, ValueError):
-            continue
-    for _campo_tot in ("valor_bruto", "total", "monto_total", "valor_total"):
-        _cab = header.get(_campo_tot)
-        if _cab:
-            try:
-                _total_doc = int(round(float(_cab)))
-                break
-            except (TypeError, ValueError):
-                pass
 
     return jsonify({
         "ok": True, "tido": tido, "nudo": nudo,
@@ -89986,7 +90128,7 @@ def ot2_api_lineas_zz(tido, nudo):
                     or header.get("razon_social") or ""),
         "lineas_zz": zz,
         "sugerido": sugerido,
-        "total_lineas": len(lineas or []),
+        "total_lineas": len(zz),
     })
 
 
@@ -116460,8 +116602,15 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # Se valida ANTES de tocar la base de datos -- si falta algo, ni el
     # levantamiento ni la OT se empiezan a crear (mismo criterio que ya
     # usa esta función para "Debes seleccionar al menos 1 equipo").
+    # 🔴 2026-09-19: RUT del cliente para el tope real (_ot_zz_topes_reales)
+    # -- este camino SIEMPRE tiene cid (es OT de cliente, ver docstring).
+    try:
+        _cli_lev = mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cid,))
+        _cliente_rut_lev = _cli_lev.get("rut") if _cli_lev else None
+    except Exception:
+        _cliente_rut_lev = None
     _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
-        data.get("finanzas"), tipo_ot, False)
+        data.get("finanzas"), tipo_ot, False, cliente_rut=_cliente_rut_lev)
     if _fin_err:
         return {
             "ok": False,
