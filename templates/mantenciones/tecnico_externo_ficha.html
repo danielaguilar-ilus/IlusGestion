@@ -384,6 +384,27 @@
     </button>
   </div>
   {% endif %}
+
+  {# 👥 2026-09-19 (Daniel, en vivo: "asignar a Daniel Pulgar como técnico
+     externo a esa empresa... si tienen más usuarios, les brindo un
+     usuario"). Esta empresa puede tener VARIOS técnicos asignados -- ya
+     no es el 1:1 viejo de tec.user_id (arriba). Cada técnico solo puede
+     estar en UNA empresa a la vez (mant_tecnico_externo_usuarios.user_id
+     UNIQUE); asignar acá reasigna, no duplica. #}
+  <div class="info-card" style="border-left:4px solid #dc2626">
+    <h6><i class="bi bi-people-fill"></i>Técnicos asignados</h6>
+    <div id="teAsignadosLista" class="text-muted small">Cargando…</div>
+    <div id="teAsignarForm" class="d-none mt-2 d-flex gap-2 align-items-center flex-wrap">
+      <select id="teAsignarSelect" class="form-select form-select-sm" style="max-width:320px"></select>
+      <button class="btn btn-ilus btn-sm" onclick="teConfirmarAsignar()">
+        <i class="bi bi-check-lg"></i>Asignar
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="teCancelarAsignar()">Cancelar</button>
+    </div>
+    <button id="teAsignarBtn" class="btn btn-sm btn-outline-danger mt-2" onclick="teMostrarAsignar()">
+      <i class="bi bi-person-plus-fill"></i>Asignar técnico
+    </button>
+  </div>
 </div>
 
 {# ─── PANEL FACTURACIÓN ─── #}
@@ -746,7 +767,113 @@ async function pdocBorrar(did){
   }
 }
 
+function teEscapeHtml(s){
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function teCargarAsignados(){
+  const cont = document.getElementById('teAsignadosLista');
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}/usuarios`, {credentials:'same-origin'});
+    const j = await r.json();
+    if (!j.ok) { cont.textContent = 'No se pudo cargar.'; return; }
+    if (!j.tecnicos.length) {
+      cont.innerHTML = '<span class="text-muted">Sin técnicos asignados todavía.</span>';
+      return;
+    }
+    cont.innerHTML = j.tecnicos.map(t => `
+      <div class="d-flex justify-content-between align-items-center py-1" style="border-bottom:1px solid #f1f1f1">
+        <div>
+          <strong>${teEscapeHtml(t.nombre)}</strong>
+          <span class="text-muted ms-2">${teEscapeHtml(t.username)}</span>
+          ${!t.active ? '<span class="badge bg-warning text-dark ms-2">inactivo</span>' : ''}
+        </div>
+        <button class="btn btn-sm btn-outline-danger" onclick="teQuitar(${t.user_id}, ${JSON.stringify(t.nombre)})">
+          <i class="bi bi-x-lg"></i>Quitar
+        </button>
+      </div>`).join('');
+  } catch(e) {
+    cont.textContent = 'Error de conexión.';
+  }
+}
+
+async function teMostrarAsignar(){
+  document.getElementById('teAsignarBtn').classList.add('d-none');
+  const form = document.getElementById('teAsignarForm');
+  form.classList.remove('d-none');
+  const sel = document.getElementById('teAsignarSelect');
+  sel.innerHTML = '<option>Cargando…</option>';
+  try {
+    const r = await fetch('/mantenciones/api/tecnicos-externos-disponibles', {credentials:'same-origin'});
+    const j = await r.json();
+    if (!j.ok) { sel.innerHTML = '<option value="">Error al cargar</option>'; return; }
+    sel.innerHTML = j.usuarios.map(u => {
+      const enOtra = u.tecnico_externo_id && u.tecnico_externo_id !== EID;
+      const label = u.nombre + ' (' + u.username + ')' + (enOtra ? ' -- hoy en ' + u.empresa_actual : '');
+      return `<option value="${u.user_id}">${teEscapeHtml(label)}</option>`;
+    }).join('') || '<option value="">No hay técnicos externos disponibles</option>';
+  } catch(e) {
+    sel.innerHTML = '<option value="">Error de conexión</option>';
+  }
+}
+
+function teCancelarAsignar(){
+  document.getElementById('teAsignarForm').classList.add('d-none');
+  document.getElementById('teAsignarBtn').classList.remove('d-none');
+}
+
+async function teConfirmarAsignar(){
+  const sel = document.getElementById('teAsignarSelect');
+  const userId = sel.value;
+  if (!userId) { ilusToast('Elige un técnico.', {type:'warning'}); return; }
+  const label = sel.options[sel.selectedIndex].textContent;
+  const ok = await ilusConfirm({
+    title: 'Asignar técnico',
+    message: `¿Asignar a ${label} a esta empresa?`,
+    sub: 'Si ya estaba asignado a otra empresa, queda movido a esta -- un técnico pertenece a una sola empresa a la vez.',
+    okLabel: 'Asignar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}/usuarios`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({user_id: userId}),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      ilusToast('✓ Técnico asignado', {type:'success'});
+      teCancelarAsignar();
+      teCargarAsignados();
+    } else {
+      ilusToast(j.error || 'Error', {type:'error'});
+    }
+  } catch(e) { ilusToast('Error de conexión.', {type:'error'}); }
+}
+
+async function teQuitar(userId, nombre){
+  const ok = await ilusConfirm({
+    title: 'Quitar técnico',
+    message: `¿Quitar a ${nombre} de esta empresa?`,
+    sub: 'No borra su usuario/login -- solo lo desvincula de esta ficha. Puedes reasignarlo después.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}/usuarios/${userId}`,
+      {method: 'DELETE', credentials: 'same-origin'});
+    const j = await r.json();
+    if (j.ok) {
+      ilusToast('✓ Técnico desvinculado', {type:'success'});
+      teCargarAsignados();
+    } else {
+      ilusToast(j.error || 'Error', {type:'error'});
+    }
+  } catch(e) { ilusToast('Error de conexión.', {type:'error'}); }
+}
+
 document.addEventListener('DOMContentLoaded', pdocCargar);
+document.addEventListener('DOMContentLoaded', teCargarAsignados);
 
 // Tabs
 document.querySelectorAll('.tf-tab').forEach(t => {
