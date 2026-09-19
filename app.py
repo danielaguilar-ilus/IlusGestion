@@ -66617,6 +66617,9 @@ def mant_visita_multi(cid):
     _err_tec_emp = _ot_validar_tecnicos_una_empresa(tecnico_ids)
     if _err_tec_emp:
         return jsonify({"error": _err_tec_emp, "error_codigo": "TECNICOS_EMPRESAS_MEZCLADAS"}), 400
+    _err_tope = _ot_validar_tope_ot_sin_contrato(tecnico_ids)
+    if _err_tope:
+        return jsonify({"error": _err_tope, "error_codigo": "PROVEEDOR_TOPE_SIN_CONTRATO"}), 400
 
     # FIX 1 (2026-07-19): resolver contra app_users (fuente de verdad desde
     # 2026-05-13, ver mant_tecnicos_list_api app.py:~43305), NO contra la tabla
@@ -67328,18 +67331,35 @@ def mant_tecnico_externo_ficha(eid):
         flash("Técnico externo no encontrado", "warning")
         return redirect(url_for("mant_tecnicos_externos_index"))
     tec = _ext_row_to_dict(r)
-    # Historial de OTs si tiene user_id
+    # 🔴 FIX 2026-09-19 (Daniel, en vivo: "Daniel Pulgar no está asociando
+    # las órdenes de trabajo"). Antes el historial SOLO miraba tec.user_id
+    # (el 1:1 viejo) -- para DAP Servicio eso siempre fue NULL, porque
+    # Daniel Pulgar quedó asignado por la tabla NUEVA
+    # (mant_tecnico_externo_usuarios, commit 0cafc803), nunca por esa
+    # columna. Ahora junta TODOS los usuarios asignados a esta empresa
+    # (la tabla nueva, más tec.user_id por compatibilidad si alguna ficha
+    # vieja todavía lo usa) y trae sus OTs como líder O como colaborador
+    # (mant_visita_tecnicos) -- "todos los técnicos que pertenezcan a esa
+    # empresa podrán... asociar sus órdenes de trabajo a la ficha".
+    _uids_empresa = [r["user_id"] for r in (mysql_fetchall(
+        "SELECT user_id FROM mant_tecnico_externo_usuarios WHERE tecnico_externo_id=%s",
+        (eid,)
+    ) or [])]
+    if tec.get("user_id") and tec["user_id"] not in _uids_empresa:
+        _uids_empresa.append(tec["user_id"])
     historial = []
-    if tec.get("user_id"):
+    if _uids_empresa:
+        _ph = ",".join(["%s"] * len(_uids_empresa))
         historial_rows = mysql_fetchall(
-            "SELECT v.id, v.numero_ot, v.titulo, v.fecha_programada, v.estado, "
+            "SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.fecha_programada, v.estado, "
             "       v.tipo, v.modalidad_cobro, c.razon_social "
             "  FROM mant_visitas v "
             "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
-            " WHERE v.tecnico_user_id=%s "
+            "  LEFT JOIN mant_visita_tecnicos vt ON vt.visita_id = v.id "
+            f" WHERE v.tecnico_user_id IN ({_ph}) OR vt.tecnico_user_id IN ({_ph}) "
             " ORDER BY v.fecha_programada DESC, v.id DESC "
             " LIMIT 50",
-            (tec["user_id"],)
+            tuple(_uids_empresa) * 2
         ) or []
         historial = [dict(h) for h in historial_rows]
         for h in historial:
@@ -84810,6 +84830,9 @@ def ot2_api_crear():
     _err_tec_emp = _ot_validar_tecnicos_una_empresa(tec_ids)
     if _err_tec_emp:
         return _ot2_err(_err_tec_emp, "TECNICOS_EMPRESAS_MEZCLADAS")
+    _err_tope = _ot_validar_tope_ot_sin_contrato(tec_ids)
+    if _err_tope:
+        return _ot2_err(_err_tope, "PROVEEDOR_TOPE_SIN_CONTRATO")
     tecnico_nombre = None
     _t = mysql_fetchone(
         "SELECT COALESCE(nombre, username) AS n FROM app_users WHERE id=%s",
@@ -115802,6 +115825,71 @@ def _ot_validar_tecnicos_una_empresa(tecnico_ids):
     return None
 
 
+_OT_TOPE_SIN_CONTRATO = 5
+
+
+def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
+    """None si ok, o el mensaje de error si alguna empresa externa entre los
+    técnicos elegidos ya superó el tope de OT sin contrato registrado.
+
+    🔴 REGLA de Daniel, 2026-09-19 (en vivo): "debería ser como un máximo de
+    cinco órdenes de trabajo sin previo registro. Si le pasamos más de
+    cinco órdenes de trabajo y no se registra con contrato, ya hay que
+    bloquear o suspender hasta que se desbloquee." Confirmado vía
+    AskUserQuestion: lo único que cuenta como "registrado" es el
+    contrato/Anexo subido (mant_tecnicos_externos.contrato_pdf_url) -- el
+    resto de "Documentación del proveedor" (F30-1, mutualidad, etc.) es
+    alerta visual en la ficha, no bloquea esta cuenta.
+
+    Cuenta TODAS las OT ya existentes de CUALQUIER técnico asignado a esa
+    empresa (líder o colaborador) -- no por usuario individual, porque el
+    contrato lo firma la EMPRESA, no cada técnico por separado. Al cruzar
+    el tope, además suspende la ficha (estado='suspendido') para que quede
+    visible en el listado sin tener que adivinar por qué se bloqueó -- "o
+    bloquear o suspender" son la misma acción acá: se bloquea Y se ve.
+    """
+    ids = [int(t) for t in (tecnico_ids or []) if str(t).strip().lstrip("-").isdigit()]
+    if not ids:
+        return None
+    ph = ",".join(["%s"] * len(ids))
+    empresas = mysql_fetchall(
+        "SELECT DISTINCT te.id, te.razon_social, te.contrato_pdf_url, te.estado "
+        "  FROM mant_tecnico_externo_usuarios teu "
+        "  JOIN mant_tecnicos_externos te ON te.id = teu.tecnico_externo_id "
+        f" WHERE teu.user_id IN ({ph})",
+        tuple(ids)
+    ) or []
+    for emp in empresas:
+        if (emp.get("contrato_pdf_url") or "").strip():
+            continue
+        sub_uids = [r["user_id"] for r in (mysql_fetchall(
+            "SELECT user_id FROM mant_tecnico_externo_usuarios WHERE tecnico_externo_id=%s",
+            (emp["id"],)
+        ) or [])]
+        if not sub_uids:
+            continue
+        ph2 = ",".join(["%s"] * len(sub_uids))
+        cnt_row = mysql_fetchone(
+            "SELECT COUNT(DISTINCT v.id) AS n FROM mant_visitas v "
+            "  LEFT JOIN mant_visita_tecnicos vt ON vt.visita_id = v.id "
+            f" WHERE v.tecnico_user_id IN ({ph2}) OR vt.tecnico_user_id IN ({ph2})",
+            tuple(sub_uids) * 2
+        ) or {}
+        n_existentes = int(cnt_row.get("n") or 0)
+        if n_existentes >= _OT_TOPE_SIN_CONTRATO:
+            if emp.get("estado") == "activo":
+                try:
+                    mysql_execute(
+                        "UPDATE mant_tecnicos_externos SET estado='suspendido' WHERE id=%s",
+                        (emp["id"],))
+                except Exception:
+                    pass
+            return (f"{emp['razon_social']} ya tiene {n_existentes} OT sin contrato "
+                     f"registrado (tope: {_OT_TOPE_SIN_CONTRATO}). Sube el contrato/Anexo "
+                     f"en su ficha para poder seguir asignándole OTs.")
+    return None
+
+
 def _ot_resolver_plantilla_override(data):
     """plantilla_id explícita del caller, validada activa. None si no
     vino, no existe, o está inactiva -- nunca bloquea la creación."""
@@ -116815,6 +116903,9 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     _err_tec_emp = _ot_validar_tecnicos_una_empresa(tecnico_ids)
     if _err_tec_emp:
         return {"ok": False, "error": _err_tec_emp, "error_codigo": "TECNICOS_EMPRESAS_MEZCLADAS"}, 400
+    _err_tope = _ot_validar_tope_ot_sin_contrato(tecnico_ids)
+    if _err_tope:
+        return {"ok": False, "error": _err_tope, "error_codigo": "PROVEEDOR_TOPE_SIN_CONTRATO"}, 400
     plantilla_id_override = _ot_resolver_plantilla_override(data)
     plantillas_por_equipo, plantillas_por_ticket_equipo = _ot_resolver_plantillas_payload(data)
     # El usuario elige la plantilla ANTES de que exista ficha (key teq_<id>,

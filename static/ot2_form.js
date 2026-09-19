@@ -263,7 +263,8 @@ function o2fRenderTecnicos(){
   }
   const fechaProg = document.getElementById('o2fLevFechaProg')?.value || '';
   const empresaBloqueada = o2fEmpresaBloqueada();
-  box.innerHTML = techs.map(function(t){
+
+  function pintarPill(t){
     const isSel = _O2F.tecnicosSel.has(t.id);
     const bloqueado = !isSel && empresaBloqueada && t.empresa_id && t.empresa_id !== empresaBloqueada;
     let bg, icon, extra = '', click = 'onclick="o2fToggleTecnico('+t.id+')"';
@@ -282,6 +283,35 @@ function o2fRenderTecnicos(){
     return '<span class="badge rounded-pill border" style="cursor:pointer;padding:.5rem .85rem;font-size:.82rem;font-weight:500;'+bg+'" '
       + click + extra + '><i class="bi '+icon+' me-1"></i>'+esc(t.nombre || t.email || ('Téc #'+t.id))
       + _tkotTecCargaChip(t.id, fechaProg) + '</span>';
+  }
+
+  // 🔴 2026-09-19 (Daniel, en vivo: "separar los técnicos según las
+  // empresas... todo eso debería estar separado como con un recuadro
+  // sencillo... para que se entienda que Rafael Naranjo no pertenece a
+  // Transportes Milling"). Ya no alcanza con solo deshabilitar la pill de
+  // otra empresa (lo de más arriba) -- el AGRUPAMIENTO visual es lo que
+  // deja clarísimo, de un vistazo, quién es de qué empresa, sin que el
+  // usuario tenga que leer el nombre de cada uno. Internos primero
+  // (empresa_id null -- se pueden mezclar con cualquiera), después un
+  // recuadro por cada empresa externa, en el orden en que aparecen.
+  const gruposOrden = [];
+  const gruposMap = {};
+  techs.forEach(function(t){
+    const key = t.empresa_id ? ('emp_' + t.empresa_id) : 'interno';
+    if(!gruposMap[key]){
+      gruposMap[key] = { titulo: t.empresa_id ? (t.empresa_nombre || 'Empresa #' + t.empresa_id) : 'Internos', items: [] };
+      gruposOrden.push(key);
+    }
+    gruposMap[key].items.push(t);
+  });
+  box.innerHTML = gruposOrden.map(function(key){
+    const g = gruposMap[key];
+    const esInterno = key === 'interno';
+    return '<div class="o2f-tec-grupo" style="border:1px solid '+(esInterno?'#e5e7eb':'#dbeafe')+';border-radius:10px;padding:.5rem .65rem;margin-bottom:.5rem;background:'+(esInterno?'#fafafa':'#f8fafc')+'">'
+      + '<div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#64748b;margin-bottom:.35rem">'
+      + '<i class="bi ' + (esInterno ? 'bi-people-fill' : 'bi-building-fill') + ' me-1"></i>' + esc(g.titulo) + '</div>'
+      + '<div class="d-flex flex-wrap gap-2">' + g.items.map(pintarPill).join('') + '</div>'
+      + '</div>';
   }).join('');
   (document.getElementById('o2fLevTecCount')||{}).textContent = String(_O2F.tecnicosSel.size);
 }
