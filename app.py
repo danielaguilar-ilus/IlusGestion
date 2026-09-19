@@ -106702,9 +106702,15 @@ _MFP_SQL_OT_EXTERNA = (
     " OR LEFT(LOWER(COALESCE(au.role,'')), 15) = 'tecnico_externo' "
     " OR te.id IS NOT NULL)"
 )
-# Solo se le paga al proveedor cuando el cliente ya firmó (o la OT ya
-# cerró): es lo que dice el propio anexo en "Hitos de pago".
-_MFP_ESTADOS_FACTURABLES = ("pendiente_aprobacion", "completada", "cerrada")
+# 🔴 2026-09-19 (Daniel, checklist de finanzas: "debe estar cerrada para
+# poder pagar" -- si no hay anexo y OT cerrada, no se paga). Antes incluía
+# 'pendiente_aprobacion'/'completada': una OT en esos estados TODAVÍA no
+# pasó por mant_ot_aprobar_cierre, que es donde vive el candado
+# ANEXO_DESACTUALIZADO (si lo que se le paga al proveedor cambió desde que
+# firmó el Anexo, no deja cerrar sin firmar uno nuevo). Pagar antes de ese
+# candado sería pagar un monto que todavía no se verificó contra lo
+# firmado. Solo 'cerrada' ya pasó por esa verificación.
+_MFP_ESTADOS_FACTURABLES = ("cerrada",)
 _MFP_PER_PAGE = (10, 25, 50, 100)
 _MFP_JOINS_OT = (
     "  FROM mant_visitas v "
@@ -107311,7 +107317,8 @@ def mant_factura_proveedor_asignar(fid):
     if ot["estado"] not in _MFP_ESTADOS_FACTURABLES:
         return jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
                         "error": (f"La {ot['numero_ot']} está '{ot['estado']}': al proveedor se le "
-                                  "paga cuando el cliente ya firmó o la OT está cerrada.")}), 400
+                                  "paga solo cuando la OT está cerrada (ya pasó por la aprobación "
+                                  "final y su Anexo quedó verificado).")}), 400
     if monto <= 0:
         monto = ot["sugerido"]
     if monto <= 0:
