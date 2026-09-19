@@ -107259,15 +107259,31 @@ def mant_facturas_proveedor():
     # tienen factura. En su propio try: un fallo acá no puede romper la
     # paginación de arriba. mant_tecnicos_externos NO tiene columna
     # `activo` (esa es de la tabla legacy mant_tecnicos): usa `estado`.
+    # 🔴 2026-09-19 (Daniel, en vivo, viendo el modal "Nueva factura de
+    # proveedor"): "el proveedor lo vamos a sacar obviamente de los
+    # proveedores nacionales... que lo tienes tú todavía como técnicos".
+    # `provs_sugeridos` (abajo) mezcla la ficha real CON nombres libres de
+    # facturas viejas ("Daniel Pulgar", "Isabel Milling", "Milling" suelto)
+    # -- sirve para que el buscador/chips sigan encontrando facturas
+    # históricas que se escribieron a mano antes de que existiera la ficha.
+    # Pero para CREAR una factura nueva eso es ruido: debe salir solo de
+    # Proveedores nacionales (mant_tecnicos_externos), la lista limpia que
+    # se consolidó hoy. provs_nacionales es ESA lista sola, sin mezclar.
+    provs_nacionales = []
     try:
-        vistos = set()
         for r in (mysql_fetchall(
                 "SELECT id, razon_social AS n, rut_empresa AS r FROM mant_tecnicos_externos "
                 " WHERE COALESCE(estado,'activo') <> 'baja' ORDER BY razon_social") or []):
-            k = (r.get("n") or "").strip().lower()
+            provs_nacionales.append({"nombre": r.get("n"), "rut": r.get("r") or "", "id": r.get("id")})
+    except Exception as e:
+        print(f"[facprov] proveedores nacionales: {e}", flush=True)
+    try:
+        vistos = set()
+        for p in provs_nacionales:
+            k = (p["nombre"] or "").strip().lower()
             if k and k not in vistos:
                 vistos.add(k)
-                provs_sugeridos.append({"nombre": r.get("n"), "rut": r.get("r") or "", "id": r.get("id")})
+                provs_sugeridos.append(p)
         for r in (mysql_fetchall(
                 "SELECT DISTINCT proveedor_nombre AS n, proveedor_rut AS r, tecnico_externo_id AS t "
                 "  FROM mant_facturas_proveedor ORDER BY proveedor_nombre") or []):
@@ -107324,6 +107340,7 @@ def mant_facturas_proveedor():
         pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
         pf_total_paginas=pf_total_paginas, pf_orden=pf_orden, pf_dir=pf_dir,
         provs_sugeridos=provs_sugeridos,
+        provs_nacionales=provs_nacionales,
         es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
         hoy_iso=_now_chile().date().isoformat(),
     )

@@ -366,7 +366,14 @@
           </div>
           <div class="fpv-step-bd">
             <label class="fpv-lbl" for="fpvProv">Proveedor <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="fpvProv" list="fpvProvLista" placeholder="Ej: Isabel Milling" autocomplete="off" oninput="fpvRefreshSteps()">
+            {# 🔴 2026-09-19 (Daniel, en vivo): al CREAR una factura, el proveedor
+               sale SOLO de Proveedores nacionales (provs_nacionales) -- ya no de
+               la mezcla con nombres sueltos de facturas viejas (fpvProvLista,
+               que sigue viva para el buscador/chips de arriba, sin tocar). #}
+            <input type="text" class="form-control" id="fpvProv" list="fpvProvNacList" placeholder="Ej: Isabel Milling" autocomplete="off" oninput="fpvRefreshSteps()">
+            <datalist id="fpvProvNacList">
+              {% for p in provs_nacionales %}<option value="{{ p.nombre }}" data-rut="{{ p.rut }}" data-id="{{ p.id or '' }}">{{ p.rut | rut_fmt if p.rut else '' }}</option>{% endfor %}
+            </datalist>
             <datalist id="fpvProvLista">
               {% for p in provs_sugeridos %}<option value="{{ p.nombre }}" data-rut="{{ p.rut }}" data-id="{{ p.id or '' }}">{{ p.rut | rut_fmt if p.rut else '' }}</option>{% endfor %}
             </datalist>
