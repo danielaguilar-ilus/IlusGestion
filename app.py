@@ -115827,6 +115827,17 @@ def _ot_validar_tecnicos_una_empresa(tecnico_ids):
 
 _OT_TOPE_SIN_CONTRATO = 5
 
+# 🔴 2026-09-19 (Daniel, en vivo): al revisar en vivo, las 3 empresas reales
+# (DAP Servicio, Milling, Felcarm) YA tenían 14-16 OT históricas sin contrato
+# subido -- contar TODO el historial las habría suspendido a las tres apenas
+# alguien intentara asignarles la próxima OT, sin que nadie lo esperara.
+# Daniel, confirmado vía pregunta: el tope cuenta SOLO OT creadas desde hoy
+# en adelante, nunca retroactivo. `os.environ.get` para poder correr esto de
+# nuevo (nuevo cutover) sin tocar código, mismo patrón que TR_FECHA_NACIMIENTO.
+_OT_TOPE_SIN_CONTRATO_DESDE = os.environ.get(
+    "ILUS_OT_TOPE_SIN_CONTRATO_DESDE", "2026-09-19"
+).strip()
+
 
 def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
     """None si ok, o el mensaje de error si alguna empresa externa entre los
@@ -115841,12 +115852,13 @@ def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
     resto de "Documentación del proveedor" (F30-1, mutualidad, etc.) es
     alerta visual en la ficha, no bloquea esta cuenta.
 
-    Cuenta TODAS las OT ya existentes de CUALQUIER técnico asignado a esa
-    empresa (líder o colaborador) -- no por usuario individual, porque el
-    contrato lo firma la EMPRESA, no cada técnico por separado. Al cruzar
-    el tope, además suspende la ficha (estado='suspendido') para que quede
-    visible en el listado sin tener que adivinar por qué se bloqueó -- "o
-    bloquear o suspender" son la misma acción acá: se bloquea Y se ve.
+    Cuenta las OT creadas desde _OT_TOPE_SIN_CONTRATO_DESDE de CUALQUIER
+    técnico asignado a esa empresa (líder o colaborador) -- no por usuario
+    individual, porque el contrato lo firma la EMPRESA, no cada técnico por
+    separado. Al cruzar el tope, además suspende la ficha
+    (estado='suspendido') para que quede visible en el listado sin tener
+    que adivinar por qué se bloqueó -- "o bloquear o suspender" son la
+    misma acción acá: se bloquea Y se ve.
     """
     ids = [int(t) for t in (tecnico_ids or []) if str(t).strip().lstrip("-").isdigit()]
     if not ids:
@@ -115872,8 +115884,9 @@ def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
         cnt_row = mysql_fetchone(
             "SELECT COUNT(DISTINCT v.id) AS n FROM mant_visitas v "
             "  LEFT JOIN mant_visita_tecnicos vt ON vt.visita_id = v.id "
-            f" WHERE v.tecnico_user_id IN ({ph2}) OR vt.tecnico_user_id IN ({ph2})",
-            tuple(sub_uids) * 2
+            f" WHERE (v.tecnico_user_id IN ({ph2}) OR vt.tecnico_user_id IN ({ph2})) "
+            "   AND v.created_at >= %s",
+            tuple(sub_uids) * 2 + (_OT_TOPE_SIN_CONTRATO_DESDE,)
         ) or {}
         n_existentes = int(cnt_row.get("n") or 0)
         if n_existentes >= _OT_TOPE_SIN_CONTRATO:
