@@ -253,6 +253,19 @@
       <i class="bi bi-trash3-fill"></i>Dar de baja
     </button>
     {% endif %}
+    {# 🗑️ 2026-09-19 (Daniel, en vivo: "no podía borrar a Daniel Pulgar...
+       el superadministrador tiene que poder hacer y deshacer"). "Dar de
+       baja" es soft-delete (REGLA #5) y la fila sigue en el listado,
+       marcada "De baja" -- correcto como default, pero no es lo que pide
+       un CRUD completo para quien de verdad necesita borrar una ficha
+       duplicada (ej. una empresa creada dos veces). El backend YA tenía
+       hard-delete (?hard=1&confirm_text=BAJA, superadmin-only) desde antes
+       de hoy; lo único que faltaba era el botón. Solo superadmin lo ve. #}
+    {% if es_superadmin %}
+    <button class="btn btn-sm btn-danger" onclick="eliminarDefinitivo()">
+      <i class="bi bi-trash3-fill"></i>Eliminar definitivamente
+    </button>
+    {% endif %}
   </div>
 </div>
 
@@ -826,6 +839,37 @@ async function darDeBaja(){
     if (d.ok){
       ilusToast('✓ Técnico dado de baja', { type:'success' });
       setTimeout(() => location.reload(), 800);
+    } else {
+      ilusToast(d.error || 'Error', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+async function eliminarDefinitivo(){
+  const ok = await ilusConfirm({
+    title: 'Eliminar definitivamente',
+    message: 'Esto borra ' + {{ tec.razon_social | tojson }} + ' de la base de datos -- no "dar de baja", BORRAR.',
+    sub: 'No se puede deshacer. Si esta empresa tiene facturas de proveedor o anexos asociados, van a quedar sin ficha vinculada. Úsalo solo para fichas duplicadas o creadas por error.',
+    okLabel: 'Entiendo, continuar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const escrito = await ilusPrompt({
+    title: 'Confirma escribiendo BAJA',
+    message: 'Escribe BAJA (en mayúsculas) para eliminar definitivamente a ' + {{ tec.razon_social | tojson }} + '.',
+    placeholder: 'BAJA',
+    required: true,
+  });
+  if ((escrito || '').trim().toUpperCase() !== 'BAJA') {
+    if (escrito !== null) ilusToast('No escribiste BAJA -- no se eliminó nada.', { type:'warning' });
+    return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}?hard=1&confirm_text=BAJA`,
+      { method: 'DELETE', credentials: 'same-origin' });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Eliminado definitivamente', { type:'success' });
+      setTimeout(() => { window.location.href = '{{ url_for("mant_tecnicos_externos_index") }}'; }, 800);
     } else {
       ilusToast(d.error || 'Error', { type:'error' });
     }

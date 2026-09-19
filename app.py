@@ -55443,6 +55443,29 @@ def init_mantenciones_tables():
                 try: cur.execute(_mig)
                 except Exception: pass
 
+            # ════════════════════════════════════════════════════════════════
+            # mant_tecnico_externo_usuarios — empresa (mant_tecnicos_externos)
+            # ↔ técnicos (app_users, rol tecnico_externo*).
+            # Reemplaza el modelo viejo 1:1 (mant_tecnicos_externos.user_id):
+            # una empresa proveedora puede tener VARIOS técnicos asignados
+            # (ej. Transportes Milling con 2 personas), y cada técnico
+            # pertenece a UNA sola empresa a la vez (user_id UNIQUE).
+            # Pedido explícito de Daniel, 19-sep-2026: "asignar a Daniel
+            # Pulgar como técnico externo a esa empresa [DAP Servicio]".
+            # ════════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tecnico_externo_usuarios (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    tecnico_externo_id INT NOT NULL COMMENT 'FK mant_tecnicos_externos.id (empresa)',
+                    user_id INT NOT NULL UNIQUE COMMENT 'FK app_users.id, un tecnico pertenece a 1 empresa',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    created_by VARCHAR(190),
+                    FOREIGN KEY (tecnico_externo_id) REFERENCES mant_tecnicos_externos(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES `""" + AUTH_TABLE + """`(id) ON DELETE CASCADE,
+                    INDEX idx_empresa (tecnico_externo_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # Migración: número de OT (Orden de Trabajo) único por visita
             for _mig in [
                 "ALTER TABLE mant_visitas ADD COLUMN numero_ot VARCHAR(30) NULL AFTER id",
@@ -67312,6 +67335,7 @@ def mant_tecnico_externo_ficha(eid):
         "mantenciones/tecnico_externo_ficha.html",
         tec=tec,
         historial=historial,
+        es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
     )
 
 
@@ -67544,6 +67568,96 @@ def mant_tecnico_externo_eliminar(eid):
         )
         _mant_log("tecnico_externo", eid, "baja", f"{row['razon_social']}")
         return jsonify({"ok": True, "soft": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:140]}), 500
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/usuarios", methods=["GET"])
+@_mant_required
+def mant_tecnico_externo_usuarios_listar(eid):
+    """Lista los técnicos (usuarios app_users, rol tecnico_externo*) asignados
+    a esta empresa proveedora. Una empresa puede tener varios técnicos."""
+    if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    rows = mysql_fetchall(
+        "SELECT teu.id AS asignacion_id, u.id AS user_id, u.username, u.nombre, "
+        "       u.phone, u.role, u.active "
+        "  FROM mant_tecnico_externo_usuarios teu "
+        "  JOIN `" + AUTH_TABLE + "` u ON u.id = teu.user_id "
+        " WHERE teu.tecnico_externo_id=%s "
+        " ORDER BY u.nombre",
+        (eid,)
+    ) or []
+    return jsonify({"ok": True, "tecnicos": [dict(r) for r in rows]})
+
+
+@app.route("/mantenciones/api/tecnicos-externos-disponibles", methods=["GET"])
+@_mant_required
+def mant_tecnicos_externos_usuarios_disponibles():
+    """Usuarios con rol tecnico_externo* para el selector de 'Asignar técnico'
+    en la ficha de empresa. Incluye a qué empresa está asignado hoy (si alguna),
+    para poder reasignarlo -- un técnico pertenece a UNA sola empresa a la vez."""
+    rows = mysql_fetchall(
+        "SELECT u.id AS user_id, u.username, u.nombre, u.phone, u.active, "
+        "       teu.tecnico_externo_id, te.razon_social AS empresa_actual "
+        "  FROM `" + AUTH_TABLE + "` u "
+        "  LEFT JOIN mant_tecnico_externo_usuarios teu ON teu.user_id = u.id "
+        "  LEFT JOIN mant_tecnicos_externos te ON te.id = teu.tecnico_externo_id "
+        " WHERE u.role LIKE 'tecnico_externo%' "
+        " ORDER BY u.nombre"
+    ) or []
+    return jsonify({"ok": True, "usuarios": [dict(r) for r in rows]})
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/usuarios", methods=["POST"])
+@_mant_required
+def mant_tecnico_externo_usuario_asignar(eid):
+    """Asigna (o reasigna) un usuario técnico_externo a esta empresa.
+    Un técnico pertenece a una sola empresa a la vez -- reasignar lo mueve."""
+    empresa = mysql_fetchone("SELECT id, razon_social FROM mant_tecnicos_externos WHERE id=%s", (eid,))
+    if not empresa:
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    d = request.get_json(silent=True) or {}
+    try:
+        user_id = int(d.get("user_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "user_id inválido"}), 400
+    user = mysql_fetchone(
+        "SELECT id, nombre, role FROM `" + AUTH_TABLE + "` WHERE id=%s", (user_id,)
+    )
+    if not user:
+        return jsonify({"ok": False, "error": "Usuario no encontrado"}), 404
+    if not (user.get("role") or "").strip().lower().startswith("tecnico_externo"):
+        return jsonify({"ok": False, "error": "Este usuario no tiene rol de técnico externo"}), 400
+    try:
+        mysql_execute(
+            "INSERT INTO mant_tecnico_externo_usuarios (tecnico_externo_id, user_id, created_by) "
+            "VALUES (%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE tecnico_externo_id=VALUES(tecnico_externo_id)",
+            (eid, user_id, (getattr(g, "user", None) or {}).get("username", "") if hasattr(g, "user") else "")
+        )
+        _mant_log("tecnico_externo", eid, "tecnico_asignado", f"{user['nombre']} -> {empresa['razon_social']}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:140]}), 500
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/usuarios/<int:user_id>", methods=["DELETE"])
+@_mant_required
+def mant_tecnico_externo_usuario_quitar(eid, user_id):
+    """Desvincula un técnico de esta empresa (no borra al usuario/login)."""
+    if not mysql_fetchone(
+        "SELECT id FROM mant_tecnico_externo_usuarios WHERE tecnico_externo_id=%s AND user_id=%s",
+        (eid, user_id)
+    ):
+        return jsonify({"ok": False, "error": "Esa asignación no existe"}), 404
+    try:
+        mysql_execute(
+            "DELETE FROM mant_tecnico_externo_usuarios WHERE tecnico_externo_id=%s AND user_id=%s",
+            (eid, user_id)
+        )
+        _mant_log("tecnico_externo", eid, "tecnico_desvinculado", f"user_id={user_id}")
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)[:140]}), 500
 
@@ -80036,12 +80150,26 @@ def _ot2_finanzas_estado(v):
     # cubierto_por, que es el vocabulario real de la tabla.
     _es_garantia = ((v.get("modalidad_cobro") or "").lower() == "garantia"
                     or (v.get("cubierto_por") or "").lower() == "garantia")
-    if _es_garantia:
-        # Cubierto por garantía: no se le pide documento, pero sí el
-        # motivo -- una garantía sin explicación no se puede defender
-        # después ante el cliente ni ante contabilidad.
+    # 🔴 FIX 2026-09-19 (Daniel, en vivo: OT-2026-00182 generada por el Plan
+    # Anual -- "toda la creación de OT en adelante venga valorizada, o
+    # declarada como garantía... con algún argumento"). `cubierto_por`
+    # arranca en 'contrato' por DEFAULT de columna (mant_visitas, ver
+    # ensure_intel) para CUALQUIER visita que no lo pise -- eso venía
+    # tratándose como "no hay nada que declarar", cuando en realidad es la
+    # MISMA situación que una garantía: el cliente ya pagó por esto (vía su
+    # contrato de mantención, no por documento suelto) y no corresponde
+    # pedirle factura ni monto por visita. Se exige el mismo candado que
+    # garantía: un motivo/argumento explícito (por qué contrato, cuál),
+    # nunca "porque sí" -- reusa garantia_motivo, que aquí funciona como
+    # "motivo de la cobertura" genérico.
+    _es_contrato = (v.get("cubierto_por") or "").lower() == "contrato"
+    if _es_garantia or _es_contrato:
+        # Cubierto por garantía o por contrato: no se le pide documento,
+        # pero sí el motivo -- una cobertura sin explicación no se puede
+        # defender después ante el cliente ni ante contabilidad.
         if not (v.get("garantia_motivo") or "").strip():
-            faltan.append("motivo de la garantía")
+            faltan.append("motivo de la garantía" if _es_garantia
+                          else "motivo/contrato que cubre esta visita")
     else:
         tiene_doc = bool((v.get("factura_nudo") or "").strip())
         if not tiene_doc:
@@ -105772,6 +105900,48 @@ def _intel_contrato_id(cid):
     return ct["id"] if ct else None
 
 
+def _pl_cobertura_contrato(cid):
+    """Resuelve cubierto_por/centro_costo/motivo/costo para una OT de
+    mantención generada automáticamente (Plan Anual, registro retroactivo).
+
+    🔴 FIX 2026-09-19 (Daniel, en vivo: OT-2026-00182 nació sin centro de
+    costo ni documento ni motivo -- "toda la creación de OT en adelante
+    venga valorizada, o declarada como garantía... con algún argumento").
+    Antes estos caminos escribían cubierto_por='contrato' a secas (el
+    DEFAULT de la columna) y _ot2_finanzas_estado() la marcaba
+    'sin_cotizar' para siempre -- invisible hasta que alguien la abriera a
+    mano. Único punto de esta regla (REGLA #4 de CLAUDE.md): cualquier otro
+    camino que genere visitas de mantención automáticas debe llamar acá,
+    nunca reinventar el criterio.
+
+    Devuelve dict con: contrato_id, cubierto_por, motivo, costo.
+      - Si el cliente tiene contrato registrado: cubierto_por='contrato',
+        motivo explica cuál contrato (el "argumento" que pidió Daniel).
+      - Si NO tiene contrato: cubierto_por='cliente' -- no se le puede
+        atribuir cobertura por contrato sin mentir; queda pendiente de
+        facturar, igual que cualquier OT normal sin cobertura declarada.
+      - `costo`: mant_clientes.valor_mantencion_clp si gerencia ya definió
+        el monto neto por mantención para este cliente (2026-06-10, "la
+        valoración de Daniel") -- nunca un número inventado por este código.
+    """
+    contrato_id = _intel_contrato_id(cid)
+    if contrato_id:
+        ct = mysql_fetchone("SELECT nombre FROM mant_contratos WHERE id=%s", (contrato_id,)) or {}
+        nombre_ct = (ct.get("nombre") or "").strip() or f"contrato N°{contrato_id}"
+        cubierto_por = "contrato"
+        motivo = (f"Mantención preventiva del Plan Anual, cubierta por {nombre_ct}; "
+                  f"no se factura por visita.")[:500]
+    else:
+        cubierto_por = "cliente"
+        motivo = None
+    cli = mysql_fetchone("SELECT valor_mantencion_clp FROM mant_clientes WHERE id=%s", (cid,)) or {}
+    try:
+        costo = float(cli.get("valor_mantencion_clp") or 0) or None
+    except (TypeError, ValueError):
+        costo = None
+    return {"contrato_id": contrato_id, "cubierto_por": cubierto_por, "motivo": motivo, "costo": costo}
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/intel/accion", methods=["POST"])
 @_mant_required
 @_no_tecnico
@@ -105805,12 +105975,19 @@ def mant_intel_accion(cid):
             uid = None
             try: uid = (g.user or {}).get("id")
             except Exception: uid = None
+            # 🔴 FIX 2026-09-19: mismo criterio que mant_planificador_generar_ots
+            # -- ver _pl_cobertura_contrato(). Esta además nace 'completada', más
+            # cerca del cierre/pago que una 'programada', así que el hueco era
+            # más grave todavía.
+            _rv_cob = _pl_cobertura_contrato(cid)
             mysql_execute(
                 "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
-                " fecha_programada, fecha_realizada, es_retroactiva, cubierto_por, created_by, created_by_user_id) "
-                "VALUES (%s,%s,%s,'preventiva','completada',%s,%s,1,'contrato',%s,%s)",
-                (cid, _intel_contrato_id(cid), "Mantención preventiva (registro retroactivo)",
-                 fecha, fecha, current_username(), uid))
+                " fecha_programada, fecha_realizada, es_retroactiva, cubierto_por, "
+                " centro_costo, garantia_motivo, costo, created_by, created_by_user_id) "
+                "VALUES (%s,%s,%s,'preventiva','completada',%s,%s,1,%s,'sstt',%s,%s,%s,%s)",
+                (cid, _rv_cob["contrato_id"], "Mantención preventiva (registro retroactivo)",
+                 fecha, fecha, _rv_cob["cubierto_por"], _rv_cob["motivo"], _rv_cob["costo"],
+                 current_username(), uid))
         elif accion == "set_campo_cliente":
             campo = (d.get("campo") or "").strip()
             valor = (d.get("valor") or "").strip()
@@ -106330,12 +106507,25 @@ def mant_planificador_generar_ots():
                     # fecha_override: solo se aplica cuando es una OT individual
                     fecha_ot = (fecha_override if fecha_override and len(candidatas) == 1
                                 else cand["fecha"])
+                    # 🔴 FIX 2026-09-19 (Daniel, en vivo: OT-2026-00182 -- "toda la
+                    # creación de OT en adelante venga valorizada, o declarada
+                    # como garantía... con algún argumento"). Antes esta OT nacía
+                    # con cubierto_por='contrato' a secas (default de columna) y
+                    # SIN centro_costo ni motivo -- _ot2_finanzas_estado() la
+                    # marcaba "sin_cotizar" indefinidamente, invisible hasta que
+                    # alguien la abriera a mano. Centro de costo siempre es sstt
+                    # acá (el Plan Anual SOLO genera mantención propia de
+                    # Servicio Técnico). Ver _pl_cobertura_contrato() (REGLA #4,
+                    # mismo criterio que registrar_visita_retro).
+                    _pl_cob = _pl_cobertura_contrato(cid)
                     cur.execute(
                         "INSERT INTO mant_visitas (numero_ot, cliente_id, contrato_id, titulo, tipo, estado, "
-                        " fecha_programada, cubierto_por, created_by, created_by_user_id) "
-                        "VALUES (%s,%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
-                        (numero_ot, cid, _intel_contrato_id(cid), "Mantención preventiva (Plan anual)",
-                         fecha_ot, current_username(), uid))
+                        " fecha_programada, cubierto_por, centro_costo, garantia_motivo, costo, "
+                        " created_by, created_by_user_id) "
+                        "VALUES (%s,%s,%s,%s,'preventiva','programada',%s,%s,'sstt',%s,%s,%s,%s)",
+                        (numero_ot, cid, _pl_cob["contrato_id"], "Mantención preventiva (Plan anual)",
+                         fecha_ot, _pl_cob["cubierto_por"], _pl_cob["motivo"], _pl_cob["costo"],
+                         current_username(), uid))
                     creadas += 1
             conn.commit()
         finally:
