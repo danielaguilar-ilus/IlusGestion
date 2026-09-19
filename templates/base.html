@@ -760,7 +760,7 @@
       {% if current_user and current_user.role != 'tecnico' %}
       <a href="{{ url_for('mant_proveedores_repuesto_page') }}"
          class="sidebar-link{% if request.endpoint == 'mant_proveedores_repuesto_page' %} active{% endif %}">
-        <i class="bi bi-truck"></i><span>Proveedores</span>
+        <i class="bi bi-truck"></i><span>Proveedores de equipos</span>
       </a>
       {% endif %}
       {# 💸 2026-09-14 (Daniel: "controlar los cobros de los externos").
