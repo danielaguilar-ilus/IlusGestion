@@ -106554,6 +106554,8 @@ _MFP_JOINS_OT = (
 _MFP_SELECT_OT = (
     "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, v.cerrada_at, "
     "       v.costo_proveedor, v.costo_despacho, v.proveedor_nombre, "
+    "       v.costo AS cliente_costo, v.zz_monto AS cliente_zz_monto, "
+    "       v.zz_envio_monto AS cliente_zz_envio_monto, "
     "       c.razon_social AS cliente, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id, "
@@ -106578,6 +106580,19 @@ def _mfp_fila_ot(f):
     desp = float(f.get("costo_despacho") or 0)
     tipo = (f.get("tipo") or "").lower()
     _fecha = f.get("cerrada_at") or f.get("fecha_programada")
+    # 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el
+    # total cobrado por el proveedor, así sé si pierdo o gano"). Misma
+    # fórmula que ya usa _pintarFinMargenDom (OT2.0) y
+    # mant_dashboard_costos_tecnico: venta = zz_monto si se declaró (>0),
+    # si no el costo_cliente legacy guardado en `costo`; el despacho
+    # cobrado al cliente va aparte en zz_envio_monto. Nunca se mezcla con
+    # costo_proveedor/costo_despacho (lo que ILUS le paga AL proveedor,
+    # signo contrario en el margen).
+    _venta_zz = float(f.get("cliente_zz_monto") or 0)
+    _venta_serv = _venta_zz if _venta_zz > 0 else float(f.get("cliente_costo") or 0)
+    _venta_envio = float(f.get("cliente_zz_envio_monto") or 0)
+    cobrado_cliente = _venta_serv + _venta_envio
+    pagado_proveedor = serv + desp
     return {
         "id": f["id"],
         "numero_ot": f.get("numero_ot") or ("OT #" + str(f["id"])),
@@ -106588,6 +106603,7 @@ def _mfp_fila_ot(f):
         "proveedor": _mfp_nombre_proveedor_ot(f),
         "proveedor_rut": f.get("prov_rut") or "",
         "servicio": serv, "despacho": desp, "sugerido": serv + desp,
+        "cobrado_cliente": cobrado_cliente, "margen": cobrado_cliente - pagado_proveedor,
         "fac_id": f.get("fac_id"), "fac_numero": f.get("fac_numero"),
         "fac_estado": f.get("fac_estado"),
         "fac_monto": float(f["fac_monto"]) if f.get("fac_monto") is not None else None,
@@ -106925,10 +106941,17 @@ def mant_factura_proveedor_detalle(fid):
     factura["monto_total"] = float(factura.get("monto_total") or 0)
     items = _mfp_items(fid)
     total_asignado = sum(i["sugerido"] if i["fac_monto"] is None else i["fac_monto"] for i in items)
+    # 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el
+    # total cobrado por el proveedor, así sé si pierdo o gano"). Suma de
+    # lo que ILUS le cobró a SU cliente en cada OT de esta factura, para
+    # verla al lado de lo que esta factura le paga al proveedor.
+    total_cobrado_cliente = sum(i["cobrado_cliente"] for i in items)
     return render_template(
         "mantenciones/factura_proveedor_detalle.html",
         factura=factura, items=items, total_asignado=total_asignado,
         diferencia=factura["monto_total"] - total_asignado,
+        total_cobrado_cliente=total_cobrado_cliente,
+        margen_total=total_cobrado_cliente - factura["monto_total"],
         es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
     )
 

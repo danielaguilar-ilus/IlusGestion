@@ -104,6 +104,18 @@
     {% else %}<div class="v {{ 'neg' if diferencia < 0 else 'warn' }}">{{ '+' if diferencia > 0 else '' }}{{ clp(diferencia) }}</div>
       <div class="s">{{ 'la factura cobra más que lo declarado en las OT' if diferencia > 0 else 'las OT suman más que la factura' }}</div>{% endif %}
   </div>
+  {# 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el
+     total cobrado por el proveedor, así sé si pierdo o gano"). Mismas OT,
+     mirando el otro lado del negocio: lo que ILUS le cobró a SU cliente,
+     al lado de lo que esta factura le paga al proveedor. #}
+  <div class="fpd-cell"><div class="l">Cobrado a cliente</div><div class="v">{{ clp(total_cobrado_cliente) }}</div></div>
+  <div class="fpd-cell">
+    <div class="l">Margen</div>
+    {% if not items %}<div class="v muted">—</div>
+    {% else %}<div class="v {{ 'pos' if margen_total > 0 else ('neg' if margen_total < 0 else '') }}">
+      {{ '+' if margen_total > 0 else '' }}{{ clp(margen_total) }}</div>
+      <div class="s">{{ 'gana ILUS' if margen_total > 0 else ('pierde ILUS' if margen_total < 0 else 'sin margen') }}</div>{% endif %}
+  </div>
 </div>
 
 {# ── OT en esta factura ──────────────────────────────────────────── #}
@@ -121,6 +133,7 @@
       <tr>
         <th>OT</th><th>Cliente</th><th>Servicio</th><th>Estado</th>
         <th class="m">Declarado en la OT</th><th class="m">Cobra esta factura</th>
+        <th class="m">Cobrado a cliente</th><th class="m">Margen</th>
         <th>Observación</th>{% if pendiente %}<th></th>{% endif %}
       </tr>
     </thead>
@@ -137,6 +150,10 @@
         <td class="m tot" data-label="Cobra esta factura">{{ clp(it.fac_monto if it.fac_monto is not none else it.sugerido) }}
           {% if it.fac_monto is not none and (it.fac_monto - it.sugerido)|round(0) != 0 %}
           <div class="fp-sub" style="color:#b45309">≠ declarado</div>{% endif %}</td>
+        <td class="m" data-label="Cobrado a cliente">{{ clp(it.cobrado_cliente) }}</td>
+        <td class="m" data-label="Margen">
+          <span class="{{ 'fp-margen-pos' if it.margen > 0 else ('fp-margen-neg' if it.margen < 0 else '') }}">
+            {{ '+' if it.margen > 0 else '' }}{{ clp(it.margen) }}</span></td>
         <td class="fpd-obs" data-label="Observación">{{ it.observacion or '—' }}
           <div class="fp-sub">{{ it.usuario }}{% if it.asignada %} · {{ it.asignada }}{% endif %}</div></td>
         {% if pendiente %}
@@ -545,6 +562,8 @@ async function fpdGuardarEdicion(){
 .fp-tabla tbody td:first-child{border-left:1px solid #e5e7eb;border-radius:9px 0 0 9px}
 .fp-tabla tbody td:last-child{border-right:1px solid #e5e7eb;border-radius:0 9px 9px 0}
 .fp-tabla td.tot{font-weight:900;color:#0f172a}
+.fp-margen-pos{color:#15803d;font-weight:800}
+.fp-margen-neg{color:#b91c1c;font-weight:800}
 .fp-sub{font-size:.7rem;color:#94a3b8}
 .fp-ot{font-weight:800;color:#dc2626;text-decoration:none}.fp-ot:hover{text-decoration:underline}
 .fp-tipo{font-size:.68rem;font-weight:800;background:#f1f5f9;color:#475569;border-radius:999px;padding:3px 9px;white-space:nowrap}

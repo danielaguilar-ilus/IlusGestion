@@ -170,6 +170,7 @@
         {% endif %}
         <th>OT</th><th>Proveedor</th><th>Cliente</th><th>Servicio</th><th>Estado</th>
         <th class="m">Instalación</th><th class="m">Despacho</th><th class="m">Total</th>
+        <th class="m">Cobrado a cliente</th><th class="m">Margen</th>
       </tr>
     </thead>
     <tbody>
@@ -188,6 +189,12 @@
         <td class="m" data-label="Instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
         <td class="m" data-label="Despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
         <td class="m tot" data-label="Total">{{ clp(d.sugerido) }}</td>
+        {# 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y
+           el total cobrado por el proveedor, así sé si pierdo o gano"). #}
+        <td class="m" data-label="Cobrado a cliente">{{ clp(d.cobrado_cliente) }}</td>
+        <td class="m" data-label="Margen">
+          <span class="{{ 'fp-margen-pos' if d.margen > 0 else ('fp-margen-neg' if d.margen < 0 else '') }}">
+            {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -550,6 +557,8 @@ async function fpvOtMarcarPagado(){
 .fp-tabla tbody td:first-child{border-left:1px solid #e5e7eb;border-radius:9px 0 0 9px}
 .fp-tabla tbody td:last-child{border-right:1px solid #e5e7eb;border-radius:0 9px 9px 0}
 .fp-tabla td.tot{font-weight:900;color:#0f172a}
+.fp-margen-pos{color:#15803d;font-weight:800}
+.fp-margen-neg{color:#b91c1c;font-weight:800}
 .fp-nom{font-weight:800;color:#0f172a}
 .fp-sub{font-size:.7rem;color:#94a3b8}
 .fp-ot{font-weight:800;color:#dc2626;text-decoration:none}.fp-ot:hover{text-decoration:underline}
