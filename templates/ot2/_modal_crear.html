@@ -3250,28 +3250,62 @@ window.OT2C = (function(){
       // ("puedes dejarlo sin asignar y decidirlo después") ya no es cierto.
       '<p class="d"><strong>Obligatorio:</strong> toda OT sale con al menos un técnico responsable. El primero que marques queda como líder. '+
       'Va antes que Agenda para ver el horario ya pensando en ellos.</p>'+
-      '<div id="o2mTecList" class="o2m-grid"><div class="p-3 text-muted small">Cargando…</div></div>';
+      '<div id="o2mTecList"><div class="p-3 text-muted small">Cargando…</div></div>';
     fetch('/mantenciones/api/tecnicos', {credentials:'same-origin'})
       .then(function(r){return r.json();})
       .then(function(j){
         cacheTec = Array.isArray(j) ? j : (j.tecnicos || []);
         var c = document.getElementById('o2mTecList'); if(!c) return;
         if (!cacheTec.length){ c.innerHTML = '<div class="p-3 text-muted small">No hay técnicos cargados.</div>'; return; }
-        // 2026-08-29 (Daniel: "que sea horizontal para que ahorremos
-        // espacio de scroll"): mismas tarjetas .o2m-op del Origen/Tipo (una
-        // grilla que fluye y envuelve) en vez de la lista vertical
-        // angosta con scroll -- mismo lenguaje visual, menos alto.
-        c.innerHTML = cacheTec.map(function(t){
-          var sel = S.tecnicos.indexOf(t.id) >= 0;
-          return '<button type="button" class="o2m-op '+(sel?'sel':'')+'" onclick="OT2C.tecTog('+t.id+')">'+
-            '<span class="n">'+(sel?'<i class="bi bi-check-circle-fill me-1"></i>':'')+esc(t.nombre)+'</span>'+
-            '<span class="l">'+esc(t.especialidad || t.nivel || 'Técnico')+
-            (t.es_externo ? ' · externo' : '')+
-            (S.lider===t.id ? ' · <b>líder</b>' : '')+'</span></button>';
-        }).join('');
+        c.innerHTML = _o2mPintarTecGrupos(cacheTec);
       })
       .catch(function(){ var c=document.getElementById('o2mTecList');
         if(c) c.innerHTML='<div class="p-3 text-danger small">No se pudo cargar la lista de técnicos.</div>'; });
+  }
+
+  // 🔴 2026-09-19 (Daniel, en vivo: "separar los técnicos según las
+  // empresas... todo eso debería estar separado como con un recuadro
+  // sencillo... para que se entienda que Rafael Naranjo no pertenece a
+  // Transportes Milling"). Internos primero (empresa_id null -- se
+  // mezclan con cualquiera), después un recuadro por cada empresa
+  // externa, en el orden en que aparecen. Mismo criterio que
+  // o2fRenderTecnicos() en ot2_form.js (el modal de Levantamiento).
+  function _o2mPintarTecGrupos(techs){
+    var bloqueada = null;
+    techs.forEach(function(x){
+      if (S.tecnicos.indexOf(x.id)>=0 && x.empresa_id) bloqueada = x.empresa_id;
+    });
+    var ordenGrupos = [], mapaGrupos = {};
+    techs.forEach(function(t){
+      var key = t.empresa_id ? ('emp_' + t.empresa_id) : 'interno';
+      if (!mapaGrupos[key]){
+        mapaGrupos[key] = { titulo: t.empresa_id ? (t.empresa_nombre || ('Empresa #' + t.empresa_id)) : 'Internos', items: [] };
+        ordenGrupos.push(key);
+      }
+      mapaGrupos[key].items.push(t);
+    });
+    return ordenGrupos.map(function(key){
+      var g = mapaGrupos[key];
+      var esInt = key === 'interno';
+      var pills = g.items.map(function(t){
+        var sel = S.tecnicos.indexOf(t.id) >= 0;
+        var bloqueado = !sel && bloqueada && t.empresa_id && t.empresa_id !== bloqueada;
+        var cls = 'o2m-op' + (sel ? ' sel' : '') + (bloqueado ? ' disabled' : '');
+        var click = bloqueado
+          ? "ilusToast('No puedes mezclar técnicos externos de dos empresas distintas en la misma OT.',{type:'warning'})"
+          : ('OT2C.tecTog(' + t.id + ')');
+        var estilo = bloqueado ? ' style="opacity:.45;cursor:not-allowed"' : '';
+        return '<button type="button" class="'+cls+'"'+estilo+' onclick="'+click+'">'+
+          '<span class="n">'+(sel?'<i class="bi bi-check-circle-fill me-1"></i>':'')+esc(t.nombre)+'</span>'+
+          '<span class="l">'+esc(t.especialidad || t.nivel || 'Técnico')+
+          (t.es_externo ? ' · externo' : '')+
+          (S.lider===t.id ? ' · <b>líder</b>' : '')+'</span></button>';
+      }).join('');
+      return '<div style="border:1px solid '+(esInt?'#e5e7eb':'#dbeafe')+';border-radius:10px;padding:.5rem .65rem;margin-bottom:.5rem;background:'+(esInt?'#fafafa':'#f8fafc')+'">'+
+        '<div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#64748b;margin-bottom:.35rem">'+
+        '<i class="bi '+(esInt?'bi-people-fill':'bi-building-fill')+' me-1"></i>'+esc(g.titulo)+'</div>'+
+        '<div class="o2m-grid" style="margin:0">'+pills+'</div></div>';
+    }).join('');
   }
 
   /* 26-08-2026: "Trabajo interno" dejó de ser un único camino (elegir UNA
@@ -8080,6 +8114,27 @@ window.OT2C = (function(){
     // completo (con scroll preservado) en vez de solo repintar Técnicos.
     var pasosAntes = _o2mPasosKeys();
     var i = S.tecnicos.indexOf(id);
+    if (i<0){
+      // 🔴 2026-09-19 (Daniel, en vivo: "si selecciono Transportes Milling
+      // no puedo seleccionar a Rafael Naranjo... son dos técnicos externos
+      // que corresponden a dos empresas distintas... los internos da lo
+      // mismo, los puedo mezclar con quien quiera"). Cada empresa
+      // proveedora firma su propio anexo/contrato -- una OT con externos
+      // de dos empresas no tiene con qué anexo cubrirse. Candado gemelo
+      // del que ya existe en ot2_form.js/o2fEmpresaBloqueada() para el
+      // otro modal (Levantamiento); el backend (_ot_validar_tecnicos_una_
+      // empresa) es el que de verdad protege, esto es solo para no dejar
+      // que Daniel se equivoque sin avisarle antes.
+      var t = (cacheTec||[]).filter(function(x){ return x.id===id; })[0];
+      var bloqueada = null;
+      (cacheTec||[]).forEach(function(x){
+        if (S.tecnicos.indexOf(x.id)>=0 && x.empresa_id) bloqueada = x.empresa_id;
+      });
+      if (t && t.empresa_id && bloqueada && t.empresa_id !== bloqueada){
+        if (window.ilusToast) ilusToast('No puedes mezclar técnicos externos de dos empresas distintas en la misma OT.', {type:'warning'});
+        return;
+      }
+    }
     if (i>=0){ S.tecnicos.splice(i,1); if (S.lider===id) S.lider = S.tecnicos[0]||null; }
     else { S.tecnicos.push(id); if (!S.lider) S.lider = id; }
     if (_o2mPasosKeys() !== pasosAntes){
