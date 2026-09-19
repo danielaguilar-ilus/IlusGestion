@@ -75244,6 +75244,17 @@ def mant_visita_historica(cid):
     tecnico = (d.get("tecnico") or "").strip()[:200]
     observ  = (d.get("observaciones") or "").strip()
     costo   = float(d.get("costo") or 0)
+    # 🔴 2026-09-19 (Daniel, cierre del checklist OT2.0 vs clásica): a
+    # diferencia de Plan Anual/Planificador -- que agendan A PROPÓSITO
+    # antes de saber el técnico -- acá el trabajo YA se hizo, así que quién
+    # lo hizo y a qué centro de costo corresponde son datos conocidos, no
+    # una incógnita futura. Único de los 6 caminos automáticos donde
+    # exigirlo al crear no rompe ningún flujo real.
+    centro_costo = (d.get("centro_costo") or "").strip().lower()
+    if centro_costo not in dict(_OT2_CENTROS_COSTO):
+        return jsonify({"ok": False, "error": "Falta el centro de costo (Servicio Técnico, Logística o Comercial)."}), 400
+    if not tecnico:
+        return jsonify({"ok": False, "error": "Falta el técnico que hizo el trabajo."}), 400
 
     conn = get_mysql()
     try:
@@ -75251,10 +75262,10 @@ def mant_visita_historica(cid):
             cur.execute(
                 """INSERT INTO mant_visitas
                    (cliente_id, contrato_id, titulo, fecha_programada, fecha_realizada,
-                    tipo, estado, tecnico, observaciones, costo, created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,'completada',%s,%s,%s,%s)""",
+                    tipo, estado, tecnico, observaciones, costo, centro_costo, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,'completada',%s,%s,%s,%s,%s)""",
                 (cid, contrato_id, titulo, fecha_real, fecha_real,
-                 tipo, tecnico, observ, costo, current_username())
+                 tipo, tecnico, observ, costo, centro_costo, current_username())
             )
             vid_historica = cur.lastrowid
         conn.commit()
@@ -75371,6 +75382,16 @@ def mant_visita_retroactiva(cid):
         tecnico_id = int(tecnico_id) if tecnico_id else None
     except Exception:
         tecnico_id = None
+    # 🔴 2026-09-19 (Daniel, cierre del checklist OT2.0 vs clásica): el
+    # trabajo YA ocurrió -- quién lo hizo y a qué centro de costo
+    # corresponde son datos conocidos, no una incógnita futura como en
+    # Plan Anual/Planificador. Único de los 6 caminos automáticos donde
+    # exigirlo al crear no rompe ningún flujo real.
+    if not tecnico_id:
+        return jsonify({"ok": False, "error": "Falta el técnico que hizo el trabajo."}), 400
+    centro_costo = (d.get("centro_costo") or "").strip().lower()
+    if centro_costo not in dict(_OT2_CENTROS_COSTO):
+        return jsonify({"ok": False, "error": "Falta el centro de costo (Servicio Técnico, Logística o Comercial)."}), 400
 
     nota_libre  = (d.get("nota_libre") or "").strip()
     equipos_ids = d.get("equipos_ids") or []
@@ -75415,17 +75436,17 @@ def mant_visita_retroactiva(cid):
                 """INSERT INTO mant_visitas
                    (cliente_id, contrato_id, titulo, fecha_programada,
                     fecha_realizada, tipo, estado, es_retroactiva,
-                    nota_libre, tecnico_user_id,
+                    nota_libre, tecnico_user_id, centro_costo,
                     cotizacion_tido, cotizacion_nudo, oc_numero,
                     factura_tido, factura_nudo, factura_emitida_at,
                     estado_facturacion, cubierto_por, created_by)
                    VALUES (%s,%s,%s,%s,%s,%s,'completada',1,
-                           %s,%s,
+                           %s,%s,%s,
                            %s,%s,%s,
                            %s,%s,%s,
                            %s,%s,%s)""",
                 (cid, contrato_id, titulo, fecha, fecha, tipo,
-                 nota_libre, tecnico_id,
+                 nota_libre, tecnico_id, centro_costo,
                  cot_tido, cot_nudo, oc_num,
                  fac_tido, fac_nudo, fac_emitida,
                  estado_fact,
@@ -106556,6 +106577,12 @@ _MFP_SELECT_OT = (
     "       v.costo_proveedor, v.costo_despacho, v.proveedor_nombre, "
     "       v.costo AS cliente_costo, v.zz_monto AS cliente_zz_monto, "
     "       v.zz_envio_monto AS cliente_zz_envio_monto, v.modalidad_cobro, "
+    # 📎 2026-09-19 (Daniel: "a la fila le falta el número de anexo").
+    # Subquery correlacionada, no JOIN -- mant_anexos puede tener varias
+    # filas por OT (re-firma, ver ANEXO_DESACTUALIZADO) y un JOIN directo
+    # duplicaría filas de esta lista. Se toma la más reciente por id.
+    "       (SELECT anx.numero FROM mant_anexos anx WHERE anx.ot_id = v.id "
+    "         ORDER BY anx.id DESC LIMIT 1) AS anexo_numero, "
     "       c.razon_social AS cliente, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id, "
@@ -106604,6 +106631,12 @@ def _mfp_fila_ot(f):
         "proveedor_rut": f.get("prov_rut") or "",
         "servicio": serv, "despacho": desp, "sugerido": serv + desp,
         "cobrado_cliente": cobrado_cliente, "margen": cobrado_cliente - pagado_proveedor,
+        # 💰 2026-09-19 (Daniel: "cuánto le cobré al cliente en instalación
+        # y despacho también" -- no solo el total). Mismo desglose que ya
+        # existe del lado proveedor (servicio/despacho arriba).
+        "cobrado_cliente_serv": _venta_serv, "cobrado_cliente_envio": _venta_envio,
+        # 📎 2026-09-19 (Daniel: "a la fila le falta el número de anexo").
+        "anexo_numero": f.get("anexo_numero"),
         # 💰 2026-09-19 (Daniel: "si es una instalación, una mantención, o
         # si se trata de una garantía"). Es la condición comercial de la
         # OT (modalidad_cobro), NO el tipo de trabajo (tipo_label) -- una
@@ -106879,6 +106912,24 @@ def mant_facturas_proveedor():
     if pf_per_page not in _MFP_PER_PAGE:
         pf_per_page = 25
     por_facturar_todas = _mfp_por_facturar(proveedor=f_prov or None)
+    # 🧭 2026-09-19 (Daniel: "poder filtrar y ordenar... seleccionar para
+    # dejar pago"). _mfp_fila_ot ya calcula todo en Python (no son columnas
+    # SQL simples: cobrado_cliente/margen salen de zz_monto+costo con
+    # fallback), así que se ordena la lista ya transformada, antes de
+    # paginar -- mismo criterio que ya usa REGLA #4.3 para esta tabla.
+    pf_orden = (request.args.get("pf_orden") or "fecha").strip()
+    pf_dir = "asc" if (request.args.get("pf_dir") or "").strip() == "asc" else "desc"
+    _PF_ORDEN_KEYS = {
+        "fecha": lambda d: d.get("fecha") or "",
+        "proveedor": lambda d: (d.get("proveedor") or "").lower(),
+        "cliente": lambda d: (d.get("cliente") or "").lower(),
+        "pagado_total": lambda d: d.get("sugerido") or 0,
+        "cobrado_total": lambda d: d.get("cobrado_cliente") or 0,
+        "margen": lambda d: d.get("margen") or 0,
+    }
+    if pf_orden not in _PF_ORDEN_KEYS:
+        pf_orden = "fecha"
+    por_facturar_todas.sort(key=_PF_ORDEN_KEYS[pf_orden], reverse=(pf_dir == "desc"))
     pf_total = len(por_facturar_todas)
     pf_total_paginas = max(1, -(-pf_total // pf_per_page))
     if pf_page > pf_total_paginas:
@@ -106892,7 +106943,7 @@ def mant_facturas_proveedor():
         f_prov=f_prov, f_estado=f_estado,
         resumen=_mfp_resumen(), por_facturar=por_facturar,
         pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
-        pf_total_paginas=pf_total_paginas,
+        pf_total_paginas=pf_total_paginas, pf_orden=pf_orden, pf_dir=pf_dir,
         provs_sugeridos=provs_sugeridos,
         es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
         hoy_iso=_now_chile().date().isoformat(),

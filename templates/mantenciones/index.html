@@ -831,6 +831,24 @@ function escCpt(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
               <option value="inspeccion">Inspección</option>
             </select>
           </div>
+          {# 🔴 2026-09-19 (Daniel, cierre checklist OT2.0): el trabajo YA
+             ocurrió, así que quién lo hizo y a qué centro de costo
+             corresponde son datos conocidos -- el backend ya los exige. #}
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Técnico que hizo el trabajo <span class="text-danger">*</span></label>
+            <select id="vhd_tecnico" class="form-select">
+              <option value="">Elige un técnico…</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Centro de costo <span class="text-danger">*</span></label>
+            <select id="vhd_centro" class="form-select">
+              <option value="">Elige un centro de costo…</option>
+              <option value="sstt">Servicio Técnico</option>
+              <option value="logistica">Logística</option>
+              <option value="comercial">Comercial</option>
+            </select>
+          </div>
           <div class="col-12">
             <label class="form-label small fw-semibold">Nota libre / Observaciones</label>
             <textarea id="vhd_nota" class="form-control" rows="2"
@@ -941,8 +959,11 @@ function abrirVisitaHistDashboard(){
   document.getElementById('vhd_cliente_drop').style.display = 'none';
   document.getElementById('vhd_fecha').value = '';
   document.getElementById('vhd_tipo').value = 'preventiva';
+  document.getElementById('vhd_tecnico').value = '';
+  document.getElementById('vhd_centro').value = '';
   document.getElementById('vhd_nota').value  = '';
   document.getElementById('vhd_result').style.display = 'none';
+  _vhdCargarTecnicos();
   const btn = document.getElementById('vhd_btn');
   btn.disabled = false;
   btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar visita';
@@ -1003,6 +1024,22 @@ function vhdBuscarCliente(){
   }, 250);
 }
 
+let _vhdTecnicosCargados = false;
+function _vhdCargarTecnicos(){
+  if (_vhdTecnicosCargados) return;
+  fetch('{{ url_for("mant_tecnicos_list_api") }}?all=1').then(r => r.json()).then(function(d){
+    const arr = Array.isArray(d) ? d : (d.tecnicos || []);
+    const sel = document.getElementById('vhd_tecnico');
+    arr.forEach(function(t){
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.nombre + (t.es_externo ? ' (externo)' : '');
+      sel.appendChild(opt);
+    });
+    _vhdTecnicosCargados = true;
+  }).catch(function(){});
+}
+
 function vhdSelCliente(cid, lbl){
   _vhdCidSel = cid;
   document.getElementById('vhd_cliente_lbl').textContent = lbl;
@@ -1026,6 +1063,20 @@ async function vhdGuardar(){
     return;
   }
   const tipo  = document.getElementById('vhd_tipo').value || 'retroactiva';
+  const tecnicoId = document.getElementById('vhd_tecnico').value;
+  const centro = document.getElementById('vhd_centro').value;
+  if (!tecnicoId){
+    if (typeof ilusAlert === 'function')
+      await ilusAlert({title:'Falta técnico', message:'Indica quién hizo el trabajo.', type:'warning'});
+    else alert('Falta el técnico');
+    return;
+  }
+  if (!centro){
+    if (typeof ilusAlert === 'function')
+      await ilusAlert({title:'Falta centro de costo', message:'Elige a qué centro de costo corresponde.', type:'warning'});
+    else alert('Falta el centro de costo');
+    return;
+  }
   const nota  = (document.getElementById('vhd_nota').value || '').trim();
   const btn = document.getElementById('vhd_btn');
   btn.disabled = true;
@@ -1034,7 +1085,7 @@ async function vhdGuardar(){
   try {
     const r = await fetch(`/mantenciones/api/clientes/${_vhdCidSel}/visitas/retroactiva`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({fecha, tipo, nota_libre: nota}),
+      body: JSON.stringify({fecha, tipo, nota_libre: nota, tecnico_id: tecnicoId, centro_costo: centro}),
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'Error');

@@ -21,6 +21,16 @@
 
 {% macro clp(v) -%}${{ '{:,.0f}'.format(v or 0)|replace(',', '.') }}{%- endmacro %}
 
+{# 🧭 2026-09-19 (Daniel: "poder ordenar"). Encabezado clicable de la tabla
+   "OT por facturar" -- next_dir invierte si ya es la columna activa, si no
+   parte en desc (más reciente/mayor primero, lo que la gente espera). #}
+{% macro th_orden(campo, label, extra_class='') -%}
+{% set next_dir = 'asc' if (pf_orden == campo and pf_dir == 'desc') else 'desc' %}
+<th class="{{ extra_class }} fp-th-ord {{ 'activo' if pf_orden == campo }}" onclick="fpvOrdenar('{{ campo }}','{{ next_dir }}')">
+  {{ label }}{% if pf_orden == campo %}<i class="bi bi-caret-{{ 'up' if pf_dir == 'asc' else 'down' }}-fill"></i>{% endif %}
+</th>
+{%- endmacro %}
+
 {% block content %}
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
@@ -140,6 +150,18 @@
 
 {# ── OT por facturar: lo primero que Daniel pidió mirar ────────────── #}
 <div class="fp-sec">OT por facturar{% if f_prov %} · {{ f_prov }}{% endif %}</div>
+{# 🧭 2026-09-19 (Daniel: "poder moverme entre los proveedores... filtrar,
+   seleccionar, como para hacerlo más rápido"). Un clic en vez de tipear el
+   nombre en el buscador -- mismos proveedores que ya arma provs_sugeridos
+   para el formulario de "Nueva factura". #}
+{% if provs_sugeridos %}
+<div class="fp-chips">
+  <a class="fp-chip {{ 'on' if not f_prov }}" href="?estado={{ f_estado }}">Todos</a>
+  {% for p in provs_sugeridos %}
+  <a class="fp-chip {{ 'on' if f_prov == p.nombre }}" href="?proveedor={{ p.nombre | urlencode }}&estado={{ f_estado }}">{{ p.nombre }}</a>
+  {% endfor %}
+</div>
+{% endif %}
 {% if not por_facturar %}
 <div class="fp-vacio">
   <i class="bi bi-check2-circle" style="color:#16a34a"></i>
@@ -168,9 +190,13 @@
         {% if puede_marcar_sin_factura %}
         <th style="width:38px"><span class="fp-chk-wrap"><input type="checkbox" id="fpvOtCheckAll" onchange="fpvOtToggleAll(this.checked)" aria-label="Seleccionar todas"></span></th>
         {% endif %}
-        <th>OT</th><th>Proveedor</th><th>Cliente</th><th>Servicio</th><th>Estado</th>
-        <th class="m">Instalación</th><th class="m">Despacho</th><th class="m">Total</th>
-        <th class="m">Cobrado a cliente</th><th class="m">Margen</th>
+        {{ th_orden('fecha', 'OT') }}{{ th_orden('proveedor', 'Proveedor') }}{{ th_orden('cliente', 'Cliente') }}
+        <th>Servicio</th><th>Estado</th><th>Anexo</th>
+        <th class="m">Pagado instalación</th><th class="m">Pagado despacho</th>
+        {{ th_orden('pagado_total', 'Pagado total', 'm') }}
+        <th class="m">Cobrado instalación</th><th class="m">Cobrado despacho</th>
+        {{ th_orden('cobrado_total', 'Cobrado total', 'm') }}
+        {{ th_orden('margen', 'Margen', 'm') }}
       </tr>
     </thead>
     <tbody>
@@ -187,12 +213,17 @@
         <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span>
           {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
         <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span></td>
-        <td class="m" data-label="Instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
-        <td class="m" data-label="Despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
-        <td class="m tot" data-label="Total">{{ clp(d.sugerido) }}</td>
-        {# 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y
-           el total cobrado por el proveedor, así sé si pierdo o gano"). #}
-        <td class="m" data-label="Cobrado a cliente">{{ clp(d.cobrado_cliente) }}</td>
+        {# 📎 2026-09-19 (Daniel: "a la fila le falta el número de anexo"). #}
+        <td data-label="Anexo">{{ 'N° ' ~ d.anexo_numero if d.anexo_numero else '—' }}</td>
+        <td class="m" data-label="Pagado instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
+        <td class="m" data-label="Pagado despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
+        <td class="m tot" data-label="Pagado total">{{ clp(d.sugerido) }}</td>
+        {# 💰 2026-09-19 (Daniel: "cuánto le cobré al cliente en instalación
+           y despacho también" -- no solo el total, mismo desglose que ya
+           existe del lado proveedor). #}
+        <td class="m" data-label="Cobrado instalación">{{ clp(d.cobrado_cliente_serv) if d.cobrado_cliente_serv else '—' }}</td>
+        <td class="m" data-label="Cobrado despacho">{{ clp(d.cobrado_cliente_envio) if d.cobrado_cliente_envio else '—' }}</td>
+        <td class="m tot" data-label="Cobrado total">{{ clp(d.cobrado_cliente) }}</td>
         <td class="m" data-label="Margen">
           <span class="{{ 'fp-margen-pos' if d.margen > 0 else ('fp-margen-neg' if d.margen < 0 else '') }}">
             {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span></td>
@@ -219,6 +250,8 @@
       <input type="hidden" name="estado" value="{{ f_estado }}">
       <input type="hidden" name="per_page" value="{{ per_page }}">
       <input type="hidden" name="page" value="{{ page }}">
+      <input type="hidden" name="pf_orden" value="{{ pf_orden }}">
+      <input type="hidden" name="pf_dir" value="{{ pf_dir }}">
       <label>Por página
         <select name="pf_per_page" onchange="this.form.submit()">
           {% for n in per_page_opciones %}<option value="{{ n }}" {{ 'selected' if n == pf_per_page }}>{{ n }}</option>{% endfor %}
@@ -226,11 +259,11 @@
       </label>
     </form>
     <a class="fp-pag-btn {{ 'dis' if pf_page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1) if pf_page > 1 else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page > 1 else '#' }}">
       <i class="bi bi-chevron-left"></i>Anterior</a>
     <span class="fp-pag-num">Página {{ pf_page }} de {{ pf_total_paginas }}</span>
     <a class="fp-pag-btn {{ 'dis' if pf_page >= pf_total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1) if pf_page < pf_total_paginas else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page < pf_total_paginas else '#' }}">
       Siguiente<i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
@@ -395,8 +428,27 @@
 
 <script>
 const FPV_PROVEEDOR = {{ f_prov | tojson }};
+
+// 🧭 2026-09-19 (Daniel: "poder ordenar"). Mantiene todos los filtros
+// actuales (proveedor/estado/tamaño de página) y solo cambia pf_orden/
+// pf_dir -- además vuelve a la página 1, porque el orden nuevo puede
+// mover una fila a otra página distinta de donde estaba antes.
+function fpvOrdenar(campo, dir){
+  const p = new URLSearchParams(window.location.search);
+  p.set('pf_orden', campo);
+  p.set('pf_dir', dir);
+  p.set('pf_page', '1');
+  window.location.search = p.toString();
+}
+
 {% if es_superadmin %}
-function fpvAbrirExcel(){ new bootstrap.Modal(document.getElementById('fpvModalExcel')).show(); }
+function fpvAbrirExcel(){
+  new bootstrap.Modal(document.getElementById('fpvModalExcel')).show();
+  // Si ya estás filtrando por un proveedor en la tabla, el Excel parte
+  // acotado a ese mismo proveedor -- ver Daniel: "filtro todo lo de
+  // Daniel Pulgar y selecciono todo para que me baje el reporte".
+  if (FPV_PROVEEDOR) document.getElementById('fpxProv').value = FPV_PROVEEDOR;
+}
 function fpvBajarExcel(){
   const d1 = document.getElementById('fpxDesde').value, d2 = document.getElementById('fpxHasta').value;
   if (!d1 || !d2){ ilusToast('Indica desde y hasta', {type:'warning'}); return; }
@@ -540,6 +592,15 @@ async function fpvOtMarcarPagado(){
 .fp-kpi.warn{border-left-color:#f59e0b}.fp-kpi.warn .v{color:#b45309}
 .fp-kpi.tot{background:#0a0a0a;border-color:#0a0a0a;border-left-color:#dc2626}
 .fp-kpi.tot .k,.fp-kpi.tot .s{color:#9ca3af}.fp-kpi.tot .v{color:#fff}
+.fp-chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 12px}
+.fp-chip{font-size:.76rem;font-weight:700;color:#374151;background:#fff;border:1px solid #d1d5db;
+  border-radius:999px;padding:5px 13px;text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center}
+.fp-chip:hover{border-color:#dc2626;color:#dc2626}
+.fp-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.fp-th-ord{cursor:pointer;user-select:none;white-space:nowrap}
+.fp-th-ord:hover{color:#dc2626}
+.fp-th-ord.activo{color:#dc2626}
+.fp-th-ord i{font-size:.6rem;margin-left:3px}
 .fpv-filtros{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
 .fpv-search{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #d1d5db;
   border-radius:8px;padding:0 12px;min-height:44px;flex:1 1 220px;max-width:360px}
