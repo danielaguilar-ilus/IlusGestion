@@ -66614,6 +66614,9 @@ def mant_visita_multi(cid):
         except (TypeError, ValueError):
             pass
     tecnico_ids = list(dict.fromkeys(tecnico_ids))[:10]  # dedupe + máx 10
+    _err_tec_emp = _ot_validar_tecnicos_una_empresa(tecnico_ids)
+    if _err_tec_emp:
+        return jsonify({"error": _err_tec_emp, "error_codigo": "TECNICOS_EMPRESAS_MEZCLADAS"}), 400
 
     # FIX 1 (2026-07-19): resolver contra app_users (fuente de verdad desde
     # 2026-05-13, ver mant_tecnicos_list_api app.py:~43305), NO contra la tabla
@@ -66908,7 +66911,16 @@ def mant_tecnicos_list_api():
            "       COALESCE(te.valor_visita, ten.valor_visita) AS tarifa_visita, "
            "       au.active AS activo, "
            "       IF(COALESCE(te.id, ten.id) IS NOT NULL "
-           "          OR au.role='tecnico_externo', 1, 0) AS es_externo "
+           "          OR au.role='tecnico_externo', 1, 0) AS es_externo, "
+           # 🔴 2026-09-19 (Daniel, en vivo: "no puedo seleccionar a Rafael
+           # Naranjo e Isabel Milling porque son dos técnicos externos que
+           # corresponden a dos empresas distintas"). Empresa real del
+           # técnico vía la tabla nueva (mant_tecnico_externo_usuarios,
+           # commit 0cafc803) -- el wizard la usa para impedir mezclar
+           # externos de empresas distintas en la misma OT. Los internos
+           # quedan con empresa_id NULL: se pueden mezclar con cualquiera.
+           "       teu.tecnico_externo_id AS empresa_id, "
+           "       tee.razon_social AS empresa_nombre "
            "  FROM app_users au "
            "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
            "  LEFT JOIN mant_tecnicos_externos ten "
@@ -66916,6 +66928,8 @@ def mant_tecnicos_list_api():
            "        AND LOWER(TRIM(COALESCE(au.nombre, au.username))) IN ( "
            "              LOWER(TRIM(ten.razon_social)), "
            "              LOWER(TRIM(ten.contacto_nombre)) ) "
+           "  LEFT JOIN mant_tecnico_externo_usuarios teu ON teu.user_id = au.id "
+           "  LEFT JOIN mant_tecnicos_externos tee ON tee.id = teu.tecnico_externo_id "
            " WHERE au.role LIKE %s")
     if not incluir_inactivos:
         sql += " AND au.active=1"
@@ -84793,6 +84807,9 @@ def ot2_api_crear():
             "Toda OT debe salir con un técnico responsable asignado. "
             "Elige al menos uno en el paso Técnicos.",
             "TECNICO_OBLIGATORIO")
+    _err_tec_emp = _ot_validar_tecnicos_una_empresa(tec_ids)
+    if _err_tec_emp:
+        return _ot2_err(_err_tec_emp, "TECNICOS_EMPRESAS_MEZCLADAS")
     tecnico_nombre = None
     _t = mysql_fetchone(
         "SELECT COALESCE(nombre, username) AS n FROM app_users WHERE id=%s",
@@ -115746,6 +115763,45 @@ def _ot_resolver_tecnicos(data):
     return limpio, (limpio[0] if limpio else None)
 
 
+def _ot_validar_tecnicos_una_empresa(tecnico_ids):
+    """None si los técnicos elegidos son válidos para compartir una misma OT;
+    si no, el mensaje de error amigable.
+
+    🔴 REGLA de Daniel, 2026-09-19 (en vivo): "si yo selecciono Transportes
+    Milling, no puedo seleccionar a Isabel Milling... o Rafael Naranjo,
+    porque son dos técnicos externos que corresponden a dos empresas
+    distintas... los internos da lo mismo, los puedo mezclar con quien yo
+    quiera." Cada empresa proveedora firma su PROPIO anexo/contrato -- una
+    OT con externos de dos empresas no tiene con qué anexo cubrirse.
+    El frontend (o2fEmpresaBloqueada en ot2_form.js) ya lo impide en el
+    wizard; esto es el mismo candado del lado servidor (REGLA #4: la
+    validación de negocio nunca vive solo en el frontend), único punto de
+    verdad para las 3 vías de creación de OT.
+
+    Técnicos INTERNOS (sin fila en mant_tecnico_externo_usuarios) nunca
+    bloquean nada -- se pueden mezclar con cualquier empresa externa.
+    """
+    ids = [int(t) for t in (tecnico_ids or []) if str(t).strip().lstrip("-").isdigit()]
+    if len(ids) < 2:
+        return None
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        "SELECT teu.user_id, teu.tecnico_externo_id, te.razon_social "
+        "  FROM mant_tecnico_externo_usuarios teu "
+        "  JOIN mant_tecnicos_externos te ON te.id = teu.tecnico_externo_id "
+        f" WHERE teu.user_id IN ({ph})",
+        tuple(ids)
+    ) or []
+    empresas = {}
+    for r in rows:
+        empresas.setdefault(r["tecnico_externo_id"], r["razon_social"])
+    if len(empresas) > 1:
+        nombres = " y ".join(list(empresas.values())[:2])
+        return (f"No puedes mezclar técnicos externos de dos empresas distintas en la "
+                f"misma OT ({nombres}). Cada empresa tiene su propio anexo/contrato.")
+    return None
+
+
 def _ot_resolver_plantilla_override(data):
     """plantilla_id explícita del caller, validada activa. None si no
     vino, no existe, o está inactiva -- nunca bloquea la creación."""
@@ -116756,6 +116812,9 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             "error": "Toda OT debe salir con un técnico responsable asignado.",
             "error_codigo": "TECNICO_OBLIGATORIO",
         }, 400
+    _err_tec_emp = _ot_validar_tecnicos_una_empresa(tecnico_ids)
+    if _err_tec_emp:
+        return {"ok": False, "error": _err_tec_emp, "error_codigo": "TECNICOS_EMPRESAS_MEZCLADAS"}, 400
     plantilla_id_override = _ot_resolver_plantilla_override(data)
     plantillas_por_equipo, plantillas_por_ticket_equipo = _ot_resolver_plantillas_payload(data)
     # El usuario elige la plantilla ANTES de que exista ficha (key teq_<id>,

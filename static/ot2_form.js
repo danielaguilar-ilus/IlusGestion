@@ -235,6 +235,21 @@ async function _tkotCargarCategoriaMap(){
 }
 
 // ── Técnicos (multi-select, idéntico a Mantenciones) ──
+// 🔴 2026-09-19 (Daniel, en vivo: "si yo selecciono Transportes Milling, no
+// puedo seleccionar a Rafael Naranjo, porque son dos técnicos externos que
+// corresponden a dos empresas distintas... los internos da lo mismo, los
+// puedo mezclar con quien yo quiera"). Cada empresa proveedora firma su
+// PROPIO anexo/contrato -- mezclar externos de dos empresas en una misma OT
+// no tiene con qué anexo cubrirse. Devuelve el empresa_id "bloqueado" (el de
+// cualquier externo ya seleccionado), o null si no hay ninguno todavía.
+function o2fEmpresaBloqueada(){
+  const techs = _O2F.tecnicosDisponibles || [];
+  for(const t of techs){
+    if(_O2F.tecnicosSel.has(t.id) && t.empresa_id) return t.empresa_id;
+  }
+  return null;
+}
+
 function o2fRenderTecnicos(){
   const box = document.getElementById('o2fLevTecnicosBox');
   if(!box) return;
@@ -247,12 +262,25 @@ function o2fRenderTecnicos(){
     return;
   }
   const fechaProg = document.getElementById('o2fLevFechaProg')?.value || '';
+  const empresaBloqueada = o2fEmpresaBloqueada();
   box.innerHTML = techs.map(function(t){
     const isSel = _O2F.tecnicosSel.has(t.id);
-    const bg = isSel ? 'background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;border-color:#1e40af' : 'background:#fff;color:#0f172a;border-color:#cbd5e1';
-    const icon = isSel ? 'bi-check-circle-fill' : 'bi-person';
+    const bloqueado = !isSel && empresaBloqueada && t.empresa_id && t.empresa_id !== empresaBloqueada;
+    let bg, icon, extra = '', click = 'onclick="o2fToggleTecnico('+t.id+')"';
+    if(bloqueado){
+      bg = 'background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb;cursor:not-allowed';
+      icon = 'bi-slash-circle';
+      extra = ' title="' + esc('Ya elegiste un técnico de otra empresa externa (' + (t.empresa_nombre || 'otra empresa') + ' no se puede mezclar).') + '"';
+      click = 'onclick="ilusToast(' + JSON.stringify('No puedes mezclar técnicos externos de dos empresas distintas en la misma OT.') + ', {type:\'warning\'})"';
+    } else if(isSel){
+      bg = 'background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;border-color:#1e40af';
+      icon = 'bi-check-circle-fill';
+    } else {
+      bg = 'background:#fff;color:#0f172a;border-color:#cbd5e1';
+      icon = 'bi-person';
+    }
     return '<span class="badge rounded-pill border" style="cursor:pointer;padding:.5rem .85rem;font-size:.82rem;font-weight:500;'+bg+'" '
-      + 'onclick="o2fToggleTecnico('+t.id+')"><i class="bi '+icon+' me-1"></i>'+esc(t.nombre || t.email || ('Téc #'+t.id))
+      + click + extra + '><i class="bi '+icon+' me-1"></i>'+esc(t.nombre || t.email || ('Téc #'+t.id))
       + _tkotTecCargaChip(t.id, fechaProg) + '</span>';
   }).join('');
   (document.getElementById('o2fLevTecCount')||{}).textContent = String(_O2F.tecnicosSel.size);
@@ -279,6 +307,14 @@ function _tkotTecCargaChip(tecnicoId, fecha){
   return '<span class="o2f-tec-carga" style="' + colores + '">· ' + n + ' ese día</span>';
 }
 function o2fToggleTecnico(tid){
+  if(!_O2F.tecnicosSel.has(tid)){
+    const t = (_O2F.tecnicosDisponibles || []).find(x => x.id === tid);
+    const bloqueada = o2fEmpresaBloqueada();
+    if(t && t.empresa_id && bloqueada && t.empresa_id !== bloqueada){
+      ilusToast('No puedes mezclar técnicos externos de dos empresas distintas en la misma OT.', {type:'warning'});
+      return;
+    }
+  }
   if(_O2F.tecnicosSel.has(tid)) _O2F.tecnicosSel.delete(tid); else _O2F.tecnicosSel.add(tid);
   o2fRenderTecnicos();
   // El bloque "Tu OT" rotula "Nueva OT · N técnicos" -> se refresca al toque.
