@@ -115838,6 +115838,18 @@ _OT_TOPE_SIN_CONTRATO_DESDE = os.environ.get(
     "ILUS_OT_TOPE_SIN_CONTRATO_DESDE", "2026-09-19"
 ).strip()
 
+# 🔴 2026-09-19 (Daniel, en vivo, mismo día que se construyó el tope): "de
+# momento yo liberaría esa regla de exigir el contrato porque faltan las
+# firmas" -- el flujo para generar/enviar/firmar el Anexo (Capa 6.2 del plan)
+# todavía no existe como botón en ninguna pantalla, así que exigir
+# contrato_pdf_url hoy bloquearía a los 3 proveedores reales sin darles
+# ninguna forma real de cumplir. Kill switch, default OFF -- mismo patrón que
+# comm_is_enabled (REGLA #11): la función queda lista y probada, se prende
+# con la variable de entorno el día que el flujo de firma esté operativo.
+_OT_TOPE_SIN_CONTRATO_ACTIVO = os.environ.get(
+    "ILUS_OT_TOPE_SIN_CONTRATO_ACTIVO", "0"
+).strip() == "1"
+
 
 def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
     """None si ok, o el mensaje de error si alguna empresa externa entre los
@@ -115859,7 +115871,12 @@ def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
     (estado='suspendido') para que quede visible en el listado sin tener
     que adivinar por qué se bloqueó -- "o bloquear o suspender" son la
     misma acción acá: se bloquea Y se ve.
+
+    Desactivada por defecto (_OT_TOPE_SIN_CONTRATO_ACTIVO) hasta que exista
+    un flujo real para firmar el Anexo -- ver comentario arriba.
     """
+    if not _OT_TOPE_SIN_CONTRATO_ACTIVO:
+        return None
     ids = [int(t) for t in (tecnico_ids or []) if str(t).strip().lstrip("-").isdigit()]
     if not ids:
         return None
