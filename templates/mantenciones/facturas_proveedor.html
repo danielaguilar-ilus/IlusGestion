@@ -197,7 +197,7 @@
     <span class="fp-prov-ini"><i class="bi bi-grid-3x3-gap-fill"></i></span>
     <span class="fp-prov-tx"><b>Todos los proveedores</b>
       <small>{{ _tot_fac }} factura{{ '' if _tot_fac == 1 else 's' }}{% if _tot_fac_pend %} · <b class="pend">{{ _tot_fac_pend }} por pagar</b>{% endif %}</small></span>
-    <span class="fp-prov-n"><b>{{ _tot_pend }}</b><em>OT por facturar · {{ clp(_tot_monto) }}</em></span>
+    <span class="fp-prov-n"><b>{{ _tot_pend }}</b><em>OT · {{ clp(_tot_monto) }}</em></span>
   </a>
   {% for p in provs_chips %}
   {# Sin OT pendientes ni facturas por pagar = "al día" (atenuado). Daniel
@@ -926,9 +926,9 @@ async function fpvOtSolicitarOC(){
 .fp-prov.on .fp-prov-tx small .pend{color:#fbbf24}
 .fpv-fecha{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;color:#64748b;margin:0}
 .fpv-fecha input{min-height:44px;font-size:16px;width:auto}
-.fp-prov-n{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;line-height:1.05;text-align:right}
+.fp-prov-n{flex:0 1 auto;max-width:46%;display:flex;flex-direction:column;align-items:flex-end;line-height:1.05;text-align:right}
 .fp-prov-n b{font-size:1.05rem;font-weight:900;color:#dc2626;font-variant-numeric:tabular-nums}
-.fp-prov-n em{font-style:normal;font-size:.62rem;font-weight:700;color:#94a3b8;white-space:nowrap}
+.fp-prov-n em{font-style:normal;font-size:.62rem;font-weight:700;color:#94a3b8;white-space:normal}
 .fp-prov-n.cero b{color:#94a3b8}
 .fp-prov.vacio{opacity:.6;background:#fafafa}
 .fp-prov.vacio:hover{opacity:1}
