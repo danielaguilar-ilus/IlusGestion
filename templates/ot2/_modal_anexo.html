@@ -207,7 +207,9 @@
             <div class="row g-2">
               <div class="col-md-4"><label class="fl">RUT</label>
                 <input class="form-control form-control-sm" id="oaxSelRut" placeholder="12.345.678-9"
-                       oninput="OT2ANX.setContactoSel('rut', this.value); OT2ANX.oaxValidarCampoManual(this,'rut')"></div>
+                       oninput="OT2ANX.setContactoSel('rut', this.value); OT2ANX.oaxValidarCampoManual(this,'rut')"
+                       onblur="OT2ANX.oaxFormatearRut(this)">
+                <small class="oax-hint" id="oaxSelRutHint"></small></div>
               <div class="col-md-4"><label class="fl">Correo de contacto</label>
                 <input type="email" class="form-control form-control-sm" id="oaxSelEmail"
                        oninput="OT2ANX.setContactoSel('email', this.value); OT2ANX.oaxValidarCampoManual(this,'email')"></div>
@@ -227,7 +229,8 @@
                 <input class="form-control form-control-sm" id="oaxManNombre"></div>
               <div class="col-6"><label class="fl">RUT</label>
                 <input class="form-control form-control-sm" id="oaxManRut" placeholder="12.345.678-9"
-                       oninput="OT2ANX.oaxValidarCampoManual(this,'rut')"></div>
+                       oninput="OT2ANX.oaxValidarCampoManual(this,'rut')" onblur="OT2ANX.oaxFormatearRut(this)">
+                <small class="oax-hint" id="oaxManRutHint"></small></div>
               <div class="col-6"><label class="fl">Correo de contacto</label>
                 <input type="email" class="form-control form-control-sm" id="oaxManEmail"
                        oninput="OT2ANX.oaxValidarCampoManual(this,'email')"></div>
@@ -1024,6 +1027,12 @@ window.OT2ANX = (function(){
       return '+56 9 ' + d.slice(1,5) + ' ' + d.slice(5);
     return null;
   }
+  function _oaxRutFormato(rut){
+    var limpio = String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+    if (limpio.length < 2) return String(rut||'');
+    var cuerpo = limpio.slice(0,-1), dv = limpio.slice(-1);
+    return cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + dv;
+  }
   function oaxValidarCampoManual(input, tipo){
     var v = (input.value || '').trim();
     var ok = true;
@@ -1033,6 +1042,25 @@ window.OT2ANX = (function(){
       else if (tipo === 'tel') ok = !!_oaxTelChileNormalizar(v);
     }
     input.style.borderColor = v ? (ok ? '#16a34a' : '#dc2626') : '';
+    // 2026-09-20 (Daniel: "no verificas el RUT"): el dígito verificador SÍ se
+    // comprueba (módulo 11), pero no se veía. Ahora lo dice al lado.
+    if (tipo === 'rut'){
+      var h = document.getElementById(input.id + 'Hint');
+      if (h){
+        h.textContent = !v ? '' : (ok ? '✓ RUT válido' : '✗ Dígito verificador incorrecto');
+        h.style.color = ok ? '#15803d' : '#b91c1c';
+      }
+    }
+    if (typeof pintarPasos === 'function') pintarPasos();
+  }
+  // Al salir del campo, el RUT queda con puntos y guion (25.547.065-5) y se
+  // sincroniza con el estado del modal -- así se ve que fue verificado.
+  function oaxFormatearRut(input){
+    var v = (input.value || '').trim();
+    if (!v || !_oaxRutValido(v)) return;
+    input.value = _oaxRutFormato(v);
+    if (input.id === 'oaxSelRut' && S) S.proveedor_rut = input.value;
+    oaxValidarCampoManual(input, 'rut');
   }
 
   /* ── Semáforo de los 4 pasos obligatorios (REGLA #15) ──────────────
@@ -1060,7 +1088,11 @@ window.OT2ANX = (function(){
         email = (S.email || '').trim();
         tel = (S.tel || '').trim();
       }
-      return !!(nombre && rut && (email || tel));
+      // Verde SOLO con RUT válido (módulo 11) y al menos un contacto bien
+      // formado -- lo mismo que crear() va a exigir.
+      var emailOk = !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      var telOk = !!tel && !!_oaxTelChileNormalizar(tel);
+      return !!(nombre && rut && _oaxRutValido(rut) && (emailOk || telOk));
     }
     if (paso === 'objetivo') return !!(S.objetivo_servicio || '').trim();
     if (paso === 'precio')
@@ -1219,13 +1251,8 @@ window.OT2ANX = (function(){
       // Corregir usa el MISMO formulario y el mismo cuerpo: si se separaran
       // en dos caminos, uno terminaría validando distinto que el otro.
       var _esEdicion = !!S.editando_id;
-      const r = await fetch(_esEdicion ? ('/ot/api/anexos/' + S.editando_id) : '/ot/api/anexos', {
-        // POST en los dos casos: es el metodo que el resto del modal ya
-        // usa sin problemas (la ruta de edicion acepta PATCH y POST).
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
+      const _url = _esEdicion ? ('/ot/api/anexos/' + S.editando_id) : '/ot/api/anexos';
+      const _cuerpo = {
           ot_id: S.ot_id, tecnico_externo_id: S.tecnico_externo_id,
           proveedor_nombre: S.proveedor_nombre, proveedor_rut: S.proveedor_rut,
           // 2026-09-16: viajan aunque mant_anexos no tenga columna para
@@ -1246,10 +1273,30 @@ window.OT2ANX = (function(){
           fecha_inicio: S.fecha_inicio || null, fecha_termino: S.fecha_termino || null,
           niveles_servicio: S.niveles_servicio, hitos_pago: S.hitos_pago,
           alcance_servicio: S.alcance_servicio,
-        }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok){
+      };
+      // POST en los dos casos: es el metodo que el resto del modal ya
+      // usa sin problemas (la ruta de edicion acepta PATCH y POST).
+      const r = await fetch(_url, {method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(_cuerpo)});
+      let j = await r.json().catch(() => ({}));
+      // 2026-09-20 (Daniel, probando con "Daniel Aguilar Prueba": "¿por qué
+      // no me deja avanzar?"). El candado del nombre de prueba se queda,
+      // pero si el backend dice que este usuario puede forzarlo
+      // (superadmin), se pregunta y se reintenta con confirmar_prueba.
+      if (!r.ok && j.codigo === 'PROVEEDOR_DE_PRUEBA' && j.puede_forzar){
+        const forzar = await ilusConfirm({
+          title: 'Nombre de proveedor de prueba',
+          message: j.error,
+          sub: 'Solo para probar el flujo: el anexo saldría con ese nombre. Queda registrado en la bitácora que lo forzaste.',
+          okLabel: 'Crear igual (es una prueba)', cancelLabel: 'Corregir el nombre', danger: true,
+        });
+        if (!forzar) return;
+        _cuerpo.confirmar_prueba = true;
+        const r2 = await fetch(_url, {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify(_cuerpo)});
+        j = await r2.json().catch(() => ({}));
+        if (!r2.ok || !j.ok){ ilusToast(j.error || 'No se pudo crear el anexo.', {type:'error'}); return; }
+      } else if (!r.ok || !j.ok){
         ilusToast(j.error || 'No se pudo crear el anexo.', {type:'error'});
         return;
       }
@@ -1489,7 +1536,7 @@ window.OT2ANX = (function(){
   return {
     abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink,
     onProveedorChange, toggleManual, toggleCondiciones, setContactoSel,
-    oaxValidarCampoManual,
+    oaxValidarCampoManual, oaxFormatearRut,
     setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,
     agregarItem, quitarItem,
   };

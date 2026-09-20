@@ -88052,6 +88052,28 @@ def _anexo_sync_proveedor_ficha(tecnico_externo_id, rut, email, tel):
         print(f"[_anexo_sync_proveedor_ficha] tecnico_externo_id={tecnico_externo_id}: {e}", flush=True)
 
 
+def _anexo_bloqueo_nombre_prueba(proveedor, d):
+    """Candado del nombre de prueba en el Anexo (documento con efecto legal).
+
+    2026-09-20 (Daniel, en vivo, probando con su proveedor "Daniel Aguilar
+    Prueba": "¿por qué no me deja avanzar?"). El candado se queda para todos,
+    pero el superadmin puede FORZARLO con confirmación explícita
+    (confirmar_prueba=true, que el modal pide con ilusConfirm) -- es la única
+    forma de probar el flujo completo del anexo con datos de prueba, y queda
+    en la bitácora. Devuelve la respuesta de error, o None si pasa."""
+    if not any(_p in (proveedor or "").lower() for _p in _ANEXO_PALABRAS_PRUEBA):
+        return None
+    es_super = ((getattr(g, "user", None) or {}).get("role") or "").lower() == "superadmin"
+    if es_super and bool(d.get("confirmar_prueba")):
+        _mant_log("anexo", 0, "nombre_prueba_forzado",
+                  f"{current_username() or 'superadmin'} creó/corrigió un anexo con nombre de prueba: {proveedor[:120]}")
+        return None
+    return _ot2_err(
+        'Ese nombre de proveedor parece de prueba ("{}"). El anexo es un '
+        "documento con efecto legal: corrige el nombre real antes de "
+        "crearlo.".format(proveedor), "PROVEEDOR_DE_PRUEBA", puede_forzar=es_super)
+
+
 @app.route("/ot/api/anexos", methods=["POST"])
 @_mant_required
 def ot2_api_anexo_crear():
@@ -88068,12 +88090,9 @@ def ot2_api_anexo_crear():
     # base ya existe un "Daniel Aguilar Prueba" con RUT de prueba.
     # La VISTA PREVIA si acepta datos de prueba a proposito -- para eso
     # existe, y ademas sale con marca de agua. Lo que se bloquea es CREAR.
-    _prov_low = proveedor.lower()
-    if any(_p in _prov_low for _p in ("prueba", "test", "demo", "ejemplo")):
-        return _ot2_err(
-            'Ese nombre de proveedor parece de prueba ("{}"). El anexo es un '
-            "documento con efecto legal: corrige el nombre real antes de "
-            "crearlo.".format(proveedor), "PROVEEDOR_DE_PRUEBA")
+    _err_prueba = _anexo_bloqueo_nombre_prueba(proveedor, d)
+    if _err_prueba:
+        return _err_prueba
     # 🔴 2026-09-16 (Daniel, en vivo: "es importante que estos detalles no
     # permitan generar el anexo... debe ser obligatorio... que el anexo no
     # le falte información al momento de crearse"). El propio paso 1 del
@@ -88326,11 +88345,9 @@ def ot2_api_anexo_editar(aid):
     proveedor = (d.get("proveedor_nombre") or "").strip()[:200]
     if not proveedor:
         return _ot2_err("Falta el nombre del proveedor.", "PROVEEDOR_REQUERIDO")
-    if any(_p in proveedor.lower() for _p in _ANEXO_PALABRAS_PRUEBA):
-        return _ot2_err(
-            'Ese nombre de proveedor parece de prueba ("{}"). El anexo es un '
-            "documento con efecto legal: corrige el nombre real.".format(proveedor),
-            "PROVEEDOR_DE_PRUEBA")
+    _err_prueba = _anexo_bloqueo_nombre_prueba(proveedor, d)
+    if _err_prueba:
+        return _err_prueba
     # 2026-09-16: mismo candado que ot2_api_anexo_crear -- "un anexo
     # corregido no puede quedar peor que uno nuevo" ya lo decía este mismo
     # comentario, pero el RUT no se exigía.
