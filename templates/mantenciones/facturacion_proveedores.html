@@ -32,10 +32,12 @@
       despacho), no el neto de la factura.
     </div>
   </div>
-  <form method="get" class="d-flex gap-2 align-items-center flex-wrap">
-    <input type="month" name="mes" value="{{ mes }}" class="form-control form-control-sm"
-           style="width:auto" onchange="this.form.submit()">
-    <a class="btn btn-sm btn-dark" href="{{ url_for('mant_facturacion_proveedores_xlsx', mes=mes) }}">
+  {# 📈 2026-09-20 (Daniel: "me gustaría verlo por periodo... cuánto estamos
+     facturando por meses"). Rango de meses desde/hasta + atajos. #}
+  <form method="get" class="d-flex gap-2 align-items-center flex-wrap" id="fpRango">
+    <label class="fpr-lbl">Desde <input type="month" name="desde" value="{{ desde_txt }}" class="form-control form-control-sm" style="width:auto" onchange="this.form.submit()"></label>
+    <label class="fpr-lbl">Hasta <input type="month" name="hasta" value="{{ hasta_txt }}" class="form-control form-control-sm" style="width:auto" onchange="this.form.submit()"></label>
+    <a class="btn btn-sm btn-dark" href="{{ url_for('mant_facturacion_proveedores_xlsx', desde=desde_txt, hasta=hasta_txt) }}">
       <i class="bi bi-file-earmark-excel me-1"></i>Bajar detalle</a>
     {# 💸 2026-09-14: de aquí se pasa a registrar las facturas reales del
        proveedor y a ver qué OT siguen sin factura. #}
@@ -43,12 +45,29 @@
       <i class="bi bi-receipt-cutoff me-1"></i>Facturas proveedor</a>
   </form>
 </div>
+<div class="fpr-atajos">
+  <span>Período:</span>
+  <a class="fpr-atajo {{ 'on' if desde_txt == hoy_mes and hasta_txt == hoy_mes }}" href="?mes={{ hoy_mes }}">Este mes</a>
+  <a class="fpr-atajo" href="javascript:fprUltimos(3)">Últimos 3 meses</a>
+  <a class="fpr-atajo" href="javascript:fprUltimos(6)">Últimos 6 meses</a>
+  <a class="fpr-atajo" href="javascript:fprUltimos(12)">Últimos 12 meses</a>
+  <a class="fpr-atajo {{ 'on' if desde_txt == hoy_mes[:4] ~ '-01' and hasta_txt == hoy_mes }}" href="?desde={{ hoy_mes[:4] }}-01&hasta={{ hoy_mes }}">Este año</a>
+  <span class="fpr-cual">{% if desde_txt == hasta_txt %}{{ desde_txt[5:] }}/{{ desde_txt[:4] }}{% else %}{{ desde_txt[5:] }}/{{ desde_txt[:4] }} → {{ hasta_txt[5:] }}/{{ hasta_txt[:4] }}{% endif %}</span>
+</div>
+<script>
+function fprUltimos(n){
+  const h = '{{ hoy_mes }}'.split('-').map(Number);
+  let a = h[0], m = h[1] - (n - 1);
+  while (m <= 0){ m += 12; a -= 1; }
+  window.location = '?desde=' + a + '-' + String(m).padStart(2,'0') + '&hasta={{ hoy_mes }}';
+}
+</script>
 
 {% if not provs %}
 <div class="fp-vacio">
   <i class="bi bi-inbox"></i>
   <div>
-    <b>Sin movimientos en este mes.</b>
+    <b>Sin movimientos en este período.</b>
     No hay órdenes de trabajo cerradas con costo de proveedor entre el
     {{ desde.strftime('%d/%m/%Y') }} y el {{ hasta.strftime('%d/%m/%Y') }}.
     <div class="mt-1" style="font-size:.8rem;color:#64748b">
@@ -109,7 +128,41 @@
   <div class="fp-kpi tot"><span class="k">Total pagado · {{ tot.n_ot }} OT</span><span class="v">{{ clp(tot.total) }}</span></div>
 </div>
 
-<div class="fp-sec">Por proveedor</div>
+{# 📈 2026-09-20 (Daniel: "cuánto estamos facturando por meses, con qué
+   proveedor, quién ha arrojado mejor ganancia, a quién se le pagó tanto").
+   Una fila por mes del período; las barras comparan pagado vs cobrado
+   entre meses (escala = el mayor del período). #}
+{% if tot.serie | length > 1 %}
+<div class="fp-sec">Evolución por mes</div>
+<div class="table-responsive">
+  <table class="fp-tabla fp-serie">
+    <thead>
+      <tr>
+        <th>Mes</th><th class="n">OT</th>
+        <th class="m">Pagado a proveedores</th><th class="m">Cobrado al cliente</th>
+        <th class="m">Ganancia</th><th>Mejor ganancia</th><th>Más pagado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in tot.serie %}
+      <tr>
+        <td><b>{{ m.mes_label }}</b></td>
+        <td class="n">{{ m.n_ot }}</td>
+        <td class="m"><div class="fp-bar"><i style="width:{{ (m.pagado / tot.max_pagado_mes * 100) | round(0) if tot.max_pagado_mes else 0 }}%"></i></div>{{ clp(m.pagado) }}
+          {% if m.pagado_garantia or m.pagado_sin_declarar %}<div class="fp-sub">{% if m.pagado_garantia %}garantía {{ clp(m.pagado_garantia) }}{% endif %}{% if m.pagado_garantia and m.pagado_sin_declarar %} · {% endif %}{% if m.pagado_sin_declarar %}sin cobro {{ clp(m.pagado_sin_declarar) }}{% endif %}</div>{% endif %}</td>
+        <td class="m"><div class="fp-bar ok"><i style="width:{{ (m.cobrado / tot.max_cobrado_mes * 100) | round(0) if tot.max_cobrado_mes else 0 }}%"></i></div>{{ clp(m.cobrado) if m.cobrado else '—' }}</td>
+        <td class="m"><span class="fp-margen {{ 'neg' if m.margen < 0 else 'pos' }}">{{ clp(m.margen) }}</span>
+          {% if m.margen_pct is not none %}<div class="fp-sub">{{ '%.1f'|format(m.margen_pct) }}% · {{ m.n_comparable }} OT</div>{% endif %}</td>
+        <td>{{ m.mejor_ganancia or '—' }}</td>
+        <td>{{ m.mas_pagado or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="fp-sec">Por proveedor <span class="fp-sec-nota">ordenado por lo pagado; la ganancia compara solo OT con cobro declarado</span></div>
 <div class="table-responsive">
   <table class="fp-tabla">
     <thead>
@@ -118,15 +171,19 @@
         <th class="m">Instalación</th><th class="m">Mantención</th>
         {% if tot.otros %}<th class="m">Otros</th>{% endif %}
         <th class="m">Despacho</th><th class="m">Pagado</th>
-        <th class="m">Cobrado</th><th class="m">Margen</th>
+        <th class="m">Cobrado</th><th class="m">Ganancia</th>
       </tr>
     </thead>
     <tbody>
       {% for p in provs %}
       <tr>
         <td>
-          <div class="fp-nom">{{ p.nombre }}</div>
+          <div class="fp-nom">{{ p.nombre }}
+            {% if p.key == tot.mejor_ganancia_key %}<span class="fp-tag win" title="Mayor ganancia del período">★ Mejor ganancia</span>{% endif %}
+            {% if p.key == tot.mas_pagado_key %}<span class="fp-tag pay" title="A quien más se le pagó en el período">Más pagado</span>{% endif %}
+            {% if p.key == tot.peor_ganancia_key %}<span class="fp-tag loss" title="Ganancia negativa: se pagó más de lo que se cobró">Pérdida</span>{% endif %}</div>
           {% if p.rut %}<div class="fp-sub">{{ p.rut | rut_fmt }}</div>{% endif %}
+          {% if p.tecnicos %}<div class="fp-sub"><i class="bi bi-person"></i> {{ p.tecnicos }}</div>{% endif %}
         </td>
         <td class="n">{{ p.n_ot }}</td>
         <td class="m">{{ clp(p.instalacion) if p.instalacion else '—' }}</td>
@@ -145,6 +202,21 @@
 </div>
 
 <div class="fp-sec">Detalle por orden de trabajo</div>
+{# 🔎 2026-09-20 (Daniel: "un filtro a las órdenes de trabajo"): por
+   proveedor y por mes, sin recargar -- las filas ya están en el DOM. #}
+<div class="fpr-filtros">
+  <button type="button" class="fpr-f on" data-k="" onclick="fprFiltroProv(this)">Todos <span>{{ detalle | length }}</span></button>
+  {% for p in provs %}
+  <button type="button" class="fpr-f" data-k="{{ p.key }}" onclick="fprFiltroProv(this)">{{ p.nombre }} <span>{{ p.n_ot }}</span></button>
+  {% endfor %}
+  {% if tot.serie | length > 1 %}
+  <select class="form-select form-select-sm fpr-mes" id="fprMes" onchange="fpPaginar(1)" aria-label="Mes">
+    <option value="">Todos los meses</option>
+    {% for m in tot.serie %}<option value="{{ m.mes }}">{{ m.mes_label }} · {{ m.n_ot }} OT</option>{% endfor %}
+  </select>
+  {% endif %}
+  <input type="search" class="form-control form-control-sm fpr-q" id="fprQ" placeholder="Buscar OT, cliente, documento…" oninput="fpPaginar(1)" aria-label="Buscar">
+</div>
 <div class="table-responsive">
   <table class="fp-tabla" id="fpDetalle">
     <thead>
@@ -157,12 +229,12 @@
     </thead>
     <tbody>
       {% for d in detalle %}
-      <tr>
+      <tr data-prov="{{ d.prov_key }}" data-mes="{{ d.mes }}">
         <td>
           <a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.vid) }}">{{ d.numero_ot }}</a>
           <div class="fp-sub">Cerrada {{ d.cerrada }}</div>
         </td>
-        <td>{{ d.proveedor }}</td>
+        <td>{{ d.proveedor }}{% if d.tecnico and d.tecnico | lower != d.proveedor | lower %}<div class="fp-sub"><i class="bi bi-person"></i> {{ d.tecnico }}</div>{% endif %}</td>
         <td>{{ d.cliente }}</td>
         <td><span class="fp-tipo">{{ d.tipo_label }}</span></td>
         <td>
@@ -194,6 +266,10 @@
   </table>
 </div>
 
+<div class="fp-vacio" id="fprVacio" hidden>
+  <i class="bi bi-search"></i>
+  <div><b>Ninguna OT calza con ese filtro.</b> Cambia el proveedor, el mes o el texto de búsqueda.</div>
+</div>
 <div class="fp-pag" id="fpPag" hidden>
   <div class="fp-pag-info" id="fpPagInfo"></div>
   <div class="fp-pag-ctl">
@@ -219,11 +295,30 @@
    mes entero vino en una sola consulta -- así que acá solo se decide cuáles
    se muestran. */
 var fpPagActual = 1;
+var fprProvActual = '';
+function fprFiltroProv(btn){
+  fprProvActual = btn.dataset.k || '';
+  document.querySelectorAll('.fpr-f').forEach(function(b){ b.classList.toggle('on', b === btn); });
+  fpPaginar(1);
+}
+// Filtro (proveedor + mes + texto) y paginación juntos: REGLA #4.3, al
+// limpiar un filtro la tabla se recalcula igual que al aplicarlo.
 function fpPaginar(pag){
-  var filas = Array.prototype.slice.call(
+  var todas = Array.prototype.slice.call(
     document.querySelectorAll('#fpDetalle tbody tr'));
+  var mesSel = (document.getElementById('fprMes') || {}).value || '';
+  var q = ((document.getElementById('fprQ') || {}).value || '').trim().toLowerCase();
+  var filas = todas.filter(function(tr){
+    if (fprProvActual && tr.dataset.prov !== fprProvActual) return false;
+    if (mesSel && tr.dataset.mes !== mesSel) return false;
+    if (q && tr.innerText.toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+  todas.forEach(function(tr){ if (filas.indexOf(tr) < 0) tr.style.display = 'none'; });
   var total = filas.length;
   var pie = document.getElementById('fpPag');
+  var vacio = document.getElementById('fprVacio');
+  if (vacio) vacio.hidden = total > 0;
   if (!total){ if (pie) pie.hidden = true; return; }
 
   var tam = parseInt(document.getElementById('fpPagSize').value, 10) || 0;
@@ -239,12 +334,14 @@ function fpPaginar(pag){
   });
 
   document.getElementById('fpPagInfo').textContent =
-    'Mostrando ' + (desde + 1) + '–' + hasta + ' de ' + total + ' órdenes de trabajo';
+    'Mostrando ' + (desde + 1) + '–' + hasta + ' de ' + total + ' órdenes de trabajo' +
+    (total !== todas.length ? ' (de ' + todas.length + ' en el período)' : '');
   document.getElementById('fpPagNum').textContent = 'Página ' + pag + ' de ' + paginas;
   document.getElementById('fpPagPrev').disabled = (pag <= 1);
   document.getElementById('fpPagNext').disabled = (pag >= paginas);
-  /* Con una sola página el pie no aporta nada: se esconde. */
-  pie.hidden = (paginas <= 1 && total <= 25);
+  /* Con una sola página el pie no aporta nada: se esconde -- salvo que haya
+     un filtro activo, para que se lea cuántas quedaron. */
+  pie.hidden = (paginas <= 1 && total <= 25 && total === todas.length);
 }
 document.addEventListener('DOMContentLoaded', function(){ fpPaginar(1); });
 </script>
@@ -327,12 +424,45 @@ document.addEventListener('DOMContentLoaded', function(){ fpPaginar(1); });
 .fp-vacio{display:flex;gap:12px;align-items:flex-start;background:#f8fafc;
   border:1px solid #e2e8f0;border-radius:12px;padding:18px;color:#0f172a;font-size:.9rem}
 .fp-vacio > i{font-size:1.5rem;color:#94a3b8}
+/* 📈 2026-09-20: rango de meses, evolución, ranking y filtro del detalle */
+.fpr-lbl{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;color:rgba(255,255,255,.85);margin:0}
+.page-header .form-control{min-height:38px}
+.fpr-atajos{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:-6px 0 14px;font-size:.76rem;color:#64748b;font-weight:700}
+.fpr-atajo{font-size:.74rem;font-weight:800;color:#374151;background:#fff;border:1px solid #d1d5db;border-radius:999px;
+  padding:5px 12px;text-decoration:none;min-height:34px;display:inline-flex;align-items:center}
+.fpr-atajo:hover{border-color:#dc2626;color:#dc2626}
+.fpr-atajo.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.fpr-cual{margin-left:auto;font-weight:900;color:#0f172a}
+.fp-sec-nota{font-weight:600;text-transform:none;letter-spacing:0;color:#94a3b8;font-size:.72rem;margin-left:4px}
+.fp-serie td.m{position:relative}
+.fp-bar{height:6px;border-radius:999px;background:#f1f5f9;margin-bottom:4px;overflow:hidden}
+.fp-bar i{display:block;height:100%;background:linear-gradient(90deg,#dc2626,#b91c1c);border-radius:999px}
+.fp-bar.ok i{background:linear-gradient(90deg,#16a34a,#15803d)}
+.fp-tag{display:inline-block;font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;
+  padding:2px 7px;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.fp-tag.win{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+.fp-tag.pay{background:#0a0a0a;color:#fff}
+.fp-tag.loss{background:#fee2e2;color:#b91c1c;border:1px solid #fecaca}
+.fpr-filtros{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+.fpr-f{font-size:.74rem;font-weight:800;color:#374151;background:#fff;border:1px solid #d1d5db;border-radius:999px;
+  padding:5px 11px;min-height:36px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.fpr-f span{font-size:.66rem;font-weight:900;background:#f1f5f9;color:#64748b;border-radius:999px;padding:1px 6px}
+.fpr-f:hover{border-color:#dc2626;color:#dc2626}
+.fpr-f.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.fpr-f.on span{background:#fff;color:#0a0a0a}
+.fpr-mes{width:auto;min-height:36px;font-size:.78rem}
+.fpr-q{flex:1 1 200px;max-width:320px;min-height:36px;font-size:16px;margin-left:auto}
 @media (max-width:768px){
   .fp-tabla thead{display:none}
   .fp-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:12px;
     padding:8px 0;margin-bottom:10px}
   .fp-tabla tbody td{display:block;border:0;padding:3px 12px;text-align:left}
   .fp-tabla th.m,.fp-tabla td.m{text-align:left}
+  .fpr-lbl{color:#0f172a}
+  .fpr-cual{margin-left:0;width:100%}
+  .fpr-q{max-width:none;margin-left:0}
+  .fpr-atajo,.fpr-f,.fpr-mes,.fpr-q{min-height:44px}
+  .fp-bar{max-width:160px}
 }
 </style>
 {% endblock %}

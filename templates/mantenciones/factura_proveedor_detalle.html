@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Factura {{ factura.numero_documento or 'sin N°' }} · {{ factura.proveedor_nombre }} — ILUS Fitness{% endblock %}
+{% block title %}Factura {{ factura.numero_documento or 'sin N°' }} · {{ factura.prov_canon or factura.proveedor_nombre }} — ILUS Fitness{% endblock %}
 
 {#- Detalle de una factura de proveedor externo (SSTT). Ver el comentario
     de cabecera en facturas_proveedor.html. Acá se asignan las OT que el
@@ -20,7 +20,9 @@
       <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.6)">
         <a href="/servicio-tecnico/facturas-proveedor" style="color:inherit;text-decoration:none">Facturas de proveedor</a> ›
         {{ tipo_lbl }} {{ factura.numero_documento or '(sin N°)' }}</div>
-      <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>{{ factura.proveedor_nombre }}
+      {# 🏢 2026-09-20: la EMPRESA como título (DAP Servicio), el nombre escrito a
+         mano ("Daniel Pulgar") queda como alias -- ver mant_factura_proveedor_detalle. #}
+      <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>{{ factura.prov_canon or factura.proveedor_nombre }}
         <span class="fp-pago pago-{{ factura.estado_pago }}" style="vertical-align:middle;margin-left:6px">
           {% if factura.estado_pago == 'pagada' %}<i class="bi bi-check-circle-fill"></i> Pagada
           {% elif factura.estado_pago == 'anulada' %}<i class="bi bi-slash-circle"></i> Anulada
@@ -42,7 +44,9 @@
         {% else %}
         <b>Solicitud de orden de compra</b> — todavía no se le paga al proveedor, se está esperando la factura real.
         {% endif %}
-        {% if factura.proveedor_rut %} · RUT {{ factura.proveedor_rut | rut_fmt }}{% endif %}
+        {% if factura.prov_canon_rut %} · RUT {{ factura.prov_canon_rut | rut_fmt }}{% endif %}
+        {% if factura.prov_alias %} · registrada como “{{ factura.prov_alias }}”{% endif %}
+        {% if factura.prov_canon_id %} · <a href="/servicio-tecnico/facturas-proveedor?prov_id={{ factura.prov_canon_id }}" style="color:#fff;font-weight:800">Ver todas las facturas de este proveedor</a>{% endif %}
         {% if factura.notas %}<div class="fp-sub" style="white-space:pre-line">{{ factura.notas }}</div>{% endif %}
       </div>
     </div>

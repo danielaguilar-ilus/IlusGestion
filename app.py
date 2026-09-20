@@ -105366,11 +105366,14 @@ def _facprov_datos(desde, hasta):
         "       v.proveedor_nombre, v.tecnico_user_id, "
         "       c.razon_social AS cliente, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
-        "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut "
+        "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id "
         "  FROM mant_visitas v "
         "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
-        "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = v.tecnico_user_id "
+        # 🏢 2026-09-20: misma resolución de EMPRESA que Facturas de proveedor
+        # (tabla empresa↔técnicos primero, vínculo legacy después) -- si no,
+        # DAP Servicio y Daniel Pulgar salían como dos proveedores.
+        "  LEFT JOIN mant_tecnicos_externos te ON te.id = " + _mfp_sql_ficha_de_tecnico("v") + " "
         " WHERE v.estado = 'cerrada' "
         "   AND v.cerrada_at >= %s AND v.cerrada_at < %s "
         "   AND (COALESCE(v.costo_proveedor,0) > 0 OR COALESCE(v.costo_despacho,0) > 0) "
@@ -105434,14 +105437,19 @@ def _facprov_datos(desde, hasta):
         else:
             cat = "otros"
 
-        pr = provs.setdefault(nombre, {
-            "nombre": nombre, "rut": f.get("prov_rut") or "",
+        _pid = int(f["prov_ficha_id"]) if f.get("prov_ficha_id") else None
+        _pkey = str(_pid) if _pid else "n:" + nombre.strip().lower()
+        pr = provs.setdefault(_pkey, {
+            "nombre": nombre, "rut": f.get("prov_rut") or "", "prov_id": _pid, "key": _pkey,
+            "tecnicos": set(),
             "instalacion": 0.0, "mantencion": 0.0, "otros": 0.0,
             "despacho": 0.0, "total": 0.0, "n_ot": 0,
             "cobrado": 0.0, "margen": 0.0, "n_sin_cobro": 0, "n_garantia": 0,
             "pagado_comparable": 0.0, "n_comparable": 0,
             "pagado_garantia": 0.0, "pagado_sin_declarar": 0.0,
         })
+        if (f.get("tecnico_nombre") or "").strip():
+            pr["tecnicos"].add(f["tecnico_nombre"].strip())
         pr[cat] += serv
         pr["despacho"] += desp
         pr["total"] += pagado
@@ -105470,10 +105478,16 @@ def _facprov_datos(desde, hasta):
         elif (f.get("modalidad_cobro") or "").lower() == "garantia":
             _doc = "Garantia"
 
+        # Mes de cierre en hora Chile (REGLA #6): cerrada_at se guarda en UTC.
+        try:
+            _mes = chile_fmt_filter(f.get("cerrada_at"), "%Y-%m") if f.get("cerrada_at") else ""
+        except Exception:
+            _mes = ""
         detalle.append({
             "vid": f["id"],
             "numero_ot": f.get("numero_ot") or ("OT #" + str(f["id"])),
-            "proveedor": nombre,
+            "proveedor": nombre, "prov_key": _pkey, "mes": _mes,
+            "tecnico": (f.get("tecnico_nombre") or "").strip(),
             "cliente": f.get("cliente") or "Trabajo interno",
             "tipo_label": _TIPO_OT_LABEL.get(tipo, (tipo or "-").replace("_", " ").title()),
             "categoria": cat,
@@ -105486,6 +105500,10 @@ def _facprov_datos(desde, hasta):
         })
 
     lista = sorted(provs.values(), key=lambda x: x["total"], reverse=True)
+    for x in lista:
+        x["tecnicos"] = ", ".join(sorted(x["tecnicos"]))
+        if x["tecnicos"].lower() == (x["nombre"] or "").lower():
+            x["tecnicos"] = ""
     tot = {
         "instalacion": sum(x["instalacion"] for x in lista),
         "mantencion":  sum(x["mantencion"] for x in lista),
@@ -105507,7 +105525,78 @@ def _facprov_datos(desde, hasta):
     tot["margen_pct"] = (tot["margen"] / tot["cobrado"] * 100.0) if tot["cobrado"] > 0 else None
     for x in lista:
         x["margen_pct"] = (x["margen"] / x["cobrado"] * 100.0) if x["cobrado"] > 0 else None
+
+    # 📈 2026-09-20 (Daniel: "indicadores de cuánto estamos facturando por
+    # meses, con qué proveedor, quién ha arrojado mejor ganancia, a quién se
+    # le pagó tanto"). Serie mes a mes sobre el mismo detalle, con las
+    # mismas reglas del margen (solo OT comparables).
+    meses = {}
+    for d in detalle:
+        m = meses.setdefault(d["mes"] or "?", {"mes": d["mes"] or "?", "n_ot": 0, "pagado": 0.0, "cobrado": 0.0,
+                                                "margen": 0.0, "n_comparable": 0, "pagado_garantia": 0.0,
+                                                "pagado_sin_declarar": 0.0, "por_prov": {}})
+        m["n_ot"] += 1
+        m["pagado"] += d["total"]
+        pp = m["por_prov"].setdefault(d["prov_key"], {"nombre": d["proveedor"], "pagado": 0.0, "margen": 0.0, "n_comparable": 0})
+        pp["pagado"] += d["total"]
+        if d["garantia"] and not d["cobrado"]:
+            m["pagado_garantia"] += d["total"]
+        elif d["sin_cobro"]:
+            m["pagado_sin_declarar"] += d["total"]
+        else:
+            m["cobrado"] += d["cobrado"]; m["margen"] += d["margen"]; m["n_comparable"] += 1
+            pp["margen"] += d["margen"]; pp["n_comparable"] += 1
+    serie = []
+    for m in sorted(meses.values(), key=lambda x: x["mes"]):
+        provs_m = list(m["por_prov"].values())
+        m["margen_pct"] = (m["margen"] / m["cobrado"] * 100.0) if m["cobrado"] > 0 else None
+        m["mas_pagado"] = max(provs_m, key=lambda x: x["pagado"])["nombre"] if provs_m else ""
+        _comp = [x for x in provs_m if x["n_comparable"]]
+        m["mejor_ganancia"] = max(_comp, key=lambda x: x["margen"])["nombre"] if _comp else ""
+        try:
+            m["mes_label"] = datetime.strptime(m["mes"], "%Y-%m").strftime("%m/%Y")
+        except Exception:
+            m["mes_label"] = m["mes"]
+        del m["por_prov"]
+        serie.append(m)
+    tot["serie"] = serie
+    tot["max_pagado_mes"] = max((m["pagado"] for m in serie), default=0.0)
+    tot["max_cobrado_mes"] = max((m["cobrado"] for m in serie), default=0.0)
+    _comp = [x for x in lista if x["n_comparable"]]
+    tot["mejor_ganancia_key"] = max(_comp, key=lambda x: x["margen"])["key"] if _comp else None
+    tot["peor_ganancia_key"] = (min(_comp, key=lambda x: x["margen"])["key"]
+                                if len(_comp) > 1 and min(_comp, key=lambda x: x["margen"])["margen"] < 0 else None)
+    tot["mas_pagado_key"] = lista[0]["key"] if lista else None
     return lista, detalle, tot
+
+
+def _facprov_rango():
+    """Rango de meses para Facturación de proveedores (2026-09-20, Daniel:
+    "verlo por periodo... cuánto estamos facturando por meses").
+    ?desde=YYYY-MM&hasta=YYYY-MM; si solo viene ?mes= (o nada), es ese
+    mes. Devuelve (desde_dt, hasta_dt_exclusivo, desde_txt, hasta_txt)."""
+    d0, h0, mes_txt = _facprov_periodo()
+    def _parse(raw):
+        raw = (raw or "").strip()
+        try:
+            a, m = int(raw[:4]), int(raw[5:7])
+            if 1 <= m <= 12 and 2000 <= a <= 2100:
+                return a, m
+        except Exception:
+            pass
+        return None
+    pd, ph = _parse(request.args.get("desde")), _parse(request.args.get("hasta"))
+    if not pd and not ph:
+        return d0, h0, mes_txt, mes_txt
+    if not pd:
+        pd = ph
+    if not ph:
+        ph = pd
+    if (pd[0], pd[1]) > (ph[0], ph[1]):
+        pd, ph = ph, pd
+    desde = datetime(pd[0], pd[1], 1)
+    hasta = datetime(ph[0] + (1 if ph[1] == 12 else 0), 1 if ph[1] == 12 else ph[1] + 1, 1)
+    return desde, hasta, "{:04d}-{:02d}".format(*pd), "{:04d}-{:02d}".format(*ph)
 
 
 def _facprov_periodo():
@@ -106273,6 +106362,30 @@ def mant_factura_proveedor_detalle(fid):
     # lo que ILUS le cobró a SU cliente en cada OT de esta factura, para
     # verla al lado de lo que esta factura le paga al proveedor.
     total_cobrado_cliente = sum(i["cobrado_cliente"] for i in items)
+    # 🏢 2026-09-20: la EMPRESA como título (ficha guardada si está vigente,
+    # si no la del técnico de sus OT); el nombre escrito a mano queda como
+    # alias -- "Daniel Pulgar" en el encabezado de una factura de DAP Servicio
+    # es justo lo que Daniel pidió unificar.
+    _canon, _canon_rut, _canon_id = "", "", None
+    try:
+        _tf = None
+        if factura.get("tecnico_externo_id"):
+            _tf = mysql_fetchone(
+                "SELECT id, razon_social, rut_empresa FROM mant_tecnicos_externos "
+                " WHERE id=%s AND COALESCE(estado,'activo') <> 'baja'", (int(factura["tecnico_externo_id"]),))
+        if not _tf:
+            _pid = next((i.get("prov_ficha_id") for i in items if i.get("prov_ficha_id")), None)
+            if _pid:
+                _tf = mysql_fetchone("SELECT id, razon_social, rut_empresa FROM mant_tecnicos_externos WHERE id=%s", (int(_pid),))
+        if _tf:
+            _canon, _canon_rut, _canon_id = (_tf.get("razon_social") or "").strip(), _tf.get("rut_empresa") or "", int(_tf["id"])
+    except Exception as _e_canon:
+        print(f"[facprov] detalle canon fid={fid}: {_e_canon}", flush=True)
+    _orig = (factura.get("proveedor_nombre") or "").strip()
+    factura["prov_canon"] = _canon or _orig
+    factura["prov_canon_rut"] = _canon_rut or (factura.get("proveedor_rut") or "")
+    factura["prov_canon_id"] = _canon_id
+    factura["prov_alias"] = _orig if (_canon and _orig.lower() != _canon.lower()) else ""
     return render_template(
         "mantenciones/factura_proveedor_detalle.html",
         factura=factura, items=items, total_asignado=total_asignado,
@@ -107584,10 +107697,13 @@ def mant_facturacion_proveedores():
     if not _facprov_puede():
         flash("No tienes permiso para ver la facturacion de proveedores.", "warning")
         return redirect(url_for("mant_index"))
-    desde, hasta, mes_txt = _facprov_periodo()
+    desde, hasta, desde_txt, hasta_txt = _facprov_rango()
     provs, detalle, tot = _facprov_datos(desde, hasta)
+    _hoy = _now_chile().date()
     return render_template("mantenciones/facturacion_proveedores.html",
-                           provs=provs, detalle=detalle, tot=tot, mes=mes_txt,
+                           provs=provs, detalle=detalle, tot=tot, mes=desde_txt,
+                           desde_txt=desde_txt, hasta_txt=hasta_txt,
+                           hoy_mes="{:04d}-{:02d}".format(_hoy.year, _hoy.month),
                            desde=desde, hasta=hasta)
 
 
@@ -107598,7 +107714,8 @@ def mant_facturacion_proveedores_xlsx():
     """El mismo detalle, en Excel, para conciliar contra la factura real."""
     if not _facprov_puede():
         return jsonify({"ok": False, "error": "Sin permiso."}), 403
-    desde, hasta, mes_txt = _facprov_periodo()
+    desde, hasta, desde_txt, hasta_txt = _facprov_rango()
+    mes_txt = desde_txt if desde_txt == hasta_txt else f"{desde_txt}_a_{hasta_txt}"
     provs, detalle, tot = _facprov_datos(desde, hasta)
 
     from openpyxl import Workbook
