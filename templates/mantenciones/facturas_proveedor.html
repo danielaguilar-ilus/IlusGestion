@@ -135,6 +135,11 @@
     <input type="search" name="proveedor" value="{{ f_prov }}" placeholder="Buscar proveedor…"
            aria-label="Buscar proveedor">
   </div>
+  {# 📅 2026-09-20 (Daniel: "hay que agregar fecha, filtros de fechas"). Filtra
+     las OT por facturar (día de cierre) y las facturas (fecha del documento
+     o, si no tiene, día en que se registró). #}
+  <label class="fpv-fecha">Desde <input type="date" name="desde" value="{{ f_desde }}" class="form-control form-control-sm" onchange="this.form.submit()"></label>
+  <label class="fpv-fecha">Hasta <input type="date" name="hasta" value="{{ f_hasta }}" class="form-control form-control-sm" onchange="this.form.submit()"></label>
   <select name="estado" class="form-select form-select-sm" style="min-height:44px;max-width:220px"
           onchange="this.form.submit()" aria-label="Estado de pago">
     <option value="">Todos los estados</option>
@@ -144,7 +149,7 @@
   </select>
   <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
     <i class="bi bi-funnel me-1"></i>Buscar</button>
-  {% if f_prov or f_estado or f_prov_id is not none %}
+  {% if f_prov or f_estado or f_prov_id is not none or f_desde or f_hasta %}
   <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px;display:inline-flex;align-items:center"
      href="/servicio-tecnico/facturas-proveedor"><i class="bi bi-x-lg me-1"></i>Limpiar</a>
   {% endif %}
@@ -183,20 +188,30 @@
    nombre + técnico, y a la derecha cuántas OT y cuánto tiene pendiente. #}
 {% set _tot_pend = provs_chips | sum(attribute='n') %}
 {% set _tot_monto = provs_chips | sum(attribute='monto') %}
+{% set _tot_fac = provs_chips | sum(attribute='n_fac') %}
+{% set _tot_fac_pend = provs_chips | sum(attribute='n_fac_pend') %}
+{# Lo que no es el chip viaja junto: estado, buscador y fechas. #}
+{% set _qs = '&estado=' ~ f_estado ~ ('&proveedor=' ~ (f_prov | urlencode) if f_prov else '') ~ ('&desde=' ~ f_desde if f_desde else '') ~ ('&hasta=' ~ f_hasta if f_hasta else '') %}
 <div class="fp-provs">
-  <a class="fp-prov {{ 'on' if f_prov_id is none }}" href="?estado={{ f_estado }}{% if f_prov %}&proveedor={{ f_prov | urlencode }}{% endif %}">
+  <a class="fp-prov {{ 'on' if f_prov_id is none }}" href="?{{ _qs[1:] }}">
     <span class="fp-prov-ini"><i class="bi bi-grid-3x3-gap-fill"></i></span>
-    <span class="fp-prov-tx"><b>Todos los proveedores</b><small>{{ provs_chips | length }} con ficha</small></span>
-    <span class="fp-prov-n"><b>{{ _tot_pend }}</b><em>{{ 'OT' if _tot_pend == 1 else 'OT' }} · {{ clp(_tot_monto) }}</em></span>
+    <span class="fp-prov-tx"><b>Todos los proveedores</b>
+      <small>{{ _tot_fac }} factura{{ '' if _tot_fac == 1 else 's' }}{% if _tot_fac_pend %} · <b class="pend">{{ _tot_fac_pend }} por pagar</b>{% endif %}</small></span>
+    <span class="fp-prov-n"><b>{{ _tot_pend }}</b><em>OT por facturar · {{ clp(_tot_monto) }}</em></span>
   </a>
   {% for p in provs_chips %}
-  <a class="fp-prov {{ 'on' if f_prov_id == p.id }} {{ 'vacio' if not p.n }}"
-     href="?prov_id={{ p.id }}&estado={{ f_estado }}{% if f_prov %}&proveedor={{ f_prov | urlencode }}{% endif %}"
-     title="{{ p.nombre }}{% if p.rut %} · {{ p.rut | rut_fmt }}{% endif %}{% if p.tecnicos %} · {{ p.tecnicos }}{% endif %}{% if p.n %} · {{ p.n }} OT · {{ clp(p.monto) }}{% else %} · nada pendiente{% endif %}">
+  {# Sin OT pendientes ni facturas por pagar = "al día" (atenuado). Daniel
+     (2026-09-20): "poder mover entre todos los facturados" -- cada tarjeta
+     dice también cuántas facturas tiene y cuántas están por pagar. #}
+  <a class="fp-prov {{ 'on' if f_prov_id == p.id }} {{ 'vacio' if not (p.n or p.n_fac_pend) }}"
+     href="?prov_id={{ p.id }}{{ _qs }}"
+     title="{{ p.nombre }}{% if p.rut %} · {{ p.rut | rut_fmt }}{% endif %}{% if p.tecnicos %} · {{ p.tecnicos }}{% endif %} · {{ p.n }} OT por facturar ({{ clp(p.monto) }}) · {{ p.n_fac }} facturas{% if p.n_fac_pend %}, {{ p.n_fac_pend }} por pagar ({{ clp(p.monto_fac_pend) }}){% endif %}">
     <span class="fp-prov-ini">{{ p.ini }}</span>
-    <span class="fp-prov-tx"><b>{{ p.nombre }}</b>{% if p.tecnicos %}<small><i class="bi bi-person"></i> {{ p.tecnicos }}</small>{% elif p.rut %}<small>{{ p.rut | rut_fmt }}</small>{% endif %}</span>
+    <span class="fp-prov-tx"><b>{{ p.nombre }}</b>
+      {% if p.tecnicos %}<small><i class="bi bi-person"></i> {{ p.tecnicos }}</small>{% elif p.rut %}<small>{{ p.rut | rut_fmt }}</small>{% endif %}
+      <small>{{ p.n_fac }} factura{{ '' if p.n_fac == 1 else 's' }}{% if p.n_fac_pend %} · <b class="pend">{{ p.n_fac_pend }} por pagar</b>{% endif %}</small></span>
     {% if p.n %}<span class="fp-prov-n"><b>{{ p.n }}</b><em>OT · {{ clp(p.monto) }}</em></span>
-    {% else %}<span class="fp-prov-n cero"><b>0</b><em>al día</em></span>{% endif %}
+    {% else %}<span class="fp-prov-n cero"><b>0</b><em>por facturar</em></span>{% endif %}
   </a>
   {% endfor %}
 </div>
@@ -229,7 +244,7 @@
     <i class="bi bi-check2-square me-1"></i><span id="fpvSelAllLbl">Marcar las {{ por_facturar | length }} de esta página</span></button>
   {% if pf_total > (por_facturar | length) %}
   <span class="fpv-selhint">Viendo {{ por_facturar | length }} de {{ pf_total }} —
-    <a href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=100, pf_page=1, pf_orden=pf_orden, pf_dir=pf_dir) }}">ver hasta 100 por página</a></span>
+    <a href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page, pf_per_page=100, pf_page=1, pf_orden=pf_orden, pf_dir=pf_dir) }}">ver hasta 100 por página</a></span>
   {% endif %}
 </div>
 {% endif %}
@@ -335,6 +350,8 @@
       <input type="hidden" name="proveedor" value="{{ f_prov }}">
       <input type="hidden" name="estado" value="{{ f_estado }}">
       {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
+      {% if f_desde %}<input type="hidden" name="desde" value="{{ f_desde }}">{% endif %}
+      {% if f_hasta %}<input type="hidden" name="hasta" value="{{ f_hasta }}">{% endif %}
       <input type="hidden" name="per_page" value="{{ per_page }}">
       <input type="hidden" name="page" value="{{ page }}">
       <input type="hidden" name="pf_orden" value="{{ pf_orden }}">
@@ -346,11 +363,11 @@
       </label>
     </form>
     <a class="fp-pag-btn {{ 'dis' if pf_page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page > 1 else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page > 1 else '#' }}">
       <i class="bi bi-chevron-left"></i>Anterior</a>
     <span class="fp-pag-num">Página {{ pf_page }} de {{ pf_total_paginas }}</span>
     <a class="fp-pag-btn {{ 'dis' if pf_page >= pf_total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page < pf_total_paginas else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page < pf_total_paginas else '#' }}">
       Siguiente<i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
@@ -424,6 +441,8 @@
       <input type="hidden" name="proveedor" value="{{ f_prov }}">
       <input type="hidden" name="estado" value="{{ f_estado }}">
       {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
+      {% if f_desde %}<input type="hidden" name="desde" value="{{ f_desde }}">{% endif %}
+      {% if f_hasta %}<input type="hidden" name="hasta" value="{{ f_hasta }}">{% endif %}
       <input type="hidden" name="pf_per_page" value="{{ pf_per_page }}">
       <input type="hidden" name="pf_page" value="{{ pf_page }}">
       <label>Por página
@@ -433,11 +452,11 @@
       </label>
     </form>
     <a class="fp-pag-btn {{ 'dis' if page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
       <i class="bi bi-chevron-left"></i>Anterior</a>
     <span class="fp-pag-num">Página {{ page }} de {{ total_paginas }}</span>
     <a class="fp-pag-btn {{ 'dis' if page >= total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
       Siguiente<i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
@@ -535,6 +554,8 @@
 const FPV_PROVEEDOR = {{ (chip_activo.nombre if (chip_activo and chip_activo.id) else f_prov) | tojson }};
 const FPV_PROV_ID = {{ f_prov_id | tojson }};
 const FPV_F_PROV = {{ f_prov | tojson }};
+const FPV_DESDE = {{ f_desde | tojson }};
+const FPV_HASTA = {{ f_hasta | tojson }};
 const FPV_CLP = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CL');
 const fpvEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -554,6 +575,8 @@ function fpvExcelCorte(version, soloSeleccion){
   } else {
     if (FPV_PROV_ID !== null && FPV_PROV_ID !== undefined) p.set('prov_id', FPV_PROV_ID);
     if (FPV_F_PROV) p.set('proveedor', FPV_F_PROV);
+    if (FPV_DESDE) p.set('desde', FPV_DESDE);
+    if (FPV_HASTA) p.set('hasta', FPV_HASTA);
     ilusToast(version === 'proveedor' ? 'Generando el corte para el proveedor…' : 'Generando el corte completo…', {type:'info'});
   }
   window.location = '/servicio-tecnico/facturas-proveedor/por-facturar.xlsx?' + p.toString();
@@ -848,6 +871,10 @@ async function fpvOtSolicitarOC(){
 .fp-prov-tx{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;line-height:1.2;text-align:left}
 .fp-prov-tx b{font-size:.84rem;font-weight:800}
 .fp-prov-tx small{font-size:.68rem;font-weight:600;color:#6b7280;margin-top:1px}
+.fp-prov-tx small .pend{color:#b45309;font-weight:800}
+.fp-prov.on .fp-prov-tx small .pend{color:#fbbf24}
+.fpv-fecha{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;color:#64748b;margin:0}
+.fpv-fecha input{min-height:44px;font-size:16px;width:auto}
 .fp-prov-n{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;line-height:1.05;text-align:right}
 .fp-prov-n b{font-size:1.05rem;font-weight:900;color:#dc2626;font-variant-numeric:tabular-nums}
 .fp-prov-n em{font-style:normal;font-size:.62rem;font-weight:700;color:#94a3b8;white-space:nowrap}

@@ -12963,7 +12963,7 @@ PERMISSIONS_META = {
         # de la clásica. Apagado por defecto a propósito: revierte una
         # decisión que Daniel tomó tras un incidente real, así que se
         # enciende cuando él quiera probarlo en terreno.
-        "ot2_tecnico":  {"label": "Técnico ve la pantalla de OT 2.0 (en vez de la clásica)",
+        "ot2_tecnico":  {"label": "Ficha de Órdenes de Trabajo para el técnico (sin efecto desde el 19-09-2026: la pantalla clásica ya no existe)",
                          "tipo": "submodulo", "icon": "bi-phone"},
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
         "cotizaciones_eliminar_item": {"label": "Quitar producto de una cotización",
@@ -82227,7 +82227,7 @@ def ot2_api_cliente_crear():
     # se acuerda de que salió de una instalación.
     try:
         _mant_log("cliente", cid, "creado",
-                  f"Ficha creada desde OT 2.0"
+                  f"Ficha creada desde la OT"
                   + (f" · motivo: {_motivo_txt}" if _motivo_txt else "")
                   + " · queda como prospecto")
     except Exception:
@@ -85356,7 +85356,7 @@ def ot2_api_crear():
     # ── 9. DESPUÉS del commit: auditoría y avisos (nunca tumban la OT) ──
     try:
         _mant_log("visita", vid, "creada",
-                  f"{numero_ot} · {tipo_ot} · OT 2.0 · {n_tareas} tareas")
+                  f"{numero_ot} · {tipo_ot} · {n_tareas} tareas")
     except Exception as e:
         print(f"[ot2_crear] log: {e}", flush=True)
 
@@ -105840,7 +105840,7 @@ def _mfp_items(fid):
     return out
 
 
-def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None):
+def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=None, hasta=None):
     """OT de proveedor externo, con costo declarado, en estado facturable,
     que todavía NO están en ninguna factura de proveedor. Es la lista que
     Daniel pidió mirar primero: "las OT que no tengan una factura".
@@ -105876,7 +105876,22 @@ def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None):
     if limit:
         sql += " LIMIT %s"
         params.append(int(limit))
-    return [_mfp_fila_ot(r) for r in (mysql_fetchall(sql, tuple(params)) or [])]
+    filas = [_mfp_fila_ot(r) for r in (mysql_fetchall(sql, tuple(params)) or [])]
+    # 📅 2026-09-20 (Daniel: "hay que agregar fecha, filtros de fechas"): por
+    # DÍA en hora Chile de la fecha de cierre (cuando el monto quedó firme),
+    # cayendo a la programada. Se filtra en Python con chile_fmt (REGLA #6,
+    # respeta el horario de verano) -- la lista ya viene completa igual.
+    if desde or hasta:
+        def _dia(d):
+            f = d.get("fecha_raw")
+            if not f:
+                return ""
+            try:
+                return chile_fmt_filter(f, "%Y-%m-%d") if hasattr(f, "hour") else str(f)[:10]
+            except Exception:
+                return str(f)[:10]
+        filas = [d for d in filas if (not desde or _dia(d) >= desde) and (not hasta or _dia(d) <= hasta)]
+    return filas
 
 
 _MFP_INI_STOP = {"y", "e", "de", "del", "la", "el", "los", "las", "spa", "ltda", "s.a.", "sa", "eirl", "cia", "cía", "&"}
@@ -105890,6 +105905,36 @@ def _mfp_iniciales(nombre):
         palabras = (nombre or "").split()
     ini = "".join(w[0] for w in palabras[:2]).upper()
     return ini or "?"
+
+
+def _mfp_facturas_por_ficha():
+    """{ficha_id: {n, pend, monto_pend}} de las facturas registradas (no
+    anuladas), resolviendo la empresa igual que el listado (ficha guardada
+    vigente, o la del técnico de sus OT). Para las tarjetas: "3 facturas ·
+    1 por pagar" -- Daniel (2026-09-20): "poder mover entre todos los
+    facturados"."""
+    out = {}
+    try:
+        rows = mysql_fetchall(
+            "SELECT COALESCE(tf.id, (SELECT " + _mfp_sql_ficha_de_tecnico("v2") +
+            "   FROM mant_factura_proveedor_items i2 JOIN mant_visitas v2 ON v2.id = i2.visita_id "
+            "  WHERE i2.factura_proveedor_id = f.id AND " + _mfp_sql_ficha_de_tecnico("v2") + " IS NOT NULL "
+            "  ORDER BY i2.id LIMIT 1)) AS pid, "
+            "       COUNT(*) AS n, "
+            "       SUM(CASE WHEN f.estado_pago = 'pendiente' THEN 1 ELSE 0 END) AS pend, "
+            "       COALESCE(SUM(CASE WHEN f.estado_pago = 'pendiente' THEN f.monto_total ELSE 0 END), 0) AS monto_pend "
+            "  FROM mant_facturas_proveedor f "
+            "  LEFT JOIN mant_tecnicos_externos tf ON tf.id = f.tecnico_externo_id "
+            "         AND COALESCE(tf.estado,'activo') <> 'baja' "
+            " WHERE f.estado_pago <> 'anulada' "
+            " GROUP BY pid") or []
+        for r in rows:
+            out[int(r["pid"]) if r.get("pid") else 0] = {
+                "n": int(r.get("n") or 0), "pend": int(r.get("pend") or 0),
+                "monto_pend": float(r.get("monto_pend") or 0)}
+    except Exception as e:
+        print(f"[facprov] facturas por ficha: {e}", flush=True)
+    return out
 
 
 def _mfp_proveedores_chips(por_facturar_todas):
@@ -105909,6 +105954,7 @@ def _mfp_proveedores_chips(por_facturar_todas):
         if d.get("tecnico_nombre"):
             p["tecnicos"].add(d["tecnico_nombre"])
     chips = []
+    facs = _mfp_facturas_por_ficha()
     try:
         rows = mysql_fetchall(
             "SELECT te.id, te.razon_social, te.rut_empresa, te.contacto_nombre, "
@@ -105932,10 +105978,13 @@ def _mfp_proveedores_chips(por_facturar_todas):
         # unipersonal), no repetirlo como subtítulo.
         if tecs and tecs.strip().lower() == nombre.lower():
             tecs = ""
+        fc = facs.get(int(r["id"]), {})
         chips.append({
             "id": int(r["id"]), "nombre": nombre, "rut": r.get("rut_empresa") or "",
             "tecnicos": tecs, "n": int(p.get("n") or 0), "monto": float(p.get("monto") or 0),
             "ini": _mfp_iniciales(nombre),
+            "n_fac": int(fc.get("n") or 0), "n_fac_pend": int(fc.get("pend") or 0),
+            "monto_fac_pend": float(fc.get("monto_pend") or 0),
         })
     # Red de seguridad: si una OT resolvió a una ficha que por lo que sea no
     # salió en la consulta de arriba, igual tiene chip -- nada pendiente
@@ -105946,14 +105995,18 @@ def _mfp_proveedores_chips(por_facturar_todas):
         if k and k not in _con_chip:
             chips.append({"id": int(k), "nombre": p.get("nombre") or f"Proveedor #{k}", "rut": "",
                           "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"],
-                          "ini": _mfp_iniciales(p.get("nombre") or "")})
-    if pend.get(0, {}).get("n"):
-        p = pend[0]
+                          "ini": _mfp_iniciales(p.get("nombre") or ""),
+                          "n_fac": 0, "n_fac_pend": 0, "monto_fac_pend": 0.0})
+    if pend.get(0, {}).get("n") or facs.get(0, {}).get("n"):
+        p = pend.get(0, {"n": 0, "monto": 0.0, "tecnicos": set()})
+        fc0 = facs.get(0, {})
         chips.append({"id": 0, "nombre": "Sin ficha de proveedor", "rut": "",
-                      "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"], "ini": "?"})
+                      "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"], "ini": "?",
+                      "n_fac": int(fc0.get("n") or 0), "n_fac_pend": int(fc0.get("pend") or 0),
+                      "monto_fac_pend": float(fc0.get("monto_pend") or 0)})
     # Primero los que tienen algo pendiente (lo que Daniel va a cobrar), y
     # dentro de cada grupo por nombre.
-    chips.sort(key=lambda c: (0 if c["n"] else 1, c["nombre"].lower()))
+    chips.sort(key=lambda c: (0 if (c["n"] or c["n_fac_pend"]) else 1, c["nombre"].lower()))
     return chips
 
 
@@ -106127,6 +106180,17 @@ def mant_facturas_proveedor():
             f_prov_id = max(0, int(request.args.get("prov_id")))
     except (TypeError, ValueError):
         f_prov_id = None
+    # 📅 2026-09-20: rango de fechas (AAAA-MM-DD) para las dos tablas.
+    def _fecha_arg(k):
+        raw = (request.args.get(k) or "").strip()[:10]
+        try:
+            datetime.strptime(raw, "%Y-%m-%d")
+            return raw
+        except Exception:
+            return ""
+    f_desde, f_hasta = _fecha_arg("desde"), _fecha_arg("hasta")
+    if f_desde and f_hasta and f_desde > f_hasta:
+        f_desde, f_hasta = f_hasta, f_desde
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (TypeError, ValueError):
@@ -106174,6 +106238,20 @@ def mant_facturas_proveedor():
     if f_estado:
         where.append("f.estado_pago = %s")
         params.append(f_estado)
+    # Fecha del documento; si aún no tiene (solicitud de OC / pago sin
+    # factura), la fecha en que se registró.
+    if f_desde or f_hasta:
+        from zoneinfo import ZoneInfo as _ZI
+        from datetime import timezone as _tz, timedelta as _td
+        def _utc(dia, fin=False):
+            dt = datetime.strptime(dia, "%Y-%m-%d") + (_td(days=1) if fin else _td(0))
+            return dt.replace(tzinfo=_ZI("America/Santiago")).astimezone(_tz.utc).replace(tzinfo=None)
+        if f_desde:
+            where.append("((f.fecha IS NOT NULL AND f.fecha >= %s) OR (f.fecha IS NULL AND f.created_at >= %s))")
+            params.extend([f_desde, _utc(f_desde)])
+        if f_hasta:
+            where.append("((f.fecha IS NOT NULL AND f.fecha <= %s) OR (f.fecha IS NULL AND f.created_at < %s))")
+            params.extend([f_hasta, _utc(f_hasta, fin=True)])
     where_sql = " WHERE " + " AND ".join(where)
 
     facturas, total, provs_sugeridos = [], 0, []
@@ -106275,7 +106353,8 @@ def mant_facturas_proveedor():
     # Una sola consulta con TODO lo pendiente: de ahí salen los chips (conteo
     # y monto por empresa) y, filtrando en Python, la tabla. El buscador de
     # texto sigue en SQL porque también acota las facturas de abajo.
-    por_facturar_sin_chip = _mfp_por_facturar(proveedor=f_prov or None)
+    por_facturar_sin_chip = _mfp_por_facturar(proveedor=f_prov or None,
+                                              desde=f_desde or None, hasta=f_hasta or None)
     provs_chips = _mfp_proveedores_chips(por_facturar_sin_chip)
     if f_prov_id is not None:
         por_facturar_todas = [d for d in por_facturar_sin_chip
@@ -106314,6 +106393,7 @@ def mant_facturas_proveedor():
         facturas=facturas, total=total, page=page, per_page=per_page,
         total_paginas=total_paginas, per_page_opciones=_MFP_PER_PAGE,
         f_prov=f_prov, f_estado=f_estado, f_prov_id=f_prov_id, chip_activo=chip_activo,
+        f_desde=f_desde, f_hasta=f_hasta,
         resumen=_mfp_resumen(), por_facturar=por_facturar,
         pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
         pf_total_paginas=pf_total_paginas, pf_orden=pf_orden, pf_dir=pf_dir,
@@ -107132,7 +107212,14 @@ def mant_facturas_proveedor_por_facturar_xlsx():
         version = "interno"
     interno = version == "interno"
 
-    filas = _mfp_por_facturar(proveedor=f_prov or None, prov_id=prov_id, ids=ids)
+    def _fecha_q(k):
+        raw = (request.args.get(k) or "").strip()[:10]
+        try:
+            datetime.strptime(raw, "%Y-%m-%d"); return raw
+        except Exception:
+            return None
+    filas = _mfp_por_facturar(proveedor=f_prov or None, prov_id=prov_id, ids=ids,
+                              desde=_fecha_q("desde"), hasta=_fecha_q("hasta"))
     filas.sort(key=lambda d: ((d.get("proveedor") or "").lower(),
                               d.get("fecha_raw").isoformat() if d.get("fecha_raw") else "", d["id"]))
 

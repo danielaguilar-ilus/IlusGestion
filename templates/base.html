@@ -708,10 +708,9 @@
     <a href="{{ url_for('ot2_panel') }}"
        class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico'] %} active{% endif %}"
        style="display:flex;align-items:center;gap:8px">
-      <i class="bi bi-clipboard2-pulse-fill"></i><span>Órdenes de Trabajo 2.0</span>
-      <span style="margin-left:auto;font-size:.62rem;font-weight:800;letter-spacing:.06em;
-                   background:var(--ilus-red,#dc2626);color:#fff;border-radius:999px;
-                   padding:1px 7px;line-height:1.5">BETA</span>
+      {# 2026-09-20 (Daniel): "ahora las órdenes de trabajo se llaman Órdenes
+         de Trabajo, no 2.0 ni nada, ya es la única que existe". Sin BETA. #}
+      <i class="bi bi-clipboard2-pulse-fill"></i><span>Órdenes de Trabajo</span>
     </a>
     {% endif %}
     {# ── Taller (2026-07-29, Daniel: "Servicio Técnico está muy largo, se

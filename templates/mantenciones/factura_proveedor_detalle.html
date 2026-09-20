@@ -140,10 +140,17 @@
 <div class="table-responsive">
   <table class="fp-tabla">
     <thead>
+      {# 📋 2026-09-20 (Daniel: "al entrar a la factura quiero ver el mismo
+         detalle que afuera... cliente, servicio, estado, N° de anexo, pagado
+         instalación y despacho, pagado total, cobrado instalación y despacho,
+         cobrado total, margen y porcentaje. Siempre todo clarito"). Mismas
+         columnas y mismo orden que la tabla "OT por facturar". #}
       <tr>
-        <th>OT</th><th>Cliente</th><th>Servicio</th><th>Estado</th>
-        <th class="m">Declarado en la OT</th><th class="m">Cobra esta factura</th>
-        <th class="m">Cobrado a cliente</th><th class="m">Margen</th>
+        <th>OT</th><th>Cliente</th><th>Servicio</th><th>Estado</th><th>Anexo</th>
+        <th class="m">Pagado instalación</th><th class="m">Pagado despacho</th>
+        <th class="m">Cobra esta factura</th>
+        <th class="m">Cobrado instalación</th><th class="m">Cobrado despacho</th>
+        <th class="m">Cobrado total</th><th class="m">Margen</th>
         <th>Observación</th>{% if pendiente %}<th></th>{% endif %}
       </tr>
     </thead>
@@ -156,15 +163,25 @@
         <td data-label="Servicio"><span class="fp-tipo">{{ it.tipo_label }}</span>
           {% if it.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
         <td data-label="Estado"><span class="fp-est est-{{ it.estado }}">{{ it.estado | replace('_',' ') }}</span></td>
-        <td class="m" data-label="Declarado en la OT">{{ clp(it.sugerido) }}
-          {% if it.despacho %}<div class="fp-sub">inst. {{ clp(it.servicio) }} · desp. {{ clp(it.despacho) }}</div>{% endif %}</td>
+        <td data-label="Anexo">
+          {% if it.anexo_numero %}
+          <a class="fp-anx {{ 'ok' if it.anexo_firmado else 'warn' }}" href="/ot/api/anexos/{{ it.anexo_id }}/pdf" target="_blank" rel="noopener" title="Abrir el PDF del anexo N° {{ it.anexo_numero }}">
+            <i class="bi bi-{{ 'patch-check-fill' if it.anexo_firmado else 'hourglass-split' }}"></i> N° {{ it.anexo_numero }}
+            <small>{{ {'firmado':'Firmado','enviado':'Enviado','visto':'Visto','borrador':'Borrador'}.get(it.anexo_estado, it.anexo_estado) }}</small></a>
+          {% else %}<span class="fp-anx none"><i class="bi bi-file-earmark-x"></i> Sin anexo</span>{% endif %}
+        </td>
+        <td class="m" data-label="Pagado instalación">{{ clp(it.servicio) if it.servicio else '—' }}</td>
+        <td class="m" data-label="Pagado despacho">{{ clp(it.despacho) if it.despacho else '—' }}</td>
         <td class="m tot" data-label="Cobra esta factura">{{ clp(it.fac_monto if it.fac_monto is not none else it.sugerido) }}
           {% if it.fac_monto is not none and (it.fac_monto - it.sugerido)|round(0) != 0 %}
-          <div class="fp-sub" style="color:#b45309">≠ declarado</div>{% endif %}</td>
-        <td class="m" data-label="Cobrado a cliente">{{ clp(it.cobrado_cliente) }}</td>
+          <div class="fp-sub" style="color:#b45309">≠ declarado {{ clp(it.sugerido) }}</div>{% endif %}</td>
+        <td class="m" data-label="Cobrado instalación">{{ clp(it.cobrado_cliente_serv) if it.cobrado_cliente_serv else '—' }}</td>
+        <td class="m" data-label="Cobrado despacho">{{ clp(it.cobrado_cliente_envio) if it.cobrado_cliente_envio else '—' }}</td>
+        <td class="m tot" data-label="Cobrado total">{{ clp(it.cobrado_cliente) }}</td>
         <td class="m" data-label="Margen">
           <span class="{{ 'fp-margen-pos' if it.margen > 0 else ('fp-margen-neg' if it.margen < 0 else '') }}">
-            {{ '+' if it.margen > 0 else '' }}{{ clp(it.margen) }}</span></td>
+            {{ '+' if it.margen > 0 else '' }}{{ clp(it.margen) }}</span>
+          {% if it.margen_pct is not none %}<div class="fp-pct {{ 'neg' if it.margen_pct < 0 }}">{{ '%.1f' | format(it.margen_pct) }}%</div>{% endif %}</td>
         <td class="fpd-obs" data-label="Observación">{{ it.observacion or '—' }}
           <div class="fp-sub">{{ it.usuario }}{% if it.asignada %} · {{ it.asignada }}{% endif %}</div></td>
         {% if pendiente %}
@@ -633,5 +650,14 @@ async function fpdGuardarEdicion(){
     text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
   .fpd-monto{width:100%}
 }
+.fp-anx{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:800;border-radius:999px;padding:3px 9px;
+  white-space:nowrap;text-decoration:none;border:1px solid transparent}
+.fp-anx small{font-weight:700;opacity:.8}
+.fp-anx.ok{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.fp-anx.warn{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.fp-anx.none{background:#f1f5f9;color:#64748b;border-color:#e2e8f0}
+a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
+.fp-pct{font-size:.66rem;font-weight:800;color:#64748b;margin-top:1px}
+.fp-pct.neg{color:#b91c1c}
 </style>
 {% endblock %}
