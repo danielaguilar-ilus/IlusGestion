@@ -4452,204 +4452,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% else %}
       <div class="otd-vacio">
         <i class="bi bi-binoculars"></i> Todavía no se captura ningún equipo en terreno.
-        {% if lev.estado != 'cerrado' %}El técnico los va agregando desde su pantalla de ejecución.{% endif %}
+        {% if lev.puede_agregar_equipo %}Usa <b>Agregar equipo</b> (arriba) para registrar cada uno a medida que lo encuentres.{% elif lev.estado != 'cerrado' %}El técnico los va agregando desde esta misma pantalla.{% endif %}
       </div>
       {% endif %}
     </div>
 
-    {#- 🆕 2026-09-20 — "Agregar equipo por descubrimiento", portado fiel al
-        original de la pantalla clásica ya eliminada (commit 5e84e765).
-        Daniel: "portar todo fiel al original". Mismos endpoints, mismo
-        autoguardado por campo, misma geocerca -- solo cambian 2 cosas a
-        propósito, porque ya existe algo MEJOR en esta pantalla:
-        _levdComprimir -> ilusComprimirImagen (misma compresión, ya usada en
-        4 puntos de esta ficha) y _levdGeoObtener -> otdGpsCascade (cascada
-        de 3 intentos con protección anti-cuelgue iOS, más robusta que el
-        GPS de 2 intentos del original). La lista de equipos NO se duplica:
-        reusa otdLevCargar()/otdLevRender() de arriba, que ya pinta TODOS
-        los items (mejor que el #levdList original, que solo mostraba los
-        huérfanos). -#}
-    {% if lev.puede_agregar_equipo %}
-    <div class="modal fade" id="modalLevDesc" tabindex="-1" data-bs-backdrop="static">
-      <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-        <div class="modal-content" style="border-radius:14px">
-          <div class="modal-header py-2">
-            <h6 class="modal-title fw-bold">
-              <i class="bi bi-camera-fill me-2" id="levdModalIco" style="color:#dc2626"></i><span id="levdModalTitulo">Nuevo equipo</span>
-              <span class="badge bg-danger ms-1" id="levdModalSeq">#1</span>
-              <small id="levdAutosaveEstado" class="ms-2 fw-normal" style="font-size:.7rem;color:#9ca3af"></small>
-            </h6>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-          </div>
-          <div class="modal-body pt-2">
-
-            <div class="levd-no-esta">
-              <label class="d-flex align-items-center justify-content-between w-100 m-0" style="cursor:pointer">
-                <span>
-                  <i class="bi bi-x-octagon-fill me-1"></i>Este equipo NO está
-                  <small class="d-block fw-normal" style="opacity:.85">No volvió del evento / no aparece en el control de calidad — anula fotos y nombre obligatorios</small>
-                </span>
-                <div class="form-check form-switch m-0">
-                  <input class="form-check-input" type="checkbox" id="levd_no_esta"
-                         onchange="levdToggleNoEsta(this.checked)">
-                </div>
-              </label>
-            </div>
-
-            <section class="levd-step" id="levdStep1">
-              <div class="levd-step-header">
-                <div class="levd-step-circle"><span class="levd-step-num">1</span><i class="bi bi-check-lg levd-step-check"></i></div>
-                <div class="levd-step-title">Evidencia fotográfica</div>
-                <div class="levd-step-sub">obligatorio</div>
-              </div>
-              <div class="levd-step-body">
-                <label class="form-label fw-semibold small mb-1">
-                  Fotos del equipo <span class="text-danger">*</span>
-                  <span class="text-muted fw-normal" style="font-size:.72rem">— mínimo 1, puedes tomar varias</span>
-                </label>
-                <div class="levd-fotos" id="levdFotos">
-                  <button type="button" class="levd-foto-add" onclick="document.getElementById('levdFotoInput').click()" title="Tomar foto">
-                    <i class="bi bi-camera-fill"></i>
-                  </button>
-                  <button type="button" class="levd-foto-add-alt" onclick="document.getElementById('levdFotoInputGaleria').click()" title="Elegir de la galería">
-                    <i class="bi bi-images"></i>
-                  </button>
-                </div>
-                <input type="file" id="levdFotoInput" accept="image/*" capture="environment" multiple style="display:none">
-                <input type="file" id="levdFotoInputGaleria" accept="image/*" multiple style="display:none">
-              </div>
-            </section>
-
-            <section class="levd-step" id="levdStep2">
-              <div class="levd-step-header">
-                <div class="levd-step-circle"><span class="levd-step-num">2</span><i class="bi bi-check-lg levd-step-check"></i></div>
-                <div class="levd-step-title">¿Qué equipo es?</div>
-                <div class="levd-step-sub">obligatorio</div>
-              </div>
-              <div class="levd-step-body">
-                <label class="form-label fw-semibold small mb-1">Nombre del equipo <span class="text-danger">*</span></label>
-                <input type="text" id="levd_nombre" class="form-control" list="levdNombres"
-                       placeholder="Ej: Trotadora Life Fitness" autocomplete="off">
-                <datalist id="levdNombres">
-                  <option value="Trotadora"></option><option value="Elíptica"></option>
-                  <option value="Bicicleta estática"></option><option value="Bicicleta spinning"></option>
-                  <option value="Remo"></option><option value="Escaladora"></option>
-                  <option value="Multifuerza"></option><option value="Prensa de piernas"></option>
-                  <option value="Press de banca"></option><option value="Press de hombros"></option>
-                  <option value="Rack de sentadillas"></option><option value="Smith machine"></option>
-                  <option value="Polea alta / Dorsalera"></option><option value="Polea baja / Remo sentado"></option>
-                  <option value="Extensión de piernas"></option><option value="Curl femoral"></option>
-                  <option value="Abductor / Aductor"></option><option value="Glúteo machine"></option>
-                  <option value="Pec deck / Contractora"></option><option value="Curl de bíceps"></option>
-                  <option value="Fondos / Tríceps"></option><option value="Banco ajustable"></option>
-                  <option value="Set de mancuernas"></option><option value="Rack de discos"></option>
-                  <option value="Kinesis / Cable cross"></option><option value="Air bike"></option>
-                </datalist>
-
-                <div class="row g-2 mt-1">
-                  <div class="col-6">
-                    <label class="form-label fw-semibold small mb-1">SKU <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
-                    <input type="text" id="levd_sku" class="form-control" placeholder="Puede ir vacío" autocomplete="off">
-                  </div>
-                  <div class="col-6">
-                    <label class="form-label fw-semibold small mb-1">N° de serie</label>
-                    <input type="text" id="levd_serie" class="form-control" autocomplete="off">
-                    <small class="text-muted d-block" style="font-size:.68rem">Sugerida — reemplázala si encuentras la real</small>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section class="levd-step is-optional" id="levdStep3">
-              <div class="levd-step-header">
-                <div class="levd-step-circle"><span class="levd-step-num">3</span><i class="bi bi-check-lg levd-step-check"></i></div>
-                <div class="levd-step-title">Ubicación y estado</div>
-                <div class="levd-step-sub">opcional</div>
-              </div>
-              <div class="levd-step-body">
-                <label class="form-label fw-semibold small mb-1">Ubicación en el recinto <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
-                <input type="text" id="levd_ubicacion" class="form-control" placeholder="Ej: Sala cardio · piso 2" autocomplete="off">
-
-                <div class="levd-sw mt-2">
-                  <span class="lbl">¿Está operativa?</span>
-                  <div class="form-check form-switch m-0">
-                    <input class="form-check-input" type="checkbox" id="levd_operativa" checked>
-                  </div>
-                </div>
-                <div class="levd-sw">
-                  <span class="lbl">¿Tiene daño?</span>
-                  <div class="form-check form-switch m-0">
-                    <input class="form-check-input" type="checkbox" id="levd_dano"
-                           onchange="document.getElementById('levdDanoWrap').style.display=this.checked?'':'none'; if(typeof levdRefreshStepStates==='function') levdRefreshStepStates();">
-                  </div>
-                </div>
-                <div id="levdDanoWrap" style="display:none" class="mt-2">
-                  <textarea id="levd_dano_txt" class="form-control" rows="2"
-                            placeholder="Describe el daño (queda en la ficha del equipo)"></textarea>
-                </div>
-              </div>
-            </section>
-
-            <section class="levd-step is-optional is-complete" id="levdStep4">
-              <div class="levd-step-header">
-                <div class="levd-step-circle"><span class="levd-step-num">4</span><i class="bi bi-check-lg levd-step-check"></i></div>
-                <div class="levd-step-title">Factura de origen (ERP)</div>
-                <div class="levd-step-sub">opcional</div>
-              </div>
-              <div class="levd-step-body">
-                <div class="d-flex align-items-center justify-content-between" style="cursor:pointer"
-                     onclick="const w=document.getElementById('levdDocWrap');w.style.display=w.style.display==='none'?'':'none'">
-                  <span class="fw-semibold small">
-                    <i class="bi bi-receipt me-1" style="color:#dc2626"></i>Factura de origen del equipo
-                    <span class="text-muted fw-normal" style="font-size:.7rem">(opcional — ERP)</span>
-                  </span>
-                  <i class="bi bi-chevron-expand text-muted"></i>
-                </div>
-                <div id="levdDocWrap" style="display:none" class="mt-2">
-                  <div class="d-flex gap-2">
-                    <select id="levd_doc_tipo" class="form-select" style="max-width:100px">
-                      <option value="FCV" selected>FCV</option>
-                      <option value="FCE">FCE</option>
-                      <option value="BLV">BLV</option>
-                      <option value="GDV">GDV</option>
-                      <option value="NVV">NVV</option>
-                      <option value="NVI">NVI</option>
-                    </select>
-                    <input type="text" id="levd_doc_num" class="form-control" inputmode="numeric"
-                           placeholder="N° documento" autocomplete="off"
-                           oninput="_levdDoc=null;document.getElementById('levdDocInfo').innerHTML='';if(typeof levdRefreshStepStates==='function') levdRefreshStepStates();">
-                    <button type="button" class="btn btn-dark" id="levdDocBtn" onclick="levdDocVerificar()"
-                            style="min-width:46px"><i class="bi bi-search"></i></button>
-                  </div>
-                  <div id="levdDocInfo" class="small mt-2" style="min-height:16px;font-size:.76rem"></div>
-                </div>
-              </div>
-            </section>
-
-            <section class="levd-step is-optional is-complete" id="levdStep5">
-              <div class="levd-step-header">
-                <div class="levd-step-circle"><span class="levd-step-num">5</span><i class="bi bi-check-lg levd-step-check"></i></div>
-                <div class="levd-step-title">Observación</div>
-                <div class="levd-step-sub">opcional</div>
-              </div>
-              <div class="levd-step-body">
-                <textarea id="levd_obs" class="form-control" rows="2" placeholder="Lo que valga la pena registrar"></textarea>
-              </div>
-            </section>
-
-            <div class="text-danger small mt-2" id="levdErr" style="min-height:18px"></div>
-          </div>
-          <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
-            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Listo</button>
-            <button type="button" class="btn fw-bold px-4" id="levdGuardarBtn"
-                    style="background:#dc2626;color:#fff;min-height:46px" onclick="levdGuardar()">
-              <i class="bi bi-check-lg me-1"></i><span id="levdGuardarLbl">Guardar equipo</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-    {% endif %}
     {% endif %}
 
     <div class="otd-card" id="otdWkCard">
@@ -12251,13 +12058,210 @@ const OT2F = (function(){
 })();
 </script>
 
-{#- 🆕 2026-09-20 — "Agregar equipo por descubrimiento", portado fiel al
-    original de la pantalla clásica ya eliminada (ver comentario junto al
-    HTML del modal, más arriba). Bloque propio al final del documento para
-    poder reusar OTD_VID/otdEsc/otdGpsCascade/ilusComprimirImagen/otdLevCargar,
-    ya definidos en los scripts anteriores (todos los <script> no-module de
-    un mismo documento comparten el mismo scope léxico de nivel superior). -#}
+{#- 🆕 2026-09-20 — "Agregar equipo por descubrimiento" (modal + JS),
+    portado fiel al original de la pantalla clásica ya eliminada (commit
+    5e84e765). Daniel: "portar todo fiel al original". Mismos endpoints,
+    mismo autoguardado por campo, misma geocerca -- solo cambian 2 cosas a
+    propósito, porque ya existe algo MEJOR en esta pantalla:
+    _levdComprimir -> ilusComprimirImagen (misma compresión, ya usada en
+    4 puntos de esta ficha) y _levdGeoObtener -> otdGpsCascade (cascada
+    de 3 intentos con protección anti-cuelgue iOS, más robusta que el
+    GPS de 2 intentos del original). La lista de equipos NO se duplica:
+    reusa otdLevCargar()/otdLevRender() de arriba, que ya pinta TODOS
+    los items (mejor que el #levdList original, que solo mostraba los
+    huérfanos). El botón que lo abre vive en el header de #otdLevCard.
+
+    El modal va ACÁ, en el top-level de block content junto a los otros
+    modales (otfModalFirma, ...), y NO dentro de #otdLevCard: esa tarjeta
+    está en el panel de la pestaña Trabajo, que tiene display:none cuando
+    la activa es Información -- Bootstrap no mueve el modal al body, así
+    que un ancestro oculto lo dejaba invisible (solo se veía el backdrop).
+    Verificado en vivo el 2026-09-20 con la OT-2026-00221.
+
+    El <script> va al final para reusar OTD_VID/otdEsc/otdGpsCascade/
+    ilusComprimirImagen/otdLevCargar, ya definidos arriba. OJO: VID y
+    _factMonto NO sirven -- viven dentro del IIFE OT2F. -#}
 {% if lev and lev.puede_agregar_equipo %}
+<div class="modal fade" id="modalLevDesc" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-bold">
+          <i class="bi bi-camera-fill me-2" id="levdModalIco" style="color:#dc2626"></i><span id="levdModalTitulo">Nuevo equipo</span>
+          <span class="badge bg-danger ms-1" id="levdModalSeq">#1</span>
+          <small id="levdAutosaveEstado" class="ms-2 fw-normal" style="font-size:.7rem;color:#9ca3af"></small>
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pt-2">
+
+        <div class="levd-no-esta">
+          <label class="d-flex align-items-center justify-content-between w-100 m-0" style="cursor:pointer">
+            <span>
+              <i class="bi bi-x-octagon-fill me-1"></i>Este equipo NO está
+              <small class="d-block fw-normal" style="opacity:.85">No volvió del evento / no aparece en el control de calidad — anula fotos y nombre obligatorios</small>
+            </span>
+            <div class="form-check form-switch m-0">
+              <input class="form-check-input" type="checkbox" id="levd_no_esta"
+                     onchange="levdToggleNoEsta(this.checked)">
+            </div>
+          </label>
+        </div>
+
+        <section class="levd-step" id="levdStep1">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">1</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">Evidencia fotográfica</div>
+            <div class="levd-step-sub">obligatorio</div>
+          </div>
+          <div class="levd-step-body">
+            <label class="form-label fw-semibold small mb-1">
+              Fotos del equipo <span class="text-danger">*</span>
+              <span class="text-muted fw-normal" style="font-size:.72rem">— mínimo 1, puedes tomar varias</span>
+            </label>
+            <div class="levd-fotos" id="levdFotos">
+              <button type="button" class="levd-foto-add" onclick="document.getElementById('levdFotoInput').click()" title="Tomar foto">
+                <i class="bi bi-camera-fill"></i>
+              </button>
+              <button type="button" class="levd-foto-add-alt" onclick="document.getElementById('levdFotoInputGaleria').click()" title="Elegir de la galería">
+                <i class="bi bi-images"></i>
+              </button>
+            </div>
+            <input type="file" id="levdFotoInput" accept="image/*" capture="environment" multiple style="display:none">
+            <input type="file" id="levdFotoInputGaleria" accept="image/*" multiple style="display:none">
+          </div>
+        </section>
+
+        <section class="levd-step" id="levdStep2">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">2</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">¿Qué equipo es?</div>
+            <div class="levd-step-sub">obligatorio</div>
+          </div>
+          <div class="levd-step-body">
+            <label class="form-label fw-semibold small mb-1">Nombre del equipo <span class="text-danger">*</span></label>
+            <input type="text" id="levd_nombre" class="form-control" list="levdNombres"
+                   placeholder="Ej: Trotadora Life Fitness" autocomplete="off">
+            <datalist id="levdNombres">
+              <option value="Trotadora"></option><option value="Elíptica"></option>
+              <option value="Bicicleta estática"></option><option value="Bicicleta spinning"></option>
+              <option value="Remo"></option><option value="Escaladora"></option>
+              <option value="Multifuerza"></option><option value="Prensa de piernas"></option>
+              <option value="Press de banca"></option><option value="Press de hombros"></option>
+              <option value="Rack de sentadillas"></option><option value="Smith machine"></option>
+              <option value="Polea alta / Dorsalera"></option><option value="Polea baja / Remo sentado"></option>
+              <option value="Extensión de piernas"></option><option value="Curl femoral"></option>
+              <option value="Abductor / Aductor"></option><option value="Glúteo machine"></option>
+              <option value="Pec deck / Contractora"></option><option value="Curl de bíceps"></option>
+              <option value="Fondos / Tríceps"></option><option value="Banco ajustable"></option>
+              <option value="Set de mancuernas"></option><option value="Rack de discos"></option>
+              <option value="Kinesis / Cable cross"></option><option value="Air bike"></option>
+            </datalist>
+
+            <div class="row g-2 mt-1">
+              <div class="col-6">
+                <label class="form-label fw-semibold small mb-1">SKU <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
+                <input type="text" id="levd_sku" class="form-control" placeholder="Puede ir vacío" autocomplete="off">
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold small mb-1">N° de serie</label>
+                <input type="text" id="levd_serie" class="form-control" autocomplete="off">
+                <small class="text-muted d-block" style="font-size:.68rem">Sugerida — reemplázala si encuentras la real</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="levd-step is-optional" id="levdStep3">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">3</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">Ubicación y estado</div>
+            <div class="levd-step-sub">opcional</div>
+          </div>
+          <div class="levd-step-body">
+            <label class="form-label fw-semibold small mb-1">Ubicación en el recinto <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
+            <input type="text" id="levd_ubicacion" class="form-control" placeholder="Ej: Sala cardio · piso 2" autocomplete="off">
+
+            <div class="levd-sw mt-2">
+              <span class="lbl">¿Está operativa?</span>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="levd_operativa" checked>
+              </div>
+            </div>
+            <div class="levd-sw">
+              <span class="lbl">¿Tiene daño?</span>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="levd_dano"
+                       onchange="document.getElementById('levdDanoWrap').style.display=this.checked?'':'none'; if(typeof levdRefreshStepStates==='function') levdRefreshStepStates();">
+              </div>
+            </div>
+            <div id="levdDanoWrap" style="display:none" class="mt-2">
+              <textarea id="levd_dano_txt" class="form-control" rows="2"
+                        placeholder="Describe el daño (queda en la ficha del equipo)"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <section class="levd-step is-optional is-complete" id="levdStep4">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">4</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">Factura de origen (ERP)</div>
+            <div class="levd-step-sub">opcional</div>
+          </div>
+          <div class="levd-step-body">
+            <div class="d-flex align-items-center justify-content-between" style="cursor:pointer"
+                 onclick="const w=document.getElementById('levdDocWrap');w.style.display=w.style.display==='none'?'':'none'">
+              <span class="fw-semibold small">
+                <i class="bi bi-receipt me-1" style="color:#dc2626"></i>Factura de origen del equipo
+                <span class="text-muted fw-normal" style="font-size:.7rem">(opcional — ERP)</span>
+              </span>
+              <i class="bi bi-chevron-expand text-muted"></i>
+            </div>
+            <div id="levdDocWrap" style="display:none" class="mt-2">
+              <div class="d-flex gap-2">
+                <select id="levd_doc_tipo" class="form-select" style="max-width:100px">
+                  <option value="FCV" selected>FCV</option>
+                  <option value="FCE">FCE</option>
+                  <option value="BLV">BLV</option>
+                  <option value="GDV">GDV</option>
+                  <option value="NVV">NVV</option>
+                  <option value="NVI">NVI</option>
+                </select>
+                <input type="text" id="levd_doc_num" class="form-control" inputmode="numeric"
+                       placeholder="N° documento" autocomplete="off"
+                       oninput="_levdDoc=null;document.getElementById('levdDocInfo').innerHTML='';if(typeof levdRefreshStepStates==='function') levdRefreshStepStates();">
+                <button type="button" class="btn btn-dark" id="levdDocBtn" onclick="levdDocVerificar()"
+                        style="min-width:46px"><i class="bi bi-search"></i></button>
+              </div>
+              <div id="levdDocInfo" class="small mt-2" style="min-height:16px;font-size:.76rem"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="levd-step is-optional is-complete" id="levdStep5">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">5</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">Observación</div>
+            <div class="levd-step-sub">opcional</div>
+          </div>
+          <div class="levd-step-body">
+            <textarea id="levd_obs" class="form-control" rows="2" placeholder="Lo que valga la pena registrar"></textarea>
+          </div>
+        </section>
+
+        <div class="text-danger small mt-2" id="levdErr" style="min-height:18px"></div>
+      </div>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Listo</button>
+        <button type="button" class="btn fw-bold px-4" id="levdGuardarBtn"
+                style="background:#dc2626;color:#fff;min-height:46px" onclick="levdGuardar()">
+          <i class="bi bi-check-lg me-1"></i><span id="levdGuardarLbl">Guardar equipo</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const VISITA_LEVANTAMIENTO_ID = {{ lev.id }};
 const LEV_EDITABLE = {{ 'true' if lev.editable else 'false' }};
