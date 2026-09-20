@@ -12254,7 +12254,7 @@ const OT2F = (function(){
 {#- 🆕 2026-09-20 — "Agregar equipo por descubrimiento", portado fiel al
     original de la pantalla clásica ya eliminada (ver comentario junto al
     HTML del modal, más arriba). Bloque propio al final del documento para
-    poder reusar VID/otdEsc/otdGpsCascade/ilusComprimirImagen/otdLevCargar,
+    poder reusar OTD_VID/otdEsc/otdGpsCascade/ilusComprimirImagen/otdLevCargar,
     ya definidos en los scripts anteriores (todos los <script> no-module de
     un mismo documento comparten el mismo scope léxico de nivel superior). -#}
 {% if lev and lev.puede_agregar_equipo %}
@@ -12268,6 +12268,13 @@ const REGLAS_TERRENO = {{ reglas_terreno | tojson }};
 const GEOF_ROL_EXENTO = {{ 'true' if geof_rol_exento else 'false' }};
 
 function _levdEl(id){ return document.getElementById(id); }
+
+// Igual a _factMonto() del namespace OT2F -- vive dentro de un IIFE propio
+// (no expuesto en su `return`), así que no es alcanzable desde acá.
+function _levdMonto(m){
+  if (m === null || m === undefined) return '—';
+  try { return '$' + Math.round(m).toLocaleString('es-CL'); } catch(_e){ return '$' + m; }
+}
 
 let _levdFotos = [];           // fotos pendientes (nuevas) del modal actual [{blob,url}]
 let _levdFotosExistentes = []; // fotos YA subidas del item en edición [{id,url}]
@@ -12285,7 +12292,7 @@ function _levdSerieSugerida(){
   // son levantamiento). Ambos formatos son "provisorios" para el backend
   // (_RE_SERIE_GENERADA), así que se pueden reemplazar después por la serie real.
   const _prefijo = ES_LEVANTAMIENTO ? 'LEV' : 'PEND';
-  return `${_prefijo}${VID}-${String(_levdSeq).padStart(3,'0')}`;
+  return `${_prefijo}${OTD_VID}-${String(_levdSeq).padStart(3,'0')}`;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12532,7 +12539,7 @@ async function levdDocVerificar(){
     info.innerHTML =
       '<span style="color:#15803d"><i class="bi bi-check-circle-fill me-1"></i>' +
       `${doc.tipo} ${doc.numero}${doc.fecha ? ' · ' + doc.fecha : ''}` +
-      (doc.monto ? ' · ' + _factMonto(doc.monto) : '') + '</span>' +
+      (doc.monto ? ' · ' + _levdMonto(doc.monto) : '') + '</span>' +
       `<div class="text-muted">${doc.cliente_nombre || ''}</div>` +
       (rutOk ? '' :
         `<div style="color:#b45309"><i class="bi bi-exclamation-triangle-fill me-1"></i>${(d.analisis && d.analisis.detalle) || 'El RUT no coincide con el cliente.'} Se guarda igual (informativo).</div>`);
