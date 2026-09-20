@@ -105907,6 +105907,42 @@ def _mfp_iniciales(nombre):
     return ini or "?"
 
 
+def _mfp_resumen_filas(filas):
+    """💰 2026-09-20 (Daniel: "¿de qué me sirve seleccionar y filtrar si no
+    vamos a tener el control de lo que se está filtrando? Necesito datos
+    financieros para la toma de decisiones desde una sola pantalla").
+    Totales de un conjunto de OT (lo filtrado o lo marcado), con la MISMA
+    regla que Facturación de proveedores: la ganancia compara solo OT con
+    cobro declarado; garantía y sin cobro van aparte, con su monto."""
+    t = {"n": 0, "pagado": 0.0, "pagado_serv": 0.0, "pagado_desp": 0.0,
+         "cobrado": 0.0, "cobrado_serv": 0.0, "cobrado_env": 0.0,
+         "n_comparable": 0, "pagado_comparable": 0.0, "margen": 0.0,
+         "n_garantia": 0, "pagado_garantia": 0.0,
+         "n_sin_cobro": 0, "pagado_sin_cobro": 0.0, "n_sin_anexo": 0}
+    for d in filas:
+        pag = float(d.get("sugerido") or 0)
+        cob = float(d.get("cobrado_cliente") or 0)
+        t["n"] += 1
+        t["pagado"] += pag
+        t["pagado_serv"] += float(d.get("servicio") or 0)
+        t["pagado_desp"] += float(d.get("despacho") or 0)
+        if not d.get("anexo_firmado"):
+            t["n_sin_anexo"] += 1
+        if d.get("es_garantia"):
+            t["n_garantia"] += 1; t["pagado_garantia"] += pag
+        elif cob <= 0:
+            t["n_sin_cobro"] += 1; t["pagado_sin_cobro"] += pag
+        else:
+            t["n_comparable"] += 1
+            t["cobrado"] += cob
+            t["cobrado_serv"] += float(d.get("cobrado_cliente_serv") or 0)
+            t["cobrado_env"] += float(d.get("cobrado_cliente_envio") or 0)
+            t["pagado_comparable"] += pag
+            t["margen"] += cob - pag
+    t["margen_pct"] = (t["margen"] / t["cobrado"] * 100.0) if t["cobrado"] > 0 else None
+    return t
+
+
 def _mfp_facturas_por_ficha():
     """{ficha_id: {n, pend, monto_pend}} de las facturas registradas (no
     anuladas), resolviendo la empresa igual que el listado (ficha guardada
@@ -106387,6 +106423,23 @@ def mant_facturas_proveedor():
     por_facturar = por_facturar_todas[(pf_page - 1) * pf_per_page: pf_page * pf_per_page]
     pf_monto_filtrado = sum(float(d.get("sugerido") or 0) for d in por_facturar_todas)
     pf_sin_anexo = sum(1 for d in por_facturar_todas if not d.get("anexo_firmado"))
+    pf_fin = _mfp_resumen_filas(por_facturar_todas)
+    # Facturas registradas: totales de LO FILTRADO (mismo WHERE que la lista,
+    # sin paginar), para verlo todo en la misma pantalla.
+    fac_fin = {"n": 0, "monto": 0.0, "n_pend": 0, "monto_pend": 0.0, "n_pag": 0, "monto_pag": 0.0}
+    try:
+        _ff = mysql_fetchone(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(f.monto_total),0) AS m, "
+            "       SUM(f.estado_pago='pendiente') AS np, "
+            "       COALESCE(SUM(CASE WHEN f.estado_pago='pendiente' THEN f.monto_total ELSE 0 END),0) AS mp, "
+            "       SUM(f.estado_pago='pagada') AS ng, "
+            "       COALESCE(SUM(CASE WHEN f.estado_pago='pagada' THEN f.monto_total ELSE 0 END),0) AS mg "
+            "  FROM mant_facturas_proveedor f" + where_sql, tuple(params)) or {}
+        fac_fin = {"n": int(_ff.get("n") or 0), "monto": float(_ff.get("m") or 0),
+                   "n_pend": int(_ff.get("np") or 0), "monto_pend": float(_ff.get("mp") or 0),
+                   "n_pag": int(_ff.get("ng") or 0), "monto_pag": float(_ff.get("mg") or 0)}
+    except Exception as e:
+        print(f"[facprov] totales facturas filtradas: {e}", flush=True)
 
     return render_template(
         "mantenciones/facturas_proveedor.html",
@@ -106398,6 +106451,7 @@ def mant_facturas_proveedor():
         pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
         pf_total_paginas=pf_total_paginas, pf_orden=pf_orden, pf_dir=pf_dir,
         pf_monto_filtrado=pf_monto_filtrado, pf_sin_anexo=pf_sin_anexo,
+        pf_fin=pf_fin, fac_fin=fac_fin,
         provs_chips=provs_chips,
         provs_sugeridos=provs_sugeridos,
         provs_nacionales=provs_nacionales,

@@ -227,6 +227,27 @@
     la OT queda <b>cerrada</b> (pasó la aprobación final y su Anexo quedó verificado).{% endif %}</div>
 </div>
 {% else %}
+{# 💰 2026-09-20 (Daniel: "necesito datos financieros para la toma de
+   decisiones y mirar el aspecto financiero desde una sola pantalla").
+   Totales de EXACTAMENTE lo que está filtrado (chip + fechas + buscador),
+   con la misma regla que Facturación: la ganancia compara solo OT con
+   cobro declarado; garantía y sin cobro se muestran aparte. La barra de
+   selección de abajo repite el cálculo sobre lo marcado. #}
+<div class="fp-fin" id="fpvFin">
+  <div class="fp-fin-t"><i class="bi bi-cash-stack"></i> Lo filtrado{% if chip_activo %} · {{ _chip_txt }}{% endif %}{% if f_desde or f_hasta %} · {{ f_desde | replace('-', '/') if f_desde else '…' }} → {{ f_hasta | replace('-', '/') if f_hasta else '…' }}{% endif %}</div>
+  <div class="fp-fin-g">
+    <div class="fp-fin-k"><span>OT por facturar</span><b>{{ pf_fin.n }}</b><small>{{ pf_fin.n_sin_anexo }} sin anexo firmado</small></div>
+    <div class="fp-fin-k pay"><span>A pagar a proveedores</span><b>{{ clp(pf_fin.pagado) }}</b><small>inst. {{ clp(pf_fin.pagado_serv) }} · desp. {{ clp(pf_fin.pagado_desp) }}</small></div>
+    <div class="fp-fin-k ok"><span>Cobrado al cliente</span><b>{{ clp(pf_fin.cobrado) }}</b><small>inst. {{ clp(pf_fin.cobrado_serv) }} · desp. {{ clp(pf_fin.cobrado_env) }} · {{ pf_fin.n_comparable }} OT con cobro</small></div>
+    <div class="fp-fin-k {{ 'neg' if pf_fin.margen < 0 else 'pos' }}"><span>Ganancia</span><b>{{ '+' if pf_fin.margen > 0 else '' }}{{ clp(pf_fin.margen) }}</b>
+      <small>{% if pf_fin.margen_pct is not none %}{{ '%.1f' | format(pf_fin.margen_pct) }}% sobre lo cobrado{% else %}sin cobro declarado para comparar{% endif %}</small></div>
+    {% if pf_fin.n_garantia or pf_fin.n_sin_cobro %}
+    <div class="fp-fin-k fuera"><span>Fuera de la ganancia</span>
+      <b>{{ clp(pf_fin.pagado_garantia + pf_fin.pagado_sin_cobro) }}</b>
+      <small>{% if pf_fin.n_garantia %}{{ pf_fin.n_garantia }} en garantía {{ clp(pf_fin.pagado_garantia) }}{% endif %}{% if pf_fin.n_garantia and pf_fin.n_sin_cobro %} · {% endif %}{% if pf_fin.n_sin_cobro %}{{ pf_fin.n_sin_cobro }} sin cobro declarado {{ clp(pf_fin.pagado_sin_cobro) }}{% endif %}</small></div>
+    {% endif %}
+  </div>
+</div>
 <div class="fp-aviso">
   <i class="bi bi-exclamation-triangle-fill"></i>
   <div><b>{{ pf_total }} OT{% if _chip_es_sin_ficha %} sin ficha de proveedor{% elif chip_activo %} de {{ chip_activo.nombre }}{% else %} de proveedor externo{% endif %} por {{ clp(pf_monto_filtrado) }}, sin factura del proveedor.</b>
@@ -273,7 +294,8 @@
         {% if puede_seleccionar %}
         <td data-label=""><span class="fp-chk-wrap"><input type="checkbox" class="fpv-ot-chk" value="{{ d.id }}"
             data-monto="{{ d.sugerido }}" data-numero="{{ d.numero_ot }}" data-prov="{{ d.prov_key }}"
-            data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
+            data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}"
+            data-cobrado="{{ d.cobrado_cliente }}" data-garantia="{{ 1 if d.es_garantia else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
         {% endif %}
         <td data-label="OT"><a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.id) }}">{{ d.numero_ot }}</a>
           <div class="fp-sub">{{ d.fecha }}</div></td>
@@ -320,7 +342,8 @@
 </div>
 {% if puede_seleccionar %}
 <div class="fpv-otbar" id="fpvOtBar">
-  <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT seleccionadas · <span id="fpvOtBarMonto">$0</span>
+  <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT seleccionadas · a pagar <span id="fpvOtBarMonto">$0</span>
+    <div class="fpv-otbar-fin" id="fpvOtBarFin"></div>
     <div class="fpv-otbar-det" id="fpvOtBarDet"></div></div>
   <div class="fpv-otbar-btns">
     <button type="button" class="btn btn-outline-light fw-bold" style="min-height:44px" onclick="fpvExcelCorte('interno', true)"
@@ -374,7 +397,14 @@
 {% endif %}
 
 {# ── Facturas registradas ──────────────────────────────────────────── #}
-<div class="fp-sec">Facturas registradas{% if total %} · {{ total }}{% endif %}</div>
+<div class="fp-sec fp-sec-row">
+  <span>Facturas registradas{% if total %} · {{ total }}{% endif %}</span>
+  {% if fac_fin.n %}
+  <span class="fp-sec-tot">{{ clp(fac_fin.monto) }} en {{ fac_fin.n }} factura{{ '' if fac_fin.n == 1 else 's' }}
+    {% if fac_fin.n_pend %} · <b class="pend">por pagar {{ clp(fac_fin.monto_pend) }} ({{ fac_fin.n_pend }})</b>{% endif %}
+    {% if fac_fin.n_pag %} · <b class="ok">pagadas {{ clp(fac_fin.monto_pag) }} ({{ fac_fin.n_pag }})</b>{% endif %}</span>
+  {% endif %}
+</div>
 {% if not facturas %}
 <div class="fp-vacio">
   <i class="bi bi-inbox"></i>
@@ -728,6 +758,22 @@ function fpvOtRefreshBar(){
   const lbl = document.getElementById('fpvSelAllLbl');
   if (lbl) lbl.textContent = (todas.length > 0 && n === todas.length)
     ? 'Desmarcar las ' + todas.length : 'Marcar las ' + todas.length + ' de esta página';
+  // 💰 Lo marcado, en plata: cobrado y ganancia con la misma regla de la
+  // franja "Lo filtrado" (solo OT con cobro declarado; garantía aparte).
+  const fin = document.getElementById('fpvOtBarFin');
+  if (fin){
+    let cob = 0, pagComp = 0, nComp = 0, gar = 0, sinCob = 0, nGar = 0, nSin = 0;
+    chks.forEach(cb => {
+      const pag = Number(cb.dataset.monto) || 0, c = Number(cb.dataset.cobrado) || 0;
+      if (cb.dataset.garantia === '1'){ gar += pag; nGar++; }
+      else if (c <= 0){ sinCob += pag; nSin++; }
+      else { cob += c; pagComp += pag; nComp++; }
+    });
+    const gan = cob - pagComp;
+    fin.innerHTML = n ? ('Cobrado al cliente <b>' + FPV_CLP(cob) + '</b> · Ganancia <b class="' + (gan < 0 ? 'neg' : 'pos') + '">' +
+      (gan > 0 ? '+' : '') + FPV_CLP(gan) + (cob > 0 ? ' (' + (gan / cob * 100).toFixed(1) + '%)' : '') + '</b>' +
+      (nGar ? ' · ' + nGar + ' en garantía ' + FPV_CLP(gar) : '') + (nSin ? ' · ' + nSin + ' sin cobro ' + FPV_CLP(sinCob) : '')) : '';
+  }
   // Desglose por proveedor: "DAP Servicio 2 OT · $500.000 · Milling 1 OT · $…"
   const grupos = fpvOtGrupos();
   const det = document.getElementById('fpvOtBarDet');
@@ -899,6 +945,24 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 /* 📊 Margen %: chiquito, debajo del monto */
 .fp-pct{font-size:.66rem;font-weight:800;color:#64748b;margin-top:1px}
 .fp-pct.neg{color:#b91c1c}
+.fpv-otbar-fin{font-size:.78rem;font-weight:600;color:#e5e7eb;margin-top:3px}
+.fpv-otbar-fin b{color:#fff}.fpv-otbar-fin b.pos{color:#4ade80}.fpv-otbar-fin b.neg{color:#f87171}
+.fp-fin{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:10px 14px 12px;margin:0 0 10px;
+  box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.fp-fin-t{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.fp-fin-t i{color:#dc2626}
+.fp-fin-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.fp-fin-k{border-left:3px solid #cbd5e1;padding:2px 0 2px 10px;min-width:0}
+.fp-fin-k span{display:block;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8}
+.fp-fin-k b{display:block;font-size:1.05rem;font-weight:900;color:#0f172a;font-variant-numeric:tabular-nums;line-height:1.2}
+.fp-fin-k small{display:block;font-size:.68rem;color:#64748b;font-weight:600}
+.fp-fin-k.pay{border-left-color:#dc2626}
+.fp-fin-k.ok{border-left-color:#16a34a}
+.fp-fin-k.pos{border-left-color:#16a34a}.fp-fin-k.pos b{color:#15803d}
+.fp-fin-k.neg{border-left-color:#dc2626}.fp-fin-k.neg b{color:#b91c1c}
+.fp-fin-k.fuera{border-left-color:#f59e0b}.fp-fin-k.fuera b{color:#92400e}
+.fp-sec-tot{margin-left:auto;font-weight:700;text-transform:none;letter-spacing:0;font-size:.76rem;color:#475569}
+.fp-sec-tot b.pend{color:#b45309}.fp-sec-tot b.ok{color:#15803d}
 .fpv-otbar-det{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.74rem;font-weight:600;color:#cbd5e1;margin-top:4px}
 .fpv-otbar-det b{color:#fff}
 .fpv-otbar-det i{color:#fbbf24}
