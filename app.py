@@ -105539,7 +105539,11 @@ def _facprov_datos(desde, hasta):
         m["pagado"] += d["total"]
         pp = m["por_prov"].setdefault(d["prov_key"], {"nombre": d["proveedor"], "pagado": 0.0, "margen": 0.0, "n_comparable": 0})
         pp["pagado"] += d["total"]
-        if d["garantia"] and not d["cobrado"]:
+        # Misma regla que el resumen por proveedor: una OT en garantía queda
+        # fuera del margen aunque tenga un cobro declarado (no se le cobra
+        # al cliente a propósito). Si no, el KPI de arriba y la serie
+        # contaban distinto (3 OT vs 7 OT, visto en vivo el 2026-09-20).
+        if d["garantia"]:
             m["pagado_garantia"] += d["total"]
         elif d["sin_cobro"]:
             m["pagado_sin_declarar"] += d["total"]
