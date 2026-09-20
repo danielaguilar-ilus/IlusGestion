@@ -643,8 +643,28 @@ body {
      El topbar sube en la misma proporción (68 → 110px) para que el logo
      quepa con el mismo aire que tenía antes, sin apretar el botón de
      menú ni la campana. */
-  :root { --topbar-h: 110px; }
-  .mobile-topbar { height: 110px; padding: 0 10px; gap: 10px; }
+  /* 🔴 2026-09-20 (Daniel, iPhone: "en la nueva versión iOS del iPhone la
+     parte de arriba queda difuminada, podrías bajarla"). Desde iOS 26 la
+     barra de estado (hora/señal/batería) es translúcida ("Liquid Glass")
+     y flota ENCIMA del contenido -- el logo "ILUS" arrancaba a los 0px, es
+     decir justo debajo/detrás de esa zona, y el desenfoque de la barra de
+     estado lo dejaba ilegible. `env(safe-area-inset-top)` es exactamente
+     el alto real de esa zona en el dispositivo del usuario (0 en Android/
+     desktop, y en iPhones sin notch/Dynamic Island también da un valor
+     chico pero correcto) -- se suma al alto del topbar y el propio topbar
+     empuja su contenido hacia abajo con ese mismo padding, así el logo y
+     el botón de menú quedan SIEMPRE debajo de la barra de estado, la
+     tengan traslúcida o no. `--topbar-h` es la MISMA variable que ya usan
+     el dropdown de notificaciones (base.html) y las pestañas sticky de la
+     OT (ot2/detalle.html .otd-tabs) -- al quedar correcta acá, esos dos
+     heredan el ajuste solos, sin tocarlos. */
+  :root { --topbar-h: calc(110px + env(safe-area-inset-top, 0px)); }
+  .mobile-topbar {
+    height: var(--topbar-h);
+    padding: 0 10px;
+    padding-top: env(safe-area-inset-top, 0px);
+    gap: 10px;
+  }
 
   /* Logo proporcional al topbar compacto (antes 80px desktop → 38px → 58px). */
   .mobile-logo { height: 99px; }

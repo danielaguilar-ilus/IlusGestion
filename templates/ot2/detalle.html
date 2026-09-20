@@ -463,6 +463,12 @@
   padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));
   display:flex;gap:8px;align-items:center;justify-content:flex-end}
 @media (min-width:992px){.otd-bottom{left:250px}}
+{#- 🔀 2026-09-20: "Ver PDF" + "Anexo de fotos" comparten una fila 50/50
+    (flex:1 1 0 -- reparto exacto sin depender del ancho del texto) para
+    que el footer quepa en menos filas. En desktop (.otd-bottom en fila,
+    justify-content:flex-end) esta fila se comporta como un único ítem más
+    entre los botones, del ancho de su contenido. -#}
+.otd-bottom-row{display:flex;gap:8px}
 .otd-bottom .b{min-height:36px;padding:0 16px;border-radius:8px;
   border:1px solid #e5e7eb;background:#fff;color:#374151;
   font-weight:700;font-size:.82rem;cursor:pointer;
@@ -486,6 +492,7 @@
      (REGLA #3, touch >=44px), pero sin el bloque gigante de escritorio. */
   .otd-bottom{justify-content:stretch;flex-wrap:wrap}
   .otd-bottom .b{flex:1 1 auto;min-height:44px;font-size:.84rem;padding:0 10px;white-space:nowrap}
+  .otd-bottom-row{flex:1 1 auto}
   .otd.has-bottombar{padding-bottom:74px}
 }
 /* 🔴 FIX 2026-09-09 (Daniel, en vivo desde el celular: "necesito que todos
@@ -499,9 +506,29 @@
    alineado sin importar cuántos botones queden (1, 2 o 3) ni cuán largo
    sea el texto de cada uno. */
 @media (max-width:480px){
-  .otd-bottom{flex-direction:column;align-items:stretch;gap:6px}
-  .otd-bottom .b{width:100%;white-space:normal;text-align:center}
-  .otd.has-bottombar{padding-bottom:132px}
+  {#- 🔀 2026-09-20 (Daniel, reforzando en vivo: "hazla pequeña y que todo
+      quepa al más mínimo espacio"). Segunda pasada de compactación: el
+      min-height:44px de los botones NO baja (REGLA #3, es el mínimo
+      táctil de Apple HIG, no negociable) -- lo único que se exprime es
+      el aire ALREDEDOR de los botones: el padding exterior de la barra
+      y el gap entre las 2 filas, ambos al mínimo que sigue dejando
+      espacio para que el dedo no toque el borde. -#}
+  .otd-bottom{flex-direction:column;align-items:stretch;gap:4px;padding:4px 14px;
+    padding-bottom:calc(4px + env(safe-area-inset-bottom,0px))}
+  .otd-bottom .b{width:100%;white-space:normal;text-align:center;min-height:44px}
+  {#- 🔀 2026-09-20: fila emparejada Ver PDF/Anexo de fotos -- `align-items:
+      stretch` del padre ya la estira a ancho completo; adentro, `flex:1 1
+      0` reparte 50/50 EXACTO entre los dos botones (no depende de cuánto
+      texto tenga cada uno, a diferencia de `width:100%` que compite mal
+      entre dos hijos de una fila). Con un solo botón adentro (ningún caso
+      hoy, pero por si el día de mañana "Anexo de fotos" se oculta y solo
+      queda "Ver PDF"), ocupa el 100% igual. -#}
+  .otd-bottom-row{gap:6px}
+  .otd-bottom-row .b{width:auto;flex:1 1 0;min-width:0;font-size:.76rem;padding:0 6px;min-height:44px}
+  {#- Con esta fila emparejada, el caso de gestión (Ver PDF + Anexo de fotos
+      + el botón de firma/estado) pasa de 3 filas completas a 2 -- la
+      reserva de espacio de la página baja en la misma proporción. -#}
+  .otd.has-bottombar{padding-bottom:calc(44px*2 + 4px + 8px + env(safe-area-inset-bottom,0px))}
 }
 
 /* ══ ACTIVIDAD DE LA OT — bitácora estilo "Actividad del ticket" ══════
@@ -5124,17 +5151,31 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
        mientras ejecuta, y el PDF le sirve poco antes de que la OT esté
        cerrada. Quitárselos de ACÁ dejaba como máximo 2 botones para
        técnico (nunca 3+), que es lo que permite alinearlos bien abajo. #}
+    {#- 🔀 2026-09-20 (Daniel, en vivo sobre OT-2026-00222: "para el footer,
+        que se utilice el menor espacio posible... en el mismo espacio
+        pueden caber los tres botones bien administrado el espacio, porque
+        después me quita capacidad de trabajo, no quiero que me pase lo
+        mismo que con las OT antiguas" -- ver la Capa 3 del plan: el cromo
+        anclado tapando la pantalla del técnico fue justo el problema de
+        fondo del motor viejo). "Ver PDF" y "Anexo de fotos" son las dos
+        herramientas de gestión CORTAS: se emparejan 50/50 en una sola fila
+        en vez de dos filas completas -- el botón de firma/estado (largo,
+        y el que más importa presionar bien) sigue abajo, a ancho completo.
+        Con esto el footer de gestión pasa de 3 filas a 2 en el caso
+        habitual, sin tocar ningún endpoint ni candado. -#}
     {% if not es_tecnico %}
-    <button type="button" class="b" onclick="otdVerPdf()">
-      <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
-    {# 📸 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
-       aparte"). El PDF de la OT lleva una muestra del anexo; el completo
-       vive acá. Solo se ofrece si de verdad hay fotos: un botón que abre
-       un documento vacío es peor que no tenerlo. #}
-    {% if fotos %}
-    <button type="button" class="b" onclick="otdVerAnexoFotos()">
-      <i class="bi bi-images"></i> Anexo de fotos ({{ fotos|length }})</button>
-    {% endif %}
+    <div class="otd-bottom-row">
+      <button type="button" class="b" onclick="otdVerPdf()">
+        <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
+      {# 📸 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
+         aparte"). El PDF de la OT lleva una muestra del anexo; el completo
+         vive acá. Solo se ofrece si de verdad hay fotos: un botón que abre
+         un documento vacío es peor que no tenerlo. #}
+      {% if fotos %}
+      <button type="button" class="b" onclick="otdVerAnexoFotos()">
+        <i class="bi bi-images"></i> Anexo de fotos ({{ fotos|length }})</button>
+      {% endif %}
+    </div>
     {% endif %}
     {% if v.estado == 'pendiente_aprobacion' and puede_aprobar %}
     <button type="button" class="b pri" onclick="OT2F.abrirAprobacion()">
