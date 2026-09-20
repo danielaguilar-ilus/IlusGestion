@@ -139,6 +139,9 @@
   .firma-img{ display:block; max-height:22mm; max-width:70mm; margin:0 auto 2mm; }
   .firma-nombre{ margin-top: 2mm; font-size:13pt; font-weight:700; }
   .firma-rut{ font-size:11.5pt; color:#333; }
+  .firma-evidencia{ font-size:8.5pt; color:#555; margin-top:6px; line-height:1.4;
+    word-break:break-word; font-family:"Courier New", monospace; }
+  .firma-evidencia b{ font-family:inherit; color:#333; }
   {# 🔴 2026-08-30 (Daniel: "la firma no puede chocar con el nombre... dale
      varios espacios hacia abajo"): antes "Firma: ___" venía pegado a
      "Nombre: X" sin ningún espacio -- se lee como si la línea de firma
@@ -352,9 +355,24 @@
       <div class="firma-rut">RUT Representante: {{ firma.firmante_rut | rut_fmt }}</div>
       {% endif %}
       <div class="firma-linea">Firma: {% if not firma.firma_url %}______________________{% endif %}</div>
-      <div class="firma-rut">Firmado el {{ firma.firmado_en }} · firma electrónica simple
-        con evidencia de trazabilidad (hash del documento, IP, dispositivo) --
-        no constituye Firma Electrónica Avanzada.</div>
+      <div class="firma-rut">Firmado el {{ firma.firmado_en }} (hora de Chile) · firma electrónica simple
+        (Ley 19.799) con evidencia de trazabilidad -- no constituye Firma Electrónica Avanzada.</div>
+      {#- 🔏 2026-09-20 (Daniel: "¿dónde queda ese IP? me da miedo que todo
+          quede inválido"): la evidencia se imprime en el propio documento.
+          Cada dato tiene un propósito probatorio distinto: el hash dice qué
+          texto exacto se firmó (cualquier edición posterior lo rompe), la IP
+          y el dispositivo dicen desde dónde, y "enviado a" ata el link al
+          canal de contacto del proveedor. -#}
+      {% if firma.ip or firma.hash_cli or firma.hash_srv or firma.enviado_a %}
+      <div class="firma-evidencia">
+        <b>Evidencia de la firma:</b>
+        {% if firma.enviado_a %}link enviado a {{ firma.enviado_a }} · {% endif %}
+        {% if firma.ip %}IP {{ firma.ip }} · {% endif %}
+        {% if firma.dispositivo %}{{ firma.dispositivo }} · {% endif %}
+        {% if firma.hash_cli %}huella del texto firmado SHA-256 {{ firma.hash_cli }}… · {% endif %}
+        {% if firma.hash_srv %}huella de los datos SHA-256 {{ firma.hash_srv }}…{% endif %}
+      </div>
+      {% endif %}
     {% else %}
       {# 🔴 2026-08-31 (Daniel: "a la firma agregarle también el RUT
          centrado y dejarle un espacio para la firma"): antes solo salía el

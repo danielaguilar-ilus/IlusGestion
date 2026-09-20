@@ -211,10 +211,10 @@
                        onblur="OT2ANX.oaxFormatearRut(this)">
                 <small class="oax-hint" id="oaxSelRutHint"></small></div>
               <div class="col-md-4"><label class="fl">Correo de contacto</label>
-                <input type="email" class="form-control form-control-sm" id="oaxSelEmail"
+                <input type="email" class="form-control form-control-sm" id="oaxSelEmail" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" onfocus="OT2ANX.focoVisible(this)"
                        oninput="OT2ANX.setContactoSel('email', this.value); OT2ANX.oaxValidarCampoManual(this,'email')"></div>
               <div class="col-md-4"><label class="fl">Teléfono</label>
-                <input class="form-control form-control-sm" id="oaxSelTel" placeholder="+56 9 1234 5678"
+                <input type="tel" class="form-control form-control-sm" id="oaxSelTel" placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="tel" onfocus="OT2ANX.focoVisible(this)"
                        oninput="OT2ANX.setContactoSel('tel', this.value); OT2ANX.oaxValidarCampoManual(this,'tel')"></div>
             </div>
             <small class="text-muted d-block mt-1" style="font-size:.72rem">Si corriges algo acá, queda guardado en la ficha de este proveedor para los próximos anexos.</small>
@@ -232,10 +232,10 @@
                        oninput="OT2ANX.oaxValidarCampoManual(this,'rut')" onblur="OT2ANX.oaxFormatearRut(this)">
                 <small class="oax-hint" id="oaxManRutHint"></small></div>
               <div class="col-6"><label class="fl">Correo de contacto</label>
-                <input type="email" class="form-control form-control-sm" id="oaxManEmail"
+                <input type="email" class="form-control form-control-sm" id="oaxManEmail" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" onfocus="OT2ANX.focoVisible(this)"
                        oninput="OT2ANX.oaxValidarCampoManual(this,'email')"></div>
               <div class="col-6"><label class="fl">Teléfono</label>
-                <input class="form-control form-control-sm" id="oaxManTel" placeholder="+56 9 1234 5678"
+                <input type="tel" class="form-control form-control-sm" id="oaxManTel" placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="tel" onfocus="OT2ANX.focoVisible(this)"
                        oninput="OT2ANX.oaxValidarCampoManual(this,'tel')"></div>
               <div class="col-12"><label class="fl">Dirección</label>
                 <input class="form-control form-control-sm" id="oaxManDireccion" autocomplete="off"
@@ -360,11 +360,21 @@
           <div class="oax-ok"><i class="bi bi-check-circle-fill"></i>
             Anexo N° <b id="oaxNumeroCreado">—</b>
             <span id="oaxNumeroSufijo">creado como borrador.</span></div>
-          <label class="fl">Correo del proveedor</label>
+          {#- 📇 2026-09-20 (Daniel, desde el iPhone: "ojalá interactúe con la
+              agenda y además el selector se ubique donde corresponde"). Los
+              campos llevan autocomplete/inputmode reales para que el teléfono
+              ofrezca su agenda de contactos (correo y número), y al enfocarlos
+              se hacen scroll a la vista sobre el teclado (ver oaxFocoVisible)
+              -- el cursor se dibujaba fuera del campo cuando el teclado
+              empujaba el modal de pantalla completa. El prellenado viene de
+              la ficha del proveedor cuando nunca se envió (ver ot2_detalle). -#}
+          <label class="fl" for="oaxEmailDestino">Correo del proveedor</label>
           <input type="email" class="form-control form-control-sm" id="oaxEmailDestino"
-                 placeholder="correo@proveedor.cl">
-          <label class="fl" style="margin-top:10px">Teléfono <span style="font-weight:500;opacity:.7">(opcional, para WhatsApp)</span></label>
-          <input class="form-control form-control-sm" id="oaxTelDestino" placeholder="+56 9 ...">
+                 placeholder="correo@proveedor.cl" inputmode="email" autocomplete="email"
+                 autocapitalize="off" spellcheck="false" onfocus="OT2ANX.focoVisible(this)">
+          <label class="fl" style="margin-top:10px" for="oaxTelDestino">Teléfono <span style="font-weight:500;opacity:.7">(opcional, para WhatsApp)</span></label>
+          <input type="tel" class="form-control form-control-sm" id="oaxTelDestino" placeholder="+56 9 ..."
+                 inputmode="tel" autocomplete="tel" onfocus="OT2ANX.focoVisible(this)">
 
           {#- 📎 2026-09-06 (Daniel: "quiero controlar enviar en el modal el
               PDF"). Hasta acá el anexo se mandaba a ciegas: al proveedor le
@@ -1536,8 +1546,22 @@ window.OT2ANX = (function(){
     });
   });
 
+  /* 📱 2026-09-20 (Daniel, iPhone: "el selector se ubique donde
+     corresponde"). En el modal de pantalla completa, cuando aparece el
+     teclado iOS achica el viewport visual y el campo enfocado queda medio
+     tapado: el cursor se dibujaba por debajo del input. Al enfocar, se
+     espera a que el teclado termine de subir y se trae el campo a la vista
+     (centrado), que es lo que iOS necesita para pintar el caret en su
+     lugar. En escritorio no hace nada visible. */
+  function focoVisible(el){
+    if (!el) return;
+    setTimeout(function(){
+      try { el.scrollIntoView({block: 'center', behavior: 'smooth'}); } catch(e){ try { el.scrollIntoView(); } catch(_e){} }
+    }, 320);
+  }
+
   return {
-    abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink,
+    abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink, focoVisible,
     onProveedorChange, toggleManual, toggleCondiciones, setContactoSel,
     oaxValidarCampoManual, oaxFormatearRut,
     setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,

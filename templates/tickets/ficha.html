@@ -165,6 +165,15 @@
         <h6><i class="bi bi-paperclip"></i>Adjuntos</h6>
         <div id="listaAdjuntosInfo"></div>
       </div>
+      {# 🔧 2026-09-20 (Daniel): las solicitudes de repuesto que una OT
+         levantó y que este ticket agrupa (OT · equipo · repuesto · cantidad
+         · proveedor · evidencia). Se llena por API y solo aparece si hay. #}
+      <div class="tk-card" id="cardRepuestosOT" style="display:none">
+        <h6 style="display:flex;align-items:center;gap:8px"><i class="bi bi-tools"></i>Repuestos solicitados desde la OT
+          <span class="badge" id="repOtN" style="background:#dc2626;font-size:.66rem"></span>
+          <a href="/repuestos#solicitudes" target="_blank" rel="noopener" class="ms-auto small" style="font-weight:700;color:#dc2626;text-decoration:none">Gestionar en Bodega <i class="bi bi-box-arrow-up-right"></i></a></h6>
+        <div id="repOtLista" style="display:flex;flex-direction:column;gap:8px"></div>
+      </div>
       <div class="tk-card" id="cardNotas" style="display:none;">
         <h6><i class="bi bi-lock"></i>Notas internas</h6>
         <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
@@ -576,6 +585,52 @@ const PUEDE_VER_ACTIVIDAD = {{ 'true' if (permissions.superadmin or permissions.
 // Ocultar el botón aquí es solo cosmético — la única defensa real es el
 // backend, que valida de nuevo en cada request.
 window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
+
+// 🔧 2026-09-20 -- solicitudes de repuesto desde la OT que este ticket
+// agrupa. Independiente del render principal (tickets_ficha.js): si falla,
+// la ficha sigue igual. Cada fila: OT · equipo · repuesto × cantidad ·
+// estado en la trayectoria · evidencia (foto/video) · diagnóstico.
+(async function tkRepuestosOT(){
+  var card = document.getElementById('cardRepuestosOT');
+  var lista = document.getElementById('repOtLista');
+  if (!card || !lista) return;
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); };
+  var fmt = function(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; };
+  try {
+    var r = await fetch('/repuestos/api/solicitudes-ot?ticket_id=' + TID, {credentials:'same-origin', cache:'no-store'});
+    if (!r.ok) return;
+    var j = await r.json();
+    var sols = (j && j.solicitudes) || [];
+    if (!sols.length) return;
+    var CL = { solicitado:'#dbeafe|#1d4ed8', validado:'#ede9fe|#6d28d9', pedido:'#fff8e1|#a16207', recibido:'#cffafe|#0e7490', instalado:'#dcfce7|#15803d', rechazado:'#fee2e2|#b91c1c' };
+    lista.innerHTML = sols.map(function(s){
+      var c = (CL[s.estado] || CL.solicitado).split('|');
+      var evs = (s.evidencias || []).map(function(e){
+        return '<a href="' + esc(e.url) + '" target="_blank" rel="noopener" style="width:44px;height:44px;border-radius:7px;overflow:hidden;background:#0a0a0a;display:grid;place-items:center;color:#fff;border:1px solid #e5e7eb">' +
+          (e.tipo === 'video' ? '<i class="bi bi-play-circle-fill"></i>' : '<img src="' + esc(e.url) + '" style="width:100%;height:100%;object-fit:cover" alt="">') + '</a>';
+      }).join('');
+      return '<div style="border:1px solid #e5e7eb;border-left:4px solid ' + c[1] + ';border-radius:10px;padding:9px 11px;font-size:.8rem;line-height:1.4">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<span style="font-size:.6rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:2px 8px;background:' + c[0] + ';color:' + c[1] + '">' + esc(String(s.estado_label || s.estado).split(' · ')[0]) + '</span>' +
+          '<b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + esc(s.repuesto_nombre) + ' × ' + fmt(s.cantidad) + '</b>' +
+          (s.piola_metros ? '<span style="color:#a16207;font-weight:800">' + fmt(s.piola_metros) + ' m de piola</span>' : '') +
+          (s.medida ? '<span style="color:#a16207;font-weight:800">' + esc(s.medida) + '</span>' : '') +
+          '<a href="/ot/' + s.visita_id + '" target="_blank" rel="noopener" style="color:#dc2626;font-weight:800;text-decoration:none">' + esc(s.numero_ot || '') + '</a>' +
+          '<small style="margin-left:auto;color:#6b7280">' + esc(s.created_at || '') + (s.solicitado_por ? ' · ' + esc(s.solicitado_por) : '') + '</small>' +
+        '</div>' +
+        '<div style="color:#374151;margin-top:3px">' + esc(s.maquina_nombre || '') + (s.maquina_serie ? ' · S/N ' + esc(s.maquina_serie) : '') +
+          (s.dejo_fuera_servicio ? ' · <b style="color:#991b1b">quedó fuera de servicio</b>' : '') +
+          (s.stock_sku ? ' · bodega <b>' + esc(s.stock_sku) + '</b>' : ' · <span style="color:#b45309;font-weight:700">sin repuesto de bodega ligado</span>') +
+          (s.proveedor_nombre ? ' · proveedor ' + esc(s.proveedor_nombre) : '') + (s.oc_numero ? ' · OC ' + esc(s.oc_numero) : '') + '</div>' +
+        '<div style="color:#1f2937;margin-top:4px;white-space:pre-wrap"><i class="bi bi-stethoscope me-1" style="color:#dc2626"></i>' + esc(s.motivo || '') + '</div>' +
+        (evs ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + evs + '</div>' : '') +
+        (s.nota_gestion ? '<div style="margin-top:6px;color:#475569;font-size:.74rem"><i class="bi bi-chat-left-text me-1"></i>' + esc(s.nota_gestion) + '</div>' : '') +
+      '</div>';
+    }).join('');
+    document.getElementById('repOtN').textContent = sols.length;
+    card.style.display = '';
+  } catch(e){ /* tarjeta opcional */ }
+})();
 </script>
 <script defer src="{{ url_for('static', filename='tickets_ficha.js') }}"></script>
 

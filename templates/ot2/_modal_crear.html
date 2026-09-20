@@ -1151,6 +1151,10 @@ window.OT2C = (function(){
   var _tiposInternoCargados = false, _tiposInternoCargando = false;
 
   function reset(){
+    // 📇 2026-09-20: la caché de contactos de la ficha es de módulo -- cada
+    // apertura del wizard vuelve a pedirla, si no, al reabrir para el mismo
+    // cliente sin recargar la página la contraparte no se prellenaba.
+    cacheContactos = null; cacheContactosCid = null;
     S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
@@ -3524,6 +3528,7 @@ window.OT2C = (function(){
     // para no atribuirle a la ficha un dato que se editó acá.
     if (['nombre','cargo','tel','email','rut'].indexOf(campo) !== -1) {
       S.contraparte.origen = 'manual';
+      _pintarContactosDom();   // solo la lista de tarjetas, no los inputs (no pierde el foco)
     }
     if (campo === 'rut' || campo === 'tel' || campo === 'email') _o2mPintarCpValidacion();
     refrescarAnclas();
@@ -3560,10 +3565,21 @@ window.OT2C = (function(){
     refrescarAnclas();
   }
 
+  /* 📇 2026-09-20: la ficha del cliente PREDOMINA. Si trae UN solo contacto
+     y la persona no escribió nada a mano en esta sesión, se rellena solo --
+     también cuando los contactos ya estaban en caché (antes esa rama no
+     prellenaba nada al reabrir el wizard). Con 2+ contactos la persona
+     elige la tarjeta (principal, secundario o encargado de sucursal). */
+  function _o2mAutoSelUnico(){
+    if (cacheContactos && cacheContactos.length === 1 &&
+        S.contraparte.origen !== 'manual' && !(S.contraparte.nombre||'').trim()){
+      elegirContacto(0);
+    }
+  }
   function cargarContactosCliente(){
     var cid = S.cliente && S.cliente.id;
     if (!cid) { cacheContactos = []; return; }
-    if (cacheContactosCid === cid) { _pintarContactosDom(); return; }
+    if (cacheContactosCid === cid) { _pintarContactosDom(); _o2mAutoSelUnico(); return; }
     cacheContactosCid = cid;
     fetch('/mantenciones/api/clientes/'+cid+'/contactos', {credentials:'same-origin'})
       .then(function(r){ return r.json(); })
@@ -3571,11 +3587,7 @@ window.OT2C = (function(){
         cacheContactos = (j && Array.isArray(j.contactos)) ? j.contactos
                        : (Array.isArray(j) ? j : []);
         _pintarContactosDom();
-        // Si la ficha trae UN solo contacto y todavía no se eligió nada, se
-        // preselecciona: es el caso más común y ahorra un toque.
-        if (cacheContactos.length === 1 && !(S.contraparte.nombre||'').trim()){
-          elegirContacto(0);
-        }
+        _o2mAutoSelUnico();
       })
       .catch(function(){ cacheContactos = []; _pintarContactosDom(); });
   }
@@ -3592,7 +3604,9 @@ window.OT2C = (function(){
       '<div class="o2m-cp-grid">'+
       cacheContactos.map(function(ct, i){
         var sel = (S.contraparte.origen === ct.origen &&
-                   (S.contraparte.nombre||'') === (ct.nombre||''));
+                   (S.contraparte.nombre||'') === (ct.nombre||'') &&
+                   (S.contraparte.email||'') === (ct.email||'') &&
+                   (S.contraparte.tel||'') === (ct.tel||''));
         return '<button type="button" class="o2m-cp-card'+(sel?' sel':'')+'" '+
           'onclick="OT2C.elegirContacto('+i+')">'+
           '<span class="o2m-cp-lbl">'+esc(ct.label || 'Contacto')+'</span>'+
@@ -3617,10 +3631,10 @@ window.OT2C = (function(){
       '<div id="o2mCpLista" class="mb-3"></div>'+
       '<div class="row g-3">'+
         '<div class="col-md-7"><label class="fl">Nombre de quien recibe *</label>'+
-        '<input class="form-control" id="o2mCpNombre" maxlength="200" value="'+esc(cp.nombre)+'" '+
+        '<input class="form-control" id="o2mCpNombre" maxlength="200" value="'+esc(cp.nombre)+'" autocomplete="off" '+
         'placeholder="Ej: Marcela Rojas" oninput="OT2C.setCpCampo(\'nombre\', this.value)"></div>'+
         '<div class="col-md-5"><label class="fl">Cargo</label>'+
-        '<input class="form-control" id="o2mCpCargo" maxlength="120" value="'+esc(cp.cargo)+'" '+
+        '<input class="form-control" id="o2mCpCargo" maxlength="120" value="'+esc(cp.cargo)+'" autocomplete="off" '+
         'placeholder="Ej: Administradora" oninput="OT2C.setCpCampo(\'cargo\', this.value)"></div>'+
         // 2026-08-30 (Daniel: "necesito que valides del contacto el RUT con
         // RUT chileno... el número de carnet chileno deberá ya validarse
@@ -3632,12 +3646,12 @@ window.OT2C = (function(){
         'onblur="this.value = OT2C._o2mFormatearRutSiValido(this.value)">'+
         '<div id="o2mCpRutEstado" class="mt-1" style="font-size:.72rem"></div></div>'+
         '<div class="col-md-4"><label class="fl">Teléfono *</label>'+
-        '<input class="form-control" id="o2mCpTel" maxlength="50" value="'+esc(cp.tel)+'" '+
+        '<input class="form-control" id="o2mCpTel" maxlength="50" value="'+esc(cp.tel)+'" autocomplete="off" '+
         'inputmode="tel" placeholder="+56 9 1234 5678" '+
         'oninput="OT2C.setCpCampo(\'tel\', this.value)">'+
         '<div id="o2mCpTelEstado" class="mt-1" style="font-size:.72rem"></div></div>'+
         '<div class="col-md-4"><label class="fl">Correo *</label>'+
-        '<input class="form-control" id="o2mCpEmail" maxlength="200" value="'+esc(cp.email)+'" '+
+        '<input class="form-control" id="o2mCpEmail" maxlength="200" value="'+esc(cp.email)+'" autocomplete="off" '+
         'type="email" placeholder="contacto@cliente.cl" '+
         'oninput="OT2C.setCpCampo(\'email\', this.value)">'+
         '<div id="o2mCpEmailEstado" class="mt-1" style="font-size:.72rem"></div>'+
@@ -4157,6 +4171,25 @@ window.OT2C = (function(){
       return String(l.sku || '').trim().toUpperCase() === k;
     }) || null;
   }
+  /* 2026-09-20: cantidad que vale para la OT. `cantidad_doc` es lo
+     FACTURADO (viene del modal TKA); `qty` es el saldo pendiente de
+     despacho, que en un piso ya entregado vale 0→1. */
+  function _o2mQtyDeItem(it){
+    var cd = parseFloat(it && it.cantidad_doc);
+    if (isFinite(cd) && cd > 0) return cd;
+    var q = parseFloat(it && it.qty);
+    return (isFinite(q) && q > 0) ? q : 1;
+  }
+  /* Un documento puede traer el MISMO SKU en dos líneas (4 + 4 pisos por
+     precio distinto): la cantidad del SKU en la OT es la SUMA. */
+  function _o2mQtyDeSku(sku){
+    if (!sku || !S.doc_lineas || !S.doc_lineas.length) return 0;
+    var k = String(sku).trim().toUpperCase(), tot = 0;
+    S.doc_lineas.forEach(function(l){
+      if (String(l.sku || '').trim().toUpperCase() === k) tot += (parseFloat(l.qty) || 0);
+    });
+    return tot;
+  }
   function _o2mDocDeLinea(l){
     if (l && l.nudo) return ((l.tido || 'FCV') + ' ' + l.nudo).trim();
     if (S.doc_origen && S.doc_origen.nudo)
@@ -4207,7 +4240,11 @@ window.OT2C = (function(){
           var enPlan = !!m.aplica_mantencion;
           var _lin = _o2mLineaDeSku(m.sku);
           var _docTxt = _o2mDocDeLinea(_lin);
-          var _cant = (_lin && _lin.qty) ? _lin.qty : '';
+          // 2026-09-20: cantidad = suma de las líneas del documento para ese
+          // SKU; sin documento, la cantidad que ya tiene la ficha (un piso
+          // dado de alta con cantidad=8 muestra 8, no "—").
+          var _cantDoc = _lin ? _o2mQtyDeSku(m.sku) : 0;
+          var _cant = _cantDoc > 0 ? _cantDoc : ((parseInt(m.cantidad, 10) || 1) > 1 ? parseInt(m.cantidad, 10) : '');
           return '<tr id="o2mEqRow-'+m.id+'" class="'+cls+'">'+
             '<td class="chk"><span class="o2m-chk'+(sel?' on':'')+'" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
               (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span></td>'+
@@ -4392,22 +4429,45 @@ window.OT2C = (function(){
        diálogo se toma la opción conservadora -- una fila por unidad, que
        es como venía funcionando (REGLA #4.2: sin respuesta, no se cambia
        el comportamiento anterior). */
+    /* 2026-09-20 (Daniel: "respetar las cantidades... entrada por la ficha
+       y por la factura para que no se repita"): (1) un documento con el
+       MISMO SKU en dos líneas se agrupa sumando -- si no, la segunda línea
+       se daba de alta aparte; (2) el diálogo de abajo por fin manda
+       `split_to_rows` explícito: "Una sola fila por producto" crea UNA fila
+       con cantidad=N (antes mandaba cantidad=1 y perdía las otras N-1). */
+    var _porClave = {};
+    faltantes.forEach(function(l){
+      var kk = String(l.sku || '').trim().toUpperCase() + '|' + ((l.tido || '') + ' ' + (l.nudo || '')).trim();
+      if (!_porClave[kk]){
+        _porClave[kk] = Object.assign({}, l, {qty: 0});
+      }
+      _porClave[kk].qty += (parseFloat(l.qty) || 1);
+      if (!_porClave[kk].nombre && l.nombre) _porClave[kk].nombre = l.nombre;
+    });
+    faltantes = Object.keys(_porClave).map(function(kk){
+      var x = _porClave[kk]; x.qty = Math.max(1, Math.round(x.qty)); return x;
+    });
     var _multi = faltantes.filter(function(l){ return (parseInt(l.qty, 10) || 1) > 1; });
     var _unaFilaPorUnidad = true;
     if (_multi.length && window.ilusConfirm){
       var _tot = _multi.reduce(function(a, l){ return a + (parseInt(l.qty, 10) || 1); }, 0);
       var _ej = _multi[0];
-      _unaFilaPorUnidad = await ilusConfirm({
+      // 2026-09-20: ilusConfirm devuelve false también con Escape o clic
+      // fuera. Para que cancelar sea la opción CONSERVADORA (una fila por
+      // unidad, como dice el comentario de arriba), el botón "OK" es
+      // "una sola fila" y se invierte el resultado.
+      _unaFilaPorUnidad = !(await ilusConfirm({
         title: '¿Una fila por unidad?',
         message: 'Hay ' + _multi.length + ' producto' + (_multi.length === 1 ? '' : 's') +
                  ' con más de una unidad (' + _tot + ' unidades en total). ' +
                  'Por ejemplo: ' + ((_ej.nombre || _ej.sku) + ' × ' + (_ej.qty || 1)) + '.',
         sub: 'Una fila por unidad le da a cada máquina su propia serie y su propio ' +
              'checklist — es lo que corresponde a un equipo. Una sola fila por producto ' +
-             'es mejor para accesorios o piso, donde revisar seis veces lo mismo no aporta.',
-        okLabel: 'Una fila por unidad',
-        cancelLabel: 'Una sola fila por producto',
-      });
+             'es mejor para accesorios o piso, donde revisar seis veces lo mismo no aporta. ' +
+             'Los pisos y accesorios clasificados en el Catálogo se agrupan solos en una fila con su cantidad, elijas lo que elijas.',
+        okLabel: 'Una sola fila por producto',
+        cancelLabel: 'Una fila por unidad',
+      }));
     }
     var docOrigenTxt = S.doc_origen ? (S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '';
     var creadosIds = [];
@@ -4416,7 +4476,11 @@ window.OT2C = (function(){
       var l = faltantes[i];
       try {
         var body = {sku: l.sku, nombre: l.nombre || l.sku,
-                    cantidad: _unaFilaPorUnidad ? (l.qty || 1) : 1};
+                    cantidad: (parseInt(l.qty, 10) || 1),
+                    split_to_rows: !!_unaFilaPorUnidad,
+                    // piso/accesorio (clasificación del Catálogo) nunca se
+                    // parte en N filas, ver mant_maquina_add
+                    respetar_clasificacion: true};
         // 2026-08-30 (Daniel, trazabilidad -- "CON QUÉ DOC entró eso a la
         // ficha"): CADA línea puede tener su propio documento ERP real
         // (una cotización combina varias facturas) -- eso manda primero;
@@ -6444,22 +6508,32 @@ window.OT2C = (function(){
        RUT el header guarda solo el ultimo documento expandido, asi que con
        varias facturas a la vez el header miente. Las lineas si traen el
        suyo. */
-    var nuevas = [], docs = {};
+    var nuevas = [], docs = {}, _enEsteLote = {};
     lineas.forEach(function(it){
       var tido = it.tido || (header && header.tido) || null;
       var nudo = it.nudo || (header && header.nudo) || null;
       var skuN = _o2mSkuNorm(it.sku);
       var docN = _o2mDocOrigenNorm((tido || '') + (nudo || ''));
+      var _kLote = skuN + '|' + docN;
+      // 2026-09-20: un documento puede traer el MISMO SKU en dos líneas
+      // (4 + 4 pisos). Si la primera entró en ESTE mismo lote, la segunda
+      // se SUMA a esa línea en vez de descartarse como "repetida".
+      if (_enEsteLote[_kLote]){
+        _enEsteLote[_kLote].qty = (parseFloat(_enEsteLote[_kLote].qty) || 0) + _o2mQtyDeItem(it);
+        if (tido && nudo) docs[tido + '|' + nudo] = {tido: tido, nudo: nudo};
+        return;
+      }
       var repetida = (S.doc_lineas || []).some(function(l){
         return _o2mSkuNorm(l.sku) === skuN &&
                _o2mDocOrigenNorm((l.tido || '') + (l.nudo || '')) === docN;
       });
       if (!repetida){
-        var linea = {sku: it.sku, nombre: it.nombre, qty: it.qty,
+        var linea = {sku: it.sku, nombre: it.nombre, qty: _o2mQtyDeItem(it),
                      tido: tido, nudo: nudo,
                      fecha: it.fecha || (header && header.fecha) || null};
         S.doc_lineas = (S.doc_lineas || []).concat([linea]);
         nuevas.push(linea);
+        _enEsteLote[_kLote] = linea;
       }
       if (tido && nudo) docs[tido + '|' + nudo] = {tido: tido, nudo: nudo};
     });
@@ -7047,13 +7121,16 @@ window.OT2C = (function(){
         // documento detrás -- equipo de la ficha, no de una factura -- la
         // unidad vale 1, que es lo que la tabla muestra.
         var _lin = _o2mLineaDeSku(m.sku);
-        var _cant = (_lin && parseInt(_lin.qty, 10) > 0) ? parseInt(_lin.qty, 10) : 1;
+        var _cantSku = _lin ? Math.round(_o2mQtyDeSku(m.sku)) : 0;
+        var _cant = _cantSku > 0 ? _cantSku : ((parseInt(m.cantidad, 10) || 1) > 1 ? parseInt(m.cantidad, 10) : 1);
         var _doc = _o2mDocDeLinea(_lin) || '';
         if (!acc[k]){
           acc[k] = { sku: sku, nombre: nombre, cantidad: 0, documento: _doc, _uds: 0 };
         }
         if (_doc && !acc[k].documento) acc[k].documento = _doc;
-        acc[k]._uds += 1;
+        // 2026-09-20: una fila de la ficha que agrupa N unidades (piso con
+        // cantidad=8) cuenta N, no 1 -- mismo número que pinta el Paso 7.
+        acc[k]._uds += Math.max(1, parseInt(m.cantidad, 10) || 1);
         // Con línea de documento la cantidad la manda el documento (no se
         // multiplica por cada unidad marcada); sin ella, se cuentan las
         // unidades.
@@ -7733,9 +7810,13 @@ window.OT2C = (function(){
     // de la cotización/documento), nunca se usa "hoy" como relleno.
     // Este SI es el origen de la OT: la tabla se limita a su documento.
     S.doc_lineas_fuente = true;
+    // 📦 2026-09-20 (Daniel: "en la factura aparecen 8... hay que respetar
+    // las cantidades, así sea piso por 400 o 500"): el modal traía el SALDO
+    // pendiente de despacho (0 → 1 en un piso ya entregado), no lo
+    // facturado. En la OT manda la cantidad del documento.
     S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; })
       .map(function(it){
-        return {sku: it.sku, nombre: it.nombre, qty: it.qty,
+        return {sku: it.sku, nombre: it.nombre, qty: _o2mQtyDeItem(it),
                 tido: it.tido || null, nudo: it.nudo || null,
                 fecha: it.fecha || header.fecha || null};
       }) : [];
@@ -8565,6 +8646,18 @@ window.OT2C = (function(){
        suyo, con su doc_origen ajeno. Escritura permanente, sin preguntar.
        Al cambiar de cliente esos documentos se sueltan, y se avisa --
        nada se borra en silencio (REGLA #4.2). */
+    /* 📇 2026-09-20 (Daniel, viendo el paso 4: "el contacto debe predominar
+       el del front"). La contraparte del cliente ANTERIOR se quedaba pegada
+       al cambiar de cliente: la tarjeta mostraba el contacto de la ficha
+       nueva y los campos seguían con nombre/cargo/correo del anterior.
+       Solo se suelta si NO fue tipeada a mano en esta sesión (origen
+       'manual'): lo escrito por la persona no se borra en silencio. */
+    if (_cambioDeCliente && S.contraparte.origen !== 'manual'){
+      S.contraparte.nombre = ''; S.contraparte.cargo = ''; S.contraparte.tel = '';
+      S.contraparte.email = ''; S.contraparte.rut = ''; S.contraparte.origen = '';
+    } else if (_cambioDeCliente && window.ilusToast){
+      ilusToast('Cambiaste de cliente: la contraparte que escribiste a mano se mantiene, revísala.', {type:'info', duration:5000});
+    }
     if (_cambioDeCliente && !(opts && opts.conservarDocs)){
       var _habiaDocs = !!(S.doc_lineas && S.doc_lineas.length);
       S.doc_lineas = [];
@@ -8581,6 +8674,7 @@ window.OT2C = (function(){
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
     repintarSeccion('equipos');
+    if (_cambioDeCliente) repintarSeccion('contraparte');   // tarjetas + prellenado de la ficha nueva
   }
 
   /* Cliente sin ficha: se crea al vuelo, diciendo POR QUÉ se crea.

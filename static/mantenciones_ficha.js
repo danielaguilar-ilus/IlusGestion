@@ -49,7 +49,7 @@
 // Estado (tab) + búsqueda + plan de mantención + mostrar bajas se
 // evalúan juntos en _eqAplicarFiltros(), no se pisan entre sí.
 // ════════════════════════════════════════════════════════════════════
-const _eqFiltros = { estado: 'todos', buscar: '', plan: 'todos', mostrarBajas: false };
+const _eqFiltros = { estado: 'todos', buscar: '', plan: 'todos', mostrarBajas: false, problemas: false };
 
 function _eqAplicarFiltros() {
   const rows = document.querySelectorAll('#maqListado tr');
@@ -65,6 +65,10 @@ function _eqAplicarFiltros() {
     // 2) Plan de mantención
     if (_eqFiltros.plan === 'si' && !apl) show = false;
     if (_eqFiltros.plan === 'no' && apl) show = false;
+    // 2b) 🔧 2026-09-20 (Daniel: "en la ficha de productos poder filtrar los
+    //     productos que estén en malas condiciones"): fuera de servicio,
+    //     con alerta o con repuesto/piola pendiente (data-problema="1").
+    if (_eqFiltros.problemas && tr.dataset.problema !== '1') show = false;
     // 3) Búsqueda por texto
     if (_eqFiltros.buscar && !name.includes(_eqFiltros.buscar)) show = false;
     // 4) Bajas ocultas por default (salvo que el tab pida explícitamente "baja")
@@ -98,6 +102,47 @@ function eqFiltrarPlan(plan, btn) {
   if (btn) btn.classList.add('active');
   _eqFiltros.plan = plan;
   _eqAplicarFiltros();
+}
+
+// ── 🔧 Filtro "Con problemas" (2026-09-20) — toggle independiente del plan:
+// equipos fuera de servicio, con alerta o con repuesto/piola pendiente.
+// Se combina con los demás filtros, no los pisa (mismo criterio 06-10).
+function eqFiltrarProblemas(btn) {
+  _eqFiltros.problemas = !_eqFiltros.problemas;
+  if (btn) btn.classList.toggle('active', _eqFiltros.problemas);
+  _eqAplicarFiltros();
+}
+
+// Fecha de resolución del ticket que agrupa los repuestos de una OT
+// (Daniel 2026-09-20: "te va a dar chance de activar un ticket y de activar
+// una fecha de resolución"). PATCH al ticket real -- no una fecha aparte.
+async function eqRepFechaResolucion(ticketId, numero, actual, actualIso) {
+  // Selector de fecha nativo (ilusPrompt inputType 'date'): el valor viaja
+  // en ISO al backend y se muestra dd/mm/aaaa (REGLA #6), sin pedirle al
+  // usuario que tipee un formato.
+  const val = await ilusPrompt({
+    title: 'Fecha de resolución · ' + (numero || 'ticket'),
+    message: '¿Para cuándo tiene que estar resuelto este repuesto?',
+    sub: actual ? ('Hoy tiene fijada: ' + actual + '.') : 'Queda como fecha límite del ticket.',
+    inputType: 'date',
+    defaultValue: actualIso || '',
+    required: true,
+  });
+  if (!val) return;
+  const f = String(val).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || isNaN(new Date(f + 'T12:00:00').getTime())) { ilusToast('Elige una fecha válida', { type: 'warning' }); return; }
+  try {
+    const r = await fetch('/tickets/api/tickets/' + ticketId, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fecha_limite: f }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { ilusToast('No se pudo fijar: ' + (d.error || 'error'), { type: 'error' }); return; }
+    ilusToast('✓ Fecha de resolución fijada en ' + numero, { type: 'success' });
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    ilusToast('Error de red: ' + (e.message || ''), { type: 'error' });
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════

@@ -77,6 +77,81 @@
 #modalSolicitarRepuesto .btn-close{filter:invert(1)}
 #solRepMaquinas{max-height:180px;overflow-y:auto;border:1.5px solid #e5e7eb;border-radius:10px;padding:8px 12px}
 #solRepMaquinas .form-check{margin-bottom:4px}
+/* ══ Solicitudes desde OT (2026-09-20) — tarjetas con semáforo, REGLA #15 ══ */
+.rs-top{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.rs-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.rs-chip{border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:999px;padding:6px 12px;
+  font-size:.74rem;font-weight:700;cursor:pointer;min-height:36px;font-family:inherit}
+.rs-chip b{font-weight:900;margin-left:2px}
+.rs-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.rs-buscar{max-width:360px;min-width:220px}
+.rs-lista{display:flex;flex-direction:column;gap:10px}
+.rs-vacio{background:#fff;border:1px dashed #d1d5db;border-radius:12px;padding:22px;text-align:center;color:#6b7280;font-size:.85rem}
+.rs-card{background:#fff;border:1px solid #e5e7eb;border-left:5px solid #2563eb;border-radius:14px;
+  box-shadow:0 1px 3px rgba(15,23,42,.05);overflow:hidden}
+.rs-card.val{border-left-color:#7c3aed}.rs-card.ped{border-left-color:#f59e0b}.rs-card.rec{border-left-color:#0891b2}
+.rs-card.ins{border-left-color:#16a34a;opacity:.85}.rs-card.rej{border-left-color:#dc2626;opacity:.8}
+.rs-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;background:#fafbfc;border-bottom:1px solid #f1f5f9}
+.rs-est{font-size:.6rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:3px 9px;
+  background:#dbeafe;color:#1d4ed8}
+.rs-est.val{background:#ede9fe;color:#6d28d9}.rs-est.ped{background:#fff8e1;color:#a16207}.rs-est.rec{background:#cffafe;color:#0e7490}
+.rs-est.ins{background:#dcfce7;color:#15803d}.rs-est.rej{background:#fee2e2;color:#b91c1c}
+.rs-num{font-size:.78rem;color:#6b7280}
+.rs-ot,.rs-tk{font-size:.78rem;font-weight:800;color:#dc2626;text-decoration:none;white-space:nowrap}
+.rs-ot:hover,.rs-tk:hover{text-decoration:underline}
+.rs-tk{color:#1d4ed8}.rs-tk.sin{color:#9ca3af;font-weight:600}
+.rs-when{margin-left:auto;font-size:.7rem;color:#6b7280}
+.rs-body{display:grid;grid-template-columns:1.1fr 1.1fr 1.6fr;gap:14px;padding:12px 14px}
+.rs-k{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;font-weight:800;margin-bottom:3px}
+.rs-v{font-size:.82rem;color:#0a0a0a;line-height:1.4;overflow-wrap:anywhere}
+.rs-v b{font-weight:800}
+.rs-mot{white-space:pre-wrap;color:#1f2937}
+.rs-fs{display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-size:.66rem;font-weight:800;color:#991b1b;
+  background:#fee2e2;border-radius:999px;padding:2px 8px}
+.rs-piola{display:inline-block;font-size:.72rem;font-weight:800;color:#a16207;background:#fff8e1;border-radius:999px;padding:1px 8px;margin-top:3px}
+.rs-liga{font-size:.72rem;color:#475569;margin-top:5px;display:flex;gap:5px;align-items:flex-start}
+.rs-liga.ok{color:#15803d;font-weight:700}.rs-liga.pend{color:#b45309;font-weight:700}
+.rs-evs{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.rs-ev{width:56px;height:56px;border-radius:8px;overflow:hidden;background:#0a0a0a;display:block;border:1px solid #e5e7eb}
+.rs-ev img{width:100%;height:100%;object-fit:cover;display:block}
+.rs-ev-vid{width:100%;height:100%;display:grid;place-items:center;color:#fff;font-size:1.4rem}
+.rs-nota{margin-top:8px;font-size:.74rem;color:#374151;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 9px;white-space:pre-wrap}
+.rs-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-top:1px solid #f1f5f9;background:#fff}
+.rs-tl{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;font-weight:800;color:#9ca3af}
+.rs-tl i{font-size:.6rem;color:#cbd5e1}
+.rs-tl-p.ok{color:#15803d}
+.rs-acc{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.rs-btn{border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 11px;font-size:.74rem;
+  font-weight:800;cursor:pointer;min-height:36px;font-family:inherit}
+.rs-btn.val{border-color:#c4b5fd;color:#6d28d9}.rs-btn.val:hover{background:#7c3aed;border-color:#7c3aed;color:#fff}
+.rs-btn.ped{border-color:#fde68a;color:#a16207}.rs-btn.ped:hover{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.rs-btn.rec{border-color:#a5f3fc;color:#0e7490}.rs-btn.rec:hover{background:#0891b2;border-color:#0891b2;color:#fff}
+.rs-btn.ins{border-color:#bbf7d0;color:#15803d}.rs-btn.ins:hover{background:#16a34a;border-color:#16a34a;color:#fff}
+.rs-btn.rej{border-color:#fecaca;color:#b91c1c}.rs-btn.rej:hover{background:#dc2626;border-color:#dc2626;color:#fff}
+.rs-pie{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;
+  font-size:.78rem;color:#475569}
+.otrep-opc{display:flex;flex-direction:column;gap:6px}
+.otrep-opc-it{display:flex;align-items:center;gap:10px;border:1.5px solid #e5e7eb;border-radius:11px;padding:8px 10px;
+  cursor:pointer;background:#fff;text-align:left;width:100%;font-family:inherit}
+.otrep-opc-it:hover{border-color:#cbd5e1}
+.otrep-opc-it.on{border-color:#dc2626;background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.otrep-opc-it .ph{width:44px;height:44px;border-radius:8px;flex:none;background:#f3f4f6;overflow:hidden;display:grid;place-items:center;color:#c7cbd1}
+.otrep-opc-it .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.otrep-opc-it .inf{flex:1;min-width:0}
+.otrep-opc-it .inf b{display:block;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere;line-height:1.25}
+.otrep-opc-it .inf small{display:block;font-size:.68rem;color:#6b7280;overflow-wrap:anywhere}
+.otrep-opc-it .stk{flex:none;font-size:.62rem;font-weight:900;border-radius:999px;padding:3px 8px;background:#dcfce7;color:#15803d;white-space:nowrap}
+.otrep-opc-it .stk.sin{background:#fee2e2;color:#b91c1c}
+.otrep-opc-vacio{font-size:.76rem;color:#6b7280;padding:6px 2px}
+@media (max-width:820px){
+  .rs-body{grid-template-columns:1fr}
+  .rs-when{margin-left:0;flex-basis:100%}
+  .rs-acc{margin-left:0;width:100%}
+  .rs-acc .rs-btn{flex:1 1 45%;min-height:44px}
+  .rs-buscar{max-width:none;width:100%}
+  .rs-chip{min-height:44px}
+  .rs-pie .btn{min-height:44px}
+}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -84,6 +159,9 @@
     <h4><i class="bi bi-gear-wide-connected me-2"></i>Repuestos</h4>
     <div class="sub" id="repSubBodega">Inventario físico de la bodega — SKU, stock, ubicación, costo,
       marca y compatibilidad con modelos de equipo.</div>
+    {# 🔒 2026-09-20 (revisión): la pestaña "Solicitudes desde OT" heredaba
+       este mismo subtítulo de Bodega, que no la describe. #}
+    <div class="sub d-none" id="repSubSolicitudes">Lo que las OT pidieron: validar en bodega, pedir al proveedor, recibir e instalar.</div>
     <div class="sub d-none" id="repSubSeguimiento">Vista de todos los repuestos cotizados/instalados por cliente. Para agregar o
       editar un repuesto puntual, ábrelo desde la ficha del cliente (pestaña "Repuestos").
       Incluye la planilla real de seguimiento de Daniel (ubicación, motivo, N° OT, garantía).</div>
@@ -120,11 +198,100 @@
       <i class="bi bi-clipboard-check me-1"></i>Seguimiento <span class="badge bg-secondary ms-1">{{ repuestos|length }}</span>
     </button>
   </li>
+  {# 🔧 2026-09-20 (Daniel): la cola de solicitudes que levantan las OT --
+     "el repuesto va a quedar pendiente de requerimiento en el seguimiento de
+     repuesto de la bodega... vamos a crear el repuesto, vamos a verificarlo
+     si es que no existe". Trayectoria: solicitado → validado → pedido →
+     recibido → instalado. #}
+  <li class="nav-item">
+    <button class="nav-link" type="button" onclick="repTab('solicitudes')" id="repTabSolicitudes">
+      <i class="bi bi-inbox-fill me-1"></i>Solicitudes desde OT
+      <span class="badge ms-1" id="repBadgeSolic" style="background:{{ '#dc2626' if otrep_abiertas else '#6b7280' }}">{{ otrep_abiertas or 0 }}</span>
+    </button>
+  </li>
 </ul>
 
 {# ════════ PANE BODEGA ════════ #}
 <div id="repPaneBodega">
   {% include "mantenciones/_repuestos_bodega_pane.html" %}
+</div>
+
+{# ════════ PANE SOLICITUDES DESDE OT (2026-09-20) ════════ #}
+<div id="repPaneSolicitudes" class="d-none">
+  <div class="rs-top">
+    <div class="rs-chips" id="rsChips"></div>
+    <div class="input-group rs-buscar">
+      <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+      <input type="search" id="rsQ" class="form-control" placeholder="OT, cliente, equipo, serie, repuesto, ticket…"
+             style="font-size:16px" oninput="rsBuscar(this.value)">
+    </div>
+  </div>
+  <div class="rs-lista" id="rsLista"><div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando solicitudes…</div></div>
+  <div class="rs-pie" id="rsPie" style="display:none">
+    <span id="rsPieTxt"></span>
+    <div class="d-flex align-items-center gap-2">
+      <select id="rsPageSize" class="form-select form-select-sm" style="width:auto" onchange="rsSetSize(this.value)">
+        <option value="25">25 por página</option><option value="50">50 por página</option><option value="100">100 por página</option>
+      </select>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="rsPrev" onclick="rsPag(-1)">Anterior</button>
+      <span id="rsPagTxt" class="small"></span>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="rsNext" onclick="rsPag(1)">Siguiente</button>
+    </div>
+  </div>
+</div>
+
+{# Modal "Pedir al proveedor" (2026-09-20, revisión): el proveedor es
+   OBLIGATORIO -- Daniel: "identificando OT, proveedor, repuesto, cantidades";
+   la OC es opcional y se puede anotar después. #}
+<div class="modal fade" id="rsModalPedir" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-truck me-2" style="color:#dc2626"></i>Pedir al proveedor
+          <small class="d-block fw-normal" id="rsPedTitulo" style="font-size:.72rem;opacity:.8"></small></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <label class="form-label fw-semibold small mb-1">Proveedor <span class="text-danger">*</span></label>
+        <select id="rsPedProv" class="form-select" style="font-size:16px"></select>
+        <small class="text-muted d-block mb-2" style="font-size:.7rem">Queda en la solicitud y en el hilo del ticket. Los proveedores se administran en <a href="/mantenciones/proveedores" target="_blank">Proveedores</a>.</small>
+        <label class="form-label fw-semibold small mb-1 mt-2">N° de orden de compra <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
+        <input type="text" id="rsPedOc" class="form-control" maxlength="60" placeholder="Ej: OC-2026-0123" style="font-size:16px">
+        <div class="text-danger small mt-2" id="rsPedErr" style="min-height:18px"></div>
+      </div>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn fw-bold px-4" id="rsPedBtn" style="background:#f59e0b;color:#fff;min-height:44px" onclick="rsPedConfirmar()">
+          <i class="bi bi-send-fill me-1"></i>Marcar como pedido</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Modal "Validar en bodega": ligar la solicitud a un repuesto REAL (buscar)
+   o crearlo con el modal de siempre (rbAbrirNuevo, que exige ubicación). #}
+<div class="modal fade" id="rsModalValidar" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-check2-square me-2" style="color:#dc2626"></i>Validar en bodega
+          <small class="d-block fw-normal" id="rsValTitulo" style="font-size:.72rem;opacity:.8"></small></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <p class="small mb-2" style="color:#475569">Liga la solicitud a un repuesto <b>real</b> de la bodega. Si no existe, créalo primero con su ubicación y vuelve a validar.</p>
+        <input type="search" id="rsValQ" class="form-control" placeholder="Buscar por SKU, descripción o código de fabricante"
+               autocomplete="off" style="font-size:16px" oninput="rsValBuscar(this.value)">
+        <div class="otrep-opc mt-2" id="rsValLista"></div>
+        <div class="text-danger small mt-2" id="rsValErr" style="min-height:18px"></div>
+      </div>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
+        <button type="button" class="btn btn-outline-dark" onclick="rsCrearEnBodega()"><i class="bi bi-plus-lg me-1"></i>Crear en bodega</button>
+        <button type="button" class="btn fw-bold px-4" id="rsValBtn" disabled style="background:#dc2626;color:#fff;min-height:44px" onclick="rsValConfirmar()">
+          <i class="bi bi-check-lg me-1"></i>Validar</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 {# ════════ PANE SEGUIMIENTO (lo que ya existía) ════════ #}
@@ -323,6 +490,8 @@
 // ══════════════ Pestañas Bodega / Seguimiento ══════════════
 function repTab(cual){
   const esBodega = (cual === 'bodega');
+  const esSolic = (cual === 'solicitudes');
+  const esSeg = !esBodega && !esSolic;
   // Se usa la clase d-none (no style.display): las utilidades de Bootstrap
   // llevan !important, así que un display en línea NO le gana a .d-flex —
   // por eso antes se veían las acciones de AMBAS pestañas a la vez.
@@ -331,13 +500,18 @@ function repTab(cual){
     if (el) el.classList.toggle('d-none', !visible);
   };
   _ver('repPaneBodega', esBodega);
-  _ver('repPaneSeguimiento', !esBodega);
+  _ver('repPaneSeguimiento', esSeg);
+  _ver('repPaneSolicitudes', esSolic);
   _ver('repAccionesBodega', esBodega);
-  _ver('repAccionesSeguimiento', !esBodega);
+  _ver('repAccionesSeguimiento', esSeg);
   _ver('repSubBodega', esBodega);
-  _ver('repSubSeguimiento', !esBodega);
+  _ver('repSubSolicitudes', esSolic);
+  _ver('repSubSeguimiento', esSeg);
   document.getElementById('repTabBodega').classList.toggle('active', esBodega);
-  document.getElementById('repTabSeguimiento').classList.toggle('active', !esBodega);
+  document.getElementById('repTabSeguimiento').classList.toggle('active', esSeg);
+  const tS = document.getElementById('repTabSolicitudes');
+  if (tS) tS.classList.toggle('active', esSolic);
+  if (esSolic && typeof rsCargar === 'function') rsCargar();
   try { localStorage.setItem('repTabActiva', cual); } catch(e){}
 }
 document.addEventListener('DOMContentLoaded', function(){
@@ -352,10 +526,282 @@ document.addEventListener('DOMContentLoaded', function(){
                    p.get('sin_costo') || p.get('sin_modelo') || p.get('pendiente_modelo') || p.get('descontinuado') || p.get('bpage');
   let elegida = 'bodega';
   if (location.hash === '#bodega' || tieneBod) elegida = 'bodega';
+  else if (location.hash === '#solicitudes' || p.get('solicitud')) elegida = 'solicitudes';
   else if (tieneSeg) elegida = 'seguimiento';
   else { try { elegida = localStorage.getItem('repTabActiva') || 'bodega'; } catch(e){} }
   repTab(elegida);
 });
+
+/* ══════════════ SOLICITUDES DESDE OT (2026-09-20) ══════════════════════
+   Cola de lo que las OT levantaron: validar en bodega (ligar a un repuesto
+   real o crearlo), pedir al proveedor (OC), recibir, instalar, rechazar.
+   Paginación tipo Etiquetas (REGLA #4.3) sobre la lista en memoria. */
+var _rs = { todas: [], filtro: 'abiertas', q: '', page: 1, size: 25, conteo: {}, estados: {}, sel: null, valSid: null, valTimer: null, pedSid: null, puedePedir: true, truncado: false, provs: null };
+var _RS_EST_CLS = { solicitado: 'sol', validado: 'val', pedido: 'ped', recibido: 'rec', instalado: 'ins', rechazado: 'rej' };
+function rsEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+function rsFmt(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; }
+
+async function rsCargar(){
+  const lista = document.getElementById('rsLista');
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot?estado=', {credentials:'same-origin', cache:'no-store'});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
+    _rs.todas = j.solicitudes || [];
+    _rs.conteo = j.conteo || {};
+    _rs.estados = j.estados || {};
+    _rs.puedePedir = (j.puede_pedir_rechazar !== false);
+    _rs.truncado = !!j.truncado;
+    _rs.page = 1;
+    rsPintarChips();
+    rsPintar();
+    const abiertas = _rs.todas.filter(function(s){ return s.abierta; }).length;
+    const bd = document.getElementById('repBadgeSolic');
+    if (bd){ bd.textContent = abiertas; bd.style.background = abiertas ? '#dc2626' : '#6b7280'; }
+  } catch(e){
+    lista.innerHTML = '<div class="rs-vacio">No se pudieron cargar las solicitudes: ' + rsEsc(e.message) + '</div>';
+  }
+}
+function rsPintarChips(){
+  const c = _rs.conteo;
+  const abiertas = (c.solicitado||0)+(c.validado||0)+(c.pedido||0)+(c.recibido||0);
+  const defs = [['abiertas','Abiertas',abiertas],['solicitado','Por validar',c.solicitado||0],['validado','Validadas',c.validado||0],
+                ['pedido','Pedidas',c.pedido||0],['recibido','Recibidas',c.recibido||0],['instalado','Instaladas',c.instalado||0],
+                ['rechazado','Rechazadas',c.rechazado||0],['todas','Todas',_rs.todas.length]];
+  document.getElementById('rsChips').innerHTML = defs.map(function(d){
+    return '<button type="button" class="rs-chip' + (_rs.filtro === d[0] ? ' on' : '') + '" onclick="rsFiltro(\'' + d[0] + '\')">' + d[1] + ' <b>' + d[2] + '</b></button>';
+  }).join('');
+}
+function rsFiltro(f){ _rs.filtro = f; _rs.page = 1; rsPintarChips(); rsPintar(); }
+function rsBuscar(q){ _rs.q = (q || '').trim().toLowerCase(); _rs.page = 1; rsPintar(); }
+function rsSetSize(n){ _rs.size = parseInt(n) || 25; _rs.page = 1; rsPintar(); }
+function rsPag(d){ _rs.page += d; rsPintar(); }
+function rsFiltradas(){
+  return _rs.todas.filter(function(s){
+    if (_rs.filtro === 'abiertas' && !s.abierta) return false;
+    if (_rs.filtro !== 'abiertas' && _rs.filtro !== 'todas' && s.estado !== _rs.filtro) return false;
+    if (_rs.q){
+      const hay = [s.numero_ot, s.cliente_nombre, s.maquina_nombre, s.maquina_serie, s.repuesto_nombre, s.stock_sku, s.numero_ticket, s.solicitado_por, s.motivo]
+        .map(function(x){ return String(x || '').toLowerCase(); }).join(' ');
+      if (hay.indexOf(_rs.q) < 0) return false;
+    }
+    return true;
+  });
+}
+function rsPintar(){
+  const lista = document.getElementById('rsLista');
+  const todas = rsFiltradas();
+  const total = todas.length;
+  const pages = Math.max(1, Math.ceil(total / _rs.size));
+  if (_rs.page > pages) _rs.page = pages;
+  if (_rs.page < 1) _rs.page = 1;
+  const ini = (_rs.page - 1) * _rs.size;
+  const pag = todas.slice(ini, ini + _rs.size);
+  if (!total){
+    lista.innerHTML = '<div class="rs-vacio"><i class="bi bi-inbox me-1"></i>' + (_rs.q ? 'Nada coincide con la búsqueda.' : (_rs.filtro === 'abiertas' ? 'No hay solicitudes abiertas. Cuando un técnico pida un repuesto desde una OT, aparece acá.' : 'Sin solicitudes en este estado.')) + '</div>';
+  } else {
+    lista.innerHTML = pag.map(rsCard).join('');
+  }
+  const pie = document.getElementById('rsPie');
+  pie.style.display = total ? '' : 'none';
+  document.getElementById('rsPieTxt').textContent = 'Mostrando ' + (total ? (ini + 1) : 0) + '–' + Math.min(total, ini + _rs.size) + ' de ' + total +
+    (_rs.truncado ? ' (se cargaron las 400 más recientes: usa la búsqueda para acotar)' : '');
+  document.getElementById('rsPagTxt').textContent = 'Página ' + _rs.page + ' de ' + pages;
+  document.getElementById('rsPrev').disabled = _rs.page <= 1;
+  document.getElementById('rsNext').disabled = _rs.page >= pages;
+}
+function rsCard(s){
+  const est = _RS_EST_CLS[s.estado] || 'sol';
+  const evs = (s.evidencias || []).map(function(e){
+    return '<a class="rs-ev" href="' + rsEsc(e.url) + '" target="_blank" rel="noopener" title="' + rsEsc(e.archivo_nombre || '') + '">' +
+      (e.tipo === 'video' ? '<span class="rs-ev-vid"><i class="bi bi-play-circle-fill"></i></span>' : '<img src="' + rsEsc(e.url) + '" loading="lazy" alt="">') + '</a>';
+  }).join('');
+  const acciones = (s.siguientes || []).filter(function(n){ return _rs.puedePedir || (n !== 'pedido' && n !== 'rechazado'); }).map(function(n){
+    const lbl = {validado:'Validar en bodega', pedido:'Pedir al proveedor', recibido:'Recibido', instalado:'Instalado', rechazado:'Rechazar', solicitado:'Reabrir'}[n] || n;
+    const cls = {validado:'val', pedido:'ped', recibido:'rec', instalado:'ins', rechazado:'rej', solicitado:'sol'}[n] || '';
+    return '<button type="button" class="rs-btn ' + cls + '" onclick="rsAccion(' + s.id + ', \'' + n + '\')">' + lbl + '</button>';
+  }).join('') + (!s.ticket_id ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '');
+  const liga = s.repuesto_stock_id
+    ? '<div class="rs-liga ok"><i class="bi bi-box-seam"></i> ' + rsEsc(s.stock_sku || '') + ' · ' + rsEsc(s.stock_descripcion || '') + (s.stock_cantidad != null ? ' · stock ' + rsFmt(s.stock_cantidad) : '') + '</div>'
+    : '<div class="rs-liga pend"><i class="bi bi-question-circle"></i> Sin repuesto de bodega ligado (' + rsEsc(s.origen_label || '') + ')</div>';
+  return '<div class="rs-card ' + est + '">' +
+    '<div class="rs-head">' +
+      '<span class="rs-est ' + est + '">' + rsEsc(String(s.estado_label || s.estado).split(' · ')[0]) + '</span>' +
+      '<b class="rs-num">#' + s.id + '</b>' +
+      '<a class="rs-ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener"><i class="bi bi-clipboard2-check"></i> ' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>' +
+      (s.numero_ticket ? '<a class="rs-tk" href="/tickets/' + s.ticket_id + '" target="_blank" rel="noopener"><i class="bi bi-ticket-perforated"></i> ' + rsEsc(s.numero_ticket) + (s.ticket_fecha_limite ? ' · vence ' + rsEsc(s.ticket_fecha_limite) : '') + '</a>' : '<span class="rs-tk sin">sin ticket</span>') +
+      '<small class="rs-when">' + rsEsc(s.created_at || '') + (s.solicitado_por ? ' · ' + rsEsc(s.solicitado_por) : '') + '</small>' +
+    '</div>' +
+    '<div class="rs-body">' +
+      '<div class="rs-col">' +
+        '<div class="rs-k">Cliente · equipo</div>' +
+        '<div class="rs-v"><b>' + rsEsc(s.cliente_nombre || 'Sin cliente') + '</b><br>' + rsEsc(s.maquina_nombre || '') + (s.maquina_serie ? ' · S/N ' + rsEsc(s.maquina_serie) : '') + (s.maquina_sku ? ' · ' + rsEsc(s.maquina_sku) : '') +
+          (s.dejo_fuera_servicio ? '<span class="rs-fs"><i class="bi bi-exclamation-octagon-fill"></i> quedó fuera de servicio</span>' : '') + '</div>' +
+      '</div>' +
+      '<div class="rs-col">' +
+        '<div class="rs-k">Repuesto</div>' +
+        '<div class="rs-v"><b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + rsEsc(s.repuesto_nombre) + ' × ' + rsFmt(s.cantidad) + '</b>' +
+          (s.piola_metros ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
+          (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga +
+          (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) + '</div>' +
+      '</div>' +
+      '<div class="rs-col rs-col-mot">' +
+        '<div class="rs-k">Diagnóstico del técnico</div>' +
+        '<div class="rs-v rs-mot">' + rsEsc(s.motivo || '') + '</div>' +
+        (evs ? '<div class="rs-evs">' + evs + '</div>' : '') +
+        (s.nota_gestion ? '<div class="rs-nota"><i class="bi bi-chat-left-text"></i> ' + rsEsc(s.nota_gestion) + '</div>' : '') +
+      '</div>' +
+    '</div>' +
+    '<div class="rs-foot">' +
+      '<span class="rs-tl">' + rsTimeline(s) + '</span>' +
+      '<div class="rs-acc">' + acciones + '</div>' +
+    '</div>' +
+  '</div>';
+}
+function rsTimeline(s){
+  const pasos = [['solicitado', s.created_at], ['validado', s.validado_at], ['pedido', s.pedido_at], ['recibido', s.recibido_at], ['instalado', s.instalado_at]];
+  const orden = ['solicitado','validado','pedido','recibido','instalado'];
+  const idx = orden.indexOf(s.estado);
+  return pasos.map(function(p, i){
+    const hecho = s.estado === 'rechazado' ? (p[1] != null) : (i <= idx && (p[1] != null || i === 0));
+    return '<span class="rs-tl-p' + (hecho ? ' ok' : '') + '" title="' + rsEsc(p[1] || '') + '">' + p[0] + '</span>';
+  }).join('<i class="bi bi-chevron-right"></i>');
+}
+
+async function rsAccion(sid, nuevo){
+  const s = _rs.todas.find(function(x){ return x.id === sid; });
+  if (!s) return;
+  if (nuevo === 'validado'){ rsValAbrir(s); return; }
+  let body = { estado: nuevo };
+  if (nuevo === 'rechazado'){
+    const nota = await ilusPrompt({ title: 'Rechazar solicitud #' + sid, message: '¿Por qué se rechaza?',
+      sub: 'Queda en la solicitud y en el hilo del ticket.', placeholder: 'Ej: no corresponde, se repara sin repuesto', required: true });
+    if (!nota) return;
+    body.nota = nota;
+  } else if (nuevo === 'pedido'){ rsPedAbrir(s); return; }
+  else {
+    const lbl = {recibido:'¿Ya llegó a la bodega?', instalado:'¿Ya quedó instalado en el equipo?', solicitado:'¿Reabrir la solicitud?'}[nuevo] || '¿Confirmas?';
+    const ok = await ilusConfirm({ title: 'Solicitud #' + sid, message: lbl, sub: (s.repuesto_nombre || '') + ' · ' + (s.numero_ot || ''), okLabel: 'Sí', cancelLabel: 'Cancelar' });
+    if (!ok) return;
+    // Cierre del círculo: si el equipo quedó fuera de servicio por esta
+    // solicitud, al instalar se pregunta si volvió a operar (vuelve a
+    // 'operativo' en la ficha del cliente).
+    if (nuevo === 'instalado' && (s.dejo_fuera_servicio || s.maquina_estado_capturado === 'fuera_servicio')){
+      const op = await ilusConfirm({ title: '¿El equipo volvió a operar?', message: (s.maquina_nombre || 'El equipo') + ' está fuera de servicio.',
+        sub: 'Si dices que sí, vuelve a "operativo" en la ficha del cliente y en la OT.', okLabel: 'Sí, ya opera', cancelLabel: 'No todavía' });
+      body.equipo_operativo = !!op;
+    }
+  }
+  await rsPostEstado(sid, body);
+}
+async function rsCrearTicket(sid){
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/ticket', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}', credentials:'same-origin' });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ ilusToast(j.error || 'No se pudo crear el ticket.', { type:'error' }); return; }
+    ilusToast('✓ Ticket ' + (j.numero_ticket || '') + (j.ya_tenia ? ' (ya existía)' : ''), { type:'success' });
+    await rsCargar();
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type:'error' }); }
+}
+async function rsPedAbrir(s){
+  _rs.pedSid = s.id;
+  document.getElementById('rsPedTitulo').textContent = '#' + s.id + ' · ' + s.repuesto_nombre + ' × ' + rsFmt(s.cantidad) + ' · ' + (s.numero_ot || '');
+  document.getElementById('rsPedErr').textContent = '';
+  document.getElementById('rsPedOc').value = s.oc_numero || '';
+  const sel = document.getElementById('rsPedProv');
+  sel.innerHTML = '<option value="">Cargando proveedores…</option>';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalPedir')).show();
+  try {
+    if (!_rs.provs){
+      const r = await fetch('/mantenciones/api/proveedores-repuesto', {credentials:'same-origin'});
+      const j = await r.json();
+      _rs.provs = j.proveedores || [];
+    }
+    sel.innerHTML = '<option value="">— Elige el proveedor —</option>' + _rs.provs.map(function(p){
+      return '<option value="' + p.id + '"' + (String(p.id) === String(s.proveedor_id || '') ? ' selected' : '') + '>' + rsEsc(p.nombre) + (p.contacto_nombre ? ' · ' + rsEsc(p.contacto_nombre) : '') + '</option>';
+    }).join('');
+    if (!_rs.provs.length) document.getElementById('rsPedErr').textContent = 'No hay proveedores de repuestos registrados: créalo primero en Proveedores.';
+  } catch(e){ sel.innerHTML = '<option value="">No se pudieron cargar</option>'; }
+}
+async function rsPedConfirmar(){
+  const prov = document.getElementById('rsPedProv').value;
+  if (!prov){ document.getElementById('rsPedErr').textContent = 'Elige a qué proveedor se le pide.'; return; }
+  const ok = await rsPostEstado(_rs.pedSid, { estado: 'pedido', proveedor_id: prov, oc_numero: (document.getElementById('rsPedOc').value || '').trim() });
+  if (ok) bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalPedir')).hide();
+}
+async function rsPostEstado(sid, body){
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/estado', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body), credentials:'same-origin' });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ await ilusAlert({ title: 'No se pudo', message: j.error || 'Intenta de nuevo.', type: 'error' }); return false; }
+    ilusToast('✓ Solicitud #' + sid + ' → ' + (j.estado_label || j.estado), { type: 'success' });
+    await rsCargar();
+    return true;
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); return false; }
+}
+
+/* Validar: ligar a un repuesto real (buscar) o crear en bodega. */
+function rsValAbrir(s){
+  _rs.valSid = s.id; _rs.sel = null;
+  document.getElementById('rsValTitulo').textContent = '#' + s.id + ' · ' + s.repuesto_nombre + ' · ' + (s.numero_ot || '');
+  document.getElementById('rsValErr').textContent = '';
+  document.getElementById('rsValBtn').disabled = true;
+  const q = document.getElementById('rsValQ');
+  q.value = s.stock_sku || (s.origen === 'piola' ? 'piola' : (s.repuesto_nombre || '').split(' ').slice(0, 2).join(' '));
+  rsValBuscar(q.value);
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalValidar')).show();
+}
+function rsValBuscar(q){
+  clearTimeout(_rs.valTimer);
+  const cont = document.getElementById('rsValLista');
+  q = (q || '').trim();
+  if (q.length < 2){ cont.innerHTML = '<div class="otrep-opc-vacio">Escribe al menos 2 letras.</div>'; return; }
+  _rs.valTimer = setTimeout(async function(){
+    cont.innerHTML = '<div class="otrep-opc-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando…</div>';
+    try {
+      const r = await fetch('/ot/api/repuestos/bodega-buscar?q=' + encodeURIComponent(q), {credentials:'same-origin'});
+      const j = await r.json();
+      const items = j.repuestos || [];
+      _rs._val = items;
+      if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Nada en la bodega con "' + rsEsc(q) + '". Créalo con el botón de abajo (pide ubicación).</div>'; return; }
+      cont.innerHTML = items.map(function(it){
+        return '<button type="button" class="otrep-opc-it" data-id="' + it.id + '" onclick="rsValSel(' + it.id + ', this)">' +
+          '<span class="ph">' + (it.foto_url ? '<img src="' + rsEsc(it.foto_url) + '" alt="">' : '<i class="bi bi-gear"></i>') + '</span>' +
+          '<span class="inf"><b>' + rsEsc(it.descripcion) + '</b><small>' + rsEsc(it.sku) + (it.marca ? ' · ' + rsEsc(it.marca) : '') + (it.ubicacion_codigo ? ' · ' + rsEsc(it.ubicacion_codigo) : '') + (it.proveedor ? ' · ' + rsEsc(it.proveedor) : '') + '</small></span>' +
+          ((it.cantidad || 0) > 0 ? '<span class="stk">' + rsFmt(it.cantidad) + ' en stock</span>' : '<span class="stk sin">sin stock</span>') + '</button>';
+      }).join('');
+    } catch(e){ cont.innerHTML = '<div class="otrep-opc-vacio">No se pudo buscar.</div>'; }
+  }, 250);
+}
+function rsValSel(id, btn){
+  _rs.sel = id;
+  document.querySelectorAll('#rsValLista .otrep-opc-it').forEach(function(b){ b.classList.toggle('on', b === btn); });
+  document.getElementById('rsValBtn').disabled = false;
+}
+async function rsValConfirmar(){
+  if (!_rs.sel || !_rs.valSid) return;
+  const ok = await rsPostEstado(_rs.valSid, { estado: 'validado', repuesto_stock_id: _rs.sel });
+  if (ok) bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalValidar')).hide();
+}
+function rsCrearEnBodega(){
+  const s = _rs.todas.find(function(x){ return x.id === _rs.valSid; }) || {};
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalValidar')).hide();
+  // El modal de "Nuevo repuesto" vive DENTRO del panel Bodega: si ese panel
+  // está oculto (d-none) Bootstrap solo pinta el backdrop. Se cambia a la
+  // pestaña Bodega y se deja anotado volver a Solicitudes tras guardar.
+  repTab('bodega');
+  try { localStorage.setItem('repTabActiva', 'solicitudes'); } catch(e){}
+  if (typeof rbAbrirNuevo === 'function'){
+    rbAbrirNuevo();
+    setTimeout(function(){
+      const d = document.getElementById('rbDescripcion');
+      if (d && !d.value) d.value = s.repuesto_nombre || '';
+      const n = document.getElementById('rbNotas');
+      if (n && !n.value) n.value = 'Pedido desde ' + (s.numero_ot || 'OT') + ' · solicitud #' + (s.id || '') + (s.motivo ? ' · ' + s.motivo : '');
+    }, 500);
+    ilusToast('Crea el repuesto con su ubicación y después vuelve a "Validar en bodega".', { type: 'info' });
+  }
+}
 
 const _REPAT = { repuestoId: null, proveedorId: null, timer: null };
 

@@ -732,6 +732,29 @@ a.eq-origen:hover{background:var(--c);color:#fff;}
 .eq-plan-sw:disabled{ cursor:default;opacity:.5; }
 
 /* Estado equipo */
+/* 🔧 2026-09-20 -- condición del equipo movida desde una OT (fuera de
+   servicio / con alerta) + solicitudes de repuesto pendientes, con la OT
+   y el ticket que las levantó. Nombres completos, nunca truncados. */
+.eq-cond{display:inline-flex;align-items:center;gap:4px;margin-top:4px;padding:2px 8px;border-radius:50px;
+  font-size:.62rem;font-weight:800;letter-spacing:.02em;white-space:nowrap}
+.eq-cond.fs{background:#fee2e2;color:#991b1b}
+.eq-cond.al{background:#fff8e1;color:#92400e}
+.eq-cond-rep{display:flex;align-items:flex-start;gap:5px;margin-top:4px;font-size:.68rem;color:#374151;
+  line-height:1.35;max-width:320px;overflow-wrap:anywhere}
+.eq-cond-rep > i{color:#2563eb;flex:none;margin-top:1px}
+.eq-cond-rep a{color:#dc2626;font-weight:800;text-decoration:none}
+.eq-cond-rep a:hover{text-decoration:underline}
+.eq-cond-rep em{font-style:normal;font-size:.58rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;
+  background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:1px 6px;margin-left:2px}
+.eq-cond-fecha{border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:999px;padding:1px 7px;
+  font-size:.62rem;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:3px;min-height:22px}
+.eq-cond-fecha:hover{border-color:#dc2626;color:#dc2626}
+.eq-prob-btn{padding:5px 12px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-size:.74rem;font-weight:700;
+  border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-family:inherit}
+.eq-prob-btn:hover{background:#fef2f2}
+.eq-prob-btn.active{background:#dc2626;border-color:#dc2626;color:#fff}
+.eq-prob-btn.active .badge{background:#fff !important;color:#dc2626 !important}
+@media (max-width:640px){ .eq-prob-btn{min-height:44px;font-size:.8rem} .eq-cond-fecha{min-height:44px;padding:4px 10px} }
 .eq-estado-activo{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
 .eq-estado-baja{background:#f3f4f6;color:#6b7280;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
 .eq-estado-garantia{background:#dbeafe;color:#1e40af;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}

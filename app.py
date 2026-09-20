@@ -1953,6 +1953,16 @@ def serve_archivo(key):
             _tok = (request.args.get("tok") or "").strip()
             if _tok and _ot_firma_token_validar(_tok) == _vid_sensible:
                 _autorizado = True
+        # 🔧 2026-09-20: la evidencia de una solicitud de repuesto o de una
+        # baja (ilus/visitas/v{vid}/repuestos|bajas/...) la gestiona la cola
+        # de Bodega y la ficha del ticket -- gente que no necesariamente
+        # "ve" esa OT (Jaizer, tickets). Mismo gate que la cola.
+        if not _autorizado and getattr(g, "user", None) and \
+                re.match(r"^ilus/visitas/v\d+/(repuestos|bajas)/", key):
+            try:
+                _autorizado = bool(_otrep_puede_gestion())
+            except Exception:
+                _autorizado = False
         if not _autorizado:
             # Sin detalles del motivo: no hay que confirmarle a un tercero
             # si el vid existe o si solo le faltó el token correcto.
@@ -7676,6 +7686,12 @@ def inject_globals():
         # igual que la matriz de permisos real. No se toca `is_tecnico`
         # para no cambiarle el comportamiento a las plantillas que ya lo usan.
         "es_tecnico":   _es_rol_tecnico(),
+        # 2026-09-20: distingue al proveedor EXTERNO del técnico interno --
+        # `es_tecnico` los junta a ambos (_rol_familia normaliza
+        # tecnico_externo→tecnico). Lo usan las pantallas nuevas de
+        # "desviaciones desde la OT" para ocultar acciones que Daniel
+        # reservó al interno (ej. dar de baja un equipo del cliente).
+        "es_tecnico_externo": _es_tecnico_externo(),
         # 2026-06-09 (Daniel): roles de gestión (admin/supervisor/ejecutivo/
         # superadmin) pueden editar y REAGENDAR visitas. Usado por el modal
         # del calendario para habilitar campos + botón Guardar. Espejo exacto
@@ -64106,12 +64122,22 @@ def repuestos_hub_list():
     # elimina nada) pero el acceso real es acá.
     bodega_ctx = _repstock_contexto_bodega()
 
+    # 🔧 2026-09-20 -- pestaña "Solicitudes desde OT": cuántas siguen
+    # abiertas, para el badge (la lista la trae el JS por API).
+    try:
+        otrep_abiertas = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
+            " WHERE estado IN ('solicitado','validado','pedido','recibido')") or {}).get("n") or 0)
+    except Exception:
+        otrep_abiertas = 0
+
     return render_template(
         "clientes_hub/repuestos.html",
         repuestos=repuestos, estados=estados,
         filtro_estado=filtro_estado, filtro_q=filtro_q,
         filtro_ticket=filtro_ticket, orden=orden,
         clientes_select=clientes_select,
+        otrep_abiertas=otrep_abiertas,
         **bodega_ctx,
     )
 
@@ -64564,6 +64590,49 @@ def _mant_ficha_impl(cid):
                 _m["clasificacion"] = _clasif_cache[_sku_m]
         except Exception as _e_clas:
             print(f"[MANT][ficha] clasificacion load error: {_e_clas}", flush=True)
+
+    # ── 🔧 2026-09-20 — Lo que las OT MOVIERON en cada equipo ──────────
+    # Daniel: "si hay una OT que está solicitando repuestos, me lo va a
+    # mover en la ficha del cliente e indicar lo que esa OT movió: que el
+    # equipo no quedó bien y que se tiene que volver". Por equipo: cuántas
+    # solicitudes de repuesto siguen abiertas, si alguna es cambio de
+    # piola, y de qué OT/ticket vienen (para enlazar y fijar fecha de
+    # resolución del ticket desde la misma ficha). Una sola consulta.
+    if maquinas:
+        try:
+            _ids_rep = [int(_m["id"]) for _m in maquinas]
+            _ph_rep = ",".join(["%s"] * len(_ids_rep))
+            _rep_rows = mysql_fetchall(
+                f"SELECT s.maquina_id, s.id, s.repuesto_nombre, s.origen, s.estado, s.cantidad, "
+                f"       s.piola_metros, s.dejo_fuera_servicio, s.visita_id, s.ticket_id, "
+                f"       v.numero_ot, t.numero_ticket, t.fecha_limite AS ticket_fecha_limite "
+                f"  FROM mant_ot_repuesto_solicitudes s "
+                f"  JOIN mant_visitas v ON v.id=s.visita_id "
+                f"  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+                f" WHERE s.maquina_id IN ({_ph_rep}) "
+                f"   AND s.estado IN ('solicitado','validado','pedido','recibido') "
+                f" ORDER BY s.id DESC",
+                tuple(_ids_rep)) or []
+            _idx_rep = {}
+            for _r in _rep_rows:
+                _r = dict(_r)
+                _fl = _r.get("ticket_fecha_limite")
+                _r["ticket_fecha_limite"] = _fl.strftime("%d/%m/%Y") if hasattr(_fl, "strftime") else (str(_fl) if _fl else None)
+                _r["ticket_fecha_limite_iso"] = _fl.strftime("%Y-%m-%d") if hasattr(_fl, "strftime") else None
+                for _k in ("cantidad", "piola_metros"):
+                    if _r.get(_k) is not None:
+                        _r[_k] = float(_r[_k])
+                _r["estado_label"] = _OTREP_ESTADO_LABEL.get(_r.get("estado"), _r.get("estado"))
+                _idx_rep.setdefault(int(_r["maquina_id"]), []).append(_r)
+            for _m in maquinas:
+                _lst = _idx_rep.get(int(_m["id"]), [])
+                _m["rep_pendientes"] = _lst
+                _m["rep_pend"] = len(_lst)
+                _m["rep_piola"] = any((_x.get("origen") == "piola") for _x in _lst)
+        except Exception as _e_rep:
+            print(f"[MANT][ficha] repuestos pendientes load error: {_e_rep}", flush=True)
+            for _m in maquinas:
+                _m.setdefault("rep_pendientes", []); _m.setdefault("rep_pend", 0); _m.setdefault("rep_piola", False)
 
     # ── 2026-07-24 (Daniel, por voz) — Desglose de técnicos por tarea ──
     # "Si le asignamos una OT a cinco técnicos, quiero saber quién hizo
@@ -65747,6 +65816,20 @@ def mant_maquina_add(cid):
     force        = bool(d.get("force", False))
     # SKU siempre en upper para que matchee con saldos y queries
     sku          = (d.get("sku","") or "").strip().upper()
+    # 📦 2026-09-20 (Daniel: "los pisos los representemos con las cantidades
+    # que sea, facturas de piso por 400 o 500"). Solo cuando el caller lo
+    # pide (`respetar_clasificacion`, el wizard de OT): un producto
+    # clasificado como REPETIBLE (piso/accesorio, modelo_precio='fijo') no
+    # se parte en N filas aunque el diálogo haya elegido "una fila por
+    # unidad" -- 400 pisos son UNA fila con cantidad=400, no 400 fichas con
+    # 400 series. El alta desde la ficha del cliente (que deja elegir N
+    # fichas explícitamente) no manda el flag y sigue igual.
+    if split_rows and cantidad > 1 and d.get("respetar_clasificacion"):
+        try:
+            if sku and _inc_clasificacion_sku(sku).get("repetible") is True:
+                split_rows = False
+        except Exception:
+            pass
     # 2026-05-27 (Daniel — auto-SKU para creación manual):
     # Si no viene SKU, generamos uno automático con formato "MAN-<cid>-<timestamp>"
     # (MAN = manual). El usuario lo puede editar después desde la ficha.
@@ -66078,8 +66161,15 @@ def mant_maquina_restaurar(mid):
         return jsonify({"ok": True, "ya_activa": True})
 
     user = current_username()
+    # 🔒 FIX 2026-09-20 (revisión): si la baja vino de una OT
+    # (ot2_api_equipo_dar_baja deja estado_capturado='dado_baja' +
+    # estado_op='critico'), restaurar solo devolvía estado='activo' -- el
+    # equipo quedaba "Activo" en la lista pero con el chip "Baja desde una
+    # OT" pegado para siempre y estado_op en 'critico'. Se limpian los tres
+    # juntos, como cuando se reactiva desde /fuera-servicio.
     mysql_execute(
-        "UPDATE mant_maquinas SET estado='activo', updated_by=%s WHERE id=%s",
+        "UPDATE mant_maquinas SET estado='activo', estado_capturado='operativo', "
+        "       estado_op='operativo', updated_by=%s WHERE id=%s",
         (user, mid)
     )
     _mant_log("maquina", mid, "restaurada", f"Restaurada por {user}")
@@ -80472,6 +80562,12 @@ def ot2_detalle(vid):
     # permisivo), así que sin este gate el botón se dibujaba para gente
     # que el backend iba a rechazar con 403 al primer click.
     puede_ejecutar = _puede_ot_accion(vid, "ejecutar")
+    # 🔧 2026-09-20: las desviaciones por equipo (fuera de servicio, baja,
+    # solicitar repuesto) las puede levantar el técnico asignado O gestión
+    # -- es el gate 'configurar', el mismo que usan sus endpoints
+    # (@_ot_can_configurar). Se pasa aparte para no ampliar `puede_ejecutar`,
+    # que gobierna el checklist/firma del técnico.
+    puede_configurar = _puede_ot_accion(vid, "configurar")
 
     # 🔒 2026-09-03 — OT SELLADA: solo lectura, TAMBIÉN para superadmin.
     # Daniel, tras firmar y cerrar la OT-2026-00127: "¿y sigue estando
@@ -80549,7 +80645,7 @@ def ot2_detalle(vid):
         # 2026-09-02: `estado_capturado` se suma para poder mostrar (y
         # revertir) el marcado de "fuera de servicio" por equipo.
         "SELECT m.id, m.nombre, m.sku, m.serie, m.marca, m.foto_url, "
-        "       m.estado_capturado, "
+        "       m.estado_capturado, m.estado AS estado_ficha, "
         "       COALESCE(t.n, 0) AS n_tareas, COALESCE(t.ok, 0) AS n_ok, "
         "       COALESCE(t.obl, 0) AS n_obl, COALESCE(t.obl_ok, 0) AS n_obl_ok, "
         "       ve.estado_revision, ve.diagnostico_estado, ve.diagnostico_texto, "
@@ -80565,7 +80661,14 @@ def ot2_detalle(vid):
         "        GROUP BY maquina_id "
         "  ) t ON t.maquina_id = m.id "
         "  LEFT JOIN mant_visita_equipos ve ON ve.maquina_id = m.id AND ve.visita_id=%s "
-        " WHERE COALESCE(m.estado,'activo') <> 'baja' "
+        # 🗑️ 2026-09-20: un equipo dado de baja DESDE ESTA OT (Daniel: "el
+        # técnico puede dar de baja con un argumento") sigue visible en su
+        # lista, con el sello "Dado de baja" -- quien lea la OT tiene que
+        # ver qué pasó. Ya está excluido del candado de firma por
+        # 'saltado' (ver _ot_maquinas_excluidas_cierre). Las bajas hechas
+        # desde la ficha, fuera de esta OT, siguen ocultas como siempre.
+        " WHERE (COALESCE(m.estado,'activo') <> 'baja' "
+        "        OR (ve.estado_revision='saltado' AND ve.razon_saltado='dado_de_baja')) "
         "   AND (t.maquina_id IS NOT NULL OR ve.maquina_id IS NOT NULL) "
         " ORDER BY m.nombre LIMIT 200",
         (vid, vid)
@@ -80610,8 +80713,13 @@ def ot2_detalle(vid):
         _rev = (e.get("estado_revision") or "").lower()
         e["estado_revision_label"] = _REV_LABEL.get(_rev, "")
         e["diagnostico_label"] = _DIAG_LABEL.get((e.get("diagnostico_estado") or "").lower(), "")
+        e["dado_baja_aqui"] = (_rev == "saltado"
+                               and (e.get("razon_saltado") or "") == "dado_de_baja"
+                               and (e.get("estado_ficha") or "").lower() == "baja")
         if int(e.get("sin_clasificar") or 0):
             e["sello"], e["sello_cls"] = "Sin clasificar", "eq-warn"
+        elif e["dado_baja_aqui"]:
+            e["sello"], e["sello_cls"] = "Dado de baja", "eq-warn"
         elif _rev in ("saltado", "falla_detectada"):
             e["sello"], e["sello_cls"] = (
                 "Saltado" if _rev == "saltado" else "Con falla"), "eq-warn"
@@ -80676,6 +80784,81 @@ def ot2_detalle(vid):
         print(f"[ot2_detalle] plantillas por equipo vid={vid}: {_e_pg}", flush=True)
         for e in equipos:
             e["plantillas"] = []
+
+    # 🔧 2026-09-20 -- solicitudes de repuesto / cambio de piola de esta OT,
+    # por equipo (Daniel: "que la OT también sea informativa y motivo de
+    # control y trazabilidad"). Una consulta para toda la OT, se reparte
+    # por maquina_id. `rep_ticket` es el ticket que agrupa las solicitudes
+    # (uno por OT) para enlazarlo en la tarjeta.
+    rep_ticket = None
+    rep_total_abiertas = 0
+    try:
+        _rep_sols = _otrep_listar("s.visita_id=%s", (vid,), limit=200, con_evidencias=False, para_ot=True)
+        _rep_por_eq = {}
+        for _s in _rep_sols:
+            _rep_por_eq.setdefault(_s["maquina_id"], []).append(_s)
+            if _s.get("abierta"):
+                rep_total_abiertas += 1
+            if not rep_ticket and _s.get("ticket_id") and \
+                    (_s.get("ticket_estado") or "") not in ("closed", "resolved", "cancelado"):
+                rep_ticket = {"id": _s["ticket_id"], "numero": _s.get("numero_ticket")}
+        for e in equipos:
+            e["rep_solicitudes"] = _rep_por_eq.get(e["id"], [])
+            e["rep_abiertas"] = sum(1 for _s in e["rep_solicitudes"] if _s.get("abierta"))
+    except Exception as _e_rep:
+        print(f"[ot2_detalle] solicitudes repuesto vid={vid}: {_e_rep}", flush=True)
+        for e in equipos:
+            e["rep_solicitudes"], e["rep_abiertas"] = [], 0
+
+    # 🔗 2026-09-20 (Daniel: "la piola se debe aplicar a los equipos
+    # selectores de pesos, y opcional a algunos racks"). El botón "Cambio de
+    # piola" no va en todos los equipos: aplica si el modelo tiene piolas
+    # registradas en el Catálogo, o si la plantilla / clasificación / nombre
+    # del equipo dicen que es de polea o selector de pesos (rack incluido
+    # como opcional). Una mancuerna o un piso no lo ven.
+    try:
+        _skus_eq = sorted({(e.get("sku") or "").strip() for e in equipos
+                           if not e.get("_interno") and (e.get("sku") or "").strip()})
+        _con_piolas = set()
+        if _skus_eq:
+            _ph_p = ",".join(["%s"] * len(_skus_eq))
+            for _r in (mysql_fetchall(
+                    f"SELECT DISTINCT p.sku FROM cat_producto_piolas pi "
+                    f"  JOIN cat_productos p ON p.id = pi.producto_id "
+                    f" WHERE pi.activo=1 AND p.sku IN ({_ph_p})", tuple(_skus_eq)) or []):
+                _con_piolas.add((_r.get("sku") or "").strip().upper())
+        _clas_eq = _inc_clasificacion_skus_batch(_skus_eq) if _skus_eq else {}
+        # 🔒 FIX 2026-09-20 (revisión): se quitan 'cross' (Cross Trainer =
+        # elíptica, no lleva piola), 'b[ií]ceps|tr[ií]ceps' (bancos de
+        # curl/tríceps -- máquina de placas, no de cable) y 'torre'
+        # (ambiguo). 'rack' se deja -- Daniel: "opcional a algunos racks".
+        _RX_PIOLA = re.compile(
+            r"selector|selectoriz|polea|cable|jungle|multiest|multi\s*gym|multifuerza|"
+            r"lat\s*pull|dorsal|remo\s+sentado|pec\s*deck|contractora|leg\s*ext|extensi[oó]n de pierna|"
+            r"curl\s+femoral|functional|kinesis|rack", re.I)
+        _RX_CINTA = re.compile(r"trotadora|treadmill|caminadora|cinta de correr|running|trotad", re.I)
+        for e in equipos:
+            if e.get("_interno"):
+                e["piola_aplica"] = False
+                e["cinta_aplica"] = False
+                continue
+            _sku_u = (e.get("sku") or "").strip().upper()
+            _txt = " ".join([
+                e.get("nombre") or "",
+                (_clas_eq.get((e.get("sku") or "").strip(), {}) or {}).get("clase_nombre") or "",
+            ] + [(pg.get("plantilla_nombre") or "") for pg in (e.get("plantillas") or [])])
+            e["piola_aplica"] = bool(_sku_u in _con_piolas or _RX_PIOLA.search(_txt))
+            # 🏃 "dejar hasta las piolas, las cintas" (Daniel 2026-09-20):
+            # cambio de cinta solo en trotadoras.
+            e["cinta_aplica"] = bool(_RX_CINTA.search(_txt))
+    except Exception as _e_pio:
+        print(f"[ot2_detalle] piola_aplica vid={vid}: {_e_pio}", flush=True)
+        # 🔒 FIX 2026-09-20 (revisión): si esta consulta falla, el fallback
+        # SEGURO es no ofrecer el botón (piso/mancuerna no debe verlo) --
+        # antes encendía ambos en TODOS los equipos ante cualquier error.
+        for e in equipos:
+            e.setdefault("piola_aplica", False)
+            e.setdefault("cinta_aplica", False)
 
     # 🔧 2026-09-11 (Daniel: "los técnicos internos no pueden realizar
     # trabajos [en OT 2.0] ya que no muestra los equipos en la pantalla").
@@ -81355,6 +81538,26 @@ def ot2_detalle(vid):
         anexo = mysql_fetchone(
             _ANEXO_SEL_BASE +
             "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,))
+    # 📇 2026-09-20 (Daniel, desde el iPhone: "ojalá interactúe con la
+    # agenda"). "Enviar a firmar" abría el modal con el correo/teléfono del
+    # ÚLTIMO envío -- en un anexo nunca enviado eso es vacío, aunque la ficha
+    # del proveedor sí tenga sus datos de contacto. Se cae a la ficha
+    # (mant_tecnicos_externos) cuando no hay envío previo: la agenda del
+    # proveedor manda, y el reenvío sigue respetando a dónde se mandó antes.
+    if anexo:
+        anexo = dict(anexo)
+        try:
+            if not (anexo.get("enviado_email") or anexo.get("enviado_tel")):
+                _anx_tec = mysql_fetchone(
+                    "SELECT te.contacto_email, te.contacto_tel FROM mant_anexos a "
+                    "  JOIN mant_tecnicos_externos te ON te.id = a.tecnico_externo_id "
+                    " WHERE a.id=%s", (anexo["id"],)) or {}
+                if not anexo.get("enviado_email"):
+                    anexo["enviado_email"] = (_anx_tec.get("contacto_email") or "").strip()
+                if not anexo.get("enviado_tel"):
+                    anexo["enviado_tel"] = (_anx_tec.get("contacto_tel") or "").strip()
+        except Exception as _e_anx_tec:
+            print(f"[ot2_detalle] contacto proveedor del anexo: {_e_anx_tec}", flush=True)
 
     # Mapa liviano {maquina_id: {...}} para el renderer JS del checklist
     # (tipo 'serie', otdChkTareaHtml en ot2/detalle.html) -- evita mandar
@@ -81491,6 +81694,7 @@ def ot2_detalle(vid):
         cronometro=cronometro,
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
+        puede_configurar=puede_configurar,
         ot_solo_lectura=ot_solo_lectura,
         puede_eliminar=puede_eliminar,
         puede_aprobar=puede_aprobar, puede_firmar_cliente=puede_firmar_cliente,
@@ -81510,6 +81714,9 @@ def ot2_detalle(vid):
         },
         geof_rol_exento=(_rol_familia((getattr(g, "user", None) or {}).get("role"))
                          in ("admin", "supervisor", "ejecutivo", "superadmin")),
+        # 🔧 2026-09-20 — solicitudes de repuesto de la OT (ticket que las
+        # agrupa + cuántas siguen abiertas), para la tarjeta de equipos.
+        rep_ticket=rep_ticket, rep_total_abiertas=rep_total_abiertas,
         # 🆕 2026-08-27 — puerta de entrada para CREAR el Anexo de Servicios
         # (el motor de firma ya existía desde anoche, commit e007c43; lo que
         # faltaba era el formulario). Los 3 textos "fijos" del documento real
@@ -83854,7 +84061,11 @@ def ot2_api_equipo_fuera_servicio(vid, mid):
         return _ot2_err("No encontramos ese equipo.", "EQUIPO_NO_EXISTE", http=404)
     # El equipo tiene que ser del MISMO cliente de la OT: sin esto, un vid
     # cualquiera podría marcar la máquina de otro cliente.
-    if v.get("cliente_id") and m.get("cliente_id") and \
+    # 🔒 FIX 2026-09-20 (revisión): con cliente_id NULL (OT de trabajo
+    # interno) el `and` cortaba y el candado no se evaluaba -- desde una OT
+    # interna se podía marcar la máquina de CUALQUIER cliente. Sin cliente
+    # no hay ficha que mover.
+    if not v.get("cliente_id") or not m.get("cliente_id") or \
             int(v["cliente_id"]) != int(m["cliente_id"]):
         return _ot2_err("Ese equipo no pertenece al cliente de esta OT.",
                         "EQUIPO_DE_OTRO_CLIENTE", http=403)
@@ -83878,6 +84089,40 @@ def ot2_api_equipo_fuera_servicio(vid, mid):
             "Explica por qué queda fuera de servicio: ese texto es el que "
             "va a leer quien tome la urgencia.", "MOTIVO_REQUERIDO")
 
+    # 2026-09-20: el marcado + la urgencia viven en un helper compartido,
+    # porque "solicitar repuesto" también puede dejar el equipo fuera de
+    # servicio (Daniel: "puede dejar fuera de servicio y solicitar un
+    # repuesto"). Ver _ot_equipo_fuera_servicio_marcar.
+    ok_fs, ticket_num, err_fs = _ot_equipo_fuera_servicio_marcar(
+        vid, mid, motivo, v, m, crear_urgencia=True)
+    if not ok_fs:
+        return _ot2_err(err_fs or "No pudimos marcar el equipo.", "ERROR_INTERNO", http=500)
+
+    return jsonify({"ok": True, "estado": "fuera_servicio",
+                    "ticket": ticket_num,
+                    "aviso": None if ticket_num else
+                             "El equipo quedó marcado, pero no se pudo crear la "
+                             "urgencia automáticamente. Créala a mano desde Tickets."})
+
+
+def _ot_equipo_fuera_servicio_marcar(vid, mid, motivo, v, m, crear_urgencia=True):
+    """Marca el equipo `m` fuera de servicio dentro de la OT `v` y, si se
+    pide, levanta la urgencia (ticket 'repair' urgente). Devuelve
+    (ok, numero_ticket|None, error|None).
+
+    Extraído de ot2_api_equipo_fuera_servicio el 2026-09-20 para que la
+    solicitud de repuesto pueda dejar el equipo fuera de servicio con la
+    MISMA regla (ficha + mant_visita_equipos + log), sin duplicar el
+    código. Cuando el caller ya va a crear su propio ticket (el de
+    repuestos), pasa crear_urgencia=False: dos tickets por el mismo
+    evento es ruido para quien los toma.
+
+    🐛 FIX 2026-09-20: el INSERT del ticket usaba origen='interno', valor
+    que NO existe en el ENUM de tk_tickets.origen ('form','backoffice',
+    'erp'). Con SQL estricto el INSERT reventaba y el endpoint devolvía
+    "no se pudo crear la urgencia" en silencio. Ahora 'backoffice', el
+    mismo valor que usa el resto de los tickets creados por el sistema.
+    """
     try:
         mysql_execute(
             "UPDATE mant_maquinas SET estado_capturado='fuera_servicio', "
@@ -83885,7 +84130,7 @@ def ot2_api_equipo_fuera_servicio(vid, mid):
             (current_username() or "sistema", mid))
     except Exception as e:
         print(f"[fuera_servicio] marcar mid={mid}: {e}", flush=True)
-        return _ot2_err("No pudimos marcar el equipo.", "ERROR_INTERNO", http=500)
+        return False, None, "No pudimos marcar el equipo."
 
     # 🔴 FIX 2026-09-08 (Bug 2, Daniel en vivo): marcar un equipo "fuera de
     # servicio" es, en los hechos, un veredicto de que la máquina tiene una
@@ -83923,64 +84168,1500 @@ def ot2_api_equipo_fuera_servicio(vid, mid):
 
     # ── Urgencia: ticket de reparación, prioridad urgente ──────────────
     ticket_num = None
-    try:
-        _cli = mysql_fetchone(
-            "SELECT razon_social, rut, contacto_email, contacto_tel, direccion, comuna "
-            "  FROM mant_clientes WHERE id=%s", (m.get("cliente_id") or v.get("cliente_id"))) or {}
-        _desc = (f"EQUIPO FUERA DE SERVICIO — {m.get('nombre') or 'equipo'}"
-                 + (f" (SKU {m['sku']})" if m.get("sku") else "")
-                 + (f" · Serie {m['serie']}" if m.get("serie") else "")
-                 + f"\nDetectado en {v.get('numero_ot') or ('OT #' + str(vid))}."
-                 + f"\nMotivo: {motivo}")
-        conn = get_mysql()
+    if crear_urgencia:
         try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO tk_tickets "
-                    "(origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, "
-                    " email, phone, direccion, comuna_nombre, created_by) "
-                    "VALUES ('interno','open','repair','urgente',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (f"Fuera de servicio: {(m.get('nombre') or 'equipo')[:200]}",
-                     _desc,
-                     (_cli.get("rut") or "")[:12] or None,
-                     (_cli.get("razon_social") or "")[:150] or None,
-                     (_cli.get("contacto_email") or "")[:150] or None,
-                     (_cli.get("contacto_tel") or "")[:20] or None,
-                     (_cli.get("direccion") or "")[:255] or None,
-                     (_cli.get("comuna") or "")[:120] or None,
-                     current_username() or "sistema"))
-                _tid = cur.lastrowid
-                cur.execute(
-                    "UPDATE tk_tickets SET numero_ticket = "
-                    "CONCAT('TK-', YEAR(NOW()), '-', LPAD(id,5,'0')) WHERE id=%s", (_tid,))
-                cur.execute("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (_tid,))
-                _r = cur.fetchone()
-                ticket_num = (_r or {}).get("numero_ticket") if isinstance(_r, dict) else None
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception as e:
-        # La urgencia es importante, pero si falla NO se revierte la marca:
-        # el equipo está detenido igual, y perder ese dato sería peor que
-        # quedarse sin ticket. Queda registrado para poder crearlo a mano.
-        print(f"[fuera_servicio] ticket mid={mid} vid={vid}: {e}", flush=True)
+            _cli = mysql_fetchone(
+                "SELECT razon_social, rut, contacto_email, contacto_tel, direccion, comuna "
+                "  FROM mant_clientes WHERE id=%s", (m.get("cliente_id") or v.get("cliente_id"),)) or {}
+            _desc = (f"EQUIPO FUERA DE SERVICIO — {m.get('nombre') or 'equipo'}"
+                     + (f" (SKU {m['sku']})" if m.get("sku") else "")
+                     + (f" · Serie {m['serie']}" if m.get("serie") else "")
+                     + f"\nDetectado en {v.get('numero_ot') or ('OT #' + str(vid))}."
+                     + f"\nMotivo: {motivo}")
+            from tickets_module import _chile_now_year as _tk_year
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO tk_tickets "
+                        "(origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, "
+                        " email, phone, direccion, comuna_nombre, created_by) "
+                        "VALUES ('backoffice','open','repair','urgente',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (f"Fuera de servicio: {(m.get('nombre') or 'equipo')[:200]}",
+                         _desc,
+                         (_cli.get("rut") or "")[:12] or None,
+                         (_cli.get("razon_social") or "")[:150] or None,
+                         (_cli.get("contacto_email") or "")[:150] or None,
+                         (_cli.get("contacto_tel") or "")[:20] or None,
+                         (_cli.get("direccion") or "")[:255] or None,
+                         (_cli.get("comuna") or "")[:120] or None,
+                         current_username() or "sistema"))
+                    _tid = cur.lastrowid
+                    cur.execute(
+                        "UPDATE tk_tickets SET numero_ticket = "
+                        "CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s", (_tk_year(), _tid))
+                conn.commit()
+                # El número es determinístico: se arma en Python, nunca se
+                # relee por el pool (REPEATABLE READ devolvía NULL).
+                ticket_num = f"TK-{_tk_year()}-{int(_tid):05d}"
+            finally:
+                conn.close()
+        except Exception as e:
+            # La urgencia es importante, pero si falla NO se revierte la marca:
+            # el equipo está detenido igual, y perder ese dato sería peor que
+            # quedarse sin ticket. Queda registrado para poder crearlo a mano.
+            print(f"[fuera_servicio] ticket mid={mid} vid={vid}: {e}", flush=True)
 
     try:
         _mant_log("maquina", mid, "fuera_de_servicio",
                   f"Marcado desde {v.get('numero_ot') or vid} · {motivo}"
                   + (f" · urgencia {ticket_num}" if ticket_num else
-                     " · NO se pudo crear la urgencia, créala a mano"))
+                     ("" if not crear_urgencia else
+                      " · NO se pudo crear la urgencia, créala a mano")))
         _mant_log("visita", vid, "equipo_fuera_de_servicio",
                   f"{m.get('nombre') or ('Equipo #' + str(mid))}: {motivo}"
                   + (f" · urgencia {ticket_num}" if ticket_num else ""))
     except Exception:
         pass
 
-    return jsonify({"ok": True, "estado": "fuera_servicio",
-                    "ticket": ticket_num,
-                    "aviso": None if ticket_num else
-                             "El equipo quedó marcado, pero no se pudo crear la "
-                             "urgencia automáticamente. Créala a mano desde Tickets."})
+    return True, ticket_num, None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  🔧 DESVIACIONES POR EQUIPO DESDE LA OT — 2026-09-20
+#
+#  Daniel: "durante la gestión del checklist quisiera estipular que el
+#  técnico puede dar de baja con un argumento, puede colocar fuera de
+#  servicio, puede dejar fuera de servicio y solicitar un repuesto, o
+#  solicitar un repuesto sin dejar fuera de servicio... son opciones
+#  extraordinarias, fuera del checklist... Necesito evidencia de video, de
+#  foto y de diagnóstico para poder hacer un levantamiento de por qué
+#  estamos solicitando el repuesto, qué tiene malo, cómo se llama, si está
+#  creado, si está asociado a la bodega de repuestos... una trayectoria
+#  circular: se deja fuera de servicio, se solicita el repuesto, queda
+#  pendiente de requerimiento en la bodega, se crea/verifica el repuesto y
+#  se crea un ticket de atención destinado a la OT que levantó los
+#  repuestos, identificando OT, proveedor, repuesto y cantidades... estoy
+#  pasando las órdenes de trabajo a otro nivel: ahora también mueven los
+#  equipos."
+#
+#  Reglas fijadas con Daniel el 2026-09-20:
+#    · Evidencia OBLIGATORIA: al menos 1 foto o 1 video, más el diagnóstico.
+#    · UN ticket 'spare_parts' por OT que agrupa todas sus solicitudes.
+#    · Repuesto manual: NO crea el ítem de bodega (la regla del 09-09 exige
+#      ubicación escaneada para todo ítem). Queda "solicitado · por validar"
+#      en la cola de la Bodega y ahí gestión lo liga o lo crea bien.
+#    · Quién puede: técnico asignado (interno o externo) + gestión =
+#      @_ot_can_configurar, el mismo gate de "fuera de servicio".
+#    · Dar de baja: DIRECTO por el técnico (decisión explícita de Daniel,
+#      sabiendo que la ficha es confidencial), con argumento ≥12 + foto.
+#      Admin puede restaurarlo desde "Mostrar bajas" en la ficha.
+#    · Cambio de piola: atajo propio porque es lo más pedido. Se ata a las
+#      piolas del MODELO en el Catálogo (cat_producto_piolas: ubicación,
+#      largo, diámetro, foto) -- "atarlo a la categoría de productos e
+#      indicar cuántos metros; dejar esa información allí lista". Si el
+#      modelo no tenía piolas, la primera declaración desde terreno la crea.
+#      "Se deja la máquina andando, pero con la alerta".
+#
+#  Trayectoria de una solicitud (mant_ot_repuesto_solicitudes.estado):
+#    solicitado → validado (ligado a un repuesto REAL de la Bodega)
+#               → pedido (proveedor obligatorio / OC) → recibido → instalado
+#    y rechazado desde cualquiera (con nota). Al cerrar la última abierta el
+#    ticket agrupador se resuelve solo y la alerta de la máquina se apaga
+#    -- el círculo se cierra sin que nadie tenga que acordarse.
+#
+#  Subida de evidencia: UN archivo por request (MAX_CONTENT_LENGTH es 60 MB
+#  y Cloud Run corta en 32 MiB por request HTTP/1): la solicitud nace con
+#  su primer archivo y los demás entran uno a uno por /evidencia.
+# ═══════════════════════════════════════════════════════════════════════
+
+_OTREP_ESTADOS = ("solicitado", "validado", "pedido", "recibido", "instalado", "rechazado")
+_OTREP_ABIERTOS = ("solicitado", "validado", "pedido", "recibido")
+_OTREP_ESTADO_LABEL = {
+    "solicitado": "Solicitado · por validar en bodega",
+    "validado": "Validado en bodega",
+    "pedido": "Pedido al proveedor",
+    "recibido": "Recibido en bodega",
+    "instalado": "Instalado",
+    "rechazado": "Rechazado",
+}
+_OTREP_ORIGEN_LABEL = {
+    "compatible": "Compatible con el modelo", "bodega": "De la bodega",
+    "manual": "Manual · por validar", "piola": "Cambio de piola",
+    "cinta": "Cambio de cinta",
+}
+# Transiciones válidas. "validado → instalado" existe a propósito: si la
+# bodega ya tenía stock, no hay nada que pedir.
+_OTREP_TRANSICIONES = {
+    "solicitado": ("validado", "rechazado"),
+    "validado": ("pedido", "recibido", "instalado", "rechazado"),
+    "pedido": ("recibido", "rechazado"),
+    "recibido": ("instalado", "rechazado"),
+    "instalado": (),
+    "rechazado": ("solicitado",),
+}
+# Decisiones de plata/proveedor: no las toma un técnico desde la cola
+# (Daniel asumió las OC el 20-sep). Validar/recibir/instalar sí (bodega).
+_OTREP_TRANSICIONES_GESTION = ("pedido", "rechazado")
+_OTREP_VIDEO_EXT = ("mp4", "mov", "webm", "mkv", "avi", "3gp", "m4v")
+# 8 MB = el techo real de _validate_uploaded_image (el navegador comprime
+# antes). 28 MB de video = bajo el corte de 32 MiB de Cloud Run HTTP/1 y
+# del MAX_CONTENT_LENGTH de 60 MB, con margen para el multipart.
+_OTREP_MAX_FOTO = 8 * 1024 * 1024
+_OTREP_MAX_VIDEO = 28 * 1024 * 1024
+# Campos de bodega que NUNCA salen hacia la OT (el técnico no los necesita)
+# y campos que además no ve un técnico EXTERNO (política del 2026-09-08:
+# costos/stock/proveedores de otros no se exponen al proveedor).
+_OTREP_STOCK_SOLO_GESTION = ("costo_unitario",)
+_OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad")
+_OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
+                         "validado_por", "resuelto_por",
+                         # 🔒 FIX 2026-09-20 (revisión): _OTREP_SQL_SOL trae
+                         # el stock/descripción de bodega del repuesto ya
+                         # ligado -- la política del bloque es que el
+                         # externo no vea stock (mismo criterio que
+                         # _OTREP_STOCK_NO_EXTERNO, que sí lo cubre en el
+                         # buscador pero no llegaba hasta acá).
+                         "stock_cantidad", "stock_descripcion")
+
+
+def _ensure_ot_repuesto_solicitudes_tables():
+    """Tablas de la solicitud de repuestos desde la OT (2026-09-20). SIEMPRE
+    en boot, incluso con ILUS_SKIP_MIGRATIONS=1. Idempotente."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_repuesto_solicitudes (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                visita_id           INT NOT NULL,
+                maquina_id          INT NOT NULL,
+                cliente_id          INT NULL,
+                repuesto_stock_id   INT NULL COMMENT 'mant_repuestos_stock.id cuando se eligió o validó un repuesto de la Bodega',
+                repuesto_nombre     VARCHAR(400) NOT NULL,
+                repuesto_sku        VARCHAR(120) NULL,
+                origen              ENUM('compatible','bodega','manual','piola','cinta') NOT NULL DEFAULT 'manual',
+                cantidad            DECIMAL(10,2) NOT NULL DEFAULT 1,
+                medida              VARCHAR(80) NULL COMMENT 'Medida declarada (ej. cinta de trotadora: largo x ancho)',
+
+                piola_id            INT NULL COMMENT 'cat_producto_piolas.id: cuál piola del modelo (solo cambio de piola)',
+                piola_metros        DECIMAL(8,2) NULL COMMENT 'Solo cambio de piola: metros que lleva la máquina',
+                motivo              TEXT NOT NULL COMMENT 'Diagnóstico del técnico: qué tiene malo y por qué se pide',
+                dejo_fuera_servicio TINYINT(1) NOT NULL DEFAULT 0,
+                estado              ENUM('solicitado','validado','pedido','recibido','instalado','rechazado') NOT NULL DEFAULT 'solicitado',
+                ticket_id           INT NULL COMMENT 'tk_tickets.id: UN ticket spare_parts por OT',
+                proveedor_id        INT NULL COMMENT 'mant_proveedores_repuesto.id',
+                oc_numero           VARCHAR(60) NULL,
+                nota_gestion        TEXT NULL,
+                n_fotos             INT NOT NULL DEFAULT 0,
+                n_videos            INT NOT NULL DEFAULT 0,
+                solicitado_por      VARCHAR(190) NULL,
+                created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                validado_por        VARCHAR(190) NULL,
+                validado_at         DATETIME NULL,
+                pedido_at           DATETIME NULL,
+                recibido_at         DATETIME NULL,
+                instalado_at        DATETIME NULL,
+                resuelto_por        VARCHAR(190) NULL,
+                updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_otrep_visita (visita_id),
+                INDEX idx_otrep_maquina (maquina_id, estado),
+                INDEX idx_otrep_estado (estado),
+                INDEX idx_otrep_ticket (ticket_id),
+                INDEX idx_otrep_stock (repuesto_stock_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_repuestos] mant_ot_repuesto_solicitudes: {e}", flush=True)
+    try:
+        _cols = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes'") or [])}
+        if _cols and "piola_id" not in _cols:
+            mysql_execute("ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN piola_id INT NULL "
+                          "COMMENT 'cat_producto_piolas.id' AFTER cantidad")
+        if _cols and "medida" not in _cols:
+            mysql_execute("ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN medida VARCHAR(80) NULL "
+                          "COMMENT 'Medida declarada (ej. cinta de trotadora: largo x ancho)' AFTER cantidad")
+        # 'cinta' (Daniel 2026-09-20: "dejar hasta las piolas, las cintas"):
+        # ENUM ampliado de forma idempotente por si la tabla ya existía.
+        _tipo = (mysql_fetchone(
+            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes' "
+            "  AND COLUMN_NAME='origen'") or {}).get("t") or ""
+        if _tipo and "'cinta'" not in _tipo:
+            mysql_execute("ALTER TABLE mant_ot_repuesto_solicitudes MODIFY COLUMN origen "
+                          "ENUM('compatible','bodega','manual','piola','cinta') NOT NULL DEFAULT 'manual'")
+    except Exception as e:
+        print(f"[ensure_ot_repuestos] piola_id/medida/cinta: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_repuesto_evidencias (
+                id             INT AUTO_INCREMENT PRIMARY KEY,
+                solicitud_id   INT NOT NULL,
+                tipo           ENUM('foto','video') NOT NULL,
+                url            VARCHAR(700) NOT NULL,
+                public_id      VARCHAR(400) NULL,
+                archivo_nombre VARCHAR(300) NULL,
+                size_kb        INT NULL,
+                subido_por     VARCHAR(190) NULL,
+                created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_otrepev_sol (solicitud_id),
+                CONSTRAINT fk_otrepev_sol FOREIGN KEY (solicitud_id)
+                    REFERENCES mant_ot_repuesto_solicitudes(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_repuestos] mant_ot_repuesto_evidencias: {e}", flush=True)
+
+
+def _otrep_insert(sql, params):
+    """INSERT que devuelve lastrowid sobre la conexión del request (get_db):
+    sin abrir un handshake TCP extra por solicitud."""
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        new_id = cur.lastrowid
+    conn.commit()
+    return int(new_id)
+
+
+def _otrep_puede_gestion():
+    """Quién opera la cola de solicitudes (Bodega / ficha del ticket) y ve su
+    evidencia: quien trabaja Mantenciones o Tickets, nunca el técnico
+    externo (vería solicitudes, proveedores y stock de otros)."""
+    perms = g.get("permissions") or {}
+    if not (perms.get("mantenciones") or perms.get("tk_ver")
+            or perms.get("tk_es_ejecutivo") or perms.get("superadmin")):
+        return False
+    try:
+        if _es_tecnico_externo():
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _otrep_gestion_required(view):
+    @wraps(view)
+    def wrapped(*a, **k):
+        if not _otrep_puede_gestion():
+            return jsonify({"ok": False, "error": "No tienes permiso para gestionar solicitudes de repuesto."}), 403
+        return view(*a, **k)
+    return wrapped
+
+
+def _otrep_producto_de_maquina(m):
+    """Modelo (cat_productos) de la máquina, por SKU: es el puente hacia la
+    compatibilidad de repuestos (mant_repuestos_stock_modelos) y hacia las
+    piolas del modelo (cat_producto_piolas)."""
+    sku = (m.get("sku") or "").strip()
+    if not sku:
+        return None
+    try:
+        return mysql_fetchone("SELECT id, sku, nombre FROM cat_productos WHERE sku=%s LIMIT 1", (sku,))
+    except Exception:
+        return None
+
+
+def _otrep_piolas_de_modelo(producto_id):
+    """Piolas del modelo en el Catálogo (mismo shape que cat_api_piolas_list,
+    sin depender de catalogo_module: ese registra sus rutas dentro de una
+    función y no exporta el serializador)."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, medida_cm, observacion, descripcion, diametro_mm, largo_m, orden, foto_key "
+            "  FROM cat_producto_piolas WHERE producto_id=%s AND activo=1 ORDER BY orden",
+            (producto_id,)) or []
+    except Exception as e:
+        print(f"[otrep] piolas producto={producto_id}: {e}", flush=True)
+        return []
+    out = []
+    for r in rows:
+        legado = r.get("diametro_mm") is None and r.get("largo_m") is None
+        out.append({
+            "id": r["id"], "orden": r.get("orden"),
+            "descripcion": r.get("descripcion") or (r.get("observacion") if legado else None) or f"Piola {r.get('orden') or ''}".strip(),
+            "largo_m": float(r["largo_m"]) if r.get("largo_m") is not None else None,
+            "diametro_mm": float(r["diametro_mm"]) if r.get("diametro_mm") is not None else None,
+            "medida_cm_legada": float(r["medida_cm"]) if legado and r.get("medida_cm") is not None else None,
+            "foto_url": ("/f/" + r["foto_key"]) if r.get("foto_key") else None,
+        })
+    return out
+
+
+_OTREP_SQL_STOCK = (
+    "SELECT rs.id, rs.sku, rs.descripcion, rs.cantidad, rs.stock_minimo, rs.codigo_fabricante, "
+    "       rs.costo_unitario, rs.proveedor_id, mk.nombre AS marca, "
+    "       u.codigo AS ubicacion_codigo, pv.nombre AS proveedor, "
+    "       (SELECT f.gcs_key FROM mant_repuestos_stock_fotos f WHERE f.repuesto_id=rs.id "
+    "         ORDER BY f.orden LIMIT 1) AS foto_key "
+    "  FROM mant_repuestos_stock rs "
+    "  LEFT JOIN mant_repuestos_marcas mk ON mk.id=rs.marca_id "
+    "  LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
+    "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=rs.proveedor_id ")
+
+
+def _otrep_fmt_stock(r, para_ot=False):
+    """Fila de bodega → dict. `para_ot`: lo que viaja a la pantalla de la OT
+    nunca lleva costo, y para un técnico externo tampoco proveedor,
+    ubicación ni stock (misma política que @_no_tecnico_externo en /repuestos)."""
+    r = dict(r)
+    r["foto_url"] = ("/f/" + r["foto_key"]) if r.get("foto_key") else None
+    r.pop("foto_key", None)
+    for k in ("cantidad", "stock_minimo", "costo_unitario"):
+        r[k] = float(r[k]) if r.get(k) is not None else None
+    r["es_piola"] = bool(re.search(r"piola|cable de acero", r.get("descripcion") or "", re.I))
+    r["es_cinta"] = bool(re.search(r"cinta|banda|belt", r.get("descripcion") or "", re.I))
+    r["con_stock"] = bool((r.get("cantidad") or 0) > 0)
+    if para_ot:
+        for k in _OTREP_STOCK_SOLO_GESTION:
+            r.pop(k, None)
+        try:
+            if _es_tecnico_externo():
+                for k in _OTREP_STOCK_NO_EXTERNO:
+                    r.pop(k, None)
+        except Exception:
+            pass
+    return r
+
+
+_OTREP_SQL_SOL = (
+    "SELECT s.*, m.nombre AS maquina_nombre, m.sku AS maquina_sku, m.serie AS maquina_serie, "
+    "       m.estado AS maquina_estado, m.estado_capturado AS maquina_estado_capturado, "
+    "       v.numero_ot, v.tipo AS ot_tipo, v.fecha_programada AS ot_fecha, "
+    "       c.razon_social AS cliente_nombre, "
+    "       t.numero_ticket, t.estado AS ticket_estado, t.fecha_limite AS ticket_fecha_limite, "
+    "       rs.sku AS stock_sku, rs.descripcion AS stock_descripcion, rs.cantidad AS stock_cantidad, "
+    "       pv.nombre AS proveedor_nombre "
+    "  FROM mant_ot_repuesto_solicitudes s "
+    "  JOIN mant_maquinas m ON m.id=s.maquina_id "
+    "  JOIN mant_visitas v ON v.id=s.visita_id "
+    "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
+    "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+    "  LEFT JOIN mant_repuestos_stock rs ON rs.id=s.repuesto_stock_id "
+    "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=s.proveedor_id ")
+
+
+def _otrep_fila(s, para_ot=False):
+    s = dict(s)
+    for k in ("cantidad", "piola_metros", "stock_cantidad"):
+        if s.get(k) is not None:
+            s[k] = float(s[k])
+    s["estado_label"] = _OTREP_ESTADO_LABEL.get(s.get("estado"), s.get("estado"))
+    s["origen_label"] = _OTREP_ORIGEN_LABEL.get(s.get("origen"), s.get("origen"))
+    s["abierta"] = s.get("estado") in _OTREP_ABIERTOS
+    s["siguientes"] = list(_OTREP_TRANSICIONES.get(s.get("estado"), ()))
+    # REGLA #6: todo datetime a hora Chile, nunca ISO crudo.
+    for k in ("created_at", "validado_at", "pedido_at", "recibido_at", "instalado_at", "updated_at"):
+        s[k] = chile_fmt_filter(s[k]) if s.get(k) else None
+    for k in ("ot_fecha", "ticket_fecha_limite"):
+        val = s.get(k)
+        s[k] = val.strftime("%d/%m/%Y") if hasattr(val, "strftime") else (str(val) if val else None)
+    s["evidencias"] = []
+    if para_ot:
+        try:
+            if _es_tecnico_externo():
+                for k in _OTREP_SOL_NO_EXTERNO:
+                    s.pop(k, None)
+        except Exception:
+            pass
+    return s
+
+
+def _otrep_listar(where_sql, params, limit=300, con_evidencias=True, para_ot=False):
+    rows = mysql_fetchall(
+        _OTREP_SQL_SOL + " WHERE " + where_sql + " ORDER BY s.id DESC LIMIT %s",
+        tuple(params) + (int(limit),)) or []
+    sols = [_otrep_fila(r, para_ot=para_ot) for r in rows]
+    if con_evidencias and sols:
+        ids = [s["id"] for s in sols]
+        ph = ",".join(["%s"] * len(ids))
+        evs = mysql_fetchall(
+            f"SELECT id, solicitud_id, tipo, url, archivo_nombre, size_kb "
+            f"  FROM mant_ot_repuesto_evidencias WHERE solicitud_id IN ({ph}) ORDER BY id",
+            tuple(ids)) or []
+        idx = {s["id"]: s for s in sols}
+        for e in evs:
+            if e.get("solicitud_id") in idx:
+                idx[e["solicitud_id"]]["evidencias"].append(dict(e))
+    return sols
+
+
+def _otrep_cargar_ot_y_equipo(vid, mid):
+    """OT + equipo, con tres candados (fix revisión 2026-09-20, IDOR):
+      1. la OT tiene cliente (una OT de trabajo interno, cliente_id NULL,
+         no tiene equipos de ficha que mover);
+      2. el equipo es de ESE cliente;
+      3. el equipo está ligado a ESTA OT (tareas o mant_visita_equipos) --
+         el mismo criterio con que la pantalla lo lista.
+    Devuelve (v, m, None) o (None, None, respuesta_error)."""
+    v = mysql_fetchone(
+        "SELECT id, numero_ot, cliente_id, tipo, estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return None, None, _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+    if not v.get("cliente_id"):
+        return None, None, _ot2_err("Esta OT no tiene cliente: no hay equipos de ficha que mover.",
+                                    "OT_SIN_CLIENTE", http=403)
+    m = mysql_fetchone(
+        "SELECT id, nombre, sku, serie, marca, cliente_id, estado, estado_capturado "
+        "  FROM mant_maquinas WHERE id=%s", (mid,))
+    if not m:
+        return None, None, _ot2_err("No encontramos ese equipo.", "EQUIPO_NO_EXISTE", http=404)
+    if not m.get("cliente_id") or int(v["cliente_id"]) != int(m["cliente_id"]):
+        return None, None, _ot2_err("Ese equipo no pertenece al cliente de esta OT.",
+                                    "EQUIPO_DE_OTRO_CLIENTE", http=403)
+    try:
+        ligado = mysql_fetchone(
+            "SELECT 1 AS x FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
+            (vid, mid)) or mysql_fetchone(
+            "SELECT 1 AS x FROM mant_visita_equipos WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
+            (vid, mid))
+    except Exception as e:
+        print(f"[otrep] ligado vid={vid} mid={mid}: {e}", flush=True)
+        ligado = None
+    if not ligado:
+        return None, None, _ot2_err("Ese equipo no está en esta OT.", "EQUIPO_NO_EN_OT", http=403)
+    return v, m, None
+
+
+def _otrep_clasificar_archivo(f):
+    """('foto'|'video', None) o (None, error). Foto valida con el helper
+    compartido (_validate_uploaded_image); video por MIME/extensión."""
+    if not f or not f.filename:
+        return None, "Archivo vacío"
+    mime = (f.mimetype or "").lower()
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    f.stream.seek(0, 2); size = f.stream.tell(); f.stream.seek(0)
+    if mime.startswith("video/") or ext in _OTREP_VIDEO_EXT:
+        if size > _OTREP_MAX_VIDEO:
+            return None, (f"El video {f.filename} pesa {size // (1024*1024)} MB y el máximo es "
+                          f"{_OTREP_MAX_VIDEO // (1024*1024)} MB: graba un clip corto (10-20 s).")
+        return "video", None
+    if size > _OTREP_MAX_FOTO:
+        return None, f"La foto {f.filename} pesa más de {_OTREP_MAX_FOTO // (1024*1024)} MB."
+    try:
+        _ok, _err = _validate_uploaded_image(f, label=f.filename)
+        if _err:
+            return None, _err
+    except Exception:
+        pass
+    f.stream.seek(0)
+    return "foto", None
+
+
+def _otrep_subir_evidencia(vid, mid, carpeta, prefijo, f, tipo, descripcion, user, solicitud_id=None):
+    """Sube UN archivo a GCS y lo registra: foto → mant_visita_fotos del
+    equipo (tipo 'falla', valor real del ENUM), video → mant_visita_adjuntos;
+    y si hay solicitud, también en sus evidencias. La OT queda informativa
+    por sí sola y la galería del equipo la hereda.
+
+    Solo cuenta como subida si la fila que la referencia quedó escrita (la
+    de la solicitud, o la de la OT cuando no hay solicitud): si eso falla,
+    el blob se borra de GCS para no dejar archivos huérfanos.
+    Devuelve (ok, error_texto)."""
+    try:
+        f.stream.seek(0)
+        res = _uploader_upload(
+            f, folder=f"ilus/visitas/v{vid}/{carpeta}",
+            public_id=f"v{vid}_m{mid}_{prefijo}_{int(time.time() * 1000)}",
+            resource_type=("video" if tipo == "video" else "image"))
+        url = res.get("secure_url")
+        pid = res.get("public_id")
+        size_kb = int((res.get("bytes") or 0) // 1024)
+        if not url:
+            raise RuntimeError("sin URL de vuelta")
+    except Exception as e:
+        print(f"[otrep] subir {tipo} vid={vid} mid={mid}: {e}", flush=True)
+        return False, "No se pudo subir el archivo."
+
+    def _borrar_blob():
+        try:
+            if pid:
+                _uploader_destroy(pid)
+        except Exception:
+            pass
+
+    ok_ot = False
+    if tipo == "foto":
+        try:
+            mysql_execute(
+                "INSERT INTO mant_visita_fotos (visita_id, tarea_id, maquina_id, archivo_path, "
+                " cloudinary_url, archivo_nombre, tipo_foto, descripcion, tomada_por, file_size_kb) "
+                "VALUES (%s,NULL,%s,'',%s,%s,'falla',%s,%s,%s)",
+                (vid, mid, url, (f.filename or "")[:300], descripcion[:300],
+                 (user or "")[:190], size_kb))
+            ok_ot = True
+        except Exception as e:
+            print(f"[otrep] mant_visita_fotos vid={vid} mid={mid}: {e}", flush=True)
+    else:
+        try:
+            mysql_execute(
+                "INSERT INTO mant_visita_adjuntos (visita_id, tipo, archivo_path, cloudinary_url, "
+                " cloudinary_public_id, archivo_nombre, file_size_kb, mime_type, descripcion, subido_por) "
+                "VALUES (%s,'video',NULL,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, url, pid, (f.filename or "")[:300], size_kb,
+                 (f.mimetype or "")[:100], descripcion[:1000], user))
+            ok_ot = True
+        except Exception as e:
+            print(f"[otrep] mant_visita_adjuntos vid={vid}: {e}", flush=True)
+
+    if solicitud_id:
+        try:
+            mysql_execute(
+                "INSERT INTO mant_ot_repuesto_evidencias "
+                "(solicitud_id, tipo, url, public_id, archivo_nombre, size_kb, subido_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (solicitud_id, tipo, url[:700], (pid or "")[:400] or None,
+                 (f.filename or "")[:300] or None, size_kb, user))
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET "
+                + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1")
+                + " WHERE id=%s", (solicitud_id,))
+            return True, None
+        except Exception as e:
+            print(f"[otrep] evidencia BD sol={solicitud_id}: {e}", flush=True)
+            if not ok_ot:
+                _borrar_blob()
+            return False, "La evidencia subió pero no se pudo registrar."
+    if not ok_ot:
+        _borrar_blob()
+        return False, "La evidencia subió pero no se pudo registrar en la OT."
+    return True, None
+
+
+def _otrep_ticket_para_ot(vid, v, user):
+    """UN ticket 'spare_parts' por OT que agrupa todas sus solicitudes
+    (Daniel 2026-09-20). Reutiliza el abierto; si el de la OT ya se cerró,
+    lo REABRE (no se crea un segundo ticket para la misma OT); si nunca
+    hubo, lo crea. Serializado con GET_LOCK por OT: dos solicitudes
+    simultáneas no pueden crear dos tickets.
+    Devuelve (ticket_id, numero_ticket, creado). Nunca lanza.
+
+    No usa tk_tickets.visita_id (es UNIQUE y significa "la OT que NACIÓ de
+    este ticket"); el vínculo vive en la solicitud (ticket_id)."""
+    from tickets_module import _chile_now_year as _tk_year
+    lock = f"otrep_ticket_{vid}"
+    conn = None
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("SELECT GET_LOCK(%s, 5) AS l", (lock,))
+            cur.execute(
+                "SELECT t.id, t.numero_ticket, t.estado FROM mant_ot_repuesto_solicitudes s "
+                "  JOIN tk_tickets t ON t.id=s.ticket_id "
+                " WHERE s.visita_id=%s AND t.tipo='spare_parts' "
+                " ORDER BY (t.estado NOT IN ('closed','resolved','cancelado')) DESC, s.id DESC LIMIT 1",
+                (vid,))
+            prev = cur.fetchone()
+            if prev:
+                tid = int(prev["id"])
+                if (prev.get("estado") or "") in ("closed", "resolved", "cancelado"):
+                    cur.execute(
+                        "UPDATE tk_tickets SET estado='open', cerrado_at=NULL, cerrado_por=NULL "
+                        " WHERE id=%s", (tid,))
+                    cur.execute(
+                        "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                        "VALUES (%s,'reapertura',%s,%s,1)",
+                        (tid, f"Reabierto: llegó una nueva solicitud de repuesto desde la "
+                              f"{v.get('numero_ot') or ('OT #' + str(vid))}.", user))
+                cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+                conn.commit()
+                return tid, prev.get("numero_ticket"), False
+            _cli = {}
+            if v.get("cliente_id"):
+                cur.execute(
+                    "SELECT razon_social, rut, contacto_email, contacto_tel, direccion, comuna "
+                    "  FROM mant_clientes WHERE id=%s", (v.get("cliente_id"),))
+                _cli = cur.fetchone() or {}
+            numero_ot = v.get("numero_ot") or f"OT #{vid}"
+            titulo = f"Repuestos {numero_ot}" + (
+                f" · {_cli.get('razon_social')}" if _cli.get("razon_social") else "")
+            desc = (f"Solicitudes de repuesto levantadas desde la {numero_ot}"
+                    f" (cliente {_cli.get('razon_social') or 'sin cliente'}).\n"
+                    f"Cada solicitud trae equipo, repuesto, cantidad, diagnóstico y evidencia "
+                    f"(foto/video). Se gestionan en Repuestos → Solicitudes desde OT.")
+            cur.execute(
+                "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, "
+                " rut, empresa, email, phone, direccion, comuna_nombre, created_by) "
+                "VALUES ('backoffice','open','spare_parts','alta',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (titulo[:300], desc,
+                 (_cli.get("rut") or "")[:12] or None,
+                 (_cli.get("razon_social") or "")[:150] or None,
+                 (_cli.get("contacto_email") or "")[:150] or None,
+                 (_cli.get("contacto_tel") or "")[:20] or None,
+                 (_cli.get("direccion") or "")[:255] or None,
+                 (_cli.get("comuna") or "")[:120] or None,
+                 user))
+            tid = cur.lastrowid
+            cur.execute(
+                "UPDATE tk_tickets SET numero_ticket=CONCAT('TK-', %s, '-', LPAD(id,5,'0')) "
+                " WHERE id=%s", (_tk_year(), tid))
+            cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+        conn.commit()
+        # Determinístico: se arma en Python (el pool REPEATABLE READ podía
+        # devolver NULL al releerlo, ver mant_repuesto_solicitar).
+        return int(tid), f"TK-{_tk_year()}-{int(tid):05d}", True
+    except Exception as e:
+        print(f"[otrep] ticket vid={vid}: {e}", flush=True)
+        try:
+            if conn:
+                conn.rollback()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+        except Exception:
+            pass
+        return None, None, False
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+def _otrep_ticket_anotar(tid, m, sol, numero_ot, user):
+    """Deja al equipo en el ticket (tk_ticket_equipos) y una nota interna
+    en su hilo con la solicitud completa. Best-effort: nunca lanza."""
+    try:
+        ya = mysql_fetchone(
+            "SELECT id FROM tk_ticket_equipos WHERE ticket_id=%s AND maquina_id=%s LIMIT 1",
+            (tid, m["id"]))
+        if not ya:
+            mysql_execute(
+                "INSERT INTO tk_ticket_equipos (ticket_id, nombre, sku, serie, cantidad, maquina_id, notas) "
+                "VALUES (%s,%s,%s,%s,1,%s,%s)",
+                (tid, (m.get("nombre") or "")[:300] or None, (m.get("sku") or "")[:100] or None,
+                 (m.get("serie") or "")[:120] or None, m["id"],
+                 f"Repuestos solicitados desde {numero_ot}"[:500]))
+    except Exception as e:
+        print(f"[otrep] tk_ticket_equipos tid={tid}: {e}", flush=True)
+    try:
+        cant = float(sol.get("cantidad") or 1)
+        txt = (f"Solicitud de repuesto #{sol['id']} · {sol['repuesto_nombre']} × {cant:g}"
+               + (f" · {float(sol['piola_metros']):g} m de piola" if sol.get("piola_metros") else "")
+               + (f" ({sol['piola_desc']})" if sol.get("piola_desc") else "")
+               + (f" · medida {sol['medida']}" if sol.get("medida") else "")
+               + f"\nEquipo: {m.get('nombre') or ''}"
+               + (f" (S/N {m['serie']})" if m.get("serie") else "")
+               + f"\nDiagnóstico: {sol['motivo']}"
+               + ("\nEl equipo quedó FUERA DE SERVICIO." if sol.get("dejo_fuera_servicio") else
+                  "\nEl equipo sigue operativo, con alerta.")
+               + (f"\nProveedor sugerido: {sol['proveedor_nombre']}" if sol.get("proveedor_nombre") else "")
+               + f"\nEvidencia: {sol.get('n_fotos', 0)} foto(s), {sol.get('n_videos', 0)} video(s).")
+        mysql_execute(
+            "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+            "VALUES (%s,'comentario',%s,%s,%s,1)",
+            (tid, txt, json.dumps({"solicitud_repuesto_id": sol["id"],
+                                   "visita_id": sol["visita_id"]}, ensure_ascii=False), user))
+    except Exception as e:
+        print(f"[otrep] tk_mensajes tid={tid}: {e}", flush=True)
+
+
+def _otrep_maquina_sin_abiertas(mid):
+    try:
+        n = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
+            " WHERE maquina_id=%s AND estado IN ('solicitado','validado','pedido','recibido')",
+            (mid,)) or {}
+        return int(n.get("n") or 0) == 0
+    except Exception:
+        return False
+
+
+def _otrep_cerrar_alerta_maquina(mid, volver_operativo=False, user=None, motivo=""):
+    """Cierra el círculo en la máquina cuando ya no le quedan solicitudes
+    abiertas: 'advertencia' vuelve a 'operativo' sola; 'fuera_servicio'
+    solo si quien cierra confirmó que el equipo volvió a operar
+    (`volver_operativo`, lo pregunta la cola al marcar Instalado)."""
+    if not _otrep_maquina_sin_abiertas(mid):
+        return False
+    try:
+        mysql_execute(
+            "UPDATE mant_maquinas SET estado_capturado='operativo' "
+            " WHERE id=%s AND estado_capturado='advertencia'", (mid,))
+        # 🔒 FIX 2026-09-20 (revisión): esto devolvía True SIEMPRE que no
+        # quedaran solicitudes abiertas, sin importar volver_operativo. El
+        # caller (repstock_solicitud_ot_estado) usa este valor para escribir
+        # en el hilo del ticket "El equipo volvió a operativo." -- con
+        # 'rechazado', o con 'instalado' + "No todavía", el mensaje mentía:
+        # la máquina seguía fuera_servicio pero el registro decía que operaba.
+        reactivada = False
+        if volver_operativo:
+            n = mysql_execute_returning_rowcount(
+                "UPDATE mant_maquinas SET estado_capturado='operativo', estado_op='operativo', "
+                "       updated_by=%s WHERE id=%s AND estado_capturado='fuera_servicio'",
+                (user or "sistema", mid))
+            reactivada = bool(n)
+            if reactivada:
+                _mant_log("maquina", mid, "reactivado",
+                          "Vuelve a operativo: repuesto instalado" + (f" · {motivo}" if motivo else ""))
+        return reactivada
+    except Exception as e:
+        print(f"[otrep] cerrar alerta mid={mid}: {e}", flush=True)
+        return False
+
+
+def _otrep_resolver_ticket_si_corresponde(ticket_id, user):
+    """Cuando la última solicitud del ticket queda instalada o rechazada, el
+    ticket agrupador se resuelve solo (si no, quedaba 'open' para siempre y
+    el SLA de 48 h lo pintaba vencido)."""
+    if not ticket_id:
+        return
+    try:
+        n = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
+            " WHERE ticket_id=%s AND estado IN ('solicitado','validado','pedido','recibido')",
+            (ticket_id,)) or {}
+        if int(n.get("n") or 0):
+            return
+        # No pisar los estados AUTOMÁTICOS del ciclo de vida de la OT (si el
+        # ticket ya se convirtió en una OT en curso, esa OT manda su estado,
+        # no este cierre por repuestos -- ver TK_ESTADOS_AUTOMATICOS).
+        cambio = mysql_execute_returning_rowcount(
+            "UPDATE tk_tickets SET estado='resolved', cerrado_at=NOW(), cerrado_por=%s "
+            " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado',"
+            "                                'ot_generated','ot_in_progress','ot_pending_approval')",
+            (user, ticket_id))
+        if cambio:
+            mysql_execute(
+                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                "VALUES (%s,'cambio_estado',%s,%s,1)",
+                (ticket_id, "Resuelto automáticamente: no quedan solicitudes de repuesto abiertas "
+                            "(todas instaladas o rechazadas).", user))
+    except Exception as e:
+        print(f"[otrep] resolver ticket {ticket_id}: {e}", flush=True)
+
+
+@app.errorhandler(413)
+def _otrep_413_json(_e):
+    """Un archivo más grande que MAX_CONTENT_LENGTH muere en Werkzeug antes
+    de entrar al endpoint. Para las APIs, que la respuesta sea JSON con un
+    mensaje que el técnico entienda; para el resto, el HTML de siempre."""
+    p = request.path or ""
+    if p.startswith(("/ot/api/", "/mantenciones/api/", "/repuestos/api/", "/tickets/api/")):
+        return jsonify({"ok": False, "error_codigo": "ARCHIVO_MUY_GRANDE",
+                        "error": "El archivo es demasiado grande para subirlo de una vez. "
+                                 "Fotos hasta 8 MB, videos hasta 28 MB (clips de 10-20 s)."}), 413
+    return "Archivo demasiado grande", 413
+
+
+@app.route("/ot/api/<int:vid>/equipo/<int:mid>/repuestos-opciones", methods=["GET"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_equipo_repuestos_opciones(vid, mid):
+    """Lo que el modal necesita al abrirse: repuestos de la Bodega
+    compatibles con el MODELO de este equipo (mant_maquinas.sku →
+    cat_productos → mant_repuestos_stock_modelos → mant_repuestos_stock),
+    las piolas del modelo en el Catálogo (cat_producto_piolas), y las
+    solicitudes ya hechas para este equipo en esta OT."""
+    v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
+    if err:
+        return err
+    prod = _otrep_producto_de_maquina(m)
+    compatibles, piolas = [], []
+    if prod:
+        try:
+            rows = mysql_fetchall(
+                _OTREP_SQL_STOCK
+                + " JOIN mant_repuestos_stock_modelos sm ON sm.repuesto_id=rs.id "
+                  " WHERE sm.producto_id=%s AND COALESCE(rs.activo,1)=1 "
+                  " ORDER BY rs.descripcion LIMIT 100",
+                (prod["id"],)) or []
+            compatibles = [_otrep_fmt_stock(r, para_ot=True) for r in rows]
+        except Exception as e:
+            print(f"[otrep] compatibles mid={mid}: {e}", flush=True)
+        piolas = _otrep_piolas_de_modelo(prod["id"])
+    try:
+        solicitudes = _otrep_listar("s.visita_id=%s AND s.maquina_id=%s", (vid, mid),
+                                    limit=50, para_ot=True)
+    except Exception as e:
+        print(f"[otrep] solicitudes mid={mid}: {e}", flush=True)
+        solicitudes = []
+    return jsonify({
+        "ok": True,
+        "equipo": {"id": m["id"], "nombre": m.get("nombre"), "sku": m.get("sku"),
+                   "serie": m.get("serie"), "marca": m.get("marca"),
+                   "estado_capturado": m.get("estado_capturado")},
+        "modelo": ({"id": prod["id"], "sku": prod.get("sku"), "nombre": prod.get("nombre")}
+                   if prod else None),
+        "compatibles": compatibles,
+        "piolas": piolas,
+        "solicitudes": solicitudes,
+        "limites": {"foto_mb": _OTREP_MAX_FOTO // (1024 * 1024),
+                    "video_mb": _OTREP_MAX_VIDEO // (1024 * 1024)},
+    })
+
+
+@app.route("/ot/api/repuestos/bodega-buscar", methods=["GET"])
+@_mant_required
+def ot2_api_repuestos_bodega_buscar():
+    """Buscador de la Bodega para el modal de solicitud (sin costo; y sin
+    proveedor/ubicación/stock para un técnico externo) y para "ligar" en
+    gestión: SKU, descripción o código de fabricante. Solo activos."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"ok": True, "repuestos": []})
+    like = f"%{q}%"
+    try:
+        rows = mysql_fetchall(
+            _OTREP_SQL_STOCK
+            + " WHERE COALESCE(rs.activo,1)=1 AND (rs.sku LIKE %s OR rs.descripcion LIKE %s "
+              "       OR rs.codigo_fabricante LIKE %s) ORDER BY rs.descripcion LIMIT 25",
+            (like, like, like)) or []
+    except Exception as e:
+        print(f"[otrep] bodega-buscar: {e}", flush=True)
+        rows = []
+    # Gestión (cola de bodega) sí puede ver stock/ubicación/proveedor: solo
+    # se recorta para la OT y para el externo.
+    para_ot = not _otrep_puede_gestion() or (request.args.get("ctx") or "") == "ot"
+    return jsonify({"ok": True, "repuestos": [_otrep_fmt_stock(r, para_ot=para_ot) for r in rows]})
+
+
+def _otrep_primer_archivo():
+    """El único archivo de este request (multipart 'evidencia'). Devuelve
+    (f, tipo, None) o (None, None, error)."""
+    files = [f for f in request.files.getlist("evidencia") if f and f.filename]
+    if not files:
+        f1 = request.files.get("foto") or request.files.get("archivo")
+        if f1 and f1.filename:
+            files = [f1]
+    if not files:
+        return None, None, None
+    f = files[0]
+    tipo, e_arch = _otrep_clasificar_archivo(f)
+    if e_arch:
+        return None, None, e_arch
+    return f, tipo, None
+
+
+@app.route("/ot/api/<int:vid>/equipo/<int:mid>/solicitar-repuesto", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_equipo_solicitar_repuesto(vid, mid):
+    """Levanta una solicitud de repuesto para un equipo de la OT.
+
+    Body multipart:
+      origen               compatible | bodega | manual | piola
+      repuesto_stock_id    id de mant_repuestos_stock (compatible/bodega)
+      repuesto_nombre      texto (manual; en piola es opcional)
+      cantidad             > 0
+      piola_id             cat_producto_piolas.id (piola, si el modelo las tiene)
+      piola_metros         obligatorio si origen=piola
+      piola_desc           ubicación/descripción de la piola (si es nueva)
+      motivo               diagnóstico, ≥ 10 caracteres (obligatorio)
+      dejar_fuera_servicio '1' → además deja el equipo fuera de servicio
+      evidencia            EL PRIMER archivo (foto o video), obligatorio;
+                           los demás llegan uno a uno por /evidencia.
+
+    Orden de escritura, pensado para no dejar mitades: primero la
+    solicitud, después la evidencia (si no quedó registrada, la solicitud
+    se borra: sin evidencia no existe), después el estado del equipo, la
+    piola del modelo, el ticket por OT y la nota en su hilo. Todo lo que no
+    es la solicitud misma es best-effort y se reporta en `aviso`.
+    """
+    v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
+    if err:
+        return err
+    if (m.get("estado") or "").lower() == "baja":
+        return _ot2_err("Ese equipo está dado de baja: no se le piden repuestos.", "EQUIPO_DE_BAJA")
+    fd = request.form
+    user = current_username() or "sistema"
+    origen = (fd.get("origen") or "manual").strip().lower()
+    if origen not in ("compatible", "bodega", "manual", "piola", "cinta"):
+        origen = "manual"
+    medida = (fd.get("medida") or "").strip()[:80] or None
+    motivo = (fd.get("motivo") or "").strip()
+    if len(re.sub(r"^cambio de piola:?\s*", "", motivo, flags=re.I)) < 10:
+        return _ot2_err(
+            "Cuenta qué tiene malo el equipo y por qué hace falta el repuesto (mínimo 10 "
+            "caracteres): ese diagnóstico es el que leen bodega y el proveedor.",
+            "MOTIVO_REQUERIDO")
+    try:
+        cantidad = float(str(fd.get("cantidad") or "1").replace(",", "."))
+    except ValueError:
+        cantidad = 0
+    if cantidad <= 0 or cantidad > 9999:
+        return _ot2_err("La cantidad tiene que ser un número mayor que cero.", "CANTIDAD_INVALIDA")
+    piola_metros, piola_id, piola_desc = None, None, ""
+    if origen == "piola":
+        try:
+            piola_metros = float(str(fd.get("piola_metros") or "").replace(",", "."))
+        except ValueError:
+            piola_metros = None
+        if not piola_metros or piola_metros <= 0 or piola_metros > 200:
+            return _ot2_err("Indica cuántos metros de piola lleva la máquina (hasta 200 m).",
+                            "PIOLA_METROS_REQUERIDO")
+        pid_txt = str(fd.get("piola_id") or "").strip()
+        piola_id = int(pid_txt) if pid_txt.isdigit() else None
+        piola_desc = (fd.get("piola_desc") or "").strip()[:300]
+    stock = None
+    rid = str(fd.get("repuesto_stock_id") or "").strip()
+    if rid.isdigit():
+        stock = mysql_fetchone(
+            "SELECT id, sku, descripcion, proveedor_id FROM mant_repuestos_stock "
+            " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
+        if not stock:
+            return _ot2_err("Ese repuesto de bodega ya no existe.", "REPUESTO_NO_EXISTE")
+    nombre = (fd.get("repuesto_nombre") or "").strip()
+    if stock:
+        nombre = stock["descripcion"]
+        if origen == "manual":
+            origen = "bodega"
+    elif origen == "piola" and not nombre:
+        nombre = "Piola / cable de acero"
+    elif origen == "cinta" and not nombre:
+        nombre = "Cinta de trotadora"
+    if not nombre:
+        return _ot2_err("Dinos qué repuesto es: elige uno de la bodega o escribe su nombre.",
+                        "REPUESTO_REQUERIDO")
+    dejar_fs = (fd.get("dejar_fuera_servicio") or "").strip().lower() in ("1", "true", "on")
+    if origen == "piola":
+        dejar_fs = False  # "se deja la máquina andando, pero con la alerta"
+
+    # Evidencia: el primer archivo viene en este request. Se valida ANTES
+    # de escribir. Los demás entran por /evidencia con la solicitud creada.
+    f, tipo, e_arch = _otrep_primer_archivo()
+    if e_arch:
+        return _ot2_err(e_arch, "EVIDENCIA_INVALIDA")
+    if not f:
+        return _ot2_err("Sin evidencia no hay solicitud: toma al menos una foto o un video "
+                        "de lo que está malo.", "EVIDENCIA_REQUERIDA")
+    if not _gcs_ready():
+        return _ot2_err("El almacenamiento de fotos no está disponible en este momento. "
+                        "Intenta de nuevo en un minuto.", "STORAGE_OFF", http=503)
+
+    # 1) La solicitud
+    try:
+        sol_id = _otrep_insert(
+            "INSERT INTO mant_ot_repuesto_solicitudes "
+            "(visita_id, maquina_id, cliente_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
+            " origen, cantidad, medida, piola_id, piola_metros, motivo, dejo_fuera_servicio, estado, "
+            " solicitado_por, proveedor_id) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s)",
+            (vid, mid, v.get("cliente_id"),
+             stock["id"] if stock else None, nombre[:400],
+             (stock.get("sku") if stock else None), origen, cantidad, medida, piola_id, piola_metros,
+             motivo[:5000], 1 if dejar_fs else 0, user,
+             (stock.get("proveedor_id") if stock else None)))
+    except Exception as e:
+        print(f"[otrep] INSERT solicitud vid={vid} mid={mid}: {e}", flush=True)
+        return _ot2_err("No pudimos guardar la solicitud.", "ERROR_INTERNO", http=500)
+
+    # 2) Evidencia. Si no quedó registrada, la solicitud no existe.
+    desc_ev = f"Solicitud de repuesto #{sol_id}: {nombre}"
+    ok_ev, e_ev = _otrep_subir_evidencia(vid, mid, "repuestos", f"rep{sol_id}", f, tipo,
+                                         desc_ev, user, solicitud_id=sol_id)
+    if not ok_ev:
+        try:
+            mysql_execute("DELETE FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sol_id,))
+        except Exception:
+            pass
+        return _ot2_err((e_ev or "No se pudo subir la evidencia") + ", así que la solicitud NO se "
+                        "guardó. Revisa la conexión e intenta de nuevo.", "EVIDENCIA_NO_SUBIO", http=502)
+
+    # 3) El equipo: fuera de servicio (misma regla que el botón, sin
+    #    segundo ticket) o "sigue andando, con la alerta".
+    fs_ok = False
+    if dejar_fs:
+        fs_ok, _t, _e = _ot_equipo_fuera_servicio_marcar(vid, mid, motivo, v, m, crear_urgencia=False)
+    else:
+        try:
+            mysql_execute(
+                "UPDATE mant_maquinas SET estado_capturado='advertencia', updated_by=%s "
+                " WHERE id=%s AND COALESCE(estado_capturado,'operativo') IN ('operativo','')",
+                (user, mid))
+        except Exception as e:
+            print(f"[otrep] advertencia mid={mid}: {e}", flush=True)
+
+    # 4) Piola: queda atada al MODELO en el Catálogo. Si el técnico eligió
+    #    una piola conocida y midió otra cosa, se corrige el largo; si el
+    #    modelo no tenía, se crea la primera con lo declarado en terreno.
+    prov_nombre = None
+    if origen == "piola" and piola_metros:
+        try:
+            prod = _otrep_producto_de_maquina(m)
+            if prod:
+                if piola_id:
+                    fila = mysql_fetchone(
+                        "SELECT id, largo_m, descripcion FROM cat_producto_piolas "
+                        " WHERE id=%s AND producto_id=%s", (piola_id, prod["id"]))
+                    if not fila:
+                        piola_id = None
+                    else:
+                        piola_desc = piola_desc or fila.get("descripcion") or ""
+                        if fila.get("largo_m") is None or abs(float(fila["largo_m"]) - piola_metros) > 0.005:
+                            mysql_execute(
+                                "UPDATE cat_producto_piolas SET largo_m=%s, updated_by=%s WHERE id=%s",
+                                (piola_metros, user, piola_id))
+                            _mant_log("maquina", mid, "piola_largo_actualizado",
+                                      f"{prod.get('sku')} · piola #{piola_id}: {piola_metros:g} m "
+                                      f"(medido en {v.get('numero_ot') or vid})")
+                if not piola_id:
+                    n_p = int((mysql_fetchone(
+                        "SELECT COUNT(*) AS n FROM cat_producto_piolas WHERE producto_id=%s AND activo=1",
+                        (prod["id"],)) or {}).get("n") or 0)
+                    if n_p < 10:
+                        desc_nueva = piola_desc or f"Declarada en {v.get('numero_ot') or ('OT #' + str(vid))}"
+                        piola_id = _otrep_insert(
+                            "INSERT INTO cat_producto_piolas (producto_id, largo_m, descripcion, orden, "
+                            " created_by, updated_by) "
+                            "VALUES (%s,%s,%s,(SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m "
+                            "  FROM cat_producto_piolas WHERE producto_id=%s) t),%s,%s)",
+                            (prod["id"], piola_metros, desc_nueva[:300], prod["id"], user, user))
+                        piola_desc = desc_nueva
+                        _mant_log("maquina", mid, "piola_creada_desde_ot",
+                                  f"{prod.get('sku')} · {desc_nueva} · {piola_metros:g} m")
+                if piola_id:
+                    mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET piola_id=%s WHERE id=%s",
+                                  (piola_id, sol_id))
+        except Exception as e:
+            print(f"[otrep] piola modelo mid={mid}: {e}", flush=True)
+    if stock and stock.get("proveedor_id"):
+        try:
+            prov_nombre = (mysql_fetchone("SELECT nombre FROM mant_proveedores_repuesto WHERE id=%s",
+                                          (stock["proveedor_id"],)) or {}).get("nombre")
+        except Exception:
+            prov_nombre = None
+
+    # 5) Ticket por OT (uno que agrupa) + nota en su hilo
+    tid, numero_ticket, creado = _otrep_ticket_para_ot(vid, v, user)
+    if tid:
+        try:
+            mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET ticket_id=%s WHERE id=%s",
+                          (tid, sol_id))
+        except Exception as e:
+            print(f"[otrep] ticket_id sol={sol_id}: {e}", flush=True)
+        _otrep_ticket_anotar(tid, m, {
+            "id": sol_id, "visita_id": vid, "repuesto_nombre": nombre, "cantidad": cantidad,
+            "piola_metros": piola_metros, "piola_desc": piola_desc, "medida": medida, "motivo": motivo,
+            "dejo_fuera_servicio": dejar_fs, "proveedor_nombre": prov_nombre,
+            "n_fotos": 1 if tipo == "foto" else 0, "n_videos": 1 if tipo == "video" else 0,
+        }, v.get("numero_ot") or f"OT #{vid}", user)
+        if dejar_fs:
+            try:
+                mysql_execute("UPDATE tk_tickets SET prioridad='urgente' WHERE id=%s", (tid,))
+            except Exception:
+                pass
+
+    # 6) Auditoría
+    try:
+        _num = v.get("numero_ot") or f"OT #{vid}"
+        _mant_log("visita", vid, "repuesto_solicitado",
+                  f"#{sol_id} {nombre} × {cantidad:g}"
+                  + (f" · {piola_metros:g} m piola" if piola_metros else "")
+                  + f" · {m.get('nombre') or ('Equipo #' + str(mid))} · {motivo[:200]}"
+                  + (f" · ticket {numero_ticket}" if numero_ticket else "")
+                  + (" · fuera de servicio" if dejar_fs else ""))
+        _mant_log("maquina", mid, "repuesto_solicitado",
+                  f"Desde {_num}: {nombre} × {cantidad:g} · {motivo[:200]}"
+                  + (f" · ticket {numero_ticket}" if numero_ticket else ""))
+    except Exception:
+        pass
+
+    aviso = None
+    if not tid:
+        aviso = ("La solicitud quedó guardada, pero no se pudo crear el ticket de seguimiento. "
+                 "Gestión puede crearlo desde Repuestos → Solicitudes desde OT.")
+    return jsonify({
+        "ok": True, "solicitud_id": sol_id, "ticket_id": tid, "numero_ticket": numero_ticket,
+        "ticket_creado": creado, "piola_id": piola_id,
+        "fuera_servicio": bool(dejar_fs and fs_ok), "aviso": aviso,
+    })
+
+
+@app.route("/ot/api/<int:vid>/equipo/<int:mid>/evidencia", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_equipo_evidencia(vid, mid):
+    """Un archivo más de evidencia (foto o video) para una solicitud de
+    repuesto ya creada (`solicitud_id`) o para la baja del equipo
+    (`contexto=baja`). Uno por request, por el techo de tamaño."""
+    v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
+    if err:
+        return err
+    user = current_username() or "sistema"
+    f, tipo, e_arch = _otrep_primer_archivo()
+    if e_arch:
+        return _ot2_err(e_arch, "EVIDENCIA_INVALIDA")
+    if not f:
+        return _ot2_err("No llegó ningún archivo.", "EVIDENCIA_REQUERIDA")
+    if not _gcs_ready():
+        return _ot2_err("El almacenamiento de fotos no está disponible en este momento.",
+                        "STORAGE_OFF", http=503)
+    sid_txt = str(request.form.get("solicitud_id") or "").strip()
+    contexto = (request.form.get("contexto") or "").strip().lower()
+    if sid_txt.isdigit():
+        s = mysql_fetchone(
+            "SELECT id, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
+            " WHERE id=%s AND visita_id=%s AND maquina_id=%s", (int(sid_txt), vid, mid))
+        if not s:
+            return _ot2_err("Esa solicitud no es de este equipo.", "SOLICITUD_NO_EXISTE", http=404)
+        ok, e_ev = _otrep_subir_evidencia(
+            vid, mid, "repuestos", f"rep{s['id']}", f, tipo,
+            f"Solicitud de repuesto #{s['id']}: {s['repuesto_nombre']}", user, solicitud_id=s["id"])
+    elif contexto == "baja":
+        ok, e_ev = _otrep_subir_evidencia(
+            vid, mid, "bajas", "baja", f, tipo,
+            f"Baja del equipo desde {v.get('numero_ot') or ('OT #' + str(vid))}", user)
+    else:
+        return _ot2_err("Falta a qué pertenece la evidencia.", "CONTEXTO_REQUERIDO")
+    if not ok:
+        return _ot2_err(e_ev or "No se pudo subir la evidencia.", "EVIDENCIA_NO_SUBIO", http=502)
+    return jsonify({"ok": True, "tipo": tipo})
+
+
+@app.route("/ot/api/<int:vid>/equipo/<int:mid>/dar-baja", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_equipo_dar_baja(vid, mid):
+    """Da de BAJA un equipo desde la OT (Daniel 2026-09-20: "ellos pueden
+    dar de baja la máquina porque se destruyó, dejar una leyenda").
+
+    Baja DIRECTA por el técnico asignado o gestión -- decisión explícita de
+    Daniel el 2026-09-20 sobre la alternativa "propone y gestión confirma",
+    sabiendo que la ficha es confidencial. Las salvaguardas que sí quedan:
+    argumento ≥ 12 caracteres, al menos una foto del equipo como está
+    (registrada ANTES de tocar la ficha: sin evidencia guardada no hay baja),
+    las mismas acciones canónicas de auditoría que la baja desde la ficha
+    (maquina_eliminada_soft / dada_de_baja) y reversible por admin con
+    "Mostrar bajas → restaurar".
+
+    En ESTA OT el equipo queda 'saltado · dado_de_baja': sale del candado
+    de firma (ver _ot_maquinas_excluidas_cierre) pero sigue visible en la
+    lista con su sello. Las solicitudes de repuesto abiertas del equipo se
+    rechazan solas (no hay a qué instalarle nada).
+
+    Body multipart: motivo, evidencia (la PRIMERA foto; más archivos por
+    /evidencia con contexto=baja).
+
+    🔒 FIX 2026-09-20 (revisión): "baja directa por el técnico" fue la
+    decisión de Daniel sobre el TÉCNICO ASIGNADO -- no consta que incluya al
+    proveedor EXTERNO, y la baja desde la ficha (mant_maquina_del) sigue
+    exigiendo superadmin/mant_equipos_baja "porque la ficha es confidencial".
+    Sin este candado, @_ot_can_configurar deja pasar igual a un externo
+    asignado. Fuera de servicio y solicitar repuesto SÍ son del externo (son
+    reversibles); sacar el equipo del parque del cliente no.
+    """
+    if _es_tecnico_externo():
+        return _ot2_err(
+            "Un proveedor externo no da de baja equipos del cliente: márcalo "
+            "fuera de servicio y avisa a gestión.", "SOLO_INTERNO_O_GESTION", http=403)
+    v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
+    if err:
+        return err
+    if (m.get("estado") or "").lower() == "baja":
+        return jsonify({"ok": True, "ya_de_baja": True})
+    motivo = (request.form.get("motivo") or "").strip()
+    if len(motivo) < 12:
+        return _ot2_err("Explica por qué se da de baja (mínimo 12 caracteres): queda en la "
+                        "auditoría de la ficha del cliente.", "MOTIVO_INSUFICIENTE")
+    f, tipo, e_arch = _otrep_primer_archivo()
+    if e_arch:
+        return _ot2_err(e_arch, "EVIDENCIA_INVALIDA")
+    if not f or tipo != "foto":
+        return _ot2_err("Dar de baja exige al menos una foto del equipo como quedó (la primera "
+                        "evidencia tiene que ser una foto).", "EVIDENCIA_REQUERIDA")
+    if not _gcs_ready():
+        return _ot2_err("El almacenamiento de fotos no está disponible en este momento. "
+                        "Intenta de nuevo en un minuto.", "STORAGE_OFF", http=503)
+    user = current_username() or "sistema"
+    numero_ot = v.get("numero_ot") or f"OT #{vid}"
+
+    # 1) Evidencia primero: sin foto REGISTRADA no hay baja.
+    ok_ev, e_ev = _otrep_subir_evidencia(
+        vid, mid, "bajas", "baja", f, "foto", f"Baja del equipo desde {numero_ot}: {motivo}", user)
+    if not ok_ev:
+        return _ot2_err((e_ev or "No se pudo subir la foto") + ", así que el equipo NO se dio de "
+                        "baja. Intenta de nuevo.", "EVIDENCIA_NO_SUBIO", http=502)
+
+    # 2) La baja: misma escritura que mant_maquina_del + estado capturado.
+    try:
+        mysql_execute(
+            "UPDATE mant_maquinas SET estado='baja', estado_capturado='dado_baja', "
+            "       estado_op='critico', updated_by=%s, last_visita_id=%s WHERE id=%s",
+            (user, vid, mid))
+    except Exception as e:
+        print(f"[otrep] dar-baja mid={mid}: {e}", flush=True)
+        return _ot2_err("No pudimos dar de baja el equipo.", "ERROR_INTERNO", http=500)
+
+    # 3) Sale del checklist de ESTA OT, queda visible con su sello. El
+    #    motivo se SUMA a la observación previa del técnico, no la pisa.
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, razon_saltado, "
+            "   observacion_tecnico, revisado_at, revisado_por) "
+            "VALUES (%s, %s, 'saltado', 'dado_de_baja', %s, NOW(), %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "  estado_revision='saltado', razon_saltado='dado_de_baja', "
+            "  observacion_tecnico = CONCAT_WS(' · ', NULLIF(observacion_tecnico,''), VALUES(observacion_tecnico)), "
+            "  revisado_at=NOW(), revisado_por=VALUES(revisado_por)",
+            (vid, mid, f"Baja: {motivo}", user))
+    except Exception as e:
+        print(f"[otrep] dar-baja estado_revision vid={vid} mid={mid}: {e}", flush=True)
+
+    # 4) Solicitudes de repuesto abiertas del equipo: se rechazan solas.
+    n_rech = 0
+    try:
+        abiertas = mysql_fetchall(
+            "SELECT id, ticket_id, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
+            " WHERE maquina_id=%s AND estado IN ('solicitado','validado','pedido','recibido')",
+            (mid,)) or []
+        for s in abiertas:
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET estado='rechazado', resuelto_por=%s, "
+                "       nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) WHERE id=%s",
+                (user, f"Equipo dado de baja desde {numero_ot}", s["id"]))
+            n_rech += 1
+            if s.get("ticket_id"):
+                try:
+                    mysql_execute(
+                        "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                        "VALUES (%s,'cambio_estado',%s,%s,1)",
+                        (s["ticket_id"], f"Solicitud de repuesto #{s['id']} ({s['repuesto_nombre']}) "
+                                         f"rechazada: el equipo fue dado de baja desde {numero_ot}. "
+                                         f"Motivo: {motivo}", user))
+                except Exception:
+                    pass
+                _otrep_resolver_ticket_si_corresponde(s["ticket_id"], user)
+    except Exception as e:
+        print(f"[otrep] dar-baja rechazar solicitudes mid={mid}: {e}", flush=True)
+
+    # 5) Auditoría: mismas acciones canónicas que la baja desde la ficha,
+    #    así dashboards y "Mostrar bajas" la ven igual.
+    detalle = (f"{m.get('nombre') or ''} (SKU {m.get('sku') or '—'} · Serie {m.get('serie') or '—'}) "
+               f"· estado: {m.get('estado')} → baja · desde {numero_ot} · por {user} "
+               f"· motivo: {motivo[:300]} · con foto"
+               + (f" · {n_rech} solicitud(es) de repuesto rechazadas" if n_rech else ""))
+    try:
+        _mant_log("maquina", mid, "maquina_eliminada_soft", detalle)
+        _mant_log("cliente", m.get("cliente_id"), "equipo_eliminado_soft", detalle)
+        _mant_log("maquina", mid, "dada_de_baja", detalle)
+        _mant_log("visita", vid, "equipo_dado_de_baja",
+                  f"{m.get('nombre') or ('Equipo #' + str(mid))}: {motivo}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "estado": "baja", "solicitudes_rechazadas": n_rech})
+
+
+@app.route("/ot/api/<int:vid>/repuestos", methods=["GET"])
+@_mant_required
+def ot2_api_ot_repuestos(vid):
+    """Solicitudes de repuesto de una OT (para refrescar la tarjeta sin
+    recargar). Quien puede VER la OT, puede ver esto (recortado para el
+    técnico externo)."""
+    if not _puede_ot_accion(vid, "ver"):
+        return _ot2_err("No tienes acceso a esta OT.", "SIN_ACCESO", http=403)
+    try:
+        sols = _otrep_listar("s.visita_id=%s", (vid,), limit=200, para_ot=True)
+    except Exception as e:
+        print(f"[otrep] listar vid={vid}: {e}", flush=True)
+        sols = []
+    return jsonify({"ok": True, "solicitudes": sols})
+
+
+@app.route("/repuestos/api/solicitudes-ot", methods=["GET"])
+@_otrep_gestion_required
+def repstock_solicitudes_ot_listar():
+    """Cola de solicitudes desde OT: filtros por estado (o 'abiertas'),
+    texto, ticket, OT o máquina. Trae conteo por estado para los chips.
+    Techo de 400 filas (se avisa con `truncado`, REGLA #4.3)."""
+    estado = (request.args.get("estado") or "").strip().lower()
+    q = (request.args.get("q") or "").strip()
+    where, params = ["1=1"], []
+    if estado == "abiertas":
+        where.append("s.estado IN ('solicitado','validado','pedido','recibido')")
+    elif estado in _OTREP_ESTADOS:
+        where.append("s.estado=%s"); params.append(estado)
+    for arg, col in (("ticket_id", "s.ticket_id"), ("visita_id", "s.visita_id"),
+                     ("maquina_id", "s.maquina_id"), ("cliente_id", "s.cliente_id")):
+        val = (request.args.get(arg) or "").strip()
+        if val.isdigit():
+            where.append(f"{col}=%s"); params.append(int(val))
+    if q:
+        like = f"%{q}%"
+        where.append("(s.repuesto_nombre LIKE %s OR v.numero_ot LIKE %s OR m.nombre LIKE %s "
+                     " OR c.razon_social LIKE %s OR t.numero_ticket LIKE %s OR rs.sku LIKE %s "
+                     " OR m.serie LIKE %s)")
+        params += [like] * 7
+    LIM = 400
+    try:
+        sols = _otrep_listar(" AND ".join(where), params, limit=LIM)
+        conteo = {r["estado"]: int(r["n"]) for r in (mysql_fetchall(
+            "SELECT estado, COUNT(*) AS n FROM mant_ot_repuesto_solicitudes GROUP BY estado") or [])}
+    except Exception as e:
+        print(f"[otrep] cola: {e}", flush=True)
+        sols, conteo = [], {}
+    puede_gestion_plata = not _es_rol_tecnico()
+    return jsonify({"ok": True, "solicitudes": sols, "conteo": conteo,
+                    "estados": _OTREP_ESTADO_LABEL, "transiciones": _OTREP_TRANSICIONES,
+                    "puede_pedir_rechazar": puede_gestion_plata,
+                    "truncado": len(sols) >= LIM})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/estado", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_ot_estado(sid):
+    """Mueve una solicitud por su trayectoria. Body JSON:
+      estado             destino (ver _OTREP_TRANSICIONES)
+      repuesto_stock_id  obligatorio para 'validado' si la solicitud no tenía
+      proveedor_id       OBLIGATORIO en 'pedido' (Daniel: "OT, proveedor,
+                         repuesto, cantidades"); oc_numero opcional
+      nota               obligatoria en 'rechazado'; opcional en el resto
+      equipo_operativo   true en 'instalado' si el equipo volvió a operar
+    'pedido' y 'rechazado' son decisiones de gestión, no de un técnico.
+    """
+    d = request.get_json(silent=True) or {}
+    nuevo = (d.get("estado") or "").strip().lower()
+    s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    actual = s.get("estado")
+    if nuevo not in _OTREP_TRANSICIONES.get(actual, ()):
+        return jsonify({"ok": False, "error":
+                        f"Desde \"{_OTREP_ESTADO_LABEL.get(actual, actual)}\" no se puede pasar a "
+                        f"\"{_OTREP_ESTADO_LABEL.get(nuevo, nuevo or '?')}\"."}), 400
+    if nuevo in _OTREP_TRANSICIONES_GESTION and _es_rol_tecnico():
+        return jsonify({"ok": False, "error":
+                        "Pedir al proveedor o rechazar una solicitud lo decide gestión, "
+                        "no un técnico."}), 403
+    user = current_username() or "sistema"
+    nota = (d.get("nota") or "").strip()
+    sets, params = ["estado=%s"], [nuevo]
+    stock = None
+    prov = None
+    if nuevo == "validado":
+        rid = str(d.get("repuesto_stock_id") or s.get("repuesto_stock_id") or "").strip()
+        if not rid.isdigit():
+            return jsonify({"ok": False, "error":
+                            "Para validar hay que ligar la solicitud a un repuesto REAL de la Bodega "
+                            "(uno existente, o créalo primero con su ubicación)."}), 400
+        stock = mysql_fetchone(
+            "SELECT id, sku, descripcion, proveedor_id FROM mant_repuestos_stock "
+            " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
+        if not stock:
+            return jsonify({"ok": False, "error": "Ese repuesto de bodega no existe o está inactivo."}), 400
+        sets += ["repuesto_stock_id=%s", "repuesto_sku=%s", "validado_por=%s", "validado_at=NOW()"]
+        params += [stock["id"], stock.get("sku"), user]
+        if stock.get("proveedor_id") and not s.get("proveedor_id"):
+            sets.append("proveedor_id=%s"); params.append(stock["proveedor_id"])
+    if nuevo == "pedido":
+        pid_txt = str(d.get("proveedor_id") or s.get("proveedor_id") or "").strip()
+        if not pid_txt.isdigit():
+            return jsonify({"ok": False, "error":
+                            "Indica a qué proveedor se le pide: es parte de lo que queda en el ticket."}), 400
+        prov = mysql_fetchone("SELECT id, nombre FROM mant_proveedores_repuesto WHERE id=%s", (int(pid_txt),))
+        if not prov:
+            return jsonify({"ok": False, "error": "Ese proveedor no existe."}), 400
+        sets += ["pedido_at=NOW()", "proveedor_id=%s"]; params.append(prov["id"])
+        oc = (d.get("oc_numero") or "").strip()[:60]
+        if oc:
+            sets.append("oc_numero=%s"); params.append(oc)
+    if nuevo == "recibido":
+        sets.append("recibido_at=NOW()")
+    if nuevo == "instalado":
+        sets += ["instalado_at=NOW()", "resuelto_por=%s"]; params.append(user)
+    if nuevo == "rechazado":
+        if len(nota) < 5:
+            return jsonify({"ok": False, "error": "Di por qué se rechaza (queda en la solicitud y en el ticket)."}), 400
+        sets.append("resuelto_por=%s"); params.append(user)
+    if nuevo == "solicitado":
+        # Reabrir: vuelve al inicio de la trayectoria, limpia lo que ya no aplica
+        sets += ["resuelto_por=NULL", "validado_at=NULL", "validado_por=NULL",
+                 "pedido_at=NULL", "recibido_at=NULL", "instalado_at=NULL"]
+    if nota:
+        # 🔒 FIX 2026-09-20 (revisión): esto REEMPLAZABA nota_gestion en cada
+        # transición -- validar con una nota y después rechazar borraba la
+        # primera. Se acumula, mismo criterio que ya usa dar-baja.
+        sets.append("nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s)")
+        params.append(nota[:5000])
+    params.append(sid)
+    try:
+        mysql_execute(f"UPDATE mant_ot_repuesto_solicitudes SET {', '.join(sets)} WHERE id=%s",
+                      tuple(params))
+    except Exception as e:
+        print(f"[otrep] estado sid={sid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo actualizar la solicitud."}), 500
+    equipo_operativo = False
+    if nuevo in ("instalado", "rechazado"):
+        equipo_operativo = _otrep_cerrar_alerta_maquina(
+            s["maquina_id"], volver_operativo=bool(d.get("equipo_operativo")) and nuevo == "instalado",
+            user=user, motivo=s.get("repuesto_nombre") or "")
+        _otrep_resolver_ticket_si_corresponde(s.get("ticket_id"), user)
+    elif nuevo == "solicitado":
+        # Reabierta: la máquina vuelve a tener una solicitud en curso.
+        try:
+            mysql_execute(
+                "UPDATE mant_maquinas SET estado_capturado='advertencia' "
+                " WHERE id=%s AND COALESCE(estado_capturado,'operativo') IN ('operativo','')",
+                (s["maquina_id"],))
+            if s.get("ticket_id"):
+                # 'cancelado' también cuenta como cerrado, igual que en
+                # _otrep_ticket_para_ot -- si no, reabrir la solicitud no
+                # reabría un ticket que alguien canceló desde Tickets.
+                mysql_execute(
+                    "UPDATE tk_tickets SET estado='open', cerrado_at=NULL, cerrado_por=NULL "
+                    " WHERE id=%s AND estado IN ('resolved','closed','cancelado')", (s["ticket_id"],))
+        except Exception as e:
+            print(f"[otrep] reabrir sid={sid}: {e}", flush=True)
+    # Nota en el hilo del ticket + auditoría de la OT
+    label = _OTREP_ESTADO_LABEL.get(nuevo, nuevo)
+    if s.get("ticket_id"):
+        try:
+            txt = (f"Solicitud de repuesto #{sid} ({s.get('repuesto_nombre')}): "
+                   f"{_OTREP_ESTADO_LABEL.get(actual, actual)} → {label}"
+                   + (f"\nLigada a {stock['sku']} · {stock['descripcion']}" if stock else "")
+                   + (f"\nProveedor: {prov['nombre']}" if prov else "")
+                   + (f"\nOC {d.get('oc_numero')}" if nuevo == 'pedido' and d.get("oc_numero") else "")
+                   + ("\nEl equipo volvió a operativo." if equipo_operativo and s.get("dejo_fuera_servicio") else "")
+                   + (f"\n{nota}" if nota else ""))
+            mysql_execute(
+                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+                "VALUES (%s,'cambio_estado',%s,%s,%s,1)",
+                (s["ticket_id"], txt,
+                 json.dumps({"solicitud_repuesto_id": sid, "antes": actual, "nuevo": nuevo},
+                            ensure_ascii=False), user))
+        except Exception as e:
+            print(f"[otrep] tk_mensajes estado sid={sid}: {e}", flush=True)
+    try:
+        _mant_log("visita", s["visita_id"], "repuesto_solicitud_estado",
+                  f"#{sid} {s.get('repuesto_nombre')}: {actual} → {nuevo}"
+                  + (f" · {stock['sku']}" if stock else "")
+                  + (f" · proveedor {prov['nombre']}" if prov else "")
+                  + (f" · {nota[:200]}" if nota else ""))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "estado": nuevo, "estado_label": label,
+                    "siguientes": list(_OTREP_TRANSICIONES.get(nuevo, ()))})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/ticket", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_ot_ticket(sid):
+    """Crea (o reutiliza) el ticket agrupador de la OT para una solicitud
+    que quedó sin ticket (falló al crearse)."""
+    s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if s.get("ticket_id"):
+        t = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (s["ticket_id"],)) or {}
+        return jsonify({"ok": True, "ticket_id": s["ticket_id"], "numero_ticket": t.get("numero_ticket"),
+                        "ya_tenia": True})
+    v = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (s["visita_id"],))
+    m = mysql_fetchone("SELECT id, nombre, sku, serie FROM mant_maquinas WHERE id=%s", (s["maquina_id"],))
+    if not v or not m:
+        return jsonify({"ok": False, "error": "La OT o el equipo de esta solicitud ya no existen."}), 404
+    user = current_username() or "sistema"
+    tid, numero, creado = _otrep_ticket_para_ot(v["id"], v, user)
+    if not tid:
+        return jsonify({"ok": False, "error": "No se pudo crear el ticket. Intenta de nuevo."}), 500
+    try:
+        mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET ticket_id=%s WHERE id=%s", (tid, sid))
+    except Exception as e:
+        print(f"[otrep] ticket manual sid={sid}: {e}", flush=True)
+    sol = dict(s)
+    sol["n_fotos"], sol["n_videos"] = int(s.get("n_fotos") or 0), int(s.get("n_videos") or 0)
+    _otrep_ticket_anotar(tid, m, sol, v.get("numero_ot") or f"OT #{v['id']}", user)
+    return jsonify({"ok": True, "ticket_id": tid, "numero_ticket": numero, "creado": creado})
 
 
 @app.route("/ot/api/<int:vid>/equipos-desde-documento", methods=["POST"])
@@ -88910,6 +90591,17 @@ def _anexo_pdf_bytes(a):
             "firma_url": (_img_a_data_uri(a.get("firma_url"))
                           if a.get("firma_url") else None),
             "firmado_en": chile_fmt_filter(a.get("firmado_at"), "%d/%m/%Y %H:%M") if a.get("firmado_at") else "",
+            # 🔏 2026-09-20 (Daniel: "¿dónde queda ese IP?"): la evidencia
+            # de trazabilidad se IMPRIME en el documento, no solo se guarda
+            # -- así el PDF firmado se sostiene solo ante un tercero: qué
+            # texto exacto se firmó (hash), desde dónde (IP), con qué
+            # dispositivo y a qué correo/teléfono se mandó el link.
+            "ip": a.get("firmado_ip") or "",
+            "dispositivo": _ua_resumen(a.get("firmado_user_agent") or ""),
+            "hash_srv": (a.get("documento_hash") or "")[:16],
+            "hash_cli": (a.get("documento_hash_cliente") or "")[:16],
+            "enviado_a": " · ".join(x for x in (a.get("enviado_email"), a.get("enviado_tel")) if x),
+            "firmado_en_cliente": a.get("firmado_en_cliente") or "",
         }
     # 🆕 2026-08-31 (Daniel: "los productos los estipulen en una tabla, que
     # me pueda evidenciar tanto SKU, descripción y cantidad"): distinto del
@@ -89318,8 +91010,18 @@ def ot2_anexo_firma_submit(token):
     # `hash_cliente` (navegador) = "el firmante vio y firmó ESTE texto exacto".
     doc_hash = _anexo_hash(a_full)
     firma_url = _subir_firma_storage(firma_data_url, a["id"], "proveedor_anexo")
-    ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-          or request.remote_addr or "")[:64]
+    # 🔒 FIX 2026-09-20 (Daniel: "¿dónde queda ese IP? ¿de qué manera
+    # podemos cagarla?"). Acá se guardaba el PRIMER valor de X-Forwarded-For
+    # -- ese valor lo escribe el navegador del firmante, no el proxy: un
+    # firmante que después quisiera desconocer la firma podía mandar una IP
+    # inventada y la evidencia quedaba "probando" una IP que no era la suya.
+    # Con ProxyFix(x_for=1) (arriba, ~línea 317) request.remote_addr YA es
+    # el salto confiable que agrega el Google Front End (mismo criterio que
+    # _rl_client_ip). La cadena XFF completa se conserva en el log de
+    # auditoría por si un perito la necesita, pero la IP de la firma es la
+    # que no se puede falsificar.
+    ip = (request.remote_addr or "")[:64]
+    xff = (request.headers.get("X-Forwarded-For") or "")[:200]
     ua = (request.headers.get("User-Agent") or "")[:400]
 
     try:
@@ -89350,7 +91052,8 @@ def ot2_anexo_firma_submit(token):
     try:
         _mant_log("anexo", a["id"], "firmado",
                   f"{nombre} ({rut}) · hash_srv={doc_hash[:12]}… · "
-                  f"hash_cli={(hash_cliente or '—')[:12]} · ip={ip} · {dispositivo}")
+                  f"hash_cli={(hash_cliente or '—')[:12]} · ip={ip}"
+                  + (f" · xff={xff}" if xff else "") + f" · {dispositivo}")
     except Exception:
         pass
 
@@ -94147,8 +95850,7 @@ def mant_ot_firmar_revision(vid):
         # Best-effort: un fallo acá no puede impedir una firma ya válida.
         try:
             _ua_tec = (request.headers.get("User-Agent") or "")[:400]
-            _ip_tec = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-                       or request.remote_addr or "")[:64]
+            _ip_tec = (request.remote_addr or "")[:64]  # IP confiable vía ProxyFix (ver _rl_client_ip)
             mysql_execute(
                 "INSERT INTO mant_ot_signatures "
                 "(ot_id, tipo_firma, signer_name, signature_url, "
@@ -94321,8 +96023,7 @@ def mant_ot_firmar_cliente(vid):
         # ── Registro de identidad del firmante cliente (Fase 2 + trazabilidad) ──
         try:
             _ua = (request.headers.get("User-Agent") or "")[:400]
-            _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-                   or request.remote_addr or "")[:64]
+            _ip = (request.remote_addr or "")[:64]  # IP confiable vía ProxyFix (ver _rl_client_ip)
             mysql_execute(
                 "INSERT INTO mant_ot_signatures "
                 "(ot_id, tipo_firma, suggested_contact_name, suggested_contact_rut, "
@@ -94908,8 +96609,7 @@ def ot_firma_publica_submit(token):
             (firma_url, nombre, vid))
         try:
             _ua = (request.headers.get("User-Agent") or "")[:400]
-            _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-                   or request.remote_addr or "")[:64]
+            _ip = (request.remote_addr or "")[:64]  # IP confiable vía ProxyFix (ver _rl_client_ip)
             mysql_execute(
                 "INSERT INTO mant_ot_signatures "
                 "(ot_id, tipo_firma, signer_name, signer_rut, signer_role, signature_url, ip, user_agent) "
@@ -119612,6 +121312,17 @@ def mant_maquina_patch(mid):
         if v_antes != v_nuevo:
             cambios_criticos.append(("estado_op", v_antes, v_nuevo))
         sets.append("estado_op=%s"); vals.append(v_nuevo)
+        # 🔒 FIX 2026-09-20 (revisión, hallazgo alto): un equipo que quedó
+        # 'fuera_servicio'/'advertencia'/'dado_baja' desde una OT (ver
+        # ot2_api_equipo_fuera_servicio / solicitar-repuesto) solo podía
+        # volver a operativo DESDE esa misma OT -- si ya estaba sellada
+        # (firmada/cerrada), no quedaba NINGÚN camino en toda la app para
+        # reactivarlo: ni el PATCH de la ficha tocaba estado_capturado. Poner
+        # "Operativo" acá (el único lugar de la ficha que edita el estado del
+        # equipo) también limpia esa bandera -- mismo criterio que ya usa
+        # /ot/api/<vid>/equipo/<mid>/fuera-servicio (reactivar).
+        if v_nuevo == "operativo":
+            sets.append("estado_capturado='operativo'")
 
     # Numéricos
     if "anio_fabricacion" in d:
@@ -127542,6 +129253,14 @@ try:
         _ensure_mant_facturas_proveedor_tables()
 except Exception as _mfp_err:
     print(f"[ILUS][WARN] _ensure_mant_facturas_proveedor_tables: {_mfp_err}", flush=True)
+
+# 🔧 Solicitud de repuestos / baja desde la OT (Daniel 2026-09-20) +
+# cat_productos.piola_metros. SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_ot_repuesto_solicitudes_tables()
+except Exception as _otrep_err:
+    print(f"[ILUS][WARN] _ensure_ot_repuesto_solicitudes_tables: {_otrep_err}", flush=True)
 
 # Columnas de trazabilidad de EDICIÓN de equipos descubiertos (Daniel 2026-07-06).
 try:

@@ -1188,6 +1188,18 @@
           <i class="bi bi-dash-circle"></i>Sin mantención
         </button>
       </div>
+      {# 🔧 2026-09-20 (Daniel: "en la ficha de productos poder filtrar los
+         productos que estén en malas condiciones"). Lo que las OT movieron:
+         fuera de servicio, con alerta, con repuesto o cambio de piola
+         pendiente. Toggle aparte del plan, se combina con el resto. #}
+      {% set _np = namespace(n=0) %}
+      {% for _m in maquinas %}{% if (_m.estado or 'activo') != 'baja' and ((_m.estado_capturado or '') in ('fuera_servicio','advertencia','en_reparacion') or (_m.rep_pend or 0) > 0) %}{% set _np.n = _np.n + 1 %}{% endif %}{% endfor %}
+      <button type="button" class="eq-prob-btn" data-plan="problemas"
+              onclick="eqFiltrarProblemas(this)"
+              title="Fuera de servicio, con alerta o con repuesto/cambio de piola pendiente">
+        <i class="bi bi-exclamation-diamond-fill"></i>Con problemas
+        <span class="badge" style="background:{{ '#dc2626' if _np.n else '#e2e8f0' }};color:{{ '#fff' if _np.n else '#475569' }};font-size:.62rem;margin-left:3px">{{ _np.n }}</span>
+      </button>
       <div class="ms-auto d-flex gap-2 flex-wrap align-items-center">
         {# Toggle "Mostrar dados de baja" — por default ocultos, click para ver papelera #}
         <label class="d-flex align-items-center gap-1" style="font-size:.78rem;color:#475569;cursor:pointer;user-select:none"
@@ -1274,9 +1286,12 @@
           {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
           {% set _es_baja = ((m.estado or 'activo') == 'baja') %}
           {% set _apl_row = (m.aplica_mantencion if m.aplica_mantencion is not none else 1) %}
+          {% set _ec_row = (m.estado_capturado or '') %}
+          {% set _problema = (not _es_baja) and (_ec_row in ('fuera_servicio','advertencia','en_reparacion') or (m.rep_pend or 0) > 0) %}
           <tr id="maq-{{ m.id }}"
               data-maquina-id="{{ m.id }}"
               data-estado="{{ m.estado or 'activo' }}"
+              data-problema="{{ 1 if _problema else 0 }}"
               data-aplica="{{ 1 if _apl_row else 0 }}"
               data-doc-origen="{{ m.doc_origen or '' }}"
               data-sku="{{ m.sku or '' }}"
@@ -1426,6 +1441,39 @@
               <span class="eq-estado-{{ m.estado or 'activo' }}">
                 {{ (m.estado or 'activo').replace('_',' ').title() }}
               </span>
+              {# 🔧 2026-09-20 (Daniel: "si hay una OT que está solicitando
+                 repuestos, me lo va a mover en la ficha del cliente e
+                 indicar lo que esa OT movió: que el equipo no quedó bien y
+                 que se tiene que volver"). Condición real del equipo + de
+                 qué OT/ticket viene, y el atajo para fijar la fecha de
+                 resolución del ticket sin salir de acá. #}
+              {% if not _es_baja %}
+                {% if _ec_row == 'fuera_servicio' %}
+                <div class="eq-cond fs" title="Marcado fuera de servicio desde una OT"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</div>
+                {% elif _ec_row == 'en_reparacion' %}
+                <div class="eq-cond fs"><i class="bi bi-wrench"></i>En reparación</div>
+                {% elif _ec_row == 'advertencia' or (m.rep_pend or 0) > 0 %}
+                <div class="eq-cond al" title="Operativo, pero con alerta desde una OT"><i class="bi bi-exclamation-triangle-fill"></i>Con alerta</div>
+                {% endif %}
+                {% for _rp in (m.rep_pendientes or [])[:3] %}
+                <div class="eq-cond-rep">
+                  <i class="bi {{ 'bi-link-45deg' if _rp.origen == 'piola' else ('bi-arrow-left-right' if _rp.origen == 'cinta' else 'bi-tools') }}"></i>
+                  <span>{{ 'Cambio de piola' if _rp.origen == 'piola' else ('Cambio de cinta' if _rp.origen == 'cinta' else _rp.repuesto_nombre) }}{% if _rp.piola_metros %} · {{ '%g' | format(_rp.piola_metros) }} m{% endif %}
+                    · <a href="{{ url_for('ot2_detalle', vid=_rp.visita_id) }}" title="La OT que lo levantó">{{ _rp.numero_ot }}</a>
+                    {% if _rp.ticket_id %}· <a href="/tickets/{{ _rp.ticket_id }}" title="Ticket de seguimiento">{{ _rp.numero_ticket }}</a>{% endif %}
+                    <em>{{ (_rp.estado_label or _rp.estado).split(' · ')[0] }}</em>
+                    {% if _rp.ticket_id and not is_tecnico %}
+                    · <button type="button" class="eq-cond-fecha" onclick="eqRepFechaResolucion({{ _rp.ticket_id }}, '{{ _rp.numero_ticket|e }}', '{{ _rp.ticket_fecha_limite or '' }}', '{{ _rp.ticket_fecha_limite_iso or '' }}')"
+                              title="Fijar la fecha de resolución del ticket">
+                      <i class="bi bi-calendar-event"></i>{{ _rp.ticket_fecha_limite or 'fecha de resolución' }}</button>
+                    {% elif _rp.ticket_fecha_limite %}· <i class="bi bi-calendar-event"></i>{{ _rp.ticket_fecha_limite }}{% endif %}
+                  </span>
+                </div>
+                {% endfor %}
+                {% if (m.rep_pend or 0) > 3 %}<div class="eq-cond-rep"><span>+{{ m.rep_pend - 3 }} solicitud(es) más</span></div>{% endif %}
+              {% elif _ec_row == 'dado_baja' %}
+                <div class="eq-cond fs" style="background:#f3f4f6;color:#374151"><i class="bi bi-trash3-fill"></i>Baja desde una OT</div>
+              {% endif %}
             </td>
             <td style="text-align:center;vertical-align:middle">
               {# 2026-08-30 (Daniel: "bloquéala para los técnicos por el

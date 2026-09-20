@@ -1855,6 +1855,11 @@ async function tkaToggleLineaDoc(inp, silent, autoReuse){
   if (inp.checked){
     _TKA.selDoc.set(key, {
       sku, nombre, qty,
+      // 2026-09-20 (Daniel: "hay que respetar las cantidades de la factura,
+      // así sea piso por 400"): la cantidad FACTURADA viaja aparte del
+      // saldo pendiente de despacho -- la OT usa esta, Tickets/Retiros
+      // siguen con `qty` (saldo).
+      cantidad_doc: parseFloat(inp.dataset.cantidadDoc) || qty,
       saldo: parseFloat(inp.dataset.qty) || qty,
       doc_tido: h.tido, doc_nudo: h.nudo,
       marcada_sin_saldo: isZero,
@@ -1875,7 +1880,9 @@ function tkaCambiarQtyDoc(inp){
   if (max > 0 && v > max) v = max;
   inp.value = v;
   const item = _TKA.selDoc.get(key);
-  if (item){ item.qty = v; _TKA.selDoc.set(key, item); }
+  // 2026-09-20: si la persona escribe una cantidad a mano, ESA es la que
+  // vale también para la OT (cantidad_doc solo reemplaza al saldo "fabricado").
+  if (item){ item.qty = v; item.cantidad_doc = v; _TKA.selDoc.set(key, item); }
   tkaUpdateCounter();
 }
 
@@ -2201,6 +2208,7 @@ async function tkaToggleLineaCli(inp, silent, autoReuse){
       sku: inp.dataset.sku,
       nombre: nombre,
       qty: qtyEff,
+      cantidad_doc: parseFloat(inp.dataset.cantidadDoc) || qtyEff,   // 2026-09-20, ver tkaToggleLineaDoc
       saldo: parseFloat(inp.dataset.qty) || qtyEff,
       marcada_sin_saldo: isZero,
       motivo_sin_saldo: isZero ? motivo : '',
@@ -2219,6 +2227,7 @@ function tkaCambiarQtyCli(inp){
   if (v > item.saldo) v = item.saldo;
   inp.value = v;
   item.qty = v;
+  item.cantidad_doc = v;   // 2026-09-20: lo tipeado manda, ver tkaCambiarQtyDoc
   _TKA.selCli.set(key, item);
   tkaUpdateCounter();
 }
@@ -3137,7 +3146,7 @@ async function tkaAsociarSeleccion(){
     const lineas = [];
     _TKA.selDoc.forEach(it => {
       if ((it.qty || 0) > 0){
-        lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty,
+        lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, cantidad_doc: it.cantidad_doc,
           marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' });
       }
     });
@@ -3149,7 +3158,7 @@ async function tkaAsociarSeleccion(){
     if ((it.qty || 0) <= 0) return;
     const key = `${it.tido}|${it.nudo}`;
     if (!docsToAdd.has(key)) docsToAdd.set(key, { tido: it.tido, nudo: it.nudo, lineas: [] });
-    docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty,
+    docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, cantidad_doc: it.cantidad_doc,
       marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' });
   });
 
@@ -3172,7 +3181,7 @@ async function tkaAsociarSeleccion(){
       info.lineas.forEach(l => {
         items.push({
           tido: info.tido, nudo: info.nudo,
-          sku: l.sku, nombre: l.nombre, qty: l.qty,
+          sku: l.sku, nombre: l.nombre, qty: l.qty, cantidad_doc: l.cantidad_doc,
           marcada_sin_saldo: !!l.marcada_sin_saldo,
           motivo_sin_saldo: l.motivo_sin_saldo || '',
         });
