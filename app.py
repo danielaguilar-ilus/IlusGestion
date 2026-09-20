@@ -107038,6 +107038,15 @@ def mant_facturas_proveedor_por_facturar_xlsx():
     _pct = lambda cob, pag: ((cob - pag) / cob * 100.0) if cob > 0 else None
     _hoy = _now_chile()
 
+    def _rut_xl(r):
+        """RUT tal como se guardó en la ficha pero sin espacios sueltos
+        ("78.151.592- 2" venía así de la ficha de DAP) y con puntos/guion."""
+        r = "".join((r or "").split())
+        try:
+            return _formato_rut_chile(r) or r
+        except Exception:
+            return r
+
     # ═══ Hoja Resumen: una fila por proveedor ═══
     ws = wb.active
     ws.title = "Resumen (interno)" if interno else "Resumen"
@@ -107056,7 +107065,7 @@ def mant_facturas_proveedor_por_facturar_xlsx():
         pag = sum(d["sugerido"] for d in lst); cob = sum(d["cobrado_cliente"] for d in lst)
         sin = sum(1 for d in lst if not d.get("anexo_firmado"))
         tecs = ", ".join(sorted({d["tecnico_nombre"] for d in lst if d.get("tecnico_nombre")}))
-        base = [_t(lst[0]["proveedor"]), lst[0]["proveedor_rut"] or "", _t(tecs), len(lst), serv, desp, pag]
+        base = [_t(lst[0]["proveedor"]), _rut_xl(lst[0]["proveedor_rut"]), _t(tecs), len(lst), serv, desp, pag]
         if interno:
             ws.append(base + [cob, cob - pag, _pct(cob, pag), sin])
             _fila_estilo(ws, fila, (5, 6, 7, 8, 9), 10)

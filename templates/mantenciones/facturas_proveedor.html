@@ -851,10 +851,6 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fpv-otbar-hint{color:#fbbf24;font-weight:800}
 .fpv-otbar-btns{display:flex;gap:8px;flex-wrap:wrap}
 .fpv-otbar .btn:disabled{opacity:.4}
-/* La barra solo existe con algo marcado: antes quedaba semitransparente
-   ocupando 1/4 del teléfono sin ninguna OT seleccionada. */
-.fpv-otbar{display:none}
-.fpv-otbar.on{display:flex}
 /* Título de sección + botones de Excel, sin romper la barrita roja del ::before */
 .fp-sec-row{flex-wrap:wrap}
 .fp-sec-btns{margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap}
@@ -863,14 +859,6 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fpv-selall{min-height:40px;text-transform:none;letter-spacing:0}
 .fpv-selhint{font-size:.76rem;color:#64748b;font-weight:600}
 .fpv-selhint a{color:#dc2626;font-weight:800}
-@media (min-width:769px){ .fpv-selall{display:none} }
-@media (max-width:768px){
-  .fp-chk-wrap{min-width:44px;min-height:44px}
-  .fp-sec-btns{margin-left:0;width:100%}
-  .fp-sec-btns .btn{flex:1 1 auto;min-height:44px}
-  .fpv-otbar-btns{width:100%}
-  .fpv-otbar-btns .btn{flex:1 1 100%}
-}
 .fp-th-ord{cursor:pointer;user-select:none;white-space:nowrap}
 .fp-th-ord:hover{color:#dc2626}
 .fp-th-ord.activo{color:#dc2626}
@@ -935,10 +923,12 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fp-pag-btn.dis{opacity:.45;pointer-events:none}
 .fp-chk-wrap{display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px}
 .fp-chk-wrap input[type=checkbox]{width:20px;height:20px;accent-color:#dc2626;cursor:pointer}
-.fpv-otbar{position:sticky;bottom:0;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+/* Solo existe con algo marcado: antes quedaba semitransparente ocupando
+   1/4 del teléfono sin ninguna OT seleccionada. */
+.fpv-otbar{position:sticky;bottom:0;display:none;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
   background:#0a0a0a;color:#fff;border-radius:12px;padding:11px 14px;margin-top:10px;
-  box-shadow:0 -4px 14px rgba(0,0,0,.15);opacity:.4;pointer-events:none;transition:opacity .15s}
-.fpv-otbar.on{opacity:1;pointer-events:auto}
+  box-shadow:0 -4px 14px rgba(0,0,0,.15)}
+.fpv-otbar.on{display:flex}
 .fpv-otbar-info{font-size:.84rem;font-weight:700}
 .fpv-otbar-info span{font-weight:900}
 .fpv-lbl{font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:3px;display:block}
@@ -969,6 +959,14 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
     text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
   /* REGLA #3: 44px en lo que se toca con el dedo y no es .btn */
   .fp-pag-btn,.fp-pag-ctl select{min-height:44px}
+}
+@media (min-width:769px){ .fpv-selall{display:none} }
+@media (max-width:768px){
+  .fp-chk-wrap{min-width:44px;min-height:44px}
+  .fp-sec-btns{margin-left:0;width:100%}
+  .fp-sec-btns .btn{flex:1 1 auto;min-height:44px}
+  .fpv-otbar-btns{width:100%}
+  .fpv-otbar-btns .btn{flex:1 1 100%}
 }
 </style>
 {% endblock %}
