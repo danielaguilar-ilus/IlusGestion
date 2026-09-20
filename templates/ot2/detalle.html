@@ -12459,7 +12459,11 @@ async function levdAbrir(prefill, editId){
   if (typeof _otdLevItems !== 'undefined' && _otdLevItems === null){
     try { await otdLevCargar(); } catch(_e){}
   }
-  _levdSeq = ((typeof _otdLevItems !== 'undefined' && _otdLevItems) || []).length + 1;
+  // Nunca hacia abajo: levdGuardar() ya subió _levdSeq al guardar, y la
+  // lista puede seguir vacía si la página se abrió con 0 equipos
+  // (otdLevCargar no consulta cuando lev.n del server era 0). Sin este
+  // max, el segundo equipo de la sesión volvía a sugerir LEV<vid>-001.
+  _levdSeq = Math.max(_levdSeq, ((typeof _otdLevItems !== 'undefined' && _otdLevItems) || []).length + 1);
   _levdEl('levd_nombre').value    = (prefill && prefill.nombre) || '';
   _levdEl('levd_sku').value       = (prefill && prefill.sku) || '';
   _levdEl('levd_serie').value     = (editId && prefill && prefill.serie) ? prefill.serie : _levdSerieSugerida();
@@ -12880,6 +12884,13 @@ async function levdGuardar(){
 
     _levdUltimo = { nombre, sku: _levdEl('levd_sku').value.trim(), ubicacion: _levdEl('levd_ubicacion').value.trim() };
     _levdSeq++;
+    // otdLevCargar() no consulta si el server dijo lev.n = 0; ya hay al
+    // menos 1, así que se destraba para que _otdLevItems quede fresco
+    // (levdEditar y el correlativo dependen de eso).
+    try {
+      const _card = document.getElementById('otdLevCard');
+      if (_card && !(parseInt(_card.dataset.levN || '0', 10) > 0)) _card.dataset.levN = '1';
+    } catch(_e){}
     if (typeof ilusToast === 'function'){
       const _fotosMsg = noEsta ? '' : ` (${fotosOk} foto${fotosOk === 1 ? '' : 's'})`;
       ilusToast(`✓ ${nombreLbl} guardado${_fotosMsg}${estLbl}`,
