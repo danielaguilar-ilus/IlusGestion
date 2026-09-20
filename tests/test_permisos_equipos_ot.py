@@ -367,27 +367,48 @@ for _modalidad_sim, _debe_bloquear in [
 # 4c. La plantilla tampoco muestra el boton en una OT que no cumple el
 #     criterio nuevo (tipo='levantamiento' Y modalidad_captura=
 #     'descubrimiento').
+#
+# 🔴 2026-09-19 (Daniel, en vivo: "quiero eliminar la OT normal"): se
+# elimino templates/mantenciones/ot_ejecutar.html y static/
+# mantenciones_ot_ejecutar.js (la pantalla clasica -- ver app.py,
+# mant_ot_ejecutar ahora es un wrapper que redirige a ot2_detalle). Esta
+# seccion NO se pudo re-verificar contra ot2/detalle.html: se grepeo por
+# "_puede_agregar_equipo" / "lev_modalidad_captura" / "levd-add" ahi y no
+# aparece nada -- o la regla de negocio (agregar equipo solo en
+# levantamiento por descubrimiento) no se porto a OT2.0, o esa pantalla
+# no ofrece "Agregar equipo" durante la ejecucion. Cualquiera de las dos
+# hay que confirmarla con Daniel antes de dar esto por resuelto -- queda
+# marcado como FALLA a proposito (no se omite en silencio) para que la
+# bateria de tests lo siga senalando hasta que se verifique.
 TPL = os.path.join(RAIZ, "templates", "mantenciones", "ot_ejecutar.html")
-with open(TPL, encoding="utf-8") as f:
-    tpl = f.read()
-check("_puede_agregar_equipo" in tpl,
-      "la plantilla calcula _puede_agregar_equipo con el criterio nuevo antes "
-      "de mostrar 'Agregar equipo'")
-check("lev_modalidad_captura == 'descubrimiento'" in tpl,
-      "el boton 'Agregar equipo' exige modalidad_captura == 'descubrimiento', "
-      "no solo el tipo/vinculo (criterio amplio viejo)")
-check("lev_editable and _puede_agregar_equipo" in tpl,
-      "el boton se gatea con lev_editable + el criterio nuevo, para TODOS los "
-      "roles (ya no hay excepcion 'not es_tecnico')")
-# 4c-i. El botón sigue naciendo con Jinja {% if %} (no display:none) -- un
-#       ocultamiento CSS se revertiría solo con el forzado de
-#       actualizarLockFirmar() en el JS y el técnico recibiría un 403.
-JS = os.path.join(RAIZ, "static", "mantenciones_ot_ejecutar.js")
-with open(JS, encoding="utf-8") as f:
-    js_src = f.read()
-check("el.classList.contains('levd-add')" in js_src,
-      "el JS sigue forzando display='' sobre .levd-add -- por eso el gate REAL "
-      "tiene que ser que el elemento no exista en el DOM (Jinja), no CSS")
+if not os.path.exists(TPL):
+    check(False,
+          "PENDIENTE (no es un fallo del codigo nuevo, es una verificacion "
+          "sin migrar): ot_ejecutar.html se elimino el 2026-09-19 y el "
+          "criterio 'agregar equipo solo en levantamiento por descubrimiento' "
+          "no se encontro en ot2/detalle.html -- confirmar con Daniel si esa "
+          "regla sigue vigente y donde vive ahora antes de cerrar este punto.")
+else:
+    with open(TPL, encoding="utf-8") as f:
+        tpl = f.read()
+    check("_puede_agregar_equipo" in tpl,
+          "la plantilla calcula _puede_agregar_equipo con el criterio nuevo antes "
+          "de mostrar 'Agregar equipo'")
+    check("lev_modalidad_captura == 'descubrimiento'" in tpl,
+          "el boton 'Agregar equipo' exige modalidad_captura == 'descubrimiento', "
+          "no solo el tipo/vinculo (criterio amplio viejo)")
+    check("lev_editable and _puede_agregar_equipo" in tpl,
+          "el boton se gatea con lev_editable + el criterio nuevo, para TODOS los "
+          "roles (ya no hay excepcion 'not es_tecnico')")
+    # 4c-i. El botón sigue naciendo con Jinja {% if %} (no display:none) -- un
+    #       ocultamiento CSS se revertiría solo con el forzado de
+    #       actualizarLockFirmar() en el JS y el técnico recibiría un 403.
+    JS = os.path.join(RAIZ, "static", "mantenciones_ot_ejecutar.js")
+    with open(JS, encoding="utf-8") as f:
+        js_src = f.read()
+    check("el.classList.contains('levd-add')" in js_src,
+          "el JS sigue forzando display='' sobre .levd-add -- por eso el gate REAL "
+          "tiene que ser que el elemento no exista en el DOM (Jinja), no CSS")
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -681,10 +681,10 @@
        class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
       <i class="bi bi-speedometer2"></i><span>Dashboard</span>
     </a>
-    <a href="{{ url_for('mant_ots_list') }}"
-       class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
-      <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
-    </a>
+    {# 🔴 FIX 2026-09-19 (Daniel, en vivo: "quiero eliminar la OT normal").
+       Se quita el link duplicado -- apuntaba a mant_ots_list, que ahora es
+       un wrapper que redirige a ot2_panel (mismo destino del link de abajo).
+       Tener los dos era mostrar la misma pantalla dos veces en el sidebar. #}
     {# OT 2.0 (Daniel, 18/19-08-2026): módulo en construcción por
        estrangulamiento -- vive en paralelo al de arriba, que sigue
        intacto (REGLA #4.2).
