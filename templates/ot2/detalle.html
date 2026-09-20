@@ -4716,8 +4716,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% if equipos %}
       <div class="otd-wk-list">
         {% for e in equipos %}
+        {#- 🔀 2026-09-20: se quitó el ontoggle que llamaba a otdFotosCargar
+            -- alimentaba la galería "Fotos de este equipo" (.otd-fot), que
+            Daniel pidió sacar de la tarjeta. otdFotosCargar() sigue viva
+            (la usa la solicitud de repuesto para refrescar la ficha), solo
+            que ya no se dispara sola al abrir el equipo. -#}
         <details class="otd-wk-item{{ ' is-complete' if e.n_obl and e.n_obl_ok == e.n_obl }}"
-                 {% if not e._interno %}ontoggle="if(this.open) otdFotosCargar({{ e.id }})"{% endif %}
                  data-obl="{{ e.n_obl }}" data-oblok="{{ e.n_obl_ok }}"
                  data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
                  data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
@@ -4824,6 +4828,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <i class="bi bi-exclamation-triangle-fill"></i>
                 <span><b>Operativo, con alerta.</b> Quedó marcado con advertencia en una visita anterior.</span>
               </div>
+              {#- 🔀 2026-09-20 (Daniel, en vivo sobre OT-2026-00222: "no pude
+                  revisarlo... agrégalo a las desviaciones", "la observación
+                  está de más, al final igual me pides un diagnóstico"). La
+                  nota de "Saltado" que antes vivía junto al textarea de
+                  observación (ya eliminado) se muestra acá como una salida
+                  más -- mismo lenguaje que fuera de servicio/con alerta.
+                  'fuera_de_servicio' y 'dado_de_baja' quedan afuera: esos
+                  YA tienen su propio badge más arriba en este mismo chain. -#}
+              {% elif e.razon_saltado and e.razon_saltado not in ('fuera_de_servicio', 'dado_de_baja') %}
+              <div class="otd-fs-badge alerta">
+                <i class="bi bi-skip-forward-fill"></i>
+                <span><b>No se pudo revisar.</b> {{ e.razon_saltado | replace('_',' ') | title }}{% if e.observacion_tecnico %} — {{ e.observacion_tecnico }}{% endif %}</span>
+              </div>
               {% endif %}
               {% if _puede_desv %}
               <div class="otd-desv-btns">
@@ -4846,6 +4863,18 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <button type="button" class="otd-fs-btn piola"
                         onclick="otdRepAbrir({{ e.id }}, 'cinta')">
                   <i class="bi bi-arrow-left-right"></i> Cambio de cinta</button>
+                {% endif %}
+                {#- 🔀 2026-09-20 (Daniel: "el no pude revisarlo, también
+                    déjalo fuera de lo normal... porque me pides un
+                    argumento"). Movido acá tal cual desde el bloque de
+                    Observación (mismo botón, mismo otdSaltarEquipo() -- ese
+                    ya pide la razón + un motivo ≥10 caracteres por sí solo,
+                    no dependía del textarea que se quitó). Mismo candado de
+                    siempre: si ya está saltado, no se vuelve a ofrecer. -#}
+                {% if not e.razon_saltado %}
+                <button type="button" class="otd-fs-btn"
+                        onclick="otdSaltarEquipo({{ e.id }})">
+                  <i class="bi bi-skip-forward-fill"></i> No pude revisarlo</button>
                 {% endif %}
                 {#- 🔒 2026-09-20 (revisión): dar de baja saca el equipo del
                     parque del cliente -- reservado a técnico INTERNO o
@@ -4880,138 +4909,31 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             </div>
             {% endif %}
 
-            {#- 🔀 2026-09-08 (Daniel, viendo la OT-2026-00179: "en la
-                observación del técnico, estado, el diagnóstico... yo lo
-                dejaría muy fuera de las plantillas, me confundió, y eso que
-                lo hice contigo... está bien que esté primero [el chequeo de
-                existencia], porque si no existe el producto, lo marcamos
-                como que no se pudo revisar, y se deja un argumento -- eso
-                invalida la plantilla. Después ejecutamos la plantilla, al
-                final tenemos que dar un diagnóstico y aprobar que el equipo
-                está o no está en servicio, para que esto mueva la orden de
-                trabajo y la ficha del cliente").
+            {#- 🔀 2026-09-20 (Daniel, en vivo sobre OT-2026-00222: "la
+                observación del técnico sácala... el estado de la revisión
+                también sácalo... al final igual me pides un diagnóstico de
+                ese equipo, si hay observación me pide un argumento y si es
+                con falla igual, así que esa observación está de más" · "el
+                no pude revisarlo agrégalo a las desviaciones" · "las fotos
+                de ese equipo sácalas también, que comience [el checklist]
+                después de fuera de lo normal").
 
-                Se reordena la secuencia del equipo en 3 tramos, sin tocar un
-                solo endpoint ni campo nuevo (los mecanismos YA EXISTÍAN,
-                solo cambian de lugar en la pantalla):
-                  1° PRIMERO -- "¿existe/se puede revisar?": Observación +
-                     Estado de la revisión + "No pude revisarlo" (.otd-obs/
-                     .otd-rev, mismo bloque de siempre). Saltar el equipo acá
-                     invalida la plantilla para él.
-                  2° La plantilla/checklist se ejecuta normal (fotos, cambiar
-                     plantilla, tareas de .otd-chk-mount).
-                  3° AL FINAL, después del checklist -- el diagnóstico/
-                     aprobación de si el equipo queda en servicio (.otd-dx,
-                     justo antes de "Siguiente equipo", más abajo).
-                Antes los tres vivían pegados ANTES de la plantilla (el
-                diagnóstico incluso iba primero), que es justo lo que
-                confundió a Daniel: parecía parte del formulario de la
-                plantilla en vez de ser el veredicto posterior. -#}
-            {#- 🔧 2026-09-07 (Daniel: "la gestión de los técnicos se pueda
-                hacer idéntica a las OT normales"). Faltaban las dos acciones
-                por equipo que el técnico usa a diario y que la pantalla
-                clásica sí tiene: dejar una observación, y saltar un equipo
-                que no pudo revisar.
-
-                Saltar NO es lo mismo que reprobar: es "no lo pude ver, y
-                esta es la razón". Sin esa salida, el técnico que encuentra
-                una máquina inaccesible tiene que elegir entre mentir
-                (marcarla aprobada) o dejar la OT incompleta para siempre.
-
-                🔒 2026-09-11: observación/estado de revisión/saltar viven en
-                mant_visita_equipos, keyed por maquina_id real -- mismo
-                candado `not e._interno` que el resto de las acciones de
-                ficha de esta tarjeta. El trabajo interno deja su propia
-                evidencia en el checklist (fotos por tarea + firmas), no acá. -#}
-            {% if puede_ejecutar and not ot_solo_lectura and not e._interno %}
-            <div class="otd-obs" data-mid="{{ e.id }}">
-              <label for="otdObs-{{ e.id }}">Observación del técnico</label>
-              {#- Autoguarda al salir del campo, igual que la clásica: si
-                  hubiera que apretar "guardar", se pierde lo escrito cuando
-                  el técnico cambia de equipo -- y eso ya nos costó datos. -#}
-              <textarea id="otdObs-{{ e.id }}" rows="2" maxlength="2000"
-                        placeholder="Algo que valga la pena dejar anotado de este equipo"
-                        onblur="otdObsGuardar({{ e.id }}, this)"
-                        >{{ e.observacion_tecnico or '' }}</textarea>
-              {#- 🏷️ 2026-09-07 (Daniel: "dale con el botón de marcar estado
-                  también"). Completa la paridad con las OT normales.
-
-                  OJO con la diferencia, que es real y conviene tener clara:
-                  el DIAGNÓSTICO (al final del equipo, ver más abajo) es el
-                  veredicto técnico sobre la máquina — cómo quedó. El ESTADO
-                  DE LA REVISIÓN es en qué quedó el trabajo sobre ella en
-                  esta visita. Una máquina puede estar "verificada" y con
-                  diagnóstico de falla: la revisé completa, y está mala.
-
-                  'Saltado' y 'falla detectada' piden motivo, como exige el
-                  backend: un estado que cambia el cierre de la OT sin
-                  explicación no le sirve a quien lo lea después. -#}
-              <div class="otd-rev">
-                <label for="otdRev-{{ e.id }}">Estado de la revisión</label>
-                <select id="otdRev-{{ e.id }}" onchange="otdMarcarEstado({{ e.id }}, this)">
-                  <option value="">— sin marcar —</option>
-                  <option value="verificado"{{ ' selected' if e.estado_revision == 'verificado' }}>Verificado</option>
-                  <option value="con_cambios"{{ ' selected' if e.estado_revision == 'con_cambios' }}>Verificado, con cambios</option>
-                  <option value="falla_detectada"{{ ' selected' if e.estado_revision == 'falla_detectada' }}>Falla detectada</option>
-                  <option value="saltado"{{ ' selected' if e.estado_revision == 'saltado' }}>No se revisó</option>
-                </select>
-              </div>
-              <div class="otd-obs-pie">
-                <small id="otdObsEstado-{{ e.id }}">Se guarda solo al salir del campo.</small>
-                {% if not e.razon_saltado %}
-                <button type="button" class="otd-saltar-btn" onclick="otdSaltarEquipo({{ e.id }})">
-                  <i class="bi bi-skip-forward-fill"></i> No pude revisarlo</button>
-                {% endif %}
-              </div>
-            </div>
-            {% endif %}
-            {% if e.razon_saltado %}
-            <div class="otd-wk-note">Saltado — motivo: {{ e.razon_saltado | replace('_',' ') | title }}</div>
-            {% endif %}
-            {% if e.observacion_tecnico %}
-            <div class="otd-wk-note">Observación del técnico: {{ e.observacion_tecnico }}</div>
-            {% endif %}
-
-            {#- 📷 2026-09-07 (Daniel: "dale con las fotos por equipo").
-                Último hueco de OT 2.0 frente a la clásica.
-
-                Las fotos DE LA OT ya existían, pero iban todas a la misma
-                bolsa: al abrir el informe no se sabía cuál era de qué
-                máquina. Con siete equipos por OT, un álbum sin dueño no
-                prueba nada. Estas quedan atadas al equipo (maquina_id) y por
-                eso alimentan también su galería permanente.
-
-                Usa el MISMO endpoint que la clásica
-                (/equipo/<mid>/foto, tipo_foto=detalle): 'detalle' y no
-                'principal' a propósito -- la foto de catálogo de la máquina
-                no se pisa desde una OT de terreno.
-
-                Se cargan al ABRIR el equipo, no al entrar a la pantalla: con
-                varios equipos serían varias consultas de una vez para fotos
-                que quizá nadie mira.
-
-                🔒 2026-09-11: se esconde para tarjetas sintéticas de
-                trabajo interno (`e._interno`) -- este álbum usa
-                mant_maquinas.id como FK real; un item_manual_id (numeración
-                propia de la OT, ver el comentario "CRÍTICO" en
-                ot2_detalle) podría coincidir por casualidad con la ficha de
-                una máquina real de OTRO cliente. -#}
-            {% if not e._interno %}
-            <div class="otd-fot" data-mid="{{ e.id }}">
-              <div class="otd-fot-head">
-                <span>Fotos de este equipo <b id="otdFotN-{{ e.id }}"></b></span>
-                {% if puede_ejecutar and not ot_solo_lectura %}
-                <button type="button" class="otd-fot-add"
-                        onclick="document.getElementById('otdFotIn-{{ e.id }}').click()">
-                  <i class="bi bi-camera-fill"></i> Tomar foto</button>
-                <input type="file" id="otdFotIn-{{ e.id }}" accept="image/*"
-                       capture="environment" style="display:none"
-                       onchange="otdFotoEquipoSubir({{ e.id }}, this)">
-                {% endif %}
-              </div>
-              <div class="otd-fot-tira" id="otdFotTira-{{ e.id }}"></div>
-            </div>
-            {% endif %}
+                Se retira el tramo intermedio completo que el 2026-09-08
+                había puesto ANTES de la plantilla (Observación + Estado de
+                la revisión + Fotos de este equipo): con el diagnóstico
+                obligatorio al FINAL del checklist (.otd-dx, más abajo) ya
+                cubre exactamente lo mismo -- Aprobado no pide nada, Con
+                observación/Con falla sí piden el argumento -- así que
+                mantener el textarea/select de arriba era pedir el mismo
+                dato dos veces. "No pude revisarlo" SÍ es una desviación real
+                (el equipo no se pudo ver) y pasa a vivir en el bloque
+                "Fuera de lo normal" de arriba (mismo botón, mismo
+                otdSaltarEquipo() -- no se tocó el endpoint). Las fotos
+                generales del equipo se quitan: las obligatorias por tarea
+                (.otd-chk-mount) y la evidencia de una solicitud de repuesto
+                siguen alimentando la misma galería igual que antes.
+                Ahora el equipo va: Fuera de lo normal → Plantilla/checklist
+                → Diagnóstico -- 2 pasos, no 3. #}
 
             {# 🆕 2026-08-28 (Daniel): "no veo qué plantilla tienen los
                equipos... quiero poder cambiarlas". Un equipo puede tener
