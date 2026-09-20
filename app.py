@@ -105568,11 +105568,51 @@ _MFP_SQL_OT_EXTERNA = (
 # firmado. Solo 'cerrada' ya pasó por esa verificación.
 _MFP_ESTADOS_FACTURABLES = ("cerrada",)
 _MFP_PER_PAGE = (10, 25, 50, 100)
+
+
+def _mfp_sql_ficha_de_tecnico(v_alias="v"):
+    """Expresión SQL con el id de la FICHA de proveedor (mant_tecnicos_externos)
+    del técnico de una visita. Autocontenida (solo necesita el alias de
+    mant_visitas), devuelve un solo valor o NULL.
+
+    🏢 2026-09-20 (Daniel, viendo Facturas de proveedor: "DAP Servicio es
+    igual que Daniel Pulgar, Logística y Transportes Milling es igual a
+    Isabel Milling, Felca es Rafael Naranjo... no sé por qué tienes dos,
+    tres Milling"). La empresa de cada técnico vive en la tabla nueva
+    mant_tecnico_externo_usuarios (empresa ↔ técnicos, commit 0cafc803);
+    te.user_id es el vínculo legacy 1:1 que quedó de antes. Se prefiere la
+    nueva y se cae a la vieja. Las DOS ramas excluyen fichas de baja: dar
+    de baja una empresa (soft-delete) no borra sus vínculos con técnicos,
+    y una OT resuelta a una ficha de baja no tenía chip donde caer
+    (hallazgo de la revisión del 2026-09-20). La legacy además usa MIN()
+    para NUNCA multiplicar filas (hubo fichas duplicadas -- "Daniel Pulgar"
+    id=5, hoy de baja -- apuntando al mismo user_id).
+    """
+    return (
+        "COALESCE("
+        f"  (SELECT MIN(teu.tecnico_externo_id) FROM mant_tecnico_externo_usuarios teu "
+        f"     JOIN mant_tecnicos_externos e ON e.id = teu.tecnico_externo_id "
+        f"      AND COALESCE(e.estado,'activo') <> 'baja' "
+        f"    WHERE teu.user_id = {v_alias}.tecnico_user_id), "
+        f"  (SELECT MIN(x.id) FROM mant_tecnicos_externos x "
+        f"    WHERE x.user_id = {v_alias}.tecnico_user_id "
+        f"      AND COALESCE(x.estado,'activo') <> 'baja'))"
+    )
+
+
 _MFP_JOINS_OT = (
     "  FROM mant_visitas v "
     "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
     "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
-    "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = v.tecnico_user_id "
+    "  LEFT JOIN mant_tecnicos_externos te ON te.id = " + _mfp_sql_ficha_de_tecnico("v") + " "
+    # 📎 Anexo de la OT: el FIRMADO si hay uno, si no el más reciente no
+    # anulado. Un solo id en el ON para que sea 1:1 -- mant_anexos puede
+    # tener varias filas por OT (re-firma, ANEXO_DESACTUALIZADO, y los
+    # "anexos gemelos" de antes del 10-sep) y un JOIN directo duplicaría
+    # esta lista o mostraría "sin firmar" teniendo uno firmado.
+    "  LEFT JOIN mant_anexos anx ON anx.id = (SELECT a2.id FROM mant_anexos a2 "
+    "         WHERE a2.ot_id = v.id AND a2.estado <> 'anulado' "
+    "         ORDER BY (a2.estado = 'firmado') DESC, a2.id DESC LIMIT 1) "
     "  LEFT JOIN mant_factura_proveedor_items fpi ON fpi.visita_id = v.id "
     "  LEFT JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
 )
@@ -105581,12 +105621,10 @@ _MFP_SELECT_OT = (
     "       v.costo_proveedor, v.costo_despacho, v.proveedor_nombre, "
     "       v.costo AS cliente_costo, v.zz_monto AS cliente_zz_monto, "
     "       v.zz_envio_monto AS cliente_zz_envio_monto, v.modalidad_cobro, "
-    # 📎 2026-09-19 (Daniel: "a la fila le falta el número de anexo").
-    # Subquery correlacionada, no JOIN -- mant_anexos puede tener varias
-    # filas por OT (re-firma, ver ANEXO_DESACTUALIZADO) y un JOIN directo
-    # duplicaría filas de esta lista. Se toma la más reciente por id.
-    "       (SELECT anx.numero FROM mant_anexos anx WHERE anx.ot_id = v.id "
-    "         ORDER BY anx.id DESC LIMIT 1) AS anexo_numero, "
+    # 📎 2026-09-19 (Daniel: "a la fila le falta el número de anexo");
+    # 2026-09-20 ("el anexo lo necesito"): también su estado e id, para
+    # mostrar Firmado/Enviado/Sin anexo y abrir el PDF desde la fila.
+    "       anx.numero AS anexo_numero, anx.estado AS anexo_estado, anx.id AS anexo_id, "
     "       c.razon_social AS cliente, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id, "
@@ -105624,6 +105662,9 @@ def _mfp_fila_ot(f):
     _venta_envio = float(f.get("cliente_zz_envio_monto") or 0)
     cobrado_cliente = _venta_serv + _venta_envio
     pagado_proveedor = serv + desp
+    margen = cobrado_cliente - pagado_proveedor
+    _anx_estado = (f.get("anexo_estado") or "").lower()
+    _prov_ficha_id = int(f["prov_ficha_id"]) if f.get("prov_ficha_id") else None
     return {
         "id": f["id"],
         "numero_ot": f.get("numero_ot") or ("OT #" + str(f["id"])),
@@ -105631,16 +105672,30 @@ def _mfp_fila_ot(f):
         "tipo_label": _TIPO_OT_LABEL.get(tipo, (tipo or "-").replace("_", " ").title()),
         "estado": f.get("estado") or "",
         "fecha": chile_fmt_filter(_fecha, "%d/%m/%Y") if _fecha else "",
+        "fecha_raw": _fecha,
         "proveedor": _mfp_nombre_proveedor_ot(f),
         "proveedor_rut": f.get("prov_rut") or "",
+        # 🏢 2026-09-20: la ficha de empresa y el técnico que ejecutó, por
+        # separado -- la pantalla agrupa por empresa y muestra al técnico
+        # como dato, no como otro proveedor (ver _mfp_sql_ficha_de_tecnico).
+        "prov_ficha_id": _prov_ficha_id,
+        "prov_key": str(_prov_ficha_id) if _prov_ficha_id else ("n:" + _mfp_nombre_proveedor_ot(f).strip().lower()),
+        "tecnico_nombre": (f.get("tecnico_nombre") or "").strip(),
         "servicio": serv, "despacho": desp, "sugerido": serv + desp,
-        "cobrado_cliente": cobrado_cliente, "margen": cobrado_cliente - pagado_proveedor,
+        "cobrado_cliente": cobrado_cliente, "margen": margen,
+        # 📊 2026-09-20 (Daniel: "el margen, colócale un porcentaje chiquitito").
+        # Sobre lo cobrado al cliente; None si no se cobró (garantía/$0):
+        # dividir por cero no es un margen, es "no aplica".
+        "margen_pct": (margen / cobrado_cliente * 100.0) if cobrado_cliente > 0 else None,
         # 💰 2026-09-19 (Daniel: "cuánto le cobré al cliente en instalación
         # y despacho también" -- no solo el total). Mismo desglose que ya
         # existe del lado proveedor (servicio/despacho arriba).
         "cobrado_cliente_serv": _venta_serv, "cobrado_cliente_envio": _venta_envio,
         # 📎 2026-09-19 (Daniel: "a la fila le falta el número de anexo").
         "anexo_numero": f.get("anexo_numero"),
+        "anexo_estado": _anx_estado,
+        "anexo_id": f.get("anexo_id"),
+        "anexo_firmado": _anx_estado == "firmado",
         # 💰 2026-09-19 (Daniel: "si es una instalación, una mantención, o
         # si se trata de una garantía"). Es la condición comercial de la
         # OT (modalidad_cobro), NO el tipo de trabajo (tipo_label) -- una
@@ -105675,10 +105730,14 @@ def _mfp_items(fid):
     return out
 
 
-def _mfp_por_facturar(limit=None, proveedor=None):
+def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None):
     """OT de proveedor externo, con costo declarado, en estado facturable,
     que todavía NO están en ninguna factura de proveedor. Es la lista que
-    Daniel pidió mirar primero: "las OT que no tengan una factura"."""
+    Daniel pidió mirar primero: "las OT que no tengan una factura".
+
+    prov_id (2026-09-20): id de la FICHA de proveedor (chip por empresa);
+    0 = las que no resuelven a ninguna ficha. `ids` acota a esas OT (el
+    Excel de "lo seleccionado")."""
     where = [
         _MFP_SQL_OT_EXTERNA,
         "v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ")",
@@ -105691,6 +105750,16 @@ def _mfp_por_facturar(limit=None, proveedor=None):
         where.append("(te.razon_social LIKE %s OR v.proveedor_nombre LIKE %s "
                      " OR COALESCE(au.nombre, au.username) LIKE %s)")
         params.extend([like, like, like])
+    if prov_id is not None:
+        if int(prov_id) > 0:
+            where.append("te.id = %s")
+            params.append(int(prov_id))
+        else:
+            where.append("te.id IS NULL")
+    if ids:
+        _ids = sorted({int(x) for x in ids})[:500]
+        where.append("v.id IN (" + ",".join(["%s"] * len(_ids)) + ")")
+        params.extend(_ids)
     sql = (_MFP_SELECT_OT + _MFP_JOINS_OT +
            " WHERE " + " AND ".join(where) +
            " ORDER BY COALESCE(v.cerrada_at, v.fecha_programada) DESC, v.id DESC")
@@ -105698,6 +105767,95 @@ def _mfp_por_facturar(limit=None, proveedor=None):
         sql += " LIMIT %s"
         params.append(int(limit))
     return [_mfp_fila_ot(r) for r in (mysql_fetchall(sql, tuple(params)) or [])]
+
+
+def _mfp_proveedores_chips(por_facturar_todas):
+    """🏢 2026-09-20 (Daniel: "estás poniendo las empresas y lo estás
+    repitiendo con los técnicos igual"). Un chip por EMPRESA (ficha de
+    Proveedores nacionales), con sus técnicos como subtítulo -- nunca un
+    chip por técnico. Trae cuántas OT y cuánto tiene pendiente cada una,
+    calculado sobre la misma lista que se pinta (sin segunda consulta).
+    Las OT que no resuelven a ninguna ficha caen en un chip "Sin ficha"
+    (id 0) para que no desaparezcan de la pantalla."""
+    pend = {}
+    for d in por_facturar_todas:
+        k = d.get("prov_ficha_id") or 0
+        p = pend.setdefault(k, {"n": 0, "monto": 0.0, "nombre": d.get("proveedor"), "tecnicos": set()})
+        p["n"] += 1
+        p["monto"] += float(d.get("sugerido") or 0)
+        if d.get("tecnico_nombre"):
+            p["tecnicos"].add(d["tecnico_nombre"])
+    chips = []
+    try:
+        rows = mysql_fetchall(
+            "SELECT te.id, te.razon_social, te.rut_empresa, te.contacto_nombre, "
+            "       GROUP_CONCAT(DISTINCT COALESCE(u.nombre, u.username) "
+            "                    ORDER BY COALESCE(u.nombre, u.username) SEPARATOR ', ') AS tecnicos "
+            "  FROM mant_tecnicos_externos te "
+            "  LEFT JOIN mant_tecnico_externo_usuarios teu ON teu.tecnico_externo_id = te.id "
+            "  LEFT JOIN app_users u ON u.id = teu.user_id "
+            " WHERE COALESCE(te.estado,'activo') <> 'baja' "
+            " GROUP BY te.id ORDER BY te.razon_social") or []
+    except Exception as e:
+        print(f"[facprov] chips proveedores: {e}", flush=True)
+        rows = []
+    for r in rows:
+        p = pend.get(int(r["id"]), {})
+        tecs = (r.get("tecnicos") or "").strip()
+        if not tecs and p.get("tecnicos"):
+            tecs = ", ".join(sorted(p["tecnicos"]))
+        nombre = (r.get("razon_social") or "").strip()
+        # Si la razón social ya ES el nombre del técnico (proveedor
+        # unipersonal), no repetirlo como subtítulo.
+        if tecs and tecs.strip().lower() == nombre.lower():
+            tecs = ""
+        chips.append({
+            "id": int(r["id"]), "nombre": nombre, "rut": r.get("rut_empresa") or "",
+            "tecnicos": tecs, "n": int(p.get("n") or 0), "monto": float(p.get("monto") or 0),
+        })
+    # Red de seguridad: si una OT resolvió a una ficha que por lo que sea no
+    # salió en la consulta de arriba, igual tiene chip -- nada pendiente
+    # puede quedar sin forma de filtrarlo (los conteos de los chips deben
+    # sumar lo mismo que "Todos").
+    _con_chip = {c["id"] for c in chips}
+    for k, p in pend.items():
+        if k and k not in _con_chip:
+            chips.append({"id": int(k), "nombre": p.get("nombre") or f"Proveedor #{k}", "rut": "",
+                          "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"]})
+    if pend.get(0, {}).get("n"):
+        p = pend[0]
+        chips.append({"id": 0, "nombre": "Sin ficha de proveedor", "rut": "",
+                      "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"]})
+    # Primero los que tienen algo pendiente (lo que Daniel va a cobrar), y
+    # dentro de cada grupo por nombre.
+    chips.sort(key=lambda c: (0 if c["n"] else 1, c["nombre"].lower()))
+    return chips
+
+
+def _mfp_nombres_de_ficha(prov_id):
+    """Nombres con los que una empresa pudo quedar escrita a mano en
+    facturas viejas (razón social, contacto, sus técnicos) -- para que el
+    chip por empresa también encuentre esas facturas históricas."""
+    razon, out = "", set()
+    try:
+        r = mysql_fetchone(
+            "SELECT razon_social, contacto_nombre FROM mant_tecnicos_externos WHERE id=%s",
+            (int(prov_id),)) or {}
+        razon = (r.get("razon_social") or "").strip().lower()
+        for k in ("razon_social", "contacto_nombre"):
+            if (r.get(k) or "").strip():
+                out.add(r[k].strip().lower())
+        for t in (mysql_fetchall(
+                "SELECT COALESCE(u.nombre, u.username) AS n FROM mant_tecnico_externo_usuarios teu "
+                "  JOIN app_users u ON u.id = teu.user_id WHERE teu.tecnico_externo_id=%s",
+                (int(prov_id),)) or []):
+            if (t.get("n") or "").strip():
+                out.add(t["n"].strip().lower())
+    except Exception as e:
+        print(f"[facprov] nombres de ficha {prov_id}: {e}", flush=True)
+    # La razón social va PRIMERO (el caller la usa para el LIKE parcial).
+    out.discard(razon)
+    return ([razon] if razon else []) + sorted(out)
 
 
 def _mfp_resumen():
@@ -105836,6 +105994,14 @@ def mant_facturas_proveedor():
     f_estado = (request.args.get("estado") or "").strip().lower()
     if f_estado not in ("pendiente", "pagada", "anulada"):
         f_estado = ""
+    # 🏢 2026-09-20: chip por EMPRESA -> prov_id (id de la ficha; 0 = sin
+    # ficha). Convive con `proveedor` (texto libre del buscador).
+    f_prov_id = None
+    try:
+        if (request.args.get("prov_id") or "").strip() != "":
+            f_prov_id = max(0, int(request.args.get("prov_id")))
+    except (TypeError, ValueError):
+        f_prov_id = None
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (TypeError, ValueError):
@@ -105847,10 +106013,39 @@ def mant_facturas_proveedor():
     if per_page not in _MFP_PER_PAGE:
         per_page = 25
 
+    # Ficha de proveedor "canónica" de una factura: la que se guardó al
+    # crearla (tf) o, si es una factura vieja escrita a mano, la empresa del
+    # técnico de su primera OT. Con esto "Daniel Pulgar" y "DAP Servicio"
+    # dejan de verse como dos proveedores distintos en la lista.
+    _SQL_FICHA_POR_ITEMS = (
+        "(SELECT " + _mfp_sql_ficha_de_tecnico("v2") +
+        "   FROM mant_factura_proveedor_items i2 "
+        "   JOIN mant_visitas v2 ON v2.id = i2.visita_id "
+        "  WHERE i2.factura_proveedor_id = f.id "
+        "    AND " + _mfp_sql_ficha_de_tecnico("v2") + " IS NOT NULL "
+        "  ORDER BY i2.id LIMIT 1)"
+    )
     where, params = ["1=1"], []
     if f_prov:
         where.append("f.proveedor_nombre LIKE %s")
         params.append(f"%{f_prov}%")
+    if f_prov_id:
+        nombres = _mfp_nombres_de_ficha(f_prov_id)
+        cond = ["f.tecnico_externo_id = %s", _SQL_FICHA_POR_ITEMS + " = %s"]
+        params.extend([f_prov_id, f_prov_id])
+        if nombres:
+            cond.append("LOWER(TRIM(f.proveedor_nombre)) IN (" + ",".join(["%s"] * len(nombres)) + ")")
+            params.extend(nombres)
+            # Factura vieja escrita a mano con UNA palabra de la razón social
+            # ("Milling" -> LOGISTICA Y TRANSPORTES MILLING SPA), sin ítems ni
+            # ficha guardada. Mínimo 4 letras para que "SPA" no enganche todo.
+            razon = next((n for n in nombres), "")
+            cond.append("(LENGTH(TRIM(f.proveedor_nombre)) >= 4 "
+                        " AND %s LIKE CONCAT('%%', LOWER(TRIM(f.proveedor_nombre)), '%%'))")
+            params.append(razon)
+        where.append("(" + " OR ".join(cond) + ")")
+    elif f_prov_id == 0:
+        where.append("(f.tecnico_externo_id IS NULL AND " + _SQL_FICHA_POR_ITEMS + " IS NULL)")
     if f_estado:
         where.append("f.estado_pago = %s")
         params.append(f_estado)
@@ -105866,9 +106061,18 @@ def mant_facturas_proveedor():
             page = total_paginas
         facturas = mysql_fetchall(
             "SELECT f.*, "
-            "       COUNT(i.id) AS n_ot, COALESCE(SUM(i.monto),0) AS total_asignado "
+            "       COUNT(i.id) AS n_ot, COALESCE(SUM(i.monto),0) AS total_asignado, "
+            # MAX(): tf/tc son 1:1 con f, pero con ONLY_FULL_GROUP_BY MySQL no
+            # infiere la dependencia a través del subquery del ON de tc.
+            "       MAX(tf.razon_social) AS prov_canon_ficha, MAX(tf.rut_empresa) AS prov_canon_rut, "
+            "       MAX(tc.razon_social) AS prov_canon_items, MAX(tc.rut_empresa) AS prov_canon_items_rut "
             "  FROM mant_facturas_proveedor f "
             "  LEFT JOIN mant_factura_proveedor_items i ON i.factura_proveedor_id = f.id "
+            # Una ficha de BAJA guardada en la factura (la duplicada del 17-sep) no
+            # gana: cae a la empresa vigente del técnico de sus OT (tc).
+            "  LEFT JOIN mant_tecnicos_externos tf ON tf.id = f.tecnico_externo_id "
+            "         AND COALESCE(tf.estado,'activo') <> 'baja' "
+            "  LEFT JOIN mant_tecnicos_externos tc ON tc.id = " + _SQL_FICHA_POR_ITEMS + " "
             + where_sql +
             " GROUP BY f.id "
             " ORDER BY FIELD(f.estado_pago,'pendiente','pagada','anulada'), f.fecha DESC, f.id DESC "
@@ -105879,6 +106083,14 @@ def mant_facturas_proveedor():
             x["total_asignado"] = float(x.get("total_asignado") or 0)
             x["monto_total"] = float(x.get("monto_total") or 0)
             x["diferencia"] = x["monto_total"] - x["total_asignado"]
+            _canon = (x.get("prov_canon_ficha") or x.get("prov_canon_items") or "").strip()
+            x["prov_canon"] = _canon or (x.get("proveedor_nombre") or "")
+            x["prov_canon_rut"] = (x.get("prov_canon_rut") or x.get("prov_canon_items_rut")
+                                   or x.get("proveedor_rut") or "")
+            # Nombre tal como se escribió a mano, SOLO si difiere de la
+            # empresa resuelta (ej. "Milling" -> LOGISTICA Y TRANSPORTES MILLING SPA).
+            _orig = (x.get("proveedor_nombre") or "").strip()
+            x["prov_alias"] = _orig if (_canon and _orig.lower() != _canon.lower()) else ""
     except Exception as e:
         print(f"[facprov] listado: {e}", flush=True)
         total_paginas = 1
@@ -105935,7 +106147,17 @@ def mant_facturas_proveedor():
         pf_per_page = 25
     if pf_per_page not in _MFP_PER_PAGE:
         pf_per_page = 25
-    por_facturar_todas = _mfp_por_facturar(proveedor=f_prov or None)
+    # Una sola consulta con TODO lo pendiente: de ahí salen los chips (conteo
+    # y monto por empresa) y, filtrando en Python, la tabla. El buscador de
+    # texto sigue en SQL porque también acota las facturas de abajo.
+    por_facturar_sin_chip = _mfp_por_facturar(proveedor=f_prov or None)
+    provs_chips = _mfp_proveedores_chips(por_facturar_sin_chip)
+    if f_prov_id is not None:
+        por_facturar_todas = [d for d in por_facturar_sin_chip
+                              if (d.get("prov_ficha_id") or 0) == f_prov_id]
+    else:
+        por_facturar_todas = por_facturar_sin_chip
+    chip_activo = next((c for c in provs_chips if c["id"] == f_prov_id), None) if f_prov_id is not None else None
     # 🧭 2026-09-19 (Daniel: "poder filtrar y ordenar... seleccionar para
     # dejar pago"). _mfp_fila_ot ya calcula todo en Python (no son columnas
     # SQL simples: cobrado_cliente/margen salen de zz_monto+costo con
@@ -105944,7 +106166,7 @@ def mant_facturas_proveedor():
     pf_orden = (request.args.get("pf_orden") or "fecha").strip()
     pf_dir = "asc" if (request.args.get("pf_dir") or "").strip() == "asc" else "desc"
     _PF_ORDEN_KEYS = {
-        "fecha": lambda d: d.get("fecha") or "",
+        "fecha": lambda d: (d.get("fecha_raw").isoformat() if d.get("fecha_raw") else ""),
         "proveedor": lambda d: (d.get("proveedor") or "").lower(),
         "cliente": lambda d: (d.get("cliente") or "").lower(),
         "pagado_total": lambda d: d.get("sugerido") or 0,
@@ -105959,17 +106181,24 @@ def mant_facturas_proveedor():
     if pf_page > pf_total_paginas:
         pf_page = pf_total_paginas
     por_facturar = por_facturar_todas[(pf_page - 1) * pf_per_page: pf_page * pf_per_page]
+    pf_monto_filtrado = sum(float(d.get("sugerido") or 0) for d in por_facturar_todas)
+    pf_sin_anexo = sum(1 for d in por_facturar_todas if not d.get("anexo_firmado"))
 
     return render_template(
         "mantenciones/facturas_proveedor.html",
         facturas=facturas, total=total, page=page, per_page=per_page,
         total_paginas=total_paginas, per_page_opciones=_MFP_PER_PAGE,
-        f_prov=f_prov, f_estado=f_estado,
+        f_prov=f_prov, f_estado=f_estado, f_prov_id=f_prov_id, chip_activo=chip_activo,
         resumen=_mfp_resumen(), por_facturar=por_facturar,
         pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
         pf_total_paginas=pf_total_paginas, pf_orden=pf_orden, pf_dir=pf_dir,
+        pf_monto_filtrado=pf_monto_filtrado, pf_sin_anexo=pf_sin_anexo,
+        provs_chips=provs_chips,
         provs_sugeridos=provs_sugeridos,
         provs_nacionales=provs_nacionales,
+        # Seleccionar OT y pedir la OC / bajar el Excel: cualquiera que pueda
+        # ver esta pantalla. "Marcar pagado sin factura" sigue siendo superadmin.
+        puede_seleccionar=True,
         es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
         hoy_iso=_now_chile().date().isoformat(),
     )
@@ -106345,20 +106574,25 @@ def mant_factura_proveedor_anular(fid):
     return jsonify({"ok": True})
 
 
-def _mfp_validar_lote_ot(visita_ids_in):
-    """Valida un lote de OT para agrupar en UNA factura de proveedor (usado
-    por marcar-pagado-sin-factura y solicitar-oc, REGLA #4: un solo lugar
-    con esta lógica, nunca duplicada). Devuelve (filas, proveedor_nombre,
-    proveedor_rut, prov_ficha_id, monto_total, error_response_or_None) --
-    si el último es no-None, el caller debe retornarlo tal cual."""
+def _mfp_validar_lote_ot_grupos(visita_ids_in):
+    """Valida un lote de OT y lo parte en UN grupo por proveedor (empresa).
+
+    🏢 2026-09-20 (Daniel: "seleccionar los proveedores que tengo
+    pendientes y generar una orden de compra con lo que está pendiente").
+    Antes el lote tenía que ser de un solo proveedor; ahora se agrupa por
+    la ficha de empresa (o por nombre si no hay ficha) y el caller decide
+    si acepta varios grupos (solicitar-oc: una OC por proveedor) o exige
+    uno solo (marcar-pagado). Devuelve (grupos, error_response_or_None);
+    cada grupo: {filas, proveedor_nombre, proveedor_rut, prov_ficha_id,
+    monto_total, sin_anexo:[numero_ot...]}."""
     if not isinstance(visita_ids_in, list) or not visita_ids_in:
-        return None, None, None, None, None, (jsonify({"ok": False, "error": "No se recibió ninguna OT seleccionada."}), 400)
+        return None, (jsonify({"ok": False, "error": "No se recibió ninguna OT seleccionada."}), 400)
     try:
         visita_ids = sorted({int(v) for v in visita_ids_in})
     except (TypeError, ValueError):
-        return None, None, None, None, None, (jsonify({"ok": False, "error": "Hay un id de OT inválido."}), 400)
+        return None, (jsonify({"ok": False, "error": "Hay un id de OT inválido."}), 400)
     if len(visita_ids) > 300:
-        return None, None, None, None, None, (jsonify({"ok": False, "error": "Selecciona como máximo 300 OT por tanda."}), 400)
+        return None, (jsonify({"ok": False, "error": "Selecciona como máximo 300 OT por tanda."}), 400)
 
     ph = ",".join(["%s"] * len(visita_ids))
     rows = mysql_fetchall(
@@ -106368,44 +106602,77 @@ def _mfp_validar_lote_ot(visita_ids_in):
     filas = {r["id"]: _mfp_fila_ot(r) for r in (rows or [])}
     faltan = [vid for vid in visita_ids if vid not in filas]
     if faltan:
-        return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "OT_NO_EXTERNA",
+        return None, (jsonify({"ok": False, "error_codigo": "OT_NO_EXTERNA",
                         "error": f"{len(faltan)} OT no existen o no son de proveedor externo: "
                                  f"{', '.join(str(v) for v in faltan[:10])}"}), 400)
     ya_facturadas = [f["numero_ot"] for f in filas.values() if f["fac_id"]]
     if ya_facturadas:
-        return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "OT_YA_FACTURADA",
+        return None, (jsonify({"ok": False, "error_codigo": "OT_YA_FACTURADA",
                         "error": f"{len(ya_facturadas)} OT ya están en otra factura: "
                                  f"{', '.join(ya_facturadas[:10])}. Quítalas de ahí primero."}), 409)
     no_facturables = [f["numero_ot"] for f in filas.values() if f["estado"] not in _MFP_ESTADOS_FACTURABLES]
     if no_facturables:
-        return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
+        return None, (jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
                         "error": f"{len(no_facturables)} OT no están listas para pagarle al proveedor "
                                  f"(falta firma del cliente o cierre): {', '.join(no_facturables[:10])}"}), 400)
 
-    # Mismo proveedor para todas -- si no, se mezclarían deudas de dos
-    # personas/empresas distintas en un solo pago/solicitud. Mismo criterio
-    # de nombre que ya usa el resto del módulo (_mfp_nombre_proveedor_ot).
-    nombres = {(f["proveedor"] or "").strip().lower() for f in filas.values()}
-    if len(nombres) > 1:
+    # Nadie puede pedir una OC "a nadie": una OT cuyo técnico no tiene ficha
+    # ni nombre de proveedor declarado se arregla en Proveedores nacionales
+    # (asignar el técnico a su empresa), no se cobra a un nombre vacío.
+    sin_prov = [f["numero_ot"] for f in filas.values()
+                if not f.get("prov_ficha_id") and f["proveedor"] == "Sin proveedor declarado"]
+    if sin_prov:
+        return None, (jsonify({"ok": False, "error_codigo": "OT_SIN_PROVEEDOR",
+                        "error": f"{len(sin_prov)} OT no tienen proveedor identificado "
+                                 f"({', '.join(sin_prov[:10])}). Asigna el técnico a su empresa en "
+                                 "Proveedores nacionales y vuelve a intentar."}), 400)
+
+    # Una OT sin ficha cuyo proveedor declarado se llama igual que una ficha
+    # presente en el lote se junta con esa ficha -- no dos solicitudes al
+    # mismo proveedor por un dato legacy.
+    _ficha_por_nombre = {(f["proveedor"] or "").strip().lower(): f["prov_key"]
+                         for f in filas.values() if f.get("prov_ficha_id")}
+    grupos = {}
+    for vid in visita_ids:
+        f = filas[vid]
+        key = f["prov_key"]
+        if not f.get("prov_ficha_id"):
+            key = _ficha_por_nombre.get((f["proveedor"] or "").strip().lower(), key)
+        g_ = grupos.setdefault(key, {
+            "filas": {}, "proveedor_nombre": f["proveedor"],
+            "proveedor_rut": f["proveedor_rut"] or None,
+            "prov_ficha_id": f.get("prov_ficha_id"), "monto_total": 0.0, "sin_anexo": [],
+        })
+        if not g_["prov_ficha_id"] and f.get("prov_ficha_id"):
+            g_["prov_ficha_id"] = f["prov_ficha_id"]
+            g_["proveedor_rut"] = f["proveedor_rut"] or g_["proveedor_rut"]
+        g_["filas"][vid] = f
+        g_["monto_total"] += float(f["sugerido"] or 0)
+        if not f.get("anexo_firmado"):
+            g_["sin_anexo"].append(f["numero_ot"])
+    for g_ in grupos.values():
+        if g_["monto_total"] <= 0:
+            return None, (jsonify({"ok": False, "error": f"El monto de {g_['proveedor_nombre']} quedó en $0 "
+                                   "-- revisa el costo declarado de esas OT."}), 400)
+    return sorted(grupos.values(), key=lambda x: (x["proveedor_nombre"] or "").lower()), None
+
+
+def _mfp_validar_lote_ot(visita_ids_in):
+    """Lote de UN solo proveedor (marcar-pagado-sin-factura). Envoltorio de
+    _mfp_validar_lote_ot_grupos que rechaza la mezcla -- reconocer un pago
+    junta deudas de una sola persona/empresa. Devuelve (filas,
+    proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total,
+    error_response_or_None)."""
+    grupos, err = _mfp_validar_lote_ot_grupos(visita_ids_in)
+    if err:
+        return None, None, None, None, None, err
+    if len(grupos) > 1:
         return None, None, None, None, None, (jsonify({"ok": False, "error_codigo": "PROVEEDORES_MEZCLADOS",
                         "error": "Las OT seleccionadas son de más de un proveedor "
-                                 "(" + ", ".join(sorted({f['proveedor'] for f in filas.values()})) + "). "
+                                 "(" + ", ".join(g_["proveedor_nombre"] for g_ in grupos) + "). "
                                  "Selecciona las de un solo proveedor a la vez."}), 400)
-    primero = next(iter(filas.values()))
-    proveedor_nombre = primero["proveedor"]
-    proveedor_rut = primero["proveedor_rut"] or None
-    # tecnico_externo_id viaja aparte porque _mfp_fila_ot no lo expone --
-    # se saca de la fila cruda original.
-    prov_ficha_id = None
-    for r in rows:
-        if r.get("prov_ficha_id"):
-            prov_ficha_id = int(r["prov_ficha_id"])
-            break
-
-    monto_total = sum(f["sugerido"] for f in filas.values())
-    if monto_total <= 0:
-        return None, None, None, None, None, (jsonify({"ok": False, "error": "El monto total quedó en $0 -- revisa el costo declarado de esas OT."}), 400)
-    return filas, proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, None
+    g_ = grupos[0]
+    return g_["filas"], g_["proveedor_nombre"], g_["proveedor_rut"], g_["prov_ficha_id"], g_["monto_total"], None
 
 
 @app.route("/mantenciones/api/facturas-proveedor/marcar-pagado-sin-factura", methods=["POST"])
@@ -106488,43 +106755,64 @@ def mant_facturas_proveedor_solicitar_oc():
         return _mfp_403()
     d = request.get_json(silent=True) or {}
     numero_oc = (d.get("numero_oc") or "").strip()[:80] or None
-    filas, proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, err = \
-        _mfp_validar_lote_ot(d.get("visita_ids"))
+    # 🏢 2026-09-20 (Daniel: "seleccionar los proveedores que tengo
+    # pendientes y generar una orden de compra con lo que está pendiente"):
+    # el lote puede traer varios proveedores -> UNA solicitud por proveedor,
+    # todas en la misma transacción (o se crean todas o ninguna). El N° de
+    # OC escrito a mano solo tiene sentido si hay un proveedor; con varios
+    # se completa después en cada solicitud.
+    grupos, err = _mfp_validar_lote_ot_grupos(d.get("visita_ids"))
     if err:
         return err
+    if len(grupos) > 1:
+        numero_oc = None
 
     user = current_username() or "sistema"
+    creadas = []
     try:
         conn = get_db()
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO mant_facturas_proveedor "
-                "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
-                " numero_documento, fecha, monto_total, estado_pago, numero_oc, notas, created_by) "
-                "VALUES (%s,%s,%s,'factura',NULL,NULL,%s,'pendiente',%s,%s,%s)",
-                (proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, numero_oc,
-                 f"Solicitud de orden de compra -- {len(filas)} OT, generada por {user}. "
-                 f"Completar con /completar cuando llegue la factura real, y con /pagar cuando se pague.",
-                 user))
-            fid = cur.lastrowid
-            for vid, f in filas.items():
+            for g_ in grupos:
+                filas = g_["filas"]
+                _nota_anexo = (f" ⚠ {len(g_['sin_anexo'])} OT sin anexo firmado: "
+                               f"{', '.join(g_['sin_anexo'][:10])}." if g_["sin_anexo"] else "")
                 cur.execute(
-                    "INSERT INTO mant_factura_proveedor_items "
-                    "(factura_proveedor_id, visita_id, monto, observacion, usuario) "
-                    "VALUES (%s,%s,%s,%s,%s)",
-                    (fid, vid, f["sugerido"], "Agrupado en solicitud de orden de compra.", user))
+                    "INSERT INTO mant_facturas_proveedor "
+                    "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
+                    " numero_documento, fecha, monto_total, estado_pago, numero_oc, notas, created_by) "
+                    "VALUES (%s,%s,%s,'factura',NULL,NULL,%s,'pendiente',%s,%s,%s)",
+                    (g_["proveedor_nombre"], g_["proveedor_rut"], g_["prov_ficha_id"], g_["monto_total"], numero_oc,
+                     f"Solicitud de orden de compra -- {len(filas)} OT, generada por {user}. "
+                     f"Completar con /completar cuando llegue la factura real, y con /pagar cuando se pague."
+                     + _nota_anexo,
+                     user))
+                fid = cur.lastrowid
+                for vid, f in filas.items():
+                    cur.execute(
+                        "INSERT INTO mant_factura_proveedor_items "
+                        "(factura_proveedor_id, visita_id, monto, observacion, usuario) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        (fid, vid, f["sugerido"], "Agrupado en solicitud de orden de compra.", user))
+                creadas.append({"id": fid, "proveedor": g_["proveedor_nombre"], "n_ot": len(filas),
+                                "monto_total": g_["monto_total"], "sin_anexo": len(g_["sin_anexo"]),
+                                "_filas": filas})
         conn.commit()
     except Exception as e:
         print(f"[facprov] solicitar-oc: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo registrar la solicitud."}), 500
 
-    _mant_log("factura_proveedor", fid, "solicitud_oc_creada",
-              f"{proveedor_nombre} · {len(filas)} OT · ${monto_total:,.0f} · OC {numero_oc or '(pendiente)'} · por {user}")
-    for vid, f in filas.items():
-        _mant_log("visita", vid, "factura_proveedor_asignada",
-                  f"Solicitud de OC #{fid} ({proveedor_nombre}) · ${f['sugerido']:,.0f}")
-    return jsonify({"ok": True, "id": fid, "proveedor": proveedor_nombre,
-                    "n_ot": len(filas), "monto_total": monto_total})
+    for c in creadas:
+        _mant_log("factura_proveedor", c["id"], "solicitud_oc_creada",
+                  f"{c['proveedor']} · {c['n_ot']} OT · ${c['monto_total']:,.0f} · OC {numero_oc or '(pendiente)'}"
+                  + (f" · {c['sin_anexo']} sin anexo firmado" if c["sin_anexo"] else "") + f" · por {user}")
+        for vid, f in c.pop("_filas").items():
+            _mant_log("visita", vid, "factura_proveedor_asignada",
+                      f"Solicitud de OC #{c['id']} ({c['proveedor']}) · ${f['sugerido']:,.0f}")
+    primera = creadas[0]
+    return jsonify({"ok": True, "id": primera["id"], "proveedor": primera["proveedor"],
+                    "n_ot": sum(c["n_ot"] for c in creadas),
+                    "monto_total": sum(c["monto_total"] for c in creadas),
+                    "solicitudes": creadas})
 
 
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/completar", methods=["POST"])
@@ -106646,6 +106934,220 @@ def _mfp_xl_dt(dt):
         return dt
 
 
+@app.route("/mantenciones/facturas-proveedor/por-facturar.xlsx")
+@app.route("/servicio-tecnico/facturas-proveedor/por-facturar.xlsx")
+@_mant_required
+@_no_tecnico
+def mant_facturas_proveedor_por_facturar_xlsx():
+    """📊 Estado de cuenta al corte, por proveedor — 2026-09-20.
+
+    Daniel: "ahora me voy a hacer cargo de los pagos de los proveedores y
+    eso lo necesito tener con un botón... cuando lleguemos al corte, que
+    soy yo quien va a decidir cuándo es el corte, genero el reporte y les
+    digo: mira, ahí está, esto es lo que te debo. Avísame si está ok para
+    yo solicitar la orden de compra y que el proveedor genere la factura."
+
+    Es la lista "OT por facturar" tal como se ve en pantalla (mismo filtro
+    por empresa/buscador, o solo las OT seleccionadas si vienen `ids`),
+    en Excel: una hoja Resumen (una fila por proveedor) y UNA HOJA POR
+    PROVEEDOR con el detalle y su total, para mandarle a cada uno solo la
+    suya. Marca las OT sin anexo firmado (Daniel: avisar, no bloquear).
+    """
+    if not _facprov_puede():
+        return _mfp_403()
+    import io as _io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    f_prov = (request.args.get("proveedor") or "").strip()[:120]
+    prov_id = None
+    try:
+        if (request.args.get("prov_id") or "").strip() != "":
+            prov_id = max(0, int(request.args.get("prov_id")))
+    except (TypeError, ValueError):
+        prov_id = None
+    ids = None
+    _raw_ids = (request.args.get("ids") or "").strip()
+    if _raw_ids:
+        try:
+            ids = [int(x) for x in _raw_ids.split(",") if x.strip()]
+        except ValueError:
+            ids = None
+    # 📄 2026-09-20 (Daniel: "quiero tener dos versiones: una completa y otra
+    # a proveedores"). `interno` = todo (cobrado al cliente, margen, %);
+    # `proveedor` = SOLO lo que ILUS le paga, sin un peso de lo comercial de
+    # ILUS -- es la hoja que sale de la empresa.
+    version = (request.args.get("version") or "interno").strip().lower()
+    if version not in ("interno", "proveedor"):
+        version = "interno"
+    interno = version == "interno"
+
+    filas = _mfp_por_facturar(proveedor=f_prov or None, prov_id=prov_id, ids=ids)
+    filas.sort(key=lambda d: ((d.get("proveedor") or "").lower(),
+                              d.get("fecha_raw").isoformat() if d.get("fecha_raw") else "", d["id"]))
+
+    grupos = {}
+    for d in filas:
+        grupos.setdefault(d["prov_key"], []).append(d)
+
+    wb = Workbook()
+    _fill = PatternFill("solid", fgColor="0A0A0A")
+    _font = Font(color="FFFFFF", bold=True, size=10)
+    _sub_fill = PatternFill("solid", fgColor="F1F5F9")
+    _bold = Font(bold=True)
+    _rojo = Font(color="B91C1C", bold=True)
+    _FMT_CLP = '"$"#,##0;[Red]-"$"#,##0'
+    _FMT_PCT = '0.0"%"'
+
+    def _encabezar(ws, cols, anchos):
+        ws.append(cols)
+        for i, _c in enumerate(cols, 1):
+            cel = ws.cell(row=1, column=i)
+            cel.fill = _fill
+            cel.font = _font
+            cel.alignment = Alignment(vertical="center", wrap_text=True)
+            ws.column_dimensions[get_column_letter(i)].width = anchos[i - 1] if i - 1 < len(anchos) else 14
+        ws.freeze_panes = "A2"
+        ws.row_dimensions[1].height = 30
+
+    def _anexo_txt(d):
+        if d.get("anexo_numero"):
+            est = {"firmado": "Firmado", "enviado": "Enviado, sin firmar", "visto": "Visto, sin firmar",
+                   "borrador": "Borrador"}.get(d.get("anexo_estado") or "", d.get("anexo_estado") or "")
+            return f"N° {d['anexo_numero']} · {est}"
+        return "SIN ANEXO"
+
+    def _t(s):
+        """Texto seguro para Excel: un nombre que empiece con = + - @ lo
+        interpretaría como fórmula (inyección CSV/XLSX)."""
+        s = "" if s is None else str(s)
+        return ("'" + s) if s[:1] in ("=", "+", "-", "@") else s
+
+    def _fila_estilo(ws, r_, cols_clp, col_pct=None, negrita=False):
+        for c in cols_clp:
+            ws.cell(row=r_, column=c).number_format = _FMT_CLP
+        if col_pct:
+            ws.cell(row=r_, column=col_pct).number_format = _FMT_PCT
+        if negrita:
+            for c in range(1, ws.max_column + 1):
+                cel = ws.cell(row=r_, column=c)
+                cel.font = _bold
+                cel.fill = _sub_fill
+
+    _pct = lambda cob, pag: ((cob - pag) / cob * 100.0) if cob > 0 else None
+    _hoy = _now_chile()
+
+    # ═══ Hoja Resumen: una fila por proveedor ═══
+    ws = wb.active
+    ws.title = "Resumen (interno)" if interno else "Resumen"
+    if interno:
+        cols = ["Proveedor", "RUT", "Técnico(s)", "N° OT", "Pago instalación", "Pago despacho",
+                "Total a pagar", "Cobrado al cliente", "Margen", "Margen %", "OT sin anexo firmado"]
+        _encabezar(ws, cols, [34, 14, 26, 8, 16, 16, 16, 18, 14, 10, 18])
+    else:
+        cols = ["Proveedor", "RUT", "Técnico(s)", "N° OT", "Pago instalación", "Pago despacho",
+                "Total a pagar", "OT sin anexo firmado"]
+        _encabezar(ws, cols, [34, 14, 26, 8, 16, 16, 16, 18])
+    fila = 2
+    tot = {"n": 0, "serv": 0.0, "desp": 0.0, "pag": 0.0, "cob": 0.0, "sin": 0}
+    for k, lst in grupos.items():
+        serv = sum(d["servicio"] for d in lst); desp = sum(d["despacho"] for d in lst)
+        pag = sum(d["sugerido"] for d in lst); cob = sum(d["cobrado_cliente"] for d in lst)
+        sin = sum(1 for d in lst if not d.get("anexo_firmado"))
+        tecs = ", ".join(sorted({d["tecnico_nombre"] for d in lst if d.get("tecnico_nombre")}))
+        base = [_t(lst[0]["proveedor"]), lst[0]["proveedor_rut"] or "", _t(tecs), len(lst), serv, desp, pag]
+        if interno:
+            ws.append(base + [cob, cob - pag, _pct(cob, pag), sin])
+            _fila_estilo(ws, fila, (5, 6, 7, 8, 9), 10)
+            if sin:
+                ws.cell(row=fila, column=11).font = _rojo
+        else:
+            ws.append(base + [sin])
+            _fila_estilo(ws, fila, (5, 6, 7))
+            if sin:
+                ws.cell(row=fila, column=8).font = _rojo
+        tot["n"] += len(lst); tot["serv"] += serv; tot["desp"] += desp; tot["pag"] += pag; tot["cob"] += cob; tot["sin"] += sin
+        fila += 1
+    base = ["TOTAL", "", "", tot["n"], tot["serv"], tot["desp"], tot["pag"]]
+    if interno:
+        ws.append(base + [tot["cob"], tot["cob"] - tot["pag"], _pct(tot["cob"], tot["pag"]), tot["sin"]])
+        _fila_estilo(ws, fila, (5, 6, 7, 8, 9), 10, negrita=True)
+    else:
+        ws.append(base + [tot["sin"]])
+        _fila_estilo(ws, fila, (5, 6, 7), negrita=True)
+    ws.append([])
+    ws.append([f"Corte al {_hoy.strftime('%d/%m/%Y %H:%M')} (hora Chile) · generado por "
+               f"{current_username() or 'sistema'} · {ILUS_BRAND}"
+               + ("" if interno else " · Versión para el proveedor: solo lo que se le paga.")])
+
+    # ═══ Una hoja por proveedor ═══
+    # interno: con lo cobrado al cliente y el margen (para Daniel).
+    # proveedor: SOLO lo que ILUS le paga -- esta hoja sale de la empresa, y
+    # lo cobrado al cliente / el margen es el dato comercial de ILUS
+    # (hallazgo de la revisión del 2026-09-20).
+    if interno:
+        cols = ["N° OT", "Fecha", "Cliente", "Servicio", "Condición", "Técnico", "Anexo de servicios",
+                "Pago instalación", "Pago despacho", "Total a pagar",
+                "Cobrado instalación", "Cobrado despacho", "Cobrado total", "Margen", "Margen %"]
+        anchos = [15, 12, 34, 18, 11, 22, 26, 16, 15, 15, 17, 16, 15, 14, 10]
+        cols_clp, col_pct, col_anx = (8, 9, 10, 11, 12, 13, 14), 15, 7
+    else:
+        cols = ["N° OT", "Fecha", "Cliente", "Servicio", "Técnico", "Anexo de servicios",
+                "Pago instalación", "Pago despacho", "Total a pagar"]
+        anchos = [15, 12, 36, 20, 24, 26, 16, 15, 16]
+        cols_clp, col_pct, col_anx = (7, 8, 9), None, 6
+    usados = {ws.title.lower()}
+    for k, lst in grupos.items():
+        base_t = "".join(ch for ch in (lst[0]["proveedor"] or "Proveedor") if ch not in '[]:*?/\\')[:28] or "Proveedor"
+        titulo, n_ = base_t, 2
+        while titulo.lower() in usados:
+            titulo, n_ = f"{base_t[:26]} {n_}", n_ + 1
+        usados.add(titulo.lower())
+        wsp = wb.create_sheet(titulo)
+        _encabezar(wsp, cols, anchos)
+        r_ = 2
+        for d in lst:
+            if interno:
+                wsp.append([d["numero_ot"], d["fecha"], _t(d["cliente"]), _t(d["tipo_label"]),
+                            "Garantía" if d["es_garantia"] else "Cobrado", _t(d["tecnico_nombre"]), _anexo_txt(d),
+                            d["servicio"], d["despacho"], d["sugerido"],
+                            d["cobrado_cliente_serv"], d["cobrado_cliente_envio"], d["cobrado_cliente"],
+                            d["margen"], d["margen_pct"]])
+            else:
+                wsp.append([d["numero_ot"], d["fecha"], _t(d["cliente"]), _t(d["tipo_label"]), _t(d["tecnico_nombre"]),
+                            _anexo_txt(d), d["servicio"], d["despacho"], d["sugerido"]])
+            _fila_estilo(wsp, r_, cols_clp, col_pct)
+            if not d.get("anexo_firmado"):
+                wsp.cell(row=r_, column=col_anx).font = _rojo
+            r_ += 1
+        pag = sum(d["sugerido"] for d in lst); cob = sum(d["cobrado_cliente"] for d in lst)
+        serv = sum(d["servicio"] for d in lst); desp = sum(d["despacho"] for d in lst)
+        if interno:
+            wsp.append([f"TOTAL {lst[0]['proveedor']}", "", "", "", "", "", f"{len(lst)} OT", serv, desp, pag,
+                        sum(d["cobrado_cliente_serv"] for d in lst), sum(d["cobrado_cliente_envio"] for d in lst), cob,
+                        cob - pag, _pct(cob, pag)])
+        else:
+            wsp.append([f"TOTAL {lst[0]['proveedor']}", "", "", "", "", f"{len(lst)} OT", serv, desp, pag])
+        _fila_estilo(wsp, r_, cols_clp, col_pct, negrita=True)
+        if not interno:
+            wsp.append([])
+            wsp.append([f"Estado de cuenta al {_hoy.strftime('%d/%m/%Y')} · {ILUS_BRAND} · "
+                        f"Si está conforme, responda este correo para que se emita la orden de compra."])
+
+    if not grupos:
+        ws.append(["No hay OT por facturar con este filtro."])
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    _suf = ("-" + "".join(ch for ch in (grupos[next(iter(grupos))][0]["proveedor"] or "") if ch.isalnum())[:30]) \
+        if len(grupos) == 1 else ""
+    nombre = f"OT-por-facturar{_suf}-{'completo' if interno else 'proveedor'}-{_hoy.strftime('%Y-%m-%d')}.xlsx"
+    return send_file(buf, as_attachment=True, download_name=nombre,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @app.route("/mantenciones/facturas-proveedor.xlsx")
 @app.route("/servicio-tecnico/facturas-proveedor.xlsx")
 @_mant_required
@@ -106738,7 +107240,10 @@ def mant_facturas_proveedor_xlsx():
         "  FROM mant_visitas v "
         "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
-        "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = v.tecnico_user_id "
+        # 🏢 2026-09-20: misma resolución de empresa que la pantalla (tabla
+        # empresa↔técnicos primero, vínculo legacy después) -- si no, la
+        # hoja "Por proveedor" partía a Daniel Pulgar de DAP Servicio.
+        "  LEFT JOIN mant_tecnicos_externos te ON te.id = " + _mfp_sql_ficha_de_tecnico("v") + " "
         "  LEFT JOIN mant_factura_proveedor_items fpi ON fpi.visita_id = v.id "
         "  LEFT JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
         "  LEFT JOIN (SELECT ot_id, MAX(id) AS id FROM mant_anexos "

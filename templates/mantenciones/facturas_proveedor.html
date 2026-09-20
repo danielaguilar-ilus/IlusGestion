@@ -128,6 +128,8 @@
 {# ── Filtros ───────────────────────────────────────────────────────── #}
 <form method="get" class="fpv-filtros">
   <input type="hidden" name="per_page" value="{{ per_page }}">
+  {# El chip activo (empresa) sobrevive a cambiar el estado o buscar texto. #}
+  {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
   <div class="fpv-search">
     <i class="bi bi-search text-muted"></i>
     <input type="search" name="proveedor" value="{{ f_prov }}" placeholder="Buscar proveedor…"
@@ -142,52 +144,92 @@
   </select>
   <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
     <i class="bi bi-funnel me-1"></i>Buscar</button>
-  {% if f_prov or f_estado %}
+  {% if f_prov or f_estado or f_prov_id is not none %}
   <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px;display:inline-flex;align-items:center"
      href="/servicio-tecnico/facturas-proveedor"><i class="bi bi-x-lg me-1"></i>Limpiar</a>
   {% endif %}
 </form>
 
 {# ── OT por facturar: lo primero que Daniel pidió mirar ────────────── #}
-<div class="fp-sec">OT por facturar{% if f_prov %} · {{ f_prov }}{% endif %}</div>
-{# 🧭 2026-09-19 (Daniel: "poder moverme entre los proveedores... filtrar,
-   seleccionar, como para hacerlo más rápido"). Un clic en vez de tipear el
-   nombre en el buscador -- mismos proveedores que ya arma provs_sugeridos
-   para el formulario de "Nueva factura". #}
-{% if provs_sugeridos %}
+{% set _chip_es_sin_ficha = chip_activo and chip_activo.id == 0 %}
+{% set _chip_txt = ('sin ficha de proveedor' if _chip_es_sin_ficha else chip_activo.nombre) if chip_activo else '' %}
+<div class="fp-sec fp-sec-row">
+  <span>OT por facturar{% if chip_activo %} · {{ _chip_txt }}{% elif f_prov %} · {{ f_prov }}{% endif %}</span>
+  {% if por_facturar %}
+  {# 📊 2026-09-20 (Daniel: "cuando lleguemos al corte genero el reporte y
+     les digo: esto es lo que te debo... quiero dos versiones, una completa
+     y otra a proveedores"). Sin modal: bajan EXACTAMENTE lo que se ve (mismo
+     chip/buscador), una hoja por proveedor. La selección marcada NO cambia
+     estos dos botones (para eso está la barra de abajo). #}
+  <span class="fp-sec-btns">
+    <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="fpvExcelCorte('interno', false)"
+            title="Todo: pago al proveedor, cobro al cliente y margen. Para ti.">
+      <i class="bi bi-file-earmark-excel me-1" style="color:#16a34a"></i>Corte completo</button>
+    <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="fpvExcelCorte('proveedor', false)"
+            title="Solo lo que se le paga, una hoja por proveedor. Para mandárselo.">
+      <i class="bi bi-send me-1"></i>Corte para el proveedor</button>
+  </span>
+  {% endif %}
+</div>
+{# 🏢 2026-09-20 (Daniel: "DAP Servicio es igual que Daniel Pulgar, Milling
+   es Isabel Milling, Felca es Rafael Naranjo... estás poniendo las empresas
+   y lo estás repitiendo con los técnicos"). UN chip por EMPRESA (ficha de
+   Proveedores nacionales), el técnico va como subtítulo. Cada chip dice
+   cuántas OT y cuánto tiene pendiente -- lo que Daniel va a cobrar. #}
+{% if provs_chips %}
 <div class="fp-chips">
-  <a class="fp-chip {{ 'on' if not f_prov }}" href="?estado={{ f_estado }}">Todos</a>
-  {% for p in provs_sugeridos %}
-  <a class="fp-chip {{ 'on' if f_prov == p.nombre }}" href="?proveedor={{ p.nombre | urlencode }}&estado={{ f_estado }}">{{ p.nombre }}</a>
+  <a class="fp-chip {{ 'on' if f_prov_id is none }}" href="?estado={{ f_estado }}{% if f_prov %}&proveedor={{ f_prov | urlencode }}{% endif %}">
+    <span class="t">Todos</span><span class="n">{{ pf_total if f_prov_id is none else provs_chips | sum(attribute='n') }}</span></a>
+  {% for p in provs_chips %}
+  <a class="fp-chip {{ 'on' if f_prov_id == p.id }} {{ 'vacio' if not p.n }}"
+     href="?prov_id={{ p.id }}&estado={{ f_estado }}{% if f_prov %}&proveedor={{ f_prov | urlencode }}{% endif %}"
+     title="{{ p.nombre }}{% if p.rut %} · {{ p.rut | rut_fmt }}{% endif %}{% if p.tecnicos %} · {{ p.tecnicos }}{% endif %}{% if p.n %} · {{ p.n }} OT · {{ clp(p.monto) }}{% else %} · nada pendiente{% endif %}">
+    <span class="t">{{ p.nombre }}{% if p.tecnicos %}<small>{{ p.tecnicos }}</small>{% endif %}</span>
+    {% if p.n %}<span class="n">{{ p.n }}</span>{% endif %}
+  </a>
   {% endfor %}
 </div>
 {% endif %}
 {% if not por_facturar %}
 <div class="fp-vacio">
   <i class="bi bi-check2-circle" style="color:#16a34a"></i>
-  <div><b>No hay OT de proveedor externo esperando factura.</b>
+  <div>{% if chip_activo %}<b>{{ chip_activo.nombre }} no tiene OT esperando factura.</b>
+    {% if resumen.por_facturar_n %}Hay {{ resumen.por_facturar_n }} pendientes de otros proveedores — toca <b>Todos</b> para verlas.{% endif %}
+    {% elif f_prov %}<b>Ninguna OT por facturar coincide con “{{ f_prov }}”.</b>
+    {% else %}<b>No hay OT de proveedor externo esperando factura.</b>
     Entran acá las OT ejecutadas por un externo, con costo declarado, una vez que
-    la OT queda <b>cerrada</b> (pasó la aprobación final y su Anexo quedó verificado).</div>
+    la OT queda <b>cerrada</b> (pasó la aprobación final y su Anexo quedó verificado).{% endif %}</div>
 </div>
 {% else %}
 <div class="fp-aviso">
   <i class="bi bi-exclamation-triangle-fill"></i>
-  <div><b>{{ pf_total }} OT de proveedor externo con costo declarado y sin factura del proveedor.</b>
-    <span>Cuando llegue la factura del proveedor, regístrala con "Nueva factura" y asígnale estas OT
-      desde su detalle.</span></div>
+  <div><b>{{ pf_total }} OT{% if _chip_es_sin_ficha %} sin ficha de proveedor{% elif chip_activo %} de {{ chip_activo.nombre }}{% else %} de proveedor externo{% endif %} por {{ clp(pf_monto_filtrado) }}, sin factura del proveedor.</b>
+    <span>Al corte: baja el <b>Corte para el proveedor</b> y mándaselo para que confirme; con su OK, marca sus OT y
+      <b>Solicita la orden de compra</b> — una por proveedor. Cuando llegue la factura, complétala desde su detalle.
+      {% if pf_sin_anexo %}<b style="color:#b45309">{{ pf_sin_anexo }} sin anexo firmado</b> (se avisa, no bloquea).{% endif %}
+      {% if _chip_es_sin_ficha %}<b style="color:#b45309">Estas OT no resuelven a ninguna empresa</b>: asigna el técnico a su empresa en Proveedores nacionales.{% endif %}</span></div>
 </div>
-{# 💸 2026-09-17 (Daniel: "necesito que todo lo del 15 para atrás me lo
-   marques como pagado, de momento sin factura"): seleccionar OT de un
-   mismo proveedor y marcarlas pagadas sin N° de documento todavía. Solo
-   tiene sentido con la lista ya acotada a UN proveedor (REGLA de este
-   endpoint: todas las OT del lote deben ser del mismo proveedor) -- por
-   eso el checkbox de selección solo aparece filtrando por proveedor. #}
-{% set puede_marcar_sin_factura = es_superadmin and f_prov %}
+{% if puede_seleccionar %}
+{# REGLA #14: marcar/desmarcar todo también en el teléfono, donde el thead
+   (y su checkbox maestro) se oculta. Si hay más OT que las de esta página,
+   se dice: una OC "de todo" no puede salir de una selección a medias. #}
+<div class="fpv-selrow">
+  <button type="button" class="btn btn-sm btn-outline-dark fpv-selall" onclick="fpvOtToggleAllBtn()">
+    <i class="bi bi-check2-square me-1"></i><span id="fpvSelAllLbl">Marcar las {{ por_facturar | length }} de esta página</span></button>
+  {% if pf_total > (por_facturar | length) %}
+  <span class="fpv-selhint">Viendo {{ por_facturar | length }} de {{ pf_total }} —
+    <a href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=100, pf_page=1, pf_orden=pf_orden, pf_dir=pf_dir) }}">ver hasta 100 por página</a></span>
+  {% endif %}
+</div>
+{% endif %}
+{# 💸 2026-09-17 marcar pagado sin factura (solo superadmin, un proveedor) y
+   🏢 2026-09-20 solicitar OC sobre VARIOS proveedores a la vez (una OC por
+   cada uno) + Excel del corte: el checkbox va siempre, no solo filtrando. #}
 <div class="table-responsive">
   <table class="fp-tabla">
     <thead>
       <tr>
-        {% if puede_marcar_sin_factura %}
+        {% if puede_seleccionar %}
         <th style="width:38px"><span class="fp-chk-wrap"><input type="checkbox" id="fpvOtCheckAll" onchange="fpvOtToggleAll(this.checked)" aria-label="Seleccionar todas"></span></th>
         {% endif %}
         {{ th_orden('fecha', 'OT') }}{{ th_orden('proveedor', 'Proveedor') }}{{ th_orden('cliente', 'Cliente') }}
@@ -202,19 +244,34 @@
     <tbody>
       {% for d in por_facturar %}
       <tr>
-        {% if puede_marcar_sin_factura %}
-        <td data-label=""><span class="fp-chk-wrap"><input type="checkbox" class="fpv-ot-chk" value="{{ d.id }}" data-monto="{{ d.sugerido }}" data-numero="{{ d.numero_ot }}" onchange="fpvOtRefreshBar()"></span></td>
+        {% if puede_seleccionar %}
+        <td data-label=""><span class="fp-chk-wrap"><input type="checkbox" class="fpv-ot-chk" value="{{ d.id }}"
+            data-monto="{{ d.sugerido }}" data-numero="{{ d.numero_ot }}" data-prov="{{ d.prov_key }}"
+            data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
         {% endif %}
         <td data-label="OT"><a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.id) }}">{{ d.numero_ot }}</a>
           <div class="fp-sub">{{ d.fecha }}</div></td>
+        {# 🏢 2026-09-20: la EMPRESA como proveedor; el técnico que ejecutó, debajo. #}
         <td data-label="Proveedor"><div class="fp-nom">{{ d.proveedor }}</div>
-          {% if d.proveedor_rut %}<div class="fp-sub">{{ d.proveedor_rut | rut_fmt }}</div>{% endif %}</td>
+          {% if d.proveedor_rut %}<div class="fp-sub">{{ d.proveedor_rut | rut_fmt }}</div>{% endif %}
+          {% if d.tecnico_nombre and d.tecnico_nombre | lower != d.proveedor | lower %}<div class="fp-sub"><i class="bi bi-person"></i> {{ d.tecnico_nombre }}</div>{% endif %}</td>
         <td data-label="Cliente">{{ d.cliente }}</td>
         <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span>
           {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
         <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span></td>
-        {# 📎 2026-09-19 (Daniel: "a la fila le falta el número de anexo"). #}
-        <td data-label="Anexo">{{ 'N° ' ~ d.anexo_numero if d.anexo_numero else '—' }}</td>
+        {# 📎 2026-09-19 (N° de anexo) + 2026-09-20 (Daniel: "el anexo lo
+           necesito"): estado y PDF en la fila. Sin anexo firmado = ámbar,
+           no rojo: Daniel decidió avisar, no bloquear. #}
+        <td data-label="Anexo">
+          {% if d.anexo_numero %}
+          <a class="fp-anx {{ 'ok' if d.anexo_firmado else 'warn' }}" href="/ot/api/anexos/{{ d.anexo_id }}/pdf" target="_blank" rel="noopener"
+             title="Abrir el PDF del anexo N° {{ d.anexo_numero }}">
+            <i class="bi bi-{{ 'patch-check-fill' if d.anexo_firmado else 'hourglass-split' }}"></i> N° {{ d.anexo_numero }}
+            <small>{{ {'firmado':'Firmado','enviado':'Enviado','visto':'Visto','borrador':'Borrador'}.get(d.anexo_estado, d.anexo_estado) }}</small></a>
+          {% else %}
+          <span class="fp-anx none" title="Esta OT no tiene Anexo de Servicios"><i class="bi bi-file-earmark-x"></i> Sin anexo</span>
+          {% endif %}
+        </td>
         <td class="m" data-label="Pagado instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
         <td class="m" data-label="Pagado despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
         <td class="m tot" data-label="Pagado total">{{ clp(d.sugerido) }}</td>
@@ -226,24 +283,35 @@
         <td class="m tot" data-label="Cobrado total">{{ clp(d.cobrado_cliente) }}</td>
         <td class="m" data-label="Margen">
           <span class="{{ 'fp-margen-pos' if d.margen > 0 else ('fp-margen-neg' if d.margen < 0 else '') }}">
-            {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span></td>
+            {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span>
+          {# 📊 2026-09-20 (Daniel: "colócale un porcentaje chiquitito"). Sobre
+             lo cobrado al cliente; sin cobro (garantía) no hay porcentaje. #}
+          {% if d.margen_pct is not none %}<div class="fp-pct {{ 'neg' if d.margen_pct < 0 }}">{{ '%.1f' | format(d.margen_pct) }}%</div>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-{% if puede_marcar_sin_factura %}
+{% if puede_seleccionar %}
 <div class="fpv-otbar" id="fpvOtBar">
-  <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT seleccionadas · <span id="fpvOtBarMonto">$0</span></div>
-  {# 🔴 2026-09-19 (Daniel, en vivo: "filtrar todas las OT pendientes,
-     seleccionar en completo, y agrupar para solicitar la orden de compra
-     de manera global"). Hermano del botón de "marcar pagado" -- mismo
-     checkbox/seleccionar-todo de arriba, pero para el paso ANTERIOR al
-     pago: pedir la OC, no reconocer que ya se pagó. #}
-  <button type="button" class="btn btn-outline-dark fw-bold" style="min-height:44px" onclick="fpvOtSolicitarOC()">
-    <i class="bi bi-file-earmark-text me-1"></i>Solicitar orden de compra</button>
-  <button type="button" class="btn btn-dark fw-bold" style="min-height:44px" onclick="fpvOtMarcarPagado()">
-    <i class="bi bi-check2-circle me-1"></i>Marcar pagado (sin factura, completar después)</button>
+  <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT seleccionadas · <span id="fpvOtBarMonto">$0</span>
+    <div class="fpv-otbar-det" id="fpvOtBarDet"></div></div>
+  <div class="fpv-otbar-btns">
+    <button type="button" class="btn btn-outline-light fw-bold" style="min-height:44px" onclick="fpvExcelCorte('interno', true)"
+            title="Solo las OT marcadas — versión completa, para ti">
+      <i class="bi bi-file-earmark-excel me-1"></i>Excel selección (completo)</button>
+    <button type="button" class="btn btn-outline-light fw-bold" style="min-height:44px" onclick="fpvExcelCorte('proveedor', true)"
+            title="Solo las OT marcadas — solo lo que se le paga, para mandárselo">
+      <i class="bi bi-send me-1"></i>Excel selección (proveedor)</button>
+    {# 🔴 2026-09-19 + 🏢 2026-09-20: agrupa por proveedor y pide UNA OC por
+       cada uno. Paso ANTERIOR al pago: pedir la OC, no reconocer que ya se pagó. #}
+    <button type="button" class="btn btn-danger fw-bold" style="min-height:44px" onclick="fpvOtSolicitarOC()">
+      <i class="bi bi-file-earmark-text me-1"></i>Solicitar orden de compra</button>
+    {% if es_superadmin %}
+    <button type="button" class="btn btn-outline-light fw-bold" style="min-height:44px" onclick="fpvOtMarcarPagado()" id="fpvBtnPagado">
+      <i class="bi bi-check2-circle me-1"></i>Marcar pagado (sin factura)</button>
+    {% endif %}
+  </div>
 </div>
 {% endif %}
 {# Paginación propia (REGLA #4.3), sin pisar la de las facturas #}
@@ -255,6 +323,7 @@
     <form method="get" class="d-inline">
       <input type="hidden" name="proveedor" value="{{ f_prov }}">
       <input type="hidden" name="estado" value="{{ f_estado }}">
+      {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
       <input type="hidden" name="per_page" value="{{ per_page }}">
       <input type="hidden" name="page" value="{{ page }}">
       <input type="hidden" name="pf_orden" value="{{ pf_orden }}">
@@ -266,11 +335,11 @@
       </label>
     </form>
     <a class="fp-pag-btn {{ 'dis' if pf_page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page > 1 else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page > 1 else '#' }}">
       <i class="bi bi-chevron-left"></i>Anterior</a>
     <span class="fp-pag-num">Página {{ pf_page }} de {{ pf_total_paginas }}</span>
     <a class="fp-pag-btn {{ 'dis' if pf_page >= pf_total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page < pf_total_paginas else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page < pf_total_paginas else '#' }}">
       Siguiente<i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
@@ -298,8 +367,13 @@
     <tbody>
       {% for f in facturas %}
       <tr onclick="window.location='/servicio-tecnico/facturas-proveedor/{{ f.id }}'">
-        <td data-label="Proveedor"><div class="fp-nom">{{ f.proveedor_nombre }}</div>
-          {% if f.proveedor_rut %}<div class="fp-sub">{{ f.proveedor_rut | rut_fmt }}</div>{% endif %}</td>
+        {# 🏢 2026-09-20: la EMPRESA resuelta (ficha guardada o la del técnico
+           de sus OT); si se escribió a mano con otro nombre ("Milling",
+           "Daniel Pulgar"), ese queda como alias debajo -- ya no parecen
+           dos proveedores distintos. #}
+        <td data-label="Proveedor"><div class="fp-nom">{{ f.prov_canon or f.proveedor_nombre }}</div>
+          {% if f.prov_canon_rut %}<div class="fp-sub">{{ f.prov_canon_rut | rut_fmt }}</div>{% endif %}
+          {% if f.prov_alias %}<div class="fp-sub" title="Nombre con el que se registró esta factura">registrada como “{{ f.prov_alias }}”</div>{% endif %}</td>
         <td data-label="Documento">
           {% if f.numero_documento %}
           <span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>
@@ -338,6 +412,7 @@
     <form method="get" class="d-inline">
       <input type="hidden" name="proveedor" value="{{ f_prov }}">
       <input type="hidden" name="estado" value="{{ f_estado }}">
+      {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
       <input type="hidden" name="pf_per_page" value="{{ pf_per_page }}">
       <input type="hidden" name="pf_page" value="{{ pf_page }}">
       <label>Por página
@@ -347,11 +422,11 @@
       </label>
     </form>
     <a class="fp-pag-btn {{ 'dis' if page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
       <i class="bi bi-chevron-left"></i>Anterior</a>
     <span class="fp-pag-num">Página {{ page }} de {{ total_paginas }}</span>
     <a class="fp-pag-btn {{ 'dis' if page >= total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, estado=f_estado or None, per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
       Siguiente<i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
@@ -444,7 +519,56 @@
 </div>
 
 <script>
-const FPV_PROVEEDOR = {{ f_prov | tojson }};
+{# Nombre real de la empresa filtrada; el chip sintético "Sin ficha" (id 0)
+   no es un proveedor y no debe prellenar ningún buscador. #}
+const FPV_PROVEEDOR = {{ (chip_activo.nombre if (chip_activo and chip_activo.id) else f_prov) | tojson }};
+const FPV_PROV_ID = {{ f_prov_id | tojson }};
+const FPV_F_PROV = {{ f_prov | tojson }};
+const FPV_CLP = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CL');
+const fpvEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// 📊 2026-09-20 (Daniel: "cuando lleguemos al corte genero el reporte y les
+// digo: esto es lo que te debo... quiero dos versiones, una completa y otra
+// a proveedores"). version: 'interno' (todo) | 'proveedor' (solo lo que se
+// le paga). soloSeleccion=true baja SOLO las OT marcadas (botones de la
+// barra); false baja lo que se ve (mismo chip/buscador, botones del título)
+// -- nunca cambia de comportamiento en silencio según haya o no marcadas.
+function fpvExcelCorte(version, soloSeleccion){
+  const p = new URLSearchParams({version: version || 'interno'});
+  if (soloSeleccion){
+    const chks = Array.from(document.querySelectorAll('.fpv-ot-chk:checked'));
+    if (!chks.length){ ilusToast('Marca al menos una OT', {type:'warning'}); return; }
+    p.set('ids', chks.map(cb => cb.value).join(','));
+    ilusToast('Generando el Excel de las ' + chks.length + ' OT marcadas…', {type:'info'});
+  } else {
+    if (FPV_PROV_ID !== null && FPV_PROV_ID !== undefined) p.set('prov_id', FPV_PROV_ID);
+    if (FPV_F_PROV) p.set('proveedor', FPV_F_PROV);
+    ilusToast(version === 'proveedor' ? 'Generando el corte para el proveedor…' : 'Generando el corte completo…', {type:'info'});
+  }
+  window.location = '/servicio-tecnico/facturas-proveedor/por-facturar.xlsx?' + p.toString();
+}
+// REGLA #14 en el teléfono (el checkbox maestro vive en el thead oculto):
+// un botón que marca todas las de la página; si ya están todas, desmarca.
+function fpvOtToggleAllBtn(){
+  const todas = Array.from(document.querySelectorAll('.fpv-ot-chk'));
+  const faltan = todas.some(cb => !cb.checked);
+  fpvOtToggleAll(faltan);
+}
+
+// Agrupa las OT marcadas por proveedor (empresa) -- lo que se muestra en la
+// barra y lo que decide si "Marcar pagado" (un solo proveedor) está disponible.
+function fpvOtGrupos(){
+  const g = new Map();
+  document.querySelectorAll('.fpv-ot-chk:checked').forEach(cb => {
+    const k = cb.dataset.prov || cb.dataset.provnombre;
+    const x = g.get(k) || {nombre: cb.dataset.provnombre, n: 0, monto: 0, sinAnexo: 0, ids: [], numeros: []};
+    x.n++; x.monto += Number(cb.dataset.monto) || 0;
+    if (cb.dataset.anexo !== '1') x.sinAnexo++;
+    x.ids.push(Number(cb.value)); x.numeros.push(cb.dataset.numero);
+    g.set(k, x);
+  });
+  return Array.from(g.values()).sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
 
 // 🧭 2026-09-19 (Daniel: "poder ordenar"). Mantiene todos los filtros
 // actuales (proveedor/estado/tamaño de página) y solo cambia pf_orden/
@@ -562,21 +686,40 @@ function fpvOtRefreshBar(){
   const n = chks.length;
   const monto = chks.reduce(function(s, cb){ return s + (Number(cb.dataset.monto) || 0); }, 0);
   document.getElementById('fpvOtBarN').textContent = n;
-  document.getElementById('fpvOtBarMonto').textContent = '$' + Math.round(monto).toLocaleString('es-CL');
+  document.getElementById('fpvOtBarMonto').textContent = FPV_CLP(monto);
   bar.classList.toggle('on', n > 0);
   const master = document.getElementById('fpvOtCheckAll');
   const todas = document.querySelectorAll('.fpv-ot-chk');
   if (master) master.checked = todas.length > 0 && n === todas.length;
+  const lbl = document.getElementById('fpvSelAllLbl');
+  if (lbl) lbl.textContent = (todas.length > 0 && n === todas.length)
+    ? 'Desmarcar las ' + todas.length : 'Marcar las ' + todas.length + ' de esta página';
+  // Desglose por proveedor: "DAP Servicio 2 OT · $500.000 · Milling 1 OT · $…"
+  const grupos = fpvOtGrupos();
+  const det = document.getElementById('fpvOtBarDet');
+  if (det){
+    det.innerHTML = grupos.map(g =>
+      '<span><b>' + fpvEsc(g.nombre) + '</b> ' + g.n + ' OT · ' + FPV_CLP(g.monto) +
+      (g.sinAnexo ? ' <i class="bi bi-exclamation-triangle-fill" title="' + g.sinAnexo + ' sin anexo firmado"></i>' : '') + '</span>'
+    ).join('');
+    if (grupos.length > 1) det.insertAdjacentHTML('afterbegin', '<span class="fpv-otbar-hint">' + grupos.length + ' proveedores → ' + grupos.length + ' órdenes de compra</span>');
+  }
+  // Marcar pagado reconoce una deuda de UN proveedor -- con varios se apaga.
+  const bp = document.getElementById('fpvBtnPagado');
+  if (bp){
+    bp.disabled = grupos.length !== 1;
+    bp.title = grupos.length > 1 ? 'Marcar pagado es por un proveedor a la vez' : '';
+  }
 }
 async function fpvOtMarcarPagado(){
-  const chks = Array.from(document.querySelectorAll('.fpv-ot-chk:checked'));
-  if (!chks.length){ ilusToast('Selecciona al menos una OT', {type:'warning'}); return; }
-  const ids = chks.map(function(cb){ return Number(cb.value); });
-  const monto = chks.reduce(function(s, cb){ return s + (Number(cb.dataset.monto) || 0); }, 0);
-  const numeros = chks.map(function(cb){ return cb.dataset.numero; }).slice(0, 6).join(', ');
+  const grupos = fpvOtGrupos();
+  if (!grupos.length){ ilusToast('Selecciona al menos una OT', {type:'warning'}); return; }
+  if (grupos.length > 1){ ilusToast('Marcar pagado es por un proveedor a la vez — filtra por el chip del proveedor', {type:'warning'}); return; }
+  const g = grupos[0];
+  const numeros = g.numeros.slice(0, 6).join(', ');
   const ok = await ilusConfirm({
     title: 'Marcar pagado sin factura',
-    message: `¿Confirmas que ya se le pagó a ${FPV_PROVEEDOR || 'este proveedor'} por ${ids.length} OT (${numeros}${ids.length > 6 ? '…' : ''}), por un total de $${Math.round(monto).toLocaleString('es-CL')}?`,
+    message: `¿Confirmas que ya se le pagó a ${g.nombre} por ${g.n} OT (${numeros}${g.n > 6 ? '…' : ''}), por un total de ${FPV_CLP(g.monto)}?`,
     sub: 'Queda registrado como pagado, sin N° de documento todavía. Podrás completarlo con el N° y la fecha real de la factura cuando llegue (botón "Completar factura" en el detalle).',
     okLabel: 'Sí, marcar pagado', cancelLabel: 'Cancelar',
   });
@@ -584,32 +727,55 @@ async function fpvOtMarcarPagado(){
   try{
     const r = await fetch('{{ url_for("mant_facturas_proveedor_marcar_pagado_sin_factura") }}', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({visita_ids: ids}),
+      body: JSON.stringify({visita_ids: g.ids}),
     });
     const d = await r.json().catch(function(){ return {}; });
     if (!r.ok || d.ok === false){
       ilusToast(d.error || 'No se pudo registrar el pago', {type:'error'});
       return;
     }
-    ilusToast('✓ Marcado pagado — ' + d.n_ot + ' OT, $' + Math.round(d.monto_total).toLocaleString('es-CL'), {type:'success'});
+    ilusToast('✓ Marcado pagado — ' + d.n_ot + ' OT, ' + FPV_CLP(d.monto_total), {type:'success'});
     window.location = '/servicio-tecnico/facturas-proveedor/' + d.id;
   }catch(e){
     ilusToast('Error de conexión', {type:'error'});
   }
 }
+// 🏢 2026-09-20 (Daniel: "seleccionar los proveedores que tengo pendientes y
+// generar una orden de compra con lo que está pendiente"): varios
+// proveedores marcados -> UNA solicitud por proveedor, en una sola llamada.
+// El N° de OC a mano solo se pide con un proveedor. Las OT sin anexo
+// firmado se avisan, no bloquean (decisión de Daniel, 2026-09-20).
 async function fpvOtSolicitarOC(){
-  const chks = Array.from(document.querySelectorAll('.fpv-ot-chk:checked'));
-  if (!chks.length){ ilusToast('Selecciona al menos una OT', {type:'warning'}); return; }
-  const ids = chks.map(function(cb){ return Number(cb.value); });
-  const monto = chks.reduce(function(s, cb){ return s + (Number(cb.dataset.monto) || 0); }, 0);
-  const numeros = chks.map(function(cb){ return cb.dataset.numero; }).slice(0, 6).join(', ');
-  const numeroOC = await ilusPrompt({
-    title: 'Solicitar orden de compra',
-    message: `Agrupando ${ids.length} OT de ${FPV_PROVEEDOR || 'este proveedor'} (${numeros}${ids.length > 6 ? '…' : ''}) por $${Math.round(monto).toLocaleString('es-CL')}. Si ya tienes el N° de OC, escríbelo -- si no, déjalo en blanco y lo completas después.`,
-    placeholder: 'N° de orden de compra (opcional)',
-    required: false,
-  });
-  if (numeroOC === null) return; // canceló
+  const grupos = fpvOtGrupos();
+  if (!grupos.length){ ilusToast('Selecciona al menos una OT', {type:'warning'}); return; }
+  const ids = grupos.flatMap(g => g.ids);
+  const total = grupos.reduce((s, g) => s + g.monto, 0);
+  const sinAnexo = grupos.reduce((s, g) => s + g.sinAnexo, 0);
+  const lineas = grupos.map(g => '<b>' + fpvEsc(g.nombre) + '</b>: ' + g.n + ' OT · ' + FPV_CLP(g.monto)
+    + (g.sinAnexo ? ' <span style="color:#b45309">(' + g.sinAnexo + ' sin anexo firmado)</span>' : '')).join('<br>');
+  let numeroOC = null;
+  if (grupos.length === 1){
+    const g = grupos[0];
+    numeroOC = await ilusPrompt({
+      title: 'Solicitar orden de compra',
+      message: `Agrupando ${g.n} OT de ${g.nombre} (${g.numeros.slice(0,6).join(', ')}${g.n > 6 ? '…' : ''}) por ${FPV_CLP(g.monto)}.`
+        + (g.sinAnexo ? ` ⚠ ${g.sinAnexo} sin anexo firmado — se avisa en la solicitud, no bloquea.` : '')
+        + ' Si ya tienes el N° de OC, escríbelo; si no, déjalo en blanco y lo completas después.',
+      placeholder: 'N° de orden de compra (opcional)',
+      required: false,
+    });
+    if (numeroOC === null) return; // canceló
+  } else {
+    const ok = await ilusConfirm({
+      title: 'Solicitar ' + grupos.length + ' órdenes de compra',
+      message: 'Se crea UNA solicitud por proveedor, con sus OT y su total:',
+      sub: lineas + '<br><br>Total ' + FPV_CLP(total) + '. El N° de OC de cada una se completa después, desde su detalle.'
+        + (sinAnexo ? '<br><span style="color:#b45309">⚠ ' + sinAnexo + ' OT sin anexo firmado — queda anotado en cada solicitud, no bloquea.</span>' : ''),
+      subHtml: true,
+      okLabel: 'Sí, solicitar ' + grupos.length + ' OC', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+  }
   try{
     const r = await fetch('{{ url_for("mant_facturas_proveedor_solicitar_oc") }}', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -620,8 +786,19 @@ async function fpvOtSolicitarOC(){
       ilusToast(d.error || 'No se pudo registrar la solicitud', {type:'error'});
       return;
     }
-    ilusToast('✓ Orden de compra solicitada — ' + d.n_ot + ' OT, $' + Math.round(d.monto_total).toLocaleString('es-CL'), {type:'success'});
-    window.location = '/servicio-tecnico/facturas-proveedor/' + d.id;
+    const sols = d.solicitudes || [];
+    if (sols.length <= 1){
+      ilusToast('✓ Orden de compra solicitada — ' + d.n_ot + ' OT, ' + FPV_CLP(d.monto_total), {type:'success'});
+      window.location = '/servicio-tecnico/facturas-proveedor/' + d.id;
+      return;
+    }
+    await ilusAlert({
+      title: sols.length + ' solicitudes de orden de compra creadas',
+      message: 'Cada una queda pendiente de N° de OC y de la factura del proveedor:',
+      sub: sols.map(s => '<b>' + fpvEsc(s.proveedor) + '</b> — solicitud #' + s.id + ' · ' + s.n_ot + ' OT · ' + FPV_CLP(s.monto_total)).join('<br>'),
+      subHtml: true, type: 'success',
+    });
+    window.location = '/servicio-tecnico/facturas-proveedor?estado=pendiente';
   }catch(e){
     ilusToast('Error de conexión', {type:'error'});
   }
@@ -644,6 +821,56 @@ async function fpvOtSolicitarOC(){
   border-radius:999px;padding:5px 13px;text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center}
 .fp-chip:hover{border-color:#dc2626;color:#dc2626}
 .fp-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+/* 🏢 2026-09-20: chip por EMPRESA -- técnico como subtítulo, contador de OT
+   pendientes a la derecha. Los que no tienen nada pendiente van atenuados
+   (siguen ahí para filtrar sus facturas históricas). REGLA #3: 44px. */
+.fp-chips .fp-chip{min-height:44px;padding:5px 8px 5px 13px;gap:8px;max-width:100%;white-space:normal}
+.fp-chips .fp-chip .t{display:flex;flex-direction:column;line-height:1.15;min-width:0;text-align:left}
+/* REGLA #15: nombres completos, nunca cortados -- el chip crece o hace wrap */
+.fp-chips .fp-chip .t small{font-size:.62rem;font-weight:600;color:#6b7280;white-space:normal}
+.fp-chips .fp-chip.on .t small{color:#cbd5e1}
+.fp-chips .fp-chip .n{font-size:.7rem;font-weight:900;min-width:22px;height:22px;border-radius:999px;background:#dc2626;color:#fff;
+  display:inline-flex;align-items:center;justify-content:center;padding:0 6px}
+.fp-chips .fp-chip.on .n{background:#fff;color:#0a0a0a}
+.fp-chips .fp-chip.vacio{opacity:.55}
+.fp-chips .fp-chip.vacio:hover{opacity:1}
+/* 📎 Anexo en la fila: firmado verde, pendiente ámbar, sin anexo gris (avisa, no bloquea) */
+.fp-anx{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:800;border-radius:999px;padding:3px 9px;
+  white-space:nowrap;text-decoration:none;border:1px solid transparent}
+.fp-anx small{font-weight:700;opacity:.8}
+.fp-anx.ok{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.fp-anx.warn{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.fp-anx.none{background:#f1f5f9;color:#64748b;border-color:#e2e8f0}
+a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
+/* 📊 Margen %: chiquito, debajo del monto */
+.fp-pct{font-size:.66rem;font-weight:800;color:#64748b;margin-top:1px}
+.fp-pct.neg{color:#b91c1c}
+.fpv-otbar-det{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.74rem;font-weight:600;color:#cbd5e1;margin-top:4px}
+.fpv-otbar-det b{color:#fff}
+.fpv-otbar-det i{color:#fbbf24}
+.fpv-otbar-hint{color:#fbbf24;font-weight:800}
+.fpv-otbar-btns{display:flex;gap:8px;flex-wrap:wrap}
+.fpv-otbar .btn:disabled{opacity:.4}
+/* La barra solo existe con algo marcado: antes quedaba semitransparente
+   ocupando 1/4 del teléfono sin ninguna OT seleccionada. */
+.fpv-otbar{display:none}
+.fpv-otbar.on{display:flex}
+/* Título de sección + botones de Excel, sin romper la barrita roja del ::before */
+.fp-sec-row{flex-wrap:wrap}
+.fp-sec-btns{margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap}
+.fp-sec-btns .btn{min-height:38px;text-transform:none;letter-spacing:0;font-size:.76rem}
+.fpv-selrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px}
+.fpv-selall{min-height:40px;text-transform:none;letter-spacing:0}
+.fpv-selhint{font-size:.76rem;color:#64748b;font-weight:600}
+.fpv-selhint a{color:#dc2626;font-weight:800}
+@media (min-width:769px){ .fpv-selall{display:none} }
+@media (max-width:768px){
+  .fp-chk-wrap{min-width:44px;min-height:44px}
+  .fp-sec-btns{margin-left:0;width:100%}
+  .fp-sec-btns .btn{flex:1 1 auto;min-height:44px}
+  .fpv-otbar-btns{width:100%}
+  .fpv-otbar-btns .btn{flex:1 1 100%}
+}
 .fp-th-ord{cursor:pointer;user-select:none;white-space:nowrap}
 .fp-th-ord:hover{color:#dc2626}
 .fp-th-ord.activo{color:#dc2626}
