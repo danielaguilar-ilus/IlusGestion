@@ -81387,7 +81387,7 @@ def ot2_detalle(vid):
         _lev_id_det = _ot_levantamiento_de(v)
         if _lev_id_det:
             _lr = mysql_fetchone(
-                "SELECT id, estado, fecha_cierre, closed_by "
+                "SELECT id, estado, fecha_cierre, closed_by, modalidad_captura "
                 "  FROM mant_levantamientos WHERE id=%s", (_lev_id_det,)) or {}
             _sql_li = (
                 "SELECT COUNT(*) AS n, "
@@ -81429,6 +81429,19 @@ def ot2_detalle(vid):
                 # Reparar = el mismo permiso que ya exige el endpoint
                 # /rematerializar (aprobar). El botón no inventa un permiso.
                 "puede_reparar": bool(puede_aprobar),
+                # 🆕 2026-09-20 — "Agregar equipo por descubrimiento": el
+                # botón que vivía en la pantalla clásica (ya eliminada,
+                # commit 5e84e765) y que hoy no tiene dónde vivir. Mismo
+                # criterio que usaba `mant_ot_ejecutar`: editable mientras
+                # la visita esté en un estado abierto, y solo tiene sentido
+                # si el levantamiento es "descubrimiento" (en "asignado" el
+                # técnico ve una lista fija, no agrega equipos sueltos).
+                "modalidad_captura": _lr.get("modalidad_captura"),
+                "editable": ((v.get("estado") or "") in _LEV_ESTADOS_EDITABLES),
+                "puede_agregar_equipo": (
+                    ((v.get("estado") or "") in _LEV_ESTADOS_EDITABLES)
+                    and (_lr.get("modalidad_captura") == "descubrimiento")
+                ),
             }
     except Exception as _e_lev_det:
         print(f"[ot2_detalle] resumen levantamiento vid={vid}: {_e_lev_det}", flush=True)
@@ -81486,6 +81499,17 @@ def ot2_detalle(vid):
         plantillas_todas=plantillas_todas,
         categoria_ot_actual=categoria_ot_actual,
         tecnicos_colaboradores=tecnicos_colaboradores,
+        # 🆕 2026-09-20 — mismos valores que ya usa `_lev_gate_finalizar`
+        # (el candado real vive ahí, server-side); esto es solo para que
+        # el modal "Agregar equipo" anticipe la misma UX que el backend
+        # va a exigir (pedir GPS antes de guardar), sin duplicar el candado.
+        reglas_terreno={
+            "geofence_lev_activo": bool((_reglas_cargar() or {}).get("ot_geofence_lev_activo")),
+            "geofence_lev_radio_m": max(50, int((_reglas_cargar() or {}).get("ot_geofence_lev_radio_m") or 500)),
+            "geofence_lev_accuracy_max_m": max(30, int((_reglas_cargar() or {}).get("ot_geofence_lev_accuracy_max_m") or 500)),
+        },
+        geof_rol_exento=(_rol_familia((getattr(g, "user", None) or {}).get("role"))
+                         in ("admin", "supervisor", "ejecutivo", "superadmin")),
         # 🆕 2026-08-27 — puerta de entrada para CREAR el Anexo de Servicios
         # (el motor de firma ya existía desde anoche, commit e007c43; lo que
         # faltaba era el formulario). Los 3 textos "fijos" del documento real
