@@ -2253,6 +2253,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .levd-foto-ov{position:absolute;inset:0;border-radius:10px;display:flex;
   align-items:center;justify-content:center;background:rgba(10,10,10,.45)}
 .levd-foto-ov-err{background:rgba(220,38,38,.55);color:#fff;font-size:1.2rem;cursor:pointer}
+.levd-foto-ov-wait{background:rgba(245,158,11,.5);color:#fff;font-size:1.2rem}
 .levd-foto-add{width:74px;height:74px;border:2px dashed #dc2626;border-radius:10px;
   background:#fff5f5;color:#dc2626;font-size:1.5rem;display:flex;align-items:center;justify-content:center}
 .levd-foto-add-alt{width:74px;height:74px;border:2px dashed #9ca3af;border-radius:10px;
@@ -12372,15 +12373,34 @@ function _levdAutosaveEstado(txt, color){
   if (el){ el.textContent = txt; el.style.color = color; }
 }
 
+// El backend (mant_lev_item_crear) no crea un item sin nombre, salvo que
+// esté marcado "no está". Antes de que exista el item, cualquier
+// autoguardado sin nombre iba a chocar con ese 400 -- y el original lo
+// mostraba como "Sin conexión" apenas se abría el modal, sin que el
+// técnico hubiera hecho nada. Con esto se espera al nombre: el POST de
+// creación ya manda el snapshot COMPLETO, así que nada se pierde.
+function _levdPuedeCrear(snap){
+  return !!(snap.nombre || snap.estado_capturado === 'no_encontrado');
+}
+
 async function _levdEnviarCampo(ctx, campo){
   ctx.timers.delete(campo);
   if (ctx !== _levdCtx) return;   // el modal ya cambió de equipo -- no escribir encima de otro
   const snap = _levdSnapshotCampos();
   const val = snap[campo];
   if (ctx.ultimoOk[campo] === val) return;
+  if (!ctx.iid && !_levdPuedeCrear(snap)) return;
   try {
+    const teniaIid = !!ctx.iid;
     const iid = await _levdEnsureIid(ctx);
     if (ctx !== _levdCtx) return;
+    if (!teniaIid){
+      // Recién nació el item: todo lo del snapshot ya viajó en el POST.
+      Object.assign(ctx.ultimoOk, snap);
+      _levdAutosaveEstado('Guardado ✓', '#15803d');
+      _levdSubirFotosEsperando(ctx);
+      return;
+    }
     const payload = {};
     payload[campo] = val;
     if (campo === 'anomalias' || campo === 'estado_capturado'){
@@ -12571,6 +12591,8 @@ function _levdRenderFotos(){
   const nuevasHtml = _levdFotos.map((f, i) => {
     const overlay = f.estado === 'subiendo'
       ? '<div class="levd-foto-ov"><span class="spinner-border spinner-border-sm text-light"></span></div>'
+      : f.estado === 'esperando'
+      ? '<div class="levd-foto-ov levd-foto-ov-wait" title="Se sube sola apenas escribas el nombre del equipo"><i class="bi bi-hourglass-split"></i></div>'
       : f.estado === 'error'
       ? `<div class="levd-foto-ov levd-foto-ov-err" onclick="levdFotoReintentar(${i})" title="No se subió — toca para reintentar"><i class="bi bi-arrow-repeat"></i></div>`
       : '';
@@ -12623,7 +12645,26 @@ function levdFotoReintentar(i){
   _levdSubirFoto(_levdCtx, f);
 }
 
+// Fotos tomadas ANTES de escribir el nombre ("foto como primera acción"):
+// no hay item donde colgarlas todavía, quedan en 'esperando' y se suben
+// solas apenas el item nace (ver _levdEnviarCampo). En el original
+// quedaban en 'error' y había que tocarlas una por una para reintentar.
+function _levdSubirFotosEsperando(ctx){
+  if (ctx !== _levdCtx || !ctx.iid) return Promise.resolve();
+  const ps = _levdFotos.filter(f => f.estado === 'esperando').map(f => {
+    f.estado = 'subiendo';
+    return _levdSubirFoto(ctx, f);
+  });
+  _levdRenderFotos();
+  return Promise.all(ps);
+}
+
 async function _levdSubirFoto(ctx, ph){
+  if (!ctx.iid && !_levdPuedeCrear(_levdSnapshotCampos())){
+    ph.estado = 'esperando';
+    if (ctx === _levdCtx) _levdRenderFotos();
+    return;
+  }
   try {
     const iid = await _levdEnsureIid(ctx);
     if (ctx !== _levdCtx) return;
@@ -12737,11 +12778,27 @@ async function levdGuardar(){
   const dano = _levdEl('levd_dano').checked;
   // "el equipo no está... ahí ya se anula cualquier obligatoriedad de
   // completar, porque no existe. Solamente se declara que no está".
+  const btn = _levdEl('levdGuardarBtn');
+  const orig = btn.innerHTML;
   if (!noEsta){
     if (!nombre){ err.textContent = 'El nombre del equipo es obligatorio.'; _levdEl('levd_nombre').focus(); return; }
+    // Fotos tomadas antes del nombre: ya hay nombre, así que ahora sí se
+    // pueden subir -- se hace acá mismo y se espera, para validar sobre
+    // lo real y no mandar al técnico a "tomar una foto" que ya tomó.
+    if (_levdFotos.some(f => f.estado === 'esperando')){
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Subiendo fotos…`;
+      try {
+        await _levdFlushPendientes(ctx);
+        await _levdEnsureIid(ctx);
+        await _levdSubirFotosEsperando(ctx);
+      } catch(_e){}
+      btn.disabled = false; btn.innerHTML = orig;
+      if (ctx !== _levdCtx) return;
+    }
     const fotosOk = _levdFotosExistentes.length + _levdFotos.filter(f => f.estado === 'ok').length;
     if (fotosOk === 0){
-      const hayPendientes = _levdFotos.some(f => f.estado === 'subiendo');
+      const hayPendientes = _levdFotos.some(f => f.estado === 'subiendo' || f.estado === 'esperando');
       err.textContent = hayPendientes ? 'Espera a que termine de subir la foto…' : 'Toma al menos 1 foto del equipo.';
       return;
     }
@@ -12762,8 +12819,6 @@ async function levdGuardar(){
   }
   const nombreLbl = nombre || '(equipo no encontrado)';
 
-  const btn = _levdEl('levdGuardarBtn');
-  const orig = btn.innerHTML;
   btn.disabled = true;
   try {
     btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Guardando…`;
