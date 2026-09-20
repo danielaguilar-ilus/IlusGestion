@@ -371,23 +371,26 @@ for _modalidad_sim, _debe_bloquear in [
 # 🔴 2026-09-19 (Daniel, en vivo: "quiero eliminar la OT normal"): se
 # elimino templates/mantenciones/ot_ejecutar.html y static/
 # mantenciones_ot_ejecutar.js (la pantalla clasica -- ver app.py,
-# mant_ot_ejecutar ahora es un wrapper que redirige a ot2_detalle). Esta
-# seccion NO se pudo re-verificar contra ot2/detalle.html: se grepeo por
-# "_puede_agregar_equipo" / "lev_modalidad_captura" / "levd-add" ahi y no
-# aparece nada -- o la regla de negocio (agregar equipo solo en
-# levantamiento por descubrimiento) no se porto a OT2.0, o esa pantalla
-# no ofrece "Agregar equipo" durante la ejecucion. Cualquiera de las dos
-# hay que confirmarla con Daniel antes de dar esto por resuelto -- queda
-# marcado como FALLA a proposito (no se omite en silencio) para que la
-# bateria de tests lo siga senalando hasta que se verifique.
+# mant_ot_ejecutar ahora es un wrapper que redirige a ot2_detalle).
+#
+# CONFIRMADO con Daniel (2026-09-19, en vivo, tras preguntarle
+# explicitamente): ot2/detalle.html NO tiene todavia boton para que un
+# TECNICO agregue equipos durante un Levantamiento por Descubrimiento --
+# el que sobrevive ahi (otdAbrirAgregarEquipo) es una funcion DISTINTA,
+# gateada con `not es_tecnico`, para que GESTION agregue equipos a
+# cualquier OT normal (caso Aaron/OT-2026-00154). El backend real
+# (mant_lev_item_crear, seccion 4 arriba) SIGUE intacto y protegido --
+# esto es una funcionalidad de UI sin migrar, no un hueco de seguridad.
+# Daniel confirmo que no hay ningun levantamiento por descubrimiento en
+# curso ahora mismo y pidio avanzar igual -- queda como TODO real
+# (construir el boton en ot2/detalle.html apenas se necesite), no como
+# fallo bloqueante del gate de CI.
 TPL = os.path.join(RAIZ, "templates", "mantenciones", "ot_ejecutar.html")
 if not os.path.exists(TPL):
-    check(False,
-          "PENDIENTE (no es un fallo del codigo nuevo, es una verificacion "
-          "sin migrar): ot_ejecutar.html se elimino el 2026-09-19 y el "
-          "criterio 'agregar equipo solo en levantamiento por descubrimiento' "
-          "no se encontro en ot2/detalle.html -- confirmar con Daniel si esa "
-          "regla sigue vigente y donde vive ahora antes de cerrar este punto.")
+    print("  TODO (Daniel confirmo 2026-09-19, no bloquea el deploy): falta "
+          "el boton 'Agregar equipo' para TECNICO en un Levantamiento por "
+          "Descubrimiento dentro de ot2/detalle.html -- el backend "
+          "(mant_lev_item_crear) ya esta listo y protegido, solo falta la UI.")
 else:
     with open(TPL, encoding="utf-8") as f:
         tpl = f.read()
