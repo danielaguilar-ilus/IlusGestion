@@ -177,15 +177,26 @@
    Proveedores nacionales), el técnico va como subtítulo. Cada chip dice
    cuántas OT y cuánto tiene pendiente -- lo que Daniel va a cobrar. #}
 {% if provs_chips %}
-<div class="fp-chips">
-  <a class="fp-chip {{ 'on' if f_prov_id is none }}" href="?estado={{ f_estado }}{% if f_prov %}&proveedor={{ f_prov | urlencode }}{% endif %}">
-    <span class="t">Todos</span><span class="n">{{ pf_total if f_prov_id is none else provs_chips | sum(attribute='n') }}</span></a>
+{# Clase propia (.fp-prov): `.fp-chip` también es el contador chico de la
+   tabla de facturas y su regla pisaba a estos filtros (Daniel, viendo las
+   burbujas rotas: "esos círculos se ven horribles"). Tarjeta: inicial,
+   nombre + técnico, y a la derecha cuántas OT y cuánto tiene pendiente. #}
+{% set _tot_pend = provs_chips | sum(attribute='n') %}
+{% set _tot_monto = provs_chips | sum(attribute='monto') %}
+<div class="fp-provs">
+  <a class="fp-prov {{ 'on' if f_prov_id is none }}" href="?estado={{ f_estado }}{% if f_prov %}&proveedor={{ f_prov | urlencode }}{% endif %}">
+    <span class="fp-prov-ini"><i class="bi bi-grid-3x3-gap-fill"></i></span>
+    <span class="fp-prov-tx"><b>Todos los proveedores</b><small>{{ provs_chips | length }} con ficha</small></span>
+    <span class="fp-prov-n"><b>{{ _tot_pend }}</b><em>{{ 'OT' if _tot_pend == 1 else 'OT' }} · {{ clp(_tot_monto) }}</em></span>
+  </a>
   {% for p in provs_chips %}
-  <a class="fp-chip {{ 'on' if f_prov_id == p.id }} {{ 'vacio' if not p.n }}"
+  <a class="fp-prov {{ 'on' if f_prov_id == p.id }} {{ 'vacio' if not p.n }}"
      href="?prov_id={{ p.id }}&estado={{ f_estado }}{% if f_prov %}&proveedor={{ f_prov | urlencode }}{% endif %}"
      title="{{ p.nombre }}{% if p.rut %} · {{ p.rut | rut_fmt }}{% endif %}{% if p.tecnicos %} · {{ p.tecnicos }}{% endif %}{% if p.n %} · {{ p.n }} OT · {{ clp(p.monto) }}{% else %} · nada pendiente{% endif %}">
-    <span class="t">{{ p.nombre }}{% if p.tecnicos %}<small>{{ p.tecnicos }}</small>{% endif %}</span>
-    {% if p.n %}<span class="n">{{ p.n }}</span>{% endif %}
+    <span class="fp-prov-ini">{{ p.ini }}</span>
+    <span class="fp-prov-tx"><b>{{ p.nombre }}</b>{% if p.tecnicos %}<small><i class="bi bi-person"></i> {{ p.tecnicos }}</small>{% elif p.rut %}<small>{{ p.rut | rut_fmt }}</small>{% endif %}</span>
+    {% if p.n %}<span class="fp-prov-n"><b>{{ p.n }}</b><em>OT · {{ clp(p.monto) }}</em></span>
+    {% else %}<span class="fp-prov-n cero"><b>0</b><em>al día</em></span>{% endif %}
   </a>
   {% endfor %}
 </div>
@@ -821,19 +832,35 @@ async function fpvOtSolicitarOC(){
   border-radius:999px;padding:5px 13px;text-decoration:none;white-space:nowrap;min-height:32px;display:inline-flex;align-items:center}
 .fp-chip:hover{border-color:#dc2626;color:#dc2626}
 .fp-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
-/* 🏢 2026-09-20: chip por EMPRESA -- técnico como subtítulo, contador de OT
-   pendientes a la derecha. Los que no tienen nada pendiente van atenuados
-   (siguen ahí para filtrar sus facturas históricas). REGLA #3: 44px. */
-.fp-chips .fp-chip{min-height:44px;padding:5px 8px 5px 13px;gap:8px;max-width:100%;white-space:normal}
-.fp-chips .fp-chip .t{display:flex;flex-direction:column;line-height:1.15;min-width:0;text-align:left}
-/* REGLA #15: nombres completos, nunca cortados -- el chip crece o hace wrap */
-.fp-chips .fp-chip .t small{font-size:.62rem;font-weight:600;color:#6b7280;white-space:normal}
-.fp-chips .fp-chip.on .t small{color:#cbd5e1}
-.fp-chips .fp-chip .n{font-size:.7rem;font-weight:900;min-width:22px;height:22px;border-radius:999px;background:#dc2626;color:#fff;
-  display:inline-flex;align-items:center;justify-content:center;padding:0 6px}
-.fp-chips .fp-chip.on .n{background:#fff;color:#0a0a0a}
-.fp-chips .fp-chip.vacio{opacity:.55}
-.fp-chips .fp-chip.vacio:hover{opacity:1}
+/* 🏢 2026-09-20: tarjeta por EMPRESA (inicial · nombre + técnico · OT y
+   monto pendiente). Clase propia para no chocar con .fp-chip (contador de
+   la tabla de facturas). Las que no tienen nada pendiente van atenuadas,
+   siguen ahí para filtrar sus facturas históricas. REGLA #3: 44px+;
+   REGLA #15: nombres completos, la tarjeta crece, nunca corta. */
+.fp-provs{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;margin:6px 0 12px}
+.fp-prov{display:flex;align-items:center;gap:11px;min-height:56px;padding:9px 12px;
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;text-decoration:none;color:#0f172a;
+  box-shadow:0 1px 2px rgba(15,23,42,.04);transition:border-color .15s,transform .15s,box-shadow .15s}
+.fp-prov:hover{border-color:#dc2626;transform:translateY(-1px);box-shadow:0 6px 16px rgba(15,23,42,.08);color:#0f172a}
+.fp-prov-ini{flex:0 0 38px;width:38px;height:38px;border-radius:11px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:.82rem;font-weight:900;letter-spacing:.02em;color:#fff;
+  background:linear-gradient(135deg,#dc2626,#991b1b);box-shadow:inset 0 -2px 0 rgba(0,0,0,.18)}
+.fp-prov-tx{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;line-height:1.2;text-align:left}
+.fp-prov-tx b{font-size:.84rem;font-weight:800}
+.fp-prov-tx small{font-size:.68rem;font-weight:600;color:#6b7280;margin-top:1px}
+.fp-prov-n{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;line-height:1.05;text-align:right}
+.fp-prov-n b{font-size:1.05rem;font-weight:900;color:#dc2626;font-variant-numeric:tabular-nums}
+.fp-prov-n em{font-style:normal;font-size:.62rem;font-weight:700;color:#94a3b8;white-space:nowrap}
+.fp-prov-n.cero b{color:#94a3b8}
+.fp-prov.vacio{opacity:.6;background:#fafafa}
+.fp-prov.vacio:hover{opacity:1}
+.fp-prov.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff;box-shadow:0 8px 22px rgba(10,10,10,.22)}
+.fp-prov.on:hover{color:#fff;border-color:#dc2626}
+.fp-prov.on .fp-prov-tx small{color:#cbd5e1}
+.fp-prov.on .fp-prov-n b{color:#fff}
+.fp-prov.on .fp-prov-n em{color:#9ca3af}
+.fp-prov.on .fp-prov-ini{box-shadow:0 0 0 2px rgba(255,255,255,.18)}
+@media (max-width:640px){ .fp-provs{grid-template-columns:1fr} }
 /* 📎 Anexo en la fila: firmado verde, pendiente ámbar, sin anexo gris (avisa, no bloquea) */
 .fp-anx{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:800;border-radius:999px;padding:3px 9px;
   white-space:nowrap;text-decoration:none;border:1px solid transparent}

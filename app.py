@@ -105769,6 +105769,19 @@ def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None):
     return [_mfp_fila_ot(r) for r in (mysql_fetchall(sql, tuple(params)) or [])]
 
 
+_MFP_INI_STOP = {"y", "e", "de", "del", "la", "el", "los", "las", "spa", "ltda", "s.a.", "sa", "eirl", "cia", "cía", "&"}
+
+
+def _mfp_iniciales(nombre):
+    """Dos letras para el avatar del proveedor, saltando conectores y formas
+    jurídicas: "LOGISTICA Y TRANSPORTES MILLING SPA" -> "LT", no "LY"."""
+    palabras = [w for w in (nombre or "").replace(",", " ").split() if w.lower().strip(".") not in _MFP_INI_STOP]
+    if not palabras:
+        palabras = (nombre or "").split()
+    ini = "".join(w[0] for w in palabras[:2]).upper()
+    return ini or "?"
+
+
 def _mfp_proveedores_chips(por_facturar_todas):
     """🏢 2026-09-20 (Daniel: "estás poniendo las empresas y lo estás
     repitiendo con los técnicos igual"). Un chip por EMPRESA (ficha de
@@ -105812,6 +105825,7 @@ def _mfp_proveedores_chips(por_facturar_todas):
         chips.append({
             "id": int(r["id"]), "nombre": nombre, "rut": r.get("rut_empresa") or "",
             "tecnicos": tecs, "n": int(p.get("n") or 0), "monto": float(p.get("monto") or 0),
+            "ini": _mfp_iniciales(nombre),
         })
     # Red de seguridad: si una OT resolvió a una ficha que por lo que sea no
     # salió en la consulta de arriba, igual tiene chip -- nada pendiente
@@ -105821,11 +105835,12 @@ def _mfp_proveedores_chips(por_facturar_todas):
     for k, p in pend.items():
         if k and k not in _con_chip:
             chips.append({"id": int(k), "nombre": p.get("nombre") or f"Proveedor #{k}", "rut": "",
-                          "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"]})
+                          "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"],
+                          "ini": _mfp_iniciales(p.get("nombre") or "")})
     if pend.get(0, {}).get("n"):
         p = pend[0]
         chips.append({"id": 0, "nombre": "Sin ficha de proveedor", "rut": "",
-                      "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"]})
+                      "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"], "ini": "?"})
     # Primero los que tienen algo pendiente (lo que Daniel va a cobrar), y
     # dentro de cada grupo por nombre.
     chips.sort(key=lambda c: (0 if c["n"] else 1, c["nombre"].lower()))
