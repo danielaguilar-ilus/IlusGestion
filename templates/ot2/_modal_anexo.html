@@ -936,12 +936,14 @@ window.OT2ANX = (function(){
       if (cBox){
         cBox.style.display = '';
         document.getElementById('oaxSelRut').value = S.proveedor_rut;
+        oaxValidarCampoManual(document.getElementById('oaxSelRut'), 'rut');
         document.getElementById('oaxSelEmail').value = S.email;
         document.getElementById('oaxSelTel').value = S.tel;
       }
     } else {
       S.tecnico_externo_id = null;
       S.proveedor_nombre = ''; S.proveedor_rut = ''; S.email = ''; S.tel = '';
+      ['oaxSelRut','oaxManRut'].forEach(function(id){ var el = document.getElementById(id); if (el){ el.style.borderColor=''; var h = document.getElementById(id + 'Hint'); if (h) h.textContent=''; } });
       S.proveedor_direccion = '';
       S.proveedor_direccion_lat = null; S.proveedor_direccion_lng = null;
       S.proveedor_direccion_place_id = '';
@@ -1092,7 +1094,8 @@ window.OT2ANX = (function(){
       // formado -- lo mismo que crear() va a exigir.
       var emailOk = !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
       var telOk = !!tel && !!_oaxTelChileNormalizar(tel);
-      return !!(nombre && rut && _oaxRutValido(rut) && (emailOk || telOk));
+      var emailMal = !!email && !emailOk, telMal = !!tel && !telOk;
+      return !!(nombre && rut && _oaxRutValido(rut) && !emailMal && !telMal && (emailOk || telOk));
     }
     if (paso === 'objetivo') return !!(S.objetivo_servicio || '').trim();
     if (paso === 'precio')

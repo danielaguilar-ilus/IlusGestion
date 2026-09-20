@@ -134,7 +134,7 @@
 <div class="fp-vacio">
   <i class="bi bi-inbox"></i>
   <div><b>Todavía no tiene OT asignadas.</b>
-    {% if pendiente %}Busca abajo las OT de {{ factura.proveedor_nombre }} y asígnalas.{% endif %}</div>
+    {% if pendiente %}Busca abajo las OT de {{ factura.prov_canon or factura.proveedor_nombre }} y asígnalas.{% endif %}</div>
 </div>
 {% else %}
 <div class="table-responsive">
@@ -158,7 +158,7 @@
       {% for it in items %}
       <tr>
         <td data-label="OT"><a class="fp-ot" href="{{ url_for('ot2_detalle', vid=it.id) }}">{{ it.numero_ot }}</a>
-          <div class="fp-sub">{{ it.fecha }}{% if it.proveedor != factura.proveedor_nombre %} · {{ it.proveedor }}{% endif %}</div></td>
+          <div class="fp-sub">{{ it.fecha }}{% if it.proveedor | lower != (factura.prov_canon or factura.proveedor_nombre) | lower %} · {{ it.proveedor }}{% endif %}</div></td>
         <td data-label="Cliente">{{ it.cliente }}</td>
         <td data-label="Servicio"><span class="fp-tipo">{{ it.tipo_label }}</span>
           {% if it.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
@@ -179,9 +179,15 @@
         <td class="m" data-label="Cobrado despacho">{{ clp(it.cobrado_cliente_envio) if it.cobrado_cliente_envio else '—' }}</td>
         <td class="m tot" data-label="Cobrado total">{{ clp(it.cobrado_cliente) }}</td>
         <td class="m" data-label="Margen">
-          <span class="{{ 'fp-margen-pos' if it.margen > 0 else ('fp-margen-neg' if it.margen < 0 else '') }}">
-            {{ '+' if it.margen > 0 else '' }}{{ clp(it.margen) }}</span>
-          {% if it.margen_pct is not none %}<div class="fp-pct {{ 'neg' if it.margen_pct < 0 }}">{{ '%.1f' | format(it.margen_pct) }}%</div>{% endif %}</td>
+          {# Contra lo que cobra ESTA factura (margen_fila), para que la suma
+             cuadre con el KPI de arriba; garantía y sin cobro se dicen. #}
+          {% if it.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">Garantía</span>
+          {% elif not it.cobrado_cliente %}<span class="fp-sindoc" title="Sin línea ZZ ni valor de cotización/contrato: el cobro no se sabe">Sin cobro declarado</span>
+          {% else %}
+          <span class="{{ 'fp-margen-pos' if it.margen_fila > 0 else ('fp-margen-neg' if it.margen_fila < 0 else '') }}">
+            {{ '+' if it.margen_fila > 0 else '' }}{{ clp(it.margen_fila) }}</span>
+          {% if it.margen_fila_pct is not none %}<div class="fp-pct {{ 'neg' if it.margen_fila_pct < 0 }}">{{ '%.1f' | format(it.margen_fila_pct) }}%</div>{% endif %}
+          {% endif %}</td>
         <td class="fpd-obs" data-label="Observación">{{ it.observacion or '—' }}
           <div class="fp-sub">{{ it.usuario }}{% if it.asignada %} · {{ it.asignada }}{% endif %}</div></td>
         {% if pendiente %}
@@ -205,7 +211,7 @@
            placeholder="N° OT o cliente…">
     <input type="date" class="form-control form-control-sm" id="fpdDesde" style="max-width:160px;min-height:44px;font-size:16px" title="Desde">
     <input type="date" class="form-control form-control-sm" id="fpdHasta" style="max-width:160px;min-height:44px;font-size:16px" title="Hasta">
-    <label class="fpd-check"><input type="checkbox" id="fpdTodas"> Ver todas las OT de externos, no solo de {{ factura.proveedor_nombre }}</label>
+    <label class="fpd-check"><input type="checkbox" id="fpdTodas"> Ver todas las OT de externos, no solo de {{ factura.prov_canon or factura.proveedor_nombre }}</label>
     <button type="button" class="btn btn-dark btn-sm px-3" style="min-height:44px" onclick="fpdBuscar()">
       <i class="bi bi-search me-1"></i>Buscar</button>
   </div>
@@ -659,5 +665,7 @@ async function fpdGuardarEdicion(){
 a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fp-pct{font-size:.66rem;font-weight:800;color:#64748b;margin-top:1px}
 .fp-pct.neg{color:#b91c1c}
+.fp-sindoc{font-size:.68rem;font-weight:800;color:#92400e;background:#fff8e1;border:1px solid #fde68a;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.fp-sindoc.gar{color:#1e40af;background:#dbeafe;border-color:#bfdbfe}
 </style>
 {% endblock %}

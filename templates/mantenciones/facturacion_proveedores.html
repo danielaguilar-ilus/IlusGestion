@@ -146,15 +146,15 @@ function fprUltimos(n){
     <tbody>
       {% for m in tot.serie %}
       <tr>
-        <td><b>{{ m.mes_label }}</b></td>
-        <td class="n">{{ m.n_ot }}</td>
-        <td class="m"><div class="fp-bar"><i style="width:{{ (m.pagado / tot.max_pagado_mes * 100) | round(0) if tot.max_pagado_mes else 0 }}%"></i></div>{{ clp(m.pagado) }}
+        <td data-label="Mes"><b>{{ m.mes_label }}</b></td>
+        <td class="n" data-label="OT">{{ m.n_ot }}</td>
+        <td class="m" data-label="Pagado a proveedores"><div class="fp-bar"><i style="width:{{ (m.pagado / tot.max_pagado_mes * 100) | round(0) if tot.max_pagado_mes else 0 }}%"></i></div>{{ clp(m.pagado) }}
           {% if m.pagado_garantia or m.pagado_sin_declarar %}<div class="fp-sub">{% if m.pagado_garantia %}garantía {{ clp(m.pagado_garantia) }}{% endif %}{% if m.pagado_garantia and m.pagado_sin_declarar %} · {% endif %}{% if m.pagado_sin_declarar %}sin cobro {{ clp(m.pagado_sin_declarar) }}{% endif %}</div>{% endif %}</td>
-        <td class="m"><div class="fp-bar ok"><i style="width:{{ (m.cobrado / tot.max_cobrado_mes * 100) | round(0) if tot.max_cobrado_mes else 0 }}%"></i></div>{{ clp(m.cobrado) if m.cobrado else '—' }}</td>
-        <td class="m"><span class="fp-margen {{ 'neg' if m.margen < 0 else 'pos' }}">{{ clp(m.margen) }}</span>
+        <td class="m" data-label="Cobrado al cliente"><div class="fp-bar ok"><i style="width:{{ (m.cobrado / tot.max_cobrado_mes * 100) | round(0) if tot.max_cobrado_mes else 0 }}%"></i></div>{{ clp(m.cobrado) if m.cobrado else '—' }}</td>
+        <td class="m" data-label="Ganancia"><span class="fp-margen {{ 'neg' if m.margen < 0 else 'pos' }}">{{ clp(m.margen) }}</span>
           {% if m.margen_pct is not none %}<div class="fp-sub">{{ '%.1f'|format(m.margen_pct) }}% · {{ m.n_comparable }} OT</div>{% endif %}</td>
-        <td>{{ m.mejor_ganancia or '—' }}</td>
-        <td>{{ m.mas_pagado or '—' }}</td>
+        <td data-label="Mejor ganancia">{{ m.mejor_ganancia or '—' }}</td>
+        <td data-label="Más pagado">{{ m.mas_pagado or '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -458,7 +458,10 @@ document.addEventListener('DOMContentLoaded', function(){ fpPaginar(1); });
     padding:8px 0;margin-bottom:10px}
   .fp-tabla tbody td{display:block;border:0;padding:3px 12px;text-align:left}
   .fp-tabla th.m,.fp-tabla td.m{text-align:left}
-  .fpr-lbl{color:#0f172a}
+  .fpr-lbl{color:rgba(255,255,255,.85)}
+  .page-header .form-control{min-height:44px}
+  .fp-tabla tbody td[data-label]::before{content:attr(data-label);display:block;font-size:.62rem;font-weight:900;
+    text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
   .fpr-cual{margin-left:0;width:100%}
   .fpr-q{max-width:none;margin-left:0}
   .fpr-atajo,.fpr-f,.fpr-mes,.fpr-q{min-height:44px}

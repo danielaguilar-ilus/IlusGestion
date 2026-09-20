@@ -111,12 +111,12 @@
   <div class="fp-kpi {{ 'warn' if resumen.por_facturar_n else 'ok' }}">
     <span class="k">Por facturar · {{ resumen.por_facturar_n }} OT</span>
     <span class="v">{{ clp(resumen.por_facturar_monto) }}</span>
-    <span class="s">OT de externos con costo declarado y sin factura del proveedor</span>
+    <span class="s">Total general, sin filtro — OT de externos con costo declarado y sin factura del proveedor</span>
   </div>
   <div class="fp-kpi {{ 'warn' if resumen.pendiente_n else 'ok' }}">
     <span class="k">Facturado, sin pagar · {{ resumen.pendiente_n }}</span>
     <span class="v">{{ clp(resumen.pendiente_monto) }}</span>
-    <span class="s">Facturas registradas que todavía no se marcan pagadas</span>
+    <span class="s">Total general, sin filtro — facturas registradas que todavía no se marcan pagadas</span>
   </div>
   <div class="fp-kpi tot">
     <span class="k">Pagado este mes · {{ resumen.pagado_mes_n }}</span>
@@ -234,7 +234,7 @@
    cobro declarado; garantía y sin cobro se muestran aparte. La barra de
    selección de abajo repite el cálculo sobre lo marcado. #}
 <div class="fp-fin" id="fpvFin">
-  <div class="fp-fin-t"><i class="bi bi-cash-stack"></i> Lo filtrado{% if chip_activo %} · {{ _chip_txt }}{% endif %}{% if f_desde or f_hasta %} · {{ f_desde | replace('-', '/') if f_desde else '…' }} → {{ f_hasta | replace('-', '/') if f_hasta else '…' }}{% endif %}</div>
+  <div class="fp-fin-t"><i class="bi bi-cash-stack"></i> Lo filtrado{% if chip_activo %} · {{ _chip_txt }}{% endif %}{% if f_desde or f_hasta %} · {{ (f_desde[8:10] ~ '/' ~ f_desde[5:7] ~ '/' ~ f_desde[:4]) if f_desde else '…' }} → {{ (f_hasta[8:10] ~ '/' ~ f_hasta[5:7] ~ '/' ~ f_hasta[:4]) if f_hasta else '…' }}{% endif %}</div>
   <div class="fp-fin-g">
     <div class="fp-fin-k"><span>OT por facturar</span><b>{{ pf_fin.n }}</b><small>{{ pf_fin.n_sin_anexo }} sin anexo firmado</small></div>
     <div class="fp-fin-k pay"><span>A pagar a proveedores</span><b>{{ clp(pf_fin.pagado) }}</b><small>inst. {{ clp(pf_fin.pagado_serv) }} · desp. {{ clp(pf_fin.pagado_desp) }}</small></div>
@@ -330,11 +330,16 @@
         <td class="m" data-label="Cobrado despacho">{{ clp(d.cobrado_cliente_envio) if d.cobrado_cliente_envio else '—' }}</td>
         <td class="m tot" data-label="Cobrado total">{{ clp(d.cobrado_cliente) }}</td>
         <td class="m" data-label="Margen">
+          {# Misma regla que la franja "Lo filtrado" y que Facturación: una OT
+             en garantía o sin cobro declarado no tiene margen, se dice. #}
+          {% if d.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">Garantía</span>
+          {% elif not d.cobrado_cliente %}<span class="fp-sindoc" title="Sin línea ZZ ni valor de cotización/contrato: el cobro no se sabe">Sin cobro declarado</span>
+          {% else %}
           <span class="{{ 'fp-margen-pos' if d.margen > 0 else ('fp-margen-neg' if d.margen < 0 else '') }}">
             {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span>
-          {# 📊 2026-09-20 (Daniel: "colócale un porcentaje chiquitito"). Sobre
-             lo cobrado al cliente; sin cobro (garantía) no hay porcentaje. #}
-          {% if d.margen_pct is not none %}<div class="fp-pct {{ 'neg' if d.margen_pct < 0 }}">{{ '%.1f' | format(d.margen_pct) }}%</div>{% endif %}</td>
+          {# 📊 2026-09-20 (Daniel: "colócale un porcentaje chiquitito"). #}
+          {% if d.margen_pct is not none %}<div class="fp-pct {{ 'neg' if d.margen_pct < 0 }}">{{ '%.1f' | format(d.margen_pct) }}%{% if d.fuente_cobro == 'valor_ot' %} · valor OT{% endif %}</div>{% endif %}
+          {% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -408,7 +413,7 @@
 {% if not facturas %}
 <div class="fp-vacio">
   <i class="bi bi-inbox"></i>
-  <div><b>{{ 'Ninguna factura coincide con el filtro.' if (f_prov or f_estado) else 'Aún no hay facturas de proveedor registradas.' }}</b>
+  <div><b>{{ 'Ninguna factura coincide con el filtro.' if (f_prov or f_estado or f_prov_id is not none or f_desde or f_hasta) else 'Aún no hay facturas de proveedor registradas.' }}</b>
     Registra la primera con "Nueva factura": proveedor, N° de documento, fecha y monto.
     Después le asignas las OT que cobra.</div>
 </div>
@@ -945,6 +950,8 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 /* 📊 Margen %: chiquito, debajo del monto */
 .fp-pct{font-size:.66rem;font-weight:800;color:#64748b;margin-top:1px}
 .fp-pct.neg{color:#b91c1c}
+.fp-sindoc{font-size:.68rem;font-weight:800;color:#92400e;background:#fff8e1;border:1px solid #fde68a;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.fp-sindoc.gar{color:#1e40af;background:#dbeafe;border-color:#bfdbfe}
 .fpv-otbar-fin{font-size:.78rem;font-weight:600;color:#e5e7eb;margin-top:3px}
 .fpv-otbar-fin b{color:#fff}.fpv-otbar-fin b.pos{color:#4ade80}.fpv-otbar-fin b.neg{color:#f87171}
 .fp-fin{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:10px 14px 12px;margin:0 0 10px;
