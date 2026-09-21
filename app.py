@@ -108608,6 +108608,12 @@ def _mfp_fila_ot(f):
         # Sin esto un margen negativo se lee como error cuando en
         # realidad es una cobertura ya autorizada.
         "es_garantia": (f.get("modalidad_cobro") or "").lower() == "garantia",
+        # 🔴 2026-09-21: NULL en los dos costos = nadie decidió todavía cuánto
+        # se le paga al proveedor (OT nacida por Levantamiento/Ticket, que no
+        # pide esos campos). Distinto de un $0 declarado (garantía, o
+        # proveedor que no cobró), que sí es un dato -- mismo criterio NULL
+        # vs 0 que ya usa el resto de finanzas de la OT.
+        "sin_costo": f.get("costo_proveedor") is None and f.get("costo_despacho") is None,
         "fac_id": f.get("fac_id"), "fac_numero": f.get("fac_numero"),
         "fac_estado": f.get("fac_estado"),
         "fac_monto": float(f["fac_monto"]) if f.get("fac_monto") is not None else None,
@@ -108648,10 +108654,20 @@ def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=
     prov_id (2026-09-20): id de la FICHA de proveedor (chip por empresa);
     0 = las que no resuelven a ninguna ficha. `ids` acota a esas OT (el
     Excel de "lo seleccionado")."""
+    # 🔴 FIX 2026-09-21 (Daniel, con OT-2026-00211/213/199 reales, cerradas,
+    # de técnico externo, que este módulo NO mostraba "ni como pagadas ni
+    # pendientes"): exigía costo_proveedor+costo_despacho > 0. Las OT que
+    # nacen por Levantamiento / "Generar OT desde Ticket" NUNCA piden esos
+    # costos (ese formulario no tiene los campos), así que quedaban con NULL
+    # e invisibles acá -- aunque hubiera plata real que pagar. Daniel: "hay
+    # que filtrar los externos, todo lo que caiga, y las garantías pueden
+    # pasar con 0". Ahora entra TODA OT externa cerrada sin factura; la que
+    # no tiene costo declarado se marca (sin_costo, ver _mfp_fila_ot) y la
+    # validación del lote la frena con un mensaje que dice dónde cargarlo
+    # (_mfp_validar_lote_ot_grupos), en vez de esconderla.
     where = [
         _MFP_SQL_OT_EXTERNA,
         "v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ")",
-        "(COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0",
         "fpi.id IS NULL",
     ]
     params = list(_MFP_ESTADOS_FACTURABLES)
@@ -108947,7 +108963,7 @@ def _mfp_resumen():
             + _MFP_JOINS_OT +
             " WHERE " + _MFP_SQL_OT_EXTERNA +
             "   AND v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ") "
-            "   AND (COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0 "
+            # 🔴 2026-09-21: ya no se exige costo > 0 -- ver _mfp_por_facturar.
             "   AND fpi.id IS NULL",
             tuple(_MFP_ESTADOS_FACTURABLES)) or {}
         out["por_facturar_n"] = int(r.get("n") or 0)
@@ -109846,10 +109862,18 @@ def _mfp_validar_lote_ot_grupos(visita_ids_in):
         g_["monto_total"] += float(f["sugerido"] or 0)
         if not f.get("anexo_firmado"):
             g_["sin_anexo"].append(f["numero_ot"])
-    for g_ in grupos.values():
-        if g_["monto_total"] <= 0:
-            return None, (jsonify({"ok": False, "error": f"El monto de {g_['proveedor_nombre']} quedó en $0 "
-                                   "-- revisa el costo declarado de esas OT."}), 400)
+    # 🔴 FIX 2026-09-21 (Daniel: "las garantías pueden pasar con 0... si es
+    # garantía es 0 pesos"). Antes cualquier grupo con total $0 se rechazaba.
+    # Ahora lo que se rechaza es una OT SIN costo declarado (NULL -- nadie
+    # decidió), con un mensaje que dice exactamente dónde cargarlo; un $0
+    # declarado (garantía, proveedor que no cobró) pasa.
+    sin_costo = [f["numero_ot"] for f in filas.values() if f.get("sin_costo")]
+    if sin_costo:
+        return None, (jsonify({"ok": False, "error_codigo": "OT_SIN_COSTO",
+                        "error": f"{len(sin_costo)} OT no tienen costo de proveedor declarado "
+                                 f"({', '.join(sin_costo[:10])}). Ábrelas y en la tarjeta Finanzas "
+                                 "carga cuánto se le paga al proveedor (0 si es garantía) -- después "
+                                 "vuelve a seleccionarlas."}), 400)
     return sorted(grupos.values(), key=lambda x: (x["proveedor_nombre"] or "").lower()), None
 
 

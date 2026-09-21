@@ -327,9 +327,20 @@
           <span class="fp-anx none" title="Esta OT no tiene Anexo de Servicios"><i class="bi bi-file-earmark-x"></i> Sin anexo</span>
           {% endif %}
         </td>
+        {#- 🔴 2026-09-21 (OT-211/213/199 invisibles): una OT nacida por
+            Levantamiento/Ticket llega sin costo declarado (NULL). Antes el
+            módulo la escondía; ahora se muestra con el aviso y el link a
+            Finanzas de esa OT, donde se carga el costo (0 si es garantía). -#}
+        {% if d.sin_costo %}
+        <td class="m" data-label="Pagado instalación" colspan="3" style="text-align:left">
+          <a class="fp-sindoc" style="text-decoration:none" href="{{ url_for('ot2_detalle', vid=d.id) }}#otdCardFinanzas"
+             title="Abrir la OT y cargar el costo del proveedor en la tarjeta Finanzas">
+            <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if d.es_garantia %} (garantía: puede ser $0){% endif %}</a></td>
+        {% else %}
         <td class="m" data-label="Pagado instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
         <td class="m" data-label="Pagado despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
-        <td class="m tot" data-label="Pagado total">{{ clp(d.sugerido) }}</td>
+        <td class="m tot" data-label="Pagado total">{{ clp(d.sugerido) }}{% if d.es_garantia and not d.sugerido %}<div class="fp-sub">garantía · $0</div>{% endif %}</td>
+        {% endif %}
         {# 💰 2026-09-19 (Daniel: "cuánto le cobré al cliente en instalación
            y despacho también" -- no solo el total, mismo desglose que ya
            existe del lado proveedor). #}
