@@ -109989,7 +109989,8 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
                     (fid, vid, f["sugerido"], "Pagado sin factura -- pendiente completar N° y fecha reales.", user))
         conn.commit()
     except Exception as e:
-        print(f"[facprov] marcar-pagado-sin-factura: {e}", flush=True)
+        print(f"[facprov] marcar-pagado-sin-factura: {e!r}", flush=True)
+        traceback.print_exc()
         return jsonify({"ok": False, "error": "No se pudo registrar el pago."}), 500
 
     _mant_log("factura_proveedor", fid, "creada_pagada_sin_factura",
@@ -110069,7 +110070,8 @@ def mant_facturas_proveedor_cerrar_historico():
                                 "monto_total": g_["monto_total"], "_filas": filas})
         conn.commit()
     except Exception as e:
-        print(f"[facprov] cerrar-historico: {e}", flush=True)
+        print(f"[facprov] cerrar-historico: {e!r}", flush=True)
+        traceback.print_exc()
         return jsonify({"ok": False, "error": "No se pudo cerrar el histórico."}), 500
 
     for c in creadas:
@@ -110149,7 +110151,8 @@ def mant_facturas_proveedor_solicitar_oc():
                                 "_filas": filas})
         conn.commit()
     except Exception as e:
-        print(f"[facprov] solicitar-oc: {e}", flush=True)
+        print(f"[facprov] solicitar-oc: {e!r}", flush=True)
+        traceback.print_exc()
         return jsonify({"ok": False, "error": "No se pudo registrar la solicitud."}), 500
 
     for c in creadas:
