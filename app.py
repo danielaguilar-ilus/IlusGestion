@@ -108541,6 +108541,13 @@ _MFP_SELECT_OT = (
     # 📋 2026-09-21 (calidad de información en la tabla): comuna de la OT (o
     # del cliente) y ticket de origen, sin JOIN nuevo que multiplique filas.
     "       COALESCE(NULLIF(v.direccion_comuna,''), c.comuna) AS comuna, "
+    # 📊 2026-09-21 (Daniel: "el Excel completo y el de proveedor me deberían
+    # dar el máximo detalle"): datos de la OT para el corte, mismos que usa
+    # el reporte de OT 2.0 (ot2_reporte_xlsx). Sin JOIN nuevo.
+    "       v.titulo, v.prioridad, v.hora_inicio, v.fecha_realizada, v.direccion_visita, "
+    "       c.rut AS cliente_rut, c.direccion AS cliente_direccion, "
+    "       v.centro_costo, v.zz_codigo, v.cubierto_por, v.estado_facturacion, "
+    "       v.factura_tido, v.factura_nudo, v.created_by, v.created_at, "
     "       (SELECT tk1.numero_ticket FROM tk_tickets tk1 WHERE tk1.visita_id = v.id ORDER BY tk1.id LIMIT 1) AS ticket_numero, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id, "
@@ -108662,6 +108669,21 @@ def _mfp_fila_ot(f):
         "no_cerrada": (f.get("estado") or "") not in _MFP_ESTADOS_FACTURABLES,
         "comuna": (f.get("comuna") or "").strip(),
         "ticket_numero": f.get("ticket_numero") or "",
+        # 📊 2026-09-21: detalle para el Excel del corte (ver por-facturar.xlsx).
+        "titulo": (f.get("titulo") or "").strip(),
+        "prioridad": (f.get("prioridad") or "").strip(),
+        "hora": _ot_tv_hhmm(f.get("hora_inicio")) or "",
+        "fecha_realizada": chile_fmt_filter(f.get("fecha_realizada"), "%d/%m/%Y") if f.get("fecha_realizada") else "",
+        "direccion": (f.get("direccion_visita") or f.get("cliente_direccion") or "").strip(),
+        "cliente_rut": (f.get("cliente_rut") or "").strip(),
+        "centro_costo": dict(_OT2_CENTROS_COSTO).get(f.get("centro_costo"), f.get("centro_costo") or ""),
+        "zz_codigo": (f.get("zz_codigo") or "").strip(),
+        "cubierto_por": (f.get("cubierto_por") or "").strip(),
+        "estado_facturacion": (f.get("estado_facturacion") or "").strip(),
+        "documento_cliente": ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip(),
+        "created_by": (f.get("created_by") or "").strip(),
+        "creada": chile_fmt_filter(f.get("created_at")) if f.get("created_at") else "",
+        "cerrada": chile_fmt_filter(f.get("cerrada_at")) if f.get("cerrada_at") else "",
         "fecha_programada": chile_fmt_filter(f.get("fecha_programada"), "%d/%m/%Y") if f.get("fecha_programada") else "",
         "fecha_cierre": chile_fmt_filter(f.get("cerrada_at"), "%d/%m/%Y") if f.get("cerrada_at") else "",
         "fac_id": f.get("fac_id"), "fac_numero": f.get("fac_numero"),
@@ -110551,23 +110573,123 @@ def mant_facturas_proveedor_por_facturar_xlsx():
                f"{current_username() or 'sistema'} · {ILUS_BRAND}"
                + ("" if interno else " · Versión para el proveedor: solo lo que se le paga.")])
 
-    # ═══ Una hoja por proveedor ═══
-    # interno: con lo cobrado al cliente y el margen (para Daniel).
-    # proveedor: SOLO lo que ILUS le paga -- esta hoja sale de la empresa, y
-    # lo cobrado al cliente / el margen es el dato comercial de ILUS
-    # (hallazgo de la revisión del 2026-09-20).
+    # ═══ Una hoja por proveedor (+ "Todas las OT" en la versión interna) ═══
+    # 📊 2026-09-21 (Daniel: "el Excel completo y el de proveedor me deberían
+    # dar el máximo detalle... dos reportes distintos: 1 proveedor, donde
+    # solo podrá ver lo que él cobró; 2 completo para manejo interno").
+    # proveedor: TODO el detalle operativo de la OT (fechas, cliente,
+    #   dirección, trabajo, técnico, anexo, estado) + SOLO lo que se le
+    #   paga. Ni un peso de lo comercial de ILUS (cobro al cliente, margen,
+    #   cobertura, centro de costo, documento del cliente).
+    # interno: lo mismo + ticket, centro de costo, ZZ, documento del cliente,
+    #   cobertura, cobrado, margen, quién la creó y banderas para revisar.
+    _ESTADO_LBL = {k: (v[0] if isinstance(v, (tuple, list)) else str(v)) for k, v in _OT2_ESTADO_META.items()}
+
+    def _estado_txt(d):
+        return _ESTADO_LBL.get(d.get("estado") or "", (d.get("estado") or "").replace("_", " ").capitalize())
+
+    def _flags(d):
+        """Banderas internas: qué revisar antes de pagar."""
+        o = []
+        if d.get("no_cerrada"):
+            o.append("OT no cerrada")
+        if d.get("sin_costo"):
+            o.append("Sin costo declarado")
+        if not d.get("anexo_firmado"):
+            o.append("Sin anexo firmado")
+        if not d.get("centro_costo"):
+            o.append("Sin centro de costo")
+        if not d.get("es_garantia") and not d.get("cobrado_cliente"):
+            o.append("Sin cobro declarado al cliente")
+        if (not d.get("es_garantia")) and d.get("cobrado_cliente") and (d.get("margen") or 0) < 0:
+            o.append("Margen negativo")
+        return " · ".join(o)
+
+    cols_op = ["N° OT", "Fecha programada", "Hora", "Fecha realizada", "Fecha cierre", "Estado OT",
+               "Cliente", "RUT cliente", "Comuna", "Dirección", "Trabajo (título)", "Servicio",
+               "Técnico", "Anexo de servicios"]
+    anchos_op = [15, 12, 7, 12, 12, 14, 34, 14, 16, 40, 34, 20, 22, 26]
+    cols_pago = ["Pago instalación", "Pago despacho", "Total a pagar"]
     if interno:
-        cols = ["N° OT", "Fecha", "Cliente", "Servicio", "Condición", "Técnico", "Anexo de servicios",
-                "Pago instalación", "Pago despacho", "Total a pagar",
-                "Cobrado instalación", "Cobrado despacho", "Cobrado total", "Margen", "Margen %"]
-        anchos = [15, 12, 34, 18, 11, 22, 26, 16, 15, 15, 17, 16, 15, 14, 10]
-        cols_clp, col_pct, col_anx = (8, 9, 10, 11, 12, 13, 14), 15, 7
+        cols = (cols_op + ["Ticket", "Prioridad", "Centro de costo", "Condición", "Cobertura",
+                           "Línea ZZ", "Documento cliente", "Estado facturación"]
+                + cols_pago
+                + ["Cobrado instalación", "Cobrado despacho", "Cobrado total", "Margen", "Margen %",
+                   "Proveedor", "RUT proveedor", "Creada por", "Creada", "Revisar"])
+        anchos = anchos_op + [14, 10, 18, 18, 12, 16, 16, 16] + [16, 15, 15] + [17, 16, 15, 14, 10, 30, 14, 20, 17, 44]
+        _i_pago = len(cols_op) + 8 + 1           # 1-based: primera columna de pago
+        cols_clp = tuple(range(_i_pago, _i_pago + 7))
+        col_pct = _i_pago + 7
+        col_anx = len(cols_op)
+        col_rev = len(cols)
     else:
-        cols = ["N° OT", "Fecha", "Cliente", "Servicio", "Técnico", "Anexo de servicios",
-                "Pago instalación", "Pago despacho", "Total a pagar"]
-        anchos = [15, 12, 36, 20, 24, 26, 16, 15, 16]
-        cols_clp, col_pct, col_anx = (7, 8, 9), None, 6
+        cols = cols_op + cols_pago + ["Observación"]
+        anchos = anchos_op + [16, 15, 16, 34]
+        _i_pago = len(cols_op) + 1
+        cols_clp, col_pct, col_anx, col_rev = tuple(range(_i_pago, _i_pago + 3)), None, len(cols_op), None
+
+    def _fila_ot(d):
+        base = [d["numero_ot"], d.get("fecha_programada") or d["fecha"], d.get("hora") or "",
+                d.get("fecha_realizada") or "", d.get("fecha_cierre") or "", _estado_txt(d),
+                _t(d["cliente"]), _rut_xl(d.get("cliente_rut")), _t(d.get("comuna")), _t(d.get("direccion")),
+                _t(d.get("titulo")), _t(d["tipo_label"]), _t(d["tecnico_nombre"]), _anexo_txt(d)]
+        pago = [d["servicio"], d["despacho"], d["sugerido"]]
+        if not interno:
+            if d.get("sin_costo"):
+                obs = "Costo pendiente de confirmar por ILUS"
+            elif not d["sugerido"]:
+                obs = "Sin cobro ($0)"
+            else:
+                obs = ""
+            return base + pago + [obs]
+        _cond = ("Garantía" if d["es_garantia"] else ("Sin cobro declarado" if not d["cobrado_cliente"] else
+                 ("Cobrado (valor OT)" if d.get("fuente_cobro") == "valor_ot" else "Cobrado")))
+        _comparable = (not d["es_garantia"]) and d["cobrado_cliente"] > 0
+        return (base
+                + [d.get("ticket_numero") or "", _t(d.get("prioridad")), _t(d.get("centro_costo")), _cond,
+                   _t(d.get("cubierto_por")), _t(d.get("zz_codigo")), _t(d.get("documento_cliente")),
+                   _t(d.get("estado_facturacion"))]
+                + pago
+                + [d["cobrado_cliente_serv"], d["cobrado_cliente_envio"], d["cobrado_cliente"],
+                   d["margen"] if _comparable else None, d["margen_pct"] if _comparable else None,
+                   _t(d["proveedor"]), _rut_xl(d.get("proveedor_rut")), _t(d.get("created_by")),
+                   d.get("creada") or "", _flags(d)])
+
+    def _total_fila(lst, etiqueta):
+        rs = _mfp_resumen_filas(lst)
+        fila_t = [etiqueta] + [""] * (len(cols_op) - 2) + [f"{len(lst)} OT"]
+        if interno:
+            fila_t += [""] * 8 + [rs["pagado_serv"], rs["pagado_desp"], rs["pagado"],
+                                  rs["cobrado_serv"], rs["cobrado_env"], rs["cobrado"], rs["margen"], rs["margen_pct"]]
+        else:
+            fila_t += [rs["pagado_serv"], rs["pagado_desp"], rs["pagado"], ""]
+        return fila_t
+
+    def _volcar(wsx, lst, etiqueta_total):
+        _encabezar(wsx, cols, anchos)
+        r_ = 2
+        for d in lst:
+            wsx.append(_fila_ot(d))
+            _fila_estilo(wsx, r_, cols_clp, col_pct)
+            if not d.get("anexo_firmado"):
+                wsx.cell(row=r_, column=col_anx).font = _rojo
+            if d.get("no_cerrada"):
+                wsx.cell(row=r_, column=6).font = _rojo
+            if col_rev and wsx.cell(row=r_, column=col_rev).value:
+                wsx.cell(row=r_, column=col_rev).font = _rojo
+            for c in (10, 11):
+                wsx.cell(row=r_, column=c).alignment = Alignment(wrap_text=True, vertical="top")
+            r_ += 1
+        wsx.append(_total_fila(lst, etiqueta_total))
+        _fila_estilo(wsx, r_, cols_clp, col_pct, negrita=True)
+        wsx.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{max(r_ - 1, 1)}"
+        return r_
+
     usados = {ws.title.lower()}
+    if interno and len(grupos) > 1:
+        wst = wb.create_sheet("Todas las OT")
+        usados.add("todas las ot")
+        _volcar(wst, filas, "TOTAL")
     for k, lst in grupos.items():
         base_t = "".join(ch for ch in (lst[0]["proveedor"] or "Proveedor") if ch not in '[]:*?/\\')[:28] or "Proveedor"
         titulo, n_ = base_t, 2
@@ -110575,36 +110697,11 @@ def mant_facturas_proveedor_por_facturar_xlsx():
             titulo, n_ = f"{base_t[:26]} {n_}", n_ + 1
         usados.add(titulo.lower())
         wsp = wb.create_sheet(titulo)
-        _encabezar(wsp, cols, anchos)
-        r_ = 2
-        for d in lst:
-            if interno:
-                _cond = "Garantía" if d["es_garantia"] else ("Sin cobro declarado" if not d["cobrado_cliente"] else
-                        ("Cobrado (valor OT)" if d.get("fuente_cobro") == "valor_ot" else "Cobrado"))
-                _comparable = (not d["es_garantia"]) and d["cobrado_cliente"] > 0
-                wsp.append([d["numero_ot"], d["fecha"], _t(d["cliente"]), _t(d["tipo_label"]),
-                            _cond, _t(d["tecnico_nombre"]), _anexo_txt(d),
-                            d["servicio"], d["despacho"], d["sugerido"],
-                            d["cobrado_cliente_serv"], d["cobrado_cliente_envio"], d["cobrado_cliente"],
-                            d["margen"] if _comparable else None, d["margen_pct"] if _comparable else None])
-            else:
-                wsp.append([d["numero_ot"], d["fecha"], _t(d["cliente"]), _t(d["tipo_label"]), _t(d["tecnico_nombre"]),
-                            _anexo_txt(d), d["servicio"], d["despacho"], d["sugerido"]])
-            _fila_estilo(wsp, r_, cols_clp, col_pct)
-            if not d.get("anexo_firmado"):
-                wsp.cell(row=r_, column=col_anx).font = _rojo
-            r_ += 1
-        rs = _mfp_resumen_filas(lst)
-        pag, cob, serv, desp = rs["pagado"], rs["cobrado"], rs["pagado_serv"], rs["pagado_desp"]
-        if interno:
-            wsp.append([f"TOTAL {lst[0]['proveedor']}", "", "", "", "", "", f"{len(lst)} OT", serv, desp, pag,
-                        rs["cobrado_serv"], rs["cobrado_env"], cob, rs["margen"], rs["margen_pct"]])
-        else:
-            wsp.append([f"TOTAL {lst[0]['proveedor']}", "", "", "", "", f"{len(lst)} OT", serv, desp, pag])
-        _fila_estilo(wsp, r_, cols_clp, col_pct, negrita=True)
+        _volcar(wsp, lst, f"TOTAL {lst[0]['proveedor']}")
         if not interno:
             wsp.append([])
             wsp.append([f"Estado de cuenta al {_hoy.strftime('%d/%m/%Y')} · {ILUS_BRAND} · "
+                        f"Proveedor: {lst[0]['proveedor']} ({_rut_xl(lst[0]['proveedor_rut'])}) · "
                         f"Si está conforme, responda este correo para que se emita la orden de compra."])
 
     if not grupos:
