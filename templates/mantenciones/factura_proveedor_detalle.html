@@ -195,6 +195,16 @@
         <td><button type="button" class="btn btn-sm btn-outline-danger" style="min-height:44px;min-width:44px"
                     onclick="fpdQuitar({{ it.id }}, '{{ it.numero_ot }}')" title="Quitar de esta factura" aria-label="Quitar {{ it.numero_ot }} de esta factura">
           <i class="bi bi-x-lg"></i></button></td>
+        {% elif factura.estado_pago == 'pagada' and es_superadmin %}
+        {#- 🔒 2026-09-21 (Daniel: "cuál sería la opción para reabrir solo 1
+            y no todas... no está amigable"). Quitar UNA OT sin reabrir toda
+            la factura -- solo superadmin, con motivo obligatorio. Ver
+            fpdQuitarPagada() y mant_factura_proveedor_desasignar (app.py). -#}
+        <td><button type="button" class="btn btn-sm btn-outline-danger" style="min-height:44px;min-width:44px"
+                    onclick="fpdQuitarPagada({{ it.id }}, '{{ it.numero_ot }}')"
+                    title="Quitar de esta factura pagada (superadmin, con motivo)"
+                    aria-label="Quitar {{ it.numero_ot }} de esta factura pagada">
+          <i class="bi bi-x-lg"></i></button></td>
         {% endif %}
       </tr>
       {% endfor %}
@@ -466,6 +476,42 @@ async function fpdQuitar(vid, numero){
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo quitar', {type:'error'}); return; }
   ilusToast('OT quitada de la factura', {type:'success'});
+  setTimeout(() => window.location.reload(), 500);
+}
+// 🔒 2026-09-21 (Daniel: "cuál sería la opción para reabrir solo 1 y no
+// todas... no está amigable"). Antes había que Reabrir TODA la factura
+// (las demás OT quedaban pendientes de golpe) solo para sacar una -- esto
+// quita UNA sin tocar el estado de pago de las demás. Exige motivo (lo
+// valida también el backend, esto es solo para no perder el viaje si se
+// deja vacío) y dice explícito que las otras OT no se tocan.
+async function fpdQuitarPagada(vid, numero){
+  const motivo = await ilusPrompt({
+    title: 'Quitar ' + numero + ' de una factura ya pagada',
+    message: '¿Por qué se saca esta OT? Las demás OT de esta factura siguen pagadas tal cual -- '
+      + 'esto no reabre la factura ni las afecta a ellas.',
+    sub: 'Mínimo 10 caracteres. Queda anotado en esta factura y en la auditoría.',
+    placeholder: 'Ej: se cobró por error en este lote, corresponde a otra factura',
+    required: true,
+  });
+  if (!motivo) return;
+  if (motivo.trim().length < 10){
+    ilusToast('El motivo necesita al menos 10 caracteres.', {type:'warning'});
+    return;
+  }
+  const ok = await ilusConfirm({
+    title: 'Confirmar', message: 'Se va a quitar ' + numero + ' de esta factura pagada.',
+    sub: 'Las demás OT de la factura siguen pagadas sin cambios. Para volver a asignarla, '
+      + 'hazlo a mano desde "por facturar".',
+    okLabel: 'Sí, quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const r = await fetch(FPD_URL_BASE + '/items/' + vid, {
+    method: 'DELETE', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({motivo: motivo.trim()}),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo quitar', {type:'error'}); return; }
+  ilusToast('OT quitada de la factura pagada', {type:'success'});
   setTimeout(() => window.location.reload(), 500);
 }
 async function fpdPagar(){

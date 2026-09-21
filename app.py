@@ -109597,9 +109597,38 @@ def mant_factura_proveedor_desasignar(fid, vid):
     f = _mfp_cargar(fid)
     if not f:
         return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
-    if f.get("estado_pago") != "pendiente":
+    _estado = f.get("estado_pago")
+    _motivo = None
+    # 🔒 FIX 2026-09-21 (Daniel, en vivo, con un lote real de 10 OT pagadas
+    # juntas: "cuál sería la opción para reabrir solo 1 y no todas... no
+    # está amigable"). Antes, sacar UNA OT de una factura pagada exigía
+    # Reabrir la CABECERA entera (las 10 quedaban 'pendiente' de golpe) →
+    # Quitar la única que sobraba → volver a marcarla pagada con las 9
+    # restantes -- mucho más disruptivo que lo que se necesitaba. Ahora se
+    # puede quitar una OT puntual SIN tocar estado_pago de la cabecera
+    # (las otras 9 siguen pagadas tal cual), pero con el MISMO nivel de
+    # permiso que Reabrir (superadmin) + motivo -- mismo patrón ya usado
+    # en el proyecto para correcciones puntuales con auditoría (ver
+    # mant_lev_item_crear, override_superadmin + override_motivo, y la
+    # corrección retroactiva de garantía). Investigado antes de construir:
+    # monto_total es un valor fijo que Daniel declara a mano (el total
+    # real del documento del proveedor), nunca se recalcula desde los
+    # items -- así que "Diferencia" simplemente deja de cuadrar después de
+    # esto, que es la alerta correcta, no un bug.
+    if _estado == "pagada":
+        if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+            return jsonify({"ok": False, "error":
+                            "Solo el superadministrador puede quitar una OT de una factura "
+                            "ya pagada."}), 403
+        d = request.get_json(silent=True) or {}
+        _motivo = (d.get("motivo") or "").strip()[:500]
+        if len(_motivo) < 10:
+            return jsonify({"ok": False, "error":
+                            "Indica por qué se saca esta OT de la factura pagada (mínimo 10 "
+                            "caracteres): queda registrado en la factura."}), 400
+    elif _estado != "pendiente":
         return jsonify({"ok": False, "error_codigo": "FACTURA_NO_EDITABLE",
-                        "error": f"La factura está {f.get('estado_pago')}: no se le pueden quitar OT."}), 409
+                        "error": f"La factura está {_estado}: no se le pueden quitar OT."}), 409
     n = mysql_execute_returning_rowcount(
         "DELETE FROM mant_factura_proveedor_items WHERE factura_proveedor_id=%s AND visita_id=%s",
         (fid, vid))
@@ -109607,9 +109636,19 @@ def mant_factura_proveedor_desasignar(fid, vid):
         return jsonify({"ok": False, "error": "Esa OT no está en esta factura."}), 404
     _v = mysql_fetchone("SELECT numero_ot FROM mant_visitas WHERE id=%s", (vid,)) or {}
     _num = _v.get("numero_ot") or f"OT #{vid}"
-    _mant_log("factura_proveedor", fid, "ot_quitada", _num)
+    if _motivo:
+        # Rastro VISIBLE en la propia factura (mismo patrón que "anular",
+        # que concatena en `notas`) -- no basta con que quede solo en
+        # mant_logs, que no se muestra en esta pantalla.
+        mysql_execute(
+            "UPDATE mant_facturas_proveedor SET notas=CONCAT(COALESCE(notas,''), %s) WHERE id=%s",
+            (f"\n[{_num} quitada por {current_username()} (factura ya pagada): {_motivo}]", fid))
+        _mant_log("factura_proveedor", fid, "ot_quitada_de_pagada", f"{_num} · {_motivo}")
+    else:
+        _mant_log("factura_proveedor", fid, "ot_quitada", _num)
     _mant_log("visita", vid, "factura_proveedor_quitada",
-              f"Sale de la factura #{fid} ({f.get('proveedor_nombre')} {f.get('numero_documento')})")
+              f"Sale de la factura #{fid} ({f.get('proveedor_nombre')} {f.get('numero_documento')})"
+              + (f" · motivo: {_motivo}" if _motivo else ""))
     return jsonify({"ok": True})
 
 
