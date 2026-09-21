@@ -78813,11 +78813,32 @@ _OT2_SELECT_FILAS = (
     "       COALESCE(tar.n_completas, 0) AS n_completas, "
     "       v.hora_real_inicio, v.cerrada_at, v.firma_tecnico_at "
 )
+# 🔧 FIX 2026-09-21 (Daniel, viendo el Monitor en vivo: "el checklist
+# aparece como 55% completo... ya dejamos solicitado todo, solo me falta
+# eso para avanzar con el tema de los repuestos"). Esta es la ÚNICA fuente
+# de n_tareas/n_completas para las 4 pantallas que muestran avance de
+# checklist (panel OT2 Tabla/Tarjeta/Kanban/Calendario vía
+# _OT2_SELECT_FILAS, Monitor día y semana vía _OT_TV_SELECT, y el reporte
+# Excel) -- pero contaba TODAS las tareas crudas de mant_visita_tareas,
+# sin mirar _ot_maquinas_excluidas_cierre (el candado REAL de firma/cierre
+# ya excluye los equipos fuera de servicio/dados de baja/saltados desde
+# hace semanas). El detalle de la OT (ot2/detalle.html) ya se corrigió
+# hoy mismo para esto mismo; el Monitor seguía mostrando el conteo crudo
+# porque nace de una consulta completamente aparte. Mismo criterio ahora
+# en el único lugar SQL que alimenta a las 4 pantallas: una tarea de un
+# equipo con estado_revision 'saltado'/'falla_detectada' no cuenta ni en
+# el numerador ni en el denominador. Tareas sin equipo (maquina_id NULL,
+# ej. trabajo interno) nunca se tocan -- no hay equipo que excluir.
 _OT2_JOIN_TAREAS = (
     "  LEFT JOIN ( "
-    "       SELECT visita_id, COUNT(*) AS n_tareas, "
-    "              SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS n_completas "
-    "         FROM mant_visita_tareas GROUP BY visita_id "
+    "       SELECT vt.visita_id, COUNT(*) AS n_tareas, "
+    "              SUM(CASE WHEN vt.completada=1 THEN 1 ELSE 0 END) AS n_completas "
+    "         FROM mant_visita_tareas vt "
+    "         LEFT JOIN mant_visita_equipos ve "
+    "                ON ve.visita_id = vt.visita_id AND ve.maquina_id = vt.maquina_id "
+    "               AND ve.estado_revision IN ('saltado','falla_detectada') "
+    "        WHERE vt.maquina_id IS NULL OR ve.maquina_id IS NULL "
+    "        GROUP BY vt.visita_id "
     "  ) tar ON tar.visita_id = v.id "
 )
 
