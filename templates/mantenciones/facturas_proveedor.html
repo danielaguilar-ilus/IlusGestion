@@ -1144,6 +1144,9 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 /* 📋 2026-09-21 calidad de información: tracking del lote, pastillas de OT,
    cliente completo (nunca truncado, REGLA #15), toggle de pruebas. */
 .fp-nom-cli{font-weight:700;color:#0f172a;line-height:1.25;min-width:160px}
+/* El N° de OT y sus fechas no se parten en 3 líneas (celda con ancho propio). */
+.fp-tabla td[data-label="OT"]{min-width:150px}
+.fp-tabla td[data-label="OT"] .fp-ot,.fp-tabla td[data-label="OT"] .fp-sub{white-space:nowrap}
 .fp-trk{display:inline-flex;align-items:center;gap:2px}
 .fp-trk-s{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:44px}
 .fp-trk-s small{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;white-space:nowrap}
