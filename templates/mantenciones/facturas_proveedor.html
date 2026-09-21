@@ -814,6 +814,28 @@ function fpvOtRefreshBar(){
     bp.title = grupos.length > 1 ? 'Marcar pagado es por un proveedor a la vez' : '';
   }
 }
+// 🔴 2026-09-21 (Daniel: "todo lo dejes pagado de aquí para atrás... ya por
+// favor paremos con esto"): si el lote trae OT sin costo declarado, el
+// superadmin puede asumir $0 en ellas y seguir — el $0 queda escrito en la
+// OT (editable después en su tarjeta Finanzas). Devuelve {r, d} final.
+const FPV_ES_SUPERADMIN = {{ 'true' if es_superadmin else 'false' }};
+async function fpvPostLote(url, body, accion){
+  let r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  let d = await r.json().catch(function(){ return {}; });
+  if (!r.ok && d.error_codigo === 'OT_SIN_COSTO' && FPV_ES_SUPERADMIN){
+    const ok = await ilusConfirm({
+      title: (d.n_sin_costo || '') + ' OT sin costo declarado',
+      message: 'Estas OT no tienen costo de proveedor cargado: ¿las asumimos en $0 y seguimos con ' + accion + '?',
+      sub: 'El $0 queda escrito en cada OT (garantía / sin cobro). Si alguna sí tenía costo, lo corriges después en su tarjeta Finanzas y en el detalle de la factura.',
+      okLabel: 'Sí, asumir $0 y continuar', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return {r, d, cancelado:true};
+    r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                          body: JSON.stringify(Object.assign({}, body, {asumir_cero:true}))});
+    d = await r.json().catch(function(){ return {}; });
+  }
+  return {r, d};
+}
 async function fpvOtMarcarPagado(){
   const grupos = fpvOtGrupos();
   if (!grupos.length){ ilusToast('Selecciona al menos una OT', {type:'warning'}); return; }
@@ -828,11 +850,9 @@ async function fpvOtMarcarPagado(){
   });
   if (!ok) return;
   try{
-    const r = await fetch('{{ url_for("mant_facturas_proveedor_marcar_pagado_sin_factura") }}', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({visita_ids: g.ids}),
-    });
-    const d = await r.json().catch(function(){ return {}; });
+    const {r, d, cancelado} = await fpvPostLote('{{ url_for("mant_facturas_proveedor_marcar_pagado_sin_factura") }}',
+      {visita_ids: g.ids}, 'marcar pagado');
+    if (cancelado) return;
     if (!r.ok || d.ok === false){
       ilusToast(d.error || 'No se pudo registrar el pago', {type:'error'});
       return;
@@ -880,11 +900,9 @@ async function fpvOtSolicitarOC(){
     if (!ok) return;
   }
   try{
-    const r = await fetch('{{ url_for("mant_facturas_proveedor_solicitar_oc") }}', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({visita_ids: ids, numero_oc: numeroOC}),
-    });
-    const d = await r.json().catch(function(){ return {}; });
+    const {r, d, cancelado} = await fpvPostLote('{{ url_for("mant_facturas_proveedor_solicitar_oc") }}',
+      {visita_ids: ids, numero_oc: numeroOC}, 'la solicitud de OC');
+    if (cancelado) return;
     if (!r.ok || d.ok === false){
       ilusToast(d.error || 'No se pudo registrar la solicitud', {type:'error'});
       return;

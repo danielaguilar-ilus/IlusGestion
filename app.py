@@ -109786,8 +109786,14 @@ def mant_factura_proveedor_anular(fid):
     return jsonify({"ok": True})
 
 
-def _mfp_validar_lote_ot_grupos(visita_ids_in):
+def _mfp_validar_lote_ot_grupos(visita_ids_in, asumir_cero=False):
     """Valida un lote de OT y lo parte en UN grupo por proveedor (empresa).
+
+    asumir_cero=True (solo superadmin, 2026-09-21 -- Daniel: "todo lo dejes
+    pagado de aquí para atrás... ya por favor paremos con esto"): las OT sin
+    costo declarado NO se rechazan; se toman como $0 y el caller las deja
+    escritas como $0 en la OT (grupo["asumidas_cero"]) dentro de la misma
+    transacción, para que el histórico cierre sin abrir OT una por una.
 
     🏢 2026-09-20 (Daniel: "seleccionar los proveedores que tengo
     pendientes y generar una orden de compra con lo que está pendiente").
@@ -109854,6 +109860,7 @@ def _mfp_validar_lote_ot_grupos(visita_ids_in):
             "filas": {}, "proveedor_nombre": f["proveedor"],
             "proveedor_rut": f["proveedor_rut"] or None,
             "prov_ficha_id": f.get("prov_ficha_id"), "monto_total": 0.0, "sin_anexo": [],
+            "asumidas_cero": [],
         })
         if not g_["prov_ficha_id"] and f.get("prov_ficha_id"):
             g_["prov_ficha_id"] = f["prov_ficha_id"]
@@ -109862,14 +109869,16 @@ def _mfp_validar_lote_ot_grupos(visita_ids_in):
         g_["monto_total"] += float(f["sugerido"] or 0)
         if not f.get("anexo_firmado"):
             g_["sin_anexo"].append(f["numero_ot"])
+        if f.get("sin_costo"):
+            g_["asumidas_cero"].append(vid)
     # 🔴 FIX 2026-09-21 (Daniel: "las garantías pueden pasar con 0... si es
     # garantía es 0 pesos"). Antes cualquier grupo con total $0 se rechazaba.
     # Ahora lo que se rechaza es una OT SIN costo declarado (NULL -- nadie
     # decidió), con un mensaje que dice exactamente dónde cargarlo; un $0
     # declarado (garantía, proveedor que no cobró) pasa.
     sin_costo = [f["numero_ot"] for f in filas.values() if f.get("sin_costo")]
-    if sin_costo:
-        return None, (jsonify({"ok": False, "error_codigo": "OT_SIN_COSTO",
+    if sin_costo and not asumir_cero:
+        return None, (jsonify({"ok": False, "error_codigo": "OT_SIN_COSTO", "n_sin_costo": len(sin_costo),
                         "error": f"{len(sin_costo)} OT no tienen costo de proveedor declarado "
                                  f"({', '.join(sin_costo[:10])}). Ábrelas y en la tarjeta Finanzas "
                                  "carga cuánto se le paga al proveedor (0 si es garantía) -- después "
@@ -109877,13 +109886,34 @@ def _mfp_validar_lote_ot_grupos(visita_ids_in):
     return sorted(grupos.values(), key=lambda x: (x["proveedor_nombre"] or "").lower()), None
 
 
-def _mfp_validar_lote_ot(visita_ids_in):
+def _mfp_asumir_cero_en_ot(cur, visita_ids, user):
+    """Deja escrito el $0 asumido en las OT que no tenían costo declarado
+    (solo las columnas NULL -- COALESCE no pisa un valor real). Se llama
+    dentro de la transacción del lote, para que la OT y la factura queden
+    consistentes o no quede nada."""
+    if not visita_ids:
+        return
+    ph = ",".join(["%s"] * len(visita_ids))
+    cur.execute(
+        "UPDATE mant_visitas SET costo_proveedor=COALESCE(costo_proveedor,0), "
+        "costo_despacho=COALESCE(costo_despacho,0), "
+        "notas=CONCAT(COALESCE(notas,''), %s) WHERE id IN (" + ph + ")",
+        (f"\n[Facturas de proveedor] Costo asumido $0 al cerrar el lote (por {user}).",
+         *visita_ids))
+
+
+def _mfp_asumir_cero_permitido(d):
+    """Solo superadmin puede pedir que el lote asuma $0 en OT sin costo."""
+    return bool(d.get("asumir_cero")) and bool((getattr(g, "permissions", {}) or {}).get("superadmin"))
+
+
+def _mfp_validar_lote_ot(visita_ids_in, asumir_cero=False):
     """Lote de UN solo proveedor (marcar-pagado-sin-factura). Envoltorio de
     _mfp_validar_lote_ot_grupos que rechaza la mezcla -- reconocer un pago
     junta deudas de una sola persona/empresa. Devuelve (filas,
     proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total,
     error_response_or_None)."""
-    grupos, err = _mfp_validar_lote_ot_grupos(visita_ids_in)
+    grupos, err = _mfp_validar_lote_ot_grupos(visita_ids_in, asumir_cero=asumir_cero)
     if err:
         return None, None, None, None, None, err
     if len(grupos) > 1:
@@ -109914,14 +109944,16 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
                         "pagadas sin factura."}), 403
     d = request.get_json(silent=True) or {}
     filas, proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, err = \
-        _mfp_validar_lote_ot(d.get("visita_ids"))
+        _mfp_validar_lote_ot(d.get("visita_ids"), asumir_cero=_mfp_asumir_cero_permitido(d))
     if err:
         return err
+    asumidas_cero = [vid for vid, f in filas.items() if f.get("sin_costo")]
 
     user = current_username() or "sistema"
     try:
         conn = get_db()
         with conn.cursor() as cur:
+            _mfp_asumir_cero_en_ot(cur, asumidas_cero, user)
             cur.execute(
                 "INSERT INTO mant_facturas_proveedor "
                 "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
@@ -109945,12 +109977,88 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
         return jsonify({"ok": False, "error": "No se pudo registrar el pago."}), 500
 
     _mant_log("factura_proveedor", fid, "creada_pagada_sin_factura",
-              f"{proveedor_nombre} · {len(filas)} OT · ${monto_total:,.0f} · por {user}")
+              f"{proveedor_nombre} · {len(filas)} OT · ${monto_total:,.0f} · por {user}"
+              + (f" · {len(asumidas_cero)} OT con costo asumido $0" if asumidas_cero else ""))
     for vid, f in filas.items():
         _mant_log("visita", vid, "factura_proveedor_asignada",
                   f"Factura #{fid} ({proveedor_nombre}, sin N° todavía) · ${f['sugerido']:,.0f}")
     return jsonify({"ok": True, "id": fid, "proveedor": proveedor_nombre,
                     "n_ot": len(filas), "monto_total": monto_total})
+
+
+@app.route("/servicio-tecnico/api/facturas-proveedor/cerrar-historico", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_facturas_proveedor_cerrar_historico():
+    """🧹 2026-09-21 (Daniel: "todo lo dejes pagado de aquí para atrás...
+    deja todo pago por código por favor"): toma TODAS las OT externas
+    cerradas que aún no están en ninguna factura, salvo las que se
+    excluyen por N° de OT (las que quedan pendientes de pago de verdad), y
+    las deja 'pagada' en UNA factura por proveedor, asumiendo $0 donde no
+    había costo declarado. Solo superadmin; con simular=true solo cuenta.
+    Body: {excluir: ["OT-2026-00190", "190", ...], simular: bool}."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede cerrar el histórico."}), 403
+    d = request.get_json(silent=True) or {}
+    simular = bool(d.get("simular"))
+
+    def _num(s):
+        s = re.sub(r"\D", "", str(s or ""))
+        return int(s) if s else None
+    excluir = {_num(x) for x in (d.get("excluir") or []) if _num(x)}
+
+    pendientes = _mfp_por_facturar() or []
+    ids = [int(f["id"]) for f in pendientes if _num(f.get("numero_ot")) not in excluir]
+    excluidas = [f["numero_ot"] for f in pendientes if _num(f.get("numero_ot")) in excluir]
+    if not ids:
+        return jsonify({"ok": True, "n_ot": 0, "excluidas": excluidas, "solicitudes": []})
+
+    grupos, err = _mfp_validar_lote_ot_grupos(ids, asumir_cero=True)
+    if err:
+        return err
+    resumen = [{"proveedor": g_["proveedor_nombre"], "n_ot": len(g_["filas"]),
+                "monto_total": g_["monto_total"], "asumidas_cero": len(g_["asumidas_cero"]),
+                "ot": [f["numero_ot"] for f in g_["filas"].values()]} for g_ in grupos]
+    if simular:
+        return jsonify({"ok": True, "simulado": True, "n_ot": len(ids), "excluidas": excluidas, "solicitudes": resumen})
+
+    user = current_username() or "sistema"
+    creadas = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            for g_ in grupos:
+                filas = g_["filas"]
+                _mfp_asumir_cero_en_ot(cur, g_["asumidas_cero"], user)
+                cur.execute(
+                    "INSERT INTO mant_facturas_proveedor "
+                    "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "
+                    " numero_documento, fecha, monto_total, estado_pago, pagada_at, pagada_por, notas, created_by) "
+                    "VALUES (%s,%s,%s,'factura',NULL,NULL,%s,'pagada',NOW(),%s,%s,%s)",
+                    (g_["proveedor_nombre"], g_["proveedor_rut"], g_["prov_ficha_id"], g_["monto_total"], user,
+                     f"Cierre de histórico (todo lo anterior se reconoce pagado) -- {len(filas)} OT, "
+                     f"{len(g_['asumidas_cero'])} con costo asumido $0, por {user}.", user))
+                fid = cur.lastrowid
+                for vid, f in filas.items():
+                    cur.execute(
+                        "INSERT INTO mant_factura_proveedor_items "
+                        "(factura_proveedor_id, visita_id, monto, observacion, usuario) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        (fid, vid, f["sugerido"], "Cierre de histórico -- pagado sin factura.", user))
+                creadas.append({"id": fid, "proveedor": g_["proveedor_nombre"], "n_ot": len(filas),
+                                "monto_total": g_["monto_total"], "_filas": filas})
+        conn.commit()
+    except Exception as e:
+        print(f"[facprov] cerrar-historico: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo cerrar el histórico."}), 500
+
+    for c in creadas:
+        _mant_log("factura_proveedor", c["id"], "creada_pagada_sin_factura",
+                  f"Cierre histórico · {c['proveedor']} · {c['n_ot']} OT · ${c['monto_total']:,.0f} · por {user}")
+        for vid, f in c.pop("_filas").items():
+            _mant_log("visita", vid, "factura_proveedor_asignada",
+                      f"Factura #{c['id']} ({c['proveedor']}, cierre histórico) · ${f['sugerido']:,.0f}")
+    return jsonify({"ok": True, "n_ot": len(ids), "excluidas": excluidas, "solicitudes": creadas})
 
 
 @app.route("/mantenciones/api/facturas-proveedor/solicitar-oc", methods=["POST"])
@@ -109981,7 +110089,7 @@ def mant_facturas_proveedor_solicitar_oc():
     # todas en la misma transacción (o se crean todas o ninguna). El N° de
     # OC escrito a mano solo tiene sentido si hay un proveedor; con varios
     # se completa después en cada solicitud.
-    grupos, err = _mfp_validar_lote_ot_grupos(d.get("visita_ids"))
+    grupos, err = _mfp_validar_lote_ot_grupos(d.get("visita_ids"), asumir_cero=_mfp_asumir_cero_permitido(d))
     if err:
         return err
     if len(grupos) > 1:
@@ -109994,6 +110102,7 @@ def mant_facturas_proveedor_solicitar_oc():
         with conn.cursor() as cur:
             for g_ in grupos:
                 filas = g_["filas"]
+                _mfp_asumir_cero_en_ot(cur, g_["asumidas_cero"], user)
                 _nota_anexo = (f" ⚠ {len(g_['sin_anexo'])} OT sin anexo firmado: "
                                f"{', '.join(g_['sin_anexo'][:10])}." if g_["sin_anexo"] else "")
                 cur.execute(
