@@ -84313,7 +84313,8 @@ _OTREP_MAX_VIDEO = 28 * 1024 * 1024
 # y campos que además no ve un técnico EXTERNO (política del 2026-09-08:
 # costos/stock/proveedores de otros no se exponen al proveedor).
 _OTREP_STOCK_SOLO_GESTION = ("costo_unitario",)
-_OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad")
+_OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
+                           "comprometido", "disponible")
 _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
                          "validado_por", "resuelto_por",
                          # 🔒 FIX 2026-09-20 (revisión): _OTREP_SQL_SOL trae
@@ -84322,7 +84323,14 @@ _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "prove
                          # externo no vea stock (mismo criterio que
                          # _OTREP_STOCK_NO_EXTERNO, que sí lo cubre en el
                          # buscador pero no llegaba hasta acá).
-                         "stock_cantidad", "stock_descripcion")
+                         "stock_cantidad", "stock_descripcion",
+                         "stock_comprometido", "stock_disponible", "ticket_asignado_a")
+# Estados que siguen "vivos" para efectos de comprometer stock -- una
+# solicitud en cualquiera de estos todavía puede consumir el repuesto real,
+# así que cuenta contra el disponible de bodega. Mismo set que _OTREP_ABIERTOS,
+# nombrado aparte porque el significado acá es otro (compromiso de stock, no
+# "sigue pendiente de gestión").
+_OTREP_ESTADOS_COMPROMETEN = _OTREP_ABIERTOS
 
 
 def _ensure_ot_repuesto_solicitudes_tables():
@@ -84449,6 +84457,34 @@ def _otrep_gestion_required(view):
     return wrapped
 
 
+def _otrep_stock_comprometido(repuesto_stock_id, excluir_sol_id=None):
+    """Cuánto de un repuesto de bodega ya está prometido a OTRAS solicitudes
+    abiertas (de cualquier OT), aunque el repuesto físico todavía no haya
+    salido. 2026-09-20 (Daniel: "el cliente y nosotros como empresa
+    deberemos hacer seguimiento y comprometer el stock de los repuestos
+    según la necesidad de la operación") -- evita que dos OT distintas
+    cuenten con el mismo repuesto limitado sin que bodega se entere.
+
+    `excluir_sol_id`: al recalcular para una solicitud que YA estaba
+    contando contra este repuesto (validarla de nuevo, editar su cantidad),
+    no contarla dos veces -- el caller suma la cantidad NUEVA por separado.
+    """
+    if not repuesto_stock_id:
+        return 0.0
+    sql = ("SELECT COALESCE(SUM(cantidad),0) AS n FROM mant_ot_repuesto_solicitudes "
+           " WHERE repuesto_stock_id=%s AND estado IN "
+           + "('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')")
+    params = [repuesto_stock_id]
+    if excluir_sol_id:
+        sql += " AND id<>%s"
+        params.append(excluir_sol_id)
+    try:
+        return float((mysql_fetchone(sql, tuple(params)) or {}).get("n") or 0)
+    except Exception as e:
+        print(f"[otrep] comprometido stock={repuesto_stock_id}: {e}", flush=True)
+        return 0.0
+
+
 def _otrep_producto_de_maquina(m):
     """Modelo (cat_productos) de la máquina, por SKU: es el puente hacia la
     compatibilidad de repuestos (mant_repuestos_stock_modelos) y hacia las
@@ -84493,7 +84529,14 @@ _OTREP_SQL_STOCK = (
     "       rs.costo_unitario, rs.proveedor_id, mk.nombre AS marca, "
     "       u.codigo AS ubicacion_codigo, pv.nombre AS proveedor, "
     "       (SELECT f.gcs_key FROM mant_repuestos_stock_fotos f WHERE f.repuesto_id=rs.id "
-    "         ORDER BY f.orden LIMIT 1) AS foto_key "
+    "         ORDER BY f.orden LIMIT 1) AS foto_key, "
+    # 🔒 2026-09-20 (Daniel: "comprometer el stock de los repuestos según la
+    # necesidad de la operación"): cuánto de este repuesto ya está prometido
+    # a OTRAS solicitudes abiertas -- se resta del físico en _otrep_fmt_stock
+    # para mostrar el disponible REAL al elegir de dónde sale un repuesto.
+    "       (SELECT COALESCE(SUM(s.cantidad),0) FROM mant_ot_repuesto_solicitudes s "
+    "         WHERE s.repuesto_stock_id=rs.id AND s.estado IN "
+    "               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido "
     "  FROM mant_repuestos_stock rs "
     "  LEFT JOIN mant_repuestos_marcas mk ON mk.id=rs.marca_id "
     "  LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
@@ -84507,11 +84550,13 @@ def _otrep_fmt_stock(r, para_ot=False):
     r = dict(r)
     r["foto_url"] = ("/f/" + r["foto_key"]) if r.get("foto_key") else None
     r.pop("foto_key", None)
-    for k in ("cantidad", "stock_minimo", "costo_unitario"):
+    for k in ("cantidad", "stock_minimo", "costo_unitario", "comprometido"):
         r[k] = float(r[k]) if r.get(k) is not None else None
+    r["comprometido"] = r.get("comprometido") or 0.0
+    r["disponible"] = (r.get("cantidad") or 0.0) - r["comprometido"]
     r["es_piola"] = bool(re.search(r"piola|cable de acero", r.get("descripcion") or "", re.I))
     r["es_cinta"] = bool(re.search(r"cinta|banda|belt", r.get("descripcion") or "", re.I))
-    r["con_stock"] = bool((r.get("cantidad") or 0) > 0)
+    r["con_stock"] = bool((r.get("disponible") or 0) > 0)
     if para_ot:
         for k in _OTREP_STOCK_SOLO_GESTION:
             r.pop(k, None)
@@ -84530,8 +84575,15 @@ _OTREP_SQL_SOL = (
     "       v.numero_ot, v.tipo AS ot_tipo, v.fecha_programada AS ot_fecha, "
     "       c.razon_social AS cliente_nombre, "
     "       t.numero_ticket, t.estado AS ticket_estado, t.fecha_limite AS ticket_fecha_limite, "
+    "       t.asignado_a AS ticket_asignado_a, "
     "       rs.sku AS stock_sku, rs.descripcion AS stock_descripcion, rs.cantidad AS stock_cantidad, "
-    "       pv.nombre AS proveedor_nombre "
+    "       pv.nombre AS proveedor_nombre, "
+    # 🔒 2026-09-20: cuánto de ESTE mismo repuesto de bodega ya está
+    # comprometido en OTRAS solicitudes abiertas (s.id<>s2.id) -- _otrep_fila
+    # le suma la cantidad de ESTA fila (si sigue abierta) para el total.
+    "       (SELECT COALESCE(SUM(s2.cantidad),0) FROM mant_ot_repuesto_solicitudes s2 "
+    "         WHERE s2.repuesto_stock_id=s.repuesto_stock_id AND s2.id<>s.id "
+    "           AND s2.estado IN ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido_otras "
     "  FROM mant_ot_repuesto_solicitudes s "
     "  JOIN mant_maquinas m ON m.id=s.maquina_id "
     "  JOIN mant_visitas v ON v.id=s.visita_id "
@@ -84543,13 +84595,41 @@ _OTREP_SQL_SOL = (
 
 def _otrep_fila(s, para_ot=False):
     s = dict(s)
-    for k in ("cantidad", "piola_metros", "stock_cantidad"):
+    for k in ("cantidad", "piola_metros", "stock_cantidad", "comprometido_otras"):
         if s.get(k) is not None:
             s[k] = float(s[k])
     s["estado_label"] = _OTREP_ESTADO_LABEL.get(s.get("estado"), s.get("estado"))
     s["origen_label"] = _OTREP_ORIGEN_LABEL.get(s.get("origen"), s.get("origen"))
     s["abierta"] = s.get("estado") in _OTREP_ABIERTOS
     s["siguientes"] = list(_OTREP_TRANSICIONES.get(s.get("estado"), ()))
+    # 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de la
+    # operación"): comprometido = lo que YA piden otras solicitudes abiertas
+    # + lo que pide ESTA (si sigue abierta) -- disponible es lo que de
+    # verdad queda libre en bodega para una OT nueva. `comprometido_otras`
+    # viene de _OTREP_SQL_SOL; se descarta del dict final (es un cálculo
+    # intermedio, no un dato de la solicitud).
+    if s.get("repuesto_stock_id") and s.get("stock_cantidad") is not None:
+        _propia = s.get("cantidad") or 0.0 if s.get("abierta") else 0.0
+        s["stock_comprometido"] = (s.get("comprometido_otras") or 0.0) + _propia
+        s["stock_disponible"] = s["stock_cantidad"] - s["stock_comprometido"]
+    else:
+        s["stock_comprometido"] = None
+        s["stock_disponible"] = None
+    s.pop("comprometido_otras", None)
+    # 🕐 2026-09-20 (Daniel: "hacer seguimiento de cuándo se solicitó y
+    # cuánto tiempo llegó, para medir los tiempos"). Abierta: cuenta hasta
+    # ahora. Cerrada (instalado/rechazado): se congela en `updated_at`, el
+    # único timestamp que SIEMPRE se actualiza en el último cambio de
+    # estado -- evita tener que elegir entre instalado_at/recibido_at según
+    # el camino que tomó cada solicitud.
+    if s.get("created_at"):
+        _ref = datetime.utcnow() if s["abierta"] else (s.get("updated_at") or datetime.utcnow())
+        try:
+            s["dias_transcurridos"] = round((_ref - s["created_at"]).total_seconds() / 86400.0, 1)
+        except Exception:
+            s["dias_transcurridos"] = None
+    else:
+        s["dias_transcurridos"] = None
     # REGLA #6: todo datetime a hora Chile, nunca ISO crudo.
     for k in ("created_at", "validado_at", "pedido_at", "recibido_at", "instalado_at", "updated_at"):
         s[k] = chile_fmt_filter(s[k]) if s.get(k) else None
@@ -85097,7 +85177,7 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
     rid = str(fd.get("repuesto_stock_id") or "").strip()
     if rid.isdigit():
         stock = mysql_fetchone(
-            "SELECT id, sku, descripcion, proveedor_id FROM mant_repuestos_stock "
+            "SELECT id, sku, descripcion, cantidad, proveedor_id FROM mant_repuestos_stock "
             " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
         if not stock:
             return _ot2_err("Ese repuesto de bodega ya no existe.", "REPUESTO_NO_EXISTE")
@@ -85257,14 +85337,29 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
     except Exception:
         pass
 
-    aviso = None
+    avisos = []
     if not tid:
-        aviso = ("La solicitud quedó guardada, pero no se pudo crear el ticket de seguimiento. "
-                 "Gestión puede crearlo desde Repuestos → Solicitudes desde OT.")
+        avisos.append("La solicitud quedó guardada, pero no se pudo crear el ticket de seguimiento. "
+                       "Gestión puede crearlo desde Repuestos → Solicitudes desde OT.")
+    # 🔒 FIX 2026-09-20 (revisión adversarial, hallazgo severidad media): al
+    # crear la solicitud YA ligada a un repuesto real de bodega (origen
+    # compatible/bodega, "stock" quedó asignado arriba), es el primer
+    # momento en que el repuesto puede quedar sobre-comprometido -- antes
+    # este cálculo solo corría al validar o al editar la cantidad, nunca al
+    # crear. El frontend (otrepEnviar) ya sabía mostrar este aviso, solo
+    # faltaba que el backend lo calculara acá también.
+    if stock and stock.get("cantidad") is not None:
+        fisico = float(stock.get("cantidad") or 0)
+        otras = _otrep_stock_comprometido(stock["id"], excluir_sol_id=sol_id)
+        disponible = fisico - otras - cantidad
+        if disponible < 0:
+            avisos.append(f"Ojo: {stock.get('sku') or nombre} queda comprometido en "
+                           f"{otras + cantidad:g} de {fisico:g} en bodega entre todas las OT abiertas "
+                           f"— faltan {abs(disponible):g}.")
     return jsonify({
         "ok": True, "solicitud_id": sol_id, "ticket_id": tid, "numero_ticket": numero_ticket,
         "ticket_creado": creado, "piola_id": piola_id,
-        "fuera_servicio": bool(dejar_fs and fs_ok), "aviso": aviso,
+        "fuera_servicio": bool(dejar_fs and fs_ok), "aviso": "\n".join(avisos) or None,
     })
 
 
@@ -85536,7 +85631,7 @@ def repstock_solicitud_ot_estado(sid):
                             "Para validar hay que ligar la solicitud a un repuesto REAL de la Bodega "
                             "(uno existente, o créalo primero con su ubicación)."}), 400
         stock = mysql_fetchone(
-            "SELECT id, sku, descripcion, proveedor_id FROM mant_repuestos_stock "
+            "SELECT id, sku, descripcion, cantidad, proveedor_id FROM mant_repuestos_stock "
             " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
         if not stock:
             return jsonify({"ok": False, "error": "Ese repuesto de bodega no existe o está inactivo."}), 400
@@ -85603,6 +85698,21 @@ def repstock_solicitud_ot_estado(sid):
                     " WHERE id=%s AND estado IN ('resolved','closed','cancelado')", (s["ticket_id"],))
         except Exception as e:
             print(f"[otrep] reabrir sid={sid}: {e}", flush=True)
+    # 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de la
+    # operación"): al validar contra un repuesto real, avisar (NO bloquear,
+    # mismo criterio que la piola) si esto deja el repuesto comprometido por
+    # encima de lo físico entre TODAS las OT abiertas que lo piden.
+    aviso = None
+    if nuevo == "validado" and stock:
+        fisico = float(stock.get("cantidad") or 0)
+        otras = _otrep_stock_comprometido(stock["id"], excluir_sol_id=sid)
+        propia = float(s.get("cantidad") or 0)
+        disponible = fisico - otras - propia
+        if disponible < 0:
+            aviso = (f"Ojo: con esta validación, {stock['sku']} queda comprometido en "
+                     f"{otras + propia:g} de {fisico:g} en bodega entre todas las OT abiertas "
+                     f"— faltan {abs(disponible):g}. Puedes seguir igual; quizás convenga pasar "
+                     "directo a \"Pedir al proveedor\".")
     # Nota en el hilo del ticket + auditoría de la OT
     label = _OTREP_ESTADO_LABEL.get(nuevo, nuevo)
     if s.get("ticket_id"):
@@ -85613,6 +85723,7 @@ def repstock_solicitud_ot_estado(sid):
                    + (f"\nProveedor: {prov['nombre']}" if prov else "")
                    + (f"\nOC {d.get('oc_numero')}" if nuevo == 'pedido' and d.get("oc_numero") else "")
                    + ("\nEl equipo volvió a operativo." if equipo_operativo and s.get("dejo_fuera_servicio") else "")
+                   + (f"\n{aviso}" if aviso else "")
                    + (f"\n{nota}" if nota else ""))
             mysql_execute(
                 "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
@@ -85630,8 +85741,136 @@ def repstock_solicitud_ot_estado(sid):
                   + (f" · {nota[:200]}" if nota else ""))
     except Exception:
         pass
-    return jsonify({"ok": True, "estado": nuevo, "estado_label": label,
+    return jsonify({"ok": True, "estado": nuevo, "estado_label": label, "aviso": aviso,
                     "siguientes": list(_OTREP_TRANSICIONES.get(nuevo, ()))})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/cantidad", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_ot_cantidad(sid):
+    """Ajusta la cantidad de una solicitud ABIERTA. 2026-09-20 (Daniel: "es
+    necesario que se pueda modificar en todo momento en la solicitud... para
+    comprometer el stock según la necesidad de la operación"). Confirmado:
+    solo la cantidad (no el repuesto/motivo/evidencia), solo gestión/bodega,
+    solo mientras la solicitud siga abierta -- una vez instalada o
+    rechazada, la cantidad queda fija como parte del historial.
+
+    🔒 FIX 2026-09-20 (revisión adversarial): dos huecos reales.
+    1. @_otrep_gestion_required por sí solo NO excluye al técnico interno
+       (solo al externo) -- un técnico con permiso `mantenciones` pasaba el
+       gate igual que bodega, violando "solo gestión edita cantidad, nunca
+       el técnico". Mismo criterio que ya usa esta función para 'pedido'/
+       'rechazado' en repstock_solicitud_ot_estado.
+    2. El UPDATE solo filtraba por `WHERE id=%s`, sin repetir la condición
+       de estado ni revisar `rowcount` -- si la solicitud se cerraba
+       (instalado/rechazado) en la fracción de segundo entre el SELECT de
+       arriba y este UPDATE, la cantidad quedaba mutada igual sobre una
+       fila ya cerrada. Ahora la condición de estado vive en el propio
+       WHERE del UPDATE (atómico) y se exige rowcount=1."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error":
+                        "Ajustar la cantidad de una solicitud lo decide gestión, no un técnico."}), 403
+    s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if s["estado"] not in _OTREP_ABIERTOS:
+        return jsonify({"ok": False, "error":
+                        f"Esta solicitud ya está \"{_OTREP_ESTADO_LABEL.get(s['estado'], s['estado'])}\": "
+                        "la cantidad queda fija como parte del historial."}), 400
+    d = request.get_json(silent=True) or {}
+    try:
+        nueva = float(str(d.get("cantidad") or "").replace(",", "."))
+    except (TypeError, ValueError):
+        nueva = 0
+    if nueva <= 0 or nueva > 9999:
+        return jsonify({"ok": False, "error": "La cantidad tiene que ser un número mayor que cero."}), 400
+    anterior = float(s.get("cantidad") or 0)
+    user = current_username() or "sistema"
+    if abs(nueva - anterior) < 0.005:
+        return jsonify({"ok": True, "cantidad": anterior, "aviso": None})
+    try:
+        tocadas = mysql_execute_returning_rowcount(
+            "UPDATE mant_ot_repuesto_solicitudes SET cantidad=%s, "
+            " nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) "
+            " WHERE id=%s AND estado IN ('" + "','".join(_OTREP_ABIERTOS) + "')",
+            (nueva, f"Cantidad ajustada de {anterior:g} a {nueva:g} — {user}.", sid))
+    except Exception as e:
+        print(f"[otrep] cantidad sid={sid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo actualizar la cantidad."}), 500
+    if not tocadas:
+        return jsonify({"ok": False, "error":
+                        "Esta solicitud se cerró justo ahora (alguien la validó/rechazó/instaló): "
+                        "la cantidad ya no se puede ajustar. Recarga para ver el estado actual."}), 409
+    aviso = None
+    if s.get("repuesto_stock_id"):
+        stock = mysql_fetchone("SELECT sku, cantidad FROM mant_repuestos_stock WHERE id=%s",
+                                (s["repuesto_stock_id"],)) or {}
+        fisico = float(stock.get("cantidad") or 0)
+        otras = _otrep_stock_comprometido(s["repuesto_stock_id"], excluir_sol_id=sid)
+        disponible = fisico - otras - nueva
+        if disponible < 0:
+            aviso = (f"Ojo: con este ajuste, {stock.get('sku') or 'el repuesto'} queda comprometido "
+                     f"en {otras + nueva:g} de {fisico:g} en bodega entre todas las OT abiertas "
+                     f"— faltan {abs(disponible):g}.")
+    if s.get("ticket_id"):
+        try:
+            mysql_execute(
+                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+                "VALUES (%s,'cambio_estado',%s,%s,%s,1)",
+                (s["ticket_id"],
+                 f"Solicitud de repuesto #{sid} ({s.get('repuesto_nombre')}): cantidad ajustada de "
+                 f"{anterior:g} a {nueva:g}." + (f"\n{aviso}" if aviso else ""),
+                 json.dumps({"solicitud_repuesto_id": sid, "cantidad_antes": anterior,
+                             "cantidad_nueva": nueva}, ensure_ascii=False),
+                 user))
+        except Exception as e:
+            print(f"[otrep] tk_mensajes cantidad sid={sid}: {e}", flush=True)
+    try:
+        _mant_log("visita", s["visita_id"], "repuesto_solicitud_cantidad",
+                  f"#{sid} {s.get('repuesto_nombre')}: {anterior:g} → {nueva:g}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "cantidad": nueva, "aviso": aviso})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/tomar", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_ot_tomar(sid):
+    """"Tomar" la solicitud = auto-asignarse el ticket que ya la agrupa.
+    2026-09-20 (Daniel: "que quede en solicitudes de repuestos hasta que la
+    tome otro usuario"). Reutiliza tk_tickets.asignado_a -- sin tabla nueva.
+
+    🔒 FIX 2026-09-20 (revisión adversarial): el diseño original llamaba
+    directo a PATCH /tickets/api/tickets/<id> (tk_api_update) desde el
+    frontend. Ese endpoint general NO excluye al técnico externo (solo
+    exige el permiso genérico `mantenciones`, que el externo también tiene)
+    y NO valida que el ticket pertenezca a la OT del que llama -- un
+    externo que conoce el ticket_id de SU PROPIA solicitud (visible en su
+    propia OT) podía usarlo para reescribir asignado_a/notas_internas/
+    prioridad/fecha_limite de CUALQUIER ticket del sistema. Este endpoint
+    dedicado usa el MISMO gate que el resto de esta cola
+    (@_otrep_gestion_required, que sí excluye al externo), toma el
+    "quién" de current_username() en el servidor (nunca de lo que mande el
+    frontend) y solo puede tocar el ticket de ESTA solicitud puntual."""
+    s = mysql_fetchone("SELECT ticket_id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if not s.get("ticket_id"):
+        return jsonify({"ok": False, "error":
+                        "Esta solicitud todavía no tiene ticket -- créalo primero."}), 400
+    user = current_username() or "sistema"
+    try:
+        mysql_execute("UPDATE tk_tickets SET asignado_a=%s WHERE id=%s", (user, s["ticket_id"]))
+        mysql_execute(
+            "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+            "VALUES (%s,'asignacion',%s,%s,%s,1)",
+            (s["ticket_id"], f"Asignado a: {user}",
+             json.dumps({"campo": "asignado_a", "nuevo": user, "via": "solicitud_repuesto", "sid": sid},
+                        ensure_ascii=False), user))
+    except Exception as e:
+        print(f"[otrep] tomar sid={sid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo tomar la solicitud."}), 500
+    return jsonify({"ok": True, "asignado_a": user})
 
 
 @app.route("/repuestos/api/solicitudes-ot/<int:sid>/ticket", methods=["POST"])

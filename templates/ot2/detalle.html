@@ -1353,6 +1353,14 @@
 @media (max-width:640px){
   .otd-desv-btns{display:grid;grid-template-columns:1fr 1fr}
   .otd-desv-btns .otd-fs-btn,.otd-fs-badge .otd-fs-btn{justify-content:center;min-height:44px}
+  {#- 🔀 2026-09-20 (Daniel: "los botones de solicitar repuesto tienen
+      cierta desasimetría"). Entre 2 y 6 botones aparecen acá según el
+      equipo (fuera de servicio/piola/cinta/no pude revisarlo/dar de baja
+      son todos condicionales) -- con un conteo IMPAR, el último botón
+      quedaba solo en su fila, ocupando solo la columna izquierda de la
+      grilla de 2 con un hueco vacío al lado. Que ese último ocupe el
+      ancho completo cuando sobra solo. -#}
+  .otd-desv-btns > .otd-fs-btn:last-child:nth-child(odd){grid-column:1 / -1}
   .otrep-tab{min-height:44px}
   .otrep-ev-th .x{width:32px;height:32px}
   #modalRepSol .modal-dialog-scrollable .modal-content,#modalBajaEq .modal-dialog-scrollable .modal-content{
@@ -4838,7 +4846,16 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% if _fs %}
               <div class="otd-fs-badge">
                 <i class="bi bi-exclamation-octagon-fill"></i>
-                <span><b>Fuera de servicio.</b> El cliente lo tiene detenido.</span>
+                {#- 🔀 2026-09-20 (Daniel: "debe dejar muy claro que el equipo
+                    está fuera de servicio... quisiera que me dejes un
+                    diagnóstico indicando exactamente el porqué"). El
+                    checklist YA se excluye solo (estado_revision=
+                    'falla_detectada', ver _ot_maquinas_excluidas_cierre) --
+                    lo que faltaba era mostrar el motivo acá: antes era
+                    genérico ("El cliente lo tiene detenido") sin decir POR
+                    QUÉ, a diferencia del badge de "No se pudo revisar" de
+                    más abajo, que sí interpola observacion_tecnico. -#}
+                <span><b>Fuera de servicio.</b> El cliente lo tiene detenido.{% if e.observacion_tecnico %} <strong>Diagnóstico:</strong> {{ e.observacion_tecnico }}{% endif %}</span>
                 {% if _puede_desv %}
                 <button type="button" class="otd-fs-btn ok"
                         onclick="otdFueraServicio({{ e.id }}, true)">
@@ -13443,8 +13460,18 @@ function otrepPintarOpciones(contId, items, origen, vacioMsg){
   var cont = document.getElementById(contId);
   if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">' + otdEsc(vacioMsg) + '</div>'; return; }
   cont.innerHTML = items.map(function(it){
-    var stk = (it.cantidad != null) ? ((it.cantidad || 0) > 0 ? '<span class="stk">' + _otrepFmt(it.cantidad) + ' en stock</span>' : '<span class="stk sin">sin stock</span>')
-            : (it.con_stock ? '<span class="stk">en stock</span>' : '<span class="stk sin">sin stock</span>');
+    {#- 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de
+        la operación"): el número que importa ahora es el DISPONIBLE (físico
+        menos lo que ya prometieron otras OT abiertas), no el físico crudo
+        -- si aparece "10 en stock" pero los 10 ya están comprometidos a
+        otra OT, es información falsa. Un técnico externo no ve ninguno de
+        los dos (_OTREP_STOCK_NO_EXTERNO), por eso el fallback a con_stock
+        (booleano) sigue igual. -#}
+    var stk = (it.disponible != null)
+      ? ((it.disponible > 0)
+          ? '<span class="stk">' + _otrepFmt(it.disponible) + ' disponible' + ((it.comprometido || 0) > 0 ? ' · ' + _otrepFmt(it.comprometido) + ' comprometido' : '') + '</span>'
+          : '<span class="stk sin">sin disponible' + ((it.comprometido || 0) > 0 ? ' · ' + _otrepFmt(it.comprometido) + ' comprometido' : '') + '</span>')
+      : (it.con_stock ? '<span class="stk">en stock</span>' : '<span class="stk sin">sin stock</span>');
     var on = (_otrep.sel && _otrep.sel.stock_id === it.id) ? ' on' : '';
     return '<button type="button" class="otrep-opc-it' + on + '" data-id="' + it.id + '" onclick="otrepSelStock(' + it.id + ', \'' + origen + '\', this)">' +
       '<span class="ph">' + (it.foto_url ? '<img src="' + otdEsc(it.foto_url) + '" alt="" loading="lazy">' : '<i class="bi bi-gear"></i>') + '</span>' +

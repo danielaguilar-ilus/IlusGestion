@@ -111,6 +111,16 @@
 .rs-piola{display:inline-block;font-size:.72rem;font-weight:800;color:#a16207;background:#fff8e1;border-radius:999px;padding:1px 8px;margin-top:3px}
 .rs-liga{font-size:.72rem;color:#475569;margin-top:5px;display:flex;gap:5px;align-items:flex-start}
 .rs-liga.ok{color:#15803d;font-weight:700}.rs-liga.pend{color:#b45309;font-weight:700}
+{#- 🔒 2026-09-20: aviso cuando el repuesto ya está comprometido por encima
+    de lo físico entre todas las OT abiertas -- informa, no bloquea (mismo
+    espíritu que la piola). -#}
+.rs-liga.warn{color:#b91c1c;font-weight:700}
+.rs-cant-editar{border:none;background:#f3f4f6;color:#6b7280;border-radius:6px;width:22px;height:22px;
+  display:inline-grid;place-items:center;font-size:.66rem;cursor:pointer;vertical-align:middle;margin-left:4px}
+.rs-cant-editar:hover{background:#dc2626;color:#fff}
+.rs-btn.tomar{border-color:#93c5fd;color:#1d4ed8}.rs-btn.tomar:hover{background:#2563eb;border-color:#2563eb;color:#fff}
+.rs-tomada{font-size:.7rem;font-weight:800;color:#1d4ed8;background:#dbeafe;border-radius:999px;padding:3px 10px;
+  display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .rs-evs{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .rs-ev{width:56px;height:56px;border-radius:8px;overflow:hidden;background:#0a0a0a;display:block;border:1px solid #e5e7eb}
 .rs-ev img{width:100%;height:100%;object-fit:cover;display:block}
@@ -194,8 +204,17 @@
     </button>
   </li>
   <li class="nav-item">
+    {#- 🔔 2026-09-20 (Daniel: "colocar una burbuja en seguimiento por cada
+        solicitud sin gestionar"). Esta pestaña es de OTRA cola (compras de
+        Seguimiento, no las solicitudes que levantan las OT) -- pero
+        gestión puede vivir acá sin pasar nunca por "Solicitudes desde OT",
+        así que se agrega una segunda burbuja roja con el conteo de
+        solicitudes en 'solicitado' (recién levantadas, nadie las tocó
+        todavía) para que no se pierdan de vista. rsCargar() la actualiza
+        sin importar qué pestaña esté activa (ver DOMContentLoaded). -#}
     <button class="nav-link" type="button" onclick="repTab('seguimiento')" id="repTabSeguimiento">
       <i class="bi bi-clipboard-check me-1"></i>Seguimiento <span class="badge bg-secondary ms-1">{{ repuestos|length }}</span>
+      <span class="badge ms-1" id="repBadgeSeguimientoSolic" style="display:none;background:#dc2626" title="Solicitudes de OT sin gestionar todavía">0</span>
     </button>
   </li>
   {# 🔧 2026-09-20 (Daniel): la cola de solicitudes que levantan las OT --
@@ -530,6 +549,12 @@ document.addEventListener('DOMContentLoaded', function(){
   else if (tieneSeg) elegida = 'seguimiento';
   else { try { elegida = localStorage.getItem('repTabActiva') || 'bodega'; } catch(e){} }
   repTab(elegida);
+  // 🔔 2026-09-20 (Daniel: "burbuja en seguimiento por cada solicitud sin
+  // gestionar"). repTab() solo llama rsCargar() cuando la pestaña activa ES
+  // "Solicitudes desde OT" -- si se abre en Bodega o Seguimiento, esa
+  // burbuja se quedaría en 0 aunque SÍ haya solicitudes sin tocar. Se carga
+  // igual (sin repetir el fetch si repTab ya lo hizo).
+  if (elegida !== 'solicitudes' && typeof rsCargar === 'function') rsCargar();
 });
 
 /* ══════════════ SOLICITUDES DESDE OT (2026-09-20) ══════════════════════
@@ -558,6 +583,13 @@ async function rsCargar(){
     const abiertas = _rs.todas.filter(function(s){ return s.abierta; }).length;
     const bd = document.getElementById('repBadgeSolic');
     if (bd){ bd.textContent = abiertas; bd.style.background = abiertas ? '#dc2626' : '#6b7280'; }
+    // 🔔 2026-09-20 (Daniel: "burbuja en seguimiento por cada solicitud sin
+    // gestionar"). "Sin gestionar" = recién levantadas, en 'solicitado' --
+    // nadie de bodega las validó/pidió/recibió todavía (distinto de
+    // "abiertas", que incluye las que YA están en curso).
+    const sinGestionar = _rs.conteo.solicitado || 0;
+    const bdSeg = document.getElementById('repBadgeSeguimientoSolic');
+    if (bdSeg){ bdSeg.textContent = sinGestionar; bdSeg.style.display = sinGestionar ? '' : 'none'; }
   } catch(e){
     lista.innerHTML = '<div class="rs-vacio">No se pudieron cargar las solicitudes: ' + rsEsc(e.message) + '</div>';
   }
@@ -621,16 +653,40 @@ function rsCard(s){
     const cls = {validado:'val', pedido:'ped', recibido:'rec', instalado:'ins', rechazado:'rej', solicitado:'sol'}[n] || '';
     return '<button type="button" class="rs-btn ' + cls + '" onclick="rsAccion(' + s.id + ', \'' + n + '\')">' + lbl + '</button>';
   }).join('') + (!s.ticket_id ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '');
+  // 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de la
+  // operación"): junto al stock físico se muestra el DISPONIBLE real (neto
+  // de lo que otras OT abiertas ya prometieron sobre el mismo repuesto) --
+  // el físico solo ya no alcanza para decidir si conviene pedir al proveedor.
+  const compTxt = (s.stock_disponible != null)
+    ? ' · disponible ' + rsFmt(s.stock_disponible) + (s.stock_comprometido > 0 ? ' (comprometido ' + rsFmt(s.stock_comprometido) + ')' : '')
+    : '';
   const liga = s.repuesto_stock_id
-    ? '<div class="rs-liga ok"><i class="bi bi-box-seam"></i> ' + rsEsc(s.stock_sku || '') + ' · ' + rsEsc(s.stock_descripcion || '') + (s.stock_cantidad != null ? ' · stock ' + rsFmt(s.stock_cantidad) : '') + '</div>'
+    ? '<div class="rs-liga ' + (s.stock_disponible != null && s.stock_disponible < 0 ? 'warn' : 'ok') + '"><i class="bi bi-box-seam"></i> ' + rsEsc(s.stock_sku || '') + ' · ' + rsEsc(s.stock_descripcion || '') + (s.stock_cantidad != null ? ' · físico ' + rsFmt(s.stock_cantidad) : '') + compTxt + '</div>'
     : '<div class="rs-liga pend"><i class="bi bi-question-circle"></i> Sin repuesto de bodega ligado (' + rsEsc(s.origen_label || '') + ')</div>';
+  // 🔀 2026-09-20 (Daniel: "hasta que la tome otro usuario"). "Tomar" REUSA
+  // tk_tickets.asignado_a del ticket que YA agrupa esta solicitud -- no hay
+  // tabla ni concepto de dueño nuevo. Sin ticket todavía no hay a quién
+  // asignarle, así que el botón se oculta (el de "Crear ticket" ya cubre
+  // ese caso).
+  const tomar = s.ticket_id
+    ? (s.ticket_asignado_a
+        ? '<span class="rs-tomada"><i class="bi bi-person-check-fill"></i> ' + rsEsc(s.ticket_asignado_a) + '</span>'
+        : '<button type="button" class="rs-btn tomar" onclick="rsTomar(' + s.id + ')"><i class="bi bi-hand-index-thumb me-1"></i>Tomar</button>')
+    : '';
+  // 🕐 2026-09-20 (Daniel: "hacer seguimiento de cuándo se solicitó y cuánto
+  // tiempo llegó, para medir los tiempos"). Abierta: cuenta corriendo desde
+  // que se creó. Cerrada: queda congelado en el número que ya vino del back.
+  const tiempoTxt = (s.dias_transcurridos != null)
+    ? (' · ' + rsFmt(s.dias_transcurridos) + (s.abierta ? ' días abierta' : ' días hasta cerrar'))
+    : '';
   return '<div class="rs-card ' + est + '">' +
     '<div class="rs-head">' +
       '<span class="rs-est ' + est + '">' + rsEsc(String(s.estado_label || s.estado).split(' · ')[0]) + '</span>' +
       '<b class="rs-num">#' + s.id + '</b>' +
       '<a class="rs-ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener"><i class="bi bi-clipboard2-check"></i> ' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>' +
       (s.numero_ticket ? '<a class="rs-tk" href="/tickets/' + s.ticket_id + '" target="_blank" rel="noopener"><i class="bi bi-ticket-perforated"></i> ' + rsEsc(s.numero_ticket) + (s.ticket_fecha_limite ? ' · vence ' + rsEsc(s.ticket_fecha_limite) : '') + '</a>' : '<span class="rs-tk sin">sin ticket</span>') +
-      '<small class="rs-when">' + rsEsc(s.created_at || '') + (s.solicitado_por ? ' · ' + rsEsc(s.solicitado_por) : '') + '</small>' +
+      tomar +
+      '<small class="rs-when">' + rsEsc(s.created_at || '') + (s.solicitado_por ? ' · ' + rsEsc(s.solicitado_por) : '') + tiempoTxt + '</small>' +
     '</div>' +
     '<div class="rs-body">' +
       '<div class="rs-col">' +
@@ -640,7 +696,8 @@ function rsCard(s){
       '</div>' +
       '<div class="rs-col">' +
         '<div class="rs-k">Repuesto</div>' +
-        '<div class="rs-v"><b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + rsEsc(s.repuesto_nombre) + ' × ' + rsFmt(s.cantidad) + '</b>' +
+        '<div class="rs-v"><b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + rsEsc(s.repuesto_nombre) + ' × ' + rsFmt(s.cantidad) +
+          (s.abierta && _rs.puedePedir ? ' <button type="button" class="rs-cant-editar" title="Ajustar cantidad" onclick="rsEditarCantidad(' + s.id + ')"><i class="bi bi-pencil-fill"></i></button>' : '') + '</b>' +
           (s.piola_metros ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
           (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga +
           (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) + '</div>' +
@@ -657,6 +714,53 @@ function rsCard(s){
       '<div class="rs-acc">' + acciones + '</div>' +
     '</div>' +
   '</div>';
+}
+async function rsEditarCantidad(sid){
+  const s = _rs.todas.find(function(x){ return x.id === sid; });
+  if (!s) return;
+  {#- 🔒 FIX 2026-09-20 (revisión adversarial): ilusPrompt ya escapa
+      "message" internamente (static/ilus_ui.js) -- pre-escaparlo acá con
+      rsEsc() lo escapaba DOS veces y un repuesto con "&"/comillas/</>
+      en el nombre salía literal como "&amp;quot;" en el diálogo. Las demás
+      llamadas a ilusPrompt/ilusConfirm en este archivo (rsPedAbrir,
+      rsAccion) tampoco pre-escapan -- esto solo alinea con ese patrón. -#}
+  const val = await ilusPrompt({
+    title: 'Ajustar cantidad — solicitud #' + sid, message: s.repuesto_nombre + ' · ' + (s.numero_ot || ''),
+    sub: 'Solo la cantidad se puede editar mientras la solicitud siga abierta — el repuesto, el motivo y la evidencia quedan fijos.',
+    placeholder: 'Cantidad', value: String(s.cantidad), required: true,
+  });
+  if (val == null) return;
+  const n = parseFloat(String(val).replace(',', '.'));
+  if (!isFinite(n) || n <= 0){ ilusToast('La cantidad tiene que ser un número mayor que cero.', { type: 'error' }); return; }
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/cantidad', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ cantidad: n }) });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ ilusToast(j.error || 'No se pudo ajustar la cantidad.', { type: 'error' }); return; }
+    ilusToast('✓ Cantidad ajustada a ' + rsFmt(j.cantidad), { type: 'success' });
+    if (j.aviso) await ilusAlert({ title: 'Aviso de stock', message: j.aviso, type: 'warning' });
+    await rsCargar();
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+}
+async function rsTomar(sid){
+  const s = _rs.todas.find(function(x){ return x.id === sid; });
+  if (!s || !s.ticket_id) return;
+  {#- 🔒 FIX 2026-09-20 (revisión adversarial): esto PATCHeaba directo
+      /tickets/api/tickets/<id>, un endpoint general que no excluye al
+      técnico externo ni valida que el ticket sea de esta solicitud -- un
+      externo que conociera CUALQUIER ticket_id podía reasignarlo o
+      reescribir sus notas/prioridad. Ahora usa un endpoint dedicado
+      (mismo gate que el resto de esta cola) que además calcula el
+      "quién" en el servidor -- ya no depende de REP_YO del frontend. -#}
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/tomar', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin', body: '{}' });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ ilusToast(j.error || 'No se pudo tomar la solicitud.', { type: 'error' }); return; }
+    ilusToast('✓ Solicitud #' + sid + ' tomada.', { type: 'success' });
+    await rsCargar();
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
 function rsTimeline(s){
   const pasos = [['solicitado', s.created_at], ['validado', s.validado_at], ['pedido', s.pedido_at], ['recibido', s.recibido_at], ['instalado', s.instalado_at]];
@@ -735,6 +839,13 @@ async function rsPostEstado(sid, body){
     const j = await r.json().catch(function(){ return {}; });
     if (!j.ok){ await ilusAlert({ title: 'No se pudo', message: j.error || 'Intenta de nuevo.', type: 'error' }); return false; }
     ilusToast('✓ Solicitud #' + sid + ' → ' + (j.estado_label || j.estado), { type: 'success' });
+    {#- 🔒 FIX 2026-09-20 (revisión adversarial): validar contra un repuesto
+        que queda sobre-comprometido YA se ve de forma persistente en la
+        tarjeta (disponible en rojo, ver rsCard/compTxt), pero el mensaje
+        explicativo con la sugerencia ("pasa a Pedir al proveedor") solo
+        vivía en el hilo del ticket -- rsEditarCantidad ya mostraba este
+        mismo aviso, acá faltaba. -#}
+    if (j.aviso) await ilusAlert({ title: 'Aviso de stock', message: j.aviso, type: 'warning' });
     await rsCargar();
     return true;
   } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); return false; }
