@@ -68219,9 +68219,18 @@ _PROV_DOCS_TIPOS = [
     ("f30",        "F30 · Antecedentes laborales y previsionales",
      False, "Certificado de multas y deudas previsionales del proveedor. Sirve "
             "para saber con quién se está trabajando antes de contratarlo."),
-    ("odi",        "ODI · Obligación de informar los riesgos",
-     False, "Registro de que se le informaron los riesgos del trabajo. Es la "
-            "base de cualquier defensa en un tema de seguridad."),
+    # 🔄 2026-09-21 (Daniel, en vivo: "eso hoy se llama el IRL"): el DS 44
+    # (vigente desde 1-feb-2025, reemplaza los DS 40/54) reemplazó el Acta
+    # ODI por el Acta IRL (Información de Riesgos Laborales, Art. 15) --
+    # mismo objetivo (que el trabajador sepa los riesgos de su tarea), nuevo
+    # nombre y marco. La CLAVE interna sigue siendo "odi" a propósito (no se
+    # renombra: reventaría los registros ya guardados con tipo='odi') -- solo
+    # cambia lo que ve el usuario.
+    ("odi",        "IRL · Información de Riesgos Laborales (ex ODI)",
+     False, "Acta de que se le informaron los riesgos del trabajo y las medidas "
+            "para controlarlos (DS 44, Art. 15 -- reemplazó al Acta ODI del DS "
+            "40 desde feb-2025). Es la base de cualquier defensa en un tema de "
+            "seguridad."),
     ("epp",        "Entrega de EPP",
      False, "Registro de entrega de elementos de protección personal."),
     ("induccion",  "Inducción de seguridad en faena",
