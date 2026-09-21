@@ -475,7 +475,13 @@
     </thead>
     <tbody>
       {% for f in facturas %}
-      {% set _etapas = [('Solicitud', 'file-earmark-plus', 1), ('OC', 'file-earmark-text', 2), ('Factura', 'receipt', 3), ('Pagada', 'cash-coin', 4)] %}
+      {# Cada paso se marca hecho por SU dato, no por orden: un lote pagado
+         sin N° de OC muestra Pagada en verde y OC pendiente (ámbar) -- así
+         se ve qué papel falta aunque la plata ya haya salido. #}
+      {% set _hecho = {'1': true, '2': f.numero_oc | default('', true) | trim != '', '3': f.numero_documento | default('', true) | trim != '', '4': f.estado_pago == 'pagada'} %}
+      {% set _etapas = [('Solicitud', 'file-earmark-plus', '1'), ('OC', 'file-earmark-text', '2'), ('Factura', 'receipt', '3'), ('Pagada', 'cash-coin', '4')] %}
+      {% set _falta = [] %}
+      {% for _lbl, _ico, _n in _etapas %}{% if not _hecho[_n] %}{% set _ = _falta.append(_lbl) %}{% endif %}{% endfor %}
       <tr onclick="window.location='/servicio-tecnico/facturas-proveedor/{{ f.id }}'" class="{{ 'fp-row-anulada' if f.estado_pago == 'anulada' }}">
         <td data-label="Lote"><a class="fp-ot" href="/servicio-tecnico/facturas-proveedor/{{ f.id }}" onclick="event.stopPropagation()">#{{ f.id }}</a>
           <div class="fp-sub" title="Creado el {{ f.created_at | chile_fmt if f.created_at else '' }}{% if f.created_by %} por {{ f.created_by }}{% endif %}">
@@ -494,18 +500,21 @@
           {% else %}
           <div class="fp-trk" title="Solicitud de OC → N° de OC → factura del proveedor → pago">
             {% for _lbl, _ico, _n in _etapas %}
-            <div class="fp-trk-s {{ 'done' if f.etapa > _n else ('now' if f.etapa == _n else '') }}">
-              <span class="fp-trk-c">{% if f.etapa > _n %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-{{ _ico }}"></i>{% endif %}</span>
+            {% set _ok = _hecho[_n] %}
+            {% set _now = (not _ok) and (_falta and _falta[0] == _lbl) %}
+            <div class="fp-trk-s {{ 'done' if _ok else ('now' if _now else 'falta') }}" title="{{ _lbl }}: {{ 'listo' if _ok else 'pendiente' }}">
+              <span class="fp-trk-c">{% if _ok %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-{{ _ico }}"></i>{% endif %}</span>
               <small>{{ _lbl }}</small>
             </div>
-            {% if not loop.last %}<span class="fp-trk-l {{ 'done' if f.etapa > _n }}"></span>{% endif %}
+            {% if not loop.last %}<span class="fp-trk-l {{ 'done' if _ok }}"></span>{% endif %}
             {% endfor %}
           </div>
           <div class="fp-sub">
-            {% if f.etapa == 4 %}Pagada{% if f.pagada_at %} el {{ f.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}{% if f.pagada_por %} · {{ f.pagada_por }}{% endif %}
-            {% elif f.etapa == 3 %}Factura recibida — falta el pago
-            {% elif f.etapa == 2 %}OC emitida — esperando la factura del proveedor
-            {% else %}Solicitud de OC — falta el N° de OC{% endif %}
+            {% if f.estado_pago == 'pagada' %}Pagada{% if f.pagada_at %} el {{ f.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}{% if f.pagada_por %} · {{ f.pagada_por }}{% endif %}{% if _falta %} · <span style="color:#b45309">falta {{ _falta | join(' y ') | lower }}</span>{% endif %}
+            {% elif _falta | length == 1 %}Falta el pago
+            {% elif not _hecho['2'] and not _hecho['3'] %}Solicitud de OC — falta el N° de OC y la factura
+            {% elif not _hecho['2'] %}Factura recibida — falta el N° de OC y el pago
+            {% else %}OC emitida — esperando la factura del proveedor{% endif %}
           </div>
           {% endif %}
         </td>
@@ -1144,6 +1153,8 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fp-trk-s.done small{color:#166534}
 .fp-trk-s.now .fp-trk-c{background:#fff;border-color:#dc2626;color:#dc2626;animation:fpTrkPulse 1.6s ease-out infinite}
 .fp-trk-s.now small{color:#dc2626}
+.fp-trk-s.falta .fp-trk-c{background:#fff8e1;border-color:#fde68a;color:#b45309}
+.fp-trk-s.falta small{color:#b45309}
 .fp-trk-l{width:16px;height:2px;background:#e2e8f0;margin-bottom:14px;flex:none}
 .fp-trk-l.done{background:#16a34a}
 @keyframes fpTrkPulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}100%{box-shadow:0 0 0 8px rgba(220,38,38,0)}}

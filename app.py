@@ -127920,11 +127920,19 @@ def _ensure_mant_facturas_proveedor_tables():
             mysql_execute(
                 "ALTER TABLE mant_tecnicos_externos ADD COLUMN es_prueba TINYINT(1) NOT NULL DEFAULT 0 "
                 "COMMENT 'Ficha de PRUEBA: fuera de KPIs y totales de Facturas de proveedor'")
-            mysql_execute(
+            print("[ensure_facturas_proveedor] es_prueba agregada", flush=True)
+        if cols_te:
+            # Idempotente en cada boot: la ficha de prueba de Daniel siempre
+            # queda marcada aunque alguien la haya vuelto a crear. El LIKE va
+            # como parámetro (un '%' literal en el SQL rompe el formateo de pymysql).
+            n_marc = mysql_execute_returning_rowcount(
                 "UPDATE mant_tecnicos_externos SET es_prueba=1 "
-                " WHERE REPLACE(REPLACE(REPLACE(COALESCE(rut_empresa,''),'.',''),'-',''),' ','') = '255470655' "
-                "    OR LOWER(razon_social) LIKE '%prueba%'")
-            print("[ensure_facturas_proveedor] es_prueba agregada y marcada", flush=True)
+                " WHERE es_prueba=0 AND ("
+                "   REPLACE(REPLACE(REPLACE(COALESCE(rut_empresa,''),'.',''),'-',''),' ','') = %s "
+                "   OR LOWER(razon_social) LIKE %s)",
+                ("255470655", "%prueba%"))
+            if n_marc:
+                print(f"[ensure_facturas_proveedor] {n_marc} ficha(s) marcadas es_prueba", flush=True)
     except Exception as e:
         print(f"[ensure_facturas_proveedor] es_prueba: {e}", flush=True)
 
