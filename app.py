@@ -78811,7 +78811,27 @@ _OT2_SELECT_FILAS = (
     "       tk.numero_ticket, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas, "
-    "       v.hora_real_inicio, v.cerrada_at, v.firma_tecnico_at "
+    "       v.hora_real_inicio, v.cerrada_at, v.firma_tecnico_at, "
+    # 🏷️ 2026-09-21 (Daniel: "en la tabla de las OT, en chiquitito, poné
+    # el N° de anexo y las facturas asociadas... por trazabilidad" -- tras
+    # la noche de OT-218/211/213 con números quemados y anexos huérfanos).
+    # anx/fp se agregan vía _OT2_JOIN_ANEXO_FAC, NO acá en _joins_comunes:
+    # esta misma constante también se usa sola (sin estos joins) en los
+    # COUNT/KPI del panel, que no necesitan esta info.
+    "       anx.numero AS anexo_numero, anx.estado AS anexo_estado, "
+    "       fp.numero_documento AS fac_numero, fp.estado_pago AS fac_estado "
+)
+# 📎💰 2026-09-21 -- mismo patrón ya probado esta noche en _MFP_JOINS_OT
+# (Facturas de proveedor): el anexo VIGENTE de una OT (firmado si hay uno,
+# si no el más reciente no anulado -- mant_anexos.ot_id NO es único, una
+# OT puede acumular varios por re-firma) + su factura de proveedor si ya
+# tiene una asignada. Aparte de _joins_comunes a propósito (ver arriba).
+_OT2_JOIN_ANEXO_FAC = (
+    "  LEFT JOIN mant_anexos anx ON anx.id = (SELECT a2.id FROM mant_anexos a2 "
+    "         WHERE a2.ot_id = v.id AND a2.estado <> 'anulado' "
+    "         ORDER BY (a2.estado = 'firmado') DESC, a2.id DESC LIMIT 1) "
+    "  LEFT JOIN mant_factura_proveedor_items fpi ON fpi.visita_id = v.id "
+    "  LEFT JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
 )
 # 🔧 FIX 2026-09-21 (Daniel, viendo el Monitor en vivo: "el checklist
 # aparece como 55% completo... ya dejamos solicitado todo, solo me falta
@@ -79369,7 +79389,7 @@ def ot2_panel():
 
         if vista in ("tabla", "tarjeta"):
             filas = mysql_fetchall(
-                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _where_completo +
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _OT2_JOIN_ANEXO_FAC + _where_completo +
                 f" ORDER BY {order_by} "
                 " LIMIT %s OFFSET %s",
                 tuple(extra_params) + (per_page, (page - 1) * per_page)
@@ -79381,7 +79401,7 @@ def ot2_panel():
         elif vista == "kanban":
             _where_solo_q = f" WHERE {where_origen} {where_extra_sql_q} "
             filas_kanban = mysql_fetchall(
-                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _where_solo_q +
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _OT2_JOIN_ANEXO_FAC + _where_solo_q +
                 " ORDER BY v.numero_ot DESC, v.id DESC LIMIT %s",
                 tuple(extra_params_q) + (_OT2_KANBAN_LIMIT_TOTAL,)
             ) or []
@@ -79419,7 +79439,7 @@ def ot2_panel():
                 " AND v.fecha_programada BETWEEN %s AND %s "
             )
             filas_cal = mysql_fetchall(
-                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _where_mes +
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _OT2_JOIN_ANEXO_FAC + _where_mes +
                 " ORDER BY v.fecha_programada ASC, v.numero_ot DESC ",
                 tuple(extra_params_q) + (primer_dia, ultimo_dia)
             ) or []
@@ -79515,7 +79535,7 @@ def ot2_panel():
             # igual aparecen). Excluye solo canceladas/anuladas -- mismo
             # criterio que el calendario viejo.
             filas_prox = mysql_fetchall(
-                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS +
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _OT2_JOIN_ANEXO_FAC +
                 f" WHERE {where_origen} {where_extra_sql_q} "
                 "  AND v.fecha_programada >= %s "
                 "  AND v.estado NOT IN ('cancelada','anulada') "

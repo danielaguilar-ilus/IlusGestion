@@ -293,6 +293,12 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
    usan -- pastillas de color, no un sistema nuevo. ────────────────── */
 .ot2-tk{display:inline-flex;align-items:center;gap:4px;font-size:.66rem;font-weight:800;
   color:#6b21a8;background:#f3e8ff;border-radius:6px;padding:2px 7px;white-space:nowrap}
+{#- 🏷️ 2026-09-21: mismo tamaño/forma que .ot2-tk, colores semáforo (REGLA
+    #2) -- verde = firmado/pagada, ámbar = pendiente todavía. -#}
+.ot2-anx,.ot2-fac{display:inline-flex;align-items:center;gap:4px;font-size:.66rem;font-weight:800;
+  border-radius:6px;padding:2px 7px;white-space:nowrap;margin-left:4px}
+.ot2-anx.ok,.ot2-fac.ok{color:#166534;background:#dcfce7}
+.ot2-anx.warn,.ot2-fac.warn{color:#92400e;background:#fff8e1}
 .ot2-tec-tipo{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;
   padding:1px 6px;border-radius:999px;white-space:nowrap}
 .ot2-tec-tipo.interno{background:#dbeafe;color:#1d4ed8}
@@ -863,6 +869,23 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                   {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
                 </span>
                 {% if f.numero_ticket %}<span class="ot2-tk" title="Ticket de origen"><i class="bi bi-ticket-perforated-fill"></i>{{ f.numero_ticket }}</span>{% endif %}
+                {#- 🏷️ 2026-09-21 (Daniel: "en la tabla de las OT, en
+                    chiquitito, poné el N° de anexo y las facturas
+                    asociadas... por trazabilidad" -- tras la noche de
+                    OT-218/211/213 con números quemados y anexos huérfanos:
+                    con esto a la vista, un caso así se nota de inmediato
+                    sin tener que ir a buscarlo). Solo se pinta si hay dato
+                    -- no se satura la fila con "sin anexo" en cada OT. -#}
+                {% if f.anexo_numero %}
+                <span class="ot2-anx {{ 'ok' if f.anexo_estado == 'firmado' else 'warn' }}"
+                      title="Anexo N° {{ f.anexo_numero }} · {{ f.anexo_estado | capitalize }}">
+                  <i class="bi bi-{{ 'patch-check-fill' if f.anexo_estado == 'firmado' else 'hourglass-split' }}"></i>N° {{ f.anexo_numero }}</span>
+                {% endif %}
+                {% if f.fac_numero or f.fac_estado %}
+                <span class="ot2-fac {{ 'ok' if f.fac_estado == 'pagada' else 'warn' }}"
+                      title="Factura de proveedor {{ f.fac_numero or '(sin N°)' }} · {{ f.fac_estado | capitalize }}">
+                  <i class="bi bi-receipt"></i>{{ f.fac_numero or 's/n' }}</span>
+                {% endif %}
               </td>
               <td data-label="Cliente"><div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div></td>
               <td data-label="Tipo"><span class="ot2-tipo"><i class="bi {{ f.tipo_icon }}"></i>{{ f.tipo_label }}</span></td>
