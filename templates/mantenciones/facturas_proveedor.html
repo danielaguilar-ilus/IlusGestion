@@ -139,8 +139,15 @@
       alcance de búsqueda en ambas. -#}
   <div class="fpv-search">
     <i class="bi bi-search text-muted"></i>
+    {# 🔁 2026-09-21 (Daniel: "los filtros cuando los saque vuelva, sobre todo
+       en el buscador"; REGLA #4.3.4): al vaciar el cuadro (✕ nativo, Backspace
+       o Escape) la tabla se recarga sola -- no se queda con el resultado
+       anterior hasta que alguien apriete Buscar. #}
     <input type="search" name="proveedor" value="{{ f_prov }}" placeholder="Buscar proveedor, cliente, N° de OT, anexo o factura…"
-           aria-label="Buscar proveedor, cliente, N° de OT, anexo o factura">
+           aria-label="Buscar proveedor, cliente, N° de OT, anexo o factura"
+           data-tenia-valor="{{ '1' if f_prov else '' }}"
+           oninput="if(!this.value && this.dataset.teniaValor){ this.dataset.teniaValor=''; this.form.submit(); }"
+           onsearch="if(!this.value && this.dataset.teniaValor){ this.dataset.teniaValor=''; this.form.submit(); }">
   </div>
   {# 📅 2026-09-20 (Daniel: "hay que agregar fecha, filtros de fechas"). Filtra
      las OT por facturar (día de cierre) y las facturas (fecha del documento
