@@ -94750,13 +94750,20 @@ def mant_tarifa_hora_tecnica():
     # real de la cartera completa de clientes.
     if _es_rol_tecnico():
         return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
-    row = mysql_fetchone(
-        "SELECT valor FROM tk_settings WHERE clave='cotiz_valor_hh'")
+    # 💱 2026-09-21: pasa por el mismo resolvedor UF/pesos que el Cotizador
+    # (_cotiz_valor_hh_resolver). Devuelve el valor de mantención (base del
+    # estimador del wizard) y el detalle por tipo por si el front lo usa.
     try:
-        valor_hh = float(row["valor"]) if row and row.get("valor") else 20000.0
-    except (TypeError, ValueError):
-        valor_hh = 20000.0
-    return jsonify({"ok": True, "valor_hh": valor_hh})
+        rows = mysql_fetchall(
+            "SELECT clave, valor FROM tk_settings WHERE clave='cotiz_valor_hh' OR clave LIKE %s",
+            ("cotiz\\_valor\\_hh%",)) or []
+        res = _cotiz_valor_hh_resolver({r["clave"]: r["valor"] for r in rows},
+                                       ("mantencion", "instalacion", "visita_tecnica", "venta_repuesto", "otro"))
+        valor_hh = float(res["clp"].get("mantencion") or res["base"] or 20000.0)
+    except Exception as e:
+        print(f"[tarifa_hora_tecnica] {e}", flush=True)
+        res, valor_hh = {"clp": {}, "uf_hoy": None}, 20000.0
+    return jsonify({"ok": True, "valor_hh": valor_hh, "por_tipo": res.get("clp"), "uf_hoy": res.get("uf_hoy")})
 
 
 @app.route("/mantenciones/api/plantillas/tarifa-sugerida", methods=["GET"])
@@ -105113,6 +105120,52 @@ def _uf_valor_actual():
         _UF_CACHE["error"] = str(e)
         print(f"[_uf_valor_actual] mindicador.cl no respondió y sin cache/DB: {e}", flush=True)
         return {"uf": None, "error": str(e), "ok": False}
+
+
+def _cotiz_valor_hh_resolver(vals, tipos, base_default=20000.0):
+    """💱 2026-09-21 (Daniel: "la hora técnica pasarla a precio UF para que
+    vaya aumentando con la inflación y proteger a la empresa, tanto en
+    instalación, mantención y visita técnica").
+
+    Un solo lugar que decide cuánto vale la hora técnica HOY, en pesos, por
+    tipo de servicio, a partir de tk_settings (`vals` = {clave: valor}):
+      · cotiz_valor_hh_uf__{tipo}  > 0  → modo UF: pesos = UF × valor UF de hoy
+        (_uf_valor_actual: override manual > API > último bueno). La cifra
+        en pesos se recalcula sola cada día; lo que se guarda es la UF.
+      · si no hay UF para ese tipo    → modo pesos: cotiz_valor_hh__{tipo}
+        (o el base histórico cotiz_valor_hh) tal como antes.
+    Devuelve {"por_tipo": {tipo: {"clp","modo","uf"}}, "clp": {tipo: pesos},
+              "uf_hoy": float|None, "uf_fecha": str|None, "uf_ok": bool}.
+    Lo usan el Cotizador (tickets_module._tk_cotiz_pricing_config), la
+    pantalla /catalogo/clases y el estimador del wizard de OT -- sin esto
+    cada uno tendría su propia conversión."""
+    def _f(clave, default=None):
+        try:
+            v = vals.get(clave)
+            return float(v) if v not in (None, "") else default
+        except (TypeError, ValueError):
+            return default
+    base = _f("cotiz_valor_hh", base_default) or base_default
+    necesita_uf = any((_f(f"cotiz_valor_hh_uf__{t}") or 0) > 0 for t in tipos)
+    uf_info = _uf_valor_actual() if necesita_uf else {"uf": None, "ok": False}
+    uf_hoy = float(uf_info.get("uf") or 0) or None
+    por_tipo, clp = {}, {}
+    for t in tipos:
+        uf_t = _f(f"cotiz_valor_hh_uf__{t}")
+        pesos_fijo = _f(f"cotiz_valor_hh__{t}", base)
+        if uf_t and uf_t > 0 and uf_hoy:
+            from decimal import Decimal as _Dec, ROUND_HALF_UP as _RHU
+            pesos = float(int(_Dec(str(uf_t * uf_hoy)).quantize(_Dec("1"), rounding=_RHU)))
+            por_tipo[t] = {"clp": pesos, "modo": "uf", "uf": uf_t}
+        elif uf_t and uf_t > 0:
+            # Modo UF pero sin valor de UF disponible (API caída y sin último
+            # bueno): se degrada al último valor en pesos guardado, y se avisa.
+            por_tipo[t] = {"clp": pesos_fijo, "modo": "uf", "uf": uf_t, "sin_uf": True}
+        else:
+            por_tipo[t] = {"clp": pesos_fijo, "modo": "clp", "uf": None}
+        clp[t] = por_tipo[t]["clp"]
+    return {"por_tipo": por_tipo, "clp": clp, "base": base,
+            "uf_hoy": uf_hoy, "uf_fecha": uf_info.get("fecha"), "uf_ok": bool(uf_info.get("ok"))}
 
 
 @app.route("/api/uf-actual")

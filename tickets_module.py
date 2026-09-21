@@ -2717,7 +2717,7 @@ def register_tickets_routes(app, ctx):
             "SELECT clave, valor FROM tk_settings "
             "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct','cotiz_iva_pct') "
             "   OR clave LIKE %s",
-            ("cotiz\\_valor\\_hh\\_\\_%",)
+            ("cotiz\\_valor\\_hh%",)
         ) or []
         cfg = {r["clave"]: r["valor"] for r in rows}
 
@@ -2726,10 +2726,25 @@ def register_tickets_routes(app, ctx):
                 return float(cfg.get(clave))
             except (TypeError, ValueError):
                 return default
-        _base = _f("cotiz_valor_hh", 20000.0)
-        _valor_hh_por_tipo = {t: _f(f"cotiz_valor_hh__{t}", _base) for t in _TK_COTIZ_TIPOS_SERVICIO}
+        # 💱 2026-09-21 (Daniel: hora técnica en UF "para que vaya aumentando
+        # con la inflación"): el valor en pesos por tipo sale del resolvedor
+        # compartido de app.py (UF × UF de hoy si ese tipo está en UF; si no,
+        # el valor en pesos de siempre). Sin el resolvedor (tests aislados),
+        # cae al cálculo histórico en pesos.
+        _resolver = ctx.get("_cotiz_valor_hh_resolver")
+        if _resolver:
+            _res = _resolver(cfg, _TK_COTIZ_TIPOS_SERVICIO)
+            _valor_hh_por_tipo = dict(_res["clp"])
+            _hh_detalle = _res["por_tipo"]
+            _uf_hoy = _res.get("uf_hoy")
+        else:
+            _base = _f("cotiz_valor_hh", 20000.0)
+            _valor_hh_por_tipo = {t: _f(f"cotiz_valor_hh__{t}", _base) for t in _TK_COTIZ_TIPOS_SERVICIO}
+            _hh_detalle, _uf_hoy = {}, None
         return {
             "valor_hh": _valor_hh_por_tipo,
+            "valor_hh_detalle": _hh_detalle,
+            "uf_hoy": _uf_hoy,
             "margen_pct": _f("cotiz_margen_pct", 40.0),
             "iva_pct": _f("cotiz_iva_pct", 19.0),
         }

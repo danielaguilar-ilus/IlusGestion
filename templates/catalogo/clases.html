@@ -52,6 +52,12 @@
 .clc-precio-campo{display:flex;flex-direction:column;gap:4px;min-width:180px;}
 .clc-precio-campo label{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;}
 .clc-precio-hint{font-size:.66rem;color:#9ca3af;margin-top:2px;}
+/* 💱 Pesos / UF por tipo de servicio */
+.clc-modo{display:inline-flex;margin-left:8px;border:1px solid #d1d5db;border-radius:50px;overflow:hidden;vertical-align:middle;}
+.clc-modo-btn{border:0;background:#fff;color:#6b7280;font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:3px 10px;cursor:pointer;min-height:24px;}
+.clc-modo-btn.on{background:#0a0a0a;color:#fff;}
+.clc-modo-btn.on[data-modo="uf"]{background:#164e63;color:#a5f3fc;}
+#clcHhUfEnPesos{font-weight:800;color:#0a0a0a;font-variant-numeric:tabular-nums;}
 /* Selector de tipo de servicio (pills) */
 .clc-servs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;}
 .clc-serv-pill{border:1.5px solid #e5e7eb;background:#fff;color:#374151;border-radius:50px;
@@ -123,13 +129,28 @@
    Margen (%) sigue GLOBAL — Daniel usa el mismo 40% en ambas tablas. #}
 <div class="clc-precio-wrap">
   <div class="clc-precio-campo">
-    <label>Valor hora técnica — <span id="clcValorHhServLbl"></span></label>
-    <div class="input-group input-group-sm">
+    <label>Valor hora técnica — <span id="clcValorHhServLbl"></span>
+      {# 💱 2026-09-21 (Daniel: "la hora técnica pasarla a precio UF para que
+         vaya aumentando con la inflación y proteger a la empresa"): cada tipo
+         de servicio elige si su hora técnica se fija en pesos o en UF. En UF,
+         los pesos se recalculan solos con la UF del día (panel de arriba). #}
+      <span class="clc-modo" id="clcHhModo">
+        <button type="button" class="clc-modo-btn" data-modo="clp" onclick="clcHhModo('clp')">Pesos</button>
+        <button type="button" class="clc-modo-btn" data-modo="uf" onclick="clcHhModo('uf')">UF</button>
+      </span>
+    </label>
+    <div class="input-group input-group-sm" id="clcHhGrupoClp">
       <span class="input-group-text">$</span>
       <input type="number" min="1" step="1" class="form-control" id="clcValorHh"
              onchange="clcGuardarPrecio()">
     </div>
-    <div class="clc-precio-hint">Base del costo de mano de obra (HH × este valor) — propio de este tipo de servicio.</div>
+    <div class="input-group input-group-sm" id="clcHhGrupoUf" style="display:none">
+      <span class="input-group-text">UF</span>
+      <input type="number" min="0.0001" step="0.0001" class="form-control" id="clcValorHhUf"
+             oninput="clcHhUfPreview()" onchange="clcGuardarPrecioUf()">
+      <span class="input-group-text" id="clcHhUfEnPesos" title="Equivalente en pesos con la UF de hoy">= $—</span>
+    </div>
+    <div class="clc-precio-hint" id="clcHhHint">Base del costo de mano de obra (HH × este valor) — propio de este tipo de servicio.</div>
   </div>
   <div class="clc-precio-campo">
     <label>Margen (%)</label>
@@ -209,10 +230,87 @@ function clcSelServ(key){ _clcServ = key; clcRenderServs(); clcSyncValorHhInput(
 
 // Refleja en el input "Valor hora técnica" el valor propio del tipo de
 // servicio actualmente seleccionado (cada tipo puede tener el suyo).
+// 💱 2026-09-21: si ese tipo está en UF, se muestra el input en UF con su
+// equivalente en pesos de hoy; si no, el input en pesos de siempre.
+function clcHhDetalle(){ return ((_clcCfg.valor_hh_detalle || {})[_clcServ]) || {modo:'clp', uf:null}; }
 function clcSyncValorHhInput(){
   const porTipo = _clcCfg.valor_hh_por_tipo || {};
   const v = (porTipo[_clcServ] != null) ? porTipo[_clcServ] : (_clcCfg.valor_hh_base || 20000);
-  document.getElementById('clcValorHh').value = v;
+  document.getElementById('clcValorHh').value = Math.round(v);
+  const det = clcHhDetalle();
+  const enUf = det.modo === 'uf';
+  document.getElementById('clcValorHhUf').value = enUf && det.uf != null ? det.uf : '';
+  document.querySelectorAll('.clc-modo-btn').forEach(b => b.classList.toggle('on', b.dataset.modo === (enUf ? 'uf' : 'clp')));
+  document.getElementById('clcHhGrupoClp').style.display = enUf ? 'none' : '';
+  document.getElementById('clcHhGrupoUf').style.display = enUf ? '' : 'none';
+  const hint = document.getElementById('clcHhHint');
+  if (enUf){
+    const ufTxt = _clcCfg.uf_hoy ? ('UF ' + fmtUF(_clcCfg.uf_hoy) + (_clcCfg.uf_fecha ? ' del ' + _clcCfg.uf_fecha.split('-').reverse().join('/') : '')) : 'UF no disponible';
+    hint.innerHTML = det.sin_uf
+      ? '<span style="color:#b91c1c;font-weight:800">⚠ Sin valor de UF: se está usando el último valor en pesos guardado.</span>'
+      : 'Fijada en UF: los pesos se recalculan solos cada día con la ' + ufTxt + '. Hoy = <b>' + fmtCLP(v) + '</b> por hora técnica.';
+  } else {
+    hint.textContent = 'Base del costo de mano de obra (HH × este valor) — propio de este tipo de servicio. Pásala a UF para que siga la inflación.';
+  }
+  clcHhUfPreview();
+}
+function clcHhUfPreview(){
+  const uf = parseFloat(document.getElementById('clcValorHhUf').value);
+  const el = document.getElementById('clcHhUfEnPesos');
+  el.textContent = (!isNaN(uf) && _clcCfg.uf_hoy) ? '= ' + fmtCLP(uf * _clcCfg.uf_hoy) : '= $—';
+}
+async function clcHhModo(modo){
+  const det = clcHhDetalle();
+  if ((det.modo === 'uf') === (modo === 'uf')) return;
+  const lbl = (_clcTipos.find(t=>t.key===_clcServ)||{}).label || _clcServ;
+  if (modo === 'uf'){
+    if (!_clcCfg.uf_hoy){ ilusToast('No hay valor de UF disponible — fija uno manual arriba primero', {type:'warning'}); return; }
+    // Propone la UF equivalente al valor en pesos actual (4 decimales).
+    const pesos = parseFloat(document.getElementById('clcValorHh').value) || 0;
+    const ufSug = Math.round(pesos / _clcCfg.uf_hoy * 10000) / 10000;
+    const v = await ilusPrompt({
+      title: 'Hora técnica de ' + lbl + ' en UF',
+      message: 'Hoy $' + Math.round(pesos).toLocaleString('es-CL') + ' equivale a ' + ufSug + ' UF (UF ' + fmtUF(_clcCfg.uf_hoy) + '). Desde ahora el valor en pesos se recalcula solo cada día.',
+      placeholder: 'Ej: ' + ufSug, defaultValue: String(ufSug), required: true,
+    });
+    if (v === null) return;
+    const uf = parseFloat(String(v).replace(',', '.'));
+    if (isNaN(uf) || uf <= 0){ ilusToast('Valor en UF inválido', {type:'warning'}); return; }
+    await clcPatchPrecio({valor_hh_uf: uf, tipo_servicio: _clcServ}, 'Hora técnica de ' + lbl + ' fijada en ' + uf + ' UF');
+  } else {
+    const pesosHoy = Math.round((_clcCfg.valor_hh_por_tipo || {})[_clcServ] || 0);
+    const ok = await ilusConfirm({
+      title: 'Volver a pesos fijos',
+      message: 'La hora técnica de ' + lbl + ' deja de seguir la UF y queda fija en ' + fmtCLP(pesosHoy) + ' (el valor de hoy). Ya no subirá con la inflación.',
+      okLabel: 'Sí, fijar en pesos', cancelLabel: 'Cancelar', danger: true,
+    });
+    if (!ok) return;
+    await clcPatchPrecio({modo: 'clp', valor_hh: pesosHoy, tipo_servicio: _clcServ}, 'Hora técnica de ' + lbl + ' fijada en ' + fmtCLP(pesosHoy));
+  }
+}
+async function clcGuardarPrecioUf(){
+  const uf = parseFloat(document.getElementById('clcValorHhUf').value);
+  if (isNaN(uf) || uf <= 0){ ilusToast('La hora técnica en UF debe ser mayor a 0', {type:'warning'}); return; }
+  const margenPct = parseFloat(document.getElementById('clcMargenPct').value);
+  const body = {valor_hh_uf: uf, tipo_servicio: _clcServ};
+  if (!isNaN(margenPct)) body.margen_pct = margenPct;
+  await clcPatchPrecio(body, '✓ Guardado — ' + uf + ' UF por hora técnica');
+}
+async function clcPatchPrecio(body, okMsg){
+  try{
+    const r = await fetch('/catalogo/api/config-precio', {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return false; }
+    _clcCfg = d.config_precio || _clcCfg;
+    clcSyncValorHhInput();
+    clcRender();
+    ilusToast(okMsg, {type:'success'});
+    return true;
+  }catch(e){
+    ilusToast('Error de conexión al guardar', {type:'error'}); return false;
+  }
 }
 
 function clcPrecioUnit(hh, tipoOverride){
@@ -330,6 +428,13 @@ function clcRender(){
 }
 
 async function clcGuardarPrecio(){
+  // Si este tipo está en UF, el input en pesos está oculto: solo se guarda el margen.
+  if (clcHhDetalle().modo === 'uf'){
+    const mp = parseFloat(document.getElementById('clcMargenPct').value);
+    if(isNaN(mp) || mp < 0){ ilusToast('El porcentaje de margen no puede ser negativo', {type:'warning'}); return; }
+    await clcPatchPrecio({margen_pct: mp}, '✓ Margen guardado');
+    return;
+  }
   const valorHh = parseFloat(document.getElementById('clcValorHh').value);
   const margenPct = parseFloat(document.getElementById('clcMargenPct').value);
   if(isNaN(valorHh) || valorHh <= 0){ ilusToast('El valor de la hora técnica debe ser mayor a 0', {type:'warning'}); return; }

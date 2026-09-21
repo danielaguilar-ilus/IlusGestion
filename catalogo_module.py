@@ -1149,7 +1149,7 @@ def register_catalogo_routes(app, ctx):
             "SELECT clave, valor FROM tk_settings "
             "WHERE clave='cotiz_valor_hh' OR clave='cotiz_margen_pct' "
             "   OR clave LIKE %s",
-            ("cotiz\\_valor\\_hh\\_\\_%",)
+            ("cotiz\\_valor\\_hh%",)
         ) or []
         vals = {r["clave"]: r["valor"] for r in rows}
 
@@ -1160,9 +1160,20 @@ def register_catalogo_routes(app, ctx):
                 return default
         valor_hh_base = _f("cotiz_valor_hh", 20000.0)
         margen_pct = _f("cotiz_margen_pct", 40.0)
-        valor_hh_por_tipo = {t: _f(f"cotiz_valor_hh__{t}", valor_hh_base)
-                             for t in _CAT_TIPOS_SERVICIO_TARIFA}
+        # 💱 2026-09-21: hora técnica en UF por tipo (ver _cotiz_valor_hh_resolver
+        # en app.py). valor_hh_por_tipo sigue siendo PESOS (lo que consumen
+        # los cálculos); valor_hh_detalle trae modo/uf para la pantalla.
+        _resolver = ctx.get("_cotiz_valor_hh_resolver")
+        if _resolver:
+            _res = _resolver(vals, _CAT_TIPOS_SERVICIO_TARIFA)
+            valor_hh_por_tipo = dict(_res["clp"])
+            detalle, uf_hoy, uf_fecha = _res["por_tipo"], _res.get("uf_hoy"), _res.get("uf_fecha")
+        else:
+            valor_hh_por_tipo = {t: _f(f"cotiz_valor_hh__{t}", valor_hh_base)
+                                 for t in _CAT_TIPOS_SERVICIO_TARIFA}
+            detalle, uf_hoy, uf_fecha = {}, None, None
         return {"valor_hh_base": valor_hh_base, "valor_hh_por_tipo": valor_hh_por_tipo,
+                "valor_hh_detalle": detalle, "uf_hoy": uf_hoy, "uf_fecha": uf_fecha,
                 "margen_pct": margen_pct}
 
     @app.route("/catalogo/api/config-precio", methods=["PATCH"])
@@ -1170,7 +1181,26 @@ def register_catalogo_routes(app, ctx):
     def cat_api_config_precio_actualizar():
         d = request.get_json(silent=True) or {}
         user = current_username() or "sistema"
-        updates = []
+        updates, borrar = [], []
+        # 💱 2026-09-21 (Daniel: "la hora técnica pasarla a precio UF... y
+        # proteger a la empresa"): valor_hh_uf guarda la hora técnica en UF
+        # para ese tipo de servicio; desde ahí los pesos se recalculan solos
+        # con la UF del día. modo='clp' vuelve a pesos fijos (borra la UF).
+        _tipo = (d.get("tipo_servicio") or "").strip().lower()
+        if _tipo and _tipo not in _CAT_TIPOS_SERVICIO_TARIFA:
+            return jsonify({"ok": False, "error": "tipo_servicio inválido"}), 400
+        if "valor_hh_uf" in d:
+            if not _tipo:
+                return jsonify({"ok": False, "error": "La hora técnica en UF se fija por tipo de servicio."}), 400
+            try:
+                v_uf = float(str(d.get("valor_hh_uf")).replace(",", "."))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "Valor en UF inválido"}), 400
+            if v_uf <= 0 or v_uf > 50:
+                return jsonify({"ok": False, "error": "La hora técnica en UF debe estar entre 0 y 50 UF"}), 400
+            updates.append((f"cotiz_valor_hh_uf__{_tipo}", f"{v_uf:.4f}"))
+        elif (d.get("modo") or "") == "clp" and _tipo:
+            borrar.append(f"cotiz_valor_hh_uf__{_tipo}")
         if "valor_hh" in d:
             try:
                 v = float(d.get("valor_hh"))
@@ -1181,9 +1211,6 @@ def register_catalogo_routes(app, ctx):
             # 2026-07-30: valor_hh ahora es POR tipo_servicio -- sin
             # tipo_servicio en el body, se actualiza el valor BASE (fallback
             # de los tipos sin override propio), igual que antes de esta fecha.
-            _tipo = (d.get("tipo_servicio") or "").strip().lower()
-            if _tipo and _tipo not in _CAT_TIPOS_SERVICIO_TARIFA:
-                return jsonify({"ok": False, "error": "tipo_servicio inválido"}), 400
             _clave = f"cotiz_valor_hh__{_tipo}" if _tipo else "cotiz_valor_hh"
             updates.append((_clave, str(v)))
         if "margen_pct" in d:
@@ -1194,16 +1221,18 @@ def register_catalogo_routes(app, ctx):
             if v < 0:
                 return jsonify({"ok": False, "error": "El porcentaje de margen no puede ser negativo"}), 400
             updates.append(("cotiz_margen_pct", str(v)))
-        if not updates:
+        if not updates and not borrar:
             return jsonify({"ok": False, "error": "Sin cambios válidos"}), 400
         for clave, valor in updates:
             mysql_execute(
                 "INSERT INTO tk_settings (clave, valor, updated_by) VALUES (%s,%s,%s) "
                 "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
                 (clave, valor, user))
+        for clave in borrar:
+            mysql_execute("DELETE FROM tk_settings WHERE clave=%s", (clave,))
         if _audit:
             _audit("cat_config_precio_actualizado", target_type="tk_settings",
-                   details={"cambios": dict(updates)})
+                   details={"cambios": dict(updates), "borrados": borrar})
         return jsonify({"ok": True, "config_precio": _cat_config_precio_leer()})
 
     # ── UF: valor actual + override manual (2026-07-22, Daniel: "actualizar
