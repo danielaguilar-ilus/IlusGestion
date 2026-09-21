@@ -5707,19 +5707,36 @@ async function tkotGenerar(){
     let adjResult = null;
     if(_TKOT.adjuntos.length > 0 && visitaId) adjResult = await _tkotSubirAdjuntos(visitaId);
 
-    const otHtml = d.ot_url ? '<a href="'+d.ot_url+'" class="fw-bold text-decoration-underline" style="color:#dc2626">'+esc(d.numero_ot)+'</a>' : '';
-    let subMsg = 'La OT está disponible para que el/los técnico(s) la gestionen desde su módulo de Órdenes de Trabajo. '
-      + (d.items_plantilla_aplicados||0) + ' tarea(s) generadas por las plantillas aplicadas.';
-    if(adjResult){
-      subMsg += adjResult.fail === 0
-        ? ' ' + adjResult.ok + ' archivo(s) preliminar(es) adjunto(s).'
-        : ' ' + adjResult.ok + '/' + (adjResult.ok+adjResult.fail) + ' archivo(s) preliminares subidos.';
+    // 🔴 FIX 2026-09-21 (Daniel, en vivo, DOS veces la misma noche --
+    // OT-2026-00218 y OT-2026-00211: "no la puedo ver ni en el calendario
+    // ni en la lista"). Este bloque mostraba "✅ Orden de Trabajo creada"
+    // sin mirar visitaId -- la Fase 2 del backend (OT espejo) puede fallar
+    // "blanda a propósito" (ver _ot_crear_registro en app.py) y devolver
+    // ok:true igual, con visita_id=None, para no perder el levantamiento
+    // ya guardado. El backend ya manda d.aviso/d.mensaje honestos en ese
+    // caso -- acá solo faltaba escucharlos en vez de festejar siempre.
+    if (!visitaId){
+      await ilusAlert({
+        title: '⚠️ Levantamiento guardado, la OT no se creó',
+        message: d.aviso || d.mensaje || 'El levantamiento quedó guardado, pero la Orden de '
+          + 'Trabajo no se pudo crear. Vuelve a intentarlo.',
+        type: 'warning', okLabel: 'Entendido',
+      });
+    } else {
+      const otHtml = d.ot_url ? '<a href="'+d.ot_url+'" class="fw-bold text-decoration-underline" style="color:#dc2626">'+esc(d.numero_ot)+'</a>' : '';
+      let subMsg = 'La OT está disponible para que el/los técnico(s) la gestionen desde su módulo de Órdenes de Trabajo. '
+        + (d.items_plantilla_aplicados||0) + ' tarea(s) generadas por las plantillas aplicadas.';
+      if(adjResult){
+        subMsg += adjResult.fail === 0
+          ? ' ' + adjResult.ok + ' archivo(s) preliminar(es) adjunto(s).'
+          : ' ' + adjResult.ok + '/' + (adjResult.ok+adjResult.fail) + ' archivo(s) preliminares subidos.';
+      }
+      await ilusAlert({
+        title: '✅ Orden de Trabajo creada',
+        message: 'Se generó la OT ' + otHtml + ' con ' + (d.n_items||keysMarcados.length) + ' equipo(s) y ' + (d.tecnicos_asignados||tecnicoIds.length) + ' técnico(s) asignado(s).',
+        sub: subMsg, messageHtml: true, type: 'success', okLabel: 'Entendido',
+      });
     }
-    await ilusAlert({
-      title: '✅ Orden de Trabajo creada',
-      message: 'Se generó la OT ' + otHtml + ' con ' + (d.n_items||keysMarcados.length) + ' equipo(s) y ' + (d.tecnicos_asignados||tecnicoIds.length) + ' técnico(s) asignado(s).',
-      sub: subMsg, messageHtml: true, type: 'success', okLabel: 'Entendido',
-    });
     tkotResetAccesoLogistica();
     tkotResetAdjuntos();
     tkotResetFinanzas();

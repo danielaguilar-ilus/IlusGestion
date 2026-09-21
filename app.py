@@ -119491,6 +119491,36 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             pass
 
         tipo_ot_label = _OT_TIPO_LABEL_MENSAJE.get(tipo_ot, tipo_ot.replace('_', ' ').capitalize())
+        # 🔴 FIX 2026-09-21 (Daniel, en vivo, DOS veces la misma noche --
+        # OT-2026-00218 y OT-2026-00211: "no la puedo ver ni en el
+        # calendario ni en la lista"). El mensaje SIEMPRE decía "OT
+        # creada... número {numero_ot}" con el número ya reservado por
+        # _next_ot_number_atomic, aunque la Fase 2 (OT espejo) hubiera
+        # fallado "blanda a propósito" (ver docstring de _ot_crear_registro)
+        # y visita_id quedara en None -- ese número NUNCA llegó a existir
+        # como fila real en mant_visitas, pero el usuario lo veía en
+        # pantalla como si la OT ya estuviera creada, y después no la
+        # encontraba en ningún lado. El campo `numero_ot` de la respuesta
+        # ya se anulaba bien (línea de arriba); el texto del mensaje no
+        # miraba lo mismo. No se toca el diseño "blando" en sí (preserva
+        # el levantamiento aunque la OT falle, decisión deliberada del
+        # 2026-08-13) -- solo se deja de mentir sobre el resultado.
+        if visita_id:
+            mensaje = (
+                f"{tipo_ot_label}: OT creada con {n_items} equipo(s) e items de "
+                f"plantilla aplicados ({items_plantilla} tareas). "
+                f"La OT quedó programada para {agenda['fecha_prog']}"
+                + (f" {agenda['hora_ini']}" if agenda['hora_ini'] else "")
+                + f" — número {numero_ot}."
+            )
+        else:
+            mensaje = (
+                f"{tipo_ot_label}: se guardó el levantamiento con {n_items} equipo(s), pero "
+                "la OT NO se pudo crear (falló al guardarla, no quedó ningún número asignado "
+                "de verdad). Vuelve a intentarlo desde el levantamiento"
+                + (f" #{lev_id}" if lev_id else "")
+                + " o avisa a soporte si se repite."
+            )
         resp = {
             "ok": True,
             "id": lev_id,
@@ -119500,14 +119530,10 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             "ot_url": f"/mantenciones/ot/{visita_id}" if visita_id else None,
             "tecnicos_asignados": len(tecnico_ids),
             "items_plantilla_aplicados": items_plantilla,
-            "mensaje": (
-                f"{tipo_ot_label}: OT creada con {n_items} equipo(s) e items de "
-                f"plantilla aplicados ({items_plantilla} tareas). "
-                f"La OT quedó programada para {agenda['fecha_prog']}"
-                + (f" {agenda['hora_ini']}" if agenda['hora_ini'] else "")
-                + f" — número {numero_ot}."
-            ),
+            "mensaje": mensaje,
         }
+        if not visita_id:
+            resp["aviso"] = mensaje
         if equipos_excluidos:
             resp["equipos_excluidos"] = equipos_excluidos
         return resp, 200
