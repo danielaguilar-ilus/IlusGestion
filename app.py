@@ -108636,10 +108636,28 @@ def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=
     ]
     params = list(_MFP_ESTADOS_FACTURABLES)
     if proveedor:
+        # 🔍 FIX 2026-09-21 (Daniel, en vivo: buscó "OT-2026-00211" en este
+        # mismo cuadro y no encontró nada -- el buscador NUNCA comparó
+        # contra v.numero_ot ni contra el N° de anexo, solo contra nombre
+        # de proveedor/técnico. El texto escrito acá no podía matchear un
+        # número de OT de ninguna forma, exista o no exista esa OT -- era
+        # un buscador de "proveedor" que invitaba a escribir cualquier
+        # cosa. anx (LEFT JOIN a mant_anexos, ver _MFP_JOINS_OT) ya está
+        # disponible en esta misma consulta, no hace falta sumar ningún
+        # JOIN nuevo.
+        # 🔍 2026-09-21 (Daniel: "quiero que busque por OT, anexo, y cliente
+        # además número de factura también") -- c.razon_social (cliente)
+        # y fp.numero_documento (factura) ya están en el mismo JOIN/SELECT
+        # de esta consulta (ver _MFP_JOINS_OT/_MFP_SELECT_OT); acá fp
+        # siempre sale NULL en la práctica porque el WHERE de esta función
+        # exige fpi.id IS NULL (por eso son "por facturar"), pero se deja
+        # igual por consistencia con "Facturas registradas", más abajo.
         like = f"%{proveedor}%"
         where.append("(te.razon_social LIKE %s OR v.proveedor_nombre LIKE %s "
-                     " OR COALESCE(au.nombre, au.username) LIKE %s)")
-        params.extend([like, like, like])
+                     " OR COALESCE(au.nombre, au.username) LIKE %s "
+                     " OR v.numero_ot LIKE %s OR CAST(anx.numero AS CHAR) LIKE %s "
+                     " OR c.razon_social LIKE %s OR fp.numero_documento LIKE %s)")
+        params.extend([like, like, like, like, like, like, like])
     if prov_id is not None:
         if int(prov_id) > 0:
             where.append("te.id = %s")
@@ -109075,8 +109093,27 @@ def mant_facturas_proveedor():
     )
     where, params = ["1=1"], []
     if f_prov:
-        where.append("f.proveedor_nombre LIKE %s")
-        params.append(f"%{f_prov}%")
+        # 🔍 2026-09-21 (Daniel: "quiero que busque por OT, anexo, y
+        # cliente además número de factura también" -- mismo cuadro que
+        # "OT por facturar", más arriba, extendido acá con el mismo
+        # alcance para no dejar una mitad de la pantalla buscando distinto
+        # que la otra). `f` (mant_facturas_proveedor) no tiene visita_id
+        # directo -- una factura puede cubrir VARIAS OT (mant_
+        # factura_proveedor_items) -- así que OT/anexo/cliente se buscan
+        # con un EXISTS a sus items, mismo camino que ya usa
+        # _SQL_FICHA_POR_ITEMS un poco más abajo para resolver la ficha.
+        like = f"%{f_prov}%"
+        where.append(
+            "(f.proveedor_nombre LIKE %s OR f.numero_documento LIKE %s OR EXISTS ("
+            "  SELECT 1 FROM mant_factura_proveedor_items fi3 "
+            "  JOIN mant_visitas v3 ON v3.id = fi3.visita_id "
+            "  LEFT JOIN mant_clientes c3 ON c3.id = v3.cliente_id "
+            "  WHERE fi3.factura_proveedor_id = f.id "
+            "    AND (v3.numero_ot LIKE %s OR c3.razon_social LIKE %s OR EXISTS ("
+            "      SELECT 1 FROM mant_anexos a3 WHERE a3.ot_id = v3.id "
+            "        AND a3.estado <> 'anulado' AND CAST(a3.numero AS CHAR) LIKE %s))"
+            "))")
+        params.extend([like, like, like, like, like])
     # Un solo mapa factura -> empresa para el filtro del chip, los contadores
     # de las tarjetas y el total de la sección (siempre cuadran entre sí).
     mapa_facturas = _mfp_ficha_de_facturas()

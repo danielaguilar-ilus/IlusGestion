@@ -130,10 +130,17 @@
   <input type="hidden" name="per_page" value="{{ per_page }}">
   {# El chip activo (empresa) sobrevive a cambiar el estado o buscar texto. #}
   {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
+  {#- 🔍 FIX 2026-09-21 (Daniel, en vivo: buscó "OT-2026-00211" acá y no
+      encontró nada, porque el filtro nunca comparó contra numero_ot ni
+      anexo -- ver el WHERE en _mfp_por_facturar, app.py). Pedido explícito
+      de seguida: "que busque por OT, anexo, y cliente además número de
+      factura también". Mismo cuadro para las dos secciones de esta
+      pantalla ("OT por facturar" y "Facturas registradas"), mismo
+      alcance de búsqueda en ambas. -#}
   <div class="fpv-search">
     <i class="bi bi-search text-muted"></i>
-    <input type="search" name="proveedor" value="{{ f_prov }}" placeholder="Buscar proveedor…"
-           aria-label="Buscar proveedor">
+    <input type="search" name="proveedor" value="{{ f_prov }}" placeholder="Buscar proveedor, cliente, N° de OT, anexo o factura…"
+           aria-label="Buscar proveedor, cliente, N° de OT, anexo o factura">
   </div>
   {# 📅 2026-09-20 (Daniel: "hay que agregar fecha, filtros de fechas"). Filtra
      las OT por facturar (día de cierre) y las facturas (fecha del documento
