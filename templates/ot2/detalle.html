@@ -4756,16 +4756,36 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             Daniel pidió sacar de la tarjeta. otdFotosCargar() sigue viva
             (la usa la solicitud de repuesto para refrescar la ficha), solo
             que ya no se dispara sola al abrir el equipo. -#}
-        <details class="otd-wk-item{{ ' is-complete' if e.n_obl and e.n_obl_ok == e.n_obl }}"
-                 data-obl="{{ e.n_obl }}" data-oblok="{{ e.n_obl_ok }}"
+        {#- 🔧 2026-09-21 (Daniel, en vivo: "puedo igualmente dejar fuera de
+            servicio, sin embargo no pide un argumento" + "que ya no sea
+            necesario completar el formulario ya que si está fuera de
+            servicio hay que dejar el checklist listo... para que no
+            necesariamente tenga que realizarlo el técnico para avanzar").
+            _ot_maquinas_excluidas_cierre (app.py) YA excluye estos equipos
+            del candado real de firma/cierre (estado_revision 'saltado' o
+            'falla_detectada' -- fuera de servicio, dado de baja o
+            saltado) -- pero data-obl/data-oblok acá SIEMPRE llevaban el
+            conteo crudo de mant_visita_tareas, sin mirar estado_revision.
+            otdWkRefrescarProgreso() (botón "Siguiente equipo") y
+            otdWkCheckAllComplete()/_otdSincronizarFirmaGate() (botón
+            "Firmar como técnico" de la barra inferior) leen EXACTAMENTE
+            estos data-*, así que un equipo fuera de servicio con checklist
+            sin tocar seguía bloqueando ambos botones en el navegador,
+            aunque el backend ya lo hubiera dejado libre. Mismo criterio
+            que el backend, un solo lugar que lo decide. #}
+        {% set _excluido_cierre = (e.estado_revision or '') in ('saltado', 'falla_detectada') %}
+        <details class="otd-wk-item{{ ' is-complete' if _excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl) }}"
+                 data-obl="{{ 1 if _excluido_cierre else e.n_obl }}"
+                 data-oblok="{{ 1 if _excluido_cierre else e.n_obl_ok }}"
                  data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
                  data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
           <summary>
             {# Numeración + semáforo, como la pantalla clásica que Daniel
                dice que "venía trabajando a la perfección": el número dice
                en qué punto de la lista vas; el color, si ese equipo ya
-               está resuelto. #}
-            <span class="num {{ 'ok' if (e.n_obl and e.n_obl_ok == e.n_obl) else ('go' if e.n_ok else 'pend') }}">
+               está resuelto (o quedó excluido por fuera de servicio/baja/
+               saltado, mismo verde -- ver _excluido_cierre arriba). #}
+            <span class="num {{ 'ok' if (_excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl)) else ('go' if e.n_ok else 'pend') }}">
               {{ loop.index }}</span>
             {# 🖼️ 2026-09-05 (Daniel, mirando la OT-319 cerrada: "aún se ven
                sin fotos"). Esta miniatura sale de `mant_maquinas.foto_url`,
@@ -13223,14 +13243,29 @@ async function levdEliminar(iid){
             <div class="levd-step-sub">opcional</div>
           </div>
           <div class="levd-step-body">
+            {#- 🔧 2026-09-21 (Daniel, en vivo: "puedo igualmente dejar fuera
+                de servicio, sin embargo no pide un argumento"). El motivo
+                de arriba (Paso 2, "¿Qué tiene malo?") YA viaja como
+                justificación al backend cuando se marca fuera de servicio
+                (_ot_equipo_fuera_servicio_marcar) -- Daniel mismo pidió el
+                2026-09-08 no preguntarlo dos veces ("más conciso"). Lo que
+                faltaba era la CONEXIÓN visible: el switch se podía marcar
+                sin que nada obligara a haber escrito ya ese motivo, y sin
+                mostrar qué texto exacto va a quedar como justificación --
+                por eso se sentía "sin argumento" aunque el campo existiera
+                arriba. otrepFsToggle() interviene el cambio del switch. -#}
             <div class="otrep-sw" id="otrepFsWrap">
               <div>
                 <span class="lbl"><i class="bi bi-exclamation-octagon-fill me-1"></i>Dejarlo fuera de servicio</span>
                 <small>Si no, sigue operativo con la alerta de repuesto pendiente.</small>
               </div>
               <div class="form-check form-switch m-0">
-                <input class="form-check-input" type="checkbox" id="otrep_fs">
+                <input class="form-check-input" type="checkbox" id="otrep_fs" onchange="otrepFsToggle(this)">
               </div>
+            </div>
+            <div class="otrep-fs-motivo" id="otrepFsMotivo" style="display:none;margin-top:8px;font-size:.76rem;
+                 color:#78350f;background:#fff8e1;border:1px solid #fde68a;border-radius:8px;padding:8px 10px">
+              <i class="bi bi-quote me-1"></i><b>Queda como motivo de la urgencia:</b> <span id="otrepFsMotivoTxt"></span>
             </div>
             <div class="otd-fs-badge" id="otrepFsYa" style="display:none;margin-top:8px">
               <i class="bi bi-exclamation-octagon-fill"></i>
@@ -13359,6 +13394,7 @@ window.otdRepAbrir = async function(mid, modo){
   document.getElementById('otrepFsWrap').style.display = (_otrep.modo === 'piola') ? 'none' : '';
   document.getElementById('otrepFsYa').style.display = 'none';
   document.getElementById('otrep_fs').checked = false;
+  document.getElementById('otrepFsMotivo').style.display = 'none';
   document.getElementById('otrep_piola_metros').value = '';
   document.getElementById('otrep_piola_desc').value = '';
   document.getElementById('otrepPiolaHint').textContent = '';
@@ -13570,6 +13606,40 @@ function otrepRefrescar(){
   var txt = document.getElementById('otrepSelTxt');
   txt.textContent = selOk ? ('✓ ' + _otrep.sel.nombre + (_otrep.sel.stock_id ? ' (de la bodega)' : ' (manual · por validar)')) : '';
   document.getElementById('otrepBtn').disabled = !(selOk && metrosOk && paso2 && paso3) || _otrep.enviando;
+  otrepFsSyncMotivoHint();
+}
+
+/* 🔧 2026-09-21 (Daniel: "no pide un argumento" al dejar fuera de
+   servicio). El switch no tiene un textarea propio a propósito (Daniel,
+   2026-09-08: "más conciso", no preguntar el motivo dos veces) -- reusa
+   el del Paso 2. Pero antes se podía marcar el switch sin haber escrito
+   nada ahí todavía: se interviene el cambio para exigir el motivo YA
+   escrito antes de dejarlo prendido, y se muestra el texto exacto que
+   queda como justificación (ver otrepFsSyncMotivoHint) para que quede
+   claro que sí hay un argumento, no que se reusa uno a escondidas. */
+function otrepFsToggle(cb){
+  var motivo = (document.getElementById('otrep_motivo').value || '').trim();
+  if (cb.checked && motivo.length < 10){
+    cb.checked = false;
+    document.getElementById('otrep_motivo').focus();
+    if (window.ilusToast) ilusToast(
+      'Primero cuenta qué tiene malo arriba (Paso 2) -- eso es lo que queda '
+      + 'como motivo de dejarlo fuera de servicio.', {type:'warning'});
+    return;
+  }
+  otrepFsSyncMotivoHint();
+}
+function otrepFsSyncMotivoHint(){
+  var hint = document.getElementById('otrepFsMotivo');
+  var cb = document.getElementById('otrep_fs');
+  if (!hint || !cb) return;
+  if (cb.checked){
+    var motivo = (document.getElementById('otrep_motivo').value || '').trim();
+    document.getElementById('otrepFsMotivoTxt').textContent = motivo;
+    hint.style.display = motivo ? '' : 'none';
+  } else {
+    hint.style.display = 'none';
+  }
 }
 
 /* Sube UN archivo extra a una solicitud ya creada (o a la baja). */
