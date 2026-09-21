@@ -114481,18 +114481,32 @@ def _repstock_next_sku(marca_nombre, conn):
     _next_ot_number_atomic — jamás SELECT MAX(), que bajo REPEATABLE READ
     duplica números en concurrencia; bug real documentado en memoria).
     Usa la MISMA conexión del INSERT del repuesto: si el caller hace
-    rollback, el número también se revierte."""
+    rollback, el número también se revierte.
+
+    🔒 FIX 2026-09-21 (caso Lenin -- investigado tras el choque real con
+    RE041003461/id 270, que resultó venir de otra vía, sku_erp; ver
+    rbCerrarSondeo() en _repuestos_bodega_pane.html). Este generador en sí
+    nunca causó ESE incidente, pero tampoco se protegía si el correlativo
+    alguna vez coincidiera con un SKU ya existente (ej. uno insertado a
+    mano vía sku_erp con la forma REP-XXXX-0001). Mismo patrón de reintento
+    que ya usa _repstock_next_sku_modelo_manual() para MOD-, por
+    simetría."""
     pref = _repstock_sku_prefijo(marca_nombre)
     with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO mant_repstock_secuencia (prefijo, n) VALUES (%s, LAST_INSERT_ID(1)) "
-            "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)",
-            (pref,)
-        )
-        cur.execute("SELECT LAST_INSERT_ID() AS n")
-        row = cur.fetchone()
-        n = int(row["n"]) if row and row.get("n") else 1
-    return f"REP-{pref}-{n:04d}"
+        for _intento in range(50):
+            cur.execute(
+                "INSERT INTO mant_repstock_secuencia (prefijo, n) VALUES (%s, LAST_INSERT_ID(1)) "
+                "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)",
+                (pref,)
+            )
+            cur.execute("SELECT LAST_INSERT_ID() AS n")
+            row = cur.fetchone()
+            n = int(row["n"]) if row and row.get("n") else 1
+            sku = f"REP-{pref}-{n:04d}"
+            cur.execute("SELECT 1 AS x FROM mant_repuestos_stock WHERE sku=%s LIMIT 1", (sku,))
+            if not cur.fetchone():
+                return sku
+    raise RuntimeError("No se pudo obtener un SKU REP- libre tras 50 intentos")
 
 
 def _repstock_next_sku_modelo_manual(conn):
@@ -114882,6 +114896,19 @@ def repstock_crear():
     except Exception as e:
         conn.rollback()
         print(f"[repstock_crear] ERROR: {e}", flush=True)
+        # 🔒 FIX 2026-09-21 (caso Lenin, refuerzo defensivo -- ver
+        # _repstock_next_sku): si un SKU choca a nivel de base de datos
+        # (carrera real entre el SELECT de arriba y este INSERT, ventana
+        # que existe porque no hay SELECT ... FOR UPDATE), el mensaje
+        # genérico "No se pudo crear el repuesto" no le dice a nadie qué
+        # pasó. Mismo criterio ya usado en otros puntos del proyecto para
+        # 1062/Duplicate entry.
+        _msg = str(e)
+        _sku_val = locals().get("sku")  # puede no existir si falló ANTES de resolver el SKU
+        if _sku_val and ("1062" in _msg or "Duplicate entry" in _msg) and "sku" in _msg.lower():
+            return jsonify({"ok": False, "error":
+                            f"Ese SKU ({_sku_val}) ya quedó registrado justo ahora por otra persona. "
+                            "Vuelve a intentar guardar."}), 409
         return jsonify({"ok": False, "error": "No se pudo crear el repuesto."}), 400
     finally:
         conn.close()

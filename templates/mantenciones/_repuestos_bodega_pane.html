@@ -1044,6 +1044,17 @@ function rbCerrarSondeo(){
   RB_SONDEO_RESULTS = [];
   const list = document.getElementById('rbSondeoResultadosList');
   if (list){ list.innerHTML = ''; list.style.display = 'none'; }
+  // 🔴 FIX 2026-09-21 (caso Lenin: "Ya existe un repuesto con el SKU
+  // RE041003461" al crear uno NUEVO que no tenía nada que ver). Esta
+  // variable solo se ASIGNABA (rbPickSondeo, al elegir un resultado real
+  // de bodega 18) pero nunca se limpiaba acá -- si en la misma carga de
+  // página el técnico eligió un SKU de ERP para un repuesto y después
+  // guardó ("Guardar y crear otro" o abriendo "Nuevo repuesto" de nuevo),
+  // ese sku_erp residual viajaba igual en el siguiente guardado aunque el
+  // campo visible mostrara "SKU (automático)" vacío -- el backend lo
+  // tomaba como una elección legítima y chocaba contra el repuesto que
+  // ESE MISMO sku_erp ya había creado momentos antes.
+  RB_SKU_ERP_ELEGIDO = null;
 }
 // 2026-08-08 (Daniel: "sustituya el SKU y el SKU automático... el código
 // de fabricante es otra cosa"): al elegir un resultado del sondeo, el SKU
