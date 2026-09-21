@@ -84449,7 +84449,17 @@ _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "prove
                          # _OTREP_STOCK_NO_EXTERNO, que sí lo cubre en el
                          # buscador pero no llegaba hasta acá).
                          "stock_cantidad", "stock_descripcion",
-                         "stock_comprometido", "stock_disponible", "ticket_asignado_a")
+                         "stock_comprometido", "stock_disponible", "ticket_asignado_a",
+                         # 🔒 FIX 2026-09-21 (revisión adversarial Fase 3): los campos de
+                         # contacto que _OTREP_SQL_SOL agregó para sugerir el cliente al
+                         # generar la OT (RUT del cliente/ticket, empresa, contacto,
+                         # dirección) son datos reales del cliente final -- un técnico
+                         # externo asignado a la OT ya puede llegar a esta misma cola
+                         # (GET /ot/api/<vid>/repuestos, para_ot=True) sin que este bloque
+                         # los recortara, mismo criterio que ya protege stock/proveedor.
+                         "cliente_rut", "ticket_rut", "ticket_empresa", "ticket_contacto_nombre",
+                         "ticket_contacto_email", "ticket_contacto_phone", "ticket_direccion",
+                         "ticket_comuna")
 # Estados que siguen "vivos" para efectos de comprometer stock -- una
 # solicitud en cualquiera de estos todavía puede consumir el repuesto real,
 # así que cuenta contra el disponible de bodega. Mismo set que _OTREP_ABIERTOS,
@@ -84558,6 +84568,21 @@ def _ensure_ot_repuesto_solicitudes_tables():
                 "AFTER maquina_id, ADD INDEX idx_otrep_incidencia (incidencia_id)")
     except Exception as e:
         print(f"[ensure_ot_repuestos] incidencia_id: {e}", flush=True)
+    # 🏗️ 2026-09-21 (Fase 3 -- Daniel: "vayamos con la fase 3", eligió los 3
+    # orígenes). Rastro de que YA se generó una OT de instalación para esta
+    # solicitud: evita que un doble click (o dos gestores a la vez) generen
+    # dos OT para el mismo repuesto recibido. NULL = todavía no se generó.
+    try:
+        _cols3 = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes'") or [])}
+        if _cols3 and "ot_generada_id" not in _cols3:
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN ot_generada_id INT NULL "
+                "COMMENT 'mant_visitas.id -- OT de instalación generada desde esta solicitud (Fase 3)' "
+                "AFTER ticket_id, ADD INDEX idx_otrep_ot_generada (ot_generada_id)")
+    except Exception as e:
+        print(f"[ensure_ot_repuestos] ot_generada_id: {e}", flush=True)
     try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_ot_repuesto_evidencias (
@@ -84611,6 +84636,45 @@ def _otrep_gestion_required(view):
     def wrapped(*a, **k):
         if not _otrep_puede_gestion():
             return jsonify({"ok": False, "error": "No tienes permiso para gestionar solicitudes de repuesto."}), 403
+        return view(*a, **k)
+    return wrapped
+
+
+def _otrep_puede_generar_ot():
+    """Gate para "Generar OT de instalación" (Fase 3, 2026-09-21 -- Daniel:
+    "vayamos con la fase 3", eligió los 3 orígenes). Reusa
+    _otrep_puede_gestion() (ya excluye técnico externo) y le suma la MISMA
+    exclusión de técnico INTERNO que ya aplica ot2_api_crear al crear
+    cualquier OT de cliente (app.py, bloque "Los técnicos no pueden crear
+    órdenes de trabajo de cliente") -- sin este segundo filtro, un técnico
+    interno vería el botón en la cola de bodega pero el backend igual le
+    rechazaría la creación con 403: el botón prometería algo que no se
+    puede cumplir. Hallazgo de la investigación previa a construir esta
+    fase (ver memoria repuestos_fase3_generar_ot_investigacion).
+
+    🔒 FIX 2026-09-21 (revisión adversarial): _otrep_puede_gestion() deja
+    pasar con SOLO tk_ver/tk_es_ejecutivo, sin `mantenciones` -- pero el
+    flujo que este botón dispara termina llamando a POST /ot/api/crear y
+    POST /ot/api/cliente, ambos gateados con @_mant_required (exige
+    mantenciones/superadmin, NO acepta tk_ver/tk_es_ejecutivo). En la
+    práctica la única pantalla que hoy ofrece este botón (/repuestos) ya
+    exige @_mant_required para cargar, así que nadie sin `mantenciones`
+    llega a verlo -- pero los endpoints preparar-ot/vincular-ot, gateados
+    solo con este helper, seguían siendo alcanzables de forma directa
+    (curl/DevTools) por un tk_ver-only sin `mantenciones`. Se exige el
+    mismo permiso que el resto de la cadena, sin costo real: quien hoy
+    puede ver el botón ya lo cumple."""
+    perms = g.get("permissions") or {}
+    return (_otrep_puede_gestion() and not _es_rol_tecnico()
+            and bool(perms.get("mantenciones") or perms.get("superadmin")))
+
+
+def _otrep_generar_ot_required(view):
+    @wraps(view)
+    def wrapped(*a, **k):
+        if not _otrep_puede_generar_ot():
+            return jsonify({"ok": False, "error":
+                            "No tienes permiso para generar una OT desde esta solicitud."}), 403
         return view(*a, **k)
     return wrapped
 
@@ -84731,13 +84795,24 @@ _OTREP_SQL_SOL = (
     "SELECT s.*, m.nombre AS maquina_nombre, m.sku AS maquina_sku, m.serie AS maquina_serie, "
     "       m.estado AS maquina_estado, m.estado_capturado AS maquina_estado_capturado, "
     "       v.numero_ot, v.tipo AS ot_tipo, v.fecha_programada AS ot_fecha, "
-    "       c.razon_social AS cliente_nombre, "
+    "       c.razon_social AS cliente_nombre, c.rut AS cliente_rut, "
     "       t.numero_ticket, t.estado AS ticket_estado, t.fecha_limite AS ticket_fecha_limite, "
     "       t.asignado_a AS ticket_asignado_a, "
+    # 🏗️ 2026-09-21 (Fase 3): datos de contacto del ticket -- SOLO se usan
+    # como sugerencia al generar la OT de un repuesto de origen Ticket
+    # directo (nunca se aplican solos, ver repstock_solicitud_ot_preparar_ot).
+    "       t.rut AS ticket_rut, t.empresa AS ticket_empresa, "
+    "       t.nombre_contacto AS ticket_contacto_nombre, t.email AS ticket_contacto_email, "
+    "       t.phone AS ticket_contacto_phone, t.direccion AS ticket_direccion, "
+    "       t.comuna_nombre AS ticket_comuna, "
     "       rs.sku AS stock_sku, rs.descripcion AS stock_descripcion, rs.cantidad AS stock_cantidad, "
     "       pv.nombre AS proveedor_nombre, "
     "       inc.sku AS incidencia_sku, inc.descripcion AS incidencia_descripcion, "
     "       inc.estado AS incidencia_estado, "
+    # 🏗️ 2026-09-21 (Fase 3): OT de instalación ya generada desde esta
+    # solicitud (si la hay) -- vg es DISTINTA de v (v es la OT de ORIGEN
+    # cuando contexto='ot'; vg es la OT NUEVA que instala el repuesto).
+    "       vg.numero_ot AS ot_generada_numero, "
     # 🔒 2026-09-20: cuánto de ESTE mismo repuesto de bodega ya está
     # comprometido en OTRAS solicitudes abiertas (s.id<>s2.id) -- _otrep_fila
     # le suma la cantidad de ESTA fila (si sigue abierta) para el total.
@@ -84749,6 +84824,7 @@ _OTREP_SQL_SOL = (
     # con origen Incidencia o Ticket directo no tiene maquina_id/visita_id.
     "  LEFT JOIN mant_maquinas m ON m.id=s.maquina_id "
     "  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+    "  LEFT JOIN mant_visitas vg ON vg.id=s.ot_generada_id "
     "  LEFT JOIN mant_incidencias inc ON inc.id=s.incidencia_id "
     "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
     "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
@@ -85894,6 +85970,9 @@ def repstock_solicitudes_ot_listar():
     return jsonify({"ok": True, "solicitudes": sols, "conteo": conteo,
                     "estados": _OTREP_ESTADO_LABEL, "transiciones": _OTREP_TRANSICIONES,
                     "puede_pedir_rechazar": puede_gestion_plata,
+                    # 🏗️ Fase 3 (2026-09-21): controla si la cola ofrece
+                    # "Generar OT de instalación" -- ver _otrep_puede_generar_ot.
+                    "puede_generar_ot": _otrep_puede_generar_ot(),
                     "truncado": len(sols) >= LIM})
 
 
@@ -86384,6 +86463,163 @@ def repstock_solicitud_ot_ticket(sid):
     sol["n_fotos"], sol["n_videos"] = int(s.get("n_fotos") or 0), int(s.get("n_videos") or 0)
     _otrep_ticket_anotar(tid, m, sol, v.get("numero_ot") or f"OT #{v['id']}", user)
     return jsonify({"ok": True, "ticket_id": tid, "numero_ticket": numero, "creado": creado})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/preparar-ot", methods=["GET"])
+@_otrep_generar_ot_required
+def repstock_solicitud_ot_preparar_ot(sid):
+    """Datos para prellenar el wizard OT2C al generar la OT de instalación
+    de una solicitud de repuesto ya 'recibida' (Fase 3, 2026-09-21 --
+    Daniel: "vayamos con la fase 3", eligió los 3 orígenes + tipo
+    correctiva). Solo lectura: la OT la sigue creando el motor genérico de
+    siempre (POST /ot/api/crear) -- esto solo arma el `opts` del wizard
+    según de dónde nació la solicitud:
+      origen OT         -> cliente YA resuelto (viene de la visita) +
+                           equipo_preset_maquina_id (el exacto, real)
+      origen Ticket      -> cliente_sugerido: SOLO una sugerencia armada
+                           con los datos de texto libre del ticket, NUNCA
+                           se aplica sola -- el frontend debe confirmar
+                           antes de crear la ficha (mismo criterio del
+                           chip "Detectado -> usar" del correo del ERP:
+                           ver REGLA de memoria feedback_email_erp_solo_
+                           sugerencia). Si gestión confirma, la ficha se
+                           crea con el endpoint que YA existe y YA hace su
+                           propio dedup (POST /ot/api/cliente).
+      origen Incidencia  -> nada que resolver: mant_incidencias no tiene
+                           ni rut ni nombre de cliente, ni como texto
+                           libre -- el wizard se abre en blanco y gestión
+                           lo completa a mano.
+    """
+    row = mysql_fetchone(_OTREP_SQL_SOL + " WHERE s.id=%s", (sid,))
+    if not row:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    s = _otrep_fila(row)
+    if s.get("ot_generada_id"):
+        v = mysql_fetchone("SELECT id, numero_ot FROM mant_visitas WHERE id=%s", (s["ot_generada_id"],))
+        return jsonify({"ok": True, "ya_generada": {
+            "visita_id": s["ot_generada_id"], "numero_ot": (v or {}).get("numero_ot")}})
+    if s.get("estado") != "recibido":
+        return jsonify({"ok": False, "error":
+                        "Solo se puede generar la OT cuando el repuesto ya está recibido."}), 400
+
+    cliente = None
+    cliente_sugerido = None
+    equipo_preset_maquina_id = None
+    if s["contexto"] == "ot":
+        if s.get("cliente_id"):
+            cliente = {"id": s["cliente_id"], "nombre": s.get("cliente_nombre") or "",
+                       "rut": s.get("cliente_rut") or ""}
+        equipo_preset_maquina_id = s.get("maquina_id")
+    elif s["contexto"] == "ticket":
+        razon = (s.get("ticket_empresa") or s.get("ticket_contacto_nombre") or "").strip()
+        if razon or s.get("ticket_rut"):
+            cliente_sugerido = {
+                "razon_social": razon or f"Cliente ticket #{s.get('ticket_id')}",
+                "rut": s.get("ticket_rut") or "",
+                "contacto_nombre": s.get("ticket_contacto_nombre") or "",
+                "contacto_tel": s.get("ticket_contacto_phone") or "",
+                "contacto_email": s.get("ticket_contacto_email") or "",
+                "direccion": s.get("ticket_direccion") or "",
+                "comuna": s.get("ticket_comuna") or "",
+            }
+    # origen 'incidencia': nada que resolver, el wizard nace en blanco.
+
+    return jsonify({
+        "ok": True,
+        "origen": s["contexto"],
+        "titulo": (f"Instalar {s.get('repuesto_nombre') or 'repuesto'} (solicitud #{sid})")[:200],
+        "descripcion": s.get("motivo") or "",
+        "tipo_sugerido": "correctiva",
+        "ticket_id": s.get("ticket_id"),
+        "cliente": cliente,
+        "cliente_sugerido": cliente_sugerido,
+        "equipo_preset_maquina_id": equipo_preset_maquina_id,
+    })
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/vincular-ot", methods=["POST"])
+@_otrep_generar_ot_required
+def repstock_solicitud_ot_vincular_ot(sid):
+    """Registra que la OT de instalación ya se generó para esta solicitud
+    (Fase 3). Se llama DESPUÉS de que el wizard genérico (POST /ot/api/
+    crear) ya creó la OT de verdad -- este endpoint nunca crea una OT,
+    solo deja el rastro (ot_generada_id) y avisa al ticket/OT/incidencia
+    de origen. Idempotente por diseño en el propio UPDATE (no solo en el
+    SELECT previo): si dos clicks casi simultáneos llegan a la vez, el
+    WHERE ot_generada_id IS NULL solo deja pasar al primero -- mismo
+    patrón de concurrencia que ya usa finanzas de la OT (auditoría
+    26-ago), para que el segundo click no enganche una segunda OT
+    silenciosamente sobre la misma solicitud.
+
+    🔒 FIX 2026-09-21 (revisión adversarial Fase 3), dos hallazgos:
+    1. TOCTOU: preparar-ot valida estado=='recibido' en un GET previo y
+       separado (minutos antes, mientras gestión llena el wizard) -- pero
+       nada impedía que OTRO gestor rechazara la misma solicitud mientras
+       tanto (POST .../estado, gate MÁS laxo que este endpoint) y este
+       UPDATE igual aceptara el link. Ahora la condición vive en el propio
+       WHERE del UPDATE (mismo patrón de concurrencia ya establecido en
+       el proyecto), no solo en un SELECT previo.
+    2. Integridad: no validaba que la OT recién creada fuera realmente del
+       MISMO cliente que la solicitud (cuando esta ya tenía cliente_id
+       resuelto, ej. origen OT) -- un visita_id ajeno pasado por bug o a
+       mano quedaba enganchado igual, dejando auditoría falsa. Mismo
+       criterio que ya aplican los "3 candados" de _otrep_cargar_ot_y_equipo
+       para el flujo hermano de esta misma tabla."""
+    d = request.get_json(silent=True) or {}
+    try:
+        visita_id = int(d.get("visita_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Falta la OT recién generada."}), 400
+    s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if s.get("ot_generada_id"):
+        return jsonify({"ok": False, "error": "Esta solicitud ya tiene una OT generada."}), 409
+    if s.get("estado") != "recibido":
+        return jsonify({"ok": False, "error":
+                        "Esta solicitud ya no está en 'recibido' -- alguien más la movió "
+                        "mientras generabas la OT. Revisa su estado antes de reintentar."}), 409
+    v = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (visita_id,))
+    if not v:
+        return jsonify({"ok": False, "error": "La OT indicada no existe."}), 404
+    if s.get("cliente_id") and v.get("cliente_id") and int(v["cliente_id"]) != int(s["cliente_id"]):
+        return jsonify({"ok": False, "error":
+                        "Esa OT es de otro cliente -- no corresponde a esta solicitud de repuesto."}), 400
+    user = current_username() or "sistema"
+    numero_ot = v.get("numero_ot") or f"OT #{visita_id}"
+    try:
+        filas = mysql_execute_returning_rowcount(
+            "UPDATE mant_ot_repuesto_solicitudes SET ot_generada_id=%s "
+            " WHERE id=%s AND ot_generada_id IS NULL AND estado='recibido'", (visita_id, sid))
+        if not filas:
+            return jsonify({"ok": False, "error":
+                            "No se pudo vincular: la solicitud ya tiene una OT generada o cambió "
+                            "de estado mientras se generaba."}), 409
+    except Exception as e:
+        print(f"[otrep] vincular-ot sid={sid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo vincular la OT."}), 500
+
+    detalle = f"OT {numero_ot} generada para instalar {s.get('repuesto_nombre')} (solicitud #{sid})"
+    if s.get("visita_id"):
+        try:
+            _mant_log("visita", s["visita_id"], "repuesto_ot_generada", detalle)
+        except Exception:
+            pass
+    elif s.get("incidencia_id"):
+        try:
+            _inc_log(s["incidencia_id"], "repuesto_ot_generada", "repuesto", None, detalle)
+        except Exception:
+            pass
+    if s.get("ticket_id"):
+        try:
+            mysql_execute(
+                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+                "VALUES (%s,'comentario',%s,%s,%s,1)",
+                (s["ticket_id"], detalle,
+                 json.dumps({"solicitud_repuesto_id": sid, "visita_id": visita_id}, ensure_ascii=False), user))
+        except Exception as e:
+            print(f"[otrep] vincular-ot tk_mensajes sid={sid}: {e}", flush=True)
+    return jsonify({"ok": True, "visita_id": visita_id, "numero_ot": numero_ot})
 
 
 @app.route("/ot/api/<int:vid>/equipos-desde-documento", methods=["POST"])

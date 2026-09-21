@@ -138,6 +138,8 @@
 .rs-btn.rec{border-color:#a5f3fc;color:#0e7490}.rs-btn.rec:hover{background:#0891b2;border-color:#0891b2;color:#fff}
 .rs-btn.ins{border-color:#bbf7d0;color:#15803d}.rs-btn.ins:hover{background:#16a34a;border-color:#16a34a;color:#fff}
 .rs-btn.rej{border-color:#fecaca;color:#b91c1c}.rs-btn.rej:hover{background:#dc2626;border-color:#dc2626;color:#fff}
+.rs-btn.generar-ot{border-color:#dc2626;color:#dc2626;background:#fef2f2}.rs-btn.generar-ot:hover{background:#dc2626;border-color:#dc2626;color:#fff}
+.rs-btn.ot-generada{border-color:#d1d5db;color:#374151;text-decoration:none;display:inline-flex;align-items:center}.rs-btn.ot-generada:hover{background:#f3f4f6}
 .rs-pie{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;
   font-size:.78rem;color:#475569}
 .otrep-opc{display:flex;flex-direction:column;gap:6px}
@@ -561,7 +563,7 @@ document.addEventListener('DOMContentLoaded', function(){
    Cola de lo que las OT levantaron: validar en bodega (ligar a un repuesto
    real o crearlo), pedir al proveedor (OC), recibir, instalar, rechazar.
    Paginación tipo Etiquetas (REGLA #4.3) sobre la lista en memoria. */
-var _rs = { todas: [], filtro: 'abiertas', q: '', page: 1, size: 25, conteo: {}, estados: {}, sel: null, valSid: null, valTimer: null, pedSid: null, puedePedir: true, truncado: false, provs: null };
+var _rs = { todas: [], filtro: 'abiertas', q: '', page: 1, size: 25, conteo: {}, estados: {}, sel: null, valSid: null, valTimer: null, pedSid: null, puedePedir: true, puedeGenerarOT: false, truncado: false, provs: null };
 var _RS_EST_CLS = { solicitado: 'sol', validado: 'val', pedido: 'ped', recibido: 'rec', instalado: 'ins', rechazado: 'rej' };
 function rsEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
 function rsFmt(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; }
@@ -576,6 +578,7 @@ async function rsCargar(){
     _rs.conteo = j.conteo || {};
     _rs.estados = j.estados || {};
     _rs.puedePedir = (j.puede_pedir_rechazar !== false);
+    _rs.puedeGenerarOT = !!j.puede_generar_ot;
     _rs.truncado = !!j.truncado;
     _rs.page = 1;
     rsPintarChips();
@@ -653,6 +656,15 @@ function rsCard(s){
     const cls = {validado:'val', pedido:'ped', recibido:'rec', instalado:'ins', rechazado:'rej', solicitado:'sol'}[n] || '';
     return '<button type="button" class="rs-btn ' + cls + '" onclick="rsAccion(' + s.id + ', \'' + n + '\')">' + lbl + '</button>';
   }).join('') + (!s.ticket_id ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '');
+  // 🏗️ Fase 3 (2026-09-21, Daniel: "vayamos con la fase 3", los 3 orígenes
+  // + tipo correctiva): una vez recibido el repuesto, se puede generar la
+  // OT que lo va a instalar. Ya generada: link "Ver OT" en vez del botón,
+  // para no volver a disparar el wizard sobre la misma solicitud.
+  const generarOT = s.ot_generada_id
+    ? '<a class="rs-btn ot-generada" href="/ot/' + s.ot_generada_id + '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Ver OT' + (s.ot_generada_numero ? ' ' + rsEsc(s.ot_generada_numero) : '') + '</a>'
+    : (s.estado === 'recibido' && _rs.puedeGenerarOT
+        ? '<button type="button" class="rs-btn generar-ot" onclick="rsGenerarOT(' + s.id + ')"><i class="bi bi-clipboard2-plus me-1"></i>Generar OT de instalación</button>'
+        : '');
   // 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de la
   // operación"): junto al stock físico se muestra el DISPONIBLE real (neto
   // de lo que otras OT abiertas ya prometieron sobre el mismo repuesto) --
@@ -726,7 +738,7 @@ function rsCard(s){
     '</div>' +
     '<div class="rs-foot">' +
       '<span class="rs-tl">' + rsTimeline(s) + '</span>' +
-      '<div class="rs-acc">' + acciones + '</div>' +
+      '<div class="rs-acc">' + generarOT + acciones + '</div>' +
     '</div>' +
   '</div>';
 }
@@ -1164,9 +1176,123 @@ if (btnRepBuscarErp){
     });
   });
 }
+
+// ══════════════ Fase 3 (2026-09-21): Generar OT de instalación ══════════════
+// Daniel, tras revisar los 3 orígenes y confirmar tipo correctiva: "vayamos
+// con la fase 3". Reusa el MISMO motor de siempre (OT2C, el wizard de OT
+// 2.0 -- nunca uno propio, ver ot2/_modal_crear.html incluido abajo) con
+// los datos que ya se conocen de la solicitud: cliente y equipo exactos si
+// nació de una OT; una SUGERENCIA de cliente (nunca aplicada sin confirmar,
+// mismo criterio que el chip "Detectado -> usar" del correo del ERP) si
+// nació de un ticket; en blanco si nació de una Incidencia.
+async function rsGenerarOT(sid){
+  if (!window.OT2C){
+    ilusToast('El formulario de OT no cargó — recarga la página.', {type:'error'});
+    return;
+  }
+  let j;
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/preparar-ot', {credentials:'same-origin'});
+    j = await r.json();
+  } catch(e){
+    ilusToast('Sin conexión: no se pudo preparar la OT.', {type:'error'});
+    return;
+  }
+  if (!j.ok){ ilusToast(j.error || 'No se pudo preparar la OT.', {type:'error'}); return; }
+  if (j.ya_generada){
+    window.open('/ot/' + j.ya_generada.visita_id, '_blank');
+    return;
+  }
+
+  const opts = {
+    origen: (j.origen === 'ticket') ? 'ticket' : 'cliente',
+    ticket_id: j.ticket_id || null,
+    titulo: j.titulo, descripcion: j.descripcion, tipo: j.tipo_sugerido || 'correctiva',
+    equipo_preset_maquina_id: j.equipo_preset_maquina_id || null,
+    // 🔒 FIX 2026-09-21 (revisión adversarial): antes esto no leía el
+    // status/body de vincular-ot -- fetch() NO rechaza la promesa por un
+    // 409 (dos gestores generando la OT casi a la vez, o la solicitud
+    // cambió de estado mientras se llenaba el wizard), así que ese caso
+    // real se trataba como éxito: se cerraba el modal y se refrescaba la
+    // lista en silencio, dejando una OT recién creada SIN rastro (sin
+    // ot_generada_id, sin log, sin comentario en el ticket). La OT en sí
+    // ya quedó creada de verdad pase lo que pase acá -- lo único que se
+    // puede perder es el enlace de vuelta, por eso se avisa con un
+    // warning (mismo patrón que usa el propio wizard para un fallo
+    // post-creación análogo, ver _modal_crear.html, fallo de Anexo) en
+    // vez de un error bloqueante.
+    onCreada: async function(vid, url){
+      try {
+        const rv = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/vincular-ot', {
+          method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+          body: JSON.stringify({ visita_id: vid })
+        });
+        const jv = await rv.json().catch(function(){ return {}; });
+        if (!jv.ok){
+          ilusToast('La OT se creó, pero no se pudo vincular a esta solicitud: ' +
+            (jv.error || 'motivo desconocido') + '. Revisa manualmente desde ' + (url || 'la OT') + '.',
+            {type:'warning', duration:9000});
+        }
+      } catch(e){
+        ilusToast('La OT se creó, pero hubo un problema de red al vincularla con esta solicitud. '
+          + 'Revisa manualmente.', {type:'warning', duration:9000});
+      }
+      OT2C.cerrar();
+      rsCargar();
+    },
+  };
+
+  if (j.cliente){
+    // Origen OT: cliente y equipo YA resueltos, se entra directo al form.
+    opts.cliente = j.cliente;
+    OT2C.abrir(opts);
+    return;
+  }
+
+  if (j.cliente_sugerido){
+    const cs = j.cliente_sugerido;
+    if (!cs.rut){
+      ilusToast('El ticket no trae RUT — elige o crea el cliente a mano en el siguiente paso.', {type:'info'});
+    } else {
+      const usar = await ilusConfirm({
+        title: 'Cliente detectado del ticket',
+        message: (cs.razon_social || 'Sin nombre') + ' · RUT ' + cs.rut,
+        sub: '¿Usar estos datos para buscar o crear la ficha del cliente?',
+        okLabel: 'Sí, usar estos datos', cancelLabel: 'Elegir manualmente',
+        type: 'question',
+      });
+      if (usar){
+        try {
+          const rc = await fetch('/ot/api/cliente', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+            body: JSON.stringify({
+              razon_social: cs.razon_social, rut: cs.rut, contacto_nombre: cs.contacto_nombre,
+              contacto_tel: cs.contacto_tel, contacto_email: cs.contacto_email,
+              direccion: cs.direccion, comuna: cs.comuna, motivo: 'correctiva',
+            })
+          });
+          const jc = await rc.json();
+          if (jc.ok){
+            opts.cliente = { id: jc.cliente.id, nombre: jc.cliente.razon_social, rut: cs.rut };
+            if (jc.mensaje) ilusToast(jc.mensaje, {type:'info'});
+          } else {
+            ilusToast(jc.error || 'No se pudo resolver el cliente — elígelo a mano.', {type:'warning'});
+          }
+        } catch(e){
+          ilusToast('Sin conexión al resolver el cliente — elígelo a mano.', {type:'warning'});
+        }
+      }
+    }
+  }
+
+  OT2C.abrir(opts);
+}
 </script>
 
 {# Modal compartido de búsqueda avanzada ERP (mode:'seleccionar' -- genérico,
    no toca nada de Tickets). Ver tkaOpen() en ese archivo. #}
 {% include "tickets/_tka_modal.html" %}
+{# Wizard de OT 2.0, el mismo motor que Tickets/Panel/Cotizaciones (Fase 3
+   de repuestos, 2026-09-21) -- ver rsGenerarOT() arriba. #}
+{% include "ot2/_modal_crear.html" %}
 {% endblock %}

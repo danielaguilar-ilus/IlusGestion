@@ -1158,6 +1158,11 @@ window.OT2C = (function(){
     S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
+         // 🔧 FASE 3 REPUESTOS (2026-09-21): equipo exacto ya conocido antes
+         // de abrir (viene de una solicitud de repuesto de origen OT, que
+         // ya trae maquina_id real) -- ver abrir()/cargarEquipos(). Se
+         // consume UNA sola vez y se limpia, nunca sobrevive a un reset().
+         equipo_preset_maquina_id:null,
          ticket_id:null,
          // 2026-09-04 (Daniel: "no quiero salir del ticket, quiero que
          // todos los modales trabajen desde allí"). Quien abrió el wizard
@@ -3897,6 +3902,21 @@ window.OT2C = (function(){
               sugerirPlantillaEquipo(m.id);
             }
           });
+          // 🔧 FASE 3 REPUESTOS (2026-09-21): equipo exacto conocido de
+          // antemano (una solicitud de repuesto de origen OT ya trae su
+          // maquina_id real) -- no depende de un documento ERP, por eso va
+          // aparte de hayFuente. Se valida contra cacheEquipos (ya cargado
+          // en este punto) por si el equipo fue dado de baja/movido entre
+          // que se pidió el repuesto y que se genera la OT: si ya no está,
+          // simplemente no se preselecciona nada y gestión lo elige a mano.
+          if (S.equipo_preset_maquina_id){
+            var _mPreset = S.equipo_preset_maquina_id;
+            S.equipo_preset_maquina_id = null;
+            if (cacheEquipos.some(function(m){ return m.id === _mPreset; })){
+              S.equipos.push({maquina_id:_mPreset, plantilla_id:null, plantilla_sugerida:false});
+              sugerirPlantillaEquipo(_mPreset);
+            }
+          }
         }
       }
       // 2026-08-30 (Daniel, caso real FCV 11382 -- Booty Builder Platinum /
@@ -9288,6 +9308,9 @@ window.OT2C = (function(){
     if (opts.titulo)     S.titulo     = opts.titulo;
     if (opts.descripcion) S.descripcion = opts.descripcion;
     if (opts.fecha)      S.fecha      = opts.fecha;
+    // 🔧 FASE 3 REPUESTOS (2026-09-21): ver S.equipo_preset_maquina_id en
+    // reset() y su consumo en cargarEquipos().
+    if (opts.equipo_preset_maquina_id) S.equipo_preset_maquina_id = opts.equipo_preset_maquina_id;
     if (opts.tipo){
       var t = TIPOS.find(function(x){
         return x.v === opts.tipo && !!x.descubrimiento === !!opts.descubrimiento; });
