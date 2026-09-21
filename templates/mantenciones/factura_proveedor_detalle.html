@@ -528,6 +528,28 @@
             <textarea class="form-control" id="fpeNotas" rows="2">{{ factura.notas or '' }}</textarea>
           </div>
         </section>
+        {# 📎 2026-09-21 (Daniel: "me gustaría poder dejar registro de al
+           menos las facturas"): adjuntar el PDF/foto del documento real en
+           el mismo paso en que se completan sus datos -- antes solo existía
+           el botón "Subir respaldo" suelto en la cabecera de la página.
+           Sube al tiro (mismo endpoint /archivo) sin perder lo que se esté
+           escribiendo en los pasos de arriba; Guardar no toca este archivo. #}
+        <section class="fpv-step listo">
+          <div class="fpv-step-hd">
+            <div class="fpv-circle"><span class="n">4</span><span class="ok"><i class="bi bi-check-lg"></i></span></div>
+            <div><div class="fpv-step-t">Respaldo del documento</div><div class="fpv-step-s">Foto o PDF de la factura real — opcional, pero deja el registro</div></div>
+          </div>
+          <div class="fpv-step-bd">
+            <div id="fpeArchivoEstado" class="fp-sub" style="margin-bottom:6px">
+              {% if factura.archivo_url %}<i class="bi bi-paperclip"></i> <a href="{{ factura.archivo_url }}" target="_blank" rel="noopener">{{ factura.archivo_nombre or 'Ver respaldo actual' }}</a>
+              {% else %}<i class="bi bi-file-earmark-x"></i> Sin respaldo adjunto todavía{% endif %}
+            </div>
+            <label class="btn btn-sm btn-outline-dark mb-0" style="min-height:44px;display:inline-flex;align-items:center;cursor:pointer">
+              <i class="bi bi-upload me-1"></i>{{ 'Cambiar archivo' if factura.archivo_url else 'Adjuntar archivo' }}
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="fpdArchivoModal(this,'fpeArchivoEstado')">
+            </label>
+          </div>
+        </section>
       </div>
       <div class="modal-footer" style="border-top:1px solid #f1f5f9">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cancelar</button>
@@ -586,6 +608,19 @@
         </div>
         <div class="fp-sub mt-1">Déjalo tal cual si coincide con lo que ya se declaró, o ajústalo al monto real de
           la factura para que cuadre.</div>
+        {# 📎 2026-09-21: mismo registro del documento real, para el pago que
+           ya se reconoció "sin factura" y ahora se completa. #}
+        <div class="mt-3" style="border-top:1px solid #f1f5f9;padding-top:10px">
+          <label class="fpv-lbl">Respaldo del documento</label>
+          <div id="fpcArchivoEstado" class="fp-sub" style="margin-bottom:6px">
+            {% if factura.archivo_url %}<i class="bi bi-paperclip"></i> <a href="{{ factura.archivo_url }}" target="_blank" rel="noopener">{{ factura.archivo_nombre or 'Ver respaldo actual' }}</a>
+            {% else %}<i class="bi bi-file-earmark-x"></i> Sin respaldo adjunto todavía{% endif %}
+          </div>
+          <label class="btn btn-sm btn-outline-dark mb-0" style="min-height:44px;display:inline-flex;align-items:center;cursor:pointer">
+            <i class="bi bi-upload me-1"></i>{{ 'Cambiar archivo' if factura.archivo_url else 'Adjuntar archivo' }}
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="fpdArchivoModal(this,'fpcArchivoEstado')">
+          </label>
+        </div>
       </div>
       <div class="modal-footer" style="border-top:1px solid #f1f5f9">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cancelar</button>
@@ -830,6 +865,36 @@ async function fpdSubirArchivo(inp){
     setTimeout(() => window.location.reload(), 500);
   }catch(e){ ilusToast('Error de conexión', {type:'error'}); inp.value=''; }
 }
+// 📎 2026-09-21: versión "en el modal" -- sube el archivo YA (mismo
+// endpoint) pero SIN recargar la página, para no perder lo que se esté
+// escribiendo en los otros pasos del modal (N°, fecha, monto, notas).
+async function fpdArchivoModal(inp, estadoElId){
+  const f = inp.files && inp.files[0];
+  if (!f) return;
+  const estado = document.getElementById(estadoElId);
+  const fd = new FormData(); fd.append('archivo', f);
+  estado.innerHTML = '<i class="bi bi-arrow-repeat"></i> Subiendo…';
+  try{
+    const r = await fetch(FPD_URL_BASE + '/archivo', {method:'POST', body: fd});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false){
+      ilusToast(d.error || 'No se pudo subir el archivo', {type:'error'});
+      estado.innerHTML = '<i class="bi bi-file-earmark-x"></i> Sin respaldo adjunto todavía';
+      inp.value = '';
+      return;
+    }
+    estado.innerHTML = '<i class="bi bi-paperclip"></i> <a href="' + d.url + '" target="_blank" rel="noopener">' + (d.nombre ? fpdEsc(d.nombre) : 'Ver respaldo') + '</a>';
+    // El botón queda mostrando "Cambiar archivo" en el próximo render de la
+    // página (recargar el <label> vivo no aporta) -- lo relevante ahora es
+    // que el link de arriba ya confirma que quedó guardado.
+    ilusToast('✓ Respaldo adjuntado', {type:'success'});
+  }catch(e){
+    ilusToast('Error de conexión al subir el archivo', {type:'error'});
+    estado.innerHTML = '<i class="bi bi-file-earmark-x"></i> Sin respaldo adjunto todavía';
+    inp.value = '';
+  }
+}
+function fpdEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 {% if pendiente %}
 function fpdEditar(){ new bootstrap.Modal(document.getElementById('fpdModalEditar')).show(); }
 document.getElementById('fpeMonto').addEventListener('input', function(){
