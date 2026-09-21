@@ -1609,6 +1609,14 @@ window.OT2C = (function(){
         // monto declarado/editado a mano no es opcional.
         if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return false;
         if (_o2mFinEnvioEsManual() && !(S.fin_zz_envio_motivo_manual||'').trim()) return false;
+        // 🔒 FIX 2026-09-21 (Daniel, confirmado explícito "obligatorio
+        // siempre"): costo_proveedor/costo_despacho pasan de opcionales a
+        // obligatorios -- mismo criterio que ya rige "Esta OT vale" para
+        // trabajo interno (arriba). Aplica también en garantía: eximir del
+        // cobro al cliente no exime de saber cuánto nos cuesta a NOSOTROS.
+        // '' (nunca tocado) bloquea; '0' (declarado explícito) no.
+        if (String(S.fin_costo_proveedor||'').trim() === '') return false;
+        if (String(S.fin_costo_despacho||'').trim() === '') return false;
         return true;
       // 2026-08-29: solo aparece si el líder es externo (ver pasos()) --
       // ahí sí es obligatorio, es lo que Daniel llamó "indispensable para
@@ -5358,21 +5366,25 @@ window.OT2C = (function(){
       // costo_despacho van en columnas SEPARADAS (mismo criterio que ya usa
       // mant_visitas desde 2026-08-27) porque más adelante se concilian
       // contra facturas de proveedores distintos.
+      // 🔒 FIX 2026-09-21: los dos pasaron de opcionales a obligatorios
+      // (Daniel, confirmado "obligatorio siempre") -- los placeholders
+      // decían "lo que le pagamos"/"solo si hay despacho", que insinuaban
+      // que en blanco estaba bien. Ahora piden el 0 explícito.
       costoHtml =
         '<div id="o2mFinCostoChip"></div>'+
         '<div class="row g-2">'+
           '<div class="col-12 col-sm-6">'+
-            '<label class="fl">Nos cuesta '+(S.tipo==='instalacion'?'la instalación':'el servicio')+'</label>'+
+            '<label class="fl">Nos cuesta '+(S.tipo==='instalacion'?'la instalación':'el servicio')+' <span class="text-danger">*</span></label>'+
             '<div class="o2m-money sm"><span class="pre">$</span>'+
             '<input type="text" inputmode="numeric" id="o2mFinCostoProv" '+
-            'value="'+esc(_o2mFormatearMiles(S.fin_costo_proveedor))+'" placeholder="Lo que le pagamos" '+
+            'value="'+esc(_o2mFormatearMiles(S.fin_costo_proveedor))+'" placeholder="0 si no hay proveedor externo" '+
             'oninput="OT2C.setFinCostoProveedor(this)"></div>'+
           '</div>'+
           '<div class="col-12 col-sm-6">'+
-            '<label class="fl">Nos cuesta el despacho</label>'+
+            '<label class="fl">Nos cuesta el despacho <span class="text-danger">*</span></label>'+
             '<div class="o2m-money sm"><span class="pre">$</span>'+
             '<input type="text" inputmode="numeric" id="o2mFinCostoDesp" '+
-            'value="'+esc(_o2mFormatearMiles(S.fin_costo_despacho))+'" placeholder="Solo si hay despacho" '+
+            'value="'+esc(_o2mFormatearMiles(S.fin_costo_despacho))+'" placeholder="0 si no hubo despacho" '+
             'oninput="OT2C.setFinCostoDespacho(this)"></div>'+
           '</div>'+
         '</div>'+
@@ -5936,8 +5948,12 @@ window.OT2C = (function(){
         }
         return {cls:'listo', txt:'Listo'};
       case 'costo':
-        return (String(S.fin_costo_proveedor||'').trim() !== '' || String(S.fin_costo_despacho||'').trim() !== '')
-          ? {cls:'listo', txt:'Listo'} : {cls:'opcional', txt:'Opcional'};
+        // 🔒 FIX 2026-09-21: pasó de opcional a obligatorio (ver completo()
+        // más arriba) -- los DOS campos, no "al menos uno", porque "0" en
+        // uno de ellos ya es una respuesta válida y completa.
+        if (interno) return {cls:'', txt:''};
+        return (String(S.fin_costo_proveedor||'').trim() !== '' && String(S.fin_costo_despacho||'').trim() !== '')
+          ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
     }
     return {cls:'', txt:''};
   }
@@ -5955,7 +5971,9 @@ window.OT2C = (function(){
      dos veces, se centra en pantalla y el toast dice su estado. Devuelve
      true si señaló algo (false = no hay sub-paso pendiente visible). */
   function _o2mFinSenalarPendiente(){
-    var subs = esInterno() ? ['centro','valor'] : ['centro','valor','cobro'];
+    // 🔒 FIX 2026-09-21: 'costo' se suma a la lista -- pasó de opcional a
+    // obligatorio (ver completo('finanzas') y _o2mFinSubEstado('costo')).
+    var subs = esInterno() ? ['centro','valor'] : ['centro','valor','cobro','costo'];
     for (var i=0;i<subs.length;i++){
       var e = _o2mFinSubEstado(subs[i]);
       if (e.cls !== 'falta') continue;

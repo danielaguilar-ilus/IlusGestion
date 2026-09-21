@@ -86691,7 +86691,8 @@ def ot2_api_equipos_desde_documento(vid):
     return jsonify({"ok": True, **data})
 
 
-def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=None):
+def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=None,
+                                     exigir_costo_prov_desp=False):
     """Valida y normaliza el bloque 'finanzas' de una OT nueva -- MISMA
     lógica que ot2_api_crear exige desde 2026-09-09/2026-09-15 (Daniel:
     "los documentos y las finanzas deben ser requisito indispensable...
@@ -86907,10 +86908,46 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         if raw is None or str(raw).strip() == "":
             return None
         return max(0.0, float(raw))
+    # 🔒 FIX 2026-09-21 (Daniel, viendo el Monitor con OT sin costos
+    # declarados: "que ya no sea necesario... esto ya debe ser obligatorio"
+    # -- confirmó explícito "obligatorio siempre" para costo_proveedor/
+    # costo_despacho, mismo criterio que ya se le exige a costo_interno
+    # desde 2026-09-15: el campo tiene que venir declarado (aunque el
+    # valor real sea $0 -- "no hay proveedor de por medio" ES la
+    # respuesta), nunca quedar sin que nadie lo haya decidido.
+    #
+    # ⚠️ Se activa SOLO con exigir_costo_prov_desp=True (hoy, únicamente
+    # desde ot2_api_crear) y nunca para trabajo interno -- que no tiene
+    # proveedor ni despacho, ya se valoriza aparte con costo_interno más
+    # abajo. Los otros 2 callers de esta función (_mant_visita_crear_core,
+    # _mant_lev_crear_ot_core -- Levantamiento directo y "Generar OT" desde
+    # un Ticket) NO lo pasan a propósito: sus formularios (templates/
+    # tickets/_modal_generar_ot.html Paso 8, #modalLevSelector) se
+    # construyeron el 2026-09-17 siguiendo el CONTRATO de ese momento
+    # (centro_costo/valor_origen/zz_monto/garantía/documento), que
+    # deliberadamente NO incluía costo_proveedor/costo_despacho -- exigirlo
+    # ahí sin antes agregar esos dos inputs bloquearía TODA creación de OT
+    # por Levantamiento o desde Tickets con un error que el usuario no
+    # podría resolver desde su propia pantalla. Pendiente: sumar los mismos
+    # dos campos a esos formularios y activar el flag ahí también.
+    if exigir_costo_prov_desp:
+        _fin_costo_prov_raw = _fin.get("costo_proveedor")
+        if not es_interna and (_fin_costo_prov_raw is None or str(_fin_costo_prov_raw).strip() == ""):
+            return _ferr(
+                "Indica cuánto le pagamos al proveedor externo por esta OT (0 si no hay "
+                "proveedor de por medio): así el reporte de margen no queda con un vacío "
+                "sin decidir.", "FINANZAS_SIN_COSTO_PROVEEDOR"), None
     try:
         _fin_costo_prov = _fin_costo_opcional(_fin.get("costo_proveedor"))
     except (TypeError, ValueError):
         return _ferr("El costo del proveedor no es válido.", "COSTO_PROVEEDOR_INVALIDO"), None
+    if exigir_costo_prov_desp:
+        _fin_costo_desp_raw = _fin.get("costo_despacho")
+        if not es_interna and (_fin_costo_desp_raw is None or str(_fin_costo_desp_raw).strip() == ""):
+            return _ferr(
+                "Indica cuánto costó el despacho de esta OT (0 si no hubo despacho): así "
+                "el reporte de margen no queda con un vacío sin decidir.",
+                "FINANZAS_SIN_COSTO_DESPACHO"), None
     try:
         _fin_costo_desp = _fin_costo_opcional(_fin.get("costo_despacho"))
     except (TypeError, ValueError):
@@ -87564,7 +87601,11 @@ def ot2_api_crear():
     # cambia de dónde salen las variables.
     _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
         d.get("finanzas"), tipo_ot, es_interna,
-        cliente_rut=(_cli.get("rut") if cliente_id and _cli else None))
+        cliente_rut=(_cli.get("rut") if cliente_id and _cli else None),
+        # 🔒 2026-09-21: costo_proveedor/costo_despacho obligatorios -- SOLO
+        # acá, ver el comentario en _ot_validar_normalizar_finanzas. El
+        # wizard de OT 2.0 (_modal_crear.html) ya pide los dos campos.
+        exigir_costo_prov_desp=True)
     if _fin_err:
         return _ot2_err(_fin_err["error"], _fin_err["error_codigo"])
     _fin_centro = _fin_campos["centro_costo"]
