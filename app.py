@@ -108445,7 +108445,41 @@ _MFP_ESTADOS_FACTURABLES = ("cerrada",)
 # sigue bloqueado es cancelada/anulada (no hubo trabajo que pagar).
 _MFP_ESTADOS_EXCLUIDOS = ("cancelada", "anulada")
 _MFP_SQL_ESTADO_OK = "v.estado NOT IN ('cancelada','anulada')"
+# 🧪 2026-09-21: OT cuyo proveedor es una ficha de PRUEBA (te.es_prueba=1)
+# quedan fuera de listas, KPIs, chips y Excel salvo que se pida ?pruebas=1.
+_MFP_SQL_SIN_PRUEBA = "COALESCE(te.es_prueba,0) = 0"
 _MFP_PER_PAGE = (10, 25, 50, 100)
+
+
+def _mfp_incluir_pruebas():
+    """True si esta petición pide ver también las fichas de prueba
+    (?pruebas=1). Cualquiera que vea el módulo puede pedirlo -- son datos
+    de prueba, no un secreto -- pero por defecto NO se muestran."""
+    try:
+        return (request.args.get("pruebas") or "") == "1"
+    except Exception:
+        return False
+
+
+def _mfp_fichas_prueba():
+    """Ids de mant_tecnicos_externos marcadas es_prueba=1 (cache por petición)."""
+    try:
+        cache = getattr(g, "_mfp_fichas_prueba", None)
+        if cache is not None:
+            return cache
+    except Exception:
+        cache = None
+    ids = set()
+    try:
+        for r in (mysql_fetchall("SELECT id FROM mant_tecnicos_externos WHERE es_prueba=1") or []):
+            ids.add(int(r["id"]))
+    except Exception as e:
+        print(f"[facprov] fichas prueba: {e}", flush=True)
+    try:
+        g._mfp_fichas_prueba = ids
+    except Exception:
+        pass
+    return ids
 
 
 def _mfp_sql_ficha_de_tecnico(v_alias="v"):
@@ -108504,6 +108538,10 @@ _MFP_SELECT_OT = (
     # mostrar Firmado/Enviado/Sin anexo y abrir el PDF desde la fila.
     "       anx.numero AS anexo_numero, anx.estado AS anexo_estado, anx.id AS anexo_id, "
     "       c.razon_social AS cliente, "
+    # 📋 2026-09-21 (calidad de información en la tabla): comuna de la OT (o
+    # del cliente) y ticket de origen, sin JOIN nuevo que multiplique filas.
+    "       COALESCE(NULLIF(v.direccion_comuna,''), c.comuna) AS comuna, "
+    "       (SELECT tk1.numero_ticket FROM tk_tickets tk1 WHERE tk1.visita_id = v.id ORDER BY tk1.id LIMIT 1) AS ticket_numero, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       te.razon_social AS prov_ficha, te.rut_empresa AS prov_rut, te.id AS prov_ficha_id, "
     "       fp.id AS fac_id, fp.numero_documento AS fac_numero, fp.estado_pago AS fac_estado, "
@@ -108622,6 +108660,10 @@ def _mfp_fila_ot(f):
         "sin_costo": f.get("costo_proveedor") is None and f.get("costo_despacho") is None,
         # 2026-09-21: la OT que aún no está cerrada se muestra (ámbar), no se esconde.
         "no_cerrada": (f.get("estado") or "") not in _MFP_ESTADOS_FACTURABLES,
+        "comuna": (f.get("comuna") or "").strip(),
+        "ticket_numero": f.get("ticket_numero") or "",
+        "fecha_programada": chile_fmt_filter(f.get("fecha_programada"), "%d/%m/%Y") if f.get("fecha_programada") else "",
+        "fecha_cierre": chile_fmt_filter(f.get("cerrada_at"), "%d/%m/%Y") if f.get("cerrada_at") else "",
         "fac_id": f.get("fac_id"), "fac_numero": f.get("fac_numero"),
         "fac_estado": f.get("fac_estado"),
         "fac_monto": float(f["fac_monto"]) if f.get("fac_monto") is not None else None,
@@ -108654,7 +108696,8 @@ def _mfp_items(fid):
     return out
 
 
-def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=None, hasta=None):
+def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=None, hasta=None,
+                      incluir_pruebas=None):
     """OT de proveedor externo, con costo declarado, en estado facturable,
     que todavía NO están en ninguna factura de proveedor. Es la lista que
     Daniel pidió mirar primero: "las OT que no tengan una factura".
@@ -108679,6 +108722,10 @@ def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=
         "fpi.id IS NULL",
     ]
     params = []
+    # 🧪 2026-09-21: fichas de prueba fuera, salvo que se pidan explícitamente
+    # (None = leer ?pruebas=1 de la petición actual).
+    if not (incluir_pruebas if incluir_pruebas is not None else _mfp_incluir_pruebas()):
+        where.append(_MFP_SQL_SIN_PRUEBA)
     if proveedor:
         # 🔍 FIX 2026-09-21 (Daniel, en vivo: buscó "OT-2026-00211" en este
         # mismo cuadro y no encontró nada -- el buscador NUNCA comparó
@@ -108885,6 +108932,7 @@ def _mfp_proveedores_chips(por_facturar_todas, mapa_facturas=None):
             "  LEFT JOIN mant_tecnico_externo_usuarios teu ON teu.tecnico_externo_id = te.id "
             "  LEFT JOIN app_users u ON u.id = teu.user_id "
             " WHERE COALESCE(te.estado,'activo') <> 'baja' "
+            + ("" if _mfp_incluir_pruebas() else "   AND COALESCE(te.es_prueba,0) = 0 ") +
             " GROUP BY te.id ORDER BY te.razon_social") or []
     except Exception as e:
         print(f"[facprov] chips proveedores: {e}", flush=True)
@@ -108957,10 +109005,12 @@ def _mfp_nombres_de_ficha(prov_id):
     return ([razon] if razon else []) + sorted(out)
 
 
-def _mfp_resumen():
+def _mfp_resumen(incluir_pruebas=False, ids_prueba_facturas=()):
     """Tres números para la cabecera: cuánto hay por facturar (OT sin
     factura), cuánto está facturado y sin pagar, y cuánto se pagó en el
-    mes en curso. Cada uno es una consulta chica e indexada."""
+    mes en curso. Cada uno es una consulta chica e indexada.
+    ids_prueba_facturas: ids de facturas que resuelven a una ficha de
+    prueba (del mapa de _mfp_ficha_de_facturas), que se excluyen."""
     out = {"por_facturar_n": 0, "por_facturar_monto": 0.0,
            "pendiente_n": 0, "pendiente_monto": 0.0,
            "pagado_mes_n": 0, "pagado_mes_monto": 0.0}
@@ -108971,13 +109021,21 @@ def _mfp_resumen():
             + _MFP_JOINS_OT +
             " WHERE " + _MFP_SQL_OT_EXTERNA +
             "   AND " + _MFP_SQL_ESTADO_OK +
+            ("" if incluir_pruebas else "   AND " + _MFP_SQL_SIN_PRUEBA) +
             # 🔴 2026-09-21: ya no se exige costo > 0 -- ver _mfp_por_facturar.
             "   AND fpi.id IS NULL") or {}
         out["por_facturar_n"] = int(r.get("n") or 0)
         out["por_facturar_monto"] = float(r.get("m") or 0)
+        # 🧪 Facturas de fichas de prueba fuera de "sin pagar" y "pagado este
+        # mes" (se resuelven por el mismo mapa que usan chips y lista).
+        _sql_sin_prueba_f, _p_sin_prueba = "", ()
+        if not incluir_pruebas and ids_prueba_facturas:
+            _sql_sin_prueba_f = " AND id NOT IN (" + ",".join(["%s"] * len(ids_prueba_facturas)) + ")"
+            _p_sin_prueba = tuple(ids_prueba_facturas)
         r = mysql_fetchone(
             "SELECT COUNT(*) AS n, COALESCE(SUM(monto_total),0) AS m "
-            "  FROM mant_facturas_proveedor WHERE estado_pago='pendiente'") or {}
+            "  FROM mant_facturas_proveedor WHERE estado_pago='pendiente'" + _sql_sin_prueba_f,
+            _p_sin_prueba) or {}
         out["pendiente_n"] = int(r.get("n") or 0)
         out["pendiente_monto"] = float(r.get("m") or 0)
         # pagada_at se guarda con NOW() (UTC, REGLA #6): los cortes del mes
@@ -108990,8 +109048,8 @@ def _mfp_resumen():
         r = mysql_fetchone(
             "SELECT COUNT(*) AS n, COALESCE(SUM(monto_total),0) AS m "
             "  FROM mant_facturas_proveedor "
-            " WHERE estado_pago='pagada' AND pagada_at >= %s AND pagada_at < %s",
-            (_d, _h)) or {}
+            " WHERE estado_pago='pagada' AND pagada_at >= %s AND pagada_at < %s" + _sql_sin_prueba_f,
+            (_d, _h) + _p_sin_prueba) or {}
         out["pagado_mes_n"] = int(r.get("n") or 0)
         out["pagado_mes_monto"] = float(r.get("m") or 0)
     except Exception as e:
@@ -109160,6 +109218,16 @@ def mant_facturas_proveedor():
     # Un solo mapa factura -> empresa para el filtro del chip, los contadores
     # de las tarjetas y el total de la sección (siempre cuadran entre sí).
     mapa_facturas = _mfp_ficha_de_facturas()
+    # 🧪 2026-09-21: facturas de fichas de prueba fuera de lista, chips y
+    # KPIs, salvo ?pruebas=1 (checkbox "Incluir pruebas" de los filtros).
+    f_pruebas = _mfp_incluir_pruebas()
+    _fichas_prueba = _mfp_fichas_prueba()
+    ids_prueba_facturas = [fid_ for fid_, m in mapa_facturas.items() if m["pid"] in _fichas_prueba]
+    if not f_pruebas:
+        mapa_facturas = {fid_: m for fid_, m in mapa_facturas.items() if m["pid"] not in _fichas_prueba}
+        if ids_prueba_facturas:
+            where.append("f.id NOT IN (" + ",".join(["%s"] * len(ids_prueba_facturas)) + ")")
+            params.extend(ids_prueba_facturas)
     if f_prov_id is not None:
         _ids_chip = [fid_ for fid_, m in mapa_facturas.items() if m["pid"] == f_prov_id]
         if _ids_chip:
@@ -109200,9 +109268,19 @@ def mant_facturas_proveedor():
             # MAX(): tf/tc son 1:1 con f, pero con ONLY_FULL_GROUP_BY MySQL no
             # infiere la dependencia a través del subquery del ON de tc.
             "       MAX(tf.razon_social) AS prov_canon_ficha, MAX(tf.rut_empresa) AS prov_canon_rut, "
-            "       MAX(tc.razon_social) AS prov_canon_items, MAX(tc.rut_empresa) AS prov_canon_items_rut "
+            "       MAX(tc.razon_social) AS prov_canon_items, MAX(tc.rut_empresa) AS prov_canon_items_rut, "
+            # 📋 2026-09-21 (Daniel: "calidad de información" en la tabla):
+            # qué OT y qué anexos contiene el lote, y cuántas OT aún no
+            # están cerradas -- sin abrir cada factura.
+            "       GROUP_CONCAT(DISTINCT vi.numero_ot ORDER BY vi.numero_ot SEPARATOR ',') AS ot_lista, "
+            "       COALESCE(SUM(vi.estado <> 'cerrada'), 0) AS n_no_cerradas, "
+            "       (SELECT GROUP_CONCAT(DISTINCT a4.numero ORDER BY a4.numero SEPARATOR ',') "
+            "          FROM mant_factura_proveedor_items i4 "
+            "          JOIN mant_anexos a4 ON a4.ot_id = i4.visita_id AND a4.estado = 'firmado' "
+            "         WHERE i4.factura_proveedor_id = f.id) AS anexos_lista "
             "  FROM mant_facturas_proveedor f "
             "  LEFT JOIN mant_factura_proveedor_items i ON i.factura_proveedor_id = f.id "
+            "  LEFT JOIN mant_visitas vi ON vi.id = i.visita_id "
             # Una ficha de BAJA guardada en la factura (la duplicada del 17-sep) no
             # gana: cae a la empresa vigente del técnico de sus OT (tc).
             "  LEFT JOIN mant_tecnicos_externos tf ON tf.id = f.tecnico_externo_id "
@@ -109226,6 +109304,21 @@ def mant_facturas_proveedor():
             # empresa resuelta (ej. "Milling" -> LOGISTICA Y TRANSPORTES MILLING SPA).
             _orig = (x.get("proveedor_nombre") or "").strip()
             x["prov_alias"] = _orig if (_canon and _orig.lower() != _canon.lower()) else ""
+            x["ot_lista"] = [o for o in (x.get("ot_lista") or "").split(",") if o]
+            x["anexos_lista"] = [a for a in (x.get("anexos_lista") or "").split(",") if a]
+            x["n_no_cerradas"] = int(x.get("n_no_cerradas") or 0)
+            # Etapa del lote para el tracking de la fila: 1 solicitud, 2 OC,
+            # 3 factura recibida, 4 pagada (anulada aparte).
+            if x.get("estado_pago") == "anulada":
+                x["etapa"] = 0
+            elif x.get("estado_pago") == "pagada":
+                x["etapa"] = 4
+            elif x.get("numero_documento"):
+                x["etapa"] = 3
+            elif x.get("numero_oc"):
+                x["etapa"] = 2
+            else:
+                x["etapa"] = 1
     except Exception as e:
         print(f"[facprov] listado: {e}", flush=True)
         total_paginas = 1
@@ -109344,7 +109437,8 @@ def mant_facturas_proveedor():
         total_paginas=total_paginas, per_page_opciones=_MFP_PER_PAGE,
         f_prov=f_prov, f_estado=f_estado, f_prov_id=f_prov_id, chip_activo=chip_activo,
         f_desde=f_desde, f_hasta=f_hasta,
-        resumen=_mfp_resumen(), por_facturar=por_facturar,
+        resumen=_mfp_resumen(incluir_pruebas=f_pruebas, ids_prueba_facturas=ids_prueba_facturas),
+        por_facturar=por_facturar, f_pruebas=f_pruebas, hay_pruebas=bool(_fichas_prueba),
         pf_total=pf_total, pf_page=pf_page, pf_per_page=pf_per_page,
         pf_total_paginas=pf_total_paginas, pf_orden=pf_orden, pf_dir=pf_dir,
         pf_monto_filtrado=pf_monto_filtrado, pf_sin_anexo=pf_sin_anexo,
@@ -127812,6 +127906,27 @@ def _ensure_mant_facturas_proveedor_tables():
             print("[ensure_facturas_proveedor] numero_oc agregada", flush=True)
     except Exception as e:
         print(f"[ensure_facturas_proveedor] nullable numero_documento/fecha/numero_oc: {e}", flush=True)
+
+    # 🧪 2026-09-21 (Daniel: "dejemos una lista de mis OT de Daniel Prueba"
+    # -> excluirlas de KPIs y totales). Una ficha de proveedor marcada
+    # es_prueba=1 sigue existiendo y se ve con "Incluir pruebas", pero no
+    # ensucia montos, chips ni Excel de Facturas de proveedor. Se marca la
+    # ficha con el RUT de Daniel (25.547.065-5), que es la que usa para probar.
+    try:
+        cols_te = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_tecnicos_externos'") or [])}
+        if cols_te and "es_prueba" not in cols_te:
+            mysql_execute(
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN es_prueba TINYINT(1) NOT NULL DEFAULT 0 "
+                "COMMENT 'Ficha de PRUEBA: fuera de KPIs y totales de Facturas de proveedor'")
+            mysql_execute(
+                "UPDATE mant_tecnicos_externos SET es_prueba=1 "
+                " WHERE REPLACE(REPLACE(REPLACE(COALESCE(rut_empresa,''),'.',''),'-',''),' ','') = '255470655' "
+                "    OR LOWER(razon_social) LIKE '%prueba%'")
+            print("[ensure_facturas_proveedor] es_prueba agregada y marcada", flush=True)
+    except Exception as e:
+        print(f"[ensure_facturas_proveedor] es_prueba: {e}", flush=True)
 
 
 def _ensure_mant_intel_tables():

@@ -163,7 +163,16 @@
   </select>
   <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
     <i class="bi bi-funnel me-1"></i>Buscar</button>
-  {% if f_prov or f_estado or f_prov_id is not none or f_desde or f_hasta %}
+  {% if hay_pruebas %}
+  {# 🧪 2026-09-21 (Daniel: "dejemos una lista de mis OT de Daniel Prueba"):
+     las fichas marcadas como prueba quedan fuera de todo por defecto; este
+     toggle las trae de vuelta (lista, chips, KPIs y Excel) sin borrarlas. #}
+  <label class="fpv-pruebas" title="Mostrar también las OT y facturas de proveedores marcados como PRUEBA (fuera de los totales por defecto)">
+    <input type="checkbox" name="pruebas" value="1" {{ 'checked' if f_pruebas }} onchange="this.form.submit()">
+    <i class="bi bi-flask"></i> Incluir pruebas
+  </label>
+  {% endif %}
+  {% if f_prov or f_estado or f_prov_id is not none or f_desde or f_hasta or f_pruebas %}
   <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px;display:inline-flex;align-items:center"
      href="/servicio-tecnico/facturas-proveedor"><i class="bi bi-x-lg me-1"></i>Limpiar</a>
   {% endif %}
@@ -205,7 +214,7 @@
 {% set _tot_fac = provs_chips | sum(attribute='n_fac') %}
 {% set _tot_fac_pend = provs_chips | sum(attribute='n_fac_pend') %}
 {# Lo que no es el chip viaja junto: estado, buscador y fechas. #}
-{% set _qs = '&estado=' ~ f_estado ~ ('&proveedor=' ~ (f_prov | urlencode) if f_prov else '') ~ ('&desde=' ~ f_desde if f_desde else '') ~ ('&hasta=' ~ f_hasta if f_hasta else '') %}
+{% set _qs = '&estado=' ~ f_estado ~ ('&proveedor=' ~ (f_prov | urlencode) if f_prov else '') ~ ('&desde=' ~ f_desde if f_desde else '') ~ ('&hasta=' ~ f_hasta if f_hasta else '') ~ ('&pruebas=1' if f_pruebas else '') %}
 <div class="fp-provs">
   <a class="fp-prov {{ 'on' if f_prov_id is none }}" href="?{{ _qs[1:] }}">
     <span class="fp-prov-ini"><i class="bi bi-grid-3x3-gap-fill"></i></span>
@@ -279,7 +288,7 @@
     <i class="bi bi-check2-square me-1"></i><span id="fpvSelAllLbl">Marcar las {{ por_facturar | length }} de esta página</span></button>
   {% if pf_total > (por_facturar | length) %}
   <span class="fpv-selhint">Viendo {{ por_facturar | length }} de {{ pf_total }} —
-    <a href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page, pf_per_page=100, pf_page=1, pf_orden=pf_orden, pf_dir=pf_dir) }}">ver hasta 100 por página</a></span>
+    <a href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page, pf_per_page=100, pf_page=1, pf_orden=pf_orden, pf_dir=pf_dir) }}">ver hasta 100 por página</a></span>
   {% endif %}
 </div>
 {% endif %}
@@ -311,13 +320,18 @@
             data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}" data-nocerrada="{{ 1 if d.no_cerrada else 0 }}"
             data-cobrado="{{ d.cobrado_cliente }}" data-garantia="{{ 1 if d.es_garantia else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
         {% endif %}
+        {# 📋 2026-09-21 (Daniel: "calidad de información"): N° OT + ticket de
+           origen + fechas reales (programada → cierre), sin abrir la OT. #}
         <td data-label="OT"><a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.id) }}">{{ d.numero_ot }}</a>
-          <div class="fp-sub">{{ d.fecha }}</div></td>
+          {% if d.ticket_numero %}<div class="fp-sub"><i class="bi bi-ticket-perforated"></i> {{ d.ticket_numero }}</div>{% endif %}
+          <div class="fp-sub" title="Fecha programada{% if d.fecha_cierre %} → fecha de cierre{% endif %}">
+            <i class="bi bi-calendar3"></i> {{ d.fecha_programada or d.fecha }}{% if d.fecha_cierre and d.fecha_cierre != d.fecha_programada %} → {{ d.fecha_cierre }}{% endif %}</div></td>
         {# 🏢 2026-09-20: la EMPRESA como proveedor; el técnico que ejecutó, debajo. #}
         <td data-label="Proveedor"><div class="fp-nom">{{ d.proveedor }}</div>
           {% if d.proveedor_rut %}<div class="fp-sub">{{ d.proveedor_rut | rut_fmt }}</div>{% endif %}
           {% if d.tecnico_nombre and d.tecnico_nombre | lower != d.proveedor | lower %}<div class="fp-sub"><i class="bi bi-person"></i> {{ d.tecnico_nombre }}</div>{% endif %}</td>
-        <td data-label="Cliente">{{ d.cliente }}</td>
+        <td data-label="Cliente"><div class="fp-nom-cli">{{ d.cliente or '—' }}</div>
+          {% if d.comuna %}<div class="fp-sub"><i class="bi bi-geo-alt"></i> {{ d.comuna }}</div>{% endif %}</td>
         <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span>
           {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
         <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span>
@@ -407,6 +421,7 @@
       {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
       {% if f_desde %}<input type="hidden" name="desde" value="{{ f_desde }}">{% endif %}
       {% if f_hasta %}<input type="hidden" name="hasta" value="{{ f_hasta }}">{% endif %}
+      {% if f_pruebas %}<input type="hidden" name="pruebas" value="1">{% endif %}
       <input type="hidden" name="per_page" value="{{ per_page }}">
       <input type="hidden" name="page" value="{{ page }}">
       <input type="hidden" name="pf_orden" value="{{ pf_orden }}">
@@ -418,11 +433,11 @@
       </label>
     </form>
     <a class="fp-pag-btn {{ 'dis' if pf_page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page > 1 else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page-1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page > 1 else '#' }}">
       <i class="bi bi-chevron-left"></i>Anterior</a>
     <span class="fp-pag-num">Página {{ pf_page }} de {{ pf_total_paginas }}</span>
     <a class="fp-pag-btn {{ 'dis' if pf_page >= pf_total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page < pf_total_paginas else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=pf_page+1, pf_orden=pf_orden, pf_dir=pf_dir) if pf_page < pf_total_paginas else '#' }}">
       Siguiente<i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
@@ -448,15 +463,24 @@
 <div class="table-responsive">
   <table class="fp-tabla fpv-clic">
     <thead>
+      {# 📋 2026-09-21 (Daniel: "mejorar la vista de las tablas con calidad
+         de información"): cada lote dice de un vistazo en qué etapa va
+         (Solicitud → OC → Factura → Pago), qué OT y anexos contiene, y si
+         los montos cuadran. Las columnas viejas (Asignado en OT, Diferencia)
+         se conservan, plegadas dentro de "Monto" (REGLA #4.2). #}
       <tr>
-        <th>Proveedor</th><th>Documento</th><th>Fecha</th><th class="n">OT</th>
-        <th class="m">Monto factura</th><th class="m">Asignado en OT</th><th class="m">Diferencia</th>
-        <th>Estado</th>
+        <th>Lote</th><th>Proveedor</th><th>Tracking</th><th>OC · Factura</th><th>OT y anexos</th>
+        <th class="m">Monto</th><th>Estado</th>
       </tr>
     </thead>
     <tbody>
       {% for f in facturas %}
-      <tr onclick="window.location='/servicio-tecnico/facturas-proveedor/{{ f.id }}'">
+      {% set _etapas = [('Solicitud', 'file-earmark-plus', 1), ('OC', 'file-earmark-text', 2), ('Factura', 'receipt', 3), ('Pagada', 'cash-coin', 4)] %}
+      <tr onclick="window.location='/servicio-tecnico/facturas-proveedor/{{ f.id }}'" class="{{ 'fp-row-anulada' if f.estado_pago == 'anulada' }}">
+        <td data-label="Lote"><a class="fp-ot" href="/servicio-tecnico/facturas-proveedor/{{ f.id }}" onclick="event.stopPropagation()">#{{ f.id }}</a>
+          <div class="fp-sub" title="Creado el {{ f.created_at | chile_fmt if f.created_at else '' }}{% if f.created_by %} por {{ f.created_by }}{% endif %}">
+            <i class="bi bi-clock-history"></i> {{ f.created_at | chile_fmt('%d/%m/%Y') if f.created_at else '—' }}</div>
+          {% if f.created_by %}<div class="fp-sub"><i class="bi bi-person"></i> {{ f.created_by }}</div>{% endif %}</td>
         {# 🏢 2026-09-20: la EMPRESA resuelta (ficha guardada o la del técnico
            de sus OT); si se escribió a mano con otro nombre ("Milling",
            "Daniel Pulgar"), ese queda como alias debajo -- ya no parecen
@@ -464,23 +488,55 @@
         <td data-label="Proveedor"><div class="fp-nom">{{ f.prov_canon or f.proveedor_nombre }}</div>
           {% if f.prov_canon_rut %}<div class="fp-sub">{{ f.prov_canon_rut | rut_fmt }}</div>{% endif %}
           {% if f.prov_alias %}<div class="fp-sub" title="Nombre con el que se registró esta factura">registrada como “{{ f.prov_alias }}”</div>{% endif %}</td>
-        <td data-label="Documento">
-          {% if f.numero_documento %}
-          <span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>
+        <td data-label="Tracking">
+          {% if f.estado_pago == 'anulada' %}
+          <span class="fp-trk-anulada"><i class="bi bi-slash-circle"></i> Lote anulado</span>
           {% else %}
-          <span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin factura — pendiente</span>
+          <div class="fp-trk" title="Solicitud de OC → N° de OC → factura del proveedor → pago">
+            {% for _lbl, _ico, _n in _etapas %}
+            <div class="fp-trk-s {{ 'done' if f.etapa > _n else ('now' if f.etapa == _n else '') }}">
+              <span class="fp-trk-c">{% if f.etapa > _n %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-{{ _ico }}"></i>{% endif %}</span>
+              <small>{{ _lbl }}</small>
+            </div>
+            {% if not loop.last %}<span class="fp-trk-l {{ 'done' if f.etapa > _n }}"></span>{% endif %}
+            {% endfor %}
+          </div>
+          <div class="fp-sub">
+            {% if f.etapa == 4 %}Pagada{% if f.pagada_at %} el {{ f.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}{% if f.pagada_por %} · {{ f.pagada_por }}{% endif %}
+            {% elif f.etapa == 3 %}Factura recibida — falta el pago
+            {% elif f.etapa == 2 %}OC emitida — esperando la factura del proveedor
+            {% else %}Solicitud de OC — falta el N° de OC{% endif %}
+          </div>
           {% endif %}
-          {% if f.numero_oc %}<div class="fp-sub"><i class="bi bi-file-earmark-text"></i> OC {{ f.numero_oc }}</div>{% endif %}
-          {% if f.archivo_url %}<div class="fp-sub"><i class="bi bi-paperclip"></i> con respaldo</div>{% endif %}</td>
-        <td data-label="Fecha">{{ f.fecha | chile_fmt('%d/%m/%Y') if f.fecha else '—' }}</td>
-        <td class="n" data-label="OT asignadas"><span class="fp-chip {{ 'ok' if f.n_ot else '' }}">{{ f.n_ot or 0 }}</span></td>
-        <td class="m tot" data-label="Monto factura">{{ clp(f.monto_total) }}</td>
-        <td class="m" data-label="Asignado en OT">{{ clp(f.total_asignado) }}</td>
-        <td class="m" data-label="Diferencia">
-          {% if f.n_ot and f.diferencia|round(0) == 0 %}<span class="fp-margen pos">Cuadra</span>
-          {% elif not f.n_ot %}<span class="muted">—</span>
-          {% else %}<span class="fp-margen {{ 'neg' if f.diferencia < 0 else 'warn' }}">{{ '+' if f.diferencia > 0 else '' }}{{ clp(f.diferencia) }}</span>{% endif %}
         </td>
+        <td data-label="OC · Factura">
+          <div class="fp-sub" style="margin-top:0">{% if f.numero_oc %}<span class="fp-doc fp-doc-oc"><i class="bi bi-file-earmark-text"></i> OC {{ f.numero_oc }}</span>{% else %}<span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin N° de OC</span>{% endif %}</div>
+          <div class="fp-sub">
+            {% if f.numero_documento %}
+            <span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>
+            {% if f.fecha %}<span class="fp-sub" style="display:inline"> · {{ f.fecha | chile_fmt('%d/%m/%Y') }}</span>{% endif %}
+            {% else %}
+            <span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin factura aún</span>
+            {% endif %}
+          </div>
+          {% if f.archivo_url %}<div class="fp-sub"><i class="bi bi-paperclip"></i> con respaldo adjunto</div>{% endif %}</td>
+        <td data-label="OT y anexos">
+          {% if f.ot_lista %}
+          <div class="fp-otlist">
+            {% for o in f.ot_lista[:8] %}<span class="fp-otpill">{{ o | replace('OT-2026-','') }}</span>{% endfor %}
+            {% if f.ot_lista | length > 8 %}<span class="fp-otpill more" title="{{ f.ot_lista | join(', ') }}">+{{ f.ot_lista | length - 8 }}</span>{% endif %}
+          </div>
+          <div class="fp-sub">{{ f.n_ot }} OT{% if f.n_no_cerradas %} · <b style="color:#b45309">{{ f.n_no_cerradas }} no cerrada{{ '' if f.n_no_cerradas == 1 else 's' }}</b>{% endif %}
+            {% if f.anexos_lista %} · <i class="bi bi-patch-check-fill" style="color:#16a34a"></i> anexo{{ '' if f.anexos_lista | length == 1 else 's' }} N° {{ f.anexos_lista | join(', ') }}{% else %} · <span style="color:#b45309">sin anexo firmado</span>{% endif %}</div>
+          {% else %}
+          <span class="fp-sindoc"><i class="bi bi-exclamation-triangle-fill"></i> Sin OT asignadas</span>
+          {% endif %}</td>
+        <td class="m tot" data-label="Monto">{{ clp(f.monto_total) }}
+          <div class="fp-sub" style="font-weight:600">
+            {% if f.n_ot and f.diferencia|round(0) == 0 %}<span class="fp-margen pos">Cuadra con las OT</span>
+            {% elif not f.n_ot %}—
+            {% else %}en OT {{ clp(f.total_asignado) }} · <span class="fp-margen {{ 'neg' if f.diferencia < 0 else 'warn' }}">{{ '+' if f.diferencia > 0 else '' }}{{ clp(f.diferencia) }}</span>{% endif %}
+          </div></td>
         <td data-label="Estado"><span class="fp-pago pago-{{ f.estado_pago }}">
           {% if f.estado_pago == 'pagada' %}<i class="bi bi-check-circle-fill"></i> Pagada
           {% elif f.estado_pago == 'anulada' %}<i class="bi bi-slash-circle"></i> Anulada
@@ -505,6 +561,7 @@
       {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
       {% if f_desde %}<input type="hidden" name="desde" value="{{ f_desde }}">{% endif %}
       {% if f_hasta %}<input type="hidden" name="hasta" value="{{ f_hasta }}">{% endif %}
+      {% if f_pruebas %}<input type="hidden" name="pruebas" value="1">{% endif %}
       <input type="hidden" name="pf_per_page" value="{{ pf_per_page }}">
       <input type="hidden" name="pf_page" value="{{ pf_page }}">
       <label>Por página
@@ -514,11 +571,11 @@
       </label>
     </form>
     <a class="fp-pag-btn {{ 'dis' if page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
       <i class="bi bi-chevron-left"></i>Anterior</a>
     <span class="fp-pag-num">Página {{ page }} de {{ total_paginas }}</span>
     <a class="fp-pag-btn {{ 'dis' if page >= total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
+       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
       Siguiente<i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
@@ -618,6 +675,7 @@ const FPV_PROV_ID = {{ f_prov_id | tojson }};
 const FPV_F_PROV = {{ f_prov | tojson }};
 const FPV_DESDE = {{ f_desde | tojson }};
 const FPV_HASTA = {{ f_hasta | tojson }};
+const FPV_PRUEBAS = {{ 'true' if f_pruebas else 'false' }};
 const FPV_CLP = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CL');
 const fpvEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -639,6 +697,7 @@ function fpvExcelCorte(version, soloSeleccion){
     if (FPV_F_PROV) p.set('proveedor', FPV_F_PROV);
     if (FPV_DESDE) p.set('desde', FPV_DESDE);
     if (FPV_HASTA) p.set('hasta', FPV_HASTA);
+    if (FPV_PRUEBAS) p.set('pruebas', '1');
     ilusToast(version === 'proveedor' ? 'Generando el corte para el proveedor…' : 'Generando el corte completo…', {type:'info'});
   }
   window.location = '/servicio-tecnico/facturas-proveedor/por-facturar.xlsx?' + p.toString();
@@ -1072,6 +1131,32 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fp-doc{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.76rem;font-weight:700;
   background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;padding:2px 6px;white-space:nowrap}
 .fp-doc-falta{font-family:inherit;color:#b45309;background:#fff8e1;border-color:#fde68a}
+.fp-doc-oc{color:#1e40af;background:#dbeafe;border-color:#bfdbfe}
+/* 📋 2026-09-21 calidad de información: tracking del lote, pastillas de OT,
+   cliente completo (nunca truncado, REGLA #15), toggle de pruebas. */
+.fp-nom-cli{font-weight:700;color:#0f172a;line-height:1.25;min-width:160px}
+.fp-trk{display:inline-flex;align-items:center;gap:2px}
+.fp-trk-s{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:44px}
+.fp-trk-s small{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;white-space:nowrap}
+.fp-trk-c{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+  font-size:.78rem;background:#f1f5f9;color:#94a3b8;border:2px solid #e2e8f0}
+.fp-trk-s.done .fp-trk-c{background:#16a34a;border-color:#16a34a;color:#fff}
+.fp-trk-s.done small{color:#166534}
+.fp-trk-s.now .fp-trk-c{background:#fff;border-color:#dc2626;color:#dc2626;animation:fpTrkPulse 1.6s ease-out infinite}
+.fp-trk-s.now small{color:#dc2626}
+.fp-trk-l{width:16px;height:2px;background:#e2e8f0;margin-bottom:14px;flex:none}
+.fp-trk-l.done{background:#16a34a}
+@keyframes fpTrkPulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}100%{box-shadow:0 0 0 8px rgba(220,38,38,0)}}
+@media (prefers-reduced-motion:reduce){.fp-trk-s.now .fp-trk-c{animation:none}}
+.fp-trk-anulada{font-size:.74rem;font-weight:800;color:#b91c1c}
+.fp-row-anulada td{opacity:.6}
+.fp-otlist{display:flex;flex-wrap:wrap;gap:3px;max-width:260px}
+.fp-otpill{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.68rem;font-weight:700;color:#0f172a;
+  background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:1px 5px}
+.fp-otpill.more{background:#0a0a0a;color:#fff;border-color:#0a0a0a;cursor:help}
+.fpv-pruebas{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border:1px dashed #cbd5e1;
+  border-radius:8px;font-size:.78rem;font-weight:700;color:#475569;cursor:pointer;user-select:none}
+.fpv-pruebas input{width:16px;height:16px;accent-color:#dc2626}
 .fp-chip{display:inline-block;min-width:26px;font-size:.72rem;font-weight:900;border-radius:999px;padding:2px 8px;background:#f1f5f9;color:#64748b}
 .fp-chip.ok{background:#dcfce7;color:#166534}
 .fp-margen{font-weight:900}.fp-margen.pos{color:#15803d}.fp-margen.neg{color:#b91c1c}.fp-margen.warn{color:#b45309}
