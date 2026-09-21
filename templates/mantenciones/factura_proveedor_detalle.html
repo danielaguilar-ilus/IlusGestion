@@ -188,7 +188,8 @@
             {{ '+' if it.margen_fila > 0 else '' }}{{ clp(it.margen_fila) }}</span>
           {% if it.margen_fila_pct is not none %}<div class="fp-pct {{ 'neg' if it.margen_fila_pct < 0 }}">{{ '%.1f' | format(it.margen_fila_pct) }}%</div>{% endif %}
           {% endif %}</td>
-        <td class="fpd-obs" data-label="Observación">{{ it.observacion or '—' }}
+        <td class="fpd-obs" data-label="Observación" {% if it.observacion %}title="{{ it.observacion }}"{% endif %}>
+          <div class="fpd-obs-txt">{{ it.observacion or '—' }}</div>
           <div class="fp-sub">{{ it.usuario }}{% if it.asignada %} · {{ it.asignada }}{% endif %}</div></td>
         {% if pendiente %}
         <td><button type="button" class="btn btn-sm btn-outline-danger" style="min-height:44px;min-width:44px"
@@ -615,7 +616,19 @@ async function fpdGuardarEdicion(){
 .fp-pago.pago-anulada{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0}
 .fp-vacio{display:flex;gap:12px;align-items:flex-start;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:18px;color:#0f172a;font-size:.9rem}
 .fp-vacio > i{font-size:1.5rem;color:#94a3b8}
-.fpd-obs{font-size:.78rem;color:#475569;max-width:240px}
+{# 🎨 2026-09-21 (Daniel, viendo la factura en vivo: "esta lista se ve pésimo,
+   la puedes mejorar"). La observación es una nota de auditoría generada
+   automáticamente (quién/cuándo/por qué) -- sin tope de ancho, un texto
+   largo la hacía envolver en 3-4 líneas y esa sola celda estiraba TODA la
+   fila muy por encima del resto de columnas (que son de una sola línea),
+   rompiendo el ritmo parejo de la tabla. Se trunca con "…" y el texto
+   completo queda en el `title` (tooltip nativo al pasar el mouse) -- no se
+   pierde información, solo deja de dominar visualmente una fila que ya
+   tiene 12 columnas. En mobile (la tabla pasa a tarjetas apiladas) se
+   revierte a texto libre: ahí no hay una columna angosta que proteger. #}
+.fpd-obs{max-width:190px}
+.fpd-obs-txt{font-size:.78rem;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fpd-obs .fp-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fpd-buscar{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px}
 .fpd-check{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;color:#475569;margin:0;min-height:44px}
 .fpd-check input{width:18px;height:18px}
@@ -655,6 +668,8 @@ async function fpdGuardarEdicion(){
   .fp-tabla tbody td[data-label]::before{content:attr(data-label);display:block;font-size:.62rem;font-weight:900;
     text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
   .fpd-monto{width:100%}
+  .fpd-obs{max-width:none}
+  .fpd-obs-txt,.fpd-obs .fp-sub{white-space:normal;overflow:visible;text-overflow:clip}
 }
 .fp-anx{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:800;border-radius:999px;padding:3px 9px;
   white-space:nowrap;text-decoration:none;border:1px solid transparent}
