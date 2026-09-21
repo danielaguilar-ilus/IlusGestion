@@ -79276,15 +79276,12 @@ def ot2_panel():
                                  " AND (COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) = 0")
         elif f_pago == "por_facturar":
             # Mismo criterio que la lista "OT por facturar" de Facturas de
-            # proveedor: externa + costo declarado + estado facturable +
-            # sin factura. Si no, el panel mostraría OT que la API rechaza.
-            _ph_est = ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES))
+            # proveedor (2026-09-21): externa + no cancelada/anulada + sin
+            # factura. Ya no exige costo ni cierre -- eso se avisa, no esconde.
             extra_where_q.append(_MFP_SQL_OT_EXTERNA +
-                                 " AND (COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0"
-                                 f" AND v.estado IN ({_ph_est})"
+                                 " AND " + _MFP_SQL_ESTADO_OK +
                                  " AND NOT EXISTS (SELECT 1 FROM mant_factura_proveedor_items fpx "
                                  "                 WHERE fpx.visita_id = v.id)")
-            extra_params_q.extend(_MFP_ESTADOS_FACTURABLES)
         elif f_pago == "facturada":
             extra_where_q.append(_fpi_en)
             extra_params_q.append("pendiente")
@@ -108439,6 +108436,15 @@ _MFP_SQL_OT_EXTERNA = (
 # candado sería pagar un monto que todavía no se verificó contra lo
 # firmado. Solo 'cerrada' ya pasó por esa verificación.
 _MFP_ESTADOS_FACTURABLES = ("cerrada",)
+# 🔴 2026-09-21 (Daniel, con OT-211/213 reales "Programada" en el sistema
+# pero ya ejecutadas y adeudadas a Pulgar: "de qué sirve el módulo si me
+# deja todo restringido... no llama ni trae"). El módulo ahora TRAE toda OT
+# externa que no esté cancelada/anulada, con su estado a la vista: la que
+# no está cerrada se marca en ámbar y al pagarla/solicitar OC se AVISA y
+# queda anotado en la factura, pero no se esconde ni se bloquea. Lo que
+# sigue bloqueado es cancelada/anulada (no hubo trabajo que pagar).
+_MFP_ESTADOS_EXCLUIDOS = ("cancelada", "anulada")
+_MFP_SQL_ESTADO_OK = "v.estado NOT IN ('cancelada','anulada')"
 _MFP_PER_PAGE = (10, 25, 50, 100)
 
 
@@ -108614,6 +108620,8 @@ def _mfp_fila_ot(f):
         # proveedor que no cobró), que sí es un dato -- mismo criterio NULL
         # vs 0 que ya usa el resto de finanzas de la OT.
         "sin_costo": f.get("costo_proveedor") is None and f.get("costo_despacho") is None,
+        # 2026-09-21: la OT que aún no está cerrada se muestra (ámbar), no se esconde.
+        "no_cerrada": (f.get("estado") or "") not in _MFP_ESTADOS_FACTURABLES,
         "fac_id": f.get("fac_id"), "fac_numero": f.get("fac_numero"),
         "fac_estado": f.get("fac_estado"),
         "fac_monto": float(f["fac_monto"]) if f.get("fac_monto") is not None else None,
@@ -108667,10 +108675,10 @@ def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=
     # (_mfp_validar_lote_ot_grupos), en vez de esconderla.
     where = [
         _MFP_SQL_OT_EXTERNA,
-        "v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ")",
+        _MFP_SQL_ESTADO_OK,
         "fpi.id IS NULL",
     ]
-    params = list(_MFP_ESTADOS_FACTURABLES)
+    params = []
     if proveedor:
         # 🔍 FIX 2026-09-21 (Daniel, en vivo: buscó "OT-2026-00211" en este
         # mismo cuadro y no encontró nada -- el buscador NUNCA comparó
@@ -108962,10 +108970,9 @@ def _mfp_resumen():
             "       COALESCE(SUM(COALESCE(v.costo_proveedor,0)+COALESCE(v.costo_despacho,0)),0) AS m "
             + _MFP_JOINS_OT +
             " WHERE " + _MFP_SQL_OT_EXTERNA +
-            "   AND v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ") "
+            "   AND " + _MFP_SQL_ESTADO_OK +
             # 🔴 2026-09-21: ya no se exige costo > 0 -- ver _mfp_por_facturar.
-            "   AND fpi.id IS NULL",
-            tuple(_MFP_ESTADOS_FACTURABLES)) or {}
+            "   AND fpi.id IS NULL") or {}
         out["por_facturar_n"] = int(r.get("n") or 0)
         out["por_facturar_monto"] = float(r.get("m") or 0)
         r = mysql_fetchone(
@@ -109499,12 +109506,13 @@ def mant_factura_proveedor_ot_disponibles(fid):
     hasta = (request.args.get("hasta") or "").strip()[:10]
     todas = (request.args.get("todas") or "") == "1"
 
+    # 2026-09-21: mismo criterio que "OT por facturar" -- trae sin costo y
+    # no cerradas también (con su estado a la vista), no las esconde.
     where = [
         _MFP_SQL_OT_EXTERNA,
-        "v.estado IN (" + ",".join(["%s"] * len(_MFP_ESTADOS_FACTURABLES)) + ")",
-        "(COALESCE(v.costo_proveedor,0) + COALESCE(v.costo_despacho,0)) > 0",
+        _MFP_SQL_ESTADO_OK,
     ]
-    params = list(_MFP_ESTADOS_FACTURABLES)
+    params = []
     if not todas:
         prov = (f.get("proveedor_nombre") or "").strip()
         conds, like = [], f"%{prov}%"
@@ -109593,15 +109601,15 @@ def mant_factura_proveedor_asignar(fid):
                       f"primero de esa factura."),
             "factura_id": ot["fac_id"],
         }), 409
-    if ot["estado"] not in _MFP_ESTADOS_FACTURABLES:
+    if ot["estado"] in _MFP_ESTADOS_EXCLUIDOS:
         return jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
-                        "error": (f"La {ot['numero_ot']} está '{ot['estado']}': al proveedor se le "
-                                  "paga solo cuando la OT está cerrada (ya pasó por la aprobación "
-                                  "final y su Anexo quedó verificado).")}), 400
+                        "error": (f"La {ot['numero_ot']} está '{ot['estado']}': no hubo trabajo "
+                                  "que pagarle al proveedor.")}), 400
+    if ot["estado"] not in _MFP_ESTADOS_FACTURABLES:
+        observacion = (observacion + " " if observacion else "") + f"⚠ OT no cerrada al asignarla ({ot['estado']})."
     if monto <= 0:
         monto = ot["sugerido"]
-    if monto <= 0:
-        return jsonify({"ok": False, "error": "Indica el monto que esta factura cobra por la OT."}), 400
+    # 2026-09-21: $0 es válido (garantía / sin cobro) -- ya no se rechaza.
     try:
         mysql_execute(
             "INSERT INTO mant_factura_proveedor_items "
@@ -109828,11 +109836,14 @@ def _mfp_validar_lote_ot_grupos(visita_ids_in, asumir_cero=False):
         return None, (jsonify({"ok": False, "error_codigo": "OT_YA_FACTURADA",
                         "error": f"{len(ya_facturadas)} OT ya están en otra factura: "
                                  f"{', '.join(ya_facturadas[:10])}. Quítalas de ahí primero."}), 409)
-    no_facturables = [f["numero_ot"] for f in filas.values() if f["estado"] not in _MFP_ESTADOS_FACTURABLES]
+    # 2026-09-21: solo cancelada/anulada bloquea. Una OT no cerrada se AVISA
+    # (grupo["no_cerradas"], igual que sin_anexo) y queda anotada en la
+    # factura -- Daniel: "no llama ni trae... me hizo pasar puras rabias".
+    no_facturables = [f["numero_ot"] for f in filas.values() if f["estado"] in _MFP_ESTADOS_EXCLUIDOS]
     if no_facturables:
         return None, (jsonify({"ok": False, "error_codigo": "OT_NO_FACTURABLE",
-                        "error": f"{len(no_facturables)} OT no están listas para pagarle al proveedor "
-                                 f"(falta firma del cliente o cierre): {', '.join(no_facturables[:10])}"}), 400)
+                        "error": f"{len(no_facturables)} OT están canceladas/anuladas, no hay trabajo "
+                                 f"que pagar: {', '.join(no_facturables[:10])}"}), 400)
 
     # Nadie puede pedir una OC "a nadie": una OT cuyo técnico no tiene ficha
     # ni nombre de proveedor declarado se arregla en Proveedores nacionales
@@ -109860,7 +109871,7 @@ def _mfp_validar_lote_ot_grupos(visita_ids_in, asumir_cero=False):
             "filas": {}, "proveedor_nombre": f["proveedor"],
             "proveedor_rut": f["proveedor_rut"] or None,
             "prov_ficha_id": f.get("prov_ficha_id"), "monto_total": 0.0, "sin_anexo": [],
-            "asumidas_cero": [],
+            "asumidas_cero": [], "no_cerradas": [],
         })
         if not g_["prov_ficha_id"] and f.get("prov_ficha_id"):
             g_["prov_ficha_id"] = f["prov_ficha_id"]
@@ -109869,6 +109880,8 @@ def _mfp_validar_lote_ot_grupos(visita_ids_in, asumir_cero=False):
         g_["monto_total"] += float(f["sugerido"] or 0)
         if not f.get("anexo_firmado"):
             g_["sin_anexo"].append(f["numero_ot"])
+        if f["estado"] not in _MFP_ESTADOS_FACTURABLES:
+            g_["no_cerradas"].append(f["numero_ot"])
         if f.get("sin_costo"):
             g_["asumidas_cero"].append(vid)
     # 🔴 FIX 2026-09-21 (Daniel: "las garantías pueden pasar con 0... si es
@@ -109897,7 +109910,7 @@ def _mfp_asumir_cero_en_ot(cur, visita_ids, user):
     cur.execute(
         "UPDATE mant_visitas SET costo_proveedor=COALESCE(costo_proveedor,0), "
         "costo_despacho=COALESCE(costo_despacho,0), "
-        "notas=CONCAT(COALESCE(notas,''), %s) WHERE id IN (" + ph + ")",
+        "observaciones=CONCAT(COALESCE(observaciones,''), %s) WHERE id IN (" + ph + ")",
         (f"\n[Facturas de proveedor] Costo asumido $0 al cerrar el lote (por {user}).",
          *visita_ids))
 
@@ -109948,6 +109961,7 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
     if err:
         return err
     asumidas_cero = [vid for vid, f in filas.items() if f.get("sin_costo")]
+    no_cerradas = [f["numero_ot"] for f in filas.values() if f["estado"] not in _MFP_ESTADOS_FACTURABLES]
 
     user = current_username() or "sistema"
     try:
@@ -109962,7 +109976,9 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
                 (proveedor_nombre, proveedor_rut, prov_ficha_id, monto_total, user,
                  f"Pago reconocido sin factura del proveedor (aún no llega el documento) -- "
                  f"{len(filas)} OT, marcado por {user}. Completar con /completar cuando "
-                 f"llegue la factura real.",
+                 f"llegue la factura real."
+                 + (f" ⚠ {len(no_cerradas)} OT no cerradas al pagar: {', '.join(no_cerradas[:10])}."
+                    if no_cerradas else ""),
                  user))
             fid = cur.lastrowid
             for vid, f in filas.items():
@@ -110037,7 +110053,9 @@ def mant_facturas_proveedor_cerrar_historico():
                     "VALUES (%s,%s,%s,'factura',NULL,NULL,%s,'pagada',NOW(),%s,%s,%s)",
                     (g_["proveedor_nombre"], g_["proveedor_rut"], g_["prov_ficha_id"], g_["monto_total"], user,
                      f"Cierre de histórico (todo lo anterior se reconoce pagado) -- {len(filas)} OT, "
-                     f"{len(g_['asumidas_cero'])} con costo asumido $0, por {user}.", user))
+                     f"{len(g_['asumidas_cero'])} con costo asumido $0, por {user}."
+                     + (f" ⚠ {len(g_['no_cerradas'])} OT no cerradas: {', '.join(g_['no_cerradas'][:10])}."
+                        if g_["no_cerradas"] else ""), user))
                 fid = cur.lastrowid
                 for vid, f in filas.items():
                     cur.execute(
@@ -110105,6 +110123,8 @@ def mant_facturas_proveedor_solicitar_oc():
                 _mfp_asumir_cero_en_ot(cur, g_["asumidas_cero"], user)
                 _nota_anexo = (f" ⚠ {len(g_['sin_anexo'])} OT sin anexo firmado: "
                                f"{', '.join(g_['sin_anexo'][:10])}." if g_["sin_anexo"] else "")
+                _nota_anexo += (f" ⚠ {len(g_['no_cerradas'])} OT no cerradas al solicitar: "
+                                f"{', '.join(g_['no_cerradas'][:10])}." if g_["no_cerradas"] else "")
                 cur.execute(
                     "INSERT INTO mant_facturas_proveedor "
                     "(proveedor_nombre, proveedor_rut, tecnico_externo_id, tipo_documento, "

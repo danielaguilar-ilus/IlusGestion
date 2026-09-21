@@ -237,8 +237,8 @@
     {% if resumen.por_facturar_n %}Hay {{ resumen.por_facturar_n }} pendientes de otros proveedores — toca <b>Todos</b> para verlas.{% endif %}
     {% elif f_prov %}<b>Ninguna OT por facturar coincide con “{{ f_prov }}”.</b>
     {% else %}<b>No hay OT de proveedor externo esperando factura.</b>
-    Entran acá las OT ejecutadas por un externo, con costo declarado, una vez que
-    la OT queda <b>cerrada</b> (pasó la aprobación final y su Anexo quedó verificado).{% endif %}</div>
+    Entran acá todas las OT ejecutadas por un proveedor externo que aún no están en una
+    factura (menos canceladas/anuladas). Si no está cerrada o no tiene costo, se avisa en la fila.{% endif %}</div>
 </div>
 {% else %}
 {# 💰 2026-09-20 (Daniel: "necesito datos financieros para la toma de
@@ -308,7 +308,7 @@
         {% if puede_seleccionar %}
         <td data-label=""><span class="fp-chk-wrap"><input type="checkbox" class="fpv-ot-chk" value="{{ d.id }}"
             data-monto="{{ d.sugerido }}" data-numero="{{ d.numero_ot }}" data-prov="{{ d.prov_key }}"
-            data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}"
+            data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}" data-nocerrada="{{ 1 if d.no_cerrada else 0 }}"
             data-cobrado="{{ d.cobrado_cliente }}" data-garantia="{{ 1 if d.es_garantia else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
         {% endif %}
         <td data-label="OT"><a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.id) }}">{{ d.numero_ot }}</a>
@@ -320,7 +320,9 @@
         <td data-label="Cliente">{{ d.cliente }}</td>
         <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span>
           {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
-        <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span></td>
+        <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span>
+          {# 2026-09-21: la OT no cerrada se ve y se puede pagar; se avisa, no se esconde. #}
+          {% if d.no_cerrada %}<div class="fp-sub" style="color:#b45309;font-weight:800"><i class="bi bi-exclamation-triangle-fill"></i> No cerrada aún</div>{% endif %}</td>
         {# 📎 2026-09-19 (N° de anexo) + 2026-09-20 (Daniel: "el anexo lo
            necesito"): estado y PDF en la fila. Sin anexo firmado = ámbar,
            no rojo: Daniel decidió avisar, no bloquear. #}
@@ -655,9 +657,10 @@ function fpvOtGrupos(){
   const g = new Map();
   document.querySelectorAll('.fpv-ot-chk:checked').forEach(cb => {
     const k = cb.dataset.prov || cb.dataset.provnombre;
-    const x = g.get(k) || {nombre: cb.dataset.provnombre, n: 0, monto: 0, sinAnexo: 0, ids: [], numeros: []};
+    const x = g.get(k) || {nombre: cb.dataset.provnombre, n: 0, monto: 0, sinAnexo: 0, noCerradas: 0, ids: [], numeros: []};
     x.n++; x.monto += Number(cb.dataset.monto) || 0;
     if (cb.dataset.anexo !== '1') x.sinAnexo++;
+    if (cb.dataset.nocerrada === '1') x.noCerradas++;
     x.ids.push(Number(cb.value)); x.numeros.push(cb.dataset.numero);
     g.set(k, x);
   });
@@ -852,7 +855,8 @@ async function fpvOtMarcarPagado(){
   const ok = await ilusConfirm({
     title: 'Marcar pagado sin factura',
     message: `¿Confirmas que ya se le pagó a ${g.nombre} por ${g.n} OT (${numeros}${g.n > 6 ? '…' : ''}), por un total de ${FPV_CLP(g.monto)}?`,
-    sub: 'Queda registrado como pagado, sin N° de documento todavía. Podrás completarlo con el N° y la fecha real de la factura cuando llegue (botón "Completar factura" en el detalle).',
+    sub: (g.noCerradas ? '⚠ ' + g.noCerradas + ' OT todavía no están cerradas en el sistema — queda anotado, no bloquea. ' : '')
+      + 'Queda registrado como pagado, sin N° de documento todavía. Podrás completarlo con el N° y la fecha real de la factura cuando llegue (botón "Completar factura" en el detalle).',
     okLabel: 'Sí, marcar pagado', cancelLabel: 'Cancelar',
   });
   if (!ok) return;
@@ -881,8 +885,10 @@ async function fpvOtSolicitarOC(){
   const ids = grupos.flatMap(g => g.ids);
   const total = grupos.reduce((s, g) => s + g.monto, 0);
   const sinAnexo = grupos.reduce((s, g) => s + g.sinAnexo, 0);
+  const noCerradas = grupos.reduce((s, g) => s + g.noCerradas, 0);
   const lineas = grupos.map(g => '<b>' + fpvEsc(g.nombre) + '</b>: ' + g.n + ' OT · ' + FPV_CLP(g.monto)
-    + (g.sinAnexo ? ' <span style="color:#b45309">(' + g.sinAnexo + ' sin anexo firmado)</span>' : '')).join('<br>');
+    + (g.sinAnexo ? ' <span style="color:#b45309">(' + g.sinAnexo + ' sin anexo firmado)</span>' : '')
+    + (g.noCerradas ? ' <span style="color:#b45309">(' + g.noCerradas + ' no cerradas)</span>' : '')).join('<br>');
   let numeroOC = null;
   if (grupos.length === 1){
     const g = grupos[0];
@@ -890,6 +896,7 @@ async function fpvOtSolicitarOC(){
       title: 'Solicitar orden de compra',
       message: `Agrupando ${g.n} OT de ${g.nombre} (${g.numeros.slice(0,6).join(', ')}${g.n > 6 ? '…' : ''}) por ${FPV_CLP(g.monto)}.`
         + (g.sinAnexo ? ` ⚠ ${g.sinAnexo} sin anexo firmado — se avisa en la solicitud, no bloquea.` : '')
+        + (g.noCerradas ? ` ⚠ ${g.noCerradas} OT todavía no cerradas en el sistema — queda anotado, no bloquea.` : '')
         + ' Si ya tienes el N° de OC, escríbelo; si no, déjalo en blanco y lo completas después.',
       placeholder: 'N° de orden de compra (opcional)',
       required: false,
@@ -900,7 +907,8 @@ async function fpvOtSolicitarOC(){
       title: 'Solicitar ' + grupos.length + ' órdenes de compra',
       message: 'Se crea UNA solicitud por proveedor, con sus OT y su total:',
       sub: lineas + '<br><br>Total ' + FPV_CLP(total) + '. El N° de OC de cada una se completa después, desde su detalle.'
-        + (sinAnexo ? '<br><span style="color:#b45309">⚠ ' + sinAnexo + ' OT sin anexo firmado — queda anotado en cada solicitud, no bloquea.</span>' : ''),
+        + (sinAnexo ? '<br><span style="color:#b45309">⚠ ' + sinAnexo + ' OT sin anexo firmado — queda anotado en cada solicitud, no bloquea.</span>' : '')
+        + (noCerradas ? '<br><span style="color:#b45309">⚠ ' + noCerradas + ' OT todavía no cerradas — queda anotado, no bloquea.</span>' : ''),
       subHtml: true,
       okLabel: 'Sí, solicitar ' + grupos.length + ' OC', cancelLabel: 'Cancelar',
     });
