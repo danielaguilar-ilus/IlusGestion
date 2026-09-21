@@ -110019,8 +110019,10 @@ def mant_facturas_proveedor_cerrar_historico():
     simular = bool(d.get("simular"))
 
     def _num(s):
-        s = re.sub(r"\D", "", str(s or ""))
-        return int(s) if s else None
+        # "OT-2026-00211", "00211" y "211" son la misma OT: manda el ÚLTIMO
+        # grupo de dígitos (el correlativo), no todos los dígitos juntos.
+        grupos_num = re.findall(r"\d+", str(s or ""))
+        return int(grupos_num[-1]) if grupos_num else None
     excluir = {_num(x) for x in (d.get("excluir") or []) if _num(x)}
 
     pendientes = _mfp_por_facturar() or []
