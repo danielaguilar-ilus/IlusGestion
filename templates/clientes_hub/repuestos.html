@@ -679,11 +679,27 @@ function rsCard(s){
   const tiempoTxt = (s.dias_transcurridos != null)
     ? (' · ' + rsFmt(s.dias_transcurridos) + (s.abierta ? ' días abierta' : ' días hasta cerrar'))
     : '';
+  // 🔒 FIX 2026-09-21 (revisión adversarial Fase 2): esta cola ahora también
+  // trae solicitudes de origen Incidencia o Ticket directo (visita_id/
+  // numero_ot NULL) -- el badge de OT se armaba sin condición y quedaba
+  // literal "OT #null" con un link roto a /ot/null. Mismo fix que ya se
+  // aplicó en templates/tickets/ficha.html (variable origenTxt).
+  const origenTxt = s.contexto === 'ot'
+    ? '<a class="rs-ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener"><i class="bi bi-clipboard2-check"></i> ' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>'
+    : (s.contexto === 'incidencia'
+        ? '<span class="rs-ot" style="color:#a16207"><i class="bi bi-exclamation-triangle-fill"></i> Incidencia' + (s.incidencia_sku ? ' ' + rsEsc(s.incidencia_sku) : '') + '</span>'
+        : '<span class="rs-ot" style="color:#6b7280">Directo del ticket</span>');
+  const clienteEquipoTxt = s.contexto === 'incidencia'
+    ? '<b>' + rsEsc(s.incidencia_descripcion || s.incidencia_sku || ('Incidencia #' + (s.incidencia_id || ''))) + '</b><br><span class="text-muted">Discrepancia de recepción, sin equipo de cliente asociado.</span>'
+    : (s.contexto === 'ticket'
+        ? '<b>' + rsEsc(s.cliente_nombre || 'Sin cliente') + '</b><br><span class="text-muted">Solicitada directo desde el ticket, sin equipo formal.</span>'
+        : '<b>' + rsEsc(s.cliente_nombre || 'Sin cliente') + '</b><br>' + rsEsc(s.maquina_nombre || '') + (s.maquina_serie ? ' · S/N ' + rsEsc(s.maquina_serie) : '') + (s.maquina_sku ? ' · ' + rsEsc(s.maquina_sku) : '')
+          + (s.dejo_fuera_servicio ? '<span class="rs-fs"><i class="bi bi-exclamation-octagon-fill"></i> quedó fuera de servicio</span>' : ''));
   return '<div class="rs-card ' + est + '">' +
     '<div class="rs-head">' +
       '<span class="rs-est ' + est + '">' + rsEsc(String(s.estado_label || s.estado).split(' · ')[0]) + '</span>' +
       '<b class="rs-num">#' + s.id + '</b>' +
-      '<a class="rs-ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener"><i class="bi bi-clipboard2-check"></i> ' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>' +
+      origenTxt +
       (s.numero_ticket ? '<a class="rs-tk" href="/tickets/' + s.ticket_id + '" target="_blank" rel="noopener"><i class="bi bi-ticket-perforated"></i> ' + rsEsc(s.numero_ticket) + (s.ticket_fecha_limite ? ' · vence ' + rsEsc(s.ticket_fecha_limite) : '') + '</a>' : '<span class="rs-tk sin">sin ticket</span>') +
       tomar +
       '<small class="rs-when">' + rsEsc(s.created_at || '') + (s.solicitado_por ? ' · ' + rsEsc(s.solicitado_por) : '') + tiempoTxt + '</small>' +
@@ -691,8 +707,7 @@ function rsCard(s){
     '<div class="rs-body">' +
       '<div class="rs-col">' +
         '<div class="rs-k">Cliente · equipo</div>' +
-        '<div class="rs-v"><b>' + rsEsc(s.cliente_nombre || 'Sin cliente') + '</b><br>' + rsEsc(s.maquina_nombre || '') + (s.maquina_serie ? ' · S/N ' + rsEsc(s.maquina_serie) : '') + (s.maquina_sku ? ' · ' + rsEsc(s.maquina_sku) : '') +
-          (s.dejo_fuera_servicio ? '<span class="rs-fs"><i class="bi bi-exclamation-octagon-fill"></i> quedó fuera de servicio</span>' : '') + '</div>' +
+        '<div class="rs-v">' + clienteEquipoTxt + '</div>' +
       '</div>' +
       '<div class="rs-col">' +
         '<div class="rs-k">Repuesto</div>' +
@@ -908,7 +923,11 @@ function rsCrearEnBodega(){
       const d = document.getElementById('rbDescripcion');
       if (d && !d.value) d.value = s.repuesto_nombre || '';
       const n = document.getElementById('rbNotas');
-      if (n && !n.value) n.value = 'Pedido desde ' + (s.numero_ot || 'OT') + ' · solicitud #' + (s.id || '') + (s.motivo ? ' · ' + s.motivo : '');
+      // 🔒 FIX 2026-09-21: esto decía siempre "Pedido desde OT" aunque la
+      // solicitud viniera de una Incidencia o de un Ticket directo.
+      const origenNota = s.contexto === 'incidencia' ? ('Incidencia #' + (s.incidencia_id || ''))
+        : (s.contexto === 'ticket' ? ('Ticket ' + (s.numero_ticket || '')) : (s.numero_ot || 'OT'));
+      if (n && !n.value) n.value = 'Pedido desde ' + origenNota + ' · solicitud #' + (s.id || '') + (s.motivo ? ' · ' + s.motivo : '');
     }, 500);
     ilusToast('Crea el repuesto con su ubicación y después vuelve a "Validar en bodega".', { type: 'info' });
   }

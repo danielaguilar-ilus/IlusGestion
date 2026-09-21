@@ -174,6 +174,18 @@
           <a href="/repuestos#solicitudes" target="_blank" rel="noopener" class="ms-auto small" style="font-weight:700;color:#dc2626;text-decoration:none">Gestionar en Bodega <i class="bi bi-box-arrow-up-right"></i></a></h6>
         <div id="repOtLista" style="display:flex;flex-direction:column;gap:8px"></div>
       </div>
+      {#- 🔧 2026-09-21 (Fase 2 -- Daniel: "la otra parte donde se podrán
+          pedir repuestos sería por los tickets... sería bueno cubrirlo").
+          Tarjeta SIEMPRE visible (a diferencia de cardRepuestosOT, que solo
+          aparece si YA hay solicitudes) -- este es el punto de entrada para
+          crear la primera. El ticket mismo es el agrupador, sin OT ni
+          equipo formal de por medio. -#}
+      <div class="tk-card">
+        <h6><i class="bi bi-tools"></i>Repuesto directo del ticket</h6>
+        <p class="text-muted small mb-2">Sin pasar por una OT: queda enganchado a este mismo ticket.</p>
+        <button type="button" class="btn btn-sm fw-bold w-100" style="border:1.5px solid #0a0a0a;color:#0a0a0a" onclick="TKREP.abrir()">
+          <i class="bi bi-tools me-1"></i>Solicitar repuesto</button>
+      </div>
       <div class="tk-card" id="cardNotas" style="display:none;">
         <h6><i class="bi bi-lock"></i>Notas internas</h6>
         <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
@@ -560,6 +572,60 @@
   </div>
 </div>
 
+{#- 🔧 2026-09-21 (Fase 2): modal propio "Solicitar repuesto directo del
+    ticket" -- mismo motor que OT/Incidencias, REGLA #8 (>3 campos reales
+    → modal Bootstrap). CSS .otrep-opc-it duplicado acá (no hay hoja
+    compartida para ese picker, mismo patrón ya usado en otros templates). -#}
+<style>
+.otrep-opc{display:flex;flex-direction:column;gap:6px;margin-top:6px;max-height:220px;overflow-y:auto}
+.otrep-opc-it{display:flex;align-items:center;gap:10px;border:1.5px solid #e5e7eb;border-radius:11px;
+  padding:8px 10px;cursor:pointer;background:#fff;text-align:left;width:100%;font-family:inherit;
+  transition:border-color .15s,background .15s}
+.otrep-opc-it:hover{border-color:#cbd5e1}
+.otrep-opc-it.on{border-color:#dc2626;background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.otrep-opc-it .inf{flex:1;min-width:0}
+.otrep-opc-it .inf b{display:block;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere;line-height:1.25}
+.otrep-opc-it .inf small{display:block;font-size:.68rem;color:#6b7280;overflow-wrap:anywhere}
+.otrep-opc-it .stk{flex:none;font-size:.62rem;font-weight:900;border-radius:999px;padding:3px 8px;
+  background:#dcfce7;color:#15803d;white-space:nowrap}
+.otrep-opc-it .stk.sin{background:#fee2e2;color:#b91c1c}
+.otrep-opc-vacio{font-size:.76rem;color:#6b7280;padding:6px 2px}
+</style>
+<div class="modal fade" id="tkRepModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-tools me-2" style="color:#dc2626"></i>Solicitar repuesto</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <label class="form-label fw-semibold small mb-1">Repuesto <span class="text-danger">*</span></label>
+        <input type="search" id="tkRepBq" class="form-control mb-2" placeholder="SKU, descripción o código de fabricante"
+               autocomplete="off" oninput="TKREP.buscar(this.value)">
+        <div class="otrep-opc" id="tkRepLista"></div>
+        <div class="mt-2">
+          <small class="text-muted d-block mb-1">No está en la bodega: escribe el nombre y bodega lo valida.</small>
+          <input type="text" id="tkRepNombreManual" class="form-control" maxlength="400"
+                 placeholder="Nombre del repuesto (manual)" oninput="TKREP.refrescar()">
+        </div>
+        <label class="form-label fw-semibold small mb-1 mt-3">Cantidad <span class="text-danger">*</span></label>
+        <input type="number" id="tkRepCantidad" class="form-control" style="max-width:140px" min="0.5" step="0.5" value="1">
+        <label class="form-label fw-semibold small mb-1 mt-3">Motivo / diagnóstico <span class="text-danger">*</span></label>
+        <textarea id="tkRepMotivo" class="form-control" rows="3" maxlength="5000"
+                  placeholder="Por qué hace falta este repuesto (mínimo 10 caracteres)"></textarea>
+        <label class="form-label fw-semibold small mb-1 mt-3">Evidencia <span class="text-danger">*</span></label>
+        <input type="file" id="tkRepEvidencia" class="form-control" accept="image/*,video/*" capture="environment">
+        <div class="text-danger small mt-2" id="tkRepErr"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus" id="tkRepBtnEnviar" onclick="TKREP.enviar()">
+          <i class="bi bi-send-check me-1"></i>Solicitar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal "Generar OT" — extraído a un partial compartido el 2026-08-10
      (Daniel: un solo modal para Tickets y para la ficha del cliente, ver
      templates/tickets/_modal_generar_ot.html). Este mismo partial se
@@ -590,7 +656,12 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
 // agrupa. Independiente del render principal (tickets_ficha.js): si falla,
 // la ficha sigue igual. Cada fila: OT · equipo · repuesto × cantidad ·
 // estado en la trayectoria · evidencia (foto/video) · diagnóstico.
-(async function tkRepuestosOT(){
+// 🔒 FIX 2026-09-21: esto era un IIFE `(async function tkRepuestosOT(){...})()`
+// -- el nombre de una function expression así SOLO existe dentro de su
+// propio cuerpo (para recursión), nunca en el scope exterior. TKREP.enviar()
+// necesita poder volver a llamar esto tras crear una solicitud directa del
+// ticket; con function DECLARATION queda global y se puede re-invocar.
+async function tkRepuestosOT(){
   var card = document.getElementById('cardRepuestosOT');
   var lista = document.getElementById('repOtLista');
   if (!card || !lista) return;
@@ -609,18 +680,29 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
         return '<a href="' + esc(e.url) + '" target="_blank" rel="noopener" style="width:44px;height:44px;border-radius:7px;overflow:hidden;background:#0a0a0a;display:grid;place-items:center;color:#fff;border:1px solid #e5e7eb">' +
           (e.tipo === 'video' ? '<i class="bi bi-play-circle-fill"></i>' : '<img src="' + esc(e.url) + '" style="width:100%;height:100%;object-fit:cover" alt="">') + '</a>';
       }).join('');
+      {#- 🔀 2026-09-21 (Fase 2): esta tarjeta filtra por ?ticket_id=TID, y
+          ahora una solicitud puede tener ese ticket_id SIN venir de una OT
+          (origen 'ticket' directo, o 'incidencia') -- antes se asumía
+          s.visita_id siempre presente y armaba <a href="/ot/undefined">.
+          _otrep_fila ya manda `contexto` ('ot'|'incidencia'|'ticket'). -#}
+      var origenTxt = s.contexto === 'ot'
+        ? '<a href="/ot/' + s.visita_id + '" target="_blank" rel="noopener" style="color:#dc2626;font-weight:800;text-decoration:none">' + esc(s.numero_ot || '') + '</a>'
+        : (s.contexto === 'incidencia'
+            ? '<span style="color:#a16207;font-weight:800"><i class="bi bi-exclamation-triangle-fill"></i> Incidencia' + (s.incidencia_sku ? ' ' + esc(s.incidencia_sku) : '') + '</span>'
+            : '<span style="color:#6b7280;font-weight:800">Directo del ticket</span>');
       return '<div style="border:1px solid #e5e7eb;border-left:4px solid ' + c[1] + ';border-radius:10px;padding:9px 11px;font-size:.8rem;line-height:1.4">' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           '<span style="font-size:.6rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:2px 8px;background:' + c[0] + ';color:' + c[1] + '">' + esc(String(s.estado_label || s.estado).split(' · ')[0]) + '</span>' +
           '<b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + esc(s.repuesto_nombre) + ' × ' + fmt(s.cantidad) + '</b>' +
           (s.piola_metros ? '<span style="color:#a16207;font-weight:800">' + fmt(s.piola_metros) + ' m de piola</span>' : '') +
           (s.medida ? '<span style="color:#a16207;font-weight:800">' + esc(s.medida) + '</span>' : '') +
-          '<a href="/ot/' + s.visita_id + '" target="_blank" rel="noopener" style="color:#dc2626;font-weight:800;text-decoration:none">' + esc(s.numero_ot || '') + '</a>' +
+          origenTxt +
           '<small style="margin-left:auto;color:#6b7280">' + esc(s.created_at || '') + (s.solicitado_por ? ' · ' + esc(s.solicitado_por) : '') + '</small>' +
         '</div>' +
-        '<div style="color:#374151;margin-top:3px">' + esc(s.maquina_nombre || '') + (s.maquina_serie ? ' · S/N ' + esc(s.maquina_serie) : '') +
-          (s.dejo_fuera_servicio ? ' · <b style="color:#991b1b">quedó fuera de servicio</b>' : '') +
-          (s.stock_sku ? ' · bodega <b>' + esc(s.stock_sku) + '</b>' : ' · <span style="color:#b45309;font-weight:700">sin repuesto de bodega ligado</span>') +
+        (s.maquina_nombre ? '<div style="color:#374151;margin-top:3px">' + esc(s.maquina_nombre) + (s.maquina_serie ? ' · S/N ' + esc(s.maquina_serie) : '') +
+          (s.dejo_fuera_servicio ? ' · <b style="color:#991b1b">quedó fuera de servicio</b>' : '') + '</div>' : '') +
+        '<div style="color:#374151;margin-top:3px">' +
+          (s.stock_sku ? 'bodega <b>' + esc(s.stock_sku) + '</b>' : '<span style="color:#b45309;font-weight:700">sin repuesto de bodega ligado</span>') +
           (s.proveedor_nombre ? ' · proveedor ' + esc(s.proveedor_nombre) : '') + (s.oc_numero ? ' · OC ' + esc(s.oc_numero) : '') + '</div>' +
         '<div style="color:#1f2937;margin-top:4px;white-space:pre-wrap"><i class="bi bi-stethoscope me-1" style="color:#dc2626"></i>' + esc(s.motivo || '') + '</div>' +
         (evs ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + evs + '</div>' : '') +
@@ -630,6 +712,103 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
     document.getElementById('repOtN').textContent = sols.length;
     card.style.display = '';
   } catch(e){ /* tarjeta opcional */ }
+}
+tkRepuestosOT();
+
+/* ══════════════ SOLICITAR REPUESTO DIRECTO DEL TICKET (Fase 2, 2026-09-21)
+   Daniel: "la otra parte donde se podrán pedir repuestos sería por los
+   tickets... sería bueno cubrirlo". Mismo motor que OT/Incidencias
+   (mant_ot_repuesto_solicitudes), pero el TICKET mismo es el agrupador --
+   sin crear uno nuevo. POST /repuestos/api/ticket/<TID>/solicitar-repuesto.
+   ⚠️ Alcance de esta primera versión: sin selector de equipo/cliente (ver
+   nota en el endpoint) -- solo repuesto + cantidad + motivo + evidencia. */
+var TKREP = (function(){
+  var sel = null, items = null;
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  function fmt(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; }
+  function modal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('tkRepModal')); }
+  function abrir(){
+    sel = null; items = [];
+    document.getElementById('tkRepCantidad').value = 1;
+    document.getElementById('tkRepMotivo').value = '';
+    document.getElementById('tkRepNombreManual').value = '';
+    document.getElementById('tkRepEvidencia').value = '';
+    document.getElementById('tkRepErr').textContent = '';
+    document.getElementById('tkRepLista').innerHTML = '';
+    document.getElementById('tkRepBq').value = '';
+    modal().show();
+  }
+  var buscarTimer = null;
+  function buscar(q){
+    q = (q || '').trim();
+    clearTimeout(buscarTimer);
+    if (q.length < 2){ document.getElementById('tkRepLista').innerHTML = '<div class="otrep-opc-vacio">Escribe al menos 2 letras.</div>'; return; }
+    document.getElementById('tkRepLista').innerHTML = '<div class="otrep-opc-vacio"><span class="spinner-border spinner-border-sm me-1"></span>Buscando…</div>';
+    buscarTimer = setTimeout(function(){
+      {#- 🔒 FIX 2026-09-21 (revisión adversarial Fase 2): sin ctx=ot,
+          ot2_api_repuestos_bodega_buscar calcula para_ot=False para
+          cualquier técnico INTERNO (_otrep_puede_gestion() es cierto para
+          él -- solo excluye al externo), así que el JSON de respuesta
+          traía costo_unitario/proveedor/ubicación aunque el HTML de este
+          modal solo pinte descripción/SKU/disponible -- visible igual
+          inspeccionando la red. Mismo patrón que ya usa ot2/detalle.html. -#}
+      fetch('/ot/api/repuestos/bodega-buscar?ctx=ot&q=' + encodeURIComponent(q), {credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){ items = (d && d.ok) ? (d.repuestos || []) : []; pintar(); })
+        .catch(function(){ document.getElementById('tkRepLista').innerHTML = '<div class="otrep-opc-vacio">No se pudo buscar.</div>'; });
+    }, 300);
+  }
+  function pintar(){
+    var cont = document.getElementById('tkRepLista');
+    if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Nada en bodega con ese texto. Escríbelo abajo como manual.</div>'; return; }
+    cont.innerHTML = items.map(function(it){
+      var stk = (it.disponible != null)
+        ? ((it.disponible > 0) ? '<span class="stk">' + fmt(it.disponible) + ' disponible</span>' : '<span class="stk sin">sin disponible</span>')
+        : (it.con_stock ? '<span class="stk">en stock</span>' : '<span class="stk sin">sin stock</span>');
+      var on = (sel && sel.id === it.id) ? ' on' : '';
+      return '<button type="button" class="otrep-opc-it' + on + '" onclick="TKREP.sel(' + it.id + ')">' +
+        '<span class="inf"><b>' + esc(it.descripcion || '') + '</b><small>' + esc(it.sku || '') + (it.marca ? ' · ' + esc(it.marca) : '') + '</small></span>' + stk + '</button>';
+    }).join('');
+  }
+  function selStock(id){
+    sel = items.find(function(x){ return x.id === id; }) || null;
+    document.getElementById('tkRepNombreManual').value = '';
+    pintar();
+  }
+  function refrescar(){
+    if ((document.getElementById('tkRepNombreManual').value || '').trim()){ sel = null; pintar(); }
+  }
+  function enviar(){
+    var err = document.getElementById('tkRepErr');
+    err.textContent = '';
+    var nombreManual = (document.getElementById('tkRepNombreManual').value || '').trim();
+    if (!sel && !nombreManual){ err.textContent = 'Elige un repuesto de bodega o escribe su nombre.'; return; }
+    var cantidad = parseFloat(String(document.getElementById('tkRepCantidad').value || '').replace(',', '.'));
+    if (!isFinite(cantidad) || cantidad <= 0){ err.textContent = 'La cantidad tiene que ser un número mayor que cero.'; return; }
+    var motivo = (document.getElementById('tkRepMotivo').value || '').trim();
+    if (motivo.length < 10){ err.textContent = 'Cuenta por qué hace falta el repuesto (mínimo 10 caracteres).'; return; }
+    var fEv = document.getElementById('tkRepEvidencia').files[0];
+    if (!fEv){ err.textContent = 'Sin evidencia no hay solicitud: sube al menos una foto o un video.'; return; }
+    var fd = new FormData();
+    if (sel) fd.append('repuesto_stock_id', sel.id); else fd.append('repuesto_nombre', nombreManual);
+    fd.append('cantidad', cantidad);
+    fd.append('motivo', motivo);
+    fd.append('evidencia', fEv);
+    var btn = document.getElementById('tkRepBtnEnviar');
+    btn.disabled = true;
+    fetch('/repuestos/api/ticket/' + TID + '/solicitar-repuesto', { method: 'POST', credentials: 'same-origin', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        btn.disabled = false;
+        if (!d.ok){ err.textContent = d.error || 'No se pudo guardar.'; return; }
+        modal().hide();
+        ilusToast('✓ Repuesto solicitado' + (d.numero_ticket ? ' — ' + d.numero_ticket : ''), {type:'success'});
+        if (d.aviso) ilusAlert({title:'Aviso de stock', message:d.aviso, type:'warning'});
+        if (typeof tkRepuestosOT === 'function') tkRepuestosOT();
+      })
+      .catch(function(e){ btn.disabled = false; err.textContent = 'Error de red: ' + e.message; });
+  }
+  return { abrir: abrir, buscar: buscar, sel: selStock, refrescar: refrescar, enviar: enviar };
 })();
 </script>
 <script defer src="{{ url_for('static', filename='tickets_ficha.js') }}"></script>
