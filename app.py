@@ -105146,8 +105146,14 @@ def _cotiz_valor_hh_resolver(vals, tipos, base_default=20000.0):
         except (TypeError, ValueError):
             return default
     base = _f("cotiz_valor_hh", base_default) or base_default
-    necesita_uf = any((_f(f"cotiz_valor_hh_uf__{t}") or 0) > 0 for t in tipos)
-    uf_info = _uf_valor_actual() if necesita_uf else {"uf": None, "ok": False}
+    # La UF se consulta siempre (cache de 1h, ver _uf_valor_actual): la
+    # pantalla de tarifas la necesita para ofrecer el cambio a UF aunque hoy
+    # todos los tipos sigan en pesos.
+    try:
+        uf_info = _uf_valor_actual() or {}
+    except Exception as e:
+        print(f"[_cotiz_valor_hh_resolver] UF: {e}", flush=True)
+        uf_info = {"uf": None, "ok": False}
     uf_hoy = float(uf_info.get("uf") or 0) or None
     por_tipo, clp = {}, {}
     for t in tipos:
