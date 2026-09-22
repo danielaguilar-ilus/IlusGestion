@@ -1817,6 +1817,29 @@ function _iwRefreshPreview(){
 window._shouldMountProposeCal = RETIROS_DETAIL_DATA.shouldMountProposeCal;
 
 // ════════════════════════════════════════════════════════════════════
+//  FIX 2026-09-22 (Daniel, captura: el modal aparece descentrado, cortado
+//  y flotando encima de los pasos en vez de como overlay normal) —
+//  #modalProponerFecha queda anidado dentro de .form-card (el card
+//  glassmorphism que envuelve TODO el wizard "Gestionar retiro" — tiene
+//  backdrop-filter:blur(20px) en su CSS). backdrop-filter (igual que
+//  transform/filter/perspective) crea un containing block nuevo para
+//  position:fixed: el modal de Bootstrap deja de fijarse contra el
+//  viewport y pasa a fijarse contra .form-card, que mide tan alto como
+//  TODO el wizard (~2300px) — por eso se veía centrado respecto a ESE
+//  alto en vez del viewport real, cortando el header y el calendario.
+//  Se originó el 2026-09-14 al convertir el form inline (que SÍ vivía
+//  bien dentro de .form-card) en modal, sin sacarlo de ahí.
+//  Fix: reparentar el modal a <body> apenas el script corre (defer, DOM
+//  ya listo) — antes de que Bootstrap lo muestre por primera vez.
+// ════════════════════════════════════════════════════════════════════
+(function _fixModalProponerFechaContainingBlock(){
+  const modalPF = document.getElementById('modalProponerFecha');
+  if (modalPF && modalPF.parentElement !== document.body){
+    document.body.appendChild(modalPF);
+  }
+})();
+
+// ════════════════════════════════════════════════════════════════════
 //  MODAL "Proponer fecha y hora" (2026-09-14) — montaje del calendario
 //  ────────────────────────────────────────────────────────────────────
 //  Mismo patrón que #modalNuevoRetiroInterno en internal_dashboard.html
