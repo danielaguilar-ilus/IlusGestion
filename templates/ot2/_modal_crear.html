@@ -527,7 +527,7 @@
 @supports not (color: color-mix(in srgb, red 50%, transparent)){
   .o2m-cc.on{background:#f9fafb}
 }
-.o2m-cc.cc-sstt{--c:#dc2626} .o2m-cc.cc-log{--c:#2563eb} .o2m-cc.cc-com{--c:#d97706}
+.o2m-cc.cc-sstt{--c:#dc2626} .o2m-cc.cc-log{--c:#2563eb} .o2m-cc.cc-com{--c:#d97706} .o2m-cc.cc-mkt{--c:#16a34a}
 
 /* Sub-paso 2: chips de valor sugerido. Cada chip trae nombre COMPLETO +
    origen + monto (nunca ellipsis, REGLA #15); min-height 44px (REGLA #3). */
@@ -5177,7 +5177,8 @@ window.OT2C = (function(){
   var _OT2M_CENTROS = [
     {v:'sstt',      n:'Servicio Técnico'},
     {v:'logistica', n:'Logística'},
-    {v:'comercial', n:'Comercial'}
+    {v:'comercial', n:'Comercial'},
+    {v:'marketing', n:'Marketing'}
   ];
   /* Input de dinero con separador de miles chileno (2026-08-30, Daniel:
      "es importante que siempre ponga los separadores de Chile" -- va a
@@ -5291,7 +5292,8 @@ window.OT2C = (function(){
     // ── Sub-paso 1: centro de costo (3 rectángulos con icono y color) ──
     var ccMeta = {sstt:{cls:'cc-sstt', ico:'bi-wrench-adjustable-circle-fill', sub:'El costo es nuestro'},
                   logistica:{cls:'cc-log', ico:'bi-truck', sub:'Despacho o bodega'},
-                  comercial:{cls:'cc-com', ico:'bi-briefcase-fill', sub:'Convenio o venta'}};
+                  comercial:{cls:'cc-com', ico:'bi-briefcase-fill', sub:'Convenio o venta'},
+                  marketing:{cls:'cc-mkt', ico:'bi-megaphone-fill', sub:'Campaña o contenido'}};
     var centroHtml = '<div class="o2m-cc-grid">'+
       _OT2M_CENTROS.map(function(c){
         var m = ccMeta[c.v] || {cls:'', ico:'bi-circle', sub:''};
@@ -5395,7 +5397,7 @@ window.OT2C = (function(){
       '<h6 class="t">Costos</h6>'+
       '<p class="d">Toda OT sale valorizada, se cobre o no: así cada centro de costo sabe cuánto trabajo le atribuimos.</p>'+
       _o2mFpasoHtml('centro', 1, '¿A qué centro de costo se atribuye?', centroHtml,
-        'Si el costo no es de Servicio Técnico, cárgalo a Logística o Comercial: así el informe no se lo atribuye al área equivocada.')+
+        'Si el costo no es de Servicio Técnico, cárgalo a Logística, Comercial o Marketing: así el informe no se lo atribuye al área equivocada.')+
       (!centroElegido
         ? '<div class="o2m-aviso"><i class="bi bi-arrow-up-circle me-1"></i>'+
           'Elige primero el centro de costo para continuar con el valor, la cobertura y los costos.</div>'

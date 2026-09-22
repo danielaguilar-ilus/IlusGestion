@@ -346,7 +346,7 @@
 @supports not (color: color-mix(in srgb, red 50%, transparent)){
   .otd-cc.on{background:#f9fafb}
 }
-.otd-cc.cc-sstt{--c:#dc2626} .otd-cc.cc-log{--c:#2563eb} .otd-cc.cc-com{--c:#d97706}
+.otd-cc.cc-sstt{--c:#dc2626} .otd-cc.cc-log{--c:#2563eb} .otd-cc.cc-com{--c:#d97706} .otd-cc.cc-mkt{--c:#16a34a}
 
 /* Chips de técnicos (2026-09-02, "seleccionar uno o varios técnicos") */
 .otd-tecchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:30px}
@@ -2132,7 +2132,9 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   .otd-firma .tinta{height:54px}
   .otd-firma .rol{font-size:.56rem;letter-spacing:.04em}
   .otd-firma .quien{font-size:.74rem}
-  .otd-cc-grid{grid-template-columns:repeat(3,1fr);gap:6px}
+  {# 4° centro de costo (Marketing, 2026-09-22): 2x2 en mobile en vez de
+     3+1 huérfano -- auto-fit se encarga solo si mañana se agrega un 5°. #}
+  .otd-cc-grid{grid-template-columns:repeat(2,1fr);gap:6px}
   .otd-cc{padding:9px 4px;min-height:72px}
   .otd-cc b{font-size:.7rem}
   .otd-cc small{display:none}   /* subtítulo decorativo; el nombre queda entero */
@@ -4290,6 +4292,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
                 <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
                 <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
+                <option value="marketing" {% if v.centro_costo=='marketing' %}selected{% endif %}>Marketing</option>
               </select>
               <div class="otd-cc-grid" id="otdCcGrid">
                 <button type="button" class="otd-cc cc-sstt {{ 'on' if v.centro_costo=='sstt' }}"
@@ -4304,9 +4307,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                         data-cc="comercial" onclick="otdSetCentroCosto(this)">
                   <i class="bi bi-briefcase-fill"></i>
                   <b>Comercial</b><small>Convenio o venta</small></button>
+                <button type="button" class="otd-cc cc-mkt {{ 'on' if v.centro_costo=='marketing' }}"
+                        data-cc="marketing" onclick="otdSetCentroCosto(this)">
+                  <i class="bi bi-megaphone-fill"></i>
+                  <b>Marketing</b><small>Campaña o contenido</small></button>
               </div>
               <div class="otf-hint" style="margin-top:8px">
-                Si la pérdida no es de Servicio Técnico, cárgala a Logística o Comercial:
+                Si la pérdida no es de Servicio Técnico, cárgala a Logística, Comercial o Marketing:
                 así el informe de resultados no se la atribuye al área equivocada.
               </div>
             </div>
@@ -6389,14 +6396,15 @@ function otdIniciarRuta(app){
             {% elif puede_cobertura %}
               <div class="small mb-2" style="color:#6b7280">
                 ¿A quién se le imputa esta OT? Si la pérdida no es de Servicio Técnico,
-                cárgala a Logística o Comercial — así el informe de resultados no se la
-                atribuye al área equivocada.
+                cárgala a Logística, Comercial o Marketing — así el informe de resultados
+                no se la atribuye al área equivocada.
               </div>
               <select id="otfModalCentroCosto" class="form-select form-select-sm" hidden>
                 <option value="">— Sin definir —</option>
                 <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
                 <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
                 <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
+                <option value="marketing" {% if v.centro_costo=='marketing' %}selected{% endif %}>Marketing</option>
               </select>
               <div class="otd-cc-grid" id="otfCcGrid">
                 <button type="button" class="otd-cc cc-sstt {{ 'on' if v.centro_costo=='sstt' }}"
@@ -6411,10 +6419,14 @@ function otdIniciarRuta(app){
                         data-cc="comercial" onclick="OT2F.setCC(this)">
                   <i class="bi bi-briefcase-fill"></i>
                   <b>Comercial</b><small>Convenio o venta</small></button>
+                <button type="button" class="otd-cc cc-mkt {{ 'on' if v.centro_costo=='marketing' }}"
+                        data-cc="marketing" onclick="OT2F.setCC(this)">
+                  <i class="bi bi-megaphone-fill"></i>
+                  <b>Marketing</b><small>Campaña o contenido</small></button>
               </div>
             {% else %}
               <div class="small">
-                <b>{{ (v.centro_costo or 'Sin definir')|replace('sstt','Servicio Técnico')|replace('logistica','Logística')|replace('comercial','Comercial') }}</b>
+                <b>{{ (v.centro_costo or 'Sin definir')|replace('sstt','Servicio Técnico')|replace('logistica','Logística')|replace('comercial','Comercial')|replace('marketing','Marketing') }}</b>
                 <div class="text-muted mt-1" style="font-size:.74rem">
                   Solo gestión puede cambiar el centro de costo.</div>
               </div>

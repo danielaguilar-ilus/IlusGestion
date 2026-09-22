@@ -80128,6 +80128,11 @@ _OT2_CENTROS_COSTO = (
     ("sstt",      "Servicio Técnico"),
     ("logistica", "Logística"),
     ("comercial", "Comercial"),
+    # 🎯 2026-09-22 (Daniel: "podemos agregar un centro de costo adicional,
+    # marketing que se me pasó"). centro_costo es VARCHAR libre (no ENUM de
+    # BD, ver _ensure_mant_ot2_tables), así que agregar acá es todo lo que
+    # hace falta -- validación, reportes y filtros ya leen de esta tupla.
+    ("marketing", "Marketing"),
 )
 
 # 💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o no...
