@@ -1841,3 +1841,99 @@
   .opc-foot input{flex:1;border:1.5px solid #e5e7eb;border-radius:50px;padding:10px 14px;font-size:15px;outline:none}
   .opc-foot input:focus{border-color:#dc2626}
   .opc-foot button{background:#dc2626;color:#fff;border:none;width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:1.1rem;flex:0 0 auto}
+
+  /* ════════════════════════════════════════════════════════════════
+     REESTRUCTURACIÓN 2026-09-22 (Daniel, "Sí, constrúyela tal cual")
+     ────────────────────────────────────────────────────────────────
+     Mismo lenguaje visual (.step-section / .step-header / .step-circle
+     / semáforo), SOLO se agrega: (1) un toggle de colapso — mismo
+     patrón que .erp-doc-toggle/.erp-doc-card.is-open ya usado arriba
+     en esta página para las tarjetas de documentos ERP — y (2) chips
+     chicos de Calidad/Riesgo con su "i" de ayuda. No se inventa
+     paleta ni tipografía nueva.
+     ════════════════════════════════════════════════════════════════ */
+
+  /* Toggle de colapso de cada Paso — reusa la geometría de .erp-doc-toggle */
+  .step-collapse-toggle{
+    background:transparent;border:none;color:#9ca3af;cursor:pointer;
+    width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    transition:all .15s;font-size:1.15rem;flex-shrink:0;margin-left:auto;
+  }
+  .step-collapse-toggle:hover{background:#f3f4f6;color:#0a0a0a}
+  .step-section:not(.is-collapsed) .step-collapse-toggle{transform:rotate(180deg);background:var(--ilus-red);color:#fff}
+  .step-header.is-clickable{cursor:pointer}
+
+  /* Estado colapsado: se oculta el contenido rico, aparece 1 línea resumen */
+  .step-section.is-collapsed .step-content{display:none}
+  .step-section.is-collapsed{padding-bottom:20px}
+  .step-collapsed-line{
+    display:none;align-items:center;gap:10px;margin-top:6px;
+    font-size:.88rem;font-weight:700;color:#374151;
+  }
+  .step-section.is-collapsed .step-collapsed-line{display:flex}
+  .step-collapsed-line i{color:var(--ilus-red);font-size:1rem}
+  .step-collapsed-line .scl-action{
+    margin-left:auto;font-size:.76rem;font-weight:800;color:var(--ilus-red);
+    text-decoration:none;flex-shrink:0;
+  }
+  .step-collapsed-line .scl-action:hover{text-decoration:underline}
+
+  /* Paso "Solicitada" — línea única, nunca se agranda a tarjeta */
+  .step-section.is-oneline{padding:14px 20px}
+  .step-section.is-oneline .step-header{margin-bottom:0}
+  .step-section.is-oneline .step-content{display:none !important}
+
+  /* Chips Calidad info / Riesgo junto al pipeline (movidos del KPI superior) */
+  .pipe-scores{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .pipe-score-chip{
+    display:inline-flex;align-items:center;gap:6px;background:#f9fafb;
+    border:1px solid var(--gray-2);border-radius:50px;padding:5px 6px 5px 12px;
+    font-size:.76rem;font-weight:700;color:#374151;
+  }
+  .pipe-score-chip strong{color:#0a0a0a}
+  .pipe-score-info{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:18px;height:18px;border-radius:50%;background:#e5e7eb;color:#6b7280;
+    font-size:.64rem;font-weight:900;cursor:pointer;flex-shrink:0;font-style:normal;
+  }
+  .pipe-score-info:hover{background:var(--ilus-red);color:#fff}
+  details.pipe-score-details{position:relative}
+  details.pipe-score-details summary{list-style:none;cursor:pointer}
+  details.pipe-score-details summary::-webkit-details-marker{display:none}
+  details.pipe-score-details[open] .pipe-score-info{background:var(--ilus-red);color:#fff}
+  .pipe-score-pop{
+    position:absolute;top:calc(100% + 8px);left:0;z-index:30;width:230px;
+    background:#0a0a0a;color:#fff;border-radius:10px;padding:10px 12px;
+    font-size:.72rem;font-weight:500;line-height:1.45;box-shadow:0 10px 26px rgba(0,0,0,.25);
+  }
+  @media(max-width:520px){ .pipe-score-pop{left:auto;right:0;width:210px} }
+
+  /* Separador "Información adicional" entre zona de tarea y zona secundaria */
+  .rid-divider{
+    display:flex;align-items:center;gap:12px;margin:30px 0 18px;
+  }
+  .rid-divider::before,.rid-divider::after{content:'';flex:1;height:1px;background:var(--gray-2)}
+  .rid-divider-lbl{
+    font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;
+    white-space:nowrap;
+  }
+
+  /* Zona secundaria: mismas tarjetas .step-section, colapsadas, sin numerito
+     de paso (no forman parte del pipeline de 6). */
+  .step-section.is-secondary .step-circle-wrap{display:none}
+  .step-section.is-secondary .step-header{gap:0}
+  .step-section.is-secondary .step-titles{flex:1}
+  .step-section.is-secondary{background:#fdfdfd}
+
+  .rid-advanced-warn{
+    display:flex;align-items:center;gap:8px;background:#fff7ed;border:1px solid #fdba74;
+    border-radius:10px;padding:8px 12px;font-size:.78rem;font-weight:700;color:#9a3412;margin-bottom:14px;
+  }
+  .rid-advanced-warn i{color:#f59e0b;font-size:1rem;flex-shrink:0}
+
+  .rid-hint-muted{font-size:.78rem;color:#6b7280;margin:0 0 12px}
+
+  @media(max-width:768px){
+    .pipe-scores{gap:6px}
+    .pipe-score-chip{font-size:.7rem;padding:4px 4px 4px 10px}
+  }

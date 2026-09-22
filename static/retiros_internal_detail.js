@@ -120,15 +120,36 @@ async function superadminEliminarSolicitud(){
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  TABS DE INFO
+//  ZONA SECUNDARIA — expandir + ir a una tarjeta (Comunicación, Adjuntos,
+//  Propuestas, Historial, Cambiar estado)
+//  REESTRUCTURACIÓN 2026-09-22: antes esto cambiaba la pestaña activa
+//  dentro de un tab-strip único (#infoTabs .info-tabs-nav). Ahora cada
+//  una es su propia tarjeta .step-section.is-secondary colapsable — la
+//  función expande esa tarjeta y hace scroll hasta ella. Mismos ids
+//  #tab-<name> que ya usaba el tab-strip (comunicacion/adjuntos/
+//  propuestas/historial/acciones), así que TODOS los llamadores
+//  existentes (botón "Mensajes/Adjuntos" del header, "Enviarle
+//  mensaje"/"Enviar recordatorio") siguen funcionando sin cambios.
 // ════════════════════════════════════════════════════════════════════
 function cambiarTabInfo(name){
-  document.querySelectorAll('.info-tabs-nav button').forEach(b => b.classList.remove('is-active'));
-  document.querySelectorAll('.info-tabs-pane').forEach(p => p.classList.remove('is-active'));
-  const btn = document.querySelector(`.info-tabs-nav button[data-tab="${name}"]`);
   const pane = document.getElementById('tab-' + name);
-  if (btn) btn.classList.add('is-active');
-  if (pane) pane.classList.add('is-active');
+  if (!pane) return;
+  const card = pane.closest('.step-section') || pane;
+  card.classList.remove('is-collapsed');
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  COLAPSAR/EXPANDIR cada "Paso" y cada tarjeta de zona secundaria
+//  REESTRUCTURACIÓN 2026-09-22 — mismo patrón visual que
+//  .erp-doc-toggle/.erp-doc-card.is-open (arriba, lista de docs ERP):
+//  el toggle vive en el header de la tarjeta, .is-collapsed en el
+//  <section class="step-section"> controla qué se ve.
+// ════════════════════════════════════════════════════════════════════
+function toggleStepCollapse(toggleBtn){
+  const card = toggleBtn.closest('.step-section');
+  if (!card) return;
+  card.classList.toggle('is-collapsed');
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1129,15 +1150,30 @@ async function refrescarDocsAsociados(rid){
     // autorizó fusionarla con la tabla) — la tabla es la única fuente de verdad.
     _renderTablaDocsAsociados(d.docs || []);
     refrescarTablaProductos();
-    // Refrescar Paso 3 — carga total
+    // Refrescar Paso "Carga" — carga total. REESTRUCTURACIÓN 2026-09-22:
+    // el strip vive UNA sola vez de forma canónica (#cargaNDocs/#cargaPeso/
+    // #cargaVol/#cargaTiempo, sección "Carga") pero se referencia además
+    // dentro del modal "Proponer fecha" (#iwCarga*) y del resumen previo
+    // a enviar, dentro del Paso "Agenda" (#resumenDocs/#resumenCarga) —
+    // se actualizan los 3 juegos de ids para que ninguno quede desfasado.
     const t = d.totales || {};
+    const _pesoTxt = `${parseFloat(t.peso_real_kg||0).toFixed(1)} kg`;
+    const _volTxt  = `${parseFloat(t.volumen_m3||0).toFixed(3)} m³`;
+    const _tiempoTxt = `${t.tiempo_estimado_min || '—'} min`;
     const $1 = document.getElementById('cargaNDocs'); if ($1) $1.textContent = ndocs;
-    const $2 = document.getElementById('cargaPeso'); if ($2) $2.textContent = `${parseFloat(t.peso_real_kg||0).toFixed(1)} kg`;
-    const $3 = document.getElementById('cargaVol'); if ($3) $3.textContent = `${parseFloat(t.volumen_m3||0).toFixed(3)} m³`;
-    const $4 = document.getElementById('cargaTiempo'); if ($4) $4.textContent = `${t.tiempo_estimado_min || '—'} min`;
-    // Refrescar Paso 5 — resumen
+    const $2 = document.getElementById('cargaPeso'); if ($2) $2.textContent = _pesoTxt;
+    const $3 = document.getElementById('cargaVol'); if ($3) $3.textContent = _volTxt;
+    const $4 = document.getElementById('cargaTiempo'); if ($4) $4.textContent = _tiempoTxt;
+    const $1b = document.getElementById('iwCargaNDocs'); if ($1b) $1b.textContent = ndocs;
+    const $2b = document.getElementById('iwCargaPeso'); if ($2b) $2b.textContent = _pesoTxt;
+    const $3b = document.getElementById('iwCargaVol'); if ($3b) $3b.textContent = _volTxt;
+    const $4b = document.getElementById('iwCargaTiempo'); if ($4b) $4b.textContent = _tiempoTxt;
+    // Línea-resumen de la tarjeta "Carga" cuando está colapsada
+    const $cargaLine = document.getElementById('paso3CollapsedLine');
+    if ($cargaLine) $cargaLine.textContent = `⚖️ ${_pesoTxt} · ${_volTxt} · ${_tiempoTxt}`;
+    // Refrescar resumen previo a enviar (dentro del Paso "Agenda")
     const $5 = document.getElementById('resumenDocs'); if ($5) $5.textContent = `${ndocs} doc${ndocs===1?'':'s'} · ${ncons} con saldo`;
-    const $6 = document.getElementById('resumenCarga'); if ($6) $6.textContent = `${parseFloat(t.peso_real_kg||0).toFixed(1)} kg · ${parseFloat(t.volumen_m3||0).toFixed(3)} m³ · ${t.tiempo_estimado_min || '—'} min`;
+    const $6 = document.getElementById('resumenCarga'); if ($6) $6.textContent = `${_pesoTxt} · ${_volTxt} · ${_tiempoTxt}`;
     // Reflejar en inputs hidden (compat con form validación)
     ['val_peso_real','val_peso_vol','val_m3','val_tiempo'].forEach((id, i) => {
       const el = document.getElementById(id);
@@ -1192,6 +1228,19 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
         statusLine.textContent = `${ndocs} documento${ndocs===1?'':'s'} · atención: ${nOtroRut} de otro RUT`;
       } else {
         statusLine.textContent = `${ndocs} documento${ndocs===1?'':'s'} · ${ncons} con saldo`;
+      }
+    }
+    // Línea-resumen de la tarjeta "Documentos" cuando está colapsada
+    // (REESTRUCTURACIÓN 2026-09-22 — mismo texto que statusLine, con emoji)
+    const collapsedLine = document.getElementById('paso2CollapsedLine');
+    if (collapsedLine){
+      const _cliente = (RETIROS_DETAIL_DATA.customerLabel || 'cliente');
+      if (ndocs === 0){
+        collapsedLine.textContent = '📄 Aún no hay documentos asociados.';
+      } else if (nOtroRut > 0){
+        collapsedLine.textContent = `📄 ${_cliente} · ${ndocs} documento${ndocs===1?'':'s'} · atención: ${nOtroRut} de otro RUT`;
+      } else {
+        collapsedLine.textContent = `📄 ${_cliente} · ${ndocs} documento${ndocs===1?'':'s'} · ${ncons} con saldo`;
       }
     }
     // Badge del header del paso (step-badge-ok / step-badge-warn)
@@ -2035,70 +2084,27 @@ async function enviarPropuestaWizard(){
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  PASO 1 — EDICIÓN DE NOMBRE CLIENTE + USAR COMO CONTACTO
+//  FICHA DEL RETIRO — "USAR DATOS DEL CLIENTE COMO CONTACTO DE RETIRO"
 //  Daniel 2026-05-23: "el nombre del cliente o la razón social cambie
 //  con la asignación del producto. Entonces, no te dejes llevar mucho
 //  por bloquear lo que dice el cliente"
+//
+//  REESTRUCTURACIÓN 2026-09-22 (Daniel, "Sí, constrúyela tal cual"):
+//  antes existían DOS editores de razón social — el botonera propia del
+//  viejo "Paso 1" (pa1EditNombre/pa1GuardarNombre, POST /customer) y el
+//  campo autoguardado de la Ficha del retiro (data-inline-edit=
+//  "customer_name", PATCH /field, whitelist _PICKUP_INLINE_FIELDS en
+//  pickups_module.py — ya soportaba customer_name). Quedó UNA sola
+//  instancia editable: la de la Ficha (persistente, nunca se colapsa).
+//  Se eliminaron pa1EditNombre/pa1CancelarEdicion/pa1GuardarNombre (ya
+//  no hay markup #pa1NombreDisplay/#pa1NombreInput/#pa1*Btn que los
+//  use). La tarjeta de solo-lectura "Quien retira" del viejo Paso 1
+//  (#pa1RetiraNombre/#pa1RetiraRut) también se fusionó en la Ficha —
+//  esta función ahora actualiza los campos data-inline-edit de la
+//  Ficha directamente (pickup_person_name/pickup_person_rut; el
+//  backend /customer con usar_cliente_como_contacto=true NO copia
+//  teléfono, solo nombre+RUT — ver pickup_actualizar_cliente).
 // ════════════════════════════════════════════════════════════════════
-function pa1EditNombre(){
-  document.getElementById('pa1NombreDisplay').style.display = 'none';
-  document.getElementById('pa1NombreInput').style.display   = '';
-  document.getElementById('pa1EditBtn').style.display       = 'none';
-  document.getElementById('pa1SaveBtn').style.display       = '';
-  document.getElementById('pa1CancelBtn').style.display     = '';
-  setTimeout(()=>{document.getElementById('pa1NombreInput').focus()}, 50);
-}
-function pa1CancelarEdicion(){
-  const orig = document.getElementById('pa1NombreDisplay').textContent.trim();
-  document.getElementById('pa1NombreInput').value = orig;
-  document.getElementById('pa1NombreDisplay').style.display = '';
-  document.getElementById('pa1NombreInput').style.display   = 'none';
-  document.getElementById('pa1EditBtn').style.display       = '';
-  document.getElementById('pa1SaveBtn').style.display       = 'none';
-  document.getElementById('pa1CancelBtn').style.display     = 'none';
-}
-async function pa1GuardarNombre(){
-  const inp = document.getElementById('pa1NombreInput');
-  const nuevo = (inp.value || '').trim();
-  if (!nuevo){
-    ilusToast('El nombre no puede quedar vacío', { type:'warning' });
-    return;
-  }
-  const orig = document.getElementById('pa1NombreDisplay').textContent.trim();
-  if (nuevo === orig){
-    pa1CancelarEdicion();
-    return;
-  }
-  const btn = document.getElementById('pa1SaveBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-  try {
-    const d = await _fetchJsonSafe(`/retiros/${_RID}/customer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer_name: nuevo }),
-    });
-    if (!d.ok){
-      ilusToast('Error: ' + (d.error || 'No se pudo guardar'), { type:'error' });
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-check-lg"></i><span>Guardar</span>';
-      return;
-    }
-    // Actualizar display + esconder inputs
-    document.getElementById('pa1NombreDisplay').textContent = d.customer_name || nuevo;
-    document.getElementById('pa1NombreDisplay').style.display = '';
-    document.getElementById('pa1NombreInput').style.display   = 'none';
-    document.getElementById('pa1EditBtn').style.display       = '';
-    btn.style.display = 'none';
-    document.getElementById('pa1CancelBtn').style.display = 'none';
-    ilusToast('Razón social actualizada', { type:'success' });
-  } catch(e){
-    ilusToast('Error de red: ' + e.message, { type:'error' });
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-check-lg"></i><span>Guardar</span>';
-  }
-}
 async function pa1UsarClienteComoContacto(checked){
   if (!checked) return;
   const ok = await ilusConfirm({
@@ -2108,7 +2114,8 @@ async function pa1UsarClienteComoContacto(checked){
     okLabel: 'Sí, copiar', cancelLabel: 'No, cancelar',
   });
   if (!ok){
-    document.getElementById('pa1UsarComoContacto').checked = false;
+    const chk = document.getElementById('pa1UsarComoContacto');
+    if (chk) chk.checked = false;
     return;
   }
   try {
@@ -2119,22 +2126,29 @@ async function pa1UsarClienteComoContacto(checked){
     });
     if (!d.ok){
       ilusToast('Error: ' + (d.error || 'No se pudo actualizar'), { type:'error' });
-      document.getElementById('pa1UsarComoContacto').checked = false;
+      const chk = document.getElementById('pa1UsarComoContacto');
+      if (chk) chk.checked = false;
       return;
     }
-    // Refrescar UI con los nuevos datos del contacto
-    const nm = document.getElementById('pa1RetiraNombre');
-    const rr = document.getElementById('pa1RetiraRut');
-    if (nm) nm.textContent = d.pickup_person_name || '';
-    if (rr){
-      const oldText = rr.textContent || '';
-      const phoneMatch = oldText.split('·')[1] || '';
-      rr.textContent = (d.pickup_person_rut || '') + ' · ' + (phoneMatch.trim());
-    }
+    // Refrescar la Ficha (única fuente editable) con los nuevos datos.
+    // Se actualiza también dataset.inlineOriginal para que setupInlineEdit
+    // no lo trate como "cambio sin guardar" del operador.
+    const _map = {
+      pickup_person_name: d.pickup_person_name || '',
+      pickup_person_rut:  d.pickup_person_rut  || '',
+    };
+    Object.keys(_map).forEach(field => {
+      const el = document.querySelector(`[data-inline-edit="${field}"]`);
+      if (!el) return;
+      el.textContent = _map[field];
+      el.dataset.inlineOriginal = _map[field];
+      delete el.dataset.inlineDirty;
+    });
     ilusToast('Datos del cliente aplicados como contacto', { type:'success' });
   } catch(e){
     ilusToast('Error de red: ' + e.message, { type:'error' });
-    document.getElementById('pa1UsarComoContacto').checked = false;
+    const chk = document.getElementById('pa1UsarComoContacto');
+    if (chk) chk.checked = false;
   }
 }
 
