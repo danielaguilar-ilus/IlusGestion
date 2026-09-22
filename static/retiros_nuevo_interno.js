@@ -34,15 +34,15 @@
      del TIDO que devuelve el ERP. NVI (factura electrónica de importación)
      se muestra como factura. ── */
   window.NRI_TIDO_INVERSO = window.NRI_TIDO_INVERSO || {
-    FCV: 'factura', BLV: 'boleta', GDV: 'guia', VD: 'nota_venta',
+    FCV: 'factura', BLV: 'boleta', GDV: 'guia', GDP: 'guia', VD: 'nota_venta',
     NVV: 'nota_venta', WEB: 'pedido', NVI: 'factura',
   };
   var NRI_TIDO_INVERSO = window.NRI_TIDO_INVERSO;
   /* tipo del <select> → TIDOs del ERP que le corresponden (para filtrar
      candidatos de la autobúsqueda). */
   var NRI_TIPO_A_TIDOS = {
-    factura: ['FCV', 'NVI'], boleta: ['BLV'], guia: ['GDV'],
-    guia_despacho: ['GDV'], nota_venta: ['VD', 'NVV'], venta_directa: ['VD'],
+    factura: ['FCV', 'NVI'], boleta: ['BLV'], guia: ['GDV', 'GDP'],
+    guia_despacho: ['GDV', 'GDP'], nota_venta: ['VD', 'NVV'], venta_directa: ['VD'],
     pedido: ['WEB'], cotizacion: ['COV'],
   };
   var NRI_TIDO_LABEL = {
@@ -216,10 +216,6 @@
   var ultimoRutConsultado = '';
   var sugerenciasActuales = [];   // candidatos del Paso 1 (buscar-erp)
   var rutDocsActuales     = [];   // docs con saldo del Paso 2 (saldo-pendiente)
-  /* B5: qué (tipo, número) escribió el ASISTENTE en el Paso 1. Al quitar el
-     último documento se limpian solo si siguen con ese valor — lo que tipeó
-     el operador a mano nunca se borra. */
-  var asistenteEscribio = { tipo: null, numero: null };
   /* Capa de inteligencia (I1-I4): lo que sabemos del cliente para el semáforo. */
   var fichaCliente   = null;   // {claveRut, razon_social} de la última ficha ERP exitosa
   var retirosActivos = null;   // {claveRut, lista:[{id,code,status,status_label,fecha,url}]}
@@ -267,9 +263,14 @@
     return p;
   }
 
-  /* ═══════════════════ PASO 1 — DOCUMENTO ═══════════════════ */
+  /* ═══════════════════ PASO 1 — DOCUMENTO ═══════════════════
+     2026-09-22 (bloqueante): selTipo/inpNumero pasan a ser "vitrina" readonly
+     del ERP — los llena SOLO sincronizarPaso1DesdeDocs() desde DOCS, nunca el
+     operador. inpBuscar (#nriDocBuscar) es el campo nuevo donde SÍ se tipea:
+     dispara la autobúsqueda y reemplaza a inpNumero como disparador. */
   var selTipo   = campo('document_type');
   var inpNumero = campo('document_number');
+  var inpBuscar = $('nriDocBuscar');
 
   function seleccionPorDefecto(lineas){
     var sel = {};
@@ -354,9 +355,18 @@
     recalcularCarga();
     sincronizarChecksRutDocs();
     marcarSugerencias();
+    /* 2026-09-22: al agregar un documento real, la excepción "sin documento"
+       deja de tener sentido — se apaga sola (auditable igual: si el operador
+       la vuelve a marcar, vuelve a quedar en el hidden). */
+    if (DOCS.size) setSinDocumento(false);
     refreshSteps();
   }
 
+  /* 2026-09-22 (bloqueante): selTipo/inpNumero son SOLO "vitrina" del ERP —
+     ya no hay tecleo manual que respetar (readonly en el template), así que
+     esta función simplemente refleja el documento PRINCIPAL de DOCS, sin la
+     lógica de divergencia "asistenteEscribio" que existía cuando el operador
+     podía escribir tipo/número a mano. */
   function sincronizarPaso1DesdeDocs(){
     var badge = $('nriDocBadge');
     var n = DOCS.size;
@@ -369,13 +379,8 @@
       }
     }
     if (!n){
-      /* B5: al quitar el ÚLTIMO documento, tipo/número del Paso 1 se limpian
-         SOLO si siguen con lo que escribió el asistente. Si el operador los
-         cambió a mano después, se respetan (el retiro nace "con documento"
-         porque él lo quiso así). */
-      if (selTipo && asistenteEscribio.tipo != null && selTipo.value === asistenteEscribio.tipo) selTipo.value = '';
-      if (inpNumero && asistenteEscribio.numero != null && (inpNumero.value || '').trim() === asistenteEscribio.numero) inpNumero.value = '';
-      asistenteEscribio = { tipo: null, numero: null };
+      if (selTipo) selTipo.value = '';
+      if (inpNumero) inpNumero.value = '';
       return;
     }
     /* pickup_requests guarda UN documento: va el PRIMERO con tipo "humano"
@@ -392,37 +397,11 @@
       principal = DOCS.values().next().value;
       tipo = '';   // sin tipo humano exacto: el <select> queda vacío, no se inventa
     }
-    if (selTipo){
-      var tipoActual = selTipo.value;
-      /* Solo pisamos el select si está vacío o si lo escribió el asistente. */
-      if (tipo){
-        if (!tipoActual || tipoActual === asistenteEscribio.tipo){ selTipo.value = tipo; asistenteEscribio.tipo = tipo; }
-      } else if (tipoActual && tipoActual === asistenteEscribio.tipo){
-        selTipo.value = ''; asistenteEscribio.tipo = null;
-      }
-    }
-    if (inpNumero){
-      /* Revisor 2: el número solo se escribe si el campo está vacío o si lo
-         escribió el asistente — nunca se pisa un N° tipeado a mano (si es
-         otro, el semáforo ya avisa "no es ninguno de los verificados"). Y
-         sin tipo humano (NVI/COV) no se deja un número huérfano: la
-         cabecera quedaría 'sin_documento' + N°; el doc igual se asocia con
-         /docs/agregar al crear. */
-      var numActual = (inpNumero.value || '').trim();
-      var esDelAsistente = asistenteEscribio.numero != null && numActual === asistenteEscribio.numero;
-      if (!tipo){
-        if (esDelAsistente){ inpNumero.value = ''; asistenteEscribio.numero = null; }
-      } else if (!numActual || esDelAsistente){
-        inpNumero.value = principal.nudo_display;
-        asistenteEscribio.numero = principal.nudo_display;
-      }
-    }
-  }
-  function algunDocConNumero(numero){
-    var n = nudoLimpio(numero);
-    var hay = false;
-    DOCS.forEach(function(e){ if (e.nudo_display === n) hay = true; });
-    return hay;
+    if (selTipo) selTipo.value = tipo;
+    /* Sin tipo humano (NVI/COV) no se deja un número huérfano: la cabecera
+       quedaría 'sin_documento' + N°; el doc igual se asocia con
+       /docs/agregar al crear. */
+    if (inpNumero) inpNumero.value = tipo ? principal.nudo_display : '';
   }
 
   /* Cliente del documento (nombre / RUT formateado / clave de comparación).
@@ -512,8 +491,10 @@
     if (b) quitarDoc(b.getAttribute('data-quitar'));
   });
 
-  /* ── Autobúsqueda al escribir el N° (debounce 450 ms, ≥3 chars, secuencia
-     anti-race, 1 request en vuelo con re-disparo si el texto cambió). ── */
+  /* ── Autobúsqueda al escribir en #nriDocBuscar (N° o RUT) — debounce 450 ms,
+     ≥3 chars, secuencia anti-race, 1 request en vuelo con re-disparo si el
+     texto cambió. 2026-09-22: inpBuscar reemplaza a inpNumero como
+     disparador — inpNumero ahora es solo la "vitrina" readonly del ERP. ── */
   var busqSeq = 0, busqEnVuelo = false, busqPendiente = null;
   /* FIX revisor B1: el CSS tenía display:none y acá se "mostraba" con
      display:'' → nunca se veía. Ahora: inline-flex visible / none oculto. */
@@ -538,8 +519,15 @@
         return;
       }
       if (d.modo === 'rut'){
-        setDocStatus('<i class="bi bi-info-circle me-1"></i>Eso parece un RUT. Escríbelo en el Paso 2 para ver los documentos del cliente.', 'info');
+        /* 2026-09-22: en vez de pedirle al operador que retipee el RUT en el
+           Paso 2, lo movemos solos (moverARutCliente ya existe más abajo —
+           function declaration, hoisted) y disparamos ficha/saldo-pendiente. */
+        setDocStatus('<i class="bi bi-info-circle me-1"></i>Eso es un RUT — se pasó al Paso 2.', 'info');
         renderSugerencias([]);
+        moverARutCliente(q, 'búsqueda del Paso 1', function(){
+          if (inpBuscar) inpBuscar.value = '';
+          busqSeq++; setDocStatus(''); renderSugerencias([]);
+        });
         return;
       }
       var docs = d.documentos || [];
@@ -552,14 +540,14 @@
         nota = 'Ninguno es del tipo elegido — se muestran todos los que coinciden con el número.';
       }
       if (!filtrados.length){
-        setDocStatus('<i class="bi bi-search me-1"></i>Sin documentos con ese número. Puedes seguir a mano o usar "Buscar en el ERP".', 'info');
+        setDocStatus('<i class="bi bi-search me-1"></i>Sin documentos con ese número. Prueba "Buscar en el ERP (modal completo)".', 'info');
       } else {
         setDocStatus('<i class="bi bi-check2-circle me-1"></i>' + filtrados.length + ' candidato' + (filtrados.length === 1 ? '' : 's') + ' en el ERP' + (nota ? ' · ' + esc(nota) : ''), 'ok');
       }
       renderSugerencias(filtrados);
     } catch(e){
       if (seq !== busqSeq) return;
-      setDocStatus('<i class="bi bi-plug me-1"></i>ERP no conectado — puedes seguir a mano.', 'warn');
+      setDocStatus('<i class="bi bi-plug me-1"></i>ERP no conectado — reintenta o marca "Continuar sin documento".', 'warn');
       renderSugerencias([]);
     } finally {
       busqEnVuelo = false;
@@ -568,13 +556,30 @@
     }
   }
   var buscarPorNumeroDeb = debounce(function(){
-    var q = (inpNumero.value || '').trim();
+    var q = (inpBuscar && inpBuscar.value || '').trim();
     if (q.length < 3){ busqSeq++; setDocStatus(''); renderSugerencias([]); return; }
     buscarPorNumero(q);
   }, 450);
-  inpNumero && inpNumero.addEventListener('input', buscarPorNumeroDeb);
-  selTipo && selTipo.addEventListener('change', function(){
-    if (inpNumero && (inpNumero.value || '').trim().length >= 3) buscarPorNumeroDeb();
+  inpBuscar && inpBuscar.addEventListener('input', buscarPorNumeroDeb);
+
+  /* ── Excepción auditada "Continuar sin documento" (2026-09-22) ── */
+  function setSinDocumento(activo){
+    var hid = $('nriSinDocumentoConfirmado'), btn = $('nriSinDocumentoBtn');
+    if (hid) hid.value = activo ? '1' : '0';
+    if (btn) btn.classList.toggle('is-on', !!activo);
+    refreshSteps();
+  }
+  $('nriSinDocumentoBtn') && $('nriSinDocumentoBtn').addEventListener('click', function(){
+    var hid = $('nriSinDocumentoConfirmado');
+    var activo = !(hid && hid.value === '1');
+    if (activo && DOCS.size){
+      toast('Ya hay documentos verificados en el retiro — no hace falta marcar "sin documento".', 'info');
+      return;
+    }
+    setSinDocumento(activo);
+    toast(activo
+      ? 'Marcado: el retiro se crea sin documento del ERP (queda auditado quién lo marcó).'
+      : 'Se quitó la excepción "sin documento".', activo ? 'warning' : 'info');
   });
 
   function renderSugerencias(docs){
@@ -649,10 +654,12 @@
       docsYaAgregadosLabel: 'Ya en este retiro',
       onSeleccionar: onSeleccionTka,
     });
-    /* Pre-carga: si el N° ya está escrito, buscamos de una (patrón de
-       templates/transporte/_modal_cotizacion_logistica.html). tkaOpen ya
-       corrió _tkaResetEstado() de forma síncrona, así que seteamos después. */
-    var n = (inpNumero && inpNumero.value || '').trim();
+    /* Pre-carga: si ya se escribió algo en el buscador del Paso 1, lo
+       llevamos de una (patrón de templates/transporte/_modal_cotizacion_logistica.html).
+       tkaOpen ya corrió _tkaResetEstado() de forma síncrona, así que
+       seteamos después. 2026-09-22: la fuente es inpBuscar (#nriDocBuscar),
+       no inpNumero (que ahora es solo la vitrina readonly del ERP). */
+    var n = (inpBuscar && inpBuscar.value || '').trim();
     if (n && /^[0-9]+$/.test(n)){
       var tidos = NRI_TIPO_A_TIDOS[selTipo ? selTipo.value : ''] || [];
       var selT = $('tkaDocTido'), inpN = $('tkaDocNudo');
@@ -687,11 +694,16 @@
     toast('✓ ' + grupos.length + ' documento' + (grupos.length === 1 ? '' : 's') + ' agregado' + (grupos.length === 1 ? '' : 's') + ' al retiro', 'success');
   }
 
-  /* ═══════════════════ PASO 2 — CLIENTE ═══════════════════ */
+  /* ═══════════════════ PASO 2 — CLIENTE ═══════════════════
+     2026-09-22: inpNombre/inpRut nacen readonly en el template (solo el ERP
+     los llena — precargarOChip/proponerClienteDesdeDocs no cambian, siguen
+     escribiendo por JS sin que el atributo readonly se los impida). El botón
+     "Editar manualmente" (SIEMPRE visible) es la ÚNICA forma de destrabarlos. */
   var inpNombre = campo('customer_name');
   var inpRut    = campo('customer_rut');
   var inpFono   = campo('contact_phone');
   var inpEmail  = campo('contact_email');
+  var clienteManual = false;
 
   function setCliStatus(html, tipo){   // B1: inline-flex visible / none oculto
     var el = $('nriCliStatus'); if (!el) return;
@@ -699,6 +711,19 @@
     el.innerHTML = html || '';
     el.style.display = html ? 'inline-flex' : 'none';
   }
+
+  function nriHabilitarEdicionClienteManual(){
+    clienteManual = true;
+    if (inpNombre) inpNombre.removeAttribute('readonly');
+    if (inpRut) inpRut.removeAttribute('readonly');
+    var btn = $('nriClienteManualBtn'), badge = $('nriClienteManualBadge');
+    if (btn){ btn.classList.add('is-on'); btn.disabled = true; btn.innerHTML = '<i class="bi bi-pencil-fill"></i>Edición manual activada'; }
+    if (badge) badge.style.display = '';
+    if (inpNombre) try { inpNombre.focus(); } catch(_){}
+    refreshSteps();
+  }
+  window.nriHabilitarEdicionClienteManual = nriHabilitarEdicionClienteManual;
+  $('nriClienteManualBtn') && $('nriClienteManualBtn').addEventListener('click', nriHabilitarEdicionClienteManual);
 
   /* Chips "Detectado en ERP → usar". Dedup por campo+valor; al usarlo se
      escribe el campo y el chip desaparece. */
@@ -1126,7 +1151,14 @@
   }
   function pintarCargaInfo(c){
     var el = $('nriCargaInfo'); if (!el) return;
-    if (!c){ el.style.display = 'none'; el.innerHTML = ''; return; }
+    if (!c){
+      /* 2026-09-22: estado inicial VISIBLE (antes display:none silencioso) —
+         el cálculo sigue siendo 100% automático, esto es solo visibilidad. */
+      el.style.display = '';
+      el.innerHTML = '<div class="nri-carga-line is-wait"><i class="bi bi-hourglass-split"></i>' +
+        '<div>Esperando el documento del Paso 1 para calcular bultos, peso y volumen…</div></div>';
+      return;
+    }
     el.style.display = '';
     var editados = Object.keys(dirty).filter(function(k){ return dirty[k]; });
     var html = '<div class="nri-carga-line' + (c.N < c.M ? ' is-warn' : ' is-ok') + '">' +
@@ -1209,6 +1241,37 @@
   var btnCrear = $('btnGuardarRetiroInterno');
   var ICONO_ESTADO = { rojo: 'bi-x-circle-fill', ambar: 'bi-exclamation-triangle-fill', verde: 'bi-check-circle-fill' };
 
+  /* ═══════════════════ Selectores de RESPONSABLES (Paso 3 + Paso 4) ═══════
+     2026-09-22: #nriResponsable (Paso 4, obligatorio, SE envía) y
+     #nriPersonaRetiraSel (Paso 3, atajo opcional, NO se envía) comparten el
+     mismo catálogo de /retiros/api/responsables — un solo fetch para los
+     dos. El template los llama dentro de shown.bs.modal. */
+  var _responsablesPromise = null;
+  function _fetchResponsables(){
+    if (!_responsablesPromise){
+      _responsablesPromise = fetchJson('/retiros/api/responsables').then(function(res){
+        if (!res.r.ok || !res.d.ok) throw new Error('no-ok');
+        return res.d.responsables || [];
+      }).catch(function(err){ _responsablesPromise = null; throw err; });
+    }
+    return _responsablesPromise;
+  }
+  window.nriPoblarSelectResponsables = function(selId){
+    var sel = $(selId);
+    if (!sel || sel.dataset.loaded === '1') return;
+    var placeholder = selId === 'nriResponsable' ? 'Selecciona un responsable…' : 'Selecciona (opcional)…';
+    _fetchResponsables().then(function(lista){
+      var opts = lista.map(function(u){
+        return '<option value="' + esc(u.id) + '" data-rut="' + esc(u.rut || '') + '">' + esc(u.nombre) + '</option>';
+      }).join('');
+      sel.innerHTML = '<option value="">' + placeholder + '</option>' + opts;
+      sel.dataset.loaded = '1';
+      refreshSteps();
+    }).catch(function(){
+      sel.innerHTML = '<option value="">(no se pudo cargar — reintenta)</option>';
+    });
+  };
+
   function val(inp){ return inp ? String(inp.value || '').trim() : ''; }
   function textoOpcion(sel){
     if (!sel || !sel.value) return '';
@@ -1233,26 +1296,34 @@
   }
   function plural(n, uno, varios){ return n === 1 ? uno : varios; }
 
-  /* ── Paso 1 · Documento (opcional) ── */
+  /* ── Paso 1 · Documento (BLOQUEANTE, 2026-09-22) ──
+     Rojo mientras DOCS.size===0 y no se marcó la excepción auditada
+     "Continuar sin documento" — ya no existe la rama que daba ok con el
+     paso vacío ("Sin documento (opcional)"). La fuente del texto tipeado
+     para la detección "¿es un RUT?" es inpBuscar (#nriDocBuscar), no el
+     N° readonly. */
   function evalPaso1(){
     var r = { faltan: [], avisos: [], ok: '' };
-    var numero = val(inpNumero), n = DOCS.size;
+    var buscado = val(inpBuscar), n = DOCS.size;
+    var sinDocHid = $('nriSinDocumentoConfirmado');
+    var sinDocConfirmado = !!(sinDocHid && sinDocHid.value === '1');
     if (!n){
-      if (!numero){ r.ok = 'Sin documento (opcional)'; return r; }
-      if (esRutPlausible(numero)){
+      if (sinDocConfirmado){
+        r.ok = 'Sin documento — confirmado explícitamente (queda auditado)';
+        return r;
+      }
+      r.faltan.push('documento del ERP (o marca "Continuar sin documento")');
+      if (buscado && esRutPlausible(buscado)){
         /* I2d: 8-9 dígitos con DV válido → probablemente es un RUT */
         r.avisos.push({
-          txt: '¿' + formatRUTStr(numero) + ' es un RUT? Va en el Paso 2',
-          html: avisoHtml('bi-person-badge', '<strong>' + esc(formatRUTStr(numero)) + '</strong> parece un RUT, no un N° de documento.',
+          txt: '¿' + formatRUTStr(buscado) + ' es un RUT? Va en el Paso 2',
+          html: avisoHtml('bi-person-badge', '<strong>' + esc(formatRUTStr(buscado)) + '</strong> parece un RUT, no un N° de documento.',
             [{ act: 'numero-a-rut', label: 'Es un RUT → buscar cliente', primary: true }]),
         });
-      } else {
-        r.avisos.push({ txt: 'N° escrito pero no verificado en el ERP — usa Buscar o elige un candidato' });
       }
       return r;
     }
     r.ok = n + ' documento' + plural(n, '', 's') + ' verificado' + plural(n, '', 's') + ' en ERP';
-    if (numero && !algunDocConNumero(numero)) r.avisos.push({ txt: 'El N° ' + numero + ' no es ninguno de los documentos verificados' });
     var claves = {};
     DOCS.forEach(function(e){
       var lbl = e.tido + ' ' + e.nudo_display, m = e.meta || {};
@@ -1321,6 +1392,17 @@
             [{ act: 'usar-cliente-doc', key: key, label: 'Usar cliente del documento', primary: true }, { act: 'mantener-distinto', key: key, label: 'Mantener' }]),
         });
       });
+    }
+
+    /* 2026-09-22: modo manual activo (botón "Editar manualmente") + el
+       valor no coincide con ningún documento/ficha ERP conocido → AVISO,
+       nunca bloqueo (el operador puede escribir clientes que el ERP no
+       tiene, ej. cliente nuevo). */
+    if (clienteManual && nombre){
+      var coincideDoc = false;
+      if (claveCli) DOCS.forEach(function(e){ if (docClaveRut(e) && docClaveRut(e) === claveCli) coincideDoc = true; });
+      var coincideFicha = !!(fichaCliente && claveCli && fichaCliente.claveRut === claveCli);
+      if (!coincideDoc && !coincideFicha) r.avisos.push({ txt: 'Cliente escrito a mano, no verificado en ERP' });
     }
     if (!r.faltan.length){
       r.ok = (fichaCliente && claveCli && fichaCliente.claveRut === claveCli) ? 'Cliente verificado en ERP' : 'Cliente completo';
@@ -1525,10 +1607,11 @@
     var b = ev.target.closest('[data-act]'); if (!b) return;
     var act = b.getAttribute('data-act'), key = b.getAttribute('data-key');
     if (act === 'numero-a-rut'){
-      var n = val(inpNumero);
-      moverARutCliente(n, 'N° documento', function(){
-        if (inpNumero) inpNumero.value = '';
-        asistenteEscribio.numero = null;
+      /* 2026-09-22: la fuente es inpBuscar (#nriDocBuscar) — inpNumero ya no
+         se tipea a mano, es la vitrina readonly del ERP. */
+      var n = val(inpBuscar);
+      moverARutCliente(n, 'búsqueda del Paso 1', function(){
+        if (inpBuscar) inpBuscar.value = '';
         busqSeq++; setDocStatus(''); renderSugerencias([]);
       });
     } else if (act === 'nombre-a-rut'){
@@ -1568,6 +1651,61 @@
     toast('✓ Persona que retira = el mismo cliente (relación: Dueño / titular)', 'success');
   }
   $('nriMismoCliente') && $('nriMismoCliente').addEventListener('click', copiarMismoCliente);
+
+  /* ── Paso 3 · "Es el mismo responsable" (2026-09-22, espejo de
+     copiarMismoCliente): copia el responsable YA ELEGIDO en el Paso 4
+     (#nriResponsable = selResponsable) hacia pickup_person_name/rut — para
+     cuando el vendedor que coordinó el retiro por teléfono es quien
+     también lo retira. Mismo patrón de confirmación si ya había otro
+     valor tipeado; NUNCA reemplaza el texto libre sin avisar. ── */
+  async function copiarMismoResponsable(){
+    if (!selResponsable || !selResponsable.value){
+      toast('Primero elige el responsable del retiro en el Paso 4.', 'info');
+      scrollAPaso(4);
+      return;
+    }
+    var opt = selResponsable.options[selResponsable.selectedIndex];
+    var nom = opt ? String(opt.textContent || '').trim() : '';
+    var rut = opt ? (opt.getAttribute('data-rut') || '') : '';
+    if (!nom){ toast('No se pudo leer el responsable elegido.', 'warning'); return; }
+    var pNom = val(inpPersona), pRut = val(inpPersonaRut);
+    var pisa = (pNom && pNom.toLowerCase() !== nom.toLowerCase()) || (pRut && rut && rutClave(pRut) !== rutClave(rut));
+    if (pisa && typeof window.ilusConfirm === 'function'){
+      var ok = await window.ilusConfirm({
+        title: 'Reemplazar persona que retira',
+        message: 'Ya escribiste ' + (pNom || pRut) + ' en el Paso 3. ¿Reemplazarlo por el responsable ' + nom + '?',
+        okLabel: 'Reemplazar', cancelLabel: 'Cancelar', type: 'question',
+      });
+      if (!ok) return;
+    }
+    if (inpPersona) inpPersona.value = nom;
+    if (rut && inpPersonaRut) inpPersonaRut.value = formatRUTStr(rut);
+    if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="autorizado"]')) selRelacion.value = 'autorizado';
+    [inpPersona, inpPersonaRut].forEach(function(i){ if (i){ i.classList.add('nri-precargado'); setTimeout(function(){ i.classList.remove('nri-precargado'); }, 1800); } });
+    pintarValidezRut(inpPersonaRut);
+    refreshSteps();
+    toast('✓ Persona que retira = el responsable del retiro (relación: Autorizado)', 'success');
+  }
+  $('nriMismoResponsable') && $('nriMismoResponsable').addEventListener('click', copiarMismoResponsable);
+
+  /* ── Paso 3 · selector ADITIVO #nriPersonaRetiraSel (2026-09-22) ──
+     Atajo de UI, no se envía (sin `name`): al elegir una opción se copia
+     directo hacia pickup_person_name/rut — mismo patrón sin-confirmación
+     que elegirAc() del Paso 2 (el operador acaba de elegir a propósito).
+     El campo de texto libre sigue existiendo y editable igual que hoy. */
+  $('nriPersonaRetiraSel') && $('nriPersonaRetiraSel').addEventListener('change', function(){
+    var opt = this.options[this.selectedIndex];
+    if (!this.value || !opt) return;
+    var nom = String(opt.textContent || '').trim();
+    var rut = opt.getAttribute('data-rut') || '';
+    if (inpPersona) inpPersona.value = nom;
+    if (rut && inpPersonaRut) inpPersonaRut.value = formatRUTStr(rut);
+    if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="autorizado"]')) selRelacion.value = 'autorizado';
+    [inpPersona, inpPersonaRut].forEach(function(i){ if (i){ i.classList.add('nri-precargado'); setTimeout(function(){ i.classList.remove('nri-precargado'); }, 1800); } });
+    pintarValidezRut(inpPersonaRut);
+    refreshSteps();
+  });
+
   inpPersonaRut && inpPersonaRut.addEventListener('input', function(){ pintarValidezRut(inpPersonaRut); });
   inpPersonaRut && inpPersonaRut.addEventListener('blur', function(){
     if (cleanRUT(inpPersonaRut.value).length >= 2) inpPersonaRut.value = formatRUTStr(inpPersonaRut.value);
@@ -1582,9 +1720,16 @@
   form.addEventListener('reset', function(){
     DOCS.clear(); chips.clear(); dirty = { total_packages: false, total_weight_kg: false, total_volume_m3: false };
     ultimoRutConsultado = ''; sugerenciasActuales = []; rutDocsActuales = [];
-    asistenteEscribio = { tipo: null, numero: null };
     fichaCliente = null; retirosActivos = null; mantenerDistinto = {}; ultimaEvaluacion = null;
     setDocStatus(''); setCliStatus(''); renderChips(); renderSugerencias([]); renderRutDocs([]); renderDocsSel(); pintarCargaInfo(null);
+    setSinDocumento(false);
+    /* 2026-09-22: re-bloquear Cliente (Paso 2) si quedó en edición manual. */
+    clienteManual = false;
+    if (inpNombre) inpNombre.setAttribute('readonly', 'readonly');
+    if (inpRut) inpRut.setAttribute('readonly', 'readonly');
+    var _mBtn = $('nriClienteManualBtn'), _mBadge = $('nriClienteManualBadge');
+    if (_mBtn){ _mBtn.classList.remove('is-on'); _mBtn.disabled = false; _mBtn.innerHTML = '<i class="bi bi-pencil"></i>Editar manualmente'; }
+    if (_mBadge) _mBadge.style.display = 'none';
     /* form.reset() restaura los .value de forma asíncrona respecto a este
        evento: se re-evalúa en el siguiente tick para pintar el semáforo limpio. */
     setTimeout(refreshSteps, 0);
@@ -1592,6 +1737,7 @@
 
   /* Valores iniciales ya presentes (p.ej. reapertura) */
   renderDocsSel();
+  pintarCargaInfo(ultimoCalculo);   // 2026-09-22: estado "Esperando el documento…" visible desde el arranque
   if (inpRut && isValidRUT(inpRut.value)) consultarRutSiValido();
   /* Primera pintada del semáforo de tres estados (I5): window.nriRefreshSteps
      ya existe porque el <script> inline del template corre antes que este

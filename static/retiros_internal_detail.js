@@ -1209,7 +1209,6 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
   const p2 = document.getElementById('paso-2');
   const p3 = document.getElementById('paso-3');
   const p4 = document.getElementById('paso-4');
-  const p5 = document.getElementById('paso-5');
   if (p2){
     // Daniel 2026-09-16: semáforo de 3 estados — ámbar (is-warn) cuando hay
     // docs pero NINGUNO con saldo confirmado, o cuando alguno viene de un
@@ -1303,11 +1302,17 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
     const hintNoSaldo = document.getElementById('paso4HintSinSaldo');
     if (hintNoSaldo) hintNoSaldo.style.display = (ndocs > 0 && ncons === 0 && !requestState.step4_done) ? '' : 'none';
   }
-  if (p5){
+  // FIX 2026-09-22 (reestructuración de la ficha): id="paso-5" pasó a ser
+  // solo el div-ancla que agrupa las secciones 8/9 (#paso-esperando /
+  // #paso-confirmacion), ya no lleva class="step-section" — togglear
+  // is-complete/is-blocked ahí no pinta nada (esas clases están scopeadas a
+  // .step-section en el CSS). La tarjeta real que se marca completa cuando
+  // el cliente acepta (step5_done) es #paso-confirmacion.
+  const pConfirmacion = document.getElementById('paso-confirmacion');
+  if (pConfirmacion){
     // Paso 5 NUNCA se bloquea: el operador debe poder enviar siempre.
-    // Solo se marca completo cuando el cliente acepta (step5_done).
-    p5.classList.remove('is-blocked');
-    p5.classList.toggle('is-complete', !!requestState.step5_done);
+    pConfirmacion.classList.remove('is-blocked');
+    pConfirmacion.classList.toggle('is-complete', !!requestState.step5_done);
   }
 }
 

@@ -229,6 +229,25 @@
 .nri-carga-line.is-warn i{color:#f59e0b}
 .nri-carga-line .sub{margin-top:4px;font-size:.74rem;color:inherit;opacity:.9}
 .nri-carga-line a{color:inherit;font-weight:800;text-decoration:underline}
+.nri-carga-line.is-wait{background:#f3f4f6;border:1px solid #e5e7eb;color:#6b7280}
+.nri-carga-line.is-wait i{color:#9ca3af}
+/* ── Paso 1 (2026-09-22): campos "vitrina" del ERP — se ven pero no se
+   tipean. El <select> no tiene readonly nativo: se bloquea con
+   pointer-events + fuera del tab order (mismo resultado visual/funcional). ── */
+.nri-field-locked{background:#f3f4f6!important;color:#4b5563;cursor:not-allowed}
+select.nri-field-locked{pointer-events:none}
+.nri-erp-btn.is-outline.is-on{background:#fff8e1;border-color:#f59e0b;color:#78350f}
+/* Paso 2 (2026-09-22): "Editar manualmente" — botón discreto SIEMPRE visible
+   junto al título + badge cuando está activo (REGLA #15: aviso, no bloqueo). */
+.nri-edit-manual-btn{background:none;border:1px solid transparent;color:#6b7280;font-size:.68rem;font-weight:700;
+  text-transform:none;letter-spacing:0;margin-left:8px;padding:3px 9px;border-radius:7px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:4px;vertical-align:middle;transition:all .15s}
+.nri-edit-manual-btn:hover{background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+.nri-edit-manual-btn:disabled{cursor:default;opacity:.85}
+.nri-edit-manual-btn.is-on{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.nri-manual-badge{display:inline-flex;align-items:center;gap:5px;margin-left:8px;background:#fff8e1;color:#92400e;
+  border:1px solid #fde68a;border-radius:50px;padding:2px 9px;font-size:.66rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.04em;vertical-align:middle}
 @media(max-width:768px){
   .nri-doc-card{padding:12px}
   .nri-doc-num{min-width:0;width:100%}
@@ -262,29 +281,55 @@
         </div>
         <form id="formNuevoRetiroInterno">
 
-          {# ── Paso 1: Documento (OPCIONAL — Daniel 2026-06-19: se puede crear
-             el retiro sin factura y asociarla después por cliente/rubro).
-             Sin campos .nri-req -> nace en verde (nada que bloquee). ── #}
-          <div class="nri-step-card is-complete" id="nriStep1">
+          {# ── Paso 1: Documento (BLOQUEANTE vía ERP — Daniel 2026-09-22: el
+             documento se BUSCA en el ERP por N° o por RUT, nunca se tipea a
+             mano; los campos Tipo/N° quedan readonly, "vitrina" de lo que
+             trajo el ERP. Excepción explícita y auditada "Continuar sin
+             documento" para clientes nuevos o sin facturar — sin ninguna de
+             las dos, /retiros/nuevo rechaza la creación (pickups_module.py).
+             Ya no nace en verde: sin .is-complete por defecto. ── #}
+          <div class="nri-step-card" id="nriStep1">
             <div class="nri-step-header">
               <div class="nri-step-circle-wrap">
                 <span class="nri-step-circle-label">Paso 1</span>
                 <div class="nri-step-circle"><span class="nri-step-num-text">1</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">Documento <span class="nri-step-opt">(opcional)</span>
+                <div class="nri-step-title">Documento
                   {# 2026-09-15: badge "N documento(s) verificados en ERP" (lo llena retiros_nuevo_interno.js) #}
                   <span class="nri-hdr-badge" id="nriDocBadge" style="display:none"></span>
                 </div>
-                <div class="nri-step-sub">Escribe el N° y te mostramos los candidatos del ERP, o búscalo con el modal estándar</div>
+                <div class="nri-step-sub">Busca el N° de documento o el RUT del cliente en el ERP — no se tipea a mano</div>
                 <div class="nri-step-estado" id="nriStepEstado1"></div>
               </div>
             </div>
             <div class="row g-2">
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Buscar en el ERP</label>
+                <input type="text" id="nriDocBuscar" class="form-control form-control-sm" maxlength="20" placeholder="N° de documento o RUT del cliente" autocomplete="off">
+              </div>
+            </div>
+            {# ── Asistente ERP del Paso 1 (2026-09-15, retiros_nuevo_interno.js):
+               botón al modal estándar tickets/_tka_modal.html (incluido al final
+               del bloque, FUERA de este modal y del form), candidatos de la
+               autobúsqueda por N° y lista de documentos que quedarán asociados
+               al crear (POST /retiros/<id>/docs/agregar). 2026-09-22: + botón
+               de excepción auditada "Continuar sin documento". ── #}
+            <div class="nri-doc-tools">
+              <button type="button" class="nri-erp-btn" id="nriDocErpBtn" title="Abrir el buscador estándar de documentos del ERP Random">
+                <i class="bi bi-search"></i>Buscar en el ERP (modal completo)
+              </button>
+              <button type="button" class="nri-erp-btn is-outline" id="nriSinDocumentoBtn" title="Cliente nuevo o sin facturar — queda auditado quién lo marcó">
+                <i class="bi bi-slash-circle"></i>Continuar sin documento (cliente nuevo/sin facturar)
+              </button>
+              <input type="hidden" name="sin_documento_confirmado" id="nriSinDocumentoConfirmado" value="0">
+              <span class="nri-doc-status" id="nriDocStatus"></span>
+            </div>
+            <div class="row g-2" style="margin-top:2px">
               <div class="col-6 col-md-4">
-                <label class="form-label small fw-semibold">Tipo</label>
-                <select name="document_type" class="form-select form-select-sm">
-                  <option value="">— Sin factura aún —</option>
+                <label class="form-label small fw-semibold">Tipo <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">(del ERP)</span></label>
+                <select name="document_type" class="form-select form-select-sm nri-field-locked" tabindex="-1" aria-readonly="true">
+                  <option value="">—</option>
                   <option value="factura">Factura</option>
                   <option value="boleta">Boleta</option>
                   <option value="nota_venta">Nota de venta</option>
@@ -293,23 +338,12 @@
                 </select>
               </div>
               <div class="col-6 col-md-4">
-                <label class="form-label small fw-semibold">N° documento</label>
-                <input name="document_number" class="form-control form-control-sm" maxlength="60" placeholder="Opcional" inputmode="numeric" autocomplete="off">
+                <label class="form-label small fw-semibold">N° documento <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">(del ERP)</span></label>
+                <input name="document_number" class="form-control form-control-sm nri-field-locked" maxlength="60" placeholder="—" readonly autocomplete="off">
               </div>
               <div class="col-12 col-md-4 d-flex align-items-end pb-1">
-                <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-info-circle me-1"></i>Puedes crear el retiro sin factura y asociarla luego por cliente/rubro desde la ficha.</div>
+                <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-info-circle me-1"></i>Se llenan solos al encontrar el documento en el ERP — no se editan a mano.</div>
               </div>
-            </div>
-            {# ── Asistente ERP del Paso 1 (2026-09-15, retiros_nuevo_interno.js):
-               botón al modal estándar tickets/_tka_modal.html (incluido al final
-               del bloque, FUERA de este modal y del form), candidatos de la
-               autobúsqueda por N° y lista de documentos que quedarán asociados
-               al crear (POST /retiros/<id>/docs/agregar). ── #}
-            <div class="nri-doc-tools">
-              <button type="button" class="nri-erp-btn" id="nriDocErpBtn" title="Abrir el buscador estándar de documentos del ERP Random">
-                <i class="bi bi-search"></i>Buscar en el ERP
-              </button>
-              <span class="nri-doc-status" id="nriDocStatus"></span>
             </div>
             {# 2026-09-15: avisos con acción del Paso 1 (¿es un RUT?, ya está en RET-XXX, varios RUT) #}
             <div id="nriDocAvisos" class="nri-avisos"></div>
@@ -331,8 +365,15 @@
                 <div class="nri-step-circle"><span class="nri-step-num-text">2</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">Cliente</div>
-                <div class="nri-step-sub">¿A nombre de quién queda el retiro? Escribe el RUT o el nombre y el ERP te propone el resto</div>
+                <div class="nri-step-title">Cliente
+                  {# 2026-09-22: "Editar manualmente" SIEMPRE visible (Daniel: default
+                     más simple, sin lógica de "recién si el ERP no encontró nada"). #}
+                  <button type="button" class="nri-edit-manual-btn" id="nriClienteManualBtn" title="Editar el nombre y el RUT a mano, sin depender del ERP">
+                    <i class="bi bi-pencil"></i>Editar manualmente
+                  </button>
+                  <span class="nri-manual-badge" id="nriClienteManualBadge" style="display:none"><i class="bi bi-pencil-fill"></i>Editando a mano, fuera del ERP</span>
+                </div>
+                <div class="nri-step-sub">Busca por RUT o nombre y el ERP completa el resto — o edítalo a mano si hace falta</div>
                 <div class="nri-step-estado" id="nriStepEstado2"></div>
               </div>
             </div>
@@ -341,13 +382,13 @@
                 <label class="form-label small fw-semibold">Nombre / Razón social *</label>
                 {# 2026-09-15: wrapper relativo para el dropdown de autocompletar por razón social (retiros_nuevo_interno.js) #}
                 <div class="nri-ac-wrap">
-                  <input name="customer_name" class="form-control form-control-sm nri-req" maxlength="200" required autocomplete="off">
+                  <input name="customer_name" class="form-control form-control-sm nri-req nri-field-locked" maxlength="200" required autocomplete="off" readonly>
                   <div id="nriNombreAc" class="nri-ac" role="listbox"></div>
                 </div>
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">RUT</label>
-                <input name="customer_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9" autocomplete="off">
+                <input name="customer_rut" class="form-control form-control-sm nri-field-locked" maxlength="20" placeholder="12.345.678-9" autocomplete="off" readonly>
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Teléfono</label>
@@ -400,11 +441,34 @@
               </div>
             </div>
             {# 2026-09-15: chip "Es el mismo cliente" — copia nombre/RUT del Paso 2
-               (solo si están vacíos; si hay otro valor, pide confirmación). #}
+               (solo si están vacíos; si hay otro valor, pide confirmación).
+               2026-09-22: + "Es el mismo responsable" (copia el responsable
+               elegido en el Paso 4 — quien coordinó por teléfono a veces
+               también retira). Ambos SIEMPRE piden confirmación si ya hay
+               algo distinto tipeado (copiarMismoCliente/copiarMismoResponsable
+               en retiros_nuevo_interno.js). #}
             <div class="d-flex flex-wrap gap-2 mb-2">
               <button type="button" class="nri-chip-mismo" id="nriMismoCliente" title="Copiar el nombre y RUT del cliente del Paso 2">
                 <i class="bi bi-person-check-fill"></i>Es el mismo cliente
               </button>
+              <button type="button" class="nri-chip-mismo" id="nriMismoResponsable" title="Copiar el nombre y RUT del responsable elegido en el Paso 4">
+                <i class="bi bi-person-badge-fill"></i>Es el mismo responsable
+              </button>
+            </div>
+            {# 2026-09-22: selector ADITIVO — nunca reemplaza el texto libre de
+               abajo, solo lo precarga como atajo. La persona que retira a veces
+               es un empleado interno (vendedor que coordinó por teléfono) y a
+               veces es externa (el cliente o un chofer sin cuenta): por eso el
+               campo de texto libre sigue existiendo y editable tal cual. Se
+               puebla con el mismo catálogo de /retiros/api/responsables
+               (window.nriPoblarSelectResponsables, retiros_nuevo_interno.js). #}
+            <div class="row g-2 mb-2">
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Elegir de la lista de responsables <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">(atajo, opcional)</span></label>
+                <select id="nriPersonaRetiraSel" class="form-select form-select-sm">
+                  <option value="">Cargando responsables…</option>
+                </select>
+              </div>
             </div>
             <div class="row g-2">
               <div class="col-12 col-md-5">
@@ -464,6 +528,14 @@
                 <div class="nri-step-estado" id="nriStepEstado5"></div>
               </div>
             </div>
+            {# 2026-09-15: "Calculado desde el ERP: N de M líneas con ficha logística"
+               (retiros_nuevo_interno.js). /retiros/nuevo valida la capacidad del
+               bloque con estos kg/m³, por eso se precargan desde las fichas.
+               2026-09-22: arriba de los 3 inputs (antes quedaba abajo, se perdía
+               de vista) y con un estado inicial visible "Esperando el documento
+               del Paso 1…" en vez de display:none silencioso. El cálculo en sí
+               NO cambia — sigue siendo 100% automático (recalcularCarga()). #}
+            <div id="nriCargaInfo" class="nri-carga-info"></div>
             <div class="row g-2">
               <div class="col-4 col-md-3">
                 <label class="form-label small fw-semibold">Bultos</label>
@@ -478,10 +550,6 @@
                 <input name="total_volume_m3" type="number" min="0" step="0.001" value="0" class="form-control form-control-sm">
               </div>
             </div>
-            {# 2026-09-15: "Calculado desde el ERP: N de M líneas con ficha logística"
-               (retiros_nuevo_interno.js). /retiros/nuevo valida la capacidad del
-               bloque con estos kg/m³, por eso se precargan desde las fichas. #}
-            <div id="nriCargaInfo" class="nri-carga-info" style="display:none"></div>
           </div>
 
           {# ── Paso 6: Agenda — Daniel 2026-06-16: MISMO slot-picker del
@@ -869,22 +937,17 @@
   //    Se monta cuando el modal YA es visible (shown), para que el grid mida
   //    bien. Bloque único, operador (puede HOY + cruzar colación), cupos reales.
   modalEl.addEventListener('shown.bs.modal', function(){
-    // Poblar el selector de RESPONSABLES (una sola vez). Daniel 2026-06-19.
-    (function(){
-      const sel = document.getElementById('nriResponsable');
-      if (!sel || sel.dataset.loaded === '1') return;
-      fetch('/retiros/api/responsables', { credentials:'same-origin', cache:'no-store' })
-        .then(r => r.json())
-        .then(d => {
-          if (!d || !d.ok) { sel.innerHTML = '<option value="">(no se pudo cargar)</option>'; return; }
-          const esc = s => String(s==null?'':s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-          const opts = (d.responsables||[]).map(u => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('');
-          sel.innerHTML = '<option value="">Selecciona un responsable…</option>' + opts;
-          sel.dataset.loaded = '1';
-          nriRefreshSteps();
-        })
-        .catch(() => { sel.innerHTML = '<option value="">(error de red — reintenta)</option>'; });
-    })();
+    // Poblar los selectores de RESPONSABLES: Paso 4 (obligatorio, se envía) y
+    // Paso 3 (atajo opcional "persona que retira", NO se envía). Daniel
+    // 2026-06-19 / ampliado 2026-09-22. window.nriPoblarSelectResponsables
+    // (retiros_nuevo_interno.js) reusa un único fetch para los dos y se
+    // encarga de no recargar si ya estaban poblados (dataset.loaded).
+    try {
+      if (typeof window.nriPoblarSelectResponsables === 'function'){
+        window.nriPoblarSelectResponsables('nriResponsable');
+        window.nriPoblarSelectResponsables('nriPersonaRetiraSel');
+      }
+    } catch(_eResp){ console.warn('nriPoblarSelectResponsables', _eResp); }
     try {
       if (!window.IlusRetirosCalendar) return;  // retiros_calendar.js carga con defer
       const inp = document.getElementById('nri_date');

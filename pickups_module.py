@@ -118,6 +118,7 @@ PICKUP_TIDO_INVERSO = {
     "FCV": "factura",
     "BLV": "boleta",
     "GDV": "guia",
+    "GDP": "guia",
     "VD":  "nota_venta",
     "NVV": "nota_venta",
     "WEB": "pedido",
@@ -4243,8 +4244,12 @@ def register_pickup_routes(app, ctx):
         (Daniel 2026-06-19)"""
         try:
             _auth_t = ctx.get("AUTH_TABLE") or "app_users"
+            # 2026-09-22: se agrega u.rut (columna ya existe, ver app.py ~3062)
+            # para que el Paso 3 del modal "Nuevo retiro interno" pueda ofrecer
+            # el mismo catálogo como atajo de "persona que retira" con RUT
+            # precargado, sin un segundo endpoint.
             rows = mysql_fetchall(
-                f"SELECT DISTINCT u.id, u.nombre, u.username "
+                f"SELECT DISTINCT u.id, u.nombre, u.username, u.rut "
                 f"FROM `{_auth_t}` u "
                 f"LEFT JOIN rol_permisos rp ON rp.rol_slug=u.role "
                 f"   AND rp.modulo='retiros' AND rp.accion='ver' AND rp.permitido=1 "
@@ -4254,7 +4259,8 @@ def register_pickup_routes(app, ctx):
                 f"  OR u.role LIKE 'supervisor%%') "
                 f"ORDER BY u.nombre") or []
             users = [{"id": r["id"],
-                      "nombre": (r.get("nombre") or r.get("username") or "Usuario")}
+                      "nombre": (r.get("nombre") or r.get("username") or "Usuario"),
+                      "rut": r.get("rut")}
                      for r in rows]
             return jsonify({"ok": True, "responsables": users})
         except Exception as e:
@@ -4280,6 +4286,10 @@ def register_pickup_routes(app, ctx):
         customer_name      = (f.get("customer_name") or "").strip()[:200]
         document_type      = (f.get("document_type") or "").strip()[:40]
         document_number    = (f.get("document_number") or "").strip()[:60]
+        # 2026-09-22: excepción auditada del Paso 1 (ver más abajo) — el
+        # operador la marca explícitamente cuando el cliente es nuevo o no
+        # tiene factura; sin ella, documento vacío ya no se deja pasar solo.
+        sin_documento_confirmado = (f.get("sin_documento_confirmado") or "").strip() == "1"
         pickup_person_name = (f.get("pickup_person_name") or "").strip()[:200]
         date = (f.get("date") or "").strip()
         tf   = (f.get("time_from") or "").strip()
@@ -4308,10 +4318,18 @@ def register_pickup_routes(app, ctx):
         # ── FASE 8: validaciones obligatorias para confirmación directa ──
         if len(customer_name) < 2:
             return _err("Falta el nombre del cliente.")
-        # Documento OPCIONAL (Daniel 2026-06-19): el retiro se crea SIN factura y
-        # la factura se asocia después por cliente/rubro. Si no viene, va vacío.
-        if not document_type:
+        # Documento: el Paso 1 ahora BLOQUEA (Daniel 2026-09-22) — document_type
+        # y document_number solo llegan no vacíos si el frontend los llenó
+        # tras una búsqueda real en el ERP (en el modal quedan readonly, nunca
+        # se tipean a mano). La única forma de dejarlo vacío a propósito es la
+        # excepción auditada "Continuar sin documento" (cliente nuevo o sin
+        # facturar) — el uso queda registrado en el log de creación más abajo.
+        if not (document_type and document_number):
+            if not sin_documento_confirmado:
+                return _err('Busca el documento o el RUT en el ERP antes de crear el retiro, '
+                            'o marca "Continuar sin documento".')
             document_type = "sin_documento"
+            document_number = ""
         if not responsable_user_id or not responsable_nombre:
             return _err("Falta el RESPONSABLE del retiro (quién se encarga de entregar el pedido).")
         if len(pickup_person_name) < 2:
@@ -4429,8 +4447,12 @@ def register_pickup_routes(app, ctx):
             except Exception: pass
 
         # FASE 9: trazabilidad — log de creación interna + confirmación directa
+        # 2026-09-22: si se usó la excepción "Continuar sin documento", queda
+        # anotada en el mismo log auditado (quién la marcó = uname/actor).
+        _doc_nota = (" · SIN DOCUMENTO (excepción confirmada por el operador)"
+                     if (sin_documento_confirmado and document_type == "sin_documento") else "")
         log_event(rid, "retiro_interno_creado", None, "agenda_confirmada",
-                  f"Retiro backoffice creado por {uname} — confirmación directa (canal: {canal})",
+                  f"Retiro backoffice creado por {uname} — confirmación directa (canal: {canal}){_doc_nota}",
                   "interno", uname)
         # Notificar al cliente si dejó email VÁLIDO (no bloqueante)
         try:
