@@ -98382,10 +98382,14 @@ def mant_ot_aprobar_cierre(vid):
         # nuevo SIN_VALORIZAR los necesita (ver más abajo).
         # costo_despacho + tecnico_user_id incluidos (2026-09-17) -- el gate
         # nuevo ANEXO_DESACTUALIZADO los necesita (ver más abajo).
-        "SELECT estado, modalidad_cobro, factura_nudo, factura_tido, cliente_id, "
-        "       centro_costo, costo_proveedor, costo_despacho, tecnico_user_id, "
-        "       tipo, zz_monto, zz_envio_monto, costo "
-        "  FROM mant_visitas WHERE id=%s",
+        # cliente_tipo incluido (2026-09-22) -- el gate SOLO_NOTA_VENTA lo
+        # necesita: un cliente de arriendo/leasing SÍ puede cerrar con nota
+        # de venta (ver más abajo).
+        "SELECT v.estado, v.modalidad_cobro, v.factura_nudo, v.factura_tido, v.cliente_id, "
+        "       v.centro_costo, v.costo_proveedor, v.costo_despacho, v.tecnico_user_id, "
+        "       v.tipo, v.zz_monto, v.zz_envio_monto, v.costo, c.tipo_cliente AS cliente_tipo "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        " WHERE v.id=%s",
         (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -98553,7 +98557,16 @@ def mant_ot_aprobar_cierre(vid):
     # siempre -- Daniel decide caso a caso cuándo forzar el cierre mientras
     # se re-emite el documento real.
     # Mismo kill-switch que los otros tres candados de este bloque.
-    if (_gate_on and not _ot_es_interna(v)
+    # 🏠 2026-09-22 (Daniel, en vivo, con OT-2026-00191 real de OASIS FITNESS
+    # CLUB SPA trabada por esto: "es posible que para algunos proyectos de
+    # arriendo con opción a compra no llevan facturas... la idea es que
+    # puedas en la ficha de cliente cambiarlo de instalación a arriendo con
+    # ese botón y así aceptar la NVV"). Un cliente clasificado arriendo/
+    # leasing (mant_clientes.tipo_cliente, ya editable desde la ficha) no
+    # siempre recibe factura por OT -- para esos, la nota de venta SÍ cierra,
+    # sin necesitar superadmin. El resto de clientes sigue exactamente igual.
+    _cliente_acepta_nvv = (v.get("cliente_tipo") or "").strip().lower() in ("arriendo", "leasing")
+    if (_gate_on and not _ot_es_interna(v) and not _cliente_acepta_nvv
             and (_mod_cobro not in ("garantia", "sin_costo"))
             and ((v.get("factura_tido") or "").upper() in _OT_DOCS_NOTA_VENTA)):
         _u_cierre = getattr(g, "user", None) or {}
@@ -98565,7 +98578,9 @@ def mant_ot_aprobar_cierre(vid):
                 "error": f"Esta OT solo tiene una nota de venta asociada "
                          f"({v.get('factura_tido')} {v.get('factura_nudo')}) -- eso "
                          f"es una promesa de cobro, no un cobro. Asocia la factura o "
-                         f"boleta real antes de firmar el cierre.",
+                         f"boleta real antes de firmar el cierre, o marca al cliente "
+                         f"como Arriendo/Leasing en su ficha si este proyecto no "
+                         f"factura por OT.",
             }), 400
     # En trabajo INTERNO la firma del administrativo que revisa es la ÚNICA
     # contraparte del técnico (no hay cliente). Daniel 2026-08-08: "que un
