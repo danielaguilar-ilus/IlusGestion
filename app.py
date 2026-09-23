@@ -78876,7 +78876,7 @@ _OT2_CAL_CAP_DIA = 4
 
 _OT2_SELECT_FILAS = (
     "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.prioridad, "
-    "       v.fecha_programada, v.hora_inicio, v.cliente_id, c.razon_social, "
+    "       v.fecha_programada, v.fecha_fin, v.hora_inicio, v.cliente_id, c.razon_social, "
     "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, au.role AS tecnico_role, "
     "       te.id AS tecnico_proveedor_id, "
@@ -79516,11 +79516,29 @@ def ot2_panel():
             for f in filas_cal:
                 _ot2_enriquecer_fila(f, hoy)
 
+            # 🔴 FIX 2026-09-23 (Daniel, viendo el calendario en vivo con
+            # OT-2026-00234: "está para varios días pero solo marca uno en
+            # el calendario"). mant_visitas.fecha_fin existe desde el
+            # 2026-05-17 justo para esto (rango multi-día) y ya lo respeta
+            # el detector de choques (_visita_choca_horario) -- pero este
+            # bucketing solo miraba fecha_programada, nunca fecha_fin, así
+            # que una OT de varios días quedaba pintada solo en el primero.
+            # Ahora la fila se repite en CADA día del rango (acotado al mes
+            # que se está mostrando) -- misma fila, no se duplica en BD, solo
+            # aparece varias veces en pantalla, como cualquier calendario.
             por_dia = {}
             for f in filas_cal:
                 fp = f.get("fecha_programada")
-                if fp and hasattr(fp, "day"):
-                    por_dia.setdefault(fp.day, []).append(f)
+                if not (fp and hasattr(fp, "day")):
+                    continue
+                ff = f.get("fecha_fin")
+                fin = ff if (ff and hasattr(ff, "day") and ff >= fp) else fp
+                d0 = max(fp, primer_dia)
+                d1 = min(fin, ultimo_dia)
+                d = d0
+                while d <= d1:
+                    por_dia.setdefault(d.day, []).append(f)
+                    d += _dt.timedelta(days=1)
 
             primer_dow = primer_dia.weekday()  # 0=lunes
             celdas = [None] * primer_dow
