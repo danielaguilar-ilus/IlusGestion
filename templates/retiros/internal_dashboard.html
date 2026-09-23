@@ -1569,12 +1569,20 @@ select.nri-field-locked{pointer-events:none}
         {% set b = status_badge(r.status) %}
         <tr data-href="{{ url_for('pickup_detail', rid=r.id) }}" data-rid="{{ r.id }}" class="row-clickable" style="cursor:pointer;position:relative">
           <td class="fw-bold font-monospace" data-label="Solicitud">{{ r.code }} <span class="js-row-chat"></span></td>
-          <td data-label="Cliente">{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></td>
-          <td data-label="Documento">{% if r.document_number %}{{ r.document_type|upper }} {{ r.document_number }}{% else %}<span class="text-muted fst-italic">Sin factura</span>{% endif %}</td>
-          <td data-label="Responsable">{% if r.responsable_nombre %}<i class="bi bi-person-check me-1 text-success"></i>{{ r.responsable_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+          {# El td es flex (patrón mobile.css) — nombre y sub-línea envueltos
+             en UN solo bloque para que se apilen en vez de repartirse como
+             columnas propias (Daniel 2026-09-23, mismo pedido de arriba). #}
+          <td data-label="Cliente"><span style="display:block;text-align:right">{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></span></td>
+          {# Daniel 2026-09-23: "en el teléfono... las tarjetas son gigantes,
+             podríamos contar con información de relevancia" -- Documento/
+             Responsable/Calidad se ven completos en el detalle (un tap más
+             allá); en el card mobile solo quedan Solicitud/Cliente/Fecha/
+             Estado/Carga, lo que se necesita para decidir de un vistazo. #}
+          <td class="desktop-only" data-label="Documento">{% if r.document_number %}{{ r.document_type|upper }} {{ r.document_number }}{% else %}<span class="text-muted fst-italic">Sin factura</span>{% endif %}</td>
+          <td class="desktop-only" data-label="Responsable">{% if r.responsable_nombre %}<i class="bi bi-person-check me-1 text-success"></i>{{ r.responsable_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
           <td data-label="Fecha solicitada">{{ r.requested_date | chile_fmt('%d-%m-%Y') }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
           <td data-label="Estado"><span class="badge bg-{{ b.color }}">{{ b.label }}</span></td>
-          <td data-label="Calidad">
+          <td class="desktop-only" data-label="Calidad">
             <div class="progress" style="height:7px"><div class="progress-bar bg-{{ 'success' if r.information_quality_score>=80 else ('warning' if r.information_quality_score>=60 else 'danger') }}" style="width:{{ r.information_quality_score }}%"></div></div>
             <small>{{ r.information_quality_score }}%</small>
           </td>
