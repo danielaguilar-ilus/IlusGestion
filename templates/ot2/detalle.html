@@ -75,27 +75,17 @@
   --line:#eaecf0; --ink:#0a0a0a;
 }
 
-/* Volver al panel — vive dentro del hero desde el 2026-09-02 (antes en el
-   .page-header, que se eliminó por duplicar la identidad de la OT). Sobre
-   fondo oscuro, así que hereda el blanco del hero. */
-.otd-back{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;
-  font-weight:700;opacity:.85;text-decoration:none;color:#fff}
-.otd-back:hover{opacity:1;text-decoration:underline;color:#fff}
-
-/* 🆕 2026-09-02 (Daniel: "el botón de PDF... mételo dentro del header, el
-   eliminar también" y luego "todavía sigo viendo repetitivo esta parte,
-   ¿las puedes juntar?"): la barra de navegación del hero -- volver a la
-   izquierda, Ver PDF / Eliminar OT a la derecha. Mismo botón .otd-btn de
-   siempre (fondo blanco, ya pensado para fondo oscuro). */
-.otd-hnav{display:flex;align-items:center;justify-content:space-between;gap:16px;
-  flex-wrap:wrap;margin-bottom:14px;padding-bottom:12px;
-  border-bottom:1px solid rgba(255,255,255,.10)}
-.otd-header-acts{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
-@media (max-width:640px){
-  .otd-hnav{flex-direction:column;align-items:stretch;gap:10px}
-  .otd-header-acts{width:100%}
-  .otd-header-acts .otd-btn{flex:1;justify-content:center}
-}
+/* Volver al panel — 2026-09-23: ya no tiene franja propia; es una píldora
+   en la misma línea del tipo de OT (.otd-idrow), visible sobre el negro. */
+.otd-idrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.otd-idrow .otd-tipo{margin-bottom:0}
+.otd-back{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:5px 13px 5px 10px;
+  border-radius:999px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.1);
+  color:#fff;font-size:.8rem;font-weight:800;text-decoration:none;transition:background .15s,border-color .15s}
+.otd-back i{font-size:.95rem}
+.otd-back:hover{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.5);color:#fff}
+.otd-back:focus-visible{outline:2px solid #fff;outline-offset:2px}
+@media (max-width:640px){.otd-back{min-height:44px;padding:8px 14px 8px 11px}}
 
 /* ══ DATOS DE LA OT (formato de la pantalla clásica) ══════════════════
    🆕 2026-09-02 (Daniel: "llévala como la imagen que te mostré"). Lista
@@ -2482,13 +2472,17 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
        Daniel ("esos botones colócalo al lado del botón de correo y
        WhatsApp"), y de paso dejan de pelearse con la campana de
        notificaciones, que los tapaba. Acá queda solo volver al panel. #}
-    <div class="otd-hnav">
-      <a class="otd-back" href="{{ url_for('ot2_panel') }}">
-        <i class="bi bi-arrow-left"></i> Volver al panel</a>
-    </div>
+    {# 2026-09-23 (Daniel: "necesita toda una pestaña para que exista... lo
+       podemos integrar dentro de las letras, que se vea integradito pero
+       que se perciba"): la franja propia de "Volver al panel" se quitó; el
+       botón vive como píldora en la misma línea del tipo de OT. #}
     <div class="otd-top">
       <div>
-        <span class="otd-tipo"><i class="bi {{ v.tipo_icon }}"></i>{{ v.tipo_label }}</span>
+        <div class="otd-idrow">
+          <a class="otd-back" href="{{ url_for('ot2_panel') }}" title="Volver al panel de órdenes de trabajo">
+            <i class="bi bi-arrow-left"></i><span>Volver</span></a>
+          <span class="otd-tipo"><i class="bi {{ v.tipo_icon }}"></i>{{ v.tipo_label }}</span>
+        </div>
         <h2 class="otd-num">{{ v.numero_ot or ('OT #' ~ v.id) }}</h2>
         <p class="otd-cli">{{ v.razon_social or 'Sin cliente asignado' }}</p>
         <div class="otd-titulo">
