@@ -1289,6 +1289,13 @@ function tkaOpen(opts){
     onSeleccionarEntidad: (typeof opts.onSeleccionarEntidad === 'function') ? opts.onSeleccionarEntidad : null,
     rutPrefill: opts.rutPrefill || '',
     tabs: Array.isArray(opts.tabs) ? opts.tabs : null,
+    // 2026-09-23 (Retiros: "tiene que ser con número de documento y número
+    // de RUT, ambas modalidades"): endpoint OPCIONAL de la pestaña "Por RUT /
+    // nombre". Default = el de Tickets (exige permiso de Tickets); Retiros
+    // pasa '/retiros/api/buscar-erp' (mismo motor ERP read-only y mismos
+    // campos, pero con el permiso de Retiros). Quien no lo pasa no cambia.
+    cliEndpoint: (typeof opts.cliEndpoint === 'string' && opts.cliEndpoint.charAt(0) === '/')
+      ? opts.cliEndpoint : '/tickets/api/erp/buscar-cliente-documentos',
     // 2026-08-12 (selector de origen de "Generar OT", /mantenciones/ots):
     // querystring OPCIONAL que se agrega al redirect de mode:'crear' (ej.
     // '?abrir_generar_ot=1') -- aditivo, default '' preserva el
@@ -1902,7 +1909,7 @@ async function tkaBuscarPorCliente(){
   _tkaCycleLoadingMsg();
   const t0 = performance.now();
   try{
-    const d = await _tkaFetchJsonSafe('/tickets/api/erp/buscar-cliente-documentos', {
+    const d = await _tkaFetchJsonSafe(_TKA.ctx.cliEndpoint || '/tickets/api/erp/buscar-cliente-documentos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ q, ticket_id: _TKA.ctx.mode === 'agregar' ? _TKA.ctx.ticketId : null })

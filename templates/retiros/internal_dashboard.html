@@ -435,14 +435,13 @@ select.nri-field-locked{pointer-events:none}
               </span>
               <i class="bi bi-chevron-right nri-add-doc-go"></i>
             </button>
-            <div class="nri-add-doc-quick">
-              <label for="nriDocBuscar" class="form-label small fw-semibold mb-1"><i class="bi bi-keyboard me-1"></i>¿Tienes el número a mano? Escríbelo aquí</label>
-              <input type="text" id="nriDocBuscar" class="form-control form-control-sm" maxlength="20" placeholder="Ej: 11575 — también sirve el RUT del cliente" autocomplete="off">
-              <span class="nri-doc-status" id="nriDocStatus"></span>
-            </div>
-            {# 2026-09-15: avisos con acción del Paso 1 (¿es un RUT?, ya está en RET-XXX, varios RUT) #}
+            {# 2026-09-23 (Daniel: "resolvamos esto con un modal nomás... no
+               coloques 'tienes el documento a la mano', solamente el modal"):
+               se quitó el atajo de escribir el N° (#nriDocBuscar + sugerencias).
+               Las facturas se agregan SOLO con el botón de arriba (buscador
+               del ERP). El JS tolera la ausencia de esos elementos. #}
+            {# 2026-09-15: avisos con acción del Paso 1 (ya está en RET-XXX, varios RUT) #}
             <div id="nriDocAvisos" class="nri-avisos"></div>
-            <div id="nriDocSugerencias" class="nri-doc-sug" style="display:none"></div>
             {# 2026-09-23 (Daniel, "sí" explícito): se quitó "Continuar sin
                documento" — todo retiro interno necesita al menos una factura,
                boleta o nota de venta del ERP. #}

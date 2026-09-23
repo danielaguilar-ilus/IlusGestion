@@ -643,7 +643,14 @@
     var yaAgregados = Array.from(DOCS.values()).map(function(e){ return { tido: e.tido, nudo: e.nudo_display }; });
     window.tkaOpen({
       mode: 'seleccionar',
-      tabs: ['doc'],                       // solo "Por documento": la pestaña por RUT exige permiso Tickets
+      /* 2026-09-23 (Daniel: "con número de documento y número de RUT, ambas
+         modalidades"): la pestaña por RUT usa el buscador de Retiros
+         (mismo motor, permiso de Retiros — no exige permiso de Tickets). */
+      tabs: ['doc', 'cli'],
+      cliEndpoint: '/retiros/api/buscar-erp',
+      /* "Agregar OTRA factura": con el cliente ya conocido se abre directo en
+         "Por RUT" con todas sus facturas (multi-documento en un paso). */
+      rutPrefill: (DOCS.size && inpRut && isValidRUT(val(inpRut))) ? val(inpRut) : '',
       docsYaAgregados: yaAgregados,
       docsYaAgregadosLabel: 'Ya en este retiro',
       onSeleccionar: onSeleccionTka,
