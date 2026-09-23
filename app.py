@@ -53124,6 +53124,69 @@ def _no_tecnico_externo(view):
     return wrapped
 
 
+def _es_tecnico_elevado(user=None):
+    """True si el rol es una VARIANTE de técnico distinta del piso base
+    ('tecnico' a secas) y de externo ('tecnico_externo*') -- ej.
+    'tecnico_ejecutivo'. Existe para el permiso 'taller' de abajo: un
+    técnico con un rol así puede ganar acceso al Taller/Incidencias sin
+    que eso reabra la puerta para el técnico de campo común ni para el
+    proveedor externo, que quedan con el candado de siempre pase lo que
+    pase en /admin/roles."""
+    try:
+        if user is None:
+            user = getattr(g, "user", None)
+        role = ((user["role"] if user else "") or "").strip().lower()
+    except Exception:
+        role = ""
+    return (_rol_familia(role) == "tecnico"
+            and role != "tecnico"
+            and not role.startswith("tecnico_externo"))
+
+
+def _no_tecnico_salvo_taller(view):
+    """Como @_no_tecnico, pero un rol técnico ELEVADO (ver
+    _es_tecnico_elevado) entra igual si su rol tiene el permiso 'taller'
+    concedido en /admin/roles (mant_taller en g.permissions).
+
+    🔧 2026-09-23 (Daniel, caso Jaizer -- rol "Técnico Ejecutivo": "no está
+    pudiendo ver la bodega de incidencias... y tiene los permisos"). El
+    toggle "Taller (Plantillas, Proveedores, Repuestos, Ubicaciones,
+    Técnicos, Incidencias)" en /admin/roles (mant_taller, ver PERMS_KEYS)
+    llevaba desde 2026-09-08 sin que NADA lo consultara en el backend --
+    Incidencias solo tenía @_no_tecnico, que bloquea por FAMILIA de rol
+    sin mirar el permiso, así que Jaizer quedaba afuera sin importar lo
+    que Daniel marcara en el admin. El técnico de campo común (Lenin,
+    Dave -- rol exacto 'tecnico') y el proveedor externo NO se tocan: solo
+    un rol elevado como 'tecnico_ejecutivo' puede usar este permiso para
+    entrar -- así el toggle no reabre por accidente algo que ya estaba
+    cerrado a propósito para el resto de los técnicos.
+
+    Mismo contrato que @_no_tecnico: 403 JSON en AJAX, redirect+flash en
+    GET normal. Se aplica DESPUÉS de @_mant_required."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if _es_rol_tecnico() and not (
+                _es_tecnico_elevado()
+                and bool((getattr(g, "permissions", {}) or {}).get("mant_taller"))):
+            is_ajax = (
+                request.headers.get("X-Wizard") == "1"
+                or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or (request.headers.get("Accept") or "").startswith("application/json")
+                or request.is_json
+                or request.path.startswith("/mantenciones/api/")
+            )
+            if is_ajax:
+                return jsonify({
+                    "ok": False,
+                    "error": "No tienes acceso a esta sección. Gestiona tus Órdenes de Trabajo desde el panel.",
+                    "error_codigo": "SIN_ACCESO_TALLER",
+                }), 403
+            flash("No tienes acceso a esta sección.", "warning")
+            return redirect(url_for("mant_ots_list"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def _puede_gestionar_clasificacion(user=None):
     """¿Puede este usuario administrar la CLASIFICACIÓN de producto?
 
@@ -63190,7 +63253,7 @@ def _inc_clasificacion_skus_batch(skus) -> dict:
 
 @app.route("/mantenciones/api/incidencias/buscar-ua", methods=["GET"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_buscar_ua():
     """Autocompleta SKU/descripción del modal de Incidencias buscando el
     código UA en CheckWMS (2026-08-03, Daniel: integración real vía API),
@@ -63298,7 +63361,7 @@ INC_BODEGA_ERP = "13"          # MAEST.KOBO -- misma bodega en Random
 
 @app.route("/mantenciones/api/incidencias/conciliacion", methods=["GET"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_conciliacion():
     """Conciliación Bodega 13 ↔ Incidencias ↔ ERP Random.
 
@@ -63508,7 +63571,7 @@ def mant_api_incidencias_conciliacion():
 @app.route("/mantenciones/incidencias")
 @app.route("/servicio-tecnico/incidencias")
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_incidencias_page():
     """Incidencias de servicio técnico (2026-08-03, Daniel): trae acá la
     tabla que hoy vive en un Clever Cloud aparte (Excel/VBA vía DSN=SPHS),
@@ -63529,7 +63592,7 @@ def _mant_incidencia_row(r):
 
 @app.route("/mantenciones/api/incidencias", methods=["GET"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_list():
     q = (request.args.get("q") or "").strip()
     estado = (request.args.get("estado") or "").strip()
@@ -63578,7 +63641,7 @@ def mant_api_incidencias_list():
 
 @app.route("/mantenciones/api/incidencias", methods=["POST"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_crear():
     data = request.get_json(silent=True) or {}
     sku = (data.get("sku") or "").strip()
@@ -63620,7 +63683,7 @@ def mant_api_incidencias_crear():
 
 @app.route("/mantenciones/api/incidencias/<int:iid>", methods=["PUT"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_editar(iid):
     data = request.get_json(silent=True) or {}
     descripcion = (data.get("descripcion") or "").strip()
@@ -63684,7 +63747,7 @@ def mant_api_incidencias_editar(iid):
 
 @app.route("/mantenciones/api/incidencias/<int:iid>", methods=["DELETE"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_borrar(iid):
     perms = g.get("permissions") or {}
     if not (perms.get("admin") or perms.get("superadmin")):
@@ -63698,7 +63761,7 @@ def mant_api_incidencias_borrar(iid):
 
 @app.route("/mantenciones/api/incidencias/deduplicar", methods=["POST"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_deduplicar():
     """Limpia duplicados EXACTOS creados por el seed de migración.
 
@@ -63766,7 +63829,7 @@ INC_MAX_FOTOS = 3   # Daniel 2026-08-03: "o al menos 3"
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/ficha", methods=["GET"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencia_ficha(iid):
     """Todo lo necesario para VALIDAR una incidencia de un vistazo
     (Daniel 2026-08-03: "que sea para validar la información... que un
@@ -63881,7 +63944,7 @@ def _inc_log(iid, accion, campo=None, antes=None, despues=None):
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/fotos", methods=["POST"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencia_foto_subir(iid):
     """Sube una foto de evidencia (máx 3). Mismo patrón que el Catálogo."""
     if not mysql_fetchone("SELECT id FROM mant_incidencias WHERE id=%s", (iid,)):
@@ -63932,7 +63995,7 @@ def mant_api_incidencia_foto_subir(iid):
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/fotos/<int:fid>", methods=["DELETE"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencia_foto_borrar(iid, fid):
     foto = mysql_fetchone(
         "SELECT gcs_key FROM mant_incidencia_fotos WHERE id=%s AND incidencia_id=%s",
@@ -63950,7 +64013,7 @@ def mant_api_incidencia_foto_borrar(iid, fid):
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/solicitar-repuesto", methods=["POST"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencia_solicitar_repuesto(iid):
     """Solicitud de repuesto con origen Incidencias (Fase 2, 2026-09-21 --
     Daniel: "la bodega de incidencias en la gestión de productos y motivos
@@ -64070,7 +64133,7 @@ def mant_api_incidencia_solicitar_repuesto(iid):
 
 @app.route("/mantenciones/api/incidencias/importar", methods=["POST"])
 @_mant_required
-@_no_tecnico
+@_no_tecnico_salvo_taller
 def mant_api_incidencias_importar():
     """Importa el CSV exportado desde la planilla Excel/VBA vieja
     (columnas: SKU, Descripcion, Cantidad, Motivo, Req_Repuesto,
