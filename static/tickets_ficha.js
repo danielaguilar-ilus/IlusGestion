@@ -4549,6 +4549,30 @@ function tkotRenderEquipos(){
             + '<i class="bi bi-lock me-1"></i><span id="lev-pl-count-'+esc(key)+'">marca el equipo</span></button>')
       + '</td></tr>';
   }).join('');
+  const _planBtn = document.getElementById('btnLevMarcarPlan');
+  if (_planBtn) _planBtn.style.display = _TKOT_MODO_CLIENTE ? '' : 'none';
+  if (_planBtn && _TKOT_MODO_CLIENTE){
+    const _planN = eqs.filter(function(e){ return e.aplica !== false; }).length;
+    const _planLbl = document.getElementById('levPlanLabel');
+    if (_planLbl) _planLbl.textContent = 'Plan (' + _planN + ')';
+  }
+  tkotRecalcEqCount();
+}
+
+// Seleccionar únicamente los equipos que están en el plan de mantención
+// (aplica_mantencion=1) -- restaura el botón "Solo plan" del modal propio
+// de la ficha del cliente (#modalLevSelector, static/mant_ficha.js), perdido
+// sin querer al unificarlo con este modal compartido de Tickets (Aarón,
+// 2026-09-23: "que vuelva el botón de Plan"). Los equipos sin mantención
+// (accesorios, mobiliario, etc.) quedan desmarcados, no se pierden -- REGLA
+// #4.2, siguen siendo seleccionables a mano.
+function tkotMarcarPlan(){
+  if(_TKOT.forzarTodosEquipos) return; // bloqueado -- no se puede tocar
+  const eqs = equiposCache || [];
+  const aplicaKeys = new Set(eqs.filter(function(e){ return e.aplica !== false; }).map(_tkotEqKey));
+  document.querySelectorAll('.lev-eq-chk').forEach(function(c){
+    c.checked = aplicaKeys.has(c.dataset.key);
+  });
   tkotRecalcEqCount();
 }
 

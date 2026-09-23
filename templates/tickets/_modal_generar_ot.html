@@ -538,6 +538,18 @@
                 Equipos declarados en este ticket. Cada uno puede tener varias plantillas.
               </small>
               <div style="display:flex;gap:6px;flex-shrink:0">
+                <!-- "Solo plan" (Aarón, 2026-09-23: "que vuelva el botón de Plan"):
+                     existía en el modal propio de la ficha del cliente antes de
+                     unificarlo con este modal compartido de Tickets (perdido sin
+                     querer en ese refactor) -- selecciona de un click solo los
+                     equipos con aplica_mantencion=1 (data-aplica en la ficha),
+                     dejando fuera accesorios/mobiliario sin mantención. Solo
+                     tiene sentido en modo cliente: un ticket no tiene "plan" --
+                     oculto por defecto, tkotRenderEquipos() lo muestra cuando
+                     _TKOT_MODO_CLIENTE es true. -->
+                <button class="btn btn-sm btn-outline-success" id="btnLevMarcarPlan" onclick="tkotMarcarPlan()" style="display:none" title="Selecciona solo los equipos incluidos en el plan de mantención">
+                  <i class="bi bi-shield-check me-1"></i><span id="levPlanLabel">Solo plan</span>
+                </button>
                 <button class="btn btn-sm btn-outline-secondary" id="btnLevToggleTodos" onclick="tkotToggleTodos()">
                   <i class="bi bi-check2-square me-1"></i>Marcar todos
                 </button>
