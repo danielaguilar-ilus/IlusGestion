@@ -100363,26 +100363,17 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         fila["completada_por_otro"] = (
             _quien(fila["completada_por"]) if fila["completada_por"]
             and fila["completada_por"].lower() != _firmante_tec else "")
-        # 🔴 FIX 2026-09-23 parte 2 (mismo caso OT-2026-00058: además de
-        # 'falla_detectada', las 4 trotadoras del hallazgo real estaban
-        # DADAS DE BAJA -- ver el comentario histórico de
-        # _ot_tarea_no_trabajable_sql(), "OT-2026-00058... 4 trotadoras
-        # (ids 6444-6447)... fueron dadas de baja", el mismo caso). La
-        # query de `equipos` más arriba (100723-100742) YA excluye a
-        # propósito los equipos con `mant_maquinas.estado == 'baja'`
-        # (`COALESCE(m.estado,'activo') != 'baja'`) -- así que un equipo
-        # de baja simplemente NO aparece en `equipos`/`idx_por_maquina`,
-        # y `excluidos_ids` (que se arma solo a partir de `equipos`)
-        # nunca podía incluirlo. `tareas`/`tareas_chk`, en cambio, se
-        # traen SIN ese filtro (correcto: no se borra evidencia, REGLA de
-        # evidencia del proyecto) -- así que sus 52 tareas seguían
-        # contando como "obligatoria pendiente"/"crítico", exactamente lo
-        # que Daniel no quiere mostrarle al cliente. `fila["maquina_idx"]`
-        # ya es None para estos casos (idx_por_maquina no tiene ese mid) --
-        # eso es prueba suficiente de "equipo de baja" dado que el único
-        # motivo por el que un mid con tareas reales queda fuera de
-        # `equipos` es justamente ese filtro. Sin query nueva.
-        fila["equipo_saltado"] = bool(mid) and (mid in excluidos_ids or fila["maquina_idx"] is None)
+        # 🔴 FIX 2026-09-23 parte 3 (caso OT-2026-00058, causa raíz real):
+        # la parte 2 asumía que "maquina_idx is None" probaba "equipo de
+        # baja" (porque la query de `equipos` excluye estado='baja'). Se
+        # desplegó, se verificó contra el PDF real y el síntoma NO cambió
+        # -- prueba de que esa inferencia no capturaba el caso real (el
+        # dato de `mant_maquinas.estado` para esos equipos no era lo que
+        # se asumía). Se reemplaza por un chequeo DIRECTO: `tareas` ahora
+        # trae `m.estado AS maquina_estado` (JOIN ya existía, una sola
+        # columna nueva) y se compara contra 'baja' sin inferir nada.
+        maquina_estado = (t.get("maquina_estado") or "").strip().lower()
+        fila["equipo_saltado"] = bool(mid) and (mid in excluidos_ids or maquina_estado == "baja")
         # Una fila es "excepción" cuando el lector tiene que mirarla: falla o
         # alerta en el resultado, foto exigida que no está, u obligatoria sin
         # completar. Las de un equipo NO revisado no se cuentan una a una:
@@ -100796,6 +100787,11 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False):
         # estado de trabajo (mismo criterio que R1 de _ot_validar_cierre).
         "       t.estado_trabajo, t.completada_por, "
         "       m.nombre AS maquina_nombre, "
+        # maquina_estado (fix OT-2026-00058, 2026-09-23): chequeo DIRECTO
+        # de mant_maquinas.estado para excluir equipos de baja del PDF —
+        # reemplaza la inferencia por "maquina_idx is None" que resultó
+        # insuficiente (ver _ot_pdf_probatorio).
+        "       m.estado AS maquina_estado, "
         "       (SELECT COUNT(*) FROM mant_visita_fotos f WHERE f.tarea_id = t.id) AS n_fotos "
         "  FROM mant_visita_tareas t "
         "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
