@@ -761,6 +761,21 @@ def register_pickup_routes(app, ctx):
             "COMMENT 'Quién declaró motivo_sin_saldo'",
             "ALTER TABLE pickup_doc_lineas ADD COLUMN sin_saldo_en DATETIME NULL "
             "COMMENT 'Cuándo se declaró motivo_sin_saldo (UTC)'",
+            # 🆕 Daniel 2026-09-23: "no demos por sentado nada... el cliente
+            # siempre tenga que aceptar vía mail la propuesta o igual marcarla
+            # a nosotros como aceptada, pero con trazabilidad — nombre,
+            # apellido, fecha y hora". Antes el retiro creado desde el modal
+            # interno se insertaba YA confirmado (customer_already_agreed=1)
+            # sin que el cliente aceptara nada. Ahora SIEMPRE pasa por el
+            # ping-pong real; estas columnas solo se llenan cuando un
+            # colaborador usa el atajo "Marcar como aceptada" en vez de
+            # esperar a que el cliente haga click en el correo.
+            f"ALTER TABLE `{REQ}` ADD COLUMN manual_accept_por VARCHAR(160) NULL "
+            "COMMENT 'Colaborador que marcó la propuesta como aceptada sin que el cliente hiciera click (nombre y apellido)'",
+            f"ALTER TABLE `{REQ}` ADD COLUMN manual_accept_en DATETIME NULL "
+            "COMMENT 'Cuándo se marcó como aceptada manualmente (UTC)'",
+            f"ALTER TABLE `{REQ}` ADD COLUMN manual_accept_motivo VARCHAR(300) NULL "
+            "COMMENT 'Cómo confirmó el cliente (ej. por teléfono) — declarado por el colaborador'",
         ]:
             try: mysql_execute(idx_sql)
             except Exception: pass
@@ -4336,8 +4351,13 @@ def register_pickup_routes(app, ctx):
             return _err("Falta la persona que retira.")
         if not (date and tf and tt):
             return _err("Falta la fecha y hora del retiro.")
+        # 2026-09-23 (Daniel): "canal" ya NO significa "por dónde el cliente ya
+        # aceptó" -- significa por dónde ENTRÓ la solicitud (el colaborador la
+        # tipea porque el cliente llamó, escribió, etc.). Ya no hay
+        # "confirmación directa": este retiro SIEMPRE pasa por el ping-pong
+        # real (ver _pickup_enviar_propuesta_core más abajo).
         if canal not in ("telefono", "correo", "whatsapp", "presencial"):
-            return _err("Para confirmar directo, marca el canal por el que el cliente aceptó.")
+            return _err("Marca por qué canal entró esta solicitud.")
         # FIX 2026-06-20 (Daniel): el email tecleado A MANO no se validaba (el form
         # público SÍ valida) → typos como 'juan gmail.com' se guardaban y el correo
         # de confirmación jamás salía, en silencio. Ahora: normalizar + validar acá,
@@ -4401,6 +4421,17 @@ def register_pickup_routes(app, ctx):
         try:
             with conn.cursor() as cur:
                 code = _generate_pickup_code(cur)
+                # 2026-09-23 (Daniel): "no demos por sentado nada... el cliente
+                # siempre tenga que aceptar vía mail la propuesta". Antes acá
+                # se insertaba YA 'agenda_confirmada' con customer_already_
+                # agreed=1 y confirmed_date=lo que tipeó el operador — el
+                # cliente nunca se enteraba ni tenía que aceptar nada. Ahora
+                # nace en 'solicitud_recibida' (customer_confirm_required=1,
+                # customer_already_agreed=0, sin confirmed_date) y, apenas
+                # se crea, se le manda la propuesta REAL por el mismo
+                # mecanismo de ping-pong que usa el resto del sistema (ver
+                # _pickup_enviar_propuesta_core más abajo) — con su link para
+                # aceptar o contraproponer.
                 cur.execute(
                     f"""INSERT INTO `{REQ}`
                         (code, request_source, created_by_user_id, created_by_user_name,
@@ -4409,19 +4440,15 @@ def register_pickup_routes(app, ctx):
                          contact_name, contact_email, contact_phone,
                          pickup_person_name, pickup_person_rut, pickup_person_phone, pickup_person_relation,
                          requested_date, requested_time_from, requested_time_to,
-                         proposed_date, proposed_time_from, proposed_time_to,
-                         confirmed_date, confirmed_time_from, confirmed_time_to,
                          status, total_packages, total_weight_kg, total_volumetric_weight, total_volume_m3,
                          observations, public_token, signature_status, created_ip, created_user_agent,
                          responsable_user_id, responsable_nombre)
-                        VALUES (%s,'backoffice',%s,%s,%s,0,1,
+                        VALUES (%s,'backoffice',%s,%s,%s,1,0,
                                 %s,%s,%s,%s,
                                 %s,%s,%s,
                                 %s,%s,%s,%s,
                                 %s,%s,%s,
-                                %s,%s,%s,
-                                %s,%s,%s,
-                                'agenda_confirmada',%s,%s,%s,%s,
+                                'solicitud_recibida',%s,%s,%s,%s,
                                 %s,%s,'pendiente',%s,%s,
                                 %s,%s)""",
                     (code, uid, uname, now_cl,
@@ -4430,7 +4457,7 @@ def register_pickup_routes(app, ctx):
                      contact_email, contact_phone_in,
                      pickup_person_name, pickup_person_rut_in,
                      pickup_person_phone_in, (f.get("pickup_person_relation") or "otro")[:30],
-                     date, tf, tt,  date, tf, tt,  date, tf, tt,
+                     date, tf, tt,
                      bultos, wkg, pv, m3,
                      (f.get("observations") or "").strip()[:2000], token,
                      request.remote_addr, (request.user_agent.string or "")[:300],
@@ -4446,28 +4473,35 @@ def register_pickup_routes(app, ctx):
             try: conn.close()
             except Exception: pass
 
-        # FASE 9: trazabilidad — log de creación interna + confirmación directa
+        # FASE 9: trazabilidad — log de creación interna.
         # 2026-09-22: si se usó la excepción "Continuar sin documento", queda
         # anotada en el mismo log auditado (quién la marcó = uname/actor).
         _doc_nota = (" · SIN DOCUMENTO (excepción confirmada por el operador)"
                      if (sin_documento_confirmado and document_type == "sin_documento") else "")
-        log_event(rid, "retiro_interno_creado", None, "agenda_confirmada",
-                  f"Retiro backoffice creado por {uname} — confirmación directa (canal: {canal}){_doc_nota}",
+        log_event(rid, "retiro_interno_creado", None, "solicitud_recibida",
+                  f"Retiro backoffice creado por {uname} (canal de entrada: {canal}){_doc_nota}",
                   "interno", uname)
-        # Notificar al cliente si dejó email VÁLIDO (no bloqueante)
-        try:
-            if contact_email:
-                _fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
-                if _fresh:
-                    notify_async(_fresh, "confirmed")
-        except Exception as _e:
-            print(f"[pickup_create_internal notify] {_e}", flush=True)
+
+        # Propuesta real al cliente — MISMO mecanismo que "Proponer fecha y
+        # hora" en la ficha (_pickup_enviar_propuesta_core), nunca se salta.
+        _req_fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+        _prop = _pickup_enviar_propuesta_core(
+            rid, _req_fresh, cfg, date, tf, tt,
+            message="", reason=f"Retiro creado internamente (canal de entrada: {canal})",
+        )
         try: _DISPO_CACHE["payload"] = None
         except Exception: pass
 
+        if _prop["email_enviado"]:
+            _msg_final = (f"Retiro {code} creado — propuesta enviada al cliente "
+                          f"({date} {tf}-{tt}). Queda esperando que acepte o contraproponga.")
+        else:
+            _msg_final = (f"Retiro {code} creado, pero el correo con la propuesta NO se pudo "
+                          f"enviar al cliente. Revisa el email o la llave de correo de Retiros.")
         return jsonify({
             "ok": True, "id": rid, "code": code,
-            "message": f"Retiro {code} creado y confirmado para {date} {tf}-{tt}.",
+            "message": _msg_final,
+            "email_enviado": _prop["email_enviado"],
             "redirect_url": url_for("pickup_detail", rid=rid),
         })
 
@@ -8715,6 +8749,86 @@ def register_pickup_routes(app, ctx):
         )
 
 
+    def _pickup_enviar_propuesta_core(rid, req, cfg, date, tf, tt, message="", reason=""):
+        """Núcleo compartido de "enviar propuesta al cliente" — extraído de
+        pickup_create_proposal (2026-09-23) para que pickup_create_internal
+        pueda reusarlo tal cual: un retiro creado desde el modal interno
+        arranca el MISMO ping-pong real (propuesta pendiente + correo con
+        link para aceptar/contraproponer), nunca queda "confirmado" solo
+        porque un colaborador lo creó.
+
+        Marca las propuestas 'pending' anteriores como 'superseded', inserta
+        la propuesta nueva, deja el retiro en status='propuesta_enviada' y
+        manda el correo de forma SÍNCRONA (mismo criterio 2026-06-15: el
+        operador tiene que saber con certeza si salió o no).
+
+        NO incluye la auto-confirmación por coincidencia (eso es exclusivo
+        de pickup_create_proposal, donde tiene sentido comparar contra una
+        fecha que el cliente ya pidió antes — un retiro recién creado no
+        tiene eso).
+
+        Devuelve {"email_enviado": bool, "n_destinatarios": int, "fresh": dict}.
+        """
+        try:
+            _expiry_h = int(cfg.get("proposal_expiry_hours") or 48)
+        except (TypeError, ValueError):
+            _expiry_h = 48
+        _expires_at = (_now_chile() + timedelta(hours=_expiry_h)).strftime("%Y-%m-%d %H:%M:%S")
+        mysql_execute(
+            f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() "
+            f"WHERE request_id=%s AND status='pending'", (rid,)
+        )
+        mysql_execute(
+            f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token,expires_at)
+                VALUES (%s,'internal',%s,%s,%s,%s,%s,'pending',%s,%s)""",
+            (rid, date, tf, tt, message, reason,
+             secrets.token_urlsafe(24), _expires_at),
+        )
+        mysql_execute(
+            f"UPDATE `{REQ}` SET status='propuesta_enviada', proposed_date=%s, "
+            f"proposed_time_from=%s, proposed_time_to=%s WHERE id=%s",
+            (date, tf, tt, rid)
+        )
+        log_event(rid, "propuesta_enviada", req.get("status"), "propuesta_enviada",
+                  f"{date} {tf}-{tt}", "interno")
+
+        fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+        try:
+            n_destinatarios = len(_get_pickup_all_emails(fresh))
+        except Exception:
+            n_destinatarios = 0
+        email_enviado = False
+        try:
+            _res = notify(fresh, "proposal", proposal={
+                "date": date, "time_from": tf, "time_to": tt, "message": message,
+            })
+            if isinstance(_res, (tuple, list)) and _res:
+                email_enviado = bool(_res[0])
+            else:
+                email_enviado = bool(_res)
+        except Exception as _e:
+            print(f"[_pickup_enviar_propuesta_core notify] {_e}", flush=True)
+            email_enviado = False
+
+        if not email_enviado:
+            try:
+                log_event(rid, "propuesta_email_no_enviado", "propuesta_enviada",
+                          "propuesta_enviada",
+                          f"Propuesta {date} {tf}-{tt} registrada pero el correo al cliente NO salió "
+                          f"(destinatarios={n_destinatarios}). Revisar llave de correo de Retiros o "
+                          f"el email del cliente.", "interno")
+            except Exception:
+                pass
+
+        try:
+            tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
+            if tok_p: _POLL_CACHE.pop(tok_p, None)
+        except Exception: pass
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
+
+        return {"email_enviado": email_enviado, "n_destinatarios": n_destinatarios, "fresh": fresh}
+
     @app.route("/retiros/<int:rid>/proposal", methods=["POST"])
     @require_permission("retiros")
     def pickup_create_proposal(rid):
@@ -8952,81 +9066,13 @@ def register_pickup_routes(app, ctx):
             flash(_ac_msg, "success")
             return redirect(url_for("pickup_detail", rid=rid))
 
-        # ── FASE 3 (2026-05-29): ping-pong. Antes de crear la propuesta nueva,
-        #    marcar las propuestas pending anteriores como 'superseded' (solo
-        #    puede haber UNA propuesta vigente a la vez). expires_at = ahora
-        #    (Chile) + proposal_expiry_hours.
-        try:
-            _expiry_h = int(cfg.get("proposal_expiry_hours") or 48)
-        except (TypeError, ValueError):
-            _expiry_h = 48
-        _expires_at = (_now_chile() + timedelta(hours=_expiry_h)).strftime("%Y-%m-%d %H:%M:%S")
-        mysql_execute(
-            f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() "
-            f"WHERE request_id=%s AND status='pending'", (rid,)
+        _core = _pickup_enviar_propuesta_core(
+            rid, req, cfg, date, tf, tt,
+            message=request.form.get("message", ""),
+            reason=request.form.get("reason", ""),
         )
-        # ── INSERT propuesta y UPDATE estado (lo crítico, debe completarse) ──
-        mysql_execute(
-            f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token,expires_at)
-                VALUES (%s,'internal',%s,%s,%s,%s,%s,'pending',%s,%s)""",
-            (rid, date, tf, tt, request.form.get("message", ""), request.form.get("reason", ""),
-             secrets.token_urlsafe(24), _expires_at),
-        )
-        mysql_execute(
-            f"UPDATE `{REQ}` SET status='propuesta_enviada', proposed_date=%s, "
-            f"proposed_time_from=%s, proposed_time_to=%s WHERE id=%s",
-            (date, tf, tt, rid)
-        )
-        log_event(rid, "propuesta_enviada", req["status"], "propuesta_enviada",
-                  f"{date} {tf}-{tt}", "interno")
-
-        # ── Notificación al cliente — SÍNCRONA (Daniel 2026-06-15) ──
-        # El correo de propuesta es el evento MÁS crítico del ping-pong.
-        # Antes iba en un thread daemon con las excepciones tragadas: si el
-        # envío fallaba, el operador veía "Propuesta enviada" pero al cliente
-        # NO le llegaba nada (caso real reportado: "me agendé y no pasó nada").
-        # Ahora lo enviamos de forma síncrona y reflejamos el resultado REAL en
-        # la respuesta, para que el operador sepa con certeza si salió o no.
-        _msg = request.form.get("message", "")
-        fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
-        try:
-            n_destinatarios = len(_get_pickup_all_emails(fresh))
-        except Exception:
-            n_destinatarios = 0
-        email_enviado = False
-        try:
-            _res = notify(fresh, "proposal", proposal={
-                "date": date, "time_from": tf, "time_to": tt, "message": _msg,
-            })
-            # notify() devuelve (sent_mail, sent_wa); defensivo por si cambia.
-            if isinstance(_res, (tuple, list)) and _res:
-                email_enviado = bool(_res[0])
-            else:
-                email_enviado = bool(_res)
-        except Exception as _e:
-            print(f"[pickup_create_proposal notify] {_e}", flush=True)
-            email_enviado = False
-
-        # Si el correo NO salió, dejamos rastro en el tracking para que el
-        # equipo lo reintente/avise (la propuesta igual queda registrada y
-        # visible en el seguimiento del cliente).
-        if not email_enviado:
-            try:
-                log_event(rid, "propuesta_email_no_enviado", "propuesta_enviada",
-                          "propuesta_enviada",
-                          f"Propuesta {date} {tf}-{tt} registrada pero el correo al cliente NO salió "
-                          f"(destinatarios={n_destinatarios}). Revisar llave de correo de Retiros o "
-                          f"el email del cliente.", "interno")
-            except Exception:
-                pass
-
-        # Invalidación de caches (no crítico).
-        try:
-            tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
-            if tok_p: _POLL_CACHE.pop(tok_p, None)
-        except Exception: pass
-        try: _DISPO_CACHE["payload"] = None
-        except Exception: pass
+        email_enviado    = _core["email_enviado"]
+        n_destinatarios  = _core["n_destinatarios"]
 
         if is_ajax:
             if email_enviado:
@@ -9236,6 +9282,120 @@ def register_pickup_routes(app, ctx):
         return jsonify({
             "ok": True,
             "message": "Contrapropuesta aceptada. El retiro quedó agendado y avisamos al cliente por correo.",
+            "confirmed": {
+                "date":      str(proposal["date"])[:10],
+                "time_from": _td_to_hhmm(proposal["time_from"]),
+                "time_to":   _td_to_hhmm(proposal["time_to"]),
+            },
+            "redirect_url": url_for("pickup_detail", rid=rid),
+        })
+
+    # ══════════════════════════════════════════════════════════════════
+    #  MARCAR PROPUESTA COMO ACEPTADA MANUALMENTE — Daniel 2026-09-23
+    #  "no demos por sentado nada... el cliente siempre tenga que aceptar
+    #  vía mail la propuesta o igual marcarla a nosotros como aceptada,
+    #  pero con todo trazabilidad... nombre, apellido, fecha y hora".
+    #  Atajo para cuando el cliente confirma por un canal que NO es el link
+    #  del correo (llamada, WhatsApp, presencial) — el colaborador deja
+    #  constancia de que él fue quien lo registró, no el cliente haciendo
+    #  click. Motivo obligatorio, mismo patrón que motivo_otro_rut.
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/<int:rid>/marcar-aceptada-manual", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_marcar_aceptada_manual(rid):
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        if str(req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
+            return jsonify({"ok": False, "error": "Este retiro ya está cerrado o finalizado."}), 409
+
+        body = request.get_json(silent=True) or {}
+        motivo = (body.get("motivo") or request.form.get("motivo") or "").strip()[:300]
+        if not motivo:
+            return jsonify({
+                "ok": False, "error": "MOTIVO_REQUERIDO", "code": "MOTIVO_REQUERIDO",
+                "detalle": "Explica cómo confirmó el cliente (ej. \"llamó y confirmó por teléfono\") — queda registrado con tu nombre y la hora.",
+            }), 400
+
+        proposal = mysql_fetchone(
+            f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+            f"ORDER BY id DESC LIMIT 1", (rid,)
+        )
+        if not proposal:
+            return jsonify({
+                "ok": False,
+                "error": "No hay una propuesta pendiente para marcar como aceptada. Propón una fecha primero.",
+            }), 409
+        if not proposal_is_vigente(proposal):
+            try:
+                mysql_execute(f"UPDATE `{PROP}` SET status='expired', answered_at=NOW() WHERE id=%s",
+                              (proposal["id"],))
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": "Esa propuesta ya venció. Propón una fecha nueva."}), 410
+
+        ok_slot, motivo_slot = _validar_disponibilidad_slot(
+            proposal["date"], proposal["time_from"], proposal["time_to"],
+            exclude_request_id=rid,
+            extra_kg=float(req.get("total_weight_kg") or 0),
+            extra_m3=float(req.get("total_volume_m3") or 0),
+        )
+        if not ok_slot:
+            return jsonify({
+                "ok": False,
+                "error": f"Ese horario ya no está disponible: {motivo_slot} Propón otra fecha.",
+            }), 409
+
+        u = getattr(g, "user", None) or {}
+        actor = u.get("nombre") or u.get("username") or "interno"
+        en_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+        try:
+            mysql_execute(
+                f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() WHERE id=%s",
+                (proposal["id"],),
+            )
+            mysql_execute(
+                f"""UPDATE `{REQ}`
+                      SET status='agenda_confirmada',
+                          confirmed_date=%s, confirmed_time_from=%s, confirmed_time_to=%s,
+                          customer_already_agreed=1,
+                          manual_accept_por=%s, manual_accept_en=%s, manual_accept_motivo=%s
+                    WHERE id=%s""",
+                (proposal["date"], proposal["time_from"], proposal["time_to"],
+                 actor, en_utc, motivo, rid),
+            )
+        except Exception as _e:
+            print(f"[pickup_marcar_aceptada_manual] rid={rid}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo registrar la aceptación. Reintenta."}), 500
+
+        log_event(
+            rid, "aceptada_manual", req.get("status"), "agenda_confirmada",
+            f"{actor} marcó la propuesta ({str(proposal['date'])[:10]} "
+            f"{_td_to_hhmm(proposal['time_from'])}-{_td_to_hhmm(proposal['time_to'])}) como aceptada "
+            f"por el cliente SIN que este hiciera click en el correo. Motivo: {motivo}",
+            "interno", actor,
+        )
+
+        try: _POLL_CACHE.pop(req.get("public_token"), None)
+        except Exception: pass
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
+
+        try:
+            req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+            notify_async(req_after, "confirmed")
+        except Exception as _e:
+            print(f"[pickup_marcar_aceptada_manual][notify] {_e}", flush=True)
+        try:
+            _alertar_si_sin_saldo(rid, req.get("code"))
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": True,
+            "message": f"Registrado — {actor} marcó la propuesta como aceptada por el cliente.",
+            "actor": actor, "en": en_utc, "motivo": motivo,
             "confirmed": {
                 "date":      str(proposal["date"])[:10],
                 "time_from": _td_to_hhmm(proposal["time_from"]),

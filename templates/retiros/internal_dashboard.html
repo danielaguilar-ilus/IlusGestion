@@ -154,6 +154,20 @@
   border-radius:50px;background:#0a0a0a;color:#fff;font-size:.66rem;font-weight:800}
 .nri-docs-list,.nri-doc-sug{display:flex;flex-direction:column;gap:8px}
 .nri-doc-sug{margin-top:10px}
+/* 🆕 Daniel 2026-09-23: tabla de productos del Paso 4 (Carga) — SKU/N°doc/
+   descripción/cantidad/peso/volumen, para que el colaborador no necesite
+   una hoja aparte. */
+.nri-tabla-productos-scroll{max-height:260px;overflow-y:auto;border:1.5px solid #e5e7eb;border-radius:12px}
+.nri-tabla-productos{width:100%;border-collapse:collapse;font-size:.78rem}
+.nri-tabla-productos thead th{position:sticky;top:0;z-index:1;background:#0a0a0a;color:#fff;
+  font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;text-align:left}
+.nri-tabla-productos thead th.num{text-align:right}
+.nri-tabla-productos tbody td{padding:7px 10px;border-top:1px solid #f1f5f9;color:#1f2937}
+.nri-tabla-productos tbody tr:hover{background:#fafafa}
+.nri-tabla-productos td.mono{font-family:ui-monospace,Consolas,monospace;font-size:.74rem;color:#374151}
+.nri-tabla-productos td.num{text-align:right;font-weight:700;white-space:nowrap}
+.nri-tp-doc{display:inline-block;background:#fef2f2;color:var(--ilus-red,#dc2626);border:1px solid #fecaca;
+  border-radius:50px;padding:2px 8px;font-size:.7rem;font-weight:800}
 .nri-doc-card{
   background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:12px 14px;
   display:flex;flex-wrap:wrap;align-items:center;gap:10px;
@@ -264,20 +278,28 @@ select.nri-field-locked{pointer-events:none}
         <h5 class="modal-title fw-bold">
           <i class="bi bi-plus-circle me-2" style="color:var(--ilus-red)"></i>Nuevo retiro interno
         </h5>
-        {# 2026-09-15: progreso global "N de 7 pasos listos" + contador de avisos
-           (lo pinta nriEvaluarPasos() en static/retiros_nuevo_interno.js) #}
+        {# 2026-09-23: progreso global "N de 6 pasos listos" (bajó de 7 a 6 al
+           fusionar "Persona que retira" + "Responsable" en un solo Paso 3) +
+           contador de avisos (lo pinta nriEvaluarPasos() en
+           static/retiros_nuevo_interno.js) #}
         <div class="nri-progreso" id="nriProgreso" aria-live="polite">
-          <span id="nriProgresoTxt">0 de 7 pasos listos</span>
+          <span id="nriProgresoTxt">0 de 6 pasos listos</span>
           <span class="bar"><span id="nriProgresoBar"></span></span>
           <span class="avisos" id="nriProgresoAvisos"></span>
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
-        <div class="alert d-flex align-items-center gap-2 mb-3" style="background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #d97706;font-size:.82rem">
-          <i class="bi bi-info-circle-fill" style="color:#d97706"></i>
-          <div>Retiro creado <strong>internamente</strong>. Como el cliente ya aceptó por otro canal,
-          queda <strong>confirmado al instante</strong> (respetando capacidad y sin fechas pasadas).</div>
+        {# 2026-09-23 (Daniel): "no demos por sentado nada, sino que el cliente
+           siempre tenga que aceptar vía mail la propuesta o igual marcarla a
+           nosotros como aceptada, pero con trazabilidad". Ya no se confirma
+           solo -- se manda la propuesta real y el cliente tiene que aceptarla
+           (o un colaborador la marca a mano, con su nombre y la hora
+           quedando registrados). #}
+        <div class="alert d-flex align-items-center gap-2 mb-3" style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;font-size:.82rem">
+          <i class="bi bi-send-check-fill" style="color:#2563eb"></i>
+          <div>Al crear el retiro se manda la <strong>propuesta real</strong> al cliente (mismo ping-pong de
+          siempre). Queda <strong>esperando que acepte o contraproponga</strong> -- nunca se confirma solo.</div>
         </div>
         <form id="formNuevoRetiroInterno">
 
@@ -427,7 +449,13 @@ select.nri-field-locked{pointer-events:none}
             </div>
           </div>
 
-          {# ── Paso 3: Persona que retira ── #}
+          {# ── Paso 3: Persona que retira + Responsable (FUSIONADOS — Daniel
+             2026-09-23: "la persona que retira está ok, eso sería el paso 2
+             [conceptual]... la persona quien retira, el responsable del
+             retiro" -- van juntos porque son la misma decisión operativa:
+             quién viene a buscar la carga y quién en ILUS responde por ella.
+             Antes eran 2 tarjetas (Paso 3 + Paso 4) con su propio numerito;
+             ahora es 1 sola, 6 pasos en total en vez de 7. ── #}
           <div class="nri-step-card" id="nriStep3">
             <div class="nri-step-header">
               <div class="nri-step-circle-wrap">
@@ -435,23 +463,34 @@ select.nri-field-locked{pointer-events:none}
                 <div class="nri-step-circle"><span class="nri-step-num-text">3</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">Persona que retira</div>
-                <div class="nri-step-sub">Quién llega a bodega a buscar la carga</div>
+                <div class="nri-step-title">Persona que retira y responsable</div>
+                <div class="nri-step-sub">Quién llega a bodega a buscar la carga, y quién en ILUS responde por la entrega</div>
                 <div class="nri-step-estado" id="nriStepEstado3"></div>
               </div>
             </div>
+
+            <label class="form-label small fw-semibold">Responsable del retiro <span class="req">*</span> <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">¿quién se responsabiliza de entregar este pedido?</span></label>
+            <div class="row g-2 mb-3">
+              <div class="col-12 col-md-7">
+                <select name="responsable_user_id" id="nriResponsable" class="form-select form-select-sm nri-req" required>
+                  <option value="">Cargando responsables…</option>
+                </select>
+              </div>
+            </div>
+
+            <label class="form-label small fw-semibold" style="display:block">Persona que retira</label>
             {# 2026-09-15: chip "Es el mismo cliente" — copia nombre/RUT del Paso 2
                (solo si están vacíos; si hay otro valor, pide confirmación).
                2026-09-22: + "Es el mismo responsable" (copia el responsable
-               elegido en el Paso 4 — quien coordinó por teléfono a veces
-               también retira). Ambos SIEMPRE piden confirmación si ya hay
-               algo distinto tipeado (copiarMismoCliente/copiarMismoResponsable
+               elegido arriba — quien coordinó por teléfono a veces también
+               retira). Ambos SIEMPRE piden confirmación si ya hay algo
+               distinto tipeado (copiarMismoCliente/copiarMismoResponsable
                en retiros_nuevo_interno.js). #}
             <div class="d-flex flex-wrap gap-2 mb-2">
               <button type="button" class="nri-chip-mismo" id="nriMismoCliente" title="Copiar el nombre y RUT del cliente del Paso 2">
                 <i class="bi bi-person-check-fill"></i>Es el mismo cliente
               </button>
-              <button type="button" class="nri-chip-mismo" id="nriMismoResponsable" title="Copiar el nombre y RUT del responsable elegido en el Paso 4">
+              <button type="button" class="nri-chip-mismo" id="nriMismoResponsable" title="Copiar el nombre y RUT del responsable elegido arriba">
                 <i class="bi bi-person-badge-fill"></i>Es el mismo responsable
               </button>
             </div>
@@ -493,39 +532,17 @@ select.nri-field-locked{pointer-events:none}
             </div>
           </div>
 
-          {# ── Paso 4: Responsable del retiro (OBLIGATORIO — Daniel 2026-06-19) ── #}
-          <div class="nri-step-card" id="nriStep4">
+          {# ── Paso 4: Carga (opcional) ── #}
+          <div class="nri-step-card is-complete" id="nriStep4">
             <div class="nri-step-header">
               <div class="nri-step-circle-wrap">
                 <span class="nri-step-circle-label">Paso 4</span>
                 <div class="nri-step-circle"><span class="nri-step-num-text">4</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">Responsable del retiro</div>
-                <div class="nri-step-sub">¿Quién se responsabiliza de entregar este pedido?</div>
-                <div class="nri-step-estado" id="nriStepEstado4"></div>
-              </div>
-            </div>
-            <div class="row g-2">
-              <div class="col-12 col-md-7">
-                <select name="responsable_user_id" id="nriResponsable" class="form-select form-select-sm nri-req" required>
-                  <option value="">Cargando responsables…</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {# ── Paso 5: Carga (opcional) ── #}
-          <div class="nri-step-card is-complete" id="nriStep5">
-            <div class="nri-step-header">
-              <div class="nri-step-circle-wrap">
-                <span class="nri-step-circle-label">Paso 5</span>
-                <div class="nri-step-circle"><span class="nri-step-num-text">5</span><i class="bi bi-check-lg nri-step-check"></i></div>
-              </div>
-              <div class="nri-step-titles">
                 <div class="nri-step-title">Carga <span class="nri-step-opt">(opcional)</span></div>
                 <div class="nri-step-sub">Puedes ajustarla después si no la tienes a mano</div>
-                <div class="nri-step-estado" id="nriStepEstado5"></div>
+                <div class="nri-step-estado" id="nriStepEstado4"></div>
               </div>
             </div>
             {# 2026-09-15: "Calculado desde el ERP: N de M líneas con ficha logística"
@@ -550,23 +567,46 @@ select.nri-field-locked{pointer-events:none}
                 <input name="total_volume_m3" type="number" min="0" step="0.001" value="0" class="form-control form-control-sm">
               </div>
             </div>
+            {# 🆕 Daniel 2026-09-23: "quisiera una tabla con todos los datos de
+               los productos, indicándome el peso y el volumen... bien potente
+               que no necesiten de una hoja para poder actuar... agrégale el
+               N° de documento". Tabla de solo lectura, se arma sola desde las
+               líneas de los documentos ya asociados (renderTablaProductosNRI,
+               llamada desde recalcularCarga() cada vez que cambian los docs). #}
+            <div id="nriTablaProductosWrap" style="display:none;margin-top:12px">
+              <div class="nri-list-title">
+                <span><i class="bi bi-box-seam"></i>Productos a retirar<span class="nri-count" id="nriTablaProductosCount">0</span></span>
+                <span class="text-muted fw-normal text-lowercase" style="letter-spacing:0;font-size:.7rem">de los documentos asociados arriba</span>
+              </div>
+              <div class="nri-tabla-productos-scroll">
+                <table class="nri-tabla-productos">
+                  <thead>
+                    <tr>
+                      <th>SKU</th><th>N° doc</th><th>Descripción</th>
+                      <th class="num">Cantidad</th><th class="num">Peso</th><th class="num">Volumen</th>
+                    </tr>
+                  </thead>
+                  <tbody id="nriTablaProductosBody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
 
-          {# ── Paso 6: Agenda — Daniel 2026-06-16: MISMO slot-picker del
+          {# ── Paso 5: Agenda — Daniel 2026-06-16: MISMO slot-picker del
              formulario público (window.IlusRetirosCalendar). Bloque único,
              cupos y medio cupo reales. FIX 2026-09-14: + mini-calendario
              mensual con densidad de cupos (Daniel: "tan potente como las
              OT") vía #nriMonth (ver mount() en el <script> de abajo). ── #}
-          <div class="nri-step-card" id="nriStep6">
+          <div class="nri-step-card" id="nriStep5">
             <div class="nri-step-header">
               <div class="nri-step-circle-wrap">
-                <span class="nri-step-circle-label">Paso 6</span>
-                <div class="nri-step-circle"><span class="nri-step-num-text">6</span><i class="bi bi-check-lg nri-step-check"></i></div>
+                <span class="nri-step-circle-label">Paso 5</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">5</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
                 <div class="nri-step-title">Agenda (entrega)</div>
                 <div class="nri-step-sub">Mira el mes completo por densidad de cupos y elige el bloque</div>
-                <div class="nri-step-estado" id="nriStepEstado6"></div>
+                <div class="nri-step-estado" id="nriStepEstado5"></div>
               </div>
             </div>
             {# Daniel 2026-09-14 ("así quiero los calendarios de todo el módulo
@@ -628,17 +668,21 @@ select.nri-field-locked{pointer-events:none}
             <input type="hidden" name="time_to" id="nriHidTt">
           </div>
 
-          {# ── Paso 7: Canal de aceptación (obligatorio para confirmar directo) ── #}
-          <div class="nri-step-card" id="nriStep7">
+          {# ── Paso 6: Canal de entrada (2026-09-23: YA NO es "el cliente ya
+             aceptó" -- es por dónde ENTRÓ la solicitud, informativo. La
+             aceptación real la da el ping-pong: el cliente hace click en el
+             correo, o un colaborador la marca a mano desde la ficha con
+             trazabilidad. Ver banner de arriba del modal. ── #}
+          <div class="nri-step-card" id="nriStep6">
             <div class="nri-step-header">
               <div class="nri-step-circle-wrap">
-                <span class="nri-step-circle-label">Paso 7</span>
-                <div class="nri-step-circle"><span class="nri-step-num-text">7</span><i class="bi bi-check-lg nri-step-check"></i></div>
+                <span class="nri-step-circle-label">Paso 6</span>
+                <div class="nri-step-circle"><span class="nri-step-num-text">6</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">El cliente ya aceptó por</div>
-                <div class="nri-step-sub">Canal de confirmación + notas para bodega</div>
-                <div class="nri-step-estado" id="nriStepEstado7"></div>
+                <div class="nri-step-title">¿Por qué canal entró la solicitud?</div>
+                <div class="nri-step-sub">Cómo llegó el pedido, no cómo lo va a aceptar — eso lo maneja la Agenda</div>
+                <div class="nri-step-estado" id="nriStepEstado6"></div>
               </div>
             </div>
             <div class="row g-2">
@@ -652,7 +696,7 @@ select.nri-field-locked{pointer-events:none}
                 </select>
               </div>
               <div class="col-12">
-                <label class="form-label small fw-semibold mt-1">Observación interna</label>
+                <label class="form-label small fw-semibold mt-1">Observación interna <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">(opcional)</span></label>
                 <textarea name="observations" class="form-control form-control-sm" rows="2" maxlength="2000" placeholder="Notas para el equipo de bodega…"></textarea>
               </div>
             </div>
@@ -1053,7 +1097,7 @@ select.nri-field-locked{pointer-events:none}
         catch(_eAsoc){ _asoc = { fallos: [String(_eAsoc && _eAsoc.message || _eAsoc)], asociados: 0 }; }
       }
       if (!_asoc.fallos.length){
-        ilusToast('✓ ' + (d.message || 'Retiro creado y confirmado')
+        ilusToast('✓ ' + (d.message || 'Retiro creado — propuesta enviada al cliente')
           + (_asoc.asociados ? ' · ' + _asoc.asociados + ' documento' + (_asoc.asociados === 1 ? '' : 's') + ' asociado' + (_asoc.asociados === 1 ? '' : 's') : ''), { type:'success' });
       }
       setTimeout(()=>{ window.location.href = d.redirect_url || '/retiros'; }, 700);

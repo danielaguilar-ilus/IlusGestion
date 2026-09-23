@@ -1122,7 +1122,7 @@
         if (inpKg && !dirty.total_weight_kg) inpKg.value = '0';
         if (inpM3 && !dirty.total_volume_m3) inpM3.value = '0';
       }
-      ultimoCalculo = null; pintarCargaInfo(null); return;
+      ultimoCalculo = null; pintarCargaInfo(null); renderTablaProductosNRI(); return;
     }
     var kg = 0, m3 = 0, bultos = 0, N = 0, M = 0, sinFicha = [];
     DOCS.forEach(function(e){
@@ -1148,6 +1148,47 @@
     if (inpM3 && !dirty.total_volume_m3) inpM3.value = (Math.round(m3 * 1000) / 1000).toFixed(3);
     if (inpBultos && !dirty.total_packages && bultosFinal > 0) inpBultos.value = String(bultosFinal);
     pintarCargaInfo(ultimoCalculo);
+    renderTablaProductosNRI();
+  }
+  /* 🆕 Daniel 2026-09-23: "una tabla con todos los datos de los productos,
+     indicándome el peso y el volumen... bien potente que no necesiten de
+     una hoja para poder actuar... agrégale el nro de documento". Tabla de
+     solo lectura, SKU/N° doc/descripción/cantidad/peso/volumen — una fila
+     por línea de cada documento asociado (excluye ZZ/descuento, mismo
+     criterio que recalcularCarga). Peso/volumen de la fila = el TOTAL para
+     la cantidad seleccionada (mismo ratio que el cálculo agregado de
+     arriba), no el catálogo crudo — para que sumen exacto contra el total. */
+  function renderTablaProductosNRI(){
+    var wrap = $('nriTablaProductosWrap'), body = $('nriTablaProductosBody'), cnt = $('nriTablaProductosCount');
+    if (!wrap || !body) return;
+    var filas = [];
+    DOCS.forEach(function(e){
+      var docLbl = e.tido + ' ' + e.nudo_display;
+      (e.lineas || []).forEach(function(l){
+        if (l.es_zz || l.es_descuento) return;
+        var sel = num(e.seleccion[l.sku]);
+        if (sel <= 0) return;
+        var cant = num(l.cantidad), ratio = cant > 0 ? sel / cant : 1;
+        var pesoFila = num(l.peso_kg_tot) * ratio;
+        var volFila = (num(l.vol_tot) / 1e6) * ratio;
+        filas.push({
+          sku: l.sku || '—', doc: docLbl,
+          desc: l.nombre || l.descripcion_erp || '(sin descripción)',
+          cant: sel, peso: pesoFila, vol: volFila,
+        });
+      });
+    });
+    if (!filas.length){ wrap.style.display = 'none'; body.innerHTML = ''; return; }
+    wrap.style.display = '';
+    if (cnt) cnt.textContent = filas.length;
+    body.innerHTML = filas.map(function(f){
+      return '<tr><td class="mono">' + esc(f.sku) + '</td>' +
+        '<td><span class="nri-tp-doc">' + esc(f.doc) + '</span></td>' +
+        '<td>' + esc(f.desc) + '</td>' +
+        '<td class="num">' + (Math.round(f.cant * 100) / 100) + '</td>' +
+        '<td class="num">' + fmtKg(f.peso) + ' kg</td>' +
+        '<td class="num">' + (Math.round(f.vol * 1000) / 1000).toFixed(3) + ' m³</td></tr>';
+    }).join('');
   }
   function pintarCargaInfo(c){
     var el = $('nriCargaInfo'); if (!el) return;
@@ -1410,9 +1451,14 @@
     return r;
   }
 
-  /* ── Paso 3 · Persona que retira ── */
+  /* ── Paso 3 · Persona que retira + Responsable (FUSIONADOS, 2026-09-23) ──
+     Antes eran evalPaso3 (persona) + evalPaso4 (responsable) por separado,
+     cada uno con su propia tarjeta. Daniel las quiso juntas ("la persona
+     quien retira, el responsable del retiro") -- un solo semáforo para las
+     dos, "falta" acumula lo que falte de cualquiera de las dos mitades. */
   function evalPaso3(){
     var r = { faltan: [], avisos: [], ok: '' };
+    if (!val(selResponsable)) r.faltan.push('responsable');
     var nombre = val(inpPersona), rut = val(inpPersonaRut);
     if (!nombre) r.faltan.push('nombre de quien retira');
     if (rut && !isValidRUT(rut)) r.avisos.push({ txt: 'RUT: dígito verificador no cuadra' });
@@ -1421,15 +1467,9 @@
     if (nombre && nomCli && nombre.toLowerCase() === nomCli.toLowerCase() && !rut && rutCli){
       r.avisos.push({ txt: 'Mismo nombre que el cliente — usa "Es el mismo cliente" para copiar el RUT' });
     }
-    if (!r.faltan.length) r.ok = 'Retira ' + nombre + (rut && isValidRUT(rut) ? ' · ' + formatRUTStr(rut) : '');
-    return r;
-  }
-
-  /* ── Paso 4 · Responsable ── */
-  function evalPaso4(){
-    var r = { faltan: [], avisos: [], ok: '' };
-    if (!val(selResponsable)) r.faltan.push('responsable');
-    else r.ok = 'Responsable: ' + textoOpcion(selResponsable);
+    if (!r.faltan.length){
+      r.ok = 'Responsable: ' + textoOpcion(selResponsable) + ' · Retira ' + nombre + (rut && isValidRUT(rut) ? ' · ' + formatRUTStr(rut) : '');
+    }
     return r;
   }
 
@@ -1462,11 +1502,12 @@
     return r;
   }
 
-  /* ── Paso 7 · Canal ── */
+  /* ── Paso 6 · Canal de entrada (2026-09-23: ya no es "por dónde aceptó",
+     es por dónde ENTRÓ la solicitud) ── */
   function evalPaso7(){
     var r = { faltan: [], avisos: [], ok: '' };
-    if (!val(selCanal)) r.faltan.push('canal por el que aceptó el cliente');
-    else r.ok = 'Aceptó por ' + textoOpcion(selCanal);
+    if (!val(selCanal)) r.faltan.push('canal por el que entró la solicitud');
+    else r.ok = 'Entró por ' + textoOpcion(selCanal);
     return r;
   }
 
@@ -1504,7 +1545,11 @@
   /* Evaluador central. Cada paso va en su try/catch: un dato raro en uno no
      puede apagar el semáforo de los demás. */
   window.nriEvaluarPasos = function(){
-    var evals = [evalPaso1, evalPaso2, evalPaso3, evalPaso4, evalPaso5, evalPaso6, evalPaso7];
+    /* 2026-09-23: 6 pasos (bajó de 7 al fusionar Persona+Responsable en
+       evalPaso3). Los nombres de función quedan igual -- solo cambia el
+       ORDEN/cantidad del array, que es lo que decide a qué #nriStepN se
+       pinta cada uno (ver pintarPaso: usa la posición i+1, no el nombre). */
+    var evals = [evalPaso1, evalPaso2, evalPaso3, evalPaso5, evalPaso6, evalPaso7];
     var res = evals.map(function(fn, i){
       var r;
       try { r = fn(); } catch(e){ console.warn('[nri] evalPaso' + (i + 1), e); r = { faltan: [], avisos: [], ok: '' }; }
