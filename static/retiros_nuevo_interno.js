@@ -648,9 +648,11 @@
          (mismo motor, permiso de Retiros — no exige permiso de Tickets). */
       tabs: ['doc', 'cli'],
       cliEndpoint: '/retiros/api/buscar-erp',
-      /* "Agregar OTRA factura": con el cliente ya conocido se abre directo en
-         "Por RUT" con todas sus facturas (multi-documento en un paso). */
-      rutPrefill: (DOCS.size && inpRut && isValidRUT(val(inpRut))) ? val(inpRut) : '',
+      /* Daniel 2026-09-23: "si ya está declarado, la ficha ya está llena, se
+         tiene que autorrellenar el RUT del cliente declarado" — con un RUT
+         válido en el Paso 2 se abre directo en "Por RUT" ya buscado, con
+         todas sus facturas (también sirve para "Agregar otra"). */
+      rutPrefill: (inpRut && isValidRUT(val(inpRut))) ? val(inpRut) : '',
       docsYaAgregados: yaAgregados,
       docsYaAgregadosLabel: 'Ya en este retiro',
       onSeleccionar: onSeleccionTka,
