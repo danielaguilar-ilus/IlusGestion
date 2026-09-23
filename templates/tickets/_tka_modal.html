@@ -393,6 +393,12 @@
     color:#b45309;font-size:.68rem;font-weight:800;margin-top:1px;
     display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
   }
+  /* 2026-09-23 (Retiros, opción mostrarStockOk): stock sano también a la
+     vista, en verde, con disponible/comprometido/devengado. */
+  .tka-line .ln-stock-ok{
+    color:#15803d;font-size:.68rem;font-weight:800;margin-top:1px;
+    display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
+  }
   .tka-line .ln-qty-input{
     border:1.5px solid var(--tka-gray-2);border-radius:8px;padding:6px 8px;
     font-size:16px;font-weight:700;text-align:center;
@@ -699,7 +705,7 @@
     <div id="tkaPanelDoc" class="tka-panel">
       <div class="tka-mod-hint">
         <i class="bi bi-info-circle"></i>
-        <div>Ingresa <strong>tipo + número</strong> del documento (factura, boleta, guía…). Te mostraremos sus productos con saldo pendiente para que selecciones cuáles van al ticket.</div>
+        <div>Ingresa <strong>tipo + número</strong> del documento (factura, boleta, guía…). Te mostraremos sus productos con saldo pendiente para que selecciones cuáles <span id="tkaDocHintDestino">van al ticket</span>.</div>
       </div>
       <div class="tka-search-row">
         <select id="tkaDocTido" title="Tipo de documento">
@@ -1296,6 +1302,7 @@ function tkaOpen(opts){
     // campos, pero con el permiso de Retiros). Quien no lo pasa no cambia.
     cliEndpoint: (typeof opts.cliEndpoint === 'string' && opts.cliEndpoint.charAt(0) === '/')
       ? opts.cliEndpoint : '/tickets/api/erp/buscar-cliente-documentos',
+    mostrarStockOk: !!opts.mostrarStockOk,   // ver _tkaStockBadge (2026-09-23)
     // 2026-08-12 (selector de origen de "Generar OT", /mantenciones/ots):
     // querystring OPCIONAL que se agrega al redirect de mode:'crear' (ej.
     // '?abrir_generar_ot=1') -- aditivo, default '' preserva el
@@ -1337,6 +1344,8 @@ function tkaOpen(opts){
     const lbl = assocBtn.querySelector('span');
     if (lbl) lbl.textContent = _TKA.ctx.mode === 'crear' ? 'Crear ticket'
       : (_TKA.ctx.mode === 'seleccionar' ? 'Usar selección' : 'Agregar al ticket');
+    const _hintDest = document.getElementById('tkaDocHintDestino');
+    if (_hintDest) _hintDest.textContent = _TKA.ctx.mode === 'seleccionar' ? 'usar' : 'van al ticket';
   }
 
   _TKA.open = true;
@@ -1590,9 +1599,21 @@ function _tkaStockEstado(l){
 
 function _tkaStockBadge(l){
   const estado = _tkaStockEstado(l);
-  if (!estado) return '';
-  const st = l.stock;
+  const st = l && l.stock;
   const f = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
+  if (!estado){
+    // 2026-09-23 (Retiros: "saber si tenemos o no stock... si hay
+    // comprometido o devengado"): opt-in con tkaOpen({mostrarStockOk:true}).
+    // Sin la opción (las demás pantallas) no cambia nada.
+    if (!(_TKA.ctx && _TKA.ctx.mostrarStockOk) || !st) return '';
+    const tipOk = 'Físico bodega 02: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido)
+      + ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
+    let txtOk = 'Stock: ' + f(st.disponible) + ' disp.';
+    if ((parseFloat(st.comprometido) || 0) > 0) txtOk += ' · ' + f(st.comprometido) + ' comp.';
+    if ((parseFloat(st.devengado) || 0) > 0) txtOk += ' · ' + f(st.devengado) + ' deveng.';
+    return '<span class="ln-stock-ok" title="' + _tkaEsc(tipOk) + '">'
+      + '<i class="bi bi-check-circle-fill"></i>' + _tkaEsc(txtOk) + '</span>';
+  }
   const tip = 'Físico bodega 02: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido)
     + ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
 
@@ -2123,7 +2144,7 @@ async function tkaToggleDocCli(idx){
       return;
     }
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.78rem;color:#6b7280;flex-wrap:wrap;gap:6px">
-      <span>${lineas.length} producto${lineas.length===1?'':'s'} disponibles · selecciona los que corresponden al ticket</span>
+      <span>${lineas.length} producto${lineas.length===1?'':'s'} disponibles · selecciona los que corresponden ${_TKA.ctx.mode === 'seleccionar' ? '' : 'al ticket'}</span>
       <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         ${(_TKA.ctx.mode === 'agregar' && !doc.ya_asociado)
           ? `<button class="tka-doc-add-btn" onclick="tkaAsociarDocCompleto(${idx})">
@@ -2830,7 +2851,7 @@ async function _tkaCotizacionElegir(idx){
     // más abajo, mismo patrón que tkaToggleAllCli (ver REGLA #14 en CLAUDE.md).
     let html = `<div class="tka-mod-hint" style="margin-bottom:10px"><i class="bi bi-calculator"></i><div><strong>${_tkaEsc(c.numero_cotizacion || ('#' + c.id))}</strong> — ${_tkaEsc(c.empresa || 'Sin empresa')}</div></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.78rem;color:#6b7280;flex-wrap:wrap;gap:6px">
-      <span>${items.length} producto${items.length===1?'':'s'} disponible${items.length===1?'':'s'} · selecciona los que corresponden al ticket</span>
+      <span>${items.length} producto${items.length===1?'':'s'} disponible${items.length===1?'':'s'} · selecciona los que corresponden ${_TKA.ctx.mode === 'seleccionar' ? '' : 'al ticket'}</span>
       <button type="button" class="tka-doc-add-btn" style="background:#fff;color:#374151;border:1px solid #d1d5db"
         onclick="tkaToggleAllCotizacion()">
         <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo

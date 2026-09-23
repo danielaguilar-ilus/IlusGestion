@@ -648,6 +648,9 @@
          (mismo motor, permiso de Retiros — no exige permiso de Tickets). */
       tabs: ['doc', 'cli'],
       cliEndpoint: '/retiros/api/buscar-erp',
+      /* Daniel 2026-09-23: "saber si tenemos o no saldo, si hay stock o no...
+         si hay comprometido o devengado" — también en verde cuando SÍ hay. */
+      mostrarStockOk: true,
       /* Daniel 2026-09-23: "si ya está declarado, la ficha ya está llena, se
          tiene que autorrellenar el RUT del cliente declarado" — con un RUT
          válido en el Paso 2 se abre directo en "Por RUT" ya buscado, con
