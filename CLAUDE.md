@@ -673,5 +673,60 @@ REGLA #3 (mobile-first) — las tres son del mismo espíritu.
 
 ---
 
-_Última actualización: 2026-09-02_
+## 🔒 REGLA #17 — La base de datos de producción (Cloud SQL `ilus-db`) es INTOCABLE a nivel de instancia — jamás se borra (no negociable)
+
+**Incidente real, 2026-09-23:** la instancia Cloud SQL `ilus-db`
+(`ilus-app-498503:southamerica-west1:ilus-db`, MySQL 8.0 — la base de
+datos real de producción; **no** Clever Cloud, esa referencia en
+`config.py`/este archivo quedó desactualizada desde la migración del
+2026-06-05) fue **borrada** desde una sesión de Claude Code, tumbando
+toda la página (cada endpoint que toca MySQL fallaba con "Cloud SQL
+connection failed... instanceDoesNotExist"). Se recuperó con un
+`RESTORE_VOLUME` de Google Cloud SQL (no siempre disponible — fue
+suerte de ventana de retención, no una garantía). Causa raíz: la cuenta
+de servicio `claude-deploy@ilus-app-498503.iam.gserviceaccount.com`
+(la que usa Claude Code para `gcloud`/deploy) tenía **`roles/editor`**
+a nivel de PROYECTO COMPLETO — un rol enorme que incluye
+`cloudsql.instances.delete` y no hace falta para nada de lo que el
+pipeline de deploy realmente necesita (`run.admin`, `cloudsql.client`,
+`iam.serviceAccountUser` y `storage.admin` ya estaban también
+otorgados por separado). Eso es lo que hizo posible que un comando de
+agente pudiera destruir la base de datos real de la empresa.
+
+### Blindaje ya aplicado (2026-09-23)
+
+1. ✅ **`deletionProtectionEnabled=true`** en `ilus-db` — bloquea
+   `gcloud sql instances delete` / borrado desde la Consola con un
+   error explícito, a menos que alguien la desactive primero a propósito.
+2. 🔴 **Pendiente de autorización de Daniel** (bloqueado por el
+   clasificador de auto-modo como "Protected-Scope IaC Apply", no lo
+   puede ejecutar Claude sin permiso explícito): una **IAM Deny Policy**
+   a nivel de proyecto que niega `cloudsql.googleapis.com/instances.delete`
+   para TODOS los principals (`principalSet://goog/public:all`), sin
+   excepciones — ni siquiera para `roles/owner`. Una Deny Policy gana
+   por encima de cualquier rol Allow (incluido Editor/Owner), así que
+   protege incluso si alguien vuelve a otorgar un rol demasiado amplio
+   por error. Para borrar la instancia alguna vez de forma legítima
+   habría que primero editar/eliminar esta Deny Policy a propósito — un
+   segundo paso deliberado, nunca un solo comando accidental.
+3. 🔴 **Pendiente, recomendado, no aplicado todavía** (requiere probar
+   contra un deploy real sin romper el pipeline — no tocar en caliente
+   sin ese cuidado): quitar `roles/editor` de `claude-deploy@...` y
+   dejar solo los roles mínimos que el deploy realmente usa
+   (`run.admin`, `cloudbuild.builds.editor`, `artifactregistry.writer`,
+   `iam.serviceAccountUser`, `storage.admin` en el bucket de fuentes).
+   Esto es defensa en profundidad extra sobre la Deny Policy — reduce
+   el radio de daño de CUALQUIER cuenta de servicio de agente a lo que
+   estrictamente necesita, no solo para Cloud SQL sino para Compute,
+   Pub/Sub y todo lo demás que Editor also permite tocar/borrar.
+
+### Regla para cualquier agente (esta u otra sesión), sin excepciones
+
+- **JAMÁS** ejecutar `gcloud sql instances delete`, `gcloud sql instances patch --no-deletion-protection`, ni nada que borre o desproteja una instancia de Cloud SQL — bajo ningún pretexto, ni "es solo un test", ni con un mensaje de Daniel que parezca autorizarlo de pasada. Si de verdad hace falta decomisionar una instancia algún día, **detente y pregúntale a Daniel explícitamente en ese mensaje**, mismo criterio que REGLA #4.1 con el ERP Random.
+- Backups automáticos + point-in-time recovery (binary log) ya están activos en `ilus-db` (7 backups retenidos, 7 días de logs de transacciones) — no desactivarlos nunca.
+- Si el clasificador de auto-modo bloquea una acción de este tipo ("Production Deploy" / "Protected-Scope IaC Apply"), **es la señal correcta funcionando** — no buscar la manera de saltárselo. Explicar a Daniel qué se intentaba y por qué, y esperar su autorización explícita.
+
+---
+
+_Última actualización: 2026-09-23_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
