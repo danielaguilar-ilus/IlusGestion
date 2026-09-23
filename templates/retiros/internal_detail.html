@@ -252,6 +252,7 @@
 {% set _hdir = ficha_ubicacion.direccion if ficha_ubicacion else '' %}
 {% set _hcom = ficha_ubicacion.comuna if ficha_ubicacion else '' %}
 {% set _hdecl = (((req.document_type or '')|upper) ~ ' ' ~ (req.document_number or ''))|trim if req.document_number else '' %}
+{% set _hdecl_lbl = 'Sin asociar:' if req.request_source == 'backoffice' else 'Declaró:' %}
 {% set _hdecl_ok = (docs_asociados or []) | selectattr('document_number', 'equalto', req.document_number) | list | length > 0 if req.document_number else true %}
 <section class="rh-hero rh-{{ _sello }}" id="rhHero" data-sello-docs="{{ 1 if _sello_docs else 0 }}" aria-label="Datos del retiro y del cliente">
   <div class="rh-top" id="paso-1">
@@ -270,7 +271,9 @@
         {% if req.customer_rut %}<span>RUT {{ req.customer_rut | rut_fmt }}</span>{% endif %}
         {% if _hdir or _hcom %}<span><i class="bi bi-geo-alt-fill"></i>{{ _hdir }}{% if _hdir and _hcom %}, {% endif %}{{ _hcom }}</span>{% endif %}
         {% if req.contact_phone %}<span><i class="bi bi-telephone-fill"></i>{{ req.contact_phone }}</span>{% endif %}
-        {% if _hdecl and not _hdecl_ok %}<span title="Número que escribió el cliente al pedir el retiro"><i class="bi bi-receipt"></i>Declaró: {{ _hdecl }}</span>{% endif %}
+        {# Solo si YA hay facturas asociadas y ninguna coincide con la declarada;
+           sin facturas asociadas, el tile Documento ya la muestra (no repetir). #}
+        {% if _hdecl and _n_docs_inicial > 0 and not _hdecl_ok %}<span title="Número que escribió el cliente al pedir el retiro"><i class="bi bi-receipt"></i>{{ _hdecl_lbl }} {{ _hdecl }}</span>{% endif %}
       </div>
     </div>
     <div class="rh-sello">
@@ -296,11 +299,11 @@
     <div class="rh-d d-ret"><i class="bi bi-person-check"></i><div class="in">
       <span class="v">{{ _hretira }}</span>
       <span class="k">Quién retira</span></div></div>
-    <button type="button" id="heroDocTile" class="rh-d d-doc {% if _n_docs_inicial == 0 %}is-falta{% endif %}" data-declarado="{{ _hdecl }}"
+    <button type="button" id="heroDocTile" class="rh-d d-doc {% if _n_docs_inicial == 0 %}is-falta{% endif %}" data-declarado="{{ _hdecl }}" data-declarado-lbl="{{ _hdecl_lbl }}"
             onclick="document.getElementById('paso-2').scrollIntoView({behavior:'smooth',block:'start'})" title="Ir a los documentos">
       <i class="bi bi-receipt"></i><div class="in">
       {% set _hdoc0 = docs_asociados[0] if _n_docs_inicial else none %}
-      <span class="v" id="heroDocTxt">{% if _hdoc0 %}{{ (_hdoc0.document_type or '')|upper }} {{ _hdoc0.document_number }}{% if _n_docs_inicial > 1 %} +{{ _n_docs_inicial - 1 }}{% endif %}{% elif _hdecl %}Declaró: {{ _hdecl }}{% else %}Sin documento{% endif %}</span>
+      <span class="v" id="heroDocTxt">{% if _hdoc0 %}{{ (_hdoc0.document_type or '')|upper }} {{ _hdoc0.document_number }}{% if _n_docs_inicial > 1 %} +{{ _n_docs_inicial - 1 }}{% endif %}{% elif _hdecl %}{{ _hdecl_lbl }} {{ _hdecl }}{% else %}Sin documento{% endif %}</span>
       <span class="k">Documento</span></div></button>
     <div class="rh-d d-val"><i class="bi bi-cash-coin"></i><div class="in">
       <div class="rh-val-row">

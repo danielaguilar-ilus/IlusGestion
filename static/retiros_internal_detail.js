@@ -1237,7 +1237,8 @@ function _pintarFichaV3(d){
       // Sin documentos asociados: siempre en rojo; el número que escribió el
       // cliente se muestra solo como referencia (igual que la plantilla).
       const decl = tile && tile.dataset.declarado;
-      if (docTxt) docTxt.textContent = decl ? `Declaró: ${decl}` : 'Sin documento';
+      const declLbl = (tile && tile.dataset.declaradoLbl) || 'Declaró:';
+      if (docTxt) docTxt.textContent = decl ? `${declLbl} ${decl}` : 'Sin documento';
       if (tile) tile.classList.add('is-falta');
     }
     // Sello de la cabecera: solo cuando su estado depende de los documentos

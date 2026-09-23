@@ -4504,9 +4504,14 @@ def register_pickup_routes(app, ctx):
             try: conn.rollback()
             except Exception: pass
             return _err(f"No se pudo crear el retiro: {str(e)[:200]}", code=500)
-        finally:
-            try: conn.close()
-            except Exception: pass
+        # FIX 2026-09-23: acá había un `finally: conn.close()`. get_db() es la
+        # conexión DEL REQUEST (g._db) y teardown_appcontext ya la devuelve al
+        # pool; cerrarla dejaba g._db muerta y todo lo de abajo fallaba:
+        # log_event("retiro_interno_creado") se perdía en silencio (RET-KM4JCQ
+        # y RET-WG85HB quedaron sin historial) y el mysql_fetchone + la
+        # propuesta al cliente reventaban DESPUÉS de crear el retiro. Mismo
+        # bug que Transporte corrigió el 2026-07-28 (app.py, "llamado de
+        # manifiesto", H3): no cerrar acá.
 
         # FASE 9: trazabilidad — log de creación interna.
         _doc_nota = f" · documento {document_type.upper()} {document_number}"
