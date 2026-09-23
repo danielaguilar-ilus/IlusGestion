@@ -712,6 +712,22 @@
     el.style.display = html ? 'inline-flex' : 'none';
   }
 
+  /* Comuna/dirección del cliente — Daniel 2026-09-23: solo informativo,
+     para que el operador considere si viene de una región lejana antes
+     de agendar. Alimenta desde consultarFichaCliente() (lookup por RUT)
+     y proponerClienteDesdeDocs() (al elegir un documento en Paso 1). */
+  function pintarUbicacionCliente(comuna, direccion){
+    var el = $('nriClienteUbicacion'); if (!el) return;
+    comuna = String(comuna || '').trim();
+    direccion = String(direccion || '').trim();
+    if (!comuna && !direccion){ el.style.display = 'none'; el.innerHTML = ''; return; }
+    var partes = [];
+    if (direccion) partes.push(esc(direccion));
+    if (comuna) partes.push(esc(comuna));
+    el.innerHTML = '<i class="bi bi-geo-alt"></i>' + partes.join(', ');
+    el.style.display = 'inline-flex';
+  }
+
   function nriHabilitarEdicionClienteManual(){
     clienteManual = true;
     if (inpNombre) inpNombre.removeAttribute('readonly');
@@ -885,6 +901,7 @@
         (extra.length ? ' · ' + extra.join(' · ') : '') +
         (precargados.length ? ' · precargado: ' + precargados.join(', ') : '') +
         (c.email ? ' · email disponible como chip' : ''), 'ok');
+      pintarUbicacionCliente(c.comuna, c.direccion);
       refreshSteps();
     } catch(e){
       if (seq !== fichaSeq) return;
@@ -1111,6 +1128,7 @@
         proponerChip('contact_email', h.email, origen);
       }
     }
+    pintarUbicacionCliente(h.comuna, h.direccion);
     renderChips();
     if (rut && inpRut && rutClave(inpRut.value) === rutClave(rut)){
       inpRut.classList.remove('is-invalid'); inpRut.classList.add('is-valid');
