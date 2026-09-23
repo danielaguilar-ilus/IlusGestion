@@ -244,6 +244,16 @@ jobs:
       # --max-instances ya permite. Ver incidente_concurrencia_cloud_run_2026_09_08
       # en memoria -- si se cambia el número de workers/threads del
       # Dockerfile, este valor debe cambiar junto con él.
+      # 🔴 2026-09-23 (Daniel, autorizado en vivo: "Sí, autorizado, súbela" --
+      # incidente real, OT-2026-00058, 60 equipos/645 tareas/77 fotos: el PDF
+      # tronaba el contenedor por memoria a mitad de generarse -- 503,
+      # "Service Unavailable"). Antes se subió a mano con
+      # `gcloud run services update --memory 4Gi`, pero este deploy corre
+      # `gcloud run deploy --source .` en CADA push a main y este flag es la
+      # ÚNICA fuente de verdad del recurso: el cambio a mano duró exactamente
+      # hasta el siguiente push, que lo pisó en silencio de vuelta a 2Gi (así
+      # volvió a caerse el mismo día). 2Gi -> 4Gi queda ACÁ, en el propio
+      # workflow, para que sobreviva a todos los deploys futuros.
       - name: Deploy to Cloud Run
         id: deploy
         run: |
@@ -255,7 +265,7 @@ jobs:
             --allow-unauthenticated \
             --min-instances 1 \
             --max-instances 4 \
-            --memory 2Gi \
+            --memory 4Gi \
             --cpu 2 \
             --timeout 300 \
             --concurrency 16 \
