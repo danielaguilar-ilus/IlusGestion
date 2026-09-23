@@ -212,6 +212,7 @@
   var DOCS = window._nriDocs;
   var docCache   = new Map();   // key → PROMESA de /api/erp/documento (M5: dos pedidos del mismo doc comparten un solo fetch)
   var docLoading = new Set();   // keys con fetch en vuelo
+  var docsGen = 0;              // sube en cada reset: descarta respuestas del ERP de un formulario ya descartado
   var dirty = { total_packages: false, total_weight_kg: false, total_volume_m3: false };
   var ultimoRutConsultado = '';
   var sugerenciasActuales = [];   // candidatos del Paso 1 (buscar-erp)
@@ -295,8 +296,13 @@
     }
     docLoading.add(key);
     renderDocsSel();
+    /* 2026-09-23 (revisión): si el modal se descarta mientras el ERP responde,
+       la respuesta tardía NO debe volver a meter la factura (docsGen sube en
+       el reset). */
+    var gen = docsGen;
     try {
       var d = await fetchDocumento(tido, nudo);
+      if (gen !== docsGen) return null;
       var lineas = d.lineas || [];
       var sel;
       if (opts.seleccion){
@@ -333,6 +339,7 @@
       alCambiarDocs();
       return entry;
     } catch(e){
+      if (gen !== docsGen) return null;
       docLoading.delete(key);
       renderDocsSel();
       toast('No se pudo traer ' + tido + ' ' + nudoLimpio(nudo) + ': ' + (e.message || 'error'), 'error');
@@ -355,10 +362,6 @@
     recalcularCarga();
     sincronizarChecksRutDocs();
     marcarSugerencias();
-    /* 2026-09-22: al agregar un documento real, la excepción "sin documento"
-       deja de tener sentido — se apaga sola (auditable igual: si el operador
-       la vuelve a marcar, vuelve a quedar en el hidden). */
-    if (DOCS.size) setSinDocumento(false);
     refreshSteps();
   }
 
@@ -449,8 +452,20 @@
     return { conSaldo: conSaldo, total: total, kg: kg, seleccionadas: Object.keys(entry.seleccion).length };
   }
 
+  /* 2026-09-23: el botón grande del Paso 1 cambia según haya facturas —
+     vacío: "Agregar factura o boleta" (grande, con pulso); con facturas:
+     "Agregar otra factura" (compacto). Multi-documento a la vista. */
+  function pintarBotonAgregarDoc(n){
+    var btn = $('nriDocErpBtn'), t = $('nriDocErpBtnTxt'), sub = $('nriDocErpBtnSub');
+    if (btn) btn.classList.toggle('is-otra', n > 0);
+    if (t) t.textContent = n > 0 ? 'Agregar otra factura o boleta' : 'Agregar factura o boleta';
+    if (sub) sub.textContent = n > 0
+      ? 'Si el cliente retira varias, agrégalas todas aquí'
+      : 'Toca aquí y búscala por su número en el ERP';
+  }
   function renderDocsSel(){
     var wrap = $('nriDocsSelWrap'), cont = $('nriDocsSel'), cnt = $('nriDocsSelCount');
+    pintarBotonAgregarDoc(DOCS.size);
     if (!wrap || !cont) return;
     var keys = Array.from(DOCS.keys());
     var cargando = Array.from(docLoading).filter(function(k){ return !DOCS.has(k); });
@@ -514,7 +529,7 @@
       if (seq !== busqSeq) return;
       var d = res.d;
       if (!res.r.ok || d.sin_conexion){
-        setDocStatus('<i class="bi bi-plug me-1"></i>ERP no conectado — puedes seguir a mano.', 'warn');
+        setDocStatus('<i class="bi bi-plug me-1"></i>El ERP no respondió — espera unos segundos y vuelve a escribir el número.', 'warn');
         renderSugerencias([]);
         return;
       }
@@ -530,24 +545,19 @@
         });
         return;
       }
-      var docs = d.documentos || [];
-      var tipo = selTipo ? selTipo.value : '';
-      var tidosOk = NRI_TIPO_A_TIDOS[tipo] || null;
-      var filtrados = tidosOk ? docs.filter(function(x){ return tidosOk.indexOf(x.tido_display) !== -1; }) : docs;
-      var nota = '';
-      if (tidosOk && !filtrados.length && docs.length){
-        filtrados = docs;
-        nota = 'Ninguno es del tipo elegido — se muestran todos los que coinciden con el número.';
-      }
+      /* 2026-09-23: sin filtro por tipo — el tipo ya no lo elige el operador
+         (es el del primer documento, oculto) y en un retiro multi-documento
+         escondía boletas u otros tipos con el mismo número. */
+      var filtrados = d.documentos || [];
       if (!filtrados.length){
-        setDocStatus('<i class="bi bi-search me-1"></i>Sin documentos con ese número. Prueba "Buscar en el ERP (modal completo)".', 'info');
+        setDocStatus('<i class="bi bi-search me-1"></i>Sin documentos con ese número. Prueba con el botón "Agregar factura o boleta" de arriba.', 'info');
       } else {
-        setDocStatus('<i class="bi bi-check2-circle me-1"></i>' + filtrados.length + ' candidato' + (filtrados.length === 1 ? '' : 's') + ' en el ERP' + (nota ? ' · ' + esc(nota) : ''), 'ok');
+        setDocStatus('<i class="bi bi-check2-circle me-1"></i>' + filtrados.length + ' documento' + (filtrados.length === 1 ? '' : 's') + ' encontrado' + (filtrados.length === 1 ? '' : 's') + ' en el ERP', 'ok');
       }
       renderSugerencias(filtrados);
     } catch(e){
       if (seq !== busqSeq) return;
-      setDocStatus('<i class="bi bi-plug me-1"></i>ERP no conectado — reintenta o marca "Continuar sin documento".', 'warn');
+      setDocStatus('<i class="bi bi-plug me-1"></i>El ERP no respondió — espera unos segundos y vuelve a escribir el número.', 'warn');
       renderSugerencias([]);
     } finally {
       busqEnVuelo = false;
@@ -562,25 +572,9 @@
   }, 450);
   inpBuscar && inpBuscar.addEventListener('input', buscarPorNumeroDeb);
 
-  /* ── Excepción auditada "Continuar sin documento" (2026-09-22) ── */
-  function setSinDocumento(activo){
-    var hid = $('nriSinDocumentoConfirmado'), btn = $('nriSinDocumentoBtn');
-    if (hid) hid.value = activo ? '1' : '0';
-    if (btn) btn.classList.toggle('is-on', !!activo);
-    refreshSteps();
-  }
-  $('nriSinDocumentoBtn') && $('nriSinDocumentoBtn').addEventListener('click', function(){
-    var hid = $('nriSinDocumentoConfirmado');
-    var activo = !(hid && hid.value === '1');
-    if (activo && DOCS.size){
-      toast('Ya hay documentos verificados en el retiro — no hace falta marcar "sin documento".', 'info');
-      return;
-    }
-    setSinDocumento(activo);
-    toast(activo
-      ? 'Marcado: el retiro se crea sin documento del ERP (queda auditado quién lo marcó).'
-      : 'Se quitó la excepción "sin documento".', activo ? 'warning' : 'info');
-  });
+  /* 2026-09-23 (Daniel: "siempre tiene que haber una factura, una boleta o
+     al menos una nota de venta"): se quitó la excepción "Continuar sin
+     documento" del modal interno (con su "sí" explícito). */
 
   function renderSugerencias(docs){
     sugerenciasActuales = docs || [];
@@ -660,10 +654,12 @@
        seteamos después. 2026-09-22: la fuente es inpBuscar (#nriDocBuscar),
        no inpNumero (que ahora es solo la vitrina readonly del ERP). */
     var n = (inpBuscar && inpBuscar.value || '').trim();
-    if (n && /^[0-9]+$/.test(n)){
-      var tidos = NRI_TIPO_A_TIDOS[selTipo ? selTipo.value : ''] || [];
-      var selT = $('tkaDocTido'), inpN = $('tkaDocNudo');
-      if (selT && tidos.length && selT.querySelector('option[value="' + tidos[0] + '"]')) selT.value = tidos[0];
+    /* 2026-09-23: no precargar un número que YA está en el retiro — con el
+       botón "Agregar otra factura" reabría la misma. Sin preselección de
+       tipo: el tipo oculto es el del primer documento, no una elección. */
+    var yaEsta = n && Array.from(DOCS.values()).some(function(e){ return e.nudo_display === nudoLimpio(n); });
+    if (n && /^[0-9]+$/.test(n) && !yaEsta){
+      var inpN = $('tkaDocNudo');
       if (inpN){ inpN.value = n; }
       if (typeof window.tkaBuscarPorDoc === 'function') setTimeout(function(){ try { window.tkaBuscarPorDoc(); } catch(_){} }, 60);
     }
@@ -690,8 +686,11 @@
     if (!grupos.length){ toast('La selección no traía documentos del ERP.', 'warning'); return; }
     var repetidos = grupos.filter(function(g){ return DOCS.has(docKey(g.tido, g.nudo)); });
     if (repetidos.length) toast(repetidos.map(function(g){ return g.tido + ' ' + g.nudo; }).join(', ') + ' ya estaba en el retiro — se actualizó la selección de líneas.', 'info');
-    await Promise.all(grupos.map(function(g){ return agregarDoc(g.tido, g.nudo, { seleccion: g.sel, sinSaldo: g.sinSaldo, silencioso: true }); }));
-    toast('✓ ' + grupos.length + ' documento' + (grupos.length === 1 ? '' : 's') + ' agregado' + (grupos.length === 1 ? '' : 's') + ' al retiro', 'success');
+    var gen = docsGen;
+    var res = await Promise.all(grupos.map(function(g){ return agregarDoc(g.tido, g.nudo, { seleccion: g.sel, sinSaldo: g.sinSaldo, silencioso: true }); }));
+    if (gen !== docsGen) return;   // el modal se descartó mientras respondía el ERP
+    var ok = res.filter(Boolean).length;
+    if (ok) toast('✓ ' + ok + ' documento' + (ok === 1 ? '' : 's') + ' agregado' + (ok === 1 ? '' : 's') + ' al retiro', 'success');
   }
 
   /* ═══════════════════ PASO 2 — CLIENTE ═══════════════════
@@ -1310,13 +1309,59 @@
        rojos hace scroll + resalte + toast; con solo ámbar pide confirmación.
      ═══════════════════════════════════════════════════════════════════════ */
   var inpPersona = campo('pickup_person_name'), inpPersonaRut = campo('pickup_person_rut'), selRelacion = campo('pickup_person_relation');
+  var inpPersonaFono = campo('pickup_person_phone');
   var selResponsable = campo('responsable_user_id'), selCanal = campo('canal');
+
+  /* ═══════════════ Paso 3 · ¿Quién viene a retirar? (2026-09-23) ═══════════
+     Daniel: "acá no son los mismos trabajadores, así que deberíamos colocar
+     que es el mismo cliente". Dos opciones como el formulario público:
+       · 'cliente' (por defecto): retira_mismo_cliente=1 y el BACKEND toma
+         nombre/RUT/teléfono del cliente. Los campos pickup_person_* NO se
+         tocan en este modo — así, si el operador ya había escrito al chofer
+         y toca "El mismo cliente" por error, al volver siguen ahí.
+       · 'otra': se abren nombre/RUT/teléfono/relación para un tercero. */
+  var modoRetira = 'cliente';
+  function setModoRetira(modo){
+    modoRetira = modo === 'otra' ? 'otra' : 'cliente';
+    var esOtra = modoRetira === 'otra';
+    var optCli = $('nriRetiraOptCliente'), optOtra = $('nriRetiraOptOtra');
+    if (optCli){ optCli.classList.toggle('is-on', !esOtra); var r1 = optCli.querySelector('input'); if (r1) r1.checked = !esOtra; }
+    if (optOtra){ optOtra.classList.toggle('is-on', esOtra); var r2 = optOtra.querySelector('input'); if (r2) r2.checked = esOtra; }
+    var hid = $('nriRetiraMismoCliente'); if (hid) hid.value = esOtra ? '0' : '1';
+    var campos = $('nriRetiraOtraFields'); if (campos) campos.style.display = esOtra ? '' : 'none';
+    if (inpPersona){
+      if (esOtra) inpPersona.setAttribute('required', 'required'); else inpPersona.removeAttribute('required');
+      inpPersona.classList.toggle('nri-req', esOtra);   // nriPreCrear enfoca el primer .nri-req vacío
+    }
+  }
+  /* Solo pinta la vista previa "El mismo cliente: Nombre · RUT". */
+  function syncPersonaDesdeCliente(){
+    var prev = $('nriRetiraClientePreview');
+    if (!prev) return;
+    var nom = val(inpNombre), rut = val(inpRut);
+    prev.textContent = nom
+      ? nom + (rut ? ' · RUT ' + (isValidRUT(rut) ? formatRUTStr(rut) : rut) : '')
+      : 'Se toman los datos del Paso 2 (todavía vacío)';
+  }
+  function cambiarModoRetira(modo){
+    var antes = modoRetira;
+    setModoRetira(modo);
+    if (modoRetira === 'otra' && antes === 'cliente'){
+      if (selRelacion && selRelacion.value === 'dueno') selRelacion.value = 'otro';
+      if (inpPersona) setTimeout(function(){ try { inpPersona.focus(); } catch(_){} }, 60);
+    }
+    refreshSteps();
+  }
+  document.querySelectorAll('input[name="nri_retira_modo"]').forEach(function(r){
+    r.addEventListener('change', function(){ if (this.checked) cambiarModoRetira(this.value); });
+  });
+  setModoRetira('cliente');
   var btnCrear = $('btnGuardarRetiroInterno');
   var ICONO_ESTADO = { rojo: 'bi-x-circle-fill', ambar: 'bi-exclamation-triangle-fill', verde: 'bi-check-circle-fill' };
 
   /* ═══════════════════ Selectores de RESPONSABLES (Paso 3 + Paso 4) ═══════
      2026-09-22: #nriResponsable (Paso 4, obligatorio, SE envía) y
-     #nriPersonaRetiraSel (Paso 3, atajo opcional, NO se envía) comparten el
+     (2026-09-23: #nriPersonaRetiraSel se quitó; queda solo #nriResponsable) comparten el
      mismo catálogo de /retiros/api/responsables — un solo fetch para los
      dos. El template los llama dentro de shown.bs.modal. */
   var _responsablesPromise = null;
@@ -1369,23 +1414,21 @@
   }
   function plural(n, uno, varios){ return n === 1 ? uno : varios; }
 
-  /* ── Paso 1 · Documento (BLOQUEANTE, 2026-09-22) ──
-     Rojo mientras DOCS.size===0 y no se marcó la excepción auditada
-     "Continuar sin documento" — ya no existe la rama que daba ok con el
-     paso vacío ("Sin documento (opcional)"). La fuente del texto tipeado
-     para la detección "¿es un RUT?" es inpBuscar (#nriDocBuscar), no el
-     N° readonly. */
+  /* ── Paso 1 · Documento (BLOQUEANTE) ──
+     2026-09-23 (Daniel: "siempre tiene que haber una factura, una boleta o
+     al menos una nota de venta"): rojo mientras no haya al menos UN
+     documento de venta real. Se quitó la excepción "Continuar sin
+     documento". Una cotización sola (COV) no cuenta — el backend la
+     rechaza, así que aquí también queda en rojo. */
   function evalPaso1(){
     var r = { faltan: [], avisos: [], ok: '' };
     var buscado = val(inpBuscar), n = DOCS.size;
-    var sinDocHid = $('nriSinDocumentoConfirmado');
-    var sinDocConfirmado = !!(sinDocHid && sinDocHid.value === '1');
+    if (n && (!val(selTipo) || !val(inpNumero))){
+      r.faltan.push('una factura, boleta o nota de venta (una cotización sola no sirve)');
+      return r;
+    }
     if (!n){
-      if (sinDocConfirmado){
-        r.ok = 'Sin documento — confirmado explícitamente (queda auditado)';
-        return r;
-      }
-      r.faltan.push('documento del ERP (o marca "Continuar sin documento")');
+      r.faltan.push('al menos una factura, boleta o nota de venta del ERP');
       if (buscado && esRutPlausible(buscado)){
         /* I2d: 8-9 dígitos con DV válido → probablemente es un RUT */
         r.avisos.push({
@@ -1488,19 +1531,29 @@
      cada uno con su propia tarjeta. Daniel las quiso juntas ("la persona
      quien retira, el responsable del retiro") -- un solo semáforo para las
      dos, "falta" acumula lo que falte de cualquiera de las dos mitades. */
+  /* 2026-09-23: dos modos — 'cliente' (por defecto, retira el mismo
+     cliente del Paso 2) u 'otra' (tercero con sus datos). El responsable
+     de ILUS se pide una sola vez. */
   function evalPaso3(){
     var r = { faltan: [], avisos: [], ok: '' };
-    if (!val(selResponsable)) r.faltan.push('responsable');
-    var nombre = val(inpPersona), rut = val(inpPersonaRut);
-    if (!nombre) r.faltan.push('nombre de quien retira');
-    if (rut && !isValidRUT(rut)) r.avisos.push({ txt: 'RUT: dígito verificador no cuadra' });
-    var nomCli = val(inpNombre), rutCli = val(inpRut);
-    /* I2g: mismo nombre que el cliente pero sin RUT → sugerir el chip */
-    if (nombre && nomCli && nombre.toLowerCase() === nomCli.toLowerCase() && !rut && rutCli){
-      r.avisos.push({ txt: 'Mismo nombre que el cliente — usa "Es el mismo cliente" para copiar el RUT' });
+    var nombre = val(inpPersona), rut = val(inpPersonaRut), fono = val(inpPersonaFono);
+    var nomCli = val(inpNombre);
+    var quien;
+    if (modoRetira === 'cliente'){
+      if (!nomCli) r.faltan.push('el cliente del Paso 2 (retira el mismo cliente)');
+      quien = 'Retira el mismo cliente';
+    } else {
+      if (nombre.length < 2) r.faltan.push('nombre de quien retira');
+      if (rut && !isValidRUT(rut)) r.avisos.push({ txt: 'RUT de quien retira: dígito verificador no cuadra' });
+      if (fono && !fonoChilenoOk(fono)) r.avisos.push({ txt: 'Teléfono de quien retira no parece chileno (+56 9 XXXX XXXX)' });
+      if (nombre && nomCli && nombre.toLowerCase() === nomCli.toLowerCase()){
+        r.avisos.push({ txt: 'Es el mismo nombre del cliente — si viene él, marca "El mismo cliente"' });
+      }
+      quien = 'Retira ' + nombre + (rut && isValidRUT(rut) ? ' · ' + formatRUTStr(rut) : '') + (selRelacion && selRelacion.value ? ' (' + textoOpcion(selRelacion).toLowerCase() + ')' : '');
     }
+    if (!val(selResponsable)) r.faltan.push('responsable en ILUS');
     if (!r.faltan.length){
-      r.ok = 'Responsable: ' + textoOpcion(selResponsable) + ' · Retira ' + nombre + (rut && isValidRUT(rut) ? ' · ' + formatRUTStr(rut) : '');
+      r.ok = quien + ' · Responsable ILUS: ' + textoOpcion(selResponsable);
     }
     return r;
   }
@@ -1582,6 +1635,10 @@
        ORDEN/cantidad del array, que es lo que decide a qué #nriStepN se
        pinta cada uno (ver pintarPaso: usa la posición i+1, no el nombre). */
     var evals = [evalPaso1, evalPaso2, evalPaso3, evalPaso5, evalPaso6, evalPaso7];
+    /* 2026-09-23: "el mismo cliente" se copia en cada evaluación — así
+       cualquier cambio del Paso 2 (tipeado o precargado del ERP) llega solo
+       al Paso 3 sin un listener por campo. */
+    try { syncPersonaDesdeCliente(); } catch(eSync){ console.warn('[nri] syncPersona', eSync); }
     var res = evals.map(function(fn, i){
       var r;
       try { r = fn(); } catch(e){ console.warn('[nri] evalPaso' + (i + 1), e); r = { faltan: [], avisos: [], ok: '' }; }
@@ -1603,7 +1660,10 @@
         try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_){ card.scrollIntoView(); }
         card.classList.remove('nri-flash'); void card.offsetWidth; card.classList.add('nri-flash');
         setTimeout(function(){ card.classList.remove('nri-flash'); }, 1300);
-        var f = card.querySelector('.nri-req:not([type="hidden"])');
+        /* el primer campo obligatorio VACÍO (no el primero que aparezca) */
+        var f = Array.prototype.find.call(card.querySelectorAll('.nri-req:not([type="hidden"])'), function(el){
+          return String(el.value || '').trim().length < (el.name === 'pickup_person_name' ? 2 : 1);
+        });
         if (f) try { f.focus({ preventScroll: true }); } catch(_){}
       }
       toast('Falta: ' + rojos.map(function(r){ return 'Paso ' + r.idx + ' → ' + r.faltan.join(', '); }).join(' · '), 'warning');
@@ -1662,7 +1722,9 @@
     /* Regla de Daniel: dueño del documento = cliente oficial; el declarado
        puede quedar como persona que retira → se OFRECE, no se hace solo. */
     var nombreDistinto = declarado.nombre && nomDoc && declarado.nombre.toLowerCase() !== nomDoc.toLowerCase();
-    if (nombreDistinto && inpPersona && !val(inpPersona) && typeof window.ilusConfirm === 'function'){
+    /* 2026-09-23: en modo "el mismo cliente" inpPersona trae la copia del
+       cliente, así que también se ofrece; aceptar pasa a "Otra persona". */
+    if (nombreDistinto && inpPersona && (modoRetira === 'cliente' || !val(inpPersona)) && typeof window.ilusConfirm === 'function'){
       var ok = await window.ilusConfirm({
         title: 'Persona que retira',
         message: '¿Dejar a ' + declarado.nombre + ' como la persona que retira (Paso 3)?',
@@ -1671,8 +1733,10 @@
         type: 'question',
       });
       if (ok){
+        cambiarModoRetira('otra');
         inpPersona.value = declarado.nombre;
-        if (inpPersonaRut && declarado.rut && isValidRUT(declarado.rut) && !val(inpPersonaRut)) inpPersonaRut.value = formatRUTStr(declarado.rut);
+        if (inpPersonaRut) inpPersonaRut.value = (declarado.rut && isValidRUT(declarado.rut)) ? formatRUTStr(declarado.rut) : '';
+        if (inpPersonaFono) inpPersonaFono.value = declarado.fono || '';
         if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="autorizado"]')) selRelacion.value = 'autorizado';
         pintarValidezRut(inpPersonaRut);
         refreshSteps();
@@ -1705,84 +1769,10 @@
   $('nriDocAvisos') && $('nriDocAvisos').addEventListener('click', onAccionAviso);
   $('nriCliAvisos') && $('nriCliAvisos').addEventListener('click', onAccionAviso);
 
-  /* ── Paso 3 · chip "Es el mismo cliente" + RUT de quien retira ── */
-  async function copiarMismoCliente(){
-    var nom = val(inpNombre), rut = val(inpRut);
-    if (!nom && !rut){ toast('Primero completa el cliente en el Paso 2.', 'info'); scrollAPaso(2); return; }
-    var pNom = val(inpPersona), pRut = val(inpPersonaRut);
-    var pisa = (pNom && nom && pNom.toLowerCase() !== nom.toLowerCase()) || (pRut && rut && rutClave(pRut) !== rutClave(rut));
-    if (pisa && typeof window.ilusConfirm === 'function'){
-      var ok = await window.ilusConfirm({
-        title: 'Reemplazar persona que retira',
-        message: 'Ya escribiste ' + (pNom || pRut) + ' en el Paso 3. ¿Reemplazarlo por el cliente ' + (nom || rut) + '?',
-        okLabel: 'Reemplazar', cancelLabel: 'Cancelar', type: 'question',
-      });
-      if (!ok) return;
-    }
-    if (nom && inpPersona) inpPersona.value = nom;
-    if (rut && inpPersonaRut) inpPersonaRut.value = formatRUTStr(rut);
-    if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="dueno"]')) selRelacion.value = 'dueno';
-    [inpPersona, inpPersonaRut].forEach(function(i){ if (i){ i.classList.add('nri-precargado'); setTimeout(function(){ i.classList.remove('nri-precargado'); }, 1800); } });
-    pintarValidezRut(inpPersonaRut);
-    refreshSteps();
-    toast('✓ Persona que retira = el mismo cliente (relación: Dueño / titular)', 'success');
-  }
-  $('nriMismoCliente') && $('nriMismoCliente').addEventListener('click', copiarMismoCliente);
-
-  /* ── Paso 3 · "Es el mismo responsable" (2026-09-22, espejo de
-     copiarMismoCliente): copia el responsable YA ELEGIDO en el Paso 4
-     (#nriResponsable = selResponsable) hacia pickup_person_name/rut — para
-     cuando el vendedor que coordinó el retiro por teléfono es quien
-     también lo retira. Mismo patrón de confirmación si ya había otro
-     valor tipeado; NUNCA reemplaza el texto libre sin avisar. ── */
-  async function copiarMismoResponsable(){
-    if (!selResponsable || !selResponsable.value){
-      toast('Primero elige el responsable del retiro en el Paso 4.', 'info');
-      scrollAPaso(4);
-      return;
-    }
-    var opt = selResponsable.options[selResponsable.selectedIndex];
-    var nom = opt ? String(opt.textContent || '').trim() : '';
-    var rut = opt ? (opt.getAttribute('data-rut') || '') : '';
-    if (!nom){ toast('No se pudo leer el responsable elegido.', 'warning'); return; }
-    var pNom = val(inpPersona), pRut = val(inpPersonaRut);
-    var pisa = (pNom && pNom.toLowerCase() !== nom.toLowerCase()) || (pRut && rut && rutClave(pRut) !== rutClave(rut));
-    if (pisa && typeof window.ilusConfirm === 'function'){
-      var ok = await window.ilusConfirm({
-        title: 'Reemplazar persona que retira',
-        message: 'Ya escribiste ' + (pNom || pRut) + ' en el Paso 3. ¿Reemplazarlo por el responsable ' + nom + '?',
-        okLabel: 'Reemplazar', cancelLabel: 'Cancelar', type: 'question',
-      });
-      if (!ok) return;
-    }
-    if (inpPersona) inpPersona.value = nom;
-    if (rut && inpPersonaRut) inpPersonaRut.value = formatRUTStr(rut);
-    if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="autorizado"]')) selRelacion.value = 'autorizado';
-    [inpPersona, inpPersonaRut].forEach(function(i){ if (i){ i.classList.add('nri-precargado'); setTimeout(function(){ i.classList.remove('nri-precargado'); }, 1800); } });
-    pintarValidezRut(inpPersonaRut);
-    refreshSteps();
-    toast('✓ Persona que retira = el responsable del retiro (relación: Autorizado)', 'success');
-  }
-  $('nriMismoResponsable') && $('nriMismoResponsable').addEventListener('click', copiarMismoResponsable);
-
-  /* ── Paso 3 · selector ADITIVO #nriPersonaRetiraSel (2026-09-22) ──
-     Atajo de UI, no se envía (sin `name`): al elegir una opción se copia
-     directo hacia pickup_person_name/rut — mismo patrón sin-confirmación
-     que elegirAc() del Paso 2 (el operador acaba de elegir a propósito).
-     El campo de texto libre sigue existiendo y editable igual que hoy. */
-  $('nriPersonaRetiraSel') && $('nriPersonaRetiraSel').addEventListener('change', function(){
-    var opt = this.options[this.selectedIndex];
-    if (!this.value || !opt) return;
-    var nom = String(opt.textContent || '').trim();
-    var rut = opt.getAttribute('data-rut') || '';
-    if (inpPersona) inpPersona.value = nom;
-    if (rut && inpPersonaRut) inpPersonaRut.value = formatRUTStr(rut);
-    if (selRelacion && selRelacion.value === 'otro' && selRelacion.querySelector('option[value="autorizado"]')) selRelacion.value = 'autorizado';
-    [inpPersona, inpPersonaRut].forEach(function(i){ if (i){ i.classList.add('nri-precargado'); setTimeout(function(){ i.classList.remove('nri-precargado'); }, 1800); } });
-    pintarValidezRut(inpPersonaRut);
-    refreshSteps();
-  });
-
+  /* 2026-09-23: se quitaron el chip "Es el mismo cliente" (ahora es la
+     opción por defecto del Paso 3), "Es el mismo responsable" y la lista
+     de responsables repetida como atajo — Daniel: "la persona que retira
+     y el responsable está como dos veces, mejora esto". */
   inpPersonaRut && inpPersonaRut.addEventListener('input', function(){ pintarValidezRut(inpPersonaRut); });
   inpPersonaRut && inpPersonaRut.addEventListener('blur', function(){
     if (cleanRUT(inpPersonaRut.value).length >= 2) inpPersonaRut.value = formatRUTStr(inpPersonaRut.value);
@@ -1791,15 +1781,36 @@
   });
 
   /* ═══════════════════ Reset al cerrar sin crear ═══════════════════
-     Bootstrap no resetea el form al cerrar, y el operador puede reabrir
-     para seguir; el estado se conserva mientras la página viva. Si el
-     form se resetea explícitamente (form.reset()), limpiamos también. */
+     2026-09-23 (Daniel: "cerré el modal, lo volví a abrir y me trajo los
+     mismos datos... si lo cerramos a propósito, eso se tiene que limpiar"):
+     el template ahora llama form.reset() en hidden.bs.modal (cierre con la
+     X o "Cancelar"; el backdrop es static, así que no hay cierre accidental).
+     Si falla la red al crear, el modal NO se cierra y los datos quedan. */
+  window.nriTieneDatos = function(){
+    if (DOCS.size || docLoading.size) return true;
+    var hay = ['customer_name', 'customer_rut', 'contact_phone', 'contact_email', 'responsable_user_id', 'canal', 'observations']
+      .some(function(n){ return !!val(campo(n)); });
+    if (hay) return true;
+    if (modoRetira === 'otra' && (val(inpPersona) || val(inpPersonaRut) || val(inpPersonaFono))) return true;
+    return !!(val(inpBuscar) || val($('nriHidTf')));
+  };
   form.addEventListener('reset', function(){
-    DOCS.clear(); chips.clear(); dirty = { total_packages: false, total_weight_kg: false, total_volume_m3: false };
-    ultimoRutConsultado = ''; sugerenciasActuales = []; rutDocsActuales = [];
+    DOCS.clear(); docLoading.clear(); chips.clear(); dirty = { total_packages: false, total_weight_kg: false, total_volume_m3: false };
+    /* descarta TODAS las respuestas del ERP que lleguen después del cierre
+       (revisión 2026-09-23: facturas en carga, búsqueda pendiente,
+       autocompletar y retiros activos también) */
+    docsGen++; busqSeq++; fichaSeq++; saldoSeq++; activosSeq++; acSeq++;
+    busqPendiente = null;
+    cerrarAc();
+    ultimoRutConsultado = ''; sugerenciasActuales = []; rutDocsActuales = []; ultimoCalculo = null;
     fichaCliente = null; retirosActivos = null; mantenerDistinto = {}; ultimaEvaluacion = null;
     setDocStatus(''); setCliStatus(''); renderChips(); renderSugerencias([]); renderRutDocs([]); renderDocsSel(); pintarCargaInfo(null);
-    setSinDocumento(false);
+    sincronizarPaso1DesdeDocs();   // oculta el badge "N documentos verificados"
+    try { renderTablaProductosNRI(); } catch(_){}
+    pintarUbicacionCliente('', '');
+    setModoRetira('cliente');
+    if (inpPersonaRut) inpPersonaRut.classList.remove('is-valid', 'is-invalid');
+    if (inpRut) inpRut.classList.remove('is-valid', 'is-invalid');
     /* 2026-09-22: re-bloquear Cliente (Paso 2) si quedó en edición manual. */
     clienteManual = false;
     if (inpNombre) inpNombre.setAttribute('readonly', 'readonly');

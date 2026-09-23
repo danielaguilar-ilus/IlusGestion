@@ -5356,7 +5356,10 @@ def load_current_user():
                 pass  # nunca romper login por este check
             # ────────────────────────────────────────────────────────
             g.user = cached
-            g.permissions = permission_set(cached["role"])
+            # dict(...): permission_set devuelve el dict CACHEADO del rol;
+            # sin copia, el .update(ov) de abajo contagiaba los permisos
+            # individuales de un usuario a todos los de su rol (mismo worker).
+            g.permissions = dict(permission_set(cached["role"]))
             # 2026-09-11: overrides por usuario -- van DENTRO del mismo
             # caché de sesión (cached["ov"], escrito abajo al refrescar),
             # así que en el camino de cache-hit esto es un dict ya en
@@ -5398,7 +5401,7 @@ def load_current_user():
         pass  # nunca romper login por este check
     # ────────────────────────────────────────────────────────────
     g.user = user
-    g.permissions = permission_set(user["role"])
+    g.permissions = dict(permission_set(user["role"]))  # copia: ver nota en el camino de caché
     # 2026-09-11: overrides por usuario (ver _permisos_override_usuario) --
     # UNA query acá, en el camino que solo corre cuando el TTL expiró
     # (10-60s), no en cada request.

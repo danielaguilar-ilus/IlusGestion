@@ -20,8 +20,8 @@
 {# ════════════════════════════════════════════════════════════════════
    MODAL: NUEVO RETIRO INTERNO / BACKOFFICE (Daniel 2026-05-29)
    Botón en el header → este modal → POST /retiros/nuevo (AJAX).
-   Confirmación directa: el cliente ya aceptó por un canal → agenda_confirmada.
-   Bootstrap modal (>5 campos, según CLAUDE.md regla #8).
+   2026-09-23: ya NO confirma directo — crea el retiro y manda la propuesta
+   real al cliente (ping-pong). Bootstrap modal (>5 campos, REGLA #8).
    ════════════════════════════════════════════════════════════════════ #}
 <style>
 /* ── Nuevo retiro interno: pasos numerados con semáforo rojo→verde
@@ -101,16 +101,56 @@
 .nri-aviso-btn:hover{background:#f9fafb;border-color:#9ca3af}
 .nri-aviso-btn.is-primary{background:#16a34a;color:#fff;border-color:#16a34a}
 .nri-aviso-btn.is-primary:hover{background:#15803d}
-/* Chip "Es el mismo cliente" (Paso 3) */
-.nri-chip-mismo{display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:10px;padding:6px 11px;min-height:36px;font-size:.76rem;font-weight:800;cursor:pointer;transition:all .15s}
-.nri-chip-mismo:hover{background:#dcfce7;border-color:#16a34a}
+/* ── Paso 1 (2026-09-23): botón grande "Agregar factura o boleta" — un solo
+   gesto claro para quien no está acostumbrado al ERP. Con facturas ya
+   agregadas se achica y dice "Agregar otra factura" (multi-documento). ── */
+.nri-add-doc{width:100%;display:flex;align-items:center;gap:14px;margin-top:4px;padding:16px 18px;min-height:76px;
+  background:#fff;border:2px dashed #fca5a5;border-radius:14px;cursor:pointer;text-align:left;
+  transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
+.nri-add-doc:hover{border-color:var(--ilus-red,#dc2626);background:#fef2f2;transform:translateY(-1px);box-shadow:0 10px 22px -14px rgba(220,38,38,.6)}
+.nri-add-doc:focus-visible{outline:3px solid rgba(220,38,38,.35);outline-offset:2px}
+.nri-add-doc-ico{width:48px;height:48px;border-radius:50%;background:var(--ilus-red,#dc2626);color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:1.45rem;flex-shrink:0;box-shadow:0 4px 12px rgba(220,38,38,.35);animation:nriAddPulse 2.2s ease-in-out infinite}
+@keyframes nriAddPulse{0%,100%{box-shadow:0 4px 12px rgba(220,38,38,.35),0 0 0 0 rgba(220,38,38,.28)}50%{box-shadow:0 4px 12px rgba(220,38,38,.35),0 0 0 9px rgba(220,38,38,0)}}
+.nri-add-doc-txt{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.nri-add-doc-txt strong{font-size:1.02rem;font-weight:900;color:#0a0a0a;line-height:1.2}
+.nri-add-doc-txt small{font-size:.76rem;color:#6b7280;line-height:1.35}
+.nri-add-doc-go{color:var(--ilus-red,#dc2626);font-size:1.25rem;flex-shrink:0}
+.nri-add-doc.is-otra{min-height:58px;padding:10px 16px;border-color:#e5e7eb;margin-top:10px}
+.nri-add-doc.is-otra .nri-add-doc-ico{width:38px;height:38px;font-size:1.15rem;animation:none}
+.nri-add-doc.is-otra .nri-add-doc-txt strong{font-size:.9rem}
+.nri-add-doc-quick{margin-top:14px;padding:12px 14px;background:#f9fafb;border:1px solid #f1f5f9;border-radius:12px}
+.nri-add-doc-quick .nri-doc-status{margin-top:6px}
+.nri-doc-regla{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:.86rem;font-weight:700;color:#374151}
+.nri-doc-regla i{color:var(--ilus-red,#dc2626);flex-shrink:0}
+@media(prefers-reduced-motion:reduce){.nri-add-doc-ico{animation:none}}
+/* ── Paso 3 (2026-09-23): "¿Quién viene a retirar?" con dos opciones grandes,
+   mismo patrón del formulario público. Seleccionada = verde (semáforo). ── */
+.nri-retira-opts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.nri-retira-opt{position:relative;display:flex;align-items:center;gap:12px;margin:0;padding:14px 16px;min-height:72px;
+  background:#fff;border:2px solid #e5e7eb;border-radius:14px;cursor:pointer;transition:all .18s ease;user-select:none}
+.nri-retira-opt:hover{border-color:#9ca3af}
+.nri-retira-opt input[type="radio"]{position:absolute;opacity:0;pointer-events:none}
+.nri-retira-opt:focus-within{outline:3px solid rgba(22,163,74,.3);outline-offset:2px}
+.nri-retira-ico{width:42px;height:42px;border-radius:50%;background:#f3f4f6;color:#6b7280;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;transition:all .18s ease}
+.nri-retira-txt{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.nri-retira-txt strong{font-size:.95rem;font-weight:900;color:#0a0a0a}
+.nri-retira-txt small{font-size:.76rem;color:#6b7280;line-height:1.35;word-break:break-word}
+.nri-retira-radio{width:22px;height:22px;border-radius:50%;border:2px solid #d1d5db;flex-shrink:0;position:relative;transition:all .18s ease}
+.nri-retira-opt.is-on{border-color:#16a34a;background:linear-gradient(180deg,#f0fdf4 0%,#fff 75%);box-shadow:0 8px 20px -14px rgba(22,163,74,.6)}
+.nri-retira-opt.is-on .nri-retira-ico{background:#16a34a;color:#fff}
+.nri-retira-opt.is-on .nri-retira-txt small{color:#166534}
+.nri-retira-opt.is-on .nri-retira-radio{border-color:#16a34a;background:#16a34a}
+.nri-retira-opt.is-on .nri-retira-radio::after{content:'';position:absolute;inset:4px;border-radius:50%;background:#fff}
+.nri-retira-otra{margin-top:12px;padding:14px;background:#fff8f8;border:1px solid #fecaca;border-radius:12px}
+.nri-resp-block{margin-top:16px;padding-top:14px;border-top:1px dashed #e5e7eb}
 /* Progreso global en el header del modal */
 .nri-progreso{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;margin-right:12px;font-size:.74rem;font-weight:700;color:#e5e7eb}
 .nri-progreso .bar{width:120px;height:7px;border-radius:50px;background:rgba(255,255,255,.18);overflow:hidden}
 .nri-progreso .bar > span{display:block;height:100%;width:0;background:#16a34a;border-radius:50px;transition:width .3s ease}
 .nri-progreso .avisos{color:#fbbf24}
 .nri-progreso .avisos:empty{display:none}
-/* Botón "Crear y confirmar": NO se deshabilita (regla de Daniel: no bloquear),
+/* Botón "Crear y enviar propuesta": NO se deshabilita (regla de Daniel: no bloquear),
    solo se atenúa mientras haya pasos en rojo */
 #btnGuardarRetiroInterno.is-pending{opacity:.62;filter:saturate(.7)}
 /* Resalte breve del primer paso rojo al intentar crear */
@@ -269,9 +309,57 @@ select.nri-field-locked{pointer-events:none}
   .nri-doc-quitar,.nri-doc-card .nri-erp-btn{width:100%;justify-content:center;min-height:44px}
   .nri-erp-btn{min-height:44px}
   .nri-chip{width:100%}
+  .nri-retira-opts{grid-template-columns:1fr}
+  .nri-add-doc{padding:14px}
 }
+
+/* ── LEGIBILIDAD (Daniel 2026-09-23: "la persona que hará los retiros es
+   media ciega") — todo el modal con letra más grande, gris más oscuro y
+   controles de 44px. Va al final para ganarle a los tamaños chicos de
+   arriba sin tener que tocar cada regla. ── */
+#modalNuevoRetiroInterno .modal-body{font-size:1rem}
+#modalNuevoRetiroInterno .form-label{font-size:.92rem;color:#111827;font-weight:700}
+#modalNuevoRetiroInterno .form-control-sm,
+#modalNuevoRetiroInterno .form-select-sm{font-size:1rem;min-height:44px;padding-top:.5rem;padding-bottom:.5rem;padding-left:.75rem;color:#0a0a0a}
+/* sin padding-right (deja espacio a la flecha del select y al ícono de
+   validación) y el borde gris solo si NO está validado — así el rojo/verde
+   de Bootstrap (.is-invalid/.is-valid) se sigue viendo */
+#modalNuevoRetiroInterno .form-control-sm:not(.is-invalid):not(.is-valid),
+#modalNuevoRetiroInterno .form-select-sm:not(.is-invalid):not(.is-valid){border-color:#9ca3af}
+#modalNuevoRetiroInterno .form-control-sm::placeholder{color:#6b7280}
+#modalNuevoRetiroInterno textarea.form-control-sm{min-height:70px}
+#modalNuevoRetiroInterno .text-muted{color:#4b5563!important}
+#modalNuevoRetiroInterno .nri-step-titles .nri-step-title{font-size:1.12rem}
+#modalNuevoRetiroInterno .nri-step-titles .nri-step-sub{font-size:.88rem;color:#374151}
+#modalNuevoRetiroInterno .nri-step-circle-label{font-size:.66rem}
+#modalNuevoRetiroInterno .nri-step-circle{width:42px;height:42px;font-size:1.15rem}
+#modalNuevoRetiroInterno .nri-step-estado{font-size:.88rem}
+#modalNuevoRetiroInterno .nri-doc-status{font-size:.86rem}
+#modalNuevoRetiroInterno .nri-list-title{font-size:.82rem;color:#111827}
+#modalNuevoRetiroInterno .nri-doc-meta .ddate{font-size:.8rem;color:#4b5563}
+#modalNuevoRetiroInterno .nri-doc-meta .dcli{font-size:.98rem}
+#modalNuevoRetiroInterno .nri-doc-meta .dlin{font-size:.84rem;color:#374151}
+#modalNuevoRetiroInterno .nri-doc-num{font-size:1.05rem}
+#modalNuevoRetiroInterno .nri-pill{font-size:.74rem}
+#modalNuevoRetiroInterno .nri-aviso{font-size:.88rem}
+#modalNuevoRetiroInterno .nri-aviso-btn{font-size:.82rem;min-height:40px}
+#modalNuevoRetiroInterno .nri-add-doc-txt strong{font-size:1.12rem}
+#modalNuevoRetiroInterno .nri-add-doc.is-otra .nri-add-doc-txt strong{font-size:1rem}
+#modalNuevoRetiroInterno .nri-add-doc-txt small{font-size:.86rem;color:#374151}
+#modalNuevoRetiroInterno .nri-retira-txt strong{font-size:1.04rem}
+#modalNuevoRetiroInterno .nri-retira-txt small{font-size:.86rem;color:#374151}
+#modalNuevoRetiroInterno .nri-retira-opt.is-on .nri-retira-txt small{color:#166534}
+#modalNuevoRetiroInterno .nri-doc-num small{font-size:.74rem;color:#4b5563}
+#modalNuevoRetiroInterno .nri-tabla-productos{font-size:.88rem}
+#modalNuevoRetiroInterno .nri-tabla-productos thead th{font-size:.74rem}
+#modalNuevoRetiroInterno .nri-carga-line{font-size:.88rem}
+#modalNuevoRetiroInterno .modal-footer .btn{font-size:.95rem;min-height:46px;padding:.5rem 1.1rem}
 </style>
-<div class="modal fade" id="modalNuevoRetiroInterno" tabindex="-1" aria-hidden="true">
+{# 2026-09-23 (Daniel: "si lo cerramos a propósito, eso se tiene que
+   limpiar"): backdrop static + sin Esc → el modal SOLO se cierra con la X o
+   "Cancelar" (cierre a propósito). Un clic accidental afuera ya no lo cierra.
+   Al cerrarse se limpia todo (nriResetFormulario, script de abajo). #}
+<div class="modal fade" id="modalNuevoRetiroInterno" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
     <div class="modal-content" style="border:2px solid var(--ilus-red);box-shadow:0 0 40px rgba(0,0,0,.25)">
       <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
@@ -317,65 +405,62 @@ select.nri-field-locked{pointer-events:none}
                 <div class="nri-step-circle"><span class="nri-step-num-text">1</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">Documento
+                <div class="nri-step-title">Factura o boleta
                   {# 2026-09-15: badge "N documento(s) verificados en ERP" (lo llena retiros_nuevo_interno.js) #}
                   <span class="nri-hdr-badge" id="nriDocBadge" style="display:none"></span>
                 </div>
-                <div class="nri-step-sub">Busca el N° de documento o el RUT del cliente en el ERP — no se tipea a mano</div>
+                <div class="nri-step-sub">Agrega la factura (o varias) que el cliente viene a retirar. Se buscan en el ERP, no se escriben a mano.</div>
                 <div class="nri-step-estado" id="nriStepEstado1"></div>
               </div>
             </div>
-            <div class="row g-2">
-              <div class="col-12">
-                <label class="form-label small fw-semibold">Buscar en el ERP</label>
-                <input type="text" id="nriDocBuscar" class="form-control form-control-sm" maxlength="20" placeholder="N° de documento o RUT del cliente" autocomplete="off">
+            {# ── Paso 1 rediseñado (Daniel 2026-09-23: "lo que falta es mejorar
+               agregar una factura, que sea intuitivo — la persona que se encarga
+               de esto necesita que lo vea y se entienda"). Orden: 1) las
+               facturas ya agregadas (como tenerlas en la mano), 2) UN botón
+               grande "Agregar factura", 3) atajo de escribir el N°, 4) la
+               excepción "sin documento" como opción secundaria. Mismos ids que
+               ya usa static/retiros_nuevo_interno.js — la lógica no cambia. ── #}
+            <div id="nriDocsSelWrap" style="display:none">
+              <div class="nri-list-title">
+                <span><i class="bi bi-receipt-cutoff"></i>Facturas de este retiro<span class="nri-count" id="nriDocsSelCount">0</span></span>
+                <span class="text-muted fw-normal text-lowercase" style="letter-spacing:0;font-size:.7rem">la primera queda como documento principal</span>
               </div>
+              <div id="nriDocsSel" class="nri-docs-list"></div>
             </div>
-            {# ── Asistente ERP del Paso 1 (2026-09-15, retiros_nuevo_interno.js):
-               botón al modal estándar tickets/_tka_modal.html (incluido al final
-               del bloque, FUERA de este modal y del form), candidatos de la
-               autobúsqueda por N° y lista de documentos que quedarán asociados
-               al crear (POST /retiros/<id>/docs/agregar). 2026-09-22: + botón
-               de excepción auditada "Continuar sin documento". ── #}
-            <div class="nri-doc-tools">
-              <button type="button" class="nri-erp-btn" id="nriDocErpBtn" title="Abrir el buscador estándar de documentos del ERP Random">
-                <i class="bi bi-search"></i>Buscar en el ERP (modal completo)
-              </button>
-              <button type="button" class="nri-erp-btn is-outline" id="nriSinDocumentoBtn" title="Cliente nuevo o sin facturar — queda auditado quién lo marcó">
-                <i class="bi bi-slash-circle"></i>Continuar sin documento (cliente nuevo/sin facturar)
-              </button>
-              <input type="hidden" name="sin_documento_confirmado" id="nriSinDocumentoConfirmado" value="0">
+            <button type="button" class="nri-add-doc" id="nriDocErpBtn" title="Abrir el buscador de documentos del ERP Random">
+              <span class="nri-add-doc-ico"><i class="bi bi-plus-lg"></i></span>
+              <span class="nri-add-doc-txt">
+                <strong id="nriDocErpBtnTxt">Agregar factura o boleta</strong>
+                <small id="nriDocErpBtnSub">Toca aquí y búscala por su número en el ERP</small>
+              </span>
+              <i class="bi bi-chevron-right nri-add-doc-go"></i>
+            </button>
+            <div class="nri-add-doc-quick">
+              <label for="nriDocBuscar" class="form-label small fw-semibold mb-1"><i class="bi bi-keyboard me-1"></i>¿Tienes el número a mano? Escríbelo aquí</label>
+              <input type="text" id="nriDocBuscar" class="form-control form-control-sm" maxlength="20" placeholder="Ej: 11575 — también sirve el RUT del cliente" autocomplete="off">
               <span class="nri-doc-status" id="nriDocStatus"></span>
-            </div>
-            <div class="row g-2" style="margin-top:2px">
-              <div class="col-6 col-md-4">
-                <label class="form-label small fw-semibold">Tipo <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">(del ERP)</span></label>
-                <select name="document_type" class="form-select form-select-sm nri-field-locked" tabindex="-1" aria-readonly="true">
-                  <option value="">—</option>
-                  <option value="factura">Factura</option>
-                  <option value="boleta">Boleta</option>
-                  <option value="nota_venta">Nota de venta</option>
-                  <option value="pedido">Pedido</option>
-                  <option value="guia">Guía de despacho</option>
-                </select>
-              </div>
-              <div class="col-6 col-md-4">
-                <label class="form-label small fw-semibold">N° documento <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">(del ERP)</span></label>
-                <input name="document_number" class="form-control form-control-sm nri-field-locked" maxlength="60" placeholder="—" readonly autocomplete="off">
-              </div>
-              <div class="col-12 col-md-4 d-flex align-items-end pb-1">
-                <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-info-circle me-1"></i>Se llenan solos al encontrar el documento en el ERP — no se editan a mano.</div>
-              </div>
             </div>
             {# 2026-09-15: avisos con acción del Paso 1 (¿es un RUT?, ya está en RET-XXX, varios RUT) #}
             <div id="nriDocAvisos" class="nri-avisos"></div>
             <div id="nriDocSugerencias" class="nri-doc-sug" style="display:none"></div>
-            <div id="nriDocsSelWrap" style="display:none">
-              <div class="nri-list-title">
-                <span><i class="bi bi-receipt-cutoff"></i>Documentos del retiro<span class="nri-count" id="nriDocsSelCount">0</span></span>
-                <span class="text-muted fw-normal text-lowercase" style="letter-spacing:0;font-size:.7rem">se asocian al crear · el primero queda como documento principal</span>
-              </div>
-              <div id="nriDocsSel" class="nri-docs-list"></div>
+            {# 2026-09-23 (Daniel, "sí" explícito): se quitó "Continuar sin
+               documento" — todo retiro interno necesita al menos una factura,
+               boleta o nota de venta del ERP. #}
+            <div class="nri-doc-regla"><i class="bi bi-info-circle-fill"></i>Todo retiro necesita al menos una factura, boleta o nota de venta.</div>
+            {# Tipo/N° del documento principal: los llena el JS desde el ERP
+               (sincronizarPaso1DesdeDocs) y viajan al backend igual que antes.
+               2026-09-23: ya no se muestran — eran dos cuadros grises que
+               repetían lo mismo que la tarjeta de la factura de arriba. #}
+            <div hidden>
+              <select name="document_type" class="nri-field-locked" tabindex="-1" aria-hidden="true">
+                <option value="">—</option>
+                <option value="factura">Factura</option>
+                <option value="boleta">Boleta</option>
+                <option value="nota_venta">Nota de venta</option>
+                <option value="pedido">Pedido</option>
+                <option value="guia">Guía de despacho</option>
+              </select>
+              <input name="document_number" class="nri-field-locked" maxlength="60" readonly tabindex="-1" autocomplete="off">
             </div>
           </div>
 
@@ -395,7 +480,7 @@ select.nri-field-locked{pointer-events:none}
                   </button>
                   <span class="nri-manual-badge" id="nriClienteManualBadge" style="display:none"><i class="bi bi-pencil-fill"></i>Editando a mano, fuera del ERP</span>
                 </div>
-                <div class="nri-step-sub">Busca por RUT o nombre y el ERP completa el resto — o edítalo a mano si hace falta</div>
+                <div class="nri-step-sub">Se llena solo con la factura. El teléfono y el correo sirven para avisarle al cliente la fecha del retiro.</div>
                 <div class="nri-step-estado" id="nriStepEstado2"></div>
               </div>
             </div>
@@ -413,11 +498,11 @@ select.nri-field-locked{pointer-events:none}
                 <input name="customer_rut" class="form-control form-control-sm nri-field-locked" maxlength="20" placeholder="12.345.678-9" autocomplete="off" readonly>
               </div>
               <div class="col-6 col-md-3">
-                <label class="form-label small fw-semibold">Teléfono</label>
+                <label class="form-label small fw-semibold">Teléfono <span class="text-muted fw-normal" style="font-size:.68rem">(opcional — para avisarle)</span></label>
                 <input name="contact_phone" class="form-control form-control-sm" maxlength="40" placeholder="+56 9 ...">
               </div>
               <div class="col-12 col-md-6">
-                <label class="form-label small fw-semibold">Email (opcional — para avisarle)</label>
+                <label class="form-label small fw-semibold">Correo <span class="text-muted fw-normal" style="font-size:.68rem">(opcional — para avisarle)</span></label>
                 <input name="contact_email" type="email" class="form-control form-control-sm" maxlength="180" placeholder="cliente@correo.cl">
                 {# Regla general (Daniel 2026-09-15, caso Jeremías): el email del ERP
                    llega como chip "Detectado en ERP → usar" en #nriCliChips, nunca
@@ -449,7 +534,7 @@ select.nri-field-locked{pointer-events:none}
             <div id="nriRutDocsWrap" style="display:none">
               <div class="nri-list-title">
                 <span><i class="bi bi-wallet2"></i>Documentos con saldo pendiente de este cliente</span>
-                <button type="button" class="nri-erp-btn is-outline" id="nriRutDocsToggleAll" style="min-height:34px;padding:5px 11px" title="Marca todos los documentos con saldo; los que ya tienen retiro se marcan uno a uno">
+                <button type="button" class="nri-erp-btn is-outline" id="nriRutDocsToggleAll" style="min-height:44px;padding:6px 12px" title="Marca todos los documentos con saldo; los que ya tienen retiro se marcan uno a uno">
                   <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo
                 </button>
               </div>
@@ -458,13 +543,18 @@ select.nri-field-locked{pointer-events:none}
             </div>
           </div>
 
-          {# ── Paso 3: Persona que retira + Responsable (FUSIONADOS — Daniel
-             2026-09-23: "la persona que retira está ok, eso sería el paso 2
-             [conceptual]... la persona quien retira, el responsable del
-             retiro" -- van juntos porque son la misma decisión operativa:
-             quién viene a buscar la carga y quién en ILUS responde por ella.
-             Antes eran 2 tarjetas (Paso 3 + Paso 4) con su propio numerito;
-             ahora es 1 sola, 6 pasos en total en vez de 7. ── #}
+          {# ── Paso 3: ¿Quién viene a retirar? + Responsable en ILUS
+             (Daniel 2026-09-23: "acá no son los mismos trabajadores, así que
+             deberíamos colocar que es el mismo cliente... persona que retira
+             y el responsable está como dos veces, mejora esto"). Mismo
+             patrón del formulario público (paso "¿Quién va a venir a
+             retirar?"): por defecto retira EL MISMO CLIENTE; "Otra persona"
+             abre nombre/RUT/teléfono/relación. Se sacaron el chip "Es el
+             mismo responsable" y la lista de responsables repetida como
+             atajo — el responsable de ILUS aparece UNA sola vez, abajo.
+             En modo "el mismo cliente" retiros_nuevo_interno.js copia solo
+             nombre/RUT/teléfono del Paso 2 a pickup_person_* y el backend
+             (retira_mismo_cliente=1) los vuelve a tomar del cliente. ── #}
           <div class="nri-step-card" id="nriStep3">
             <div class="nri-step-header">
               <div class="nri-step-circle-wrap">
@@ -472,71 +562,73 @@ select.nri-field-locked{pointer-events:none}
                 <div class="nri-step-circle"><span class="nri-step-num-text">3</span><i class="bi bi-check-lg nri-step-check"></i></div>
               </div>
               <div class="nri-step-titles">
-                <div class="nri-step-title">Persona que retira y responsable</div>
-                <div class="nri-step-sub">Quién llega a bodega a buscar la carga, y quién en ILUS responde por la entrega</div>
+                <div class="nri-step-title">¿Quién viene a retirar?</div>
+                <div class="nri-step-sub">Normalmente viene el mismo cliente. Si manda a otra persona (chofer, transporte, familiar), márcalo aquí.</div>
                 <div class="nri-step-estado" id="nriStepEstado3"></div>
               </div>
             </div>
 
-            <label class="form-label small fw-semibold">Responsable del retiro <span class="req">*</span> <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">¿quién se responsabiliza de entregar este pedido?</span></label>
-            <div class="row g-2 mb-3">
-              <div class="col-12 col-md-7">
-                <select name="responsable_user_id" id="nriResponsable" class="form-select form-select-sm nri-req" required>
-                  <option value="">Cargando responsables…</option>
-                </select>
+            <div class="nri-retira-opts" role="radiogroup" aria-label="¿Quién viene a retirar?">
+              <label class="nri-retira-opt is-on" id="nriRetiraOptCliente">
+                <input type="radio" name="nri_retira_modo" value="cliente" checked>
+                <span class="nri-retira-ico"><i class="bi bi-person-check-fill"></i></span>
+                <span class="nri-retira-txt">
+                  <strong>El mismo cliente</strong>
+                  <small id="nriRetiraClientePreview">Se toman los datos del Paso 2</small>
+                </span>
+                <span class="nri-retira-radio" aria-hidden="true"></span>
+              </label>
+              <label class="nri-retira-opt" id="nriRetiraOptOtra">
+                <input type="radio" name="nri_retira_modo" value="otra">
+                <span class="nri-retira-ico"><i class="bi bi-truck"></i></span>
+                <span class="nri-retira-txt">
+                  <strong>Otra persona</strong>
+                  <small>Chofer, transporte o alguien que el cliente autorizó</small>
+                </span>
+                <span class="nri-retira-radio" aria-hidden="true"></span>
+              </label>
+            </div>
+            <input type="hidden" name="retira_mismo_cliente" id="nriRetiraMismoCliente" value="1">
+
+            <div id="nriRetiraOtraFields" class="nri-retira-otra" style="display:none">
+              <div class="row g-2">
+                <div class="col-12 col-md-6">
+                  <label class="form-label small fw-semibold">Nombre completo de quien retira <span class="req">*</span></label>
+                  <input name="pickup_person_name" class="form-control form-control-sm" maxlength="200" placeholder="Ej: Juan Pérez González" autocomplete="off">
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small fw-semibold">RUT</label>
+                  <input name="pickup_person_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9" autocomplete="off">
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small fw-semibold">Teléfono</label>
+                  <input name="pickup_person_phone" class="form-control form-control-sm" maxlength="40" placeholder="+56 9 ..." autocomplete="off">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label small fw-semibold">Relación con el cliente</label>
+                  <select name="pickup_person_relation" class="form-select form-select-sm">
+                    <option value="dueno">Dueño / titular</option>
+                    <option value="comprador">Comprador</option>
+                    <option value="chofer">Chofer</option>
+                    <option value="transporte">Transporte</option>
+                    <option value="autorizado">Autorizado</option>
+                    <option value="otro" selected>Otro</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-6 d-flex align-items-end">
+                  <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-telephone me-1"></i>El teléfono sirve para llamarlo el día del retiro si hace falta.</div>
+                </div>
               </div>
             </div>
 
-            <label class="form-label small fw-semibold" style="display:block">Persona que retira</label>
-            {# 2026-09-15: chip "Es el mismo cliente" — copia nombre/RUT del Paso 2
-               (solo si están vacíos; si hay otro valor, pide confirmación).
-               2026-09-22: + "Es el mismo responsable" (copia el responsable
-               elegido arriba — quien coordinó por teléfono a veces también
-               retira). Ambos SIEMPRE piden confirmación si ya hay algo
-               distinto tipeado (copiarMismoCliente/copiarMismoResponsable
-               en retiros_nuevo_interno.js). #}
-            <div class="d-flex flex-wrap gap-2 mb-2">
-              <button type="button" class="nri-chip-mismo" id="nriMismoCliente" title="Copiar el nombre y RUT del cliente del Paso 2">
-                <i class="bi bi-person-check-fill"></i>Es el mismo cliente
-              </button>
-              <button type="button" class="nri-chip-mismo" id="nriMismoResponsable" title="Copiar el nombre y RUT del responsable elegido arriba">
-                <i class="bi bi-person-badge-fill"></i>Es el mismo responsable
-              </button>
-            </div>
-            {# 2026-09-22: selector ADITIVO — nunca reemplaza el texto libre de
-               abajo, solo lo precarga como atajo. La persona que retira a veces
-               es un empleado interno (vendedor que coordinó por teléfono) y a
-               veces es externa (el cliente o un chofer sin cuenta): por eso el
-               campo de texto libre sigue existiendo y editable tal cual. Se
-               puebla con el mismo catálogo de /retiros/api/responsables
-               (window.nriPoblarSelectResponsables, retiros_nuevo_interno.js). #}
-            <div class="row g-2 mb-2">
-              <div class="col-12 col-md-6">
-                <label class="form-label small fw-semibold">Elegir de la lista de responsables <span class="text-muted fw-normal text-lowercase" style="font-size:.65rem;letter-spacing:0">(atajo, opcional)</span></label>
-                <select id="nriPersonaRetiraSel" class="form-select form-select-sm">
-                  <option value="">Cargando responsables…</option>
-                </select>
-              </div>
-            </div>
-            <div class="row g-2">
-              <div class="col-12 col-md-5">
-                <label class="form-label small fw-semibold">Nombre *</label>
-                <input name="pickup_person_name" class="form-control form-control-sm nri-req" maxlength="200" required>
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label small fw-semibold">RUT</label>
-                <input name="pickup_person_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9" autocomplete="off">
-              </div>
-              <div class="col-6 col-md-4">
-                <label class="form-label small fw-semibold">Relación</label>
-                <select name="pickup_person_relation" class="form-select form-select-sm">
-                  <option value="dueno">Dueño / titular</option>
-                  <option value="comprador">Comprador</option>
-                  <option value="chofer">Chofer</option>
-                  <option value="transporte">Transporte</option>
-                  <option value="autorizado">Autorizado</option>
-                  <option value="otro" selected>Otro</option>
-                </select>
+            <div class="nri-resp-block">
+              <label class="form-label small fw-semibold" for="nriResponsable"><i class="bi bi-person-badge me-1" style="color:var(--ilus-red,#dc2626)"></i>Responsable en ILUS <span class="req">*</span> <span class="text-muted fw-normal" style="font-size:.68rem">¿quién de ILUS se hace cargo de este retiro?</span></label>
+              <div class="row g-2">
+                <div class="col-12 col-md-7">
+                  <select name="responsable_user_id" id="nriResponsable" class="form-select form-select-sm nri-req" required>
+                    <option value="">Cargando responsables…</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
@@ -715,8 +807,9 @@ select.nri-field-locked{pointer-events:none}
       </div>
       <div class="modal-footer" style="background:#fafafa">
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        {# 2026-09-23: ya no confirma solo — crea y manda la propuesta al cliente #}
         <button type="button" class="btn btn-sm btn-ilus fw-bold" id="btnGuardarRetiroInterno">
-          <i class="bi bi-check2 me-1"></i>Crear y confirmar
+          <i class="bi bi-send-fill me-1"></i>Crear y enviar propuesta
         </button>
       </div>
     </div>
@@ -990,15 +1083,13 @@ select.nri-field-locked{pointer-events:none}
   //    Se monta cuando el modal YA es visible (shown), para que el grid mida
   //    bien. Bloque único, operador (puede HOY + cruzar colación), cupos reales.
   modalEl.addEventListener('shown.bs.modal', function(){
-    // Poblar los selectores de RESPONSABLES: Paso 4 (obligatorio, se envía) y
-    // Paso 3 (atajo opcional "persona que retira", NO se envía). Daniel
-    // 2026-06-19 / ampliado 2026-09-22. window.nriPoblarSelectResponsables
-    // (retiros_nuevo_interno.js) reusa un único fetch para los dos y se
-    // encarga de no recargar si ya estaban poblados (dataset.loaded).
+    // Poblar el selector "Responsable en ILUS" (Paso 3, obligatorio). La
+    // lista = usuarios con acceso real a Retiros (GET /retiros/api/responsables,
+    // 2026-09-23). La lista repetida como atajo de "persona que retira" se
+    // quitó (Daniel: "está como dos veces").
     try {
       if (typeof window.nriPoblarSelectResponsables === 'function'){
         window.nriPoblarSelectResponsables('nriResponsable');
-        window.nriPoblarSelectResponsables('nriPersonaRetiraSel');
       }
     } catch(_eResp){ console.warn('nriPoblarSelectResponsables', _eResp); }
     try {
@@ -1034,6 +1125,11 @@ select.nri-field-locked{pointer-events:none}
         if (window._nriCalInstance && window._nriCalInstance.setDate && inp && inp.value){
           window._nriCalInstance.setDate(inp.value);
         }
+      } else if (inp && inp.value && window._nriCalInstance.setDate){
+        // 2026-09-23: al cerrar se limpia todo y la fecha vuelve a HOY
+        // (show.bs.modal); el calendario se mueve a esa fecha y recarga cupos.
+        window._nriCalInstance.setDate(inp.value);
+        if (window._nriCalInstance.reload) window._nriCalInstance.reload();  // cupos frescos
       } else if (window._nriCalInstance.reload){
         window._nriCalInstance.reload();  // refrescar cupos al reabrir
       }
@@ -1043,6 +1139,49 @@ select.nri-field-locked{pointer-events:none}
       if (_h && window._nriCalInstance) _h.style.display = 'none';
       nriRefreshSteps();
     } catch(e){ console.warn('nri calendar mount', e); }
+  });
+
+  // ── Cerrar = limpiar (Daniel 2026-09-23: "cerré el modal, lo volví a
+  // abrir y me trajo los mismos datos... si lo cerramos a propósito, eso se
+  // tiene que limpiar"). El modal solo se cierra con la X o "Cancelar"
+  // (backdrop static). Si hay datos cargados se pregunta antes de borrar,
+  // para que un toque equivocado en la X no bote el trabajo. Si la red falla
+  // al crear, el modal NO se cierra y los datos quedan intactos.
+  let _nriDescartarOk = false;
+  let _nriCreado = false;
+  let _nriEnviando = false;   // mientras el POST /retiros/nuevo está en curso
+  modalEl.addEventListener('hide.bs.modal', async function(ev){
+    // Revisión 2026-09-23: si se está creando, cerrar descartaría un retiro
+    // que igual se crea (y cuyo correo igual sale) — se bloquea el cierre.
+    if (_nriEnviando){
+      ev.preventDefault();
+      ilusToast('Espera un momento: se está creando el retiro…', { type:'info' });
+      return;
+    }
+    if (_nriDescartarOk || _nriCreado) return;
+    let tiene = false;
+    try { tiene = typeof window.nriTieneDatos === 'function' && window.nriTieneDatos(); } catch(_){ tiene = false; }
+    if (!tiene) return;
+    ev.preventDefault();
+    const ok = await ilusConfirm({
+      title: '¿Descartar este retiro?',
+      message: 'Se borrarán los datos que llevas en el formulario.',
+      sub: 'Si quieres seguir completándolo, elige "Seguir editando".',
+      okLabel: 'Sí, descartar', cancelLabel: 'Seguir editando',
+      danger: true,
+    });
+    if (!ok) return;
+    _nriDescartarOk = true;
+    try { bootstrap.Modal.getOrCreateInstance(modalEl).hide(); } catch(_){}
+  });
+  modalEl.addEventListener('hidden.bs.modal', function(){
+    _nriDescartarOk = false;
+    if (_nriCreado) return;
+    try { _formNri && _formNri.reset(); } catch(e){ console.warn('nri reset', e); }
+    try { if (window._nriCalInstance && window._nriCalInstance.clearSelection) window._nriCalInstance.clearSelection(); } catch(_){}
+    ['nriHidDate', 'nriHidTf', 'nriHidTt'].forEach(function(id){ const el = document.getElementById(id); if (el) el.value = ''; });
+    const _d = document.getElementById('nri_date'); if (_d) _d.value = '';
+    setTimeout(nriRefreshSteps, 0);
   });
 
   // ── Auto-apertura por query params (responsive_retiros 2026-06-09) ──
@@ -1065,6 +1204,7 @@ select.nri-field-locked{pointer-events:none}
   } catch(_){}
   const btn = document.getElementById('btnGuardarRetiroInterno');
   btn?.addEventListener('click', async function(){
+    if (_nriCreado || _nriEnviando) return;   // ya se creó / se está creando: nunca un segundo POST
     const form = document.getElementById('formNuevoRetiroInterno');
     // 2026-09-15: pre-chequeo del semáforo (retiros_nuevo_interno.js). Con
     // pasos en ROJO: scroll + resalte + toast con lo que falta y no sigue.
@@ -1086,6 +1226,7 @@ select.nri-field-locked{pointer-events:none}
       return;
     }
     btn.disabled = true;
+    _nriEnviando = true;
     const _orig = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
     try {
@@ -1095,6 +1236,7 @@ select.nri-field-locked{pointer-events:none}
         await ilusAlert({ title:'No se pudo crear', message: d.error || 'Error desconocido.', type:'error' });
         return;
       }
+      _nriCreado = true;   // ya existe: el cierre/redirect no debe preguntar ni limpiar
       // 2026-09-15 — CREAR = ASOCIAR DE VERDAD: antes del redirect, cada
       // documento elegido en el Paso 1/2 (window._nriDocs) se asocia con
       // POST /retiros/<id>/docs/agregar (static/retiros_nuevo_interno.js).
@@ -1113,7 +1255,9 @@ select.nri-field-locked{pointer-events:none}
     } catch(e) {
       await ilusAlert({ title:'Error de red', message: e.message || 'No se pudo contactar al servidor.', type:'error' });
     } finally {
-      btn.disabled = false; btn.innerHTML = _orig;
+      // Si ya se creó, el botón y el cierre quedan bloqueados hasta el
+      // redirect (antes se reactivaba y un 2º clic creaba un duplicado).
+      if (!_nriCreado){ _nriEnviando = false; btn.disabled = false; btn.innerHTML = _orig; }
     }
   });
 })();

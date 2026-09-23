@@ -4254,15 +4254,46 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/api/responsables", methods=["GET"])
     @require_permission("retiros")
     def pickup_responsables():
-        """Usuarios internos que pueden ser RESPONSABLES de entregar un retiro
-        (rol con acceso a retiros). Alimenta el selector del modal 'Nuevo retiro'.
-        (Daniel 2026-06-19)"""
+        """Usuarios internos que pueden ser RESPONSABLES de un retiro.
+        Alimenta el selector "Responsable en ILUS" del modal 'Nuevo retiro'.
+
+        2026-09-23 (Daniel: "las personas que tengan acceso al módulo de
+        retiro por el front son las que van a aparecer"): la lista sale de la
+        MISMA regla que usa require_permission("retiros") — permisos del rol
+        (permission_set, matriz de /admin/roles) + permisos individuales
+        (usuario_permisos, botón "Permisos individuales") + superadmin
+        siempre. Antes: rol con retiros.ver en rol_permisos O cualquier
+        admin/supervisor aunque no usara Retiros, y sin mirar los permisos
+        individuales. Si permission_set no estuviera disponible en ctx, cae a
+        la consulta anterior (nunca dejar el selector vacío)."""
+        _perm_set = ctx.get("permission_set")
+        _auth_t = ctx.get("AUTH_TABLE") or "app_users"
+        if _perm_set:
+            try:
+                rows = mysql_fetchall(
+                    f"SELECT id, nombre, username, rut, role FROM `{_auth_t}` "
+                    f"WHERE active=1 ORDER BY nombre") or []
+                ov = {}
+                try:
+                    for o in (mysql_fetchall(
+                            "SELECT user_id, permiso, permitido FROM usuario_permisos "
+                            "WHERE permiso IN ('retiros','superadmin')") or []):
+                        ov.setdefault(o["user_id"], {})[o["permiso"]] = bool(o["permitido"])
+                except Exception as _e_ov:
+                    print(f"[pickup-responsables] overrides: {_e_ov}", flush=True)
+                users = []
+                for r in rows:
+                    perms = dict(_perm_set(r.get("role")) or {})
+                    perms.update(ov.get(r["id"], {}))
+                    if not (perms.get("superadmin") or perms.get("retiros")):
+                        continue
+                    users.append({"id": r["id"],
+                                  "nombre": (r.get("nombre") or r.get("username") or "Usuario"),
+                                  "rut": r.get("rut")})
+                return jsonify({"ok": True, "responsables": users})
+            except Exception as e:
+                print(f"[pickup-responsables] acceso real: {e} — uso consulta anterior", flush=True)
         try:
-            _auth_t = ctx.get("AUTH_TABLE") or "app_users"
-            # 2026-09-22: se agrega u.rut (columna ya existe, ver app.py ~3062)
-            # para que el Paso 3 del modal "Nuevo retiro interno" pueda ofrecer
-            # el mismo catálogo como atajo de "persona que retira" con RUT
-            # precargado, sin un segundo endpoint.
             rows = mysql_fetchall(
                 f"SELECT DISTINCT u.id, u.nombre, u.username, u.rut "
                 f"FROM `{_auth_t}` u "
@@ -4286,10 +4317,9 @@ def register_pickup_routes(app, ctx):
     #  NUEVO RETIRO INTERNO / BACKOFFICE (Daniel 2026-05-29)
     #  Botón [+ Nuevo retiro interno] en el monitor → modal → POST aquí.
     #  Es el MISMO flujo que el público pero request_source='backoffice'.
-    #  Modo CONFIRMACIÓN DIRECTA: el operador marca que el cliente ya
-    #  aceptó por un canal (tel/correo/WhatsApp/presencial) → queda
-    #  agenda_confirmada al instante. Reusa validate_pickup_datetime +
-    #  _validar_disponibilidad_slot (no duplica lógica fecha/capacidad).
+    #  2026-09-23: ya NO confirma directo — crea el retiro y manda la
+    #  propuesta real al cliente (_pickup_enviar_propuesta_core). Reusa
+    #  validate_pickup_datetime + _validar_disponibilidad_slot.
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/nuevo", methods=["POST"])
     @require_permission("retiros")
@@ -4301,11 +4331,15 @@ def register_pickup_routes(app, ctx):
         customer_name      = (f.get("customer_name") or "").strip()[:200]
         document_type      = (f.get("document_type") or "").strip()[:40]
         document_number    = (f.get("document_number") or "").strip()[:60]
-        # 2026-09-22: excepción auditada del Paso 1 (ver más abajo) — el
-        # operador la marca explícitamente cuando el cliente es nuevo o no
-        # tiene factura; sin ella, documento vacío ya no se deja pasar solo.
-        sin_documento_confirmado = (f.get("sin_documento_confirmado") or "").strip() == "1"
         pickup_person_name = (f.get("pickup_person_name") or "").strip()[:200]
+        # 2026-09-23 (Daniel: "acá no son los mismos trabajadores, deberíamos
+        # colocar que es el mismo cliente"): opción por defecto del Paso 3. El
+        # front ya copia los datos, pero el servidor es la fuente de verdad:
+        # con retira_mismo_cliente=1 quien retira ES el cliente (nombre, RUT,
+        # teléfono, relación dueño), sin depender de la copia del navegador.
+        retira_mismo_cliente = (f.get("retira_mismo_cliente") or "").strip() == "1"
+        if retira_mismo_cliente:
+            pickup_person_name = customer_name
         date = (f.get("date") or "").strip()
         tf   = (f.get("time_from") or "").strip()
         tt   = (f.get("time_to") or "").strip()
@@ -4333,18 +4367,14 @@ def register_pickup_routes(app, ctx):
         # ── FASE 8: validaciones obligatorias para confirmación directa ──
         if len(customer_name) < 2:
             return _err("Falta el nombre del cliente.")
-        # Documento: el Paso 1 ahora BLOQUEA (Daniel 2026-09-22) — document_type
-        # y document_number solo llegan no vacíos si el frontend los llenó
-        # tras una búsqueda real en el ERP (en el modal quedan readonly, nunca
-        # se tipean a mano). La única forma de dejarlo vacío a propósito es la
-        # excepción auditada "Continuar sin documento" (cliente nuevo o sin
-        # facturar) — el uso queda registrado en el log de creación más abajo.
+        # Documento OBLIGATORIO (Daniel 2026-09-23: "siempre tiene que haber una
+        # factura, una boleta o al menos una nota de venta"). document_type y
+        # document_number solo llegan llenos si el frontend encontró el
+        # documento en el ERP (nunca se tipean a mano). Se quitó la excepción
+        # "Continuar sin documento" con el "sí" explícito de Daniel.
         if not (document_type and document_number):
-            if not sin_documento_confirmado:
-                return _err('Busca el documento o el RUT en el ERP antes de crear el retiro, '
-                            'o marca "Continuar sin documento".')
-            document_type = "sin_documento"
-            document_number = ""
+            return _err("Agrega al menos una factura, boleta o nota de venta del ERP "
+                        "antes de crear el retiro.")
         if not responsable_user_id or not responsable_nombre:
             return _err("Falta el RESPONSABLE del retiro (quién se encarga de entregar el pedido).")
         if len(pickup_person_name) < 2:
@@ -4387,6 +4417,11 @@ def register_pickup_routes(app, ctx):
         pickup_person_phone_in = (f.get("pickup_person_phone") or "").strip()[:40]
         if pickup_person_phone_in and is_valid_cl_phone(pickup_person_phone_in):
             pickup_person_phone_in = format_cl_phone(pickup_person_phone_in)[:40]
+        pickup_person_relation_in = (f.get("pickup_person_relation") or "otro").strip()[:30]
+        if retira_mismo_cliente:
+            pickup_person_rut_in = customer_rut_in
+            pickup_person_phone_in = contact_phone_in
+            pickup_person_relation_in = "dueno"
 
         cfg = settings()
         # Validación temporal central (modo interno: NO exige min_notice y
@@ -4456,7 +4491,7 @@ def register_pickup_routes(app, ctx):
                      (f.get("contact_name") or pickup_person_name)[:180],
                      contact_email, contact_phone_in,
                      pickup_person_name, pickup_person_rut_in,
-                     pickup_person_phone_in, (f.get("pickup_person_relation") or "otro")[:30],
+                     pickup_person_phone_in, pickup_person_relation_in,
                      date, tf, tt,
                      bultos, wkg, pv, m3,
                      (f.get("observations") or "").strip()[:2000], token,
@@ -4474,10 +4509,7 @@ def register_pickup_routes(app, ctx):
             except Exception: pass
 
         # FASE 9: trazabilidad — log de creación interna.
-        # 2026-09-22: si se usó la excepción "Continuar sin documento", queda
-        # anotada en el mismo log auditado (quién la marcó = uname/actor).
-        _doc_nota = (" · SIN DOCUMENTO (excepción confirmada por el operador)"
-                     if (sin_documento_confirmado and document_type == "sin_documento") else "")
+        _doc_nota = f" · documento {document_type.upper()} {document_number}"
         log_event(rid, "retiro_interno_creado", None, "solicitud_recibida",
                   f"Retiro backoffice creado por {uname} (canal de entrada: {canal}){_doc_nota}",
                   "interno", uname)
