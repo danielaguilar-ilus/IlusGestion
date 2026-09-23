@@ -100294,6 +100294,24 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         e["revision_label"] = lbl
         e["revision_sev"] = sev
         e["saltado"] = (rev == "saltado")
+        # 🔴 FIX 2026-09-23 (Daniel, caso real OT-2026-00058 a punto de
+        # compartirse con el cliente: el PDF mostraba "52 críticos / 52
+        # obligatorias sin completar" mientras la pantalla decía 100%,
+        # 473/473 obligatorias). e["saltado"] arriba solo mira
+        # rev=='saltado' A PROPÓSITO -- el hallazgo de más abajo lo usa
+        # para distinguir "Equipo no revisado" de "Falla detectada" (dos
+        # categorías, no se fusionan). Pero para decidir si las TAREAS de
+        # este equipo siguen contando como "obligatoria pendiente", el
+        # criterio correcto es el mismo que ya usa
+        # _ot_maquinas_excluidas_cierre() en el resto de la app -- su
+        # docstring la marca "ÚNICA fuente de verdad" desde el fix del
+        # caso OT-56 (2026-08-08): 'saltado' O 'falla_detectada', ambos ya
+        # quedaron documentados/con incidencia registrada. Este generador
+        # de PDF tenía su PROPIA copia del criterio, incompleta (solo
+        # 'saltado') -- mismo patrón de bug que ya se corrigió una vez
+        # para firmar-revision, repetido acá porque nadie lo actualizó
+        # cuando se creó este PDF.
+        e["excluido_checklist"] = rev in ("saltado", "falla_detectada")
         rz = (e.get("razon_saltado") or "").strip().lower()
         e["razon_saltado_label"] = _OT_PDF_RAZON_SALTADO.get(
             rz, rz.replace("_", " ").capitalize() if rz else "")
@@ -100302,7 +100320,10 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
             ec, ec.replace("_", " ").capitalize() if ec else "")
         e["revisado_at_str"] = _chile(e.get("revisado_at"))
         e["revisado_por_str"] = _quien(e.get("revisado_por"))
-    saltados_ids = {e.get("id") for e in equipos if e.get("saltado")}
+    # excluidos_ids (no "saltados_ids"): mismo criterio que
+    # _ot_maquinas_excluidas_cierre -- saltado O falla_detectada -- ver
+    # el comentario junto a e["excluido_checklist"] arriba.
+    excluidos_ids = {e.get("id") for e in equipos if e.get("excluido_checklist")}
 
     # ── 2) Filas del checklist: campos probatorios + orden por tarjeta ──
     t_por_id = {t.get("id"): t for t in tareas}
@@ -100324,7 +100345,7 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         fila["completada_por_otro"] = (
             _quien(fila["completada_por"]) if fila["completada_por"]
             and fila["completada_por"].lower() != _firmante_tec else "")
-        fila["equipo_saltado"] = bool(mid) and mid in saltados_ids
+        fila["equipo_saltado"] = bool(mid) and mid in excluidos_ids
         # Una fila es "excepción" cuando el lector tiene que mirarla: falla o
         # alerta en el resultado, foto exigida que no está, u obligatoria sin
         # completar. Las de un equipo NO revisado no se cuentan una a una:
