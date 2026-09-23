@@ -4599,6 +4599,184 @@ def register_pickup_routes(app, ctx):
             "total_candidatos": len(rows),
         })
 
+    # ══════════════════════════════════════════════════════════════════
+    #  FICHA v3 (Daniel 2026-09-23, boceto aprobado): documentos
+    #  valorizados + línea de actividad tipo Tickets.
+    # ══════════════════════════════════════════════════════════════════
+    def _pickup_valores_hdr(hdr):
+        """Neto/IVA/bruto del documento completo desde erp_snapshot.hdr.
+        None = sin dato (nunca 0 inventado)."""
+        def _f(v):
+            try:
+                return float(v) if v not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+        hdr = hdr or {}
+        neto, iva, bruto = _f(hdr.get("valor_neto")), _f(hdr.get("valor_iva")), _f(hdr.get("valor_bruto"))
+        if bruto is None and neto is not None and iva is not None:
+            bruto = neto + iva
+        # Los snapshots de respaldo (fetch mínimo por SQL) rellenan con 0 lo
+        # que no traen: un documento real nunca vale $0 neto y $0 bruto.
+        if not neto and not bruto:
+            neto = iva = bruto = None
+        return {"valor_neto": neto, "valor_iva": iva, "valor_bruto": bruto}
+
+    def _pickup_sumar_valores(docs):
+        tot = {"neto": 0.0, "iva": 0.0, "bruto": 0.0, "n_docs": len(docs or []), "n_sin_dato": 0}
+        for d in docs or []:
+            if d.get("valor_bruto") is None and d.get("valor_neto") is None:
+                tot["n_sin_dato"] += 1
+                continue
+            tot["neto"] += d.get("valor_neto") or 0.0
+            tot["iva"] += d.get("valor_iva") or 0.0
+            tot["bruto"] += d.get("valor_bruto") or 0.0
+        if tot["n_sin_dato"] >= tot["n_docs"]:
+            # Ningún documento con valor → "—", nunca un $0 inventado
+            tot["neto"] = tot["iva"] = tot["bruto"] = None
+        return tot
+
+    # acción de pickup_logs → (categoría del filtro, ícono, tono, verbo)
+    _ACT_LOG_MAP = {
+        "creada": ("cambios", "bi-flag-fill", "crea", "creó la solicitud desde el formulario público"),
+        "retiro_interno_creado": ("cambios", "bi-flag-fill", "crea", "creó el retiro"),
+        "ficha_inline_edit": ("cambios", "bi-pencil-fill", "cambio", "cambió un dato"),
+        "cliente_actualizado": ("cambios", "bi-person-lines-fill", "cambio", "actualizó los datos del cliente"),
+        "estado_actualizado": ("cambios", "bi-arrow-left-right", "cambio", "cambió el estado"),
+        "doc_agregado": ("cambios", "bi-file-earmark-plus-fill", "doc", "asoció un documento"),
+        "doc_quitado": ("cambios", "bi-file-earmark-minus-fill", "doc", "quitó un documento"),
+        "doc_otro_rut": ("cambios", "bi-people-fill", "doc", "asoció un documento de otro RUT"),
+        "lineas_seleccion": ("cambios", "bi-list-check", "doc", "eligió los productos a retirar"),
+        "doc_validada": ("cambios", "bi-patch-check-fill", "doc", "validó los documentos"),
+        "doc_incompleta": ("cambios", "bi-exclamation-triangle-fill", "fail", "marcó documentos incompletos"),
+        "doc_validacion_auto": ("cambios", "bi-patch-check", "doc", "validó los documentos automáticamente"),
+        "erp_actualizado": ("cambios", "bi-arrow-repeat", "doc", "actualizó datos desde el ERP"),
+        "propuesta_enviada": ("cambios", "bi-send-fill", "agenda", "envió una propuesta de fecha"),
+        "propuesta_email_no_enviado": ("mensajes", "bi-envelope-x-fill", "fail", "la propuesta no salió por correo"),
+        "propuesta_bloqueada": ("cambios", "bi-slash-circle", "fail", "intentó proponer un horario sin cupo"),
+        "propuesta_vencida": ("cambios", "bi-hourglass-bottom", "warn", "bloqueó la aceptación: la propuesta ya había vencido"),
+        "auto_confirmada_coincidencia": ("cambios", "bi-calendar-check-fill", "cli", "confirmó la fecha pedida por el cliente"),
+        "ilus_acepto_contrapropuesta": ("cambios", "bi-calendar-check-fill", "agenda", "aceptó la contrapropuesta del cliente"),
+        "aceptada_manual": ("cambios", "bi-person-check-fill", "agenda", "marcó la propuesta como aceptada"),
+        "cliente_confirmo": ("mensajes", "bi-check2-square", "cli", "aceptó la propuesta"),
+        "cliente_rechazo": ("mensajes", "bi-x-octagon-fill", "fail", "rechazó el retiro"),
+        "cliente_contrapropuso": ("mensajes", "bi-arrow-left-right", "cli", "propuso otra fecha"),
+        "confirm_bloqueada": ("cambios", "bi-slash-circle", "fail", "no se pudo confirmar (sin cupo)"),
+        "declaracion_tercero": ("cambios", "bi-person-badge", "cli", "declaró que retira otra persona"),
+        "mensaje_enviado": ("mensajes", "bi-chat-left-text-fill", "mail", "envió un mensaje al cliente"),
+        "email_enviado": ("mensajes", "bi-envelope-check-fill", "mail", "envió el correo de solicitud recibida"),
+        "email_pendiente": ("mensajes", "bi-envelope-x-fill", "fail", "no pudo enviar el correo de solicitud recibida"),
+        "whatsapp_enviado": ("mensajes", "bi-whatsapp", "mail", "envió un WhatsApp"),
+        "recordatorio_24h_enviado": ("mensajes", "bi-alarm-fill", "mail", "envió el recordatorio de 24 h"),
+        "picking_completo": ("cambios", "bi-box-seam-fill", "ok", "terminó de preparar la carga en bodega"),
+        "retiro_evidencia": ("cambios", "bi-person-check-fill", "ok", "registró quién retiró"),
+        "retiro_evidencia_foto": ("archivos", "bi-camera-fill", "file", "subió la foto de evidencia del retiro"),
+    }
+
+    def _act_corta(s, n):
+        """Corta con "…" visible: nunca un texto cortado sin que se note (REGLA #15)."""
+        s = (s or "").strip()
+        return s if len(s) <= n else s[:n - 1].rstrip() + "…"
+
+    def _pickup_actividad(req, logs, attachments):
+        """Línea de actividad del retiro (Daniel 2026-09-23: "necesito saber
+        quién modificó, quién creó, quién realizó... hasta la del cliente si
+        responde"). Une pickup_logs + email_log (por el código RET en el
+        asunto) + pickup_messages + adjuntos del cliente. SOLO acciones —
+        no hay eventos de "quién abrió". Devuelve dicts sin HTML (la
+        plantilla escapa todo): cat, icon, tono, actor, accion, objetivo,
+        tag, tag_tono, detalle, fecha (datetime UTC)."""
+        items = []
+        code = (req.get("code") or "").strip()
+        for l in logs or []:
+            action = (l.get("action") or "").strip()
+            cat, icon, tono, verbo = _ACT_LOG_MAP.get(
+                action, ("cambios", "bi-dot", "cambio", action.replace("_", " ") or "actividad"))
+            at = (l.get("actor_type") or "").strip()
+            actor = (l.get("actor_name") or "").strip() or ("Cliente" if at == "cliente" else "Sistema")
+            if actor.lower() in ("expiry", "system", "cron", "scheduler"):
+                actor = "Sistema"
+            notes = (l.get("notes") or "").strip()
+            detalle, objetivo, tag, tag_tono = notes, "", "", ""
+            if action == "ficha_inline_edit" and ":" in notes:
+                campo, _, resto = notes.partition(":")
+                verbo = "cambió " + campo.strip().lower()
+                detalle = resto.strip()
+            elif action == "estado_actualizado":
+                o, n = l.get("old_status"), l.get("new_status")
+                if n and o != n:
+                    trans = f"Estado: {PICKUP_STATUS.get(o, o) if o else '—'} → {PICKUP_STATUS.get(n, n)}"
+                    detalle = f"{trans} · {notes}" if notes else trans
+            if action.startswith("cliente_"):
+                tag, tag_tono = "Respondió el cliente", "cli"
+            items.append({
+                "cat": cat, "icon": icon, "tono": tono, "actor": actor,
+                "accion": verbo, "objetivo": objetivo, "tag": tag, "tag_tono": tag_tono,
+                "detalle": _act_corta(detalle, 400), "fecha": l.get("created_at"),
+            })
+        # Correos del retiro (email_log no guarda request_id: se identifican
+        # por el código RET en el asunto, desde la creación del retiro).
+        if code:
+            try:
+                _desde = req.get("created_at")
+                emails = mysql_fetchall(
+                    "SELECT destinatario, asunto, estado, error_msg, actor, created_at "
+                    "FROM email_log WHERE asunto LIKE %s AND created_at >= %s "
+                    "ORDER BY id DESC LIMIT 80",
+                    (f"%{code}%", _desde or "2000-01-01")) or []
+            except Exception as _e_em:
+                print(f"[pickup-actividad] email_log: {_e_em}", flush=True)
+                emails = []
+            _TAG_EMAIL = {"enviado": ("Enviado", "ok"), "fallido": ("Fallido", "fail"),
+                          "bloqueado": ("Bloqueado", "warn")}
+            for e in emails:
+                est = (e.get("estado") or "").strip()
+                tag, tono_tag = _TAG_EMAIL.get(est, (est.title(), "warn"))
+                act = (e.get("actor") or "").strip()
+                det = (e.get("asunto") or "").strip()
+                if est in ("fallido", "bloqueado") and e.get("error_msg"):
+                    det = f"{det} · {_act_corta(str(e.get('error_msg')), 300)}"
+                items.append({
+                    "cat": "mensajes", "icon": "bi-envelope-fill",
+                    "tono": "fail" if est == "fallido" else ("warn" if est == "bloqueado" else "mail"),
+                    "actor": act if act and act.lower() != "sistema" else "Sistema",
+                    "accion": "— Correo a", "objetivo": (e.get("destinatario") or "").strip(),
+                    "tag": tag, "tag_tono": tono_tag, "detalle": _act_corta(det, 400),
+                    "fecha": e.get("created_at"),
+                })
+        # Chat operador ↔ cliente
+        try:
+            msgs = mysql_fetchall(
+                "SELECT sender, autor, cuerpo, created_at FROM pickup_messages "
+                "WHERE request_id=%s ORDER BY id DESC LIMIT 60", (req.get("id"),)) or []
+        except Exception:
+            msgs = []
+        for m in msgs:
+            es_cli = (m.get("sender") or "") == "cliente"
+            items.append({
+                "cat": "mensajes", "icon": "bi-chat-dots-fill", "tono": "cli" if es_cli else "mail",
+                "actor": (m.get("autor") or "").strip() or ("Cliente" if es_cli else "Operador"),
+                "accion": "escribió por el chat", "objetivo": "",
+                "tag": "Respondió el cliente" if es_cli else "", "tag_tono": "cli" if es_cli else "",
+                "detalle": _act_corta(m.get("cuerpo"), 2000), "fecha": m.get("created_at"),
+            })
+        # Archivos que adjuntó el cliente (la foto de evidencia ya viene del log)
+        for a in attachments or []:
+            if (a.get("tipo") or "") == "evidencia_retiro":
+                continue
+            quien = (a.get("uploaded_by") or "").strip()
+            items.append({
+                "cat": "archivos", "icon": "bi-paperclip", "tono": "file",
+                "actor": "Cliente" if quien in ("", "cliente") else quien,
+                "accion": "adjuntó un archivo", "objetivo": "",
+                "tag": "", "tag_tono": "", "detalle": _act_corta(a.get("original_name"), 255),
+                "fecha": a.get("created_at"),
+            })
+        import datetime as _dt_act
+        _min = _dt_act.datetime(1970, 1, 1)
+        items.sort(key=lambda x: x.get("fecha") if isinstance(x.get("fecha"), _dt_act.datetime) else _min,
+                   reverse=True)
+        return items
+
     @app.route("/retiros/<int:rid>")
     @require_permission("view")
     def pickup_detail(rid):
@@ -4654,7 +4832,7 @@ def register_pickup_routes(app, ctx):
                 (rid,)
             ) or []
             logs = mysql_fetchall(
-                f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 80",
+                f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 200",
                 (rid,)
             ) or []
             attachments = mysql_fetchall(
@@ -4702,9 +4880,13 @@ def register_pickup_routes(app, ctx):
             # antes de guardarlo), así que NO se reformatea acá (REGLA #6 ya
             # cumplida en origen) — se deja tal cual vino, o None si no hay dato.
             import json as _json_detail
+            # Ficha v3 (2026-09-23): comuna/dirección del cliente para la
+            # cabecera, desde el primer documento que la traiga.
+            ficha_ubicacion = {"comuna": "", "direccion": ""}
             for _d in docs_asociados:
                 _d["fecha_emision"] = None
                 _d["valor_total"] = None
+                _d.update({"valor_neto": None, "valor_iva": None, "valor_bruto": None})
                 _snap_raw = _d.get("erp_snapshot")
                 if not _snap_raw:
                     continue
@@ -4716,8 +4898,20 @@ def register_pickup_routes(app, ctx):
                     _d["valor_total"] = (
                         float(_valor_snap) if _valor_snap not in (None, "") else None
                     )
+                    _d.update(_pickup_valores_hdr(_hdr_snap))
+                    if not ficha_ubicacion["comuna"] and not ficha_ubicacion["direccion"]:
+                        ficha_ubicacion = {
+                            "comuna": (_hdr_snap.get("comuna") or "").strip(),
+                            "direccion": (_hdr_snap.get("direccion") or "").strip(),
+                        }
                 except Exception:
                     pass  # snapshot ausente/corrupto → fecha_emision/valor_total quedan None
+            valores = _pickup_sumar_valores(docs_asociados)
+            try:
+                actividad = _pickup_actividad(req, logs, attachments)
+            except Exception as _e_act:
+                print(f"[pickup_detail] actividad rid={rid}: {_e_act}", flush=True)
+                actividad = []
 
             return render_template(
                 "retiros/internal_detail.html",
@@ -4726,6 +4920,7 @@ def register_pickup_routes(app, ctx):
                 docs_asociados=docs_asociados,
                 statuses=PICKUP_STATUS, status_badge=status_badge,
                 settings=settings(),
+                valores=valores, ficha_ubicacion=ficha_ubicacion, actividad=actividad,
             )
         except Exception as _e_detail:
             # Logging COMPLETO con traceback para diagnóstico inmediato
@@ -5407,6 +5602,7 @@ def register_pickup_routes(app, ctx):
             # enrichment que pickup_detail (fuente única: erp_snapshot.hdr).
             d["fecha_emision"] = None
             d["valor_total"] = None
+            d.update({"valor_neto": None, "valor_iva": None, "valor_bruto": None})
             _snap_raw = d.pop("erp_snapshot", None)
             if _snap_raw:
                 try:
@@ -5415,6 +5611,7 @@ def register_pickup_routes(app, ctx):
                     d["fecha_emision"] = _hdr_snap.get("fecha") or None
                     _valor_snap = _hdr_snap.get("valor_bruto") or _hdr_snap.get("valor_neto")
                     d["valor_total"] = float(_valor_snap) if _valor_snap not in (None, "") else None
+                    d.update(_pickup_valores_hdr(_hdr_snap))   # ficha v3: neto/IVA/bruto
                 except Exception:
                     pass  # snapshot ausente/corrupto → quedan None
             out.append(d)
@@ -5432,6 +5629,7 @@ def register_pickup_routes(app, ctx):
             "ok": True,
             "docs": out,
             "totales": totales,
+            "valores": _pickup_sumar_valores(out),   # ficha v3: neto/IVA/bruto del retiro
             "saldo_summary": {
                 "con_saldo": docs_con_saldo,
                 "sin_saldo": docs_sin_saldo,
@@ -5527,6 +5725,13 @@ def register_pickup_routes(app, ctx):
             except Exception:
                 pass
 
+            # Ficha v3: la consulta ya trae VANEDO/VABRDO; se devuelven para
+            # que el snapshot guarde el valor real (antes quedaba en 0).
+            try:
+                _vn = float(row.get("VANEDO") or 0) or None
+                _vb = float(row.get("VABRDO") or 0) or None
+            except (TypeError, ValueError):
+                _vn = _vb = None
             return {
                 "cliente_rut":      rut_base,
                 "rut":              rut_base,
@@ -5534,6 +5739,9 @@ def register_pickup_routes(app, ctx):
                 "razon_social":     cliente_nombre,
                 "observaciones":    "",
                 "obs":              "",
+                "valor_neto":       _vn,
+                "valor_bruto":      _vb,
+                "valor_iva":        (_vb - _vn) if (_vn is not None and _vb is not None) else None,
                 "_fallback_source": "maeedo_direct_sql",
                 "_minimal":         True,
             }

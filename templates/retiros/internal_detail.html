@@ -180,51 +180,6 @@
 </style>
 
 {# ──────────────────────────────────────────────────────────────
-   1 · HEADER + ACCIONES RÁPIDAS + KPIs (SIN CAMBIOS de contenido —
-   único ajuste: "Mensajes/Adjuntos" ahora apunta directo a la
-   sección 11 vía cambiarTabInfo, en vez del scroll genérico a #infoTabs
-   que ya no existe como bloque único de pestañas)
-   ────────────────────────────────────────────────────────────── #}
-<div class="page-header id-hero d-flex justify-content-between align-items-center flex-wrap gap-2">
-  <div class="d-flex align-items-center gap-2">
-    <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
-    <div>
-      <h4><i class="bi bi-calendar2-check me-2" style="color:var(--ilus-red)"></i>{{ req.code }} <span class="badge bg-{{ b.color }}">{{ b.label }}</span></h4>
-      <div class="sub">{{ req.customer_name }}{% if req.document_number %} · {{ req.document_type|upper }} {{ req.document_number }}{% endif %}{% if req.responsable_nombre %} · <i class="bi bi-person-check"></i> Responsable: <strong>{{ req.responsable_nombre }}</strong>{% endif %}</div>
-    </div>
-  </div>
-  <div class="d-flex gap-2 flex-wrap">
-    <a href="{{ url_for('pickup_public_tracking', token=req.public_token) }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-link-45deg me-1"></i>Link cliente</a>
-    <button type="button" class="btn btn-sm btn-outline-light" onclick="abrirDescargaInforme('{{ req.customer_rut }}')" title="Excel con todos los retiros del mes">
-      <i class="bi bi-file-earmark-excel me-1"></i>Informe mes
-    </button>
-    <button type="button" class="btn btn-sm btn-outline-light" onclick="cambiarTabInfo('comunicacion')" title="Ver mensajes, adjuntos, propuestas e historial">
-      <i class="bi bi-chat-square-text me-1"></i>Mensajes/Adjuntos
-    </button>
-    {# Daniel 2026-05-23: borrar solicitud completa — SOLO superadmin #}
-    {% if current_user and current_user.role == 'superadmin' %}
-    <button type="button" class="btn btn-sm" id="btnSuperadminEliminar"
-            onclick="superadminEliminarSolicitud()"
-            style="background:rgba(220,38,38,.18);color:#fff;border:1px solid rgba(220,38,38,.5);font-weight:700"
-            title="SOLO SUPERADMIN — Elimina la solicitud y todos sus datos (docs, fotos, logs, propuestas). No se puede deshacer.">
-      <i class="bi bi-trash3 me-1"></i>Eliminar solicitud
-    </button>
-    {% endif %}
-  </div>
-</div>
-
-{# KPI superior simplificado (Daniel 2026-09-22): Calidad/Riesgo se
-   mudaron junto al pipeline (sección 2, con su "i" de ayuda). El
-   estimado del cliente (total_weight_kg/total_volumetric_weight) NO se
-   oculta — Daniel pidió explícitamente dejarlo visible — pero deja de
-   competir aquí arriba: vive como dato secundario en el Paso "Carga"
-   (sección 6), etiquetado con claridad frente al peso real del ERP. #}
-<div class="id-kpis">
-  <div class="id-kpi"><i class="bi bi-box-seam"></i><span class="lbl">Peso real (ERP)</span><strong>{{ "%.1f"|format(req.peso_real_kg|float) }} kg</strong></div>
-  <div class="id-kpi"><i class="bi bi-bounding-box"></i><span class="lbl">Volumen</span><strong>{{ req.total_volume_m3 }} m³</strong></div>
-</div>
-
-{# ──────────────────────────────────────────────────────────────
    2 · PIPELINE 6 PASOS (mantener 100% — Daniel lo aprobó, ni lógica
    ni apariencia se tocan) + chips Calidad/Riesgo con su "i" de ayuda
    (movidos desde el KPI superior). Detalle extendido de estos 2
@@ -259,6 +214,131 @@
 {% elif _doc_ok %}{% set _pipe_active = 3 %}{% set _pipe_fail = false %}
 {% else %}{% set _pipe_active = 2 %}{% set _pipe_fail = false %}
 {% endif %}
+
+{# ════════════════════════════════════════════════════════════════════
+   FICHA v3 — CABECERA NEGRA (Daniel 2026-09-23, boceto aprobado:
+   "enfocada en los datos del cliente y luego el tracking"). Mismo
+   lenguaje que la cabecera de OT 2.0 pero con prefijo propio .rh-* y
+   SIN recortar nombres (REGLA #15). Lleva id="paso-1": el paso 1 del
+   tracking ("Solicitada") salta aquí. Reemplaza al .page-header viejo
+   y a los 2 KPIs — todo lo que tenían (volver, código, estado, cliente,
+   documento, responsable, peso, volumen, Link cliente, Informe mes,
+   Mensajes/Adjuntos, Eliminar superadmin) sigue aquí.
+   ════════════════════════════════════════════════════════════════════ #}
+{% macro clp(v) %}{% if v is none %}—{% else %}${{ '{:,.0f}'.format(v|float)|replace(',', '.') }}{% endif %}{% endmacro %}
+{% if req.status == 'rechazada' %}{% set _sig = 'El cliente rechazó el retiro' %}{% set _sello = 'fail' %}{% set _sello_ico = 'bi-x-octagon-fill' %}
+{% elif req.status == 'fallida' %}{% set _sig = 'El retiro no se concretó' %}{% set _sello = 'fail' %}{% set _sello_ico = 'bi-x-circle-fill' %}
+{% elif req.status in ['retirada','cerrada'] %}{% set _sig = 'Retiro completado' %}{% set _sello = 'ok' %}{% set _sello_ico = 'bi-check-lg' %}
+{% elif req.status == 'en_preparacion' %}{% set _sig = 'Siguiente: entregar al cliente' %}{% set _sello = 'info' %}{% set _sello_ico = 'bi-box-seam-fill' %}
+{% elif _step5_done %}{% set _sig = 'Siguiente: enviar a preparación' %}{% set _sello = 'info' %}{% set _sello_ico = 'bi-calendar-check-fill' %}
+{% elif _contraprop_cliente %}{% set _sig = 'Siguiente: responder la contrapropuesta del cliente' %}{% set _sello = 'wait' %}{% set _sello_ico = 'bi-arrow-left-right' %}
+{% elif _step4_done %}{% set _sig = 'Siguiente: que el cliente acepte la propuesta' %}{% set _sello = 'wait' %}{% set _sello_ico = 'bi-hourglass-split' %}
+{% elif _n_docs_inicial == 0 %}{% set _sig = 'Siguiente: agregar la factura o boleta' %}{% set _sello = 'fail' %}{% set _sello_ico = 'bi-file-earmark-plus' %}
+{% else %}{% set _sig = 'Siguiente: proponer fecha al cliente' %}{% set _sello = 'pend' %}{% set _sello_ico = 'bi-send' %}
+{% endif %}
+{# El sello depende de los documentos solo en las 2 últimas ramas: el JS
+   (_pintarFichaV3) lo repinta al agregar/quitar facturas sin recargar. #}
+{% set _sello_docs = req.status not in ['rechazada','fallida','retirada','cerrada','en_preparacion'] and not _step5_done and not _contraprop_cliente and not _step4_done %}
+{% if _step5_done %}{% set _hf = req.confirmed_date %}{% set _htf = req.confirmed_time_from %}{% set _htt = req.confirmed_time_to %}{% set _hflbl = 'Agendado' %}
+{% elif _step4_done %}{% set _hf = req.proposed_date %}{% set _htf = req.proposed_time_from %}{% set _htt = req.proposed_time_to %}{% set _hflbl = 'Propuesto al cliente' %}
+{% elif req.requested_date %}{% set _hf = req.requested_date %}{% set _htf = req.requested_time_from %}{% set _htt = req.requested_time_to %}{% set _hflbl = 'Pedido por el cliente' %}
+{% else %}{% set _hf = none %}{% set _htf = none %}{% set _htt = none %}{% set _hflbl = 'Sin fecha todavía' %}
+{% endif %}
+{% set _hcli_n = (req.customer_name or '')|trim|lower %}
+{% set _hret_n = (req.pickup_person_name or '')|trim|lower %}
+{% set _hretira = 'El mismo cliente' if (_hret_n and _hret_n == _hcli_n) else (req.pickup_person_name or '—') %}
+{% set _hwa = (req.contact_phone or '')|replace(' ','')|replace('+','')|replace('-','')|replace('(','')|replace(')','') %}
+{% if _hwa|length == 9 %}{% set _hwa = '56' ~ _hwa %}{% endif %}
+{% set _hdir = ficha_ubicacion.direccion if ficha_ubicacion else '' %}
+{% set _hcom = ficha_ubicacion.comuna if ficha_ubicacion else '' %}
+{% set _hdecl = (((req.document_type or '')|upper) ~ ' ' ~ (req.document_number or ''))|trim if req.document_number else '' %}
+{% set _hdecl_ok = (docs_asociados or []) | selectattr('document_number', 'equalto', req.document_number) | list | length > 0 if req.document_number else true %}
+<section class="rh-hero rh-{{ _sello }}" id="rhHero" data-sello-docs="{{ 1 if _sello_docs else 0 }}" aria-label="Datos del retiro y del cliente">
+  <div class="rh-top" id="paso-1">
+    <div class="rh-id">
+      <div class="rh-idrow">
+        <a class="rh-back" href="{{ url_for('pickup_dashboard') }}" title="Volver a Retiros"><i class="bi bi-arrow-left"></i><span>Volver</span></a>
+        {% if req.request_source == 'backoffice' %}
+        <span class="rh-origen"><i class="bi bi-person-workspace"></i>Retiro interno</span>
+        {% else %}
+        <span class="rh-origen is-pub"><i class="bi bi-globe2"></i>Formulario público</span>
+        {% endif %}
+      </div>
+      <div class="rh-code">{{ req.code }}</div>
+      <h1 class="rh-cli">{{ req.customer_name or 'Cliente sin nombre' }}</h1>
+      <div class="rh-sub">
+        {% if req.customer_rut %}<span>RUT {{ req.customer_rut | rut_fmt }}</span>{% endif %}
+        {% if _hdir or _hcom %}<span><i class="bi bi-geo-alt-fill"></i>{{ _hdir }}{% if _hdir and _hcom %}, {% endif %}{{ _hcom }}</span>{% endif %}
+        {% if req.contact_phone %}<span><i class="bi bi-telephone-fill"></i>{{ req.contact_phone }}</span>{% endif %}
+        {% if _hdecl and not _hdecl_ok %}<span title="Número que escribió el cliente al pedir el retiro"><i class="bi bi-receipt"></i>Declaró: {{ _hdecl }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="rh-sello">
+      <div class="ico"><i class="bi {{ _sello_ico }}" id="rhSelloIco"></i></div>
+      <div class="txt">
+        <div class="k">Estado</div>
+        <div class="v">{{ b.label }}</div>
+        <div class="sig" id="rhSelloSig">{{ _sig }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rh-datos">
+    <div class="rh-d d-fec"><i class="bi bi-calendar-event"></i><div class="in">
+      <span class="v">{% if _hf %}{{ _hf | chile_fmt('%a %d/%m') }}{% else %}—{% endif %}</span>
+      <span class="k">{{ _hflbl }}</span></div></div>
+    <div class="rh-d d-hor"><i class="bi bi-clock"></i><div class="in">
+      <span class="v">{% if _htf %}{{ _htf|hm }}{% if _htt %} – {{ _htt|hm }}{% endif %}{% else %}—{% endif %}</span>
+      <span class="k">Horario</span></div></div>
+    <div class="rh-d d-resp"><i class="bi bi-person-badge"></i><div class="in">
+      <span class="v">{{ req.responsable_nombre or 'Sin asignar' }}</span>
+      <span class="k">Responsable ILUS</span></div></div>
+    <div class="rh-d d-ret"><i class="bi bi-person-check"></i><div class="in">
+      <span class="v">{{ _hretira }}</span>
+      <span class="k">Quién retira</span></div></div>
+    <button type="button" id="heroDocTile" class="rh-d d-doc {% if _n_docs_inicial == 0 %}is-falta{% endif %}" data-declarado="{{ _hdecl }}"
+            onclick="document.getElementById('paso-2').scrollIntoView({behavior:'smooth',block:'start'})" title="Ir a los documentos">
+      <i class="bi bi-receipt"></i><div class="in">
+      {% set _hdoc0 = docs_asociados[0] if _n_docs_inicial else none %}
+      <span class="v" id="heroDocTxt">{% if _hdoc0 %}{{ (_hdoc0.document_type or '')|upper }} {{ _hdoc0.document_number }}{% if _n_docs_inicial > 1 %} +{{ _n_docs_inicial - 1 }}{% endif %}{% elif _hdecl %}Declaró: {{ _hdecl }}{% else %}Sin documento{% endif %}</span>
+      <span class="k">Documento</span></div></button>
+    <div class="rh-d d-val"><i class="bi bi-cash-coin"></i><div class="in">
+      <div class="rh-val-row">
+        <span><span class="v" id="heroValorBruto">{% if valores and valores.n_docs and valores.n_sin_dato < valores.n_docs %}{{ clp(valores.bruto) }}{% else %}—{% endif %}</span><span class="k">Total bruto</span></span>
+        <span><span class="v v2" id="heroValorNeto">{% if valores and valores.n_docs and valores.n_sin_dato < valores.n_docs %}{{ clp(valores.neto) }}{% else %}—{% endif %}</span><span class="k">Neto</span></span>
+      </div></div></div>
+    <div class="rh-d d-bul"><i class="bi bi-boxes"></i><div class="in">
+      <span class="v">{{ req.total_packages or '—' }}</span>
+      <span class="k">Bultos</span></div></div>
+    <div class="rh-d d-kg"><i class="bi bi-box-seam"></i><div class="in">
+      <span class="v" id="heroPeso">{{ ("%.1f"|format((req.peso_real_kg or 0)|float))|replace('.', ',') }} kg</span>
+      <span class="k">Peso real</span></div></div>
+    <div class="rh-d d-vol"><i class="bi bi-bounding-box"></i><div class="in">
+      <span class="v" id="heroVol">{{ ("%.3f"|format((req.total_volume_m3 or 0)|float))|replace('.', ',') }} m³</span>
+      <span class="k">Volumen</span></div></div>
+    <div class="rh-d d-pv"><i class="bi bi-rulers"></i><div class="in">
+      <span class="v" id="heroPesoVol">{{ ("%.1f"|format((req.peso_vol_kg or 0)|float))|replace('.', ',') }} kg</span>
+      <span class="k">Peso volumétrico</span></div></div>
+  </div>
+
+  <div class="rh-acciones">
+    {% if req.contact_phone %}
+    <a class="rh-btn call" href="tel:{{ req.contact_phone|replace(' ','') }}"><i class="bi bi-telephone-fill"></i>Llamar</a>
+    {% if _hwa|length >= 11 %}<a class="rh-btn wa" href="https://wa.me/{{ _hwa }}" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i>WhatsApp</a>{% endif %}
+    {% endif %}
+    {% if req.contact_email %}<a class="rh-btn mail" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope-fill"></i>Correo</a>{% endif %}
+    <a class="rh-btn" href="{{ url_for('pickup_public_tracking', token=req.public_token) }}" target="_blank" rel="noopener"><i class="bi bi-link-45deg"></i>Link cliente</a>
+    <button type="button" class="rh-btn" onclick="abrirDescargaInforme('{{ req.customer_rut }}')" title="Excel con todos los retiros del mes"><i class="bi bi-file-earmark-excel"></i>Informe mes</button>
+    <button type="button" class="rh-btn" onclick="cambiarTabInfo('comunicacion')" title="Ver mensajes, adjuntos, propuestas e historial"><i class="bi bi-chat-square-text"></i>Mensajes/Adjuntos</button>
+    {# Daniel 2026-05-23: borrar solicitud completa — SOLO superadmin #}
+    {% if current_user and current_user.role == 'superadmin' %}
+    <button type="button" class="rh-btn del" id="btnSuperadminEliminar" onclick="superadminEliminarSolicitud()"
+            title="SOLO SUPERADMIN — Elimina la solicitud y todos sus datos (docs, fotos, logs, propuestas). No se puede deshacer.">
+      <i class="bi bi-trash3"></i>Eliminar solicitud
+    </button>
+    {% endif %}
+  </div>
+</section>
 
 <div class="pipe-wrap">
   <div class="pipe-wrap-title"><i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>Estado del retiro · click en un paso para ir a esa sección</div>
@@ -381,166 +461,10 @@
   </div>
 </div>
 
-{# ──────────────────────────────────────────────────────────────
-   3 · FICHA DEL RETIRO — PERSISTENTE, ÚNICA fuente editable.
-   Daniel 2026-05-23: "La info debe estar disponible como ficha y
-   modificable a medida que se agrega información."
-   Daniel 2026-09-22: fusiona en UNA sola instancia editable lo que
-   antes vivía repetido en 3 lugares — la Ficha rápida original + el
-   editor de razón social del viejo Paso 1 (pa1EditNombre/
-   pa1GuardarNombre, botones propios) + la tarjeta de solo lectura
-   "Quien retira" del viejo Paso 1. El viejo Paso 1 completo se
-   disuelve: no queda ningún remanente duplicado más abajo — su única
-   función (ver/editar cliente y quien retira) queda 100% cubierta
-   aquí. Ver retiros_internal_detail.js para el detalle de la fusión
-   de JS (pa1UsarClienteComoContacto ahora actualiza estos mismos
-   campos data-inline-edit en vez de una tarjeta aparte).
-   ────────────────────────────────────────────────────────────── #}
-{% set _cli_rut_clean = (req.customer_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
-{% set _ret_rut_clean = (req.pickup_person_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
-{% set _rut_mismatch = (_cli_rut_clean and _ret_rut_clean and _cli_rut_clean != _ret_rut_clean) %}
-{% set _has_decl_tercero = (req.observations and 'DECLARACIÓN AUTORIZACIÓN TERCERO' in req.observations) %}
-
-<div class="ficha-rapida-wrap">
-  <div class="ficha-rapida-head">
-    <i class="bi bi-pencil-square" style="color:var(--ilus-red)"></i>
-    <span><strong>Ficha del retiro</strong> — click en cualquier dato para editarlo. Se guarda solo.</span>
-  </div>
-  <div class="ficha-rapida-grid">
-
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-building"></i> Cliente</div>
-      <div class="ficha-val" data-inline-edit="customer_name"
-           data-placeholder="Sin razón social"
-           title="Click para editar la razón social">{{ req.customer_name or '' }}</div>
-      <div class="ficha-sub">RUT
-        <span data-inline-edit="customer_rut" data-placeholder="Sin RUT" style="font-family:monospace">{{ req.customer_rut or '' }}</span>
-      </div>
-    </div>
-
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-envelope-at"></i> Contacto principal</div>
-      <div class="ficha-val" data-inline-edit="contact_name"
-           data-placeholder="Sin nombre">{{ req.contact_name or '' }}</div>
-      <div class="ficha-sub">
-        <i class="bi bi-envelope"></i>
-        <span data-inline-edit="contact_email" data-placeholder="Sin email">{{ req.contact_email or '' }}</span>
-      </div>
-      <div class="ficha-sub">
-        <i class="bi bi-telephone"></i>
-        <span data-inline-edit="contact_phone" data-placeholder="Sin teléfono">{{ req.contact_phone or '' }}</span>
-      </div>
-      {# Daniel 2026-05-23: extra_emails — CC del envío de notificaciones #}
-      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
-        <i class="bi bi-people"></i>
-        <span style="font-size:.74rem;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.04em">Emails CC adicionales</span>
-      </div>
-      <div data-inline-edit="extra_emails"
-           data-placeholder="Click para agregar emails separados por coma…"
-           title="Estos emails recibirán TAMBIÉN las notificaciones (propuesta, confirmación, recordatorio). Separa con coma."
-           style="font-size:.82rem;color:#0a0a0a;line-height:1.5;padding:4px 6px;background:#fafafa;border:1px solid #f1f5f9;border-radius:6px;min-height:24px;word-break:break-all">{{ req.extra_emails or '' }}</div>
-      <div id="emailErpSug" style="margin-top:6px"></div>
-      {# Contacto rápido — antes vivía al fondo del viejo Paso 1
-         (líneas 406-410); ahora junto al dato que usa (Daniel 2026-09-22). #}
-      <div class="d-flex gap-2 flex-wrap mt-2" style="font-size:.76rem">
-        <a class="btn btn-sm btn-outline-dark btn-2027" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope me-1"></i>Email</a>
-        {% if req.contact_phone %}<a class="btn btn-sm btn-outline-success btn-2027" href="tel:{{ req.contact_phone }}"><i class="bi bi-telephone me-1"></i>Llamar</a>{% endif %}
-        <button type="button" class="btn btn-sm btn-outline-dark btn-2027" onclick="cambiarTabInfo('comunicacion')"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
-      </div>
-    </div>
-
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-person-badge"></i> Persona que retira</div>
-      <div class="ficha-val" data-inline-edit="pickup_person_name"
-           data-placeholder="Sin nombre">{{ req.pickup_person_name or '' }}</div>
-      <div class="ficha-sub">RUT
-        <span data-inline-edit="pickup_person_rut" data-placeholder="—" style="font-family:monospace">{{ req.pickup_person_rut or '' }}</span>
-        · <i class="bi bi-telephone"></i>
-        <span data-inline-edit="pickup_person_phone" data-placeholder="—">{{ req.pickup_person_phone or '' }}</span>
-      </div>
-      <div class="ficha-sub" style="text-transform:capitalize">Relación:
-        <span data-inline-edit="pickup_person_relation" data-placeholder="—">{{ req.pickup_person_relation or '' }}</span>
-      </div>
-    </div>
-
-    {# Gestión — Daniel 2026-09-23: "Gestionar retiro. Acá quisiera ver
-       quién lo gestionó" — responsable asignado + quién creó la solicitud. #}
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-person-workspace"></i> Gestión</div>
-      <div class="ficha-val" style="font-size:.94rem">{{ req.responsable_nombre or 'Sin responsable asignado' }}</div>
-      <div class="ficha-sub">Responsable del retiro</div>
-      {% if req.created_by_user_name %}
-      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
-        <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d-%m-%Y %H:%M') }}{% endif %}
-      </div>
-      {% endif %}
-    </div>
-
-    {# RUT del documento ≠ RUT de quien retira — antes vivía SUELTA arriba
-       de todo (líneas 305-326) y el checkbox de "usar como contacto" vivía
-       lejos, dentro del viejo Paso 1 (líneas 383-394). Daniel 2026-09-22:
-       un solo bloque, misma condición _rut_mismatch, justo debajo de
-       "Persona que retira" que es el dato al que afecta. #}
-    {% if _rut_mismatch %}
-    <div class="ficha-card ficha-card-wide" style="padding:0;background:transparent;border:none;box-shadow:none">
-      <div class="rut-mismatch-alert" style="margin:0 0 10px">
-        <i class="bi bi-exclamation-triangle-fill"></i>
-        <div>
-          <strong>Atención · RUT del documento ≠ RUT de quien retira.</strong><br>
-          El documento está a nombre de <strong>{{ req.customer_name }}</strong> ({{ req.customer_rut }}) pero retira <strong>{{ req.pickup_person_name }}</strong> ({{ req.pickup_person_rut }}).
-          {% if _has_decl_tercero %}
-            El cliente firmó la declaración de autorización al solicitar.
-          {% else %}
-            <span style="color:#991b1b">Verifica autorización antes de entregar.</span>
-          {% endif %}
-        </div>
-      </div>
-      <label class="pa1-contact-chk btn-2027" for="pa1UsarComoContacto">
-        <input type="checkbox" id="pa1UsarComoContacto" onchange="pa1UsarClienteComoContacto(this.checked)">
-        <div>
-          <strong><i class="bi bi-arrow-down-up me-1"></i>Usar datos del cliente como contacto de retiro</strong>
-          <small>Si lo marcas, copiamos al cliente (<strong>{{ req.customer_name }}</strong>) como persona que retira, dejando el dueño del documento como contacto oficial.</small>
-        </div>
-      </label>
-    </div>
-    {% endif %}
-
-    <div class="ficha-card ficha-card-wide">
-      <div class="ficha-lbl"><i class="bi bi-sticky"></i> Notas internas del operador
-        <small style="color:#94a3b8;font-weight:500;text-transform:none;letter-spacing:0">(no visible al cliente)</small>
-      </div>
-      <div class="ficha-textarea" data-inline-edit="internal_notes"
-           data-placeholder="Agrega notas, recordatorios, contexto del retiro…">{{ req.internal_notes or '' }}</div>
-    </div>
-
-  </div>
-</div>
-
-{# ════════════════════════════════════════════════════════════════════
-   ✦✦✦ FORM CARD — LOS "PASO" DEL PIPELINE, COLAPSABLES ✦✦✦
-   Daniel 2026-09-22: dejan de mostrar su propio "Paso N" (el pipeline
-   de arriba es la ÚNICA numeración) — el label sobre el círculo pasa a
-   un texto neutro. anchors/ids/data-step se mantienen intactos porque
-   el pipeline y el JS existente (_refrescarEstadoPasos, scroll-to-
-   section) los siguen usando tal cual.
-══════════════════════════════════════════════════════════════════════ #}
-<div class="form-card">
-  <div class="form-head">
-    <div>
-      <h3>GESTIONAR RETIRO {{ req.code }}</h3>
-      <div class="form-sub">Te toma menos de 1 minuto si los datos están listos.</div>
-    </div>
-    <span class="form-pill"><i class="bi bi-shield-check"></i>Vista interna · operador</span>
-  </div>
-  <div class="form-body">
-
-    {# ═════════ 4 · PASO · SOLICITADA — 1 línea, nunca se agranda ═════════ #}
-    <div class="step-section is-oneline is-complete" id="paso-1" data-step="1">
-      <div class="step-collapsed-line" style="display:flex;margin-top:0">
-        <i class="bi bi-envelope-paper-fill"></i>
-        <span>Solicitada el {{ req.created_at | chile_fmt('%d-%m-%Y') if req.created_at else '—' }}</span>
-      </div>
-    </div>
+{# FICHA v3 (2026-09-23): se quitó la franja negra "GESTIONAR RETIRO" y la
+   línea "Solicitada" (su ancla id="paso-1" pasó a la cabecera). Los pasos
+   quedan como tarjetas sueltas, en el orden del boceto aprobado. #}
+<div class="rd-flow">
 
     {# ═════════ 5 · PASO · DOCUMENTOS (Paso 2 tal cual, colapsable) ═════════ #}
     {% set _docs_list = docs_asociados or [] %}
@@ -558,7 +482,7 @@
           </div>
         </div>
         <div class="step-titles">
-          <h5>Cargar facturas o boletas pendientes</h5>
+          <h5>Factura, boleta o nota de venta</h5>
           <p class="step-sub">Asocia los documentos que vienen a retirar. Solo mostramos los que tienen <strong>saldo pendiente</strong> en ERP — los ya despachados quedan ocultos.</p>
           {# Daniel 2026-09-16: resumen corto de estado, semáforo ámbar/verde según saldo y RUTs pendientes de revisar #}
           <p class="step-sub-status {% if _paso2_is_warn %}is-warn{% elif _n_docs_inicial > 0 %}is-ok{% endif %}" id="paso2StatusLine">
@@ -585,7 +509,7 @@
           <button type="button" class="btn-asociar-compact" onclick="rbaOpen()"
                   title="Buscar en el ERP Random por número de documento o por RUT/nombre del cliente">
             <i class="bi bi-search"></i>
-            <span>Asociar documento</span>
+            <span>Agregar factura o boleta</span>
             <span class="erp-chip"><i class="bi bi-database-fill-gear"></i>ERP Random</span>
           </button>
         </div>
@@ -599,6 +523,37 @@
         {% else %}<i class="bi bi-file-earmark"></i>{{ req.customer_name }} · {{ _n_docs_inicial }} documento{{ '' if _n_docs_inicial == 1 else 's' }} · {{ _docs_con_saldo_n }} con saldo
         {% endif %}
       </p>
+      {# FICHA v3 (Daniel 2026-09-23: "siempre tiene que predominar el
+         documento, valorizarlo en neto y bruto de la factura"). Fuera de
+         .step-content a propósito: se ve aunque la tarjeta esté plegada.
+         El JS (refrescarDocsAsociados → _pintarDocsValor) lo repinta al
+         agregar o quitar facturas sin recargar. #}
+      <div class="rd-docval" id="docsValorWrap" {% if not _docs_list %}hidden{% endif %}>
+        <div class="rd-docval-list" id="docsValorList">
+          {% for d in _docs_list %}
+          <div class="rd-dv">
+            <div class="rd-dv-doc">
+              <span class="num">{{ (d.document_type or '')|upper }} {{ d.document_number }}</span>
+              <span class="sub">{% if d.fecha_emision %}{{ d.fecha_emision }}{% endif %}{% if d.cliente_nombre %}{% if d.fecha_emision %} · {% endif %}{{ d.cliente_nombre }}{% endif %}</span>
+            </div>
+            <div class="rd-dv-vals">
+              <span class="val"><span class="k">Neto</span><span class="v">{{ clp(d.valor_neto) }}</span></span>
+              <span class="val"><span class="k">IVA</span><span class="v">{{ clp(d.valor_iva) }}</span></span>
+              <span class="val bruto"><span class="k">Bruto</span><span class="v">{{ clp(d.valor_bruto) }}</span></span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="rd-docval-tot" id="docsValorTot">
+          {% if valores and valores.n_docs %}
+          <span class="lbl">Total del retiro</span>
+          <span class="val"><span class="k">Neto</span><span class="v">{{ clp(valores.neto) }}</span></span>
+          <span class="val"><span class="k">IVA</span><span class="v">{{ clp(valores.iva) }}</span></span>
+          <span class="val bruto"><span class="k">Bruto</span><span class="v">{{ clp(valores.bruto) }}</span></span>
+          {% if valores.n_sin_dato %}<span class="aviso"><i class="bi bi-exclamation-triangle-fill"></i>{{ valores.n_sin_dato }} documento{{ '' if valores.n_sin_dato == 1 else 's' }} sin valor en el ERP</span>{% endif %}
+          {% endif %}
+        </div>
+      </div>
       <div class="step-content">
 
         {# Hint dinámico que ENSEÑA al usuario #}
@@ -745,13 +700,203 @@
                       <div class="ilus-tabla-empty">
                         <i class="bi bi-inbox"></i>
                         <strong>Aún no hay documentos asociados</strong>
-                        <small>Haz click en "Asociar documento" arriba para buscar y agregar facturas/boletas.</small>
+                        <small>Haz click en "Agregar factura o boleta" arriba para buscarla en el ERP.</small>
                       </div>
                     </td>
                   </tr>
                 {% endif %}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {# Daniel 2026-09-22 — REGLA #4.2: <form id="formValidacion"> (oculto,
+           display:none) ELIMINADO. Verificado como código muerto real: el JS
+           sincronizaba sus inputs hidden (val_peso_real/val_peso_vol/val_m3/
+           val_tiempo/val_notes/val_action) pero NADA hacía submit de este
+           form — no había ningún caller. Daniel aprobó explícitamente esta
+           eliminación puntual (una de las 3 autorizadas en este plan). Los
+           `if (!el) return;` que ya traía retiros_internal_detail.js hacen
+           que perder estos ids sea inofensivo (no-op, no hay error). #}
+      </div>
+    </section>
+
+{# ──────────────────────────────────────────────────────────────
+   3 · FICHA DEL RETIRO — PERSISTENTE, ÚNICA fuente editable.
+   Daniel 2026-05-23: "La info debe estar disponible como ficha y
+   modificable a medida que se agrega información."
+   Daniel 2026-09-22: fusiona en UNA sola instancia editable lo que
+   antes vivía repetido en 3 lugares — la Ficha rápida original + el
+   editor de razón social del viejo Paso 1 (pa1EditNombre/
+   pa1GuardarNombre, botones propios) + la tarjeta de solo lectura
+   "Quien retira" del viejo Paso 1. El viejo Paso 1 completo se
+   disuelve: no queda ningún remanente duplicado más abajo — su única
+   función (ver/editar cliente y quien retira) queda 100% cubierta
+   aquí. Ver retiros_internal_detail.js para el detalle de la fusión
+   de JS (pa1UsarClienteComoContacto ahora actualiza estos mismos
+   campos data-inline-edit en vez de una tarjeta aparte).
+   ────────────────────────────────────────────────────────────── #}
+{% set _cli_rut_clean = (req.customer_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
+{% set _ret_rut_clean = (req.pickup_person_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
+{% set _rut_mismatch = (_cli_rut_clean and _ret_rut_clean and _cli_rut_clean != _ret_rut_clean) %}
+{% set _has_decl_tercero = (req.observations and 'DECLARACIÓN AUTORIZACIÓN TERCERO' in req.observations) %}
+
+<div class="ficha-rapida-wrap">
+  <div class="ficha-rapida-head">
+    <i class="bi bi-pencil-square" style="color:var(--ilus-red)"></i>
+    <span><strong>Ficha del retiro</strong> — click en cualquier dato para editarlo. Se guarda solo.</span>
+  </div>
+  <div class="ficha-rapida-grid">
+
+    <div class="ficha-card">
+      <div class="ficha-lbl"><i class="bi bi-building"></i> Cliente</div>
+      <div class="ficha-val" data-inline-edit="customer_name"
+           data-placeholder="Sin razón social"
+           title="Click para editar la razón social">{{ req.customer_name or '' }}</div>
+      <div class="ficha-sub">RUT
+        <span data-inline-edit="customer_rut" data-placeholder="Sin RUT" style="font-family:monospace">{{ req.customer_rut or '' }}</span>
+      </div>
+    </div>
+
+    <div class="ficha-card">
+      <div class="ficha-lbl"><i class="bi bi-envelope-at"></i> Contacto principal</div>
+      <div class="ficha-val" data-inline-edit="contact_name"
+           data-placeholder="Sin nombre">{{ req.contact_name or '' }}</div>
+      <div class="ficha-sub">
+        <i class="bi bi-envelope"></i>
+        <span data-inline-edit="contact_email" data-placeholder="Sin email">{{ req.contact_email or '' }}</span>
+      </div>
+      <div class="ficha-sub">
+        <i class="bi bi-telephone"></i>
+        <span data-inline-edit="contact_phone" data-placeholder="Sin teléfono">{{ req.contact_phone or '' }}</span>
+      </div>
+      {# Daniel 2026-05-23: extra_emails — CC del envío de notificaciones #}
+      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
+        <i class="bi bi-people"></i>
+        <span style="font-size:.74rem;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.04em">Emails CC adicionales</span>
+      </div>
+      <div data-inline-edit="extra_emails"
+           data-placeholder="Click para agregar emails separados por coma…"
+           title="Estos emails recibirán TAMBIÉN las notificaciones (propuesta, confirmación, recordatorio). Separa con coma."
+           style="font-size:.82rem;color:#0a0a0a;line-height:1.5;padding:4px 6px;background:#fafafa;border:1px solid #f1f5f9;border-radius:6px;min-height:24px;word-break:break-all">{{ req.extra_emails or '' }}</div>
+      <div id="emailErpSug" style="margin-top:6px"></div>
+      {# Contacto rápido — antes vivía al fondo del viejo Paso 1
+         (líneas 406-410); ahora junto al dato que usa (Daniel 2026-09-22). #}
+      <div class="d-flex gap-2 flex-wrap mt-2" style="font-size:.76rem">
+        <a class="btn btn-sm btn-outline-dark btn-2027" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope me-1"></i>Email</a>
+        {% if req.contact_phone %}<a class="btn btn-sm btn-outline-success btn-2027" href="tel:{{ req.contact_phone }}"><i class="bi bi-telephone me-1"></i>Llamar</a>{% endif %}
+        <button type="button" class="btn btn-sm btn-outline-dark btn-2027" onclick="cambiarTabInfo('comunicacion')"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
+      </div>
+    </div>
+
+    <div class="ficha-card">
+      <div class="ficha-lbl"><i class="bi bi-person-badge"></i> Persona que retira</div>
+      <div class="ficha-val" data-inline-edit="pickup_person_name"
+           data-placeholder="Sin nombre">{{ req.pickup_person_name or '' }}</div>
+      <div class="ficha-sub">RUT
+        <span data-inline-edit="pickup_person_rut" data-placeholder="—" style="font-family:monospace">{{ req.pickup_person_rut or '' }}</span>
+        · <i class="bi bi-telephone"></i>
+        <span data-inline-edit="pickup_person_phone" data-placeholder="—">{{ req.pickup_person_phone or '' }}</span>
+      </div>
+      <div class="ficha-sub" style="text-transform:capitalize">Relación:
+        <span data-inline-edit="pickup_person_relation" data-placeholder="—">{{ req.pickup_person_relation or '' }}</span>
+      </div>
+    </div>
+
+    {# Gestión — Daniel 2026-09-23: "Gestionar retiro. Acá quisiera ver
+       quién lo gestionó" — responsable asignado + quién creó la solicitud. #}
+    <div class="ficha-card">
+      <div class="ficha-lbl"><i class="bi bi-person-workspace"></i> Gestión</div>
+      <div class="ficha-val" style="font-size:.94rem">{{ req.responsable_nombre or 'Sin responsable asignado' }}</div>
+      <div class="ficha-sub">Responsable del retiro</div>
+      {% if req.created_by_user_name %}
+      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
+        <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d-%m-%Y %H:%M') }}{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    {# RUT del documento ≠ RUT de quien retira — antes vivía SUELTA arriba
+       de todo (líneas 305-326) y el checkbox de "usar como contacto" vivía
+       lejos, dentro del viejo Paso 1 (líneas 383-394). Daniel 2026-09-22:
+       un solo bloque, misma condición _rut_mismatch, justo debajo de
+       "Persona que retira" que es el dato al que afecta. #}
+    {% if _rut_mismatch %}
+    <div class="ficha-card ficha-card-wide" style="padding:0;background:transparent;border:none;box-shadow:none">
+      <div class="rut-mismatch-alert" style="margin:0 0 10px">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <div>
+          <strong>Atención · RUT del documento ≠ RUT de quien retira.</strong><br>
+          El documento está a nombre de <strong>{{ req.customer_name }}</strong> ({{ req.customer_rut }}) pero retira <strong>{{ req.pickup_person_name }}</strong> ({{ req.pickup_person_rut }}).
+          {% if _has_decl_tercero %}
+            El cliente firmó la declaración de autorización al solicitar.
+          {% else %}
+            <span style="color:#991b1b">Verifica autorización antes de entregar.</span>
+          {% endif %}
+        </div>
+      </div>
+      <label class="pa1-contact-chk btn-2027" for="pa1UsarComoContacto">
+        <input type="checkbox" id="pa1UsarComoContacto" onchange="pa1UsarClienteComoContacto(this.checked)">
+        <div>
+          <strong><i class="bi bi-arrow-down-up me-1"></i>Usar datos del cliente como contacto de retiro</strong>
+          <small>Si lo marcas, copiamos al cliente (<strong>{{ req.customer_name }}</strong>) como persona que retira, dejando el dueño del documento como contacto oficial.</small>
+        </div>
+      </label>
+    </div>
+    {% endif %}
+
+    <div class="ficha-card ficha-card-wide">
+      <div class="ficha-lbl"><i class="bi bi-sticky"></i> Notas internas del operador
+        <small style="color:#94a3b8;font-weight:500;text-transform:none;letter-spacing:0">(no visible al cliente)</small>
+      </div>
+      <div class="ficha-textarea" data-inline-edit="internal_notes"
+           data-placeholder="Agrega notas, recordatorios, contexto del retiro…">{{ req.internal_notes or '' }}</div>
+    </div>
+
+  </div>
+</div>
+
+
+    {# ═════════ 6 · PASO · CARGA (peso/volumen/tiempo — strip único) ═════════ #}
+    {% set _paso3_collapsed = (_n_docs_inicial == 0) %}{# ficha v3: abierto si hay documentos #}
+    <section class="step-section {% if _paso3_collapsed %}is-collapsed{% endif %} {% if _cubic_ok %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-3" data-step="3">
+      <div class="step-header">
+        <div class="step-circle-wrap">
+          <span class="step-circle-label">Productos</span>
+          <div class="step-circle">
+            <span class="step-num-text">3</span>
+            <span class="step-check"><i class="bi bi-check-lg"></i></span>
+          </div>
+        </div>
+        <div class="step-titles">
+          <h5>Productos a retirar</h5>
+          <p class="step-sub">Lo que se va a retirar, con su peso, volumen y peso volumétrico. Revisa las cantidades antes de proponer la fecha.</p>
+        </div>
+        {% if _cubic_ok %}<span class="step-badge-ok"><i class="bi bi-check-circle"></i>Cubicaje OK</span>{% endif %}
+        <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
+          <i class="bi bi-chevron-down"></i>
+        </button>
+      </div>
+      <p class="step-collapsed-line" id="paso3CollapsedLine">
+        <i class="bi bi-speedometer2"></i>⚖️ {{ "%.1f"|format(req.peso_real_kg|float) }} kg · {{ "%.3f"|format(req.total_volume_m3|float) }} m³ · {{ req.tiempo_estimado_min or '—' }} min
+      </p>
+      <div class="step-content">
+        <div class="carga-strip" id="cargaStrip">
+          <div class="carga-cell">
+            <div class="lbl"><i class="bi bi-archive me-1"></i>Documentos</div>
+            <div class="val accent" id="cargaNDocs">{{ _n_docs_inicial }}</div>
+          </div>
+          <div class="carga-cell">
+            <div class="lbl"><i class="bi bi-box-seam me-1"></i>Peso real (ERP)</div>
+            <div class="val" id="cargaPeso">{{ "%.1f"|format(req.peso_real_kg|float) }} kg</div>
+          </div>
+          <div class="carga-cell">
+            <div class="lbl"><i class="bi bi-bounding-box me-1"></i>Volumen</div>
+            <div class="val" id="cargaVol">{{ "%.3f"|format(req.total_volume_m3|float) }} m³</div>
+          </div>
+          <div class="carga-cell">
+            <div class="lbl"><i class="bi bi-stopwatch me-1"></i>Tiempo est.</div>
+            <div class="val" id="cargaTiempo">{{ req.tiempo_estimado_min or '—' }} min</div>
           </div>
         </div>
 
@@ -805,65 +950,11 @@
                 </tr>
                 <tr class="ilus-tabla-foot-sub">
                   <td colspan="9">
-                    <small><span id="tabProdsTotLineas">0</span> producto(s) incluido(s) en total · listo para revisar carga en el Paso "Carga".</small>
+                    <small><span id="tabProdsTotLineas">0</span> producto(s) incluido(s) en total · revisa que las cantidades cuadren con lo que viene a retirar el cliente.</small>
                   </td>
                 </tr>
               </tfoot>
             </table>
-          </div>
-        </div>
-
-        {# Daniel 2026-09-22 — REGLA #4.2: <form id="formValidacion"> (oculto,
-           display:none) ELIMINADO. Verificado como código muerto real: el JS
-           sincronizaba sus inputs hidden (val_peso_real/val_peso_vol/val_m3/
-           val_tiempo/val_notes/val_action) pero NADA hacía submit de este
-           form — no había ningún caller. Daniel aprobó explícitamente esta
-           eliminación puntual (una de las 3 autorizadas en este plan). Los
-           `if (!el) return;` que ya traía retiros_internal_detail.js hacen
-           que perder estos ids sea inofensivo (no-op, no hay error). #}
-      </div>
-    </section>
-
-    {# ═════════ 6 · PASO · CARGA (peso/volumen/tiempo — strip único) ═════════ #}
-    {% set _paso3_collapsed = (_pipe_active != 3) %}
-    <section class="step-section {% if _paso3_collapsed %}is-collapsed{% endif %} {% if _cubic_ok %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-3" data-step="3">
-      <div class="step-header">
-        <div class="step-circle-wrap">
-          <span class="step-circle-label">Carga</span>
-          <div class="step-circle">
-            <span class="step-num-text">3</span>
-            <span class="step-check"><i class="bi bi-check-lg"></i></span>
-          </div>
-        </div>
-        <div class="step-titles">
-          <h5>Revisar carga del retiro</h5>
-          <p class="step-sub">Calculamos peso real, peso volumétrico y tiempo estimado a partir de los documentos asociados. Verifica que cuadre antes de proponer fecha.</p>
-        </div>
-        {% if _cubic_ok %}<span class="step-badge-ok"><i class="bi bi-check-circle"></i>Cubicaje OK</span>{% endif %}
-        <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-          <i class="bi bi-chevron-down"></i>
-        </button>
-      </div>
-      <p class="step-collapsed-line" id="paso3CollapsedLine">
-        <i class="bi bi-speedometer2"></i>⚖️ {{ "%.1f"|format(req.peso_real_kg|float) }} kg · {{ "%.3f"|format(req.total_volume_m3|float) }} m³ · {{ req.tiempo_estimado_min or '—' }} min
-      </p>
-      <div class="step-content">
-        <div class="carga-strip" id="cargaStrip">
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-archive me-1"></i>Documentos</div>
-            <div class="val accent" id="cargaNDocs">{{ _n_docs_inicial }}</div>
-          </div>
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-box-seam me-1"></i>Peso real (ERP)</div>
-            <div class="val" id="cargaPeso">{{ "%.1f"|format(req.peso_real_kg|float) }} kg</div>
-          </div>
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-bounding-box me-1"></i>Volumen</div>
-            <div class="val" id="cargaVol">{{ "%.3f"|format(req.total_volume_m3|float) }} m³</div>
-          </div>
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-stopwatch me-1"></i>Tiempo est.</div>
-            <div class="val" id="cargaTiempo">{{ req.tiempo_estimado_min or '—' }} min</div>
           </div>
         </div>
 
@@ -887,12 +978,11 @@
         </div>
 
         {# Hint cuando no hay docs todavía #}
-        {% if _n_docs_inicial == 0 %}
-        <div class="smart-hint" style="margin-top:14px">
+        {# Siempre en el DOM: el JS lo oculta/muestra al agregar o quitar facturas #}
+        <div class="smart-hint" id="paso3HintSinDocs" style="margin-top:14px{% if _n_docs_inicial > 0 %};display:none{% endif %}">
           <i class="bi bi-arrow-up-circle"></i>
           <div>Asocia al menos <strong>1 documento con saldo</strong> en el paso anterior para que se calculen estos totales automáticamente.</div>
         </div>
-        {% endif %}
       </div>
     </section>
 
@@ -1496,8 +1586,82 @@
     {% endif %}
     </div>{# /#paso-5 #}
 
+{# ════════════════════════════════════════════════════════════════════
+   FICHA v3 — ACTIVIDAD DEL RETIRO (Daniel 2026-09-23: "no necesito ver
+   quién abrió o entró; necesito saber quién modificó, quién creó, quién
+   realizó... todo con trazabilidad, hasta la del cliente si responde").
+   Mismo formato que "Actividad del ticket". La arma _pickup_actividad()
+   en pickups_module.py (logs + correos con su estado + chat + archivos).
+   No es .step-section a propósito: queda fuera del reveal/colapso del JS.
+   ════════════════════════════════════════════════════════════════════ #}
+<section class="rd-act" id="rdActividad" aria-label="Actividad del retiro">
+  <div class="rd-act-h">
+    <h3><span class="ic"><i class="bi bi-activity"></i></span>Actividad del retiro</h3>
+    <div class="rd-act-chips" role="group" aria-label="Filtrar actividad">
+      <button type="button" class="rd-chip" data-f="todo" aria-pressed="true">Todo</button>
+      <button type="button" class="rd-chip" data-f="cambios" aria-pressed="false">Cambios</button>
+      <button type="button" class="rd-chip" data-f="mensajes" aria-pressed="false">Mensajes</button>
+      <button type="button" class="rd-chip" data-f="archivos" aria-pressed="false">Archivos</button>
+    </div>
   </div>
-</div>
+  {% if actividad %}
+  <div class="rd-tl" id="rdActTl">
+    {% for ev in actividad %}
+    <div class="rd-ev t-{{ ev.tono }}" data-cat="{{ ev.cat }}" data-i="{{ loop.index0 }}">
+      <div class="n"><i class="bi {{ ev.icon }}"></i></div>
+      <div class="bd">
+        <div class="ln">
+          <span class="tx"><b>{{ ev.actor }}</b> {{ ev.accion }}{% if ev.objetivo %} <b>{{ ev.objetivo }}</b>{% endif %}{% if ev.tag %} <span class="rd-tag t-{{ ev.tag_tono }}">{{ ev.tag }}</span>{% endif %}</span>
+          <span class="fe">{{ ev.fecha | chile_fmt('%d/%m/%Y %H:%M') if ev.fecha else '' }}</span>
+        </div>
+        {% if ev.detalle %}<div class="ex">{{ ev.detalle }}</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="rd-act-vacio" id="rdActVacio" hidden><i class="bi bi-activity"></i>Sin actividad para este filtro.</div>
+  <button type="button" class="rd-act-mas" id="rdActMas" hidden></button>
+  {% else %}
+  <div class="rd-act-vacio"><i class="bi bi-activity"></i>Todavía no hay actividad registrada.</div>
+  {% endif %}
+</section>
+<script>
+/* Actividad: filtro por chips + "ver toda" (primeros 12). Autocontenido. */
+(function(){
+  var tl = document.getElementById('rdActTl'); if (!tl) return;
+  var LIM = 12, filtro = 'todo', todo = false;
+  var evs = Array.prototype.slice.call(tl.querySelectorAll('.rd-ev'));
+  var mas = document.getElementById('rdActMas'), vacio = document.getElementById('rdActVacio');
+  function pintar(){
+    var vis = 0, total = 0, ult = null;
+    evs.forEach(function(ev){
+      var ok = filtro === 'todo' || ev.getAttribute('data-cat') === filtro;
+      if (ok) total++;
+      var mostrar = ok && (todo || total <= LIM);
+      ev.hidden = !mostrar;
+      ev.classList.remove('is-ult');
+      if (mostrar){ vis++; ult = ev; }
+    });
+    if (ult) ult.classList.add('is-ult');
+    if (vacio) vacio.hidden = total > 0;
+    if (mas){
+      mas.hidden = todo || total <= LIM;
+      mas.innerHTML = '<i class="bi bi-chevron-down"></i> Ver toda la actividad (' + total + ')';
+    }
+  }
+  document.querySelectorAll('#rdActividad .rd-chip').forEach(function(ch){
+    ch.addEventListener('click', function(){
+      filtro = ch.getAttribute('data-f'); todo = false;
+      document.querySelectorAll('#rdActividad .rd-chip').forEach(function(c){ c.setAttribute('aria-pressed', c === ch ? 'true' : 'false'); });
+      pintar();
+    });
+  });
+  if (mas) mas.addEventListener('click', function(){ todo = true; pintar(); });
+  pintar();
+})();
+</script>
+
+</div>{# /.rd-flow #}
 
 {# ──────────────────────────────────────────────────────────────
    10 · SEPARADOR — límite entre zona de tarea (1-9) y zona

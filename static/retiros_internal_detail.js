@@ -615,7 +615,7 @@ function _renderTablaDocsAsociados(docs){
         <div class="ilus-tabla-empty">
           <i class="bi bi-inbox"></i>
           <strong>Aún no hay documentos asociados</strong>
-          <small>Haz click en "Asociar documento" arriba para buscar y agregar facturas/boletas.</small>
+          <small>Haz click en "Agregar factura o boleta" arriba para buscarla en el ERP.</small>
         </div>
       </td>
     </tr>`;
@@ -1152,6 +1152,7 @@ async function refrescarDocsAsociados(rid){
     // 🔧 2026-09-16: la lista de chips #docsAsociadosLista se eliminó (Daniel
     // autorizó fusionarla con la tabla) — la tabla es la única fuente de verdad.
     _renderTablaDocsAsociados(d.docs || []);
+    _pintarFichaV3(d);
     refrescarTablaProductos();
     // Refrescar Paso "Carga" — carga total. REESTRUCTURACIÓN 2026-09-22:
     // el strip vive UNA sola vez de forma canónica (#cargaNDocs/#cargaPeso/
@@ -1201,13 +1202,105 @@ async function refrescarDocsAsociados(rid){
   }
 }
 
+// FICHA v3 (Daniel 2026-09-23): al agregar o quitar facturas sin recargar,
+// la cabecera negra (documento, valor, peso, volumen, peso vol.) y el bloque
+// "documentos valorizados" (#docsValorWrap) se repintan con lo mismo que
+// arma la plantilla. Cada id se busca con guard: si la ficha no lo tiene,
+// no rompe nada del resto del JS.
+function _fmtClp(v){
+  if (v === null || v === undefined || v === '' || isNaN(Number(v))) return '—';
+  return '$' + Math.round(Number(v)).toLocaleString('es-CL');
+}
+function _pintarFichaV3(d){
+  try {
+    const docs = d.docs || [];
+    const n = docs.length;
+    const t = d.totales || {};
+    const v = d.valores || {};
+    const _num = (x, dec) => parseFloat(x || 0).toFixed(dec).replace('.', ',');
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set('heroPeso', `${_num(t.peso_real_kg, 1)} kg`);
+    set('heroVol', `${_num(t.volumen_m3, 3)} m³`);
+    set('heroPesoVol', `${_num(t.peso_vol_kg, 1)} kg`);
+    // Valor: "—" si no hay documentos o ninguno trae valor en el ERP
+    const hayValor = (v.n_docs || 0) > 0 && (v.n_sin_dato || 0) < (v.n_docs || 0);
+    set('heroValorBruto', hayValor ? _fmtClp(v.bruto) : '—');
+    set('heroValorNeto', hayValor ? _fmtClp(v.neto) : '—');
+    // Documento principal + cuántos más
+    const tile = document.getElementById('heroDocTile');
+    const docTxt = document.getElementById('heroDocTxt');
+    if (n > 0){
+      const d0 = docs[0];
+      if (docTxt) docTxt.textContent = `${String(d0.document_type || '').toUpperCase()} ${d0.document_number || ''}`.trim() + (n > 1 ? ` +${n - 1}` : '');
+      if (tile) tile.classList.remove('is-falta');
+    } else {
+      // Sin documentos asociados: siempre en rojo; el número que escribió el
+      // cliente se muestra solo como referencia (igual que la plantilla).
+      const decl = tile && tile.dataset.declarado;
+      if (docTxt) docTxt.textContent = decl ? `Declaró: ${decl}` : 'Sin documento';
+      if (tile) tile.classList.add('is-falta');
+    }
+    // Sello de la cabecera: solo cuando su estado depende de los documentos
+    // (sin propuesta enviada ni agenda). Los demás estados no se tocan.
+    const hero = document.getElementById('rhHero');
+    const rs = d.request_state || {};
+    if (hero && hero.dataset.selloDocs === '1' && !rs.proposed_date && !rs.confirmed_date){
+      const sinDocs = n === 0;
+      hero.classList.toggle('rh-fail', sinDocs);
+      hero.classList.toggle('rh-pend', !sinDocs);
+      const ico = document.getElementById('rhSelloIco');
+      if (ico) ico.className = 'bi ' + (sinDocs ? 'bi-file-earmark-plus' : 'bi-send');
+      set('rhSelloSig', sinDocs ? 'Siguiente: agregar la factura o boleta' : 'Siguiente: proponer fecha al cliente');
+    }
+    // Bloque de documentos valorizados
+    const wrap = document.getElementById('docsValorWrap');
+    const list = document.getElementById('docsValorList');
+    const tot = document.getElementById('docsValorTot');
+    if (wrap) wrap.hidden = n === 0;
+    if (list){
+      list.innerHTML = docs.map(doc => {
+        const sub = [doc.fecha_emision, doc.cliente_nombre].filter(Boolean).map(_esc).join(' · ');
+        return `<div class="rd-dv">
+          <div class="rd-dv-doc">
+            <span class="num">${_esc(String(doc.document_type || '').toUpperCase())} ${_esc(doc.document_number || '')}</span>
+            <span class="sub">${sub}</span>
+          </div>
+          <div class="rd-dv-vals">
+            <span class="val"><span class="k">Neto</span><span class="v">${_fmtClp(doc.valor_neto)}</span></span>
+            <span class="val"><span class="k">IVA</span><span class="v">${_fmtClp(doc.valor_iva)}</span></span>
+            <span class="val bruto"><span class="k">Bruto</span><span class="v">${_fmtClp(doc.valor_bruto)}</span></span>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    if (tot){
+      if (!(v.n_docs > 0)){ tot.innerHTML = ''; }
+      else {
+        const ns = v.n_sin_dato || 0;
+        tot.innerHTML = `<span class="lbl">Total del retiro</span>
+          <span class="val"><span class="k">Neto</span><span class="v">${_fmtClp(v.neto)}</span></span>
+          <span class="val"><span class="k">IVA</span><span class="v">${_fmtClp(v.iva)}</span></span>
+          <span class="val bruto"><span class="k">Bruto</span><span class="v">${_fmtClp(v.bruto)}</span></span>`
+          + (ns ? `<span class="aviso"><i class="bi bi-exclamation-triangle-fill"></i>${ns} documento${ns === 1 ? '' : 's'} sin valor en el ERP</span>` : '');
+      }
+    }
+  } catch(e){
+    console.error('_pintarFichaV3', e);
+  }
+}
+
 // Estado de pasos (verde/rojo/gris) según docs y propuesta.
 // Daniel 2026-05-24: el paso 4 SOLO se bloquea cuando ndocs===0.
 // Antes exigía ncons>0 (docs con saldo verificado por ERP) y dejaba
 // al operador atrapado cuando el ERP no podía verificar el saldo ZZ
 // (boletas sin línea ZZ, timeout, etc.). El warning de "sin saldo
 // verificado" se muestra dentro del paso pero NO bloquea.
+let _p3NdocsPrev = null;   // nº de docs del último repintado (null = aún no se pinta)
 function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
+  if (_p3NdocsPrev === null){
+    const _p3i = document.getElementById('paso-3');
+    _p3NdocsPrev = (_p3i && !_p3i.classList.contains('is-blocked')) ? ndocs : 0;
+  }
   nOtroRut = nOtroRut || 0;
   const p2 = document.getElementById('paso-2');
   const p3 = document.getElementById('paso-3');
@@ -1275,8 +1368,15 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
     }
   }
   if (p3){
+    // Ficha v3: igual que el render del servidor (_paso3_collapsed = sin docs).
+    // Se abre solo al pasar de 0 a 1+ documentos: si la operadora la plegó
+    // a mano después, no se vuelve a abrir sola.
+    if (ndocs > 0 && !(_p3NdocsPrev > 0)) p3.classList.remove('is-collapsed');
+    _p3NdocsPrev = ndocs;
     p3.classList.toggle('is-blocked', ndocs === 0);
     p3.classList.toggle('is-complete', ndocs > 0);  // si hay docs, totales se calcularon
+    const hint = document.getElementById('paso3HintSinDocs');
+    if (hint) hint.style.display = ndocs === 0 ? '' : 'none';
   }
   if (p4){
     p4.classList.toggle('is-blocked', ndocs === 0);
