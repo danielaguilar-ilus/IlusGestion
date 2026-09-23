@@ -206,6 +206,30 @@ def _tk_cotiz_clase_no_cobrable(clase_producto):
     return str(clase_producto or "").strip().lower() in _TK_COTIZ_CLASES_NO_COBRABLES
 
 
+# 🚚 Costo de ruta -- clases que NO absorben el prorrateo del traslado ni
+# cuentan como unidad para dividirlo. Daniel (2026-09-23, viendo el wizard
+# en vivo, cotización de ejemplo con 2 equipos cobrables + 2 accesorios +
+# $426.600 de costo de ruta repartido entre los 2 equipos cobrables):
+# "quisiera que los repuestos no se vean afectados por los costos de
+# ruta... en esa cotización de ejemplo me indica que no apliquen a los
+# repuestos".
+#
+# ⚠️ NO es lo mismo que _TK_COTIZ_CLASES_NO_COBRABLES: "accesorio" es NO
+# COBRABLE (precio forzado a $0, línea puramente operativa de foto/
+# observación) y por eso ya quedaba fuera del reparto de ruta como efecto
+# colateral de ser no-cobrable. "repuesto" es DISTINTO -- SÍ se cobra
+# normal (su propio precio, su propia mano de obra si aplica), solo no
+# debe absorber ni un peso del costo de ruta. Meter "repuesto" en
+# _TK_COTIZ_CLASES_NO_COBRABLES pondría su precio en $0 por error (bug de
+# facturación real: el cliente dejaría de pagar el repuesto) -- por eso es
+# un conjunto NUEVO y separado, que solo afecta el prorrateo de ruta.
+_TK_COTIZ_CLASES_SIN_COSTO_RUTA = frozenset({"accesorio", "repuesto"})
+
+
+def _tk_cotiz_clase_sin_costo_ruta(clase_producto):
+    return str(clase_producto or "").strip().lower() in _TK_COTIZ_CLASES_SIN_COSTO_RUTA
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  Trazabilidad: documentos ERP de origen de una cotización (2026-09-05)
 #
@@ -253,10 +277,15 @@ def _tk_docs_resumen(items):
 
 
 def _tk_cotiz_unidades_cobrables(items):
-    """Unidades físicas que pueden absorber el prorrateo de ruta."""
+    """Unidades físicas que pueden absorber el prorrateo de ruta.
+
+    Usa _tk_cotiz_clase_sin_costo_ruta (accesorio + repuesto), NO
+    _tk_cotiz_clase_no_cobrable -- un repuesto sí es cobrable (tiene su
+    propio precio), solo no participa en el reparto del costo de ruta
+    (Daniel, 2026-09-23)."""
     total_unidades = 0.0
     for it in items or []:
-        if _tk_cotiz_clase_no_cobrable((it or {}).get("clase_producto")):
+        if _tk_cotiz_clase_sin_costo_ruta((it or {}).get("clase_producto")):
             continue
         try:
             cantidad = max(float((it or {}).get("cantidad") or 0), 0.0)
@@ -3455,7 +3484,10 @@ def register_tickets_routes(app, ctx):
         costo_ruta = 0.0 if cot.get("ruta_excluida") else float(cot.get("costo_ruta") or 0)
         # Solo los equipos cobrables absorben traslado. Un accesorio existe
         # para la evidencia de entrega, pero conserva precio $0 también en el
-        # documento que ve el cliente.
+        # documento que ve el cliente. Un repuesto SÍ conserva su propio
+        # precio en el documento, pero tampoco absorbe traslado (Daniel,
+        # 2026-09-23) -- _tk_cotiz_unidades_cobrables ya excluye a ambos del
+        # divisor (_TK_COTIZ_CLASES_SIN_COSTO_RUTA).
         total_unidades = _tk_cotiz_unidades_cobrables(items_rows)
         transporte_unidad = (costo_ruta / total_unidades) if total_unidades > 0 else 0.0
 
@@ -3506,7 +3538,14 @@ def register_tickets_routes(app, ctx):
         for it in items_rows:
             cant = int(float(it.get("cantidad") or 0))
             pu_base = int(it.get("precio_unitario") or 0)
-            es_cobrable = (not _tk_cotiz_clase_no_cobrable(it.get("clase_producto"))
+            # "es_cobrable" acá = "absorbe costo de ruta" (nombre histórico,
+            # se mantiene por los tests de regresión que lo referencian
+            # textual). Usa _tk_cotiz_clase_sin_costo_ruta (accesorio +
+            # repuesto), NO _tk_cotiz_clase_no_cobrable -- pu_base ya trae
+            # el precio propio del repuesto desde la BD (columna
+            # precio_unitario) y ese valor NO se toca; lo único que decide
+            # es si se le SUMA la cuota de ruta encima.
+            es_cobrable = (not _tk_cotiz_clase_sin_costo_ruta(it.get("clase_producto"))
                            and cant > 0 and pu_base > 0 and float(it.get("total") or 0) > 0)
             pu = _tk_money_round(pu_base + transporte_unidad) if es_cobrable else pu_base
             tot = pu * cant

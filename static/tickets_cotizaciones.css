@@ -251,6 +251,10 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-ruta-desglose{font-size:.64rem;line-height:1.25;color:#64748b;margin-top:3px;white-space:nowrap;}
 .cot-ruta-desglose b{color:#0f172a;}
 .cot-ruta-desglose.no-cobrable{color:#15803d;font-weight:700;}
+/* Repuesto: SÍ tiene precio propio, solo queda fuera del reparto de ruta
+   (Daniel, 2026-09-23) -- display:block + white-space:normal para que la
+   etiqueta nunca se corte ni empuje el resto de la fila (REGLA #15). */
+.cot-ruta-sin-ruta{display:block;white-space:normal;color:#92400e;font-style:italic;}
 .cot-wiz-ruta-prorrateo{margin-top:6px;padding:7px 9px;border-radius:8px;background:#eff6ff;color:#1e40af;
   font-size:.72rem;font-weight:700;}
 .cot-wiz-ruta-prorrateo.excluida{background:#f3f4f6;color:#6b7280;}

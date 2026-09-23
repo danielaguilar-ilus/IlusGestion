@@ -1322,6 +1322,18 @@ async function cotWizClasificar(){
 function _cotWizEsAccesorio(it){
   return !!(it && String(it.clase_producto || '').trim().toLowerCase() === 'accesorio');
 }
+// 🚚 Costo de ruta -- clases que NO absorben el prorrateo del traslado ni
+// cuentan como unidad para dividirlo. Daniel (2026-09-23, viendo el
+// wizard en vivo): "quisiera que los repuestos no se vean afectados por
+// los costos de ruta". Distinto de _cotWizEsAccesorio: un repuesto SÍ se
+// cobra normal (su propio precio_manual/precio_unitario) -- solo no
+// participa en el reparto de la ruta. Mismo criterio que
+// _TK_COTIZ_CLASES_SIN_COSTO_RUTA en tickets_module.py, para que el
+// preview en vivo del wizard coincida con lo que el backend guarda.
+function _cotWizSinCostoRuta(it){
+  const clase = String(it && it.clase_producto || '').trim().toLowerCase();
+  return clase === 'accesorio' || clase === 'repuesto';
+}
 
 async function cotWizRender(){
   const body = document.getElementById('cotWizBody');
@@ -1528,21 +1540,25 @@ function cotWizRecalcLocal(){
     const auto = (it._precioCalc != null) ? Math.round(it._precioCalc) : null;
     return (it.precio_manual != null) ? it.precio_manual : auto;
   });
+  // unidadesCobrables/filasCobrablesRestantes/esCobrable usan
+  // _cotWizSinCostoRuta (accesorio + repuesto), NO _cotWizEsAccesorio: un
+  // repuesto SÍ suma a `suma`/`totBase` con su propio precio (`bases[i]`
+  // no se toca acá), solo queda fuera del reparto de la ruta.
   const unidadesCobrables = _WIZ.items.reduce(function(acc, it, i){
     const qty = Math.max(parseInt(it.qty, 10) || 0, 0);
-    return acc + (!_cotWizEsAccesorio(it) && bases[i] != null && bases[i] > 0 ? qty : 0);
+    return acc + (!_cotWizSinCostoRuta(it) && bases[i] != null && bases[i] > 0 ? qty : 0);
   }, 0);
   const rutaAplicada = (!rutaExcluida && unidadesCobrables > 0) ? rutaDetectada : 0;
   let rutaRestante = rutaAplicada;
   let filasCobrablesRestantes = _WIZ.items.filter(function(it, i){
-    return !_cotWizEsAccesorio(it) && (parseInt(it.qty, 10) || 0) > 0 && bases[i] != null && bases[i] > 0;
+    return !_cotWizSinCostoRuta(it) && (parseInt(it.qty, 10) || 0) > 0 && bases[i] != null && bases[i] > 0;
   }).length;
   let suma = 0;
   _WIZ.items.forEach(function(it, i){
     const accesorio = _cotWizEsAccesorio(it);
     const pu = accesorio ? 0 : bases[i];
     const qty = Math.max(parseInt(it.qty, 10) || 0, 0);
-    const esCobrable = !accesorio && pu != null && pu > 0 && qty > 0;
+    const esCobrable = !_cotWizSinCostoRuta(it) && pu != null && pu > 0 && qty > 0;
     const totBase = (pu != null) ? Math.round(pu * qty) : null;
     let rutaLinea = 0;
     if (esCobrable && rutaAplicada > 0){
@@ -1571,9 +1587,16 @@ function cotWizRecalcLocal(){
         desgloses[i].textContent = 'sin tarifa configurada';
       } else {
         const rutaUnidad = esCobrable && qty > 0 ? rutaLinea / qty : 0;
+        // Repuesto: SÍ tiene precio propio (pu), pero _cotWizSinCostoRuta lo
+        // deja fuera del reparto -- rutaUnidad ya da $0 solo, se agrega la
+        // etiqueta para que en pantalla quede claro que es a propósito y no
+        // un ítem "sin tarifa" (Daniel: nombres/datos siempre completos y
+        // legibles, REGLA #15).
+        const sinRuta = _cotWizSinCostoRuta(it);
         desgloses[i].className = 'cot-ruta-desglose';
         desgloses[i].innerHTML = _wizCLP(pu) + ' base + ' + _wizCLP(rutaUnidad)
-          + ' ruta = <b>' + _wizCLP(pu + rutaUnidad) + '/u</b>';
+          + ' ruta = <b>' + _wizCLP(pu + rutaUnidad) + '/u</b>'
+          + (sinRuta ? ' <span class="cot-ruta-sin-ruta">(repuesto, sin ruta)</span>' : '');
       }
     }
     if (filasTot[i]) filasTot[i].innerHTML = (totConRuta != null)
@@ -1591,11 +1614,11 @@ function cotWizRecalcLocal(){
     } else if (rutaDetectada > 0 && unidadesCobrables > 0){
       hintRuta.textContent = _wizCLP(rutaDetectada) + ' ÷ ' + unidadesCobrables
         + ' equipo(s) cobrable(s) = ' + _wizCLP(rutaDetectada / unidadesCobrables)
-        + ' de ruta por unidad. Los accesorios quedan fuera.';
+        + ' de ruta por unidad. Los accesorios y repuestos quedan fuera.';
     } else if (rutaDetectada > 0){
-      hintRuta.textContent = 'No hay equipos con precio: la ruta no se cobra ni se carga a accesorios.';
+      hintRuta.textContent = 'No hay equipos con precio: la ruta no se cobra ni se carga a accesorios ni repuestos.';
     } else {
-      hintRuta.textContent = 'Ruta $0. Solo se reparte entre equipos con precio; los accesorios quedan fuera.';
+      hintRuta.textContent = 'Ruta $0. Solo se reparte entre equipos con precio; los accesorios y repuestos quedan fuera.';
     }
   }
   cotWizResumen();
@@ -2264,7 +2287,7 @@ async function cotRecalcular(cid, numero, btn){
   const ok = await ilusConfirm({
     title: 'Recotizar ' + numero,
     message: 'Se recalcularán todas las líneas con la clasificación y tarifas vigentes.',
-    sub: 'Los accesorios quedarán en $0 y la ruta se dividirá solo entre equipos cobrables. No se borran productos, cliente ni evidencias.',
+    sub: 'Los accesorios quedarán en $0 y la ruta se dividirá solo entre equipos cobrables (los repuestos conservan su propio precio, pero tampoco absorben ruta). No se borran productos, cliente ni evidencias.',
     okLabel: 'Recotizar', cancelLabel: 'Cancelar',
   });
   if (!ok) return;
