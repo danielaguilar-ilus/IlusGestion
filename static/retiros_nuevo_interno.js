@@ -1096,7 +1096,21 @@
     if (nombre) precargarOChip('customer_name', nombre, origen);
     if (rut) precargarOChip('customer_rut', rut, origen);
     if (h.telefono) precargarOChip('contact_phone', h.telefono, origen);
-    if (h.email) proponerChip('contact_email', h.email, origen);
+    /* Daniel 2026-09-23: "vamos a sustituir... correo" — a diferencia de
+       consultarFichaCliente() (lookup solo por RUT, sigue siendo chip por
+       la regla general de 2026-09-15), acá el operador ya ELIGIÓ un
+       documento específico: el email SÍ se precarga igual que nombre/RUT/
+       teléfono (si el campo está vacío; si ya hay algo distinto, chip). */
+    if (h.email){
+      var _emailVacio = inpEmail && !String(inpEmail.value || '').trim();
+      if (_emailVacio){
+        inpEmail.value = h.email;
+        inpEmail.classList.add('nri-precargado');
+        setTimeout(function(){ inpEmail.classList.remove('nri-precargado'); }, 1800);
+      } else {
+        proponerChip('contact_email', h.email, origen);
+      }
+    }
     renderChips();
     if (rut && inpRut && rutClave(inpRut.value) === rutClave(rut)){
       inpRut.classList.remove('is-invalid'); inpRut.classList.add('is-valid');

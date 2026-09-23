@@ -262,6 +262,60 @@
 
 <div class="pipe-wrap">
   <div class="pipe-wrap-title"><i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>Estado del retiro · click en un paso para ir a esa sección</div>
+
+  {# ── BANNER DE PING-PONG — Daniel 2026-09-23: "lo primero que quiero
+     ver es el tracking de cómo va la agenda... esto es un pimponeo, no
+     se puede dar por sentado que se entregó". Nunca implica aceptación
+     sin evidencia real (email del cliente o marcado manual con motivo). #}
+  {% if req.status in ['retirada','cerrada'] %}
+  <div class="pp-banner pp-done">
+    <i class="bi bi-check-circle-fill"></i>
+    <div class="pp-banner-txt"><strong>{% if req.status == 'retirada' %}Retiro completado{% else %}Retiro cerrado{% endif %}.</strong> Confirmado el {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
+  </div>
+  {% elif _step5_done %}
+    {% if req.manual_accept_por %}
+    <div class="pp-banner pp-manual">
+      <i class="bi bi-person-check-fill"></i>
+      <div class="pp-banner-txt">
+        <strong>Marcado como aceptado manualmente</strong> por {{ req.manual_accept_por }}, {{ req.manual_accept_en | chile_fmt('%d-%m-%Y %H:%M') }}.
+        <div class="pp-banner-sub">El cliente no confirmó por correo — motivo declarado: "{{ req.manual_accept_motivo }}". Agenda: {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
+      </div>
+    </div>
+    {% else %}
+    <div class="pp-banner pp-accepted">
+      <i class="bi bi-envelope-check-fill"></i>
+      <div class="pp-banner-txt"><strong>El cliente aceptó</strong> la propuesta por correo. Agenda confirmada: {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
+    </div>
+    {% endif %}
+  {% elif _contraprop_cliente %}
+  <div class="pp-banner pp-counter">
+    <i class="bi bi-arrow-left-right"></i>
+    <div class="pp-banner-txt">
+      <strong>El cliente contrapropuso otra fecha:</strong> {{ _contraprop_cliente.date }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
+      <div class="pp-banner-sub">Revisa y responde más abajo (aceptar con 1 click o re-proponer).</div>
+    </div>
+    <button type="button" class="pp-banner-btn" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
+      <i class="bi bi-eye me-1"></i>Ver contrapropuesta
+    </button>
+  </div>
+  {% elif _step4_done %}
+  <div class="pp-banner pp-waiting">
+    <i class="bi bi-hourglass-split"></i>
+    <div class="pp-banner-txt">
+      <strong>Esperando que el cliente acepte</strong> la propuesta enviada para el {{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}.
+      <div class="pp-banner-sub">Nadie ha confirmado todavía — no asumas que se entregó.</div>
+    </div>
+    <button type="button" class="pp-banner-btn" onclick="marcarAceptadaManual(this)">
+      <i class="bi bi-check2-square me-1"></i>Marcar como aceptada
+    </button>
+  </div>
+  {% else %}
+  <div class="pp-banner pp-none">
+    <i class="bi bi-envelope"></i>
+    <div class="pp-banner-txt"><strong>Aún no se ha enviado una propuesta</strong> de fecha al cliente.</div>
+  </div>
+  {% endif %}
+
   <div class="pipe-row">
     <div class="pipe-step {% if 1 < _pipe_active %}done{% elif 1 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-1').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 1</span>
@@ -407,6 +461,19 @@
       <div class="ficha-sub" style="text-transform:capitalize">Relación:
         <span data-inline-edit="pickup_person_relation" data-placeholder="—">{{ req.pickup_person_relation or '' }}</span>
       </div>
+    </div>
+
+    {# Gestión — Daniel 2026-09-23: "Gestionar retiro. Acá quisiera ver
+       quién lo gestionó" — responsable asignado + quién creó la solicitud. #}
+    <div class="ficha-card">
+      <div class="ficha-lbl"><i class="bi bi-person-workspace"></i> Gestión</div>
+      <div class="ficha-val" style="font-size:.94rem">{{ req.responsable_nombre or 'Sin responsable asignado' }}</div>
+      <div class="ficha-sub">Responsable del retiro</div>
+      {% if req.created_by_user_name %}
+      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
+        <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d-%m-%Y %H:%M') }}{% endif %}
+      </div>
+      {% endif %}
     </div>
 
     {# RUT del documento ≠ RUT de quien retira — antes vivía SUELTA arriba
@@ -716,11 +783,12 @@
                   <th class="num">Vol. un.</th>
                   <th class="num">Total kg</th>
                   <th class="num">Total m³</th>
+                  <th class="num">Peso vol.</th>
                 </tr>
               </thead>
               <tbody id="tabProductosBody">
                 <tr class="ilus-tabla-empty-row">
-                  <td colspan="8">
+                  <td colspan="9">
                     <div class="ilus-tabla-empty">
                       <i class="bi bi-hourglass-split"></i>
                       <strong>Cargando productos...</strong>
@@ -733,9 +801,10 @@
                   <td colspan="6" class="num"><strong>Totales</strong></td>
                   <td class="num"><strong id="tabProdsTotKg">0.0 kg</strong></td>
                   <td class="num"><strong id="tabProdsTotM3">0.000 m³</strong></td>
+                  <td class="num"><strong id="tabProdsTotPesoVol">0.0 kg</strong></td>
                 </tr>
                 <tr class="ilus-tabla-foot-sub">
-                  <td colspan="8">
+                  <td colspan="9">
                     <small><span id="tabProdsTotLineas">0</span> producto(s) incluido(s) en total · listo para revisar carga en el Paso "Carga".</small>
                   </td>
                 </tr>

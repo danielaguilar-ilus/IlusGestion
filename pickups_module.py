@@ -6525,12 +6525,13 @@ def register_pickup_routes(app, ctx):
             return {
                 "ok": True,
                 "lineas": [],
-                "totales": {"n_lineas": 0, "peso_total_kg": 0.0, "vol_total_m3": 0.0},
+                "totales": {"n_lineas": 0, "peso_total_kg": 0.0, "vol_total_m3": 0.0, "peso_vol_total_kg": 0.0},
             }
 
         lineas_out = []
         peso_total_acum = 0.0
         vol_total_acum  = 0.0
+        peso_vol_total_acum = 0.0
 
         for doc in docs:
             doc_id     = doc.get("id")
@@ -6561,6 +6562,7 @@ def register_pickup_routes(app, ctx):
                         """SELECT sku, descripcion, cantidad_seleccionada,
                                   peso_unit_kg, vol_unit_m3,
                                   peso_total_kg, vol_total_m3,
+                                  peso_vol_unit_kg, peso_vol_total_kg,
                                   marcada_sin_saldo,
                                   motivo_sin_saldo, sin_saldo_por, sin_saldo_en
                              FROM pickup_doc_lineas
@@ -6577,6 +6579,7 @@ def register_pickup_routes(app, ctx):
                             """SELECT sku, descripcion, cantidad_seleccionada,
                                       peso_unit_kg, vol_unit_m3,
                                       peso_total_kg, vol_total_m3,
+                                      peso_vol_unit_kg, peso_vol_total_kg,
                                       marcada_sin_saldo
                                  FROM pickup_doc_lineas
                                 WHERE doc_id=%s AND incluida=1
@@ -6590,7 +6593,8 @@ def register_pickup_routes(app, ctx):
                             sel_rows = mysql_fetchall(
                                 """SELECT sku, descripcion, cantidad_seleccionada,
                                           peso_unit_kg, vol_unit_m3,
-                                          peso_total_kg, vol_total_m3
+                                          peso_total_kg, vol_total_m3,
+                                          peso_vol_unit_kg, peso_vol_total_kg
                                      FROM pickup_doc_lineas
                                     WHERE doc_id=%s AND incluida=1
                                     ORDER BY sku ASC""",
@@ -6612,6 +6616,8 @@ def register_pickup_routes(app, ctx):
                     _eq = _empaques_equivalentes(qty, _ln_snap)
                     peso_tot  = float(r.get("peso_total_kg") or (peso_unit * _eq))
                     vol_tot   = float(r.get("vol_total_m3") or (vol_unit * _eq))
+                    peso_vol_unit = float(r.get("peso_vol_unit_kg") or 0)
+                    peso_vol_tot  = float(r.get("peso_vol_total_kg") or (peso_vol_unit * _eq))
                     # FIX 2026-09-16 (Daniel: "51 kg por un lado, 25 kg por
                     # otro" en la misma fila): peso_unit_kg/vol_unit_m3
                     # guardados en pickup_doc_lineas son el peso DE LA FICHA
@@ -6637,6 +6643,7 @@ def register_pickup_routes(app, ctx):
                         "vol_unit_m3":       vol_unit_mostrar,
                         "peso_total":        peso_tot,
                         "vol_total":         vol_tot,
+                        "peso_vol_total":    peso_vol_tot,
                         "marcada_sin_saldo": bool(r.get("marcada_sin_saldo")),
                         "motivo_sin_saldo":  r.get("motivo_sin_saldo") or None,
                         "sin_saldo_por":     r.get("sin_saldo_por") or None,
@@ -6644,6 +6651,7 @@ def register_pickup_routes(app, ctx):
                     })
                     peso_total_acum += peso_tot
                     vol_total_acum  += vol_tot
+                    peso_vol_total_acum += peso_vol_tot
             else:
                 # Sin selección granular → leer erp_snapshot y devolver todas
                 try:
@@ -6662,11 +6670,13 @@ def register_pickup_routes(app, ctx):
                     peso_unit    = float(ln.get("peso_kg_u") or 0)
                     vol_unit_cm3 = float(ln.get("vol_u") or 0)
                     vol_unit_m3  = vol_unit_cm3 / 1_000_000.0 if vol_unit_cm3 else 0.0
+                    peso_vol_unit = float(ln.get("peso_vol_u") or 0)
                     desc = (ln.get("descripcion_erp") or ln.get("nombre_app") or "").strip()
                     # Empaques reales (= piezas salvo en productos de a par).
                     _eq = _empaques_equivalentes(qty, ln)
                     peso_tot = peso_unit * _eq
                     vol_tot  = vol_unit_m3 * _eq
+                    peso_vol_tot = peso_vol_unit * _eq
                     # FIX 2026-09-16 — mismo criterio que la rama con
                     # selección granular arriba: mostrar el unitario
                     # derivado del total (consistente con "cantidad"),
@@ -6684,18 +6694,21 @@ def register_pickup_routes(app, ctx):
                         "vol_unit_m3":       vol_unit_mostrar,
                         "peso_total":        peso_tot,
                         "vol_total":         vol_tot,
+                        "peso_vol_total":    peso_vol_tot,
                         "marcada_sin_saldo": False,  # snapshot completo = ERP en orden
                     })
                     peso_total_acum += peso_tot
                     vol_total_acum  += vol_tot
+                    peso_vol_total_acum += peso_vol_tot
 
         return {
             "ok": True,
             "lineas": lineas_out,
             "totales": {
-                "n_lineas":      len(lineas_out),
-                "peso_total_kg": round(peso_total_acum, 2),
-                "vol_total_m3":  round(vol_total_acum, 4),
+                "n_lineas":          len(lineas_out),
+                "peso_total_kg":     round(peso_total_acum, 2),
+                "vol_total_m3":      round(vol_total_acum, 4),
+                "peso_vol_total_kg": round(peso_vol_total_acum, 2),
             },
         }
 

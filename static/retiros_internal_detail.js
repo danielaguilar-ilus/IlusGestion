@@ -858,7 +858,7 @@ async function refrescarTablaProductos(){
   try {
     const d = await _fetchJsonSafe(`/retiros/${_RID}/lineas-resumen`);
     if (!d.ok){
-      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="8">
+      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="9">
         <div class="ilus-tabla-empty">
           <i class="bi bi-exclamation-triangle" style="color:#dc2626"></i>
           <strong>No se pudo cargar la lista de productos</strong>
@@ -872,7 +872,7 @@ async function refrescarTablaProductos(){
     const tot = d.totales || { n_lineas: 0, peso_total_kg: 0, vol_total_m3: 0 };
     if (badge) badge.textContent = tot.n_lineas || lineas.length;
     if (!lineas.length){
-      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="8">
+      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="9">
         <div class="ilus-tabla-empty">
           <i class="bi bi-box"></i>
           <strong>Aún no hay productos seleccionados</strong>
@@ -920,19 +920,22 @@ async function refrescarTablaProductos(){
         <td data-label="Vol. un." class="num">${_fmtNum(ln.vol_unit_m3, 3)} m³</td>
         <td data-label="Total kg" class="num"><strong>${_fmtNum(ln.peso_total, 1)} kg</strong></td>
         <td data-label="Total m³" class="num"><strong>${_fmtNum(ln.vol_total, 3)} m³</strong></td>
+        <td data-label="Peso vol." class="num">${_fmtNum(ln.peso_vol_total, 1)} kg</td>
       </tr>`;
     }).join('');
     if (foot){
       foot.style.display = '';
       const totKg = document.getElementById('tabProdsTotKg');
       const totM3 = document.getElementById('tabProdsTotM3');
+      const totPV = document.getElementById('tabProdsTotPesoVol');
       const totLn = document.getElementById('tabProdsTotLineas');
       if (totKg) totKg.textContent = _fmtNum(tot.peso_total_kg, 1) + ' kg';
       if (totM3) totM3.textContent = _fmtNum(tot.vol_total_m3, 3) + ' m³';
+      if (totPV) totPV.textContent = _fmtNum(tot.peso_vol_total_kg, 1) + ' kg';
       if (totLn) totLn.textContent = tot.n_lineas || lineas.length;
     }
   } catch(e){
-    body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="8">
+    body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="9">
       <div class="ilus-tabla-empty">
         <i class="bi bi-wifi-off" style="color:#dc2626"></i>
         <strong>Error de red</strong>
@@ -1987,6 +1990,59 @@ async function aceptarContrapropuesta(btn){
       return;
     }
     ilusToast('✓ ' + (d.message || 'Contrapropuesta aceptada — retiro confirmado'), { type:'success' });
+    setTimeout(() => {
+      if (d.redirect_url) window.location.href = d.redirect_url;
+      else window.location.reload();
+    }, 900);
+  } catch(err){
+    await ilusAlert({ title:'Error de red', message: err.message || 'No se pudo contactar al servidor.', type:'error' });
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = _orig; }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  MARCAR PROPUESTA COMO ACEPTADA MANUALMENTE (Daniel 2026-09-23)
+//  Atajo para cuando el cliente confirma por un canal que NO es el link
+//  del correo (llamada, WhatsApp, presencial). Motivo obligatorio — mismo
+//  patrón que motivo_otro_rut / motivo_sin_saldo: queda con nombre y hora.
+//  POST /retiros/<rid>/marcar-aceptada-manual → {ok,message,actor,en,motivo,confirmed,redirect_url}
+// ════════════════════════════════════════════════════════════════════
+async function marcarAceptadaManual(btn){
+  const motivo = await ilusPrompt({
+    title: 'Marcar como aceptada',
+    message: 'Explica cómo confirmó el cliente (ej. "llamó y confirmó por teléfono").',
+    sub: 'Queda registrado con tu nombre y la hora — el cliente no hizo click en el correo.',
+    placeholder: 'Ej: cliente llamó y confirmó verbalmente',
+    required: true,
+  });
+  if (!motivo) return;
+  const _orig = btn ? btn.innerHTML : '';
+  if (btn){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Registrando…';
+  }
+  try {
+    const fd = new FormData();
+    fd.append('motivo', motivo);
+    const tok = document.querySelector('#iwProposeFormEl input[name=csrf_token]') ||
+                document.querySelector('input[name=csrf_token]');
+    if (tok) fd.append('csrf_token', tok.value);
+    const r = await fetch(`/retiros/${_RID}/marcar-aceptada-manual`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+      body: fd, credentials: 'same-origin',
+    });
+    const d = await r.json().catch(() => ({ ok:false, error:'Respuesta inválida del servidor.' }));
+    if (!r.ok || !d.ok){
+      if (d && d.code === 'MOTIVO_REQUERIDO'){
+        await ilusAlert({ title:'Falta el motivo', message: d.detalle || d.error, type:'warning' });
+      } else {
+        await ilusAlert({ title:'No se pudo registrar', message: (d && d.error) || ('Error HTTP ' + r.status), type:'error' });
+      }
+      return;
+    }
+    ilusToast('✓ ' + (d.message || 'Marcado como aceptado'), { type:'success' });
     setTimeout(() => {
       if (d.redirect_url) window.location.href = d.redirect_url;
       else window.location.reload();
