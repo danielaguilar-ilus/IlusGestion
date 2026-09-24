@@ -1725,14 +1725,44 @@ def register_pickup_routes(app, ctx):
         def _fmt_horario(tf, tt):
             tf, tt = _hm(tf), _hm(tt)
             return f"{tf} - {tt}" if tf else ""
+        # FIX 2026-09-23 (Daniel, viendo el correo en Outlook): la fecha salía
+        # ISO cruda ("2026-09-25", REGLA #6) y el documento con el código
+        # interno ("NOTA_VENTA 6162"). Ahora: "vie 25/09/2026" y el nombre
+        # legible de cada documento asociado ("Nota de venta VD 6162").
+        _DIAS_CL = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+        def _fmt_fecha(v):
+            if not v:
+                return ""
+            try:
+                import datetime as _dt_rv
+                d = v if isinstance(v, _dt_rv.date) else _dt_rv.date.fromisoformat(str(v)[:10])
+                return f"{_DIAS_CL[d.weekday()]} {d.strftime('%d/%m/%Y')}"
+            except Exception:
+                return str(v)
+        _DOC_NOMBRE = {"FCV": "Factura", "FACTURA": "Factura", "BLV": "Boleta", "BOLETA": "Boleta",
+                       "VD": "Nota de venta VD", "NVV": "Nota de venta", "NOTA_VENTA": "Nota de venta",
+                       "WEB": "Pedido web", "GDV": "Guía de despacho", "NVI": "Nota de venta interna"}
+        def _fmt_doc(tipo, numero):
+            t = (tipo or "").strip().upper()
+            return f"{_DOC_NOMBRE.get(t, t)} {numero or ''}".strip()
+        _documento = _fmt_doc(req.get("document_type"), req.get("document_number"))
+        try:
+            if req.get("id"):
+                _dl = mysql_fetchall(
+                    "SELECT document_type, document_number FROM pickup_request_docs "
+                    "WHERE request_id=%s ORDER BY id ASC", (req.get("id"),)) or []
+                if _dl:
+                    _documento = ", ".join(_fmt_doc(x.get("document_type"), x.get("document_number")) for x in _dl)
+        except Exception:
+            pass  # fuera de contexto (hilo) o tabla ausente: queda el documento principal
         return {
             "code":              req.get("code") or "",
             "cliente":           req.get("customer_name") or "",
             "persona_retira":    req.get("pickup_person_name") or req.get("contact_name") or "",
-            "documento":         f"{(req.get('document_type') or '').upper()} {req.get('document_number') or ''}".strip(),
-            "fecha_solicitada":  str(req.get("requested_date") or ""),
-            "fecha_propuesta":   str((proposal or {}).get("date") or req.get("proposed_date") or ""),
-            "fecha_confirmada":  str(req.get("confirmed_date") or ""),
+            "documento":         _documento,
+            "fecha_solicitada":  _fmt_fecha(req.get("requested_date")),
+            "fecha_propuesta":   _fmt_fecha((proposal or {}).get("date") or req.get("proposed_date")),
+            "fecha_confirmada":  _fmt_fecha(req.get("confirmed_date")),
             "horario": (
                 _fmt_horario((proposal or {}).get("time_from"), (proposal or {}).get("time_to"))
                 or _fmt_horario(req.get("confirmed_time_from"), req.get("confirmed_time_to"))
@@ -1904,7 +1934,10 @@ def register_pickup_routes(app, ctx):
                         btn_primario_url=follow_url,
                     )
                 # Multi-email: envía al cliente declarado + extra_emails + emails del ERP
-                _multi = _send_pickup_email_multi(req, f"ILUS — {asunto}", html, attachments=_ics_att)
+                # Sin "ILUS — ILUS propone…" (Daniel 2026-09-23): el prefijo
+                # solo si la plantilla no lo trae ya.
+                _asunto_final = asunto if (asunto or "").strip().upper().startswith("ILUS") else f"ILUS — {asunto}"
+                _multi = _send_pickup_email_multi(req, _asunto_final, html, attachments=_ics_att)
                 sent_mail = len(_multi["sent"]) > 0
                 if _multi["sent"]:
                     print(f"[pickup-email] {asunto} → {_multi['total']} dest: "
@@ -6957,6 +6990,394 @@ def register_pickup_routes(app, ctx):
             },
         }
 
+    # ══════════════════════════════════════════════════════════════════
+    #  FICHA v4 — PRODUCTOS CON DIAGNÓSTICO (Daniel 2026-09-23: "lo que más
+    #  quiero vender es qué productos van a retirar y cuánto pesa... que me
+    #  muestre si está comprometido, cuánto hay de stock, si puedo avanzar o
+    #  no... si está entregado, con saldo o no").
+    #
+    #  GET /retiros/<rid>/productos-erp — carga diferida (no frena la ficha).
+    #  Por documento asociado, en SOLO LECTURA contra el ERP (REGLA #4.1):
+    #   Q1  líneas del documento (MAEDDO) con saldo = CAPRCO1−CAPRAD1−CAPREX1
+    #       −CAPRNC1 (misma fórmula que _cubicador_fetch), bodega (BOSULIDO)
+    #   Q2  documentos hijos que consumieron cada línea (TIDOPA/NUDOPA/ENDOPA
+    #       + NULIDOPA = NULIDO): guía, boleta, factura, nota de crédito
+    #   Q3  stock POR BODEGA en MAEST: físico STFI1, devengado STDV1,
+    #       comprometido STOCNV1 (diccionario Random, tabla MAEST). Libre =
+    #       físico − comprometido − devengado. OJO: get_erp_stock_by_skus
+    #       mezcla físico de bodega 02 con devengado/comprometido GLOBALES de
+    #       MAEPR y no descuenta el devengado — acá se usa MAEST completo.
+    #  + lo que ILUS ya sabe: cantidad a retirar (pickup_doc_lineas), pesos
+    #  (_pickup_lineas_consolidadas) y otros retiros activos con el mismo doc.
+    #  ERP caído ≠ "sin guías": cada doc trae erp_ok y nunca se inventa.
+    # ══════════════════════════════════════════════════════════════════
+    _PROD_ERP_CACHE = {}          # (tido_db, nudo_db) -> (ts, dict)
+    _PROD_ERP_TTL = 300           # 5 min, mismo criterio que /api/erp/documento
+    _ESLIDO_CERRADA = ("C", "T", "TOTAL", "CERRADO", "DESPACHADO")
+    _TIPO_CONSUMO = {
+        "GDV": "Guía de despacho", "GDP": "Guía de despacho", "GDD": "Guía de despacho",
+        "BLV": "Boleta", "BSV": "Boleta", "FCV": "Factura", "FDV": "Factura",
+        "NCV": "Nota de crédito", "NVV": "Nota de venta",
+    }
+
+    def _prod_erp_candidatos(tipo, numero):
+        """(TIDO, NUDO) exactos a probar en MAEEDO. VD/WEB son NVV con prefijo;
+        se prueba primero el prefijo (una NVV numérica con el mismo número
+        sería OTRO documento)."""
+        t = (tipo or "").strip().upper()
+        n = str(numero or "").strip()
+        n_limpio = (n[2:] if n.upper().startswith("VD") else n[3:] if n.upper().startswith("WEB") else n).lstrip("0") or "0"
+        if t == "VD":
+            return [("NVV", "VD" + n_limpio.zfill(8))]
+        if t == "WEB":
+            return [("NVV", "WEB" + n_limpio.zfill(7))]
+        if t in ("NVV", "NV"):
+            return [("NVV", n_limpio.zfill(10)), ("NVV", "VD" + n_limpio.zfill(8)), ("NVV", "WEB" + n_limpio.zfill(7))]
+        if t == "FACTURA":
+            t = "FCV"
+        elif t == "BOLETA":
+            t = "BLV"
+        return [(t, n_limpio.zfill(10))]
+
+    def _prod_erp_doc(tipo, numero):
+        """Datos ERP de UN documento: líneas con saldo, consumos y stock por
+        bodega. Devuelve {"ok": bool, ...}. Caché 5 min."""
+        import time as _t_pe
+        _rq = ctx.get("_random_sql_query")
+        if not _rq:
+            return {"ok": False, "error": "ERP no disponible"}
+        for tido_db, nudo_db in _prod_erp_candidatos(tipo, numero):
+            hit = _PROD_ERP_CACHE.get((tido_db, nudo_db))
+            if hit and (_t_pe.time() - hit[0]) < _PROD_ERP_TTL:
+                return hit[1]
+        hdr = None
+        for tido_db, nudo_db in _prod_erp_candidatos(tipo, numero):
+            rows = _rq(
+                "SELECT TOP 1 e.IDMAEEDO, e.TIDO, e.NUDO, e.ENDO, e.FEEMDO "
+                "FROM MAEEDO e WHERE e.TIDO = %s AND e.NUDO = %s "
+                "AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')",
+                (tido_db, nudo_db), max_rows=1)
+            if rows is None:
+                return {"ok": False, "error": "El ERP no respondió"}
+            if rows:
+                hdr = rows[0]
+                break
+        if not hdr:
+            return {"ok": False, "error": "Documento no encontrado en el ERP", "no_encontrado": True}
+        # Q1 — líneas con saldo
+        lin = _rq(
+            "SELECT d.NULIDO, LTRIM(RTRIM(d.KOPRCT)) AS sku, LTRIM(RTRIM(d.NOKOPR)) AS nombre, "
+            "COALESCE(d.CAPRCO1,0) AS caprco, COALESCE(d.CAPRAD1,0) AS caprad, "
+            "COALESCE(d.CAPREX1,0) AS caprex, COALESCE(d.CAPRNC1,0) AS caprnc, "
+            "LTRIM(RTRIM(COALESCE(d.ESLIDO,''))) AS eslido, "
+            "LTRIM(RTRIM(COALESCE(d.BOSULIDO,''))) AS bodega "
+            "FROM MAEDDO d WHERE d.IDMAEEDO = %s ORDER BY d.NULIDO",
+            (hdr["IDMAEEDO"],), max_rows=400)
+        if lin is None:
+            return {"ok": False, "error": "El ERP no respondió"}
+        # Q2 — quién consumió cada línea
+        hijos = _rq(
+            "SELECT d.NULIDOPA AS origen_linea, LTRIM(RTRIM(d.TIDO)) AS tido, "
+            "LTRIM(RTRIM(d.NUDO)) AS nudo, LTRIM(RTRIM(d.KOPRCT)) AS sku, "
+            "COALESCE(d.CAPRCO1,0) AS cantidad, e.FEEMDO AS fecha, "
+            "LTRIM(RTRIM(COALESCE(e.ESDO,''))) AS estado "
+            "FROM MAEDDO d LEFT JOIN MAEEDO e ON e.IDMAEEDO = d.IDMAEEDO "
+            "WHERE d.TIDOPA = %s AND d.NUDOPA = %s AND d.ENDOPA = %s "
+            "ORDER BY e.FEEMDO, d.NUDO, d.NULIDO",
+            (hdr["TIDO"], hdr["NUDO"], hdr["ENDO"]), max_rows=800)
+        guias_ok = hijos is not None
+        consumos = {}
+        for h in (hijos or []):
+            try:
+                ol = int(str(h.get("origen_linea") or "0").strip() or 0)
+            except (TypeError, ValueError):
+                continue
+            f = h.get("fecha")
+            consumos.setdefault(ol, []).append({
+                "tipo": (h.get("tido") or "").upper(),
+                "label": _TIPO_CONSUMO.get((h.get("tido") or "").upper(), (h.get("tido") or "").upper()),
+                "numero": (h.get("nudo") or "").lstrip("0") or (h.get("nudo") or ""),
+                "fecha": f.strftime("%d/%m/%Y") if hasattr(f, "strftime") else (str(f)[:10] if f else ""),
+                "cantidad": float(h.get("cantidad") or 0),
+            })
+        # Q3 — stock POR BODEGA (MAEST)
+        pares = sorted({((l.get("sku") or "").upper(), (l.get("bodega") or "02") or "02")
+                        for l in lin if (l.get("sku") or "").strip()
+                        and not (l.get("sku") or "").upper().startswith("ZZ")})
+        stock = {}
+        stock_ok = True
+        if pares:
+            skus = sorted({p[0] for p in pares})
+            bods = sorted({p[1] for p in pares})
+            st_rows = _rq(
+                "SELECT LTRIM(RTRIM(st.KOPR)) AS sku, LTRIM(RTRIM(st.KOBO)) AS bodega, "
+                "COALESCE(st.STFI1,0) AS fisico, COALESCE(st.STDV1,0) AS devengado, "
+                "COALESCE(st.STOCNV1,0) AS comprometido FROM MAEST st "
+                "WHERE st.KOPR IN (" + ",".join(["%s"] * len(skus)) + ") "
+                "AND st.KOBO IN (" + ",".join(["%s"] * len(bods)) + ")",
+                tuple(skus) + tuple(bods), max_rows=len(skus) * len(bods) * 3 + 10)
+            if st_rows is None:
+                stock_ok = False
+            for s in (st_rows or []):
+                k = ((s.get("sku") or "").upper(), (s.get("bodega") or ""))
+                acc = stock.setdefault(k, {"fisico": 0.0, "devengado": 0.0, "comprometido": 0.0})
+                acc["fisico"] += float(s.get("fisico") or 0)
+                acc["devengado"] += float(s.get("devengado") or 0)
+                acc["comprometido"] += float(s.get("comprometido") or 0)
+        lineas = []
+        for l in lin:
+            sku = (l.get("sku") or "").strip()
+            caprco = float(l.get("caprco") or 0)
+            saldo = caprco - float(l.get("caprad") or 0) - float(l.get("caprex") or 0) - float(l.get("caprnc") or 0)
+            if (l.get("eslido") or "").upper() in _ESLIDO_CERRADA:
+                saldo = 0.0
+            saldo = max(saldo, 0.0)
+            try:
+                nulido = int(str(l.get("NULIDO") or "0").strip() or 0)
+            except (TypeError, ValueError):
+                nulido = 0
+            bod = (l.get("bodega") or "02") or "02"
+            st = stock.get((sku.upper(), bod))
+            lineas.append({
+                "nulido": nulido, "sku": sku, "nombre": (l.get("nombre") or "").strip(),
+                "facturado": caprco, "saldo": saldo, "consumido": max(caprco - saldo, 0.0),
+                "nota_credito": float(l.get("caprnc") or 0),
+                "es_zz": sku.upper().startswith("ZZ"), "es_descuento": sku.upper() == "DE",
+                "bodega": bod,
+                "stock": ({"fisico": st["fisico"], "devengado": st["devengado"],
+                           "comprometido": st["comprometido"],
+                           "libre": st["fisico"] - st["comprometido"] - st["devengado"]}
+                          if st else ({"fisico": 0.0, "devengado": 0.0, "comprometido": 0.0, "libre": 0.0}
+                                      if stock_ok else None)),
+                "consumos": consumos.get(nulido, []),
+            })
+        f_doc = hdr.get("FEEMDO")
+        data = {"ok": True, "guias_ok": guias_ok, "stock_ok": stock_ok,
+                "tido_erp": (hdr.get("TIDO") or "").strip(), "nudo_erp": (hdr.get("NUDO") or "").strip(),
+                "fecha": f_doc.strftime("%d/%m/%Y") if hasattr(f_doc, "strftime") else "",
+                "lineas": lineas}
+        _PROD_ERP_CACHE[((hdr.get("TIDO") or "").strip(), (hdr.get("NUDO") or "").strip())] = (_t_pe.time(), data)
+        if len(_PROD_ERP_CACHE) > 400:
+            _PROD_ERP_CACHE.clear()
+        return data
+
+    @app.route("/retiros/<int:rid>/productos-erp", methods=["GET"])
+    @require_permission("view")
+    def pickup_productos_erp(rid):
+        try:
+            return jsonify(_pickup_productos_diagnostico(rid, refrescar=request.args.get("refrescar") == "1"))
+        except Exception as e:
+            import traceback as _tb_pe
+            print(f"[productos-erp] rid={rid} {type(e).__name__}: {e}\n{_tb_pe.format_exc()}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo armar el detalle de productos."}), 500
+
+    def _pickup_productos_diagnostico(rid, refrescar=False):
+        """Une ERP (saldo, consumos, stock por bodega) + ILUS (a retirar, pesos,
+        otros retiros) y arma el diagnóstico de 'se puede entregar o no'."""
+        import json as _json_pd
+        if refrescar:
+            _PROD_ERP_CACHE.clear()
+        docs = mysql_fetchall(
+            "SELECT id, document_type, document_number, erp_snapshot, has_seleccion_lineas "
+            "FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+        consolidado = _pickup_lineas_consolidadas(rid)
+        # Pesos/volúmenes de lo que SE RETIRA, ya multiplicados por la cantidad
+        pesos = {}
+        for c in consolidado.get("lineas") or []:
+            pesos[(c.get("doc_id"), (c.get("sku") or "").upper())] = c
+        sel_rows = {}
+        if docs:
+            ph = ",".join(["%s"] * len(docs))
+            try:
+                _sel_q = mysql_fetchall(
+                    f"SELECT doc_id, sku, cantidad_seleccionada, incluida, marcada_sin_saldo, motivo_sin_saldo "
+                    f"FROM pickup_doc_lineas WHERE doc_id IN ({ph})", tuple(d["id"] for d in docs)) or []
+            except Exception:
+                _sel_q = mysql_fetchall(
+                    f"SELECT doc_id, sku, cantidad_seleccionada, incluida "
+                    f"FROM pickup_doc_lineas WHERE doc_id IN ({ph})", tuple(d["id"] for d in docs)) or []
+            for r in _sel_q:
+                sel_rows[(r["doc_id"], (r.get("sku") or "").upper())] = r
+        # Otros retiros activos con el mismo documento (evita retirar dos veces)
+        otros = {}
+        if docs:
+            nums = sorted({(d.get("document_number") or "").strip() for d in docs if d.get("document_number")})
+            if nums:
+                ph2 = ",".join(["%s"] * len(nums))
+                for r in (mysql_fetchall(
+                        f"SELECT prd.document_type, prd.document_number, pr.id, pr.code, pr.status "
+                        f"FROM pickup_request_docs prd JOIN `{REQ}` pr ON pr.id = prd.request_id "
+                        f"WHERE prd.document_number IN ({ph2}) AND prd.request_id <> %s "
+                        f"AND pr.status NOT IN ('rechazada','fallida','cancelada')",
+                        tuple(nums) + (rid,)) or []):
+                    k = ((r.get("document_type") or "").upper(), (r.get("document_number") or "").strip())
+                    otros.setdefault(k, []).append({
+                        "id": r["id"], "code": r["code"],
+                        "estado": PICKUP_STATUS.get(r.get("status"), r.get("status")),
+                        "cerrado": r.get("status") in ("retirada", "cerrada"),
+                    })
+        out_docs = []
+        cont = {"listos": 0, "bloqueados": 0, "revisar": 0, "ya_entregados": 0, "sin_ficha": 0,
+                "no_incluidos": 0, "unidades": 0.0}
+        erp_caido = False
+        for d in docs:
+            tipo = (d.get("document_type") or "").upper()
+            numero = (d.get("document_number") or "").strip()
+            has_sel = bool(d.get("has_seleccion_lineas"))
+            try:
+                snap = _json_pd.loads(d.get("erp_snapshot") or "{}")
+            except Exception:
+                snap = {}
+            snap_map = {(l.get("sku") or "").strip().upper(): l for l in (snap.get("lineas") or [])}
+            erp = _prod_erp_doc(tipo, numero)
+            if not erp.get("ok"):
+                erp_caido = erp_caido or not erp.get("no_encontrado")
+            lineas_erp = erp.get("lineas") if erp.get("ok") else None
+            if lineas_erp is None:
+                # Sin ERP: se muestra lo que ILUS guardó, sin saldo ni stock (nunca inventado)
+                lineas_erp = [{"nulido": 0, "sku": (l.get("sku") or "").strip(),
+                               "nombre": (l.get("descripcion_erp") or l.get("nombre_app") or "").strip(),
+                               "facturado": float(l.get("cantidad") or 0), "saldo": None, "consumido": None,
+                               "nota_credito": 0.0, "es_zz": bool(l.get("es_zz")), "es_descuento": False,
+                               "bodega": l.get("bodega") or "02", "stock": None, "consumos": []}
+                              for l in (snap.get("lineas") or [])]
+            lineas = []
+            servicios = []
+            ya_vistos = set()
+            for le in lineas_erp:
+                sku_u = (le.get("sku") or "").upper()
+                if le.get("es_zz"):
+                    servicios.append({"sku": le.get("sku"), "nombre": le.get("nombre"),
+                                      "consumos": le.get("consumos") or []})
+                    continue
+                if le.get("es_descuento") or not sku_u:
+                    continue
+                # A retirar: selección guardada; sin selección = lo facturado (comportamiento actual)
+                sel = sel_rows.get((d["id"], sku_u)) if sku_u not in ya_vistos else None
+                ya_vistos.add(sku_u)
+                if sel is not None:
+                    incluida = bool(sel.get("incluida"))
+                    a_retirar = float(sel.get("cantidad_seleccionada") or 0) if incluida else 0.0
+                elif has_sel:
+                    incluida, a_retirar = False, 0.0
+                else:
+                    incluida, a_retirar = True, float(le.get("facturado") or 0)
+                p = pesos.get((d["id"], sku_u)) or {}
+                ln_snap = snap_map.get(sku_u) or {}
+                tiene_ficha = bool(ln_snap.get("tiene_ficha")) or float(ln_snap.get("peso_kg_u") or 0) > 0
+                saldo = le.get("saldo")
+                st = le.get("stock")
+                bod = le.get("bodega") or "02"
+                # ── Diagnóstico de la línea ──────────────────────────
+                estado, texto, tono = "ok", "Se puede entregar", "ok"
+                avisos = []
+                if not incluida or a_retirar <= 0:
+                    if saldo is not None and saldo <= 0:
+                        estado, texto, tono = "entregado", "Ya entregado", "gris"
+                    else:
+                        estado, texto, tono = "no_incluido", "No se retira", "gris"
+                else:
+                    if saldo is not None and saldo <= 0:
+                        estado, texto, tono = "sin_saldo", "Ya salió: no entregar", "rojo"
+                    elif saldo is not None and a_retirar > saldo + 1e-9:
+                        estado, texto, tono = "excede_saldo", f"Más que el saldo ({_fmt_num(a_retirar)} > {_fmt_num(saldo)})", "rojo"
+                    elif st is not None and st["fisico"] <= 0:
+                        estado, texto, tono = "sin_stock", "Sin stock: no se puede entregar", "rojo"
+                    elif st is not None and st["fisico"] < a_retirar:
+                        estado, texto, tono = "stock_insuf", f"Stock insuficiente ({_fmt_num(st['fisico'])} de {_fmt_num(a_retirar)})", "rojo"
+                    _sel_m = sel_rows.get((d["id"], sku_u)) or {}
+                    if estado in ("sin_saldo", "excede_saldo") and _sel_m.get("marcada_sin_saldo"):
+                        # Alguien autorizó entregar sin saldo, con motivo: deja de bloquear
+                        estado, texto, tono = "autorizado", "Entrega autorizada sin saldo", "ambar"
+                        avisos.append("Motivo: " + (_sel_m.get("motivo_sin_saldo") or "sin detalle"))
+                    if tono != "rojo" and estado != "autorizado":
+                        if st is not None and st["libre"] < 0:
+                            avisos.append(f"Stock reservado: {_fmt_num(st['comprometido'] + st['devengado'])} para {_fmt_num(st['fisico'])} físicos")
+                        if bod not in ("02", ""):
+                            avisos.append(f"Sale de la bodega {bod}, no de la 02")
+                        if not tiene_ficha:
+                            avisos.append("Sin ficha logística: el peso no se cuenta")
+                        if saldo is None or st is None:
+                            avisos.append("No se pudo verificar en el ERP")
+                        if avisos:
+                            estado, texto, tono = "revisar", "Revisar antes de entregar", "ambar"
+                # contadores
+                if estado == "ok":
+                    cont["listos"] += 1
+                elif tono == "rojo":
+                    cont["bloqueados"] += 1
+                elif estado in ("revisar", "autorizado"):
+                    cont["revisar"] += 1
+                elif estado == "entregado":
+                    cont["ya_entregados"] += 1
+                else:
+                    cont["no_incluidos"] += 1
+                if incluida and a_retirar > 0:
+                    cont["unidades"] += a_retirar
+                    if not tiene_ficha:
+                        cont["sin_ficha"] += 1
+                lineas.append({
+                    "sku": le.get("sku"), "nombre": le.get("nombre") or p.get("descripcion") or "",
+                    "nulido": le.get("nulido"), "bodega": bod,
+                    "facturado": le.get("facturado"), "saldo": saldo, "consumido": le.get("consumido"),
+                    "nota_credito": le.get("nota_credito") or 0,
+                    "a_retirar": a_retirar, "incluida": incluida,
+                    "marcada_sin_saldo": bool((sel_rows.get((d["id"], sku_u)) or {}).get("marcada_sin_saldo")),
+                    "stock": st, "consumos": le.get("consumos") or [],
+                    "tiene_ficha": tiene_ficha,
+                    "peso_unit": p.get("peso_unit_kg"), "peso_total": p.get("peso_total") if incluida else None,
+                    "vol_total": p.get("vol_total") if incluida else None,
+                    "peso_vol_total": p.get("peso_vol_total") if incluida else None,
+                    "estado": estado, "estado_txt": texto, "tono": tono, "avisos": avisos,
+                })
+            doc_guias = []
+            for l in lineas:
+                for c in l["consumos"]:
+                    k = (c["tipo"], c["numero"])
+                    if k not in [(x["tipo"], x["numero"]) for x in doc_guias]:
+                        doc_guias.append({"tipo": c["tipo"], "label": c["label"], "numero": c["numero"], "fecha": c["fecha"]})
+            out_docs.append({
+                "doc_id": d["id"], "tipo": tipo, "numero": numero, "fecha": erp.get("fecha") or "",
+                "erp_ok": bool(erp.get("ok")), "erp_error": None if erp.get("ok") else erp.get("error"),
+                "guias_ok": bool(erp.get("guias_ok")), "consumos": doc_guias,
+                "otros_retiros": otros.get((tipo, numero), []),
+                "lineas": lineas, "servicios": servicios,
+            })
+        # ── Veredicto general ───────────────────────────────────────
+        tot = consolidado.get("totales") or {}
+        if not docs:
+            veredicto = {"estado": "vacio", "titulo": "Falta la factura o boleta",
+                         "detalle": "Agrega el documento del ERP para ver qué se retira."}
+        elif cont["bloqueados"]:
+            veredicto = {"estado": "bloqueado", "titulo": "No se puede entregar todavía",
+                         "detalle": f"{cont['bloqueados']} producto{'s' if cont['bloqueados'] != 1 else ''} con problema: revisa las filas en rojo."}
+        elif cont["listos"] + cont["revisar"] == 0:
+            veredicto = {"estado": "vacio", "titulo": "No hay productos para retirar",
+                         "detalle": "Todo ya fue entregado o no se marcó nada para retirar."}
+        elif cont["revisar"]:
+            veredicto = {"estado": "revisar", "titulo": "Se puede entregar, revisando los avisos",
+                         "detalle": f"{cont['revisar']} producto{'s' if cont['revisar'] != 1 else ''} con aviso en ámbar."}
+        else:
+            veredicto = {"estado": "ok", "titulo": "Listo para entregar",
+                         "detalle": "Todo lo marcado tiene saldo y stock en bodega."}
+        if erp_caido:
+            veredicto["erp_caido"] = True
+        return {
+            "ok": True, "rid": rid, "verificado": _now_chile().strftime("%d/%m/%Y %H:%M"),
+            "veredicto": veredicto, "contadores": cont, "docs": out_docs,
+            "totales": {"unidades": cont["unidades"],
+                        "peso_total_kg": tot.get("peso_total_kg") or 0.0,
+                        "vol_total_m3": tot.get("vol_total_m3") or 0.0,
+                        "peso_vol_total_kg": tot.get("peso_vol_total_kg") or 0.0},
+        }
+
+    def _fmt_num(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return str(v)
+        return str(int(f)) if f == int(f) else f"{f:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
     @app.route("/retiros/<int:rid>/docs/<int:doc_id>/lineas", methods=["POST"])
     @require_permission("retiros")
     def pickup_doc_lineas_guardar(rid, doc_id):
@@ -7063,10 +7484,38 @@ def register_pickup_routes(app, ctx):
         except Exception as exc:
             return jsonify({"ok": False, "error": f"Error al guardar: {str(exc)[:200]}"}), 500
 
+        # Ficha v4: "Entregar igual…" en una línea sin saldo exige motivo y
+        # queda con nombre y hora (mismas columnas que usa el buscador del
+        # ERP). Las líneas que se desmarcan limpian la marca.
+        _u_sel = getattr(g, "user", None) or {}
+        _quien_sel = _u_sel.get("nombre") or _u_sel.get("username") or "interno"
+        _motivos_log = []
+        for li in lineas_in:
+            if "marcada_sin_saldo" not in li:
+                continue
+            _sku_m = (li.get("sku") or "").strip()[:80]
+            if not _sku_m:
+                continue
+            _marca = 1 if li.get("marcada_sin_saldo") else 0
+            _motivo = (li.get("motivo_sin_saldo") or "").strip()[:500] or None
+            if _marca and not _motivo:
+                continue  # sin motivo no se marca (el front lo pide con ilusPrompt)
+            try:
+                mysql_execute(
+                    "UPDATE pickup_doc_lineas SET marcada_sin_saldo=%s, motivo_sin_saldo=%s, "
+                    "sin_saldo_por=%s, sin_saldo_en=" + ("NOW()" if _marca else "NULL") + " "
+                    "WHERE doc_id=%s AND sku=%s",
+                    (_marca, _motivo if _marca else None, _quien_sel if _marca else None, doc_id, _sku_m))
+                if _marca:
+                    _motivos_log.append(f"{_sku_m}: {_motivo}")
+            except Exception as _e_ms:
+                print(f"[lineas_guardar] marca sin saldo {_sku_m}: {_e_ms}", flush=True)
+
         log_event(rid, "lineas_seleccion", None, None,
                   f"Doc {doc['document_type']} {doc['document_number']}: "
                   f"selección granular guardada ({len(upsert_rows)} líneas, "
-                  f"{sum(1 for r in upsert_rows if r[-2])} incluidas)",
+                  f"{sum(1 for r in upsert_rows if r[-2])} incluidas)"
+                  + (f" · entregar sin saldo — {'; '.join(_motivos_log)}" if _motivos_log else ""),
                   "interno")
 
         # Recalcular totales del retiro tomando en cuenta selecciones
@@ -9032,6 +9481,33 @@ def register_pickup_routes(app, ctx):
         except (TypeError, ValueError):
             _expiry_h = 48
         _expires_at = (_now_chile() + timedelta(hours=_expiry_h)).strftime("%Y-%m-%d %H:%M:%S")
+        # FIX 2026-09-23 (ficha v4, "Cambiar horario"): re-proponer sobre una
+        # cita YA CONFIRMADA dejaba confirmed_date/time viejos → la ficha seguía
+        # mostrando "Agenda confirmada" con la fecha vieja, el retiro ocupaba
+        # el cupo viejo y no el nuevo (riesgo de sobrecupo) y el recordatorio
+        # de 24 h no volvía a salir. Se deja trazado ANTES de limpiar (REGLA #5).
+        _conf_prev = req.get("confirmed_date")
+        if _conf_prev and str(_conf_prev).strip() not in ("", "None"):
+            try:
+                log_event(rid, "agenda_reprogramada", req.get("status"), "propuesta_enviada",
+                          f"Cita confirmada {_conf_prev} {str(req.get('confirmed_time_from') or '')[:5]}-"
+                          f"{str(req.get('confirmed_time_to') or '')[:5]} queda sin efecto; "
+                          f"nueva propuesta {date} {tf}-{tt}", "interno")
+            except Exception:
+                pass
+            try:
+                mysql_execute(
+                    f"UPDATE `{REQ}` SET confirmed_date=NULL, confirmed_time_from=NULL, "
+                    f"confirmed_time_to=NULL, reminder_24h_sent=0, customer_already_agreed=0 "
+                    f"WHERE id=%s", (rid,))
+            except Exception as _e_rc:
+                print(f"[propuesta_core] limpiar confirmada rid={rid}: {_e_rc}", flush=True)
+            try:
+                mysql_execute(
+                    f"UPDATE `{REQ}` SET manual_accept_por=NULL, manual_accept_en=NULL, "
+                    f"manual_accept_motivo=NULL WHERE id=%s", (rid,))
+            except Exception:
+                pass  # columnas manual_accept_* pueden no existir aún
         mysql_execute(
             f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() "
             f"WHERE request_id=%s AND status='pending'", (rid,)
@@ -9123,6 +9599,13 @@ def register_pickup_routes(app, ctx):
         if not req:
             if is_ajax: return jsonify({"ok": False, "error": "Retiro no encontrado"}), 404
             return redirect(url_for("pickup_dashboard"))
+
+        # Ficha v4 (2026-09-23): un retiro terminado no se re-agenda — antes
+        # se podía mandar una propuesta nueva a un retiro ya retirado/cerrado.
+        if (req.get("status") or "") in ("retirada", "cerrada", "rechazada", "fallida"):
+            return _resp_err("Este retiro ya está terminado "
+                             f"({PICKUP_STATUS.get(req.get('status'), req.get('status'))}): "
+                             "no se puede cambiar su agenda.", 409)
 
         # WORKFLOW: la propuesta requiere documentación cargada.
         # Daniel 2026-06-15: si el retiro YA tiene documentos asociados NO
