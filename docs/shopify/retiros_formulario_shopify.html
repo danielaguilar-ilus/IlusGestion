@@ -56,15 +56,32 @@
       if (extra.length) frame.src = ORIGEN + '/retiros/solicitar?embed=1&' + extra.join('&');
     } catch (e) { /* navegador antiguo: el formulario abre vacío */ }
 
+    // Alto del encabezado fijo de la tienda (menú pegado arriba), para que
+    // los avisos del formulario no queden escondidos detrás de él
+    function encabezado() {
+      if (!document.elementsFromPoint) return 0;
+      var max = 0;
+      var els = document.elementsFromPoint(window.innerWidth / 2, 2);
+      for (var i = 0; i < els.length; i++) {
+        for (var a = els[i]; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+          if (a === frame) break;
+          var pos = window.getComputedStyle(a).position;
+          if (pos === 'fixed' || pos === 'sticky') { max = Math.max(max, a.getBoundingClientRect().bottom); break; }
+        }
+      }
+      return Math.min(Math.max(0, max), 220);
+    }
+
     // Le cuenta al formulario qué parte de él está a la vista (para ubicar
     // avisos y ventanas donde el cliente los vea)
     function vista() {
       if (!frame.contentWindow) return;
       var r = frame.getBoundingClientRect();
       var vh = window.innerHeight || document.documentElement.clientHeight;
-      var alto = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+      var arriba = Math.max(r.top, encabezado());
+      var alto = Math.min(r.bottom, vh) - arriba;
       if (alto <= 0) return;
-      frame.contentWindow.postMessage({ ilusRetiros: 'vista', top: Math.max(0, -r.top), alto: alto }, ORIGEN);
+      frame.contentWindow.postMessage({ ilusRetiros: 'vista', top: arriba - r.top, alto: alto }, ORIGEN);
     }
 
     window.addEventListener('message', function (ev) {
@@ -80,7 +97,7 @@
         // Llevar al cliente al campo que falta completar
         var r = frame.getBoundingClientRect();
         var vh = window.innerHeight || document.documentElement.clientHeight;
-        var margen = Math.max(90, (vh - (d.alto || 0)) / 2);
+        var margen = Math.max(encabezado() + 24, (vh - (d.alto || 0)) / 2);
         var destino = (window.pageYOffset || document.documentElement.scrollTop) + r.top + d.y - margen;
         window.scrollTo({ top: Math.max(0, destino), behavior: 'smooth' });
       }
