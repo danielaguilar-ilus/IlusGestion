@@ -115258,10 +115258,18 @@ def repstock_actividad():
         _inicio_hasta_utc, fin_utc = _hoy_chile_rango_utc(hasta)
 
         rows = mysql_fetchall(
+            # COALESCE(reactivated_at, created_at): un repuesto reactivado
+            # (ver repstock_crear, fix SKU eliminado) cuenta como trabajo
+            # del día en que VOLVIÓ a la bodega, no del día original en
+            # que se creó por primera vez -- si no, "Avance de carga"
+            # mostraría "0 cargados hoy" mientras alguien reactiva 40
+            # repuestos en vivo, exactamente el bug que este panel debía
+            # ayudar a detectar.
             "SELECT COALESCE(NULLIF(TRIM(created_by),''),'Sin registrar') AS autor, "
-            "       created_at "
+            "       COALESCE(reactivated_at, created_at) AS created_at "
             "  FROM mant_repuestos_stock "
-            " WHERE activo=1 AND created_at >= %s AND created_at < %s",
+            " WHERE activo=1 AND COALESCE(reactivated_at, created_at) >= %s "
+            "   AND COALESCE(reactivated_at, created_at) < %s",
             (inicio_utc, fin_utc)
         ) or []
 
@@ -115687,10 +115695,14 @@ def repstock_crear():
             if reactivar_id:
                 # No se toca created_by/created_at -- el origen real del
                 # registro no cambia solo porque alguien más lo reactivó.
+                # reactivated_at SÍ se marca a AHORA -- "Avance de carga"
+                # (repstock_actividad) lo usa para contar esto como trabajo
+                # de HOY, que es lo que realmente pasó.
                 cols_upd = [c for c in cols if c != "created_by"]
                 set_sql = ", ".join(f"{c}=%s" for c in cols_upd)
                 cur.execute(
-                    f"UPDATE mant_repuestos_stock SET {set_sql}, activo=1, updated_by=%s "
+                    f"UPDATE mant_repuestos_stock SET {set_sql}, activo=1, "
+                    f"       updated_by=%s, reactivated_at=NOW() "
                     f" WHERE id=%s",
                     tuple(fields[c] for c in cols_upd) + (current_username(), reactivar_id)
                 )
@@ -129447,8 +129459,23 @@ def _ensure_repuestos_bodega_tables():
                 "ALTER TABLE mant_repuestos_stock "
                 "ADD INDEX idx_repstock_modelo_pendiente (modelo_pendiente)"
             )
+        # 🔧 2026-09-24 (fix del bug de SKU eliminado, ver repstock_crear):
+        # cuando se reactiva un repuesto, created_at NO se toca (preserva
+        # el origen real, REGLA de evidencia) -- pero eso significa que
+        # "Avance de carga" (repstock_actividad, bucketiza por created_at)
+        # no contaba la reactivación como trabajo de HOY, aunque la
+        # persona sí trabajó hoy de verdad. reactivated_at guarda ESE
+        # momento aparte, solo para saber "cuándo volvió a la bodega".
+        if "reactivated_at" not in _cols_pend:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN reactivated_at "
+                "DATETIME NULL "
+                "COMMENT 'Cuando se reactivo (repstock_crear, choque de SKU contra "
+                "un repuesto inactivo) -- NULL si nunca se reactivo. created_at NO "
+                "se toca al reactivar, este campo es aparte'"
+            )
     except Exception as e:
-        print(f"[ensure_repuestos_stock] ALTER modelo_pendiente: {e}", flush=True)
+        print(f"[ensure_repuestos_stock] ALTER modelo_pendiente/reactivated_at: {e}", flush=True)
 
     try:
         mysql_execute("""
