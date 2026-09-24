@@ -92,6 +92,72 @@ _heroPlay();
 })();
 
 // ════════════════════════════════════════════════════════
+//  MODO EMBEBIDO (Shopify, 2026-09-24)
+//  /retiros/solicitar?embed=1 vive dentro de un <iframe> en ilusfitness.com
+//  (ver docs/shopify/retiros_formulario_shopify.html). Ahí:
+//   · el seguimiento se abre en PESTAÑA NUEVA: navegar dentro del iframe
+//     dejaría la página del seguimiento encajonada en la tienda;
+//   · el iframe no tiene scroll propio (la tienda lo estira a su alto), así
+//     que modales, avisos y "scrollIntoView" se ubican con la zona visible
+//     que nos informa la tienda por postMessage.
+// ════════════════════════════════════════════════════════
+const _ES_EMBED = document.documentElement.classList.contains('is-embed');
+
+function _irA(url){
+  if (!url || /^\s*javascript:/i.test(url)) return;
+  if (_ES_EMBED){
+    const w = window.open(url, '_blank');
+    if (w){ try { w.opener = null; } catch(_){} return; }
+  }
+  location.href = url;
+}
+
+(function(){
+  if (!_ES_EMBED || window.parent === window) return;
+  const root = document.documentElement;
+  let _ultimoAlto = 0;
+  function _avisarAlto(){
+    // Alto del contenido (no del viewport del iframe: eso crecería en bucle)
+    const main = document.querySelector('main.shell');
+    const fondo = main ? main.getBoundingClientRect().bottom + window.scrollY : document.body.scrollHeight;
+    const alto = Math.ceil(fondo + 28);
+    if (Math.abs(alto - _ultimoAlto) < 2) return;
+    _ultimoAlto = alto;
+    window.parent.postMessage({ ilusRetiros: 'alto', alto: alto }, '*');
+  }
+  if ('ResizeObserver' in window){
+    new ResizeObserver(_avisarAlto).observe(document.body);
+  }
+  window.addEventListener('load', _avisarAlto);
+  setInterval(_avisarAlto, 1500);   // red de seguridad (fuentes/imágenes tardías)
+  _avisarAlto();
+
+  // La tienda nos dice qué franja del iframe está a la vista. Mientras no
+  // llegue ese mensaje (tienda sin el script) el iframe tiene alto fijo con
+  // scroll propio y todo funciona como una página normal.
+  let _tiendaConectada = false;
+  window.addEventListener('message', function(ev){
+    const d = ev.data;
+    if (!d || d.ilusRetiros !== 'vista') return;
+    const top = Number(d.top), alto = Number(d.alto);
+    if (!isFinite(top) || !isFinite(alto) || alto <= 0) return;
+    _tiendaConectada = true;
+    root.style.setProperty('--ilus-vp-top', Math.max(0, Math.round(top)) + 'px');
+    root.style.setProperty('--ilus-vp-h', Math.round(alto) + 'px');
+  });
+  window.parent.postMessage({ ilusRetiros: 'hola' }, '*');
+
+  // scrollIntoView dentro del iframe no siempre mueve la página de la tienda:
+  // se le pide a la tienda que se desplace hasta el elemento.
+  const _nativo = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function(){
+    if (!_tiendaConectada) return _nativo.apply(this, arguments);
+    const r = this.getBoundingClientRect();
+    window.parent.postMessage({ ilusRetiros: 'ir', y: Math.round(r.top + window.scrollY), alto: Math.round(r.height) }, '*');
+  };
+})();
+
+// ════════════════════════════════════════════════════════
 //  IR A SEGUIMIENTO (banner mini)
 // ════════════════════════════════════════════════════════
 function irASeguimiento(){
@@ -106,7 +172,7 @@ function irASeguimiento(){
   }
   // Si es URL completa, redirige tal cual; si es código, redirige a búsqueda
   if (v.startsWith('http') || v.includes('/retiros/seguimiento/')){
-    location.href = v;
+    _irA(v);
     return;
   }
   // FIX 2026-06-09: los códigos nuevos son ALFANUMÉRICOS (ej: RET-CCE24P).
@@ -116,10 +182,10 @@ function irASeguimiento(){
   // Acepta "RET-7KQ2MX", "RET7KQ2MX" o solo "7KQ2MX" (antes sin "RET-" caía
   // a la ruta de token y mostraba "Solicitud no encontrada" en texto plano).
   if (/^(RET[-_]?)?[A-Z0-9]{4,12}$/.test(code)){
-    location.href = '/retiros/buscar?code=' + encodeURIComponent(code);
+    _irA('/retiros/buscar?code=' + encodeURIComponent(code));
   } else {
     // asumimos token
-    location.href = '/retiros/seguimiento/' + encodeURIComponent(v);
+    _irA('/retiros/seguimiento/' + encodeURIComponent(v));
   }
 }
 
@@ -1367,10 +1433,11 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
           '  <div style="font-family:\'Bebas Neue\',\'Inter\',sans-serif;font-size:2.6rem;font-weight:900;color:#fff;letter-spacing:.05em;line-height:1;text-shadow:0 2px 14px rgba(0,0,0,.5)">' + safeCode + '</div>' +
           '  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px">' +
           '    <button type="button" onclick="copiarCodigoRet(this)" style="min-height:44px;padding:10px 18px;border-radius:10px;border:1.5px solid rgba(255,255,255,.4);background:rgba(255,255,255,.08);color:#fff;font-weight:800;font-size:.86rem;cursor:pointer"><i class="bi bi-clipboard me-1"></i>Copiar código</button>' +
-          '    <button type="button" onclick="irAlSeguimientoAhora()" style="min-height:44px;padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(180deg,#dc2626 0%,#b91c1c 100%);color:#fff;font-weight:800;font-size:.86rem;cursor:pointer;box-shadow:0 8px 18px -6px rgba(220,38,38,.55)"><i class="bi bi-arrow-right-circle me-1"></i>Ir al seguimiento ahora</button>' +
+          '    <button type="button" onclick="irAlSeguimientoAhora()" style="min-height:44px;padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(180deg,#dc2626 0%,#b91c1c 100%);color:#fff;font-weight:800;font-size:.86rem;cursor:pointer;box-shadow:0 8px 18px -6px rgba(220,38,38,.55)"><i class="bi bi-arrow-right-circle me-1"></i>' + (_ES_EMBED ? 'Ver mi seguimiento' : 'Ir al seguimiento ahora') + '</button>' +
           '  </div>' +
           '  <div style="font-size:.82rem;color:rgba(255,255,255,.75);margin-top:14px;line-height:1.45">Recibirás un email de confirmación en los próximos minutos.</div>' +
-          '  <div style="font-size:.74rem;color:rgba(255,255,255,.5);margin-top:6px">Te llevamos al seguimiento en unos segundos…</div>' +
+          '  <div style="font-size:.74rem;color:rgba(255,255,255,.5);margin-top:6px">' +
+               (_ES_EMBED ? 'El enlace de seguimiento también llega a tu correo.' : 'Te llevamos al seguimiento en unos segundos…') + '</div>' +
           '</div>';
       }
       // Reemplazar el texto principal por un check
@@ -1378,10 +1445,15 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
       if (t) t.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a;margin-right:6px"></i>Recibido';
     }
 
-    // 6 s: tiempo real para leer y copiar el código antes del redirect
-    setTimeout(() => {
-      window.location.href = window._ilusTrackingUrl;
-    }, 6000);
+    // 6 s: tiempo real para leer y copiar el código antes del redirect.
+    // Embebido en la tienda NO se redirige solo: el navegador bloquea abrir
+    // pestañas sin un toque del cliente, y dentro del iframe el seguimiento
+    // quedaría encajonado. El cliente toca "Ver mi seguimiento".
+    if (!_ES_EMBED){
+      setTimeout(() => {
+        window.location.href = window._ilusTrackingUrl;
+      }, 6000);
+    }
   }
 
   // Enviar por fetch — el backend detecta X-Requested-With y responde JSON
@@ -1483,7 +1555,7 @@ function copiarCodigoRet(btnEl){
   }
 }
 function irAlSeguimientoAhora(){
-  window.location.href = window._ilusTrackingUrl || '/retiros';
+  _irA(window._ilusTrackingUrl || '/retiros');
 }
 
 document.addEventListener('DOMContentLoaded', () => {

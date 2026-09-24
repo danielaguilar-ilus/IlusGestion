@@ -6447,9 +6447,15 @@ def _perf_static_cache_and_gzip(resp):
             )
         if _es_soporte_publico:
             resp.headers.pop("X-Frame-Options", None)
+            # + Shopify (2026-09-24): el editor de la tienda previsualiza la
+            # página desde *.myshopify.com dentro de admin.shopify.com; sin
+            # estos dos, el equipo de e-commerce veía el formulario bloqueado
+            # al armar la página y creía que estaba roto. Son páginas públicas
+            # sin sesión: embeberlas no expone nada del usuario.
             resp.headers["Content-Security-Policy"] = (
                 "frame-ancestors 'self' https://ilusfitness.com "
-                "https://www.ilusfitness.com"
+                "https://www.ilusfitness.com https://*.myshopify.com "
+                "https://admin.shopify.com"
             )
         elif "X-Frame-Options" not in resp.headers:
             resp.headers["X-Frame-Options"] = "SAMEORIGIN"

@@ -1,0 +1,91 @@
+<!--
+  ════════════════════════════════════════════════════════════════════
+  ILUS Fitness · Formulario de retiro en bodega · bloque para Shopify
+  ════════════════════════════════════════════════════════════════════
+
+  CÓMO PUBLICARLO
+  1. Shopify › Tienda online › Personalizar › crear una página nueva
+     (ej. "Retiro en bodega", queda en ilusfitness.com/pages/retiro-en-bodega).
+  2. Agregar una sección "Liquid personalizado" (Custom Liquid) y pegar
+     TODO este bloque, desde el primer <div> hasta el último </script>.
+     (También funciona pegado en el editor HTML de la página: botón "<>").
+  3. Guardar. No hay que tocar nada más.
+
+  QUÉ HACE
+  - Muestra el formulario oficial de retiros de ILUS Fitness. Es el mismo
+    del sistema, así que cualquier mejora que hagamos se ve sola en la
+    tienda: nunca hay que volver a pegar este código.
+  - Se estira al alto del formulario (sin doble scroll) y funciona en
+    celular.
+  - Si el link de la página trae datos del pedido, el formulario se abre
+    completo. Ej. en el correo de confirmación o en la página de gracias:
+      https://ilusfitness.com/pages/retiro-en-bodega?tipo=pedido&numero=1136&email=cliente@correo.cl
+    Acepta: tipo, numero, nombre, email, telefono, rut.
+  - No usa claves ni contraseñas: no hay nada privado en este código.
+  ════════════════════════════════════════════════════════════════════
+-->
+<div id="ilus-retiros" style="max-width:1180px;margin:0 auto;">
+  <iframe
+    id="ilus-retiros-frame"
+    src="https://ilus-app-469212710544.southamerica-west1.run.app/retiros/solicitar?embed=1"
+    title="Agenda tu retiro en bodega · ILUS Fitness"
+    allow="clipboard-write"
+    style="display:block;width:100%;height:90vh;min-height:760px;border:0;background:transparent;"
+  ></iframe>
+  <p style="text-align:center;font-size:13px;color:#6b7280;margin:10px 0 0;">
+    ¿No ves el formulario?
+    <a href="https://ilus-app-469212710544.southamerica-west1.run.app/retiros/solicitar"
+       target="_blank" rel="noopener" style="color:#dc2626;font-weight:600;">Ábrelo aquí</a>
+  </p>
+</div>
+<script>
+  (function () {
+    var ORIGEN = 'https://ilus-app-469212710544.southamerica-west1.run.app';
+    var frame = document.getElementById('ilus-retiros-frame');
+    if (!frame || !window.postMessage) return;
+
+    // Datos del pedido que vienen en el link de esta página → formulario prellenado
+    try {
+      var permitidos = ['tipo', 'numero', 'pedido', 'nombre', 'email', 'telefono', 'rut'];
+      var params = new URLSearchParams(window.location.search);
+      var extra = [];
+      permitidos.forEach(function (k) {
+        var v = params.get(k);
+        if (v) extra.push(encodeURIComponent(k) + '=' + encodeURIComponent(v.slice(0, 160)));
+      });
+      if (extra.length) frame.src = ORIGEN + '/retiros/solicitar?embed=1&' + extra.join('&');
+    } catch (e) { /* navegador antiguo: el formulario abre vacío */ }
+
+    // Le cuenta al formulario qué parte de él está a la vista (para ubicar
+    // avisos y ventanas donde el cliente los vea)
+    function vista() {
+      if (!frame.contentWindow) return;
+      var r = frame.getBoundingClientRect();
+      var vh = window.innerHeight || document.documentElement.clientHeight;
+      var alto = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+      if (alto <= 0) return;
+      frame.contentWindow.postMessage({ ilusRetiros: 'vista', top: Math.max(0, -r.top), alto: alto }, ORIGEN);
+    }
+
+    window.addEventListener('message', function (ev) {
+      if (ev.origin !== ORIGEN || !ev.data || !ev.data.ilusRetiros) return;
+      var d = ev.data;
+      if (d.ilusRetiros === 'alto' && typeof d.alto === 'number' && d.alto > 200) {
+        frame.style.minHeight = '0';
+        frame.style.height = Math.ceil(d.alto) + 'px';
+        vista();
+      } else if (d.ilusRetiros === 'hola') {
+        vista();
+      } else if (d.ilusRetiros === 'ir' && typeof d.y === 'number') {
+        // Llevar al cliente al campo que falta completar
+        var r = frame.getBoundingClientRect();
+        var vh = window.innerHeight || document.documentElement.clientHeight;
+        var margen = Math.max(90, (vh - (d.alto || 0)) / 2);
+        var destino = (window.pageYOffset || document.documentElement.scrollTop) + r.top + d.y - margen;
+        window.scrollTo({ top: Math.max(0, destino), behavior: 'smooth' });
+      }
+    });
+    window.addEventListener('scroll', vista, { passive: true });
+    window.addEventListener('resize', vista);
+  })();
+</script>

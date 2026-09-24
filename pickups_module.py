@@ -3397,7 +3397,8 @@ def register_pickup_routes(app, ctx):
                     _anuncios_err = [dict(r) for r in (_anun_rows or [])]
                 except Exception:
                     _anuncios_err = []
-                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs, announcements=_anuncios_err, form_t0=int(time.time()))
+                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs, announcements=_anuncios_err, form_t0=int(time.time()),
+                                       embed=(request.values.get("embed") == "1"))
 
             # Adjuntos DESACTIVADOS en el envío público (Daniel 2026-09-24, "desactivar
             # ambas"): el formulario no tiene campo de archivos, pero la ruta aceptaba
@@ -3667,6 +3668,8 @@ def register_pickup_routes(app, ctx):
             carousel_images=carousel_images,
             announcements=anuncios,
             form_t0=int(time.time()),
+            # Tienda Shopify: iframe sin portada (docs/shopify/retiros_formulario_shopify.html)
+            embed=(request.args.get("embed") == "1"),
         ))
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"

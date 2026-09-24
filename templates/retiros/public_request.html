@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang="es">
+{# embed=1 (2026-09-24): el formulario vive en un iframe dentro de la tienda
+   Shopify (docs/shopify/retiros_formulario_shopify.html). Se ocultan la
+   portada, las franjas de marketing y el footer: la tienda ya tiene los suyos. #}
+<html lang="es"{% if embed %} class="is-embed"{% endif %}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -31,7 +34,10 @@
   <script>
     // Agrega class js-reveal al body solo si el browser soporta IntersectionObserver.
     // De esta forma, browsers sin IO muestran los pasos visibles desde el inicio.
-    if (document.documentElement.classList.contains('has-io')){
+    // Embebido: sin animación de aparición (el iframe no scrollea solo y
+    // los pasos podrían quedar invisibles).
+    if (document.documentElement.classList.contains('has-io')
+        && !document.documentElement.classList.contains('is-embed')){
       document.body.classList.add('js-reveal');
     }
   </script>
@@ -301,6 +307,7 @@
         <input type="text" id="hp_ilus_extra" name="hp_ilus_extra" tabindex="-1" autocomplete="off" value="">
       </div>
       <input type="hidden" name="ilus_t0" value="{{ form_t0 or '' }}">
+      {% if embed %}<input type="hidden" name="embed" value="1">{% endif %}
       <div class="form-head">
         <div>
           <h3>AGENDAR TU RETIRO</h3>

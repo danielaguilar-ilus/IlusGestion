@@ -1303,3 +1303,38 @@
       display:inline-block;margin-top:6px;background:#fff8e1;border:1px solid #f59e0b;color:#78350f;
       border-radius:8px;padding:6px 10px;font-size:.8rem;font-weight:700;cursor:pointer;min-height:36px;
     }
+
+    /* ════════════════════════════════════════════════════════════
+       MODO EMBEBIDO EN LA TIENDA SHOPIFY (?embed=1, 2026-09-24)
+       La tienda ya tiene su propio encabezado y pie: acá solo va lo útil
+       (cómo funciona, buscar seguimiento, el formulario y la bodega).
+       El iframe no scrollea solo (la tienda lo estira), así que todo lo que
+       es position:fixed (envío, modales, avisos) se ubica en la franja
+       visible que informa la tienda: --ilus-vp-top / --ilus-vp-h.
+       ════════════════════════════════════════════════════════════ */
+    html.is-embed, html.is-embed body{min-height:0!important;height:auto!important}
+    html.is-embed body{background:transparent!important;background-attachment:scroll!important}
+    html.is-embed .mini-bar,
+    html.is-embed .hero-wrap,
+    html.is-embed .ilus-marquee,
+    html.is-embed .stats-strip,
+    html.is-embed .footer{display:none!important}
+    html.is-embed .shell{padding:8px 14px 12px}
+    html.is-embed body.js-reveal .step-section{opacity:1;transform:none}
+
+    /* Enviar: dentro del iframe el botón fijo al fondo quedaría al final del
+       iframe, no de la pantalla → vuelve a su lugar al final del formulario. */
+    html.is-embed #submitBtn.submit-btn{
+      position:relative!important;left:auto!important;right:auto!important;bottom:auto!important;
+      width:100%!important;z-index:auto!important;
+    }
+    html.is-embed #form-solicitud .form-body{padding-bottom:28px!important}
+
+    html.is-embed .spartan-overlay,
+    html.is-embed .ilus-overlay,
+    html.is-embed .ilus-sheet-overlay,
+    html.is-embed .modal{
+      top:var(--ilus-vp-top,0px)!important;bottom:auto!important;
+      height:var(--ilus-vp-h,100vh)!important;
+    }
+    html.is-embed .ilus-toast-wrap{top:calc(var(--ilus-vp-top,0px) + 16px)!important}
