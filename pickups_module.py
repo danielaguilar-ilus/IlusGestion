@@ -1205,28 +1205,33 @@ def register_pickup_routes(app, ctx):
 
         return True, ""
 
-    def proposal_is_vigente(proposal, now_chile=None):
+    def proposal_is_vigente(proposal, now_chile=None, exigir_bloque_futuro=False):
         """True si la propuesta sigue 'pending' y NO venció (expires_at).
-        Filas viejas sin expires_at se consideran vigentes (compat)."""
+        Filas viejas sin expires_at se consideran vigentes (compat).
+
+        exigir_bloque_futuro=True (solo el CLIENTE confirmando desde su link):
+        un bloque que ya empezó no se puede confirmar aunque falten horas para
+        las 48 h (auditoría 2026-09-24: "mañana 09:00" propuesto a las 15:00 y
+        confirmado al día siguiente a las 14:00). Los flujos del OPERADOR no lo
+        usan: "marcar aceptada" cuando el cliente confirmó por teléfono y llega
+        a la hora debe seguir funcionando."""
         if not proposal:
             return False
         if (proposal.get("status") or "") != "pending":
             return False
         now = now_chile or _now_chile()
-        # Un bloque que ya empezó no se puede confirmar aunque falten horas para
-        # las 48 h de vigencia (auditoría 2026-09-24: "mañana 09:00" propuesto a
-        # las 15:00 y confirmado al día siguiente a las 14:00).
-        try:
-            _d_pv = proposal.get("date")
-            _tf_pv = proposal.get("time_from")
-            if _d_pv and _tf_pv is not None:
-                if not hasattr(_d_pv, "year"):
-                    _d_pv = datetime.strptime(str(_d_pv)[:10], "%Y-%m-%d").date()
-                _hh_pv, _mm_pv = [int(x) for x in _td_to_hhmm(_tf_pv).split(":")[:2]]
-                if datetime(_d_pv.year, _d_pv.month, _d_pv.day, _hh_pv, _mm_pv) <= now:
-                    return False
-        except Exception:
-            pass
+        if exigir_bloque_futuro:
+            try:
+                _d_pv = proposal.get("date")
+                _tf_pv = proposal.get("time_from")
+                if _d_pv and _tf_pv is not None:
+                    if not hasattr(_d_pv, "year"):
+                        _d_pv = datetime.strptime(str(_d_pv)[:10], "%Y-%m-%d").date()
+                    _hh_pv, _mm_pv = [int(x) for x in _td_to_hhmm(_tf_pv).split(":")[:2]]
+                    if datetime(_d_pv.year, _d_pv.month, _d_pv.day, _hh_pv, _mm_pv) <= now:
+                        return False
+            except Exception:
+                pass
         exp = proposal.get("expires_at")
         if not exp:
             return True
@@ -3787,7 +3792,7 @@ def register_pickup_routes(app, ctx):
                 # FASE 3 (2026-05-29): la propuesta existe pero pudo VENCER
                 # (expires_at < ahora Chile). NO se puede confirmar una propuesta
                 # vencida — se marca 'expired' y se pide al cliente nueva fecha.
-                if proposal and not proposal_is_vigente(proposal):
+                if proposal and not proposal_is_vigente(proposal, exigir_bloque_futuro=True):
                     try:
                         mysql_execute(
                             f"UPDATE `{PROP}` SET status='expired', answered_at=NOW() WHERE id=%s",
@@ -9928,17 +9933,10 @@ def register_pickup_routes(app, ctx):
             _expiry_h = int(cfg.get("proposal_expiry_hours") or 48)
         except (TypeError, ValueError):
             _expiry_h = 48
-        _expires_dt = _now_chile() + timedelta(hours=_expiry_h)
-        # La propuesta vence a las 48 h o al empezar el bloque, lo que ocurra primero.
-        try:
-            _d_ex = date if hasattr(date, "year") else datetime.strptime(str(date)[:10], "%Y-%m-%d").date()
-            _hh_ex, _mm_ex = [int(x) for x in _td_to_hhmm(tf).split(":")[:2]]
-            _blk_ex = datetime(_d_ex.year, _d_ex.month, _d_ex.day, _hh_ex, _mm_ex)
-            if _blk_ex < _expires_dt:
-                _expires_dt = _blk_ex
-        except Exception:
-            pass
-        _expires_at = _expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+        # 48 h de vigencia. Que el CLIENTE no confirme un bloque ya empezado lo
+        # controla proposal_is_vigente(exigir_bloque_futuro=True) en su confirm;
+        # no se recorta aquí para no bloquear "marcar aceptada" del operador.
+        _expires_at = (_now_chile() + timedelta(hours=_expiry_h)).strftime("%Y-%m-%d %H:%M:%S")
         # FIX 2026-09-23 (ficha v4, "Cambiar horario"): re-proponer sobre una
         # cita YA CONFIRMADA dejaba confirmed_date/time viejos → la ficha seguía
         # mostrando "Agenda confirmada" con la fecha vieja, el retiro ocupaba
