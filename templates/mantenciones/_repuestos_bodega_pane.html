@@ -852,12 +852,14 @@
    siguiendo el skill dataviz del proyecto -- ver palette.md ahí para el
    porqué de cada hex. Nombres siempre completos (REGLA #15). #}
 <style>
-.rba-stats{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
-.rba-stat{flex:1;min-width:120px;background:#f3f4f6;border-radius:12px;padding:14px;text-align:center}
-.rba-stat-n{font-size:1.6rem;font-weight:900;color:#0a0a0a;font-variant-numeric:tabular-nums}
-.rba-stat-l{font-size:.72rem;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+.rba-stats{display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.rba-stat{flex:1;min-width:140px;background:#f3f4f6;border-radius:14px;padding:16px 14px;text-align:center;position:relative}
+.rba-stat-icon{position:absolute;top:12px;right:14px;font-size:1.1rem;color:#c7cbd1}
+.rba-stat-n{font-size:2.1rem;font-weight:900;color:#0a0a0a;font-variant-numeric:tabular-nums;line-height:1.15}
+.rba-stat-l{font-size:.76rem;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.02em}
 .rba-stat-hoy{background:#dcfce7}
 .rba-stat-hoy .rba-stat-n{color:#15803d}
+.rba-stat-hoy .rba-stat-icon{color:#86d5a6}
 .rba-seccion-titulo{font-size:.82rem;font-weight:800;color:#374151;margin-bottom:8px}
 .rba-hoy-lista{display:flex;flex-direction:column;gap:8px;margin-bottom:4px}
 .rba-hoy-card{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #dcfce7;border-left:4px solid #16a34a;border-radius:10px;padding:10px 14px;flex-wrap:wrap}
@@ -886,16 +888,17 @@
 /* ── Gráfico apilado (dataviz: bar ≤24px, gap 2px, categórico fijo) ── */
 .rba-chart-card{margin-bottom:18px}
 .rba-chart-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px}
-.rba-legend{display:flex;flex-wrap:wrap;gap:10px}
-.rba-legend-item{display:flex;align-items:center;gap:5px;font-size:.72rem;font-weight:600;color:#52514e}
-.rba-legend-swatch{width:10px;height:10px;border-radius:2px;flex:none}
+.rba-legend{display:flex;flex-wrap:wrap;gap:12px}
+.rba-legend-item{display:flex;align-items:center;gap:6px;font-size:.78rem;font-weight:700;color:#374151}
+.rba-legend-swatch{width:12px;height:12px;border-radius:3px;flex:none}
 .rba-chart-scroll{overflow-x:auto;background:#fcfcfb;border:1px solid #e5e7eb;border-radius:12px;padding:10px 6px 0;position:relative}
 .rba-chart-svg{display:block}
 .rba-bar-seg{cursor:pointer;transition:filter .1s}
 .rba-bar-seg:hover{filter:brightness(1.08)}
 .rba-axis-line{stroke:#e1e0d9;stroke-width:1}
-.rba-axis-text{fill:#898781;font-size:9.5px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-.rba-day-label{fill:#52514e;font-size:9px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.rba-axis-text{fill:#898781;font-size:10.5px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.rba-day-label{fill:#374151;font-size:10px;font-weight:600;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.rba-bar-total{fill:#0a0a0a;font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 .rba-tooltip{position:fixed;z-index:2000;background:#0a0a0a;color:#fff;font-size:.74rem;border-radius:8px;padding:8px 11px;pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,.25);max-width:220px}
 .rba-tooltip .rba-tt-fecha{font-weight:800;margin-bottom:4px;display:block}
 .rba-tooltip .rba-tt-row{display:flex;align-items:center;gap:6px;white-space:nowrap}
@@ -948,14 +951,17 @@
         <div id="rbaContenido" class="d-none">
           <div class="rba-stats">
             <div class="rba-stat">
+              <i class="bi bi-boxes rba-stat-icon" aria-hidden="true"></i>
               <div class="rba-stat-n" id="rbaTotalN">0</div>
               <div class="rba-stat-l">en el rango</div>
             </div>
             <div class="rba-stat rba-stat-hoy" id="rbaStatHoyCard">
+              <i class="bi bi-lightning-charge-fill rba-stat-icon" aria-hidden="true"></i>
               <div class="rba-stat-n" id="rbaHoyN">0</div>
               <div class="rba-stat-l">cargados hoy <span id="rbaFechaHoy"></span></div>
             </div>
             <div class="rba-stat">
+              <i class="bi bi-people-fill rba-stat-icon" aria-hidden="true"></i>
               <div class="rba-stat-n" id="rbaActivosHoyN">0</div>
               <div class="rba-stat-l">personas activas hoy</div>
             </div>
@@ -3299,8 +3305,8 @@ function rbaRenderChart(dias){
   svg.innerHTML = '';
   if (!dias.length) return;
 
-  const plotH = 200;          // alto del área de barras
-  const padTop = 10, padBottom = 24, padLeft = 8, padRight = 8;
+  const plotH = 220;          // alto del área de barras
+  const padTop = 22, padBottom = 24, padLeft = 8, padRight = 8;
   const slotW = Math.max(28, Math.min(52, Math.floor(900 / dias.length)));
   const barW = Math.min(24, slotW - 8); // spec: barra <=24px, nunca llena el slot
   const gapSeg = 2;            // surface gap entre segmentos apilados
@@ -3342,6 +3348,12 @@ function rbaRenderChart(dias){
     g.appendChild(txt);
   });
 
+  // Etiqueta con el TOTAL encima de cada barra (estilo Power BI, pedido de
+  // Daniel: "algo más potente y entendible... como de Power BI") -- solo
+  // con pocos días en pantalla, si no el número se amontona y estorba más
+  // de lo que ayuda (para eso está el detalle al pasar el mouse y la tabla).
+  const mostrarTotales = dias.length <= 31;
+
   dias.forEach((dia, i) => {
     const xSlot = i * slotW;
     const xBar = xSlot + (slotW - barW) / 2;
@@ -3350,6 +3362,15 @@ function rbaRenderChart(dias){
       .filter(([, v]) => v > 0);
     const total = dia.total || 0;
     if (total > 0){
+      if (mostrarTotales){
+        const lbl = document.createElementNS(ns, 'text');
+        lbl.setAttribute('class', 'rba-bar-total');
+        lbl.setAttribute('x', xBar + barW / 2);
+        lbl.setAttribute('y', yToPx(total) - 5);
+        lbl.setAttribute('text-anchor', 'middle');
+        lbl.textContent = total;
+        g.appendChild(lbl);
+      }
       // 🔧 FIX (revisión 2026-09-24, hallazgo #2): la versión anterior
       // anclaba el hueco de 2px por ABAJO de cada segmento no-top, así
       // que el gap terminaba flotando entre la barra y la línea base en
