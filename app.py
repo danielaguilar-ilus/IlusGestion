@@ -54019,6 +54019,20 @@ def _puede_ot_accion(vid, accion, user=None):
         # 'eliminar' arriba: se consulta has_role_permission() directo a
         # rol_permisos (no g.permissions), porque este `role_raw` puede
         # no ser el del usuario logueado en ESTE request.
+        # 🔒 FIX 2026-09-24 (auditoría a pedido de Daniel: "los técnicos no
+        # ven las ganancias y pérdidas..."): este permiso es configurable
+        # libremente en /admin/roles para CUALQUIER rol, incluido uno de la
+        # familia técnico (tecnico/tecnico_ejecutivo/tecnico_externo) -- si
+        # alguna vez se marca por error, `role` ya viene normalizado por
+        # _rol_familia() más arriba, así que un solo chequeo cierra las 3
+        # variantes de una vez. El comentario original ya decía "NUNCA
+        # técnico: quien ejecuta no decide si se le cobra al cliente" --
+        # esto lo hace cumplirse en código, no solo en el comentario.
+        if role == "tecnico":
+            print(f"[PERM] vid={vid} action=cobertura role={role_raw}->{role} user={username} "
+                  f"-> DENIED (familia tecnico -- nunca ve finanzas, aunque tenga "
+                  f"el permiso ot_finanzas marcado)", flush=True)
+            return False
         try:
             _tiene_permiso_finanzas = has_role_permission(
                 role_raw, "mantenciones", "ot_finanzas"
@@ -100752,7 +100766,7 @@ def _ot_pdf_anexo_max():
         return _OT_PDF_ANEXO_MAX_DEFECTO
 
 
-def _ot_pdf_context(vid, embed_images=False, anexo_completo=False):
+def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False):
     """Construye el contexto COMPLETO para renderizar `mantenciones/ot_pdf.html`.
 
     embed_images=True (2026-07-10, Daniel — urgente): usado SOLO por el
@@ -100770,6 +100784,19 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False):
     `eq_fotos_idx` / `eq_check_resumen`, pero `mant_visita_pdf` no los pasaba,
     así que `paginas_equipos|length` reventaba con un Undefined → HTTP 500 al
     intentar ver la OT. Centralizar evita que se vuelvan a desincronizar.
+
+    publico=True (2026-09-24, Daniel: "el cliente no debe ver nada en
+    absoluto" de costos -- "puede ver cualquier detalle, foto de
+    producto, pero no los costos"): endurece la promesa que hasta ahora
+    dependía SOLO de que los templates nunca referenciaran los campos
+    de dinero (ver _ot_pdf_probatorio, que ya lo declaraba a propósito
+    para /ot-firmada/<token>). Con publico=True, `ctx["visita"]` se
+    limpia de toda columna de costo/margen ANTES de devolver el
+    contexto -- así una plantilla nueva que algún día referencie
+    `visita.costo` por error simplemente no tiene el dato, en vez de
+    depender para siempre de que nadie la escriba. El resto del
+    contenido (equipos, fotos, checklist, hallazgos técnicos) no se
+    toca -- el cliente sigue viendo todo el detalle operativo real.
 
     Devuelve (ctx, status, razones):
       - status == "ok"         → ctx = dict de variables de template
@@ -101492,6 +101519,21 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False):
             "firmante_cliente_rut_fmt": "", "ilus_brand": ILUS_BRAND,
             "ilus_legal": ILUS_LEGAL, "ilus_rut": ILUS_RUT,
         })
+    if publico:
+        # Columnas de dinero de mant_visitas -- MISMA lista que expone
+        # /ot/api/finanzas/<vid> (el endpoint interno de gestión), para
+        # que "qué es financiero" no diverja en dos lugares. modalidad_cobro
+        # queda afuera a propósito: no es un monto, solo decide si el PDF
+        # muestra el bloque genérico "Datos para transferencia" (cuenta de
+        # la empresa) -- eso el cliente SÍ debe verlo.
+        for _k in ("costo", "costo_proveedor", "costo_despacho",
+                   "costo_presupuestado", "costo_real",
+                   "centro_costo", "zz_codigo", "zz_monto", "zz_envio_monto",
+                   "cubierto_por", "garantia_motivo",
+                   "factura_tido", "factura_nudo",
+                   "valor_origen", "estado_facturacion",
+                   "finanzas_at", "finanzas_por"):
+            ctx["visita"].pop(_k, None)
     return ctx, "ok", []
 
 
@@ -102047,7 +102089,12 @@ def ot_publica_firmada(token):
     # tal cual en el HTML; ahora vienen ya convertidas a data-URI, leídas
     # server-side directo de GCS. Bonus: tampoco deja una URL reusable
     # dando vueltas en el HTML entregado al cliente.
-    ctx, status, razones = _ot_pdf_context(vid, embed_images=True)
+    # 🔒 2026-09-24 (Daniel: "el cliente no debe ver nada en absoluto" de
+    # costos -- "puede ver cualquier detalle, foto de producto, pero no
+    # los costos"): publico=True limpia costo/margen/centro de costo del
+    # ctx ANTES de que llegue al template -- ya no depende solo de que
+    # ot_pdf_levantamiento.html / ot_pdf.html nunca los referencien.
+    ctx, status, razones = _ot_pdf_context(vid, embed_images=True, publico=True)
     if status != "ok":
         # La OT existe pero todavía no está cerrada con sus firmas. No se
         # muestra a medias: sería entregarle al cliente un documento que
