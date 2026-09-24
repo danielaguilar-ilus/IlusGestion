@@ -542,6 +542,16 @@ def register_pickup_routes(app, ctx):
             )
         except Exception:
             pass
+        # 2026-09-24 (Daniel: "necesito que esto quede por el front, porque aún
+        # no existe la Sam"): responsable por defecto de las solicitudes que
+        # entran por el formulario público. Se elige en Horarios y alertas.
+        try:
+            mysql_execute(
+                f"ALTER TABLE `{SET}` ADD COLUMN web_responsable_user_id INT NULL "
+                f"COMMENT 'Responsable automático de las solicitudes del formulario público'"
+            )
+        except Exception:
+            pass
 
     # 2026-06-10 — FIX RAÍZ: estas migraciones de boot corren en IMPORT,
     # donde NO hay contexto Flask. get_db() usa `g` → RuntimeError que el
@@ -941,6 +951,7 @@ def register_pickup_routes(app, ctx):
             "hero_image_2": "",
             "hero_image_3": "",
             "notify_emails": "",
+            "web_responsable_user_id": None,
         }
         _SETTINGS_CACHE["row"] = result
         _SETTINGS_CACHE["fetched_at"] = now
@@ -2933,7 +2944,14 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/seguimiento/<token>/mensaje", methods=["POST"])
     @_rate_limited("pickup_msg_publico", max_attempts=40, window_seconds=300, methods=("POST",))
     def pickup_public_mensaje_post(token):
-        """El cliente envía un mensaje desde la pancarta del seguimiento."""
+        """El cliente envía un mensaje desde la pancarta del seguimiento.
+
+        DESACTIVADO 2026-09-24 (Daniel: "desactivar ambas"): el widget se quitó
+        del seguimiento en julio, pero el endpoint seguía abierto y cada POST
+        avisaba a todo el equipo (vía de spam). El canal del cliente es el correo."""
+        return jsonify({"ok": False, "error": "chat_desactivado",
+                        "mensaje": "Para comunicarte con ILUS responde el correo que te enviamos "
+                                   "o escribe a soportetec@sphs.cl."}), 410
         if not token or len(token) < 16 or len(token) > 200 \
                 or not re.match(r"^[A-Za-z0-9_\-]+$", token):
             return jsonify({"ok": False, "error": "invalid_token"}), 400
@@ -3381,7 +3399,10 @@ def register_pickup_routes(app, ctx):
                     _anuncios_err = []
                 return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs, announcements=_anuncios_err, form_t0=int(time.time()))
 
-            files = [f for f in request.files.getlist("attachments") if f and f.filename]
+            # Adjuntos DESACTIVADOS en el envío público (Daniel 2026-09-24, "desactivar
+            # ambas"): el formulario no tiene campo de archivos, pero la ruta aceptaba
+            # 5 × 10 MB por POST que quedaban públicos en el disco en memoria de Cloud Run.
+            files = []
             quality, risk = quality_score(data, packages, signed=True, attachments=len(files))
             token = secrets.token_urlsafe(42)
             if data["whatsapp_phone"]:
@@ -3426,6 +3447,23 @@ def register_pickup_routes(app, ctx):
                     (rid, data["contact_name"], data["customer_rut"], request.remote_addr, (request.user_agent.string or "")[:300]),
                 )
             conn.commit()
+            # Responsable automático (Daniel 2026-09-24, elegido en Horarios y
+            # alertas): con responsable, los avisos por correo del ciclo (nueva
+            # solicitud, confirmación, contrapropuesta, cancelación) le llegan a
+            # esa persona. Va ANTES de lanzar los avisos en segundo plano.
+            try:
+                _wr_uid = cfg.get("web_responsable_user_id")
+                if _wr_uid:
+                    _auth_t_wr = ctx.get("AUTH_TABLE") or "app_users"
+                    _u_wr = mysql_fetchone(
+                        f"SELECT id, nombre, username FROM `{_auth_t_wr}` WHERE id=%s AND active=1",
+                        (int(_wr_uid),)) or {}
+                    if _u_wr.get("id"):
+                        mysql_execute(
+                            f"UPDATE `{REQ}` SET responsable_user_id=%s, responsable_nombre=%s WHERE id=%s",
+                            (int(_u_wr["id"]), (_u_wr.get("nombre") or _u_wr.get("username") or "")[:160], rid))
+            except Exception as _e_wr:
+                print(f"[pickup_public_request] responsable automático: {_e_wr}", flush=True)
             # ── HARDENING UPLOAD (Daniel mayo 2026) ──────────────────────
             # 1) Whitelist estricto de extensiones
             # 2) Max 5 archivos por solicitud (defense vs abuse)
@@ -4142,8 +4180,9 @@ def register_pickup_routes(app, ctx):
                 try:
                     _notificar_operador_rechazo(req, reason)
                 except Exception as _e: print(f"[pickups][notify reject operador] {_e}")
-                # In-app al equipo (campana). El email interno YA sale arriba
-                # vía _notificar_operador_rechazo → send_email=False evita duplicar.
+                # In-app al equipo (campana) + correo al RESPONSABLE del retiro
+                # (2026-09-24: la responsable de solicitudes web debe enterarse
+                # de las cancelaciones; el aviso a soporte sale aparte arriba).
                 try:
                     _notificar_equipo_retiros(
                         f"El cliente RECHAZÓ el retiro {req.get('code') or '?'}",
@@ -4151,7 +4190,7 @@ def register_pickup_routes(app, ctx):
                          f"Motivo declarado: {reason or 'No indicó motivo'}."),
                         req["id"], req.get("code") or "?",
                         prioridad="urgente", tipo="retiro_respuesta",
-                        send_email=False,
+                        send_email=True,
                     )
                 except Exception as _e: print(f"[pickups][team notify reject] {_e}")
                 flash(
@@ -10641,6 +10680,15 @@ def register_pickup_routes(app, ctx):
                 (data.get("notify_emails") or "").strip()[:2000],
             ),
         )
+        # Responsable automático de solicitudes web (UPDATE aparte: si la
+        # columna aún no existiera, el resto de la configuración igual se guarda).
+        try:
+            _wr = (data.get("web_responsable_user_id") or "").strip()
+            mysql_execute(
+                f"UPDATE `{SET}` SET web_responsable_user_id=%s WHERE id=1",
+                (int(_wr) if _wr.isdigit() else None,))
+        except Exception as _e_wr:
+            print(f"[pickup_settings] web_responsable_user_id: {_e_wr}", flush=True)
         # Invalidar cache de settings (Daniel mayo 2026) — el TTL es 30s pero
         # tras un guardado del admin queremos que el público vea el cambio YA.
         try: _invalidate_settings_cache()

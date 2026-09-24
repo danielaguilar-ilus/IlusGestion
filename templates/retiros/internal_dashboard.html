@@ -1312,8 +1312,16 @@ select.nri-field-locked{pointer-events:none}
   </div>
   {# responsive_retiros (2026-06-09): flex-wrap evita que el selector de vistas se clipee en móvil #}
   <div class="btn-group btn-group-sm mt-3 flex-wrap">
-    {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Kanban','kanban'),('agenda','Agenda diaria','calendar-day'),('lista','Lista','list-ul')] %}
+    {# 2026-09-24 (Daniel: "Uno solo desde el Monitor"): el botón que antes
+       abría la "Agenda diaria" (lista simple por fecha) ahora abre el
+       calendario operativo completo, que salió del menú lateral. La vista
+       ?view=agenda sigue existiendo por URL. #}
+    {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Kanban','kanban'),('calendario','Calendario','calendar2-week-fill'),('lista','Lista','list-ul')] %}
+    {% if view == 'calendario' %}
+    <a class="btn btn-outline-dark" href="{{ url_for('pickup_calendar') }}"><i class="bi bi-{{ icon }} me-1"></i>{{ label }}</a>
+    {% else %}
     <a class="btn {% if filtros.view==view %}btn-dark{% else %}btn-outline-dark{% endif %}" href="{{ url_for('pickup_dashboard', view=view, q=filtros.q, status=filtros.status, date=filtros.date) }}"><i class="bi bi-{{ icon }} me-1"></i>{{ label }}</a>
+    {% endif %}
     {% endfor %}
   </div>
 </form>
@@ -1925,9 +1933,26 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
       <div class="settings-section-title"><i class="bi bi-people me-1"></i>Equipo y alertas</div>
       <div class="row g-3">
         <div class="col-12">
+          {# 2026-09-24 (Daniel: "necesito que esto quede por el front"): quién
+             queda a cargo de cada solicitud que entra por el formulario público.
+             La lista es la de personas con acceso a Retiros (la misma del
+             "Nuevo retiro interno"); se carga al abrir este modal. #}
+          <label class="form-label" for="webResponsableSel">Responsable de solicitudes web</label>
+          <select name="web_responsable_user_id" id="webResponsableSel" class="form-select"
+                  data-actual="{{ settings.web_responsable_user_id or '' }}">
+            <option value="">— Sin responsable automático —</option>
+            {# Mientras carga la lista (o si falla), el valor guardado sigue
+               seleccionado: guardar el modal nunca lo borra sin querer. #}
+            {% if settings.web_responsable_user_id %}
+            <option value="{{ settings.web_responsable_user_id }}" selected data-placeholder="1">Responsable actual (cargando nombre…)</option>
+            {% endif %}
+          </select>
+          <div class="form-text">Cada solicitud nueva del formulario público queda a su cargo y le llegan por correo la solicitud, la confirmación, la contrapropuesta y la cancelación del cliente. Solo aparecen personas con acceso a Retiros.</div>
+        </div>
+        <div class="col-12">
           <label class="form-label">Correos del equipo para alertas de retiros (separados por coma)</label>
           <textarea name="notify_emails" class="form-control" rows="2" placeholder="bodega@ilusfitness.com, ventas@ilusfitness.com">{{ settings.notify_emails or '' }}</textarea>
-          <div class="form-text">Reciben aviso de nuevas solicitudes y respuestas de clientes.</div>
+          <div class="form-text">Hoy los avisos por correo van al responsable de cada retiro (el de arriba para las solicitudes web). Esta lista queda guardada pero no se usa desde el 14-09.</div>
         </div>
         <div class="col-md-4">
           <label class="form-check form-switch mt-md-4 pt-md-2">
@@ -1946,6 +1971,44 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
     </div>
   </form></div>
 </div>
+<script>
+// Responsable de solicitudes web: se llena al abrir "Horarios y alertas" con
+// las personas que tienen acceso a Retiros (mismo endpoint del Nuevo retiro).
+(function(){
+  const modal = document.getElementById('settingsModal');
+  const sel = document.getElementById('webResponsableSel');
+  if (!modal || !sel) return;
+  let cargado = false;
+  modal.addEventListener('show.bs.modal', async () => {
+    if (cargado) return;
+    try {
+      const r = await fetch('/retiros/api/responsables', {credentials: 'same-origin', cache: 'no-store'});
+      const d = await r.json();
+      const actual = String(sel.dataset.actual || '');
+      const ph = sel.querySelector('option[data-placeholder]');
+      if (ph && (d.responsables || []).length) ph.remove();
+      (d.responsables || []).forEach(u => {
+        const o = document.createElement('option');
+        o.value = String(u.id);
+        o.textContent = u.nombre || ('Usuario ' + u.id);
+        if (o.value === actual) o.selected = true;
+        sel.appendChild(o);
+      });
+      // Responsable guardado que ya no tiene acceso a Retiros: se muestra igual
+      // para no borrarlo sin querer al guardar otra cosa del modal.
+      if (actual && !sel.querySelector('option[value="' + actual + '"]')) {
+        const o = document.createElement('option');
+        o.value = actual; o.selected = true;
+        o.textContent = 'Usuario #' + actual + ' (sin acceso a Retiros)';
+        sel.appendChild(o);
+      }
+      cargado = true;
+    } catch (e) {
+      console.warn('[retiros] no se pudo cargar la lista de responsables', e);
+    }
+  });
+})();
+</script>
 {% endif %}
 
 {# ════════ Burbuja "nuevo mensaje" del cliente en las cards (Daniel 2026-06-17) ════════ #}
