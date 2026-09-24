@@ -115637,10 +115637,27 @@ def repstock_crear():
         sku_erp = ""
     conn = get_mysql()
     try:
+        # 🔧 FIX 2026-09-24 (Daniel, en vivo: "¿estás seguro que hoy solo se
+        # ha registrado un repuesto?" -- se investigó y la cifra era
+        # correcta, pero escondía el problema real: ~20 intentos de crear
+        # repuestos fallaron hoy con 409 "ya existe", sin que la persona
+        # pudiera ver ese repuesto en ningún lado del sistema). Causa raíz:
+        # el índice único es sobre `sku` solo (sin `activo`), así que un
+        # repuesto YA ELIMINADO (soft-delete, activo=0 -- invisible en toda
+        # la UI, que siempre filtra activo=1) sigue bloqueando su SKU para
+        # siempre. Si el SKU viene del ERP (sku_erp) y el choque es contra
+        # un repuesto INACTIVO, se reactiva ese registro con los datos
+        # nuevos en vez de bloquear -- "este código volvió a la bodega" es
+        # el caso real, no un duplicado. Si el choque es contra uno ACTIVO,
+        # sigue siendo un bloqueo legítimo (eso sí es un duplicado real).
+        reactivar_id = None
         if sku_erp:
-            existente = mysql_fetchone("SELECT id FROM mant_repuestos_stock WHERE sku=%s", (sku_erp,))
+            existente = mysql_fetchone(
+                "SELECT id, activo FROM mant_repuestos_stock WHERE sku=%s", (sku_erp,))
             if existente:
-                return jsonify({"ok": False, "error": f"Ya existe un repuesto con el SKU {sku_erp} (id {existente['id']})"}), 409
+                if existente.get("activo"):
+                    return jsonify({"ok": False, "error": f"Ya existe un repuesto activo con el SKU {sku_erp} (id {existente['id']})"}), 409
+                reactivar_id = existente["id"]
             sku = sku_erp
         else:
             # SKU atómico en la MISMA transacción del INSERT: si algo falla,
@@ -115667,15 +115684,29 @@ def repstock_crear():
         }
         cols = list(fields.keys())
         with conn.cursor() as cur:
-            cur.execute(
-                f"INSERT INTO mant_repuestos_stock ({','.join(cols)}) "
-                f"VALUES ({','.join(['%s'] * len(cols))})",
-                tuple(fields[c] for c in cols)
-            )
-            new_id = cur.lastrowid
+            if reactivar_id:
+                # No se toca created_by/created_at -- el origen real del
+                # registro no cambia solo porque alguien más lo reactivó.
+                cols_upd = [c for c in cols if c != "created_by"]
+                set_sql = ", ".join(f"{c}=%s" for c in cols_upd)
+                cur.execute(
+                    f"UPDATE mant_repuestos_stock SET {set_sql}, activo=1, updated_by=%s "
+                    f" WHERE id=%s",
+                    tuple(fields[c] for c in cols_upd) + (current_username(), reactivar_id)
+                )
+                new_id = reactivar_id
+            else:
+                cur.execute(
+                    f"INSERT INTO mant_repuestos_stock ({','.join(cols)}) "
+                    f"VALUES ({','.join(['%s'] * len(cols))})",
+                    tuple(fields[c] for c in cols)
+                )
+                new_id = cur.lastrowid
         conn.commit()
-        _mant_log("repuesto_stock", new_id, "crear", f"{sku} — {descripcion}")
-        return jsonify({"ok": True, "id": new_id, "sku": sku, "proveedor_id": proveedor_id})
+        _mant_log("repuesto_stock", new_id,
+                   "reactivar" if reactivar_id else "crear", f"{sku} — {descripcion}")
+        return jsonify({"ok": True, "id": new_id, "sku": sku, "proveedor_id": proveedor_id,
+                          "reactivado": bool(reactivar_id)})
     except Exception as e:
         conn.rollback()
         print(f"[repstock_crear] ERROR: {e}", flush=True)

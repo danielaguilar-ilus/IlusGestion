@@ -1577,7 +1577,10 @@ async function rbGuardar(crearOtro){
     // Recién creado: el backend generó el SKU (REP-MARCA-0001)
     if (RB_FOTOS_PENDIENTES.length) await rbSubirFotosPendientes(d.id);
     if (RB_MODELOS_PENDIENTES.length) await rbSubirModelosPendientes(d.id);
-    ilusToast('✓ ' + (d.sku || 'Repuesto') + ' creado', {type:'success'});
+    // 🔧 FIX 2026-09-24: si el SKU pertenecía a un repuesto eliminado
+    // antes, el backend lo reactivó en vez de bloquear "ya existe" --
+    // avisar con un mensaje distinto para que no parezca un duplicado.
+    ilusToast('✓ ' + (d.sku || 'Repuesto') + (d.reactivado ? ' reactivado (ya existía, estaba eliminado)' : ' creado'), {type:'success'});
     if (crearOtro){
       rbAbrirNuevo(true);   // mismo estante: conserva marca/ubicación/stock mínimo
       return;
