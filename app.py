@@ -115138,33 +115138,96 @@ REPSTOCK_SQL_DESCONTINUADO = (
 def repstock_actividad():
     """Indicador "Avance de carga" (Daniel, 2026-09-24: "cuantos repuestos
     se estan registrando en este minuto... necesito ver el avance y quien
-    lo esta avanzando"): total en Bodega, ranking por persona y el avance
-    de HOY -- hora Chile (REGLA #6, via _hoy_chile_rango_utc), no la fecha
-    del servidor. Botón "Avance de carga" en /repuestos, pestaña Bodega."""
+    lo esta avanzando", y en el mismo día: "necesito filtrar por dias y
+    ver el avance por dia y por usuario... algo bien profesional"):
+    ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD (hora Chile, default últimos 30
+    días) -- total del rango, desglose día×persona (para el gráfico
+    apilado) y ranking por persona. TODO en hora Chile (REGLA #6): el
+    bucketing por día se hace en Python con zoneinfo sobre cada fila,
+    igual que to_chile_filter -- nunca DATE(created_at) crudo, que sería
+    el día en UTC del servidor. Botón "Avance de carga" en /repuestos,
+    pestaña Bodega."""
     try:
-        inicio_utc, fin_utc = _hoy_chile_rango_utc()
+        hoy_cl = _now_chile().date()
+
+        def _parse_fecha(s, default):
+            if not s:
+                return default
+            try:
+                return datetime.strptime(s, "%Y-%m-%d").date()
+            except ValueError:
+                return default
+
+        desde = _parse_fecha(request.args.get("desde"), hoy_cl - timedelta(days=29))
+        hasta = _parse_fecha(request.args.get("hasta"), hoy_cl)
+        if desde > hasta:
+            desde, hasta = hasta, desde
+        # Techo de 366 días -- un query string mal armado no debe poder
+        # pedir años de historia de una sola vez.
+        if (hasta - desde).days > 366:
+            desde = hasta - timedelta(days=366)
+
+        inicio_utc, _fin_hoy_utc = _hoy_chile_rango_utc(desde)
+        _inicio_hasta_utc, fin_utc = _hoy_chile_rango_utc(hasta)
+
         rows = mysql_fetchall(
             "SELECT COALESCE(NULLIF(TRIM(created_by),''),'Sin registrar') AS autor, "
-            "       COUNT(*) AS total, "
-            "       SUM(CASE WHEN created_at >= %s AND created_at < %s THEN 1 ELSE 0 END) AS hoy, "
-            "       MAX(created_at) AS ultimo_at "
+            "       created_at "
             "  FROM mant_repuestos_stock "
-            " WHERE activo=1 "
-            " GROUP BY autor "
-            " ORDER BY total DESC",
+            " WHERE activo=1 AND created_at >= %s AND created_at < %s",
             (inicio_utc, fin_utc)
         ) or []
+
+        por_dia = {}
+        por_autor_total = {}
+        hoy_total = 0
+        hoy_por_autor = {}
+        for r in rows:
+            ts = r["created_at"]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            dia_cl = ts.astimezone(_TZ_CL).date()
+            autor = r["autor"]
+            d = por_dia.setdefault(dia_cl, {})
+            d[autor] = d.get(autor, 0) + 1
+            por_autor_total[autor] = por_autor_total.get(autor, 0) + 1
+            if dia_cl == hoy_cl:
+                hoy_total += 1
+                hoy_por_autor[autor] = hoy_por_autor.get(autor, 0) + 1
+
+        # Orden alfabético fijo -- "el color sigue a la persona, nunca a su
+        # posición en el ranking" (evita que Fulano cambie de color de
+        # gráfico solo porque otro día tuvo más o menos carga que él).
+        usuarios = sorted(por_autor_total.keys())
+
+        dias = []
+        d = desde
+        while d <= hasta:
+            entry = por_dia.get(d, {})
+            dias.append({
+                "fecha": d.isoformat(),
+                "fecha_fmt": d.strftime("%d/%m"),
+                "fecha_fmt_larga": d.strftime("%d/%m/%Y"),
+                "total": sum(entry.values()),
+                "por_autor": entry,
+            })
+            d += timedelta(days=1)
+
         ranking = [{
-            "autor": r["autor"],
-            "total": int(r.get("total") or 0),
-            "hoy": int(r.get("hoy") or 0),
-            "ultimo_at": chile_fmt_filter(r.get("ultimo_at")) if r.get("ultimo_at") else "",
-        } for r in rows]
+            "autor": a,
+            "total": por_autor_total[a],
+            "hoy": hoy_por_autor.get(a, 0),
+        } for a in sorted(por_autor_total, key=lambda a: -por_autor_total[a])]
+
         return jsonify({
             "ok": True,
-            "total": sum(r["total"] for r in ranking),
-            "hoy_total": sum(r["hoy"] for r in ranking),
-            "fecha_hoy": _now_chile().strftime("%d/%m/%Y"),
+            "desde": desde.isoformat(),
+            "hasta": hasta.isoformat(),
+            "total": sum(por_autor_total.values()),
+            "hoy_total": hoy_total,
+            "fecha_hoy": hoy_cl.strftime("%d/%m/%Y"),
+            "usuarios": usuarios,
+            "dias": dias,
             "ranking": ranking,
         })
     except Exception as _e:

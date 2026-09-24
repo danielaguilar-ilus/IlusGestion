@@ -843,13 +843,16 @@
 </div>
 
 {# 📊 2026-09-24 (Daniel: "cuantos repuestos se estan registrando en este
-   minuto... necesito ver el avance y quien lo esta avanzando") -- botón
-   "Avance de carga" en el header de la pestaña Bodega abre este modal.
-   Lenguaje visual REGLA #15 (tarjetas + semáforo verde para "hoy" +
-   progreso visual en el ranking), nombres siempre completos (nunca
-   truncados). #}
+   minuto... necesito ver el avance y quien lo esta avanzando", y luego:
+   "necesito filtrar por dias y ver el avance por dia y por usuario...
+   algo bien profesional") -- botón "Avance de carga" en el header de la
+   pestaña Bodega abre este modal: filtro de rango + gráfico de barras
+   apiladas por día/persona + tabla de detalle. Paleta categórica y specs
+   de marca (gap de 2px, barras ≤24px, orden fijo de color por persona)
+   siguiendo el skill dataviz del proyecto -- ver palette.md ahí para el
+   porqué de cada hex. Nombres siempre completos (REGLA #15). #}
 <style>
-.rba-stats{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.rba-stats{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
 .rba-stat{flex:1;min-width:120px;background:#f3f4f6;border-radius:12px;padding:14px;text-align:center}
 .rba-stat-n{font-size:1.6rem;font-weight:900;color:#0a0a0a;font-variant-numeric:tabular-nums}
 .rba-stat-l{font-size:.72rem;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
@@ -860,24 +863,80 @@
 .rba-hoy-card{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #dcfce7;border-left:4px solid #16a34a;border-radius:10px;padding:10px 14px;flex-wrap:wrap}
 .rba-hoy-card .rba-nombre{flex:1;min-width:120px;font-weight:700;color:#0a0a0a;font-size:.88rem;overflow-wrap:anywhere}
 .rba-hoy-card .rba-badge{background:#16a34a;color:#fff;font-weight:800;font-size:.78rem;border-radius:50px;padding:3px 12px;white-space:nowrap}
-.rba-hoy-card .rba-hora{font-size:.7rem;color:#6b7280;white-space:nowrap}
 .rba-ranking-lista{display:flex;flex-direction:column;gap:6px}
 .rba-rank-row{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
 .rba-rank-row:last-child{border-bottom:none}
-.rba-rank-nombre{flex:0 0 180px;font-weight:600;color:#0a0a0a;font-size:.82rem;overflow-wrap:anywhere}
+.rba-rank-dot{flex:0 0 10px;width:10px;height:10px;border-radius:50%}
+.rba-rank-nombre{flex:0 0 170px;font-weight:600;color:#0a0a0a;font-size:.82rem;overflow-wrap:anywhere}
 .rba-rank-bar-wrap{flex:1;min-width:80px;background:#f1f5f9;border-radius:50px;height:10px;overflow:hidden}
-.rba-rank-bar{height:100%;background:#dc2626;border-radius:50px}
+.rba-rank-bar{height:100%;border-radius:50px}
 .rba-rank-n{flex:0 0 34px;text-align:right;font-weight:800;color:#0a0a0a;font-size:.82rem;font-variant-numeric:tabular-nums}
-@media (max-width:600px){ .rba-rank-nombre{flex-basis:110px} }
+/* ── Filtro de fechas (interaction.md: "una fila, arriba de los gráficos") ── */
+.rba-filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #e5e7eb}
+.rba-presets{display:flex;gap:4px;background:#f3f4f6;border-radius:10px;padding:3px}
+.rba-preset-btn{border:none;background:transparent;font-size:.78rem;font-weight:700;color:#6b7280;padding:6px 12px;border-radius:8px;cursor:pointer;min-height:32px}
+.rba-preset-btn.active{background:#0a0a0a;color:#fff}
+.rba-preset-btn:hover:not(.active){background:#e5e7eb}
+.rba-rango-custom{display:flex;align-items:center;gap:6px}
+.rba-rango-custom input[type=date]{font-size:.8rem;padding:5px 8px;border-radius:8px;border:1px solid #d1d5db;min-height:32px}
+/* ── Gráfico apilado (dataviz: bar ≤24px, gap 2px, categórico fijo) ── */
+.rba-chart-card{margin-bottom:18px}
+.rba-chart-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.rba-legend{display:flex;flex-wrap:wrap;gap:10px}
+.rba-legend-item{display:flex;align-items:center;gap:5px;font-size:.72rem;font-weight:600;color:#52514e}
+.rba-legend-swatch{width:10px;height:10px;border-radius:2px;flex:none}
+.rba-chart-scroll{overflow-x:auto;background:#fcfcfb;border:1px solid #e5e7eb;border-radius:12px;padding:10px 6px 0;position:relative}
+.rba-chart-svg{display:block}
+.rba-bar-seg{cursor:pointer;transition:filter .1s}
+.rba-bar-seg:hover{filter:brightness(1.08)}
+.rba-axis-line{stroke:#e1e0d9;stroke-width:1}
+.rba-axis-text{fill:#898781;font-size:9.5px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.rba-day-label{fill:#52514e;font-size:9px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.rba-tooltip{position:fixed;z-index:2000;background:#0a0a0a;color:#fff;font-size:.74rem;border-radius:8px;padding:8px 11px;pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,.25);max-width:220px}
+.rba-tooltip .rba-tt-fecha{font-weight:800;margin-bottom:4px;display:block}
+.rba-tooltip .rba-tt-row{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.rba-tooltip .rba-tt-row+.rba-tt-row{margin-top:2px}
+.rba-tooltip .rba-tt-key{width:8px;height:8px;border-radius:2px;flex:none}
+.rba-tooltip .rba-tt-val{font-weight:800;margin-left:auto;font-variant-numeric:tabular-nums}
+/* ── Tabla de detalle (mismo patrón contenido-con-scroll que .rb-table-scroll) ── */
+.rba-table-scroll{overflow:auto;max-height:280px;border:1px solid #e5e7eb;border-radius:12px}
+.rba-tabla{width:100%;border-collapse:separate;border-spacing:0;font-size:.78rem}
+.rba-tabla thead th{position:sticky;top:0;background:#0a0a0a;color:#fff;padding:8px 10px;text-align:right;font-weight:700;font-size:.68rem;text-transform:uppercase;letter-spacing:.02em;white-space:nowrap;z-index:2}
+.rba-tabla thead th:first-child{text-align:left;position:sticky;left:0;z-index:3}
+.rba-tabla tbody td{padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rba-tabla tbody td:first-child{text-align:left;font-weight:700;color:#0a0a0a;position:sticky;left:0;background:#fff;font-variant-numeric:normal}
+.rba-tabla tbody tr:hover td{background:#fafafa}
+.rba-tabla tbody tr:hover td:first-child{background:#f5f5f5}
+.rba-tabla tbody td.rba-td-cero{color:#c7cbd1}
+.rba-tabla tfoot td{padding:7px 10px;border-top:2px solid #0a0a0a;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
+.rba-tabla tfoot td:first-child{text-align:left;position:sticky;left:0;background:#fff}
+@media (max-width:600px){
+  .rba-rank-nombre{flex-basis:110px}
+  .rba-filtros{flex-direction:column;align-items:stretch}
+  .rba-rango-custom{flex-wrap:wrap}
+}
 </style>
 <div class="modal fade" id="modalRbActividad" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-lg">
+  <div class="modal-dialog modal-dialog-centered modal-xl">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title fw-bold"><i class="bi bi-graph-up-arrow me-2"></i>Avance de carga — Bodega de Repuestos</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        <div class="rba-filtros">
+          <div class="rba-presets" id="rbaPresets">
+            <button type="button" class="rba-preset-btn" data-dias="7" onclick="rbaAplicarPreset('7')">7 días</button>
+            <button type="button" class="rba-preset-btn active" data-dias="30" onclick="rbaAplicarPreset('30')">30 días</button>
+            <button type="button" class="rba-preset-btn" data-dias="90" onclick="rbaAplicarPreset('90')">90 días</button>
+            <button type="button" class="rba-preset-btn" data-dias="todo" onclick="rbaAplicarPreset('todo')">Todo</button>
+          </div>
+          <div class="rba-rango-custom">
+            <input type="date" id="rbaDesde" class="form-control form-control-sm" onchange="rbaAplicarRangoCustom()">
+            <span class="text-muted small">a</span>
+            <input type="date" id="rbaHasta" class="form-control form-control-sm" onchange="rbaAplicarRangoCustom()">
+          </div>
+        </div>
         <div id="rbaLoading" class="text-center text-muted py-4">
           <span class="spinner-border spinner-border-sm me-1"></span> Calculando avance…
         </div>
@@ -886,7 +945,7 @@
           <div class="rba-stats">
             <div class="rba-stat">
               <div class="rba-stat-n" id="rbaTotalN">0</div>
-              <div class="rba-stat-l">en Bodega</div>
+              <div class="rba-stat-l">en el rango</div>
             </div>
             <div class="rba-stat rba-stat-hoy">
               <div class="rba-stat-n" id="rbaHoyN">0</div>
@@ -897,22 +956,40 @@
               <div class="rba-stat-l">personas activas hoy</div>
             </div>
           </div>
+
+          <div class="rba-chart-card">
+            <div class="rba-chart-head">
+              <h6 class="rba-seccion-titulo mb-0"><i class="bi bi-bar-chart-fill me-1"></i>Avance por día</h6>
+              <div class="rba-legend" id="rbaLegend"></div>
+            </div>
+            <div class="rba-chart-scroll">
+              <svg id="rbaChartSvg" class="rba-chart-svg"></svg>
+            </div>
+          </div>
+
           <div id="rbaHoySeccion" class="d-none">
             <h6 class="rba-seccion-titulo"><i class="bi bi-lightning-charge-fill text-success me-1"></i>Quién está cargando hoy</h6>
             <div id="rbaHoyLista" class="rba-hoy-lista"></div>
           </div>
-          <h6 class="rba-seccion-titulo mt-3"><i class="bi bi-bar-chart-fill me-1"></i>Ranking total</h6>
+
+          <h6 class="rba-seccion-titulo mt-3"><i class="bi bi-trophy-fill me-1"></i>Ranking del período</h6>
           <div id="rbaRankingLista" class="rba-ranking-lista"></div>
+
+          <h6 class="rba-seccion-titulo mt-3"><i class="bi bi-table me-1"></i>Detalle por día</h6>
+          <div class="rba-table-scroll">
+            <table class="rba-tabla" id="rbaTablaDetalle"></table>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
         <span class="text-muted small me-auto" id="rbaActualizadoTxt"></span>
-        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="rbaCargarActividad()"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="rbaCargarActividad(RBA_DESDE, RBA_HASTA)"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
       </div>
     </div>
   </div>
 </div>
+<div class="rba-tooltip" id="rbaTooltip" style="display:none"></div>
 
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
@@ -3014,52 +3091,67 @@ function rbPickTicket(i){
   if (t) rbSetTicket(t.id, t.numero_ticket || ('#'+t.id));
 }
 
-// ── "Avance de carga" (Daniel, 2026-09-24) ──────────────────────────────
+// ── "Avance de carga" (Daniel, 2026-09-24: total + quién + "por día y por
+//    usuario, algo bien profesional") ────────────────────────────────────
+// Paleta categórica validada (skill dataviz del proyecto, palette.md) --
+// orden FIJO por persona (alfabético, no por ranking: "el color sigue a
+// la entidad, nunca a su posición"). Más de 8 personas activas en el
+// rango pliega a "Otros" gris -- nunca se inventa una novena tonalidad.
+const RBA_PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+const RBA_OTROS_COLOR = '#9ca3af';
 let RBA_MODAL = null;
+let RBA_DESDE = null;
+let RBA_HASTA = null;
+let RBA_USUARIOS = [];
+
 function rbaAbrirActividad(){
   if (!RBA_MODAL) RBA_MODAL = new bootstrap.Modal(document.getElementById('modalRbActividad'));
   RBA_MODAL.show();
-  rbaCargarActividad();
+  rbaAplicarPreset('30');
 }
-async function rbaCargarActividad(){
+function rbaFechaAStr(d){
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function rbaAplicarPreset(diasStr){
+  document.querySelectorAll('.rba-preset-btn').forEach(b => b.classList.toggle('active', b.dataset.dias === diasStr));
+  const hoy = new Date();
+  const hastaStr = rbaFechaAStr(hoy);
+  let desdeStr;
+  if (diasStr === 'todo'){
+    desdeStr = '2020-01-01'; // el backend igual topa a 366 días antes de "hasta"
+  } else {
+    const d = new Date(hoy);
+    d.setDate(d.getDate() - (parseInt(diasStr, 10) - 1));
+    desdeStr = rbaFechaAStr(d);
+  }
+  document.getElementById('rbaDesde').value = desdeStr;
+  document.getElementById('rbaHasta').value = hastaStr;
+  rbaCargarActividad(desdeStr, hastaStr);
+}
+function rbaAplicarRangoCustom(){
+  document.querySelectorAll('.rba-preset-btn').forEach(b => b.classList.remove('active'));
+  const desde = document.getElementById('rbaDesde').value;
+  const hasta = document.getElementById('rbaHasta').value;
+  if (!desde || !hasta) return;
+  rbaCargarActividad(desde, hasta);
+}
+function rbaColorFor(usuario){
+  const idx = RBA_USUARIOS.indexOf(usuario);
+  return (idx >= 0 && idx < RBA_PALETTE.length) ? RBA_PALETTE[idx] : RBA_OTROS_COLOR;
+}
+async function rbaCargarActividad(desde, hasta){
+  RBA_DESDE = desde; RBA_HASTA = hasta;
   document.getElementById('rbaLoading').classList.remove('d-none');
   document.getElementById('rbaError').classList.add('d-none');
   document.getElementById('rbaContenido').classList.add('d-none');
   try{
-    const r = await fetch('/repuestos/api/actividad', {headers:{'X-Requested-With':'XMLHttpRequest'}});
+    const params = new URLSearchParams();
+    if (desde) params.set('desde', desde);
+    if (hasta) params.set('hasta', hasta);
+    const r = await fetch('/repuestos/api/actividad?' + params.toString(), {headers: {'X-Requested-With': 'XMLHttpRequest'}});
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo cargar el avance.');
-    const ranking = d.ranking || [];
-    document.getElementById('rbaTotalN').textContent = d.total;
-    document.getElementById('rbaHoyN').textContent = d.hoy_total;
-    document.getElementById('rbaFechaHoy').textContent = '(' + d.fecha_hoy + ')';
-    const activosHoy = ranking.filter(x => x.hoy > 0).sort((a, b) => b.hoy - a.hoy);
-    document.getElementById('rbaActivosHoyN').textContent = activosHoy.length;
-    const hoySeccion = document.getElementById('rbaHoySeccion');
-    if (activosHoy.length){
-      hoySeccion.classList.remove('d-none');
-      document.getElementById('rbaHoyLista').innerHTML = activosHoy.map(x =>
-        '<div class="rba-hoy-card">' +
-          '<span class="rba-nombre">' + escHtmlRb(x.autor) + '</span>' +
-          '<span class="rba-hora">Última: ' + escHtmlRb(x.ultimo_at) + '</span>' +
-          '<span class="rba-badge">' + x.hoy + ' hoy</span>' +
-        '</div>'
-      ).join('');
-    } else {
-      hoySeccion.classList.add('d-none');
-    }
-    const maxTotal = Math.max(1, ...ranking.map(x => x.total));
-    document.getElementById('rbaRankingLista').innerHTML = ranking.length
-      ? ranking.map(x =>
-          '<div class="rba-rank-row">' +
-            '<span class="rba-rank-nombre">' + escHtmlRb(x.autor) + '</span>' +
-            '<span class="rba-rank-bar-wrap"><span class="rba-rank-bar" style="width:' + Math.round(x.total / maxTotal * 100) + '%"></span></span>' +
-            '<span class="rba-rank-n">' + x.total + '</span>' +
-          '</div>'
-        ).join('')
-      : '<div class="text-muted small">Sin datos todavía.</div>';
-    document.getElementById('rbaActualizadoTxt').textContent =
-      'Actualizado ' + new Date().toLocaleTimeString('es-CL', {hour: '2-digit', minute: '2-digit'});
+    rbaRenderTodo(d);
     document.getElementById('rbaContenido').classList.remove('d-none');
   } catch(e){
     document.getElementById('rbaError').textContent = e.message || 'No se pudo cargar el avance.';
@@ -3067,5 +3159,312 @@ async function rbaCargarActividad(){
   } finally{
     document.getElementById('rbaLoading').classList.add('d-none');
   }
+}
+function rbaRenderTodo(d){
+  RBA_USUARIOS = d.usuarios || [];
+  const dias = d.dias || [];
+  const ranking = d.ranking || [];
+
+  document.getElementById('rbaTotalN').textContent = d.total;
+  document.getElementById('rbaHoyN').textContent = d.hoy_total;
+  document.getElementById('rbaFechaHoy').textContent = '(' + d.fecha_hoy + ')';
+  const activosHoy = ranking.filter(x => x.hoy > 0).sort((a, b) => b.hoy - a.hoy);
+  document.getElementById('rbaActivosHoyN').textContent = activosHoy.length;
+
+  const hoySeccion = document.getElementById('rbaHoySeccion');
+  const hoyLista = document.getElementById('rbaHoyLista');
+  hoyLista.innerHTML = '';
+  if (activosHoy.length){
+    hoySeccion.classList.remove('d-none');
+    activosHoy.forEach(x => {
+      const card = document.createElement('div');
+      card.className = 'rba-hoy-card';
+      const nombre = document.createElement('span');
+      nombre.className = 'rba-nombre';
+      nombre.textContent = x.autor; // dato no confiable -- textContent, nunca innerHTML
+      const badge = document.createElement('span');
+      badge.className = 'rba-badge';
+      badge.textContent = x.hoy + ' hoy';
+      card.appendChild(nombre); card.appendChild(badge);
+      hoyLista.appendChild(card);
+    });
+  } else {
+    hoySeccion.classList.add('d-none');
+  }
+
+  const rankingEl = document.getElementById('rbaRankingLista');
+  rankingEl.innerHTML = '';
+  if (!ranking.length){
+    rankingEl.innerHTML = '<div class="text-muted small">Sin repuestos cargados en este rango.</div>';
+  } else {
+    const maxTotal = Math.max(1, ...ranking.map(x => x.total));
+    ranking.forEach(x => {
+      const row = document.createElement('div');
+      row.className = 'rba-rank-row';
+      const color = rbaColorFor(x.autor);
+      const dot = document.createElement('span');
+      dot.className = 'rba-rank-dot';
+      dot.style.background = color;
+      const nombre = document.createElement('span');
+      nombre.className = 'rba-rank-nombre';
+      nombre.textContent = x.autor;
+      const barWrap = document.createElement('span');
+      barWrap.className = 'rba-rank-bar-wrap';
+      const bar = document.createElement('span');
+      bar.className = 'rba-rank-bar';
+      bar.style.width = Math.round(x.total / maxTotal * 100) + '%';
+      bar.style.background = color;
+      barWrap.appendChild(bar);
+      const n = document.createElement('span');
+      n.className = 'rba-rank-n';
+      n.textContent = x.total;
+      row.appendChild(dot); row.appendChild(nombre); row.appendChild(barWrap); row.appendChild(n);
+      rankingEl.appendChild(row);
+    });
+  }
+
+  rbaRenderLegend();
+  rbaRenderChart(dias);
+  rbaRenderTabla(dias);
+
+  document.getElementById('rbaActualizadoTxt').textContent =
+    'Actualizado ' + new Date().toLocaleTimeString('es-CL', {hour: '2-digit', minute: '2-digit'});
+}
+function rbaRenderLegend(){
+  const el = document.getElementById('rbaLegend');
+  el.innerHTML = '';
+  // Legend siempre presente con 2+ series (marks-and-anatomy.md); con 1 o 0
+  // el título de la sección ya dice qué se grafica.
+  if (RBA_USUARIOS.length < 2) return;
+  RBA_USUARIOS.forEach(u => {
+    const item = document.createElement('span');
+    item.className = 'rba-legend-item';
+    const sw = document.createElement('span');
+    sw.className = 'rba-legend-swatch';
+    sw.style.background = rbaColorFor(u);
+    const txt = document.createElement('span');
+    txt.textContent = u;
+    item.appendChild(sw); item.appendChild(txt);
+    el.appendChild(item);
+  });
+}
+// Path de un rect con SOLO las esquinas superiores redondeadas (spec:
+// "4px rounded data-end, square at baseline" -- en un stack, el "end" es
+// el borde superior del segmento más alto; el resto queda cuadrado).
+function rbaPathRectTopRound(x, y, w, h, r){
+  r = Math.max(0, Math.min(r, w / 2, h));
+  if (r <= 0) return `M${x},${y} h${w} v${h} h${-w} Z`;
+  return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} `
+       + `L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} `
+       + `L${x + w},${y + h} Z`;
+}
+function rbaRenderChart(dias){
+  const svg = document.getElementById('rbaChartSvg');
+  svg.innerHTML = '';
+  if (!dias.length) return;
+
+  const plotH = 200;          // alto del área de barras
+  const padTop = 10, padBottom = 24, padLeft = 8, padRight = 8;
+  const slotW = Math.max(28, Math.min(52, Math.floor(900 / dias.length)));
+  const barW = Math.min(24, slotW - 8); // spec: barra <=24px, nunca llena el slot
+  const gapSeg = 2;            // surface gap entre segmentos apilados
+  const gapBar = 2;            // surface gap entre barras vecinas (vía slot - barW)
+  const width = padLeft + slotW * dias.length + padRight;
+  const height = padTop + plotH + padBottom;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Repuestos cargados por día, apilado por persona');
+
+  const maxTotal = Math.max(1, ...dias.map(d => d.total));
+  // Techo del eje Y a un número redondo -- ticks limpios (marks-and-anatomy.md).
+  const step = Math.pow(10, Math.max(0, String(Math.ceil(maxTotal)).length - 1));
+  const yMax = Math.ceil(maxTotal / step) * step || 1;
+  const yToPx = v => plotH - (v / yMax) * plotH;
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const g = document.createElementNS(ns, 'g');
+  g.setAttribute('transform', `translate(${padLeft},${padTop})`);
+
+  // Gridlines + ticks Y (3 pasos: 0, mitad, máximo)
+  [0, 0.5, 1].forEach(f => {
+    const val = Math.round(yMax * f);
+    const y = yToPx(val);
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('class', 'rba-axis-line');
+    line.setAttribute('x1', 0); line.setAttribute('x2', slotW * dias.length);
+    line.setAttribute('y1', y); line.setAttribute('y2', y);
+    g.appendChild(line);
+    const txt = document.createElementNS(ns, 'text');
+    txt.setAttribute('class', 'rba-axis-text');
+    txt.setAttribute('x', -4); txt.setAttribute('y', y + 3);
+    txt.setAttribute('text-anchor', 'end');
+    txt.textContent = val;
+    g.appendChild(txt);
+  });
+
+  dias.forEach((dia, i) => {
+    const xSlot = i * slotW;
+    const xBar = xSlot + (slotW - barW) / 2;
+    let acumulado = 0;
+    const entradas = RBA_USUARIOS
+      .map(u => [u, dia.por_autor[u] || 0])
+      .filter(([, v]) => v > 0);
+    const total = dia.total || 0;
+    if (total > 0){
+      entradas.forEach(([usuario, valor], idx) => {
+        const hTotal = (valor / yMax) * plotH;
+        const isTop = idx === entradas.length - 1;
+        const y0 = plotH - (acumulado / yMax) * plotH;
+        const hSeg = Math.max(0, hTotal - (isTop ? 0 : gapSeg));
+        const yTop = y0 - hTotal;
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('class', 'rba-bar-seg');
+        path.setAttribute('fill', rbaColorFor(usuario));
+        path.setAttribute('d', isTop
+          ? rbaPathRectTopRound(xBar, yTop, barW, hSeg, 3)
+          : `M${xBar},${yTop + hSeg} h${barW} v${-hSeg} h${-barW} Z`);
+        path.addEventListener('pointerenter', ev => rbaTooltipShow(ev, dia, usuario, valor));
+        path.addEventListener('pointermove', ev => rbaTooltipMove(ev));
+        path.addEventListener('pointerleave', rbaTooltipHide);
+        g.appendChild(path);
+        acumulado += valor;
+      });
+    } else {
+      // Día sin carga: placa fantasma para que el hover del eje siga
+      // respondiendo (muestra "0" en vez de nada).
+      const ghost = document.createElementNS(ns, 'rect');
+      ghost.setAttribute('x', xBar); ghost.setAttribute('y', plotH - 3);
+      ghost.setAttribute('width', barW); ghost.setAttribute('height', 3);
+      ghost.setAttribute('fill', '#e1e0d9');
+      ghost.addEventListener('pointerenter', ev => rbaTooltipShow(ev, dia, null, 0));
+      ghost.addEventListener('pointermove', ev => rbaTooltipMove(ev));
+      ghost.addEventListener('pointerleave', rbaTooltipHide);
+      g.appendChild(ghost);
+    }
+    // Etiqueta de fecha bajo cada barra (cada N para no amontonar si hay
+    // muchos días) -- REGLA #6, hora Chile, ya viene formateada del backend.
+    const cadaN = dias.length > 45 ? 5 : (dias.length > 20 ? 2 : 1);
+    if (i % cadaN === 0 || i === dias.length - 1){
+      const lbl = document.createElementNS(ns, 'text');
+      lbl.setAttribute('class', 'rba-day-label');
+      lbl.setAttribute('x', xSlot + slotW / 2); lbl.setAttribute('y', plotH + 14);
+      lbl.setAttribute('text-anchor', 'middle');
+      lbl.textContent = dia.fecha_fmt;
+      g.appendChild(lbl);
+    }
+  });
+
+  svg.appendChild(g);
+}
+function rbaTooltipShow(ev, dia, usuarioHover, valorHover){
+  const tooltip = document.getElementById('rbaTooltip');
+  tooltip.innerHTML = '';
+  const fecha = document.createElement('span');
+  fecha.className = 'rba-tt-fecha';
+  fecha.textContent = dia.fecha_fmt_larga + ' — ' + dia.total + ' total';
+  tooltip.appendChild(fecha);
+  const entradas = RBA_USUARIOS.map(u => [u, dia.por_autor[u] || 0]).filter(([, v]) => v > 0);
+  if (!entradas.length){
+    const row = document.createElement('div');
+    row.className = 'rba-tt-row';
+    row.textContent = 'Sin repuestos cargados este día';
+    tooltip.appendChild(row);
+  } else {
+    entradas.forEach(([usuario, valor]) => {
+      const row = document.createElement('div');
+      row.className = 'rba-tt-row';
+      const key = document.createElement('span');
+      key.className = 'rba-tt-key';
+      key.style.background = rbaColorFor(usuario);
+      const nombre = document.createElement('span');
+      nombre.textContent = usuario + (usuario === usuarioHover ? ' •' : '');
+      const val = document.createElement('span');
+      val.className = 'rba-tt-val';
+      val.textContent = valor;
+      row.appendChild(key); row.appendChild(nombre); row.appendChild(val);
+      tooltip.appendChild(row);
+    });
+  }
+  tooltip.style.display = 'block';
+  rbaTooltipMove(ev);
+}
+function rbaTooltipMove(ev){
+  const tooltip = document.getElementById('rbaTooltip');
+  const pad = 14;
+  let x = ev.clientX + pad, y = ev.clientY + pad;
+  const rect = tooltip.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth - 8) x = ev.clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - 8) y = ev.clientY - rect.height - pad;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top = y + 'px';
+}
+function rbaTooltipHide(){
+  document.getElementById('rbaTooltip').style.display = 'none';
+}
+function rbaRenderTabla(dias){
+  const tabla = document.getElementById('rbaTablaDetalle');
+  tabla.innerHTML = '';
+  if (!dias.length){
+    tabla.innerHTML = '<tbody><tr><td class="text-muted small p-3">Sin datos en este rango.</td></tr></tbody>';
+    return;
+  }
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  const thFecha = document.createElement('th');
+  thFecha.textContent = 'Día';
+  trh.appendChild(thFecha);
+  RBA_USUARIOS.forEach(u => {
+    const th = document.createElement('th');
+    th.textContent = u;
+    trh.appendChild(th);
+  });
+  const thTotal = document.createElement('th');
+  thTotal.textContent = 'Total';
+  trh.appendChild(thTotal);
+  thead.appendChild(trh);
+  tabla.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  const totalesPorUsuario = {};
+  let granTotal = 0;
+  // Filas más recientes primero -- es lo que Daniel quiere ver al abrir.
+  [...dias].reverse().forEach(dia => {
+    const tr = document.createElement('tr');
+    const tdFecha = document.createElement('td');
+    tdFecha.textContent = dia.fecha_fmt_larga;
+    tr.appendChild(tdFecha);
+    RBA_USUARIOS.forEach(u => {
+      const v = dia.por_autor[u] || 0;
+      totalesPorUsuario[u] = (totalesPorUsuario[u] || 0) + v;
+      const td = document.createElement('td');
+      td.textContent = v || '—';
+      if (!v) td.classList.add('rba-td-cero');
+      tr.appendChild(td);
+    });
+    const tdTotal = document.createElement('td');
+    tdTotal.textContent = dia.total;
+    tr.appendChild(tdTotal);
+    granTotal += dia.total;
+    tbody.appendChild(tr);
+  });
+  tabla.appendChild(tbody);
+
+  const tfoot = document.createElement('tfoot');
+  const trf = document.createElement('tr');
+  const tdLbl = document.createElement('td');
+  tdLbl.textContent = 'Total del período';
+  trf.appendChild(tdLbl);
+  RBA_USUARIOS.forEach(u => {
+    const td = document.createElement('td');
+    td.textContent = totalesPorUsuario[u] || 0;
+    trf.appendChild(td);
+  });
+  const tdGran = document.createElement('td');
+  tdGran.textContent = granTotal;
+  trf.appendChild(tdGran);
+  tfoot.appendChild(trf);
+  tabla.appendChild(tfoot);
 }
 </script>
