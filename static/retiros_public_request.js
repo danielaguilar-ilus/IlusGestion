@@ -112,8 +112,10 @@ function irASeguimiento(){
   // FIX 2026-06-09: los códigos nuevos son ALFANUMÉRICOS (ej: RET-CCE24P).
   // El regex anterior (/^RET-\d+$/) solo aceptaba dígitos y mandaba los
   // códigos nuevos a la ruta de token (404). Trim + uppercase antes de evaluar.
-  const code = v.toUpperCase().trim();
-  if (/^RET-[A-Z0-9]{4,}$/.test(code)){
+  const code = v.toUpperCase().trim().replace(/\s+/g, '');
+  // Acepta "RET-7KQ2MX", "RET7KQ2MX" o solo "7KQ2MX" (antes sin "RET-" caía
+  // a la ruta de token y mostraba "Solicitud no encontrada" en texto plano).
+  if (/^(RET[-_]?)?[A-Z0-9]{4,12}$/.test(code)){
     location.href = '/retiros/buscar?code=' + encodeURIComponent(code);
   } else {
     // asumimos token
@@ -208,6 +210,25 @@ function onEmailInput(input){
   if (errEl) errEl.style.display = 'none';
   if (okEl) okEl.style.display = 'none';
 }
+// Dominios mal escritos más comunes (2026-09-24): un "gmial.com" es un correo
+// "válido" que nunca llega — el cliente se queda sin propuesta ni confirmación.
+const _EMAIL_TYPOS = {
+  'gmial.com':'gmail.com','gmai.com':'gmail.com','gmal.com':'gmail.com','gmil.com':'gmail.com',
+  'gmail.co':'gmail.com','gmail.cl':'gmail.com','gamil.com':'gmail.com','gnail.com':'gmail.com',
+  'gmaill.com':'gmail.com','gmail.con':'gmail.com','gmail.om':'gmail.com',
+  'hotmial.com':'hotmail.com','hotmal.com':'hotmail.com','hotmai.com':'hotmail.com',
+  'hotmail.co':'hotmail.com','hotmail.con':'hotmail.com','hotmil.com':'hotmail.com',
+  'outlok.com':'outlook.com','outlook.co':'outlook.com','outloo.com':'outlook.com',
+  'yahooo.com':'yahoo.com','yaho.com':'yahoo.com','yahoo.co':'yahoo.com',
+  'icloud.co':'icloud.com','iclod.com':'icloud.com','live.co':'live.cl',
+};
+function _emailTypoSugerencia(email){
+  const e = String(email || '').trim().toLowerCase();
+  const at = e.lastIndexOf('@');
+  if (at < 1) return '';
+  const dom = e.slice(at + 1);
+  return _EMAIL_TYPOS[dom] ? e.slice(0, at + 1) + _EMAIL_TYPOS[dom] : '';
+}
 function validateEmail(input){
   const has = input.value.length > 0;
   const ok = has && isValidEmail(input.value);
@@ -225,6 +246,27 @@ function validateEmail(input){
     } else {
       okEl.style.display = 'none';
     }
+  }
+  // ¿Dominio mal escrito? Sugerencia con un toque para corregir.
+  let sug = document.getElementById(input.id + '_sug');
+  const propuesta = ok ? _emailTypoSugerencia(input.value) : '';
+  if (propuesta){
+    if (!sug){
+      sug = document.createElement('button');
+      sug.type = 'button';
+      sug.id = input.id + '_sug';
+      sug.className = 'email-sugerencia';
+      input.insertAdjacentElement('afterend', sug);
+    }
+    sug.textContent = '¿Quisiste decir ' + propuesta + '? Toca para corregir';
+    sug.onclick = function(){
+      input.value = propuesta;
+      sug.remove();
+      validateEmail(input);
+    };
+    sug.style.display = '';
+  } else if (sug){
+    sug.remove();
   }
   return ok;
 }
@@ -356,6 +398,61 @@ function _showToast(msg, type){
   }
 }
 
+// Escape para todo texto que entra con innerHTML (el motivo de un bloqueo lo
+// escribe el equipo en Marketing → Bloqueos; nunca se inserta crudo).
+function _escHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+const _DIAS_CORTO = ['dom','lun','mar','mié','jue','vie','sáb'];
+function _fmtIsoCorto(iso){
+  const p = String(iso || '').split('-').map(Number);
+  if (p.length < 3 || !p[0]) return String(iso || '');
+  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+  return _DIAS_CORTO[d.getUTCDay()] + ' ' + String(p[2]).padStart(2, '0') + '/' + String(p[1]).padStart(2, '0');
+}
+
+// ════════════════════════════════════════════════════════
+//  AVISO DE BLOQUEOS (Daniel 2026-09-24: "reforzar la gestión de bloqueo
+//  de días y horas… un mensaje asociado al diseño de la página donde nos
+//  indique el bloqueo de las horas y días"). Fuente: payload.bloqueos
+//  (Marketing → Bloqueos), ya agrupado por el servidor.
+// ════════════════════════════════════════════════════════
+function _renderAgendaAvisos(){
+  const box = document.getElementById('agendaAvisos');
+  if (!box) return;
+  const bl = (_disponibilidad && Array.isArray(_disponibilidad.bloqueos)) ? _disponibilidad.bloqueos : [];
+  if (!bl.length){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  const MAX = 6;
+  const items = bl.slice(0, MAX).map(b => {
+    const cuando = b.dia_completo
+      ? '<span class="aa-hora is-dia">Todo el día</span>'
+      : '<span class="aa-hora">' + _escHtml(b.desde) + ' – ' + _escHtml(b.hasta || 'cierre') + '</span>';
+    const mot = b.motivo ? '<span class="aa-mot">' + _escHtml(b.motivo) + '</span>' : '';
+    return '<li><span class="aa-fecha">' + _escHtml(_fmtIsoCorto(b.fecha)) + '</span>' + cuando + mot + '</li>';
+  }).join('');
+  box.innerHTML =
+    '<div class="aa-head"><span class="aa-ico"><i class="bi bi-calendar2-x-fill"></i></span>' +
+    '<div><strong>Días y horarios bloqueados</strong>' +
+    '<span>En estas fechas la bodega no atiende retiros. Ya están bloqueados en el calendario.</span></div></div>' +
+    '<ul class="aa-list">' + items + '</ul>' +
+    (bl.length > MAX ? '<div class="aa-more">y ' + (bl.length - MAX) + ' bloqueo(s) más en el calendario</div>' : '');
+  box.style.display = '';
+}
+
+// Franjas bloqueadas del día elegido, arriba de los bloques horarios.
+function _renderBloqueoDelDia(fecha){
+  const box = document.getElementById('slotBlockNotice');
+  if (!box) return;
+  const bl = (_disponibilidad && Array.isArray(_disponibilidad.bloqueos)) ? _disponibilidad.bloqueos : [];
+  const delDia = fecha ? bl.filter(b => b.fecha === fecha && !b.dia_completo) : [];
+  if (!delDia.length){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.innerHTML = '<i class="bi bi-slash-circle-fill"></i><div><strong>Horario bloqueado por ILUS este día</strong>' +
+    delDia.map(b => '<span>' + _escHtml(b.desde) + ' – ' + _escHtml(b.hasta || 'cierre') +
+      (b.motivo ? ' · ' + _escHtml(b.motivo) : '') + '</span>').join('') + '</div>';
+  box.style.display = '';
+}
+
 // Helpers HH:MM ↔ minutos
 function _hmToMin(hm){
   const parts = String(hm || '').split(':').map(Number);
@@ -380,6 +477,7 @@ async function cargarDisponibilidad() {
     fechaInput.min = _disponibilidad.from;
     fechaInput.max = _disponibilidad.to;
     _applyOperacionTexts();
+    _renderAgendaAvisos();
     _initIlusCalendar();
     if (retry) retry.style.display = 'none';
     if (fechaInput.value){
@@ -583,6 +681,7 @@ function onFechaChange() {
 
   document.querySelector('input[name=requested_date]').value = fecha;
   clearSlots();
+  _renderBloqueoDelDia(fecha);
 
   if (!fecha || !_disponibilidad){
     grid.innerHTML = '<div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1"><i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero</div>';
@@ -605,9 +704,19 @@ function onFechaChange() {
 
   const dia = _disponibilidad.dias[fecha];
   if (!dia || !dia.disponible){
-    msg.textContent = (dia && dia.razon) || 'Dia sin cupos';
+    const razon = (dia && dia.razon) || 'Día sin cupos disponibles';
+    const esBloqueo = /^D[ií]a bloqueado/i.test(razon);
+    msg.textContent = razon;
     msg.style.color = '#dc2626';
-    grid.innerHTML = `<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-x-circle me-1"></i>${(dia && dia.razon) || 'Dia sin cupos disponibles'}</div>`;
+    // Aviso con el diseño de la página (antes: una línea roja suelta, con el
+    // motivo insertado sin escapar).
+    grid.innerHTML =
+      '<div class="cal-day-notice" style="grid-column:1/-1">' +
+        '<i class="bi bi-' + (esBloqueo ? 'calendar2-x-fill' : 'lock-fill') + '"></i>' +
+        '<div><strong>' + (esBloqueo ? 'La bodega no atiende retiros este día' : 'Este día no está disponible') + '</strong>' +
+        '<span>' + _escHtml(esBloqueo ? razon.replace(/^D[ií]a bloqueado:\s*/i, 'Motivo: ') : razon) + '</span>' +
+        '<span class="cdn-hint">Elige otra fecha en el calendario.</span></div>' +
+      '</div>';
     quick.style.display = 'none';
     return;
   }
@@ -615,7 +724,7 @@ function onFechaChange() {
   _slotsDelDia = dia.slots || [];
   // Contar bloques que puedan INICIAR un rango
   const libres = _slotsDelDia.filter(s => s.puede_iniciar).length;
-  msg.textContent = `${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este dia`;
+  msg.textContent = `${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este día`;
   msg.style.color = libres > 0 ? '#16a34a' : '#dc2626';
 
   renderSlotGrid();
@@ -664,8 +773,8 @@ function renderSlotGrid(){
       badge = '<span class="slot-badge">½</span>';
       title = 'Medio cupo · queda 1 lugar';
     } else if (estado === 'bloqueado'){
-      cls.push('is-blocked', 'is-disabled');
-      title = 'Hora no disponible';
+      cls.push('is-blocked', 'is-disabled', 'is-ilus-block');
+      title = 'Bloqueado por ILUS' + (s.razon ? ': ' + s.razon : '');
     } else if (estado === 'no_disponible'){
       // FIX 2026-06-09: 'no_disponible' (hora pasada / min_notice) caía al
       // else y quedaba CLICKEABLE. Ahora va gris con candado, sin onclick.
@@ -685,7 +794,7 @@ function renderSlotGrid(){
     // Los deshabilitados NO llevan onclick (antes solo se filtraba en el handler)
     const disabled = cls.indexOf('is-disabled') !== -1;
     const action = disabled ? 'aria-disabled="true"' : `onclick="onSlotClick(${i})"`;
-    return `<div class="${cls.join(' ')}" data-idx="${i}" ${action} title="${title}">${badge}${hora}</div>`;
+    return `<div class="${cls.join(' ')}" data-idx="${i}" ${action} title="${_escHtml(title)}">${badge}${_escHtml(hora)}</div>`;
   };
 
   // Buscar el índice del primer slot post-colación
@@ -728,7 +837,11 @@ function onSlotClick(i){
   // Juan Daniel 2026-06-05: 'ocupado' (1/2 = MEDIO CUPO) SÍ es agendable —
   // atendemos hasta 2 clientes por bloque (dos agendas). Solo 'completo' (2/2),
   // colación, bloqueado y no_disponible (pasado / min_notice) quedan fuera.
-  if (estado === 'colacion' || estado === 'completo' || estado === 'bloqueado' || estado === 'no_disponible'){
+  if (estado === 'bloqueado'){
+    _showToast('Ese horario está bloqueado por ILUS' + (s.razon ? ' (' + s.razon + ')' : '') + '. Elige otro bloque.', 'warning');
+    return;
+  }
+  if (estado === 'colacion' || estado === 'completo' || estado === 'no_disponible'){
     _showToast('Esa hora ya no tiene cupos. Elige otro bloque.', 'warning');
     return;
   }
@@ -763,7 +876,7 @@ function updateSlotSummary(){
   const summaryBox = document.getElementById('slotSummary');
   if (_slotStartIdx === null){
     txt.className = 'sum-empty';
-    txt.textContent = 'No has seleccionado bloque aun';
+    txt.textContent = 'No has seleccionado bloque aún';
     clearBtn.style.display = 'none';
     if (summaryBox) summaryBox.classList.remove('is-active');
     document.querySelector('input[name=requested_time_from]').value = '';
@@ -856,6 +969,21 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
   const errores = [];
   const invalidIds = [];
 
+  // N° de documento y nombre (2026-09-24): antes solo los revisaba el servidor
+  // y el cliente recibía un error genérico sin saber qué campo faltaba.
+  const elDocNum = document.getElementById('document_number');
+  if (elDocNum && !elDocNum.value.trim()){
+    errores.push('Escribe el N° de tu documento o pedido');
+    invalidIds.push('document_number');
+    elDocNum.classList.add('field-invalid');
+  }
+  const elCliName = document.getElementById('customer_name');
+  if (elCliName && !elCliName.value.trim()){
+    errores.push('Escribe la razón social o tu nombre completo');
+    invalidIds.push('customer_name');
+    elCliName.classList.add('field-invalid');
+  }
+
   // RUT del cliente
   const elCliRut = document.getElementById('customer_rut');
   if (!isValidRUT(elCliRut.value)){
@@ -924,6 +1052,13 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
     invalidIds.push('slotPicker');
   }
 
+  // Declaración de responsabilidad (casilla final)
+  const elTerms = document.getElementById('acceptTerms');
+  if (elTerms && !elTerms.checked){
+    errores.push('Marca la declaración de responsabilidad al final del formulario');
+    invalidIds.push('acceptTerms');
+  }
+
   if (errores.length){
     e.preventDefault();
 
@@ -936,9 +1071,10 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
     }
 
     // Usar ilusToast (regla #1 ILUS). Fallback a alert si helper no cargó.
+    // El primer error con nombre y apellido: "revisa los campos" no decía cuál.
     if (typeof ilusToast === 'function'){
-      ilusToast('Revisa los campos marcados en rojo (' + errores.length + ')',
-                { type: 'warning', duration: 4500 });
+      ilusToast(errores[0] + (errores.length > 1 ? ' (y ' + (errores.length - 1) + ' más)' : ''),
+                { type: 'warning', duration: 5500 });
     } else if (typeof ilusAlert === 'function'){
       ilusAlert({
         title: 'Revisa el formulario',
@@ -973,7 +1109,9 @@ function _initStepReveal(){
         obs.unobserve(entry.target);
       }
     });
-  }, { threshold: 0.08, rootMargin: '0px 0px -20px 0px' });
+  // threshold 0: con 0.08 una sección más alta que ~12 pantallas NUNCA llegaba
+  // al 8 % visible y quedaba invisible (auditoría 2026-09-24).
+  }, { threshold: 0, rootMargin: '0px 0px -20px 0px' });
   steps.forEach((s, i) => {
     s.style.transitionDelay = (i * 60) + 'ms';
     obs.observe(s);
@@ -1145,7 +1283,7 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
     // Animaciones RÁPIDAS (~600 ms total) — solo para que el ojo perciba
     // los 3 pasos. El cliente ya tiene su código en <1 s.
     spartanShowStep(1, 'Validando tus datos…');
-    setTimeout(() => spartanShowStep(2, 'Reservando tu slot…'), 200);
+    setTimeout(() => spartanShowStep(2, 'Registrando tu solicitud…'), 200);
     setTimeout(() => spartanShowStep(3, 'Generando código…'), 400);
   }
 
@@ -1247,6 +1385,16 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
   }
 
   // Enviar por fetch — el backend detecta X-Requested-With y responde JSON
+  // Tiempo límite (2026-09-24): sin esto, con el servidor saturado el cliente
+  // esperaba hasta 5 min mirando el overlay. Si reintenta, el servidor reconoce
+  // la misma solicitud (correo+RUT+documento+hora) y NO la duplica.
+  let _abortCtl = null, _abortTimer = null;
+  try {
+    if (typeof AbortController === 'function'){
+      _abortCtl = new AbortController();
+      _abortTimer = setTimeout(() => { try { _abortCtl.abort(); } catch(_){} }, 45000);
+    }
+  } catch(_){ _abortCtl = null; }
   try {
     const fd = new FormData(form);
     const t0 = Date.now();
@@ -1258,7 +1406,9 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
         'Accept': 'application/json',
       },
       credentials: 'same-origin',
+      signal: _abortCtl ? _abortCtl.signal : undefined,
     });
+    if (_abortTimer) clearTimeout(_abortTimer);
     const elapsed = Date.now() - t0;
     console.log('[ILUS submit] backend respondió en ' + elapsed + 'ms');
 
@@ -1285,11 +1435,17 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
       return;
     }
 
-    // ÉXITO — mostrar código RET-XXX
+    // ÉXITO — mostrar código RET-XXX (duplicado=true: era un reenvío de la
+    // misma solicitud; se muestra el código que ya existía, sin crear otra)
     _showSuccess(data.code, data.tracking_url);
   } catch (err){
+    if (_abortTimer) clearTimeout(_abortTimer);
     console.error('[ILUS submit] fetch error', err);
-    _onError('Sin conexión o el servidor no responde. Verifica tu internet.');
+    if (err && err.name === 'AbortError'){
+      _onError('La conexión está muy lenta y no tuvimos respuesta. Intenta enviar de nuevo: si tu solicitud ya había quedado registrada, no se duplicará.');
+    } else {
+      _onError('Sin conexión o el servidor no responde. Verifica tu internet e intenta de nuevo (no se duplicará).');
+    }
   }
 });
 
@@ -1331,6 +1487,30 @@ function irAlSeguimientoAhora(){
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Prellenado desde el link (2026-09-24, campaña e-commerce): la tienda puede
+  // mandar ?tipo=pedido&numero=1136&nombre=…&email=…&telefono=…&rut=…
+  // Solo completa campos VACÍOS y los valores entran con .value (nunca HTML).
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const _set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el && v && !el.value) el.value = String(v).trim().slice(0, 160);
+    };
+    const tipo = (qs.get('tipo') || '').toLowerCase();
+    const dtSel = document.getElementById('document_type');
+    if (dtSel && ['factura', 'boleta', 'nota_venta', 'pedido'].indexOf(tipo) !== -1) dtSel.value = tipo;
+    else if (dtSel && qs.get('pedido') && !tipo) dtSel.value = 'pedido';
+    _set('document_number', qs.get('numero') || qs.get('pedido'));
+    _set('customer_name', qs.get('nombre'));
+    _set('customer_rut', qs.get('rut'));
+    _set('contact_email', qs.get('email'));
+    _set('contact_phone', qs.get('telefono'));
+  } catch (_) { /* sin URLSearchParams: el formulario funciona igual, vacío */ }
+  ['document_number', 'customer_name'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => el.classList.remove('field-invalid'));
+  });
+
   // Listener de fecha UNA sola vez aquí (antes se agregaba dentro de
   // cargarDisponibilidad — cada reintento apilaba un listener más).
   const _fi = document.getElementById('cal_fecha');

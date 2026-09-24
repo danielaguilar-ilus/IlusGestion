@@ -563,9 +563,33 @@
        columna principal y dejaba un hueco vacío abajo). Se fija la
        columna al hacer scroll en vez de dejarla flotando sobre espacio
        en blanco -- estándar en dashboards con panel lateral corto. */
+    /* 2026-09-24: solo la columna lateral (.trk-side) es sticky — antes era
+       .col-lg-4 global, y top:18px la dejaba debajo del header sticky (~106 px).
+       Las tarjetas de marketing ya no viven ahí (fila .mkt-row propia), así la
+       lateral es más corta que la central y no queda hueco en blanco. */
     @media(min-width:992px){
-      .col-lg-4{ align-self:flex-start; position:sticky; top:18px; }
+      .trk-side{ align-self:flex-start; position:sticky; top:124px; }
+      .mkt-row > .col-lg-4{ display:flex; }
+      .mkt-row > .col-lg-4 > *{ flex:1; }
     }
+
+    /* Bloque de acción: variantes (2026-09-24). is-review = la contrapropuesta del
+       cliente espera respuesta de ILUS; is-soft = sin propuesta pendiente, el
+       cliente puede cambiar fecha o cancelar. Sin campanita animada: no hay
+       nada urgente que responder. */
+    .next-action.is-review{
+      background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);
+      border-color:#60a5fa;
+    }
+    .next-action.is-review h5{ color:#1e3a8a; }
+    .next-action.is-review h5 i{ color:#3b82f6; animation:none; }
+    .next-action.is-review .prop-fecha{ border-color:#60a5fa; }
+    .next-action.is-soft{
+      background:#fff;border:1.5px solid var(--ilus-border);
+      box-shadow:0 4px 14px rgba(15,23,42,.05);
+    }
+    .next-action.is-soft h5{ color:var(--ilus-black); }
+    .next-action.is-soft h5 i{ color:var(--ilus-red); animation:none; }
 
     /* Modales — heredan Bootstrap pero refinamos un poco */
     .modal-content{border-radius:14px;border:none;box-shadow:0 22px 48px rgba(0,0,0,.3)}

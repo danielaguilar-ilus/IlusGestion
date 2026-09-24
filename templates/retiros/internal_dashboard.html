@@ -1761,7 +1761,12 @@ select.nri-field-locked{pointer-events:none}
                 {% endif %}
                 {% if current_user and current_user.role == 'superadmin' %}
                 <li><hr class="dropdown-divider"></li>
-                <li><button type="button" class="dropdown-item text-danger" onclick="eliminarSolicitudDesdeMonitor({{ r.id }}, '{{ r.code }}', '{{ r.customer_name|e }}')">
+                {# data-*: el nombre viene del formulario público. Dentro de un
+                   onclick='…', |e no protege (el navegador decodifica &#39; antes de
+                   ejecutar) → XSS con sesión de superadmin (auditoría 2026-09-24). #}
+                <li><button type="button" class="dropdown-item text-danger"
+                            data-rid="{{ r.id }}" data-code="{{ r.code }}" data-cliente="{{ r.customer_name }}"
+                            onclick="eliminarSolicitudDesdeMonitor(this)">
                   <i class="bi bi-trash3 me-1"></i>Eliminar (superadmin)
                 </button></li>
                 {% endif %}
@@ -1791,11 +1796,17 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Eliminar solicitud desde monitor — solo superadmin
-async function eliminarSolicitudDesdeMonitor(rid, code, cliente){
+async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
+  let rid = btnOrRid;
+  if (btnOrRid && btnOrRid.dataset){
+    rid = btnOrRid.dataset.rid; code = btnOrRid.dataset.code; cliente = btnOrRid.dataset.cliente;
+  }
+  const _esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const sigue = await ilusConfirm({
     title: 'Eliminar solicitud',
-    message: `¿Eliminar la solicitud <strong>${code}</strong>?`,
-    sub: `Cliente: <strong>${cliente}</strong><br>` +
+    message: `¿Eliminar la solicitud ${code || ''}?`,
+    sub: `Cliente: <strong>${_esc(cliente)}</strong><br>` +
          'Borra docs, fotos, firmas, propuestas, mensajes y todo el historial.<br>' +
          '<strong style="color:#dc2626">No se puede deshacer.</strong>',
     subHtml: true,

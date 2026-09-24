@@ -5659,16 +5659,33 @@ def _rl_client_ip():
     return request.remote_addr or "0.0.0.0"
 
 
+def _rl_ip_bucket(ip: str) -> str:
+    """IPv6 → su red /64. Un cliente IPv6 controla un /64 completo y podía
+    estrenar IP en cada request para saltarse el límite (auditoría 2026-09-24:
+    run.app publica registros AAAA). IPv4 queda igual (equivale a un NAT)."""
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(ip)
+        if addr.version == 6:
+            if addr.ipv4_mapped:
+                return str(addr.ipv4_mapped)
+            return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    except Exception:
+        pass
+    return ip
+
+
 def _rl_identifier() -> str:
     """Identificador para el límite. Si el usuario está autenticado usa
-    user_id (más estable). Si no, cae a IP. Truncado a 190 chars."""
+    user_id (más estable). Si no, cae a IP (IPv6 agrupada por /64).
+    Truncado a 190 chars."""
     try:
         u = getattr(g, "user", None)
         if u and u.get("id"):
             return f"u:{u['id']}"[:190]
     except Exception:
         pass
-    return f"ip:{_rl_client_ip()}"[:190]
+    return f"ip:{_rl_ip_bucket(_rl_client_ip())}"[:190]
 
 
 def _rl_check_memory_fallback(scope, max_attempts, window_seconds):
@@ -5793,6 +5810,21 @@ def rate_limited(scope: str, max_attempts: int, window_seconds: int,
                     if is_ajax:
                         return jsonify({"ok": False, "error": msg,
                                         "error_codigo": "RATE_LIMIT"}), 429
+                    # En rutas GET limitadas (/retiros/buscar, resumen.xlsx) el
+                    # redirect a la misma URL volvía a contar → "demasiadas
+                    # redirecciones" en el navegador. GET responde 429 directo.
+                    if request.method != "POST":
+                        return (
+                            "<!doctype html><html lang='es'><head><meta charset='utf-8'>"
+                            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                            "<title>Demasiados intentos — ILUS Fitness</title></head>"
+                            "<body style=\"margin:0;min-height:100vh;display:flex;align-items:center;"
+                            "justify-content:center;background:#0a0a0a;color:#fff;"
+                            "font-family:system-ui,-apple-system,Segoe UI,sans-serif\">"
+                            "<div style='max-width:440px;padding:24px;text-align:center'>"
+                            "<h1 style='color:#dc2626;font-size:22px;margin:0 0 12px'>Demasiados intentos</h1>"
+                            f"<p style='line-height:1.5;margin:0'>{msg}</p></div></body></html>"
+                        ), 429
                     flash(msg, "danger")
                     return redirect(request.path)
             return view(*a, **kw)
@@ -6402,6 +6434,17 @@ def _perf_static_cache_and_gzip(resp):
         # formulario en un iframe oculto/clickjacking). El resto del sitio
         # sigue con SAMEORIGIN normal.
         _es_soporte_publico = bool(request) and request.path.rstrip("/") == "/soporte"
+        # 2026-09-24 (Daniel: el formulario de retiros se publica en el
+        # e-commerce): misma excepción para el formulario público de Retiros y su
+        # seguimiento (a donde redirige el formulario al enviarse), acotada a
+        # ilusfitness.com igual que /soporte. Ambas rutas ya están exentas de
+        # CSRF y no usan sesión, así que funcionan dentro de un iframe.
+        if not _es_soporte_publico and bool(request):
+            _p_emb = request.path.rstrip("/")
+            _es_soporte_publico = (
+                _p_emb in ("/retiros/solicitar", "/retiros/buscar")
+                or _p_emb.startswith("/retiros/seguimiento/")
+            )
         if _es_soporte_publico:
             resp.headers.pop("X-Frame-Options", None)
             resp.headers["Content-Security-Policy"] = (
@@ -28710,9 +28753,26 @@ def _mantenciones_cron_run_once(slot_str=""):
         # de forma robusta: si el módulo no exportó el helper, hacemos el
         # send mínimo aquí mismo usando _ilus_email_html.
         from pickups_module import PICKUP_STATUS  # no rompe nada
+        # 2026-09-24 (auditoría Retiros): el camino propio de abajo mandaba fecha
+        # ISO, "NOTA_VENTA", "9:00:", doble envoltorio, botones de calendario
+        # vacíos, ".ics adjunto" sin adjunto y SOLO al contacto (sin los CC).
+        # Si pickups_module expuso notify() (ver _pickup_notify), se usa esa.
+        _pn = globals().get("_pickup_notify")
         for r in pick_rows:
             try:
                 rd = dict(r)
+                if _pn:
+                    _res_pn = _pn(rd, "reminder_24h")
+                    _ok_pn = bool(_res_pn[0]) if isinstance(_res_pn, (tuple, list)) and _res_pn else bool(_res_pn)
+                    if _ok_pn:
+                        mysql_execute(
+                            "UPDATE pickup_requests SET reminder_24h_sent=NOW() WHERE id=%s",
+                            (rd["id"],),
+                        )
+                        metricas["pickup_reminders_sent"] += 1
+                    else:
+                        metricas["pickup_reminders_omitted"] += 1
+                    continue
                 # Inline notify minimalista — reusa la plantilla recordatorio_24h
                 tpl = mysql_fetchone(
                     "SELECT asunto, cuerpo FROM comm_templates "
@@ -28734,8 +28794,8 @@ def _mantenciones_cron_run_once(slot_str=""):
                                       + "/retiros/seguimiento/"
                                       + str(rd["public_token"]))
                 except Exception: pass
-                tf = str(rd.get("confirmed_time_from") or "")[:5]
-                tt = str(rd.get("confirmed_time_to") or "")[:5]
+                tf = _jinja_hm(rd.get("confirmed_time_from")) if rd.get("confirmed_time_from") else ""
+                tt = _jinja_hm(rd.get("confirmed_time_to")) if rd.get("confirmed_time_to") else ""
                 # Settings de bodega (defaults sensatos para evitar romper)
                 wcfg = mysql_fetchone("SELECT * FROM pickup_settings WHERE id=1") or {}
                 vars_ = {
@@ -49802,7 +49862,11 @@ def _build_retiro_email_templates():
          '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
          'Recibimos tu solicitud y nuestro equipo está validando documentación e identidad. '
          'Te avisaremos por email apenas tengamos novedades — generalmente, en menos de '
-         '<strong>2 horas hábiles</strong>.</p>' +
+         '<strong>24 horas</strong>.</p>'
+         '<p style="font-size:13px;color:#1e3a8a;background:#dbeafe;border-radius:8px;'
+         'line-height:1.55;margin:0 0 16px;padding:10px 14px">'
+         '<strong>Aún no es una reserva:</strong> la fecha y hora de abajo son las que pediste. '
+         'Tu retiro queda agendado cuando te enviemos la confirmación por correo.</p>' +
          _ret_info_card(_DATOS_AGENDA_SOLIC) +
          _ret_cta("link_seguimiento", "Ver mi retiro en vivo") +
          '<p style="font-size:12px;color:#6b7280;line-height:1.5;margin:18px 0 0;text-align:center">'
@@ -49830,7 +49894,8 @@ def _build_retiro_email_templates():
          'margin:18px 0;padding:14px 18px">'
          '<tr><td style="font-size:13px;color:#9a3412;line-height:1.55">'
          '⏱ <strong>Importante:</strong> tu retiro queda <em>reservado</em> sólo cuando confirmes. '
-         'Otros clientes pueden tomar este horario si demoras.</td></tr></table>' +
+         'Otros clientes pueden tomar este horario si demoras. La propuesta vence en '
+         '<strong>48 horas</strong> (o al comenzar el horario propuesto, si es antes).</td></tr></table>' +
          _ret_cta("link_seguimiento", "Responder la propuesta") +
          '<p style="font-size:12px;color:#6b7280;line-height:1.55;margin:16px 0 0">'
          'En el enlace verás 3 botones: <strong style="color:#16a34a">Confirmar</strong>, '
@@ -49846,7 +49911,7 @@ def _build_retiro_email_templates():
          'Retiro {{code}} confirmado para {{fecha_confirmada}}',
          _ret_hero_block(
              "Cita confirmada", "#dcfce7", "#14532d",
-             "Tu retiro está listo · {{fecha_confirmada}}",
+             "Tu retiro está agendado · {{fecha_confirmada}}",
              "Guarda este correo — sirve como comprobante"
          ) +
          _ret_stepper(2) +
@@ -49860,7 +49925,7 @@ def _build_retiro_email_templates():
          '<tr><td style="font-size:13px;color:#78350f;line-height:1.6">'
          '<strong>Trae contigo:</strong><br>'
          '✓ Cédula de identidad (debe coincidir con quien retira)<br>'
-         '✓ Vehículo apto para {{n_bultos}} bulto(s) — {{kg}} kg / {{m3}} m³<br>'
+         '✓ Vehículo apto para tu carga: {{carga_txt}}<br>'
          '✓ Este correo o el código <strong>{{code}}</strong></td></tr></table>' +
          _ret_calendar_btns() +
          _ret_cta("link_seguimiento", "Ver detalle del retiro") +
@@ -49906,7 +49971,6 @@ def _build_retiro_email_templates():
          'Todo el equipo ILUS te agradece la confianza.</p>' +
          _ret_info_card(
              _DATOS_BASE +
-             _ret_field("Documento",        "{{documento}}") +
              _ret_field("Retirado el",      "{{fecha_confirmada}}") +
              _ret_field("Bodega",           "{{warehouse_name}}")
          ) +
@@ -49923,7 +49987,7 @@ def _build_retiro_email_templates():
          'Calificar mi experiencia ★</a>'
          '</td></tr></table>' +
          '<p style="font-size:12px;color:#6b7280;line-height:1.55;text-align:center;margin:18px 0 0">'
-         '¿Necesitas asesoría o un service post-venta? Responde este correo y te ayudamos.</p>'),
+         '¿Necesitas asesoría o servicio post-venta? Responde este correo y te ayudamos.</p>'),
         ('retirada', 'whatsapp',
          '',
          '✅ *ILUS* — Retiro *{{code}}* completado. ¡Gracias por confiar en nosotros!'),
@@ -57461,7 +57525,9 @@ def init_mantenciones_tables():
                 "       'ot_aprobada','ot_rechazada','ot_firmada_cliente',"
                 "       'sugerencia','ot_sugerida_cron',"
                 "       'retiro_nuevo','retiro_respuesta','retiro_sin_saldo',"
-                "       'otro') DEFAULT 'otro'",
+                "       'otro',"
+                "       'retiro_confirmado','retiro_mensaje','retiro_preparacion',"
+                "       'retiro_listo','retiro_cerrado') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -97855,7 +97921,13 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
     fallaría en modo SQL estricto -- silencioso porque _mant_notificar
     atrapa la excepción, así que el técnico simplemente nunca vería la
     campana encenderse. Idempotente: MODIFY COLUMN con el mismo ENUM (o
-    ampliado) no falla si ya existe."""
+    ampliado) no falla si ya existe.
+
+    2026-09-24 (auditoría Retiros): + retiro_confirmado / retiro_mensaje /
+    retiro_preparacion / retiro_listo / retiro_cerrado. pickups_module los
+    usaba y el INSERT fallaba en silencio (modo estricto): la campana nunca
+    avisaba de un mensaje del cliente ni de una cita confirmada a mano. Van
+    AL FINAL (después de 'otro') para no reordenar los valores existentes."""
     try:
         mysql_execute(
             "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
@@ -97867,7 +97939,9 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'ot_aprobada','ot_rechazada','ot_firmada_cliente',"
             "       'sugerencia','ot_sugerida_cron',"
             "       'retiro_nuevo','retiro_respuesta','retiro_sin_saldo',"
-            "       'otro') DEFAULT 'otro'"
+            "       'otro',"
+            "       'retiro_confirmado','retiro_mensaje','retiro_preparacion',"
+            "       'retiro_listo','retiro_cerrado') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)

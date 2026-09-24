@@ -168,7 +168,10 @@ function toggleStepCollapse(toggleBtn){
         obs.unobserve(entry.target);
       }
     });
-  }, { threshold: 0.08, rootMargin: '0px 0px -20px 0px' });
+  // threshold 0 (antes 0.08): Chrome solo marca "visible" cuando el 8 % de la
+  // sección está en pantalla → una sección de más de ~12 pantallas (Paso 3 con
+  // muchos productos) NUNCA aparecía: pantallas grises al bajar (2026-09-24).
+  }, { threshold: 0, rootMargin: '0px 0px -20px 0px' });
   steps.forEach((s, i) => {
     s.style.transitionDelay = (i * 60) + 'ms';
     obs.observe(s);
@@ -181,6 +184,9 @@ function toggleStepCollapse(toggleBtn){
       }
     });
   }, 800);
+  // Red de seguridad: pestaña en segundo plano / observador que no dispara →
+  // ninguna sección puede quedar invisible para siempre.
+  setTimeout(() => { steps.forEach(s => s.classList.add('in-view')); }, 3000);
 })();
 // ════════════════════════════════════════════════════════════════════
 //  ESTADO COMPARTIDO + UTILS
@@ -3649,6 +3655,21 @@ async function _saveInlineField(el){
     el.textContent = d.value;
     el.dataset.inlineOriginal = d.value;
     delete el.dataset.inlineDirty;
+    // El mismo campo aparece en más de un lugar (el correo, dos veces) y el
+    // diálogo "Cambiar aquí" leía el correo de cuando cargó la página: todo se
+    // sincroniza con lo recién guardado (2026-09-24).
+    document.querySelectorAll('[data-inline-edit="' + field + '"]').forEach(o => {
+      if (o !== el && o.dataset.inlineDirty !== '1'){
+        o.textContent = d.value;
+        o.dataset.inlineOriginal = d.value;
+      }
+    });
+    if (field === 'contact_email'){
+      if (window.RETIROS_DETAIL_DATA) window.RETIROS_DETAIL_DATA.contactEmail = d.value;
+      document.querySelectorAll('a.rh-btn.mail, a.btn-2027[href^="mailto:"]').forEach(a => {
+        a.href = 'mailto:' + d.value;
+      });
+    }
     indicator.innerHTML = `<i class="bi bi-check-circle-fill"></i> guardado ${d.saved_at}`;
     indicator.style.color = '#16a34a';
     setTimeout(()=> {
@@ -3673,13 +3694,21 @@ function setupInlineEdit(root){
     el.dataset.inlineOriginal = el.textContent.replace(/\s+/g, ' ').trim();
 
     let debounceTimer = null;
+    // Correos: se guardan SOLO al salir del campo o con Enter. Con el guardado
+    // por pausa, "maria@hotmail" a medio escribir iba al servidor, volvía 400 y
+    // el valor viejo se reponía mientras el operador seguía tecleando (2026-09-24).
+    const _soloAlSalir = ['contact_email', 'extra_emails'].indexOf(el.dataset.inlineEdit) !== -1;
     el.addEventListener('input', () => {
       el.dataset.inlineDirty = '1';
       const ind = _ensureInlineIndicator(el);
-      ind.innerHTML = '<i class="bi bi-pencil-fill"></i> escribiendo…';
+      ind.innerHTML = _soloAlSalir
+        ? '<i class="bi bi-pencil-fill"></i> escribiendo… (se guarda al presionar Enter o salir)'
+        : '<i class="bi bi-pencil-fill"></i> escribiendo…';
       ind.style.color = '#6b7280';
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => _saveInlineField(el), _INLINE_EDIT_DEBOUNCE_MS);
+      if (!_soloAlSalir){
+        debounceTimer = setTimeout(() => _saveInlineField(el), _INLINE_EDIT_DEBOUNCE_MS);
+      }
     });
     el.addEventListener('blur', () => {
       if (el.dataset.inlineDirty === '1'){

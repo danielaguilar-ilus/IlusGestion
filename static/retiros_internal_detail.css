@@ -2209,7 +2209,9 @@
   .pd-aviso-doc.t-gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
   .pd-vacio{padding:14px 16px;font-size:.9rem;font-weight:600;color:#6b7280}
 
-  .pd-row{display:grid;grid-template-columns:150px minmax(0,1.5fr) 130px 190px 190px 190px;gap:14px;
+  /* minmax(240px,…): con minmax(0,…) la columna del nombre llegaba a 0 px en
+     1024-1366 px (sidebar de 250 px) y el nombre salía una letra por línea. */
+  .pd-row{display:grid;grid-template-columns:150px minmax(240px,1.5fr) 130px 190px 190px 190px;gap:14px;
     align-items:center;padding:14px 16px;border-top:1px solid #f1f1f3}
   .pd-doc-head + .pd-row, .pd-doc-head + .pd-aviso-doc + .pd-row, .pd-doc-head + .pd-aviso-doc + .pd-aviso-doc + .pd-row{border-top:0}
   .pd-row.t-rojo{background:#fef2f2}
@@ -2274,7 +2276,10 @@
   .pd-totales span:not(:first-child) b{font-size:1.3rem;font-weight:900}
   .pd-totales span:not(:first-child) small{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa}
 
-  @media (max-width:900px){
+  /* 2026-09-24 (auditoría): el diseño de 6 columnas necesita ~1.600 px de
+     ventana (sidebar incluido). Por debajo se usa el diseño compacto — antes
+     solo bajo 900 px y en 1024-1440 la tabla colapsaba (filas de 300-1.700 px). */
+  @media (max-width:1599px){
     .pd-row{grid-template-columns:130px minmax(0,1fr);grid-template-areas:"check info" "nums nums" "stock stock" "peso peso" "estado estado"}
     .pd-check{grid-area:check}
     .pd-info{grid-area:info}

@@ -436,7 +436,7 @@ Todas son **opcionales** — si no se setean, hay defaults sensatos:
 | `ILUS_BRAND_REPLY_TO`     | `soportetec@sphs.cl`       | Buzón donde caen respuestas reales       |
 | `ILUS_BRAND_WA_NAME`      | `ILUS`                                   | Prefijo de WhatsApp/SMS (`🔧 ILUS · …`)  |
 | `ILUS_BRAND_SUPPORT_EMAIL`| `soportetec@sphs.cl`       | Email en footer "Para soporte: …"        |
-| `ILUS_BRAND_SUPPORT_URL`  | `https://ilusfitness.com/soporte`        | URL portal soporte (footer)              |
+| `ILUS_BRAND_SUPPORT_URL`  | `https://ilusfitness.com/pages/soporte-tecnico` | URL portal soporte (footer). Es el link oficial para levantar tickets (Daniel 2026-09-24); `/soporte` da 404 |
 
 **Cómo aparece para el destinatario:**
 

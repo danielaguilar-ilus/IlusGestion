@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Solicita tu retiro — ILUS</title>
-  <meta name="description" content="Solicita tu retiro en bodega ILUS. Agenda online en 1 minuto.">
+  <title>Solicita tu retiro — ILUS Fitness</title>
+  <meta name="description" content="Solicita tu retiro en bodega ILUS Fitness. Agenda online en 1 minuto.">
   <meta name="theme-color" content="#0a0a0a">
   {# 2026-05-28: removida ref a favicon.svg inexistente (causaba 404 silencioso). #}
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='Logo.png') }}">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Solicita tu retiro — ILUS">
+  <meta property="og:title" content="Solicita tu retiro — ILUS Fitness">
   <meta property="og:description" content="Agenda online en 1 minuto.">
   <meta property="og:image" content="{{ url_for('static', filename='Logo.png', _external=True) }}">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -69,7 +69,7 @@
         <div class="hero-logo-wrap">
           <picture>
             <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
-            <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="hero-logo" alt="ILUS" decoding="async" fetchpriority="high">
+            <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="hero-logo" alt="ILUS Fitness" decoding="async" fetchpriority="high">
           </picture>
         </div>
         <div class="hero-pill-row">
@@ -240,7 +240,9 @@
         <div class="step-num">2</div>
         <div class="step-icon"><i class="bi bi-shield-check"></i></div>
         <h6>ILUS revisa</h6>
-        <p>Validamos disponibilidad y respondemos en menos de 2 horas hábiles.</p>
+        {# 2026-09-24 (Daniel): una sola promesa en toda la página — "menos de
+           24 horas", igual que la píldora de arriba (antes decía 2 h hábiles). #}
+        <p>Validamos disponibilidad y respondemos en menos de 24 horas.</p>
       </div>
       <div class="step-card">
         <div class="step-num">3</div>
@@ -252,13 +254,25 @@
         <div class="step-num">4</div>
         <div class="step-icon"><i class="bi bi-truck"></i></div>
         <h6>Día del retiro</h6>
-        <p>Te entregamos los productos. Firmas digitalmente al recibir.</p>
+        <p>Presentas tu cédula y te entregamos los productos. Registramos quién retira.</p>
       </div>
     </div>
 
     {# ════════════════════════════════════════════════════════════════
        BUSCAR SEGUIMIENTO EXISTENTE
        ════════════════════════════════════════════════════════════════ #}
+    {# Mensajes de /retiros/buscar ("código no encontrado", límite de intentos…):
+       antes esta página no los mostraba y la búsqueda fallaba en silencio. #}
+    {%- set _flashed = get_flashed_messages(with_categories=true) -%}
+    {%- if _flashed -%}
+    <div class="mb-3" role="status" aria-live="polite">
+      {%- for cat, msg in _flashed -%}
+      <div class="alert alert-{{ 'danger' if cat in ('danger','error') else ('success' if cat == 'success' else 'warning') }} py-2 mb-2">
+        <i class="bi bi-{{ 'check-circle' if cat == 'success' else 'exclamation-triangle' }} me-2"></i>{{ msg }}
+      </div>
+      {%- endfor -%}
+    </div>
+    {%- endif -%}
     <div id="tracking-search" class="form-card mb-4" style="border-left:5px solid #0a0a0a">
       <div class="form-body" style="padding:20px 24px">
         <div class="d-flex align-items-center gap-3 flex-wrap">
@@ -267,7 +281,7 @@
             <p class="mb-0 small text-muted">Pega aquí el enlace de seguimiento que te enviamos por correo.</p>
           </div>
           <div class="d-flex gap-2 align-items-center" style="flex:1;min-width:280px">
-            <input type="text" id="trackingLink" class="form-control" placeholder="Pega el enlace o el código (RET-000123)">
+            <input type="text" id="trackingLink" class="form-control" placeholder="Pega el enlace o el código (ej: RET-7KQ2MX)">
             <button class="btn btn-dark fw-bold" onclick="irASeguimiento()">
               <i class="bi bi-arrow-right"></i>
             </button>
@@ -280,6 +294,13 @@
        FORMULARIO DE SOLICITUD
        ════════════════════════════════════════════════════════════════ #}
     <form id="form-solicitud" method="post" class="form-card" novalidate>
+      {# Anti-bots (2026-09-24): campo trampa que una persona nunca ve + hora de
+         apertura del formulario. Ver pickup_public_request. #}
+      <div aria-hidden="true" style="position:absolute!important;left:-10000px!important;top:auto;width:1px;height:1px;overflow:hidden">
+        <label for="hp_ilus_extra">No completes este campo</label>
+        <input type="text" id="hp_ilus_extra" name="hp_ilus_extra" tabindex="-1" autocomplete="off" value="">
+      </div>
+      <input type="hidden" name="ilus_t0" value="{{ form_t0 or '' }}">
       <div class="form-head">
         <div>
           <h3>AGENDAR TU RETIRO</h3>
@@ -316,17 +337,21 @@
             <div class="col-md-4">
               <label class="form-label small fw-bold">Tipo de documento <span class="req">*</span></label>
               <select name="document_type" id="document_type" class="form-select" required>
-                <option value="factura">Factura electrónica</option>
-                <option value="boleta">Boleta electrónica</option>
-                <option value="nota_venta">Nota de venta</option>
-                <option value="pedido">N° de pedido</option>
+                {# 2026-09-24 (campaña e-commerce): "N° de pedido" era ambiguo para el
+                   comprador web. El value "pedido" NO cambia (el backend lo traduce a
+                   WEB en el ERP). #}
+                {% set _dt_sel = fd.get('document_type','') %}
+                <option value="factura" {{ 'selected' if _dt_sel == 'factura' }}>Factura electrónica</option>
+                <option value="boleta" {{ 'selected' if _dt_sel == 'boleta' }}>Boleta electrónica</option>
+                <option value="nota_venta" {{ 'selected' if _dt_sel == 'nota_venta' }}>Nota de venta</option>
+                <option value="pedido" {{ 'selected' if _dt_sel == 'pedido' }}>Pedido web (ilusfitness.com)</option>
               </select>
-              <div class="input-help with-example">Elige según el documento que recibiste al comprar.</div>
+              <div class="input-help with-example">Elige según el documento que recibiste al comprar. ¿Compraste en la tienda online? Elige <strong>Pedido web</strong>.</div>
             </div>
             <div class="col-md-8">
               <label class="form-label small fw-bold">N° del documento <span class="req">*</span></label>
-              <input name="document_number" id="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required placeholder="Ej: 10683" inputmode="numeric">
-              <div class="input-help with-example">El número aparece en la parte superior de tu factura, boleta o NV.</div>
+              <input name="document_number" id="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required placeholder="Ej: 10683" inputmode="numeric" maxlength="60">
+              <div class="input-help with-example">Está en la parte superior de tu factura, boleta o nota de venta. En compras web, es el número del correo de confirmación de tu pedido (ej: #1136 → escribe 1136).</div>
               <input type="hidden" name="invoice_total_amount" value="0">
             </div>
           </div>
@@ -490,6 +515,9 @@
               <p class="step-sub">Elige el día y <strong>tu hora de llegada</strong>. Cada bloque dura 30 minutos. <span id="horarioAtencion">Atendemos <strong>09:00 a 12:30</strong> en la mañana y <strong>14:00 a 16:30</strong> en la tarde, solo días hábiles.</span></p>
             </div>
           </div>
+          {# Días y horarios bloqueados por ILUS (Marketing → Bloqueos). Lo llena
+             el JS desde payload.bloqueos; oculto si no hay bloqueos. #}
+          <div id="agendaAvisos" class="agenda-avisos" style="display:none" aria-live="polite"></div>
           <div class="row g-3">
             <div class="col-md-5">
               <label class="form-label small fw-bold">Fecha del retiro <span class="req">*</span></label>
@@ -545,6 +573,7 @@
                     <span><span class="dot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>Sin cupos 🔒</span>
                   </div>
                 </div>
+                <div id="slotBlockNotice" class="slot-block-notice" style="display:none" aria-live="polite"></div>
                 <div class="slot-grid" id="slotGrid">
                   <div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1">
                     <i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero
@@ -639,7 +668,7 @@
         <div class="spartan-logo-wrap">
           <picture>
             <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
-            <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="spartan-logo" alt="ILUS" decoding="async" width="140" height="140">
+            <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="spartan-logo" alt="ILUS Fitness" decoding="async" width="140" height="140">
           </picture>
         </div>
         <div class="spartan-text" id="spartanText">Procesando tu solicitud…</div>
@@ -654,7 +683,7 @@
           </div>
           <div class="sp-step pending" data-step="2">
             <span class="sp-bullet"></span>
-            <span>Reservando bodega</span>
+            <span>Registrando tu solicitud</span>
           </div>
           <div class="sp-step pending" data-step="3">
             <span class="sp-bullet"></span>
@@ -673,7 +702,7 @@
   <footer class="footer">
     <picture>
       <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
-      <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
+      <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS Fitness" loading="lazy" decoding="async">
     </picture>
     <div class="fw-bold text-white mb-1">ILUS Fitness</div>
     <div class="small">© Todos los derechos reservados · Solicitud de retiro segura</div>

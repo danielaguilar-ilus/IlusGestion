@@ -296,6 +296,9 @@
           <label class="form-label small fw-semibold">Motivo</label>
           <input type="text" name="motivo" class="form-control" maxlength="200"
                  placeholder="Ej: Inventario, feriado regional, cierre anticipado…">
+          <div class="form-text" style="font-size:.74rem">
+            <i class="bi bi-eye me-1"></i>El cliente verá este motivo en el formulario público de retiros.
+          </div>
         </div>
         <div class="col-md-3">
           <button type="submit" class="btn btn-danger w-100 fw-bold" id="bkBtnSave" disabled>
@@ -374,9 +377,9 @@
               {% endif %}
             </td>
             <td class="font-monospace">
+              {# |hm: MySQL entrega TIME como timedelta → (…|string)[:5] mostraba "9:00:" #}
               {% if is_full_day %}—{% else %}
-                {{ b.hora_inicio.strftime('%H:%M') if b.hora_inicio.__class__.__name__ == 'time' else (b.hora_inicio|string)[:5] }}
-                – {{ b.hora_fin.strftime('%H:%M') if b.hora_fin and b.hora_fin.__class__.__name__ == 'time' else (b.hora_fin|string)[:5] if b.hora_fin else 'cierre' }}
+                {{ b.hora_inicio|hm }} – {{ b.hora_fin|hm if b.hora_fin else 'cierre' }}
               {% endif %}
             </td>
             <td>{{ b.motivo or '—' }}</td>

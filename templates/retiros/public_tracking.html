@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Seguimiento {{ req.code }} — ILUS</title>
-  <meta name="description" content="Seguimiento en vivo de tu retiro ILUS.">
+  <title>Seguimiento {{ req.code }} — ILUS Fitness</title>
+  <meta name="description" content="Seguimiento en vivo de tu retiro ILUS Fitness.">
   <meta name="theme-color" content="#0a0a0a">
   {# 2026-05-28: removida ref a favicon.svg inexistente (causaba 404 silencioso). #}
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
@@ -47,11 +47,11 @@
       <div class="logo-wrap">
         <picture>
           <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
-          <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" decoding="async" fetchpriority="high">
+          <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS Fitness" decoding="async" fetchpriority="high">
         </picture>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <span class="live-badge" id="liveBadge" title="Esta pagina se actualiza sola cada 30 segundos">
+        <span class="live-badge" id="liveBadge" title="Esta página se actualiza sola cada 30 segundos">
           <span class="dot"></span>EN VIVO
         </span>
         <a href="{{ url_for('pickup_public_request') }}" class="btn-volver">
@@ -81,8 +81,12 @@
       <div>
         <div class="eyebrow">Orden de retiro</div>
         <h2 class="code mono">{{ req.code }}</h2>
+        {# 2026-09-24 (campaña Shopify): el cliente veía el código interno
+           ("NOTA_VENTA 6162", "PEDIDO 123"). Ahora el nombre legible. #}
+        {% set _doc_lbl = {'factura':'Factura','boleta':'Boleta','nota_venta':'Nota de venta','pedido':'Pedido',
+                           'fcv':'Factura','blv':'Boleta','nvv':'Nota de venta','vd':'Nota de venta VD','web':'Pedido web'} %}
         <div class="doc-line">
-          <i class="bi bi-file-earmark-text"></i>{{ req.document_type|upper }} {{ req.document_number }}
+          <i class="bi bi-file-earmark-text"></i>{{ _doc_lbl.get((req.document_type or '')|lower, (req.document_type or '')|upper) }} {{ req.document_number }}
           <span class="sep">·</span>
           <i class="bi bi-person"></i>{{ req.customer_name }}
         </div>
@@ -122,15 +126,15 @@
 
     {# ──────── STATUS HERO CONTEXTUAL ──────── #}
     {% set _hero_msg = {
-      'solicitud_recibida': {'ico':'envelope-paper-heart','accent':'accent-blue','title':'Tu solicitud está en cola','msg':'En menos de 2 horas hábiles te confirmamos disponibilidad y persona autorizada.'},
+      'solicitud_recibida': {'ico':'envelope-paper-heart','accent':'accent-blue','title':'Tu solicitud está en cola','msg':'En menos de 24 horas te confirmamos disponibilidad y persona autorizada.'},
       'en_revision':        {'ico':'search-heart',    'accent':'accent-amber','title':'ILUS está revisando tu retiro','msg':'Validamos documento, identidad y disponibilidad. Te avisamos por email.'},
       'informacion_incompleta':{'ico':'exclamation-triangle','accent':'accent-amber','title':'Necesitamos completar datos','msg':'Te contactaremos para confirmar lo que falta. También puedes responder tu correo de confirmación.'},
       'propuesta_enviada':  {'ico':'calendar-plus',   'accent':'accent-amber','title':'Hay una fecha esperándote','msg':'Confírmala abajo, propón otra o rechaza. Mientras no respondas, el cupo no está reservado.'},
       'esperando_cliente':  {'ico':'hourglass-split', 'accent':'accent-amber','title':'Esperando tu respuesta','msg':'Necesitamos tu confirmación para avanzar con el retiro.'},
-      'agenda_confirmada':  {'ico':'calendar-check-fill','accent':'accent-green','title':'Tu retiro está confirmado','msg':'Te esperamos puntual. Trae cédula y un vehículo apto para los bultos declarados.'},
+      'agenda_confirmada':  {'ico':'calendar-check-fill','accent':'accent-green','title':'Tu retiro está confirmado','msg':'Te esperamos puntual. Trae tu cédula y un vehículo apto para tus productos.'},
       'en_preparacion':     {'ico':'box-seam-fill',   'accent':'accent-purple','title':'Bodega está preparando tu pedido','msg':'Estamos armando todo para que retires sin esperas. Llega dentro del horario confirmado.'},
       'reagendada':         {'ico':'arrow-clockwise','accent':'accent-amber','title':'Tu retiro fue reagendado','msg':'Revisa abajo la nueva propuesta y respóndela para asegurar el nuevo cupo.'},
-      'retirada':           {'ico':'check-circle-fill','accent':'accent-green','title':'Retiro completado, gracias','msg':'Esperamos que disfrutes tu equipo ILUS. Si necesitas service post-venta, escríbenos.'},
+      'retirada':           {'ico':'check-circle-fill','accent':'accent-green','title':'Retiro completado, gracias','msg':'Esperamos que disfrutes tu equipo ILUS. Si necesitas servicio post-venta, escríbenos.'},
       'cerrada':            {'ico':'archive-fill',   'accent':'accent-green','title':'Solicitud cerrada','msg':'Este retiro ya fue completado. Si tienes dudas, escríbenos.'},
       'rechazada':          {'ico':'x-octagon-fill', 'accent':'accent-red','title':'Solicitud cancelada','msg':'Si fue un error o quieres reagendar, escríbenos respondiendo el correo o haz una nueva solicitud.'},
       'fallida':            {'ico':'exclamation-octagon-fill','accent':'accent-red','title':'Retiro no completado','msg':'No pudimos completar tu retiro. Nos pondremos en contacto para reagendar.'},
@@ -159,6 +163,210 @@
         {% endif %}
       </div>
     </div>
+
+        {# ──────── PROPUESTA PENDIENTE — bloque destacado ──────── #}
+        {# 2026-09-24 (auditoría campaña Shopify): el bloque de acción va ARRIBA
+           (antes quedaba bajo el stepper: en el celular "Confirmar" estaba a
+           1,5 pantallas). Solo las propuestas de ILUS (proposed_by='internal')
+           piden confirmación: la contrapropuesta del propio cliente se muestra
+           "en revisión" (antes aparecía como si ILUS la hubiera propuesto y
+           Confirmar fallaba). Y el cliente siempre tiene salida: cambiar fecha
+           o cancelar mientras el retiro no esté cerrado. #}
+        {% set _pend_all = proposals|selectattr('status','equalto','pending')|list %}
+        {% set pending = _pend_all|selectattr('proposed_by','equalto','internal')|list %}
+        {% set pending_cli = _pend_all|rejectattr('proposed_by','equalto','internal')|list %}
+        {% set _st_terminal = req.status in ['retirada','cerrada','rechazada','fallida'] %}
+        {% set _st_responde = req.status in ['solicitud_recibida','en_revision','informacion_incompleta','propuesta_enviada','esperando_cliente','reagendada'] %}
+        {% if pending and _st_responde %}
+        <div class="next-action" id="nextAction">
+          <h5><i class="bi bi-bell-fill"></i>ILUS te propuso una fecha — responde por favor</h5>
+          <p class="small text-muted mb-0">
+            Tienes tres opciones: confirmar, proponer otra fecha o rechazar definitivamente.
+          </p>
+          <div class="prop-fecha">
+            <i class="bi bi-calendar-event ico-cal"></i>
+            <strong>{{ pending[0].date | chile_fmt('%a %d/%m/%Y') }}</strong>
+            <span style="color:#9ca3af">·</span>
+            {{ pending[0].time_from|hm }} – {{ pending[0].time_to|hm }}
+          </div>
+          {% if pending[0].message %}
+          <p class="small mb-3" style="color:#9a3412;background:rgba(255,255,255,.6);padding:10px 14px;border-radius:8px">
+            <i class="bi bi-chat-dots me-1"></i><strong>Mensaje:</strong> {{ pending[0].message }}
+          </p>
+          {% endif %}
+          <div class="btns">
+            {# Confirmar — abre stepper modal (3 pasos visuales con AJAX).
+               Daniel mayo 2026: antes era un form submit que recargaba la
+               página sin feedback intermedio; ahora cada paso muestra su
+               propio progreso. Si algo falla, el cliente VE EN QUÉ PASO falló. #}
+            <button class="btn-act btn-confirm" type="button" id="openConfirmStepper" data-proposal-id="{{ pending[0].id }}">
+              <i class="bi bi-check2-circle"></i>Confirmar esta fecha
+            </button>
+            {# Fallback no-JS: si por alguna razón el JS no carga (cliente con
+               adblock raro, navegador antiguo), preservamos el form clásico
+               escondido para que el cliente NO quede bloqueado. #}
+            <noscript>
+              <form method="post" style="display:inline">
+                <input type="hidden" name="action" value="confirm">
+                <input type="hidden" name="proposal_id" value="{{ pending[0].id }}">
+                <button class="btn-act btn-confirm" type="submit">
+                  <i class="bi bi-check2-circle"></i>Confirmar esta fecha
+                </button>
+              </form>
+            </noscript>
+            <button class="btn-act btn-counter" data-bs-toggle="modal" data-bs-target="#counterModal" type="button">
+              <i class="bi bi-calendar-plus"></i>Proponer otra fecha
+            </button>
+            <button class="btn-act btn-reject" data-bs-toggle="modal" data-bs-target="#rejectModal" type="button">
+              <i class="bi bi-x-circle"></i>No puedo / cancelar
+            </button>
+          </div>
+
+          {# ════════════════════════════════════════════════════════════
+             MODAL STEPPER: confirmar fecha en 3 pasos visuales
+             Daniel mayo 2026 — "paso a paso, no un botón solitario que
+             falle en silencio". Cada paso tiene su propio spinner, su
+             check verde al completarse, o su mensaje de error con botón
+             "Reintentar". UX premium ILUS.
+
+             Pasos:
+              1) Re-verificamos disponibilidad (GET disponibilidad-publica)
+              2) Reservamos tu slot (POST seguimiento, action=confirm, AJAX)
+              3) Listo — redirect al tracking actualizado
+             ════════════════════════════════════════════════════════════ #}
+          <div class="modal fade" id="confirmStepperModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-sm">
+              <div class="modal-content cs-modal">
+                <div class="modal-header cs-header">
+                  <h5 class="modal-title">
+                    <i class="bi bi-check2-circle me-2" style="color:#16a34a"></i>
+                    Confirmar tu cita
+                  </h5>
+                  <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar" id="csCloseBtn"></button>
+                </div>
+                <div class="modal-body cs-body">
+                  <div class="cs-target">
+                    <i class="bi bi-calendar-event"></i>
+                    <div>
+                      <strong id="csTargetDate">{{ pending[0].date | chile_fmt('%a %d/%m/%Y') if pending else '' }}</strong>
+                      <span class="text-muted">·</span>
+                      <span id="csTargetTime">{{ pending[0].time_from|hm if pending else '' }} – {{ pending[0].time_to|hm if pending else '' }}</span>
+                    </div>
+                  </div>
+
+                  <ol class="cs-steps" id="csSteps">
+                    <li class="cs-step" data-step="1">
+                      <span class="cs-step-icon">
+                        <span class="cs-step-num">1</span>
+                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
+                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
+                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
+                      </span>
+                      <div class="cs-step-body">
+                        <div class="cs-step-title">Verificamos disponibilidad</div>
+                        <div class="cs-step-sub">Comprobando que tu horario sigue libre…</div>
+                      </div>
+                    </li>
+                    <li class="cs-step" data-step="2">
+                      <span class="cs-step-icon">
+                        <span class="cs-step-num">2</span>
+                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
+                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
+                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
+                      </span>
+                      <div class="cs-step-body">
+                        <div class="cs-step-title">Confirmamos tu hora</div>
+                        <div class="cs-step-sub">Avisando a la bodega y bloqueando tu bloque…</div>
+                      </div>
+                    </li>
+                    <li class="cs-step" data-step="3">
+                      <span class="cs-step-icon">
+                        <span class="cs-step-num">3</span>
+                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
+                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
+                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
+                      </span>
+                      <div class="cs-step-body">
+                        <div class="cs-step-title">Listo</div>
+                        <div class="cs-step-sub">Te enviamos un correo con todos los detalles.</div>
+                      </div>
+                    </li>
+                  </ol>
+
+                  <div class="cs-summary cs-summary-success" id="csSummarySuccess" style="display:none">
+                    <i class="bi bi-check-circle-fill"></i>
+                    <div>
+                      <strong>¡Cita confirmada!</strong>
+                      <div class="small">Redirigiendo a tu seguimiento…</div>
+                    </div>
+                  </div>
+                  <div class="cs-summary cs-summary-error" id="csSummaryError" style="display:none">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <div>
+                      <strong>No pudimos confirmar.</strong>
+                      <div class="small" id="csErrorDetail">Intenta nuevamente o elige otro horario.</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="modal-footer cs-footer">
+                  <button type="button" class="btn btn-link text-muted" data-bs-dismiss="modal" id="csCancelBtn">Cancelar</button>
+                  <button type="button" class="btn btn-outline-danger" id="csRetryBtn" style="display:none">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Reintentar
+                  </button>
+                  <button type="button" class="btn btn-success fw-bold" id="csDoneBtn" style="display:none" disabled>
+                    <i class="bi bi-check-lg me-1"></i>Listo
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+
+        </div>
+        {% elif pending_cli and not _st_terminal %}
+        <div class="next-action is-review" id="nextAction">
+          <h5><i class="bi bi-hourglass-split"></i>Tu propuesta de fecha está en revisión</h5>
+          <p class="small text-muted mb-0">
+            ILUS la revisará y te confirmará por correo. No necesitas hacer nada más por ahora.
+          </p>
+          <div class="prop-fecha">
+            <i class="bi bi-calendar-event ico-cal"></i>
+            <strong>{{ pending_cli[0].date | chile_fmt('%a %d/%m/%Y') }}</strong>
+            <span style="color:#9ca3af">·</span>
+            {{ pending_cli[0].time_from|hm }} – {{ pending_cli[0].time_to|hm }}
+          </div>
+          {% if req.confirmed_date %}
+          <p class="small mb-2" style="color:#1e3a8a">
+            <i class="bi bi-info-circle me-1"></i>Tu cita confirmada del {{ req.confirmed_date | chile_fmt('%a %d/%m/%Y') }}
+            sigue vigente hasta que te respondamos.
+          </p>
+          {% endif %}
+          <div class="btns">
+            <button class="btn-act btn-counter" data-bs-toggle="modal" data-bs-target="#counterModal" type="button">
+              <i class="bi bi-calendar-plus"></i>Proponer otra fecha
+            </button>
+            <button class="btn-act btn-reject" data-bs-toggle="modal" data-bs-target="#rejectModal" type="button">
+              <i class="bi bi-x-circle"></i>Cancelar retiro
+            </button>
+          </div>
+        </div>
+        {% elif not _st_terminal and req.status != 'en_preparacion' %}
+        <div class="next-action is-soft" id="nextAction">
+          <h5><i class="bi bi-calendar2-week"></i>{% if req.confirmed_date %}¿No puedes asistir en la fecha confirmada?{% else %}¿Necesitas cambiar la fecha o cancelar?{% endif %}</h5>
+          <p class="small text-muted mb-0">
+            {% if req.confirmed_date %}Propón otra fecha y hora de llegada: tu cita actual sigue vigente hasta que ILUS te confirme el cambio.
+            {% else %}Puedes proponernos otra fecha u hora de llegada, o cancelar si ya no necesitas el retiro.{% endif %}
+          </p>
+          <div class="btns">
+            <button class="btn-act btn-counter" data-bs-toggle="modal" data-bs-target="#counterModal" type="button">
+              <i class="bi bi-calendar-plus"></i>Proponer otra fecha
+            </button>
+            <button class="btn-act btn-reject" data-bs-toggle="modal" data-bs-target="#rejectModal" type="button">
+              <i class="bi bi-x-circle"></i>Cancelar retiro
+            </button>
+          </div>
+        </div>
+        {% endif %}
 
     {# ──────── STEPPER del MODELO CANÓNICO ÚNICO (5 hitos) ────────
        Daniel 2026-06-15: los mismos hitos que el correo y el interno
@@ -217,7 +425,7 @@
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
               <div style="font-weight:700;color:#7c2d12">
                 <i class="bi bi-calendar-x me-1"></i>
-                {{ p.date }} · {{ p.time_from|hm }}–{{ p.time_to|hm }}
+                {{ p.date | chile_fmt('%a %d/%m/%Y') }} · {{ p.time_from|hm }}–{{ p.time_to|hm }}
               </div>
               <span class="badge bg-danger" style="font-size:.68rem">Rechazada</span>
             </div>
@@ -228,7 +436,7 @@
             {% endif %}
             {% if p.answered_at %}
             <div class="small mt-1" style="color:#9ca3af;font-size:.72rem">
-              Respondida: {{ p.answered_at }}
+              Respondida: {{ p.answered_at | chile_fmt }}
             </div>
             {% endif %}
           </div>
@@ -240,155 +448,6 @@
 
     <div class="row g-3 mt-1">
       <div class="col-lg-8">
-
-        {# ──────── PROPUESTA PENDIENTE — bloque destacado ──────── #}
-        {% set pending = proposals|selectattr('status','equalto','pending')|list %}
-        {% if pending %}
-        <div class="next-action">
-          <h5><i class="bi bi-bell-fill"></i>ILUS te propuso una fecha — responde por favor</h5>
-          <p class="small text-muted mb-0">
-            Tienes tres opciones: confirmar, proponer otra fecha o rechazar definitivamente.
-          </p>
-          <div class="prop-fecha">
-            <i class="bi bi-calendar-event ico-cal"></i>
-            <strong>{{ pending[0].date }}</strong>
-            <span style="color:#9ca3af">·</span>
-            {{ pending[0].time_from|hm }} – {{ pending[0].time_to|hm }}
-          </div>
-          {% if pending[0].message %}
-          <p class="small mb-3" style="color:#9a3412;background:rgba(255,255,255,.6);padding:10px 14px;border-radius:8px">
-            <i class="bi bi-chat-dots me-1"></i><strong>Mensaje:</strong> {{ pending[0].message }}
-          </p>
-          {% endif %}
-          <div class="btns">
-            {# Confirmar — abre stepper modal (3 pasos visuales con AJAX).
-               Daniel mayo 2026: antes era un form submit que recargaba la
-               página sin feedback intermedio; ahora cada paso muestra su
-               propio progreso. Si algo falla, el cliente VE EN QUÉ PASO falló. #}
-            <button class="btn-act btn-confirm" type="button" id="openConfirmStepper">
-              <i class="bi bi-check2-circle"></i>Confirmar esta fecha
-            </button>
-            {# Fallback no-JS: si por alguna razón el JS no carga (cliente con
-               adblock raro, navegador antiguo), preservamos el form clásico
-               escondido para que el cliente NO quede bloqueado. #}
-            <noscript>
-              <form method="post" style="display:inline">
-                <input type="hidden" name="action" value="confirm">
-                <button class="btn-act btn-confirm" type="submit">
-                  <i class="bi bi-check2-circle"></i>Confirmar esta fecha
-                </button>
-              </form>
-            </noscript>
-            <button class="btn-act btn-counter" data-bs-toggle="modal" data-bs-target="#counterModal" type="button">
-              <i class="bi bi-calendar-plus"></i>Proponer otra fecha
-            </button>
-            <button class="btn-act btn-reject" data-bs-toggle="modal" data-bs-target="#rejectModal" type="button">
-              <i class="bi bi-x-circle"></i>No puedo
-            </button>
-          </div>
-
-          {# ════════════════════════════════════════════════════════════
-             MODAL STEPPER: confirmar fecha en 3 pasos visuales
-             Daniel mayo 2026 — "paso a paso, no un botón solitario que
-             falle en silencio". Cada paso tiene su propio spinner, su
-             check verde al completarse, o su mensaje de error con botón
-             "Reintentar". UX premium ILUS.
-
-             Pasos:
-              1) Re-verificamos disponibilidad (GET disponibilidad-publica)
-              2) Reservamos tu slot (POST seguimiento, action=confirm, AJAX)
-              3) Listo — redirect al tracking actualizado
-             ════════════════════════════════════════════════════════════ #}
-          <div class="modal fade" id="confirmStepperModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered modal-sm">
-              <div class="modal-content cs-modal">
-                <div class="modal-header cs-header">
-                  <h5 class="modal-title">
-                    <i class="bi bi-check2-circle me-2" style="color:#16a34a"></i>
-                    Confirmar tu cita
-                  </h5>
-                  <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar" id="csCloseBtn"></button>
-                </div>
-                <div class="modal-body cs-body">
-                  <div class="cs-target">
-                    <i class="bi bi-calendar-event"></i>
-                    <div>
-                      <strong id="csTargetDate">{{ pending[0].date if pending else '' }}</strong>
-                      <span class="text-muted">·</span>
-                      <span id="csTargetTime">{{ pending[0].time_from|hm if pending else '' }} – {{ pending[0].time_to|hm if pending else '' }}</span>
-                    </div>
-                  </div>
-
-                  <ol class="cs-steps" id="csSteps">
-                    <li class="cs-step" data-step="1">
-                      <span class="cs-step-icon">
-                        <span class="cs-step-num">1</span>
-                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
-                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
-                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
-                      </span>
-                      <div class="cs-step-body">
-                        <div class="cs-step-title">Verificamos disponibilidad</div>
-                        <div class="cs-step-sub">Comprobando que tu horario sigue libre…</div>
-                      </div>
-                    </li>
-                    <li class="cs-step" data-step="2">
-                      <span class="cs-step-icon">
-                        <span class="cs-step-num">2</span>
-                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
-                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
-                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
-                      </span>
-                      <div class="cs-step-body">
-                        <div class="cs-step-title">Reservamos tu slot</div>
-                        <div class="cs-step-sub">Avisando a la bodega y bloqueando tu bloque…</div>
-                      </div>
-                    </li>
-                    <li class="cs-step" data-step="3">
-                      <span class="cs-step-icon">
-                        <span class="cs-step-num">3</span>
-                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
-                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
-                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
-                      </span>
-                      <div class="cs-step-body">
-                        <div class="cs-step-title">Listo</div>
-                        <div class="cs-step-sub">Te enviamos un correo con todos los detalles.</div>
-                      </div>
-                    </li>
-                  </ol>
-
-                  <div class="cs-summary cs-summary-success" id="csSummarySuccess" style="display:none">
-                    <i class="bi bi-check-circle-fill"></i>
-                    <div>
-                      <strong>¡Cita confirmada!</strong>
-                      <div class="small">Redirigiendo a tu seguimiento…</div>
-                    </div>
-                  </div>
-                  <div class="cs-summary cs-summary-error" id="csSummaryError" style="display:none">
-                    <i class="bi bi-exclamation-triangle-fill"></i>
-                    <div>
-                      <strong>No pudimos confirmar.</strong>
-                      <div class="small" id="csErrorDetail">Intenta nuevamente o elige otro horario.</div>
-                    </div>
-                  </div>
-                </div>
-                <div class="modal-footer cs-footer">
-                  <button type="button" class="btn btn-link text-muted" data-bs-dismiss="modal" id="csCancelBtn">Cancelar</button>
-                  <button type="button" class="btn btn-outline-danger" id="csRetryBtn" style="display:none">
-                    <i class="bi bi-arrow-clockwise me-1"></i>Reintentar
-                  </button>
-                  <button type="button" class="btn btn-success fw-bold" id="csDoneBtn" style="display:none" disabled>
-                    <i class="bi bi-check-lg me-1"></i>Listo
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-
-        </div>
-        {% endif %}
 
         {# ──────── PRÓXIMO PASO según estado ──────── #}
         {% if req.status == 'agenda_confirmada' and req.confirmed_date %}
@@ -423,7 +482,7 @@
             <div class="agenda-cell">
               <div class="ag-lbl"><i class="bi bi-envelope"></i>Solicitada por ti</div>
               <div class="ag-val">
-                {{ req.requested_date }}
+                {{ req.requested_date | chile_fmt('%a %d/%m/%Y') if req.requested_date else '—' }}
                 {% if req.requested_time_from %}<br><small>{{ req.requested_time_from|hm }} – {{ req.requested_time_to|hm }}</small>{% endif %}
               </div>
             </div>
@@ -431,7 +490,7 @@
               <div class="ag-lbl"><i class="bi bi-send"></i>Propuesta de ILUS</div>
               <div class="ag-val">
                 {% if req.proposed_date %}
-                  {{ req.proposed_date }}
+                  {{ req.proposed_date | chile_fmt('%a %d/%m/%Y') }}
                   {% if req.proposed_time_from %}<br><small>{{ req.proposed_time_from|hm }} – {{ req.proposed_time_to|hm }}</small>{% endif %}
                 {% else %}—{% endif %}
               </div>
@@ -440,7 +499,7 @@
               <div class="ag-lbl"><i class="bi bi-check2-circle"></i>Confirmada</div>
               <div class="ag-val">
                 {% if req.confirmed_date %}
-                  {{ req.confirmed_date }}
+                  {{ req.confirmed_date | chile_fmt('%a %d/%m/%Y') }}
                   {% if req.confirmed_time_from %}<br><small>{{ req.confirmed_time_from|hm }} – {{ req.confirmed_time_to|hm }}</small>{% endif %}
                 {% else %}—{% endif %}
               </div>
@@ -462,13 +521,25 @@
            directo a campos legacy. Evitamos `namespace` Jinja que es frágil
            entre versiones. #}
         {%- set _m3_show = (req.m3_calculado if req.m3_calculado is defined else (req.total_volume_m3 or req.volumen_m3 or 0))|float -%}
+        {# 2026-09-24: el cliente web no declara medidas; mostrar "1 BULTOS · 0.00 KG"
+           confundía. Sin peso ni volumen reales, solo se explica que se verifica en
+           bodega. Con datos: formato chileno (coma decimal) y singular/plural. #}
+        {% if _kg_show <= 0 and _m3_show <= 0 %}
         <div class="ilus-card">
-          <h6><i class="bi bi-box-seam"></i>Carga declarada</h6>
+          <h6><i class="bi bi-box-seam"></i>Tu carga</h6>
+          <div class="text-muted small py-1">
+            <i class="bi bi-info-circle me-1"></i>Los productos, su peso y volumen los verificamos en bodega según tu compra.
+            No necesitas declarar medidas.
+          </div>
+        </div>
+        {% else %}
+        <div class="ilus-card">
+          <h6><i class="bi bi-box-seam"></i>Carga del retiro</h6>
           <div class="carga-grid mb-3">
-            <div class="carga-cell"><div class="c-num">{{ _bultos_show }}</div><div class="c-lbl">Bultos</div></div>
-            <div class="carga-cell"><div class="c-num">{{ "%.2f"|format(_kg_show) }}</div><div class="c-lbl">Kg reales</div></div>
-            <div class="carga-cell"><div class="c-num">{{ "%.2f"|format(_pvol_show) }}</div><div class="c-lbl">P. vol</div></div>
-            <div class="carga-cell"><div class="c-num">{{ "%.4f"|format(_m3_show) }}</div><div class="c-lbl">m³</div></div>
+            <div class="carga-cell"><div class="c-num">{{ _bultos_show }}</div><div class="c-lbl">{{ 'Bulto' if _bultos_show == 1 else 'Bultos' }}</div></div>
+            <div class="carga-cell"><div class="c-num">{{ ("%.1f"|format(_kg_show))|replace('.', ',') }}</div><div class="c-lbl">Kg</div></div>
+            <div class="carga-cell"><div class="c-num">{{ ("%.1f"|format(_pvol_show))|replace('.', ',') }}</div><div class="c-lbl">Peso vol. (kg)</div></div>
+            <div class="carga-cell"><div class="c-num">{{ ("%.3f"|format(_m3_show))|replace('.', ',') }}</div><div class="c-lbl">m³</div></div>
           </div>
           {% if packages and (req.total_packages or 0) > 0 %}
           <div class="table-responsive">
@@ -491,10 +562,14 @@
           </div>
           {% endif %}
         </div>
+        {% endif %}
       </div>
 
       {# ──────── SIDEBAR ──────── #}
-      <div class="col-lg-4">
+      {# trk-side: solo esta columna es sticky (antes .col-lg-4 global — las
+         tarjetas de marketing la hacían más alta que la central y dejaban un
+         hueco en blanco de 800-1.100 px al bajar; ahora van en fila propia). #}
+      <div class="col-lg-4 trk-side">
         {# Bodega — solo si no es post-retirada ya cerrada #}
         {% if req.status not in ['retirada','cerrada'] %}
         <div class="ilus-card warehouse-card">
@@ -509,11 +584,17 @@
             <li>Presenta tu cédula al llegar.</li>
             <li>Si retira un tercero, debe coincidir con la persona autorizada.</li>
             <li>La cita es válida sólo cuando aparece como <strong>confirmada</strong>.</li>
-            <li>Firmarás digitalmente al recibir.</li>
+            <li>Al entregar, registramos el nombre y RUT de quien retira.</li>
           </ul>
         </div>
         {% endif %}
 
+      </div>
+    </div>
+
+    {# 2026-09-24: las 3 tarjetas de marketing salen de la columna lateral a
+       una fila propia de ancho completo (mismo contenido, otro lugar). #}
+    <div class="row g-3 mt-1 mkt-row">
         {# ───────────────────────────────────────────────────────────────
            MARKETING ILUS — reemplaza el historial interno (mayo 2026)
            El cliente NO necesita ver eventos internos del operador.
@@ -521,6 +602,7 @@
            Cards animadas con IntersectionObserver (scroll-triggered).
            ─────────────────────────────────────────────────────────────── #}
 
+      <div class="col-lg-4">
         {# Card: ¿Por qué ILUS? #}
         <div class="ilus-card mkt-card mkt-why reveal-on-scroll">
           <h6><i class="bi bi-shield-check"></i>¿Por qué ILUS?</h6>
@@ -532,6 +614,8 @@
           </ul>
         </div>
 
+      </div>
+      <div class="col-lg-4">
         {# Card: Recomendaciones para el día del retiro #}
         <div class="ilus-card mkt-card mkt-tips reveal-on-scroll">
           <h6><i class="bi bi-lightbulb"></i>Recomendaciones para tu retiro</h6>
@@ -567,16 +651,17 @@
           </div>
         </div>
 
+      </div>
+      <div class="col-lg-4">
         {# Card: Conecta con ILUS — fondo negro #}
         <div class="mkt-card-dark reveal-on-scroll">
           <div class="mkt-dark-eyebrow">Conecta con ILUS</div>
           <div class="mkt-dark-title">¿Dudas con tu retiro?</div>
           <div class="mkt-dark-msg">Nuestro equipo de soporte responde en horario hábil.</div>
+          {# 2026-09-24 (Daniel: "solo dejemos el canal de correos"): se quitó
+             el botón "WhatsApp directo" — el único canal de contacto del
+             cliente es el correo de soporte. #}
           <div class="mkt-cta-row">
-            <a href="https://wa.me/56986405100?text=Hola%20ILUS%2C%20tengo%20una%20consulta%20sobre%20mi%20retiro%20{{ req.code }}"
-               target="_blank" rel="noopener" class="mkt-cta mkt-cta-wa">
-              <i class="bi bi-whatsapp"></i>WhatsApp directo
-            </a>
             <a href="mailto:soportetec@sphs.cl?subject=Consulta%20retiro%20{{ req.code }}"
                class="mkt-cta mkt-cta-mail" id="ctaMailSoporte"
                data-mail="soportetec@sphs.cl">
@@ -587,7 +672,7 @@
           <div class="mkt-social-row">
             <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
             <a href="https://www.facebook.com/ilusfitness" target="_blank" rel="noopener" aria-label="Facebook" class="soc-fb"><i class="bi bi-facebook"></i></a>
-            <a href="https://www.linkedin.com/company/ilus-sport-health" target="_blank" rel="noopener" aria-label="LinkedIn" class="soc-in"><i class="bi bi-linkedin"></i></a>
+            <a href="https://www.linkedin.com/company/ilusfitness" target="_blank" rel="noopener" aria-label="LinkedIn" class="soc-in"><i class="bi bi-linkedin"></i></a>
             <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Sitio web" class="soc-web"><i class="bi bi-globe2"></i></a>
           </div>
         </div>
@@ -599,19 +684,18 @@
   <footer class="footer">
     <picture>
       <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
-      <img class="logo-foot" src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
+      <img class="logo-foot" src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS Fitness" loading="lazy" decoding="async">
     </picture>
     <div class="name">ILUS Fitness</div>
     <div class="small">Equipamiento profesional para alto rendimiento</div>
     <div class="social" aria-label="Redes sociales">
       <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
-      <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp" class="soc-wa"><i class="bi bi-whatsapp"></i></a>
       <a href="mailto:soportetec@sphs.cl" aria-label="Email" class="soc-mail"><i class="bi bi-envelope"></i></a>
       <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Web" class="soc-web"><i class="bi bi-globe2"></i></a>
     </div>
     <div class="links">
       <a href="{{ url_for('pickup_public_request') }}">Nueva solicitud</a> ·
-      <a href="https://ilusfitness.com/soporte" target="_blank" rel="noopener">Soporte</a>
+      <a href="https://ilusfitness.com/pages/soporte-tecnico" target="_blank" rel="noopener">Soporte</a>
     </div>
     <div class="small mt-3" style="color:#4b5563">ILUS Fitness · Página de seguimiento</div>
   </footer>
@@ -661,7 +745,7 @@
             <i class="bi bi-info-circle-fill"></i>
             <div>
               <strong>ILUS te propuso:</strong>
-              {{ pending[0].date | chile_fmt('%d-%m-%Y') }} de {{ pending[0].time_from|hm }} a {{ pending[0].time_to|hm }}.
+              {{ pending[0].date | chile_fmt('%a %d/%m/%Y') }} de {{ pending[0].time_from|hm }} a {{ pending[0].time_to|hm }}.
               Si no te acomoda, elige otra fecha y horario aquí abajo.
             </div>
           </div>
@@ -737,7 +821,7 @@
       <form method="post" class="modal-content" id="rejectForm">
         <input type="hidden" name="action" value="reject">
         <div class="modal-header bg-dark text-white">
-          <h5 class="modal-title"><i class="bi bi-x-circle me-2" style="color:#ef4444"></i>No puedo asistir</h5>
+          <h5 class="modal-title"><i class="bi bi-x-circle me-2" style="color:#ef4444"></i>Cancelar mi retiro</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body">
@@ -764,9 +848,12 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  {# ilusToast/ilusAlert (REGLA #1): sin esto los avisos caían a alert() nativo. #}
+  <script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 
   <script>
     window.TRK_DATA = {
+      pendingProposalId: {{ (pending[0].id if pending else 0)|int }},
       targetDate:    '{{ pending[0].date if pending else "" }}',
       targetTf:      '{{ pending[0].time_from|hm if pending else "" }}',
       targetTt:      '{{ pending[0].time_to|hm if pending else "" }}',

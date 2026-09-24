@@ -148,6 +148,10 @@
                 try {
                   const fd = new FormData();
                   fd.append('action', 'confirm');
+                  // La propuesta que el cliente VE: si ILUS la reemplazó mientras
+                  // tanto, el servidor responde proposal_changed y recargamos.
+                  const _pid = openBtn.dataset.proposalId || (TRK.pendingProposalId ? String(TRK.pendingProposalId) : '');
+                  if (_pid) fd.append('proposal_id', _pid);
                   const r2 = await fetch(POST_URL, {
                     method: 'POST',
                     body: fd,
@@ -160,16 +164,22 @@
                   let data = null;
                   try { data = await r2.json(); } catch(_){}
                   if (!r2.ok || !data || data.ok === false){
-                    const msg = (data && data.error) || ('HTTP ' + r2.status);
+                    const msg = (data && data.error) || 'No pudimos confirmar. Intenta nuevamente en unos segundos.';
                     _running = false;
                     _fail(2, msg);
+                    // La página quedó desactualizada (propuesta reemplazada, ya
+                    // confirmado, retiro cerrado): recargar muestra lo vigente.
+                    const _reason = data && data.reason;
+                    if (['proposal_changed', 'ya_confirmado', 'estado_terminal', 'no_pending_proposal', 'proposal_expired'].indexOf(_reason) !== -1){
+                      setTimeout(() => { window.location.href = TRACK_URL; }, 2600);
+                    }
                     return;
                   }
-                  _setSub(2, 'Slot reservado para ' + (data.fecha || TARGET_DATE) + ' · ' + (data.hora_desde || TARGET_TF));
+                  _setSub(2, 'Hora confirmada: ' + (data.fecha_txt || data.fecha || TARGET_DATE) + ' · ' + (data.hora_desde || TARGET_TF));
                   _done(2);
                 } catch (e){
                   _running = false;
-                  _fail(2, 'No pudimos reservar el slot. Intenta nuevamente.');
+                  _fail(2, 'Sin conexión: no pudimos confirmar. Revisa tu internet e intenta nuevamente.');
                   return;
                 }
 
@@ -283,6 +293,9 @@
       return [
         d.status, d.journey_idx,
         d.has_pending_proposal ? 1 : 0,
+        // ILUS puede REEMPLAZAR la propuesta sin cambiar el estado ("Cambiar
+        // aquí"): el id nuevo fuerza la recarga antes de que el cliente confirme.
+        d.pending_proposal_id || 0,
         d.confirmed_date || '', d.confirmed_time_from || '',
         // CONECTIVIDAD (2026-06-21): cada check de bodega en el picking WMS
         // cambia la firma → la barra de preparación avanza EN VIVO.
@@ -315,7 +328,19 @@
           // renderizó la página (cambió entre el render y este poll), refrescamos.
           lastSig = sig;
           const idxChanged = Number.isFinite(CURRENT_IDX) && data.journey_idx !== CURRENT_IDX;
-          if (data.status !== CURRENT_STATUS || idxChanged) {
+          // Propuesta de ILUS distinta a la que se pintó (reemplazada entre el
+          // render y este poll) → recargar antes de que el cliente la confirme.
+          let propChanged = Number(data.pending_proposal_id || 0) !== Number(TRK.pendingProposalId || 0);
+          if (propChanged) {
+            // Freno anti-bucle: una sola recarga por propuesta nueva.
+            try {
+              const _k = 'trkPropReload:' + (PUBLIC_TOKEN || '').slice(0, 12);
+              const _cur = String(data.pending_proposal_id || 0);
+              if (sessionStorage.getItem(_k) === _cur) propChanged = false;
+              else sessionStorage.setItem(_k, _cur);
+            } catch (_) { /* sin storage: seguimos, el riesgo es solo una recarga extra */ }
+          }
+          if (data.status !== CURRENT_STATUS || idxChanged || propChanged) {
             showStatusChangeAlert(data.status_label || data.status);
             setTimeout(() => { window.location.reload(); }, 1400);
           }
@@ -397,6 +422,11 @@
         });
       }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
       items.forEach(el => io.observe(el));
+      // Red de seguridad: si el observador no dispara (pestaña en segundo plano,
+      // navegador raro), las tarjetas no pueden quedar invisibles para siempre.
+      setTimeout(() => {
+        items.forEach(el => { if (!el.classList.contains('is-visible')) el.classList.add('is-visible'); });
+      }, 2500);
     }
 
     // ── 5b) Auto-dismiss de flash toasts (Daniel 2026-05-23) ─────
@@ -425,6 +455,13 @@
     function initMailFallback(){
       const btn = document.getElementById('ctaMailSoporte');
       if (!btn) return;
+      // _toast vivía en OTRO bloque (el del modal) → ReferenceError al tocar el
+      // botón. Helper local; ilus_ui.js ya se carga en la página (REGLA #1).
+      function _toast(msg, type){
+        if (typeof window.ilusToast === 'function') {
+          try { window.ilusToast(msg, { type: type || 'info', duration: 4500 }); } catch (_) {}
+        }
+      }
       btn.addEventListener('click', () => {
         const mail = btn.dataset.mail || 'soportetec@sphs.cl';
         try {
@@ -485,6 +522,7 @@
       if (typeof window.ilusToast === 'function') {
         try { return window.ilusToast(msg, { type: type || 'info', duration: 4500 }); } catch(_){}
       }
+      // Sin ilus_ui.js el shim no existe: último recurso, nunca silencio.
       try { window.alert(msg); } catch(_){}
     }
 

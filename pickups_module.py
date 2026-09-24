@@ -33,14 +33,14 @@ def _public_base_url():
 
 PICKUP_STATUS = {
     "solicitud_recibida": "Solicitud recibida",
-    "en_revision": "En revision",
-    "informacion_incompleta": "Informacion incompleta",
+    "en_revision": "En revisión",
+    "informacion_incompleta": "Información incompleta",
     "propuesta_enviada": "Propuesta enviada",
     "esperando_cliente": "Esperando respuesta",
     "agenda_confirmada": "Agenda confirmada",
     "reagendada": "Reagendada",
     "rechazada": "Rechazada",
-    "en_preparacion": "En preparacion",
+    "en_preparacion": "En preparación",
     "retirada": "Retirada",
     "fallida": "Fallida",
     "cerrada": "Cerrada",
@@ -124,6 +124,31 @@ PICKUP_TIDO_INVERSO = {
     "WEB": "pedido",
     "NVI": "factura",
 }
+
+
+_PREFIJO_DOC_RE = re.compile(
+    r"^(?:N[°º]|NRO|NÚMERO|NUMERO|NUM|PEDIDO|ORDEN|WEB|BOLETA|FACTURA|FCV|BLV|NVV|NV|VD)[\s.:#\-]*")
+
+
+def _normalizar_numero_documento(texto):
+    """'#1136' / 'Pedido #1136' / 'WEB0001136' / 'N° 10.683' → solo el número
+    ('1136', '10683'), que es lo que el buscador del ERP entiende (el prefijo
+    WEB/VD lo agrega él según el tipo). Si lo escrito no es UN número con
+    adornos ('16669 y 16670', 'no sé'), se devuelve tal cual: nunca se pierde
+    lo que escribió el cliente."""
+    s = (texto or "").strip()
+    if not s:
+        return s
+    t = s.upper()
+    for _ in range(3):  # "Boleta N° 16669": dos prefijos seguidos
+        t2 = _PREFIJO_DOC_RE.sub("", t).strip().lstrip("#:-. ").strip()
+        if t2 == t:
+            break
+        t = t2
+    t = re.sub(r"[\s.]", "", t)
+    if t.isdigit():
+        return t.lstrip("0") or "0"
+    return s
 
 
 def pickup_doc_type_to_tido(document_type):
@@ -302,7 +327,7 @@ PIPELINE_GROUPS = [
     },
     {
         "key": "preparacion",
-        "label": "En preparacion",
+        "label": "En preparación",
         "statuses": ["en_preparacion"],
         "accent": "#f59e0b",   # ambar
         "icon": "bi-box-seam",
@@ -324,7 +349,7 @@ PIPELINE_GROUPS = [
 ]
 
 PICKUP_RELATIONS = [
-    ("dueno", "Dueno / titular"),
+    ("dueno", "Dueño / titular"),
     ("comprador", "Comprador"),
     ("familiar", "Familiar autorizado"),
     ("chofer", "Chofer"),
@@ -946,6 +971,19 @@ def register_pickup_routes(app, ctx):
         except Exception:
             return str(val)[:5] if val else "00:00"
 
+    _DIAS_CL_CORTO = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+
+    def _fmt_fecha_cl(val):
+        """date / 'YYYY-MM-DD' → 'vie 25/09/2026' (REGLA #6: nunca ISO al cliente)."""
+        if not val:
+            return ""
+        try:
+            import datetime as _dt_fc
+            d = val if isinstance(val, _dt_fc.date) else _dt_fc.date.fromisoformat(str(val)[:10])
+            return f"{_DIAS_CL_CORTO[d.weekday()]} {d.strftime('%d/%m/%Y')}"
+        except Exception:
+            return str(val)
+
     def _chile_holidays(year):
         """Set de feriados legales de Chile en 'YYYY-MM-DD' para `year`.
 
@@ -1037,7 +1075,7 @@ def register_pickup_routes(app, ctx):
         lunch_s = _td_to_hhmm(cfg.get("lunch_start") or "12:30:00")
         lunch_e = _td_to_hhmm(cfg.get("lunch_end")   or "14:00:00")
         if not time_from or not time_to or time_from >= time_to:
-            return False, "Selecciona un rango horario valido."
+            return False, "Selecciona un horario válido."
         # Daniel 2026-06-10: el CIERRE es la última hora de LLEGADA admitida.
         # La grilla pública (v3, 2026-05-24) ofrece el bloque 16:30→17:00 a
         # propósito; este validador exigía que el bloque TERMINARA antes del
@@ -1067,8 +1105,8 @@ def register_pickup_routes(app, ctx):
         try:
             if not (time_to <= lunch_s or time_from >= lunch_e):
                 return False, (
-                    f"El horario no puede cruzar la colacion ({lunch_s}-{lunch_e}). "
-                    f"Elige un rango solo en la mañana o solo en la tarde."
+                    f"El horario no puede cruzar la colación ({lunch_s}-{lunch_e}). "
+                    f"Elige un bloque de la mañana o de la tarde."
                 )
         except Exception:
             pass
@@ -1116,9 +1154,10 @@ def register_pickup_routes(app, ctx):
             d = datetime.strptime(date_str, "%Y-%m-%d").date()
         except Exception:
             return False, "Fecha no válida."
-        # 2) Formato hora
-        tf = str(time_from or "")[:5]
-        tt = str(time_to or "")[:5]
+        # 2) Formato hora (_td_to_hhmm: acepta también TIME de MySQL sin
+        # producir "9:00:"; vacío sigue vacío → "Hora no válida")
+        tf = _td_to_hhmm(time_from) if time_from else ""
+        tt = _td_to_hhmm(time_to) if time_to else ""
         try:
             h_from = datetime.strptime(tf, "%H:%M").time()
             h_to   = datetime.strptime(tt, "%H:%M").time()
@@ -1173,10 +1212,24 @@ def register_pickup_routes(app, ctx):
             return False
         if (proposal.get("status") or "") != "pending":
             return False
+        now = now_chile or _now_chile()
+        # Un bloque que ya empezó no se puede confirmar aunque falten horas para
+        # las 48 h de vigencia (auditoría 2026-09-24: "mañana 09:00" propuesto a
+        # las 15:00 y confirmado al día siguiente a las 14:00).
+        try:
+            _d_pv = proposal.get("date")
+            _tf_pv = proposal.get("time_from")
+            if _d_pv and _tf_pv is not None:
+                if not hasattr(_d_pv, "year"):
+                    _d_pv = datetime.strptime(str(_d_pv)[:10], "%Y-%m-%d").date()
+                _hh_pv, _mm_pv = [int(x) for x in _td_to_hhmm(_tf_pv).split(":")[:2]]
+                if datetime(_d_pv.year, _d_pv.month, _d_pv.day, _hh_pv, _mm_pv) <= now:
+                    return False
+        except Exception:
+            pass
         exp = proposal.get("expires_at")
         if not exp:
             return True
-        now = now_chile or _now_chile()
         # exp viene como datetime naive de MySQL (hora Chile por convención).
         if hasattr(exp, "year"):
             try:
@@ -1311,7 +1364,8 @@ def register_pickup_routes(app, ctx):
     #  VALIDACIÓN DE DISPONIBILIDAD REAL DE SLOT (cupos + bloqueos + colación)
     # ══════════════════════════════════════════════════════════════════
     def _validar_disponibilidad_slot(date, time_from, time_to, exclude_request_id=None,
-                                      extra_kg=0, extra_m3=0, bypass_lunch=False):
+                                      extra_kg=0, extra_m3=0, bypass_lunch=False,
+                                      incluir_solicitudes=False):
         """Valida que un slot (date + time_from..time_to) pueda usarse.
 
         Chequea, en este orden:
@@ -1332,6 +1386,11 @@ def register_pickup_routes(app, ctx):
                           Solo el OPERADOR interno debe activar esta opción
                           (factura grande que necesita más tiempo). El cliente
                           público nunca pasa este flag → mantiene la regla.
+            incluir_solicitudes: si True, las solicitudes nuevas (solo
+                          requested_*, sin propuesta ni confirmación) también
+                          ocupan cupo — el MISMO criterio con que el calendario
+                          público pinta un bloque como lleno. Lo usa el
+                          formulario público; los flujos internos no cambian.
 
         Returns:
             (ok: bool, motivo: str)
@@ -1416,10 +1475,13 @@ def register_pickup_routes(app, ctx):
                 if not hi:
                     return False, f"Día bloqueado: {motivo}"
                 try:
-                    bh, bm = [int(x) for x in str(hi)[:5].split(":")]
+                    # _td_to_hhmm: hora_inicio es TIME (timedelta). Con str()[:5] un
+                    # bloqueo de 09:00 daba "9:00:" → int('') → except → el bloqueo
+                    # se IGNORABA (auditoría 2026-09-24).
+                    bh, bm = [int(x) for x in _td_to_hhmm(hi).split(":")[:2]]
                     bs = bh * 60 + bm
                     if hf:
-                        beh, bem = [int(x) for x in str(hf)[:5].split(":")]
+                        beh, bem = [int(x) for x in _td_to_hhmm(hf).split(":")[:2]]
                         be = beh * 60 + bem
                     else:
                         be = 24 * 60  # hasta cierre
@@ -1447,6 +1509,13 @@ def register_pickup_routes(app, ctx):
         # según el estado real. Excluimos cancelados/cerrados.
         exclude_clause = ""
         params = [date_str, str(time_from)[:5], date_str, str(time_from)[:5]]
+        solic_clause = ""
+        if incluir_solicitudes:
+            solic_clause = (
+                "OR (confirmed_date IS NULL AND proposed_date IS NULL AND requested_date=%s "
+                "    AND TIME_FORMAT(requested_time_from,'%%H:%%i')=%s)"
+            )
+            params += [date_str, str(time_from)[:5]]
         if exclude_request_id:
             exclude_clause = "AND id <> %s"
             params.append(int(exclude_request_id))
@@ -1461,6 +1530,7 @@ def register_pickup_routes(app, ctx):
                     OR
                     (confirmed_date IS NULL AND proposed_date=%s
                      AND TIME_FORMAT(proposed_time_from,'%%H:%%i')=%s)
+                    {solic_clause}
                   )
                   {exclude_clause}""",
             tuple(params),
@@ -1478,6 +1548,10 @@ def register_pickup_routes(app, ctx):
 
         # 5) Capacidad diaria
         day_params = [date_str, date_str]
+        day_solic = ""
+        if incluir_solicitudes:
+            day_solic = "OR (confirmed_date IS NULL AND proposed_date IS NULL AND requested_date=%s)"
+            day_params.append(date_str)
         day_exclude = ""
         if exclude_request_id:
             day_exclude = "AND id <> %s"
@@ -1485,7 +1559,8 @@ def register_pickup_routes(app, ctx):
         day_row = mysql_fetchone(
             f"""SELECT COUNT(*) AS n FROM `{REQ}`
                 WHERE status NOT IN ('rechazada','cerrada','fallida')
-                  AND (confirmed_date=%s OR (confirmed_date IS NULL AND proposed_date=%s))
+                  AND (confirmed_date=%s OR (confirmed_date IS NULL AND proposed_date=%s)
+                       {day_solic})
                   {day_exclude}""",
             tuple(day_params),
         ) or {}
@@ -1721,7 +1796,9 @@ def register_pickup_routes(app, ctx):
         """Construye el dict de variables disponibles en plantillas de retiros."""
         cfg = settings()
         def _hm(t):
-            return str(t)[:5] if t else ""
+            # _td_to_hhmm: MySQL entrega TIME como timedelta y str(timedelta(hours=9))[:5]
+            # da "9:00:" — así salían los correos de los bloques de 09:00 y 09:30.
+            return _td_to_hhmm(t) if t else ""
         def _fmt_horario(tf, tt):
             tf, tt = _hm(tf), _hm(tt)
             return f"{tf} - {tt}" if tf else ""
@@ -1741,7 +1818,8 @@ def register_pickup_routes(app, ctx):
                 return str(v)
         _DOC_NOMBRE = {"FCV": "Factura", "FACTURA": "Factura", "BLV": "Boleta", "BOLETA": "Boleta",
                        "VD": "Nota de venta VD", "NVV": "Nota de venta", "NOTA_VENTA": "Nota de venta",
-                       "WEB": "Pedido web", "GDV": "Guía de despacho", "NVI": "Nota de venta interna"}
+                       "WEB": "Pedido web", "PEDIDO": "Pedido web", "GDV": "Guía de despacho",
+                       "GUIA": "Guía de despacho", "NVI": "Nota de venta interna"}
         def _fmt_doc(tipo, numero):
             t = (tipo or "").strip().upper()
             return f"{_DOC_NOMBRE.get(t, t)} {numero or ''}".strip()
@@ -1755,6 +1833,37 @@ def register_pickup_routes(app, ctx):
                     _documento = ", ".join(_fmt_doc(x.get("document_type"), x.get("document_number")) for x in _dl)
         except Exception:
             pass  # fuera de contexto (hilo) o tabla ausente: queda el documento principal
+
+        def _num_cl(x, dec):
+            """1234.5 → '1.234,5' (formato chileno)."""
+            try:
+                return f"{float(x):,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            except Exception:
+                return str(x)
+        try:
+            _peso_rv = float(req.get("peso_real_kg") or req.get("total_weight_kg") or 0)
+        except (TypeError, ValueError):
+            _peso_rv = 0.0
+        try:
+            _m3_rv = float(req.get("total_volume_m3") or 0)
+        except (TypeError, ValueError):
+            _m3_rv = 0.0
+        try:
+            _nb_rv = int(req.get("total_packages") or 0)
+        except (TypeError, ValueError):
+            _nb_rv = 0
+        if _peso_rv > 0 or _m3_rv > 0:
+            _partes_c = []
+            if _nb_rv:
+                _partes_c.append(f"{_nb_rv} bulto{'s' if _nb_rv != 1 else ''}")
+            if _peso_rv > 0:
+                _partes_c.append(f"{_num_cl(_peso_rv, 1)} kg")
+            if _m3_rv > 0:
+                _partes_c.append(f"{_num_cl(_m3_rv, 2)} m³")
+            _carga_txt = " · ".join(_partes_c)
+        else:
+            # Solicitud web sin cubicar: no inventar "1 bulto — 0 kg".
+            _carga_txt = "según los productos de tu compra"
         return {
             "code":              req.get("code") or "",
             "cliente":           req.get("customer_name") or "",
@@ -1770,8 +1879,11 @@ def register_pickup_routes(app, ctx):
                 or _fmt_horario(req.get("requested_time_from"), req.get("requested_time_to"))
             ),
             "n_bultos":          str(req.get("total_packages") or 0),
-            "kg":                str(req.get("total_weight_kg") or 0),
-            "m3":                str(req.get("total_volume_m3") or 0),
+            # peso_real_kg (cubicación del operador) antes que total_weight_kg:
+            # en solicitudes web este último es 0 y el correo decía "0 kg".
+            "kg":                _num_cl(_peso_rv, 1),
+            "m3":                _num_cl(_m3_rv, 2),
+            "carga_txt":         _carga_txt,
             "warehouse_name":    cfg.get("warehouse_name") or "Bodega ILUS Quilicura",
             "warehouse_addr":    cfg.get("warehouse_addr") or "",
             # Link literal (NO url_for): esta función corre también en threads
@@ -1873,6 +1985,14 @@ def register_pickup_routes(app, ctx):
         # url_for(_external=True) falla sin SERVER_NAME (fix 2026-06-09).
         follow_url = _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or "")
         variables = _render_pickup_vars(req, proposal)
+        # Anti-phishing (auditoría 2026-09-24): cliente, persona_retira y documento
+        # los escribe cualquiera en el formulario público. Crudos dentro del HTML,
+        # un "<a href=...>Paga aquí</a>" salía con la marca ILUS a cualquier casilla.
+        # El asunto y WhatsApp son texto plano: ahí se usan las variables crudas.
+        import html as _html_nt
+        variables_html = dict(variables)
+        for _k_nt in ("cliente", "persona_retira", "documento"):
+            variables_html[_k_nt] = _html_nt.escape(str(variables.get(_k_nt) or ""), quote=True)
         estado = _KIND_TO_ESTADO.get(kind)
 
         # ── CALENDARIO (.ics) — Daniel 2026-06-17 ──────────────────────
@@ -1897,7 +2017,7 @@ def register_pickup_routes(app, ctx):
             if tpl_email and (tpl_email.get("asunto") or tpl_email.get("cuerpo")):
                 # Plantilla configurada en BD: usar con variables interpoladas
                 asunto = _apply_template(tpl_email.get("asunto") or "", variables)
-                cuerpo = _apply_template(tpl_email.get("cuerpo") or "", variables)
+                cuerpo = _apply_template(tpl_email.get("cuerpo") or "", variables_html)
                 # FIX 2026-06-19 (Daniel: "los correos me llegan SIN tracking, un
                 # perfil distinto al que enviamos"). CAUSA RAÍZ: si la plantilla de
                 # BD fue editada a mano (o quedó vieja) su `cuerpo` NO trae el
@@ -1928,12 +2048,13 @@ def register_pickup_routes(app, ctx):
                     html = _ilus_email_html(
                         titulo=asunto or f"Actualización retiro {req['code']}",
                         subtitulo=f"{req['code']} - {variables['documento']}",
-                        saludo=variables["persona_retira"],
+                        saludo=variables_html["persona_retira"],
                         parrafos=[cuerpo],   # cuerpo ya viene como HTML
                         btn_primario_txt="Ver mi retiro en vivo",
                         btn_primario_url=follow_url,
                     )
-                # Multi-email: envía al cliente declarado + extra_emails + emails del ERP
+                # Multi-email: correo declarado + extra_emails (CC editables en la ficha).
+                # NUNCA el correo del ERP por sí solo (fix 2026-09-14, ver _get_pickup_all_emails).
                 # Sin "ILUS — ILUS propone…" (Daniel 2026-09-23): el prefijo
                 # solo si la plantilla no lo trae ya.
                 _asunto_final = asunto if (asunto or "").strip().upper().startswith("ILUS") else f"ILUS — {asunto}"
@@ -1941,7 +2062,8 @@ def register_pickup_routes(app, ctx):
                 sent_mail = len(_multi["sent"]) > 0
                 if _multi["sent"]:
                     print(f"[pickup-email] {asunto} → {_multi['total']} dest: "
-                          f"{_multi['sent']} (failed: {_multi['failed']})", flush=True)
+                          f"{[_mask_email(x) for x in _multi['sent']]} "
+                          f"(failed: {[_mask_email(x) for x in _multi['failed']]})", flush=True)
             else:
                 # Fallback: plantilla hardcoded original
                 titles = {
@@ -1962,7 +2084,7 @@ def register_pickup_routes(app, ctx):
                 elif kind == "proposal" and proposal:
                     paragraphs = [
                         "Te enviamos una propuesta de fecha y horario para tu retiro.",
-                        f"Propuesta: <strong>{proposal['date']} de {str(proposal['time_from'])[:5]} a {str(proposal['time_to'])[:5]}</strong>.",
+                        f"Propuesta: <strong>{_fmt_fecha_cl(proposal['date'])} de {_td_to_hhmm(proposal['time_from'])} a {_td_to_hhmm(proposal['time_to'])}</strong>.",
                         proposal.get("message") or "Puedes confirmar, rechazar o proponer una nueva fecha desde el enlace.",
                     ]
                 elif kind == "confirmed":
@@ -1999,7 +2121,7 @@ def register_pickup_routes(app, ctx):
                 html = _ilus_email_html(
                     titulo=title,
                     subtitulo=f"{req['code']} - {variables['documento']}",
-                    saludo=variables["persona_retira"],
+                    saludo=variables_html["persona_retira"],
                     parrafos=paragraphs,
                     btn_primario_txt="Ver solicitud",
                     btn_primario_url=follow_url,
@@ -2066,6 +2188,14 @@ def register_pickup_routes(app, ctx):
         except Exception as exc:
             print(f"[ILUS][PICKUP WA] {exc}")
         return sent_mail, sent_wa
+
+    # Expuesta al resto de app.py (ctx ES globals() de app.py): el cron de las
+    # 06:00 manda el recordatorio de 24 h con ESTE mismo camino — plantilla,
+    # .ics, contacto + CC y fechas legibles — en vez de su copia propia.
+    try:
+        ctx["_pickup_notify"] = notify
+    except Exception:
+        pass
 
     def notify_async(req, kind="created", proposal=None, custom_message=""):
         """Versión asíncrona de notify(): dispara el envío en un hilo daemon
@@ -2145,13 +2275,18 @@ def register_pickup_routes(app, ctx):
                         else:
                             link = _public_base_url()
                         subject = f"ILUS - Cliente rechazo retiro {code}"
+                        # Nombre y motivo los escribe el cliente: escapados antes de
+                        # entrar al HTML (_ilus_email_html no escapa los párrafos).
+                        import html as _html_rj
+                        _cli_h = _html_rj.escape(str(cli))
+                        _motivo_h = _html_rj.escape((_reason or 'No indico motivo').strip())
                         html = _ilus_email_html(
                             titulo="Cliente rechazo la propuesta de retiro",
                             subtitulo=f"{code} - {doc}",
                             saludo="Equipo ILUS",
                             parrafos=[
-                                f"El cliente <strong>{cli}</strong> rechazo la propuesta de fecha y horario.",
-                                f"Motivo declarado: <em>{(_reason or 'No indico motivo').strip()}</em>",
+                                f"El cliente <strong>{_cli_h}</strong> rechazo la propuesta de fecha y horario.",
+                                f"Motivo declarado: <em>{_motivo_h}</em>",
                                 "Sugerencia: revisa la solicitud y contacta al cliente para reagendar o cerrarla.",
                             ],
                             btn_primario_txt="Abrir solicitud",
@@ -2678,10 +2813,21 @@ def register_pickup_routes(app, ctx):
 
         # ¿Hay propuesta pendiente?
         pend = mysql_fetchone(
-            f"SELECT id FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+            f"SELECT id, proposed_by FROM `{PROP}` WHERE request_id=%s AND status='pending' "
             f"ORDER BY id DESC LIMIT 1",
             (req["id"],)
         )
+        # Solo la propuesta de ILUS es "confirmable": es la que muestra la página
+        # (window.TRK_DATA.pendingProposalId). La contrapropuesta del cliente no.
+        _pend_ilus_id = 0
+        try:
+            # Comparación EXACTA, igual al filtro de la plantilla
+            # (selectattr('proposed_by','equalto','internal')): si difirieran,
+            # la página se recargaría en cada poll.
+            if pend and str(pend.get("proposed_by") or "") == "internal":
+                _pend_ilus_id = int(pend.get("id") or 0)
+        except Exception:
+            _pend_ilus_id = 0
 
         status = req.get("status") or ""
         # CONECTIVIDAD (Daniel 2026-06-21): progreso del picking WMS visible para
@@ -2709,10 +2855,14 @@ def register_pickup_routes(app, ctx):
             # a otro estado del MISMO hito (ej: solicitud_recibida→en_revision).
             "journey_idx":          pickup_journey_idx(status),
             "has_pending_proposal": bool(pend),
+            # Si ILUS reemplaza la propuesta ("Cambiar aquí") el estado NO cambia
+            # (sigue propuesta_enviada): el id es lo que avisa al polling que
+            # debe recargar antes de que el cliente confirme algo que no vio.
+            "pending_proposal_id":  _pend_ilus_id,
             "updated_at":           str(req.get("updated_at") or "")[:19],
             "confirmed_date":       str(req.get("confirmed_date") or ""),
-            "confirmed_time_from":  str(req.get("confirmed_time_from") or "")[:5],
-            "confirmed_time_to":    str(req.get("confirmed_time_to") or "")[:5],
+            "confirmed_time_from":  _td_to_hhmm(req.get("confirmed_time_from")) if req.get("confirmed_time_from") else "",
+            "confirmed_time_to":    _td_to_hhmm(req.get("confirmed_time_to")) if req.get("confirmed_time_to") else "",
         }
         _polling_store(token, payload)
         return _no_store_json(payload)
@@ -2842,7 +2992,23 @@ def register_pickup_routes(app, ctx):
         except Exception as exc:
             print(f"[pickup-msg] insert operador: {exc}", flush=True)
             return jsonify({"ok": False, "error": "no_guardado"}), 500
-        return jsonify({"ok": True, "mensaje": {
+        # El seguimiento público ya no muestra el chat: sin correo, la respuesta
+        # del operador NUNCA llegaba al cliente (auditoría 2026-09-24). Sale a los
+        # correos declarados en la ficha (contacto + CC), como todo aviso.
+        _correo_ok = False
+        try:
+            import html as _html_om
+            _req_full = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+            if _req_full and _get_pickup_all_emails(_req_full):
+                notify_async(_req_full, "message", custom_message=(
+                    "<strong>Mensaje del equipo ILUS:</strong><br>"
+                    + _html_om.escape(texto).replace("\n", "<br>")))
+                _correo_ok = True
+                log_event(rid, "mensaje_operador_correo", _req_full.get("status"), _req_full.get("status"),
+                          "Respuesta del chat enviada por correo al cliente", "interno", autor)
+        except Exception as _e_om:
+            print(f"[pickup-msg] correo operador: {_e_om}", flush=True)
+        return jsonify({"ok": True, "correo_enviado": _correo_ok, "mensaje": {
             "sender": "operador", "autor": autor, "cuerpo": texto, "hora": _msg_time(None) or ""}})
 
     @app.route("/retiros/api/mensajes-no-leidos", methods=["GET"])
@@ -2872,6 +3038,34 @@ def register_pickup_routes(app, ctx):
         cfg = settings()
         if request.method == "POST":
             form = request.form
+            _is_ajax_pub = (
+                request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or "application/json" in (request.headers.get("Accept") or "")
+            )
+            # ── Filtro anti-bots (auditoría 2026-09-24) ──────────────────────
+            # 1) Campo trampa invisible: una persona nunca lo ve ni lo llena.
+            # 2) Nadie completa el formulario en menos de 3 s desde que se abrió.
+            # Sin estos frenos el formulario servía para mandar correos con la
+            # marca ILUS a cualquier casilla.
+            _es_bot = bool((form.get("hp_ilus_extra") or "").strip())
+            try:
+                _t0_pub = int(form.get("ilus_t0") or 0)
+            except (TypeError, ValueError):
+                _t0_pub = 0
+            if _t0_pub and (time.time() - _t0_pub) < 3:
+                _es_bot = True
+            if _es_bot:
+                print("[pickup_public_request] envío descartado por filtro anti-bots", flush=True)
+                _msg_bot = ("No pudimos procesar tu solicitud. Recarga la página e inténtalo "
+                            "nuevamente, o escríbenos a soportetec@sphs.cl.")
+                if _is_ajax_pub:
+                    return jsonify({"ok": False, "errors": [_msg_bot]}), 400
+                flash(_msg_bot, "warning")
+                return redirect(url_for("pickup_public_request"))
+            try:
+                _inv_total = float(str(form.get("invoice_total_amount") or "0").replace(",", "."))
+            except (TypeError, ValueError):
+                _inv_total = 0.0
             data = {
                 "document_type": (form.get("document_type") or "factura").strip(),
                 "document_number": (form.get("document_number") or "").strip(),
@@ -2888,11 +3082,17 @@ def register_pickup_routes(app, ctx):
                 "requested_date": (form.get("requested_date") or "").strip(),
                 "requested_time_from": (form.get("requested_time_from") or "").strip(),
                 "requested_time_to": (form.get("requested_time_to") or "").strip(),
-                "observations": (form.get("observations") or "").strip(),
-                "invoice_total_amount": float(form.get("invoice_total_amount") or 0),
+                "observations": (form.get("observations") or "").strip()[:4000],
+                "invoice_total_amount": _inv_total,
             }
             if not data["requested_date"]:
                 data["requested_date"] = next_allowed_date(cfg)
+            # N° de documento: el comprador web escribe "#1136", "Pedido 1136" o
+            # "WEB0001136" y el ERP solo encuentra "1136" (el prefijo WEB/VD lo
+            # arma el buscador). Si lo escrito es UN número con adornos, se
+            # guarda limpio; si trae otra cosa ("16669 y 16670") queda tal cual.
+            _num_doc_cliente = data["document_number"]
+            data["document_number"] = _normalizar_numero_documento(_num_doc_cliente)
 
             # ──────────────────────────────────────────────────────────────
             # FORMULARIO SIMPLIFICADO (a pedido):
@@ -2922,8 +3122,34 @@ def register_pickup_routes(app, ctx):
             required = ["document_number", "customer_name", "customer_rut",
                         "contact_email", "contact_phone",
                         "requested_time_from", "requested_time_to"]
-            if any(not data.get(k) for k in required):
-                errors.append("Completa todos los campos obligatorios.")
+            _faltan = [k for k in required if not data.get(k)]
+            if _faltan:
+                _nombres_campo = {
+                    "document_number": "N° del documento", "customer_name": "razón social o nombre",
+                    "customer_rut": "RUT", "contact_email": "email", "contact_phone": "teléfono",
+                    "requested_time_from": "horario", "requested_time_to": "horario",
+                }
+                _lista_f = []
+                for _k in _faltan:
+                    _n = _nombres_campo.get(_k, _k)
+                    if _n not in _lista_f:
+                        _lista_f.append(_n)
+                errors.append("Completa los campos obligatorios: " + ", ".join(_lista_f) + ".")
+            if data["document_type"] not in ("factura", "boleta", "nota_venta", "pedido"):
+                errors.append("Elige el tipo de documento de la lista.")
+            # Largos máximos de la tabla: pasarse daba un error 500 sin explicación.
+            for _campo, _max, _lbl in (
+                    ("document_number", 60, "El N° del documento"),
+                    ("customer_name", 160, "La razón social o nombre"),
+                    ("contact_name", 160, "El nombre de contacto"),
+                    ("pickup_person_name", 160, "El nombre de quien retira"),
+                    ("contact_email", 180, "El email"),
+                    ("customer_rut", 20, "El RUT del cliente"),
+                    ("pickup_person_rut", 20, "El RUT de quien retira"),
+                    ("contact_phone", 40, "El teléfono"),
+                    ("pickup_person_phone", 40, "El teléfono de quien retira")):
+                if len(data.get(_campo) or "") > _max:
+                    errors.append(f"{_lbl} es demasiado largo (máximo {_max} caracteres).")
 
             # ── VALIDACIÓN EMAIL (robusta: regex + doble@ + espacios) ──
             if data["contact_email"]:
@@ -3043,13 +3269,24 @@ def register_pickup_routes(app, ctx):
             # inválido (colación, bloque lleno, fuera de horario, etc).
             if ok_date and ok_time and data["requested_date"]:
                 try:
+                    # incluir_solicitudes=True: el servidor cuenta el cupo IGUAL que
+                    # el calendario público (antes aceptaba solicitudes nuevas en un
+                    # bloque que el calendario ya mostraba lleno).
                     ok_slot, motivo_slot = _validar_disponibilidad_slot(
                         data["requested_date"],
                         data["requested_time_from"],
                         data["requested_time_to"],
+                        incluir_solicitudes=True,
                     )
                     if not ok_slot:
-                        errors.append(motivo_slot or "El horario seleccionado no está disponible.")
+                        _m_slot = motivo_slot or ""
+                        # Sin cifras internas al cliente; "cupo" hace que el JS
+                        # recargue la disponibilidad y lo lleve a elegir otro bloque.
+                        if _m_slot.startswith(("Slot lleno", "Capacidad")):
+                            _m_slot = "Ese horario se acaba de llenar (no quedan cupos). Elige otro bloque."
+                        elif _m_slot.startswith("Día completo"):
+                            _m_slot = "Ese día se acaba de llenar (no quedan cupos). Elige otra fecha."
+                        errors.append(_m_slot or "El horario seleccionado no está disponible.")
                 except Exception as _slot_exc:
                     # Si la validación falla por error técnico, no bloqueamos
                     # (defensa en profundidad: ya validamos lo básico arriba).
@@ -3059,7 +3296,51 @@ def register_pickup_routes(app, ctx):
             # placeholder. El operador interno cubicará después con datos reales.
             packages = [calc_package(0, 0, 0, 0)]
             if not form.get("accept_terms"):
-                errors.append("Debes aceptar la declaracion de responsabilidad y autorizacion.")
+                errors.append("Debes aceptar la declaración de responsabilidad y autorización (casilla al final del formulario).")
+
+            # ── Reenvío de la MISMA solicitud (se cortó la red después de guardar,
+            # doble envío): se devuelve el retiro ya creado en vez de duplicarlo.
+            # Exige correo + RUT + documento + fecha + hora idénticos en los
+            # últimos 30 min: nadie ajeno reúne todo eso para ver un retiro.
+            if not errors:
+                try:
+                    _dup = mysql_fetchone(
+                        f"SELECT code, public_token FROM `{REQ}` "
+                        f"WHERE contact_email=%s AND customer_rut=%s AND document_number=%s "
+                        f"  AND requested_date=%s AND TIME_FORMAT(requested_time_from,'%%H:%%i')=%s "
+                        f"  AND status='solicitud_recibida' "
+                        f"  AND created_at >= NOW() - INTERVAL 30 MINUTE "
+                        f"ORDER BY id DESC LIMIT 1",
+                        (data["contact_email"], data["customer_rut"], data["document_number"],
+                         data["requested_date"], _td_to_hhmm(data["requested_time_from"])))
+                    if _dup and _dup.get("public_token"):
+                        print(f"[pickup_public_request] reenvío idéntico → se devuelve {_dup.get('code')}", flush=True)
+                        if _is_ajax_pub:
+                            return jsonify({
+                                "ok": True, "code": _dup.get("code"), "token": _dup["public_token"],
+                                "duplicado": True,
+                                "tracking_url": url_for("pickup_public_tracking", token=_dup["public_token"]),
+                            })
+                        return redirect(url_for("pickup_public_tracking", token=_dup["public_token"]))
+                except Exception as _e_dup:
+                    print(f"[pickup_public_request] chequeo duplicado: {_e_dup}", flush=True)
+
+            # ── Tope anti-spam por correo: 3 solicitudes web en 24 h. Una persona
+            # real no necesita más; un bot no puede usar el formulario para
+            # bombardear una casilla con correos de ILUS.
+            if not errors and data["contact_email"]:
+                try:
+                    _n_mail = mysql_fetchone(
+                        f"SELECT COUNT(*) AS n FROM `{REQ}` WHERE contact_email=%s "
+                        f"  AND (request_source IS NULL OR request_source='web') "
+                        f"  AND created_at >= NOW() - INTERVAL 1 DAY",
+                        (data["contact_email"],)) or {}
+                    if int(_n_mail.get("n") or 0) >= 3:
+                        errors.append(
+                            "Ya recibimos 3 solicitudes con este correo en las últimas 24 horas. "
+                            "Si necesitas agendar otra, escríbenos a soportetec@sphs.cl.")
+                except Exception as _e_cap:
+                    print(f"[pickup_public_request] tope por correo: {_e_cap}", flush=True)
             if errors:
                 # Detección AJAX: si el form viene por fetch(), devolvemos
                 # JSON con la lista de errores. Sin esto, el cliente nunca
@@ -3090,7 +3371,7 @@ def register_pickup_routes(app, ctx):
                     _anuncios_err = [dict(r) for r in (_anun_rows or [])]
                 except Exception:
                     _anuncios_err = []
-                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs, announcements=_anuncios_err)
+                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs, announcements=_anuncios_err, form_t0=int(time.time()))
 
             files = [f for f in request.files.getlist("attachments") if f and f.filename]
             quality, risk = quality_score(data, packages, signed=True, attachments=len(files))
@@ -3174,7 +3455,10 @@ def register_pickup_routes(app, ctx):
                     (rid, fname, safe_name[:240], (f.mimetype or "")[:120]),
                 )
             req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
-            log_event(rid, "creada", None, "solicitud_recibida", "Solicitud creada desde pagina publica", "cliente", data["contact_name"])
+            _nota_creada = "Solicitud creada desde la página pública"
+            if _num_doc_cliente and _num_doc_cliente != data["document_number"]:
+                _nota_creada += f" (N° escrito por el cliente: '{_num_doc_cliente[:60]}')"
+            log_event(rid, "creada", None, "solicitud_recibida", _nota_creada, "cliente", data["contact_name"])
             # Invalidar cache del calendario público — el nuevo retiro
             # ocupa un slot, los demás clientes deben verlo al instante.
             try: _DISPO_CACHE["payload"] = None
@@ -3336,6 +3620,7 @@ def register_pickup_routes(app, ctx):
             settings=cfg, relations=PICKUP_RELATIONS, errors=[], fd={},
             carousel_images=carousel_images,
             announcements=anuncios,
+            form_t0=int(time.time()),
         ))
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
@@ -3365,22 +3650,17 @@ def register_pickup_routes(app, ctx):
         # rechazamos sin tocar BD (evita LIKE costoso con basura).
         # FIX 2026-06-15: regex anterior (\d+) rechazaba los códigos nuevos
         # alfanuméricos tipo RET-H29JRR (alphabet ABCDEFGHJKLMNPQRSTUVWXYZ23456789).
-        if not re.match(r"^(RET[-_]?)?[A-Z0-9]{4,12}$", code_raw):
+        _m_code = re.match(r"^(?:RET[-_ ]?)?([A-Z0-9]{4,12})$", code_raw)
+        if not _m_code:
             flash("Código inválido. Usa el formato RET-XXXXXX.", "warning")
             return redirect(url_for("pickup_public_request"))
-        # Buscar por código exacto primero (más rápido)
+        # SOLO coincidencia exacta (auditoría 2026-09-24). Antes, si no calzaba,
+        # buscaba `code LIKE '%<sufijo>'`: con "RET-0002" abría el seguimiento del
+        # último retiro terminado en 2 — datos, Excel y botones de un retiro AJENO.
         row = mysql_fetchone(
             f"SELECT public_token FROM `{REQ}` WHERE UPPER(code)=%s LIMIT 1",
-            (code_raw,)
+            ("RET-" + _m_code.group(1),)
         )
-        if not row:
-            # Probar quitando "RET-" si lo trae (sigue con LIKE acotado al final)
-            code_alt = code_raw.replace("RET-", "").replace("RET_", "").lstrip("0") or code_raw
-            row = mysql_fetchone(
-                f"SELECT public_token FROM `{REQ}` "
-                f"WHERE code LIKE %s ORDER BY id DESC LIMIT 1",
-                (f"%{code_alt}",)
-            )
         if not row or not row.get("public_token"):
             # IMPORTANTE: NO loguear el código intentado en stdout (un atacante
             # podría llenar logs con códigos basura). El flash sí lo muestra
@@ -3440,9 +3720,39 @@ def register_pickup_routes(app, ctx):
             # Root cause histórico: timedelta vs str en time_allowed → TypeError.
             # Aunque ya fue corregido en _validar_disponibilidad_slot, este try
             # atrapa cualquier excepción futura antes de que Flask la convierta en HTML.
+            # Estados en los que el cliente ya no puede mover nada desde el link
+            # (auditoría 2026-09-24: una propuesta viva en un retiro marcado
+            # fallida/cerrada/retirada lo "revivía" al confirmar).
+            _PUB_TERMINALES = ("retirada", "cerrada", "rechazada", "fallida")
+            _MSG_TERMINAL = ("Esta solicitud ya está cerrada y no admite cambios. Si necesitas "
+                             "ayuda, escríbenos a soportetec@sphs.cl.")
             try:
               if action == "confirm":
+                if old in _PUB_TERMINALES:
+                    if _is_ajax:
+                        return _ajax_err(_MSG_TERMINAL, code=409, payload={"reason": "estado_terminal"})
+                    flash(_MSG_TERMINAL, "info")
+                    return redirect(url_for("pickup_public_tracking", token=token))
+                if old in ("agenda_confirmada", "en_preparacion"):
+                    _msg_ya = "Tu retiro ya está confirmado. La fecha vigente está en esta página y en tu correo."
+                    if _is_ajax:
+                        return _ajax_err(_msg_ya, code=409, payload={"reason": "ya_confirmado"})
+                    flash(_msg_ya, "info")
+                    return redirect(url_for("pickup_public_tracking", token=token))
                 proposal = mysql_fetchone(f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' ORDER BY id DESC LIMIT 1", (req["id"],))
+                # El cliente confirma la propuesta que TIENE EN PANTALLA. Si ILUS la
+                # reemplazó mientras tanto ("Cambiar aquí"), no se confirma a ciegas
+                # la nueva: se recarga para que la vea primero.
+                _pid_form = (request.form.get("proposal_id") or "").strip()
+                if proposal and _pid_form.isdigit() and int(_pid_form) != int(proposal["id"]):
+                    _msg_cambio = ("La propuesta cambió mientras tenías la página abierta. "
+                                   "Te mostramos la fecha vigente para que la revises.")
+                    try: _POLL_CACHE.pop(token, None)
+                    except Exception: pass
+                    if _is_ajax:
+                        return _ajax_err(_msg_cambio, code=409, payload={"reason": "proposal_changed"})
+                    flash(_msg_cambio, "warning")
+                    return redirect(url_for("pickup_public_tracking", token=token))
                 if not proposal:
                     # No hay propuesta pendiente — el cliente vio el botón
                     # pero el operador ya la canceló / cambió de estado.
@@ -3450,6 +3760,17 @@ def register_pickup_routes(app, ctx):
                     try:
                         print(f"[pickup_tracking] CONFIRM sin propuesta pendiente req_id={req['id']}", flush=True)
                     except Exception: pass
+                    # Le prometemos una nueva fecha → que el equipo se entere.
+                    try:
+                        _notificar_equipo_retiros(
+                            f"El cliente quiere confirmar el retiro {req.get('code') or '?'} y no tiene propuesta vigente",
+                            (f"Cliente: {req.get('customer_name') or '?'}. Intentó confirmar, pero el "
+                             f"retiro no tiene ninguna propuesta pendiente. Envíale una fecha."),
+                            req["id"], req.get("code") or "?",
+                            prioridad="alta", tipo="retiro_respuesta",
+                        )
+                    except Exception as _e_np:
+                        print(f"[pickups][team notify sin propuesta] {_e_np}", flush=True)
                     if _is_ajax:
                         return _ajax_err(
                             "Esa propuesta ya no está vigente. Si tu retiro sigue pendiente, ILUS te enviará una nueva fecha en breve.",
@@ -3475,6 +3796,18 @@ def register_pickup_routes(app, ctx):
                     except Exception: pass
                     log_event(req["id"], "propuesta_vencida", old, old,
                               "Cliente intentó confirmar una propuesta vencida", "sistema", "Expiry")
+                    try:
+                        _notificar_equipo_retiros(
+                            f"Propuesta vencida en el retiro {req.get('code') or '?'}",
+                            (f"Cliente: {req.get('customer_name') or '?'}. Quiso confirmar la "
+                             f"propuesta del {_fmt_fecha_cl(proposal.get('date'))} "
+                             f"{_td_to_hhmm(proposal.get('time_from'))}, pero ya había vencido. "
+                             f"Envíale una nueva fecha."),
+                            req["id"], req.get("code") or "?",
+                            prioridad="urgente", tipo="retiro_respuesta",
+                        )
+                    except Exception as _e_nv:
+                        print(f"[pickups][team notify vencida] {_e_nv}", flush=True)
                     _msg_exp = ("Esta propuesta venció o la fecha ya pasó. Propón una "
                                 "nueva fecha y el equipo ILUS te responderá.")
                     try: _POLL_CACHE.pop(token, None)
@@ -3537,12 +3870,23 @@ def register_pickup_routes(app, ctx):
                             f"Cliente intentó confirmar pero slot ya no disponible: {motivo}",
                             "sistema", "Validación capacidad",
                         )
+                        try:
+                            _notificar_equipo_retiros(
+                                f"El cliente no pudo confirmar el retiro {req.get('code') or '?'}",
+                                (f"Cliente: {req.get('customer_name') or '?'}. El bloque propuesto "
+                                 f"({_fmt_fecha_cl(proposal.get('date'))} {_td_to_hhmm(proposal.get('time_from'))}) "
+                                 f"ya no está disponible: {motivo}. Envíale una nueva fecha."),
+                                req["id"], req.get("code") or "?",
+                                prioridad="urgente", tipo="retiro_respuesta",
+                            )
+                        except Exception as _e_nb:
+                            print(f"[pickups][team notify slot] {_e_nb}", flush=True)
                         if _is_ajax:
                             return _ajax_err(
                                 "Lo sentimos, este horario ya no está disponible. "
                                 "Te enviamos una nueva propuesta a la brevedad.",
                                 code=409,
-                                payload={"reason": "slot_unavailable", "detail": motivo},
+                                payload={"reason": "slot_unavailable"},
                             )
                         flash(
                             "Lo sentimos, este horario ya no está disponible. "
@@ -3554,6 +3898,8 @@ def register_pickup_routes(app, ctx):
                     # FASE 2: Transacción con lock para garantizar atomicidad
                     confirm_ok = False
                     confirm_motivo = ""
+                    _tx_fallo_tecnico = False
+                    _ya_confirmado = False
                     conn_tx = None
                     try:
                         conn_tx = get_mysql()
@@ -3625,6 +3971,7 @@ def register_pickup_routes(app, ctx):
                                 if cur_tx.rowcount == 0:
                                     # Alguien más confirmó este mismo retiro entre clics
                                     confirm_motivo = "El retiro ya fue confirmado anteriormente."
+                                    _ya_confirmado = True
                                 else:
                                     cur_tx.execute(
                                         f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() WHERE id=%s",
@@ -3640,12 +3987,35 @@ def register_pickup_routes(app, ctx):
                         if conn_tx is not None:
                             try: conn_tx.rollback()
                             except Exception: pass
-                        confirm_motivo = f"Error técnico al confirmar: {_tx_err}"
+                        _tx_fallo_tecnico = True
+                        confirm_motivo = "Error técnico al confirmar"
                         print(f"[pickup_confirm] tx error req={req['id']}: {_tx_err}", flush=True)
                     finally:
                         if conn_tx is not None:
                             try: conn_tx.close()
                             except Exception: pass
+
+                    # Falla pasajera (deadlock, BD ocupada): la propuesta SIGUE
+                    # vigente. Antes quedaba 'declined' para siempre y el detalle
+                    # crudo de la excepción llegaba al cliente (REGLA #4).
+                    if not confirm_ok and _tx_fallo_tecnico:
+                        log_event(req["id"], "confirm_error_tecnico", old, old,
+                                  "Falla técnica momentánea al confirmar; la propuesta sigue vigente",
+                                  "sistema", "Confirmación")
+                        _msg_tmp = ("No pudimos confirmar por un problema momentáneo. Tu propuesta "
+                                    "sigue vigente: inténtalo de nuevo en unos segundos.")
+                        if _is_ajax:
+                            return _ajax_err(_msg_tmp, code=503, payload={"reason": "error_temporal"})
+                        flash(_msg_tmp, "warning")
+                        return redirect(url_for("pickup_public_tracking", token=token))
+                    # Doble clic / dos pestañas: la primera ya confirmó. No se
+                    # rechaza la propuesta aceptada ni se le dice "no disponible".
+                    if not confirm_ok and _ya_confirmado:
+                        _msg_ya2 = "Tu retiro ya quedó confirmado. Revisa la fecha en esta página y en tu correo."
+                        if _is_ajax:
+                            return _ajax_err(_msg_ya2, code=409, payload={"reason": "ya_confirmado"})
+                        flash(_msg_ya2, "info")
+                        return redirect(url_for("pickup_public_tracking", token=token))
 
                     if not confirm_ok:
                         # Marcar propuesta como declined y avisar
@@ -3660,14 +4030,27 @@ def register_pickup_routes(app, ctx):
                             f"Cliente intentó confirmar pero falló (race): {confirm_motivo}",
                             "sistema", "Validación bajo lock",
                         )
+                        try:
+                            _notificar_equipo_retiros(
+                                f"El cliente no pudo confirmar el retiro {req.get('code') or '?'}",
+                                (f"Cliente: {req.get('customer_name') or '?'}. Otro retiro tomó el "
+                                 f"bloque {_fmt_fecha_cl(proposal.get('date'))} "
+                                 f"{_td_to_hhmm(proposal.get('time_from'))} justo antes ({confirm_motivo}). "
+                                 f"Envíale una nueva fecha."),
+                                req["id"], req.get("code") or "?",
+                                prioridad="urgente", tipo="retiro_respuesta",
+                            )
+                        except Exception as _e_nr:
+                            print(f"[pickups][team notify race] {_e_nr}", flush=True)
                         if _is_ajax:
                             return _ajax_err(
-                                "Lo sentimos, este horario ya no está disponible.",
+                                "Lo sentimos, este horario ya no está disponible. "
+                                "Te enviamos una nueva propuesta a la brevedad.",
                                 code=409,
-                                payload={"reason": "race_lost", "detail": confirm_motivo},
+                                payload={"reason": "race_lost"},
                             )
                         flash(
-                            f"Lo sentimos, este horario ya no está disponible. {confirm_motivo} "
+                            "Lo sentimos, este horario ya no está disponible. "
                             "Te enviamos una nueva propuesta a la brevedad.",
                             "warning",
                         )
@@ -3687,7 +4070,7 @@ def register_pickup_routes(app, ctx):
                         _notificar_equipo_retiros(
                             f"El cliente CONFIRMÓ el retiro {req.get('code') or '?'}",
                             (f"Cliente: {req.get('customer_name') or '?'}. "
-                             f"Fecha confirmada: {str(proposal['date'])[:10]} "
+                             f"Fecha confirmada: {_fmt_fecha_cl(proposal['date'])} "
                              f"{_td_to_hhmm(proposal['time_from'])}-{_td_to_hhmm(proposal['time_to'])}."),
                             req["id"], req.get("code") or "?",
                             prioridad="alta", tipo="retiro_respuesta",
@@ -3702,13 +4085,14 @@ def register_pickup_routes(app, ctx):
                         return _ajax_ok({
                             "message": "Retiro confirmado",
                             "fecha":    str(proposal["date"])[:10],
-                            "hora_desde": str(proposal["time_from"])[:5],
-                            "hora_hasta": str(proposal["time_to"])[:5],
+                            "fecha_txt": _fmt_fecha_cl(proposal["date"]),
+                            "hora_desde": _td_to_hhmm(proposal["time_from"]),
+                            "hora_hasta": _td_to_hhmm(proposal["time_to"]),
                             "redirect_url": url_for("pickup_public_tracking", token=token),
                         })
                     flash(
-                        f"¡Retiro confirmado para {proposal['date']} a las {str(proposal['time_from'])[:5]}! "
-                        "Te enviamos un correo con todos los detalles.",
+                        f"¡Retiro confirmado para el {_fmt_fecha_cl(proposal['date'])} a las "
+                        f"{_td_to_hhmm(proposal['time_from'])}! Te enviamos un correo con todos los detalles.",
                         "success",
                     )
               elif action == "reject":
@@ -3716,6 +4100,11 @@ def register_pickup_routes(app, ctx):
                 # (defensa contra doble-submit / refresh con resend POST).
                 if old in ("rechazada", "cerrada"):
                     flash("Esta solicitud ya fue cancelada anteriormente.", "info")
+                    return redirect(url_for("pickup_public_tracking", token=token))
+                # Un retiro ya entregado o marcado fallido no se "cancela" desde
+                # un link viejo (auditoría 2026-09-24).
+                if old in _PUB_TERMINALES:
+                    flash(_MSG_TERMINAL, "info")
                     return redirect(url_for("pickup_public_tracking", token=token))
                 reason = (request.form.get("reason") or "").strip()[:500]
                 # C3 (2026-06-09): cerrar también closed_at — gap conocido, el
@@ -3762,6 +4151,30 @@ def register_pickup_routes(app, ctx):
                     "info",
                 )
               elif action == "counter":
+                if old in _PUB_TERMINALES or old == "en_preparacion":
+                    _msg_nc = (_MSG_TERMINAL if old in _PUB_TERMINALES else
+                               "Tu retiro ya se está preparando en bodega. Para cambiar la fecha "
+                               "escríbenos a soportetec@sphs.cl.")
+                    if _is_ajax:
+                        return _ajax_err(_msg_nc, code=409, payload={"reason": "estado_no_permite"})
+                    flash(_msg_nc, "info")
+                    return redirect(url_for("pickup_public_tracking", token=token))
+                # Anti-spam: cada contrapropuesta dispara un correo al cliente y
+                # avisos al equipo. Un ping-pong real no pasa de 1-2 por día.
+                try:
+                    _n_cp = mysql_fetchone(
+                        f"SELECT COUNT(*) AS n FROM `{PROP}` WHERE request_id=%s "
+                        f"AND LOWER(proposed_by)='cliente' AND created_at >= CURDATE()",
+                        (req["id"],)) or {}
+                    if int(_n_cp.get("n") or 0) >= 3:
+                        _msg_cp = ("Ya registramos varias propuestas tuyas hoy. Nuestro equipo las está "
+                                   "revisando; si necesitas algo más escríbenos a soportetec@sphs.cl.")
+                        if _is_ajax:
+                            return _ajax_err(_msg_cp, code=429, payload={"reason": "counter_limit"})
+                        flash(_msg_cp, "warning")
+                        return redirect(url_for("pickup_public_tracking", token=token))
+                except Exception as _e_cp:
+                    print(f"[pickup_tracking] counter limit check: {_e_cp}", flush=True)
                 date, tf, tt = request.form.get("counter_date"), request.form.get("counter_time_from"), request.form.get("counter_time_to")
                 # FASE 2 (2026-05-29): validador temporal CENTRAL, modo 'public'.
                 # El cliente contrapropone → exige anticipación mínima (min_notice),
@@ -3811,8 +4224,10 @@ def register_pickup_routes(app, ctx):
                         _notificar_equipo_retiros(
                             f"El cliente contrapropuso fecha en el retiro {req.get('code') or '?'}",
                             (f"Cliente: {req.get('customer_name') or '?'}. "
-                             f"El cliente contrapropuso {date} {tf}-{tt}. "
-                             f"Acepta la contrapropuesta o envía una nueva fecha."),
+                             f"El cliente contrapropuso {_fmt_fecha_cl(date)} {_td_to_hhmm(tf)}-{_td_to_hhmm(tt)}. "
+                             + (f"Su cita confirmada del {_fmt_fecha_cl(req.get('confirmed_date'))} sigue "
+                                f"vigente hasta que respondas. " if req.get("confirmed_date") else "")
+                             + "Acepta la contrapropuesta o envía una nueva fecha."),
                             req["id"], req.get("code") or "?",
                             prioridad="alta", tipo="retiro_respuesta",
                         )
@@ -3821,14 +4236,19 @@ def register_pickup_routes(app, ctx):
                     # (antes el cliente quedaba sin acuse por correo).
                     try:
                         req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
-                        notify_async(req_after, "message", custom_message=(
-                            f"Recibimos tu propuesta de fecha {date} {tf}-{tt}. "
+                        # proposal= para que "Horario" muestre la hora que pidió el
+                        # cliente y no la última propuesta de ILUS.
+                        notify_async(req_after, "message",
+                                     proposal={"date": date, "time_from": tf, "time_to": tt},
+                                     custom_message=(
+                            f"Recibimos tu propuesta de fecha: {_fmt_fecha_cl(date)} de "
+                            f"{_td_to_hhmm(tf)} a {_td_to_hhmm(tt)}. "
                             "Nuestro equipo la revisará y te confirmaremos por correo."
                         ))
                     except Exception as _e: print(f"[pickups][notify counter cliente] {_e}")
                     flash(
-                        f"¡Listo! Registramos tu contrapropuesta para {date} a las {tf}. "
-                        "Te confirmaremos en breve por correo.",
+                        f"¡Listo! Registramos tu contrapropuesta para el {_fmt_fecha_cl(date)} a las "
+                        f"{_td_to_hhmm(tf)}. Te confirmaremos en breve por correo.",
                         "success",
                     )
                 else:
@@ -3968,8 +4388,8 @@ def register_pickup_routes(app, ctx):
             except Exception: return str(d)[:10]
         def _fmt_time(t):
             if not t: return ""
-            try: return t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)[:5]
-            except Exception: return str(t)[:5]
+            try: return t.strftime("%H:%M") if hasattr(t, "strftime") else _td_to_hhmm(t)
+            except Exception: return _td_to_hhmm(t)
         def _fmt_dt(d):
             if not d: return ""
             try: return d.strftime("%d-%m-%Y %H:%M") if hasattr(d, "strftime") else str(d)[:16]
@@ -4042,6 +4462,10 @@ def register_pickup_routes(app, ctx):
             l.alignment = Alignment(horizontal="left", vertical="center", indent=1)
             l.border = thin_border
             v = ws.cell(row, 2, value if value not in (None, "") else "—")
+            # openpyxl guarda como FÓRMULA todo texto que empiece con "=" (un nombre
+            # escrito por el cliente como "=HYPERLINK(...)"): se fuerza texto.
+            if isinstance(value, str) and value.startswith("="):
+                v.data_type = "s"
             v.font = value_font
             v.alignment = Alignment(horizontal="left", vertical="center", indent=1, wrap_text=True)
             v.border = thin_border
@@ -4997,6 +5421,17 @@ def register_pickup_routes(app, ctx):
 
         mysql_execute(f"UPDATE `{REQ}` SET status=%s, closed_at=IF(%s IN ('cerrada','rechazada','retirada'),NOW(),closed_at) WHERE id=%s", (new_status, new_status, rid))
         log_event(rid, "estado_actualizado", old_status, new_status, notes, "interno")
+        # Una propuesta pendiente no puede sobrevivir a un cambio manual a
+        # confirmado / preparación / estado terminal: desde el link viejo el
+        # cliente la confirmaba y "revivía" el retiro (auditoría 2026-09-24).
+        if new_status in ("agenda_confirmada", "en_preparacion", "retirada",
+                          "cerrada", "rechazada", "fallida") and old_status != new_status:
+            try:
+                mysql_execute(
+                    f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() "
+                    f"WHERE request_id=%s AND status='pending'", (rid,))
+            except Exception as _e_sp:
+                print(f"[pickup-updstatus] cerrar propuestas pendientes: {_e_sp}", flush=True)
 
         # ── 2º CAMINO ROTO (Daniel 2026-06-19): confirmar manualmente sin fecha ──
         # Si el operador pasa a 'agenda_confirmada' desde el <select> o el monitor
@@ -5123,6 +5558,11 @@ def register_pickup_routes(app, ctx):
             "esperando_cliente":      "info_incompleta",
         }
         kind = kind_map.get(new_status)
+        # "cerrada" reusa la plantilla de retirada ("Retiro completado · Gracias"):
+        # solo es verdad si el retiro SÍ se retiró. Cerrar un duplicado o spam
+        # (nunca retirado) no le escribe nada al cliente (auditoría 2026-09-24).
+        if new_status == "cerrada" and old_status != "retirada":
+            kind = None
         if kind and old_status != new_status:
             try:
                 # Re-leer la solicitud actualizada (estado/fechas pueden haber cambiado)
@@ -8850,10 +9290,12 @@ def register_pickup_routes(app, ctx):
     # tanto al correo del cliente que declaró como al del documento.
     # Mientras más se vayan agregando correo, mejor."
     #
-    # Devuelve lista de emails únicos en MAYÚSCULAS deduplicadas:
-    #   1) req["contact_email"] (cliente declarado)
-    #   2) parseados de req["extra_emails"] (coma-separados, agregados manualmente)
-    #   3) emails de cada doc asociado (pickup_request_docs.email_cliente_erp)
+    # Devuelve lista de emails únicos en minúsculas deduplicadas:
+    #   1) req["contact_email"] (cliente declarado en el formulario / editado en la ficha)
+    #   2) parseados de req["extra_emails"] (CC agregados manualmente en la ficha)
+    # Los correos que trae el ERP (pickup_request_docs.email_cliente_erp) YA NO
+    # entran solos: son solo sugerencia con un clic (fix 2026-09-14, Daniel:
+    # "si lo quiero cambiar, quiero tener esa libertad por el front").
     def _get_pickup_all_emails(rid_or_req):
         """Devuelve lista única de emails de envío para un retiro.
 
@@ -8986,7 +9428,7 @@ def register_pickup_routes(app, ctx):
                 else:
                     failed.append(e)
             except Exception as exc:
-                print(f"[pickup-multi-email] fallo {e}: {exc}", flush=True)
+                print(f"[pickup-multi-email] fallo {_mask_email(e)}: {exc}", flush=True)
                 failed.append(e)
         return {"sent": sent, "failed": failed, "total": len(emails)}
 
@@ -9427,14 +9869,20 @@ def register_pickup_routes(app, ctx):
             c = ws2.cell(1, ci, h); c.fill = RED_FILL; c.font = WHITE_FONT; c.alignment = CENTER
         for ri, r in enumerate(rows, 2):
             ws2.cell(ri, 1, r.get("code") or "")
-            ws2.cell(ri, 2, r.get("customer_name") or "")
-            ws2.cell(ri, 3, f"{(r.get('document_type') or '').upper()} {r.get('document_number') or ''}".strip())
+            _c_cli = ws2.cell(ri, 2, r.get("customer_name") or "")
+            # Nombre escrito en el formulario público: si empieza con "=" openpyxl
+            # lo guardaría como fórmula al abrirlo en Excel.
+            if str(_c_cli.value or "").startswith("="):
+                _c_cli.data_type = "s"
+            _c_doc = ws2.cell(ri, 3, f"{(r.get('document_type') or '').upper()} {r.get('document_number') or ''}".strip())
+            if str(_c_doc.value or "").startswith("="):
+                _c_doc.data_type = "s"
             ws2.cell(ri, 4, PICKUP_STATUS.get(r.get("status") or "", r.get("status") or ""))
             ws2.cell(ri, 5, r.get("request_source") or "web")
             ws2.cell(ri, 6, r.get("responsable_nombre") or "")
             ws2.cell(ri, 7, r.get("retirado_por_nombre") or "")
             ws2.cell(ri, 8, str(r.get("confirmed_date") or ""))
-            ws2.cell(ri, 9, str(r.get("confirmed_time_from") or "")[:5])
+            ws2.cell(ri, 9, _td_to_hhmm(r.get("confirmed_time_from")) if r.get("confirmed_time_from") else "")
             ws2.cell(ri, 10, float(r.get("kg") or 0))
             ws2.cell(ri, 11, float(r.get("total_volume_m3") or 0))
             ws2.cell(ri, 12, int(r.get("total_packages") or 0))
@@ -9480,7 +9928,17 @@ def register_pickup_routes(app, ctx):
             _expiry_h = int(cfg.get("proposal_expiry_hours") or 48)
         except (TypeError, ValueError):
             _expiry_h = 48
-        _expires_at = (_now_chile() + timedelta(hours=_expiry_h)).strftime("%Y-%m-%d %H:%M:%S")
+        _expires_dt = _now_chile() + timedelta(hours=_expiry_h)
+        # La propuesta vence a las 48 h o al empezar el bloque, lo que ocurra primero.
+        try:
+            _d_ex = date if hasattr(date, "year") else datetime.strptime(str(date)[:10], "%Y-%m-%d").date()
+            _hh_ex, _mm_ex = [int(x) for x in _td_to_hhmm(tf).split(":")[:2]]
+            _blk_ex = datetime(_d_ex.year, _d_ex.month, _d_ex.day, _hh_ex, _mm_ex)
+            if _blk_ex < _expires_dt:
+                _expires_dt = _blk_ex
+        except Exception:
+            pass
+        _expires_at = _expires_dt.strftime("%Y-%m-%d %H:%M:%S")
         # FIX 2026-09-23 (ficha v4, "Cambiar horario"): re-proponer sobre una
         # cita YA CONFIRMADA dejaba confirmed_date/time viejos → la ficha seguía
         # mostrando "Agenda confirmada" con la fecha vieja, el retiro ocupaba
@@ -9490,15 +9948,17 @@ def register_pickup_routes(app, ctx):
         if _conf_prev and str(_conf_prev).strip() not in ("", "None"):
             try:
                 log_event(rid, "agenda_reprogramada", req.get("status"), "propuesta_enviada",
-                          f"Cita confirmada {_conf_prev} {str(req.get('confirmed_time_from') or '')[:5]}-"
-                          f"{str(req.get('confirmed_time_to') or '')[:5]} queda sin efecto; "
+                          f"Cita confirmada {_fmt_fecha_cl(_conf_prev)} {_td_to_hhmm(req.get('confirmed_time_from') or '')}-"
+                          f"{_td_to_hhmm(req.get('confirmed_time_to') or '')} queda sin efecto; "
                           f"nueva propuesta {date} {tf}-{tt}", "interno")
             except Exception:
                 pass
             try:
                 mysql_execute(
                     f"UPDATE `{REQ}` SET confirmed_date=NULL, confirmed_time_from=NULL, "
-                    f"confirmed_time_to=NULL, reminder_24h_sent=0, customer_already_agreed=0 "
+                    # reminder_24h_sent es DATETIME: con 0 el modo estricto de MySQL
+                    # (error 1292) tumbaba el UPDATE entero y la cita vieja seguía viva.
+                    f"confirmed_time_to=NULL, reminder_24h_sent=NULL, customer_already_agreed=0 "
                     f"WHERE id=%s", (rid,))
             except Exception as _e_rc:
                 print(f"[propuesta_core] limpiar confirmada rid={rid}: {_e_rc}", flush=True)
@@ -9696,7 +10156,7 @@ def register_pickup_routes(app, ctx):
 
         # ── Daniel 2026-06-15: la propuesta DEBE poder notificarse al cliente.
         #    El ping-pong con el cliente arranca con este correo, así que si el
-        #    retiro no tiene NINGÚN email válido (contacto / extra / ERP), no
+        #    retiro no tiene NINGÚN email válido (contacto / CC de la ficha), no
         #    tiene sentido avanzar a 'propuesta_enviada' — el cliente jamás se
         #    enteraría. Bloqueamos y pedimos al operador agregar el email.
         if not _get_pickup_all_emails(req):
@@ -10262,10 +10722,41 @@ def register_pickup_routes(app, ctx):
                  g.user["nombre"] if getattr(g,"user",None) else None)
             )
             flash("Bloqueo creado correctamente.", "success")
+            try: _DISPO_CACHE["payload"] = None
+            except Exception: pass
         except Exception as exc:
             flash(f"Error al crear bloqueo: {exc}", "danger")
         return redirect(url_for("marketing_settings"))
 
+
+    def _pickup_retiros_en_bloqueo(fecha, slots=None, full_day=False):
+        """Retiros vivos cuya cita (confirmada > propuesta > pedida) cae dentro
+        del bloqueo recién creado. El bloqueo NO mueve retiros existentes: hay
+        que avisarle al operador para que los reprograme (2026-09-24)."""
+        try:
+            rows = mysql_fetchall(
+                f"SELECT code, customer_name, "
+                f"  CASE WHEN confirmed_date IS NOT NULL THEN confirmed_time_from "
+                f"       WHEN proposed_date IS NOT NULL THEN proposed_time_from "
+                f"       ELSE requested_time_from END AS tf_ef "
+                f"FROM `{REQ}` "
+                f"WHERE status NOT IN ('rechazada','cerrada','fallida','retirada') "
+                f"  AND COALESCE(confirmed_date, proposed_date, requested_date) = %s",
+                (fecha,)) or []
+        except Exception as _e_rb:
+            print(f"[bloqueos] cruce con retiros: {_e_rb}", flush=True)
+            return []
+        rangos = []
+        for s in (slots or []):
+            if "-" in s:
+                _a, _b = s.split("-", 1)
+                rangos.append((_td_to_hhmm(_a.strip()), _td_to_hhmm(_b.strip())))
+        out = []
+        for r in rows:
+            tf = _td_to_hhmm(r.get("tf_ef")) if r.get("tf_ef") is not None else ""
+            if full_day or (tf and any(a <= tf < b for a, b in rangos)):
+                out.append(r)
+        return out
 
     @app.route("/retiros/bloqueos/batch", methods=["POST"])
     @require_permission("admin")
@@ -10336,6 +10827,18 @@ def register_pickup_routes(app, ctx):
                 flash(msg, "danger")
             else:
                 flash(f"✅ {inserted} franja(s) bloqueadas para {fecha}.", "success")
+                # El calendario público lo ve al instante (sin esperar los 30 s de caché).
+                try: _DISPO_CACHE["payload"] = None
+                except Exception: pass
+                # ¿Ya había retiros agendados ahí? El bloqueo no los mueve.
+                _choques = _pickup_retiros_en_bloqueo(fecha, slots=slots, full_day=bool(full_day))
+                if _choques:
+                    _lista = ", ".join(
+                        f"{(c.get('code') or '?')} ({(c.get('customer_name') or 'cliente')[:40]})"
+                        for c in _choques[:8])
+                    flash(f"⚠️ Ojo: {len(_choques)} retiro(s) ya agendado(s) en ese horario: {_lista}"
+                          + (" y más" if len(_choques) > 8 else "")
+                          + ". El bloqueo no los mueve: reprográmalos desde su ficha.", "warning")
         except Exception as exc:
             print(f"[marketing/bloqueos] excepción general fecha={fecha}: {exc}")
             flash(f"Error al crear bloqueos: {exc}", "danger")
@@ -10349,6 +10852,8 @@ def register_pickup_routes(app, ctx):
         try:
             mysql_execute("DELETE FROM pickup_blocks WHERE id=%s", (bid,))
             flash("Bloqueo eliminado.", "success")
+            try: _DISPO_CACHE["payload"] = None
+            except Exception: pass
         except Exception as exc:
             flash(f"Error al eliminar: {exc}", "danger")
         return redirect(url_for("marketing_settings"))
@@ -10475,7 +10980,7 @@ def register_pickup_routes(app, ctx):
 
     def _slot_label(time_from):
         """Devuelve etiqueta legible de la franja (HH:MM)."""
-        try: return str(time_from)[:5]
+        try: return _td_to_hhmm(time_from)
         except Exception: return "00:00"
 
     @app.route("/retiros/calendario")
@@ -10705,8 +11210,8 @@ def register_pickup_routes(app, ctx):
             "from": d_from.isoformat(),
             "to":   d_to.isoformat(),
             "settings": {
-                "open_time":      str(cfg.get("open_time") or "09:00:00")[:5],
-                "close_time":     str(cfg.get("close_time") or "16:30:00")[:5],
+                "open_time":      _td_to_hhmm(cfg.get("open_time") or "09:00:00"),
+                "close_time":     _td_to_hhmm(cfg.get("close_time") or "16:30:00"),
                 "work_days":      cfg.get("work_days") or "1,2,3,4,5",
                 "holidays":       cfg.get("holidays") or "",
                 "slot_minutes":   slot_min,
@@ -10989,7 +11494,9 @@ def register_pickup_routes(app, ctx):
             tf = r.get("confirmed_time_from") or r.get("proposed_time_from") or r.get("requested_time_from")
             if not tf: continue
             fecha_str = fecha.isoformat() if hasattr(fecha,"isoformat") else str(fecha)
-            slot = str(tf)[:5]
+            # _td_to_hhmm: con str(tf)[:5] el bloque de 09:00 quedaba como "9:00:"
+            # y nunca calzaba con "09:00" → se veía LIBRE aunque estuviera lleno.
+            slot = _td_to_hhmm(tf)
             if fecha_str not in ocupacion: ocupacion[fecha_str] = {}
             if slot not in ocupacion[fecha_str]:
                 ocupacion[fecha_str][slot] = {"ocupados":0,"kg":0,"m3":0,"owners":[]}
@@ -11020,9 +11527,11 @@ def register_pickup_routes(app, ctx):
             for b in blk_rows:
                 f = b["fecha"]
                 fs = f.isoformat() if hasattr(f,"isoformat") else str(f)
+                # _td_to_hhmm: un bloqueo de 09:00 quedaba "9:00:" y el split
+                # fallaba → el bloqueo NO se aplicaba en el calendario.
                 blocks_by_date.setdefault(fs, []).append({
-                    "hora_inicio": str(b.get("hora_inicio") or "")[:5],
-                    "hora_fin":    str(b.get("hora_fin") or "")[:5],
+                    "hora_inicio": _td_to_hhmm(b.get("hora_inicio")) if b.get("hora_inicio") else "",
+                    "hora_fin":    _td_to_hhmm(b.get("hora_fin")) if b.get("hora_fin") else "",
                     "motivo":      b.get("motivo") or "",
                 })
         except Exception:
@@ -11168,19 +11677,50 @@ def register_pickup_routes(app, ctx):
                     slot_payload["owners"] = list(ocup.get("owners") or [])
                 dias[iso]["slots"].append(slot_payload)
 
+        # Bloqueos del horizonte, agrupados para mostrarlos al cliente (Daniel
+        # 2026-09-24: "que nos indique el bloqueo de las horas y días" con el
+        # diseño de la página). El bloqueo por franjas se guarda en filas de
+        # 30 min: se unen las contiguas con el mismo motivo ("09:00–10:30").
+        _bloqueos_pub = []
+        try:
+            for _fs in sorted(blocks_by_date):
+                _its = blocks_by_date[_fs]
+                if any(not _b["hora_inicio"] for _b in _its):
+                    _bloqueos_pub.append({
+                        "fecha": _fs, "dia_completo": True, "desde": "", "hasta": "",
+                        "motivo": next((_b["motivo"] for _b in _its if not _b["hora_inicio"]), "")[:200],
+                    })
+                    continue
+                _cur = None
+                for _b in sorted(_its, key=lambda x: x["hora_inicio"]):
+                    _hi, _hf, _mo = _b["hora_inicio"], (_b["hora_fin"] or ""), (_b["motivo"] or "")[:200]
+                    if _cur and _cur["hasta"] and _cur["hasta"] >= _hi and _cur["motivo"] == _mo:
+                        if _hf and _hf > _cur["hasta"]:
+                            _cur["hasta"] = _hf
+                    else:
+                        if _cur:
+                            _bloqueos_pub.append(_cur)
+                        _cur = {"fecha": _fs, "dia_completo": False, "desde": _hi, "hasta": _hf, "motivo": _mo}
+                if _cur:
+                    _bloqueos_pub.append(_cur)
+        except Exception as _e_bp:
+            print(f"[disponibilidad] agrupar bloqueos: {_e_bp}", flush=True)
+            _bloqueos_pub = []
+
         _payload = {
             "from": d_from.isoformat(),
             "to":   d_to.isoformat(),
+            "bloqueos": _bloqueos_pub,
             "warehouse_name": cfg.get("warehouse_name"),
-            "open_time":  str(cfg.get("open_time") or "09:00")[:5],
-            "close_time": str(cfg.get("close_time") or "16:30")[:5],
+            "open_time":  _td_to_hhmm(cfg.get("open_time") or "09:00"),
+            "close_time": _td_to_hhmm(cfg.get("close_time") or "16:30"),
             "slot_minutes": slot_dur,
             "slot_step":    slot_step,
             "lunch_start":  lunch_s_str,
             "lunch_end":    lunch_e_str,
             "operacion": {
-                "open_time":  str(cfg.get("open_time") or "09:00")[:5],
-                "close_time": str(cfg.get("close_time") or "16:30")[:5],
+                "open_time":  _td_to_hhmm(cfg.get("open_time") or "09:00"),
+                "close_time": _td_to_hhmm(cfg.get("close_time") or "16:30"),
                 "ultimo_inicio": ultimo_inicio,
                 "ultimo_fin":    ultimo_fin,
                 "lunch_start":   lunch_s_str,
