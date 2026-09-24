@@ -862,7 +862,11 @@
 .rba-hoy-lista{display:flex;flex-direction:column;gap:8px;margin-bottom:4px}
 .rba-hoy-card{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #dcfce7;border-left:4px solid #16a34a;border-radius:10px;padding:10px 14px;flex-wrap:wrap}
 .rba-hoy-card .rba-nombre{flex:1;min-width:120px;font-weight:700;color:#0a0a0a;font-size:.88rem;overflow-wrap:anywhere}
+.rba-hoy-card .rba-hora{font-size:.7rem;color:#6b7280;white-space:nowrap}
 .rba-hoy-card .rba-badge{background:#16a34a;color:#fff;font-weight:800;font-size:.78rem;border-radius:50px;padding:3px 12px;white-space:nowrap}
+.rba-stat-hoy.rba-stat-fuera-rango{background:#f3f4f6}
+.rba-stat-hoy.rba-stat-fuera-rango .rba-stat-n{color:#9ca3af}
+.rba-stat-fuera-rango-nota{font-size:.62rem;color:#9ca3af;font-weight:600;display:block;margin-top:2px}
 .rba-ranking-lista{display:flex;flex-direction:column;gap:6px}
 .rba-rank-row{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
 .rba-rank-row:last-child{border-bottom:none}
@@ -947,7 +951,7 @@
               <div class="rba-stat-n" id="rbaTotalN">0</div>
               <div class="rba-stat-l">en el rango</div>
             </div>
-            <div class="rba-stat rba-stat-hoy">
+            <div class="rba-stat rba-stat-hoy" id="rbaStatHoyCard">
               <div class="rba-stat-n" id="rbaHoyN">0</div>
               <div class="rba-stat-l">cargados hoy <span id="rbaFechaHoy"></span></div>
             </div>
@@ -3095,8 +3099,12 @@ function rbPickTicket(i){
 //    usuario, algo bien profesional") ────────────────────────────────────
 // Paleta categórica validada (skill dataviz del proyecto, palette.md) --
 // orden FIJO por persona (alfabético, no por ranking: "el color sigue a
-// la entidad, nunca a su posición"). Más de 8 personas activas en el
-// rango pliega a "Otros" gris -- nunca se inventa una novena tonalidad.
+// la entidad, nunca a su posición"). Nunca se inventa una novena
+// tonalidad: la persona 9+ en el rango comparte este gris con las demás
+// (sigue viéndose con su nombre y su valor real en leyenda/tabla/ranking
+// -- el dato no se pierde), pero no se fusiona en un solo bucket "Otros"
+// agregado. Con el equipo actual de Bodega (5 personas) no aplica; si
+// algún día se necesita un "Otros" real, hay que sumar esa agregación.
 const RBA_PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 const RBA_OTROS_COLOR = '#9ca3af';
 let RBA_MODAL = null;
@@ -3165,16 +3173,34 @@ function rbaRenderTodo(d){
   const dias = d.dias || [];
   const ranking = d.ranking || [];
 
+  // 🔧 FIX (revisión): el backend puede recortar el rango pedido (tope de
+  // 366 días) -- reflejar el rango REAL usado, no lo que se pidió, para
+  // que "Todo" no muestre en silencio menos de lo que el usuario cree.
+  document.getElementById('rbaDesde').value = d.desde;
+  document.getElementById('rbaHasta').value = d.hasta;
+
   document.getElementById('rbaTotalN').textContent = d.total;
-  document.getElementById('rbaHoyN').textContent = d.hoy_total;
   document.getElementById('rbaFechaHoy').textContent = '(' + d.fecha_hoy + ')';
+  const statHoyCard = document.getElementById('rbaStatHoyCard');
+  if (d.hoy_en_rango){
+    statHoyCard.classList.remove('rba-stat-fuera-rango');
+    statHoyCard.title = '';
+    document.getElementById('rbaHoyN').textContent = d.hoy_total;
+  } else {
+    // 🔧 FIX (revisión): un rango que no incluye hoy mostraba "0 cargados
+    // hoy" -- se leía como "nadie trabajó hoy" cuando en realidad hoy
+    // simplemente no se consultó. Se atenúa la tarjeta y se avisa.
+    statHoyCard.classList.add('rba-stat-fuera-rango');
+    statHoyCard.title = 'El rango elegido no incluye el día de hoy';
+    document.getElementById('rbaHoyN').textContent = '—';
+  }
   const activosHoy = ranking.filter(x => x.hoy > 0).sort((a, b) => b.hoy - a.hoy);
-  document.getElementById('rbaActivosHoyN').textContent = activosHoy.length;
+  document.getElementById('rbaActivosHoyN').textContent = d.hoy_en_rango ? activosHoy.length : '—';
 
   const hoySeccion = document.getElementById('rbaHoySeccion');
   const hoyLista = document.getElementById('rbaHoyLista');
   hoyLista.innerHTML = '';
-  if (activosHoy.length){
+  if (d.hoy_en_rango && activosHoy.length){
     hoySeccion.classList.remove('d-none');
     activosHoy.forEach(x => {
       const card = document.createElement('div');
@@ -3185,7 +3211,14 @@ function rbaRenderTodo(d){
       const badge = document.createElement('span');
       badge.className = 'rba-badge';
       badge.textContent = x.hoy + ' hoy';
-      card.appendChild(nombre); card.appendChild(badge);
+      card.appendChild(nombre);
+      if (x.hoy_ultimo_at){
+        const hora = document.createElement('span');
+        hora.className = 'rba-hora';
+        hora.textContent = 'Última: ' + x.hoy_ultimo_at;
+        card.appendChild(hora);
+      }
+      card.appendChild(badge);
       hoyLista.appendChild(card);
     });
   } else {
@@ -3287,9 +3320,11 @@ function rbaRenderChart(dias){
   const g = document.createElementNS(ns, 'g');
   g.setAttribute('transform', `translate(${padLeft},${padTop})`);
 
-  // Gridlines + ticks Y (3 pasos: 0, mitad, máximo)
-  [0, 0.5, 1].forEach(f => {
-    const val = Math.round(yMax * f);
+  // Gridlines + ticks Y (3 pasos: 0, mitad, máximo). Dedupe: con yMax=1 el
+  // paso "mitad" (0.5) redondea al mismo valor que 0 o 1 -- sin esto salía
+  // la misma etiqueta repetida (revisión 2026-09-24, hallazgo #7).
+  const valoresTick = [...new Set([0, Math.round(yMax * 0.5), yMax])];
+  valoresTick.forEach(val => {
     const y = yToPx(val);
     const line = document.createElementNS(ns, 'line');
     line.setAttribute('class', 'rba-axis-line');
@@ -3307,29 +3342,41 @@ function rbaRenderChart(dias){
   dias.forEach((dia, i) => {
     const xSlot = i * slotW;
     const xBar = xSlot + (slotW - barW) / 2;
-    let acumulado = 0;
     const entradas = RBA_USUARIOS
       .map(u => [u, dia.por_autor[u] || 0])
       .filter(([, v]) => v > 0);
     const total = dia.total || 0;
     if (total > 0){
+      // 🔧 FIX (revisión 2026-09-24, hallazgo #2): la versión anterior
+      // anclaba el hueco de 2px por ABAJO de cada segmento no-top, así
+      // que el gap terminaba flotando entre la barra y la línea base en
+      // vez de separar a las personas entre sí -- el caso más común (2+
+      // personas el mismo día) se veía como un solo bloque sin costura.
+      // Se recorre de ABAJO hacia ARRIBA llevando el borde inferior real
+      // en píxeles (`bottomY`): el segmento de más abajo llega intacto
+      // hasta la línea base, cada segmento del medio se acorta 2px desde
+      // ARRIBA (el hueco queda exactamente en la costura con el
+      // siguiente), y el de más arriba tampoco se acorta -- así su borde
+      // superior sigue marcando el valor TOTAL real del día en el eje Y
+      // (si se acortaran todos, la barra completa quedaría más baja que
+      // su valor verdadero).
+      let bottomY = plotH;
       entradas.forEach(([usuario, valor], idx) => {
         const hTotal = (valor / yMax) * plotH;
         const isTop = idx === entradas.length - 1;
-        const y0 = plotH - (acumulado / yMax) * plotH;
         const hSeg = Math.max(0, hTotal - (isTop ? 0 : gapSeg));
-        const yTop = y0 - hTotal;
+        const yTop = bottomY - hSeg;
         const path = document.createElementNS(ns, 'path');
         path.setAttribute('class', 'rba-bar-seg');
         path.setAttribute('fill', rbaColorFor(usuario));
         path.setAttribute('d', isTop
           ? rbaPathRectTopRound(xBar, yTop, barW, hSeg, 3)
-          : `M${xBar},${yTop + hSeg} h${barW} v${-hSeg} h${-barW} Z`);
+          : `M${xBar},${bottomY} h${barW} v${-hSeg} h${-barW} Z`);
         path.addEventListener('pointerenter', ev => rbaTooltipShow(ev, dia, usuario, valor));
         path.addEventListener('pointermove', ev => rbaTooltipMove(ev));
         path.addEventListener('pointerleave', rbaTooltipHide);
         g.appendChild(path);
-        acumulado += valor;
+        bottomY -= hTotal; // avanza por el alto NATURAL (sin descontar el gap)
       });
     } else {
       // Día sin carga: placa fantasma para que el hover del eje siga

@@ -115182,6 +115182,14 @@ def repstock_actividad():
         por_autor_total = {}
         hoy_total = 0
         hoy_por_autor = {}
+        # 🔧 FIX (revisión 2026-09-24): la versión anterior tenía "Última:
+        # HH:MM" por persona en la tarjeta "Quién está cargando hoy" y se
+        # perdió sin querer al agregar el filtro de rango -- REGLA #4.2
+        # (no se quita una feature que ya existía sin pedirlo). Se
+        # restaura acá, calculado solo sobre las cargas de HOY (no del
+        # rango filtrado completo -- "última carga de hoy" es lo que la
+        # tarjeta pregunta).
+        hoy_ultimo_ts = {}
         for r in rows:
             ts = r["created_at"]
             if ts.tzinfo is None:
@@ -115194,6 +115202,8 @@ def repstock_actividad():
             if dia_cl == hoy_cl:
                 hoy_total += 1
                 hoy_por_autor[autor] = hoy_por_autor.get(autor, 0) + 1
+                if autor not in hoy_ultimo_ts or ts > hoy_ultimo_ts[autor]:
+                    hoy_ultimo_ts[autor] = ts
 
         # Orden alfabético fijo -- "el color sigue a la persona, nunca a su
         # posición en el ranking" (evita que Fulano cambie de color de
@@ -115217,6 +115227,7 @@ def repstock_actividad():
             "autor": a,
             "total": por_autor_total[a],
             "hoy": hoy_por_autor.get(a, 0),
+            "hoy_ultimo_at": chile_fmt_filter(hoy_ultimo_ts[a], "%H:%M") if a in hoy_ultimo_ts else "",
         } for a in sorted(por_autor_total, key=lambda a: -por_autor_total[a])]
 
         return jsonify({
@@ -115226,6 +115237,11 @@ def repstock_actividad():
             "total": sum(por_autor_total.values()),
             "hoy_total": hoy_total,
             "fecha_hoy": hoy_cl.strftime("%d/%m/%Y"),
+            # 🔧 FIX (revisión 2026-09-24): si el rango filtrado no incluye
+            # HOY, "0 cargados hoy" no significa "nadie trabajó" -- significa
+            # que hoy no se consultó. El frontend usa este flag para avisar
+            # en vez de mostrar un 0 engañoso.
+            "hoy_en_rango": desde <= hoy_cl <= hasta,
             "usuarios": usuarios,
             "dias": dias,
             "ranking": ranking,
