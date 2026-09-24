@@ -1710,6 +1710,9 @@
 {% set _prop_lbl = {'pending':('Pendiente','t-ambar'),'accepted':('Aceptada','t-ok'),'superseded':('Reemplazada','t-gris'),
                     'declined':('Rechazada','t-rojo'),'expired':('Vencida','t-gris')} %}
 <section class="rd-more" id="rdMore" aria-label="Herramientas del retiro">
+  {# Franja negra con textura + halo rojo: mismo lenguaje que la cabecera
+     del retiro (.rh-hero) y el encabezado del formulario público. #}
+  <div class="rd-more-top">
   <div class="rd-more-h">
     <h3><span class="ic"><i class="bi bi-grid-3x3-gap-fill"></i></span>Herramientas del retiro</h3>
     <p>Mensajes, archivos, propuestas y ajustes. No requieren acción ahora.</p>
@@ -1731,6 +1734,7 @@
       <i class="bi bi-lightning-charge"></i><span>Cambiar estado</span>
     </button>
   </div>
+  </div>{# /.rd-more-top #}
 
   {# ── Mensaje al cliente — mismo formulario de siempre ── #}
   <div class="rd-more-pane" id="tab-comunicacion" role="tabpanel" hidden>
@@ -1867,18 +1871,28 @@
 {# ──────────────────────────────────────────────────────────────
    17 · FOOTER DE AYUDA — SIN CAMBIOS
    ────────────────────────────────────────────────────────────── #}
-<div class="ilus-help-footer">
-  <div class="ilus-help-msg">
-    <i class="bi bi-headset"></i>
-    <div>
-      <strong>¿Necesitas ayuda con este retiro o el sistema?</strong>
-      <small>El equipo de soporte técnico ILUS responde en menos de 1h hábil.</small>
+{# 2026-09-24 (Daniel: "con el diseño de empresa... y un footer bonito"):
+   mismo lenguaje que la cabecera del retiro — negro con textura diagonal,
+   halo rojo, logo ILUS y cierre de marca. Mismo link y texto de ayuda. #}
+<footer class="ilus-help-footer rd-foot">
+  <div class="rd-foot-main">
+    <img class="rd-foot-logo" src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS Fitness" loading="lazy" decoding="async">
+    <div class="ilus-help-msg">
+      <i class="bi bi-headset"></i>
+      <div>
+        <strong>¿Necesitas ayuda con este retiro o el sistema?</strong>
+        <small>El equipo de soporte técnico ILUS responde en menos de 1h hábil · soportetec@sphs.cl</small>
+      </div>
     </div>
+    <a href="https://ilusfitness.com/pages/soporte-tecnico" target="_blank" rel="noopener" class="ilus-help-cta">
+      <i class="bi bi-life-preserver"></i>Levantar un ticket
+    </a>
   </div>
-  <a href="https://ilusfitness.com/pages/soporte-tecnico" target="_blank" rel="noopener" class="ilus-help-cta">
-    <i class="bi bi-life-preserver"></i>Levantar un ticket
-  </a>
-</div>
+  <div class="rd-foot-line">
+    <span>ILUS Fitness · Gestión de retiros</span>
+    <span>Retiro {{ req.code }}</span>
+  </div>
+</footer>
 
 {# ════════════════════════════════════════════════════════════════════
    18 · MODALES DE APOYO — SIN CAMBIOS: búsqueda avanzada de productos

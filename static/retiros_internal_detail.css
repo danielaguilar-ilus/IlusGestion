@@ -2304,27 +2304,60 @@
      Una tarjeta con pestañas en vez de 5 tarjetas apiladas. Mismo
      lenguaje que .rd-act; botones grandes (operador con baja visión).
      ════════════════════════════════════════════════════════════════ */
-  .rd-more{background:#fff;border:1.5px solid var(--gray-2,#e5e7eb);border-radius:16px;padding:18px 22px;margin:0 0 24px;
-    box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .rd-more{background:#fff;border:1.5px solid var(--gray-2,#e5e7eb);border-radius:16px;margin:0 0 24px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(0,0,0,.04),0 14px 34px -18px rgba(10,10,10,.35)}
+  /* Franja negra: textura diagonal + halo rojo, como .rh-hero (cabecera del retiro) */
+  .rd-more-top{position:relative;background:linear-gradient(135deg,#0a0a0a 0%,#161616 55%,#0a0a0a 100%);
+    padding:18px 22px 16px;border-bottom:4px solid var(--ilus-red,#dc2626);overflow:hidden;color:#fff}
+  .rd-more-top::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.035) 0 1px,transparent 1px 12px)}
+  .rd-more-top::after{content:"";position:absolute;top:-120%;right:-6%;width:460px;height:460px;pointer-events:none;
+    background:radial-gradient(circle,rgba(220,38,38,.24) 0%,transparent 62%)}
+  .rd-more-h,.rd-more-tabs{position:relative;z-index:1}
   .rd-more-h{margin-bottom:14px}
-  .rd-more-h h3{margin:0;font-size:1.05rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;display:flex;align-items:center;gap:10px;color:#0a0a0a}
-  .rd-more-h h3 .ic{width:36px;height:36px;border-radius:10px;background:#f4f4f5;color:#0a0a0a;display:grid;place-items:center;font-size:1.05rem}
-  .rd-more-h p{margin:6px 0 0 46px;font-size:.86rem;font-weight:600;color:#6b7280}
+  .rd-more-h h3{margin:0;font-family:'Barlow Condensed',system-ui,-apple-system,'Segoe UI',sans-serif;font-size:1.55rem;
+    font-weight:900;letter-spacing:.04em;text-transform:uppercase;display:flex;align-items:center;gap:12px;color:#fff;line-height:1}
+  .rd-more-h h3 .ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:1.05rem;color:#fff;
+    background:linear-gradient(135deg,#dc2626,#a60000);box-shadow:0 6px 16px -6px rgba(220,38,38,.7)}
+  .rd-more-h p{margin:6px 0 0 50px;font-size:.88rem;font-weight:600;color:#a1a1aa}
   .rd-more-tabs{display:flex;gap:8px;flex-wrap:wrap}
   .rd-more-tab{display:inline-flex;align-items:center;gap:8px;min-height:48px;padding:8px 16px;border-radius:12px;
-    border:2px solid #e4e4e7;background:#fafafa;color:#1f2937;font-weight:800;font-size:.95rem;cursor:pointer;
-    transition:border-color .15s,background .15s,color .15s}
-  .rd-more-tab i{font-size:1.1rem;color:#dc2626}
-  .rd-more-tab .cnt{min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#e4e4e7;color:#111827;
+    border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#f4f4f5;font-weight:800;font-size:.95rem;
+    cursor:pointer;transition:border-color .15s,background .15s,color .15s,transform .15s}
+  .rd-more-tab i{font-size:1.1rem;color:#f87171}
+  .rd-more-tab .cnt{min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:rgba(255,255,255,.14);color:#fff;
     font-size:.8rem;font-weight:900;display:inline-grid;place-items:center}
-  .rd-more-tab:hover{border-color:#dc2626;background:#fff}
-  .rd-more-tab[aria-selected="true"]{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
-  .rd-more-tab[aria-selected="true"] i{color:#f87171}
-  .rd-more-tab[aria-selected="true"] .cnt{background:#dc2626;color:#fff}
+  .rd-more-tab:hover{border-color:rgba(248,113,113,.7);background:rgba(255,255,255,.1);transform:translateY(-1px)}
+  .rd-more-tab[aria-selected="true"]{background:var(--ilus-red,#dc2626);border-color:var(--ilus-red,#dc2626);color:#fff;
+    box-shadow:0 8px 20px -8px rgba(220,38,38,.8)}
+  .rd-more-tab[aria-selected="true"] i{color:#fff}
+  .rd-more-tab[aria-selected="true"] .cnt{background:#fff;color:#b91c1c}
   .rd-more-tab.is-avz{margin-left:auto;border-style:dashed}
-  .rd-more-tab.is-avz i{color:#f59e0b}
-  .rd-more-pane{margin-top:16px;padding-top:16px;border-top:2px solid #f1f1f3}
+  .rd-more-tab.is-avz i{color:#fbbf24}
+  .rd-more-pane{padding:18px 22px 20px}
   .rd-more-pane[hidden]{display:none}
+  @media (prefers-reduced-motion:reduce){.rd-more-tab{transition:none}.rd-more-tab:hover{transform:none}}
+
+  /* Footer de la ficha (Daniel: "un footer bonito") — mismo lenguaje negro/rojo */
+  .rd-foot{display:block;position:relative;overflow:hidden;padding:0;border-left:0;border-radius:16px;
+    background:linear-gradient(135deg,#0a0a0a 0%,#171717 60%,#0a0a0a 100%);
+    box-shadow:0 14px 34px -18px rgba(10,10,10,.55)}
+  .rd-foot::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.03) 0 1px,transparent 1px 12px)}
+  .rd-foot::after{content:"";position:absolute;bottom:-140%;left:-8%;width:520px;height:520px;pointer-events:none;
+    background:radial-gradient(circle,rgba(220,38,38,.22) 0%,transparent 62%)}
+  .rd-foot-main{position:relative;z-index:1;display:flex;align-items:center;gap:18px 22px;flex-wrap:wrap;
+    padding:20px 24px;border-bottom:1px solid rgba(255,255,255,.08)}
+  /* La imagen trae márgenes transparentes: se agranda y se compensa con
+     margen negativo para que el footer no crezca. */
+  .rd-foot-logo{height:84px;width:auto;flex-shrink:0;margin:-20px -10px -20px -14px}
+  .rd-foot .ilus-help-msg{flex:1 1 320px}
+  .rd-foot .ilus-help-msg strong{font-size:1.02rem}
+  .rd-foot .ilus-help-msg small{color:#a1a1aa;font-size:.84rem}
+  .rd-foot .ilus-help-cta{min-height:46px;padding:10px 20px;border-radius:10px;font-size:.92rem;
+    box-shadow:0 8px 20px -8px rgba(220,38,38,.8)}
+  .rd-foot-line{position:relative;z-index:1;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
+    padding:10px 24px;font-size:.76rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#71717a}
   .rd-more-help{display:flex;gap:8px;align-items:flex-start;font-size:.86rem;font-weight:600;color:#4b5563;margin:0 0 12px}
   .rd-more-help i{color:#3b82f6;margin-top:2px}
   .rd-more-vacio{display:flex;gap:10px;align-items:center;padding:14px 16px;border-radius:12px;background:#f9fafb;
@@ -2355,8 +2388,13 @@
   .rd-more-scores b i{color:#dc2626}
   .rd-more-scores span{display:block;margin-top:6px;font-size:.82rem;color:#6b7280;line-height:1.45}
   @media (max-width:767px){
-    .rd-more{padding:16px 14px}
+    .rd-more-top{padding:16px 14px 14px}
+    .rd-more-pane{padding:16px 14px 18px}
+    .rd-more-h h3{font-size:1.35rem}
     .rd-more-h p{margin-left:0}
+    .rd-foot-main{padding:16px}
+    .rd-foot .ilus-help-cta{width:100%;justify-content:center}
+    .rd-foot-line{padding:10px 16px}
     /* Grilla de 2 columnas: todas las pestañas a la vista (con scroll lateral
        la 2.ª quedaba cortada y no se notaba que había más). */
     .rd-more-tabs{display:grid;grid-template-columns:1fr 1fr}
