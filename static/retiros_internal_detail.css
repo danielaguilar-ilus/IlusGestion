@@ -1031,8 +1031,14 @@
     margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.04);
   }
   .icd-cal-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
-  .icd-cal-head h6{margin:0;font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px}
+  .icd-cal-head h6{margin:0;font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px;font-size:1.05rem}
+  .icd-cal-head h6 i{color:var(--ilus-red,#dc2626);font-size:1.2rem}
   .icd-cal-head h6 .ico{color:var(--ilus-red,#dc2626)}
+  .icd-cal-head p{margin:3px 0 0;font-size:.86rem;font-weight:600;color:#52525b}
+  /* Ficha v4 (Daniel 2026-09-23, "potenciar" el calendario dentro de
+     Agenda): mismo look de siempre, con un borde superior de marca y un
+     poco más de aire para que se sienta protagonista, no de relleno. */
+  .icd-cal-potenciado{border-top:4px solid var(--ilus-red,#dc2626);box-shadow:0 6px 20px -8px rgba(0,0,0,.12)}
   .icd-cal-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
   .icd-cal-toolbar input[type="date"]{
     max-width:200px;font-size:.85rem;font-weight:700;border:1.5px solid #e5e7eb;
@@ -1116,6 +1122,16 @@
     padding:2px 7px;border-radius:50px;letter-spacing:.06em;white-space:nowrap;
     box-shadow:0 2px 5px rgba(220,38,38,.25);
   }
+  /* Ficha v4: bloque libre que se puede tocar para mover ESTE retiro ahí. */
+  .icd-slot.is-pickable{cursor:pointer;border-style:dashed;border-color:#86efac;background:#f0fdf4}
+  .icd-slot.is-pickable:hover{transform:translateY(-2px) scale(1.03);border-color:#16a34a;background:#dcfce7;box-shadow:0 6px 16px -6px rgba(22,163,74,.4)}
+  .icd-slot.is-pickable .icd-slot-meta{color:#15803d}
+  .icd-slot-pick{font-size:.58rem;font-weight:900;letter-spacing:.03em;color:#15803d;text-transform:uppercase;
+    background:#dcfce7;border-radius:50px;padding:1px 6px;margin-top:1px}
+  .icd-owner-mover{width:100%;margin-top:4px;min-height:44px;border-radius:10px;border:1.5px solid #16a34a;
+    background:#f0fdf4;color:#15803d;font-weight:800;font-size:.86rem;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;gap:8px}
+  .icd-owner-mover:hover{background:#16a34a;color:#fff}
   .icd-cal-empty{padding:32px 14px;text-align:center;color:#9ca3af;font-size:.85rem}
   .icd-cal-empty i{font-size:1.6rem;display:block;margin-bottom:6px;opacity:.6}
   .icd-cal-skel{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;perspective:1000px}
@@ -1139,7 +1155,8 @@
   .icd-owner-row.is-current{border-color:var(--ilus-red,#dc2626);background:#fff5f5}
   .icd-owner-info{min-width:0;flex:1}
   .icd-owner-code{font-weight:900;color:var(--ilus-red,#dc2626);font-size:.86rem}
-  .icd-owner-name{font-weight:700;color:#0a0a0a;font-size:.84rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* REGLA #15: nombres completos, nunca truncados — antes cortaba con "…" */
+  .icd-owner-name{font-weight:700;color:#0a0a0a;font-size:.84rem;overflow-wrap:anywhere;line-height:1.3}
   .icd-owner-status{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280}
   .icd-owner-row a.icd-owner-go{font-size:.74rem;font-weight:800;color:#fff;background:#0a0a0a;border:0;padding:7px 12px;border-radius:8px;text-decoration:none;display:inline-flex;align-items:center;gap:5px;flex-shrink:0}
   .icd-owner-row a.icd-owner-go:hover{background:var(--ilus-red,#dc2626);color:#fff}

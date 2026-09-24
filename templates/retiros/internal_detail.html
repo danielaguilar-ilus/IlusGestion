@@ -67,7 +67,9 @@
      12 Adjuntos — SIN CAMBIOS
      13 Historial de propuestas — SIN el botón duplicado (ver sección 9)
      14 Historial / auditoría — + vista extendida de los 2 scores
-     15 Calendario del día — SIN CAMBIOS funcionales, solo reubicado
+     15 Calendario del día — ficha v4 (2026-09-23): reubicado DENTRO de
+        la sección 6 (Agenda), potenciado y ahora permite mover el
+        retiro tocando un bloque libre (ver _can_change_agenda)
      16 Cambiar estado (avanzado) — SIN CAMBIOS funcionales/permisos
      17 Footer de ayuda — SIN CAMBIOS
      18 Modales de apoyo (rbaModal, modalRetirar) — SIN CAMBIOS
@@ -967,7 +969,20 @@
        vivía suelto como primera rama del viejo Paso 5). El aviso
        "Propuesta enviada" y la espera del cliente ahora viven en la
        sección 8 — acá solo queda el ACTO de proponer. #}
-    {% set _paso4_collapsed = (_pipe_active != 4) %}
+    {# Ficha v4 (Daniel 2026-09-23, viendo el calendario de la OT: "esto lo
+       tenemos que potenciar... no lo necesito en una tarjeta aparte, lo veo
+       hasta abajo"): el calendario del día se muda a este paso (ver más
+       abajo, antes del botón de proponer) y queda visible en casi todo el
+       ciclo de vida del retiro — solo se pliega si ya terminó o si todavía
+       no hay documentos (nada que agendar). #}
+    {% set _paso4_collapsed = (req.status in ['rechazada','fallida','retirada','cerrada']) or (_n_docs_inicial == 0) %}
+    {% set _cal_init_date = (
+        (req.confirmed_date|string)[:10] if req.confirmed_date
+        else (req.proposed_date|string)[:10] if req.proposed_date
+        else (req.requested_date|string)[:10] if req.requested_date
+        else ''
+    ) %}
+    {% set _can_change_agenda = permissions.get('retiros') and req.status not in ['rechazada','fallida','retirada','cerrada'] %}
     <section class="step-section {% if _paso4_collapsed %}is-collapsed{% endif %} {% if _step4_done %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-4" data-step="4">
       <div class="step-header">
         <div class="step-circle-wrap">
@@ -1058,6 +1073,55 @@
           <div>
             <strong>Aviso:</strong> los documentos asociados no muestran saldo verificado por ERP.
             Igual puedes proponer fecha — verifica con bodega antes de retirar.
+          </div>
+        </div>
+
+        {# ════════════════════════════════════════════════════════════════
+           CALENDARIO DEL DÍA — potenciado, dentro de Agenda (Daniel
+           2026-09-23, viendo el calendario de la OT: "necesito datos y
+           colores... que se ve hermososo"). Mismo widget de siempre
+           (icdCal*/icdMonth*/icdSlotGrid, JS sin cambios de fondo), con más
+           contexto arriba. Si `_can_change_agenda`, los bloques libres se
+           pueden tocar para mover ESTE retiro ahí — con aviso previo de
+           las consecuencias (nunca se manda el correo sin confirmar). #}
+        <div id="sec-calendario" class="icd-cal-card icd-cal-potenciado" data-can-change="{{ 1 if _can_change_agenda else 0 }}">
+          <div class="icd-cal-head">
+            <div>
+              <h6><i class="bi bi-calendar-week"></i>Agenda del retiro</h6>
+              <p>{% if _can_change_agenda %}Toca un bloque libre para mover este retiro ahí — se pregunta antes de avisarle al cliente.{% else %}Disponibilidad de todos los retiros del día.{% endif %}</p>
+            </div>
+            <span class="ms-auto small text-muted" id="icdCalSummary" style="font-size:.78rem"></span>
+          </div>
+          <div class="icd-cal-toolbar">
+            <label class="form-label small fw-bold mb-0" for="icdCalDate" style="font-size:.78rem">Día:</label>
+            <input type="date" id="icdCalDate" value="{{ _cal_init_date }}">
+            <button type="button" class="btn-mini" id="icdCalPrev" title="Día anterior"><i class="bi bi-chevron-left"></i></button>
+            <button type="button" class="btn-mini" id="icdCalNext" title="Día siguiente"><i class="bi bi-chevron-right"></i></button>
+            <button type="button" class="btn-mini" id="icdCalToday">Hoy</button>
+            <button type="button" class="btn-mini" id="icdCalRefresh" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="ilus-cal-col-label">Fecha</label>
+              <div id="icdMonth" class="ilus-cal-month"></div>
+              <div id="icdMonthGrid" style="display:none" aria-hidden="true"></div>
+            </div>
+            <div class="col-md-7">
+              <label class="ilus-cal-col-label">Bloques del día</label>
+              <div class="icd-cal-legend">
+                <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
+                <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
+                <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Bloqueado</span>
+                <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Este retiro</span>
+              </div>
+              <div class="icd-slot-grid" id="icdSlotGrid">
+                <div class="icd-cal-skel" aria-hidden="true">
+                  {% for _ in range(10) %}<div></div>{% endfor %}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1766,71 +1830,14 @@
 </section>
 
 {# ──────────────────────────────────────────────────────────────
-   15 · CALENDARIO DEL DÍA — mismo componente IlusRetirosCalendar,
-   SIN CAMBIOS funcionales, solo reubicado dentro de una tarjeta
-   colapsable de la zona secundaria (no se fusiona con el del modal
-   "Proponer fecha" — eso queda fuera de alcance de este build).
+   15 · CALENDARIO DEL DÍA — ficha v4 (Daniel 2026-09-23): se mudó
+   DENTRO de #paso-4 (Agenda, más arriba) — "no lo necesito en una
+   tarjeta aparte, esto lo tenemos que potenciar". El modal de "quién
+   tiene el bloque" (icdOwnersModal) se queda exactamente aquí a
+   propósito: reubicarlo dentro de un .step-section rompe su
+   posicionamiento (backdrop-filter/will-change), mismo motivo por el
+   que #modalProponerFecha vive fuera de las tarjetas.
    ────────────────────────────────────────────────────────────── #}
-{% set _cal_init_date = (
-    (req.confirmed_date|string)[:10] if req.confirmed_date
-    else (req.proposed_date|string)[:10] if req.proposed_date
-    else (req.requested_date|string)[:10] if req.requested_date
-    else ''
-) %}
-<section class="step-section is-secondary is-collapsed">
-  <div class="step-header">
-    <div class="step-titles">
-      <h5><i class="bi bi-calendar-week me-2" style="color:var(--ilus-red)"></i>Calendario del día</h5>
-      <p class="step-sub">Vista general de disponibilidad de <strong>todos</strong> los retiros del día — no actúa sobre este retiro; para agendar ESTE retiro usa el Paso "Agenda" más arriba.</p>
-    </div>
-    <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-      <i class="bi bi-chevron-down"></i>
-    </button>
-  </div>
-  <p class="step-collapsed-line"><i class="bi bi-calendar-week"></i>Consulta general del día</p>
-  <div class="step-content">
-    <div id="sec-calendario" class="icd-cal-card" style="border:none;box-shadow:none;padding:0;margin:0">
-      <div class="icd-cal-toolbar">
-        <label class="form-label small fw-bold mb-0" for="icdCalDate" style="font-size:.78rem">Día:</label>
-        <input type="date" id="icdCalDate" value="{{ _cal_init_date }}">
-        <button type="button" class="btn-mini" id="icdCalPrev" title="Día anterior"><i class="bi bi-chevron-left"></i></button>
-        <button type="button" class="btn-mini" id="icdCalNext" title="Día siguiente"><i class="bi bi-chevron-right"></i></button>
-        <button type="button" class="btn-mini" id="icdCalToday">Hoy</button>
-        <button type="button" class="btn-mini" id="icdCalRefresh" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
-        <span class="ms-auto small text-muted" id="icdCalSummary" style="font-size:.78rem"></span>
-      </div>
-      {# Daniel 2026-09-14 ("así quiero los calendarios de todo el módulo"):
-         mismo layout de dos columnas que /retiros/solicitar — mes a la
-         izquierda (widget compartido, solo como navegación: clic en un día
-         carga ese día a la derecha), bloques del día a la derecha (la grilla
-         icd de siempre, con su modal de "quién tiene el bloque", intacta). #}
-      <div class="row g-3">
-        <div class="col-md-5">
-          <label class="ilus-cal-col-label">Fecha</label>
-          <div id="icdMonth" class="ilus-cal-month"></div>
-          <div id="icdMonthGrid" style="display:none" aria-hidden="true"></div>
-        </div>
-        <div class="col-md-7">
-          <label class="ilus-cal-col-label">Bloques del día</label>
-          <div class="icd-cal-legend">
-            <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-            <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
-            <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
-            <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
-            <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Bloqueado</span>
-            <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Este retiro</span>
-          </div>
-          <div class="icd-slot-grid" id="icdSlotGrid">
-            <div class="icd-cal-skel" aria-hidden="true">
-              {% for _ in range(10) %}<div></div>{% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <div class="modal fade icd-owners-modal" id="icdOwnersModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -2011,6 +2018,12 @@ window.RETIROS_DETAIL_DATA = {
   shouldMountProposeCal: {{ (not _step4_done and _n_docs_inicial > 0)|tojson }},
   pesoInicial: {{ (req.peso_real_kg or 0)|float }},
   pickupDashboardUrl: {{ url_for('pickup_dashboard')|tojson }},
+  // Ficha v4 (2026-09-23): "Agenda del retiro" — si el operador puede tocar
+  // un bloque libre para MOVER este retiro (permiso 'retiros' + no terminado).
+  canChangeAgenda: {{ (_can_change_agenda or false)|tojson }},
+  contactEmail: {{ (req.contact_email or '')|tojson }},
+  step4Done: {{ (_step4_done or false)|tojson }},
+  step5Done: {{ (_step5_done or false)|tojson }},
 };
 </script>
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>

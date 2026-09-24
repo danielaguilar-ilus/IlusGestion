@@ -1327,6 +1327,10 @@ function _pintarFichaV3(d){
 // verificado" se muestra dentro del paso pero NO bloquea.
 let _p3NdocsPrev = null;   // nº de docs del último repintado (null = aún no se pinta)
 function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
+  // Ficha v4: última fuente de verdad del estado de agenda, para
+  // _icdCambiarAgenda() (calendario potenciado) sin tener que repetir
+  // el fetch — se refresca cada vez que se asocia/quita un documento.
+  window._RETIROS_REQUEST_STATE = requestState || {};
   if (_p3NdocsPrev === null){
     const _p3i = document.getElementById('paso-3');
     _p3NdocsPrev = (_p3i && !_p3i.classList.contains('is-blocked')) ? ndocs : 0;
@@ -1461,7 +1465,16 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
   const MODAL_EL = document.getElementById('icdOwnersModal');
   const MODAL_BODY = document.getElementById('icdOwnersModalBody');
   const MODAL_TITLE = document.getElementById('icdOwnersModalTitle');
+  // Ficha v4: si falta alguno de estos ids (ej. retiro en estado terminal,
+  // #sec-calendario ni se renderiza), no seguir — evita cortar el resto
+  // del archivo, del que dependen ~30 funciones más abajo.
+  if (!DATE_IN || !GRID || !SUMMARY) return;
   let _modalInstance = null;
+  // Ficha v4 (Daniel 2026-09-23): "toca un bloque libre para mover este
+  // retiro ahí". Solo si el operador tiene permiso 'retiros' y el retiro
+  // no está en un estado terminal (mismo criterio que el backend en
+  // POST /proposal — pickups_module.py).
+  const CAN_CHANGE = !!(window.RETIROS_DETAIL_DATA && RETIROS_DETAIL_DATA.canChangeAgenda);
 
   function _hmToMin(s){
     const p = String(s||'').split(':').map(Number);
@@ -1521,6 +1534,13 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
       if (owners.length) cls.push('has-owners');
       const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
       const mx = s.capacidad_max    != null ? s.capacidad_max    : (s.max || 2);
+      const hayCupo = (estado === 'disponible' || estado === 'ocupado') && oc < mx;
+      // Ficha v4: bloque LIBRE (sin dueños) con cupo → clic directo mueve
+      // el retiro aquí. Con dueños pero con cupo (ocupado), se ofrece
+      // "Mover este retiro aquí" dentro del modal de dueños (ver abajo) —
+      // así el operador ve primero quién más hay agendado a esa hora.
+      const pickable = CAN_CHANGE && !isCurrent && hayCupo && !owners.length;
+      if (pickable) cls.push('is-pickable');
       let label = '';
       if (estado === 'colacion') label = 'Colación';
       else if (estado === 'bloqueado') label = 'Bloqueado';
@@ -1532,10 +1552,11 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
         ownersLine = `<div class="icd-slot-owners" title="${owners.length} retiros">${owners.length} retiros</div>`;
       }
       const hora = s.time_from || s.hora || '';
-      return `<div class="${cls.join(' ')}" data-idx="${i}" role="button" tabindex="${owners.length ? 0 : -1}">
+      const pickTag = pickable ? '<div class="icd-slot-pick">Cambiar aquí</div>' : '';
+      return `<div class="${cls.join(' ')}" data-idx="${i}" role="button" tabindex="${(owners.length || pickable) ? 0 : -1}">
         <div class="icd-slot-hora">${_esc(hora)}</div>
         <div class="icd-slot-meta">${_esc(label)}</div>
-        ${ownersLine}
+        ${ownersLine}${pickTag}
       </div>`;
     };
     let html = '';
@@ -1573,6 +1594,18 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
         if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); el.click(); }
       });
     });
+    // Ficha v4: bloques libres "pickables" (sin dueños, con cupo) — clic
+    // directo abre la confirmación de cambio de agenda.
+    GRID.querySelectorAll('.icd-slot.is-pickable').forEach(el => {
+      el.addEventListener('click', () => {
+        const i = parseInt(el.dataset.idx, 10);
+        const slot = slots[i];
+        if (slot && typeof _icdCambiarAgenda === 'function') _icdCambiarAgenda(fecha, slot);
+      });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); el.click(); }
+      });
+    });
   }
   function _openOwnersModal(fecha, slot){
     const owners = Array.isArray(slot.owners) ? slot.owners : [];
@@ -1595,11 +1628,79 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
         </div>`;
       }).join('');
     }
+    // Ficha v4: bloque con dueños pero TODAVÍA con cupo → ofrecer mover
+    // este retiro aquí sin cerrar el modal de "quién hay" (el operador
+    // ve primero con quién compartiría el bloque).
+    const oc = slot.ocupacion_actual != null ? slot.ocupacion_actual : (slot.ocupados || 0);
+    const mx = slot.capacidad_max    != null ? slot.capacidad_max    : (slot.max || 2);
+    const yaEsEste = _isThisRequestSlot(slot);
+    if (CAN_CHANGE && !yaEsEste && oc < mx && slot.estado !== 'bloqueado' && slot.estado !== 'colacion'){
+      MODAL_BODY.innerHTML += `<button type="button" class="icd-owner-mover" id="icdBtnMoverAqui">
+        <i class="bi bi-arrow-repeat"></i>Mover este retiro a este bloque (${mx - oc} cupo${mx - oc === 1 ? '' : 's'} libre${mx - oc === 1 ? '' : 's'})
+      </button>`;
+      const btnMover = document.getElementById('icdBtnMoverAqui');
+      if (btnMover) btnMover.addEventListener('click', () => {
+        if (_modalInstance) _modalInstance.hide();
+        _icdCambiarAgenda(fecha, slot);
+      });
+    }
     if (!_modalInstance && window.bootstrap){
       _modalInstance = new bootstrap.Modal(MODAL_EL);
     }
     if (_modalInstance) _modalInstance.show();
   }
+  // Ficha v4 (Daniel 2026-09-23): confirma las consecuencias y mueve la
+  // agenda de ESTE retiro al bloque tocado. Reusa enviarPropuestaWizard()
+  // (mismo mecanismo que "Aceptar como propuesta") — mismo correo real,
+  // mismo candado anti-doble-envío, mismo manejo de errores 409.
+  window._icdCambiarAgenda = async function(fecha, slot){
+    if (!CAN_CHANGE) return;
+    // window._RETIROS_REQUEST_STATE se refresca en cada _refrescarEstadoPasos
+    // (más al día); antes del primer refresco se usa lo que trajo el
+    // servidor al cargar la página.
+    const rs = window._RETIROS_REQUEST_STATE || {
+      step4_done: !!(window.RETIROS_DETAIL_DATA && RETIROS_DETAIL_DATA.step4Done),
+      step5_done: !!(window.RETIROS_DETAIL_DATA && RETIROS_DETAIL_DATA.step5Done),
+    };
+    const tf = slot.time_from || slot.hora || '';
+    const tt = slot.time_to || '';
+    const [y, m, d] = fecha.split('-');
+    const fechaDMY = `${d}/${m}/${y}`;
+    let consecuencias;
+    if (rs.step5_done){
+      consecuencias = 'La cita confirmada actual queda sin efecto. El retiro vuelve a esperar que el cliente acepte esta nueva fecha, y se libera el cupo anterior.';
+    } else if (rs.step4_done){
+      consecuencias = 'La propuesta enviada anteriormente deja de servir (el botón del correo viejo ya no confirma). Se libera ese cupo y se manda una propuesta nueva.';
+    } else {
+      consecuencias = 'Se le manda al cliente una propuesta de fecha para que la acepte o proponga otra — nunca queda confirmado solo.';
+    }
+    const email = (window.RETIROS_DETAIL_DATA && RETIROS_DETAIL_DATA.contactEmail) || '';
+    if (!email){
+      if (typeof ilusAlert === 'function'){
+        await ilusAlert({ type:'warning', title:'Falta el correo del cliente',
+          message: 'Agrega un correo en la Ficha antes de proponer una fecha — si no, el cliente nunca se entera.' });
+      }
+      return;
+    }
+    const ok = typeof ilusConfirm === 'function' ? await ilusConfirm({
+      title: '¿Cambiar la agenda de este retiro?',
+      message: `Mover a ${fechaDMY} · ${tf}${tt ? '–' + tt : ''}.`,
+      sub: `📧 Le llega un correo a <strong>${_esc(email)}</strong> con la nueva fecha.<br>${_esc(consecuencias)}`,
+      subHtml: true,
+      okLabel: 'Sí, cambiar y avisar al cliente', cancelLabel: 'Cancelar',
+      danger: !!rs.step5_done, type: rs.step5_done ? 'warning' : 'question',
+    }) : true;
+    if (!ok) return;
+    const hd = document.getElementById('iwProposeHidDate');
+    const ht = document.getElementById('iwProposeHidTf');
+    const he = document.getElementById('iwProposeHidTt');
+    const reasonInp = document.getElementById('iwProposeReason');
+    if (hd) hd.value = fecha;
+    if (ht) ht.value = tf;
+    if (he) he.value = tt;
+    if (reasonInp) reasonInp.value = 'Cambio de horario desde el calendario del día';
+    if (typeof enviarPropuestaWizard === 'function') enviarPropuestaWizard();
+  };
   async function _loadDia(fecha){
     if (!fecha){ _renderEmpty('Elige una fecha.'); return; }
     _renderSkel();
