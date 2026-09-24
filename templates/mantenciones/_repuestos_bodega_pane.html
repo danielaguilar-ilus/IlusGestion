@@ -922,6 +922,32 @@
   .rba-filtros{flex-direction:column;align-items:stretch}
   .rba-rango-custom{flex-wrap:wrap}
 }
+/* 🔧 FIX 2026-09-24 (Daniel, en su celular: "se ve pésimo la imagen en el
+   Cel"): este modal es más alto que cualquier otro de esta página (gráfico
+   + tarjetas + ranking + tabla) -- de sobra más que un celular de alto. Las
+   reglas globales de REGLA #3 (mobile.css) dejan el modal-content en
+   height:auto/max-height:100dvh SIN un contenedor de scroll interno
+   garantizado -- el contenido que se pasa de 100dvh queda dibujado FUERA
+   de los límites del modal, sin recortarse ni scrollear, y aparece "suelto"
+   sobre la página de atrás. Se fuerza acá, SOLO para este modal (no toca
+   los demás que ya andaban bien), el patrón robusto de columna flex con
+   scroll interno: modal-content ocupa el alto exacto del viewport,
+   header/footer no se achican, y modal-body es la ÚNICA zona que
+   scrollea -- min-height:0 es el detalle que se olvida siempre: sin eso,
+   un hijo flex nunca se encoge más chico que su contenido y el scroll
+   interno no aparece. */
+@media (max-width:768px){
+  #modalRbActividad .modal-content{
+    height:100dvh!important; max-height:100dvh!important;
+    display:flex; flex-direction:column;
+  }
+  #modalRbActividad .modal-header,
+  #modalRbActividad .modal-footer{flex:0 0 auto}
+  #modalRbActividad .modal-body{
+    flex:1 1 auto; min-height:0; overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+}
 </style>
 <div class="modal fade" id="modalRbActividad" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-xl">
