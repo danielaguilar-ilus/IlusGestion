@@ -179,6 +179,11 @@
       Incluye la planilla real de seguimiento de Daniel (ubicación, motivo, N° OT, garantía).</div>
   </div>
   <div class="d-flex gap-2" id="repAccionesBodega">
+    {# 📊 2026-09-24 (Daniel: "cuantos repuestos se estan registrando en
+       este minuto... necesito ver el avance y quien lo esta avanzando") #}
+    <button class="btn btn-sm btn-outline-secondary" type="button" onclick="rbaAbrirActividad()"
+            title="Cuántos repuestos hay cargados, quién los está cargando y el avance de hoy">
+      <i class="bi bi-graph-up-arrow me-1"></i>Avance de carga</button>
     {% if current_user.role != 'tecnico' %}
     <a href="/mantenciones/proveedores" class="btn btn-sm btn-outline-secondary"><i class="bi bi-truck me-1"></i>Proveedores</a>
     {% endif %}

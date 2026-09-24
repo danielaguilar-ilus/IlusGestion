@@ -115132,6 +115132,46 @@ REPSTOCK_SQL_DESCONTINUADO = (
 )
 
 
+@app.route("/repuestos/api/actividad")
+@_mant_required
+@_no_tecnico_externo
+def repstock_actividad():
+    """Indicador "Avance de carga" (Daniel, 2026-09-24: "cuantos repuestos
+    se estan registrando en este minuto... necesito ver el avance y quien
+    lo esta avanzando"): total en Bodega, ranking por persona y el avance
+    de HOY -- hora Chile (REGLA #6, via _hoy_chile_rango_utc), no la fecha
+    del servidor. Botón "Avance de carga" en /repuestos, pestaña Bodega."""
+    try:
+        inicio_utc, fin_utc = _hoy_chile_rango_utc()
+        rows = mysql_fetchall(
+            "SELECT COALESCE(NULLIF(TRIM(created_by),''),'Sin registrar') AS autor, "
+            "       COUNT(*) AS total, "
+            "       SUM(CASE WHEN created_at >= %s AND created_at < %s THEN 1 ELSE 0 END) AS hoy, "
+            "       MAX(created_at) AS ultimo_at "
+            "  FROM mant_repuestos_stock "
+            " WHERE activo=1 "
+            " GROUP BY autor "
+            " ORDER BY total DESC",
+            (inicio_utc, fin_utc)
+        ) or []
+        ranking = [{
+            "autor": r["autor"],
+            "total": int(r.get("total") or 0),
+            "hoy": int(r.get("hoy") or 0),
+            "ultimo_at": chile_fmt_filter(r.get("ultimo_at")) if r.get("ultimo_at") else "",
+        } for r in rows]
+        return jsonify({
+            "ok": True,
+            "total": sum(r["total"] for r in ranking),
+            "hoy_total": sum(r["hoy"] for r in ranking),
+            "fecha_hoy": _now_chile().strftime("%d/%m/%Y"),
+            "ranking": ranking,
+        })
+    except Exception as _e:
+        print(f"[repstock-actividad] ERROR: {_e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo calcular el avance de la Bodega."}), 500
+
+
 def _repstock_contexto_bodega():
     """Todo lo que la pestaña "Bodega" necesita para pintarse. Se llama
     tanto desde /repuestos (donde vive de verdad, Daniel 2026-08-07) como

@@ -842,6 +842,78 @@
   </div>
 </div>
 
+{# 📊 2026-09-24 (Daniel: "cuantos repuestos se estan registrando en este
+   minuto... necesito ver el avance y quien lo esta avanzando") -- botón
+   "Avance de carga" en el header de la pestaña Bodega abre este modal.
+   Lenguaje visual REGLA #15 (tarjetas + semáforo verde para "hoy" +
+   progreso visual en el ranking), nombres siempre completos (nunca
+   truncados). #}
+<style>
+.rba-stats{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.rba-stat{flex:1;min-width:120px;background:#f3f4f6;border-radius:12px;padding:14px;text-align:center}
+.rba-stat-n{font-size:1.6rem;font-weight:900;color:#0a0a0a;font-variant-numeric:tabular-nums}
+.rba-stat-l{font-size:.72rem;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+.rba-stat-hoy{background:#dcfce7}
+.rba-stat-hoy .rba-stat-n{color:#15803d}
+.rba-seccion-titulo{font-size:.82rem;font-weight:800;color:#374151;margin-bottom:8px}
+.rba-hoy-lista{display:flex;flex-direction:column;gap:8px;margin-bottom:4px}
+.rba-hoy-card{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #dcfce7;border-left:4px solid #16a34a;border-radius:10px;padding:10px 14px;flex-wrap:wrap}
+.rba-hoy-card .rba-nombre{flex:1;min-width:120px;font-weight:700;color:#0a0a0a;font-size:.88rem;overflow-wrap:anywhere}
+.rba-hoy-card .rba-badge{background:#16a34a;color:#fff;font-weight:800;font-size:.78rem;border-radius:50px;padding:3px 12px;white-space:nowrap}
+.rba-hoy-card .rba-hora{font-size:.7rem;color:#6b7280;white-space:nowrap}
+.rba-ranking-lista{display:flex;flex-direction:column;gap:6px}
+.rba-rank-row{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
+.rba-rank-row:last-child{border-bottom:none}
+.rba-rank-nombre{flex:0 0 180px;font-weight:600;color:#0a0a0a;font-size:.82rem;overflow-wrap:anywhere}
+.rba-rank-bar-wrap{flex:1;min-width:80px;background:#f1f5f9;border-radius:50px;height:10px;overflow:hidden}
+.rba-rank-bar{height:100%;background:#dc2626;border-radius:50px}
+.rba-rank-n{flex:0 0 34px;text-align:right;font-weight:800;color:#0a0a0a;font-size:.82rem;font-variant-numeric:tabular-nums}
+@media (max-width:600px){ .rba-rank-nombre{flex-basis:110px} }
+</style>
+<div class="modal fade" id="modalRbActividad" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-graph-up-arrow me-2"></i>Avance de carga — Bodega de Repuestos</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="rbaLoading" class="text-center text-muted py-4">
+          <span class="spinner-border spinner-border-sm me-1"></span> Calculando avance…
+        </div>
+        <div id="rbaError" class="alert alert-danger d-none"></div>
+        <div id="rbaContenido" class="d-none">
+          <div class="rba-stats">
+            <div class="rba-stat">
+              <div class="rba-stat-n" id="rbaTotalN">0</div>
+              <div class="rba-stat-l">en Bodega</div>
+            </div>
+            <div class="rba-stat rba-stat-hoy">
+              <div class="rba-stat-n" id="rbaHoyN">0</div>
+              <div class="rba-stat-l">cargados hoy <span id="rbaFechaHoy"></span></div>
+            </div>
+            <div class="rba-stat">
+              <div class="rba-stat-n" id="rbaActivosHoyN">0</div>
+              <div class="rba-stat-l">personas activas hoy</div>
+            </div>
+          </div>
+          <div id="rbaHoySeccion" class="d-none">
+            <h6 class="rba-seccion-titulo"><i class="bi bi-lightning-charge-fill text-success me-1"></i>Quién está cargando hoy</h6>
+            <div id="rbaHoyLista" class="rba-hoy-lista"></div>
+          </div>
+          <h6 class="rba-seccion-titulo mt-3"><i class="bi bi-bar-chart-fill me-1"></i>Ranking total</h6>
+          <div id="rbaRankingLista" class="rba-ranking-lista"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span class="text-muted small me-auto" id="rbaActualizadoTxt"></span>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="rbaCargarActividad()"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 const RB_ES_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
@@ -2940,5 +3012,60 @@ async function rbBuscarTickets(){
 function rbPickTicket(i){
   const t = RB_TICKETS_RESULTS[i];
   if (t) rbSetTicket(t.id, t.numero_ticket || ('#'+t.id));
+}
+
+// ── "Avance de carga" (Daniel, 2026-09-24) ──────────────────────────────
+let RBA_MODAL = null;
+function rbaAbrirActividad(){
+  if (!RBA_MODAL) RBA_MODAL = new bootstrap.Modal(document.getElementById('modalRbActividad'));
+  RBA_MODAL.show();
+  rbaCargarActividad();
+}
+async function rbaCargarActividad(){
+  document.getElementById('rbaLoading').classList.remove('d-none');
+  document.getElementById('rbaError').classList.add('d-none');
+  document.getElementById('rbaContenido').classList.add('d-none');
+  try{
+    const r = await fetch('/repuestos/api/actividad', {headers:{'X-Requested-With':'XMLHttpRequest'}});
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo cargar el avance.');
+    const ranking = d.ranking || [];
+    document.getElementById('rbaTotalN').textContent = d.total;
+    document.getElementById('rbaHoyN').textContent = d.hoy_total;
+    document.getElementById('rbaFechaHoy').textContent = '(' + d.fecha_hoy + ')';
+    const activosHoy = ranking.filter(x => x.hoy > 0).sort((a, b) => b.hoy - a.hoy);
+    document.getElementById('rbaActivosHoyN').textContent = activosHoy.length;
+    const hoySeccion = document.getElementById('rbaHoySeccion');
+    if (activosHoy.length){
+      hoySeccion.classList.remove('d-none');
+      document.getElementById('rbaHoyLista').innerHTML = activosHoy.map(x =>
+        '<div class="rba-hoy-card">' +
+          '<span class="rba-nombre">' + escHtmlRb(x.autor) + '</span>' +
+          '<span class="rba-hora">Última: ' + escHtmlRb(x.ultimo_at) + '</span>' +
+          '<span class="rba-badge">' + x.hoy + ' hoy</span>' +
+        '</div>'
+      ).join('');
+    } else {
+      hoySeccion.classList.add('d-none');
+    }
+    const maxTotal = Math.max(1, ...ranking.map(x => x.total));
+    document.getElementById('rbaRankingLista').innerHTML = ranking.length
+      ? ranking.map(x =>
+          '<div class="rba-rank-row">' +
+            '<span class="rba-rank-nombre">' + escHtmlRb(x.autor) + '</span>' +
+            '<span class="rba-rank-bar-wrap"><span class="rba-rank-bar" style="width:' + Math.round(x.total / maxTotal * 100) + '%"></span></span>' +
+            '<span class="rba-rank-n">' + x.total + '</span>' +
+          '</div>'
+        ).join('')
+      : '<div class="text-muted small">Sin datos todavía.</div>';
+    document.getElementById('rbaActualizadoTxt').textContent =
+      'Actualizado ' + new Date().toLocaleTimeString('es-CL', {hour: '2-digit', minute: '2-digit'});
+    document.getElementById('rbaContenido').classList.remove('d-none');
+  } catch(e){
+    document.getElementById('rbaError').textContent = e.message || 'No se pudo cargar el avance.';
+    document.getElementById('rbaError').classList.remove('d-none');
+  } finally{
+    document.getElementById('rbaLoading').classList.add('d-none');
+  }
 }
 </script>
