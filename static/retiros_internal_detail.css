@@ -2150,3 +2150,128 @@
   @media (max-width:767px){
     .step-section,#paso-1,#rdActividad{scroll-margin-top:calc(var(--topbar-h, 110px) + 8px)}
   }
+
+  /* ════════════════════════════════════════════════════════════════
+     PRODUCTOS A RETIRAR — CON DIAGNÓSTICO (ficha v4, Daniel 2026-09-23)
+     "que me muestre si está comprometido, cuánto hay de stock, si puedo
+     avanzar o no, si está entregado con saldo o no". Reemplaza la tabla
+     plana + el modal "Productos" por doc (REGLA #4.2: función conservada,
+     ahora inline). Prefijo .pd-* + .prod-diag-banner.
+     ════════════════════════════════════════════════════════════════ */
+  .prod-diag-banner{display:flex;align-items:center;gap:14px;flex-wrap:wrap;border-radius:14px;padding:14px 18px;
+    margin-bottom:14px;color:#fff;background:#52525b}
+  .prod-diag-banner > i{font-size:1.6rem;flex-shrink:0}
+  .prod-diag-banner .pdb-txt{display:flex;flex-direction:column;gap:2px;flex:1 1 260px;min-width:0}
+  .prod-diag-banner .pdb-txt strong{font-size:1.15rem;font-weight:900;line-height:1.2}
+  .prod-diag-banner .pdb-txt span{font-size:.94rem;font-weight:600;opacity:.92}
+  .prod-diag-banner .pdb-chips{display:flex;gap:6px;flex-wrap:wrap}
+  .prod-diag-banner .pd-chip{border-radius:999px;padding:5px 11px;font-size:.8rem;font-weight:800;background:rgba(255,255,255,.18)}
+  .prod-diag-banner .pdb-refresh{background:rgba(255,255,255,.18);border:0;color:#fff;width:40px;height:40px;
+    border-radius:50%;display:grid;place-items:center;cursor:pointer;flex-shrink:0}
+  .prod-diag-banner .pdb-refresh:hover{background:rgba(255,255,255,.3)}
+  .prod-diag-banner .pdb-erp-caido{flex-basis:100%;font-size:.85rem;font-weight:700;background:rgba(0,0,0,.18);
+    border-radius:8px;padding:7px 12px;display:flex;align-items:center;gap:8px}
+  .prod-diag-banner.is-loading{background:#71717a}
+  .prod-diag-banner.is-ok{background:#16a34a}
+  .prod-diag-banner.is-revisar{background:#b45309}
+  .prod-diag-banner.is-bloqueado{background:#dc2626}
+  .prod-diag-banner.is-vacio{background:#71717a}
+
+  .pd-doc{border:2px solid #e4e4e7;border-radius:14px;overflow:hidden;margin-bottom:14px;background:#fff}
+  .pd-doc-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;background:#fafafa;border-bottom:1.5px solid #ececef}
+  .pd-doc-pill{background:#0a0a0a;color:#fff;border-radius:7px;padding:5px 10px;font-size:.8rem;font-weight:900;letter-spacing:.04em}
+  .pd-doc-meta{display:flex;flex-direction:column;flex:1 1 auto;min-width:0}
+  .pd-doc-num{font-weight:900;color:var(--ilus-red,#dc2626);font-size:1.15rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .pd-doc-fecha{font-size:.82rem;font-weight:700;color:#6b7280}
+  .pd-toggle-all{display:inline-flex;align-items:center;gap:7px;min-height:40px;padding:0 14px;border-radius:9px;
+    border:1.5px solid #d1d5db;background:#fff;color:#374151;font-weight:800;font-size:.86rem;cursor:pointer}
+  .pd-toggle-all:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626)}
+  .pd-aviso-doc{display:flex;align-items:center;gap:9px;padding:9px 16px;font-size:.87rem;font-weight:700;
+    background:#fff8e1;color:#92400e;border-bottom:1px solid #fde68a}
+  .pd-aviso-doc a{color:#92400e;text-decoration:underline}
+  .pd-aviso-doc.t-gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+  .pd-vacio{padding:14px 16px;font-size:.9rem;font-weight:600;color:#6b7280}
+
+  .pd-row{display:grid;grid-template-columns:150px minmax(0,1.5fr) 130px 190px 190px 190px;gap:14px;
+    align-items:center;padding:14px 16px;border-top:1px solid #f1f1f3}
+  .pd-doc-head + .pd-row, .pd-doc-head + .pd-aviso-doc + .pd-row, .pd-doc-head + .pd-aviso-doc + .pd-aviso-doc + .pd-row{border-top:0}
+  .pd-row.t-rojo{background:#fef2f2}
+  .pd-row.t-ambar{background:#fffbeb}
+  .pd-row.t-gris{background:#fafafa;opacity:.85}
+
+  .pd-check{display:flex;align-items:center;gap:8px}
+  .pd-check input[type="checkbox"]{width:24px;height:24px;flex-shrink:0;accent-color:#16a34a;cursor:pointer}
+  .pd-check input[type="checkbox"]:disabled{cursor:not-allowed;opacity:.5}
+  .pd-qty{display:flex;align-items:center;border:1.5px solid #d1d5db;border-radius:9px;overflow:hidden}
+  .pd-qty button{width:32px;height:36px;border:0;background:#f4f4f5;font-size:1.1rem;font-weight:800;cursor:pointer;color:#374151}
+  .pd-qty button:disabled{cursor:not-allowed;opacity:.4}
+  .pd-qty button:hover:not(:disabled){background:#e4e4e7}
+  .pd-qty input[type="number"]{width:52px;height:36px;border:0;border-left:1.5px solid #d1d5db;border-right:1.5px solid #d1d5db;
+    text-align:center;font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;-moz-appearance:textfield}
+  .pd-qty input[type="number"]::-webkit-outer-spin-button,.pd-qty input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .pd-qty input:disabled{background:#f4f4f5;color:#9ca3af}
+
+  .pd-info{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .pd-nombre{font-weight:800;font-size:1rem;color:#111827;overflow-wrap:anywhere}
+  .pd-sub{font-size:.8rem;font-weight:600;color:#6b7280}
+  .pd-guias{display:flex;flex-wrap:wrap;gap:5px;margin-top:3px}
+  .pd-guia{background:#ede9fe;color:#5b21b6;border-radius:7px;padding:3px 8px;font-size:.76rem;font-weight:800}
+
+  .pd-nums{display:flex;flex-direction:column;gap:2px;font-size:.86rem;font-weight:700;color:#52525b}
+  .pd-nums b{font-size:1.05rem;font-weight:900;color:#111827}
+  .pd-nums .t-ok b{color:#15803d}
+  .pd-nums .t-gris b{color:#6b7280}
+
+  .pd-stock{display:flex;flex-wrap:wrap;gap:5px;align-content:center}
+  .pd-stock-chip{border-radius:7px;padding:4px 8px;font-size:.8rem;font-weight:800;white-space:nowrap}
+  .pd-stock-chip.t-ok{background:#dcfce7;color:#166534}
+  .pd-stock-chip.t-ambar{background:#fff8e1;color:#92400e}
+  .pd-stock-chip.t-rojo{background:#fee2e2;color:#991b1b}
+  .pd-stock-na{font-size:.82rem;font-weight:700;color:#9ca3af}
+
+  .pd-peso{display:flex;flex-direction:column;gap:2px;font-size:.86rem;font-weight:700;color:#374151}
+  .pd-peso .pd-vol{color:#6b7280;font-weight:600}
+
+  .pd-estado{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+  .pd-badge{display:inline-flex;align-items:center;gap:7px;border-radius:10px;padding:8px 12px;font-size:.88rem;font-weight:800;white-space:nowrap}
+  .pd-badge.t-ok{background:#16a34a;color:#fff}
+  .pd-badge.t-ambar{background:#f59e0b;color:#fff}
+  .pd-badge.t-rojo{background:#dc2626;color:#fff}
+  .pd-badge.t-gris{background:#e4e4e7;color:#374151}
+  .pd-btn-autorizar{min-height:36px;padding:0 12px;border-radius:8px;border:1.5px solid #fca5a5;background:#fff;
+    color:#991b1b;font-size:.8rem;font-weight:800;cursor:pointer}
+  .pd-btn-autorizar:hover{background:#fef2f2}
+  .pd-btn-quitar-autorizacion{min-height:32px;padding:0 10px;border-radius:8px;border:1px solid #e4e4e7;background:#fff;
+    color:#6b7280;font-size:.76rem;font-weight:700;cursor:pointer}
+
+  .pd-aviso-linea{grid-column:2 / -1;font-size:.84rem;font-weight:700;color:#92400e;margin-top:-4px}
+  .pd-row.t-rojo .pd-aviso-linea{color:#991b1b}
+
+  .pd-servicios{padding:10px 16px;font-size:.84rem;font-weight:600;color:#6b7280;border-top:1px solid #f1f1f3;
+    display:flex;align-items:center;gap:8px}
+
+  .pd-totales{display:grid;grid-template-columns:minmax(0,1fr) repeat(3,auto);gap:16px;align-items:center;
+    background:#0a0a0a;color:#fff;border-radius:14px;padding:14px 20px;font-size:.92rem;font-weight:700}
+  .pd-totales span:first-child b{font-size:1.1rem}
+  .pd-totales span:not(:first-child){display:flex;flex-direction:column;align-items:flex-end}
+  .pd-totales span:not(:first-child) b{font-size:1.3rem;font-weight:900}
+  .pd-totales span:not(:first-child) small{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa}
+
+  @media (max-width:900px){
+    .pd-row{grid-template-columns:130px minmax(0,1fr);grid-template-areas:"check info" "nums nums" "stock stock" "peso peso" "estado estado"}
+    .pd-check{grid-area:check}
+    .pd-info{grid-area:info}
+    .pd-nums{grid-area:nums;flex-direction:row;gap:16px}
+    .pd-stock{grid-area:stock}
+    .pd-peso{grid-area:peso;flex-direction:row;gap:14px}
+    .pd-estado{grid-area:estado;align-items:flex-start;flex-direction:row;flex-wrap:wrap}
+    .pd-aviso-linea{grid-column:1 / -1}
+  }
+  @media (max-width:640px){
+    .pd-doc-head{padding:10px 12px}
+    .pd-toggle-all{flex:1 1 100%;justify-content:center}
+    .pd-row{padding:12px}
+    .prod-diag-banner{padding:12px 14px}
+    .prod-diag-banner .pdb-txt strong{font-size:1.05rem}
+    .pd-totales{grid-template-columns:1fr 1fr;row-gap:10px}
+  }

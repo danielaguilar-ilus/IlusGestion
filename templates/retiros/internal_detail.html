@@ -684,11 +684,12 @@
                       </div>
                     </td>
                     <td data-label="Acciones" class="acciones">
-                      <button type="button" class="td-btn td-btn-prods"
-                              onclick="abrirSeleccionProductos({{ d.id }}, '{{ d.document_type|upper }}', '{{ d.document_number }}')"
-                              title="Ver y elegir qué productos retirar de esta factura">
-                        <i class="bi bi-list-check"></i><span>Productos</span>
-                      </button>
+                      {# Daniel 2026-09-23: "no quiero un botón que me diga
+                         productos" — el botón "Productos" (abría un modal
+                         aparte) se quita a propósito. La tabla de "Productos
+                         a retirar" (#paso-3, más abajo) ES el editor ahora:
+                         muestra y permite marcar/desmarcar cada línea con su
+                         saldo, guía y stock, sin salir de la ficha. #}
                       <button type="button" class="td-btn td-btn-quitar"
                               onclick="quitarDoc({{ req.id }}, {{ d.id }}, '{{ d.document_type|upper }} {{ d.document_number }}')"
                               title="Quitar del retiro (no afecta al ERP)">
@@ -904,61 +905,28 @@
         </div>
 
         {# ═════════════════════════════════════════════════════════════
-           TABLA 2 — PRODUCTOS A RETIRAR (suma todas las líneas incluidas)
-           Daniel 2026-05-24: "necesito tener una tabla donde vea los
-           productos ubicados". Vista consolidada con SKU, descripción,
-           doc origen, cantidades y totales.
+           PRODUCTOS A RETIRAR — con diagnóstico (ficha v4, 2026-09-23)
+           Daniel: "lo que más quiero vender es qué productos van a retirar
+           y cuánto pesa... que me muestre si está comprometido, cuánto hay
+           de stock, si puedo avanzar o no, si está entregado con saldo o
+           no". Reemplaza la tabla plana de antes Y el botón "Productos" de
+           la tabla de documentos (ese modal aparte ya no existe — esta
+           tabla ES el editor: marcar/desmarcar línea a línea, con su saldo,
+           guía de despacho y stock por bodega, sin salir de la ficha).
+           Todo lo pinta refrescarProductosDiag() (retiros_internal_detail.js)
+           vía GET /retiros/<rid>/productos-erp — carga diferida, no frena
+           el resto de la ficha; si el ERP no responde, lo dice (nunca
+           inventa "sin guías").
            ═════════════════════════════════════════════════════════════ #}
-        <div class="ilus-tabla-wrap" style="margin-top:22px">
-          <div class="ilus-tabla-head">
-            <i class="bi bi-box-seam" style="color:var(--ilus-red)"></i>
-            <strong>Productos a retirar</strong>
-            <span class="ilus-tabla-badge" id="tabProdsBadge">0</span>
-            <button type="button" class="ilus-tabla-refresh" onclick="refrescarTablaProductos()"
-                    title="Refrescar tabla de productos">
-              <i class="bi bi-arrow-clockwise"></i>
-            </button>
+        <div id="prodDiagWrap" style="margin-top:22px">
+          <div id="prodDiagBanner" class="prod-diag-banner is-loading">
+            <i class="bi bi-hourglass-split"></i>
+            <div class="pdb-txt">
+              <strong>Verificando en el ERP…</strong>
+              <span>Saldo, stock y guía de despacho de cada producto.</span>
+            </div>
           </div>
-          <div class="ilus-tabla-scroll">
-            <table class="ilus-tabla" id="tabProductos">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Descripción</th>
-                  <th>Doc origen</th>
-                  <th class="num">Cantidad</th>
-                  <th class="num">Peso un.</th>
-                  <th class="num">Vol. un.</th>
-                  <th class="num">Total kg</th>
-                  <th class="num">Total m³</th>
-                  <th class="num">Peso vol.</th>
-                </tr>
-              </thead>
-              <tbody id="tabProductosBody">
-                <tr class="ilus-tabla-empty-row">
-                  <td colspan="9">
-                    <div class="ilus-tabla-empty">
-                      <i class="bi bi-hourglass-split"></i>
-                      <strong>Cargando productos...</strong>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-              <tfoot id="tabProductosFoot" style="display:none">
-                <tr class="ilus-tabla-foot">
-                  <td colspan="6" class="num"><strong>Totales</strong></td>
-                  <td class="num"><strong id="tabProdsTotKg">0.0 kg</strong></td>
-                  <td class="num"><strong id="tabProdsTotM3">0.000 m³</strong></td>
-                  <td class="num"><strong id="tabProdsTotPesoVol">0.0 kg</strong></td>
-                </tr>
-                <tr class="ilus-tabla-foot-sub">
-                  <td colspan="9">
-                    <small><span id="tabProdsTotLineas">0</span> producto(s) incluido(s) en total · revisa que las cantidades cuadren con lo que viene a retirar el cliente.</small>
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+          <div id="prodDiagBody"></div>
         </div>
 
         {# Daniel 2026-09-22 — pedido explícito: NO ocultar el estimado que

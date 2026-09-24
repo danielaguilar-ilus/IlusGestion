@@ -655,6 +655,9 @@ function _renderTablaDocsAsociados(docs){
             <strong>Justificado por:</strong> ${_esc(d.otro_rut_por || '—')}${d.otro_rut_en ? ' · ' + _chileFmtStr(d.otro_rut_en) : ''}
           </div>
         </details>` : '';
+    // Daniel 2026-09-23: el botón "Productos" de esta fila se quitó a
+    // propósito — la tabla de "Productos a retirar" (#prodDiagBody) es el
+    // editor ahora, sin salir de la ficha.
     return `<tr data-doc-id="${d.id}">
       <td data-label="" class="td-check"><input type="checkbox" class="doc-row-check" value="${d.id}" onchange="_docsTablaUpdateSeleccion()"></td>
       <td data-label="#">${idx + 1}</td>
@@ -679,11 +682,6 @@ function _renderTablaDocsAsociados(docs){
         </div>
       </td>
       <td data-label="Acciones" class="acciones">
-        <button type="button" class="td-btn td-btn-prods"
-                onclick="abrirSeleccionProductos(${d.id}, '${_esc(tipoUp)}', '${_esc(numero)}')"
-                title="Ver y elegir qué productos retirar de esta factura">
-          <i class="bi bi-list-check"></i><span>Productos</span>
-        </button>
         <button type="button" class="td-btn td-btn-quitar"
                 onclick="quitarDoc(${_RID}, ${d.id}, '${_esc(tipoUp)} ${_esc(numero)}')"
                 title="Quitar del retiro (no afecta al ERP)">
@@ -848,293 +846,324 @@ async function _docsTablaQuitarSeleccionados(){
   if (btn){ btn.disabled = false; btn.innerHTML = _orig || '<i class="bi bi-trash3"></i>Quitar seleccionados <span id="nSeleccionados">(0)</span>'; }
 }
 
-async function refrescarTablaProductos(){
-  const body   = document.getElementById('tabProductosBody');
-  const foot   = document.getElementById('tabProductosFoot');
-  const badge  = document.getElementById('tabProdsBadge');
-  const btnRef = document.querySelector('.ilus-tabla-refresh');
-  if (!body) return;
-  if (btnRef) btnRef.classList.add('is-loading');
-  try {
-    const d = await _fetchJsonSafe(`/retiros/${_RID}/lineas-resumen`);
-    if (!d.ok){
-      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="9">
-        <div class="ilus-tabla-empty">
-          <i class="bi bi-exclamation-triangle" style="color:#dc2626"></i>
-          <strong>No se pudo cargar la lista de productos</strong>
-          <small>${_esc(d.error || 'Error desconocido')}</small>
-        </div></td></tr>`;
-      if (foot) foot.style.display = 'none';
-      if (badge) badge.textContent = '0';
-      return;
-    }
-    const lineas = d.lineas || [];
-    const tot = d.totales || { n_lineas: 0, peso_total_kg: 0, vol_total_m3: 0 };
-    if (badge) badge.textContent = tot.n_lineas || lineas.length;
-    if (!lineas.length){
-      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="9">
-        <div class="ilus-tabla-empty">
-          <i class="bi bi-box"></i>
-          <strong>Aún no hay productos seleccionados</strong>
-          <small>Asocia una factura/boleta arriba y luego haz click en <strong>"Productos"</strong> en cada fila para elegir qué se va a retirar. Si no eliges nada, se incluye todo lo del documento.</small>
-        </div></td></tr>`;
-      if (foot) foot.style.display = 'none';
-      return;
-    }
-    body.innerHTML = lineas.map(ln => {
-      const docTipo = String(ln.doc_tipo || '').toUpperCase();
-      // 🆕 Daniel 2026-05-24: badge ámbar para líneas marcadas SIN saldo en ERP
-      // (el operador las incluyó manualmente aunque Random las reporte como ya
-      // entregadas). Da aviso visual sin bloquear la operación.
-      // 2026-09-16: si hay motivo_sin_saldo guardado (trazabilidad, mismo
-      // patrón que "Otro RUT" en la tabla de documentos), el badge se
-      // expande a un <details> con motivo + quién + cuándo. Líneas viejas
-      // (asociadas antes de este fix) no tienen motivo -- badge simple.
-      const sinSaldoBadge = !ln.marcada_sin_saldo ? '' : (ln.motivo_sin_saldo
-        ? `<details class="td-sin-saldo-badge td-sin-saldo-badge-details">
-            <summary><i class="bi bi-exclamation-triangle-fill"></i> Ya rebajado en ERP</summary>
-            <div class="otro-rut-detail">
-              <strong>Motivo:</strong> ${_esc(ln.motivo_sin_saldo)}<br>
-              <strong>Justificado por:</strong> ${_esc(ln.sin_saldo_por || '—')}${ln.sin_saldo_en ? ' · ' + _chileFmtStr(ln.sin_saldo_en) : ''}
-            </div>
-          </details>`
-        : '<span class="td-sin-saldo-badge" title="Esta línea ya estaba rebajada en el ERP Random (figura como entregada). El operador la incluyó igualmente porque el cliente viene a retirarla.">'
-          + '<i class="bi bi-exclamation-triangle-fill"></i>'
-          + '<span>Ya rebajado en ERP</span>'
-          + '</span>');
-      const rowCls = ln.marcada_sin_saldo ? ' class="td-row-sin-saldo"' : '';
-      return `<tr${rowCls}>
-        <td data-label="SKU" class="mono">${_esc(ln.sku || '—')}</td>
-        <td data-label="Descripción">
-          <div class="td-prod-desc">${_esc(ln.descripcion || '(sin descripción)')}</div>
-          ${sinSaldoBadge}
-        </td>
-        <td data-label="Doc origen">
-          <span class="td-doc-origen">
-            <span class="tdo-tipo">${_esc(docTipo)}</span>
-            <span>${_esc(ln.doc_numero || '')}</span>
-          </span>
-        </td>
-        <td data-label="Cantidad" class="num"><strong>${_fmtNum(ln.cantidad, 2)}</strong></td>
-        <td data-label="Peso un." class="num">${_fmtNum(ln.peso_unit_kg, 2)} kg</td>
-        <td data-label="Vol. un." class="num">${_fmtNum(ln.vol_unit_m3, 3)} m³</td>
-        <td data-label="Total kg" class="num"><strong>${_fmtNum(ln.peso_total, 1)} kg</strong></td>
-        <td data-label="Total m³" class="num"><strong>${_fmtNum(ln.vol_total, 3)} m³</strong></td>
-        <td data-label="Peso vol." class="num">${_fmtNum(ln.peso_vol_total, 1)} kg</td>
-      </tr>`;
-    }).join('');
-    if (foot){
-      foot.style.display = '';
-      const totKg = document.getElementById('tabProdsTotKg');
-      const totM3 = document.getElementById('tabProdsTotM3');
-      const totPV = document.getElementById('tabProdsTotPesoVol');
-      const totLn = document.getElementById('tabProdsTotLineas');
-      if (totKg) totKg.textContent = _fmtNum(tot.peso_total_kg, 1) + ' kg';
-      if (totM3) totM3.textContent = _fmtNum(tot.vol_total_m3, 3) + ' m³';
-      if (totPV) totPV.textContent = _fmtNum(tot.peso_vol_total_kg, 1) + ' kg';
-      if (totLn) totLn.textContent = tot.n_lineas || lineas.length;
-    }
-  } catch(e){
-    body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="9">
-      <div class="ilus-tabla-empty">
-        <i class="bi bi-wifi-off" style="color:#dc2626"></i>
-        <strong>Error de red</strong>
-        <small>${_esc(e.message || 'No se pudo contactar al servidor')}</small>
-      </div></td></tr>`;
-  } finally {
-    if (btnRef) btnRef.classList.remove('is-loading');
-  }
-}
-
+// ════════════════════════════════════════════════════════════════════
+//  PRODUCTOS A RETIRAR — CON DIAGNÓSTICO (ficha v4, Daniel 2026-09-23)
+//  "lo que más quiero vender es qué productos van a retirar y cuánto
+//  pesa... que me muestre si está comprometido, cuánto hay de stock, si
+//  puedo avanzar o no, si está entregado con saldo o no".
+//
+//  Reemplaza la tabla plana de antes Y el modal de selección por doc
+//  (abrirSeleccionProductos/guardarSeleccionProductos, REGLA #4.2: Daniel
+//  pidió explícitamente quitar el botón "Productos" — su función de
+//  elegir qué se retira sigue viva, ahora inline en esta misma tabla).
+//  Fuente: GET /retiros/<rid>/productos-erp (pickups_module.py), que
+//  cruza saldo/guía/stock del ERP con lo que ILUS ya sabe. Los cambios
+//  (casilla, cantidad, "Entregar igual…") se guardan con
+//  POST /docs/<doc_id>/lineas (debounce ~600ms) y recargan esta tabla.
+// ════════════════════════════════════════════════════════════════════
 function _fmtNum(n, dec){
   const v = parseFloat(n || 0);
   if (!isFinite(v)) return '0';
   return v.toFixed(dec == null ? 2 : dec);
 }
 
-// _renderDocAsoCard (chips verdes de #docsAsociadosLista) se eliminó el
-// 2026-09-16: Daniel autorizó explícitamente fusionar esa lista duplicada
-// dentro de la tabla #tabDocsAsociados (única fuente de verdad ahora).
+const _PD_VEREDICTO = {
+  ok:        { cls: 'is-ok',        ico: 'bi-check-circle-fill' },
+  revisar:   { cls: 'is-revisar',   ico: 'bi-exclamation-triangle-fill' },
+  bloqueado: { cls: 'is-bloqueado', ico: 'bi-x-octagon-fill' },
+  vacio:     { cls: 'is-vacio',     ico: 'bi-inbox' },
+};
+let _pdUltimoMotivo = '';   // reusar motivo entre líneas del mismo lote (mismo patrón que el tka)
+let _pdSaveTimers = {};     // debounce de guardado, uno por documento
 
-// ════════════════════════════════════════════════════════════════════
-//  SELECCIÓN GRANULAR DE PRODUCTOS POR DOC (Daniel 2026-05-23)
-//  "de dos documentos que tengan 10 y 10 productos, podría seleccionar
-//  2 y 3 productos de cada factura"
-// ════════════════════════════════════════════════════════════════════
-async function abrirSeleccionProductos(docId, tipo, numero){
-  let modal = document.getElementById('selProdModal');
-  if (!modal){
-    modal = document.createElement('div');
-    modal.id = 'selProdModal';
-    modal.className = 'sel-prod-overlay';
-    modal.innerHTML = `
-      <div class="sel-prod-card" onclick="event.stopPropagation()">
-        <div class="sel-prod-head">
-          <div>
-            <h5 id="selProdTitle" style="margin:0;font-weight:800">Productos del documento</h5>
-            <div id="selProdSub" style="font-size:.78rem;color:#94a3b8;margin-top:2px"></div>
-          </div>
-          <button type="button" class="sel-prod-close" onclick="cerrarSeleccionProductos()" title="Cerrar">
-            <i class="bi bi-x-lg"></i>
-          </button>
-        </div>
-        <div id="selProdBody" class="sel-prod-body">
-          <div class="text-center py-4 text-muted"><i class="bi bi-hourglass-split"></i> Cargando líneas...</div>
-        </div>
-        <div class="sel-prod-foot">
-          <div id="selProdResumen" class="sel-prod-resumen"></div>
-          <div style="display:flex;gap:8px">
-            <button type="button" class="btn-2027" onclick="cerrarSeleccionProductos()" style="background:#fff;color:#0a0a0a">Cancelar</button>
-            <button type="button" class="btn-2027" id="selProdGuardar" onclick="guardarSeleccionProductos()" style="background:var(--ilus-red);color:#fff">
-              <i class="bi bi-check-circle me-1"></i>Guardar selección
-            </button>
-          </div>
-        </div>
-      </div>`;
-    modal.addEventListener('click', e => { if (e.target === modal) cerrarSeleccionProductos(); });
-    document.body.appendChild(modal);
-  }
-  document.getElementById('selProdTitle').textContent = `Productos de ${tipo} ${numero}`;
-  document.getElementById('selProdSub').textContent = 'Marca solo los productos que el cliente va a retirar';
-  document.getElementById('selProdBody').innerHTML = '<div class="text-center py-4 text-muted"><i class="bi bi-hourglass-split"></i> Cargando líneas...</div>';
-  modal.style.display = 'flex';
-  modal.dataset.docId = docId;
+async function refrescarProductosDiag(){
+  const banner = document.getElementById('prodDiagBanner');
+  const body   = document.getElementById('prodDiagBody');
+  if (!banner || !body) return;
   try {
-    const r = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`);
-    const d = await r.json();
+    const d = await _fetchJsonSafe(`/retiros/${_RID}/productos-erp`);
     if (!d.ok){
-      document.getElementById('selProdBody').innerHTML = `<div class="text-danger py-3">${_esc(d.error || 'Error al cargar')}</div>`;
+      banner.className = 'prod-diag-banner is-bloqueado';
+      banner.innerHTML = `<i class="bi bi-exclamation-triangle-fill"></i>
+        <div class="pdb-txt"><strong>No se pudo cargar el diagnóstico</strong><span>${_esc(d.error || 'Error desconocido')}</span></div>`;
       return;
     }
-    _renderSeleccionLineas(d.lineas || []);
+    const v = d.veredicto || { estado: 'vacio', titulo: '', detalle: '' };
+    const vc = _PD_VEREDICTO[v.estado] || _PD_VEREDICTO.vacio;
+    const c = d.contadores || {};
+    const chips = [
+      c.listos       ? `<span class="pd-chip t-ok">${c.listos} listo${c.listos===1?'':'s'}</span>` : '',
+      c.bloqueados   ? `<span class="pd-chip t-rojo">${c.bloqueados} con problema${c.bloqueados===1?'':'s'}</span>` : '',
+      c.revisar      ? `<span class="pd-chip t-ambar">${c.revisar} para revisar</span>` : '',
+      c.ya_entregados? `<span class="pd-chip t-gris">${c.ya_entregados} ya entregado${c.ya_entregados===1?'':'s'}</span>` : '',
+      c.sin_ficha    ? `<span class="pd-chip t-ambar">${c.sin_ficha} sin ficha logística</span>` : '',
+    ].filter(Boolean).join('');
+    banner.className = 'prod-diag-banner ' + vc.cls;
+    banner.innerHTML = `<i class="bi ${vc.ico}"></i>
+      <div class="pdb-txt"><strong>${_esc(v.titulo)}</strong><span>${_esc(v.detalle)}</span></div>
+      <div class="pdb-chips">${chips}</div>
+      <button type="button" class="pdb-refresh" onclick="refrescarProductosDiag()" title="Volver a verificar en el ERP">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>`;
+    if (v.erp_caido){
+      banner.innerHTML += `<div class="pdb-erp-caido"><i class="bi bi-wifi-off"></i> El ERP no respondió para algún documento — no se inventó saldo ni guía, revisa cuando vuelva a responder.</div>`;
+    }
+    const docs = d.docs || [];
+    if (!docs.length){
+      body.innerHTML = '';
+      return;
+    }
+    body.innerHTML = docs.map(doc => _pdRenderDoc(doc)).join('')
+      + _pdRenderTotales(d.totales || {}, c);
   } catch(e){
-    document.getElementById('selProdBody').innerHTML = `<div class="text-danger py-3">Error de red: ${_esc(e.message)}</div>`;
+    banner.className = 'prod-diag-banner is-bloqueado';
+    banner.innerHTML = `<i class="bi bi-wifi-off"></i>
+      <div class="pdb-txt"><strong>Error de red</strong><span>${_esc(e.message || 'No se pudo contactar al servidor')}</span></div>`;
   }
 }
 
-function cerrarSeleccionProductos(){
-  const m = document.getElementById('selProdModal');
-  if (m) m.style.display = 'none';
+function _pdRenderDoc(doc){
+  const otros = (doc.otros_retiros || []).filter(o => !o.cerrado);
+  const otrosHtml = otros.length ? `<div class="pd-aviso-doc">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      También está en ${otros.map(o => `<a href="/retiros/${o.id}" target="_blank" rel="noopener">${_esc(o.code)}</a> (${_esc(o.estado)})`).join(', ')} — revisa que no se retire dos veces.
+    </div>` : '';
+  const erpErrHtml = !doc.erp_ok ? `<div class="pd-aviso-doc t-gris">
+      <i class="bi bi-wifi-off"></i> ${_esc(doc.erp_error || 'No se pudo verificar este documento en el ERP')} — se muestra lo que ILUS guardó, sin saldo ni stock.
+    </div>` : '';
+  const lineas = (doc.lineas || []).filter(l => (l.sku || '').trim());
+  const rows = lineas.map(l => _pdRenderLinea(doc.doc_id, l)).join('');
+  const servicios = (doc.servicios || []).map(s => {
+    const cons = (s.consumos || []).map(c => `${_esc(c.label)} ${_esc(c.numero)} (${_esc(c.fecha)})`).join(', ');
+    return `${_esc(s.nombre || s.sku)}${cons ? ' — ' + cons : ''}`;
+  });
+  const servHtml = servicios.length
+    ? `<div class="pd-servicios"><i class="bi bi-info-circle"></i> ${servicios.map(_esc).join(' · ')}: línea de servicio, no es producto físico.</div>`
+    : '';
+  return `<article class="pd-doc" data-doc-id="${doc.doc_id}">
+    <div class="pd-doc-head">
+      <span class="pd-doc-pill">${_esc(doc.tipo)}</span>
+      <div class="pd-doc-meta">
+        <span class="pd-doc-num">${_esc(doc.tipo)} ${_esc(doc.numero)}</span>
+        <span class="pd-doc-fecha">${doc.fecha ? 'Emitida ' + _esc(doc.fecha) : ''}</span>
+      </div>
+      <button type="button" class="pd-toggle-all" onclick="_pdToggleAll(this, ${doc.doc_id})" title="Marcar o desmarcar todas las líneas de este documento">
+        <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo
+      </button>
+    </div>
+    ${otrosHtml}${erpErrHtml}
+    ${rows || '<div class="pd-vacio">Sin productos en este documento (solo servicios).</div>'}
+    ${servHtml}
+  </article>`;
 }
 
-function _renderSeleccionLineas(lineas){
-  const body = document.getElementById('selProdBody');
-  if (!lineas.length){
-    body.innerHTML = '<div class="text-muted py-3 text-center">Sin productos (solo servicios).</div>';
-    document.getElementById('selProdGuardar').disabled = true;
-    return;
-  }
-  // Bulk actions
-  const head = `<div class="sel-prod-bulk">
-    <button type="button" class="btn-bulk" onclick="_selProdToggleAll(true)"><i class="bi bi-check-all"></i> Marcar todas</button>
-    <button type="button" class="btn-bulk" onclick="_selProdToggleAll(false)"><i class="bi bi-square"></i> Desmarcar todas</button>
-    <span style="flex:1"></span>
-    <span style="font-size:.74rem;color:#94a3b8">Editá la cantidad si quieres retirar menos que lo que está en el doc.</span>
-  </div>`;
-  const rows = lineas.map((ln, idx) => `
-    <div class="sel-prod-row" data-sku="${_esc(ln.sku)}" data-cantidad-doc="${ln.cantidad_doc}">
-      <label class="sel-prod-check">
-        <input type="checkbox" ${ln.incluida ? 'checked' : ''} onchange="_selProdRecalc()">
-      </label>
-      <div class="sel-prod-info">
-        <div class="sel-prod-sku">${_esc(ln.sku)}</div>
-        <div class="sel-prod-desc">${_esc(ln.descripcion || '(sin descripción)')}</div>
-      </div>
-      <div class="sel-prod-qty">
-        <label style="font-size:.66rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;font-weight:700">Cantidad</label>
-        <div class="sel-prod-qty-input">
-          <input type="number" min="0" max="${ln.cantidad_doc}" step="0.01"
-                 value="${ln.cantidad_seleccionada}"
-                 data-qty-input="${idx}"
-                 onchange="_selProdRecalc()"
-                 oninput="_selProdRecalc()">
-          <span style="color:#94a3b8;font-size:.74rem">/ ${ln.cantidad_doc}</span>
-        </div>
-      </div>
-      <div class="sel-prod-totals" data-uxv="${ln.unidades_por_venta || 1}">
-        <div><i class="bi bi-box"></i> <span data-peso="${ln.peso_unit_kg}">0.0</span> kg</div>
-        <div><i class="bi bi-bounding-box"></i> <span data-vol="${ln.vol_unit_m3}">0.000</span> m³</div>
+function _pdRenderLinea(docId, l){
+  const disabled = !(l.estado === 'ok' || l.estado === 'revisar' || l.estado === 'autorizado');
+  const checked = !!l.incluida;
+  const nulido = l.nulido ? `línea ${l.nulido} · ` : '';
+  const consumos = (l.consumos || []).map(c =>
+    `<span class="pd-guia">${_esc(c.label)} ${_esc(c.numero)} · ${_esc(c.fecha)}</span>`).join('');
+  const st = l.stock;
+  const stockHtml = st === null
+    ? '<span class="pd-stock-na">Sin verificar</span>'
+    : `<span class="pd-stock-chip ${st.fisico <= 0 ? 't-rojo' : (st.libre < 0 ? 't-ambar' : 't-ok')}">${_fmtNum(st.fisico, 0)} físico</span>
+       ${st.comprometido > 0 ? `<span class="pd-stock-chip t-ambar">${_fmtNum(st.comprometido, 0)} comp.</span>` : ''}
+       ${st.devengado > 0 ? `<span class="pd-stock-chip t-ambar">${_fmtNum(st.devengado, 0)} deveng.</span>` : ''}`;
+  const saldoTxt = l.saldo === null ? '—' : _fmtNum(l.saldo, 2);
+  const facturadoTxt = l.facturado === null ? '—' : _fmtNum(l.facturado, 2);
+  const avisos = (l.avisos || []).map(a => `<div class="pd-aviso-linea">${_esc(a)}</div>`).join('');
+  const puedeAutorizar = l.estado === 'sin_saldo' || l.estado === 'excede_saldo';
+  const autorizarBtn = puedeAutorizar
+    ? `<button type="button" class="pd-btn-autorizar" onclick="_pdEntregarIgual(this, ${docId}, '${_escAttr(l.sku)}', '${_escAttr(l.nombre)}')">Entregar igual…</button>`
+    : (l.estado === 'autorizado'
+        ? `<button type="button" class="pd-btn-quitar-autorizacion" onclick="_pdQuitarAutorizacion(this, ${docId}, '${_escAttr(l.sku)}')" title="Quitar autorización">Quitar autorización</button>`
+        : '');
+  const pesoTxt = (l.peso_total != null && l.a_retirar > 0)
+    ? `${_fmtNum(l.peso_unit, 2)} × ${_fmtNum(l.a_retirar, 2)} = ${_fmtNum(l.peso_total, 1)} kg`
+    : '—';
+  const volTxt = (l.vol_total != null && l.a_retirar > 0) ? `${_fmtNum(l.vol_total, 3)} m³` : '—';
+  return `<div class="pd-row t-${l.tono}" data-doc-id="${docId}" data-sku="${_escAttr(l.sku)}">
+    <div class="pd-check">
+      <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}
+             aria-label="Retirar ${_escAttr(l.nombre)}"
+             onchange="_pdOnChange(this, ${docId})">
+      <div class="pd-qty">
+        <button type="button" tabindex="-1" onclick="_pdStep(this, -1)" ${disabled ? 'disabled' : ''} aria-label="Una menos">−</button>
+        <input type="number" min="0" step="0.01" value="${_fmtNum(l.a_retirar, 2)}" ${disabled ? 'disabled' : ''}
+               oninput="_pdOnChange(this, ${docId})">
+        <button type="button" tabindex="-1" onclick="_pdStep(this, 1)" ${disabled ? 'disabled' : ''} aria-label="Una más">+</button>
       </div>
     </div>
-  `).join('');
-  body.innerHTML = head + rows;
-  _selProdRecalc();
-  document.getElementById('selProdGuardar').disabled = false;
+    <div class="pd-info">
+      <span class="pd-nombre">${_esc(l.nombre || l.sku)}</span>
+      <span class="pd-sub">SKU ${_esc(l.sku)} · ${nulido}bodega ${_esc(l.bodega || '02')}</span>
+      ${consumos ? `<div class="pd-guias">${consumos}</div>` : ''}
+    </div>
+    <div class="pd-nums">
+      <span><b>${facturadoTxt}</b> facturado</span>
+      <span class="${l.saldo !== null && l.saldo <= 0 ? 't-gris' : 't-ok'}"><b>${saldoTxt}</b> saldo</span>
+    </div>
+    <div class="pd-stock">${stockHtml}</div>
+    <div class="pd-peso">
+      <span>${pesoTxt}</span>
+      <span class="pd-vol">${volTxt}</span>
+    </div>
+    <div class="pd-estado">
+      <span class="pd-badge t-${l.tono}"><i class="bi ${_PD_ICO[l.estado] || 'bi-dash-circle'}"></i>${_esc(l.estado_txt)}</span>
+      ${autorizarBtn}
+    </div>
+    ${avisos}
+  </div>`;
 }
 
-function _selProdToggleAll(checked){
-  document.querySelectorAll('.sel-prod-row input[type="checkbox"]').forEach(cb => cb.checked = checked);
-  _selProdRecalc();
+const _PD_ICO = {
+  ok: 'bi-check-lg', revisar: 'bi-exclamation-triangle-fill', autorizado: 'bi-shield-check',
+  sin_saldo: 'bi-x-lg', excede_saldo: 'bi-x-lg', sin_stock: 'bi-x-lg', stock_insuf: 'bi-x-lg',
+  entregado: 'bi-check2-circle', no_incluido: 'bi-dash-circle',
+};
+
+function _pdRenderTotales(tot, c){
+  return `<div class="pd-totales">
+    <span>Se retiran <b>${_fmtNum(tot.unidades, 0)} unidades</b> de este retiro</span>
+    <span><b>${_fmtNum(tot.peso_total_kg, 1)} kg</b><small>peso real</small></span>
+    <span><b>${_fmtNum(tot.vol_total_m3, 3)} m³</b><small>volumen</small></span>
+    <span><b>${_fmtNum(tot.peso_vol_total_kg, 1)} kg</b><small>peso volumétrico</small></span>
+  </div>`;
 }
 
-function _selProdRecalc(){
-  let totPeso = 0, totVol = 0, nIncluidas = 0, nTotal = 0;
-  document.querySelectorAll('.sel-prod-row').forEach(row => {
-    nTotal++;
+function _escAttr(s){ return _esc(s).replace(/'/g, '&#39;'); }
+
+function _pdStep(btn, delta){
+  const inp = btn.parentElement.querySelector('input[type="number"]');
+  if (!inp || inp.disabled) return;
+  const v = Math.max(0, (parseFloat(inp.value || 0) + delta));
+  inp.value = v % 1 === 0 ? v : v.toFixed(2);
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function _pdOnChange(el, docId){
+  const row = el.closest('.pd-row');
+  if (row){
     const cb = row.querySelector('input[type="checkbox"]');
-    const qtyInp = row.querySelector('input[type="number"]');
-    const qty = parseFloat(qtyInp.value || 0);
-    const incluida = cb.checked && qty > 0;
-    const pesoSpan = row.querySelector('[data-peso]');
-    const volSpan  = row.querySelector('[data-vol]');
-    const pesoUnit = parseFloat(pesoSpan.dataset.peso || 0);
-    const volUnit  = parseFloat(volSpan.dataset.vol || 0);
-    /* Productos con unidad secundaria (discos, mancuernas): la ficha describe
-       el PAR y el ERP cuenta piezas sueltas, así que 4 piezas son 2 empaques.
-       Sin esto, el peso del retiro salía al doble (2026-08-07, caso FCV 11225). */
-    const uxv = Math.max(parseFloat(pesoSpan.closest('[data-uxv]')?.dataset.uxv) || 1, 1);
-    const equiv = uxv > 1 ? (qty / uxv) : qty;
-    const pesoTot = incluida ? pesoUnit * equiv : 0;
-    const volTot  = incluida ? volUnit * equiv : 0;
-    pesoSpan.textContent = pesoTot.toFixed(1);
-    volSpan.textContent  = volTot.toFixed(3);
-    if (incluida){
-      totPeso += pesoTot;
-      totVol  += volTot;
-      nIncluidas++;
-    }
-    row.classList.toggle('is-excluded', !incluida);
-  });
-  const res = document.getElementById('selProdResumen');
-  res.innerHTML = `<strong>${nIncluidas}/${nTotal}</strong> incluidas · <strong>${totPeso.toFixed(1)} kg</strong> · <strong>${totVol.toFixed(3)} m³</strong>`;
-}
-
-async function guardarSeleccionProductos(){
-  const modal = document.getElementById('selProdModal');
-  const docId = modal.dataset.docId;
-  if (!docId) return;
-  const lineas = [];
-  document.querySelectorAll('.sel-prod-row').forEach(row => {
-    const sku = row.dataset.sku;
-    const cb = row.querySelector('input[type="checkbox"]');
-    const qtyInp = row.querySelector('input[type="number"]');
-    const qty = parseFloat(qtyInp.value || 0);
-    lineas.push({ sku, incluida: !!cb.checked, cantidad_seleccionada: qty });
-  });
-  const btn = document.getElementById('selProdGuardar');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
-  try {
-    const r = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ lineas }),
-    });
-    const d = await r.json();
-    if (!d.ok){
-      ilusAlert({ type:'error', title:'No se pudo guardar', message: d.error || `HTTP ${r.status}` });
-      return;
-    }
-    ilusToast(`✓ ${d.lineas_guardadas} líneas guardadas — totales actualizados`, { type:'success' });
-    cerrarSeleccionProductos();
-    await refrescarDocsAsociados(_RID);
-    // refrescarDocsAsociados ya dispara refrescarTablaProductos() internamente.
-  } catch(e){
-    ilusAlert({ type:'error', title:'Sin conexión', message: e.message });
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Guardar selección';
+    const qty = row.querySelector('input[type="number"]');
+    // Marcar la casilla sola al tocar la cantidad (misma UX que el buscador ERP)
+    if (el === qty && parseFloat(qty.value || 0) > 0 && !cb.disabled) cb.checked = true;
+    if (el === cb && !cb.checked) qty.value = '0';
   }
+  _pdSaveDoc(docId);
+}
+
+// Marcar/desmarcar todo (REGLA #14): toggle según si ALGUNA línea editable
+// del documento está sin marcar. Reusa el guard individual de cada fila.
+function _pdToggleAll(btn, docId){
+  const art = btn.closest('.pd-doc');
+  const boxes = [...art.querySelectorAll('.pd-row input[type="checkbox"]:not([disabled])')];
+  if (!boxes.length) return;
+  const marcarTodo = boxes.some(cb => !cb.checked);
+  boxes.forEach(cb => {
+    if (cb.checked === marcarTodo) return;
+    cb.checked = marcarTodo;
+    const row = cb.closest('.pd-row');
+    const qty = row.querySelector('input[type="number"]');
+    if (marcarTodo && parseFloat(qty.value || 0) <= 0){
+      // sin cantidad guardada aún: usar lo facturado como default (mismo criterio que "sin selección" del backend)
+      const facturadoTxt = row.querySelector('.pd-nums b')?.textContent;
+      qty.value = facturadoTxt && facturadoTxt !== '—' ? facturadoTxt : qty.value;
+    }
+    if (!marcarTodo) qty.value = '0';
+  });
+  _pdSaveDoc(docId);
+}
+
+async function _pdEntregarIgual(btn, docId, sku, nombre){
+  let motivo;
+  if (_pdUltimoMotivo){
+    const reusar = await ilusConfirm({
+      title: 'Producto sin saldo disponible',
+      message: `"${nombre}" tampoco tiene saldo. ¿Usar el mismo motivo del producto anterior?`,
+      sub: `"${_esc(_pdUltimoMotivo)}"`, subHtml: true,
+      okLabel: 'Usar el mismo motivo', cancelLabel: 'Escribir uno distinto',
+      type: 'warning',
+    });
+    motivo = reusar ? _pdUltimoMotivo : await ilusPrompt({
+      title: 'Producto sin saldo disponible',
+      message: `"${nombre}" ya fue rebajado en el ERP (aparece como entregado o facturado de más). Explica por qué se debe entregar igual:`,
+      placeholder: 'Ej: cliente reporta que nunca lo recibió, se reemplaza por garantía…',
+      required: true, type: 'warning',
+    });
+  } else {
+    motivo = await ilusPrompt({
+      title: 'Producto sin saldo disponible',
+      message: `"${nombre}" ya fue rebajado en el ERP (aparece como entregado o facturado de más). Explica por qué se debe entregar igual:`,
+      placeholder: 'Ej: cliente reporta que nunca lo recibió, se reemplaza por garantía…',
+      required: true, type: 'warning',
+    });
+  }
+  if (!motivo) return;
+  _pdUltimoMotivo = motivo;
+  const row = btn.closest('.pd-row');
+  row.dataset.marcadaSinSaldo = '1';
+  row.dataset.motivoSinSaldo = motivo;
+  const cb = row.querySelector('input[type="checkbox"]');
+  cb.disabled = false;
+  cb.checked = true;
+  const qty = row.querySelector('input[type="number"]');
+  qty.disabled = false;
+  if (parseFloat(qty.value || 0) <= 0) qty.value = '1';
+  await _pdSaveDoc(docId, true);
+}
+
+async function _pdQuitarAutorizacion(btn, docId, sku){
+  const ok = await ilusConfirm({
+    title: 'Quitar autorización', message: `"${sku}" vuelve a bloquearse hasta que se autorice de nuevo.`,
+    okLabel: 'Quitar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const row = btn.closest('.pd-row');
+  row.dataset.marcadaSinSaldo = '0';
+  row.dataset.motivoSinSaldo = '';
+  await _pdSaveDoc(docId, true);
+}
+
+// Guardado con debounce: junta el estado actual de TODAS las filas del
+// documento (checkbox + cantidad + autorización) y hace un solo POST.
+// `inmediato=true` salta el debounce (usado tras "Entregar igual…").
+function _pdSaveDoc(docId, inmediato){
+  clearTimeout(_pdSaveTimers[docId]);
+  const run = async () => {
+    const art = document.querySelector(`.pd-doc[data-doc-id="${docId}"]`);
+    if (!art) return;
+    const lineas = [...art.querySelectorAll('.pd-row')].map(row => {
+      const sku = row.dataset.sku;
+      const cb = row.querySelector('input[type="checkbox"]');
+      const qty = row.querySelector('input[type="number"]');
+      const out = { sku, incluida: !!(cb && cb.checked), cantidad_seleccionada: parseFloat((qty && qty.value) || 0) };
+      if (row.dataset.marcadaSinSaldo !== undefined){
+        out.marcada_sin_saldo = row.dataset.marcadaSinSaldo === '1';
+        out.motivo_sin_saldo = row.dataset.motivoSinSaldo || '';
+      }
+      return out;
+    });
+    if (!lineas.length) return;
+    try {
+      const r = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ lineas }),
+      });
+      const d = await r.json();
+      if (!d.ok){
+        ilusToast('⚠ No se pudo guardar: ' + (d.error || `HTTP ${r.status}`), { type: 'error' });
+        return;
+      }
+      await refrescarDocsAsociados(_RID);
+      // refrescarDocsAsociados dispara refrescarProductosDiag() internamente.
+    } catch(e){
+      ilusToast('⚠ Sin conexión: ' + e.message, { type: 'error' });
+    }
+  };
+  if (inmediato) { run(); return; }
+  _pdSaveTimers[docId] = setTimeout(run, 600);
 }
 
 async function refrescarDocsAsociados(rid){
@@ -1153,7 +1182,7 @@ async function refrescarDocsAsociados(rid){
     // autorizó fusionarla con la tabla) — la tabla es la única fuente de verdad.
     _renderTablaDocsAsociados(d.docs || []);
     _pintarFichaV3(d);
-    refrescarTablaProductos();
+    refrescarProductosDiag();
     // Refrescar Paso "Carga" — carga total. REESTRUCTURACIÓN 2026-09-22:
     // el strip vive UNA sola vez de forma canónica (#cargaNDocs/#cargaPeso/
     // #cargaVol/#cargaTiempo, sección "Carga") pero se referencia además
@@ -3638,8 +3667,8 @@ document.addEventListener('DOMContentLoaded', function(){
       setTimeout(run, 60);   // fallback Safari < 17
     }
   };
-  // 1) Tabla de productos del retiro (consulta local, rápida).
-  _deferLoad(() => refrescarTablaProductos(), 800);
+  // 1) Diagnóstico de productos del retiro (consulta al ERP: saldo, guía, stock).
+  _deferLoad(() => refrescarProductosDiag(), 800);
   // 2) Sugerencias de email (ligera).
   _deferLoad(() => cargarSugerenciasEmail(), 1200);
   // 3) Documentos con saldo en el ERP (lo más lento) — al final, en
