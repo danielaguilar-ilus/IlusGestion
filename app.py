@@ -10221,20 +10221,42 @@ def welcome_activate(token):
     if request.method == "POST":
         pw1 = request.form.get("password", "")
         pw2 = request.form.get("password2", "")
+        # 🔧 2026-09-24 (Daniel: "cuando el usuario se meta el debe completar
+        # con sus propios datos... rut, direccion" -- Ley 21.719): se agrega
+        # ACÁ, en la activación de cuenta NUEVA, no en /auth/restablecer
+        # (esa es la de "olvidé mi clave" de cuentas YA existentes -- REGLA
+        # de alcance de Daniel: "solo usuarios nuevos, desde ahora"). Cada
+        # quien declara sus propios datos -- minimización de datos, nadie
+        # los tipea por otra persona.
+        rut_raw = request.form.get("rut", "")
+        direccion = (request.form.get("direccion") or "").strip()[:300]
+        comuna = (request.form.get("comuna") or "").strip()[:100]
+        rut_ok, rut_val = validar_rut(rut_raw)
         if pw1 != pw2:
             flash("Las contraseñas no coinciden.", "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
+            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
+                                    rut=rut_raw, direccion=direccion, comuna=comuna)
 
         strength_errors = _password_strength_errors(pw1)
         if strength_errors:
             flash(" ".join(strength_errors), "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
+            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
+                                    rut=rut_raw, direccion=direccion, comuna=comuna)
+
+        if not rut_ok:
+            flash(f"RUT inválido: {rut_val}", "danger")
+            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
+                                    rut=rut_raw, direccion=direccion, comuna=comuna)
+        if not direccion or not comuna:
+            flash("Tu dirección y comuna son obligatorias.", "danger")
+            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
+                                    rut=rut_raw, direccion=direccion, comuna=comuna)
 
         new_hash = generate_password_hash(pw1)
         with conn.cursor() as cur:
             cur.execute(
-                f"UPDATE `{AUTH_TABLE}` SET password_hash=%s WHERE id=%s",
-                (new_hash, row["user_id"])
+                f"UPDATE `{AUTH_TABLE}` SET password_hash=%s, rut=%s, direccion=%s, comuna=%s WHERE id=%s",
+                (new_hash, rut_val, direccion, comuna, row["user_id"])
             )
             cur.execute(
                 f"UPDATE `{RESETS_TABLE}` SET used=1 WHERE token=%s",

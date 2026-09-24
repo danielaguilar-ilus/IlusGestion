@@ -150,6 +150,46 @@
           <div id="matchHint" style="min-height:18px"></div>
         </div>
 
+        <hr style="border-color:#222;margin:22px 0">
+
+        <div class="mb-3">
+          <label class="form-label" style="color:#ccc;font-size:.82rem;font-weight:600">
+            Tu RUT
+          </label>
+          <input type="text" name="rut" required
+                 class="form-control"
+                 style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
+                 placeholder="Ej: 12.345.678-9" value="{{ rut or '' }}">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" style="color:#ccc;font-size:.82rem;font-weight:600">
+            Tu dirección
+          </label>
+          <input type="text" name="direccion" required
+                 class="form-control"
+                 style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
+                 placeholder="Calle, número, depto (si aplica)" value="{{ direccion or '' }}">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" style="color:#ccc;font-size:.82rem;font-weight:600">
+            Tu comuna
+          </label>
+          <input type="text" name="comuna" required
+                 class="form-control"
+                 style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
+                 placeholder="Ej: Providencia" value="{{ comuna or '' }}">
+        </div>
+
+        <p style="color:#666;font-size:.72rem;line-height:1.55;margin-bottom:20px">
+          <i class="bi bi-shield-check me-1"></i>
+          Tu RUT y dirección se usan solo para documentos internos y
+          coordinación operativa de {{ marca.name if marca else 'ILUS Fitness' }} —
+          nunca se comparten con terceros. Puedes actualizarlos cuando
+          quieras desde "Mi cuenta".
+        </p>
+
         <button type="submit" class="btn btn-ilus fw-bold w-100 mb-3"
                 style="border-radius:7px;padding:11px;background:var(--ilus-red);border:0">
           <i class="bi bi-check2-circle me-2"></i>Activar mi cuenta
