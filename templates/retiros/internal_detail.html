@@ -1698,35 +1698,43 @@
 
 </div>{# /.rd-flow #}
 
-{# ──────────────────────────────────────────────────────────────
-   10 · SEPARADOR — límite entre zona de tarea (1-9) y zona
-   secundaria de consulta (11-16). Puramente visual, reusa el mismo
-   estilo tipográfico que .ficha-lbl (uppercase, letter-spacing) —
-   sin CSS nuevo más allá del propio separador.
-   ────────────────────────────────────────────────────────────── #}
-<div class="rid-divider"><span class="rid-divider-lbl">Información adicional — no requiere acción ahora</span></div>
-
 {# ════════════════════════════════════════════════════════════════════
-   ZONA SECUNDARIA (11-16) — antes un único tab-strip (#infoTabs); ahora
-   tarjetas independientes .step-section.is-secondary, cada una
-   colapsable por su cuenta (no mutuamente excluyentes). Mismos ids
-   #tab-<nombre> que ya usaba cambiarTabInfo(), así que todo llamador
-   existente sigue funcionando — ver retiros_internal_detail.js.
-══════════════════════════════════════════════════════════════════════ #}
-
-{# ── 11 · Comunicación (Mensajes) — SIN CAMBIOS de campos ── #}
-<section class="step-section is-secondary is-collapsed">
-  <div class="step-header">
-    <div class="step-titles">
-      <h5><i class="bi bi-chat-dots me-2" style="color:var(--ilus-red)"></i>Para hablar con el cliente</h5>
-      <p class="step-sub">Plantilla o mensaje libre — se envía por email al cliente.</p>
-    </div>
-    <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-      <i class="bi bi-chevron-down"></i>
+   10-16 · HERRAMIENTAS DEL RETIRO (2026-09-24, Daniel: "no me gustan esas
+   tarjetas, se ven feas... algo más acorde a su funcionalidad sin
+   necesidad de usar mucho scroll"). Antes: separador + 5 tarjetas
+   colapsables apiladas (~500 px). Ahora: UNA tarjeta con 5 pestañas; solo
+   se abre la que se elige. Nada se quitó: mismos formularios, mismas
+   acciones y los mismos ids #tab-<nombre> que usa cambiarTabInfo() (botones
+   "Mensajes/Adjuntos" y "Enviarle mensaje" de más arriba).
+   ════════════════════════════════════════════════════════════════════ #}
+{% set _prop_lbl = {'pending':('Pendiente','t-ambar'),'accepted':('Aceptada','t-ok'),'superseded':('Reemplazada','t-gris'),
+                    'declined':('Rechazada','t-rojo'),'expired':('Vencida','t-gris')} %}
+<section class="rd-more" id="rdMore" aria-label="Herramientas del retiro">
+  <div class="rd-more-h">
+    <h3><span class="ic"><i class="bi bi-grid-3x3-gap-fill"></i></span>Herramientas del retiro</h3>
+    <p>Mensajes, archivos, propuestas y ajustes. No requieren acción ahora.</p>
+  </div>
+  <div class="rd-more-tabs" role="tablist">
+    <button type="button" class="rd-more-tab" role="tab" data-pane="comunicacion" aria-selected="false">
+      <i class="bi bi-envelope-paper"></i><span>Mensaje al cliente</span>
+    </button>
+    <button type="button" class="rd-more-tab" role="tab" data-pane="adjuntos" aria-selected="false">
+      <i class="bi bi-paperclip"></i><span>Adjuntos</span><b class="cnt">{{ attachments|length }}</b>
+    </button>
+    <button type="button" class="rd-more-tab" role="tab" data-pane="propuestas" aria-selected="false">
+      <i class="bi bi-arrow-left-right"></i><span>Propuestas</span><b class="cnt">{{ proposals|length }}</b>
+    </button>
+    <button type="button" class="rd-more-tab" role="tab" data-pane="historial" aria-selected="false">
+      <i class="bi bi-clock-history"></i><span>Auditoría</span><b class="cnt">{{ logs|length }}</b>
+    </button>
+    <button type="button" class="rd-more-tab is-avz" role="tab" data-pane="acciones" aria-selected="false">
+      <i class="bi bi-lightning-charge"></i><span>Cambiar estado</span>
     </button>
   </div>
-  <p class="step-collapsed-line"><i class="bi bi-chat-dots"></i>Mensajes al cliente</p>
-  <div class="step-content" id="tab-comunicacion">
+
+  {# ── Mensaje al cliente — mismo formulario de siempre ── #}
+  <div class="rd-more-pane" id="tab-comunicacion" role="tabpanel" hidden>
+    <p class="rd-more-help"><i class="bi bi-info-circle"></i>Se envía por correo al cliente y a los correos en copia de la ficha. Elige una plantilla o escribe un mensaje libre.</p>
     <form method="post" action="{{ url_for('pickup_send_message', rid=req.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2">
@@ -1745,87 +1753,93 @@
       <button class="btn btn-outline-danger btn-sm fw-bold mt-2"><i class="bi bi-envelope-paper me-1"></i>Enviar al cliente</button>
     </form>
   </div>
-</section>
 
-{# ── 12 · Adjuntos — SIN CAMBIOS ── #}
-<section class="step-section is-secondary is-collapsed">
-  <div class="step-header">
-    <div class="step-titles">
-      <h5><i class="bi bi-paperclip me-2" style="color:var(--ilus-red)"></i>Adjuntos <span class="badge bg-secondary ms-1">{{ attachments|length }}</span></h5>
+  {# ── Adjuntos ── #}
+  <div class="rd-more-pane" id="tab-adjuntos" role="tabpanel" hidden>
+    {% if attachments %}
+    <div class="rd-more-files">
+      {% for a in attachments %}
+      <a href="{{ url_for('pickup_attachment', aid=a.id) }}" target="_blank" rel="noopener" class="rd-more-file">
+        <i class="bi bi-{{ 'camera-fill' if (a.tipo or '') == 'evidencia_retiro' else 'file-earmark-text' }}"></i>
+        <span>{{ a.original_name }}</span>
+      </a>
+      {% endfor %}
     </div>
-    <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-      <i class="bi bi-chevron-down"></i>
-    </button>
+    {% else %}
+    <div class="rd-more-vacio"><i class="bi bi-paperclip"></i>Este retiro no tiene archivos. La foto de evidencia se agrega al marcarlo como retirado.</div>
+    {% endif %}
   </div>
-  <p class="step-collapsed-line"><i class="bi bi-paperclip"></i>{{ attachments|length }} adjunto{{ '' if attachments|length == 1 else 's' }}</p>
-  <div class="step-content" id="tab-adjuntos">
-    {% for a in attachments %}
-    <a href="{{ url_for('pickup_attachment', aid=a.id) }}" target="_blank" class="d-block mb-2 text-decoration-none">
-      <i class="bi bi-file-earmark me-1"></i>{{ a.original_name }}
-    </a>
-    {% else %}<div class="text-muted small">Sin adjuntos.</div>{% endfor %}
-  </div>
-</section>
 
-{# ── 13 · Historial de propuestas — SIN el botón "Aceptar
-   contrapropuesta" duplicado (queda solo en la sección 8) ── #}
-<section class="step-section is-secondary is-collapsed">
-  <div class="step-header">
-    <div class="step-titles">
-      <h5><i class="bi bi-arrow-left-right me-2" style="color:var(--ilus-red)"></i>Historial de propuestas <span class="badge bg-secondary ms-1">{{ proposals|length }}</span></h5>
+  {# ── Propuestas — en español (antes "internal · superseded") ── #}
+  <div class="rd-more-pane" id="tab-propuestas" role="tabpanel" hidden>
+    {% if proposals %}
+    <div class="rd-more-list">
+      {% for p in proposals %}
+      {% set _pl = _prop_lbl.get(p.status, (p.status, 't-gris')) %}
+      <div class="rd-more-row">
+        <span class="rd-more-who {{ 'is-cli' if p.proposed_by == 'cliente' else '' }}">{{ 'Cliente' if p.proposed_by == 'cliente' else 'ILUS' }}</span>
+        <span class="rd-more-when"><b>{{ p.date | chile_fmt('%a %d/%m/%Y') }}</b> · {{ p.time_from|hm }}–{{ p.time_to|hm }}</span>
+        <span class="rd-more-badge {{ _pl[1] }}">{{ _pl[0] }}</span>
+        {% if p.message %}<span class="rd-more-msg">{{ p.message }}</span>{% endif %}
+      </div>
+      {% endfor %}
     </div>
-    <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-      <i class="bi bi-chevron-down"></i>
-    </button>
+    {% else %}
+    <div class="rd-more-vacio"><i class="bi bi-arrow-left-right"></i>Sin propuestas todavía. Se envían desde el paso "Agenda".</div>
+    {% endif %}
   </div>
-  <p class="step-collapsed-line"><i class="bi bi-arrow-left-right"></i>{{ proposals|length }} propuesta{{ '' if proposals|length == 1 else 's' }}</p>
-  <div class="step-content" id="tab-propuestas">
-    {% for p in proposals %}
-    <div class="mb-2 p-2 bg-light rounded">
-      <strong>{{ p.date | chile_fmt('%d-%m-%Y') }} {{ p.time_from|hm }}-{{ p.time_to|hm }}</strong>
-      <div class="text-muted small">{{ p.proposed_by }} · {{ p.status }}</div>
-      {% if p.message %}<div class="small mt-1">{{ p.message }}</div>{% endif %}
-    </div>
-    {% else %}<div class="text-muted small">Sin propuestas todavía.</div>{% endfor %}
-  </div>
-</section>
 
-{# ── 14 · Historial / auditoría — SIN CAMBIOS + vista extendida de
-   los 2 scores de diagnóstico (Calidad info/Riesgo) ── #}
-<section class="step-section is-secondary is-collapsed">
-  <div class="step-header">
-    <div class="step-titles">
-      <h5><i class="bi bi-clock-history me-2" style="color:var(--ilus-red)"></i>Historial / auditoría</h5>
-    </div>
-    <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-      <i class="bi bi-chevron-down"></i>
-    </button>
-  </div>
-  <p class="step-collapsed-line"><i class="bi bi-clock-history"></i>{{ logs|length }} evento{{ '' if logs|length == 1 else 's' }} registrado{{ '' if logs|length == 1 else 's' }}</p>
-  <div class="step-content" id="tab-historial">
-    <div class="ilus-card mb-3" style="padding:14px 16px">
-      <div style="font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:8px">Scores de diagnóstico — detalle</div>
-      <div class="row g-3">
-        <div class="col-md-6">
-          <div class="fw-bold"><i class="bi bi-stars me-1" style="color:var(--ilus-red)"></i>Calidad info: {{ req.information_quality_score }}%</div>
-          <div class="small text-muted mt-1">Qué tan completa está la información del retiro (contacto, documentos asociados, carga calculada). Sube al completar cada dato de la Ficha y al asociar documentos con saldo verificado. Un score bajo suele significar: falta email/teléfono, o aún no hay documentos con saldo confirmado.</div>
-        </div>
-        <div class="col-md-6">
-          <div class="fw-bold"><i class="bi bi-shield-exclamation me-1" style="color:var(--ilus-red)"></i>Riesgo: {{ req.risk_score }}%</div>
-          <div class="small text-muted mt-1">Probabilidad de que el retiro se complique al momento de entregar: RUT del documento distinto al de quien retira, documentos sin saldo verificado por ERP, o carga pesada (&gt;100kg). Un score alto pide más cuidado — revisa la alerta de RUT y el saldo antes de agendar.</div>
-        </div>
+  {# ── Auditoría — registro técnico + detalle de los 2 scores ── #}
+  <div class="rd-more-pane" id="tab-historial" role="tabpanel" hidden>
+    <div class="rd-more-scores">
+      <div>
+        <b><i class="bi bi-stars"></i>Calidad info: {{ req.information_quality_score }}%</b>
+        <span>Qué tan completa está la información del retiro (contacto, documentos asociados, carga calculada). Sube al completar cada dato de la Ficha y al asociar documentos con saldo verificado. Un score bajo suele significar: falta email/teléfono, o aún no hay documentos con saldo confirmado.</span>
+      </div>
+      <div>
+        <b><i class="bi bi-shield-exclamation"></i>Riesgo: {{ req.risk_score }}%</b>
+        <span>Probabilidad de que el retiro se complique al momento de entregar: RUT del documento distinto al de quien retira, documentos sin saldo verificado por ERP, o carga pesada (&gt;100kg). Un score alto pide más cuidado — revisa la alerta de RUT y el saldo antes de agendar.</span>
       </div>
     </div>
-    {% for l in logs %}
-    <div class="d-flex gap-3 mb-3">
-      <div class="rounded-circle bg-danger flex-shrink-0" style="width:10px;height:10px;margin-top:6px"></div>
-      <div class="small">
-        <div class="fw-bold">{{ l.action }} <span class="text-muted fw-normal">por {{ l.actor_name }}</span></div>
-        <div class="text-muted">{{ l.created_at | chile_fmt }} {% if l.old_status or l.new_status %}· {{ l.old_status or '-' }} → {{ l.new_status or '-' }}{% endif %}</div>
-        {% if l.notes %}<div>{{ l.notes }}</div>{% endif %}
+    <p class="rd-more-help"><i class="bi bi-info-circle"></i>Registro técnico completo. La versión legible, con correos y respuestas del cliente, está en "Actividad del retiro", más arriba.</p>
+    {% if logs %}
+    <div class="rd-more-list">
+      {% for l in logs %}
+      <div class="rd-more-row is-log">
+        <span class="rd-more-when"><b>{{ (l.action or '')|replace('_', ' ')|capitalize }}</b>{% if l.actor_name %} · {{ l.actor_name }}{% endif %}</span>
+        <span class="rd-more-fecha">{{ l.created_at | chile_fmt }}</span>
+        {% if (l.old_status or l.new_status) and l.old_status != l.new_status %}
+        <span class="rd-more-msg">Estado: {{ statuses.get(l.old_status, l.old_status) if l.old_status else '—' }} → {{ statuses.get(l.new_status, l.new_status) if l.new_status else '—' }}</span>
+        {% endif %}
+        {% if l.notes %}<span class="rd-more-msg">{{ l.notes }}</span>{% endif %}
       </div>
+      {% endfor %}
     </div>
-    {% else %}<div class="text-muted small">Sin eventos aún.</div>{% endfor %}
+    {% else %}
+    <div class="rd-more-vacio"><i class="bi bi-clock-history"></i>Sin eventos aún.</div>
+    {% endif %}
+  </div>
+
+  {# ── Cambiar estado (avanzado) — sin cambios funcionales ni de permisos ── #}
+  <div class="rd-more-pane" id="tab-acciones" role="tabpanel" hidden>
+    <div class="rid-advanced-warn">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      <span>Uso avanzado — salta el flujo guiado de los pasos de arriba, úsalo solo si sabes lo que haces.</span>
+    </div>
+    <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-2">
+        <div class="col-md-6">
+          <label class="form-label small fw-bold mb-1">Cambiar estado</label>
+          <select name="status" class="form-select form-select-sm">{% for k,v in statuses.items() %}<option value="{{ k }}" {% if req.status==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small fw-bold mb-1">Nota interna (opcional)</label>
+          <input type="text" name="notes" class="form-control form-control-sm" placeholder="Razón del cambio...">
+        </div>
+      </div>
+      <button class="btn btn-dark fw-bold mt-2"><i class="bi bi-arrow-repeat me-1"></i>Actualizar estado</button>
+    </form>
   </div>
 </section>
 
@@ -1849,43 +1863,6 @@
     </div>
   </div>
 </div>
-
-{# ──────────────────────────────────────────────────────────────
-   16 · CAMBIAR ESTADO (avanzado) — SIN CAMBIOS funcionales ni de
-   permisos (no se restringe por rol — fuera de alcance de este build,
-   queda tal cual estaba). Se agrega advertencia de "uso avanzado".
-   ────────────────────────────────────────────────────────────── #}
-<section class="step-section is-secondary is-collapsed">
-  <div class="step-header">
-    <div class="step-titles">
-      <h5><i class="bi bi-lightning-charge me-2" style="color:var(--ilus-red)"></i>Cambiar estado (avanzado)</h5>
-    </div>
-    <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-      <i class="bi bi-chevron-down"></i>
-    </button>
-  </div>
-  <p class="step-collapsed-line"><i class="bi bi-lightning-charge"></i>Cambio de estado manual</p>
-  <div class="step-content" id="tab-acciones">
-    <div class="rid-advanced-warn">
-      <i class="bi bi-exclamation-triangle-fill"></i>
-      <span>Uso avanzado — salta el flujo guiado de los pasos de arriba, úsalo solo si sabes lo que haces.</span>
-    </div>
-    <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="row g-2">
-        <div class="col-md-6">
-          <label class="form-label small fw-bold mb-1">Cambiar estado</label>
-          <select name="status" class="form-select form-select-sm">{% for k,v in statuses.items() %}<option value="{{ k }}" {% if req.status==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
-        </div>
-        <div class="col-md-6">
-          <label class="form-label small fw-bold mb-1">Nota interna (opcional)</label>
-          <input type="text" name="notes" class="form-control form-control-sm" placeholder="Razón del cambio...">
-        </div>
-      </div>
-      <button class="btn btn-dark fw-bold mt-2"><i class="bi bi-arrow-repeat me-1"></i>Actualizar estado</button>
-    </form>
-  </div>
-</section>
 
 {# ──────────────────────────────────────────────────────────────
    17 · FOOTER DE AYUDA — SIN CAMBIOS

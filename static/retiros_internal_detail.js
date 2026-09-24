@@ -131,13 +131,38 @@ async function superadminEliminarSolicitud(){
 //  existentes (botón "Mensajes/Adjuntos" del header, "Enviarle
 //  mensaje"/"Enviar recordatorio") siguen funcionando sin cambios.
 // ════════════════════════════════════════════════════════════════════
-function cambiarTabInfo(name){
+// Herramientas del retiro (2026-09-24): una tarjeta con pestañas en vez de 5
+// tarjetas apiladas. Solo un panel abierto a la vez; tocar la pestaña activa
+// lo cierra. cambiarTabInfo(name) la abre desde los botones de más arriba.
+function _rdMoreAbrir(name, toggle){
   const pane = document.getElementById('tab-' + name);
-  if (!pane) return;
-  const card = pane.closest('.step-section') || pane;
-  card.classList.remove('is-collapsed');
-  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!pane) return null;
+  const card = document.getElementById('rdMore');
+  const yaAbierto = !pane.hidden;
+  if (card){
+    card.querySelectorAll('.rd-more-pane').forEach(p => { p.hidden = true; });
+    card.querySelectorAll('.rd-more-tab').forEach(t => t.setAttribute('aria-selected', 'false'));
+    card.classList.remove('is-open');
+  }
+  if (toggle && yaAbierto) return null;
+  pane.hidden = false;
+  if (card){
+    card.classList.add('is-open');
+    const tab = card.querySelector('.rd-more-tab[data-pane="' + name + '"]');
+    if (tab) tab.setAttribute('aria-selected', 'true');
+  }
+  return pane;
 }
+function cambiarTabInfo(name){
+  const pane = _rdMoreAbrir(name, false);
+  if (!pane) return;
+  (document.getElementById('rdMore') || pane).scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('#rdMore .rd-more-tab').forEach(tab => {
+    tab.addEventListener('click', () => _rdMoreAbrir(tab.dataset.pane, true));
+  });
+});
 
 // ════════════════════════════════════════════════════════════════════
 //  COLAPSAR/EXPANDIR cada "Paso" y cada tarjeta de zona secundaria

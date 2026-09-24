@@ -2297,3 +2297,71 @@
     .prod-diag-banner .pdb-txt strong{font-size:1.05rem}
     .pd-totales{grid-template-columns:1fr 1fr;row-gap:10px}
   }
+
+  /* ════════════════════════════════════════════════════════════════
+     HERRAMIENTAS DEL RETIRO (2026-09-24, Daniel: "no me gustan esas
+     tarjetas... algo más acorde a su funcionalidad sin mucho scroll").
+     Una tarjeta con pestañas en vez de 5 tarjetas apiladas. Mismo
+     lenguaje que .rd-act; botones grandes (operador con baja visión).
+     ════════════════════════════════════════════════════════════════ */
+  .rd-more{background:#fff;border:1.5px solid var(--gray-2,#e5e7eb);border-radius:16px;padding:18px 22px;margin:0 0 24px;
+    box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .rd-more-h{margin-bottom:14px}
+  .rd-more-h h3{margin:0;font-size:1.05rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;display:flex;align-items:center;gap:10px;color:#0a0a0a}
+  .rd-more-h h3 .ic{width:36px;height:36px;border-radius:10px;background:#f4f4f5;color:#0a0a0a;display:grid;place-items:center;font-size:1.05rem}
+  .rd-more-h p{margin:6px 0 0 46px;font-size:.86rem;font-weight:600;color:#6b7280}
+  .rd-more-tabs{display:flex;gap:8px;flex-wrap:wrap}
+  .rd-more-tab{display:inline-flex;align-items:center;gap:8px;min-height:48px;padding:8px 16px;border-radius:12px;
+    border:2px solid #e4e4e7;background:#fafafa;color:#1f2937;font-weight:800;font-size:.95rem;cursor:pointer;
+    transition:border-color .15s,background .15s,color .15s}
+  .rd-more-tab i{font-size:1.1rem;color:#dc2626}
+  .rd-more-tab .cnt{min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#e4e4e7;color:#111827;
+    font-size:.8rem;font-weight:900;display:inline-grid;place-items:center}
+  .rd-more-tab:hover{border-color:#dc2626;background:#fff}
+  .rd-more-tab[aria-selected="true"]{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+  .rd-more-tab[aria-selected="true"] i{color:#f87171}
+  .rd-more-tab[aria-selected="true"] .cnt{background:#dc2626;color:#fff}
+  .rd-more-tab.is-avz{margin-left:auto;border-style:dashed}
+  .rd-more-tab.is-avz i{color:#f59e0b}
+  .rd-more-pane{margin-top:16px;padding-top:16px;border-top:2px solid #f1f1f3}
+  .rd-more-pane[hidden]{display:none}
+  .rd-more-help{display:flex;gap:8px;align-items:flex-start;font-size:.86rem;font-weight:600;color:#4b5563;margin:0 0 12px}
+  .rd-more-help i{color:#3b82f6;margin-top:2px}
+  .rd-more-vacio{display:flex;gap:10px;align-items:center;padding:14px 16px;border-radius:12px;background:#f9fafb;
+    border:1.5px dashed #e5e7eb;color:#4b5563;font-size:.92rem;font-weight:700}
+  .rd-more-vacio i{font-size:1.15rem;color:#9ca3af}
+  .rd-more-files{display:flex;flex-wrap:wrap;gap:8px}
+  .rd-more-file{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:8px 14px;border-radius:10px;
+    border:1.5px solid #e5e7eb;background:#fafafa;color:#111827;font-weight:700;font-size:.9rem;text-decoration:none}
+  .rd-more-file:hover{border-color:#dc2626;color:#dc2626}
+  .rd-more-file i{color:#dc2626}
+  .rd-more-list{display:flex;flex-direction:column;gap:8px}
+  .rd-more-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:10px 14px;border-radius:12px;
+    background:#fafafa;border:1.5px solid #f1f1f3;font-size:.92rem;color:#1f2937}
+  .rd-more-who{font-weight:900;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;border-radius:999px;
+    background:#0a0a0a;color:#fff}
+  .rd-more-who.is-cli{background:#dbeafe;color:#1e3a8a}
+  .rd-more-when b{font-weight:900;color:#111827}
+  .rd-more-badge{margin-left:auto;font-weight:800;font-size:.82rem;padding:4px 10px;border-radius:999px}
+  .rd-more-badge.t-ok{background:#dcfce7;color:#166534}
+  .rd-more-badge.t-ambar{background:#fff8e1;color:#92400e}
+  .rd-more-badge.t-rojo{background:#fee2e2;color:#991b1b}
+  .rd-more-badge.t-gris{background:#f3f4f6;color:#4b5563}
+  .rd-more-msg{flex-basis:100%;font-size:.86rem;color:#4b5563}
+  .rd-more-fecha{margin-left:auto;font-size:.84rem;font-weight:700;color:#6b7280;white-space:nowrap}
+  .rd-more-scores{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+  .rd-more-scores > div{padding:12px 14px;border-radius:12px;background:#fafafa;border:1.5px solid #f1f1f3}
+  .rd-more-scores b{display:flex;align-items:center;gap:6px;font-size:.95rem;font-weight:900;color:#111827}
+  .rd-more-scores b i{color:#dc2626}
+  .rd-more-scores span{display:block;margin-top:6px;font-size:.82rem;color:#6b7280;line-height:1.45}
+  @media (max-width:767px){
+    .rd-more{padding:16px 14px}
+    .rd-more-h p{margin-left:0}
+    /* Grilla de 2 columnas: todas las pestañas a la vista (con scroll lateral
+       la 2.ª quedaba cortada y no se notaba que había más). */
+    .rd-more-tabs{display:grid;grid-template-columns:1fr 1fr}
+    .rd-more-tab{justify-content:center;padding:8px 10px;font-size:.9rem}
+    .rd-more-tab.is-avz{margin-left:0;grid-column:1 / -1}
+    .rd-more-scores{grid-template-columns:1fr}
+    .rd-more-fecha{margin-left:0;flex-basis:100%}
+  }
