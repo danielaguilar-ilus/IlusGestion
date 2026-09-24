@@ -1863,8 +1863,11 @@ def register_pickup_routes(app, ctx):
                 _partes_c.append(f"{_nb_rv} bulto{'s' if _nb_rv != 1 else ''}")
             if _peso_rv > 0:
                 _partes_c.append(f"{_num_cl(_peso_rv, 1)} kg")
-            if _m3_rv > 0:
+            if _m3_rv >= 0.01:
                 _partes_c.append(f"{_num_cl(_m3_rv, 2)} m³")
+            elif _m3_rv > 0:
+                # Carga chica: con 2 decimales salía "0,00 m³" (RET-VTXLQP, 0,0016 m³).
+                _partes_c.append(f"{_num_cl(_m3_rv, 3)} m³")
             _carga_txt = " · ".join(_partes_c)
         else:
             # Solicitud web sin cubicar: no inventar "1 bulto — 0 kg".
@@ -1887,7 +1890,7 @@ def register_pickup_routes(app, ctx):
             # peso_real_kg (cubicación del operador) antes que total_weight_kg:
             # en solicitudes web este último es 0 y el correo decía "0 kg".
             "kg":                _num_cl(_peso_rv, 1),
-            "m3":                _num_cl(_m3_rv, 2),
+            "m3":                _num_cl(_m3_rv, 2 if _m3_rv >= 0.01 or _m3_rv == 0 else 3),
             "carga_txt":         _carga_txt,
             "warehouse_name":    cfg.get("warehouse_name") or "Bodega ILUS Quilicura",
             "warehouse_addr":    cfg.get("warehouse_addr") or "",

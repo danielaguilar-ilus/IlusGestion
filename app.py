@@ -9586,6 +9586,17 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     from_addr = from_addr_cfg or user
     todos_destinatarios = [to_addr] + cc_list
 
+    def _espera_larga_para_data(srv, seg=40):
+        # 2026-09-24 (prueba real RET-VTXLQP): Gmail tardó 13 s en aceptar el
+        # DATA; con el socket en 10 s expiró DESPUÉS de entregar, se reintentó
+        # por el otro puerto y el cliente recibió el correo DOS veces. Conectar
+        # y autenticar siguen con 10 s; solo la espera de aceptación se alarga.
+        try:
+            if getattr(srv, "sock", None) is not None:
+                srv.sock.settimeout(seg)
+        except Exception:
+            pass
+
     def _try_send(p, sec, timeout=10):
         # Timeout reducido a 10s/intento (antes 30s). Si el endpoint
         # va a fallback Resend, el peor caso total es: SMTP attempt1
@@ -9595,12 +9606,14 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
         if sec:
             with _open_smtp_client(host, p, True, timeout=timeout) as srv:
                 srv.login(user, passwd)
+                _espera_larga_para_data(srv)
                 srv.sendmail(from_addr, todos_destinatarios, msg.as_string())
         else:
             with _open_smtp_client(host, p, False, timeout=timeout) as srv:
                 srv.ehlo()
                 srv.starttls()
                 srv.login(user, passwd)
+                _espera_larga_para_data(srv)
                 srv.sendmail(from_addr, todos_destinatarios, msg.as_string())
 
     # Intentos: puerto configurado → puerto alternativo automático
