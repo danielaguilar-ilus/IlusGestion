@@ -2922,7 +2922,13 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/seguimiento/<token>/mensajes", methods=["GET"])
     def pickup_public_mensajes(token):
         """Lista de mensajes del chat (vista del CLIENTE). Marca como leídos por
-        el cliente los mensajes del operador."""
+        el cliente los mensajes del operador.
+
+        DESACTIVADO 2026-09-25 (levantamiento Ley 21.719): el chat público se
+        apagó el 2026-09-24 ("desactivar ambas") pero esta lectura seguía
+        entregando la conversación a quien tuviera el enlace. Mismo criterio que
+        el POST de abajo; el código siguiente queda por si se reactiva."""
+        return jsonify({"ok": False, "error": "chat_desactivado", "mensajes": []}), 410
         if not token or len(token) < 16 or len(token) > 200 \
                 or not re.match(r"^[A-Za-z0-9_\-]+$", token):
             return jsonify({"ok": False, "error": "invalid_token"}), 400
@@ -3389,7 +3395,7 @@ def register_pickup_routes(app, ctx):
                         (data["contact_email"],)) or {}
                     if int(_n_mail.get("n") or 0) >= 3:
                         errors.append(
-                            "Ya recibimos 3 solicitudes con este correo en las últimas 24 horas. "
+                            "Ya recibimos 3 solicitudes con este correo hoy. "
                             "Si necesitas agendar otra, escríbenos a soportetec@sphs.cl.")
                 except Exception as _e_cap:
                     print(f"[pickup_public_request] tope por correo: {_e_cap}", flush=True)
@@ -3702,50 +3708,52 @@ def register_pickup_routes(app, ctx):
         resp.headers["Expires"] = "0"
         return resp
 
-    @app.route("/retiros/buscar")
-    @_rate_limited("pickup_buscar_publico", max_attempts=30, window_seconds=300, methods=("GET",))
+    @app.route("/retiros/buscar", methods=["GET", "POST"])
+    @_rate_limited("pickup_buscar_publico", max_attempts=30, window_seconds=300, methods=("GET", "POST"))
     def pickup_buscar_publico():
-        """Lookup público por código de retiro (RET-XXXXXX).
-        El form público de seguimiento referencia esta ruta.
-        Si encuentra el retiro, redirige a /retiros/seguimiento/<token>.
+        """Búsqueda pública de un retiro: CÓDIGO + CORREO (2026-09-25).
 
-        Seguridad (Daniel mayo 2026):
-        - Rate limit: 30 búsquedas / 5 min por IP. Antes era ilimitado,
-          permitiendo enumerar códigos RET-XXXXXX por fuerza bruta (los
-          códigos son secuenciales, por eso luego de confirmar siempre
-          redirigimos al token público — no al código).
-        - Validación estricta del formato del código antes de tocar BD:
-          solo acepta RET-NNNNNN o NNNNNN (anti-injection y anti-noise).
-        - Sanitiza el code en el flash (evita XSS si flash renderiza HTML).
+        Levantamiento Ley 21.719 (Daniel): con solo el código RET-XXXXXX —que
+        sale en el asunto de los correos, en etiquetas y se dicta por teléfono—
+        cualquiera abría el seguimiento completo y podía cancelar o cambiar la
+        fecha. Ahora se exige además el correo con que se registró (o uno de los
+        correos que reciben avisos del retiro). El enlace privado del correo
+        sigue abriendo directo, sin nada de esto.
+
+        - POST (formulario "¿Ya tienes una solicitud?"): code + email. El correo
+          va en el cuerpo, nunca en la URL.
+        - GET con ?code= (enlaces viejos): no abre nada; vuelve al formulario con
+          el código escrito para que el cliente agregue su correo.
+        - Mismo mensaje si falla el código o el correo: no revela cuál existe.
         """
-        code_raw = (request.args.get("code") or "").strip().upper()
-        if not code_raw:
-            return redirect(url_for("pickup_public_request"))
-        # Validar formato: 6-12 chars alfanuméricos + guion. Si no calza,
-        # rechazamos sin tocar BD (evita LIKE costoso con basura).
-        # FIX 2026-06-15: regex anterior (\d+) rechazaba los códigos nuevos
-        # alfanuméricos tipo RET-H29JRR (alphabet ABCDEFGHJKLMNPQRSTUVWXYZ23456789).
-        _m_code = re.match(r"^(?:RET[-_ ]?)?([A-Z0-9]{4,12})$", code_raw)
-        if not _m_code:
-            flash("Código inválido. Usa el formato RET-XXXXXX.", "warning")
-            return redirect(url_for("pickup_public_request"))
-        # SOLO coincidencia exacta (auditoría 2026-09-24). Antes, si no calzaba,
-        # buscaba `code LIKE '%<sufijo>'`: con "RET-0002" abría el seguimiento del
-        # último retiro terminado en 2 — datos, Excel y botones de un retiro AJENO.
+        _embed_q = {"embed": "1"} if (request.values.get("embed") == "1") else {}
+        code_raw = (request.values.get("code") or "").strip().upper()
+        _m_code = re.match(r"^(?:RET[-_ ]?)?([A-Z0-9]{4,12})$", code_raw) if code_raw else None
+        if request.method == "GET":
+            if _m_code:
+                flash("Para ver tu retiro escribe el código y el correo con que lo registraste.", "info")
+                return redirect(url_for("pickup_public_request", buscar="RET-" + _m_code.group(1), **_embed_q) + "#tracking-search")
+            return redirect(url_for("pickup_public_request", **_embed_q))
+        email_in = (request.form.get("email") or "").strip().lower()
+        _msg_no = ("No encontramos un retiro con ese código y correo. Revisa los datos "
+                   "o abre el enlace de seguimiento que te enviamos por correo.")
+        if not _m_code or not email_in or "@" not in email_in or len(email_in) > 180:
+            flash(_msg_no, "warning")
+            return redirect(url_for("pickup_public_request", buscar=("RET-" + _m_code.group(1)) if _m_code else None, **_embed_q) + "#tracking-search")
         row = mysql_fetchone(
-            f"SELECT public_token FROM `{REQ}` WHERE UPPER(code)=%s LIMIT 1",
+            f"SELECT id, contact_email, extra_emails, public_token FROM `{REQ}` WHERE UPPER(code)=%s LIMIT 1",
             ("RET-" + _m_code.group(1),)
         )
-        if not row or not row.get("public_token"):
-            # IMPORTANTE: NO loguear el código intentado en stdout (un atacante
-            # podría llenar logs con códigos basura). El flash sí lo muestra
-            # al usuario que lo escribió.
-            # Sanitizar antes de inyectar al flash (defensa anti-XSS)
-            safe_code = re.sub(r"[^A-Z0-9\-_]", "", code_raw)[:20]
-            flash(f"No encontramos un retiro con el código '{safe_code}'. Verifica e intenta nuevamente.", "warning")
-            return redirect(url_for("pickup_public_request"))
+        _ok = False
+        if row and row.get("public_token"):
+            try:
+                _ok = email_in in _get_pickup_all_emails(row)
+            except Exception:
+                _ok = (str(row.get("contact_email") or "").strip().lower() == email_in)
+        if not _ok:
+            flash(_msg_no, "warning")
+            return redirect(url_for("pickup_public_request", buscar="RET-" + _m_code.group(1), **_embed_q) + "#tracking-search")
         return redirect(url_for("pickup_public_tracking", token=row["public_token"]))
-
 
     @app.route("/retiros/seguimiento/<token>", methods=["GET", "POST"])
     @_rate_limited("pickup_public_tracking_post", max_attempts=20, window_seconds=600, methods=("POST",))
@@ -4413,281 +4421,11 @@ def register_pickup_routes(app, ctx):
         _resp.headers["Expires"] = "0"
         return _resp
 
-    # ══════════════════════════════════════════════════════════════════════
-    #  XLSX RESUMEN PÚBLICO — descarga del cliente desde el tracking
-    # ══════════════════════════════════════════════════════════════════════
-    #  Solo requiere el token público del retiro. NO requiere login.
-    #  Genera un XLSX con todos los datos relevantes que el cliente
-    #  podría querer guardar/imprimir para su propio archivo.
-    #
-    #  NO incluye datos internos del operador:
-    #   · No expone internal_notes / doc_validation_notes
-    #   · No expone IPs ni user-agents
-    #   · No expone observaciones de fraude / validaciones doc
-    @app.route("/retiros/seguimiento/<token>/resumen.xlsx", methods=["GET"])
-    @_rate_limited("pickup_public_xlsx", max_attempts=10, window_seconds=300, methods=("GET",))
-    def pickup_public_xlsx(token):
-        """Excel resumen para el cliente — accesible solo con el token público.
-
-        Seguridad (Daniel mayo 2026):
-        - Validamos formato del token antes de tocar BD.
-        - Rate limit: 10 descargas / 5 min por IP (evita scraping masivo).
-        - NO incluye campos internos (lo verifica `_strip_internal`).
-        """
-        if not token or len(token) < 16 or len(token) > 200 \
-                or not re.match(r"^[A-Za-z0-9_\-]+$", token):
-            return "Solicitud no encontrada", 404
-        try:
-            import openpyxl
-            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-            from openpyxl.utils import get_column_letter
-            from io import BytesIO
-        except ImportError:
-            return "Servicio de descarga temporalmente no disponible.", 500
-
-        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE public_token=%s LIMIT 1", (token,))
-        if not req:
-            return "Solicitud no encontrada", 404
-        # Sanitizar antes de pasar al builder XLSX (defensa en profundidad).
-        req = _strip_internal(req)
-
-        cfg = settings()
-        packages = mysql_fetchall(
-            f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number",
-            (req["id"],)
-        ) or []
-
-        # ── Helpers de formato fecha
-        def _fmt_date(d):
-            if not d: return ""
-            try: return d.strftime("%d-%m-%Y") if hasattr(d, "strftime") else str(d)[:10]
-            except Exception: return str(d)[:10]
-        def _fmt_time(t):
-            if not t: return ""
-            try: return t.strftime("%H:%M") if hasattr(t, "strftime") else _td_to_hhmm(t)
-            except Exception: return _td_to_hhmm(t)
-        def _fmt_dt(d):
-            if not d: return ""
-            try: return d.strftime("%d-%m-%Y %H:%M") if hasattr(d, "strftime") else str(d)[:16]
-            except Exception: return str(d)[:16]
-
-        # ── Estilos
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Resumen retiro"
-
-        ILUS_RED = "DC2626"
-        ILUS_BLACK = "0A0A0A"
-        SOFT_GRAY = "F3F4F6"
-        TXT_DARK = "111827"
-
-        red_fill = PatternFill("solid", fgColor=ILUS_RED)
-        black_fill = PatternFill("solid", fgColor=ILUS_BLACK)
-        gray_fill = PatternFill("solid", fgColor=SOFT_GRAY)
-        white_bold = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
-        red_bold = Font(name="Calibri", size=11, bold=True, color=ILUS_RED)
-        label_bold = Font(name="Calibri", size=10, bold=True, color=TXT_DARK)
-        value_font = Font(name="Calibri", size=11, color=TXT_DARK)
-        title_font = Font(name="Calibri", size=18, bold=True, color="FFFFFF")
-        small_gray = Font(name="Calibri", size=9, color="6B7280", italic=True)
-        thin_border = Border(
-            left=Side(style="thin", color="E5E7EB"),
-            right=Side(style="thin", color="E5E7EB"),
-            top=Side(style="thin", color="E5E7EB"),
-            bottom=Side(style="thin", color="E5E7EB"),
-        )
-
-        # ── Encabezado rojo grande
-        ws.merge_cells("A1:B1")
-        c = ws.cell(1, 1, "ILUS Fitness")
-        c.font = title_font
-        c.fill = red_fill
-        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-        ws.row_dimensions[1].height = 34
-
-        ws.merge_cells("A2:B2")
-        c = ws.cell(2, 1, f"Resumen de Retiro · {req.get('code','')}")
-        c.font = white_bold
-        c.fill = black_fill
-        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-        ws.row_dimensions[2].height = 24
-
-        # ── Status (línea grande)
-        status_lbl = PICKUP_STATUS.get(req.get("status") or "", req.get("status") or "")
-        ws.merge_cells("A3:B3")
-        c = ws.cell(3, 1, f"Estado actual: {status_lbl}")
-        c.font = red_bold
-        c.fill = gray_fill
-        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-        ws.row_dimensions[3].height = 22
-
-        # ── Sección con cabecera
-        def add_section(row_start, title):
-            ws.merge_cells(start_row=row_start, start_column=1, end_row=row_start, end_column=2)
-            cc = ws.cell(row_start, 1, title)
-            cc.font = white_bold
-            cc.fill = black_fill
-            cc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-            ws.row_dimensions[row_start].height = 22
-            return row_start + 1
-
-        def add_row(row, label, value):
-            l = ws.cell(row, 1, label)
-            l.font = label_bold
-            l.fill = gray_fill
-            l.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-            l.border = thin_border
-            v = ws.cell(row, 2, value if value not in (None, "") else "—")
-            # openpyxl guarda como FÓRMULA todo texto que empiece con "=" (un nombre
-            # escrito por el cliente como "=HYPERLINK(...)"): se fuerza texto.
-            if isinstance(value, str) and value.startswith("="):
-                v.data_type = "s"
-            v.font = value_font
-            v.alignment = Alignment(horizontal="left", vertical="center", indent=1, wrap_text=True)
-            v.border = thin_border
-            return row + 1
-
-        # Fallback bultos/peso/vol/m3
-        n_bultos = int(req.get("total_packages") or len(packages) or 0)
-        peso_kg = float(req.get("peso_real_kg") or req.get("total_weight_kg") or 0)
-        peso_vol = float(req.get("peso_vol_kg") or req.get("total_volumetric_weight") or 0)
-        volumen_m3 = float(req.get("total_volume_m3") or req.get("volumen_m3") or 0)
-
-        # Bodega
-        bodega_nombre = cfg.get("warehouse_name") or "ILUS Bodega"
-        bodega_addr = cfg.get("warehouse_addr") or ""
-
-        # Horarios formateados
-        def _slot(date, tf, tt):
-            d = _fmt_date(date)
-            if tf and tt:
-                return f"{d}   {_fmt_time(tf)} – {_fmt_time(tt)}"
-            return d
-
-        r = 5
-        # Solicitud
-        r = add_section(r, "Datos de la solicitud")
-        r = add_row(r, "Código de retiro", req.get("code") or "")
-        r = add_row(r, "Documento", f"{(req.get('document_type') or '').upper()} {req.get('document_number') or ''}".strip())
-        r = add_row(r, "Estado", status_lbl)
-        r = add_row(r, "Fecha de solicitud", _fmt_dt(req.get("created_at")))
-
-        r += 1
-        # Cliente
-        r = add_section(r, "Cliente")
-        r = add_row(r, "Razón social / Nombre", req.get("customer_name") or "")
-        r = add_row(r, "RUT", req.get("customer_rut") or "")
-        r = add_row(r, "Contacto", req.get("contact_name") or "")
-        r = add_row(r, "Email contacto", req.get("contact_email") or "")
-        r = add_row(r, "Teléfono contacto", req.get("contact_phone") or "")
-
-        r += 1
-        # Persona que retira
-        r = add_section(r, "Persona que retira")
-        r = add_row(r, "Nombre", req.get("pickup_person_name") or "")
-        r = add_row(r, "RUT", req.get("pickup_person_rut") or "")
-        r = add_row(r, "Teléfono", req.get("pickup_person_phone") or "")
-        relation_lbl = dict(PICKUP_RELATIONS).get(req.get("pickup_person_relation") or "", req.get("pickup_person_relation") or "")
-        r = add_row(r, "Relación", relation_lbl)
-
-        r += 1
-        # Agenda
-        r = add_section(r, "Agenda")
-        if req.get("requested_date"):
-            r = add_row(r, "Fecha solicitada", _slot(req.get("requested_date"), req.get("requested_time_from"), req.get("requested_time_to")))
-        if req.get("proposed_date"):
-            r = add_row(r, "Propuesta de ILUS", _slot(req.get("proposed_date"), req.get("proposed_time_from"), req.get("proposed_time_to")))
-        if req.get("confirmed_date"):
-            r = add_row(r, "Fecha confirmada", _slot(req.get("confirmed_date"), req.get("confirmed_time_from"), req.get("confirmed_time_to")))
-
-        r += 1
-        # Bodega
-        r = add_section(r, "Bodega de retiro")
-        r = add_row(r, "Nombre", bodega_nombre)
-        r = add_row(r, "Dirección", bodega_addr)
-        if cfg.get("maps_url"):
-            r = add_row(r, "Ver en mapa", cfg.get("maps_url"))
-
-        r += 1
-        # Carga
-        r = add_section(r, "Carga declarada")
-        r = add_row(r, "Bultos", n_bultos)
-        r = add_row(r, "Peso real (kg)", f"{peso_kg:.2f}")
-        r = add_row(r, "Peso volumétrico (kg)", f"{peso_vol:.2f}")
-        r = add_row(r, "Volumen (m³)", f"{volumen_m3:.4f}")
-
-        # Detalle paquetes (si hay)
-        if packages:
-            r += 1
-            r = add_section(r, "Detalle de bultos")
-            # Header tabla
-            hdrs = ["#", "Largo (cm)", "Alto (cm)", "Ancho (cm)", "Kg", "P. vol"]
-            # Adaptar: lo embebemos en 2 cols mergeando: para mantener layout 2col, mejor expandimos a 6
-            # Mejor: descomprimimos a 6 columnas SOLO en esta sección
-            for ci, h in enumerate(hdrs, 1):
-                cc = ws.cell(r, ci, h)
-                cc.font = white_bold
-                cc.fill = red_fill
-                cc.alignment = Alignment(horizontal="center", vertical="center")
-                cc.border = thin_border
-            r += 1
-            for p in packages:
-                row_vals = [
-                    p.get("package_number") or "",
-                    float(p.get("length_cm") or 0),
-                    float(p.get("height_cm") or 0),
-                    float(p.get("width_cm") or 0),
-                    float(p.get("weight_kg") or 0),
-                    float(p.get("volumetric_weight") or 0),
-                ]
-                for ci, v in enumerate(row_vals, 1):
-                    cc = ws.cell(r, ci, v)
-                    cc.font = value_font
-                    cc.alignment = Alignment(horizontal="center", vertical="center")
-                    cc.border = thin_border
-                r += 1
-
-        # Observaciones públicas del cliente (no internas)
-        if req.get("observations"):
-            r += 1
-            r = add_section(r, "Observaciones")
-            r = add_row(r, "Tus comentarios", req.get("observations") or "")
-
-        # Footer
-        r += 2
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
-        try:
-            from zoneinfo import ZoneInfo as _ZI
-            now_cl = datetime.now(_ZI("America/Santiago")).strftime("%d-%m-%Y %H:%M")
-        except Exception:
-            now_cl = datetime.now().strftime("%d-%m-%Y %H:%M")
-        cc = ws.cell(r, 1, f"Documento generado el {now_cl} · ILUS Fitness · sistema interno de retiros")
-        cc.font = small_gray
-        cc.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[r].height = 20
-
-        # Anchos columnas
-        ws.column_dimensions[get_column_letter(1)].width = 28
-        ws.column_dimensions[get_column_letter(2)].width = 48
-        if packages:
-            # Cuando hubo tabla de bultos extendimos a 6, ajustar
-            ws.column_dimensions[get_column_letter(3)].width = 14
-            ws.column_dimensions[get_column_letter(4)].width = 14
-            ws.column_dimensions[get_column_letter(5)].width = 12
-            ws.column_dimensions[get_column_letter(6)].width = 12
-
-        # Guardar
-        buf = BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-        fname = f"ILUS_Retiro_{req.get('code','retiro')}.xlsx"
-        from flask import send_file
-        return send_file(
-            buf,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name=fname,
-        )
+    # XLSX RESUMEN PÚBLICO — ELIMINADO 2026-09-25 (Daniel: "le eliminamos el
+    # Excel"). Levantamiento Ley 21.719: entregaba RUT, correo y teléfono
+    # completos del cliente y de quien retira a cualquiera con el enlace (y,
+    # con la búsqueda por código de entonces, a cualquiera con el código).
+    # El seguimiento queda solo para gestionar el retiro y su agenda.
 
     @app.route("/retiros")
     @require_permission("retiros")

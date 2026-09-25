@@ -160,33 +160,47 @@ function _irA(url){
 // ════════════════════════════════════════════════════════
 //  IR A SEGUIMIENTO (banner mini)
 // ════════════════════════════════════════════════════════
-function irASeguimiento(){
-  const v = document.getElementById('trackingLink').value.trim();
+// 2026-09-25 (levantamiento Ley 21.719): es el onsubmit del formulario
+// #tracking-search. Un enlace/token pegado se abre directo (es privado); un
+// CÓDIGO necesita además el correo de la solicitud y viaja por POST — el
+// correo nunca va en la URL. Devuelve true para dejar que el form se envíe.
+function _avisoBusqueda(msg){
+  if (typeof ilusToast === 'function') ilusToast(msg, { type: 'info' });
+}
+function irASeguimiento(ev){
+  const inp = document.getElementById('trackingLink');
+  const mail = document.getElementById('trackingEmail');
+  const v = inp.value.trim();
   if (!v){
-    if (typeof ilusToast === 'function'){
-      ilusToast('Pega el enlace o código RET-XXXXXX que recibiste por email', { type: 'info' });
-    } else {
-      alert('Pega el enlace o el código RET-XXXXXX que recibiste por email');
-    }
-    return;
+    if (ev) ev.preventDefault();
+    _avisoBusqueda('Escribe el código RET-XXXXXX y el correo con que registraste la solicitud, o abre el enlace que te enviamos por correo.');
+    inp.focus();
+    return false;
   }
-  // Si es URL completa, redirige tal cual; si es código, redirige a búsqueda
+  // Enlace completo pegado: se abre tal cual
   if (v.startsWith('http') || v.includes('/retiros/seguimiento/')){
+    if (ev) ev.preventDefault();
     _irA(v);
-    return;
+    return false;
   }
   // FIX 2026-06-09: los códigos nuevos son ALFANUMÉRICOS (ej: RET-CCE24P).
-  // El regex anterior (/^RET-\d+$/) solo aceptaba dígitos y mandaba los
-  // códigos nuevos a la ruta de token (404). Trim + uppercase antes de evaluar.
-  const code = v.toUpperCase().trim().replace(/\s+/g, '');
-  // Acepta "RET-7KQ2MX", "RET7KQ2MX" o solo "7KQ2MX" (antes sin "RET-" caía
-  // a la ruta de token y mostraba "Solicitud no encontrada" en texto plano).
+  // Acepta "RET-7KQ2MX", "RET7KQ2MX" o solo "7KQ2MX".
+  const code = v.toUpperCase().replace(/\s+/g, '');
   if (/^(RET[-_]?)?[A-Z0-9]{4,12}$/.test(code)){
-    _irA('/retiros/buscar?code=' + encodeURIComponent(code));
-  } else {
-    // asumimos token
-    _irA('/retiros/seguimiento/' + encodeURIComponent(v));
+    const correo = (mail.value || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(correo)){
+      if (ev) ev.preventDefault();
+      _avisoBusqueda('Escribe también el correo con que registraste la solicitud.');
+      mail.focus();
+      return false;
+    }
+    inp.value = code;
+    return true;          // POST a /retiros/buscar con código + correo
   }
+  // Texto largo sin forma de código: se asume el token del enlace
+  if (ev) ev.preventDefault();
+  _irA('/retiros/seguimiento/' + encodeURIComponent(v));
+  return false;
 }
 
 // ════════════════════════════════════════════════════════
@@ -589,9 +603,11 @@ async function reintentarDisponibilidad(){
 // al payload, esto lo toma solo.
 function _applyOperacionTexts(){
   const op = (_disponibilidad && _disponibilidad.operacion) || {};
-  const mn = parseInt(op.min_notice_hours, 10) || 24;
+  // 2026-09-25 (Daniel): sin cifras de horas en los textos al cliente. La regla
+  // de anticipación sigue igual en el servidor; el calendario ya no ofrece
+  // horas que no la cumplan.
   const noticeEl = document.getElementById('noticeHelp');
-  if (noticeEl) noticeEl.textContent = 'Necesitamos mínimo ' + mn + ' horas de anticipación para preparar tu pedido.';
+  if (noticeEl) noticeEl.textContent = 'Las horas disponibles ya consideran el tiempo que necesitamos para preparar tu pedido.';
   const horEl = document.getElementById('horarioAtencion');
   if (horEl && op.open_time && op.lunch_start && op.lunch_end && op.close_time){
     // Strings HH:MM controlados por el servidor — seguros para innerHTML
@@ -759,8 +775,7 @@ function onFechaChange() {
   // usaba el reloj del navegador (bug timezone conocido). Comparación de
   // strings ISO YYYY-MM-DD: orden lexicográfico == orden cronológico.
   if (fecha < _disponibilidad.from){
-    const mnH = parseInt(((_disponibilidad.operacion || {}).min_notice_hours), 10) || 24;
-    msg.textContent = 'Necesitamos mínimo ' + mnH + ' horas de anticipación';
+    msg.textContent = 'Esa fecha ya no está disponible';
     msg.style.color = '#dc2626';
     const desde = _disponibilidad.from.split('-').reverse().join('/');
     grid.innerHTML = '<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde el ' + desde + '</div>';

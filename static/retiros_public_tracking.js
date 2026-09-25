@@ -538,7 +538,7 @@
         hiddenTimeFrom: '#cnt_tf_input',
         hiddenTimeTo:   '#cnt_tt_input',
         monthContainer: '#cnt_month',
-        monthHelp:      'Necesitamos mínimo 24 horas de anticipación para preparar tu pedido.',
+        monthHelp:      'Las horas disponibles ya consideran el tiempo que necesitamos para preparar tu pedido.',
         apiUrl:         TRK.dispUrl || '/retiros/api/disponibilidad-publica',
         excludeToken:   TRK.selfToken || null,
         includeOwners:  false,   // cliente: sin nombres ni cupos internos

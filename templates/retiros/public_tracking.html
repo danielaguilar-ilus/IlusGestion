@@ -115,18 +115,12 @@
       </div>
     </div>
 
-    {# ──────── ACCIONES SECUNDARIAS (descarga resumen) ──────── #}
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">
-      <a href="{{ url_for('pickup_public_xlsx', token=req.public_token) }}"
-         class="btn-xlsx" download
-         title="Descarga un Excel con los datos completos de tu retiro">
-        <i class="bi bi-file-earmark-excel-fill"></i>Descargar resumen (Excel)
-      </a>
-    </div>
+    {# Descarga "resumen (Excel)" ELIMINADA 2026-09-25 (Daniel; levantamiento
+       Ley 21.719): exponía RUT, correo y teléfono completos. #}
 
     {# ──────── STATUS HERO CONTEXTUAL ──────── #}
     {% set _hero_msg = {
-      'solicitud_recibida': {'ico':'envelope-paper-heart','accent':'accent-blue','title':'Tu solicitud está en cola','msg':'En menos de 24 horas te confirmamos disponibilidad y persona autorizada.'},
+      'solicitud_recibida': {'ico':'envelope-paper-heart','accent':'accent-blue','title':'Tu solicitud está en cola','msg':'Validamos disponibilidad y persona autorizada, y te responderemos a la brevedad.'},
       'en_revision':        {'ico':'search-heart',    'accent':'accent-amber','title':'ILUS está revisando tu retiro','msg':'Validamos documento, identidad y disponibilidad. Te avisamos por email.'},
       'informacion_incompleta':{'ico':'exclamation-triangle','accent':'accent-amber','title':'Necesitamos completar datos','msg':'Te contactaremos para confirmar lo que falta. También puedes responder tu correo de confirmación.'},
       'propuesta_enviada':  {'ico':'calendar-plus',   'accent':'accent-amber','title':'Hay una fecha esperándote','msg':'Confírmala abajo, propón otra o rechaza. Mientras no respondas, el cupo no está reservado.'},

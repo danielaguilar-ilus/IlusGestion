@@ -828,7 +828,7 @@
       if (new Date(fecha + 'T00:00:00') < minDate){
         renderEmpty(cfg.allowToday
           ? 'Esa fecha ya pasó. Elige hoy o una fecha futura.'
-          : 'Necesitamos mínimo 24 horas de anticipación. Elige una fecha desde mañana.'
+          : 'Esa fecha ya no está disponible. Elige otra fecha del calendario.'
         );
         return;
       }

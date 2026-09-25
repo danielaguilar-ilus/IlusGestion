@@ -165,7 +165,7 @@
   <div class="irf-head">
     <p class="irf-kicker">ILUS Fitness · Retiro en bodega</p>
     <h2 class="irf-title">Agenda tu retiro</h2>
-    <p class="irf-lead">Te toma 2 minutos. Te confirmamos la fecha por correo en menos de 24 horas.</p>
+    <p class="irf-lead">Te toma 2 minutos. Te responderemos a la brevedad por correo.</p>
     <div class="irf-prog" id="irfProg"><div class="irf-prog-bar"><span id="irfProgBar"></span></div><span id="irfProgTxt">0 de 4 pasos listos</span></div>
   </div>
 
@@ -286,7 +286,7 @@
         <div class="irf-step-h">
           <div class="irf-circle"><b>4</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
           <div><h3 class="irf-step-t">¿Cuándo vienes?</h3>
-            <p class="irf-step-s">Elige el día y tu hora de llegada. Cada bloque dura 30 minutos, de lunes a viernes. Necesitamos al menos 24 horas para preparar tu pedido.</p></div>
+            <p class="irf-step-s">Elige el día y tu hora de llegada. Cada bloque dura 30 minutos, de lunes a viernes. Las horas disponibles ya consideran el tiempo que necesitamos para preparar tu pedido.</p></div>
         </div>
         <div class="irf-avisos" id="irf_avisos" hidden></div>
         <div class="irf-when">
@@ -344,7 +344,7 @@
       <h3>¡Recibimos tu solicitud!</h3>
       <div>Tu código de retiro</div>
       <div class="irf-code" id="irf_code">RET-XXXXXX</div>
-      <p id="irf_ok_txt">Te enviamos un correo con el enlace de seguimiento. Te confirmaremos la fecha en menos de 24 horas.</p>
+      <p id="irf_ok_txt">Te enviamos un correo con el enlace de seguimiento. Te responderemos a la brevedad con la confirmación.</p>
       <p><strong>Aún no es una reserva:</strong> espera nuestra confirmación antes de venir.</p>
       <div class="irf-ok-btns">
         <a class="irf-btn is-red" id="irf_track" href="#" target="_blank" rel="noopener">Ver mi seguimiento</a>
@@ -541,7 +541,7 @@
       var dia = (iso >= desde && iso <= hasta) ? dispo.dias[iso] : null;
       if (!dia) { html += '<button type="button" class="irf-day is-out" disabled>' + d + '</button>'; continue; }
       // Día hábil pero sin ninguna hora que se pueda elegir (ej. mañana cuando
-      // ya no se alcanzan las 24 h de anticipación): se muestra como no disponible
+      // ya no se alcanza la anticipación mínima): se muestra como no disponible
       var libres = (dia.slots || []).filter(function (s) { return s.estado === 'disponible' || s.estado === 'ocupado'; }).length;
       var razon = !dia.disponible ? (dia.razon || 'Día no disponible') : (!libres ? 'Ya no quedan horas libres este día' : '');
       if (razon) {
@@ -709,7 +709,7 @@
     form.hidden = true;
     var code = String(d.code).replace(/[^A-Za-z0-9-]/g, '');
     $('irf_code').textContent = code;
-    $('irf_ok_txt').textContent = 'Te enviamos un correo a ' + $('irf_email').value.trim().toLowerCase() + ' con el enlace de seguimiento. Te confirmaremos la fecha en menos de 24 horas.';
+    $('irf_ok_txt').textContent = 'Te enviamos un correo a ' + $('irf_email').value.trim().toLowerCase() + ' con el enlace de seguimiento. Te responderemos a la brevedad con la confirmación.';
     var url = String(d.tracking_url || '');
     if (url.charAt(0) === '/') url = API + url;
     if (/^https:\/\//.test(url)) $('irf_track').href = url; else $('irf_track').hidden = true;

@@ -5855,6 +5855,9 @@ _CSRF_EXEMPT_PATHS: set = {
     "/registro-tecnico-externo",
     # formularios públicos sin sesión (clientes externos solicitan retiro)
     "/retiros/solicitar",
+    # búsqueda pública de un retiro por código + correo (POST, 2026-09-25):
+    # solo consulta, no cambia nada, y el cliente no tiene sesión
+    "/retiros/buscar",
 }
 # Prefijos exentos: cubren rutas dinámicas (token o id variable).
 _CSRF_EXEMPT_PREFIXES: tuple = (
@@ -49902,8 +49905,7 @@ def _build_retiro_email_templates():
          _ret_stepper(0) +
          '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
          'Recibimos tu solicitud y nuestro equipo está validando documentación e identidad. '
-         'Te avisaremos por email apenas tengamos novedades — generalmente, en menos de '
-         '<strong>24 horas</strong>.</p>'
+         'Te responderemos a la brevedad por este mismo medio.</p>'
          '<p style="font-size:13px;color:#1e3a8a;background:#dbeafe;border-radius:8px;'
          'line-height:1.55;margin:0 0 16px;padding:10px 14px">'
          '<strong>Aún no es una reserva:</strong> la fecha y hora de abajo son las que pediste. '

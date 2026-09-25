@@ -1338,3 +1338,8 @@
       height:var(--ilus-vp-h,100vh)!important;
     }
     html.is-embed .ilus-toast-wrap{top:calc(var(--ilus-vp-top,0px) + 16px)!important}
+
+    /* Búsqueda por código + correo (2026-09-25): al volver con un aviso
+       ("no encontramos…") el salto a #tracking-search deja visible el aviso,
+       que está justo encima. */
+    #tracking-search{scroll-margin-top:120px}
