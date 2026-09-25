@@ -3686,6 +3686,13 @@ window.OT2C = (function(){
           ? '<span style="color:#16a34a"><i class="bi bi-geo-alt-fill me-1"></i>Dirección confirmada — el GPS del técnico va a validar contra este punto.</span>'
           : '<span style="color:#b45309"><i class="bi bi-exclamation-triangle me-1"></i>Elige una sugerencia para confirmar la ubicación. Sin esto el técnico no puede validar su llegada.</span>')+
         '</div>'+
+        // 🛣️ 2026-09-25 (Daniel: "la dirección que declaremos en las OT son
+        // las rutas que seguirán los técnicos... la persona que realice la
+        // OT será el responsable"). Va FUERA de #o2mCpDirEstado: ese div lo
+        // reescribe setCpDireccionTexto en cada tecla.
+        '<div class="mt-1" style="font-size:.72rem;color:#92400e">'+
+        '<i class="bi bi-signpost-split-fill me-1"></i>El técnico va a navegar a esta dirección con el '+
+        'botón "Ruta" (Waze / Google Maps). Quien crea la OT es responsable de que sea la correcta.</div>'+
         // 📍 2026-09-06 (Daniel: "cómo haremos visible ese detalle de
         // edificio y local para que no se pierda y el técnico le pegue en
         // los ojos"). Google devuelve la calle normalizada y se come el
