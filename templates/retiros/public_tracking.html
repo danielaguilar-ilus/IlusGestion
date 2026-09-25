@@ -541,7 +541,19 @@
             <div class="carga-cell"><div class="c-num">{{ ("%.1f"|format(_pvol_show))|replace('.', ',') }}</div><div class="c-lbl">Peso vol. (kg)</div></div>
             <div class="carga-cell"><div class="c-num">{{ ("%.3f"|format(_m3_show))|replace('.', ',') }}</div><div class="c-lbl">m³</div></div>
           </div>
-          {% if packages and (req.total_packages or 0) > 0 %}
+          {# 2026-09-24 (Daniel, en vivo: "en el seguimiento pasa eso" — las
+             tarjetas de arriba mostraban el total real (peso_real_kg/
+             peso_vol_kg, cargado a mano por el operador), pero esta tabla
+             lee el detalle POR BULTO (`packages`), que en este caso nunca
+             se completó -- quedaba una fila entera en 0.00 al lado de
+             totales reales, mismo patrón "calcula bien, la pantalla
+             muestra otra cosa". Se evita namespace (frágil entre
+             versiones, ver comentario de arriba) sumando los campos del
+             bulto: si esa suma es 0, ningún bulto tiene detalle real
+             cargado y no tiene sentido mostrar la tabla en ceros. #}
+          {%- set _pkg_kg_total = (packages | sum(attribute='weight_kg')) if packages else 0 -%}
+          {%- set _pkg_dim_total = ((packages | sum(attribute='length_cm')) + (packages | sum(attribute='height_cm')) + (packages | sum(attribute='width_cm'))) if packages else 0 -%}
+          {% if packages and (req.total_packages or 0) > 0 and (_pkg_kg_total > 0 or _pkg_dim_total > 0) %}
           <div class="table-responsive">
             <table class="pkg-table">
               <thead><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Kg</th><th>P. vol</th></tr></thead>
@@ -558,7 +570,7 @@
           </div>
           {% else %}
           <div class="text-center text-muted small py-2">
-            <i class="bi bi-info-circle me-1"></i>No declaraste medidas. ILUS las verificará al momento del retiro.
+            <i class="bi bi-info-circle me-1"></i>No hay detalle por bulto — se declaró el total. ILUS lo verificará al momento del retiro.
           </div>
           {% endif %}
         </div>
