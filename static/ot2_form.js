@@ -2875,6 +2875,12 @@ document.getElementById('ot2ModalForm').addEventListener('show.bs.modal', async 
   // abrirLevantamientoSelector() en el modal viejo) -- editable de todas
   // formas, Google Maps valida al elegir una sugerencia.
   const dirInput = document.getElementById('o2fLevDireccion');
+  // 🛣️ 2026-09-25: el modal se reutiliza entre OTs -- sin esto el pin
+  // elegido para la OT anterior viajaba con la siguiente y el botón "Ruta"
+  // mandaba al técnico a la dirección de otro cliente.
+  delete dirInput.dataset.lat;
+  delete dirInput.dataset.lng;
+  delete dirInput.dataset.placeId;
   if (_TKOT_MODO_CLIENTE){
     const _dirCliente = DATA.cliente_direccion || '';
     const _comunaCliente = DATA.cliente_comuna || '';
@@ -2900,6 +2906,14 @@ document.getElementById('ot2ModalForm').addEventListener('show.bs.modal', async 
         dirInput.dataset.lng = place.lng;
         dirInput.dataset.placeId = place.place_id || '';
       },
+    });
+    // Si se escribe a mano DESPUÉS de elegir la sugerencia, ese pin ya no
+    // corresponde al texto: se descarta y el servidor ubica el texto nuevo.
+    // (Google llena el input por código al elegir, eso no dispara 'input'.)
+    dirInput.addEventListener('input', function(){
+      delete dirInput.dataset.lat;
+      delete dirInput.dataset.lng;
+      delete dirInput.dataset.placeId;
     });
     dirInput.dataset.placesInit = '1';
   }

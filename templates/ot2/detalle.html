@@ -2819,7 +2819,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           tarjeta y otra pestaña que Llamar/WhatsApp. Por eso este botón va
           acá, en la misma fila, que es donde el técnico ya mira. -#}
       {% set _ruta_dir = v.direccion_visita or v.cliente_direccion %}
-      {% if _ruta_dir or (v.direccion_lat and v.direccion_lng) %}
+      {% if _ruta_dir or ruta.lat is not none %}
       <button type="button" class="otd-qabtn ruta" onclick="otdAbrirRuta()">
         <i class="bi bi-signpost-split-fill"></i> Ruta</button>
       {% endif %}
@@ -3017,7 +3017,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <div class="fila"><span class="lbl">Dirección</span>
             <span class="val">{{ _dir_ot }}{% if _comuna_ot %}, {{ _comuna_ot }}{% endif %}
               <a class="acc" target="_blank" rel="noopener"
-                 href="https://www.google.com/maps/search/?api=1&query={{ (_dir_ot ~ (', ' ~ _comuna_ot if _comuna_ot else '')) | urlencode }}">
+                 href="https://www.google.com/maps/search/?api=1&query={% if ruta.lat is not none %}{{ ruta.lat }},{{ ruta.lng }}{% else %}{{ (_dir_ot ~ (', ' ~ _comuna_ot if _comuna_ot else '')) | urlencode }}{% endif %}">
                 <i class="bi bi-geo-alt-fill"></i> Abrir mapa</a>
               {# 🆕 2026-09-11 (Daniel, viendo la OT en el celular: "a las OT
                  les faltaría poder editar la ubicación"). Mismo patrón que
@@ -3065,6 +3065,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% endif %}
             </span></div>
           {% endif %}
+          {#- 🛣️ 2026-09-25 (Daniel: "reforcemos que la dirección que declaremos
+              en las OT son las rutas que seguirán los técnicos... la persona
+              que realice la OT será el responsable"). Solo aparece cuando
+              Google no pudo ubicar un punto exacto -- con dirección bien
+              declarada no molesta a nadie. -#}
+          {% if puede_metadata and ruta.origen in ('sin_pin', 'sin_direccion') %}
+          <div class="otd-warn" style="margin:0 0 10px">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span>{% if ruta.origen == 'sin_direccion' %}Esta OT no tiene dirección: el técnico no tiene a dónde navegar.{% else %}El técnico no tiene un punto exacto para llegar: Waze y Google Maps van a adivinar con el texto.{% endif %}
+              Quien crea o edita la OT es responsable de la dirección —
+              <a href="#" onclick="otdAbrirDireccion();return false" style="color:inherit;font-weight:700;text-decoration:underline">corrígela aquí</a>
+              y elige la sugerencia de Google.</span>
+          </div>
+          {% endif %}
           {% if puede_metadata %}
           <div class="otd-editbox" id="otdDireccionBox" style="margin:0 0 10px">
             <div class="row">
@@ -3099,7 +3113,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <i class="bi bi-check2"></i> Guardar</button>
               <button type="button" class="otd-btn" onclick="otdCerrarDireccion()">Cancelar</button>
             </div>
-            <div class="hint">El técnico usa este dato para llegar y para el botón "Ruta" — no cambia la ficha del cliente.</div>
+            <div class="hint">Esta es la ruta que va a seguir el técnico con el botón "Ruta" (Waze / Google Maps). Elige la sugerencia de Google para que llegue al punto exacto — no cambia la ficha del cliente.</div>
           </div>
           {% endif %}
           <div class="fila"><span class="lbl">Fecha</span>
@@ -5795,8 +5809,13 @@ async function otdDxEnviar(mid, estado, txt){
    para que el request sobreviva a que la pantalla salte a otra app. */
 const OTD_RUTA = {
   vid:  {{ v.id }},
-  lat:  {{ (v.direccion_lat | float) | tojson if v.direccion_lat else 'null' }},
-  lng:  {{ (v.direccion_lng | float) | tojson if v.direccion_lng else 'null' }},
+  {#- 🛣️ 2026-09-25: el punto sale de _ot_ruta_destino() (app.py) -- el pin
+      de la OT, o el de la ficha si la OT no trae dirección propia, o uno
+      geocodificado por Google a partir del texto. Antes solo se usaba el
+      pin propio de la OT, y como casi ninguna OT lo tenía, Waze y Google
+      terminaban adivinando con el texto (así llegaban a otra comuna). -#}
+  lat:  {{ ruta.lat | tojson }},
+  lng:  {{ ruta.lng | tojson }},
   dir:  {{ (v.direccion_visita or v.cliente_direccion or '') | tojson }},
   {#- ⚠️ 2026-09-07, encontrado verificando la OT-2026-00171 en producción.
       La comuna del CLIENTE solo corresponde si la dirección TAMBIÉN sale de
@@ -8354,6 +8373,15 @@ window.otdConfirmarDireccion = async function(){
     body.direccion_place_id = _otdDirNuevoPlace.place_id;
     body.direccion_comuna = _otdDirNuevoPlace.comuna || '';
     body.direccion_region = _otdDirNuevoPlace.region || '';
+  } else if (dir !== {{ (v.direccion_visita or v.cliente_direccion or '') | tojson }}){
+    // 🛣️ 2026-09-25: el texto cambió pero nadie eligió sugerencia de Google.
+    // El pin viejo apuntaba a la dirección ANTERIOR: si se queda, el botón
+    // "Ruta" manda al técnico al lugar equivocado sin que nadie lo note.
+    // Se borra (el backend normaliza '' a NULL) y el servidor vuelve a
+    // ubicar el texto nuevo con Google al abrir la OT.
+    body.direccion_lat = ''; body.direccion_lng = '';
+    body.direccion_place_id = '';
+    body.direccion_comuna = ''; body.direccion_region = '';
   }
   try {
     const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {

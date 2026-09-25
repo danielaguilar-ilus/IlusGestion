@@ -2858,6 +2858,129 @@ def _google_geocode_region_comuna(direccion, comuna_hint=""):
         return {"region": "", "comuna": ""}
 
 
+# Direcciones que Google no pudo ubicar con precisión: no se reintentan en
+# cada visita a la OT (cada intento es una llamada paga y ~1 s de espera).
+_GEO_LATLNG_FALLA = {}
+_GEO_LATLNG_FALLA_TTL = 6 * 3600
+
+
+def _google_geocode_latlng(direccion, comuna_hint=""):
+    """(lat, lng) de una dirección chilena vía Google Geocoding, o None.
+
+    Rechaza a propósito los resultados APPROXIMATE: son el centro de la
+    comuna o de la ciudad, no la dirección. Mandar al técnico ahí es peor
+    que dejar que Waze busque el texto completo por su cuenta."""
+    if not GOOGLE_MAPS_API_KEY:
+        return None
+    address = ", ".join([x for x in [
+        (direccion or "").strip(), (comuna_hint or "").strip(), "Chile",
+    ] if x])
+    if not (direccion or "").strip():
+        return None
+    _k = address.lower()
+    _t = _GEO_LATLNG_FALLA.get(_k)
+    if _t and (time.time() - _t) < _GEO_LATLNG_FALLA_TTL:
+        return None
+    try:
+        import requests as _req
+        resp = _req.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"address": address, "key": GOOGLE_MAPS_API_KEY,
+                    "components": "country:CL", "language": "es"},
+            timeout=4,
+        )
+        results = (resp.json() or {}).get("results") or []
+        if results:
+            r0 = results[0]
+            geom = r0.get("geometry") or {}
+            tipo = geom.get("location_type")
+            ok = tipo != "APPROXIMATE"
+            # Coincidencia parcial + "centro geométrico" = Google encontró
+            # algo con un nombre parecido, no la dirección. Se descarta.
+            if r0.get("partial_match") and tipo == "GEOMETRIC_CENTER":
+                ok = False
+            # Si se declaró comuna y Google ubicó el punto en OTRA comuna,
+            # es el error que se quiere evitar (Colina vs Colchane): mejor
+            # sin pin que un pin en el lugar equivocado.
+            if ok and (comuna_hint or "").strip():
+                import unicodedata as _ud
+
+                def _norm(s):
+                    s = _ud.normalize("NFKD", s or "")
+                    return "".join(ch for ch in s if not _ud.combining(ch)).lower().strip()
+                hint = _norm(comuna_hint)
+                zonas = [_norm(c.get("long_name")) for c in (r0.get("address_components") or [])
+                         if set(c.get("types") or []) & {"locality", "administrative_area_level_3",
+                                                           "sublocality", "sublocality_level_1"}]
+                if zonas and not any(hint in z or z in hint for z in zonas if z):
+                    ok = False
+            if ok:
+                loc = geom.get("location") or {}
+                if loc.get("lat") is not None and loc.get("lng") is not None:
+                    return float(loc["lat"]), float(loc["lng"])
+    except Exception as e:
+        print(f"[geocode_latlng] {e}", flush=True)
+    _GEO_LATLNG_FALLA[_k] = time.time()
+    return None
+
+
+def _ot_ruta_destino(v):
+    """Punto al que el botón "Ruta" de la OT manda al técnico (Waze/Google
+    Maps). Devuelve {"lat", "lng", "origen"}; origen es "ot", "cliente",
+    "geocodificada", "sin_pin" (hay texto pero Google no lo ubicó) o
+    "sin_direccion".
+
+    Distinto de _ot_destino_coords (geocerca): si la OT trae SU PROPIA
+    dirección, nunca se cae a las coordenadas del cliente -- caso real
+    OT-2026-00171: visita en Colina, ficha del cliente en Colchane, a
+    1.900 km. Si solo hay texto, se geocodifica UNA vez y se guarda, para
+    que el técnico no navegue con texto que Waze interpreta a su manera."""
+    def _f(x):
+        try:
+            return float(x) if x is not None and str(x).strip() != "" else None
+        except (TypeError, ValueError):
+            return None
+
+    propia = (v.get("direccion_visita") or "").strip()
+    lat, lng = _f(v.get("direccion_lat")), _f(v.get("direccion_lng"))
+    if lat is not None and lng is not None:
+        return {"lat": lat, "lng": lng, "origen": "ot"}
+
+    cli_dir = (v.get("cliente_direccion") or "").strip()
+    if not propia:
+        clat, clng = _f(v.get("cliente_lat")), _f(v.get("cliente_lng"))
+        if clat is not None and clng is not None:
+            return {"lat": clat, "lng": clng, "origen": "cliente"}
+
+    texto = propia or cli_dir
+    if not texto:
+        return {"lat": None, "lng": None, "origen": "sin_direccion"}
+    if propia:
+        # La comuna del cliente solo sirve si la OT copió SU dirección.
+        comuna = (v.get("direccion_comuna") or "").strip() or (
+            (v.get("cliente_comuna") or "") if propia == cli_dir else "")
+    else:
+        comuna = v.get("cliente_comuna") or ""
+
+    g = _google_geocode_latlng(texto, comuna)
+    if not g:
+        return {"lat": None, "lng": None, "origen": "sin_pin"}
+    try:
+        if propia:
+            mysql_execute(
+                "UPDATE mant_visitas SET direccion_lat=%s, direccion_lng=%s "
+                " WHERE id=%s AND direccion_lat IS NULL",
+                (g[0], g[1], v.get("id")))
+        elif v.get("cliente_id"):
+            mysql_execute(
+                "UPDATE mant_clientes SET direccion_lat=%s, direccion_lng=%s "
+                " WHERE id=%s AND direccion_lat IS NULL",
+                (g[0], g[1], v.get("cliente_id")))
+    except Exception as e:
+        print(f"[ot_ruta_destino] no se pudo guardar vid={v.get('id')}: {e}", flush=True)
+    return {"lat": g[0], "lng": g[1], "origen": "geocodificada"}
+
+
 # ── INSTRUMENTACIÓN SQL 2026-05-26 (Daniel — audit runtime) ──────────
 # Wrapper transparente que mide cada query: cuenta queries, suma tiempo,
 # y loguea las que duran > _SQL_SLOW_THRESHOLD_MS. Los stats se agregan
@@ -80922,6 +81045,7 @@ def ot2_detalle(vid):
         "       c.contacto_tel AS cli_contacto_tel, "
         "       c.contacto_email AS cli_contacto_email, "
         "       c.tel_empresa, "
+        "       c.direccion_lat AS cliente_lat, c.direccion_lng AS cliente_lng, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre "
         "  FROM mant_visitas v "
         "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
@@ -80931,6 +81055,16 @@ def ot2_detalle(vid):
         flash("Esa OT no existe.", "warning")
         return redirect(url_for("ot2_panel"))
     v = dict(v)
+
+    # 🛣️ 2026-09-25 (Daniel: "los técnicos siguen teniendo problemas con el
+    # botón de ruta"). La Ruta mandaba a Waze solo el TEXTO de la dirección
+    # cada vez que la OT no tenía coordenadas propias -- aunque el cliente sí
+    # las tuviera -- y Waze lo interpretaba a su manera. Ver _ot_ruta_destino.
+    try:
+        ruta = _ot_ruta_destino(v)
+    except Exception as _e_ruta:
+        print(f"[ot2_detalle] ruta vid={vid}: {_e_ruta}", flush=True)
+        ruta = {"lat": None, "lng": None, "origen": "sin_pin"}
 
     # Mismo gate que /mantenciones/ot/<id>/ejecutar (puede_metadata_flag):
     # gestión (superadmin/admin/supervisor/ejecutivo) puede reagendar y
@@ -82059,7 +82193,7 @@ def ot2_detalle(vid):
 
     return render_template(
         "ot2/detalle.html",
-        v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
+        v=v, ruta=ruta, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         factura_prov=factura_prov, factura_prov_aplica=factura_prov_aplica,
         lev=lev,
         equipos_serie_map=equipos_serie_map,
