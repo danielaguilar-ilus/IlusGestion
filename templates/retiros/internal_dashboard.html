@@ -1323,6 +1323,9 @@ select.nri-field-locked{pointer-events:none}
     <a class="btn {% if filtros.view==view %}btn-dark{% else %}btn-outline-dark{% endif %}" href="{{ url_for('pickup_dashboard', view=view, q=filtros.q, status=filtros.status, date=filtros.date) }}"><i class="bi bi-{{ icon }} me-1"></i>{{ label }}</a>
     {% endif %}
     {% endfor %}
+    {# 2026-09-25 (Daniel: "algo más tecnológico, algo que sea poderoso"):
+       Centro de control en vivo — vista aparte, no reemplaza ninguna. #}
+    <a class="btn btn-outline-dark fw-bold" href="{{ url_for('pickup_centro_control') }}"><i class="bi bi-broadcast-pin me-1" style="color:var(--ilus-red)"></i>Centro de control</a>
   </div>
 </form>
 

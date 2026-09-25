@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Centro de control · Retiros - ILUS{% endblock %}
+{% block head_extra %}
+{# Centro de control de Retiros (Daniel 2026-09-25: "además del monitor quisiera
+   algo más tecnológico, algo que sea poderoso"). Vista nueva, junto a Monitor /
+   Kanban / Calendario / Lista. Todo lo que muestra sale de
+   /retiros/api/centro-control y se refresca solo cada 20 s. #}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_centro_control.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-broadcast-pin me-2" style="color:var(--ilus-red)"></i>Centro de control · Retiros</h4>
+    <div class="sub">La operación de retiros en vivo: el día, lo urgente, la agenda y el rendimiento</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-dark fw-bold" href="{{ url_for('pickup_dashboard') }}"><i class="bi bi-display me-1"></i>Volver al Monitor</a>
+    <button type="button" class="btn btn-sm btn-dark fw-bold" id="ccFull"><i class="bi bi-arrows-fullscreen me-1"></i>Pantalla completa</button>
+  </div>
+</div>
+
+<div class="cc-shell" id="ccShell">
+  <div class="cc-top">
+    <div class="cc-live"><span class="cc-dot"></span><span id="ccLiveTxt">EN VIVO</span></div>
+    <div class="cc-clock"><span id="ccClock">--:--:--</span><small id="ccHoy"></small></div>
+    <div class="cc-upd" id="ccUpd">Cargando…</div>
+  </div>
+
+  <div class="cc-kpis">
+    <div class="cc-kpi"><div class="cc-kpi-n" id="kHoy">–</div><div class="cc-kpi-l">Retiros hoy</div><div class="cc-kpi-s" id="kHoyS"></div></div>
+    <div class="cc-kpi" id="kRespBox"><div class="cc-kpi-n" id="kResp">–</div><div class="cc-kpi-l">Por responder</div><div class="cc-kpi-s" id="kRespS"></div></div>
+    <div class="cc-kpi" id="kRojBox"><div class="cc-kpi-n" id="kRoj">–</div><div class="cc-kpi-l">Alertas rojas</div><div class="cc-kpi-s">Resolver primero</div></div>
+    <div class="cc-kpi"><div class="cc-kpi-n" id="kAct">–</div><div class="cc-kpi-l">Retiros activos</div><div class="cc-kpi-s">En curso, todas las fechas</div></div>
+    <div class="cc-kpi"><div class="cc-kpi-n" id="kTasa">–</div><div class="cc-kpi-l">Tasa de confirmación</div><div class="cc-kpi-s" id="kTasaS"></div></div>
+  </div>
+
+  <div class="cc-grid">
+    <section class="cc-panel cc-torre">
+      <div class="cc-ph"><h5><i class="bi bi-clock-history"></i>Torre de control · hoy</h5><span class="cc-ph-s" id="torreS"></span></div>
+      <div class="cc-next" id="ccNext"></div>
+      <div class="cc-tl-wrap">
+        <div class="cc-tl" id="ccTl">
+          <div class="cc-tl-lunch" title="Colación y margen de bodega"></div>
+          <div class="cc-tl-now" id="ccNow"><span></span></div>
+        </div>
+        <div class="cc-tl-axis" id="ccAxis"></div>
+      </div>
+      <div class="cc-today" id="ccToday"></div>
+    </section>
+
+    <section class="cc-panel cc-alertas">
+      <div class="cc-ph"><h5><i class="bi bi-lightning-charge-fill"></i>Alertas en vivo</h5><span class="cc-ph-s" id="alertS"></span></div>
+      <div class="cc-sla" id="ccSla"></div>
+      <div class="cc-alist" id="ccAlertas"></div>
+    </section>
+
+    <section class="cc-panel cc-mapa">
+      <div class="cc-ph"><h5><i class="bi bi-grid-3x3-gap-fill"></i>Mapa de calor · próximos días hábiles</h5><span class="cc-ph-s">Retiros por bloque de 30 min</span></div>
+      <div class="cc-heat-wrap"><div class="cc-heat" id="ccHeat"></div></div>
+      <div class="cc-legend" id="ccLegend"></div>
+    </section>
+
+    <section class="cc-panel cc-rend">
+      <div class="cc-ph"><h5><i class="bi bi-funnel-fill"></i>Embudo y rendimiento</h5>
+        <div class="cc-seg" role="group" aria-label="Período">
+          <button type="button" data-dias="30" class="is-on">30 días</button>
+          <button type="button" data-dias="90">90 días</button>
+        </div>
+      </div>
+      <div class="cc-funnel" id="ccFunnel"></div>
+      <div class="cc-stats" id="ccStats"></div>
+      <div class="cc-tables">
+        <div><div class="cc-th">Por canal</div><div id="ccCanal"></div></div>
+        <div><div class="cc-th">Por responsable</div><div id="ccResp"></div></div>
+      </div>
+    </section>
+  </div>
+  <div class="cc-err" id="ccErr" hidden>No pudimos actualizar el Centro de control. Reintentamos solos en unos segundos.</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>window.CC_API = "{{ url_for('pickup_centro_control_api') }}";</script>
+<script src="{{ url_for('static', filename='retiros_centro_control.js') }}"></script>
+{% endblock %}

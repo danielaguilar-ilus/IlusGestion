@@ -4627,6 +4627,356 @@ def register_pickup_routes(app, ctx):
             pipeline_groups=PIPELINE_GROUPS,
         )
 
+    # ══════════════════════════════════════════════════════════════════
+    #  CENTRO DE CONTROL DE RETIROS (Daniel 2026-09-25: "además del monitor
+    #  quisiera algo más tecnológico, algo que sea poderoso")
+    #  Vista nueva junto a Monitor/Kanban/Calendario/Lista (no reemplaza nada):
+    #   · Torre de control del día (línea de tiempo 09:00–17:00 + próximo retiro)
+    #   · Alertas en vivo / SLA (solicitudes sin responder en horas hábiles,
+    #     contrapropuestas, propuestas por vencer, confirmados sin preparar,
+    #     atrasados)
+    #   · Mapa de calor de la agenda (próximos 10 días hábiles × bloque)
+    #   · Embudo y rendimiento (30/90 días, por canal y por responsable)
+    #  Solo datos reales: nada estimado ni inventado (ilus_design_system).
+    #  Fechas: created_at/answered_at de MySQL están en UTC; expires_at y las
+    #  fechas/horas de agenda están en hora Chile.
+    # ══════════════════════════════════════════════════════════════════
+    _CC_SLA_AMBAR_H = 2.0   # horas hábiles sin respuesta → ámbar
+    _CC_SLA_ROJO_H = 4.0    # horas hábiles sin respuesta → rojo
+    _CC_ACTIVOS = ("solicitud_recibida", "en_revision", "informacion_incompleta",
+                   "propuesta_enviada", "esperando_cliente", "reagendada",
+                   "agenda_confirmada", "en_preparacion")
+
+    def _cc_utc_a_chile(dt_utc):
+        if not dt_utc:
+            return None
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            return dt_utc.replace(tzinfo=_ZI("UTC")).astimezone(_ZI("America/Santiago")).replace(tzinfo=None)
+        except Exception:
+            return dt_utc
+
+    def _cc_horas_habiles(desde, hasta, feriados=()):
+        """Horas hábiles (lun-vie 09:00-18:00, sin feriados) entre dos datetimes
+        naive en hora Chile. Es el reloj del SLA: una solicitud del viernes a
+        las 19:00 no está "atrasada" el sábado."""
+        if not desde or not hasta or hasta <= desde:
+            return 0.0
+        total = 0.0
+        dia = desde.date()
+        fin_dia = hasta.date()
+        # Tope de seguridad: 60 días de recorrido
+        for _ in range(62):
+            if dia > fin_dia:
+                break
+            if dia.weekday() < 5 and dia.isoformat() not in feriados:
+                ini = datetime.combine(dia, datetime.min.time()).replace(hour=9)
+                fin = datetime.combine(dia, datetime.min.time()).replace(hour=18)
+                a, b = max(ini, desde), min(fin, hasta)
+                if b > a:
+                    total += (b - a).total_seconds() / 3600.0
+            dia = dia + timedelta(days=1)
+        return round(total, 2)
+
+    def _cc_hhmm_a_min(v):
+        s = _td_to_hhmm(v) if v else ""
+        try:
+            h, m = s.split(":")[:2]
+            return int(h) * 60 + int(m)
+        except Exception:
+            return None
+
+    @app.route("/retiros/centro-control")
+    @require_permission("retiros")
+    def pickup_centro_control():
+        return render_template("retiros/centro_control.html")
+
+    @app.route("/retiros/api/centro-control")
+    @require_permission("retiros")
+    def pickup_centro_control_api():
+        cfg = settings()
+        ahora = _now_chile()
+        hoy = ahora.date()
+        ahora_utc = datetime.utcnow()
+        feriados = set()
+        for _yr in {hoy.year, (hoy + timedelta(days=40)).year}:
+            try:
+                feriados |= set(_chile_holidays(_yr))
+            except Exception:
+                pass
+        feriados |= {h.strip() for h in (cfg.get("holidays") or "").replace(";", ",").split(",") if h.strip()}
+        try:
+            capacidad = int(cfg.get("parallel_capacity") or 2)
+        except (TypeError, ValueError):
+            capacidad = 2
+        base_det = "/retiros/"
+
+        # ── 1) TORRE DE CONTROL DEL DÍA ─────────────────────────────────
+        filas_hoy = mysql_fetchall(
+            f"""SELECT id, code, status, customer_name, total_packages, total_weight_kg,
+                       confirmed_time_from, confirmed_time_to, responsable_nombre
+                  FROM `{REQ}`
+                 WHERE confirmed_date=%s
+                   AND status IN ('agenda_confirmada','en_preparacion','retirada','cerrada','fallida')
+                 ORDER BY confirmed_time_from""", (hoy.isoformat(),)) or []
+        prep = {}
+        try:
+            _ids = [int(r["id"]) for r in filas_hoy]
+            if _ids:
+                _ph = ",".join(["%s"] * len(_ids))
+                for pr in (mysql_fetchall(
+                        f"SELECT request_id, COUNT(*) AS t, COALESCE(SUM(picked),0) AS h "
+                        f"FROM pickup_picking_items WHERE request_id IN ({_ph}) GROUP BY request_id",
+                        tuple(_ids)) or []):
+                    prep[int(pr["request_id"])] = (int(pr["h"] or 0), int(pr["t"] or 0))
+        except Exception:
+            prep = {}
+        ahora_min = ahora.hour * 60 + ahora.minute
+        hoy_items, proximo = [], None
+        for r in filas_hoy:
+            ini = _cc_hhmm_a_min(r.get("confirmed_time_from"))
+            fin = _cc_hhmm_a_min(r.get("confirmed_time_to")) or ((ini or 0) + 30)
+            st = r.get("status") or ""
+            hechos, total = prep.get(int(r["id"]), (0, 0))
+            # Atrasado: pasaron 30 min desde el inicio del bloque y no se retiró
+            atrasado = (st in ("agenda_confirmada", "en_preparacion") and ini is not None
+                        and ahora_min > ini + 30)
+            item = {
+                "id": int(r["id"]), "code": r.get("code"), "cliente": (r.get("customer_name") or "")[:80],
+                "estado": st, "estado_lbl": PICKUP_STATUS.get(st, st),
+                "desde": _td_to_hhmm(r.get("confirmed_time_from")), "hasta": _td_to_hhmm(r.get("confirmed_time_to")),
+                "ini_min": ini, "fin_min": fin, "bultos": int(r.get("total_packages") or 0),
+                "kg": float(r.get("total_weight_kg") or 0), "responsable": r.get("responsable_nombre") or "",
+                "prep_hechos": hechos, "prep_total": total, "atrasado": atrasado,
+                "url": base_det + str(r["id"]),
+            }
+            hoy_items.append(item)
+            if proximo is None and st in ("agenda_confirmada", "en_preparacion") and ini is not None and ini >= ahora_min - 30:
+                proximo = item
+
+        # ── 2) ALERTAS EN VIVO / SLA ────────────────────────────────────
+        alertas = []
+        # 2a) Solicitudes esperando respuesta de ILUS (sin propuesta vigente)
+        sin_resp = mysql_fetchall(
+            f"""SELECT r.id, r.code, r.status, r.customer_name, r.created_at, r.request_source,
+                       r.responsable_nombre, r.requested_date, r.requested_time_from
+                  FROM `{REQ}` r
+                 WHERE r.status IN ('solicitud_recibida','en_revision','informacion_incompleta')
+                   AND NOT EXISTS (SELECT 1 FROM `{PROP}` p WHERE p.request_id=r.id AND p.status='pending'
+                                   AND LOWER(p.proposed_by)='internal')
+                 ORDER BY r.created_at ASC LIMIT 60""") or []
+        # Contrapropuestas del cliente pendientes (se muestran como alerta propia)
+        contra = {}
+        try:
+            for c in (mysql_fetchall(
+                    f"""SELECT p.request_id, p.date, p.time_from, p.created_at
+                          FROM `{PROP}` p JOIN `{REQ}` r ON r.id=p.request_id
+                         WHERE p.status='pending' AND LOWER(p.proposed_by)<>'internal'
+                           AND r.status NOT IN ('rechazada','cerrada','fallida','retirada')""") or []):
+                contra[int(c["request_id"])] = c
+        except Exception:
+            contra = {}
+        for r in sin_resp:
+            creado_cl = _cc_utc_a_chile(r.get("created_at"))
+            desde_ref = creado_cl
+            tipo, titulo = "sin_respuesta", "Solicitud sin responder"
+            if int(r["id"]) in contra:
+                c = contra[int(r["id"])]
+                desde_ref = _cc_utc_a_chile(c.get("created_at")) or creado_cl
+                tipo = "contrapropuesta"
+                titulo = f"El cliente propuso {_fmt_fecha_cl(c.get('date'))} {_td_to_hhmm(c.get('time_from'))}"
+            h = _cc_horas_habiles(desde_ref, ahora, feriados)
+            nivel = "rojo" if h >= _CC_SLA_ROJO_H else ("ambar" if h >= _CC_SLA_AMBAR_H else "verde")
+            alertas.append({
+                "tipo": tipo, "nivel": nivel, "titulo": titulo, "id": int(r["id"]), "code": r.get("code"),
+                "cliente": (r.get("customer_name") or "")[:80], "horas_habiles": h,
+                "desde": creado_cl.strftime("%d/%m %H:%M") if creado_cl else "",
+                "canal": "Web" if (r.get("request_source") or "web") == "web" else "Interno",
+                "responsable": r.get("responsable_nombre") or "", "url": base_det + str(r["id"]),
+            })
+        # Contrapropuestas sobre citas ya confirmadas (el estado no cambia)
+        _ids_ya = {a["id"] for a in alertas}
+        for rid, c in contra.items():
+            if rid in _ids_ya:
+                continue
+            rr = mysql_fetchone(f"SELECT id, code, customer_name, responsable_nombre FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+            if not rr:
+                continue
+            dref = _cc_utc_a_chile(c.get("created_at"))
+            h = _cc_horas_habiles(dref, ahora, feriados)
+            alertas.append({
+                "tipo": "contrapropuesta", "nivel": "rojo" if h >= _CC_SLA_ROJO_H else ("ambar" if h >= _CC_SLA_AMBAR_H else "verde"),
+                "titulo": f"Quiere cambiar su cita a {_fmt_fecha_cl(c.get('date'))} {_td_to_hhmm(c.get('time_from'))}",
+                "id": rid, "code": rr.get("code"), "cliente": (rr.get("customer_name") or "")[:80],
+                "horas_habiles": h, "desde": dref.strftime("%d/%m %H:%M") if dref else "", "canal": "",
+                "responsable": rr.get("responsable_nombre") or "", "url": base_det + str(rid),
+            })
+        # 2b) Propuestas de ILUS por vencer (< 12 h) o vencidas sin reemplazo
+        for pz in (mysql_fetchall(
+                f"""SELECT p.request_id, p.date, p.time_from, p.expires_at, r.code, r.customer_name, r.responsable_nombre
+                      FROM `{PROP}` p JOIN `{REQ}` r ON r.id=p.request_id
+                     WHERE p.status='pending' AND LOWER(p.proposed_by)='internal' AND p.expires_at IS NOT NULL
+                       AND r.status IN ('propuesta_enviada','esperando_cliente','reagendada')
+                       AND p.expires_at <= %s""",
+                ((ahora + timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S"),)) or []):
+            vencida = pz.get("expires_at") and pz["expires_at"] <= ahora
+            alertas.append({
+                "tipo": "propuesta_vence", "nivel": "rojo" if vencida else "ambar",
+                "titulo": ("Propuesta vencida sin respuesta" if vencida else
+                           "Propuesta vence " + pz["expires_at"].strftime("%d/%m %H:%M")),
+                "id": int(pz["request_id"]), "code": pz.get("code"), "cliente": (pz.get("customer_name") or "")[:80],
+                "horas_habiles": None, "desde": f"{_fmt_fecha_cl(pz.get('date'))} {_td_to_hhmm(pz.get('time_from'))}",
+                "canal": "", "responsable": pz.get("responsable_nombre") or "", "url": base_det + str(pz["request_id"]),
+            })
+        # 2c) Citas de hoy: próximas 2 h sin preparar + atrasadas
+        for it in hoy_items:
+            if it["atrasado"]:
+                alertas.append({"tipo": "atrasado", "nivel": "rojo", "titulo": f"Atrasado: cita de las {it['desde']} sin retirar",
+                                "id": it["id"], "code": it["code"], "cliente": it["cliente"], "horas_habiles": None,
+                                "desde": it["desde"], "canal": "", "responsable": it["responsable"], "url": it["url"]})
+            elif (it["estado"] == "agenda_confirmada" and it["ini_min"] is not None
+                  and 0 <= it["ini_min"] - ahora_min <= 120):
+                alertas.append({"tipo": "sin_preparar", "nivel": "ambar", "titulo": f"Cita a las {it['desde']} aún sin preparar",
+                                "id": it["id"], "code": it["code"], "cliente": it["cliente"], "horas_habiles": None,
+                                "desde": it["desde"], "canal": "", "responsable": it["responsable"], "url": it["url"]})
+        _orden = {"rojo": 0, "ambar": 1, "verde": 2}
+        alertas.sort(key=lambda a: (_orden.get(a["nivel"], 3), -(a["horas_habiles"] or 0)))
+
+        # ── 3) MAPA DE CALOR — próximos 10 días hábiles ─────────────────
+        work_days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
+        dias_mapa, d = [], hoy
+        while len(dias_mapa) < 10 and (d - hoy).days < 30:
+            if d.isoweekday() in work_days and d.isoformat() not in feriados:
+                dias_mapa.append(d)
+            d = d + timedelta(days=1)
+        # Bloques: 09:00–12:00 y 14:00–16:30 (mismo horario del calendario público)
+        bloques = []
+        for mm in range(9 * 60, 17 * 60, 30):
+            if 12 * 60 + 30 <= mm < 14 * 60:
+                continue
+            bloques.append(f"{mm // 60:02d}:{mm % 60:02d}")
+        ocup = {}
+        if dias_mapa:
+            for r in (mysql_fetchall(
+                    f"""SELECT COALESCE(confirmed_date, proposed_date, requested_date) AS f,
+                               COALESCE(confirmed_time_from, proposed_time_from, requested_time_from) AS h
+                          FROM `{REQ}`
+                         WHERE status NOT IN ('rechazada','cerrada','fallida')
+                           AND COALESCE(confirmed_date, proposed_date, requested_date) BETWEEN %s AND %s""",
+                    (dias_mapa[0].isoformat(), dias_mapa[-1].isoformat())) or []):
+                f = r.get("f")
+                fs = f.isoformat() if hasattr(f, "isoformat") else str(f)
+                k = (fs, _td_to_hhmm(r.get("h")))
+                ocup[k] = ocup.get(k, 0) + 1
+        bloqueos = {}
+        try:
+            if dias_mapa:
+                for b in (mysql_fetchall(
+                        "SELECT fecha, hora_inicio, hora_fin, motivo FROM pickup_blocks WHERE fecha BETWEEN %s AND %s",
+                        (dias_mapa[0].isoformat(), dias_mapa[-1].isoformat())) or []):
+                    fs = b["fecha"].isoformat() if hasattr(b["fecha"], "isoformat") else str(b["fecha"])
+                    bloqueos.setdefault(fs, []).append((
+                        _cc_hhmm_a_min(b.get("hora_inicio")) if b.get("hora_inicio") else None,
+                        _cc_hhmm_a_min(b.get("hora_fin")) if b.get("hora_fin") else None,
+                        (b.get("motivo") or "Bloqueado")[:80]))
+        except Exception:
+            bloqueos = {}
+        mapa = []
+        for dm in dias_mapa:
+            fs = dm.isoformat()
+            celdas, total_dia = [], 0
+            for bl in bloques:
+                bmin = _cc_hhmm_a_min(bl)
+                motivo = None
+                for (bi, bf, mo) in bloqueos.get(fs, []):
+                    if bi is None or (bmin is not None and bi <= bmin < (bf if bf is not None else 24 * 60)):
+                        motivo = mo
+                        break
+                n = ocup.get((fs, bl), 0)
+                total_dia += n
+                pasado = (dm == hoy and bmin is not None and bmin + 30 <= ahora_min)
+                celdas.append({"h": bl, "n": n, "bloqueo": motivo, "pasado": pasado})
+            mapa.append({"fecha": fs, "lbl": _fmt_fecha_cl(dm), "es_hoy": dm == hoy, "total": total_dia, "celdas": celdas})
+
+        # ── 4) EMBUDO Y RENDIMIENTO ─────────────────────────────────────
+        try:
+            dias_emb = int(request.args.get("dias") or 30)
+        except (TypeError, ValueError):
+            dias_emb = 30
+        dias_emb = 90 if dias_emb >= 90 else 30
+        desde_utc = (ahora_utc - timedelta(days=dias_emb)).strftime("%Y-%m-%d %H:%M:%S")
+        filas_emb = mysql_fetchall(
+            f"""SELECT r.id, r.status, r.request_source, r.responsable_nombre, r.confirmed_date, r.created_at,
+                       (SELECT MIN(p.created_at) FROM `{PROP}` p
+                         WHERE p.request_id=r.id AND LOWER(p.proposed_by)='internal') AS primera_prop
+                  FROM `{REQ}` r
+                 WHERE r.created_at >= %s""", (desde_utc,)) or []
+        CONF = ("agenda_confirmada", "en_preparacion", "retirada", "cerrada")
+        emb = {"solicitudes": 0, "con_propuesta": 0, "confirmadas": 0, "retiradas": 0,
+               "canceladas": 0, "fallidas": 0}
+        tiempos, por_canal, por_resp = [], {}, {}
+        for r in filas_emb:
+            st = r.get("status") or ""
+            emb["solicitudes"] += 1
+            tuvo_prop = bool(r.get("primera_prop")) or st in CONF
+            conf = bool(r.get("confirmed_date")) or st in CONF
+            if tuvo_prop: emb["con_propuesta"] += 1
+            if conf: emb["confirmadas"] += 1
+            if st in ("retirada", "cerrada"): emb["retiradas"] += 1
+            if st == "rechazada": emb["canceladas"] += 1
+            if st == "fallida": emb["fallidas"] += 1
+            if r.get("primera_prop") and r.get("created_at"):
+                tiempos.append(_cc_horas_habiles(_cc_utc_a_chile(r["created_at"]),
+                                                 _cc_utc_a_chile(r["primera_prop"]), feriados))
+            canal = "Web" if (r.get("request_source") or "web") == "web" else "Interno"
+            pc = por_canal.setdefault(canal, {"nombre": canal, "solicitudes": 0, "confirmadas": 0, "retiradas": 0})
+            pc["solicitudes"] += 1; pc["confirmadas"] += int(conf); pc["retiradas"] += int(st in ("retirada", "cerrada"))
+            resp = (r.get("responsable_nombre") or "Sin responsable").strip() or "Sin responsable"
+            prp = por_resp.setdefault(resp, {"nombre": resp, "solicitudes": 0, "confirmadas": 0, "retiradas": 0})
+            prp["solicitudes"] += 1; prp["confirmadas"] += int(conf); prp["retiradas"] += int(st in ("retirada", "cerrada"))
+        tiempos.sort()
+        rend = {
+            "dias": dias_emb,
+            "resp_prom_h": round(sum(tiempos) / len(tiempos), 1) if tiempos else None,
+            "resp_mediana_h": round(tiempos[len(tiempos) // 2], 1) if tiempos else None,
+            "resp_n": len(tiempos),
+            "tasa_conf": round(100.0 * emb["confirmadas"] / emb["solicitudes"]) if emb["solicitudes"] else None,
+            "tasa_ret": round(100.0 * emb["retiradas"] / emb["confirmadas"]) if emb["confirmadas"] else None,
+        }
+
+        # ── KPIs de cabecera ────────────────────────────────────────────
+        kpis = {
+            "hoy": len([i for i in hoy_items if i["estado"] != "fallida"]),
+            "hoy_retirados": len([i for i in hoy_items if i["estado"] in ("retirada", "cerrada")]),
+            "por_responder": len([a for a in alertas if a["tipo"] in ("sin_respuesta", "contrapropuesta")]),
+            "fuera_sla": len([a for a in alertas if a["tipo"] in ("sin_respuesta", "contrapropuesta") and a["nivel"] == "rojo"]),
+            "alertas_rojas": len([a for a in alertas if a["nivel"] == "rojo"]),
+            "activos": 0,
+        }
+        try:
+            _ph = ",".join(["%s"] * len(_CC_ACTIVOS))
+            kpis["activos"] = int((mysql_fetchone(
+                f"SELECT COUNT(*) AS n FROM `{REQ}` WHERE status IN ({_ph})", _CC_ACTIVOS) or {}).get("n") or 0)
+        except Exception:
+            pass
+
+        return _no_store_json({
+            "ok": True,
+            "ahora": ahora.strftime("%Y-%m-%d %H:%M:%S"),
+            "ahora_min": ahora_min,
+            "hoy": hoy.isoformat(), "hoy_lbl": _fmt_fecha_cl(hoy),
+            "sla": {"ambar_h": _CC_SLA_AMBAR_H, "rojo_h": _CC_SLA_ROJO_H},
+            "capacidad": capacidad,
+            "kpis": kpis,
+            "torre": {"items": hoy_items, "proximo": proximo, "abre": "09:00", "cierra": "17:00"},
+            "alertas": alertas[:40],
+            "alertas_total": len(alertas),
+            "mapa": {"bloques": bloques, "dias": mapa},
+            "embudo": emb, "rendimiento": rend,
+            "por_canal": sorted(por_canal.values(), key=lambda x: -x["solicitudes"]),
+            "por_responsable": sorted(por_resp.values(), key=lambda x: -x["solicitudes"])[:8],
+        })
+
     @app.route("/retiros/api/responsables", methods=["GET"])
     @require_permission("retiros")
     def pickup_responsables():

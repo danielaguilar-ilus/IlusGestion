@@ -835,7 +835,7 @@
          "Uno solo desde el Monitor"): el link "Calendario" salió del menú; el
          calendario completo se abre desde el botón "Calendario" del Monitor. #}
       <a href="{{ url_for('pickup_dashboard') }}"
-         class="sidebar-link{% if request.endpoint in ('pickup_dashboard', 'pickup_calendar') %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint in ('pickup_dashboard', 'pickup_calendar', 'pickup_centro_control') %} active{% endif %}">
         <i class="bi bi-display"></i><span>Monitor</span>
       </a>
       <a href="{{ url_for('pickup_public_request') }}" target="_blank"
