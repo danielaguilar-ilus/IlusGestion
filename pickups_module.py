@@ -1376,6 +1376,19 @@ def register_pickup_routes(app, ctx):
         except Exception as exc:
             print(f"[ILUS][PICKUP LOG] {exc}")
 
+    def _aviso_equipo_ya_enviado(request_id, clave, horas=6):
+        """True si ya se avisó al equipo por lo mismo (misma `clave` de log) en
+        las últimas `horas`. Freno anti-spam de acciones públicas repetidas con
+        el mismo enlace (auditoría 2026-09-25: repetir "Confirmar" sin propuesta
+        mandaba un correo al responsable y campanas a todo el equipo cada vez)."""
+        try:
+            return bool(mysql_fetchone(
+                f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action=%s "
+                f"AND created_at >= NOW() - INTERVAL %s HOUR LIMIT 1",
+                (request_id, clave, int(horas))))
+        except Exception:
+            return False
+
     # ══════════════════════════════════════════════════════════════════
     #  VALIDACIÓN DE DISPONIBILIDAD REAL DE SLOT (cupos + bloqueos + colación)
     # ══════════════════════════════════════════════════════════════════
@@ -1662,16 +1675,17 @@ def register_pickup_routes(app, ctx):
             eu = end.replace(tzinfo=_tz).astimezone(_utc)
             code = (req.get("code") or "RETIRO").strip()
             location = _pickup_event_location(req)
-            persona = req.get("pickup_person_name") or req.get("contact_name") or ""
-            link = _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or "")
+            # Levantamiento Ley 21.719 (2026-09-25): los calendarios se comparten
+            # (asistentes, familia, calendarios corporativos) → el evento NO lleva
+            # el enlace privado del seguimiento (con él se puede cancelar o
+            # cambiar la fecha) ni el nombre de quien retira. Solo el código y la
+            # página para buscarlo con código + correo.
+            link = _public_base_url() + "/retiros/solicitar#tracking-search"
             def _esc(s):
                 return (str(s or "").replace("\\", "\\\\").replace(",", "\\,")
                         .replace(";", "\\;").replace("\n", "\\n").replace("\r", ""))
-            desc = f"Retiro ILUS {code}."
-            if persona:
-                desc += f" Persona que retira: {persona}."
-            if req.get("public_token"):
-                desc += f" Seguimiento: {link}"
+            desc = (f"Retiro ILUS {code}. Para ver o cambiar tu retiro usa el enlace de tu "
+                    f"correo, o búscalo con este código y tu correo en: {link}")
             lines = [
                 "BEGIN:VCALENDAR", "VERSION:2.0",
                 "PRODID:-//ILUS Fitness//Retiros//ES",
@@ -1685,8 +1699,6 @@ def register_pickup_routes(app, ctx):
                 f"LOCATION:{_esc(location)}",
                 f"DESCRIPTION:{_esc(desc)}",
             ]
-            if req.get("public_token"):
-                lines.append(f"URL:{_esc(link)}")
             lines += [
                 "STATUS:CONFIRMED",
                 "BEGIN:VALARM", "TRIGGER:-PT2H", "ACTION:DISPLAY",
@@ -1717,8 +1729,10 @@ def register_pickup_routes(app, ctx):
             code = (req.get("code") or "RETIRO").strip()
             title = f"Retiro ILUS {code}"
             location = _pickup_event_location(req)
-            link = _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or "")
-            details = f"Retiro ILUS {code}." + (f" Seguimiento: {link}" if req.get("public_token") else "")
+            # Sin enlace privado del seguimiento (ver _build_pickup_ics, 2026-09-25)
+            link = _public_base_url() + "/retiros/solicitar#tracking-search"
+            details = (f"Retiro ILUS {code}. Para ver o cambiar tu retiro usa el enlace de tu "
+                       f"correo, o búscalo con este código y tu correo en: {link}")
             google = (
                 "https://calendar.google.com/calendar/render?action=TEMPLATE"
                 "&text=" + quote_plus(title)
@@ -2782,9 +2796,11 @@ def register_pickup_routes(app, ctx):
         resp = jsonify(payload)
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
+        resp.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         return resp
 
     @app.route("/retiros/seguimiento/<token>/status", methods=["GET"])
+    @_rate_limited("pickup_public_status_ip", max_attempts=240, window_seconds=60, methods=("GET",))
     def pickup_public_tracking_status(token):
         """Devuelve estado actual del retiro en JSON ligero — usado por el
         polling del tracking público (cada 30s).
@@ -3757,6 +3773,7 @@ def register_pickup_routes(app, ctx):
 
     @app.route("/retiros/seguimiento/<token>", methods=["GET", "POST"])
     @_rate_limited("pickup_public_tracking_post", max_attempts=20, window_seconds=600, methods=("POST",))
+    @_rate_limited("pickup_public_tracking_get", max_attempts=120, window_seconds=60, methods=("GET",))
     def pickup_public_tracking(token):
         # Validar formato del token antes de tocar BD (evita enumeración de
         # paths inválidos por bots). Tokens son URL-safe-base64 de >= 16 chars.
@@ -3843,8 +3860,17 @@ def register_pickup_routes(app, ctx):
                     try:
                         print(f"[pickup_tracking] CONFIRM sin propuesta pendiente req_id={req['id']}", flush=True)
                     except Exception: pass
-                    # Le prometemos una nueva fecha → que el equipo se entere.
+                    # Le prometemos una nueva fecha → que el equipo se entere. Solo si
+                    # el retiro esperaba una propuesta y no se avisó ya (auditoría
+                    # 2026-09-25: repetir este POST con el enlace inundaba de correos).
+                    _avisar_np = (old in ("propuesta_enviada", "esperando_cliente", "reagendada")
+                                  and not _aviso_equipo_ya_enviado(req["id"], "aviso_equipo_sin_propuesta"))
                     try:
+                        if not _avisar_np:
+                            raise StopIteration
+                        log_event(req["id"], "aviso_equipo_sin_propuesta", old, old,
+                                  "El cliente quiso confirmar sin propuesta vigente; se avisó al equipo",
+                                  "sistema", "Seguimiento")
                         _notificar_equipo_retiros(
                             f"El cliente quiere confirmar el retiro {req.get('code') or '?'} y no tiene propuesta vigente",
                             (f"Cliente: {req.get('customer_name') or '?'}. Intentó confirmar, pero el "
@@ -3852,6 +3878,8 @@ def register_pickup_routes(app, ctx):
                             req["id"], req.get("code") or "?",
                             prioridad="alta", tipo="retiro_respuesta",
                         )
+                    except StopIteration:
+                        pass
                     except Exception as _e_np:
                         print(f"[pickups][team notify sin propuesta] {_e_np}", flush=True)
                     if _is_ajax:
@@ -3983,6 +4011,7 @@ def register_pickup_routes(app, ctx):
                     confirm_motivo = ""
                     _tx_fallo_tecnico = False
                     _ya_confirmado = False
+                    _prop_cambiada = False
                     conn_tx = None
                     try:
                         conn_tx = get_mysql()
@@ -4047,20 +4076,30 @@ def register_pickup_routes(app, ctx):
                                               confirmed_time_from=%s,
                                               confirmed_time_to=%s
                                         WHERE id=%s
-                                          AND status <> 'agenda_confirmada'""",
+                                          AND status IN ('solicitud_recibida','en_revision','informacion_incompleta',
+                                                         'propuesta_enviada','esperando_cliente','reagendada')""",
                                     (proposal["date"], proposal["time_from"],
                                      proposal["time_to"], req["id"]),
                                 )
                                 if cur_tx.rowcount == 0:
-                                    # Alguien más confirmó este mismo retiro entre clics
+                                    # Alguien más confirmó (o el equipo movió el
+                                    # retiro a preparación / cierre) entre clics:
+                                    # no se pisa ese cambio (auditoría 2026-09-25).
                                     confirm_motivo = "El retiro ya fue confirmado anteriormente."
                                     _ya_confirmado = True
                                 else:
                                     cur_tx.execute(
-                                        f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() WHERE id=%s",
+                                        f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() "
+                                        f"WHERE id=%s AND status='pending'",
                                         (proposal["id"],),
                                     )
-                                    confirm_ok = True
+                                    if cur_tx.rowcount == 0:
+                                        # La propuesta dejó de estar pendiente entre la
+                                        # lectura y el lock: no se confirma a ciegas.
+                                        confirm_motivo = "La propuesta cambió mientras confirmabas."
+                                        _prop_cambiada = True
+                                    else:
+                                        confirm_ok = True
 
                         if confirm_ok:
                             conn_tx.commit()
@@ -4093,6 +4132,17 @@ def register_pickup_routes(app, ctx):
                         return redirect(url_for("pickup_public_tracking", token=token))
                     # Doble clic / dos pestañas: la primera ya confirmó. No se
                     # rechaza la propuesta aceptada ni se le dice "no disponible".
+                    # La propuesta fue reemplazada entre la lectura y el lock: se
+                    # recarga para que el cliente vea la vigente (no se declina).
+                    if not confirm_ok and _prop_cambiada:
+                        _msg_pc = ("La propuesta cambió mientras confirmabas. Te mostramos "
+                                   "la fecha vigente para que la revises.")
+                        try: _POLL_CACHE.pop(token, None)
+                        except Exception: pass
+                        if _is_ajax:
+                            return _ajax_err(_msg_pc, code=409, payload={"reason": "proposal_changed"})
+                        flash(_msg_pc, "warning")
+                        return redirect(url_for("pickup_public_tracking", token=token))
                     if not confirm_ok and _ya_confirmado:
                         _msg_ya2 = "Tu retiro ya quedó confirmado. Revisa la fecha en esta página y en tu correo."
                         if _is_ajax:
@@ -4188,6 +4238,16 @@ def register_pickup_routes(app, ctx):
                 # un link viejo (auditoría 2026-09-24).
                 if old in _PUB_TERMINALES:
                     flash(_MSG_TERMINAL, "info")
+                    return redirect(url_for("pickup_public_tracking", token=token))
+                # Bodega ya está preparando el pedido: igual que "counter", el
+                # cambio se coordina por correo (auditoría 2026-09-25: el botón no
+                # se muestra en este estado, pero el POST se aceptaba igual).
+                if old == "en_preparacion":
+                    _msg_prep = ("Tu retiro ya se está preparando en bodega. Para cancelarlo "
+                                 "escríbenos a soportetec@sphs.cl.")
+                    if _is_ajax:
+                        return _ajax_err(_msg_prep, code=409, payload={"reason": "estado_no_permite"})
+                    flash(_msg_prep, "info")
                     return redirect(url_for("pickup_public_tracking", token=token))
                 reason = (request.form.get("reason") or "").strip()[:500]
                 # C3 (2026-06-09): cerrar también closed_at — gap conocido, el
@@ -4297,8 +4357,14 @@ def register_pickup_routes(app, ctx):
                         (req["id"], date, tf, tt, (request.form.get("counter_message", "") or "")[:1000],
                          secrets.token_urlsafe(24), _expires_at),
                     )
-                    mysql_execute(f"UPDATE `{REQ}` SET status='en_revision' WHERE id=%s", (req["id"],))
-                    log_event(req["id"], "cliente_contrapropuso", old, "en_revision", f"{date} {tf}-{tt}", "cliente", req["contact_name"])
+                    # Desde una cita CONFIRMADA el estado no cambia (auditoría
+                    # 2026-09-25): la cita sigue vigente hasta que ILUS acepte la
+                    # nueva fecha — antes pasaba a 'en_revision' y se perdían el
+                    # recordatorio, el stepper y la tarjeta de la cita.
+                    _est_nuevo = old if old == "agenda_confirmada" else "en_revision"
+                    if _est_nuevo != old:
+                        mysql_execute(f"UPDATE `{REQ}` SET status=%s WHERE id=%s", (_est_nuevo, req["id"]))
+                    log_event(req["id"], "cliente_contrapropuso", old, _est_nuevo, f"{date} {tf}-{tt}", "cliente", req["contact_name"])
                     try:
                         print(f"[pickup_tracking] COUNTER OK req_id={req['id']} fecha={date} {tf}-{tt}", flush=True)
                     except Exception: pass
@@ -4336,7 +4402,16 @@ def register_pickup_routes(app, ctx):
                         "success",
                     )
                 else:
-                    _err = msg_dt if not ok_dt else f"Ese horario ya no está disponible: {motivo_slot}"
+                    # Sin cifras internas al cliente (mismo criterio que el formulario
+                    # público): "Slot lleno: 2 retiros (máx 2)" → texto simple.
+                    _m_cp = motivo_slot or ""
+                    if _m_cp.startswith(("Slot lleno", "Capacidad")):
+                        _m_cp = "no quedan cupos en ese bloque"
+                    elif _m_cp.startswith("Día completo"):
+                        _m_cp = "ese día ya no tiene cupos"
+                    elif _m_cp.startswith("Día bloqueado"):
+                        _m_cp = "la bodega no atiende retiros ese día"
+                    _err = msg_dt if not ok_dt else f"Ese horario ya no está disponible: {_m_cp or 'elige otro bloque'}."
                     try:
                         print(f"[pickup_tracking] COUNTER rechazada req_id={req['id']} ok_dt={ok_dt} ok_slot={ok_slot} motivo={_err}", flush=True)
                     except Exception: pass
@@ -4361,8 +4436,27 @@ def register_pickup_routes(app, ctx):
             return redirect(url_for("pickup_public_tracking", token=token))
         packages = mysql_fetchall(f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number", (req["id"],))
         proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
-        logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 20", (req["id"],))
-        attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
+        # Levantamiento Ley 21.719 (2026-09-25): la página pública no usa el
+        # historial interno ni los adjuntos (traían nombres del personal y datos
+        # de quien retira) → ya no se consultan ni se pasan a la plantilla.
+        logs, attachments = [], []
+        # De cada propuesta, solo lo que se muestra (sin token ni motivo interno).
+        # Una propuesta "pendiente" que ya venció o cuyo bloque ya pasó se
+        # muestra como vencida: antes seguía ofreciendo "Confirmar" (auditoría
+        # 2026-09-25); el backend igual la rechaza al confirmar.
+        _prop_campos = ("id", "status", "proposed_by", "date", "time_from", "time_to",
+                        "message", "created_at", "answered_at", "expires_at")
+        _props_pub = []
+        for _p in (proposals or []):
+            _d = {k: _p.get(k) for k in _prop_campos}
+            if _d["status"] == "pending":
+                try:
+                    if not proposal_is_vigente(_p, exigir_bloque_futuro=True):
+                        _d["status"] = "expired"
+                except Exception:
+                    pass
+            _props_pub.append(_d)
+        proposals = _props_pub
         # 2026-05-23 (Daniel): cálculo robusto de m³ en backend (evita Jinja
         # `namespace` que falla en algunas versiones).
         try:
@@ -4383,8 +4477,17 @@ def register_pickup_routes(app, ctx):
                 for p in packages
                 if p.get("length_cm") and p.get("width_cm") and p.get("height_cm")
             ))
-        # Sanitizar: eliminar campos internos antes de pasar al template público.
-        req_safe = dict(_strip_internal(req))
+        # Solo los campos que la página pública muestra (lista BLANCA, 2026-09-25).
+        # Antes se quitaban algunos campos internos pero seguían llegando RUT,
+        # correo, teléfono, persona que retira, observaciones y montos: la
+        # plantilla no los usaba, pero cualquier cambio futuro los habría expuesto.
+        _REQ_PUBLICO = ("code", "status", "document_type", "document_number", "customer_name",
+                        "public_token", "requested_date", "requested_time_from", "requested_time_to",
+                        "proposed_date", "proposed_time_from", "proposed_time_to",
+                        "confirmed_date", "confirmed_time_from", "confirmed_time_to",
+                        "total_packages", "peso_real_kg", "peso_vol_kg", "total_weight_kg",
+                        "total_volumetric_weight", "total_volume_m3", "volumen_m3")
+        req_safe = {k: req.get(k) for k in _REQ_PUBLICO}
         req_safe["m3_calculado"] = _m3
         # Progreso de preparación (WMS) para el cliente (Daniel 2026-06-21)
         prep_total, prep_hechos = 0, 0
@@ -4419,6 +4522,8 @@ def register_pickup_routes(app, ctx):
         _resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         _resp.headers["Pragma"] = "no-cache"
         _resp.headers["Expires"] = "0"
+        # Enlace privado: que ningún buscador lo indexe si se publica por error
+        _resp.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         return _resp
 
     # XLSX RESUMEN PÚBLICO — ELIMINADO 2026-09-25 (Daniel: "le eliminamos el

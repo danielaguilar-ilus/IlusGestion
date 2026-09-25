@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Seguimiento {{ req.code }} — ILUS Fitness</title>
   <meta name="description" content="Seguimiento en vivo de tu retiro ILUS Fitness.">
+  {# Enlace privado: ningún buscador debe indexarlo si se publica por error (2026-09-25) #}
+  <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="theme-color" content="#0a0a0a">
   {# 2026-05-28: removida ref a favicon.svg inexistente (causaba 404 silencioso). #}
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
@@ -109,14 +111,26 @@
           }.get(req.status,'circle') %}
           <i class="bi bi-{{ _icon }} ico"></i><span id="statusLbl">{{ b.label }}</span>
         </span>
+        {# Quitar lo repetido (Daniel 2026-09-25): este aviso contradecía al
+           estado cuando el retiro ya estaba confirmado o terminado. #}
+        {% if req.status not in ['agenda_confirmada','en_preparacion','retirada','cerrada','rechazada','fallida'] %}
         <div class="hero-help">
           La cita queda <strong style="color:#fff">confirmada</strong> solo cuando aparece como tal abajo.
         </div>
+        {% endif %}
       </div>
     </div>
 
     {# Descarga "resumen (Excel)" ELIMINADA 2026-09-25 (Daniel; levantamiento
        Ley 21.719): exponía RUT, correo y teléfono completos. #}
+
+    {# Propuestas vigentes: se calculan acá porque deciden si se muestra la
+       tarjeta de estado (abajo) y el bloque de acción. #}
+        {% set _pend_all = proposals|selectattr('status','equalto','pending')|list %}
+        {% set pending = _pend_all|selectattr('proposed_by','equalto','internal')|list %}
+        {% set pending_cli = _pend_all|rejectattr('proposed_by','equalto','internal')|list %}
+        {% set _st_terminal = req.status in ['retirada','cerrada','rechazada','fallida'] %}
+        {% set _st_responde = req.status in ['solicitud_recibida','en_revision','informacion_incompleta','propuesta_enviada','esperando_cliente','reagendada'] %}
 
     {# ──────── STATUS HERO CONTEXTUAL ──────── #}
     {% set _hero_msg = {
@@ -133,7 +147,17 @@
       'rechazada':          {'ico':'x-octagon-fill', 'accent':'accent-red','title':'Solicitud cancelada','msg':'Si fue un error o quieres reagendar, escríbenos respondiendo el correo o haz una nueva solicitud.'},
       'fallida':            {'ico':'exclamation-octagon-fill','accent':'accent-red','title':'Retiro no completado','msg':'No pudimos completar tu retiro. Nos pondremos en contacto para reagendar.'},
     }.get(req.status, {'ico':'circle','accent':'accent-blue','title':b.label,'msg':'Estado actualizado por nuestro equipo.'}) %}
-    <div class="hero-status {{ _hero_msg.accent }}" id="heroStatusCard">
+    {# Estado "con propuesta" pero sin ninguna vigente (venció, se liberó por falta
+       de cupo…): antes decía "Confírmala abajo" sin nada que confirmar. #}
+    {% if req.status in ['propuesta_enviada','esperando_cliente','reagendada'] and not pending and not pending_cli %}
+      {% set _hero_msg = {'ico':'hourglass-split','accent':'accent-amber','title':'Te enviaremos una nueva fecha',
+                          'msg':'La propuesta anterior ya no está vigente. Te responderemos a la brevedad con una nueva fecha, o propón tú otra abajo.'} %}
+    {% endif %}
+    {# Quitar lo repetido (Daniel 2026-09-25): con una propuesta vigente, el
+       bloque de la propuesta ya dice lo mismo ("Hay una fecha esperándote" +
+       "ILUS te propuso una fecha") → se muestra solo el bloque de acción. #}
+    {% set _hay_bloque_propuesta = (pending or pending_cli) and _st_responde %}
+    <div class="hero-status {{ _hero_msg.accent }}" id="heroStatusCard"{% if _hay_bloque_propuesta %} style="display:none"{% endif %}>
       <div class="ico-wrap"><i class="bi bi-{{ _hero_msg.ico }}"></i></div>
       <div style="flex:1">
         <h3 class="title" id="heroStatusTitle">{{ _hero_msg.title }}</h3>
@@ -166,11 +190,6 @@
            "en revisión" (antes aparecía como si ILUS la hubiera propuesto y
            Confirmar fallaba). Y el cliente siempre tiene salida: cambiar fecha
            o cancelar mientras el retiro no esté cerrado. #}
-        {% set _pend_all = proposals|selectattr('status','equalto','pending')|list %}
-        {% set pending = _pend_all|selectattr('proposed_by','equalto','internal')|list %}
-        {% set pending_cli = _pend_all|rejectattr('proposed_by','equalto','internal')|list %}
-        {% set _st_terminal = req.status in ['retirada','cerrada','rechazada','fallida'] %}
-        {% set _st_responde = req.status in ['solicitud_recibida','en_revision','informacion_incompleta','propuesta_enviada','esperando_cliente','reagendada'] %}
         {% if pending and _st_responde %}
         <div class="next-action" id="nextAction">
           <h5><i class="bi bi-bell-fill"></i>ILUS te propuso una fecha — responde por favor</h5>
@@ -375,7 +394,7 @@
       {%- if _idx_actual == -1 -%}
       <div class="step-cancel-banner" style="display:flex;align-items:center;gap:10px;background:#fee2e2;border:1px solid #fca5a5;border-radius:12px;padding:12px 16px;margin-bottom:14px;color:#991b1b;font-weight:700">
         <i class="bi bi-x-octagon-fill" style="font-size:1.2rem"></i>
-        <span>Esta solicitud fue cancelada. Si fue un error, escríbenos respondiendo el correo.</span>
+        <span>{% if req.status == 'fallida' %}No pudimos completar este retiro. Te contactaremos para reagendar.{% else %}Esta solicitud fue cancelada. Si fue un error, escríbenos respondiendo el correo.{% endif %}</span>
       </div>
       {%- endif -%}
       <div class="stepper stepper-5" id="stepperRoot" data-idx="{{ _idx_actual }}">
@@ -392,7 +411,7 @@
             <div class="circle"><span class="emoji">{{ paso.emoji }}</span></div>
             <div>
               <div class="label">{{ paso.label }}</div>
-              <div class="sub">{{ paso.sub }}</div>
+              <div class="sub">{{ 'Fecha respondida' if (_cls == 'done' and loop.index0 == 1) else paso.sub }}</div>
             </div>
           </div>
         {% endfor %}
@@ -403,7 +422,8 @@
        Útil para quejas: "el cliente reclama pero rechazó 3 fechas que le propusimos".
        Muestra las propuestas con estado 'rejected' (o 'rechazada') con fecha
        y motivo (si el cliente dejó nota al rechazar). #}
-    {% set _rejected_props = proposals|selectattr('status','in',['rejected','rechazada'])|list %}
+    {% set _rejected_props = proposals|selectattr('status','in',['declined','rejected','rechazada','expired','superseded'])|list %}
+    {% set _prop_estado_lbl = {'declined':'No confirmada','rejected':'Rechazada','rechazada':'Rechazada','expired':'Vencida','superseded':'Reemplazada'} %}
     {% if _rejected_props and _rejected_props|length > 0 %}
     <div class="ilus-card" style="background:linear-gradient(135deg,#fafafa 0%,#fff 100%);border-left:4px solid #f59e0b">
       <details style="cursor:pointer">
@@ -421,7 +441,7 @@
                 <i class="bi bi-calendar-x me-1"></i>
                 {{ p.date | chile_fmt('%a %d/%m/%Y') }} · {{ p.time_from|hm }}–{{ p.time_to|hm }}
               </div>
-              <span class="badge bg-danger" style="font-size:.68rem">Rechazada</span>
+              <span class="badge {{ 'bg-secondary' if p.status == 'superseded' else 'bg-danger' }}" style="font-size:.68rem">{{ _prop_estado_lbl.get(p.status, 'Cerrada') }}{% if p.proposed_by and p.proposed_by != 'internal' %} · tu propuesta{% endif %}</span>
             </div>
             {% if p.message %}
             <div class="small mt-2" style="color:#9a3412;font-style:italic">
@@ -443,17 +463,9 @@
     <div class="row g-3 mt-1">
       <div class="col-lg-8">
 
-        {# ──────── PRÓXIMO PASO según estado ──────── #}
-        {% if req.status == 'agenda_confirmada' and req.confirmed_date %}
-        <div class="ilus-card" style="background:linear-gradient(135deg,#fff 0%,#fafafa 100%)">
-          <h6><i class="bi bi-geo-alt-fill"></i>Cómo llegar a la bodega</h6>
-          <div style="font-weight:800;color:var(--ilus-black);font-size:1rem">{{ settings.warehouse_name }}</div>
-          <div class="text-muted small mt-1">{{ settings.warehouse_addr }}</div>
-          <a href="{{ settings.maps_url }}" target="_blank" class="map-btn">
-            <i class="bi bi-google"></i>Abrir en Google Maps
-          </a>
-        </div>
-        {% endif %}
+        {# "Cómo llegar a la bodega" QUITADA 2026-09-25 (Daniel: "quitar lo
+           repetido"): con el retiro confirmado mostraba la misma dirección y
+           mapa que la tarjeta "Bodega de retiro" de la columna lateral. #}
 
         {# ──────── RATING — solo si ya retirado ──────── #}
         {% if req.status == 'retirada' %}
@@ -480,7 +492,7 @@
                 {% if req.requested_time_from %}<br><small>{{ req.requested_time_from|hm }} – {{ req.requested_time_to|hm }}</small>{% endif %}
               </div>
             </div>
-            <div class="agenda-cell {% if req.proposed_date and not req.confirmed_date %}proposed{% endif %}">
+            <div class="agenda-cell {% if pending and not req.confirmed_date %}proposed{% endif %}">
               <div class="ag-lbl"><i class="bi bi-send"></i>Propuesta de ILUS</div>
               <div class="ag-val">
                 {% if req.proposed_date %}
@@ -589,7 +601,7 @@
           <ul class="small mb-0 ps-3" style="line-height:1.75;color:#374151">
             <li>Presenta tu cédula al llegar.</li>
             <li>Si retira un tercero, debe coincidir con la persona autorizada.</li>
-            <li>La cita es válida sólo cuando aparece como <strong>confirmada</strong>.</li>
+            {% if req.status not in ['agenda_confirmada','en_preparacion'] %}<li>La cita es válida sólo cuando aparece como <strong>confirmada</strong>.</li>{% endif %}
             <li>Al entregar, registramos el nombre y RUT de quien retira.</li>
           </ul>
         </div>

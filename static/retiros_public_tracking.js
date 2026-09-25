@@ -111,36 +111,20 @@
                     credentials: 'same-origin',
                   });
                   if (!r.ok) throw new Error('HTTP ' + r.status);
-                  const payload = await r.json();
-                  const dia = (payload.dias || {})[TARGET_DATE];
-                  if (!dia || !dia.disponible){
-                    _running = false;
-                    _fail(1, (dia && dia.razon) || 'El día ya no está disponible.');
-                    return;
-                  }
-                  const slot = (dia.slots || []).find(s =>
-                    (s.time_from || s.hora) === TARGET_TF
-                  );
-                  // El grid público solo muestra bloques estándar (09:00-12:30
-                  // y 14:00-17:00). Si ILUS propuso un horario que cruza el
-                  // buffer/colación (propuesta interna con bypass), ese bloque
-                  // NO aparece en el grid — pero ES válido. En ese caso NO
-                  // bloqueamos acá: dejamos que el POST confirm (paso 2), que
-                  // es la fuente de verdad y respeta la propuesta interna,
-                  // decida. Solo bloqueamos si el bloque SÍ está en el grid y
-                  // quedó realmente lleno por OTRO retiro (su propia reserva ya
-                  // viene excluida vía exclude_token).
-                  if (slot && (slot.estado === 'completo' || slot.estado === 'colacion' || slot.estado === 'bloqueado')){
-                    _running = false;
-                    _fail(1, 'Tu horario ya no está libre: ' + (slot.razon || slot.estado));
-                    return;
-                  }
-                  _setSub(1, 'Horario disponible. Reservando…');
+                  await r.json();
+                  // 2026-09-25 (auditoría): este paso ya NO corta la confirmación.
+                  // Bloqueaba propuestas válidas de ILUS en horario de colación
+                  // (el operador puede cruzarla) y contaba solicitudes nuevas que
+                  // el servidor no cuenta → "Tu horario ya no está libre" sin que
+                  // el POST llegara ni el equipo se enterara. El POST (paso 2) es
+                  // la fuente de verdad: si el bloque se llenó, lo dice y avisa.
+                  _setSub(1, 'Horario revisado. Reservando…');
                   _done(1);
                 } catch (e){
-                  _running = false;
-                  _fail(1, 'No pudimos comprobar disponibilidad. Verifica tu conexión.');
-                  return;
+                  // Sin red para revisar: igual intentamos confirmar (el paso 2
+                  // informa si no hay conexión).
+                  _setSub(1, 'Reservando…');
+                  _done(1);
                 }
 
                 // ── PASO 2: POST AJAX confirm ─────────────────────
@@ -170,7 +154,11 @@
                     // La página quedó desactualizada (propuesta reemplazada, ya
                     // confirmado, retiro cerrado): recargar muestra lo vigente.
                     const _reason = data && data.reason;
-                    if (['proposal_changed', 'ya_confirmado', 'estado_terminal', 'no_pending_proposal', 'proposal_expired'].indexOf(_reason) !== -1){
+                    // slot_unavailable / race_lost: el servidor ya liberó esa
+                    // propuesta → "Reintentar" fallaría siempre (y avisaba de nuevo
+                    // al equipo); se recarga para mostrar lo vigente (2026-09-25).
+                    if (['proposal_changed', 'ya_confirmado', 'estado_terminal', 'no_pending_proposal', 'proposal_expired',
+                         'slot_unavailable', 'race_lost', 'estado_no_permite'].indexOf(_reason) !== -1){
                       setTimeout(() => { window.location.href = TRACK_URL; }, 2600);
                     }
                     return;
@@ -289,6 +277,7 @@
     // otro estado del MISMO hito) y la fecha/propuesta (caso ping-pong: nueva
     // propuesta sin cambiar de estado). Daniel 2026-06-17 (canal EN VIVO).
     let lastSig = null;
+    let lastPrep = null;
     function _stateSig(d) {
       return [
         d.status, d.journey_idx,
@@ -296,11 +285,28 @@
         // ILUS puede REEMPLAZAR la propuesta sin cambiar el estado ("Cambiar
         // aquí"): el id nuevo fuerza la recarga antes de que el cliente confirme.
         d.pending_proposal_id || 0,
-        d.confirmed_date || '', d.confirmed_time_from || '',
-        // CONECTIVIDAD (2026-06-21): cada check de bodega en el picking WMS
-        // cambia la firma → la barra de preparación avanza EN VIVO.
-        (d.prep_hechos || 0) + '/' + (d.prep_total || 0)
+        d.confirmed_date || '', d.confirmed_time_from || ''
       ].join('|');
+    }
+    // CONECTIVIDAD (2026-06-21): cada check de bodega en el picking avanza la
+    // barra de preparación. Desde 2026-09-25 va aparte de la firma: antes cada
+    // ítem marcado mostraba "Tu retiro pasó a…" a pantalla completa y cerraba
+    // cualquier ventana abierta, aunque el estado no cambiara.
+    function _prepSig(d) { return (d.prep_hechos || 0) + '/' + (d.prep_total || 0); }
+    // URL del seguimiento SIN ?created=1 (si no, el aviso "¡Solicitud creada!"
+    // reaparecía en cada recarga automática).
+    function _recargar() {
+      const u = TRK.trackUrl || '';
+      if (u) window.location.replace(u); else window.location.reload();
+    }
+    function _pollFallo() {
+      pollFailures++;
+      // Tras 5 fallos seguidos (red o respuesta del servidor), callar el polling
+      if (pollFailures >= 5 && pollTimer) {
+        clearInterval(pollTimer); pollTimer = null;
+        const lb = document.getElementById('liveBadge');
+        if (lb) lb.innerHTML = '<i class="bi bi-wifi-off"></i> SIN CONEXIÓN';
+      }
     }
 
     function startPolling() {
@@ -318,15 +324,17 @@
       if (document.hidden) return; // No malgastar si la pestaña está oculta
       try {
         const resp = await fetch(POLL_URL, { credentials: 'same-origin', cache: 'no-store' });
-        if (!resp.ok) { pollFailures++; return; }
+        if (!resp.ok) { _pollFallo(); return; }
         const data = await resp.json();
         pollFailures = 0;
         if (!data || !data.ok || !data.status) return;
         const sig = _stateSig(data);
+        const prep = _prepSig(data);
         if (lastSig === null) {
           // Primer poll: fijamos baseline. Si YA difiere del estado con que se
           // renderizó la página (cambió entre el render y este poll), refrescamos.
           lastSig = sig;
+          lastPrep = prep;
           const idxChanged = Number.isFinite(CURRENT_IDX) && data.journey_idx !== CURRENT_IDX;
           // Propuesta de ILUS distinta a la que se pintó (reemplazada entre el
           // render y este poll) → recargar antes de que el cliente la confirme.
@@ -342,23 +350,23 @@
           }
           if (data.status !== CURRENT_STATUS || idxChanged || propChanged) {
             showStatusChangeAlert(data.status_label || data.status);
-            setTimeout(() => { window.location.reload(); }, 1400);
+            setTimeout(_recargar, 1400);
           }
           return;
         }
         if (sig !== lastSig) {
           // Cualquier novedad visible (estado, hito, propuesta o fecha) → refrescar
           showStatusChangeAlert(data.status_label || data.status);
-          setTimeout(() => { window.location.reload(); }, 1400);
+          setTimeout(_recargar, 1400);
+          return;
+        }
+        if (prep !== lastPrep) {
+          // Solo avanzó la preparación: recarga silenciosa, y nunca con una
+          // ventana abierta (se reintenta en el próximo poll).
+          if (!document.querySelector('.modal.show')) _recargar();
         }
       } catch (e) {
-        pollFailures++;
-        // Tras 5 fallos seguidos, callar el polling para no martillar
-        if (pollFailures >= 5 && pollTimer) {
-          clearInterval(pollTimer); pollTimer = null;
-          const lb = document.getElementById('liveBadge');
-          if (lb) lb.innerHTML = '<i class="bi bi-wifi-off"></i> SIN CONEXIÓN';
-        }
+        _pollFallo();
       }
     }
 
@@ -522,8 +530,21 @@
       if (typeof window.ilusToast === 'function') {
         try { return window.ilusToast(msg, { type: type || 'info', duration: 4500 }); } catch(_){}
       }
-      // Sin ilus_ui.js el shim no existe: último recurso, nunca silencio.
-      try { window.alert(msg); } catch(_){}
+      // Sin ilus_ui.js: el aviso va dentro del modal (REGLA #1, nada de alert
+      // nativo — 2026-09-25), nunca silencio.
+      try {
+        const ref = document.getElementById('cnt_submit_btn');
+        if (!ref || !ref.parentNode) return;
+        let box = document.getElementById('cntAvisoFallback');
+        if (!box){
+          box = document.createElement('div');
+          box.id = 'cntAvisoFallback';
+          box.setAttribute('role', 'alert');
+          box.style.cssText = 'margin:10px 0;padding:10px 12px;border-radius:10px;background:#fee2e2;color:#7f1d1d;font-weight:700;font-size:.9rem';
+          ref.parentNode.insertBefore(box, ref);
+        }
+        box.textContent = msg;
+      } catch(_){}
     }
 
     function _mountCal(){

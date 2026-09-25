@@ -64,6 +64,16 @@
     return `${String(Math.floor(min/60)).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
   }
   function _qs(sel, root){ return (root || document).querySelector(sel); }
+  // Fecha LOCAL del navegador en YYYY-MM-DD (2026-09-25): toISOString() da la
+  // fecha en UTC y de noche en Chile marcaba "hoy" y el mínimo un día corrido.
+  function _isoLocal(d){
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  // YYYY-MM-DD → DD/MM/YYYY para textos al cliente (REGLA #6: nunca ISO crudo)
+  function _fechaCl(iso){
+    const p = String(iso || '').split('-');
+    return p.length === 3 ? (p[2] + '/' + p[1] + '/' + p[0]) : String(iso || '');
+  }
   function _toast(msg, type){
     if (typeof global.ilusToast === 'function'){
       try { return global.ilusToast(msg, { type: type || 'info', duration: 4500 }); } catch(_){}
@@ -231,7 +241,7 @@
       const nDias = new Date(a, m, 0).getDate();
       let offset = primerDia.getDay() - 1;
       if (offset < 0) offset = 6;
-      const hoyStr = new Date().toISOString().slice(0, 10);
+      const hoyStr = _isoLocal(new Date());
       const diasPayload = (state.payload && state.payload.dias) || {};
       // Navegación acotada al horizonte del payload (igual que el formulario
       // público): fuera de [from, to] no hay datos que mostrar.
@@ -771,9 +781,9 @@
           // Daniel 2026-05-24: el operador interno (allowToday) puede agendar
           // desde HOY; el cliente público sigue limitado a mañana en adelante.
           const today = new Date();
-          const todayStr = today.toISOString().slice(0,10);
-          const tomorrow = new Date(Date.now() + 24*3600*1000);
-          const tomorrowStr = tomorrow.toISOString().slice(0,10);
+          const todayStr = _isoLocal(today);
+          const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+          const tomorrowStr = _isoLocal(tomorrow);
           const minStr = cfg.allowToday ? todayStr : tomorrowStr;
           dateInp.min = (state.payload.from < minStr) ? minStr : state.payload.from;
           dateInp.max = state.payload.to;
@@ -838,11 +848,11 @@
       }
       const dia = (state.payload.dias || {})[fecha];
       if (!dia){
-        renderEmpty('Sin datos para ' + fecha + '. Está fuera del rango de 30 días.');
+        renderEmpty('Sin datos para el ' + _fechaCl(fecha) + '. Está fuera del rango de 30 días.');
         return;
       }
       if (!dia.disponible){
-        renderEmpty((dia.razon || 'Día no operativo') + ' — ' + fecha);
+        renderEmpty((dia.razon || 'Día no operativo') + ' — ' + _fechaCl(fecha));
         return;
       }
       state.slots = dia.slots || [];
