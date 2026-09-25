@@ -81783,7 +81783,13 @@ def ot2_detalle(vid):
     # viene en el mismo documento (monto = valor_bruto del documento
     # completo, no una línea suelta).
     _docs_proyecto = _ot_docs_listar(vid)
-    valor_proyecto = {"n": _docs_proyecto["n_cobro"], "total": _docs_proyecto["total_cobro"]}
+    # 💰 2026-09-25 (Daniel: "podemos identificar el valor del proyecto, pero
+    # yo quiero identificar y valorizar son los servicios siempre"). El número
+    # principal del chip pasa a ser el VALOR DEL SERVICIO de la OT (servicio +
+    # despacho del Paso 1, o `costo` si ambos están vacíos -- es `valor_ot`);
+    # el total de los documentos CON productos queda como dato secundario.
+    valor_proyecto = {"n": _docs_proyecto["n_cobro"], "total": _docs_proyecto["total_cobro"],
+                      "servicio": _docs_proyecto.get("valor_ot")}
 
     # ═══════════════════════════════════════════════════════════════════
     # 🆕 2026-09-02 — ACTIVIDAD DE LA OT (Daniel, urgente: "necesito algo
@@ -84227,6 +84233,14 @@ def _ot_docs_listar(vid):
         # manda: el total de los documentos incluye productos.
         "valor_ot": _zz_ot if _zz_ot is not None else (
             float(v["costo"]) if v.get("costo") is not None else None),
+        # 💰 2026-09-25 (tarjeta de Finanzas por pasos): lo que quedó
+        # GUARDADO en la OT después de sumar/quitar un documento. Con esto la
+        # pantalla repinta los tres campos de cobro (Paso 1) sin recargar y
+        # sin un segundo fetch -- POST y DELETE de /documentos ya devuelven
+        # **_ot_docs_listar. None = columna vacía (no es lo mismo que 0).
+        "zz_monto": float(v["zz_monto"]) if v.get("zz_monto") is not None else None,
+        "zz_envio_monto": float(v["zz_envio_monto"]) if v.get("zz_envio_monto") is not None else None,
+        "costo": float(v["costo"]) if v.get("costo") is not None else None,
     }
 
 
@@ -93875,6 +93889,194 @@ def ot2_api_estimar_costo():
         "sin_tarifa": sin_tarifa,
         "n_equipos_sin_clasificar": n_sin_clasificar,
     })
+
+
+@app.route("/ot/api/<int:vid>/costo-sugerido", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_api_costo_sugerido(vid):
+    """Lo JUSTO que cuesta el trabajo de esta OT, según el cotizador.
+
+    💰 2026-09-25 (Daniel, tarjeta de Finanzas: "prefiero que cotices el
+    servicio con el mismo motor de cotización"). Sirve para comparar contra
+    lo que se le declara pagar al técnico/proveedor ("Nos cuesta la
+    instalación") y decir si se le está pagando de más.
+
+    ⚠️ NO reutiliza /ot/api/estimar-costo tal cual: ese endpoint, pese a su
+    nombre, devuelve el PRECIO al cliente (con el margen del cotizador). Acá
+    se devuelven las DOS cifras, separadas:
+      · costo  = horas × técnicos × valor hora técnica × cantidad
+                 (SIN margen, SIN precio piso, SIN precio fijo) -- lo justo
+                 que cuesta la mano de obra.
+      · precio = lo que el cotizador le cobraría al cliente por lo mismo
+                 (_tk_cotiz_calcular_item, el MISMO motor de Cotizaciones).
+    Tarifas: cat_clase_producto_tarifas vía _cat_tarifas_clases_batch (hereda
+    la de Mantención si la clase no tiene tarifa propia para el servicio).
+    Puente equipo → clase: cat_productos.sku = mant_maquinas.sku.
+
+    Equipos: la MISMA unión que usa ot2_detalle (tareas ∪ equipos de la OT),
+    sin los dados de baja y sin los saltados por el técnico. La cantidad se
+    suma con mant_maquinas.cantidad (los pisos son 1 fila con cantidad N).
+
+    Nunca inventa números: una clase de precio fijo (Pisos) o sin tarifa va a
+    `sin_tarifa`, y un equipo sin clasificar va a `sin_clasificar` con su
+    nombre y SKU -- los dos quedan FUERA del total.
+
+    SOLO LECTURA (no escribe nada) y SQL siempre parametrizado (REGLA #4).
+    El técnico nunca ve montos: 403 (mismo candado que /ot/api/lineas-zz).
+    """
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+
+    v = mysql_fetchone("SELECT id, tipo FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
+
+    tipo_ot = (v.get("tipo") or "").strip().lower()
+    tipo_servicio = _OT2_TIPO_A_TIPO_SERVICIO_COSTO.get(tipo_ot)
+    out = {
+        "ok": True, "tipo_ot": tipo_ot, "tipo_servicio": tipo_servicio,
+        "clases": [], "sin_tarifa": [], "sin_clasificar": [],
+        "total_costo": None, "total_precio": None, "margen_pct": None,
+        "n_equipos": 0, "motivo": None,
+    }
+
+    try:
+        equipos = mysql_fetchall(
+            "SELECT m.id, m.nombre, m.sku, COALESCE(m.cantidad,1) AS cant, "
+            "       cp.id AS producto_id, cc.slug AS clase_slug, cc.nombre AS clase_nombre "
+            "  FROM mant_maquinas m "
+            "  LEFT JOIN (SELECT DISTINCT maquina_id FROM mant_visita_tareas "
+            "              WHERE visita_id=%s AND maquina_id IS NOT NULL) t "
+            "         ON t.maquina_id = m.id "
+            "  LEFT JOIN mant_visita_equipos ve ON ve.maquina_id = m.id AND ve.visita_id=%s "
+            "  LEFT JOIN cat_productos cp ON cp.sku = m.sku "
+            "  LEFT JOIN cat_clases_producto cc ON cc.slug = cp.clase_producto AND cc.activo = 1 "
+            " WHERE (t.maquina_id IS NOT NULL OR ve.maquina_id IS NOT NULL) "
+            "   AND COALESCE(m.estado,'activo') <> 'baja' "
+            "   AND COALESCE(ve.estado_revision,'') <> 'saltado' "
+            " ORDER BY m.nombre LIMIT 500",
+            (vid, vid)) or []
+    except Exception as e:
+        print(f"[ot2_costo_sugerido] equipos vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos leer los equipos de la OT."}), 500
+
+    out["n_equipos"] = len(equipos)
+    if not equipos:
+        out["motivo"] = "sin_equipos"
+        return jsonify(out)
+    if not tipo_servicio:
+        out["motivo"] = "sin_tipo_servicio"
+        return jsonify(out)
+
+    # Agrupar por clase. Lo que no tiene clase activa se lista por nombre.
+    por_clase = {}
+    for e in equipos:
+        e = dict(e)
+        try:
+            cant = max(float(e.get("cant") or 1), 0.0)
+        except (TypeError, ValueError):
+            cant = 1.0
+        slug = (e.get("clase_slug") or "").strip()
+        if not slug:
+            out["sin_clasificar"].append({
+                "maquina_id": e.get("id"),
+                "nombre": (e.get("nombre") or "").strip() or "Equipo sin nombre",
+                "sku": (e.get("sku") or "").strip(),
+                "cantidad": cant,
+                # False = el SKU ni siquiera existe en el catálogo.
+                "en_catalogo": bool(e.get("producto_id")),
+            })
+            continue
+        g_ = por_clase.setdefault(slug, {"nombre": e.get("clase_nombre") or slug,
+                                         "cantidad": 0.0, "equipos": []})
+        g_["cantidad"] += cant
+        if len(g_["equipos"]) < 60:
+            g_["equipos"].append((e.get("nombre") or "").strip() or (e.get("sku") or ""))
+
+    if not por_clase:
+        out["motivo"] = "sin_clasificacion"
+        return jsonify(out)
+
+    _pricing = globals().get("_tk_cotiz_pricing_config")
+    _calc = globals().get("_tk_cotiz_calcular_item")
+    _batch = globals().get("_cat_tarifas_clases_batch")
+    if not (_pricing and _calc and _batch):
+        print("[ot2_costo_sugerido] motor del cotizador no registrado", flush=True)
+        return jsonify({"ok": False, "error": "El cotizador no está disponible ahora."}), 503
+    try:
+        cfg = _pricing()
+        tarifas = _batch(list(por_clase.keys()), tipo_servicio) or {}
+    except Exception as e:
+        print(f"[ot2_costo_sugerido] tarifas vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos leer las tarifas del cotizador."}), 500
+
+    from decimal import Decimal as _DecCs, ROUND_HALF_UP as _RhuCs
+
+    def _redondear(x):
+        return int(_DecCs(str(x)).quantize(_DecCs("1"), rounding=_RhuCs))
+
+    _valor_hh_cfg = cfg.get("valor_hh")
+    total_costo, total_precio = 0, 0
+    for slug, g_ in sorted(por_clase.items(), key=lambda kv: kv[1]["nombre"]):
+        cant = g_["cantidad"]
+        tarifa = tarifas.get(slug)
+        try:
+            item = _calc(slug, tipo_servicio, cant, 0, cfg, tarifa=tarifa)
+        except Exception as e:
+            print(f"[ot2_costo_sugerido] calcular '{slug}': {type(e).__name__}: {e}", flush=True)
+            item = None
+        base_fila = {"slug": slug, "clase": g_["nombre"], "cantidad": cant,
+                     "equipos": g_["equipos"]}
+        if item and item.get("no_cobrable"):
+            # Accesorio: línea operativa, el cotizador la deja en $0.
+            out["clases"].append(dict(base_fila, no_cobrable=True, horas=0, tecnicos=0,
+                                      hh=0, valor_hh=0, costo=0, precio=0,
+                                      heredada_de_mantencion=False))
+            continue
+        if not item or not tarifa:
+            out["sin_tarifa"].append(dict(base_fila, motivo="sin_tarifa"))
+            continue
+        if tarifa.get("precio_fijo") is not None:
+            # Pisos y similares: se cobran por unidad, sin horas-hombre. No
+            # hay de dónde sacar un costo de mano de obra -- no se inventa.
+            out["sin_tarifa"].append(dict(base_fila, motivo="precio_fijo",
+                                          precio=_redondear(item.get("total") or 0)))
+            continue
+        horas, tecnicos = tarifa.get("horas"), tarifa.get("tecnicos")
+        if horas is None or tecnicos is None:
+            out["sin_tarifa"].append(dict(base_fila, motivo="sin_tarifa"))
+            continue
+        tipo_origen = tarifa.get("tipo_servicio_origen") or tipo_servicio
+        if isinstance(_valor_hh_cfg, dict):
+            valor_hh = float(_valor_hh_cfg.get(tipo_origen, 20000.0))
+        else:
+            valor_hh = float(_valor_hh_cfg or 20000.0)
+        hh = float(horas) * int(tecnicos)
+        costo = _redondear(hh * valor_hh * cant)
+        precio = _redondear(item.get("total") or 0)
+        total_costo += costo
+        total_precio += precio
+        out["clases"].append(dict(
+            base_fila, horas=float(horas), tecnicos=int(tecnicos), hh=hh,
+            valor_hh=_redondear(valor_hh), costo=costo, precio=precio,
+            costo_unitario=_redondear(hh * valor_hh),
+            heredada_de_mantencion=(tipo_origen != tipo_servicio),
+        ))
+
+    _calculadas = [c for c in out["clases"] if not c.get("no_cobrable")]
+    if _calculadas:
+        out["total_costo"] = total_costo
+        out["total_precio"] = total_precio
+    elif out["sin_tarifa"]:
+        out["motivo"] = "sin_tarifa"
+    else:
+        out["motivo"] = "sin_clasificacion"
+    try:
+        out["margen_pct"] = float(cfg.get("margen_pct")) if cfg.get("margen_pct") is not None else None
+    except (TypeError, ValueError):
+        out["margen_pct"] = None
+    return jsonify(out)
 
 
 # ── Panel de administración de pantallas ─────────────────────────────
