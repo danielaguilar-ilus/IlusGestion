@@ -26,6 +26,9 @@
     max-width:980px;margin:0 auto;font-family:'Inter',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#111827;font-size:15px;line-height:1.5;text-align:left}
   #ilus-rf *,#ilus-rf *::before,#ilus-rf *::after{box-sizing:border-box}
   #ilus-rf [hidden]{display:none!important}
+  /* El tema de la tienda puede poner labels/títulos en mayúsculas o chicos */
+  #ilus-rf label,#ilus-rf h2,#ilus-rf h3,#ilus-rf p,#ilus-rf small,#ilus-rf strong{text-transform:none;letter-spacing:normal;font-family:inherit}
+  #ilus-rf label{display:block;font-size:inherit;font-weight:inherit;line-height:inherit;color:inherit;margin:0}
   #ilus-rf .irf-head{position:relative;overflow:hidden;background:var(--k);color:#fff;border-radius:18px 18px 0 0;padding:26px 28px 22px;border-bottom:4px solid var(--r)}
   #ilus-rf .irf-head::before{content:"";position:absolute;inset:0;pointer-events:none;
     background:radial-gradient(520px 220px at 92% -10%,rgba(220,38,38,.38),transparent 60%),repeating-linear-gradient(135deg,rgba(255,255,255,.035) 0 2px,transparent 2px 12px)}
@@ -465,13 +468,23 @@
       sec.classList.toggle('is-ok', marcado);
       if (n !== 3 && n !== 5 && ok) listos++;
     });
+    // 4 pasos obligatorios: documento, cliente, día/hora y la declaración
+    if ($('irf_terms').checked) listos++;
     $('irf_terms_box').classList.toggle('is-ok', $('irf_terms').checked);
     $('irfProgBar').style.width = (listos / 4 * 100) + '%';
     $('irfProg').classList.toggle('is-ok', listos === 4);
     $('irfProgTxt').textContent = listos + ' de 4 pasos listos';
   }
-  form.addEventListener('input', actualizar);
-  form.addEventListener('change', actualizar);
+  // Al corregir un campo se le quita el rojo, y la lista de avisos se oculta
+  // (vuelve a revisarse al enviar)
+  function alEditar(e) {
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('irf-in') && String(t.value || '').trim()) t.classList.remove('is-bad');
+    $('irf_alert').hidden = true;
+    actualizar();
+  }
+  form.addEventListener('input', alEditar);
+  form.addEventListener('change', alEditar);
 
   /* ── Agenda ────────────────────────────────────────────── */
   function cargarAgenda(mantener) {
@@ -518,8 +531,12 @@
       var iso = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
       var dia = (iso >= desde && iso <= hasta) ? dispo.dias[iso] : null;
       if (!dia) { html += '<button type="button" class="irf-day is-out" disabled>' + d + '</button>'; continue; }
-      if (!dia.disponible) {
-        html += '<button type="button" class="irf-day is-off" data-off="' + esc(dia.razon || 'Día no disponible') + '" data-iso="' + iso + '" aria-label="' + d + ': ' + esc(dia.razon || 'no disponible') + '">' + d + '</button>';
+      // Día hábil pero sin ninguna hora que se pueda elegir (ej. mañana cuando
+      // ya no se alcanzan las 24 h de anticipación): se muestra como no disponible
+      var libres = (dia.slots || []).filter(function (s) { return s.estado === 'disponible' || s.estado === 'ocupado'; }).length;
+      var razon = !dia.disponible ? (dia.razon || 'Día no disponible') : (!libres ? 'Ya no quedan horas libres este día' : '');
+      if (razon) {
+        html += '<button type="button" class="irf-day is-off" data-off="' + esc(razon) + '" data-iso="' + iso + '" aria-label="' + d + ': ' + esc(razon) + '">' + d + '</button>';
         continue;
       }
       var pct = +dia.ocupacion_pct || 0, col = pct >= 80 ? '#dc2626' : pct >= 40 ? '#f59e0b' : '#16a34a';
