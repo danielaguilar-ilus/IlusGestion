@@ -788,6 +788,9 @@
             '&libraries=places&language=es&region=CL&callback=__ilusGmapsReady&loading=async';
     document.head.appendChild(s);
   }
+  // 2026-09-25: expuesto para pantallas que necesitan el Geocoder sin un
+  // input de autocompletado (botón "Ruta" de la OT, ot2/detalle.html).
+  global.ilusEnsureGmapsSdk = ensureGmapsSdk;
 
   function ilusPlacesAutocomplete(inputIdOrEl, opts){
     opts = opts || {};

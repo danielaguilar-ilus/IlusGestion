@@ -3070,8 +3070,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               que realice la OT será el responsable"). Solo aparece cuando
               Google no pudo ubicar un punto exacto -- con dirección bien
               declarada no molesta a nadie. -#}
-          {% if puede_metadata and ruta.origen in ('sin_pin', 'sin_direccion') %}
-          <div class="otd-warn" style="margin:0 0 10px">
+          {#- Un trabajo interno de bodega (sin cliente) no tiene a dónde
+              navegar por diseño: ahí el aviso sería ruido. -#}
+          {% if puede_metadata and (ruta.origen == 'sin_pin' or (ruta.origen == 'sin_direccion' and v.cliente_id)) %}
+          <div class="otd-warn" id="otdRutaSinPin" style="margin:0 0 10px">
             <i class="bi bi-exclamation-triangle-fill"></i>
             <span>{% if ruta.origen == 'sin_direccion' %}Esta OT no tiene dirección: el técnico no tiene a dónde navegar.{% else %}El técnico no tiene un punto exacto para llegar: Waze y Google Maps van a adivinar con el texto.{% endif %}
               Quien crea o edita la OT es responsable de la dirección —
@@ -5844,6 +5846,80 @@ function otdDestinoTexto(){
   return d;
 }
 function otdHayCoords(){ return OTD_RUTA.lat != null && OTD_RUTA.lng != null; }
+
+{% if ruta.origen == 'sin_pin' and v.estado not in ('completada', 'cerrada', 'cancelada', 'anulada') %}
+/* 🛣️ 2026-09-25 — la OT tiene dirección escrita pero ningún punto exacto.
+   Se busca AQUÍ, en el navegador, con el mismo Google del autocompletado:
+   la clave de ILUS está restringida por sitio web y Google la rechaza desde
+   el servidor (REQUEST_DENIED, medido en producción). Mismas reglas que
+   _google_geocode_latlng en app.py: nada de APPROXIMATE (centro de la
+   comuna), nada de coincidencia parcial "al centro", y el punto tiene que
+   caer en la comuna declarada. Lo encontrado se guarda en la OT
+   (/ot/api/<vid>/ruta-pin), así que solo se busca una vez.
+   Corre al cargar la página, NO al tocar Waze/Google: ese toque tiene que
+   abrir la app sin esperar nada (ver comentario de OTD_RUTA arriba). */
+(function(){
+  const txt = otdDestinoTexto();
+  if (!txt || otdHayCoords()) return;
+  const _k = 'otdGeoFalla:{{ v.id }}:' + txt;
+  try { if (sessionStorage.getItem(_k)) return; } catch(e){}
+  const norm = function(s){
+    return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  };
+  const ZONAS = ['locality', 'administrative_area_level_3', 'sublocality', 'sublocality_level_1'];
+  function fallo(){ try { sessionStorage.setItem(_k, '1'); } catch(e){} }
+  function ubicar(){
+    if (!(window.google && google.maps) || otdHayCoords()) return;
+    // Con el SDK en modo `loading=async` la clase puede no estar colgada aún
+    // del namespace: importLibrary la trae (y resuelve al tiro si ya está).
+    const lib = google.maps.Geocoder
+      ? Promise.resolve({Geocoder: google.maps.Geocoder})
+      : (google.maps.importLibrary ? google.maps.importLibrary('geocoding')
+                                   : Promise.reject(new Error('sin Geocoder')));
+    lib.then(function(m){
+      return new m.Geocoder().geocode({address: txt, componentRestrictions: {country: 'CL'}, language: 'es'});
+    })
+      .then(function(res){
+        const r = ((res && res.results) || [])[0];
+        if (!r){ fallo(); return; }
+        const tipo = r.geometry.location_type;
+        if (tipo === 'APPROXIMATE' || (r.partial_match && tipo === 'GEOMETRIC_CENTER')){ fallo(); return; }
+        const hint = norm(OTD_RUTA.comuna);
+        if (hint){
+          const zonas = (r.address_components || [])
+            .filter(function(c){ return (c.types || []).some(function(t){ return ZONAS.indexOf(t) >= 0; }); })
+            .map(function(c){ return norm(c.long_name); }).filter(Boolean);
+          if (zonas.length && !zonas.some(function(z){ return z.indexOf(hint) >= 0 || hint.indexOf(z) >= 0; })){
+            fallo(); return;
+          }
+        }
+        if (otdHayCoords()) return;
+        OTD_RUTA.lat = r.geometry.location.lat();
+        OTD_RUTA.lng = r.geometry.location.lng();
+        fetch('/ot/api/{{ v.id }}/ruta-pin', {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({lat: OTD_RUTA.lat, lng: OTD_RUTA.lng}),
+        }).then(function(rr){
+          // Con el punto ya resuelto, el aviso al responsable sobra.
+          // (style, no `hidden`: .otd-warn fuerza display:flex).
+          const w = document.getElementById('otdRutaSinPin');
+          if (rr.ok && w) w.style.display = 'none';
+        }).catch(function(){});
+      })
+      .catch(function(e){ console.log('[otd] geocoder:', e && (e.code || e.message)); fallo(); });
+  }
+  function arrancar(){
+    if (window.google && google.maps && (google.maps.Geocoder || google.maps.importLibrary)){ ubicar(); return; }
+    (window.__ilusGmapsPending = window.__ilusGmapsPending || []).push(ubicar);
+    if (typeof ilusEnsureGmapsSdk === 'function') ilusEnsureGmapsSdk();
+  }
+  // ilus_ui.js (ilusEnsureGmapsSdk) y la clave llegan con `defer` / al pie
+  // de base.html, DESPUÉS de este script: se espera a que estén.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arrancar);
+  else arrancar();
+})();
+{% endif %}
 
 function otdAbrirRuta(){
   const txt = otdHayCoords()

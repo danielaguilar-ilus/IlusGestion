@@ -2862,6 +2862,15 @@ def _google_geocode_region_comuna(direccion, comuna_hint=""):
 # cada visita a la OT (cada intento es una llamada paga y ~1 s de espera).
 _GEO_LATLNG_FALLA = {}
 _GEO_LATLNG_FALLA_TTL = 6 * 3600
+# ⚠️ 2026-09-25, medido en producción: la GOOGLE_MAPS_API_KEY de ILUS está
+# restringida por sitio web (la usa el navegador para el autocompletado), y
+# Google RECHAZA esas claves desde un servidor: REQUEST_DENIED, "API keys
+# with referer restrictions cannot be used with this API". Mientras no
+# exista una clave de servidor, esta vía no funciona -- el punto exacto lo
+# busca el navegador (ver OTD_RUTA en ot2/detalle.html + /ot/api/<vid>/
+# ruta-pin). Al primer rechazo se deja de intentar en este proceso, para no
+# sumarle la espera a cada apertura de OT.
+_GEO_SERVIDOR_DENEGADO = [False]
 
 
 def _google_geocode_latlng(direccion, comuna_hint=""):
@@ -2870,7 +2879,7 @@ def _google_geocode_latlng(direccion, comuna_hint=""):
     Rechaza a propósito los resultados APPROXIMATE: son el centro de la
     comuna o de la ciudad, no la dirección. Mandar al técnico ahí es peor
     que dejar que Waze busque el texto completo por su cuenta."""
-    if not GOOGLE_MAPS_API_KEY:
+    if not GOOGLE_MAPS_API_KEY or _GEO_SERVIDOR_DENEGADO[0]:
         return None
     address = ", ".join([x for x in [
         (direccion or "").strip(), (comuna_hint or "").strip(), "Chile",
@@ -2889,7 +2898,14 @@ def _google_geocode_latlng(direccion, comuna_hint=""):
                     "components": "country:CL", "language": "es"},
             timeout=4,
         )
-        results = (resp.json() or {}).get("results") or []
+        _j = resp.json() or {}
+        if _j.get("status") == "REQUEST_DENIED":
+            _GEO_SERVIDOR_DENEGADO[0] = True
+            print("[geocode_latlng] Google rechazó la clave desde el servidor "
+                  "(REQUEST_DENIED) -- se desactiva la vía servidor en este proceso",
+                  flush=True)
+            return None
+        results = _j.get("results") or []
         if results:
             r0 = results[0]
             geom = r0.get("geometry") or {}
@@ -84130,6 +84146,40 @@ def _ot_docs_listar(vid):
         "n_cobro": len(_cobro),
         "total_cobro": sum((d.get("monto") or 0) for d in _cobro),
     }
+
+
+@app.route("/ot/api/<int:vid>/ruta-pin", methods=["POST"])
+@_mant_required
+@_ot_can_view
+def ot2_api_ruta_pin(vid):
+    """🛣️ 2026-09-25 — guarda el punto exacto de la dirección de la OT que
+    ubicó el NAVEGADOR con google.maps.Geocoder (el servidor no puede: ver
+    _GEO_SERVIDOR_DENEGADO). Así el botón "Ruta" manda a Waze/Google Maps
+    coordenadas y no texto, y la próxima vez ya no hay que buscarlo.
+
+    Lo puede llamar cualquiera que VE la OT, incluido el técnico (suele ser
+    quien la abre antes de salir). Por eso solo llena una OT abierta que
+    todavía NO tiene punto (direccion_lat IS NULL): nunca pisa el que
+    eligió gestión con la sugerencia de Google, ni toca una OT cerrada."""
+    d = request.get_json(silent=True) or {}
+    try:
+        lat = float(d.get("lat"))
+        lng = float(d.get("lng"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Punto inválido."}), 400
+    # Chile continental, insular (Juan Fernández) e Isla de Pascua.
+    if not (-56.5 <= lat <= -17.0 and -110.0 <= lng <= -66.0):
+        return jsonify({"ok": False, "error": "El punto está fuera de Chile."}), 400
+    try:
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_visitas SET direccion_lat=%s, direccion_lng=%s "
+            " WHERE id=%s AND direccion_lat IS NULL "
+            "   AND estado NOT IN ('completada','cerrada','cancelada','anulada')",
+            (lat, lng, vid))
+    except Exception as e:
+        print(f"[ot2_ruta_pin] vid={vid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el punto."}), 500
+    return jsonify({"ok": True, "guardado": bool(n)})
 
 
 @app.route("/ot/api/<int:vid>/documentos", methods=["GET"])
