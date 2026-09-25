@@ -1,0 +1,705 @@
+<!--
+  ════════════════════════════════════════════════════════════════════
+  ILUS Fitness · Formulario de retiro en bodega (HTML para Shopify)
+  ════════════════════════════════════════════════════════════════════
+  CÓMO PUBLICARLO
+  1. Shopify › Tienda online › Personalizar › crear una página nueva
+     (ej. "Retiro en bodega" → ilusfitness.com/pages/retiro-en-bodega).
+  2. Agregar una sección "Liquid personalizado" (Custom Liquid) y pegar
+     TODO este archivo.
+  3. Guardar.
+
+  - Envía la solicitud directo al sistema de retiros de ILUS Fitness: el
+    cliente recibe su código y el correo con su seguimiento.
+  - Agenda en vivo: días y horas disponibles, cupos y bloqueos de bodega.
+  - Si el link de la página trae datos del pedido, el formulario se abre
+    completo:  …/pages/retiro-en-bodega?tipo=pedido&numero=1136&email=cliente@correo.cl
+    (acepta: tipo, numero, nombre, email, telefono, rut)
+  - No usa claves ni contraseñas.
+  ════════════════════════════════════════════════════════════════════
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  #ilus-rf{--r:#dc2626;--r-dk:#b91c1c;--k:#0a0a0a;--g:#16a34a;--g-bg:#dcfce7;--a:#f59e0b;--a-bg:#fff8e1;--gr:#6b7280;--gr-bg:#f3f4f6;--line:#e5e7eb;
+    max-width:980px;margin:0 auto;font-family:'Inter',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#111827;font-size:15px;line-height:1.5;text-align:left}
+  #ilus-rf *,#ilus-rf *::before,#ilus-rf *::after{box-sizing:border-box}
+  #ilus-rf [hidden]{display:none!important}
+  #ilus-rf .irf-head{position:relative;overflow:hidden;background:var(--k);color:#fff;border-radius:18px 18px 0 0;padding:26px 28px 22px;border-bottom:4px solid var(--r)}
+  #ilus-rf .irf-head::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(520px 220px at 92% -10%,rgba(220,38,38,.38),transparent 60%),repeating-linear-gradient(135deg,rgba(255,255,255,.035) 0 2px,transparent 2px 12px)}
+  #ilus-rf .irf-head>*{position:relative}
+  #ilus-rf .irf-kicker{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#fca5a5;margin:0 0 4px}
+  #ilus-rf .irf-title{font-family:'Bebas Neue','Inter',sans-serif;font-weight:400;font-size:40px;line-height:1;letter-spacing:.02em;margin:0;color:#fff;text-transform:none}
+  #ilus-rf .irf-lead{margin:8px 0 0;color:rgba(255,255,255,.78);font-size:14px}
+  #ilus-rf .irf-prog{display:flex;align-items:center;gap:10px;margin-top:16px;font-size:12.5px;font-weight:700;color:rgba(255,255,255,.85)}
+  #ilus-rf .irf-prog-bar{flex:1;max-width:260px;height:6px;border-radius:9px;background:rgba(255,255,255,.15);overflow:hidden}
+  #ilus-rf .irf-prog-bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--r),#f87171);border-radius:9px;transition:width .35s ease}
+  #ilus-rf .irf-prog.is-ok .irf-prog-bar span{background:linear-gradient(90deg,var(--g),#4ade80)}
+  #ilus-rf .irf-body{background:#fff;border:1px solid var(--line);border-top:0;border-radius:0 0 18px 18px;padding:22px;box-shadow:0 18px 50px -24px rgba(15,23,42,.28)}
+  #ilus-rf .irf-step{position:relative;border:1.5px solid var(--line);border-left:5px solid var(--r);border-radius:14px;padding:18px 18px 20px;margin:0 0 16px;background:#fff;transition:border-color .25s,background .25s}
+  #ilus-rf .irf-step.is-ok{border-color:#86efac;border-left-color:var(--g);background:linear-gradient(180deg,#f0fdf4 0,#fff 70px)}
+  #ilus-rf .irf-step.is-opt{border-left-color:var(--gr);border-style:dashed;border-left-style:solid}
+  #ilus-rf .irf-step-h{display:flex;gap:14px;align-items:flex-start;margin:0 0 14px}
+  #ilus-rf .irf-circle{flex:0 0 44px;width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(180deg,#ef4444,var(--r-dk));color:#fff;font-family:'Bebas Neue','Inter',sans-serif;font-size:24px;box-shadow:0 8px 18px -6px rgba(220,38,38,.55)}
+  #ilus-rf .irf-step.is-ok .irf-circle{background:linear-gradient(180deg,#22c55e,var(--g));box-shadow:0 0 0 0 rgba(22,163,74,.45);animation:irfPulse 1.6s ease-out 1}
+  #ilus-rf .irf-step.is-opt .irf-circle{background:linear-gradient(180deg,#9ca3af,var(--gr));box-shadow:none}
+  #ilus-rf .irf-circle svg{width:22px;height:22px;display:none}
+  #ilus-rf .irf-step.is-ok .irf-circle svg{display:block}
+  #ilus-rf .irf-step.is-ok .irf-circle b{display:none}
+  #ilus-rf .irf-circle b{font-weight:400}
+  @keyframes irfPulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}100%{box-shadow:0 0 0 14px rgba(22,163,74,0)}}
+  #ilus-rf .irf-step-t{margin:0;font-size:18px;font-weight:800;color:#111827;line-height:1.25}
+  #ilus-rf .irf-tag{display:inline-block;vertical-align:middle;margin-left:6px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--gr-bg);color:#4b5563}
+  #ilus-rf .irf-step-s{margin:4px 0 0;color:#4b5563;font-size:13.5px}
+  #ilus-rf .irf-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+  #ilus-rf .irf-c4{grid-column:span 4}#ilus-rf .irf-c5{grid-column:span 5}#ilus-rf .irf-c6{grid-column:span 6}
+  #ilus-rf .irf-c7{grid-column:span 7}#ilus-rf .irf-c8{grid-column:span 8}#ilus-rf .irf-c12{grid-column:span 12}
+  #ilus-rf label.irf-lbl{display:block;font-size:13px;font-weight:700;color:#111827;margin:0 0 6px;text-transform:none;letter-spacing:0}
+  #ilus-rf .irf-req{color:var(--r)}
+  #ilus-rf .irf-in{display:block;width:100%;min-height:46px;margin:0;padding:11px 14px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;
+    font:inherit;font-size:15px;line-height:1.3;box-shadow:none;outline:0;-webkit-appearance:none;appearance:none;transition:border-color .15s,box-shadow .15s}
+  #ilus-rf select.irf-in{padding-right:38px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16'%3E%3Cpath fill='%236b7280' d='M1.6 5.2 8 11.2l6.4-6-1.1-1.1L8 9 2.7 4.1z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
+  #ilus-rf textarea.irf-in{min-height:88px;resize:vertical}
+  #ilus-rf .irf-in:focus{border-color:var(--r);box-shadow:0 0 0 4px rgba(220,38,38,.14)}
+  #ilus-rf .irf-in.is-bad{border-color:var(--r);background:#fff5f5}
+  #ilus-rf .irf-in.is-good{border-color:#86efac}
+  #ilus-rf .irf-help{margin:6px 0 0;font-size:12.5px;color:var(--gr)}
+  #ilus-rf .irf-err{margin:6px 0 0;font-size:12.5px;font-weight:700;color:var(--r)}
+  #ilus-rf .irf-sug{margin-top:6px;display:inline-block;background:var(--a-bg);border:1px solid var(--a);color:#78350f;border-radius:8px;padding:6px 10px;font-size:13px;font-weight:700;cursor:pointer}
+  #ilus-rf .irf-toggle{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:12px 14px;border:1.5px dashed #d1d5db;border-radius:12px;background:#f9fafb;cursor:pointer;text-align:left;font:inherit;color:#111827}
+  #ilus-rf .irf-toggle input{width:20px;height:20px;margin:0;accent-color:var(--r);flex:0 0 auto}
+  #ilus-rf .irf-toggle small{display:block;color:var(--gr);font-size:12.5px;font-weight:500}
+  #ilus-rf .irf-auth{margin-top:12px;padding:14px;border:1px solid #fecaca;border-radius:12px;background:#fff8f8}
+  #ilus-rf .irf-decl{margin-top:12px;padding:12px 14px;border:1.5px solid var(--a);border-radius:12px;background:var(--a-bg);font-size:13.5px;color:#78350f}
+  #ilus-rf .irf-check{display:flex;gap:10px;align-items:flex-start;cursor:pointer;margin:8px 0 0;font-weight:700}
+  #ilus-rf .irf-check input{width:20px;height:20px;margin:1px 0 0;accent-color:var(--r);flex:0 0 auto}
+  #ilus-rf .irf-avisos{margin:0 0 14px;padding:12px 14px;border:1.5px solid #fecaca;border-radius:12px;background:linear-gradient(135deg,#fff,#fff5f5);font-size:13.5px}
+  #ilus-rf .irf-avisos strong{color:#991b1b}
+  #ilus-rf .irf-avisos ul{margin:6px 0 0;padding-left:18px}
+  #ilus-rf .irf-when{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px}
+  #ilus-rf .irf-cal{border:1.5px solid var(--line);border-radius:14px;padding:12px;background:#fcfcfd}
+  #ilus-rf .irf-cal-h{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}
+  #ilus-rf .irf-cal-m{font-weight:800;text-transform:capitalize}
+  #ilus-rf .irf-nav{width:40px;height:40px;min-height:40px;padding:0;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:#111827;font-size:18px;font-weight:700;cursor:pointer;line-height:1}
+  #ilus-rf .irf-nav:disabled{opacity:.35;cursor:default}
+  #ilus-rf .irf-wk,#ilus-rf .irf-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+  #ilus-rf .irf-wk span{text-align:center;font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase}
+  #ilus-rf .irf-day{position:relative;height:44px;min-height:44px;padding:0;border:1.5px solid transparent;border-radius:10px;background:#fff;color:#111827;font:inherit;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+  #ilus-rf .irf-day i{position:absolute;left:50%;bottom:5px;width:6px;height:6px;margin-left:-3px;border-radius:50%}
+  #ilus-rf .irf-day.is-off{background:var(--gr-bg);color:#b8bcc4;box-shadow:none;cursor:not-allowed}
+  #ilus-rf .irf-day.is-out{background:transparent;color:#d1d5db;box-shadow:none;cursor:default}
+  #ilus-rf .irf-day.is-sel{background:var(--r);border-color:var(--r-dk);color:#fff}
+  #ilus-rf .irf-day.is-sel i{background:#fff!important}
+  #ilus-rf .irf-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11.5px;color:var(--gr);font-weight:600}
+  #ilus-rf .irf-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
+  #ilus-rf .irf-slots{border:1.5px solid var(--line);border-radius:14px;padding:12px;background:#fcfcfd;min-height:100%}
+  #ilus-rf .irf-slots-t{font-size:13px;font-weight:800;margin:0 0 8px}
+  #ilus-rf .irf-sect{font-size:12px;font-weight:800;color:var(--gr);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 6px}
+  #ilus-rf .irf-sgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+  #ilus-rf .irf-slot{position:relative;min-height:46px;padding:0 4px;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:#111827;font:inherit;font-weight:800;font-size:14px;cursor:pointer}
+  #ilus-rf .irf-slot:hover:not(:disabled){border-color:var(--r)}
+  #ilus-rf .irf-slot.is-half{background:#fff7ed;border-color:#fdba74}
+  #ilus-rf .irf-slot.is-half::after{content:"½";position:absolute;top:2px;right:6px;font-size:11px;color:#c2410c}
+  #ilus-rf .irf-slot:disabled{background:var(--gr-bg);color:#b8bcc4;border-color:transparent;cursor:not-allowed;text-decoration:line-through}
+  #ilus-rf .irf-slot.is-block:disabled{background:repeating-linear-gradient(135deg,#fee2e2 0 6px,#fff 6px 12px);color:#b91c1c;border-color:#fca5a5;text-decoration:none}
+  #ilus-rf .irf-slot.is-sel{background:var(--r);border-color:var(--r-dk);color:#fff}
+  #ilus-rf .irf-note{padding:12px;border-radius:12px;background:#fff;border:1.5px dashed #d1d5db;color:var(--gr);font-size:13.5px;text-align:center}
+  #ilus-rf .irf-note.is-bad{border-color:#fca5a5;background:#fff5f5;color:#991b1b;text-align:left}
+  #ilus-rf .irf-sum{margin-top:12px;padding:12px 14px;border-radius:12px;background:var(--k);color:rgba(255,255,255,.7);font-size:14px;border-left:4px solid var(--r)}
+  #ilus-rf .irf-sum.is-ok{color:#fff;border-left-color:var(--g)}
+  #ilus-rf .irf-sum b{color:#fff}
+  #ilus-rf .irf-retry{margin-top:10px;min-height:44px;padding:0 16px;border:1.5px solid var(--r);border-radius:10px;background:#fff;color:var(--r);font:inherit;font-weight:800;cursor:pointer}
+  #ilus-rf .irf-terms{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border:1.5px solid #fecaca;border-left:5px solid var(--r);border-radius:14px;background:#fff5f5;cursor:pointer;margin:0 0 14px}
+  #ilus-rf .irf-terms.is-ok{border-color:#86efac;border-left-color:var(--g);background:#f0fdf4}
+  #ilus-rf .irf-terms input{width:22px;height:22px;margin:2px 0 0;accent-color:var(--g);flex:0 0 auto}
+  #ilus-rf .irf-terms small{display:block;color:#4b5563;font-size:13px;font-weight:500;margin-top:2px}
+  #ilus-rf .irf-alert{margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1.5px solid #fca5a5;background:#fee2e2;color:#7f1d1d;font-size:14px;font-weight:600}
+  #ilus-rf .irf-alert ul{margin:4px 0 0;padding-left:18px;font-weight:500}
+  #ilus-rf .irf-send{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:56px;margin:0;padding:0 20px;border:0;border-radius:14px;
+    background:linear-gradient(180deg,#ef4444,var(--r-dk));color:#fff;font:inherit;font-size:16px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;box-shadow:0 14px 30px -12px rgba(220,38,38,.6)}
+  #ilus-rf .irf-send:disabled{opacity:.7;cursor:wait}
+  #ilus-rf .irf-send svg{width:20px;height:20px}
+  #ilus-rf .irf-priv{margin:12px 0 0;text-align:center;font-size:12.5px;color:var(--gr)}
+  #ilus-rf .irf-bodega{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;padding:16px 18px;border-radius:14px;background:var(--k);color:#fff;border-left:5px solid var(--r)}
+  #ilus-rf .irf-bodega b{display:block;font-family:'Bebas Neue','Inter',sans-serif;font-weight:400;font-size:22px;letter-spacing:.03em}
+  #ilus-rf .irf-bodega span{color:rgba(255,255,255,.75);font-size:13.5px}
+  #ilus-rf .irf-bodega a{display:inline-flex;align-items:center;min-height:44px;padding:0 16px;border-radius:10px;background:var(--r);color:#fff;font-weight:800;text-decoration:none}
+  #ilus-rf .irf-ok{text-align:center;padding:30px 20px}
+  #ilus-rf .irf-ok-ic{width:64px;height:64px;margin:0 auto 12px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--g-bg);color:var(--g)}
+  #ilus-rf .irf-ok-ic svg{width:34px;height:34px}
+  #ilus-rf .irf-ok h3{margin:0 0 6px;font-size:22px;font-weight:800;color:#111827}
+  #ilus-rf .irf-code{display:inline-block;margin:10px 0 6px;padding:10px 22px;border-radius:12px;background:var(--k);color:#fff;font-family:'Bebas Neue','Inter',sans-serif;font-size:42px;letter-spacing:.06em;line-height:1;border-bottom:4px solid var(--r)}
+  #ilus-rf .irf-ok p{margin:8px auto 0;max-width:520px;color:#4b5563}
+  #ilus-rf .irf-ok-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+  #ilus-rf .irf-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 20px;border-radius:12px;font:inherit;font-weight:800;text-decoration:none;cursor:pointer;border:1.5px solid var(--k);background:#fff;color:var(--k)}
+  #ilus-rf .irf-btn.is-red{background:var(--r);border-color:var(--r-dk);color:#fff}
+  #ilus-rf .irf-hp{position:absolute!important;left:-10000px!important;width:1px;height:1px;overflow:hidden}
+  @media (max-width:720px){
+    #ilus-rf .irf-head{padding:22px 18px 18px}
+    #ilus-rf .irf-title{font-size:34px}
+    #ilus-rf .irf-body{padding:14px}
+    #ilus-rf .irf-step{padding:14px 14px 16px}
+    #ilus-rf .irf-c4,#ilus-rf .irf-c5,#ilus-rf .irf-c6,#ilus-rf .irf-c7,#ilus-rf .irf-c8{grid-column:span 12}
+    #ilus-rf .irf-when{grid-template-columns:minmax(0,1fr)}
+    #ilus-rf .irf-sgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+    #ilus-rf .irf-in{font-size:16px}
+  }
+</style>
+
+<div id="ilus-rf">
+  <div class="irf-head">
+    <p class="irf-kicker">ILUS Fitness · Retiro en bodega</p>
+    <h2 class="irf-title">Agenda tu retiro</h2>
+    <p class="irf-lead">Te toma 2 minutos. Te confirmamos la fecha por correo en menos de 24 horas.</p>
+    <div class="irf-prog" id="irfProg"><div class="irf-prog-bar"><span id="irfProgBar"></span></div><span id="irfProgTxt">0 de 4 pasos listos</span></div>
+  </div>
+
+  <div class="irf-body">
+    <form id="irfForm" novalidate>
+      <div class="irf-hp" aria-hidden="true">
+        <label for="irf_hp">No completes este campo</label>
+        <input type="text" id="irf_hp" name="hp_ilus_extra" tabindex="-1" autocomplete="off" value="">
+      </div>
+
+      <!-- PASO 1 -->
+      <section class="irf-step" data-paso="1">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>1</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Qué vienes a retirar?</h3>
+            <p class="irf-step-s">El documento de tu compra. Con él encontramos tus productos en el sistema.</p></div>
+        </div>
+        <div class="irf-grid">
+          <div class="irf-c5">
+            <label class="irf-lbl" for="irf_tipo">Tipo de documento <span class="irf-req">*</span></label>
+            <select class="irf-in" id="irf_tipo" name="document_type">
+              <option value="pedido">Pedido web (ilusfitness.com)</option>
+              <option value="factura">Factura electrónica</option>
+              <option value="boleta">Boleta electrónica</option>
+              <option value="nota_venta">Nota de venta</option>
+            </select>
+            <p class="irf-help">¿Compraste en la tienda online? Deja «Pedido web».</p>
+          </div>
+          <div class="irf-c7">
+            <label class="irf-lbl" for="irf_num">N° del documento <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_num" name="document_number" maxlength="60" inputmode="numeric" placeholder="Ej: 1136" autocomplete="off">
+            <p class="irf-help" id="irf_num_help">Está en el correo de confirmación de tu pedido (ej: #1136 → escribe 1136).</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- PASO 2 -->
+      <section class="irf-step" data-paso="2">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>2</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Quién es el cliente?</h3>
+            <p class="irf-step-s">La persona o empresa a nombre de quien está la compra. A este correo llegan la confirmación y el seguimiento.</p></div>
+        </div>
+        <div class="irf-grid">
+          <div class="irf-c7">
+            <label class="irf-lbl" for="irf_nombre">Nombre completo o razón social <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_nombre" name="customer_name" maxlength="160" placeholder="Ej: María González Soto" autocomplete="name">
+          </div>
+          <div class="irf-c5">
+            <label class="irf-lbl" for="irf_rut">RUT <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_rut" name="customer_rut" maxlength="12" placeholder="Ej: 12.345.678-9" autocomplete="off">
+            <p class="irf-err" id="irf_rut_err" hidden>RUT inválido: revisa el dígito verificador.</p>
+          </div>
+          <div class="irf-c7">
+            <label class="irf-lbl" for="irf_email">Correo <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_email" name="contact_email" type="email" maxlength="180" placeholder="Ej: tu@correo.cl" autocomplete="email">
+            <p class="irf-err" id="irf_email_err" hidden>Correo inválido (ej: tu@correo.cl).</p>
+            <button type="button" class="irf-sug" id="irf_email_sug" hidden></button>
+          </div>
+          <div class="irf-c5">
+            <label class="irf-lbl" for="irf_tel">Celular <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_tel" name="contact_phone" type="tel" maxlength="16" placeholder="9 1234 5678" autocomplete="tel">
+            <p class="irf-help">9 dígitos. El +56 se agrega solo.</p>
+            <p class="irf-err" id="irf_tel_err" hidden>Celular inválido: debe ser 9 XXXX XXXX.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- PASO 3 (opcional) -->
+      <section class="irf-step is-opt" data-paso="3">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>3</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Quién viene a retirar? <span class="irf-tag">Opcional</span></h3>
+            <p class="irf-step-s">Si no marcas nada, entendemos que vienes tú. Márcalo solo si viene otra persona en tu nombre (chofer, familiar, transporte).</p></div>
+        </div>
+        <label class="irf-toggle" for="irf_auth">
+          <input type="checkbox" id="irf_auth">
+          <span><strong>Sí, viene otra persona en mi nombre</strong><small>Te pediremos su nombre, RUT y celular.</small></span>
+        </label>
+        <div class="irf-auth" id="irf_auth_box" hidden>
+          <div class="irf-grid">
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_pnom">Nombre de quien retira <span class="irf-req">*</span></label>
+              <input class="irf-in" id="irf_pnom" name="pickup_person_name" maxlength="160" placeholder="Como aparece en su cédula">
+            </div>
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_prut">RUT de quien retira <span class="irf-req">*</span></label>
+              <input class="irf-in" id="irf_prut" name="pickup_person_rut" maxlength="12" placeholder="Ej: 11.111.111-1" autocomplete="off">
+              <p class="irf-err" id="irf_prut_err" hidden>RUT inválido: revisa el dígito verificador.</p>
+            </div>
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_ptel">Celular de quien retira</label>
+              <input class="irf-in" id="irf_ptel" name="pickup_person_phone" type="tel" maxlength="16" placeholder="9 8765 4321">
+              <p class="irf-err" id="irf_ptel_err" hidden>Celular inválido: debe ser 9 XXXX XXXX.</p>
+            </div>
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_prel">Relación con el cliente</label>
+              <select class="irf-in" id="irf_prel" name="pickup_person_relation">
+                <option value="chofer">Chofer</option>
+                <option value="transporte">Transporte externo</option>
+                <option value="familiar">Familiar autorizado</option>
+                <option value="comprador">Comprador</option>
+                <option value="autorizado">Persona autorizada</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+          </div>
+          <div class="irf-decl" id="irf_decl" hidden>
+            La compra está a nombre de <strong id="irf_decl_cli">—</strong> y retira <strong id="irf_decl_ter">—</strong>.
+            <label class="irf-check"><input type="checkbox" id="irf_decl_ok" name="acepta_tercero" value="1">
+              <span>Confirmo que el cliente autoriza a esta persona a retirar en su nombre. Queda registrado con fecha y hora.</span></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- PASO 4 -->
+      <section class="irf-step" data-paso="4" id="irf_paso4">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>4</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Cuándo vienes?</h3>
+            <p class="irf-step-s">Elige el día y tu hora de llegada. Cada bloque dura 30 minutos, de lunes a viernes. Necesitamos al menos 24 horas para preparar tu pedido.</p></div>
+        </div>
+        <div class="irf-avisos" id="irf_avisos" hidden></div>
+        <div class="irf-when">
+          <div>
+            <div class="irf-cal" id="irf_cal">
+              <div class="irf-cal-h">
+                <button type="button" class="irf-nav" id="irf_prev" aria-label="Mes anterior">‹</button>
+                <span class="irf-cal-m" id="irf_mes">Cargando agenda…</span>
+                <button type="button" class="irf-nav" id="irf_next" aria-label="Mes siguiente">›</button>
+              </div>
+              <div class="irf-wk" aria-hidden="true"><span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span></div>
+              <div class="irf-days" id="irf_days"></div>
+              <div class="irf-legend"><span><i style="background:#16a34a"></i>Libre</span><span><i style="background:#f59e0b"></i>Medio</span><span><i style="background:#dc2626"></i>Casi lleno</span><span><i style="background:#d1d5db"></i>No disponible</span></div>
+            </div>
+            <div id="irf_cal_err" hidden>
+              <div class="irf-note is-bad">No pudimos cargar la agenda. Revisa tu conexión.</div>
+              <button type="button" class="irf-retry" id="irf_retry">Reintentar</button>
+            </div>
+          </div>
+          <div class="irf-slots">
+            <p class="irf-slots-t">Tu hora de llegada <span class="irf-req">*</span></p>
+            <div id="irf_slots"><div class="irf-note">Elige primero un día en el calendario.</div></div>
+            <div class="irf-sum" id="irf_sum">Aún no eliges día y hora.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PASO 5 (opcional) -->
+      <section class="irf-step is-opt" data-paso="5">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>5</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Algo más que debamos saber? <span class="irf-tag">Opcional</span></h3>
+            <p class="irf-step-s">Vehículo en que vienes, productos delicados, instrucciones especiales.</p></div>
+        </div>
+        <textarea class="irf-in" id="irf_obs" name="observations" maxlength="4000" rows="3" placeholder="Ej: Voy en camioneta. Prefiero después de las 15:00."></textarea>
+      </section>
+
+      <label class="irf-terms" id="irf_terms_box" for="irf_terms">
+        <input type="checkbox" id="irf_terms" name="accept_terms" value="on">
+        <span><strong>Declaración de responsabilidad <span class="irf-req">*</span></strong>
+          <small>Confirmo que los datos son correctos y que la persona indicada está autorizada para retirar los productos.</small></span>
+      </label>
+
+      <div class="irf-alert" id="irf_alert" role="alert" hidden></div>
+
+      <button type="submit" class="irf-send" id="irf_send">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M15.6.4a.6.6 0 0 0-.6-.1L.8 5.9a.6.6 0 0 0 0 1.1l5.6 2.5 2.5 5.6a.6.6 0 0 0 1.1 0L15.7 1a.6.6 0 0 0-.1-.6zM6.7 8.4 3 6.8l9.4-3.8zm.9.9 5.4-5.4-3.8 9.4z"/></svg>
+        <span id="irf_send_txt">Enviar solicitud de retiro</span>
+      </button>
+      <p class="irf-priv">Tus datos solo se usan para gestionar este retiro. No se comparten con terceros.</p>
+    </form>
+
+    <div class="irf-ok" id="irf_ok" hidden tabindex="-1">
+      <div class="irf-ok-ic"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+      <h3>¡Recibimos tu solicitud!</h3>
+      <div>Tu código de retiro</div>
+      <div class="irf-code" id="irf_code">RET-XXXXXX</div>
+      <p id="irf_ok_txt">Te enviamos un correo con el enlace de seguimiento. Te confirmaremos la fecha en menos de 24 horas.</p>
+      <p><strong>Aún no es una reserva:</strong> espera nuestra confirmación antes de venir.</p>
+      <div class="irf-ok-btns">
+        <a class="irf-btn is-red" id="irf_track" href="#" target="_blank" rel="noopener">Ver mi seguimiento</a>
+        <button type="button" class="irf-btn" id="irf_copy">Copiar código</button>
+      </div>
+    </div>
+
+    <div class="irf-bodega" id="irf_bodega" hidden>
+      <div><b id="irf_bod_nom">Bodega ILUS</b><span id="irf_bod_dir"></span></div>
+      <a id="irf_bod_map" href="#" target="_blank" rel="noopener">Abrir en mapa</a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var API = 'https://ilus-app-469212710544.southamerica-west1.run.app';
+  var root = document.getElementById('ilus-rf');
+  if (!root) return;
+  var $ = function (id) { return document.getElementById(id); };
+  var form = $('irfForm');
+  var DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+  var MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  var dispo = null, cursor = null, fechaSel = '', slotSel = null, t0Servidor = 0, enviando = false;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+  function isoDia(iso) { var p = iso.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])); }
+  function fechaTxt(iso) { var d = isoDia(iso); return DIAS[d.getUTCDay()] + ' ' + iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4); }
+
+  /* ── RUT, correo y celular ─────────────────────────────── */
+  function rutLimpio(v) { return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
+  function rutValido(v) {
+    var r = rutLimpio(v); if (r.length < 2) return false;
+    var cuerpo = r.slice(0, -1), dv = r.slice(-1), suma = 0, mul = 2;
+    if (!/^\d+$/.test(cuerpo)) return false;
+    for (var i = cuerpo.length - 1; i >= 0; i--) { suma += (+cuerpo[i]) * mul; mul = mul === 7 ? 2 : mul + 1; }
+    var res = 11 - (suma % 11), esp = res === 11 ? '0' : res === 10 ? 'K' : String(res);
+    return esp === dv;
+  }
+  function rutFormato(v) {
+    var r = rutLimpio(v); if (r.length < 2) return v;
+    var cuerpo = r.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return cuerpo + '-' + r.slice(-1);
+  }
+  function emailValido(v) { return /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/.test(String(v || '').trim()); }
+  var TYPOS = { 'gmial.com': 'gmail.com', 'gmai.com': 'gmail.com', 'gmail.co': 'gmail.com', 'gmail.cl': 'gmail.com', 'gamil.com': 'gmail.com', 'hotmial.com': 'hotmail.com', 'hotmail.co': 'hotmail.com', 'hotmal.com': 'hotmail.com', 'outlok.com': 'outlook.com', 'yaho.com': 'yahoo.com' };
+  function telDigitos(v) {
+    var d = String(v || '').replace(/\D/g, '');
+    if (d.indexOf('56') === 0 && d.length === 11) d = d.slice(2);
+    return d;
+  }
+  function telValido(v) { return /^9\d{8}$/.test(telDigitos(v)); }
+  function telFormato(v) { var d = telDigitos(v); return /^9\d{8}$/.test(d) ? '+56 ' + d[0] + ' ' + d.slice(1, 5) + ' ' + d.slice(5) : v; }
+
+  function marcar(inp, ok, errId) {
+    inp.classList.toggle('is-bad', ok === false);
+    inp.classList.toggle('is-good', ok === true);
+    if (errId) $(errId).hidden = ok !== false;
+  }
+  function validarCampo(id) {
+    var inp = $(id), v = inp.value.trim();
+    if (id === 'irf_rut' || id === 'irf_prut') {
+      if (!v) { marcar(inp, null, id + '_err'); return false; }
+      var okR = rutValido(v); if (okR) inp.value = rutFormato(v);
+      marcar(inp, okR, id + '_err'); return okR;
+    }
+    if (id === 'irf_email') {
+      if (!v) { marcar(inp, null, 'irf_email_err'); return false; }
+      var okE = emailValido(v); marcar(inp, okE, 'irf_email_err');
+      var dom = v.split('@')[1] || '', sug = $('irf_email_sug');
+      if (TYPOS[dom.toLowerCase()]) { sug.textContent = '¿Quisiste decir ' + v.split('@')[0] + '@' + TYPOS[dom.toLowerCase()] + '?'; sug.hidden = false; }
+      else sug.hidden = true;
+      return okE;
+    }
+    if (id === 'irf_tel' || id === 'irf_ptel') {
+      if (!v) { marcar(inp, null, id + '_err'); return id === 'irf_ptel'; }
+      var okT = telValido(v); if (okT) inp.value = telFormato(v);
+      marcar(inp, okT, id + '_err'); return okT;
+    }
+    return !!v;
+  }
+  ['irf_rut', 'irf_prut', 'irf_email', 'irf_tel', 'irf_ptel'].forEach(function (id) {
+    $(id).addEventListener('blur', function () { validarCampo(id); actualizar(); });
+  });
+  $('irf_email_sug').addEventListener('click', function () {
+    var v = $('irf_email').value.trim(), dom = (v.split('@')[1] || '').toLowerCase();
+    if (TYPOS[dom]) { $('irf_email').value = v.split('@')[0] + '@' + TYPOS[dom]; validarCampo('irf_email'); actualizar(); }
+  });
+  $('irf_tipo').addEventListener('change', function () {
+    $('irf_num_help').textContent = this.value === 'pedido'
+      ? 'Está en el correo de confirmación de tu pedido (ej: #1136 → escribe 1136).'
+      : 'Está en la parte superior de tu factura, boleta o nota de venta.';
+  });
+
+  /* ── Tercero que retira ────────────────────────────────── */
+  $('irf_auth').addEventListener('change', function () { $('irf_auth_box').hidden = !this.checked; declaracion(); actualizar(); });
+  function declaracion() {
+    var on = $('irf_auth').checked, rc = rutLimpio($('irf_rut').value), rp = rutLimpio($('irf_prut').value);
+    var mostrar = on && rc && rp && rc !== rp && rutValido(rc) && rutValido(rp);
+    $('irf_decl').hidden = !mostrar;
+    if (mostrar) {
+      $('irf_decl_cli').textContent = ($('irf_nombre').value.trim() || 'el cliente') + ' (' + rutFormato(rc) + ')';
+      $('irf_decl_ter').textContent = ($('irf_pnom').value.trim() || 'otra persona') + ' (' + rutFormato(rp) + ')';
+    }
+    return mostrar;
+  }
+  ['irf_nombre', 'irf_pnom', 'irf_prut', 'irf_rut'].forEach(function (id) { $(id).addEventListener('input', declaracion); });
+
+  /* ── Semáforo de pasos ─────────────────────────────────── */
+  function pasoOk(n) {
+    if (n === 1) return !!$('irf_num').value.trim();
+    if (n === 2) return !!$('irf_nombre').value.trim() && rutValido($('irf_rut').value) && emailValido($('irf_email').value) && telValido($('irf_tel').value);
+    if (n === 3) {
+      if (!$('irf_auth').checked) return true;
+      var ok = !!$('irf_pnom').value.trim() && rutValido($('irf_prut').value) && (!$('irf_ptel').value.trim() || telValido($('irf_ptel').value));
+      return ok && (!declaracion() || $('irf_decl_ok').checked);
+    }
+    if (n === 4) return !!(fechaSel && slotSel);
+    return true;
+  }
+  function actualizar() {
+    var listos = 0;
+    [1, 2, 3, 4, 5].forEach(function (n) {
+      var sec = form.querySelector('[data-paso="' + n + '"]'), ok = pasoOk(n);
+      var marcado = (n === 3) ? $('irf_auth').checked && ok : (n === 5) ? !!$('irf_obs').value.trim() : ok;
+      sec.classList.toggle('is-ok', marcado);
+      if (n !== 3 && n !== 5 && ok) listos++;
+    });
+    $('irf_terms_box').classList.toggle('is-ok', $('irf_terms').checked);
+    $('irfProgBar').style.width = (listos / 4 * 100) + '%';
+    $('irfProg').classList.toggle('is-ok', listos === 4);
+    $('irfProgTxt').textContent = listos + ' de 4 pasos listos';
+  }
+  form.addEventListener('input', actualizar);
+  form.addEventListener('change', actualizar);
+
+  /* ── Agenda ────────────────────────────────────────────── */
+  function cargarAgenda(mantener) {
+    $('irf_cal_err').hidden = true; $('irf_cal').hidden = false;
+    return fetch(API + '/retiros/api/disponibilidad-publica', { credentials: 'omit' })
+      .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+      .then(function (d) {
+        if (!d || !d.dias || !d.from) throw new Error('sin datos');
+        dispo = d;
+        if (d.ahora_ts && !t0Servidor) t0Servidor = d.ahora_ts;
+        if (!cursor) cursor = { y: +d.from.slice(0, 4), m: +d.from.slice(5, 7) - 1 };
+        avisos(); bodega(d);
+        if (!mantener) { fechaSel = ''; slotSel = null; }
+        pintarCal(); pintarSlots(); actualizar();
+      })
+      .catch(function () { $('irf_cal').hidden = true; $('irf_cal_err').hidden = false; });
+  }
+  $('irf_retry').addEventListener('click', function () { cargarAgenda(false); });
+
+  function bodega(d) {
+    if (!d.warehouse_addr) return;
+    $('irf_bod_nom').textContent = d.warehouse_name || 'Bodega ILUS';
+    $('irf_bod_dir').textContent = d.warehouse_addr;
+    if (d.maps_url) $('irf_bod_map').href = d.maps_url; else $('irf_bod_map').hidden = true;
+    $('irf_bodega').hidden = false;
+  }
+  function avisos() {
+    var b = (dispo.bloqueos || []).slice(0, 6), box = $('irf_avisos');
+    if (!b.length) { box.hidden = true; return; }
+    box.innerHTML = '<strong>Días y horarios sin atención en bodega</strong><ul>' + b.map(function (x) {
+      return '<li>' + esc(fechaTxt(x.fecha)) + (x.dia_completo ? ' · todo el día' : ' · ' + esc(x.desde) + '–' + esc(x.hasta)) + (x.motivo ? ' — ' + esc(x.motivo) : '') + '</li>';
+    }).join('') + '</ul>';
+    box.hidden = false;
+  }
+  function clave(y, m) { return y * 12 + m; }
+  function pintarCal() {
+    var y = cursor.y, m = cursor.m, desde = dispo.from, hasta = dispo.to;
+    $('irf_mes').textContent = MESES[m] + ' ' + y;
+    $('irf_prev').disabled = clave(y, m) <= clave(+desde.slice(0, 4), +desde.slice(5, 7) - 1);
+    $('irf_next').disabled = clave(y, m) >= clave(+hasta.slice(0, 4), +hasta.slice(5, 7) - 1);
+    var nd = new Date(Date.UTC(y, m + 1, 0)).getUTCDate(), off = (new Date(Date.UTC(y, m, 1)).getUTCDay() + 6) % 7, html = '';
+    for (var i = 0; i < off; i++) html += '<span></span>';
+    for (var d = 1; d <= nd; d++) {
+      var iso = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      var dia = (iso >= desde && iso <= hasta) ? dispo.dias[iso] : null;
+      if (!dia) { html += '<button type="button" class="irf-day is-out" disabled>' + d + '</button>'; continue; }
+      if (!dia.disponible) {
+        html += '<button type="button" class="irf-day is-off" data-off="' + esc(dia.razon || 'Día no disponible') + '" data-iso="' + iso + '" aria-label="' + d + ': ' + esc(dia.razon || 'no disponible') + '">' + d + '</button>';
+        continue;
+      }
+      var pct = +dia.ocupacion_pct || 0, col = pct >= 80 ? '#dc2626' : pct >= 40 ? '#f59e0b' : '#16a34a';
+      html += '<button type="button" class="irf-day' + (iso === fechaSel ? ' is-sel' : '') + '" data-iso="' + iso + '" aria-label="' + esc(fechaTxt(iso)) + '">' + d + '<i style="background:' + col + '"></i></button>';
+    }
+    $('irf_days').innerHTML = html;
+  }
+  $('irf_prev').addEventListener('click', function () { if (this.disabled) return; cursor.m--; if (cursor.m < 0) { cursor.m = 11; cursor.y--; } pintarCal(); });
+  $('irf_next').addEventListener('click', function () { if (this.disabled) return; cursor.m++; if (cursor.m > 11) { cursor.m = 0; cursor.y++; } pintarCal(); });
+  $('irf_days').addEventListener('click', function (e) {
+    var b = e.target.closest('.irf-day'); if (!b || !b.getAttribute('data-iso')) return;
+    if (b.getAttribute('data-off')) {
+      fechaSel = ''; slotSel = null; pintarCal();
+      $('irf_slots').innerHTML = '<div class="irf-note is-bad"><strong>' + esc(fechaTxt(b.getAttribute('data-iso'))) + ':</strong> ' + esc(b.getAttribute('data-off')) + '. Elige otro día.</div>';
+      resumen(); actualizar(); return;
+    }
+    fechaSel = b.getAttribute('data-iso'); slotSel = null;
+    pintarCal(); pintarSlots(); actualizar();
+  });
+
+  function pintarSlots() {
+    var box = $('irf_slots');
+    if (!fechaSel || !dispo || !dispo.dias[fechaSel]) { box.innerHTML = '<div class="irf-note">Elige primero un día en el calendario.</div>'; resumen(); return; }
+    var slots = (dispo.dias[fechaSel].slots || []).filter(function (s) { return s.estado !== 'colacion'; });
+    var corte = dispo.lunch_start || '12:30', man = [], tar = [];
+    slots.forEach(function (s) { (s.time_from < corte ? man : tar).push(s); });
+    function chips(lista) {
+      return '<div class="irf-sgrid">' + lista.map(function (s) {
+        var st = s.estado, cls = 'irf-slot', dis = '', tit = 'Disponible';
+        if (st === 'ocupado') { cls += ' is-half'; tit = 'Medio cupo: queda 1 lugar'; }
+        else if (st === 'bloqueado') { cls += ' is-block'; dis = ' disabled'; tit = 'Bloqueado por ILUS' + (s.razon ? ': ' + s.razon : ''); }
+        else if (st !== 'disponible') { dis = ' disabled'; tit = st === 'completo' ? 'Sin cupos' : 'No disponible'; }
+        if (slotSel && slotSel.time_from === s.time_from) cls += ' is-sel';
+        return '<button type="button" class="' + cls + '" data-t="' + esc(s.time_from) + '" title="' + esc(tit) + '" aria-label="' + esc(s.time_from + ' — ' + tit) + '"' + dis + '>' + esc(s.time_from) + '</button>';
+      }).join('') + '</div>';
+    }
+    var libres = slots.filter(function (s) { return s.estado === 'disponible' || s.estado === 'ocupado'; }).length;
+    box.innerHTML = libres ? ((man.length ? '<div class="irf-sect">Mañana</div>' + chips(man) : '') + (tar.length ? '<div class="irf-sect">Tarde</div>' + chips(tar) : ''))
+      : '<div class="irf-note is-bad">Este día ya no tiene horas libres. Elige otro día.</div>';
+    resumen();
+  }
+  $('irf_slots').addEventListener('click', function (e) {
+    var b = e.target.closest('.irf-slot'); if (!b || b.disabled) return;
+    var t = b.getAttribute('data-t'), s = (dispo.dias[fechaSel].slots || []).filter(function (x) { return x.time_from === t; })[0];
+    slotSel = (slotSel && slotSel.time_from === t) ? null : s;
+    pintarSlots(); actualizar();
+  });
+  function resumen() {
+    var el = $('irf_sum');
+    if (fechaSel && slotSel) { el.innerHTML = 'Llegas el <b>' + esc(fechaTxt(fechaSel)) + '</b> a las <b>' + esc(slotSel.time_from) + '</b>'; el.classList.add('is-ok'); }
+    else { el.textContent = fechaSel ? 'Ahora elige tu hora de llegada.' : 'Aún no eliges día y hora.'; el.classList.remove('is-ok'); }
+  }
+
+  /* ── Datos que vienen en el link de la página ─────────── */
+  try {
+    var qs = new URLSearchParams(window.location.search);
+    var tipo = (qs.get('tipo') || '').toLowerCase();
+    if (['pedido', 'factura', 'boleta', 'nota_venta'].indexOf(tipo) !== -1) { $('irf_tipo').value = tipo; $('irf_tipo').dispatchEvent(new Event('change')); }
+    var pon = function (id, v) { if (v && !$(id).value) $(id).value = String(v).trim().slice(0, 160); };
+    pon('irf_num', (qs.get('numero') || qs.get('pedido') || '').replace(/^#/, ''));
+    pon('irf_nombre', qs.get('nombre')); pon('irf_email', qs.get('email'));
+    pon('irf_tel', qs.get('telefono')); pon('irf_rut', qs.get('rut'));
+    ['irf_rut', 'irf_email', 'irf_tel'].forEach(function (id) { if ($(id).value) validarCampo(id); });
+  } catch (e) { }
+
+  /* ── Envío ─────────────────────────────────────────────── */
+  function mostrarErrores(lista) {
+    var a = $('irf_alert');
+    a.innerHTML = 'Revisa esto antes de enviar:<ul>' + lista.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
+    a.hidden = false;
+  }
+  function validarTodo() {
+    var errores = [], primero = null;
+    function falta(msg, el) { errores.push(msg); if (!primero) primero = el; }
+    if (!$('irf_num').value.trim()) { falta('Escribe el N° del documento.', $('irf_num')); marcar($('irf_num'), false); }
+    if (!$('irf_nombre').value.trim()) { falta('Escribe el nombre completo o razón social.', $('irf_nombre')); marcar($('irf_nombre'), false); }
+    if (!validarCampo('irf_rut')) { falta('Revisa el RUT del cliente.', $('irf_rut')); marcar($('irf_rut'), false, 'irf_rut_err'); }
+    if (!validarCampo('irf_email')) { falta('Revisa el correo.', $('irf_email')); marcar($('irf_email'), false, 'irf_email_err'); }
+    if (!validarCampo('irf_tel')) { falta('Revisa el celular (9 XXXX XXXX).', $('irf_tel')); marcar($('irf_tel'), false, 'irf_tel_err'); }
+    if ($('irf_auth').checked) {
+      if (!$('irf_pnom').value.trim()) { falta('Escribe el nombre de quien retira.', $('irf_pnom')); marcar($('irf_pnom'), false); }
+      if (!validarCampo('irf_prut')) { falta('Revisa el RUT de quien retira.', $('irf_prut')); marcar($('irf_prut'), false, 'irf_prut_err'); }
+      if (!validarCampo('irf_ptel')) falta('Revisa el celular de quien retira.', $('irf_ptel'));
+      if (declaracion() && !$('irf_decl_ok').checked) falta('Confirma que el cliente autoriza a la persona que retira.', $('irf_decl'));
+    }
+    if (!fechaSel || !slotSel) falta('Elige el día y tu hora de llegada.', $('irf_paso4'));
+    if (!$('irf_terms').checked) falta('Marca la declaración de responsabilidad.', $('irf_terms_box'));
+    return { errores: errores, primero: primero };
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (enviando) return;
+    $('irf_alert').hidden = true;
+    var v = validarTodo();
+    if (v.errores.length) {
+      mostrarErrores(v.errores);
+      if (v.primero) { v.primero.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (v.primero.focus) try { v.primero.focus({ preventScroll: true }); } catch (x) { } }
+      return;
+    }
+    var fd = new FormData();
+    var nombre = $('irf_nombre').value.trim(), auth = $('irf_auth').checked;
+    fd.append('document_type', $('irf_tipo').value);
+    fd.append('document_number', $('irf_num').value.trim());
+    fd.append('invoice_total_amount', '0');
+    fd.append('customer_name', nombre);
+    fd.append('customer_rut', $('irf_rut').value.trim());
+    fd.append('contact_email', $('irf_email').value.trim().toLowerCase());
+    fd.append('contact_phone', $('irf_tel').value.trim());
+    fd.append('auth_active', auth ? '1' : '0');
+    fd.append('contact_name', auth ? $('irf_pnom').value.trim() : nombre);
+    if (auth) {
+      fd.append('pickup_person_name', $('irf_pnom').value.trim());
+      fd.append('pickup_person_rut', $('irf_prut').value.trim());
+      fd.append('pickup_person_phone', $('irf_ptel').value.trim());
+      fd.append('pickup_person_relation', $('irf_prel').value);
+      if ($('irf_decl_ok').checked) fd.append('acepta_tercero', '1');
+    }
+    fd.append('requested_date', fechaSel);
+    fd.append('requested_time_from', slotSel.time_from);
+    fd.append('requested_time_to', slotSel.time_to);
+    fd.append('total_packages', '0');
+    fd.append('observations', $('irf_obs').value.trim());
+    fd.append('accept_terms', 'on');
+    fd.append('hp_ilus_extra', $('irf_hp').value);
+    if (t0Servidor) fd.append('ilus_t0', String(t0Servidor));
+
+    enviando = true; $('irf_send').disabled = true; $('irf_send_txt').textContent = 'Enviando…';
+    var ctl = window.AbortController ? new AbortController() : null;
+    var reloj = ctl ? setTimeout(function () { ctl.abort(); }, 45000) : null;
+    fetch(API + '/retiros/solicitar', { method: 'POST', body: fd, headers: { 'Accept': 'application/json' }, credentials: 'omit', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) {
+        return r.json().catch(function () { return null; }).then(function (d) { return { st: r.status, d: d }; });
+      })
+      .then(function (res) {
+        var d = res.d;
+        if (d && d.ok && d.code) { exito(d); return; }
+        if (res.st === 429) { mostrarErrores(['Hiciste muchos intentos seguidos. Espera unos minutos y vuelve a enviar.']); return; }
+        var errs = (d && d.errors && d.errors.length) ? d.errors : [(d && d.error) || 'No pudimos registrar tu solicitud. Inténtalo de nuevo.'];
+        mostrarErrores(errs);
+        if (/cupo|lleno|slot|horario/i.test(errs.join(' '))) {
+          cargarAgenda(true).then(function () { slotSel = null; pintarSlots(); actualizar(); });
+          $('irf_paso4').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          $('irf_alert').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      })
+      .catch(function (err) {
+        mostrarErrores([err && err.name === 'AbortError'
+          ? 'La conexión está muy lenta. Vuelve a enviar: si tu solicitud ya había quedado registrada, no se duplica.'
+          : 'Sin conexión con ILUS. Revisa tu internet y vuelve a enviar (no se duplica).']);
+        $('irf_alert').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      })
+      .then(function () {
+        if (reloj) clearTimeout(reloj);
+        enviando = false; $('irf_send').disabled = false; $('irf_send_txt').textContent = 'Enviar solicitud de retiro';
+      });
+  });
+
+  function exito(d) {
+    form.hidden = true;
+    var code = String(d.code).replace(/[^A-Za-z0-9-]/g, '');
+    $('irf_code').textContent = code;
+    $('irf_ok_txt').textContent = 'Te enviamos un correo a ' + $('irf_email').value.trim().toLowerCase() + ' con el enlace de seguimiento. Te confirmaremos la fecha en menos de 24 horas.';
+    var url = String(d.tracking_url || '');
+    if (url.charAt(0) === '/') url = API + url;
+    if (/^https:\/\//.test(url)) $('irf_track').href = url; else $('irf_track').hidden = true;
+    $('irf_ok').hidden = false;
+    $('irfProgBar').style.width = '100%'; $('irfProg').classList.add('is-ok'); $('irfProgTxt').textContent = 'Solicitud enviada';
+    $('irf_ok').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    try { $('irf_ok').focus({ preventScroll: true }); } catch (x) { }
+  }
+  $('irf_copy').addEventListener('click', function () {
+    var code = $('irf_code').textContent, btn = this;
+    var listo = function () { btn.textContent = 'Código copiado'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(listo, function () { btn.textContent = code; });
+    else btn.textContent = code;
+  });
+
+  cargarAgenda(false);
+  actualizar();
+})();
+</script>

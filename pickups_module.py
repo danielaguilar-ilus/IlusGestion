@@ -3054,6 +3054,29 @@ def register_pickup_routes(app, ctx):
             print(f"[pickup-msg] no-leidos: {exc}", flush=True)
             return jsonify({"ok": True, "total": 0, "por_retiro": {}})
 
+    # Formulario HTML de la tienda (docs/shopify/formulario_retiro_ilus.html,
+    # Daniel 2026-09-24: "quiero el formulario en HTML"). Vive en ilusfitness.com
+    # y le habla a esta app: el navegador solo le deja leer la respuesta si la
+    # app autoriza ese origen (CORS). Solo la tienda, solo estas dos rutas
+    # públicas y sin cookies: ninguna sesión interna queda expuesta.
+    _ORIGEN_TIENDA_RE = re.compile(r"^https://((www\.)?ilusfitness\.com|[a-z0-9-]+\.myshopify\.com)$")
+
+    @app.after_request
+    def _cors_formulario_tienda(resp):
+        try:
+            if request.path.rstrip("/") not in ("/retiros/solicitar", "/retiros/api/disponibilidad-publica"):
+                return resp
+            origen = request.headers.get("Origin") or ""
+            if origen and _ORIGEN_TIENDA_RE.match(origen):
+                resp.headers["Access-Control-Allow-Origin"] = origen
+                resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                resp.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type"
+                resp.headers["Access-Control-Max-Age"] = "600"
+                resp.headers.add("Vary", "Origin")
+        except Exception as _e_cors:
+            print(f"[pickup-cors] {_e_cors}", flush=True)
+        return resp
+
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
     @_rate_limited("pickup_public_request", max_attempts=40, window_seconds=3600)
     def pickup_public_request():
@@ -11398,7 +11421,9 @@ def register_pickup_routes(app, ctx):
         use_cache = (not include_owners) and (single_date_obj is None) and (exclude_request_id is None)
         if use_cache and _DISPO_CACHE["payload"] is not None and \
                 (_time_local.time() - _DISPO_CACHE["ts"]) < _DISPO_TTL:
-            return jsonify(_DISPO_CACHE["payload"])
+            # ahora_ts va fuera del cache: el formulario de la tienda lo usa
+            # como hora de apertura (filtro anti-bots) con el reloj del servidor.
+            return jsonify({**_DISPO_CACHE["payload"], "ahora_ts": int(_time_local.time())})
 
         cfg = settings()
         if single_date_obj is not None:
@@ -11764,6 +11789,10 @@ def register_pickup_routes(app, ctx):
             "to":   d_to.isoformat(),
             "bloqueos": _bloqueos_pub,
             "warehouse_name": cfg.get("warehouse_name"),
+            # Dirección de la bodega para el formulario HTML de la tienda
+            # (docs/shopify/formulario_retiro_ilus.html): así no queda escrita a mano.
+            "warehouse_addr": cfg.get("warehouse_addr") or "",
+            "maps_url": cfg.get("maps_url") or "",
             "open_time":  _td_to_hhmm(cfg.get("open_time") or "09:00"),
             "close_time": _td_to_hhmm(cfg.get("close_time") or "16:30"),
             "slot_minutes": slot_dur,
@@ -11791,7 +11820,7 @@ def register_pickup_routes(app, ctx):
         if use_cache:
             _DISPO_CACHE["payload"] = _payload
             _DISPO_CACHE["ts"]      = _time_local.time()
-        return jsonify(_payload)
+        return jsonify({**_payload, "ahora_ts": int(_time_local.time())})
 
     @app.route("/retiros/api/<int:rid>/full")
     @require_permission("view")
