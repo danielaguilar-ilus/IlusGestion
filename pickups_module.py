@@ -3067,7 +3067,10 @@ def register_pickup_routes(app, ctx):
             if request.path.rstrip("/") not in ("/retiros/solicitar", "/retiros/api/disponibilidad-publica"):
                 return resp
             origen = request.headers.get("Origin") or ""
-            if origen and _ORIGEN_TIENDA_RE.match(origen):
+            # "null" = el archivo .html abierto directo desde el computador (el
+            # equipo de e-commerce lo revisa antes de pegarlo). No abre nada
+            # nuevo: estas dos rutas ya son públicas y se pueden llamar sin navegador.
+            if origen and (origen == "null" or _ORIGEN_TIENDA_RE.match(origen)):
                 resp.headers["Access-Control-Allow-Origin"] = origen
                 resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
                 resp.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type"
