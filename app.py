@@ -1569,6 +1569,20 @@ def _img_resize_bytes(file_obj, max_dim=1600, quality=82):
         import io as _io
         im = Image.open(_io.BytesIO(raw))
         fmt = (im.format or "JPEG").upper()
+        # 🔄 FIX 2026-09-25 (Daniel: "las fotos de todas las OT están
+        # torcidas"). Muchos celulares (Samsung/Android sobre todo) guardan
+        # la foto con los píxeles ACOSTADOS y una marca EXIF "Orientation"
+        # que dice cómo girarla. Pillow no la aplica solo, y este save()
+        # descarta el EXIF: la foto quedaba de lado para siempre (medido en
+        # la OT-2026-00161: 1600x737 con el techo a la izquierda).
+        # exif_transpose gira los píxeles según la marca y la limpia; sin
+        # marca devuelve la misma imagen. `fmt` se lee ANTES, porque la
+        # imagen girada ya no conserva `format`.
+        try:
+            from PIL import ImageOps
+            im = ImageOps.exif_transpose(im) or im
+        except Exception as _e_exif:
+            print(f"[_img_resize_bytes] exif_transpose: {_e_exif}", flush=True)
         if fmt == "PNG":
             im.thumbnail((max_dim, max_dim))
             out = _io.BytesIO(); im.save(out, format="PNG", optimize=True)
