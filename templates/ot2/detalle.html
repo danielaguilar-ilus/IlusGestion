@@ -627,7 +627,16 @@
 #otdFinCotizCmp > :first-child{margin-top:0}
 /* "Revisar las líneas" en media tarjeta: que el tipo se lea entero
    ("VD (nota de venta)") y el botón no se coma la fila. */
-#otdCardFinanzas .otd-fin-docrow{grid-template-columns:minmax(150px,1.2fr) minmax(100px,1fr) auto}
+/* 2026-09-25 (revisión): con 3 columnas el botón "Leer documento" (nowrap)
+   pedía ~400px y la mitad izquierda mide 340px a 1024: se montaba sobre
+   "Cuánto cobra". Tipo | Número lado a lado y el botón debajo, a todo el
+   ancho de su mitad; en 3 columnas solo cuando la mitad tiene espacio. */
+#otdCardFinanzas .otd-fin-docrow{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}
+#otdCardFinanzas #otdBtnLeerZz{grid-column:1/-1}
+@media (min-width:1400px){
+  #otdCardFinanzas .otd-fin-docrow{grid-template-columns:minmax(150px,1.2fr) minmax(100px,1fr) auto}
+  #otdCardFinanzas #otdBtnLeerZz{grid-column:auto}
+}
 /* 🐛 (venía de antes) bloqueada, "Leer documento" quedaba con fondo blanco
    y letra blanca: un botón rojo invisible. */
 #otdCardFinanzas.bloqueada #otdBtnLeerZz{color:#dc2626;border-color:#dc2626}
@@ -642,7 +651,7 @@
 .otd-fcotiz-anx{margin-top:6px;font-size:.72rem;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;
   border-radius:8px;padding:6px 9px;line-height:1.4}
 .otd-fcotiz details{margin-top:8px}
-.otd-fcotiz summary{cursor:pointer;font-size:.76rem;font-weight:800;color:#374151;min-height:32px;
+.otd-fcotiz summary{cursor:pointer;font-size:.76rem;font-weight:800;color:#374151;min-height:44px;
   display:flex;align-items:center}
 .otd-fcotiz-cl{border-top:1px solid #f1f3f5;padding:7px 0;font-size:.76rem;line-height:1.45}
 .otd-fcotiz-cl .eqs{color:#6b7280;font-size:.7rem;overflow-wrap:anywhere}
@@ -705,6 +714,16 @@
   /* Guardar / Corregir: 44px de alto, ícono arriba y palabra abajo, para
      dejarle el ancho a los tres números. */
   .otd-fbar-btn{flex-direction:column;gap:0;min-width:50px;padding:2px 6px;font-size:.58rem;line-height:1.1}
+  /* 2026-09-25 (revisión): la franja pegada medía 59px (tope de la spec:
+     ~48px). Se aprietan interlineado y rellenos SOLO de la franja; el alto
+     lo fija el botón Guardar/Corregir (44px, REGLA #3) + 1px + bordes. */
+  .otd-fbar-eq{padding:1px 4px}
+  .otd-fbar-eq .otd-fbar-cell{padding:2px 5px}
+  .otd-fbar-eq .otd-fbar-lab,.otd-fbar-eq .otd-fbar-pct{line-height:1.2}
+  .otd-fbar-eq .otd-fbar-num{line-height:1.15}
+  /* mobile.css le da 10px arriba/abajo a button.btn (Guardar lleva .btn):
+     eso lo subía a 50px. Con #id gana; el mínimo de 44px sigue intacto. */
+  #otdFinBarEq .otd-fbar-btn{padding-top:2px;padding-bottom:2px}
   .otd-fbar-btn i{font-size:1rem}
   /* Lo justo según el cotizador: la comparación primero en el celular. */
   .otd-fcotiz .otd-fsplit > #otdFinCotizCmp{order:-1}
@@ -716,7 +735,8 @@
   #otdFinCostoProveedor{scroll-margin-top:calc(var(--topbar-h,110px) + var(--otd-tabs-h,52px) + var(--otd-fbar-h,56px) + 10px)}
   .otd-fm-row{padding:9px 10px}
   .otd-fm-in input{width:132px;font-size:16px}
-  .otd-fm-row.tot .otd-fm-in input{width:150px;font-size:1.3rem}
+  /* !important: mobile.css fuerza .form-control a 16px !important (sigue ≥16px). */
+  .otd-fm-row.tot .otd-fm-in input{width:150px;font-size:1.3rem !important}
   .otd-fres-frase{font-size:.98rem}
   .otd-freq .otd-fbar-num{font-size:.86rem}
   .otd-fadd-num select,.otd-fadd-num #otdDocNum{flex:1 1 40%}
@@ -7595,14 +7615,27 @@ window.otdFinCuenta = function(d){
   const bajo = window.OTD_FIN_UMBRAL_BAJO;
   if (!(c.cTot > 0)){
     // Garantía: se valoriza aunque no se cobre -- el resultado es la caja.
-    if (d.garantia){ c.sem = 'ambar'; c.semTxt = 'Valorizada sin cobro (garantía)'; c.mostrarQueda = c.hayCosto; }
+    if (d.garantia){
+      c.sem = 'ambar';
+      c.semTxt = c.hayCosto && !c.costoCompleto ? 'Falta un costo' : 'Valorizada sin cobro (garantía)';
+      c.mostrarQueda = c.costoCompleto;
+    }
     else { c.sem = 'gris'; c.semTxt = 'Falta lo que se cobra'; c.mostrarQueda = false; }
   } else if (!c.hayCosto){ c.sem = 'ambar'; c.semTxt = 'Falta el costo'; c.mostrarQueda = false; }
+  // Un costo declarado y el otro vacío: vacío NO es $0 (regla aprobada).
+  // La barra no da un "Queda" que suponga el otro costo en cero.
+  else if (!c.costoCompleto){ c.sem = 'ambar'; c.semTxt = 'Falta un costo'; c.mostrarQueda = false; }
   else if (c.qTot < 0){ c.sem = 'rojo'; c.semTxt = 'Pérdida'; c.mostrarQueda = true; }
   else if (c.pTot < bajo){ c.sem = 'ambar'; c.semTxt = 'Margen bajo (menos de ' + bajo + ' %)'; c.mostrarQueda = true; }
   else { c.sem = 'verde'; c.semTxt = 'Margen'; c.mostrarQueda = true; }
   return c;
 };
+// Qué falta, dicho corto, cuando no se puede mostrar el "Queda" total.
+function _otdFinFaltaTxt(c, d){
+  if (!c.hayCobro && !d.garantia) return 'falta el cobro';
+  if (c.hayCosto && !c.costoCompleto) return 'falta un costo';
+  return 'falta el costo';
+}
 // Semáforo de UNA fila del resultado (instalación / despacho).
 function _otdFinSemFila(cob, cue, q){
   if (cue === null) return 'ambar';
@@ -7638,12 +7671,12 @@ window.otdFinPintar = function(d){
   const bar = el('otdFinBar');
   if (bar) bar.dataset.sem = c.sem;
   if (el('otdFinBarCobro')) el('otdFinBarCobro').textContent = c.hayCobro ? fb(c.cTot) : '—';
-  if (el('otdFinBarCosto')) el('otdFinBarCosto').textContent = c.hayCosto ? fb(c.kTot) : '—';
+  if (el('otdFinBarCosto')) el('otdFinBarCosto').textContent = c.costoCompleto ? fb(c.kTot) : '—';
   if (el('otdFinMargen')) el('otdFinMargen').textContent = c.mostrarQueda ? fb(c.qTot, true) : '—';
   if (el('otdFinMargenPct')){
     el('otdFinMargenPct').textContent = c.mostrarQueda
       ? (c.pTot === null ? 'sin cobro' : P(c.pTot))
-      : (c.hayCobro || d.garantia ? 'falta el costo' : 'falta el cobro');
+      : _otdFinFaltaTxt(c, d);
   }
   if (el('otdFinBarQueda')) el('otdFinBarQueda').className = 'otd-fbar-cell q sem-' + c.sem;
   const semTxt = el('otdFinBarSemTxt');
@@ -7657,15 +7690,17 @@ window.otdFinPintar = function(d){
   if (det){
     const cls = x => x > 0 ? 'pos' : (x < 0 ? 'neg' : 'cero');
     const cue = (k) => k === null ? '—' : f(k);
-    const qq = (q, k) => k === null ? '<span class="cero">—</span>' : '<span class="' + cls(q) + '">' + f(q, true) + '</span>';
+    // Sin cobro declarado (fuera de garantía) no hay "Queda": falta un dato.
+    const sinCob = !c.hayCobro && !d.garantia;
+    const qq = (q, k) => (k === null || sinCob) ? '<span class="cero">—</span>' : '<span class="' + cls(q) + '">' + f(q, true) + '</span>';
     det.innerHTML =
       '<div class="otd-fdet-row cab"><span>Por negocio</span><span>Cobramos</span><span>Nos cuesta</span><span>Queda</span></div>' +
-      '<div class="otd-fdet-row"><span>' + Neg + '</span><span>' + f(c.cInst) + '</span><span>' +
+      '<div class="otd-fdet-row"><span>' + Neg + '</span><span>' + (sinCob ? '—' : f(c.cInst)) + '</span><span>' +
         cue(c.kInstN) + '</span>' + qq(c.qInst, c.kInstN) + '</div>' +
-      '<div class="otd-fdet-row"><span>Despacho</span><span>' + f(c.cDesp) + '</span><span>' +
+      '<div class="otd-fdet-row"><span>Despacho</span><span>' + (sinCob ? '—' : f(c.cDesp)) + '</span><span>' +
         cue(c.kDespN) + '</span>' + qq(c.qDesp, c.kDespN) + '</div>' +
-      '<div class="otd-fdet-row tot"><span>Total OT</span><span>' + f(c.cTot) + '</span><span>' +
-        (c.hayCosto ? f(c.kTot) : '—') + '</span>' +
+      '<div class="otd-fdet-row tot"><span>Total OT</span><span>' + (sinCob ? '—' : f(c.cTot)) + '</span><span>' +
+        (c.costoCompleto ? f(c.kTot) : '—') + '</span>' +
         (c.mostrarQueda ? '<span class="' + cls(c.qTot) + '">' + f(c.qTot, true) +
           (c.pTot !== null ? ' · ' + P(c.pTot) : '') + '</span>' : '<span class="cero">—</span>') + '</div>';
   }
@@ -7673,20 +7708,20 @@ window.otdFinPintar = function(d){
   // ── Cuadro "Resultado de la OT": mismas celdas, mismo semáforo ──
   const pctFila = (cob, cue, q, p) => cue === null ? 'falta el costo'
     : (cob > 0 ? P(p) : (q < 0 ? 'pérdida' : (!cob && !cue ? 'no aplica' : 'sin cobro')));
-  // Sin nada declarado en el cobro, las filas dicen "—", no "$0".
+  // Sin nada declarado en el cobro, las filas dicen "—", no "$0". Y sin
+  // cobro (fuera de garantía) no hay "pérdida": falta un dato -- gris, igual
+  // que la barra y la fila Total.
   const cobF = x => c.hayCobro ? x : null;
-  if (el('otdFinResInst')){
-    el('otdFinResInst').innerHTML = _otdFinEqHtml(cobF(c.cInst), c.kInstN, c.kInstN === null ? null : c.qInst,
-      _otdFinSemFila(c.cInst, c.kInstN, c.qInst), pctFila(c.cInst, c.kInstN, c.qInst, c.pInst));
-  }
-  if (el('otdFinResDesp')){
-    el('otdFinResDesp').innerHTML = _otdFinEqHtml(cobF(c.cDesp), c.kDespN, c.kDespN === null ? null : c.qDesp,
-      _otdFinSemFila(c.cDesp, c.kDespN, c.qDesp), pctFila(c.cDesp, c.kDespN, c.qDesp, c.pDesp));
-  }
+  const faltaCobro = !c.hayCobro && !d.garantia;
+  const fila = (cob, k, q, p) => faltaCobro
+    ? _otdFinEqHtml(null, k, null, 'gris', 'falta el cobro')
+    : _otdFinEqHtml(cobF(cob), k, k === null ? null : q, _otdFinSemFila(cob, k, q), pctFila(cob, k, q, p));
+  if (el('otdFinResInst')) el('otdFinResInst').innerHTML = fila(c.cInst, c.kInstN, c.qInst, c.pInst);
+  if (el('otdFinResDesp')) el('otdFinResDesp').innerHTML = fila(c.cDesp, c.kDespN, c.qDesp, c.pDesp);
   if (el('otdFinResTot')){
-    el('otdFinResTot').innerHTML = _otdFinEqHtml(c.hayCobro ? c.cTot : null, c.hayCosto ? c.kTot : null,
+    el('otdFinResTot').innerHTML = _otdFinEqHtml(c.hayCobro ? c.cTot : null, c.costoCompleto ? c.kTot : null,
       c.mostrarQueda ? c.qTot : null, c.sem,
-      c.mostrarQueda ? (c.pTot === null ? 'sin cobro' : P(c.pTot)) : (c.hayCobro || d.garantia ? 'falta el costo' : 'falta el cobro'));
+      c.mostrarQueda ? (c.pTot === null ? 'sin cobro' : P(c.pTot)) : _otdFinFaltaTxt(c, d));
   }
   if (el('otdFinResDespN')){
     el('otdFinResDespN').textContent = (c.cDesp === 0 && c.kDesp > 0)
@@ -7708,6 +7743,9 @@ window.otdFinPintar = function(d){
       t = 'Falta declarar lo que se le cobra al cliente: sin eso no se puede saber lo que queda.';
     } else if (!c.hayCosto){
       t = 'Falta declarar lo que nos cuesta: sin eso no se puede saber lo que queda.';
+    } else if (!(c.cTot > 0) && !c.costoCompleto){
+      t = 'Es garantía: no se le cobra al cliente. Falta declarar lo que nos cuesta ' +
+          (c.kInstN === null ? (d.neg || 'la instalación') : 'el despacho') + ' (si no hubo, escribe 0).';
     } else if (!(c.cTot > 0)){
       t = 'Es garantía: no se le cobra al cliente y a ILUS Fitness le cuesta ' + r(c.kTot) + '.';
     } else if (c.kInstN === null || c.kDespN === null){
@@ -7971,7 +8009,8 @@ window.otdFinToggleDesglose = function(forzar){
     });
     // "Nos cuesta en total": texto calculado, no un campo.
     const kt = document.getElementById('otdFinCostoTotal');
-    if (kt) kt.textContent = c.hayCosto ? window.otdFinFmt(c.kTot) : '—';
+    if (kt) kt.textContent = c.costoCompleto ? window.otdFinFmt(c.kTot)
+      : (c.hayCosto ? window.otdFinFmt(c.kTot) + ' (falta un costo)' : '—');
     // "Se carga a: …"
     const cc = document.getElementById('otdFinCentroCosto');
     const ccTxt = document.getElementById('otdFinBarCentro');
@@ -8272,15 +8311,20 @@ window.otdGuardarFinanzas = async function(){
      columna no se toca (el backend hace COALESCE). */
   const _kProv = window.otdMoneyVal('otdFinCostoProveedor');
   const _kDesp = window.otdMoneyVal('otdFinCostoDespacho');
-  // Un costo YA declarado que se dejó vacío no se puede borrar así (el
-  // backend lo conserva): se dice en vez de "guardar" algo que no cambia.
-  const _vacioDeclarado = [['otdFinCostoProveedor', _kProv, 'Nos cuesta ' + ((window.OTD_FIN || {}).neg || 'la instalación')],
-                           ['otdFinCostoDespacho', _kDesp, 'Nos cuesta el despacho']]
+  // Un monto YA declarado que se dejó vacío no se puede borrar así (el
+  // backend hace COALESCE en costo, zz_envio_monto, costo_proveedor y
+  // costo_despacho: lo conserva): se dice en vez de "guardar" algo que no
+  // cambia -- y en vez de pintar como guardado un vacío que la base no tiene.
+  const _vacioDeclarado = [['otdFinCostoProveedor', _kProv, 'Nos cuesta ' + ((window.OTD_FIN || {}).neg || 'la instalación'), 'costo'],
+                           ['otdFinCostoDespacho', _kDesp, 'Nos cuesta el despacho', 'costo'],
+                           ['otdFinZzEnvio', body.zz_envio_monto, 'Despacho al cliente', 'cobro'],
+                           ['otdFinCosto', body.costo, 'Total al cliente', 'cobro']]
     .find(function(x){ return x[1] === null && window.otdFinValorGuardado && window.otdFinValorGuardado(x[0]) !== ''; });
   if (_vacioDeclarado){
     if (window.ilusToast){
       ilusToast('«' + _vacioDeclarado[2] + '» ya estaba declarado: vacío no lo borra. ' +
-                'Si no hubo costo, escribe 0.', {type: 'warning'});
+                (_vacioDeclarado[3] === 'costo' ? 'Si no hubo costo, escribe 0.' : 'Si no se cobra, escribe 0.'),
+                {type: 'warning'});
     }
     const _c = document.getElementById(_vacioDeclarado[0]);
     if (_c) _c.focus();
@@ -8334,6 +8378,14 @@ window.otdGuardarFinanzas = async function(){
       } catch (_eFecha){}
       if (window.OTD_FIN) window.OTD_FIN.declarada = true;
       if (window.otdFinPintarZzBox) window.otdFinPintarZzBox(body.zz_monto, body.zz_envio_monto);
+      // Chip "Valor del servicio" del encabezado: misma regla que valor_ot
+      // en _ot_docs_listar (servicio + despacho; si ambos vacíos, el total).
+      // Con el freno de arriba, lo enviado es lo que quedó en la base.
+      if (window.otdFinPintarHeader){
+        const _vz = (body.zz_monto !== null || body.zz_envio_monto !== null)
+          ? (body.zz_monto || 0) + (body.zz_envio_monto || 0) : body.costo;
+        window.otdFinPintarHeader({valor_ot: _vz});
+      }
       const falt = document.getElementById('otdFinFaltan');
       if (falt && Array.isArray(j.faltan)){
         falt.hidden = !j.faltan.length;
@@ -8725,9 +8777,17 @@ window.otdSetCentroCosto = function(btn){
     sincronizarTipo();
   }
 
+  // ¿Estos dos campos estaban tal como se cargaron? (lo decide la foto de
+  // "lo guardado" de la tarjeta de Finanzas).
+  const _AUTO_IDS = ['otdFinProveedorNombre', 'otdFinProveedorTipo'];
+  const _limpios = () => !!window.otdFinValorGuardado && _AUTO_IDS.every(function(id){
+    const x = document.getElementById(id);
+    return !x || String(x.value || '').trim() === window.otdFinValorGuardado(id);
+  });
   fetch('/mantenciones/api/tecnicos')
     .then(r => r.json())
     .then(function(lista){
+      const _estabanLimpios = _limpios();
       if (!Array.isArray(lista) || !lista.length){
         cont.innerHTML = '<span class="cargando">No hay técnicos registrados — escribe el nombre abajo.</span>';
         return;
@@ -8767,6 +8827,15 @@ window.otdSetCentroCosto = function(btn){
         }
       }
       pintarSeleccion();
+      /* 2026-09-25: la preselección (y el tipo que deduce) es una
+         SUGERENCIA de la carga, no un cambio de alguien: entra a la foto
+         de "lo guardado" para que la barra no diga "Cambios sin guardar"
+         al abrir la OT sin haber tocado nada. Solo si nadie había tocado
+         esos campos antes de que llegara la lista. */
+      if (_estabanLimpios && window.otdFinMarcarGuardado){
+        window.otdFinMarcarGuardado(_AUTO_IDS);
+        if (window.otdPintarResultado) window.otdPintarResultado();
+      }
     })
     .catch(function(){
       cont.innerHTML = '<span class="cargando">No se pudo cargar la lista — escribe el nombre abajo.</span>';
@@ -11181,8 +11250,18 @@ function otdFinCotizPintar(){
       sin_clasificacion: 'Los equipos de esta OT no tienen tipo en el catálogo: clasifícalos y te digo ' +
                          'cuánto vale este trabajo a costo.',
       sin_tarifa: 'Los tipos de equipo de esta OT no tienen tarifa de horas para este servicio.',
+      solo_no_cobrables: 'Los equipos clasificados de esta OT son accesorios: el cotizador no les ' +
+                         'asigna mano de obra.',
     };
     html += otdEsc(motivos[j.motivo] || 'No hay con qué calcular lo justo para esta OT.');
+    // Los accesorios (no_cobrable) se nombran igual, aunque no haya total.
+    const _noCob = (j.clases || []).filter(function(c){ return c.no_cobrable; });
+    if (_noCob.length){
+      html += _noCob.map(function(c){
+        return '<div class="otd-fcotiz-cl"><b>' + otdEsc(c.clase) + ' × ' + cant(c.cantidad) +
+          '</b> — el cotizador no la cobra (línea operativa).' + eqs(c) + '</div>';
+      }).join('');
+    }
   }
   if ((j.sin_tarifa || []).length){
     html += '<div class="otd-fcotiz-sin"><b>Quedan fuera del cálculo:</b><ul>' +

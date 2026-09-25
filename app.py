@@ -93973,8 +93973,11 @@ def ot2_api_costo_sugerido(vid):
     por_clase = {}
     for e in equipos:
         e = dict(e)
+        # Mismo criterio que _tk_cotiz_calcular_item: solo None es "sin
+        # cantidad" (→ 1). Un 0 declarado es 0 -- `or 1` lo colapsaba a 1.
         try:
-            cant = max(float(e.get("cant") or 1), 0.0)
+            _c = e.get("cant")
+            cant = 1.0 if _c is None else max(float(_c), 0.0)
         except (TypeError, ValueError):
             cant = 1.0
         slug = (e.get("clase_slug") or "").strip()
@@ -94070,6 +94073,11 @@ def ot2_api_costo_sugerido(vid):
         out["total_precio"] = total_precio
     elif out["sin_tarifa"]:
         out["motivo"] = "sin_tarifa"
+    elif any(c.get("no_cobrable") for c in out["clases"]):
+        # Todo lo clasificado es accesorio (no_cobrable): SÍ tiene tipo en el
+        # catálogo, pero el cotizador no le asigna mano de obra. Decir
+        # "clasifícalos" aquí sería mandar a arreglar algo que está bien.
+        out["motivo"] = "solo_no_cobrables"
     else:
         out["motivo"] = "sin_clasificacion"
     try:
