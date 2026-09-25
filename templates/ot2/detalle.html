@@ -4064,6 +4064,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     <option value="">— Sin asociar —</option>
                     <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
                     <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
+                    {#- 🐛 2026-09-25: las notas de venta de ILUS en Random son
+                        "VD" (y "WEB" las de la tienda). Sin estas opciones, un
+                        principal VD se veía "— Sin asociar —" y elegir un
+                        resultado VD de la búsqueda no hacía nada. -#}
+                    <option value="VD" {% if _doc_tido_fin=='VD' %}selected{% endif %}>VD (nota de venta)</option>
+                    <option value="WEB" {% if _doc_tido_fin=='WEB' %}selected{% endif %}>WEB (nota de venta web)</option>
                     <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
                     <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
                   </select>
@@ -4122,8 +4128,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     <i class="bi bi-plus-lg"></i> Agregar</button>
                 </div>
                 <div class="small text-muted mt-1" style="font-size:.68rem">
-                  Las facturas y boletas suman al total cobrado. Las cotizaciones quedan
-                  como referencia: no reemplazan el documento de cobro.
+                  Al agregar un documento se leen solo sus líneas <b>ZZ</b> (instalación,
+                  mantención y envío) y se <b>suman al valor de la OT</b> (Paso 2). Los
+                  productos no suman. Una nota de venta se encuentra aunque esté como VD o WEB.
+                  Las cotizaciones quedan como referencia: no reemplazan el documento de cobro.
                 </div>
                 <div class="small text-danger mt-1" id="otdDocErr" style="min-height:14px;font-size:.7rem"></div>
               </div>
@@ -7795,6 +7803,21 @@ window.otdIrAFirmar = function(){
    que traer"). El wizard de creación ya leía el documento; esta pantalla
    solo guardaba tipo+número sin abrirlo nunca -- por eso se podía guardar
    una boleta y quedar con los montos en blanco (y el margen falso). */
+/* Pone un tipo de documento en un <select>. Si la opción no existe la crea:
+   asignar .value a una opción inexistente no da error, simplemente no hace
+   nada -- así se perdía en silencio "VD" al elegir un resultado. */
+window.otdSelTido = function(selId, tido){
+  const sel = document.getElementById(selId);
+  if (!sel || !tido) return;
+  if (![...sel.options].some(o => o.value === tido)){
+    const op = document.createElement('option');
+    op.value = tido; op.textContent = tido;
+    sel.appendChild(op);
+  }
+  sel.value = tido;
+  sel.dispatchEvent(new Event('change', {bubbles: true}));
+};
+
 window.otdLeerLineasZz = async function(){
   const tido = (document.getElementById('otdFinDocErpTido') || {}).value || '';
   const nudo = ((document.getElementById('otdFinDocErpNudo') || {}).value || '').trim();
@@ -7819,6 +7842,11 @@ window.otdLeerLineasZz = async function(){
     if (!j.ok){
       msg.textContent = j.error || 'No pudimos leer ese documento en el ERP.';
       return;
+    }
+    // Una "NVV 10667" puede estar en Random como VD 10667: el servidor la
+    // encuentra y devuelve el tipo real -- se deja puesto para el Guardar.
+    if (j.documento && j.documento.tido && j.documento.tido !== tido){
+      otdSelTido('otdFinDocErpTido', j.documento.tido);
     }
     if (j.sin_zz){
       // Honestidad: un documento sin líneas ZZ no es un error, pero hay
@@ -8008,11 +8036,28 @@ window.otdBuscarDocErp = async function(){
           ${usoTxt ? '<div style="color:#b45309">' + usoTxt + '</div>' : ''}</div>
         <div style="text-align:right;white-space:nowrap"><b>$${Math.round(d.valor_total||0).toLocaleString('es-CL')}</b></div>`;
       row.onclick = function(){
-        document.getElementById('otdFinDocErpTido').value = d.tido_display;
+        otdSelTido('otdFinDocErpTido', d.tido_display);
         document.getElementById('otdFinDocErpNudo').value = d.nudo_display;
         box.style.display = 'none';
         msg.textContent = 'Documento seleccionado: ' + d.tido_display + ' ' + d.nudo_display + '. Recuerda presionar Guardar.';
       };
+      /* 💰 2026-09-25: además de usarlo como principal, cada resultado se
+         puede sumar directo a "Otros documentos" -- así no hay que copiar a
+         mano tipo y número (que era justo donde se equivocaba NVV/VD). */
+      const btnSumar = document.createElement('button');
+      btnSumar.type = 'button';
+      btnSumar.className = 'btn btn-dark btn-sm';
+      btnSumar.style.cssText = 'font-size:.7rem;padding:2px 8px;margin-left:6px;white-space:nowrap';
+      btnSumar.innerHTML = '<i class="bi bi-plus-lg"></i> Sumar a la OT';
+      btnSumar.title = 'Agregar como documento adicional y sumar su plata ZZ al valor de la OT';
+      btnSumar.onclick = function(ev){
+        ev.stopPropagation();
+        box.style.display = 'none';
+        otdDocAgregar(d.tido_display, d.nudo_display);
+      };
+      // Las guías (GDV/GDP) salen en la búsqueda pero no son de cobro.
+      if (['FCV','FCE','BLV','BLE','NVV','NVI','VD','WEB'].includes(d.tido_display))
+        row.lastElementChild.appendChild(btnSumar);
       box.appendChild(row);
     });
     box.style.display = 'block';
@@ -9702,8 +9747,25 @@ function otdEsc(s){
 
 function otdDocFila(d){
   const esCot = d.origen === 'cotizacion';
-  const monto = (d.monto || d.monto === 0)
-    ? '$' + Math.round(d.monto).toLocaleString('es-CL') : '';
+  const _fmt = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
+  /* 💰 2026-09-25 (Daniel: "solo busque plata de ZZ"). Lo que se muestra
+     por documento es lo que SUMÓ al valor de la OT (sus líneas ZZ), no el
+     total con productos. Documentos asociados antes de esto no sumaron:
+     se muestra su total apagado y marcado "doc." para no confundirlo. */
+  const _tieneZz = (d.zz_serv != null || d.zz_envio != null);
+  const _zzTot = _tieneZz ? (d.zz_serv || 0) + (d.zz_envio || 0)
+               : (d.zz_total_deducido != null ? d.zz_total_deducido : null);
+  let monto = '';
+  if (esCot){
+    monto = (d.monto || d.monto === 0) ? _fmt(d.monto) : '';
+  } else if (_zzTot != null){
+    monto = _fmt(_zzTot) + ' <small style="font-weight:700;color:#16a34a">ZZ</small>';
+  } else if (d.monto || d.monto === 0){
+    monto = '<span style="opacity:.55" title="Total del documento con productos: no suma al valor de la OT">' +
+            _fmt(d.monto) + ' doc.</span>';
+  }
+  const zzDet = (!esCot && _tieneZz)
+    ? 'ZZ servicio ' + _fmt(d.zz_serv) + ' · envío ' + _fmt(d.zz_envio) : '';
   // El RUT que no calzó se declara acá: es el dato que después nadie
   // recuerda haber justificado.
   const rutPill = (!esCot && d.rut_ok === 0)
@@ -9711,7 +9773,7 @@ function otdDocFila(d){
   const pill = esCot
     ? '<span class="pill ref">Referencia</span>'
     : (d.es_principal ? '<span class="pill">Principal</span>' : '');
-  const sub = [d.etiqueta, d.emitido_el ? ('Emitido ' + d.emitido_el) : '',
+  const sub = [d.etiqueta, zzDet, d.emitido_el ? ('Emitido ' + d.emitido_el) : '',
                esCot && d.estado ? d.estado : ''].filter(Boolean).join(' · ');
   const borrar = (d.id && !d.es_principal)
     ? `<button type="button" class="del" title="Quitar de la OT"
@@ -9734,9 +9796,12 @@ function otdDocPintar(data){
     : '<div class="text-muted" style="font-size:.76rem">Todavía no hay documentos asociados.</div>';
   if (res){
     const n = (data && data.n_cobro) || 0;
-    const tot = (data && data.total_cobro) || 0;
+    // 💰 2026-09-25: el número que manda es el VALOR de la OT (servicio +
+    // despacho del Paso 2), no la suma de totales con productos.
+    const valor = (data && data.valor_ot != null) ? data.valor_ot
+                : ((data && data.total_cobro) || 0);
     res.textContent = n
-      ? `${n} de cobro · $${Math.round(tot).toLocaleString('es-CL')}`
+      ? `${n} de cobro · valor OT $${Math.round(valor).toLocaleString('es-CL')}`
       : '';
   }
 }
@@ -9796,13 +9861,25 @@ window.otdAplicarCotizacion = function(btn){
   if (window.ilusToast) ilusToast('Monto de la cotización aplicado — revisa y presiona Guardar', {type:'success'});
 };
 
-async function otdDocAgregar(){
+/* tipoDirecto/numDirecto: cuando viene del botón "Sumar a la OT" de la
+   búsqueda (2026-09-25) -- ahí el tipo real (VD, WEB…) ya lo sabe el ERP. */
+let _otdDocAgregando = false;
+async function otdDocAgregar(tipoDirecto, numDirecto){
   const err = document.getElementById('otdDocErr');
   err.textContent = '';
-  const tipo = document.getElementById('otdDocTipo').value;
-  const num  = (document.getElementById('otdDocNum').value || '').trim();
+  const tipo = tipoDirecto || document.getElementById('otdDocTipo').value;
+  const num  = (numDirecto || document.getElementById('otdDocNum').value || '').trim();
   const etiq = (document.getElementById('otdDocEtiq').value || '').trim();
   if (!num){ err.textContent = 'Escribe el número.'; return; }
+  if (!['FCV','FCE','BLV','BLE','NVV','NVI','VD','WEB','__cot__'].includes(tipo)){
+    err.textContent = 'Ese tipo de documento (' + tipo + ') no es de cobro: no se puede sumar a la OT.';
+    return;
+  }
+  // Anti doble click: dos clics seguidos sumaban la plata dos veces.
+  if (_otdDocAgregando) return;
+  _otdDocAgregando = true;
+  err.style.color = '#6b7280';
+  err.textContent = 'Buscando ' + (tipo === '__cot__' ? 'la cotización' : tipo + ' ' + num) + ' en el ERP…';
   const body = (tipo === '__cot__')
     ? {origen: 'cotizacion', cotizacion: num, etiqueta: etiq}
     : {origen: 'erp', tipo: tipo, numero: num, etiqueta: etiq};
@@ -9830,22 +9907,51 @@ async function otdDocAgregar(){
       });
       d = await r.json().catch(() => ({}));
     }
+    err.style.color = '';
     if (!d.ok){ err.textContent = d.error || 'No se pudo agregar.'; return; }
+    err.textContent = '';
     document.getElementById('otdDocNum').value = '';
     document.getElementById('otdDocEtiq').value = '';
     otdDocPintar(d);
-    ilusToast('✓ Documento asociado a la OT', {type:'success'});
+    const fmt = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
+    if (d.sumado){
+      // Se dice exactamente cuánto movió el valor: es plata de la OT.
+      await ilusAlert({
+        title: (d.documento || 'Documento') + ' asociado',
+        type: 'success',
+        message: d.sumado.reemplazo
+          ? 'Es el primer documento de la OT: su plata ZZ pasa a ser el valor de la OT.'
+          : 'Su plata ZZ se sumó al valor de la OT.',
+        sub: '<b>' + fmt(d.sumado.servicio) + '</b> instalación / mantención + <b>' +
+             fmt(d.sumado.despacho) + '</b> envío<br><small>' +
+             (d.sumado.codigos || []).map(otdEsc).join(', ') + ' · Los productos no suman.</small>',
+        subHtml: true, okLabel: 'Ver la OT actualizada',
+      });
+      location.reload();
+      return;
+    }
+    if (d.zz_leido === false){
+      ilusToast('✓ ' + (d.documento || 'Documento') + ' asociado, pero no se pudieron leer sus líneas ZZ: ' +
+                'revisa el valor en el Paso 2.', {type:'warning'});
+    } else if (!d.sumado && tipo !== '__cot__'){
+      ilusToast('✓ ' + (d.documento || 'Documento') + ' asociado. No trae ZZ instalación, mantención ni ' +
+                'envío: no sumó plata a la OT.', {type:'info'});
+    } else {
+      ilusToast('✓ Documento asociado a la OT', {type:'success'});
+    }
     // Si fue el primero, pasó a ser el principal: esa declaración cambia
     // el candado de cierre y el margen, así que la pantalla se refresca.
     if (d.es_principal) setTimeout(() => location.reload(), 900);
-  } catch(e){ err.textContent = 'Error de conexión.'; }
+  } catch(e){ err.style.color = ''; err.textContent = 'Error de conexión.'; }
+  finally { _otdDocAgregando = false; }
 }
 
 async function otdDocQuitar(did){
   const ok = await ilusConfirm({
     title: 'Quitar documento',
     message: '¿Sacar este documento de la OT?',
-    sub: 'Queda registrado en la bitácora de la OT. El documento en sí no se toca.',
+    sub: 'Queda registrado en la bitácora de la OT. El documento en sí no se toca. ' +
+         'Si sumó plata ZZ al valor de la OT, se resta.',
     okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
   });
   if (!ok) return;
@@ -9854,6 +9960,13 @@ async function otdDocQuitar(did){
     const d = await r.json().catch(() => ({}));
     if (!d.ok){ ilusToast(d.error || 'No se pudo quitar.', {type:'error'}); return; }
     otdDocPintar(d);
+    if (d.restado){
+      // Ese documento había sumado plata ZZ: el valor de la OT bajó.
+      ilusToast('Documento quitado · se restaron $' + Math.round(d.restado).toLocaleString('es-CL') +
+                ' del valor de la OT', {type:'info'});
+      setTimeout(() => location.reload(), 1200);
+      return;
+    }
     ilusToast('Documento quitado', {type:'info'});
   } catch(e){ ilusToast('Error de conexión.', {type:'error'}); }
 }

@@ -80598,6 +80598,19 @@ def _ensure_mant_visita_documentos():
         """)
     except Exception as e:
         print(f"[ensure_visita_documentos] {e}", flush=True)
+    # 💰 2026-09-25 (Daniel: "en esa parte solo busque plata de ZZ
+    # instalación y ZZ envío o ZZ mantención... debe sumar lo que ya está").
+    # Lo que CADA documento aportó al valor de la OT, separado igual que el
+    # Paso 2 (servicio / despacho). Guardarlo por documento es lo que
+    # permite restar exacto si después se quita. NULL = documento asociado
+    # antes de esto: nunca sumó al valor, así que tampoco se le resta nada.
+    for _col in ("zz_serv_monto", "zz_envio_monto"):
+        try:
+            mysql_execute(f"ALTER TABLE mant_visita_documentos "
+                          f"ADD COLUMN {_col} DECIMAL(14,2) NULL")
+        except Exception as e:
+            if "Duplicate column" not in str(e):
+                print(f"[ensure_visita_documentos] {_col}: {e}", flush=True)
 
 
 def _ensure_ot_finanzas_cols():
@@ -83252,7 +83265,22 @@ def ot2_api_finanzas(vid):
                 _cli_rut_fin2 = _cli2.get("rut") if _cli2 else None
             except Exception:
                 _cli_rut_fin2 = None
-        _topes2 = _ot_zz_topes_reales(f_tido, f_nudo, None, _cli_rut_fin2)
+        # 💰 2026-09-25: el tope también cuenta los documentos ADICIONALES
+        # que sumaron plata ZZ a la OT (Otros documentos). Sin esto, después
+        # de agregar una segunda nota de venta el valor sumado quedaba por
+        # encima del tope del principal y "Guardar" lo rechazaba.
+        _extras_tope = []
+        try:
+            for _r_x in (mysql_fetchall(
+                    "SELECT erp_tido, erp_nudo FROM mant_visita_documentos "
+                    " WHERE visita_id=%s AND origen='erp' AND es_principal=0 "
+                    "   AND (zz_serv_monto IS NOT NULL OR zz_envio_monto IS NOT NULL)",
+                    (vid,)) or []):
+                _tx, _nx = _ot_doc_real_a_usuario(_r_x.get("erp_tido"), _r_x.get("erp_nudo"))
+                _extras_tope.append({"tido": _tx, "nudo": _nx})
+        except Exception as _e_xt:
+            print(f"[ot2_finanzas] extras tope vid={vid}: {_e_xt}", flush=True)
+        _topes2 = _ot_zz_topes_reales(f_tido, f_nudo, _extras_tope, _cli_rut_fin2)
         if _topes2["excluidos"] and not _topes2["documentos"]:
             _mot2 = _topes2["excluidos"][0]["motivo"]
             return _ot2_err(f"No pudimos validar el documento: {_mot2}",
@@ -83496,12 +83524,18 @@ def ot2_api_finanzas_buscar_erp(vid):
 
     q_clean = q.replace(".", "").replace(" ", "").replace("-", "").upper()
     is_digits = q_clean.isdigit()
+    # 🐛 2026-09-25 (Daniel, OT de Physica Ppc Spa: "Sin resultados para
+    # 77.038.558-k"). Un RUT con dígito verificador K no es "solo dígitos",
+    # así que caía al modo razón social y buscaba el texto del RUT como
+    # nombre -- nunca encontraba nada. Cuerpo numérico + K = RUT.
+    es_rut_k = (q_clean.endswith("K") and q_clean[:-1].isdigit()
+                and 7 <= len(q_clean) <= 9)
     tidos_in = "','".join(("FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "VD", "WEB"))
 
     docs, modo = [], ""
     try:
-        # ── Modo RUT (7-9 dígitos) ──────────────────────────────
-        if is_digits and 7 <= len(q_clean) <= 9:
+        # ── Modo RUT (7-9 dígitos, o cuerpo + K) ────────────────
+        if (is_digits or es_rut_k) and 7 <= len(q_clean) <= 9:
             modo = "rut"
             rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
             docs = _random_sql_query(f"""
@@ -83712,6 +83746,14 @@ def ot2_api_finanzas_lineas_zz(vid):
 
     try:
         header, lineas = _mant_erp_doc_cached(tido, nudo)
+        # 🐛 2026-09-25: "NVV 10667" no existe tal cual -- las notas de
+        # venta de ILUS viven en Random como VD/WEB (ver _ot_resolver_doc_erp).
+        if not header and tido == "NVV":
+            for _t_alt in ("VD", "WEB"):
+                header, lineas = _mant_erp_doc_cached(_t_alt, nudo)
+                if header:
+                    tido = _t_alt
+                    break
     except Exception as e:
         print(f"[ot2_lineas_zz] vid={vid} {tido} {nudo}: {e}", flush=True)
         return _ot2_err("No pudimos leer el documento en el ERP.", "ERP_ERROR", http=502)
@@ -84065,7 +84107,8 @@ def _ot_docs_listar(vid):
     """
     v = mysql_fetchone(
         "SELECT factura_tido, factura_nudo, factura_monto, factura_rut, "
-        "       factura_rut_ok, factura_emitida_at, documentos_extra "
+        "       factura_rut_ok, factura_emitida_at, documentos_extra, "
+        "       zz_monto, zz_envio_monto, costo "
         "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
     try:
         filas = mysql_fetchall(
@@ -84093,10 +84136,17 @@ def _ot_docs_listar(vid):
             })
         else:
             _erp_ya.add((f.get("erp_tido") or "", f.get("erp_nudo") or ""))
+            _t_u, _n_u = _ot_doc_real_a_usuario(f.get("erp_tido") or "FCV", f.get("erp_nudo") or "")
+            _zs, _ze = f.get("zz_serv_monto"), f.get("zz_envio_monto")
             docs.append({
                 "id": f["id"], "origen": "erp", "es_cobro": bool(f.get("es_cobro", 1)),
                 "es_principal": bool(f.get("es_principal")),
-                "titulo": f"{f.get('erp_tido') or 'FCV'} {f.get('erp_nudo') or ''}".strip(),
+                # "VD 10667", como se escribe en la app -- no "NVV VD00010667".
+                "titulo": f"{_t_u} {_n_u}".strip(),
+                # 💰 2026-09-25: lo que este documento sumó al valor de la OT
+                # (solo ZZ). None = no sumó (sin ZZ, o asociado antes).
+                "zz_serv": float(_zs) if _zs is not None else None,
+                "zz_envio": float(_ze) if _ze is not None else None,
                 "etiqueta": f.get("etiqueta") or "",
                 "monto": float(f["monto"]) if f.get("monto") is not None else None,
                 "rut": f.get("rut") or "", "rut_ok": f.get("rut_ok"),
@@ -84108,7 +84158,7 @@ def _ot_docs_listar(vid):
     if _p_nudo and (v.get("factura_tido") or "", _p_nudo) not in _erp_ya:
         docs.insert(0, {
             "id": None, "origen": "erp", "es_cobro": True, "es_principal": True,
-            "titulo": f"{v.get('factura_tido') or 'FCV'} {_p_nudo}".strip(),
+            "titulo": " ".join(_ot_doc_real_a_usuario(v.get('factura_tido') or 'FCV', _p_nudo)).strip(),
             "etiqueta": "", "solo_legacy": True,
             "monto": float(v["factura_monto"]) if v.get("factura_monto") is not None else None,
             "rut": v.get("factura_rut") or "", "rut_ok": v.get("factura_rut_ok"),
@@ -84140,11 +84190,29 @@ def _ot_docs_listar(vid):
     except Exception as _e_dx:
         print(f"[ot_docs] documentos_extra vid={vid}: {_e_dx}", flush=True)
 
+    # 💰 2026-09-25 -- el principal que nació en el wizard no tiene su ZZ
+    # guardado por fila: se deduce del valor de la OT menos lo que sumaron
+    # los adicionales (que sí lo tienen). Así cada fila muestra su plata ZZ
+    # y la suma de las filas cuadra con el valor de la OT.
+    _zz_ot = None
+    if v.get("zz_monto") is not None or v.get("zz_envio_monto") is not None:
+        _zz_ot = float(v.get("zz_monto") or 0) + float(v.get("zz_envio_monto") or 0)
+    _extra_zz = sum((d.get("zz_serv") or 0) + (d.get("zz_envio") or 0)
+                    for d in docs if d.get("origen") == "erp" and not d.get("es_principal"))
+    for d in docs:
+        if (d.get("es_principal") and d.get("zz_serv") is None
+                and d.get("zz_envio") is None and _zz_ot is not None):
+            d["zz_total_deducido"] = max(_zz_ot - _extra_zz, 0)
+
     _cobro = [d for d in docs if d.get("es_cobro")]
     return {
         "documentos": docs,
         "n_cobro": len(_cobro),
         "total_cobro": sum((d.get("monto") or 0) for d in _cobro),
+        # Valor de la OT (Paso 2: servicio + despacho). Es el número que
+        # manda: el total de los documentos incluye productos.
+        "valor_ot": _zz_ot if _zz_ot is not None else (
+            float(v["costo"]) if v.get("costo") is not None else None),
     }
 
 
@@ -84239,6 +84307,68 @@ def _erp_fecha_a_date(raw):
     return None
 
 
+def _ot_doc_zz_plata(zz):
+    """Plata que un documento le suma a la OT: (servicio, despacho, códigos).
+
+    💰 2026-09-25 (Daniel: "en esa parte solo busque plata de ZZ instalación
+    y ZZ envío o ZZ mantención"). Un documento adicional trae también los
+    PRODUCTOS físicos -- su total no es lo que vale el trabajo técnico. Solo
+    cuentan las líneas de servicio: ZZINSTALACION y ZZMANTENCION (y sus
+    variantes por prefijo) van a servicio, ZZENVIO a despacho -- la misma
+    separación del Paso 2 de Finanzas. `zz` viene de _erp_zz_lineas."""
+    serv, envio, cods = 0, 0, []
+    for l in (zz or []):
+        sku = (l.get("sku") or "").strip().upper()
+        if sku == "ZZENVIO":
+            envio += int(l.get("monto") or 0)
+            cods.append(sku)
+        elif sku.startswith("ZZINSTAL") or sku.startswith("ZZMANT"):
+            serv += int(l.get("monto") or 0)
+            cods.append(sku)
+    return serv, envio, cods
+
+
+def _ot_doc_real_a_usuario(tido, nudo):
+    """NVV 'VD00010667' (clave real de MAEEDO) → ('VD', '10667'), la forma en
+    que se escribe y se busca en la app. Lo demás pasa igual."""
+    tido = (tido or "").strip().upper()
+    nudo = (nudo or "").strip()
+    if tido == "NVV" and nudo.upper().startswith("VD"):
+        return "VD", nudo[2:].lstrip("0") or "0"
+    if tido == "NVV" and nudo.upper().startswith("WEB"):
+        return "WEB", nudo[3:].lstrip("0") or "0"
+    return tido, nudo
+
+
+def _ot_resolver_doc_erp(tipo, numero, cli_rut=None):
+    """Busca un documento probando las formas en que Random guarda una nota
+    de venta. Devuelve (tipo_encontrado, doc, respondio, error).
+
+    🐛 2026-09-25 (Daniel, OT de Physica Ppc: "dice agregar y todo pero no
+    agrega"). "Nota venta 10667" buscaba NVV con NUDO 0000010667, pero en
+    Random las notas de venta de ILUS viven como NVV con NUDO 'VD00010667'
+    (lo que en la app se escribe "VD 10667") -- no existía y el Agregar
+    respondía "No encontramos". Para NVV se prueban también VD y WEB, y si
+    el número existe en más de una serie se prefiere la del RUT del cliente
+    de la OT (un número suelto puede repetirse entre series).
+    REGLA #4.1: solo lectura, vía _erp_doc_lookup."""
+    candidatos = [tipo] + (["VD", "WEB"] if tipo == "NVV" else [])
+    encontrados, respondio, ultimo_err = [], False, None
+    for t in candidatos:
+        doc, _fuente, _resp, _err = _erp_doc_lookup(t, numero)
+        respondio = respondio or _resp
+        ultimo_err = _err or ultimo_err
+        if doc:
+            encontrados.append((t, doc))
+    if not encontrados:
+        return None, None, respondio, ultimo_err
+    if cli_rut and len(encontrados) > 1:
+        for t, doc in encontrados:
+            if _rut_analisis_comparacion(cli_rut, doc.get("cliente_rut")).get("match"):
+                return t, doc, True, None
+    return encontrados[0][0], encontrados[0][1], True, None
+
+
 @app.route("/ot/api/<int:vid>/documentos", methods=["POST"])
 @_mant_required
 @_ot_can_cobertura
@@ -84264,6 +84394,7 @@ def ot2_api_documentos_agregar(vid):
 
     v = mysql_fetchone(
         "SELECT v.id, v.factura_tido, v.factura_nudo, v.estado_facturacion, "
+        "       v.zz_monto, v.zz_envio_monto, v.costo, v.zz_codigo, v.valor_origen, "
         "       c.rut AS cli_rut, c.razon_social "
         "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         " WHERE v.id=%s", (vid,))
@@ -84308,12 +84439,18 @@ def ot2_api_documentos_agregar(vid):
     # ── Documento del ERP (factura/boleta/NVV) ─────────────────────────
     tipo = (d.get("tipo") or "FCV").strip().upper()[:5]
     if tipo not in _OT_DOCS_CIERRE:
-        tipo = "FCV"
+        # 2026-09-25: antes se convertía en silencio a FCV -- una guía de
+        # despacho (GDV) 123 terminaba buscando la FACTURA 123, otro
+        # documento. Ahora que la búsqueda permite "Sumar a la OT" desde los
+        # resultados (que incluyen guías), eso sería plata equivocada.
+        return jsonify({"ok": False,
+                        "error": f"{tipo} no es un documento de cobro: no se puede "
+                                 f"sumar a la OT."}), 400
     numero = re.sub(r"[^0-9]", "", str(d.get("numero") or ""))
     if not numero:
         return jsonify({"ok": False, "error": "Indica el número del documento."}), 400
 
-    doc, _fuente, _respondio, _erp_err = _erp_doc_lookup(tipo, numero)
+    _tipo_enc, doc, _respondio, _erp_err = _ot_resolver_doc_erp(tipo, numero, v.get("cli_rut"))
     if not doc:
         if not _respondio:
             return jsonify({
@@ -84323,8 +84460,11 @@ def ot2_api_documentos_agregar(vid):
             }), 502
         return jsonify({
             "ok": False,
-            "error": f"No encontramos la {tipo} N° {numero} en el ERP.",
+            "error": (f"No encontramos la nota de venta N° {numero} en el ERP "
+                      f"(se buscó como NVV, VD y WEB)." if tipo == "NVV"
+                      else f"No encontramos la {tipo} N° {numero} en el ERP."),
         }), 404
+    tipo = _tipo_enc
 
     # La clave REAL de MAEEDO, no el atajo que tecleó el usuario (mismo
     # criterio que mant_ot_asociar_factura: "VD"+"10460" no es buscable).
@@ -84338,10 +84478,18 @@ def ot2_api_documentos_agregar(vid):
         "SELECT id FROM mant_visita_documentos "
         " WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s",
         (vid, _tipo_real, _numero_real[:30]))
-    if _ya or ((v.get("factura_tido") or "") == _tipo_real
-               and (v.get("factura_nudo") or "") == _numero_real[:30]):
+    # El principal puede estar guardado en la forma de la app ("VD" +
+    # "10666") o en la real ("NVV" + "VD00010666"): se comparan las dos,
+    # si no la misma nota entraba dos veces y se cobraba doble.
+    _p_tido = (v.get("factura_tido") or "").strip().upper()
+    _p_nudo = (v.get("factura_nudo") or "").strip()
+    _es_el_principal = (
+        (_p_tido == _tipo_real and _p_nudo == _numero_real[:30])
+        or (_p_tido == tipo and _p_nudo.lstrip("0") == numero.lstrip("0")))
+    if _ya or _es_el_principal:
+        _nom = f"{tipo} {numero}" if tipo in erp_engine.TIDO_NUDO_MAP else f"{_tipo_real} {_numero_real}"
         return jsonify({"ok": False,
-                        "error": f"La {_tipo_real} {_numero_real} ya está asociada a esta OT."}), 409
+                        "error": f"La {_nom} ya está asociada a esta OT."}), 409
 
     rut_fact = (doc.get("cliente_rut") or "").strip()
     analisis = _rut_analisis_comparacion(v.get("cli_rut"), rut_fact)
@@ -84358,6 +84506,20 @@ def ot2_api_documentos_agregar(vid):
     except (TypeError, ValueError):
         _monto = None
 
+    # 💰 2026-09-25 -- lo que el documento SUMA a la OT es solo su plata de
+    # servicio (ZZ instalación/mantención + ZZ envío), no el total con
+    # productos. `monto` sigue guardando el total del documento (evidencia
+    # congelada, como siempre); lo que aporta a la OT va aparte.
+    _zz_leido, _zz_serv, _zz_envio, _zz_cods = False, 0, 0, []
+    try:
+        _h_zz, _lineas_zz, _ = _erp_zz_lineas(tipo, numero)
+        if _h_zz:
+            _zz_leido = True
+            _zz_serv, _zz_envio, _zz_cods = _ot_doc_zz_plata(_lineas_zz)
+    except Exception as _e_zz:
+        print(f"[ot_docs] ZZ vid={vid} {tipo} {numero}: {_e_zz}", flush=True)
+    _zz_total = _zz_serv + _zz_envio
+
     # ¿Es el primero? Entonces además se espeja al campo principal, que es
     # el que gobierna cierre/PDF/margen y ya existía desde siempre.
     _es_primero = not (v.get("factura_nudo") or "").strip()
@@ -84368,12 +84530,17 @@ def ot2_api_documentos_agregar(vid):
         mysql_execute(
             "INSERT INTO mant_visita_documentos "
             "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
-            "   etiqueta, monto, rut, rut_ok, rut_justif, emitido_el, asociado_por) "
-            "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "   etiqueta, monto, rut, rut_ok, rut_justif, emitido_el, asociado_por, "
+            "   zz_serv_monto, zz_envio_monto) "
+            "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (vid, 1 if _es_primero else 0, _tipo_real, _numero_real[:30], etiqueta,
              _monto, rut_fact[:20] or None, 1 if analisis["match"] else 0,
              justif or None, _erp_fecha_a_date(doc.get("fecha")),
-             current_username()))
+             current_username(),
+             # Solo si de verdad se sumó algo: NULL = no aportó al valor,
+             # y así el "quitar" sabe que no tiene nada que restar.
+             _zz_serv if (_zz_leido and _zz_total) else None,
+             _zz_envio if (_zz_leido and _zz_total) else None))
     except Exception as _e_ins:
         # Defensa en profundidad: si algún otro dato del documento no le
         # calza a su columna, el usuario tiene que leer QUÉ pasó con su
@@ -84397,23 +84564,73 @@ def ot2_api_documentos_agregar(vid):
                 "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
                 "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
                 "  factura_rut_justif=%s, factura_asociada_por=%s, "
-                "  costo=COALESCE(NULLIF(costo,0), %s), estado_facturacion=%s "
+                "  estado_facturacion=%s "
                 " WHERE id=%s",
                 (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
                  1 if analisis["match"] else 0, justif or None,
-                 current_username(), _monto, _estado_fact, vid))
+                 current_username(), _estado_fact, vid))
         except Exception as e:
             print(f"[ot_docs] espejo principal vid={vid}: {e}", flush=True)
 
+    # 💰 2026-09-25 -- el documento se integra al VALOR de la OT (Daniel:
+    # "debe sumar lo que ya está e integrarse para modificar la OT en
+    # términos de valor"). Antes el primer documento llenaba `costo` con su
+    # total CON productos, y los adicionales no movían el valor en absoluto.
+    #   · primero de la OT → su plata ZZ ES el valor (no había documento que
+    #     lo respaldara; lo que hubiera era una estimación).
+    #   · adicional        → se SUMA a lo ya declarado, servicio y despacho
+    #     por separado (mismos campos del Paso 2).
+    _nom_doc = (f"{tipo} {numero}" if tipo in erp_engine.TIDO_NUDO_MAP
+                else f"{_tipo_real} {_numero_real}")
+    _sumado = None
+    if _zz_leido and _zz_total:
+        _cod_serv = next((c for c in _zz_cods if c != "ZZENVIO"), None)
+
+        def _clp(n):
+            return "$" + "{:,.0f}".format(float(n or 0)).replace(",", ".")
+        # Bitácora ANTES de escribir (REGLA #5): el valor anterior queda.
+        try:
+            _mant_log("visita", vid, "valor_por_documento",
+                      f"{_nom_doc} {'fija' if _es_primero else 'suma'} ZZ: "
+                      f"servicio {_clp(_zz_serv)} + despacho {_clp(_zz_envio)} "
+                      f"({', '.join(_zz_cods)}) · antes: servicio "
+                      f"{_clp(v.get('zz_monto'))}, despacho {_clp(v.get('zz_envio_monto'))}, "
+                      f"total {_clp(v.get('costo'))}")
+        except Exception:
+            pass
+        try:
+            if _es_primero:
+                mysql_execute(
+                    "UPDATE mant_visitas SET zz_monto=%s, zz_envio_monto=%s, costo=%s, "
+                    "  zz_codigo=COALESCE(NULLIF(zz_codigo,''), %s), valor_origen='zz' "
+                    " WHERE id=%s",
+                    (_zz_serv, _zz_envio, _zz_total, _cod_serv, vid))
+            else:
+                mysql_execute(
+                    "UPDATE mant_visitas SET "
+                    "  zz_monto=COALESCE(zz_monto,0)+%s, "
+                    "  zz_envio_monto=COALESCE(zz_envio_monto,0)+%s, "
+                    "  costo=COALESCE(costo,0)+%s, "
+                    "  zz_codigo=COALESCE(NULLIF(zz_codigo,''), %s), "
+                    "  valor_origen=COALESCE(NULLIF(valor_origen,''), 'zz') "
+                    " WHERE id=%s",
+                    (_zz_serv, _zz_envio, _zz_total, _cod_serv, vid))
+            _sumado = {"servicio": _zz_serv, "despacho": _zz_envio,
+                       "codigos": _zz_cods, "reemplazo": _es_primero}
+        except Exception as e:
+            print(f"[ot_docs] valor OT vid={vid}: {e}", flush=True)
+
     try:
         _mant_log("visita", vid, "documento_asociado",
-                  f"{_tipo_real} {_numero_real}"
-                  + (f" · ${_monto:,.0f}" if _monto else "")
+                  f"{_nom_doc}"
+                  + (f" · ZZ ${_zz_total:,.0f}".replace(",", ".") if _zz_total else " · sin ZZ")
                   + (f" · {etiqueta}" if etiqueta else "")
                   + (" · PRINCIPAL" if _es_primero else " · adicional"))
     except Exception:
         pass
-    return jsonify({"ok": True, "es_principal": _es_primero, **_ot_docs_listar(vid)})
+    return jsonify({"ok": True, "es_principal": _es_primero, "documento": _nom_doc,
+                    "zz_leido": _zz_leido, "sumado": _sumado,
+                    **_ot_docs_listar(vid)})
 
 
 @app.route("/ot/api/<int:vid>/documentos/<int:did>", methods=["DELETE"])
@@ -84429,7 +84646,8 @@ def ot2_api_documentos_quitar(vid, did):
     garantía), que deja su propio registro.
     """
     f = mysql_fetchone(
-        "SELECT id, es_principal, origen, erp_tido, erp_nudo, cotizacion_id "
+        "SELECT id, es_principal, origen, erp_tido, erp_nudo, cotizacion_id, "
+        "       zz_serv_monto, zz_envio_monto "
         "  FROM mant_visita_documentos WHERE id=%s AND visita_id=%s", (did, vid))
     if not f:
         return jsonify({"ok": False, "error": "Documento no encontrado en esta OT."}), 404
@@ -84440,14 +84658,35 @@ def ot2_api_documentos_quitar(vid, did):
                      "y el PDF. Cámbialo desde Finanzas (asociar documento o "
                      "declarar garantía), no desde la lista.",
         }), 409
-    mysql_execute("DELETE FROM mant_visita_documentos WHERE id=%s", (did,))
+    # 💰 2026-09-25 -- si ese documento sumó plata ZZ al valor de la OT, se
+    # resta exacto lo que aportó (ni más ni menos). NULL = asociado antes de
+    # que existiera la suma: nunca movió el valor, no hay nada que restar.
+    _r_serv = float(f.get("zz_serv_monto") or 0)
+    _r_envio = float(f.get("zz_envio_monto") or 0)
+    _nom_q = (f"{f.get('erp_tido')} {f.get('erp_nudo')}" if f.get("origen") == "erp"
+              else f"Cotización #{f.get('cotizacion_id')}")
+    # Bitácora ANTES del borrado (REGLA #5).
     try:
         _mant_log("visita", vid, "documento_quitado",
-                  (f"{f.get('erp_tido')} {f.get('erp_nudo')}" if f.get("origen") == "erp"
-                   else f"Cotización #{f.get('cotizacion_id')}"))
+                  _nom_q + (f" · resta ZZ servicio ${_r_serv:,.0f} + despacho "
+                            f"${_r_envio:,.0f}".replace(",", ".")
+                            if (_r_serv or _r_envio) else ""))
     except Exception:
         pass
-    return jsonify({"ok": True, **_ot_docs_listar(vid)})
+    mysql_execute("DELETE FROM mant_visita_documentos WHERE id=%s", (did,))
+    if _r_serv or _r_envio:
+        try:
+            mysql_execute(
+                "UPDATE mant_visitas SET "
+                "  zz_monto=GREATEST(COALESCE(zz_monto,0)-%s, 0), "
+                "  zz_envio_monto=GREATEST(COALESCE(zz_envio_monto,0)-%s, 0), "
+                "  costo=GREATEST(COALESCE(costo,0)-%s, 0) "
+                " WHERE id=%s",
+                (_r_serv, _r_envio, _r_serv + _r_envio, vid))
+        except Exception as e:
+            print(f"[ot_docs] restar valor vid={vid}: {e}", flush=True)
+    return jsonify({"ok": True, "restado": (_r_serv + _r_envio) or None,
+                    **_ot_docs_listar(vid)})
 
 
 @app.route("/ot/api/<int:vid>/proveedor-del-tecnico", methods=["GET", "POST"])
