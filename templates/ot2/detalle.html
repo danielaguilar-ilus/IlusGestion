@@ -1222,6 +1222,82 @@
 .otd-ev-btn:disabled{opacity:.55;cursor:not-allowed}
 .otd-ev-btn i{color:var(--ilus-red,#dc2626)}
 
+/* 🔄 2026-09-25 — ENDEREZAR FOTOS (Daniel: "las fotos de todas las OT
+   están torcidas; quisiera que las endereces y que dejes la opción de
+   poder editar y que se puedan guardar si es que están mal").
+   Botón en el encabezado de "Fotos de la OT" + modal con grilla de
+   miniaturas, formato Retiros (REGLA #15: tarjetas, semáforo, datos
+   completos sin truncar) y paginación (REGLA #4.3). */
+.otd-card > h3 .otd-enz-open{display:inline-flex;align-items:center;gap:5px;
+  background:#0a0a0a;color:#fff;border:0;border-left:3px solid var(--ilus-red,#dc2626);
+  border-radius:8px;font-size:.7rem;font-weight:800;text-transform:none;letter-spacing:normal;
+  cursor:pointer;padding:0 10px;min-height:32px;flex:none}
+.otd-card > h3 .otd-enz-open i{color:var(--ilus-red,#dc2626);font-size:.85rem}
+.otd-card > h3 .otd-enz-open:hover{opacity:.9}
+@media (max-width:576px){ .otd-card > h3 .otd-enz-open{min-height:44px;padding:0 12px} }
+#otdModalEnderezar .modal-dialog{max-width:1100px}
+.otd-enz-intro{font-size:.8rem;color:#374151;line-height:1.45;margin:0 0 10px}
+.otd-enz-intro b{color:#0f172a}
+.otd-enz-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
+.otd-enz-bar .btn{min-height:44px;font-weight:700;font-size:.8rem;border-radius:10px}
+.otd-enz-count{margin-left:auto;font-size:.8rem;font-weight:800;color:#92400e;background:#fff8e1;
+  border:1px solid #fcd34d;border-radius:999px;padding:6px 12px}
+.otd-enz-count.cero{color:#6b7280;background:#f3f4f6;border-color:#e5e7eb}
+.otd-enz-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.otd-enz-card{border:1.5px solid #e5e7eb;border-radius:12px;background:#fff;overflow:hidden;
+  display:flex;flex-direction:column;transition:border-color .2s,box-shadow .2s}
+.otd-enz-card.st-pend{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.15)}
+.otd-enz-card.st-ok{border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.12)}
+.otd-enz-card.st-err{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.otd-enz-card.st-off{opacity:.65}
+.otd-enz-ph{position:relative;aspect-ratio:1/1;background:#f3f4f6;overflow:hidden;cursor:zoom-in}
+.otd-enz-ph img{width:100%;height:100%;object-fit:contain;display:block;
+  transition:transform .2s ease;transform-origin:center center}
+.otd-enz-sug{position:absolute;top:6px;left:6px;background:#0a0a0a;color:#fff;font-size:.6rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.04em;border-radius:999px;padding:3px 8px}
+.otd-enz-sug i{color:#f59e0b}
+.otd-enz-chk{position:absolute;top:4px;right:4px;width:44px;height:44px;display:grid;place-items:center;
+  cursor:pointer;margin:0}
+.otd-enz-chk input{width:22px;height:22px;accent-color:#dc2626;cursor:pointer}
+.otd-enz-ctrl{display:flex;gap:6px;padding:8px 8px 0}
+.otd-enz-ctrl button{flex:1;min-height:44px;border:1px solid #d1d5db;background:#fff;border-radius:10px;
+  font-size:1.05rem;color:#0f172a;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px}
+.otd-enz-ctrl button:hover{background:#f9fafb;border-color:#9ca3af}
+.otd-enz-ctrl button:disabled{opacity:.45;cursor:not-allowed}
+.otd-enz-ctrl button small{font-size:.66rem;font-weight:700;color:#6b7280}
+.otd-enz-meta{padding:8px 10px 10px;font-size:.72rem;color:#374151;line-height:1.35}
+.otd-enz-eq{font-weight:800;color:#0f172a;overflow-wrap:anywhere}
+.otd-enz-tipo{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--ilus-red,#dc2626)}
+.otd-enz-fecha{color:#6b7280;font-size:.68rem;margin-top:2px}
+.otd-enz-st{display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:.68rem;
+  font-weight:800;border-radius:999px;padding:3px 9px;background:#f3f4f6;color:#6b7280;
+  overflow-wrap:anywhere}
+.otd-enz-st::before{content:'';width:8px;height:8px;border-radius:50%;background:#9ca3af;flex:none}
+.otd-enz-card.st-pend .otd-enz-st{background:#fff8e1;color:#92400e}
+.otd-enz-card.st-pend .otd-enz-st::before{background:#f59e0b}
+.otd-enz-card.st-ok .otd-enz-st{background:#dcfce7;color:#166534}
+.otd-enz-card.st-ok .otd-enz-st::before{background:#16a34a}
+.otd-enz-card.st-err .otd-enz-st{background:#fee2e2;color:#991b1b}
+.otd-enz-card.st-err .otd-enz-st::before{background:#dc2626}
+.otd-enz-pag{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;
+  font-size:.78rem;color:#374151}
+.otd-enz-pag .info{margin-right:auto}
+.otd-enz-pag select{min-height:44px;border-radius:10px;border:1px solid #d1d5db;padding:0 8px;font-size:16px}
+.otd-enz-pag .btn{min-height:44px;border-radius:10px;font-weight:700;font-size:.78rem}
+.otd-enz-vacio{text-align:center;color:#9ca3af;padding:30px 10px;font-size:.85rem}
+@media (max-width:576px){
+  .otd-enz-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .otd-enz-bar .btn{flex:1 1 100%}
+  .otd-enz-count{margin-left:0;flex:1 1 100%;text-align:center}
+  #otdModalEnderezar .modal-dialog{margin:0;max-width:none;height:100dvh}
+  #otdModalEnderezar .modal-content{height:100dvh;border-radius:0 !important}
+  #otdModalEnderezar .modal-footer{display:grid;grid-template-columns:1fr 1fr;gap:8px;
+    padding-bottom:max(.6rem,env(safe-area-inset-bottom,0px))}
+  #otdModalEnderezar .modal-footer > .btn{min-height:46px;margin:0}
+  #otdModalEnderezar .modal-header .btn-close{width:44px;height:44px;padding:0;margin:0}
+}
+
 /* ══ TRABAJO — vista de solo lectura pensada para el técnico ══
    2026-08-27 (Daniel: "una forma inteligente, mostrar los equipos...
    pensando en la mirada del técnico"). Usa <details>/<summary> nativos:
@@ -3406,7 +3482,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          cambia de pestaña. #}
       <div class="otd-card" data-bal="1">
         <h3><i class="bi bi-camera-fill"></i> Fotos de la OT
-          <span class="n" id="otdEvCountWrap"></span></h3>
+          <span class="n" id="otdEvCountWrap"></span>
+          {# 🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas;
+             quisiera que las endereces y que dejes la opción de poder editar
+             y que se puedan guardar si es que están mal"). Abre el modal
+             #otdModalEnderezar. Gate: _foto_puede_girar (gestión que ve la
+             OT, en cualquier estado; técnico solo si puede ejecutarla) -- el
+             backend lo re-valida en cada giro. #}
+          {% if puede_girar_fotos %}
+          <button type="button" class="otd-enz-open{{ ' d-none' if not fotos }}" id="otdEnzOpenBtn"
+                  onclick="otdEnderezarAbrir()" title="Girar las fotos que quedaron de lado">
+            <i class="bi bi-arrow-repeat"></i> Enderezar fotos
+          </button>
+          {% endif %}
+        </h3>
           <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
             <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
                  text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
@@ -3446,7 +3535,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% for f in fotos %}
               <div class="otd-ev-item">
                 {% if f.url %}
-                  <img src="{{ f.url }}" alt="" loading="lazy" onclick="otdVerFoto(this)">
+                  <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}" onclick="otdVerFoto(this)">
                 {% else %}
                   <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
                     <i class="bi bi-image" style="font-size:1.6rem"></i></div>
@@ -9271,6 +9360,7 @@ async function otdSubirFoto(input){
     }
     ilusToast('✓ Foto subida', {type:'success'});
     const url = j.url || (j.fotos && j.fotos[0] && j.fotos[0].url);
+    const fidNueva = (j.fotos && j.fotos[0] && j.fotos[0].id) || '';
     if (url){
       const grid = document.getElementById('otdEvGrid');
       const empty = document.getElementById('otdEvEmpty');
@@ -9279,13 +9369,18 @@ async function otdSubirFoto(input){
         grid.classList.remove('d-none');
         const div = document.createElement('div');
         div.className = 'otd-ev-item';
-        div.innerHTML = `<img src="${url}" alt="" loading="lazy">
+        // 🔄 2026-09-25: la tarjeta recién subida no tenía onclick (tocarla
+        // no abría el visor) ni data-fid (no se podía guardar un giro).
+        div.innerHTML = `<img src="${otdEsc(url)}" alt="" loading="lazy"
+               data-fid="${otdEsc(String(fidNueva))}" onclick="otdVerFoto(this)">
           <div class="meta">
             <div class="tipo">General</div>
             <div class="who">Recién subida</div>
           </div>`;
         grid.prepend(div);
       }
+      document.getElementById('otdEnzOpenBtn')?.classList.remove('d-none');
+      if (window.OTD_ENZ) window.OTD_ENZ.cargado = false;   // el modal recarga la lista
     }
     // Contador -- ahora vive dentro de la card "Videos y documentos" en
     // Información (sin pestaña Evidencia propia desde 2026-08-30).
@@ -9535,11 +9630,11 @@ function otdEqFotosFallback(){
   document.querySelectorAll('[data-eqfoto]').forEach(function(ph){
     const mid = ph.getAttribute('data-eqfoto');
     const grupos = OTD_CHK_DATA[String(mid)] || [];
-    let url = '', desde = '';
+    let url = '', desde = '', fid = '';
     for (const g of grupos){
       for (const t of (g.tareas || [])){
         if (t.fotos && t.fotos.length && t.fotos[0].url){
-          url = t.fotos[0].url; desde = t.titulo || '';
+          url = t.fotos[0].url; desde = t.titulo || ''; fid = t.fotos[0].id || '';
           break;
         }
       }
@@ -9553,9 +9648,16 @@ function otdEqFotosFallback(){
     img.alt = 'Evidencia del equipo';
     img.title = desde ? ('Evidencia: ' + desde) : 'Evidencia de este equipo';
     img.style.cursor = 'zoom-in';
+    if (fid) img.dataset.fid = String(fid);
     img.addEventListener('click', function(ev){
       ev.preventDefault(); ev.stopPropagation();   // no abrir/cerrar el <details>
-      if (typeof ilusLightbox === 'function') ilusLightbox(url, 0, 'Evidencia del equipo');
+      // 🔄 2026-09-25: se lee el src ACTUAL (no la `url` del closure): si la
+      // foto se giró, la URL cambió y el visor abriría la versión torcida.
+      const actual = img.getAttribute('src') || url;
+      if (typeof ilusLightbox === 'function'){
+        ilusLightbox([{ url: actual, caption: desde ? ('Evidencia: ' + desde) : '', id: img.dataset.fid || null }],
+                     0, 'Evidencia del equipo', otdFotoLbOpts());
+      }
     });
     ph.replaceWith(img);
   });
@@ -10031,10 +10133,119 @@ window.otdVerFoto = function(imgEl){
     const tipo = (item?.querySelector('.tipo')?.textContent || '').trim();
     const desc = (item?.querySelector('.desc')?.textContent || '').trim();
     const who  = (item?.querySelector('.who')?.textContent || '').trim();
-    return { url: el.src, caption: [tipo, desc, who].filter(Boolean).join(' · ') };
+    // 🔄 2026-09-25: + id (data-fid) para poder "Guardar giro" desde el visor.
+    return { url: el.getAttribute('src') || el.src, id: el.dataset.fid || null,
+             caption: [tipo, desc, who].filter(Boolean).join(' · ') };
   });
   const idx = Math.max(0, imgs.indexOf(imgEl));
-  ilusLightbox(fotos, idx, 'Foto de la OT');
+  ilusLightbox(fotos, idx, 'Foto de la OT', otdFotoLbOpts());
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   🔄 GIRAR Y GUARDAR FOTOS — 2026-09-25.
+   Daniel: "las fotos de todas las OT están torcidas; quisiera que las
+   endereces y que dejes la opción de poder editar y que se puedan guardar
+   si es que están mal". Dos caminos, mismo backend:
+     1) En el visor (ilusLightbox): ↺ / ↻ y "Guardar giro" en cada foto.
+     2) "Enderezar fotos" (encabezado de "Fotos de la OT"): todas las fotos
+        de la OT en una grilla, para girar muchas de una vez.
+   El servidor guarda la foto girada en un archivo NUEVO; la original no se
+   toca y el giro queda en la bitácora. Solo se ofrece a quien puede girar
+   (OTD_PUEDE_GIRAR, misma regla que valida el backend).
+   ══════════════════════════════════════════════════════════════════════ */
+const OTD_PUEDE_GIRAR = {{ (puede_girar_fotos | default(false)) | tojson }};
+
+/* Opciones del visor: sin permiso de giro, el visor queda como siempre. */
+function otdFotoLbOpts(){
+  if (!OTD_PUEDE_GIRAR) return undefined;
+  return {
+    onGuardarGiro: async function(item, grados){
+      const res = await otdFotoGuardarGiro(item.id, grados);
+      return res.url;
+    },
+  };
+}
+
+/* POST a /fotos/<fid>/girar. Devuelve {fid, url_anterior, url, rotacion}
+   y ya deja la pantalla al día; si falla, lanza Error con el mensaje. */
+async function otdFotoGuardarGiro(fid, grados){
+  let r, d = null;
+  try {
+    r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/${encodeURIComponent(fid)}/girar`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ grados: grados }),
+    }, 60000);
+    d = await r.json().catch(() => null);
+  } catch(e){
+    throw new Error('Sin conexión: el giro no se guardó. Intenta de nuevo.');
+  }
+  if (!r.ok || !d || !d.ok){
+    throw new Error((d && d.error) || 'No se pudo guardar el giro.');
+  }
+  otdFotoGiroAplicado(d);
+  return d;
+}
+
+/* Un giro guardado (del visor o del modal): refresca todo lo que ya está
+   pintado con esa foto y el estado del modal "Enderezar fotos". */
+function otdFotoGiroAplicado(res){
+  if (!res || !res.url) return;
+  otdFotoReemplazarUrl(res.fid, res.url_anterior, res.url);
+  if (window.OTD_ENZ && Array.isArray(window.OTD_ENZ.fotos)){
+    const f = window.OTD_ENZ.fotos.find(x => String(x.id) === String(res.fid));
+    if (f){
+      f.url = res.url; f.rotacion = res.rotacion; f.pend = 0; f.st = 'ok';
+      f.msg = res.rotacion ? `Guardada · girada ${res.rotacion}° desde la original` : 'Guardada · volvió a la original';
+      f.w = 0; f.h = 0;   // la versión nueva tiene otras medidas
+      if (typeof otdEnzRepintarCard === 'function') otdEnzRepintarCard(f);
+    }
+  }
+}
+
+/* Camino (sin ?query) de una URL, para comparar "/f/x.jpg" con
+   "https://host/f/x.jpg" o con "/f/x.jpg?w=320". */
+function otdFotoRuta(u){
+  const s = String(u || '');
+  try {
+    const x = new URL(s, location.origin);
+    return x.origin === location.origin ? x.pathname : s.split('?')[0];
+  } catch(e){ return s.split('?')[0]; }
+}
+
+/* Cambia la foto `fid` (o cualquier <img> que muestre la URL vieja) por la
+   nueva en TODA la pantalla: galería, checklist, miniatura del equipo, foto
+   de ficha. Una miniatura con ?w= conserva su tamaño. También actualiza la
+   copia en memoria del checklist (OTD_CHK_DATA), para que un repintado no
+   vuelva a traer la URL vieja. */
+window.otdFotoReemplazarUrl = function(fid, vieja, nueva){
+  if (!nueva) return;
+  const fidS = (fid === null || fid === undefined) ? '' : String(fid);
+  const rutaVieja = vieja ? otdFotoRuta(vieja) : '';
+  document.querySelectorAll('img').forEach(function(img){
+    const src = img.getAttribute('src') || '';
+    const porFid = fidS && img.dataset && img.dataset.fid === fidS;
+    const porUrl = rutaVieja && otdFotoRuta(src) === rutaVieja;
+    if (!porFid && !porUrl) return;
+    const q = src.indexOf('?');
+    const query = (q >= 0 && /[?&]w=\d+/.test(src.slice(q))) ? src.slice(q) : '';
+    img.setAttribute('src', nueva + query);
+  });
+  try {
+    if (typeof OTD_CHK_DATA !== 'undefined' && OTD_CHK_DATA){
+      Object.keys(OTD_CHK_DATA).forEach(function(mid){
+        (OTD_CHK_DATA[mid] || []).forEach(function(g){
+          (g.tareas || []).forEach(function(t){
+            (t.fotos || []).forEach(function(f){
+              if ((fidS && String(f.id) === fidS) || (rutaVieja && otdFotoRuta(f.url) === rutaVieja)){
+                f.url = nueva;
+              }
+            });
+          });
+        });
+      });
+    }
+  } catch(e){ /* sin checklist cargado: nada que actualizar */ }
 };
 
 function otdChkFotosHtml(t){
@@ -10046,8 +10257,10 @@ function otdChkFotosHtml(t){
   // propia foto: para ver las 3 evidencias de una tarea había que cerrar y
   // volver a entrar tres veces. Ahora se abre la tarea completa en el visor
   // y se pasa de una a otra con las flechas, sin salir.
+  // 🔄 2026-09-25: + data-fid, para poder guardar un giro desde el visor.
   return `<div class="otd-chk-fotos">${t.fotos.map((f, i) =>
     `<img src="${otdEsc(f.url)}" alt="Foto de ${otdEsc(t.titulo || 'la tarea')}"
+          data-fid="${otdEsc(f.id == null ? '' : String(f.id))}"
           loading="lazy" onclick="otdVerFotosTarea(this, ${i})">`).join('')}</div>`;
 }
 
@@ -10065,10 +10278,11 @@ window.otdVerFotosTarea = function(imgEl, idx){
   const imgs = Array.from(cont.querySelectorAll('img'));
   const tarea = (imgEl.getAttribute('alt') || 'Foto de la tarea').trim();
   const fotos = imgs.map(function(el, i){
-    return { url: el.src, caption: tarea + (imgs.length > 1 ? ` · ${i + 1} de ${imgs.length}` : '') };
+    return { url: el.getAttribute('src') || el.src, id: el.dataset.fid || null,
+             caption: tarea + (imgs.length > 1 ? ` · ${i + 1} de ${imgs.length}` : '') };
   });
   const i = (typeof idx === 'number' && idx >= 0) ? idx : Math.max(0, imgs.indexOf(imgEl));
-  ilusLightbox(fotos, i, tarea);
+  ilusLightbox(fotos, i, tarea, otdFotoLbOpts());
 };
 
 function otdChkFotoBtnHtml(t){
@@ -14071,6 +14285,507 @@ document.addEventListener('DOMContentLoaded', function(){
   var m1 = document.getElementById('modalRepSol'), m2 = document.getElementById('modalBajaEq');
   if (m1) m1.addEventListener('hidden.bs.modal', function(){ if (!_otrep.enviando){ _otrepLiberar(_otrep.archivos); _otrep.archivos = []; } });
   if (m2) m2.addEventListener('hidden.bs.modal', function(){ if (!_otbaja.enviando){ _otrepLiberar(_otbaja.archivos); _otbaja.archivos = []; } });
+});
+</script>
+{% endif %}
+
+{#- 🔄 2026-09-25 — ENDEREZAR FOTOS. Daniel: "las fotos de todas las OT están
+    torcidas; quisiera que las endereces y que dejes la opción de poder
+    editar y que se puedan guardar si es que están mal".
+
+    Las fotos ya guardadas perdieron su marca de orientación (EXIF), así que
+    no hay forma de saber cuáles están de lado sin mirarlas: esta grilla es
+    para mirarlas y girarlas de a muchas. Va en el top-level de block
+    content (mismo gotcha que modalRepSol: dentro de una pestaña oculta
+    Bootstrap solo muestra el backdrop). Formato Retiros (REGLA #15: pasos,
+    semáforo, datos completos), marcar/desmarcar todo (REGLA #14) y
+    paginación (REGLA #4.3). Gate: puede_girar_fotos (_foto_puede_girar),
+    re-validado por el backend en cada giro. -#}
+{% if puede_girar_fotos %}
+{#- data-bs-keyboard="false": Escape cierra el visor de fotos abierto
+    encima (ilusLightbox) sin cerrar también este modal. -#}
+<div class="modal fade" id="otdModalEnderezar" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false"
+     aria-labelledby="otdEnzTitulo">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold" id="otdEnzTitulo">
+          <i class="bi bi-arrow-repeat me-2" style="color:#dc2626"></i>Enderezar fotos
+          <small class="d-block fw-normal" style="font-size:.72rem;opacity:.8">{{ v.numero_ot or ('OT #' ~ v.id) }} · la foto original nunca se borra</small>
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <section class="levd-step" id="otdEnzStep1">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">1</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">Marca cómo girar cada foto</div>
+            <div class="levd-step-sub" id="otdEnzResumen">cargando…</div>
+          </div>
+          <div class="levd-step-body">
+            <p class="otd-enz-intro">
+              Toca <b>↺</b> o <b>↻</b> en cada foto que esté de lado hasta que se vea derecha.
+              <b>Sugerir giros</b> marca ↻ 90° en las fotos apaisadas subidas entre el 3 y el 20 de
+              septiembre, cuando la app guardaba las fotos del celular sin enderezar: revísalas antes de guardar.
+              Toca una foto para verla en grande.
+            </p>
+            <div class="otd-enz-bar">
+              <button type="button" class="btn btn-dark" id="otdEnzSugerirBtn" onclick="otdEnzSugerir()">
+                <i class="bi bi-magic me-1" style="color:#f59e0b"></i><span>Sugerir giros</span>
+              </button>
+              <button type="button" class="btn" id="otdEnzToggleBtn" onclick="otdEnzToggleSugeridas()"
+                      style="background:#fff;color:#374151;border:1px solid #d1d5db">
+                <i class="bi bi-check-all me-1"></i><span id="otdEnzToggleLbl">Marcar/desmarcar todas las sugeridas</span>
+              </button>
+              <span class="otd-enz-count cero" id="otdEnzCount">Ninguna foto se va a girar</span>
+            </div>
+            <div class="otd-enz-grid" id="otdEnzGrid">
+              <div class="otd-enz-vacio" style="grid-column:1/-1">Cargando fotos…</div>
+            </div>
+            <div class="otd-enz-pag" id="otdEnzPag"></div>
+          </div>
+        </section>
+        <section class="levd-step" id="otdEnzStep2">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">2</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">Guarda los giros</div>
+            <div class="levd-step-sub">la original queda guardada</div>
+          </div>
+          <div class="levd-step-body">
+            <div style="font-size:.78rem;color:#374151;line-height:1.45">
+              Cada foto girada se guarda como un archivo nuevo: la original <b>no se borra ni se reemplaza</b>,
+              y el giro queda registrado en la bitácora de la OT (quién, cuándo y cuánto). El PDF de la OT,
+              la ficha del equipo y la firma del cliente pasan a mostrar la foto derecha.
+            </div>
+            <div id="otdEnzResultado" class="mt-2" style="font-size:.8rem;font-weight:700"></div>
+          </div>
+        </section>
+      </div>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="otdEnzCerrarBtn">Cerrar</button>
+        <button type="button" class="btn fw-bold px-4" id="otdEnzGuardarBtn" disabled
+                style="background:#dc2626;color:#fff;min-height:46px" onclick="otdEnzGuardar()">
+          <i class="bi bi-check2-circle me-1"></i><span id="otdEnzGuardarLbl">Guardar giros</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   🔄 ENDEREZAR FOTOS — 2026-09-25 (ver el comentario del modal, arriba).
+   Estado en memoria: OTD_ENZ.fotos[i] = lo que manda /fotos/para-girar +
+     pend  giro PENDIENTE a la derecha (0/90/180/270), respecto de cómo se
+           ve hoy la foto. 0 = sin cambios.
+     st    '' | 'ok' (guardada) | 'err' (falló)  → color del semáforo.
+     w, h  tamaño real medido en el navegador (para "Sugerir giros").
+   Guardar manda /fotos/girar-lote en tandas chicas (cada foto se baja, se
+   gira y se sube de nuevo en el servidor: una tanda de 300 excedería el
+   tiempo máximo de una petición).
+   ══════════════════════════════════════════════════════════════════════ */
+window.OTD_ENZ = { cargado: false, cargando: false, guardando: false, midiendo: false,
+                   fotos: [], pag: 1, porPag: 100 };
+const OTD_ENZ_TANDA = 20;
+const OTD_ENZ_POR_PAG_OPC = [50, 100, 200];
+
+function otdEnzThumb(f){
+  // Miniatura de 320 px (cacheada en GCS) solo para fotos /f/; las antiguas
+  // se muestran tal cual.
+  return (f.url && f.url.indexOf('/f/') === 0) ? (f.url + '?w=320') : (f.url || '');
+}
+
+function otdEnzGiroTxt(p){
+  if (p === 90)  return 'Se va a girar 90° a la derecha';
+  if (p === 180) return 'Se va a girar 180° (quedaba de cabeza)';
+  if (p === 270) return 'Se va a girar 90° a la izquierda';
+  return '';
+}
+
+function otdEnzPendientes(){
+  return OTD_ENZ.fotos.filter(f => f.girable && f.pend);
+}
+
+async function otdEnderezarAbrir(){
+  const el = document.getElementById('otdModalEnderezar');
+  if (!el) return;
+  bootstrap.Modal.getOrCreateInstance(el).show();
+  if (!OTD_ENZ.cargado) await otdEnzCargar();
+  else otdEnzRender();
+}
+
+async function otdEnzCargar(){
+  if (OTD_ENZ.cargando) return;
+  OTD_ENZ.cargando = true;
+  const grid = document.getElementById('otdEnzGrid');
+  if (grid) grid.innerHTML = '<div class="otd-enz-vacio" style="grid-column:1/-1">Cargando fotos…</div>';
+  try {
+    const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/para-girar`, {}, 30000);
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d || !d.ok){
+      if (grid) grid.innerHTML = `<div class="otd-enz-vacio" style="grid-column:1/-1">${otdEsc((d && d.error) || 'No se pudieron cargar las fotos.')}</div>`;
+      return;
+    }
+    OTD_ENZ.fotos = (d.fotos || []).map(f => Object.assign({}, f, { pend: 0, st: '', msg: '', w: 0, h: 0 }));
+    OTD_ENZ.pag = 1;
+    OTD_ENZ.cargado = true;
+    const r2 = document.getElementById('otdEnzResultado');
+    if (r2) r2.textContent = '';
+    document.getElementById('otdEnzStep2')?.classList.remove('is-complete');
+    otdEnzRender();
+  } catch(e){
+    if (grid) grid.innerHTML = '<div class="otd-enz-vacio" style="grid-column:1/-1">Sin conexión — cierra y vuelve a abrir en un momento.</div>';
+  } finally {
+    OTD_ENZ.cargando = false;
+  }
+}
+
+function otdEnzPagina(){
+  const total = OTD_ENZ.fotos.length;
+  const porPag = OTD_ENZ.porPag || 100;
+  const paginas = Math.max(1, Math.ceil(total / porPag));
+  if (OTD_ENZ.pag > paginas) OTD_ENZ.pag = paginas;
+  if (OTD_ENZ.pag < 1) OTD_ENZ.pag = 1;
+  const desde = (OTD_ENZ.pag - 1) * porPag;
+  return { total, porPag, paginas, desde, items: OTD_ENZ.fotos.slice(desde, desde + porPag) };
+}
+
+function otdEnzCardHtml(f){
+  const bloqueado = OTD_ENZ.guardando;
+  let cls = '', st = 'Sin cambios';
+  if (!f.girable){ cls = 'st-off'; st = 'No se puede girar: está en un sistema antiguo'; }
+  // El error va ANTES que el pendiente: la foto que falló conserva su giro
+  // marcado (para reintentar con "Guardar giros"), pero tiene que verse en rojo.
+  else if (f.st === 'err'){ cls = 'st-err'; st = (f.msg || 'No se pudo girar') + (f.pend ? ' · sigue marcada para reintentar' : ''); }
+  else if (f.pend){ cls = 'st-pend'; st = otdEnzGiroTxt(f.pend); }
+  else if (f.st === 'ok'){ cls = 'st-ok'; st = f.msg || 'Guardada'; }
+  else if (f.rotacion){ st = `Sin cambios · ya estaba girada ${f.rotacion}° desde la original`; }
+  const tipo = (f.tipo_foto || 'general').replace(/_/g, ' ');
+  const equipo = f.maquina_nombre || 'Foto general de la OT';
+  const apaisada = f.w && f.h ? (f.w > f.h) : null;
+  const sug = f.sugerida
+    ? `<span class="otd-enz-sug"><i class="bi bi-magic"></i> Sugerida${apaisada === true ? ' · apaisada' : ''}</span>` : '';
+  const dis = (!f.girable || bloqueado) ? 'disabled' : '';
+  return `
+    <div class="otd-enz-card ${cls}" data-enz="${otdEsc(String(f.id))}">
+      <div class="otd-enz-ph" onclick="otdEnzVer(${Number(f.id)})" title="Ver en grande">
+        <img src="${otdEsc(otdEnzThumb(f))}" alt="${otdEsc(equipo)}" loading="lazy"
+             data-fid="${otdEsc(String(f.id))}" style="transform:rotate(${Number(f.pend) || 0}deg)"
+             onload="otdEnzMedido(${Number(f.id)}, this)">
+        ${sug}
+        ${f.girable ? `<label class="otd-enz-chk" onclick="event.stopPropagation()" title="Girar esta foto">
+          <input type="checkbox" ${f.pend ? 'checked' : ''} ${bloqueado ? 'disabled' : ''}
+                 aria-label="Girar esta foto" onchange="otdEnzMarcar(${Number(f.id)}, this.checked)">
+        </label>` : ''}
+      </div>
+      <div class="otd-enz-ctrl">
+        <button type="button" ${dis} onclick="otdEnzGirar(${Number(f.id)}, -90)" title="Girar 90° a la izquierda"
+                aria-label="Girar 90° a la izquierda"><i class="bi bi-arrow-counterclockwise"></i><small>Izq.</small></button>
+        <button type="button" ${dis} onclick="otdEnzGirar(${Number(f.id)}, 90)" title="Girar 90° a la derecha"
+                aria-label="Girar 90° a la derecha"><i class="bi bi-arrow-clockwise"></i><small>Der.</small></button>
+      </div>
+      <div class="otd-enz-meta">
+        <div class="otd-enz-tipo">${otdEsc(tipo)}</div>
+        <div class="otd-enz-eq">${otdEsc(equipo)}</div>
+        ${f.descripcion ? `<div style="overflow-wrap:anywhere">${otdEsc(f.descripcion)}</div>` : ''}
+        <div class="otd-enz-fecha">${otdEsc(f.tomada_at || 'Sin fecha')}</div>
+        <div class="otd-enz-st">${otdEsc(st)}</div>
+      </div>
+    </div>`;
+}
+
+function otdEnzRender(){
+  const grid = document.getElementById('otdEnzGrid');
+  const pag = document.getElementById('otdEnzPag');
+  if (!grid) return;
+  const p = otdEnzPagina();
+  if (!p.total){
+    grid.innerHTML = '<div class="otd-enz-vacio" style="grid-column:1/-1">Esta OT todavía no tiene fotos.</div>';
+    if (pag) pag.innerHTML = '';
+  } else {
+    grid.innerHTML = p.items.map(otdEnzCardHtml).join('');
+    if (pag){
+      const a = p.desde + 1, b = p.desde + p.items.length;
+      pag.innerHTML = `
+        <span class="info">Mostrando ${a}–${b} de ${p.total}</span>
+        <label class="d-flex align-items-center gap-1 m-0">
+          <select aria-label="Fotos por página" onchange="otdEnzPorPag(this.value)" ${OTD_ENZ.guardando ? 'disabled' : ''}>
+            ${OTD_ENZ_POR_PAG_OPC.map(n => `<option value="${n}" ${n === p.porPag ? 'selected' : ''}>${n} por página</option>`).join('')}
+          </select>
+        </label>
+        <button type="button" class="btn btn-outline-secondary" ${p.desde === 0 || OTD_ENZ.guardando ? 'disabled' : ''}
+                onclick="otdEnzIrPag(-1)"><i class="bi bi-chevron-left"></i> Anterior</button>
+        <span>Página ${OTD_ENZ.pag} de ${p.paginas}</span>
+        <button type="button" class="btn btn-outline-secondary" ${OTD_ENZ.pag >= p.paginas || OTD_ENZ.guardando ? 'disabled' : ''}
+                onclick="otdEnzIrPag(1)">Siguiente <i class="bi bi-chevron-right"></i></button>`;
+    }
+  }
+  otdEnzRefrescarResumen();
+}
+
+/* Contador, botones y semáforo de los pasos — sin repintar la grilla. */
+function otdEnzRefrescarResumen(){
+  const n = otdEnzPendientes().length;
+  const cnt = document.getElementById('otdEnzCount');
+  if (cnt){
+    cnt.textContent = n === 0 ? 'Ninguna foto se va a girar'
+                     : (n === 1 ? '1 foto se va a girar' : `${n} fotos se van a girar`);
+    cnt.classList.toggle('cero', n === 0);
+  }
+  const total = OTD_ENZ.fotos.length;
+  const nSug = OTD_ENZ.fotos.filter(f => f.sugerida).length;
+  const res = document.getElementById('otdEnzResumen');
+  if (res) res.textContent = `${total} foto${total === 1 ? '' : 's'}` + (nSug ? ` · ${nSug} sugerida${nSug === 1 ? '' : 's'}` : '');
+  document.getElementById('otdEnzStep1')?.classList.toggle('is-complete', n > 0);
+  const btn = document.getElementById('otdEnzGuardarBtn');
+  const lbl = document.getElementById('otdEnzGuardarLbl');
+  if (btn) btn.disabled = OTD_ENZ.guardando || n === 0;
+  if (lbl && !OTD_ENZ.guardando) lbl.textContent = n ? `Guardar giros (${n})` : 'Guardar giros';
+  const tl = document.getElementById('otdEnzToggleLbl');
+  if (tl) tl.textContent = otdEnzSugeridasVigentes().length ? 'Marcar/desmarcar todas las sugeridas'
+                                : 'Marcar/desmarcar todas (esta página)';
+  ['otdEnzSugerirBtn', 'otdEnzToggleBtn'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = OTD_ENZ.guardando || OTD_ENZ.midiendo;
+  });
+}
+
+/* Repinta SOLO la tarjeta de una foto (girar no debe recargar la grilla
+   entera: se perdería el scroll y las miniaturas parpadearían). */
+function otdEnzRepintarCard(f){
+  const card = document.querySelector(`#otdEnzGrid .otd-enz-card[data-enz="${CSS.escape(String(f.id))}"]`);
+  if (card) card.outerHTML = otdEnzCardHtml(f);
+  otdEnzRefrescarResumen();
+}
+
+function otdEnzBuscar(id){
+  return OTD_ENZ.fotos.find(f => String(f.id) === String(id));
+}
+
+function otdEnzGirar(id, delta){
+  const f = otdEnzBuscar(id);
+  if (!f || !f.girable || OTD_ENZ.guardando) return;
+  f.pend = (((f.pend || 0) + delta) % 360 + 360) % 360;
+  if (f.pend) { f.st = ''; f.msg = ''; }
+  otdEnzRepintarCard(f);
+}
+
+/* Toggle individual de una foto (el checkbox). Marcar sin giro elegido
+   propone ↻ 90°, el caso típico de estas fotos (celular Samsung, "el techo
+   quedó a la izquierda"); desmarcar la deja sin cambios. */
+function otdEnzMarcar(id, on){
+  const f = otdEnzBuscar(id);
+  if (!f || !f.girable || OTD_ENZ.guardando) return;
+  if (on && !f.pend){ f.pend = 90; f.st = ''; f.msg = ''; }
+  if (!on) f.pend = 0;
+  otdEnzRepintarCard(f);
+}
+
+/* La miniatura cargó: se guarda su tamaño real para "Sugerir giros". Con
+   un giro pendiente de 90°/270° la vista previa ya está girada, pero
+   naturalWidth/Height siempre es el del archivo. */
+function otdEnzMedido(id, img){
+  const f = otdEnzBuscar(id);
+  if (f && img && img.naturalWidth){ f.w = img.naturalWidth; f.h = img.naturalHeight; }
+}
+
+function otdEnzMedir(f){
+  if (f.w && f.h) return Promise.resolve(f);
+  return new Promise(function(resolve){
+    const im = new Image();
+    const fin = function(){
+      if (im.naturalWidth){ f.w = im.naturalWidth; f.h = im.naturalHeight; }
+      resolve(f);
+    };
+    im.onload = fin; im.onerror = fin;
+    im.src = otdEnzThumb(f);
+  });
+}
+
+/* Sugeridas que todavía no se han girado nunca (una ya guardada en esta
+   sesión, o girada antes, ya la revisó alguien: no se vuelve a proponer). */
+function otdEnzSugeridasVigentes(){
+  return OTD_ENZ.fotos.filter(f => f.sugerida && f.girable && !f.rotacion && f.st !== 'ok');
+}
+
+/* Mide las sugeridas (de a 6 en paralelo) y devuelve las APAISADAS. */
+async function otdEnzSugeridasApaisadas(){
+  const cand = otdEnzSugeridasVigentes();
+  const cola = cand.slice();
+  const trabajadores = Array.from({ length: Math.min(6, cola.length) }, async function(){
+    while (cola.length){ await otdEnzMedir(cola.shift()); }
+  });
+  await Promise.all(trabajadores);
+  return cand.filter(f => f.w && f.h && f.w > f.h);
+}
+
+async function otdEnzSugerir(){
+  if (OTD_ENZ.guardando || OTD_ENZ.midiendo) return;
+  const nSug = otdEnzSugeridasVigentes().length;
+  if (!nSug){
+    ilusToast('No hay fotos sugeridas en esta OT: las sugerencias son para fotos subidas entre el 3 y el 20 de septiembre de 2026. Gira a mano las que veas de lado.', {type:'info', duration:6000});
+    return;
+  }
+  OTD_ENZ.midiendo = true;
+  otdEnzRefrescarResumen();
+  const btn = document.querySelector('#otdEnzSugerirBtn span');
+  if (btn) btn.textContent = 'Midiendo fotos…';
+  try {
+    const aps = await otdEnzSugeridasApaisadas();
+    let marcadas = 0;
+    aps.forEach(f => { if (!f.pend && f.st !== 'ok'){ f.pend = 90; f.st = ''; f.msg = ''; marcadas++; } });
+    if (marcadas){
+      ilusToast(`${marcadas} foto${marcadas === 1 ? '' : 's'} marcada${marcadas === 1 ? '' : 's'} con ↻ 90°. Revísalas antes de guardar.`, {type:'success', duration:5000});
+    } else if (!aps.length){
+      ilusToast('Ninguna de las fotos sugeridas está apaisada: se ven verticales, así que probablemente ya están bien.', {type:'info', duration:5000});
+    } else {
+      ilusToast('Las fotos sugeridas ya estaban marcadas.', {type:'info'});
+    }
+  } finally {
+    OTD_ENZ.midiendo = false;
+    if (btn) btn.textContent = 'Sugerir giros';
+    otdEnzRender();
+  }
+}
+
+/* REGLA #14: un solo control que marca o desmarca TODAS las sugeridas
+   (apaisadas). Si ALGUNA está sin marcar, las marca todas; si ya están
+   todas marcadas, las desmarca. Reusa el toggle individual (otdEnzMarcar).
+   En una OT sin sugeridas (fotos de otras fechas), actúa sobre todas las
+   fotos de la página visible. */
+async function otdEnzToggleSugeridas(){
+  if (OTD_ENZ.guardando || OTD_ENZ.midiendo) return;
+  let objetivo;
+  if (otdEnzSugeridasVigentes().length){
+    OTD_ENZ.midiendo = true;
+    otdEnzRefrescarResumen();
+    try { objetivo = await otdEnzSugeridasApaisadas(); }
+    finally { OTD_ENZ.midiendo = false; }
+    if (!objetivo.length){
+      otdEnzRefrescarResumen();
+      ilusToast('Ninguna de las fotos sugeridas está apaisada: no hay nada que marcar.', {type:'info'});
+      return;
+    }
+  } else {
+    // Las ya guardadas en esta sesión quedan fuera: si contaran, el
+    // "marcar todas" nunca llegaría a "todas marcadas" y no desmarcaría.
+    objetivo = otdEnzPagina().items.filter(f => f.girable && f.st !== 'ok');
+  }
+  const marcar = objetivo.some(f => !f.pend);
+  objetivo.forEach(f => otdEnzMarcar(f.id, marcar));
+  otdEnzRender();
+}
+
+function otdEnzIrPag(d){
+  if (OTD_ENZ.guardando) return;
+  OTD_ENZ.pag += d;
+  otdEnzRender();
+  document.querySelector('#otdModalEnderezar .modal-body')?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function otdEnzPorPag(v){
+  OTD_ENZ.porPag = parseInt(v, 10) || 100;
+  OTD_ENZ.pag = 1;
+  otdEnzRender();
+}
+
+/* Ver en grande (visor global). Se puede guardar un giro desde ahí mismo;
+   otdFotoGiroAplicado deja la grilla al día. */
+function otdEnzVer(id){
+  if (typeof ilusLightbox !== 'function') return;
+  const items = otdEnzPagina().items;
+  const lista = items.map(f => ({
+    url: f.url, id: f.girable ? f.id : null,
+    caption: [f.maquina_nombre || 'Foto general de la OT', f.tomada_at].filter(Boolean).join(' · '),
+  }));
+  const idx = Math.max(0, items.findIndex(f => String(f.id) === String(id)));
+  ilusLightbox(lista, idx, 'Foto de la OT', otdFotoLbOpts());
+}
+
+async function otdEnzGuardar(){
+  if (OTD_ENZ.guardando) return;
+  const pend = otdEnzPendientes();
+  if (!pend.length) return;
+  const ok = await ilusConfirm({
+    title: 'Guardar giros',
+    message: pend.length === 1 ? 'Se va a girar 1 foto.' : `Se van a girar ${pend.length} fotos.`,
+    sub: 'La foto original no se borra: queda guardada, y el giro queda registrado en la bitácora de la OT.',
+    okLabel: 'Girar y guardar', cancelLabel: 'Volver',
+    type: 'question',
+  });
+  if (!ok) return;
+
+  OTD_ENZ.guardando = true;
+  otdEnzRender();
+  const lbl = document.getElementById('otdEnzGuardarLbl');
+  const cerrar = document.getElementById('otdEnzCerrarBtn');
+  if (cerrar) cerrar.disabled = true;
+  let nOk = 0, nErr = 0, hechas = 0;
+  try {
+    for (let i = 0; i < pend.length; i += OTD_ENZ_TANDA){
+      const tanda = pend.slice(i, i + OTD_ENZ_TANDA);
+      if (lbl) lbl.textContent = `Guardando ${hechas + 1}–${hechas + tanda.length} de ${pend.length}…`;
+      let d = null;
+      try {
+        const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/girar-lote`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ giros: tanda.map(f => ({ fid: f.id, grados: f.pend === 270 ? -90 : f.pend })) }),
+        }, 180000);
+        d = await r.json().catch(() => null);
+        if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || 'No se pudo guardar esta tanda.');
+      } catch(e){
+        const msg = (e && e.name === 'AbortError') ? 'Sin respuesta del servidor: no se guardó.'
+                  : ((e && e.message && e.message !== 'Failed to fetch') ? e.message : 'Sin conexión: no se guardó.');
+        tanda.forEach(f => { f.st = 'err'; f.msg = msg; });
+        nErr += tanda.length; hechas += tanda.length;
+        continue;
+      }
+      const porFid = {};
+      (d.resultados || []).forEach(x => { porFid[String(x.fid)] = x; });
+      tanda.forEach(f => {
+        const x = porFid[String(f.id)];
+        if (x && x.ok){
+          f.pend = 0;
+          otdFotoGiroAplicado(x);   // actualiza la pantalla y esta tarjeta
+          nOk++;
+        } else {
+          f.st = 'err';
+          f.msg = (x && x.error) || 'No se pudo girar esta foto.';
+          nErr++;
+        }
+      });
+      hechas += tanda.length;
+    }
+  } finally {
+    OTD_ENZ.guardando = false;
+    if (cerrar) cerrar.disabled = false;
+    otdEnzRender();
+  }
+  const res = document.getElementById('otdEnzResultado');
+  if (res){
+    res.style.color = nErr ? '#92400e' : '#166534';
+    res.textContent = nErr
+      ? `${nOk} foto${nOk === 1 ? '' : 's'} guardada${nOk === 1 ? '' : 's'} · ${nErr} con error (quedan en rojo: revisa el motivo en cada una).`
+      : `✓ ${nOk} foto${nOk === 1 ? '' : 's'} guardada${nOk === 1 ? '' : 's'} derecha${nOk === 1 ? '' : 's'}.`;
+  }
+  document.getElementById('otdEnzStep2')?.classList.toggle('is-complete', nOk > 0);
+  if (nErr){
+    ilusToast(`${nOk} guardada${nOk === 1 ? '' : 's'}, ${nErr} con error. Las que fallaron quedan en rojo.`, {type:'warning', duration:6000});
+  } else {
+    ilusToast(`✓ ${nOk} foto${nOk === 1 ? '' : 's'} girada${nOk === 1 ? '' : 's'} y guardada${nOk === 1 ? '' : 's'}`, {type:'success'});
+  }
+}
+
+/* Cerrar con giros sin guardar: se avisa (no se pierden en silencio). */
+document.addEventListener('DOMContentLoaded', function(){
+  const m = document.getElementById('otdModalEnderezar');
+  if (!m) return;
+  m.addEventListener('hide.bs.modal', function(ev){
+    if (OTD_ENZ.guardando){ ev.preventDefault(); return; }
+    const n = otdEnzPendientes().length;
+    if (n) ilusToast(`Quedaron ${n} giro${n === 1 ? '' : 's'} sin guardar. Vuelve a abrir "Enderezar fotos" para guardarlos.`, {type:'warning', duration:6000});
+  });
 });
 </script>
 {% endif %}

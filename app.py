@@ -82059,6 +82059,16 @@ def ot2_detalle(vid):
             f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
         f["cuando"] = chile_fmt_filter(f.get("tomada_at"), "%d/%m %H:%M") if f.get("tomada_at") else ""
 
+    # 🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas...
+    # que se puedan guardar si es que están mal"): decide si se dibuja
+    # "Enderezar fotos" y el botón "Guardar giro" del visor. Misma regla que
+    # re-valida el backend en /fotos/<fid>/girar (_foto_puede_girar).
+    try:
+        puede_girar_fotos = _foto_puede_girar(vid)
+    except Exception as _e_giro:
+        print(f"[ot2_detalle] puede_girar_fotos vid={vid}: {_e_giro}", flush=True)
+        puede_girar_fotos = False
+
     # ── Documentos — pestaña "Anexo de Servicios" del proveedor. ─────────
     # 🔓 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del técnico:
     # "que se vea el anexo en la otra parte"): hasta hoy este query se
@@ -82254,6 +82264,7 @@ def ot2_detalle(vid):
         # 2026-09-02 — cronómetro del técnico (ver el bloque `cronometro`).
         cronometro=cronometro,
         fotos=fotos, anexo=anexo,
+        puede_girar_fotos=puede_girar_fotos,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         puede_configurar=puede_configurar,
         ot_solo_lectura=ot_solo_lectura,
@@ -103979,6 +103990,416 @@ def mant_visita_foto_delete(vid, fid):
             print(f"[foto_delete] descompletar tarea vid={vid} tid={_tid}: {_e_tar}", flush=True)
     return jsonify({"ok": True, "deleted": True,
                     "tarea_descompletada": tarea_descompletada})
+
+
+# ═════════════════════════════════════════════════════════════════════
+# OT — GIRAR (ENDEREZAR) FOTOS DE LA VISITA
+# ═════════════════════════════════════════════════════════════════════
+# 🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas;
+# quisiera que las endereces y que dejes la opción de poder editar y que
+# se puedan guardar si es que están mal").
+#
+# La causa de fondo ya se corrigió (commit 3352a767: _img_resize_bytes
+# aplica exif_transpose). Pero las fotos YA guardadas perdieron su marca
+# EXIF de orientación: los bytes en GCS no dicen cuáles están de lado, así
+# que no se pueden enderezar solas -- alguien tiene que mirarlas y girarlas.
+# Esto es la herramienta para eso.
+#
+# Reglas (las OT son EVIDENCIA, ver feedback_ot_es_evidencia):
+#   - El archivo ORIGINAL nunca se borra ni se sobrescribe. La versión
+#     girada va SIEMPRE a una key NUEVA (además, /f/ cachea 30 días por
+#     key con ETag: sobrescribir la misma key nunca llegaría al navegador).
+#   - Se gira siempre DESDE EL ORIGINAL con el ángulo acumulado, para no
+#     ir perdiendo calidad JPEG con cada giro. Volver a 0° = restaurar la
+#     URL original, sin archivo nuevo.
+#   - `foto_hash` y `tomada_at` NO se tocan: el cierre cuenta
+#     COUNT(DISTINCT foto_hash) y girar no es evidencia nueva.
+#   - Bitácora (mant_logs) ANTES del UPDATE (REGLA #5).
+#   - La misma URL vive copiada en otras 4 tablas (levantamiento, galería
+#     del equipo, foto principal del equipo, evidencia de repuestos): se
+#     actualizan todas juntas, como ya lo hace el borrado de fotos. Si no,
+#     la foto torcida seguiría apareciendo en esas pantallas y la reparación
+#     de arranque (_reparar_fotos_levantamiento_a_galeria, que compara por
+#     URL) duplicaría la foto en la galería del equipo.
+#
+# Permisos: gestión (superadmin/admin/supervisor/ejecutivo) puede girar
+# en CUALQUIER estado de la OT, incluida cerrada -- girar no cambia el
+# contenido (el original queda, y queda en la bitácora). El técnico solo
+# mientras pueda EJECUTAR la OT (misma regla que borrar una foto).
+
+# Ventana en que OT 2.0 subía las fotos crudas (sin comprimir ni aplicar
+# EXIF), así que casi toda foto vertical de esas fechas quedó acostada.
+# Solo sirve para SUGERIR; el ancho/alto real lo mide el navegador.
+_FOTO_GIRO_VENTANA_SUGERIDA = (datetime(2026, 9, 3).date(), datetime(2026, 9, 20).date())
+_FOTO_GIRO_DELTAS = (90, -90, 180, -180, 270, -270)
+_FOTO_GIRO_LOTE_MAX = 300
+_FOTO_GIRO_MAX_LADO = 1600
+# Tablas que guardan COPIA de la URL de una foto de OT (tabla, columna).
+# Constantes del código, nunca input del usuario (REGLA #4).
+_FOTO_GIRO_COPIAS = (
+    ("mant_levantamiento_fotos", "cloudinary_url"),
+    ("mant_maquina_fotos", "cloudinary_url"),
+    ("mant_maquinas", "foto_url"),
+    ("mant_ot_repuesto_evidencias", "url"),
+)
+_FOTO_GIRO_MSG_ANTIGUA = "Esta foto está en un sistema antiguo y no se puede girar."
+
+
+class _FotoGiroError(Exception):
+    """Error de negocio al girar una foto: `mensaje` es apto para mostrarse
+    al usuario tal cual (REGLA #4: el detalle técnico va solo al log)."""
+
+    def __init__(self, mensaje, status=400):
+        super().__init__(mensaje)
+        self.mensaje = mensaje
+        self.status = status
+
+
+def _foto_puede_girar(vid, user=None):
+    """¿Puede este usuario girar (enderezar) fotos de la OT `vid`?
+
+    Gestión (superadmin/admin/supervisor/ejecutivo): si puede VER la OT,
+    en cualquier estado -- incluida cerrada. Técnico: solo si puede
+    EJECUTARLA (misma regla que borrar una foto). Cualquier otro rol: no.
+    Fail-closed: ante cualquier error, False.
+    """
+    u = user if user is not None else (getattr(g, "user", None) or {})
+    try:
+        if _es_rol_tecnico(u):
+            return bool(_puede_ot_accion(vid, "ejecutar", u))
+        familia = _rol_familia((u.get("role") or "").lower())
+        if familia in ("superadmin", "admin", "supervisor", "ejecutivo"):
+            return bool(_puede_ot_accion(vid, "ver", u))
+    except Exception as e:
+        print(f"[foto_girar] permiso vid={vid}: {e}", flush=True)
+    return False
+
+
+def _foto_girar_bytes(raw, grados, max_lado=_FOTO_GIRO_MAX_LADO, calidad=90):
+    """Gira una imagen `grados` a la DERECHA (horario): 90 | 180 | 270.
+    Devuelve bytes JPEG. Lanza excepción si Pillow no puede abrirla (HEIC).
+
+    Primero aplica exif_transpose: las fotos migradas desde Cloudinary
+    pueden conservar su marca EXIF, y girarlas sin aplicarla primero las
+    giraría DOS veces. Luego un transpose exacto (sin interpolar, sin
+    deformar). OJO con Pillow: ROTATE_270 es 270° ANTIHORARIO = 90° a la
+    derecha. Calidad 90 para no degradar la evidencia; solo se achica si
+    supera `max_lado` (las fotos subidas ya vienen a <= 1600).
+    """
+    from PIL import Image, ImageOps
+    import io as _io
+    ops = {
+        90: Image.Transpose.ROTATE_270,
+        180: Image.Transpose.ROTATE_180,
+        270: Image.Transpose.ROTATE_90,
+    }
+    op = ops.get(int(grados) % 360)
+    if op is None:
+        raise ValueError(f"giro no soportado: {grados}")
+    im = Image.open(_io.BytesIO(raw))
+    im.load()
+    try:
+        im = ImageOps.exif_transpose(im) or im
+    except Exception as _e_exif:
+        print(f"[foto_girar] exif_transpose: {_e_exif}", flush=True)
+    im = im.transpose(op)
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        # Transparencia sobre fondo blanco (JPEG no tiene canal alfa).
+        im = im.convert("RGBA")
+        fondo = Image.new("RGB", im.size, (255, 255, 255))
+        fondo.paste(im, mask=im.split()[-1])
+        im = fondo
+    elif im.mode != "RGB":
+        im = im.convert("RGB")
+    if max(im.size) > max_lado:
+        im.thumbnail((max_lado, max_lado))
+    out = _io.BytesIO()
+    im.save(out, format="JPEG", quality=calidad, optimize=True)
+    return out.getvalue()
+
+
+def _foto_girar_key_nueva(key_original, vid, rot, ts=None):
+    """Key NUEVA para la versión girada `rot`° de `key_original`.
+
+    Si el original ya vive bajo ilus/visitas/v{vid}/ (subida normal,
+    foto de equipo, repuestos/bajas) se queda en su MISMA carpeta. Si no
+    (levantamiento, migradas desde Cloudinary, foto principal de máquina)
+    va a ilus/visitas/v{vid}/rot/ -- así queda detrás del candado de /f/
+    (_RE_FOTO_KEY_VID), igual que el resto de la evidencia de la OT.
+    """
+    ts = ts or int(time.time() * 1000)
+    carpeta, _, nombre = (key_original or "").rpartition("/")
+    base = nombre.rsplit(".", 1)[0] if "." in nombre else nombre
+    base = base or "foto"
+    prefijo = f"ilus/visitas/v{int(vid)}/"
+    if carpeta and (key_original + "").startswith(prefijo):
+        destino = carpeta
+    else:
+        destino = prefijo + "rot"
+    return f"{destino}/{base}__r{int(rot) % 360}_{ts}.jpg"
+
+
+def _foto_url_actual(row):
+    """URL con la que se muestra hoy una fila de mant_visita_fotos (mismo
+    criterio que el resto del proyecto: cloudinary_url manda; archivo_path
+    solo si trae una URL /f/, como las fotos vinculadas al cerrar un
+    levantamiento)."""
+    cu = row.get("cloudinary_url") or ""
+    if cu:
+        return cu
+    ap = row.get("archivo_path") or ""
+    return ap if ap.startswith("/f/") else ""
+
+
+def _foto_es_girable(url):
+    return bool(url) and url.startswith("/f/") and len(url) > 3
+
+
+def _foto_girar_fila(vid, fid):
+    """Lee la fila de la foto con las columnas de giro. Si faltaran (el
+    _ensure de arranque falló), las crea y reintenta una vez."""
+    sql = ("SELECT id, visita_id, cloudinary_url, archivo_path, url_original, rotacion "
+           "  FROM mant_visita_fotos WHERE id=%s AND visita_id=%s")
+    try:
+        return mysql_fetchone(sql, (fid, vid))
+    except Exception as e:
+        print(f"[foto_girar] leer fila vid={vid} fid={fid}: {e} -- reintento tras _ensure", flush=True)
+        _ensure_fotos_rotacion_cols()
+        return mysql_fetchone(sql, (fid, vid))
+
+
+def _foto_girar_core(vid, fid, delta, usuario=None):
+    """Gira la foto `fid` de la OT `vid` en `delta` grados (a la derecha si
+    es positivo). Devuelve {fid, url_anterior, url, rotacion, copias}.
+    Lanza _FotoGiroError con un mensaje apto para el usuario.
+
+    No valida permisos: eso lo hace el endpoint (_foto_puede_girar).
+    """
+    try:
+        delta = int(delta)
+    except (TypeError, ValueError):
+        raise _FotoGiroError("Giro inválido: usa 90, -90 o 180 grados.")
+    if delta not in _FOTO_GIRO_DELTAS:
+        raise _FotoGiroError("Giro inválido: usa 90, -90 o 180 grados.")
+    usuario = (usuario or current_username() or "?")[:190]
+
+    row = _foto_girar_fila(vid, fid)
+    if not row:
+        raise _FotoGiroError("Foto no encontrada en esta OT.", 404)
+    url_actual = _foto_url_actual(row)
+    if not _foto_es_girable(url_actual):
+        raise _FotoGiroError(_FOTO_GIRO_MSG_ANTIGUA, 409)
+    original = row.get("url_original") or url_actual
+    if not _foto_es_girable(original):
+        raise _FotoGiroError(_FOTO_GIRO_MSG_ANTIGUA, 409)
+
+    rot_prev = int(row.get("rotacion") or 0) % 360
+    nueva_rot = (rot_prev + delta) % 360
+
+    if nueva_rot == 0:
+        # Vuelve a como estaba: se restaura la URL original, sin archivo nuevo.
+        nueva_url = original
+    else:
+        b = _gcs_bucket()
+        if b is None:
+            raise _FotoGiroError(_STORAGE_OFF_MSG, 503)
+        key_orig = original[3:].split("?", 1)[0]
+        try:
+            raw = b.blob(key_orig).download_as_bytes()
+        except Exception as e:
+            print(f"[foto_girar] descarga vid={vid} fid={fid} key={key_orig[:160]}: "
+                  f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+            raise _FotoGiroError("No encontramos el archivo original de esta foto "
+                                 "en el almacenamiento.", 502)
+        try:
+            data = _foto_girar_bytes(raw, nueva_rot)
+        except Exception as e:
+            print(f"[foto_girar] Pillow vid={vid} fid={fid}: {type(e).__name__}: "
+                  f"{str(e)[:200]}", flush=True)
+            raise _FotoGiroError("No se pudo abrir esta foto para girarla (formato no "
+                                 "compatible, por ejemplo HEIC).", 422)
+        key_nueva = _foto_girar_key_nueva(key_orig, vid, nueva_rot)
+        try:
+            nueva_url = _storage_upload_bytes(data, key_nueva, "image/jpeg")
+        except Exception as e:
+            print(f"[foto_girar] subida vid={vid} fid={fid}: {type(e).__name__}: "
+                  f"{str(e)[:200]}", flush=True)
+            raise _FotoGiroError("No se pudo guardar la foto girada. Intenta de nuevo "
+                                 "en un minuto.", 502)
+
+    # Bitácora ANTES de escribir (REGLA #5).
+    _mant_log("visita", vid, "foto_girada",
+              f"foto #{fid} · giro {delta:+d}° (queda {nueva_rot}°) · "
+              f"antes={url_actual} · ahora={nueva_url} · por {usuario}")
+
+    # Candado optimista: si otra persona la giró entre la lectura y ahora,
+    # rotacion/URL ya no calzan y no se pisa su giro.
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_visita_fotos "
+        "   SET cloudinary_url=%s, url_original=COALESCE(url_original, %s), "
+        "       rotacion=%s, rotada_por=%s, rotada_at=NOW(), "
+        "       archivo_path=CASE WHEN archivo_path=%s THEN %s ELSE archivo_path END "
+        " WHERE id=%s AND visita_id=%s AND COALESCE(rotacion,0)=%s "
+        "   AND COALESCE(NULLIF(cloudinary_url,''), archivo_path)=%s",
+        (nueva_url, original, nueva_rot, usuario,
+         url_actual, nueva_url,
+         fid, vid, rot_prev, url_actual))
+    if not n:
+        _mant_log("visita", vid, "foto_giro_descartado",
+                  f"foto #{fid} · la foto cambió mientras se giraba · por {usuario}")
+        raise _FotoGiroError("Esta foto cambió mientras la girabas. Recarga la página "
+                             "e inténtalo de nuevo.", 409)
+
+    # Propagar a las copias de la URL (cada una por separado: si una falla,
+    # las demás igual se actualizan).
+    copias = {}
+    if nueva_url != url_actual:
+        for tabla, col in _FOTO_GIRO_COPIAS:
+            try:
+                n_c = mysql_execute_returning_rowcount(
+                    f"UPDATE {tabla} SET {col}=%s WHERE {col}=%s",
+                    (nueva_url, url_actual))
+                if n_c:
+                    copias[tabla] = n_c
+            except Exception as e:
+                print(f"[foto_girar] propagar {tabla} vid={vid} fid={fid}: "
+                      f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+
+    return {"fid": fid, "url_anterior": url_actual, "url": nueva_url,
+            "rotacion": nueva_rot, "copias": copias}
+
+
+def _foto_girar_sin_permiso():
+    return jsonify({"ok": False,
+                    "error": "No tienes permiso para girar las fotos de esta OT."}), 403
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos/<int:fid>/girar", methods=["POST"])
+@_mant_required
+def mant_visita_foto_girar(vid, fid):
+    """Gira una foto de la OT y guarda la versión girada.
+    Body JSON: {grados: 90 | -90 | 180} (giro a la derecha si es positivo,
+    relativo a cómo se ve HOY la foto)."""
+    if not _foto_puede_girar(vid):
+        return _foto_girar_sin_permiso()
+    body = request.get_json(silent=True) or {}
+    try:
+        res = _foto_girar_core(vid, fid, body.get("grados"))
+    except _FotoGiroError as e:
+        return jsonify({"ok": False, "error": e.mensaje}), e.status
+    except Exception as e:
+        import traceback as _tb_giro
+        print(f"[foto_girar] vid={vid} fid={fid} error inesperado: "
+              f"{type(e).__name__}: {str(e)[:300]}\n{_tb_giro.format_exc()[-1500:]}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo girar la foto. Intenta de nuevo en un minuto."}), 500
+    return jsonify({"ok": True, **res})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos/girar-lote", methods=["POST"])
+@_mant_required
+def mant_visita_fotos_girar_lote(vid):
+    """Gira varias fotos de la OT de una vez ("Enderezar fotos").
+    Body JSON: {giros: [{fid, grados}, ...]} (máx. 300). Se aplican una por
+    una y NUNCA se aborta el lote: cada foto informa su propio resultado."""
+    if not _foto_puede_girar(vid):
+        return _foto_girar_sin_permiso()
+    body = request.get_json(silent=True) or {}
+    giros = body.get("giros")
+    if not isinstance(giros, list) or not giros:
+        return jsonify({"ok": False, "error": "No hay fotos para girar."}), 400
+    if len(giros) > _FOTO_GIRO_LOTE_MAX:
+        return jsonify({"ok": False,
+                        "error": f"Son demasiadas fotos de una vez (máximo "
+                                 f"{_FOTO_GIRO_LOTE_MAX}). Guarda por partes."}), 400
+    resultados, n_ok, vistos = [], 0, set()
+    for gi in giros:
+        gi = gi if isinstance(gi, dict) else {}
+        try:
+            fid = int(gi.get("fid"))
+        except (TypeError, ValueError):
+            resultados.append({"fid": gi.get("fid"), "ok": False, "error": "Foto inválida."})
+            continue
+        if fid in vistos:
+            # La misma foto dos veces en el lote se sumaría dos veces.
+            resultados.append({"fid": fid, "ok": False,
+                               "error": "Esta foto venía repetida en el lote."})
+            continue
+        vistos.add(fid)
+        try:
+            res = _foto_girar_core(vid, fid, gi.get("grados"))
+            resultados.append({"ok": True, **res})
+            n_ok += 1
+        except _FotoGiroError as e:
+            resultados.append({"fid": fid, "ok": False, "error": e.mensaje})
+        except Exception as e:
+            print(f"[foto_girar_lote] vid={vid} fid={fid} error inesperado: "
+                  f"{type(e).__name__}: {str(e)[:300]}", flush=True)
+            resultados.append({"fid": fid, "ok": False,
+                               "error": "No se pudo girar esta foto."})
+    return jsonify({"ok": True, "total": len(resultados), "giradas": n_ok,
+                    "fallidas": len(resultados) - n_ok, "resultados": resultados})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos/para-girar", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def mant_visita_fotos_para_girar(vid):
+    """Lista las fotos de la OT para el modal "Enderezar fotos".
+
+    `sugerida` = foto girable, todavía sin girar, subida en la ventana en
+    que OT 2.0 subía las fotos crudas (3 al 20 de septiembre de 2026). Es
+    solo una pista: el navegador mide si la foto es apaisada antes de
+    proponer el giro.
+    """
+    if not _foto_puede_girar(vid):
+        return _foto_girar_sin_permiso()
+    base_sql = (
+        "SELECT f.id, f.cloudinary_url, f.archivo_path, f.tipo_foto, f.descripcion, "
+        "       f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre{extra} "
+        "  FROM mant_visita_fotos f "
+        "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
+        " WHERE f.visita_id=%s "
+        " ORDER BY f.tomada_at DESC, f.id DESC"
+    )
+    try:
+        rows = mysql_fetchall(base_sql.format(extra=", f.rotacion"), (vid,)) or []
+    except Exception as e:
+        # Sin la columna nueva (el _ensure de arranque falló): se lista igual.
+        print(f"[foto_para_girar] vid={vid} sin columna rotacion: {e}", flush=True)
+        try:
+            rows = mysql_fetchall(base_sql.format(extra=""), (vid,)) or []
+        except Exception as e2:
+            print(f"[foto_para_girar] vid={vid}: {e2}", flush=True)
+            return jsonify({"ok": False,
+                            "error": "No se pudieron cargar las fotos. Intenta de nuevo."}), 500
+    d0, d1 = _FOTO_GIRO_VENTANA_SUGERIDA
+    out = []
+    for r in rows:
+        url = _foto_url_actual(r) or (
+            f"/static/{r['archivo_path']}" if r.get("archivo_path") else "")
+        girable = _foto_es_girable(url)
+        rot = int(r.get("rotacion") or 0) % 360
+        sugerida = False
+        ta = r.get("tomada_at")
+        if girable and rot == 0 and ta:
+            try:
+                dia = to_chile_filter(ta).date()
+                sugerida = d0 <= dia <= d1
+            except Exception:
+                sugerida = False
+        out.append({
+            "id": r["id"],
+            "url": url,
+            "tomada_at": chile_fmt_filter(ta, "%d/%m/%Y %H:%M") if ta else "",
+            "tipo_foto": r.get("tipo_foto") or "general",
+            "descripcion": r.get("descripcion") or "",
+            "maquina_nombre": r.get("maquina_nombre") or "",
+            "rotacion": rot,
+            "girable": girable,
+            "sugerida": sugerida,
+        })
+    return jsonify({"ok": True, "fotos": out, "total": len(out)})
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -128535,6 +128956,52 @@ def _ensure_fotos_hash_cols():
             print(f"[ensure_fotos_hash] {tabla}: {e}", flush=True)
 
 
+# Columnas para GIRAR fotos de OT sin perder el original (ver
+# _foto_girar_core). Constantes del código, nunca input del usuario.
+_FOTOS_ROTACION_COLS = (
+    ("url_original", "TEXT NULL"),
+    ("rotacion", "SMALLINT NOT NULL DEFAULT 0"),
+    ("rotada_por", "VARCHAR(190) NULL"),
+    ("rotada_at", "DATETIME NULL"),
+)
+
+
+def _ensure_fotos_rotacion_cols():
+    """🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas...
+    que se puedan guardar si es que están mal"). Columnas para girar una
+    foto de OT conservando la original:
+
+      url_original  la URL con la que se subió (se escribe UNA sola vez, en
+                    el primer giro; así siempre se gira desde el original y
+                    se puede volver a él).
+      rotacion      giro acumulado a la derecha (0/90/180/270).
+      rotada_por / rotada_at   quién y cuándo (UTC, se muestra con chile_fmt).
+
+    Corre SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 (mismo patrón que
+    _ensure_fotos_hash_cols): sin estas columnas el giro falla. Idempotente:
+    revisa information_schema y además ignora "Duplicate column".
+    """
+    for col, ddl in _FOTOS_ROTACION_COLS:
+        try:
+            existe = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mant_visita_fotos' "
+                "   AND COLUMN_NAME = %s",
+                (col,)
+            ) or {}
+            if int(existe.get("n") or 0) > 0:
+                continue
+            conn = get_mysql()
+            with conn.cursor() as cur:
+                cur.execute(f"ALTER TABLE mant_visita_fotos ADD COLUMN {col} {ddl}")
+            conn.commit()
+            print(f"[ensure_fotos_rotacion] {col} agregada en mant_visita_fotos", flush=True)
+        except Exception as e:
+            if "Duplicate column" in str(e) or "1060" in str(e):
+                continue
+            print(f"[ensure_fotos_rotacion] {col}: {e}", flush=True)
+
+
 def _ensure_lev_items_gps_cols():
     """Borrador + evidencia GPS por equipo capturado (Daniel 2026-08-08:
     geocerca de 500m al guardar cada equipo del modal de levantamiento).
@@ -131891,6 +132358,16 @@ try:
         _ensure_fotos_hash_cols()
 except Exception as _ensure_fotos_hash_err:
     print(f"[ILUS][WARN] _ensure_fotos_hash_cols: {_ensure_fotos_hash_err}", flush=True)
+
+# 🔄 Girar fotos de OT conservando la original (Daniel 2026-09-25: "las
+# fotos de todas las OT están torcidas... que se puedan guardar si es que
+# están mal"). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1: sin estas
+# columnas el giro falla.
+try:
+    with app.app_context():
+        _ensure_fotos_rotacion_cols()
+except Exception as _ensure_fotos_rot_err:
+    print(f"[ILUS][WARN] _ensure_fotos_rotacion_cols: {_ensure_fotos_rot_err}", flush=True)
 
 # CRÍTICO: repara OTs cerradas con equipos descubiertos huérfanos (bug de
 # app_context en _lev_promover_full_async, Daniel 2026-07-08 — caso real
