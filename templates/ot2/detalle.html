@@ -9907,6 +9907,24 @@ async function otdDocAgregar(tipoDirecto, numDirecto){
       });
       d = await r.json().catch(() => ({}));
     }
+    // 🛑 Mismo total y mismo ZZ que un documento que ya está: casi siempre
+    // es la factura de la nota de venta ya asociada. Se pregunta en serio.
+    if (!d.ok && d.error_codigo === 'POSIBLE_DUPLICADO'){
+      const seguir = await ilusConfirm({
+        title: '¿Es el mismo cobro?',
+        message: d.error || 'Este documento parece duplicar uno que ya está en la OT.',
+        sub: 'Si es la factura de ' + (d.duplicado_de || 'esa nota de venta') +
+             ', NO la sumes: la OT quedaría cobrando dos veces.',
+        okLabel: 'Sumar igual', cancelLabel: 'No sumar', danger: true,
+      });
+      if (!seguir){ err.style.color = ''; err.textContent = 'No se agregó (posible duplicado).'; return; }
+      body.confirmar_duplicado = true;
+      r = await fetch(`/ot/api/${OTD_VID}/documentos`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      d = await r.json().catch(() => ({}));
+    }
     err.style.color = '';
     if (!d.ok){ err.textContent = d.error || 'No se pudo agregar.'; return; }
     err.textContent = '';

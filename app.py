@@ -84510,15 +84510,53 @@ def ot2_api_documentos_agregar(vid):
     # servicio (ZZ instalación/mantención + ZZ envío), no el total con
     # productos. `monto` sigue guardando el total del documento (evidencia
     # congelada, como siempre); lo que aporta a la OT va aparte.
-    _zz_leido, _zz_serv, _zz_envio, _zz_cods = False, 0, 0, []
+    _zz_leido, _zz_serv, _zz_envio, _zz_cods, _tot_doc = False, 0, 0, [], 0
     try:
-        _h_zz, _lineas_zz, _ = _erp_zz_lineas(tipo, numero)
+        _h_zz, _lineas_zz, _tot_doc = _erp_zz_lineas(tipo, numero)
         if _h_zz:
             _zz_leido = True
             _zz_serv, _zz_envio, _zz_cods = _ot_doc_zz_plata(_lineas_zz)
     except Exception as _e_zz:
         print(f"[ot_docs] ZZ vid={vid} {tipo} {numero}: {_e_zz}", flush=True)
     _zz_total = _zz_serv + _zz_envio
+
+    # 🛑 2026-09-25 -- freno a la desviación humana más cara: agregar la
+    # FACTURA de una nota de venta que ya está en la OT (caso real
+    # OT-2026-00249: VD 10666 y FCV 11591 = mismo total $1.525.000 y mismo
+    # ZZINSTALACION $252.101). Son el mismo cobro en dos documentos; sumarla
+    # duplicaba el valor. Mismo total + misma plata ZZ que un documento ya
+    # asociado → se pide confirmación explícita (no se bloquea: puede haber
+    # dos ventas idénticas de verdad). Solo lectura del ERP (REGLA #4.1).
+    if _zz_total and not d.get("confirmar_duplicado"):
+        _existentes = []
+        if _p_nudo:
+            _existentes.append(_ot_doc_real_a_usuario(_p_tido, _p_nudo))
+        try:
+            for _r_e in (mysql_fetchall(
+                    "SELECT erp_tido, erp_nudo FROM mant_visita_documentos "
+                    " WHERE visita_id=%s AND origen='erp'", (vid,)) or []):
+                _par_e = _ot_doc_real_a_usuario(_r_e.get("erp_tido"), _r_e.get("erp_nudo"))
+                if _par_e not in _existentes:
+                    _existentes.append(_par_e)
+        except Exception as _e_ex:
+            print(f"[ot_docs] duplicado vid={vid}: {_e_ex}", flush=True)
+        for _t_e, _n_e in _existentes:
+            try:
+                _h_e, _zz_e, _tot_e = _erp_zz_lineas(_t_e, _n_e)
+            except Exception:
+                continue
+            if not _h_e:
+                continue
+            _s_e, _v_e, _ = _ot_doc_zz_plata(_zz_e)
+            if (_s_e, _v_e) == (_zz_serv, _zz_envio) and int(_tot_e or 0) == int(_tot_doc or 0):
+                return jsonify({
+                    "ok": False, "error_codigo": "POSIBLE_DUPLICADO",
+                    "duplicado_de": f"{_t_e} {_n_e}",
+                    "error": (f"Este documento parece el mismo cobro que la {_t_e} {_n_e} "
+                              f"que ya está en la OT: mismo total y mismo ZZ "
+                              f"(${_zz_total:,.0f}). Si es la factura de esa nota de "
+                              f"venta, sumarlo cobraría dos veces.").replace(",", "."),
+                }), 409
 
     # ¿Es el primero? Entonces además se espeja al campo principal, que es
     # el que gobierna cierre/PDF/margen y ya existía desde siempre.
@@ -84625,7 +84663,10 @@ def ot2_api_documentos_agregar(vid):
                   f"{_nom_doc}"
                   + (f" · ZZ ${_zz_total:,.0f}".replace(",", ".") if _zz_total else " · sin ZZ")
                   + (f" · {etiqueta}" if etiqueta else "")
-                  + (" · PRINCIPAL" if _es_primero else " · adicional"))
+                  + (" · PRINCIPAL" if _es_primero else " · adicional")
+                  # Quién decidió sumar un posible duplicado, queda escrito.
+                  + (" · el usuario confirmó que NO es duplicado"
+                     if d.get("confirmar_duplicado") else ""))
     except Exception:
         pass
     return jsonify({"ok": True, "es_principal": _es_primero, "documento": _nom_doc,
