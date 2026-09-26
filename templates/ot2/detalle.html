@@ -9655,7 +9655,8 @@ function otdEqFotosFallback(){
       // foto se giró, la URL cambió y el visor abriría la versión torcida.
       const actual = img.getAttribute('src') || url;
       if (typeof ilusLightbox === 'function'){
-        ilusLightbox([{ url: actual, caption: desde ? ('Evidencia: ' + desde) : '', id: img.dataset.fid || null }],
+        ilusLightbox([{ url: actual, caption: desde ? ('Evidencia: ' + desde) : '',
+                        id: otdFotoIdGirable(img.dataset.fid, actual) }],
                      0, 'Evidencia del equipo', otdFotoLbOpts());
       }
     });
@@ -10134,7 +10135,10 @@ window.otdVerFoto = function(imgEl){
     const desc = (item?.querySelector('.desc')?.textContent || '').trim();
     const who  = (item?.querySelector('.who')?.textContent || '').trim();
     // 🔄 2026-09-25: + id (data-fid) para poder "Guardar giro" desde el visor.
-    return { url: el.getAttribute('src') || el.src, id: el.dataset.fid || null,
+    // Solo si la foto se puede girar (/f/): una del sistema antiguo
+    // (Cloudinary, /static/) ofrecería un botón que siempre falla.
+    const u = el.getAttribute('src') || el.src;
+    return { url: u, id: otdFotoIdGirable(el.dataset.fid, u),
              caption: [tipo, desc, who].filter(Boolean).join(' · ') };
   });
   const idx = Math.max(0, imgs.indexOf(imgEl));
@@ -10160,28 +10164,54 @@ function otdFotoLbOpts(){
   if (!OTD_PUEDE_GIRAR) return undefined;
   return {
     onGuardarGiro: async function(item, grados){
-      const res = await otdFotoGuardarGiro(item.id, grados);
+      // url_esperada = cómo ve el navegador la foto HOY: si el servidor ya
+      // la tiene distinta (un reintento de un giro que sí se guardó), no la
+      // gira de nuevo y devuelve cómo quedó.
+      const res = await otdFotoGuardarGiro(item.id, grados, { url_esperada: otdFotoRuta(item.url) });
+      if (res.desfasada) return { url: res.url, mensaje: res.error, tipo: 'warning' };
       return res.url;
     },
   };
 }
 
+/* id de la foto para el visor, SOLO si se puede girar: el servidor gira
+   únicamente fotos /f/ (mismo criterio que otdEnzThumb y el backend). */
+function otdFotoIdGirable(fid, url){
+  if (!fid) return null;
+  return otdFotoRuta(url).indexOf('/f/') === 0 ? String(fid) : null;
+}
+
 /* POST a /fotos/<fid>/girar. Devuelve {fid, url_anterior, url, rotacion}
-   y ya deja la pantalla al día; si falla, lanza Error con el mensaje. */
-async function otdFotoGuardarGiro(fid, grados){
+   y ya deja la pantalla al día; si falla, lanza Error con el mensaje.
+   `esperado` = {url_esperada, rot_esperada}: el giro es RELATIVO, así que
+   sin esto un reintento tras un corte de red lo sumaría dos veces. Si la
+   foto ya había cambiado, devuelve {desfasada:true, url, rotacion, error}
+   con la foto como quedó guardada (y la pantalla ya actualizada). */
+async function otdFotoGuardarGiro(fid, grados, esperado){
+  esperado = esperado || {};
+  const SIN_RESPUESTA = 'Sin respuesta del servidor: no sabemos si el giro se guardó. ' +
+    'Vuelve a tocar "Guardar giro": si ya se había guardado, te mostramos cómo quedó (no se gira dos veces).';
   let r, d = null;
   try {
     r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/${encodeURIComponent(fid)}/girar`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ grados: grados }),
+      body: JSON.stringify(Object.assign({ grados: grados }, esperado)),
     }, 60000);
     d = await r.json().catch(() => null);
   } catch(e){
-    throw new Error('Sin conexión: el giro no se guardó. Intenta de nuevo.');
+    throw new Error(SIN_RESPUESTA);
   }
-  if (!r.ok || !d || !d.ok){
-    throw new Error((d && d.error) || 'No se pudo guardar el giro.');
+  if (!d) throw new Error(SIN_RESPUESTA);   // 502/504 sin JSON: resultado incierto
+  if (d.desfasada && d.url_actual){
+    const res = { fid: fid, url_anterior: esperado.url_esperada || '', url: d.url_actual,
+                  rotacion: Number(d.rotacion) || 0, desfasada: true,
+                  error: d.error || 'Esta foto ya había cambiado: te mostramos cómo quedó guardada.' };
+    otdFotoGiroAplicado(res);
+    return res;
+  }
+  if (!r.ok || !d.ok){
+    throw new Error(d.error || 'No se pudo guardar el giro.');
   }
   otdFotoGiroAplicado(d);
   return d;
@@ -10195,8 +10225,16 @@ function otdFotoGiroAplicado(res){
   if (window.OTD_ENZ && Array.isArray(window.OTD_ENZ.fotos)){
     const f = window.OTD_ENZ.fotos.find(x => String(x.id) === String(res.fid));
     if (f){
-      f.url = res.url; f.rotacion = res.rotacion; f.pend = 0; f.st = 'ok';
-      f.msg = res.rotacion ? `Guardada · girada ${res.rotacion}° desde la original` : 'Guardada · volvió a la original';
+      f.url = res.url; f.rotacion = Number(res.rotacion) || 0; f.pend = 0;
+      if (res.desfasada){
+        f.st = 'aviso';
+        f.msg = 'Ya había cambiado: te mostramos cómo quedó guardada' +
+                (f.rotacion ? ` (girada ${f.rotacion}° desde la original)` : ' (como la original)') +
+                '. Revísala y gírala solo si hace falta.';
+      } else {
+        f.st = 'ok';
+        f.msg = f.rotacion ? `Guardada · girada ${f.rotacion}° desde la original` : 'Guardada · volvió a la original';
+      }
       f.w = 0; f.h = 0;   // la versión nueva tiene otras medidas
       if (typeof otdEnzRepintarCard === 'function') otdEnzRepintarCard(f);
     }
@@ -10224,12 +10262,25 @@ window.otdFotoReemplazarUrl = function(fid, vieja, nueva){
   const rutaVieja = vieja ? otdFotoRuta(vieja) : '';
   document.querySelectorAll('img').forEach(function(img){
     const src = img.getAttribute('src') || '';
-    const porFid = fidS && img.dataset && img.dataset.fid === fidS;
-    const porUrl = rutaVieja && otdFotoRuta(src) === rutaVieja;
+    const imgFid = (img.dataset && img.dataset.fid) || '';
+    const porFid = fidS && imgFid === fidS;
+    // Por URL solo las <img> SIN fid (foto de ficha, tira del equipo,
+    // levantamiento): otra fila con OTRO fid puede compartir el archivo y
+    // en la base NO se giró -- no hay que mostrarla girada.
+    const porUrl = rutaVieja && (!imgFid || imgFid === fidS) && otdFotoRuta(src) === rutaVieja;
     if (!porFid && !porUrl) return;
     const q = src.indexOf('?');
     const query = (q >= 0 && /[?&]w=\d+/.test(src.slice(q))) ? src.slice(q) : '';
     img.setAttribute('src', nueva + query);
+    // La miniatura dentro de <a href=URL target=_blank> (tira de fotos del
+    // equipo, levantamiento): el link también tiene que abrir la derecha.
+    const a = img.closest('a[href]');
+    if (a && otdFotoRuta(a.getAttribute('href')) === otdFotoRuta(src)){
+      const ha = a.getAttribute('href') || '';
+      const qa = ha.indexOf('?');
+      const queryA = (qa >= 0 && /[?&]w=\d+/.test(ha.slice(qa))) ? ha.slice(qa) : '';
+      a.setAttribute('href', nueva + queryA);
+    }
   });
   try {
     if (typeof OTD_CHK_DATA !== 'undefined' && OTD_CHK_DATA){
@@ -10237,7 +10288,9 @@ window.otdFotoReemplazarUrl = function(fid, vieja, nueva){
         (OTD_CHK_DATA[mid] || []).forEach(function(g){
           (g.tareas || []).forEach(function(t){
             (t.fotos || []).forEach(function(f){
-              if ((fidS && String(f.id) === fidS) || (rutaVieja && otdFotoRuta(f.url) === rutaVieja)){
+              const fId = (f.id === null || f.id === undefined) ? '' : String(f.id);
+              if ((fidS && fId === fidS) ||
+                  (rutaVieja && (!fId || fId === fidS) && otdFotoRuta(f.url) === rutaVieja)){
                 f.url = nueva;
               }
             });
@@ -10278,7 +10331,8 @@ window.otdVerFotosTarea = function(imgEl, idx){
   const imgs = Array.from(cont.querySelectorAll('img'));
   const tarea = (imgEl.getAttribute('alt') || 'Foto de la tarea').trim();
   const fotos = imgs.map(function(el, i){
-    return { url: el.getAttribute('src') || el.src, id: el.dataset.fid || null,
+    const u = el.getAttribute('src') || el.src;
+    return { url: u, id: otdFotoIdGirable(el.dataset.fid, u),
              caption: tarea + (imgs.length > 1 ? ` · ${i + 1} de ${imgs.length}` : '') };
   });
   const i = (typeof idx === 'number' && idx >= 0) ? idx : Math.max(0, imgs.indexOf(imgEl));
@@ -11410,6 +11464,10 @@ async function otdChkSubirFoto(input, tid){
     const fo = (j.fotos && j.fotos[0]) || { id: null, url: j.url };
     t.fotos = t.fotos || [];
     if (fo.url) t.fotos.push({ id: fo.id, url: fo.url });
+    // 🔄 2026-09-25: igual que otdSubirFoto -- ya hay fotos para enderezar,
+    // y el modal (si ya estaba cargado) tiene que traer esta foto nueva.
+    document.getElementById('otdEnzOpenBtn')?.classList.remove('d-none');
+    if (window.OTD_ENZ) window.OTD_ENZ.cargado = false;
     // 🔴 FIX 2026-09-08 (Lenin, OT-2026-00161: subió las 5 fotos exigidas y
     // la tarea seguía "pendiente"). Esta pantalla nunca marcaba completada
     // una tarea tipo 'foto' -- solo guardaba la foto. La pantalla clásica
@@ -14434,7 +14492,14 @@ async function otdEnzCargar(){
     document.getElementById('otdEnzStep2')?.classList.remove('is-complete');
     otdEnzRender();
   } catch(e){
-    if (grid) grid.innerHTML = '<div class="otd-enz-vacio" style="grid-column:1/-1">Sin conexión — cierra y vuelve a abrir en un momento.</div>';
+    // Solo un fallo de fetch es "sin conexión"; un error de JS al dibujar
+    // (datos inesperados) no se disfraza de problema de red.
+    const esRed = e && (e.name === 'AbortError' ||
+                        (e.name === 'TypeError' && /fetch|network|load failed/i.test(String(e.message || ''))));
+    if (!esRed) console.error('[Enderezar fotos] error al mostrar la lista', e);
+    const txt = esRed ? 'Sin conexión — cierra y vuelve a abrir en un momento.'
+                      : 'No se pudieron mostrar las fotos. Recarga la página; si se repite, avísale a soporte.';
+    if (grid) grid.innerHTML = `<div class="otd-enz-vacio" style="grid-column:1/-1">${otdEsc(txt)}</div>`;
   } finally {
     OTD_ENZ.cargando = false;
   }
@@ -14457,6 +14522,7 @@ function otdEnzCardHtml(f){
   // El error va ANTES que el pendiente: la foto que falló conserva su giro
   // marcado (para reintentar con "Guardar giros"), pero tiene que verse en rojo.
   else if (f.st === 'err'){ cls = 'st-err'; st = (f.msg || 'No se pudo girar') + (f.pend ? ' · sigue marcada para reintentar' : ''); }
+  else if (f.st === 'aviso' && !f.pend){ cls = 'st-pend'; st = f.msg || 'Ya había cambiado: revísala'; }
   else if (f.pend){ cls = 'st-pend'; st = otdEnzGiroTxt(f.pend); }
   else if (f.st === 'ok'){ cls = 'st-ok'; st = f.msg || 'Guardada'; }
   else if (f.rotacion){ st = `Sin cambios · ya estaba girada ${f.rotacion}° desde la original`; }
@@ -14693,13 +14759,53 @@ function otdEnzPorPag(v){
    otdFotoGiroAplicado deja la grilla al día. */
 function otdEnzVer(id){
   if (typeof ilusLightbox !== 'function') return;
+  // Mientras corre "Guardar giros" la foto puede estar en la tanda en
+  // curso: un segundo giro desde el visor se sumaría al de la tanda. Se
+  // puede mirar, pero sin "Guardar giro".
+  const bloqueado = OTD_ENZ.guardando;
   const items = otdEnzPagina().items;
   const lista = items.map(f => ({
-    url: f.url, id: f.girable ? f.id : null,
+    url: f.url, id: (f.girable && !bloqueado) ? f.id : null,
     caption: [f.maquina_nombre || 'Foto general de la OT', f.tomada_at].filter(Boolean).join(' · '),
   }));
   const idx = Math.max(0, items.findIndex(f => String(f.id) === String(id)));
-  ilusLightbox(lista, idx, 'Foto de la OT', otdFotoLbOpts());
+  ilusLightbox(lista, idx, 'Foto de la OT', bloqueado ? undefined : otdFotoLbOpts());
+}
+
+/* Una tanda sin respuesta (corte de red, timeout, 504): el servidor pudo
+   haber girado todas, algunas o ninguna. Se recarga la lista y se compara
+   foto por foto con lo que sabía la pantalla: la que cambió SÍ se guardó
+   (queda al día y sin giro pendiente); la que no cambió sigue marcada para
+   reintentar. Devuelve cuántas resultaron guardadas. */
+async function otdEnzReconciliar(dudosas){
+  let d = null;
+  try {
+    const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/para-girar`, {}, 30000);
+    d = await r.json().catch(() => null);
+    if (!r.ok || !d || !d.ok) d = null;
+  } catch(e){ d = null; }
+  const porId = {};
+  ((d && d.fotos) || []).forEach(x => { porId[String(x.id)] = x; });
+  let guardadas = 0;
+  dudosas.forEach(f => {
+    const x = porId[String(f.id)];
+    if (!x){
+      f.st = 'err';
+      f.msg = 'No sabemos si se guardó (no pudimos comprobarlo). Al reintentar, si ya se había ' +
+              'guardado te mostramos cómo quedó, sin girarla dos veces';
+      return;
+    }
+    const cambio = otdFotoRuta(x.url) !== otdFotoRuta(f.url) ||
+                   (Number(x.rotacion) || 0) !== (Number(f.rotacion) || 0);
+    if (cambio){
+      otdFotoGiroAplicado({ fid: f.id, url_anterior: f.url, url: x.url, rotacion: x.rotacion });
+      guardadas++;
+    } else {
+      f.st = 'err';
+      f.msg = 'No se guardó (lo comprobamos recargando la lista)';
+    }
+  });
+  return guardadas;
 }
 
 async function otdEnzGuardar(){
@@ -14720,23 +14826,37 @@ async function otdEnzGuardar(){
   const lbl = document.getElementById('otdEnzGuardarLbl');
   const cerrar = document.getElementById('otdEnzCerrarBtn');
   if (cerrar) cerrar.disabled = true;
-  let nOk = 0, nErr = 0, hechas = 0;
+  let nOk = 0, nErr = 0, nAviso = 0, hechas = 0;
+  const dudosas = [];
   try {
     for (let i = 0; i < pend.length; i += OTD_ENZ_TANDA){
       const tanda = pend.slice(i, i + OTD_ENZ_TANDA);
       if (lbl) lbl.textContent = `Guardando ${hechas + 1}–${hechas + tanda.length} de ${pend.length}…`;
-      let d = null;
+      let r = null, d = null;
       try {
-        const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/girar-lote`, {
+        r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/girar-lote`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ giros: tanda.map(f => ({ fid: f.id, grados: f.pend === 270 ? -90 : f.pend })) }),
+          // rot/url_esperada: el giro es relativo; si la foto ya no está
+          // como la ve esta pantalla, el servidor no la gira otra vez.
+          body: JSON.stringify({ giros: tanda.map(f => ({
+            fid: f.id, grados: f.pend === 270 ? -90 : f.pend,
+            rot_esperada: Number(f.rotacion) || 0, url_esperada: otdFotoRuta(f.url),
+          })) }),
         }, 180000);
         d = await r.json().catch(() => null);
-        if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || 'No se pudo guardar esta tanda.');
-      } catch(e){
-        const msg = (e && e.name === 'AbortError') ? 'Sin respuesta del servidor: no se guardó.'
-                  : ((e && e.message && e.message !== 'Failed to fetch') ? e.message : 'Sin conexión: no se guardó.');
+      } catch(e){ d = null; }
+      if (!d){
+        // Sin respuesta (corte, timeout, 504): el servidor pudo haber
+        // guardado. NO se afirma "no se guardó": se comprueba al terminar.
+        tanda.forEach(f => { f.st = 'err'; f.msg = 'No sabemos si se guardó; recargamos la lista para comprobarlo'; });
+        dudosas.push(...tanda);
+        nErr += tanda.length; hechas += tanda.length;
+        continue;
+      }
+      if (!r.ok || !d.ok){
+        // El servidor contestó que no (permiso, tope del lote...): nada se giró.
+        const msg = d.error || 'No se pudo guardar esta tanda.';
         tanda.forEach(f => { f.st = 'err'; f.msg = msg; });
         nErr += tanda.length; hechas += tanda.length;
         continue;
@@ -14749,6 +14869,12 @@ async function otdEnzGuardar(){
           f.pend = 0;
           otdFotoGiroAplicado(x);   // actualiza la pantalla y esta tarjeta
           nOk++;
+        } else if (x && x.desfasada && x.url_actual){
+          // Ya había cambiado (otra pestaña, otra persona, un reintento):
+          // se muestra como quedó guardada, sin girarla de nuevo.
+          otdFotoGiroAplicado({ fid: f.id, url_anterior: f.url, url: x.url_actual,
+                                rotacion: x.rotacion, desfasada: true });
+          nAviso++;
         } else {
           f.st = 'err';
           f.msg = (x && x.error) || 'No se pudo girar esta foto.';
@@ -14757,6 +14883,11 @@ async function otdEnzGuardar(){
       });
       hechas += tanda.length;
     }
+    if (dudosas.length){
+      if (lbl) lbl.textContent = 'Comprobando lo que se guardó…';
+      const rec = await otdEnzReconciliar(dudosas);
+      nOk += rec; nErr -= rec;
+    }
   } finally {
     OTD_ENZ.guardando = false;
     if (cerrar) cerrar.disabled = false;
@@ -14764,14 +14895,18 @@ async function otdEnzGuardar(){
   }
   const res = document.getElementById('otdEnzResultado');
   if (res){
-    res.style.color = nErr ? '#92400e' : '#166534';
+    const txtAviso = nAviso
+      ? ` · ${nAviso} ya había${nAviso === 1 ? '' : 'n'} cambiado (en ámbar: revísala${nAviso === 1 ? '' : 's'})` : '';
+    res.style.color = (nErr || nAviso) ? '#92400e' : '#166534';
     res.textContent = nErr
-      ? `${nOk} foto${nOk === 1 ? '' : 's'} guardada${nOk === 1 ? '' : 's'} · ${nErr} con error (quedan en rojo: revisa el motivo en cada una).`
-      : `✓ ${nOk} foto${nOk === 1 ? '' : 's'} guardada${nOk === 1 ? '' : 's'} derecha${nOk === 1 ? '' : 's'}.`;
+      ? `${nOk} foto${nOk === 1 ? '' : 's'} guardada${nOk === 1 ? '' : 's'} · ${nErr} con error (quedan en rojo: revisa el motivo en cada una)${txtAviso}.`
+      : `✓ ${nOk} foto${nOk === 1 ? '' : 's'} guardada${nOk === 1 ? '' : 's'} derecha${nOk === 1 ? '' : 's'}${txtAviso}.`;
   }
   document.getElementById('otdEnzStep2')?.classList.toggle('is-complete', nOk > 0);
   if (nErr){
     ilusToast(`${nOk} guardada${nOk === 1 ? '' : 's'}, ${nErr} con error. Las que fallaron quedan en rojo.`, {type:'warning', duration:6000});
+  } else if (nAviso){
+    ilusToast(`${nOk} guardada${nOk === 1 ? '' : 's'}; ${nAviso} ya había${nAviso === 1 ? '' : 'n'} cambiado: revísala${nAviso === 1 ? '' : 's'} (en ámbar).`, {type:'warning', duration:6000});
   } else {
     ilusToast(`✓ ${nOk} foto${nOk === 1 ? '' : 's'} girada${nOk === 1 ? '' : 's'} y guardada${nOk === 1 ? '' : 's'}`, {type:'success'});
   }

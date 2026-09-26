@@ -104009,6 +104009,21 @@ def mant_visita_foto_delete(vid, fid):
 #   - El archivo ORIGINAL nunca se borra ni se sobrescribe. La versión
 #     girada va SIEMPRE a una key NUEVA (además, /f/ cachea 30 días por
 #     key con ETag: sobrescribir la misma key nunca llegaría al navegador).
+#     Esa key depende SOLO de (original, ángulo): `<base>__r{rot}_{huella}`
+#     con la huella SHA-1 de los bytes del original. Si ya existe se
+#     reutiliza, así que girar mil veces deja como mucho 3 versiones por
+#     foto (revisión 2026-09-25: antes cada giro dejaba un archivo nuevo).
+#   - La versión girada queda en la MISMA carpeta que su original, con el
+#     mismo nivel de acceso en /f/: la foto que era pública (levantamiento,
+#     foto principal del equipo, galería de la ficha) sigue pública, y la
+#     evidencia de la OT sigue detrás del candado de su OT. Revisión
+#     2026-09-25: mandarlas a ilus/visitas/v{vid}/rot/ dejaba la ficha del
+#     equipo apuntando a un archivo que solo ve quien ve ESA OT (403 para
+#     el técnico de otra OT del mismo equipo).
+#   - Primer giro de una foto que NO nació en esta OT: su key se puede
+#     compartir o reescribir (la foto principal usa la key fija
+#     ilus/maquinas/maquina_{mid}.jpg). Se congela antes una COPIA exacta,
+#     byte a byte, y esa copia es el `url_original` de la evidencia.
 #   - Se gira siempre DESDE EL ORIGINAL con el ángulo acumulado, para no
 #     ir perdiendo calidad JPEG con cada giro. Volver a 0° = restaurar la
 #     URL original, sin archivo nuevo.
@@ -104017,7 +104032,9 @@ def mant_visita_foto_delete(vid, fid):
 #   - Bitácora (mant_logs) ANTES del UPDATE (REGLA #5).
 #   - La misma URL vive copiada en otras 4 tablas (levantamiento, galería
 #     del equipo, foto principal del equipo, evidencia de repuestos): se
-#     actualizan todas juntas, como ya lo hace el borrado de fotos. Si no,
+#     actualizan todas juntas, como ya lo hace el borrado de fotos, pero
+#     SOLO las filas de esta OT / este equipo (una key compartida no puede
+#     reescribir la foto de otra OT). Si no,
 #     la foto torcida seguiría apareciendo en esas pantallas y la reparación
 #     de arranque (_reparar_fotos_levantamiento_a_galeria, que compara por
 #     URL) duplicaría la foto en la galería del equipo.
@@ -104032,16 +104049,32 @@ def mant_visita_foto_delete(vid, fid):
 # Solo sirve para SUGERIR; el ancho/alto real lo mide el navegador.
 _FOTO_GIRO_VENTANA_SUGERIDA = (datetime(2026, 9, 3).date(), datetime(2026, 9, 20).date())
 _FOTO_GIRO_DELTAS = (90, -90, 180, -180, 270, -270)
-_FOTO_GIRO_LOTE_MAX = 300
+# Tope del lote = lo que cabe con margen en el timeout de Cloud Run (300 s):
+# cada foto se baja, se gira y se sube (~0,5-1 s). La pantalla manda de a 20.
+_FOTO_GIRO_LOTE_MAX = 40
 _FOTO_GIRO_MAX_LADO = 1600
-# Tablas que guardan COPIA de la URL de una foto de OT (tabla, columna).
+# Tablas que guardan COPIA de la URL de una foto de OT:
+#   (tabla, columna, filtro que acota la copia a ESTA OT / ESTE equipo,
+#    qué valores usa el filtro: "vid" = la OT, "mid" = el equipo de la foto).
+# El filtro evita que una key compartida (la foto principal fija
+# ilus/maquinas/maquina_{mid}.jpg) reescriba filas de OTRAS OT o
+# levantamientos, y acota el UPDATE a un índice en vez de recorrer la tabla.
 # Constantes del código, nunca input del usuario (REGLA #4).
 _FOTO_GIRO_COPIAS = (
-    ("mant_levantamiento_fotos", "cloudinary_url"),
-    ("mant_maquina_fotos", "cloudinary_url"),
-    ("mant_maquinas", "foto_url"),
-    ("mant_ot_repuesto_evidencias", "url"),
+    ("mant_levantamiento_fotos", "cloudinary_url",
+     "levantamiento_id IN (SELECT id FROM mant_levantamientos WHERE visita_id=%s "
+     "UNION SELECT levantamiento_id FROM mant_visitas "
+     "       WHERE id=%s AND levantamiento_id IS NOT NULL)",
+     ("vid", "vid")),
+    ("mant_maquina_fotos", "cloudinary_url", "maquina_id=%s", ("mid",)),
+    ("mant_maquinas", "foto_url", "id=%s", ("mid",)),
+    ("mant_ot_repuesto_evidencias", "url",
+     "solicitud_id IN (SELECT id FROM mant_ot_repuesto_solicitudes WHERE visita_id=%s)",
+     ("vid",)),
 )
+_FOTO_GIRO_MSG_DESFASE = ("Esta foto ya había cambiado (quizás el giro ya se guardó, "
+                          "o alguien más la giró). Te mostramos cómo quedó guardada: "
+                          "revísala y gírala de nuevo solo si hace falta.")
 _FOTO_GIRO_MSG_ANTIGUA = "Esta foto está en un sistema antiguo y no se puede girar."
 
 
@@ -104049,10 +104082,13 @@ class _FotoGiroError(Exception):
     """Error de negocio al girar una foto: `mensaje` es apto para mostrarse
     al usuario tal cual (REGLA #4: el detalle técnico va solo al log)."""
 
-    def __init__(self, mensaje, status=400):
+    def __init__(self, mensaje, status=400, extra=None):
         super().__init__(mensaje)
         self.mensaje = mensaje
         self.status = status
+        # Datos para que la pantalla se ponga al día (p. ej. la URL con que
+        # quedó guardada una foto que ya había cambiado). Nunca url_original.
+        self.extra = extra or {}
 
 
 def _foto_puede_girar(vid, user=None):
@@ -104118,25 +104154,73 @@ def _foto_girar_bytes(raw, grados, max_lado=_FOTO_GIRO_MAX_LADO, calidad=90):
     return out.getvalue()
 
 
-def _foto_girar_key_nueva(key_original, vid, rot, ts=None):
-    """Key NUEVA para la versión girada `rot`° de `key_original`.
-
-    Si el original ya vive bajo ilus/visitas/v{vid}/ (subida normal,
-    foto de equipo, repuestos/bajas) se queda en su MISMA carpeta. Si no
-    (levantamiento, migradas desde Cloudinary, foto principal de máquina)
-    va a ilus/visitas/v{vid}/rot/ -- así queda detrás del candado de /f/
-    (_RE_FOTO_KEY_VID), igual que el resto de la evidencia de la OT.
+def _foto_girar_carpeta(key_original, vid):
+    """Carpeta donde se guardan las versiones de `key_original`: la MISMA
+    del original, para que /f/ les aplique el mismo nivel de acceso (la
+    evidencia de esta OT sigue con su candado; una foto pública -- de
+    levantamiento, principal o de galería del equipo -- sigue pública).
+    Única excepción: un original bajo el candado de OTRA OT (o sin
+    carpeta) va a ilus/visitas/v{vid}/rot/, detrás del candado de ESTA OT.
     """
-    ts = ts or int(time.time() * 1000)
-    carpeta, _, nombre = (key_original or "").rpartition("/")
-    base = nombre.rsplit(".", 1)[0] if "." in nombre else nombre
-    base = base or "foto"
+    key_original = key_original or ""
+    carpeta = key_original.rpartition("/")[0]
     prefijo = f"ilus/visitas/v{int(vid)}/"
-    if carpeta and (key_original + "").startswith(prefijo):
-        destino = carpeta
-    else:
-        destino = prefijo + "rot"
-    return f"{destino}/{base}__r{int(rot) % 360}_{ts}.jpg"
+    if carpeta and key_original.startswith(prefijo):
+        return carpeta
+    if carpeta and _foto_key_vid_sensible(key_original) is None:
+        return carpeta
+    return prefijo + "rot"
+
+
+def _foto_girar_base(key_original):
+    """Nombre del original sin extensión ni el sufijo de copia congelada
+    (así la versión girada de la copia y la del original se llaman igual)."""
+    nombre = (key_original or "").rpartition("/")[2]
+    base = nombre.rsplit(".", 1)[0] if "." in nombre else nombre
+    base = re.sub(r"__orig_[0-9a-f]{12}$", "", base)
+    return base or "foto"
+
+
+def _foto_girar_key_nueva(key_original, carpeta, rot, huella):
+    """Key de la versión girada `rot`° de `key_original`. Depende SOLO del
+    contenido del original (`huella`) y del ángulo: el mismo giro de la
+    misma foto cae siempre en la misma key y se reutiliza (el contenido de
+    esa key nunca cambia, así que el caché de /f/ no se desfasa)."""
+    return f"{carpeta}/{_foto_girar_base(key_original)}__r{int(rot) % 360}_{huella}.jpg"
+
+
+def _foto_girar_key_copia(key_original, carpeta, huella):
+    """Key de la copia CONGELADA (byte a byte) de un original que no nació
+    en esta OT. Conserva la extensión del original."""
+    nombre = (key_original or "").rpartition("/")[2]
+    ext = ("." + nombre.rsplit(".", 1)[1].lower()) if "." in nombre else ".jpg"
+    if not re.match(r"^\.[a-z0-9]{2,5}$", ext):
+        ext = ".jpg"
+    return f"{carpeta}/{_foto_girar_base(key_original)}__orig_{huella}{ext}"
+
+
+def _foto_girar_subir_si_falta(bucket, key, data, content_type):
+    """Sube `data` a `key` salvo que ya exista (mismo contenido por
+    construcción de la key). Devuelve la URL /f/<key>."""
+    try:
+        if bucket.blob(key).exists():
+            return "/f/" + key
+    except Exception as e:
+        print(f"[foto_girar] exists {key[:160]}: {type(e).__name__}: {str(e)[:200]}", flush=True)
+    return _storage_upload_bytes(data, key, content_type)
+
+
+def _foto_url_ruta(u):
+    """Camino /f/<key> de una URL, sin host ni ?query: para comparar la URL
+    que conoce el navegador ("https://host/f/x.jpg?w=320") con la de la BD."""
+    s = str(u or "").strip()
+    if s.startswith(("http://", "https://")):
+        try:
+            from urllib.parse import urlsplit
+            s = urlsplit(s).path or ""
+        except Exception:
+            pass
+    return s.split("#", 1)[0].split("?", 1)[0]
 
 
 def _foto_url_actual(row):
@@ -104158,7 +104242,7 @@ def _foto_es_girable(url):
 def _foto_girar_fila(vid, fid):
     """Lee la fila de la foto con las columnas de giro. Si faltaran (el
     _ensure de arranque falló), las crea y reintenta una vez."""
-    sql = ("SELECT id, visita_id, cloudinary_url, archivo_path, url_original, rotacion "
+    sql = ("SELECT id, visita_id, maquina_id, cloudinary_url, archivo_path, url_original, rotacion "
            "  FROM mant_visita_fotos WHERE id=%s AND visita_id=%s")
     try:
         return mysql_fetchone(sql, (fid, vid))
@@ -104168,10 +104252,16 @@ def _foto_girar_fila(vid, fid):
         return mysql_fetchone(sql, (fid, vid))
 
 
-def _foto_girar_core(vid, fid, delta, usuario=None):
+def _foto_girar_core(vid, fid, delta, usuario=None, rot_esperada=None, url_esperada=None):
     """Gira la foto `fid` de la OT `vid` en `delta` grados (a la derecha si
     es positivo). Devuelve {fid, url_anterior, url, rotacion, copias}.
     Lanza _FotoGiroError con un mensaje apto para el usuario.
+
+    `rot_esperada` / `url_esperada`: cómo cree el navegador que está HOY la
+    foto. El giro es RELATIVO, así que un reintento después de un corte de
+    red (el servidor sí alcanzó a guardar) lo sumaría dos veces y la foto
+    quedaría de cabeza. Si no calzan con la BD -> 409 `desfasada`, con la
+    URL y rotación reales para que la pantalla se ponga al día.
 
     No valida permisos: eso lo hace el endpoint (_foto_puede_girar).
     """
@@ -104189,11 +104279,27 @@ def _foto_girar_core(vid, fid, delta, usuario=None):
     url_actual = _foto_url_actual(row)
     if not _foto_es_girable(url_actual):
         raise _FotoGiroError(_FOTO_GIRO_MSG_ANTIGUA, 409)
-    original = row.get("url_original") or url_actual
+    original_guardado = row.get("url_original") or ""
+    original = original_guardado or url_actual
     if not _foto_es_girable(original):
         raise _FotoGiroError(_FOTO_GIRO_MSG_ANTIGUA, 409)
 
     rot_prev = int(row.get("rotacion") or 0) % 360
+
+    # ¿El navegador está al día? (reintentos tras un corte de red, dos
+    # pestañas, dos personas). Sin esto el giro relativo se sumaría dos veces.
+    desfase = False
+    if rot_esperada is not None and rot_esperada != "":
+        try:
+            desfase = (int(rot_esperada) % 360) != rot_prev
+        except (TypeError, ValueError):
+            desfase = True
+    if not desfase and url_esperada:
+        desfase = _foto_url_ruta(url_esperada) != _foto_url_ruta(url_actual)
+    if desfase:
+        raise _FotoGiroError(_FOTO_GIRO_MSG_DESFASE, 409, extra={
+            "desfasada": True, "url_actual": url_actual, "rotacion": rot_prev})
+
     nueva_rot = (rot_prev + delta) % 360
 
     if nueva_rot == 0:
@@ -104218,47 +104324,87 @@ def _foto_girar_core(vid, fid, delta, usuario=None):
                   f"{str(e)[:200]}", flush=True)
             raise _FotoGiroError("No se pudo abrir esta foto para girarla (formato no "
                                  "compatible, por ejemplo HEIC).", 422)
-        key_nueva = _foto_girar_key_nueva(key_orig, vid, nueva_rot)
+        huella = hashlib.sha1(raw).hexdigest()[:12]
+        carpeta = _foto_girar_carpeta(key_orig, vid)
         try:
-            nueva_url = _storage_upload_bytes(data, key_nueva, "image/jpeg")
+            if not original_guardado and not key_orig.startswith(f"ilus/visitas/v{int(vid)}/"):
+                # Primer giro de una foto que no nació en esta OT: se congela
+                # una copia exacta como original de la evidencia (la key de
+                # origen se puede reescribir, p. ej. la foto principal fija).
+                import mimetypes as _mt_giro
+                ct_orig = _mt_giro.guess_type(key_orig)[0] or "image/jpeg"
+                original = _foto_girar_subir_si_falta(
+                    b, _foto_girar_key_copia(key_orig, carpeta, huella), raw, ct_orig)
+            nueva_url = _foto_girar_subir_si_falta(
+                b, _foto_girar_key_nueva(key_orig, carpeta, nueva_rot, huella),
+                data, "image/jpeg")
         except Exception as e:
             print(f"[foto_girar] subida vid={vid} fid={fid}: {type(e).__name__}: "
                   f"{str(e)[:200]}", flush=True)
             raise _FotoGiroError("No se pudo guardar la foto girada. Intenta de nuevo "
                                  "en un minuto.", 502)
 
-    # Bitácora ANTES de escribir (REGLA #5).
-    _mant_log("visita", vid, "foto_girada",
-              f"foto #{fid} · giro {delta:+d}° (queda {nueva_rot}°) · "
-              f"antes={url_actual} · ahora={nueva_url} · por {usuario}")
+    # Bitácora ANTES de escribir (REGLA #5). Directo y NO de mejor esfuerzo
+    # (_mant_log se come los errores): sin bitácora no hay giro.
+    try:
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            ("visita", vid, "foto_girada",
+             f"foto #{fid} · giro {delta:+d}° (queda {nueva_rot}°) · "
+             f"antes={url_actual} · ahora={nueva_url} · original={original} · por {usuario}",
+             usuario))
+    except Exception as e:
+        print(f"[foto_girar] bitácora vid={vid} fid={fid}: {type(e).__name__}: "
+              f"{str(e)[:200]}", flush=True)
+        raise _FotoGiroError("No se pudo registrar el giro en la bitácora de la OT, así "
+                             "que no se guardó. Intenta de nuevo en un minuto.", 503)
 
     # Candado optimista: si otra persona la giró entre la lectura y ahora,
     # rotacion/URL ya no calzan y no se pisa su giro.
-    n = mysql_execute_returning_rowcount(
-        "UPDATE mant_visita_fotos "
-        "   SET cloudinary_url=%s, url_original=COALESCE(url_original, %s), "
-        "       rotacion=%s, rotada_por=%s, rotada_at=NOW(), "
-        "       archivo_path=CASE WHEN archivo_path=%s THEN %s ELSE archivo_path END "
-        " WHERE id=%s AND visita_id=%s AND COALESCE(rotacion,0)=%s "
-        "   AND COALESCE(NULLIF(cloudinary_url,''), archivo_path)=%s",
-        (nueva_url, original, nueva_rot, usuario,
-         url_actual, nueva_url,
-         fid, vid, rot_prev, url_actual))
+    try:
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_visita_fotos "
+            "   SET cloudinary_url=%s, url_original=COALESCE(url_original, %s), "
+            "       rotacion=%s, rotada_por=%s, rotada_at=NOW(), "
+            "       archivo_path=CASE WHEN archivo_path=%s THEN %s ELSE archivo_path END "
+            " WHERE id=%s AND visita_id=%s AND COALESCE(rotacion,0)=%s "
+            "   AND COALESCE(NULLIF(cloudinary_url,''), archivo_path)=%s",
+            (nueva_url, original, nueva_rot, usuario,
+             url_actual, nueva_url,
+             fid, vid, rot_prev, url_actual))
+    except Exception as e:
+        print(f"[foto_girar] UPDATE vid={vid} fid={fid}: {type(e).__name__}: "
+              f"{str(e)[:200]}", flush=True)
+        _mant_log("visita", vid, "foto_giro_descartado",
+                  f"foto #{fid} · error al guardar el giro ({type(e).__name__}) · por {usuario}")
+        raise _FotoGiroError("No se pudo guardar el giro. Intenta de nuevo en un minuto.", 500)
     if not n:
         _mant_log("visita", vid, "foto_giro_descartado",
                   f"foto #{fid} · la foto cambió mientras se giraba · por {usuario}")
-        raise _FotoGiroError("Esta foto cambió mientras la girabas. Recarga la página "
-                             "e inténtalo de nuevo.", 409)
+        extra = {"desfasada": True}
+        try:
+            fila = _foto_girar_fila(vid, fid) or {}
+            extra.update({"url_actual": _foto_url_actual(fila),
+                          "rotacion": int(fila.get("rotacion") or 0) % 360})
+        except Exception:
+            pass
+        raise _FotoGiroError(_FOTO_GIRO_MSG_DESFASE, 409, extra=extra)
 
-    # Propagar a las copias de la URL (cada una por separado: si una falla,
-    # las demás igual se actualizan).
+    # Propagar a las copias de la URL, SOLO en filas de esta OT / este
+    # equipo (cada tabla por separado: si una falla, las demás igual se
+    # actualizan). Se busca la URL de hoy Y la original: si una copia quedó
+    # atrás en un giro anterior (falló su UPDATE), este giro la repara.
     copias = {}
     if nueva_url != url_actual:
-        for tabla, col in _FOTO_GIRO_COPIAS:
+        valores = {"vid": vid, "mid": row.get("maquina_id")}
+        for tabla, col, filtro, claves in _FOTO_GIRO_COPIAS:
+            if any(valores.get(k) is None for k in claves):
+                continue
             try:
                 n_c = mysql_execute_returning_rowcount(
-                    f"UPDATE {tabla} SET {col}=%s WHERE {col}=%s",
-                    (nueva_url, url_actual))
+                    f"UPDATE {tabla} SET {col}=%s WHERE {col} IN (%s, %s) AND {filtro}",
+                    (nueva_url, url_actual, original) + tuple(valores[k] for k in claves))
                 if n_c:
                     copias[tabla] = n_c
             except Exception as e:
@@ -104278,15 +104424,18 @@ def _foto_girar_sin_permiso():
 @_mant_required
 def mant_visita_foto_girar(vid, fid):
     """Gira una foto de la OT y guarda la versión girada.
-    Body JSON: {grados: 90 | -90 | 180} (giro a la derecha si es positivo,
-    relativo a cómo se ve HOY la foto)."""
+    Body JSON: {grados: 90 | -90 | 180, url_esperada?, rot_esperada?}
+    (giro a la derecha si es positivo, relativo a cómo se ve HOY la foto;
+    url/rot_esperada = cómo la ve el navegador, ver _foto_girar_core)."""
     if not _foto_puede_girar(vid):
         return _foto_girar_sin_permiso()
     body = request.get_json(silent=True) or {}
     try:
-        res = _foto_girar_core(vid, fid, body.get("grados"))
+        res = _foto_girar_core(vid, fid, body.get("grados"),
+                               rot_esperada=body.get("rot_esperada"),
+                               url_esperada=body.get("url_esperada"))
     except _FotoGiroError as e:
-        return jsonify({"ok": False, "error": e.mensaje}), e.status
+        return jsonify({"ok": False, "error": e.mensaje, **e.extra}), e.status
     except Exception as e:
         import traceback as _tb_giro
         print(f"[foto_girar] vid={vid} fid={fid} error inesperado: "
@@ -104300,10 +104449,19 @@ def mant_visita_foto_girar(vid, fid):
 @_mant_required
 def mant_visita_fotos_girar_lote(vid):
     """Gira varias fotos de la OT de una vez ("Enderezar fotos").
-    Body JSON: {giros: [{fid, grados}, ...]} (máx. 300). Se aplican una por
-    una y NUNCA se aborta el lote: cada foto informa su propio resultado."""
+    Body JSON: {giros: [{fid, grados, rot_esperada?, url_esperada?}, ...]}
+    (máx. _FOTO_GIRO_LOTE_MAX). Se aplican una por una y NUNCA se aborta el
+    lote: cada foto informa su propio resultado."""
     if not _foto_puede_girar(vid):
         return _foto_girar_sin_permiso()
+    # El técnico puede girar solo mientras pueda EJECUTAR la OT. El permiso
+    # queda cacheado por request (g._perm_visita_cache) y el lote tarda:
+    # antes de cada foto se vuelve a mirar la OT (firma del cliente, cierre).
+    es_tecnico = False
+    try:
+        es_tecnico = bool(_es_rol_tecnico(getattr(g, "user", None) or {}))
+    except Exception:
+        es_tecnico = True   # ante la duda, se revisa foto por foto
     body = request.get_json(silent=True) or {}
     giros = body.get("giros")
     if not isinstance(giros, list) or not giros:
@@ -104326,12 +104484,26 @@ def mant_visita_fotos_girar_lote(vid):
                                "error": "Esta foto venía repetida en el lote."})
             continue
         vistos.add(fid)
+        if es_tecnico and resultados:
+            try:
+                _cache = getattr(g, "_perm_visita_cache", None)
+                if isinstance(_cache, dict):
+                    _cache.pop(("v", int(vid)), None)
+            except Exception:
+                pass
+            if not _foto_puede_girar(vid):
+                resultados.append({"fid": fid, "ok": False,
+                                   "error": "La OT se firmó o se cerró mientras se "
+                                            "guardaba: esta foto no se giró."})
+                continue
         try:
-            res = _foto_girar_core(vid, fid, gi.get("grados"))
+            res = _foto_girar_core(vid, fid, gi.get("grados"),
+                                   rot_esperada=gi.get("rot_esperada"),
+                                   url_esperada=gi.get("url_esperada"))
             resultados.append({"ok": True, **res})
             n_ok += 1
         except _FotoGiroError as e:
-            resultados.append({"fid": fid, "ok": False, "error": e.mensaje})
+            resultados.append({"fid": fid, "ok": False, "error": e.mensaje, **e.extra})
         except Exception as e:
             print(f"[foto_girar_lote] vid={vid} fid={fid} error inesperado: "
                   f"{type(e).__name__}: {str(e)[:300]}", flush=True)
@@ -122415,10 +122587,34 @@ def mant_lev_foto_del(fid):
         pass
 
     if foto.get("cloudinary_public_id"):
+        # 🔄 2026-09-25: el mismo archivo puede ser evidencia de una OT (la
+        # foto se vinculó a mant_visita_fotos al cerrar el levantamiento, o
+        # es el `url_original` de una foto girada). Las OT son evidencia: si
+        # alguna fila de OT lo usa, se borra solo la fila del levantamiento.
+        _url_blob = "/f/" + str(foto["cloudinary_public_id"])
+        _en_uso_ot = True   # ante un error de consulta, NO se borra el archivo
         try:
-            _uploader_destroy(foto["cloudinary_public_id"], resource_type="image")
+            try:
+                _en_uso_ot = bool(mysql_fetchone(
+                    "SELECT 1 AS x FROM mant_visita_fotos "
+                    " WHERE cloudinary_url=%s OR archivo_path=%s OR url_original=%s LIMIT 1",
+                    (_url_blob, _url_blob, _url_blob)))
+            except Exception:
+                # Sin la columna url_original (el _ensure de arranque falló).
+                _en_uso_ot = bool(mysql_fetchone(
+                    "SELECT 1 AS x FROM mant_visita_fotos "
+                    " WHERE cloudinary_url=%s OR archivo_path=%s LIMIT 1",
+                    (_url_blob, _url_blob)))
         except Exception as e:
-            print(f"[lev_foto_del] Cloudinary delete fail: {e}", flush=True)
+            print(f"[lev_foto_del] no se pudo verificar uso en OT: {e}", flush=True)
+        if _en_uso_ot:
+            print(f"[lev_foto_del] foto id={fid}: el archivo es evidencia de una OT, "
+                  f"se conserva en el almacenamiento", flush=True)
+        else:
+            try:
+                _uploader_destroy(foto["cloudinary_public_id"], resource_type="image")
+            except Exception as e:
+                print(f"[lev_foto_del] Cloudinary delete fail: {e}", flush=True)
 
     mysql_execute("DELETE FROM mant_levantamiento_fotos WHERE id=%s", (fid,))
     # Recontar

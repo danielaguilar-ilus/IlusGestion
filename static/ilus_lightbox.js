@@ -161,6 +161,8 @@
     var abrirEl = ov.querySelector('[data-act="abrir"]');
     var saveBtn = ov.querySelector('[data-act="guardar"]');
     var saveTxt = saveBtn ? saveBtn.querySelector('span') : null;
+    var toolsGiro = Array.prototype.slice.call(
+      ov.querySelectorAll('[data-act="rotate"],[data-act="rotate-left"],[data-act="reset"]'));
 
     function applyTransform() {
       img.style.transform =
@@ -178,6 +180,9 @@
         saveBtn.disabled = guardando;
         if (saveTxt) saveTxt.textContent = guardando ? 'Guardando…' : 'Guardar giro';
       }
+      // Mientras se guarda, el giro queda congelado: un giro extra se
+      // perdería en silencio al terminar (render() vuelve rot a 0).
+      toolsGiro.forEach(function (b) { b.disabled = guardando; });
     }
     function render() {
       var it = images[idx];
@@ -216,10 +221,14 @@
       applyTransform();
       Promise.resolve()
         .then(function () { return opts.onGuardarGiro(it, grados); })
-        .then(function (nuevaUrl) {
+        .then(function (res) {
+          // El callback devuelve la URL nueva, o {url, mensaje, tipo} cuando
+          // hay algo que avisar (p. ej. la foto ya había cambiado).
+          var nuevaUrl = (res && typeof res === 'object') ? res.url : res;
           guardando = false;
           if (nuevaUrl) it.url = nuevaUrl;
-          _toast('✓ Foto guardada con el giro', 'success');
+          if (res && typeof res === 'object' && res.mensaje) _toast(res.mensaje, res.tipo || 'info');
+          else _toast('✓ Foto guardada con el giro', 'success');
           // Si sigue a la vista, se recarga ya derecha y sin giro pendiente.
           if (idx === i0 && document.body.contains(ov)) { render(); }
           else { applyTransform(); }
@@ -236,8 +245,8 @@
       else if (multi && e.key === 'ArrowRight') go(1);
       else if (e.key === '+') { zoom = Math.min(zoom * 1.25, 5);  applyTransform(); }
       else if (e.key === '-') { zoom = Math.max(zoom / 1.25, .3); applyTransform(); }
-      else if (e.key === 'r' || e.key === 'R') { rot = (rot + 90) % 360; applyTransform(); }
-      else if (e.key === 'l' || e.key === 'L') { rot = (rot + 270) % 360; applyTransform(); }
+      else if (!guardando && (e.key === 'r' || e.key === 'R')) { rot = (rot + 90) % 360; applyTransform(); }
+      else if (!guardando && (e.key === 'l' || e.key === 'L')) { rot = (rot + 270) % 360; applyTransform(); }
     }
 
     ov.addEventListener('click', function (e) {
@@ -250,6 +259,7 @@
       if (tool) {
         var act = tool.dataset.act;
         if (act === 'abrir') return;             // <a>: deja que el navegador lo abra
+        if (guardando && (act === 'rotate' || act === 'rotate-left' || act === 'reset')) return;
         if (act === 'zoom-in')       zoom = Math.min(zoom * 1.25, 5);
         else if (act === 'zoom-out') { zoom = Math.max(zoom / 1.25, .3); if (zoom === 1) { panX = 0; panY = 0; } }
         else if (act === 'rotate')   rot  = (rot + 90) % 360;
