@@ -3056,3 +3056,308 @@ function cotFichaCambiarPagina(delta) {
   cargarCotizacionesFicha(next);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ★ VIDA DEL CLIENTE (2026-09-26) -- formato Retiros (tarjetas + semáforo,
+// REGLA #15), toda tabla paginada (REGLA #4.3), sin alert/confirm nativos
+// (no aplica acá -- es solo lectura). Umbral de margen IDÉNTICO al de la
+// tarjeta Finanzas de la OT (templates/ot2/detalle.html): verde desde
+// 10 %, ámbar bajo 10 %, rojo en pérdida.
+// ═══════════════════════════════════════════════════════════════════
+window._vidaState = { mg_page: 1, lv_page: 1, lv_tipo: '', pr_page: 1, loaded: false };
+
+const _VIDA_TIPO_LABEL = {
+  ot: 'OT', repuesto: 'Repuestos', compra: 'Compras', ticket: 'Tickets',
+  incidencia: 'Incidencias', bodega: 'Bodega', documento: 'Documentos',
+};
+const _VIDA_TIPO_COLOR = {
+  ot: '#dc2626', repuesto: '#3b82f6', compra: '#f59e0b', ticket: '#1d4ed8',
+  incidencia: '#9ca3af', bodega: '#16a34a', documento: '#0a0a0a',
+};
+
+function _vidaMargenColor(pct, clp) {
+  if (clp != null && clp < 0) return '#dc2626';
+  if (pct == null) return '#6b7280';
+  if (pct < 0) return '#dc2626';
+  if (pct < 10) return '#b45309';
+  return '#166534';
+}
+function _vidaMargenBg(pct, clp) {
+  if (clp != null && clp < 0) return '#fee2e2';
+  if (pct == null) return '#f3f4f6';
+  if (pct < 0) return '#fee2e2';
+  if (pct < 10) return '#fff8e1';
+  return '#dcfce7';
+}
+
+async function cargarVidaCliente() {
+  const root = document.getElementById('vidaClienteRoot');
+  if (!root) return;
+  const st = window._vidaState;
+  const qs = new URLSearchParams({
+    mg_page: st.mg_page, lv_page: st.lv_page, pr_page: st.pr_page, lv_per: 15,
+  });
+  if (st.lv_tipo) qs.set('lv_tipo', st.lv_tipo);
+  if (!st.loaded) {
+    root.innerHTML = `<div class="text-center text-muted py-5">
+      <div class="spinner-border spinner-border-sm me-2"></div>Cargando la vida del cliente…</div>`;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/vida-cliente?` + qs.toString());
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error desconocido');
+    st.loaded = true;
+    root.innerHTML = _vidaRender(d);
+  } catch (e) {
+    root.innerHTML = `<div class="alert alert-danger" style="font-size:.85rem">
+      <i class="bi bi-x-circle me-1"></i>No se pudo cargar la vida del cliente: ${_escH(e.message)}
+    </div>`;
+  }
+}
+
+function vidaCambiarPag(cual, delta) {
+  const st = window._vidaState;
+  const key = cual + '_page';
+  st[key] = Math.max(1, (st[key] || 1) + delta);
+  cargarVidaCliente();
+}
+function vidaFiltrarTipo(tipo) {
+  window._vidaState.lv_tipo = tipo;
+  window._vidaState.lv_page = 1;
+  cargarVidaCliente();
+}
+
+function _vidaRender(d) {
+  const h = d.hero || {};
+  const k = d.kpis || {};
+  const f = d.financiero || {};
+  const dsg = f.desglose || {};
+  const pq = k.por_que || {};
+
+  const heroChips = [];
+  if (h.tipo_cliente) heroChips.push(`🏋 ${_escH((h.tipo_cliente || '').replace('_',' '))}`);
+  if (h.contrato_vigente) heroChips.push(`📄 Contrato ${h.contrato_indefinido ? 'indefinido' : ('vigente' + (h.contrato_vence ? ' hasta ' + _fmtFecha(h.contrato_vence) : ''))}`);
+  else heroChips.push('📄 Sin contrato vigente');
+  heroChips.push(`⚙ ${h.n_equipos || 0} equipos`);
+
+  const barTotal = Math.max(1, (k.n_cobradas || 0) + (k.n_garantia_gratis || 0) + (k.n_contrato || 0));
+  const pctCobrada = 100 * (k.n_cobradas || 0) / barTotal;
+  const pctGarantia = 100 * (k.n_garantia_gratis || 0) / barTotal;
+  const pctContrato = 100 * (k.n_contrato || 0) / barTotal;
+
+  const pqTotal = Math.max(1, (pq.instalacion||0)+(pq.mantencion||0)+(pq.inst_repuestos||0)+(pq.correctiva||0)+(pq.otros||0));
+  const pqBar = [
+    ['instalacion','#0a0a0a','instalación'], ['mantencion','#dc2626','mantención'],
+    ['inst_repuestos','#3b82f6','inst. de repuestos'], ['correctiva','#f59e0b','correctiva'],
+    ['otros','#9ca3af','otros'],
+  ].filter(([key]) => (pq[key]||0) > 0);
+
+  let html = `
+  <div class="vida-hero" style="background:linear-gradient(135deg,#0a0a0a,#1c1c1c 60%,#2a0b0b);color:#fff;
+       border-radius:16px;padding:20px 22px;border-bottom:4px solid #dc2626;display:flex;gap:16px;
+       flex-wrap:wrap;align-items:center;margin-bottom:16px">
+    <div style="flex:1;min-width:220px">
+      <div style="font-size:1.4rem;font-weight:900;letter-spacing:.01em">${_escH(h.razon_social || '')}</div>
+      <div style="color:#cbd5e1;font-size:.8rem;margin-top:4px">
+        ${h.rut ? 'RUT ' + _escH(h.rut) : ''}${h.comuna ? ' · ' + _escH(h.comuna) : ''}
+        ${h.contacto_nombre ? ' · Contacto: ' + _escH(h.contacto_nombre) : ''}${h.contacto_tel ? ' · ' + _escH(h.contacto_tel) : ''}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+        ${heroChips.map(c => `<span style="background:rgba(255,255,255,.12);color:#fff;font-size:.7rem;
+             font-weight:800;border-radius:999px;padding:3px 10px">${c}</span>`).join('')}
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:.68rem;color:#cbd5e1;font-weight:800;letter-spacing:.05em">CLIENTE DESDE</div>
+      <div style="font-size:1.6rem;font-weight:900;line-height:1;text-transform:uppercase">${_escH(h.cliente_desde || '—')}</div>
+      ${h.antiguedad_label ? `<div style="font-size:.72rem;color:#cbd5e1">${_escH(h.antiguedad_label)} con ILUS Fitness</div>` : ''}
+    </div>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md-3"><div class="kpi-cell" style="border-left:3px solid #dc2626">
+      <div class="kpi-cell-label">Veces que hemos ido</div>
+      <div class="kpi-cell-val" style="font-size:1.6rem">${k.veces_fuimos || 0}</div>
+      <div class="kpi-cell-sub">OT cerradas${k.ultima_hace_dias != null ? ' · última hace ' + k.ultima_hace_dias + ' días' : ''}</div>
+    </div></div>
+    <div class="col-6 col-md-3"><div class="kpi-cell">
+      <div class="kpi-cell-label">¿Cobradas o gratis?</div>
+      <div style="display:flex;height:8px;border-radius:99px;overflow:hidden;margin:8px 0 6px;background:#eef0f2">
+        <span style="display:block;width:${pctCobrada}%;background:#16a34a"></span>
+        <span style="display:block;width:${pctGarantia}%;background:#f59e0b"></span>
+        <span style="display:block;width:${pctContrato}%;background:#9ca3af"></span>
+      </div>
+      <div class="kpi-cell-sub">${k.n_cobradas||0} cobradas · ${k.n_garantia_gratis||0} garantía/gratis · ${k.n_contrato||0} contrato</div>
+    </div></div>
+    <div class="col-6 col-md-3"><div class="kpi-cell">
+      <div class="kpi-cell-label">¿Por qué fuimos?</div>
+      <div style="display:flex;height:8px;border-radius:99px;overflow:hidden;margin:8px 0 6px;background:#eef0f2">
+        ${pqBar.map(([key,color]) => `<span style="display:block;width:${100*(pq[key]||0)/pqTotal}%;background:${color}"></span>`).join('')}
+      </div>
+      <div class="kpi-cell-sub" style="font-size:.68rem">${pqBar.map(([key,,lbl]) => `${pq[key]} ${lbl}`).join(' · ') || 'Sin datos'}</div>
+    </div></div>
+    <div class="col-6 col-md-3"><div class="kpi-cell" style="border-left:3px solid #dc2626">
+      <div class="kpi-cell-label">Abierto ahora</div>
+      <div class="kpi-cell-val" style="font-size:1.6rem;color:#dc2626">${k.abierto_ahora || 0}</div>
+      <div class="kpi-cell-sub">${k.abierto_ot||0} OT programada(s) · ${k.abierto_repuestos||0} repuesto(s) en gestión</div>
+    </div></div>
+  </div>
+
+  <h2 style="font-size:.95rem;font-weight:900;margin:18px 0 10px">
+    💰 Resultado con este cliente
+    <small style="font-weight:600;color:#6b7280;font-size:.72rem">· solo lo ve gestión, el técnico y el PDF nunca muestran esto</small>
+  </h2>
+  <div class="row g-2 mb-2">
+    <div class="col-12 col-xl-7">
+      <div class="kpi-cell" style="height:100%">
+        <div style="display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:8px;text-align:center">
+          <div><div class="kpi-cell-label">Cobramos</div><div style="font-weight:900;font-size:1.3rem">${_fmtMoney(f.cobramos)}</div></div>
+          <div style="font-size:1.3rem;color:#9ca3af;font-weight:800">−</div>
+          <div><div class="kpi-cell-label">Nos costó</div><div style="font-weight:900;font-size:1.3rem">${_fmtMoney(f.nos_costo)}</div></div>
+          <div style="font-size:1.3rem;color:#9ca3af;font-weight:800">=</div>
+          <div><div class="kpi-cell-label">Queda</div>
+            <div style="font-weight:900;font-size:1.3rem;color:${_vidaMargenColor(f.margen_pct, f.queda)}">${_fmtMoney(f.queda)}</div>
+            ${f.margen_pct != null ? `<span class="tag" style="font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px;
+                background:${_vidaMargenBg(f.margen_pct, f.queda)};color:${_vidaMargenColor(f.margen_pct, f.queda)}">${f.margen_pct}% margen</span>` : ''}
+          </div>
+        </div>
+        <div style="margin-top:12px;font-size:.78rem;display:grid;grid-template-columns:1fr auto;gap:5px 10px">
+          <span style="color:#6b7280">Técnicos (internos y externos)</span><b>${_fmtMoney(dsg.tecnicos)}</b>
+          <span style="color:#6b7280">Repuestos instalados (costo de bodega)</span><b>${_fmtMoney(dsg.repuestos_bodega)}</b>
+          <span style="color:#6b7280">Compras a proveedor para este cliente</span><b>${_fmtMoney(dsg.compras_proveedor)}</b>
+          <span style="color:#6b7280">Garantías que cubrimos (costo sin cobro)</span><b style="color:#b45309">${_fmtMoney(dsg.garantias_cubiertas)}</b>
+          ${f.ot_sin_costo ? `<span style="color:#9ca3af">Sin costo registrado todavía</span><span style="color:#9ca3af">${f.ot_sin_costo} OT</span>` : ''}
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-5">
+      <div class="kpi-cell" style="height:100%">
+        <div style="font-weight:800;margin-bottom:8px;font-size:.85rem">Margen por OT <small style="color:#9ca3af;font-weight:600">· más recientes</small></div>
+        ${_vidaMargenOtTabla(d.margen_ot)}
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-2 mt-1">
+    <div class="col-12 col-xl-7">
+      <div class="kpi-cell" style="height:100%">
+        <div style="font-weight:800;margin-bottom:6px;font-size:.85rem">🕒 Línea de vida
+          <small style="color:#9ca3af;font-weight:600">· todo lo que ha pasado con el cliente, en orden</small></div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">
+          <span onclick="vidaFiltrarTipo('')" style="cursor:pointer;font-size:.68rem;font-weight:800;
+              border:1px solid #e5e7eb;border-radius:999px;padding:3px 9px;
+              ${!window._vidaState.lv_tipo ? 'background:#0a0a0a;color:#fff' : 'background:#fff'}">Todo</span>
+          ${(d.linea_vida.tipos || []).map(t => `<span onclick="vidaFiltrarTipo('${t}')" style="cursor:pointer;font-size:.68rem;
+              font-weight:800;border:1px solid #e5e7eb;border-radius:999px;padding:3px 9px;
+              ${window._vidaState.lv_tipo === t ? 'background:#0a0a0a;color:#fff' : 'background:#fff'}">${_VIDA_TIPO_LABEL[t] || t}</span>`).join('')}
+        </div>
+        ${_vidaLineaVida(d.linea_vida)}
+      </div>
+    </div>
+    <div class="col-12 col-xl-5">
+      <div class="kpi-cell" style="height:100%">
+        <div style="font-weight:800;margin-bottom:6px;font-size:.85rem">🏋 Sus productos <small style="color:#9ca3af;font-weight:600">· ${d.productos.total} equipos</small></div>
+        ${_vidaProductos(d.productos)}
+      </div>
+    </div>
+  </div>`;
+  return html;
+}
+
+function _vidaMargenOtTabla(mg) {
+  if (!mg || !mg.items || !mg.items.length) {
+    return `<div class="text-muted" style="font-size:.8rem">Todavía no hay OT cerradas para calcular margen.</div>`;
+  }
+  let h = `<div style="overflow-x:auto"><table style="width:100%;font-size:.78rem;border-collapse:collapse">
+    <thead><tr style="font-size:.62rem;text-transform:uppercase;color:#fff;background:#0a0a0a">
+      <th style="padding:6px 8px;text-align:left">OT</th><th style="padding:6px 8px;text-align:left">Motivo</th>
+      <th style="padding:6px 8px;text-align:right">Cobrado</th><th style="padding:6px 8px;text-align:right">Margen</th>
+    </tr></thead><tbody>`;
+  mg.items.forEach(it => {
+    const color = _vidaMargenColor(it.margen_pct, it.margen_clp);
+    const bg = _vidaMargenBg(it.margen_pct, it.margen_clp);
+    let tag;
+    if (it.sin_costo) tag = `<span style="background:#f3f4f6;color:#374151;font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">sin costo</span>`;
+    else if (it.margen_pct != null) tag = `<span style="background:${bg};color:${color};font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">${it.margen_pct}%</span>`;
+    else tag = `<span style="background:${bg};color:${color};font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">${_fmtMoney(it.margen_clp)}</span>`;
+    h += `<tr style="border-bottom:1px solid #e5e7eb">
+      <td style="padding:6px 8px">${_escH(it.numero_ot || ('#' + it.id))}</td>
+      <td style="padding:6px 8px">${_escH(it.tipo_label || '')}</td>
+      <td style="padding:6px 8px;text-align:right">${_fmtMoney(it.cobrado)}</td>
+      <td style="padding:6px 8px;text-align:right">${tag}</td>
+    </tr>`;
+  });
+  h += `</tbody></table></div>
+    <div style="display:flex;justify-content:space-between;font-size:.72rem;color:#6b7280;margin-top:8px">
+      <span>Mostrando ${(mg.page-1)*mg.per_page+1}–${Math.min(mg.page*mg.per_page, mg.total)} de ${mg.total}</span>
+      <span>
+        <a href="javascript:void(0)" onclick="vidaCambiarPag('mg',-1)" style="${mg.page<=1?'pointer-events:none;color:#d1d5db':''}">Anterior</a>
+        · Página ${mg.page} de ${mg.total_pages} ·
+        <a href="javascript:void(0)" onclick="vidaCambiarPag('mg',1)" style="${mg.page>=mg.total_pages?'pointer-events:none;color:#d1d5db':''}">Siguiente</a>
+      </span>
+    </div>`;
+  return h;
+}
+
+function _vidaLineaVida(lv) {
+  if (!lv || !lv.items || !lv.items.length) {
+    return `<div class="text-muted" style="font-size:.8rem">Sin eventos todavía.</div>`;
+  }
+  let h = `<div style="position:relative;padding-left:18px;border-left:2px solid #e5e7eb">`;
+  lv.items.forEach(e => {
+    const color = _VIDA_TIPO_COLOR[e.tipo] || '#9ca3af';
+    h += `<div style="position:relative;padding-bottom:12px">
+      <div style="position:absolute;left:-23px;top:3px;width:10px;height:10px;border-radius:50%;
+           background:#fff;border:3px solid ${color}"></div>
+      <div style="font-size:.68rem;color:#9ca3af;font-weight:700">${_escH(e.fecha_fmt || '')}</div>
+      <div style="font-weight:700;font-size:.82rem;margin-top:1px">
+        ${e.url ? `<a href="${e.url}">${_escH(e.titulo || '')}</a>` : _escH(e.titulo || '')}
+      </div>
+      ${e.detalle ? `<div style="font-size:.76rem;color:#4b5563;margin-top:1px">${_escH(e.detalle)}</div>` : ''}
+    </div>`;
+  });
+  h += `</div>
+    <div style="display:flex;justify-content:space-between;font-size:.72rem;color:#6b7280;margin-top:6px">
+      <span>Mostrando ${(lv.page-1)*lv.per_page+1}–${Math.min(lv.page*lv.per_page, lv.total)} de ${lv.total}</span>
+      <span>
+        <a href="javascript:void(0)" onclick="vidaCambiarPag('lv',-1)" style="${lv.page<=1?'pointer-events:none;color:#d1d5db':''}">Anterior</a>
+        · Página ${lv.page} de ${lv.total_pages} ·
+        <a href="javascript:void(0)" onclick="vidaCambiarPag('lv',1)" style="${lv.page>=lv.total_pages?'pointer-events:none;color:#d1d5db':''}">Siguiente</a>
+      </span>
+    </div>`;
+  return h;
+}
+
+const _VIDA_EQ_TAG = {
+  activo: ['Operativo', '#166534', '#dcfce7'], garantia: ['En garantía', '#1e40af', '#dbeafe'],
+  baja: ['Fuera de servicio', '#991b1b', '#fee2e2'],
+};
+function _vidaProductos(pr) {
+  if (!pr || !pr.items || !pr.items.length) {
+    return `<div class="text-muted" style="font-size:.8rem">Sin equipos registrados.</div>`;
+  }
+  let h = '';
+  pr.items.forEach(eq => {
+    const [lbl, fg, bg] = _VIDA_EQ_TAG[eq.estado] || ['Operativo', '#166534', '#dcfce7'];
+    h += `<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px dashed #e5e7eb">
+      <div>
+        <b style="font-size:.82rem">${_escH(eq.nombre || '')}</b>
+        <div style="font-size:.72rem;color:#6b7280">${eq.sku ? 'SKU ' + _escH(eq.sku) : ''}${eq.serie ? ' · serie ' + _escH(eq.serie) : ''}${eq.instalada ? ' · instalada ' + _escH(eq.instalada) : ''}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <span style="font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px;background:${bg};color:${fg}">${lbl}</span>
+        <div style="font-size:.7rem;color:#6b7280;margin-top:2px">${eq.n_visitas} visita(s)${eq.n_repuestos ? ' · ' + eq.n_repuestos + ' repuesto(s)' : ''}</div>
+      </div>
+    </div>`;
+  });
+  h += `<div style="display:flex;justify-content:space-between;font-size:.72rem;color:#6b7280;margin-top:8px">
+      <span>Mostrando ${(pr.page-1)*pr.per_page+1}–${Math.min(pr.page*pr.per_page, pr.total)} de ${pr.total}</span>
+      <span>
+        <a href="javascript:void(0)" onclick="vidaCambiarPag('pr',-1)" style="${pr.page<=1?'pointer-events:none;color:#d1d5db':''}">Anterior</a>
+        · Página ${pr.page} de ${pr.total_pages} ·
+        <a href="javascript:void(0)" onclick="vidaCambiarPag('pr',1)" style="${pr.page>=pr.total_pages?'pointer-events:none;color:#d1d5db':''}">Siguiente</a>
+      </span>
+    </div>`;
+  return h;
+}
+

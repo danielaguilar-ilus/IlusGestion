@@ -76939,6 +76939,440 @@ def mant_visita_ligar_factura(vid):
         return jsonify({"ok": False, "error": f"Error guardando: {e}"}), 500
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# ★ VIDA DEL CLIENTE (2026-09-26) -- Daniel: "en la ficha tiene que estar
+# toda la vida del cliente con nosotros... todo debe estar conectado:
+# repuestos, incidencias, tickets, OT y sus costos. Todo esto debe vivir
+# en la ficha del cliente, es lo más importante".
+#
+# Endpoint único con carga perezosa (la pestaña lo llama recién al
+# abrirse, no en `_mant_ficha_impl` -- no engordar la carga de la ficha
+# para el resto de las pestañas). Reutiliza las MISMAS columnas que ya
+# gobiernan Finanzas de la OT (mant_visitas.costo/costo_proveedor/
+# costo_despacho/cubierto_por, ver _ot2_finanzas_estado) y los costos de
+# Etapa A (mant_ot_repuesto_solicitudes.costo_unitario/costo_origen) --
+# nunca vuelve a calcular una cifra que ya vive en otro lado.
+#
+# ⚠️ Corrección sobre el mapeo del encargo: tk_tickets NO tiene cliente_id
+# real (solo rut/empresa de texto libre -- ver el comentario de
+# repstock_ticket_solicitar_repuesto, ~L90005). La única liga confiable
+# tickets↔cliente hoy es a través de mant_ot_repuesto_solicitudes.ticket_id
+# (esas solicitudes SÍ tienen cliente_id) -- un ticket de soporte suelto
+# sin repuesto de por medio no aparece en la línea de vida todavía.
+#
+# ⚠️ Limitación conocida (documentada, no resuelta -- mismo criterio que
+# el LIMIT 500 del Monitor de Transporte, REGLA #4.3): la línea de vida
+# trae hasta 300 filas por FUENTE (OT/repuestos/compras/tickets/
+# incidencias/bodega/documentos) y pagina EN PYTHON sobre la unión ya
+# ordenada -- un cliente con más de 300 eventos de una misma fuente no
+# los va a ver todos. En la práctica ningún cliente de ILUS se acerca a
+# ese volumen todavía.
+# ═══════════════════════════════════════════════════════════════════════
+
+_VIDA_CLIENTE_TIPO_BUCKET = {
+    "instalacion": "instalacion",
+    "preventiva": "mantencion",
+    "correctiva": "correctiva",
+    "retroactiva": "correctiva",
+    "inspeccion": "mantencion",
+    "levantamiento": "otros",
+    "revision_interna": "otros",
+}
+
+
+def _vida_cliente_bucket(tipo, tiene_repuestos):
+    if tiene_repuestos:
+        return "inst_repuestos"
+    return _VIDA_CLIENTE_TIPO_BUCKET.get((tipo or "").strip().lower(), "otros")
+
+
+def _vida_margen_clase(margen_pct, margen_clp):
+    """Semáforo del margen -- MISMO umbral que la tarjeta Finanzas de la OT
+    (templates/ot2/detalle.html, `window.OTD_FIN_UMBRAL_BAJO = 10`, Daniel:
+    "ámbar bajo 10 %"): verde desde 10 %, ámbar bajo 10 %, rojo en pérdida.
+    FUNCIÓN PURA -- sin BD/Flask, ver tests/test_vida_cliente.py.
+
+    Una pérdida en $ (margen_clp < 0) es rojo aunque no haya % (OT sin
+    cobro, ver maqueta OT-00219: "$0 cobrado, −$95.000 de margen")."""
+    if margen_clp is not None and margen_clp < 0:
+        return "rojo"
+    if margen_pct is None:
+        return "sin_dato"
+    if margen_pct < 0:
+        return "rojo"
+    if margen_pct < 10:
+        return "bajo"
+    return "ok"
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/vida-cliente", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_vida_cliente_api(cid):
+    """★ Vida del cliente -- hero + KPIs + resultado financiero + margen por
+    OT (paginado) + línea de vida (paginada, filtrable) + sus productos
+    (paginado). SOLO gestión: @_no_tecnico ya bloquea toda la ficha, y acá
+    se repite `_es_rol_tecnico()` como defensa en profundidad (mismo
+    candado que costo-sugerido/repuestos-costo de la OT)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver esta pestaña."}), 403
+    cliente = mysql_fetchone(
+        "SELECT id, razon_social, rut, comuna, contacto_nombre, contacto_tel, "
+        "       tipo_cliente, estado, created_at FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado."}), 404
+
+    def _qint(name, default, lo, hi):
+        try:
+            v = int(request.args.get(name) or default)
+        except (TypeError, ValueError):
+            v = default
+        return max(lo, min(v, hi))
+
+    out = {"ok": True}
+
+    # ── HERO ──────────────────────────────────────────────────────────
+    try:
+        contrato = mysql_fetchone(
+            "SELECT estado, fecha_vencimiento, es_indefinido FROM mant_contratos "
+            " WHERE cliente_id=%s ORDER BY (estado IN ('vigente','indefinido')) DESC, "
+            " fecha_vencimiento DESC LIMIT 1", (cid,))
+        n_equipos = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_maquinas WHERE cliente_id=%s "
+            " AND COALESCE(estado,'activo')<>'baja'", (cid,)) or {}).get("n") or 0)
+        desde = cliente.get("created_at")
+        antiguedad = None
+        if desde:
+            _dias = (datetime.now() - desde).days if isinstance(desde, datetime) else None
+            if _dias is not None:
+                _anios, _meses = divmod(max(_dias, 0) // 30, 12)
+                partes = []
+                if _anios: partes.append(f"{_anios} año{'s' if _anios != 1 else ''}")
+                if _meses: partes.append(f"{_meses} mes{'es' if _meses != 1 else ''}")
+                antiguedad = " y ".join(partes) if partes else "menos de un mes"
+        out["hero"] = {
+            "razon_social": cliente.get("razon_social"),
+            "rut": cliente.get("rut"),
+            "comuna": cliente.get("comuna"),
+            "contacto_nombre": cliente.get("contacto_nombre"),
+            "contacto_tel": cliente.get("contacto_tel"),
+            "tipo_cliente": cliente.get("tipo_cliente"),
+            "n_equipos": n_equipos,
+            "cliente_desde": chile_fmt_filter(desde, "%b %Y") if desde else None,
+            "antiguedad_label": antiguedad,
+            "contrato_vigente": bool(contrato and contrato.get("estado") in ("vigente", "indefinido")),
+            "contrato_vence": (contrato.get("fecha_vencimiento").isoformat()
+                               if contrato and contrato.get("fecha_vencimiento") else None),
+            "contrato_indefinido": bool(contrato and contrato.get("es_indefinido")),
+        }
+    except Exception as e:
+        print(f"[vida-cliente] hero cid={cid}: {e}", flush=True)
+        out["hero"] = {"razon_social": cliente.get("razon_social"), "error": True}
+
+    # ── KPIs + FINANCIERO (misma pasada: comparten las visitas cerradas) ──
+    try:
+        visitas = mysql_fetchall(
+            "SELECT v.id, v.tipo, v.estado, v.cubierto_por, v.numero_ot, "
+            "       COALESCE(v.fecha_realizada, v.fecha_programada) AS fecha, "
+            "       v.costo, v.costo_proveedor, v.costo_despacho, "
+            "       EXISTS(SELECT 1 FROM mant_ot_repuesto_solicitudes s "
+            "               WHERE s.ot_generada_id=v.id) AS tiene_rep "
+            "  FROM mant_visitas v WHERE v.cliente_id=%s "
+            " ORDER BY fecha DESC LIMIT 2000", (cid,)) or []
+    except Exception as e:
+        print(f"[vida-cliente] visitas cid={cid}: {e}", flush=True)
+        visitas = []
+    cerradas = [v for v in visitas if (v.get("estado") or "") in ("cerrada", "completada")]
+    veces_fuimos = len(cerradas)
+    ultima_fecha = cerradas[0]["fecha"] if cerradas else None
+    n_cobradas = sum(1 for v in cerradas if (v.get("cubierto_por") or "") in ("cliente", "mixto"))
+    n_garantia = sum(1 for v in cerradas if (v.get("cubierto_por") or "") == "garantia")
+    n_contrato = veces_fuimos - n_cobradas - n_garantia
+    por_que = {"instalacion": 0, "mantencion": 0, "inst_repuestos": 0, "correctiva": 0, "otros": 0}
+    for v in cerradas:
+        por_que[_vida_cliente_bucket(v.get("tipo"), v.get("tiene_rep"))] += 1
+    n_ot_programadas = sum(1 for v in visitas if (v.get("estado") or "") == "programada")
+    try:
+        n_rep_gestion = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
+            " WHERE cliente_id=%s AND estado IN ('solicitado','validado','pedido','recibido')",
+            (cid,)) or {}).get("n") or 0)
+    except Exception:
+        n_rep_gestion = 0
+    out["kpis"] = {
+        "veces_fuimos": veces_fuimos,
+        "ultima_hace_dias": ((_date_today() - ultima_fecha.date()).days
+                             if ultima_fecha and hasattr(ultima_fecha, "date")
+                             else ((_date_today() - ultima_fecha).days if ultima_fecha else None)),
+        "n_cobradas": n_cobradas, "n_garantia_gratis": n_garantia, "n_contrato": max(n_contrato, 0),
+        "por_que": por_que,
+        "abierto_ahora": n_ot_programadas + n_rep_gestion,
+        "abierto_ot": n_ot_programadas, "abierto_repuestos": n_rep_gestion,
+    }
+
+    try:
+        rep_rows = mysql_fetchall(
+            "SELECT cantidad, costo_unitario, costo_origen, visita_id, ot_generada_id "
+            "  FROM mant_ot_repuesto_solicitudes "
+            " WHERE cliente_id=%s AND estado IN ('recibido','instalado')", (cid,)) or []
+    except Exception as e:
+        print(f"[vida-cliente] repuestos costo cid={cid}: {e}", flush=True)
+        rep_rows = []
+    _rep_por_visita = {}
+    _tot_bodega = _tot_compra = 0.0
+    for r in rep_rows:
+        if r.get("costo_unitario") is None:
+            continue
+        linea = float(r["costo_unitario"]) * float(r.get("cantidad") or 0)
+        origen = r.get("costo_origen") or "bodega"
+        if origen == "compra":
+            _tot_compra += linea
+        else:
+            # 'bodega' y 'manual' (Daniel no distinguió una 5ta columna
+            # para el ajuste manual -- se muestra junto a bodega, que es
+            # el caso más común de un ajuste a mano) van en esta línea.
+            _tot_bodega += linea
+        _vid_ref = r.get("ot_generada_id") or r.get("visita_id")
+        if _vid_ref:
+            _rep_por_visita[_vid_ref] = _rep_por_visita.get(_vid_ref, 0.0) + linea
+
+    tot_cobramos = sum(float(v.get("costo") or 0) for v in cerradas)
+    tot_tecnicos = sum(float(v.get("costo_proveedor") or 0) + float(v.get("costo_despacho") or 0)
+                       for v in cerradas if (v.get("cubierto_por") or "") != "garantia")
+    tot_garantia_costo = sum(float(v.get("costo_proveedor") or 0) + float(v.get("costo_despacho") or 0)
+                             for v in cerradas if (v.get("cubierto_por") or "") == "garantia")
+    ot_sin_costo = sum(1 for v in cerradas
+                       if v.get("costo_proveedor") is None and v.get("costo_despacho") is None)
+    tot_nos_costo = tot_tecnicos + _tot_bodega + _tot_compra + tot_garantia_costo
+    _fin_queda = round(tot_cobramos - tot_nos_costo, 2)
+    _fin_margen_pct = (round((tot_cobramos - tot_nos_costo) / tot_cobramos * 100, 1)
+                       if tot_cobramos > 0 else None)
+    out["financiero"] = {
+        "cobramos": round(tot_cobramos, 2),
+        "nos_costo": round(tot_nos_costo, 2),
+        "queda": _fin_queda,
+        "margen_pct": _fin_margen_pct,
+        "margen_clase": _vida_margen_clase(_fin_margen_pct, _fin_queda),
+        "desglose": {
+            "tecnicos": round(tot_tecnicos, 2),
+            "repuestos_bodega": round(_tot_bodega, 2),
+            "compras_proveedor": round(_tot_compra, 2),
+            "garantias_cubiertas": round(tot_garantia_costo, 2),
+        },
+        "ot_sin_costo": ot_sin_costo,
+    }
+
+    # ── MARGEN POR OT (paginado) ────────────────────────────────────────
+    mg_page = _qint("mg_page", 1, 1, 100000)
+    mg_per = _qint("mg_per", 10, 5, 100)
+    mg_total = len(cerradas)
+    mg_pages = max(1, -(-mg_total // mg_per))
+    if mg_page > mg_pages:
+        mg_page = mg_pages
+    _mg_slice = cerradas[(mg_page - 1) * mg_per: mg_page * mg_per]
+    mg_items = []
+    for v in _mg_slice:
+        costo_tec = float(v.get("costo_proveedor") or 0) + float(v.get("costo_despacho") or 0)
+        costo_rep = _rep_por_visita.get(v["id"], 0.0)
+        costo_total = costo_tec + costo_rep
+        cobrado = float(v.get("costo") or 0)
+        if cobrado > 0:
+            margen_pct = round((cobrado - costo_total) / cobrado * 100, 1)
+        elif costo_total > 0:
+            margen_pct = None  # pérdida pura, sin cobro -- se muestra en $ negativo
+        else:
+            margen_pct = None
+        _margen_clp = round(cobrado - costo_total, 2)
+        mg_items.append({
+            "id": v["id"], "numero_ot": v.get("numero_ot"),
+            "tipo_label": _ot_tipo_label_efectivo(v.get("tipo"), bool(v.get("tiene_rep"))),
+            "cobrado": round(cobrado, 2), "costo_total": round(costo_total, 2),
+            "margen_clp": _margen_clp, "margen_pct": margen_pct,
+            "margen_clase": _vida_margen_clase(margen_pct, _margen_clp),
+            "sin_costo": v.get("costo_proveedor") is None and v.get("costo_despacho") is None and costo_rep == 0,
+        })
+    out["margen_ot"] = {"items": mg_items, "page": mg_page, "per_page": mg_per,
+                        "total": mg_total, "total_pages": mg_pages}
+
+    # ── LÍNEA DE VIDA (paginada, filtrable) ─────────────────────────────
+    lv_page = _qint("lv_page", 1, 1, 100000)
+    lv_per = _qint("lv_per", 15, 5, 100)
+    lv_tipo = (request.args.get("lv_tipo") or "").strip().lower()
+    _tipos_validos = ("ot", "repuesto", "compra", "ticket", "incidencia", "bodega", "documento")
+    eventos = []
+    try:
+        if not lv_tipo or lv_tipo == "ot":
+            for v in visitas[:300]:
+                eventos.append({
+                    "tipo": "ot", "fecha": v.get("fecha"),
+                    "titulo": f"{v.get('numero_ot') or ('OT #' + str(v['id']))} · "
+                              f"{_ot_tipo_label_efectivo(v.get('tipo'), bool(v.get('tiene_rep')))}",
+                    "detalle": (v.get("estado") or "").replace("_", " ").title(),
+                    "url": url_for("ot2_detalle", vid=v["id"]),
+                })
+    except Exception as e:
+        print(f"[vida-cliente] linea-vida ot cid={cid}: {e}", flush=True)
+    try:
+        if not lv_tipo or lv_tipo == "repuesto":
+            rows = mysql_fetchall(
+                "SELECT id, repuesto_nombre, cantidad, estado, created_at, updated_at "
+                "  FROM mant_ot_repuesto_solicitudes WHERE cliente_id=%s "
+                " ORDER BY created_at DESC LIMIT 300", (cid,)) or []
+            for r in rows:
+                eventos.append({
+                    "tipo": "repuesto", "fecha": r.get("created_at"),
+                    "titulo": f"Solicitud de repuesto #{r['id']} · {r.get('repuesto_nombre')}",
+                    "detalle": f"{r.get('cantidad')} unid. · {_OTREP_ESTADO_LABEL.get(r.get('estado'), r.get('estado'))}",
+                    "url": None,
+                })
+    except Exception as e:
+        print(f"[vida-cliente] linea-vida repuesto cid={cid}: {e}", flush=True)
+    try:
+        if not lv_tipo or lv_tipo == "compra":
+            rows = mysql_fetchall(
+                "SELECT DISTINCT c.id, c.estado, c.eta, c.created_at, c.monto_total, "
+                "       (SELECT nombre FROM mant_proveedores_repuesto WHERE id=c.proveedor_id) AS proveedor "
+                "  FROM mant_repuestos_compras c "
+                "  JOIN mant_ot_repuesto_solicitudes s ON s.compra_id=c.id "
+                " WHERE s.cliente_id=%s ORDER BY c.created_at DESC LIMIT 300", (cid,)) or []
+            for r in rows:
+                eventos.append({
+                    "tipo": "compra", "fecha": r.get("created_at"),
+                    "titulo": f"Compra #{r['id']}" + (f" · {r['proveedor']}" if r.get("proveedor") else ""),
+                    "detalle": _OTREP_COMPRA_ESTADO_LABEL.get(r.get("estado"), r.get("estado"))
+                              + (f" · ETA {r['eta'].strftime('%d/%m/%Y')}" if r.get("eta") else ""),
+                    "url": None,
+                })
+    except Exception as e:
+        print(f"[vida-cliente] linea-vida compra cid={cid}: {e}", flush=True)
+    try:
+        if not lv_tipo or lv_tipo == "ticket":
+            rows = mysql_fetchall(
+                "SELECT DISTINCT t.id, t.numero_ticket, t.titulo, t.estado, t.created_at "
+                "  FROM tk_tickets t JOIN mant_ot_repuesto_solicitudes s ON s.ticket_id=t.id "
+                " WHERE s.cliente_id=%s ORDER BY t.created_at DESC LIMIT 300", (cid,)) or []
+            for r in rows:
+                eventos.append({
+                    "tipo": "ticket", "fecha": r.get("created_at"),
+                    "titulo": f"Ticket {r.get('numero_ticket') or ('#' + str(r['id']))}"
+                              + (f" · {r['titulo']}" if r.get("titulo") else ""),
+                    "detalle": (r.get("estado") or "").replace("_", " ").title(),
+                    "url": None,
+                })
+    except Exception as e:
+        print(f"[vida-cliente] linea-vida ticket cid={cid}: {e}", flush=True)
+    try:
+        if not lv_tipo or lv_tipo == "incidencia":
+            rows = mysql_fetchall(
+                "SELECT s.id, s.created_at, s.repuesto_nombre, i.descripcion, i.motivo "
+                "  FROM mant_ot_repuesto_solicitudes s "
+                "  LEFT JOIN mant_incidencias i ON i.id=s.incidencia_id "
+                " WHERE s.cliente_id=%s AND s.creada_desde='incidencia' "
+                " ORDER BY s.created_at DESC LIMIT 300", (cid,)) or []
+            for r in rows:
+                eventos.append({
+                    "tipo": "incidencia", "fecha": r.get("created_at"),
+                    "titulo": f"Incidencia · {r.get('descripcion') or r.get('repuesto_nombre')}",
+                    "detalle": r.get("motivo") or "",
+                    "url": None,
+                })
+    except Exception as e:
+        print(f"[vida-cliente] linea-vida incidencia cid={cid}: {e}", flush=True)
+    try:
+        if not lv_tipo or lv_tipo == "bodega":
+            rows = mysql_fetchall(
+                "SELECT m.id, m.tipo, m.cantidad, m.nota, m.created_at, r.descripcion "
+                "  FROM mant_repuestos_movimientos m "
+                "  LEFT JOIN mant_repuestos_stock r ON r.id=m.repuesto_id "
+                " WHERE m.cliente_id=%s ORDER BY m.created_at DESC LIMIT 300", (cid,)) or []
+            for r in rows:
+                eventos.append({
+                    "tipo": "bodega", "fecha": r.get("created_at"),
+                    "titulo": f"Bodega · {r.get('tipo')} de {r.get('descripcion') or 'repuesto'}",
+                    "detalle": r.get("nota") or f"{r.get('cantidad')} unid.",
+                    "url": None,
+                })
+    except Exception as e:
+        print(f"[vida-cliente] linea-vida bodega cid={cid}: {e}", flush=True)
+    try:
+        if not lv_tipo or lv_tipo == "documento":
+            rows = mysql_fetchall(
+                "SELECT id, tipo, nombre, archivo_nombre, created_at FROM mant_contrato_adjuntos "
+                " WHERE cliente_id=%s ORDER BY created_at DESC LIMIT 300", (cid,)) or []
+            for r in rows:
+                eventos.append({
+                    "tipo": "documento", "fecha": r.get("created_at"),
+                    "titulo": r.get("nombre") or r.get("archivo_nombre") or f"Documento #{r['id']}",
+                    "detalle": (r.get("tipo") or "").replace("_", " ").title(),
+                    "url": None,
+                })
+    except Exception as e:
+        print(f"[vida-cliente] linea-vida documento cid={cid}: {e}", flush=True)
+
+    def _ev_key(e):
+        f = e.get("fecha")
+        if f is None:
+            return datetime.min
+        if isinstance(f, datetime):
+            return f
+        if hasattr(f, "isoformat") and not isinstance(f, datetime):
+            return datetime.combine(f, datetime.min.time())
+        return datetime.min
+    eventos.sort(key=_ev_key, reverse=True)
+    lv_total = len(eventos)
+    lv_pages = max(1, -(-lv_total // lv_per))
+    if lv_page > lv_pages:
+        lv_page = lv_pages
+    _lv_slice = eventos[(lv_page - 1) * lv_per: lv_page * lv_per]
+    for e in _lv_slice:
+        f = e.get("fecha")
+        e["fecha_fmt"] = (chile_fmt_filter(f, "%d/%m/%Y %H:%M") if isinstance(f, datetime)
+                          else (f.strftime("%d/%m/%Y") if f else "—"))
+        e["fecha"] = f.isoformat() if hasattr(f, "isoformat") else None
+    out["linea_vida"] = {"items": _lv_slice, "page": lv_page, "per_page": lv_per,
+                         "total": lv_total, "total_pages": lv_pages, "tipos": _tipos_validos}
+
+    # ── SUS PRODUCTOS (paginado, server-side de verdad) ─────────────────
+    pr_page = _qint("pr_page", 1, 1, 100000)
+    pr_per = _qint("pr_per", 10, 5, 100)
+    try:
+        pr_total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_maquinas WHERE cliente_id=%s "
+            " AND COALESCE(estado,'activo')<>'baja'", (cid,)) or {}).get("n") or 0)
+        pr_pages = max(1, -(-pr_total // pr_per))
+        if pr_page > pr_pages:
+            pr_page = pr_pages
+        rows = mysql_fetchall(
+            "SELECT m.id, m.nombre, m.sku, m.serie, m.estado, m.cantidad, m.doc_fecha, "
+            "       (SELECT COUNT(DISTINCT ve.visita_id) FROM mant_visita_equipos ve "
+            "         WHERE ve.maquina_id=m.id) AS n_visitas, "
+            "       (SELECT COUNT(*) FROM mant_ot_repuesto_solicitudes s "
+            "         WHERE s.maquina_id=m.id AND s.estado='instalado') AS n_repuestos "
+            "  FROM mant_maquinas m WHERE m.cliente_id=%s AND COALESCE(m.estado,'activo')<>'baja' "
+            " ORDER BY m.nombre LIMIT %s OFFSET %s",
+            (cid, pr_per, (pr_page - 1) * pr_per)) or []
+        productos = []
+        for r in rows:
+            productos.append({
+                "id": r["id"], "nombre": r.get("nombre"), "sku": r.get("sku"), "serie": r.get("serie"),
+                "estado": r.get("estado") or "activo", "cantidad": r.get("cantidad") or 1,
+                "instalada": r["doc_fecha"].strftime("%m/%Y") if r.get("doc_fecha") else None,
+                "n_visitas": int(r.get("n_visitas") or 0), "n_repuestos": int(r.get("n_repuestos") or 0),
+            })
+    except Exception as e:
+        print(f"[vida-cliente] productos cid={cid}: {e}", flush=True)
+        productos, pr_total, pr_pages = [], 0, 1
+    out["productos"] = {"items": productos, "page": pr_page, "per_page": pr_per,
+                        "total": pr_total, "total_pages": pr_pages}
+
+    return jsonify(out)
+
+
+def _date_today():
+    from datetime import date as _dt_date
+    return _dt_date.today()
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/finanzas-servicios",
            methods=["GET"])
 @_mant_required
@@ -85814,6 +86248,34 @@ def _ensure_ot_repuesto_solicitudes_tables():
             " WHERE creada_desde IS NULL AND visita_id IS NULL AND incidencia_id IS NULL")
     except Exception as e:
         print(f"[ensure_ot_repuestos] creada_desde/es_reposicion: {e}", flush=True)
+    # 💰 2026-09-26 (Vida del cliente, Etapa A -- Daniel: "todo debe estar
+    # conectado: repuestos, incidencias, tickets, OT y sus costos"): hasta
+    # acá esta tabla registraba EL repuesto y su trayectoria, pero no
+    # cuánto costó de verdad. `costo_unitario` se llena solo (nunca a
+    # ciegas) en dos momentos, y siempre queda editable a mano por gestión
+    # después:
+    #   'bodega' -- al VALIDAR contra un repuesto real (mant_repuestos_
+    #               stock.costo_unitario), ver _otrep_cambiar_estado.
+    #   'compra'  -- al COMPLETAR la recepción de una Compra con monto_total
+    #               declarado (repstock_compra_recibir), prorrateado por
+    #               cantidad entre las líneas de esa Compra.
+    #   'manual'  -- gestión lo corrigió a mano (POST .../costo) -- una vez
+    #               'manual', las otras dos rutas NUNCA lo pisan.
+    try:
+        _colsCosto = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes'") or [])}
+        if _colsCosto and "costo_unitario" not in _colsCosto:
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN costo_unitario DECIMAL(12,2) NULL "
+                "COMMENT 'Costo real por unidad -- de bodega, de la compra o editado a mano'")
+        if _colsCosto and "costo_origen" not in _colsCosto:
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN costo_origen VARCHAR(20) NULL "
+                "COMMENT \"'bodega'|'compra'|'manual' -- de donde salio costo_unitario\" "
+                "AFTER costo_unitario")
+    except Exception as e:
+        print(f"[ensure_ot_repuestos] costo_unitario/costo_origen: {e}", flush=True)
     try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_ot_repuesto_evidencias (
@@ -85895,6 +86357,22 @@ def _ensure_repuestos_compras_tables():
                 "AFTER compra_id")
     except Exception as e:
         print(f"[ensure_repuestos_compras] cantidad_recibida: {e}", flush=True)
+    # 💰 2026-09-26 (Vida del cliente, Etapa A): monto que declara gestión al
+    # confirmar/recibir la Compra (POST .../estado, campo monto_total) --
+    # al completarse la recepción de una línea, repstock_compra_recibir
+    # prorratea este total por cantidad para llenar costo_unitario/
+    # costo_origen='compra' de cada solicitud (ver _otrep_cambiar_estado y
+    # el bloque de prorrateo en repstock_compra_recibir).
+    try:
+        _cols_mt = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos_compras'") or [])}
+        if _cols_mt and "monto_total" not in _cols_mt:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_compras ADD COLUMN monto_total DECIMAL(14,2) NULL "
+                "COMMENT 'Monto total declarado por gestion para esta compra (CLP)' AFTER oc_numero")
+    except Exception as e:
+        print(f"[ensure_repuestos_compras] monto_total: {e}", flush=True)
 
 
 def _otrep_insert(sql, params):
@@ -88496,7 +88974,7 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
                             "Para validar hay que ligar la solicitud a un repuesto REAL de la Bodega "
                             "(uno existente, o créalo primero con su ubicación)."}
         stock = mysql_fetchone(
-            "SELECT id, sku, descripcion, cantidad, proveedor_id FROM mant_repuestos_stock "
+            "SELECT id, sku, descripcion, cantidad, proveedor_id, costo_unitario FROM mant_repuestos_stock "
             " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
         if not stock:
             return False, 400, {"ok": False, "error": "Ese repuesto de bodega no existe o está inactivo."}
@@ -88504,6 +88982,16 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         params += [stock["id"], stock.get("sku"), user]
         if stock.get("proveedor_id") and not s.get("proveedor_id"):
             sets.append("proveedor_id=%s"); params.append(stock["proveedor_id"])
+        # 💰 Vida del cliente, Etapa A (2026-09-26): el costo de bodega se
+        # toma como referencia AL VALIDAR -- nunca pisa un costo que gestión
+        # ya haya corregido a mano ('manual'). Un costo_unitario en $0 en la
+        # ficha de bodega no es "gratis": es que a esa ficha nunca le
+        # cargaron el costo -- no se declara nada en ese caso (mejor "sin
+        # costo registrado" que un $0 inventado, mismo criterio que el
+        # resto de esta cola con los avisos de kardex).
+        if (s.get("costo_origen") or "") != "manual" and float(stock.get("costo_unitario") or 0) > 0:
+            sets += ["costo_unitario=%s", "costo_origen=%s"]
+            params += [stock["costo_unitario"], "bodega"]
     if nuevo == "pedido":
         pid_txt = str(d.get("proveedor_id") or s.get("proveedor_id") or "").strip()
         if not pid_txt.isdigit():
@@ -89517,6 +90005,42 @@ def repstock_compra_estado(cid):
     return jsonify({"ok": True, "estado": nuevo})
 
 
+@app.route("/repuestos/api/compras/<int:cid>/monto", methods=["POST"])
+@_otrep_compra_gestion_required
+def repstock_compra_monto(cid):
+    """Declara/edita el monto total de la Compra (Vida del cliente, Etapa A,
+    2026-09-26). Editable mientras la Compra siga ABIERTA -- una vez
+    'recibido'/'cancelada' el monto queda fijo como parte del historial
+    (mismo criterio que la cantidad de una solicitud, ver
+    repstock_solicitud_ot_cantidad). Al completarse la recepción de cada
+    línea, repstock_compra_recibir prorratea este monto por cantidad para
+    llenar costo_unitario/costo_origen='compra' de las solicitudes."""
+    c = mysql_fetchone("SELECT id, estado FROM mant_repuestos_compras WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"ok": False, "error": "Compra no encontrada."}), 404
+    if c["estado"] not in _OTREP_COMPRA_ABIERTOS:
+        return jsonify({"ok": False, "error":
+                        f"Esta compra ya está \"{_OTREP_COMPRA_ESTADO_LABEL.get(c['estado'])}\": "
+                        "el monto queda fijo como parte del historial."}), 400
+    d = request.get_json(silent=True) or {}
+    try:
+        monto = float(str(d.get("monto_total") or "").replace(",", "."))
+    except (TypeError, ValueError):
+        monto = -1
+    if monto < 0 or monto > 9999999999:
+        return jsonify({"ok": False, "error": "El monto tiene que ser un número igual o mayor que cero."}), 400
+    user = current_username() or "sistema"
+    try:
+        mysql_execute(
+            "UPDATE mant_repuestos_compras SET monto_total=%s, "
+            " nota=CONCAT_WS(' · ', NULLIF(nota,''), %s) WHERE id=%s",
+            (monto, f"Monto total declarado: ${monto:,.0f}".replace(",", ".") + f" ({user}).", cid))
+    except Exception as e:
+        print(f"[otrep] compra monto cid={cid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo actualizar el monto."}), 500
+    return jsonify({"ok": True, "monto_total": monto})
+
+
 def _otrep_recepcion_es_completa(cantidad_recibida, cantidad_requerida):
     """¿Lo recibido acumulado alcanza o supera lo pedido en esa línea? (con
     tolerancia de punto flotante). Decide si la línea pasa a 'recibido'
@@ -89527,6 +90051,35 @@ def _otrep_recepcion_es_completa(cantidad_recibida, cantidad_requerida):
         return float(cantidad_recibida) + 1e-6 >= float(cantidad_requerida)
     except (TypeError, ValueError):
         return False
+
+
+def _otrep_compra_prorratear_costo(cid, sids_completados):
+    """Vida del cliente, Etapa A (2026-09-26): si la Compra declaró un
+    monto_total (POST .../monto), al completarse la recepción de una o más
+    líneas se prorratea ese total EN PROPORCIÓN A LA CANTIDAD entre TODAS
+    las líneas de la compra (no solo las recién completadas -- el costo
+    unitario es el mismo para toda la compra, llegue en una entrega o en
+    varias). Nunca pisa un costo_unitario que gestión ya corrigió a mano
+    (costo_origen='manual'). Sin monto_total declarado, no hace nada -- "sin
+    costo registrado" es mejor que inventar un número (mismo criterio que el
+    resto de esta cola)."""
+    try:
+        c = mysql_fetchone("SELECT monto_total FROM mant_repuestos_compras WHERE id=%s", (cid,))
+        if not c or c.get("monto_total") is None:
+            return
+        monto_total = float(c["monto_total"])
+        lineas = mysql_fetchall(
+            "SELECT id, cantidad FROM mant_ot_repuesto_solicitudes WHERE compra_id=%s", (cid,)) or []
+        cant_total = sum(float(li.get("cantidad") or 0) for li in lineas)
+        if cant_total <= 0:
+            return
+        costo_unit = monto_total / cant_total
+        mysql_execute(
+            "UPDATE mant_ot_repuesto_solicitudes SET costo_unitario=%s, costo_origen='compra' "
+            " WHERE compra_id=%s AND COALESCE(costo_origen,'') <> 'manual'",
+            (round(costo_unit, 2), cid))
+    except Exception as e:
+        print(f"[otrep] prorratear costo cid={cid}: {e}", flush=True)
 
 
 @app.route("/repuestos/api/compras/<int:cid>/recibir", methods=["POST"])
@@ -89672,6 +90225,8 @@ def repstock_compra_recibir(cid):
     # caminos individuales (evita mantener dos copias del mismo cálculo, y
     # ya trae la concurrencia `AND estado=%s` + rowcount de MEDIA #4).
     _otrep_compra_sincronizar(cid, user)
+    if recibidas:
+        _otrep_compra_prorratear_costo(cid, recibidas)
     nuevo_estado = (mysql_fetchone(
         "SELECT estado FROM mant_repuestos_compras WHERE id=%s", (cid,)) or {}).get("estado", c["estado"])
     if c.get("ticket_id"):
@@ -89778,6 +90333,41 @@ def repstock_solicitud_ot_cantidad(sid):
     except Exception:
         pass
     return jsonify({"ok": True, "cantidad": nueva, "aviso": aviso})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/costo", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_ot_costo(sid):
+    """Corrige a mano el costo_unitario de una solicitud (Vida del cliente,
+    Etapa A, 2026-09-26 -- Daniel: "el costo del técnico interno... no
+    inventes tarifas" + "editable por gestión"). Queda con costo_origen=
+    'manual': ni la validación contra bodega ni la recepción de una Compra
+    lo vuelven a pisar después (ver _otrep_cambiar_estado y
+    repstock_compra_recibir). Solo gestión (nunca técnico, ni interno ni
+    externo -- mismo candado que /cantidad de arriba)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error":
+                        "Corregir el costo de una solicitud lo decide gestión, no un técnico."}), 403
+    s = mysql_fetchone("SELECT id, costo_unitario FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    d = request.get_json(silent=True) or {}
+    try:
+        nuevo_costo = float(str(d.get("costo_unitario") or "").replace(",", "."))
+    except (TypeError, ValueError):
+        nuevo_costo = -1
+    if nuevo_costo < 0 or nuevo_costo > 99999999:
+        return jsonify({"ok": False, "error": "El costo tiene que ser un número igual o mayor que cero."}), 400
+    user = current_username() or "sistema"
+    try:
+        mysql_execute(
+            "UPDATE mant_ot_repuesto_solicitudes SET costo_unitario=%s, costo_origen='manual', "
+            " nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) WHERE id=%s",
+            (nuevo_costo, f"Costo unitario corregido a mano a ${nuevo_costo:,.0f} por {user}.".replace(",", "."), sid))
+    except Exception as e:
+        print(f"[otrep] costo manual sid={sid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo actualizar el costo."}), 500
+    return jsonify({"ok": True, "costo_unitario": nuevo_costo, "costo_origen": "manual"})
 
 
 @app.route("/repuestos/api/solicitudes-ot/<int:sid>/tomar", methods=["POST"])
@@ -97664,6 +98254,55 @@ def ot2_api_costo_sugerido(vid):
     except (TypeError, ValueError):
         out["margen_pct"] = None
     return jsonify(out)
+
+
+@app.route("/ot/api/<int:vid>/repuestos-costo", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_api_repuestos_costo(vid):
+    """Cuánto costaron de verdad los repuestos INSTALADOS en esta OT (Vida
+    del cliente, Etapa A, 2026-09-26 -- Daniel: "todo debe estar conectado:
+    repuestos... y sus costos"). SOLO LECTURA -- informativa, no entra al
+    cálculo de cierre/margen de _ot2_finanzas_estado (esa es la fuente de
+    verdad que decide si la OT puede cerrarse, y tocarla no era parte de
+    este encargo). Se muestra como un dato ADICIONAL en la tarjeta
+    Finanzas, no reemplaza costo_proveedor/costo_despacho.
+
+    `visita_id=vid` cubre el repuesto solicitado y usado en LA MISMA OT;
+    `ot_generada_id=vid` cubre el caso de una OT de instalación de
+    repuestos (label efectivo, ver _ot_tipo_label_efectivo) generada DESDE
+    otra solicitud -- el repuesto se instala ahí, no en su OT de origen.
+
+    El técnico nunca ve montos (mismo candado que costo-sugerido)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, repuesto_nombre, repuesto_sku, cantidad, costo_unitario, costo_origen "
+            "  FROM mant_ot_repuesto_solicitudes "
+            " WHERE (visita_id=%s OR ot_generada_id=%s) AND estado='instalado' "
+            " ORDER BY id", (vid, vid)) or []
+    except Exception as e:
+        print(f"[ot2_repuestos_costo] vid={vid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos leer los repuestos de esta OT."}), 500
+    items, total, sin_costo = [], 0.0, 0
+    for r in rows:
+        cant = float(r.get("cantidad") or 0)
+        cu = r.get("costo_unitario")
+        if cu is None:
+            sin_costo += 1
+            costo_linea = None
+        else:
+            costo_linea = round(float(cu) * cant, 2)
+            total += costo_linea
+        items.append({
+            "id": r["id"], "repuesto_nombre": r.get("repuesto_nombre"),
+            "repuesto_sku": r.get("repuesto_sku"), "cantidad": cant,
+            "costo_unitario": float(cu) if cu is not None else None,
+            "costo_origen": r.get("costo_origen"), "costo_linea": costo_linea,
+        })
+    return jsonify({"ok": True, "items": items, "total_costo": round(total, 2) if items else 0,
+                    "n_sin_costo": sin_costo})
 
 
 # ── Panel de administración de pantallas ─────────────────────────────
