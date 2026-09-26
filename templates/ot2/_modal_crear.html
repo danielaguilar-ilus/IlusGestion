@@ -1163,6 +1163,20 @@ window.OT2C = (function(){
          // ya trae maquina_id real) -- ver abrir()/cargarEquipos(). Se
          // consume UNA sola vez y se limpia, nunca sobrevive a un reset().
          equipo_preset_maquina_id:null,
+         // 🔧 FASE 4 REPUESTOS (2026-09-26): variante EN LOTE de lo de
+         // arriba -- varias solicitudes del MISMO cliente, cada una con su
+         // propio equipo real, generando UNA sola OT (Daniel: "puedo
+         // gestionar una orden de trabajo en base a que vayan a instalar
+         // todos esos repuestos o uno solo"). Retrocompatible: el singular
+         // sigue funcionando igual, este es un camino adicional. Se
+         // consume UNA sola vez en cargarEquipos() y se limpia.
+         equipo_preset_maquina_ids:null,
+         // Bloque informativo "Repuestos que se instalarán en esta OT"
+         // (ver pintarDetalle) -- lista de {id,nombre,cantidad,equipo,sku}
+         // que ya armó preparar-ot-lote/preparar-ot. Nunca se manda al
+         // backend: es solo para que quien crea la OT vea qué está
+         // resolviendo (REGLA #15, nombres completos).
+         repuestos_a_instalar:null,
          ticket_id:null,
          // 2026-09-04 (Daniel: "no quiero salir del ticket, quiero que
          // todos los modales trabajen desde allí"). Quien abrió el wizard
@@ -2116,7 +2130,19 @@ window.OT2C = (function(){
       '<small class="d-block mt-1" id="o2mDescHint" style="font-size:.72rem;color:'+(descOk?'#16a34a':'#9ca3af')+'">'+
       (descOk ? '<i class="bi bi-check-circle-fill me-1"></i>'+descLen+' caracteres'
               : descLen+' / '+O2M_DESC_MIN+' caracteres mínimos')+
-      '</small>';
+      '</small>'+
+      // 🔧 FASE 4 REPUESTOS (2026-09-26): bloque informativo -- ver
+      // S.repuestos_a_instalar en reset()/abrir(). Nombres completos,
+      // nunca truncados (REGLA #15, formato Retiros).
+      (S.repuestos_a_instalar && S.repuestos_a_instalar.length ?
+        '<div class="o2m-aviso" style="background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a;margin-top:14px">'+
+          '<b><i class="bi bi-tools me-1"></i>Repuestos que se instalarán en esta OT</b>'+
+          '<ul style="margin:8px 0 0;padding-left:18px">'+
+          S.repuestos_a_instalar.map(function(r){
+            return '<li>'+esc(r.nombre||'')+' × '+esc(String(r.cantidad!=null?r.cantidad:''))+
+              (r.equipo ? ' — '+esc(r.equipo) : '')+'</li>';
+          }).join('')+
+          '</ul></div>' : '');
   }
 
   function pintarAgenda(b){
@@ -3931,6 +3957,24 @@ window.OT2C = (function(){
               S.equipos.push({maquina_id:_mPreset, plantilla_id:null, plantilla_sugerida:false});
               sugerirPlantillaEquipo(_mPreset);
             }
+          }
+          // 🔧 FASE 4 REPUESTOS (2026-09-26): variante en lote -- varios
+          // equipos reales conocidos de antemano (preparar-ot-lote), uno
+          // por cada solicitud del lote, sin repetir. Mismo criterio de
+          // validación contra cacheEquipos que el singular de arriba: si
+          // alguno ya no está (baja/movido), simplemente no se preselecciona
+          // y gestión lo elige a mano. El `!S.equipos.some(...)` evita
+          // duplicar si el singular y el plural llegaran a coincidir.
+          if (S.equipo_preset_maquina_ids && S.equipo_preset_maquina_ids.length){
+            var _midsPreset = S.equipo_preset_maquina_ids;
+            S.equipo_preset_maquina_ids = null;
+            _midsPreset.forEach(function(_mp){
+              if (cacheEquipos.some(function(m){ return m.id === _mp; }) &&
+                  !S.equipos.some(function(e){ return e.maquina_id === _mp; })){
+                S.equipos.push({maquina_id:_mp, plantilla_id:null, plantilla_sugerida:false});
+                sugerirPlantillaEquipo(_mp);
+              }
+            });
           }
         }
       }
@@ -9338,6 +9382,12 @@ window.OT2C = (function(){
     // 🔧 FASE 3 REPUESTOS (2026-09-21): ver S.equipo_preset_maquina_id en
     // reset() y su consumo en cargarEquipos().
     if (opts.equipo_preset_maquina_id) S.equipo_preset_maquina_id = opts.equipo_preset_maquina_id;
+    // 🔧 FASE 4 REPUESTOS (2026-09-26): variante en lote -- ver
+    // S.equipo_preset_maquina_ids en reset() y su consumo en cargarEquipos().
+    if (opts.equipo_preset_maquina_ids && opts.equipo_preset_maquina_ids.length)
+      S.equipo_preset_maquina_ids = opts.equipo_preset_maquina_ids.slice();
+    if (opts.repuestos_a_instalar && opts.repuestos_a_instalar.length)
+      S.repuestos_a_instalar = opts.repuestos_a_instalar.slice();
     if (opts.tipo){
       var t = TIPOS.find(function(x){
         return x.v === opts.tipo && !!x.descubrimiento === !!opts.descubrimiento; });

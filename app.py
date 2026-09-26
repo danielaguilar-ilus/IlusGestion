@@ -81371,6 +81371,28 @@ def ot2_detalle(vid):
         for e in equipos:
             e["rep_solicitudes"], e["rep_abiertas"] = [], 0
 
+    # 🆕 2026-09-26 (Fase 4 -- Daniel: "puedo gestionar una orden de trabajo
+    # en base a que vayan a instalar todos esos repuestos o uno solo, con el
+    # filtro de que tiene que ser siempre el mismo cliente"). Estas
+    # solicitudes NACIERON en OTRA OT/ticket/incidencia pero se van a
+    # INSTALAR en ESTA (ot_generada_id=vid, ver vincular-ot-lote/
+    # vincular-ot) -- lo INVERSO del bloque de arriba (que muestra lo que
+    # esta OT movió desde su PROPIO origen). "Marcar instalado" reusa el
+    # mismo núcleo que la cola de Solicitudes (_otrep_cambiar_estado) vía
+    # POST /ot/api/<vid>/repuestos-instalar/<sid>.
+    rep_a_instalar = []
+    try:
+        rep_a_instalar = _otrep_listar("s.ot_generada_id=%s", (vid,), limit=200,
+                                        con_evidencias=False, para_ot=True)
+    except Exception as _e_repai:
+        print(f"[ot2_detalle] repuestos a instalar vid={vid}: {_e_repai}", flush=True)
+        rep_a_instalar = []
+    rep_a_instalar_pend = sum(1 for _s in rep_a_instalar if _s.get("estado") in ("validado", "recibido"))
+    # Gate: técnico asignado que pueda EJECUTAR esta OT, o gestión -- MISMO
+    # criterio que el backend de /repuestos-instalar (defensa en
+    # profundidad, esto solo decide si se dibuja el botón).
+    puede_marcar_repuesto = bool((puede_ejecutar or _otrep_puede_gestion()) and not ot_solo_lectura)
+
     # 🔗 2026-09-20 (Daniel: "la piola se debe aplicar a los equipos
     # selectores de pesos, y opcional a algunos racks"). El botón "Cambio de
     # piola" no va en todos los equipos: aplica si el modelo tiene piolas
@@ -82295,6 +82317,9 @@ def ot2_detalle(vid):
         # 🔧 2026-09-20 — solicitudes de repuesto de la OT (ticket que las
         # agrupa + cuántas siguen abiertas), para la tarjeta de equipos.
         rep_ticket=rep_ticket, rep_total_abiertas=rep_total_abiertas,
+        # 🆕 2026-09-26 (Fase 4) — ver bloque "rep_a_instalar" más arriba.
+        rep_a_instalar=rep_a_instalar, rep_a_instalar_pend=rep_a_instalar_pend,
+        puede_marcar_repuesto=puede_marcar_repuesto,
         # 🆕 2026-08-27 — puerta de entrada para CREAR el Anexo de Servicios
         # (el motor de firma ya existía desde anoche, commit e007c43; lo que
         # faltaba era el formulario). Los 3 textos "fijos" del documento real
@@ -87318,7 +87343,17 @@ def ot2_api_ot_repuestos(vid):
     except Exception as e:
         print(f"[otrep] listar vid={vid}: {e}", flush=True)
         sols = []
-    return jsonify({"ok": True, "solicitudes": sols})
+    # 🆕 2026-09-26 (Fase 4): repuestos que NACIERON en otra OT/ticket/
+    # incidencia y se instalan EN ESTA (ver vincular-ot-lote/vincular-ot) --
+    # refresca el bloque "Repuestos a instalar en esta OT" sin recargar la
+    # página, mismo criterio aditivo que `solicitudes` de arriba.
+    try:
+        a_instalar = _otrep_listar("s.ot_generada_id=%s", (vid,), limit=200,
+                                    con_evidencias=False, para_ot=True)
+    except Exception as e:
+        print(f"[otrep] listar a_instalar vid={vid}: {e}", flush=True)
+        a_instalar = []
+    return jsonify({"ok": True, "solicitudes": sols, "a_instalar": a_instalar})
 
 
 def _otrep_filtros_query():
@@ -87657,33 +87692,50 @@ def repstock_crear_ticket_compra():
                     "(botón \"Pedir al proveedor\")."}), 501
 
 
-@app.route("/repuestos/api/solicitudes-ot/<int:sid>/estado", methods=["POST"])
-@_otrep_gestion_required
-def repstock_solicitud_ot_estado(sid):
-    """Mueve una solicitud por su trayectoria. Body JSON:
-      estado             destino (ver _OTREP_TRANSICIONES)
-      repuesto_stock_id  obligatorio para 'validado' si la solicitud no tenía
-      proveedor_id       OBLIGATORIO en 'pedido' (Daniel: "OT, proveedor,
-                         repuesto, cantidades"); oc_numero opcional
-      nota               obligatoria en 'rechazado'; opcional en el resto
-      equipo_operativo   true en 'instalado' si el equipo volvió a operar
-    'pedido' y 'rechazado' son decisiones de gestión, no de un técnico.
+def _otrep_cambiar_estado(sid, nuevo, user, datos):
+    """Núcleo de la transición de estado de una solicitud de repuesto.
+
+    🏗️ Fase 4 (2026-09-26 -- Daniel: "puedo gestionar una orden de trabajo
+    en base a que vayan a instalar todos esos repuestos o uno solo"):
+    extraído MECÁNICAMENTE (mover código, no reescribirlo) del cuerpo de
+    `repstock_solicitud_ot_estado` para que TAMBIÉN lo use el botón "Marcar
+    instalado" de la OT (POST /ot/api/<vid>/repuestos-instalar/<sid>) sin
+    duplicar la lógica de negocio (kardex/alerta de máquina/ticket/log) en
+    dos lugares. La ruta original (`repstock_solicitud_ot_estado`) queda
+    como un wrapper delgado que solo arma `nuevo`/`user` desde el request y
+    traduce la tupla de vuelta a `jsonify(...), http` -- MISMO
+    comportamiento observable (códigos, mensajes y JSON) de antes.
+
+    ⚠️ COORDINACIÓN (Fase 3 kardex, en paralelo): otra rama está
+    reescribiendo esta misma transición para que 'instalado' corra en una
+    transacción con el movimiento de bodega (salida de stock). Cuando esa
+    rama se integre, hay que volver a aplicar esta extracción sobre su
+    versión nueva del cuerpo.
+
+    Args:
+      sid:    id de mant_ot_repuesto_solicitudes
+      nuevo:  estado destino, YA en minúsculas (ver _OTREP_TRANSICIONES)
+      user:   username que ejecuta la transición (nunca confiar en `datos`)
+      datos:  el mismo body que acepta la ruta -- nota, equipo_operativo,
+              proveedor_id, oc_numero, repuesto_stock_id, etc.
+
+    Returns:
+      (ok: bool, http_status: int, payload: dict) -- el caller solo tiene
+      que hacer `return jsonify(payload), http_status`.
     """
-    d = request.get_json(silent=True) or {}
-    nuevo = (d.get("estado") or "").strip().lower()
+    d = datos or {}
     s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
     if not s:
-        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+        return False, 404, {"ok": False, "error": "Solicitud no encontrada."}
     actual = s.get("estado")
     if nuevo not in _OTREP_TRANSICIONES.get(actual, ()):
-        return jsonify({"ok": False, "error":
+        return False, 400, {"ok": False, "error":
                         f"Desde \"{_OTREP_ESTADO_LABEL.get(actual, actual)}\" no se puede pasar a "
-                        f"\"{_OTREP_ESTADO_LABEL.get(nuevo, nuevo or '?')}\"."}), 400
+                        f"\"{_OTREP_ESTADO_LABEL.get(nuevo, nuevo or '?')}\"."}
     if nuevo in _OTREP_TRANSICIONES_GESTION and _es_rol_tecnico():
-        return jsonify({"ok": False, "error":
+        return False, 403, {"ok": False, "error":
                         "Pedir al proveedor o rechazar una solicitud lo decide gestión, "
-                        "no un técnico."}), 403
-    user = current_username() or "sistema"
+                        "no un técnico."}
     nota = (d.get("nota") or "").strip()
     sets, params = ["estado=%s"], [nuevo]
     stock = None
@@ -87691,14 +87743,14 @@ def repstock_solicitud_ot_estado(sid):
     if nuevo == "validado":
         rid = str(d.get("repuesto_stock_id") or s.get("repuesto_stock_id") or "").strip()
         if not rid.isdigit():
-            return jsonify({"ok": False, "error":
+            return False, 400, {"ok": False, "error":
                             "Para validar hay que ligar la solicitud a un repuesto REAL de la Bodega "
-                            "(uno existente, o créalo primero con su ubicación)."}), 400
+                            "(uno existente, o créalo primero con su ubicación)."}
         stock = mysql_fetchone(
             "SELECT id, sku, descripcion, cantidad, proveedor_id FROM mant_repuestos_stock "
             " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
         if not stock:
-            return jsonify({"ok": False, "error": "Ese repuesto de bodega no existe o está inactivo."}), 400
+            return False, 400, {"ok": False, "error": "Ese repuesto de bodega no existe o está inactivo."}
         sets += ["repuesto_stock_id=%s", "repuesto_sku=%s", "validado_por=%s", "validado_at=NOW()"]
         params += [stock["id"], stock.get("sku"), user]
         if stock.get("proveedor_id") and not s.get("proveedor_id"):
@@ -87706,11 +87758,11 @@ def repstock_solicitud_ot_estado(sid):
     if nuevo == "pedido":
         pid_txt = str(d.get("proveedor_id") or s.get("proveedor_id") or "").strip()
         if not pid_txt.isdigit():
-            return jsonify({"ok": False, "error":
-                            "Indica a qué proveedor se le pide: es parte de lo que queda en el ticket."}), 400
+            return False, 400, {"ok": False, "error":
+                            "Indica a qué proveedor se le pide: es parte de lo que queda en el ticket."}
         prov = mysql_fetchone("SELECT id, nombre FROM mant_proveedores_repuesto WHERE id=%s", (int(pid_txt),))
         if not prov:
-            return jsonify({"ok": False, "error": "Ese proveedor no existe."}), 400
+            return False, 400, {"ok": False, "error": "Ese proveedor no existe."}
         sets += ["pedido_at=NOW()", "proveedor_id=%s"]; params.append(prov["id"])
         oc = (d.get("oc_numero") or "").strip()[:60]
         if oc:
@@ -87721,7 +87773,7 @@ def repstock_solicitud_ot_estado(sid):
         sets += ["instalado_at=NOW()", "resuelto_por=%s"]; params.append(user)
     if nuevo == "rechazado":
         if len(nota) < 5:
-            return jsonify({"ok": False, "error": "Di por qué se rechaza (queda en la solicitud y en el ticket)."}), 400
+            return False, 400, {"ok": False, "error": "Di por qué se rechaza (queda en la solicitud y en el ticket)."}
         sets.append("resuelto_por=%s"); params.append(user)
     if nuevo == "solicitado":
         # Reabrir: vuelve al inicio de la trayectoria, limpia lo que ya no aplica
@@ -87739,7 +87791,7 @@ def repstock_solicitud_ot_estado(sid):
                       tuple(params))
     except Exception as e:
         print(f"[otrep] estado sid={sid}: {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo actualizar la solicitud."}), 500
+        return False, 500, {"ok": False, "error": "No se pudo actualizar la solicitud."}
     equipo_operativo = False
     if nuevo in ("instalado", "rechazado"):
         equipo_operativo = _otrep_cerrar_alerta_maquina(
@@ -87814,8 +87866,32 @@ def repstock_solicitud_ot_estado(sid):
             _inc_log(s["incidencia_id"], "repuesto_solicitud_estado", "repuesto", None, _detalle_log)
     except Exception:
         pass
-    return jsonify({"ok": True, "estado": nuevo, "estado_label": label, "aviso": aviso,
-                    "siguientes": list(_OTREP_TRANSICIONES.get(nuevo, ()))})
+    return True, 200, {"ok": True, "estado": nuevo, "estado_label": label, "aviso": aviso,
+                    "siguientes": list(_OTREP_TRANSICIONES.get(nuevo, ()))}
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/estado", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_ot_estado(sid):
+    """Mueve una solicitud por su trayectoria. Body JSON:
+      estado             destino (ver _OTREP_TRANSICIONES)
+      repuesto_stock_id  obligatorio para 'validado' si la solicitud no tenía
+      proveedor_id       OBLIGATORIO en 'pedido' (Daniel: "OT, proveedor,
+                         repuesto, cantidades"); oc_numero opcional
+      nota               obligatoria en 'rechazado'; opcional en el resto
+      equipo_operativo   true en 'instalado' si el equipo volvió a operar
+    'pedido' y 'rechazado' son decisiones de gestión, no de un técnico.
+
+    🏗️ Fase 4 (2026-09-26): el cuerpo de esta ruta vive ahora en
+    `_otrep_cambiar_estado` (ver su docstring) -- esta función solo arma
+    `nuevo`/`user` desde el request y traduce el resultado a JSON, sin
+    cambiar ningún código/mensaje/comportamiento de antes.
+    """
+    d = request.get_json(silent=True) or {}
+    nuevo = (d.get("estado") or "").strip().lower()
+    user = current_username() or "sistema"
+    ok, http, payload = _otrep_cambiar_estado(sid, nuevo, user, d)
+    return jsonify(payload), http
 
 
 @app.route("/repuestos/api/solicitudes-ot/<int:sid>/cantidad", methods=["POST"])
@@ -88405,9 +88481,21 @@ def repstock_solicitud_ot_preparar_ot(sid):
         v = mysql_fetchone("SELECT id, numero_ot FROM mant_visitas WHERE id=%s", (s["ot_generada_id"],))
         return jsonify({"ok": True, "ya_generada": {
             "visita_id": s["ot_generada_id"], "numero_ot": (v or {}).get("numero_ot")}})
-    if s.get("estado") != "recibido":
+    # 🏗️ FIX 2026-09-26 (Fase 4 -- decisión de Daniel: "se puede generar
+    # desde validada con stock o recibida"): antes solo 'recibido'. Si está
+    # 'validado' pero el repuesto quedó sobre-comprometido en bodega entre
+    # TODAS las OT abiertas que lo piden (mismo cálculo de _otrep_fila,
+    # `stock_disponible`), se pide pasar por "Pedir al proveedor" primero.
+    if s.get("estado") not in ("recibido", "validado"):
         return jsonify({"ok": False, "error":
-                        "Solo se puede generar la OT cuando el repuesto ya está recibido."}), 400
+                        "Solo se puede generar la OT cuando el repuesto está validado (con stock) "
+                        "o recibido."}), 400
+    if (s.get("estado") == "validado" and s.get("stock_disponible") is not None
+            and s["stock_disponible"] < 0):
+        return jsonify({"ok": False, "error":
+                        f"\"{s.get('stock_sku') or s.get('repuesto_nombre')}\" no tiene stock "
+                        "suficiente entre todas las OT abiertas que lo piden -- pide al proveedor "
+                        "antes de generar esta OT."}), 400
 
     cliente = None
     cliente_sugerido = None
@@ -88488,10 +88576,12 @@ def repstock_solicitud_ot_vincular_ot(sid):
         return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
     if s.get("ot_generada_id"):
         return jsonify({"ok": False, "error": "Esta solicitud ya tiene una OT generada."}), 409
-    if s.get("estado") != "recibido":
+    # 🏗️ FIX 2026-09-26 (Fase 4): mismo criterio que preparar-ot -- 'validado'
+    # también puede generar OT, no solo 'recibido'.
+    if s.get("estado") not in ("recibido", "validado"):
         return jsonify({"ok": False, "error":
-                        "Esta solicitud ya no está en 'recibido' -- alguien más la movió "
-                        "mientras generabas la OT. Revisa su estado antes de reintentar."}), 409
+                        "Esta solicitud ya no está en 'validado' ni 'recibido' -- alguien más la "
+                        "movió mientras generabas la OT. Revisa su estado antes de reintentar."}), 409
     v = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (visita_id,))
     if not v:
         return jsonify({"ok": False, "error": "La OT indicada no existe."}), 404
@@ -88503,7 +88593,8 @@ def repstock_solicitud_ot_vincular_ot(sid):
     try:
         filas = mysql_execute_returning_rowcount(
             "UPDATE mant_ot_repuesto_solicitudes SET ot_generada_id=%s "
-            " WHERE id=%s AND ot_generada_id IS NULL AND estado='recibido'", (visita_id, sid))
+            " WHERE id=%s AND ot_generada_id IS NULL AND estado IN ('validado','recibido')",
+            (visita_id, sid))
         if not filas:
             return jsonify({"ok": False, "error":
                             "No se pudo vincular: la solicitud ya tiene una OT generada o cambió "
@@ -88533,6 +88624,250 @@ def repstock_solicitud_ot_vincular_ot(sid):
         except Exception as e:
             print(f"[otrep] vincular-ot tk_mensajes sid={sid}: {e}", flush=True)
     return jsonify({"ok": True, "visita_id": visita_id, "numero_ot": numero_ot})
+
+
+def _otrep_validar_lote_mismo_cliente(sols):
+    """Valida el lote de `preparar-ot-lote` (Fase 4, 2026-09-26 -- Daniel:
+    "con el filtro de que tiene que ser siempre el mismo cliente"): mismo
+    cliente_id (no NULL), ninguna con ot_generada_id ya seteado, y estado
+    'recibido' o 'validado' con stock disponible suficiente.
+
+    FUNCIÓN PURA -- sin BD ni Flask: recibe la lista de solicitudes YA
+    resueltas por `_otrep_fila` (con su `stock_disponible` YA calculado,
+    que es un cálculo GLOBAL sobre TODAS las solicitudes abiertas de ese
+    repuesto -- no hace falta sumar aparte "las demás del lote que usan el
+    mismo repuesto", ya viene sumado). Separada de la ruta a propósito para
+    poder testearla sin levantar Flask/BD (mismo criterio que
+    `_otrep_validar_lineas_lote`, ver tests/test_repuestos_lote_validacion.py).
+
+    Returns: (error: str|None, codigo_http: int|None) -- (None, None) si
+    el lote es válido."""
+    if not sols:
+        return "Selecciona al menos una solicitud.", 400
+    ya_generada = next((s for s in sols if s.get("ot_generada_id")), None)
+    if ya_generada:
+        return (f"La solicitud #{ya_generada['id']} ({ya_generada.get('repuesto_nombre')}) ya "
+                "tiene una OT generada -- sácala de la selección."), 409
+    clientes = {s.get("cliente_id") for s in sols}
+    if None in clientes or len(clientes) != 1:
+        return ("Todas las solicitudes deben ser del MISMO cliente (una reposición de stock "
+                "propio, sin cliente, no se puede mezclar en una OT de cliente)."), 400
+    for s in sols:
+        if s.get("estado") not in ("recibido", "validado"):
+            return (f"\"{s.get('repuesto_nombre')}\" (#{s['id']}) está "
+                    f"\"{(s.get('estado_label') or '').split(' · ')[0]}\": solo se puede "
+                    "generar la OT desde validado (con stock) o recibido."), 400
+        if (s.get("estado") == "validado" and s.get("stock_disponible") is not None
+                and s["stock_disponible"] < 0):
+            return (f"\"{s.get('stock_sku') or s.get('repuesto_nombre')}\" (#{s['id']}) no "
+                    "tiene stock suficiente entre todas las OT abiertas que lo piden -- pide "
+                    "al proveedor antes de generar esta OT."), 400
+    return None, None
+
+
+@app.route("/repuestos/api/solicitudes-ot/preparar-ot-lote", methods=["POST"])
+@_otrep_generar_ot_required
+def repstock_solicitud_ot_preparar_ot_lote():
+    """Como preparar-ot (singular), pero para VARIAS solicitudes del MISMO
+    cliente en UNA sola OT de instalación (Fase 4, 2026-09-26 -- Daniel:
+    "puedo gestionar una orden de trabajo en base a que vayan a instalar
+    todos esos repuestos o uno solo, con el filtro de que tiene que ser
+    siempre el mismo cliente"; "para generar una OT, por cliente").
+
+    Body JSON: {sids: [1..50 ids]}. Solo LECTURA -- arma el prellenado del
+    wizard OT2C (cliente, máquinas a preseleccionar sin repetir, y la lista
+    de repuestos para el bloque informativo y el título/descripción
+    sugeridos). La OT la sigue creando el motor genérico de siempre (POST
+    /ot/api/crear); el link se registra DESPUÉS con vincular-ot-lote.
+
+    Reglas (todas o nada -- si una sola solicitud no cumple, se rechaza el
+    lote completo con un mensaje que dice cuál y por qué):
+      · mismo cliente_id, no NULL (una reposición de stock propio, sin
+        cliente, no se puede mezclar en una OT de cliente);
+      · ninguna con ot_generada_id ya seteado;
+      · estado 'recibido', o 'validado' con stock disponible suficiente
+        (considerando las demás del lote que usan el mismo repuesto --
+        `stock_disponible`, en _otrep_fila, ya es un cálculo GLOBAL sobre
+        TODAS las solicitudes abiertas de ese repuesto, así que cubre solo
+        con leerlo por fila, sin sumar aparte)."""
+    d = request.get_json(silent=True) or {}
+    sids_in = d.get("sids") or []
+    try:
+        sids = sorted({int(x) for x in sids_in})
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Lista de solicitudes inválida."}), 400
+    if not sids:
+        return jsonify({"ok": False, "error": "Selecciona al menos una solicitud."}), 400
+    if len(sids) > 50:
+        return jsonify({"ok": False, "error": "Máximo 50 solicitudes por OT."}), 400
+
+    ph = ",".join(["%s"] * len(sids))
+    try:
+        rows = mysql_fetchall(_OTREP_SQL_SOL + f" WHERE s.id IN ({ph})", tuple(sids)) or []
+    except Exception as e:
+        print(f"[otrep] preparar-ot-lote sids={sids}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudieron leer las solicitudes."}), 500
+    if len(rows) != len(sids):
+        return jsonify({"ok": False, "error": "Alguna solicitud ya no existe -- recarga la lista."}), 404
+    sols = [_otrep_fila(r) for r in rows]
+
+    _err, _http = _otrep_validar_lote_mismo_cliente(sols)
+    if _err:
+        return jsonify({"ok": False, "error": _err}), _http
+
+    cliente_id = sols[0].get("cliente_id")
+    cliente = {"id": cliente_id, "nombre": sols[0].get("cliente_nombre") or "",
+               "rut": sols[0].get("cliente_rut") or ""}
+    maquina_ids = []
+    for s in sols:
+        mid = s.get("maquina_id")
+        if mid and mid not in maquina_ids:
+            maquina_ids.append(mid)
+    repuestos = [{
+        "id": s["id"], "nombre": s.get("repuesto_nombre") or "", "cantidad": s.get("cantidad"),
+        "equipo": s.get("maquina_nombre") or "", "sku": s.get("stock_sku") or s.get("repuesto_sku") or "",
+    } for s in sols]
+    nombres = ", ".join(sorted({r["nombre"] for r in repuestos if r["nombre"]}))
+    descripcion = "\n".join(
+        f"- {r['nombre']} (x{r['cantidad']:g})" + (f" · {r['equipo']}" if r["equipo"] else "")
+        for r in repuestos)
+    return jsonify({
+        "ok": True,
+        "titulo": (f"Instalación de repuestos: {nombres}")[:200],
+        "descripcion": descripcion[:2000],
+        "tipo_sugerido": "correctiva",
+        "cliente": cliente,
+        "equipo_preset_maquina_ids": maquina_ids,
+        "repuestos": repuestos,
+    })
+
+
+@app.route("/repuestos/api/solicitudes-ot/vincular-ot-lote", methods=["POST"])
+@_otrep_generar_ot_required
+def repstock_solicitud_ot_vincular_ot_lote():
+    """Como vincular-ot (singular), pero para el lote de la Fase 4. El
+    UPDATE es ATÓMICO: la condición de cliente/estado/sin-OT-previa vive en
+    el propio WHERE (mismo patrón de concurrencia que el singular) y se
+    exige rowcount == len(sids) -- si UNA sola solicitud cambió de estado o
+    ya se vinculó mientras se llenaba el wizard, se aborta el UPDATE
+    completo (nada queda vinculado a medias) y se avisa con un 409 claro."""
+    d = request.get_json(silent=True) or {}
+    sids_in = d.get("sids") or []
+    try:
+        sids = sorted({int(x) for x in sids_in})
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Lista de solicitudes inválida."}), 400
+    if not sids:
+        return jsonify({"ok": False, "error": "Selecciona al menos una solicitud."}), 400
+    if len(sids) > 50:
+        return jsonify({"ok": False, "error": "Máximo 50 solicitudes por OT."}), 400
+    try:
+        visita_id = int(d.get("visita_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Falta la OT recién generada."}), 400
+
+    v = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (visita_id,))
+    if not v:
+        return jsonify({"ok": False, "error": "La OT indicada no existe."}), 404
+
+    ph = ",".join(["%s"] * len(sids))
+    try:
+        rows = mysql_fetchall(
+            f"SELECT id, cliente_id, estado, ot_generada_id, visita_id, incidencia_id, ticket_id, "
+            f"       repuesto_nombre FROM mant_ot_repuesto_solicitudes WHERE id IN ({ph})",
+            tuple(sids)) or []
+    except Exception as e:
+        print(f"[otrep] vincular-ot-lote leer sids={sids}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudieron leer las solicitudes."}), 500
+    if len(rows) != len(sids):
+        return jsonify({"ok": False, "error": "Alguna solicitud ya no existe -- recarga la lista."}), 404
+    clientes = {r.get("cliente_id") for r in rows}
+    if None in clientes or len(clientes) != 1:
+        return jsonify({"ok": False, "error": "Todas las solicitudes deben ser del mismo cliente."}), 400
+    cliente_id = next(iter(clientes))
+    if v.get("cliente_id") and int(v["cliente_id"]) != int(cliente_id):
+        return jsonify({"ok": False, "error":
+                        "Esa OT es de otro cliente -- no corresponde a esta selección."}), 400
+
+    user = current_username() or "sistema"
+    numero_ot = v.get("numero_ot") or f"OT #{visita_id}"
+    try:
+        filas = mysql_execute_returning_rowcount(
+            f"UPDATE mant_ot_repuesto_solicitudes SET ot_generada_id=%s "
+            f" WHERE id IN ({ph}) AND ot_generada_id IS NULL AND estado IN ('validado','recibido') "
+            f"   AND cliente_id=%s",
+            (visita_id, *sids, cliente_id))
+        if filas != len(sids):
+            return jsonify({"ok": False, "error":
+                            "No se pudo vincular el lote completo: alguna solicitud ya tiene una OT "
+                            "generada o cambió de estado mientras se generaba. Nada quedó a medias -- "
+                            "revisa el estado actual de cada una y reintenta."}), 409
+    except Exception as e:
+        print(f"[otrep] vincular-ot-lote sids={sids}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo vincular la OT."}), 500
+
+    for r in rows:
+        detalle = f"OT {numero_ot} generada para instalar {r.get('repuesto_nombre')} (solicitud #{r['id']}, lote de {len(sids)})"
+        try:
+            if r.get("visita_id"):
+                _mant_log("visita", r["visita_id"], "repuesto_ot_generada", detalle)
+            elif r.get("incidencia_id"):
+                _inc_log(r["incidencia_id"], "repuesto_ot_generada", "repuesto", None, detalle)
+        except Exception:
+            pass
+        if r.get("ticket_id"):
+            try:
+                mysql_execute(
+                    "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+                    "VALUES (%s,'comentario',%s,%s,%s,1)",
+                    (r["ticket_id"], detalle,
+                     json.dumps({"solicitud_repuesto_id": r["id"], "visita_id": visita_id}, ensure_ascii=False),
+                     user))
+            except Exception as e:
+                print(f"[otrep] vincular-ot-lote tk_mensajes sid={r['id']}: {e}", flush=True)
+    try:
+        _mant_log("visita", visita_id, "repuesto_ot_lote_generada",
+                  f"OT generada para instalar {len(sids)} solicitud(es) de repuesto: "
+                  + ", ".join(f"#{x}" for x in sids))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "visita_id": visita_id, "numero_ot": numero_ot, "n": len(sids)})
+
+
+@app.route("/ot/api/<int:vid>/repuestos-instalar/<int:sid>", methods=["POST"])
+@_mant_required
+def ot2_api_repuesto_instalar(vid, sid):
+    """"Marcar instalado" desde la OT (Fase 4, 2026-09-26 -- Daniel: "las OT
+    deben expresar si se solicitó el repuesto y el estado en que quedó el
+    equipo... el repositorio son las fichas de clientes, todo movimiento se
+    verá reflejado"). Este repuesto NACIÓ en otra OT/ticket/incidencia y se
+    INSTALA en ESTA (ot_generada_id=vid, ver vincular-ot-lote/vincular-ot) --
+    reusa el MISMO núcleo que la cola de Solicitudes (_otrep_cambiar_estado)
+    para que el kardex/alerta de máquina/ticket se comporten IGUAL sea cual
+    sea la puerta por la que se marcó 'instalado'.
+
+    Gate: técnico asignado que pueda EJECUTAR esta OT, o gestión (bodega/
+    Tickets/superadmin) -- mismo criterio que el resto del módulo. Un
+    técnico EXTERNO no ve costos/proveedor/ubicación: ya los filtra
+    `_otrep_fila(..., para_ot=True)`, la misma función que arma el GET que
+    alimenta esta pantalla."""
+    if not (_puede_ot_accion(vid, "ejecutar") or _otrep_puede_gestion()):
+        return jsonify({"ok": False, "error": "No tienes permiso para marcar repuestos de esta OT."}), 403
+    s = mysql_fetchone(
+        "SELECT id, ot_generada_id, estado, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
+        " WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if int(s.get("ot_generada_id") or 0) != int(vid):
+        return jsonify({"ok": False, "error": "Este repuesto no está vinculado a esta OT."}), 400
+    if s.get("estado") not in ("validado", "recibido"):
+        return jsonify({"ok": False, "error":
+                        f"Esta solicitud está \"{(_OTREP_ESTADO_LABEL.get(s['estado'], s['estado']) or '').split(' · ')[0]}\": "
+                        "solo se puede marcar instalado desde validado o recibido."}), 400
+    d = request.get_json(silent=True) or {}
+    user = current_username() or "sistema"
+    ok, http, payload = _otrep_cambiar_estado(sid, "instalado", user, d)
+    return jsonify(payload), http
 
 
 @app.route("/ot/api/<int:vid>/equipos-desde-documento", methods=["POST"])
@@ -98996,7 +99331,23 @@ def mant_ot_firmar_revision(vid):
             _notificar_ot_pendiente_aprobacion_async(vid, request.host_url)
         except Exception as e_n:
             print(f"[notif-firmada-tecnico] fail vid={vid}: {e_n}", flush=True)
-        return jsonify({"ok": True, "estado": "firmada_tecnico"})
+        # ⚠️ 2026-09-26 (Fase 4 -- spec: "al cerrar/firmar la OT con
+        # repuestos sin marcar: aviso (no bloqueo)"). NO bloquea la firma --
+        # solo avisa, mismo criterio que los demás `avisos` de este módulo
+        # (ver ot2_api_crear). Repuestos vinculados a ESTA OT (ot_generada_id
+        # = vid) que siguen 'validado'/'recibido' = todavía no se marcaron
+        # instalados desde el bloque "Repuestos a instalar en esta OT".
+        avisos = []
+        try:
+            _n_pend_rep = int((mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
+                " WHERE ot_generada_id=%s AND estado IN ('validado','recibido')",
+                (vid,)) or {}).get("n") or 0)
+            if _n_pend_rep:
+                avisos.append(f"Quedan {_n_pend_rep} repuesto(s) sin marcar como instalados en esta OT.")
+        except Exception as _e_avrep:
+            print(f"[firmar-revision] aviso repuestos vid={vid}: {_e_avrep}", flush=True)
+        return jsonify({"ok": True, "estado": "firmada_tecnico", "avisos": avisos})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

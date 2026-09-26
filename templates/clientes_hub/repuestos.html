@@ -125,6 +125,9 @@
 .rs-grupo-head .n{background:#dc2626;color:#fff;font-weight:800;font-size:.7rem;border-radius:999px;padding:2px 10px}
 .rs-grupo-contacto{font-size:.76rem;color:#6b7280}
 .rs-grupo-acc{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+/* 🏗️ Fase 4 (2026-09-26) -- misma barra de acciones para la vista Lista:
+   reusa .rs-grupo-item (checkbox + tarjeta) para cada fila seleccionable. */
+.rs-lista-acc{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .rs-grupo-body{padding:12px 16px;display:flex;flex-direction:column;gap:10px}
 .rs-grupo-item{display:flex;align-items:flex-start;gap:10px}
 .rs-grupo-item input[type=checkbox]{width:20px;height:20px;margin-top:4px;flex:none}
@@ -220,6 +223,10 @@
   .rs-buscar{max-width:none;width:100%}
   .rs-chip{min-height:44px}
   .rs-pie .btn{min-height:44px}
+  /* REGLA #3 -- Fase 4 (2026-09-26): toque mínimo 44px en los botones
+     nuevos de "Generar OT (N)" (Lista y Por cliente) y su checkbox. */
+  .rs-lista-acc .rs-btn, .rs-grupo-acc .rs-btn{min-height:44px}
+  .rs-grupo-item input[type=checkbox]{width:22px;height:22px}
 }
 </style>
 
@@ -361,6 +368,18 @@
 
   {# ── Vista Lista (paginada en servidor, REGLA #4.3) ── #}
   <div id="rsVistaPaneLista">
+    {#- 🏗️ Fase 4 (2026-09-26 -- Daniel: "puedo gestionar una orden de
+        trabajo en base a que vayan a instalar todos esos repuestos o uno
+        solo, con el filtro de que tiene que ser siempre el mismo
+        cliente"). "Generar OT (N)" también en Lista, cuando TODAS las
+        seleccionadas son del mismo cliente -- selección solo de la página
+        visible (REGLA #14: marcar/desmarcar todo). -#}
+    <div class="rs-lista-acc" id="rsListaAcc" style="display:none">
+      <button type="button" class="rs-btn" onclick="rsListaToggleTodo()">
+        <i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>
+      <button type="button" class="rs-btn generar-ot" id="rsListaBtnOT" disabled
+              onclick="rsListaGenerarOT()"><i class="bi bi-clipboard2-plus me-1"></i>Generar OT (0)</button>
+    </div>
     <div class="rs-lista" id="rsLista"><div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando solicitudes…</div></div>
     <div class="rs-pie" id="rsPie" style="display:none">
       <span id="rsPieTxt"></span>
@@ -829,7 +848,11 @@ var _rs = {
   fecha_desde: '', fecha_hasta: '', q: '', page: 1, size: 100, conteo: {}, estados: {},
   total: 0, total_pages: 1, sel: null, valSid: null, valTimer: null, pedSid: null,
   puedePedir: true, puedeGenerarOT: false, provs: null, vista: 'lista', qTimer: null,
-  grupos: [], selGrupo: {}, clienteTimer: null
+  grupos: [], selGrupo: {}, clienteTimer: null,
+  // 🏗️ Fase 4 (2026-09-26): selección de la vista Lista para "Generar OT
+  // (N)" -- solo de la página visible (se reinicia en cada rsCargar()),
+  // mismo espíritu que selGrupo pero sin agrupar por cliente/proveedor.
+  selLista: {}
 };
 var _RS_EST_CLS = { solicitado: 'sol', validado: 'val', pedido: 'ped', recibido: 'rec', instalado: 'ins', rechazado: 'rej' };
 function rsEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
@@ -975,6 +998,9 @@ async function rsCargar(){
     _rs.total_pages = j.total_pages || 1;
     _rs.puedePedir = (j.puede_pedir_rechazar !== false);
     _rs.puedeGenerarOT = !!j.puede_generar_ot;
+    // 🏗️ Fase 4: cada fetch nuevo (filtro/página) reinicia la selección de
+    // "Generar OT (N)" -- REGLA #14 opera sobre lo VISIBLE, no across pages.
+    _rs.selLista = {};
     rsPintarChips();
     rsPintar();
     rsAplicarPendientesTecnicos(j.pendientes_tecnicos);
@@ -1110,6 +1136,7 @@ function rsPintar(){
   document.getElementById('rsPagTxt').textContent = 'Página ' + _rs.page + ' de ' + _rs.total_pages;
   document.getElementById('rsPrev').disabled = _rs.page <= 1;
   document.getElementById('rsNext').disabled = _rs.page >= _rs.total_pages;
+  rsListaActualizarBoton();
 }
 
 /* ── Vistas agrupadas: Por proveedor / Por cliente (Daniel, 25-sep) ── */
@@ -1169,29 +1196,42 @@ function rsPintarGrupos(){
             '<i class="bi bi-cart-plus me-1"></i>Crear ticket de compra (' + nSel + ')</button>' +
         '</div></div><div class="rs-grupo-body">' + itemsHtml + '</div></div>';
     }
-    // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): el
-    // botón se habilitaba con solo "nSel === 1", sin mirar si ESA solicitud
-    // está en 'recibido' (lo único que preparar-ot acepta) ni si
-    // _rs.puedeGenerarOT es true (el permiso que ya trae la respuesta del
-    // backend) -- el click igual llegaba a rsGenerarOT() y recién ahí el
-    // backend lo rechazaba con un error, un paso evitable.
-    const unoSel = nSel === 1 ? g.solicitudes.find(function(s){ return sel[s.id]; }) : null;
-    const puedeUno = !!(unoSel && unoSel.estado === 'recibido' && _rs.puedeGenerarOT);
-    let btnTxt = 'Generar OT (0)';
-    let btnTitle = 'Marca una solicitud "Recibida" para generar su OT.';
-    if (nSel > 1){ btnTxt = 'Varias en una OT: próxima fase'; btnTitle = 'Por ahora, genera la OT de a una solicitud.'; }
-    else if (nSel === 1){
-      btnTxt = 'Generar OT (1)';
-      if (!_rs.puedeGenerarOT) btnTitle = 'No tienes permiso para generar una OT desde aquí.';
-      else if (unoSel.estado !== 'recibido') btnTitle = 'Solo se puede generar la OT cuando el repuesto ya está "Recibido".';
-      else btnTitle = 'Genera la OT de instalación de esta solicitud.';
+    // 🏗️ Fase 4 (2026-09-26 -- Daniel: "puedo gestionar una orden de
+    // trabajo en base a que vayan a instalar todos esos repuestos o uno
+    // solo, con el filtro de que tiene que ser siempre el mismo cliente").
+    // "Generar OT (N)" ya funciona con N≥1 -- esta vista agrupa "Por
+    // cliente", así que el cliente YA es el mismo para todo el grupo; solo
+    // falta validar que ninguna seleccionada tenga OT generada, que todas
+    // estén validado/recibido, y que las validadas tengan stock suficiente.
+    const seleccionadas = g.solicitudes.filter(function(s){ return sel[s.id]; });
+    const conOT = seleccionadas.filter(function(s){ return s.ot_generada_id; });
+    const noAptas = seleccionadas.filter(function(s){ return s.estado !== 'recibido' && s.estado !== 'validado'; });
+    const sinStock = seleccionadas.filter(function(s){ return s.estado === 'validado' && s.stock_disponible != null && s.stock_disponible < 0; });
+    let btnTxt = 'Generar OT (' + nSel + ')';
+    let btnTitle = 'Marca una o más solicitudes para generar su OT.';
+    let puedeLote = false;
+    if (!nSel){
+      btnTitle = 'Marca una o más solicitudes de este cliente para generar su OT.';
+    } else if (!_rs.puedeGenerarOT){
+      btnTitle = 'No tienes permiso para generar una OT desde aquí.';
+    } else {
+      const razones = [];
+      if (conOT.length) razones.push(conOT.length + (conOT.length === 1 ? ' ya tiene OT generada' : ' ya tienen OT generada'));
+      if (noAptas.length){
+        const estados = noAptas.map(function(s){ return String(s.estado_label || s.estado).split(' · ')[0]; })
+          .filter(function(v, i, a){ return a.indexOf(v) === i; });
+        razones.push(noAptas.length + ' no está(n) "Validada" ni "Recibida" (' + estados.join(', ') + ')');
+      }
+      if (sinStock.length) razones.push(sinStock.length + ' sin stock suficiente: espera a que lleguen');
+      puedeLote = !razones.length;
+      btnTitle = razones.length ? razones.join(' · ') : 'Genera una OT de instalación con estas ' + nSel + ' solicitud(es).';
     }
     return '<div class="rs-grupo">' +
       '<div class="rs-grupo-head"><h6><i class="bi bi-building me-1"></i>' + rsEsc(g.cliente_nombre) + '</h6>' +
       '<span class="n">' + g.n + ' abierta' + (g.n === 1 ? '' : 's') + '</span>' +
       '<div class="rs-grupo-acc">' +
         '<button type="button" class="rs-btn" onclick="rsGrupoToggleTodo(\'' + key + '\')"><i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>' +
-        '<button type="button" class="rs-btn generar-ot" title="' + rsEsc(btnTitle) + '" ' + (puedeUno ? '' : 'disabled') + ' onclick="rsGrupoGenerarOT(\'' + key + '\')">' +
+        '<button type="button" class="rs-btn generar-ot" title="' + rsEsc(btnTitle) + '" ' + (puedeLote ? '' : 'disabled') + ' onclick="rsGrupoGenerarOT(\'' + key + '\')">' +
           '<i class="bi bi-clipboard2-plus me-1"></i>' + btnTxt + '</button>' +
       '</div></div><div class="rs-grupo-body">' + itemsHtml + '</div></div>';
   }).join('');
@@ -1225,18 +1265,79 @@ async function rsCrearTicketCompra(key){
     ilusToast(j.error || 'Disponible en la próxima fase.', { type: 'info' });
   } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
+// 🏗️ Fase 4 (2026-09-26): ya no restringe a 1 sola solicitud -- N≥1 pasa
+// por el lote (rsGenerarOTLote). El botón mismo queda deshabilitado si la
+// selección no cumple (ver rsPintarGrupos), así que si esto se llama es
+// porque la validación ya pasó.
 function rsGrupoGenerarOT(key){
   const sel = _rs.selGrupo[key] || {};
   const ids = Object.keys(sel).filter(function(k){ return sel[k]; }).map(Number);
-  if (ids.length !== 1){
-    if (ids.length > 1) ilusToast('Varias solicitudes en una sola OT está disponible en la próxima fase: genera una OT por solicitud, o deja marcada solo una.', { type: 'info' });
-    return;
-  }
-  rsGenerarOT(ids[0]);
+  if (!ids.length) return;
+  rsGenerarOTLote(ids, function(){ _rs.selGrupo[key] = {}; });
 }
 function rsCard(s){
   const est = _RS_EST_CLS[s.estado] || 'sol';
-  return '<div class="rs-card ' + est + (s.por_atender ? ' por-atender' : '') + '">' + rsCardInner(s) + '</div>';
+  const card = '<div class="rs-card ' + est + (s.por_atender ? ' por-atender' : '') + '">' + rsCardInner(s) + '</div>';
+  // 🏗️ Fase 4 (2026-09-26): checkbox de selección para "Generar OT (N)" en
+  // la vista Lista -- solo tiene sentido si el usuario puede generar OT
+  // (mismo permiso que ya gatea el botón individual de cada tarjeta).
+  // Reusa .rs-grupo-item (checkbox + tarjeta), YA estilado para esto.
+  if (!_rs.puedeGenerarOT) return card;
+  const checked = !!_rs.selLista[s.id];
+  return '<div class="rs-grupo-item"><input type="checkbox" ' + (checked ? 'checked' : '') +
+    ' onchange="rsListaToggle(' + s.id + ', this.checked)" ' +
+    'title="Seleccionar para generar OT de instalación">' + card + '</div>';
+}
+function rsListaSeleccionIds(){ return _rs.pagina.filter(function(s){ return _rs.selLista[s.id]; }).map(function(s){ return s.id; }); }
+function rsListaToggle(sid, checked){
+  _rs.selLista[sid] = checked;
+  rsListaActualizarBoton();
+}
+function rsListaToggleTodo(){
+  // REGLA #14: un solo toggle sobre lo VISIBLE (la página actual) -- si
+  // ALGUNO no está marcado, marca todos; si ya están todos marcados, los
+  // desmarca todos. Mismo criterio que rsGrupoToggleTodo.
+  const faltaAlguno = _rs.pagina.some(function(s){ return !_rs.selLista[s.id]; });
+  _rs.pagina.forEach(function(s){ _rs.selLista[s.id] = faltaAlguno; });
+  rsPintar();
+}
+// 🏗️ Fase 4 (2026-09-26): habilita/deshabilita "Generar OT (N)" de la vista
+// Lista y explica por qué, si alguna seleccionada no cumple -- mismo
+// espíritu que la validación de "Por cliente" (rsPintarGrupos). Se llama
+// tras cada rsPintar() y tras cada cambio de selección.
+function rsListaActualizarBoton(){
+  const acc = document.getElementById('rsListaAcc');
+  const btn = document.getElementById('rsListaBtnOT');
+  if (!acc || !btn) return;
+  acc.style.display = _rs.puedeGenerarOT ? '' : 'none';
+  if (!_rs.puedeGenerarOT) return;
+  const sels = _rs.pagina.filter(function(s){ return _rs.selLista[s.id]; });
+  btn.innerHTML = '<i class="bi bi-clipboard2-plus me-1"></i>Generar OT (' + sels.length + ')';
+  if (!sels.length){
+    btn.disabled = true;
+    btn.title = 'Marca una o más solicitudes del mismo cliente, "Validada" (con stock) o "Recibida".';
+    return;
+  }
+  const razones = [];
+  const clientes = new Set(sels.map(function(s){ return s.cliente_id; }));
+  if (clientes.size > 1 || sels.some(function(s){ return s.cliente_id == null; })) razones.push('deben ser todas del mismo cliente');
+  const conOT = sels.filter(function(s){ return s.ot_generada_id; });
+  if (conOT.length) razones.push(conOT.length + ' ya tiene(n) OT generada');
+  const noAptas = sels.filter(function(s){ return s.estado !== 'recibido' && s.estado !== 'validado'; });
+  if (noAptas.length){
+    const estados = noAptas.map(function(s){ return String(s.estado_label || s.estado).split(' · ')[0]; })
+      .filter(function(v, i, a){ return a.indexOf(v) === i; });
+    razones.push(noAptas.length + ' no está(n) "Validada" ni "Recibida" (' + estados.join(', ') + ')');
+  }
+  const sinStock = sels.filter(function(s){ return s.estado === 'validado' && s.stock_disponible != null && s.stock_disponible < 0; });
+  if (sinStock.length) razones.push(sinStock.length + ' sin stock suficiente entre todas las OT abiertas: espera a que lleguen');
+  btn.disabled = !!razones.length;
+  btn.title = razones.length ? razones.join(' · ') : 'Genera una OT de instalación con estas ' + sels.length + ' solicitud(es).';
+}
+async function rsListaGenerarOT(){
+  const ids = rsListaSeleccionIds();
+  if (!ids.length) return;
+  await rsGenerarOTLote(ids);
 }
 function rsCardInner(s){
   const est = _RS_EST_CLS[s.estado] || 'sol';
@@ -1258,12 +1359,16 @@ function rsCardInner(s){
   // funcionar todavía.
   }).join('') + (!s.ticket_id && s.contexto !== 'manual' ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '');
   // 🏗️ Fase 3 (2026-09-21, Daniel: "vayamos con la fase 3", los 3 orígenes
-  // + tipo correctiva): una vez recibido el repuesto, se puede generar la
-  // OT que lo va a instalar. Ya generada: link "Ver OT" en vez del botón,
-  // para no volver a disparar el wizard sobre la misma solicitud.
+  // + tipo correctiva): una vez recibido (o validado con stock, Fase 4) el
+  // repuesto, se puede generar la OT que lo va a instalar. Ya generada:
+  // link "OT-XXXX de instalación" en vez del botón, para no volver a
+  // disparar el wizard sobre la misma solicitud.
   const generarOT = s.ot_generada_id
-    ? '<a class="rs-btn ot-generada" href="/ot/' + s.ot_generada_id + '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Ver OT' + (s.ot_generada_numero ? ' ' + rsEsc(s.ot_generada_numero) : '') + '</a>'
-    : (s.estado === 'recibido' && _rs.puedeGenerarOT
+    ? '<a class="rs-btn ot-generada" href="/ot/' + s.ot_generada_id + '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>' + rsEsc(s.ot_generada_numero || ('OT #' + s.ot_generada_id)) + ' de instalación</a>'
+    // 🏗️ FIX Fase 4 (2026-09-26): antes solo 'recibido' -- ahora también
+    // 'validado' con stock disponible (decisión de Daniel: "se puede
+    // generar desde validada con stock o recibida").
+    : ((s.estado === 'recibido' || (s.estado === 'validado' && !(s.stock_disponible < 0))) && _rs.puedeGenerarOT
         ? '<button type="button" class="rs-btn generar-ot" onclick="rsGenerarOT(' + s.id + ')"><i class="bi bi-clipboard2-plus me-1"></i>Generar OT de instalación</button>'
         : '');
   // 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de la
@@ -1907,6 +2012,71 @@ async function rsGenerarOT(sid){
     }
   }
 
+  OT2C.abrir(opts);
+}
+
+/* ══════════════ Fase 4 (2026-09-26): UNA OT para VARIAS solicitudes del
+   MISMO cliente ══════════════════════════════════════════════════════════
+   Daniel: "gestionar esa solicitud, ver si tengo stock, puedo gestionar
+   una orden de trabajo en base a que vayan a instalar todos esos repuestos
+   o uno solo, con el filtro de que tiene que ser siempre el mismo
+   cliente"; "para generar una OT, por cliente". Reusa el MISMO wizard
+   OT2C (nunca uno propio) con `equipo_preset_maquina_ids` (plural) y el
+   bloque informativo `repuestos_a_instalar` -- ver ot2/_modal_crear.html.
+   Llaman a esta función: rsListaGenerarOT() (vista Lista) y
+   rsGrupoGenerarOT() (vista Por cliente). `alTerminar` es opcional: cada
+   caller limpia SU PROPIA selección (selLista vs. selGrupo[key]) después
+   de vincular. */
+async function rsGenerarOTLote(sids, alTerminar){
+  if (!window.OT2C){
+    ilusToast('El formulario de OT no cargó — recarga la página.', {type:'error'});
+    return;
+  }
+  let j;
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/preparar-ot-lote', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ sids: sids }) });
+    j = await r.json();
+  } catch(e){
+    ilusToast('Sin conexión: no se pudo preparar la OT.', {type:'error'});
+    return;
+  }
+  if (!j.ok){ ilusToast(j.error || 'No se pudo preparar la OT.', {type:'error'}); return; }
+
+  const opts = {
+    origen: 'cliente', cliente: j.cliente,
+    titulo: j.titulo, descripcion: j.descripcion, tipo: j.tipo_sugerido || 'correctiva',
+    equipo_preset_maquina_ids: j.equipo_preset_maquina_ids || [],
+    repuestos_a_instalar: j.repuestos || [],
+    // 🔒 Mismo criterio que rsGenerarOT (singular): fetch() NO rechaza la
+    // promesa por un 409 (dos gestores generando la OT casi a la vez, o
+    // alguna solicitud cambió de estado mientras se llenaba el wizard) --
+    // la OT en sí ya quedó creada de verdad pase lo que pase acá, así que
+    // se avisa con un warning en vez de un error bloqueante.
+    onCreada: async function(vid, url){
+      try {
+        const rv = await fetch('/repuestos/api/solicitudes-ot/vincular-ot-lote', {
+          method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+          body: JSON.stringify({ sids: sids, visita_id: vid })
+        });
+        const jv = await rv.json().catch(function(){ return {}; });
+        if (!jv.ok){
+          ilusToast('La OT se creó, pero no se pudo vincular a estas solicitudes: ' +
+            (jv.error || 'motivo desconocido') + '. Revisa manualmente desde ' + (url || 'la OT') + '.',
+            {type:'warning', duration:9000});
+        } else {
+          ilusToast('✓ ' + jv.n + ' repuesto(s) vinculado(s) a ' + (jv.numero_ot || url), {type:'success'});
+        }
+      } catch(e){
+        ilusToast('La OT se creó, pero hubo un problema de red al vincularla con estas solicitudes. '
+          + 'Revisa manualmente.', {type:'warning', duration:9000});
+      }
+      OT2C.cerrar();
+      if (typeof alTerminar === 'function') alTerminar();
+      rsCargar();
+    },
+  };
   OT2C.abrir(opts);
 }
 
