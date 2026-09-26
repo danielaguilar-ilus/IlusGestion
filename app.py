@@ -86037,6 +86037,20 @@ _OTREP_SQL_STOCK = (
     "  LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
     "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=rs.proveedor_id ")
 
+# 🚦 2026-09-26 (Daniel, motor de búsqueda "bien espectacular"): el mismo
+# cálculo de disponible que usa _otrep_fmt_stock (físico menos lo
+# comprometido en OTRAS solicitudes abiertas), pero como fragmento SQL
+# reutilizable para rankear -- a igualdad de relevancia de texto, el
+# repuesto con stock disponible sube primero. Se repite el subquery de
+# `comprometido` en vez de referenciar el alias del SELECT: más verboso,
+# pero cero ambigüedad de si el motor SQL resuelve alias dentro de una
+# expresión de ORDER BY.
+_OTREP_SQL_DISPONIBLE = (
+    "(rs.cantidad - (SELECT COALESCE(SUM(sd.cantidad),0) FROM mant_ot_repuesto_solicitudes sd "
+    " WHERE sd.repuesto_stock_id=rs.id AND COALESCE(sd.es_reposicion,0)=0 AND sd.estado IN "
+    "('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')))"
+)
+
 
 def _otrep_fmt_stock(r, para_ot=False):
     """Fila de bodega → dict. `para_ot`: lo que viaja a la pantalla de la OT
@@ -86838,6 +86852,15 @@ def ot2_api_repuestos_bodega_buscar():
       q             texto libre (>= 2 letras) sobre SKU, descripción, código de
                     fabricante, MARCA, nombre/SKU de MODELO compatible y, si
                     quien busca no es técnico externo, nombre de PROVEEDOR.
+                    🔎 2026-09-26 (Daniel: "es medio débil el buscador"): con
+                    VARIAS palabras se aplica AND entre ellas -- cada palabra
+                    debe calzar en ALGÚN campo (no todas en el mismo), así
+                    "cable trotadora" encuentra un cable cuyo MODELO
+                    compatible se llama "Trotadora X9" aunque esa palabra no
+                    esté en la descripción del repuesto. La collation por
+                    defecto de MySQL 8 (utf8mb4_0900_ai_ci) ya es acento- y
+                    mayúscula-insensible, así que "perilla" encuentra
+                    "Perilla" y "cinturón" sin tildear nada aparte.
       proveedor_id  int -> solo ese proveedor; 'sin' -> repuestos SIN proveedor
       marca_id      int
       maquina_id    int -> el MODELO de ese equipo del cliente es el contexto
@@ -86851,7 +86874,8 @@ def ot2_api_repuestos_bodega_buscar():
     y `semaforo` verde/ámbar/rojo.
     Con algún filtro puesto, `q` puede ir vacío (ej. "todo lo de Drax").
     Ranking: SKU exacto primero, luego compatibles con el equipo/modelo,
-    luego los que EMPIEZAN con el texto, luego alfabético.
+    luego los que EMPIEZAN con el texto, luego con stock DISPONIBLE
+    (_OTREP_SQL_DISPONIBLE, mismo cálculo que el semáforo), luego alfabético.
     Devuelve además `modelo` (el cat_productos resuelto, o None si el
     equipo no tiene modelo en el catálogo -- la UI avisa y muestra todo),
     `modelos` por repuesto (chips de compatibilidad) y `es_compatible`
@@ -86917,17 +86941,29 @@ def ot2_api_repuestos_bodega_buscar():
     # el SQL sigue parametrizado (%s), esto solo es el valor.
     q_like = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     if len(q) >= 2:
-        like = f"%{q_like}%"
-        texto = ["rs.sku LIKE %s", "rs.descripcion LIKE %s", "rs.codigo_fabricante LIKE %s",
-                 "mk.nombre LIKE %s",
-                 "EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos smq "
-                 "          JOIN cat_productos pq ON pq.id=smq.producto_id "
-                 "         WHERE smq.repuesto_id=rs.id AND (pq.nombre LIKE %s OR pq.sku LIKE %s))"]
-        params += [like, like, like, like, like, like]
-        if not es_externo:
-            texto.append("pv.nombre LIKE %s")
-            params.append(like)
-        where.append("(" + " OR ".join(texto) + ")")
+        # 🔎 2026-09-26 (Daniel: "es medio débil el buscador... ojalá ahorrar
+        # espacio, algo bien espectacular"): varias palabras se combinan con
+        # AND -- cada palabra por separado debe calzar en ALGÚN campo (SKU,
+        # descripción, código de fabricante, marca, modelo compatible o
+        # proveedor), no todas en el mismo campo. Cada palabra es su propio
+        # LIKE escapado (los comodines del usuario no viajan tal cual, ver
+        # abajo); el SQL sigue 100% parametrizado, nunca f-string con el
+        # texto de la palabra.
+        clausulas_y = []
+        for palabra in q.split():
+            p_like = palabra.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like_p = f"%{p_like}%"
+            texto = ["rs.sku LIKE %s", "rs.descripcion LIKE %s", "rs.codigo_fabricante LIKE %s",
+                     "mk.nombre LIKE %s",
+                     "EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos smq "
+                     "          JOIN cat_productos pq ON pq.id=smq.producto_id "
+                     "         WHERE smq.repuesto_id=rs.id AND (pq.nombre LIKE %s OR pq.sku LIKE %s))"]
+            params += [like_p, like_p, like_p, like_p, like_p, like_p]
+            if not es_externo:
+                texto.append("pv.nombre LIKE %s")
+                params.append(like_p)
+            clausulas_y.append("(" + " OR ".join(texto) + ")")
+        where.append("(" + " AND ".join(clausulas_y) + ")")
     if proveedor_id:
         where.append("rs.proveedor_id=%s")
         params.append(proveedor_id)
@@ -86954,6 +86990,9 @@ def ot2_api_repuestos_bodega_buscar():
     if len(q) >= 2:
         orden.append("(rs.descripcion LIKE %s) DESC")
         params.append(f"{q_like}%")
+    # 🚦 2026-09-26: a igualdad de relevancia de texto/modelo, el que SÍ
+    # tiene stock disponible sube primero (mismo cálculo que el semáforo).
+    orden.append(_OTREP_SQL_DISPONIBLE + " DESC")
     orden.append("rs.descripcion")
     # Con filtros el universo es acotado (un proveedor, un modelo), así que
     # se deja ver más que los 25 del texto libre; `truncado` avisa a la UI

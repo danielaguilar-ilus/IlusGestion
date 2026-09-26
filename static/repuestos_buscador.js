@@ -38,7 +38,21 @@
      });
      b.setEquipo(eq) · b.setProveedores(lista) · b.setSeleccion(id|null)
      b.limpiar() · b.buscar() · b.refrescar() · b.focus() · b.getItems()
-   ═══════════════════════════════════════════════════════════════════════ */
+
+   🗜️ v3 2026-09-26 (Daniel, viendo el paso 2 del modal: "es medio débil el
+   buscador... ojalá ahorrar espacio, algo bien espectacular"):
+     · Filtros (Proveedor/Marca/Modelo) + "Limpiar" ahora son chips
+       compactos en UNA línea (antes: grid de 1 columna, 4 filas completas).
+     · Resultado muestra el SKU del modelo compatible ("Compatible con:
+       Nombre · SKU-XXX", 2 primeros + "+N") y resalta <mark> el término
+       que calzó (nombre/SKU/marca/código/proveedor/modelo).
+     · Estado vacío en una línea chica + sugerencias clicables (antes: caja
+       grande "Escribe al menos 2 letras...").
+     · Navegación con teclado desde el buscador: ↑/↓ recorre tarjetas,
+       Enter agrega (modo agregar) o elige (modo selección). Contador
+       "N resultados" visible mientras se busca.
+   La API pública (arriba) NO cambia -- ambos modales (repuestos.html,
+   ot2/detalle.html) siguen instanciando y llamando esto igual. */
 (function (global) {
   'use strict';
 
@@ -55,6 +69,30 @@
     });
   }
   function fmt(n) { n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; }
+
+  /* 🔎 2026-09-26: resalta con <mark> el/los término(s) que el usuario
+     escribió, ACENTO- y MAYÚSCULA-insensible (igual que la collation del
+     backend, ver app.py) -- así "perilla" resalta "Perilla" y "cinturón"
+     resalta "cinturon" sin que el usuario tenga que tildear nada. `texto`
+     YA debe venir escapado (esc()); esto solo envuelve substrings, nunca
+     decodifica ni inyecta HTML nuevo del usuario. */
+  var RPB_ACENTOS = { a: 'aáàäâ', e: 'eéèëê', i: 'iíìïî', o: 'oóòöô', u: 'uúùüû', n: 'nñ' };
+  function rpbEscRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function rpbPatronPalabra(palabra) {
+    return palabra.split('').map(function (ch) {
+      var grupo = RPB_ACENTOS[ch.toLowerCase()];
+      if (grupo) return '[' + grupo + grupo.toUpperCase() + ']';
+      return rpbEscRegex(ch);
+    }).join('');
+  }
+  function marcar(textoEscapado, palabras) {
+    if (!palabras || !palabras.length || !textoEscapado) return textoEscapado;
+    var patrones = palabras.filter(Boolean).map(rpbPatronPalabra);
+    if (!patrones.length) return textoEscapado;
+    var re;
+    try { re = new RegExp('(' + patrones.join('|') + ')', 'gi'); } catch (e) { return textoEscapado; }
+    return textoEscapado.replace(re, '<mark class="rpb-mark">$1</mark>');
+  }
 
   /* Chip de canal preferido del proveedor (mismos colores que el modal
      "Asignar a ticket" de Seguimiento: WhatsApp verde, WeChat verde claro,
@@ -88,21 +126,35 @@
 
   /* Pastilla de proveedor: nombre, o "Sin proveedor" en ámbar. Solo si el
      campo VIENE en el JSON (un externo no lo recibe → no se pinta nada). */
-  function proveedorBadge(it) {
+  function proveedorBadge(it, palabras) {
     if (!('proveedor' in it) && !('proveedor_id' in it)) return '';
     if (it.proveedor) {
-      return '<span class="rpb-tag prov"><i class="bi bi-truck"></i>' + esc(it.proveedor) + canalChip(it.proveedor_canal) + '</span>';
+      return '<span class="rpb-tag prov"><i class="bi bi-truck"></i>' + marcar(esc(it.proveedor), palabras) + canalChip(it.proveedor_canal) + '</span>';
     }
     return '<span class="rpb-tag sinprov"><i class="bi bi-exclamation-triangle-fill"></i>Sin proveedor</span>';
   }
 
-  function modelosHTML(it, modeloCtxId) {
+  /* 🔎 2026-09-26 (Daniel: "poder buscar... por los modelos compatibles"):
+     ahora se ve el SKU del modelo junto al nombre ("Compatible con: Nombre
+     · SKU-XXX"), no solo el nombre con el SKU escondido en un title. Con
+     más de 2 modelos se muestran los 2 primeros + "+N" (title con el
+     resto) -- la tarjeta no puede crecer sin límite si un repuesto sirve
+     para 10 máquinas distintas. */
+  function modelosHTML(it, modeloCtxId, palabras) {
     var ms = it.modelos || [];
     if (!ms.length) return '<div class="rpb-modelos rpb-modelos-vacio"><i class="bi bi-diagram-3"></i>Sin modelos compatibles declarados</div>';
-    return '<div class="rpb-modelos"><i class="bi bi-diagram-3" title="Modelos compatibles"></i>' + ms.map(function (m) {
+    var visibles = ms.slice(0, 2), resto = ms.length - visibles.length;
+    var chips = visibles.map(function (m) {
       var on = modeloCtxId && Number(m.id) === Number(modeloCtxId);
-      return '<span class="rpb-modelo' + (on ? ' on' : '') + '" title="' + esc(m.sku || '') + '">' + esc(m.nombre || m.sku || '') + '</span>';
-    }).join('') + '</div>';
+      var nombre = marcar(esc(m.nombre || m.sku || ''), palabras);
+      var sku = m.sku ? ' <span class="rpb-modelo-sku">' + marcar(esc(m.sku), palabras) + '</span>' : '';
+      return '<span class="rpb-modelo' + (on ? ' on' : '') + '">' + nombre + sku + '</span>';
+    }).join('');
+    if (resto > 0) {
+      var restantes = ms.slice(2).map(function (m) { return (m.nombre || m.sku || '') + (m.sku ? ' (' + m.sku + ')' : ''); }).join(', ');
+      chips += '<span class="rpb-modelo rpb-modelo-mas" title="' + esc(restantes) + '">+' + resto + '</span>';
+    }
+    return '<div class="rpb-modelos"><i class="bi bi-diagram-3" title="Modelos compatibles"></i><span class="rpb-modelos-lbl">Compatible con:</span>' + chips + '</div>';
   }
 
   function crear(opts) {
@@ -120,7 +172,10 @@
       enLista: typeof opts.enLista === 'function' ? opts.enLista : function () { return 0; },
       onAgregar: opts.onAgregar, onSeleccionar: opts.onSeleccionar, onResultados: opts.onResultados,
       items: [], modeloCtx: null, seleccionId: null, timer: null, modeloTimer: null, req: 0,
-      sinModelo: false
+      sinModelo: false,
+      // 🔎 2026-09-26: palabras del texto libre (para resaltar <mark> en los
+      // resultados) y el índice de la tarjeta resaltada por teclado (↑/↓).
+      palabras: [], nav: -1
     };
     if (!st.mount) throw new Error('RepBuscador: falta mount');
 
@@ -141,17 +196,22 @@
             '<input type="search" class="rpb-modelo-in" autocomplete="off" placeholder="Modelo compatible (nombre o SKU)…" aria-label="Modelo compatible">' +
             '<div class="rpb-modelo-drop"></div>' +
           '</div>' +
-          '<button type="button" class="rpb-limpiar"><i class="bi bi-eraser"></i>Limpiar</button>' +
+          // 🗜️ 2026-09-26 (Daniel: "ahorrar espacio"): "Limpiar" pasa de
+          // botón con texto en su propia fila a ícono compacto en la misma
+          // línea de los filtros -- limpia TODO (texto + filtros + modelo),
+          // no solo el texto (para eso está la x del buscador principal).
+          '<button type="button" class="rpb-limpiar" title="Limpiar todo (texto y filtros)" aria-label="Limpiar todo (texto y filtros)"><i class="bi bi-eraser"></i></button>' +
         '</div>' +
         '<div class="rpb-ctx"></div>' +
       '</div>' +
       '<div class="rpb-aviso"></div>' +
+      '<div class="rpb-resumen" aria-live="polite"></div>' +
       '<div class="rpb-res"></div>';
 
     var $ = function (sel) { return st.mount.querySelector(sel); };
     var inQ = $('.rpb-q-in'), selProv = $('.rpb-prov'), selMarca = $('.rpb-marca'),
         inModelo = $('.rpb-modelo-in'), dropModelo = $('.rpb-modelo-drop'),
-        ctxBox = $('.rpb-ctx'), avisoBox = $('.rpb-aviso'), resBox = $('.rpb-res');
+        ctxBox = $('.rpb-ctx'), avisoBox = $('.rpb-aviso'), resumenBox = $('.rpb-resumen'), resBox = $('.rpb-res');
 
     /* ── filtros: proveedores / marcas ───────────────────────────────── */
     function pintarProvs() {
@@ -266,6 +326,10 @@
     async function buscar() {
       clearTimeout(st.timer);
       avisoBox.innerHTML = '';
+      // 🔎 2026-09-26: palabras del texto libre, para resaltar <mark> en las
+      // tarjetas (mismo criterio de "palabra" que el AND del backend).
+      st.palabras = st.q ? st.q.split(/\s+/).filter(Boolean) : [];
+      st.nav = -1;
       if (!hayCriterio()) {
         st.items = [];
         pintarHint();
@@ -273,6 +337,7 @@
         return;
       }
       var mio = ++st.req;
+      resumenBox.textContent = '';
       resBox.innerHTML = '<div class="rpb-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando en la bodega…</div>';
       var j;
       try {
@@ -309,11 +374,12 @@
       var compat = !!it.es_compatible && !!st.modeloCtx;
       var clases = 'rpb-card' + (compat ? ' compat' : '') + (st.seleccionId === it.id ? ' sel' : '') + (enLista ? ' enlista' : '');
       var foto = it.foto_url ? '<img src="' + esc(it.foto_url) + '" alt="" loading="lazy">' : '<i class="bi bi-gear"></i>';
+      var pal = st.palabras;
       var meta = [];
-      if (it.sku) meta.push('<span class="rpb-sku">' + esc(it.sku) + '</span>');
-      if (it.marca) meta.push('<span><i class="bi bi-tag"></i>' + esc(it.marca) + '</span>');
-      if (it.codigo_fabricante) meta.push('<span title="Código de fabricante">cód. ' + esc(it.codigo_fabricante) + '</span>');
-      var tags = proveedorBadge(it);
+      if (it.sku) meta.push('<span class="rpb-sku">' + marcar(esc(it.sku), pal) + '</span>');
+      if (it.marca) meta.push('<span><i class="bi bi-tag"></i>' + marcar(esc(it.marca), pal) + '</span>');
+      if (it.codigo_fabricante) meta.push('<span title="Código de fabricante">cód. ' + marcar(esc(it.codigo_fabricante), pal) + '</span>');
+      var tags = proveedorBadge(it, pal);
       if (it.ubicacion_codigo) tags += '<span class="rpb-tag ubi"><i class="bi bi-geo-alt"></i>' + esc(it.ubicacion_codigo) + '</span>';
       if (compat) tags += '<span class="rpb-tag compat"><i class="bi bi-check2-circle"></i>Compatible con ' + esc((st.modelo && (st.modelo.nombre || st.modelo.sku)) || (st.equipo && st.equipo.nombre) || 'el modelo') + '</span>';
       var lado = '<div class="rpb-lado">' + semaforoHTML(it);
@@ -330,29 +396,46 @@
       var inner =
         '<div class="rpb-foto">' + foto + '</div>' +
         '<div class="rpb-info">' +
-          '<div class="rpb-nombre">' + esc(it.descripcion || '') + '</div>' +
+          // REGLA #15: nombre COMPLETO, nunca truncado -- el resaltado solo
+          // envuelve substrings, no recorta ni acorta el texto alrededor.
+          '<div class="rpb-nombre">' + marcar(esc(it.descripcion || ''), pal) + '</div>' +
           (meta.length ? '<div class="rpb-meta">' + meta.join('<span class="rpb-dot">·</span>') + '</div>' : '') +
           (tags ? '<div class="rpb-tags">' + tags + '</div>' : '') +
-          modelosHTML(it, st.modeloCtx) +
+          modelosHTML(it, st.modeloCtx, pal) +
         '</div>' + lado;
       if (st.modo === 'seleccion') {
         return '<button type="button" class="' + clases + '" data-rpb-id="' + it.id + '">' + inner + '</button>';
       }
       return '<div class="' + clases + '" data-rpb-id="' + it.id + '">' + inner + '</div>';
     }
+    // 🗜️ 2026-09-26 (Daniel: "ahorrar espacio"): la caja grande de "Escribe
+    // al menos 2 letras..." pasa a una línea chica + sugerencias clicables
+    // que llenan el buscador y disparan la búsqueda al toque.
+    var RPB_SUGERENCIAS = ['perilla', 'cable', 'cinturón', 'SKU del modelo'];
     function pintarHint() {
-      resBox.innerHTML = '<div class="rpb-vacio"><i class="bi bi-search"></i>Escribe al menos 2 letras (nombre, SKU, marca, modelo' + (st.mostrarProveedor ? ' o proveedor' : '') + ') o usa un filtro.</div>';
+      resumenBox.textContent = '';
+      resBox.innerHTML =
+        '<div class="rpb-hint"><i class="bi bi-search"></i><span>Escribe al menos 2 letras (nombre, SKU, marca, modelo' +
+          (st.mostrarProveedor ? ' o proveedor' : '') + ') o usa un filtro.</span></div>' +
+        '<div class="rpb-sugerencias"><span class="rpb-sug-lbl">Prueba:</span>' +
+          RPB_SUGERENCIAS.map(function (s) { return '<button type="button" class="rpb-sug" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') +
+        '</div>';
     }
     function pintarResultados() {
+      st.nav = -1;
       if (!st.items.length) {
         // Sin criterio de búsqueda no hay "nada encontrado": hay que decir
         // qué escribir (refrescar() desde afuera no debe pisar la pista).
         if (!hayCriterio()) { pintarHint(); return; }
+        resumenBox.textContent = '0 resultados';
         var que = st.q.length >= 2 ? ' con "' + esc(st.q) + '"' : '';
         resBox.innerHTML = '<div class="rpb-vacio"><i class="bi bi-inbox"></i>Nada en la bodega' + que +
           (st.modelo || (st.equipo && st.soloCompat && !st.sinModelo) ? ' compatible con ese modelo. Prueba "Toda la bodega", otro texto, o escríbelo manual.' : '. Prueba con otro texto o filtro, o escríbelo manual.') + '</div>';
         return;
       }
+      // Contador "N resultados" (REGLA #15/#4.3: el usuario siempre sabe
+      // cuánto está viendo, aunque no haya paginador en un buscador modal).
+      resumenBox.textContent = st.items.length === 1 ? '1 resultado' : (st.items.length + ' resultados');
       resBox.innerHTML = '<div class="rpb-grid">' + st.items.map(tarjetaHTML).join('') + '</div>';
     }
     function itemPorId(id) {
@@ -360,6 +443,14 @@
       return null;
     }
     resBox.addEventListener('click', function (e) {
+      var bsug = e.target.closest('.rpb-sug');
+      if (bsug) {
+        inQ.value = bsug.dataset.q || '';
+        st.q = inQ.value.trim();
+        buscar();
+        inQ.focus();
+        return;
+      }
       var badd = e.target.closest('.rpb-btn-add');
       if (badd) {
         var it = itemPorId(badd.dataset.id);
@@ -396,15 +487,45 @@
       if (b) b.click();
     });
 
+    /* 🔎 2026-09-26 (Daniel: "algo bien espectacular"): navegación con
+       teclado desde el buscador -- ↑/↓ recorre las tarjetas visibles,
+       Enter agrega (modo agregar) o elige (modo selección) la resaltada;
+       sin ninguna resaltada, Enter simplemente dispara la búsqueda (como
+       antes). */
+    function cardsEls() { return Array.prototype.slice.call(resBox.querySelectorAll('.rpb-card')); }
+    function marcarNav(delta) {
+      var cards = cardsEls();
+      if (!cards.length) { st.nav = -1; return; }
+      st.nav = st.nav < 0 ? 0 : Math.max(0, Math.min(cards.length - 1, st.nav + delta));
+      cards.forEach(function (c, i) { c.classList.toggle('nav', i === st.nav); });
+      cards[st.nav].scrollIntoView({ block: 'nearest' });
+    }
+
     /* ── eventos de la barra ─────────────────────────────────────────── */
     inQ.addEventListener('input', function () {
       st.q = (inQ.value || '').trim();
       clearTimeout(st.timer);
       // Al vaciar el texto se re-consulta igual (REGLA #4.3: al limpiar un
       // filtro la lista se recarga, no se queda con el resultado anterior).
-      st.timer = setTimeout(buscar, 260);
+      st.timer = setTimeout(buscar, 250);
     });
-    inQ.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); st.q = (inQ.value || '').trim(); buscar(); } });
+    inQ.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); marcarNav(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); marcarNav(-1); return; }
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (st.nav >= 0) {
+        var cards = cardsEls();
+        var card = cards[st.nav];
+        if (card) {
+          if (st.modo === 'seleccion') { card.click(); return; }
+          var addBtn = card.querySelector('.rpb-btn-add');
+          if (addBtn) { addBtn.click(); return; }
+        }
+      }
+      st.q = (inQ.value || '').trim();
+      buscar();
+    });
     $('.rpb-q-x').addEventListener('click', function () { inQ.value = ''; st.q = ''; buscar(); inQ.focus(); });
     if (selProv) selProv.addEventListener('change', function () { st.proveedor = selProv.value; buscar(); });
     selMarca.addEventListener('change', function () { st.marca = selMarca.value; buscar(); });
