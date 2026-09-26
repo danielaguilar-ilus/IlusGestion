@@ -1031,6 +1031,21 @@
     <p class="text-muted small mb-2">Indica cuánto llegó de cada línea. Lo que complete la cantidad pedida
       pasa a "Recibido en bodega"; lo que llegue de menos queda "Pedido al proveedor" con una nota.</p>
     <div id="rcrLineas"></div>
+    {#- 💰 A4/M3 (revisión Opus 2026-09-26): costo por línea (arriba, en
+       cada input "Costo unit. $") es el camino PREFERIDO. Esto de acá es
+       el FALLBACK explícito para cuando de verdad no hay costo por línea
+       (solo la factura total del proveedor) -- pondera por el costo de
+       bodega de cada repuesto, nunca reparte plano por cantidad; si falta
+       una referencia de bodega, no prorratea nada (avisa en vez de
+       inventar). -#}
+    <div class="rcr-monto-total">
+      <label for="rcrMontoTotal">O, si no vas a costear cada línea: monto TOTAL de la factura ($)</label>
+      <div style="display:flex;gap:8px">
+        <input type="number" min="0" step="1" id="rcrMontoTotal" placeholder="Ej: 185000" style="flex:1">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="rcrGuardarMontoTotal()">Guardar monto</button>
+      </div>
+      <small class="text-muted">Se reparte entre las líneas SIN costo propio, ponderando por el costo de bodega de cada una.</small>
+    </div>
     <div class="rcm-err" id="rcrErr"></div>
   </div>
   <div class="repat-head" style="border-top:1px solid #e5e7eb;border-bottom:none">
@@ -1824,7 +1839,19 @@ function rsCardInner(s){
           (s.piola_metros ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
           (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga +
           (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) +
-          rsCompraBadge(s) + '</div>' +
+          rsCompraBadge(s) +
+          {#- 💰 M3 (revisión Opus 2026-09-26 -- Daniel: "corregir costo de
+             una solicitud, en la tarjeta/detalle... marca manual"): solo
+             gestión (_rs.puedePedir, mismo flag que la cantidad) y solo
+             cuando el costo ya tiene sentido mostrarlo (validado en
+             adelante -- 'solicitado' todavía no se ligó a nada). -#}
+          (_rs.puedePedir && ['validado','pedido','recibido','instalado'].indexOf(s.estado) !== -1
+            ? '<div class="rs-liga rs-costo"><i class="bi bi-cash-coin"></i> ' +
+              (s.costo_unitario != null
+                ? 'Costo unit. $' + rsFmt(s.costo_unitario) + (s.costo_origen ? ' · ' + rsEsc(s.costo_origen) : '')
+                : '<span class="text-muted">Sin costo registrado</span>') +
+              ' <button type="button" class="rs-cant-editar" title="Corregir costo" onclick="rsEditarCosto(' + s.id + ')"><i class="bi bi-pencil-fill"></i></button></div>'
+            : '') + '</div>' +
       '</div>' +
       '<div class="rs-col rs-col-mot">' +
         '<div class="rs-k">Diagnóstico del técnico</div>' +
@@ -1863,6 +1890,31 @@ async function rsEditarCantidad(sid){
     if (!j.ok){ ilusToast(j.error || 'No se pudo ajustar la cantidad.', { type: 'error' }); return; }
     ilusToast('✓ Cantidad ajustada a ' + rsFmt(j.cantidad), { type: 'success' });
     if (j.aviso) await ilusAlert({ title: 'Aviso de stock', message: j.aviso, type: 'warning' });
+    await rsCargar();
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+}
+async function rsEditarCosto(sid){
+  // 💰 M3 (revisión Opus 2026-09-26): corrección manual del costo unitario
+  // de una solicitud -- queda costo_origen='manual', y desde ahí ni la
+  // validación contra bodega ni el prorrateo de una Compra lo vuelven a
+  // pisar (ver _otrep_cambiar_estado / _otrep_compra_prorratear_costo).
+  const s = rsBuscarSolicitud(sid);
+  if (!s) return;
+  const val = await ilusPrompt({
+    title: 'Corregir costo — solicitud #' + sid, message: s.repuesto_nombre + ' · ' + (s.numero_ot || ''),
+    sub: 'Costo unitario real (CLP). Queda marcado como corregido a mano y ya no se recalcula solo.',
+    placeholder: 'Costo unitario', value: (s.costo_unitario != null ? String(s.costo_unitario) : ''), required: true,
+  });
+  if (val == null) return;
+  const n = parseFloat(String(val).replace(/\./g, '').replace(',', '.'));
+  if (!isFinite(n) || n < 0){ ilusToast('El costo tiene que ser un número igual o mayor que cero.', { type: 'error' }); return; }
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/costo', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ costo_unitario: n }) });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ ilusToast(j.error || 'No se pudo corregir el costo.', { type: 'error' }); return; }
+    ilusToast('✓ Costo corregido a $' + rsFmt(j.costo_unitario), { type: 'success' });
     await rsCargar();
   } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
@@ -3466,12 +3518,15 @@ async function rcrAbrir(cid){
   _rcr.compraId = cid;
   document.getElementById('rcrErr').textContent = '';
   document.getElementById('rcrLineas').innerHTML = '<div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando líneas…</div>';
+  const elMonto = document.getElementById('rcrMontoTotal');
+  if (elMonto) elMonto.value = '';
   document.getElementById('rcrBackdrop').classList.add('is-open');
   document.getElementById('rcrModal').classList.add('is-open');
   try {
     const r = await fetch('/repuestos/api/compras/' + cid, {credentials:'same-origin', cache:'no-store'});
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
+    if (elMonto && j.compra.monto_total != null) elMonto.value = j.compra.monto_total;
     _rcr.lineas = (j.compra.lineas || []).filter(function(li){ return li.estado === 'pedido'; });
     if (!_rcr.lineas.length){
       document.getElementById('rcrLineas').innerHTML = '<div class="rc-vacio">No quedan líneas pendientes por recibir en esta compra.</div>';
@@ -3484,11 +3539,24 @@ async function rcrAbrir(cid){
     document.getElementById('rcrLineas').innerHTML = _rcr.lineas.map(function(li){
       const yaRecibido = li.cantidad_recibida || 0;
       const faltante = Math.max(0, li.cantidad - yaRecibido);
+      // 💰 A4 (revisión Opus 2026-09-26 -- Daniel: "pedir COSTO UNITARIO
+      // POR LÍNEA... prellenado con costo de bodega del repuesto si
+      // existe"): si la línea ya tiene costo propio (costo_unitario) se
+      // muestra ESE -- si no, se sugiere el costo de bodega de esa
+      // referencia (stock_costo_unitario). Ninguno de los dos = vacío,
+      // nunca un $0 inventado.
+      const costoSugerido = (li.costo_unitario != null) ? li.costo_unitario
+        : (li.stock_costo_unitario != null ? li.stock_costo_unitario : '');
+      const esManual = li.costo_origen === 'manual';
       return '<div class="rcr-linea"><span class="nombre">' + rsEsc(li.repuesto_nombre) +
         (li.repuesto_sku ? ' <span class="text-muted">· ' + rsEsc(li.repuesto_sku) + '</span>' : '') +
         ' <span class="text-muted small">(pedidos ' + rsFmt(li.cantidad)
         + (yaRecibido > 0 ? ', ya recibidos ' + rsFmt(yaRecibido) + ', faltan ' + rsFmt(faltante) : '') + ')</span></span>' +
-        '<input type="number" min="0" step="0.5" placeholder="0" title="Cantidad NUEVA que llega ahora (se suma a lo ya recibido)" id="rcrCant' + li.id + '"></div>';
+        '<input type="number" min="0" step="0.5" placeholder="0" title="Cantidad NUEVA que llega ahora (se suma a lo ya recibido)" id="rcrCant' + li.id + '">' +
+        '<input type="number" min="0" step="1" placeholder="Costo unit. $" title="Costo unitario de esta línea (CLP) -- se prellena con el costo de bodega si existe" ' +
+          'id="rcrCosto' + li.id + '" value="' + costoSugerido + '"' + (esManual ? ' disabled' : '') + '>' +
+        (esManual ? '<span class="text-muted small" title="Este costo ya fue corregido a mano por gestión">🔒 manual</span>' : '') +
+        '</div>';
     }).join('');
   } catch(e){
     document.getElementById('rcrLineas').innerHTML = '<div class="rc-vacio">No se pudo cargar: ' + rsEsc(e.message) + '</div>';
@@ -3497,6 +3565,24 @@ async function rcrAbrir(cid){
 function rcrCerrar(){
   document.getElementById('rcrBackdrop').classList.remove('is-open');
   document.getElementById('rcrModal').classList.remove('is-open');
+}
+async function rcrGuardarMontoTotal(){
+  // 💰 A4/M3 (revisión Opus 2026-09-26): fallback explícito -- SOLO se usa
+  // cuando gestión no costeó cada línea. Reparte por costo de bodega
+  // (nunca plano por cantidad, ver _otrep_compra_prorratear_costo) y NO
+  // toca una línea que ya tenga costo propio ('manual' o ya costeada).
+  const el = document.getElementById('rcrMontoTotal');
+  if (!el || el.value === ''){ ilusToast('Ingresa un monto.', { type: 'error' }); return; }
+  const v = parseFloat(String(el.value).replace(/\./g, '').replace(',', '.'));
+  if (!isFinite(v) || v < 0){ ilusToast('El monto tiene que ser un número igual o mayor que cero.', { type: 'error' }); return; }
+  try {
+    const r = await fetch('/repuestos/api/compras/' + _rcr.compraId + '/monto', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ monto_total: v }) });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ ilusToast(j.error || 'No se pudo guardar el monto.', { type: 'error' }); return; }
+    ilusToast('✓ Monto total guardado. Se reparte al recibir las líneas sin costo propio.', { type: 'success' });
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
 async function rcrConfirmar(){
   const lineas = _rcr.lineas.map(function(li){
@@ -3508,11 +3594,30 @@ async function rcrConfirmar(){
     document.getElementById('rcrErr').textContent = 'Indica al menos una cantidad recibida.';
     return;
   }
+  // 💰 A4 (revisión Opus 2026-09-26): costo por línea -- se manda ANTES de
+  // /recibir (si la línea completa esta entrega, /recibir ya encuentra el
+  // costo puesto y no necesita el fallback de prorrateo por monto_total).
+  // Se omiten las líneas 'manual' (el input queda disabled, nunca se toca)
+  // y las que quedaron vacías (gestión puede recibir sin costear todavía).
+  const costos = _rcr.lineas.map(function(li){
+    if (li.costo_origen === 'manual') return null;
+    const el = document.getElementById('rcrCosto' + li.id);
+    if (!el || el.value === '' || el.disabled) return null;
+    const v = parseFloat(String(el.value).replace(',', '.'));
+    return isFinite(v) && v >= 0 ? { solicitud_id: li.id, costo_unitario: v } : null;
+  }).filter(Boolean);
   // 🔒 2026-09-26 (revisión, hallazgo MEDIA #7): botón deshabilitado
   // mientras procesa -- evita un doble envío con doble click.
   const btnConfirmar = document.getElementById('rcrBtnConfirmar');
   if (btnConfirmar) btnConfirmar.disabled = true;
   try {
+    if (costos.length){
+      try {
+        await fetch('/repuestos/api/compras/' + _rcr.compraId + '/costos-lineas', {
+          method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+          body: JSON.stringify({ lineas: costos }) });
+      } catch(e){ /* si falla el costo, igual se sigue con la recepción física -- el costo se puede corregir después */ }
+    }
     const r = await fetch('/repuestos/api/compras/' + _rcr.compraId + '/recibir', {
       method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
       body: JSON.stringify({ lineas: lineas }) });

@@ -343,9 +343,22 @@ function switchTab(name) {
   document.querySelector(`.ftab-btn[data-tab="${name}"]`).classList.add('active');
   localStorage.setItem(TAB_KEY, name);
 }
+// Pestañas de carga perezosa: si al abrir la ficha el tab activo (SOLO
+// puede venir de localStorage -- el HTML por defecto sigue siendo
+// 'resumen', Daniel 2026-09-26: "la ficha debe seguir abriendo en Resumen
+// por defecto, Vida del cliente queda como primera pestaña pero no se
+// auto-abre") necesita un fetch, hay que dispararlo -- el onclick del
+// botón NO corre en la carga inicial de la página. Sin esto, reabrir la
+// ficha con "vida" recordado en localStorage mostraría el panel vacío.
+const TAB_LAZY_LOADERS = {
+  vida: () => (typeof cargarVidaCliente === 'function') && cargarVidaCliente(),
+};
 (function() {
   const saved = localStorage.getItem(TAB_KEY);
+  const activo = (saved && document.getElementById(`tab-${saved}`)) ? saved
+    : (document.querySelector('.ftab-btn.active')?.dataset.tab || 'resumen');
   if (saved && document.getElementById(`tab-${saved}`)) switchTab(saved);
+  if (TAB_LAZY_LOADERS[activo]) TAB_LAZY_LOADERS[activo]();
 })();
 
 // ─── Filtro de equipos ─────────────────────────────────────────

@@ -190,6 +190,13 @@
 {# ── Tabs ─────────────────────────────────────────── #}
 <div class="ficha-tabs-wrap" style="border-radius:0 0 0 0">
   <div class="ficha-tabs">
+    {# ★ Vida del cliente (2026-09-26, Daniel: "es lo más importante") --
+       pestaña NUEVA, primera de todas. Las 13 que ya existían (empezando
+       por Resumen) se mantienen intactas -- REGLA #4.2. #}
+    <button class="ftab-btn" data-tab="vida" onclick="switchTab('vida');cargarVidaCliente()"
+            style="border-color:#dc2626">
+      <i class="bi bi-stars" style="color:#dc2626"></i><b>Vida del cliente</b>
+    </button>
     <button class="ftab-btn active" data-tab="resumen" onclick="switchTab('resumen')">
       <i class="bi bi-grid-1x2"></i>Resumen
     </button>
@@ -238,6 +245,23 @@
       <i class="bi bi-clock-history"></i>Historial
       {% if logs %}<span class="badge ms-1" style="font-size:.6rem;background:#f3f4f6;color:#374151">{{ logs|length }}</span>{% endif %}
     </button>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: ★ VIDA DEL CLIENTE (2026-09-26) -- toda la vida del cliente con
+   ILUS Fitness: equipos, visitas, repuestos, incidencias, tickets, OT y
+   sus costos, todo conectado. Carga perezosa vía cargarVidaCliente() al
+   abrir la pestaña (no engorda el resto de la ficha). Solo gestión ve
+   montos -- la ficha entera ya está bloqueada a técnicos (@_no_tecnico),
+   y el endpoint repite el candado (REGLA #15: formato Retiros, tarjetas +
+   semáforo; REGLA #16: sin huecos; REGLA #4.3: toda tabla paginada).
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-vida">
+  <div id="vidaClienteRoot">
+    <div class="text-center text-muted py-5">
+      <div class="spinner-border spinner-border-sm me-2"></div>Cargando la vida del cliente…
+    </div>
   </div>
 </div>
 
