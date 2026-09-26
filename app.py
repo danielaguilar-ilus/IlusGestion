@@ -85201,7 +85201,13 @@ _OTREP_MAX_VIDEO = 28 * 1024 * 1024
 # costos/stock/proveedores de otros no se exponen al proveedor).
 _OTREP_STOCK_SOLO_GESTION = ("costo_unitario",)
 _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
-                           "comprometido", "disponible")
+                           "comprometido", "disponible",
+                           # 🔒 2026-09-26: los campos nuevos del buscador del modal
+                           # "Solicitar repuesto" (contacto del proveedor, por
+                           # llegar, semáforo fino) tampoco los ve un externo --
+                           # `con_stock` (sí/no) sigue siendo lo único que recibe.
+                           "proveedor_contacto", "proveedor_telefono", "proveedor_email",
+                           "proveedor_canal", "por_llegar", "semaforo", "marca_id")
 _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
                          # 🔒 2026-09-25 (Fase 2): mismos 3 campos nuevos de contacto del
                          # proveedor que _OTREP_SQL_SOL agrega para la vista agrupada
@@ -85670,8 +85676,16 @@ def _otrep_piolas_de_modelo(producto_id):
 
 _OTREP_SQL_STOCK = (
     "SELECT rs.id, rs.sku, rs.descripcion, rs.cantidad, rs.stock_minimo, rs.codigo_fabricante, "
-    "       rs.costo_unitario, rs.proveedor_id, mk.nombre AS marca, "
+    # 🧠 2026-09-26 (Daniel: "tengo que poder buscar por proveedor y por
+    # equipo... si elijo un repuesto, ya debe estar gestionado el proveedor"):
+    # marca_id viaja junto con el nombre para que el modal "Solicitar
+    # repuesto" pueda filtrar por marca y heredar el proveedor por línea;
+    # pv.contacto_nombre/telefono/email/canal_preferido son lo que el
+    # encabezado de grupo "por proveedor" muestra al agrupar los elegidos.
+    "       rs.costo_unitario, rs.proveedor_id, rs.marca_id, mk.nombre AS marca, "
     "       u.codigo AS ubicacion_codigo, pv.nombre AS proveedor, "
+    "       pv.contacto_nombre AS proveedor_contacto, pv.telefono AS proveedor_telefono, "
+    "       pv.email AS proveedor_email, pv.canal_preferido AS proveedor_canal, "
     "       (SELECT f.gcs_key FROM mant_repuestos_stock_fotos f WHERE f.repuesto_id=rs.id "
     "         ORDER BY f.orden LIMIT 1) AS foto_key, "
     # 🔒 2026-09-20 (Daniel: "comprometer el stock de los repuestos según la
@@ -85680,7 +85694,14 @@ _OTREP_SQL_STOCK = (
     # para mostrar el disponible REAL al elegir de dónde sale un repuesto.
     "       (SELECT COALESCE(SUM(s.cantidad),0) FROM mant_ot_repuesto_solicitudes s "
     "         WHERE s.repuesto_stock_id=rs.id AND s.estado IN "
-    "               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido "
+    "               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido, "
+    # 🚚 2026-09-26: "por llegar" = la parte de lo comprometido que YA se
+    # pidió al proveedor (estado 'pedido') y todavía no se recibió. Es un
+    # SUBCONJUNTO de `comprometido` (no se suma aparte): sirve para que
+    # bodega sepa que, aunque hoy falte, ya viene en camino. Misma fuente
+    # única que el resto (esta query), no se recalcula en ningún otro lado.
+    "       (SELECT COALESCE(SUM(s3.cantidad),0) FROM mant_ot_repuesto_solicitudes s3 "
+    "         WHERE s3.repuesto_stock_id=rs.id AND s3.estado='pedido') AS por_llegar "
     "  FROM mant_repuestos_stock rs "
     "  LEFT JOIN mant_repuestos_marcas mk ON mk.id=rs.marca_id "
     "  LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
@@ -85694,10 +85715,21 @@ def _otrep_fmt_stock(r, para_ot=False):
     r = dict(r)
     r["foto_url"] = ("/f/" + r["foto_key"]) if r.get("foto_key") else None
     r.pop("foto_key", None)
-    for k in ("cantidad", "stock_minimo", "costo_unitario", "comprometido"):
+    for k in ("cantidad", "stock_minimo", "costo_unitario", "comprometido", "por_llegar"):
         r[k] = float(r[k]) if r.get(k) is not None else None
     r["comprometido"] = r.get("comprometido") or 0.0
+    r["por_llegar"] = r.get("por_llegar") or 0.0
     r["disponible"] = (r.get("cantidad") or 0.0) - r["comprometido"]
+    # 🚦 2026-09-26: semáforo de stock en UN solo lugar (Daniel: "bonito,
+    # entendible e inteligente"). verde = hay disponible real; ambar = hay
+    # físico pero está TODO comprometido en otras solicitudes (falta, aunque
+    # el repuesto exista en la repisa); rojo = no hay nada físico.
+    if r["disponible"] > 0:
+        r["semaforo"] = "verde"
+    elif (r.get("cantidad") or 0.0) > 0:
+        r["semaforo"] = "ambar"
+    else:
+        r["semaforo"] = "rojo"
     r["es_piola"] = bool(re.search(r"piola|cable de acero", r.get("descripcion") or "", re.I))
     r["es_cinta"] = bool(re.search(r"cinta|banda|belt", r.get("descripcion") or "", re.I))
     r["con_stock"] = bool((r.get("disponible") or 0) > 0)
@@ -86437,24 +86469,177 @@ def ot2_api_equipo_repuestos_opciones(vid, mid):
 def ot2_api_repuestos_bodega_buscar():
     """Buscador de la Bodega para el modal de solicitud (sin costo; y sin
     proveedor/ubicación/stock para un técnico externo) y para "ligar" en
-    gestión: SKU, descripción o código de fabricante. Solo activos."""
+    gestión: SKU, descripción o código de fabricante. Solo activos.
+
+    🧠 2026-09-26 (Daniel, viendo el modal "Solicitar repuesto": "debe ser
+    súper poderoso... tengo que poder buscar por proveedor y por equipo, es
+    decir, buscar por los modelos compatibles" + "el motor de búsqueda igual
+    deberá aplicar cuando el técnico tenga la OT y solicitará repuesto:
+    proveedor, modelo compatible y repuesto, obviamente SKU también").
+    Es UN solo motor para los dos modales -- el componente JS compartido
+    vive en static/repuestos_buscador.js. Filtros COMBINABLES, todos
+    opcionales y aditivos sobre lo que ya existía (`q` solo sigue
+    funcionando igual para los callers de siempre -- incidencias, ticket,
+    validación de bodega -- con la misma forma de respuesta):
+      q             texto libre (>= 2 letras) sobre SKU, descripción, código de
+                    fabricante, MARCA, nombre/SKU de MODELO compatible y, si
+                    quien busca no es técnico externo, nombre de PROVEEDOR.
+      proveedor_id  int -> solo ese proveedor; 'sin' -> repuestos SIN proveedor
+      marca_id      int
+      maquina_id    int -> el MODELO de ese equipo del cliente es el contexto
+                    (mant_maquinas.sku -> cat_productos -> mant_repuestos_stock_modelos)
+      modelo_id     int -> ese cat_productos directo (sin equipo)
+      solo_compat   '1' (default) filtra a los compatibles con el modelo;
+                    '0' muestra todo pero RANKEA los compatibles primero.
+    Con algún filtro puesto, `q` puede ir vacío (ej. "todo lo de Drax").
+    Ranking: SKU exacto primero, luego compatibles con el equipo/modelo,
+    luego los que EMPIEZAN con el texto, luego alfabético.
+    Devuelve además `modelo` (el cat_productos resuelto, o None si el
+    equipo no tiene modelo en el catálogo -- la UI avisa y muestra todo),
+    `modelos` por repuesto (chips de compatibilidad) y `es_compatible`
+    por fila cuando hay modelo de contexto.
+    """
     q = (request.args.get("q") or "").strip()
-    if len(q) < 2:
-        return jsonify({"ok": True, "repuestos": []})
-    like = f"%{q}%"
+    args = request.args
+
+    def _int_arg(nombre):
+        v = (args.get(nombre) or "").strip()
+        return int(v) if v.isdigit() else None
+
+    proveedor_raw = (args.get("proveedor_id") or "").strip().lower()
+    proveedor_id = int(proveedor_raw) if proveedor_raw.isdigit() else None
+    sin_proveedor = proveedor_raw in ("sin", "0", "null", "none")
+    marca_id = _int_arg("marca_id")
+    maquina_id = _int_arg("maquina_id")
+    modelo_id = _int_arg("modelo_id")
+    solo_compat = (args.get("solo_compat") or "1").strip().lower() not in ("0", "false", "no")
+
+    # Gestión (cola de bodega) sí puede ver stock/ubicación/proveedor: solo
+    # se recorta para la OT y para el externo.
+    para_ot = not _otrep_puede_gestion() or (args.get("ctx") or "") == "ot"
+    try:
+        es_externo = bool(_es_tecnico_externo())
+    except Exception:
+        es_externo = False
+    if es_externo:
+        # 🔒 Un técnico externo no ve proveedores (política 2026-09-08,
+        # _OTREP_STOCK_NO_EXTERNO) -- tampoco puede usarlos como filtro ni
+        # buscarlos por texto para deducirlos por el camino indirecto.
+        proveedor_id, sin_proveedor = None, False
+
+    # Modelo de contexto: por equipo del cliente o por modelo directo.
+    modelo = None
+    compat_pedido = bool(maquina_id or modelo_id)
+    if maquina_id:
+        try:
+            maq = mysql_fetchone("SELECT id, nombre, sku FROM mant_maquinas WHERE id=%s", (maquina_id,))
+        except Exception:
+            maq = None
+        if maq:
+            modelo = _otrep_producto_de_maquina(maq)
+    elif modelo_id:
+        try:
+            modelo = mysql_fetchone("SELECT id, sku, nombre FROM cat_productos WHERE id=%s", (modelo_id,))
+        except Exception:
+            modelo = None
+
+    filtra_modelo = bool(modelo) and solo_compat
+    hay_filtro = bool(proveedor_id or sin_proveedor or marca_id or filtra_modelo)
+    if len(q) < 2 and not hay_filtro:
+        # Sin texto y sin filtros no hay nada que buscar (igual que antes).
+        # Ojo: si se pidió compatibles pero el equipo NO tiene modelo en el
+        # catálogo, se devuelve modelo=None para que la UI lo avise.
+        return jsonify({"ok": True, "repuestos": [], "modelo": None, "truncado": False,
+                        "compatibles_sin_modelo": compat_pedido and not modelo})
+
+    where = ["COALESCE(rs.activo,1)=1"]
+    params = []
+    if len(q) >= 2:
+        like = f"%{q}%"
+        texto = ["rs.sku LIKE %s", "rs.descripcion LIKE %s", "rs.codigo_fabricante LIKE %s",
+                 "mk.nombre LIKE %s",
+                 "EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos smq "
+                 "          JOIN cat_productos pq ON pq.id=smq.producto_id "
+                 "         WHERE smq.repuesto_id=rs.id AND (pq.nombre LIKE %s OR pq.sku LIKE %s))"]
+        params += [like, like, like, like, like, like]
+        if not es_externo:
+            texto.append("pv.nombre LIKE %s")
+            params.append(like)
+        where.append("(" + " OR ".join(texto) + ")")
+    if proveedor_id:
+        where.append("rs.proveedor_id=%s")
+        params.append(proveedor_id)
+    elif sin_proveedor:
+        where.append("rs.proveedor_id IS NULL")
+    if marca_id:
+        where.append("rs.marca_id=%s")
+        params.append(marca_id)
+    sql_compat = ("EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos smf "
+                  " WHERE smf.repuesto_id=rs.id AND smf.producto_id=%s)")
+    if filtra_modelo:
+        where.append(sql_compat)
+        params.append(modelo["id"])
+
+    # Ranking (ver docstring). Todo parametrizado; el SQL solo cambia por
+    # banderas internas, nunca por texto del usuario.
+    orden = []
+    if len(q) >= 2:
+        orden.append("(rs.sku = %s) DESC")
+        params.append(q)
+    if modelo and not filtra_modelo:
+        orden.append(sql_compat + " DESC")
+        params.append(modelo["id"])
+    if len(q) >= 2:
+        orden.append("(rs.descripcion LIKE %s) DESC")
+        params.append(f"{q}%")
+    orden.append("rs.descripcion")
+    # Con filtros el universo es acotado (un proveedor, un modelo), así que
+    # se deja ver más que los 25 del texto libre; `truncado` avisa a la UI
+    # que afine si se llegó al techo.
+    limite = 60 if hay_filtro else 25
     try:
         rows = mysql_fetchall(
-            _OTREP_SQL_STOCK
-            + " WHERE COALESCE(rs.activo,1)=1 AND (rs.sku LIKE %s OR rs.descripcion LIKE %s "
-              "       OR rs.codigo_fabricante LIKE %s) ORDER BY rs.descripcion LIMIT 25",
-            (like, like, like)) or []
+            _OTREP_SQL_STOCK + " WHERE " + " AND ".join(where)
+            + " ORDER BY " + ", ".join(orden) + " LIMIT %s",
+            tuple(params) + (limite + 1,)) or []
     except Exception as e:
         print(f"[otrep] bodega-buscar: {e}", flush=True)
         rows = []
-    # Gestión (cola de bodega) sí puede ver stock/ubicación/proveedor: solo
-    # se recorta para la OT y para el externo.
-    para_ot = not _otrep_puede_gestion() or (request.args.get("ctx") or "") == "ot"
-    return jsonify({"ok": True, "repuestos": [_otrep_fmt_stock(r, para_ot=para_ot) for r in rows]})
+    truncado = len(rows) > limite
+    rows = rows[:limite]
+
+    # Chips de modelos compatibles por repuesto (una sola query para todo el
+    # lote, nunca N+1). Es dato de catálogo, no de costos: lo ve todo el
+    # mundo, también el técnico en la OT.
+    modelos_por_rep = {}
+    if rows:
+        ids = [int(r["id"]) for r in rows]
+        try:
+            mrows = mysql_fetchall(
+                "SELECT sm.repuesto_id, p.id, p.sku, p.nombre "
+                "  FROM mant_repuestos_stock_modelos sm "
+                "  JOIN cat_productos p ON p.id=sm.producto_id "
+                " WHERE sm.repuesto_id IN (" + ",".join(["%s"] * len(ids)) + ") "
+                " ORDER BY p.nombre", tuple(ids)) or []
+            for m in mrows:
+                modelos_por_rep.setdefault(int(m["repuesto_id"]), []).append(
+                    {"id": m["id"], "sku": m.get("sku"), "nombre": m.get("nombre")})
+        except Exception as e:
+            print(f"[otrep] bodega-buscar modelos: {e}", flush=True)
+
+    out = []
+    for r in rows:
+        d = _otrep_fmt_stock(r, para_ot=para_ot)
+        d["modelos"] = modelos_por_rep.get(int(r["id"]), [])
+        if modelo:
+            d["es_compatible"] = any(int(m["id"]) == int(modelo["id"]) for m in d["modelos"])
+        out.append(d)
+    return jsonify({
+        "ok": True, "repuestos": out, "truncado": truncado,
+        "modelo": ({"id": modelo["id"], "sku": modelo.get("sku"), "nombre": modelo.get("nombre")}
+                   if modelo else None),
+        "compatibles_sin_modelo": compat_pedido and not modelo,
+    })
 
 
 def _otrep_primer_archivo():
@@ -88112,7 +88297,22 @@ def repstock_solicitud_manual():
       maquina_id      opcional, debe pertenecer al cliente
       motivo          texto, obligatorio >= 5 caracteres
       items           lista >=1: [{repuesto_stock_id?, repuesto_nombre?,
-                       repuesto_sku?, cantidad}]
+                       repuesto_sku?, cantidad, proveedor_id?,
+                       guardar_proveedor_en_repuesto?}]
+
+    🧠 2026-09-26 (Daniel: "si elijo un repuesto, ya debe estar gestionado
+    el proveedor. Si no, se deberá gestionar"). Proveedor POR LÍNEA:
+      - Cada ítem puede traer `proveedor_id` (elegido o creado en el modal).
+        Si no lo trae, hereda el de mant_repuestos_stock (repuesto de Bodega).
+      - Una línea de BODEGA sin proveedor (ni propio ni heredado) se
+        RECHAZA: después las solicitudes se agrupan por proveedor para armar
+        un ticket de compra por proveedor, y una línea sin proveedor no
+        tendría a quién comprársele. Las manuales/ERP ("por validar") sí
+        pueden ir sin proveedor -- bodega lo define al validar.
+      - `guardar_proveedor_en_repuesto: true` (solo Bodega) actualiza
+        mant_repuestos_stock.proveedor_id dentro de la misma transacción y
+        deja log en mant_logs -- así la próxima vez el repuesto ya viene
+        gestionado.
     """
     es_multipart = not (request.content_type and "application/json" in request.content_type)
     if es_multipart:
@@ -88168,6 +88368,7 @@ def repstock_solicitud_manual():
     import math  # patrón del archivo: import local, no se agrega un import global solo por esto.
 
     limpios = []
+    provs_cache = {}  # proveedor_id -> fila (o None), para no consultar el mismo N veces
     for it in items:
         if not isinstance(it, dict):
             return jsonify({"ok": False, "error": "Uno de los repuestos llegó mal formado."}), 400
@@ -88198,8 +88399,30 @@ def repstock_solicitud_manual():
         if not nombre:
             return jsonify({"ok": False, "error": "Falta el nombre de uno de los repuestos."}), 400
         sku = (stock or {}).get("sku") or (it.get("repuesto_sku") or "").strip() or None
+        # 🧠 2026-09-26: proveedor por línea (ver docstring). El elegido en el
+        # modal manda; si no viene, se hereda el del repuesto de Bodega.
+        prov_raw = str(it.get("proveedor_id") or "").strip()
+        proveedor_id = int(prov_raw) if prov_raw.isdigit() else None
+        if proveedor_id:
+            if proveedor_id not in provs_cache:
+                provs_cache[proveedor_id] = mysql_fetchone(
+                    "SELECT id, nombre FROM mant_proveedores_repuesto WHERE id=%s", (proveedor_id,))
+            if not provs_cache[proveedor_id]:
+                return jsonify({"ok": False, "error":
+                                f"El proveedor elegido para \"{nombre[:60]}\" ya no existe. "
+                                "Elige otro o créalo de nuevo."}), 400
+        elif stock:
+            proveedor_id = stock.get("proveedor_id") or None
+        if stock and not proveedor_id:
+            return jsonify({"ok": False, "error":
+                            f"\"{nombre[:80]}\" es un repuesto de la Bodega y no tiene proveedor: "
+                            "elígelo o créalo en la línea antes de solicitar."}), 400
+        guardar_prov = bool(stock) and bool(proveedor_id) and str(
+            it.get("guardar_proveedor_en_repuesto") or "").strip().lower() in ("1", "true", "on", "si", "sí") \
+            and (stock.get("proveedor_id") or None) != proveedor_id
         limpios.append({"stock": stock, "nombre": nombre[:400], "sku": (sku or "")[:120] or None,
-                         "cantidad": cantidad})
+                         "cantidad": cantidad, "proveedor_id": proveedor_id,
+                         "guardar_prov": guardar_prov})
 
     # Adjunto opcional (spec: "motivo/nota + adjunto opcional") -- se valida
     # ANTES de insertar nada: si el archivo viene mal, no queda una
@@ -88239,9 +88462,16 @@ def repstock_solicitud_manual():
                     + ("NOW()" if stock else "NULL") + ")",
                     (cliente_id, maquina_id, stock["id"] if stock else None, it["nombre"], it["sku"],
                      ("bodega" if stock else "manual"), it["cantidad"], motivo, estado_ini, user,
-                     (stock.get("proveedor_id") if stock else None),
+                     it.get("proveedor_id"),
                      int(es_reposicion), lote_id, (user if stock else None)))
                 creados.append(int(cur.lastrowid))
+                # 🧠 2026-09-26: "Guardar como proveedor de este repuesto" --
+                # misma transacción que el lote: si el lote se deshace, el
+                # repuesto tampoco queda con un proveedor a medias.
+                if it.get("guardar_prov"):
+                    cur.execute(
+                        "UPDATE mant_repuestos_stock SET proveedor_id=%s, updated_by=%s WHERE id=%s",
+                        (it["proveedor_id"], user, stock["id"]))
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -88254,6 +88484,14 @@ def repstock_solicitud_manual():
     avisos = []
     for sol_id, it in zip(creados, limpios):
         stock = it["stock"]
+        if it.get("guardar_prov"):
+            # 🧠 2026-09-26: rastro de que el proveedor del repuesto cambió
+            # desde este modal (REGLA #5: audit log en mant_logs).
+            pnom = ((provs_cache.get(it["proveedor_id"]) or {}).get("nombre")) or f"#{it['proveedor_id']}"
+            _mant_log("repuesto_stock", stock["id"], "proveedor_asignado",
+                      f"{stock.get('sku') or it['nombre']} → proveedor {pnom} "
+                      f"(antes: {stock.get('proveedor_id') or 'ninguno'}) · desde Solicitar repuesto, "
+                      f"solicitud #{sol_id} · por {user}")
         if stock and stock.get("cantidad") is not None:
             # 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad
             # de la operación"): mismo aviso -no bloqueante- que ya usa la
@@ -119154,6 +119392,13 @@ def repstock_buscar_marcas():
         like = f"%{q}%"
         rows = mysql_fetchall(
             base + " WHERE m.activo=1 AND m.nombre LIKE %s ORDER BY m.nombre LIMIT 15", (like,)) or []
+    elif (request.args.get("todas") or "") in ("1", "true"):
+        # 🧠 2026-09-26: el filtro "Marca" del modal "Solicitar repuesto"
+        # (Daniel: "buscar por proveedor y por equipo") necesita TODAS las
+        # marcas para armar un <select>, no un typeahead de 15. Aditivo: sin
+        # ?todas=1 se comporta exactamente igual que antes.
+        rows = mysql_fetchall(
+            base + " WHERE m.activo=1 ORDER BY m.nombre LIMIT 400") or []
     else:
         rows = mysql_fetchall(
             base + " WHERE m.activo=1 ORDER BY m.nombre LIMIT 15") or []

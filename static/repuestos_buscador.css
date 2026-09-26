@@ -1,0 +1,126 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   repuestos_buscador.css — estilos del motor de búsqueda de repuestos
+   compartido (static/repuestos_buscador.js), 2026-09-26. REGLA #15: lenguaje
+   de Retiros (tarjetas, semáforo, nombres COMPLETOS nunca truncados) y
+   REGLA #3 (mobile-first: inputs 16px, toques ≥44px, sin scroll horizontal).
+   Paleta REGLA #2: rojo #dc2626, negro #0a0a0a, verde #16a34a/#dcfce7,
+   ámbar #f59e0b/#fff8e1, rojo peligro #fee2e2, azul #3b82f6/#dbeafe, gris.
+   ═══════════════════════════════════════════════════════════════════════ */
+.rpb{display:flex;flex-direction:column;gap:10px;min-width:0}
+.rpb-barra{display:flex;flex-direction:column;gap:8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
+.rpb-q{position:relative;display:flex;align-items:center}
+.rpb-q > .bi-search{position:absolute;left:12px;color:#9ca3af;pointer-events:none}
+.rpb-q-in{width:100%;font-size:16px;min-height:44px;padding:9px 40px 9px 36px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;font-family:inherit}
+.rpb-q-in:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.rpb-q-x{position:absolute;right:2px;width:40px;height:40px;border:none;background:transparent;color:#9ca3af;border-radius:8px;cursor:pointer}
+.rpb-q-x:hover{background:#f3f4f6;color:#0a0a0a}
+.rpb-filtros{display:grid;gap:8px}
+.rpb-filtros select,.rpb-modelo-in{width:100%;font-size:16px;min-height:42px;padding:7px 10px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#374151;font-family:inherit}
+.rpb-filtros select:focus,.rpb-modelo-in:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.rpb-modelo-wrap{position:relative;min-width:0}
+.rpb-modelo-drop{position:absolute;top:100%;left:0;right:0;z-index:30;background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  box-shadow:0 12px 30px -8px rgba(15,23,42,.25);max-height:240px;overflow-y:auto;display:none;margin-top:4px}
+.rpb-modelo-opt{display:block;width:100%;text-align:left;border:none;background:#fff;padding:9px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-family:inherit;min-height:44px}
+.rpb-modelo-opt:hover{background:#fef2f2}
+.rpb-modelo-opt b{display:block;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere}
+.rpb-modelo-opt small{display:block;font-size:.7rem;color:#6b7280}
+.rpb-modelo-vacio{padding:10px 12px;font-size:.78rem;color:#6b7280}
+.rpb-limpiar{border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:10px;min-height:42px;padding:7px 12px;font-size:.8rem;font-weight:700;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-family:inherit}
+.rpb-limpiar:hover{border-color:#0a0a0a;color:#0a0a0a}
+.rpb-ctx{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rpb-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:999px;
+  padding:6px 12px;font-size:.76rem;font-weight:700;cursor:pointer;min-height:36px;font-family:inherit;max-width:100%;overflow-wrap:anywhere;text-align:left}
+.rpb-chip b{font-weight:900}
+.rpb-chip small{font-weight:600;opacity:.8}
+.rpb-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.rpb-chip.off{background:#fff8e1;border-color:#fcd34d;color:#92400e;cursor:default}
+.rpb-chip-x{border:none;background:rgba(255,255,255,.18);color:inherit;width:22px;height:22px;border-radius:50%;display:inline-grid;place-items:center;font-size:.6rem;cursor:pointer;margin-left:2px}
+.rpb-chip-x:hover{background:#dc2626;color:#fff}
+.rpb-aviso:empty{display:none}
+.rpb-nota{display:flex;gap:8px;align-items:flex-start;font-size:.78rem;color:#1e40af;background:#dbeafe;border:1px solid #bfdbfe;border-radius:10px;padding:8px 12px;line-height:1.4}
+.rpb-nota.ambar{color:#92400e;background:#fff8e1;border-color:#fcd34d}
+.rpb-nota .bi{flex:none;margin-top:1px}
+.rpb-vacio{background:#fff;border:1px dashed #d1d5db;border-radius:12px;padding:18px 14px;text-align:center;color:#6b7280;font-size:.82rem;line-height:1.45}
+.rpb-vacio .bi{display:block;font-size:1.3rem;margin-bottom:4px;color:#cbd5e1}
+.rpb-vacio.rpb-error{color:#b91c1c;border-color:#fecaca;background:#fff5f5}
+.rpb-grid{display:grid;gap:10px}
+/* Tarjeta de resultado */
+.rpb-card{display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-areas:"foto info" "lado lado";gap:8px 12px;
+  background:#fff;border:1.5px solid #e5e7eb;border-left:5px solid #cbd5e1;border-radius:14px;padding:12px;text-align:left;
+  box-shadow:0 1px 3px rgba(15,23,42,.05);transition:border-color .15s,box-shadow .15s;min-width:0;font-family:inherit;color:inherit;width:100%}
+.rpb-card.compat{border-left-color:#16a34a}
+.rpb-card.enlista{background:linear-gradient(180deg,#f0fdf4 0%,#fff 60%)}
+button.rpb-card{cursor:pointer}
+button.rpb-card:hover{border-color:#cbd5e1;box-shadow:0 6px 18px -10px rgba(15,23,42,.35)}
+.rpb-card.sel{border-color:#dc2626;border-left-color:#dc2626;background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.rpb-foto{grid-area:foto;width:64px;height:64px;border-radius:10px;background:#f3f4f6;overflow:hidden;display:grid;place-items:center;color:#c7cbd1;font-size:1.5rem}
+.rpb-foto img{width:100%;height:100%;object-fit:cover;display:block}
+.rpb-info{grid-area:info;min-width:0;display:flex;flex-direction:column;gap:5px}
+/* REGLA #15: el nombre va COMPLETO, nunca line-clamp ni ellipsis. */
+.rpb-nombre{font-weight:800;font-size:.9rem;color:#0a0a0a;line-height:1.3;overflow-wrap:anywhere;white-space:normal}
+.rpb-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:.74rem;color:#6b7280;overflow-wrap:anywhere}
+.rpb-meta .bi{margin-right:3px}
+.rpb-sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:#374151;background:#f3f4f6;border-radius:6px;padding:1px 6px}
+.rpb-dot{color:#cbd5e1}
+.rpb-tags{display:flex;flex-wrap:wrap;gap:5px}
+.rpb-tag{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:800;border-radius:999px;padding:3px 9px;background:#f3f4f6;color:#374151;overflow-wrap:anywhere}
+.rpb-tag.prov{background:#0a0a0a;color:#fff}
+.rpb-tag.sinprov{background:#fff8e1;color:#92400e;border:1px solid #fcd34d}
+.rpb-tag.ubi{background:#dbeafe;color:#1d4ed8}
+.rpb-tag.compat{background:#dcfce7;color:#15803d}
+.rpb-canal{display:inline-flex;align-items:center;gap:4px;font-size:.62rem;font-weight:800;border-radius:999px;padding:1px 7px;color:#fff;margin-left:2px}
+.rpb-canal.whatsapp{background:#16a34a}.rpb-canal.wechat{background:#07C160}.rpb-canal.telefono{background:#3b82f6}.rpb-canal.email{background:#6b7280}
+.rpb-tag.prov .rpb-canal{background:rgba(255,255,255,.22)}
+.rpb-modelos{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:.7rem;color:#6b7280}
+.rpb-modelos > .bi{color:#9ca3af;margin-right:2px}
+.rpb-modelos-vacio{font-style:italic}
+.rpb-modelo{background:#f3f4f6;color:#374151;border-radius:999px;padding:2px 8px;font-weight:600;overflow-wrap:anywhere}
+.rpb-modelo.on{background:#dcfce7;color:#15803d;font-weight:800}
+.rpb-lado{grid-area:lado;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding-top:8px;border-top:1px dashed #f1f5f9}
+.rpb-sem{display:inline-flex;align-items:center;gap:5px;font-size:.74rem;font-weight:900;border-radius:999px;padding:4px 10px;white-space:nowrap}
+.rpb-sem.verde{background:#dcfce7;color:#15803d}
+.rpb-sem.ambar{background:#fff8e1;color:#b45309}
+.rpb-sem.rojo{background:#fee2e2;color:#b91c1c}
+.rpb-sem-sub{font-size:.68rem;color:#6b7280;overflow-wrap:anywhere}
+.rpb-add{margin-left:auto;display:flex;align-items:center;gap:6px}
+.rpb-cant{width:72px;font-size:16px;min-height:40px;padding:6px 8px;border:1.5px solid #d1d5db;border-radius:9px;text-align:center;font-family:inherit}
+.rpb-cant:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.rpb-btn-add{display:inline-flex;align-items:center;gap:5px;background:#0a0a0a;color:#fff;border:none;border-radius:9px;min-height:40px;padding:6px 14px;
+  font-size:.8rem;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap}
+.rpb-btn-add:hover{background:#dc2626}
+.rpb-enlista{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:800;color:#15803d;white-space:nowrap}
+/* Responsive por CONTENEDOR, no por viewport: el mismo componente vive en
+   un modal-lg (~740px de ancho útil, gestión) y en un modal normal (~470px,
+   OT del técnico) sobre la misma pantalla de escritorio. El layout base es
+   el angosto (REGLA #3, mobile-first: una columna, toques de 44px) y se
+   ensancha con @container; un navegador sin container queries se queda
+   con el apilado, que siempre se ve bien. */
+.rpb{container-type:inline-size}
+.rpb-filtros{grid-template-columns:1fr}
+.rpb-filtros select,.rpb-modelo-in,.rpb-limpiar{min-height:44px}
+.rpb-grid{grid-template-columns:1fr}
+.rpb-add{margin-left:0;width:100%}
+.rpb-cant{flex:0 0 80px;min-height:44px}
+.rpb-btn-add{flex:1;min-height:44px;justify-content:center}
+@container (min-width:560px){
+  .rpb-filtros{grid-template-columns:1fr 1fr}
+  .rpb-modelo-wrap{grid-column:1 / -1}
+  .rpb-limpiar{grid-column:1 / -1;justify-self:end;min-width:130px}
+  .rpb-add{margin-left:auto;width:auto}
+  .rpb-cant{flex:0 0 72px;min-height:40px}
+  .rpb-btn-add{flex:none;min-height:40px}
+}
+@container (min-width:700px){
+  .rpb-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (min-width:860px){
+  .rpb-filtros{grid-template-columns:1fr 1fr 1.3fr auto}
+  .rpb.sin-prov .rpb-filtros{grid-template-columns:1fr 1.3fr auto}
+  .rpb-modelo-wrap,.rpb-limpiar{grid-column:auto}
+}
+@media (max-width:575.98px){
+  .rpb-card{grid-template-columns:52px minmax(0,1fr);padding:10px}
+  .rpb-foto{width:52px;height:52px}
+  .rpb-chip{min-height:44px}
+}

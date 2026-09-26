@@ -15022,6 +15022,13 @@ async function levdEliminar(iid){
     Subida: UN archivo por request (Cloud Run corta en 32 MiB): la solicitud
     nace con el primer archivo y los demás van uno a uno por /evidencia. -#}
 {% if (puede_ejecutar or puede_configurar) and not ot_solo_lectura %}
+{#- 🧠 2026-09-26 (Daniel: "el motor de búsqueda igual deberá aplicar cuando el
+    técnico tenga la OT y solicitará repuesto: proveedor, modelo compatible y
+    repuesto, obviamente SKU también"): la pestaña "Buscar en bodega" de este
+    modal usa el MISMO motor que "Solicitar repuesto" en /repuestos
+    (static/repuestos_buscador.js + GET /ot/api/repuestos/bodega-buscar). -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='repuestos_buscador.css') }}">
+<script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
 <div class="modal fade" id="modalRepSol" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content" style="border-radius:14px">
@@ -15077,9 +15084,19 @@ async function levdEliminar(iid){
               <div class="otrep-opc" id="otrepCompatLista"></div>
             </div>
             <div id="otrepPaneBodega" style="display:none">
-              <input type="search" id="otrep_bq" class="form-control" placeholder="SKU, descripción o código de fabricante"
-                     autocomplete="off" oninput="otrepBuscarBodega(this.value)">
-              <div class="otrep-opc" id="otrepBodegaLista"></div>
+              {#- 🧠 2026-09-26: motor compartido (texto + marca + proveedor si
+                  corresponde + modelo compatible, con el equipo de esta OT
+                  como contexto: "Compatibles con <equipo>" primero). Elegir
+                  una tarjeta = otrepSelStock(), igual que antes; el flujo
+                  "Agregar a la lista" / piola / cinta no cambia. -#}
+              <div id="otrepBuscadorMount"></div>
+              {#- Respaldo histórico (oculto): si el motor no cargó, este input
+                  sigue buscando por texto como en la Fase 1. -#}
+              <div id="otrepBodegaLegacy" class="d-none">
+                <input type="search" id="otrep_bq" class="form-control" placeholder="SKU, descripción o código de fabricante"
+                       autocomplete="off" oninput="otrepBuscarBodega(this.value)">
+                <div class="otrep-opc" id="otrepBodegaLista"></div>
+              </div>
             </div>
             <div id="otrepPaneManual" style="display:none">
               <label class="form-label fw-semibold small mb-1">Nombre del repuesto <span class="text-danger">*</span></label>
@@ -15292,6 +15309,34 @@ const _OTREP_HDR = {'X-Requested-With': 'XMLHttpRequest'};
     #4.2). Cada ítem: {stock_id, nombre, sku, origen, cantidad, disponible,
     comprometido, con_stock}. -#}
 var _otrep = { mid: null, modo: 'repuesto', tab: 'compat', opciones: null, sel: null, archivos: [], enviando: false, piola: null, lista: [] };
+{#- 🧠 2026-09-26: motor de búsqueda compartido. Un técnico EXTERNO no ve ni
+    filtra por proveedor (mismo criterio que _OTREP_STOCK_NO_EXTERNO en el
+    backend, que además no le busca por nombre de proveedor). -#}
+var _OTREP_ES_EXTERNO = {{ (es_tecnico_externo or false) | tojson }};
+var _otrepBuscador = null;
+function otrepBuscadorPreparar(mid, equipo){
+  var mount = document.getElementById('otrepBuscadorMount');
+  if (!mount || !window.RepBuscador){
+    // Sin motor (script no cargó): se muestra el buscador por texto de la Fase 1.
+    var leg = document.getElementById('otrepBodegaLegacy'); if (leg) leg.classList.remove('d-none');
+    return;
+  }
+  var eq = { id: mid, nombre: (equipo && equipo.nombre) || _OTREP_EQ_NOMBRE[mid] || ('Equipo #' + mid), sku: (equipo && equipo.sku) || null };
+  if (!_otrepBuscador){
+    _otrepBuscador = RepBuscador.crear({
+      mount: mount, ctx: 'ot', modo: 'seleccion',
+      // La pestaña Compatibles ya lista los del modelo: acá se parte en
+      // "Toda la bodega (compatibles primero)" y el chip permite acotar.
+      compatPorDefecto: false, mostrarProveedor: !_OTREP_ES_EXTERNO,
+      equipo: eq, headers: _OTREP_HDR,
+      onResultados: function(items){ _otrep._bodega = items; },
+      onSeleccionar: function(it, card){ _otrep._bodega = _otrepBuscador.getItems(); otrepSelStock(it.id, 'bodega', card); }
+    });
+  } else {
+    _otrepBuscador.limpiar();
+    _otrepBuscador.setEquipo(eq);
+  }
+}
 var _otbaja = { mid: null, archivos: [], enviando: false };
 var _otrepBqTimer = null;
 
@@ -15350,6 +15395,7 @@ window.otdRepAbrir = async function(mid, modo){
   document.getElementById('otrep_nombre').value = (_otrep.modo === 'piola') ? 'Piola / cable de acero' : (_otrep.modo === 'cinta' ? 'Cinta de trotadora' : '');
   document.getElementById('otrep_bq').value = '';
   document.getElementById('otrepBodegaLista').innerHTML = '';
+  otrepBuscadorPreparar(mid, null);
   document.getElementById('otrepEv').innerHTML = '';
   document.getElementById('otrepErr').textContent = '';
   document.getElementById('otrepCompatLista').innerHTML = '<div class="otrep-opc-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando repuestos compatibles con este modelo…</div>';
@@ -15363,6 +15409,8 @@ window.otdRepAbrir = async function(mid, modo){
     if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
     if (_otrep.mid !== mid) return;
     _otrep.opciones = j;
+    // El SKU del equipo alimenta el chip "Compatibles con <equipo>" del motor.
+    if (_otrepBuscador && j.equipo) _otrepBuscador.setEquipo({ id: mid, nombre: _OTREP_EQ_NOMBRE[mid] || j.equipo.nombre || ('Equipo #' + mid), sku: j.equipo.sku || null });
     var comp = j.compatibles || [];
     // Un equipo que YA está fuera de servicio no vuelve a preguntarlo.
     if (j.equipo && j.equipo.estado_capturado === 'fuera_servicio'){
@@ -15430,7 +15478,7 @@ function otrepTab(t){
   document.getElementById('otrepPaneBodega').style.display = (t === 'bodega') ? '' : 'none';
   document.getElementById('otrepPaneManual').style.display = (t === 'manual') ? '' : 'none';
   if (t === 'manual') otrepSelManual();
-  if (t === 'bodega') setTimeout(function(){ var i = document.getElementById('otrep_bq'); if (i) i.focus(); }, 150);
+  if (t === 'bodega') setTimeout(function(){ if (_otrepBuscador) { _otrepBuscador.focus(); return; } var i = document.getElementById('otrep_bq'); if (i) i.focus(); }, 150);
 }
 
 function otrepPintarOpciones(contId, items, origen, vacioMsg){
@@ -15468,12 +15516,14 @@ function otrepSelStock(id, origen, btn){
                  comprometido: (it.comprometido != null ? it.comprometido : null),
                  con_stock: (it.con_stock != null ? it.con_stock : null) };
   document.querySelectorAll('.otrep-opc-it[data-id]').forEach(function(b){ b.classList.toggle('on', Number(b.dataset.id) === id && b === btn); });
+  if (_otrepBuscador) _otrepBuscador.setSeleccion(origen === 'bodega' ? id : null);
   otrepRefrescar();
 }
 
 function otrepSelManual(){
   var nom = (document.getElementById('otrep_nombre').value || '').trim();
   document.querySelectorAll('.otrep-opc-it[data-id]').forEach(function(b){ b.classList.remove('on'); });
+  if (_otrepBuscador) _otrepBuscador.setSeleccion(null);
   _otrep.sel = nom ? { stock_id: null, nombre: nom, origen: (_otrep.modo === 'repuesto' ? 'manual' : _otrep.modo),
                         sku: null, disponible: null, comprometido: null, con_stock: null } : null;
   otrepRefrescar();
@@ -15514,6 +15564,7 @@ function otrepAgregarALaLista(){
   // repuesto -- la lista de abajo es la que se envía, no esta selección.
   _otrep.sel = null;
   document.querySelectorAll('.otrep-opc-it[data-id]').forEach(function(b){ b.classList.remove('on'); });
+  if (_otrepBuscador) _otrepBuscador.setSeleccion(null);
   document.getElementById('otrep_nombre').value = '';
   document.getElementById('otrep_add_cantidad').value = '1';
   otrepPintarLista();
