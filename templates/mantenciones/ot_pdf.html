@@ -470,6 +470,45 @@
     letter-spacing: .04em; display: block;
     margin-bottom: 1px;
   }
+  /* 🔧 Fase 3b (2026-09-26 -- Daniel: "las OT deben expresar si se solicitó
+     el repuesto y el estado en que quedó el equipo"). "Estado en esta OT":
+     semáforo dentro de la ficha de identificación, junto a "Estado en
+     ficha" (que NO se toca, REGLA #4.2) -- uno es lo que pasó EN ESTA
+     visita, el otro es el estado ACTUAL de la ficha del equipo. */
+  .eq-card .eq-ident span.eq-estado-ot.ok  { color: #15803d; font-weight: 800; }
+  .eq-card .eq-ident span.eq-estado-ot.warn{ color: #b45309; font-weight: 800; }
+  .eq-card .eq-ident span.eq-estado-ot.err { color: var(--ilus-red); font-weight: 800; }
+  {# 🔴 FIX 2026-09-26 (revisión, ALTA 1): "Sin revisión registrada" -- ni
+     verde (no hay revisión que lo respalde) ni rojo (no es una falla),
+     gris neutro (REGLA #2). #}
+  .eq-card .eq-ident span.eq-estado-ot.mute{ color: var(--ilus-mute); font-weight: 800; }
+  /* "Repuestos solicitados en esta OT": mismo lenguaje visual que .eq-obs,
+     acento azul (REGLA #2, azul info) para no confundirse con la
+     observación del técnico (rojo) ni el diagnóstico (verde/rojo). SOLO
+     nombre/cantidad/medida/estado/fecha -- nunca costo, proveedor, OC ni
+     ubicación de bodega: el PDF lo recibe el CLIENTE (ver _ot_pdf_context,
+     rep_por_maquina, en app.py -- esas columnas ni siquiera se consultan). */
+  .eq-card .eq-rep-sol {
+    background: var(--ilus-bg);
+    border-radius: 3px;
+    padding: 6px 8px;
+    font-size: 8.5pt; line-height: 1.4;
+    color: var(--ilus-ink);
+    border-left: 3px solid #3b82f6;
+    margin-bottom: 6px;
+  }
+  .eq-card .eq-rep-sol .lbl {
+    font-weight: 800; color: #1d4ed8;
+    font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .04em; display: block;
+    margin-bottom: 3px;
+  }
+  .eq-card .eq-rep-sol .eq-rep-sol-item { margin-bottom: 3px; }
+  .eq-card .eq-rep-sol .eq-rep-sol-item:last-child { margin-bottom: 0; }
+  .eq-card .eq-rep-sol .eq-rep-sol-item b { color: var(--ilus-ink); }
+  .eq-card .eq-rep-sol .eq-rep-sol-item span {
+    display: block; font-size: 8pt; color: var(--ilus-mute);
+  }
   /* Diagnóstico por máquina (Daniel 26-ago: "muy importante") — verde
      aprobado, rojo cuando hay observación o falla que revisar. */
   .eq-card .eq-diag {
@@ -855,6 +894,34 @@
   table.hall td.det { color: var(--ilus-ink); }
   .hall-mas { font-size: 7pt; color: var(--ilus-mute); font-style: italic; margin: -1.5mm 0 3mm; }
 
+  /* 🔧 Fase 3b (2026-09-26 -- Daniel: "las OT deben expresar si se solicitó
+     el repuesto"). Tabla resumen "Repuestos solicitados", una vez por OT --
+     mismo lenguaje visual que table.hall/table.chk. SOLO nombre/cantidad/
+     medida/estado/fecha (ver rep_resumen en _ot_pdf_context, app.py). */
+  table.rep-sol { width: 100%; border-collapse: collapse; font-size: 7.8pt; margin-bottom: 3mm; }
+  table.rep-sol thead { background: var(--ilus-black); }
+  table.rep-sol thead th {
+    color: #fff; padding: 5px 6px; text-align: left;
+    font-size: 7.2pt; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
+  }
+  table.rep-sol thead th:first-child { border-top-left-radius: 6px; }
+  table.rep-sol thead th:last-child { border-top-right-radius: 6px; }
+  table.rep-sol tbody tr { page-break-inside: avoid; }
+  table.rep-sol tbody tr:nth-child(even) { background: var(--ilus-bg); }
+  table.rep-sol td {
+    padding: 4px 6px; vertical-align: top; border-bottom: 1px solid var(--ilus-line);
+    line-height: 1.35; overflow-wrap: anywhere;
+  }
+  table.rep-sol td.eq { width: 24mm; font-weight: 700; color: var(--ilus-red); }
+  table.rep-sol .pill-rep {
+    display: inline-block; padding: 1px 8px; border-radius: 50px;
+    font-size: 7pt; font-weight: 800; background: #dbeafe; color: #1e40af;
+    border: 1px solid #bfdbfe; text-transform: uppercase; letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  table.rep-sol .pill-rep.ok  { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+  table.rep-sol .pill-rep.err { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+
   /* Tarjeta de equipo: estado de revisión en ESTA visita. */
   .eq-card .eq-rev {
     background: #fef2f2; border-left: 3px solid var(--ilus-red); border-radius: 3px;
@@ -997,9 +1064,31 @@
     de cámara aunque el técnico SÍ había fotografiado el equipo. Ahora usa la
     primera foto de esta visita (nunca un video: el <img> lo dejaría en
     blanco) y la marca como tal. -#}
+{# 🔧 2026-09-26 (Daniel: "brindarle la oportunidad al técnico de elegir la
+   foto principal de cada OT, bien informativo, y todo debe estar
+   conectado"). Orden de preferencia para el recuadro grande del equipo:
+     1) Foto PRINCIPAL elegida por el técnico EN ESTA OT (f.es_principal,
+        ver /mantenciones/api/visitas/<vid>/fotos/<fid>/principal en app.py)
+     2) Foto de la ficha (e.foto_url) -- como ya era antes de esta fecha
+     3) Primera foto de esta visita (fallback ya existente)
+     4) Ícono
+   `fotos` viene de eq_fotos_idx, que YA deja la principal primera en la
+   lista (ver _ot_pdf_context) -- acá solo se distingue el caso para poner
+   la etiqueta correcta ("Foto principal de esta visita" vs "Foto de esta
+   visita"). #}
 {% macro eq_foto_ref(e, fotos) -%}
-  {%- set _ref = namespace(u=None) -%}
-  {%- if not e.foto_url -%}
+  {%- set _ref = namespace(u=None, principal=False) -%}
+  {%- for f in fotos -%}
+    {%- set _u = (f.url or '') -%}
+    {%- set _ul = _u|lower -%}
+    {%- set _esvid = _ul.startswith('data:video')
+          or (_ul.split('?')[0]).endswith(('.mp4', '.mov', '.webm', '.m4v', '.3gp')) -%}
+    {%- if f.es_principal and _u and not _esvid and not _ref.u -%}
+      {%- set _ref.u = _u -%}
+      {%- set _ref.principal = True -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- if not _ref.u and not e.foto_url -%}
     {%- for f in fotos -%}
       {%- set _u = (f.url or '') -%}
       {%- set _ul = _u|lower -%}
@@ -1009,7 +1098,8 @@
       {%- endif -%}
     {%- endfor -%}
   {%- endif -%}
-  {%- if e.foto_url -%}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">
+  {%- if _ref.principal and _ref.u -%}<img src="{{ _ref.u }}" alt="{{ e.nombre }}"><span class="eq-foto-tag">Foto principal de esta visita</span>
+  {%- elif e.foto_url -%}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">
   {%- elif _ref.u -%}<img src="{{ _ref.u }}" alt="{{ e.nombre }}"><span class="eq-foto-tag">Foto de esta visita</span>
   {%- else -%}{{ ic_camera(26, '#cbd5e1') }}{%- endif -%}
 {%- endmacro %}
@@ -1431,11 +1521,29 @@
           {% if e.ubicacion_sala %}<span><b>Ubicación</b>{{ e.ubicacion_sala }}</span>{% endif %}
           {% if e.anio_fabricacion %}<span><b>Año</b>{{ e.anio_fabricacion }}</span>{% endif %}
           {% if e.voltaje %}<span><b>Voltaje</b>{{ e.voltaje }}</span>{% endif %}
+          {# 🔧 Fase 3b (2026-09-26): "Estado en esta OT" -- lo que ESTA
+             visita dejó del equipo (nunca el estado actual de la ficha, ver
+             _ot_pdf_context/estado_esta_ot_label en app.py). Va ANTES de
+             "Estado en ficha" y con su propio rótulo para que nadie las
+             confunda: una es evidencia congelada de este documento, la otra
+             es el estado de HOY (puede haber cambiado después). #}
+          {% if e.estado_esta_ot_label %}<span class="eq-estado-ot {{ e.estado_esta_ot_clase }}"><b>Estado en esta OT</b>{{ e.estado_esta_ot_label }}</span>{% endif %}
           {# "Estado en ficha": es el último estado conocido del equipo en su
              ficha (mant_maquinas), no una lectura de esta visita. Se omite
              en un equipo no revisado para no contradecir el aviso. #}
           {% if e.estado_capturado and not e.saltado %}<span><b>Estado en ficha</b>{{ e.estado_capturado_label or (e.estado_capturado|replace('_',' ')|capitalize) }}</span>{% endif %}
         </div>
+        {% if e.rep_solicitudes %}
+        <div class="eq-rep-sol">
+          <span class="lbl">Repuestos solicitados en esta OT</span>
+          {% for s in e.rep_solicitudes %}
+          <div class="eq-rep-sol-item">
+            <b>{{ s.repuesto_nombre }}</b>
+            <span>Cant. {% if s.cantidad is not none %}{{ '%g' | format(s.cantidad) }}{% endif %}{% if s.medida %} · {{ s.medida }}{% endif %} · {{ s.estado_label }}{% if s.fecha_str %} · {{ s.fecha_str }}{% endif %}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
         {# 2026-09-05 (valor probatorio): estado de revisión EN ESTA visita.
            Un equipo "saltado" (no encontrado, dado de baja, retirado por el
            cliente) salía como cualquier otro, con checklist a medias y sin
@@ -1599,11 +1707,29 @@
           {% if e.ubicacion_sala %}<span><b>Ubicación</b>{{ e.ubicacion_sala }}</span>{% endif %}
           {% if e.anio_fabricacion %}<span><b>Año</b>{{ e.anio_fabricacion }}</span>{% endif %}
           {% if e.voltaje %}<span><b>Voltaje</b>{{ e.voltaje }}</span>{% endif %}
+          {# 🔧 Fase 3b (2026-09-26): "Estado en esta OT" -- lo que ESTA
+             visita dejó del equipo (nunca el estado actual de la ficha, ver
+             _ot_pdf_context/estado_esta_ot_label en app.py). Va ANTES de
+             "Estado en ficha" y con su propio rótulo para que nadie las
+             confunda: una es evidencia congelada de este documento, la otra
+             es el estado de HOY (puede haber cambiado después). #}
+          {% if e.estado_esta_ot_label %}<span class="eq-estado-ot {{ e.estado_esta_ot_clase }}"><b>Estado en esta OT</b>{{ e.estado_esta_ot_label }}</span>{% endif %}
           {# "Estado en ficha": es el último estado conocido del equipo en su
              ficha (mant_maquinas), no una lectura de esta visita. Se omite
              en un equipo no revisado para no contradecir el aviso. #}
           {% if e.estado_capturado and not e.saltado %}<span><b>Estado en ficha</b>{{ e.estado_capturado_label or (e.estado_capturado|replace('_',' ')|capitalize) }}</span>{% endif %}
         </div>
+        {% if e.rep_solicitudes %}
+        <div class="eq-rep-sol">
+          <span class="lbl">Repuestos solicitados en esta OT</span>
+          {% for s in e.rep_solicitudes %}
+          <div class="eq-rep-sol-item">
+            <b>{{ s.repuesto_nombre }}</b>
+            <span>Cant. {% if s.cantidad is not none %}{{ '%g' | format(s.cantidad) }}{% endif %}{% if s.medida %} · {{ s.medida }}{% endif %} · {{ s.estado_label }}{% if s.fecha_str %} · {{ s.fecha_str }}{% endif %}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
         {# 2026-09-05 (valor probatorio): estado de revisión EN ESTA visita.
            Un equipo "saltado" (no encontrado, dado de baja, retirado por el
            cliente) salía como cualquier otro, con checklist a medias y sin
@@ -1838,6 +1964,32 @@
     </div>
   </div>
 
+  {# 🔧 Fase 3b (2026-09-26 -- Daniel: "las OT deben expresar si se solicitó
+     el repuesto y el estado en que quedó el equipo... el repositorio son
+     las fichas de clientes, todo movimiento se verá reflejado"). Resumen
+     ÚNICO de la OT completa -- si no hubo solicitudes, no se muestra nada
+     (spec: "Si no hubo, no se muestra"). SOLO nombre/cantidad/medida/
+     estado/fecha: nunca costo, proveedor, OC ni ubicación de bodega, en
+     NINGUNA versión del PDF (el detalle por equipo, con el mismo criterio,
+     va en cada tarjeta de "Equipos informados" más arriba). #}
+  {% if rep_resumen %}
+  <div class="sec-title">Repuestos solicitados</div>
+  <table class="rep-sol">
+    <thead><tr><th>Equipo</th><th>Repuesto</th><th>Cantidad</th><th>Estado</th><th>Fecha</th></tr></thead>
+    <tbody>
+      {% for r in rep_resumen %}
+      <tr>
+        <td class="eq">{% if r.equipo_idx %}#{{ r.equipo_idx }} {% endif %}{{ r.equipo_nombre }}</td>
+        <td>{{ r.repuesto_nombre }}</td>
+        <td>{% if r.cantidad is not none %}{{ '%g' | format(r.cantidad) }}{% endif %}{% if r.medida %} · {{ r.medida }}{% endif %}</td>
+        <td><span class="pill-rep {{ 'ok' if r.estado == 'instalado' else ('err' if r.estado == 'rechazado' else '') }}">{{ r.estado_label }}</span></td>
+        <td>{{ r.fecha_str }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
   {# ── FIRMAS ── #}
   {# 2026-05-18 — Nombres estampados al firmar:
        firma_cliente_nombre → cliente
@@ -2023,6 +2175,32 @@
       </div>
     </div>
   </div>
+
+  {# 🔧 Fase 3b (2026-09-26 -- Daniel: "las OT deben expresar si se solicitó
+     el repuesto y el estado en que quedó el equipo... el repositorio son
+     las fichas de clientes, todo movimiento se verá reflejado"). Resumen
+     ÚNICO de la OT completa -- si no hubo solicitudes, no se muestra nada
+     (spec: "Si no hubo, no se muestra"). SOLO nombre/cantidad/medida/
+     estado/fecha: nunca costo, proveedor, OC ni ubicación de bodega, en
+     NINGUNA versión del PDF (el detalle por equipo, con el mismo criterio,
+     va en cada tarjeta de "Equipos informados" más arriba). #}
+  {% if rep_resumen %}
+  <div class="sec-title">Repuestos solicitados</div>
+  <table class="rep-sol">
+    <thead><tr><th>Equipo</th><th>Repuesto</th><th>Cantidad</th><th>Estado</th><th>Fecha</th></tr></thead>
+    <tbody>
+      {% for r in rep_resumen %}
+      <tr>
+        <td class="eq">{% if r.equipo_idx %}#{{ r.equipo_idx }} {% endif %}{{ r.equipo_nombre }}</td>
+        <td>{{ r.repuesto_nombre }}</td>
+        <td>{% if r.cantidad is not none %}{{ '%g' | format(r.cantidad) }}{% endif %}{% if r.medida %} · {{ r.medida }}{% endif %}</td>
+        <td><span class="pill-rep {{ 'ok' if r.estado == 'instalado' else ('err' if r.estado == 'rechazado' else '') }}">{{ r.estado_label }}</span></td>
+        <td>{{ r.fecha_str }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 
   <div class="sec-title">Firmas y validación</div>
   <div class="firmas">
