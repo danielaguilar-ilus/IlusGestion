@@ -1706,12 +1706,31 @@
     setTimeout(function(){ document.getElementById('incMotivo').focus(); }, 250);
   }
 
+  // 🔧 2026-09-26 (Daniel: "a veces funciona, a veces no"): el botón SIEMPRE
+  // hacía un fetch nuevo, y si el usuario tocaba dos veces seguido (o volvía
+  // a abrir el panel mientras el primero seguía esperando al ERP/CheckWMS,
+  // que pueden tardar hasta ~45s), la respuesta MÁS LENTA podía llegar
+  // DESPUÉS de la más rápida y pisar el resultado bueno con uno viejo --
+  // parecía que "a veces no hacía nada". `incConcToken` descarta cualquier
+  // respuesta que no sea la del último clic. También se agrega un aviso
+  // pasados 12s (el ERP/WMS a veces demoran, pero igual sigue esperando)
+  // para que no se vea "colgado" sin decir nada.
+  var incConcToken = 0;
   function incConcCargar(){
+    var miToken = ++incConcToken;
     $('incConciliacion').hidden = false;
     $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
       + '<i class="bi bi-hourglass-split"></i>Comparando con el ERP y el WMS…</div>';
+    var avisoLento = setTimeout(function(){
+      if(miToken !== incConcToken) return;
+      $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
+        + '<i class="bi bi-hourglass-split"></i>Sigue comparando -- el ERP o CheckWMS a veces demoran '
+        + 'hasta un minuto. No cierres esta pantalla.</div>';
+    }, 12000);
     fetch('/mantenciones/api/incidencias/conciliacion')
       .then(function(r){return r.json();}).then(function(d){
+        clearTimeout(avisoLento);
+        if(miToken !== incConcToken) return;   // llegó tarde, ya no importa
         if(!d.ok){
           $('incConcLista').innerHTML = '<div class="empty-state text-danger" style="padding:26px">'
             + (d.error || 'No se pudo comparar.')+'</div>';
@@ -1719,8 +1738,11 @@
         }
         incConcData = d; incConcPintar();
       }).catch(function(){
+        clearTimeout(avisoLento);
+        if(miToken !== incConcToken) return;
         $('incConcLista').innerHTML = '<div class="empty-state text-danger" style="padding:26px">'
-          + 'No se pudo conectar con el servidor.</div>';
+          + 'No se pudo conectar con el servidor. <button type="button" class="btn btn-sm btn-ilus-outline mt-2" '
+          + 'onclick="incConcData=null;incConcCargar()">Reintentar</button></div>';
       });
   }
 
