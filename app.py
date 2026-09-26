@@ -85201,7 +85201,7 @@ _OTREP_MAX_VIDEO = 28 * 1024 * 1024
 # costos/stock/proveedores de otros no se exponen al proveedor).
 _OTREP_STOCK_SOLO_GESTION = ("costo_unitario",)
 _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
-                           "comprometido", "disponible")
+                           "comprometido", "disponible", "por_llegar")
 _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
                          # 🔒 2026-09-25 (Fase 2): mismos 3 campos nuevos de contacto del
                          # proveedor que _OTREP_SQL_SOL agrega para la vista agrupada
@@ -85227,12 +85227,19 @@ _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "prove
                          "cliente_rut", "ticket_rut", "ticket_empresa", "ticket_contacto_nombre",
                          "ticket_contacto_email", "ticket_contacto_phone", "ticket_direccion",
                          "ticket_comuna")
-# Estados que siguen "vivos" para efectos de comprometer stock -- una
-# solicitud en cualquiera de estos todavía puede consumir el repuesto real,
-# así que cuenta contra el disponible de bodega. Mismo set que _OTREP_ABIERTOS,
-# nombrado aparte porque el significado acá es otro (compromiso de stock, no
-# "sigue pendiente de gestión").
-_OTREP_ESTADOS_COMPROMETEN = _OTREP_ABIERTOS
+# 🔧 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): antes este set
+# era = _OTREP_ABIERTOS (solicitado, validado, pedido, recibido) -- pero
+# "pedido" está ESPERANDO al proveedor, no consumiendo stock físico que ya
+# esté en bodega, así que comprometerlo contra el físico existente era
+# incorrecto (bloqueaba stock real por algo que ni siquiera había llegado).
+# Comprometen de verdad: 'validado' (bodega ya apartó el repuesto físico
+# para esa OT) y 'recibido' (ya entró físicamente, en camino a instalarse).
+# 'pedido' pasa a ser "por llegar" (ver _OTREP_ESTADOS_POR_LLEGAR) -- un
+# dato informativo aparte, no un descuento del disponible actual.
+_OTREP_ESTADOS_COMPROMETEN = ("validado", "recibido")
+# Lo que está pedido al proveedor pero todavía no llega a bodega -- se
+# muestra aparte ("por llegar"), nunca se resta del disponible físico.
+_OTREP_ESTADOS_POR_LLEGAR = ("pedido",)
 # 🚦 2026-09-25 (Fase 2 -- spec: "semáforo por antigüedad (días abiertos):
 # verde <3, ámbar 3–7, rojo >7"). Constantes en un solo lugar, como pide la
 # especificación, para que la tarjeta y cualquier reporte usen el mismo corte.
@@ -85596,8 +85603,14 @@ def _otrep_stock_comprometido(repuesto_stock_id, excluir_sol_id=None):
     """
     if not repuesto_stock_id:
         return 0.0
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una "reposición de
+    # stock propio" (es_reposicion=1) es una solicitud manual que trae
+    # repuestos HACIA la bodega -- no compite por el físico existente como
+    # sí lo hace una solicitud real de una OT/ticket/incidencia. Contarla
+    # acá inflaba el comprometido con algo que en realidad va a SUMAR stock,
+    # nunca a restarlo.
     sql = ("SELECT COALESCE(SUM(cantidad),0) AS n FROM mant_ot_repuesto_solicitudes "
-           " WHERE repuesto_stock_id=%s AND estado IN "
+           " WHERE repuesto_stock_id=%s AND COALESCE(es_reposicion,0)=0 AND estado IN "
            + "('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')")
     params = [repuesto_stock_id]
     if excluir_sol_id:
@@ -85678,9 +85691,17 @@ _OTREP_SQL_STOCK = (
     # necesidad de la operación"): cuánto de este repuesto ya está prometido
     # a OTRAS solicitudes abiertas -- se resta del físico en _otrep_fmt_stock
     # para mostrar el disponible REAL al elegir de dónde sale un repuesto.
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una reposición de
+    # stock propio (es_reposicion=1) trae repuestos HACIA la bodega, no
+    # compite por el físico existente -- se excluye del comprometido.
     "       (SELECT COALESCE(SUM(s.cantidad),0) FROM mant_ot_repuesto_solicitudes s "
-    "         WHERE s.repuesto_stock_id=rs.id AND s.estado IN "
-    "               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido "
+    "         WHERE s.repuesto_stock_id=rs.id AND COALESCE(s.es_reposicion,0)=0 AND s.estado IN "
+    "               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido, "
+    # 🔧 2026-09-26 (Fase 3 -- kardex): "por llegar" = lo pedido al proveedor
+    # que todavía no entra a bodega -- informativo, NO se resta del físico.
+    "       (SELECT COALESCE(SUM(s3.cantidad),0) FROM mant_ot_repuesto_solicitudes s3 "
+    "         WHERE s3.repuesto_stock_id=rs.id AND s3.estado IN "
+    "               ('" + "','".join(_OTREP_ESTADOS_POR_LLEGAR) + "')) AS por_llegar "
     "  FROM mant_repuestos_stock rs "
     "  LEFT JOIN mant_repuestos_marcas mk ON mk.id=rs.marca_id "
     "  LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
@@ -85694,9 +85715,10 @@ def _otrep_fmt_stock(r, para_ot=False):
     r = dict(r)
     r["foto_url"] = ("/f/" + r["foto_key"]) if r.get("foto_key") else None
     r.pop("foto_key", None)
-    for k in ("cantidad", "stock_minimo", "costo_unitario", "comprometido"):
+    for k in ("cantidad", "stock_minimo", "costo_unitario", "comprometido", "por_llegar"):
         r[k] = float(r[k]) if r.get(k) is not None else None
     r["comprometido"] = r.get("comprometido") or 0.0
+    r["por_llegar"] = r.get("por_llegar") or 0.0
     r["disponible"] = (r.get("cantidad") or 0.0) - r["comprometido"]
     r["es_piola"] = bool(re.search(r"piola|cable de acero", r.get("descripcion") or "", re.I))
     r["es_cinta"] = bool(re.search(r"cinta|banda|belt", r.get("descripcion") or "", re.I))
@@ -85744,8 +85766,11 @@ _OTREP_SQL_SOL = (
     # 🔒 2026-09-20: cuánto de ESTE mismo repuesto de bodega ya está
     # comprometido en OTRAS solicitudes abiertas (s.id<>s2.id) -- _otrep_fila
     # le suma la cantidad de ESTA fila (si sigue abierta) para el total.
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una reposición
+    # (es_reposicion=1) no compite por el físico -- se excluye acá también.
     "       (SELECT COALESCE(SUM(s2.cantidad),0) FROM mant_ot_repuesto_solicitudes s2 "
     "         WHERE s2.repuesto_stock_id=s.repuesto_stock_id AND s2.id<>s.id "
+    "           AND COALESCE(s2.es_reposicion,0)=0 "
     "           AND s2.estado IN ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido_otras "
     "  FROM mant_ot_repuesto_solicitudes s "
     # 🔀 2026-09-21 (Fase 2): m/v pasan de JOIN a LEFT JOIN -- una solicitud
@@ -85798,7 +85823,15 @@ def _otrep_fila(s, para_ot=False):
     # viene de _OTREP_SQL_SOL; se descarta del dict final (es un cálculo
     # intermedio, no un dato de la solicitud).
     if s.get("repuesto_stock_id") and s.get("stock_cantidad") is not None:
-        _propia = s.get("cantidad") or 0.0 if s.get("abierta") else 0.0
+        # 🔒 2026-09-26 (revisión Fase 3, hallazgo MEDIA #6): "abierta" incluía
+        # 'pedido' (esperando al proveedor, YA NO compromete físico -- ver
+        # _OTREP_ESTADOS_COMPROMETEN) y dejaba fuera a 'solicitado', que sí
+        # se cuenta como proyección (todavía puede terminar consumiendo este
+        # repuesto). Una reposición (es_reposicion=1) nunca es "propia" del
+        # comprometido -- trae stock, no lo consume (hallazgo ALTA #1).
+        _propia = 0.0
+        if not s.get("es_reposicion") and s.get("estado") in (_OTREP_ESTADOS_COMPROMETEN + ("solicitado",)):
+            _propia = s.get("cantidad") or 0.0
         s["stock_comprometido"] = (s.get("comprometido_otras") or 0.0) + _propia
         s["stock_disponible"] = s["stock_cantidad"] - s["stock_comprometido"]
     else:
@@ -87657,6 +87690,15 @@ def repstock_crear_ticket_compra():
                     "(botón \"Pedir al proveedor\")."}), 501
 
 
+class _OtrepConflictoEstado(Exception):
+    """Señal interna (2026-09-26, revisión Fase 3, hallazgo MEDIA #2): la
+    solicitud cambió de estado entre el SELECT que leyó `actual` y el UPDATE
+    de la transición -- el UPDATE con `WHERE estado=%s` no tocó ninguna fila
+    (rowcount=0). Se usa solo para cortar limpio dentro del `try` de
+    repstock_solicitud_ot_estado y devolver 409, nunca escapa de esa función."""
+    pass
+
+
 @app.route("/repuestos/api/solicitudes-ot/<int:sid>/estado", methods=["POST"])
 @_otrep_gestion_required
 def repstock_solicitud_ot_estado(sid):
@@ -87683,6 +87725,17 @@ def repstock_solicitud_ot_estado(sid):
         return jsonify({"ok": False, "error":
                         "Pedir al proveedor o rechazar una solicitud lo decide gestión, "
                         "no un técnico."}), 403
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una "reposición de
+    # stock propio" (es_reposicion=1) trae repuestos HACIA la bodega -- no
+    # hay nada que "instalar" en un equipo/cliente. Su estado final es
+    # 'recibido' (ahí ya se hizo la entrada real). Se bloquea con mensaje
+    # claro en vez de "cerrarse sola" silenciosamente -- así queda visible
+    # en la cola que la reposición terminó, y no aparece un botón que
+    # promete algo que no corresponde.
+    if nuevo == "instalado" and s.get("es_reposicion"):
+        return jsonify({"ok": False, "error":
+                        "Esta es una reposición de stock propio: quedó cerrada al recibirse "
+                        "en bodega, no hay una instalación que registrar."}), 400
     user = current_username() or "sistema"
     nota = (d.get("nota") or "").strip()
     sets, params = ["estado=%s"], [nuevo]
@@ -87734,10 +87787,116 @@ def repstock_solicitud_ot_estado(sid):
         sets.append("nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s)")
         params.append(nota[:5000])
     params.append(sid)
+    # 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): "recibido"
+    # e "instalado" ahora mueven bodega DE VERDAD (antes solo cambiaban el
+    # estado de la solicitud y mant_repuestos_stock.cantidad ni se enteraba).
+    # Todo en UNA transacción con el propio UPDATE de estado -- si el
+    # movimiento de bodega falla, el cambio de estado también se revierte
+    # (nunca queda una solicitud "recibida" sin que el físico se haya
+    # movido, o viceversa). Conexión get_db() del request: NUNCA se cierra
+    # (gotcha_get_db_no_cerrar) -- mismo patrón que el INSERT en lote de
+    # arriba (_otrep_crear_fila_solicitud con cur=cur).
+    mov_aviso = None
+    conn = get_db()
     try:
-        mysql_execute(f"UPDATE mant_ot_repuesto_solicitudes SET {', '.join(sets)} WHERE id=%s",
-                      tuple(params))
+        with conn.cursor() as cur:
+            # 🔒 2026-09-26 (revisión Fase 3, hallazgo MEDIA #2 -- concurrencia
+            # real): el UPDATE original solo filtraba por `id`, así que dos
+            # requests casi simultáneos sobre la MISMA solicitud (doble click,
+            # o dos personas en la cola a la vez) podían aplicarse los dos --
+            # el segundo pisando trabajo del primero sin que nadie se
+            # enterara. Ahora exige `estado=%s` con el `actual` leído al
+            # principio de la función y revisa `rowcount`: si alguien más ya
+            # movió la solicitud en el medio, esta transición no toca NADA
+            # (ni el estado ni bodega) y se corta con 409 -- nunca queda a
+            # medias.
+            cur.execute(f"UPDATE mant_ot_repuesto_solicitudes SET {', '.join(sets)} "
+                        f" WHERE id=%s AND estado=%s",
+                        tuple(params) + (actual,))
+            if cur.rowcount != 1:
+                raise _OtrepConflictoEstado()
+            if nuevo == "recibido":
+                if not s.get("repuesto_stock_id"):
+                    mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
+                                 "movimiento de bodega no se registró.")
+                elif s.get("es_reposicion"):
+                    # 🔒 ALTA #1: una reposición SIEMPRE hace la entrada al
+                    # llegar a 'recibido' -- es su propio flujo (stock propio
+                    # volviendo a bodega), no depende de haber pasado por
+                    # 'pedido' a un proveedor externo.
+                    mov = _repstock_mover(
+                        s["repuesto_stock_id"], float(s.get("cantidad") or 0), "entrada",
+                        "recepcion_proveedor", solicitud_id=sid, visita_id=s.get("visita_id"),
+                        cliente_id=s.get("cliente_id"),
+                        nota=f"Reposición #{sid} ({s.get('repuesto_nombre')}) recibida en bodega.",
+                        usuario=user, cur=cur)
+                    mov_aviso = mov.get("aviso")
+                elif s.get("pedido_at"):
+                    # 🔧 BAJA #7 (revisión Fase 3): "recibido" de verdad
+                    # significa "llegó del proveedor" -- eso implica haber
+                    # pasado por 'pedido' antes (pedido_at quedó seteado en
+                    # ESA transición). Si pedido_at existe, esta es una
+                    # recepción real.
+                    mov = _repstock_mover(
+                        s["repuesto_stock_id"], float(s.get("cantidad") or 0), "entrada",
+                        "recepcion_proveedor", solicitud_id=sid, visita_id=s.get("visita_id"),
+                        cliente_id=s.get("cliente_id"),
+                        nota=f"Solicitud #{sid} ({s.get('repuesto_nombre')}) recibida en bodega.",
+                        usuario=user, cur=cur)
+                    mov_aviso = mov.get("aviso")
+                else:
+                    # 🔧 BAJA #7: 'validado' -> 'recibido' SIN pasar por
+                    # 'pedido' (y sin ser reposición) -- no hubo ningún
+                    # proveedor de por medio, así que sumar stock solo
+                    # porque cambió de estado sería inventar una entrada que
+                    # nadie confirmó. No se mueve nada; se avisa para que
+                    # bodega lo ajuste a mano si de verdad llegó físico.
+                    mov_aviso = ("Esta solicitud pasó a \"recibido\" sin pasar por \"Pedido al "
+                                 "proveedor\" -- no se sumó al stock automáticamente. Si el "
+                                 "repuesto llegó físico de verdad, ajusta la cantidad a mano en "
+                                 "Bodega (queda registrado en el kardex).")
+            elif nuevo == "instalado":
+                # Válido tanto si viene de 'recibido' (entró físico y ahora
+                # sale a instalarse) como de 'validado' directo (spec: "ya
+                # había stock, no hay nada que pedir" -- nunca pasó por
+                # 'recibido', así que esta es la ÚNICA salida que registra).
+                _tiene_entrada = True
+                if actual == "recibido":
+                    cur.execute(
+                        "SELECT 1 FROM mant_repuestos_movimientos "
+                        " WHERE solicitud_id=%s AND motivo_tipo='recepcion_proveedor' LIMIT 1",
+                        (sid,))
+                    _tiene_entrada = cur.fetchone() is not None
+                if not s.get("repuesto_stock_id"):
+                    mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
+                                 "movimiento de bodega no se registró.")
+                elif actual == "recibido" and not _tiene_entrada:
+                    # 🔒 MEDIA #3 (revisión Fase 3): esta solicitud ya estaba
+                    # 'recibido' de ANTES de que existiera el kardex (o esa
+                    # entrada nunca quedó registrada por otro motivo) -- no
+                    # hay un movimiento 'recepcion_proveedor' que contrapese
+                    # esta salida. Restar ahora dejaría el saldo mal (una
+                    # salida sin su entrada correspondiente), así que no se
+                    # mueve stock -- solo se avisa.
+                    mov_aviso = ("Esta solicitud estaba \"recibida\" desde antes del kardex de "
+                                 "bodega (no hay registro de esa entrada): no se descontó stock "
+                                 "al instalar. Revisa el saldo de bodega a mano si hace falta.")
+                else:
+                    mov = _repstock_mover(
+                        s["repuesto_stock_id"], -float(s.get("cantidad") or 0), "salida",
+                        "instalacion", solicitud_id=sid, visita_id=s.get("visita_id"),
+                        cliente_id=s.get("cliente_id"),
+                        nota=f"Solicitud #{sid} ({s.get('repuesto_nombre')}) instalada.",
+                        usuario=user, cur=cur)
+                    mov_aviso = mov.get("aviso")
+        conn.commit()
+    except _OtrepConflictoEstado:
+        conn.rollback()
+        return jsonify({"ok": False, "error":
+                        "Esta solicitud cambió de estado justo ahora (alguien más la actualizó): "
+                        "recarga para ver el estado actual."}), 409
     except Exception as e:
+        conn.rollback()
         print(f"[otrep] estado sid={sid}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo actualizar la solicitud."}), 500
     equipo_operativo = False
@@ -87766,7 +87925,11 @@ def repstock_solicitud_ot_estado(sid):
     # operación"): al validar contra un repuesto real, avisar (NO bloquear,
     # mismo criterio que la piola) si esto deja el repuesto comprometido por
     # encima de lo físico entre TODAS las OT abiertas que lo piden.
-    aviso = None
+    # 2026-09-26: `mov_aviso` (del movimiento de bodega en recibido/
+    # instalado) y este `aviso` (sobrecompromiso al validar) nunca se pisan
+    # -- son mutuamente excluyentes por `nuevo` (validado vs recibido/
+    # instalado), pero por si algún día dejan de serlo, mov_aviso manda.
+    aviso = mov_aviso
     if nuevo == "validado" and stock:
         fisico = float(stock.get("cantidad") or 0)
         otras = _otrep_stock_comprometido(stock["id"], excluir_sol_id=sid)
@@ -117587,7 +117750,140 @@ def _repstock_fmt(r):
     d["created_at_corto"] = chile_fmt_filter(d.get("created_at"), "%d/%m/%y") if d.get("created_at") else ""
     d["created_at"] = chile_fmt_filter(d.get("created_at")) if d.get("created_at") else ""
     d["updated_at"] = chile_fmt_filter(d.get("updated_at")) if d.get("updated_at") else ""
+    # 🧾 2026-09-26 (Fase 3 -- kardex): "comprometido"/"por_llegar" solo
+    # vienen poblados cuando el caller los agregó al SELECT (ver
+    # _repstock_contexto_bodega) -- si no, quedan en 0 sin romper nada de
+    # lo que ya usaba _repstock_fmt (excel, etiquetas, etc, que no los piden).
+    d["comprometido"] = float(d["comprometido"]) if d.get("comprometido") is not None else 0.0
+    d["por_llegar"] = float(d["por_llegar"]) if d.get("por_llegar") is not None else 0.0
+    d["disponible"] = d["cantidad"] - d["comprometido"]
     return d
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  KARDEX DE BODEGA (Fase 3, 2026-09-26 -- Daniel: "Sí, es la base";
+#  objetivo: "almacenamiento inteligente", que el "disponible" diga
+#  siempre la verdad).
+#
+#  `_repstock_mover` es el ÚNICO camino para mover `cantidad` de
+#  mant_repuestos_stock a partir de HOY con auditoría (ajuste manual,
+#  recepción de proveedor, instalación) -- SIEMPRE dentro de una
+#  transacción real: SELECT ... FOR UPDATE (evita la carrera de dos
+#  movimientos simultáneos sobre el mismo repuesto), UPDATE del saldo,
+#  INSERT del movimiento con el saldo ya resultante. Si el caller pasa
+#  `cur` (un cursor ya abierto de SU propia transacción -- ej. la
+#  transición de estado de una solicitud, que también actualiza
+#  mant_ot_repuesto_solicitudes), este helper NO abre conexión ni hace
+#  commit/rollback propios: todo corre atómico junto con lo del caller.
+#  Si no recibe `cur`, abre su propia transacción sobre get_db() (la
+#  conexión del request -- REGLA: nunca se cierra, ver
+#  gotcha_get_db_no_cerrar) y hace su propio commit.
+#
+#  Mismo criterio "avisa pero no bloquea" que ya usa el módulo de
+#  solicitudes (_otrep_aviso_sobrecompromiso): un ajuste o una salida que
+#  dejen el saldo en negativo NO se rechazan -- se permiten y se devuelve
+#  un aviso para que bodega lo vea y corrija a mano.
+# ══════════════════════════════════════════════════════════════════════
+
+def _repstock_log_movimiento(cur, repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, *,
+                              solicitud_id=None, visita_id=None, cliente_id=None,
+                              nota='', usuario=None):
+    """INSERT crudo en mant_repuestos_movimientos, SIN tocar `cantidad` de
+    mant_repuestos_stock -- para los casos donde el saldo ya quedó fijado
+    por OTRO INSERT/UPDATE en la MISMA transacción (alta de repuesto,
+    reactivación, backfill del saldo inicial). `_repstock_mover` (abajo)
+    es el que sí mueve stock real a partir de un delta (entrada/salida/
+    ajuste) -- no lo dupliques a mano en otro punto del código."""
+    cur.execute(
+        "INSERT INTO mant_repuestos_movimientos "
+        "(repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, solicitud_id, "
+        " visita_id, cliente_id, nota, usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, solicitud_id,
+         visita_id, cliente_id, (nota or "")[:500], usuario or current_username() or "sistema")
+    )
+
+
+def _repstock_mover(repuesto_id, delta, tipo, motivo_tipo, *, solicitud_id=None,
+                     visita_id=None, cliente_id=None, nota='', usuario=None, cur=None,
+                     objetivo=None):
+    """Mueve stock sobre mant_repuestos_stock.cantidad y deja el rastro en
+    mant_repuestos_movimientos, en una sola transacción con el
+    SELECT ... FOR UPDATE como mutex.
+
+    `delta` (con signo: + entra, - sale) es el modo normal (entrada/salida
+    de una solicitud, donde la cantidad a mover ya se sabe de antemano).
+
+    `objetivo` (2026-09-26, revisión Fase 3, hallazgo BAJA #11): para un
+    AJUSTE manual, donde el usuario declara la cantidad FINAL que debería
+    quedar, no un delta. Si se pasa, IGNORA `delta` por completo y calcula
+    el delta real DENTRO del FOR UPDATE, contra el valor que la fila tenga
+    en ESE instante -- así un ajuste calculado con una lectura tomada ANTES
+    de pedir el lock nunca pisa un cambio que otra persona hizo justo en el
+    medio (el delta se recalcula sobre el dato fresco, no sobre el viejo).
+
+    Idempotencia (spec Fase 3): un movimiento ligado a una SOLICITUD
+    (motivo_tipo 'recepcion_proveedor' o 'instalacion') no se inserta dos
+    veces para el mismo (solicitud_id, motivo_tipo) -- si ya existe (ej. el
+    usuario hizo doble click, o un reintento de red repite la transición de
+    estado), esta llamada no mueve nada de nuevo y devuelve el resultado de
+    la vez anterior en vez de fallar. Un ajuste manual (nunca idempotente
+    por diseño, aunque traiga solicitud_id) siempre corre.
+
+    Devuelve dict: {"movido": bool, "ya_existia": bool, "saldo": float,
+    "aviso": str|None}. `aviso` viene poblado (sin bloquear el movimiento)
+    si el saldo resultante queda negativo -- mismo criterio "avisa pero no
+    bloquea" que ya usa el resto del módulo de repuestos.
+
+    Lanza si el repuesto no existe -- el caller decide qué responder. Si NO
+    recibe `cur` (abre su propia transacción sobre get_db()), un fallo hace
+    rollback antes de relanzar (hallazgo BAJA #10) -- nunca deja la conexión
+    del request con una transacción a medias colgando."""
+    usuario = usuario or current_username() or "sistema"
+    nota = (nota or "")[:500]
+
+    def _do(c):
+        if solicitud_id and motivo_tipo in ("recepcion_proveedor", "instalacion"):
+            c.execute(
+                "SELECT id, saldo_resultante FROM mant_repuestos_movimientos "
+                " WHERE solicitud_id=%s AND motivo_tipo=%s LIMIT 1",
+                (solicitud_id, motivo_tipo)
+            )
+            ya = c.fetchone()
+            if ya:
+                return {"movido": False, "ya_existia": True,
+                        "saldo": float(ya["saldo_resultante"]), "aviso": None}
+        c.execute("SELECT cantidad FROM mant_repuestos_stock WHERE id=%s FOR UPDATE", (repuesto_id,))
+        row = c.fetchone()
+        if not row:
+            raise ValueError(f"Repuesto {repuesto_id} no existe (o fue eliminado) -- no se puede mover stock.")
+        actual = float(row["cantidad"] or 0)
+        delta_real = round(float(objetivo) - actual, 2) if objetivo is not None else round(float(delta), 2)
+        nuevo_saldo = round(actual + delta_real, 2)
+        c.execute("UPDATE mant_repuestos_stock SET cantidad=%s WHERE id=%s", (nuevo_saldo, repuesto_id))
+        c.execute(
+            "INSERT INTO mant_repuestos_movimientos "
+            "(repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, solicitud_id, "
+            " visita_id, cliente_id, nota, usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (repuesto_id, tipo, motivo_tipo, delta_real, nuevo_saldo, solicitud_id,
+             visita_id, cliente_id, nota, usuario)
+        )
+        aviso = None
+        if nuevo_saldo < 0:
+            aviso = (f"Ojo: el repuesto queda con saldo negativo ({nuevo_saldo:g}) en bodega -- "
+                     "revísalo cuando puedas.")
+        return {"movido": True, "ya_existia": False, "saldo": nuevo_saldo, "aviso": aviso}
+
+    if cur is not None:
+        return _do(cur)
+    conn = get_db()
+    try:
+        with conn.cursor() as cur2:
+            resultado = _do(cur2)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return resultado
 
 
 # Sync de marcas de repuesto desde el ERP Random (2026-08-07, Daniel:
@@ -117957,7 +118253,20 @@ def _repstock_contexto_bodega():
         f"       u.codigo AS ubicacion_codigo, u.nombre AS ubicacion_nombre, "
         f"       c.razon_social AS cliente_nombre, t.numero_ticket AS ticket_numero, "
         f"       pv.nombre AS proveedor_nombre, pv.contacto_nombre AS proveedor_contacto, "
-        f"       pv.telefono AS proveedor_telefono, pv.email AS proveedor_email "
+        f"       pv.telefono AS proveedor_telefono, pv.email AS proveedor_email, "
+        # 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "que el disponible diga
+        # siempre la verdad"): comprometido (validado+recibido) y por llegar
+        # (pedido) -- misma fuente única que el resto del módulo de
+        # solicitudes (_OTREP_ESTADOS_COMPROMETEN/_OTREP_ESTADOS_POR_LLEGAR),
+        # nunca un criterio propio calculado acá aparte.
+        # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): reposición
+        # (es_reposicion=1) no compite por el físico -- se excluye.
+        f"       (SELECT COALESCE(SUM(s.cantidad),0) FROM mant_ot_repuesto_solicitudes s "
+        f"         WHERE s.repuesto_stock_id=r.id AND COALESCE(s.es_reposicion,0)=0 AND s.estado IN "
+        f"               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido, "
+        f"       (SELECT COALESCE(SUM(s2.cantidad),0) FROM mant_ot_repuesto_solicitudes s2 "
+        f"         WHERE s2.repuesto_stock_id=r.id AND s2.estado IN "
+        f"               ('" + "','".join(_OTREP_ESTADOS_POR_LLEGAR) + "')) AS por_llegar "
         f"  FROM mant_repuestos_stock r "
         f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
         f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
@@ -118200,14 +118509,19 @@ def repstock_crear():
             "created_by": current_username(),
         }
         cols = list(fields.keys())
+        mov_aviso = None
         with conn.cursor() as cur:
             if reactivar_id:
-                # No se toca created_by/created_at -- el origen real del
-                # registro no cambia solo porque alguien más lo reactivó.
-                # reactivated_at SÍ se marca a AHORA -- "Avance de carga"
-                # (repstock_actividad) lo usa para contar esto como trabajo
-                # de HOY, que es lo que realmente pasó.
-                cols_upd = [c for c in cols if c != "created_by"]
+                # 🔒 2026-09-26 (revisión Fase 3, hallazgo BAJA #8): un
+                # repuesto soft-eliminado puede haber quedado con `cantidad`
+                # distinta de 0 (repstock_eliminar solo apaga `activo`, nunca
+                # toca la cantidad) -- "reactivar con la cantidad nueva del
+                # formulario" es en realidad un AJUSTE contra ese saldo
+                # previo, no un alta desde cero. `cantidad` sale de este
+                # UPDATE genérico (igual que en repstock_editar) y se aplica
+                # aparte con _repstock_mover(objetivo=...), que lee el saldo
+                # previo bajo FOR UPDATE y calcula el delta real.
+                cols_upd = [c for c in cols if c not in ("created_by", "cantidad")]
                 set_sql = ", ".join(f"{c}=%s" for c in cols_upd)
                 cur.execute(
                     f"UPDATE mant_repuestos_stock SET {set_sql}, activo=1, "
@@ -118216,6 +118530,15 @@ def repstock_crear():
                     tuple(fields[c] for c in cols_upd) + (current_username(), reactivar_id)
                 )
                 new_id = reactivar_id
+                # BAJA #8: se registra SIEMPRE, incluso si la reactivación
+                # trae cantidad=0 (o si el delta resultante es 0) -- sin
+                # esto, el backfill de boot podría más adelante confundir
+                # este repuesto con uno "legacy" sin historial (hallazgo
+                # BAJA #9) y además se perdería el rastro de "cuándo volvió".
+                mov = _repstock_mover(
+                    reactivar_id, 0, "inicial", "reactivacion", objetivo=cantidad,
+                    nota="Repuesto reactivado en bodega.", usuario=current_username(), cur=cur)
+                mov_aviso = mov.get("aviso")
             else:
                 cur.execute(
                     f"INSERT INTO mant_repuestos_stock ({','.join(cols)}) "
@@ -118223,11 +118546,23 @@ def repstock_crear():
                     tuple(fields[c] for c in cols)
                 )
                 new_id = cur.lastrowid
+                # 🧾 Fase 3 -- kardex: deja registro del arranque del repuesto
+                # en el historial -- log crudo (_repstock_log_movimiento), NO
+                # _repstock_mover: `cantidad` ya quedó fijada arriba por el
+                # propio INSERT de esta misma transacción (fila NUEVA, sin
+                # saldo previo que leer), sumarle un delta otra vez la
+                # duplicaría. SIEMPRE se registra, incluso en 0 (hallazgo
+                # BAJA #9): si no, el backfill de boot podría más adelante
+                # tratar esta alta como "legacy sin historial" y adivinarle
+                # un saldo inicial que no corresponde.
+                _repstock_log_movimiento(
+                    cur, new_id, "inicial", "alta_repuesto", cantidad, cantidad,
+                    nota="Alta de repuesto.", usuario=current_username())
         conn.commit()
         _mant_log("repuesto_stock", new_id,
                    "reactivar" if reactivar_id else "crear", f"{sku} — {descripcion}")
         return jsonify({"ok": True, "id": new_id, "sku": sku, "proveedor_id": proveedor_id,
-                          "reactivado": bool(reactivar_id)})
+                          "reactivado": bool(reactivar_id), "aviso": mov_aviso})
     except Exception as e:
         conn.rollback()
         print(f"[repstock_crear] ERROR: {e}", flush=True)
@@ -118272,11 +118607,56 @@ def repstock_editar(rid):
                "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
                "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg", "bultos",
                "modelo_pendiente"]
+    # 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): `cantidad`
+    # sale del UPDATE genérico de abajo -- si cambia, el delta se aplica y
+    # se audita por _repstock_mover (motivo_tipo='ajuste_manual'), nunca
+    # como una sobrescritura silenciosa que no dejaba rastro de por qué
+    # cambió. Se exige `motivo_ajuste` (≥5 caracteres) SOLO cuando el
+    # número realmente cambia -- guardar el resto del formulario sin tocar
+    # la cantidad sigue sin pedir nada nuevo.
+    ajusta_cantidad = "cantidad" in d
+    cantidad_nueva = None
+    motivo_ajuste = ""
+    if ajusta_cantidad:
+        try:
+            cantidad_nueva = float(d["cantidad"]) if d["cantidad"] not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "'cantidad' debe ser numérico"}), 400
+        if cantidad_nueva is None:
+            return jsonify({"ok": False, "error": "La cantidad no puede quedar vacía"}), 400
+        actual_row = mysql_fetchone("SELECT cantidad FROM mant_repuestos_stock WHERE id=%s", (rid,))
+        if not actual_row:
+            return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+        cantidad_bd = float(actual_row.get("cantidad") or 0)
+        # 🔒 2026-09-26 (revisión Fase 3, hallazgo MEDIA #4): el frontend manda
+        # `cantidad_original` -- la cantidad con la que se abrió el modal. Si
+        # ya no coincide con lo que hay en la base, alguien más (u otra
+        # pestaña) editó este repuesto mientras el usuario tenía el modal
+        # abierto: aplicar el ajuste igual pisaría ese cambio sin que nadie
+        # se entere. Se corta con 409 y se pide recargar.
+        cantidad_original = d.get("cantidad_original")
+        if cantidad_original not in (None, "", "null"):
+            try:
+                cantidad_original = float(cantidad_original)
+            except (TypeError, ValueError):
+                cantidad_original = None
+            if cantidad_original is not None and abs(cantidad_original - cantidad_bd) >= 0.005:
+                return jsonify({"ok": False, "error":
+                                "La cantidad cambió mientras editabas (otra persona la actualizó): "
+                                "recarga el repuesto para ver el valor actual."}), 409
+        delta_estimado = round(cantidad_nueva - cantidad_bd, 2)
+        motivo_ajuste = (d.get("motivo_ajuste") or "").strip()
+        if abs(delta_estimado) >= 0.005 and len(motivo_ajuste) < 5:
+            return jsonify({"ok": False, "error":
+                            "Indica el motivo del ajuste de cantidad (mínimo 5 caracteres) — "
+                            "queda registrado en el kardex del repuesto."}), 400
     sets, vals = [], []
     for f in allowed:
+        if f == "cantidad":
+            continue  # se aplica aparte, vía _repstock_mover (ver arriba)
         if f in d:
             v = d[f]
-            if f in ("cantidad", "costo_unitario", "stock_minimo"):
+            if f in ("costo_unitario", "stock_minimo"):
                 try:
                     v = float(v) if v not in (None, "", "null") else None
                 except (TypeError, ValueError):
@@ -118294,25 +118674,103 @@ def repstock_editar(rid):
             elif v in ("", "null"):
                 v = None
             sets.append(f"{f}=%s"); vals.append(v)
-    if not sets:
+    if not sets and not ajusta_cantidad:
         return jsonify({"ok": False, "error": "Sin campos para actualizar"}), 400
-    sets.append("updated_by=%s"); vals.append(current_username())
-    conn = get_mysql()
+    if sets:
+        sets.append("updated_by=%s"); vals.append(current_username())
+    # get_db(): la conexión del request, NUNCA se cierra (gotcha_get_db_no_
+    # cerrar) -- necesaria acá porque _repstock_mover, cuando recibe `cur`,
+    # tiene que participar de la MISMA transacción que este UPDATE (si el
+    # ajuste de cantidad falla, el resto de los campos tampoco se guarda).
+    conn = get_db()
     try:
+        aviso = None
         with conn.cursor() as cur:
-            cur.execute(
-                f"UPDATE mant_repuestos_stock SET {','.join(sets)} WHERE id=%s",
-                vals + [rid]
-            )
+            if sets:
+                cur.execute(
+                    f"UPDATE mant_repuestos_stock SET {','.join(sets)} WHERE id=%s",
+                    vals + [rid]
+                )
+            if ajusta_cantidad and abs(delta_estimado) >= 0.005:
+                # 🔒 BAJA #11 (revisión Fase 3): se pasa `objetivo` (la
+                # cantidad final que el usuario quiere), no un delta ya
+                # calculado -- _repstock_mover recalcula el delta real BAJO
+                # el FOR UPDATE, contra el valor que la fila tenga en ese
+                # instante (no contra `cantidad_bd`, leída antes del lock).
+                mov = _repstock_mover(
+                    rid, 0, "ajuste", "ajuste_manual", objetivo=cantidad_nueva,
+                    nota=motivo_ajuste, usuario=current_username(), cur=cur)
+                aviso = mov.get("aviso")
         conn.commit()
         _mant_log("repuesto_stock", rid, "editar")
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "aviso": aviso})
     except Exception as e:
         conn.rollback()
         print(f"[repstock_editar] rid={rid} ERROR: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo guardar el repuesto."}), 400
-    finally:
-        conn.close()
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/movimientos", methods=["GET"])
+@_mant_required
+@_no_tecnico_externo
+def repstock_movimientos(rid):
+    """Kardex de UN repuesto (Fase 3, 2026-09-26 -- Daniel: "Sí, es la
+    base"). Paginado real (REGLA #4.3, mismo patrón que Etiquetas):
+    ?page=&per_page=. Mismo gate que el resto de la Bodega -- excluye
+    técnico externo (vería costos/proveedor/ubicación de otros, y acá
+    además vería a qué cliente/OT se le instaló cada salida)."""
+    rep = mysql_fetchone(
+        "SELECT id, sku, descripcion, cantidad, stock_minimo FROM mant_repuestos_stock WHERE id=%s",
+        (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado."}), 404
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page") or 20)
+    except (TypeError, ValueError):
+        per_page = 20
+    if per_page not in (20, 50, 100):
+        per_page = 20
+    total = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_movimientos WHERE repuesto_id=%s", (rid,)
+    ) or {}).get("n", 0)
+    total_pages = max(1, -(-total // per_page))
+    page = min(page, total_pages)
+    offset = (page - 1) * per_page
+    rows = mysql_fetchall(
+        "SELECT mv.*, v.numero_ot, c.razon_social AS cliente_nombre "
+        "  FROM mant_repuestos_movimientos mv "
+        "  LEFT JOIN mant_visitas v ON v.id=mv.visita_id "
+        "  LEFT JOIN mant_clientes c ON c.id=mv.cliente_id "
+        " WHERE mv.repuesto_id=%s ORDER BY mv.created_at DESC, mv.id DESC LIMIT %s OFFSET %s",
+        (rid, per_page, offset)
+    ) or []
+    movimientos = []
+    for r in rows:
+        r = dict(r)
+        r["cantidad"] = float(r["cantidad"])
+        r["saldo_resultante"] = float(r["saldo_resultante"])
+        r["created_at"] = chile_fmt_filter(r.get("created_at")) if r.get("created_at") else ""
+        movimientos.append(r)
+    fisico = float(rep.get("cantidad") or 0)
+    comprometido = _otrep_stock_comprometido(rid)
+    por_llegar = float((mysql_fetchone(
+        "SELECT COALESCE(SUM(cantidad),0) AS n FROM mant_ot_repuesto_solicitudes "
+        " WHERE repuesto_stock_id=%s AND estado IN ('"
+        + "','".join(_OTREP_ESTADOS_POR_LLEGAR) + "')", (rid,)
+    ) or {}).get("n") or 0)
+    return jsonify({
+        "ok": True,
+        "repuesto": {"id": rep["id"], "sku": rep["sku"], "descripcion": rep["descripcion"],
+                     "stock_minimo": float(rep["stock_minimo"]) if rep.get("stock_minimo") is not None else None},
+        "resumen": {"fisico": fisico, "comprometido": comprometido,
+                    "disponible": fisico - comprometido, "por_llegar": por_llegar},
+        "movimientos": movimientos,
+        "page": page, "per_page": per_page, "total": total, "total_pages": total_pages,
+    })
 
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>", methods=["DELETE"])
@@ -132106,6 +132564,73 @@ def _ensure_repuestos_bodega_tables():
         """)
     except Exception as e:
         print(f"[ensure_repuestos_stock] mant_repstock_secuencia: {e}", flush=True)
+
+    # 🧾 2026-09-26 (Fase 3 -- kardex de bodega, Daniel: "Sí, es la base" --
+    # "almacenamiento inteligente", que el "disponible" diga siempre la
+    # verdad). Hasta hoy `mant_repuestos_stock.cantidad` cambiaba SOLO por
+    # el PUT manual de repstock_editar, sin dejar rastro de POR QUÉ cambió
+    # ni de que "recibido"/"instalado" (transición de una solicitud) debía
+    # moverla también -- no existía ninguna tabla de movimientos. Esta es
+    # esa tabla: 1 fila POR movimiento, con signo (+entra/-sale) y el saldo
+    # resultante ya calculado (evita tener que sumar el historial completo
+    # para saber "cuánto había en ese momento"). Ver _repstock_mover (más
+    # abajo en este archivo) -- el ÚNICO lugar que debe escribir acá.
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_movimientos (
+                id               INT AUTO_INCREMENT PRIMARY KEY,
+                repuesto_id      INT NOT NULL,
+                tipo             ENUM('inicial','entrada','salida','ajuste') NOT NULL,
+                motivo_tipo      VARCHAR(30) NOT NULL COMMENT 'saldo_inicial, recepcion_proveedor, instalacion, ajuste_manual, alta_repuesto, reactivacion...',
+                cantidad         DECIMAL(12,2) NOT NULL COMMENT 'Con signo: + entra, - sale',
+                saldo_resultante DECIMAL(12,2) NOT NULL,
+                solicitud_id     INT NULL COMMENT 'mant_ot_repuesto_solicitudes.id -- si el movimiento nació de una solicitud',
+                visita_id        INT NULL COMMENT 'mant_visitas.id (OT) -- si aplica',
+                cliente_id       INT NULL COMMENT 'mant_clientes.id -- si aplica',
+                nota             VARCHAR(500) NULL,
+                usuario          VARCHAR(190) NULL,
+                created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_repmov_repuesto_fecha (repuesto_id, created_at),
+                INDEX idx_repmov_solicitud_motivo (solicitud_id, motivo_tipo),
+                CONSTRAINT fk_repmov_repuesto FOREIGN KEY (repuesto_id)
+                    REFERENCES mant_repuestos_stock(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repuestos_movimientos: {e}", flush=True)
+
+    # Backfill idempotente del saldo inicial: cada repuesto activo que
+    # todavía no tiene NINGÚN movimiento (todo lo que existía antes de hoy)
+    # recibe UNA fila 'inicial'/'saldo_inicial' con la cantidad que ya tenía
+    # -- así el kardex arranca completo, sin huecos, para todo lo que ya
+    # estaba cargado. NO toca `cantidad` ni `updated_at` de mant_repuestos_
+    # stock (es un INSERT puro hacia la tabla nueva); el WHERE NOT EXISTS
+    # hace que corra una sola vez por repuesto aunque el boot se repita.
+    #
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo BAJA #9): `repstock_crear`
+    # (alta y reactivación) ahora SIEMPRE deja su propio movimiento, incluso
+    # en cantidad 0 -- así que en teoría ningún alta nueva debería llegar
+    # nunca a este backfill sin movimientos. El corte por `created_at` es la
+    # segunda capa de defensa (por si algún día algo inserta en
+    # mant_repuestos_stock por fuera de repstock_crear, ej. una migración o
+    # un import): un repuesto creado DESPUÉS del arranque del kardex nunca
+    # debería recibir un "saldo_inicial" -- si lo tiene, es que su propio
+    # alta se saltó el log por otro motivo, y ese es un bug a investigar,
+    # no algo que este backfill deba tapar silenciosamente.
+    try:
+        mysql_execute(
+            "INSERT INTO mant_repuestos_movimientos "
+            "(repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, nota, usuario) "
+            "SELECT r.id, 'inicial', 'saldo_inicial', r.cantidad, r.cantidad, "
+            "       'Saldo al iniciar el kardex (26-09-2026)', 'sistema' "
+            "  FROM mant_repuestos_stock r "
+            " WHERE COALESCE(r.activo,1)=1 "
+            "   AND r.created_at < '2026-09-26 00:00:00' "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_repuestos_movimientos mv "
+            "                    WHERE mv.repuesto_id=r.id)"
+        )
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] backfill saldo_inicial: {e}", flush=True)
 
     # Seed de marcas conocidas hoy (Daniel, 2026-08-07). La lista real se
     # sincroniza desde el ERP Random (MAEPR.MRPR) en cada carga de la
