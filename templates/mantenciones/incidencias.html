@@ -70,43 +70,15 @@
         <h5 class="modal-title" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      {# 🔧 2026-09-26 (Daniel, en vivo: "me gustaría que toda la información
-         se viera y no el paso a paso, para saber qué debo arreglar"). El
-         wizard de 5 pasos (2026-08-03) se reemplaza por UNA vista con las
-         5 tarjetas SIEMPRE visibles (abajo, `.inc-pane` ya no se ocultan) --
-         esta barra deja de ser un navegador de pasos y pasa a ser el
-         SEMÁFORO de completitud de cada tarjeta (verde=completa,
-         ámbar=falta algo opcional, rojo=falta algo obligatorio). Clic en
-         un ítem hace scroll a esa tarjeta. Ninguna función del wizard se
-         perdió: buscar UA/autocompletar, fotos, eliminar y guardar siguen
-         siendo las mismas (REGLA #4.2). #}
-      {#- 🔧 2026-09-26 (Daniel, sobre su macro Excel vieja): reordena las
-          tarjetas siguiendo su estructura original -- OBLIGATORIO (UA +
-          Ubicación + SKU + Descripción + Cantidad, todo junto), Motivo,
-          Sugerencia (campo nuevo, separado de la UA), Detalle (repuesto +
-          resolución + observación), Evidencia. -#}
-      <div class="inc-steps libre" id="incSteps">
-        <div class="inc-step" data-step="1">
-          <span class="inc-step-n"><i class="bi bi-box-seam"></i></span>
-          <span class="inc-step-t">Obligatorio<small>UA, SKU, cantidad</small></span>
-        </div>
-        <div class="inc-step" data-step="2">
-          <span class="inc-step-n"><i class="bi bi-chat-left-quote"></i></span>
-          <span class="inc-step-t">Motivo<small>qué pasó</small></span>
-        </div>
-        <div class="inc-step" data-step="3">
-          <span class="inc-step-n"><i class="bi bi-lightbulb"></i></span>
-          <span class="inc-step-t">Sugerencia<small>opcional</small></span>
-        </div>
-        <div class="inc-step" data-step="4">
-          <span class="inc-step-n"><i class="bi bi-wrench-adjustable"></i></span>
-          <span class="inc-step-t">Detalle<small>repuesto y notas</small></span>
-        </div>
-        <div class="inc-step" data-step="5">
-          <span class="inc-step-n"><i class="bi bi-camera"></i></span>
-          <span class="inc-step-t">Evidencia<small>fotos y video</small></span>
-        </div>
-      </div>
+      {# 🔧 2026-09-26 (Daniel, viendo el modal en producción: "elimina por
+         completo la barra superior de navegación tipo wizard... esa fila
+         desaparece entera, no se oculta con CSS: se saca del DOM"). La
+         barra `#incSteps` (íconos + semáforo de completitud) YA NO EXISTE.
+         El semáforo de completitud se conserva pero ahora vive en el
+         círculo numerado de CADA tarjeta (`.inc-num-circle` en su
+         `.inc-pane-head`, ver pintarPasos() más abajo) -- mismo patrón
+         "step-circle" de Retiros/OT2 (templates/ot2/_modal_crear.html).
+         El banner "Falta: ..." SÍ se mantiene, tal cual funcionaba. #}
       <div id="incFaltan" class="inc-faltan" hidden></div>
 
       <div class="modal-body">
@@ -119,48 +91,57 @@
            sola tarjeta -- ya no repartido en "Unidad" y "Producto"). #}
         <section class="inc-pane" data-pane="1">
           <div class="inc-pane-head inc-c1">
+            <span class="inc-num-circle" data-step="1"><span class="num">1</span><i class="bi bi-check-lg chk"></i></span>
             <i class="bi bi-upc-scan"></i>
-            <div><b>Datos obligatorios</b>
+            <div><b>1. Obligatorio</b>
               <small>UA y ubicación en Bodega 13, SKU, nombre completo y cantidad afectada.</small></div>
           </div>
-          {#- 🔒 2026-09-26 (Daniel: "candados de datos del sistema... cuando
-              se edita una incidencia YA creada (tiene UA), UA/Ubicación/
-              SKU/Producto quedan bloqueados, solo lectura"). El candado
-              REAL vive en el backend (mant_api_incidencias_editar ignora
-              estos 4 campos del payload si ya había UA); acá solo se
-              refleja visualmente (readonly + ícono + tooltip) -- ver
-              incAplicarCandadoSistema() más abajo. En el ALTA (sin UA
-              todavía) los 4 quedan editables como siempre. -#}
+          {#- 🔒 2026-09-26 (Daniel, viendo el modal en producción: "candados
+              de datos del sistema... UA, SKU, Nombre del producto SIEMPRE
+              bloqueados, sin importar si es alta o edición -- esto CAMBIA
+              la regla de la ronda anterior, que los bloqueaba solo al
+              editar"). El candado REAL vive en el backend
+              (mant_api_incidencias_crear/editar) -- acá es el reflejo
+              visual (readonly + ícono + tooltip), ver
+              incAplicarCandadoSistema() más abajo, que ahora se llama
+              SIEMPRE con `true`. Ya NO hay buscador "Buscar en WMS" en
+              esta tarjeta -- los datos llegan siempre prellenados desde
+              el hallazgo de la conciliación o desde la incidencia ya
+              creada (ver incAbrirAltaPrellenada/abrirEdicion). -#}
           <div class="row g-3">
-            <div class="col-md-7 inc-campo" data-campo="incRecomendacion">
+            <div class="col-md-6 inc-campo" data-campo="incRecomendacion">
               <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
-                <i class="bi bi-lock-fill inc-candado" id="incCandadoUa" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
-              <div class="input-group input-group-lg">
-                <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
-                <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
-                  <i class="bi bi-search me-1"></i>Buscar</button>
-              </div>
-              <div class="form-text">
-                Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
-                del WMS y en el historial de movimientos.
-              </div>
+                <i class="bi bi-lock-fill inc-candado" id="incCandadoUa" title="Dato del sistema WMS/ERP, no editable"></i></label>
+              <input type="text" class="form-control form-control-lg" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off" readonly>
             </div>
-            <div class="col-md-5">
-              <label class="form-label">Ubicación en Bodega 13
-                <i class="bi bi-lock-fill inc-candado" id="incCandadoUbicacion" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
-              <input type="text" class="form-control" id="incUbicacion" placeholder="Ej: A-12-03">
-              <div class="form-text">Se completa sola al buscar la UA. Se compara contra CheckWMS en la tabla.</div>
+            <div class="col-md-6 inc-campo" data-campo="incSku">
+              <label class="form-label">SKU <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
+                <i class="bi bi-lock-fill inc-candado" id="incCandadoSku" title="Dato del sistema WMS/ERP, no editable"></i></label>
+              <input type="text" class="form-control form-control-lg" id="incSku" placeholder="Ej: TWMA305-140" readonly>
+            </div>
+            {#- 🔧 2026-09-26 (Daniel: "Ubicación: en vez de un solo campo,
+                muestra DOS, ambos bloqueados: 'Ubicación en Bodega 13
+                (nuestra)' y 'Ubicación según Check (WMS)' -- si difieren,
+                píntalo en ámbar como ya hace el semáforo de comparativa
+                que ya existe (reutilízalo, no lo dupliques)"). Reusa
+                exactamente `chk_estado`/`chk_ubicacion` que ya calcula
+                _inc_comparativa_ua (mismo semáforo de la tabla principal),
+                devuelto ahora también por la ficha -- ver incCargarEvidencia. -#}
+            <div class="col-md-6">
+              <label class="form-label">Ubicación en Bodega 13 (nuestra)
+                <i class="bi bi-lock-fill inc-candado" title="Dato del sistema WMS/ERP, no editable"></i></label>
+              <input type="text" class="form-control" id="incUbicacion" placeholder="Ej: A-12-03" readonly>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Ubicación según Check (WMS)
+                <i class="bi bi-lock-fill inc-candado" title="Dato del sistema WMS/ERP, no editable"></i></label>
+              <input type="text" class="form-control" id="incUbicacionCheck" placeholder="—" readonly>
             </div>
             <div id="incUaResultado" class="inc-resultado col-12"></div>
-            <div class="col-md-4 inc-campo" data-campo="incSku">
-              <label class="form-label">SKU <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
-                <i class="bi bi-lock-fill inc-candado" id="incCandadoSku" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
-              <input type="text" class="form-control" id="incSku" placeholder="Ej: TWMA305-140">
-            </div>
-            <div class="col-md-8 inc-campo" data-campo="incDescripcion">
+            <div class="col-12 inc-campo" data-campo="incDescripcion">
               <label class="form-label">Nombre del producto <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
-                <i class="bi bi-lock-fill inc-candado" id="incCandadoDescripcion" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
-              <textarea class="form-control" id="incDescripcion" rows="2" required
+                <i class="bi bi-lock-fill inc-candado" id="incCandadoDescripcion" title="Dato del sistema WMS/ERP, no editable"></i></label>
+              <textarea class="form-control" id="incDescripcion" rows="2" required readonly
                         placeholder="Nombre completo del producto -- no lo acortes, aunque sea largo."></textarea>
             </div>
             <div class="col-md-4 inc-campo" data-campo="incCantidad">
@@ -188,8 +169,9 @@
         {# ══ MOTIVO (el protagonista) ══ #}
         <section class="inc-pane" data-pane="2">
           <div class="inc-pane-head inc-c3">
+            <span class="inc-num-circle" data-step="2"><span class="num">2</span><i class="bi bi-check-lg chk"></i></span>
             <i class="bi bi-chat-left-quote"></i>
-            <div><b>¿Qué pasó exactamente?</b>
+            <div><b>2. Motivo</b>
               <small>Es el campo más importante: explica la falla o el faltante con claridad.</small></div>
           </div>
           <div class="inc-campo" data-campo="incMotivo">
@@ -231,8 +213,9 @@
            un campo nuevo, `sugerencia`). #}
         <section class="inc-pane" data-pane="3">
           <div class="inc-pane-head inc-c2">
+            <span class="inc-num-circle" data-step="3"><span class="num">3</span><i class="bi bi-check-lg chk"></i></span>
             <i class="bi bi-lightbulb"></i>
-            <div><b>Sugerencia o recomendación</b>
+            <div><b>3. Sugerencia</b>
               <small>Opcional: qué harías tú, o qué le recomiendas al técnico/proveedor.</small></div>
           </div>
           <textarea class="form-control" id="incSugerencia" rows="4"
@@ -242,8 +225,9 @@
         {# ══ DETALLE: repuesto + resolución + observación ══ #}
         <section class="inc-pane" data-pane="4">
           <div class="inc-pane-head inc-c4">
+            <span class="inc-num-circle" data-step="4"><span class="num">4</span><i class="bi bi-check-lg chk"></i></span>
             <i class="bi bi-wrench-adjustable"></i>
-            <div><b>Detalle del repuesto y notas</b>
+            <div><b>4. Detalle</b>
               <small>Todo esto es opcional — completa lo que sepas.</small></div>
           </div>
           <div class="row g-3">
@@ -275,6 +259,17 @@
             <div class="col-12" id="incRepBuscadorWrap" style="display:none">
               <label class="form-label">Elegir repuesto de la Bodega</label>
               <div id="incRepBuscadorMount"></div>
+              {#- 🔧 2026-09-26 (Daniel, viendo el modal en producción: "debe
+                  decirse explícitamente de dónde sale el repuesto... la
+                  tarjeta debe distinguir con claridad visual los dos
+                  caminos (hay stock vs. hay que pedirlo), no dejarlo
+                  ambiguo como hoy"). `disponible` real del ítem elegido
+                  decide el mensaje y el texto del botón -- ver
+                  incRepSeleccionar(). El botón sigue siendo el MISMO
+                  "Solicitar repuesto" que ya existe (mismo endpoint,
+                  compromete stock si lo hay): solo cambia el rótulo para
+                  que el camino sea explícito, no una acción nueva. -#}
+              <div id="incRepEstadoStock" class="inc-rep-estado" hidden></div>
               <div class="d-flex align-items-center gap-2 mt-2" id="incRepSeleccionadoBox" style="display:none">
                 <span class="badge text-bg-light border" id="incRepSeleccionadoTxt"></span>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="incBtnQuitarRepSel">
@@ -328,8 +323,9 @@
            acá NO hay ningún botón que escriba en ERP ni en WMS. #}
         <section class="inc-pane" data-pane="5">
           <div class="inc-pane-head inc-c5">
+            <span class="inc-num-circle" data-step="5"><span class="num">5</span><i class="bi bi-check-lg chk"></i></span>
             <i class="bi bi-camera"></i>
-            <div><b>Evidencia y cuadre de stock</b>
+            <div><b>5. Evidencia</b>
               <small>Comprueba que las tres fuentes digan lo mismo y deja la foto de respaldo.</small></div>
           </div>
 
@@ -498,22 +494,10 @@
 .inc-mini-btn:hover{border-color:#dc2626;color:#dc2626}
 .inc-mini-btn.danger:hover{background:#fee2e2}
 
-/* ══ 2026-09-26: barra de SEMÁFORO de completitud (reemplaza el stepper
-   de navegación 2026-08-03 -- ver comentario en el HTML). Verde=completa,
-   ámbar=falta algo opcional, rojo=falta algo obligatorio. ══ */
-.inc-steps{display:flex;gap:0;padding:14px 18px 0;background:#fafbfc;border-bottom:0;overflow-x:auto}
-.inc-step{flex:1;display:flex;align-items:center;gap:9px;padding:0 10px 12px;position:relative;
-  opacity:.55;transition:opacity .2s;min-width:132px;cursor:pointer}
-.inc-step:hover{opacity:1}
-.inc-step.on,.inc-step.done,.inc-step.warn,.inc-step.falta{opacity:1}
-.inc-step-n{width:34px;height:34px;flex:0 0 34px;border-radius:50%;display:grid;place-items:center;
-  background:#eef0f3;color:#9aa3ae;font-size:1rem;transition:background .25s,color .25s,transform .25s}
-.inc-step.on  .inc-step-n{transform:scale(1.12);box-shadow:0 0 0 5px rgba(15,23,42,.10)}
-.inc-step.done .inc-step-n{background:#16a34a;color:#fff}
-.inc-step.warn .inc-step-n{background:#f59e0b;color:#fff}
-.inc-step.falta .inc-step-n{background:var(--ilus-red,#dc2626);color:#fff}
-.inc-step-t{display:flex;flex-direction:column;line-height:1.15;font-size:.83rem;font-weight:700;color:#0f172a}
-.inc-step-t small{font-weight:500;font-size:.68rem;color:#6b7280}
+/* ══ 2026-09-26 (Daniel, viendo el modal en producción): la barra de
+   navegación tipo wizard (`#incSteps`) se ELIMINÓ del DOM por completo.
+   El semáforo de completitud pasó al círculo numerado de cada tarjeta
+   (.inc-num-circle, ver arriba). El banner "Falta: ..." se mantiene. ══ */
 .inc-faltan{margin:10px 18px 0;padding:9px 14px;border-radius:9px;font-size:.82rem;font-weight:600;
   background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
 .inc-faltan.ok{background:#f0fdf4;color:#15803d;border-color:#bbf7d0}
@@ -529,6 +513,27 @@
 .inc-c3{background:#fff7ed;border-left:4px solid #f97316} .inc-c3 i{color:#f97316}
 .inc-c4{background:#f0fdf4;border-left:4px solid #16a34a} .inc-c4 i{color:#16a34a}
 .inc-c5{background:#f8fafc;border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
+
+/* ══ 2026-09-26 (Daniel, viendo el modal en producción): sin barra de
+   navegación arriba -- cada tarjeta trae su propio círculo numerado
+   (formato Retiros/OT2, ver templates/ot2/_modal_crear.html
+   .o2m-step-circle) que además hace de semáforo de completitud: rojo =
+   falta algo obligatorio, ámbar = completa pero falta algo opcional,
+   verde = completa (con un check en vez del número). ══ */
+.inc-num-circle{position:relative;width:34px;height:34px;flex:0 0 34px;border-radius:50%;
+  background:var(--ilus-red,#dc2626);color:#fff;border:2px solid #fff;
+  display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:900;
+  line-height:1;box-shadow:0 3px 10px rgba(220,38,38,.30);cursor:pointer;
+  transition:background .25s ease,box-shadow .25s ease}
+.inc-num-circle .chk{display:none;font-size:1.15rem}
+.inc-num-circle.warn{background:#f59e0b;box-shadow:0 3px 10px rgba(245,158,11,.30)}
+.inc-num-circle.done{background:#16a34a;box-shadow:0 3px 10px rgba(22,163,74,.30)}
+.inc-num-circle.done .num{display:none}
+.inc-num-circle.done .chk{display:block}
+@media (max-width:480px){
+  .inc-num-circle{width:28px;height:28px;flex:0 0 28px;font-size:.85rem}
+  .inc-num-circle .chk{font-size:1rem}
+}
 
 /* ══ Paso 5: cuadre de stock + fotos + bitácora ══ */
 .inc-cuadre{margin-bottom:18px}
@@ -595,6 +600,12 @@
     patrón que el resto del proyecto ya usa para este picker). -#}
 .inc-rep-cta{margin-top:14px;padding-top:12px;border-top:1px dashed #d7dbe0}
 .inc-rep-nuevo{margin-top:8px;padding:10px;border-radius:10px;background:#fafbfc;border:1px dashed #d7dbe0}
+/* 🔧 2026-09-26: mensaje explícito de dónde sale el repuesto (hay stock
+   vs. hay que pedirlo) -- REGLA #2 colores ILUS (verde éxito / ámbar
+   advertencia). */
+.inc-rep-estado{margin-top:10px;padding:9px 13px;border-radius:10px;font-size:.85rem;font-weight:700}
+.inc-rep-estado.ok{background:#dcfce7;color:#15803d}
+.inc-rep-estado.sin{background:#fff8e1;color:#92400e}
 .otrep-opc{display:flex;flex-direction:column;gap:6px;margin-top:6px;max-height:220px;overflow-y:auto}
 .otrep-opc-it{display:flex;align-items:center;gap:10px;border:1.5px solid #e5e7eb;border-radius:11px;
   padding:8px 10px;cursor:pointer;background:#fff;text-align:left;width:100%;font-family:inherit;
@@ -627,6 +638,11 @@
 .inc-campo.inc-bloqueado .form-control,.inc-campo.inc-bloqueado .form-select{
   background:#f3f4f6;color:#6b7280;cursor:not-allowed}
 .inc-hint-erpwms{font-weight:600;color:#374151}
+/* 🔧 2026-09-26 (Daniel: "si difieren, píntalo en ámbar como ya hace el
+   semáforo de comparativa que ya existe"): mismo criterio de color que
+   .inc-chk-warn de la tabla principal, aplicado a los 2 campos de
+   ubicación cuando `chk_estado` de _inc_comparativa_ua es 'distinta'. */
+.inc-ubic-ambar{border-color:#f59e0b !important;background:#fff8e1 !important;color:#92400e !important}
 .inc-campo.ok .form-control,.inc-campo.ok .form-select{
   border-color:#16a34a;background:#f6fefa}
 .inc-campo.ok .form-control:focus,.inc-campo.ok .form-select:focus{
@@ -690,11 +706,6 @@
 .g-error .inc-h-ico{background:#fee2e2;color:#dc2626}
 .g-warn  .inc-h-ico{background:#fff7ed;color:#f97316}
 .g-info  .inc-h-ico{background:#f3f4f6;color:#6b7280}
-@media (max-width:640px){
-  .inc-step-t small{display:none}
-  .inc-step{min-width:74px;padding:0 4px 12px}
-  .inc-step-t{font-size:.72rem}
-}
 </style>
 
 <script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
@@ -1047,17 +1058,21 @@
     return regla ? !!regla(el.value || '') : !!(el.value || '').trim();
   }
 
+  // 🔧 2026-09-26 (Daniel, viendo el modal en producción): sin barra de
+  // navegación arriba, el semáforo vive en el círculo numerado de CADA
+  // tarjeta (.inc-num-circle dentro de su .inc-pane-head) -- verde con
+  // check = completa, ámbar = completa pero falta algo opcional, rojo =
+  // falta algo obligatorio (mismo criterio que antes, solo cambia dónde
+  // se pinta).
   function pintarPasos(){
     var faltanObligatorios = [];
-    document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
+    document.querySelectorAll('.inc-num-circle[data-step]').forEach(function(s){
       var n = parseInt(s.dataset.step, 10);
       var t = INC_TARJETAS[n] || {req: [], opc: []};
       var reqOk = t.req.every(incCompletaCampo);
       var opcOk = t.opc.every(incCompletaCampo);
-      s.classList.toggle('on', n === incPaso);
       s.classList.toggle('done', reqOk && (t.opc.length === 0 || opcOk));
       s.classList.toggle('warn', reqOk && t.opc.length > 0 && !opcOk);
-      s.classList.toggle('falta', !reqOk);
       if(!reqOk) faltanObligatorios.push(INC_TARJETA_LABEL[n]);
     });
     var box = $('incFaltan');
@@ -1384,11 +1399,11 @@
                   ? (' · ' + ($('incStockRepuesto').value === 'hay' ? 'Hay stock' : 'Sin stock')) : '')) : '');
   }
 
-  // 🔧 2026-09-26: sin paso a paso, "Siguiente/Atrás" ya no existen (ver
-  // footer). El semáforo sigue siendo clicable: lleva con scroll a la
-  // tarjeta correspondiente, sin importar si está completa o no -- todas
-  // las tarjetas están siempre visibles y editables.
-  document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
+  // 🔧 2026-09-26 (Daniel: barra de navegación eliminada del DOM): el
+  // círculo numerado de cada tarjeta sigue siendo clicable -- hace scroll
+  // a su propia tarjeta (ya no hay a dónde "navegar", todas están
+  // siempre visibles, pero el clic sigue siendo útil en tarjetas largas).
+  document.querySelectorAll('.inc-num-circle[data-step]').forEach(function(s){
     s.addEventListener('click', function(){ irAPaso(parseInt(s.dataset.step, 10)); });
   });
 
@@ -1678,6 +1693,8 @@
     document.getElementById('incCantidad').value = h.cantidad || 1;
     if(h.ubicacion){
       document.getElementById('incUbicacion').value = h.ubicacion;
+      // La ubicación viene DIRECTO del WMS en este hallazgo -- Check dice lo mismo por definición.
+      incPintarUbicacionCheck('coincide', h.ubicacion);
       document.getElementById('incUaResultado').innerHTML =
         '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación en Bodega 13: <b>'
         +h.ubicacion+'</b> (traída de la conciliación, no de una nueva búsqueda de UA).</span>';
@@ -1711,35 +1728,58 @@
   $('incConcRefrescar').addEventListener('click', function(){ incConcData=null; incConcCargar(); });
   $('incConcCerrar').addEventListener('click', function(){ $('incConciliacion').hidden = true; });
 
-  // 🔒 2026-09-26 (Daniel: "candados de datos del sistema... UA, Ubicación,
-  // SKU y Producto/Descripción quedan bloqueados... nunca se deben poder
-  // alterar a mano porque vienen de una fuente externa"). Es solo el
-  // REFLEJO visual del candado real, que vive en el backend
-  // (mant_api_incidencias_editar ignora estos 4 campos si ya había UA) --
-  // aunque alguien manipulara el DOM, el servidor los conserva igual.
-  var INC_CAMPOS_CANDADO = ['incRecomendacion', 'incSku', 'incDescripcion', 'incUbicacion'];
-  function incAplicarCandadoSistema(bloquear){
+  // 🔒 2026-09-26 (Daniel, viendo el modal en producción: "SIEMPRE
+  // bloqueados... sin importar si es alta o edición -- esto CAMBIA la
+  // regla de la ronda anterior, que los bloqueaba solo al editar"). UA,
+  // SKU y Nombre del producto quedan de solo lectura SIEMPRE -- Ubicación
+  // (las 2, nuestra y Check) tampoco se editan nunca, ya vienen `readonly`
+  // fijo en el HTML. Es solo el REFLEJO visual del candado real, que vive
+  // en el backend (mant_api_incidencias_crear/editar ignoran estos campos
+  // del payload) -- aunque alguien manipulara el DOM, el servidor los
+  // conserva igual. Se mantiene la función (en vez de borrarla) porque
+  // sigue limpiando la clase visual `.inc-bloqueado` en cada apertura del
+  // modal, y por si el día de mañana hay que volver a hacerlo condicional.
+  var INC_CAMPOS_CANDADO = ['incRecomendacion', 'incSku', 'incDescripcion'];
+  function incAplicarCandadoSistema(){
     INC_CAMPOS_CANDADO.forEach(function(id){
       var el = document.getElementById(id);
       if(!el) return;
-      el.readOnly = !!bloquear;
+      el.readOnly = true;
       var campo = el.closest('.inc-campo');
-      if(campo) campo.classList.toggle('inc-bloqueado', !!bloquear);
+      if(campo) campo.classList.add('inc-bloqueado');
     });
-    ['incCandadoUa','incCandadoUbicacion','incCandadoSku','incCandadoDescripcion'].forEach(function(id){
-      var el = document.getElementById(id);
-      if(el) el.hidden = !bloquear;
-    });
-    var btnBuscar = document.getElementById('incBtnBuscarUa');
-    if(btnBuscar) btnBuscar.disabled = !!bloquear;
+  }
+
+  // 🔧 2026-09-26 (Daniel: "Ubicación: DOS campos, ambos bloqueados...
+  // si difieren, píntalo en ámbar como ya hace el semáforo de comparativa
+  // que ya existe -- reutilízalo, no lo dupliques"). Reusa `chk_estado`/
+  // `chk_ubicacion` que ya calcula _inc_comparativa_ua (mismo semáforo de
+  // la tabla principal): 'distinta' = ámbar en ambos campos, 'no_esta' =
+  // el campo Check queda vacío con una nota, cualquier otro estado = sin
+  // resaltar (coincide, o no hay con qué comparar todavía).
+  function incPintarUbicacionCheck(chkEstado, chkUbicacion){
+    var elNuestra = $('incUbicacion'), elCheck = $('incUbicacionCheck');
+    elNuestra.classList.remove('inc-ubic-ambar');
+    elCheck.classList.remove('inc-ubic-ambar');
+    if(chkEstado === 'no_esta'){
+      elCheck.value = 'No está en Check';
+      return;
+    }
+    elCheck.value = chkUbicacion || (chkEstado === 'sin_datos' ? 'Check no disponible' : '—');
+    if(chkEstado === 'distinta'){
+      elNuestra.classList.add('inc-ubic-ambar');
+      elCheck.classList.add('inc-ubic-ambar');
+    }
   }
 
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
      'incObservacion','incRecomendacion','incFechaResolucion','incUbicacion',
-     'incSugerencia','incRepuestoStockId'].forEach(function(id){
+     'incUbicacionCheck','incSugerencia','incRepuestoStockId'].forEach(function(id){
       document.getElementById(id).value = '';
     });
+    $('incUbicacion').classList.remove('inc-ubic-ambar');
+    $('incUbicacionCheck').classList.remove('inc-ubic-ambar');
     document.getElementById('incCantidad').value = 1;
     document.getElementById('incEstado').value = 'abierta';
     document.getElementById('incReqRepuesto').value = '';
@@ -1755,7 +1795,7 @@
     document.getElementById('incRepCtaHint').textContent = 'Guarda la incidencia primero para poder solicitar un repuesto.';
     incRepSelLimpiar();
     incRepBuscadorToggle();
-    incAplicarCandadoSistema(false);
+    incAplicarCandadoSistema();
     refrescarVerdeTodos();
     irAPaso(1);
   }
@@ -1780,9 +1820,14 @@
     document.getElementById('incUbicacion').value = r.ubicacion || '';
     document.getElementById('incSugerencia').value = r.sugerencia || '';
     document.getElementById('incRepuestoStockId').value = r.repuesto_stock_id || '';
-    // 🔒 2026-09-26: candado SOLO si la incidencia ya tenía UA declarada
-    // (Daniel: "cuando se edita una incidencia YA creada, tiene UA").
-    incAplicarCandadoSistema(!!(r.recomendacion || '').trim());
+    // 🔧 2026-09-26 (Daniel: "Ubicación según Check (WMS)... reutiliza el
+    // semáforo que ya existe"): `r` viene de la última carga de la tabla
+    // principal, que YA trae chk_estado/chk_ubicacion calculados por
+    // _inc_comparativa_ua -- cero consultas nuevas.
+    incPintarUbicacionCheck(r.chk_estado, r.chk_ubicacion);
+    // 🔒 2026-09-26 (Daniel, viendo el modal en producción): SIEMPRE
+    // bloqueado, también al editar -- ya no depende de si tenía UA.
+    incAplicarCandadoSistema();
     incRepBuscadorToggle();
     if(r.repuesto_stock_id){
       incRepSelMostrar({id: r.repuesto_stock_id, descripcion: r.descripcion_repuesto || r.sku || ('Repuesto #'+r.repuesto_stock_id)});
@@ -1801,118 +1846,15 @@
     incModal().show();
   }
 
-  document.getElementById('incBtnBuscarUa').addEventListener('click', function(){
-    var codigo = document.getElementById('incRecomendacion').value.trim();
-    var res = document.getElementById('incUaResultado');
-    if(!codigo){ ilusToast('Escribe primero el código UA', {type:'warning'}); return; }
-    res.textContent = 'Buscando en CheckWMS… (puede tardar hasta 30s la primera vez)';
-    var _incId = document.getElementById('incId').value;
-    fetch('/mantenciones/api/incidencias/buscar-ua?codigo='+encodeURIComponent(codigo)
-          + (_incId ? ('&excluir_id='+encodeURIComponent(_incId)) : ''))
-      .then(function(r){return r.json();}).then(function(data){
-        if(!data.ok){ res.innerHTML = '<span class="text-danger">'+(data.error||'No se pudo consultar CheckWMS.')+'</span>'; return; }
-        if(!data.found){
-          res.innerHTML = '<span class="text-warning">No se encontró <b>'+(data.codigo_normalizado||codigo)+'</b> '
-            + 'entre las '+(data.total_uas||'—')+' UA de CheckWMS'
-            + (data.desde ? (' (datos desde '+data.desde.split('-').reverse().join('/')+')') : '')+'.</span>';
-          return;
-        }
-        // 2026-08-03 (Daniel: "que informe la ubicación y que si coincide
-        // con el producto"): ANTES de sobrescribir, comparar el SKU que la
-        // incidencia ya tenía contra el que el WMS dice que hay en esa UA.
-        // Si no calzan, es un error de registro -- se avisa y NO se pisa
-        // el dato del usuario en silencio.
-        var skuInput = document.getElementById('incSku');
-        var skuPrevio = (skuInput.value || '').trim().toUpperCase();
-        var skuWms    = (data.sku || '').trim().toUpperCase();
-        var descalce  = (skuPrevio && skuWms && skuPrevio !== skuWms);
-
-        if(!descalce){
-          if(data.sku) skuInput.value = data.sku;
-          if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
-          // 🔧 2026-09-26: guarda la ubicación que trae el WMS -- es la que
-          // se compara luego contra CheckWMS en la tabla principal.
-          if(data.ubicacion) document.getElementById('incUbicacion').value = data.ubicacion;
-          refrescarVerdeTodos();
-        }
-        // Ubicación actual (GetReporteStock) primero -- es lo que el
-        // usuario ve en la pantalla "Reporte Stock" del WMS.
-        var html = '<span class="text-success">✓ '+(data.en_stock ? 'En stock' : 'Sin stock actual')
-          + ' — ' + (data.bodega||'—')
-          + (data.ubicacion ? (' · ubic. '+data.ubicacion) : '')
-          + (data.stock_fisico != null ? (' · físico '+data.stock_fisico) : '')
-          + (data.disponible != null ? (' · disp. '+data.disponible) : '')
-          + '</span>';
-        if(data.sku){
-          html += '<br><span class="'+(descalce ? 'text-danger' : 'text-muted')+'">'
-            + (descalce ? '<i class="bi bi-x-octagon-fill me-1"></i>NO COINCIDE: ' : 'Producto en la UA: ')
-            + '<code>'+data.sku+'</code> '+(data.descripcion||'')
-            + (descalce ? (' — pero esta incidencia dice <code>'+skuPrevio+'</code>. '
-                + 'Revisa el número de UA o corrige el SKU; no toqué tus datos.') : ' ✓')
-            + '</span>';
-        }
-        if(data.ot){
-          html += '<br><span class="text-muted">Último movimiento: OT '+data.ot+' · '+(data.estado||'—')
-            + (data.tipo_ot ? (' · '+data.tipo_ot) : '')
-            + (data.cliente ? (' · '+data.cliente) : '')+'</span>';
-        }
-        // 2026-08-03 (Daniel: "tenemos la clasificación de productos, las
-        // tablas se deben reusar"). Viene del Catálogo:
-        // cat_productos.clase_producto -> cat_clases_producto.modelo_precio.
-        // 'fijo' = piso/accesorio (repetible), 'horas' = equipo (único).
-        var cl = data.clasificacion || {};
-        if(cl.clase_nombre){
-          html += '<br><span class="text-muted"><i class="bi bi-tags me-1"></i>'
-            + cl.clase_nombre
-            + (cl.repetible === true  ? ' · <b>repetible</b> (piso/accesorio: la misma falla puede darse en muchas unidades)' : '')
-            + (cl.repetible === false ? ' · <b>equipo único</b> (no debería repetir incidencia)' : '')
-            + '</span>';
-        } else if(data.sku){
-          html += '<br><span class="text-warning"><i class="bi bi-question-circle me-1"></i>'
-            + 'Producto sin clasificar en el Catálogo — clasifícalo para activar el control de duplicados.</span>';
-        }
-        // Duplicado: solo se advierte en EQUIPOS (repetible=false).
-        var dup = data.duplicado;
-        if(dup && dup.n){
-          html += '<br><span class="text-danger"><i class="bi bi-exclamation-octagon-fill me-1"></i>'
-            + 'Ya hay <b>'+dup.n+'</b> incidencia'+(dup.n===1?'':'s')+' registrada'+(dup.n===1?'':'s')
-            + ' para este equipo. Si es la misma falla, no la dupliques:</span>'
-            + '<ul style="margin:4px 0 0 18px;font-size:.78rem">'
-            + dup.previas.map(function(p){
-                return '<li>#'+p.id+' — '+(p.motivo||'(sin motivo)')+' <span class="text-muted">['+(p.estado||'—')+']</span></li>';
-              }).join('')
-            + '</ul>';
-        }
-        // 2026-08-03 (Daniel: "identificar qué salió primero" -- cruce
-        // contra ERP Random usando el documento que ya trae CheckWMS).
-        var resp = data.respaldo_erp;
-        if(resp && resp.alerta){
-          html += '<br><span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+resp.alerta+'</span>';
-        } else if(resp && resp.encontrado === true){
-          html += '<br><span class="text-muted">Respaldado por '+resp.doc_ref+' en Random ('+(resp.fecha_erp||'—')+').</span>';
-        }
-        // Daniel 2026-08-03: "si la UA >1 deberán desglosar en las UA
-        // necesarias" -- una misma UA puede agrupar varios SKU (pallet /
-        // OT multi-línea). Se avisa para que no se registre una sola
-        // incidencia cubriendo productos distintos.
-        var skus = data.skus_en_ua || [];
-        if(skus.length > 1){
-          html += '<br><span class="text-warning"><i class="bi bi-diagram-3 me-1"></i>'
-            + 'Esta UA agrupa <b>'+skus.length+' productos distintos</b> — registra una incidencia por producto:</span>'
-            + '<ul style="margin:4px 0 0 18px;font-size:.78rem">'
-            + skus.map(function(s){
-                return '<li><code>'+(s.sku||'—')+'</code> — '+(s.descripcion||'')
-                  + ' <span class="text-muted">(solicitado '+(s.sol!=null?s.sol:'—')+' / ejecutado '+(s.ejec!=null?s.ejec:'—')+')</span></li>';
-              }).join('')
-            + '</ul>';
-        }
-        res.innerHTML = html;
-        // 🔧 2026-09-26: SKU/descripción/cantidad ahora viven en la MISMA
-        // tarjeta que la UA (antes eran un paso aparte) -- ya no hace
-        // falta saltar a ningún otro lado, el usuario ve todo junto.
-        refrescarVerdeTodos();
-      }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });
-  });
+  // 🔧 2026-09-26 (Daniel, viendo el modal en producción: "QUITA el
+  // buscador/botón 'Buscar en WMS' de esta tarjeta -- ya no se busca ahí.
+  // Los datos llegan siempre prellenados desde el hallazgo de la
+  // conciliación o desde la incidencia ya creada"). El botón #incBtnBuscarUa
+  // y su handler de búsqueda en CheckWMS (con desglose de SKU, duplicados,
+  // clasificación, respaldo ERP) se eliminaron de esta tarjeta -- ver
+  // el reporte de esta sesión sobre el impacto en "Nueva incidencia"
+  // (alta 100% manual sin venir de un hallazgo, que dependía de este
+  // buscador para completar UA/SKU/Descripción).
 
   document.getElementById('incBtnNueva').addEventListener('click', function(){
     limpiarModal();
@@ -2183,7 +2125,33 @@
     if(it.disponible != null){
       $('incStockRepuesto').value = (it.disponible > 0) ? 'hay' : 'no_hay';
     }
+    incPintarEstadoStock(it.disponible);
     incRepSelMostrar(it);
+  }
+
+  // 🔧 2026-09-26 (Daniel: "si disponible > 0, mostrar claro '✅ Hay stock
+  // en bodega: N disponibles'... si no hay stock, mostrar '⚠ Sin stock --
+  // se debe solicitar al proveedor'"). El botón sigue siendo el MISMO
+  // "Solicitar repuesto" (incBtnSolicitarAhora / incBtnSolicitarRepuesto)
+  // -- solo cambia el rótulo para que el camino sea explícito.
+  function incPintarEstadoStock(disponible){
+    var box = document.getElementById('incRepEstadoStock');
+    var btn = document.getElementById('incBtnSolicitarAhora');
+    if(disponible == null){
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    if(disponible > 0){
+      box.className = 'inc-rep-estado ok';
+      box.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Hay stock en bodega: <b>'
+        + disponible + ' disponible' + (disponible === 1 ? '' : 's') + '</b>';
+      if(btn) btn.innerHTML = '<i class="bi bi-box-arrow-in-down me-1"></i>Tomar de bodega';
+    } else {
+      box.className = 'inc-rep-estado sin';
+      box.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Sin stock -- se debe solicitar al proveedor';
+      if(btn) btn.innerHTML = '<i class="bi bi-send-check me-1"></i>Solicitar este repuesto ahora';
+    }
   }
 
   function incRepSelMostrar(it){
@@ -2196,6 +2164,7 @@
   function incRepSelLimpiar(){
     document.getElementById('incRepSeleccionadoBox').style.display = 'none';
     document.getElementById('incRepuestoStockId').value = '';
+    incPintarEstadoStock(null);
     if(_incRepBuscador) _incRepBuscador.setSeleccion(null);
   }
 
