@@ -82,7 +82,7 @@ def _cargar_motor(gestion=True, externo=False):
     ambito = {"re": __import__("re")}
     quiero = {"ot2_api_repuestos_bodega_buscar", "_otrep_fmt_stock", "_otrep_producto_de_maquina"}
     consts = {"_OTREP_STOCK_SOLO_GESTION", "_OTREP_STOCK_NO_EXTERNO", "_OTREP_ABIERTOS",
-              "_OTREP_ESTADOS_COMPROMETEN", "_OTREP_SQL_STOCK"}
+              "_OTREP_ESTADOS_COMPROMETEN", "_OTREP_ESTADOS_POR_LLEGAR", "_OTREP_SQL_STOCK"}
     for nodo in arbol.body:
         if isinstance(nodo, ast.FunctionDef) and nodo.name in quiero:
             nodo.decorator_list = []  # sin @app.route / @_mant_required
@@ -266,6 +266,13 @@ class TestMotorBusqueda(unittest.TestCase):
         sql, params = _sql_principal(doble)
         self.assertNotIn(malo, sql, "REGLA #4: solo %s con parametros")
         self.assertIn("%" + malo + "%", params)
+
+    def test_comodines_like_se_escapan(self):
+        res, doble = self._buscar(q="REP_DRAX 100%")
+        sql, params = _sql_principal(doble)
+        self.assertIn("%REP\\_DRAX 100\\%%", params, "_ y % del usuario van escapados")
+        self.assertIn("REP\\_DRAX 100\\%%", params, "tambien en el ranking 'empieza con'")
+        self.assertIn("REP_DRAX 100%", params, "el SKU exacto se compara sin escapar")
 
     def test_gestion_recibe_contacto_del_proveedor(self):
         res, _ = self._buscar(q="correa", ctx="gestion")

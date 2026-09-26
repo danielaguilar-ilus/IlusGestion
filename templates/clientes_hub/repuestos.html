@@ -2247,7 +2247,8 @@ function rsmErpBuscar(q){
       if (!_rsm._erp.length){ cont.innerHTML = '<div class="rsm-vacio">Nada en el ERP con "' + rsEsc(q) + '".</div>'; return; }
       // Mismas tarjetas que el motor de bodega (clases .rpb-*), con lo que el
       // ERP sabe: SKU, descripción y stock de la bodega 18.
-      cont.innerHTML = '<div class="rpb rpb-grid">' + _rsm._erp.map(function(it, i){
+      // Contenedor .rpb aparte del grid: el @container del CSS compartido mide el .rpb.
+      cont.innerHTML = '<div class="rpb"><div class="rpb-grid">' + _rsm._erp.map(function(it, i){
         const enLista = _rsm.items.filter(function(x){ return x.origen === 'erp' && x.repuesto_sku === it.sku; }).length;
         return '<div class="rpb-card' + (enLista ? ' enlista' : '') + '">' +
           '<div class="rpb-foto"><i class="bi bi-cloud-arrow-down"></i></div>' +
@@ -2257,7 +2258,7 @@ function rsmErpBuscar(q){
           '<div class="rpb-lado"><div class="rpb-add"><input type="number" class="rpb-cant" inputmode="decimal" min="0.5" step="0.5" value="1" aria-label="Cantidad" id="rsmErpCant' + i + '">' +
             '<button type="button" class="rpb-btn-add" onclick="rsmAgregarErp(' + i + ')"><i class="bi bi-plus-lg"></i>Agregar</button></div>' +
             (enLista ? '<span class="rpb-enlista"><i class="bi bi-check-circle-fill"></i>En la lista</span>' : '') + '</div></div>';
-      }).join('') + '</div>';
+      }).join('') + '</div></div>';
     } catch(e){ cont.innerHTML = '<div class="rsm-vacio">No se pudo consultar el ERP.</div>'; }
   }, 300);
 }

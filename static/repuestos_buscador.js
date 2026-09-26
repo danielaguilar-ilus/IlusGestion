@@ -180,7 +180,9 @@
       pintarProvs();
       if (!st.marcas) {
         try {
-          var r2 = await fetch('/mantenciones/api/repuestos-stock/buscar-marcas?todas=1', { credentials: 'same-origin', headers: st.headers });
+          // Sin filtro de proveedor (externo) se pide solo lo necesario (`solo=1`):
+          // el backend igual le recorta el proveedor de referencia de cada marca.
+          var r2 = await fetch('/mantenciones/api/repuestos-stock/buscar-marcas?todas=1' + (st.mostrarProveedor ? '' : '&solo=1'), { credentials: 'same-origin', headers: st.headers });
           var j2 = await r2.json();
           st.marcas = j2.marcas || [];
         } catch (e2) { st.marcas = []; }
