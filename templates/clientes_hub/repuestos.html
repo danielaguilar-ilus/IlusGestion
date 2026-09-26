@@ -257,6 +257,7 @@
 .rsm-meta{font-size:.72rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-top:3px}
 .rsm-origen{font-size:.6rem;font-weight:900;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 7px;background:#dbeafe;color:#1d4ed8;white-space:nowrap}
 .rsm-origen.erp{background:#ede9fe;color:#6d28d9}.rsm-origen.manual{background:#f3f4f6;color:#6b7280}
+.rsm-origen.incidencia{background:#fff7ed;color:#c2410c}
 .rsm-prov{grid-area:prov;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.76rem}
 .rsm-prov-ok{display:inline-flex;align-items:center;gap:5px;font-weight:800;color:#0a0a0a;overflow-wrap:anywhere}
 .rsm-prov-ok .cambiar{border:none;background:transparent;color:#6b7280;font-size:.74rem;text-decoration:underline;cursor:pointer;padding:0 8px;min-height:36px;font-family:inherit}
@@ -719,6 +720,12 @@
               <li class="nav-item"><button type="button" class="nav-link active" onclick="rsmSubTab('bodega')" id="rsmSubTabBodega"><i class="bi bi-box-seam me-1"></i>Bodega</button></li>
               <li class="nav-item"><button type="button" class="nav-link" onclick="rsmSubTab('erp')" id="rsmSubTabErp"><i class="bi bi-cloud-arrow-down me-1"></i>Buscar en ERP</button></li>
               <li class="nav-item"><button type="button" class="nav-link" onclick="rsmSubTab('manual')" id="rsmSubTabManual"><i class="bi bi-pencil me-1"></i>Manual</button></li>
+              {#- 🧠 2026-09-26 (Daniel: "los productos de incidencias deben
+                 ser una TERCERA FUENTE al solicitar repuesto... se puede
+                 tomar una pieza de ahí y queda trazado el origen"). Solo
+                 gestión (mismo gate que el resto de este modal) -- nunca
+                 en la OT del técnico. -#}
+              <li class="nav-item"><button type="button" class="nav-link" onclick="rsmSubTab('incidencias')" id="rsmSubTabIncidencias"><i class="bi bi-exclamation-triangle me-1"></i>Incidencias</button></li>
             </ul>
             <div id="rsmSubBodega">
               {# 🧠 2026-09-26 (Daniel: "súper poderoso... buscar por proveedor y
@@ -748,6 +755,12 @@
                   <button type="button" class="btn btn-dark fw-bold" onclick="rsmAgregarManual()"><i class="bi bi-plus-lg me-1"></i>Agregar a los elegidos</button>
                 </div>
               </div>
+            </div>
+            <div id="rsmSubIncidencias" class="d-none">
+              <input type="search" id="rsmIncQ" class="form-control" placeholder="Buscar por SKU, descripción o motivo…"
+                     autocomplete="off" style="font-size:16px;min-height:44px" oninput="rsmIncBuscar(this.value)">
+              <div class="small text-muted mt-1" style="font-size:.72rem"><i class="bi bi-info-circle me-1"></i>Solo incidencias <b>abiertas</b> con unidades sin tomar todavía — el origen queda trazado como "Desde Incidencias".</div>
+              <div class="mt-2" id="rsmIncLista"></div>
             </div>
 
             {# ══ Elegidos, AGRUPADOS POR PROVEEDOR (Daniel 2026-09-26: después
@@ -1735,9 +1748,14 @@ function rsCardInner(s){
     else stockTxt = 'Sin stock';
   }
   const compTxt = (stockTxt ? ' · ' + stockTxt : '') + (s.stock_comprometido > 0 ? ' (comprometido ' + rsFmt(s.stock_comprometido) + ')' : '');
+  // 2026-09-26: origen 'incidencia' -- la pieza viene de un sobrante/
+  // faltante YA confirmado en la bodega de Incidencias, no "por validar"
+  // como manual/ERP (esos sí carecen de repuesto_stock_id).
   const liga = s.repuesto_stock_id
     ? '<div class="rs-liga ' + (s.stock_disponible != null && s.stock_disponible < 0 ? 'warn' : 'ok') + '"><i class="bi bi-box-seam"></i> ' + rsEsc(s.stock_sku || '') + ' · ' + rsEsc(s.stock_descripcion || '') + (s.stock_cantidad != null ? ' · físico ' + rsFmt(s.stock_cantidad) : '') + compTxt + '</div>'
-    : '<div class="rs-liga pend"><i class="bi bi-question-circle"></i> Por validar — sin repuesto de bodega ligado (' + rsEsc(s.origen_label || '') + ')</div>';
+    : (s.origen === 'incidencia'
+        ? '<div class="rs-liga ok"><i class="bi bi-exclamation-triangle"></i> Desde incidencia #' + (s.incidencia_id || '?') + (s.incidencia_sku ? ' · ' + rsEsc(s.incidencia_sku) : '') + '</div>'
+        : '<div class="rs-liga pend"><i class="bi bi-question-circle"></i> Por validar — sin repuesto de bodega ligado (' + rsEsc(s.origen_label || '') + ')</div>');
   // 🔀 2026-09-20 (Daniel: "hasta que la tome otro usuario"). "Tomar" REUSA
   // tk_tickets.asignado_a del ticket que YA agrupa esta solicitud -- no hay
   // tabla ni concepto de dueño nuevo. Sin ticket todavía no hay a quién
@@ -2605,12 +2623,13 @@ function rsmMaquinaCambio(){
 }
 function rsmSubTab(t){
   _rsm.subtab = t;
-  ['Bodega','Erp','Manual'].forEach(function(x){
+  ['Bodega','Erp','Manual','Incidencias'].forEach(function(x){
     const tab = document.getElementById('rsmSubTab' + x), pane = document.getElementById('rsmSub' + x);
     if (tab) tab.classList.toggle('active', x.toLowerCase() === t);
     if (pane) pane.classList.toggle('d-none', x.toLowerCase() !== t);
   });
   if (t === 'bodega' && _rsm.buscador) setTimeout(function(){ _rsm.buscador.focus(); }, 120);
+  if (t === 'incidencias') setTimeout(function(){ document.getElementById('rsmIncQ').focus(); }, 120);
 }
 // Compatibilidad: el buscador antiguo por texto vive ahora dentro del motor
 // compartido; si algo externo llamaba a rsmBodegaBuscar(q) sigue funcionando.
@@ -2621,7 +2640,7 @@ function rsmBodegaBuscar(q){
 }
 function rsmNuevoItem(base){
   _rsm.uidSeq += 1;
-  return Object.assign({ uid: _rsm.uidSeq, repuesto_stock_id: null, repuesto_nombre: '', repuesto_sku: null, cantidad: 1,
+  return Object.assign({ uid: _rsm.uidSeq, repuesto_stock_id: null, incidencia_id: null, repuesto_nombre: '', repuesto_sku: null, cantidad: 1,
     origen: 'manual', proveedor_id: null, proveedor_original_id: null, guardar_proveedor: false,
     disponible: null, cantidad_fisica: null, comprometido: 0, por_llegar: 0, semaforo: null, con_stock: null,
     marca: null, foto_url: null, ubicacion_codigo: null, modelos: [], editandoProv: false, creandoProv: false }, base);
@@ -2693,6 +2712,67 @@ function rsmAgregarErp(i){
   rsmRenderItems();
   rsmErpBuscar(document.getElementById('rsmErpQ').value); // repinta "En la lista"
   ilusToast('✓ ' + it.descripcion + ' agregado (queda "por validar" en bodega)', { type: 'success' });
+}
+/* ── Incidencias como TERCERA FUENTE (2026-09-26, Daniel) ────────────── */
+function rsmIncBuscar(q){
+  clearTimeout(_rsm.incTimer);
+  const cont = document.getElementById('rsmIncLista');
+  q = (q || '').trim();
+  _rsm.incTimer = setTimeout(async function(){
+    cont.innerHTML = '<div class="rsm-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando en Incidencias…</div>';
+    try {
+      const r = await fetch('/mantenciones/api/incidencias/disponibles-repuesto?q=' + encodeURIComponent(q), {credentials:'same-origin'});
+      const j = await r.json();
+      if (!j.ok){ cont.innerHTML = '<div class="rsm-vacio">' + rsEsc(j.error || 'No se pudo buscar.') + '</div>'; return; }
+      _rsm._inc = j.incidencias || [];
+      rsmPintarIncidencias();
+    } catch(e){ cont.innerHTML = '<div class="rsm-vacio">No se pudo conectar con el servidor.</div>'; }
+  }, 300);
+}
+function rsmPintarIncidencias(){
+  const cont = document.getElementById('rsmIncLista');
+  const lista = _rsm._inc || [];
+  if (!lista.length){ cont.innerHTML = '<div class="rsm-vacio">Ninguna incidencia abierta con unidades disponibles todavía. Prueba con otro SKU, descripción o palabra del motivo.</div>'; return; }
+  // Mismo lenguaje de tarjetas que Bodega/ERP (.rpb-*) + semáforo de
+  // disponible (REGLA #15: nombres completos, nunca truncados).
+  cont.innerHTML = '<div class="rpb"><div class="rpb-grid">' + lista.map(function(it, i){
+    const enLista = _rsm.items.filter(function(x){ return x.origen === 'incidencia' && x.incidencia_id === it.id; }).length;
+    const semClase = it.disponible > 1 ? 'ok' : 'sin';   // ámbar visual simple: 1 = justo, 0 ya se filtra en el backend
+    return '<div class="rpb-card' + (enLista ? ' enlista' : '') + '">' +
+      '<div class="rpb-foto">' + (it.foto_url ? '<img src="' + rsEsc(it.foto_url) + '" alt="" loading="lazy">' : '<i class="bi bi-exclamation-triangle"></i>') + '</div>' +
+      '<div class="rpb-info"><div class="rpb-nombre">' + rsEsc(it.descripcion || ('Incidencia #' + it.id)) + '</div>' +
+        '<div class="rpb-meta">' + (it.sku ? '<span class="rpb-sku">' + rsEsc(it.sku) + '</span><span class="rpb-dot">·</span>' : '') +
+          '<span class="' + (semClase === 'ok' ? 'text-success' : 'text-warning') + '"><b>' + rsFmt(it.disponible) + '</b> disponible de ' + rsFmt(it.cantidad) + '</span></div>' +
+        (it.motivo ? '<div class="rpb-meta" style="margin-top:2px"><i class="bi bi-chat-left-quote"></i>&nbsp;' + rsEsc(it.motivo) + '</div>' : '') +
+        '<div class="rpb-tags"><span class="rpb-tag"><i class="bi bi-link-45deg"></i>Incidencia #' + it.id + '</span></div></div>' +
+      '<div class="rpb-lado"><div class="rpb-add"><input type="number" class="rpb-cant" inputmode="decimal" min="0.5" step="0.5" value="1" max="' + it.disponible + '" aria-label="Cantidad" id="rsmIncCant' + i + '">' +
+        '<button type="button" class="rpb-btn-add" onclick="rsmAgregarIncidencia(' + i + ')"><i class="bi bi-plus-lg"></i>Agregar</button></div>' +
+        (enLista ? '<span class="rpb-enlista"><i class="bi bi-check-circle-fill"></i>En la lista</span>' : '') + '</div></div>';
+  }).join('') + '</div></div>';
+}
+function rsmAgregarIncidencia(i){
+  const it = (_rsm._inc || [])[i];
+  if (!it) return;
+  const inp = document.getElementById('rsmIncCant' + i);
+  const cant = inp ? parseFloat(String(inp.value).replace(',', '.')) : 1;
+  if (!isFinite(cant) || cant <= 0){ ilusToast('Indica una cantidad válida.', { type: 'warning' }); return; }
+  if (cant > it.disponible){ ilusToast('Esa incidencia solo tiene ' + rsFmt(it.disponible) + ' disponible.', { type: 'warning' }); return; }
+  let existente = null;
+  _rsm.items.forEach(function(x){ if (x.origen === 'incidencia' && x.incidencia_id === it.id) existente = x; });
+  if (existente){
+    existente.cantidad = Math.round((existente.cantidad + cant) * 100) / 100;
+    rsmRenderItems();
+    ilusToast('✓ ' + (it.descripcion || ('Incidencia #' + it.id)) + ': ahora ×' + rsFmt(existente.cantidad), { type: 'success' });
+    return;
+  }
+  _rsm.items.push(rsmNuevoItem({
+    incidencia_id: it.id, repuesto_nombre: it.descripcion || ('Incidencia #' + it.id), repuesto_sku: it.sku || null,
+    cantidad: cant, origen: 'incidencia', disponible: it.disponible, cantidad_fisica: it.cantidad,
+    foto_url: it.foto_url || null,
+  }));
+  rsmRenderItems();
+  rsmIncBuscar(document.getElementById('rsmIncQ').value); // repinta "En la lista"
+  ilusToast('✓ ' + (it.descripcion || ('Incidencia #' + it.id)) + ' agregado (queda trazado desde Incidencias #' + it.id + ')', { type: 'success' });
 }
 function rsmAgregarManual(){
   const nombre = (document.getElementById('rsmManualNombre').value || '').trim();
@@ -2774,6 +2854,14 @@ async function rsmProvCrearGuardar(uid){
 }
 /* ── Render de los elegidos agrupados por proveedor ──────────────────── */
 function rsmStockBadge(it){
+  // 2026-09-26: una pieza de Incidencias ya está CONFIRMADA físicamente
+  // (se validó al agregarla, contra mant_incidencias.cantidad) -- no es
+  // "por validar en bodega" como el manual/ERP, así que tiene su propio
+  // badge con el disponible real de esa incidencia.
+  if (it.origen === 'incidencia'){
+    if (it.disponible == null) return '<span class="rsm-stk ok"><i class="bi bi-check-circle-fill"></i>Desde Incidencias</span>';
+    return '<span class="rsm-stk ok"><i class="bi bi-check-circle-fill"></i>' + rsFmt(it.disponible) + ' disponible en la incidencia</span>';
+  }
   if (it.origen !== 'bodega' || it.disponible == null){
     if (it.origen !== 'bodega') return '<span class="rsm-stk validar"><i class="bi bi-hourglass-split"></i>Por validar en bodega</span>';
     return it.con_stock ? '<span class="rsm-stk ok"><i class="bi bi-check-circle-fill"></i>En stock</span>' : '<span class="rsm-stk sin"><i class="bi bi-x-circle-fill"></i>Sin stock</span>';
@@ -2792,17 +2880,18 @@ function rsmGrupos(){
   const map = {};
   _rsm.items.forEach(function(it){
     let key, tipo;
-    if (it.proveedor_id){ key = 'p' + it.proveedor_id; tipo = 'prov'; }
+    if (it.origen === 'incidencia'){ key = 'incidencia'; tipo = 'incidencia'; }
+    else if (it.proveedor_id){ key = 'p' + it.proveedor_id; tipo = 'prov'; }
     else if (it.origen === 'bodega'){ key = 'falta'; tipo = 'falta'; }
     else { key = 'validar'; tipo = 'validar'; }
     if (!map[key]){
       const p = tipo === 'prov' ? rsmProvPorId(it.proveedor_id) : null;
-      map[key] = { key: key, tipo: tipo, prov: p, nombre: tipo === 'prov' ? (p ? p.nombre : ('Proveedor #' + it.proveedor_id)) : (tipo === 'falta' ? 'Falta proveedor' : 'Por validar en bodega'), items: [] };
+      map[key] = { key: key, tipo: tipo, prov: p, nombre: tipo === 'prov' ? (p ? p.nombre : ('Proveedor #' + it.proveedor_id)) : (tipo === 'falta' ? 'Falta proveedor' : (tipo === 'incidencia' ? 'Desde Incidencias' : 'Por validar en bodega')), items: [] };
     }
     map[key].items.push(it);
   });
   const grupos = Object.values(map);
-  const orden = { prov: 0, falta: 1, validar: 2 };
+  const orden = { prov: 0, falta: 1, incidencia: 2, validar: 3 };
   grupos.sort(function(a, b){ return (orden[a.tipo] - orden[b.tipo]) || String(a.nombre).localeCompare(String(b.nombre)); });
   return grupos;
 }
@@ -2846,7 +2935,7 @@ function rsmProvHTML(it){
 }
 function rsmLineaHTML(it){
   const uid = it.uid;
-  const origenLbl = it.origen === 'bodega' ? 'Bodega' : (it.origen === 'erp' ? 'ERP' : 'Manual');
+  const origenLbl = it.origen === 'bodega' ? 'Bodega' : (it.origen === 'erp' ? 'ERP' : (it.origen === 'incidencia' ? 'Incidencias' : 'Manual'));
   const sinProv = it.origen === 'bodega' && !it.proveedor_id;
   const meta = [];
   if (it.repuesto_sku) meta.push('<span class="rpb-sku">' + rsEsc(it.repuesto_sku) + '</span>');
@@ -2854,7 +2943,7 @@ function rsmLineaHTML(it){
   if (it.ubicacion_codigo) meta.push('<span><i class="bi bi-geo-alt me-1"></i>' + rsEsc(it.ubicacion_codigo) + '</span>');
   if (it.modelos && it.modelos.length) meta.push('<span title="Modelos compatibles"><i class="bi bi-diagram-3 me-1"></i>' + it.modelos.map(function(m){ return rsEsc(m.nombre || m.sku || ''); }).join(', ') + '</span>');
   return '<div class="rsm-linea' + (sinProv ? ' sinprov' : '') + '">' +
-    '<div class="rsm-foto">' + (it.foto_url ? '<img src="' + rsEsc(it.foto_url) + '" alt="" loading="lazy">' : '<i class="bi bi-' + (it.origen === 'bodega' ? 'gear' : (it.origen === 'erp' ? 'cloud-arrow-down' : 'pencil')) + '"></i>') + '</div>' +
+    '<div class="rsm-foto">' + (it.foto_url ? '<img src="' + rsEsc(it.foto_url) + '" alt="" loading="lazy">' : '<i class="bi bi-' + (it.origen === 'bodega' ? 'gear' : (it.origen === 'erp' ? 'cloud-arrow-down' : (it.origen === 'incidencia' ? 'exclamation-triangle' : 'pencil'))) + '"></i>') + '</div>' +
     '<div class="rsm-info"><div class="rsm-nombre">' + rsEsc(it.repuesto_nombre) + '</div>' +
       '<div class="rsm-meta"><span class="rsm-origen ' + it.origen + '">' + origenLbl + '</span>' + meta.join('<span class="rpb-dot">·</span>') + '</div></div>' +
     '<div class="rsm-prov">' + rsmProvHTML(it) + '</div>' +
@@ -2951,7 +3040,11 @@ async function rsmEnviar(){
   const btn = document.getElementById('rsmBtnEnviar');
   btn.disabled = true;
   const items = _rsm.items.map(function(it){
-    return { repuesto_stock_id: it.repuesto_stock_id, repuesto_nombre: it.repuesto_nombre,
+    return { repuesto_stock_id: it.repuesto_stock_id,
+             // 🧠 2026-09-26: tercera fuente -- si viene de Incidencias, el
+             // backend liga por incidencia_id (nunca junto a repuesto_stock_id).
+             incidencia_id: it.incidencia_id || null,
+             repuesto_nombre: it.repuesto_nombre,
              repuesto_sku: it.repuesto_sku, cantidad: it.cantidad,
              // 🧠 2026-09-26: proveedor por línea + "guardar en el repuesto".
              proveedor_id: it.proveedor_id || null,

@@ -63637,6 +63637,92 @@ def mant_api_incidencias_buscar_ua():
 INC_BODEGA_WMS = "BODEGA 13"   # ver memoria checkwms_integracion_ua
 INC_BODEGA_ERP = "13"          # MAEST.KOBO -- misma bodega en Random
 
+# 🔧 2026-09-26 (Daniel: "está disfuncional... no selecciona nada, no sé qué
+# hace" -- ver conversación con Claude). Cada TIPO de hallazgo de la
+# conciliación necesita una acción explícita y clara, no solo una fila con
+# cursor de mano sin onclick. Diccionario único (backend Y frontend leen de
+# acá vía el campo "tipos" de la respuesta) para no duplicar el texto:
+#   - "accion": qué botón se ofrece ('registrar' abre el alta prellenada,
+#     'ver' abre la incidencia ya existente para corregirla, None = no hay
+#     nada que gestionar desde acá todavía -- ver abajo el caso real).
+#   - "ayuda": una frase simple de qué significa este hallazgo.
+INC_HALLAZGO_INFO = {
+    "dif_erp": {
+        "label": "Diferencia con el ERP", "accion": "ver",
+        "ayuda": "El ERP Random (la fuente que manda) tiene una cantidad "
+                 "distinta a la que tenemos declarada. Corrige la incidencia.",
+    },
+    "no_en_erp": {
+        "label": "No existe en el ERP", "accion": "ver",
+        "ayuda": "Declaramos este SKU pero no tiene stock en la bodega 13 "
+                 "del ERP Random -- revisa si el SKU está bien escrito.",
+    },
+    "dif_wms": {
+        "label": "Diferencia con CheckWMS", "accion": "ver",
+        "ayuda": "CheckWMS (la bodega física) reporta una cantidad "
+                 "distinta a la que tenemos declarada para este SKU.",
+    },
+    "sin_motivo": {
+        "label": "Sin motivo declarado", "accion": "ver",
+        "ayuda": "Falta o es muy breve el motivo -- sin él nadie puede "
+                 "gestionar esta incidencia.",
+    },
+    "falta_registrar": {
+        "label": "Falta en nuestra BD", "accion": "registrar",
+        "ayuda": "Está físicamente en la Bodega 13 del WMS pero no tiene "
+                 "una incidencia registrada en nuestro sistema todavía.",
+    },
+    "fuera_de_bodega": {
+        "label": "Salió de la bodega", "accion": "ver",
+        "ayuda": "La incidencia sigue abierta acá, pero la UA ya no está "
+                 "en la Bodega 13 del WMS -- revisa si ya se resolvió.",
+    },
+}
+
+
+def _inc_hallazgo_accion(h):
+    """Qué botón mostrar para UN hallazgo de la conciliación (función pura,
+    testeable sin BD). Daniel (26-sep): "cada tipo de hallazgo con una
+    acción clara y visible... los que no tienen acción posible sin cursor
+    de mano".
+
+    - 'falta_registrar' siempre abre el alta prellenada (no depende de
+      ids: nace justamente de NO tener incidencia todavía).
+    - Cualquier otro tipo con `ids` no vacío abre esa incidencia a corregir.
+    - Sin ids y sin ser 'falta_registrar' -> None: no hay nada que
+      gestionar desde acá todavía (ej. "dif_erp" de un SKU que el ERP
+      reporta pero que nosotros nunca declaramos -- caso real, poco
+      común, documentado en INC_HALLAZGO_INFO como limitación conocida)."""
+    if h.get("tipo") == "falta_registrar":
+        return "registrar"
+    if h.get("ids"):
+        return "ver"
+    return None
+
+
+def _inc_hallazgo_falta_registrar(ua, fila_wms):
+    """Arma el hallazgo 'falta_registrar' (WMS tiene la UA, nosotros no la
+    registramos) con los datos para PRELLENAR el alta (Daniel, 2026-09-26:
+    "tocar una fila 'Falta en nuestra BD' -> abrir el alta prellenada...
+    con SKU, descripción, UA y ubicación ya puestos"). Función PURA
+    (testeable sin BD ni WMS real): `fila_wms` es una fila cualquiera con
+    forma de dict tipo CheckWMS (codigo/descripcion/ubicacion/stFisico).
+
+    `cantidad` sale de stFisico -- puede venir como texto o vacío desde el
+    WMS, nunca menor a 1 (una incidencia siempre representa al menos una
+    unidad física)."""
+    try:
+        cant = int(float((fila_wms or {}).get("stFisico") or 1))
+    except (TypeError, ValueError):
+        cant = 1
+    return {
+        "tipo": "falta_registrar", "gravedad": "warn", "orden": 4,
+        "ua": ua, "sku": (fila_wms or {}).get("codigo"),
+        "descripcion": (fila_wms or {}).get("descripcion"),
+        "ubicacion": (fila_wms or {}).get("ubicacion"), "cantidad": max(1, cant),
+        "detalle": f"Está en {INC_BODEGA_WMS} del WMS pero no tiene incidencia registrada.",
+    }
+
 
 @app.route("/mantenciones/api/incidencias/conciliacion", methods=["GET"])
 @_mant_required
@@ -63802,12 +63888,7 @@ def mant_api_incidencias_conciliacion():
     if wms_ok:
         for ua, r in wms_por_ua.items():
             if ua not in inc_por_ua:
-                hallazgos.append({
-                    "tipo": "falta_registrar", "gravedad": "warn", "orden": 4,
-                    "ua": ua, "sku": r.get("codigo"), "descripcion": r.get("descripcion"),
-                    "ubicacion": r.get("ubicacion"),
-                    "detalle": f"Está en {INC_BODEGA_WMS} del WMS pero no tiene incidencia registrada.",
-                })
+                hallazgos.append(_inc_hallazgo_falta_registrar(ua, r))
 
     # ── P5) UA que ya salió de la bodega de incidencias ──
     if wms_ok:
@@ -63826,6 +63907,11 @@ def mant_api_incidencias_conciliacion():
                 })
 
     hallazgos.sort(key=lambda h: (h.get("orden", 9), -abs(h.get("delta") or 0), h.get("sku") or ""))
+    # 🔧 2026-09-26: cada hallazgo trae su acción ya resuelta -- el frontend
+    # ya no adivina mirando si `ids` viene o no (ese fue exactamente el bug
+    # que Daniel reportó: "no selecciona nada, no sé qué hace").
+    for h in hallazgos:
+        h["accion"] = _inc_hallazgo_accion(h)
 
     return jsonify({
         "ok": True,
@@ -63843,6 +63929,7 @@ def mant_api_incidencias_conciliacion():
             "falta_registrar": sum(1 for h in hallazgos if h["tipo"] == "falta_registrar"),
             "fuera_de_bodega": sum(1 for h in hallazgos if h["tipo"] == "fuera_de_bodega"),
         },
+        "tipos": INC_HALLAZGO_INFO,
         "hallazgos": hallazgos[:300],
     })
 
@@ -64146,6 +64233,23 @@ def mant_api_incidencia_ficha(iid):
         if l.get("created_at"):
             l["created_at"] = l["created_at"].strftime("%Y-%m-%d %H:%M:%S")
 
+    # 🔗 2026-09-26 (Daniel: "la ficha de la incidencia muestra las
+    # solicitudes que la usaron, trazabilidad"): toda solicitud de
+    # mant_ot_repuesto_solicitudes que apunte a esta incidencia -- sea por
+    # el puente viejo (POST .../solicitar-repuesto, origen bodega/manual)
+    # o por la tercera fuente nueva del modal /repuestos (origen incidencia).
+    solicitudes = mysql_fetchall(
+        "SELECT id, repuesto_nombre, repuesto_sku, cantidad, origen, estado, created_at "
+        "  FROM mant_ot_repuesto_solicitudes WHERE incidencia_id=%s "
+        " ORDER BY created_at DESC LIMIT 40", (iid,)) or []
+    for s in solicitudes:
+        if s.get("cantidad") is not None:
+            s["cantidad"] = float(s["cantidad"])
+        if s.get("created_at"):
+            s["created_at"] = s["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        s["origen_label"] = _OTREP_ORIGEN_LABEL.get(s.get("origen"), s.get("origen"))
+        s["estado_label"] = _OTREP_ESTADO_LABEL.get(s.get("estado"), s.get("estado"))
+
     return jsonify({
         "ok": True,
         "incidencia": inc,
@@ -64155,6 +64259,7 @@ def mant_api_incidencia_ficha(iid):
         "cuadre": _inc_cuadre_stock(sku, int(inc.get("cantidad") or 0)),
         "clasificacion": _inc_clasificacion_sku(sku),
         "log": log,
+        "solicitudes": solicitudes,
     })
 
 
@@ -85364,6 +85469,9 @@ _OTREP_ORIGEN_LABEL = {
     "compatible": "Compatible con el modelo", "bodega": "De la bodega",
     "manual": "Manual · por validar", "piola": "Cambio de piola",
     "cinta": "Cambio de cinta",
+    # 2026-09-26: repuesto tomado de un sobrante/faltante YA registrado en
+    # la bodega de Incidencias (mant_incidencias), no de mant_repuestos_stock.
+    "incidencia": "Desde Incidencias",
 }
 # Transiciones válidas. "validado → instalado" existe a propósito: si la
 # bodega ya tenía stock, no hay nada que pedir.
@@ -85504,7 +85612,7 @@ def _ensure_ot_repuesto_solicitudes_tables():
                 repuesto_stock_id   INT NULL COMMENT 'mant_repuestos_stock.id cuando se eligió o validó un repuesto de la Bodega',
                 repuesto_nombre     VARCHAR(400) NOT NULL,
                 repuesto_sku        VARCHAR(120) NULL,
-                origen              ENUM('compatible','bodega','manual','piola','cinta') NOT NULL DEFAULT 'manual',
+                origen              ENUM('compatible','bodega','manual','piola','cinta','incidencia') NOT NULL DEFAULT 'manual',
                 cantidad            DECIMAL(10,2) NOT NULL DEFAULT 1,
                 medida              VARCHAR(80) NULL COMMENT 'Medida declarada (ej. cinta de trotadora: largo x ancho)',
 
@@ -85556,8 +85664,23 @@ def _ensure_ot_repuesto_solicitudes_tables():
         if _tipo and "'cinta'" not in _tipo:
             mysql_execute("ALTER TABLE mant_ot_repuesto_solicitudes MODIFY COLUMN origen "
                           "ENUM('compatible','bodega','manual','piola','cinta') NOT NULL DEFAULT 'manual'")
+        # 'incidencia' (2026-09-26 -- Daniel: "los productos de incidencias
+        # deben ser una TERCERA FUENTE al solicitar repuesto"): un repuesto
+        # puede venir de un sobrante/faltante ya registrado en la bodega de
+        # Incidencias, no solo de la Bodega de repuestos o de un ingreso
+        # manual/ERP. Reutiliza la columna `incidencia_id` que YA existe
+        # (agregada más abajo en este mismo boot, ver ALTER incidencia_id) --
+        # acá solo se amplía el ENUM, idempotente, mismo patrón que 'cinta'.
+        _tipo = (mysql_fetchone(
+            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes' "
+            "  AND COLUMN_NAME='origen'") or {}).get("t") or ""
+        if _tipo and "'incidencia'" not in _tipo:
+            mysql_execute("ALTER TABLE mant_ot_repuesto_solicitudes MODIFY COLUMN origen "
+                          "ENUM('compatible','bodega','manual','piola','cinta','incidencia') "
+                          "NOT NULL DEFAULT 'manual'")
     except Exception as e:
-        print(f"[ensure_ot_repuestos] piola_id/medida/cinta: {e}", flush=True)
+        print(f"[ensure_ot_repuestos] piola_id/medida/cinta/incidencia: {e}", flush=True)
     # 🔀 2026-09-20/21 (Fase 2 -- Daniel: "la bodega de incidencias en la
     # gestión de productos y motivos se puede solicitar un repuesto" +
     # "la otra parte donde se podrán pedir repuestos sería por los
@@ -89811,6 +89934,88 @@ def repstock_ticket_solicitar_repuesto(tid):
                     "numero_ticket": t.get("numero_ticket"), "aviso": "\n".join(avisos) or None})
 
 
+def _inc_disponible_repuesto(cantidad_total, solicitudes_cantidades):
+    """Cuánto de una incidencia sigue disponible para tomarla como repuesto
+    (Daniel, 2026-09-26: "que devuelva cantidad y disponible = cantidad -
+    solicitudes activas ya vinculadas a esa incidencia, para no tomar dos
+    veces la misma pieza"). Función PURA -- sin BD, fácil de testear.
+
+    DEFINICIÓN de "activa" (Daniel pidió explícitamente "define y
+    documenta"): TODOS los estados de mant_ot_repuesto_solicitudes restan
+    del disponible, EXCEPTO 'rechazado'. Incluso 'instalado' sigue
+    restando -- esa unidad física YA se usó, no vuelve a estar libre.
+    Solo 'rechazado' libera la cantidad de vuelta, porque la pieza nunca
+    llegó a tomarse de la bodega de Incidencias."""
+    total = float(cantidad_total or 0)
+    tomado = sum(float(c or 0) for c in (solicitudes_cantidades or []))
+    return total - tomado
+
+
+@app.route("/mantenciones/api/incidencias/disponibles-repuesto", methods=["GET"])
+@_otrep_manual_required
+def mant_api_incidencias_disponibles_repuesto():
+    """Tercera fuente del modal "Solicitar repuesto" de /repuestos (Daniel,
+    2026-09-26: "los productos de incidencias deben ser una TERCERA
+    FUENTE al solicitar repuesto... se puede tomar una pieza de ahí y
+    queda trazado el origen"). Devuelve incidencias ABIERTAS con unidades
+    todavía disponibles (no ya comprometidas por otra solicitud, ver
+    _inc_disponible_repuesto).
+
+    Multipalabra AND sobre sku/descripcion/observacion (mismo criterio que
+    el resto de los buscadores del proyecto), SIEMPRE con %s (REGLA #4).
+    Mismo gate que el resto del alta manual de repuestos: gestión/bodega,
+    nunca un técnico (ni interno ni externo) -- REGLA de Daniel: "NO
+    exponer esta pestaña en la OT del técnico por ahora"."""
+    q = (request.args.get("q") or "").strip()
+    palabras = [p for p in q.split() if p][:8]
+    where = ["estado='abierta'", "cantidad > 0"]
+    params = []
+    for p in palabras:
+        where.append("(sku LIKE %s OR descripcion LIKE %s OR observacion LIKE %s)")
+        like = f"%{p}%"
+        params += [like, like, like]
+    where_sql = " AND ".join(where)
+    try:
+        incs = mysql_fetchall(
+            f"SELECT id, sku, descripcion, cantidad, motivo, observacion "
+            f"  FROM mant_incidencias WHERE {where_sql} "
+            f" ORDER BY created_at DESC LIMIT 60", params) or []
+    except Exception as e:
+        print(f"[incidencias_disponibles_repuesto] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo buscar en incidencias."}), 500
+    if not incs:
+        return jsonify({"ok": True, "incidencias": []})
+
+    ids = [i["id"] for i in incs]
+    ph = ",".join(["%s"] * len(ids))
+    try:
+        tomadas = mysql_fetchall(
+            f"SELECT incidencia_id, cantidad FROM mant_ot_repuesto_solicitudes "
+            f" WHERE incidencia_id IN ({ph}) AND estado <> 'rechazado'", ids) or []
+    except Exception as e:
+        print(f"[incidencias_disponibles_repuesto] tomadas: {e}", flush=True)
+        tomadas = []
+    tomado_por_inc = {}
+    for t in tomadas:
+        tomado_por_inc.setdefault(t["incidencia_id"], []).append(t.get("cantidad"))
+
+    out = []
+    for i in incs:
+        disp = _inc_disponible_repuesto(i.get("cantidad"), tomado_por_inc.get(i["id"]))
+        if disp <= 0:
+            continue   # ya está toda comprometida por otras solicitudes
+        foto = mysql_fetchone(
+            "SELECT gcs_key FROM mant_incidencia_fotos WHERE incidencia_id=%s "
+            " ORDER BY orden LIMIT 1", (i["id"],))
+        out.append({
+            "id": i["id"], "sku": i.get("sku"), "descripcion": i.get("descripcion") or i.get("sku") or "(sin nombre)",
+            "cantidad": float(i.get("cantidad") or 0), "disponible": disp,
+            "motivo": i.get("motivo"),
+            "foto_url": ("/f/" + foto["gcs_key"]) if foto else None,
+        })
+    return jsonify({"ok": True, "incidencias": out[:30]})
+
+
 @app.route("/repuestos/api/solicitudes/manual", methods=["POST"])
 @_otrep_manual_required
 def repstock_solicitud_manual():
@@ -89935,10 +90140,40 @@ def repstock_solicitud_manual():
             if not stock:
                 return jsonify({"ok": False, "error":
                                 "Uno de los repuestos elegidos de la Bodega ya no existe."}), 400
-        nombre = (it.get("repuesto_nombre") or (stock or {}).get("descripcion") or "").strip()
+        # 🧠 2026-09-26 (Daniel: "los productos de incidencias deben ser una
+        # TERCERA FUENTE al solicitar repuesto... se puede tomar una pieza
+        # de ahí y queda trazado el origen"). Igual que `stock`, pero contra
+        # mant_incidencias -- valida que siga abierta y que no se esté
+        # tomando más de lo que queda disponible (ver _inc_disponible_repuesto,
+        # misma cuenta que expone GET .../disponibles-repuesto).
+        incidencia = None
+        inc_id_raw = str(it.get("incidencia_id") or "").strip()
+        if inc_id_raw.isdigit():
+            if stock:
+                return jsonify({"ok": False, "error":
+                                "Un repuesto no puede venir de la Bodega y de una Incidencia a la vez."}), 400
+            incidencia = mysql_fetchone(
+                "SELECT id, sku, descripcion, cantidad, estado FROM mant_incidencias WHERE id=%s",
+                (int(inc_id_raw),))
+            if not incidencia or incidencia.get("estado") != "abierta":
+                return jsonify({"ok": False, "error":
+                                "Esa incidencia ya no está abierta o no existe."}), 400
+            _tomadas_inc = mysql_fetchall(
+                "SELECT cantidad FROM mant_ot_repuesto_solicitudes "
+                " WHERE incidencia_id=%s AND estado <> 'rechazado'", (incidencia["id"],)) or []
+            _disp_inc = _inc_disponible_repuesto(
+                incidencia.get("cantidad"), [t.get("cantidad") for t in _tomadas_inc])
+            if cantidad > _disp_inc:
+                return jsonify({"ok": False, "error":
+                                f"\"{(incidencia.get('descripcion') or incidencia.get('sku') or 'Esa incidencia')}\" "
+                                f"solo tiene {_disp_inc:g} unidad(es) disponible(s) sin tomar "
+                                f"(de {float(incidencia.get('cantidad') or 0):g} declaradas)."}), 400
+        nombre = (it.get("repuesto_nombre") or (stock or {}).get("descripcion")
+                  or (incidencia or {}).get("descripcion") or "").strip()
         if not nombre:
             return jsonify({"ok": False, "error": "Falta el nombre de uno de los repuestos."}), 400
-        sku = (stock or {}).get("sku") or (it.get("repuesto_sku") or "").strip() or None
+        sku = ((stock or {}).get("sku") or (incidencia or {}).get("sku")
+               or (it.get("repuesto_sku") or "").strip() or None)
         # 🧠 2026-09-26: proveedor por línea (ver docstring). El elegido en el
         # modal manda; si no viene, se hereda el del repuesto de Bodega.
         prov_raw = str(it.get("proveedor_id") or "").strip()
@@ -89960,7 +90195,8 @@ def repstock_solicitud_manual():
         guardar_prov = bool(stock) and bool(proveedor_id) and str(
             it.get("guardar_proveedor_en_repuesto") or "").strip().lower() in ("1", "true", "on", "si", "sí") \
             and (stock.get("proveedor_id") or None) != proveedor_id
-        limpios.append({"stock": stock, "nombre": nombre[:400], "sku": (sku or "")[:120] or None,
+        limpios.append({"stock": stock, "incidencia": incidencia, "nombre": nombre[:400],
+                         "sku": (sku or "")[:120] or None,
                          "cantidad": cantidad, "proveedor_id": proveedor_id,
                          "guardar_prov": guardar_prov})
 
@@ -89992,18 +90228,26 @@ def repstock_solicitud_manual():
         with conn.cursor() as cur:
             for it in limpios:
                 stock = it["stock"]
-                estado_ini = "validado" if stock else "solicitado"
+                incidencia = it.get("incidencia")
+                # 🧠 2026-09-26: una pieza de Incidencias ya está confirmada
+                # físicamente (la disponibilidad se validó recién arriba,
+                # contra mant_incidencias.cantidad) -- mismo criterio que
+                # 'bodega': nace 'validado', no 'solicitado' por validar.
+                confirmado = bool(stock) or bool(incidencia)
+                estado_ini = "validado" if confirmado else "solicitado"
+                origen_ins = "bodega" if stock else ("incidencia" if incidencia else "manual")
                 cur.execute(
                     "INSERT INTO mant_ot_repuesto_solicitudes "
-                    "(cliente_id, maquina_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
+                    "(cliente_id, maquina_id, incidencia_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
                     " origen, cantidad, motivo, estado, solicitado_por, proveedor_id, "
                     " creada_desde, es_reposicion, lote_id, validado_por, validado_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'manual',%s,%s,%s,"
-                    + ("NOW()" if stock else "NULL") + ")",
-                    (cliente_id, maquina_id, stock["id"] if stock else None, it["nombre"], it["sku"],
-                     ("bodega" if stock else "manual"), it["cantidad"], motivo, estado_ini, user,
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'manual',%s,%s,%s,"
+                    + ("NOW()" if confirmado else "NULL") + ")",
+                    (cliente_id, maquina_id, (incidencia["id"] if incidencia else None),
+                     stock["id"] if stock else None, it["nombre"], it["sku"],
+                     origen_ins, it["cantidad"], motivo, estado_ini, user,
                      it.get("proveedor_id"),
-                     int(es_reposicion), lote_id, (user if stock else None)))
+                     int(es_reposicion), lote_id, (user if confirmado else None)))
                 creados.append(int(cur.lastrowid))
                 # 🧠 2026-09-26: "Guardar como proveedor de este repuesto" --
                 # misma transacción que el lote: si el lote se deshace, el
@@ -90024,6 +90268,17 @@ def repstock_solicitud_manual():
     avisos = []
     for sol_id, it in zip(creados, limpios):
         stock = it["stock"]
+        incidencia = it.get("incidencia")
+        # 🔎 2026-09-26: bitácora de la incidencia (append-only, fuera de la
+        # transacción del lote a propósito -- _inc_log usa mysql_execute,
+        # que hace su propio commit, y el commit del lote ya se hizo justo
+        # arriba). Así la ficha de la incidencia (GET .../ficha) muestra qué
+        # solicitudes tomaron pieza de ahí -- trazabilidad pedida por Daniel,
+        # sin tocar el puente inverso que ya existía (solicitar-repuesto).
+        if incidencia:
+            _inc_log(incidencia["id"], "repuesto_tomado", "repuesto", None,
+                      f"#{sol_id} {it['nombre']} × {it['cantidad']:g} "
+                      f"(solicitud manual, lote {lote_id}, por {user})")
         if it.get("guardar_prov"):
             # 🧠 2026-09-26: rastro de que el proveedor del repuesto cambió
             # desde este modal (REGLA #5: audit log en mant_logs).

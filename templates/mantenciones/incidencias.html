@@ -527,7 +527,18 @@
 .inc-conc .inc-tabla td.v-bd {color:#1d4ed8}
 .inc-conc .inc-tabla td.v-erp{color:#b91c1c}
 .inc-conc .inc-tabla td.v-wms{color:#c2410c}
+{#- 🔧 2026-09-26 (Daniel: "no selecciona nada, no sé qué hace... está
+    disfuncional"): la regla genérica `.inc-tabla tbody tr{cursor:pointer}`
+    (arriba, pensada para la tabla PRINCIPAL donde TODA fila abre la
+    incidencia) se colaba también en la tabla de conciliación, donde solo
+    las filas con acción real (`.act`) responden al clic. Se resetea acá
+    a 'default' y se vuelve a activar SOLO en `.act` -- así el cursor deja
+    de prometer algo que no pasa. -#}
+.inc-conc .inc-tabla tbody tr{cursor:default}
 .inc-conc .inc-tabla tr.act{cursor:pointer}
+.inc-h-accion{white-space:nowrap}
+.inc-h-sinaccion{font-size:.72rem;color:#9aa3ae;font-style:italic}
+.inc-kpi[title]{position:relative}
 .inc-conc .inc-tabla tr.g-error td:first-child{box-shadow:inset 3px 0 0 #dc2626}
 .inc-conc .inc-tabla tr.g-warn  td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
 .inc-conc .inc-tabla tr.g-info  td:first-child{box-shadow:inset 3px 0 0 #9aa3ae}
@@ -972,17 +983,28 @@
       + ' &nbsp;·&nbsp; datos cacheados 1 h';
 
     // Tarjetas-filtro con los nombres que usa Daniel (2026-08-03):
-    // "pendiente Random, pendiente motivo, pendiente CheckWMS".
+    // "pendiente Random, pendiente motivo, pendiente CheckWMS". La frase de
+    // ayuda (2026-09-26, Daniel: "una frase de ayuda por tipo que explique
+    // en simple qué significa") viene del backend (d.tipos) -- una sola
+    // fuente de verdad del texto, no un duplicado hardcodeado acá.
+    var tiposInfo = d.tipos || {};
+    function ayudaDe(){
+      var partes = Array.prototype.slice.call(arguments).map(function(t){
+        return (tiposInfo[t] || {}).ayuda;
+      }).filter(Boolean);
+      return partes.join(' ');
+    }
     var kpis = [
-      ['',                'k-tod', 'Todos',            (d.total || 0)],
-      ['dif_erp',         'k-erp', 'Pendiente Random',  (r.dif_erp || 0) + (r.no_en_erp || 0)],
-      ['dif_wms',         'k-wms', 'Pendiente CheckWMS',(r.dif_wms || 0)],
-      ['sin_motivo',      'k-mot', 'Pendiente motivo',  (r.sin_motivo || 0)],
-      ['falta_registrar', 'k-reg', 'Falta en nuestra BD',(r.falta_registrar || 0)],
-      ['fuera_de_bodega', 'k-fue', 'Salió de bodega',   (r.fuera_de_bodega || 0)],
+      ['',                'k-tod', 'Todos',            (d.total || 0), ''],
+      ['dif_erp',         'k-erp', 'Pendiente Random',  (r.dif_erp || 0) + (r.no_en_erp || 0), ayudaDe('dif_erp', 'no_en_erp')],
+      ['dif_wms',         'k-wms', 'Pendiente CheckWMS',(r.dif_wms || 0), ayudaDe('dif_wms')],
+      ['sin_motivo',      'k-mot', 'Pendiente motivo',  (r.sin_motivo || 0), ayudaDe('sin_motivo')],
+      ['falta_registrar', 'k-reg', 'Falta en nuestra BD',(r.falta_registrar || 0), ayudaDe('falta_registrar')],
+      ['fuera_de_bodega', 'k-fue', 'Salió de bodega',   (r.fuera_de_bodega || 0), ayudaDe('fuera_de_bodega')],
     ];
     $('incConcKpis').innerHTML = kpis.map(function(k){
-      return '<div class="inc-kpi '+k[1]+(incConcFiltro===k[0]?' sel':'')+'" data-t="'+k[0]+'">'
+      return '<div class="inc-kpi '+k[1]+(incConcFiltro===k[0]?' sel':'')+'" data-t="'+k[0]+'"'
+           + (k[4] ? ' title="'+k[4].replace(/"/g,'&quot;')+'"' : '')+'>'
            + '<div class="inc-kpi-n">'+k[3]+'</div><div class="inc-kpi-t">'+k[2]+'</div></div>';
     }).join('');
     $('incConcKpis').querySelectorAll('.inc-kpi').forEach(function(el){
@@ -1019,11 +1041,30 @@
     var html = '<div class="inc-wrap"><table class="inc-tabla"><thead><tr>'
       + '<th style="width:34px"></th><th>Pendiente</th><th>SKU</th><th>Producto</th>'
       + '<th class="num">Nuestra BD</th><th class="num">ERP</th><th class="num">WMS</th>'
-      + '<th>Qué hacer</th></tr></thead><tbody>';
-    pagina.forEach(function(h){
+      + '<th>Qué significa</th><th>Acción</th></tr></thead><tbody>';
+    // 🔧 2026-09-26 (Daniel: "no selecciona nada, no sé qué hace"): la
+    // acción YA viene resuelta del backend (h.accion, ver
+    // _inc_hallazgo_accion en app.py) -- el frontend deja de adivinar
+    // mirando si `h.ids` viene o no. 'registrar' abre el alta prellenada
+    // (falta_registrar, sin incidencia todavía); 'ver' abre la incidencia
+    // ya existente; sin acción -> fila sin cursor de mano y sin botón,
+    // solo el texto de qué significa.
+    pagina.forEach(function(h, i){
       var m = INC_TIPOS[h.tipo] || {ico:'bi-question-circle', t:h.tipo};
-      var act = (h.ids && h.ids.length);
-      html += '<tr class="g-'+h.gravedad+(act?' act':'')+'"'+(act?' data-id="'+h.ids[0]+'"':'')+'>'
+      var act = !!h.accion;
+      var idx = desde + i;
+      var boton = '';
+      if (h.accion === 'registrar'){
+        boton = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
+              + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
+      } else if (h.accion === 'ver'){
+        boton = '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
+              + '<i class="bi bi-search me-1"></i>Ver / corregir</button>';
+      } else {
+        boton = '<span class="inc-h-sinaccion">Sin acción disponible todavía</span>';
+      }
+      var ayuda = (tiposInfo[h.tipo] || {}).ayuda || '';
+      html += '<tr class="g-'+h.gravedad+(act?' act':'')+'" data-idx="'+idx+'">'
         + '<td><span class="inc-h-ico"><i class="bi '+m.ico+'"></i></span></td>'
         + '<td><b>'+m.t+'</b></td>'
         + '<td><code>'+(h.sku||h.ua||'—')+'</code></td>'
@@ -1031,7 +1072,8 @@
         + '<td class="num'+(h.nuestra_bd!=null?' v-bd':'')+'">'+(h.nuestra_bd!=null?h.nuestra_bd:'—')+'</td>'
         + '<td class="num'+(h.erp!=null?' v-erp':'')+'">'+(h.erp!=null?h.erp:'—')+'</td>'
         + '<td class="num'+(h.wms!=null?' v-wms':'')+'">'+(h.wms!=null?h.wms:'—')+'</td>'
-        + '<td class="inc-h-d">'+h.detalle+(act?' <b>Clic para gestionar.</b>':'')+'</td>'
+        + '<td class="inc-h-d">'+h.detalle+(ayuda?'<br><small class="text-muted">'+ayuda+'</small>':'')+'</td>'
+        + '<td>'+boton+'</td>'
         + '</tr>';
     });
     html += '</tbody></table>'
@@ -1047,8 +1089,27 @@
       +   '</div></div></div>';
     $('incConcLista').innerHTML = html;
 
+    // Búsqueda por índice ABSOLUTO dentro de `lista` (no solo `pagina`):
+    // así el botón/fila siguen apuntando al hallazgo correcto sin importar
+    // la página en la que esté parado el usuario.
+    function hallazgoPorIdx(idx){ return lista[idx]; }
+    function accionarHallazgo(idx){
+      var h = hallazgoPorIdx(idx);
+      if(!h || !h.accion) return;
+      if(h.accion === 'registrar') incAbrirAltaPrellenada(h);
+      else if(h.accion === 'ver' && h.ids && h.ids.length) incAbrirPorId(h.ids[0]);
+    }
     $('incConcLista').querySelectorAll('tr.act').forEach(function(el){
-      el.onclick = function(){ incAbrirPorId(el.dataset.id); };
+      el.addEventListener('click', function(ev){
+        if(ev.target.closest('button')) return;   // el botón ya dispara su propio click
+        accionarHallazgo(parseInt(el.dataset.idx, 10));
+      });
+    });
+    $('incConcLista').querySelectorAll('.inc-h-accion').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        accionarHallazgo(parseInt(btn.dataset.idx, 10));
+      });
     });
     $('incConcPrev').onclick = function(){ if(incConcPage>1){ incConcPage--; incConcPintar(); } };
     $('incConcNext').onclick = function(){ if(incConcPage<pages){ incConcPage++; incConcPintar(); } };
@@ -1061,6 +1122,29 @@
       .then(function(r){return r.json();}).then(function(d){
         if(d && d.ok) abrirEdicion(id, d.rows || []);
       });
+  }
+
+  // 🔧 2026-09-26 (Daniel, decisión confirmada): tocar una fila "Falta en
+  // nuestra BD" abre el ALTA prellenada -- SKU, descripción, UA y
+  // ubicación ya puestos, el usuario solo completa motivo/fotos y guarda.
+  // Salta directo al paso 3 (Motivo): los pasos 1 y 2 ya quedan resueltos.
+  function incAbrirAltaPrellenada(h){
+    limpiarModal();
+    document.getElementById('incModalTitulo').innerHTML =
+      '<i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia — desde Bodega 13';
+    if(h.ua) document.getElementById('incRecomendacion').value = h.ua;
+    if(h.sku) document.getElementById('incSku').value = h.sku;
+    if(h.descripcion) document.getElementById('incDescripcion').value = h.descripcion;
+    document.getElementById('incCantidad').value = h.cantidad || 1;
+    if(h.ubicacion){
+      document.getElementById('incUaResultado').innerHTML =
+        '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación en Bodega 13: <b>'
+        +h.ubicacion+'</b> (traída de la conciliación, no de una nueva búsqueda de UA).</span>';
+    }
+    refrescarVerdeTodos();
+    irAPaso(3);
+    incModal().show();
+    setTimeout(function(){ document.getElementById('incMotivo').focus(); }, 250);
   }
 
   function incConcCargar(){
@@ -1283,6 +1367,12 @@
       incModal().hide();
       ilusToast('✓ Incidencia guardada', {type:'success'});
       cargar();
+      // 🔧 2026-09-26 (Daniel): "tras guardar, la conciliación se refresca y
+      // esa fila desaparece o pasa a registrada" -- si el panel sigue
+      // abierto (se ocultó, no se cerró, al abrir el alta prellenada),
+      // se vuelve a consultar para que el hallazgo recién resuelto se caiga
+      // de la lista.
+      if(incConcData && !$('incConciliacion').hidden){ incConcData = null; incConcCargar(); }
     }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
   });
 
