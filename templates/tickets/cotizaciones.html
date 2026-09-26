@@ -441,7 +441,9 @@
                (Daniel 2026-07-22: "descuento en $ además de %"). El selector
                de la izquierda cambia el modo; el input de la derecha es el
                valor (editable). #}
-            <div class="cot-wiz-campo"><label>Descuento General</label>
+            <div class="cot-wiz-campo"><label>Descuento General
+              <i class="bi bi-lock-fill" id="cotWizDescGarantiaCandado" style="display:none;color:#dc2626;margin-left:4px;"
+                 title="Un descuento del 100% (garantía) solo lo puede aplicar o modificar un superadministrador."></i></label>
               <div class="input-group input-group-sm">
                 <select id="cotWizDescModo" class="form-select" style="max-width:64px;flex:0 0 64px;"
                         onchange="cotWizDescModoCambio()">
@@ -449,7 +451,7 @@
                   <option value="monto">$</option>
                 </select>
                 <input id="cotWizDescValor" type="number" min="0" step="1" class="form-control"
-                       value="0" oninput="cotWizResumen()">
+                       value="0" oninput="cotWizResumen()" onchange="_cotWizGarantiaValidarHeader(this)">
               </div>
               <div class="cot-wiz-hint" id="cotWizDescHint">Se aplica sobre el subtotal (ítems + ruta).</div>
             </div>
@@ -737,6 +739,12 @@
   // en static/catalogo_list.js -- flag plano inyectado antes del script,
   // editable por rol desde /admin/roles (permiso cotiz_eliminar_item).
   window.PUEDE_ELIMINAR_ITEM_COTIZ = {{ (permissions.superadmin or permissions.cotiz_eliminar_item) | tojson }};
+  // 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
+  // descuentos de garantías"): gatea el descuento 100% de cabecera y el
+  // precio_manual=$0 de línea en el wizard. El backend es la fuente de
+  // verdad (rechaza con 403 igual si este flag se saltara); esto es solo
+  // el candado + tooltip visual para no-superadmin.
+  window.PUEDE_DESCUENTO_GARANTIA = {{ permissions.superadmin | tojson }};
 </script>
 <script defer src="{{ url_for('static', filename='tickets_cotizaciones.js') }}"></script>
 {% endblock %}

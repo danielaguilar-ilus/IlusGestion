@@ -47,7 +47,10 @@ function cotWizAbrir(editCid){
   // de trazabilidad (columna tk_cotizaciones.origen, 100% informativo).
   _WIZ = { items: [], tipo: 'mantencion', rutaManual: false, sumaItems: 0, direccionValidada: false,
            origen: null, clienteId: null, ticketId: null, planInfo: null, docRef: null,
-           fichaContactos: [], fichaMaquinas: [], editCid: null };
+           fichaContactos: [], fichaMaquinas: [], editCid: null,
+           // 2026-09-26: descuento por garantía (100%) que YA traía la
+           // cotización al abrirla -- ver _cotWizAplicarCandadoGarantia.
+           garantiaHeaderPreexistente: false };
   ['cotWizCliQ','cotWizEmpresa','cotWizRut','cotWizDireccion','cotWizRegion','cotWizComuna',
    'cotWizEmail','cotWizTelefono','cotWizNotas','cotWizNotasInt',
    'cotWizDireccionLat','cotWizDireccionLng','cotWizDireccionPlaceId',
@@ -58,6 +61,8 @@ function cotWizAbrir(editCid){
   document.getElementById('cotWizDescModo').value = 'pct';
   document.getElementById('cotWizDescValor').value = '0';
   cotWizDescModoCambio();
+  _WIZ.garantiaHeaderPreexistente = false;
+  _cotWizAplicarCandadoGarantia();
   document.getElementById('cotWizCostoRuta').value = '0';
   document.getElementById('cotWizRutaExcluida').checked = false;
   document.getElementById('cotWizEjecutivo').value = '';
@@ -149,6 +154,19 @@ async function _cotWizCargarEdicion(cid){
     document.getElementById('cotWizDescModo').value = c.descuento_tipo || 'pct';
     document.getElementById('cotWizDescValor').value = (c.descuento_tipo === 'monto') ? (c.descuento_monto || 0) : (c.descuento_pct || 0);
     cotWizDescModoCambio();
+    // 🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
+    // descuentos de garantías"): si esta cotización YA traía un descuento
+    // de cabecera del 100% (o un MONTO fijo que ya cubría el subtotal
+    // completo -- mismo efecto en $0, solo expresado en pesos), se bloquea
+    // el control para no-superadmin (el backend igual lo protege -- esto
+    // solo explica el porqué en pantalla).
+    const _subtotalPrevio = parseFloat(c.subtotal) || 0;
+    _WIZ.garantiaHeaderPreexistente = (
+      ((c.descuento_tipo || 'pct') === 'pct' && (parseFloat(c.descuento_pct) || 0) >= 100)
+      || ((c.descuento_tipo === 'monto') && _subtotalPrevio > 0
+          && (parseFloat(c.descuento_monto) || 0) >= _subtotalPrevio)
+    );
+    _cotWizAplicarCandadoGarantia();
     // Tipo de servicio
     _WIZ.tipo = c.tipo_servicio || 'mantencion';
     document.querySelectorAll('.cot-wiz-ts-pill').forEach(function(b){ b.classList.toggle('on', b.dataset.v === _WIZ.tipo); });
@@ -166,7 +184,14 @@ async function _cotWizCargarEdicion(cid){
                // guardadas ANTES de esta fecha no traen la columna -- quedan
                // en null/false por default, sin romper nada.
                maquina_id: (it.maquina_id != null ? it.maquina_id : null),
-               aplica_mantencion: !!it.aplica_mantencion };
+               aplica_mantencion: !!it.aplica_mantencion,
+               // 🔒 2026-09-26 (Daniel: descuento por garantía solo superadmin):
+               // marca si ESTE ítem YA venía a $0 al abrir la cotización --
+               // solo se congela en el momento de la carga, nunca se
+               // recalcula después, así una edición nueva de un no-superadmin
+               // SÍ queda atrapada por el candado si intenta ponerlo en $0.
+               _pmGarantiaPreexistente: (String(it.clase_producto || '').toLowerCase() !== 'accesorio'
+                 && it.precio_manual === 0) };
     });
     _WIZ.rutaManual = (parseInt(c.costo_ruta, 10) || 0) > 0;
     // 2026-07-24 (Daniel, insiste: "quiero ver los productos que gestiono
@@ -1347,6 +1372,12 @@ async function cotWizRender(){
   }).join('');
   body.innerHTML = _WIZ.items.map(function(it, i){
     const accesorio = _cotWizEsAccesorio(it);
+    // 🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
+    // descuentos de garantías"): esta línea ya venía a $0 por garantía --
+    // se congela para no-superadmin (candado + tooltip). El backend
+    // rechaza igual cualquier precio_manual=0 NUEVO de un no-superadmin,
+    // esto solo evita que choque con el 403 sin entender por qué.
+    const garantiaBloqueada = !!(it._pmGarantiaPreexistente && !window.PUEDE_DESCUENTO_GARANTIA);
     return '<tr>' +
       '<td class="cot-rev-sku">' + _cotEsc(it.sku) + '</td>' +
       '<td class="cot-rev-nombre" title="' + _cotEsc(it.nombre) + '">' + _cotEsc(it.nombre) + '</td>' +
@@ -1355,6 +1386,7 @@ async function cotWizRender(){
         '<option value="">Sin clasificar</option>' + opts + '</select></td>' +
       '<td class="cot-wiz-pu-cell"><input type="number" min="0" step="1" class="cot-rev-pu-input' + (accesorio ? ' accesorio-bloqueado' : '') + '" data-i="' + i + '" '
         + (accesorio ? 'value="0" disabled readonly title="Accesorio no cobrable: queda en la OT para foto y observación"'
+          : garantiaBloqueada ? ('value="0" disabled readonly title="Descuento por garantía (100%) -- solo un superadministrador puede modificarlo."')
           // 2026-08-20: restaura el precio_manual ya escrito -- sin esto,
           // CUALQUIER re-render (agregar otro ítem, cambiar cantidad de
           // otra fila) dejaba este input visualmente vacío aunque el
@@ -1362,7 +1394,9 @@ async function cotWizRender(){
           // vivía en _WIZ.items[i].precio_manual, solo no se pintaba).
           : 'placeholder="auto"' + (it.precio_manual != null ? ' value="' + _cotEsc(it.precio_manual) + '"' : '')
             + ' title="Precio base unitario — la ruta se muestra debajo" onchange="cotWizPrecioManual(' + i + ', this.value)"') + '>'
-        + '<div class="cot-ruta-desglose' + (accesorio ? ' no-cobrable' : '') + '" data-ruta-i="' + i + '">' + (accesorio ? '<i class="bi bi-lock-fill"></i> $0 · no cobrable' : '') + '</div></td>' +
+        + '<div class="cot-ruta-desglose' + (accesorio ? ' no-cobrable' : '') + '" data-ruta-i="' + i + '">'
+          + (accesorio ? '<i class="bi bi-lock-fill"></i> $0 · no cobrable'
+             : garantiaBloqueada ? '<i class="bi bi-lock-fill" style="color:#dc2626"></i> $0 · garantía (solo superadmin)' : '') + '</div></td>' +
       '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
       // PLAN (2026-09-01): escudo clickeable SOLO si el ítem viene de un
       // equipo real de la ficha (maquina_id) -- mismo criterio/colores que
@@ -1571,10 +1605,14 @@ function cotWizRecalcLocal(){
     const totConRuta = (totBase != null) ? totBase + rutaLinea : null;
     suma += totBase || 0;
     const inp = inputsPu[i];
+    // 🔒 2026-09-26: no pisar el candado de garantía que ya puso cotWizRender
+    // -- sin esto, CUALQUIER recálculo (cambiar cantidad de otra fila,
+    // etc.) volvía a habilitar el input de una línea a $0 por garantía.
+    const garantiaBloqueada = !!(it._pmGarantiaPreexistente && !window.PUEDE_DESCUENTO_GARANTIA);
     if (inp && document.activeElement !== inp){
       inp.value = (pu != null) ? pu : '';
-      inp.disabled = accesorio;
-      inp.readOnly = accesorio;
+      inp.disabled = accesorio || garantiaBloqueada;
+      inp.readOnly = accesorio || garantiaBloqueada;
       inp.classList.toggle('manual', !accesorio && it.precio_manual != null);
       inp.classList.toggle('accesorio-bloqueado', accesorio);
     }
@@ -1643,7 +1681,17 @@ function cotWizPrecioManual(i, v){
   // (los precios CLP de este wizard siempre son pesos enteros, sin
   // decimales, así que no hay ambigüedad con quitar el punto).
   const vLimpio = (v == null) ? '' : String(v).replace(/\D/g, '');
-  const n = (vLimpio === '') ? null : Math.max(parseInt(vLimpio, 10) || 0, 0);
+  let n = (vLimpio === '') ? null : Math.max(parseInt(vLimpio, 10) || 0, 0);
+  // 🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
+  // descuentos de garantías"): un no-superadmin no puede poner una línea a
+  // $0 NUEVA (la que ya venía a $0 está deshabilitada más arriba y ni
+  // siquiera llega acá). El backend rechazaría igual con 403 -- esto solo
+  // evita el viaje redondo y explica el porqué en el momento.
+  if (n === 0 && !it._pmGarantiaPreexistente && !window.PUEDE_DESCUENTO_GARANTIA){
+    ilusToast('Solo un superadministrador puede aplicar un descuento por garantía (precio $0).', {type: 'warning'});
+    cotWizRecalcLocal(); // repinta el input con el valor real (no se guarda el 0)
+    return;
+  }
   const auto = (it._precioCalc != null) ? Math.round(it._precioCalc) : null;
   it.precio_manual = (n === null || (auto != null && n === auto)) ? null : n;
   cotWizRecalcLocal();
@@ -1720,6 +1768,53 @@ function cotWizDescModoCambio(){
     ? 'Monto fijo en pesos a descontar del subtotal.'
     : 'Porcentaje aplicado sobre el subtotal (ítems + ruta).';
   cotWizResumen();
+}
+// 🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
+// descuentos de garantías"): candado visual del descuento 100% de
+// cabecera. El backend es quien manda (rechaza con 403 igual si este
+// flag se saltara) -- esto solo evita que un no-superadmin choque con el
+// error sin entender por qué, y deja el motivo a la vista con un candado
+// + tooltip cuando la cotización YA traía un descuento de garantía.
+function _cotWizAplicarCandadoGarantia(){
+  const candado = document.getElementById('cotWizDescGarantiaCandado');
+  const modoEl = document.getElementById('cotWizDescModo');
+  const valorEl = document.getElementById('cotWizDescValor');
+  const bloqueado = !!(_WIZ && _WIZ.garantiaHeaderPreexistente && !window.PUEDE_DESCUENTO_GARANTIA);
+  if (candado) candado.style.display = bloqueado ? '' : 'none';
+  if (modoEl) modoEl.disabled = bloqueado;
+  if (valorEl){
+    valorEl.disabled = bloqueado;
+    valorEl.title = bloqueado
+      ? 'Descuento por garantía (100% o monto que cubre todo) -- solo un superadministrador puede modificarlo.'
+      : '';
+  }
+}
+// El usuario cambió el valor del descuento general. Si es un 100% NUEVO
+// (modo %) o un monto fijo que iguala/supera el subtotal NUEVO (modo $) --
+// la cotización no lo traía ya al abrirla -- y no es superadmin, se
+// revierte -- el backend rechazaría igual el guardado con 403, esto solo
+// lo explica en el momento en vez de un error genérico al final.
+function _cotWizGarantiaValidarHeader(el){
+  if (window.PUEDE_DESCUENTO_GARANTIA) return;
+  if (_WIZ && _WIZ.garantiaHeaderPreexistente) return; // ya deshabilitado arriba
+  const modo = (document.getElementById('cotWizDescModo') || {}).value || 'pct';
+  const valor = parseFloat(el.value) || 0;
+  if (modo === 'pct' && valor >= 100){
+    el.value = '99';
+    cotWizResumen();
+    ilusToast('Solo un superadministrador puede aplicar un descuento por garantía (100%).', {type: 'warning'});
+    return;
+  }
+  // 2026-09-26 (cierre del caso "monto fijo"): mismo subtotal que ya
+  // calcula cotWizResumen (ítems + ruta aplicada), sin repetir esa lógica.
+  if (modo === 'monto'){
+    const subtotal = Math.round((_WIZ && _WIZ.sumaItems || 0) + (_WIZ && _WIZ.rutaAplicada || 0));
+    if (subtotal > 0 && valor >= subtotal){
+      el.value = String(Math.max(subtotal - 1, 0));
+      cotWizResumen();
+      ilusToast('Solo un superadministrador puede aplicar un descuento por garantía (deja la cotización en $0).', {type: 'warning'});
+    }
+  }
 }
 function cotWizResumen(){
   if (!_WIZ) return;
