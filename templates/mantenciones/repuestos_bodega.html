@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Bodega de Repuestos — ILUS{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ilus_timeline.css') }}">
+<script src="{{ url_for('static', filename='ilus_timeline.js') }}"></script>
+{% endblock %}
 {% block content %}
 {# 2026-08-07 (Daniel: "pero si lo quiero en repuestos!!!"): la Bodega
    ahora vive como pestaña dentro de /repuestos. Esta URL directa se

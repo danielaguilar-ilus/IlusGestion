@@ -1,0 +1,36 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ilus_timeline.css — línea de tiempo de actividad COMPARTIDA
+   (2026-09-26, Daniel: "aplica ese mismo componente/estilo" viendo la
+   captura de "Actividad del ticket" de templates/tickets/ficha.html).
+
+   Mismo lenguaje visual que .tk-act-* (static/tickets_ficha.css): nodo
+   redondo por tipo de evento, línea vertical conectando eventos, nombre
+   en negrita + acción, fecha alineada a la derecha. Se saca a un archivo
+   propio (prefijo `ilus-tl-`) para que Incidencias y Repuestos lo usen
+   SIN duplicar el CSS de tickets ni depender de esa hoja de estilos.
+   ═══════════════════════════════════════════════════════════════════════ */
+.ilus-tl{display:flex;flex-direction:column}
+.ilus-tl-item{position:relative;display:flex;gap:14px;padding-bottom:14px}
+.ilus-tl-item::before{content:'';position:absolute;left:17px;top:40px;bottom:-4px;width:3px;border-radius:2px;
+  background:#e5e7eb}
+.ilus-tl-item:last-child{padding-bottom:0}
+.ilus-tl-item:last-child::before{display:none}
+.ilus-tl-nodo{width:36px;height:36px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:.95rem;position:relative;z-index:1}
+.ilus-tl-item:first-child .ilus-tl-nodo::after{content:'';position:absolute;inset:-6px;border-radius:50%;
+  border:2px solid currentColor;opacity:.25}
+.ilus-tl-body{flex:1;min-width:0;background:#fafbfc;border:1px solid #f1f5f9;border-radius:10px;
+  padding:9px 12px}
+.ilus-tl-item:hover .ilus-tl-body{background:#fff;border-color:#e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+.ilus-tl-item:first-child .ilus-tl-body{background:#fff;border-color:#e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+.ilus-tl-linea{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ilus-tl-texto{font-size:.85rem;color:#374151;line-height:1.4;overflow-wrap:anywhere}
+.ilus-tl-texto b{color:#0f172a;font-weight:700}
+.ilus-tl-fecha{font-size:.7rem;color:#9ca3af;margin-left:auto;white-space:nowrap;font-weight:600}
+.ilus-tl-extracto{font-size:.78rem;color:#6b7280;margin-top:3px;overflow-wrap:anywhere;white-space:pre-wrap}
+.ilus-tl-vacio{display:flex;flex-direction:column;align-items:center;gap:6px;padding:22px 10px;
+  color:#9aa3ae;font-size:.82rem;text-align:center}
+.ilus-tl-vacio i{font-size:1.6rem}
+@media (max-width:480px){
+  .ilus-tl-fecha{margin-left:0;flex-basis:100%}
+}

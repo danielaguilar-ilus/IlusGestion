@@ -3,6 +3,11 @@
 {% block head_extra %}
 {# 🧠 2026-09-26: motor de búsqueda de repuestos compartido con el modal del técnico en la OT (static/repuestos_buscador.js) #}
 <link rel="stylesheet" href="{{ url_for('static', filename='repuestos_buscador.css') }}">
+{# 🔧 2026-09-26: timeline de actividad COMPARTIDO (mismo lenguaje visual
+   que "Actividad del ticket" e Incidencias) -- usado en "quién creó/
+   actualizó" del modal de editar repuesto. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='ilus_timeline.css') }}">
+<script src="{{ url_for('static', filename='ilus_timeline.js') }}"></script>
 {% endblock %}
 {% block content %}
 <style>

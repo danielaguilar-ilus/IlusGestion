@@ -54999,9 +54999,25 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_incidencias ADD COLUMN repuesto_stock_id INT NULL "
                 "COMMENT 'FK conceptual a mant_repuestos_stock.id, elegido con RepBuscador'",
                 "ALTER TABLE mant_incidencias ADD INDEX idx_inc_repstock (repuesto_stock_id)",
+                # 🔧 2026-09-26 (Daniel, viendo Incidencias en producción: "la UA
+                # como identificador único real"). NO se agrega UNIQUE todavía:
+                # si ya existen UA duplicadas activas en datos reales, un
+                # UNIQUE INDEX rompería el próximo INSERT/UPDATE que las toque
+                # sin aviso. Se agrega el índice NO-único (deja la búsqueda
+                # rápida y no falla nunca) + la validación real vive en el
+                # backend (mant_api_incidencias_crear/editar, más abajo), que
+                # sí rechaza una UA activa repetida con un mensaje claro. Ver
+                # _inc_diagnostico_ua_duplicadas() -- corre una vez al boot y
+                # deja en el log cuántas UA activas están duplicadas HOY, para
+                # que Daniel decida si migrar a UNIQUE más adelante.
+                "ALTER TABLE mant_incidencias ADD INDEX idx_inc_ua (recomendacion)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
+            try:
+                _inc_diagnostico_ua_duplicadas()
+            except Exception as _e:
+                print(f"[init_mantenciones_tables] diagnostico UA duplicadas: {_e}", flush=True)
 
             # ── Log de actividad ────────────────────────────────────
             cur.execute("""
@@ -63452,33 +63468,64 @@ def _checkwms_respaldo_erp(doc_ref: str, fecha_wms: str) -> dict:
     }
 
 
+# 🔧 2026-09-26 (Daniel: "consulta las mismas fuentes que ya usa la
+# conciliación -- cachea, no dispares una consulta nueva por incidencia
+# abierta"). Antes _inc_presencia_erp golpeaba el ERP Random EN VIVO cada
+# vez que se abría una ficha -- con el modal mostrando ahora "Random (ERP):
+# N" junto a Cantidad, eso sería una consulta nueva por cada apertura.
+# Mismo criterio que _checkwms_stock_rows: TODA la bodega 13 se trae UNA
+# vez y se cachea 15 min; la conciliación y la ficha comparten esta
+# misma caché en vez de cada una golpear el ERP por su lado.
+_ERP_B13_CACHE = {"ts": 0, "por_sku": None, "lock": threading.Lock()}
+_ERP_B13_CACHE_TTL = 900   # 15 min
+
+
+def _erp_stock_b13_por_sku(forzar: bool = False):
+    """dict {sku: stock_b13} de TODA la bodega 13 del ERP Random, cacheado.
+    None si el ERP nunca respondió (ni siquiera hay caché vieja que servir)."""
+    now = time.time()
+    if (not forzar and _ERP_B13_CACHE["por_sku"] is not None
+            and (now - _ERP_B13_CACHE["ts"]) < _ERP_B13_CACHE_TTL):
+        return _ERP_B13_CACHE["por_sku"]
+    with _ERP_B13_CACHE["lock"]:
+        if (not forzar and _ERP_B13_CACHE["por_sku"] is not None
+                and (time.time() - _ERP_B13_CACHE["ts"]) < _ERP_B13_CACHE_TTL):
+            return _ERP_B13_CACHE["por_sku"]
+        try:
+            filas = _random_sql_query(
+                "SELECT LTRIM(RTRIM(KOPR)) AS sku, SUM(STFI1) AS cant "
+                "  FROM MAEST WHERE LTRIM(RTRIM(KOBO))=%s GROUP BY LTRIM(RTRIM(KOPR))",
+                (INC_BODEGA_ERP,), max_rows=5000) or []
+        except Exception as _e:
+            print(f"[_erp_stock_b13_por_sku] ERP no disponible: {_e}", flush=True)
+            return _ERP_B13_CACHE["por_sku"]   # sirve la caché vieja si existe
+        por_sku = {}
+        for f in filas:
+            try:
+                por_sku[(f.get("sku") or "").strip()] = float(f.get("cant") or 0)
+            except (TypeError, ValueError):
+                pass
+        _ERP_B13_CACHE.update({"ts": time.time(), "por_sku": por_sku})
+        return por_sku
+
+
 def _inc_presencia_erp(sku: str) -> dict:
     """¿Existe este SKU en el ERP Random, y tiene stock en bodega 13?
 
     Daniel (2026-08-03): "el que manda es el ERP... necesito saber si falta
     en alguno de los sistemas". Solo lectura (Regla #4.1). Nunca lanza:
-    si el ERP no responde devuelve existe=None (desconocido, no "falta")."""
+    si el ERP no responde devuelve existe=None (desconocido, no "falta").
+    🔧 2026-09-26: reusa la caché de bodega 13 (_erp_stock_b13_por_sku) en
+    vez de consultar el ERP en vivo por cada SKU."""
     sku = (sku or "").strip()
     if not sku:
         return {"existe": None, "stock_b13": None}
-    try:
-        row = _random_sql_one(
-            "SELECT TOP 1 LTRIM(RTRIM(pr.KOPR)) AS sku, "
-            "  (SELECT SUM(st.STFI1) FROM MAEST st "
-            "     WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR)) "
-            "       AND LTRIM(RTRIM(st.KOBO))=%s) AS stock_b13 "
-            "  FROM MAEPR pr WHERE LTRIM(RTRIM(pr.KOPR))=%s",
-            (INC_BODEGA_ERP, sku))
-    except Exception as _e:
-        print(f"[_inc_presencia_erp] ERP no disponible: {_e}", flush=True)
+    por_sku = _erp_stock_b13_por_sku()
+    if por_sku is None:
         return {"existe": None, "stock_b13": None}
-    if not row:
+    if sku not in por_sku:
         return {"existe": False, "stock_b13": None}
-    try:
-        st = float(row.get("stock_b13")) if row.get("stock_b13") is not None else None
-    except (TypeError, ValueError):
-        st = None
-    return {"existe": True, "stock_b13": st}
+    return {"existe": True, "stock_b13": por_sku.get(sku)}
 
 
 def _inc_clasificacion_sku(sku: str) -> dict:
@@ -63825,20 +63872,14 @@ def mant_api_incidencias_conciliacion():
             e["ids"].append(i["id"])
 
     # ── Fuente 3: ERP Random, MAEST bodega 13 (solo lectura, Regla #4.1) ──
-    erp_por_sku, erp_ok = {}, False
-    try:
-        filas = _random_sql_query(
-            "SELECT LTRIM(RTRIM(KOPR)) AS sku, SUM(STFI1) AS cant "
-            "  FROM MAEST WHERE LTRIM(RTRIM(KOBO))=%s GROUP BY LTRIM(RTRIM(KOPR))",
-            (INC_BODEGA_ERP,), max_rows=5000) or []
-        for f in filas:
-            try:
-                erp_por_sku[(f.get("sku") or "").strip()] = float(f.get("cant") or 0)
-            except (TypeError, ValueError):
-                pass
-        erp_ok = True
-    except Exception as _e:
-        print(f"[conciliacion] ERP no disponible: {_e}", flush=True)
+    # 🔧 2026-09-26 (Daniel: "cachea, no dispares una consulta nueva por
+    # incidencia abierta si ya hay caché de la conciliación"): ahora la
+    # conciliación Y la ficha de cada incidencia comparten la MISMA caché
+    # de 15 min (_erp_stock_b13_por_sku), en vez de que cada una golpee el
+    # ERP por su lado.
+    erp_por_sku = _erp_stock_b13_por_sku()
+    erp_ok = erp_por_sku is not None
+    erp_por_sku = erp_por_sku or {}
 
     # ══ Hallazgos, en el ORDEN DE PRIORIDAD que pidió Daniel (2026-08-03):
     #    "prioridad a comparar nuestra BD es contra el ERP y luego el WMS,
@@ -63993,6 +64034,23 @@ def mant_api_incidencias_conciliacion():
     })
 
 
+def _sentence_case(texto: str) -> str:
+    """🔧 2026-09-26 (Daniel: "capitaliza cada motivo con mayúscula inicial
+    de oración -- no Title Case por palabra"). Sube SOLO la primera letra
+    de la frase; el resto del texto queda tal cual (no toca acrónimos ni
+    nombres propios que vengan en mayúscula, ej. "UA1007933 sin llegar").
+    Función PURA, no toca la BD -- se usa al MOSTRAR (chips) y al GUARDAR
+    un motivo NUEVO (REGLA #4.2/#5: nunca reescribe motivos históricos que
+    no se estén editando en ese momento)."""
+    t = (texto or "")
+    i = 0
+    while i < len(t) and t[i] in (' ', '\t', '\n'):
+        i += 1
+    if i >= len(t):
+        return t
+    return t[:i] + t[i].upper() + t[i + 1:]
+
+
 @app.route("/mantenciones/api/incidencias/motivos-frecuentes", methods=["GET"])
 @_mant_required
 @_no_tecnico_salvo_taller
@@ -64000,7 +64058,9 @@ def mant_api_incidencias_motivos_frecuentes():
     """🔧 2026-09-26 (Daniel, sobre su macro Excel vieja): "chips de motivos
     frecuentes seleccionables... top ~8". Agrupa por motivo EXACTO (no hay
     NLP acá) y devuelve los 8 más repetidos, excluyendo vacíos/demasiado
-    cortos (mismo mínimo de 10 caracteres que exige el campo)."""
+    cortos (mismo mínimo de 10 caracteres que exige el campo). Se
+    capitalizan en sentence-case SOLO para mostrarlos como chip -- no se
+    reescribe ningún motivo histórico en la BD."""
     try:
         filas = mysql_fetchall(
             "SELECT motivo, COUNT(*) AS n FROM mant_incidencias "
@@ -64009,7 +64069,7 @@ def mant_api_incidencias_motivos_frecuentes():
     except Exception as e:
         print(f"[motivos_frecuentes] {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo consultar los motivos frecuentes."}), 500
-    return jsonify({"ok": True, "motivos": [f["motivo"] for f in filas if f.get("motivo")]})
+    return jsonify({"ok": True, "motivos": [_sentence_case(f["motivo"]) for f in filas if f.get("motivo")]})
 
 
 @app.route("/mantenciones/incidencias")
@@ -64022,6 +64082,37 @@ def mant_incidencias_page():
     para poder dar de baja esa instancia externa. Paginada server-side
     (REGLA #4.3, patrón Etiquetas)."""
     return render_template("mantenciones/incidencias.html")
+
+
+def _inc_diagnostico_ua_duplicadas():
+    """🔧 2026-09-26 (Daniel: "la UA como identificador único real...
+    si hay duplicados hoy, repórtalo y no lo apliques a ciegas"). Corre al
+    boot (best-effort, nunca bloquea el arranque) y deja en el log cuántas
+    UA activas (no eliminadas, con UA declarada) se repiten en más de una
+    incidencia -- así queda un registro real de si hoy existen duplicados
+    antes de plantearse un UNIQUE INDEX de verdad."""
+    filas = mysql_fetchall(
+        "SELECT recomendacion, COUNT(*) AS n FROM mant_incidencias "
+        " WHERE COALESCE(eliminada,0)=0 AND recomendacion IS NOT NULL AND recomendacion<>'' "
+        " GROUP BY recomendacion HAVING COUNT(*) > 1") or []
+    if filas:
+        print(f"[incidencias] ⚠️ UA duplicadas en incidencias ACTIVAS: {len(filas)} UA repetidas "
+              f"-- {[(f['recomendacion'], f['n']) for f in filas[:20]]}", flush=True)
+    else:
+        print("[incidencias] UA duplicadas: ninguna (todas las UA activas son únicas hoy).", flush=True)
+
+
+def _inc_ua_duplicada(ua_normalizada, excluir_id=None):
+    """True si YA existe otra incidencia ACTIVA (no eliminada) con esa
+    misma UA. Usada por crear/editar para rechazar con un mensaje claro
+    -- REGLA de Daniel 2026-09-26: "la UA como identificador único real"."""
+    if not ua_normalizada:
+        return False
+    fila = mysql_fetchone(
+        "SELECT id FROM mant_incidencias WHERE recomendacion=%s AND COALESCE(eliminada,0)=0 "
+        " AND (%s IS NULL OR id<>%s) LIMIT 1",
+        (ua_normalizada, excluir_id, excluir_id))
+    return bool(fila)
 
 
 def _mant_incidencia_row(r):
@@ -64197,20 +64288,27 @@ def mant_api_incidencias_list():
 
         # Foto principal por incidencia (miniatura en la tabla, Daniel
         # 2026-09-26: "mostrar en la tabla una miniatura de la foto
-        # principal") -- una sola consulta para toda la página.
+        # principal... si solo hay video, ícono de video") -- una sola
+        # consulta para toda la página, fotos Y videos juntos (orden ASC:
+        # si hay foto Y video, la miniatura prioriza la foto).
         ids = [r["id"] for r in rows]
-        fotos_por_inc = {}
+        fotos_por_inc, videos_por_inc = {}, {}
         if ids:
             marcadores = ",".join(["%s"] * len(ids))
             cur.execute(
-                f"""SELECT incidencia_id, gcs_key FROM mant_incidencia_fotos
-                    WHERE incidencia_id IN ({marcadores}) AND tipo='foto'
+                f"""SELECT incidencia_id, gcs_key, tipo FROM mant_incidencia_fotos
+                    WHERE incidencia_id IN ({marcadores})
                     ORDER BY incidencia_id, orden""", ids)
             for f in cur.fetchall():
-                fotos_por_inc.setdefault(f["incidencia_id"], f["gcs_key"])
+                if f["tipo"] == "foto":
+                    fotos_por_inc.setdefault(f["incidencia_id"], f["gcs_key"])
+                else:
+                    videos_por_inc.setdefault(f["incidencia_id"], f["gcs_key"])
     for r in rows:
         gk = fotos_por_inc.get(r["id"])
+        vk = videos_por_inc.get(r["id"])
         r["foto_principal"] = ("/f/" + gk) if gk else None
+        r["video_principal"] = ("/f/" + vk) if (not gk and vk) else None
 
     # Comparativa UA/Ubicación vs CheckWMS SOLO de la página visible (Daniel
     # 2026-09-26: "no llames una vez por fila... limita a la página"). El
@@ -64259,6 +64357,16 @@ def mant_api_incidencias_crear():
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
     rep_stock_id = str(data.get("repuesto_stock_id") or "").strip()
     rep_stock_id = int(rep_stock_id) if rep_stock_id.isdigit() else None
+    # 🔧 2026-09-26 (Daniel: "la UA como identificador único real"). Se
+    # normaliza con el mismo criterio que el resto del módulo
+    # (_checkwms_norm_ua, usado en buscar-ua y en la conciliación) para que
+    # "ua1007933"/"UA 1007933"/"1007933" comparen igual, y se rechaza si
+    # otra incidencia ACTIVA ya usa esa misma UA.
+    ua_norm = _checkwms_norm_ua(data.get("recomendacion") or "")
+    if ua_norm and _inc_ua_duplicada(ua_norm):
+        return jsonify({"ok": False, "error":
+                        f"La UA {ua_norm} ya está en uso por otra incidencia activa. "
+                        "Revisa esa incidencia antes de crear una nueva con la misma UA."}), 409
 
     db = get_db()
     with db.cursor() as cur:
@@ -64270,10 +64378,10 @@ def mant_api_incidencias_crear():
                 repuesto_stock_id, created_by)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (sku or None, descripcion, cantidad,
-             (data.get("motivo") or "").strip() or None,
+             _sentence_case((data.get("motivo") or "").strip()) or None,
              req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
              stock_repuesto, (data.get("observacion") or "").strip() or None,
-             fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
+             fecha_resolucion, ua_norm or None,
              (data.get("ubicacion") or "").strip() or None,
              (data.get("sugerencia") or "").strip() or None,
              rep_stock_id,
@@ -64313,7 +64421,7 @@ def mant_api_incidencias_editar(iid):
         "sku": (data.get("sku") or "").strip() or None,
         "descripcion": descripcion,
         "cantidad": cantidad,
-        "motivo": (data.get("motivo") or "").strip() or None,
+        "motivo": _sentence_case((data.get("motivo") or "").strip()) or None,
         "req_repuesto": req_repuesto,
         "descripcion_repuesto": (data.get("descripcion_repuesto") or "").strip() or None,
         "stock_repuesto": stock_repuesto,
@@ -64332,6 +64440,27 @@ def mant_api_incidencias_editar(iid):
     # (soft-delete) no se puede editar -- se trata igual que "no existe".
     if not antes or antes.get("eliminada"):
         return jsonify({"ok": False, "error": "Esa incidencia fue eliminada y ya no se puede editar."}), 404
+
+    # 🔒 2026-09-26 (Daniel: "candados de datos del sistema... UA, Ubicación,
+    # SKU y Producto/Descripción quedan bloqueados... vienen de una fuente
+    # externa"). El modal ya los deja de solo lectura, pero el candado REAL
+    # tiene que vivir acá: si la incidencia YA tenía UA declarada, estos 4
+    # campos se IGNORAN del payload y se conservan tal cual estaban --
+    # nunca se alteran a mano una vez que el WMS/ERP los fijó.
+    if (antes.get("recomendacion") or "").strip():
+        nuevos["recomendacion"] = antes.get("recomendacion")
+        nuevos["ubicacion"] = antes.get("ubicacion")
+        nuevos["sku"] = antes.get("sku")
+        nuevos["descripcion"] = antes.get("descripcion") or descripcion
+    else:
+        # Sin UA todavía (caso raro de una incidencia vieja sin UA): se
+        # permite fijarla ahora, con la misma validación de unicidad que
+        # el alta.
+        ua_norm = _checkwms_norm_ua(data.get("recomendacion") or "")
+        if ua_norm and _inc_ua_duplicada(ua_norm, excluir_id=iid):
+            return jsonify({"ok": False, "error":
+                            f"La UA {ua_norm} ya está en uso por otra incidencia activa."}), 409
+        nuevos["recomendacion"] = ua_norm or None
 
     db = get_db()
     with db.cursor() as cur:
@@ -64502,7 +64631,9 @@ def mant_api_incidencia_ficha(iid):
         " ORDER BY created_at DESC LIMIT 40", (iid,)) or []
     for l in log:
         if l.get("created_at"):
-            l["created_at"] = l["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+            # 🔧 2026-09-26 (REGLA #6): la bitácora mostraba la hora UTC cruda
+            # -- ahora pasa por chile_fmt_filter como el resto de la UI.
+            l["created_at"] = chile_fmt_filter(l["created_at"], "%d/%m/%Y %H:%M")
 
     # 🔗 2026-09-26 (Daniel: "la ficha de la incidencia muestra las
     # solicitudes que la usaron, trazabilidad"): toda solicitud de
@@ -64680,6 +64811,63 @@ def mant_api_incidencia_foto_borrar(iid, fid):
         pass   # el registro ya se borró; el huérfano en GCS no bloquea
     _inc_log(iid, "foto_eliminada", "fotos", foto["gcs_key"], None)
     return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/incidencias/repuestos-crear-rapido", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_repuesto_crear_rapido():
+    """🔧 2026-09-26 (Daniel, caso real: "quiero ingresar el equipo de la
+    Escaladora ILUS y solicitarle la pantalla, estoy seguro que el
+    repuesto no existe, debo poder crearlo desde ahí"). Alta MÍNIMA de un
+    repuesto nuevo directo desde el buscador (RepBuscador) de la tarjeta
+    Detalle de Incidencias, cuando la Bodega no lo tiene: nombre, SKU
+    (SIEMPRE auto-generado -- REGLA vigente desde 2026-08-07, "bloqueamos
+    el SKU", no se abre una segunda vía de texto libre acá) y proveedor
+    opcional. Entra a mant_repuestos_stock con cantidad=0 (sin stock
+    todavía, alguien lo tiene que reponer) y SIN ubicación -- a propósito
+    más liviano que /mantenciones/api/repuestos-stock (que sí exige
+    ubicación real escaneada, REGLA de gestión de bodega 2026-09-09; ese
+    flujo completo sigue siendo el correcto para un alta normal, este es
+    solo el atajo para no dejar a alguien sin poder pedir un repuesto que
+    de verdad no existe)."""
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:400]
+    if not nombre:
+        return jsonify({"ok": False, "error": "El nombre del repuesto es obligatorio."}), 400
+    proveedor_id = d.get("proveedor_id") or None
+    try:
+        proveedor_id = int(proveedor_id) if proveedor_id else None
+    except (TypeError, ValueError):
+        proveedor_id = None
+    conn = get_mysql()
+    try:
+        sku = _repstock_next_sku(None, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_repuestos_stock
+                   (sku, descripcion, cantidad, proveedor_id, notas, created_by)
+                   VALUES (%s,%s,0,%s,%s,%s)""",
+                (sku, nombre, proveedor_id,
+                 "Creado rápido desde Incidencias -- sin ubicación ni stock inicial, "
+                 "completar en /repuestos cuando llegue.",
+                 current_username()))
+            new_id = cur.lastrowid
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[repuesto_crear_rapido] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear el repuesto."}), 500
+    try:
+        mysql_execute(
+            "INSERT INTO mant_repuestos_movimientos "
+            "(repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, nota, usuario) "
+            "VALUES (%s,'inicial','alta_repuesto',0,0,%s,%s)",
+            (new_id, "Alta rápida desde Incidencias (sin ubicación todavía)", current_username()))
+    except Exception as e:
+        print(f"[repuesto_crear_rapido] kardex: {e}", flush=True)
+    return jsonify({"ok": True, "id": new_id, "sku": sku, "descripcion": nombre,
+                    "disponible": 0, "cantidad": 0})
 
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/solicitar-repuesto", methods=["POST"])

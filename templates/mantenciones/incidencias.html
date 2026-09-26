@@ -5,6 +5,9 @@
    tarjeta "Detalle" del modal de incidencia. #}
 {% block head_extra %}
 <link rel="stylesheet" href="{{ url_for('static', filename='repuestos_buscador.css') }}">
+{# 🔧 2026-09-26: timeline de actividad COMPARTIDO (mismo lenguaje visual
+   que "Actividad del ticket") -- usado por la bitácora de la incidencia. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='ilus_timeline.css') }}">
 {% endblock %}
 {% block content %}
 
@@ -120,9 +123,18 @@
             <div><b>Datos obligatorios</b>
               <small>UA y ubicación en Bodega 13, SKU, nombre completo y cantidad afectada.</small></div>
           </div>
+          {#- 🔒 2026-09-26 (Daniel: "candados de datos del sistema... cuando
+              se edita una incidencia YA creada (tiene UA), UA/Ubicación/
+              SKU/Producto quedan bloqueados, solo lectura"). El candado
+              REAL vive en el backend (mant_api_incidencias_editar ignora
+              estos 4 campos del payload si ya había UA); acá solo se
+              refleja visualmente (readonly + ícono + tooltip) -- ver
+              incAplicarCandadoSistema() más abajo. En el ALTA (sin UA
+              todavía) los 4 quedan editables como siempre. -#}
           <div class="row g-3">
             <div class="col-md-7 inc-campo" data-campo="incRecomendacion">
-              <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
+              <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
+                <i class="bi bi-lock-fill inc-candado" id="incCandadoUa" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
               <div class="input-group input-group-lg">
                 <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
                 <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
@@ -134,24 +146,34 @@
               </div>
             </div>
             <div class="col-md-5">
-              <label class="form-label">Ubicación en Bodega 13</label>
+              <label class="form-label">Ubicación en Bodega 13
+                <i class="bi bi-lock-fill inc-candado" id="incCandadoUbicacion" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
               <input type="text" class="form-control" id="incUbicacion" placeholder="Ej: A-12-03">
               <div class="form-text">Se completa sola al buscar la UA. Se compara contra CheckWMS en la tabla.</div>
             </div>
             <div id="incUaResultado" class="inc-resultado col-12"></div>
             <div class="col-md-4 inc-campo" data-campo="incSku">
-              <label class="form-label">SKU <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
+              <label class="form-label">SKU <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
+                <i class="bi bi-lock-fill inc-candado" id="incCandadoSku" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
               <input type="text" class="form-control" id="incSku" placeholder="Ej: TWMA305-140">
             </div>
             <div class="col-md-8 inc-campo" data-campo="incDescripcion">
-              <label class="form-label">Nombre del producto <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
+              <label class="form-label">Nombre del producto <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
+                <i class="bi bi-lock-fill inc-candado" id="incCandadoDescripcion" hidden title="Dato del sistema WMS/ERP, no editable"></i></label>
               <textarea class="form-control" id="incDescripcion" rows="2" required
                         placeholder="Nombre completo del producto -- no lo acortes, aunque sea largo."></textarea>
             </div>
             <div class="col-md-4 inc-campo" data-campo="incCantidad">
               <label class="form-label">Cantidad afectada <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
               <input type="number" class="form-control form-control-lg" id="incCantidad" min="1" value="1">
-              <div class="form-text">Debe ser 1 o más.</div>
+              <div class="form-text">Debe ser 1 o más.
+                {#- 🔧 2026-09-26 (Daniel: "sugiere Random (ERP): N · Check
+                    (WMS): M, solo lectura, informativo... cachea, no
+                    dispares una consulta nueva"): se llena con el mismo
+                    `cuadre` que ya trae la ficha para el paso Evidencia
+                    (incFichaCache), sin pedir nada nuevo al backend. -#}
+                <span id="incCantidadHintErpWms"></span>
+              </div>
             </div>
             <div class="col-md-8">
               <label class="form-label">Estado</label>
@@ -259,6 +281,29 @@
                   <i class="bi bi-x-lg"></i> Quitar</button>
                 <button type="button" class="btn btn-sm btn-ilus" id="incBtnSolicitarAhora">
                   <i class="bi bi-send-check me-1"></i>Solicitar este repuesto ahora</button>
+              </div>
+              {#- 🔧 2026-09-26 (Daniel, caso real "Escaladora ILUS... estoy
+                  seguro que el repuesto no existe, debo poder crearlo desde
+                  ahí"): atajo de alta MÍNIMA sin salir del modal -- ver
+                  POST /mantenciones/api/incidencias/repuestos-crear-rapido. -#}
+              <div class="mt-2">
+                <button type="button" class="btn btn-sm btn-outline-dark" id="incBtnRepNoExiste">
+                  <i class="bi bi-plus-circle me-1"></i>No existe, crear repuesto nuevo</button>
+              </div>
+              <div class="inc-rep-nuevo" id="incRepNuevoForm" hidden>
+                <div class="row g-2">
+                  <div class="col-md-7">
+                    <input type="text" class="form-control form-control-sm" id="incRepNuevoNombre"
+                           placeholder="Nombre completo del repuesto" maxlength="400">
+                  </div>
+                  <div class="col-md-5 d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-ilus" id="incBtnRepNuevoGuardar">
+                      <i class="bi bi-check2 me-1"></i>Crear y seleccionar</button>
+                    <button type="button" class="btn btn-sm btn-secondary" id="incBtnRepNuevoCancelar">Cancelar</button>
+                  </div>
+                </div>
+                <div class="form-text">Se crea en la Bodega con cantidad 0 y SKU automático -- complétalo (ubicación,
+                  costo, proveedor) en /repuestos cuando llegue.</div>
               </div>
             </div>
             <div class="col-12">
@@ -438,6 +483,8 @@
 .inc-th-sort.on i{opacity:1;color:var(--ilus-red,#dc2626)}
 .inc-th-filtros input.form-control-sm{font-size:.76rem;padding:3px 8px}
 .inc-foto-mini{width:36px;height:36px;object-fit:cover;border-radius:7px;border:1px solid #e5e7eb;cursor:zoom-in}
+.inc-foto-mini-video{display:inline-flex;align-items:center;justify-content:center;background:#0a0a0a;color:#fff;
+  cursor:pointer;font-size:1rem}
 .inc-chk{display:flex;flex-direction:column;gap:1px;font-size:.72rem;line-height:1.25;padding:2px 8px;
   border-radius:8px;white-space:nowrap}
 .inc-chk small{font-weight:400;opacity:.85;white-space:normal}
@@ -547,6 +594,7 @@
     porque ese CSS vive por template, no en una hoja compartida (mismo
     patrón que el resto del proyecto ya usa para este picker). -#}
 .inc-rep-cta{margin-top:14px;padding-top:12px;border-top:1px dashed #d7dbe0}
+.inc-rep-nuevo{margin-top:8px;padding:10px;border-radius:10px;background:#fafbfc;border:1px dashed #d7dbe0}
 .otrep-opc{display:flex;flex-direction:column;gap:6px;margin-top:6px;max-height:220px;overflow-y:auto}
 .otrep-opc-it{display:flex;align-items:center;gap:10px;border:1.5px solid #e5e7eb;border-radius:11px;
   padding:8px 10px;cursor:pointer;background:#fff;text-align:left;width:100%;font-family:inherit;
@@ -575,6 +623,10 @@
 .inc-campo.ok .form-label .inc-tick{opacity:1;transform:scale(1)}
 .inc-tick{display:inline-block;margin-left:5px;color:#16a34a;opacity:0;transform:scale(.6);
   transition:opacity .18s,transform .18s}
+.inc-candado{margin-left:6px;color:#9aa3ae;font-size:.78rem;cursor:help}
+.inc-campo.inc-bloqueado .form-control,.inc-campo.inc-bloqueado .form-select{
+  background:#f3f4f6;color:#6b7280;cursor:not-allowed}
+.inc-hint-erpwms{font-weight:600;color:#374151}
 .inc-campo.ok .form-control,.inc-campo.ok .form-select{
   border-color:#16a34a;background:#f6fefa}
 .inc-campo.ok .form-control:focus,.inc-campo.ok .form-select:focus{
@@ -646,6 +698,7 @@
 </style>
 
 <script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
+<script src="{{ url_for('static', filename='ilus_timeline.js') }}"></script>
 <script>
 (function(){
   var incPage = 1, incSize = 10, incQ = '', incEstado = '';
@@ -701,6 +754,23 @@
   }
 
   function incEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+
+  // 🔧 2026-09-26 (Daniel, viendo producción: "miniatura de foto/evidencia
+  // en la tabla principal... click abre el lightbox"). Prioriza la foto;
+  // si solo hay video, ícono de video (el lightbox de imágenes no sirve
+  // para reproducir video -- se abre en pestaña nueva, mismo criterio que
+  // ya usa el modal de evidencia, ver incPintarFotos).
+  function incMiniaturaCelda(r){
+    if(r.foto_principal){
+      return '<img src="'+r.foto_principal+'" class="inc-foto-mini" alt="Evidencia" loading="lazy" '
+        + 'data-lightbox="'+incEsc(r.foto_principal)+'">';
+    }
+    if(r.video_principal){
+      return '<span class="inc-foto-mini inc-foto-mini-video" data-video="'+incEsc(r.video_principal)+'" title="Ver video">'
+        + '<i class="bi bi-camera-video-fill"></i></span>';
+    }
+    return '<span class="text-muted">—</span>';
+  }
 
   // Encabezado con orden por clic (flecha, como el resto del proyecto) +
   // fila de filtros por columna (REGLA #4.3, patrón Etiquetas: combinable
@@ -803,9 +873,7 @@
     var html = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'<tbody>';
     rows.forEach(function(r){
       html += '<tr data-id="'+r.id+'">'
-        + '<td>'+(r.foto_principal
-              ? ('<img src="'+r.foto_principal+'" class="inc-foto-mini" alt="Evidencia" loading="lazy">')
-              : '<span class="text-muted">—</span>')+'</td>'
+        + '<td>'+incMiniaturaCelda(r)+'</td>'
         + '<td>'+(r.recomendacion||'—')+'</td>'
         + '<td>'+(r.sku||'—')+'</td>'
         + '<td>'+(r.descripcion||'')+'</td>'
@@ -841,8 +909,20 @@
 
     box.querySelectorAll('tbody tr').forEach(function(tr){
       tr.addEventListener('click', function(ev){
-        if(ev.target.closest('.inc-mini-btn')) return;
+        if(ev.target.closest('.inc-mini-btn') || ev.target.closest('.inc-foto-mini')) return;
         abrirEdicion(tr.dataset.id, rows);
+      });
+    });
+    box.querySelectorAll('.inc-foto-mini[data-lightbox]').forEach(function(img){
+      img.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        ilusLightbox(img.dataset.lightbox);
+      });
+    });
+    box.querySelectorAll('.inc-foto-mini-video[data-video]').forEach(function(v){
+      v.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        window.open(v.dataset.video, '_blank');
       });
     });
     box.querySelectorAll('.inc-mini-btn').forEach(function(btn){
@@ -1125,32 +1205,67 @@
     if(addV) addV.onclick = function(){ $('incVideoInput').click(); };
   }
 
+  // 🔧 2026-09-26 (Daniel, viendo producción: "el mismo lenguaje visual que
+  // Actividad del ticket... ícono redondo por tipo de evento, nombre en
+  // negrita + acción + fecha alineada a la derecha, línea vertical
+  // conectando eventos, más reciente arriba"). Reemplaza la lista plana de
+  // la bitácora por el componente COMPARTIDO static/ilus_timeline.js --
+  // mismo componente que usan Repuestos (ver incRepActividad más abajo),
+  // nada de HTML de timeline duplicado por pantalla.
+  var INC_BIT_TIPO = {
+    creada: 'creacion', editada: 'cambio', eliminada: 'eliminado',
+    eliminada_dedup: 'eliminado', foto_agregada: 'foto', foto_eliminada: 'foto',
+    video_agregado: 'foto',
+    repuesto_solicitado: 'repuesto', repuesto_solicitud_estado: 'repuesto',
+    repuesto_solicitud_cantidad: 'repuesto',
+  };
+  var INC_BIT_ACCION_LABEL = {
+    creada: 'creó la incidencia', editada: 'editó', eliminada: 'eliminó la incidencia',
+    eliminada_dedup: 'eliminó (duplicado del seed)', foto_agregada: 'agregó una foto',
+    foto_eliminada: 'quitó una foto', video_agregado: 'agregó un video',
+    repuesto_solicitado: 'solicitó un repuesto',
+    repuesto_solicitud_estado: 'cambió el estado del repuesto',
+    repuesto_solicitud_cantidad: 'cambió la cantidad del repuesto',
+  };
+
   function incPintarBitacora(log){
-    if(!log || !log.length){ $('incBitacora').innerHTML = ''; return; }
-    $('incBitacora').innerHTML = '<div class="inc-bit-t">Bitácora</div>'
-      + log.slice(0, 12).map(function(l){
-          var q = l.campo ? (' · <b>'+l.campo+'</b>') : '';
-          var d = (l.valor_antes || l.valor_despues)
-                ? (' ' + (l.valor_antes ? ('«'+String(l.valor_antes).slice(0,40)+'»') : '')
-                       + (l.valor_despues ? (' → «'+String(l.valor_despues).slice(0,40)+'»') : ''))
-                : '';
-          return '<div class="inc-bit-i"><span class="inc-bit-f">'
-               + (l.created_at||'').slice(0,16).split(' ').join(' · ')+'</span>'
-               + '<span><b>'+(l.usuario||'sistema')+'</b> '+l.accion+q+d+'</span></div>';
-        }).join('');
+    var mount = $('incBitacora');
+    if(!log || !log.length){
+      mount.innerHTML = '<div class="inc-bit-t">Bitácora</div><div id="incBitTl"></div>';
+      IlusTimeline.render(document.getElementById('incBitTl'), [], {vacioTexto: 'Sin actividad registrada todavía.'});
+      return;
+    }
+    mount.innerHTML = '<div class="inc-bit-t">Bitácora</div><div id="incBitTl"></div>';
+    var eventos = log.slice(0, 12).map(function(l){
+      var q = l.campo ? (' · <b>'+incEsc(l.campo)+'</b>') : '';
+      var d = (l.valor_antes || l.valor_despues)
+            ? (' ' + (l.valor_antes ? ('«'+incEsc(String(l.valor_antes).slice(0,40))+'»') : '')
+                   + (l.valor_despues ? (' → «'+incEsc(String(l.valor_despues).slice(0,40))+'»') : ''))
+            : '';
+      var accion = INC_BIT_ACCION_LABEL[l.accion] || incEsc(l.accion || 'actividad');
+      return {
+        tipo: INC_BIT_TIPO[l.accion] || 'default',
+        html: '<b>'+incEsc(l.usuario || 'sistema')+'</b> '+accion+q+d,
+        fecha: l.created_at || '',
+      };
+    });
+    IlusTimeline.render(document.getElementById('incBitTl'), eventos);
   }
 
   function incCargarEvidencia(){
     var id = $('incId').value;
+    var hint = $('incCantidadHintErpWms');
     if(!id){
       // Incidencia nueva: aún no hay id, así que no hay fotos ni bitácora.
       $('incCuadre').innerHTML = '<div class="inc-vered v-nd">El cuadre y las fotos se habilitan al guardar la incidencia.'
         + '<small>Primero guarda; luego vuelve a abrirla para adjuntar evidencia.</small></div>';
       $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de '+INC_MAX_FOTOS;
       $('incBitacora').innerHTML = '';
+      if(hint) hint.textContent = '';
       return;
     }
     $('incCuadre').innerHTML = '<div class="inc-vered v-nd">Consultando ERP y WMS…</div>';
+    if(hint) hint.textContent = '';
     fetch('/mantenciones/api/incidencias/'+id+'/ficha')
       .then(function(r){return r.json();}).then(function(f){
         if(!f.ok) return;
@@ -1158,6 +1273,15 @@
         incPintarCuadre(f.cuadre);
         incPintarFotos(f);
         incPintarBitacora(f.log);
+        // 🔧 2026-09-26 (Daniel: "sugiere Random (ERP): N · Check (WMS): M,
+        // solo lectura, informativo"): mismo `cuadre` que ya se pidió para
+        // el paso Evidencia -- ni una consulta extra al ERP/WMS.
+        if(hint && f.cuadre){
+          var c = f.cuadre;
+          hint.innerHTML = ' · <span class="inc-hint-erpwms">Random (ERP): '
+            + (c.erp != null ? incNum(c.erp) : '—') + ' · Check (WMS): '
+            + (c.wms != null ? incNum(c.wms) : '—') + '</span>';
+        }
         pintarPasos();   // ahora que ya sabemos si hay evidencia, refresca el semáforo
       }).catch(function(){
         $('incCuadre').innerHTML = '<div class="inc-vered v-nd">No se pudo consultar el cuadre.</div>';
@@ -1587,6 +1711,29 @@
   $('incConcRefrescar').addEventListener('click', function(){ incConcData=null; incConcCargar(); });
   $('incConcCerrar').addEventListener('click', function(){ $('incConciliacion').hidden = true; });
 
+  // 🔒 2026-09-26 (Daniel: "candados de datos del sistema... UA, Ubicación,
+  // SKU y Producto/Descripción quedan bloqueados... nunca se deben poder
+  // alterar a mano porque vienen de una fuente externa"). Es solo el
+  // REFLEJO visual del candado real, que vive en el backend
+  // (mant_api_incidencias_editar ignora estos 4 campos si ya había UA) --
+  // aunque alguien manipulara el DOM, el servidor los conserva igual.
+  var INC_CAMPOS_CANDADO = ['incRecomendacion', 'incSku', 'incDescripcion', 'incUbicacion'];
+  function incAplicarCandadoSistema(bloquear){
+    INC_CAMPOS_CANDADO.forEach(function(id){
+      var el = document.getElementById(id);
+      if(!el) return;
+      el.readOnly = !!bloquear;
+      var campo = el.closest('.inc-campo');
+      if(campo) campo.classList.toggle('inc-bloqueado', !!bloquear);
+    });
+    ['incCandadoUa','incCandadoUbicacion','incCandadoSku','incCandadoDescripcion'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) el.hidden = !bloquear;
+    });
+    var btnBuscar = document.getElementById('incBtnBuscarUa');
+    if(btnBuscar) btnBuscar.disabled = !!bloquear;
+  }
+
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
      'incObservacion','incRecomendacion','incFechaResolucion','incUbicacion',
@@ -1608,6 +1755,7 @@
     document.getElementById('incRepCtaHint').textContent = 'Guarda la incidencia primero para poder solicitar un repuesto.';
     incRepSelLimpiar();
     incRepBuscadorToggle();
+    incAplicarCandadoSistema(false);
     refrescarVerdeTodos();
     irAPaso(1);
   }
@@ -1632,6 +1780,9 @@
     document.getElementById('incUbicacion').value = r.ubicacion || '';
     document.getElementById('incSugerencia').value = r.sugerencia || '';
     document.getElementById('incRepuestoStockId').value = r.repuesto_stock_id || '';
+    // 🔒 2026-09-26: candado SOLO si la incidencia ya tenía UA declarada
+    // (Daniel: "cuando se edita una incidencia YA creada, tiene UA").
+    incAplicarCandadoSistema(!!(r.recomendacion || '').trim());
     incRepBuscadorToggle();
     if(r.repuesto_stock_id){
       incRepSelMostrar({id: r.repuesto_stock_id, descripcion: r.descripcion_repuesto || r.sku || ('Repuesto #'+r.repuesto_stock_id)});
@@ -2049,6 +2200,35 @@
   }
 
   document.getElementById('incBtnQuitarRepSel').addEventListener('click', incRepSelLimpiar);
+
+  // 🔧 2026-09-26 (Daniel, caso real "Escaladora ILUS... el repuesto no
+  // existe, debo poder crearlo desde ahí"): alta mínima sin salir del
+  // modal -- POST /mantenciones/api/incidencias/repuestos-crear-rapido.
+  // Tras crearlo queda auto-seleccionado y sigue el flujo normal.
+  document.getElementById('incBtnRepNoExiste').addEventListener('click', function(){
+    document.getElementById('incRepNuevoForm').hidden = false;
+    document.getElementById('incRepNuevoNombre').value = $('incDescripcion').value || '';
+    document.getElementById('incRepNuevoNombre').focus();
+  });
+  document.getElementById('incBtnRepNuevoCancelar').addEventListener('click', function(){
+    document.getElementById('incRepNuevoForm').hidden = true;
+  });
+  document.getElementById('incBtnRepNuevoGuardar').addEventListener('click', function(){
+    var nombre = document.getElementById('incRepNuevoNombre').value.trim();
+    if(!nombre){ ilusToast('Escribe el nombre del repuesto', {type:'warning'}); return; }
+    var btn = this;
+    btn.disabled = true;
+    fetch('/mantenciones/api/incidencias/repuestos-crear-rapido', {
+      method: 'POST', headers: {'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN || ''},
+      body: JSON.stringify({nombre: nombre}),
+    }).then(function(r){ return r.json(); }).then(function(d){
+      btn.disabled = false;
+      if(!d.ok){ ilusToast(d.error || 'No se pudo crear el repuesto', {type:'error'}); return; }
+      document.getElementById('incRepNuevoForm').hidden = true;
+      incRepSeleccionar({id: d.id, sku: d.sku, descripcion: d.descripcion, disponible: 0});
+      ilusToast('✓ Repuesto '+d.sku+' creado y seleccionado', {type:'success'});
+    }).catch(function(){ btn.disabled = false; ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
+  });
 
   // "Solicitar este repuesto ahora": reusa el modal/flujo YA existente
   // (incRepModal + incRepEnviar) -- se le pre-selecciona el mismo item de

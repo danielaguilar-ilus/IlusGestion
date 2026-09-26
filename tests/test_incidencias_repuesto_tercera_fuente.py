@@ -311,5 +311,67 @@ class TestConciliacionExcluyeEliminadas(unittest.TestCase):
                          "el log de auditoría debe escribirse ANTES del DELETE, no después")
 
 
+class TestSentenceCase(unittest.TestCase):
+    """🔧 2026-09-26 (Daniel, viendo producción: "capitaliza cada motivo
+    con mayúscula inicial de oración -- no Title Case por palabra")."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = staticmethod(_cargar_funciones("_sentence_case")["_sentence_case"])
+
+    def test_sube_solo_la_primera_letra(self):
+        self.assertEqual(self.f("falta acrílico derecho"), "Falta acrílico derecho")
+
+    def test_no_es_title_case(self):
+        # "Falta Acrílico Derecho" sería Title Case -- NO es lo pedido.
+        out = self.f("falta acrílico Derecho del Lado")
+        self.assertEqual(out, "Falta acrílico Derecho del Lado")
+
+    def test_ya_capitalizado_no_cambia(self):
+        self.assertEqual(self.f("Ya viene bien"), "Ya viene bien")
+
+    def test_respeta_mayusculas_propias_como_ua_o_siglas(self):
+        self.assertEqual(self.f("UA1007933 sin llegar"), "UA1007933 sin llegar")
+
+    def test_texto_vacio_no_revienta(self):
+        self.assertEqual(self.f(""), "")
+        self.assertEqual(self.f(None), "")
+
+    def test_ignora_espacios_iniciales_al_capitalizar(self):
+        self.assertEqual(self.f("  falta pieza"), "  Falta pieza")
+
+
+class TestCandadoSistemaYUaUnica(unittest.TestCase):
+    """🔧 2026-09-26 (Daniel: "candados de datos del sistema... UA como
+    identificador único real"). Sin BD disponible en este entorno de test,
+    se revisa el SQL/lógica ARMADA (código fuente) -- mismo criterio que
+    TestConciliacionExcluyeEliminadas."""
+
+    def test_editar_bloquea_ua_ubicacion_sku_descripcion_si_ya_tenia_ua(self):
+        src = _fuente_de("mant_api_incidencias_editar")
+        self.assertIn('antes.get("recomendacion")', src)
+        # Los 4 campos deben quedar fijados a los valores de `antes`, no a
+        # lo que venga en el payload, cuando la incidencia ya tenía UA.
+        for campo in ('nuevos["recomendacion"] = antes.get("recomendacion")',
+                      'nuevos["ubicacion"] = antes.get("ubicacion")',
+                      'nuevos["sku"] = antes.get("sku")',
+                      'nuevos["descripcion"] = antes.get("descripcion")'):
+            self.assertIn(campo, src)
+
+    def test_editar_permite_fijar_ua_si_no_tenia(self):
+        src = _fuente_de("mant_api_incidencias_editar")
+        self.assertIn("_inc_ua_duplicada(ua_norm, excluir_id=iid)", src)
+
+    def test_crear_rechaza_ua_duplicada_activa(self):
+        src = _fuente_de("mant_api_incidencias_crear")
+        self.assertIn("_inc_ua_duplicada(ua_norm)", src)
+        self.assertIn("409", src)
+
+    def test_ua_duplicada_excluye_eliminadas_y_se_puede_autoexcluir(self):
+        src = _fuente_de("_inc_ua_duplicada")
+        self.assertIn("COALESCE(eliminada,0)=0", src)
+        self.assertIn("id<>%s", src)
+
+
 if __name__ == "__main__":
     unittest.main()
