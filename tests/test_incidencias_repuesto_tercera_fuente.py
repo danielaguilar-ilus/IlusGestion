@@ -33,12 +33,43 @@ def _leer(path):
         return fh.read()
 
 
+# 🔧 2026-09-26 (revisión post-merge): app.py ya pasa las 140 mil líneas --
+# en máquinas o sandboxes con disco/CPU lentos, un solo `ast.parse` de este
+# archivo puede tardar varios MINUTOS (medido: ~190 s en un entorno de CI
+# restringido). Antes, CADA llamada a `_fuente_de`/`_cargar_funciones`
+# volvía a leer y re-parsear el archivo completo desde cero -- con las 6
+# llamadas de TestConciliacionExcluyeEliminadas más las de las demás clases,
+# la suite completa se volvía impráctica de esperar. Se cachea el AST (y el
+# código fuente) UNA sola vez por proceso: el resto de las llamadas reusan
+# el mismo árbol ya parseado. No cambia lo que se prueba, solo cuánto tarda.
+_AST_CACHE = {}
+
+
+def _codigo_y_arbol():
+    if "codigo" not in _AST_CACHE:
+        codigo = _leer(APP_PY)
+        _AST_CACHE["codigo"] = codigo
+        _AST_CACHE["arbol"] = ast.parse(codigo)
+    return _AST_CACHE["codigo"], _AST_CACHE["arbol"]
+
+
+def _fuente_de(nombre_funcion):
+    """Devuelve el CÓDIGO FUENTE (texto crudo) de una función de app.py por
+    nombre, usando ast.get_source_segment -- para revisar SQL armado sin
+    ejecutarlo (no hay BD en este test, ver módulo docstring)."""
+    codigo, arbol = _codigo_y_arbol()
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.FunctionDef) and nodo.name == nombre_funcion:
+            return ast.get_source_segment(codigo, nodo)
+    raise AssertionError(f"no se encontró la función '{nombre_funcion}' en app.py")
+
+
 def _cargar_funciones(*nombres):
     """Extrae varias funciones/constantes de app.py y las ejecuta juntas en
     un ambito aislado (para que las que dependen de otras -- ej.
     _inc_hallazgo_falta_registrar usa el string INC_BODEGA_WMS -- lo
     encuentren)."""
-    arbol = ast.parse(_leer(APP_PY))
+    _, arbol = _codigo_y_arbol()
     ambito = {}
     # INC_BODEGA_WMS es un simple `NOMBRE = "literal"` a nivel de módulo;
     # se busca aparte porque no es un FunctionDef.
@@ -124,13 +155,17 @@ class TestHallazgoAccion(unittest.TestCase):
     def test_fuera_de_bodega_con_ids_es_ver(self):
         self.assertEqual(self.accion({"tipo": "fuera_de_bodega", "ids": [7]}), "ver")
 
-    def test_dif_erp_sin_ids_no_tiene_accion(self):
-        # Caso real documentado en app.py: un SKU que el ERP reporta pero
-        # que nunca declaramos -- no hay incidencia que abrir todavía.
-        self.assertIsNone(self.accion({"tipo": "dif_erp", "ids": []}))
+    def test_dif_erp_sin_ids_es_registrar(self):
+        # 🔧 2026-09-26 (Daniel, en vivo: "los hallazgos dif_erp sin ids...
+        # deben poder registrarse"): un SKU que el ERP reporta pero que
+        # nunca declaramos ahora SÍ abre el alta prellenada.
+        self.assertEqual(self.accion({"tipo": "dif_erp", "ids": []}), "registrar")
 
-    def test_dif_erp_sin_clave_ids_no_tiene_accion(self):
-        self.assertIsNone(self.accion({"tipo": "dif_erp"}))
+    def test_dif_erp_sin_clave_ids_es_registrar(self):
+        self.assertEqual(self.accion({"tipo": "dif_erp"}), "registrar")
+
+    def test_no_en_erp_sin_ids_es_registrar(self):
+        self.assertEqual(self.accion({"tipo": "no_en_erp", "ids": []}), "registrar")
 
     def test_tipo_desconocido_sin_ids_no_tiene_accion(self):
         self.assertIsNone(self.accion({"tipo": "otra-cosa"}))
@@ -180,6 +215,100 @@ class TestHallazgoFaltaRegistrar(unittest.TestCase):
         self.assertEqual(h["cantidad"], 1)
         self.assertIsNone(h["sku"])
         self.assertIsNone(h["descripcion"])
+
+
+class TestComparativaUa(unittest.TestCase):
+    """🔧 2026-09-26 (Daniel, en vivo: "necesito hacer una comparativa de
+    la ubicación y de la UA de Check"). _inc_comparativa_ua es la función
+    PURA que decide el semáforo de la tabla principal: verde (coincide),
+    ámbar (distinta), rojo (no está en Check), gris (sin datos)."""
+
+    @classmethod
+    def setUpClass(cls):
+        amb = _cargar_funciones("_inc_comparativa_ua", "_checkwms_norm_ua")
+        cls.comparar = staticmethod(amb["_inc_comparativa_ua"])
+
+    def test_checkwms_no_disponible_marca_sin_datos_para_todas(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": "A-1"}]
+        out = self.comparar(filas, None)
+        self.assertEqual(out[0]["chk_estado"], "sin_datos")
+        self.assertIsNone(out[0]["chk_ubicacion"])
+
+    def test_ubicacion_coincide_es_verde(self):
+        filas = [{"recomendacion": "UA1007933", "ubicacion": "A-12-03"}]
+        wms = [{"ua": "ua1007933", "ubicacion": "a-12-03"}]
+        out = self.comparar(filas, wms)
+        self.assertEqual(out[0]["chk_estado"], "coincide")
+        self.assertEqual(out[0]["chk_ubicacion"], "a-12-03")
+
+    def test_ubicacion_distinta_es_ambar(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": "A-1"}]
+        wms = [{"ua": "UA1", "ubicacion": "B-9"}]
+        out = self.comparar(filas, wms)
+        self.assertEqual(out[0]["chk_estado"], "distinta")
+
+    def test_ua_no_esta_en_wms_es_no_esta(self):
+        filas = [{"recomendacion": "UA9", "ubicacion": "A-1"}]
+        wms = [{"ua": "UA1", "ubicacion": "A-1"}]
+        out = self.comparar(filas, wms)
+        self.assertEqual(out[0]["chk_estado"], "no_esta")
+
+    def test_sin_ua_declarada_no_compara(self):
+        filas = [{"recomendacion": "", "ubicacion": "A-1"}]
+        out = self.comparar(filas, [{"ua": "UA1", "ubicacion": "A-1"}])
+        self.assertEqual(out[0]["chk_estado"], "sin_ua")
+
+    def test_ua_en_wms_pero_sin_ubicacion_nuestra(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": ""}]
+        out = self.comparar(filas, [{"ua": "UA1", "ubicacion": "A-1"}])
+        self.assertEqual(out[0]["chk_estado"], "sin_ubicacion_nuestra")
+
+    def test_no_muta_la_lista_de_wms_ni_falla_con_ua_repetida(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": "A-1"}]
+        wms = [{"ua": "UA1", "ubicacion": "A-1"}, {"ua": "UA1", "ubicacion": "Z-9"}]
+        out = self.comparar(filas, wms)
+        # Se queda con la PRIMERA ocurrencia -- no revienta con UA duplicada.
+        self.assertEqual(out[0]["chk_estado"], "coincide")
+
+
+class TestConciliacionExcluyeEliminadas(unittest.TestCase):
+    """🔧 2026-09-26 (revisión post-merge, coordinador): el borrado lógico
+    quedó incompleto -- la conciliación seguía leyendo `mant_incidencias`
+    sin excluir `eliminada=1`, así que una incidencia eliminada seguía
+    contando como "nuestra BD" y la diferencia con el ERP/WMS nunca
+    desaparecía. Sin BD disponible en este entorno de test, se revisa el
+    SQL ARMADO (código fuente de la función) en vez de ejecutarlo -- mismo
+    criterio que el resto del archivo (funciones puras vía ast)."""
+
+    def test_conciliacion_excluye_eliminadas_del_where(self):
+        src = _fuente_de("mant_api_incidencias_conciliacion")
+        self.assertIn("FROM mant_incidencias WHERE estado='abierta' AND COALESCE(eliminada,0)=0", src,
+                       "la consulta de incidencias abiertas para la conciliación debe excluir eliminada=1")
+
+    def test_borrar_incidencia_no_permite_reeliminar(self):
+        src = _fuente_de("mant_api_incidencias_borrar")
+        self.assertIn("COALESCE(eliminada,0)=0", src)
+
+    def test_editar_incidencia_rechaza_eliminadas(self):
+        src = _fuente_de("mant_api_incidencias_editar")
+        self.assertIn('antes.get("eliminada")', src)
+
+    def test_solicitar_repuesto_de_incidencia_excluye_eliminadas(self):
+        src = _fuente_de("mant_api_incidencia_solicitar_repuesto")
+        self.assertIn("COALESCE(eliminada,0)=0", src)
+
+    def test_disponibles_repuesto_excluye_eliminadas(self):
+        src = _fuente_de("mant_api_incidencias_disponibles_repuesto")
+        self.assertIn("COALESCE(eliminada,0)=0", src)
+
+    def test_deduplicar_registra_log_antes_de_borrar(self):
+        # REGLA #5: aunque este endpoint SÍ hace hard delete (duplicados
+        # exactos del seed), debe llamar _inc_log ANTES del DELETE.
+        src = _fuente_de("mant_api_incidencias_deduplicar")
+        idx_log = src.index("_inc_log(")
+        idx_delete = src.index("DELETE FROM mant_incidencias")
+        self.assertLess(idx_log, idx_delete,
+                         "el log de auditoría debe escribirse ANTES del DELETE, no después")
 
 
 if __name__ == "__main__":

@@ -54969,6 +54969,40 @@ def init_mantenciones_tables():
                 except Exception:
                     pass
 
+            # 🔧 2026-09-26 (Daniel, sesión en vivo sobre Incidencias):
+            #   - `ubicacion`: la ubicación NUESTRA declarada dentro de Bodega 13
+            #     (para la comparativa contra CheckWMS que pidió en la tabla
+            #     principal). Se llena al buscar la UA en el modal.
+            #   - `eliminada`: soft-delete (REGLA #5 -- "nunca hard delete sin
+            #     log"). El DELETE real pasa a marcar esta columna, nunca borra
+            #     la fila; el log de auditoría queda en mant_incidencia_log
+            #     ANTES de marcarla.
+            #   - `mant_incidencia_fotos.tipo`: distingue foto de video para
+            #     poder subir hasta 5 fotos + 1 video (antes solo fotos).
+            for _mig in [
+                "ALTER TABLE mant_incidencias ADD COLUMN ubicacion VARCHAR(120) NULL "
+                "COMMENT 'Ubicación nuestra en Bodega 13, para comparar contra CheckWMS'",
+                "ALTER TABLE mant_incidencias ADD COLUMN eliminada TINYINT(1) NOT NULL DEFAULT 0",
+                "ALTER TABLE mant_incidencias ADD COLUMN eliminada_at DATETIME NULL",
+                "ALTER TABLE mant_incidencias ADD COLUMN eliminada_by VARCHAR(190) NULL",
+                "ALTER TABLE mant_incidencias ADD INDEX idx_eliminada (eliminada)",
+                "ALTER TABLE mant_incidencia_fotos ADD COLUMN tipo ENUM('foto','video') "
+                "NOT NULL DEFAULT 'foto'",
+                # 🔧 2026-09-26 (Daniel: modal según su macro Excel vieja).
+                # `sugerencia` es el campo "Sugerencia" de la macro -- DISTINTO
+                # de `recomendacion`, que ya se usa como la UA (compatibilidad
+                # de datos: no se toca `recomendacion`, se abre uno nuevo).
+                # `repuesto_stock_id` liga la incidencia a un repuesto real de
+                # la Bodega elegido con el buscador compartido RepBuscador.
+                "ALTER TABLE mant_incidencias ADD COLUMN sugerencia TEXT NULL "
+                "COMMENT 'Sugerencia/recomendación libre -- campo propio, distinto de recomendacion (=UA)'",
+                "ALTER TABLE mant_incidencias ADD COLUMN repuesto_stock_id INT NULL "
+                "COMMENT 'FK conceptual a mant_repuestos_stock.id, elegido con RepBuscador'",
+                "ALTER TABLE mant_incidencias ADD INDEX idx_inc_repstock (repuesto_stock_id)",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
+
             # ── Log de actividad ────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_logs (
@@ -63595,7 +63629,7 @@ def mant_api_incidencias_buscar_ua():
         try:
             previas = mysql_fetchall(
                 "SELECT id, motivo, estado, created_at FROM mant_incidencias "
-                " WHERE sku=%s AND (%s IS NULL OR id<>%s) "
+                " WHERE sku=%s AND (%s IS NULL OR id<>%s) AND COALESCE(eliminada,0)=0 "
                 " ORDER BY created_at DESC LIMIT 5",
                 (sku_base, excluir, excluir)) or []
         except Exception as _e:
@@ -63689,14 +63723,18 @@ def _inc_hallazgo_accion(h):
     - 'falta_registrar' siempre abre el alta prellenada (no depende de
       ids: nace justamente de NO tener incidencia todavía).
     - Cualquier otro tipo con `ids` no vacío abre esa incidencia a corregir.
-    - Sin ids y sin ser 'falta_registrar' -> None: no hay nada que
-      gestionar desde acá todavía (ej. "dif_erp" de un SKU que el ERP
-      reporta pero que nosotros nunca declaramos -- caso real, poco
-      común, documentado en INC_HALLAZGO_INFO como limitación conocida)."""
+    - 🔧 2026-09-26 (Daniel: "los hallazgos dif_erp sin ids... deben poder
+      registrarse"): 'dif_erp' y 'no_en_erp' SIN ids son un SKU que el ERP
+      (o el WMS) reporta pero que nosotros nunca declaramos -- antes
+      quedaban sin acción; ahora también abren el alta prellenada.
+    - Cualquier otro caso sin ids -> None: no hay nada que gestionar desde
+      acá todavía."""
     if h.get("tipo") == "falta_registrar":
         return "registrar"
     if h.get("ids"):
         return "ver"
+    if h.get("tipo") in ("dif_erp", "no_en_erp"):
+        return "registrar"
     return None
 
 
@@ -63760,7 +63798,8 @@ def mant_api_incidencias_conciliacion():
                 q = float(r.get("stFisico") or 0)
             except (TypeError, ValueError):
                 q = 0
-            e = wms_por_sku.setdefault(sku, {"cant": 0, "desc": r.get("descripcion"), "uas": []})
+            e = wms_por_sku.setdefault(sku, {"cant": 0, "desc": r.get("descripcion"),
+                                              "uas": [], "ubicacion": r.get("ubicacion")})
             e["cant"] += q
             if ua:
                 e["uas"].append(ua)
@@ -63769,7 +63808,7 @@ def mant_api_incidencias_conciliacion():
     try:
         incs = mysql_fetchall(
             "SELECT id, sku, descripcion, cantidad, motivo, estado, recomendacion "
-            "  FROM mant_incidencias WHERE estado='abierta'") or []
+            "  FROM mant_incidencias WHERE estado='abierta' AND COALESCE(eliminada,0)=0") or []
     except Exception as _e:
         print(f"[conciliacion] error MySQL: {_e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
@@ -63826,26 +63865,46 @@ def mant_api_incidencias_conciliacion():
         for sku in sorted(skus_todos):
             reg = inc_por_sku.get(sku, {}).get("cant", 0)
             erp = erp_por_sku.get(sku)
+            wsku = wms_por_sku.get(sku) or {}
             if erp is None:
                 if reg:   # lo tenemos declarado y el ERP no lo conoce
                     hallazgos.append({
                         "tipo": "no_en_erp", "gravedad": "error", "orden": 1,
                         "sku": sku,
-                        "descripcion": (wms_por_sku.get(sku) or {}).get("desc"),
+                        "descripcion": wsku.get("desc"),
                         "ids": inc_por_sku.get(sku, {}).get("ids", []),
                         "nuestra_bd": reg, "erp": None,
                         "detalle": (f"Tenemos {reg:g} unidad(es) declarada(s), pero el SKU "
                                     f"no tiene stock en la bodega {INC_BODEGA_ERP} del ERP Random."),
+                    })
+                elif wsku:
+                    # 🔧 2026-09-26 (Daniel: "los hallazgos dif_erp sin ids... SKU
+                    # que el ERP tiene y nosotros no -- deben poder registrarse").
+                    # Este es el caso simétrico: el WMS SÍ tiene el SKU (bodega
+                    # física real) pero ni nosotros ni el ERP lo conocen -- se
+                    # prellena con lo que trae el WMS, igual que "falta_registrar".
+                    hallazgos.append({
+                        "tipo": "no_en_erp", "gravedad": "error", "orden": 1,
+                        "sku": sku, "descripcion": wsku.get("desc"),
+                        "ids": [], "nuestra_bd": 0, "erp": None,
+                        "cantidad": max(1, int(wsku.get("cant") or 1)),
+                        "ua": (wsku.get("uas") or [None])[0], "ubicacion": wsku.get("ubicacion"),
+                        "detalle": (f"CheckWMS tiene {wsku.get('cant', 0):g} unidad(es) de este SKU en "
+                                    f"Bodega 13, pero ni nosotros ni el ERP Random lo tenemos declarado."),
                     })
                 continue
             if abs(erp - reg) > 0.001:
                 hallazgos.append({
                     "tipo": "dif_erp", "gravedad": "error", "orden": 0,
                     "sku": sku,
-                    "descripcion": (wms_por_sku.get(sku) or {}).get("desc"),
-                    "nuestra_bd": reg, "erp": erp, "wms": (wms_por_sku.get(sku) or {}).get("cant"),
+                    "descripcion": wsku.get("desc"),
+                    "nuestra_bd": reg, "erp": erp, "wms": wsku.get("cant"),
                     "delta": reg - erp,
                     "ids": inc_por_sku.get(sku, {}).get("ids", []),
+                    # Sugerencia de cantidad/UA/ubicación para prellenar el alta
+                    # cuando este hallazgo no tiene incidencia asociada todavía.
+                    "cantidad": max(1, int(round(abs(erp - reg)))),
+                    "ua": (wsku.get("uas") or [None])[0], "ubicacion": wsku.get("ubicacion"),
                     "detalle": (f"ERP Random dice {erp:g} y nosotros tenemos {reg:g} "
                                 f"declarada(s). Diferencia de {abs(reg - erp):g}."),
                 })
@@ -63934,6 +63993,25 @@ def mant_api_incidencias_conciliacion():
     })
 
 
+@app.route("/mantenciones/api/incidencias/motivos-frecuentes", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_motivos_frecuentes():
+    """🔧 2026-09-26 (Daniel, sobre su macro Excel vieja): "chips de motivos
+    frecuentes seleccionables... top ~8". Agrupa por motivo EXACTO (no hay
+    NLP acá) y devuelve los 8 más repetidos, excluyendo vacíos/demasiado
+    cortos (mismo mínimo de 10 caracteres que exige el campo)."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT motivo, COUNT(*) AS n FROM mant_incidencias "
+            " WHERE COALESCE(eliminada,0)=0 AND CHAR_LENGTH(TRIM(COALESCE(motivo,''))) >= 10 "
+            " GROUP BY motivo ORDER BY n DESC, motivo ASC LIMIT 8") or []
+    except Exception as e:
+        print(f"[motivos_frecuentes] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar los motivos frecuentes."}), 500
+    return jsonify({"ok": True, "motivos": [f["motivo"] for f in filas if f.get("motivo")]})
+
+
 @app.route("/mantenciones/incidencias")
 @app.route("/servicio-tecnico/incidencias")
 @_mant_required
@@ -63948,12 +64026,74 @@ def mant_incidencias_page():
 
 def _mant_incidencia_row(r):
     r = dict(r)
-    for k in ("created_at", "updated_at"):
+    for k in ("created_at", "updated_at", "eliminada_at"):
         if r.get(k):
             r[k] = r[k].strftime("%Y-%m-%d %H:%M:%S")
     if r.get("fecha_resolucion"):
         r["fecha_resolucion"] = r["fecha_resolucion"].strftime("%Y-%m-%d")
     return r
+
+
+def _inc_comparativa_ua(rows, wms_rows):
+    """🔧 2026-09-26 (Daniel: "necesito hacer una comparativa de la
+    ubicación y de la UA de Check"). Anota cada fila con el semáforo de
+    comparación contra CheckWMS: función PURA y testeable sin red --
+    `wms_rows` ya viene resuelto (lista de dicts estilo CheckWMS con
+    ua/ubicacion) o None cuando CheckWMS no respondió (la tabla igual
+    carga, con "Check no disponible" en vez de bloquear todo).
+
+    Estados: 'coincide' (verde), 'distinta' (ámbar), 'no_esta' (rojo,
+    la UA no está en el WMS), 'sin_ua'/'sin_ubicacion_nuestra' (gris, no
+    hay con qué comparar), 'sin_datos' (gris, CheckWMS no respondió)."""
+    if wms_rows is None:
+        for r in rows:
+            r["chk_estado"], r["chk_ubicacion"], r["chk_ua"] = "sin_datos", None, None
+        return rows
+    por_ua = {}
+    for w in wms_rows:
+        ua = (w.get("ua") or "").strip().upper()
+        if ua and ua not in por_ua:
+            por_ua[ua] = w
+    for r in rows:
+        ua = _checkwms_norm_ua(r.get("recomendacion") or "")
+        r["chk_ua"] = ua or None
+        if not ua:
+            r["chk_estado"], r["chk_ubicacion"] = "sin_ua", None
+            continue
+        w = por_ua.get(ua)
+        if not w:
+            r["chk_estado"], r["chk_ubicacion"] = "no_esta", None
+            continue
+        r["chk_ubicacion"] = w.get("ubicacion")
+        nuestra = (r.get("ubicacion") or "").strip().upper()
+        chk = (w.get("ubicacion") or "").strip().upper()
+        if nuestra and chk:
+            r["chk_estado"] = "coincide" if nuestra == chk else "distinta"
+        else:
+            r["chk_estado"] = "sin_ubicacion_nuestra"
+    return rows
+
+
+# Columnas filtrables por el header de la tabla (REGLA #4.3, patrón
+# Etiquetas: filtro combinable con el buscador general `q`, y al limpiar
+# un filtro la tabla se recarga -- eso lo maneja el frontend re-pidiendo
+# siempre con el valor actual, vacío o no).
+_INC_COLUMNAS_FILTRO = {
+    "f_ua": "recomendacion", "f_sku": "sku", "f_descripcion": "descripcion",
+    "f_motivo": "motivo",
+}
+_INC_COLUMNAS_ORDEN = {
+    "ua": "recomendacion", "sku": "sku", "descripcion": "descripcion",
+    "cantidad": "cantidad", "motivo": "motivo",
+    "estado": "estado", "fecha_resolucion": "fecha_resolucion",
+    "created_at": "created_at",
+}
+# 🔧 2026-09-26 (revisión post-merge, Daniel: "pon filtro en TODAS las
+# columnas de la tabla principal que tengan dato filtrable"). Los estados
+# del semáforo que puede pedir el select de "Ubicación/UA vs Check" --
+# mismos valores que arma `_inc_comparativa_ua`.
+_INC_CHK_ESTADOS = ("coincide", "distinta", "no_esta", "sin_ua",
+                     "sin_ubicacion_nuestra", "sin_datos")
 
 
 @app.route("/mantenciones/api/incidencias", methods=["GET"])
@@ -63974,8 +64114,14 @@ def mant_api_incidencias_list():
     # más que lo cambien, pero que no le den scroll" (REGLA #4.3).
     if page_size not in (10, 25, 50, 100, 200):
         page_size = 10
+    order_by = _INC_COLUMNAS_ORDEN.get((request.args.get("order_by") or "").strip(), "estado")
+    order_dir = "ASC" if (request.args.get("order_dir") or "").strip().lower() == "asc" else "DESC"
+    if order_by == "estado":
+        order_sql = "estado ASC, created_at DESC"
+    else:
+        order_sql = f"{order_by} {order_dir}"
 
-    where = []
+    where = ["COALESCE(eliminada,0) = 0"]
     params = []
     if q:
         where.append("(sku LIKE %s OR descripcion LIKE %s OR motivo LIKE %s)")
@@ -63984,6 +64130,56 @@ def mant_api_incidencias_list():
     if estado in ("abierta", "resuelta"):
         where.append("estado = %s")
         params.append(estado)
+    # 🔧 2026-09-26 (Daniel: "filtre resultados por las columnas del
+    # header de la tabla"), combinable con `q`.
+    for arg, col in _INC_COLUMNAS_FILTRO.items():
+        val = (request.args.get(arg) or "").strip()
+        if val:
+            where.append(f"{col} LIKE %s")
+            params.append(f"%{val}%")
+    f_cantidad = (request.args.get("f_cantidad") or "").strip()
+    if f_cantidad:
+        try:
+            where.append("cantidad = %s")
+            params.append(int(f_cantidad))
+        except (TypeError, ValueError):
+            pass   # texto no numérico en el filtro de cantidad -- se ignora, no rompe la consulta
+    f_fecha = (request.args.get("f_fecha") or "").strip()
+    if f_fecha:
+        where.append("fecha_resolucion = %s")
+        params.append(f_fecha)
+
+    # 🔧 2026-09-26 (revisión post-merge, Daniel: "select de semáforo si es
+    # factible server-side"). El estado del semáforo (chk_estado) no vive
+    # en la BD -- se calcula cruzando `recomendacion`/`ubicacion` contra
+    # CheckWMS (_inc_comparativa_ua). Para que el filtro sea compatible con
+    # la paginación SQL, se resuelve ANTES: se buscan los ids que matchean
+    # el resto de filtros (sin paginar) y se cruzan contra CheckWMS UNA
+    # sola vez; el resultado se agrega como `id IN (...)` al WHERE real.
+    f_chk = (request.args.get("f_chk") or "").strip()
+    wms_rows_prefiltro = None
+    if f_chk in _INC_CHK_ESTADOS:
+        where_sql_previo = "WHERE " + " AND ".join(where)
+        previas = mysql_fetchall(
+            f"SELECT id, recomendacion, ubicacion FROM mant_incidencias {where_sql_previo} "
+            f"LIMIT 5000", params) or []
+        try:
+            wms_rows_prefiltro = _checkwms_stock_rows()
+            wms_rows_prefiltro = wms_rows_prefiltro if wms_rows_prefiltro else None
+        except Exception as _e:
+            print(f"[incidencias filtro chk] CheckWMS no disponible: {_e}", flush=True)
+            wms_rows_prefiltro = None
+        anotadas = _inc_comparativa_ua(previas, wms_rows_prefiltro)
+        ids_match = [r["id"] for r in anotadas if r.get("chk_estado") == f_chk]
+        if not ids_match:
+            return jsonify({
+                "ok": True, "rows": [], "total": 0, "page": 1, "page_size": page_size,
+                "total_pages": 1, "checkwms_ok": wms_rows_prefiltro is not None,
+            })
+        marcadores = ",".join(["%s"] * len(ids_match))
+        where.append(f"id IN ({marcadores})")
+        params = params + ids_match
+
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     db = get_db()
@@ -63993,15 +64189,51 @@ def mant_api_incidencias_list():
         offset = (page - 1) * page_size
         cur.execute(
             f"""SELECT * FROM mant_incidencias {where_sql}
-                ORDER BY estado ASC, created_at DESC
+                ORDER BY {order_sql}
                 LIMIT %s OFFSET %s""",
             params + [page_size, offset],
         )
         rows = [_mant_incidencia_row(r) for r in cur.fetchall()]
+
+        # Foto principal por incidencia (miniatura en la tabla, Daniel
+        # 2026-09-26: "mostrar en la tabla una miniatura de la foto
+        # principal") -- una sola consulta para toda la página.
+        ids = [r["id"] for r in rows]
+        fotos_por_inc = {}
+        if ids:
+            marcadores = ",".join(["%s"] * len(ids))
+            cur.execute(
+                f"""SELECT incidencia_id, gcs_key FROM mant_incidencia_fotos
+                    WHERE incidencia_id IN ({marcadores}) AND tipo='foto'
+                    ORDER BY incidencia_id, orden""", ids)
+            for f in cur.fetchall():
+                fotos_por_inc.setdefault(f["incidencia_id"], f["gcs_key"])
+    for r in rows:
+        gk = fotos_por_inc.get(r["id"])
+        r["foto_principal"] = ("/f/" + gk) if gk else None
+
+    # Comparativa UA/Ubicación vs CheckWMS SOLO de la página visible (Daniel
+    # 2026-09-26: "no llames una vez por fila... limita a la página"). El
+    # cliente de CheckWMS (`_checkwms_stock_rows`) ya cachea la respuesta
+    # completa 1h -- una llamada cubre toda la tabla, no una por fila. Si ya
+    # se consultó arriba para el filtro `f_chk`, se reutiliza esa misma
+    # respuesta (sigue viniendo del mismo cache, pero evita un segundo golpe).
+    if f_chk in _INC_CHK_ESTADOS:
+        wms_rows = wms_rows_prefiltro
+    else:
+        try:
+            wms_rows = _checkwms_stock_rows()
+            wms_rows = wms_rows if wms_rows else None
+        except Exception as _e:
+            print(f"[incidencias comparativa] CheckWMS no disponible: {_e}", flush=True)
+            wms_rows = None
+    rows = _inc_comparativa_ua(rows, wms_rows)
+
     total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
     return jsonify({
         "ok": True, "rows": rows, "total": total,
         "page": page, "page_size": page_size, "total_pages": total_pages,
+        "checkwms_ok": wms_rows is not None,
     })
 
 
@@ -64025,6 +64257,8 @@ def mant_api_incidencias_crear():
     if stock_repuesto not in ("hay", "no_hay", None):
         stock_repuesto = None
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+    rep_stock_id = str(data.get("repuesto_stock_id") or "").strip()
+    rep_stock_id = int(rep_stock_id) if rep_stock_id.isdigit() else None
 
     db = get_db()
     with db.cursor() as cur:
@@ -64032,13 +64266,17 @@ def mant_api_incidencias_crear():
             """INSERT INTO mant_incidencias
                (sku, descripcion, cantidad, motivo, req_repuesto,
                 descripcion_repuesto, stock_repuesto, observacion,
-                fecha_resolucion, recomendacion, created_by)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                fecha_resolucion, recomendacion, ubicacion, sugerencia,
+                repuesto_stock_id, created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (sku or None, descripcion, cantidad,
              (data.get("motivo") or "").strip() or None,
              req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
              stock_repuesto, (data.get("observacion") or "").strip() or None,
              fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
+             (data.get("ubicacion") or "").strip() or None,
+             (data.get("sugerencia") or "").strip() or None,
+             rep_stock_id,
              current_username()),
         )
         db.commit()
@@ -64069,6 +64307,8 @@ def mant_api_incidencias_editar(iid):
     if estado not in ("abierta", "resuelta"):
         estado = "abierta"
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+    rep_stock_id = str(data.get("repuesto_stock_id") or "").strip()
+    rep_stock_id = int(rep_stock_id) if rep_stock_id.isdigit() else None
     nuevos = {
         "sku": (data.get("sku") or "").strip() or None,
         "descripcion": descripcion,
@@ -64080,11 +64320,18 @@ def mant_api_incidencias_editar(iid):
         "observacion": (data.get("observacion") or "").strip() or None,
         "fecha_resolucion": fecha_resolucion,
         "recomendacion": (data.get("recomendacion") or "").strip() or None,
+        "ubicacion": (data.get("ubicacion") or "").strip() or None,
+        "sugerencia": (data.get("sugerencia") or "").strip() or None,
+        "repuesto_stock_id": rep_stock_id,
         "estado": estado,
     }
     # Snapshot previo para la bitácora (Daniel: "trazable"). Solo se
     # registran los campos que REALMENTE cambiaron.
     antes = mysql_fetchone("SELECT * FROM mant_incidencias WHERE id=%s", (iid,)) or {}
+    # 🔧 2026-09-26 (revisión post-merge): una incidencia eliminada
+    # (soft-delete) no se puede editar -- se trata igual que "no existe".
+    if not antes or antes.get("eliminada"):
+        return jsonify({"ok": False, "error": "Esa incidencia fue eliminada y ya no se puede editar."}), 404
 
     db = get_db()
     with db.cursor() as cur:
@@ -64092,12 +64339,14 @@ def mant_api_incidencias_editar(iid):
             """UPDATE mant_incidencias SET
                  sku=%s, descripcion=%s, cantidad=%s, motivo=%s,
                  req_repuesto=%s, descripcion_repuesto=%s, stock_repuesto=%s,
-                 observacion=%s, fecha_resolucion=%s, recomendacion=%s,
+                 observacion=%s, fecha_resolucion=%s, recomendacion=%s, ubicacion=%s,
+                 sugerencia=%s, repuesto_stock_id=%s,
                  estado=%s, updated_by=%s
                WHERE id=%s""",
             (nuevos["sku"], nuevos["descripcion"], nuevos["cantidad"], nuevos["motivo"],
              nuevos["req_repuesto"], nuevos["descripcion_repuesto"], nuevos["stock_repuesto"],
              nuevos["observacion"], nuevos["fecha_resolucion"], nuevos["recomendacion"],
+             nuevos["ubicacion"], nuevos["sugerencia"], nuevos["repuesto_stock_id"],
              nuevos["estado"], current_username(), iid),
         )
         db.commit()
@@ -64115,12 +64364,26 @@ def mant_api_incidencias_editar(iid):
 @_mant_required
 @_no_tecnico_salvo_taller
 def mant_api_incidencias_borrar(iid):
+    """🔧 2026-09-26 (Daniel, CRUD de "Revisar diferencias"): "debo borrar
+    algunas [incidencias]". REGLA #5: soft-delete + audit log ANTES de
+    borrar (nunca hard delete sin log). La fila queda marcada `eliminada=1`
+    -- no se hace DROP de datos reales; el listado (GET) y la conciliación
+    ya no la muestran."""
     perms = g.get("permissions") or {}
     if not (perms.get("admin") or perms.get("superadmin")):
         return jsonify({"ok": False, "error": "Solo un administrador puede eliminar incidencias."}), 403
+    inc = mysql_fetchone("SELECT id, sku, descripcion, estado FROM mant_incidencias "
+                          " WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
+    if not inc:
+        return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
+    # El log queda ANTES de tocar la fila (REGLA #5).
+    _inc_log(iid, "eliminada", "eliminada", "0",
+             f"1 (sku={inc.get('sku') or '(sin SKU)'}, {inc.get('descripcion') or ''})")
     db = get_db()
     with db.cursor() as cur:
-        cur.execute("DELETE FROM mant_incidencias WHERE id=%s", (iid,))
+        cur.execute(
+            "UPDATE mant_incidencias SET eliminada=1, eliminada_at=NOW(), eliminada_by=%s WHERE id=%s",
+            (current_username(), iid))
         db.commit()
     return jsonify({"ok": True})
 
@@ -64178,6 +64441,13 @@ def mant_api_incidencias_deduplicar():
         "SELECT DISTINCT incidencia_id FROM mant_incidencia_fotos") or [])}
     a_borrar = [i for i in a_borrar if i not in con_foto]
 
+    # 🔧 2026-09-26 (revisión post-merge, REGLA #5): este endpoint SÍ hace
+    # hard delete (son duplicados exactos del seed, no incidencias reales
+    # -- distinto del soft-delete de mant_api_incidencias_borrar), pero el
+    # log de auditoría va ANTES de borrar igual, uno por id.
+    for _iid in a_borrar:
+        _inc_log(_iid, "eliminada_dedup", "eliminada", "0", "1 (duplicado exacto del seed de migración)")
+
     db = get_db()
     with db.cursor() as cur:
         for chunk_start in range(0, len(a_borrar), 200):
@@ -64190,7 +64460,8 @@ def mant_api_incidencias_deduplicar():
     return jsonify({"ok": True, "borradas": len(a_borrar), "restantes": restantes})
 
 
-INC_MAX_FOTOS = 3   # Daniel 2026-08-03: "o al menos 3"
+INC_MAX_FOTOS = 5   # 🔧 2026-09-26 (Daniel): "hasta cinco fotos y tal vez un video" — sube de 3 a 5.
+INC_MAX_VIDEOS = 1  # 🔧 2026-09-26: un video corto por incidencia (mismo límite que Repuestos, _OTREP_MAX_VIDEO).
 
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/ficha", methods=["GET"])
@@ -64212,7 +64483,7 @@ def mant_api_incidencia_ficha(iid):
     sku = (inc.get("sku") or "").strip()
 
     fotos = mysql_fetchall(
-        "SELECT id, gcs_key, orden FROM mant_incidencia_fotos "
+        "SELECT id, gcs_key, orden, tipo FROM mant_incidencia_fotos "
         " WHERE incidencia_id=%s ORDER BY orden", (iid,)) or []
 
     # Foto del catálogo por SKU -- cero esfuerzo para el usuario.
@@ -64253,9 +64524,11 @@ def mant_api_incidencia_ficha(iid):
     return jsonify({
         "ok": True,
         "incidencia": inc,
-        "fotos": [{"id": f["id"], "url": "/f/" + f["gcs_key"], "orden": f["orden"]} for f in fotos],
+        "fotos": [{"id": f["id"], "url": "/f/" + f["gcs_key"], "orden": f["orden"],
+                   "tipo": f.get("tipo") or "foto"} for f in fotos],
         "foto_catalogo": foto_catalogo,
         "max_fotos": INC_MAX_FOTOS,
+        "max_videos": INC_MAX_VIDEOS,
         "cuadre": _inc_cuadre_stock(sku, int(inc.get("cantidad") or 0)),
         "clasificacion": _inc_clasificacion_sku(sku),
         "log": log,
@@ -64330,23 +64603,34 @@ def _inc_log(iid, accion, campo=None, antes=None, despues=None):
 @_mant_required
 @_no_tecnico_salvo_taller
 def mant_api_incidencia_foto_subir(iid):
-    """Sube una foto de evidencia (máx 3). Mismo patrón que el Catálogo."""
-    if not mysql_fetchone("SELECT id FROM mant_incidencias WHERE id=%s", (iid,)):
+    """Sube evidencia de la incidencia: hasta INC_MAX_FOTOS fotos +
+    INC_MAX_VIDEOS video (🔧 2026-09-26, Daniel: "hasta cinco fotos y tal
+    vez un video"). Reusa `_otrep_clasificar_archivo` (mismo validador y
+    mismo límite de tamaño de video que Repuestos, _OTREP_MAX_VIDEO) para
+    no duplicar reglas de validación."""
+    if not mysql_fetchone(
+            "SELECT id FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,)):
         return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
     f = request.files.get("file") or request.files.get("archivo")
     if not f or not f.filename:
         return jsonify({"ok": False, "error": "No llegó ningún archivo."}), 400
+    tipo, e_arch = _otrep_clasificar_archivo(f)
+    if e_arch:
+        return jsonify({"ok": False, "error": e_arch}), 400
     n = int((mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_incidencia_fotos WHERE incidencia_id=%s",
-        (iid,)) or {}).get("n") or 0)
-    if n >= INC_MAX_FOTOS:
+        "SELECT COUNT(*) AS n FROM mant_incidencia_fotos WHERE incidencia_id=%s AND tipo=%s",
+        (iid, tipo)) or {}).get("n") or 0)
+    tope = INC_MAX_FOTOS if tipo == "foto" else INC_MAX_VIDEOS
+    if n >= tope:
         return jsonify({"ok": False,
-                        "error": f"Máximo {INC_MAX_FOTOS} fotos por incidencia."}), 400
+                        "error": (f"Máximo {INC_MAX_FOTOS} fotos por incidencia." if tipo == "foto"
+                                  else f"Máximo {INC_MAX_VIDEOS} video por incidencia.")}), 400
     try:
-        res = _uploader_upload(f, folder="incidencias", resource_type="image")
+        res = _uploader_upload(f, folder="incidencias",
+                                resource_type=("video" if tipo == "video" else "image"))
     except Exception as _e:
         print(f"[inc_foto_subir] iid={iid}: {_e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo subir la foto."}), 500
+        return jsonify({"ok": False, "error": "No se pudo subir el archivo."}), 500
     key = res.get("public_id")
     if not key:
         return jsonify({"ok": False, "error": "Subida sin resultado válido."}), 500
@@ -64356,6 +64640,8 @@ def mant_api_incidencia_foto_subir(iid):
     # table ... for update in FROM clause") -- verificado en producción
     # 2026-08-03 contra los logs de Cloud Run. El reintento cubre la carrera
     # de dos subidas simultáneas chocando contra UNIQUE(incidencia_id, orden).
+    # `orden` sigue siendo único por incidencia sin importar el tipo (fotos
+    # y video comparten la misma numeración).
     _last = None
     for _intento in range(5):
         try:
@@ -64364,17 +64650,17 @@ def mant_api_incidencia_foto_subir(iid):
                 " WHERE incidencia_id=%s", (iid,)) or {}
             _orden = int(_fila.get("prox") or 1) + _intento
             mysql_execute(
-                "INSERT INTO mant_incidencia_fotos (incidencia_id, gcs_key, orden, created_by) "
-                "VALUES (%s,%s,%s,%s)",
-                (iid, key, _orden, current_username()))
+                "INSERT INTO mant_incidencia_fotos (incidencia_id, gcs_key, orden, tipo, created_by) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (iid, key, _orden, tipo, current_username()))
             break
         except Exception as _e:
             _last = _e
     else:
         print(f"[inc_foto_subir] no se pudo registrar iid={iid}: {_last}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo registrar la foto."}), 500
-    _inc_log(iid, "foto_agregada", "fotos", None, key)
-    return jsonify({"ok": True, "url": "/f/" + key})
+        return jsonify({"ok": False, "error": "No se pudo registrar el archivo."}), 500
+    _inc_log(iid, "foto_agregada" if tipo == "foto" else "video_agregado", "fotos", None, key)
+    return jsonify({"ok": True, "url": "/f/" + key, "tipo": tipo})
 
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/fotos/<int:fid>", methods=["DELETE"])
@@ -64382,13 +64668,14 @@ def mant_api_incidencia_foto_subir(iid):
 @_no_tecnico_salvo_taller
 def mant_api_incidencia_foto_borrar(iid, fid):
     foto = mysql_fetchone(
-        "SELECT gcs_key FROM mant_incidencia_fotos WHERE id=%s AND incidencia_id=%s",
+        "SELECT gcs_key, tipo FROM mant_incidencia_fotos WHERE id=%s AND incidencia_id=%s",
         (fid, iid))
     if not foto:
         return jsonify({"ok": False, "error": "Foto no encontrada."}), 404
     mysql_execute("DELETE FROM mant_incidencia_fotos WHERE id=%s", (fid,))
     try:
-        _uploader_destroy(foto["gcs_key"])
+        _uploader_destroy(foto["gcs_key"],
+                           resource_type=("video" if foto.get("tipo") == "video" else "image"))
     except Exception:
         pass   # el registro ya se borró; el huérfano en GCS no bloquea
     _inc_log(iid, "foto_eliminada", "fotos", foto["gcs_key"], None)
@@ -64412,7 +64699,8 @@ def mant_api_incidencia_solicitar_repuesto(iid):
     Body multipart: repuesto_stock_id (opcional, liga a bodega) |
     repuesto_nombre (manual), cantidad, motivo (≥10 chars, el mismo texto
     de "Motivo" del wizard sirve), evidencia (obligatoria, foto o video)."""
-    inc = mysql_fetchone("SELECT * FROM mant_incidencias WHERE id=%s", (iid,))
+    inc = mysql_fetchone(
+        "SELECT * FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
     if not inc:
         return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
     fd = request.form
@@ -89989,7 +90277,7 @@ def mant_api_incidencias_disponibles_repuesto():
     exponer esta pestaña en la OT del técnico por ahora"."""
     q = (request.args.get("q") or "").strip()
     palabras = [p for p in q.split() if p][:8]
-    where = ["estado='abierta'", "cantidad > 0"]
+    where = ["estado='abierta'", "cantidad > 0", "COALESCE(eliminada,0)=0"]
     params = []
     for p in palabras:
         where.append("(sku LIKE %s OR descripcion LIKE %s OR observacion LIKE %s)")
@@ -90174,9 +90462,12 @@ def repstock_solicitud_manual():
                 return jsonify({"ok": False, "error":
                                 "Un repuesto no puede venir de la Bodega y de una Incidencia a la vez."}), 400
             incidencia = mysql_fetchone(
-                "SELECT id, sku, descripcion, cantidad, estado FROM mant_incidencias WHERE id=%s",
+                "SELECT id, sku, descripcion, cantidad, estado, eliminada FROM mant_incidencias WHERE id=%s",
                 (int(inc_id_raw),))
-            if not incidencia or incidencia.get("estado") != "abierta":
+            # 🔧 2026-09-26 (revisión post-merge): una incidencia eliminada
+            # (soft-delete) no puede seguir sirviendo de origen de repuesto
+            # -- se trata igual que "no existe".
+            if not incidencia or incidencia.get("estado") != "abierta" or incidencia.get("eliminada"):
                 return jsonify({"ok": False, "error":
                                 "Esa incidencia ya no está abierta o no existe."}), 400
             _tomadas_inc = mysql_fetchall(

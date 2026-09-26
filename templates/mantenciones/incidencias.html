@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Incidencias — ILUS{% endblock %}
+{# 🔧 2026-09-26: motor de búsqueda de repuestos COMPARTIDO (mismo que
+   /repuestos y la OT) para elegir un repuesto real de la Bodega desde la
+   tarjeta "Detalle" del modal de incidencia. #}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='repuestos_buscador.css') }}">
+{% endblock %}
 {% block content %}
 
 <div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -61,75 +67,86 @@
         <h5 class="modal-title" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      {# ── Stepper (2026-08-03, Daniel: "algo bien dinámico, bonito,
-         colorido, que sea un paso a paso, como siempre hemos venido
-         trabajando"). Orden deliberado: la UA va PRIMERO porque es
-         obligatoria para guardar y porque autocompleta el producto,
-         evitando tipeo manual y errores. #}
-      <div class="inc-steps" id="incSteps">
+      {# 🔧 2026-09-26 (Daniel, en vivo: "me gustaría que toda la información
+         se viera y no el paso a paso, para saber qué debo arreglar"). El
+         wizard de 5 pasos (2026-08-03) se reemplaza por UNA vista con las
+         5 tarjetas SIEMPRE visibles (abajo, `.inc-pane` ya no se ocultan) --
+         esta barra deja de ser un navegador de pasos y pasa a ser el
+         SEMÁFORO de completitud de cada tarjeta (verde=completa,
+         ámbar=falta algo opcional, rojo=falta algo obligatorio). Clic en
+         un ítem hace scroll a esa tarjeta. Ninguna función del wizard se
+         perdió: buscar UA/autocompletar, fotos, eliminar y guardar siguen
+         siendo las mismas (REGLA #4.2). #}
+      {#- 🔧 2026-09-26 (Daniel, sobre su macro Excel vieja): reordena las
+          tarjetas siguiendo su estructura original -- OBLIGATORIO (UA +
+          Ubicación + SKU + Descripción + Cantidad, todo junto), Motivo,
+          Sugerencia (campo nuevo, separado de la UA), Detalle (repuesto +
+          resolución + observación), Evidencia. -#}
+      <div class="inc-steps libre" id="incSteps">
         <div class="inc-step" data-step="1">
-          <span class="inc-step-n"><i class="bi bi-upc-scan"></i></span>
-          <span class="inc-step-t">Unidad<small>de almacenamiento</small></span>
+          <span class="inc-step-n"><i class="bi bi-box-seam"></i></span>
+          <span class="inc-step-t">Obligatorio<small>UA, SKU, cantidad</small></span>
         </div>
         <div class="inc-step" data-step="2">
-          <span class="inc-step-n"><i class="bi bi-box-seam"></i></span>
-          <span class="inc-step-t">Producto<small>SKU y cantidad</small></span>
-        </div>
-        <div class="inc-step" data-step="3">
           <span class="inc-step-n"><i class="bi bi-chat-left-quote"></i></span>
           <span class="inc-step-t">Motivo<small>qué pasó</small></span>
         </div>
+        <div class="inc-step" data-step="3">
+          <span class="inc-step-n"><i class="bi bi-lightbulb"></i></span>
+          <span class="inc-step-t">Sugerencia<small>opcional</small></span>
+        </div>
         <div class="inc-step" data-step="4">
           <span class="inc-step-n"><i class="bi bi-wrench-adjustable"></i></span>
-          <span class="inc-step-t">Detalle<small>opcional</small></span>
+          <span class="inc-step-t">Detalle<small>repuesto y notas</small></span>
         </div>
         <div class="inc-step" data-step="5">
           <span class="inc-step-n"><i class="bi bi-camera"></i></span>
-          <span class="inc-step-t">Evidencia<small>fotos y cuadre</small></span>
+          <span class="inc-step-t">Evidencia<small>fotos y video</small></span>
         </div>
       </div>
-      <div class="inc-progress"><div class="inc-progress-bar" id="incProgressBar"></div></div>
+      <div id="incFaltan" class="inc-faltan" hidden></div>
 
       <div class="modal-body">
         <input type="hidden" id="incId">
+        <input type="hidden" id="incRepuestoStockId">
 
-        {# ══ PASO 1 — UA (obligatoria) ══ #}
+        {# ══ OBLIGATORIO: UA + Ubicación + SKU + Descripción + Cantidad ══
+           🔧 2026-09-26 (Daniel, sobre su macro Excel: "bloque OBLIGATORIO:
+           SKU, Descripción, Cantidad" + UA/Ubicación, todo junto en una
+           sola tarjeta -- ya no repartido en "Unidad" y "Producto"). #}
         <section class="inc-pane" data-pane="1">
           <div class="inc-pane-head inc-c1">
             <i class="bi bi-upc-scan"></i>
-            <div><b>¿En qué unidad de almacenamiento está?</b>
-              <small>Búscala y traemos el producto automáticamente desde el WMS.</small></div>
-          </div>
-          <div class="inc-campo" data-campo="incRecomendacion">
-            <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
-            <div class="input-group input-group-lg">
-              <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
-              <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
-                <i class="bi bi-search me-1"></i>Buscar</button>
-            </div>
-            <div class="form-text">
-              Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
-              del WMS y en el historial de movimientos.
-            </div>
-          </div>
-          <div id="incUaResultado" class="inc-resultado"></div>
-        </section>
-
-        {# ══ PASO 2 — Producto ══ #}
-        <section class="inc-pane" data-pane="2" hidden>
-          <div class="inc-pane-head inc-c2">
-            <i class="bi bi-box-seam"></i>
-            <div><b>¿Qué producto es y cuántas unidades?</b>
-              <small>Verifica lo que trajo el WMS y ajusta la cantidad afectada.</small></div>
+            <div><b>Datos obligatorios</b>
+              <small>UA y ubicación en Bodega 13, SKU, nombre completo y cantidad afectada.</small></div>
           </div>
           <div class="row g-3">
-            <div class="col-md-5 inc-campo" data-campo="incSku">
+            <div class="col-md-7 inc-campo" data-campo="incRecomendacion">
+              <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
+              <div class="input-group input-group-lg">
+                <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
+                <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
+                  <i class="bi bi-search me-1"></i>Buscar</button>
+              </div>
+              <div class="form-text">
+                Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
+                del WMS y en el historial de movimientos.
+              </div>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label">Ubicación en Bodega 13</label>
+              <input type="text" class="form-control" id="incUbicacion" placeholder="Ej: A-12-03">
+              <div class="form-text">Se completa sola al buscar la UA. Se compara contra CheckWMS en la tabla.</div>
+            </div>
+            <div id="incUaResultado" class="inc-resultado col-12"></div>
+            <div class="col-md-4 inc-campo" data-campo="incSku">
               <label class="form-label">SKU <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
               <input type="text" class="form-control" id="incSku" placeholder="Ej: TWMA305-140">
             </div>
-            <div class="col-md-7 inc-campo" data-campo="incDescripcion">
+            <div class="col-md-8 inc-campo" data-campo="incDescripcion">
               <label class="form-label">Nombre del producto <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
-              <input type="text" class="form-control" id="incDescripcion" required>
+              <textarea class="form-control" id="incDescripcion" rows="2" required
+                        placeholder="Nombre completo del producto -- no lo acortes, aunque sea largo."></textarea>
             </div>
             <div class="col-md-4 inc-campo" data-campo="incCantidad">
               <label class="form-label">Cantidad afectada <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
@@ -146,8 +163,8 @@
           </div>
         </section>
 
-        {# ══ PASO 3 — Motivo (el protagonista) ══ #}
-        <section class="inc-pane" data-pane="3" hidden>
+        {# ══ MOTIVO (el protagonista) ══ #}
+        <section class="inc-pane" data-pane="2">
           <div class="inc-pane-head inc-c3">
             <i class="bi bi-chat-left-quote"></i>
             <div><b>¿Qué pasó exactamente?</b>
@@ -162,22 +179,23 @@
               <span class="inc-contador" id="incMotivoCount">0</span>
             </div>
           </div>
+          {#- 🔧 2026-09-26 (Daniel, sobre su macro Excel: "chips de motivos
+              frecuentes... top ~8"): reemplaza los 5 chips fijos por los
+              motivos MÁS USADOS de verdad en mant_incidencias (se cargan
+              una vez, GET /mantenciones/api/incidencias/motivos-frecuentes)
+              + un chip "Otro" que solo enfoca el textarea. -#}
           <div class="inc-chips" id="incMotivoChips">
             <span class="inc-chip-lbl">Rápidos:</span>
-            <button type="button" class="inc-chip">Falta pieza</button>
-            <button type="button" class="inc-chip">Llegó dañado del proveedor</button>
-            <button type="button" class="inc-chip">Se sacó para cubrir garantía</button>
-            <button type="button" class="inc-chip">Devolución de cliente</button>
-            <button type="button" class="inc-chip">Faltante en despacho</button>
+            <span class="text-muted" style="font-size:.74rem">Cargando…</span>
           </div>
           {#- 🔧 2026-09-21 (Fase 2 -- Daniel: "la bodega de incidencias en la
               gestión de productos y motivos se puede solicitar un
               repuesto"). Va acá porque en este punto ya están completos el
-              producto (Paso 2: SKU/descripción/cantidad) y el motivo
-              (este paso) -- exactamente lo que pide una solicitud real.
-              Solo disponible sobre una incidencia YA GUARDADA (incId con
-              valor): pedir un repuesto para algo que todavía no existe en
-              la base no tiene a qué solicitud engancharse. -#}
+              producto (tarjeta Obligatorio) y el motivo (este paso) --
+              exactamente lo que pide una solicitud real. Solo disponible
+              sobre una incidencia YA GUARDADA (incId con valor): pedir un
+              repuesto para algo que todavía no existe en la base no tiene
+              a qué solicitud engancharse. -#}
           <div class="inc-rep-cta" id="incRepCta">
             <button type="button" class="btn btn-outline-dark" id="incBtnSolicitarRepuesto">
               <i class="bi bi-tools me-1"></i>Solicitar repuesto</button>
@@ -185,8 +203,22 @@
           </div>
         </section>
 
-        {# ══ PASO 4 — Detalle opcional ══ #}
-        <section class="inc-pane" data-pane="4" hidden>
+        {# ══ SUGERENCIA / RECOMENDACIÓN ══ 🔧 2026-09-26 (Daniel, sobre su
+           macro Excel: campo "Sugerencia" de la planilla vieja -- DISTINTO
+           de la UA, que ya vive en `recomendacion`/incRecomendacion; este es
+           un campo nuevo, `sugerencia`). #}
+        <section class="inc-pane" data-pane="3">
+          <div class="inc-pane-head inc-c2">
+            <i class="bi bi-lightbulb"></i>
+            <div><b>Sugerencia o recomendación</b>
+              <small>Opcional: qué harías tú, o qué le recomiendas al técnico/proveedor.</small></div>
+          </div>
+          <textarea class="form-control" id="incSugerencia" rows="4"
+                    placeholder="Ej: pedir al proveedor que revise el embalaje antes de despachar…"></textarea>
+        </section>
+
+        {# ══ DETALLE: repuesto + resolución + observación ══ #}
+        <section class="inc-pane" data-pane="4">
           <div class="inc-pane-head inc-c4">
             <i class="bi bi-wrench-adjustable"></i>
             <div><b>Detalle del repuesto y notas</b>
@@ -208,10 +240,26 @@
                 <option value="hay">Hay</option>
                 <option value="no_hay">No hay</option>
               </select>
+              <div class="form-text">Se calcula solo al elegir un repuesto de la bodega; editable si no hay match.</div>
             </div>
             <div class="col-md-4">
               <label class="form-label">Fecha de resolución</label>
               <input type="date" class="form-control" id="incFechaResolucion">
+            </div>
+            {#- 🔧 2026-09-26 (Daniel: "el tipo de repuesto se puede asociar de
+                la bodega de repuestos... hacerlo más interactivo"): motor
+                COMPARTIDO RepBuscador en modo selección, mismo que usan
+                /repuestos y la OT. Solo se muestra con "Requiere repuesto: Sí". -#}
+            <div class="col-12" id="incRepBuscadorWrap" style="display:none">
+              <label class="form-label">Elegir repuesto de la Bodega</label>
+              <div id="incRepBuscadorMount"></div>
+              <div class="d-flex align-items-center gap-2 mt-2" id="incRepSeleccionadoBox" style="display:none">
+                <span class="badge text-bg-light border" id="incRepSeleccionadoTxt"></span>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="incBtnQuitarRepSel">
+                  <i class="bi bi-x-lg"></i> Quitar</button>
+                <button type="button" class="btn btn-sm btn-ilus" id="incBtnSolicitarAhora">
+                  <i class="bi bi-send-check me-1"></i>Solicitar este repuesto ahora</button>
+              </div>
             </div>
             <div class="col-12">
               <label class="form-label">Descripción del repuesto</label>
@@ -220,8 +268,8 @@
             </div>
             <div class="col-12">
               <label class="form-label">Observación</label>
-              <textarea class="form-control" id="incObservacion" rows="3"
-                        placeholder="Notas internas, seguimiento con proveedor, etc."></textarea>
+              <textarea class="form-control" id="incObservacion" rows="4"
+                        placeholder="Notas internas, seguimiento con proveedor, etc. (texto grande, sin límite práctico)"></textarea>
             </div>
           </div>
         </section>
@@ -233,7 +281,7 @@
            "nosotros no tocamos sistemas, solo evidenciamos, y de manera
            automática se autogestiona con el proceso completo" -- por eso
            acá NO hay ningún botón que escriba en ERP ni en WMS. #}
-        <section class="inc-pane" data-pane="5" hidden>
+        <section class="inc-pane" data-pane="5">
           <div class="inc-pane-head inc-c5">
             <i class="bi bi-camera"></i>
             <div><b>Evidencia y cuadre de stock</b>
@@ -242,30 +290,34 @@
 
           <div id="incCuadre" class="inc-cuadre"></div>
 
+          {#- 🔧 2026-09-26 (Daniel: "tomar hasta cinco fotos y tal vez un
+              video"): dos disparadores separados -- uno de foto (cámara o
+              galería) y uno de video corto -- comparten la misma grilla de
+              miniaturas y el mismo botón "Agregar" (ver incPintarFotos). -#}
           <div class="inc-fotos-head">
-            <b>Fotos de la incidencia</b>
-            <span class="text-muted" id="incFotosCount">0 de 3</span>
+            <b>Evidencia (fotos y video)</b>
+            <span class="text-muted" id="incFotosCount">0 de 5 fotos · 0 de 1 video</span>
           </div>
           <div class="inc-fotos" id="incFotos"></div>
           <input type="file" id="incFotoInput" accept="image/*" capture="environment" hidden>
-          <div class="form-text">Hasta 3 fotos del daño o faltante. Se comprimen antes de subir.</div>
+          <input type="file" id="incVideoInput" accept="video/*" capture="environment" hidden>
+          <div class="form-text">Hasta 5 fotos + 1 video del daño o faltante (cámara o galería). Las fotos se comprimen antes de subir.</div>
 
           <div class="inc-bitacora" id="incBitacora"></div>
           <div class="inc-resumen" id="incResumen"></div>
         </section>
       </div>
 
+      {#- 🔧 2026-09-26: sin paso a paso, el footer se simplifica a
+          Eliminar / Cancelar / Guardar -- "Atrás" y "Siguiente" ya no
+          tienen sentido con las 5 tarjetas siempre visibles. -#}
       <div class="modal-footer inc-footer">
         {% if permissions.admin or permissions.superadmin %}
         <button type="button" class="btn btn-outline-danger me-auto" id="incBtnEliminar" style="display:none">
           <i class="bi bi-trash me-1"></i>Eliminar</button>
         {% endif %}
-        <button type="button" class="btn btn-secondary" id="incBtnAtras" style="display:none">
-          <i class="bi bi-chevron-left me-1"></i>Atrás</button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus" id="incBtnSiguiente">
-          Siguiente<i class="bi bi-chevron-right ms-1"></i></button>
-        <button type="button" class="btn btn-ilus" id="incBtnGuardar" style="display:none">
+        <button type="button" class="btn btn-ilus" id="incBtnGuardar">
           <i class="bi bi-check2-circle me-1"></i>Guardar incidencia</button>
       </div>
     </div>
@@ -377,23 +429,47 @@
 .inc-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626}
 .inc-pg-btn:disabled{opacity:.4;cursor:not-allowed}
 
-/* ══ Wizard paso a paso (2026-08-03) ══ */
+/* ══ 2026-09-26: filtros por columna (REGLA #4.3), miniatura, semáforo
+   de comparativa CheckWMS y acciones rápidas por fila ══ */
+.inc-th-filtros td{background:#fff;padding:6px 10px;border-bottom:2px solid #eaecf0}
+.inc-th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.inc-th-sort:hover{color:#fff;opacity:.85}
+.inc-th-sort i{font-size:.62rem;opacity:.55;margin-left:2px}
+.inc-th-sort.on i{opacity:1;color:var(--ilus-red,#dc2626)}
+.inc-th-filtros input.form-control-sm{font-size:.76rem;padding:3px 8px}
+.inc-foto-mini{width:36px;height:36px;object-fit:cover;border-radius:7px;border:1px solid #e5e7eb;cursor:zoom-in}
+.inc-chk{display:flex;flex-direction:column;gap:1px;font-size:.72rem;line-height:1.25;padding:2px 8px;
+  border-radius:8px;white-space:nowrap}
+.inc-chk small{font-weight:400;opacity:.85;white-space:normal}
+.inc-chk-ok{background:#dcfce7;color:#15803d}
+.inc-chk-warn{background:#fff8e1;color:#b45309}
+.inc-chk-bad{background:#fee2e2;color:#b91c1c}
+.inc-chk-nd{background:#f3f4f6;color:#6b7280}
+.inc-acciones{white-space:nowrap}
+.inc-mini-btn{border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:7px;
+  width:30px;height:30px;display:inline-grid;place-items:center;margin-right:4px;cursor:pointer}
+.inc-mini-btn:hover{border-color:#dc2626;color:#dc2626}
+.inc-mini-btn.danger:hover{background:#fee2e2}
+
+/* ══ 2026-09-26: barra de SEMÁFORO de completitud (reemplaza el stepper
+   de navegación 2026-08-03 -- ver comentario en el HTML). Verde=completa,
+   ámbar=falta algo opcional, rojo=falta algo obligatorio. ══ */
 .inc-steps{display:flex;gap:0;padding:14px 18px 0;background:#fafbfc;border-bottom:0;overflow-x:auto}
 .inc-step{flex:1;display:flex;align-items:center;gap:9px;padding:0 10px 12px;position:relative;
-  opacity:.45;transition:opacity .2s;min-width:132px}
-.inc-step.on,.inc-step.done{opacity:1}
+  opacity:.55;transition:opacity .2s;min-width:132px;cursor:pointer}
+.inc-step:hover{opacity:1}
+.inc-step.on,.inc-step.done,.inc-step.warn,.inc-step.falta{opacity:1}
 .inc-step-n{width:34px;height:34px;flex:0 0 34px;border-radius:50%;display:grid;place-items:center;
   background:#eef0f3;color:#9aa3ae;font-size:1rem;transition:background .25s,color .25s,transform .25s}
-.inc-step.on  .inc-step-n{background:var(--ilus-red,#dc2626);color:#fff;transform:scale(1.12);
-  box-shadow:0 0 0 5px rgba(220,38,38,.14)}
+.inc-step.on  .inc-step-n{transform:scale(1.12);box-shadow:0 0 0 5px rgba(15,23,42,.10)}
 .inc-step.done .inc-step-n{background:#16a34a;color:#fff}
+.inc-step.warn .inc-step-n{background:#f59e0b;color:#fff}
+.inc-step.falta .inc-step-n{background:var(--ilus-red,#dc2626);color:#fff}
 .inc-step-t{display:flex;flex-direction:column;line-height:1.15;font-size:.83rem;font-weight:700;color:#0f172a}
 .inc-step-t small{font-weight:500;font-size:.68rem;color:#6b7280}
-.inc-steps.libre .inc-step{cursor:pointer}
-.inc-steps.libre .inc-step:hover{opacity:1}
-.inc-progress{height:3px;background:#eef0f3}
-.inc-progress-bar{height:100%;width:25%;background:linear-gradient(90deg,#dc2626,#f97316);
-  transition:width .35s cubic-bezier(.4,0,.2,1)}
+.inc-faltan{margin:10px 18px 0;padding:9px 14px;border-radius:9px;font-size:.82rem;font-weight:600;
+  background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.inc-faltan.ok{background:#f0fdf4;color:#15803d;border-color:#bbf7d0}
 
 .inc-pane{animation:incFade .28s ease}
 @keyframes incFade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
@@ -433,6 +509,10 @@
   background:rgba(15,23,42,.72);color:#fff;font-size:.8rem;display:grid;place-items:center;cursor:pointer}
 .inc-foto-x:hover{background:#dc2626}
 .inc-foto-cat{border-style:dashed}
+.inc-foto-video{cursor:zoom-in;background:#0a0a0a}
+.inc-foto-video video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.inc-foto-play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:1.8rem;
+  text-shadow:0 1px 6px rgba(0,0,0,.5);pointer-events:none}
 .inc-foto-tag{position:absolute;left:0;right:0;bottom:0;background:rgba(15,23,42,.72);color:#fff;
   font-size:.62rem;text-align:center;padding:2px 0;letter-spacing:.03em}
 .inc-foto-add{aspect-ratio:1;border:2px dashed #d7dbe0;border-radius:11px;background:#fafbfc;color:#6b7280;
@@ -565,9 +645,22 @@
 }
 </style>
 
+<script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
 <script>
 (function(){
   var incPage = 1, incSize = 10, incQ = '', incEstado = '';
+  var incOrderBy = '', incOrderDir = '';
+  // 🔧 2026-09-26 (revisión post-merge, Daniel: "pon filtro en TODAS las
+  // columnas de la tabla principal que tengan dato filtrable"). f_ua/
+  // f_cantidad/f_fecha/f_chk se suman a los 3 de la primera vuelta.
+  var incFiltrosCol = {f_ua: '', f_sku: '', f_descripcion: '', f_motivo: '', f_cantidad: '', f_fecha: '', f_chk: ''};
+  // Se resuelve una sola vez en el render (no en cada fila) para no meter
+  // una condición de Jinja adentro de un string de JS -- más frágil de
+  // leer y de mantener que una bandera booleana simple.
+  var incCanDelete = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }};
+  // Mismos topes que app.py (INC_MAX_FOTOS/INC_MAX_VIDEOS) -- se usan solo
+  // como valor por defecto mientras llega la respuesta real del backend.
+  var INC_MAX_FOTOS = 5, INC_MAX_VIDEOS = 1;
   // FIX 2026-08-03 (Daniel: "no funciona ese boton"): bootstrap.bundle.js
   // se carga con `defer` en base.html -- si este <script> inline (que NO
   // es defer) corre `new bootstrap.Modal(...)` al parsear la página,
@@ -586,32 +679,154 @@
     return s.split(' ')[0].split('-').reverse().join('/');
   }
 
+  // 🔧 2026-09-26 (Daniel: "comparativa de la ubicación y de la UA de
+  // Check" -- semáforo verde/ámbar/rojo). `checkwms_ok` lo manda el
+  // backend: si CheckWMS no respondió, la tabla igual carga y esta
+  // columna avisa "Check no disponible" en vez de bloquear todo.
+  var INC_CHK_INFO = {
+    coincide:  {cls:'ok',    txt:'Coincide'},
+    distinta:  {cls:'warn',  txt:'Distinta'},
+    no_esta:   {cls:'bad',   txt:'No está en Check'},
+    sin_ua:    {cls:'nd',    txt:'Sin UA declarada'},
+    sin_ubicacion_nuestra: {cls:'nd', txt:'Sin ubicación nuestra'},
+    sin_datos: {cls:'nd',    txt:'Check no disponible'},
+  };
+
+  function incChkCelda(r, checkwmsOk){
+    var info = INC_CHK_INFO[r.chk_estado] || INC_CHK_INFO.sin_datos;
+    var nuestra = [r.recomendacion, r.ubicacion].filter(Boolean).join(' · ') || '—';
+    var chk = r.chk_estado === 'no_esta' ? '—' : ([r.chk_ua, r.chk_ubicacion].filter(Boolean).join(' · ') || '—');
+    return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Nuestra: '+incEsc(nuestra)+' · Check: '+incEsc(chk)+'">'
+      + '<b>'+info.txt+'</b><small>'+incEsc(nuestra)+(checkwmsOk===false ? '' : (' → '+incEsc(chk)))+'</small></span></td>';
+  }
+
+  function incEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+
+  // Encabezado con orden por clic (flecha, como el resto del proyecto) +
+  // fila de filtros por columna (REGLA #4.3, patrón Etiquetas: combinable
+  // con el buscador `q`; al limpiar un filtro de columna la tabla se
+  // recarga igual que al limpiar `q`/estado).
+  function incTh(label, orderKey){
+    if(!orderKey) return '<th>'+label+'</th>';
+    var on = incOrderBy === orderKey;
+    var icon = on ? (incOrderDir === 'asc' ? 'bi-caret-up-fill' : 'bi-caret-down-fill') : 'bi-caret-down';
+    return '<th class="inc-th-sort'+(on?' on':'')+'" data-order="'+orderKey+'">'
+      + label + ' <i class="bi '+icon+'"></i></th>';
+  }
+
+  function incTheadHtml(){
+    return '<thead><tr>'
+      + '<th style="width:56px">Foto</th>'
+      + incTh('UA', 'ua') + incTh('SKU', 'sku') + incTh('Descripción', 'descripcion')
+      + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
+      + incTh('Estado', 'estado') + '<th>Ubicación/UA vs Check</th>'
+      + incTh('Fecha resolución', 'fecha_resolucion')
+      + '<th style="width:78px">Acciones</th></tr>'
+      + '<tr class="inc-th-filtros">'
+      + '<td></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColUa" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_ua)+'"></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColSku" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_sku)+'"></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColDescripcion" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_descripcion)+'"></td>'
+      + '<td><input type="number" class="form-control form-control-sm" id="incColCantidad" placeholder="N°" value="'+incEsc(incFiltrosCol.f_cantidad)+'"></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColMotivo" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_motivo)+'"></td>'
+      + '<td></td>'
+      + '<td><select class="form-select form-select-sm" id="incColEstado">'
+      +   '<option value="">Todos</option>'
+      +   '<option value="abierta"'+(incEstado==='abierta'?' selected':'')+'>Abierta</option>'
+      +   '<option value="resuelta"'+(incEstado==='resuelta'?' selected':'')+'>Resuelta</option>'
+      + '</select></td>'
+      + '<td><select class="form-select form-select-sm" id="incColChk">'
+      +   '<option value="">Todos</option>'
+      +   '<option value="coincide"'+(incFiltrosCol.f_chk==='coincide'?' selected':'')+'>Coincide</option>'
+      +   '<option value="distinta"'+(incFiltrosCol.f_chk==='distinta'?' selected':'')+'>Distinta</option>'
+      +   '<option value="no_esta"'+(incFiltrosCol.f_chk==='no_esta'?' selected':'')+'>No está en Check</option>'
+      +   '<option value="sin_ua"'+(incFiltrosCol.f_chk==='sin_ua'?' selected':'')+'>Sin UA</option>'
+      +   '<option value="sin_ubicacion_nuestra"'+(incFiltrosCol.f_chk==='sin_ubicacion_nuestra'?' selected':'')+'>Sin ubic. nuestra</option>'
+      +   '<option value="sin_datos"'+(incFiltrosCol.f_chk==='sin_datos'?' selected':'')+'>Check no disponible</option>'
+      + '</select></td>'
+      + '<td><input type="date" class="form-control form-control-sm" id="incColFecha" value="'+incEsc(incFiltrosCol.f_fecha)+'"></td>'
+      + '<td></td>'
+      + '</tr></thead>';
+  }
+
+  function incWireFiltrosCol(){
+    [['incColUa','f_ua'],['incColSku','f_sku'],['incColDescripcion','f_descripcion'],
+     ['incColMotivo','f_motivo'],['incColCantidad','f_cantidad']].forEach(function(par){
+      var el = document.getElementById(par[0]);
+      if(!el) return;
+      el.addEventListener('input', function(){
+        clearTimeout(window['__incColDeb_'+par[1]]);
+        var v = this.value;
+        window['__incColDeb_'+par[1]] = setTimeout(function(){
+          incFiltrosCol[par[1]] = v; incPage = 1; cargar();
+        }, 350);
+      });
+    });
+    var selEstado = document.getElementById('incColEstado');
+    if(selEstado) selEstado.addEventListener('change', function(){
+      incEstado = this.value; incPage = 1; cargar();
+      var top = document.getElementById('incFEstado'); if(top) top.value = incEstado;
+    });
+    var selChk = document.getElementById('incColChk');
+    if(selChk) selChk.addEventListener('change', function(){
+      incFiltrosCol.f_chk = this.value; incPage = 1; cargar();
+    });
+    var fFecha = document.getElementById('incColFecha');
+    if(fFecha) fFecha.addEventListener('change', function(){
+      incFiltrosCol.f_fecha = this.value; incPage = 1; cargar();
+    });
+    document.querySelectorAll('.inc-th-sort').forEach(function(th){
+      th.addEventListener('click', function(){
+        var key = th.dataset.order;
+        if(incOrderBy === key){
+          incOrderDir = (incOrderDir === 'asc') ? 'desc' : 'asc';
+        } else {
+          incOrderBy = key; incOrderDir = 'asc';
+        }
+        incPage = 1; cargar();
+      });
+    });
+  }
+
   function render(data){
     var rows = data.rows || [];
     var box = document.getElementById('incLista');
+    var hayFiltros = incQ || incEstado || Object.keys(incFiltrosCol).some(function(k){ return !!incFiltrosCol[k]; });
     if(!rows.length){
-      box.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay incidencias registradas.</div>';
+      box.innerHTML = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'</table>'
+        + '<div class="empty-state"><i class="bi bi-inbox"></i>'
+        + (hayFiltros ? 'Sin resultados para estos filtros.' : 'No hay incidencias registradas.')+'</div></div>';
+      incWireFiltrosCol();
       return;
     }
-    var html = '<div class="inc-wrap"><table class="inc-tabla"><thead><tr>'
-      + '<th>SKU</th><th>Descripción</th><th>Cant.</th><th>Motivo</th>'
-      + '<th>Repuesto</th><th>Estado</th><th>Fecha resolución</th></tr></thead><tbody>';
+    var checkwmsOk = data.checkwms_ok !== false;
+    var html = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'<tbody>';
     rows.forEach(function(r){
       html += '<tr data-id="'+r.id+'">'
+        + '<td>'+(r.foto_principal
+              ? ('<img src="'+r.foto_principal+'" class="inc-foto-mini" alt="Evidencia" loading="lazy">')
+              : '<span class="text-muted">—</span>')+'</td>'
+        + '<td>'+(r.recomendacion||'—')+'</td>'
         + '<td>'+(r.sku||'—')+'</td>'
         + '<td>'+(r.descripcion||'')+'</td>'
         + '<td>'+(r.cantidad||0)+'</td>'
         + '<td>'+(r.motivo||'—')+'</td>'
         + '<td>'+(r.req_repuesto==='si' ? ('Sí'+(r.stock_repuesto?(' · '+(r.stock_repuesto==='hay'?'Hay':'No hay')):'')) : (r.req_repuesto==='no'?'No':'—'))+'</td>'
         + '<td><span class="inc-badge inc-badge-'+r.estado+'">'+(r.estado==='resuelta'?'Resuelta':'Abierta')+'</span></td>'
+        + incChkCelda(r, checkwmsOk)
         + '<td>'+fmtFecha(r.fecha_resolucion)+'</td>'
+        + '<td class="inc-acciones">'
+        +   '<button type="button" class="inc-mini-btn" data-accion="rep" data-id="'+r.id+'" title="Solicitar repuesto"><i class="bi bi-tools"></i></button>'
+        +   (incCanDelete ? ('<button type="button" class="inc-mini-btn danger" data-accion="del" data-id="'+r.id+'" title="Eliminar"><i class="bi bi-trash"></i></button>') : '')
+        + '</td>'
         + '</tr>';
     });
     html += '</tbody></table>';
 
     var desde = ((data.page-1)*data.page_size)+1, hasta = Math.min(data.page*data.page_size, data.total);
     html += '<div class="inc-foot">'
-      + '<div class="inc-foot-info">Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+data.total+'</b></div>'
+      + '<div class="inc-foot-info">Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+data.total+'</b>'
+      + (checkwmsOk ? '' : ' &nbsp;·&nbsp; <span class="text-danger">Check no disponible</span>')+'</div>'
       + '<div class="d-flex align-items-center gap-2">'
       + '<select class="form-select form-select-sm" id="incSizeSel" style="width:auto">'
       + [10,25,50,100,200].map(function(sz){return '<option value="'+sz+'"'+(sz===incSize?' selected':'')+'>'+sz+' por página</option>';}).join('')
@@ -622,13 +837,54 @@
       + '</div></div></div>';
 
     box.innerHTML = html;
+    incWireFiltrosCol();
 
     box.querySelectorAll('tbody tr').forEach(function(tr){
-      tr.addEventListener('click', function(){ abrirEdicion(tr.dataset.id, rows); });
+      tr.addEventListener('click', function(ev){
+        if(ev.target.closest('.inc-mini-btn')) return;
+        abrirEdicion(tr.dataset.id, rows);
+      });
+    });
+    box.querySelectorAll('.inc-mini-btn').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var id = btn.dataset.id, accion = btn.dataset.accion;
+        if(accion === 'del') incEliminarDesdeTabla(id);
+        else if(accion === 'rep') incSolicitarRepuestoDesdeTabla(id, rows);
+      });
     });
     document.getElementById('incPrev').onclick = function(){ if(incPage>1){incPage--; cargar();} };
     document.getElementById('incNext').onclick = function(){ incPage++; cargar(); };
     document.getElementById('incSizeSel').onchange = function(){ incSize = parseInt(this.value,10); incPage = 1; cargar(); };
+  }
+
+  // 🔧 2026-09-26 (Daniel: "debo borrar algunas [incidencias]... solicitar
+  // repuesto de una" -- CRUD directo desde la fila, sin tener que abrir
+  // el modal completo primero).
+  function incEliminarDesdeTabla(id){
+    ilusConfirm({
+      title: 'Eliminar incidencia',
+      message: '¿Quitar este registro permanentemente?',
+      sub: 'Esta acción no se puede deshacer.',
+      okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+    }).then(function(ok){
+      if(!ok) return;
+      fetch('/mantenciones/api/incidencias/'+id, {
+        method: 'DELETE', headers: {'X-CSRFToken': window.CSRF_TOKEN || ''},
+      }).then(function(r){return r.json();}).then(function(data){
+        if(!data.ok){ ilusToast(data.error || 'No se pudo eliminar', {type:'error'}); return; }
+        ilusToast('Incidencia eliminada', {type:'success'});
+        cargar();
+      });
+    });
+  }
+
+  function incSolicitarRepuestoDesdeTabla(id, rows){
+    // Abre el mismo modal de edición (para tener el motivo/SKU a mano) y
+    // dispara el flujo de "Solicitar repuesto" que ya existe -- ningún
+    // código nuevo de solicitud, solo un atajo directo desde la fila.
+    abrirEdicion(id, rows);
+    setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
   }
 
   function cargar(){
@@ -636,6 +892,10 @@
     box.innerHTML = '<div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div>';
     var url = '/mantenciones/api/incidencias?page='+incPage+'&page_size='+incSize
       + '&q='+encodeURIComponent(incQ)+'&estado='+encodeURIComponent(incEstado);
+    Object.keys(incFiltrosCol).forEach(function(k){
+      url += '&'+k+'='+encodeURIComponent(incFiltrosCol[k] || '');
+    });
+    if(incOrderBy) url += '&order_by='+encodeURIComponent(incOrderBy)+'&order_dir='+encodeURIComponent(incOrderDir);
     fetch(url).then(function(r){return r.json();}).then(function(data){
       if(!data.ok){ box.innerHTML = '<div class="empty-state text-danger">'+(data.error||'Error al cargar.')+'</div>'; return; }
       render(data);
@@ -682,32 +942,73 @@
     if(el) el.addEventListener('input', function(){ refrescarVerde(id); });
   });
 
-  function pintarPasos(){
-    document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
-      var n = parseInt(s.dataset.step, 10);
-      s.classList.toggle('on',   n === incPaso);
-      s.classList.toggle('done', n <  incPaso);
-    });
-    document.querySelectorAll('.inc-pane').forEach(function(p){
-      p.hidden = (parseInt(p.dataset.pane, 10) !== incPaso);
-    });
-    $('incProgressBar').style.width = Math.round(incPaso / INC_PASOS * 100) + '%';
-    $('incBtnAtras').style.display     = incPaso > 1 ? '' : 'none';
-    $('incBtnSiguiente').style.display = incPaso < INC_PASOS ? '' : 'none';
-    // Al EDITAR, Guardar está siempre disponible: no hay que recorrer el
-    // wizard entero para corregir un dato (Daniel: "que no sea tan tedioso").
-    $('incBtnGuardar').style.display   = (incPaso === INC_PASOS || $('incId').value) ? '' : 'none';
-    // El paso 5 es evidencia, no dato obligatorio: se puede guardar antes.
-    $('incSteps').classList.toggle('libre', !!$('incId').value);
-    if(incPaso === INC_PASOS){ pintarResumen(); incCargarEvidencia(); }
+  // 🔧 2026-09-26 (Daniel: "toda la información se vea y no el paso a
+  // paso, para saber qué debo arreglar"). Las 5 tarjetas están SIEMPRE
+  // visibles (ver HTML, ya sin `hidden`); esta función deja de decidir
+  // qué pane mostrar y pasa a pintar el SEMÁFORO de completitud de cada
+  // una + el resumen "Falta: ..." de arriba. `incPaso` se conserva solo
+  // como referencia de qué tarjeta resaltar tras un scroll (irAPaso).
+  var INC_TARJETAS = {
+    1: {req: ['incRecomendacion', 'incSku', 'incDescripcion', 'incCantidad'], opc: ['incUbicacion']},
+    2: {req: ['incMotivo'], opc: []},
+    3: {req: [], opc: ['incSugerencia']},
+    4: {req: [], opc: ['incReqRepuesto', 'incDescripcionRepuesto']},
+    5: {req: [], opc: ['fotos']},
+  };
+  var INC_TARJETA_LABEL = {1: 'datos obligatorios', 2: 'motivo', 3: 'sugerencia', 4: 'detalle', 5: 'evidencia'};
+
+  function incCompletaCampo(id){
+    if(id === 'fotos'){
+      return !!(incFichaCache && (incFichaCache.fotos || []).length);
+    }
+    var regla = INC_REGLAS[id];
+    var el = $(id);
+    if(!el) return true;
+    return regla ? !!regla(el.value || '') : !!(el.value || '').trim();
   }
 
+  function pintarPasos(){
+    var faltanObligatorios = [];
+    document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
+      var n = parseInt(s.dataset.step, 10);
+      var t = INC_TARJETAS[n] || {req: [], opc: []};
+      var reqOk = t.req.every(incCompletaCampo);
+      var opcOk = t.opc.every(incCompletaCampo);
+      s.classList.toggle('on', n === incPaso);
+      s.classList.toggle('done', reqOk && (t.opc.length === 0 || opcOk));
+      s.classList.toggle('warn', reqOk && t.opc.length > 0 && !opcOk);
+      s.classList.toggle('falta', !reqOk);
+      if(!reqOk) faltanObligatorios.push(INC_TARJETA_LABEL[n]);
+    });
+    var box = $('incFaltan');
+    if(faltanObligatorios.length){
+      box.hidden = false;
+      box.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Falta: <b>'
+        + faltanObligatorios.join(', ') + '</b>';
+    } else {
+      box.hidden = false;
+      box.className = 'inc-faltan ok';
+      box.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Todo lo obligatorio está completo.';
+    }
+    pintarResumen();
+  }
+
+  // Ya no cambia de pane (todas las tarjetas están visibles) -- solo
+  // hace scroll a la tarjeta y la resalta un instante. Se conserva la
+  // función y su nombre porque el stepper y el flujo de "abrir alta
+  // prellenada" siguen llamándola.
   function irAPaso(n){
     incPaso = Math.max(1, Math.min(INC_PASOS, n));
+    var pane = document.querySelector('.inc-pane[data-pane="'+incPaso+'"]');
+    if(pane) pane.scrollIntoView({behavior:'smooth', block:'start'});
     pintarPasos();
   }
 
   // Valida el paso actual. Devuelve true si se puede avanzar.
+  // 🔧 2026-09-26: la tarjeta "Obligatorio" ahora junta UA + SKU +
+  // descripción + cantidad (antes repartidos en pasos 1 y 2) -- se valida
+  // todo junto bajo n===1. n===2 sigue siendo el motivo; 3/4/5 no tienen
+  // campos obligatorios.
   function validarPaso(n){
     if(n === 1){
       var ua = $('incRecomendacion');
@@ -716,8 +1017,6 @@
         ilusToast('La Unidad de Almacenamiento es obligatoria', {type:'warning'});
         return false;
       }
-    }
-    if(n === 2){
       var sku = $('incSku'), desc = $('incDescripcion'), cant = $('incCantidad');
       if(!sku.value.trim()){
         marcarError(sku); ilusToast('Indica el SKU del producto', {type:'warning'}); return false;
@@ -730,7 +1029,7 @@
         marcarError(cant); ilusToast('La cantidad debe ser 1 o más', {type:'warning'}); return false;
       }
     }
-    if(n === 3){
+    if(n === 2){
       var mot = $('incMotivo');
       if(mot.value.trim().length < 10){
         marcarError(mot);
@@ -780,13 +1079,28 @@
       + '<div class="inc-vered '+vc+'">'+vt+(vs ? '<small>'+vs+'</small>' : '')+'</div>';
   }
 
+  // 🔧 2026-09-26 (Daniel: "hasta cinco fotos y tal vez un video"). Las
+  // fotos y el video comparten la misma grilla de miniaturas; el video se
+  // distingue con un ícono de reproducción y abre en una pestaña nueva
+  // (el <video> no cabe bien en el lightbox de imágenes).
   function incPintarFotos(f){
-    var cont = $('incFotos'), n = (f.fotos || []).length, max = f.max_fotos || 3;
-    $('incFotosCount').textContent = n + ' de ' + max;
-    var html = (f.fotos || []).map(function(x){
+    var cont = $('incFotos');
+    var todas = f.fotos || [];
+    var fotos = todas.filter(function(x){ return x.tipo !== 'video'; });
+    var videos = todas.filter(function(x){ return x.tipo === 'video'; });
+    var maxF = f.max_fotos || INC_MAX_FOTOS, maxV = f.max_videos || INC_MAX_VIDEOS;
+    $('incFotosCount').textContent = fotos.length + ' de ' + maxF + ' fotos · ' + videos.length + ' de ' + maxV + ' video';
+    var html = fotos.map(function(x){
       return '<div class="inc-foto"><img src="'+x.url+'" alt="Evidencia" loading="lazy" '
            + 'onclick="window.open(\''+x.url+'\',\'_blank\')">'
            + '<button type="button" class="inc-foto-x" data-fid="'+x.id+'" title="Quitar foto">'
+           + '<i class="bi bi-x-lg"></i></button></div>';
+    }).join('');
+    html += videos.map(function(x){
+      return '<div class="inc-foto inc-foto-video" onclick="window.open(\''+x.url+'\',\'_blank\')">'
+           + '<video src="'+x.url+'" muted preload="metadata"></video>'
+           + '<span class="inc-foto-play"><i class="bi bi-play-circle-fill"></i></span>'
+           + '<button type="button" class="inc-foto-x" data-fid="'+x.id+'" title="Quitar video">'
            + '<i class="bi bi-x-lg"></i></button></div>';
     }).join('');
     // Foto del catálogo del SKU: contexto gratis, no ocupa cupo.
@@ -795,8 +1109,11 @@
             + 'onclick="window.open(\''+f.foto_catalogo+'\',\'_blank\')">'
             + '<span class="inc-foto-tag">Foto del catálogo</span></div>';
     }
-    if(n < max){
+    if(fotos.length < maxF){
       html += '<div class="inc-foto-add" id="incFotoAdd"><i class="bi bi-camera"></i>Agregar foto</div>';
+    }
+    if(videos.length < maxV){
+      html += '<div class="inc-foto-add" id="incVideoAdd"><i class="bi bi-camera-video"></i>Agregar video</div>';
     }
     cont.innerHTML = html;
     cont.querySelectorAll('.inc-foto-x').forEach(function(b){
@@ -804,6 +1121,8 @@
     });
     var add = document.getElementById('incFotoAdd');
     if(add) add.onclick = function(){ $('incFotoInput').click(); };
+    var addV = document.getElementById('incVideoAdd');
+    if(addV) addV.onclick = function(){ $('incVideoInput').click(); };
   }
 
   function incPintarBitacora(log){
@@ -827,7 +1146,7 @@
       // Incidencia nueva: aún no hay id, así que no hay fotos ni bitácora.
       $('incCuadre').innerHTML = '<div class="inc-vered v-nd">El cuadre y las fotos se habilitan al guardar la incidencia.'
         + '<small>Primero guarda; luego vuelve a abrirla para adjuntar evidencia.</small></div>';
-      $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de 3';
+      $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de '+INC_MAX_FOTOS;
       $('incBitacora').innerHTML = '';
       return;
     }
@@ -839,6 +1158,7 @@
         incPintarCuadre(f.cuadre);
         incPintarFotos(f);
         incPintarBitacora(f.log);
+        pintarPasos();   // ahora que ya sabemos si hay evidencia, refresca el semáforo
       }).catch(function(){
         $('incCuadre').innerHTML = '<div class="inc-vered v-nd">No se pudo consultar el cuadre.</div>';
       });
@@ -886,6 +1206,26 @@
     }).catch(function(){ ilusToast('No se pudo subir la foto', {type:'error'}); });
   });
 
+  // 🔧 2026-09-26: mismo flujo que las fotos, pero SIN compresión (un
+  // video no se puede recomprimir en canvas) -- el backend valida tamaño
+  // y tipo con `_otrep_clasificar_archivo` (mismo límite que Repuestos).
+  $('incVideoInput').addEventListener('change', function(){
+    var file = this.files && this.files[0];
+    this.value = '';
+    if(!file) return;
+    var id = $('incId').value;
+    if(!id){ ilusToast('Guarda la incidencia antes de adjuntar el video', {type:'warning'}); return; }
+    ilusToast('Subiendo video…', {type:'info'});
+    var fd = new FormData(); fd.append('file', file);
+    fetch('/mantenciones/api/incidencias/'+id+'/fotos', {
+      method:'POST', headers:{'X-CSRFToken': window.CSRF_TOKEN || ''}, body: fd,
+    }).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){ ilusToast(d.error || 'No se pudo subir el video', {type:'error'}); return; }
+      ilusToast('✓ Video agregado', {type:'success'});
+      incCargarEvidencia();
+    }).catch(function(){ ilusToast('No se pudo subir el video', {type:'error'}); });
+  });
+
   function incBorrarFoto(fid){
     var id = $('incId').value;
     if(!id || !fid) return;
@@ -920,37 +1260,61 @@
                   ? (' · ' + ($('incStockRepuesto').value === 'hay' ? 'Hay stock' : 'Sin stock')) : '')) : '');
   }
 
-  $('incBtnSiguiente').addEventListener('click', function(){
-    if(validarPaso(incPaso)) irAPaso(incPaso + 1);
-  });
-  $('incBtnAtras').addEventListener('click', function(){ irAPaso(incPaso - 1); });
-  // Navegación por el stepper. Al CREAR solo se puede volver atrás (para
-  // no saltarse validaciones). Al EDITAR se puede ir a cualquier paso:
-  // los datos ya existen y son válidos, y Daniel (2026-08-03) pidió que
-  // editar "no sea tan tedioso... que sea para validar la información" --
-  // obligar a recorrer 5 pasos para tocar un campo es exactamente eso.
+  // 🔧 2026-09-26: sin paso a paso, "Siguiente/Atrás" ya no existen (ver
+  // footer). El semáforo sigue siendo clicable: lleva con scroll a la
+  // tarjeta correspondiente, sin importar si está completa o no -- todas
+  // las tarjetas están siempre visibles y editables.
   document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
-    s.addEventListener('click', function(){
-      var n = parseInt(s.dataset.step, 10);
-      var editando = !!$('incId').value;
-      if(n < incPaso || editando) irAPaso(n);
-    });
+    s.addEventListener('click', function(){ irAPaso(parseInt(s.dataset.step, 10)); });
   });
 
-  // Contador vivo del motivo + chips de motivos frecuentes.
+  // Contador vivo del motivo.
   $('incMotivo').addEventListener('input', function(){
     var n = this.value.trim().length, c = $('incMotivoCount');
     c.textContent = n;
     c.classList.toggle('ok', n >= 10);
   });
-  document.querySelectorAll('#incMotivoChips .inc-chip').forEach(function(b){
-    b.addEventListener('click', function(){
-      var t = $('incMotivo');
-      t.value = (t.value.trim() ? t.value.trim() + ' — ' : '') + b.textContent;
-      t.dispatchEvent(new Event('input'));
-      t.focus();
-    });
-  });
+
+  // 🔧 2026-09-26 (Daniel, sobre su macro Excel: "chips de motivos
+  // frecuentes... top ~8"): se cargan UNA vez (GET .../motivos-frecuentes)
+  // y se pintan como chips clicables + un chip "Otro" que solo enfoca el
+  // textarea (no inserta texto). Si la consulta falla, no bloquea nada --
+  // el textarea grande sigue siendo la forma normal de escribir el motivo.
+  var incMotivosFrecuentesCargados = false;
+  function incMotivoChipClick(texto){
+    var t = $('incMotivo');
+    t.value = (t.value.trim() ? t.value.trim() + ' — ' : '') + texto;
+    t.dispatchEvent(new Event('input'));
+    t.focus();
+  }
+  function incCargarMotivosFrecuentes(){
+    if(incMotivosFrecuentesCargados) return;
+    incMotivosFrecuentesCargados = true;
+    fetch('/mantenciones/api/incidencias/motivos-frecuentes')
+      .then(function(r){ return r.json(); }).then(function(d){
+        var cont = $('incMotivoChips');
+        var motivos = (d && d.ok && d.motivos && d.motivos.length) ? d.motivos : [
+          'Falta pieza', 'Llegó dañado del proveedor', 'Se sacó para cubrir garantía',
+          'Devolución de cliente', 'Faltante en despacho',
+        ];
+        var html = '<span class="inc-chip-lbl">Rápidos:</span>';
+        motivos.slice(0, 8).forEach(function(m){
+          html += '<button type="button" class="inc-chip" data-motivo="'+incEsc(m)+'">'+incEsc(m.length > 60 ? m.slice(0,57)+'…' : m)+'</button>';
+        });
+        html += '<button type="button" class="inc-chip" data-motivo="">Otro</button>';
+        cont.innerHTML = html;
+        cont.querySelectorAll('.inc-chip').forEach(function(b){
+          b.addEventListener('click', function(){
+            var m = b.dataset.motivo;
+            if(m) incMotivoChipClick(m); else $('incMotivo').focus();
+          });
+        });
+      }).catch(function(){
+        // Falla silenciosa: se deja la etiqueta sin chips, el textarea sigue disponible.
+        $('incMotivoChips').innerHTML = '<span class="inc-chip-lbl">Rápidos:</span>'
+          + '<span class="text-muted" style="font-size:.74rem">No se pudieron cargar los motivos frecuentes.</span>';
+      });
+  }
 
   // ══════════ Conciliación: nuestra BD vs ERP Random vs CheckWMS ══════════
   // Daniel (2026-08-03): "prioridad a comparar nuestra BD es contra el ERP
@@ -1058,8 +1422,19 @@
         boton = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
               + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
       } else if (h.accion === 'ver'){
-        boton = '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
-              + '<i class="bi bi-search me-1"></i>Ver / corregir</button>';
+        // 🔧 2026-09-26 (Daniel: "CRUD completo desde Revisar diferencias
+        // ... debo borrar algunas, y debo solicitar repuesto de una"): la
+        // fila con incidencia ya registrada ofrece las 3 acciones juntas.
+        boton = '<div class="d-flex gap-1 flex-wrap">'
+              + '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
+              + '<i class="bi bi-search me-1"></i>Ver / corregir</button>'
+              + '<button type="button" class="btn btn-sm btn-outline-secondary inc-h-accion" data-idx="'+idx+'" data-accion="repuesto" title="Solicitar repuesto">'
+              + '<i class="bi bi-tools"></i></button>';
+        if(incCanDelete){
+          boton += '<button type="button" class="btn btn-sm btn-outline-danger inc-h-accion" data-idx="'+idx+'" data-accion="eliminar" title="Eliminar">'
+                + '<i class="bi bi-trash"></i></button>';
+        }
+        boton += '</div>';
       } else {
         boton = '<span class="inc-h-sinaccion">Sin acción disponible todavía</span>';
       }
@@ -1093,11 +1468,19 @@
     // así el botón/fila siguen apuntando al hallazgo correcto sin importar
     // la página en la que esté parado el usuario.
     function hallazgoPorIdx(idx){ return lista[idx]; }
-    function accionarHallazgo(idx){
+    // 🔧 2026-09-26: ahora una fila 'ver' puede disparar 3 sub-acciones
+    // distintas (ver, solicitar repuesto, eliminar) -- `subaccion` viene
+    // del data-accion del botón concreto que se clickeó; el clic en la
+    // FILA (sin botón) siempre significa "ver/corregir", como antes.
+    function accionarHallazgo(idx, subaccion){
       var h = hallazgoPorIdx(idx);
       if(!h || !h.accion) return;
-      if(h.accion === 'registrar') incAbrirAltaPrellenada(h);
-      else if(h.accion === 'ver' && h.ids && h.ids.length) incAbrirPorId(h.ids[0]);
+      if(h.accion === 'registrar'){ incAbrirAltaPrellenada(h); return; }
+      if(h.accion !== 'ver' || !h.ids || !h.ids.length) return;
+      var id = h.ids[0];
+      if(subaccion === 'eliminar') incEliminarDesdeConciliacion(id);
+      else if(subaccion === 'repuesto') incAbrirPorId(id, true);
+      else incAbrirPorId(id);
     }
     $('incConcLista').querySelectorAll('tr.act').forEach(function(el){
       el.addEventListener('click', function(ev){
@@ -1108,7 +1491,7 @@
     $('incConcLista').querySelectorAll('.inc-h-accion').forEach(function(btn){
       btn.addEventListener('click', function(ev){
         ev.stopPropagation();
-        accionarHallazgo(parseInt(btn.dataset.idx, 10));
+        accionarHallazgo(parseInt(btn.dataset.idx, 10), btn.dataset.accion);
       });
     });
     $('incConcPrev').onclick = function(){ if(incConcPage>1){ incConcPage--; incConcPintar(); } };
@@ -1116,18 +1499,51 @@
     $('incConcSize').onchange = function(){ incConcSize = parseInt(this.value,10); incConcPage = 1; incConcPintar(); };
   }
 
-  // Abre una incidencia por id aunque no esté en la página actual.
-  function incAbrirPorId(id){
+  // Abre una incidencia por id aunque no esté en la página actual. Con
+  // `abrirRepuesto=true` (2026-09-26, acción "Solicitar repuesto" directo
+  // desde Revisar diferencias) además dispara el flujo de solicitud ya
+  // existente apenas el modal termina de poblarse.
+  function incAbrirPorId(id, abrirRepuesto){
     fetch('/mantenciones/api/incidencias?page=1&page_size=500')
       .then(function(r){return r.json();}).then(function(d){
-        if(d && d.ok) abrirEdicion(id, d.rows || []);
+        if(!d || !d.ok) return;
+        abrirEdicion(id, d.rows || []);
+        if(abrirRepuesto){
+          setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
+        }
       });
   }
 
+  // 🔧 2026-09-26: eliminar directo desde "Revisar diferencias" (Daniel:
+  // "debo borrar algunas") -- mismo endpoint/confirmación que la tabla
+  // principal, sin necesidad de abrir el modal primero.
+  function incEliminarDesdeConciliacion(id){
+    ilusConfirm({
+      title: 'Eliminar incidencia',
+      message: '¿Quitar este registro permanentemente?',
+      sub: 'Esta acción no se puede deshacer.',
+      okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+    }).then(function(ok){
+      if(!ok) return;
+      fetch('/mantenciones/api/incidencias/'+id, {
+        method: 'DELETE', headers: {'X-CSRFToken': window.CSRF_TOKEN || ''},
+      }).then(function(r){return r.json();}).then(function(data){
+        if(!data.ok){ ilusToast(data.error || 'No se pudo eliminar', {type:'error'}); return; }
+        ilusToast('Incidencia eliminada', {type:'success'});
+        cargar();
+        incConcData = null; incConcCargar();
+      });
+    });
+  }
+
   // 🔧 2026-09-26 (Daniel, decisión confirmada): tocar una fila "Falta en
-  // nuestra BD" abre el ALTA prellenada -- SKU, descripción, UA y
-  // ubicación ya puestos, el usuario solo completa motivo/fotos y guarda.
-  // Salta directo al paso 3 (Motivo): los pasos 1 y 2 ya quedan resueltos.
+  // nuestra BD" -- o "dif_erp"/"no_en_erp" sin incidencia asociada, ej. el
+  // caso real "Escaladora ILUS X1" (SKU 1010089701, nuestra BD 0 / ERP 1 /
+  // WMS 1) -- abre el ALTA prellenada: SKU, descripción, cantidad = la
+  // diferencia, UA y ubicación YA puestos (ver `cantidad`/`ua`/`ubicacion`
+  // que arma app.py en cada hallazgo). El usuario solo completa el motivo
+  // y guarda. Salta directo a la tarjeta Motivo: la Obligatoria ya queda
+  // resuelta.
   function incAbrirAltaPrellenada(h){
     limpiarModal();
     document.getElementById('incModalTitulo').innerHTML =
@@ -1137,12 +1553,14 @@
     if(h.descripcion) document.getElementById('incDescripcion').value = h.descripcion;
     document.getElementById('incCantidad').value = h.cantidad || 1;
     if(h.ubicacion){
+      document.getElementById('incUbicacion').value = h.ubicacion;
       document.getElementById('incUaResultado').innerHTML =
         '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación en Bodega 13: <b>'
         +h.ubicacion+'</b> (traída de la conciliación, no de una nueva búsqueda de UA).</span>';
     }
     refrescarVerdeTodos();
-    irAPaso(3);
+    incCargarEvidencia();
+    irAPaso(2);
     incModal().show();
     setTimeout(function(){ document.getElementById('incMotivo').focus(); }, 250);
   }
@@ -1171,7 +1589,8 @@
 
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
-     'incObservacion','incRecomendacion','incFechaResolucion'].forEach(function(id){
+     'incObservacion','incRecomendacion','incFechaResolucion','incUbicacion',
+     'incSugerencia','incRepuestoStockId'].forEach(function(id){
       document.getElementById(id).value = '';
     });
     document.getElementById('incCantidad').value = 1;
@@ -1187,6 +1606,8 @@
     // enganchar la solicitud de repuesto.
     document.getElementById('incBtnSolicitarRepuesto').disabled = true;
     document.getElementById('incRepCtaHint').textContent = 'Guarda la incidencia primero para poder solicitar un repuesto.';
+    incRepSelLimpiar();
+    incRepBuscadorToggle();
     refrescarVerdeTodos();
     irAPaso(1);
   }
@@ -1208,6 +1629,15 @@
     document.getElementById('incObservacion').value = r.observacion || '';
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
+    document.getElementById('incUbicacion').value = r.ubicacion || '';
+    document.getElementById('incSugerencia').value = r.sugerencia || '';
+    document.getElementById('incRepuestoStockId').value = r.repuesto_stock_id || '';
+    incRepBuscadorToggle();
+    if(r.repuesto_stock_id){
+      incRepSelMostrar({id: r.repuesto_stock_id, descripcion: r.descripcion_repuesto || r.sku || ('Repuesto #'+r.repuesto_stock_id)});
+    } else {
+      incRepSelLimpiar();
+    }
     document.getElementById('incMotivo').dispatchEvent(new Event('input'));
     refrescarVerdeTodos();
     var btnDel = document.getElementById('incBtnEliminar');
@@ -1215,6 +1645,7 @@
     // 🔧 2026-09-21 (Fase 2): ya hay id real -- se puede solicitar repuesto.
     document.getElementById('incBtnSolicitarRepuesto').disabled = false;
     document.getElementById('incRepCtaHint').textContent = '';
+    incCargarEvidencia();
     irAPaso(1);
     incModal().show();
   }
@@ -1248,6 +1679,9 @@
         if(!descalce){
           if(data.sku) skuInput.value = data.sku;
           if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
+          // 🔧 2026-09-26: guarda la ubicación que trae el WMS -- es la que
+          // se compara luego contra CheckWMS en la tabla principal.
+          if(data.ubicacion) document.getElementById('incUbicacion').value = data.ubicacion;
           refrescarVerdeTodos();
         }
         // Ubicación actual (GetReporteStock) primero -- es lo que el
@@ -1322,17 +1756,17 @@
             + '</ul>';
         }
         res.innerHTML = html;
-        // Si el WMS resolvió el producto sin conflicto, avanzar solo al
-        // paso 2 -- el usuario ya tiene lo que necesitaba de este paso.
-        if(!descalce && data.sku){
-          setTimeout(function(){ if(incPaso === 1) irAPaso(2); }, 900);
-        }
+        // 🔧 2026-09-26: SKU/descripción/cantidad ahora viven en la MISMA
+        // tarjeta que la UA (antes eran un paso aparte) -- ya no hace
+        // falta saltar a ningún otro lado, el usuario ve todo junto.
+        refrescarVerdeTodos();
       }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });
   });
 
   document.getElementById('incBtnNueva').addEventListener('click', function(){
     limpiarModal();
     document.getElementById('incModalTitulo').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia';
+    incCargarEvidencia();
     incModal().show();
   });
 
@@ -1349,6 +1783,9 @@
       descripcion_repuesto: document.getElementById('incDescripcionRepuesto').value,
       observacion: document.getElementById('incObservacion').value,
       recomendacion: document.getElementById('incRecomendacion').value,
+      ubicacion: document.getElementById('incUbicacion').value,
+      sugerencia: document.getElementById('incSugerencia').value,
+      repuesto_stock_id: document.getElementById('incRepuestoStockId').value,
       fecha_resolucion: document.getElementById('incFechaResolucion').value,
     };
     // Revalidar TODOS los pasos antes de guardar: alguien pudo volver
@@ -1522,7 +1959,11 @@
   document.getElementById('incBtnLimpiar').addEventListener('click', function(){
     document.getElementById('incFQ').value = '';
     document.getElementById('incFEstado').value = '';
-    incQ = ''; incEstado = ''; incPage = 1; cargar();
+    // REGLA #4.3 (Daniel, bug real 2026-08-01): al limpiar CUALQUIER
+    // filtro -- también los de columna y el orden -- la tabla se recarga
+    // siempre, nunca se queda con el resultado anterior.
+    incFiltrosCol = {f_ua: '', f_sku: '', f_descripcion: '', f_motivo: '', f_cantidad: '', f_fecha: '', f_chk: ''};
+    incQ = ''; incEstado = ''; incOrderBy = ''; incOrderDir = ''; incPage = 1; cargar();
   });
 
   {% if permissions.superadmin %}
@@ -1552,7 +1993,84 @@
   });
   {% endif %}
 
+  /* ══════════ Detalle: elegir repuesto de la Bodega (RepBuscador) ══════════
+     🔧 2026-09-26 (Daniel, sobre su macro Excel: "el tipo de repuesto se
+     puede asociar de la bodega de repuestos... hacerlo más interactivo").
+     Motor COMPARTIDO (static/repuestos_buscador.js), modo 'seleccion' --
+     mismo patrón que ot2/detalle.html (RepBuscador.crear + onSeleccionar).
+     Guarda `repuesto_stock_id` en la incidencia; "Stock del repuesto" se
+     calcula SOLO desde el stock real del item elegido, pero sigue editable
+     a mano si no hay match (select normal, no se bloquea). */
+  var _incRepBuscador = null;
+
+  function incRepBuscadorToggle(){
+    var si = $('incReqRepuesto').value === 'si';
+    $('incRepBuscadorWrap').style.display = si ? '' : 'none';
+    if(si) incRepBuscadorPreparar();
+  }
+  $('incReqRepuesto').addEventListener('change', incRepBuscadorToggle);
+
+  function incRepBuscadorPreparar(){
+    var mount = document.getElementById('incRepBuscadorMount');
+    if(!mount || !window.RepBuscador) return;
+    if(!_incRepBuscador){
+      _incRepBuscador = RepBuscador.crear({
+        mount: mount, ctx: 'gestion', modo: 'seleccion',
+        compatPorDefecto: false, mostrarProveedor: true,
+        onSeleccionar: function(it){ incRepSeleccionar(it); },
+      });
+    }
+  }
+
+  function incRepSeleccionar(it){
+    document.getElementById('incRepuestoStockId').value = it.id;
+    if(!$('incDescripcionRepuesto').value.trim()) $('incDescripcionRepuesto').value = it.descripcion || '';
+    // Stock real del item elegido -- Daniel: "Stock de repuesto: Hay / No
+    // hay se calcula SOLO desde el stock real, editable manualmente si no
+    // hay match". `disponible` viene ya calculado del backend
+    // (_otrep_fmt_stock, mismo criterio que el semáforo del buscador).
+    if(it.disponible != null){
+      $('incStockRepuesto').value = (it.disponible > 0) ? 'hay' : 'no_hay';
+    }
+    incRepSelMostrar(it);
+  }
+
+  function incRepSelMostrar(it){
+    var box = document.getElementById('incRepSeleccionadoBox');
+    var txt = document.getElementById('incRepSeleccionadoTxt');
+    txt.textContent = (it.sku ? (it.sku + ' — ') : '') + (it.descripcion || ('Repuesto #'+it.id));
+    box.style.display = '';
+  }
+
+  function incRepSelLimpiar(){
+    document.getElementById('incRepSeleccionadoBox').style.display = 'none';
+    document.getElementById('incRepuestoStockId').value = '';
+    if(_incRepBuscador) _incRepBuscador.setSeleccion(null);
+  }
+
+  document.getElementById('incBtnQuitarRepSel').addEventListener('click', incRepSelLimpiar);
+
+  // "Solicitar este repuesto ahora": reusa el modal/flujo YA existente
+  // (incRepModal + incRepEnviar) -- se le pre-selecciona el mismo item de
+  // bodega elegido acá arriba, sin repetir la búsqueda.
+  document.getElementById('incBtnSolicitarAhora').addEventListener('click', function(){
+    var id = document.getElementById('incId').value;
+    if(!id){ ilusToast('Guarda la incidencia primero: la solicitud necesita a qué incidencia engancharse.', {type:'warning'}); return; }
+    var stockId = document.getElementById('incRepuestoStockId').value;
+    if(!stockId){ ilusToast('Elige un repuesto de la bodega primero.', {type:'warning'}); return; }
+    document.getElementById('incBtnSolicitarRepuesto').click();
+    // El click de arriba ya abre incRepModal y precarga cantidad/motivo;
+    // acá se fuerza además la SELECCIÓN del repuesto elegido en Detalle.
+    var txt = document.getElementById('incRepSeleccionadoTxt').textContent;
+    setTimeout(function(){
+      _incRep.sel = {id: parseInt(stockId, 10), descripcion: txt, sku: ''};
+      document.getElementById('incRepNombreManual').value = '';
+      incRepPintarLista();
+    }, 60);
+  });
+
   cargar();
+  incCargarMotivosFrecuentes();
 })();
 </script>
 {% endblock %}
