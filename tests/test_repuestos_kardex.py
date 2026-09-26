@@ -14,7 +14,8 @@ reposición nunca cuenta), la regla de comprometido/por llegar
 (_OTREP_ESTADOS_COMPROMETEN / _OTREP_ESTADOS_POR_LLEGAR), y -- por texto
 fuente, no por ejecución -- que las consultas SQL de comprometido excluyan
 `es_reposicion` y que los guards de concurrencia/recepción vivan en
-repstock_solicitud_ot_estado.
+_otrep_cambiar_estado (2026-09-26, Fase 4: el cuerpo se movió ahí desde
+repstock_solicitud_ot_estado, que quedó como wrapper delgado).
 
 Ninguna de estas funciones es 100% pura (las reales tocan Flask/MySQL),
 pero se extraen con ast y se exec-ean en un ámbito aislado con los
@@ -390,16 +391,22 @@ class TestSqlComprometidoExcluyeReposicion(unittest.TestCase):
 
 
 class TestGuardsSolicitudEstado(unittest.TestCase):
-    """repstock_solicitud_ot_estado no es extraíble/ejecutable aislado
-    (Flask, mysql_fetchone, request, _repstock_mover...) -- se revisa por
-    TEXTO fuente que los guards de la revisión Fase 3 siguen presentes.
-    Cambia de intención a "no se borró el guard", no a "el guard funciona
-    con datos reales" (eso ya lo cubre _repstock_mover más arriba, que sí
-    es ejecutable)."""
+    """_otrep_cambiar_estado no es extraíble/ejecutable aislado (Flask,
+    mysql_fetchone, request, _repstock_mover...) -- se revisa por TEXTO
+    fuente que los guards de la revisión Fase 3 siguen presentes. Cambia
+    de intención a "no se borró el guard", no a "el guard funciona con
+    datos reales" (eso ya lo cubre _repstock_mover más arriba, que sí es
+    ejecutable).
+
+    🏗️ Fase 4 (2026-09-26, merge con main): el cuerpo entero de
+    `repstock_solicitud_ot_estado` (guards de Fase 3 incluidos) se movió a
+    `_otrep_cambiar_estado` -- la ruta original quedó como wrapper delgado
+    que solo llama a esa función y traduce el resultado a JSON. Se revisa
+    la fuente de la función NUEVA, que es donde estos guards viven ahora."""
 
     @classmethod
     def setUpClass(cls):
-        cls.fuente = _extraer_fuente_funcion("repstock_solicitud_ot_estado")
+        cls.fuente = _extraer_fuente_funcion("_otrep_cambiar_estado")
 
     def test_concurrencia_exige_estado_actual_en_el_update(self):
         # MEDIA #2: el UPDATE debe filtrar también por el estado leído al
