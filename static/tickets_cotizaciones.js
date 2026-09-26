@@ -156,10 +156,16 @@ async function _cotWizCargarEdicion(cid){
     cotWizDescModoCambio();
     // 🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
     // descuentos de garantías"): si esta cotización YA traía un descuento
-    // de cabecera del 100%, se bloquea el control para no-superadmin (el
-    // backend igual lo protege -- esto solo explica el porqué en pantalla).
-    _WIZ.garantiaHeaderPreexistente = ((c.descuento_tipo || 'pct') === 'pct'
-      && (parseFloat(c.descuento_pct) || 0) >= 100);
+    // de cabecera del 100% (o un MONTO fijo que ya cubría el subtotal
+    // completo -- mismo efecto en $0, solo expresado en pesos), se bloquea
+    // el control para no-superadmin (el backend igual lo protege -- esto
+    // solo explica el porqué en pantalla).
+    const _subtotalPrevio = parseFloat(c.subtotal) || 0;
+    _WIZ.garantiaHeaderPreexistente = (
+      ((c.descuento_tipo || 'pct') === 'pct' && (parseFloat(c.descuento_pct) || 0) >= 100)
+      || ((c.descuento_tipo === 'monto') && _subtotalPrevio > 0
+          && (parseFloat(c.descuento_monto) || 0) >= _subtotalPrevio)
+    );
     _cotWizAplicarCandadoGarantia();
     // Tipo de servicio
     _WIZ.tipo = c.tipo_servicio || 'mantencion';
@@ -1779,14 +1785,15 @@ function _cotWizAplicarCandadoGarantia(){
   if (valorEl){
     valorEl.disabled = bloqueado;
     valorEl.title = bloqueado
-      ? 'Descuento por garantía (100%) -- solo un superadministrador puede modificarlo.'
+      ? 'Descuento por garantía (100% o monto que cubre todo) -- solo un superadministrador puede modificarlo.'
       : '';
   }
 }
 // El usuario cambió el valor del descuento general. Si es un 100% NUEVO
-// (la cotización no lo traía ya al abrirla) y no es superadmin, se
-// revierte a 99 -- el backend rechazaría igual el guardado con 403, esto
-// solo lo explica en el momento en vez de un error genérico al final.
+// (modo %) o un monto fijo que iguala/supera el subtotal NUEVO (modo $) --
+// la cotización no lo traía ya al abrirla -- y no es superadmin, se
+// revierte -- el backend rechazaría igual el guardado con 403, esto solo
+// lo explica en el momento en vez de un error genérico al final.
 function _cotWizGarantiaValidarHeader(el){
   if (window.PUEDE_DESCUENTO_GARANTIA) return;
   if (_WIZ && _WIZ.garantiaHeaderPreexistente) return; // ya deshabilitado arriba
@@ -1796,6 +1803,17 @@ function _cotWizGarantiaValidarHeader(el){
     el.value = '99';
     cotWizResumen();
     ilusToast('Solo un superadministrador puede aplicar un descuento por garantía (100%).', {type: 'warning'});
+    return;
+  }
+  // 2026-09-26 (cierre del caso "monto fijo"): mismo subtotal que ya
+  // calcula cotWizResumen (ítems + ruta aplicada), sin repetir esa lógica.
+  if (modo === 'monto'){
+    const subtotal = Math.round((_WIZ && _WIZ.sumaItems || 0) + (_WIZ && _WIZ.rutaAplicada || 0));
+    if (subtotal > 0 && valor >= subtotal){
+      el.value = String(Math.max(subtotal - 1, 0));
+      cotWizResumen();
+      ilusToast('Solo un superadministrador puede aplicar un descuento por garantía (deja la cotización en $0).', {type: 'warning'});
+    }
   }
 }
 function cotWizResumen(){

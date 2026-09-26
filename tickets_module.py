@@ -4290,6 +4290,72 @@ def register_tickets_routes(app, ctx):
         except (TypeError, ValueError):
             return False
 
+    def _tk_cotiz_preview_subtotal(items_payload, tipo_servicio, clases_por_sku,
+                                    costo_ruta_in, ruta_excluida_in):
+        """Subtotal (ítems + ruta) ANTES de guardar nada -- usa la MISMA
+        función de precio por ítem que el recálculo real persistido
+        (_tk_cotiz_calcular_item), pero en modo lectura pura sobre el
+        payload que mandó el frontend, sin tocar la base.
+
+        2026-09-26 (Daniel: cerrar también el caso del descuento por MONTO
+        fijo que deja la cotización en $0): un descuento 'monto' se valida
+        contra este subtotal ANTES de escribir, en vez de guardar y recién
+        ahí descubrir con _tk_cotiz_recalcular (que persiste en su propia
+        conexión/commit) que quedó en $0 -- deshacer un guardado ya
+        commiteado sería mucho más frágil que simplemente no escribirlo
+        si el descuento no es válido para un no-superadmin."""
+        cfg = _tk_cotiz_pricing_config()
+        _tarifas_batch_fn = ctx.get("_cat_tarifas_clases_batch")
+        _tarifas_map = {}
+        if _tarifas_batch_fn:
+            _slugs = []
+            for it in items_payload:
+                if not isinstance(it, dict):
+                    continue
+                _sku_s = (it.get("sku") or "").strip().upper()
+                _clase_s = it.get("clase_producto") or clases_por_sku.get(_sku_s)
+                if _clase_s:
+                    _slugs.append(_clase_s)
+            _tarifas_map = _tarifas_batch_fn(_slugs, tipo_servicio) or {}
+        subtotal_items = 0.0
+        items_cobrabilidad = []
+        for it in items_payload:
+            if not isinstance(it, dict):
+                continue
+            sku = (it.get("sku") or "").strip()
+            clase = it.get("clase_producto") or clases_por_sku.get(sku.upper())
+            _pm = None if _tk_cotiz_clase_no_cobrable(clase) else it.get("precio_manual")
+            calc = None
+            if _pm not in (None, ""):
+                try:
+                    _pu = int(float(_pm))
+                except (TypeError, ValueError):
+                    _pu = None
+                if _pu is not None and _pu >= 0:
+                    try:
+                        _cant = max(int(float(it.get("qty") or 0)), 0)
+                    except (TypeError, ValueError):
+                        _cant = 1
+                    _sub = _tk_money_round(_pu * _cant)
+                    calc = {"precio_unitario": _pu, "subtotal": _sub, "total": _sub}
+            if calc is None and _tk_cotiz_clase_no_cobrable(clase):
+                calc = _tk_cotiz_calcular_item(clase, tipo_servicio, it.get("qty"), None, cfg)
+            if calc is None:
+                _tarifa = _tarifas_map.get(clase)
+                calc = _tk_cotiz_calcular_item(
+                    clase, tipo_servicio, it.get("qty"), None, cfg, tarifa=_tarifa) if _tarifa else None
+            if calc:
+                subtotal_items += calc["total"]
+                items_cobrabilidad.append({"clase_producto": clase, "cantidad": it.get("qty"),
+                                            "precio_unitario": calc["precio_unitario"], "total": calc["total"]})
+            else:
+                items_cobrabilidad.append({"clase_producto": clase, "cantidad": it.get("qty"),
+                                            "precio_unitario": 0, "total": 0})
+        unidades_cobrables = _tk_cotiz_unidades_cobrables(items_cobrabilidad)
+        costo_ruta_solicitado = 0.0 if ruta_excluida_in else float(costo_ruta_in or 0)
+        costo_ruta_aplicado = costo_ruta_solicitado if unidades_cobrables > 0 else 0.0
+        return _tk_money_round(subtotal_items + costo_ruta_aplicado)
+
     @app.route("/tickets/cotizaciones/<int:cid>/detalle-calculo")
     @_tickets_required
     def tk_cotizacion_detalle_calculo(cid):
@@ -4670,6 +4736,22 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False,
                              "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
 
+        # 🔒 Candado descuento por garantía (100%) DE CABECERA POR MONTO
+        # FIJO, SOLO superadmin (2026-09-26, cierre del hueco: un descuento
+        # 'monto' que iguale o supere el subtotal deja el total en $0 igual
+        # que un 100% -- solo que expresado en pesos, no en %). Se calcula
+        # el subtotal ANTES de escribir con la MISMA función de precio que
+        # usa el recálculo real (_tk_cotiz_preview_subtotal -> misma
+        # _tk_cotiz_calcular_item), así se rechaza sin tener que deshacer un
+        # guardado ya commiteado. Cotización nueva: no hay "antes" que
+        # proteger.
+        if descuento_tipo == "monto" and not _tk_solo_superadmin():
+            _preview_subtotal = _tk_cotiz_preview_subtotal(
+                items, tipo_servicio, clases_por_sku, costo_ruta_in, ruta_excluida_in)
+            if _preview_subtotal > 0 and descuento_monto_in >= _preview_subtotal:
+                return jsonify({"ok": False,
+                                 "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
+
         # 2026-07-23 (Daniel): una cotización nacida de la FICHA del cliente no
         # puede ser de instalación (solo mantención/visita técnica). Solo aplica
         # cuando el frontend declara origen='ficha' -- ningún otro origen cambia,
@@ -4872,11 +4954,23 @@ def register_tickets_routes(app, ctx):
                 if isinstance(it, dict) and _tk_item_precio_manual_cero(
                     it, it.get("clase_producto") or clases_por_sku.get((it.get("sku") or "").strip().upper()))
             ]
-            if (descuento_tipo == "pct" and descuento_pct >= 100) or _items_garantia_creados:
+            _header_full_pct = (descuento_tipo == "pct" and descuento_pct >= 100)
+            _header_full_monto = False
+            if descuento_tipo == "monto":
+                try:
+                    _preview_subtotal_log = _tk_cotiz_preview_subtotal(
+                        items, tipo_servicio, clases_por_sku, costo_ruta_in, ruta_excluida_in)
+                    _header_full_monto = (_preview_subtotal_log > 0
+                                           and descuento_monto_in >= _preview_subtotal_log)
+                except Exception:
+                    _header_full_monto = False
+            if _header_full_pct or _header_full_monto or _items_garantia_creados:
                 try:
                     _tk_cotiz_log(cot_id, "descuento_garantia",
-                                  {"numero": numero, "nivel": "cabecera" if descuento_pct >= 100 else "item",
+                                  {"numero": numero,
+                                   "nivel": "cabecera" if (_header_full_pct or _header_full_monto) else "item",
                                    "descuento_pct_cabecera": descuento_pct,
+                                   "descuento_monto_cabecera": descuento_monto_in if descuento_tipo == "monto" else None,
                                    "items_costo_cero": _items_garantia_creados[:10]}, user)
                 except Exception:
                     pass
@@ -5591,6 +5685,15 @@ def register_tickets_routes(app, ctx):
                 and not _antes_full_header and not _tk_solo_superadmin()):
             return jsonify({"ok": False,
                              "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
+        # Mismo candado, descuento por MONTO fijo (2026-09-26): "antes" se
+        # compara contra el ÚLTIMO subtotal ya persistido por
+        # _tk_cotiz_recalcular (cab.subtotal) -- la validación del valor
+        # NUEVO contra el subtotal recién calculado del payload va más abajo
+        # (necesita clases_por_sku + costo_ruta_in, que todavía no existen
+        # acá).
+        _antes_full_header_monto = ((cab.get("descuento_tipo") or "pct") == "monto"
+                                     and float(cab.get("subtotal") or 0) > 0
+                                     and float(cab.get("descuento_monto") or 0) >= float(cab.get("subtotal") or 0))
 
         try:
             costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
@@ -5678,6 +5781,22 @@ def register_tickets_routes(app, ctx):
                 if _clave_chk not in _pm_cero_antes_por_clave:
                     return jsonify({"ok": False,
                                      "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
+
+        # 🔒 Candado descuento por garantía (100%) DE CABECERA POR MONTO
+        # FIJO, SOLO superadmin (2026-09-26): un descuento 'monto' que
+        # iguale o supere el subtotal deja el total en $0 igual que un 100%,
+        # solo que expresado en pesos. Se calcula el subtotal del payload
+        # ANTES de escribir (misma función de precio que el recálculo real,
+        # ver _tk_cotiz_preview_subtotal) y se compara contra el "antes"
+        # (_antes_full_header_monto, calculado más arriba desde cab) para no
+        # atrapar a un no-superadmin por un descuento que ya existía.
+        if (descuento_tipo == "monto" and not _antes_full_header_monto
+                and not _tk_solo_superadmin()):
+            _preview_subtotal = _tk_cotiz_preview_subtotal(
+                items, tipo_servicio, clases_por_sku, costo_ruta_in, ruta_excluida_in)
+            if _preview_subtotal > 0 and descuento_monto_in >= _preview_subtotal:
+                return jsonify({"ok": False,
+                                 "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
 
         # 🔒 2026-08-28 (Daniel, en vivo, tras encontrar la causa raíz de
         # OT-2026-00125 -- 8 de 16 equipos sin plantilla automática porque
@@ -5893,8 +6012,15 @@ def register_tickets_routes(app, ctx):
         # de este guardado no genera un log nuevo cada vez que se edita algo
         # más de la cotización.
         if _tk_solo_superadmin():
-            _header_nuevo_full = (descuento_tipo == "pct" and descuento_pct >= 100
-                                   and not _antes_full_header)
+            _header_nuevo_full_pct = (descuento_tipo == "pct" and descuento_pct >= 100
+                                       and not _antes_full_header)
+            # Monto: se usa el subtotal/total YA recalculado y persistido
+            # (totales, recién obtenido arriba) -- es el dato autoritativo
+            # post-guardado, más preciso que repetir la preview.
+            _header_nuevo_full_monto = (descuento_tipo == "monto" and not _antes_full_header_monto
+                                         and (totales or {}).get("total") == 0
+                                         and float((totales or {}).get("subtotal") or 0) > 0)
+            _header_nuevo_full = _header_nuevo_full_pct or _header_nuevo_full_monto
             _items_garantia_nuevos = []
             for it in items:
                 if not isinstance(it, dict):
@@ -5911,6 +6037,7 @@ def register_tickets_routes(app, ctx):
                     _tk_cotiz_log(cid, "descuento_garantia",
                                   {"nivel": "cabecera" if _header_nuevo_full else "item",
                                    "descuento_pct_cabecera": descuento_pct,
+                                   "descuento_monto_cabecera": descuento_monto_in if descuento_tipo == "monto" else None,
                                    "total": (totales or {}).get("total"),
                                    "items_costo_cero": _items_garantia_nuevos[:10]}, user)
                 except Exception:
