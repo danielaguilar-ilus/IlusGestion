@@ -1481,7 +1481,11 @@ async function verHistorialOTEquipo(mid, nombre) {
           </thead>
           <tbody>`;
     d.ots.forEach(ot => {
-      const tipo_lbl = ot.tipo ? ot.tipo.charAt(0).toUpperCase() + ot.tipo.slice(1) : '—';
+      // 🏷️ 2026-09-26 (Daniel): el backend ya resuelve el label EFECTIVO
+      // ("Instalación de repuestos" si la OT trae repuestos vinculados,
+      // ver _ot_tipo_label_efectivo en app.py) -- se prefiere sobre el
+      // capitalize() a mano del tipo crudo.
+      const tipo_lbl = ot.tipo_label || (ot.tipo ? ot.tipo.charAt(0).toUpperCase() + ot.tipo.slice(1) : '—');
       html += `
         <tr>
           <td class="font-monospace small fw-bold" style="color:#0f172a">${escHtml(ot.numero_ot)}</td>

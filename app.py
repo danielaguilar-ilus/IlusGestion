@@ -79074,7 +79074,9 @@ _OT2_TIPO_ICONS = {
     "cambio_equipo":     "bi-arrow-left-right",
     "desinstalacion":    "bi-box-arrow-up",
     "capacitacion":      "bi-mortarboard",
-    "repuesto":          "bi-gear",
+    # 🏷️ 2026-09-26 (Daniel): "Instalación de repuestos" -- caja distinta a
+    # la de 'instalacion' (equipos) para no confundirlas de un vistazo.
+    "repuesto":          "bi-box-seam-fill",
     "revision_interna":  "bi-building",
     "visita_correctiva": "bi-wrench-adjustable",
     "control_calidad":   "bi-patch-check",
@@ -79183,7 +79185,13 @@ _OT2_SELECT_FILAS = (
     # esta misma constante también se usa sola (sin estos joins) en los
     # COUNT/KPI del panel, que no necesitan esta info.
     "       anx.numero AS anexo_numero, anx.estado AS anexo_estado, "
-    "       fp.numero_documento AS fac_numero, fp.estado_pago AS fac_estado "
+    "       fp.numero_documento AS fac_numero, fp.estado_pago AS fac_estado, "
+    # 🏷️ 2026-09-26 (Daniel: "OT de instalación debe llamarse OT de
+    # instalación de Repuestos"): EXISTS por fila -- NUNCA una consulta
+    # aparte por OT (N+1) -- que dice si esta OT tiene al menos una
+    # solicitud de repuesto vinculada (ver _ot_tipo_label_efectivo).
+    "       EXISTS (SELECT 1 FROM mant_ot_repuesto_solicitudes rs "
+    "               WHERE rs.ot_generada_id = v.id) AS ot_tiene_repuestos "
 )
 # 📎💰 2026-09-21 -- mismo patrón ya probado esta noche en _MFP_JOINS_OT
 # (Facturas de proveedor): el anexo VIGENTE de una OT (firmado si hay uno,
@@ -79261,8 +79269,14 @@ def _ot2_enriquecer_fila(f, hoy):
         f["numero_prefijo"], f["numero_sufijo"] = "", num
 
     tipo = f.get("tipo") or ""
-    f["tipo_label"] = _TIPO_OT_LABEL.get(tipo, tipo.replace("_", " ").title() or "Sin tipo")
-    f["tipo_icon"] = _OT2_TIPO_ICONS.get(tipo, "bi-clipboard2")
+    # 🏷️ 2026-09-26 (Daniel): tipo/ícono EFECTIVOS -- una OT 'correctiva'
+    # con al menos una solicitud de repuesto vinculada (ot_tiene_repuestos,
+    # ya resuelto por EXISTS en _OT2_SELECT_FILAS -- NUNCA una consulta por
+    # fila) se muestra como "Instalación de repuestos", no "Mantención
+    # correctiva". Ver _ot_tipo_label_efectivo.
+    _tiene_rep = bool(f.get("ot_tiene_repuestos"))
+    f["tipo_label"] = _ot_tipo_label_efectivo(tipo, _tiene_rep)
+    f["tipo_icon"] = _ot_tipo_icon_efectivo(tipo, _tiene_rep)
 
     estado = f.get("estado")
     meta = _OT2_ESTADO_META.get(estado)
@@ -81301,6 +81315,13 @@ def ot2_detalle(vid):
     # no la del contenedor en UTC — si no, después de las 21:00 una OT de
     # hoy se rotularía "mañana" (REGLA #6).
     hoy = _now_chile().date()
+    # 🏷️ 2026-09-26 (Daniel): ver _ot_tipo_label_efectivo -- esta vista
+    # detalle no pasa por _OT2_SELECT_FILAS (trae `v.*` aparte), así que la
+    # bandera se resuelve acá con una única consulta puntual (no es lista,
+    # no hay N+1 que evitar).
+    v["ot_tiene_repuestos"] = bool(mysql_fetchone(
+        "SELECT 1 FROM mant_ot_repuesto_solicitudes WHERE ot_generada_id=%s LIMIT 1",
+        (vid,)))
     _ot2_enriquecer_fila(v, hoy)
 
     # ── Equipos con su avance ──────────────────────────────────────────
@@ -92953,7 +92974,13 @@ _OT_TV_SELECT = (
     "       v.firma_cliente_at,    v.firma_cliente_nombre, "
     "       v.firma_supervisor_at, v.firma_supervisor_nombre, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
-    "       COALESCE(tar.n_completas, 0) AS n_completas "
+    "       COALESCE(tar.n_completas, 0) AS n_completas, "
+    # 🏷️ 2026-09-26 (Daniel: "OT de instalación debe llamarse OT de
+    # instalación de Repuestos"): mismo EXISTS por fila que
+    # _OT2_SELECT_FILAS (ver _ot_tipo_label_efectivo) -- nunca una consulta
+    # aparte por OT.
+    "       EXISTS (SELECT 1 FROM mant_ot_repuesto_solicitudes rs "
+    "               WHERE rs.ot_generada_id = v.id) AS ot_tiene_repuestos "
     "  FROM mant_visitas v "
     "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
     "  LEFT JOIN tk_tickets    tk ON tk.visita_id = v.id "
@@ -93413,8 +93440,13 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         # lo capturemos"): el tipo ya se guarda y ya se consulta (v.tipo),
         # pero no llegaba al bloque del timeline ni al "próximo trabajo" de
         # quien aún no parte — ahí quedaba hardcodeado a None.
-        tipo_label = _TIPO_OT_LABEL.get((f.get("tipo") or "").lower(),
-                                         (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo")
+        # 🏷️ 2026-09-26 (Daniel: "OT de instalación debe llamarse OT de
+        # instalación de Repuestos... en la ficha del cliente" -- también
+        # el Monitor comparte esta misma etiqueta). ot_tiene_repuestos ya
+        # viene resuelto por EXISTS en _OT_TV_SELECT (ver
+        # _ot_tipo_label_efectivo), no una consulta por fila.
+        tipo_label = _ot_tipo_label_efectivo((f.get("tipo") or "").lower(),
+                                              bool(f.get("ot_tiene_repuestos")))
 
         # Nombre del cliente REAL. Cuando la OT nace de un ticket cuyo
         # cliente todavía no tenía ficha, se crea una con el nombre
@@ -93921,9 +93953,11 @@ def _ot_tv_datos_rango(fecha=None, vista="semana"):
                     "numero": f.get("numero_ot") or f"#{f.get('id')}",
                     "cliente": (_cn or "Trabajo interno")[:38],
                     "ticket": f.get("numero_ticket") or None,
-                    "tipo": _TIPO_OT_LABEL.get(
+                    # 🏷️ 2026-09-26 (Daniel): mismo criterio que la vista día
+                    # -- ver _ot_tipo_label_efectivo.
+                    "tipo": _ot_tipo_label_efectivo(
                         (f.get("tipo") or "").lower(),
-                        (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo"),
+                        bool(f.get("ot_tiene_repuestos"))),
                     "tecnico": f.get("tecnico_nombre") or "Sin asignar",
                     # En una OT de varios días, la hora de inicio solo aplica
                     # al primero — en los siguientes confundiría.
@@ -104785,8 +104819,13 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         contacto_sitio_tel = (visita.get("cli_contacto_tel") or "").strip()
     _tipo = (visita.get("tipo") or "").strip().lower()
     _cr = (visita.get("causa_raiz") or "").strip().lower()
+    # 🏷️ 2026-09-26 (Daniel: "OT de instalación debe llamarse OT de
+    # instalación de Repuestos, en el PDF..."). Ver _ot_tipo_label_efectivo.
+    _tiene_rep_pdf = bool(mysql_fetchone(
+        "SELECT 1 FROM mant_ot_repuesto_solicitudes WHERE ot_generada_id=%s LIMIT 1",
+        (visita.get("id"),))) if visita.get("id") else False
     ot_datos = {
-        "tipo_label":        _TIPO_OT_LABEL.get(_tipo, _tipo.replace("_", " ").capitalize() if _tipo else "Servicio técnico"),
+        "tipo_label":        _ot_tipo_label_efectivo(_tipo, _tiene_rep_pdf),
         "titulo":            (visita.get("titulo") or "").strip(),
         "cli_rut_fmt":       _formato_rut_chile(visita.get("cli_rut")) if visita.get("cli_rut") else "",
         "fecha_prog_str":    fecha_prog_str,
@@ -105575,10 +105614,12 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
         pdf_subtitulo_doc = "Levantamiento técnico de equipos"
     else:
         pdf_titulo_doc = "ORDEN DE TRABAJO"
-        pdf_subtitulo_doc = _TIPO_OT_LABEL.get(
-            _tipo_real_pdf,
-            _tipo_real_pdf.capitalize() if _tipo_real_pdf else "Servicio técnico"
-        )
+        # 🏷️ 2026-09-26 (Daniel): "OT de instalación de Repuestos" en el
+        # PDF -- ver _ot_tipo_label_efectivo.
+        _tiene_rep_pdf2 = bool(mysql_fetchone(
+            "SELECT 1 FROM mant_ot_repuesto_solicitudes WHERE ot_generada_id=%s LIMIT 1",
+            (vid,)))
+        pdf_subtitulo_doc = _ot_tipo_label_efectivo(_tipo_real_pdf, _tiene_rep_pdf2)
 
     # 2) KPIs reales de ot_pdf.html (OT normal, sin informe de
     #    levantamiento): % de checklist REALMENTE completado (antes texto
@@ -123820,7 +123861,13 @@ _TIPO_OT_LABEL = {
     'cambio_equipo':     'Cambio de equipo',
     'desinstalacion':    'Desinstalación',
     'capacitacion':      'Capacitación',
-    'repuesto':          'Repuesto',
+    # 🏷️ 2026-09-26 (Daniel: "OT de instalación debe llamarse OT de
+    # instalación de Repuestos, en el PDF y en la ficha del cliente"). Este
+    # label también se usa para la OT tipo='correctiva' que trae al menos
+    # una solicitud de mant_ot_repuesto_solicitudes vinculada (ver
+    # _ot_tipo_label_efectivo, ~línea 123836) -- el ENUM/valor guardado NO
+    # cambia, solo la etiqueta visible.
+    'repuesto':          'Instalación de repuestos',
     # 2026-08-10 (Daniel): "Trabajo de bodega" es el MISMO tipo que ya
     # existía como 'revision_interna' — solo cambia el label visible.
     # NO cambiar el valor del ENUM (revision_interna), solo el texto.
@@ -123832,6 +123879,42 @@ _TIPO_OT_LABEL = {
     # instalación ni desinstalación — antes no tenía dónde caer.
     'movimiento_equipos': 'Movimiento de equipos',
 }
+
+
+def _ot_tipo_label_efectivo(tipo, tiene_repuestos=False):
+    """Etiqueta EFECTIVA de tipo de OT -- distingue la OT de instalación de
+    REPUESTOS (Fase 4, /repuestos, preparar-ot/preparar-ot-lote) de una
+    mantención correctiva normal.
+
+    🏷️ 2026-09-26 (Daniel: "OT de instalación debe llamarse OT de
+    instalación de Repuestos, en el PDF y en la ficha del cliente"). Esa OT
+    HOY nace con tipo='correctiva' (no se cambia -- rompería tarifas,
+    plantillas y el candado de finanzas que dependen de ese valor, ver
+    _otrep_generar_ot_required/preparar-ot-lote): lo único que cambia es
+    esta ETIQUETA visible, cuando la OT tiene al menos una solicitud de
+    mant_ot_repuesto_solicitudes con `ot_generada_id` = esta OT (o cuando
+    el tipo YA es 'repuesto', valor legado/futuro que también cae acá).
+
+    FUNCIÓN PURA -- `tiene_repuestos` lo resuelve el LLAMADOR con una sola
+    consulta/EXISTS por lote (nunca un SELECT por fila -- ver
+    _OT2_SELECT_FILAS/_OT_TV_SELECT, que ya traen `ot_tiene_repuestos` vía
+    EXISTS, y _ot2_enriquecer_fila, que la consume). Punto único para no
+    repetir esta regla en PDF/ficha/panel/monitor por separado."""
+    t = (tipo or "").strip().lower()
+    if t == "repuesto" or tiene_repuestos:
+        return _TIPO_OT_LABEL.get("repuesto", "Instalación de repuestos")
+    return _TIPO_OT_LABEL.get(t, t.replace("_", " ").title() if t else "Sin tipo")
+
+
+def _ot_tipo_icon_efectivo(tipo, tiene_repuestos=False):
+    """Ícono coherente con `_ot_tipo_label_efectivo` -- mismo criterio,
+    misma fuente (_OT2_TIPO_ICONS['repuesto'], caja/herramienta), para no
+    mostrar el label "Instalación de repuestos" con el ícono de llave de
+    'correctiva' (2026-09-26)."""
+    t = (tipo or "").strip().lower()
+    if t == "repuesto" or tiene_repuestos:
+        return _OT2_TIPO_ICONS.get("repuesto", "bi-box-seam")
+    return _OT2_TIPO_ICONS.get(t, "bi-clipboard2")
 
 
 # Nombre "de convención" de la plantilla estándar de cada tipo de OT. Si
@@ -127778,7 +127861,13 @@ def mant_maquina_historial_ots(mid):
                   v.tipo, v.estado, v.descripcion, v.tecnico,
                   v.cerrada_at, v.created_by,
                   COALESCE(u.nombre, u.username) AS tecnico_nombre,
-                  u.username AS tecnico_username
+                  u.username AS tecnico_username,
+                  -- 🏷️ 2026-09-26 (Daniel: "OT de instalación debe llamarse
+                  -- OT de instalación de Repuestos... en la ficha del
+                  -- cliente"). EXISTS por fila, no una consulta aparte por
+                  -- OT (ver _ot_tipo_label_efectivo).
+                  EXISTS (SELECT 1 FROM mant_ot_repuesto_solicitudes rs
+                          WHERE rs.ot_generada_id = v.id) AS ot_tiene_repuestos
              FROM mant_visitas v
              JOIN mant_visita_tareas t ON t.visita_id=v.id
              LEFT JOIN app_users u ON u.id=v.tecnico_user_id
@@ -127799,6 +127888,10 @@ def mant_maquina_historial_ots(mid):
             "hora_real_ini":   str(r["hora_real_inicio"])[:16] if r.get("hora_real_inicio") else "",
             "hora_real_fin":   str(r["hora_real_fin"])[:16] if r.get("hora_real_fin") else "",
             "tipo":            r.get("tipo") or "",
+            # 🏷️ 2026-09-26: label EFECTIVO ya resuelto en backend -- el
+            # front (verHistorialOTEquipo, static/mant_ficha.js) lo prefiere
+            # sobre su propio capitalize() del `tipo` crudo.
+            "tipo_label":      _ot_tipo_label_efectivo(r.get("tipo"), bool(r.get("ot_tiene_repuestos"))),
             "estado":          r.get("estado") or "",
             "descripcion":     r.get("descripcion") or "",
             "tecnico":         r.get("tecnico_nombre") or r.get("tecnico") or "",

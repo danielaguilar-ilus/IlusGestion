@@ -1549,7 +1549,7 @@ function rsPintarGrupos(){
       }
       if (sinStock.length) razones.push(sinStock.length + ' sin stock suficiente: espera a que lleguen');
       puedeLote = !razones.length;
-      btnTitle = razones.length ? razones.join(' · ') : 'Genera una OT de instalación con estas ' + nSel + ' solicitud(es).';
+      btnTitle = razones.length ? razones.join(' · ') : 'Genera una OT de instalación de repuestos con estas ' + nSel + ' solicitud(es).';
     }
     // 🔒 M4 (coordinación post-merge, 2026-09-26): el motivo del botón
     // deshabilitado también en un <small> visible bajo el botón, no solo
@@ -1617,7 +1617,7 @@ function rsCard(s){
   const checked = !!_rs.selLista[s.id];
   return '<div class="rs-grupo-item"><input type="checkbox" ' + (checked ? 'checked' : '') +
     ' onchange="rsListaToggle(' + s.id + ', this.checked)" ' +
-    'title="Seleccionar para generar OT de instalación">' + card + '</div>';
+    'title="Seleccionar para generar OT de instalación de repuestos">' + card + '</div>';
 }
 function rsListaSeleccionIds(){ return _rs.pagina.filter(function(s){ return _rs.selLista[s.id]; }).map(function(s){ return s.id; }); }
 function rsListaToggle(sid, checked){
@@ -1669,7 +1669,7 @@ function rsListaActualizarBoton(){
   const sinStock = sels.filter(function(s){ return s.estado === 'validado' && s.stock_disponible != null && s.stock_disponible < 0; });
   if (sinStock.length) razones.push(sinStock.length + ' sin stock suficiente entre todas las OT abiertas: espera a que lleguen');
   btn.disabled = !!razones.length;
-  btn.title = razones.length ? razones.join(' · ') : 'Genera una OT de instalación con estas ' + sels.length + ' solicitud(es).';
+  btn.title = razones.length ? razones.join(' · ') : 'Genera una OT de instalación de repuestos con estas ' + sels.length + ' solicitud(es).';
   _setMotivo(razones.length ? razones.join(' · ') : '');
 }
 async function rsListaGenerarOT(){
@@ -1711,15 +1711,15 @@ function rsCardInner(s){
   // 🏗️ Fase 3 (2026-09-21, Daniel: "vayamos con la fase 3", los 3 orígenes
   // + tipo correctiva): una vez recibido (o validado con stock, Fase 4) el
   // repuesto, se puede generar la OT que lo va a instalar. Ya generada:
-  // link "OT-XXXX de instalación" en vez del botón, para no volver a
+  // link "OT-XXXX de instalación de repuestos" en vez del botón, para no volver a
   // disparar el wizard sobre la misma solicitud.
   const generarOT = s.ot_generada_id
-    ? '<a class="rs-btn ot-generada" href="/ot/' + s.ot_generada_id + '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>' + rsEsc(s.ot_generada_numero || ('OT #' + s.ot_generada_id)) + ' de instalación</a>'
+    ? '<a class="rs-btn ot-generada" href="/ot/' + s.ot_generada_id + '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>' + rsEsc(s.ot_generada_numero || ('OT #' + s.ot_generada_id)) + ' de instalación de repuestos</a>'
     // 🏗️ FIX Fase 4 (2026-09-26): antes solo 'recibido' -- ahora también
     // 'validado' con stock disponible (decisión de Daniel: "se puede
     // generar desde validada con stock o recibida").
     : ((s.estado === 'recibido' || (s.estado === 'validado' && !(s.stock_disponible < 0))) && _rs.puedeGenerarOT
-        ? '<button type="button" class="rs-btn generar-ot" onclick="rsGenerarOT(' + s.id + ')"><i class="bi bi-clipboard2-plus me-1"></i>Generar OT de instalación</button>'
+        ? '<button type="button" class="rs-btn generar-ot" onclick="rsGenerarOT(' + s.id + ')"><i class="bi bi-clipboard2-plus me-1"></i>Generar OT de instalación de repuestos</button>'
         : '');
   // 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de la
   // operación"): junto al stock físico se muestra el DISPONIBLE real (neto
@@ -2255,7 +2255,7 @@ if (btnRepBuscarErp){
   });
 }
 
-// ══════════════ Fase 3 (2026-09-21): Generar OT de instalación ══════════════
+// ══════════════ Fase 3 (2026-09-21): Generar OT de instalación de repuestos ═══
 // Daniel, tras revisar los 3 orígenes y confirmar tipo correctiva: "vayamos
 // con la fase 3". Reusa el MISMO motor de siempre (OT2C, el wizard de OT
 // 2.0 -- nunca uno propio, ver ot2/_modal_crear.html incluido abajo) con
