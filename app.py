@@ -55015,7 +55015,20 @@ def init_mantenciones_tables():
                 try: cur.execute(_mig)
                 except Exception: pass
             try:
-                _inc_diagnostico_ua_duplicadas()
+                # 🔧 2026-09-26: usa el `cur` ya abierto de este boot -- llamar
+                # a _inc_diagnostico_ua_duplicadas() aquí falla en silencio con
+                # "Working outside of application context" porque mysql_fetchall
+                # depende de Flask `g`, que no existe todavía en el arranque.
+                cur.execute(
+                    "SELECT recomendacion, COUNT(*) AS n FROM mant_incidencias "
+                    " WHERE COALESCE(eliminada,0)=0 AND recomendacion IS NOT NULL AND recomendacion<>'' "
+                    " GROUP BY recomendacion HAVING COUNT(*) > 1")
+                _dups = cur.fetchall() or []
+                if _dups:
+                    print(f"[incidencias] ⚠️ UA duplicadas en incidencias ACTIVAS: {len(_dups)} UA repetidas "
+                          f"-- {[(d[0], d[1]) for d in _dups[:20]]}", flush=True)
+                else:
+                    print("[incidencias] UA duplicadas: ninguna (todas las UA activas son únicas hoy).", flush=True)
             except Exception as _e:
                 print(f"[init_mantenciones_tables] diagnostico UA duplicadas: {_e}", flush=True)
 
