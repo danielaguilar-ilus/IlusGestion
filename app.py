@@ -63618,7 +63618,7 @@ def mant_api_incidencias_buscar_ua():
         try:
             previas = mysql_fetchall(
                 "SELECT id, motivo, estado, created_at FROM mant_incidencias "
-                " WHERE sku=%s AND (%s IS NULL OR id<>%s) "
+                " WHERE sku=%s AND (%s IS NULL OR id<>%s) AND COALESCE(eliminada,0)=0 "
                 " ORDER BY created_at DESC LIMIT 5",
                 (sku_base, excluir, excluir)) or []
         except Exception as _e:
@@ -63797,7 +63797,7 @@ def mant_api_incidencias_conciliacion():
     try:
         incs = mysql_fetchall(
             "SELECT id, sku, descripcion, cantidad, motivo, estado, recomendacion "
-            "  FROM mant_incidencias WHERE estado='abierta'") or []
+            "  FROM mant_incidencias WHERE estado='abierta' AND COALESCE(eliminada,0)=0") or []
     except Exception as _e:
         print(f"[conciliacion] error MySQL: {_e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
@@ -64049,13 +64049,21 @@ def _inc_comparativa_ua(rows, wms_rows):
 # un filtro la tabla se recarga -- eso lo maneja el frontend re-pidiendo
 # siempre con el valor actual, vacío o no).
 _INC_COLUMNAS_FILTRO = {
-    "f_sku": "sku", "f_descripcion": "descripcion", "f_motivo": "motivo",
+    "f_ua": "recomendacion", "f_sku": "sku", "f_descripcion": "descripcion",
+    "f_motivo": "motivo",
 }
 _INC_COLUMNAS_ORDEN = {
-    "sku": "sku", "descripcion": "descripcion", "cantidad": "cantidad",
+    "ua": "recomendacion", "sku": "sku", "descripcion": "descripcion",
+    "cantidad": "cantidad", "motivo": "motivo",
     "estado": "estado", "fecha_resolucion": "fecha_resolucion",
     "created_at": "created_at",
 }
+# 🔧 2026-09-26 (revisión post-merge, Daniel: "pon filtro en TODAS las
+# columnas de la tabla principal que tengan dato filtrable"). Los estados
+# del semáforo que puede pedir el select de "Ubicación/UA vs Check" --
+# mismos valores que arma `_inc_comparativa_ua`.
+_INC_CHK_ESTADOS = ("coincide", "distinta", "no_esta", "sin_ua",
+                     "sin_ubicacion_nuestra", "sin_datos")
 
 
 @app.route("/mantenciones/api/incidencias", methods=["GET"])
@@ -64099,6 +64107,49 @@ def mant_api_incidencias_list():
         if val:
             where.append(f"{col} LIKE %s")
             params.append(f"%{val}%")
+    f_cantidad = (request.args.get("f_cantidad") or "").strip()
+    if f_cantidad:
+        try:
+            where.append("cantidad = %s")
+            params.append(int(f_cantidad))
+        except (TypeError, ValueError):
+            pass   # texto no numérico en el filtro de cantidad -- se ignora, no rompe la consulta
+    f_fecha = (request.args.get("f_fecha") or "").strip()
+    if f_fecha:
+        where.append("fecha_resolucion = %s")
+        params.append(f_fecha)
+
+    # 🔧 2026-09-26 (revisión post-merge, Daniel: "select de semáforo si es
+    # factible server-side"). El estado del semáforo (chk_estado) no vive
+    # en la BD -- se calcula cruzando `recomendacion`/`ubicacion` contra
+    # CheckWMS (_inc_comparativa_ua). Para que el filtro sea compatible con
+    # la paginación SQL, se resuelve ANTES: se buscan los ids que matchean
+    # el resto de filtros (sin paginar) y se cruzan contra CheckWMS UNA
+    # sola vez; el resultado se agrega como `id IN (...)` al WHERE real.
+    f_chk = (request.args.get("f_chk") or "").strip()
+    wms_rows_prefiltro = None
+    if f_chk in _INC_CHK_ESTADOS:
+        where_sql_previo = "WHERE " + " AND ".join(where)
+        previas = mysql_fetchall(
+            f"SELECT id, recomendacion, ubicacion FROM mant_incidencias {where_sql_previo} "
+            f"LIMIT 5000", params) or []
+        try:
+            wms_rows_prefiltro = _checkwms_stock_rows()
+            wms_rows_prefiltro = wms_rows_prefiltro if wms_rows_prefiltro else None
+        except Exception as _e:
+            print(f"[incidencias filtro chk] CheckWMS no disponible: {_e}", flush=True)
+            wms_rows_prefiltro = None
+        anotadas = _inc_comparativa_ua(previas, wms_rows_prefiltro)
+        ids_match = [r["id"] for r in anotadas if r.get("chk_estado") == f_chk]
+        if not ids_match:
+            return jsonify({
+                "ok": True, "rows": [], "total": 0, "page": 1, "page_size": page_size,
+                "total_pages": 1, "checkwms_ok": wms_rows_prefiltro is not None,
+            })
+        marcadores = ",".join(["%s"] * len(ids_match))
+        where.append(f"id IN ({marcadores})")
+        params = params + ids_match
+
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     db = get_db()
@@ -64134,13 +64185,18 @@ def mant_api_incidencias_list():
     # Comparativa UA/Ubicación vs CheckWMS SOLO de la página visible (Daniel
     # 2026-09-26: "no llames una vez por fila... limita a la página"). El
     # cliente de CheckWMS (`_checkwms_stock_rows`) ya cachea la respuesta
-    # completa 1h -- una llamada cubre toda la tabla, no una por fila.
-    try:
-        wms_rows = _checkwms_stock_rows()
-        wms_rows = wms_rows if wms_rows else None
-    except Exception as _e:
-        print(f"[incidencias comparativa] CheckWMS no disponible: {_e}", flush=True)
-        wms_rows = None
+    # completa 1h -- una llamada cubre toda la tabla, no una por fila. Si ya
+    # se consultó arriba para el filtro `f_chk`, se reutiliza esa misma
+    # respuesta (sigue viniendo del mismo cache, pero evita un segundo golpe).
+    if f_chk in _INC_CHK_ESTADOS:
+        wms_rows = wms_rows_prefiltro
+    else:
+        try:
+            wms_rows = _checkwms_stock_rows()
+            wms_rows = wms_rows if wms_rows else None
+        except Exception as _e:
+            print(f"[incidencias comparativa] CheckWMS no disponible: {_e}", flush=True)
+            wms_rows = None
     rows = _inc_comparativa_ua(rows, wms_rows)
 
     total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
@@ -64233,6 +64289,10 @@ def mant_api_incidencias_editar(iid):
     # Snapshot previo para la bitácora (Daniel: "trazable"). Solo se
     # registran los campos que REALMENTE cambiaron.
     antes = mysql_fetchone("SELECT * FROM mant_incidencias WHERE id=%s", (iid,)) or {}
+    # 🔧 2026-09-26 (revisión post-merge): una incidencia eliminada
+    # (soft-delete) no se puede editar -- se trata igual que "no existe".
+    if not antes or antes.get("eliminada"):
+        return jsonify({"ok": False, "error": "Esa incidencia fue eliminada y ya no se puede editar."}), 404
 
     db = get_db()
     with db.cursor() as cur:
@@ -64340,6 +64400,13 @@ def mant_api_incidencias_deduplicar():
     con_foto = {r["incidencia_id"] for r in (mysql_fetchall(
         "SELECT DISTINCT incidencia_id FROM mant_incidencia_fotos") or [])}
     a_borrar = [i for i in a_borrar if i not in con_foto]
+
+    # 🔧 2026-09-26 (revisión post-merge, REGLA #5): este endpoint SÍ hace
+    # hard delete (son duplicados exactos del seed, no incidencias reales
+    # -- distinto del soft-delete de mant_api_incidencias_borrar), pero el
+    # log de auditoría va ANTES de borrar igual, uno por id.
+    for _iid in a_borrar:
+        _inc_log(_iid, "eliminada_dedup", "eliminada", "0", "1 (duplicado exacto del seed de migración)")
 
     db = get_db()
     with db.cursor() as cur:
@@ -64501,7 +64568,8 @@ def mant_api_incidencia_foto_subir(iid):
     vez un video"). Reusa `_otrep_clasificar_archivo` (mismo validador y
     mismo límite de tamaño de video que Repuestos, _OTREP_MAX_VIDEO) para
     no duplicar reglas de validación."""
-    if not mysql_fetchone("SELECT id FROM mant_incidencias WHERE id=%s", (iid,)):
+    if not mysql_fetchone(
+            "SELECT id FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,)):
         return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
     f = request.files.get("file") or request.files.get("archivo")
     if not f or not f.filename:
@@ -64591,7 +64659,8 @@ def mant_api_incidencia_solicitar_repuesto(iid):
     Body multipart: repuesto_stock_id (opcional, liga a bodega) |
     repuesto_nombre (manual), cantidad, motivo (≥10 chars, el mismo texto
     de "Motivo" del wizard sirve), evidencia (obligatoria, foto o video)."""
-    inc = mysql_fetchone("SELECT * FROM mant_incidencias WHERE id=%s", (iid,))
+    inc = mysql_fetchone(
+        "SELECT * FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
     if not inc:
         return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
     fd = request.form
@@ -90168,7 +90237,7 @@ def mant_api_incidencias_disponibles_repuesto():
     exponer esta pestaña en la OT del técnico por ahora"."""
     q = (request.args.get("q") or "").strip()
     palabras = [p for p in q.split() if p][:8]
-    where = ["estado='abierta'", "cantidad > 0"]
+    where = ["estado='abierta'", "cantidad > 0", "COALESCE(eliminada,0)=0"]
     params = []
     for p in palabras:
         where.append("(sku LIKE %s OR descripcion LIKE %s OR observacion LIKE %s)")
@@ -90353,9 +90422,12 @@ def repstock_solicitud_manual():
                 return jsonify({"ok": False, "error":
                                 "Un repuesto no puede venir de la Bodega y de una Incidencia a la vez."}), 400
             incidencia = mysql_fetchone(
-                "SELECT id, sku, descripcion, cantidad, estado FROM mant_incidencias WHERE id=%s",
+                "SELECT id, sku, descripcion, cantidad, estado, eliminada FROM mant_incidencias WHERE id=%s",
                 (int(inc_id_raw),))
-            if not incidencia or incidencia.get("estado") != "abierta":
+            # 🔧 2026-09-26 (revisión post-merge): una incidencia eliminada
+            # (soft-delete) no puede seguir sirviendo de origen de repuesto
+            # -- se trata igual que "no existe".
+            if not incidencia or incidencia.get("estado") != "abierta" or incidencia.get("eliminada"):
                 return jsonify({"ok": False, "error":
                                 "Esa incidencia ya no está abierta o no existe."}), 400
             _tomadas_inc = mysql_fetchall(

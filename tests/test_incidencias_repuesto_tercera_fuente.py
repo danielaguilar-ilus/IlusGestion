@@ -33,6 +33,18 @@ def _leer(path):
         return fh.read()
 
 
+def _fuente_de(nombre_funcion):
+    """Devuelve el CÓDIGO FUENTE (texto crudo) de una función de app.py por
+    nombre, usando ast.get_source_segment -- para revisar SQL armado sin
+    ejecutarlo (no hay BD en este test, ver módulo docstring)."""
+    codigo = _leer(APP_PY)
+    arbol = ast.parse(codigo)
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.FunctionDef) and nodo.name == nombre_funcion:
+            return ast.get_source_segment(codigo, nodo)
+    raise AssertionError(f"no se encontró la función '{nombre_funcion}' en app.py")
+
+
 def _cargar_funciones(*nombres):
     """Extrae varias funciones/constantes de app.py y las ejecuta juntas en
     un ambito aislado (para que las que dependen de otras -- ej.
@@ -238,6 +250,46 @@ class TestComparativaUa(unittest.TestCase):
         out = self.comparar(filas, wms)
         # Se queda con la PRIMERA ocurrencia -- no revienta con UA duplicada.
         self.assertEqual(out[0]["chk_estado"], "coincide")
+
+
+class TestConciliacionExcluyeEliminadas(unittest.TestCase):
+    """🔧 2026-09-26 (revisión post-merge, coordinador): el borrado lógico
+    quedó incompleto -- la conciliación seguía leyendo `mant_incidencias`
+    sin excluir `eliminada=1`, así que una incidencia eliminada seguía
+    contando como "nuestra BD" y la diferencia con el ERP/WMS nunca
+    desaparecía. Sin BD disponible en este entorno de test, se revisa el
+    SQL ARMADO (código fuente de la función) en vez de ejecutarlo -- mismo
+    criterio que el resto del archivo (funciones puras vía ast)."""
+
+    def test_conciliacion_excluye_eliminadas_del_where(self):
+        src = _fuente_de("mant_api_incidencias_conciliacion")
+        self.assertIn("FROM mant_incidencias WHERE estado='abierta' AND COALESCE(eliminada,0)=0", src,
+                       "la consulta de incidencias abiertas para la conciliación debe excluir eliminada=1")
+
+    def test_borrar_incidencia_no_permite_reeliminar(self):
+        src = _fuente_de("mant_api_incidencias_borrar")
+        self.assertIn("COALESCE(eliminada,0)=0", src)
+
+    def test_editar_incidencia_rechaza_eliminadas(self):
+        src = _fuente_de("mant_api_incidencias_editar")
+        self.assertIn('antes.get("eliminada")', src)
+
+    def test_solicitar_repuesto_de_incidencia_excluye_eliminadas(self):
+        src = _fuente_de("mant_api_incidencia_solicitar_repuesto")
+        self.assertIn("COALESCE(eliminada,0)=0", src)
+
+    def test_disponibles_repuesto_excluye_eliminadas(self):
+        src = _fuente_de("mant_api_incidencias_disponibles_repuesto")
+        self.assertIn("COALESCE(eliminada,0)=0", src)
+
+    def test_deduplicar_registra_log_antes_de_borrar(self):
+        # REGLA #5: aunque este endpoint SÍ hace hard delete (duplicados
+        # exactos del seed), debe llamar _inc_log ANTES del DELETE.
+        src = _fuente_de("mant_api_incidencias_deduplicar")
+        idx_log = src.index("_inc_log(")
+        idx_delete = src.index("DELETE FROM mant_incidencias")
+        self.assertLess(idx_log, idx_delete,
+                         "el log de auditoría debe escribirse ANTES del DELETE, no después")
 
 
 if __name__ == "__main__":

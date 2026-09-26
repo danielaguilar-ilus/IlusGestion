@@ -390,6 +390,10 @@
 /* ══ 2026-09-26: filtros por columna (REGLA #4.3), miniatura, semáforo
    de comparativa CheckWMS y acciones rápidas por fila ══ */
 .inc-th-filtros td{background:#fff;padding:6px 10px;border-bottom:2px solid #eaecf0}
+.inc-th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.inc-th-sort:hover{color:#fff;opacity:.85}
+.inc-th-sort i{font-size:.62rem;opacity:.55;margin-left:2px}
+.inc-th-sort.on i{opacity:1;color:var(--ilus-red,#dc2626)}
 .inc-th-filtros input.form-control-sm{font-size:.76rem;padding:3px 8px}
 .inc-foto-mini{width:36px;height:36px;object-fit:cover;border-radius:7px;border:1px solid #e5e7eb;cursor:zoom-in}
 .inc-chk{display:flex;flex-direction:column;gap:1px;font-size:.72rem;line-height:1.25;padding:2px 8px;
@@ -603,7 +607,10 @@
 (function(){
   var incPage = 1, incSize = 10, incQ = '', incEstado = '';
   var incOrderBy = '', incOrderDir = '';
-  var incFiltrosCol = {f_sku: '', f_descripcion: '', f_motivo: ''};
+  // 🔧 2026-09-26 (revisión post-merge, Daniel: "pon filtro en TODAS las
+  // columnas de la tabla principal que tengan dato filtrable"). f_ua/
+  // f_cantidad/f_fecha/f_chk se suman a los 3 de la primera vuelta.
+  var incFiltrosCol = {f_ua: '', f_sku: '', f_descripcion: '', f_motivo: '', f_cantidad: '', f_fecha: '', f_chk: ''};
   // Se resuelve una sola vez en el render (no en cada fila) para no meter
   // una condición de Jinja adentro de un string de JS -- más frágil de
   // leer y de mantener que una bandera booleana simple.
@@ -652,26 +659,56 @@
 
   function incEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
 
-  // Encabezado + fila de filtros por columna (REGLA #4.3, patrón
-  // Etiquetas: combinable con el buscador `q`; al limpiar un filtro de
-  // columna la tabla se recarga igual que al limpiar `q`/estado).
+  // Encabezado con orden por clic (flecha, como el resto del proyecto) +
+  // fila de filtros por columna (REGLA #4.3, patrón Etiquetas: combinable
+  // con el buscador `q`; al limpiar un filtro de columna la tabla se
+  // recarga igual que al limpiar `q`/estado).
+  function incTh(label, orderKey){
+    if(!orderKey) return '<th>'+label+'</th>';
+    var on = incOrderBy === orderKey;
+    var icon = on ? (incOrderDir === 'asc' ? 'bi-caret-up-fill' : 'bi-caret-down-fill') : 'bi-caret-down';
+    return '<th class="inc-th-sort'+(on?' on':'')+'" data-order="'+orderKey+'">'
+      + label + ' <i class="bi '+icon+'"></i></th>';
+  }
+
   function incTheadHtml(){
     return '<thead><tr>'
-      + '<th style="width:56px">Foto</th><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Motivo</th>'
-      + '<th>Repuesto</th><th>Estado</th><th>Ubicación/UA vs Check</th><th>Fecha resolución</th>'
+      + '<th style="width:56px">Foto</th>'
+      + incTh('UA', 'ua') + incTh('SKU', 'sku') + incTh('Descripción', 'descripcion')
+      + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
+      + incTh('Estado', 'estado') + '<th>Ubicación/UA vs Check</th>'
+      + incTh('Fecha resolución', 'fecha_resolucion')
       + '<th style="width:78px">Acciones</th></tr>'
       + '<tr class="inc-th-filtros">'
       + '<td></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColUa" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_ua)+'"></td>'
       + '<td><input type="text" class="form-control form-control-sm" id="incColSku" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_sku)+'"></td>'
       + '<td><input type="text" class="form-control form-control-sm" id="incColDescripcion" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_descripcion)+'"></td>'
-      + '<td></td>'
+      + '<td><input type="number" class="form-control form-control-sm" id="incColCantidad" placeholder="N°" value="'+incEsc(incFiltrosCol.f_cantidad)+'"></td>'
       + '<td><input type="text" class="form-control form-control-sm" id="incColMotivo" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_motivo)+'"></td>'
-      + '<td></td><td></td><td></td><td></td><td></td>'
+      + '<td></td>'
+      + '<td><select class="form-select form-select-sm" id="incColEstado">'
+      +   '<option value="">Todos</option>'
+      +   '<option value="abierta"'+(incEstado==='abierta'?' selected':'')+'>Abierta</option>'
+      +   '<option value="resuelta"'+(incEstado==='resuelta'?' selected':'')+'>Resuelta</option>'
+      + '</select></td>'
+      + '<td><select class="form-select form-select-sm" id="incColChk">'
+      +   '<option value="">Todos</option>'
+      +   '<option value="coincide"'+(incFiltrosCol.f_chk==='coincide'?' selected':'')+'>Coincide</option>'
+      +   '<option value="distinta"'+(incFiltrosCol.f_chk==='distinta'?' selected':'')+'>Distinta</option>'
+      +   '<option value="no_esta"'+(incFiltrosCol.f_chk==='no_esta'?' selected':'')+'>No está en Check</option>'
+      +   '<option value="sin_ua"'+(incFiltrosCol.f_chk==='sin_ua'?' selected':'')+'>Sin UA</option>'
+      +   '<option value="sin_ubicacion_nuestra"'+(incFiltrosCol.f_chk==='sin_ubicacion_nuestra'?' selected':'')+'>Sin ubic. nuestra</option>'
+      +   '<option value="sin_datos"'+(incFiltrosCol.f_chk==='sin_datos'?' selected':'')+'>Check no disponible</option>'
+      + '</select></td>'
+      + '<td><input type="date" class="form-control form-control-sm" id="incColFecha" value="'+incEsc(incFiltrosCol.f_fecha)+'"></td>'
+      + '<td></td>'
       + '</tr></thead>';
   }
 
   function incWireFiltrosCol(){
-    [['incColSku','f_sku'],['incColDescripcion','f_descripcion'],['incColMotivo','f_motivo']].forEach(function(par){
+    [['incColUa','f_ua'],['incColSku','f_sku'],['incColDescripcion','f_descripcion'],
+     ['incColMotivo','f_motivo'],['incColCantidad','f_cantidad']].forEach(function(par){
       var el = document.getElementById(par[0]);
       if(!el) return;
       el.addEventListener('input', function(){
@@ -682,12 +719,36 @@
         }, 350);
       });
     });
+    var selEstado = document.getElementById('incColEstado');
+    if(selEstado) selEstado.addEventListener('change', function(){
+      incEstado = this.value; incPage = 1; cargar();
+      var top = document.getElementById('incFEstado'); if(top) top.value = incEstado;
+    });
+    var selChk = document.getElementById('incColChk');
+    if(selChk) selChk.addEventListener('change', function(){
+      incFiltrosCol.f_chk = this.value; incPage = 1; cargar();
+    });
+    var fFecha = document.getElementById('incColFecha');
+    if(fFecha) fFecha.addEventListener('change', function(){
+      incFiltrosCol.f_fecha = this.value; incPage = 1; cargar();
+    });
+    document.querySelectorAll('.inc-th-sort').forEach(function(th){
+      th.addEventListener('click', function(){
+        var key = th.dataset.order;
+        if(incOrderBy === key){
+          incOrderDir = (incOrderDir === 'asc') ? 'desc' : 'asc';
+        } else {
+          incOrderBy = key; incOrderDir = 'asc';
+        }
+        incPage = 1; cargar();
+      });
+    });
   }
 
   function render(data){
     var rows = data.rows || [];
     var box = document.getElementById('incLista');
-    var hayFiltros = incQ || incEstado || incFiltrosCol.f_sku || incFiltrosCol.f_descripcion || incFiltrosCol.f_motivo;
+    var hayFiltros = incQ || incEstado || Object.keys(incFiltrosCol).some(function(k){ return !!incFiltrosCol[k]; });
     if(!rows.length){
       box.innerHTML = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'</table>'
         + '<div class="empty-state"><i class="bi bi-inbox"></i>'
@@ -702,6 +763,7 @@
         + '<td>'+(r.foto_principal
               ? ('<img src="'+r.foto_principal+'" class="inc-foto-mini" alt="Evidencia" loading="lazy">')
               : '<span class="text-muted">—</span>')+'</td>'
+        + '<td>'+(r.recomendacion||'—')+'</td>'
         + '<td>'+(r.sku||'—')+'</td>'
         + '<td>'+(r.descripcion||'')+'</td>'
         + '<td>'+(r.cantidad||0)+'</td>'
@@ -1804,10 +1866,10 @@
     document.getElementById('incFQ').value = '';
     document.getElementById('incFEstado').value = '';
     // REGLA #4.3 (Daniel, bug real 2026-08-01): al limpiar CUALQUIER
-    // filtro -- también los de columna -- la tabla se recarga siempre,
-    // nunca se queda con el resultado anterior.
-    incFiltrosCol = {f_sku: '', f_descripcion: '', f_motivo: ''};
-    incQ = ''; incEstado = ''; incPage = 1; cargar();
+    // filtro -- también los de columna y el orden -- la tabla se recarga
+    // siempre, nunca se queda con el resultado anterior.
+    incFiltrosCol = {f_ua: '', f_sku: '', f_descripcion: '', f_motivo: '', f_cantidad: '', f_fecha: '', f_chk: ''};
+    incQ = ''; incEstado = ''; incOrderBy = ''; incOrderDir = ''; incPage = 1; cargar();
   });
 
   {% if permissions.superadmin %}
