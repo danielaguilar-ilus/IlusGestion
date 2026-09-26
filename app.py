@@ -64355,8 +64355,8 @@ def mant_api_incidencia_solicitar_repuesto(iid):
         sol_id = _otrep_insert(
             "INSERT INTO mant_ot_repuesto_solicitudes "
             "(incidencia_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, origen, cantidad, "
-            " motivo, estado, solicitado_por, proveedor_id) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s)",
+            " motivo, estado, solicitado_por, proveedor_id, creada_desde) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,'incidencia')",
             (iid, stock["id"] if stock else None, nombre[:400],
              (stock.get("sku") if stock else None), origen, cantidad, motivo[:5000], user,
              (stock.get("proveedor_id") if stock else None)))
@@ -85203,6 +85203,11 @@ _OTREP_STOCK_SOLO_GESTION = ("costo_unitario",)
 _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
                            "comprometido", "disponible")
 _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
+                         # 🔒 2026-09-25 (Fase 2): mismos 3 campos nuevos de contacto del
+                         # proveedor que _OTREP_SQL_SOL agrega para la vista agrupada
+                         # "Por proveedor" -- un técnico externo no debe verlos tampoco.
+                         "proveedor_contacto", "proveedor_telefono", "proveedor_email",
+                         "proveedor_canal",
                          "validado_por", "resuelto_por",
                          # 🔒 FIX 2026-09-20 (revisión): _OTREP_SQL_SOL trae
                          # el stock/descripción de bodega del repuesto ya
@@ -85228,6 +85233,11 @@ _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "prove
 # nombrado aparte porque el significado acá es otro (compromiso de stock, no
 # "sigue pendiente de gestión").
 _OTREP_ESTADOS_COMPROMETEN = _OTREP_ABIERTOS
+# 🚦 2026-09-25 (Fase 2 -- spec: "semáforo por antigüedad (días abiertos):
+# verde <3, ámbar 3–7, rojo >7"). Constantes en un solo lugar, como pide la
+# especificación, para que la tarjeta y cualquier reporte usen el mismo corte.
+_OTREP_ANTIGUEDAD_DIAS_VERDE = 3
+_OTREP_ANTIGUEDAD_DIAS_AMBAR = 7
 
 
 def _ensure_ot_repuesto_solicitudes_tables():
@@ -85363,6 +85373,52 @@ def _ensure_ot_repuesto_solicitudes_tables():
                 "AFTER ot_generada_id, ADD INDEX idx_otrep_lote (lote_id)")
     except Exception as e:
         print(f"[ensure_ot_repuestos] lote_id: {e}", flush=True)
+    # 🏗️ 2026-09-25 (Fase 2): `creada_desde` es la fuente EXPLÍCITA de dónde
+    # nació la solicitud -- hasta acá `_otrep_fila` lo DERIVABA de qué FK
+    # quedó seteada (visita_id/incidencia_id/ninguna->ticket), lo que no
+    # distinguía un origen 'manual' sin ticket de uno 'ticket' real. Se
+    # agrega la columna + backfill de las filas existentes con la MISMA
+    # lógica de derivación que ya usaba _otrep_fila -- nada de lo que ya
+    # vive en producción cambia de clasificación (REGLA #4.2). `_otrep_fila`
+    # sigue derivando como antes si la columna viniera vacía (defensivo).
+    # `es_reposicion`: solicitud manual SIN cliente ("Reposición de stock
+    # propio", decisión confirmada 25-sep).
+    try:
+        _colsCD = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes'") or [])}
+        if _colsCD and "creada_desde" not in _colsCD:
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN creada_desde VARCHAR(20) NULL "
+                "COMMENT \"'ot'|'incidencia'|'ticket'|'manual' -- de donde nacio\" "
+                "AFTER origen, ADD INDEX idx_otrep_creada_desde (creada_desde)")
+        if _colsCD and "es_reposicion" not in _colsCD:
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN es_reposicion TINYINT(1) NOT NULL DEFAULT 0 "
+                "COMMENT 'Solicitud manual SIN cliente: reposicion de stock propio' AFTER cliente_id")
+        # Backfill de filas viejas (creada_desde IS NULL) -- una vez
+        # clasificadas, todo INSERT nuevo ya trae la columna seteada (los 3
+        # orígenes existentes -- OT ~L86428, incidencia ~L64358, ticket
+        # ~L87442 -- y el manual nuevo, todos la setean en su propio INSERT).
+        # 🔴 FIX 2026-09-25 (revisión adversarial post-commit f5db174b):
+        # `updated_at` es ON UPDATE CURRENT_TIMESTAMP -- sin
+        # `updated_at=updated_at` este UPDATE lo reescribía a NOW() en
+        # TODAS las solicitudes CERRADAS de producción en cada arranque
+        # del servidor, destruyendo `dias_transcurridos` ("días hasta
+        # cerrar", que se congela en updated_at, ver _otrep_fila) de
+        # golpe. `updated_at=updated_at` es una asignación literal (no un
+        # cambio real de valor), así que MySQL NO dispara el ON UPDATE.
+        mysql_execute(
+            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='ot', updated_at=updated_at "
+            " WHERE creada_desde IS NULL AND visita_id IS NOT NULL")
+        mysql_execute(
+            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='incidencia', updated_at=updated_at "
+            " WHERE creada_desde IS NULL AND visita_id IS NULL AND incidencia_id IS NOT NULL")
+        mysql_execute(
+            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='ticket', updated_at=updated_at "
+            " WHERE creada_desde IS NULL AND visita_id IS NULL AND incidencia_id IS NULL")
+    except Exception as e:
+        print(f"[ensure_ot_repuestos] creada_desde/es_reposicion: {e}", flush=True)
     try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_ot_repuesto_evidencias (
@@ -85467,6 +85523,22 @@ def _otrep_gestion_required(view):
     def wrapped(*a, **k):
         if not _otrep_puede_gestion():
             return jsonify({"ok": False, "error": "No tienes permiso para gestionar solicitudes de repuesto."}), 403
+        return view(*a, **k)
+    return wrapped
+
+
+def _otrep_manual_required(view):
+    """Gate del alta manual (Fase 2, 2026-09-25 -- spec: "gate
+    _otrep_gestion_required + excluir técnicos"). A diferencia del resto de
+    la cola (que sí deja operar al técnico INTERNO -- valida/pide/recibe/
+    instala como parte de su trabajo de bodega), crear una solicitud desde
+    CERO es decisión de gestión: el técnico pide repuestos desde la OT (ya
+    cubierto) o los recibe ya cargados acá, nunca los da de alta él mismo."""
+    @wraps(view)
+    def wrapped(*a, **k):
+        if not _otrep_puede_gestion() or _es_rol_tecnico():
+            return jsonify({"ok": False, "error":
+                            "Crear una solicitud manual lo hace bodega/gestión, no un técnico."}), 403
         return view(*a, **k)
     return wrapped
 
@@ -85657,6 +85729,12 @@ _OTREP_SQL_SOL = (
     "       t.comuna_nombre AS ticket_comuna, "
     "       rs.sku AS stock_sku, rs.descripcion AS stock_descripcion, rs.cantidad AS stock_cantidad, "
     "       pv.nombre AS proveedor_nombre, "
+    # 🏗️ 2026-09-25 (Fase 2): contacto/canal del proveedor -- lo usa la
+    # vista agrupada "Por proveedor" del centro de solicitudes (mismos datos
+    # que ya muestra el modal "Asignar a ticket" de Seguimiento, ver
+    # _repatRenderProveedor en repuestos.html).
+    "       pv.contacto_nombre AS proveedor_contacto, pv.telefono AS proveedor_telefono, "
+    "       pv.email AS proveedor_email, pv.canal_preferido AS proveedor_canal, "
     "       inc.sku AS incidencia_sku, inc.descripcion AS incidencia_descripcion, "
     "       inc.estado AS incidencia_estado, "
     # 🏗️ 2026-09-21 (Fase 3): OT de instalación ya generada desde esta
@@ -85700,7 +85778,14 @@ def _otrep_fila(s, para_ot=False):
     # maquina_id, opcional) sin que exista ninguna OT -- si se usara
     # maquina_id como señal, una solicitud nacida de un ticket con equipo
     # se clasificaría como "ot" por error.
-    if s.get("visita_id"):
+    # 🏗️ 2026-09-25 (Fase 2): si la columna `creada_desde` ya viene seteada
+    # (todo INSERT nuevo la trae, y el backfill de la migración la puso en
+    # las filas viejas), es la fuente de verdad -- distingue un origen
+    # 'manual' real de uno derivado por descarte. Si viniera vacía por algún
+    # motivo, se deriva exactamente como antes (defensivo).
+    if s.get("creada_desde"):
+        s["contexto"] = s["creada_desde"]
+    elif s.get("visita_id"):
         s["contexto"] = "ot"
     elif s.get("incidencia_id"):
         s["contexto"] = "incidencia"
@@ -85734,6 +85819,19 @@ def _otrep_fila(s, para_ot=False):
             s["dias_transcurridos"] = None
     else:
         s["dias_transcurridos"] = None
+    # 🚦 2026-09-25 (Fase 2 -- spec: "semáforo por antigüedad"). Solo tiene
+    # sentido para solicitudes ABIERTAS -- una cerrada ya no espera nada.
+    if s.get("abierta") and s.get("dias_transcurridos") is not None:
+        _d = s["dias_transcurridos"]
+        s["antiguedad_color"] = ("rojo" if _d > _OTREP_ANTIGUEDAD_DIAS_AMBAR
+                                  else "ambar" if _d >= _OTREP_ANTIGUEDAD_DIAS_VERDE else "verde")
+    else:
+        s["antiguedad_color"] = None
+    # ⚠️ 2026-09-25 (Daniel: "el técnico ya está subiendo solicitudes de
+    # repuestos y eso tiene que quedar ahí con una alerta tremenda"): marca
+    # explícita para la tarjeta -- 'solicitado' es lo único que nadie de
+    # bodega tocó todavía.
+    s["por_atender"] = (s.get("estado") == "solicitado")
     # REGLA #6: todo datetime a hora Chile, nunca ISO crudo.
     for k in ("created_at", "validado_at", "pedido_at", "recibido_at", "instalado_at", "updated_at"):
         s[k] = chile_fmt_filter(s[k]) if s.get(k) else None
@@ -87223,61 +87321,340 @@ def ot2_api_ot_repuestos(vid):
     return jsonify({"ok": True, "solicitudes": sols})
 
 
-@app.route("/repuestos/api/solicitudes-ot", methods=["GET"])
-@_otrep_gestion_required
-def repstock_solicitudes_ot_listar():
-    """Cola de solicitudes desde OT: filtros por estado (o 'abiertas'),
-    texto, ticket, OT o máquina. Trae conteo por estado para los chips.
-    Techo de 400 filas (se avisa con `truncado`, REGLA #4.3)."""
-    estado = (request.args.get("estado") or "").strip().lower()
-    q = (request.args.get("q") or "").strip()
+def _otrep_filtros_query():
+    """Arma WHERE+params comunes a la cola/Excel/vistas agrupadas del centro
+    de solicitudes (Fase 2, 2026-09-25) -- UNA sola fuente para que el Excel
+    exportado coincida siempre con lo que la pantalla está filtrando.
+    Soporta: estado ('abiertas'|'cerradas'|'todas'|uno de _OTREP_ESTADOS),
+    origen ('ot'|'manual'|'incidencia'|'ticket'), cliente_id, proveedor_id,
+    ticket_id, visita_id, maquina_id, fecha_desde/fecha_hasta (YYYY-MM-DD
+    sobre created_at) y texto libre `q` (igual que antes)."""
     where, params = ["1=1"], []
-    # 🔒 FIX 2026-09-21 (revisión adversarial Fase 2): esta cola ahora
-    # también trae solicitudes de origen Incidencias (LEFT JOIN nuevo en
-    # _OTREP_SQL_SOL), pero la propia página de Incidencias está bloqueada
-    # para técnicos (@_no_tecnico en mant_incidencias_page y en el endpoint
-    # de crear solicitud) -- sin este filtro, un técnico interno (que sí
-    # puede ver esta cola por sus solicitudes de OT) terminaba viendo
-    # motivo/evidencia/SKU de Incidencias por una puerta lateral que la
-    # regla de negocio nunca quiso abrirle.
+    # 🔒 FIX 2026-09-21 (revisión adversarial Fase 2): esta cola también
+    # trae solicitudes de origen Incidencias (LEFT JOIN en _OTREP_SQL_SOL),
+    # pero esa pantalla está bloqueada para técnicos -- sin este filtro, un
+    # técnico interno (que sí puede ver esta cola por sus solicitudes de OT)
+    # terminaba viendo motivo/evidencia/SKU de Incidencias por una puerta
+    # lateral que la regla de negocio nunca quiso abrirle.
     if _es_rol_tecnico():
         where.append("s.incidencia_id IS NULL")
+    estado = (request.args.get("estado") or "").strip().lower()
     if estado == "abiertas":
         where.append("s.estado IN ('solicitado','validado','pedido','recibido')")
+    elif estado == "cerradas":
+        where.append("s.estado IN ('instalado','rechazado')")
     elif estado in _OTREP_ESTADOS:
         where.append("s.estado=%s"); params.append(estado)
+    origen = (request.args.get("origen") or "").strip().lower()
+    if origen in ("ot", "manual", "incidencia", "ticket"):
+        where.append(
+            "COALESCE(s.creada_desde, CASE WHEN s.visita_id IS NOT NULL THEN 'ot' "
+            "  WHEN s.incidencia_id IS NOT NULL THEN 'incidencia' ELSE 'ticket' END) = %s")
+        params.append(origen)
     for arg, col in (("ticket_id", "s.ticket_id"), ("visita_id", "s.visita_id"),
-                     ("maquina_id", "s.maquina_id"), ("cliente_id", "s.cliente_id")):
+                     ("maquina_id", "s.maquina_id"), ("cliente_id", "s.cliente_id"),
+                     ("proveedor_id", "s.proveedor_id")):
         val = (request.args.get(arg) or "").strip()
         if val.isdigit():
             where.append(f"{col}=%s"); params.append(int(val))
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): el
+    # <input type=date> del filtro es un día calendario EN HORA CHILE, pero
+    # `created_at` se guarda en UTC (REGLA #6) -- comparar el string tal
+    # cual corría 3-4 horas desfasado (un documento de las 23:30 hora Chile
+    # del día X ya es X+1 en UTC, y quedaba fuera de "hasta X" o adentro de
+    # "desde X+1" quien no debía). Se arma el límite como medianoche/23:59:59
+    # EN HORA CHILE y se convierte a UTC antes de compararlo.
+    fdesde = (request.args.get("fecha_desde") or "").strip()
+    fhasta = (request.args.get("fecha_hasta") or "").strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", fdesde) or re.match(r"^\d{4}-\d{2}-\d{2}$", fhasta):
+        from zoneinfo import ZoneInfo
+        _tz_cl = ZoneInfo("America/Santiago")
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", fdesde):
+            try:
+                dt_cl = datetime.strptime(fdesde, "%Y-%m-%d").replace(
+                    hour=0, minute=0, second=0, tzinfo=_tz_cl)
+                dt_utc = dt_cl.astimezone(timezone.utc).replace(tzinfo=None)
+                where.append("s.created_at >= %s"); params.append(dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                pass
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", fhasta):
+            try:
+                dt_cl = datetime.strptime(fhasta, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=_tz_cl)
+                dt_utc = dt_cl.astimezone(timezone.utc).replace(tzinfo=None)
+                where.append("s.created_at <= %s"); params.append(dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                pass
+    q = (request.args.get("q") or "").strip()
     if q:
         like = f"%{q}%"
         where.append("(s.repuesto_nombre LIKE %s OR v.numero_ot LIKE %s OR m.nombre LIKE %s "
                      " OR c.razon_social LIKE %s OR t.numero_ticket LIKE %s OR rs.sku LIKE %s "
                      " OR m.serie LIKE %s)")
         params += [like] * 7
-    LIM = 400
+    return " AND ".join(where), params
+
+
+def _otrep_pendientes_tecnicos():
+    """Fuente ÚNICA del banner + burbuja de "solicitudes de técnicos sin
+    atender" (Daniel, 2026-09-25: "el técnico ya está subiendo solicitudes
+    de repuestos y eso tiene que quedar ahí con una alerta tremenda porque
+    hay que atender eso"). "Sin atender" = estado='solicitado': recién
+    levantada, nadie de bodega la validó/rechazó todavía. El banner Y la
+    burbuja de la pestaña leen este mismo dict -- nunca dos cálculos.
+
+    🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
+    solicitud `creada_desde='manual'` la levantó la PROPIA gestión/bodega
+    desde el modal "Solicitar repuesto" (Fase 2) -- no es un técnico
+    pidiendo algo que "hay que atender". Contarla acá infla la alerta con
+    algo que quien la ve ya sabe que existe (la acaba de crear él mismo)."""
+    where = "estado='solicitado' AND COALESCE(creada_desde,'')<>'manual'"
+    if _es_rol_tecnico():
+        where += " AND incidencia_id IS NULL"
     try:
-        sols = _otrep_listar(" AND ".join(where), params, limit=LIM)
-        # Mismo filtro que arriba para que los conteos de los chips no
-        # muestren números más altos que las filas que el técnico de
-        # verdad puede ver en la lista.
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS n, MIN(created_at) AS mas_antigua "
+            "FROM mant_ot_repuesto_solicitudes WHERE " + where) or {}
+        n = int(row.get("n") or 0)
+        dias_max = None
+        if row.get("mas_antigua"):
+            try:
+                dias_max = round((datetime.utcnow() - row["mas_antigua"]).total_seconds() / 86400.0, 1)
+            except Exception:
+                dias_max = None
+        return {"n": n, "dias_max": dias_max}
+    except Exception as e:
+        print(f"[otrep] pendientes_tecnicos: {e}", flush=True)
+        return {"n": 0, "dias_max": None}
+
+
+def _otrep_listar_agrupado(vista, where_sql, params):
+    """Vistas "Por proveedor" / "Por cliente" del centro de solicitudes
+    (Fase 2, 2026-09-25 -- Daniel: "si tengo tres repuestos que solicitarle
+    a Drax y dos a Kairos/Relax, puedo hacer dos tickets... agrupar las
+    solicitudes de repuestos por proveedor, y para generar una OT, por
+    cliente"). No pagina -- son para trabajar TODO el grupo de una vez
+    (marcar/desmarcar todo, REGLA #14), así que se cachea en memoria con un
+    techo de seguridad."""
+    LIM = 1000
+    try:
+        rows = mysql_fetchall(
+            _OTREP_SQL_SOL + " WHERE " + where_sql
+            + " ORDER BY (s.estado='solicitado') DESC, s.id DESC LIMIT %s",
+            tuple(params) + (LIM,)) or []
+        sols = [_otrep_fila(r) for r in rows]
+    except Exception as e:
+        print(f"[otrep] agrupado {vista}: {e}", flush=True)
+        return jsonify({"ok": True, "vista": vista, "grupos": [], "truncado": False})
+    grupos = {}
+    if vista == "proveedor":
+        # "cuántas solicitudes pendientes de compra (sin stock / validadas
+        # sin stock / pedidas)" -- lo que de verdad hay que comprarle a ese
+        # proveedor, no todo lo que alguna vez pasó por él.
+        # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): esta
+        # vista usaba `<= 0`, pero la tarjeta (rsCard/compTxt en el
+        # frontend) marca "warn" con `stock_disponible < 0` -- con `<= 0`,
+        # un repuesto justo en el límite (disponible exactamente 0, ni de
+        # más ni de menos) aparecía acá como "pendiente de compra" sin que
+        # la tarjeta lo mostrara en rojo, dos criterios distintos para el
+        # mismo dato.
+        pendientes = [s for s in sols if s.get("estado") in ("solicitado", "validado", "pedido")
+                      and (not s.get("repuesto_stock_id")
+                           or (s.get("stock_disponible") is not None and s["stock_disponible"] < 0)
+                           or s.get("estado") == "pedido")]
+        for s in pendientes:
+            pid = s.get("proveedor_id") or 0
+            g = grupos.setdefault(pid, {
+                "proveedor_id": s.get("proveedor_id"),
+                "proveedor_nombre": s.get("proveedor_nombre") or "Sin proveedor asignado",
+                "contacto": s.get("proveedor_contacto"), "canal": s.get("proveedor_canal"),
+                "telefono": s.get("proveedor_telefono"), "email": s.get("proveedor_email"),
+                "solicitudes": []})
+            g["solicitudes"].append(s)
+    else:
+        for s in sols:
+            if not (s.get("abierta") and s.get("cliente_id")):
+                continue
+            cid = s["cliente_id"]
+            g = grupos.setdefault(cid, {"cliente_id": cid,
+                                        "cliente_nombre": s.get("cliente_nombre") or f"Cliente #{cid}",
+                                        "solicitudes": []})
+            g["solicitudes"].append(s)
+    lista_grupos = sorted(grupos.values(), key=lambda g: -len(g["solicitudes"]))
+    for g in lista_grupos:
+        g["n"] = len(g["solicitudes"])
+    return jsonify({"ok": True, "vista": vista, "grupos": lista_grupos, "truncado": len(sols) >= LIM})
+
+
+@app.route("/repuestos/api/solicitudes-ot", methods=["GET"])
+@_otrep_gestion_required
+def repstock_solicitudes_ot_listar():
+    """Centro único de solicitudes (Fase 2, 2026-09-25 -- Daniel: "en el
+    seguimiento podemos tener un repositorio de todos los repuestos,
+    clientes, proveedor"). Reemplaza el techo mudo de 400 filas por
+    paginación REAL en servidor (REGLA #4.3): `page`/`per_page` entran,
+    `total`/`total_pages` salen. `vista=proveedor|cliente` devuelve las
+    agrupaciones en vez de una página (ver _otrep_listar_agrupado).
+
+    Orden: las 'solicitado' (por validar, sin gestionar) SIEMPRE primero --
+    alerta de Daniel 2026-09-25: "el técnico ya está subiendo solicitudes de
+    repuestos... hay que atender eso" -- después el resto por antigüedad."""
+    where_sql, params = _otrep_filtros_query()
+    vista = (request.args.get("vista") or "lista").strip().lower()
+    if vista in ("proveedor", "cliente"):
+        return _otrep_listar_agrupado(vista, where_sql, params)
+
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page") or 100)
+    except (TypeError, ValueError):
+        per_page = 100
+    per_page = max(10, min(per_page, 200))
+
+    sols, conteo, total, total_pages = [], {}, 0, 1
+    try:
+        total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes s "
+            "  LEFT JOIN mant_maquinas m ON m.id=s.maquina_id "
+            "  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+            "  LEFT JOIN mant_incidencias inc ON inc.id=s.incidencia_id "
+            "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
+            "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+            "  LEFT JOIN mant_repuestos_stock rs ON rs.id=s.repuesto_stock_id "
+            " WHERE " + where_sql, tuple(params)) or {}).get("n") or 0)
+        total_pages = max(1, -(-total // per_page))  # ceil sin import math
+        if page > total_pages:
+            page = total_pages
+        offset = (page - 1) * per_page
+        rows = mysql_fetchall(
+            _OTREP_SQL_SOL + " WHERE " + where_sql
+            + " ORDER BY (s.estado='solicitado') DESC, s.id DESC LIMIT %s OFFSET %s",
+            tuple(params) + (per_page, offset)) or []
+        sols = [_otrep_fila(r) for r in rows]
+        if sols:
+            ids = [s["id"] for s in sols]
+            ph = ",".join(["%s"] * len(ids))
+            evs = mysql_fetchall(
+                f"SELECT id, solicitud_id, tipo, url, archivo_nombre, size_kb "
+                f"  FROM mant_ot_repuesto_evidencias WHERE solicitud_id IN ({ph}) ORDER BY id",
+                tuple(ids)) or []
+            idx = {s["id"]: s for s in sols}
+            for e in evs:
+                if e.get("solicitud_id") in idx:
+                    idx[e["solicitud_id"]]["evidencias"].append(dict(e))
+        # Conteo por estado SIN el resto de los filtros (para los chips: los
+        # chips necesitan ver cuánto hay en CADA estado, no solo en el que
+        # ya está aplicado) -- mismo filtro de técnico que arriba.
         _conteo_where = " WHERE incidencia_id IS NULL" if _es_rol_tecnico() else ""
         conteo = {r["estado"]: int(r["n"]) for r in (mysql_fetchall(
             "SELECT estado, COUNT(*) AS n FROM mant_ot_repuesto_solicitudes"
             + _conteo_where + " GROUP BY estado") or [])}
     except Exception as e:
         print(f"[otrep] cola: {e}", flush=True)
-        sols, conteo = [], {}
     puede_gestion_plata = not _es_rol_tecnico()
     return jsonify({"ok": True, "solicitudes": sols, "conteo": conteo,
+                    "total": total, "page": page, "per_page": per_page, "total_pages": total_pages,
+                    "pendientes_tecnicos": _otrep_pendientes_tecnicos(),
                     "estados": _OTREP_ESTADO_LABEL, "transiciones": _OTREP_TRANSICIONES,
                     "puede_pedir_rechazar": puede_gestion_plata,
                     # 🏗️ Fase 3 (2026-09-21): controla si la cola ofrece
                     # "Generar OT de instalación" -- ver _otrep_puede_generar_ot.
-                    "puede_generar_ot": _otrep_puede_generar_ot(),
-                    "truncado": len(sols) >= LIM})
+                    "puede_generar_ot": _otrep_puede_generar_ot()})
+
+
+@app.route("/repuestos/api/solicitudes-ot/export", methods=["GET"])
+@_otrep_gestion_required
+def repstock_solicitudes_ot_export():
+    """Excel del filtro ACTUAL del centro de solicitudes (Fase 2, 2026-09-25
+    -- REGLA de exports del proyecto: nunca un reporte aparte, siempre lo
+    mismo que la pantalla). Mismos filtros que la cola (_otrep_filtros_query),
+    sin paginar, con un techo de seguridad."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        return jsonify({"ok": False, "error": "openpyxl no está instalado en el servidor."}), 500
+    from io import BytesIO
+
+    where_sql, params = _otrep_filtros_query()
+    LIM = 5000
+    try:
+        rows = mysql_fetchall(
+            _OTREP_SQL_SOL + " WHERE " + where_sql
+            + " ORDER BY (s.estado='solicitado') DESC, s.id DESC LIMIT %s",
+            tuple(params) + (LIM,)) or []
+        sols = [_otrep_fila(r) for r in rows]
+    except Exception as e:
+        print(f"[otrep] export: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo generar el Excel."}), 500
+    truncado = len(rows) >= LIM
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Solicitudes"
+    HDR_FILL = PatternFill("solid", fgColor="0A0A0A")   # REGLA #2: negro ILUS
+    HDR_FONT = Font(color="FFFFFF", bold=True)
+    headers = ["ID", "Estado", "Origen", "Cliente", "Equipo / Serie", "N° OT", "N° Ticket",
+               "Repuesto", "SKU", "Cantidad", "Proveedor", "N° OC", "Motivo",
+               "Solicitado por", "Creado (hora Chile)", "Días abiertos"]
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(1, ci, h)
+        cell.font = HDR_FONT
+        cell.fill = HDR_FILL
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    ws.freeze_panes = "A2"
+    _ORIGEN_XLS = {"ot": "OT", "manual": "Manual", "incidencia": "Incidencia", "ticket": "Ticket directo"}
+    for s in sols:
+        ws.append([
+            s.get("id"), s.get("estado_label"), _ORIGEN_XLS.get(s.get("contexto"), s.get("contexto")),
+            s.get("cliente_nombre") or ("Reposición de stock propio" if s.get("es_reposicion") else "—"),
+            s.get("maquina_nombre") or "", s.get("numero_ot") or "", s.get("numero_ticket") or "",
+            s.get("repuesto_nombre") or "", s.get("repuesto_sku") or "",
+            s.get("cantidad"), s.get("proveedor_nombre") or "", s.get("oc_numero") or "",
+            (s.get("motivo") or "")[:500], s.get("solicitado_por") or "",
+            s.get("created_at") or "", s.get("dias_transcurridos"),
+        ])
+    for i in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 18
+    # ⚠️ 2026-09-25 (revisión adversarial post-commit f5db174b): si el
+    # filtro trae más de `LIM` solicitudes, el Excel solo alcanza a traer
+    # las más recientes -- sin avisarlo, se leía como "esto es todo" cuando
+    # en realidad faltaban filas. Fila de aviso al tope, mismo patrón de
+    # otros exports del proyecto (ver export de Transporte, ws1 "Resumen").
+    if truncado:
+        ws.insert_rows(1)
+        warn = ws.cell(1, 1, f"⚠ Se alcanzó el techo de {LIM} solicitudes (las más recientes, "
+                              "'por validar' primero) — acota fecha/cliente/proveedor/estado para "
+                              "ver el resto en otro Excel.")
+        warn.font = Font(color="B45309", bold=True)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+        ws.freeze_panes = "A3"
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nombre = f"solicitudes_repuestos_{_now_chile().strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(buf, as_attachment=True, download_name=nombre,
+                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/repuestos/api/solicitudes-ot/crear-ticket-compra", methods=["POST"])
+@_otrep_gestion_required
+def repstock_crear_ticket_compra():
+    """Stub deliberado (Fase 2, 2026-09-25 -- spec: "deja el botón y la
+    selección listos llamando a un endpoint stub que responde 'disponible
+    en la próxima fase' SOLO si el backend de la Fase 5 no existe; NO
+    inventar el ticket de compra aquí"). El botón "Crear ticket de compra
+    (N)" de la vista "Por proveedor" ya deja la selección lista
+    (checkboxes + marcar/desmarcar todo, REGLA #14); armar el ticket
+    agrupado de verdad es la Fase 5, que Daniel todavía no pidió construir."""
+    return jsonify({"ok": False, "error":
+                    "Crear el ticket de compra agrupado por proveedor está disponible en la "
+                    "próxima fase. Por ahora, pide cada repuesto desde su propia solicitud "
+                    "(botón \"Pedir al proveedor\")."}), 501
 
 
 @app.route("/repuestos/api/solicitudes-ot/<int:sid>/estado", methods=["POST"])
@@ -87668,8 +88045,8 @@ def repstock_ticket_solicitar_repuesto(tid):
         sol_id = _otrep_insert(
             "INSERT INTO mant_ot_repuesto_solicitudes "
             "(ticket_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, origen, cantidad, "
-            " motivo, estado, solicitado_por, proveedor_id) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s)",
+            " motivo, estado, solicitado_por, proveedor_id, creada_desde) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,'ticket')",
             (tid, stock["id"] if stock else None, nombre[:400],
              (stock.get("sku") if stock else None), origen, cantidad, motivo[:5000], user,
              (stock.get("proveedor_id") if stock else None)))
@@ -87707,6 +88084,215 @@ def repstock_ticket_solicitar_repuesto(tid):
                            f"abiertos — faltan {abs(disponible):g}.")
     return jsonify({"ok": True, "solicitud_id": sol_id, "ticket_id": tid,
                     "numero_ticket": t.get("numero_ticket"), "aviso": "\n".join(avisos) or None})
+
+
+@app.route("/repuestos/api/solicitudes/manual", methods=["POST"])
+@_otrep_manual_required
+def repstock_solicitud_manual():
+    """"Solicitar repuesto" potente (Fase 2, 2026-09-25 -- Daniel: "el
+    solicitar repuesto debe ser bien potente"). Crea VARIAS solicitudes de
+    una sola vez (una por repuesto elegido en el paso 2 del modal), todas
+    con el MISMO lote_id -- así "Solicitudes" las puede mostrar ligadas y,
+    más adelante, un ticket de compra agrupado (Fase 5) las reconoce como
+    un solo pedido.
+
+    Decisiones confirmadas (25-sep): cliente OBLIGATORIO salvo marcar
+    "Reposición de stock propio" (es_reposicion=true, entonces sin cliente).
+    Cada repuesto puede venir de la Bodega (repuesto_stock_id -> nace
+    'validado', mismo criterio y aviso de comprometido que ya usa la
+    transición a validado) o manual/ERP sin ligar (nace 'solicitado', "por
+    validar").
+
+    Acepta JSON puro (sin adjunto) o multipart (con adjunto, campo
+    'evidencia' -- mismo criterio que el resto de esta cola, foto o video,
+    opcional acá). Campos, iguales en ambos formatos salvo `items` que en
+    multipart va como JSON serializado en el propio campo:
+      cliente_id      int, obligatorio salvo es_reposicion=true
+      es_reposicion   bool ('1'/'true' en multipart)
+      maquina_id      opcional, debe pertenecer al cliente
+      motivo          texto, obligatorio >= 5 caracteres
+      items           lista >=1: [{repuesto_stock_id?, repuesto_nombre?,
+                       repuesto_sku?, cantidad}]
+    """
+    es_multipart = not (request.content_type and "application/json" in request.content_type)
+    if es_multipart:
+        fd = request.form
+        d = {"cliente_id": fd.get("cliente_id"), "es_reposicion": fd.get("es_reposicion"),
+             "maquina_id": fd.get("maquina_id"), "motivo": fd.get("motivo")}
+        try:
+            d["items"] = json.loads(fd.get("items") or "[]")
+        except Exception:
+            d["items"] = []
+    else:
+        d = request.get_json(silent=True) or {}
+    es_reposicion = str(d.get("es_reposicion") or "").strip().lower() in ("1", "true", "on", "si", "sí") \
+        if es_multipart else bool(d.get("es_reposicion"))
+    cliente = None
+    cliente_id = None
+    if es_reposicion:
+        cliente_id = None
+    else:
+        try:
+            cliente_id = int(d.get("cliente_id"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error":
+                            "Elige el cliente, o marca \"Reposición de stock propio\" si esta "
+                            "compra no es para un cliente."}), 400
+        cliente = mysql_fetchone("SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cliente_id,))
+        if not cliente:
+            return jsonify({"ok": False, "error": "Ese cliente no existe."}), 400
+
+    maquina_id = None
+    mq = str(d.get("maquina_id") or "").strip()
+    if mq.isdigit():
+        if not cliente_id:
+            return jsonify({"ok": False, "error":
+                            "Un equipo solo se puede ligar cuando la solicitud es para un cliente."}), 400
+        maq = mysql_fetchone("SELECT id FROM mant_maquinas WHERE id=%s AND cliente_id=%s",
+                              (int(mq), cliente_id))
+        if not maq:
+            return jsonify({"ok": False, "error": "Ese equipo no pertenece al cliente elegido."}), 400
+        maquina_id = maq["id"]
+
+    motivo = (d.get("motivo") or "").strip()
+    if len(motivo) < 5:
+        return jsonify({"ok": False, "error": "Cuenta el motivo de la solicitud (mínimo 5 caracteres)."}), 400
+
+    items = d.get("items")
+    if not isinstance(items, list) or not items:
+        return jsonify({"ok": False, "error": "Agrega al menos un repuesto."}), 400
+    if len(items) > 30:
+        return jsonify({"ok": False, "error":
+                        "Demasiados repuestos de una vez (máximo 30): crea una segunda solicitud."}), 400
+
+    import math  # patrón del archivo: import local, no se agrega un import global solo por esto.
+
+    limpios = []
+    for it in items:
+        if not isinstance(it, dict):
+            return jsonify({"ok": False, "error": "Uno de los repuestos llegó mal formado."}), 400
+        # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): `it.get("cantidad") or "1"`
+        # trataba 0 como "no vino" (0 es falsy en Python) y lo convertía en 1 en silencio -- una
+        # cantidad explícita de 0 debe rechazarse, no redondearse para arriba solo. `math.isfinite`
+        # además bloquea 'inf'/'nan' (float() los acepta sin error).
+        cantidad_raw = it.get("cantidad")
+        if cantidad_raw is None or cantidad_raw == "":
+            cantidad_raw = 1
+        try:
+            cantidad = float(str(cantidad_raw).replace(",", "."))
+        except (TypeError, ValueError):
+            cantidad = float("nan")
+        if not math.isfinite(cantidad) or cantidad <= 0 or cantidad > 9999:
+            return jsonify({"ok": False, "error":
+                            "Cada repuesto necesita una cantidad válida (mayor que cero)."}), 400
+        stock = None
+        rid = str(it.get("repuesto_stock_id") or "").strip()
+        if rid.isdigit():
+            stock = mysql_fetchone(
+                "SELECT id, sku, descripcion, cantidad, proveedor_id FROM mant_repuestos_stock "
+                " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
+            if not stock:
+                return jsonify({"ok": False, "error":
+                                "Uno de los repuestos elegidos de la Bodega ya no existe."}), 400
+        nombre = (it.get("repuesto_nombre") or (stock or {}).get("descripcion") or "").strip()
+        if not nombre:
+            return jsonify({"ok": False, "error": "Falta el nombre de uno de los repuestos."}), 400
+        sku = (stock or {}).get("sku") or (it.get("repuesto_sku") or "").strip() or None
+        limpios.append({"stock": stock, "nombre": nombre[:400], "sku": (sku or "")[:120] or None,
+                         "cantidad": cantidad})
+
+    # Adjunto opcional (spec: "motivo/nota + adjunto opcional") -- se valida
+    # ANTES de insertar nada: si el archivo viene mal, no queda una
+    # solicitud a medias sin su evidencia.
+    f_ev, tipo_ev, e_arch = (None, None, None)
+    if es_multipart:
+        f_ev, tipo_ev, e_arch = _otrep_primer_archivo()
+        if e_arch:
+            return jsonify({"ok": False, "error": e_arch}), 400
+
+    user = current_username() or "sistema"
+    # secrets.token_hex ya está importado (import secrets, arriba del
+    # archivo) -- se evita sumar una dependencia nueva (uuid) solo por esto.
+    lote_id = secrets.token_hex(16)
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): antes
+    # cada INSERT pasaba por _otrep_insert(), que hace su propio
+    # conn.commit() por fila -- si el repuesto #3 de 5 fallaba (ej. columna
+    # rara, deadlock), el lote quedaba a MEDIAS (3 solicitudes creadas, 2
+    # perdidas) con el mismo lote_id, sin forma limpia de saber que faltaron.
+    # Ahora TODO el lote entra en una sola transacción sobre la conexión del
+    # request (get_db(), la misma que usa _otrep_insert -- NUNCA se cierra a
+    # mano, ver gotcha_get_db_no_cerrar): si algo falla, se hace rollback
+    # completo y no queda ninguna fila del lote, en vez de un lote cojo.
+    conn = get_db()
+    creados = []
+    try:
+        with conn.cursor() as cur:
+            for it in limpios:
+                stock = it["stock"]
+                estado_ini = "validado" if stock else "solicitado"
+                cur.execute(
+                    "INSERT INTO mant_ot_repuesto_solicitudes "
+                    "(cliente_id, maquina_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
+                    " origen, cantidad, motivo, estado, solicitado_por, proveedor_id, "
+                    " creada_desde, es_reposicion, lote_id, validado_por, validado_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'manual',%s,%s,%s,"
+                    + ("NOW()" if stock else "NULL") + ")",
+                    (cliente_id, maquina_id, stock["id"] if stock else None, it["nombre"], it["sku"],
+                     ("bodega" if stock else "manual"), it["cantidad"], motivo, estado_ini, user,
+                     (stock.get("proveedor_id") if stock else None),
+                     int(es_reposicion), lote_id, (user if stock else None)))
+                creados.append(int(cur.lastrowid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[otrep] INSERT manual lote={lote_id} (rollback, {len(creados)} de {len(limpios)} llegaron a intentarse): {e}",
+              flush=True)
+        return jsonify({"ok": False, "error":
+                        "No se pudo guardar la solicitud: no se creó ninguna (se deshizo todo el "
+                        "lote para no dejarlo a medias). Intenta de nuevo."}), 500
+
+    avisos = []
+    for sol_id, it in zip(creados, limpios):
+        stock = it["stock"]
+        if stock and stock.get("cantidad") is not None:
+            # 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad
+            # de la operación"): mismo aviso -no bloqueante- que ya usa la
+            # transición a 'validado' desde la cola.
+            fisico = float(stock.get("cantidad") or 0)
+            otras = _otrep_stock_comprometido(stock["id"], excluir_sol_id=sol_id)
+            disponible = fisico - otras - it["cantidad"]
+            if disponible < 0:
+                avisos.append(f"{stock.get('sku') or it['nombre']} queda comprometido en "
+                               f"{otras + it['cantidad']:g} de {fisico:g} en bodega — "
+                               f"faltan {abs(disponible):g}.")
+
+    # El MISMO adjunto se registra en cada solicitud del lote (una sola foto/
+    # video sirve de evidencia para todo lo que se pidió junto) -- si sube
+    # bien para al menos una, se avisa igual si alguna falla (no se revierte
+    # el alta: las solicitudes en sí ya son válidas sin evidencia).
+    if f_ev:
+        fallos_ev = 0
+        for sol_id in creados:
+            try:
+                f_ev.stream.seek(0)
+            except Exception:
+                pass
+            ok_ev, e_ev = _otrep_subir_evidencia_generica("manual", f"man{sol_id}", f_ev, tipo_ev, user, sol_id)
+            if not ok_ev:
+                fallos_ev += 1
+        if fallos_ev:
+            avisos.append("El adjunto no se pudo subir a " + str(fallos_ev) + " de las solicitudes creadas.")
+
+    try:
+        _mant_log("repuesto_solicitud", creados[0], "creada_manual",
+                  f"Lote {lote_id} · {len(creados)} solicitud(es)"
+                  + (f" · cliente {cliente['razon_social']}" if cliente else " · reposición de stock propio")
+                  + f" · motivo: {motivo[:200]} · por {user}")
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "lote_id": lote_id, "solicitudes": creados,
+                    "creadas": len(creados), "aviso": "\n".join(avisos) or None})
 
 
 @app.route("/repuestos/api/solicitudes-ot/<int:sid>/ticket", methods=["POST"])
@@ -87752,6 +88338,17 @@ def repstock_solicitud_ot_ticket(sid):
         except Exception as e:
             print(f"[otrep] ticket manual incidencia sid={sid}: {e}", flush=True)
         return jsonify({"ok": True, "ticket_id": tid, "numero_ticket": numero, "creado": creado})
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
+    # solicitud MANUAL (Fase 2) no tiene visita_id ni incidencia_id ni
+    # ticket_id -- sin este freno caía al bloque de abajo, que asume 100%
+    # origen OT, y devolvía el 404 "La OT o el equipo ya no existen" (un
+    # mensaje FALSO: nunca hubo una OT que buscar). El botón "Crear ticket"
+    # ya no se muestra para contexto=='manual' en el frontend (rsCard), pero
+    # este endpoint se puede llamar directo -- el mensaje debe ser honesto.
+    if not s.get("visita_id"):
+        return jsonify({"ok": False, "error":
+                        "Esta solicitud es manual: no nació de una OT ni de una Incidencia, así que "
+                        "no tiene de dónde crear un ticket automático."}), 400
     v = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (s["visita_id"],))
     m = mysql_fetchone("SELECT id, nombre, sku, serie FROM mant_maquinas WHERE id=%s", (s["maquina_id"],))
     if not v or not m:
@@ -87793,6 +88390,12 @@ def repstock_solicitud_ot_preparar_ot(sid):
                            ni rut ni nombre de cliente, ni como texto
                            libre -- el wizard se abre en blanco y gestión
                            lo completa a mano.
+      origen Manual      -> (Fase 2, 2026-09-25) si la solicitud manual
+                           tiene cliente_id (no es "reposición de stock
+                           propio"), el cliente YA está resuelto -- mismo
+                           trato que origen OT, incluido el equipo si se
+                           ligó uno al crearla. Si es reposición (sin
+                           cliente), el wizard nace en blanco como Incidencia.
     """
     row = mysql_fetchone(_OTREP_SQL_SOL + " WHERE s.id=%s", (sid,))
     if not row:
@@ -87809,7 +88412,13 @@ def repstock_solicitud_ot_preparar_ot(sid):
     cliente = None
     cliente_sugerido = None
     equipo_preset_maquina_id = None
-    if s["contexto"] == "ot":
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
+    # solicitud manual CON cliente_id (spec: cliente obligatorio salvo
+    # "Reposición de stock propio") tiene exactamente el mismo dato ya
+    # resuelto que una de origen OT -- sin esta rama, "manual" caía al
+    # `else` final (nada que resolver) y el wizard se abría en blanco
+    # aunque la solicitud SÍ supiera para qué cliente/equipo era.
+    if s["contexto"] == "ot" or (s["contexto"] == "manual" and s.get("cliente_id")):
         if s.get("cliente_id"):
             cliente = {"id": s["cliente_id"], "nombre": s.get("cliente_nombre") or "",
                        "rut": s.get("cliente_rut") or ""}
