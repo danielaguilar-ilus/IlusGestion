@@ -61,12 +61,17 @@
         <h5 class="modal-title" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      {# ── Stepper (2026-08-03, Daniel: "algo bien dinámico, bonito,
-         colorido, que sea un paso a paso, como siempre hemos venido
-         trabajando"). Orden deliberado: la UA va PRIMERO porque es
-         obligatoria para guardar y porque autocompleta el producto,
-         evitando tipeo manual y errores. #}
-      <div class="inc-steps" id="incSteps">
+      {# 🔧 2026-09-26 (Daniel, en vivo: "me gustaría que toda la información
+         se viera y no el paso a paso, para saber qué debo arreglar"). El
+         wizard de 5 pasos (2026-08-03) se reemplaza por UNA vista con las
+         5 tarjetas SIEMPRE visibles (abajo, `.inc-pane` ya no se ocultan) --
+         esta barra deja de ser un navegador de pasos y pasa a ser el
+         SEMÁFORO de completitud de cada tarjeta (verde=completa,
+         ámbar=falta algo opcional, rojo=falta algo obligatorio). Clic en
+         un ítem hace scroll a esa tarjeta. Ninguna función del wizard se
+         perdió: buscar UA/autocompletar, fotos, eliminar y guardar siguen
+         siendo las mismas (REGLA #4.2). #}
+      <div class="inc-steps libre" id="incSteps">
         <div class="inc-step" data-step="1">
           <span class="inc-step-n"><i class="bi bi-upc-scan"></i></span>
           <span class="inc-step-t">Unidad<small>de almacenamiento</small></span>
@@ -85,15 +90,16 @@
         </div>
         <div class="inc-step" data-step="5">
           <span class="inc-step-n"><i class="bi bi-camera"></i></span>
-          <span class="inc-step-t">Evidencia<small>fotos y cuadre</small></span>
+          <span class="inc-step-t">Evidencia<small>fotos y video</small></span>
         </div>
       </div>
-      <div class="inc-progress"><div class="inc-progress-bar" id="incProgressBar"></div></div>
+      <div id="incFaltan" class="inc-faltan" hidden></div>
 
       <div class="modal-body">
         <input type="hidden" id="incId">
+        <input type="hidden" id="incUbicacion">
 
-        {# ══ PASO 1 — UA (obligatoria) ══ #}
+        {# ══ Unidad de almacenamiento (obligatoria) ══ #}
         <section class="inc-pane" data-pane="1">
           <div class="inc-pane-head inc-c1">
             <i class="bi bi-upc-scan"></i>
@@ -116,7 +122,7 @@
         </section>
 
         {# ══ PASO 2 — Producto ══ #}
-        <section class="inc-pane" data-pane="2" hidden>
+        <section class="inc-pane" data-pane="2">
           <div class="inc-pane-head inc-c2">
             <i class="bi bi-box-seam"></i>
             <div><b>¿Qué producto es y cuántas unidades?</b>
@@ -147,7 +153,7 @@
         </section>
 
         {# ══ PASO 3 — Motivo (el protagonista) ══ #}
-        <section class="inc-pane" data-pane="3" hidden>
+        <section class="inc-pane" data-pane="3">
           <div class="inc-pane-head inc-c3">
             <i class="bi bi-chat-left-quote"></i>
             <div><b>¿Qué pasó exactamente?</b>
@@ -186,7 +192,7 @@
         </section>
 
         {# ══ PASO 4 — Detalle opcional ══ #}
-        <section class="inc-pane" data-pane="4" hidden>
+        <section class="inc-pane" data-pane="4">
           <div class="inc-pane-head inc-c4">
             <i class="bi bi-wrench-adjustable"></i>
             <div><b>Detalle del repuesto y notas</b>
@@ -233,7 +239,7 @@
            "nosotros no tocamos sistemas, solo evidenciamos, y de manera
            automática se autogestiona con el proceso completo" -- por eso
            acá NO hay ningún botón que escriba en ERP ni en WMS. #}
-        <section class="inc-pane" data-pane="5" hidden>
+        <section class="inc-pane" data-pane="5">
           <div class="inc-pane-head inc-c5">
             <i class="bi bi-camera"></i>
             <div><b>Evidencia y cuadre de stock</b>
@@ -242,30 +248,34 @@
 
           <div id="incCuadre" class="inc-cuadre"></div>
 
+          {#- 🔧 2026-09-26 (Daniel: "tomar hasta cinco fotos y tal vez un
+              video"): dos disparadores separados -- uno de foto (cámara o
+              galería) y uno de video corto -- comparten la misma grilla de
+              miniaturas y el mismo botón "Agregar" (ver incPintarFotos). -#}
           <div class="inc-fotos-head">
-            <b>Fotos de la incidencia</b>
-            <span class="text-muted" id="incFotosCount">0 de 3</span>
+            <b>Evidencia (fotos y video)</b>
+            <span class="text-muted" id="incFotosCount">0 de 5 fotos · 0 de 1 video</span>
           </div>
           <div class="inc-fotos" id="incFotos"></div>
           <input type="file" id="incFotoInput" accept="image/*" capture="environment" hidden>
-          <div class="form-text">Hasta 3 fotos del daño o faltante. Se comprimen antes de subir.</div>
+          <input type="file" id="incVideoInput" accept="video/*" capture="environment" hidden>
+          <div class="form-text">Hasta 5 fotos + 1 video del daño o faltante (cámara o galería). Las fotos se comprimen antes de subir.</div>
 
           <div class="inc-bitacora" id="incBitacora"></div>
           <div class="inc-resumen" id="incResumen"></div>
         </section>
       </div>
 
+      {#- 🔧 2026-09-26: sin paso a paso, el footer se simplifica a
+          Eliminar / Cancelar / Guardar -- "Atrás" y "Siguiente" ya no
+          tienen sentido con las 5 tarjetas siempre visibles. -#}
       <div class="modal-footer inc-footer">
         {% if permissions.admin or permissions.superadmin %}
         <button type="button" class="btn btn-outline-danger me-auto" id="incBtnEliminar" style="display:none">
           <i class="bi bi-trash me-1"></i>Eliminar</button>
         {% endif %}
-        <button type="button" class="btn btn-secondary" id="incBtnAtras" style="display:none">
-          <i class="bi bi-chevron-left me-1"></i>Atrás</button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus" id="incBtnSiguiente">
-          Siguiente<i class="bi bi-chevron-right ms-1"></i></button>
-        <button type="button" class="btn btn-ilus" id="incBtnGuardar" style="display:none">
+        <button type="button" class="btn btn-ilus" id="incBtnGuardar">
           <i class="bi bi-check2-circle me-1"></i>Guardar incidencia</button>
       </div>
     </div>
@@ -377,23 +387,43 @@
 .inc-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626}
 .inc-pg-btn:disabled{opacity:.4;cursor:not-allowed}
 
-/* ══ Wizard paso a paso (2026-08-03) ══ */
+/* ══ 2026-09-26: filtros por columna (REGLA #4.3), miniatura, semáforo
+   de comparativa CheckWMS y acciones rápidas por fila ══ */
+.inc-th-filtros td{background:#fff;padding:6px 10px;border-bottom:2px solid #eaecf0}
+.inc-th-filtros input.form-control-sm{font-size:.76rem;padding:3px 8px}
+.inc-foto-mini{width:36px;height:36px;object-fit:cover;border-radius:7px;border:1px solid #e5e7eb;cursor:zoom-in}
+.inc-chk{display:flex;flex-direction:column;gap:1px;font-size:.72rem;line-height:1.25;padding:2px 8px;
+  border-radius:8px;white-space:nowrap}
+.inc-chk small{font-weight:400;opacity:.85;white-space:normal}
+.inc-chk-ok{background:#dcfce7;color:#15803d}
+.inc-chk-warn{background:#fff8e1;color:#b45309}
+.inc-chk-bad{background:#fee2e2;color:#b91c1c}
+.inc-chk-nd{background:#f3f4f6;color:#6b7280}
+.inc-acciones{white-space:nowrap}
+.inc-mini-btn{border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:7px;
+  width:30px;height:30px;display:inline-grid;place-items:center;margin-right:4px;cursor:pointer}
+.inc-mini-btn:hover{border-color:#dc2626;color:#dc2626}
+.inc-mini-btn.danger:hover{background:#fee2e2}
+
+/* ══ 2026-09-26: barra de SEMÁFORO de completitud (reemplaza el stepper
+   de navegación 2026-08-03 -- ver comentario en el HTML). Verde=completa,
+   ámbar=falta algo opcional, rojo=falta algo obligatorio. ══ */
 .inc-steps{display:flex;gap:0;padding:14px 18px 0;background:#fafbfc;border-bottom:0;overflow-x:auto}
 .inc-step{flex:1;display:flex;align-items:center;gap:9px;padding:0 10px 12px;position:relative;
-  opacity:.45;transition:opacity .2s;min-width:132px}
-.inc-step.on,.inc-step.done{opacity:1}
+  opacity:.55;transition:opacity .2s;min-width:132px;cursor:pointer}
+.inc-step:hover{opacity:1}
+.inc-step.on,.inc-step.done,.inc-step.warn,.inc-step.falta{opacity:1}
 .inc-step-n{width:34px;height:34px;flex:0 0 34px;border-radius:50%;display:grid;place-items:center;
   background:#eef0f3;color:#9aa3ae;font-size:1rem;transition:background .25s,color .25s,transform .25s}
-.inc-step.on  .inc-step-n{background:var(--ilus-red,#dc2626);color:#fff;transform:scale(1.12);
-  box-shadow:0 0 0 5px rgba(220,38,38,.14)}
+.inc-step.on  .inc-step-n{transform:scale(1.12);box-shadow:0 0 0 5px rgba(15,23,42,.10)}
 .inc-step.done .inc-step-n{background:#16a34a;color:#fff}
+.inc-step.warn .inc-step-n{background:#f59e0b;color:#fff}
+.inc-step.falta .inc-step-n{background:var(--ilus-red,#dc2626);color:#fff}
 .inc-step-t{display:flex;flex-direction:column;line-height:1.15;font-size:.83rem;font-weight:700;color:#0f172a}
 .inc-step-t small{font-weight:500;font-size:.68rem;color:#6b7280}
-.inc-steps.libre .inc-step{cursor:pointer}
-.inc-steps.libre .inc-step:hover{opacity:1}
-.inc-progress{height:3px;background:#eef0f3}
-.inc-progress-bar{height:100%;width:25%;background:linear-gradient(90deg,#dc2626,#f97316);
-  transition:width .35s cubic-bezier(.4,0,.2,1)}
+.inc-faltan{margin:10px 18px 0;padding:9px 14px;border-radius:9px;font-size:.82rem;font-weight:600;
+  background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.inc-faltan.ok{background:#f0fdf4;color:#15803d;border-color:#bbf7d0}
 
 .inc-pane{animation:incFade .28s ease}
 @keyframes incFade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
@@ -433,6 +463,10 @@
   background:rgba(15,23,42,.72);color:#fff;font-size:.8rem;display:grid;place-items:center;cursor:pointer}
 .inc-foto-x:hover{background:#dc2626}
 .inc-foto-cat{border-style:dashed}
+.inc-foto-video{cursor:zoom-in;background:#0a0a0a}
+.inc-foto-video video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.inc-foto-play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:1.8rem;
+  text-shadow:0 1px 6px rgba(0,0,0,.5);pointer-events:none}
 .inc-foto-tag{position:absolute;left:0;right:0;bottom:0;background:rgba(15,23,42,.72);color:#fff;
   font-size:.62rem;text-align:center;padding:2px 0;letter-spacing:.03em}
 .inc-foto-add{aspect-ratio:1;border:2px dashed #d7dbe0;border-radius:11px;background:#fafbfc;color:#6b7280;
@@ -568,6 +602,15 @@
 <script>
 (function(){
   var incPage = 1, incSize = 10, incQ = '', incEstado = '';
+  var incOrderBy = '', incOrderDir = '';
+  var incFiltrosCol = {f_sku: '', f_descripcion: '', f_motivo: ''};
+  // Se resuelve una sola vez en el render (no en cada fila) para no meter
+  // una condición de Jinja adentro de un string de JS -- más frágil de
+  // leer y de mantener que una bandera booleana simple.
+  var incCanDelete = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }};
+  // Mismos topes que app.py (INC_MAX_FOTOS/INC_MAX_VIDEOS) -- se usan solo
+  // como valor por defecto mientras llega la respuesta real del backend.
+  var INC_MAX_FOTOS = 5, INC_MAX_VIDEOS = 1;
   // FIX 2026-08-03 (Daniel: "no funciona ese boton"): bootstrap.bundle.js
   // se carga con `defer` en base.html -- si este <script> inline (que NO
   // es defer) corre `new bootstrap.Modal(...)` al parsear la página,
@@ -586,32 +629,99 @@
     return s.split(' ')[0].split('-').reverse().join('/');
   }
 
+  // 🔧 2026-09-26 (Daniel: "comparativa de la ubicación y de la UA de
+  // Check" -- semáforo verde/ámbar/rojo). `checkwms_ok` lo manda el
+  // backend: si CheckWMS no respondió, la tabla igual carga y esta
+  // columna avisa "Check no disponible" en vez de bloquear todo.
+  var INC_CHK_INFO = {
+    coincide:  {cls:'ok',    txt:'Coincide'},
+    distinta:  {cls:'warn',  txt:'Distinta'},
+    no_esta:   {cls:'bad',   txt:'No está en Check'},
+    sin_ua:    {cls:'nd',    txt:'Sin UA declarada'},
+    sin_ubicacion_nuestra: {cls:'nd', txt:'Sin ubicación nuestra'},
+    sin_datos: {cls:'nd',    txt:'Check no disponible'},
+  };
+
+  function incChkCelda(r, checkwmsOk){
+    var info = INC_CHK_INFO[r.chk_estado] || INC_CHK_INFO.sin_datos;
+    var nuestra = [r.recomendacion, r.ubicacion].filter(Boolean).join(' · ') || '—';
+    var chk = r.chk_estado === 'no_esta' ? '—' : ([r.chk_ua, r.chk_ubicacion].filter(Boolean).join(' · ') || '—');
+    return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Nuestra: '+incEsc(nuestra)+' · Check: '+incEsc(chk)+'">'
+      + '<b>'+info.txt+'</b><small>'+incEsc(nuestra)+(checkwmsOk===false ? '' : (' → '+incEsc(chk)))+'</small></span></td>';
+  }
+
+  function incEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+
+  // Encabezado + fila de filtros por columna (REGLA #4.3, patrón
+  // Etiquetas: combinable con el buscador `q`; al limpiar un filtro de
+  // columna la tabla se recarga igual que al limpiar `q`/estado).
+  function incTheadHtml(){
+    return '<thead><tr>'
+      + '<th style="width:56px">Foto</th><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Motivo</th>'
+      + '<th>Repuesto</th><th>Estado</th><th>Ubicación/UA vs Check</th><th>Fecha resolución</th>'
+      + '<th style="width:78px">Acciones</th></tr>'
+      + '<tr class="inc-th-filtros">'
+      + '<td></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColSku" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_sku)+'"></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColDescripcion" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_descripcion)+'"></td>'
+      + '<td></td>'
+      + '<td><input type="text" class="form-control form-control-sm" id="incColMotivo" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_motivo)+'"></td>'
+      + '<td></td><td></td><td></td><td></td><td></td>'
+      + '</tr></thead>';
+  }
+
+  function incWireFiltrosCol(){
+    [['incColSku','f_sku'],['incColDescripcion','f_descripcion'],['incColMotivo','f_motivo']].forEach(function(par){
+      var el = document.getElementById(par[0]);
+      if(!el) return;
+      el.addEventListener('input', function(){
+        clearTimeout(window['__incColDeb_'+par[1]]);
+        var v = this.value;
+        window['__incColDeb_'+par[1]] = setTimeout(function(){
+          incFiltrosCol[par[1]] = v; incPage = 1; cargar();
+        }, 350);
+      });
+    });
+  }
+
   function render(data){
     var rows = data.rows || [];
     var box = document.getElementById('incLista');
+    var hayFiltros = incQ || incEstado || incFiltrosCol.f_sku || incFiltrosCol.f_descripcion || incFiltrosCol.f_motivo;
     if(!rows.length){
-      box.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay incidencias registradas.</div>';
+      box.innerHTML = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'</table>'
+        + '<div class="empty-state"><i class="bi bi-inbox"></i>'
+        + (hayFiltros ? 'Sin resultados para estos filtros.' : 'No hay incidencias registradas.')+'</div></div>';
+      incWireFiltrosCol();
       return;
     }
-    var html = '<div class="inc-wrap"><table class="inc-tabla"><thead><tr>'
-      + '<th>SKU</th><th>Descripción</th><th>Cant.</th><th>Motivo</th>'
-      + '<th>Repuesto</th><th>Estado</th><th>Fecha resolución</th></tr></thead><tbody>';
+    var checkwmsOk = data.checkwms_ok !== false;
+    var html = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'<tbody>';
     rows.forEach(function(r){
       html += '<tr data-id="'+r.id+'">'
+        + '<td>'+(r.foto_principal
+              ? ('<img src="'+r.foto_principal+'" class="inc-foto-mini" alt="Evidencia" loading="lazy">')
+              : '<span class="text-muted">—</span>')+'</td>'
         + '<td>'+(r.sku||'—')+'</td>'
         + '<td>'+(r.descripcion||'')+'</td>'
         + '<td>'+(r.cantidad||0)+'</td>'
         + '<td>'+(r.motivo||'—')+'</td>'
         + '<td>'+(r.req_repuesto==='si' ? ('Sí'+(r.stock_repuesto?(' · '+(r.stock_repuesto==='hay'?'Hay':'No hay')):'')) : (r.req_repuesto==='no'?'No':'—'))+'</td>'
         + '<td><span class="inc-badge inc-badge-'+r.estado+'">'+(r.estado==='resuelta'?'Resuelta':'Abierta')+'</span></td>'
+        + incChkCelda(r, checkwmsOk)
         + '<td>'+fmtFecha(r.fecha_resolucion)+'</td>'
+        + '<td class="inc-acciones">'
+        +   '<button type="button" class="inc-mini-btn" data-accion="rep" data-id="'+r.id+'" title="Solicitar repuesto"><i class="bi bi-tools"></i></button>'
+        +   (incCanDelete ? ('<button type="button" class="inc-mini-btn danger" data-accion="del" data-id="'+r.id+'" title="Eliminar"><i class="bi bi-trash"></i></button>') : '')
+        + '</td>'
         + '</tr>';
     });
     html += '</tbody></table>';
 
     var desde = ((data.page-1)*data.page_size)+1, hasta = Math.min(data.page*data.page_size, data.total);
     html += '<div class="inc-foot">'
-      + '<div class="inc-foot-info">Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+data.total+'</b></div>'
+      + '<div class="inc-foot-info">Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+data.total+'</b>'
+      + (checkwmsOk ? '' : ' &nbsp;·&nbsp; <span class="text-danger">Check no disponible</span>')+'</div>'
       + '<div class="d-flex align-items-center gap-2">'
       + '<select class="form-select form-select-sm" id="incSizeSel" style="width:auto">'
       + [10,25,50,100,200].map(function(sz){return '<option value="'+sz+'"'+(sz===incSize?' selected':'')+'>'+sz+' por página</option>';}).join('')
@@ -622,13 +732,54 @@
       + '</div></div></div>';
 
     box.innerHTML = html;
+    incWireFiltrosCol();
 
     box.querySelectorAll('tbody tr').forEach(function(tr){
-      tr.addEventListener('click', function(){ abrirEdicion(tr.dataset.id, rows); });
+      tr.addEventListener('click', function(ev){
+        if(ev.target.closest('.inc-mini-btn')) return;
+        abrirEdicion(tr.dataset.id, rows);
+      });
+    });
+    box.querySelectorAll('.inc-mini-btn').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var id = btn.dataset.id, accion = btn.dataset.accion;
+        if(accion === 'del') incEliminarDesdeTabla(id);
+        else if(accion === 'rep') incSolicitarRepuestoDesdeTabla(id, rows);
+      });
     });
     document.getElementById('incPrev').onclick = function(){ if(incPage>1){incPage--; cargar();} };
     document.getElementById('incNext').onclick = function(){ incPage++; cargar(); };
     document.getElementById('incSizeSel').onchange = function(){ incSize = parseInt(this.value,10); incPage = 1; cargar(); };
+  }
+
+  // 🔧 2026-09-26 (Daniel: "debo borrar algunas [incidencias]... solicitar
+  // repuesto de una" -- CRUD directo desde la fila, sin tener que abrir
+  // el modal completo primero).
+  function incEliminarDesdeTabla(id){
+    ilusConfirm({
+      title: 'Eliminar incidencia',
+      message: '¿Quitar este registro permanentemente?',
+      sub: 'Esta acción no se puede deshacer.',
+      okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+    }).then(function(ok){
+      if(!ok) return;
+      fetch('/mantenciones/api/incidencias/'+id, {
+        method: 'DELETE', headers: {'X-CSRFToken': window.CSRF_TOKEN || ''},
+      }).then(function(r){return r.json();}).then(function(data){
+        if(!data.ok){ ilusToast(data.error || 'No se pudo eliminar', {type:'error'}); return; }
+        ilusToast('Incidencia eliminada', {type:'success'});
+        cargar();
+      });
+    });
+  }
+
+  function incSolicitarRepuestoDesdeTabla(id, rows){
+    // Abre el mismo modal de edición (para tener el motivo/SKU a mano) y
+    // dispara el flujo de "Solicitar repuesto" que ya existe -- ningún
+    // código nuevo de solicitud, solo un atajo directo desde la fila.
+    abrirEdicion(id, rows);
+    setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
   }
 
   function cargar(){
@@ -636,6 +787,10 @@
     box.innerHTML = '<div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div>';
     var url = '/mantenciones/api/incidencias?page='+incPage+'&page_size='+incSize
       + '&q='+encodeURIComponent(incQ)+'&estado='+encodeURIComponent(incEstado);
+    Object.keys(incFiltrosCol).forEach(function(k){
+      url += '&'+k+'='+encodeURIComponent(incFiltrosCol[k] || '');
+    });
+    if(incOrderBy) url += '&order_by='+encodeURIComponent(incOrderBy)+'&order_dir='+encodeURIComponent(incOrderDir);
     fetch(url).then(function(r){return r.json();}).then(function(data){
       if(!data.ok){ box.innerHTML = '<div class="empty-state text-danger">'+(data.error||'Error al cargar.')+'</div>'; return; }
       render(data);
@@ -682,28 +837,65 @@
     if(el) el.addEventListener('input', function(){ refrescarVerde(id); });
   });
 
-  function pintarPasos(){
-    document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
-      var n = parseInt(s.dataset.step, 10);
-      s.classList.toggle('on',   n === incPaso);
-      s.classList.toggle('done', n <  incPaso);
-    });
-    document.querySelectorAll('.inc-pane').forEach(function(p){
-      p.hidden = (parseInt(p.dataset.pane, 10) !== incPaso);
-    });
-    $('incProgressBar').style.width = Math.round(incPaso / INC_PASOS * 100) + '%';
-    $('incBtnAtras').style.display     = incPaso > 1 ? '' : 'none';
-    $('incBtnSiguiente').style.display = incPaso < INC_PASOS ? '' : 'none';
-    // Al EDITAR, Guardar está siempre disponible: no hay que recorrer el
-    // wizard entero para corregir un dato (Daniel: "que no sea tan tedioso").
-    $('incBtnGuardar').style.display   = (incPaso === INC_PASOS || $('incId').value) ? '' : 'none';
-    // El paso 5 es evidencia, no dato obligatorio: se puede guardar antes.
-    $('incSteps').classList.toggle('libre', !!$('incId').value);
-    if(incPaso === INC_PASOS){ pintarResumen(); incCargarEvidencia(); }
+  // 🔧 2026-09-26 (Daniel: "toda la información se vea y no el paso a
+  // paso, para saber qué debo arreglar"). Las 5 tarjetas están SIEMPRE
+  // visibles (ver HTML, ya sin `hidden`); esta función deja de decidir
+  // qué pane mostrar y pasa a pintar el SEMÁFORO de completitud de cada
+  // una + el resumen "Falta: ..." de arriba. `incPaso` se conserva solo
+  // como referencia de qué tarjeta resaltar tras un scroll (irAPaso).
+  var INC_TARJETAS = {
+    1: {req: ['incRecomendacion'], opc: []},
+    2: {req: ['incSku', 'incDescripcion', 'incCantidad'], opc: []},
+    3: {req: ['incMotivo'], opc: []},
+    4: {req: [], opc: ['incReqRepuesto', 'incDescripcionRepuesto']},
+    5: {req: [], opc: ['fotos']},
+  };
+  var INC_TARJETA_LABEL = {1: 'UA', 2: 'producto', 3: 'motivo', 4: 'detalle', 5: 'evidencia'};
+
+  function incCompletaCampo(id){
+    if(id === 'fotos'){
+      return !!(incFichaCache && (incFichaCache.fotos || []).length);
+    }
+    var regla = INC_REGLAS[id];
+    var el = $(id);
+    if(!el) return true;
+    return regla ? !!regla(el.value || '') : !!(el.value || '').trim();
   }
 
+  function pintarPasos(){
+    var faltanObligatorios = [];
+    document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
+      var n = parseInt(s.dataset.step, 10);
+      var t = INC_TARJETAS[n] || {req: [], opc: []};
+      var reqOk = t.req.every(incCompletaCampo);
+      var opcOk = t.opc.every(incCompletaCampo);
+      s.classList.toggle('on', n === incPaso);
+      s.classList.toggle('done', reqOk && (t.opc.length === 0 || opcOk));
+      s.classList.toggle('warn', reqOk && t.opc.length > 0 && !opcOk);
+      s.classList.toggle('falta', !reqOk);
+      if(!reqOk) faltanObligatorios.push(INC_TARJETA_LABEL[n]);
+    });
+    var box = $('incFaltan');
+    if(faltanObligatorios.length){
+      box.hidden = false;
+      box.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Falta: <b>'
+        + faltanObligatorios.join(', ') + '</b>';
+    } else {
+      box.hidden = false;
+      box.className = 'inc-faltan ok';
+      box.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Todo lo obligatorio está completo.';
+    }
+    pintarResumen();
+  }
+
+  // Ya no cambia de pane (todas las tarjetas están visibles) -- solo
+  // hace scroll a la tarjeta y la resalta un instante. Se conserva la
+  // función y su nombre porque el stepper y el flujo de "abrir alta
+  // prellenada" siguen llamándola.
   function irAPaso(n){
     incPaso = Math.max(1, Math.min(INC_PASOS, n));
+    var pane = document.querySelector('.inc-pane[data-pane="'+incPaso+'"]');
+    if(pane) pane.scrollIntoView({behavior:'smooth', block:'start'});
     pintarPasos();
   }
 
@@ -780,13 +972,28 @@
       + '<div class="inc-vered '+vc+'">'+vt+(vs ? '<small>'+vs+'</small>' : '')+'</div>';
   }
 
+  // 🔧 2026-09-26 (Daniel: "hasta cinco fotos y tal vez un video"). Las
+  // fotos y el video comparten la misma grilla de miniaturas; el video se
+  // distingue con un ícono de reproducción y abre en una pestaña nueva
+  // (el <video> no cabe bien en el lightbox de imágenes).
   function incPintarFotos(f){
-    var cont = $('incFotos'), n = (f.fotos || []).length, max = f.max_fotos || 3;
-    $('incFotosCount').textContent = n + ' de ' + max;
-    var html = (f.fotos || []).map(function(x){
+    var cont = $('incFotos');
+    var todas = f.fotos || [];
+    var fotos = todas.filter(function(x){ return x.tipo !== 'video'; });
+    var videos = todas.filter(function(x){ return x.tipo === 'video'; });
+    var maxF = f.max_fotos || INC_MAX_FOTOS, maxV = f.max_videos || INC_MAX_VIDEOS;
+    $('incFotosCount').textContent = fotos.length + ' de ' + maxF + ' fotos · ' + videos.length + ' de ' + maxV + ' video';
+    var html = fotos.map(function(x){
       return '<div class="inc-foto"><img src="'+x.url+'" alt="Evidencia" loading="lazy" '
            + 'onclick="window.open(\''+x.url+'\',\'_blank\')">'
            + '<button type="button" class="inc-foto-x" data-fid="'+x.id+'" title="Quitar foto">'
+           + '<i class="bi bi-x-lg"></i></button></div>';
+    }).join('');
+    html += videos.map(function(x){
+      return '<div class="inc-foto inc-foto-video" onclick="window.open(\''+x.url+'\',\'_blank\')">'
+           + '<video src="'+x.url+'" muted preload="metadata"></video>'
+           + '<span class="inc-foto-play"><i class="bi bi-play-circle-fill"></i></span>'
+           + '<button type="button" class="inc-foto-x" data-fid="'+x.id+'" title="Quitar video">'
            + '<i class="bi bi-x-lg"></i></button></div>';
     }).join('');
     // Foto del catálogo del SKU: contexto gratis, no ocupa cupo.
@@ -795,8 +1002,11 @@
             + 'onclick="window.open(\''+f.foto_catalogo+'\',\'_blank\')">'
             + '<span class="inc-foto-tag">Foto del catálogo</span></div>';
     }
-    if(n < max){
+    if(fotos.length < maxF){
       html += '<div class="inc-foto-add" id="incFotoAdd"><i class="bi bi-camera"></i>Agregar foto</div>';
+    }
+    if(videos.length < maxV){
+      html += '<div class="inc-foto-add" id="incVideoAdd"><i class="bi bi-camera-video"></i>Agregar video</div>';
     }
     cont.innerHTML = html;
     cont.querySelectorAll('.inc-foto-x').forEach(function(b){
@@ -804,6 +1014,8 @@
     });
     var add = document.getElementById('incFotoAdd');
     if(add) add.onclick = function(){ $('incFotoInput').click(); };
+    var addV = document.getElementById('incVideoAdd');
+    if(addV) addV.onclick = function(){ $('incVideoInput').click(); };
   }
 
   function incPintarBitacora(log){
@@ -827,7 +1039,7 @@
       // Incidencia nueva: aún no hay id, así que no hay fotos ni bitácora.
       $('incCuadre').innerHTML = '<div class="inc-vered v-nd">El cuadre y las fotos se habilitan al guardar la incidencia.'
         + '<small>Primero guarda; luego vuelve a abrirla para adjuntar evidencia.</small></div>';
-      $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de 3';
+      $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de '+INC_MAX_FOTOS;
       $('incBitacora').innerHTML = '';
       return;
     }
@@ -839,6 +1051,7 @@
         incPintarCuadre(f.cuadre);
         incPintarFotos(f);
         incPintarBitacora(f.log);
+        pintarPasos();   // ahora que ya sabemos si hay evidencia, refresca el semáforo
       }).catch(function(){
         $('incCuadre').innerHTML = '<div class="inc-vered v-nd">No se pudo consultar el cuadre.</div>';
       });
@@ -886,6 +1099,26 @@
     }).catch(function(){ ilusToast('No se pudo subir la foto', {type:'error'}); });
   });
 
+  // 🔧 2026-09-26: mismo flujo que las fotos, pero SIN compresión (un
+  // video no se puede recomprimir en canvas) -- el backend valida tamaño
+  // y tipo con `_otrep_clasificar_archivo` (mismo límite que Repuestos).
+  $('incVideoInput').addEventListener('change', function(){
+    var file = this.files && this.files[0];
+    this.value = '';
+    if(!file) return;
+    var id = $('incId').value;
+    if(!id){ ilusToast('Guarda la incidencia antes de adjuntar el video', {type:'warning'}); return; }
+    ilusToast('Subiendo video…', {type:'info'});
+    var fd = new FormData(); fd.append('file', file);
+    fetch('/mantenciones/api/incidencias/'+id+'/fotos', {
+      method:'POST', headers:{'X-CSRFToken': window.CSRF_TOKEN || ''}, body: fd,
+    }).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){ ilusToast(d.error || 'No se pudo subir el video', {type:'error'}); return; }
+      ilusToast('✓ Video agregado', {type:'success'});
+      incCargarEvidencia();
+    }).catch(function(){ ilusToast('No se pudo subir el video', {type:'error'}); });
+  });
+
   function incBorrarFoto(fid){
     var id = $('incId').value;
     if(!id || !fid) return;
@@ -920,21 +1153,12 @@
                   ? (' · ' + ($('incStockRepuesto').value === 'hay' ? 'Hay stock' : 'Sin stock')) : '')) : '');
   }
 
-  $('incBtnSiguiente').addEventListener('click', function(){
-    if(validarPaso(incPaso)) irAPaso(incPaso + 1);
-  });
-  $('incBtnAtras').addEventListener('click', function(){ irAPaso(incPaso - 1); });
-  // Navegación por el stepper. Al CREAR solo se puede volver atrás (para
-  // no saltarse validaciones). Al EDITAR se puede ir a cualquier paso:
-  // los datos ya existen y son válidos, y Daniel (2026-08-03) pidió que
-  // editar "no sea tan tedioso... que sea para validar la información" --
-  // obligar a recorrer 5 pasos para tocar un campo es exactamente eso.
+  // 🔧 2026-09-26: sin paso a paso, "Siguiente/Atrás" ya no existen (ver
+  // footer). El semáforo sigue siendo clicable: lleva con scroll a la
+  // tarjeta correspondiente, sin importar si está completa o no -- todas
+  // las tarjetas están siempre visibles y editables.
   document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
-    s.addEventListener('click', function(){
-      var n = parseInt(s.dataset.step, 10);
-      var editando = !!$('incId').value;
-      if(n < incPaso || editando) irAPaso(n);
-    });
+    s.addEventListener('click', function(){ irAPaso(parseInt(s.dataset.step, 10)); });
   });
 
   // Contador vivo del motivo + chips de motivos frecuentes.
@@ -1058,8 +1282,19 @@
         boton = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
               + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
       } else if (h.accion === 'ver'){
-        boton = '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
-              + '<i class="bi bi-search me-1"></i>Ver / corregir</button>';
+        // 🔧 2026-09-26 (Daniel: "CRUD completo desde Revisar diferencias
+        // ... debo borrar algunas, y debo solicitar repuesto de una"): la
+        // fila con incidencia ya registrada ofrece las 3 acciones juntas.
+        boton = '<div class="d-flex gap-1 flex-wrap">'
+              + '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
+              + '<i class="bi bi-search me-1"></i>Ver / corregir</button>'
+              + '<button type="button" class="btn btn-sm btn-outline-secondary inc-h-accion" data-idx="'+idx+'" data-accion="repuesto" title="Solicitar repuesto">'
+              + '<i class="bi bi-tools"></i></button>';
+        if(incCanDelete){
+          boton += '<button type="button" class="btn btn-sm btn-outline-danger inc-h-accion" data-idx="'+idx+'" data-accion="eliminar" title="Eliminar">'
+                + '<i class="bi bi-trash"></i></button>';
+        }
+        boton += '</div>';
       } else {
         boton = '<span class="inc-h-sinaccion">Sin acción disponible todavía</span>';
       }
@@ -1093,11 +1328,19 @@
     // así el botón/fila siguen apuntando al hallazgo correcto sin importar
     // la página en la que esté parado el usuario.
     function hallazgoPorIdx(idx){ return lista[idx]; }
-    function accionarHallazgo(idx){
+    // 🔧 2026-09-26: ahora una fila 'ver' puede disparar 3 sub-acciones
+    // distintas (ver, solicitar repuesto, eliminar) -- `subaccion` viene
+    // del data-accion del botón concreto que se clickeó; el clic en la
+    // FILA (sin botón) siempre significa "ver/corregir", como antes.
+    function accionarHallazgo(idx, subaccion){
       var h = hallazgoPorIdx(idx);
       if(!h || !h.accion) return;
-      if(h.accion === 'registrar') incAbrirAltaPrellenada(h);
-      else if(h.accion === 'ver' && h.ids && h.ids.length) incAbrirPorId(h.ids[0]);
+      if(h.accion === 'registrar'){ incAbrirAltaPrellenada(h); return; }
+      if(h.accion !== 'ver' || !h.ids || !h.ids.length) return;
+      var id = h.ids[0];
+      if(subaccion === 'eliminar') incEliminarDesdeConciliacion(id);
+      else if(subaccion === 'repuesto') incAbrirPorId(id, true);
+      else incAbrirPorId(id);
     }
     $('incConcLista').querySelectorAll('tr.act').forEach(function(el){
       el.addEventListener('click', function(ev){
@@ -1108,7 +1351,7 @@
     $('incConcLista').querySelectorAll('.inc-h-accion').forEach(function(btn){
       btn.addEventListener('click', function(ev){
         ev.stopPropagation();
-        accionarHallazgo(parseInt(btn.dataset.idx, 10));
+        accionarHallazgo(parseInt(btn.dataset.idx, 10), btn.dataset.accion);
       });
     });
     $('incConcPrev').onclick = function(){ if(incConcPage>1){ incConcPage--; incConcPintar(); } };
@@ -1116,12 +1359,41 @@
     $('incConcSize').onchange = function(){ incConcSize = parseInt(this.value,10); incConcPage = 1; incConcPintar(); };
   }
 
-  // Abre una incidencia por id aunque no esté en la página actual.
-  function incAbrirPorId(id){
+  // Abre una incidencia por id aunque no esté en la página actual. Con
+  // `abrirRepuesto=true` (2026-09-26, acción "Solicitar repuesto" directo
+  // desde Revisar diferencias) además dispara el flujo de solicitud ya
+  // existente apenas el modal termina de poblarse.
+  function incAbrirPorId(id, abrirRepuesto){
     fetch('/mantenciones/api/incidencias?page=1&page_size=500')
       .then(function(r){return r.json();}).then(function(d){
-        if(d && d.ok) abrirEdicion(id, d.rows || []);
+        if(!d || !d.ok) return;
+        abrirEdicion(id, d.rows || []);
+        if(abrirRepuesto){
+          setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
+        }
       });
+  }
+
+  // 🔧 2026-09-26: eliminar directo desde "Revisar diferencias" (Daniel:
+  // "debo borrar algunas") -- mismo endpoint/confirmación que la tabla
+  // principal, sin necesidad de abrir el modal primero.
+  function incEliminarDesdeConciliacion(id){
+    ilusConfirm({
+      title: 'Eliminar incidencia',
+      message: '¿Quitar este registro permanentemente?',
+      sub: 'Esta acción no se puede deshacer.',
+      okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+    }).then(function(ok){
+      if(!ok) return;
+      fetch('/mantenciones/api/incidencias/'+id, {
+        method: 'DELETE', headers: {'X-CSRFToken': window.CSRF_TOKEN || ''},
+      }).then(function(r){return r.json();}).then(function(data){
+        if(!data.ok){ ilusToast(data.error || 'No se pudo eliminar', {type:'error'}); return; }
+        ilusToast('Incidencia eliminada', {type:'success'});
+        cargar();
+        incConcData = null; incConcCargar();
+      });
+    });
   }
 
   // 🔧 2026-09-26 (Daniel, decisión confirmada): tocar una fila "Falta en
@@ -1137,11 +1409,13 @@
     if(h.descripcion) document.getElementById('incDescripcion').value = h.descripcion;
     document.getElementById('incCantidad').value = h.cantidad || 1;
     if(h.ubicacion){
+      document.getElementById('incUbicacion').value = h.ubicacion;
       document.getElementById('incUaResultado').innerHTML =
         '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación en Bodega 13: <b>'
         +h.ubicacion+'</b> (traída de la conciliación, no de una nueva búsqueda de UA).</span>';
     }
     refrescarVerdeTodos();
+    incCargarEvidencia();
     irAPaso(3);
     incModal().show();
     setTimeout(function(){ document.getElementById('incMotivo').focus(); }, 250);
@@ -1171,7 +1445,7 @@
 
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
-     'incObservacion','incRecomendacion','incFechaResolucion'].forEach(function(id){
+     'incObservacion','incRecomendacion','incFechaResolucion','incUbicacion'].forEach(function(id){
       document.getElementById(id).value = '';
     });
     document.getElementById('incCantidad').value = 1;
@@ -1208,6 +1482,7 @@
     document.getElementById('incObservacion').value = r.observacion || '';
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
+    document.getElementById('incUbicacion').value = r.ubicacion || '';
     document.getElementById('incMotivo').dispatchEvent(new Event('input'));
     refrescarVerdeTodos();
     var btnDel = document.getElementById('incBtnEliminar');
@@ -1215,6 +1490,7 @@
     // 🔧 2026-09-21 (Fase 2): ya hay id real -- se puede solicitar repuesto.
     document.getElementById('incBtnSolicitarRepuesto').disabled = false;
     document.getElementById('incRepCtaHint').textContent = '';
+    incCargarEvidencia();
     irAPaso(1);
     incModal().show();
   }
@@ -1248,6 +1524,9 @@
         if(!descalce){
           if(data.sku) skuInput.value = data.sku;
           if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
+          // 🔧 2026-09-26: guarda la ubicación que trae el WMS -- es la que
+          // se compara luego contra CheckWMS en la tabla principal.
+          if(data.ubicacion) document.getElementById('incUbicacion').value = data.ubicacion;
           refrescarVerdeTodos();
         }
         // Ubicación actual (GetReporteStock) primero -- es lo que el
@@ -1333,6 +1612,7 @@
   document.getElementById('incBtnNueva').addEventListener('click', function(){
     limpiarModal();
     document.getElementById('incModalTitulo').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia';
+    incCargarEvidencia();
     incModal().show();
   });
 
@@ -1349,6 +1629,7 @@
       descripcion_repuesto: document.getElementById('incDescripcionRepuesto').value,
       observacion: document.getElementById('incObservacion').value,
       recomendacion: document.getElementById('incRecomendacion').value,
+      ubicacion: document.getElementById('incUbicacion').value,
       fecha_resolucion: document.getElementById('incFechaResolucion').value,
     };
     // Revalidar TODOS los pasos antes de guardar: alguien pudo volver
@@ -1522,6 +1803,10 @@
   document.getElementById('incBtnLimpiar').addEventListener('click', function(){
     document.getElementById('incFQ').value = '';
     document.getElementById('incFEstado').value = '';
+    // REGLA #4.3 (Daniel, bug real 2026-08-01): al limpiar CUALQUIER
+    // filtro -- también los de columna -- la tabla se recarga siempre,
+    // nunca se queda con el resultado anterior.
+    incFiltrosCol = {f_sku: '', f_descripcion: '', f_motivo: ''};
     incQ = ''; incEstado = ''; incPage = 1; cargar();
   });
 

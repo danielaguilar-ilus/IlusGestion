@@ -124,13 +124,17 @@ class TestHallazgoAccion(unittest.TestCase):
     def test_fuera_de_bodega_con_ids_es_ver(self):
         self.assertEqual(self.accion({"tipo": "fuera_de_bodega", "ids": [7]}), "ver")
 
-    def test_dif_erp_sin_ids_no_tiene_accion(self):
-        # Caso real documentado en app.py: un SKU que el ERP reporta pero
-        # que nunca declaramos -- no hay incidencia que abrir todavía.
-        self.assertIsNone(self.accion({"tipo": "dif_erp", "ids": []}))
+    def test_dif_erp_sin_ids_es_registrar(self):
+        # 🔧 2026-09-26 (Daniel, en vivo: "los hallazgos dif_erp sin ids...
+        # deben poder registrarse"): un SKU que el ERP reporta pero que
+        # nunca declaramos ahora SÍ abre el alta prellenada.
+        self.assertEqual(self.accion({"tipo": "dif_erp", "ids": []}), "registrar")
 
-    def test_dif_erp_sin_clave_ids_no_tiene_accion(self):
-        self.assertIsNone(self.accion({"tipo": "dif_erp"}))
+    def test_dif_erp_sin_clave_ids_es_registrar(self):
+        self.assertEqual(self.accion({"tipo": "dif_erp"}), "registrar")
+
+    def test_no_en_erp_sin_ids_es_registrar(self):
+        self.assertEqual(self.accion({"tipo": "no_en_erp", "ids": []}), "registrar")
 
     def test_tipo_desconocido_sin_ids_no_tiene_accion(self):
         self.assertIsNone(self.accion({"tipo": "otra-cosa"}))
@@ -180,6 +184,60 @@ class TestHallazgoFaltaRegistrar(unittest.TestCase):
         self.assertEqual(h["cantidad"], 1)
         self.assertIsNone(h["sku"])
         self.assertIsNone(h["descripcion"])
+
+
+class TestComparativaUa(unittest.TestCase):
+    """🔧 2026-09-26 (Daniel, en vivo: "necesito hacer una comparativa de
+    la ubicación y de la UA de Check"). _inc_comparativa_ua es la función
+    PURA que decide el semáforo de la tabla principal: verde (coincide),
+    ámbar (distinta), rojo (no está en Check), gris (sin datos)."""
+
+    @classmethod
+    def setUpClass(cls):
+        amb = _cargar_funciones("_inc_comparativa_ua", "_checkwms_norm_ua")
+        cls.comparar = staticmethod(amb["_inc_comparativa_ua"])
+
+    def test_checkwms_no_disponible_marca_sin_datos_para_todas(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": "A-1"}]
+        out = self.comparar(filas, None)
+        self.assertEqual(out[0]["chk_estado"], "sin_datos")
+        self.assertIsNone(out[0]["chk_ubicacion"])
+
+    def test_ubicacion_coincide_es_verde(self):
+        filas = [{"recomendacion": "UA1007933", "ubicacion": "A-12-03"}]
+        wms = [{"ua": "ua1007933", "ubicacion": "a-12-03"}]
+        out = self.comparar(filas, wms)
+        self.assertEqual(out[0]["chk_estado"], "coincide")
+        self.assertEqual(out[0]["chk_ubicacion"], "a-12-03")
+
+    def test_ubicacion_distinta_es_ambar(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": "A-1"}]
+        wms = [{"ua": "UA1", "ubicacion": "B-9"}]
+        out = self.comparar(filas, wms)
+        self.assertEqual(out[0]["chk_estado"], "distinta")
+
+    def test_ua_no_esta_en_wms_es_no_esta(self):
+        filas = [{"recomendacion": "UA9", "ubicacion": "A-1"}]
+        wms = [{"ua": "UA1", "ubicacion": "A-1"}]
+        out = self.comparar(filas, wms)
+        self.assertEqual(out[0]["chk_estado"], "no_esta")
+
+    def test_sin_ua_declarada_no_compara(self):
+        filas = [{"recomendacion": "", "ubicacion": "A-1"}]
+        out = self.comparar(filas, [{"ua": "UA1", "ubicacion": "A-1"}])
+        self.assertEqual(out[0]["chk_estado"], "sin_ua")
+
+    def test_ua_en_wms_pero_sin_ubicacion_nuestra(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": ""}]
+        out = self.comparar(filas, [{"ua": "UA1", "ubicacion": "A-1"}])
+        self.assertEqual(out[0]["chk_estado"], "sin_ubicacion_nuestra")
+
+    def test_no_muta_la_lista_de_wms_ni_falla_con_ua_repetida(self):
+        filas = [{"recomendacion": "UA1", "ubicacion": "A-1"}]
+        wms = [{"ua": "UA1", "ubicacion": "A-1"}, {"ua": "UA1", "ubicacion": "Z-9"}]
+        out = self.comparar(filas, wms)
+        # Se queda con la PRIMERA ocurrencia -- no revienta con UA duplicada.
+        self.assertEqual(out[0]["chk_estado"], "coincide")
 
 
 if __name__ == "__main__":
