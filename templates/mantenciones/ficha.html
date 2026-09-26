@@ -1459,7 +1459,19 @@
                 <div class="eq-cond-rep">
                   <i class="bi {{ 'bi-link-45deg' if _rp.origen == 'piola' else ('bi-arrow-left-right' if _rp.origen == 'cinta' else 'bi-tools') }}"></i>
                   <span>{{ 'Cambio de piola' if _rp.origen == 'piola' else ('Cambio de cinta' if _rp.origen == 'cinta' else _rp.repuesto_nombre) }}{% if _rp.piola_metros %} · {{ '%g' | format(_rp.piola_metros) }} m{% endif %}
-                    · <a href="{{ url_for('ot2_detalle', vid=_rp.visita_id) }}" title="La OT que lo levantó">{{ _rp.numero_ot }}</a>
+                    {# 🔴 FIX 2026-09-26 (Fase 3b): una solicitud MANUAL (Fase 2,
+                       "Solicitar repuesto") puede traer maquina_id sin visita_id
+                       -- sin este guard, url_for('ot2_detalle', vid=None) tira
+                       BuildError y rompe la ficha ENTERA con un 500.
+                       🔴 FIX 2026-09-26 (revisión, BAJA 10): visita_id puede
+                       existir mientras la OT ya no (borrada) -- el LEFT JOIN de
+                       la consulta deja `numero_ot` en NULL. Antes eso caía al
+                       `else` y mostraba "Solicitud manual", que es falso (SÍ
+                       tuvo una OT), o un <a> con texto vacío si se mira solo
+                       visita_id. Se distinguen los 3 casos reales. #}
+                    {% if _rp.visita_id and _rp.numero_ot %}· <a href="{{ url_for('ot2_detalle', vid=_rp.visita_id) }}" title="La OT que lo levantó">{{ _rp.numero_ot }}</a>
+                    {% elif _rp.visita_id %}· <span class="text-muted" title="La OT que la levantó ya no existe">OT eliminada</span>
+                    {% else %}· <span class="text-muted" title="Levantada manualmente desde Repuestos, sin OT de origen">Solicitud manual</span>{% endif %}
                     {% if _rp.ticket_id %}· <a href="/tickets/{{ _rp.ticket_id }}" title="Ticket de seguimiento">{{ _rp.numero_ticket }}</a>{% endif %}
                     <em>{{ (_rp.estado_label or _rp.estado).split(' · ')[0] }}</em>
                     {% if _rp.ticket_id and not is_tecnico %}
@@ -2692,6 +2704,96 @@
    TAB: REPUESTOS — Inventario, ventas/garantías por cliente
 ══════════════════════════════════════════════════════════════════ #}
 <div class="ftab-pane" id="tab-repuestos">
+
+{# ══════════════════════════════════════════════════════════════════
+   🔧 Fase 3b (2026-09-26 -- Daniel: "las OT deben expresar si se
+   solicitó el repuesto y el estado en que quedó el equipo, y todo
+   esto... recuerda que el repositorio son las fichas de clientes, todo
+   movimiento se verá reflejado"). Historial COMPLETO de solicitudes de
+   repuesto (mant_ot_repuesto_solicitudes) de este cliente -- de
+   cualquier origen (OT, manual, incidencia, ticket). NO duplica el chip
+   de condición "Con problemas" de la tabla de Equipos (20-sep): ese solo
+   muestra las ABIERTAS por equipo; esto es el historial entero,
+   paginado (REGLA #4.3: nada de scroll infinito, N por página real).
+
+   🔴 FIX 2026-09-26 (revisión, MEDIA 4): se liga por cliente_id, equipo
+   (maquina_id de este cliente) o visita (OT de este cliente) -- un
+   ticket/incidencia SIN ninguna de las tres cosas no se puede atribuir
+   con certeza a este cliente y queda AFUERA a propósito (no se adivina).
+   El subtítulo dice exactamente eso, no "todas las solicitudes". #}
+<div class="d-flex align-items-center justify-content-between gap-2 mb-2 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.9rem"><i class="bi bi-clock-history me-2" style="color:var(--ilus-red)"></i>Historial de solicitudes de repuesto</span>
+    <span class="text-muted ms-2" style="font-size:.76rem" title="No incluye tickets o incidencias sin cliente, equipo ni OT de este cliente asociados">OT, incidencias y tickets ligados a este cliente, sus equipos o sus OT</span>
+  </div>
+  <div class="btn-group btn-group-sm" role="group">
+    <button type="button" class="btn btn-outline-secondary repsol-f-btn active" data-estado="abiertas" onclick="repSolFiltrar('abiertas')">Pendientes</button>
+    <button type="button" class="btn btn-outline-secondary repsol-f-btn" data-estado="cerradas" onclick="repSolFiltrar('cerradas')">Cerradas</button>
+    <button type="button" class="btn btn-outline-secondary repsol-f-btn" data-estado="todas" onclick="repSolFiltrar('todas')">Todas</button>
+  </div>
+</div>
+<div class="f-card mb-2" style="overflow:hidden">
+  <div class="f-card-body p-0">
+    <div style="overflow-x:auto">
+      <table class="rep-table" id="repSolTabla">
+        <thead>
+          <tr>
+            <th>Repuesto</th><th>Equipo</th><th>Estado</th><th>OT de origen</th>
+            <th>OT de instalación</th><th>Días</th><th>Fecha</th>
+          </tr>
+        </thead>
+        <tbody id="repSolTbody">
+          <tr><td colspan="7" class="text-center text-muted py-4" style="font-size:.85rem">Cargando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap p-2" style="border-top:1px solid #e5e7eb;font-size:.78rem">
+    <span class="text-muted" id="repSolPagInfo">—</span>
+    <div class="d-flex align-items-center gap-2">
+      <select class="form-select form-select-sm" id="repSolPorPag" style="width:auto" onchange="repSolCambiarPorPag()">
+        <option value="10">10 por página</option>
+        <option value="20" selected>20 por página</option>
+        <option value="50">50 por página</option>
+      </select>
+      <button class="btn btn-sm btn-outline-secondary" id="repSolPrevBtn" onclick="repSolIrPagina(-1)"><i class="bi bi-chevron-left"></i></button>
+      <span id="repSolPagTxt">Página 1 de 1</span>
+      <button class="btn btn-sm btn-outline-secondary" id="repSolNextBtn" onclick="repSolIrPagina(1)"><i class="bi bi-chevron-right"></i></button>
+    </div>
+  </div>
+</div>
+
+{# 🔧 Fase 3b: "movimientos de bodega de este cliente" -- kardex real
+   (mant_repuestos_movimientos), tolerante a que esa tabla no exista
+   todavía (se construye en paralelo en otra rama, ver spec). #}
+<div class="d-flex align-items-center justify-content-between gap-2 mb-2 mt-4 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.9rem"><i class="bi bi-boxes me-2" style="color:var(--ilus-red)"></i>Movimientos de bodega de este cliente</span>
+    <span class="text-muted ms-2" style="font-size:.76rem">Instalaciones descontadas del stock, con OT y fecha</span>
+  </div>
+</div>
+<div class="f-card mb-4" style="overflow:hidden">
+  <div class="f-card-body p-0">
+    <div style="overflow-x:auto">
+      <table class="rep-table" id="repMovTabla">
+        <thead>
+          <tr><th>Repuesto</th><th>Tipo</th><th>Cantidad</th><th>Saldo</th><th>OT</th><th>Fecha</th></tr>
+        </thead>
+        <tbody id="repMovTbody">
+          <tr><td colspan="6" class="text-center text-muted py-4" style="font-size:.85rem">Cargando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap p-2" style="border-top:1px solid #e5e7eb;font-size:.78rem">
+    <span class="text-muted" id="repMovPagInfo">—</span>
+    <div class="d-flex align-items-center gap-2">
+      <button class="btn btn-sm btn-outline-secondary" id="repMovPrevBtn" onclick="repMovIrPagina(-1)"><i class="bi bi-chevron-left"></i></button>
+      <span id="repMovPagTxt">Página 1 de 1</span>
+      <button class="btn btn-sm btn-outline-secondary" id="repMovNextBtn" onclick="repMovIrPagina(1)"><i class="bi bi-chevron-right"></i></button>
+    </div>
+  </div>
+</div>
 
 <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
   <div>

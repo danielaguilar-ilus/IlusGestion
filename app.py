@@ -65069,12 +65069,22 @@ def _mant_ficha_impl(cid):
         try:
             _ids_rep = [int(_m["id"]) for _m in maquinas]
             _ph_rep = ",".join(["%s"] * len(_ids_rep))
+            # 🔴 FIX 2026-09-26 (Fase 3b -- spec: "el chip de condición debe
+            # reflejar también las solicitudes MANUALES con maquina_id, no
+            # solo las de OT"). Antes esto era `JOIN mant_visitas v` (INNER):
+            # una solicitud creada desde "Solicitar repuesto" (Fase 2,
+            # 2026-09-25) puede traer maquina_id sin visita_id (nace de un
+            # cliente+equipo, no de una OT) -- con INNER JOIN esa fila
+            # desaparecía entera de la consulta y el equipo se veía "sin
+            # problemas" aunque tuviera una solicitud abierta de verdad.
+            # LEFT JOIN: v.numero_ot queda NULL para esas filas (el template
+            # ya lo trata como "sin OT de origen", ver ficha.html).
             _rep_rows = mysql_fetchall(
                 f"SELECT s.maquina_id, s.id, s.repuesto_nombre, s.origen, s.estado, s.cantidad, "
                 f"       s.piola_metros, s.dejo_fuera_servicio, s.visita_id, s.ticket_id, "
                 f"       v.numero_ot, t.numero_ticket, t.fecha_limite AS ticket_fecha_limite "
                 f"  FROM mant_ot_repuesto_solicitudes s "
-                f"  JOIN mant_visitas v ON v.id=s.visita_id "
+                f"  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
                 f"  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
                 f" WHERE s.maquina_id IN ({_ph_rep}) "
                 f"   AND s.estado IN ('solicitado','validado','pedido','recibido') "
@@ -82066,15 +82076,31 @@ def ot2_detalle(vid):
     # que podían dejar evidencia... buscar la mejor manera de mostrarlo").
     # El dato ya se sube desde hace tiempo (mant_visita_fotos); lo que
     # faltaba era una pantalla que lo hiciera visible y explorable.
-    fotos = mysql_fetchall(
-        "SELECT f.id, f.archivo_path, f.cloudinary_url, f.tipo_foto, f.descripcion, "
-        "       f.tomada_por, f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre "
-        "  FROM mant_visita_fotos f "
-        "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
-        " WHERE f.visita_id=%s "
-        " ORDER BY f.tomada_at DESC LIMIT 300",
-        (vid,)
-    ) or []
+    # es_principal (2026-09-26, foto principal por equipo -- Daniel: "todo
+    # debe estar conectado"): con try/except aparte por si el _ensure de
+    # boot no alcanzó a correr en este entorno (columna nueva).
+    try:
+        fotos = mysql_fetchall(
+            "SELECT f.id, f.archivo_path, f.cloudinary_url, f.tipo_foto, f.descripcion, "
+            "       f.tomada_por, f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre, "
+            "       f.es_principal "
+            "  FROM mant_visita_fotos f "
+            "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
+            " WHERE f.visita_id=%s "
+            " ORDER BY f.tomada_at DESC LIMIT 300",
+            (vid,)
+        ) or []
+    except Exception as _e_fotos_ep:
+        print(f"[ot2_detalle] fotos es_principal vid={vid}: {_e_fotos_ep}", flush=True)
+        fotos = mysql_fetchall(
+            "SELECT f.id, f.archivo_path, f.cloudinary_url, f.tipo_foto, f.descripcion, "
+            "       f.tomada_por, f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre "
+            "  FROM mant_visita_fotos f "
+            "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
+            " WHERE f.visita_id=%s "
+            " ORDER BY f.tomada_at DESC LIMIT 300",
+            (vid,)
+        ) or []
     fotos = [dict(f) for f in fotos]
     for f in fotos:
         # Mismo criterio que el resto del proyecto: cloudinary_url tiene
@@ -82086,6 +82112,9 @@ def ot2_detalle(vid):
         f["url"] = f.get("cloudinary_url") or (
             f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
         f["cuando"] = chile_fmt_filter(f.get("tomada_at"), "%d/%m %H:%M") if f.get("tomada_at") else ""
+        # ⭐ 2026-09-26: para la galería general "Fotos de la OT" -- estrella
+        # sobre la miniatura ya marcada, y el botón del visor.
+        f["principal"] = bool(f.get("es_principal"))
 
     # 🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas...
     # que se puedan guardar si es que están mal"): decide si se dibuja
@@ -82157,6 +82186,40 @@ def ot2_detalle(vid):
                     anexo["enviado_tel"] = (_anx_tec.get("contacto_tel") or "").strip()
         except Exception as _e_anx_tec:
             print(f"[ot2_detalle] contacto proveedor del anexo: {_e_anx_tec}", flush=True)
+
+    # ⭐ 2026-09-26 (Daniel, en vivo: "brindarle la oportunidad al técnico
+    # de elegir la foto principal de cada OT, bien informativo, y todo
+    # debe estar conectado" -- pidió esto viendo la miniatura del resumen
+    # de equipos y la galería general). Foto PRINCIPAL de cada equipo EN
+    # ESTA OT: si existe, gana incluso sobre la foto de ficha
+    # (mant_maquinas.foto_url) -- mismo orden de preferencia que
+    # eq_foto_ref en ot_pdf.html, para que OT/ficha/PDF digan lo mismo.
+    # Consulta dedicada (no la de `fotos` arriba, que trae LIMIT 300 y
+    # podría no alcanzar a traer la principal en una OT con muchas fotos).
+    try:
+        _principales = mysql_fetchall(
+            "SELECT maquina_id, cloudinary_url, archivo_path "
+            "  FROM mant_visita_fotos "
+            " WHERE visita_id=%s AND maquina_id IS NOT NULL AND es_principal=1",
+            (vid,)
+        ) or []
+        _principal_por_mid = {}
+        for _pp in _principales:
+            _u = _pp.get("cloudinary_url") or (
+                f"/static/{_pp['archivo_path']}" if _pp.get("archivo_path") else "")
+            # 🔴 FIX 2026-09-26 (revisión, BAJA 7): el endpoint ya rechaza
+            # marcar un video como principal, pero esto es defensa en
+            # profundidad para filas viejas/legacy que pudieran tener
+            # es_principal=1 sobre un video -- la miniatura del equipo
+            # nunca debe intentar mostrar un video como si fuera foto.
+            if _u and _pp.get("maquina_id") is not None and not _foto_es_video_url(_u):
+                _principal_por_mid[int(_pp["maquina_id"])] = _u
+        for _e in equipos:
+            _mid_e = _e.get("id")
+            if _mid_e in _principal_por_mid:
+                _e["foto_principal_url"] = _principal_por_mid[_mid_e]
+    except Exception as _e_prin:
+        print(f"[ot2_detalle] foto_principal vid={vid}: {_e_prin}", flush=True)
 
     # Mapa liviano {maquina_id: {...}} para el renderer JS del checklist
     # (tipo 'serie', otdChkTareaHtml en ot2/detalle.html) -- evita mandar
@@ -85226,7 +85289,7 @@ _OTREP_MAX_VIDEO = 28 * 1024 * 1024
 # costos/stock/proveedores de otros no se exponen al proveedor).
 _OTREP_STOCK_SOLO_GESTION = ("costo_unitario",)
 _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
-                           "comprometido", "disponible")
+                           "comprometido", "disponible", "por_llegar")
 _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
                          # 🔒 2026-09-25 (Fase 2): mismos 3 campos nuevos de contacto del
                          # proveedor que _OTREP_SQL_SOL agrega para la vista agrupada
@@ -85252,12 +85315,19 @@ _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "prove
                          "cliente_rut", "ticket_rut", "ticket_empresa", "ticket_contacto_nombre",
                          "ticket_contacto_email", "ticket_contacto_phone", "ticket_direccion",
                          "ticket_comuna")
-# Estados que siguen "vivos" para efectos de comprometer stock -- una
-# solicitud en cualquiera de estos todavía puede consumir el repuesto real,
-# así que cuenta contra el disponible de bodega. Mismo set que _OTREP_ABIERTOS,
-# nombrado aparte porque el significado acá es otro (compromiso de stock, no
-# "sigue pendiente de gestión").
-_OTREP_ESTADOS_COMPROMETEN = _OTREP_ABIERTOS
+# 🔧 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): antes este set
+# era = _OTREP_ABIERTOS (solicitado, validado, pedido, recibido) -- pero
+# "pedido" está ESPERANDO al proveedor, no consumiendo stock físico que ya
+# esté en bodega, así que comprometerlo contra el físico existente era
+# incorrecto (bloqueaba stock real por algo que ni siquiera había llegado).
+# Comprometen de verdad: 'validado' (bodega ya apartó el repuesto físico
+# para esa OT) y 'recibido' (ya entró físicamente, en camino a instalarse).
+# 'pedido' pasa a ser "por llegar" (ver _OTREP_ESTADOS_POR_LLEGAR) -- un
+# dato informativo aparte, no un descuento del disponible actual.
+_OTREP_ESTADOS_COMPROMETEN = ("validado", "recibido")
+# Lo que está pedido al proveedor pero todavía no llega a bodega -- se
+# muestra aparte ("por llegar"), nunca se resta del disponible físico.
+_OTREP_ESTADOS_POR_LLEGAR = ("pedido",)
 # 🚦 2026-09-25 (Fase 2 -- spec: "semáforo por antigüedad (días abiertos):
 # verde <3, ámbar 3–7, rojo >7"). Constantes en un solo lugar, como pide la
 # especificación, para que la tarjeta y cualquier reporte usen el mismo corte.
@@ -85621,8 +85691,14 @@ def _otrep_stock_comprometido(repuesto_stock_id, excluir_sol_id=None):
     """
     if not repuesto_stock_id:
         return 0.0
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una "reposición de
+    # stock propio" (es_reposicion=1) es una solicitud manual que trae
+    # repuestos HACIA la bodega -- no compite por el físico existente como
+    # sí lo hace una solicitud real de una OT/ticket/incidencia. Contarla
+    # acá inflaba el comprometido con algo que en realidad va a SUMAR stock,
+    # nunca a restarlo.
     sql = ("SELECT COALESCE(SUM(cantidad),0) AS n FROM mant_ot_repuesto_solicitudes "
-           " WHERE repuesto_stock_id=%s AND estado IN "
+           " WHERE repuesto_stock_id=%s AND COALESCE(es_reposicion,0)=0 AND estado IN "
            + "('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')")
     params = [repuesto_stock_id]
     if excluir_sol_id:
@@ -85703,9 +85779,17 @@ _OTREP_SQL_STOCK = (
     # necesidad de la operación"): cuánto de este repuesto ya está prometido
     # a OTRAS solicitudes abiertas -- se resta del físico en _otrep_fmt_stock
     # para mostrar el disponible REAL al elegir de dónde sale un repuesto.
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una reposición de
+    # stock propio (es_reposicion=1) trae repuestos HACIA la bodega, no
+    # compite por el físico existente -- se excluye del comprometido.
     "       (SELECT COALESCE(SUM(s.cantidad),0) FROM mant_ot_repuesto_solicitudes s "
-    "         WHERE s.repuesto_stock_id=rs.id AND s.estado IN "
-    "               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido "
+    "         WHERE s.repuesto_stock_id=rs.id AND COALESCE(s.es_reposicion,0)=0 AND s.estado IN "
+    "               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido, "
+    # 🔧 2026-09-26 (Fase 3 -- kardex): "por llegar" = lo pedido al proveedor
+    # que todavía no entra a bodega -- informativo, NO se resta del físico.
+    "       (SELECT COALESCE(SUM(s3.cantidad),0) FROM mant_ot_repuesto_solicitudes s3 "
+    "         WHERE s3.repuesto_stock_id=rs.id AND s3.estado IN "
+    "               ('" + "','".join(_OTREP_ESTADOS_POR_LLEGAR) + "')) AS por_llegar "
     "  FROM mant_repuestos_stock rs "
     "  LEFT JOIN mant_repuestos_marcas mk ON mk.id=rs.marca_id "
     "  LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
@@ -85719,9 +85803,10 @@ def _otrep_fmt_stock(r, para_ot=False):
     r = dict(r)
     r["foto_url"] = ("/f/" + r["foto_key"]) if r.get("foto_key") else None
     r.pop("foto_key", None)
-    for k in ("cantidad", "stock_minimo", "costo_unitario", "comprometido"):
+    for k in ("cantidad", "stock_minimo", "costo_unitario", "comprometido", "por_llegar"):
         r[k] = float(r[k]) if r.get(k) is not None else None
     r["comprometido"] = r.get("comprometido") or 0.0
+    r["por_llegar"] = r.get("por_llegar") or 0.0
     r["disponible"] = (r.get("cantidad") or 0.0) - r["comprometido"]
     r["es_piola"] = bool(re.search(r"piola|cable de acero", r.get("descripcion") or "", re.I))
     r["es_cinta"] = bool(re.search(r"cinta|banda|belt", r.get("descripcion") or "", re.I))
@@ -85769,8 +85854,11 @@ _OTREP_SQL_SOL = (
     # 🔒 2026-09-20: cuánto de ESTE mismo repuesto de bodega ya está
     # comprometido en OTRAS solicitudes abiertas (s.id<>s2.id) -- _otrep_fila
     # le suma la cantidad de ESTA fila (si sigue abierta) para el total.
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una reposición
+    # (es_reposicion=1) no compite por el físico -- se excluye acá también.
     "       (SELECT COALESCE(SUM(s2.cantidad),0) FROM mant_ot_repuesto_solicitudes s2 "
     "         WHERE s2.repuesto_stock_id=s.repuesto_stock_id AND s2.id<>s.id "
+    "           AND COALESCE(s2.es_reposicion,0)=0 "
     "           AND s2.estado IN ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido_otras "
     "  FROM mant_ot_repuesto_solicitudes s "
     # 🔀 2026-09-21 (Fase 2): m/v pasan de JOIN a LEFT JOIN -- una solicitud
@@ -85823,7 +85911,15 @@ def _otrep_fila(s, para_ot=False):
     # viene de _OTREP_SQL_SOL; se descarta del dict final (es un cálculo
     # intermedio, no un dato de la solicitud).
     if s.get("repuesto_stock_id") and s.get("stock_cantidad") is not None:
-        _propia = s.get("cantidad") or 0.0 if s.get("abierta") else 0.0
+        # 🔒 2026-09-26 (revisión Fase 3, hallazgo MEDIA #6): "abierta" incluía
+        # 'pedido' (esperando al proveedor, YA NO compromete físico -- ver
+        # _OTREP_ESTADOS_COMPROMETEN) y dejaba fuera a 'solicitado', que sí
+        # se cuenta como proyección (todavía puede terminar consumiendo este
+        # repuesto). Una reposición (es_reposicion=1) nunca es "propia" del
+        # comprometido -- trae stock, no lo consume (hallazgo ALTA #1).
+        _propia = 0.0
+        if not s.get("es_reposicion") and s.get("estado") in (_OTREP_ESTADOS_COMPROMETEN + ("solicitado",)):
+            _propia = s.get("cantidad") or 0.0
         s["stock_comprometido"] = (s.get("comprometido_otras") or 0.0) + _propia
         s["stock_disponible"] = s["stock_cantidad"] - s["stock_comprometido"]
     else:
@@ -87692,25 +87788,39 @@ def repstock_crear_ticket_compra():
                     "(botón \"Pedir al proveedor\")."}), 501
 
 
+class _OtrepConflictoEstado(Exception):
+    """Señal interna (2026-09-26, revisión Fase 3, hallazgo MEDIA #2): la
+    solicitud cambió de estado entre el SELECT que leyó `actual` y el UPDATE
+    de la transición -- el UPDATE con `WHERE estado=%s` no tocó ninguna fila
+    (rowcount=0). Se usa solo para cortar limpio dentro del `try` de
+    _otrep_cambiar_estado y devolver 409, nunca escapa de esa función."""
+    pass
+
+
 def _otrep_cambiar_estado(sid, nuevo, user, datos):
     """Núcleo de la transición de estado de una solicitud de repuesto.
 
     🏗️ Fase 4 (2026-09-26 -- Daniel: "puedo gestionar una orden de trabajo
     en base a que vayan a instalar todos esos repuestos o uno solo"):
-    extraído MECÁNICAMENTE (mover código, no reescribirlo) del cuerpo de
-    `repstock_solicitud_ot_estado` para que TAMBIÉN lo use el botón "Marcar
-    instalado" de la OT (POST /ot/api/<vid>/repuestos-instalar/<sid>) sin
-    duplicar la lógica de negocio (kardex/alerta de máquina/ticket/log) en
-    dos lugares. La ruta original (`repstock_solicitud_ot_estado`) queda
-    como un wrapper delgado que solo arma `nuevo`/`user` desde el request y
-    traduce la tupla de vuelta a `jsonify(...), http` -- MISMO
-    comportamiento observable (códigos, mensajes y JSON) de antes.
+    extraído del cuerpo de `repstock_solicitud_ot_estado` para que TAMBIÉN
+    lo use el botón "Marcar instalado" de la OT (POST
+    /ot/api/<vid>/repuestos-instalar/<sid>) sin duplicar la lógica de
+    negocio (kardex/alerta de máquina/ticket/log) en dos lugares. La ruta
+    original (`repstock_solicitud_ot_estado`) queda como un wrapper delgado
+    que solo arma `nuevo`/`user` desde el request y traduce la tupla de
+    vuelta a `jsonify(...), http` -- MISMO comportamiento observable
+    (códigos, mensajes y JSON) de antes.
 
-    ⚠️ COORDINACIÓN (Fase 3 kardex, en paralelo): otra rama está
-    reescribiendo esta misma transición para que 'instalado' corra en una
-    transacción con el movimiento de bodega (salida de stock). Cuando esa
-    rama se integre, hay que volver a aplicar esta extracción sobre su
-    versión nueva del cuerpo.
+    🧾 REBASE sobre Fase 3 (kardex, 2026-09-26, ya en main): "recibido" e
+    "instalado" mueven bodega DE VERDAD (mant_repuestos_stock.cantidad +
+    mant_repuestos_movimientos), todo en UNA transacción con el propio
+    UPDATE de estado -- si el movimiento de bodega falla, el cambio de
+    estado también se revierte. Conexión get_db() del request: NUNCA se
+    cierra (gotcha_get_db_no_cerrar).
+
+    TODOS los retornos de esta función son la tupla (ok, http, payload) --
+    ni un solo `return jsonify(...)` acá dentro. El wrapper
+    (`repstock_solicitud_ot_estado`) es el ÚNICO que llama a `jsonify`.
 
     Args:
       sid:    id de mant_ot_repuesto_solicitudes
@@ -87718,6 +87828,15 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
       user:   username que ejecuta la transición (nunca confiar en `datos`)
       datos:  el mismo body que acepta la ruta -- nota, equipo_operativo,
               proveedor_id, oc_numero, repuesto_stock_id, etc.
+              🏗️ Fase 4: puede traer además `_visita_instalacion_id`
+              (interno, NUNCA viene del body de un usuario real -- lo pone
+              `ot2_api_repuesto_instalar` antes de llamar acá): cuando
+              'instalado' se dispara desde la OT donde el repuesto se está
+              instalando (que puede ser DISTINTA de la OT de ORIGEN de la
+              solicitud, ver ot_generada_id), el movimiento de kardex
+              'instalacion' debe quedar con ESE visita_id -- no con el de
+              origen -- para que el kardex y la ficha del cliente reflejen
+              en QUÉ OT de verdad se instaló el repuesto.
 
     Returns:
       (ok: bool, http_status: int, payload: dict) -- el caller solo tiene
@@ -87736,6 +87855,17 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         return False, 403, {"ok": False, "error":
                         "Pedir al proveedor o rechazar una solicitud lo decide gestión, "
                         "no un técnico."}
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): una "reposición de
+    # stock propio" (es_reposicion=1) trae repuestos HACIA la bodega -- no
+    # hay nada que "instalar" en un equipo/cliente. Su estado final es
+    # 'recibido' (ahí ya se hizo la entrada real). Se bloquea con mensaje
+    # claro en vez de "cerrarse sola" silenciosamente -- así queda visible
+    # en la cola que la reposición terminó, y no aparece un botón que
+    # promete algo que no corresponde.
+    if nuevo == "instalado" and s.get("es_reposicion"):
+        return False, 400, {"ok": False, "error":
+                        "Esta es una reposición de stock propio: quedó cerrada al recibirse "
+                        "en bodega, no hay una instalación que registrar."}
     nota = (d.get("nota") or "").strip()
     sets, params = ["estado=%s"], [nuevo]
     stock = None
@@ -87786,10 +87916,126 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         sets.append("nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s)")
         params.append(nota[:5000])
     params.append(sid)
+    # 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): "recibido"
+    # e "instalado" ahora mueven bodega DE VERDAD (antes solo cambiaban el
+    # estado de la solicitud y mant_repuestos_stock.cantidad ni se enteraba).
+    # Todo en UNA transacción con el propio UPDATE de estado -- si el
+    # movimiento de bodega falla, el cambio de estado también se revierte
+    # (nunca queda una solicitud "recibida" sin que el físico se haya
+    # movido, o viceversa). Conexión get_db() del request: NUNCA se cierra
+    # (gotcha_get_db_no_cerrar) -- mismo patrón que el INSERT en lote de
+    # arriba (_otrep_crear_fila_solicitud con cur=cur).
+    mov_aviso = None
+    conn = get_db()
     try:
-        mysql_execute(f"UPDATE mant_ot_repuesto_solicitudes SET {', '.join(sets)} WHERE id=%s",
-                      tuple(params))
+        with conn.cursor() as cur:
+            # 🔒 2026-09-26 (revisión Fase 3, hallazgo MEDIA #2 -- concurrencia
+            # real): el UPDATE original solo filtraba por `id`, así que dos
+            # requests casi simultáneos sobre la MISMA solicitud (doble click,
+            # o dos personas en la cola a la vez) podían aplicarse los dos --
+            # el segundo pisando trabajo del primero sin que nadie se
+            # enterara. Ahora exige `estado=%s` con el `actual` leído al
+            # principio de la función y revisa `rowcount`: si alguien más ya
+            # movió la solicitud en el medio, esta transición no toca NADA
+            # (ni el estado ni bodega) y se corta con 409 -- nunca queda a
+            # medias.
+            cur.execute(f"UPDATE mant_ot_repuesto_solicitudes SET {', '.join(sets)} "
+                        f" WHERE id=%s AND estado=%s",
+                        tuple(params) + (actual,))
+            if cur.rowcount != 1:
+                raise _OtrepConflictoEstado()
+            if nuevo == "recibido":
+                if not s.get("repuesto_stock_id"):
+                    mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
+                                 "movimiento de bodega no se registró.")
+                elif s.get("es_reposicion"):
+                    # 🔒 ALTA #1: una reposición SIEMPRE hace la entrada al
+                    # llegar a 'recibido' -- es su propio flujo (stock propio
+                    # volviendo a bodega), no depende de haber pasado por
+                    # 'pedido' a un proveedor externo.
+                    mov = _repstock_mover(
+                        s["repuesto_stock_id"], float(s.get("cantidad") or 0), "entrada",
+                        "recepcion_proveedor", solicitud_id=sid, visita_id=s.get("visita_id"),
+                        cliente_id=s.get("cliente_id"),
+                        nota=f"Reposición #{sid} ({s.get('repuesto_nombre')}) recibida en bodega.",
+                        usuario=user, cur=cur)
+                    mov_aviso = mov.get("aviso")
+                elif s.get("pedido_at"):
+                    # 🔧 BAJA #7 (revisión Fase 3): "recibido" de verdad
+                    # significa "llegó del proveedor" -- eso implica haber
+                    # pasado por 'pedido' antes (pedido_at quedó seteado en
+                    # ESA transición). Si pedido_at existe, esta es una
+                    # recepción real.
+                    mov = _repstock_mover(
+                        s["repuesto_stock_id"], float(s.get("cantidad") or 0), "entrada",
+                        "recepcion_proveedor", solicitud_id=sid, visita_id=s.get("visita_id"),
+                        cliente_id=s.get("cliente_id"),
+                        nota=f"Solicitud #{sid} ({s.get('repuesto_nombre')}) recibida en bodega.",
+                        usuario=user, cur=cur)
+                    mov_aviso = mov.get("aviso")
+                else:
+                    # 🔧 BAJA #7: 'validado' -> 'recibido' SIN pasar por
+                    # 'pedido' (y sin ser reposición) -- no hubo ningún
+                    # proveedor de por medio, así que sumar stock solo
+                    # porque cambió de estado sería inventar una entrada que
+                    # nadie confirmó. No se mueve nada; se avisa para que
+                    # bodega lo ajuste a mano si de verdad llegó físico.
+                    mov_aviso = ("Esta solicitud pasó a \"recibido\" sin pasar por \"Pedido al "
+                                 "proveedor\" -- no se sumó al stock automáticamente. Si el "
+                                 "repuesto llegó físico de verdad, ajusta la cantidad a mano en "
+                                 "Bodega (queda registrado en el kardex).")
+            elif nuevo == "instalado":
+                # Válido tanto si viene de 'recibido' (entró físico y ahora
+                # sale a instalarse) como de 'validado' directo (spec: "ya
+                # había stock, no hay nada que pedir" -- nunca pasó por
+                # 'recibido', así que esta es la ÚNICA salida que registra).
+                _tiene_entrada = True
+                if actual == "recibido":
+                    cur.execute(
+                        "SELECT 1 FROM mant_repuestos_movimientos "
+                        " WHERE solicitud_id=%s AND motivo_tipo='recepcion_proveedor' LIMIT 1",
+                        (sid,))
+                    _tiene_entrada = cur.fetchone() is not None
+                if not s.get("repuesto_stock_id"):
+                    mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
+                                 "movimiento de bodega no se registró.")
+                elif actual == "recibido" and not _tiene_entrada:
+                    # 🔒 MEDIA #3 (revisión Fase 3): esta solicitud ya estaba
+                    # 'recibido' de ANTES de que existiera el kardex (o esa
+                    # entrada nunca quedó registrada por otro motivo) -- no
+                    # hay un movimiento 'recepcion_proveedor' que contrapese
+                    # esta salida. Restar ahora dejaría el saldo mal (una
+                    # salida sin su entrada correspondiente), así que no se
+                    # mueve stock -- solo se avisa.
+                    mov_aviso = ("Esta solicitud estaba \"recibida\" desde antes del kardex de "
+                                 "bodega (no hay registro de esa entrada): no se descontó stock "
+                                 "al instalar. Revisa el saldo de bodega a mano si hace falta.")
+                else:
+                    # 🏗️ Fase 4 (2026-09-26): si 'instalado' se dispara desde
+                    # la OT donde el repuesto se está instalando -- que puede
+                    # ser DISTINTA de la OT de origen de la solicitud, ver
+                    # ot_generada_id -- el kardex debe quedar con ESA OT, no
+                    # con la de origen. `_visita_instalacion_id` es interno
+                    # (lo pone ot2_api_repuesto_instalar, nunca viene del
+                    # body de un usuario real); si no viene, se usa la OT de
+                    # origen de la solicitud (comportamiento de siempre,
+                    # cuando se instala desde la MISMA OT donde nació).
+                    _visita_kardex = d.get("_visita_instalacion_id") or s.get("visita_id")
+                    mov = _repstock_mover(
+                        s["repuesto_stock_id"], -float(s.get("cantidad") or 0), "salida",
+                        "instalacion", solicitud_id=sid, visita_id=_visita_kardex,
+                        cliente_id=s.get("cliente_id"),
+                        nota=f"Solicitud #{sid} ({s.get('repuesto_nombre')}) instalada.",
+                        usuario=user, cur=cur)
+                    mov_aviso = mov.get("aviso")
+        conn.commit()
+    except _OtrepConflictoEstado:
+        conn.rollback()
+        return False, 409, {"ok": False, "error":
+                        "Esta solicitud cambió de estado justo ahora (alguien más la actualizó): "
+                        "recarga para ver el estado actual."}
     except Exception as e:
+        conn.rollback()
         print(f"[otrep] estado sid={sid}: {e}", flush=True)
         return False, 500, {"ok": False, "error": "No se pudo actualizar la solicitud."}
     equipo_operativo = False
@@ -87818,7 +88064,11 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
     # operación"): al validar contra un repuesto real, avisar (NO bloquear,
     # mismo criterio que la piola) si esto deja el repuesto comprometido por
     # encima de lo físico entre TODAS las OT abiertas que lo piden.
-    aviso = None
+    # 2026-09-26: `mov_aviso` (del movimiento de bodega en recibido/
+    # instalado) y este `aviso` (sobrecompromiso al validar) nunca se pisan
+    # -- son mutuamente excluyentes por `nuevo` (validado vs recibido/
+    # instalado), pero por si algún día dejan de serlo, mov_aviso manda.
+    aviso = mov_aviso
     if nuevo == "validado" and stock:
         fisico = float(stock.get("cantidad") or 0)
         otras = _otrep_stock_comprometido(stock["id"], excluir_sol_id=sid)
@@ -87883,9 +88133,10 @@ def repstock_solicitud_ot_estado(sid):
     'pedido' y 'rechazado' son decisiones de gestión, no de un técnico.
 
     🏗️ Fase 4 (2026-09-26): el cuerpo de esta ruta vive ahora en
-    `_otrep_cambiar_estado` (ver su docstring) -- esta función solo arma
-    `nuevo`/`user` desde el request y traduce el resultado a JSON, sin
-    cambiar ningún código/mensaje/comportamiento de antes.
+    `_otrep_cambiar_estado` (ver su docstring, incluye el kardex de la
+    Fase 3) -- esta función solo arma `nuevo`/`user` desde el request y
+    traduce el resultado a JSON, sin cambiar ningún código/mensaje/
+    comportamiento de antes.
     """
     d = request.get_json(silent=True) or {}
     nuevo = (d.get("estado") or "").strip().lower()
@@ -88648,10 +88899,18 @@ def _otrep_validar_lote_mismo_cliente(sols):
     if ya_generada:
         return (f"La solicitud #{ya_generada['id']} ({ya_generada.get('repuesto_nombre')}) ya "
                 "tiene una OT generada -- sácala de la selección."), 409
+    # 🔒 FIX 2026-09-26 (coordinación post-merge, hallazgo B3): "Todas deben
+    # ser del mismo cliente" no decía CUÁL solicitud era la del problema --
+    # si es una reposición de stock propio (sin cliente) mezclada con otras
+    # que sí lo tienen, el mensaje específico ("La #X no tiene cliente
+    # asignado") es más accionable que el genérico de abajo.
+    sin_cliente = next((s for s in sols if s.get("cliente_id") is None), None)
+    if sin_cliente:
+        return (f"La #{sin_cliente['id']} no tiene cliente asignado: genera su OT "
+                "individual."), 400
     clientes = {s.get("cliente_id") for s in sols}
-    if None in clientes or len(clientes) != 1:
-        return ("Todas las solicitudes deben ser del MISMO cliente (una reposición de stock "
-                "propio, sin cliente, no se puede mezclar en una OT de cliente)."), 400
+    if len(clientes) != 1:
+        return ("Todas las solicitudes deben ser del MISMO cliente."), 400
     for s in sols:
         if s.get("estado") not in ("recibido", "validado"):
             return (f"\"{s.get('repuesto_nombre')}\" (#{s['id']}) está "
@@ -88745,12 +89004,28 @@ def repstock_solicitud_ot_preparar_ot_lote():
 @app.route("/repuestos/api/solicitudes-ot/vincular-ot-lote", methods=["POST"])
 @_otrep_generar_ot_required
 def repstock_solicitud_ot_vincular_ot_lote():
-    """Como vincular-ot (singular), pero para el lote de la Fase 4. El
-    UPDATE es ATÓMICO: la condición de cliente/estado/sin-OT-previa vive en
-    el propio WHERE (mismo patrón de concurrencia que el singular) y se
-    exige rowcount == len(sids) -- si UNA sola solicitud cambió de estado o
-    ya se vinculó mientras se llenaba el wizard, se aborta el UPDATE
-    completo (nada queda vinculado a medias) y se avisa con un 409 claro."""
+    """Como vincular-ot (singular), pero para el lote de la Fase 4.
+
+    🔒 A1 (coordinación post-merge, 2026-09-26): el UPDATE es ATÓMICO DE
+    VERDAD -- mismo `conn=get_db()`/cursor que usa el kardex
+    (_otrep_cambiar_estado), condiciones en el propio WHERE, se revisa
+    `cur.rowcount` y se hace ROLLBACK si no calza con `len(sids)` (commit
+    solo si calza). Antes esto usaba `mysql_execute_returning_rowcount`,
+    que HACE COMMIT SIEMPRE apenas ejecuta el UPDATE -- si el WHERE solo
+    tocaba 3 de 5 solicitudes, esas 3 quedaban vinculadas y COMMITEADAS
+    antes de que el código alcanzara a leer el rowcount y decidir "esto no
+    calza, aborto": el "todo o nada" era falso, ya había quedado a medias.
+
+    🔒 B4: revalida TODO el lote (mismo cliente, sin OT previa, estado
+    validado/recibido con stock suficiente) con datos FRESCOS justo antes
+    de vincular -- reusa `_otrep_validar_lote_mismo_cliente`, la MISMA
+    función que preparar-ot-lote. El stock pudo cambiar en los segundos
+    que el usuario tardó en llenar el wizard (otra OT se llevó el
+    repuesto), así que no basta con haber validado en preparar-ot-lote.
+
+    🔒 M3: la OT destino debe ser DEL MISMO cliente (v.cliente_id NULL
+    también es error -- una OT de trabajo interno no puede recibir
+    repuestos de cliente) y no puede estar cerrada/cancelada/anulada."""
     d = request.get_json(silent=True) or {}
     sids_in = d.get("sids") or []
     try:
@@ -88766,43 +89041,66 @@ def repstock_solicitud_ot_vincular_ot_lote():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Falta la OT recién generada."}), 400
 
-    v = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (visita_id,))
+    v = mysql_fetchone(
+        "SELECT id, numero_ot, cliente_id, estado, firma_cliente_url FROM mant_visitas WHERE id=%s",
+        (visita_id,))
     if not v:
         return jsonify({"ok": False, "error": "La OT indicada no existe."}), 404
+    # M3: cerrada/cancelada/anulada -- no se le puede vincular más repuestos.
+    if (v.get("estado") or "").lower() in ("cerrada", "cancelada", "anulada") or v.get("firma_cliente_url"):
+        return jsonify({"ok": False, "error":
+                        "Esa OT ya está cerrada/cancelada -- no se le puede vincular más repuestos."}), 409
 
     ph = ",".join(["%s"] * len(sids))
     try:
-        rows = mysql_fetchall(
-            f"SELECT id, cliente_id, estado, ot_generada_id, visita_id, incidencia_id, ticket_id, "
-            f"       repuesto_nombre FROM mant_ot_repuesto_solicitudes WHERE id IN ({ph})",
-            tuple(sids)) or []
+        rows = mysql_fetchall(_OTREP_SQL_SOL + f" WHERE s.id IN ({ph})", tuple(sids)) or []
     except Exception as e:
         print(f"[otrep] vincular-ot-lote leer sids={sids}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudieron leer las solicitudes."}), 500
     if len(rows) != len(sids):
         return jsonify({"ok": False, "error": "Alguna solicitud ya no existe -- recarga la lista."}), 404
-    clientes = {r.get("cliente_id") for r in rows}
-    if None in clientes or len(clientes) != 1:
-        return jsonify({"ok": False, "error": "Todas las solicitudes deben ser del mismo cliente."}), 400
-    cliente_id = next(iter(clientes))
-    if v.get("cliente_id") and int(v["cliente_id"]) != int(cliente_id):
+    sols = [_otrep_fila(r) for r in rows]
+
+    # B4: revalida TODO de nuevo con datos frescos (mismo cliente, sin OT
+    # previa, estado+stock) -- mismo validador que preparar-ot-lote.
+    _err, _http = _otrep_validar_lote_mismo_cliente(sols)
+    if _err:
+        return jsonify({"ok": False, "error": _err}), _http
+
+    cliente_id = sols[0].get("cliente_id")
+    # M3: la OT destino tiene que ser EXACTAMENTE de este cliente -- NULL
+    # (ej. una OT de trabajo interno) es tan error como un cliente distinto.
+    if v.get("cliente_id") is None or int(v["cliente_id"]) != int(cliente_id):
         return jsonify({"ok": False, "error":
-                        "Esa OT es de otro cliente -- no corresponde a esta selección."}), 400
+                        "Esa OT no es del cliente de esta selección -- no corresponde."}), 400
 
     user = current_username() or "sistema"
     numero_ot = v.get("numero_ot") or f"OT #{visita_id}"
+    # A1: transacción real -- get_db()/cursor, rowcount, rollback si no
+    # calza con len(sids), commit solo si calza. La conexión del request
+    # NUNCA se cierra (gotcha_get_db_no_cerrar).
+    conn = get_db()
     try:
-        filas = mysql_execute_returning_rowcount(
-            f"UPDATE mant_ot_repuesto_solicitudes SET ot_generada_id=%s "
-            f" WHERE id IN ({ph}) AND ot_generada_id IS NULL AND estado IN ('validado','recibido') "
-            f"   AND cliente_id=%s",
-            (visita_id, *sids, cliente_id))
-        if filas != len(sids):
-            return jsonify({"ok": False, "error":
-                            "No se pudo vincular el lote completo: alguna solicitud ya tiene una OT "
-                            "generada o cambió de estado mientras se generaba. Nada quedó a medias -- "
-                            "revisa el estado actual de cada una y reintenta."}), 409
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE mant_ot_repuesto_solicitudes SET ot_generada_id=%s "
+                f" WHERE id IN ({ph}) AND ot_generada_id IS NULL AND estado IN ('validado','recibido') "
+                f"   AND cliente_id=%s",
+                (visita_id, *sids, cliente_id))
+            # Mismo patrón que _otrep_cambiar_estado: si el rowcount no
+            # calza, se corta con una excepción DENTRO del `with` -- el
+            # rollback real vive en el `except`, nunca dentro del cursor.
+            if cur.rowcount != len(sids):
+                raise _OtrepConflictoEstado()
+        conn.commit()
+    except _OtrepConflictoEstado:
+        conn.rollback()
+        return jsonify({"ok": False, "error":
+                        "No se pudo vincular el lote completo: alguna solicitud ya tiene una OT "
+                        "generada o cambió de estado mientras se generaba. Nada quedó a medias -- "
+                        "revisa el estado actual de cada una y reintenta."}), 409
     except Exception as e:
+        conn.rollback()
         print(f"[otrep] vincular-ot-lote sids={sids}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo vincular la OT."}), 500
 
@@ -88844,14 +89142,36 @@ def ot2_api_repuesto_instalar(vid, sid):
     INSTALA en ESTA (ot_generada_id=vid, ver vincular-ot-lote/vincular-ot) --
     reusa el MISMO núcleo que la cola de Solicitudes (_otrep_cambiar_estado)
     para que el kardex/alerta de máquina/ticket se comporten IGUAL sea cual
-    sea la puerta por la que se marcó 'instalado'.
+    sea la puerta por la que se marcó 'instalado'. El movimiento de kardex
+    queda con visita_id = ESTA OT (donde de verdad se instaló), no la de
+    origen de la solicitud -- ver `_visita_instalacion_id` más abajo.
 
-    Gate: técnico asignado que pueda EJECUTAR esta OT, o gestión (bodega/
-    Tickets/superadmin) -- mismo criterio que el resto del módulo. Un
-    técnico EXTERNO no ve costos/proveedor/ubicación: ya los filtra
-    `_otrep_fila(..., para_ot=True)`, la misma función que arma el GET que
-    alimenta esta pantalla."""
-    if not (_puede_ot_accion(vid, "ejecutar") or _otrep_puede_gestion()):
+    🔒 M1 (coordinación post-merge, 2026-09-26): gate -- técnico asignado
+    que pueda EJECUTAR esta OT, o gestión que NO sea un técnico (ni interno
+    ni externo). Antes `_otrep_puede_gestion()` solo, que SÍ deja pasar a
+    un técnico interno con permiso `mantenciones` aunque no esté asignado a
+    ESTA OT -- acá eso no corresponde: o eres el técnico asignado (pasa por
+    'ejecutar'), o eres gestión de verdad (bodega/Tickets/superadmin), pero
+    nunca un técnico cualquiera por tener el permiso genérico.
+
+    🔒 M2: la OT tiene que estar ABIERTA -- firma de cliente, o estado
+    pendiente_aprobacion/completada/cerrada/cancelada/anulada, bloquea con
+    409 amable para CUALQUIERA salvo superadmin (mismo criterio que
+    `_puede_ot_accion`: el candado maestro de superadmin ya decide eso solo
+    -- acá se replica la MISMA condición amplia, porque el gate de arriba
+    puede pasar por la rama de gestión, que no mira sellado en absoluto)."""
+    v = mysql_fetchone(
+        "SELECT id, estado, firma_cliente_url FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa orden de trabajo."}), 404
+    _es_superadmin = bool((g.get("permissions") or {}).get("superadmin"))
+    _ot_sellada_amplio = bool(v.get("firma_cliente_url")) or (v.get("estado") or "").lower() in (
+        "pendiente_aprobacion", "completada", "cerrada", "cancelada", "anulada")
+    if _ot_sellada_amplio and not _es_superadmin:
+        return jsonify({"ok": False, "error":
+                        "Esta OT ya está cerrada o sellada: no se pueden marcar más repuestos "
+                        "como instalados."}), 409
+    if not (_puede_ot_accion(vid, "ejecutar") or (_otrep_puede_gestion() and not _es_rol_tecnico())):
         return jsonify({"ok": False, "error": "No tienes permiso para marcar repuestos de esta OT."}), 403
     s = mysql_fetchone(
         "SELECT id, ot_generada_id, estado, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
@@ -88865,6 +89185,10 @@ def ot2_api_repuesto_instalar(vid, sid):
                         f"Esta solicitud está \"{(_OTREP_ESTADO_LABEL.get(s['estado'], s['estado']) or '').split(' · ')[0]}\": "
                         "solo se puede marcar instalado desde validado o recibido."}), 400
     d = request.get_json(silent=True) or {}
+    # 🏗️ Fase 4: interno, NUNCA viene del body de un usuario real -- le dice
+    # a _otrep_cambiar_estado que el movimiento de kardex 'instalacion' va
+    # con ESTA OT (vid), no con la OT de origen de la solicitud.
+    d["_visita_instalacion_id"] = vid
     user = current_username() or "sistema"
     ok, http, payload = _otrep_cambiar_estado(sid, "instalado", user, d)
     return jsonify(payload), http
@@ -102336,17 +102660,30 @@ def mant_visita_checklist_get(vid):
 
     fotos_por_tarea = {}
     try:
-        _fr = mysql_fetchall(
-            "SELECT id, tarea_id, cloudinary_url, archivo_path "
-            "  FROM mant_visita_fotos WHERE visita_id=%s AND tarea_id IS NOT NULL",
-            (vid,)
-        ) or []
+        # es_principal (2026-09-26, foto principal por equipo -- Daniel:
+        # "todo debe estar conectado"): se pasa tal cual al frontend para
+        # que el visor (ilus_lightbox) sepa qué foto ya es la principal de
+        # este equipo. Con try/except aparte por si el _ensure de boot no
+        # alcanzó a correr en este entorno (columna nueva).
+        try:
+            _fr = mysql_fetchall(
+                "SELECT id, tarea_id, cloudinary_url, archivo_path, es_principal "
+                "  FROM mant_visita_fotos WHERE visita_id=%s AND tarea_id IS NOT NULL",
+                (vid,)
+            ) or []
+        except Exception as _e_fpt_ep:
+            print(f"[checklist_get] es_principal no disponible vid={vid}: {_e_fpt_ep}", flush=True)
+            _fr = mysql_fetchall(
+                "SELECT id, tarea_id, cloudinary_url, archivo_path "
+                "  FROM mant_visita_fotos WHERE visita_id=%s AND tarea_id IS NOT NULL",
+                (vid,)
+            ) or []
         for f in _fr:
             url = f.get("cloudinary_url") or (
                 f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
             if url:
                 fotos_por_tarea.setdefault(f["tarea_id"], []).append(
-                    {"id": f["id"], "url": url})
+                    {"id": f["id"], "url": url, "principal": bool(f.get("es_principal"))})
     except Exception as _e_fpt:
         print(f"[checklist_get] fotos_por_tarea vid={vid}: {_e_fpt}", flush=True)
     for t in tareas:
@@ -102575,7 +102912,7 @@ def _ot_pdf_hhmm(v):
 
 
 def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_cliente=None,
-                       usuarios=None, anexo_completo=False):
+                       usuarios=None, anexo_completo=False, rep_por_maquina=None):
     """Capa PROBATORIA del PDF de la OT.
 
     `usuarios`: {username_en_minúscula: {"id":…, "nombre":…}} resuelto por
@@ -102609,6 +102946,14 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     OJO: este contexto alimenta también /ot-firmada/<token> (público, sin
     login). Acá NO va ningún dato financiero: ni costos, ni márgenes, ni
     modalidad de cobro. Solo hechos técnicos del servicio prestado.
+
+    `rep_por_maquina` (Fase 3b, 2026-09-26): {maquina_id: [solicitudes]} YA
+    consultado por `_ot_pdf_context` (mant_ot_repuesto_solicitudes, solo
+    columnas seguras para el cliente -- nunca costo/proveedor/OC/ubicación
+    de bodega). Se pasa como dato, no se consulta acá, para que esta
+    función siga siendo pura transformación (sin Flask ni MySQL, tal como
+    dice el párrafo de arriba) y el harness Playwright la pueda seguir
+    probando aislada.
     """
     visita = visita or {}
     equipos = equipos or []
@@ -102677,6 +103022,130 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     # _ot_maquinas_excluidas_cierre -- saltado O falla_detectada -- ver
     # el comentario junto a e["excluido_checklist"] arriba.
     excluidos_ids = {e.get("id") for e in equipos if e.get("excluido_checklist")}
+
+    # ── 🔧 Fase 3b (2026-09-26 -- Daniel: "las OT deben expresar si se
+    #    solicitó el repuesto y el estado en que quedó el equipo, y todo
+    #    esto... recuerda que el repositorio son las fichas de clientes,
+    #    todo movimiento se verá reflejado"). Repuestos solicitados EN ESTA
+    #    VISITA, por equipo, y el estado en que ESTA OT deja cada equipo.
+    #
+    #    SOLO columnas seguras para el cliente: nunca costo, proveedor, OC
+    #    ni ubicación de bodega -- el PDF lo recibe el CLIENTE, en CUALQUIER
+    #    versión (interna o pública vía /ot-firmada/<token>), así que ni
+    #    siquiera se seleccionan de la tabla (no basta con no imprimirlas:
+    #    si no están en el SELECT, ninguna plantilla futura puede mostrarlas
+    #    por error).
+    #
+    #    "Estado en que quedó el equipo en esta OT" se DERIVA de lo que
+    #    hizo ESTA visita -- nunca del estado ACTUAL de la ficha (una OT
+    #    vieja no puede cambiar su evidencia por algo que pasó después):
+    #      · razon_saltado == 'dado_de_baja'      -> Dado de baja
+    #        (ot2_api_equipo_dar_baja escribe esto en mant_visita_equipos
+    #        de ESTA visita, ver app.py)
+    #      · razon_saltado == 'fuera_de_servicio' -> Fuera de servicio
+    #        (_ot_equipo_fuera_servicio_marcar, misma tabla/visita)
+    #      · o alguna solicitud de repuesto de ESTA visita+equipo trae
+    #        dejo_fuera_servicio=1                -> Fuera de servicio
+    #      · o queda alguna solicitud de ESTA visita todavía abierta
+    #        (_OTREP_ABIERTOS)                    -> Con alerta (repuesto
+    #        pendiente)
+    #      · si nada de eso pasó                  -> Operativo
+    #    "Estado en ficha" (e.estado_capturado, más abajo en el template)
+    #    NO se toca (REGLA #4.2) -- se rotula claro para que no se
+    #    confundan: uno es "como quedó ESTA visita", el otro es "como está
+    #    HOY la ficha" (puede haber cambiado por una OT posterior).
+    rep_por_maquina = rep_por_maquina or {}
+    for e in equipos:
+        _sols_e = rep_por_maquina.get(e.get("id"), [])
+        e["rep_solicitudes"] = _sols_e
+        # 🔴 FIX 2026-09-26 (revisión de hallazgos, ALTA 1; reordenado el
+        # mismo día tras un segundo ajuste de Daniel: "Fuera de servicio"
+        # y "Dado de baja" son MÁS ESPECÍFICOS que "Con falla" y deben
+        # ganarle -- un equipo dado de baja no debería leerse como "con
+        # falla" aunque su fila de revisión también haya quedado marcada
+        # falla_detectada). "Estado en esta OT" no podía llegar nunca a
+        # "Operativo" por descarte -- un equipo sin ninguna revisión real
+        # (o con checklist a medias, o con falla detectada) terminaba
+        # mostrando "Operativo" solo porque no calzaba con baja/fuera de
+        # servicio/solicitud abierta. Cascada EXPLÍCITA, de más a menos
+        # específico -- la PRIMERA regla que aplica gana:
+        #   1. saltado (no revisado) con una razón que NO es baja ni fuera
+        #      de servicio -> "No revisado · {razón}"
+        #   2. dado de baja EN ESTA visita -> "Dado de baja"
+        #   3. fuera de servicio EN ESTA visita (razón, o una solicitud de
+        #      ESTA visita con dejo_fuera_servicio=1) -> "Fuera de servicio"
+        #   4. falla detectada (checklist o diagnóstico por equipo)
+        #      -> "Con falla"
+        #   5. cualquier solicitud de repuesto de ESTA visita, salvo las
+        #      rechazadas -> "Con alerta · repuesto solicitado" (MEDIA 3:
+        #      NO depende del estado ACTUAL/vivo de la solicitud -- si se
+        #      instaló semanas después, la evidencia de ESTA OT no cambia
+        #      retroactivamente; el estado vivo se ve en la pill de la fila
+        #      del resumen, no acá)
+        #   6. revisión OK (verificado/con_cambios) o diagnóstico aprobado
+        #      -> "Operativo"
+        #   7. nada de lo anterior (equipo sin ningún dato de revisión)
+        #      -> "Sin revisión registrada" (gris, NO "Operativo")
+        _razon_e = (e.get("razon_saltado") or "").strip().lower()
+        _rev_e = (e.get("estado_revision") or "").strip().lower()
+        _diag_e = (e.get("diagnostico_estado") or "").strip().lower()
+        _saltado_e = (_rev_e == "saltado")
+        _falla_e = (_rev_e == "falla_detectada") or (_diag_e == "falla")
+        _hay_fs_sol = any(s.get("dejo_fuera_servicio") for s in _sols_e)
+        # No depende de _OTREP_ABIERTOS (MEDIA 3): rechazada es la ÚNICA
+        # que no cuenta como alerta -- ni siquiera "instalado" se excluye.
+        _hay_sol_no_rechazada = any((s.get("estado") or "") != "rechazado" for s in _sols_e)
+        if _saltado_e and _razon_e not in ("dado_de_baja", "fuera_de_servicio"):
+            _razon_lbl_e = e.get("razon_saltado_label") or ""
+            e["estado_esta_ot_label"] = (
+                f"No revisado · {_razon_lbl_e}" if _razon_lbl_e else "No revisado")
+            e["estado_esta_ot_clase"] = "err"
+        elif _razon_e == "dado_de_baja":
+            e["estado_esta_ot_label"] = "Dado de baja"
+            e["estado_esta_ot_clase"] = "err"
+        elif _razon_e == "fuera_de_servicio" or _hay_fs_sol:
+            e["estado_esta_ot_label"] = "Fuera de servicio"
+            e["estado_esta_ot_clase"] = "err"
+        elif _falla_e:
+            e["estado_esta_ot_label"] = "Con falla"
+            e["estado_esta_ot_clase"] = "err"
+        elif _hay_sol_no_rechazada:
+            e["estado_esta_ot_label"] = "Con alerta · repuesto solicitado"
+            e["estado_esta_ot_clase"] = "warn"
+        elif _rev_e in ("verificado", "con_cambios") or _diag_e == "aprobado":
+            e["estado_esta_ot_label"] = "Operativo"
+            e["estado_esta_ot_clase"] = "ok"
+        else:
+            e["estado_esta_ot_label"] = "Sin revisión registrada"
+            e["estado_esta_ot_clase"] = "mute"
+
+    # 🔴 FIX 2026-09-26 (revisión de hallazgos, MEDIA 2): rep_resumen se
+    # arma desde rep_por_maquina COMPLETO -- antes solo recorría `equipos`,
+    # así que un equipo que por cualquier motivo no llegara a "Equipos
+    # informados" perdía sus solicitudes en el resumen de la OT aunque
+    # existieran de verdad. `maquina_nombre` viaja en cada solicitud desde
+    # el LEFT JOIN de la propia consulta en _ot_pdf_context -- ya no
+    # depende de `equipos` para saber el nombre del equipo.
+    rep_resumen = []
+    for _mid_r, _sols_r in rep_por_maquina.items():
+        _idx_r = idx_por_maquina.get(_mid_r) if _mid_r is not None else None
+        for s in _sols_r:
+            _nombre_r = s.get("maquina_nombre") or (
+                f"Equipo #{_mid_r}" if _mid_r else "Sin equipo asociado")
+            rep_resumen.append({
+                "equipo_idx": _idx_r, "equipo_nombre": _nombre_r,
+                "repuesto_nombre": s.get("repuesto_nombre") or "",
+                "cantidad": s.get("cantidad"), "medida": s.get("medida") or "",
+                # "estado" (crudo, ej. 'instalado'/'rechazado') solo sirve para
+                # colorear la pill en el template -- no es información sensible
+                # (no es costo/proveedor/OC), ver _OTREP_ESTADOS.
+                "estado": s.get("estado") or "", "estado_label": s.get("estado_label") or "",
+                "fecha_str": s.get("fecha_str") or "",
+                "_orden": (_idx_r if _idx_r is not None else 10 ** 6, _nombre_r),
+            })
+    rep_resumen.sort(key=lambda r: r["_orden"])
+    for _r in rep_resumen:
+        _r.pop("_orden", None)
 
     # ── 2) Filas del checklist: campos probatorios + orden por tarjeta ──
     t_por_id = {t.get("id"): t for t in tareas}
@@ -102947,6 +103416,10 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         "ilus_brand":            ILUS_BRAND,
         "ilus_legal":            ILUS_LEGAL,
         "ilus_rut":              ILUS_RUT,
+        # 🔧 Fase 3b (2026-09-26): resumen único de repuestos solicitados en
+        # TODA la OT (ver rep_por_maquina/rep_resumen más arriba). Viaja
+        # aditivo, igual que el resto de esta capa probatoria.
+        "rep_resumen":           rep_resumen,
     }
 
 
@@ -103078,14 +103551,11 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     # era lo único que se imprimía como "Observación". Con fallback a la
     # consulta anterior por si algún entorno no tiene las columnas
     # (ILUS_SKIP_MIGRATIONS=1).
-    _sql_equipos_base = (
+    _sql_equipos_joins = (
         "  FROM mant_visita_tareas vt "
         "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
         "  LEFT JOIN mant_visita_equipos ve "
         "         ON ve.visita_id = vt.visita_id AND ve.maquina_id = m.id "
-        " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
-        "   AND COALESCE(m.estado,'activo') != 'baja' "
-        " ORDER BY m.nombre"
     )
     try:
         equipos = mysql_fetchall(
@@ -103095,17 +103565,37 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             "       ve.diagnostico_estado, ve.diagnostico_texto, "
             "       ve.estado_revision, ve.razon_saltado, ve.observacion_tecnico, "
             "       ve.revisado_at, ve.revisado_por "
-            + _sql_equipos_base,
+            + _sql_equipos_joins +
+            # 🔴 FIX 2026-09-26 (revisión de hallazgos, MEDIA 2 -- mismo
+            # criterio que ya usa ot2_detalle, app.py ~81241): un equipo
+            # dado de baja DESDE ESTA OT sigue visible con su sello "Dado
+            # de baja" -- antes desaparecía del PDF entero apenas se
+            # marcaba la baja (COALESCE(m.estado)!='baja' lo excluía sin
+            # excepción), aunque la hubiera hecho el mismo técnico en la
+            # MISMA visita que el documento describe. Las bajas de OTRA
+            # OT/ficha (fuera de esta visita) siguen ocultas como antes --
+            # esta condición solo mira `ve` de ESTA visita_id (el JOIN de
+            # arriba ya filtra por visita_id=vt.visita_id).
+            "WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+            "  AND (COALESCE(m.estado,'activo') != 'baja' "
+            "       OR (ve.estado_revision='saltado' AND ve.razon_saltado='dado_de_baja')) "
+            "ORDER BY m.nombre",
             (vid,)
         ) or []
     except Exception as _e_eq_rev:
         print(f"[_ot_pdf_context][equipos_revision] vid={vid}: {_e_eq_rev}", flush=True)
+        # Fallback (entorno sin las columnas de revisión, ILUS_SKIP_MIGRATIONS=1):
+        # sin razon_saltado no hay forma de distinguir "de baja desde ESTA
+        # OT" -- se mantiene el filtro simple de siempre, sin la excepción.
         equipos = mysql_fetchall(
             "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
             "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
             "       m.ubicacion_sala, m.estado_capturado, m.observaciones, "
             "       ve.diagnostico_estado, ve.diagnostico_texto "
-            + _sql_equipos_base,
+            + _sql_equipos_joins +
+            "WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+            "  AND COALESCE(m.estado,'activo') != 'baja' "
+            "ORDER BY m.nombre",
             (vid,)
         ) or []
     equipos = [dict(e) for e in equipos]
@@ -103150,15 +103640,27 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     tareas = [dict(t) for t in tareas]
 
     # ── Fotos (con URL resuelta) ─────────────────────────────────────
-    fotos_raw = mysql_fetchall(
-        # descripcion/tomada_por (2026-09-05): el anexo fotográfico del PDF
-        # imprime fecha/hora y autor de cada foto -- una foto sin esos datos
-        # no respalda nada. Ambas columnas existen desde el CREATE TABLE.
-        "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
-        "       tipo_foto, tomada_at, descripcion, tomada_por "
-        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
-        (vid,)
-    ) or []
+    # es_principal (2026-09-26, foto principal por equipo -- Daniel: "todo
+    # debe estar conectado"): con try/except aparte por si el _ensure de
+    # boot no alcanzó a correr en este entorno (columna nueva).
+    try:
+        fotos_raw = mysql_fetchall(
+            # descripcion/tomada_por (2026-09-05): el anexo fotográfico del PDF
+            # imprime fecha/hora y autor de cada foto -- una foto sin esos datos
+            # no respalda nada. Ambas columnas existen desde el CREATE TABLE.
+            "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+            "       tipo_foto, tomada_at, descripcion, tomada_por, es_principal "
+            "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
+            (vid,)
+        ) or []
+    except Exception as _e_fotos_ep:
+        print(f"[_ot_pdf_context][fotos_es_principal] vid={vid}: {_e_fotos_ep}", flush=True)
+        fotos_raw = mysql_fetchall(
+            "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+            "       tipo_foto, tomada_at, descripcion, tomada_por "
+            "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
+            (vid,)
+        ) or []
     # ── FOTOS QUE SÍ SE IMPRIMEN (Daniel 2026-08-09: "¿por qué no se
     #    imprimen las fotos en las OT cuando generamos el PDF?") ──
     # El PDF se arma con page.set_content(), así que la página vive en
@@ -103218,6 +103720,13 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
         if not mid:
             continue
         eq_fotos_idx.setdefault(mid, []).append(f)
+    # ⭐ 2026-09-26: la foto PRINCIPAL de cada equipo (si el técnico eligió
+    # una) va primera -- así el recuadro grande (eq_foto_ref) y las 3
+    # miniaturas de la tarjeta la muestran de preferencia. sort() es
+    # estable: entre fotos sin principal, se conserva el orden por fecha
+    # que ya traía la consulta.
+    for _lst_ep in eq_fotos_idx.values():
+        _lst_ep.sort(key=lambda x: 0 if x.get("es_principal") else 1)
 
     # ── Fotos generales (sin máquina asociada o tipo=general) ────────
     fotos_generales = [
@@ -103622,6 +104131,38 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     #    archivo no existe -- ambos templates ya tienen fallback.
     logo_shs_url = _logo_shs_pdf_data_url()
 
+    # ── 🔧 Fase 3b (2026-09-26 -- Daniel: "las OT deben expresar si se
+    #    solicitó el repuesto y el estado en que quedó el equipo... el
+    #    repositorio son las fichas de clientes, todo movimiento se verá
+    #    reflejado"). Repuestos solicitados EN ESTA VISITA, por equipo --
+    #    SOLO columnas seguras para el cliente: nunca costo, proveedor, OC
+    #    ni ubicación de bodega, ni siquiera en el SELECT (el PDF lo recibe
+    #    el CLIENTE, en CUALQUIER versión). La derivación por equipo
+    #    (estado_esta_ot_label, rep_resumen) vive en _ot_pdf_probatorio --
+    #    acá SOLO se consulta, para que esa función siga siendo pura
+    #    transformación (sin Flask ni MySQL, ver su docstring).
+    rep_por_maquina = {}
+    try:
+        # 🔴 FIX 2026-09-26 (revisión, MEDIA 2): + LEFT JOIN mant_maquinas
+        # para traer `maquina_nombre` DESDE ESTA MISMA consulta -- así
+        # rep_resumen (en _ot_pdf_probatorio) puede armarse desde
+        # rep_por_maquina completo sin depender de que el equipo también
+        # haya llegado a la lista `equipos` (ver ese comentario más abajo).
+        _rep_rows_pdf = mysql_fetchall(
+            "SELECT s.maquina_id, s.repuesto_nombre, s.cantidad, s.medida, s.estado, "
+            "       s.dejo_fuera_servicio, s.created_at, m.nombre AS maquina_nombre "
+            "  FROM mant_ot_repuesto_solicitudes s "
+            "  LEFT JOIN mant_maquinas m ON m.id = s.maquina_id "
+            " WHERE s.visita_id=%s ORDER BY s.id ASC", (vid,)) or []
+        for _rp in _rep_rows_pdf:
+            _rp = dict(_rp)
+            _rp["cantidad"] = float(_rp["cantidad"]) if _rp.get("cantidad") is not None else None
+            _rp["estado_label"] = _OTREP_ESTADO_LABEL.get(_rp.get("estado"), _rp.get("estado"))
+            _rp["fecha_str"] = chile_fmt_filter(_rp["created_at"]) if _rp.get("created_at") else ""
+            rep_por_maquina.setdefault(_rp.get("maquina_id"), []).append(_rp)
+    except Exception as _e_rep_pdf:
+        print(f"[_ot_pdf_context][repuestos_pdf] vid={vid}: {_e_rep_pdf}", flush=True)
+
     ctx = {
         "visita": visita,
         "firmante_cliente": _ot_firmante_cliente(vid),
@@ -103708,7 +104249,8 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             print(f"[_ot_pdf_context][usuarios_pdf] vid={vid}: {_e_usr}", flush=True)
         ctx.update(_ot_pdf_probatorio(
             visita, equipos, tareas, tareas_chk, fotos, ctx.get("firmante_cliente"),
-            usuarios=_usuarios_pdf, anexo_completo=anexo_completo))
+            usuarios=_usuarios_pdf, anexo_completo=anexo_completo,
+            rep_por_maquina=rep_por_maquina))
     except Exception as _e_prob:
         # OJO: si esto se dispara, el PDF sale SIN anexo fotografico, sin
         # hallazgos y sin conteos -- se ve bien pero es evidencia incompleta.
@@ -103727,6 +104269,9 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             "tareas_sin_foto_n": 0, "fotos_anexo": [], "ot_datos": {},
             "firmante_cliente_rut_fmt": "", "ilus_brand": ILUS_BRAND,
             "ilus_legal": ILUS_LEGAL, "ilus_rut": ILUS_RUT,
+            # Fase 3b: sin capa probatoria, tampoco hay resumen de repuestos
+            # -- el template ya lo guarda con {% if rep_resumen %}.
+            "rep_resumen": [],
         })
     if publico:
         # Columnas de dinero de mant_visitas -- MISMA lista que expone
@@ -106154,6 +106699,176 @@ def mant_visita_foto_girar(vid, fid):
               f"{type(e).__name__}: {str(e)[:300]}\n{_tb_giro.format_exc()[-1500:]}", flush=True)
         return jsonify({"ok": False,
                         "error": "No se pudo girar la foto. Intenta de nuevo en un minuto."}), 500
+    return jsonify({"ok": True, **res})
+
+
+class _FotoPrincipalError(Exception):
+    """Error de negocio al marcar/desmarcar foto principal (mismo patrón
+    que _FotoGiroError): `mensaje` apto para mostrarse al usuario tal
+    cual (REGLA #4: el detalle técnico va solo al log)."""
+
+    def __init__(self, mensaje, status=400):
+        super().__init__(mensaje)
+        self.mensaje = mensaje
+        self.status = status
+
+
+def _foto_principal_sin_permiso():
+    # 🔴 FIX 2026-09-26 (revisión, BAJA 8): mensaje PROPIO -- antes
+    # reusaba _foto_girar_sin_permiso() y el usuario leía "no tienes
+    # permiso para GIRAR" al intentar elegir una foto principal.
+    return jsonify({"ok": False,
+                    "error": "No tienes permiso para elegir la foto principal de esta OT."}), 403
+
+
+def _parse_bool_estricto(v):
+    """🔴 FIX 2026-09-26 (revisión, BAJA 8): `bool(v)` acepta CUALQUIER
+    valor truthy -- un body `{"principal": "false"}` (string no vacío)
+    se leía como True. Solo boolean real, 1/0, o los strings
+    'true'/'false'/'1'/'0' (case-insensitive) son válidos; cualquier otra
+    cosa levanta ValueError."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if v in (0, 1):
+            return bool(v)
+    if isinstance(v, str):
+        vl = v.strip().lower()
+        if vl in ("true", "1"):
+            return True
+        if vl in ("false", "0"):
+            return False
+    raise ValueError(f"valor de 'principal' inválido: {v!r}")
+
+
+def _foto_es_video_url(url):
+    """🔴 FIX 2026-09-26 (revisión, BAJA 7): "elegir la foto principal"
+    -- un video no es una foto. Mismas extensiones que el resto del
+    proyecto usa para reconocer video (_OTREP_VIDEO_EXT)."""
+    u = (url or "").strip().lower().split("?")[0]
+    return u.endswith(tuple("." + e for e in _OTREP_VIDEO_EXT))
+
+
+def _foto_marcar_principal(vid, fid, principal):
+    """⭐ 2026-09-26 (Daniel: "elegir la foto principal de cada OT"). Marca o
+    desmarca la foto `fid` de la OT `vid` como PRINCIPAL de su equipo.
+
+    Una sola principal por (visita_id, maquina_id): al marcar una, se
+    desmarcan las demás del MISMO equipo en la MISMA OT, en una sola
+    transacción (get_db(), la conexión del request -- nunca se cierra a
+    mano, ver gotcha_get_db_no_cerrar). Si la foto no tiene maquina_id, es
+    la principal "general" de la OT (maquina_id IS NULL) -- incluida en el
+    mismo candado para no dejar dos "generales" a la vez.
+
+    Devuelve {"principal": bool, "maquina_id": int|None}. Lanza ValueError
+    si la foto no existe en esa OT, o _FotoPrincipalError (mensaje apto
+    para el usuario) si es un video (BAJA 7).
+    """
+    def _leer():
+        return mysql_fetchone(
+            "SELECT id, maquina_id, cloudinary_url, archivo_path "
+            "  FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
+            (fid, vid))
+    try:
+        row = _leer()
+    except Exception as e:
+        # La columna puede faltar si el _ensure de boot no alcanzó a correr
+        # todavía (mismo patrón defensivo que _foto_girar_fila) -- UN
+        # reintento tras forzarlo; si sigue fallando, se deja propagar
+        # para que el endpoint responda 503 (BAJA 8), no un 500 genérico.
+        print(f"[foto_principal] leer fila vid={vid} fid={fid}: {e} -- reintento tras _ensure",
+              flush=True)
+        _ensure_fotos_principal_col()
+        row = _leer()
+    if not row:
+        raise ValueError("Foto no encontrada en esta OT.")
+    mid = row.get("maquina_id")
+
+    if principal and _foto_es_video_url(row.get("cloudinary_url") or row.get("archivo_path")):
+        raise _FotoPrincipalError(
+            "Solo una FOTO puede ser la principal de un equipo -- esto es un video.")
+
+    # 🔒 REGLA #5 (revisión, BAJA 8): log ANTES de mutar -- qué foto(s)
+    # pierden la estrella queda en la bitácora aunque el UPDATE de abajo
+    # fallara justo después por lo que sea.
+    _perdedoras_ids = []
+    try:
+        if principal:
+            _where_grupo = ("maquina_id IS NULL" if mid is None else "maquina_id=%s")
+            _params_grupo = (vid,) if mid is None else (vid, mid)
+            _perdedoras = mysql_fetchall(
+                f"SELECT id FROM mant_visita_fotos WHERE visita_id=%s AND {_where_grupo} "
+                f"  AND es_principal=1 AND id<>%s",
+                _params_grupo + (fid,)) or []
+            _perdedoras_ids = [r["id"] for r in _perdedoras]
+    except Exception as e:
+        print(f"[foto_principal] leer perdedoras vid={vid} fid={fid}: {e}", flush=True)
+    _mant_log(
+        "visita", vid, "foto_principal",
+        f"Foto #{fid} {'marcada como' if principal else 'quitada de'} principal"
+        + (f" del equipo #{mid}" if mid else " (general de la OT)")
+        + (f" -- pierde la estrella: foto(s) #{', '.join(str(x) for x in _perdedoras_ids)}"
+           if _perdedoras_ids else ""))
+
+    conn = get_db()
+    with conn.cursor() as cur:
+        if principal:
+            if mid is None:
+                cur.execute(
+                    "UPDATE mant_visita_fotos SET es_principal=0 "
+                    " WHERE visita_id=%s AND maquina_id IS NULL AND id<>%s",
+                    (vid, fid))
+            else:
+                cur.execute(
+                    "UPDATE mant_visita_fotos SET es_principal=0 "
+                    " WHERE visita_id=%s AND maquina_id=%s AND id<>%s",
+                    (vid, mid, fid))
+        cur.execute(
+            "UPDATE mant_visita_fotos SET es_principal=%s WHERE id=%s",
+            (1 if principal else 0, fid))
+    conn.commit()
+    return {"principal": bool(principal), "maquina_id": mid}
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos/<int:fid>/principal", methods=["POST"])
+@_mant_required
+def mant_visita_foto_principal(vid, fid):
+    """Marca/desmarca una foto como PRINCIPAL de su equipo dentro de esta OT
+    (Daniel 2026-09-26: "brindarle la oportunidad al técnico de elegir la
+    foto principal de cada OT, bien informativo, y todo debe estar
+    conectado"). Body JSON: {principal: true|false}.
+
+    Mismo permiso que girar fotos (_foto_puede_girar): gestión si puede ver
+    la OT, técnico si puede ejecutarla -- elegir la foto que mejor
+    representa el equipo es parte de dejar la evidencia bien armada, no
+    una decisión administrativa aparte."""
+    if not _foto_puede_girar(vid):
+        return _foto_principal_sin_permiso()
+    body = request.get_json(silent=True) or {}
+    try:
+        principal = _parse_bool_estricto(body.get("principal"))
+    except ValueError:
+        return jsonify({"ok": False, "error": "El campo 'principal' debe ser true o false."}), 400
+    try:
+        res = _foto_marcar_principal(vid, fid, principal)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 404
+    except _FotoPrincipalError as e:
+        return jsonify({"ok": False, "error": e.mensaje}), e.status
+    except Exception as e:
+        msg = str(e)
+        # 🔴 FIX 2026-09-26 (revisión, BAJA 8): si la columna es_principal
+        # todavía no existe en este entorno (el _ensure de boot no alcanzó
+        # a correr o falló), decirlo con un 503 amable en vez de un 500
+        # genérico -- es una condición transitoria, no un error real.
+        if "es_principal" in msg and ("Unknown column" in msg or "1054" in msg):
+            print(f"[foto_principal] columna faltante vid={vid} fid={fid}: {msg}", flush=True)
+            return jsonify({"ok": False, "error":
+                            "La foto principal se está activando en el servidor, "
+                            "intenta de nuevo en un minuto."}), 503
+        print(f"[foto_principal] vid={vid} fid={fid}: {type(e).__name__}: {msg[:300]}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo actualizar la foto principal. Intenta de nuevo."}), 500
     return jsonify({"ok": True, **res})
 
 
@@ -117368,6 +118083,145 @@ def mant_repuesto_crear(cid):
         conn.close()
 
 
+@app.route("/mantenciones/api/clientes/<int:cid>/repuestos-solicitudes", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_cliente_repuestos_solicitudes(cid):
+    """🔧 Fase 3b (2026-09-26 -- Daniel: "el repositorio son las fichas de
+    clientes, todo movimiento se verá reflejado"). Historial COMPLETO de
+    solicitudes de repuesto de este cliente (mant_ot_repuesto_solicitudes),
+    de cualquier origen (OT, manual, incidencia, ticket) -- a diferencia
+    del chip de condición por equipo (solo las ABIERTAS), esto es el
+    historial entero para la pestaña Repuestos de la ficha.
+
+    Query: ?estado=abiertas|cerradas|todas|<uno de _OTREP_ESTADOS>
+           &page=&per_page= (REGLA #4.3 -- paginación real, no scroll).
+
+    Mismo gate que el resto de la ficha (@_no_tecnico: la ficha completa ya
+    está bloqueada para técnicos, incluidos externos -- el filtro de
+    _OTREP_SOL_NO_EXTERNO de abajo es defensa en profundidad extra, no la
+    única barrera)."""
+    cliente = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado."}), 404
+
+    estado = (request.args.get("estado") or "todas").strip().lower()
+    # 🔴 FIX 2026-09-26 (revisión de hallazgos, MEDIA 4): `s.cliente_id=%s`
+    # solo (antes) dejaba afuera las solicitudes de Ticket/Incidencia de
+    # ESTE cliente que no traen cliente_id propio pero SÍ traen un equipo
+    # o una OT de este cliente -- "el repositorio son las fichas de
+    # clientes, todo movimiento se verá reflejado" no se cumplía para esas.
+    # Se liga por las 3 vías posibles, sin adivinar: un ticket/incidencia
+    # SIN cliente_id, SIN maquina_id y SIN visita_id de este cliente
+    # sencillamente no se puede atribuir con certeza -- se queda afuera a
+    # propósito (ver el subtítulo ajustado en ficha.html, que ya no dice
+    # "de este cliente" sin más).
+    where = ["(s.cliente_id=%s "
+             " OR s.maquina_id IN (SELECT id FROM mant_maquinas WHERE cliente_id=%s) "
+             " OR s.visita_id IN (SELECT id FROM mant_visitas WHERE cliente_id=%s))"]
+    params = [cid, cid, cid]
+    if estado in ("abiertas", "pendientes"):
+        where.append("s.estado IN ('" + "','".join(_OTREP_ABIERTOS) + "')")
+    elif estado == "cerradas":
+        where.append("s.estado IN ('instalado','rechazado')")
+    elif estado in _OTREP_ESTADOS:
+        where.append("s.estado=%s"); params.append(estado)
+    where_sql = " AND ".join(where)
+
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page") or 20)
+    except (TypeError, ValueError):
+        per_page = 20
+    per_page = max(5, min(per_page, 100))
+
+    sols, total, total_pages = [], 0, 1
+    try:
+        total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes s WHERE " + where_sql,
+            tuple(params)) or {}).get("n") or 0)
+        total_pages = max(1, -(-total // per_page))  # ceil sin import math
+        if page > total_pages:
+            page = total_pages
+        offset = (page - 1) * per_page
+        rows = mysql_fetchall(
+            _OTREP_SQL_SOL + " WHERE " + where_sql
+            + " ORDER BY s.id DESC LIMIT %s OFFSET %s",
+            tuple(params) + (per_page, offset)) or []
+        sols = [_otrep_fila(r) for r in rows]
+        if _es_tecnico_externo():
+            for s in sols:
+                for k in _OTREP_SOL_NO_EXTERNO:
+                    s.pop(k, None)
+    except Exception as e:
+        print(f"[ficha][repuestos_solicitudes] cid={cid}: {e}", flush=True)
+        return jsonify({"ok": False, "error":
+                        "No se pudo cargar el historial de solicitudes de repuesto."}), 500
+    return jsonify({"ok": True, "solicitudes": sols, "total": total, "page": page,
+                    "per_page": per_page, "total_pages": total_pages,
+                    "estados": _OTREP_ESTADO_LABEL})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/repuestos-movimientos", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_cliente_repuestos_movimientos(cid):
+    """🔧 Fase 3b (2026-09-26 -- spec: "movimientos de bodega de este
+    cliente"). Kardex de bodega (mant_repuestos_movimientos) filtrado por
+    este cliente -- instalaciones reales descontadas del stock, con OT y
+    fecha en hora Chile.
+
+    ⚠️ mant_repuestos_movimientos se construye EN PARALELO en otra rama
+    (ver spec) y puede NO existir todavía acá: tolerante por diseño -- si
+    la tabla o alguna columna falta, devuelve una lista vacía sin romper
+    la ficha (nunca un 500 por una tabla que a propósito no está lista)."""
+    cliente = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado."}), 404
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    per_page = 20
+    offset = (page - 1) * per_page
+
+    movimientos, total, total_pages = [], 0, 1
+    try:
+        total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_repuestos_movimientos WHERE cliente_id=%s",
+            (cid,)) or {}).get("n") or 0)
+        total_pages = max(1, -(-total // per_page))
+        if page > total_pages:
+            page = total_pages
+            offset = (page - 1) * per_page
+        rows = mysql_fetchall(
+            "SELECT m.id, m.tipo, m.motivo_tipo, m.cantidad, m.saldo_resultante, "
+            "       m.solicitud_id, m.visita_id, m.nota, m.usuario, m.created_at, "
+            "       rs.sku AS repuesto_sku, rs.descripcion AS repuesto_nombre, v.numero_ot "
+            "  FROM mant_repuestos_movimientos m "
+            "  LEFT JOIN mant_repuestos_stock rs ON rs.id=m.repuesto_id "
+            "  LEFT JOIN mant_visitas v ON v.id=m.visita_id "
+            " WHERE m.cliente_id=%s ORDER BY m.id DESC LIMIT %s OFFSET %s",
+            (cid, per_page, offset)) or []
+        for r in rows:
+            r = dict(r)
+            for k in ("cantidad", "saldo_resultante"):
+                r[k] = float(r[k]) if r.get(k) is not None else None
+            r["created_at"] = chile_fmt_filter(r["created_at"]) if r.get("created_at") else None
+            movimientos.append(r)
+    except Exception as e:
+        # Tolerante a propósito (ver docstring): la tabla puede no existir
+        # todavía en esta rama -- no es un error de la ficha.
+        print(f"[ficha][repuestos_movimientos] cid={cid} (tolerado -- tabla en construcción "
+              f"en paralelo): {e}", flush=True)
+        movimientos, total, total_pages = [], 0, 1
+    return jsonify({"ok": True, "movimientos": movimientos, "total": total,
+                    "page": page, "per_page": per_page, "total_pages": total_pages})
+
+
 @app.route("/mantenciones/api/repuestos/<int:rid>", methods=["PUT"])
 @_mant_required
 def mant_repuesto_update(rid):
@@ -117938,7 +118792,140 @@ def _repstock_fmt(r):
     d["created_at_corto"] = chile_fmt_filter(d.get("created_at"), "%d/%m/%y") if d.get("created_at") else ""
     d["created_at"] = chile_fmt_filter(d.get("created_at")) if d.get("created_at") else ""
     d["updated_at"] = chile_fmt_filter(d.get("updated_at")) if d.get("updated_at") else ""
+    # 🧾 2026-09-26 (Fase 3 -- kardex): "comprometido"/"por_llegar" solo
+    # vienen poblados cuando el caller los agregó al SELECT (ver
+    # _repstock_contexto_bodega) -- si no, quedan en 0 sin romper nada de
+    # lo que ya usaba _repstock_fmt (excel, etiquetas, etc, que no los piden).
+    d["comprometido"] = float(d["comprometido"]) if d.get("comprometido") is not None else 0.0
+    d["por_llegar"] = float(d["por_llegar"]) if d.get("por_llegar") is not None else 0.0
+    d["disponible"] = d["cantidad"] - d["comprometido"]
     return d
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  KARDEX DE BODEGA (Fase 3, 2026-09-26 -- Daniel: "Sí, es la base";
+#  objetivo: "almacenamiento inteligente", que el "disponible" diga
+#  siempre la verdad).
+#
+#  `_repstock_mover` es el ÚNICO camino para mover `cantidad` de
+#  mant_repuestos_stock a partir de HOY con auditoría (ajuste manual,
+#  recepción de proveedor, instalación) -- SIEMPRE dentro de una
+#  transacción real: SELECT ... FOR UPDATE (evita la carrera de dos
+#  movimientos simultáneos sobre el mismo repuesto), UPDATE del saldo,
+#  INSERT del movimiento con el saldo ya resultante. Si el caller pasa
+#  `cur` (un cursor ya abierto de SU propia transacción -- ej. la
+#  transición de estado de una solicitud, que también actualiza
+#  mant_ot_repuesto_solicitudes), este helper NO abre conexión ni hace
+#  commit/rollback propios: todo corre atómico junto con lo del caller.
+#  Si no recibe `cur`, abre su propia transacción sobre get_db() (la
+#  conexión del request -- REGLA: nunca se cierra, ver
+#  gotcha_get_db_no_cerrar) y hace su propio commit.
+#
+#  Mismo criterio "avisa pero no bloquea" que ya usa el módulo de
+#  solicitudes (_otrep_aviso_sobrecompromiso): un ajuste o una salida que
+#  dejen el saldo en negativo NO se rechazan -- se permiten y se devuelve
+#  un aviso para que bodega lo vea y corrija a mano.
+# ══════════════════════════════════════════════════════════════════════
+
+def _repstock_log_movimiento(cur, repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, *,
+                              solicitud_id=None, visita_id=None, cliente_id=None,
+                              nota='', usuario=None):
+    """INSERT crudo en mant_repuestos_movimientos, SIN tocar `cantidad` de
+    mant_repuestos_stock -- para los casos donde el saldo ya quedó fijado
+    por OTRO INSERT/UPDATE en la MISMA transacción (alta de repuesto,
+    reactivación, backfill del saldo inicial). `_repstock_mover` (abajo)
+    es el que sí mueve stock real a partir de un delta (entrada/salida/
+    ajuste) -- no lo dupliques a mano en otro punto del código."""
+    cur.execute(
+        "INSERT INTO mant_repuestos_movimientos "
+        "(repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, solicitud_id, "
+        " visita_id, cliente_id, nota, usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, solicitud_id,
+         visita_id, cliente_id, (nota or "")[:500], usuario or current_username() or "sistema")
+    )
+
+
+def _repstock_mover(repuesto_id, delta, tipo, motivo_tipo, *, solicitud_id=None,
+                     visita_id=None, cliente_id=None, nota='', usuario=None, cur=None,
+                     objetivo=None):
+    """Mueve stock sobre mant_repuestos_stock.cantidad y deja el rastro en
+    mant_repuestos_movimientos, en una sola transacción con el
+    SELECT ... FOR UPDATE como mutex.
+
+    `delta` (con signo: + entra, - sale) es el modo normal (entrada/salida
+    de una solicitud, donde la cantidad a mover ya se sabe de antemano).
+
+    `objetivo` (2026-09-26, revisión Fase 3, hallazgo BAJA #11): para un
+    AJUSTE manual, donde el usuario declara la cantidad FINAL que debería
+    quedar, no un delta. Si se pasa, IGNORA `delta` por completo y calcula
+    el delta real DENTRO del FOR UPDATE, contra el valor que la fila tenga
+    en ESE instante -- así un ajuste calculado con una lectura tomada ANTES
+    de pedir el lock nunca pisa un cambio que otra persona hizo justo en el
+    medio (el delta se recalcula sobre el dato fresco, no sobre el viejo).
+
+    Idempotencia (spec Fase 3): un movimiento ligado a una SOLICITUD
+    (motivo_tipo 'recepcion_proveedor' o 'instalacion') no se inserta dos
+    veces para el mismo (solicitud_id, motivo_tipo) -- si ya existe (ej. el
+    usuario hizo doble click, o un reintento de red repite la transición de
+    estado), esta llamada no mueve nada de nuevo y devuelve el resultado de
+    la vez anterior en vez de fallar. Un ajuste manual (nunca idempotente
+    por diseño, aunque traiga solicitud_id) siempre corre.
+
+    Devuelve dict: {"movido": bool, "ya_existia": bool, "saldo": float,
+    "aviso": str|None}. `aviso` viene poblado (sin bloquear el movimiento)
+    si el saldo resultante queda negativo -- mismo criterio "avisa pero no
+    bloquea" que ya usa el resto del módulo de repuestos.
+
+    Lanza si el repuesto no existe -- el caller decide qué responder. Si NO
+    recibe `cur` (abre su propia transacción sobre get_db()), un fallo hace
+    rollback antes de relanzar (hallazgo BAJA #10) -- nunca deja la conexión
+    del request con una transacción a medias colgando."""
+    usuario = usuario or current_username() or "sistema"
+    nota = (nota or "")[:500]
+
+    def _do(c):
+        if solicitud_id and motivo_tipo in ("recepcion_proveedor", "instalacion"):
+            c.execute(
+                "SELECT id, saldo_resultante FROM mant_repuestos_movimientos "
+                " WHERE solicitud_id=%s AND motivo_tipo=%s LIMIT 1",
+                (solicitud_id, motivo_tipo)
+            )
+            ya = c.fetchone()
+            if ya:
+                return {"movido": False, "ya_existia": True,
+                        "saldo": float(ya["saldo_resultante"]), "aviso": None}
+        c.execute("SELECT cantidad FROM mant_repuestos_stock WHERE id=%s FOR UPDATE", (repuesto_id,))
+        row = c.fetchone()
+        if not row:
+            raise ValueError(f"Repuesto {repuesto_id} no existe (o fue eliminado) -- no se puede mover stock.")
+        actual = float(row["cantidad"] or 0)
+        delta_real = round(float(objetivo) - actual, 2) if objetivo is not None else round(float(delta), 2)
+        nuevo_saldo = round(actual + delta_real, 2)
+        c.execute("UPDATE mant_repuestos_stock SET cantidad=%s WHERE id=%s", (nuevo_saldo, repuesto_id))
+        c.execute(
+            "INSERT INTO mant_repuestos_movimientos "
+            "(repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, solicitud_id, "
+            " visita_id, cliente_id, nota, usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (repuesto_id, tipo, motivo_tipo, delta_real, nuevo_saldo, solicitud_id,
+             visita_id, cliente_id, nota, usuario)
+        )
+        aviso = None
+        if nuevo_saldo < 0:
+            aviso = (f"Ojo: el repuesto queda con saldo negativo ({nuevo_saldo:g}) en bodega -- "
+                     "revísalo cuando puedas.")
+        return {"movido": True, "ya_existia": False, "saldo": nuevo_saldo, "aviso": aviso}
+
+    if cur is not None:
+        return _do(cur)
+    conn = get_db()
+    try:
+        with conn.cursor() as cur2:
+            resultado = _do(cur2)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return resultado
 
 
 # Sync de marcas de repuesto desde el ERP Random (2026-08-07, Daniel:
@@ -118308,7 +119295,20 @@ def _repstock_contexto_bodega():
         f"       u.codigo AS ubicacion_codigo, u.nombre AS ubicacion_nombre, "
         f"       c.razon_social AS cliente_nombre, t.numero_ticket AS ticket_numero, "
         f"       pv.nombre AS proveedor_nombre, pv.contacto_nombre AS proveedor_contacto, "
-        f"       pv.telefono AS proveedor_telefono, pv.email AS proveedor_email "
+        f"       pv.telefono AS proveedor_telefono, pv.email AS proveedor_email, "
+        # 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "que el disponible diga
+        # siempre la verdad"): comprometido (validado+recibido) y por llegar
+        # (pedido) -- misma fuente única que el resto del módulo de
+        # solicitudes (_OTREP_ESTADOS_COMPROMETEN/_OTREP_ESTADOS_POR_LLEGAR),
+        # nunca un criterio propio calculado acá aparte.
+        # 🔒 2026-09-26 (revisión Fase 3, hallazgo ALTA #1): reposición
+        # (es_reposicion=1) no compite por el físico -- se excluye.
+        f"       (SELECT COALESCE(SUM(s.cantidad),0) FROM mant_ot_repuesto_solicitudes s "
+        f"         WHERE s.repuesto_stock_id=r.id AND COALESCE(s.es_reposicion,0)=0 AND s.estado IN "
+        f"               ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido, "
+        f"       (SELECT COALESCE(SUM(s2.cantidad),0) FROM mant_ot_repuesto_solicitudes s2 "
+        f"         WHERE s2.repuesto_stock_id=r.id AND s2.estado IN "
+        f"               ('" + "','".join(_OTREP_ESTADOS_POR_LLEGAR) + "')) AS por_llegar "
         f"  FROM mant_repuestos_stock r "
         f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
         f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
@@ -118551,14 +119551,19 @@ def repstock_crear():
             "created_by": current_username(),
         }
         cols = list(fields.keys())
+        mov_aviso = None
         with conn.cursor() as cur:
             if reactivar_id:
-                # No se toca created_by/created_at -- el origen real del
-                # registro no cambia solo porque alguien más lo reactivó.
-                # reactivated_at SÍ se marca a AHORA -- "Avance de carga"
-                # (repstock_actividad) lo usa para contar esto como trabajo
-                # de HOY, que es lo que realmente pasó.
-                cols_upd = [c for c in cols if c != "created_by"]
+                # 🔒 2026-09-26 (revisión Fase 3, hallazgo BAJA #8): un
+                # repuesto soft-eliminado puede haber quedado con `cantidad`
+                # distinta de 0 (repstock_eliminar solo apaga `activo`, nunca
+                # toca la cantidad) -- "reactivar con la cantidad nueva del
+                # formulario" es en realidad un AJUSTE contra ese saldo
+                # previo, no un alta desde cero. `cantidad` sale de este
+                # UPDATE genérico (igual que en repstock_editar) y se aplica
+                # aparte con _repstock_mover(objetivo=...), que lee el saldo
+                # previo bajo FOR UPDATE y calcula el delta real.
+                cols_upd = [c for c in cols if c not in ("created_by", "cantidad")]
                 set_sql = ", ".join(f"{c}=%s" for c in cols_upd)
                 cur.execute(
                     f"UPDATE mant_repuestos_stock SET {set_sql}, activo=1, "
@@ -118567,6 +119572,15 @@ def repstock_crear():
                     tuple(fields[c] for c in cols_upd) + (current_username(), reactivar_id)
                 )
                 new_id = reactivar_id
+                # BAJA #8: se registra SIEMPRE, incluso si la reactivación
+                # trae cantidad=0 (o si el delta resultante es 0) -- sin
+                # esto, el backfill de boot podría más adelante confundir
+                # este repuesto con uno "legacy" sin historial (hallazgo
+                # BAJA #9) y además se perdería el rastro de "cuándo volvió".
+                mov = _repstock_mover(
+                    reactivar_id, 0, "inicial", "reactivacion", objetivo=cantidad,
+                    nota="Repuesto reactivado en bodega.", usuario=current_username(), cur=cur)
+                mov_aviso = mov.get("aviso")
             else:
                 cur.execute(
                     f"INSERT INTO mant_repuestos_stock ({','.join(cols)}) "
@@ -118574,11 +119588,23 @@ def repstock_crear():
                     tuple(fields[c] for c in cols)
                 )
                 new_id = cur.lastrowid
+                # 🧾 Fase 3 -- kardex: deja registro del arranque del repuesto
+                # en el historial -- log crudo (_repstock_log_movimiento), NO
+                # _repstock_mover: `cantidad` ya quedó fijada arriba por el
+                # propio INSERT de esta misma transacción (fila NUEVA, sin
+                # saldo previo que leer), sumarle un delta otra vez la
+                # duplicaría. SIEMPRE se registra, incluso en 0 (hallazgo
+                # BAJA #9): si no, el backfill de boot podría más adelante
+                # tratar esta alta como "legacy sin historial" y adivinarle
+                # un saldo inicial que no corresponde.
+                _repstock_log_movimiento(
+                    cur, new_id, "inicial", "alta_repuesto", cantidad, cantidad,
+                    nota="Alta de repuesto.", usuario=current_username())
         conn.commit()
         _mant_log("repuesto_stock", new_id,
                    "reactivar" if reactivar_id else "crear", f"{sku} — {descripcion}")
         return jsonify({"ok": True, "id": new_id, "sku": sku, "proveedor_id": proveedor_id,
-                          "reactivado": bool(reactivar_id)})
+                          "reactivado": bool(reactivar_id), "aviso": mov_aviso})
     except Exception as e:
         conn.rollback()
         print(f"[repstock_crear] ERROR: {e}", flush=True)
@@ -118623,11 +119649,56 @@ def repstock_editar(rid):
                "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
                "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg", "bultos",
                "modelo_pendiente"]
+    # 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): `cantidad`
+    # sale del UPDATE genérico de abajo -- si cambia, el delta se aplica y
+    # se audita por _repstock_mover (motivo_tipo='ajuste_manual'), nunca
+    # como una sobrescritura silenciosa que no dejaba rastro de por qué
+    # cambió. Se exige `motivo_ajuste` (≥5 caracteres) SOLO cuando el
+    # número realmente cambia -- guardar el resto del formulario sin tocar
+    # la cantidad sigue sin pedir nada nuevo.
+    ajusta_cantidad = "cantidad" in d
+    cantidad_nueva = None
+    motivo_ajuste = ""
+    if ajusta_cantidad:
+        try:
+            cantidad_nueva = float(d["cantidad"]) if d["cantidad"] not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "'cantidad' debe ser numérico"}), 400
+        if cantidad_nueva is None:
+            return jsonify({"ok": False, "error": "La cantidad no puede quedar vacía"}), 400
+        actual_row = mysql_fetchone("SELECT cantidad FROM mant_repuestos_stock WHERE id=%s", (rid,))
+        if not actual_row:
+            return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+        cantidad_bd = float(actual_row.get("cantidad") or 0)
+        # 🔒 2026-09-26 (revisión Fase 3, hallazgo MEDIA #4): el frontend manda
+        # `cantidad_original` -- la cantidad con la que se abrió el modal. Si
+        # ya no coincide con lo que hay en la base, alguien más (u otra
+        # pestaña) editó este repuesto mientras el usuario tenía el modal
+        # abierto: aplicar el ajuste igual pisaría ese cambio sin que nadie
+        # se entere. Se corta con 409 y se pide recargar.
+        cantidad_original = d.get("cantidad_original")
+        if cantidad_original not in (None, "", "null"):
+            try:
+                cantidad_original = float(cantidad_original)
+            except (TypeError, ValueError):
+                cantidad_original = None
+            if cantidad_original is not None and abs(cantidad_original - cantidad_bd) >= 0.005:
+                return jsonify({"ok": False, "error":
+                                "La cantidad cambió mientras editabas (otra persona la actualizó): "
+                                "recarga el repuesto para ver el valor actual."}), 409
+        delta_estimado = round(cantidad_nueva - cantidad_bd, 2)
+        motivo_ajuste = (d.get("motivo_ajuste") or "").strip()
+        if abs(delta_estimado) >= 0.005 and len(motivo_ajuste) < 5:
+            return jsonify({"ok": False, "error":
+                            "Indica el motivo del ajuste de cantidad (mínimo 5 caracteres) — "
+                            "queda registrado en el kardex del repuesto."}), 400
     sets, vals = [], []
     for f in allowed:
+        if f == "cantidad":
+            continue  # se aplica aparte, vía _repstock_mover (ver arriba)
         if f in d:
             v = d[f]
-            if f in ("cantidad", "costo_unitario", "stock_minimo"):
+            if f in ("costo_unitario", "stock_minimo"):
                 try:
                     v = float(v) if v not in (None, "", "null") else None
                 except (TypeError, ValueError):
@@ -118645,25 +119716,103 @@ def repstock_editar(rid):
             elif v in ("", "null"):
                 v = None
             sets.append(f"{f}=%s"); vals.append(v)
-    if not sets:
+    if not sets and not ajusta_cantidad:
         return jsonify({"ok": False, "error": "Sin campos para actualizar"}), 400
-    sets.append("updated_by=%s"); vals.append(current_username())
-    conn = get_mysql()
+    if sets:
+        sets.append("updated_by=%s"); vals.append(current_username())
+    # get_db(): la conexión del request, NUNCA se cierra (gotcha_get_db_no_
+    # cerrar) -- necesaria acá porque _repstock_mover, cuando recibe `cur`,
+    # tiene que participar de la MISMA transacción que este UPDATE (si el
+    # ajuste de cantidad falla, el resto de los campos tampoco se guarda).
+    conn = get_db()
     try:
+        aviso = None
         with conn.cursor() as cur:
-            cur.execute(
-                f"UPDATE mant_repuestos_stock SET {','.join(sets)} WHERE id=%s",
-                vals + [rid]
-            )
+            if sets:
+                cur.execute(
+                    f"UPDATE mant_repuestos_stock SET {','.join(sets)} WHERE id=%s",
+                    vals + [rid]
+                )
+            if ajusta_cantidad and abs(delta_estimado) >= 0.005:
+                # 🔒 BAJA #11 (revisión Fase 3): se pasa `objetivo` (la
+                # cantidad final que el usuario quiere), no un delta ya
+                # calculado -- _repstock_mover recalcula el delta real BAJO
+                # el FOR UPDATE, contra el valor que la fila tenga en ese
+                # instante (no contra `cantidad_bd`, leída antes del lock).
+                mov = _repstock_mover(
+                    rid, 0, "ajuste", "ajuste_manual", objetivo=cantidad_nueva,
+                    nota=motivo_ajuste, usuario=current_username(), cur=cur)
+                aviso = mov.get("aviso")
         conn.commit()
         _mant_log("repuesto_stock", rid, "editar")
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "aviso": aviso})
     except Exception as e:
         conn.rollback()
         print(f"[repstock_editar] rid={rid} ERROR: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo guardar el repuesto."}), 400
-    finally:
-        conn.close()
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/movimientos", methods=["GET"])
+@_mant_required
+@_no_tecnico_externo
+def repstock_movimientos(rid):
+    """Kardex de UN repuesto (Fase 3, 2026-09-26 -- Daniel: "Sí, es la
+    base"). Paginado real (REGLA #4.3, mismo patrón que Etiquetas):
+    ?page=&per_page=. Mismo gate que el resto de la Bodega -- excluye
+    técnico externo (vería costos/proveedor/ubicación de otros, y acá
+    además vería a qué cliente/OT se le instaló cada salida)."""
+    rep = mysql_fetchone(
+        "SELECT id, sku, descripcion, cantidad, stock_minimo FROM mant_repuestos_stock WHERE id=%s",
+        (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado."}), 404
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page") or 20)
+    except (TypeError, ValueError):
+        per_page = 20
+    if per_page not in (20, 50, 100):
+        per_page = 20
+    total = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_movimientos WHERE repuesto_id=%s", (rid,)
+    ) or {}).get("n", 0)
+    total_pages = max(1, -(-total // per_page))
+    page = min(page, total_pages)
+    offset = (page - 1) * per_page
+    rows = mysql_fetchall(
+        "SELECT mv.*, v.numero_ot, c.razon_social AS cliente_nombre "
+        "  FROM mant_repuestos_movimientos mv "
+        "  LEFT JOIN mant_visitas v ON v.id=mv.visita_id "
+        "  LEFT JOIN mant_clientes c ON c.id=mv.cliente_id "
+        " WHERE mv.repuesto_id=%s ORDER BY mv.created_at DESC, mv.id DESC LIMIT %s OFFSET %s",
+        (rid, per_page, offset)
+    ) or []
+    movimientos = []
+    for r in rows:
+        r = dict(r)
+        r["cantidad"] = float(r["cantidad"])
+        r["saldo_resultante"] = float(r["saldo_resultante"])
+        r["created_at"] = chile_fmt_filter(r.get("created_at")) if r.get("created_at") else ""
+        movimientos.append(r)
+    fisico = float(rep.get("cantidad") or 0)
+    comprometido = _otrep_stock_comprometido(rid)
+    por_llegar = float((mysql_fetchone(
+        "SELECT COALESCE(SUM(cantidad),0) AS n FROM mant_ot_repuesto_solicitudes "
+        " WHERE repuesto_stock_id=%s AND estado IN ('"
+        + "','".join(_OTREP_ESTADOS_POR_LLEGAR) + "')", (rid,)
+    ) or {}).get("n") or 0)
+    return jsonify({
+        "ok": True,
+        "repuesto": {"id": rep["id"], "sku": rep["sku"], "descripcion": rep["descripcion"],
+                     "stock_minimo": float(rep["stock_minimo"]) if rep.get("stock_minimo") is not None else None},
+        "resumen": {"fisico": fisico, "comprometido": comprometido,
+                    "disponible": fisico - comprometido, "por_llegar": por_llegar},
+        "movimientos": movimientos,
+        "page": page, "per_page": per_page, "total": total, "total_pages": total_pages,
+    })
 
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>", methods=["DELETE"])
@@ -130910,6 +132059,46 @@ def _ensure_fotos_rotacion_cols():
             print(f"[ensure_fotos_rotacion] {col}: {e}", flush=True)
 
 
+def _ensure_fotos_principal_col():
+    """⭐ 2026-09-26 (Daniel: "hay que expresar todo muy bien y brindarle la
+    oportunidad al técnico de elegir la foto principal de cada OT, bien
+    informativo, y todo debe estar conectado"). Columna `es_principal` en
+    mant_visita_fotos: UNA foto principal por (visita_id, maquina_id) --
+    al marcar una, el endpoint desmarca las demás del mismo equipo en esa
+    misma OT (ver _foto_marcar_principal). Una foto sin maquina_id es la
+    principal "general" de la OT (maquina_id IS NULL).
+
+    Mismo patrón que _ensure_fotos_rotacion_cols: corre SIEMPRE en boot,
+    incluso con ILUS_SKIP_MIGRATIONS=1 (sin la columna, marcar principal
+    falla), e idempotente (revisa information_schema + ignora "Duplicate
+    column").
+    """
+    try:
+        existe = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mant_visita_fotos' "
+            "   AND COLUMN_NAME = 'es_principal'"
+        ) or {}
+        if int(existe.get("n") or 0) > 0:
+            return
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE mant_visita_fotos ADD COLUMN es_principal TINYINT(1) NOT NULL DEFAULT 0")
+            try:
+                cur.execute(
+                    "CREATE INDEX idx_visita_fotos_principal ON mant_visita_fotos "
+                    "(visita_id, maquina_id, es_principal)")
+            except Exception:
+                pass  # índice duplicado: no es bloqueante
+        conn.commit()
+        print("[ensure_fotos_principal] es_principal agregada en mant_visita_fotos", flush=True)
+    except Exception as e:
+        if "Duplicate column" in str(e) or "1060" in str(e):
+            return
+        print(f"[ensure_fotos_principal] {e}", flush=True)
+
+
 def _ensure_lev_items_gps_cols():
     """Borrador + evidencia GPS por equipo capturado (Daniel 2026-08-08:
     geocerca de 500m al guardar cada equipo del modal de levantamiento).
@@ -132457,6 +133646,73 @@ def _ensure_repuestos_bodega_tables():
         """)
     except Exception as e:
         print(f"[ensure_repuestos_stock] mant_repstock_secuencia: {e}", flush=True)
+
+    # 🧾 2026-09-26 (Fase 3 -- kardex de bodega, Daniel: "Sí, es la base" --
+    # "almacenamiento inteligente", que el "disponible" diga siempre la
+    # verdad). Hasta hoy `mant_repuestos_stock.cantidad` cambiaba SOLO por
+    # el PUT manual de repstock_editar, sin dejar rastro de POR QUÉ cambió
+    # ni de que "recibido"/"instalado" (transición de una solicitud) debía
+    # moverla también -- no existía ninguna tabla de movimientos. Esta es
+    # esa tabla: 1 fila POR movimiento, con signo (+entra/-sale) y el saldo
+    # resultante ya calculado (evita tener que sumar el historial completo
+    # para saber "cuánto había en ese momento"). Ver _repstock_mover (más
+    # abajo en este archivo) -- el ÚNICO lugar que debe escribir acá.
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_movimientos (
+                id               INT AUTO_INCREMENT PRIMARY KEY,
+                repuesto_id      INT NOT NULL,
+                tipo             ENUM('inicial','entrada','salida','ajuste') NOT NULL,
+                motivo_tipo      VARCHAR(30) NOT NULL COMMENT 'saldo_inicial, recepcion_proveedor, instalacion, ajuste_manual, alta_repuesto, reactivacion...',
+                cantidad         DECIMAL(12,2) NOT NULL COMMENT 'Con signo: + entra, - sale',
+                saldo_resultante DECIMAL(12,2) NOT NULL,
+                solicitud_id     INT NULL COMMENT 'mant_ot_repuesto_solicitudes.id -- si el movimiento nació de una solicitud',
+                visita_id        INT NULL COMMENT 'mant_visitas.id (OT) -- si aplica',
+                cliente_id       INT NULL COMMENT 'mant_clientes.id -- si aplica',
+                nota             VARCHAR(500) NULL,
+                usuario          VARCHAR(190) NULL,
+                created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_repmov_repuesto_fecha (repuesto_id, created_at),
+                INDEX idx_repmov_solicitud_motivo (solicitud_id, motivo_tipo),
+                CONSTRAINT fk_repmov_repuesto FOREIGN KEY (repuesto_id)
+                    REFERENCES mant_repuestos_stock(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repuestos_movimientos: {e}", flush=True)
+
+    # Backfill idempotente del saldo inicial: cada repuesto activo que
+    # todavía no tiene NINGÚN movimiento (todo lo que existía antes de hoy)
+    # recibe UNA fila 'inicial'/'saldo_inicial' con la cantidad que ya tenía
+    # -- así el kardex arranca completo, sin huecos, para todo lo que ya
+    # estaba cargado. NO toca `cantidad` ni `updated_at` de mant_repuestos_
+    # stock (es un INSERT puro hacia la tabla nueva); el WHERE NOT EXISTS
+    # hace que corra una sola vez por repuesto aunque el boot se repita.
+    #
+    # 🔒 2026-09-26 (revisión Fase 3, hallazgo BAJA #9): `repstock_crear`
+    # (alta y reactivación) ahora SIEMPRE deja su propio movimiento, incluso
+    # en cantidad 0 -- así que en teoría ningún alta nueva debería llegar
+    # nunca a este backfill sin movimientos. El corte por `created_at` es la
+    # segunda capa de defensa (por si algún día algo inserta en
+    # mant_repuestos_stock por fuera de repstock_crear, ej. una migración o
+    # un import): un repuesto creado DESPUÉS del arranque del kardex nunca
+    # debería recibir un "saldo_inicial" -- si lo tiene, es que su propio
+    # alta se saltó el log por otro motivo, y ese es un bug a investigar,
+    # no algo que este backfill deba tapar silenciosamente.
+    try:
+        mysql_execute(
+            "INSERT INTO mant_repuestos_movimientos "
+            "(repuesto_id, tipo, motivo_tipo, cantidad, saldo_resultante, nota, usuario) "
+            "SELECT r.id, 'inicial', 'saldo_inicial', r.cantidad, r.cantidad, "
+            "       'Saldo al iniciar el kardex (26-09-2026)', 'sistema' "
+            "  FROM mant_repuestos_stock r "
+            " WHERE COALESCE(r.activo,1)=1 "
+            "   AND r.created_at < '2026-09-26 00:00:00' "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_repuestos_movimientos mv "
+            "                    WHERE mv.repuesto_id=r.id)"
+        )
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] backfill saldo_inicial: {e}", flush=True)
 
     # Seed de marcas conocidas hoy (Daniel, 2026-08-07). La lista real se
     # sincroniza desde el ERP Random (MAEPR.MRPR) en cada carga de la
@@ -134276,6 +135532,16 @@ try:
         _ensure_fotos_rotacion_cols()
 except Exception as _ensure_fotos_rot_err:
     print(f"[ILUS][WARN] _ensure_fotos_rotacion_cols: {_ensure_fotos_rot_err}", flush=True)
+
+# ⭐ Foto principal por equipo dentro de la OT (Daniel 2026-09-26: "brindarle
+# la oportunidad al técnico de elegir la foto principal de cada OT, bien
+# informativo"). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1: sin la
+# columna, marcar una foto como principal falla.
+try:
+    with app.app_context():
+        _ensure_fotos_principal_col()
+except Exception as _ensure_fotos_principal_err:
+    print(f"[ILUS][WARN] _ensure_fotos_principal_col: {_ensure_fotos_principal_err}", flush=True)
 
 # CRÍTICO: repara OTs cerradas con equipos descubiertos huérfanos (bug de
 # app_context en _lev_promover_full_async, Daniel 2026-07-08 — caso real

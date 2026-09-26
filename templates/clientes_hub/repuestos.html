@@ -128,6 +128,10 @@
 /* 🏗️ Fase 4 (2026-09-26) -- misma barra de acciones para la vista Lista:
    reusa .rs-grupo-item (checkbox + tarjeta) para cada fila seleccionable. */
 .rs-lista-acc{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+/* 🔒 M4 (coordinación post-merge, 2026-09-26): motivo del "Generar OT (N)"
+   deshabilitado, visible (no solo en el title, que en touch no se ve). */
+.rs-motivo{flex-basis:100%;color:#b45309;font-size:.72rem;line-height:1.4}
+.rs-grupo-motivo{padding:0 16px 10px;color:#b45309;font-size:.72rem;line-height:1.4}
 .rs-grupo-body{padding:12px 16px;display:flex;flex-direction:column;gap:10px}
 .rs-grupo-item{display:flex;align-items:flex-start;gap:10px}
 .rs-grupo-item input[type=checkbox]{width:20px;height:20px;margin-top:4px;flex:none}
@@ -379,6 +383,10 @@
         <i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>
       <button type="button" class="rs-btn generar-ot" id="rsListaBtnOT" disabled
               onclick="rsListaGenerarOT()"><i class="bi bi-clipboard2-plus me-1"></i>Generar OT (0)</button>
+      {#- 🔒 M4 (coordinación post-merge, 2026-09-26): el motivo del botón
+          deshabilitado no puede vivir SOLO en el title (invisible en
+          touch) -- visible siempre que haya algo que explicar. -#}
+      <small id="rsListaBtnOTMotivo" class="rs-motivo" style="display:none"></small>
     </div>
     <div class="rs-lista" id="rsLista"><div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando solicitudes…</div></div>
     <div class="rs-pie" id="rsPie" style="display:none">
@@ -1226,6 +1234,10 @@ function rsPintarGrupos(){
       puedeLote = !razones.length;
       btnTitle = razones.length ? razones.join(' · ') : 'Genera una OT de instalación con estas ' + nSel + ' solicitud(es).';
     }
+    // 🔒 M4 (coordinación post-merge, 2026-09-26): el motivo del botón
+    // deshabilitado también en un <small> visible bajo el botón, no solo
+    // en el title (invisible en touch).
+    const motivoVisible = (nSel && !puedeLote) ? btnTitle : '';
     return '<div class="rs-grupo">' +
       '<div class="rs-grupo-head"><h6><i class="bi bi-building me-1"></i>' + rsEsc(g.cliente_nombre) + '</h6>' +
       '<span class="n">' + g.n + ' abierta' + (g.n === 1 ? '' : 's') + '</span>' +
@@ -1233,7 +1245,9 @@ function rsPintarGrupos(){
         '<button type="button" class="rs-btn" onclick="rsGrupoToggleTodo(\'' + key + '\')"><i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>' +
         '<button type="button" class="rs-btn generar-ot" title="' + rsEsc(btnTitle) + '" ' + (puedeLote ? '' : 'disabled') + ' onclick="rsGrupoGenerarOT(\'' + key + '\')">' +
           '<i class="bi bi-clipboard2-plus me-1"></i>' + btnTxt + '</button>' +
-      '</div></div><div class="rs-grupo-body">' + itemsHtml + '</div></div>';
+      '</div>' +
+      (motivoVisible ? '<div class="rs-grupo-motivo"><small>' + rsEsc(motivoVisible) + '</small></div>' : '') +
+      '</div><div class="rs-grupo-body">' + itemsHtml + '</div></div>';
   }).join('');
 }
 function rsGrupoToggle(key, sid, checked){
@@ -1308,14 +1322,20 @@ function rsListaToggleTodo(){
 function rsListaActualizarBoton(){
   const acc = document.getElementById('rsListaAcc');
   const btn = document.getElementById('rsListaBtnOT');
+  const motivo = document.getElementById('rsListaBtnOTMotivo');
   if (!acc || !btn) return;
   acc.style.display = _rs.puedeGenerarOT ? '' : 'none';
   if (!_rs.puedeGenerarOT) return;
+  // 🔒 M4 (coordinación post-merge, 2026-09-26): el motivo del botón
+  // deshabilitado también se muestra en un <small> visible bajo el botón
+  // -- el title solo no se ve en touch (móvil no tiene hover).
+  const _setMotivo = function(txt){ if (motivo){ motivo.textContent = txt || ''; motivo.style.display = txt ? '' : 'none'; } };
   const sels = _rs.pagina.filter(function(s){ return _rs.selLista[s.id]; });
   btn.innerHTML = '<i class="bi bi-clipboard2-plus me-1"></i>Generar OT (' + sels.length + ')';
   if (!sels.length){
     btn.disabled = true;
     btn.title = 'Marca una o más solicitudes del mismo cliente, "Validada" (con stock) o "Recibida".';
+    _setMotivo('');
     return;
   }
   const razones = [];
@@ -1333,6 +1353,7 @@ function rsListaActualizarBoton(){
   if (sinStock.length) razones.push(sinStock.length + ' sin stock suficiente entre todas las OT abiertas: espera a que lleguen');
   btn.disabled = !!razones.length;
   btn.title = razones.length ? razones.join(' · ') : 'Genera una OT de instalación con estas ' + sels.length + ' solicitud(es).';
+  _setMotivo(razones.length ? razones.join(' · ') : '');
 }
 async function rsListaGenerarOT(){
   const ids = rsListaSeleccionIds();

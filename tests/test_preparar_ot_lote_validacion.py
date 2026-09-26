@@ -95,6 +95,16 @@ class TestValidarLotePreparaOt(unittest.TestCase):
         self.assertIsNotNone(err)
         self.assertEqual(http, 400)
 
+    def test_mensaje_especifico_cual_solicitud_no_tiene_cliente(self):
+        # B3 (coordinación post-merge, 2026-09-26): el mensaje debe decir
+        # CUÁL solicitud es la que no tiene cliente, no solo "deben ser del
+        # mismo cliente" -- así el usuario sabe qué sacar del lote.
+        sols = [_sol(1, cliente_id=5), _sol(2, cliente_id=None)]
+        err, http = self.validar(sols)
+        self.assertIn("#2", err)
+        self.assertIn("no tiene cliente asignado", err)
+        self.assertEqual(http, 400)
+
     def test_lote_vacio_se_rechaza(self):
         err, http = self.validar([])
         self.assertIsNotNone(err)
