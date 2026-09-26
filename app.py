@@ -79167,6 +79167,9 @@ _OT2_SELECT_FILAS = (
     "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.prioridad, "
     "       v.fecha_programada, v.fecha_fin, v.hora_inicio, v.hora_fin, v.cliente_id, c.razon_social, "
     "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
+    # 📍 2026-09-26: comuna de la VISITA para la tabla (una instalación en
+    # Zapallar de un cliente con domicilio en Vitacura decía "Vitacura").
+    "       COALESCE(NULLIF(v.direccion_comuna,''), c.comuna) AS visita_comuna, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, au.role AS tecnico_role, "
     "       te.id AS tecnico_proveedor_id, "
     "       tk.numero_ticket, "

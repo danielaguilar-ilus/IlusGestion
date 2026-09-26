@@ -937,9 +937,9 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 <div class="ot2-cliw">
                   <div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
                   {% if f.titulo %}<div class="ot2-tit">{{ f.titulo }}</div>{% endif %}
-                  {% if f.cliente_comuna or f.n_equipos or f.docs %}
+                  {% if f.visita_comuna or f.n_equipos or f.docs %}
                   <div class="ot2-meta">
-                    {% if f.cliente_comuna %}<span><i class="bi bi-geo-alt-fill"></i>{{ f.cliente_comuna }}</span>{% endif %}
+                    {% if f.visita_comuna %}<span><i class="bi bi-geo-alt-fill"></i>{{ f.visita_comuna }}</span>{% endif %}
                     {% if f.n_equipos %}<span><i class="bi bi-hdd-stack-fill"></i>{{ f.n_equipos }} equipo{{ 's' if f.n_equipos != 1 }}</span>{% endif %}
                     {% if f.docs %}<span class="doc" title="{{ f.docs | join(' · ') }}"><i class="bi bi-file-earmark-text-fill"></i>{{ f.docs[0] }}{% if f.docs|length > 1 %} +{{ f.docs|length - 1 }}{% endif %}</span>{% endif %}
                   </div>
