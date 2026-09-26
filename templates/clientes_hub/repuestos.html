@@ -3545,16 +3545,32 @@ async function rcrAbrir(cid){
       // muestra ESE -- si no, se sugiere el costo de bodega de esa
       // referencia (stock_costo_unitario). Ninguno de los dos = vacío,
       // nunca un $0 inventado.
-      const costoSugerido = (li.costo_unitario != null) ? li.costo_unitario
+      // 🔒 revisión Opus #2: el costo prellenado puede venir de DOS
+      // fuentes distintas -- si la línea YA tenía costo propio
+      // (li.costo_unitario != null, cualquiera sea su origen) eso NO es
+      // una "sugerencia" que el usuario pueda simplemente "confirmar sin
+      // tocar" -- es un dato ya guardado, así que reenviarlo tal cual
+      // debe conservar SU origen real (bodega/compra/manual), nunca
+      // reclasificarlo como 'compra' de nuevo. Solo cuando no había costo
+      // propio y se sugiere el de bodega (stock_costo_unitario) aplica la
+      // distinción "¿lo tocó o lo confirmó tal cual?" -- de ahí sale
+      // 'bodega' (confirmado) vs 'compra' (editado a otro número).
+      const yaTeniaCostoPropio = li.costo_unitario != null;
+      const costoSugerido = yaTeniaCostoPropio ? li.costo_unitario
         : (li.stock_costo_unitario != null ? li.stock_costo_unitario : '');
       const esManual = li.costo_origen === 'manual';
+      // data-sugerido guarda el valor de la SUGERENCIA de bodega (no el ya
+      // guardado) -- solo se usa para decidir 'bodega' vs 'compra' cuando
+      // yaTeniaCostoPropio es false (ver rcrConfirmar).
+      const dataSugerido = (!yaTeniaCostoPropio && li.stock_costo_unitario != null) ? li.stock_costo_unitario : '';
       return '<div class="rcr-linea"><span class="nombre">' + rsEsc(li.repuesto_nombre) +
         (li.repuesto_sku ? ' <span class="text-muted">· ' + rsEsc(li.repuesto_sku) + '</span>' : '') +
         ' <span class="text-muted small">(pedidos ' + rsFmt(li.cantidad)
         + (yaRecibido > 0 ? ', ya recibidos ' + rsFmt(yaRecibido) + ', faltan ' + rsFmt(faltante) : '') + ')</span></span>' +
         '<input type="number" min="0" step="0.5" placeholder="0" title="Cantidad NUEVA que llega ahora (se suma a lo ya recibido)" id="rcrCant' + li.id + '">' +
         '<input type="number" min="0" step="1" placeholder="Costo unit. $" title="Costo unitario de esta línea (CLP) -- se prellena con el costo de bodega si existe" ' +
-          'id="rcrCosto' + li.id + '" value="' + costoSugerido + '"' + (esManual ? ' disabled' : '') + '>' +
+          'id="rcrCosto' + li.id + '" data-sugerido="' + dataSugerido + '" data-ya-tenia-costo="' + (yaTeniaCostoPropio ? '1' : '0') +
+          '" data-origen-previo="' + rsEsc(li.costo_origen || '') + '" value="' + costoSugerido + '"' + (esManual ? ' disabled' : '') + '>' +
         (esManual ? '<span class="text-muted small" title="Este costo ya fue corregido a mano por gestión">🔒 manual</span>' : '') +
         '</div>';
     }).join('');
@@ -3599,12 +3615,29 @@ async function rcrConfirmar(){
   // costo puesto y no necesita el fallback de prorrateo por monto_total).
   // Se omiten las líneas 'manual' (el input queda disabled, nunca se toca)
   // y las que quedaron vacías (gestión puede recibir sin costear todavía).
+  //
+  // 🔒 revisión Opus #2 ("el modal Recibir NO debe mandar como costo
+  // 'compra' los valores prellenados que el usuario no tocó"): si la
+  // línea YA tenía costo propio (data-ya-tenia-costo=1) y el valor no
+  // cambió, no se reenvía nada -- ya está guardado con SU origen real, no
+  // hay nada nuevo que declarar. Si no tenía costo propio, se sugirió el
+  // de bodega (data-sugerido): confirmarlo tal cual = origen 'bodega';
+  // cambiarlo a otro número = origen 'compra'.
   const costos = _rcr.lineas.map(function(li){
     if (li.costo_origen === 'manual') return null;
     const el = document.getElementById('rcrCosto' + li.id);
     if (!el || el.value === '' || el.disabled) return null;
     const v = parseFloat(String(el.value).replace(',', '.'));
-    return isFinite(v) && v >= 0 ? { solicitud_id: li.id, costo_unitario: v } : null;
+    if (!isFinite(v) || v < 0) return null;
+    const yaTeniaCostoPropio = el.dataset.yaTeniaCosto === '1';
+    if (yaTeniaCostoPropio) {
+      const valorPrevio = parseFloat(String(li.costo_unitario));
+      if (isFinite(valorPrevio) && Math.abs(valorPrevio - v) < 0.005) return null; // sin cambios, no reenviar
+      return { solicitud_id: li.id, costo_unitario: v, origen: 'compra' }; // lo editó -> costo propio de ESTA compra
+    }
+    const sugerido = el.dataset.sugerido === '' ? null : parseFloat(el.dataset.sugerido);
+    const esElSugerido = sugerido != null && isFinite(sugerido) && Math.abs(sugerido - v) < 0.005;
+    return { solicitud_id: li.id, costo_unitario: v, origen: esElSugerido ? 'bodega' : 'compra' };
   }).filter(Boolean);
   // 🔒 2026-09-26 (revisión, hallazgo MEDIA #7): botón deshabilitado
   // mientras procesa -- evita un doble envío con doble click.

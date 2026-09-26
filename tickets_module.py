@@ -1596,6 +1596,17 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN email_cliente_real VARCHAR(190) NULL")
         if "notif_pausada" not in existentes:
             alters.append("ADD COLUMN notif_pausada TINYINT(1) NOT NULL DEFAULT 0")
+        # 🔗 2026-09-26 (D3/(e), revisión Opus #2 -- Vida del cliente liga
+        # tickets por RUT normalizado además de por solicitud de repuesto):
+        # columna GENERADA (barata -- MySQL 8 la calcula sola, STORED para
+        # poder indexarla) con el mismo RUT sin puntos/guion/mayúsculas que
+        # ya usa _rut_norm en Python -- así la búsqueda de
+        # mant_vida_cliente_api deja de escanear la tabla completa con
+        # REPLACE(REPLACE(REPLACE(...))) en cada carga de la línea de vida.
+        if "rut_norm" not in existentes:
+            alters.append(
+                "ADD COLUMN rut_norm VARCHAR(12) "
+                "GENERATED ALWAYS AS (UPPER(REPLACE(REPLACE(REPLACE(rut,'.',''),' ',''),'-',''))) STORED")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_tickets {a}")
@@ -1603,6 +1614,10 @@ def register_tickets_routes(app, ctx):
                 print(f"[ILUS][WARN] ALTER tk_tickets {a}: {_e}", flush=True)
         try:
             mysql_execute("CREATE UNIQUE INDEX uq_tk_legacy_taa ON tk_tickets (legacy_taa_id)")
+        except Exception:
+            pass  # ya existe
+        try:
+            mysql_execute("CREATE INDEX idx_tk_rut_norm ON tk_tickets (rut_norm)")
         except Exception:
             pass  # ya existe
         # 2026-07-15 (Daniel): 3 tipos nuevos 100% internos de bodega

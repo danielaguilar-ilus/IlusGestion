@@ -3259,7 +3259,7 @@ function _vidaRender(d) {
         </div>
         ${f.ot_sin_costo ? `<div style="margin-top:10px;font-size:.72rem;background:#fff8e1;color:#92400e;
             border-radius:8px;padding:6px 9px">⚠ ${_fmtMoney(f.cobrado_sin_costo_completo)} cobrados en ${f.ot_sin_costo}
-            OT sin costo completo (fuera de este cálculo -- revisar).</div>` : ''}
+            OT fuera de este cálculo -- falta un costo o falta lo que se cobra (revisar en "Margen por OT").</div>` : ''}
         ${f.ot_interna_excluida ? `<div style="margin-top:6px;font-size:.68rem;color:#9ca3af">
             ${f.ot_interna_excluida} OT de trabajo interno excluida(s) del cálculo.</div>` : ''}
       </div>
