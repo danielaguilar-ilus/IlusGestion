@@ -4244,6 +4244,52 @@ def register_tickets_routes(app, ctx):
         perms = g.get("permissions") or {}
         return bool(perms.get("superadmin"))
 
+    # ─────────────────────────────────────────────────────────────────
+    #  🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
+    #  descuentos de garantías"). Investigación previa a este candado: el
+    #  modelo de datos de Cotizaciones NO tiene un campo/motivo "garantía"
+    #  separado del descuento comercial normal -- ni a nivel de cabecera
+    #  (tk_cotizaciones.descuento_pct/descuento_monto/descuento_tipo) ni a
+    #  nivel de ítem (tk_cotizacion_items.precio_manual; el descuento_pct
+    #  de ítem existe en el esquema pero NINGÚN endpoint lo escribe hoy --
+    #  el mecanismo real por línea es forzar precio_manual). El flag
+    #  es_garantia SÍ existe, pero vive en tk_tickets (el ticket), no en la
+    #  cotización, y no fuerza ningún descuento automático.
+    #
+    #  Caso INEQUÍVOCO (el único que este candado bloquea, tal como pidió
+    #  Daniel -- "descuento 100% por garantía"): un descuento que deja la
+    #  cabecera o una línea a costo $0 -- 100% en la cabecera (modo 'pct'),
+    #  o precio_manual=0 en un ítem cobrable. Un descuento PARCIAL (10%,
+    #  20%, etc.) sigue siendo indistinguible de un descuento comercial
+    #  normal y NO pasa por este candado -- bloquearlo sería inventar una
+    #  regla que Daniel no pidió.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_item_clave_garantia(sku, tido, nudo, desc):
+        """Clave para casar un ítem ANTES/DESPUÉS de un guardado sin id
+        estable (actualizar hace DELETE+INSERT). Prioriza sku+documento
+        ERP (tido/nudo) -- mismo criterio que la guardia anti-borrado de
+        líneas de documento ya existente en tk_api_cotizacion_actualizar;
+        cae a sku+descripción para ítems agregados a mano/catálogo."""
+        _sku_u = (sku or "").strip().upper()
+        _tido_u = (tido or "").strip().upper()
+        _nudo_u = (nudo or "").strip()
+        if _sku_u and _tido_u and _nudo_u:
+            return ("doc", _sku_u, _tido_u, _nudo_u)
+        return ("simple", _sku_u, (desc or "").strip().lower())
+
+    def _tk_item_precio_manual_cero(it, clase_producto):
+        """True si el ítem trae un precio_manual explícito = 0 (línea a
+        costo $0). Los 'no cobrables' (accesorio) NUNCA cuentan -- son $0
+        por diseño de categoría, no por descuento (ver
+        _tk_cotiz_clase_no_cobrable)."""
+        if _tk_cotiz_clase_no_cobrable(clase_producto):
+            return False
+        try:
+            _pmv = it.get("precio_manual")
+            return _pmv not in (None, "") and max(int(float(_pmv)), 0) == 0
+        except (TypeError, ValueError):
+            return False
+
     @app.route("/tickets/cotizaciones/<int:cid>/detalle-calculo")
     @_tickets_required
     def tk_cotizacion_detalle_calculo(cid):
@@ -4463,6 +4509,16 @@ def register_tickets_routes(app, ctx):
             descuento_pct = 0.0
         else:
             descuento_monto_in = 0
+
+        # 🔒 Candado descuento por garantía (100%), SOLO superadmin -- ver
+        # comentario junto a _tk_solo_superadmin/_tk_item_precio_manual_cero.
+        # Cotización nueva: no hay "antes" que proteger, así que CUALQUIER
+        # descuento de cabecera al 100% de un no-superadmin se rechaza acá,
+        # antes de tocar la base.
+        if descuento_tipo == "pct" and descuento_pct >= 100 and not _tk_solo_superadmin():
+            return jsonify({"ok": False,
+                             "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
+
         try:
             costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
         except (TypeError, ValueError):
@@ -4595,6 +4651,24 @@ def register_tickets_routes(app, ctx):
         # Ya no quedan pendientes de clasificar -- el usuario los vio y
         # eligió en el modal de revisión antes de llegar acá.
         sin_clasificar = [s for s in sin_clasificar if not clases_por_sku.get(s["sku"])]
+
+        # 🔒 Candado descuento por garantía (100%) A NIVEL DE ÍTEM, SOLO
+        # superadmin -- ver comentario junto a _tk_solo_superadmin. Cotización
+        # nueva: cualquier ítem cobrable que llegue con precio_manual=0 de un
+        # no-superadmin se rechaza antes de abrir la transacción.
+        _item_garantia_cero = None
+        if not _tk_solo_superadmin():
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                _sku_chk = (it.get("sku") or "").strip()
+                _clase_chk = it.get("clase_producto") or clases_por_sku.get(_sku_chk.upper())
+                if _tk_item_precio_manual_cero(it, _clase_chk):
+                    _item_garantia_cero = it
+                    break
+        if _item_garantia_cero is not None:
+            return jsonify({"ok": False,
+                             "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
 
         # 2026-07-23 (Daniel): una cotización nacida de la FICHA del cliente no
         # puede ser de instalación (solo mantención/visita técnica). Solo aplica
@@ -4788,6 +4862,24 @@ def register_tickets_routes(app, ctx):
                           {"numero": numero, "items": len(items), "origen": origen_in}, user)
         except Exception:
             pass
+        # 🔒 Auditoría del descuento por garantía (quién/cuándo/monto) --
+        # Daniel: "en las cotizaciones solo yo puedo aplicar descuentos de
+        # garantías". Solo se registra cuando el superadmin de verdad lo
+        # aplicó (el candado de arriba ya rechazó el caso de un no-superadmin).
+        if _tk_solo_superadmin():
+            _items_garantia_creados = [
+                (it.get("nombre") or it.get("sku") or "producto") for it in items
+                if isinstance(it, dict) and _tk_item_precio_manual_cero(
+                    it, it.get("clase_producto") or clases_por_sku.get((it.get("sku") or "").strip().upper()))
+            ]
+            if (descuento_tipo == "pct" and descuento_pct >= 100) or _items_garantia_creados:
+                try:
+                    _tk_cotiz_log(cot_id, "descuento_garantia",
+                                  {"numero": numero, "nivel": "cabecera" if descuento_pct >= 100 else "item",
+                                   "descuento_pct_cabecera": descuento_pct,
+                                   "items_costo_cero": _items_garantia_creados[:10]}, user)
+                except Exception:
+                    pass
         # Si nació desde un ticket, deja rastro en la bitácora de ESE ticket
         # (mismo patrón que cambio_estado/asignacion -- nunca bloquea el
         # flujo si el log falla).
@@ -5486,6 +5578,20 @@ def register_tickets_routes(app, ctx):
             descuento_pct = 0.0
         else:
             descuento_monto_in = 0
+
+        # 🔒 Candado descuento por garantía (100%) DE CABECERA, SOLO
+        # superadmin -- ver comentario junto a _tk_solo_superadmin. Solo
+        # bloquea si el 100% es NUEVO en este guardado: una cotización que
+        # YA tenía descuento_pct=100 (garantía aplicada antes, por un
+        # superadmin) sigue editable en todo lo demás por cualquier usuario
+        # -- Regla #4.2, no romper flujos ni tocar datos existentes.
+        _antes_full_header = ((cab.get("descuento_tipo") or "pct") == "pct"
+                               and float(cab.get("descuento_pct") or 0) >= 100)
+        if (descuento_tipo == "pct" and descuento_pct >= 100
+                and not _antes_full_header and not _tk_solo_superadmin()):
+            return jsonify({"ok": False,
+                             "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
+
         try:
             costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
         except (TypeError, ValueError):
@@ -5539,6 +5645,39 @@ def register_tickets_routes(app, ctx):
                     _ot_resync_plantillas_por_sku(sku_up, actor=user)
                 except Exception:
                     pass
+
+        # 🔒 Candado descuento por garantía (100%) A NIVEL DE ÍTEM, SOLO
+        # superadmin -- ver comentario junto a _tk_solo_superadmin. Se casa
+        # ítem antes/después por sku+documento ERP (o sku+descripción si no
+        # viene de un documento) -- misma clave que las guardias anti-borrado
+        # de más abajo -- para bloquear SOLO el precio_manual=0 NUEVO. Un
+        # ítem que YA estaba a $0 (garantía aplicada antes) sigue viajando
+        # intacto si el usuario no lo toca -- no atrapa al no-superadmin por
+        # un descuento que no metió él (Regla #4.2).
+        try:
+            _items_pm_antes = mysql_fetchall(
+                "SELECT erp_kopr, erp_tido, erp_nudo, descripcion, precio_manual, clase_producto "
+                "FROM tk_cotizacion_items WHERE cotizacion_id=%s", (cid,)) or []
+        except Exception as _e_pm_antes:
+            print(f"[tk_api_cotizacion_actualizar] guardia garantía no pudo leer items previos: {_e_pm_antes}", flush=True)
+            _items_pm_antes = []
+        _pm_cero_antes_por_clave = set()
+        for _itp in _items_pm_antes:
+            if _tk_item_precio_manual_cero(_itp, _itp.get("clase_producto")):
+                _pm_cero_antes_por_clave.add(_tk_item_clave_garantia(
+                    _itp.get("erp_kopr"), _itp.get("erp_tido"), _itp.get("erp_nudo"), _itp.get("descripcion")))
+        if not _tk_solo_superadmin():
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                _sku_chk = (it.get("sku") or "").strip()
+                _clase_chk = it.get("clase_producto") or clases_por_sku.get(_sku_chk.upper())
+                if not _tk_item_precio_manual_cero(it, _clase_chk):
+                    continue
+                _clave_chk = _tk_item_clave_garantia(_sku_chk, it.get("tido"), it.get("nudo"), it.get("nombre"))
+                if _clave_chk not in _pm_cero_antes_por_clave:
+                    return jsonify({"ok": False,
+                                     "error": "Solo el superadmin puede aplicar descuentos por garantía."}), 403
 
         # 🔒 2026-08-28 (Daniel, en vivo, tras encontrar la causa raíz de
         # OT-2026-00125 -- 8 de 16 equipos sin plantilla automática porque
@@ -5747,6 +5886,35 @@ def register_tickets_routes(app, ctx):
         _diff = {k: [_antes.get(k), _despues.get(k)] for k in _despues if _antes.get(k) != _despues.get(k)}
         _tk_cotiz_log(cid, "editar_aprobada" if _estaba_aprobada else "editar",
                       {"cambios": _diff}, user)
+        # 🔒 Auditoría del descuento por garantía (quién/cuándo/monto) --
+        # Daniel: "en las cotizaciones solo yo puedo aplicar descuentos de
+        # garantías". Solo registra si el superadmin introdujo AHORA un
+        # descuento 100% nuevo (cabecera o ítem) -- uno que ya existía antes
+        # de este guardado no genera un log nuevo cada vez que se edita algo
+        # más de la cotización.
+        if _tk_solo_superadmin():
+            _header_nuevo_full = (descuento_tipo == "pct" and descuento_pct >= 100
+                                   and not _antes_full_header)
+            _items_garantia_nuevos = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                _sku_log = (it.get("sku") or "").strip()
+                _clase_log = it.get("clase_producto") or clases_por_sku.get(_sku_log.upper())
+                if not _tk_item_precio_manual_cero(it, _clase_log):
+                    continue
+                _clave_log = _tk_item_clave_garantia(_sku_log, it.get("tido"), it.get("nudo"), it.get("nombre"))
+                if _clave_log not in _pm_cero_antes_por_clave:
+                    _items_garantia_nuevos.append(it.get("nombre") or _sku_log or "producto")
+            if _header_nuevo_full or _items_garantia_nuevos:
+                try:
+                    _tk_cotiz_log(cid, "descuento_garantia",
+                                  {"nivel": "cabecera" if _header_nuevo_full else "item",
+                                   "descuento_pct_cabecera": descuento_pct,
+                                   "total": (totales or {}).get("total"),
+                                   "items_costo_cero": _items_garantia_nuevos[:10]}, user)
+                except Exception:
+                    pass
         return jsonify({"ok": True, "id": cid, "totales": totales,
                         "editada_post_aprobacion": _estaba_aprobada})
 
