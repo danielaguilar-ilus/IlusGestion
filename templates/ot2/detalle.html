@@ -1504,7 +1504,11 @@
 /* Evidencia — galería de fotos reales de la visita */
 .otd-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
   padding:14px 16px}
-.otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc}
+.otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc;position:relative}
+{# ⭐ 2026-09-26: estrella de "foto principal" sobre la miniatura de la
+   galería general -- mismo criterio visual que el checklist. #}
+.otd-ev-star{position:absolute;top:6px;right:6px;color:#f59e0b;font-size:.85rem;
+  text-shadow:0 1px 3px rgba(0,0,0,.6);pointer-events:none;z-index:1}
 /* 🔍 2026-09-04 (Daniel: "quiero verlas cuando presione, con buena
    calidad, mover las fotos, si es necesario rotarla"). La miniatura ahora
    abre el visor global (ilusLightbox — zoom/girar/arrastrar/navegar), así
@@ -1757,6 +1761,36 @@
 .otd-rep-resumen a{color:#dc2626;font-weight:800;text-decoration:none}
 .otd-rep-ico{color:#2563eb;font-size:.8rem;margin-left:2px}
 .otrep-ev-th.ok{outline:2px solid #16a34a}
+/* 🆕 2026-09-26 (Fase 4) -- bloque "Repuestos a instalar en esta OT":
+   solicitudes que NACIERON en otra OT/ticket/incidencia y se instalan acá
+   (ot_generada_id=vid). Distinto de .otd-rep-resumen/.otd-rep-it de arriba
+   (que muestran lo que ESTA OT movió desde su propio origen). */
+.otd-repai{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;margin:0 0 14px}
+.otd-repai-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.otd-repai-head i{color:#2563eb;font-size:1.05rem}
+.otd-repai-head b{font-size:.86rem;color:#0a0a0a}
+.otd-repai-head .n{font-size:.7rem;font-weight:800;color:#6b7280;background:#f3f4f6;border-radius:50px;padding:2px 10px;margin-left:auto}
+.otd-repai-lista{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.otd-repai-it{display:flex;align-items:center;gap:9px;background:#f9fafb;border:1px solid #e5e7eb;
+  border-left:3px solid #2563eb;border-radius:9px;padding:8px 10px;flex-wrap:wrap}
+.otd-repai-it.cerrada{border-left-color:#9ca3af;opacity:.8}
+.otd-repai-it > i{color:#2563eb;flex:none}
+.otd-repai-it.cerrada > i{color:#6b7280}
+.otd-repai-it .inf{flex:1;min-width:180px}
+.otd-repai-it .inf b{display:block;font-size:.8rem;color:#0a0a0a;overflow-wrap:anywhere}
+.otd-repai-it .inf small{display:block;font-size:.7rem;color:#6b7280;overflow-wrap:anywhere}
+.otd-repai-it .est{flex:none;font-size:.58rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;
+  padding:3px 9px;border-radius:50px;background:#ede9fe;color:#6d28d9}
+.otd-repai-it .est.recibido{background:#cffafe;color:#0e7490}
+.otd-repai-it .est.instalado{background:#dcfce7;color:#15803d}
+.otd-repai-it .est.rechazado{background:#fee2e2;color:#b91c1c}
+.otd-repai-btn{flex:none;min-height:36px;background:#16a34a;color:#fff;border:none;border-radius:8px;
+  padding:0 14px;font-size:.75rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.otd-repai-btn:hover{background:#15803d}
+@media (max-width:576px){
+  .otd-repai-it .inf{min-width:100%}
+  .otd-repai-btn{width:100%;justify-content:center;min-height:44px}
+}
 @media (max-width:640px){
   .otd-desv-btns{display:grid;grid-template-columns:1fr 1fr}
   .otd-desv-btns .otd-fs-btn,.otd-fs-badge .otd-fs-btn{justify-content:center;min-height:44px}
@@ -2201,6 +2235,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 @media (max-width:640px){
   .otd-chk-fotos img{width:74px;height:74px}
 }
+{# ⭐ 2026-09-26 (foto principal por equipo, Daniel: "bien informativo, y
+   todo debe estar conectado"): estrella sobre la miniatura ya elegida como
+   principal de este equipo -- mismo criterio en el checklist, el visor y
+   el PDF (eq-foto-tag en ot_pdf.html). #}
+.otd-fotomini{position:relative;display:inline-block;line-height:0}
+.otd-fotomini-badge{position:absolute;top:4px;right:4px;color:#f59e0b;
+  font-size:.8rem;text-shadow:0 1px 3px rgba(0,0,0,.65);pointer-events:none}
 .otd-chk-fallback{font-size:.72rem;color:#6b7280;font-style:italic}
 .otd-chk-gpsbtn{width:100%;min-height:52px;border-radius:10px;border:none;
   background:var(--ilus-red,#dc2626);color:#fff;font-size:.86rem;font-weight:800;
@@ -3880,9 +3921,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             {% endif %}
             <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
               {% for f in fotos %}
-              <div class="otd-ev-item">
+              {# ⭐ 2026-09-26 (Daniel, en vivo: "todo debe estar conectado" --
+                 la galería general es donde más se ven las fotos). data-mid
+                 agrupa las fotos del MISMO equipo (para desmarcar las demás
+                 al elegir una nueva principal) y data-principal + la
+                 estrella reflejan cuál ya está elegida. #}
+              <div class="otd-ev-item" data-mid="{{ f.maquina_id or '' }}">
                 {% if f.url %}
-                  <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}" onclick="otdVerFoto(this)">
+                  <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}"
+                       data-principal="{{ '1' if f.principal else '0' }}"
+                       onclick="otdVerFoto(this)">
+                  {# ⭐ BAJA 9 (revisión): título según el caso -- una foto sin
+                     equipo asociado es la principal GENERAL de la OT. #}
+                  {% if f.principal %}<i class="bi bi-star-fill otd-ev-star" title="{{ 'Foto principal de este equipo' if f.maquina_id else 'Foto principal de la OT' }}"></i>{% endif %}
                 {% else %}
                   <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
                     <i class="bi bi-image" style="font-size:1.6rem"></i></div>
@@ -5327,6 +5378,39 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         <i class="bi bi-tools"></i>
         <span><b>Lo que esta OT movió:</b> {{ _rep_total }} solicitud{{ 'es' if _rep_total != 1 }} de repuesto ({{ rep_total_abiertas or 0 }} en curso){% if rep_ticket %} · ticket <a href="/tickets/{{ rep_ticket.id }}" target="_blank" rel="noopener">{{ rep_ticket.numero }}</a>{% endif %}</span>
       </div>
+
+      {#- 🆕 2026-09-26 (Fase 4 -- Daniel: "puedo gestionar una orden de
+          trabajo en base a que vayan a instalar todos esos repuestos o uno
+          solo, con el filtro de que tiene que ser siempre el mismo
+          cliente"). Repuestos que NACIERON en otra OT/ticket/incidencia y
+          se instalan EN ESTA (ver vincular-ot-lote/vincular-ot) -- es lo
+          INVERSO del resumen de arriba. REGLA #15: nombres completos,
+          nunca truncados. Se repinta por JS tras "Marcar instalado"
+          (otdRepAInstalarRefrescar), sin recargar la página. -#}
+      <div class="otd-repai" id="otdRepAInstalar"{% if not rep_a_instalar %} style="display:none"{% endif %}>
+        <div class="otd-repai-head">
+          <i class="bi bi-box-arrow-in-down"></i>
+          <b>Repuestos a instalar en esta OT</b>
+          <span class="n">{{ rep_a_instalar_pend }} pendiente{{ 's' if rep_a_instalar_pend != 1 }} de {{ rep_a_instalar|length }}</span>
+        </div>
+        <div class="otd-repai-lista" id="otdRepAInstalarLista">
+          {% for s in rep_a_instalar %}
+          <div class="otd-repai-it {{ 'cerrada' if s.estado in ('instalado', 'rechazado') }}" data-sid="{{ s.id }}">
+            <i class="bi bi-tools"></i>
+            <div class="inf">
+              <b>{{ s.repuesto_nombre }} × {{ '%g' | format(s.cantidad or 1) }}{% if s.stock_sku %} · {{ s.stock_sku }}{% endif %}</b>
+              <small>{{ s.maquina_nombre or ('Equipo #' ~ s.maquina_id) if s.maquina_id else 'Sin equipo ligado' }}{% if s.cliente_nombre %} · {{ s.cliente_nombre }}{% endif %}</small>
+            </div>
+            <span class="est {{ s.estado }}">{{ (s.estado_label or s.estado).split(' · ')[0] }}</span>
+            {% if s.estado in ('validado', 'recibido') and puede_marcar_repuesto %}
+            <button type="button" class="otd-repai-btn" onclick="otdRepAInstalarMarcar({{ s.id }})">
+              <i class="bi bi-check2-circle"></i> Marcar instalado</button>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
       {% if equipos %}
       <div class="otd-wk-list">
         {% for e in equipos %}
@@ -5374,11 +5458,27 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                tiene foto, se rellena con la primera evidencia REAL de ese
                equipo en ESTA OT (ver otdEqFotosFallback más abajo). Se hace
                en el navegador con los datos del checklist que ya se
-               descargan: no agrega ni una consulta al servidor. #}
-            {% if e.foto_url %}
-              <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
+               descargan: no agrega ni una consulta al servidor.
+
+               ⭐ 2026-09-26 (Daniel, en vivo: "si hay foto principal de este
+               equipo en esta OT, esa es la miniatura"): la foto PRINCIPAL
+               elegida por el técnico manda incluso sobre la de ficha --
+               mismo orden que eq_foto_ref en ot_pdf.html. `data-eqfoto` va
+               en LOS TRES casos (antes solo en el ícono) para que
+               otdEqFotosFallback pueda reemplazar cualquiera de los tres
+               apenas se marque/desmarque una principal, sin recargar.
+               `data-ficha-url` (revisión, BAJA 6) guarda la foto de ficha
+               SIEMPRE, aunque hoy no se esté mostrando (porque hay
+               principal) -- así, si la principal se DESMARCA, JS puede
+               volver a la ficha sin tener que recargar la página. #}
+            {% if e.foto_principal_url %}
+              <img class="th" data-eqfoto="{{ e.id }}" data-ficha-url="{{ e.foto_url or '' }}"
+                   src="{{ e.foto_principal_url }}" alt="" loading="lazy" title="Foto principal">
+            {% elif e.foto_url %}
+              <img class="th" data-eqfoto="{{ e.id }}" data-ficha-url="{{ e.foto_url }}"
+                   src="{{ e.foto_url }}" alt="" loading="lazy">
             {% else %}
-              <span class="th" data-eqfoto="{{ e.id }}"><i class="bi bi-image"></i></span>
+              <span class="th" data-eqfoto="{{ e.id }}" data-ficha-url=""><i class="bi bi-image"></i></span>
             {% endif %}
             <div class="nm">
               <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if not e._interno and e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
@@ -10574,6 +10674,21 @@ async function otdSubirFoto(input){
    que abre por defecto).
    ══════════════════════════════════════════════════════════════════════ */
 const OTD_VID = {{ v.id }};
+// 🆕 2026-09-26 (Fase 4) -- ver `puede_marcar_repuesto` en ot2_detalle
+// (app.py): mismo gate que el backend de /repuestos-instalar, esto solo
+// decide si otdRepAInstalarRefrescar() vuelve a dibujar el botón "Marcar
+// instalado" tras un repintado (el backend re-valida siempre).
+const OTD_PUEDE_MARCAR_REPUESTO = {{ 'true' if puede_marcar_repuesto else 'false' }};
+// 🔒 B1 (coordinación post-merge, 2026-09-26): cache mínima para decidir si
+// "Marcar instalado" pregunta "¿volvió a operar?" -- MISMA condición que la
+// cola de Solicitudes (rsAccion, repuestos.html): dejo_fuera_servicio o
+// maquina_estado_capturado === 'fuera_servicio'. Se puebla al cargar la
+// página y se actualiza en cada otdRepAInstalarRefrescar().
+var _otdRepAInstalarCache = {};
+{% for s in rep_a_instalar %}
+_otdRepAInstalarCache[{{ s.id }}] = {dejo_fuera_servicio: {{ 'true' if s.dejo_fuera_servicio else 'false' }},
+  maquina_estado_capturado: {{ (s.maquina_estado_capturado or '') | tojson }}};
+{% endfor %}
 
 // 🆕 2026-08-30 (Daniel: "estoy viendo un número de serie que no me está
 // dando el formato... trae eso de allá" -- comparando con ot_ejecutar.html).
@@ -10789,31 +10904,76 @@ async function otdCargarChecklistSiHaceFalta(){
    las tarjetas, se verían más bonitas".
 
    Se resuelve en el navegador con los datos del checklist que ya se
-   descargaron (cero consultas nuevas). La foto de ficha, cuando existe,
-   SIEMPRE gana: es la foto del equipo, no la de un momento puntual.
-   Al tocarla abre el visor, igual que el resto de las fotos. */
+   descargaron (cero consultas nuevas). Al tocarla abre el visor, igual
+   que el resto de las fotos.
+
+   ⭐ 2026-09-26 (Daniel, en vivo: "si hay foto principal de este equipo en
+   esta OT, esa es la miniatura", "todo debe estar conectado"): esta
+   función SIEMPRE recalcula la cascada completa -- principal > ficha
+   (`data-ficha-url`, guardado por Jinja aunque hoy no se esté mostrando)
+   > primera evidencia real > ícono -- así corre cada vez que se recarga
+   el checklist (tras marcar/desmarcar una principal) y puede tanto
+   REEMPLAZAR una miniatura que ya tenía imagen (ficha o una principal
+   vieja) COMO volver a la ficha/ícono si la principal se desmarcó
+   (revisión, BAJA 6: "al desmarcar, la miniatura vuelve a la regla
+   ficha → primera foto → ícono sin recargar"). */
 function otdEqFotosFallback(){
   if (!OTD_CHK_DATA) return;
   document.querySelectorAll('[data-eqfoto]').forEach(function(ph){
     const mid = ph.getAttribute('data-eqfoto');
+    const fichaUrl = ph.getAttribute('data-ficha-url') || '';
     const grupos = OTD_CHK_DATA[String(mid)] || [];
-    let url = '', desde = '', fid = '';
+    let url = '', desde = '', fid = '', esPrincipal = false;
+    busqueda_principal:
     for (const g of grupos){
       for (const t of (g.tareas || [])){
-        if (t.fotos && t.fotos.length && t.fotos[0].url){
-          url = t.fotos[0].url; desde = t.titulo || ''; fid = t.fotos[0].id || '';
-          break;
+        for (const f of (t.fotos || [])){
+          if (f.principal && f.url){
+            url = f.url; desde = t.titulo || ''; fid = f.id || ''; esPrincipal = true;
+            break busqueda_principal;
+          }
         }
       }
-      if (url) break;
     }
-    if (!url) return;   // sin evidencia todavía: se queda el ícono gris
+    if (!url && fichaUrl){
+      // BAJA 6: sin principal (nunca hubo, o se acaba de desmarcar), la
+      // foto de FICHA gana -- es la del equipo, no la de un momento puntual.
+      url = fichaUrl;
+    }
+    if (!url){
+      // Sin principal NI ficha: primera evidencia real de esta OT.
+      for (const g of grupos){
+        for (const t of (g.tareas || [])){
+          if (t.fotos && t.fotos.length && t.fotos[0].url){
+            url = t.fotos[0].url; desde = t.titulo || ''; fid = t.fotos[0].id || '';
+            break;
+          }
+        }
+        if (url) break;
+      }
+    }
+    if (!url){
+      // Nada de nada: ícono gris. Si `ph` ya es un <span> con el ícono, no
+      // hay nada que hacer; si venía siendo un <img> (se desmarcó una
+      // principal y tampoco hay ficha ni evidencia), se vuelve al ícono.
+      if (ph.tagName !== 'IMG') return;
+      const span = document.createElement('span');
+      span.className = 'th';
+      span.setAttribute('data-eqfoto', String(mid));
+      span.setAttribute('data-ficha-url', '');
+      span.innerHTML = '<i class="bi bi-image"></i>';
+      ph.replaceWith(span);
+      return;
+    }
     const img = document.createElement('img');
     img.className = 'th';
+    img.dataset.eqfoto = String(mid);
+    img.setAttribute('data-ficha-url', fichaUrl);   // se conserva para la próxima pasada
     img.src = url;
     img.loading = 'lazy';
     img.alt = 'Evidencia del equipo';
-    img.title = desde ? ('Evidencia: ' + desde) : 'Evidencia de este equipo';
+    img.title = esPrincipal ? ('Foto principal' + (desde ? (' · ' + desde) : ''))
+                             : (desde ? ('Evidencia: ' + desde) : 'Evidencia de este equipo');
     img.style.cursor = 'zoom-in';
     if (fid) img.dataset.fid = String(fid);
     img.addEventListener('click', function(ev){
@@ -10823,7 +10983,8 @@ function otdEqFotosFallback(){
       const actual = img.getAttribute('src') || url;
       if (typeof ilusLightbox === 'function'){
         ilusLightbox([{ url: actual, caption: desde ? ('Evidencia: ' + desde) : '',
-                        id: otdFotoIdGirable(img.dataset.fid, actual) }],
+                        id: otdFotoIdGirable(img.dataset.fid, actual),
+                        principal: esPrincipal, mid: mid }],
                      0, 'Evidencia del equipo', otdFotoLbOpts());
       }
     });
@@ -11525,7 +11686,11 @@ window.otdVerFoto = function(imgEl){
     // Solo si la foto se puede girar (/f/): una del sistema antiguo
     // (Cloudinary, /static/) ofrecería un botón que siempre falla.
     const u = el.getAttribute('src') || el.src;
+    // ⭐ 2026-09-26: principal + mid (equipo), para poder elegir/objetar la
+    // foto principal desde ESTA galería -- la que más ve el técnico.
     return { url: u, id: otdFotoIdGirable(el.dataset.fid, u),
+             principal: el.dataset.principal === '1',
+             mid: (item && item.dataset.mid) || '',
              caption: [tipo, desc, who].filter(Boolean).join(' · ') };
   });
   const idx = Math.max(0, imgs.indexOf(imgEl));
@@ -11546,7 +11711,11 @@ window.otdVerFoto = function(imgEl){
    ══════════════════════════════════════════════════════════════════════ */
 const OTD_PUEDE_GIRAR = {{ (puede_girar_fotos | default(false)) | tojson }};
 
-/* Opciones del visor: sin permiso de giro, el visor queda como siempre. */
+/* Opciones del visor: sin permiso de giro, el visor queda como siempre.
+   ⭐ 2026-09-26 (Daniel: "brindarle la oportunidad al técnico de elegir la
+   foto principal de cada OT, bien informativo, y todo debe estar
+   conectado"): mismo permiso que girar (OTD_PUEDE_GIRAR / _foto_puede_girar
+   en el backend) habilita también el botón "★ Foto principal" del visor. */
 function otdFotoLbOpts(){
   if (!OTD_PUEDE_GIRAR) return undefined;
   return {
@@ -11558,7 +11727,113 @@ function otdFotoLbOpts(){
       if (res.desfasada) return { url: res.url, mensaje: res.error, tipo: 'warning' };
       return res.url;
     },
+    onMarcarPrincipal: async function(item){
+      // El visor no decide el valor nuevo (ver ilus_lightbox.js) -- se
+      // toggea sobre lo que el propio item.principal diga hoy.
+      return await otdFotoGuardarPrincipal(item.id, !item.principal);
+    },
   };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ⭐ FOTO PRINCIPAL POR EQUIPO — 2026-09-26.
+   Daniel: "hay que expresar todo muy bien y brindarle la oportunidad al
+   técnico de elegir la foto principal de cada OT, bien informativo, y
+   todo debe estar conectado". Una sola principal por (visita, equipo) --
+   el servidor desmarca las demás al marcar una nueva (ver
+   _foto_marcar_principal en app.py). El visor (ilus_lightbox.js) actualiza
+   su propia estrella al toque; el resto de la pantalla (checklist, tarjeta
+   del equipo) se pone al día recargando el checklist desde el servidor --
+   más simple y siempre correcto que llevar la cuenta a mano de qué otra
+   foto del MISMO equipo, en otra tarea, dejó de ser principal.
+   ══════════════════════════════════════════════════════════════════════ */
+async function otdFotoGuardarPrincipal(fid, principal){
+  const SIN_RESPUESTA = 'Sin respuesta del servidor: no sabemos si se guardó. Vuelve a intentar.';
+  let r, d = null;
+  try {
+    r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/${encodeURIComponent(fid)}/principal`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ principal: !!principal }),
+    }, 30000);
+    d = await r.json().catch(() => null);
+  } catch(e){
+    throw new Error(SIN_RESPUESTA);
+  }
+  if (!d) throw new Error(SIN_RESPUESTA);
+  if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo actualizar la foto principal.');
+  // ⭐ 2026-09-26: la galería general "Fotos de la OT" (pestaña Información)
+  // NO se recarga del servidor -- se pinta una vez con Jinja -- así que se
+  // sincroniza a mano: esta foto queda con/sin estrella y las DEMÁS del
+  // MISMO equipo la pierden, sin esperar la respuesta del checklist.
+  otdEvGridSyncPrincipal(fid, d.maquina_id, !!d.principal);
+  // El checklist (OTD_CHK_DATA) es la ÚNICA fuente que agrupa fotos por
+  // equipo hoy -- se recarga desde el servidor para reflejar que, si se
+  // marcó una principal, las demás del mismo equipo (aunque estén en OTRA
+  // tarea) quedaron desmarcadas. otdCargarChecklistSiHaceFalta ya repinta
+  // cada .otd-chk-mount abierto Y la miniatura del resumen
+  // (otdEqFotosFallback al final de esa carga).
+  otdRecargarChecklistTrasPrincipal();
+  return { principal: !!d.principal };
+}
+
+/* ⭐ 2026-09-26 (revisión, BAJA 6: "si el checklist está cargando,
+   reintentar después"): forzar OTD_CHK_LOADED=false y llamar de una a
+   otdCargarChecklistSiHaceFalta() es un no-op silencioso si YA hay una
+   carga en curso (el guard `if (OTD_CHK_LOADED || OTD_CHK_LOADING) return`
+   de esa función corta antes de mirar el false que se acaba de poner) --
+   la miniatura/checklist se quedarían desactualizados sin que nadie avise.
+   Se reintenta cada 150ms mientras OTD_CHK_LOADING sea true, hasta 3
+   segundos (20 intentos); pasado eso se rinde en silencio -- un refresh
+   manual de la página sigue funcionando como red de seguridad. */
+function otdRecargarChecklistTrasPrincipal(intentos){
+  intentos = intentos || 0;
+  if (typeof OTD_CHK_LOADING !== 'undefined' && OTD_CHK_LOADING){
+    if (intentos < 20) setTimeout(function(){ otdRecargarChecklistTrasPrincipal(intentos + 1); }, 150);
+    return;
+  }
+  OTD_CHK_LOADED = false;
+  otdCargarChecklistSiHaceFalta().catch(function(){});
+}
+
+/* ⭐ 2026-09-26: refleja en la galería general (#otdEvGrid) el resultado de
+   marcar/desmarcar una principal, sin recargar la página ni esperar al
+   checklist. `mid` puede venir vacío (foto sin equipo, principal "general"
+   de la OT) -- en ese caso se agrupa con las DEMÁS fotos SIN equipo
+   (revisión, BAJA 9: antes `mid && ...` era siempre falso para las
+   generales y ninguna otra perdía la estrella). */
+function otdEvGridSyncPrincipal(fid, mid, principal){
+  const grid = document.getElementById('otdEvGrid');
+  if (!grid) return;
+  const fidS = String(fid);
+  const midS = mid ? String(mid) : '';
+  grid.querySelectorAll('.otd-ev-item').forEach(function(item){
+    const img = item.querySelector('img[data-fid]');
+    if (!img) return;
+    const esEsta = String(img.dataset.fid) === fidS;
+    // '' === '' agrupa las fotos SIN equipo entre sí (la principal
+    // "general" de la OT), igual que un mid real agrupa las de un equipo.
+    const itemMidS = item.dataset.mid || '';
+    const mismoGrupo = itemMidS === midS;
+    let nuevo = null;
+    if (esEsta) nuevo = principal;
+    else if (principal && mismoGrupo) nuevo = false;   // otra del mismo grupo pierde la estrella
+    if (nuevo === null) return;
+    img.dataset.principal = nuevo ? '1' : '0';
+    let star = item.querySelector('.otd-ev-star');
+    if (nuevo){
+      if (!star){
+        star = document.createElement('i');
+        star.className = 'bi bi-star-fill otd-ev-star';
+        // ⭐ BAJA 9: título según el caso -- una foto sin equipo es la
+        // principal GENERAL de la OT, no "de este equipo".
+        star.title = itemMidS ? 'Foto principal de este equipo' : 'Foto principal de la OT';
+        item.appendChild(star);
+      }
+    } else if (star){
+      star.remove();
+    }
+  });
 }
 
 /* id de la foto para el visor, SOLO si se puede girar: el servidor gira
@@ -11698,10 +11973,17 @@ function otdChkFotosHtml(t){
   // volver a entrar tres veces. Ahora se abre la tarea completa en el visor
   // y se pasa de una a otra con las flechas, sin salir.
   // 🔄 2026-09-25: + data-fid, para poder guardar un giro desde el visor.
+  // ⭐ 2026-09-26: + data-principal y la estrella sobre la miniatura que ya
+  // es la principal de este equipo (checklist.js/app.py la pasa en cada
+  // foto, ver mant_visita_checklist_get).
   return `<div class="otd-chk-fotos">${t.fotos.map((f, i) =>
-    `<img src="${otdEsc(f.url)}" alt="Foto de ${otdEsc(t.titulo || 'la tarea')}"
-          data-fid="${otdEsc(f.id == null ? '' : String(f.id))}"
-          loading="lazy" onclick="otdVerFotosTarea(this, ${i})">`).join('')}</div>`;
+    `<span class="otd-fotomini">
+       <img src="${otdEsc(f.url)}" alt="Foto de ${otdEsc(t.titulo || 'la tarea')}"
+            data-fid="${otdEsc(f.id == null ? '' : String(f.id))}"
+            data-principal="${f.principal ? '1' : '0'}"
+            loading="lazy" onclick="otdVerFotosTarea(this, ${i})">
+       ${f.principal ? '<i class="bi bi-star-fill otd-fotomini-badge" title="Foto principal de este equipo"></i>' : ''}
+     </span>`).join('')}</div>`;
 }
 
 /* Abre TODAS las fotos de una tarea del checklist en el visor, empezando
@@ -11717,9 +11999,17 @@ window.otdVerFotosTarea = function(imgEl, idx){
   }
   const imgs = Array.from(cont.querySelectorAll('img'));
   const tarea = (imgEl.getAttribute('alt') || 'Foto de la tarea').trim();
+  // ⭐ 2026-09-26 (revisión, BAJA 5/9): el equipo de esta tarea, para que el
+  // visor sepa qué otras fotos del ARREGLO pertenecen al MISMO equipo (y
+  // desmarcarlas al elegir una nueva principal) y para el título del botón.
+  const mount = cont.closest('.otd-chk-mount');
+  const mid = (mount && mount.dataset.mid) || '';
   const fotos = imgs.map(function(el, i){
     const u = el.getAttribute('src') || el.src;
+    // ⭐ 2026-09-26: principal se lee del propio DOM (data-principal), igual
+    // que el fid -- así el visor sabe qué estrella pintar sin otra consulta.
     return { url: u, id: otdFotoIdGirable(el.dataset.fid, u),
+             principal: el.dataset.principal === '1', mid: mid,
              caption: tarea + (imgs.length > 1 ? ` · ${i + 1} de ${imgs.length}` : '') };
   });
   const i = (typeof idx === 'number' && idx >= 0) ? idx : Math.max(0, imgs.indexOf(imgEl));
@@ -13445,6 +13735,25 @@ const OT2F = (function(){
     const btn = document.getElementById('otfBtnFirmarConfirm');
     if (_firmaStage === 'cliente') return _enviarFirmaCliente(btn);
     if (!_sig.otfCanvasTec || !_sig.otfCanvasTec.has){ ilusToast('Falta tu firma', {type:'warning'}); return; }
+    // 🔒 B2 (coordinación post-merge, 2026-09-26): recordatorio ANTES de
+    // firmar -- si quedan repuestos del bloque "Repuestos a instalar en
+    // esta OT" sin marcar instalados, se pregunta explícito (NO bloquea:
+    // "Firmar igual" sigue disponible). Antes esto se avisaba DESPUÉS de
+    // firmar (ya tarde para reaccionar); ahora se pregunta antes.
+    try {
+      const rp = await fetch('/ot/api/' + OTD_VID + '/repuestos', {credentials:'same-origin', cache:'no-store'});
+      const jp = await rp.json();
+      const pendientes = (jp.a_instalar || []).filter(function(s){ return s.estado === 'validado' || s.estado === 'recibido'; }).length;
+      if (pendientes){
+        const seguir = await ilusConfirm({
+          title: 'Repuestos sin marcar',
+          message: 'Quedan ' + pendientes + (pendientes === 1 ? ' repuesto sin marcar' : ' repuestos sin marcar') +
+            ' como instalado(s) en esta OT. ¿Firmar igual?',
+          okLabel: 'Firmar igual', cancelLabel: 'Volver', type: 'warning',
+        });
+        if (!seguir) return;
+      }
+    } catch(e){ /* silencioso -- un fallo de red en este chequeo no debe bloquear la firma */ }
     const firmaTec = document.getElementById('otfCanvasTec').toDataURL('image/png');
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
     try {
@@ -13470,6 +13779,8 @@ const OT2F = (function(){
       }
       if (d.ok){
         bootstrap.Modal.getInstance(document.getElementById('otfModalFirma'))?.hide();
+        // B2: el recordatorio de repuestos pendientes ya se preguntó ANTES
+        // de llegar acá (ver arriba) -- no se repite después de firmar.
         await ilusAlert({
           title: '✅ Técnico firmó',
           message: 'La OT quedó en revisión. El ejecutivo SSTT puede corregir antes de la firma del cliente.',
@@ -15909,6 +16220,85 @@ async function otdRepRefrescar(mid){
       res.innerHTML = '<i class="bi bi-tools"></i><span><b>Lo que esta OT movió:</b> ' + todas.length + ' solicitud' + (todas.length > 1 ? 'es' : '') + ' de repuesto (' + tot + ' en curso)' +
         (tk ? ' · ticket <a href="/tickets/' + tk.ticket_id + '" target="_blank" rel="noopener">' + otdEsc(tk.numero_ticket || '') + '</a>' : '') + '</span>';
     }
+  } catch(e){}
+}
+
+/* 🆕 2026-09-26 (Fase 4) -- "Repuestos a instalar en esta OT": solicitudes
+   que NACIERON en otra OT/ticket/incidencia (ot_generada_id=vid). Reusa el
+   MISMO endpoint /ot/api/<vid>/repuestos (campo `a_instalar`) y el MISMO
+   núcleo de transición que la cola de Solicitudes (_otrep_cambiar_estado)
+   vía POST /ot/api/<vid>/repuestos-instalar/<sid>. */
+async function otdRepAInstalarMarcar(sid){
+  const ok = await ilusConfirm({
+    title: 'Marcar instalado',
+    message: '¿Confirmas que este repuesto ya quedó instalado en esta OT?',
+    okLabel: 'Sí, instalado', cancelLabel: 'Cancelar', type: 'question',
+  });
+  if (!ok) return;
+  // 🔒 B1 (coordinación post-merge, 2026-09-26): la pregunta "¿volvió a
+  // operar?" SOLO se hace si aplica -- MISMA condición que la cola de
+  // Solicitudes (rsAccion, repuestos.html): dejo_fuera_servicio o
+  // maquina_estado_capturado === 'fuera_servicio'. Antes se preguntaba
+  // siempre, aunque el equipo nunca hubiera quedado fuera de servicio.
+  const info = _otdRepAInstalarCache[sid] || {};
+  const body = {};
+  if (info.dejo_fuera_servicio || info.maquina_estado_capturado === 'fuera_servicio'){
+    const volvio = await ilusConfirm({
+      title: '¿El equipo volvió a operar?',
+      message: 'Este repuesto había dejado el equipo fuera de servicio -- confirma si ya quedó operativo.',
+      okLabel: 'Sí, ya opera', cancelLabel: 'No', type: 'question',
+    });
+    body.equipo_operativo = !!volvio;
+  }
+  try {
+    const r = await fetch('/ot/api/' + OTD_VID + '/repuestos-instalar/' + sid, {
+      method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ ilusToast(j.error || 'No se pudo marcar como instalado.', {type:'error'}); return; }
+    ilusToast('✓ Repuesto marcado como instalado', {type:'success'});
+    if (j.aviso) await ilusAlert({title: 'Aviso de stock', message: j.aviso, type: 'warning'});
+    otdRepAInstalarRefrescar();
+  } catch(e){
+    ilusToast('Error de conexión: ' + e.message, {type:'error'});
+  }
+}
+async function otdRepAInstalarRefrescar(){
+  try {
+    const r = await fetch('/ot/api/' + OTD_VID + '/repuestos', {credentials:'same-origin', cache:'no-store'});
+    const j = await r.json();
+    var lista = j.a_instalar || [];
+    var wrap = document.getElementById('otdRepAInstalar');
+    var cont = document.getElementById('otdRepAInstalarLista');
+    if (!wrap || !cont) return;
+    wrap.style.display = lista.length ? '' : 'none';
+    if (!lista.length) return;
+    var pend = lista.filter(function(s){ return s.estado === 'validado' || s.estado === 'recibido'; }).length;
+    var nEl = wrap.querySelector('.n');
+    if (nEl) nEl.textContent = pend + (pend === 1 ? ' pendiente' : ' pendientes') + ' de ' + lista.length;
+    // B1: refresca la cache de dejo_fuera_servicio/maquina_estado_capturado
+    // con el dato fresco de este fetch.
+    lista.forEach(function(s){
+      _otdRepAInstalarCache[s.id] = {
+        dejo_fuera_servicio: !!s.dejo_fuera_servicio,
+        maquina_estado_capturado: s.maquina_estado_capturado || '',
+      };
+    });
+    cont.innerHTML = lista.map(function(s){
+      var cerrada = (s.estado === 'instalado' || s.estado === 'rechazado');
+      var lbl = String(s.estado_label || s.estado).split(' · ')[0];
+      var btn = (!cerrada && OTD_PUEDE_MARCAR_REPUESTO)
+        ? '<button type="button" class="otd-repai-btn" onclick="otdRepAInstalarMarcar(' + s.id + ')">'
+          + '<i class="bi bi-check2-circle"></i> Marcar instalado</button>'
+        : '';
+      return '<div class="otd-repai-it ' + (cerrada ? 'cerrada' : '') + '" data-sid="' + s.id + '">' +
+        '<i class="bi bi-tools"></i><div class="inf"><b>' + otdEsc(s.repuesto_nombre) + ' × ' +
+        _otrepFmt(s.cantidad || 1) + (s.stock_sku ? ' · ' + otdEsc(s.stock_sku) : '') + '</b>' +
+        '<small>' + otdEsc(s.maquina_nombre || (s.maquina_id ? ('Equipo #' + s.maquina_id) : 'Sin equipo ligado')) +
+        (s.cliente_nombre ? ' · ' + otdEsc(s.cliente_nombre) : '') + '</small></div>' +
+        '<span class="est ' + otdEsc(s.estado) + '">' + otdEsc(lbl) + '</span>' + btn + '</div>';
+    }).join('');
   } catch(e){}
 }
 

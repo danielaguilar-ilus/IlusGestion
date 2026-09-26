@@ -7,15 +7,18 @@ las solicitudes de repuestos por proveedor").
 Prueba dos funciones PURAS de app.py (sin BD ni Flask):
 
   _otrep_compra_elegible(s)
-      Que solicitudes puede agrupar una Compra nueva -- spec ambigua a
-      proposito ("validado sin stock suficiente, o solicitado ya ligado"),
-      documentada en el propio codigo. Ver REGLA de la spec: "define y
-      documenta".
+      Que solicitudes puede agrupar una Compra nueva. 🔒 2026-09-26
+      (revision post-Fase 5, hallazgo ALTA #3): se simplifico a proposito
+      -- ya NO existe el camino "solicitado ya ligado a proveedor" (eso
+      hubiera exigido tocar el mapa GLOBAL _OTREP_TRANSICIONES para dejar
+      saltar 'solicitado' -> 'pedido'). Ahora solo 'validado' (con stock
+      insuficiente, hallazgo MEDIA #9) o 'pedido' sin compra_id (Fase <5).
 
   _otrep_recepcion_es_completa(cantidad_recibida, cantidad_requerida)
       La regla de "recepcion parcial" del endpoint POST
-      .../compras/<cid>/recibir: si lo recibido no alcanza lo pedido, la
-      linea sigue 'pedido' con una nota en vez de pasar a 'recibido'.
+      .../compras/<cid>/recibir: si lo recibido ACUMULADO no alcanza lo
+      pedido, la linea sigue 'pedido' con una nota en vez de pasar a
+      'recibido'.
 
 Ambas son funciones puras: se extraen de app.py con ast en vez de
 importarlo entero (importar app.py completo levanta Flask, la base y los
@@ -56,36 +59,46 @@ def _cargar_funcion(nombre):
 
 
 class TestCompraElegible(unittest.TestCase):
-    """_otrep_compra_elegible: ver el docstring en app.py (2026-09-26) para
-    la definicion completa de las 3 categorias elegibles."""
+    """_otrep_compra_elegible: ver el docstring en app.py (2026-09-26,
+    revision post-Fase 5) para la definicion completa de las 2 categorias
+    elegibles."""
 
     @classmethod
     def setUpClass(cls):
         cls.elegible = staticmethod(_cargar_funcion("_otrep_compra_elegible"))
 
-    def test_validado_es_elegible(self):
-        # Bodega ya la reviso y la ligo a un repuesto real -- si hace falta
-        # comprarla es porque ese repuesto no alcanza.
-        s = {"estado": "validado", "repuesto_stock_id": 5, "proveedor_id": None, "compra_id": None}
+    def test_validado_sin_stock_suficiente_es_elegible(self):
+        # Bodega ya la reviso y la ligo a un repuesto real, pero el
+        # disponible no alcanza -- eso es lo que hay que comprarle a
+        # alguien (hallazgo MEDIA #9: "sin stock suficiente").
+        s = {"estado": "validado", "repuesto_stock_id": 5, "proveedor_id": None,
+             "compra_id": None, "cantidad": 3, "stock_disponible": 1}
         self.assertTrue(self.elegible(s))
 
-    def test_solicitado_con_proveedor_y_sin_stock_es_elegible(self):
-        # "solicitado ya ligado" -- ligado a un PROVEEDOR, no a un repuesto
-        # de bodega: nunca va a pasar por bodega, se compra directo.
-        s = {"estado": "solicitado", "repuesto_stock_id": None, "proveedor_id": 3, "compra_id": None}
-        self.assertTrue(self.elegible(s))
-
-    def test_solicitado_sin_proveedor_no_es_elegible(self):
-        # Sin proveedor asignado no hay "a quien comprarle" todavia --
-        # tiene que pasar primero por validar (bodega) o que alguien le
-        # asigne proveedor.
-        s = {"estado": "solicitado", "repuesto_stock_id": None, "proveedor_id": None, "compra_id": None}
+    def test_validado_con_stock_de_sobra_no_es_elegible(self):
+        # Si el disponible alcanza y sobra, no hay nada que comprarle a
+        # nadie -- REGLA de negocio nueva (hallazgo MEDIA #9).
+        s = {"estado": "validado", "repuesto_stock_id": 5, "proveedor_id": None,
+             "compra_id": None, "cantidad": 2, "stock_disponible": 5}
         self.assertFalse(self.elegible(s))
 
-    def test_solicitado_con_stock_ligado_no_es_elegible(self):
-        # Si YA tiene un repuesto de bodega ligado, el camino normal es
-        # 'validado' (bodega decide), no saltar directo a comprar.
-        s = {"estado": "solicitado", "repuesto_stock_id": 9, "proveedor_id": 3, "compra_id": None}
+    def test_validado_disponible_exactamente_igual_no_es_elegible(self):
+        s = {"estado": "validado", "repuesto_stock_id": 5, "proveedor_id": None,
+             "compra_id": None, "cantidad": 3, "stock_disponible": 3}
+        self.assertFalse(self.elegible(s))
+
+    def test_validado_sin_dato_de_stock_disponible_es_elegible(self):
+        # Defensivo: si por lo que sea no vino stock_disponible (None), se
+        # prefiere dejarla pasar (mejor ofrecerla de mas que esconderla).
+        s = {"estado": "validado", "repuesto_stock_id": 5, "proveedor_id": None,
+             "compra_id": None, "cantidad": 3, "stock_disponible": None}
+        self.assertTrue(self.elegible(s))
+
+    def test_solicitado_ya_no_es_elegible_bajo_ningun_caso(self):
+        # 🔒 ALTA #3: se elimino el camino "solicitado ya ligado a
+        # proveedor" -- ahora SIEMPRE hay que pasar por 'validado' primero,
+        # sin excepcion, aunque tenga proveedor_id y no tenga stock ligado.
+        s = {"estado": "solicitado", "repuesto_stock_id": None, "proveedor_id": 3, "compra_id": None}
         self.assertFalse(self.elegible(s))
 
     def test_pedido_sin_compra_es_elegible_solo_para_adjuntar(self):
