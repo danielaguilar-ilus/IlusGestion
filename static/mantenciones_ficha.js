@@ -3063,7 +3063,13 @@ function cotFichaCambiarPagina(delta) {
 // tarjeta Finanzas de la OT (templates/ot2/detalle.html): verde desde
 // 10 %, ámbar bajo 10 %, rojo en pérdida.
 // ═══════════════════════════════════════════════════════════════════
-window._vidaState = { mg_page: 1, lv_page: 1, lv_tipo: '', pr_page: 1, loaded: false };
+window._vidaState = {
+  mg_page: 1, mg_per: 10, lv_page: 1, lv_per: 15, lv_tipo: '', pr_page: 1, pr_per: 10, loaded: false,
+};
+// M8 (revisión Opus 2026-09-26): la última respuesta completa -- cuando el
+// backend contesta {"skipped": true} en una sección (porque solo se pidió
+// repaginar OTRA), se conserva lo que ya había en vez de perderlo.
+window._vidaLastData = null;
 
 const _VIDA_TIPO_LABEL = {
   ot: 'OT', repuesto: 'Repuestos', compra: 'Compras', ticket: 'Tickets',
@@ -3073,30 +3079,37 @@ const _VIDA_TIPO_COLOR = {
   ot: '#dc2626', repuesto: '#3b82f6', compra: '#f59e0b', ticket: '#1d4ed8',
   incidencia: '#9ca3af', bodega: '#16a34a', documento: '#0a0a0a',
 };
+// Semáforo por CLASE ya decidida en el backend (_vida_margen_clase /
+// _ot_resultado_financiero -- D2: "una sola fórmula compartida", el
+// frontend NUNCA recalcula el color, solo lo pinta.
+const _VIDA_CLASE_COLOR = { ok: '#166534', bajo: '#b45309', rojo: '#dc2626', sin_dato: '#6b7280', gris: '#6b7280', ambar: '#b45309' };
+const _VIDA_CLASE_BG    = { ok: '#dcfce7', bajo: '#fff8e1', rojo: '#fee2e2', sin_dato: '#f3f4f6', gris: '#f3f4f6', ambar: '#fff8e1' };
+function _vidaClaseColor(clase) { return _VIDA_CLASE_COLOR[clase] || '#6b7280'; }
+function _vidaClaseBg(clase) { return _VIDA_CLASE_BG[clase] || '#f3f4f6'; }
 
-function _vidaMargenColor(pct, clp) {
-  if (clp != null && clp < 0) return '#dc2626';
-  if (pct == null) return '#6b7280';
-  if (pct < 0) return '#dc2626';
-  if (pct < 10) return '#b45309';
-  return '#166534';
-}
-function _vidaMargenBg(pct, clp) {
-  if (clp != null && clp < 0) return '#fee2e2';
-  if (pct == null) return '#f3f4f6';
-  if (pct < 0) return '#fee2e2';
-  if (pct < 10) return '#fff8e1';
-  return '#dcfce7';
+const _VIDA_PER_PAGE_OPCIONES = [10, 25, 50, 100];
+function _vidaPerSelect(cual, actual) {
+  return `<select onchange="vidaCambiarPer('${cual}', this.value)" style="font-size:.72rem;border:1px solid #e5e7eb;
+      border-radius:6px;padding:1px 4px;margin-left:8px" title="Filas por página">
+    ${_VIDA_PER_PAGE_OPCIONES.map(n => `<option value="${n}"${n === actual ? ' selected' : ''}>${n} por página</option>`).join('')}
+  </select>`;
 }
 
-async function cargarVidaCliente() {
+async function cargarVidaCliente(solo) {
   const root = document.getElementById('vidaClienteRoot');
   if (!root) return;
   const st = window._vidaState;
   const qs = new URLSearchParams({
-    mg_page: st.mg_page, lv_page: st.lv_page, pr_page: st.pr_page, lv_per: 15,
+    mg_page: st.mg_page, mg_per: st.mg_per,
+    lv_page: st.lv_page, lv_per: st.lv_per,
+    pr_page: st.pr_page, pr_per: st.pr_per,
   });
   if (st.lv_tipo) qs.set('lv_tipo', st.lv_tipo);
+  // 🚀 M8: repaginar SOLO línea de vida o SOLO productos no recalcula el
+  // resto (hero/kpis/financiero/margen se recalculan siempre juntos --
+  // comparten la misma consulta de visitas, barata; ver `solo` en el
+  // backend, mant_vida_cliente_api).
+  if (solo) qs.set('solo', solo);
   if (!st.loaded) {
     root.innerHTML = `<div class="text-center text-muted py-5">
       <div class="spinner-border spinner-border-sm me-2"></div>Cargando la vida del cliente…</div>`;
@@ -3107,7 +3120,14 @@ async function cargarVidaCliente() {
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'Error desconocido');
     st.loaded = true;
-    root.innerHTML = _vidaRender(d);
+    // Fusiona con lo último completo: una sección "skipped" conserva su
+    // valor anterior en vez de quedar vacía.
+    const prev = window._vidaLastData || {};
+    const merged = Object.assign({}, prev, d);
+    if (d.linea_vida && d.linea_vida.skipped) merged.linea_vida = prev.linea_vida || d.linea_vida;
+    if (d.productos && d.productos.skipped) merged.productos = prev.productos || d.productos;
+    window._vidaLastData = merged;
+    root.innerHTML = _vidaRender(merged);
   } catch (e) {
     root.innerHTML = `<div class="alert alert-danger" style="font-size:.85rem">
       <i class="bi bi-x-circle me-1"></i>No se pudo cargar la vida del cliente: ${_escH(e.message)}
@@ -3119,12 +3139,18 @@ function vidaCambiarPag(cual, delta) {
   const st = window._vidaState;
   const key = cual + '_page';
   st[key] = Math.max(1, (st[key] || 1) + delta);
-  cargarVidaCliente();
+  cargarVidaCliente(cual === 'mg' ? null : (cual === 'lv' ? 'linea' : (cual === 'pr' ? 'productos' : null)));
+}
+function vidaCambiarPer(cual, valor) {
+  const st = window._vidaState;
+  st[cual + '_per'] = parseInt(valor, 10) || 10;
+  st[cual + '_page'] = 1;
+  cargarVidaCliente(cual === 'mg' ? null : (cual === 'lv' ? 'linea' : (cual === 'pr' ? 'productos' : null)));
 }
 function vidaFiltrarTipo(tipo) {
   window._vidaState.lv_tipo = tipo;
   window._vidaState.lv_page = 1;
-  cargarVidaCliente();
+  cargarVidaCliente('linea');
 }
 
 function _vidaRender(d) {
@@ -3140,7 +3166,11 @@ function _vidaRender(d) {
   else heroChips.push('📄 Sin contrato vigente');
   heroChips.push(`⚙ ${h.n_equipos || 0} equipos`);
 
-  const barTotal = Math.max(1, (k.n_cobradas || 0) + (k.n_garantia_gratis || 0) + (k.n_contrato || 0));
+  // n_otros_cobro (BAJA revisión Opus): lo que no calza en ninguna de las
+  // 3 categorías se suma al total de la barra (para que los % de las 3
+  // visibles sean reales) pero no dibuja su propio segmento -- no hay un
+  // 4to color en la maqueta aprobada.
+  const barTotal = Math.max(1, (k.n_cobradas || 0) + (k.n_garantia_gratis || 0) + (k.n_contrato || 0) + (k.n_otros_cobro || 0));
   const pctCobrada = 100 * (k.n_cobradas || 0) / barTotal;
   const pctGarantia = 100 * (k.n_garantia_gratis || 0) / barTotal;
   const pctContrato = 100 * (k.n_contrato || 0) / barTotal;
@@ -3216,9 +3246,9 @@ function _vidaRender(d) {
           <div><div class="kpi-cell-label">Nos costó</div><div style="font-weight:900;font-size:1.3rem">${_fmtMoney(f.nos_costo)}</div></div>
           <div style="font-size:1.3rem;color:#9ca3af;font-weight:800">=</div>
           <div><div class="kpi-cell-label">Queda</div>
-            <div style="font-weight:900;font-size:1.3rem;color:${_vidaMargenColor(f.margen_pct, f.queda)}">${_fmtMoney(f.queda)}</div>
+            <div style="font-weight:900;font-size:1.3rem;color:${_vidaClaseColor(f.margen_clase)}">${_fmtMoney(f.queda)}</div>
             ${f.margen_pct != null ? `<span class="tag" style="font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px;
-                background:${_vidaMargenBg(f.margen_pct, f.queda)};color:${_vidaMargenColor(f.margen_pct, f.queda)}">${f.margen_pct}% margen</span>` : ''}
+                background:${_vidaClaseBg(f.margen_clase)};color:${_vidaClaseColor(f.margen_clase)}">${f.margen_pct}% margen</span>` : ''}
           </div>
         </div>
         <div style="margin-top:12px;font-size:.78rem;display:grid;grid-template-columns:1fr auto;gap:5px 10px">
@@ -3226,13 +3256,20 @@ function _vidaRender(d) {
           <span style="color:#6b7280">Repuestos instalados (costo de bodega)</span><b>${_fmtMoney(dsg.repuestos_bodega)}</b>
           <span style="color:#6b7280">Compras a proveedor para este cliente</span><b>${_fmtMoney(dsg.compras_proveedor)}</b>
           <span style="color:#6b7280">Garantías que cubrimos (costo sin cobro)</span><b style="color:#b45309">${_fmtMoney(dsg.garantias_cubiertas)}</b>
-          ${f.ot_sin_costo ? `<span style="color:#9ca3af">Sin costo registrado todavía</span><span style="color:#9ca3af">${f.ot_sin_costo} OT</span>` : ''}
         </div>
+        ${f.ot_sin_costo ? `<div style="margin-top:10px;font-size:.72rem;background:#fff8e1;color:#92400e;
+            border-radius:8px;padding:6px 9px">⚠ ${_fmtMoney(f.cobrado_sin_costo_completo)} cobrados en ${f.ot_sin_costo}
+            OT sin costo completo (fuera de este cálculo -- revisar).</div>` : ''}
+        ${f.ot_interna_excluida ? `<div style="margin-top:6px;font-size:.68rem;color:#9ca3af">
+            ${f.ot_interna_excluida} OT de trabajo interno excluida(s) del cálculo.</div>` : ''}
       </div>
     </div>
     <div class="col-12 col-xl-5">
       <div class="kpi-cell" style="height:100%">
-        <div style="font-weight:800;margin-bottom:8px;font-size:.85rem">Margen por OT <small style="color:#9ca3af;font-weight:600">· más recientes</small></div>
+        <div style="font-weight:800;margin-bottom:8px;font-size:.85rem;display:flex;align-items:center;flex-wrap:wrap">
+          <span>Margen por OT</span><small style="color:#9ca3af;font-weight:600;margin-left:4px">· más recientes</small>
+          ${_vidaPerSelect('mg', window._vidaState.mg_per)}
+        </div>
         ${_vidaMargenOtTabla(d.margen_ot)}
       </div>
     </div>
@@ -3241,8 +3278,11 @@ function _vidaRender(d) {
   <div class="row g-2 mt-1">
     <div class="col-12 col-xl-7">
       <div class="kpi-cell" style="height:100%">
-        <div style="font-weight:800;margin-bottom:6px;font-size:.85rem">🕒 Línea de vida
-          <small style="color:#9ca3af;font-weight:600">· todo lo que ha pasado con el cliente, en orden</small></div>
+        <div style="font-weight:800;margin-bottom:6px;font-size:.85rem;display:flex;align-items:center;flex-wrap:wrap">
+          <span>🕒 Línea de vida</span>
+          <small style="color:#9ca3af;font-weight:600;margin-left:4px">· todo lo que ha pasado con el cliente, en orden</small>
+          ${_vidaPerSelect('lv', window._vidaState.lv_per)}
+        </div>
         <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">
           <span onclick="vidaFiltrarTipo('')" style="cursor:pointer;font-size:.68rem;font-weight:800;
               border:1px solid #e5e7eb;border-radius:999px;padding:3px 9px;
@@ -3256,7 +3296,10 @@ function _vidaRender(d) {
     </div>
     <div class="col-12 col-xl-5">
       <div class="kpi-cell" style="height:100%">
-        <div style="font-weight:800;margin-bottom:6px;font-size:.85rem">🏋 Sus productos <small style="color:#9ca3af;font-weight:600">· ${d.productos.total} equipos</small></div>
+        <div style="font-weight:800;margin-bottom:6px;font-size:.85rem;display:flex;align-items:center;flex-wrap:wrap">
+          <span>🏋 Sus productos</span><small style="color:#9ca3af;font-weight:600;margin-left:4px">· ${d.productos.total} equipos</small>
+          ${_vidaPerSelect('pr', window._vidaState.pr_per)}
+        </div>
         ${_vidaProductos(d.productos)}
       </div>
     </div>
@@ -3274,16 +3317,19 @@ function _vidaMargenOtTabla(mg) {
       <th style="padding:6px 8px;text-align:right">Cobrado</th><th style="padding:6px 8px;text-align:right">Margen</th>
     </tr></thead><tbody>`;
   mg.items.forEach(it => {
-    const color = _vidaMargenColor(it.margen_pct, it.margen_clp);
-    const bg = _vidaMargenBg(it.margen_pct, it.margen_clp);
+    // A2/D2 (revisión Opus): estado ya viene clasificado del backend --
+    // 'interna'/'incompleto'/'garantia_sin_cobro'/'contrato' muestran su
+    // ETIQUETA (nunca un % ni rojo inventado); 'ok' muestra el % normal.
+    const color = _vidaClaseColor(it.margen_clase);
+    const bg = _vidaClaseBg(it.margen_clase);
     let tag;
-    if (it.sin_costo) tag = `<span style="background:#f3f4f6;color:#374151;font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">sin costo</span>`;
+    if (it.label) tag = `<span style="background:${bg};color:${color};font-size:.6rem;font-weight:800;border-radius:6px;padding:2px 7px">${_escH(it.label)}</span>`;
     else if (it.margen_pct != null) tag = `<span style="background:${bg};color:${color};font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">${it.margen_pct}%</span>`;
     else tag = `<span style="background:${bg};color:${color};font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">${_fmtMoney(it.margen_clp)}</span>`;
     h += `<tr style="border-bottom:1px solid #e5e7eb">
-      <td style="padding:6px 8px">${_escH(it.numero_ot || ('#' + it.id))}</td>
+      <td style="padding:6px 8px"><a href="/ot/${it.id}">${_escH(it.numero_ot || ('#' + it.id))}</a></td>
       <td style="padding:6px 8px">${_escH(it.tipo_label || '')}</td>
-      <td style="padding:6px 8px;text-align:right">${_fmtMoney(it.cobrado)}</td>
+      <td style="padding:6px 8px;text-align:right">${it.cobrado != null ? _fmtMoney(it.cobrado) : '—'}</td>
       <td style="padding:6px 8px;text-align:right">${tag}</td>
     </tr>`;
   });

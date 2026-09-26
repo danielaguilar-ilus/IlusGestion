@@ -4900,6 +4900,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <div class="otd-frow"><div class="otd-frow-n"><span>Despacho</span>
                   <span class="nota" id="otdFinResDespN"></span></div>
                   <div class="otd-freq" id="otdFinResDesp"></div></div>
+                {# 💰 D2 (revisión Opus 2026-09-26): repuestos instalados en
+                   esta OT -- informativo (nunca bloquea el cierre), viene de
+                   GET /ot/api/<vid>/resultado-financiero (misma función que
+                   Vida del cliente). Oculto hasta que el fetch confirme que
+                   hay algo que mostrar (ver otdFinCargarRepuestos). #}
+                <div class="otd-frow" id="otdFinResRepWrap" hidden>
+                  <div class="otd-frow-n"><span>Repuestos instalados</span>
+                    <span class="nota" id="otdFinResRepN"></span></div>
+                  <div class="otd-freq" id="otdFinResRep"></div></div>
                 <div class="otd-frow tot"><div class="otd-frow-n"><span>Total de la OT</span></div>
                   <div class="otd-freq" id="otdFinResTot"></div></div>
               </div>
@@ -7806,7 +7815,17 @@ window.otdFinCuenta = function(d){
   const num = x => (x === null || x === undefined || x === '' || !isFinite(Number(x))) ? null : Number(x);
   const serv = num(d.serv), env = num(d.env), tot = num(d.tot);
   const kI = num(d.kInst), kD = num(d.kDesp);
-  const c = {kInstN: kI, kDespN: kD};
+  // 💰 D2 (revisión Opus 2026-09-26 -- Daniel: "Nos cuesta = técnico/
+  // proveedor + despacho + repuestos, con desglose visible"): kRep viene
+  // de GET /ot/api/<vid>/resultado-financiero (window.OTD_KREP, ver el
+  // fetch al pie de este script) -- MISMA función que usa Vida del
+  // cliente para "Margen por OT" (_ot_resultado_financiero, único lugar
+  // que calcula esto). Es INFORMATIVO: no participa en `costoCompleto`
+  // (esa bandera sigue siendo solo técnico+despacho -- los repuestos
+  // nunca bloquean nada, D2) pero SÍ suma al total real "Nos cuesta"/
+  // "Queda"/semáforo, que es lo que se pidió.
+  const kR = num(d.kRep);
+  const c = {kInstN: kI, kDespN: kD, kRepN: kR};
   c.hayCobro = tot !== null || serv !== null || env !== null;
   c.cDesp = env || 0;
   c.cTot = tot !== null ? tot : ((serv || 0) + (env || 0));
@@ -7815,7 +7834,8 @@ window.otdFinCuenta = function(d){
   c.cInst = tot !== null ? (tot - c.cDesp) : (serv || 0);
   c.hayCosto = kI !== null || kD !== null;
   c.costoCompleto = kI !== null && kD !== null;
-  c.kInst = kI || 0; c.kDesp = kD || 0; c.kTot = c.kInst + c.kDesp;
+  c.kInst = kI || 0; c.kDesp = kD || 0; c.kRep = kR || 0;
+  c.kTot = c.kInst + c.kDesp + c.kRep;
   c.qInst = c.cInst - c.kInst; c.qDesp = c.cDesp - c.kDesp; c.qTot = c.cTot - c.kTot;
   c.pInst = c.cInst > 0 ? c.qInst / c.cInst * 100 : null;
   c.pDesp = c.cDesp > 0 ? c.qDesp / c.cDesp * 100 : null;
@@ -8050,9 +8070,66 @@ window.otdFinToggleDesglose = function(forzar){
     const ds = bar.dataset;
     const n = x => (x === undefined || x === '') ? null : Number(x);
     window.otdFinPintar({serv: n(ds.serv), env: n(ds.env), tot: n(ds.tot),
-      kInst: n(ds.kinst), kDesp: n(ds.kdesp),
+      kInst: n(ds.kinst), kDesp: n(ds.kdesp), kRep: window.OTD_KREP,
       garantia: window.OTD_FIN.garantia, neg: window.OTD_FIN.neg, Neg: window.OTD_FIN.Neg});
   }
+})();
+
+/* 💰 D2 (revisión Opus 2026-09-26 -- Daniel: "la tarjeta de la OT y la
+   fila de esa OT en Vida deben dar EXACTAMENTE el mismo Cobramos/Nos
+   cuesta/Queda/semáforo"): GET /ot/api/<vid>/resultado-financiero -- la
+   MISMA función (_ot_resultado_financiero) que ya usa Vida del cliente
+   para "Margen por OT". `setTimeout(...,0)` -- no `OTD_VID` a secas --
+   porque esta tarjeta se pinta ANTES de que `const OTD_VID` (más abajo
+   en este mismo <script>) exista todavía (gotcha_ot2_detalle_scope_y_
+   modales.md: "VID en IIFE, usar OTD_VID" -- acá el problema es al
+   revés, OTD_VID todavía no se declaró en este punto del parseo). Un
+   setTimeout(0) corre después de que TODO el script haya terminado de
+   ejecutarse una vez, cuando OTD_VID ya es global. */
+(function(){
+  const bar = document.getElementById('otdFinBar');
+  if (!bar) return;   // técnico: la tarjeta no existe, nada que pedir
+  setTimeout(async function(){
+    try {
+      const vid = (typeof OTD_VID !== 'undefined') ? OTD_VID : null;
+      if (!vid) return;
+      const r = await fetch('/ot/api/' + vid + '/resultado-financiero', {credentials: 'same-origin'});
+      const j = await r.json();
+      if (!j.ok) return;
+      window.OTD_KREP = j.costo_repuestos || 0;
+      const wrap = document.getElementById('otdFinResRepWrap');
+      const val = document.getElementById('otdFinResRep');
+      const nota = document.getElementById('otdFinResRepN');
+      if (j.costo_repuestos > 0 && wrap && val){
+        wrap.hidden = false;
+        val.textContent = window.otdFinFmt(j.costo_repuestos);
+        const dsg = j.repuestos_desglose || {};
+        const partes = [];
+        if (dsg.bodega) partes.push('bodega ' + window.otdFinFmt(dsg.bodega));
+        if (dsg.compra) partes.push('compra ' + window.otdFinFmt(dsg.compra));
+        if (dsg.manual) partes.push('manual ' + window.otdFinFmt(dsg.manual));
+        if (nota) nota.textContent = partes.join(' · ')
+          + (j.repuestos_sin_costo ? (partes.length ? ' · ' : '') + j.repuestos_sin_costo + ' sin costo' : '');
+      } else if (j.repuestos_sin_costo > 0 && wrap && val){
+        // Hay repuestos instalados pero NINGUNO tiene costo todavía --
+        // se muestra igual (transparencia) en vez de desaparecer la fila.
+        wrap.hidden = false;
+        val.textContent = '—';
+        if (nota) nota.textContent = j.repuestos_sin_costo + ' repuesto(s) sin costo registrado';
+      }
+      // Repinta con el kRep ya cargado -- el primer pintado (arriba) corrió
+      // sin este dato porque el fetch todavía no volvía.
+      if (window.OTD_KREP && document.getElementById('otdFinCosto')){
+        if (typeof window.otdPintarResultado === 'function') window.otdPintarResultado();
+      } else if (window.OTD_KREP && !document.getElementById('otdFinCosto')){
+        const ds = bar.dataset;
+        const n = x => (x === undefined || x === '') ? null : Number(x);
+        window.otdFinPintar({serv: n(ds.serv), env: n(ds.env), tot: n(ds.tot),
+          kInst: n(ds.kinst), kDesp: n(ds.kdesp), kRep: window.OTD_KREP,
+          garantia: window.OTD_FIN.garantia, neg: window.OTD_FIN.neg, Neg: window.OTD_FIN.Neg});
+      }
+    } catch (e) { /* informativo -- si falla, la tarjeta sigue sin repuestos, nunca rompe nada */ }
+  }, 0);
 })();
 
 /* 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del
@@ -8213,6 +8290,7 @@ window.otdFinToggleDesglose = function(forzar){
       serv: window.otdMoneyVal('otdFinZzServ'), env: window.otdMoneyVal('otdFinZzEnvio'),
       tot: window.otdMoneyVal('otdFinCosto'),
       kInst: window.otdMoneyVal('otdFinCostoProveedor'), kDesp: window.otdMoneyVal('otdFinCostoDespacho'),
+      kRep: window.OTD_KREP,
       garantia: F.garantia, neg: F.neg, Neg: F.Neg,
     });
     // "Nos cuesta en total": texto calculado, no un campo.

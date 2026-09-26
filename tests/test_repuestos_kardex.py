@@ -319,6 +319,13 @@ class TestOtrepFilaComprometidoPropio(unittest.TestCase):
             "_OTREP_ANTIGUEDAD_DIAS_VERDE": _extraer_constante_tupla("_OTREP_ANTIGUEDAD_DIAS_VERDE"),
             "_OTREP_ANTIGUEDAD_DIAS_AMBAR": _extraer_constante_tupla("_OTREP_ANTIGUEDAD_DIAS_AMBAR"),
             "datetime": datetime,
+            # 🔒 2026-09-26 (revisión Opus, hallazgo ALTA #1 -- Vida del
+            # cliente Etapa A): _otrep_fila ahora empieza llamando a
+            # _es_rol_tecnico() para esconder costo_unitario/costo_origen
+            # de cualquier técnico. Stub neutro (False) -- estas pruebas
+            # son sobre comprometido/disponible, no sobre ese candado.
+            "_es_rol_tecnico": lambda *a, **k: False,
+            "_OTREP_SOL_SOLO_GESTION": ("costo_unitario", "costo_origen"),
         }
         cls.fila = staticmethod(_extraer_funcion("_otrep_fila", contexto=contexto))
 
