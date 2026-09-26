@@ -82185,7 +82185,12 @@ def ot2_detalle(vid):
         for _pp in _principales:
             _u = _pp.get("cloudinary_url") or (
                 f"/static/{_pp['archivo_path']}" if _pp.get("archivo_path") else "")
-            if _u and _pp.get("maquina_id") is not None:
+            # 🔴 FIX 2026-09-26 (revisión, BAJA 7): el endpoint ya rechaza
+            # marcar un video como principal, pero esto es defensa en
+            # profundidad para filas viejas/legacy que pudieran tener
+            # es_principal=1 sobre un video -- la miniatura del equipo
+            # nunca debe intentar mostrar un video como si fuera foto.
+            if _u and _pp.get("maquina_id") is not None and not _foto_es_video_url(_u):
                 _principal_por_mid[int(_pp["maquina_id"])] = _u
         for _e in equipos:
             _mid_e = _e.get("id")
@@ -102438,28 +102443,80 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     #    confundan: uno es "como quedó ESTA visita", el otro es "como está
     #    HOY la ficha" (puede haber cambiado por una OT posterior).
     rep_por_maquina = rep_por_maquina or {}
-    rep_resumen = []
     for e in equipos:
         _sols_e = rep_por_maquina.get(e.get("id"), [])
         e["rep_solicitudes"] = _sols_e
-        _hay_fs_sol = any(s.get("dejo_fuera_servicio") for s in _sols_e)
-        _hay_abierta = any((s.get("estado") in _OTREP_ABIERTOS) for s in _sols_e)
+        # 🔴 FIX 2026-09-26 (revisión de hallazgos, ALTA 1): "Estado en esta
+        # OT" no podía llegar nunca a "Operativo" por descarte -- un equipo
+        # sin ninguna revisión real (o con checklist a medias, o con falla
+        # detectada) terminaba mostrando "Operativo" solo porque no calzaba
+        # con baja/fuera de servicio/solicitud abierta. Cascada EXPLÍCITA,
+        # de más a menos grave -- la PRIMERA regla que aplica gana:
+        #   1. saltado (no revisado) con una razón que NO es baja ni fuera
+        #      de servicio -> "No revisado · {razón}"
+        #   2. falla detectada (checklist o diagnóstico por equipo)
+        #      -> "Con falla"
+        #   3. dado de baja EN ESTA visita -> "Dado de baja"
+        #   4. fuera de servicio EN ESTA visita (razón, o una solicitud de
+        #      ESTA visita con dejo_fuera_servicio=1) -> "Fuera de servicio"
+        #   5. cualquier solicitud de repuesto de ESTA visita, salvo las
+        #      rechazadas -> "Con alerta · repuesto solicitado" (MEDIA 3:
+        #      NO depende del estado ACTUAL/vivo de la solicitud -- si se
+        #      instaló semanas después, la evidencia de ESTA OT no cambia
+        #      retroactivamente; el estado vivo se ve en la pill de la fila
+        #      del resumen, no acá)
+        #   6. revisión OK (verificado/con_cambios) o diagnóstico aprobado
+        #      -> "Operativo"
+        #   7. nada de lo anterior (equipo sin ningún dato de revisión)
+        #      -> "Sin revisión registrada" (gris, NO "Operativo")
         _razon_e = (e.get("razon_saltado") or "").strip().lower()
-        if _razon_e == "dado_de_baja":
+        _rev_e = (e.get("estado_revision") or "").strip().lower()
+        _diag_e = (e.get("diagnostico_estado") or "").strip().lower()
+        _saltado_e = (_rev_e == "saltado")
+        _falla_e = (_rev_e == "falla_detectada") or (_diag_e == "falla")
+        _hay_fs_sol = any(s.get("dejo_fuera_servicio") for s in _sols_e)
+        # No depende de _OTREP_ABIERTOS (MEDIA 3): rechazada es la ÚNICA
+        # que no cuenta como alerta -- ni siquiera "instalado" se excluye.
+        _hay_sol_no_rechazada = any((s.get("estado") or "") != "rechazado" for s in _sols_e)
+        if _saltado_e and _razon_e not in ("dado_de_baja", "fuera_de_servicio"):
+            _razon_lbl_e = e.get("razon_saltado_label") or ""
+            e["estado_esta_ot_label"] = (
+                f"No revisado · {_razon_lbl_e}" if _razon_lbl_e else "No revisado")
+            e["estado_esta_ot_clase"] = "err"
+        elif _falla_e:
+            e["estado_esta_ot_label"] = "Con falla"
+            e["estado_esta_ot_clase"] = "err"
+        elif _razon_e == "dado_de_baja":
             e["estado_esta_ot_label"] = "Dado de baja"
             e["estado_esta_ot_clase"] = "err"
         elif _razon_e == "fuera_de_servicio" or _hay_fs_sol:
             e["estado_esta_ot_label"] = "Fuera de servicio"
             e["estado_esta_ot_clase"] = "err"
-        elif _hay_abierta:
-            e["estado_esta_ot_label"] = "Con alerta · repuesto pendiente"
+        elif _hay_sol_no_rechazada:
+            e["estado_esta_ot_label"] = "Con alerta · repuesto solicitado"
             e["estado_esta_ot_clase"] = "warn"
-        else:
+        elif _rev_e in ("verificado", "con_cambios") or _diag_e == "aprobado":
             e["estado_esta_ot_label"] = "Operativo"
             e["estado_esta_ot_clase"] = "ok"
-        for s in _sols_e:
+        else:
+            e["estado_esta_ot_label"] = "Sin revisión registrada"
+            e["estado_esta_ot_clase"] = "mute"
+
+    # 🔴 FIX 2026-09-26 (revisión de hallazgos, MEDIA 2): rep_resumen se
+    # arma desde rep_por_maquina COMPLETO -- antes solo recorría `equipos`,
+    # así que un equipo que por cualquier motivo no llegara a "Equipos
+    # informados" perdía sus solicitudes en el resumen de la OT aunque
+    # existieran de verdad. `maquina_nombre` viaja en cada solicitud desde
+    # el LEFT JOIN de la propia consulta en _ot_pdf_context -- ya no
+    # depende de `equipos` para saber el nombre del equipo.
+    rep_resumen = []
+    for _mid_r, _sols_r in rep_por_maquina.items():
+        _idx_r = idx_por_maquina.get(_mid_r) if _mid_r is not None else None
+        for s in _sols_r:
+            _nombre_r = s.get("maquina_nombre") or (
+                f"Equipo #{_mid_r}" if _mid_r else "Sin equipo asociado")
             rep_resumen.append({
-                "equipo_idx": e.get("idx"), "equipo_nombre": e.get("nombre") or "",
+                "equipo_idx": _idx_r, "equipo_nombre": _nombre_r,
                 "repuesto_nombre": s.get("repuesto_nombre") or "",
                 "cantidad": s.get("cantidad"), "medida": s.get("medida") or "",
                 # "estado" (crudo, ej. 'instalado'/'rechazado') solo sirve para
@@ -102467,7 +102524,11 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
                 # (no es costo/proveedor/OC), ver _OTREP_ESTADOS.
                 "estado": s.get("estado") or "", "estado_label": s.get("estado_label") or "",
                 "fecha_str": s.get("fecha_str") or "",
+                "_orden": (_idx_r if _idx_r is not None else 10 ** 6, _nombre_r),
             })
+    rep_resumen.sort(key=lambda r: r["_orden"])
+    for _r in rep_resumen:
+        _r.pop("_orden", None)
 
     # ── 2) Filas del checklist: campos probatorios + orden por tarjeta ──
     t_por_id = {t.get("id"): t for t in tareas}
@@ -102873,14 +102934,11 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     # era lo único que se imprimía como "Observación". Con fallback a la
     # consulta anterior por si algún entorno no tiene las columnas
     # (ILUS_SKIP_MIGRATIONS=1).
-    _sql_equipos_base = (
+    _sql_equipos_joins = (
         "  FROM mant_visita_tareas vt "
         "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
         "  LEFT JOIN mant_visita_equipos ve "
         "         ON ve.visita_id = vt.visita_id AND ve.maquina_id = m.id "
-        " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
-        "   AND COALESCE(m.estado,'activo') != 'baja' "
-        " ORDER BY m.nombre"
     )
     try:
         equipos = mysql_fetchall(
@@ -102890,17 +102948,37 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             "       ve.diagnostico_estado, ve.diagnostico_texto, "
             "       ve.estado_revision, ve.razon_saltado, ve.observacion_tecnico, "
             "       ve.revisado_at, ve.revisado_por "
-            + _sql_equipos_base,
+            + _sql_equipos_joins +
+            # 🔴 FIX 2026-09-26 (revisión de hallazgos, MEDIA 2 -- mismo
+            # criterio que ya usa ot2_detalle, app.py ~81241): un equipo
+            # dado de baja DESDE ESTA OT sigue visible con su sello "Dado
+            # de baja" -- antes desaparecía del PDF entero apenas se
+            # marcaba la baja (COALESCE(m.estado)!='baja' lo excluía sin
+            # excepción), aunque la hubiera hecho el mismo técnico en la
+            # MISMA visita que el documento describe. Las bajas de OTRA
+            # OT/ficha (fuera de esta visita) siguen ocultas como antes --
+            # esta condición solo mira `ve` de ESTA visita_id (el JOIN de
+            # arriba ya filtra por visita_id=vt.visita_id).
+            "WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+            "  AND (COALESCE(m.estado,'activo') != 'baja' "
+            "       OR (ve.estado_revision='saltado' AND ve.razon_saltado='dado_de_baja')) "
+            "ORDER BY m.nombre",
             (vid,)
         ) or []
     except Exception as _e_eq_rev:
         print(f"[_ot_pdf_context][equipos_revision] vid={vid}: {_e_eq_rev}", flush=True)
+        # Fallback (entorno sin las columnas de revisión, ILUS_SKIP_MIGRATIONS=1):
+        # sin razon_saltado no hay forma de distinguir "de baja desde ESTA
+        # OT" -- se mantiene el filtro simple de siempre, sin la excepción.
         equipos = mysql_fetchall(
             "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
             "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
             "       m.ubicacion_sala, m.estado_capturado, m.observaciones, "
             "       ve.diagnostico_estado, ve.diagnostico_texto "
-            + _sql_equipos_base,
+            + _sql_equipos_joins +
+            "WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+            "  AND COALESCE(m.estado,'activo') != 'baja' "
+            "ORDER BY m.nombre",
             (vid,)
         ) or []
     equipos = [dict(e) for e in equipos]
@@ -103448,11 +103526,17 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     #    transformación (sin Flask ni MySQL, ver su docstring).
     rep_por_maquina = {}
     try:
+        # 🔴 FIX 2026-09-26 (revisión, MEDIA 2): + LEFT JOIN mant_maquinas
+        # para traer `maquina_nombre` DESDE ESTA MISMA consulta -- así
+        # rep_resumen (en _ot_pdf_probatorio) puede armarse desde
+        # rep_por_maquina completo sin depender de que el equipo también
+        # haya llegado a la lista `equipos` (ver ese comentario más abajo).
         _rep_rows_pdf = mysql_fetchall(
-            "SELECT maquina_id, repuesto_nombre, cantidad, medida, estado, "
-            "       dejo_fuera_servicio, created_at "
-            "  FROM mant_ot_repuesto_solicitudes "
-            " WHERE visita_id=%s ORDER BY id ASC", (vid,)) or []
+            "SELECT s.maquina_id, s.repuesto_nombre, s.cantidad, s.medida, s.estado, "
+            "       s.dejo_fuera_servicio, s.created_at, m.nombre AS maquina_nombre "
+            "  FROM mant_ot_repuesto_solicitudes s "
+            "  LEFT JOIN mant_maquinas m ON m.id = s.maquina_id "
+            " WHERE s.visita_id=%s ORDER BY s.id ASC", (vid,)) or []
         for _rp in _rep_rows_pdf:
             _rp = dict(_rp)
             _rp["cantidad"] = float(_rp["cantidad"]) if _rp.get("cantidad") is not None else None
@@ -106001,6 +106085,53 @@ def mant_visita_foto_girar(vid, fid):
     return jsonify({"ok": True, **res})
 
 
+class _FotoPrincipalError(Exception):
+    """Error de negocio al marcar/desmarcar foto principal (mismo patrón
+    que _FotoGiroError): `mensaje` apto para mostrarse al usuario tal
+    cual (REGLA #4: el detalle técnico va solo al log)."""
+
+    def __init__(self, mensaje, status=400):
+        super().__init__(mensaje)
+        self.mensaje = mensaje
+        self.status = status
+
+
+def _foto_principal_sin_permiso():
+    # 🔴 FIX 2026-09-26 (revisión, BAJA 8): mensaje PROPIO -- antes
+    # reusaba _foto_girar_sin_permiso() y el usuario leía "no tienes
+    # permiso para GIRAR" al intentar elegir una foto principal.
+    return jsonify({"ok": False,
+                    "error": "No tienes permiso para elegir la foto principal de esta OT."}), 403
+
+
+def _parse_bool_estricto(v):
+    """🔴 FIX 2026-09-26 (revisión, BAJA 8): `bool(v)` acepta CUALQUIER
+    valor truthy -- un body `{"principal": "false"}` (string no vacío)
+    se leía como True. Solo boolean real, 1/0, o los strings
+    'true'/'false'/'1'/'0' (case-insensitive) son válidos; cualquier otra
+    cosa levanta ValueError."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if v in (0, 1):
+            return bool(v)
+    if isinstance(v, str):
+        vl = v.strip().lower()
+        if vl in ("true", "1"):
+            return True
+        if vl in ("false", "0"):
+            return False
+    raise ValueError(f"valor de 'principal' inválido: {v!r}")
+
+
+def _foto_es_video_url(url):
+    """🔴 FIX 2026-09-26 (revisión, BAJA 7): "elegir la foto principal"
+    -- un video no es una foto. Mismas extensiones que el resto del
+    proyecto usa para reconocer video (_OTREP_VIDEO_EXT)."""
+    u = (url or "").strip().lower().split("?")[0]
+    return u.endswith(tuple("." + e for e in _OTREP_VIDEO_EXT))
+
+
 def _foto_marcar_principal(vid, fid, principal):
     """⭐ 2026-09-26 (Daniel: "elegir la foto principal de cada OT"). Marca o
     desmarca la foto `fid` de la OT `vid` como PRINCIPAL de su equipo.
@@ -106013,17 +106144,21 @@ def _foto_marcar_principal(vid, fid, principal):
     mismo candado para no dejar dos "generales" a la vez.
 
     Devuelve {"principal": bool, "maquina_id": int|None}. Lanza ValueError
-    (mensaje apto para el usuario) si la foto no existe en esa OT.
+    si la foto no existe en esa OT, o _FotoPrincipalError (mensaje apto
+    para el usuario) si es un video (BAJA 7).
     """
     def _leer():
         return mysql_fetchone(
-            "SELECT id, maquina_id FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
+            "SELECT id, maquina_id, cloudinary_url, archivo_path "
+            "  FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
             (fid, vid))
     try:
         row = _leer()
     except Exception as e:
         # La columna puede faltar si el _ensure de boot no alcanzó a correr
-        # todavía (mismo patrón defensivo que _foto_girar_fila).
+        # todavía (mismo patrón defensivo que _foto_girar_fila) -- UN
+        # reintento tras forzarlo; si sigue fallando, se deja propagar
+        # para que el endpoint responda 503 (BAJA 8), no un 500 genérico.
         print(f"[foto_principal] leer fila vid={vid} fid={fid}: {e} -- reintento tras _ensure",
               flush=True)
         _ensure_fotos_principal_col()
@@ -106031,6 +106166,33 @@ def _foto_marcar_principal(vid, fid, principal):
     if not row:
         raise ValueError("Foto no encontrada en esta OT.")
     mid = row.get("maquina_id")
+
+    if principal and _foto_es_video_url(row.get("cloudinary_url") or row.get("archivo_path")):
+        raise _FotoPrincipalError(
+            "Solo una FOTO puede ser la principal de un equipo -- esto es un video.")
+
+    # 🔒 REGLA #5 (revisión, BAJA 8): log ANTES de mutar -- qué foto(s)
+    # pierden la estrella queda en la bitácora aunque el UPDATE de abajo
+    # fallara justo después por lo que sea.
+    _perdedoras_ids = []
+    try:
+        if principal:
+            _where_grupo = ("maquina_id IS NULL" if mid is None else "maquina_id=%s")
+            _params_grupo = (vid,) if mid is None else (vid, mid)
+            _perdedoras = mysql_fetchall(
+                f"SELECT id FROM mant_visita_fotos WHERE visita_id=%s AND {_where_grupo} "
+                f"  AND es_principal=1 AND id<>%s",
+                _params_grupo + (fid,)) or []
+            _perdedoras_ids = [r["id"] for r in _perdedoras]
+    except Exception as e:
+        print(f"[foto_principal] leer perdedoras vid={vid} fid={fid}: {e}", flush=True)
+    _mant_log(
+        "visita", vid, "foto_principal",
+        f"Foto #{fid} {'marcada como' if principal else 'quitada de'} principal"
+        + (f" del equipo #{mid}" if mid else " (general de la OT)")
+        + (f" -- pierde la estrella: foto(s) #{', '.join(str(x) for x in _perdedoras_ids)}"
+           if _perdedoras_ids else ""))
+
     conn = get_db()
     with conn.cursor() as cur:
         if principal:
@@ -106064,23 +106226,32 @@ def mant_visita_foto_principal(vid, fid):
     representa el equipo es parte de dejar la evidencia bien armada, no
     una decisión administrativa aparte."""
     if not _foto_puede_girar(vid):
-        return _foto_girar_sin_permiso()
+        return _foto_principal_sin_permiso()
     body = request.get_json(silent=True) or {}
-    principal = bool(body.get("principal"))
+    try:
+        principal = _parse_bool_estricto(body.get("principal"))
+    except ValueError:
+        return jsonify({"ok": False, "error": "El campo 'principal' debe ser true o false."}), 400
     try:
         res = _foto_marcar_principal(vid, fid, principal)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 404
+    except _FotoPrincipalError as e:
+        return jsonify({"ok": False, "error": e.mensaje}), e.status
     except Exception as e:
-        print(f"[foto_principal] vid={vid} fid={fid}: {type(e).__name__}: {str(e)[:300]}", flush=True)
+        msg = str(e)
+        # 🔴 FIX 2026-09-26 (revisión, BAJA 8): si la columna es_principal
+        # todavía no existe en este entorno (el _ensure de boot no alcanzó
+        # a correr o falló), decirlo con un 503 amable en vez de un 500
+        # genérico -- es una condición transitoria, no un error real.
+        if "es_principal" in msg and ("Unknown column" in msg or "1054" in msg):
+            print(f"[foto_principal] columna faltante vid={vid} fid={fid}: {msg}", flush=True)
+            return jsonify({"ok": False, "error":
+                            "La foto principal se está activando en el servidor, "
+                            "intenta de nuevo en un minuto."}), 503
+        print(f"[foto_principal] vid={vid} fid={fid}: {type(e).__name__}: {msg[:300]}", flush=True)
         return jsonify({"ok": False,
                         "error": "No se pudo actualizar la foto principal. Intenta de nuevo."}), 500
-    try:
-        _mant_log("visita", vid, "foto_principal",
-                  f"Foto #{fid} {'marcada como' if principal else 'quitada de'} principal"
-                  + (f" del equipo #{res['maquina_id']}" if res.get("maquina_id") else " (general de la OT)"))
-    except Exception as e:
-        print(f"[foto_principal] log vid={vid}: {e}", flush=True)
     return jsonify({"ok": True, **res})
 
 
@@ -117318,8 +117489,20 @@ def mant_cliente_repuestos_solicitudes(cid):
         return jsonify({"ok": False, "error": "Cliente no encontrado."}), 404
 
     estado = (request.args.get("estado") or "todas").strip().lower()
-    where = ["s.cliente_id=%s"]
-    params = [cid]
+    # 🔴 FIX 2026-09-26 (revisión de hallazgos, MEDIA 4): `s.cliente_id=%s`
+    # solo (antes) dejaba afuera las solicitudes de Ticket/Incidencia de
+    # ESTE cliente que no traen cliente_id propio pero SÍ traen un equipo
+    # o una OT de este cliente -- "el repositorio son las fichas de
+    # clientes, todo movimiento se verá reflejado" no se cumplía para esas.
+    # Se liga por las 3 vías posibles, sin adivinar: un ticket/incidencia
+    # SIN cliente_id, SIN maquina_id y SIN visita_id de este cliente
+    # sencillamente no se puede atribuir con certeza -- se queda afuera a
+    # propósito (ver el subtítulo ajustado en ficha.html, que ya no dice
+    # "de este cliente" sin más).
+    where = ["(s.cliente_id=%s "
+             " OR s.maquina_id IN (SELECT id FROM mant_maquinas WHERE cliente_id=%s) "
+             " OR s.visita_id IN (SELECT id FROM mant_visitas WHERE cliente_id=%s))"]
+    params = [cid, cid, cid]
     if estado in ("abiertas", "pendientes"):
         where.append("s.estado IN ('" + "','".join(_OTREP_ABIERTOS) + "')")
     elif estado == "cerradas":

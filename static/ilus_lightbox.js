@@ -202,9 +202,13 @@
       starBtn.disabled = marcandoPrincipal;
       var ico = starBtn.querySelector('i');
       if (ico) ico.className = (it && it.principal) ? 'bi bi-star-fill' : 'bi bi-star';
+      // ⭐ 2026-09-26 (revisión, BAJA 9): título según el caso -- una foto
+      // sin `mid` es la principal GENERAL de la OT (no de un equipo), y
+      // decir "de este equipo" ahí sería falso.
+      var ambito = (it && it.mid) ? 'de este equipo' : 'de la OT';
       starBtn.title = (it && it.principal)
-        ? 'Foto principal de este equipo (toca para quitarla)'
-        : 'Marcar como foto principal de este equipo';
+        ? ('Foto principal ' + ambito + ' (toca para quitarla)')
+        : ('Marcar como foto principal ' + ambito);
     }
 
     function applyTransform() {
@@ -297,6 +301,16 @@
           marcandoPrincipal = false;
           var principal = !!(res && res.principal);
           it.principal = principal;
+          // ⭐ 2026-09-26 (revisión, BAJA 5): si esta foto quedó principal,
+          // las DEMÁS del mismo equipo (mismo it.mid) dejan de serlo EN EL
+          // ARREGLO del visor -- así, si el usuario navega a otra foto de
+          // ese equipo sin cerrar el visor, ya ve la estrella correcta sin
+          // esperar el refresco de la página/checklist.
+          if (principal && it.mid) {
+            images.forEach(function (o) {
+              if (o !== it && o.mid && String(o.mid) === String(it.mid)) o.principal = false;
+            });
+          }
           _toast(principal ? '★ Foto marcada como principal' : 'Foto principal quitada', 'success');
           actualizarEstrella();
         })

@@ -877,12 +877,18 @@ function repSolRenderTabla(arr) {
                   recibido:'#3b82f6', instalado:'#16a34a', rechazado:'#dc2626' };
   tbody.innerHTML = arr.map(s => {
     const color = COLOR[s.estado] || '#6b7280';
+    // 🔴 FIX 2026-09-26 (revisión, BAJA 10): visita_id puede existir
+    // mientras la OT ya no (borrada) -- s.numero_ot llega vacío desde el
+    // LEFT JOIN. Antes eso caía a "Sin OT · manual" (falso: sí tuvo una
+    // OT) o a un <a href> con texto vacío si solo se miraba visita_id.
     const otOrigen = s.numero_ot
       ? `<a href="/ot/${s.visita_id}" target="_blank" rel="noopener">${repEsc(s.numero_ot)}</a>`
-      : '<span class="text-muted">Sin OT · manual</span>';
+      : (s.visita_id
+          ? '<span class="text-muted" title="La OT que la levantó ya no existe">OT eliminada</span>'
+          : '<span class="text-muted">Sin OT · manual</span>');
     const otInstal = s.ot_generada_numero
       ? `<a href="/ot/${s.ot_generada_id}" target="_blank" rel="noopener">${repEsc(s.ot_generada_numero)}</a>`
-      : '—';
+      : (s.ot_generada_id ? '<span class="text-muted" title="La OT de instalación ya no existe">OT eliminada</span>' : '—');
     return `
     <tr>
       <td>

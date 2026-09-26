@@ -3901,7 +3901,9 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                   <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}"
                        data-principal="{{ '1' if f.principal else '0' }}"
                        onclick="otdVerFoto(this)">
-                  {% if f.principal %}<i class="bi bi-star-fill otd-ev-star" title="Foto principal de este equipo"></i>{% endif %}
+                  {# ⭐ BAJA 9 (revisión): título según el caso -- una foto sin
+                     equipo asociado es la principal GENERAL de la OT. #}
+                  {% if f.principal %}<i class="bi bi-star-fill otd-ev-star" title="{{ 'Foto principal de este equipo' if f.maquina_id else 'Foto principal de la OT' }}"></i>{% endif %}
                 {% else %}
                   <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
                     <i class="bi bi-image" style="font-size:1.6rem"></i></div>
@@ -5401,13 +5403,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                mismo orden que eq_foto_ref en ot_pdf.html. `data-eqfoto` va
                en LOS TRES casos (antes solo en el ícono) para que
                otdEqFotosFallback pueda reemplazar cualquiera de los tres
-               apenas se marque/desmarque una principal, sin recargar. #}
+               apenas se marque/desmarque una principal, sin recargar.
+               `data-ficha-url` (revisión, BAJA 6) guarda la foto de ficha
+               SIEMPRE, aunque hoy no se esté mostrando (porque hay
+               principal) -- así, si la principal se DESMARCA, JS puede
+               volver a la ficha sin tener que recargar la página. #}
             {% if e.foto_principal_url %}
-              <img class="th" data-eqfoto="{{ e.id }}" src="{{ e.foto_principal_url }}" alt="" loading="lazy" title="Foto principal">
+              <img class="th" data-eqfoto="{{ e.id }}" data-ficha-url="{{ e.foto_url or '' }}"
+                   src="{{ e.foto_principal_url }}" alt="" loading="lazy" title="Foto principal">
             {% elif e.foto_url %}
-              <img class="th" data-eqfoto="{{ e.id }}" src="{{ e.foto_url }}" alt="" loading="lazy">
+              <img class="th" data-eqfoto="{{ e.id }}" data-ficha-url="{{ e.foto_url }}"
+                   src="{{ e.foto_url }}" alt="" loading="lazy">
             {% else %}
-              <span class="th" data-eqfoto="{{ e.id }}"><i class="bi bi-image"></i></span>
+              <span class="th" data-eqfoto="{{ e.id }}" data-ficha-url=""><i class="bi bi-image"></i></span>
             {% endif %}
             <div class="nm">
               <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if not e._interno and e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
@@ -10818,23 +10826,24 @@ async function otdCargarChecklistSiHaceFalta(){
    las tarjetas, se verían más bonitas".
 
    Se resuelve en el navegador con los datos del checklist que ya se
-   descargaron (cero consultas nuevas). La foto de ficha, cuando existe,
-   SIEMPRE gana: es la foto del equipo, no la de un momento puntual.
-   Al tocarla abre el visor, igual que el resto de las fotos.
+   descargaron (cero consultas nuevas). Al tocarla abre el visor, igual
+   que el resto de las fotos.
 
    ⭐ 2026-09-26 (Daniel, en vivo: "si hay foto principal de este equipo en
-   esta OT, esa es la miniatura", "todo debe estar conectado"): ahora
-   TODOS los casos (ficha, fallback, ícono) traen `data-eqfoto`, así esta
-   función corre siempre que se recarga el checklist (tras marcar/
-   desmarcar una principal) y puede REEMPLAZAR una miniatura que ya tenía
-   imagen -- antes solo rellenaba el ícono gris. La foto principal manda
-   incluso sobre la de ficha; si no hay principal NUEVA y ya había una
-   imagen pintada (ficha o principal previa), se deja tal cual (no se
-   downgradea a la "primera evidencia" de siempre). */
+   esta OT, esa es la miniatura", "todo debe estar conectado"): esta
+   función SIEMPRE recalcula la cascada completa -- principal > ficha
+   (`data-ficha-url`, guardado por Jinja aunque hoy no se esté mostrando)
+   > primera evidencia real > ícono -- así corre cada vez que se recarga
+   el checklist (tras marcar/desmarcar una principal) y puede tanto
+   REEMPLAZAR una miniatura que ya tenía imagen (ficha o una principal
+   vieja) COMO volver a la ficha/ícono si la principal se desmarcó
+   (revisión, BAJA 6: "al desmarcar, la miniatura vuelve a la regla
+   ficha → primera foto → ícono sin recargar"). */
 function otdEqFotosFallback(){
   if (!OTD_CHK_DATA) return;
   document.querySelectorAll('[data-eqfoto]').forEach(function(ph){
     const mid = ph.getAttribute('data-eqfoto');
+    const fichaUrl = ph.getAttribute('data-ficha-url') || '';
     const grupos = OTD_CHK_DATA[String(mid)] || [];
     let url = '', desde = '', fid = '', esPrincipal = false;
     busqueda_principal:
@@ -10848,9 +10857,13 @@ function otdEqFotosFallback(){
         }
       }
     }
-    if (!url && ph.tagName === 'IMG') return;   // ya hay imagen y no cambió la principal: se deja
+    if (!url && fichaUrl){
+      // BAJA 6: sin principal (nunca hubo, o se acaba de desmarcar), la
+      // foto de FICHA gana -- es la del equipo, no la de un momento puntual.
+      url = fichaUrl;
+    }
     if (!url){
-      // Sin principal: comportamiento de siempre (primera evidencia real).
+      // Sin principal NI ficha: primera evidencia real de esta OT.
       for (const g of grupos){
         for (const t of (g.tareas || [])){
           if (t.fotos && t.fotos.length && t.fotos[0].url){
@@ -10861,10 +10874,23 @@ function otdEqFotosFallback(){
         if (url) break;
       }
     }
-    if (!url) return;   // sin evidencia todavía: se queda el ícono gris
+    if (!url){
+      // Nada de nada: ícono gris. Si `ph` ya es un <span> con el ícono, no
+      // hay nada que hacer; si venía siendo un <img> (se desmarcó una
+      // principal y tampoco hay ficha ni evidencia), se vuelve al ícono.
+      if (ph.tagName !== 'IMG') return;
+      const span = document.createElement('span');
+      span.className = 'th';
+      span.setAttribute('data-eqfoto', String(mid));
+      span.setAttribute('data-ficha-url', '');
+      span.innerHTML = '<i class="bi bi-image"></i>';
+      ph.replaceWith(span);
+      return;
+    }
     const img = document.createElement('img');
     img.className = 'th';
     img.dataset.eqfoto = String(mid);
+    img.setAttribute('data-ficha-url', fichaUrl);   // se conserva para la próxima pasada
     img.src = url;
     img.loading = 'lazy';
     img.alt = 'Evidencia del equipo';
@@ -10880,7 +10906,7 @@ function otdEqFotosFallback(){
       if (typeof ilusLightbox === 'function'){
         ilusLightbox([{ url: actual, caption: desde ? ('Evidencia: ' + desde) : '',
                         id: otdFotoIdGirable(img.dataset.fid, actual),
-                        principal: esPrincipal }],
+                        principal: esPrincipal, mid: mid }],
                      0, 'Evidencia del equipo', otdFotoLbOpts());
       }
     });
@@ -11666,30 +11692,54 @@ async function otdFotoGuardarPrincipal(fid, principal){
   // El checklist (OTD_CHK_DATA) es la ÚNICA fuente que agrupa fotos por
   // equipo hoy -- se recarga desde el servidor para reflejar que, si se
   // marcó una principal, las demás del mismo equipo (aunque estén en OTRA
-  // tarea) quedaron desmarcadas. OTD_CHK_LOADED=false fuerza el refetch;
-  // otdCargarChecklistSiHaceFalta ya repinta cada .otd-chk-mount abierto
-  // Y la miniatura del resumen (otdEqFotosFallback al final de esa carga).
+  // tarea) quedaron desmarcadas. otdCargarChecklistSiHaceFalta ya repinta
+  // cada .otd-chk-mount abierto Y la miniatura del resumen
+  // (otdEqFotosFallback al final de esa carga).
+  otdRecargarChecklistTrasPrincipal();
+  return { principal: !!d.principal };
+}
+
+/* ⭐ 2026-09-26 (revisión, BAJA 6: "si el checklist está cargando,
+   reintentar después"): forzar OTD_CHK_LOADED=false y llamar de una a
+   otdCargarChecklistSiHaceFalta() es un no-op silencioso si YA hay una
+   carga en curso (el guard `if (OTD_CHK_LOADED || OTD_CHK_LOADING) return`
+   de esa función corta antes de mirar el false que se acaba de poner) --
+   la miniatura/checklist se quedarían desactualizados sin que nadie avise.
+   Se reintenta cada 150ms mientras OTD_CHK_LOADING sea true, hasta 3
+   segundos (20 intentos); pasado eso se rinde en silencio -- un refresh
+   manual de la página sigue funcionando como red de seguridad. */
+function otdRecargarChecklistTrasPrincipal(intentos){
+  intentos = intentos || 0;
+  if (typeof OTD_CHK_LOADING !== 'undefined' && OTD_CHK_LOADING){
+    if (intentos < 20) setTimeout(function(){ otdRecargarChecklistTrasPrincipal(intentos + 1); }, 150);
+    return;
+  }
   OTD_CHK_LOADED = false;
   otdCargarChecklistSiHaceFalta().catch(function(){});
-  return { principal: !!d.principal };
 }
 
 /* ⭐ 2026-09-26: refleja en la galería general (#otdEvGrid) el resultado de
    marcar/desmarcar una principal, sin recargar la página ni esperar al
    checklist. `mid` puede venir vacío (foto sin equipo, principal "general"
-   de la OT) -- en ese caso solo se actualiza la foto tocada. */
+   de la OT) -- en ese caso se agrupa con las DEMÁS fotos SIN equipo
+   (revisión, BAJA 9: antes `mid && ...` era siempre falso para las
+   generales y ninguna otra perdía la estrella). */
 function otdEvGridSyncPrincipal(fid, mid, principal){
   const grid = document.getElementById('otdEvGrid');
   if (!grid) return;
   const fidS = String(fid);
+  const midS = mid ? String(mid) : '';
   grid.querySelectorAll('.otd-ev-item').forEach(function(item){
     const img = item.querySelector('img[data-fid]');
     if (!img) return;
     const esEsta = String(img.dataset.fid) === fidS;
-    const mismoEquipo = mid && item.dataset.mid && String(item.dataset.mid) === String(mid);
+    // '' === '' agrupa las fotos SIN equipo entre sí (la principal
+    // "general" de la OT), igual que un mid real agrupa las de un equipo.
+    const itemMidS = item.dataset.mid || '';
+    const mismoGrupo = itemMidS === midS;
     let nuevo = null;
     if (esEsta) nuevo = principal;
-    else if (principal && mismoEquipo) nuevo = false;   // otra del mismo equipo pierde la estrella
+    else if (principal && mismoGrupo) nuevo = false;   // otra del mismo grupo pierde la estrella
     if (nuevo === null) return;
     img.dataset.principal = nuevo ? '1' : '0';
     let star = item.querySelector('.otd-ev-star');
@@ -11697,7 +11747,9 @@ function otdEvGridSyncPrincipal(fid, mid, principal){
       if (!star){
         star = document.createElement('i');
         star.className = 'bi bi-star-fill otd-ev-star';
-        star.title = 'Foto principal de este equipo';
+        // ⭐ BAJA 9: título según el caso -- una foto sin equipo es la
+        // principal GENERAL de la OT, no "de este equipo".
+        star.title = itemMidS ? 'Foto principal de este equipo' : 'Foto principal de la OT';
         item.appendChild(star);
       }
     } else if (star){
@@ -11869,12 +11921,17 @@ window.otdVerFotosTarea = function(imgEl, idx){
   }
   const imgs = Array.from(cont.querySelectorAll('img'));
   const tarea = (imgEl.getAttribute('alt') || 'Foto de la tarea').trim();
+  // ⭐ 2026-09-26 (revisión, BAJA 5/9): el equipo de esta tarea, para que el
+  // visor sepa qué otras fotos del ARREGLO pertenecen al MISMO equipo (y
+  // desmarcarlas al elegir una nueva principal) y para el título del botón.
+  const mount = cont.closest('.otd-chk-mount');
+  const mid = (mount && mount.dataset.mid) || '';
   const fotos = imgs.map(function(el, i){
     const u = el.getAttribute('src') || el.src;
     // ⭐ 2026-09-26: principal se lee del propio DOM (data-principal), igual
     // que el fid -- así el visor sabe qué estrella pintar sin otra consulta.
     return { url: u, id: otdFotoIdGirable(el.dataset.fid, u),
-             principal: el.dataset.principal === '1',
+             principal: el.dataset.principal === '1', mid: mid,
              caption: tarea + (imgs.length > 1 ? ` · ${i + 1} de ${imgs.length}` : '') };
   });
   const i = (typeof idx === 'number' && idx >= 0) ? idx : Math.max(0, imgs.indexOf(imgEl));

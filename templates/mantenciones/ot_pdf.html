@@ -478,6 +478,10 @@
   .eq-card .eq-ident span.eq-estado-ot.ok  { color: #15803d; font-weight: 800; }
   .eq-card .eq-ident span.eq-estado-ot.warn{ color: #b45309; font-weight: 800; }
   .eq-card .eq-ident span.eq-estado-ot.err { color: var(--ilus-red); font-weight: 800; }
+  {# 🔴 FIX 2026-09-26 (revisión, ALTA 1): "Sin revisión registrada" -- ni
+     verde (no hay revisión que lo respalde) ni rojo (no es una falla),
+     gris neutro (REGLA #2). #}
+  .eq-card .eq-ident span.eq-estado-ot.mute{ color: var(--ilus-mute); font-weight: 800; }
   /* "Repuestos solicitados en esta OT": mismo lenguaje visual que .eq-obs,
      acento azul (REGLA #2, azul info) para no confundirse con la
      observación del técnico (rojo) ni el diagnóstico (verde/rojo). SOLO

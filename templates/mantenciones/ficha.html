@@ -1462,8 +1462,15 @@
                     {# 🔴 FIX 2026-09-26 (Fase 3b): una solicitud MANUAL (Fase 2,
                        "Solicitar repuesto") puede traer maquina_id sin visita_id
                        -- sin este guard, url_for('ot2_detalle', vid=None) tira
-                       BuildError y rompe la ficha ENTERA con un 500. #}
-                    {% if _rp.visita_id %}· <a href="{{ url_for('ot2_detalle', vid=_rp.visita_id) }}" title="La OT que lo levantó">{{ _rp.numero_ot }}</a>
+                       BuildError y rompe la ficha ENTERA con un 500.
+                       🔴 FIX 2026-09-26 (revisión, BAJA 10): visita_id puede
+                       existir mientras la OT ya no (borrada) -- el LEFT JOIN de
+                       la consulta deja `numero_ot` en NULL. Antes eso caía al
+                       `else` y mostraba "Solicitud manual", que es falso (SÍ
+                       tuvo una OT), o un <a> con texto vacío si se mira solo
+                       visita_id. Se distinguen los 3 casos reales. #}
+                    {% if _rp.visita_id and _rp.numero_ot %}· <a href="{{ url_for('ot2_detalle', vid=_rp.visita_id) }}" title="La OT que lo levantó">{{ _rp.numero_ot }}</a>
+                    {% elif _rp.visita_id %}· <span class="text-muted" title="La OT que la levantó ya no existe">OT eliminada</span>
                     {% else %}· <span class="text-muted" title="Levantada manualmente desde Repuestos, sin OT de origen">Solicitud manual</span>{% endif %}
                     {% if _rp.ticket_id %}· <a href="/tickets/{{ _rp.ticket_id }}" title="Ticket de seguimiento">{{ _rp.numero_ticket }}</a>{% endif %}
                     <em>{{ (_rp.estado_label or _rp.estado).split(' · ')[0] }}</em>
@@ -2707,11 +2714,17 @@
    cualquier origen (OT, manual, incidencia, ticket). NO duplica el chip
    de condición "Con problemas" de la tabla de Equipos (20-sep): ese solo
    muestra las ABIERTAS por equipo; esto es el historial entero,
-   paginado (REGLA #4.3: nada de scroll infinito, N por página real). #}
+   paginado (REGLA #4.3: nada de scroll infinito, N por página real).
+
+   🔴 FIX 2026-09-26 (revisión, MEDIA 4): se liga por cliente_id, equipo
+   (maquina_id de este cliente) o visita (OT de este cliente) -- un
+   ticket/incidencia SIN ninguna de las tres cosas no se puede atribuir
+   con certeza a este cliente y queda AFUERA a propósito (no se adivina).
+   El subtítulo dice exactamente eso, no "todas las solicitudes". #}
 <div class="d-flex align-items-center justify-content-between gap-2 mb-2 flex-wrap">
   <div>
     <span class="fw-bold" style="font-size:.9rem"><i class="bi bi-clock-history me-2" style="color:var(--ilus-red)"></i>Historial de solicitudes de repuesto</span>
-    <span class="text-muted ms-2" style="font-size:.76rem">OT, incidencias y solicitudes manuales de este cliente</span>
+    <span class="text-muted ms-2" style="font-size:.76rem" title="No incluye tickets o incidencias sin cliente, equipo ni OT de este cliente asociados">OT, incidencias y tickets ligados a este cliente, sus equipos o sus OT</span>
   </div>
   <div class="btn-group btn-group-sm" role="group">
     <button type="button" class="btn btn-outline-secondary repsol-f-btn active" data-estado="abiertas" onclick="repSolFiltrar('abiertas')">Pendientes</button>
