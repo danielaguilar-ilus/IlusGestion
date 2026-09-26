@@ -1504,7 +1504,11 @@
 /* Evidencia — galería de fotos reales de la visita */
 .otd-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
   padding:14px 16px}
-.otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc}
+.otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc;position:relative}
+{# ⭐ 2026-09-26: estrella de "foto principal" sobre la miniatura de la
+   galería general -- mismo criterio visual que el checklist. #}
+.otd-ev-star{position:absolute;top:6px;right:6px;color:#f59e0b;font-size:.85rem;
+  text-shadow:0 1px 3px rgba(0,0,0,.6);pointer-events:none;z-index:1}
 /* 🔍 2026-09-04 (Daniel: "quiero verlas cuando presione, con buena
    calidad, mover las fotos, si es necesario rotarla"). La miniatura ahora
    abre el visor global (ilusLightbox — zoom/girar/arrastrar/navegar), así
@@ -3887,9 +3891,17 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             {% endif %}
             <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
               {% for f in fotos %}
-              <div class="otd-ev-item">
+              {# ⭐ 2026-09-26 (Daniel, en vivo: "todo debe estar conectado" --
+                 la galería general es donde más se ven las fotos). data-mid
+                 agrupa las fotos del MISMO equipo (para desmarcar las demás
+                 al elegir una nueva principal) y data-principal + la
+                 estrella reflejan cuál ya está elegida. #}
+              <div class="otd-ev-item" data-mid="{{ f.maquina_id or '' }}">
                 {% if f.url %}
-                  <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}" onclick="otdVerFoto(this)">
+                  <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}"
+                       data-principal="{{ '1' if f.principal else '0' }}"
+                       onclick="otdVerFoto(this)">
+                  {% if f.principal %}<i class="bi bi-star-fill otd-ev-star" title="Foto principal de este equipo"></i>{% endif %}
                 {% else %}
                   <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
                     <i class="bi bi-image" style="font-size:1.6rem"></i></div>
@@ -5381,9 +5393,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                tiene foto, se rellena con la primera evidencia REAL de ese
                equipo en ESTA OT (ver otdEqFotosFallback más abajo). Se hace
                en el navegador con los datos del checklist que ya se
-               descargan: no agrega ni una consulta al servidor. #}
-            {% if e.foto_url %}
-              <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
+               descargan: no agrega ni una consulta al servidor.
+
+               ⭐ 2026-09-26 (Daniel, en vivo: "si hay foto principal de este
+               equipo en esta OT, esa es la miniatura"): la foto PRINCIPAL
+               elegida por el técnico manda incluso sobre la de ficha --
+               mismo orden que eq_foto_ref en ot_pdf.html. `data-eqfoto` va
+               en LOS TRES casos (antes solo en el ícono) para que
+               otdEqFotosFallback pueda reemplazar cualquiera de los tres
+               apenas se marque/desmarque una principal, sin recargar. #}
+            {% if e.foto_principal_url %}
+              <img class="th" data-eqfoto="{{ e.id }}" src="{{ e.foto_principal_url }}" alt="" loading="lazy" title="Foto principal">
+            {% elif e.foto_url %}
+              <img class="th" data-eqfoto="{{ e.id }}" src="{{ e.foto_url }}" alt="" loading="lazy">
             {% else %}
               <span class="th" data-eqfoto="{{ e.id }}"><i class="bi bi-image"></i></span>
             {% endif %}
@@ -10798,29 +10820,56 @@ async function otdCargarChecklistSiHaceFalta(){
    Se resuelve en el navegador con los datos del checklist que ya se
    descargaron (cero consultas nuevas). La foto de ficha, cuando existe,
    SIEMPRE gana: es la foto del equipo, no la de un momento puntual.
-   Al tocarla abre el visor, igual que el resto de las fotos. */
+   Al tocarla abre el visor, igual que el resto de las fotos.
+
+   ⭐ 2026-09-26 (Daniel, en vivo: "si hay foto principal de este equipo en
+   esta OT, esa es la miniatura", "todo debe estar conectado"): ahora
+   TODOS los casos (ficha, fallback, ícono) traen `data-eqfoto`, así esta
+   función corre siempre que se recarga el checklist (tras marcar/
+   desmarcar una principal) y puede REEMPLAZAR una miniatura que ya tenía
+   imagen -- antes solo rellenaba el ícono gris. La foto principal manda
+   incluso sobre la de ficha; si no hay principal NUEVA y ya había una
+   imagen pintada (ficha o principal previa), se deja tal cual (no se
+   downgradea a la "primera evidencia" de siempre). */
 function otdEqFotosFallback(){
   if (!OTD_CHK_DATA) return;
   document.querySelectorAll('[data-eqfoto]').forEach(function(ph){
     const mid = ph.getAttribute('data-eqfoto');
     const grupos = OTD_CHK_DATA[String(mid)] || [];
-    let url = '', desde = '', fid = '';
+    let url = '', desde = '', fid = '', esPrincipal = false;
+    busqueda_principal:
     for (const g of grupos){
       for (const t of (g.tareas || [])){
-        if (t.fotos && t.fotos.length && t.fotos[0].url){
-          url = t.fotos[0].url; desde = t.titulo || ''; fid = t.fotos[0].id || '';
-          break;
+        for (const f of (t.fotos || [])){
+          if (f.principal && f.url){
+            url = f.url; desde = t.titulo || ''; fid = f.id || ''; esPrincipal = true;
+            break busqueda_principal;
+          }
         }
       }
-      if (url) break;
+    }
+    if (!url && ph.tagName === 'IMG') return;   // ya hay imagen y no cambió la principal: se deja
+    if (!url){
+      // Sin principal: comportamiento de siempre (primera evidencia real).
+      for (const g of grupos){
+        for (const t of (g.tareas || [])){
+          if (t.fotos && t.fotos.length && t.fotos[0].url){
+            url = t.fotos[0].url; desde = t.titulo || ''; fid = t.fotos[0].id || '';
+            break;
+          }
+        }
+        if (url) break;
+      }
     }
     if (!url) return;   // sin evidencia todavía: se queda el ícono gris
     const img = document.createElement('img');
     img.className = 'th';
+    img.dataset.eqfoto = String(mid);
     img.src = url;
     img.loading = 'lazy';
     img.alt = 'Evidencia del equipo';
-    img.title = desde ? ('Evidencia: ' + desde) : 'Evidencia de este equipo';
+    img.title = esPrincipal ? ('Foto principal' + (desde ? (' · ' + desde) : ''))
+                             : (desde ? ('Evidencia: ' + desde) : 'Evidencia de este equipo');
     img.style.cursor = 'zoom-in';
     if (fid) img.dataset.fid = String(fid);
     img.addEventListener('click', function(ev){
@@ -10830,7 +10879,8 @@ function otdEqFotosFallback(){
       const actual = img.getAttribute('src') || url;
       if (typeof ilusLightbox === 'function'){
         ilusLightbox([{ url: actual, caption: desde ? ('Evidencia: ' + desde) : '',
-                        id: otdFotoIdGirable(img.dataset.fid, actual) }],
+                        id: otdFotoIdGirable(img.dataset.fid, actual),
+                        principal: esPrincipal }],
                      0, 'Evidencia del equipo', otdFotoLbOpts());
       }
     });
@@ -11532,7 +11582,11 @@ window.otdVerFoto = function(imgEl){
     // Solo si la foto se puede girar (/f/): una del sistema antiguo
     // (Cloudinary, /static/) ofrecería un botón que siempre falla.
     const u = el.getAttribute('src') || el.src;
+    // ⭐ 2026-09-26: principal + mid (equipo), para poder elegir/objetar la
+    // foto principal desde ESTA galería -- la que más ve el técnico.
     return { url: u, id: otdFotoIdGirable(el.dataset.fid, u),
+             principal: el.dataset.principal === '1',
+             mid: (item && item.dataset.mid) || '',
              caption: [tipo, desc, who].filter(Boolean).join(' · ') };
   });
   const idx = Math.max(0, imgs.indexOf(imgEl));
@@ -11604,14 +11658,52 @@ async function otdFotoGuardarPrincipal(fid, principal){
   }
   if (!d) throw new Error(SIN_RESPUESTA);
   if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo actualizar la foto principal.');
+  // ⭐ 2026-09-26: la galería general "Fotos de la OT" (pestaña Información)
+  // NO se recarga del servidor -- se pinta una vez con Jinja -- así que se
+  // sincroniza a mano: esta foto queda con/sin estrella y las DEMÁS del
+  // MISMO equipo la pierden, sin esperar la respuesta del checklist.
+  otdEvGridSyncPrincipal(fid, d.maquina_id, !!d.principal);
   // El checklist (OTD_CHK_DATA) es la ÚNICA fuente que agrupa fotos por
   // equipo hoy -- se recarga desde el servidor para reflejar que, si se
   // marcó una principal, las demás del mismo equipo (aunque estén en OTRA
   // tarea) quedaron desmarcadas. OTD_CHK_LOADED=false fuerza el refetch;
-  // otdCargarChecklistSiHaceFalta ya repinta cada .otd-chk-mount abierto.
+  // otdCargarChecklistSiHaceFalta ya repinta cada .otd-chk-mount abierto
+  // Y la miniatura del resumen (otdEqFotosFallback al final de esa carga).
   OTD_CHK_LOADED = false;
   otdCargarChecklistSiHaceFalta().catch(function(){});
   return { principal: !!d.principal };
+}
+
+/* ⭐ 2026-09-26: refleja en la galería general (#otdEvGrid) el resultado de
+   marcar/desmarcar una principal, sin recargar la página ni esperar al
+   checklist. `mid` puede venir vacío (foto sin equipo, principal "general"
+   de la OT) -- en ese caso solo se actualiza la foto tocada. */
+function otdEvGridSyncPrincipal(fid, mid, principal){
+  const grid = document.getElementById('otdEvGrid');
+  if (!grid) return;
+  const fidS = String(fid);
+  grid.querySelectorAll('.otd-ev-item').forEach(function(item){
+    const img = item.querySelector('img[data-fid]');
+    if (!img) return;
+    const esEsta = String(img.dataset.fid) === fidS;
+    const mismoEquipo = mid && item.dataset.mid && String(item.dataset.mid) === String(mid);
+    let nuevo = null;
+    if (esEsta) nuevo = principal;
+    else if (principal && mismoEquipo) nuevo = false;   // otra del mismo equipo pierde la estrella
+    if (nuevo === null) return;
+    img.dataset.principal = nuevo ? '1' : '0';
+    let star = item.querySelector('.otd-ev-star');
+    if (nuevo){
+      if (!star){
+        star = document.createElement('i');
+        star.className = 'bi bi-star-fill otd-ev-star';
+        star.title = 'Foto principal de este equipo';
+        item.appendChild(star);
+      }
+    } else if (star){
+      star.remove();
+    }
+  });
 }
 
 /* id de la foto para el visor, SOLO si se puede girar: el servidor gira

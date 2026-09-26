@@ -82054,15 +82054,31 @@ def ot2_detalle(vid):
     # que podían dejar evidencia... buscar la mejor manera de mostrarlo").
     # El dato ya se sube desde hace tiempo (mant_visita_fotos); lo que
     # faltaba era una pantalla que lo hiciera visible y explorable.
-    fotos = mysql_fetchall(
-        "SELECT f.id, f.archivo_path, f.cloudinary_url, f.tipo_foto, f.descripcion, "
-        "       f.tomada_por, f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre "
-        "  FROM mant_visita_fotos f "
-        "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
-        " WHERE f.visita_id=%s "
-        " ORDER BY f.tomada_at DESC LIMIT 300",
-        (vid,)
-    ) or []
+    # es_principal (2026-09-26, foto principal por equipo -- Daniel: "todo
+    # debe estar conectado"): con try/except aparte por si el _ensure de
+    # boot no alcanzó a correr en este entorno (columna nueva).
+    try:
+        fotos = mysql_fetchall(
+            "SELECT f.id, f.archivo_path, f.cloudinary_url, f.tipo_foto, f.descripcion, "
+            "       f.tomada_por, f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre, "
+            "       f.es_principal "
+            "  FROM mant_visita_fotos f "
+            "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
+            " WHERE f.visita_id=%s "
+            " ORDER BY f.tomada_at DESC LIMIT 300",
+            (vid,)
+        ) or []
+    except Exception as _e_fotos_ep:
+        print(f"[ot2_detalle] fotos es_principal vid={vid}: {_e_fotos_ep}", flush=True)
+        fotos = mysql_fetchall(
+            "SELECT f.id, f.archivo_path, f.cloudinary_url, f.tipo_foto, f.descripcion, "
+            "       f.tomada_por, f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre "
+            "  FROM mant_visita_fotos f "
+            "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
+            " WHERE f.visita_id=%s "
+            " ORDER BY f.tomada_at DESC LIMIT 300",
+            (vid,)
+        ) or []
     fotos = [dict(f) for f in fotos]
     for f in fotos:
         # Mismo criterio que el resto del proyecto: cloudinary_url tiene
@@ -82074,6 +82090,9 @@ def ot2_detalle(vid):
         f["url"] = f.get("cloudinary_url") or (
             f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
         f["cuando"] = chile_fmt_filter(f.get("tomada_at"), "%d/%m %H:%M") if f.get("tomada_at") else ""
+        # ⭐ 2026-09-26: para la galería general "Fotos de la OT" -- estrella
+        # sobre la miniatura ya marcada, y el botón del visor.
+        f["principal"] = bool(f.get("es_principal"))
 
     # 🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas...
     # que se puedan guardar si es que están mal"): decide si se dibuja
@@ -82145,6 +82164,35 @@ def ot2_detalle(vid):
                     anexo["enviado_tel"] = (_anx_tec.get("contacto_tel") or "").strip()
         except Exception as _e_anx_tec:
             print(f"[ot2_detalle] contacto proveedor del anexo: {_e_anx_tec}", flush=True)
+
+    # ⭐ 2026-09-26 (Daniel, en vivo: "brindarle la oportunidad al técnico
+    # de elegir la foto principal de cada OT, bien informativo, y todo
+    # debe estar conectado" -- pidió esto viendo la miniatura del resumen
+    # de equipos y la galería general). Foto PRINCIPAL de cada equipo EN
+    # ESTA OT: si existe, gana incluso sobre la foto de ficha
+    # (mant_maquinas.foto_url) -- mismo orden de preferencia que
+    # eq_foto_ref en ot_pdf.html, para que OT/ficha/PDF digan lo mismo.
+    # Consulta dedicada (no la de `fotos` arriba, que trae LIMIT 300 y
+    # podría no alcanzar a traer la principal en una OT con muchas fotos).
+    try:
+        _principales = mysql_fetchall(
+            "SELECT maquina_id, cloudinary_url, archivo_path "
+            "  FROM mant_visita_fotos "
+            " WHERE visita_id=%s AND maquina_id IS NOT NULL AND es_principal=1",
+            (vid,)
+        ) or []
+        _principal_por_mid = {}
+        for _pp in _principales:
+            _u = _pp.get("cloudinary_url") or (
+                f"/static/{_pp['archivo_path']}" if _pp.get("archivo_path") else "")
+            if _u and _pp.get("maquina_id") is not None:
+                _principal_por_mid[int(_pp["maquina_id"])] = _u
+        for _e in equipos:
+            _mid_e = _e.get("id")
+            if _mid_e in _principal_por_mid:
+                _e["foto_principal_url"] = _principal_por_mid[_mid_e]
+    except Exception as _e_prin:
+        print(f"[ot2_detalle] foto_principal vid={vid}: {_e_prin}", flush=True)
 
     # Mapa liviano {maquina_id: {...}} para el renderer JS del checklist
     # (tipo 'serie', otdChkTareaHtml en ot2/detalle.html) -- evita mandar
