@@ -377,6 +377,12 @@
       <th>SKU</th>
       <th>Descripción</th>
       <th>Cantidad</th>
+      {# 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "almacenamiento inteligente...
+         que el disponible diga siempre la verdad"): comprometido/disponible/
+         por llegar en UNA sola celda rotulada (REGLA #4.3 -- no agregar 3
+         columnas más a una tabla que ya tiene 10, se agrupa) -- no reemplaza
+         "Cantidad" (el físico real, REGLA #4.2 no se quita nada existente). #}
+      <th>Stock</th>
       <th>Ubicación</th>
       <th>Costo</th>
       <th>Marca</th>
@@ -417,6 +423,17 @@
          cual si no se trunca explícito. round() sin decimales + int()
          asegura "3", nunca "3.0". #}
       <td>{{ (r.cantidad|round)|int }} un.</td>
+      {# 🧾 2026-09-26 (Fase 3 -- kardex): rojo si el disponible quedó
+         negativo (sobre-comprometido), ámbar si tocó el mínimo, gris
+         cuando no hay nada que avisar -- mismo semáforo que ya usa
+         "BAJO MÍNIMO" arriba en la fila. #}
+      <td class="text-nowrap" style="font-size:.74rem;line-height:1.5">
+        <div{% if r.disponible < 0 %} style="color:#dc2626;font-weight:700"{% elif r.stock_minimo is not none and r.disponible <= r.stock_minimo %} style="color:#92400e;font-weight:700"{% endif %}>
+          Disp.: {{ (r.disponible|round)|int }}
+        </div>
+        {% if r.comprometido %}<div class="text-muted">Comprometido: {{ (r.comprometido|round)|int }}</div>{% endif %}
+        {% if r.por_llegar %}<div class="text-muted">Por llegar: {{ (r.por_llegar|round)|int }}</div>{% endif %}
+      </td>
       <td>{% if r.ubicacion_codigo %}{{ r.ubicacion_codigo }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td>{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td>{% if r.marca_nombre %}{{ r.marca_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
@@ -475,6 +492,9 @@
             </button></li>
             <li><button type="button" class="dropdown-item" onclick="rbImprimirUno({{ r.id }})">
               <i class="bi bi-tag me-1"></i>Imprimir etiqueta
+            </button></li>
+            <li><button type="button" class="dropdown-item" onclick="rbmAbrir({{ r.id }}, '{{ r.sku }}')">
+              <i class="bi bi-clock-history me-1"></i>Movimientos
             </button></li>
             <li><hr class="dropdown-divider"></li>
             <li><button type="button" class="dropdown-item text-danger" onclick="rbEliminar({{ r.id }}, '{{ r.sku }}')">
@@ -569,7 +589,7 @@
             <div class="row g-3">
               <div class="col-md-4">
                 <label class="form-label small fw-semibold">Cantidad <span class="rb-req">*</span></label>
-                <input type="number" class="form-control" id="rbCantidad" min="0" step="1" placeholder="0">
+                <input type="number" class="form-control" id="rbCantidad" min="0" step="1" placeholder="0" oninput="rbCantidadCambio()">
               </div>
               <div class="col-md-4">
                 <label class="form-label small fw-semibold">Stock mínimo <span class="rb-req">*</span></label>
@@ -579,6 +599,16 @@
                 <label class="form-label small fw-semibold">Costo unitario</label>
                 <input type="text" class="form-control" id="rbCosto" inputmode="numeric" placeholder="$0"
                        onfocus="rbCostoFoco(this)" onblur="rbCostoFormatear(this)">
+              </div>
+              {# 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"):
+                 solo aparece cuando la cantidad de un repuesto YA EXISTENTE
+                 cambia (rbCantidadCambio) -- un alta nueva no pide motivo,
+                 es carga inicial, no un ajuste sobre algo que ya había. #}
+              <div class="col-12" id="rbMotivoAjusteWrap" style="display:none">
+                <label class="form-label small fw-semibold">Motivo del ajuste de cantidad <span class="rb-req">*</span></label>
+                <input type="text" class="form-control" id="rbMotivoAjuste" maxlength="500"
+                       placeholder="Ej: conteo físico, diferencia detectada, corrección de carga...">
+                <div class="rb-input-help mb-0">Cambiaste la cantidad — queda registrado en el kardex del repuesto (botón "Movimientos").</div>
               </div>
               <div class="col-12">
                 <label class="form-label small fw-semibold">Ubicación <span class="rb-req">*</span></label>
@@ -1027,6 +1057,93 @@
 </div>
 <div class="rba-tooltip" id="rbaTooltip" style="display:none"></div>
 
+{# ══════════════════════════════════════════════════════════════════
+   🧾 Modal "Movimientos" (kardex de UN repuesto) -- Fase 3, 2026-09-26
+   (Daniel: "Sí, es la base"). Resumen físico/comprometido/disponible/
+   por llegar arriba, historial paginado abajo (REGLA #4.3, mismo
+   lenguaje que el resto del proyecto: Mostrando A-B de N, Anterior/
+   Página X de Y/Siguiente) y "Comparar con ERP" reusa el sondeo de la
+   bodega 18 que ya existe (repstock_sondeo_erp) -- solo lectura,
+   REGLA #4.1. #}
+<style>
+#modalRbMovs .rbm-resumen{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+#modalRbMovs .rbm-resumen .rbm-card{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;text-align:center}
+#modalRbMovs .rbm-resumen .rbm-card .rbm-n{font-size:1.15rem;font-weight:800;color:#0a0a0a}
+#modalRbMovs .rbm-resumen .rbm-card .rbm-l{font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.02em}
+#modalRbMovs .rbm-resumen .rbm-card.is-neg .rbm-n{color:#dc2626}
+#modalRbMovs .rbm-tabla{width:100%;border-collapse:collapse;font-size:.8rem}
+#modalRbMovs .rbm-tabla thead th{background:#0a0a0a;color:#fff;padding:8px 10px;text-align:left;font-size:.68rem;text-transform:uppercase;letter-spacing:.02em;white-space:nowrap}
+#modalRbMovs .rbm-tabla tbody td{padding:8px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+#modalRbMovs .rbm-tipo{display:inline-block;padding:2px 8px;border-radius:6px;font-size:.7rem;font-weight:700;white-space:nowrap}
+#modalRbMovs .rbm-tipo.t-entrada,#modalRbMovs .rbm-tipo.t-inicial{background:#dcfce7;color:#166534}
+#modalRbMovs .rbm-tipo.t-salida{background:#fee2e2;color:#991b1b}
+#modalRbMovs .rbm-tipo.t-ajuste{background:#fff8e1;color:#92400e}
+#modalRbMovs .rbm-cant.pos{color:#166534;font-weight:700}
+#modalRbMovs .rbm-cant.neg{color:#991b1b;font-weight:700}
+@media (max-width:768px){
+  #modalRbMovs .rbm-resumen{grid-template-columns:repeat(2,1fr)}
+  #modalRbMovs .rbm-tabla{display:block}
+  #modalRbMovs .rbm-tabla thead{display:none}
+  #modalRbMovs .rbm-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;padding:8px}
+  #modalRbMovs .rbm-tabla tbody td{display:block;border:none;padding:2px 0}
+}
+</style>
+<div class="modal fade" id="modalRbMovs" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-clock-history me-2"></i>Movimientos — <span id="rbmSkuTitulo">…</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="rbmLoading" class="text-center text-muted py-4"><i class="bi bi-hourglass-split"></i> Cargando…</div>
+        <div id="rbmError" class="alert alert-danger d-none"></div>
+        <div id="rbmContenido" class="d-none">
+          <div class="rbm-resumen">
+            <div class="rbm-card"><div class="rbm-n" id="rbmFisico">—</div><div class="rbm-l">Físico</div></div>
+            <div class="rbm-card"><div class="rbm-n" id="rbmComprometido">—</div><div class="rbm-l">Comprometido</div></div>
+            <div class="rbm-card" id="rbmDisponibleCard"><div class="rbm-n" id="rbmDisponible">—</div><div class="rbm-l">Disponible</div></div>
+            <div class="rbm-card"><div class="rbm-n" id="rbmPorLlegar">—</div><div class="rbm-l">Por llegar</div></div>
+          </div>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <button type="button" class="btn btn-sm btn-outline-dark" onclick="rbmCompararErp()">
+              <i class="bi bi-cloud-arrow-down me-1"></i>Comparar con ERP
+            </button>
+            <div id="rbmErpResultado" class="small text-muted"></div>
+          </div>
+          <div class="rb-table-wrap" style="max-height:340px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px">
+            <table class="rbm-tabla">
+              <thead>
+                <tr>
+                  <th>Fecha</th><th>Tipo</th><th>Motivo</th><th>Cantidad</th><th>Saldo</th>
+                  <th>Referencia</th><th>Usuario</th><th>Nota</th>
+                </tr>
+              </thead>
+              <tbody id="rbmTbody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-1 py-2">
+            <div class="small text-muted" id="rbmPagInfo"></div>
+            <div class="d-flex align-items-center gap-2">
+              <select class="form-select form-select-sm" id="rbmPerPage" style="width:auto;font-size:.78rem" onchange="rbmCargar(1)">
+                <option value="20">20 por página</option>
+                <option value="50">50 por página</option>
+                <option value="100">100 por página</option>
+              </select>
+              <button type="button" class="btn btn-sm btn-outline-secondary fw-bold" id="rbmBtnAnterior" onclick="rbmCargar(RBM_PAGE - 1)"><i class="bi bi-chevron-left"></i> Anterior</button>
+              <span class="badge" style="background:#dc2626;color:#fff;font-weight:700" id="rbmPagBadge">Página 1 de 1</span>
+              <button type="button" class="btn btn-sm btn-danger fw-bold" id="rbmBtnSiguiente" onclick="rbmCargar(RBM_PAGE + 1)">Siguiente <i class="bi bi-chevron-right"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 const RB_ES_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
@@ -1068,6 +1185,11 @@ let RB_FOTOS_ACTUALES = [];
 let RB_FOTOS_PENDIENTES = [];   // fotos elegidas ANTES de guardar (blob local, ver rbRenderFotos)
 let RB_DIRTY = false;          // hubo cambios → recargar la tabla al cerrar el modal
 const RB_MAX_FOTOS = 3;
+// 🧾 2026-09-26 (Fase 3 -- kardex): cantidad con la que se ABRIÓ el modal
+// de edición -- null al crear (no hay "ajuste" posible, es carga inicial).
+// Sirve para saber si el usuario de verdad cambió el número y, si cambió,
+// exigir el motivo (rbMotivoAjuste) antes de dejar guardar.
+let RB_CANTIDAD_ORIGINAL = null;
 
 document.addEventListener('DOMContentLoaded', function(){
   const modalEl = document.getElementById('modalRepStock');
@@ -1395,6 +1517,11 @@ async function rbAbrirNuevo(mantenerContexto){
   document.getElementById('rbSku').placeholder = 'REP-MARCA-0001 al guardar';
   ['rbDescripcion','rbCodigoFabricante','rbNotas'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('rbCantidad').value = '';
+  // 2026-09-26 (kardex): un alta nueva nunca pide motivo de ajuste -- es
+  // carga inicial, no un cambio sobre algo que ya existía.
+  RB_CANTIDAD_ORIGINAL = null;
+  document.getElementById('rbMotivoAjusteWrap').style.display = 'none';
+  document.getElementById('rbMotivoAjuste').value = '';
   // Medidas físicas: SIEMPRE se limpian, incluso con mantenerContexto --
   // a diferencia de marca/ubicación/stock mínimo (mismo estante), el
   // largo/ancho/alto/peso son propios de CADA repuesto, no del estante.
@@ -1448,6 +1575,11 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbSku').value = r.sku || '';
   document.getElementById('rbDescripcion').value = r.descripcion || '';
   document.getElementById('rbCantidad').value = r.cantidad != null ? r.cantidad : '';
+  // 2026-09-26 (kardex): guarda con QUÉ cantidad se abrió -- si el usuario
+  // la cambia antes de guardar, rbCantidadCambio() pide el motivo.
+  RB_CANTIDAD_ORIGINAL = r.cantidad != null ? Number(r.cantidad) : null;
+  document.getElementById('rbMotivoAjusteWrap').style.display = 'none';
+  document.getElementById('rbMotivoAjuste').value = '';
   document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : 1;
   document.getElementById('rbLargo').value = r.largo != null ? r.largo : '';
   document.getElementById('rbAncho').value = r.ancho != null ? r.ancho : '';
@@ -1507,6 +1639,19 @@ function rbAbrirEditar(r, modelos, fotos){
   RB_MODAL.show();
 }
 
+// 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): muestra el
+// campo "motivo del ajuste" en cuanto la cantidad de un repuesto YA
+// EXISTENTE (RB_CANTIDAD_ORIGINAL no-null) deja de coincidir con la
+// original -- se oculta de nuevo si el usuario la vuelve a dejar igual
+// (ej. se arrepintió), para no pedir un motivo de "nada que ajustar".
+function rbCantidadCambio(){
+  const wrap = document.getElementById('rbMotivoAjusteWrap');
+  if (RB_CANTIDAD_ORIGINAL === null){ wrap.style.display = 'none'; return; }
+  const actual = document.getElementById('rbCantidad').value;
+  const cambio = actual !== '' && Math.abs(Number(actual) - RB_CANTIDAD_ORIGINAL) >= 0.005;
+  wrap.style.display = cambio ? '' : 'none';
+}
+
 // Muestra/oculta el avatar circular con la foto principal en la esquina
 // inferior izquierda del header del modal (Daniel 2026-08-08, ver CSS
 // #rbFotoPrincipalAvatar). url=null/'' -> sin fotos, se oculta sin dejar
@@ -1535,6 +1680,19 @@ async function rbGuardar(crearOtro){
   if (!descripcion){ ilusToast('La descripción es obligatoria', {type:'warning'}); document.getElementById('rbDescripcion').focus(); return; }
   if (cantidad === '' || Number(cantidad) < 0){ ilusToast('Indica la cantidad', {type:'warning'}); document.getElementById('rbCantidad').focus(); return; }
   if (stockMin === '' || Number(stockMin) < 0){ ilusToast('Indica el stock mínimo', {type:'warning'}); document.getElementById('rbStockMinimo').focus(); return; }
+  // 🧾 2026-09-26 (kardex): cambiar la cantidad de un repuesto que YA
+  // EXISTÍA exige decir por qué -- el backend (repstock_editar) vuelve a
+  // exigir esto igual, esto solo evita el viaje de red en vano.
+  let motivoAjuste = '';
+  if (id && RB_CANTIDAD_ORIGINAL !== null && Math.abs(Number(cantidad) - RB_CANTIDAD_ORIGINAL) >= 0.005){
+    motivoAjuste = document.getElementById('rbMotivoAjuste').value.trim();
+    if (motivoAjuste.length < 5){
+      ilusToast('Indica el motivo del ajuste de cantidad (mínimo 5 caracteres)', {type:'warning'});
+      document.getElementById('rbMotivoAjuste').focus();
+      document.getElementById('rbMotivoAjuste').scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+  }
   // 🔒 2026-09-09 (Daniel: "están agregando repuestos sin ubicación...
   // que no nos permita agregar una ubicación a mano de momento... si no
   // tiene la ubicación declarada, tomada por el código de barra, no
@@ -1586,6 +1744,7 @@ async function rbGuardar(crearOtro){
     cliente_id: document.getElementById('rbClienteId').value || null,
     ticket_id: document.getElementById('rbTicketId').value || null,
     sku_erp: id ? undefined : RB_SKU_ERP_ELEGIDO,   // solo aplica al crear, el backend lo ignora si viene en un PUT
+    motivo_ajuste: motivoAjuste || undefined,   // solo va si de verdad cambió la cantidad (ver arriba)
   };
   try{
     const url = id ? ('/mantenciones/api/repuestos-stock/' + id) : '/mantenciones/api/repuestos-stock';
@@ -1595,6 +1754,11 @@ async function rbGuardar(crearOtro){
     if (!(r.ok && d.ok !== false)){
       ilusToast(d.error || 'No se pudo guardar', {type:'error'});
       return;
+    }
+    // 2026-09-26 (kardex): "avisa pero no bloquea" -- el ajuste ya se
+    // guardó, esto es solo informativo (ej. saldo quedó negativo).
+    if (d.aviso){
+      await ilusAlert({title: 'Ajuste guardado', message: d.aviso, type: 'warning'});
     }
     RB_DIRTY = true;
     // Guardado real en el servidor -- el borrador local ya cumplió su
@@ -3563,5 +3727,155 @@ function rbaRenderTabla(dias){
   trf.appendChild(tdGran);
   tfoot.appendChild(trf);
   tabla.appendChild(tfoot);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 🧾 Modal "Movimientos" (kardex de UN repuesto) -- Fase 3, 2026-09-26
+// (Daniel: "Sí, es la base" -- "almacenamiento inteligente", que el
+// "disponible" diga siempre la verdad). Ver #modalRbMovs más arriba.
+// ══════════════════════════════════════════════════════════════════
+let RBM_MODAL = null;
+let RBM_RID = null;
+let RBM_SKU = '';
+let RBM_PAGE = 1;
+let RBM_RESUMEN = null;   // {fisico, comprometido, disponible, por_llegar} -- crudo, para "Comparar con ERP"
+
+function rbmAbrir(rid, sku){
+  RBM_RID = rid;
+  RBM_SKU = sku || '';
+  document.getElementById('rbmSkuTitulo').textContent = RBM_SKU || ('#' + rid);
+  document.getElementById('rbmErpResultado').textContent = '';
+  document.getElementById('rbmPerPage').value = '20';
+  if (!RBM_MODAL) RBM_MODAL = new bootstrap.Modal(document.getElementById('modalRbMovs'));
+  RBM_MODAL.show();
+  rbmCargar(1);
+}
+
+function rbmFmtN(n){
+  const v = Number(n) || 0;
+  // Entero limpio cuando no hay decimales reales (mismo criterio que el
+  // resto de la Bodega -- "3", nunca "3.00").
+  const r = Math.round(v * 100) / 100;
+  return (Math.abs(r % 1) < 0.005) ? String(Math.round(r)) : r.toFixed(2);
+}
+
+const RBM_MOTIVO_LABEL = {
+  saldo_inicial: 'Saldo inicial', recepcion_proveedor: 'Recepción de proveedor',
+  instalacion: 'Instalación', ajuste_manual: 'Ajuste manual',
+  alta_repuesto: 'Alta de repuesto', reactivacion: 'Reactivación',
+};
+const RBM_TIPO_LABEL = {inicial: 'Inicial', entrada: 'Entrada', salida: 'Salida', ajuste: 'Ajuste'};
+
+async function rbmCargar(page){
+  if (!RBM_RID) return;
+  page = Math.max(1, page || 1);
+  document.getElementById('rbmLoading').classList.remove('d-none');
+  document.getElementById('rbmError').classList.add('d-none');
+  document.getElementById('rbmContenido').classList.add('d-none');
+  const perPage = document.getElementById('rbmPerPage').value || 20;
+  try{
+    const params = new URLSearchParams({page, per_page: perPage});
+    const r = await fetch('/mantenciones/api/repuestos-stock/' + RBM_RID + '/movimientos?' + params.toString(),
+      {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo cargar el kardex.');
+    RBM_PAGE = d.page;
+    RBM_RESUMEN = d.resumen;
+    rbmRender(d);
+    document.getElementById('rbmContenido').classList.remove('d-none');
+  } catch(e){
+    document.getElementById('rbmError').textContent = e.message || 'No se pudo cargar el kardex.';
+    document.getElementById('rbmError').classList.remove('d-none');
+  } finally{
+    document.getElementById('rbmLoading').classList.add('d-none');
+  }
+}
+
+function rbmRender(d){
+  document.getElementById('rbmFisico').textContent = rbmFmtN(d.resumen.fisico);
+  document.getElementById('rbmComprometido').textContent = rbmFmtN(d.resumen.comprometido);
+  document.getElementById('rbmPorLlegar').textContent = rbmFmtN(d.resumen.por_llegar);
+  document.getElementById('rbmDisponible').textContent = rbmFmtN(d.resumen.disponible);
+  document.getElementById('rbmDisponibleCard').classList.toggle('is-neg', d.resumen.disponible < 0);
+
+  const tbody = document.getElementById('rbmTbody');
+  tbody.innerHTML = '';
+  const movs = d.movimientos || [];
+  // Todo esto con textContent (nunca innerHTML) -- `nota` y `usuario`
+  // pueden traer texto libre escrito por cualquier persona del equipo.
+  movs.forEach(m => {
+    const tr = document.createElement('tr');
+
+    const tdFecha = document.createElement('td'); tdFecha.textContent = m.created_at || '—'; tr.appendChild(tdFecha);
+
+    const tdTipo = document.createElement('td');
+    const spanTipo = document.createElement('span');
+    spanTipo.className = 'rbm-tipo t-' + (m.tipo || '');
+    spanTipo.textContent = RBM_TIPO_LABEL[m.tipo] || m.tipo || '—';
+    tdTipo.appendChild(spanTipo); tr.appendChild(tdTipo);
+
+    const tdMotivo = document.createElement('td');
+    tdMotivo.textContent = RBM_MOTIVO_LABEL[m.motivo_tipo] || m.motivo_tipo || '—';
+    tr.appendChild(tdMotivo);
+
+    const tdCant = document.createElement('td');
+    const cantNum = Number(m.cantidad) || 0;
+    tdCant.textContent = (cantNum > 0 ? '+' : '') + rbmFmtN(cantNum);
+    tdCant.className = 'rbm-cant ' + (cantNum >= 0 ? 'pos' : 'neg');
+    tr.appendChild(tdCant);
+
+    const tdSaldo = document.createElement('td'); tdSaldo.textContent = rbmFmtN(m.saldo_resultante); tr.appendChild(tdSaldo);
+
+    const tdRef = document.createElement('td');
+    const refs = [];
+    if (m.solicitud_id) refs.push('Solicitud #' + m.solicitud_id);
+    if (m.numero_ot) refs.push(m.numero_ot);
+    if (m.cliente_nombre) refs.push(m.cliente_nombre);
+    tdRef.textContent = refs.length ? refs.join(' · ') : '—';
+    tr.appendChild(tdRef);
+
+    const tdUser = document.createElement('td'); tdUser.textContent = m.usuario || '—'; tr.appendChild(tdUser);
+    const tdNota = document.createElement('td'); tdNota.textContent = m.nota || ''; tr.appendChild(tdNota);
+
+    tbody.appendChild(tr);
+  });
+  if (!movs.length){
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 8; td.className = 'text-center text-muted py-3';
+    td.textContent = 'Sin movimientos registrados.';
+    tr.appendChild(td); tbody.appendChild(tr);
+  }
+
+  const first = d.total > 0 ? ((d.page - 1) * d.per_page) + 1 : 0;
+  const last = d.total > 0 ? Math.min(first + movs.length - 1, d.total) : 0;
+  document.getElementById('rbmPagInfo').textContent = d.total > 0
+    ? ('Mostrando ' + first + '–' + last + ' de ' + d.total) : 'Sin movimientos';
+  document.getElementById('rbmPagBadge').textContent = 'Página ' + d.page + ' de ' + d.total_pages;
+  document.getElementById('rbmBtnAnterior').disabled = d.page <= 1;
+  document.getElementById('rbmBtnSiguiente').disabled = d.page >= d.total_pages;
+}
+
+// "Comparar con ERP" (spec Fase 3): reusa el sondeo de la bodega 18 que
+// ya existe para el modal de alta (repstock_sondeo_erp) -- SOLO LECTURA
+// (REGLA #4.1), nunca un endpoint nuevo que vuelva a tocar el ERP.
+async function rbmCompararErp(){
+  if (!RBM_RID || !RBM_RESUMEN) return;
+  const out = document.getElementById('rbmErpResultado');
+  out.textContent = 'Consultando ERP…';
+  try{
+    const r = await fetch('/mantenciones/api/repuestos-stock/sondeo-erp?q=' + encodeURIComponent(RBM_SKU));
+    const d = await r.json();
+    if (!r.ok || !d.ok){ out.textContent = d.error || 'No se pudo consultar el ERP.'; return; }
+    const productos = d.productos || [];
+    const match = productos.find(p => (p.sku || '').toUpperCase() === RBM_SKU.toUpperCase()) || productos[0];
+    if (!match){ out.textContent = 'No se encontró en la bodega 18 del ERP.'; return; }
+    const erp = Number(match.cantidad) || 0;
+    const diff = RBM_RESUMEN.fisico - erp;
+    out.textContent = 'ERP: ' + rbmFmtN(erp) + ' · Local: ' + rbmFmtN(RBM_RESUMEN.fisico) + ' · ' +
+      (Math.abs(diff) < 0.005 ? 'coinciden ✓' : ('diferencia de ' + rbmFmtN(Math.abs(diff))));
+  } catch(e){
+    out.textContent = 'Error de conexión al consultar el ERP.';
+  }
 }
 </script>
