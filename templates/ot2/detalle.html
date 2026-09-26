@@ -8079,20 +8079,19 @@ window.otdFinToggleDesglose = function(forzar){
    fila de esa OT en Vida deben dar EXACTAMENTE el mismo Cobramos/Nos
    cuesta/Queda/semáforo"): GET /ot/api/<vid>/resultado-financiero -- la
    MISMA función (_ot_resultado_financiero) que ya usa Vida del cliente
-   para "Margen por OT". `setTimeout(...,0)` -- no `OTD_VID` a secas --
-   porque esta tarjeta se pinta ANTES de que `const OTD_VID` (más abajo
-   en este mismo <script>) exista todavía (gotcha_ot2_detalle_scope_y_
-   modales.md: "VID en IIFE, usar OTD_VID" -- acá el problema es al
-   revés, OTD_VID todavía no se declaró en este punto del parseo). Un
-   setTimeout(0) corre después de que TODO el script haya terminado de
-   ejecutarse una vez, cuando OTD_VID ya es global. */
+   para "Margen por OT".
+   🔧 FIX (revisión Opus #2, (d)): la versión anterior dependía de
+   `OTD_VID` (una `const` declarada más abajo en este mismo <script>) y
+   usaba `setTimeout(...,0)` solo para esperar a que existiera -- fràgil
+   (dependía del orden de ejecución del resto del archivo). Esta OT ya
+   está disponible como `{{ v.id }}` directo desde Jinja, sin esperar
+   nada -- se usa ese valor, sin importar OTD_VID en absoluto. */
 (function(){
   const bar = document.getElementById('otdFinBar');
   if (!bar) return;   // técnico: la tarjeta no existe, nada que pedir
-  setTimeout(async function(){
+  const vid = {{ v.id }};
+  (async function(){
     try {
-      const vid = (typeof OTD_VID !== 'undefined') ? OTD_VID : null;
-      if (!vid) return;
       const r = await fetch('/ot/api/' + vid + '/resultado-financiero', {credentials: 'same-origin'});
       const j = await r.json();
       if (!j.ok) return;
@@ -8129,7 +8128,7 @@ window.otdFinToggleDesglose = function(forzar){
           garantia: window.OTD_FIN.garantia, neg: window.OTD_FIN.neg, Neg: window.OTD_FIN.Neg});
       }
     } catch (e) { /* informativo -- si falla, la tarjeta sigue sin repuestos, nunca rompe nada */ }
-  }, 0);
+  })();
 })();
 
 /* 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del

@@ -60,7 +60,11 @@ def _cargar_con_dependencias(nombre_funcion, nombres_globales=(), funciones_extr
                     pendientes_glob.discard(target.id)
     assert not pendientes_glob, f"no se encontraron estas globales en app.py: {pendientes_glob}"
     assert not pendientes_fn, f"no se encontraron estas funciones en app.py: {pendientes_fn}"
-    ambito = {}
+    # `re` -- varias funciones puras de app.py lo usan (ej. _parse_monto_clp
+    # desde la revisión Opus #2) sin que este extractor copie el `import re`
+    # del módulo -- se inyecta directo, mismo criterio que `datetime` en
+    # test_repuestos_kardex.py.
+    ambito = {"re": __import__("re")}
     exec(compile(ast.Module(body=nodos, type_ignores=[]), "<app>", "exec"), ambito)
     assert nombre_funcion in ambito, f"no se encontro {nombre_funcion} en app.py"
     return ambito[nombre_funcion]
@@ -144,11 +148,21 @@ def _rep(costo=0.0, bodega=0.0, compra=0.0, manual=0.0, n_sin_costo=0):
 
 
 class TestOtResultadoFinanciero(unittest.TestCase):
-    """★ D2 (revisión Opus 2026-09-26 -- Daniel: "la tarjeta de la OT y la
-    fila de esa OT en Vida deben dar EXACTAMENTE el mismo Cobramos/Nos
-    cuesta/Queda/semáforo"): _ot_resultado_financiero es la ÚNICA función
-    que ambas vistas usan -- se prueban los 5 casos que pidió la revisión:
-    costo incompleto, garantía, con repuestos, interna, contrato."""
+    """★ D2 (2ª revisión Opus 2026-09-26 -- Daniel: "la tarjeta de la OT y
+    la fila de esa OT en Vida deben dar EXACTAMENTE el mismo Cobramos/Nos
+    cuesta/Queda/semáforo"): _ot_resultado_financiero es ahora un PUERTO
+    1:1 de `otdFinCuenta` (templates/ot2/detalle.html) -- la regla que
+    Daniel ya conoce y validó en la tarjeta de la OT. Los 6 casos pedidos
+    en la 2ª revisión: interna, contrato, cobro $0 sin garantía/contrato
+    con costos completos ("falta el cobro"), costo incompleto, garantía,
+    con repuestos.
+
+    Nota clave: ni 'interna' ni 'contrato' son casos ESPECIALES de esta
+    función (la tarjeta tampoco los distingue, otdFinCuenta nunca lee
+    OTD_FIN.interna/OTD_FIN.contrato) -- caen en las mismas ramas
+    genéricas que cualquier OT. `_ot_es_interna(v)` sigue existiendo para
+    quien necesite EXCLUIR una OT interna del agregado del cliente (M6),
+    pero eso es responsabilidad del LLAMADOR, no de esta función."""
 
     @classmethod
     def setUpClass(cls):
@@ -158,50 +172,81 @@ class TestOtResultadoFinanciero(unittest.TestCase):
     def _v(self, **kw):
         base = {"tipo": "correctiva", "cubierto_por": "cliente", "costo": 100000,
                 "costo_proveedor": 30000, "costo_despacho": 10000,
+                "zz_monto": None, "zz_envio_monto": None,
                 "modalidad_cobro": "pagado", "cliente_id": 1}
         base.update(kw)
         return base
 
-    def test_ot_interna_excluida_del_calculo(self):
-        r = self.resultado(self._v(modalidad_cobro="interno"), None)
-        self.assertEqual(r["estado"], "interna")
+    def test_1_interna_no_es_caso_especial_cae_en_falta_el_cobro(self):
+        # Una OT interna típica no tiene costo (`costo`) declarado -- cae
+        # en la MISMA rama gris "Falta lo que se cobra" que cualquier OT
+        # sin cobro y sin garantía (la tarjeta no la trata distinto).
+        r = self.resultado(self._v(modalidad_cobro="interno", costo=None), None)
         self.assertEqual(r["clase"], "gris")
-        self.assertIsNone(r["costo_total"])
+        self.assertEqual(r["label"], "Falta lo que se cobra")
+        self.assertFalse(r["mostrar_queda"])
+        self.assertIsNone(r["margen_clp"])
+
+    def test_2_contrato_con_perdida_real_es_rojo_no_gris(self):
+        # Antes esta función pintaba 'contrato' siempre gris -- la tarjeta
+        # de la OT NUNCA lee OTD_FIN.contrato, así que una OT contrato con
+        # costo completo y margen negativo es 'rojo' igual que cualquier
+        # otra (la regla validada por Daniel es la de la tarjeta).
+        r = self.resultado(self._v(cubierto_por="contrato", costo=20000,
+                                    costo_proveedor=30000, costo_despacho=10000), None)
+        self.assertEqual(r["clase"], "rojo")
+        self.assertIsNone(r["label"])
+        self.assertTrue(r["mostrar_queda"])
+        self.assertLess(r["margen_clp"], 0)
+
+    def test_3_cobro_cero_sin_garantia_ni_contrato_es_falta_el_cobro_no_rojo(self):
+        # El caso central de la 2ª revisión: costo_proveedor/costo_despacho
+        # COMPLETOS pero cobrado=0 y sin garantía -> "falta el cobro", gris,
+        # FUERA del margen -- nunca una pérdida roja.
+        r = self.resultado(self._v(costo=0, cubierto_por="cliente",
+                                    costo_proveedor=30000, costo_despacho=10000), None)
+        self.assertEqual(r["clase"], "gris")
+        self.assertEqual(r["label"], "Falta lo que se cobra")
+        self.assertFalse(r["mostrar_queda"])
+        self.assertIsNone(r["margen_clp"])
         self.assertIsNone(r["margen_pct"])
 
-    def test_costo_incompleto_sin_costo_proveedor(self):
-        r = self.resultado(self._v(costo_proveedor=None), None)
-        self.assertEqual(r["estado"], "incompleto")
-        self.assertEqual(r["label"], "Falta un costo")
-        self.assertIsNone(r["costo_total"])
-        self.assertIsNone(r["margen_pct"])
-
-    def test_costo_incompleto_sin_costo_despacho(self):
-        r = self.resultado(self._v(costo_despacho=None), None)
-        self.assertEqual(r["estado"], "incompleto")
-
-    def test_garantia_sin_cobro_es_ambar_no_rojo(self):
-        r = self.resultado(self._v(cubierto_por="garantia", costo=0), None)
-        self.assertEqual(r["estado"], "garantia_sin_cobro")
+    def test_4_costo_incompleto_ningun_costo_declarado(self):
+        # "Falta EL costo" (sin artículo indefinido) es el caso NINGUNO de
+        # los dos declarado -- distinto de test_4b, donde uno sí está.
+        r = self.resultado(self._v(costo_proveedor=None, costo_despacho=None), None)
         self.assertEqual(r["clase"], "ambar")
+        self.assertEqual(r["label"], "Falta el costo")
+        self.assertFalse(r["hay_costo"])
+        self.assertFalse(r["costo_completo"])
+        self.assertIsNone(r["costo_total"])
+        self.assertFalse(r["mostrar_queda"])
+
+    def test_4b_costo_incompleto_solo_uno_declarado(self):
+        # kInst declarado, kDesp vacío -- "Falta UN costo" (distinto del
+        # caso anterior, donde NINGUNO estaba declarado).
+        r = self.resultado(self._v(costo_despacho=None), None)
+        self.assertEqual(r["clase"], "ambar")
+        self.assertEqual(r["label"], "Falta un costo")
+        self.assertFalse(r["costo_completo"])
+
+    def test_5_garantia_sin_cobro_es_ambar_no_rojo(self):
+        r = self.resultado(self._v(cubierto_por="garantia", costo=0), None)
+        self.assertEqual(r["clase"], "ambar")
+        self.assertEqual(r["label"], "Valorizada sin cobro (garantía)")
+        self.assertTrue(r["mostrar_queda"])
         self.assertEqual(r["costo_total"], 40000)
         self.assertLess(r["margen_clp"], 0)  # es costo real, aunque no rojo
 
-    def test_contrato_no_es_rojo_aunque_no_haya_cobro(self):
-        r = self.resultado(self._v(cubierto_por="contrato", costo=0), None)
-        self.assertEqual(r["estado"], "contrato")
-        self.assertEqual(r["clase"], "gris")
-        self.assertEqual(r["costo_total"], 40000)
+    def test_5b_garantia_por_modalidad_cobro_tambien_cuenta(self):
+        # La tarjeta arma `garantia` con un OR (modalidad_cobro=='garantia'
+        # O cubierto_por=='garantia') -- la versión vieja de esta función
+        # solo miraba cubierto_por.
+        r = self.resultado(self._v(modalidad_cobro="garantia", cubierto_por="cliente", costo=0), None)
+        self.assertTrue(r["garantia"])
+        self.assertEqual(r["label"], "Valorizada sin cobro (garantía)")
 
-    def test_ok_normal_con_margen_verde(self):
-        r = self.resultado(self._v(costo=100000, costo_proveedor=30000, costo_despacho=10000), None)
-        self.assertEqual(r["estado"], "ok")
-        self.assertIsNone(r["label"])
-        self.assertEqual(r["costo_total"], 40000)
-        self.assertEqual(r["margen_clp"], 60000)
-        self.assertEqual(r["clase"], "ok")
-
-    def test_con_repuestos_suma_al_costo_total(self):
+    def test_6_con_repuestos_suma_al_costo_total(self):
         # M4: el costo de repuestos entra al Nos cuesta/Queda, igual que
         # técnico/despacho -- mismo resultado que pintaría la tarjeta OT.
         rep = _rep(costo=15000, bodega=15000)
@@ -211,16 +256,34 @@ class TestOtResultadoFinanciero(unittest.TestCase):
         self.assertEqual(r["margen_clp"], 45000)
         self.assertEqual(r["repuestos_desglose"]["bodega"], 15000)
 
+    def test_cobramos_usa_costo_si_esta_declarado(self):
+        r = self.resultado(self._v(costo=100000, zz_monto=40000, zz_envio_monto=5000), None)
+        self.assertEqual(r["cobrado"], 100000)
+
+    def test_cobramos_cae_a_zz_monto_mas_envio_sin_costo_declarado(self):
+        # 🔧 FIX 2ª revisión: la versión vieja usaba SOLO `costo` -- una OT
+        # sin `costo` pero con zz_monto/zz_envio_monto (el documento SÍ
+        # factura algo) mostraba "Cobramos $0" en vez de lo real.
+        r = self.resultado(self._v(costo=None, zz_monto=40000, zz_envio_monto=5000,
+                                    costo_proveedor=10000, costo_despacho=2000), None)
+        self.assertEqual(r["cobrado"], 45000)
+
+    def test_ok_normal_con_margen_verde(self):
+        r = self.resultado(self._v(costo=100000, costo_proveedor=30000, costo_despacho=10000), None)
+        self.assertIsNone(r["label"])
+        self.assertEqual(r["costo_total"], 40000)
+        self.assertEqual(r["margen_clp"], 60000)
+        self.assertEqual(r["clase"], "ok")
+
     def test_repuestos_sin_costo_no_rompe_el_calculo(self):
         rep = _rep(costo=0, n_sin_costo=2)
         r = self.resultado(self._v(), rep)
-        self.assertEqual(r["estado"], "ok")
+        self.assertEqual(r["clase"], "ok")
         self.assertEqual(r["repuestos_sin_costo"], 2)
         self.assertEqual(r["costo_repuestos"], 0)
 
-    def test_perdida_pura_es_rojo(self):
+    def test_perdida_pura_con_cobro_real_es_rojo(self):
         r = self.resultado(self._v(costo=10000, costo_proveedor=30000, costo_despacho=10000), None)
-        self.assertEqual(r["estado"], "ok")
         self.assertEqual(r["clase"], "rojo")
         self.assertLess(r["margen_clp"], 0)
 
@@ -239,6 +302,15 @@ class TestParseMontoClp(unittest.TestCase):
 
     def test_punto_de_miles_con_varios_grupos(self):
         self.assertEqual(self.parse("1.250.000"), 1250000.0)
+
+    def test_coma_de_miles_chilena_no_decimal(self):
+        # 🔧 FIX revisión Opus #2: en CLP la coma NO es decimal -- "15,000"
+        # es "quince mil", igual que "15.000". Antes se malinterpretaba
+        # como 15.0 (coma tratada siempre como separador decimal).
+        self.assertEqual(self.parse("15,000"), 15000.0)
+
+    def test_coma_de_miles_con_varios_grupos(self):
+        self.assertEqual(self.parse("1,250,000"), 1250000.0)
 
     def test_numero_plano(self):
         self.assertEqual(self.parse("15000"), 15000.0)
@@ -265,6 +337,7 @@ class TestParseMontoClp(unittest.TestCase):
     def test_decimal_real_con_1_o_2_digitos(self):
         self.assertEqual(self.parse("15.5"), 15.5)
         self.assertEqual(self.parse("15.50"), 15.5)
+        self.assertEqual(self.parse("15,5"), 15.5)
 
 
 class TestVidaClienteEndpointGuards(unittest.TestCase):

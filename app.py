@@ -77364,66 +77364,115 @@ def _ot_resultado_financiero(v, rep=None):
     vida-cliente (margen por OT + el agregado del cliente) -- NINGÚN otro
     lugar debe recalcular esto por su cuenta.
 
+    🔧 REESCRITO en la 2ª revisión Opus (2026-09-26): la primera versión de
+    esta función INVENTABA su propia regla (interna/incompleto/garantía/
+    contrato con colores propios), distinta de la que YA usa la tarjeta
+    Finanzas de la OT (`otdFinCuenta`, templates/ot2/detalle.html
+    ~L7814-7859) -- la que Daniel conoce y ya validó en vivo. Divergían en
+    5 puntos reales (interna no leída por la tarjeta, contrato rojo en la
+    tarjeta vs gris acá, cobro $0 sin garantía "falta el cobro" en la
+    tarjeta vs rojo acá, costo incompleto ámbar en la tarjeta vs gris
+    acá, garantía por modalidad_cobro U cubierto_por en la tarjeta vs solo
+    cubierto_por acá, y "Cobramos" con fallback a zz_monto+zz_envio_monto
+    en la tarjeta vs solo `costo` acá). Esta versión es un PUERTO 1:1 de
+    `otdFinCuenta` a Python -- la única fuente de verdad pasa a ser ESA
+    función JS; cualquier ajuste futuro a la regla se hace PRIMERO ahí y
+    se porta acá igual, nunca al revés.
+
     Args:
-      v: dict con, al menos, tipo/cubierto_por/costo/costo_proveedor/
-         costo_despacho/modalidad_cobro/cliente_id (lo que _ot_es_interna
-         necesita) de UNA fila de mant_visitas.
+      v: dict con, al menos, costo/costo_proveedor/costo_despacho/
+         zz_monto/zz_envio_monto/cubierto_por/modalidad_cobro de UNA fila
+         de mant_visitas.
       rep: una entrada de _ot_repuestos_desglose(...) para ESTA OT (o
-           None/ausente = sin repuestos instalados ahí, costo 0).
+           None/ausente = sin repuestos instalados ahí, costo 0). Es
+           INFORMATIVO (kRep en la tarjeta): suma a costo_total/Nos
+           cuesta, pero NUNCA participa en `costo_completo` -- los
+           repuestos no bloquean nada (D2).
 
-    Prioridad de estados (la primera que aplica manda):
-      'interna'            -- _ot_es_interna(v): no hay negocio que medir.
-      'incompleto'         -- falta costo_proveedor O costo_despacho: no
-                              se puede calcular nada, "Falta un costo".
-      'garantia_sin_cobro' -- cubierto_por='garantia' y no se cobró nada:
-                              ambar, no rojo (es un costo esperado, no una
-                              pérdida de un trabajo que sí se vendió).
-      'contrato'           -- cubierto_por='contrato': el número se
-                              calcula igual (para el agregado del
-                              cliente), pero la etiqueta es gris, nunca
-                              rojo (Daniel: "no amerita" verla como
-                              pérdida -- se paga por el contrato, no por
-                              esta OT puntual).
-      'ok'                 -- semáforo normal vía _vida_margen_clase.
+    Igual que otdFinCuenta, NO distingue 'interna' ni 'contrato' como
+    casos propios -- la tarjeta tampoco lo hace (Daniel: "así la conoce y
+    la validó"). `_ot_es_interna(v)`/`cubierto_por=='contrato'` siguen
+    disponibles para quien los necesite (ej. excluir internas del
+    agregado del cliente, M6), pero la CLASIFICACIÓN devuelta acá
+    (clase/label/cobrado/costo/margen) es la misma para cualquier OT.
 
-    Devuelve dict con: estado, label (str o None si 'ok'), clase,
-    cobrado, costo_tecnico, costo_repuestos, costo_total, margen_clp,
-    margen_pct, repuestos_sin_costo, repuestos_desglose (dict por
-    origen)."""
+    Devuelve dict con: clase ('gris'|'ambar'|'rojo'|'bajo'|'ok'), label
+    (str si hay uno especial que reemplaza al %, o None), cobrado,
+    costo_tecnico, costo_repuestos, costo_total, margen_clp, margen_pct,
+    hay_cobro, hay_costo, costo_completo, mostrar_queda, garantia,
+    repuestos_sin_costo, repuestos_desglose (dict por origen)."""
     rep = rep or {"costo": 0.0, "por_origen": {"bodega": 0.0, "compra": 0.0, "manual": 0.0}, "n_sin_costo": 0}
-    costo_rep = float(rep.get("costo") or 0)
-    base = {
+    costo_rep = round(float(rep.get("costo") or 0), 2)
+
+    def _num(x):
+        if x is None or x == "":
+            return None
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    serv = _num(v.get("zz_monto"))
+    env = _num(v.get("zz_envio_monto"))
+    tot = _num(v.get("costo"))
+    kI = _num(v.get("costo_proveedor"))
+    kD = _num(v.get("costo_despacho"))
+    # Mismo `d.garantia` que arma window.OTD_FIN en el template: OR entre
+    # modalidad_cobro y cubierto_por -- la versión vieja de esta función
+    # solo miraba cubierto_por.
+    garantia = (((v.get("modalidad_cobro") or "").strip().lower() == "garantia")
+                or ((v.get("cubierto_por") or "").strip().lower() == "garantia"))
+
+    hay_cobro = tot is not None or serv is not None or env is not None
+    c_desp = env or 0.0
+    # "Cobramos": el total declarado a mano (`costo`/tot) manda; si no
+    # hay, se cae a zz_monto+zz_envio_monto (lo que factura el documento)
+    # -- la versión vieja de esta función usaba SOLO `costo`.
+    c_tot = tot if tot is not None else ((serv or 0.0) + (env or 0.0))
+    c_inst = (tot - c_desp) if tot is not None else (serv or 0.0)  # informativo, no se devuelve
+    hay_costo = kI is not None or kD is not None
+    costo_completo = kI is not None and kD is not None
+    k_inst = kI or 0.0
+    k_desp = kD or 0.0
+    k_tot = round(k_inst + k_desp + costo_rep, 2)
+    q_tot = round(c_tot - k_tot, 2)
+    p_tot = round(q_tot / c_tot * 100, 1) if c_tot > 0 else None
+    BAJO = 10
+
+    if not (c_tot > 0):
+        if garantia:
+            clase = "ambar"
+            label = "Falta un costo" if (hay_costo and not costo_completo) else "Valorizada sin cobro (garantía)"
+            mostrar_queda = costo_completo
+        else:
+            # Antes esto caía al cálculo normal (margen negativo -> rojo).
+            # La tarjeta dice "Falta lo que se cobra" (gris) -- no hay
+            # pérdida que declarar si nunca se definió qué se cobra.
+            clase, label, mostrar_queda = "gris", "Falta lo que se cobra", False
+    elif not hay_costo:
+        clase, label, mostrar_queda = "ambar", "Falta el costo", False
+    elif not costo_completo:
+        clase, label, mostrar_queda = "ambar", "Falta un costo", False
+    elif q_tot < 0:
+        clase, label, mostrar_queda = "rojo", None, True
+    elif p_tot is not None and p_tot < BAJO:
+        clase, label, mostrar_queda = "bajo", None, True
+    else:
+        clase, label, mostrar_queda = "ok", None, True
+
+    return {
+        "clase": clase, "label": label,
+        "cobrado": round(c_tot, 2) if hay_cobro else None,
+        "costo_tecnico": round(k_inst + k_desp, 2) if hay_costo else None,
         "costo_repuestos": costo_rep,
+        "costo_total": round(k_tot, 2) if hay_costo else None,
+        "margen_clp": q_tot if mostrar_queda else None,
+        "margen_pct": (p_tot if (mostrar_queda and p_tot is not None) else None),
+        "hay_cobro": hay_cobro, "hay_costo": hay_costo, "costo_completo": costo_completo,
+        "mostrar_queda": mostrar_queda, "garantia": garantia,
         "repuestos_sin_costo": int(rep.get("n_sin_costo") or 0),
         "repuestos_desglose": rep.get("por_origen") or {"bodega": 0.0, "compra": 0.0, "manual": 0.0},
     }
-    cobrado = float(v.get("costo")) if v.get("costo") is not None else 0.0
-    cp, cd = v.get("costo_proveedor"), v.get("costo_despacho")
-    cubierto_por = (v.get("cubierto_por") or "").strip().lower()
-
-    if _ot_es_interna(v):
-        return {**base, "estado": "interna", "label": "Trabajo interno", "clase": "gris",
-                "cobrado": None, "costo_tecnico": None, "costo_total": None,
-                "margen_clp": None, "margen_pct": None}
-    if cp is None or cd is None:
-        return {**base, "estado": "incompleto", "label": "Falta un costo", "clase": "sin_dato",
-                "cobrado": cobrado, "costo_tecnico": None, "costo_total": None,
-                "margen_clp": None, "margen_pct": None}
-    costo_tecnico = round(float(cp) + float(cd), 2)
-    costo_total = round(costo_tecnico + costo_rep, 2)
-    if cubierto_por == "garantia" and cobrado <= 0:
-        return {**base, "estado": "garantia_sin_cobro", "label": "Valorizada sin cobro (garantía)",
-                "clase": "ambar", "cobrado": cobrado, "costo_tecnico": costo_tecnico,
-                "costo_total": costo_total, "margen_clp": round(0 - costo_total, 2), "margen_pct": None}
-    margen_clp = round(cobrado - costo_total, 2)
-    margen_pct = round((cobrado - costo_total) / cobrado * 100, 1) if cobrado > 0 else None
-    if cubierto_por == "contrato":
-        return {**base, "estado": "contrato", "label": "Cubierta por contrato", "clase": "gris",
-                "cobrado": cobrado, "costo_tecnico": costo_tecnico, "costo_total": costo_total,
-                "margen_clp": margen_clp, "margen_pct": margen_pct}
-    return {**base, "estado": "ok", "label": None, "clase": _vida_margen_clase(margen_pct, margen_clp),
-            "cobrado": cobrado, "costo_tecnico": costo_tecnico, "costo_total": costo_total,
-            "margen_clp": margen_clp, "margen_pct": margen_pct}
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/vida-cliente", methods=["GET"])
@@ -77508,6 +77557,7 @@ def mant_vida_cliente_api(cid):
             "       v.modalidad_cobro, v.cliente_id, "
             "       COALESCE(v.fecha_realizada, v.fecha_programada) AS fecha, "
             "       v.costo, v.costo_proveedor, v.costo_despacho, "
+            "       v.zz_monto, v.zz_envio_monto, "
             "       EXISTS(SELECT 1 FROM mant_ot_repuesto_solicitudes s "
             "               WHERE s.ot_generada_id=v.id) AS tiene_rep "
             "  FROM mant_visitas v WHERE v.cliente_id=%s "
@@ -77569,28 +77619,33 @@ def mant_vida_cliente_api(cid):
 
     tot_cobramos = tot_nos_costo = 0.0
     tot_tecnicos = tot_bodega = tot_compra = tot_garantia_costo = 0.0
-    n_incompleto = n_interna = 0
-    cobrado_incompleto = 0.0
+    n_interna = n_fuera_margen = 0
+    cobrado_fuera_margen = 0.0
     for v in cerradas:
         r = _resultados[v["id"]]
-        if r["estado"] == "interna":
+        if _ot_es_interna(v):
             # M6: una OT interna no es negocio con el cliente -- fuera de
-            # Cobramos Y de Nos costó, no solo del cobro.
+            # Cobramos Y de Nos costó, no solo del cobro. La CLASIFICACIÓN
+            # (clase/label) de _ot_resultado_financiero no distingue
+            # interna (igual que la tarjeta de la OT, revisión Opus #2) --
+            # esta exclusión es SOLO del agregado, no cambia lo que se ve
+            # en la fila de "Margen por OT".
             n_interna += 1
             continue
-        if r["estado"] == "incompleto":
-            # A3: sin costo_proveedor/costo_despacho declarado no hay
-            # margen que calcular -- se cuenta aparte, nunca se mete a la
-            # suma con un 0 que ensuciaría el promedio.
-            n_incompleto += 1
-            cobrado_incompleto += float(v.get("costo") or 0)
+        if not r["mostrar_queda"]:
+            # A3/revisión #2: sin costo completo ("Falta un costo"/"Falta
+            # el costo") o sin cobro declarado y sin garantía ("Falta lo
+            # que se cobra") no hay margen que sumar -- se cuenta aparte,
+            # nunca se mete a la suma con un 0 que ensuciaría el promedio.
+            n_fuera_margen += 1
+            cobrado_fuera_margen += float(r["cobrado"] or 0)
             continue
-        # 'ok' | 'garantia_sin_cobro' | 'contrato': las 3 tienen costo
-        # COMPLETO y entran al agregado -- el rótulo gris/ámbar en estas
-        # dos últimas es solo visual (A2), no las saca de la plata real.
+        # Con costo completo Y (cobro>0 o garantía valorizada): entra al
+        # agregado -- el rótulo gris/ámbar de garantía es solo visual
+        # (A2), no lo saca de la plata real.
         tot_cobramos += r["cobrado"] or 0
         tot_nos_costo += r["costo_total"] or 0
-        if (v.get("cubierto_por") or "").strip().lower() == "garantia":
+        if r["garantia"]:
             # BAJA: "Garantías que cubrimos" incluye repuestos de OT en
             # garantía -- técnico + repuestos juntos en esta única línea.
             tot_garantia_costo += r["costo_total"] or 0
@@ -77605,7 +77660,7 @@ def mant_vida_cliente_api(cid):
     _fin_queda = round(tot_cobramos - tot_nos_costo, 2)
     _fin_margen_pct = round((tot_cobramos - tot_nos_costo) / tot_cobramos * 100, 1) if tot_cobramos > 0 else None
     _fin_clase = _vida_margen_clase(_fin_margen_pct, _fin_queda)
-    if n_incompleto > 0 and _fin_clase == "ok":
+    if n_fuera_margen > 0 and _fin_clase == "ok":
         # A3: "si hay alguna, el semáforo agregado no puede ser verde
         # limpio" -- se degrada a ámbar con nota. Si ya era rojo/ámbar por
         # los números reales, se queda igual (nunca mejora el color).
@@ -77622,8 +77677,14 @@ def mant_vida_cliente_api(cid):
             "compras_proveedor": round(tot_compra, 2),
             "garantias_cubiertas": round(tot_garantia_costo, 2),
         },
-        "ot_sin_costo": n_incompleto,
-        "cobrado_sin_costo_completo": round(cobrado_incompleto, 2),
+        # 🔧 revisión Opus #2: el bucket "fuera del margen" ahora agrupa DOS
+        # cosas distintas por diseño de la tarjeta de la OT -- "falta un
+        # costo/el costo" (costo incompleto) Y "falta lo que se cobra"
+        # (cobro $0 sin garantía). ot_sin_costo/cobrado_sin_costo_completo
+        # se mantienen con estos nombres por compatibilidad del frontend,
+        # pero ahora cubren ambos casos (ver n_fuera_margen arriba).
+        "ot_sin_costo": n_fuera_margen,
+        "cobrado_sin_costo_completo": round(cobrado_fuera_margen, 2),
         "ot_interna_excluida": n_interna,
     }
 
@@ -77642,11 +77703,11 @@ def mant_vida_cliente_api(cid):
         mg_items.append({
             "id": v["id"], "numero_ot": v.get("numero_ot"),
             "tipo_label": _ot_tipo_label_efectivo(v.get("tipo"), bool(v.get("tiene_rep"))),
-            "estado": r["estado"], "label": r["label"],
+            "label": r["label"],
             "cobrado": r["cobrado"], "costo_total": r["costo_total"],
             "margen_clp": r["margen_clp"], "margen_pct": r["margen_pct"],
             "margen_clase": r["clase"],
-            "sin_costo": r["estado"] == "incompleto",
+            "sin_costo": not r["mostrar_queda"],
         })
     out["margen_ot"] = {"items": mg_items, "page": mg_page, "per_page": mg_per,
                         "total": mg_total, "total_pages": mg_pages}
@@ -77712,12 +77773,17 @@ def mant_vida_cliente_api(cid):
             # camino se omite (no se compara "" contra tickets sin RUT).
             _rut_cli = _rut_norm(cliente.get("rut")) if cliente.get("rut") else ""
             if _rut_cli:
+                # 🔗 (e), revisión Opus #2: rut_norm es una columna GENERADA
+                # + indexada en tk_tickets (ver _ensure_tk_tickets_columns,
+                # tickets_module.py) -- reemplaza el REPLACE(REPLACE(REPLACE(
+                # ...))) que antes obligaba a escanear la tabla completa en
+                # cada carga de la línea de vida.
                 rows = mysql_fetchall(
                     "SELECT DISTINCT t.id, t.numero_ticket, t.titulo, t.estado, t.created_at "
                     "  FROM tk_tickets t "
                     " WHERE t.id IN (SELECT ticket_id FROM mant_ot_repuesto_solicitudes "
                     "                 WHERE cliente_id=%s AND ticket_id IS NOT NULL) "
-                    "    OR UPPER(REPLACE(REPLACE(REPLACE(t.rut,'.',''),' ',''),'-','')) = %s "
+                    "    OR t.rut_norm = %s "
                     " ORDER BY t.created_at DESC LIMIT 300", (cid, _rut_cli)) or []
             else:
                 rows = mysql_fetchall(
@@ -86877,6 +86943,24 @@ def _ensure_repuestos_compras_tables():
                 "COMMENT 'Monto total declarado por gestion para esta compra (CLP)' AFTER oc_numero")
     except Exception as e:
         print(f"[ensure_repuestos_compras] monto_total: {e}", flush=True)
+    # 🔒 2026-09-26 (revisión Opus #2, hallazgo B -- "no recalcules/pises un
+    # monto_total declarado a mano por gestión"): sin esta columna,
+    # repstock_compra_costos_lineas no podía distinguir "monto_total que
+    # puso gestión a mano" de "monto_total que YA es un espejo calculado
+    # de las líneas" -- y lo recalculaba/pisaba SIEMPRE que se guardaba un
+    # costo por línea, perdiendo la cifra manual. 'manual' = gestión lo
+    # escribió por POST .../monto -- nunca se recalcula solo desde ahí en
+    # adelante. 'lineas' = es la suma automática de las líneas costeadas.
+    try:
+        _cols_mto = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos_compras'") or [])}
+        if _cols_mto and "monto_total_origen" not in _cols_mto:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_compras ADD COLUMN monto_total_origen VARCHAR(10) NULL "
+                "COMMENT \"'manual'|'lineas' -- de donde salio monto_total\" AFTER monto_total")
+    except Exception as e:
+        print(f"[ensure_repuestos_compras] monto_total_origen: {e}", flush=True)
 
 
 def _otrep_insert(sql, params):
@@ -90550,10 +90634,17 @@ def _parse_monto_clp(raw):
     el punto de miles chileno). Acepta 0 como monto VALIDO (garantía de
     proveedor, M2) -- solo None/str vacío/no numérico devuelven None.
 
-    Reglas: un punto seguido de EXACTAMENTE 3 dígitos (y nada más raro
-    alrededor) es separador de miles chileno y se quita; con 1-2 dígitos
-    tras el último punto se asume decimal real. Una coma sin puntos se
-    trata como separador decimal (por si alguien lo escribe así)."""
+    🔧 FIX (revisión Opus #2): en Chile la COMA tampoco se usa como
+    decimal para pesos -- "15,000" en CLP es igual de "quince mil" que
+    "15.000", nunca "quince coma cero cero cero". La versión anterior
+    solo aplicaba la regla de miles a puntos; una coma sola se trataba
+    SIEMPRE como decimal (`"," -> "."`), así que "15,000" devolvía 15.0.
+    Ahora `.` y `,` se tratan IGUAL: el ÚLTIMO separador (el que sea)
+    manda -- si el grupo de dígitos después de él tiene EXACTAMENTE 3,
+    es separador de miles y se quitan TODOS los separadores del string
+    (soporta varios grupos: "1.250.000" o "1,250,000" -> 1250000); con
+    1-2 dígitos después del último, se asume decimal real y todo lo de
+    antes se limpia de separadores (miles) dejando ese último como '.'."""
     if raw is None:
         return None
     s = str(raw).strip()
@@ -90565,14 +90656,16 @@ def _parse_monto_clp(raw):
     neg = s.startswith("-")
     if neg:
         s = s[1:]
-    if "," in s and "." not in s:
-        s = s.replace(",", ".")
-    else:
-        partes = s.split(".")
-        if len(partes) > 1 and all(p.isdigit() for p in partes) and len(partes[-1]) == 3:
-            s = "".join(partes)
-        elif len(partes) > 2:
-            s = "".join(partes[:-1]) + "." + partes[-1]
+    m = re.search(r"[.,](\d+)$", s)
+    if m:
+        cola = m.group(1)
+        if len(cola) == 3:
+            s = re.sub(r"[.,]", "", s)
+        elif len(cola) in (1, 2):
+            s = re.sub(r"[.,]", "", s[:m.start()]) + "." + cola
+        # cualquier otro largo de cola (ej. 4+ dígitos) no calza con un
+        # monto CLP real -- se deja tal cual y el float() de abajo falla
+        # limpio con None, en vez de adivinar mal.
     try:
         val = float(s)
     except (TypeError, ValueError):
@@ -90618,8 +90711,11 @@ def repstock_compra_monto(cid):
         return jsonify({"ok": False, "error": "El monto tiene que ser un número igual o mayor que cero."}), 400
     user = current_username() or "sistema"
     try:
+        # 🔒 revisión Opus #2: monto_total_origen='manual' -- esta cifra la
+        # escribió gestión a propósito; repstock_compra_costos_lineas ya
+        # NO la recalcula/pisa sola desde acá en adelante.
         mysql_execute(
-            "UPDATE mant_repuestos_compras SET monto_total=%s, "
+            "UPDATE mant_repuestos_compras SET monto_total=%s, monto_total_origen='manual', "
             " nota=CONCAT_WS(' · ', NULLIF(nota,''), %s) WHERE id=%s",
             (monto, f"Monto total declarado: ${monto:,.0f}".replace(",", ".") + f" ({user}).", cid))
     except Exception as e:
@@ -90650,9 +90746,19 @@ def repstock_compra_costos_lineas(cid):
     corrección explícita manda sobre cualquier recálculo automático,
     mismo criterio que _otrep_cambiar_estado y _otrep_compra_prorratear_
     costo). monto_total de la Compra se recalcula = Σ(costo·cantidad) de
-    las líneas ya costeadas -- queda como espejo informativo, no como
-    fuente de verdad (esa es cada línea)."""
-    c = mysql_fetchone("SELECT id, estado, ticket_id FROM mant_repuestos_compras WHERE id=%s", (cid,))
+    las líneas ya costeadas -- EXCEPTO si gestión ya declaró monto_total
+    a mano (monto_total_origen='manual', ver repstock_compra_monto):
+    revisión Opus #2, "no recalcules/pises un monto_total declarado a
+    mano" -- esa cifra manda mientras nadie la borre a propósito.
+
+    Cada línea trae opcionalmente `origen` ('bodega'|'compra'): el modal
+    "Recibir compra" lo manda 'bodega' cuando el usuario CONFIRMÓ el
+    costo sugerido sin tocarlo (es el costo de bodega de esa referencia,
+    no un costo propio de esta compra) y 'compra' cuando lo editó a un
+    valor distinto -- revisión Opus #2, "el modal Recibir NO debe mandar
+    como costo 'compra' los valores prellenados que el usuario no tocó".
+    Sin `origen` (compat), se asume 'compra' (comportamiento de antes)."""
+    c = mysql_fetchone("SELECT id, estado, ticket_id, monto_total_origen FROM mant_repuestos_compras WHERE id=%s", (cid,))
     if not c:
         return jsonify({"ok": False, "error": "Compra no encontrada."}), 404
     if c["estado"] == "cancelada":
@@ -90675,11 +90781,14 @@ def repstock_compra_costos_lineas(cid):
         if costo is None:
             errores.append(f"#{sid}: costo inválido.")
             continue
+        origen = (li.get("origen") or "compra").strip().lower()
+        if origen not in ("bodega", "compra"):
+            origen = "compra"
         try:
             tocadas = mysql_execute_returning_rowcount(
-                "UPDATE mant_ot_repuesto_solicitudes SET costo_unitario=%s, costo_origen='compra' "
+                "UPDATE mant_ot_repuesto_solicitudes SET costo_unitario=%s, costo_origen=%s "
                 " WHERE id=%s AND compra_id=%s AND COALESCE(costo_origen,'')<>'manual'",
-                (costo, sid, cid))
+                (costo, origen, sid, cid))
         except Exception as e:
             print(f"[otrep] costos-lineas sid={sid}: {e}", flush=True)
             errores.append(f"#{sid}: no se pudo guardar.")
@@ -90688,13 +90797,14 @@ def repstock_compra_costos_lineas(cid):
             actualizadas.append(sid)
         else:
             errores.append(f"#{sid}: no pertenece a esta compra o su costo ya fue corregido a mano ('manual').")
-    try:
-        mysql_execute(
-            "UPDATE mant_repuestos_compras SET monto_total=("
-            "  SELECT COALESCE(SUM(costo_unitario*cantidad),0) FROM mant_ot_repuesto_solicitudes"
-            "   WHERE compra_id=%s AND costo_unitario IS NOT NULL) WHERE id=%s", (cid, cid))
-    except Exception as e:
-        print(f"[otrep] recalc monto_total cid={cid}: {e}", flush=True)
+    if (c.get("monto_total_origen") or "") != "manual":
+        try:
+            mysql_execute(
+                "UPDATE mant_repuestos_compras SET monto_total_origen='lineas', monto_total=("
+                "  SELECT COALESCE(SUM(costo_unitario*cantidad),0) FROM mant_ot_repuesto_solicitudes"
+                "   WHERE compra_id=%s AND costo_unitario IS NOT NULL) WHERE id=%s", (cid, cid))
+        except Exception as e:
+            print(f"[otrep] recalc monto_total cid={cid}: {e}", flush=True)
     if c.get("ticket_id") and actualizadas:
         try:
             mysql_execute(
@@ -90724,11 +90834,14 @@ def _otrep_compra_prorratear_costo(cid):
     propio (ni por costos-lineas ni por 'manual'). Revisión Opus 2026-09-26
     (A4, corrige el prorrateo plano por cantidad de la versión anterior --
     Daniel: "nada de monto_total/Σcantidad plano"): si la Compra declaró
-    monto_total y quedan líneas sin costear, reparte ese total PONDERANDO
-    POR EL COSTO DE BODEGA de referencia de cada línea (mant_repuestos_
-    stock.costo_unitario del repuesto ligado), no por cantidad plana --
-    un repuesto caro no puede costar lo mismo por unidad que uno barato
-    solo porque llegaron en la misma compra.
+    monto_total y quedan líneas sin costear, reparte el REMANENTE
+    (monto_total − Σ de lo que las OTRAS líneas ya tienen asignado,
+    revisión Opus #2 -- antes se repartía monto_total completo, ignorando
+    que algunas líneas ya podían tener costo propio de costos-lineas o
+    'manual') PONDERANDO POR EL COSTO DE BODEGA de referencia de cada
+    línea sin costear (mant_repuestos_stock.costo_unitario), no por
+    cantidad plana -- un repuesto caro no puede costar lo mismo por
+    unidad que uno barato solo porque llegaron en la misma compra.
 
     Si CUALQUIERA de las líneas pendientes de costear no tiene una
     referencia de bodega (repuesto sin costo_unitario, o sin
@@ -90738,8 +90851,10 @@ def _otrep_compra_prorratear_costo(cid):
     mitad con una base de cálculo distinta que confunda el desglose.
 
     Redondeo cuadrado al peso: cada línea se redondea a 2 decimales y la
-    ÚLTIMA absorbe la diferencia contra monto_total, así la suma de las
-    líneas SIEMPRE cuadra exacto con el total declarado."""
+    ÚLTIMA CON CANTIDAD > 0 absorbe la diferencia contra el remanente
+    (revisión Opus #2: antes, si la última línea de la lista tenía
+    cantidad<=0, la diferencia quedaba sin asignar a nadie), así la suma
+    de las líneas SIEMPRE cuadra exacto con el remanente repartido."""
     try:
         c = mysql_fetchone("SELECT monto_total FROM mant_repuestos_compras WHERE id=%s", (cid,))
         if not c or c.get("monto_total") is None:
@@ -90758,19 +90873,40 @@ def _otrep_compra_prorratear_costo(cid):
             print(f"[otrep] prorratear costo cid={cid}: al menos una línea sin referencia de bodega, "
                   "no se prorratea nada.", flush=True)
             return
+        # 🔒 revisión Opus #2: el remanente es monto_total MENOS lo que las
+        # líneas YA costeadas (ya tienen costo_unitario, sea 'bodega',
+        # 'compra' o 'manual') se están llevando -- no se reparte el total
+        # completo otra vez sobre ellas.
+        ya_asignado = sum(float(li["costo_unitario"]) * float(li.get("cantidad") or 0)
+                          for li in lineas if li.get("costo_unitario") is not None)
+        remanente = round(monto_total - ya_asignado, 2)
+        if remanente <= 0:
+            return
         pesos = [float(li["ref_costo"]) * float(li.get("cantidad") or 0) for li in objetivo]
         total_peso = sum(pesos)
         if total_peso <= 0:
             return
+        # La ÚLTIMA línea CON cantidad > 0 absorbe el redondeo -- no
+        # necesariamente el último índice de `objetivo` (podría tener
+        # cantidad<=0, en cuyo caso se le asigna costo_unitario=0 y se
+        # sigue buscando hacia atrás quién absorbe la diferencia real).
+        idx_ultima_con_cantidad = None
+        for i in range(len(objetivo) - 1, -1, -1):
+            if float(objetivo[i].get("cantidad") or 0) > 0:
+                idx_ultima_con_cantidad = i
+                break
         asignado = 0.0
         for i, li in enumerate(objetivo):
             cant = float(li.get("cantidad") or 0)
             if cant <= 0:
+                mysql_execute(
+                    "UPDATE mant_ot_repuesto_solicitudes SET costo_unitario=0, costo_origen='compra' "
+                    " WHERE id=%s AND COALESCE(costo_origen,'') <> 'manual'", (li["id"],))
                 continue
-            if i == len(objetivo) - 1:
-                monto_linea = round(monto_total - asignado, 2)
+            if idx_ultima_con_cantidad is not None and i == idx_ultima_con_cantidad:
+                monto_linea = round(remanente - asignado, 2)
             else:
-                monto_linea = round(monto_total * (pesos[i] / total_peso), 2)
+                monto_linea = round(remanente * (pesos[i] / total_peso), 2)
                 asignado += monto_linea
             costo_unit = round(monto_linea / cant, 2)
             mysql_execute(
@@ -91051,11 +91187,11 @@ def repstock_solicitud_ot_costo(sid):
     if not s:
         return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
     d = request.get_json(silent=True) or {}
-    try:
-        nuevo_costo = float(str(d.get("costo_unitario") or "").replace(",", "."))
-    except (TypeError, ValueError):
-        nuevo_costo = -1
-    if nuevo_costo < 0 or nuevo_costo > 99999999:
+    # 🔧 revisión Opus #2 (c): usar el mismo parseo robusto que el resto de
+    # la cola -- antes hacía `.replace(',', '.')` a mano, que malinterpreta
+    # "15,000" (quince mil en CLP) como 15.0.
+    nuevo_costo = _parse_monto_clp(d.get("costo_unitario"))
+    if nuevo_costo is None or nuevo_costo > 99999999:
         return jsonify({"ok": False, "error": "El costo tiene que ser un número igual o mayor que cero."}), 400
     user = current_username() or "sistema"
     try:
@@ -99012,6 +99148,7 @@ def ot2_api_resultado_financiero(vid):
         return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     v = mysql_fetchone(
         "SELECT id, tipo, cubierto_por, costo, costo_proveedor, costo_despacho, "
+        "       zz_monto, zz_envio_monto, "
         "       modalidad_cobro, cliente_id FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
