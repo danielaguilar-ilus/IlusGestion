@@ -90577,9 +90577,16 @@ def _parse_monto_clp(raw):
         val = float(s)
     except (TypeError, ValueError):
         return None
-    if val < 0:
+    # 🔧 FIX (revisión Opus post-commit 29929ce1, hallazgo real vía test):
+    # `val` acá SIEMPRE es >= 0 -- el signo ya se le quitó a `s` arriba
+    # (`neg = s.startswith("-")`), así que `val < 0` nunca era verdad y un
+    # monto negativo ("-500") se colaba devolviendo -500.0 en vez de None.
+    # Un monto no puede ser negativo (M2 no lo pidió, y no tiene sentido
+    # de negocio) -- se rechaza usando el flag `neg`, no el valor ya
+    # despojado del signo.
+    if neg:
         return None
-    return -val if neg else val
+    return val
 
 
 @app.route("/repuestos/api/compras/<int:cid>/monto", methods=["POST"])
@@ -98971,10 +98978,11 @@ def ot2_api_repuestos_costo(vid):
     El técnico nunca ve montos (mismo candado que costo-sugerido).
 
     🔧 M4 (revisión Opus 2026-09-26): reusa `_ot_repuestos_desglose` --
-    ANTES esta query decía `(visita_id=%s OR ot_generada_id=%s)`, que podía
-    atribuir el MISMO repuesto a DOS OT (la de origen Y la de instalación,
-    si son distintas). Ahora es la ÚNICA regla del proyecto: `COALESCE(
-    ot_generada_id, visita_id) = vid`, la misma que usa Vida del cliente."""
+    la condición vieja de este WHERE combinaba visita_id y ot_generada_id
+    con un OR, lo que podía atribuir el MISMO repuesto a DOS OT (la de
+    origen Y la de instalación, si son distintas). Ahora es la ÚNICA
+    regla del proyecto: `COALESCE(ot_generada_id, visita_id) = vid`, la
+    misma que usa Vida del cliente."""
     if _es_rol_tecnico():
         return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     rep = _ot_repuestos_desglose([vid]).get(vid) or {
