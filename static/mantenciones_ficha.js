@@ -888,7 +888,9 @@ function repSolRenderTabla(arr) {
           : '<span class="text-muted">Sin OT · manual</span>');
     const otInstal = s.ot_generada_numero
       ? `<a href="/ot/${s.ot_generada_id}" target="_blank" rel="noopener">${repEsc(s.ot_generada_numero)}</a>`
-      : (s.ot_generada_id ? '<span class="text-muted" title="La OT de instalación ya no existe">OT eliminada</span>' : '—');
+      // 🏷️ 2026-09-26 (Daniel): "OT de instalación" -> "OT de instalación de
+      // repuestos" para distinguirla de la instalación de EQUIPOS.
+      : (s.ot_generada_id ? '<span class="text-muted" title="La OT de instalación de repuestos ya no existe">OT eliminada</span>' : '—');
     return `
     <tr>
       <td>
