@@ -54988,6 +54988,17 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_incidencias ADD INDEX idx_eliminada (eliminada)",
                 "ALTER TABLE mant_incidencia_fotos ADD COLUMN tipo ENUM('foto','video') "
                 "NOT NULL DEFAULT 'foto'",
+                # 🔧 2026-09-26 (Daniel: modal según su macro Excel vieja).
+                # `sugerencia` es el campo "Sugerencia" de la macro -- DISTINTO
+                # de `recomendacion`, que ya se usa como la UA (compatibilidad
+                # de datos: no se toca `recomendacion`, se abre uno nuevo).
+                # `repuesto_stock_id` liga la incidencia a un repuesto real de
+                # la Bodega elegido con el buscador compartido RepBuscador.
+                "ALTER TABLE mant_incidencias ADD COLUMN sugerencia TEXT NULL "
+                "COMMENT 'Sugerencia/recomendación libre -- campo propio, distinto de recomendacion (=UA)'",
+                "ALTER TABLE mant_incidencias ADD COLUMN repuesto_stock_id INT NULL "
+                "COMMENT 'FK conceptual a mant_repuestos_stock.id, elegido con RepBuscador'",
+                "ALTER TABLE mant_incidencias ADD INDEX idx_inc_repstock (repuesto_stock_id)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -63982,6 +63993,25 @@ def mant_api_incidencias_conciliacion():
     })
 
 
+@app.route("/mantenciones/api/incidencias/motivos-frecuentes", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_motivos_frecuentes():
+    """🔧 2026-09-26 (Daniel, sobre su macro Excel vieja): "chips de motivos
+    frecuentes seleccionables... top ~8". Agrupa por motivo EXACTO (no hay
+    NLP acá) y devuelve los 8 más repetidos, excluyendo vacíos/demasiado
+    cortos (mismo mínimo de 10 caracteres que exige el campo)."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT motivo, COUNT(*) AS n FROM mant_incidencias "
+            " WHERE COALESCE(eliminada,0)=0 AND CHAR_LENGTH(TRIM(COALESCE(motivo,''))) >= 10 "
+            " GROUP BY motivo ORDER BY n DESC, motivo ASC LIMIT 8") or []
+    except Exception as e:
+        print(f"[motivos_frecuentes] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar los motivos frecuentes."}), 500
+    return jsonify({"ok": True, "motivos": [f["motivo"] for f in filas if f.get("motivo")]})
+
+
 @app.route("/mantenciones/incidencias")
 @app.route("/servicio-tecnico/incidencias")
 @_mant_required
@@ -64227,6 +64257,8 @@ def mant_api_incidencias_crear():
     if stock_repuesto not in ("hay", "no_hay", None):
         stock_repuesto = None
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+    rep_stock_id = str(data.get("repuesto_stock_id") or "").strip()
+    rep_stock_id = int(rep_stock_id) if rep_stock_id.isdigit() else None
 
     db = get_db()
     with db.cursor() as cur:
@@ -64234,14 +64266,17 @@ def mant_api_incidencias_crear():
             """INSERT INTO mant_incidencias
                (sku, descripcion, cantidad, motivo, req_repuesto,
                 descripcion_repuesto, stock_repuesto, observacion,
-                fecha_resolucion, recomendacion, ubicacion, created_by)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                fecha_resolucion, recomendacion, ubicacion, sugerencia,
+                repuesto_stock_id, created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (sku or None, descripcion, cantidad,
              (data.get("motivo") or "").strip() or None,
              req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
              stock_repuesto, (data.get("observacion") or "").strip() or None,
              fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
              (data.get("ubicacion") or "").strip() or None,
+             (data.get("sugerencia") or "").strip() or None,
+             rep_stock_id,
              current_username()),
         )
         db.commit()
@@ -64272,6 +64307,8 @@ def mant_api_incidencias_editar(iid):
     if estado not in ("abierta", "resuelta"):
         estado = "abierta"
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+    rep_stock_id = str(data.get("repuesto_stock_id") or "").strip()
+    rep_stock_id = int(rep_stock_id) if rep_stock_id.isdigit() else None
     nuevos = {
         "sku": (data.get("sku") or "").strip() or None,
         "descripcion": descripcion,
@@ -64284,6 +64321,8 @@ def mant_api_incidencias_editar(iid):
         "fecha_resolucion": fecha_resolucion,
         "recomendacion": (data.get("recomendacion") or "").strip() or None,
         "ubicacion": (data.get("ubicacion") or "").strip() or None,
+        "sugerencia": (data.get("sugerencia") or "").strip() or None,
+        "repuesto_stock_id": rep_stock_id,
         "estado": estado,
     }
     # Snapshot previo para la bitácora (Daniel: "trazable"). Solo se
@@ -64301,12 +64340,13 @@ def mant_api_incidencias_editar(iid):
                  sku=%s, descripcion=%s, cantidad=%s, motivo=%s,
                  req_repuesto=%s, descripcion_repuesto=%s, stock_repuesto=%s,
                  observacion=%s, fecha_resolucion=%s, recomendacion=%s, ubicacion=%s,
+                 sugerencia=%s, repuesto_stock_id=%s,
                  estado=%s, updated_by=%s
                WHERE id=%s""",
             (nuevos["sku"], nuevos["descripcion"], nuevos["cantidad"], nuevos["motivo"],
              nuevos["req_repuesto"], nuevos["descripcion_repuesto"], nuevos["stock_repuesto"],
              nuevos["observacion"], nuevos["fecha_resolucion"], nuevos["recomendacion"],
-             nuevos["ubicacion"],
+             nuevos["ubicacion"], nuevos["sugerencia"], nuevos["repuesto_stock_id"],
              nuevos["estado"], current_username(), iid),
         )
         db.commit()

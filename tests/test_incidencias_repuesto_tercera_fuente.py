@@ -33,12 +33,31 @@ def _leer(path):
         return fh.read()
 
 
+# 🔧 2026-09-26 (revisión post-merge): app.py ya pasa las 140 mil líneas --
+# en máquinas o sandboxes con disco/CPU lentos, un solo `ast.parse` de este
+# archivo puede tardar varios MINUTOS (medido: ~190 s en un entorno de CI
+# restringido). Antes, CADA llamada a `_fuente_de`/`_cargar_funciones`
+# volvía a leer y re-parsear el archivo completo desde cero -- con las 6
+# llamadas de TestConciliacionExcluyeEliminadas más las de las demás clases,
+# la suite completa se volvía impráctica de esperar. Se cachea el AST (y el
+# código fuente) UNA sola vez por proceso: el resto de las llamadas reusan
+# el mismo árbol ya parseado. No cambia lo que se prueba, solo cuánto tarda.
+_AST_CACHE = {}
+
+
+def _codigo_y_arbol():
+    if "codigo" not in _AST_CACHE:
+        codigo = _leer(APP_PY)
+        _AST_CACHE["codigo"] = codigo
+        _AST_CACHE["arbol"] = ast.parse(codigo)
+    return _AST_CACHE["codigo"], _AST_CACHE["arbol"]
+
+
 def _fuente_de(nombre_funcion):
     """Devuelve el CÓDIGO FUENTE (texto crudo) de una función de app.py por
     nombre, usando ast.get_source_segment -- para revisar SQL armado sin
     ejecutarlo (no hay BD en este test, ver módulo docstring)."""
-    codigo = _leer(APP_PY)
-    arbol = ast.parse(codigo)
+    codigo, arbol = _codigo_y_arbol()
     for nodo in ast.walk(arbol):
         if isinstance(nodo, ast.FunctionDef) and nodo.name == nombre_funcion:
             return ast.get_source_segment(codigo, nodo)
@@ -50,7 +69,7 @@ def _cargar_funciones(*nombres):
     un ambito aislado (para que las que dependen de otras -- ej.
     _inc_hallazgo_falta_registrar usa el string INC_BODEGA_WMS -- lo
     encuentren)."""
-    arbol = ast.parse(_leer(APP_PY))
+    _, arbol = _codigo_y_arbol()
     ambito = {}
     # INC_BODEGA_WMS es un simple `NOMBRE = "literal"` a nivel de módulo;
     # se busca aparte porque no es un FunctionDef.

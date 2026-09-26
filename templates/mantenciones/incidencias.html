@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Incidencias — ILUS{% endblock %}
+{# 🔧 2026-09-26: motor de búsqueda de repuestos COMPARTIDO (mismo que
+   /repuestos y la OT) para elegir un repuesto real de la Bodega desde la
+   tarjeta "Detalle" del modal de incidencia. #}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='repuestos_buscador.css') }}">
+{% endblock %}
 {% block content %}
 
 <div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -71,22 +77,27 @@
          un ítem hace scroll a esa tarjeta. Ninguna función del wizard se
          perdió: buscar UA/autocompletar, fotos, eliminar y guardar siguen
          siendo las mismas (REGLA #4.2). #}
+      {#- 🔧 2026-09-26 (Daniel, sobre su macro Excel vieja): reordena las
+          tarjetas siguiendo su estructura original -- OBLIGATORIO (UA +
+          Ubicación + SKU + Descripción + Cantidad, todo junto), Motivo,
+          Sugerencia (campo nuevo, separado de la UA), Detalle (repuesto +
+          resolución + observación), Evidencia. -#}
       <div class="inc-steps libre" id="incSteps">
         <div class="inc-step" data-step="1">
-          <span class="inc-step-n"><i class="bi bi-upc-scan"></i></span>
-          <span class="inc-step-t">Unidad<small>de almacenamiento</small></span>
+          <span class="inc-step-n"><i class="bi bi-box-seam"></i></span>
+          <span class="inc-step-t">Obligatorio<small>UA, SKU, cantidad</small></span>
         </div>
         <div class="inc-step" data-step="2">
-          <span class="inc-step-n"><i class="bi bi-box-seam"></i></span>
-          <span class="inc-step-t">Producto<small>SKU y cantidad</small></span>
-        </div>
-        <div class="inc-step" data-step="3">
           <span class="inc-step-n"><i class="bi bi-chat-left-quote"></i></span>
           <span class="inc-step-t">Motivo<small>qué pasó</small></span>
         </div>
+        <div class="inc-step" data-step="3">
+          <span class="inc-step-n"><i class="bi bi-lightbulb"></i></span>
+          <span class="inc-step-t">Sugerencia<small>opcional</small></span>
+        </div>
         <div class="inc-step" data-step="4">
           <span class="inc-step-n"><i class="bi bi-wrench-adjustable"></i></span>
-          <span class="inc-step-t">Detalle<small>opcional</small></span>
+          <span class="inc-step-t">Detalle<small>repuesto y notas</small></span>
         </div>
         <div class="inc-step" data-step="5">
           <span class="inc-step-n"><i class="bi bi-camera"></i></span>
@@ -97,45 +108,45 @@
 
       <div class="modal-body">
         <input type="hidden" id="incId">
-        <input type="hidden" id="incUbicacion">
+        <input type="hidden" id="incRepuestoStockId">
 
-        {# ══ Unidad de almacenamiento (obligatoria) ══ #}
+        {# ══ OBLIGATORIO: UA + Ubicación + SKU + Descripción + Cantidad ══
+           🔧 2026-09-26 (Daniel, sobre su macro Excel: "bloque OBLIGATORIO:
+           SKU, Descripción, Cantidad" + UA/Ubicación, todo junto en una
+           sola tarjeta -- ya no repartido en "Unidad" y "Producto"). #}
         <section class="inc-pane" data-pane="1">
           <div class="inc-pane-head inc-c1">
             <i class="bi bi-upc-scan"></i>
-            <div><b>¿En qué unidad de almacenamiento está?</b>
-              <small>Búscala y traemos el producto automáticamente desde el WMS.</small></div>
-          </div>
-          <div class="inc-campo" data-campo="incRecomendacion">
-            <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
-            <div class="input-group input-group-lg">
-              <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
-              <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
-                <i class="bi bi-search me-1"></i>Buscar</button>
-            </div>
-            <div class="form-text">
-              Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
-              del WMS y en el historial de movimientos.
-            </div>
-          </div>
-          <div id="incUaResultado" class="inc-resultado"></div>
-        </section>
-
-        {# ══ PASO 2 — Producto ══ #}
-        <section class="inc-pane" data-pane="2">
-          <div class="inc-pane-head inc-c2">
-            <i class="bi bi-box-seam"></i>
-            <div><b>¿Qué producto es y cuántas unidades?</b>
-              <small>Verifica lo que trajo el WMS y ajusta la cantidad afectada.</small></div>
+            <div><b>Datos obligatorios</b>
+              <small>UA y ubicación en Bodega 13, SKU, nombre completo y cantidad afectada.</small></div>
           </div>
           <div class="row g-3">
-            <div class="col-md-5 inc-campo" data-campo="incSku">
+            <div class="col-md-7 inc-campo" data-campo="incRecomendacion">
+              <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
+              <div class="input-group input-group-lg">
+                <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
+                <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
+                  <i class="bi bi-search me-1"></i>Buscar</button>
+              </div>
+              <div class="form-text">
+                Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
+                del WMS y en el historial de movimientos.
+              </div>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label">Ubicación en Bodega 13</label>
+              <input type="text" class="form-control" id="incUbicacion" placeholder="Ej: A-12-03">
+              <div class="form-text">Se completa sola al buscar la UA. Se compara contra CheckWMS en la tabla.</div>
+            </div>
+            <div id="incUaResultado" class="inc-resultado col-12"></div>
+            <div class="col-md-4 inc-campo" data-campo="incSku">
               <label class="form-label">SKU <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
               <input type="text" class="form-control" id="incSku" placeholder="Ej: TWMA305-140">
             </div>
-            <div class="col-md-7 inc-campo" data-campo="incDescripcion">
+            <div class="col-md-8 inc-campo" data-campo="incDescripcion">
               <label class="form-label">Nombre del producto <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
-              <input type="text" class="form-control" id="incDescripcion" required>
+              <textarea class="form-control" id="incDescripcion" rows="2" required
+                        placeholder="Nombre completo del producto -- no lo acortes, aunque sea largo."></textarea>
             </div>
             <div class="col-md-4 inc-campo" data-campo="incCantidad">
               <label class="form-label">Cantidad afectada <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
@@ -152,8 +163,8 @@
           </div>
         </section>
 
-        {# ══ PASO 3 — Motivo (el protagonista) ══ #}
-        <section class="inc-pane" data-pane="3">
+        {# ══ MOTIVO (el protagonista) ══ #}
+        <section class="inc-pane" data-pane="2">
           <div class="inc-pane-head inc-c3">
             <i class="bi bi-chat-left-quote"></i>
             <div><b>¿Qué pasó exactamente?</b>
@@ -168,22 +179,23 @@
               <span class="inc-contador" id="incMotivoCount">0</span>
             </div>
           </div>
+          {#- 🔧 2026-09-26 (Daniel, sobre su macro Excel: "chips de motivos
+              frecuentes... top ~8"): reemplaza los 5 chips fijos por los
+              motivos MÁS USADOS de verdad en mant_incidencias (se cargan
+              una vez, GET /mantenciones/api/incidencias/motivos-frecuentes)
+              + un chip "Otro" que solo enfoca el textarea. -#}
           <div class="inc-chips" id="incMotivoChips">
             <span class="inc-chip-lbl">Rápidos:</span>
-            <button type="button" class="inc-chip">Falta pieza</button>
-            <button type="button" class="inc-chip">Llegó dañado del proveedor</button>
-            <button type="button" class="inc-chip">Se sacó para cubrir garantía</button>
-            <button type="button" class="inc-chip">Devolución de cliente</button>
-            <button type="button" class="inc-chip">Faltante en despacho</button>
+            <span class="text-muted" style="font-size:.74rem">Cargando…</span>
           </div>
           {#- 🔧 2026-09-21 (Fase 2 -- Daniel: "la bodega de incidencias en la
               gestión de productos y motivos se puede solicitar un
               repuesto"). Va acá porque en este punto ya están completos el
-              producto (Paso 2: SKU/descripción/cantidad) y el motivo
-              (este paso) -- exactamente lo que pide una solicitud real.
-              Solo disponible sobre una incidencia YA GUARDADA (incId con
-              valor): pedir un repuesto para algo que todavía no existe en
-              la base no tiene a qué solicitud engancharse. -#}
+              producto (tarjeta Obligatorio) y el motivo (este paso) --
+              exactamente lo que pide una solicitud real. Solo disponible
+              sobre una incidencia YA GUARDADA (incId con valor): pedir un
+              repuesto para algo que todavía no existe en la base no tiene
+              a qué solicitud engancharse. -#}
           <div class="inc-rep-cta" id="incRepCta">
             <button type="button" class="btn btn-outline-dark" id="incBtnSolicitarRepuesto">
               <i class="bi bi-tools me-1"></i>Solicitar repuesto</button>
@@ -191,7 +203,21 @@
           </div>
         </section>
 
-        {# ══ PASO 4 — Detalle opcional ══ #}
+        {# ══ SUGERENCIA / RECOMENDACIÓN ══ 🔧 2026-09-26 (Daniel, sobre su
+           macro Excel: campo "Sugerencia" de la planilla vieja -- DISTINTO
+           de la UA, que ya vive en `recomendacion`/incRecomendacion; este es
+           un campo nuevo, `sugerencia`). #}
+        <section class="inc-pane" data-pane="3">
+          <div class="inc-pane-head inc-c2">
+            <i class="bi bi-lightbulb"></i>
+            <div><b>Sugerencia o recomendación</b>
+              <small>Opcional: qué harías tú, o qué le recomiendas al técnico/proveedor.</small></div>
+          </div>
+          <textarea class="form-control" id="incSugerencia" rows="4"
+                    placeholder="Ej: pedir al proveedor que revise el embalaje antes de despachar…"></textarea>
+        </section>
+
+        {# ══ DETALLE: repuesto + resolución + observación ══ #}
         <section class="inc-pane" data-pane="4">
           <div class="inc-pane-head inc-c4">
             <i class="bi bi-wrench-adjustable"></i>
@@ -214,10 +240,26 @@
                 <option value="hay">Hay</option>
                 <option value="no_hay">No hay</option>
               </select>
+              <div class="form-text">Se calcula solo al elegir un repuesto de la bodega; editable si no hay match.</div>
             </div>
             <div class="col-md-4">
               <label class="form-label">Fecha de resolución</label>
               <input type="date" class="form-control" id="incFechaResolucion">
+            </div>
+            {#- 🔧 2026-09-26 (Daniel: "el tipo de repuesto se puede asociar de
+                la bodega de repuestos... hacerlo más interactivo"): motor
+                COMPARTIDO RepBuscador en modo selección, mismo que usan
+                /repuestos y la OT. Solo se muestra con "Requiere repuesto: Sí". -#}
+            <div class="col-12" id="incRepBuscadorWrap" style="display:none">
+              <label class="form-label">Elegir repuesto de la Bodega</label>
+              <div id="incRepBuscadorMount"></div>
+              <div class="d-flex align-items-center gap-2 mt-2" id="incRepSeleccionadoBox" style="display:none">
+                <span class="badge text-bg-light border" id="incRepSeleccionadoTxt"></span>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="incBtnQuitarRepSel">
+                  <i class="bi bi-x-lg"></i> Quitar</button>
+                <button type="button" class="btn btn-sm btn-ilus" id="incBtnSolicitarAhora">
+                  <i class="bi bi-send-check me-1"></i>Solicitar este repuesto ahora</button>
+              </div>
             </div>
             <div class="col-12">
               <label class="form-label">Descripción del repuesto</label>
@@ -226,8 +268,8 @@
             </div>
             <div class="col-12">
               <label class="form-label">Observación</label>
-              <textarea class="form-control" id="incObservacion" rows="3"
-                        placeholder="Notas internas, seguimiento con proveedor, etc."></textarea>
+              <textarea class="form-control" id="incObservacion" rows="4"
+                        placeholder="Notas internas, seguimiento con proveedor, etc. (texto grande, sin límite práctico)"></textarea>
             </div>
           </div>
         </section>
@@ -603,6 +645,7 @@
 }
 </style>
 
+<script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
 <script>
 (function(){
   var incPage = 1, incSize = 10, incQ = '', incEstado = '';
@@ -906,13 +949,13 @@
   // una + el resumen "Falta: ..." de arriba. `incPaso` se conserva solo
   // como referencia de qué tarjeta resaltar tras un scroll (irAPaso).
   var INC_TARJETAS = {
-    1: {req: ['incRecomendacion'], opc: []},
-    2: {req: ['incSku', 'incDescripcion', 'incCantidad'], opc: []},
-    3: {req: ['incMotivo'], opc: []},
+    1: {req: ['incRecomendacion', 'incSku', 'incDescripcion', 'incCantidad'], opc: ['incUbicacion']},
+    2: {req: ['incMotivo'], opc: []},
+    3: {req: [], opc: ['incSugerencia']},
     4: {req: [], opc: ['incReqRepuesto', 'incDescripcionRepuesto']},
     5: {req: [], opc: ['fotos']},
   };
-  var INC_TARJETA_LABEL = {1: 'UA', 2: 'producto', 3: 'motivo', 4: 'detalle', 5: 'evidencia'};
+  var INC_TARJETA_LABEL = {1: 'datos obligatorios', 2: 'motivo', 3: 'sugerencia', 4: 'detalle', 5: 'evidencia'};
 
   function incCompletaCampo(id){
     if(id === 'fotos'){
@@ -962,6 +1005,10 @@
   }
 
   // Valida el paso actual. Devuelve true si se puede avanzar.
+  // 🔧 2026-09-26: la tarjeta "Obligatorio" ahora junta UA + SKU +
+  // descripción + cantidad (antes repartidos en pasos 1 y 2) -- se valida
+  // todo junto bajo n===1. n===2 sigue siendo el motivo; 3/4/5 no tienen
+  // campos obligatorios.
   function validarPaso(n){
     if(n === 1){
       var ua = $('incRecomendacion');
@@ -970,8 +1017,6 @@
         ilusToast('La Unidad de Almacenamiento es obligatoria', {type:'warning'});
         return false;
       }
-    }
-    if(n === 2){
       var sku = $('incSku'), desc = $('incDescripcion'), cant = $('incCantidad');
       if(!sku.value.trim()){
         marcarError(sku); ilusToast('Indica el SKU del producto', {type:'warning'}); return false;
@@ -984,7 +1029,7 @@
         marcarError(cant); ilusToast('La cantidad debe ser 1 o más', {type:'warning'}); return false;
       }
     }
-    if(n === 3){
+    if(n === 2){
       var mot = $('incMotivo');
       if(mot.value.trim().length < 10){
         marcarError(mot);
@@ -1223,20 +1268,53 @@
     s.addEventListener('click', function(){ irAPaso(parseInt(s.dataset.step, 10)); });
   });
 
-  // Contador vivo del motivo + chips de motivos frecuentes.
+  // Contador vivo del motivo.
   $('incMotivo').addEventListener('input', function(){
     var n = this.value.trim().length, c = $('incMotivoCount');
     c.textContent = n;
     c.classList.toggle('ok', n >= 10);
   });
-  document.querySelectorAll('#incMotivoChips .inc-chip').forEach(function(b){
-    b.addEventListener('click', function(){
-      var t = $('incMotivo');
-      t.value = (t.value.trim() ? t.value.trim() + ' — ' : '') + b.textContent;
-      t.dispatchEvent(new Event('input'));
-      t.focus();
-    });
-  });
+
+  // 🔧 2026-09-26 (Daniel, sobre su macro Excel: "chips de motivos
+  // frecuentes... top ~8"): se cargan UNA vez (GET .../motivos-frecuentes)
+  // y se pintan como chips clicables + un chip "Otro" que solo enfoca el
+  // textarea (no inserta texto). Si la consulta falla, no bloquea nada --
+  // el textarea grande sigue siendo la forma normal de escribir el motivo.
+  var incMotivosFrecuentesCargados = false;
+  function incMotivoChipClick(texto){
+    var t = $('incMotivo');
+    t.value = (t.value.trim() ? t.value.trim() + ' — ' : '') + texto;
+    t.dispatchEvent(new Event('input'));
+    t.focus();
+  }
+  function incCargarMotivosFrecuentes(){
+    if(incMotivosFrecuentesCargados) return;
+    incMotivosFrecuentesCargados = true;
+    fetch('/mantenciones/api/incidencias/motivos-frecuentes')
+      .then(function(r){ return r.json(); }).then(function(d){
+        var cont = $('incMotivoChips');
+        var motivos = (d && d.ok && d.motivos && d.motivos.length) ? d.motivos : [
+          'Falta pieza', 'Llegó dañado del proveedor', 'Se sacó para cubrir garantía',
+          'Devolución de cliente', 'Faltante en despacho',
+        ];
+        var html = '<span class="inc-chip-lbl">Rápidos:</span>';
+        motivos.slice(0, 8).forEach(function(m){
+          html += '<button type="button" class="inc-chip" data-motivo="'+incEsc(m)+'">'+incEsc(m.length > 60 ? m.slice(0,57)+'…' : m)+'</button>';
+        });
+        html += '<button type="button" class="inc-chip" data-motivo="">Otro</button>';
+        cont.innerHTML = html;
+        cont.querySelectorAll('.inc-chip').forEach(function(b){
+          b.addEventListener('click', function(){
+            var m = b.dataset.motivo;
+            if(m) incMotivoChipClick(m); else $('incMotivo').focus();
+          });
+        });
+      }).catch(function(){
+        // Falla silenciosa: se deja la etiqueta sin chips, el textarea sigue disponible.
+        $('incMotivoChips').innerHTML = '<span class="inc-chip-lbl">Rápidos:</span>'
+          + '<span class="text-muted" style="font-size:.74rem">No se pudieron cargar los motivos frecuentes.</span>';
+      });
+  }
 
   // ══════════ Conciliación: nuestra BD vs ERP Random vs CheckWMS ══════════
   // Daniel (2026-08-03): "prioridad a comparar nuestra BD es contra el ERP
@@ -1459,9 +1537,13 @@
   }
 
   // 🔧 2026-09-26 (Daniel, decisión confirmada): tocar una fila "Falta en
-  // nuestra BD" abre el ALTA prellenada -- SKU, descripción, UA y
-  // ubicación ya puestos, el usuario solo completa motivo/fotos y guarda.
-  // Salta directo al paso 3 (Motivo): los pasos 1 y 2 ya quedan resueltos.
+  // nuestra BD" -- o "dif_erp"/"no_en_erp" sin incidencia asociada, ej. el
+  // caso real "Escaladora ILUS X1" (SKU 1010089701, nuestra BD 0 / ERP 1 /
+  // WMS 1) -- abre el ALTA prellenada: SKU, descripción, cantidad = la
+  // diferencia, UA y ubicación YA puestos (ver `cantidad`/`ua`/`ubicacion`
+  // que arma app.py en cada hallazgo). El usuario solo completa el motivo
+  // y guarda. Salta directo a la tarjeta Motivo: la Obligatoria ya queda
+  // resuelta.
   function incAbrirAltaPrellenada(h){
     limpiarModal();
     document.getElementById('incModalTitulo').innerHTML =
@@ -1478,7 +1560,7 @@
     }
     refrescarVerdeTodos();
     incCargarEvidencia();
-    irAPaso(3);
+    irAPaso(2);
     incModal().show();
     setTimeout(function(){ document.getElementById('incMotivo').focus(); }, 250);
   }
@@ -1507,7 +1589,8 @@
 
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
-     'incObservacion','incRecomendacion','incFechaResolucion','incUbicacion'].forEach(function(id){
+     'incObservacion','incRecomendacion','incFechaResolucion','incUbicacion',
+     'incSugerencia','incRepuestoStockId'].forEach(function(id){
       document.getElementById(id).value = '';
     });
     document.getElementById('incCantidad').value = 1;
@@ -1523,6 +1606,8 @@
     // enganchar la solicitud de repuesto.
     document.getElementById('incBtnSolicitarRepuesto').disabled = true;
     document.getElementById('incRepCtaHint').textContent = 'Guarda la incidencia primero para poder solicitar un repuesto.';
+    incRepSelLimpiar();
+    incRepBuscadorToggle();
     refrescarVerdeTodos();
     irAPaso(1);
   }
@@ -1545,6 +1630,14 @@
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
     document.getElementById('incUbicacion').value = r.ubicacion || '';
+    document.getElementById('incSugerencia').value = r.sugerencia || '';
+    document.getElementById('incRepuestoStockId').value = r.repuesto_stock_id || '';
+    incRepBuscadorToggle();
+    if(r.repuesto_stock_id){
+      incRepSelMostrar({id: r.repuesto_stock_id, descripcion: r.descripcion_repuesto || r.sku || ('Repuesto #'+r.repuesto_stock_id)});
+    } else {
+      incRepSelLimpiar();
+    }
     document.getElementById('incMotivo').dispatchEvent(new Event('input'));
     refrescarVerdeTodos();
     var btnDel = document.getElementById('incBtnEliminar');
@@ -1663,11 +1756,10 @@
             + '</ul>';
         }
         res.innerHTML = html;
-        // Si el WMS resolvió el producto sin conflicto, avanzar solo al
-        // paso 2 -- el usuario ya tiene lo que necesitaba de este paso.
-        if(!descalce && data.sku){
-          setTimeout(function(){ if(incPaso === 1) irAPaso(2); }, 900);
-        }
+        // 🔧 2026-09-26: SKU/descripción/cantidad ahora viven en la MISMA
+        // tarjeta que la UA (antes eran un paso aparte) -- ya no hace
+        // falta saltar a ningún otro lado, el usuario ve todo junto.
+        refrescarVerdeTodos();
       }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });
   });
 
@@ -1692,6 +1784,8 @@
       observacion: document.getElementById('incObservacion').value,
       recomendacion: document.getElementById('incRecomendacion').value,
       ubicacion: document.getElementById('incUbicacion').value,
+      sugerencia: document.getElementById('incSugerencia').value,
+      repuesto_stock_id: document.getElementById('incRepuestoStockId').value,
       fecha_resolucion: document.getElementById('incFechaResolucion').value,
     };
     // Revalidar TODOS los pasos antes de guardar: alguien pudo volver
@@ -1899,7 +1993,84 @@
   });
   {% endif %}
 
+  /* ══════════ Detalle: elegir repuesto de la Bodega (RepBuscador) ══════════
+     🔧 2026-09-26 (Daniel, sobre su macro Excel: "el tipo de repuesto se
+     puede asociar de la bodega de repuestos... hacerlo más interactivo").
+     Motor COMPARTIDO (static/repuestos_buscador.js), modo 'seleccion' --
+     mismo patrón que ot2/detalle.html (RepBuscador.crear + onSeleccionar).
+     Guarda `repuesto_stock_id` en la incidencia; "Stock del repuesto" se
+     calcula SOLO desde el stock real del item elegido, pero sigue editable
+     a mano si no hay match (select normal, no se bloquea). */
+  var _incRepBuscador = null;
+
+  function incRepBuscadorToggle(){
+    var si = $('incReqRepuesto').value === 'si';
+    $('incRepBuscadorWrap').style.display = si ? '' : 'none';
+    if(si) incRepBuscadorPreparar();
+  }
+  $('incReqRepuesto').addEventListener('change', incRepBuscadorToggle);
+
+  function incRepBuscadorPreparar(){
+    var mount = document.getElementById('incRepBuscadorMount');
+    if(!mount || !window.RepBuscador) return;
+    if(!_incRepBuscador){
+      _incRepBuscador = RepBuscador.crear({
+        mount: mount, ctx: 'gestion', modo: 'seleccion',
+        compatPorDefecto: false, mostrarProveedor: true,
+        onSeleccionar: function(it){ incRepSeleccionar(it); },
+      });
+    }
+  }
+
+  function incRepSeleccionar(it){
+    document.getElementById('incRepuestoStockId').value = it.id;
+    if(!$('incDescripcionRepuesto').value.trim()) $('incDescripcionRepuesto').value = it.descripcion || '';
+    // Stock real del item elegido -- Daniel: "Stock de repuesto: Hay / No
+    // hay se calcula SOLO desde el stock real, editable manualmente si no
+    // hay match". `disponible` viene ya calculado del backend
+    // (_otrep_fmt_stock, mismo criterio que el semáforo del buscador).
+    if(it.disponible != null){
+      $('incStockRepuesto').value = (it.disponible > 0) ? 'hay' : 'no_hay';
+    }
+    incRepSelMostrar(it);
+  }
+
+  function incRepSelMostrar(it){
+    var box = document.getElementById('incRepSeleccionadoBox');
+    var txt = document.getElementById('incRepSeleccionadoTxt');
+    txt.textContent = (it.sku ? (it.sku + ' — ') : '') + (it.descripcion || ('Repuesto #'+it.id));
+    box.style.display = '';
+  }
+
+  function incRepSelLimpiar(){
+    document.getElementById('incRepSeleccionadoBox').style.display = 'none';
+    document.getElementById('incRepuestoStockId').value = '';
+    if(_incRepBuscador) _incRepBuscador.setSeleccion(null);
+  }
+
+  document.getElementById('incBtnQuitarRepSel').addEventListener('click', incRepSelLimpiar);
+
+  // "Solicitar este repuesto ahora": reusa el modal/flujo YA existente
+  // (incRepModal + incRepEnviar) -- se le pre-selecciona el mismo item de
+  // bodega elegido acá arriba, sin repetir la búsqueda.
+  document.getElementById('incBtnSolicitarAhora').addEventListener('click', function(){
+    var id = document.getElementById('incId').value;
+    if(!id){ ilusToast('Guarda la incidencia primero: la solicitud necesita a qué incidencia engancharse.', {type:'warning'}); return; }
+    var stockId = document.getElementById('incRepuestoStockId').value;
+    if(!stockId){ ilusToast('Elige un repuesto de la bodega primero.', {type:'warning'}); return; }
+    document.getElementById('incBtnSolicitarRepuesto').click();
+    // El click de arriba ya abre incRepModal y precarga cantidad/motivo;
+    // acá se fuerza además la SELECCIÓN del repuesto elegido en Detalle.
+    var txt = document.getElementById('incRepSeleccionadoTxt').textContent;
+    setTimeout(function(){
+      _incRep.sel = {id: parseInt(stockId, 10), descripcion: txt, sku: ''};
+      document.getElementById('incRepNombreManual').value = '';
+      incRepPintarLista();
+    }, 60);
+  });
+
   cargar();
+  incCargarMotivosFrecuentes();
 })();
 </script>
 {% endblock %}
