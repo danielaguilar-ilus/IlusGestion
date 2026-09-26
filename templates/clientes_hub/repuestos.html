@@ -534,8 +534,15 @@
             <textarea id="rsmMotivo" class="form-control" rows="3"
                       placeholder="Ej: se rompió la piola del trotador X, cliente reporta ruido…"
                       style="font-size:16px" oninput="rsmActualizarEstado()"></textarea>
-            <label class="form-label small fw-bold mt-2">Adjunto <span class="text-muted fw-normal">(opcional, foto o documento)</span></label>
-            <input type="file" id="rsmAdjunto" class="form-control" accept="image/*,video/*,.pdf">
+            {#- 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b):
+                el backend (_otrep_primer_archivo/_otrep_clasificar_archivo)
+                SOLO acepta foto o video -- un PDF pasaba el `accept` del
+                navegador y recién en el submit el usuario se enteraba de
+                que no servía. Se quita ".pdf" del accept y "documento" del
+                texto para que la UI prometa exactamente lo que el backend
+                cumple. -#}
+            <label class="form-label small fw-bold mt-2">Adjunto <span class="text-muted fw-normal">(opcional, foto o video)</span></label>
+            <input type="file" id="rsmAdjunto" class="form-control" accept="image/*,video/*">
           </div>
         </section>
 
@@ -830,14 +837,24 @@ function rsFmt(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100
 // 🔀 2026-09-25 (Fase 2): con paginación real ya no existe un `_rs.todas`
 // con TODO en memoria -- una solicitud puede estar en la página actual de
 // la vista Lista o dentro de un grupo de la vista Proveedor/Cliente.
+// 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): `_rs.pagina`
+// y `_rs.grupos` NO se vaciaban al cambiar de vista -- si una acción (validar,
+// pedir, etc.) se disparaba desde una tarjeta de la vista agrupada, esto
+// buscaba primero en `_rs.pagina`, que podía traer una copia VIEJA de la
+// MISMA solicitud (de la última vez que se vio la vista Lista, con otro
+// estado/cantidad) y usarla en vez de la actual. Ahora se busca primero en
+// la fuente de datos de la vista ACTIVA.
 function rsBuscarSolicitud(sid){
-  let s = _rs.pagina.find(function(x){ return x.id === sid; });
-  if (s) return s;
-  for (let i = 0; i < _rs.grupos.length; i++){
-    s = _rs.grupos[i].solicitudes.find(function(x){ return x.id === sid; });
-    if (s) return s;
-  }
-  return null;
+  const enPagina = function(){ return _rs.pagina.find(function(x){ return x.id === sid; }) || null; };
+  const enGrupos = function(){
+    for (let i = 0; i < _rs.grupos.length; i++){
+      const s = _rs.grupos[i].solicitudes.find(function(x){ return x.id === sid; });
+      if (s) return s;
+    }
+    return null;
+  };
+  if (_rs.vista !== 'lista') return enGrupos() || enPagina();
+  return enPagina() || enGrupos();
 }
 
 function rsQueryString(extra){
@@ -864,8 +881,23 @@ async function rsCargarPendientesSolo(){
   try {
     const r = await fetch('/repuestos/api/solicitudes-ot?per_page=10', {credentials:'same-origin', cache:'no-store'});
     const j = await r.json();
-    if (j.ok) rsAplicarPendientesTecnicos(j.pendientes_tecnicos);
+    if (j.ok){
+      rsAplicarPendientesTecnicos(j.pendientes_tecnicos);
+      // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): esta
+      // llamada (usada cuando la página abre en Bodega) nunca actualizaba
+      // la burbuja "abiertas" de la pestaña Solicitudes -- se quedaba en el
+      // "0" fijo del HTML hasta que alguien entrara a esa pestaña.
+      rsAplicarConteoAbiertas(j.conteo);
+    }
   } catch(e){ /* silencioso: no debe bloquear la pestaña Bodega por esto */ }
+}
+// Única fuente para la burbuja "abiertas" de la pestaña Solicitudes --
+// usada tanto por rsCargar (lista completa) como por rsCargarPendientesSolo
+// (sondeo liviano desde Bodega).
+function rsAplicarConteoAbiertas(conteo){
+  const abiertas = (conteo && ((conteo.solicitado||0)+(conteo.validado||0)+(conteo.pedido||0)+(conteo.recibido||0))) || 0;
+  const bdAb = document.getElementById('repBadgeSolic');
+  if (bdAb){ bdAb.textContent = abiertas; bdAb.style.background = abiertas ? '#dc2626' : '#6b7280'; }
 }
 function rsAplicarPendientesTecnicos(pt){
   pt = pt || { n: 0, dias_max: null };
@@ -884,12 +916,37 @@ function rsAplicarPendientesTecnicos(pt){
   }
 }
 function rsAtenderAhora(){
-  repTab('solicitudes');
-  rsVista('lista');
-  _rs.filtro = 'solicitado';
-  _rs.page = 1;
-  const q = document.getElementById('rsQ'); if (q) q.value = '';
-  _rs.q = '';
+  // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): esto
+  // llamaba repTab('solicitudes') + rsVista('lista') + rsCargar() -- las
+  // dos primeras YA disparan su propio rsCargar() internamente, así que un
+  // solo click hacía TRES fetch en fila (el único que importaba era el
+  // último). Ahora se arma el estado del DOM a mano (mismo criterio que
+  // repTab/rsVista, sin llamarlos) y se pide UNA sola vez. También limpia
+  // los demás filtros -- "Atender ahora" tiene que mostrar TODO lo
+  // 'solicitado', no lo que quedó filtrado de antes por cliente/proveedor/
+  // fecha/origen/texto.
+  const _ver = function(id, visible){ const el = document.getElementById(id); if (el) el.classList.toggle('d-none', !visible); };
+  _ver('repPaneBodega', false); _ver('repPaneSeguimiento', false); _ver('repPaneSolicitudes', true);
+  _ver('repAccionesBodega', false); _ver('repAccionesSeguimiento', false);
+  _ver('repSubBodega', false); _ver('repSubSolicitudes', true); _ver('repSubSeguimiento', false);
+  const tB = document.getElementById('repTabBodega'); if (tB) tB.classList.remove('active');
+  const tS = document.getElementById('repTabSolicitudes'); if (tS) tS.classList.add('active');
+  try { localStorage.setItem('repTabActiva', 'solicitudes'); } catch(e){}
+
+  _rs.vista = 'lista'; _rs.grupos = [];
+  ['Lista','Proveedor','Cliente'].forEach(function(x){
+    const b = document.getElementById('rsVista' + x);
+    if (b) b.classList.toggle('on', x === 'Lista');
+  });
+  const pl = document.getElementById('rsVistaPaneLista'); if (pl) pl.classList.remove('d-none');
+  const pg = document.getElementById('rsVistaPaneGrupos'); if (pg) pg.classList.add('d-none');
+
+  _rs.filtro = 'solicitado'; _rs.origen = ''; _rs.cliente_id = ''; _rs.cliente_nombre = '';
+  _rs.proveedor_id = ''; _rs.fecha_desde = ''; _rs.fecha_hasta = ''; _rs.q = ''; _rs.page = 1;
+  const setVal = function(id, v){ const el = document.getElementById(id); if (el) el.value = v; };
+  setVal('rsQ', ''); setVal('rsFOrigen', ''); setVal('rsFCliente', '');
+  setVal('rsFProveedor', ''); setVal('rsFDesde', ''); setVal('rsFHasta', '');
+
   rsCargar();
 }
 
@@ -897,10 +954,18 @@ async function rsCargar(){
   if (_rs.vista !== 'lista') return rsCargarAgrupado();
   const lista = document.getElementById('rsLista');
   lista.innerHTML = '<div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando solicitudes…</div>';
+  // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): token de
+  // secuencia -- si el usuario cambia de filtro/página rápido, dos fetch
+  // pueden estar en vuelo a la vez y el que responde SEGUNDO no siempre es
+  // el que se disparó segundo (la red no garantiza orden). Sin esto, una
+  // respuesta atrasada de un filtro viejo podía pisar la pantalla después
+  // de que ya se pintó el filtro nuevo.
+  const miSeq = (_rs.reqSeq = (_rs.reqSeq || 0) + 1);
   try {
     const qs = rsQueryString({ page: _rs.page, per_page: _rs.size });
     const r = await fetch('/repuestos/api/solicitudes-ot?' + qs, {credentials:'same-origin', cache:'no-store'});
     const j = await r.json();
+    if (miSeq !== _rs.reqSeq) return; // llegó tarde: ya hay un fetch más nuevo en curso o resuelto
     if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
     _rs.pagina = j.solicitudes || [];
     _rs.conteo = j.conteo || {};
@@ -913,9 +978,7 @@ async function rsCargar(){
     rsPintarChips();
     rsPintar();
     rsAplicarPendientesTecnicos(j.pendientes_tecnicos);
-    const abiertas = (j.conteo && ((j.conteo.solicitado||0)+(j.conteo.validado||0)+(j.conteo.pedido||0)+(j.conteo.recibido||0))) || 0;
-    const bdAb = document.getElementById('repBadgeSolic');
-    if (bdAb){ bdAb.textContent = abiertas; bdAb.style.background = abiertas ? '#dc2626' : '#6b7280'; }
+    rsAplicarConteoAbiertas(j.conteo);
     rsFiltrosSyncBoton();
     rsActualizarExportLink();
   } catch(e){
@@ -982,8 +1045,13 @@ async function rsFClienteBuscar(q){
       const r = await fetch('/mantenciones/api/clientes/autocomplete?q=' + encodeURIComponent(q), {credentials:'same-origin'});
       const items = (await r.json() || []).filter(function(it){ return it && it.id; });
       if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Sin resultados.</div>'; cont.style.display = ''; return; }
+      // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): un
+      // razon_social con comilla simple (ej. "Gimnasio O'Higgins") rompía
+      // el onclick generado a mano -- data-id/data-nombre + un listener
+      // delegado (ver DOMContentLoaded más abajo) no ejecutan nada como
+      // código, así que ningún carácter del nombre puede escapar el atributo.
       cont.innerHTML = items.map(function(it){
-        return '<button type="button" class="otrep-opc-it" onclick="rsFClienteElegir(' + it.id + ', \'' + rsEsc(it.razon_social).replace(/'/g, "\\'") + '\')">' +
+        return '<button type="button" class="otrep-opc-it" data-id="' + it.id + '" data-nombre="' + rsEsc(it.razon_social) + '">' +
           '<span class="ph"><i class="bi bi-building"></i></span><span class="inf"><b>' + rsEsc(it.razon_social) + '</b><small>' + rsEsc(it.rut || '') + '</small></span></button>';
       }).join('');
       cont.style.display = '';
@@ -998,8 +1066,23 @@ function rsFClienteElegir(id, nombre){
   _rs.page = 1;
   rsCargar();
 }
+// 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): listener
+// delegado ÚNICO para los resultados de cliente del filtro (rsFCliente...)
+// y del modal "Solicitar repuesto" (rsmCliente...) -- lee id/nombre de
+// data-* en vez de tenerlos embebidos en un onclick armado a mano (ver
+// comentario en rsFClienteBuscar/rsmClienteBuscar).
+document.addEventListener('click', function(e){
+  const bF = e.target.closest('#rsFClienteResultados .otrep-opc-it');
+  if (bF){ rsFClienteElegir(parseInt(bF.dataset.id, 10), bF.dataset.nombre || ''); return; }
+  const bM = e.target.closest('#rsmClienteLista .otrep-opc-it');
+  if (bM){ rsmClienteElegir(parseInt(bM.dataset.id, 10), bM.dataset.nombre || ''); return; }
+});
 function rsVista(v){
   _rs.vista = v;
+  // 🔒 FIX 2026-09-25: vaciar la fuente que deja de estar activa -- si no,
+  // rsBuscarSolicitud() podía encontrar una copia vieja de la MISMA
+  // solicitud en la vista que ya no se ve (ver comentario ahí).
+  if (v === 'lista') _rs.grupos = []; else _rs.pagina = [];
   ['Lista','Proveedor','Cliente'].forEach(function(x){
     const b = document.getElementById('rsVista' + x);
     if (b) b.classList.toggle('on', x.toLowerCase() === v);
@@ -1033,12 +1116,16 @@ function rsPintar(){
 async function rsCargarAgrupado(){
   const cont = document.getElementById('rsGrupos');
   cont.innerHTML = '<div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Agrupando…</div>';
+  // Mismo token de secuencia que rsCargar (ver ahí el porqué).
+  const miSeq = (_rs.reqSeq = (_rs.reqSeq || 0) + 1);
   try {
     const qs = rsQueryString({ vista: _rs.vista });
     const r = await fetch('/repuestos/api/solicitudes-ot?' + qs, {credentials:'same-origin', cache:'no-store'});
     const j = await r.json();
+    if (miSeq !== _rs.reqSeq) return;
     if (!j.ok) throw new Error(j.error || 'No se pudo agrupar');
     _rs.grupos = j.grupos || [];
+    _rs.gruposTruncado = !!j.truncado;
     rsPintarGrupos();
   } catch(e){
     cont.innerHTML = '<div class="rs-vacio">No se pudo agrupar: ' + rsEsc(e.message) + '</div>';
@@ -1049,11 +1136,18 @@ async function rsCargarAgrupado(){
 function rsGrupoKey(g){ return _rs.vista + ':' + (g.proveedor_id != null ? g.proveedor_id : (g.cliente_id != null ? g.cliente_id : '0')); }
 function rsPintarGrupos(){
   const cont = document.getElementById('rsGrupos');
+  // ⚠️ 2026-09-25 (revisión adversarial post-commit f5db174b): esta vista
+  // no paginaba (a propósito, para poder marcar/desmarcar todo el grupo de
+  // una vez) pero tampoco avisaba si el filtro traía más de 1000 filas --
+  // se veían "todos" los grupos sin que nada dijera que en realidad faltaban.
+  const avisoTrunc = _rs.gruposTruncado
+    ? '<div class="rs-vacio" style="border-color:#f59e0b;color:#b45309;text-align:left"><i class="bi bi-exclamation-triangle-fill me-1"></i>Se alcanzó el techo de 1000 solicitudes para agrupar: acota el filtro (fecha/cliente/proveedor/estado) para ver el resto.</div>'
+    : '';
   if (!_rs.grupos.length){
-    cont.innerHTML = '<div class="rs-vacio"><i class="bi bi-inbox me-1"></i>Nada que agrupar con este filtro.</div>';
+    cont.innerHTML = avisoTrunc + '<div class="rs-vacio"><i class="bi bi-inbox me-1"></i>Nada que agrupar con este filtro.</div>';
     return;
   }
-  cont.innerHTML = _rs.grupos.map(function(g){
+  cont.innerHTML = avisoTrunc + _rs.grupos.map(function(g){
     const key = rsGrupoKey(g);
     const sel = _rs.selGrupo[key] || {};
     const nSel = Object.keys(sel).filter(function(k){ return sel[k]; }).length;
@@ -1075,13 +1169,29 @@ function rsPintarGrupos(){
             '<i class="bi bi-cart-plus me-1"></i>Crear ticket de compra (' + nSel + ')</button>' +
         '</div></div><div class="rs-grupo-body">' + itemsHtml + '</div></div>';
     }
-    const btnTxt = nSel === 1 ? 'Generar OT (1)' : (nSel > 1 ? 'Varias en una OT: próxima fase' : 'Generar OT (0)');
+    // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): el
+    // botón se habilitaba con solo "nSel === 1", sin mirar si ESA solicitud
+    // está en 'recibido' (lo único que preparar-ot acepta) ni si
+    // _rs.puedeGenerarOT es true (el permiso que ya trae la respuesta del
+    // backend) -- el click igual llegaba a rsGenerarOT() y recién ahí el
+    // backend lo rechazaba con un error, un paso evitable.
+    const unoSel = nSel === 1 ? g.solicitudes.find(function(s){ return sel[s.id]; }) : null;
+    const puedeUno = !!(unoSel && unoSel.estado === 'recibido' && _rs.puedeGenerarOT);
+    let btnTxt = 'Generar OT (0)';
+    let btnTitle = 'Marca una solicitud "Recibida" para generar su OT.';
+    if (nSel > 1){ btnTxt = 'Varias en una OT: próxima fase'; btnTitle = 'Por ahora, genera la OT de a una solicitud.'; }
+    else if (nSel === 1){
+      btnTxt = 'Generar OT (1)';
+      if (!_rs.puedeGenerarOT) btnTitle = 'No tienes permiso para generar una OT desde aquí.';
+      else if (unoSel.estado !== 'recibido') btnTitle = 'Solo se puede generar la OT cuando el repuesto ya está "Recibido".';
+      else btnTitle = 'Genera la OT de instalación de esta solicitud.';
+    }
     return '<div class="rs-grupo">' +
       '<div class="rs-grupo-head"><h6><i class="bi bi-building me-1"></i>' + rsEsc(g.cliente_nombre) + '</h6>' +
       '<span class="n">' + g.n + ' abierta' + (g.n === 1 ? '' : 's') + '</span>' +
       '<div class="rs-grupo-acc">' +
         '<button type="button" class="rs-btn" onclick="rsGrupoToggleTodo(\'' + key + '\')"><i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>' +
-        '<button type="button" class="rs-btn generar-ot" ' + (nSel === 1 ? '' : 'disabled') + ' onclick="rsGrupoGenerarOT(\'' + key + '\')">' +
+        '<button type="button" class="rs-btn generar-ot" title="' + rsEsc(btnTitle) + '" ' + (puedeUno ? '' : 'disabled') + ' onclick="rsGrupoGenerarOT(\'' + key + '\')">' +
           '<i class="bi bi-clipboard2-plus me-1"></i>' + btnTxt + '</button>' +
       '</div></div><div class="rs-grupo-body">' + itemsHtml + '</div></div>';
   }).join('');
@@ -1138,7 +1248,15 @@ function rsCardInner(s){
     const lbl = {validado:'Validar en bodega', pedido:'Pedir al proveedor', recibido:'Recibido', instalado:'Instalado', rechazado:'Rechazar', solicitado:'Reabrir'}[n] || n;
     const cls = {validado:'val', pedido:'ped', recibido:'rec', instalado:'ins', rechazado:'rej', solicitado:'sol'}[n] || '';
     return '<button type="button" class="rs-btn ' + cls + '" onclick="rsAccion(' + s.id + ', \'' + n + '\')">' + lbl + '</button>';
-  }).join('') + (!s.ticket_id ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '');
+  // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
+  // solicitud manual (contexto==='manual') no nació de una OT ni de una
+  // Incidencia -- "Crear ticket" llamaba a un endpoint que solo sabe
+  // resolver esos dos orígenes y devolvía un 404 con un mensaje falso
+  // ("La OT o el equipo ya no existen"). El backend ya tiene un mensaje
+  // honesto por si igual se llama (ver repstock_solicitud_ot_ticket), pero
+  // acá directamente no se ofrece un botón que sabemos que no puede
+  // funcionar todavía.
+  }).join('') + (!s.ticket_id && s.contexto !== 'manual' ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '');
   // 🏗️ Fase 3 (2026-09-21, Daniel: "vayamos con la fase 3", los 3 orígenes
   // + tipo correctiva): una vez recibido el repuesto, se puede generar la
   // OT que lo va a instalar. Ya generada: link "Ver OT" en vez del botón,
@@ -1152,12 +1270,19 @@ function rsCardInner(s){
   // operación"): junto al stock físico se muestra el DISPONIBLE real (neto
   // de lo que otras OT abiertas ya prometieron sobre el mismo repuesto) --
   // el físico solo ya no alcanza para decidir si conviene pedir al proveedor.
-  const compTxt = (s.stock_disponible != null)
-    ? ' · disponible ' + rsFmt(s.stock_disponible) + (s.stock_comprometido > 0 ? ' (comprometido ' + rsFmt(s.stock_comprometido) + ')' : '')
-    : '';
+  // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): "disponible
+  // N" era un número pelado -- se reemplaza por los 4 textos explícitos que
+  // pidió la revisión, mismo criterio en toda la tarjeta.
+  let stockTxt = null;
+  if (s.stock_disponible != null){
+    if (s.stock_disponible > 0) stockTxt = 'Hay stock (' + rsFmt(s.stock_disponible) + ')';
+    else if (s.stock_disponible < 0) stockTxt = 'Falta (tienes ' + rsFmt(s.stock_cantidad != null ? s.stock_cantidad : 0) + ', faltan ' + rsFmt(Math.abs(s.stock_disponible)) + ')';
+    else stockTxt = 'Sin stock';
+  }
+  const compTxt = (stockTxt ? ' · ' + stockTxt : '') + (s.stock_comprometido > 0 ? ' (comprometido ' + rsFmt(s.stock_comprometido) + ')' : '');
   const liga = s.repuesto_stock_id
     ? '<div class="rs-liga ' + (s.stock_disponible != null && s.stock_disponible < 0 ? 'warn' : 'ok') + '"><i class="bi bi-box-seam"></i> ' + rsEsc(s.stock_sku || '') + ' · ' + rsEsc(s.stock_descripcion || '') + (s.stock_cantidad != null ? ' · físico ' + rsFmt(s.stock_cantidad) : '') + compTxt + '</div>'
-    : '<div class="rs-liga pend"><i class="bi bi-question-circle"></i> Sin repuesto de bodega ligado (' + rsEsc(s.origen_label || '') + ')</div>';
+    : '<div class="rs-liga pend"><i class="bi bi-question-circle"></i> Por validar — sin repuesto de bodega ligado (' + rsEsc(s.origen_label || '') + ')</div>';
   // 🔀 2026-09-20 (Daniel: "hasta que la tome otro usuario"). "Tomar" REUSA
   // tk_tickets.asignado_a del ticket que YA agrupa esta solicitud -- no hay
   // tabla ni concepto de dueño nuevo. Sin ticket todavía no hay a quién
@@ -1821,6 +1946,13 @@ function rsmToggleReposicion(){
   if (_rsm.es_reposicion){
     _rsm.cliente = null;
     document.getElementById('rsmMaquinaWrap').style.display = 'none';
+    // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): si el
+    // usuario ya había elegido un equipo y RECIÉN marca "Reposición de
+    // stock propio", el <select> seguía con ese equipo seleccionado por
+    // dentro (solo el wrapper se ocultaba) -- rsmEnviar() lo habría mandado
+    // igual. Se resetea al ocultarlo, y rsmEnviar() además nunca lo manda
+    // si es_reposicion es true (doble candado).
+    document.getElementById('rsmMaquina').innerHTML = '<option value="">— Sin equipo asociado —</option>';
   }
   rsmActualizarEstado();
 }
@@ -1845,8 +1977,11 @@ function rsmClienteBuscar(q){
       // mant_clientes.id).
       const items = (await r.json() || []).filter(function(it){ return it && it.id; });
       if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Sin resultados con ficha local. Créala primero desde Clientes.</div>'; return; }
+      // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): mismo
+      // criterio que rsFClienteBuscar -- data-id/data-nombre + listener
+      // delegado en vez de embeber el nombre dentro de un onclick.
       cont.innerHTML = items.map(function(it){
-        return '<button type="button" class="otrep-opc-it" onclick=\'rsmClienteElegir(' + it.id + ',' + JSON.stringify(it.razon_social || '') + ')\'>' +
+        return '<button type="button" class="otrep-opc-it" data-id="' + it.id + '" data-nombre="' + rsEsc(it.razon_social) + '">' +
           '<span class="ph"><i class="bi bi-building"></i></span><span class="inf"><b>' + rsEsc(it.razon_social) + '</b><small>' + rsEsc(it.rut || '') + '</small></span></button>';
       }).join('');
     } catch(e){ cont.innerHTML = '<div class="otrep-opc-vacio">No se pudo buscar.</div>'; }
@@ -2000,7 +2135,9 @@ async function rsmEnviar(){
     return { repuesto_stock_id: it.repuesto_stock_id, repuesto_nombre: it.repuesto_nombre,
              repuesto_sku: it.repuesto_sku, cantidad: it.cantidad };
   });
-  const maquinaId = document.getElementById('rsmMaquina').value || '';
+  // 🔒 FIX 2026-09-25: segundo candado -- si es reposición, NUNCA se manda
+  // maquina_id (el backend lo rechazaría igual, pero mejor no ni intentarlo).
+  const maquinaId = _rsm.es_reposicion ? '' : (document.getElementById('rsmMaquina').value || '');
   const adjunto = (document.getElementById('rsmAdjunto').files || [])[0];
   let j;
   try {

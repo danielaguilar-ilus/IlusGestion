@@ -64355,8 +64355,8 @@ def mant_api_incidencia_solicitar_repuesto(iid):
         sol_id = _otrep_insert(
             "INSERT INTO mant_ot_repuesto_solicitudes "
             "(incidencia_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, origen, cantidad, "
-            " motivo, estado, solicitado_por, proveedor_id) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s)",
+            " motivo, estado, solicitado_por, proveedor_id, creada_desde) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,'incidencia')",
             (iid, stock["id"] if stock else None, nombre[:400],
              (stock.get("sku") if stock else None), origen, cantidad, motivo[:5000], user,
              (stock.get("proveedor_id") if stock else None)))
@@ -85374,15 +85374,25 @@ def _ensure_ot_repuesto_solicitudes_tables():
                 "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN es_reposicion TINYINT(1) NOT NULL DEFAULT 0 "
                 "COMMENT 'Solicitud manual SIN cliente: reposicion de stock propio' AFTER cliente_id")
         # Backfill de filas viejas (creada_desde IS NULL) -- una vez
-        # clasificadas, todo INSERT nuevo ya trae la columna seteada.
+        # clasificadas, todo INSERT nuevo ya trae la columna seteada (los 3
+        # orígenes existentes -- OT ~L86428, incidencia ~L64358, ticket
+        # ~L87442 -- y el manual nuevo, todos la setean en su propio INSERT).
+        # 🔴 FIX 2026-09-25 (revisión adversarial post-commit f5db174b):
+        # `updated_at` es ON UPDATE CURRENT_TIMESTAMP -- sin
+        # `updated_at=updated_at` este UPDATE lo reescribía a NOW() en
+        # TODAS las solicitudes CERRADAS de producción en cada arranque
+        # del servidor, destruyendo `dias_transcurridos` ("días hasta
+        # cerrar", que se congela en updated_at, ver _otrep_fila) de
+        # golpe. `updated_at=updated_at` es una asignación literal (no un
+        # cambio real de valor), así que MySQL NO dispara el ON UPDATE.
         mysql_execute(
-            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='ot' "
+            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='ot', updated_at=updated_at "
             " WHERE creada_desde IS NULL AND visita_id IS NOT NULL")
         mysql_execute(
-            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='incidencia' "
+            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='incidencia', updated_at=updated_at "
             " WHERE creada_desde IS NULL AND visita_id IS NULL AND incidencia_id IS NOT NULL")
         mysql_execute(
-            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='ticket' "
+            "UPDATE mant_ot_repuesto_solicitudes SET creada_desde='ticket', updated_at=updated_at "
             " WHERE creada_desde IS NULL AND visita_id IS NULL AND incidencia_id IS NULL")
     except Exception as e:
         print(f"[ensure_ot_repuestos] creada_desde/es_reposicion: {e}", flush=True)
@@ -86425,8 +86435,8 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
             "INSERT INTO mant_ot_repuesto_solicitudes "
             "(visita_id, maquina_id, cliente_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
             " origen, cantidad, medida, piola_id, piola_metros, motivo, dejo_fuera_servicio, estado, "
-            " solicitado_por, proveedor_id) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s)",
+            " solicitado_por, proveedor_id, creada_desde) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,'ot')",
             (vid, mid, v.get("cliente_id"),
              stock["id"] if stock else None, nombre[:400],
              (stock.get("sku") if stock else None), origen, cantidad, medida, piola_id, piola_metros,
@@ -86800,12 +86810,34 @@ def _otrep_filtros_query():
         val = (request.args.get(arg) or "").strip()
         if val.isdigit():
             where.append(f"{col}=%s"); params.append(int(val))
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): el
+    # <input type=date> del filtro es un día calendario EN HORA CHILE, pero
+    # `created_at` se guarda en UTC (REGLA #6) -- comparar el string tal
+    # cual corría 3-4 horas desfasado (un documento de las 23:30 hora Chile
+    # del día X ya es X+1 en UTC, y quedaba fuera de "hasta X" o adentro de
+    # "desde X+1" quien no debía). Se arma el límite como medianoche/23:59:59
+    # EN HORA CHILE y se convierte a UTC antes de compararlo.
     fdesde = (request.args.get("fecha_desde") or "").strip()
     fhasta = (request.args.get("fecha_hasta") or "").strip()
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", fdesde):
-        where.append("s.created_at >= %s"); params.append(fdesde + " 00:00:00")
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", fhasta):
-        where.append("s.created_at <= %s"); params.append(fhasta + " 23:59:59")
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", fdesde) or re.match(r"^\d{4}-\d{2}-\d{2}$", fhasta):
+        from zoneinfo import ZoneInfo
+        _tz_cl = ZoneInfo("America/Santiago")
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", fdesde):
+            try:
+                dt_cl = datetime.strptime(fdesde, "%Y-%m-%d").replace(
+                    hour=0, minute=0, second=0, tzinfo=_tz_cl)
+                dt_utc = dt_cl.astimezone(timezone.utc).replace(tzinfo=None)
+                where.append("s.created_at >= %s"); params.append(dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                pass
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", fhasta):
+            try:
+                dt_cl = datetime.strptime(fhasta, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=_tz_cl)
+                dt_utc = dt_cl.astimezone(timezone.utc).replace(tzinfo=None)
+                where.append("s.created_at <= %s"); params.append(dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                pass
     q = (request.args.get("q") or "").strip()
     if q:
         like = f"%{q}%"
@@ -86822,8 +86854,14 @@ def _otrep_pendientes_tecnicos():
     de repuestos y eso tiene que quedar ahí con una alerta tremenda porque
     hay que atender eso"). "Sin atender" = estado='solicitado': recién
     levantada, nadie de bodega la validó/rechazó todavía. El banner Y la
-    burbuja de la pestaña leen este mismo dict -- nunca dos cálculos."""
-    where = "estado='solicitado'"
+    burbuja de la pestaña leen este mismo dict -- nunca dos cálculos.
+
+    🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
+    solicitud `creada_desde='manual'` la levantó la PROPIA gestión/bodega
+    desde el modal "Solicitar repuesto" (Fase 2) -- no es un técnico
+    pidiendo algo que "hay que atender". Contarla acá infla la alerta con
+    algo que quien la ve ya sabe que existe (la acaba de crear él mismo)."""
+    where = "estado='solicitado' AND COALESCE(creada_desde,'')<>'manual'"
     if _es_rol_tecnico():
         where += " AND incidencia_id IS NULL"
     try:
@@ -86866,9 +86904,16 @@ def _otrep_listar_agrupado(vista, where_sql, params):
         # "cuántas solicitudes pendientes de compra (sin stock / validadas
         # sin stock / pedidas)" -- lo que de verdad hay que comprarle a ese
         # proveedor, no todo lo que alguna vez pasó por él.
+        # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): esta
+        # vista usaba `<= 0`, pero la tarjeta (rsCard/compTxt en el
+        # frontend) marca "warn" con `stock_disponible < 0` -- con `<= 0`,
+        # un repuesto justo en el límite (disponible exactamente 0, ni de
+        # más ni de menos) aparecía acá como "pendiente de compra" sin que
+        # la tarjeta lo mostrara en rojo, dos criterios distintos para el
+        # mismo dato.
         pendientes = [s for s in sols if s.get("estado") in ("solicitado", "validado", "pedido")
                       and (not s.get("repuesto_stock_id")
-                           or (s.get("stock_disponible") is not None and s["stock_disponible"] <= 0)
+                           or (s.get("stock_disponible") is not None and s["stock_disponible"] < 0)
                            or s.get("estado") == "pedido")]
         for s in pendientes:
             pid = s.get("proveedor_id") or 0
@@ -86999,6 +87044,7 @@ def repstock_solicitudes_ot_export():
     except Exception as e:
         print(f"[otrep] export: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo generar el Excel."}), 500
+    truncado = len(rows) >= LIM
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -87027,6 +87073,19 @@ def repstock_solicitudes_ot_export():
         ])
     for i in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 18
+    # ⚠️ 2026-09-25 (revisión adversarial post-commit f5db174b): si el
+    # filtro trae más de `LIM` solicitudes, el Excel solo alcanza a traer
+    # las más recientes -- sin avisarlo, se leía como "esto es todo" cuando
+    # en realidad faltaban filas. Fila de aviso al tope, mismo patrón de
+    # otros exports del proyecto (ver export de Transporte, ws1 "Resumen").
+    if truncado:
+        ws.insert_rows(1)
+        warn = ws.cell(1, 1, f"⚠ Se alcanzó el techo de {LIM} solicitudes (las más recientes, "
+                              "'por validar' primero) — acota fecha/cliente/proveedor/estado para "
+                              "ver el resto en otro Excel.")
+        warn.font = Font(color="B45309", bold=True)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+        ws.freeze_panes = "A3"
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -87439,8 +87498,8 @@ def repstock_ticket_solicitar_repuesto(tid):
         sol_id = _otrep_insert(
             "INSERT INTO mant_ot_repuesto_solicitudes "
             "(ticket_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, origen, cantidad, "
-            " motivo, estado, solicitado_por, proveedor_id) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s)",
+            " motivo, estado, solicitado_por, proveedor_id, creada_desde) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,'ticket')",
             (tid, stock["id"] if stock else None, nombre[:400],
              (stock.get("sku") if stock else None), origen, cantidad, motivo[:5000], user,
              (stock.get("proveedor_id") if stock else None)))
@@ -87559,15 +87618,24 @@ def repstock_solicitud_manual():
         return jsonify({"ok": False, "error":
                         "Demasiados repuestos de una vez (máximo 30): crea una segunda solicitud."}), 400
 
+    import math  # patrón del archivo: import local, no se agrega un import global solo por esto.
+
     limpios = []
     for it in items:
         if not isinstance(it, dict):
             return jsonify({"ok": False, "error": "Uno de los repuestos llegó mal formado."}), 400
+        # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): `it.get("cantidad") or "1"`
+        # trataba 0 como "no vino" (0 es falsy en Python) y lo convertía en 1 en silencio -- una
+        # cantidad explícita de 0 debe rechazarse, no redondearse para arriba solo. `math.isfinite`
+        # además bloquea 'inf'/'nan' (float() los acepta sin error).
+        cantidad_raw = it.get("cantidad")
+        if cantidad_raw is None or cantidad_raw == "":
+            cantidad_raw = 1
         try:
-            cantidad = float(str(it.get("cantidad") or "1").replace(",", "."))
+            cantidad = float(str(cantidad_raw).replace(",", "."))
         except (TypeError, ValueError):
-            cantidad = 0
-        if cantidad <= 0 or cantidad > 9999:
+            cantidad = float("nan")
+        if not math.isfinite(cantidad) or cantidad <= 0 or cantidad > 9999:
             return jsonify({"ok": False, "error":
                             "Cada repuesto necesita una cantidad válida (mayor que cero)."}), 400
         stock = None
@@ -87599,26 +87667,46 @@ def repstock_solicitud_manual():
     # secrets.token_hex ya está importado (import secrets, arriba del
     # archivo) -- se evita sumar una dependencia nueva (uuid) solo por esto.
     lote_id = secrets.token_hex(16)
-    creados, avisos = [], []
-    for it in limpios:
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): antes
+    # cada INSERT pasaba por _otrep_insert(), que hace su propio
+    # conn.commit() por fila -- si el repuesto #3 de 5 fallaba (ej. columna
+    # rara, deadlock), el lote quedaba a MEDIAS (3 solicitudes creadas, 2
+    # perdidas) con el mismo lote_id, sin forma limpia de saber que faltaron.
+    # Ahora TODO el lote entra en una sola transacción sobre la conexión del
+    # request (get_db(), la misma que usa _otrep_insert -- NUNCA se cierra a
+    # mano, ver gotcha_get_db_no_cerrar): si algo falla, se hace rollback
+    # completo y no queda ninguna fila del lote, en vez de un lote cojo.
+    conn = get_db()
+    creados = []
+    try:
+        with conn.cursor() as cur:
+            for it in limpios:
+                stock = it["stock"]
+                estado_ini = "validado" if stock else "solicitado"
+                cur.execute(
+                    "INSERT INTO mant_ot_repuesto_solicitudes "
+                    "(cliente_id, maquina_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
+                    " origen, cantidad, motivo, estado, solicitado_por, proveedor_id, "
+                    " creada_desde, es_reposicion, lote_id, validado_por, validado_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'manual',%s,%s,%s,"
+                    + ("NOW()" if stock else "NULL") + ")",
+                    (cliente_id, maquina_id, stock["id"] if stock else None, it["nombre"], it["sku"],
+                     ("bodega" if stock else "manual"), it["cantidad"], motivo, estado_ini, user,
+                     (stock.get("proveedor_id") if stock else None),
+                     int(es_reposicion), lote_id, (user if stock else None)))
+                creados.append(int(cur.lastrowid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[otrep] INSERT manual lote={lote_id} (rollback, {len(creados)} de {len(limpios)} llegaron a intentarse): {e}",
+              flush=True)
+        return jsonify({"ok": False, "error":
+                        "No se pudo guardar la solicitud: no se creó ninguna (se deshizo todo el "
+                        "lote para no dejarlo a medias). Intenta de nuevo."}), 500
+
+    avisos = []
+    for sol_id, it in zip(creados, limpios):
         stock = it["stock"]
-        estado_ini = "validado" if stock else "solicitado"
-        try:
-            sol_id = _otrep_insert(
-                "INSERT INTO mant_ot_repuesto_solicitudes "
-                "(cliente_id, maquina_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
-                " origen, cantidad, motivo, estado, solicitado_por, proveedor_id, "
-                " creada_desde, es_reposicion, lote_id, validado_por, validado_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'manual',%s,%s,%s,"
-                + ("NOW()" if stock else "NULL") + ")",
-                (cliente_id, maquina_id, stock["id"] if stock else None, it["nombre"], it["sku"],
-                 ("bodega" if stock else "manual"), it["cantidad"], motivo, estado_ini, user,
-                 (stock.get("proveedor_id") if stock else None),
-                 int(es_reposicion), lote_id, (user if stock else None)))
-        except Exception as e:
-            print(f"[otrep] INSERT manual lote={lote_id}: {e}", flush=True)
-            continue
-        creados.append(sol_id)
         if stock and stock.get("cantidad") is not None:
             # 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad
             # de la operación"): mismo aviso -no bloqueante- que ya usa la
@@ -87630,9 +87718,6 @@ def repstock_solicitud_manual():
                 avisos.append(f"{stock.get('sku') or it['nombre']} queda comprometido en "
                                f"{otras + it['cantidad']:g} de {fisico:g} en bodega — "
                                f"faltan {abs(disponible):g}.")
-
-    if not creados:
-        return jsonify({"ok": False, "error": "No se pudo guardar ninguna solicitud."}), 500
 
     # El MISMO adjunto se registra en cada solicitud del lote (una sola foto/
     # video sirve de evidencia para todo lo que se pidió junto) -- si sube
@@ -87706,6 +87791,17 @@ def repstock_solicitud_ot_ticket(sid):
         except Exception as e:
             print(f"[otrep] ticket manual incidencia sid={sid}: {e}", flush=True)
         return jsonify({"ok": True, "ticket_id": tid, "numero_ticket": numero, "creado": creado})
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
+    # solicitud MANUAL (Fase 2) no tiene visita_id ni incidencia_id ni
+    # ticket_id -- sin este freno caía al bloque de abajo, que asume 100%
+    # origen OT, y devolvía el 404 "La OT o el equipo ya no existen" (un
+    # mensaje FALSO: nunca hubo una OT que buscar). El botón "Crear ticket"
+    # ya no se muestra para contexto=='manual' en el frontend (rsCard), pero
+    # este endpoint se puede llamar directo -- el mensaje debe ser honesto.
+    if not s.get("visita_id"):
+        return jsonify({"ok": False, "error":
+                        "Esta solicitud es manual: no nació de una OT ni de una Incidencia, así que "
+                        "no tiene de dónde crear un ticket automático."}), 400
     v = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE id=%s", (s["visita_id"],))
     m = mysql_fetchone("SELECT id, nombre, sku, serie FROM mant_maquinas WHERE id=%s", (s["maquina_id"],))
     if not v or not m:
@@ -87747,6 +87843,12 @@ def repstock_solicitud_ot_preparar_ot(sid):
                            ni rut ni nombre de cliente, ni como texto
                            libre -- el wizard se abre en blanco y gestión
                            lo completa a mano.
+      origen Manual      -> (Fase 2, 2026-09-25) si la solicitud manual
+                           tiene cliente_id (no es "reposición de stock
+                           propio"), el cliente YA está resuelto -- mismo
+                           trato que origen OT, incluido el equipo si se
+                           ligó uno al crearla. Si es reposición (sin
+                           cliente), el wizard nace en blanco como Incidencia.
     """
     row = mysql_fetchone(_OTREP_SQL_SOL + " WHERE s.id=%s", (sid,))
     if not row:
@@ -87763,7 +87865,13 @@ def repstock_solicitud_ot_preparar_ot(sid):
     cliente = None
     cliente_sugerido = None
     equipo_preset_maquina_id = None
-    if s["contexto"] == "ot":
+    # 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
+    # solicitud manual CON cliente_id (spec: cliente obligatorio salvo
+    # "Reposición de stock propio") tiene exactamente el mismo dato ya
+    # resuelto que una de origen OT -- sin esta rama, "manual" caía al
+    # `else` final (nada que resolver) y el wizard se abría en blanco
+    # aunque la solicitud SÍ supiera para qué cliente/equipo era.
+    if s["contexto"] == "ot" or (s["contexto"] == "manual" and s.get("cliente_id")):
         if s.get("cliente_id"):
             cliente = {"id": s["cliente_id"], "nombre": s.get("cliente_nombre") or "",
                        "rut": s.get("cliente_rut") or ""}
