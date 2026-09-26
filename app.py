@@ -102446,19 +102446,24 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     for e in equipos:
         _sols_e = rep_por_maquina.get(e.get("id"), [])
         e["rep_solicitudes"] = _sols_e
-        # 🔴 FIX 2026-09-26 (revisión de hallazgos, ALTA 1): "Estado en esta
-        # OT" no podía llegar nunca a "Operativo" por descarte -- un equipo
-        # sin ninguna revisión real (o con checklist a medias, o con falla
-        # detectada) terminaba mostrando "Operativo" solo porque no calzaba
-        # con baja/fuera de servicio/solicitud abierta. Cascada EXPLÍCITA,
-        # de más a menos grave -- la PRIMERA regla que aplica gana:
+        # 🔴 FIX 2026-09-26 (revisión de hallazgos, ALTA 1; reordenado el
+        # mismo día tras un segundo ajuste de Daniel: "Fuera de servicio"
+        # y "Dado de baja" son MÁS ESPECÍFICOS que "Con falla" y deben
+        # ganarle -- un equipo dado de baja no debería leerse como "con
+        # falla" aunque su fila de revisión también haya quedado marcada
+        # falla_detectada). "Estado en esta OT" no podía llegar nunca a
+        # "Operativo" por descarte -- un equipo sin ninguna revisión real
+        # (o con checklist a medias, o con falla detectada) terminaba
+        # mostrando "Operativo" solo porque no calzaba con baja/fuera de
+        # servicio/solicitud abierta. Cascada EXPLÍCITA, de más a menos
+        # específico -- la PRIMERA regla que aplica gana:
         #   1. saltado (no revisado) con una razón que NO es baja ni fuera
         #      de servicio -> "No revisado · {razón}"
-        #   2. falla detectada (checklist o diagnóstico por equipo)
-        #      -> "Con falla"
-        #   3. dado de baja EN ESTA visita -> "Dado de baja"
-        #   4. fuera de servicio EN ESTA visita (razón, o una solicitud de
+        #   2. dado de baja EN ESTA visita -> "Dado de baja"
+        #   3. fuera de servicio EN ESTA visita (razón, o una solicitud de
         #      ESTA visita con dejo_fuera_servicio=1) -> "Fuera de servicio"
+        #   4. falla detectada (checklist o diagnóstico por equipo)
+        #      -> "Con falla"
         #   5. cualquier solicitud de repuesto de ESTA visita, salvo las
         #      rechazadas -> "Con alerta · repuesto solicitado" (MEDIA 3:
         #      NO depende del estado ACTUAL/vivo de la solicitud -- si se
@@ -102483,14 +102488,14 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
             e["estado_esta_ot_label"] = (
                 f"No revisado · {_razon_lbl_e}" if _razon_lbl_e else "No revisado")
             e["estado_esta_ot_clase"] = "err"
-        elif _falla_e:
-            e["estado_esta_ot_label"] = "Con falla"
-            e["estado_esta_ot_clase"] = "err"
         elif _razon_e == "dado_de_baja":
             e["estado_esta_ot_label"] = "Dado de baja"
             e["estado_esta_ot_clase"] = "err"
         elif _razon_e == "fuera_de_servicio" or _hay_fs_sol:
             e["estado_esta_ot_label"] = "Fuera de servicio"
+            e["estado_esta_ot_clase"] = "err"
+        elif _falla_e:
+            e["estado_esta_ot_label"] = "Con falla"
             e["estado_esta_ot_clase"] = "err"
         elif _hay_sol_no_rechazada:
             e["estado_esta_ot_label"] = "Con alerta · repuesto solicitado"
