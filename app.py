@@ -85373,27 +85373,52 @@ def _otrep_insert(sql, params):
 def _otrep_crear_fila_solicitud(vid, mid, cliente_id, nombre, sku, origen, cantidad, motivo,
                                  dejo_fuera_servicio, user, medida=None, piola_id=None,
                                  piola_metros=None, repuesto_stock_id=None, proveedor_id=None,
-                                 lote_id=None):
+                                 lote_id=None, cur=None):
     """Núcleo de creación de UNA fila en mant_ot_repuesto_solicitudes: el
     mismo INSERT que ya usaba el endpoint singular (ot2_api_equipo_
     solicitar_repuesto), extraído a un helper reutilizable para que el
     plural (levantamiento de VARIOS repuestos, Fase 1 -- 2026-09-25) lo
-    llame una vez por línea sin duplicar el SQL (REGLA #4.2: el singular
-    sigue igual -- mismas columnas, mismos valores por defecto; `lote_id`
-    es la única columna nueva y queda NULL cuando el caller no la pasa,
-    que es el caso del singular).
+    llame una vez por línea sin duplicar el SQL.
+
+    🔒 2026-09-25 (revisión, hallazgo #4): `lote_id` NO va en la lista de
+    columnas cuando es None (el caso del singular) -- así el SQL que corre
+    para el singular queda BYTE A BYTE igual al que corría antes de esta
+    Fase 1 (REGLA #4.2: no cambiarle el comportamiento a un endpoint que
+    usan otras pantallas), en vez de depender de que la columna nueva
+    acepte NULL "por las puras".
+
+    🔒 2026-09-25 (revisión, hallazgo #3): `cur` -- cuando el caller pasa un
+    cursor ya abierto (el plural, para meter las N filas del lote en UNA
+    transacción con commit/rollback al final), el INSERT corre sobre ESE
+    cursor y NO hace su propio commit -- el caller controla la transacción.
+    Si no se pasa (caso del singular, que sigue igual), se usa _otrep_insert
+    tal cual estaba: get_db() + commit inmediato.
 
     Devuelve el id nuevo; lanza si el INSERT falla (el caller decide qué
     hacer: el singular ya envolvía esto en try/except, y el plural también)."""
-    return _otrep_insert(
-        "INSERT INTO mant_ot_repuesto_solicitudes "
-        "(visita_id, maquina_id, cliente_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
-        " origen, cantidad, medida, piola_id, piola_metros, motivo, dejo_fuera_servicio, estado, "
-        " solicitado_por, proveedor_id, lote_id) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,%s)",
-        (vid, mid, cliente_id, repuesto_stock_id, nombre[:400], sku, origen, cantidad, medida,
-         piola_id, piola_metros, motivo[:5000], 1 if dejo_fuera_servicio else 0, user,
-         proveedor_id, lote_id))
+    base_params = (vid, mid, cliente_id, repuesto_stock_id, nombre[:400], sku, origen, cantidad,
+                   medida, piola_id, piola_metros, motivo[:5000],
+                   1 if dejo_fuera_servicio else 0, user, proveedor_id)
+    if lote_id is None:
+        # Exactamente el mismo SQL que corría el singular antes de la Fase 1
+        # -- ni la columna ni el parámetro de lote_id existen en este caso.
+        sql = ("INSERT INTO mant_ot_repuesto_solicitudes "
+               "(visita_id, maquina_id, cliente_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
+               " origen, cantidad, medida, piola_id, piola_metros, motivo, dejo_fuera_servicio, estado, "
+               " solicitado_por, proveedor_id) "
+               "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s)")
+        params = base_params
+    else:
+        sql = ("INSERT INTO mant_ot_repuesto_solicitudes "
+               "(visita_id, maquina_id, cliente_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, "
+               " origen, cantidad, medida, piola_id, piola_metros, motivo, dejo_fuera_servicio, estado, "
+               " solicitado_por, proveedor_id, lote_id) "
+               "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,%s)")
+        params = base_params + (lote_id,)
+    if cur is not None:
+        cur.execute(sql, params)
+        return int(cur.lastrowid)
+    return _otrep_insert(sql, params)
 
 
 def _otrep_puede_gestion():
@@ -85486,6 +85511,25 @@ def _otrep_stock_comprometido(repuesto_stock_id, excluir_sol_id=None):
     except Exception as e:
         print(f"[otrep] comprometido stock={repuesto_stock_id}: {e}", flush=True)
         return 0.0
+
+
+def _otrep_aviso_sobrecompromiso(es_externo, sku_o_nombre, pedido_total, fisico, disponible):
+    """Texto del aviso cuando un repuesto de bodega queda sobre-comprometido
+    al crear una solicitud (Daniel 2026-09-20: "comprometer el stock de los
+    repuestos según la necesidad de la operación"). Compartido por el
+    endpoint singular y el plural (Fase 1) para que ambos avisen lo mismo.
+
+    🔒 2026-09-25 (revisión Fase 1, hallazgo #7): un técnico EXTERNO no ve
+    stock/proveedor/ubicación de bodega en ningún otro lado de este módulo
+    (_OTREP_STOCK_NO_EXTERNO, _OTREP_SOL_NO_EXTERNO) -- pero este aviso, al
+    ser texto libre, se armaba igual para todos y filtraba solo los campos
+    estructurados, no la prosa. Para el externo el texto queda genérico, sin
+    cantidades de bodega."""
+    if es_externo:
+        return (f"Ojo: puede que {sku_o_nombre} no alcance para todas las OT abiertas -- "
+                "bodega ya lo sabe y lo está gestionando.")
+    return (f"Ojo: {sku_o_nombre} queda comprometido en {pedido_total:g} de {fisico:g} en bodega "
+            f"entre todas las OT abiertas — faltan {abs(disponible):g}.")
 
 
 def _otrep_producto_de_maquina(m):
@@ -85772,7 +85816,13 @@ def _otrep_subir_evidencia(vid, mid, carpeta, prefijo, f, tipo, descripcion, use
     Solo cuenta como subida si la fila que la referencia quedó escrita (la
     de la solicitud, o la de la OT cuando no hay solicitud): si eso falla,
     el blob se borra de GCS para no dejar archivos huérfanos.
-    Devuelve (ok, error_texto)."""
+
+    Devuelve (ok, error_texto, info). `info` es un dict {url, public_id,
+    archivo_nombre, size_kb} cuando ok=True (None si ok=False) -- 2026-09-25
+    (revisión Fase 1, hallazgo #9): así un caller que necesita compartir ESTE
+    mismo archivo con otras filas (el lote) usa la url que YA tiene en mano,
+    sin releerla de la BD (evita una carrera rara si otra solicitud del
+    lote insertó su propia evidencia entre el INSERT y el SELECT de vuelta)."""
     try:
         f.stream.seek(0)
         res = _uploader_upload(
@@ -85786,7 +85836,7 @@ def _otrep_subir_evidencia(vid, mid, carpeta, prefijo, f, tipo, descripcion, use
             raise RuntimeError("sin URL de vuelta")
     except Exception as e:
         print(f"[otrep] subir {tipo} vid={vid} mid={mid}: {e}", flush=True)
-        return False, "No se pudo subir el archivo."
+        return False, "No se pudo subir el archivo.", None
 
     def _borrar_blob():
         try:
@@ -85819,6 +85869,8 @@ def _otrep_subir_evidencia(vid, mid, carpeta, prefijo, f, tipo, descripcion, use
         except Exception as e:
             print(f"[otrep] mant_visita_adjuntos vid={vid}: {e}", flush=True)
 
+    info = {"url": url[:700], "public_id": (pid or "")[:400] or None,
+             "archivo_nombre": (f.filename or "")[:300] or None, "size_kb": size_kb}
     if solicitud_id:
         try:
             mysql_execute(
@@ -85831,16 +85883,16 @@ def _otrep_subir_evidencia(vid, mid, carpeta, prefijo, f, tipo, descripcion, use
                 "UPDATE mant_ot_repuesto_solicitudes SET "
                 + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1")
                 + " WHERE id=%s", (solicitud_id,))
-            return True, None
+            return True, None, info
         except Exception as e:
             print(f"[otrep] evidencia BD sol={solicitud_id}: {e}", flush=True)
             if not ok_ot:
                 _borrar_blob()
-            return False, "La evidencia subió pero no se pudo registrar."
+            return False, "La evidencia subió pero no se pudo registrar.", None
     if not ok_ot:
         _borrar_blob()
-        return False, "La evidencia subió pero no se pudo registrar en la OT."
-    return True, None
+        return False, "La evidencia subió pero no se pudo registrar en la OT.", None
+    return True, None, info
 
 
 def _otrep_ticket_para_ot(vid, v, user):
@@ -86410,8 +86462,8 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
 
     # 2) Evidencia. Si no quedó registrada, la solicitud no existe.
     desc_ev = f"Solicitud de repuesto #{sol_id}: {nombre}"
-    ok_ev, e_ev = _otrep_subir_evidencia(vid, mid, "repuestos", f"rep{sol_id}", f, tipo,
-                                         desc_ev, user, solicitud_id=sol_id)
+    ok_ev, e_ev, _info_ev = _otrep_subir_evidencia(vid, mid, "repuestos", f"rep{sol_id}", f, tipo,
+                                                    desc_ev, user, solicitud_id=sol_id)
     if not ok_ev:
         try:
             mysql_execute("DELETE FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sol_id,))
@@ -86535,9 +86587,15 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
         otras = _otrep_stock_comprometido(stock["id"], excluir_sol_id=sol_id)
         disponible = fisico - otras - cantidad
         if disponible < 0:
-            avisos.append(f"Ojo: {stock.get('sku') or nombre} queda comprometido en "
-                           f"{otras + cantidad:g} de {fisico:g} en bodega entre todas las OT abiertas "
-                           f"— faltan {abs(disponible):g}.")
+            # 🔒 2026-09-25 (revisión Fase 1, hallazgo #7): el texto ya no se
+            # arma acá -- _otrep_aviso_sobrecompromiso decide entre el
+            # detallado (interno) y el genérico sin cantidades (externo).
+            try:
+                _es_ext_aviso = _es_tecnico_externo()
+            except Exception:
+                _es_ext_aviso = False
+            avisos.append(_otrep_aviso_sobrecompromiso(
+                _es_ext_aviso, stock.get('sku') or nombre, otras + cantidad, fisico, disponible))
     return jsonify({
         "ok": True, "solicitud_id": sol_id, "ticket_id": tid, "numero_ticket": numero_ticket,
         "ticket_creado": creado, "piola_id": piola_id,
@@ -86561,27 +86619,42 @@ def _otrep_validar_lineas_lote(lineas_in, stock_por_id):
     error encontrado, en el mismo orden en que llegaron las líneas.
     Cada línea de `lineas_ok` trae: origen, repuesto_stock_id, nombre, sku,
     cantidad, proveedor_id, stock_cantidad (física, para calcular avisos de
-    sobre-compromiso después de insertar)."""
+    sobre-compromiso después de insertar).
+
+    🔒 2026-09-25 (revisión, hallazgos #5 y #6):
+    - `math.isfinite` rechaza NaN/Infinity -- `json.loads` de Python acepta
+      esos tokens sueltos (no son JSON estándar, pero el parser estándar los
+      deja pasar) y antes se colaban: `nan <= 0` y `nan > 9999` son ambos
+      False, así que una cantidad NaN pasaba el filtro sin ser un número.
+    - `str(...)` defensivo sobre `origen`/`repuesto_nombre`/`repuesto_sku`:
+      si el JSON trae un número, `true`/`false` o `null` en vez de texto en
+      esos campos, `.strip()` sobre el valor crudo revienta con
+      AttributeError (500 feo) en vez de degradar a "manual"/vacío.
+    - El tope de 9999 se revisa DE NUEVO después de sumar cantidades del
+      mismo repuesto_stock_id (dedupe): dos líneas de 6000 cada una, cada
+      una válida por separado, no pueden colarse sumando 12000."""
+    import math
     lineas_ok = []
     por_stock_id = {}
     for idx, li in enumerate(lineas_in, start=1):
-        origen = (li.get("origen") or "manual").strip().lower()
+        origen = str(li.get("origen") or "manual").strip().lower()
         if origen not in ("compatible", "bodega", "manual"):
             origen = "manual"
         try:
-            cantidad = float(str(li.get("cantidad") or "0").replace(",", "."))
+            cantidad = float(str(li.get("cantidad") if li.get("cantidad") is not None else "0")
+                              .replace(",", "."))
         except (TypeError, ValueError):
-            cantidad = 0
-        if cantidad <= 0 or cantidad > 9999:
-            return None, (f"La línea #{idx} tiene una cantidad inválida: tiene que ser mayor que "
-                          "cero.", "CANTIDAD_INVALIDA")
+            cantidad = float("nan")
+        if not math.isfinite(cantidad) or cantidad <= 0 or cantidad > 9999:
+            return None, (f"La línea #{idx} tiene una cantidad inválida: tiene que ser un número "
+                          "mayor que cero (hasta 9999).", "CANTIDAD_INVALIDA")
         rid_txt = str(li.get("repuesto_stock_id") or "").strip()
         stock = stock_por_id.get(int(rid_txt)) if rid_txt.isdigit() else None
         if rid_txt.isdigit() and not stock:
             return None, (f"La línea #{idx} apunta a un repuesto de bodega que ya no existe.",
                           "REPUESTO_NO_EXISTE")
-        nombre = (li.get("repuesto_nombre") or "").strip()
-        sku = (li.get("repuesto_sku") or "").strip()[:120] or None
+        nombre = str(li.get("repuesto_nombre") or "").strip()
+        sku = str(li.get("repuesto_sku") or "").strip()[:120] or None
         if stock:
             nombre = stock["descripcion"]
             sku = stock.get("sku")
@@ -86593,7 +86666,11 @@ def _otrep_validar_lineas_lote(lineas_in, stock_por_id):
         if stock:
             sid = stock["id"]
             if sid in por_stock_id:
-                lineas_ok[por_stock_id[sid]]["cantidad"] += cantidad
+                nueva_cantidad = lineas_ok[por_stock_id[sid]]["cantidad"] + cantidad
+                if not math.isfinite(nueva_cantidad) or nueva_cantidad > 9999:
+                    return None, (f"La línea #{idx} repite un repuesto ya en el lote y la suma de "
+                                  "cantidades supera 9999.", "CANTIDAD_INVALIDA")
+                lineas_ok[por_stock_id[sid]]["cantidad"] = nueva_cantidad
                 continue
             por_stock_id[sid] = len(lineas_ok)
             lineas_ok.append({
@@ -86708,33 +86785,46 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
         return _ot2_err("El almacenamiento de fotos no está disponible en este momento. "
                         "Intenta de nuevo en un minuto.", "STORAGE_OFF", http=503)
 
-    # 3) Crear las N solicitudes con el mismo lote_id y el mismo motivo.
+    # 3) Crear las N solicitudes con el mismo lote_id y el mismo motivo, TODAS
+    #    en UNA transacción (revisión 2026-09-25, hallazgo #3): un cursor
+    #    compartido sobre la conexión del request (get_db, la misma que usa
+    #    _otrep_insert -- NUNCA se cierra, ver gotcha_get_db_no_cerrar), un
+    #    solo commit al final. Si una línea falla a mitad de camino, rollback
+    #    deshace TODO el lote de una vez -- ya no hace falta borrar fila por
+    #    fila "a mano" (ese DELETE de limpieza podía fallar en silencio).
     import uuid as _uuid_otrep
     lote_id = _uuid_otrep.uuid4().hex
     sol_ids = []
+    conn = get_db()
     try:
-        for li in lineas_ok:
-            sid = _otrep_crear_fila_solicitud(
-                vid, mid, v.get("cliente_id"), li["nombre"], li["sku"], li["origen"],
-                li["cantidad"], motivo, dejar_fs, user,
-                repuesto_stock_id=li["repuesto_stock_id"], proveedor_id=li["proveedor_id"],
-                lote_id=lote_id)
-            sol_ids.append(sid)
+        with conn.cursor() as cur:
+            for li in lineas_ok:
+                sid = _otrep_crear_fila_solicitud(
+                    vid, mid, v.get("cliente_id"), li["nombre"], li["sku"], li["origen"],
+                    li["cantidad"], motivo, dejar_fs, user,
+                    repuesto_stock_id=li["repuesto_stock_id"], proveedor_id=li["proveedor_id"],
+                    lote_id=lote_id, cur=cur)
+                sol_ids.append(sid)
+        conn.commit()
     except Exception as e:
         print(f"[otrep] INSERT lote vid={vid} mid={mid}: {e}", flush=True)
-        for sid in sol_ids:
-            try:
-                mysql_execute("DELETE FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
-            except Exception:
-                pass
+        try:
+            conn.rollback()
+        except Exception as e_rb:
+            # Esto sí es grave: si el rollback falla, alguna(s) de las filas
+            # que sí llegaron a insertarse antes del error podrían quedar
+            # sueltas en la BD sin evidencia ni ticket -- log fuerte para
+            # que no pase inadvertido (hallazgo #3, "al menos log fuerte").
+            print(f"[otrep][CRITICO] rollback lote FALLÓ vid={vid} mid={mid} "
+                  f"lote_id={lote_id}: {e_rb}", flush=True)
         return _ot2_err("No pudimos guardar las solicitudes.", "ERROR_INTERNO", http=500)
 
     # 4) Evidencia: se sube UNA vez y se registra en CADA solicitud del lote
-    #    (misma url). Si no queda registrada, el lote entero se descarta --
-    #    "sin evidencia no existe", mismo criterio del singular.
+    #    (misma url). Si no queda registrada para la PRIMERA, el lote entero
+    #    se descarta -- "sin evidencia no existe", mismo criterio del singular.
     desc_ev = f"Solicitud de repuestos (lote) para {m.get('nombre') or ('equipo #' + str(mid))}"
-    ok_primera, e_ev = _otrep_subir_evidencia(vid, mid, "repuestos", f"lote{lote_id[:8]}", f, tipo,
-                                               desc_ev, user, solicitud_id=sol_ids[0])
+    ok_primera, e_ev, info_primera = _otrep_subir_evidencia(
+        vid, mid, "repuestos", f"lote{lote_id[:8]}", f, tipo, desc_ev, user, solicitud_id=sol_ids[0])
     if not ok_primera:
         for sid in sol_ids:
             try:
@@ -86744,33 +86834,37 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
         return _ot2_err((e_ev or "No se pudo subir la evidencia") + ", así que las solicitudes NO se "
                         "guardaron. Revisa la conexión e intenta de nuevo.", "EVIDENCIA_NO_SUBIO",
                         http=502)
-    # El archivo ya se subió a GCS una sola vez -- para el resto de las
-    # solicitudes del lote solo se registra la MISMA url (no se re-sube).
-    ev_primera = mysql_fetchone(
-        "SELECT url, public_id, archivo_nombre, size_kb FROM mant_ot_repuesto_evidencias "
-        " WHERE solicitud_id=%s ORDER BY id DESC LIMIT 1", (sol_ids[0],)) or {}
-    if ev_primera.get("url"):
+    # 🔧 2026-09-25 (revisión, hallazgo #9): el archivo ya se subió a GCS una
+    # sola vez -- para el resto de las solicitudes del lote se registra la
+    # MISMA url que _otrep_subir_evidencia acaba de devolver, en vez de
+    # releerla de la BD (evita depender de un SELECT de vuelta que podría
+    # traer otra fila si dos requests del mismo lote corrieran a la vez).
+    fallos_evidencia_compartida = 0
+    if info_primera:
         for sid in sol_ids[1:]:
             try:
                 mysql_execute(
                     "INSERT INTO mant_ot_repuesto_evidencias "
                     "(solicitud_id, tipo, url, public_id, archivo_nombre, size_kb, subido_por) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                    (sid, tipo, ev_primera.get("url"), ev_primera.get("public_id"),
-                     ev_primera.get("archivo_nombre"), ev_primera.get("size_kb"), user))
+                    (sid, tipo, info_primera.get("url"), info_primera.get("public_id"),
+                     info_primera.get("archivo_nombre"), info_primera.get("size_kb"), user))
                 mysql_execute(
                     "UPDATE mant_ot_repuesto_solicitudes SET "
                     + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1")
                     + " WHERE id=%s", (sid,))
             except Exception as e:
+                fallos_evidencia_compartida += 1
                 print(f"[otrep] evidencia compartida sol={sid}: {e}", flush=True)
     else:
-        # No debería pasar (la evidencia recién se insertó y se leyó dentro
-        # de la misma request), pero si el SELECT de vuelta no la trae, no
-        # tiene sentido intentar un INSERT que va a fallar por url NOT NULL
-        # para cada línea del lote -- se deja constancia y se sigue: la
-        # PRIMERA solicitud del lote sí quedó con su evidencia.
-        print(f"[otrep] evidencia compartida: no se pudo releer sol={sol_ids[0]}", flush=True)
+        # No debería pasar (_otrep_subir_evidencia devuelve info siempre que
+        # ok=True), pero si llegara None no tiene sentido intentar un INSERT
+        # que va a fallar por url NOT NULL para cada línea del lote -- se
+        # deja constancia y se sigue: la PRIMERA solicitud del lote sí quedó
+        # con su evidencia.
+        fallos_evidencia_compartida = len(sol_ids) - 1
+        print(f"[otrep] evidencia compartida: _otrep_subir_evidencia no devolvió info, "
+              f"sol={sol_ids[0]}", flush=True)
 
     # 5) El equipo: fuera de servicio o "sigue andando, con la alerta" --
     #    UNA sola vez por lote (no una vez por línea).
@@ -86829,6 +86923,13 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
     if not tid:
         avisos.append("Las solicitudes quedaron guardadas, pero no se pudo crear el ticket de "
                        "seguimiento. Gestión puede crearlo desde Repuestos → Solicitudes desde OT.")
+    # 🔧 2026-09-25 (revisión, hallazgo #8): si copiar la evidencia compartida
+    # a alguna solicitud del lote falló, avisarlo -- antes quedaba solo en
+    # el log del backend y nadie se enteraba de que esa línea quedó sin foto.
+    if fallos_evidencia_compartida:
+        avisos.append(f"La evidencia se guardó en la primera solicitud, pero no se pudo copiar a "
+                       f"{fallos_evidencia_compartida} de las otras. Ábrelas y agrégala de nuevo "
+                       "desde la ficha del equipo.")
     try:
         es_externo = _es_tecnico_externo()
     except Exception:
@@ -86843,9 +86944,10 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
             disponible = fisico - otras - li["cantidad"]
             item["stock_disponible"] = disponible
             if disponible < 0:
-                avisos.append(f"Ojo: {li['sku'] or li['nombre']} queda comprometido en "
-                               f"{otras + li['cantidad']:g} de {fisico:g} en bodega entre todas las "
-                               f"OT abiertas — faltan {abs(disponible):g}.")
+                # Mismo helper que el singular (hallazgo #7): texto genérico
+                # sin cantidades de bodega para el técnico externo.
+                avisos.append(_otrep_aviso_sobrecompromiso(
+                    es_externo, li['sku'] or li['nombre'], otras + li['cantidad'], fisico, disponible))
         if es_externo:
             item.pop("repuesto_stock_id", None)
             item.pop("stock_disponible", None)
@@ -86881,6 +86983,7 @@ def ot2_api_equipo_evidencia(vid, mid):
     sid_txt = str(request.form.get("solicitud_id") or "").strip()
     lote_id_txt = (request.form.get("lote_id") or "").strip()
     contexto = (request.form.get("contexto") or "").strip().lower()
+    aviso = None
     if lote_id_txt:
         # Fase 1: agregar evidencia extra a TODAS las solicitudes del lote
         # de esta OT/equipo -- se valida pertenencia (mismo vid/mid) antes
@@ -86891,47 +86994,58 @@ def ot2_api_equipo_evidencia(vid, mid):
             (lote_id_txt, vid, mid)) or []
         if not sols:
             return _ot2_err("Ese lote no tiene solicitudes en este equipo.", "LOTE_NO_EXISTE", http=404)
-        ok, e_ev = _otrep_subir_evidencia(
+        ok, e_ev, info = _otrep_subir_evidencia(
             vid, mid, "repuestos", f"lote{lote_id_txt[:8]}", f, tipo,
             f"Solicitud de repuestos (lote) para {m.get('nombre') or ('equipo #' + str(mid))}",
             user, solicitud_id=sols[0]["id"])
+        # 🔒 2026-09-25 (revisión, hallazgo #9): usar directamente la url que
+        # _otrep_subir_evidencia acaba de devolver -- no releerla de la BD.
         if ok and len(sols) > 1:
-            ev = mysql_fetchone(
-                "SELECT url, public_id, archivo_nombre, size_kb FROM mant_ot_repuesto_evidencias "
-                " WHERE solicitud_id=%s ORDER BY id DESC LIMIT 1", (sols[0]["id"],)) or {}
-            if ev.get("url"):
+            fallos_copia = 0
+            if info:
                 for s in sols[1:]:
                     try:
                         mysql_execute(
                             "INSERT INTO mant_ot_repuesto_evidencias "
                             "(solicitud_id, tipo, url, public_id, archivo_nombre, size_kb, subido_por) "
                             "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                            (s["id"], tipo, ev.get("url"), ev.get("public_id"),
-                             ev.get("archivo_nombre"), ev.get("size_kb"), user))
+                            (s["id"], tipo, info.get("url"), info.get("public_id"),
+                             info.get("archivo_nombre"), info.get("size_kb"), user))
                         mysql_execute(
                             "UPDATE mant_ot_repuesto_solicitudes SET "
                             + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1")
                             + " WHERE id=%s", (s["id"],))
                     except Exception as e:
+                        fallos_copia += 1
                         print(f"[otrep] evidencia lote extra sol={s['id']}: {e}", flush=True)
+            else:
+                fallos_copia = len(sols) - 1
+                print(f"[otrep] evidencia lote extra: sin info de subida, sol={sols[0]['id']}",
+                      flush=True)
+            # 🔧 2026-09-25 (revisión, hallazgo #8): avisar en la respuesta si
+            # no se pudo copiar a alguna del resto -- antes quedaba solo en
+            # el log del backend.
+            if fallos_copia:
+                aviso = (f"El archivo se guardó en la primera solicitud del lote, pero no se pudo "
+                         f"copiar a {fallos_copia} de las otras.")
     elif sid_txt.isdigit():
         s = mysql_fetchone(
             "SELECT id, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
             " WHERE id=%s AND visita_id=%s AND maquina_id=%s", (int(sid_txt), vid, mid))
         if not s:
             return _ot2_err("Esa solicitud no es de este equipo.", "SOLICITUD_NO_EXISTE", http=404)
-        ok, e_ev = _otrep_subir_evidencia(
+        ok, e_ev, _info_ev = _otrep_subir_evidencia(
             vid, mid, "repuestos", f"rep{s['id']}", f, tipo,
             f"Solicitud de repuesto #{s['id']}: {s['repuesto_nombre']}", user, solicitud_id=s["id"])
     elif contexto == "baja":
-        ok, e_ev = _otrep_subir_evidencia(
+        ok, e_ev, _info_ev = _otrep_subir_evidencia(
             vid, mid, "bajas", "baja", f, tipo,
             f"Baja del equipo desde {v.get('numero_ot') or ('OT #' + str(vid))}", user)
     else:
         return _ot2_err("Falta a qué pertenece la evidencia.", "CONTEXTO_REQUERIDO")
     if not ok:
         return _ot2_err(e_ev or "No se pudo subir la evidencia.", "EVIDENCIA_NO_SUBIO", http=502)
-    return jsonify({"ok": True, "tipo": tipo})
+    return jsonify({"ok": True, "tipo": tipo, "aviso": aviso})
 
 
 @app.route("/ot/api/<int:vid>/equipo/<int:mid>/dar-baja", methods=["POST"])
@@ -86992,7 +87106,7 @@ def ot2_api_equipo_dar_baja(vid, mid):
     numero_ot = v.get("numero_ot") or f"OT #{vid}"
 
     # 1) Evidencia primero: sin foto REGISTRADA no hay baja.
-    ok_ev, e_ev = _otrep_subir_evidencia(
+    ok_ev, e_ev, _info_ev = _otrep_subir_evidencia(
         vid, mid, "bajas", "baja", f, "foto", f"Baja del equipo desde {numero_ot}: {motivo}", user)
     if not ok_ev:
         return _ot2_err((e_ev or "No se pudo subir la foto") + ", así que el equipo NO se dio de "

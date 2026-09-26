@@ -1315,7 +1315,26 @@
 .otrep-opc-it .stk{flex:none;font-size:.62rem;font-weight:900;border-radius:999px;padding:3px 8px;
   background:#dcfce7;color:#15803d;white-space:nowrap}
 .otrep-opc-it .stk.sin{background:#fee2e2;color:#b91c1c}
+.otrep-opc-it .stk.validar{background:#f3f4f6;color:#6b7280}
 .otrep-opc-vacio{font-size:.76rem;color:#6b7280;padding:6px 2px}
+{#- 🔧 2026-09-25 (revisión Fase 1, hallazgo ALTA #1): las tarjetas de la
+    LISTA del levantamiento (.otrep-lista-it) suman al ícono 44px y al
+    nombre (.inf) otros tres elementos de ancho fijo -- cantidad, quitar y
+    la pastilla de stock. A 390px eso deja el nombre en 0px de ancho (una
+    letra por línea). flex-wrap + el nombre a fila completa en móvil
+    (REGLA #3: sin scroll horizontal) resuelve sin tocar las OTRAS listas
+    que reusan .otrep-opc-it (compatibles/bodega, que solo llevan ph+inf+stk
+    y sí caben en una fila). -#}
+.otrep-lista-it{flex-wrap:wrap;cursor:default}
+.otrep-lista-it .cant{width:66px;flex:none}
+.otrep-lista-it .quitar{flex:none}
+@media (max-width:640px){
+  .otrep-lista-it .inf{flex:1 1 100%;order:1;min-width:0}
+  .otrep-lista-it .ph{order:0}
+  .otrep-lista-it .cant{order:2}
+  .otrep-lista-it .quitar{order:3}
+  .otrep-lista-it .stk{order:4;flex:1 1 100%;white-space:normal;text-align:left;margin-top:2px}
+}
 .otrep-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .otrep-tab{border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:999px;padding:6px 12px;
   font-size:.74rem;font-weight:800;cursor:pointer;min-height:36px;font-family:inherit}
@@ -13863,6 +13882,18 @@ function otrepAgregarALaLista(){
 
 /* REGLA #15 (formato Retiros, nombres SIEMPRE completos): cada tarjeta de
    la lista muestra el nombre entero del repuesto, sin cortar. */
+/* 🔧 2026-09-25 (revisión Fase 1, hallazgo #11): la pastilla de la lista
+   compara lo PEDIDO (it.cantidad, editable) contra el disponible real de
+   bodega -- no basta con mostrar "hay stock" del momento en que se agregó,
+   si el técnico después sube la cantidad a más de lo disponible tiene que
+   verse "Falta". Repuestos manuales (sin stock_id, disponible siempre
+   null) quedan como "Por validar": bodega todavía no los ligó a nada. */
+function _otrepBadgeLista(it){
+  if (it.disponible == null) return '<span class="stk validar">Por validar</span>';
+  if (it.disponible <= 0) return '<span class="stk sin">Sin stock</span>';
+  if (it.disponible >= it.cantidad) return '<span class="stk">Hay stock</span>';
+  return '<span class="stk sin">Falta (tienes ' + _otrepFmt(it.disponible) + ')</span>';
+}
 function otrepPintarLista(){
   var wrap = document.getElementById('otrepListaWrap');
   var cont = document.getElementById('otrepListaItems');
@@ -13873,27 +13904,25 @@ function otrepPintarLista(){
   wrap.style.display = n ? '' : 'none';
   contador.textContent = n + (n === 1 ? ' repuesto en la lista' : ' repuestos en la lista');
   cont.innerHTML = _otrep.lista.map(function(it, i){
-    var stk = (it.disponible != null)
-      ? ((it.disponible > 0)
-          ? '<span class="stk">' + _otrepFmt(it.disponible) + ' disponible' + ((it.comprometido || 0) > 0 ? ' · ' + _otrepFmt(it.comprometido) + ' comprometido' : '') + '</span>'
-          : '<span class="stk sin">sin disponible' + ((it.comprometido || 0) > 0 ? ' · ' + _otrepFmt(it.comprometido) + ' comprometido' : '') + '</span>')
-      : (it.stock_id ? (it.con_stock ? '<span class="stk">en stock</span>' : '<span class="stk sin">sin stock</span>')
-                      : '<span class="stk sin">manual · por validar</span>');
-    return '<div class="otrep-opc-it on" style="cursor:default">' +
+    return '<div class="otrep-opc-it on otrep-lista-it">' +
       '<span class="ph"><i class="bi bi-' + (it.stock_id ? 'gear' : 'pencil') + '"></i></span>' +
       '<span class="inf"><b>' + otdEsc(it.nombre) + '</b>' +
       '<small>' + (it.sku ? otdEsc(it.sku) + ' · ' : '') + (it.stock_id ? 'De la bodega' : 'Manual · por validar') + '</small></span>' +
-      '<input type="number" class="form-control form-control-sm" style="width:66px;flex:none" inputmode="decimal" min="0.5" step="0.5" ' +
+      '<input type="number" class="form-control form-control-sm cant" inputmode="decimal" min="0.5" step="0.5" ' +
         'value="' + it.cantidad + '" onchange="otrepListaCant(' + i + ', this.value)" title="Cantidad">' +
-      '<button type="button" class="btn btn-sm" style="border:0;color:#dc2626;flex:none" onclick="otrepListaQuitar(' + i + ')" title="Quitar">' +
+      '<button type="button" class="btn btn-sm quitar" style="border:0;color:#dc2626" onclick="otrepListaQuitar(' + i + ')" title="Quitar">' +
         '<i class="bi bi-x-lg"></i></button>' +
-      stk + '</div>';
+      _otrepBadgeLista(it) + '</div>';
   }).join('');
 }
 function otrepListaCant(i, val){
   var cant = parseFloat(val);
   if (!isFinite(cant) || cant <= 0){ otrepPintarLista(); return; }
   _otrep.lista[i].cantidad = _otrepRound1(cant);
+  // Repinta para que la pastilla de stock (hallazgo #11) refleje la nueva
+  // cantidad pedida contra el disponible -- "Hay stock" puede pasar a
+  // "Falta" si el técnico sube la cantidad después de agregarla.
+  otrepPintarLista();
   otrepRefrescar();
 }
 function otrepListaQuitar(i){
@@ -14119,6 +14148,24 @@ async function otrepEnviar(){
    el resto entra después uno a uno por /evidencia con lote_id. */
 async function otrepEnviarLote(){
   var err = document.getElementById('otrepErr'); err.textContent = '';
+  // 🔧 2026-09-25 (revisión Fase 1, hallazgo MEDIA #2): si quedó un repuesto
+  // elegido arriba (Paso 1) sin apretar "Agregar a la lista", preguntar
+  // antes de mandar el lote sin él -- es el error más fácil de cometer con
+  // este patrón de "elegir, poner cantidad, agregar".
+  if (_otrep.sel && _otrep.sel.nombre){
+    var agregarlo = await ilusConfirm({
+      title: 'Repuesto sin agregar',
+      message: 'Tienes "' + _otrep.sel.nombre + '" elegido sin agregar a la lista, ¿lo agrego?',
+      okLabel: 'Sí, agregar', cancelLabel: 'No, enviar sin él',
+    });
+    if (agregarlo){
+      otrepAgregarALaLista();
+    } else {
+      _otrep.sel = null;
+      document.querySelectorAll('.otrep-opc-it[data-id]').forEach(function(b){ b.classList.remove('on'); });
+      otrepRefrescar();
+    }
+  }
   if (!_otrep.lista.length){ err.textContent = 'Agrega al menos un repuesto a la lista.'; return; }
   var fd = new FormData();
   fd.append('lineas', JSON.stringify(_otrep.lista.map(function(it){
@@ -14156,8 +14203,13 @@ async function otrepEnviarLote(){
     var n = (j.solicitudes || []).length || _otrep.lista.length;
     var msg = '✓ ' + n + (n === 1 ? ' repuesto solicitado' : ' repuestos solicitados') + ' para ' + nombreEq
       + (j.numero_ticket ? ' · ticket ' + j.numero_ticket : '');
-    if (fallidos) await ilusAlert({title: 'Solicitudes guardadas', message: msg + '. ' + fallidos + ' archivo(s) no se pudieron subir: agrégalos desde la galería del equipo.', type: 'warning'});
-    else if (j.avisos && j.avisos.length) await ilusAlert({title: 'Solicitudes guardadas', message: j.avisos.join('\n'), type: 'warning'});
+    // 🔧 2026-09-25 (revisión Fase 1, hallazgo #10): antes, si fallaba un
+    // archivo extra, los avisos de sobre-compromiso de stock (j.avisos) se
+    // perdían del todo (el "else if" nunca corría) -- ahora se combinan.
+    var extras = [];
+    if (fallidos) extras.push(fallidos + ' archivo(s) no se pudieron subir: agrégalos desde la galería del equipo.');
+    if (j.avisos && j.avisos.length) extras.push(j.avisos.join('\n'));
+    if (extras.length) await ilusAlert({title: 'Solicitudes guardadas', message: msg + '.\n\n' + extras.join('\n\n'), type: 'warning'});
     else ilusToast(msg, {type:'success'});
     _otrepLiberar(_otrep.archivos); _otrep.archivos = []; _otrep.lista = [];
     if (j.fuera_servicio){ setTimeout(function(){ location.reload(); }, 900); return; }

@@ -149,6 +149,48 @@ class TestValidacionLoteRepuestos(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(lineas, [])
 
+    def test_cantidad_nan_rechazada(self):
+        # Revision 2026-09-25 (hallazgo #5): json.loads de Python acepta el
+        # token NaN suelto (no es JSON estandar) y antes se colaba porque
+        # "nan <= 0" y "nan > 9999" son ambos False en Python.
+        lineas, err = self.validar(
+            [{"origen": "manual", "repuesto_nombre": "Correa", "cantidad": float("nan")}], {})
+        self.assertIsNone(lineas)
+        self.assertEqual(err[1], "CANTIDAD_INVALIDA")
+
+    def test_cantidad_infinito_rechazada(self):
+        lineas, err = self.validar(
+            [{"origen": "manual", "repuesto_nombre": "Correa", "cantidad": float("inf")}], {})
+        self.assertIsNone(lineas)
+        self.assertEqual(err[1], "CANTIDAD_INVALIDA")
+
+    def test_dedupe_que_supera_9999_al_sumar_se_rechaza(self):
+        # Revision 2026-09-25 (hallazgo #5): cada linea por separado es
+        # valida (6000 <= 9999), pero la SUMA del dedupe no puede colarse.
+        stock_por_id = {7: {"id": 7, "sku": "COR-7", "descripcion": "Correa 7mm",
+                             "cantidad": 20000, "proveedor_id": None}}
+        lineas, err = self.validar(
+            [{"origen": "bodega", "repuesto_stock_id": 7, "cantidad": 6000},
+             {"origen": "bodega", "repuesto_stock_id": 7, "cantidad": 6000}],
+            stock_por_id)
+        self.assertIsNone(lineas)
+        self.assertEqual(err[1], "CANTIDAD_INVALIDA")
+
+    def test_origen_no_string_no_revienta_cae_a_manual(self):
+        # Revision 2026-09-25 (hallazgo #6): un origen que no es texto (acá
+        # un numero, valdria igual None/bool/lista) no debe tirar
+        # AttributeError al hacer .strip() sobre el valor crudo.
+        lineas, err = self.validar(
+            [{"origen": 123, "repuesto_nombre": "Correa", "cantidad": 1}], {})
+        self.assertIsNone(err)
+        self.assertEqual(lineas[0]["origen"], "manual")
+
+    def test_repuesto_nombre_no_string_no_revienta(self):
+        lineas, err = self.validar(
+            [{"origen": "manual", "repuesto_nombre": 12345, "cantidad": 1}], {})
+        self.assertIsNone(err)
+        self.assertEqual(lineas[0]["nombre"], "12345")
+
 
 if __name__ == "__main__":
     unittest.main()
