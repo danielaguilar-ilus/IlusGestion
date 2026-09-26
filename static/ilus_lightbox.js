@@ -19,6 +19,9 @@
      ilusLightbox([{url, caption, id}], 0, 'Foto', {  // con "Guardar giro"
        onGuardarGiro: async (item, grados) => nuevaUrl,
      })
+     ilusLightbox([{url, caption, id, principal}], 0, 'Foto', {  // + estrella
+       onMarcarPrincipal: async (item) => ({ principal: true|false }),
+     })
 
    Qué trae: navegación (flechas del teclado o botones), zoom (botones,
    rueda del mouse, doble click), girar 90° a la izquierda o a la derecha,
@@ -35,6 +38,17 @@
    una copia nueva, el original NO se toca) y el visor pasa a mostrar la
    URL nueva. Sin `opts` todo funciona exactamente igual que antes — los
    llamadores viejos no cambian.
+
+   ⭐ 2026-09-26 (Daniel: "brindarle la oportunidad al técnico de elegir la
+   foto principal de cada OT, bien informativo, y todo debe estar
+   conectado"). Mismo patrón retrocompatible que "Guardar giro": si quien
+   abre el visor pasa `opts.onMarcarPrincipal` y la foto trae `id`, aparece
+   el botón "★ Foto principal" -- una estrella llena si `item.principal` es
+   verdadero, vacía si no. Al tocarla se llama `onMarcarPrincipal(item)`
+   (el visor no decide el valor nuevo: el caller sabe si esto es
+   marcar/desmarcar y qué grupo de fotos afecta) y se espera de vuelta
+   `{principal: bool}` para repintar la estrella. Sin `opts.onMarcarPrincipal`
+   el botón no aparece -- los llamadores viejos no cambian.
    ══════════════════════════════════════════════════════════════════════ */
 
 (function (global) {
@@ -86,6 +100,13 @@
       '.ilus-lb-save.is-on{display:inline-flex}',
       '.ilus-lb-save:hover{background:#b91c1c}',
       '.ilus-lb-save:disabled{opacity:.6;cursor:wait}',
+      /* ⭐ 2026-09-26: "★ Foto principal" -- oculto por defecto (solo con
+         opts.onMarcarPrincipal + item.id), amarillo relleno si ya es la
+         principal de su equipo, blanco vacío si no. */
+      '.ilus-lb-star{display:none}',
+      '.ilus-lb-star.is-show{display:inline-flex}',
+      '.ilus-lb-star.is-set{color:#f59e0b}',
+      '.ilus-lb-star:disabled{opacity:.6;cursor:wait}',
       /* Móvil: botones de 44px (REGLA #3) y la barra puede pasar a 2 filas
          en vez de salirse de la pantalla. */
       '@media (max-width:576px){',
@@ -151,6 +172,7 @@
         '<button type="button" class="ilus-lb-tool" data-act="rotate" title="Girar 90° a la derecha" aria-label="Girar 90° a la derecha"><i class="bi bi-arrow-clockwise"></i></button>' +
         '<button type="button" class="ilus-lb-tool" data-act="reset" title="Restablecer"><i class="bi bi-aspect-ratio"></i></button>' +
         '<a class="ilus-lb-tool" data-act="abrir" target="_blank" rel="noopener" title="Abrir original en pestaña nueva"><i class="bi bi-box-arrow-up-right"></i></a>' +
+        '<button type="button" class="ilus-lb-tool ilus-lb-star" data-act="principal" title="Marcar como foto principal de este equipo"><i class="bi bi-star"></i></button>' +
         '<button type="button" class="ilus-lb-save" data-act="guardar" title="Guardar la foto girada"><i class="bi bi-check2-circle"></i> <span>Guardar giro</span></button>' +
       '</div>';
 
@@ -161,8 +183,29 @@
     var abrirEl = ov.querySelector('[data-act="abrir"]');
     var saveBtn = ov.querySelector('[data-act="guardar"]');
     var saveTxt = saveBtn ? saveBtn.querySelector('span') : null;
+    var starBtn = ov.querySelector('[data-act="principal"]');
     var toolsGiro = Array.prototype.slice.call(
       ov.querySelectorAll('[data-act="rotate"],[data-act="rotate-left"],[data-act="reset"]'));
+    var marcandoPrincipal = false;
+
+    // ⭐ 2026-09-26: ¿la foto actual puede marcarse/desmarcarse principal?
+    // Necesita id + callback, igual criterio que puedeGuardar (giro).
+    function puedeMarcarPrincipal(it) {
+      return !!(it && it.id && typeof opts.onMarcarPrincipal === 'function');
+    }
+    function actualizarEstrella() {
+      if (!starBtn) return;
+      var it = images[idx];
+      var puede = puedeMarcarPrincipal(it);
+      starBtn.classList.toggle('is-show', puede);
+      starBtn.classList.toggle('is-set', !!(it && it.principal));
+      starBtn.disabled = marcandoPrincipal;
+      var ico = starBtn.querySelector('i');
+      if (ico) ico.className = (it && it.principal) ? 'bi bi-star-fill' : 'bi bi-star';
+      starBtn.title = (it && it.principal)
+        ? 'Foto principal de este equipo (toca para quitarla)'
+        : 'Marcar como foto principal de este equipo';
+    }
 
     function applyTransform() {
       img.style.transform =
@@ -192,6 +235,7 @@
       if (capEl) capEl.textContent = it.caption || '';
       zoom = 1; rot = 0; panX = 0; panY = 0;
       applyTransform();
+      actualizarEstrella();
       if (counter) counter.textContent = (idx + 1) + ' / ' + images.length;
     }
     // Un giro que se pudo guardar y no se guardó se pierde al cambiar de
@@ -239,6 +283,29 @@
           _toast((err && err.message) || 'No se pudo guardar el giro. Intenta de nuevo.', 'error');
         });
     }
+    // ⭐ 2026-09-26: el visor NO decide si esto es marcar o desmarcar --
+    // delega el estado actual (item.principal) y todo lo que implique (qué
+    // otras fotos del mismo equipo dejan de serlo) al caller.
+    function marcarPrincipal() {
+      var it = images[idx];
+      if (marcandoPrincipal || !puedeMarcarPrincipal(it)) return;
+      marcandoPrincipal = true;
+      actualizarEstrella();
+      Promise.resolve()
+        .then(function () { return opts.onMarcarPrincipal(it); })
+        .then(function (res) {
+          marcandoPrincipal = false;
+          var principal = !!(res && res.principal);
+          it.principal = principal;
+          _toast(principal ? '★ Foto marcada como principal' : 'Foto principal quitada', 'success');
+          actualizarEstrella();
+        })
+        .catch(function (err) {
+          marcandoPrincipal = false;
+          actualizarEstrella();
+          _toast((err && err.message) || 'No se pudo actualizar la foto principal.', 'error');
+        });
+    }
     function onKey(e) {
       if (e.key === 'Escape') cerrar();
       else if (multi && e.key === 'ArrowLeft')  go(-1);
@@ -255,10 +322,12 @@
       var nav = e.target.closest('.ilus-lb-nav');
       if (nav) { go(nav.classList.contains('ilus-lb-prev') ? -1 : 1); return; }
       if (e.target.closest('.ilus-lb-save')) { guardarGiro(); return; }
+      if (e.target.closest('.ilus-lb-star')) { marcarPrincipal(); return; }
       var tool = e.target.closest('.ilus-lb-tool');
       if (tool) {
         var act = tool.dataset.act;
         if (act === 'abrir') return;             // <a>: deja que el navegador lo abra
+        if (act === 'principal') return;         // ya se manejó arriba (marcarPrincipal)
         if (guardando && (act === 'rotate' || act === 'rotate-left' || act === 'reset')) return;
         if (act === 'zoom-in')       zoom = Math.min(zoom * 1.25, 5);
         else if (act === 'zoom-out') { zoom = Math.max(zoom / 1.25, .3); if (zoom === 1) { panX = 0; panY = 0; } }

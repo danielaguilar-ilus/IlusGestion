@@ -2201,6 +2201,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 @media (max-width:640px){
   .otd-chk-fotos img{width:74px;height:74px}
 }
+{# ⭐ 2026-09-26 (foto principal por equipo, Daniel: "bien informativo, y
+   todo debe estar conectado"): estrella sobre la miniatura ya elegida como
+   principal de este equipo -- mismo criterio en el checklist, el visor y
+   el PDF (eq-foto-tag en ot_pdf.html). #}
+.otd-fotomini{position:relative;display:inline-block;line-height:0}
+.otd-fotomini-badge{position:absolute;top:4px;right:4px;color:#f59e0b;
+  font-size:.8rem;text-shadow:0 1px 3px rgba(0,0,0,.65);pointer-events:none}
 .otd-chk-fallback{font-size:.72rem;color:#6b7280;font-style:italic}
 .otd-chk-gpsbtn{width:100%;min-height:52px;border-radius:10px;border:none;
   background:var(--ilus-red,#dc2626);color:#fff;font-size:.86rem;font-weight:800;
@@ -11546,7 +11553,11 @@ window.otdVerFoto = function(imgEl){
    ══════════════════════════════════════════════════════════════════════ */
 const OTD_PUEDE_GIRAR = {{ (puede_girar_fotos | default(false)) | tojson }};
 
-/* Opciones del visor: sin permiso de giro, el visor queda como siempre. */
+/* Opciones del visor: sin permiso de giro, el visor queda como siempre.
+   ⭐ 2026-09-26 (Daniel: "brindarle la oportunidad al técnico de elegir la
+   foto principal de cada OT, bien informativo, y todo debe estar
+   conectado"): mismo permiso que girar (OTD_PUEDE_GIRAR / _foto_puede_girar
+   en el backend) habilita también el botón "★ Foto principal" del visor. */
 function otdFotoLbOpts(){
   if (!OTD_PUEDE_GIRAR) return undefined;
   return {
@@ -11558,7 +11569,49 @@ function otdFotoLbOpts(){
       if (res.desfasada) return { url: res.url, mensaje: res.error, tipo: 'warning' };
       return res.url;
     },
+    onMarcarPrincipal: async function(item){
+      // El visor no decide el valor nuevo (ver ilus_lightbox.js) -- se
+      // toggea sobre lo que el propio item.principal diga hoy.
+      return await otdFotoGuardarPrincipal(item.id, !item.principal);
+    },
   };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ⭐ FOTO PRINCIPAL POR EQUIPO — 2026-09-26.
+   Daniel: "hay que expresar todo muy bien y brindarle la oportunidad al
+   técnico de elegir la foto principal de cada OT, bien informativo, y
+   todo debe estar conectado". Una sola principal por (visita, equipo) --
+   el servidor desmarca las demás al marcar una nueva (ver
+   _foto_marcar_principal en app.py). El visor (ilus_lightbox.js) actualiza
+   su propia estrella al toque; el resto de la pantalla (checklist, tarjeta
+   del equipo) se pone al día recargando el checklist desde el servidor --
+   más simple y siempre correcto que llevar la cuenta a mano de qué otra
+   foto del MISMO equipo, en otra tarea, dejó de ser principal.
+   ══════════════════════════════════════════════════════════════════════ */
+async function otdFotoGuardarPrincipal(fid, principal){
+  const SIN_RESPUESTA = 'Sin respuesta del servidor: no sabemos si se guardó. Vuelve a intentar.';
+  let r, d = null;
+  try {
+    r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/${encodeURIComponent(fid)}/principal`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ principal: !!principal }),
+    }, 30000);
+    d = await r.json().catch(() => null);
+  } catch(e){
+    throw new Error(SIN_RESPUESTA);
+  }
+  if (!d) throw new Error(SIN_RESPUESTA);
+  if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo actualizar la foto principal.');
+  // El checklist (OTD_CHK_DATA) es la ÚNICA fuente que agrupa fotos por
+  // equipo hoy -- se recarga desde el servidor para reflejar que, si se
+  // marcó una principal, las demás del mismo equipo (aunque estén en OTRA
+  // tarea) quedaron desmarcadas. OTD_CHK_LOADED=false fuerza el refetch;
+  // otdCargarChecklistSiHaceFalta ya repinta cada .otd-chk-mount abierto.
+  OTD_CHK_LOADED = false;
+  otdCargarChecklistSiHaceFalta().catch(function(){});
+  return { principal: !!d.principal };
 }
 
 /* id de la foto para el visor, SOLO si se puede girar: el servidor gira
@@ -11698,10 +11751,17 @@ function otdChkFotosHtml(t){
   // volver a entrar tres veces. Ahora se abre la tarea completa en el visor
   // y se pasa de una a otra con las flechas, sin salir.
   // 🔄 2026-09-25: + data-fid, para poder guardar un giro desde el visor.
+  // ⭐ 2026-09-26: + data-principal y la estrella sobre la miniatura que ya
+  // es la principal de este equipo (checklist.js/app.py la pasa en cada
+  // foto, ver mant_visita_checklist_get).
   return `<div class="otd-chk-fotos">${t.fotos.map((f, i) =>
-    `<img src="${otdEsc(f.url)}" alt="Foto de ${otdEsc(t.titulo || 'la tarea')}"
-          data-fid="${otdEsc(f.id == null ? '' : String(f.id))}"
-          loading="lazy" onclick="otdVerFotosTarea(this, ${i})">`).join('')}</div>`;
+    `<span class="otd-fotomini">
+       <img src="${otdEsc(f.url)}" alt="Foto de ${otdEsc(t.titulo || 'la tarea')}"
+            data-fid="${otdEsc(f.id == null ? '' : String(f.id))}"
+            data-principal="${f.principal ? '1' : '0'}"
+            loading="lazy" onclick="otdVerFotosTarea(this, ${i})">
+       ${f.principal ? '<i class="bi bi-star-fill otd-fotomini-badge" title="Foto principal de este equipo"></i>' : ''}
+     </span>`).join('')}</div>`;
 }
 
 /* Abre TODAS las fotos de una tarea del checklist en el visor, empezando
@@ -11719,7 +11779,10 @@ window.otdVerFotosTarea = function(imgEl, idx){
   const tarea = (imgEl.getAttribute('alt') || 'Foto de la tarea').trim();
   const fotos = imgs.map(function(el, i){
     const u = el.getAttribute('src') || el.src;
+    // ⭐ 2026-09-26: principal se lee del propio DOM (data-principal), igual
+    // que el fid -- así el visor sabe qué estrella pintar sin otra consulta.
     return { url: u, id: otdFotoIdGirable(el.dataset.fid, u),
+             principal: el.dataset.principal === '1',
              caption: tarea + (imgs.length > 1 ? ` · ${i + 1} de ${imgs.length}` : '') };
   });
   const i = (typeof idx === 'number' && idx >= 0) ? idx : Math.max(0, imgs.indexOf(imgEl));

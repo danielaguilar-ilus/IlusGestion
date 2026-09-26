@@ -794,6 +794,174 @@ async function cargarRepuestos() {
     document.getElementById('repTbody').innerHTML =
       `<tr><td colspan="9" class="text-center text-danger py-3">Error: ${e.message}</td></tr>`;
   }
+  // 🔧 Fase 3b (2026-09-26): historial de solicitudes de repuesto (OT +
+  // manual + incidencia + ticket) y movimientos de bodega de este cliente
+  // -- carga junto con el resto de la pestaña Repuestos, sin duplicar el
+  // chip de condición por equipo (ese solo trae las abiertas, ver
+  // ficha.html "Con problemas").
+  repSolCargar();
+  repMovCargar();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   🔧 Fase 3b (2026-09-26) — Historial de solicitudes de repuesto del
+   cliente. REGLA #4.3: paginación real en servidor, no scroll infinito.
+   REGLA de filtros: al limpiar/cambiar el filtro, la tabla se recarga
+   siempre (bug real 2026-08-01) -- por eso repSolFiltrar SIEMPRE llama a
+   repSolCargar(), nunca solo cambia una clase visual.
+   ══════════════════════════════════════════════════════════════════════ */
+let _repSolState = { estado: 'abiertas', page: 1, perPage: 20 };
+
+function repSolFiltrar(estado) {
+  _repSolState.estado = estado;
+  _repSolState.page = 1;
+  document.querySelectorAll('.repsol-f-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.estado === estado);
+  });
+  repSolCargar();
+}
+
+function repSolCambiarPorPag() {
+  const sel = document.getElementById('repSolPorPag');
+  _repSolState.perPage = parseInt((sel && sel.value) || '20', 10) || 20;
+  _repSolState.page = 1;
+  repSolCargar();
+}
+
+function repSolIrPagina(delta) {
+  const next = _repSolState.page + delta;
+  if (next < 1 || (_repSolState.totalPages && next > _repSolState.totalPages)) return;
+  _repSolState.page = next;
+  repSolCargar();
+}
+
+async function repSolCargar() {
+  const tbody = document.getElementById('repSolTbody');
+  if (!tbody) return;   // pestaña Repuestos todavía no se montó en el DOM
+  try {
+    const qs = new URLSearchParams({
+      estado: _repSolState.estado, page: _repSolState.page, per_page: _repSolState.perPage,
+    });
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/repuestos-solicitudes?${qs}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    _repSolState.page = d.page || 1;
+    _repSolState.totalPages = d.total_pages || 1;
+    repSolRenderTabla(d.solicitudes || []);
+    const desde = d.total ? ((d.page - 1) * d.per_page + 1) : 0;
+    const hasta = Math.min(d.page * d.per_page, d.total || 0);
+    const info = document.getElementById('repSolPagInfo');
+    if (info) info.textContent = d.total ? `Mostrando ${desde}–${hasta} de ${d.total}` : 'Sin solicitudes en este filtro';
+    const txt = document.getElementById('repSolPagTxt');
+    if (txt) txt.textContent = `Página ${d.page} de ${d.total_pages}`;
+    const prev = document.getElementById('repSolPrevBtn'); if (prev) prev.disabled = d.page <= 1;
+    const next = document.getElementById('repSolNextBtn'); if (next) next.disabled = d.page >= d.total_pages;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3" style="font-size:.82rem">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function repSolRenderTabla(arr) {
+  const tbody = document.getElementById('repSolTbody');
+  if (!tbody) return;
+  if (!arr.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4" style="font-size:.85rem">
+      <i class="bi bi-inboxes" style="font-size:1.6rem;opacity:.3"></i>
+      <div class="mt-1">Sin solicitudes en este filtro</div></td></tr>`;
+    return;
+  }
+  // 🚦 Semáforo por estado (REGLA #15 -- mismo espíritu que Retiros): ámbar
+  // recién solicitado, azul en curso (bodega/proveedor), verde instalado,
+  // rojo rechazado.
+  const COLOR = { solicitado:'#f59e0b', validado:'#3b82f6', pedido:'#3b82f6',
+                  recibido:'#3b82f6', instalado:'#16a34a', rechazado:'#dc2626' };
+  tbody.innerHTML = arr.map(s => {
+    const color = COLOR[s.estado] || '#6b7280';
+    const otOrigen = s.numero_ot
+      ? `<a href="/ot/${s.visita_id}" target="_blank" rel="noopener">${repEsc(s.numero_ot)}</a>`
+      : '<span class="text-muted">Sin OT · manual</span>';
+    const otInstal = s.ot_generada_numero
+      ? `<a href="/ot/${s.ot_generada_id}" target="_blank" rel="noopener">${repEsc(s.ot_generada_numero)}</a>`
+      : '—';
+    return `
+    <tr>
+      <td>
+        <div class="fw-bold" style="font-size:.82rem;color:#0f172a">${repEsc(s.repuesto_nombre || '—')}</div>
+        ${s.repuesto_sku ? `<div style="font-size:.68rem;color:#9ca3af;font-family:monospace">${repEsc(s.repuesto_sku)}</div>` : ''}
+      </td>
+      <td style="font-size:.8rem">${repEsc(s.maquina_nombre || '—')}</td>
+      <td><span class="badge" style="background:${color}22;color:${color};font-weight:700;font-size:.7rem">${repEsc(s.estado_label || s.estado || '—')}</span></td>
+      <td style="font-size:.78rem">${otOrigen}</td>
+      <td style="font-size:.78rem">${otInstal}</td>
+      <td style="font-size:.78rem">${s.dias_transcurridos != null ? s.dias_transcurridos + ' d' : '—'}</td>
+      <td style="font-size:.75rem;color:#6b7280">${repEsc(s.created_at || '—')}</td>
+    </tr>`;
+  }).join('');
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   🔧 Fase 3b (2026-09-26) — Movimientos de bodega de este cliente
+   (kardex, mant_repuestos_movimientos). Tolerante: si el backend no
+   encuentra la tabla (se construye en paralelo en otra rama), muestra un
+   aviso en vez de romper la pestaña.
+   ══════════════════════════════════════════════════════════════════════ */
+let _repMovState = { page: 1, totalPages: 1 };
+
+function repMovIrPagina(delta) {
+  const next = _repMovState.page + delta;
+  if (next < 1 || (_repMovState.totalPages && next > _repMovState.totalPages)) return;
+  _repMovState.page = next;
+  repMovCargar();
+}
+
+async function repMovCargar() {
+  const tbody = document.getElementById('repMovTbody');
+  if (!tbody) return;
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/repuestos-movimientos?page=${_repMovState.page}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    _repMovState.page = d.page || 1;
+    _repMovState.totalPages = d.total_pages || 1;
+    repMovRenderTabla(d.movimientos || []);
+    const txt = document.getElementById('repMovPagTxt');
+    if (txt) txt.textContent = `Página ${d.page} de ${d.total_pages}`;
+    const info = document.getElementById('repMovPagInfo');
+    if (info) info.textContent = d.total ? `${d.total} movimiento(s)` : 'Sin movimientos registrados';
+    const prev = document.getElementById('repMovPrevBtn'); if (prev) prev.disabled = d.page <= 1;
+    const next = document.getElementById('repMovNextBtn'); if (next) next.disabled = d.page >= d.total_pages;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3" style="font-size:.8rem">Sin datos de bodega disponibles todavía.</td></tr>`;
+  }
+}
+
+function repMovRenderTabla(arr) {
+  const tbody = document.getElementById('repMovTbody');
+  if (!tbody) return;
+  if (!arr.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4" style="font-size:.85rem">Sin movimientos de bodega para este cliente</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = arr.map(m => `
+    <tr>
+      <td>
+        <div class="fw-bold" style="font-size:.82rem">${repEsc(m.repuesto_nombre || '—')}</div>
+        ${m.repuesto_sku ? `<div style="font-size:.68rem;color:#9ca3af;font-family:monospace">${repEsc(m.repuesto_sku)}</div>` : ''}
+      </td>
+      <td style="font-size:.8rem">${repEsc(m.tipo || m.motivo_tipo || '—')}</td>
+      <td style="font-size:.8rem">${m.cantidad != null ? m.cantidad : '—'}</td>
+      <td style="font-size:.8rem">${m.saldo_resultante != null ? m.saldo_resultante : '—'}</td>
+      <td style="font-size:.78rem">${m.numero_ot ? `<a href="/ot/${m.visita_id}" target="_blank" rel="noopener">${repEsc(m.numero_ot)}</a>` : '—'}</td>
+      <td style="font-size:.75rem;color:#6b7280">${repEsc(m.created_at || '—')}</td>
+    </tr>`).join('');
+}
+
+/* Escape mínimo para texto que viene del backend (nombres de repuesto,
+   SKU, OT) antes de insertarlo con innerHTML -- mismo criterio que el
+   resto del proyecto (nunca confiar el HTML crudo del servidor). */
+function repEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
 
 function repFmt(n) {
