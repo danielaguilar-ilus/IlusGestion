@@ -883,7 +883,10 @@
 .rba-personas-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px;min-width:0}
 .rba-personas-lbl{font-size:.68rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;flex:none}
 .rba-chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:thin;padding:2px;flex:1;min-width:0;-webkit-overflow-scrolling:touch}
-.rba-chip{display:inline-flex;align-items:center;gap:7px;border:1.5px solid #e5e7eb;background:#fff;border-radius:50px;padding:0 14px;min-height:38px;font-size:.8rem;font-weight:700;color:#374151;white-space:nowrap;cursor:pointer;flex:none}
+/* REGLA #15: el nombre va COMPLETO tal como viene de la API -- el chip crece
+   (y en móvil puede saltar de línea), nunca se corta ni se abrevia. */
+.rba-chip{display:inline-flex;align-items:center;gap:7px;border:1.5px solid #e5e7eb;background:#fff;border-radius:50px;padding:6px 14px;min-height:38px;font-size:.8rem;font-weight:700;color:#374151;white-space:nowrap;cursor:pointer;flex:none;text-align:left}
+.rba-chip-nombre{overflow-wrap:anywhere}
 .rba-chip-dot{width:10px;height:10px;border-radius:50%;flex:none}
 .rba-chip.active{border-color:#0a0a0a;background:#0a0a0a;color:#fff}
 .rba-chip-n{font-size:.7rem;font-weight:800;color:#9ca3af}
@@ -949,7 +952,8 @@
 .rba-acum-lbl-n{font-size:11px;font-weight:900;font-variant-numeric:tabular-nums;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 .rba-crosshair{stroke:#0a0a0a;stroke-width:1;stroke-dasharray:3 3;pointer-events:none}
 .rba-sel-band{fill:rgba(220,38,38,.09)}
-.rba-tooltip{position:fixed;z-index:2000;background:#0a0a0a;color:#fff;font-size:.74rem;border-radius:10px;padding:9px 12px;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.28);max-width:260px}
+.rba-tooltip{position:fixed;z-index:2000;background:#0a0a0a;color:#fff;font-size:.74rem;border-radius:10px;padding:9px 12px;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.28);max-width:min(340px,calc(100vw - 24px))}
+.rba-tooltip .rba-tt-nombre{white-space:normal;overflow-wrap:anywhere}
 .rba-tooltip .rba-tt-fecha{font-weight:800;margin-bottom:5px;display:block;font-size:.78rem}
 .rba-tooltip .rba-tt-row{display:flex;align-items:center;gap:7px;white-space:nowrap}
 .rba-tooltip .rba-tt-row+.rba-tt-row{margin-top:3px}
@@ -1026,7 +1030,8 @@
   .rba-rango-custom input[type=date]{flex:1;min-width:0;min-height:44px;font-size:16px}
   .rba-gran{margin-left:0;width:100%}
   .rba-gran-btn{flex:1;min-height:44px}
-  .rba-chip{min-height:44px}
+  /* En móvil el chip puede saltar de línea antes que cortar el nombre. */
+  .rba-chip{min-height:44px;white-space:normal;max-width:70vw}
   .rba-sel-quitar{min-height:44px}
   /* Ranking en 2 filas: nombre + número arriba, barra abajo. Se ubica cada
      celda a mano: con auto-placement el número caía a una tercera fila. */
@@ -3655,7 +3660,7 @@ function rbaRenderChips(v){
   RBA.usuarios.forEach((u, i) => {
     const on = RBA.personas.has(u);
     h += `<button type="button" class="rba-chip${on ? ' active' : ''}" data-rba="persona" data-u="${i}" aria-pressed="${on}">`
-       + `<span class="rba-chip-dot" style="background:${rbaColorFor(u)}"></span>${rbaEsc(u)}<span class="rba-chip-n">${rbaNum(totPorU[u] || 0)}</span></button>`;
+       + `<span class="rba-chip-dot" style="background:${rbaColorFor(u)}"></span><span class="rba-chip-nombre">${rbaEsc(u)}</span><span class="rba-chip-n">${rbaNum(totPorU[u] || 0)}</span></button>`;
   });
   document.getElementById('rbaChips').innerHTML = h;
 }
@@ -3815,7 +3820,7 @@ function rbaChartPointer(ev){
     h += `<div class="rba-tt-row">Sin repuestos cargados</div>`;
   } else {
     [...entradas].reverse().forEach(u => {
-      h += `<div class="rba-tt-row${u === uHover ? ' hl' : ''}"><span class="rba-tt-key" style="background:${rbaColorFor(u)}"></span><span>${rbaEsc(u)}</span><span class="rba-tt-val">${rbaNum(b.por_autor[u])}</span></div>`;
+      h += `<div class="rba-tt-row${u === uHover ? ' hl' : ''}"><span class="rba-tt-key" style="background:${rbaColorFor(u)}"></span><span class="rba-tt-nombre">${rbaEsc(u)}</span><span class="rba-tt-val">${rbaNum(b.por_autor[u])}</span></div>`;
     });
     if (entradas.length > 1) h += `<div class="rba-tt-row rba-tt-tot"><span>Total</span><span class="rba-tt-val">${rbaNum(b.total)}</span></div>`;
   }
@@ -3867,7 +3872,10 @@ function rbaRenderAcum(v){
   const movil = W < 420;
   const conLabels = !movil && modo === 'persona';
   const padL = 40, padT = 16, padB = 28;
-  const padR = conLabels ? Math.min(170, Math.round(W * 0.34)) : (modo === 'persona' ? 40 : 52);
+  // Margen derecho según el nombre COMPLETO más largo (REGLA #15: nunca se
+  // abrevia): ~6.6px por carácter a 11px + el valor + el punto.
+  const maxChars = Math.max(0, ...series.map(sr => sr.nombre.length + String(rbaNum(sr.fin)).length));
+  const padR = conLabels ? Math.min(Math.round(W * 0.42), 30 + Math.round(maxChars * 6.6)) : (modo === 'persona' ? 40 : 52);
   const plotH = movil ? 170 : 220;
   const H = padT + plotH + padB;
   const plotW = W - padL - padR;
@@ -3944,7 +3952,7 @@ function rbaAcumPointer(ev){
   const dia = g.dias[i];
   let h = `<span class="rba-tt-fecha">Acumulado al ${rbaEsc(rbaFmtDiaSem(dia.fecha))}</span>`;
   [...g.series].sort((a, b) => b.acum[i] - a.acum[i]).forEach(sr => {
-    h += `<div class="rba-tt-row"><span class="rba-tt-key" style="background:${sr.color}"></span><span>${rbaEsc(sr.nombre)}</span><span class="rba-tt-val">${rbaNum(sr.acum[i])}</span></div>`;
+    h += `<div class="rba-tt-row"><span class="rba-tt-key" style="background:${sr.color}"></span><span class="rba-tt-nombre">${rbaEsc(sr.nombre)}</span><span class="rba-tt-val">${rbaNum(sr.acum[i])}</span></div>`;
   });
   if (g.modo === 'persona' && g.series.length > 1){
     h += `<div class="rba-tt-row rba-tt-tot"><span>Total</span><span class="rba-tt-val">${rbaNum(g.series.reduce((s, sr) => s + sr.acum[i], 0))}</span></div>`;
