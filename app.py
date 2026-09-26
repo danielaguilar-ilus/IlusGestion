@@ -79165,7 +79165,7 @@ _OT2_CAL_CAP_DIA = 4
 
 _OT2_SELECT_FILAS = (
     "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.prioridad, "
-    "       v.fecha_programada, v.fecha_fin, v.hora_inicio, v.cliente_id, c.razon_social, "
+    "       v.fecha_programada, v.fecha_fin, v.hora_inicio, v.hora_fin, v.cliente_id, c.razon_social, "
     "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, au.role AS tecnico_role, "
     "       te.id AS tecnico_proveedor_id, "
@@ -79325,6 +79325,50 @@ def _ot2_enriquecer_fila(f, hoy):
         except (AttributeError, TypeError, ValueError):
             f["hora_hhmm"] = None
 
+    # 📅 2026-09-26 (Daniel, viendo la tabla de OT: "no veo para cuándo está
+    # agendado... algo que traiga más información, vuélvela más
+    # inteligente"). La columna Fecha decía solo "28/09": ahora dice el día
+    # de la semana, el horario y CUÁNTO FALTA (o cuánto se atrasó), que es
+    # lo que se lee de un vistazo. Solo datos reales: sin hora => no se
+    # inventa una.
+    def _hhmm_td(x):
+        if x is None:
+            return None
+        if hasattr(x, "strftime"):
+            return x.strftime("%H:%M")
+        try:
+            _s = int(x.total_seconds())
+            return f"{_s // 3600:02d}:{(_s % 3600) // 60:02d}"
+        except (AttributeError, TypeError, ValueError):
+            return None
+    _hf = _hhmm_td(f.get("hora_fin"))
+    f["agenda_horario"] = (f"{f['hora_hhmm']}–{_hf}" if (f.get("hora_hhmm") and _hf and _hf != f["hora_hhmm"])
+                           else (f.get("hora_hhmm") or None))
+    ffin = f.get("fecha_fin")
+    f["agenda_hasta"] = (ffin.strftime("%d/%m") if (ffin and hasattr(ffin, "strftime") and fp
+                         and hasattr(fp, "isoformat") and ffin > fp) else None)
+    f["agenda_dow"] = (_OT2_DOW_ES[fp.weekday()][:3] if (fp and hasattr(fp, "isoformat")) else "")
+    f["agenda_rel"], f["agenda_rel_class"] = None, None
+    _fase = (_OT2_ESTADO_META.get(f.get("estado")) or (None, None, None, None))[3]
+    if fp and hasattr(fp, "isoformat") and hoy and _fase in ("pend", "ejec"):
+        _d = (fp - hoy).days
+        if _d == 0:
+            f["agenda_rel"], f["agenda_rel_class"] = "Hoy", "hoy"
+        elif _d == 1:
+            f["agenda_rel"], f["agenda_rel_class"] = "Mañana", "pronto"
+        elif 1 < _d <= 7:
+            f["agenda_rel"], f["agenda_rel_class"] = f"En {_d} días", "pronto"
+        elif _d > 7:
+            f["agenda_rel"], f["agenda_rel_class"] = f"En {_d} días", "lejos"
+        else:
+            _a = -_d
+            # Si es de varios días y todavía no termina, no está atrasada.
+            if ffin and hasattr(ffin, "isoformat") and ffin >= hoy:
+                f["agenda_rel"], f["agenda_rel_class"] = "En curso (varios días)", "hoy"
+            else:
+                f["agenda_rel"] = "Atrasada 1 día" if _a == 1 else f"Atrasada {_a} días"
+                f["agenda_rel_class"] = "mal"
+
     prio = f.get("prioridad")
     meta_prio = _OT2_PRIORIDAD_META.get(prio)
     if meta_prio:
@@ -79421,6 +79465,55 @@ def _ot2_fila_modal_lean(f):
         "dir": " · ".join(dir_partes),
         "url": url_for("ot2_detalle", vid=f["id"]),
     }
+
+
+def _ot2_panel_extras(filas):
+    """📋 2026-09-26 (Daniel, viendo la tabla de OT: "necesita más
+    información... vuélvela más inteligente"). Datos de la página visible
+    que no están en _OT2_SELECT_FILAS: cuántos equipos tiene la OT, qué
+    documentos la respaldan y cuántos repuestos siguen abiertos (pedidos
+    en ella o por instalar en ella). Tres consultas por LOTE sobre los ids
+    de la página (máx. 100), nunca una por fila, y aparte de la consulta
+    principal para no multiplicar filas con JOINs. Si alguna tabla falla,
+    la tabla se muestra igual sin ese dato (nunca se inventa)."""
+    for f in filas:
+        f["n_equipos"], f["docs"], f["rep_abiertos"], f["rep_instalar"] = 0, [], 0, 0
+    ids = [int(f["id"]) for f in filas if f.get("id")]
+    if not ids:
+        return
+    por_id = {int(f["id"]): f for f in filas}
+    ph = ",".join(["%s"] * len(ids))
+    try:
+        for r in (mysql_fetchall(
+            f"SELECT visita_id, COUNT(DISTINCT maquina_id) AS n FROM mant_visita_tareas "
+            f"WHERE visita_id IN ({ph}) AND maquina_id IS NOT NULL GROUP BY visita_id", tuple(ids)) or []):
+            por_id[int(r["visita_id"])]["n_equipos"] = int(r["n"] or 0)
+    except Exception as e:
+        print(f"[ot2_panel_extras] equipos: {type(e).__name__}", flush=True)
+    try:
+        for r in (mysql_fetchall(
+            f"SELECT visita_id, origen, erp_tido, erp_nudo, etiqueta FROM mant_visita_documentos "
+            f"WHERE visita_id IN ({ph}) ORDER BY visita_id, es_principal DESC, id", tuple(ids)) or []):
+            if r.get("erp_tido") and r.get("erp_nudo"):
+                _nudo = str(r["erp_nudo"]).lstrip("0") or str(r["erp_nudo"])
+                txt = f"{r['erp_tido']} {_nudo}"
+            else:
+                txt = (r.get("etiqueta") or ("Cotización" if r.get("origen") == "cotizacion" else "Documento"))
+            por_id[int(r["visita_id"])]["docs"].append(txt)
+    except Exception as e:
+        print(f"[ot2_panel_extras] documentos: {type(e).__name__}", flush=True)
+    try:
+        for r in (mysql_fetchall(
+            f"SELECT visita_id, ot_generada_id, estado FROM mant_ot_repuesto_solicitudes "
+            f"WHERE (visita_id IN ({ph}) OR ot_generada_id IN ({ph})) "
+            f"AND estado IN ('solicitado','validado','pedido','recibido')", tuple(ids) + tuple(ids)) or []):
+            vid, og = r.get("visita_id"), r.get("ot_generada_id")
+            if vid and int(vid) in por_id:
+                por_id[int(vid)]["rep_abiertos"] += 1
+            if og and int(og) in por_id and og != vid:
+                por_id[int(og)]["rep_instalar"] += 1
+    except Exception as e:
+        print(f"[ot2_panel_extras] repuestos: {type(e).__name__}", flush=True)
 
 
 @app.route("/ot/")
@@ -79679,7 +79772,10 @@ def ot2_panel():
     extra_params = list(extra_params) + list(_role_where_params)
 
     try:
-        hoy = _dt.date.today()
+        # 🕐 2026-09-26: era _dt.date.today() -- en Cloud Run eso es UTC, así
+        # que desde las 20-21 h de Chile la tabla ya marcaba "Hoy"/"Atrasada"
+        # contra el día siguiente (REGLA #6). Hora Chile siempre.
+        hoy = _now_chile().date()
 
         # Los dos totales del hero/pestañas — siempre el universo COMPLETO,
         # sin q/fase, para que la pestaña siga diciendo "cuántas hay en
@@ -79755,6 +79851,7 @@ def ot2_panel():
             filas = [dict(f) for f in filas]
             for f in filas:
                 _ot2_enriquecer_fila(f, hoy)
+            _ot2_panel_extras(filas)
 
         elif vista == "kanban":
             _where_solo_q = f" WHERE {where_origen} {where_extra_sql_q} "

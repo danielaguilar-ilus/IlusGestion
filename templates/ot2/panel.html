@@ -146,6 +146,36 @@ tr.f-cancel .ot2-est{text-decoration:line-through}
   text-transform:uppercase;letter-spacing:.03em;text-decoration:none;white-space:nowrap;
   transition:background .14s}
 tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
+/* 📋 2026-09-26 (Daniel: "más información... más inteligente"). */
+.ot2-cliw{min-width:200px;max-width:340px}
+.ot2-cliw .ot2-cli{max-width:none;white-space:normal;overflow:visible;line-height:1.25}
+.ot2-tit{font-size:.74rem;color:#4b5563;margin-top:2px;line-height:1.3}
+.ot2-meta{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:5px;font-size:.7rem;font-weight:700;color:#6b7280}
+.ot2-meta span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.ot2-meta i{color:#9ca3af;font-size:.72rem}
+.ot2-meta .doc{color:#1d4ed8}
+.ot2-meta .doc i{color:#3b82f6}
+.ot2-estsub{font-size:.68rem;color:#6b7280;font-weight:600;margin-top:4px;white-space:nowrap}
+.ot2-ag{display:flex;flex-direction:column;gap:3px;white-space:nowrap}
+.ot2-ag .d{font-weight:800;color:#0a0a0a;font-variant-numeric:tabular-nums}
+.ot2-ag .d small{font-weight:700;color:#6b7280;font-size:.72rem}
+.ot2-ag .h{font-size:.72rem;color:#374151;font-weight:700;display:inline-flex;align-items:center;gap:4px;font-variant-numeric:tabular-nums}
+.ot2-ag .h i{color:#9ca3af}
+.ot2-ag .r{align-self:flex-start;font-size:.64rem;font-weight:800;border-radius:6px;padding:2px 7px;letter-spacing:.02em}
+.ot2-ag .r.hoy{color:#fff;background:#dc2626}
+.ot2-ag .r.pronto{color:#1e40af;background:#dbeafe}
+.ot2-ag .r.lejos{color:#4b5563;background:#f3f4f6}
+.ot2-ag .r.mal{color:#991b1b;background:#fee2e2}
+.ot2-rep{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.ot2-rep span{display:inline-flex;align-items:center;gap:4px;font-size:.64rem;font-weight:800;border-radius:6px;padding:2px 7px;white-space:nowrap}
+.ot2-rep .ab{color:#92400e;background:#fff8e1}
+.ot2-rep .in{color:#1e40af;background:#dbeafe}
+.ot2-tabla th.ot2-goth{width:36px;padding:0}
+.ot2-tabla td.ot2-go{width:36px;padding:0 10px 0 0;text-align:right}
+.ot2-go a{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:8px;
+  color:#c0c4cc;text-decoration:none;transition:background .14s,color .14s,transform .14s}
+.ot2-tabla tbody tr:hover .ot2-go a{color:#fff;background:var(--ilus-red,#dc2626);transform:translateX(2px)}
+.ot2-go a:focus-visible{outline:2px solid var(--ilus-red,#dc2626);outline-offset:2px}
 
 /* 2026-08-28 (Daniel): "no me gusta ese efecto del hover del mouse,
    mejor quítalo" -- la fila de detalle ya no se despliega al pasar el
@@ -392,6 +422,11 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     flex:none}
   .ot2-cli{max-width:60%}
   .ot2-abrir{min-height:44px;width:100%;justify-content:center}
+  .ot2-tabla td.ot2-go{display:none}
+  .ot2-cliw{max-width:62%;min-width:0;text-align:right}
+  .ot2-meta,.ot2-rep{justify-content:flex-end}
+  .ot2-ag{align-items:flex-end}
+  .ot2-ag .r{align-self:flex-end}
   .ot2-det{display:none !important}   /* el detalle expandido no aporta en celular; ya está todo en la tarjeta */
 }
 
@@ -843,8 +878,8 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
               </th>
               {% endif %}
               {{ th('ot','N° OT') }}{{ th('cliente','Cliente') }}{{ th('tipo','Tipo') }}
-              {{ th('estado','Estado') }}{{ th('tecnico','Técnico') }}{{ th('fecha','Fecha') }}
-              <th>Avance</th><th></th>
+              {{ th('estado','Estado') }}{{ th('tecnico','Técnico') }}{{ th('fecha','Agenda') }}
+              <th>Avance</th><th class="ot2-goth" aria-label="Abrir"></th>
             </tr>
           </thead>
           <tbody>
@@ -876,10 +911,17 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                     con esto a la vista, un caso así se nota de inmediato
                     sin tener que ir a buscarlo). Solo se pinta si hay dato
                     -- no se satura la fila con "sin anexo" en cada OT. -#}
+                {#- 📋 2026-09-26 (Daniel: "que salga el anexo"): el chip ahora dice
+                    en palabras si está firmado o no, no solo un reloj de arena.
+                    Y si la OT es de un técnico EXTERNO y todavía no tiene anexo,
+                    se avisa en ámbar -- el anexo firmado es condición para que el
+                    externo trabaje. En internas no se pinta nada (no satura). -#}
                 {% if f.anexo_numero %}
                 <span class="ot2-anx {{ 'ok' if f.anexo_estado == 'firmado' else 'warn' }}"
-                      title="Anexo N° {{ f.anexo_numero }} · {{ f.anexo_estado | capitalize }}">
-                  <i class="bi bi-{{ 'patch-check-fill' if f.anexo_estado == 'firmado' else 'hourglass-split' }}"></i>N° {{ f.anexo_numero }}</span>
+                      title="Anexo de servicios N° {{ f.anexo_numero }} · {{ f.anexo_estado | capitalize }}">
+                  <i class="bi bi-{{ 'patch-check-fill' if f.anexo_estado == 'firmado' else 'hourglass-split' }}"></i>Anexo {{ f.anexo_numero }} · {{ 'firmado' if f.anexo_estado == 'firmado' else ('borrador' if f.anexo_estado == 'borrador' else 'por firmar') }}</span>
+                {% elif f.tecnico_tipo == 'externo' and f.estado_fase in ('pend','ejec') %}
+                <span class="ot2-anx warn" title="Técnico externo sin anexo de servicios"><i class="bi bi-exclamation-triangle-fill"></i>Sin anexo</span>
                 {% endif %}
                 {% if f.fac_numero or f.fac_estado %}
                 <span class="ot2-fac {{ 'ok' if f.fac_estado == 'pagada' else 'warn' }}"
@@ -887,13 +929,32 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                   <i class="bi bi-receipt"></i>{{ f.fac_numero or 's/n' }}</span>
                 {% endif %}
               </td>
-              <td data-label="Cliente"><div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div></td>
+              {#- 📋 2026-09-26 (Daniel: "necesita más información"): bajo el
+                  cliente va QUÉ se hace (título), DÓNDE (comuna), cuántos
+                  equipos y con qué documento se respalda. Nombres completos,
+                  nunca cortados (REGLA #15). -#}
+              <td data-label="Cliente">
+                <div class="ot2-cliw">
+                  <div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
+                  {% if f.titulo %}<div class="ot2-tit">{{ f.titulo }}</div>{% endif %}
+                  {% if f.cliente_comuna or f.n_equipos or f.docs %}
+                  <div class="ot2-meta">
+                    {% if f.cliente_comuna %}<span><i class="bi bi-geo-alt-fill"></i>{{ f.cliente_comuna }}</span>{% endif %}
+                    {% if f.n_equipos %}<span><i class="bi bi-hdd-stack-fill"></i>{{ f.n_equipos }} equipo{{ 's' if f.n_equipos != 1 }}</span>{% endif %}
+                    {% if f.docs %}<span class="doc" title="{{ f.docs | join(' · ') }}"><i class="bi bi-file-earmark-text-fill"></i>{{ f.docs[0] }}{% if f.docs|length > 1 %} +{{ f.docs|length - 1 }}{% endif %}</span>{% endif %}
+                  </div>
+                  {% endif %}
+                </div>
+              </td>
               <td data-label="Tipo"><span class="ot2-tipo"><i class="bi {{ f.tipo_icon }}"></i>{{ f.tipo_label }}</span></td>
               <td data-label="Estado">
                 <span class="ot2-est">
                   {% if f.estado_en_vivo %}<span class="ot2-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
                   {{ f.estado_label }}
                 </span>
+                {% if f.estado_sub and not f.estado_sub.startswith('Programada') %}
+                <div class="ot2-estsub">{{ f.estado_sub }}</div>
+                {% endif %}
               </td>
               <td data-label="Técnico">
                 <div class="ot2-tec">
@@ -903,15 +964,35 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                   {% if f.tecnico_tipo %}<span class="ot2-tec-tipo {{ f.tecnico_tipo }}">{{ 'Ext' if f.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}
                 </div>
               </td>
-              <td data-label="Fecha" style="white-space:nowrap">{{ f.fecha_dia }}</td>
+              {#- 📅 2026-09-26 (Daniel: "no veo para cuándo está agendado"):
+                  día de la semana + fecha, horario y cuánto falta / cuánto
+                  se atrasó, en semáforo. -#}
+              <td data-label="Agenda">
+                <div class="ot2-ag">
+                  <div class="d">{% if f.agenda_dow %}<small>{{ f.agenda_dow }}</small> {% endif %}{{ f.fecha_dia }}{% if f.agenda_hasta %} <small>→ {{ f.agenda_hasta }}</small>{% endif %}</div>
+                  {% if f.agenda_horario %}<div class="h"><i class="bi bi-clock"></i>{{ f.agenda_horario }}</div>{% endif %}
+                  {% if f.agenda_rel %}<span class="r {{ f.agenda_rel_class }}">{{ f.agenda_rel }}</span>{% endif %}
+                </div>
+              </td>
               <td data-label="Avance">
                 <div class="ot2-prog">
                   <span class="bar"><i style="width:{{ f.check_pct }}%"></i></span>
                   <span class="pc">{{ f.n_completas }}/{{ f.n_tareas }}</span>
                 </div>
+                {% if f.rep_abiertos or f.rep_instalar %}
+                <div class="ot2-rep">
+                  {% if f.rep_abiertos %}<span class="ab" title="Repuestos pedidos en esta OT que siguen en gestión"><i class="bi bi-tools"></i>{{ f.rep_abiertos }} repuesto{{ 's' if f.rep_abiertos != 1 }} en gestión</span>{% endif %}
+                  {% if f.rep_instalar %}<span class="in" title="Repuestos que se instalan en esta OT"><i class="bi bi-box-seam-fill"></i>{{ f.rep_instalar }} a instalar</span>{% endif %}
+                </div>
+                {% endif %}
               </td>
-              <td style="text-align:right">
-                <a class="ot2-abrir" href="{{ url_for('ot2_detalle', vid=f.id) }}">Abrir <i class="bi bi-arrow-right"></i></a>
+              {#- 2026-09-26 (Daniel: "tal vez sacar el botón de abrir porque
+                  está toda la fila seleccionable"): el botón negro "Abrir"
+                  pasa a ser una flecha discreta -- la fila entera sigue
+                  abriendo la OT, y la flecha sigue siendo un enlace real
+                  (Ctrl+clic abre en otra pestaña, y se llega con teclado). -#}
+              <td class="ot2-go">
+                <a href="{{ url_for('ot2_detalle', vid=f.id) }}" aria-label="Abrir la OT {{ f.numero_ot or '' }}" onclick="event.stopPropagation()"><i class="bi bi-chevron-right"></i></a>
               </td>
             </tr>
             {# El detalle que se despliega al pasar por encima. Cada dato
