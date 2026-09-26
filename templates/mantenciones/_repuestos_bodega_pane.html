@@ -785,9 +785,18 @@
            llena y la muestra) -- un repuesto nuevo todavia no tiene
            quien/cuando. "Ultima edicion" solo se pinta si de verdad hubo
            una edicion posterior a la creacion (ver rbAbrirEditar). #}
-        <div id="rbTrazabilidad" style="display:none;margin-top:4px;padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:.78rem;color:#6b7280">
-          <i class="bi bi-clock-history me-1"></i>Creado por <strong id="rbTrazCreadoPor" style="color:#374151"></strong> el <strong id="rbTrazCreadoEl" style="color:#374151"></strong>
-          <span id="rbTrazEditado" style="display:none"> · Última edición: <strong id="rbTrazEditadoPor" style="color:#374151"></strong> el <strong id="rbTrazEditadoEl" style="color:#374151"></strong></span>
+        {#- 🔧 2026-09-26 (Daniel, viendo Incidencias: "aplica ese mismo
+            componente/estilo... a los REPUESTOS: quién creó y quién
+            actualizó"). El texto plano "Creado por X el Y" pasa al
+            componente COMPARTIDO static/ilus_timeline.js (mismo lenguaje
+            visual que "Actividad del ticket" e Incidencias) -- ver
+            rbAbrirEditar(). El kardex completo (#modalRbMovs, botón
+            "Movimientos") NO se toca: es una tabla paginada con
+            referencias clickeables construida hoy mismo, más completa que
+            un timeline simple -- convertirla sería un paso atrás, no lo
+            que se pidió (REGLA #4.2). -#}
+        <div id="rbTrazabilidad" style="display:none;margin-top:4px">
+          <div id="rbTrazTimeline" class="ilus-tl"></div>
         </div>
       </div>
       <div class="modal-footer">
@@ -1790,15 +1799,14 @@ function rbAbrirEditar(r, modelos, fotos){
   // valor que created_by/created_at) porque la columna tiene default, así
   // que comparar contra created_by/created_at es lo que evita mostrar una
   // "edición" fantasma en un repuesto que nunca se tocó.
-  if (r.created_by){
-    document.getElementById('rbTrazCreadoPor').textContent = r.created_by;
-    document.getElementById('rbTrazCreadoEl').textContent = r.created_at || '—';
+  if (r.created_by && window.IlusTimeline){
     var huboEdicion = r.updated_by && (r.updated_by !== r.created_by || r.updated_at !== r.created_at);
-    document.getElementById('rbTrazEditado').style.display = huboEdicion ? '' : 'none';
+    var eventosTraz = [];
     if (huboEdicion){
-      document.getElementById('rbTrazEditadoPor').textContent = r.updated_by;
-      document.getElementById('rbTrazEditadoEl').textContent = r.updated_at || '—';
+      eventosTraz.push({tipo: 'cambio', html: '<b>' + IlusTimeline.esc(r.updated_by) + '</b> actualizó el repuesto', fecha: r.updated_at || '—'});
     }
+    eventosTraz.push({tipo: 'creacion', html: '<b>' + IlusTimeline.esc(r.created_by) + '</b> creó el repuesto', fecha: r.created_at || '—'});
+    IlusTimeline.render(document.getElementById('rbTrazTimeline'), eventosTraz);
     document.getElementById('rbTrazabilidad').style.display = '';
   } else {
     document.getElementById('rbTrazabilidad').style.display = 'none';
