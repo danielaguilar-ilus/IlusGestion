@@ -165,6 +165,21 @@
         <h6><i class="bi bi-paperclip"></i>Adjuntos</h6>
         <div id="listaAdjuntosInfo"></div>
       </div>
+      {# 🧾 Fase 5 (2026-09-26): si ESTE ticket es el ticket de compra de una
+         Compra a proveedor (tipo spare_parts_import/store, creado desde
+         Repuestos → Solicitudes → Compras), muestra proveedor/estado/ETA/
+         líneas -- spec: "Ficha del ticket: tarjeta 'Compra de repuestos'
+         con proveedor, estado, ETA, líneas y links a las solicitudes/OT
+         (solo gestión)". Mismo patrón async que cardRepuestosOT: se llena
+         por API y solo aparece si hay una Compra ligada a este ticket. #}
+      <div class="tk-card" id="cardCompraRepuesto" style="display:none">
+        <h6 style="display:flex;align-items:center;gap:8px"><i class="bi bi-cart-check"></i>Compra de repuestos
+          <span class="badge" id="rccEst" style="font-size:.66rem"></span>
+          <a href="/repuestos#solicitudes" target="_blank" rel="noopener" class="ms-auto small"
+             style="font-weight:700;color:#dc2626;text-decoration:none">Gestionar en Bodega <i class="bi bi-box-arrow-up-right"></i></a></h6>
+        <div id="rccInfo" style="font-size:.82rem;color:#374151;line-height:1.6;margin-bottom:8px"></div>
+        <div id="rccLineas" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
       {# 🔧 2026-09-20 (Daniel): las solicitudes de repuesto que una OT
          levantó y que este ticket agrupa (OT · equipo · repuesto · cantidad
          · proveedor · evidencia). Se llena por API y solo aparece si hay. #}
@@ -714,6 +729,48 @@ async function tkRepuestosOT(){
   } catch(e){ /* tarjeta opcional */ }
 }
 tkRepuestosOT();
+
+// 🧾 Fase 5 (2026-09-26) -- si este ticket es el ticket de compra de una
+// Compra a proveedor, trae proveedor/estado/ETA/líneas. Independiente del
+// resto (si falla, la ficha sigue igual) -- mismo patrón que tkRepuestosOT.
+async function tkCompraRepuesto(){
+  var card = document.getElementById('cardCompraRepuesto');
+  if (!card) return;
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); };
+  var fmt = function(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; };
+  var CL = { pedido:'#fff8e1|#a16207', cotizado:'#ede9fe|#6d28d9', confirmado:'#dbeafe|#1d4ed8',
+             en_transito:'#cffafe|#0e7490', recibido_parcial:'#e0f2fe|#0369a1',
+             recibido:'#dcfce7|#15803d', cancelada:'#f3f4f6|#6b7280' };
+  try {
+    var r = await fetch('/repuestos/api/compras/por-ticket/' + TID, {credentials:'same-origin', cache:'no-store'});
+    if (!r.ok) return;
+    var j = await r.json();
+    var c = j && j.compra;
+    if (!c) return; // este ticket no es de una Compra -- tarjeta queda oculta
+    var col = (CL[c.estado] || CL.pedido).split('|');
+    document.getElementById('rccEst').textContent = c.estado_label || c.estado;
+    document.getElementById('rccEst').style.background = col[0];
+    document.getElementById('rccEst').style.color = col[1];
+    var etaTxt = c.eta ? ('ETA ' + esc(c.eta) + (c.eta_vencida ? ' <b style="color:#b91c1c">(vencida)</b>' : '')) : 'Sin ETA';
+    document.getElementById('rccInfo').innerHTML =
+      '<b>' + esc(c.proveedor_nombre || 'Sin proveedor') + '</b>'
+      + (c.proveedor_email ? ' · ' + esc(c.proveedor_email) : '')
+      + (c.proveedor_telefono ? ' · ' + esc(c.proveedor_telefono) : '')
+      + '<br>' + etaTxt + (c.oc_numero ? ' · OC ' + esc(c.oc_numero) : '')
+      + (c.dias_desde_pedido != null ? ' · ' + fmt(c.dias_desde_pedido) + ' días desde el pedido' : '')
+      + (c.nota ? '<br><i class="bi bi-chat-left-text me-1"></i>' + esc(c.nota) : '');
+    document.getElementById('rccLineas').innerHTML = (c.lineas || []).map(function(li){
+      return '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;font-size:.78rem;display:flex;justify-content:space-between;gap:8px">'
+        + '<span>' + esc(li.repuesto_nombre) + (li.repuesto_sku ? ' <span class="text-muted">· ' + esc(li.repuesto_sku) + '</span>' : '')
+        + ' × ' + fmt(li.cantidad) + (li.cliente_nombre ? ' — ' + esc(li.cliente_nombre) : '')
+        + (li.visita_id ? ' <a href="/ot/' + li.visita_id + '" target="_blank" rel="noopener" style="color:#dc2626">'
+            + esc(li.numero_ot || ('OT #' + li.visita_id)) + '</a>' : '') + '</span>'
+        + '<span class="text-muted">' + esc(li.estado_label || li.estado) + '</span></div>';
+    }).join('');
+    card.style.display = '';
+  } catch(e){ /* tarjeta opcional */ }
+}
+tkCompraRepuesto();
 
 /* ══════════════ SOLICITAR REPUESTO DIRECTO DEL TICKET (Fase 2, 2026-09-21)
    Daniel: "la otra parte donde se podrán pedir repuestos sería por los

@@ -85367,6 +85367,14 @@ _OTREP_ORIGEN_LABEL = {
 }
 # Transiciones válidas. "validado → instalado" existe a propósito: si la
 # bodega ya tenía stock, no hay nada que pedir.
+# 🔒 2026-09-26 (revisión Fase 5, hallazgo ALTA #3): el mapa GLOBAL de
+# transiciones NO se toca -- "solicitado" nunca salta directo a "pedido"
+# para NADIE. El caso "solicitado ya ligado a proveedor, sin repuesto de
+# bodega" que la spec de Compras mencionaba se resuelve más simple: primero
+# se valida/liga a bodega (transición normal 'solicitado' -> 'validado'),
+# y RECIÉN desde 'validado' se puede comprar -- así el kardex de Fase 3
+# (que exige pasar por 'validado' para tener repuesto_stock_id) sigue
+# funcionando sin un segundo camino especial. Ver _otrep_compra_elegible.
 _OTREP_TRANSICIONES = {
     "solicitado": ("validado", "rechazado"),
     "validado": ("pedido", "recibido", "instalado", "rechazado"),
@@ -85420,7 +85428,12 @@ _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "prove
                          # los recortara, mismo criterio que ya protege stock/proveedor.
                          "cliente_rut", "ticket_rut", "ticket_empresa", "ticket_contacto_nombre",
                          "ticket_contacto_email", "ticket_contacto_phone", "ticket_direccion",
-                         "ticket_comuna")
+                         "ticket_comuna",
+                         # 🔒 Fase 5 (2026-09-26): la Compra es plata/proveedor, mismo criterio
+                         # que el resto de este bloque -- un externo no ve en qué compra ni con
+                         # qué proveedor quedó su repuesto, solo que está "pedido".
+                         "compra_id", "compra_estado", "compra_estado_label",
+                         "compra_eta", "compra_numero_ticket", "compra_ticket_id")
 # 🔧 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): antes este set
 # era = _OTREP_ABIERTOS (solicitado, validado, pedido, recibido) -- pero
 # "pedido" está ESPERANDO al proveedor, no consumiendo stock físico que ya
@@ -85439,6 +85452,43 @@ _OTREP_ESTADOS_POR_LLEGAR = ("pedido",)
 # especificación, para que la tarjeta y cualquier reporte usen el mismo corte.
 _OTREP_ANTIGUEDAD_DIAS_VERDE = 3
 _OTREP_ANTIGUEDAD_DIAS_AMBAR = 7
+
+# ═══════════════════════════════════════════════════════════════════════
+#  🧾 Fase 5 (2026-09-26) -- COMPRA a proveedor con ticket y seguimiento.
+#  Daniel: "si no tiene stock, nos vayamos a los tickets, generemos un
+#  ticket de atención con los datos de los proveedores... con total
+#  trazabilidad y viendo los estados"; "si tengo tres repuestos que
+#  solicitarle a Drax y dos a Kairos/Relax, puedo hacer dos tickets...
+#  agrupar las solicitudes de repuestos por proveedor". Decisión: UN
+#  ticket de compra POR PROVEEDOR (agrupa solicitudes de distintos
+#  clientes/OT). `mant_repuestos_compras` es la cabecera de esa compra;
+#  cada `mant_ot_repuesto_solicitudes.compra_id` apunta a ella (no hay
+#  tabla de líneas -- la cantidad de la línea ES `solicitudes.cantidad`).
+# ═══════════════════════════════════════════════════════════════════════
+_OTREP_COMPRA_ESTADOS = ("pedido", "cotizado", "confirmado", "en_transito",
+                         "recibido_parcial", "recibido", "cancelada")
+_OTREP_COMPRA_ABIERTOS = ("pedido", "cotizado", "confirmado", "en_transito", "recibido_parcial")
+_OTREP_COMPRA_ESTADO_LABEL = {
+    "pedido": "Pedido al proveedor",
+    "cotizado": "Cotizado",
+    "confirmado": "Confirmado por el proveedor",
+    "en_transito": "En tránsito",
+    "recibido_parcial": "Recibido parcialmente",
+    "recibido": "Recibido completo",
+    "cancelada": "Cancelada",
+}
+# Transiciones manuales vía POST .../estado. 'recibido'/'recibido_parcial'
+# NUNCA se disparan desde acá -- solo los pone POST .../recibir, que es la
+# única fuente de verdad de cuánto llegó de verdad.
+_OTREP_COMPRA_TRANSICIONES = {
+    "pedido": ("cotizado", "confirmado", "en_transito", "cancelada"),
+    "cotizado": ("confirmado", "en_transito", "cancelada"),
+    "confirmado": ("en_transito", "cancelada"),
+    "en_transito": ("cancelada",),
+    "recibido_parcial": ("en_transito", "cancelada"),
+    "recibido": (),
+    "cancelada": (),
+}
 
 
 def _ensure_ot_repuesto_solicitudes_tables():
@@ -85641,6 +85691,68 @@ def _ensure_ot_repuesto_solicitudes_tables():
         print(f"[ensure_ot_repuestos] mant_ot_repuesto_evidencias: {e}", flush=True)
 
 
+def _ensure_repuestos_compras_tables():
+    """🧾 Fase 5 (2026-09-26) -- Compra a proveedor con ticket y seguimiento.
+    SIEMPRE en boot, incluso con ILUS_SKIP_MIGRATIONS=1. Idempotente (mismo
+    patrón que _ensure_ot_repuesto_solicitudes_tables).
+
+    Sin tabla de líneas a propósito: `mant_ot_repuesto_solicitudes.compra_id`
+    ES la línea (N solicitudes -> 1 compra), y su `cantidad` ya existente es
+    la cantidad de esa línea -- agregar una tabla aparte solo para repetir
+    ese mismo número sería una segunda fuente de verdad que se puede
+    desincronizar (mismo criterio de REGLA #5 que ya sigue esta cola)."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_compras (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                proveedor_id INT NOT NULL COMMENT 'mant_proveedores_repuesto.id',
+                ticket_id    INT NULL COMMENT 'tk_tickets.id: el ticket de compra con este proveedor',
+                estado       ENUM('pedido','cotizado','confirmado','en_transito',
+                                   'recibido_parcial','recibido','cancelada')
+                                   NOT NULL DEFAULT 'pedido',
+                eta          DATE NULL COMMENT 'Fecha estimada de llegada',
+                oc_numero    VARCHAR(60) NULL,
+                nota         TEXT NULL,
+                created_by   VARCHAR(190) NULL,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_compra_proveedor (proveedor_id),
+                INDEX idx_compra_estado (estado),
+                INDEX idx_compra_ticket (ticket_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_compras] mant_repuestos_compras: {e}", flush=True)
+    try:
+        _cols = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes'") or [])}
+        if _cols and "compra_id" not in _cols:
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN compra_id INT NULL "
+                "COMMENT 'mant_repuestos_compras.id -- Fase 5, compra agrupada por proveedor' "
+                "AFTER proveedor_id, ADD INDEX idx_otrep_compra (compra_id)")
+    except Exception as e:
+        print(f"[ensure_repuestos_compras] compra_id: {e}", flush=True)
+    # 🔒 2026-09-26 (revisión Fase 5, hallazgo MEDIA #7): antes la recepción
+    # parcial solo dejaba una NOTA de texto -- sin una columna, no había
+    # forma de acumular de verdad cuánto había llegado entre dos llamadas
+    # separadas a /recibir (cada una tenía que "declarar el total", frágil).
+    # Columna dedicada: se INCREMENTA en cada /recibir y se compara contra
+    # `cantidad` para decidir si la línea ya está completa.
+    try:
+        _cols_cr = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes'") or [])}
+        if _cols_cr and "cantidad_recibida" not in _cols_cr:
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN cantidad_recibida DECIMAL(10,2) "
+                "NOT NULL DEFAULT 0 COMMENT 'Fase 5: acumulado recibido de esta línea en su Compra' "
+                "AFTER compra_id")
+    except Exception as e:
+        print(f"[ensure_repuestos_compras] cantidad_recibida: {e}", flush=True)
+
+
 def _otrep_insert(sql, params):
     """INSERT que devuelve lastrowid sobre la conexión del request (get_db):
     sin abrir un handshake TCP extra por solicitud."""
@@ -85740,6 +85852,22 @@ def _otrep_manual_required(view):
         if not _otrep_puede_gestion() or _es_rol_tecnico():
             return jsonify({"ok": False, "error":
                             "Crear una solicitud manual lo hace bodega/gestión, no un técnico."}), 403
+        return view(*a, **k)
+    return wrapped
+
+
+def _otrep_compra_gestion_required(view):
+    """Gate de los endpoints de Compras a proveedor (Fase 5, revisión
+    ALTA #1): mismo criterio que _otrep_manual_required -- gestión/bodega
+    decide con quién y cuánto se compra, NUNCA un técnico (ni interno ni
+    externo). A diferencia del resto de la cola (donde el técnico interno
+    sí valida/recibe/instala), acá no hay ningún caso de uso legítimo para
+    que un técnico cree, liste, cambie de estado o reciba una Compra."""
+    @wraps(view)
+    def wrapped(*a, **k):
+        if not _otrep_puede_gestion() or _es_rol_tecnico():
+            return jsonify({"ok": False, "error":
+                            "Gestionar compras a proveedor lo hace bodega/gestión, no un técnico."}), 403
         return view(*a, **k)
     return wrapped
 
@@ -85983,7 +86111,12 @@ _OTREP_SQL_SOL = (
     "       (SELECT COALESCE(SUM(s2.cantidad),0) FROM mant_ot_repuesto_solicitudes s2 "
     "         WHERE s2.repuesto_stock_id=s.repuesto_stock_id AND s2.id<>s.id "
     "           AND COALESCE(s2.es_reposicion,0)=0 "
-    "           AND s2.estado IN ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido_otras "
+    "           AND s2.estado IN ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "')) AS comprometido_otras, "
+    # 🧾 Fase 5 (2026-09-26): la Compra que agrupa esta solicitud con OTRAS
+    # del mismo proveedor (si ya se generó un ticket de compra) -- la tarjeta
+    # muestra "En compra #N · estado · ETA" en vez de solo "pedido".
+    "       cp.estado AS compra_estado, cp.eta AS compra_eta, tcp.numero_ticket AS compra_numero_ticket, "
+    "       cp.ticket_id AS compra_ticket_id "
     "  FROM mant_ot_repuesto_solicitudes s "
     # 🔀 2026-09-21 (Fase 2): m/v pasan de JOIN a LEFT JOIN -- una solicitud
     # con origen Incidencia o Ticket directo no tiene maquina_id/visita_id.
@@ -85994,7 +86127,9 @@ _OTREP_SQL_SOL = (
     "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
     "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
     "  LEFT JOIN mant_repuestos_stock rs ON rs.id=s.repuesto_stock_id "
-    "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=s.proveedor_id ")
+    "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=s.proveedor_id "
+    "  LEFT JOIN mant_repuestos_compras cp ON cp.id=s.compra_id "
+    "  LEFT JOIN tk_tickets tcp ON tcp.id=cp.ticket_id ")
 
 
 def _otrep_fila(s, para_ot=False):
@@ -86077,10 +86212,16 @@ def _otrep_fila(s, para_ot=False):
     # explícita para la tarjeta -- 'solicitado' es lo único que nadie de
     # bodega tocó todavía.
     s["por_atender"] = (s.get("estado") == "solicitado")
+    # 🧾 Fase 5 (2026-09-26): etiqueta de la Compra que agrupa esta solicitud
+    # con otras del mismo proveedor -- "En compra #N · <estado> · ETA dd/mm"
+    # (spec: "Tarjeta de cada solicitud: muestra 'En compra #N · <estado> ·
+    # ETA dd/mm' con link"). Solo tiene sentido si compra_id está seteado.
+    s["compra_estado_label"] = (_OTREP_COMPRA_ESTADO_LABEL.get(s.get("compra_estado"))
+                                 if s.get("compra_id") else None)
     # REGLA #6: todo datetime a hora Chile, nunca ISO crudo.
     for k in ("created_at", "validado_at", "pedido_at", "recibido_at", "instalado_at", "updated_at"):
         s[k] = chile_fmt_filter(s[k]) if s.get(k) else None
-    for k in ("ot_fecha", "ticket_fecha_limite"):
+    for k in ("ot_fecha", "ticket_fecha_limite", "compra_eta"):
         val = s.get(k)
         s[k] = val.strftime("%d/%m/%Y") if hasattr(val, "strftime") else (str(val) if val else None)
     s["evidencias"] = []
@@ -87670,16 +87811,27 @@ def ot2_api_equipo_dar_baja(vid, mid):
     # 4) Solicitudes de repuesto abiertas del equipo: se rechazan solas.
     n_rech = 0
     try:
+        # 🔒 2026-09-26 (revisión #2, hallazgo MEDIA #5): esta baja rechaza
+        # solicitudes con SQL directo (no pasa por _otrep_cambiar_estado ni
+        # por el wrapper de la cola) -- si alguna estaba ligada a una
+        # Compra a proveedor, se limpia compra_id y se recalcula el
+        # agregado de esa Compra, mismo criterio que el resto de los
+        # caminos de rechazo/reapertura (ver MEDIA #6 en
+        # repstock_solicitud_ot_estado).
         abiertas = mysql_fetchall(
-            "SELECT id, ticket_id, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
+            "SELECT id, ticket_id, repuesto_nombre, compra_id FROM mant_ot_repuesto_solicitudes "
             " WHERE maquina_id=%s AND estado IN ('solicitado','validado','pedido','recibido')",
             (mid,)) or []
+        compras_afectadas = set()
         for s in abiertas:
             mysql_execute(
                 "UPDATE mant_ot_repuesto_solicitudes SET estado='rechazado', resuelto_por=%s, "
+                "       compra_id=NULL, cantidad_recibida=0, "
                 "       nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) WHERE id=%s",
                 (user, f"Equipo dado de baja desde {numero_ot}", s["id"]))
             n_rech += 1
+            if s.get("compra_id"):
+                compras_afectadas.add(s["compra_id"])
             if s.get("ticket_id"):
                 try:
                     mysql_execute(
@@ -87691,6 +87843,11 @@ def ot2_api_equipo_dar_baja(vid, mid):
                 except Exception:
                     pass
                 _otrep_resolver_ticket_si_corresponde(s["ticket_id"], user)
+        for _cid_afectado in compras_afectadas:
+            try:
+                _otrep_compra_sincronizar(_cid_afectado, user)
+            except Exception as e:
+                print(f"[otrep] dar-baja compra_sincronizar cid={_cid_afectado}: {e}", flush=True)
     except Exception as e:
         print(f"[otrep] dar-baja rechazar solicitudes mid={mid}: {e}", flush=True)
 
@@ -87874,7 +88031,12 @@ def _otrep_listar_agrupado(vista, where_sql, params):
         # más ni de menos) aparecía acá como "pendiente de compra" sin que
         # la tarjeta lo mostrara en rojo, dos criterios distintos para el
         # mismo dato.
+        # 🔒 2026-09-26 (revisión Fase 5, hallazgo MEDIA #9): una solicitud
+        # que YA está en una Compra (compra_id seteado) no es "pendiente de
+        # compra" -- ya se le pidió a este mismo proveedor. Sin este filtro,
+        # el grupo la mostraba de nuevo, invitando a comprarla dos veces.
         pendientes = [s for s in sols if s.get("estado") in ("solicitado", "validado", "pedido")
+                      and not s.get("compra_id")
                       and (not s.get("repuesto_stock_id")
                            or (s.get("stock_disponible") is not None and s["stock_disponible"] < 0)
                            or s.get("estado") == "pedido")]
@@ -88057,22 +88219,6 @@ def repstock_solicitudes_ot_export():
                       mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-@app.route("/repuestos/api/solicitudes-ot/crear-ticket-compra", methods=["POST"])
-@_otrep_gestion_required
-def repstock_crear_ticket_compra():
-    """Stub deliberado (Fase 2, 2026-09-25 -- spec: "deja el botón y la
-    selección listos llamando a un endpoint stub que responde 'disponible
-    en la próxima fase' SOLO si el backend de la Fase 5 no existe; NO
-    inventar el ticket de compra aquí"). El botón "Crear ticket de compra
-    (N)" de la vista "Por proveedor" ya deja la selección lista
-    (checkboxes + marcar/desmarcar todo, REGLA #14); armar el ticket
-    agrupado de verdad es la Fase 5, que Daniel todavía no pidió construir."""
-    return jsonify({"ok": False, "error":
-                    "Crear el ticket de compra agrupado por proveedor está disponible en la "
-                    "próxima fase. Por ahora, pide cada repuesto desde su propia solicitud "
-                    "(botón \"Pedir al proveedor\")."}), 501
-
-
 class _OtrepConflictoEstado(Exception):
     """Señal interna (2026-09-26, revisión Fase 3, hallazgo MEDIA #2): la
     solicitud cambió de estado entre el SELECT que leyó `actual` y el UPDATE
@@ -88102,6 +88248,11 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
     UPDATE de estado -- si el movimiento de bodega falla, el cambio de
     estado también se revierte. Conexión get_db() del request: NUNCA se
     cierra (gotcha_get_db_no_cerrar).
+
+    🧾 Fase 5 (2026-09-26 -- compra a proveedor): esta función NO sabe nada
+    de `mant_repuestos_compras` a propósito -- el que sí necesita reaccionar
+    (limpiar compra_id, recalcular el agregado de la Compra) es el wrapper
+    de abajo, después de que esta función confirma el cambio de estado.
 
     TODOS los retornos de esta función son la tupla (ok, http, payload) --
     ni un solo `return jsonify(...)` acá dentro. El wrapper
@@ -88189,11 +88340,19 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
     if nuevo == "rechazado":
         if len(nota) < 5:
             return False, 400, {"ok": False, "error": "Di por qué se rechaza (queda en la solicitud y en el ticket)."}
+        # 🧾 Fase 5 (revisión #2, hallazgo ALTA #1): `cantidad_recibida` es
+        # el acumulado de entregas parciales de una Compra en curso -- si la
+        # solicitud se rechaza, ese acumulado deja de significar nada (las
+        # unidades que ya llegaron físicamente quedan en bodega igual, ya
+        # están en el kardex/mant_repuestos_stock; esto solo resetea el
+        # CONTADOR de la solicitud para que una futura Compra empiece limpia).
+        sets.append("cantidad_recibida=0")
         sets.append("resuelto_por=%s"); params.append(user)
     if nuevo == "solicitado":
-        # Reabrir: vuelve al inicio de la trayectoria, limpia lo que ya no aplica
+        # Reabrir: vuelve al inicio de la trayectoria, limpia lo que ya no
+        # aplica -- mismo motivo que 'rechazado' arriba para cantidad_recibida.
         sets += ["resuelto_por=NULL", "validado_at=NULL", "validado_por=NULL",
-                 "pedido_at=NULL", "recibido_at=NULL", "instalado_at=NULL"]
+                 "pedido_at=NULL", "recibido_at=NULL", "instalado_at=NULL", "cantidad_recibida=0"]
     if nota:
         # 🔒 FIX 2026-09-20 (revisión): esto REEMPLAZABA nota_gestion en cada
         # transición -- validar con una nota y después rechazar borraba la
@@ -88230,7 +88389,17 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
             if cur.rowcount != 1:
                 raise _OtrepConflictoEstado()
             if nuevo == "recibido":
-                if not s.get("repuesto_stock_id"):
+                # 🧾 Fase 5 (2026-09-26, revisión hallazgo ALTA #1): si esta
+                # transición viene de una recepción por Compra a proveedor
+                # (repstock_compra_recibir), la entrada de bodega de ESTA
+                # entrega ya se registró (motivo_tipo='recepcion_parcial')
+                # en la MISMA transacción, antes de llegar acá --
+                # `_entrada_ya_registrada` es interno (NUNCA viene del body
+                # de un usuario real, lo pone repstock_compra_recibir) y
+                # evita que este bloque sume el mismo stock una segunda vez.
+                if d.get("_entrada_ya_registrada"):
+                    mov_aviso = None
+                elif not s.get("repuesto_stock_id"):
                     mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
                                  "movimiento de bodega no se registró.")
                 elif s.get("es_reposicion"):
@@ -88276,10 +88445,15 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
                 # 'recibido', así que esta es la ÚNICA salida que registra).
                 _tiene_entrada = True
                 if actual == "recibido":
+                    # 🔒 Fase 5 (revisión, hallazgo ALTA #1): una recepción por
+                    # Compra puede haber quedado con motivo_tipo='recepcion_
+                    # parcial' (entregas parciales, ver repstock_compra_recibir)
+                    # en vez de 'recepcion_proveedor' -- ambas son entradas
+                    # reales de bodega para esta solicitud.
                     cur.execute(
                         "SELECT 1 FROM mant_repuestos_movimientos "
-                        " WHERE solicitud_id=%s AND motivo_tipo='recepcion_proveedor' LIMIT 1",
-                        (sid,))
+                        " WHERE solicitud_id=%s AND motivo_tipo IN ('recepcion_proveedor','recepcion_parcial') "
+                        " LIMIT 1", (sid,))
                     _tiene_entrada = cur.fetchone() is not None
                 if not s.get("repuesto_stock_id"):
                     mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
@@ -88422,12 +88596,912 @@ def repstock_solicitud_ot_estado(sid):
     Fase 3) -- esta función solo arma `nuevo`/`user` desde el request y
     traduce el resultado a JSON, sin cambiar ningún código/mensaje/
     comportamiento de antes.
+
+    🧾 Fase 5 (2026-09-26, revisión hallazgo MEDIA #6): si la solicitud
+    estaba ligada a una Compra (compra_id), un cambio de estado disparado
+    desde ACÁ (el botón individual de la tarjeta, no desde Compras) debe
+    seguir reflejándose en la Compra: rechazar/reabrir la suelta (vuelve a
+    NULL -- ya no cuenta ni como pedida ni como recibida) y recibir/
+    instalar recalcula el agregado de la Compra (_otrep_compra_sincronizar)
+    -- así el semáforo de la pestaña "Compras" nunca queda desactualizado
+    por haber usado el botón de la solicitud en vez del de la Compra.
     """
     d = request.get_json(silent=True) or {}
     nuevo = (d.get("estado") or "").strip().lower()
     user = current_username() or "sistema"
+    s_antes = mysql_fetchone("SELECT compra_id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    compra_id_antes = (s_antes or {}).get("compra_id")
     ok, http, payload = _otrep_cambiar_estado(sid, nuevo, user, d)
+    if ok and compra_id_antes:
+        try:
+            if nuevo in ("rechazado", "solicitado"):
+                mysql_execute(
+                    "UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL "
+                    " WHERE id=%s AND compra_id=%s", (sid, compra_id_antes))
+                _otrep_compra_sincronizar(compra_id_antes, user)
+            elif nuevo in ("recibido", "instalado"):
+                _otrep_compra_sincronizar(compra_id_antes, user)
+        except Exception as e:
+            print(f"[otrep] estado->compra sync sid={sid} compra={compra_id_antes}: {e}", flush=True)
     return jsonify(payload), http
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  🧾 Fase 5 (2026-09-26) -- Compra a proveedor: endpoints + helpers.
+#  Reemplaza el stub de repstock_crear_ticket_compra (Fase 2). La ruta
+#  vieja /repuestos/api/solicitudes-ot/crear-ticket-compra se deja
+#  apuntando al mismo handler (spec: "mantener también la ruta vieja
+#  apuntando aquí") -- el frontend puede seguir llamándola sin cambios.
+#
+#  🔒 2026-09-26 (revisión post-Fase 5): TODOS los endpoints de este bloque
+#  van con @_otrep_compra_gestion_required (hallazgo ALTA #1) -- comprar a
+#  un proveedor es plata/proveedor, nunca decisión de un técnico. Las
+#  transiciones de estado de una solicitud las hace _otrep_cambiar_estado
+#  (Fase 3/4, ya en main) -- este bloque NUNCA reimplementa esa lógica.
+# ═══════════════════════════════════════════════════════════════════════
+
+_OTREP_COMPRA_SQL = (
+    "SELECT c.*, pv.nombre AS proveedor_nombre, pv.contacto_nombre AS proveedor_contacto, "
+    "       pv.telefono AS proveedor_telefono, pv.email AS proveedor_email, "
+    "       pv.canal_preferido AS proveedor_canal, "
+    "       t.numero_ticket, t.estado AS ticket_estado, "
+    "       (SELECT COUNT(*) FROM mant_ot_repuesto_solicitudes s WHERE s.compra_id=c.id) AS n_lineas, "
+    "       (SELECT COUNT(*) FROM mant_ot_repuesto_solicitudes s "
+    "         WHERE s.compra_id=c.id AND s.estado IN ('recibido','instalado')) AS n_recibidas, "
+    # 🔒 2026-09-26 (revisión, hallazgo BAJA): el botón "Recibir" de la
+    # pantalla solo tiene sentido si queda algo EN 'pedido' -- n_lineas -
+    # n_recibidas también cuenta las rechazadas como "pendientes", y una
+    # rechazada nunca se va a recibir.
+    "       (SELECT COUNT(*) FROM mant_ot_repuesto_solicitudes s "
+    "         WHERE s.compra_id=c.id AND s.estado='pedido') AS n_pendientes "
+    "  FROM mant_repuestos_compras c "
+    "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=c.proveedor_id "
+    "  LEFT JOIN tk_tickets t ON t.id=c.ticket_id ")
+
+
+def _otrep_compra_fila(c):
+    """Fila de mant_repuestos_compras -> dict para el frontend: semáforo de
+    ETA vencida (spec: "estado con semáforo (ETA vencida en rojo)") y días
+    desde el pedido (spec: "días desde el pedido")."""
+    c = dict(c)
+    c["estado_label"] = _OTREP_COMPRA_ESTADO_LABEL.get(c.get("estado"), c.get("estado"))
+    c["abierta"] = c.get("estado") in _OTREP_COMPRA_ABIERTOS
+    _eta_raw = c.get("eta")
+    _hoy = _now_chile().date()
+    c["eta_vencida"] = bool(_eta_raw and hasattr(_eta_raw, "year") and _eta_raw < _hoy and c["abierta"])
+    c["eta"] = _eta_raw.strftime("%d/%m/%Y") if hasattr(_eta_raw, "strftime") else (str(_eta_raw) if _eta_raw else None)
+    if c.get("created_at"):
+        try:
+            c["dias_desde_pedido"] = round((datetime.utcnow() - c["created_at"]).total_seconds() / 86400.0, 1)
+        except Exception:
+            c["dias_desde_pedido"] = None
+    else:
+        c["dias_desde_pedido"] = None
+    for k in ("created_at", "updated_at"):
+        c[k] = chile_fmt_filter(c[k]) if c.get(k) else None
+    return c
+
+
+def _otrep_compra_elegible(s):
+    """¿Puede esta solicitud entrar a una Compra nueva?
+
+    🔒 2026-09-26 (revisión Fase 5, hallazgo ALTA #3): se simplificó a
+    propósito -- la spec original mencionaba un segundo camino
+    ("solicitado ya ligado a proveedor, sin repuesto de bodega") que
+    hubiera exigido tocar el mapa GLOBAL `_OTREP_TRANSICIONES` para dejar
+    saltar 'solicitado' -> 'pedido' fuera del flujo normal. Se prefirió lo
+    más simple y seguro: toda solicitud pasa PRIMERO por 'validado' (se
+    liga a un repuesto real de bodega, aunque sea solo para que quede el
+    registro) -- desde ahí el kardex de Fase 3 (que asume repuesto_stock_id
+    presente) sigue funcionando sin un segundo camino especial que
+    mantener.
+
+    1. 'validado' -- bodega YA la revisó y la ligó a un repuesto real, PERO
+       el disponible no alcanza (hallazgo MEDIA #9: "sin stock suficiente",
+       no cualquier validado -- si hay de sobra en bodega, no hay nada que
+       comprarle a nadie).
+       🔒 2026-09-26 (revisión #2, hallazgo MEDIA #3): `stock_disponible`
+       (armado en _otrep_fila) YA le resta a `cantidad` de bodega el
+       comprometido de TODAS las OT abiertas, INCLUYENDO la cantidad
+       propia de esta misma solicitud (ver `_propia` en _otrep_fila) -- así
+       que compararlo de nuevo contra `cantidad` restaba dos veces. La
+       comparación correcta es simplemente `< 0` (bodega ya no alcanza
+       para cubrir ni siquiera lo comprometido).
+    2. 'pedido' SIN compra_id -- ya se le pidió al proveedor ANTES de que
+       existiera esta Compra (Fase <5, individual): se adjunta a la
+       Compra nueva sin repetir la transición (ya está en 'pedido')."""
+    estado = s.get("estado")
+    if estado == "validado":
+        disp = s.get("stock_disponible")
+        return disp is None or disp < 0
+    if estado == "pedido" and not s.get("compra_id"):
+        return True
+    return False
+
+
+def _otrep_compra_sincronizar(compra_id, user):
+    """Recalcula el estado agregado de una Compra cuando alguna de sus
+    líneas cambia por el botón INDIVIDUAL de la solicitud -- rechazar,
+    reabrir, recibir o instalar directo desde la cola (revisión Fase 5,
+    hallazgo MEDIA #6). Mismo criterio de agregación que
+    repstock_compra_recibir: si ya no queda ninguna línea 'pedido' (entre
+    las que NO se rechazaron), la Compra queda 'recibido' y su ticket se
+    resuelve; si TODAS sus líneas terminaron rechazadas, la Compra queda
+    'cancelada' (revisión #2, hallazgo MEDIA #4 -- no queda nada que
+    comprarle a ese proveedor); si hay progreso pero no está completa,
+    'recibido_parcial'. Nunca pisa una Compra ya cerrada (recibido/
+    cancelada).
+
+    🔒 2026-09-26 (revisión #2, hallazgo MEDIA #4): el UPDATE de la Compra
+    ahora lleva `AND estado=%s` (concurrencia) y el ticket solo se cierra
+    si ESE UPDATE de verdad tocó la fila (rowcount==1) -- antes se cerraba
+    el ticket aunque el UPDATE de la Compra hubiera fallado en silencio
+    por una carrera con otro cambio simultáneo."""
+    if not compra_id:
+        return
+    c = mysql_fetchone("SELECT estado, ticket_id FROM mant_repuestos_compras WHERE id=%s", (compra_id,))
+    if not c or c["estado"] in ("recibido", "cancelada"):
+        return
+    pendientes = int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes WHERE compra_id=%s AND estado='pedido'",
+        (compra_id,)) or {}).get("n") or 0)
+    total_no_rechazadas = int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes WHERE compra_id=%s AND estado<>'rechazado'",
+        (compra_id,)) or {}).get("n") or 0)
+    recibidas = int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
+        " WHERE compra_id=%s AND estado IN ('recibido','instalado')", (compra_id,)) or {}).get("n") or 0)
+    nuevo_estado = c["estado"]
+    if total_no_rechazadas == 0:
+        # Todas las líneas de esta Compra terminaron rechazadas -- no queda
+        # nada que comprarle a este proveedor.
+        nuevo_estado = "cancelada"
+    elif pendientes == 0:
+        nuevo_estado = "recibido"
+    elif recibidas > 0:
+        nuevo_estado = "recibido_parcial"
+    if nuevo_estado != c["estado"]:
+        try:
+            tocada = mysql_execute_returning_rowcount(
+                "UPDATE mant_repuestos_compras SET estado=%s WHERE id=%s AND estado=%s",
+                (nuevo_estado, compra_id, c["estado"]))
+            if tocada == 1 and c.get("ticket_id"):
+                if nuevo_estado == "recibido":
+                    mysql_execute(
+                        "UPDATE tk_tickets SET estado='resolved', cerrado_at=NOW(), cerrado_por=%s "
+                        " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado')",
+                        (user, c["ticket_id"]))
+                elif nuevo_estado == "cancelada":
+                    mysql_execute(
+                        "UPDATE tk_tickets SET estado='cancelado', cerrado_at=NOW(), cerrado_por=%s "
+                        " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado')",
+                        (user, c["ticket_id"]))
+        except Exception as e:
+            print(f"[otrep] compra_sincronizar cid={compra_id}: {e}", flush=True)
+
+
+def _otrep_compra_enviar_correo(ticket_id, numero_ticket, proveedor, sols, mensaje_custom, user):
+    """Correo AL PROVEEDOR con el detalle de la compra. REGLA #0/#11: branding
+    genérico ILUS Fitness (_brand_subject/_send_ilus_email); REGLA #13: SMTP
+    primero, Resend solo de respaldo (ya lo maneja _send_ilus_email_real).
+    comm_is_enabled('email') lo aplica _send_ilus_email por dentro (kill
+    switch), y TK_TEST_EMAIL_TO se respeta acá igual que en Tickets (spec:
+    "en modo prueba respeta TK_TEST_EMAIL_TO... como el resto") -- sin esto,
+    probar esta fase con datos reales de Daniel mandaría un correo real a un
+    proveedor de verdad.
+
+    🔒 Spec: "el correo al proveedor NO debe incluir nombres de clientes ni
+    costos internos": el cuerpo de abajo SOLO trae repuesto/SKU/cantidad,
+    nunca `cliente_nombre`, `numero_ot` ni `costo_unitario` -- a propósito
+    no se reutiliza el `descripcion` interno del ticket (ese sí los trae,
+    para trazabilidad de gestión) como cuerpo del correo."""
+    import html as _html
+    email = (proveedor.get("email") or "").strip()
+    if not email or "@" not in email:
+        canal = proveedor.get("canal_preferido") or "teléfono"
+        tel = (proveedor.get("telefono") or "").strip()
+        return {"enviado": False,
+                "aviso": f"Proveedor sin correo: contáctalo por {canal}" + (f" ({tel})" if tel else "") + "."}
+    filas_html = "".join(
+        '<tr><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">'
+        + _html.escape(s.get("repuesto_nombre") or "") + '</td>'
+        + '<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">'
+        + _html.escape(s.get("repuesto_sku") or "—") + '</td>'
+        + '<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">'
+        + f'{float(s.get("cantidad") or 0):g}</td></tr>'
+        for s in sols)
+    saludo = "Hola" + (f" {_html.escape(proveedor['contacto_nombre'])}" if proveedor.get("contacto_nombre") else "") + ","
+    mensaje_txt = (mensaje_custom or "").strip()
+    mensaje_html = (f'<p style="font-size:14px;color:#374151;margin:0 0 14px;white-space:pre-wrap">'
+                     f'{_html.escape(mensaje_txt)}</p>') if mensaje_txt else ""
+    cuerpo = (
+        f'<p style="font-size:14px;color:#6b7280;margin:0 0 14px">{saludo}</p>'
+        f'<p style="font-size:14px;color:#374151;margin:0 0 14px">Te solicitamos cotizar / gestionar '
+        f'el envío de los siguientes repuestos:</p>'
+        + mensaje_html +
+        '<table style="width:100%;border-collapse:collapse;font-size:13px;margin:0 0 14px">'
+        '<thead><tr style="background:#0a0a0a;color:#fff">'
+        '<th style="padding:6px 10px;text-align:left">Repuesto</th>'
+        '<th style="padding:6px 10px;text-align:left">SKU</th>'
+        '<th style="padding:6px 10px;text-align:right">Cantidad</th></tr></thead>'
+        f'<tbody>{filas_html}</tbody></table>'
+        f'<p style="font-size:13px;color:#6b7280;margin:0">Referencia interna: '
+        f'{_html.escape(numero_ticket)}</p>')
+    subject = _brand_subject(f"Solicitud de compra · {numero_ticket}")
+    to_envio, subject_envio = email, subject
+    # MODO PRUEBA (TK_TEST_EMAIL_TO) -- mismo criterio que _tk_test_redirect
+    # (tickets_module.py), replicado acá porque esa función es interna del
+    # blueprint de Tickets y no se exporta.
+    test_to = (os.environ.get("TK_TEST_EMAIL_TO") or "").strip()
+    if test_to and to_envio.lower() != test_to.lower():
+        print(f"[TK_TEST_MODE] correo de compra redirigido: real={to_envio} -> {test_to}", flush=True)
+        to_envio, subject_envio = test_to, f"[PRUEBA→{email}] {subject}"
+    html_final = (_comm_render_email_document(subject_envio, cuerpo, subtitle="Compras · ILUS Fitness")
+                  if _comm_render_email_document else cuerpo)
+    try:
+        enviado = _send_ilus_email(to_envio, subject_envio, html_final,
+                                   evento="compra_repuesto", modulo="tickets")
+    except Exception as e:
+        print(f"[otrep] correo compra ticket={ticket_id}: {e}", flush=True)
+        enviado = False
+    try:
+        # 🔒 2026-09-26 (revisión, hallazgo BAJA): antes solo se guardaba
+        # una línea ("Correo enviado a X") -- se guarda el CUERPO real
+        # (mensaje + tabla en texto plano), mismo criterio que
+        # tk_api_responder_cliente (que persiste el contenido, no el
+        # envoltorio de marca).
+        filas_txt = "\n".join(
+            f"  · {s.get('repuesto_nombre')} × {float(s.get('cantidad') or 0):g}"
+            + (f" (SKU {s['repuesto_sku']})" if s.get("repuesto_sku") else "")
+            for s in sols)
+        contenido_log = (f"Correo de compra {'enviado' if enviado else 'FALLIDO'} a {email}.\n"
+                          + (f"{mensaje_txt}\n\n" if mensaje_txt else "") + filas_txt)
+        mysql_execute(
+            "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+            "VALUES (%s,'mensaje',%s,%s,0)",
+            (ticket_id, contenido_log[:20000], user))
+    except Exception:
+        pass
+    return {"enviado": enviado, "to": email}
+
+
+def _otrep_compra_eta_valida(eta_txt):
+    """Valida una fecha AAAA-MM-DD de verdad (calendario real, no solo el
+    patrón de dígitos) -- revisión Fase 5, hallazgo BAJA: `re.match` dejaba
+    pasar "2026-13-40". Devuelve la fecha normalizada o None si no vino, y
+    lanza ValueError si vino pero es inválida."""
+    eta_txt = (eta_txt or "").strip()[:10]
+    if not eta_txt:
+        return None
+    datetime.strptime(eta_txt, "%Y-%m-%d")  # lanza ValueError si no es una fecha real
+    return eta_txt
+
+
+def _otrep_crear_compra():
+    """Crea la Compra + su ticket agrupador por proveedor (Fase 5). Body:
+      solicitud_ids  [ids] -- obligatorio
+      proveedor_id   opcional si TODAS ya comparten el mismo proveedor
+      eta, oc_numero, nota  opcionales
+      enviar_correo  bool
+      mensaje        texto libre que se antepone a la tabla del correo
+    Ver _otrep_compra_elegible para qué solicitudes se pueden incluir.
+
+    🔒 2026-09-26 (revisión, hallazgo MEDIA #4): TODO o NADA. Primero se
+    "reclaman" TODAS las solicitudes de un solo UPDATE condicional (seteo
+    de compra_id solo si siguen sin dueño y en un estado elegible); si el
+    rowcount no calza con lo pedido, se revierte compra_id + se cancela la
+    Compra/ticket recién creados y se corta con 409 -- nadie alcanza a ver
+    una Compra a medio armar. Recién con el reclamo confirmado se
+    transiciona cada solicitud 'validado' -> 'pedido' (las que ya estaban
+    'pedido' de antes de esta Fase 5 no necesitan transición, solo el
+    compra_id que el reclamo ya les dejó). Si alguna transición falla, se
+    revierte TODO (compra_id + estado de las que sí alcanzaron a pasar +
+    Compra/ticket cancelados)."""
+    d = request.get_json(silent=True) or {}
+    try:
+        ids = sorted({int(x) for x in (d.get("solicitud_ids") or [])})
+    except (TypeError, ValueError):
+        ids = []
+    if not ids:
+        return jsonify({"ok": False, "error": "Selecciona al menos un repuesto para comprar."}), 400
+    if len(ids) > 200:
+        return jsonify({"ok": False, "error": "Selecciona como máximo 200 solicitudes por compra."}), 400
+
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(_OTREP_SQL_SOL + f" WHERE s.id IN ({ph})", tuple(ids)) or []
+    if len(rows) != len(ids):
+        return jsonify({"ok": False, "error": "Alguna solicitud ya no existe: recarga e inténtalo de nuevo."}), 404
+    sols = [_otrep_fila(r) for r in rows]
+
+    proveedor_id_body = str(d.get("proveedor_id") or "").strip()
+    provs_en_sel = {int(s["proveedor_id"]) for s in sols if s.get("proveedor_id")}
+    if proveedor_id_body.isdigit():
+        proveedor_id = int(proveedor_id_body)
+    elif len(provs_en_sel) == 1:
+        proveedor_id = next(iter(provs_en_sel))
+    else:
+        return jsonify({"ok": False, "error":
+                        "Indica a qué proveedor se le compra: la selección no trae uno solo."}), 400
+    proveedor = mysql_fetchone("SELECT * FROM mant_proveedores_repuesto WHERE id=%s", (proveedor_id,))
+    if not proveedor:
+        return jsonify({"ok": False, "error": "Ese proveedor no existe."}), 400
+
+    errores = []
+    for s in sols:
+        if s.get("proveedor_id") and int(s["proveedor_id"]) != proveedor_id:
+            errores.append(f"#{s['id']} ({s.get('repuesto_nombre')}) ya está asignada a otro proveedor.")
+        elif s.get("compra_id"):
+            errores.append(f"#{s['id']} ({s.get('repuesto_nombre')}) ya está en la compra #{s['compra_id']}.")
+        elif not _otrep_compra_elegible(s):
+            errores.append(f"#{s['id']} ({s.get('repuesto_nombre')}) está "
+                           f"\"{s.get('estado_label')}\": no se puede comprar en este estado.")
+    if errores:
+        return jsonify({"ok": False, "error": "No se pudo crear la compra:\n" + "\n".join(errores[:10])}), 400
+
+    try:
+        eta = _otrep_compra_eta_valida(d.get("eta"))
+    except ValueError:
+        return jsonify({"ok": False, "error": "ETA inválida (formato AAAA-MM-DD, fecha real)."}), 400
+    oc_numero = (d.get("oc_numero") or "").strip()[:60] or None
+    nota = (d.get("nota") or "").strip()[:2000] or None
+    user = current_username() or "sistema"
+
+    # 🔧 Ticket + Compra en UNA transacción real (get_mysql(): conexión
+    # propia y directa, autocommit=False -- mismo patrón que
+    # _otrep_ticket_para_ot, NO el pool por-request de get_db()/mysql_execute,
+    # que hace commit inmediato en cada llamada). Si algo falla acá, no
+    # queda ni ticket ni compra huérfanos.
+    # 🔒 REGLA #0/#11: tipo se decide por canal del proveedor (única señal
+    # disponible hoy -- no hay columna "país" en mant_proveedores_repuesto);
+    # 'wechat' es la única pista real de proveedor de importación (China).
+    # Sin esa señal, cae a 'spare_parts_store' (spec: "si no, spare_parts_store").
+    tipo_ticket = "spare_parts_import" if (proveedor.get("canal_preferido") or "") == "wechat" else "spare_parts_store"
+    n_items = len(sols)
+    titulo = f"Compra de repuestos · {proveedor['nombre']} · {n_items} ítem" + ("" if n_items == 1 else "s")
+    # 🔒 Descripción INTERNA del ticket (para gestión/trazabilidad): esta SÍ
+    # trae cliente/OT -- el correo al proveedor (_otrep_compra_enviar_correo)
+    # es el que jamás debe incluirlos.
+    detalle_interno = "\n".join(
+        f"  · {s['repuesto_nombre']} × {s['cantidad']:g}"
+        + (f" (SKU {s['repuesto_sku']})" if s.get("repuesto_sku") else "")
+        + f" — {s.get('cliente_nombre') or ('Reposición de stock propio' if s.get('es_reposicion') else 'sin cliente')}"
+        + f" / {s.get('numero_ot') or s.get('numero_ticket') or ('solicitud #' + str(s['id']))}"
+        for s in sols)
+    descripcion = (f"Compra agrupada a {proveedor['nombre']} ({n_items} solicitud"
+                   f"{'es' if n_items != 1 else ''}).\n{detalle_interno}\n"
+                   f"Gestionar en Repuestos → Solicitudes → Compras.")
+    conn = None
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, "
+                " empresa, nombre_contacto, email, phone, created_by) "
+                "VALUES ('backoffice','open',%s,'alta',%s,%s,%s,%s,%s,%s,%s)",
+                (tipo_ticket, titulo[:300], descripcion, proveedor["nombre"][:150],
+                 (proveedor.get("contacto_nombre") or "")[:150] or None,
+                 (proveedor.get("email") or "")[:150] or None,
+                 (proveedor.get("telefono") or "")[:20] or None, user))
+            tid = cur.lastrowid
+            from tickets_module import _chile_now_year as _tk_year
+            cur.execute(
+                "UPDATE tk_tickets SET numero_ticket=CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                (_tk_year(), tid))
+            cur.execute(
+                "INSERT INTO mant_repuestos_compras "
+                "(proveedor_id, ticket_id, estado, eta, oc_numero, nota, created_by) "
+                "VALUES (%s,%s,'pedido',%s,%s,%s,%s)",
+                (proveedor_id, tid, eta, oc_numero, nota, user))
+            compra_id = cur.lastrowid
+        conn.commit()
+        numero_ticket = f"TK-{_tk_year()}-{int(tid):05d}"
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        print(f"[otrep] crear_compra ticket/compra: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear el ticket de compra."}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _abortar_todo(motivo_log):
+        """Revierte compra_id (+ reinicia cantidad_recibida, hallazgo
+        ALTA #1) de lo reclamado y cancela Compra/ticket -- usado tanto si
+        el reclamo no calza como si alguna transición falla después
+        (MEDIA #4: todo o nada, nunca una Compra a medias). Cada paso en su
+        propio try/except (hallazgo MEDIA #6): un fallo al cancelar el
+        ticket, por ejemplo, no debe impedir que igual se suelten las
+        solicitudes reclamadas."""
+        try:
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL, cantidad_recibida=0 "
+                " WHERE compra_id=%s", (compra_id,))
+        except Exception as e:
+            print(f"[otrep] crear_compra abortar (solicitudes) cid={compra_id}: {e}", flush=True)
+        try:
+            mysql_execute("UPDATE mant_repuestos_compras SET estado='cancelada' WHERE id=%s", (compra_id,))
+        except Exception as e:
+            print(f"[otrep] crear_compra abortar (compra) cid={compra_id}: {e}", flush=True)
+        try:
+            mysql_execute("UPDATE tk_tickets SET estado='cancelado', cerrado_at=NOW() WHERE id=%s", (tid,))
+        except Exception as e:
+            print(f"[otrep] crear_compra abortar (ticket) cid={compra_id}: {e}", flush=True)
+        print(f"[otrep] crear_compra abortada cid={compra_id}: {motivo_log}", flush=True)
+
+    # 🔒 2026-09-26 (revisión #2, hallazgo MEDIA #6): `exito` + `finally` --
+    # `_abortar_todo` SIEMPRE corre si esta función sale sin haber llegado al
+    # final feliz (incluida una excepción inesperada a mitad de camino, no
+    # solo los `return` de error explícitos de antes), para que nunca quede
+    # una Compra a medias por un error que nadie previó.
+    exito = False
+    try:
+        # --- Reclamo atómico (hallazgo MEDIA #4) -------------------------
+        # UN solo UPDATE reclama TODAS las solicitudes de una vez,
+        # condicionado a que sigan sin dueño (compra_id IS NULL) y en un
+        # estado elegible ('validado' o 'pedido') -- si el rowcount no
+        # calza con lo pedido, alguien más ya se llevó alguna (otra
+        # Compra, u otro cambio de estado) entre la validación de arriba y
+        # este UPDATE, y se aborta completo.
+        tocadas_reclamo = mysql_execute_returning_rowcount(
+            f"UPDATE mant_ot_repuesto_solicitudes SET compra_id=%s "
+            f" WHERE id IN ({ph}) AND compra_id IS NULL AND estado IN ('validado','pedido')",
+            (compra_id,) + tuple(ids))
+        if tocadas_reclamo != len(ids):
+            return jsonify({"ok": False, "error":
+                            "Alguna solicitud dejó de estar disponible justo ahora (otra compra se la "
+                            "llevó, o cambió de estado): no se creó nada, recarga e inténtalo de nuevo."}), 409
+
+        # --- Transición 'validado' -> 'pedido' (reutilizando _otrep_cambiar_
+        # estado, spec: "no dupliques su lógica" -- Fase 3/4 en main) ------
+        ok_ids, fallos = [], []
+        for s in sols:
+            sid = s["id"]
+            try:
+                if s.get("estado") == "pedido":
+                    # Ya estaba 'pedido' de antes de esta Fase 5 -- el
+                    # reclamo de arriba ya le dejó el compra_id, no hay
+                    # transición que hacer.
+                    ok_ids.append(sid)
+                    continue
+                ok, http, payload = _otrep_cambiar_estado(
+                    sid, "pedido", user, {"proveedor_id": proveedor_id, "oc_numero": oc_numero})
+                if ok:
+                    ok_ids.append(sid)
+                else:
+                    print(f"[otrep] crear_compra transición sid={sid}: {payload.get('error')}", flush=True)
+                    fallos.append(sid)
+            except Exception as e:
+                print(f"[otrep] crear_compra transición sid={sid} EXCEPCIÓN: {e}", flush=True)
+                fallos.append(sid)
+
+        if fallos:
+            # Todo o nada: las que sí alcanzaron a pasar a 'pedido' en ESTE
+            # request vuelven a 'validado' (es lo único que pudieron haber
+            # sido antes, dado que _otrep_compra_elegible solo deja entrar
+            # 'validado' o 'pedido' preexistente a esta función). El WHERE
+            # de cada UPDATE lleva `estado='pedido' AND compra_id=%s`
+            # (hallazgo MEDIA #6): concurrencia -- si alguien más ya tocó
+            # esa solicitud en el medio, no se le pisa el trabajo.
+            # Las de `fallos` (nunca llegaron a 'pedido': _otrep_cambiar_
+            # estado no tocó nada si falló) NO se tocan acá a propósito --
+            # su compra_id se limpia solo en `_abortar_todo` (finally, más
+            # abajo), que barre TODO lo que siga apuntando a esta Compra.
+            for sid_ok in ok_ids:
+                try:
+                    s_ok = next((x for x in sols if x["id"] == sid_ok), None)
+                    if s_ok and s_ok.get("estado") != "pedido":
+                        mysql_execute(
+                            "UPDATE mant_ot_repuesto_solicitudes SET estado='validado', pedido_at=NULL, "
+                            " compra_id=NULL, cantidad_recibida=0, "
+                            " nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) "
+                            " WHERE id=%s AND estado='pedido' AND compra_id=%s",
+                            (f"Reversión: la compra #{compra_id} no se pudo completar.", sid_ok, compra_id))
+                    else:
+                        mysql_execute(
+                            "UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL, cantidad_recibida=0 "
+                            " WHERE id=%s AND compra_id=%s", (sid_ok, compra_id))
+                except Exception as e:
+                    print(f"[otrep] crear_compra revertir sid={sid_ok}: {e}", flush=True)
+            return jsonify({"ok": False, "error":
+                            f"No se pudo completar la compra para {len(fallos)} solicitud(es): se "
+                            "revirtió todo, nada quedó a medias. Inténtalo de nuevo."}), 409
+
+        correo = None
+        if bool(d.get("enviar_correo")):
+            correo = _otrep_compra_enviar_correo(tid, numero_ticket, proveedor, sols, d.get("mensaje"), user)
+
+        exito = True
+        return jsonify({"ok": True, "compra_id": compra_id, "ticket_id": tid, "numero_ticket": numero_ticket,
+                        "n_solicitudes": len(ok_ids), "correo": correo})
+    finally:
+        if not exito:
+            _abortar_todo("salida sin éxito (ver error de respuesta arriba, o excepción no prevista)")
+
+
+@app.route("/repuestos/api/solicitudes-ot/crear-ticket-compra", methods=["POST"])
+@app.route("/repuestos/api/compras", methods=["POST"])
+@_otrep_compra_gestion_required
+def repstock_crear_ticket_compra():
+    """Crea la Compra agrupada por proveedor (Fase 5, 2026-09-26 -- ver
+    _otrep_crear_compra). Reemplaza el stub de la Fase 2; la ruta vieja
+    /repuestos/api/solicitudes-ot/crear-ticket-compra (que el frontend ya
+    llama desde el botón "Crear ticket de compra (N)") se deja apuntando
+    acá mismo, spec: "mantener también la ruta vieja apuntando aquí"."""
+    return _otrep_crear_compra()
+
+
+@app.route("/repuestos/api/compras", methods=["GET"])
+@_otrep_compra_gestion_required
+def repstock_compras_listar():
+    """Pestaña "Compras" del centro de solicitudes (REGLA #4.3: paginada,
+    contenida en pantalla -- Mostrando A–B de N / N por página / Anterior /
+    Página X de Y / Siguiente). Filtros: estado_grupo=abiertas|cerradas|todas,
+    estado=<uno de _OTREP_COMPRA_ESTADOS>, proveedor_id."""
+    where, params = ["1=1"], []
+    grupo = (request.args.get("estado_grupo") or "").strip().lower()
+    if grupo == "abiertas":
+        where.append("c.estado IN ('" + "','".join(_OTREP_COMPRA_ABIERTOS) + "')")
+    elif grupo == "cerradas":
+        where.append("c.estado IN ('recibido','cancelada')")
+    estado = (request.args.get("estado") or "").strip().lower()
+    if estado in _OTREP_COMPRA_ESTADOS:
+        where.append("c.estado=%s"); params.append(estado)
+    prov = (request.args.get("proveedor_id") or "").strip()
+    if prov.isdigit():
+        where.append("c.proveedor_id=%s"); params.append(int(prov))
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page") or 100)
+    except (TypeError, ValueError):
+        per_page = 100
+    per_page = max(10, min(per_page, 200))
+    where_sql = " AND ".join(where)
+    compras, total, total_pages = [], 0, 1
+    try:
+        total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_repuestos_compras c WHERE " + where_sql, tuple(params)) or {}).get("n") or 0)
+        total_pages = max(1, -(-total // per_page))
+        if page > total_pages:
+            page = total_pages
+        offset = (page - 1) * per_page
+        rows = mysql_fetchall(
+            _OTREP_COMPRA_SQL + " WHERE " + where_sql
+            + " ORDER BY (c.estado IN ('" + "','".join(_OTREP_COMPRA_ABIERTOS) + "')) DESC, c.id DESC "
+              "LIMIT %s OFFSET %s",
+            tuple(params) + (per_page, offset)) or []
+        compras = [_otrep_compra_fila(r) for r in rows]
+    except Exception as e:
+        print(f"[otrep] compras listar: {e}", flush=True)
+    return jsonify({"ok": True, "compras": compras, "total": total, "page": page,
+                    "per_page": per_page, "total_pages": total_pages,
+                    "estados": _OTREP_COMPRA_ESTADO_LABEL})
+
+
+def _otrep_compra_con_lineas(compra_row):
+    """Fila de mant_repuestos_compras (ya con los JOIN de _OTREP_COMPRA_SQL)
+    -> dict con sus líneas (mant_ot_repuesto_solicitudes.compra_id=id).
+    Compartido por el detalle (GET .../<cid>, para el modal "Recibir") y la
+    tarjeta de la ficha del ticket (GET .../por-ticket/<tid>) -- una sola
+    fuente para no repetir el JOIN de líneas dos veces."""
+    compra = _otrep_compra_fila(compra_row)
+    # 🔒 v.id (no solo numero_ot): la URL de la OT es /ot/<id interno>, NUNCA
+    # el correlativo OT-AAAA-NNNNN (gotcha real del proyecto, ver
+    # ot_id_interno_vs_numero_ot.md) -- v.numero_ot es solo para MOSTRAR.
+    lineas = mysql_fetchall(
+        "SELECT s.id, s.repuesto_nombre, s.repuesto_sku, s.cantidad, s.cantidad_recibida, "
+        "       s.estado, s.visita_id, "
+        "       cl.razon_social AS cliente_nombre, v.numero_ot "
+        "  FROM mant_ot_repuesto_solicitudes s "
+        "  LEFT JOIN mant_clientes cl ON cl.id=s.cliente_id "
+        "  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+        " WHERE s.compra_id=%s ORDER BY s.id", (compra["id"],)) or []
+    lineas = [dict(li) for li in lineas]
+    for li in lineas:
+        li["cantidad"] = float(li["cantidad"]) if li.get("cantidad") is not None else None
+        li["cantidad_recibida"] = float(li["cantidad_recibida"]) if li.get("cantidad_recibida") is not None else 0.0
+        li["estado_label"] = _OTREP_ESTADO_LABEL.get(li.get("estado"), li.get("estado"))
+    compra["lineas"] = lineas
+    return compra
+
+
+@app.route("/repuestos/api/compras/<int:cid>", methods=["GET"])
+@_otrep_compra_gestion_required
+def repstock_compra_detalle(cid):
+    """Detalle de UNA compra + sus líneas -- lo usa el modal "Recibir"
+    (necesita solicitud_id/repuesto/SKU/cantidad de cada línea todavía
+    'pedido' para pedir la cantidad que llegó de cada una)."""
+    row = mysql_fetchone(_OTREP_COMPRA_SQL + " WHERE c.id=%s", (cid,))
+    if not row:
+        return jsonify({"ok": False, "error": "Compra no encontrada."}), 404
+    return jsonify({"ok": True, "compra": _otrep_compra_con_lineas(row)})
+
+
+@app.route("/repuestos/api/compras/por-ticket/<int:tid>", methods=["GET"])
+@_otrep_compra_gestion_required
+def repstock_compra_por_ticket(tid):
+    """Para la tarjeta "Compra de repuestos" de la ficha del ticket (Fase 5):
+    la Compra (si la hay) más sus líneas. Solo gestión (mismo criterio que
+    el resto de esta cola -- proveedor/costos no son para el técnico)."""
+    row = mysql_fetchone(_OTREP_COMPRA_SQL + " WHERE c.ticket_id=%s ORDER BY c.id DESC LIMIT 1", (tid,))
+    if not row:
+        return jsonify({"ok": True, "compra": None})
+    return jsonify({"ok": True, "compra": _otrep_compra_con_lineas(row)})
+
+
+@app.route("/repuestos/api/compras/<int:cid>/estado", methods=["POST"])
+@_otrep_compra_gestion_required
+def repstock_compra_estado(cid):
+    """Cotizado / confirmado (con ETA) / en_transito / cancelada (con nota).
+    'recibido'/'recibido_parcial' NUNCA se ponen acá -- solo los decide
+    POST .../recibir, según cuánto llegó de verdad línea por línea.
+
+    🔒 2026-09-26 (revisión, hallazgo MEDIA #5): TODO en una transacción
+    sobre get_db() -- el UPDATE de la Compra (con `estado=%s` + rowcount,
+    concurrencia) y, si se cancela, la reversión de cada solicitud + el
+    ticket, todo o nada. Un error a mitad de camino ya NO responde
+    `ok:true` con medio trabajo hecho -- se revierte y se informa error."""
+    c = mysql_fetchone("SELECT * FROM mant_repuestos_compras WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"ok": False, "error": "Compra no encontrada."}), 404
+    d = request.get_json(silent=True) or {}
+    nuevo = (d.get("estado") or "").strip().lower()
+    actual = c["estado"]
+    if nuevo not in _OTREP_COMPRA_TRANSICIONES.get(actual, ()):
+        return jsonify({"ok": False, "error":
+                        f"Desde \"{_OTREP_COMPRA_ESTADO_LABEL.get(actual, actual)}\" no se puede pasar a "
+                        f"\"{_OTREP_COMPRA_ESTADO_LABEL.get(nuevo, nuevo or '?')}\"."}), 400
+    user = current_username() or "sistema"
+    nota = (d.get("nota") or "").strip()
+    if nuevo == "cancelada" and len(nota) < 5:
+        return jsonify({"ok": False, "error": "Di por qué se cancela (queda en el ticket)."}), 400
+    try:
+        eta = _otrep_compra_eta_valida(d.get("eta"))
+    except ValueError:
+        return jsonify({"ok": False, "error": "ETA inválida (formato AAAA-MM-DD, fecha real)."}), 400
+    if nuevo == "confirmado" and not (eta or c.get("eta")):
+        return jsonify({"ok": False, "error":
+                        "Confirmar el pedido requiere una fecha estimada de llegada (ETA)."}), 400
+    sets, params = ["estado=%s"], [nuevo]
+    if eta:
+        sets.append("eta=%s"); params.append(eta)
+    oc = (d.get("oc_numero") or "").strip()[:60]
+    if oc:
+        sets.append("oc_numero=%s"); params.append(oc)
+    if nota:
+        sets.append("nota=CONCAT_WS(' · ', NULLIF(nota,''), %s)"); params.append(nota[:2000])
+    params += [cid, actual]
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # 🔒 Concurrencia (spec): condición de estado en el WHERE + rowcount.
+            cur.execute(f"UPDATE mant_repuestos_compras SET {', '.join(sets)} WHERE id=%s AND estado=%s",
+                        tuple(params))
+            if cur.rowcount != 1:
+                raise _OtrepConflictoEstado()
+            if nuevo == "cancelada":
+                # Spec: "Cancelar: solicitudes vuelven a 'validado' (compra_id
+                # NULL) con nota" -- toda solicitud de esta Compra que sigue
+                # 'pedido' vuelve a 'validado' (lo único que pudo haber sido
+                # antes, ver _otrep_compra_elegible).
+                cur.execute(
+                    "SELECT id FROM mant_ot_repuesto_solicitudes "
+                    " WHERE compra_id=%s AND estado='pedido'", (cid,))
+                abiertas = cur.fetchall() or []
+                for s_ab in abiertas:
+                    # 🧾 Fase 5 (revisión #2, hallazgo ALTA #1): cantidad_recibida=0
+                    # -- las unidades que ya hayan llegado en entregas parciales
+                    # quedan en bodega igual (el kardex/mant_repuestos_stock ya
+                    # las sumó); acá solo se reinicia el CONTADOR de la
+                    # solicitud para que una futura Compra empiece limpia.
+                    cur.execute(
+                        "UPDATE mant_ot_repuesto_solicitudes SET estado='validado', compra_id=NULL, "
+                        " pedido_at=NULL, cantidad_recibida=0, "
+                        " nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) "
+                        " WHERE id=%s AND compra_id=%s AND estado='pedido'",
+                        (f"Compra #{cid} cancelada — {nota[:300]}"[:5000], s_ab["id"], cid))
+                if c.get("ticket_id"):
+                    cur.execute(
+                        "UPDATE tk_tickets SET estado='cancelado', cerrado_at=NOW(), cerrado_por=%s "
+                        " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado')",
+                        (user, c["ticket_id"]))
+            if c.get("ticket_id"):
+                cur.execute(
+                    "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                    "VALUES (%s,'cambio_estado',%s,%s,1)",
+                    (c["ticket_id"],
+                     f"Compra #{cid}: {_OTREP_COMPRA_ESTADO_LABEL.get(actual, actual)} → "
+                     f"{_OTREP_COMPRA_ESTADO_LABEL.get(nuevo, nuevo)}"
+                     + (f"\nETA: {eta}" if eta else "") + (f"\n{nota}" if nota else ""), user))
+        conn.commit()
+    except _OtrepConflictoEstado:
+        conn.rollback()
+        return jsonify({"ok": False, "error":
+                        "Esta compra cambió de estado justo ahora: recarga para ver el estado actual."}), 409
+    except Exception as e:
+        conn.rollback()
+        print(f"[otrep] compra_estado cid={cid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo actualizar la compra."}), 500
+    return jsonify({"ok": True, "estado": nuevo})
+
+
+def _otrep_recepcion_es_completa(cantidad_recibida, cantidad_requerida):
+    """¿Lo recibido acumulado alcanza o supera lo pedido en esa línea? (con
+    tolerancia de punto flotante). Decide si la línea pasa a 'recibido'
+    completo o queda 'pedido' con una nota de recepción parcial -- ver
+    repstock_compra_recibir. Función PURA (sin BD/Flask) a propósito: se
+    puede testear la regla de negocio sola (tests/test_repuestos_compras_fase5.py)."""
+    try:
+        return float(cantidad_recibida) + 1e-6 >= float(cantidad_requerida)
+    except (TypeError, ValueError):
+        return False
+
+
+@app.route("/repuestos/api/compras/<int:cid>/recibir", methods=["POST"])
+@_otrep_compra_gestion_required
+def repstock_compra_recibir(cid):
+    """Recepción línea por línea. Body: {lineas:[{solicitud_id, cantidad_recibida}]}.
+    `cantidad_recibida` que manda el modal es LO NUEVO que llegó en ESTA
+    entrega (no el total acumulado).
+
+    🔒 2026-09-26 (revisión #2, hallazgo ALTA #1): por CADA entrega, en la
+    MISMA transacción (mismo `conn`/cursor, sin commit entre medio):
+      1. Incrementa `cantidad_recibida` de forma atómica (MEDIA #2:
+         `SET cantidad_recibida=cantidad_recibida+%s WHERE ... AND
+         compra_id=%s AND estado='pedido'` + rowcount).
+      2. Si tiene repuesto de bodega ligado, registra la ENTRADA real de
+         kardex para ESTA entrega vía `_repstock_mover(cur=cur)` -- el
+         excedente sobre lo pedido entra igual (el stock físico debe
+         calzar con lo que de verdad llegó) y queda anotado en la nota.
+      3. Si el acumulado ya completa lo pedido, transiciona a 'recibido'
+         reutilizando `_otrep_cambiar_estado(..., {"_entrada_ya_registrada":
+         True})` -- ese flag le dice al núcleo que NO vuelva a registrar
+         la entrada (ya se hizo en el paso 2, sería un doble conteo físico).
+         El commit de `_otrep_cambiar_estado` (misma conexión) confirma
+         TAMBIÉN los pasos 1-2 de arriba.
+      Si no completa todavía, el commit lo hace esta función misma --
+      la entrega parcial queda guardada aunque falten más.
+
+    🔧 Idempotencia del kardex (spec, "revisa que la idempotencia... no
+    bloquee las entregas parciales múltiples"): `_repstock_mover` solo
+    deduplica por (solicitud_id, motivo_tipo) cuando motivo_tipo es
+    'recepcion_proveedor' o 'instalacion' -- CADA entrega parcial de esta
+    función usa el motivo_tipo PROPIO 'recepcion_parcial' (fuera de ese
+    set), así que nunca se bloquea entre sí y SIEMPRE inserta un movimiento
+    nuevo por entrega. Esto es intencional (varias entregas reales = varios
+    movimientos reales), pero como contrapartida 'recepcion_parcial' NO es
+    idempotente ante un doble-click/reintento de red sobre la MISMA
+    entrega -- se mitiga en el frontend (botón deshabilitado mientras
+    procesa) en vez de en el backend, porque no hay una clave natural más
+    fina que (solicitud_id, motivo_tipo) sin agregar una tabla de líneas
+    de compra que la spec no pidió."""
+    c = mysql_fetchone("SELECT * FROM mant_repuestos_compras WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"ok": False, "error": "Compra no encontrada."}), 404
+    if c["estado"] in ("recibido", "cancelada"):
+        return jsonify({"ok": False, "error":
+                        f"Esta compra ya está \"{_OTREP_COMPRA_ESTADO_LABEL.get(c['estado'])}\"."}), 400
+    d = request.get_json(silent=True) or {}
+    lineas = d.get("lineas") or []
+    if not isinstance(lineas, list) or not lineas:
+        return jsonify({"ok": False, "error": "Indica qué líneas llegaron y cuánto."}), 400
+    user = current_username() or "sistema"
+    recibidas, avisos = [], []
+    for li in lineas:
+        try:
+            sid = int((li or {}).get("solicitud_id"))
+            cant_nueva = float(str((li or {}).get("cantidad_recibida") or "0").replace(",", "."))
+        except (TypeError, ValueError):
+            continue
+        if cant_nueva <= 0:
+            continue
+        # Pre-check informativo (mensaje amable) -- el candado real de
+        # concurrencia es el UPDATE condicional de abajo, con su rowcount.
+        s_pre = mysql_fetchone(
+            "SELECT id, estado, compra_id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+        if not s_pre or int(s_pre.get("compra_id") or 0) != cid:
+            avisos.append(f"#{sid} no pertenece a esta compra.")
+            continue
+        if s_pre["estado"] != "pedido":
+            avisos.append(f"#{sid} ya está \"{_OTREP_ESTADO_LABEL.get(s_pre['estado'], s_pre['estado'])}\".")
+            continue
+
+        conn = get_db()
+        entrada_registrada = False
+        completa = False
+        requerida = acumulado_nuevo = excedente = 0.0
+        try:
+            with conn.cursor() as cur:
+                # 🔒 MEDIA #2: incremento ATÓMICO (no lee-y-escribe en dos
+                # pasos) + condición de dueño/estado + rowcount.
+                cur.execute(
+                    "UPDATE mant_ot_repuesto_solicitudes SET cantidad_recibida=cantidad_recibida+%s "
+                    " WHERE id=%s AND compra_id=%s AND estado='pedido'",
+                    (cant_nueva, sid, cid))
+                if cur.rowcount != 1:
+                    conn.rollback()
+                    avisos.append(f"#{sid}: cambió de estado justo ahora -- esta entrega no se registró, reintenta.")
+                    continue
+                cur.execute(
+                    "SELECT cantidad, cantidad_recibida, repuesto_stock_id, visita_id, cliente_id, "
+                    "       repuesto_nombre FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+                row = cur.fetchone()
+                requerida = float(row["cantidad"] or 0)
+                acumulado_nuevo = float(row["cantidad_recibida"] or 0)
+                # Excedente (hallazgo MEDIA #7 -> reafirmado ALTA #1: "el
+                # stock debe calzar con lo físico"): si llegó más de lo
+                # pedido, la entrada de bodega es por el TOTAL físico que
+                # llegó (cant_nueva completo), nunca recortada -- solo se
+                # deja constancia del excedente en la nota.
+                excedente = max(0.0, acumulado_nuevo - requerida)
+                if row.get("repuesto_stock_id"):
+                    mov = _repstock_mover(
+                        row["repuesto_stock_id"], cant_nueva, "entrada", "recepcion_parcial",
+                        solicitud_id=sid, visita_id=row.get("visita_id"), cliente_id=row.get("cliente_id"),
+                        nota=(f"Solicitud #{sid} ({row.get('repuesto_nombre')}) recibida -- entrega de "
+                              f"{cant_nueva:g} para la compra #{cid}."
+                              + (f" Incluye excedente recibido: {excedente:g} sobre lo pedido."
+                                 if excedente > 1e-6 else "")),
+                        usuario=user, cur=cur)
+                    entrada_registrada = True
+                    if mov.get("aviso"):
+                        avisos.append(f"#{sid}: {mov['aviso']}")
+                completa = _otrep_recepcion_es_completa(acumulado_nuevo, requerida)
+            if not completa:
+                conn.commit()
+                avisos.append(f"#{sid}: recibido parcial ({acumulado_nuevo:g} de {requerida:g}), sigue "
+                              f"\"{_OTREP_ESTADO_LABEL.get('pedido')}\".")
+                continue
+        except Exception as e:
+            conn.rollback()
+            print(f"[otrep] recibir entrega sid={sid}: {e}", flush=True)
+            avisos.append(f"#{sid}: no se pudo registrar esta entrega.")
+            continue
+
+        # Completa: transiciona a 'recibido' reutilizando _otrep_cambiar_
+        # estado (spec: "no dupliques su lógica") -- misma conexión/
+        # transacción que el incremento y la entrada de arriba: el commit
+        # que hace ESA función confirma todo junto.
+        ok, http, payload = _otrep_cambiar_estado(
+            sid, "recibido", user, {"_entrada_ya_registrada": entrada_registrada})
+        if ok:
+            recibidas.append(sid)
+            # Propaga cualquier aviso del kardex (hallazgo MEDIA #7:
+            # "propagar payload['aviso'] a avisos").
+            if payload.get("aviso"):
+                avisos.append(f"#{sid}: {payload['aviso']}")
+            if excedente > 1e-6:
+                avisos.append(f"#{sid}: llegaron {excedente:g} de más sobre lo pedido "
+                              f"({acumulado_nuevo:g} de {requerida:g}).")
+        else:
+            avisos.append(f"#{sid}: {payload.get('error')}")
+    # 🔒 2026-09-26 (revisión #2): el agregado de la Compra se recalcula con
+    # _otrep_compra_sincronizar -- MISMA función que usa el resto de los
+    # caminos individuales (evita mantener dos copias del mismo cálculo, y
+    # ya trae la concurrencia `AND estado=%s` + rowcount de MEDIA #4).
+    _otrep_compra_sincronizar(cid, user)
+    nuevo_estado = (mysql_fetchone(
+        "SELECT estado FROM mant_repuestos_compras WHERE id=%s", (cid,)) or {}).get("estado", c["estado"])
+    if c.get("ticket_id"):
+        try:
+            resumen = ("; ".join(f"#{x} recibida completa" for x in recibidas) or "sin líneas completas")
+            mysql_execute(
+                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                "VALUES (%s,'cambio_estado',%s,%s,1)",
+                (c["ticket_id"], f"Recepción registrada: {resumen}."
+                 + ((" " + " ".join(avisos)) if avisos else ""), user))
+        except Exception as e:
+            print(f"[otrep] recibir tk_mensajes cid={cid}: {e}", flush=True)
+    return jsonify({"ok": True, "recibidas": recibidas, "avisos": avisos, "estado_compra": nuevo_estado})
 
 
 @app.route("/repuestos/api/solicitudes-ot/<int:sid>/cantidad", methods=["POST"])
@@ -89520,7 +90594,7 @@ def ot2_api_repuesto_instalar(vid, sid):
     if not (_puede_ot_accion(vid, "ejecutar") or (_otrep_puede_gestion() and not _es_rol_tecnico())):
         return jsonify({"ok": False, "error": "No tienes permiso para marcar repuestos de esta OT."}), 403
     s = mysql_fetchone(
-        "SELECT id, ot_generada_id, estado, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
+        "SELECT id, ot_generada_id, estado, repuesto_nombre, compra_id FROM mant_ot_repuesto_solicitudes "
         " WHERE id=%s", (sid,))
     if not s:
         return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
@@ -89537,6 +90611,16 @@ def ot2_api_repuesto_instalar(vid, sid):
     d["_visita_instalacion_id"] = vid
     user = current_username() or "sistema"
     ok, http, payload = _otrep_cambiar_estado(sid, "instalado", user, d)
+    # 🧾 Fase 5 (2026-09-26, revisión hallazgo MEDIA #6): "Marcar instalado"
+    # desde la OT es otro botón INDIVIDUAL que puede tocar una solicitud
+    # ligada a una Compra -- mismo motivo que en repstock_solicitud_ot_estado,
+    # se recalcula el agregado para que el semáforo de "Compras" no quede
+    # desactualizado por haberse instalado desde acá en vez de esa pantalla.
+    if ok and s.get("compra_id"):
+        try:
+            _otrep_compra_sincronizar(s["compra_id"], user)
+        except Exception as e:
+            print(f"[otrep] instalar->compra sync sid={sid} compra={s['compra_id']}: {e}", flush=True)
     return jsonify(payload), http
 
 
@@ -135828,6 +136912,14 @@ try:
         _ensure_ot_repuesto_solicitudes_tables()
 except Exception as _otrep_err:
     print(f"[ILUS][WARN] _ensure_ot_repuesto_solicitudes_tables: {_otrep_err}", flush=True)
+
+# 🧾 Compra a proveedor con ticket y seguimiento (Fase 5, Daniel 2026-09-26).
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_repuestos_compras_tables()
+except Exception as _otcompra_err:
+    print(f"[ILUS][WARN] _ensure_repuestos_compras_tables: {_otcompra_err}", flush=True)
 
 # Columnas de trazabilidad de EDICIÓN de equipos descubiertos (Daniel 2026-07-06).
 try:

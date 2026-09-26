@@ -310,6 +310,79 @@
   .rs-lista-acc .rs-btn, .rs-grupo-acc .rs-btn{min-height:44px}
   .rs-grupo-item input[type=checkbox]{width:22px;height:22px}
 }
+
+/* ── Fase 5 (2026-09-26): "En compra #N" en la tarjeta de la solicitud ── */
+.rs-compra{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:700;color:#a16207;
+  background:#fff8e1;border-radius:999px;padding:2px 9px;text-decoration:none;white-space:nowrap}
+.rs-compra:hover{background:#f59e0b;color:#fff}
+.rs-compra.recibido,.rs-compra.recibido_parcial{color:#15803d;background:#dcfce7}
+.rs-compra.recibido:hover,.rs-compra.recibido_parcial:hover{background:#16a34a;color:#fff}
+.rs-compra.cancelada{color:#6b7280;background:#f3f4f6}
+
+/* ── Pestaña "Compras" (Fase 5, 2026-09-26 -- REGLA #4.3: paginada, con
+   semáforo por ETA vencida, mismo lenguaje visual que la cola de
+   solicitudes: tarjetas con borde de color por estado, REGLA #15). ── */
+.rc-filtros{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.rc-filtros select{font-size:16px}
+.rc-card{background:#fff;border:1px solid #e5e7eb;border-left:5px solid #f59e0b;border-radius:14px;
+  padding:14px 16px;margin-bottom:10px}
+.rc-card.cotizado{border-left-color:#7c3aed}
+.rc-card.confirmado{border-left-color:#2563eb}
+.rc-card.en_transito{border-left-color:#0891b2}
+.rc-card.recibido_parcial{border-left-color:#0ea5e9}
+.rc-card.recibido{border-left-color:#16a34a;opacity:.85}
+.rc-card.cancelada{border-left-color:#9ca3af;opacity:.7}
+.rc-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rc-head b{color:#0a0a0a;font-size:.92rem}
+.rc-est{font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;
+  padding:3px 10px;background:#fff8e1;color:#a16207;white-space:nowrap}
+.rc-est.cotizado{background:#ede9fe;color:#6d28d9}
+.rc-est.confirmado{background:#dbeafe;color:#1d4ed8}
+.rc-est.en_transito{background:#cffafe;color:#0e7490}
+.rc-est.recibido_parcial{background:#e0f2fe;color:#0369a1}
+.rc-est.recibido{background:#dcfce7;color:#15803d}
+.rc-est.cancelada{background:#f3f4f6;color:#6b7280}
+.rc-eta{font-size:.76rem;color:#374151}
+.rc-eta.venc{color:#b91c1c;font-weight:800}
+.rc-tk{margin-left:auto;font-size:.72rem;font-weight:800;color:#dc2626;text-decoration:none;
+  background:#fee2e2;border-radius:999px;padding:2px 10px}
+.rc-tk:hover{background:#dc2626;color:#fff}
+.rc-body{margin-top:8px;font-size:.82rem;color:#374151;line-height:1.6}
+.rc-lineas{margin-top:8px;display:flex;flex-direction:column;gap:5px}
+.rc-linea{display:flex;justify-content:space-between;gap:8px;font-size:.78rem;border-top:1px dashed #e5e7eb;
+  padding-top:5px;color:#374151}
+.rc-acc{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+.rc-vacio{text-align:center;color:#9ca3af;padding:34px 14px;border:1.5px dashed #e5e7eb;border-radius:14px;font-size:.86rem}
+
+/* ── Modal "Crear compra" (formato Retiros: pasos numerados, REGLA #15) ── */
+.rcm-step{display:flex;gap:10px;margin-bottom:18px}
+.rcm-step .num{width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:flex;
+  align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex:0 0 auto}
+.rcm-step .txt{flex:1;min-width:0}
+.rcm-step h6{margin:0 0 8px;font-weight:800;color:#0a0a0a;font-size:.88rem}
+.rcm-prov{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:.82rem;color:#374151}
+.rcm-prov a.wa{color:#15803d;font-weight:700;text-decoration:none;margin-right:10px}
+.rcm-prov a.tel{color:#1d4ed8;font-weight:700;text-decoration:none;margin-right:10px}
+.rcm-prov a.mail{color:#dc2626;font-weight:700;text-decoration:none}
+.rcm-item{display:flex;align-items:center;gap:8px;border:1px solid #e5e7eb;border-radius:10px;
+  padding:8px 10px;margin-bottom:6px;background:#fff}
+.rcm-item .nombre{flex:1;min-width:0;font-size:.82rem;color:#0a0a0a;font-weight:600;overflow-wrap:anywhere}
+.rcm-item .sku{font-size:.7rem;color:#6b7280;font-weight:400}
+.rcm-item input[type=number]{width:78px;font-size:16px;padding:6px 8px;border:1px solid #d1d5db;border-radius:8px}
+.rcm-row{display:flex;gap:10px;flex-wrap:wrap}
+.rcm-row > div{flex:1;min-width:150px}
+.rcm-row label{display:block;font-size:.74rem;font-weight:700;color:#374151;margin-bottom:4px}
+.rcm-row input,.rcm-row textarea{width:100%;font-size:16px;padding:9px 11px;border:1.5px solid #e5e7eb;border-radius:9px}
+.rcm-preview{background:#fafafa;border-left:4px solid #dc2626;border-radius:0 10px 10px 0;padding:12px 14px;
+  font-size:.8rem;color:#374151;margin-top:8px;max-height:220px;overflow-y:auto}
+.rcm-sinmail{background:#fff8e1;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;font-size:.82rem;color:#92400e}
+.rcm-err{color:#b91c1c;font-size:.8rem;margin-top:8px;white-space:pre-wrap}
+
+/* ── Modal "Recibir compra" (líneas con cantidad recibida) ── */
+.rcr-linea{display:flex;align-items:center;gap:8px;border:1px solid #e5e7eb;border-radius:10px;
+  padding:8px 10px;margin-bottom:6px}
+.rcr-linea .nombre{flex:1;min-width:0;font-size:.82rem;color:#0a0a0a;font-weight:600;overflow-wrap:anywhere}
+.rcr-linea input[type=number]{width:88px;font-size:16px;padding:6px 8px;border:1px solid #d1d5db;border-radius:8px}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -444,6 +517,15 @@
       <button type="button" class="on" id="rsVistaLista" onclick="rsVista('lista')">Lista</button>
       <button type="button" id="rsVistaProveedor" onclick="rsVista('proveedor')">Por proveedor</button>
       <button type="button" id="rsVistaCliente" onclick="rsVista('cliente')">Por cliente</button>
+      {# 🧾 Fase 5 (2026-09-26): compras a proveedor con ticket y seguimiento.
+         🔒 revisión ALTA #1: comprar es plata/proveedor, nunca un técnico
+         -- mismo criterio y misma condición ya usada arriba para
+         "Solicitar repuesto" (current_user.role != 'tecnico'). El backend
+         (@_otrep_compra_gestion_required) igual lo bloquea aunque alguien
+         fuerce la URL o el fetch a mano; esto es solo no ofrecer el botón. #}
+      {% if current_user.role != 'tecnico' %}
+      <button type="button" id="rsVistaCompras" onclick="rsVista('compras')">Compras</button>
+      {% endif %}
     </div>
   </div>
   <div id="rsFClienteResultados" class="otrep-opc" style="display:none;position:relative;z-index:5;margin:-6px 0 8px"></div>
@@ -484,6 +566,37 @@
   {# ── Vistas agrupadas: Por proveedor / Por cliente (REGLA #14) ── #}
   <div id="rsVistaPaneGrupos" class="d-none">
     <div id="rsGrupos"><div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Agrupando…</div></div>
+  </div>
+
+  {# ── 🧾 Fase 5 (2026-09-26): pestaña "Compras" -- compra a proveedor con
+     ticket y seguimiento. Paginada en servidor (REGLA #4.3). ── #}
+  <div id="rsVistaPaneCompras" class="d-none">
+    <div class="rc-filtros">
+      <select id="rcFGrupo" class="form-select" style="max-width:170px" onchange="rcFiltrosAplicar()">
+        <option value="abiertas" selected>Abiertas</option>
+        <option value="cerradas">Cerradas</option>
+        <option value="todas">Todas</option>
+      </select>
+      <select id="rcFEstado" class="form-select" style="max-width:210px" onchange="rcFiltrosAplicar()">
+        <option value="">Estado: todos</option>
+      </select>
+      <select id="rcFProveedor" class="form-select" style="max-width:190px" onchange="rcFiltrosAplicar()">
+        <option value="">Proveedor: todos</option>
+      </select>
+    </div>
+    <div id="rcLista"><div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando compras…</div></div>
+    <div class="rs-pie" id="rcPie" style="display:none">
+      <span id="rcPieTxt"></span>
+      <div class="d-flex align-items-center gap-2">
+        <select id="rcPageSize" class="form-select form-select-sm" style="width:auto" onchange="rcSetSize(this.value)">
+          <option value="25">25 por página</option><option value="50">50 por página</option>
+          <option value="100" selected>100 por página</option><option value="200">200 por página</option>
+        </select>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="rcPrev" onclick="rcPag(-1)">Anterior</button>
+        <span id="rcPagTxt" class="small"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="rcNext" onclick="rcPag(1)">Siguiente</button>
+      </div>
+    </div>
   </div>
 
   <div class="text-center mt-3">
@@ -833,6 +946,87 @@
   </div>
 </div>
 
+{#- 🧾 Fase 5 (2026-09-26): modal "Crear compra" -- formato Retiros (pasos
+    numerados, REGLA #15): resumen del proveedor, repuestos a pedir con
+    cantidad editable, ETA/OC opcionales, mensaje con vista previa del
+    correo y casilla "enviar correo ahora". Reusa el mismo esqueleto de
+    bottom-sheet que "Asignar a ticket" (.repat-backdrop/.repat-modal). -#}
+<div class="repat-backdrop" id="rcmBackdrop" onclick="rcmCerrar()"></div>
+<div class="repat-modal" id="rcmModal" role="dialog" aria-modal="true" style="max-width:640px">
+  <div class="repat-head">
+    <h5><i class="bi bi-cart-plus me-1" style="color:#dc2626"></i>Crear compra a proveedor</h5>
+    <button type="button" class="repat-close" onclick="rcmCerrar()"><i class="bi bi-x-lg"></i></button>
+  </div>
+  <div class="repat-body" id="rcmBody">
+    <div class="rcm-step">
+      <div class="num">1</div>
+      <div class="txt">
+        <h6>Proveedor</h6>
+        <div class="rcm-prov" id="rcmProv"></div>
+      </div>
+    </div>
+    <div class="rcm-step">
+      <div class="num">2</div>
+      <div class="txt">
+        <h6>Repuestos a pedir</h6>
+        <div id="rcmItems"></div>
+      </div>
+    </div>
+    <div class="rcm-step">
+      <div class="num">3</div>
+      <div class="txt">
+        <h6>Fecha estimada y N° de orden de compra (opcional)</h6>
+        <div class="rcm-row">
+          <div><label for="rcmEta">ETA (llegada estimada)</label><input type="date" id="rcmEta"></div>
+          <div><label for="rcmOc">N° OC</label><input type="text" id="rcmOc" maxlength="60" placeholder="Ej: OC-1042"></div>
+        </div>
+      </div>
+    </div>
+    <div class="rcm-step">
+      <div class="num">4</div>
+      <div class="txt">
+        <h6>Mensaje al proveedor</h6>
+        <div class="rcm-row"><div style="flex:1 1 100%">
+          <textarea id="rcmMensaje" rows="3" maxlength="2000" oninput="rcmActualizarPreview()"
+            placeholder="Ej: Buenas tardes, ¿nos pueden cotizar y confirmar tiempo de entrega de lo siguiente?"></textarea>
+        </div></div>
+        <label class="d-flex align-items-center gap-2 mt-2" style="font-size:.84rem;font-weight:600;color:#374151">
+          <input type="checkbox" id="rcmEnviar" style="width:20px;height:20px" checked onchange="rcmActualizarPreview()">
+          Enviar correo al proveedor ahora
+        </label>
+        <div class="rcm-preview" id="rcmPreview" style="display:none"></div>
+        <div class="rcm-sinmail" id="rcmSinMail" style="display:none"></div>
+      </div>
+    </div>
+    <div class="rcm-err" id="rcmErr"></div>
+  </div>
+  <div class="repat-head" style="border-top:1px solid #e5e7eb;border-bottom:none">
+    <button type="button" class="btn btn-outline-secondary" onclick="rcmCerrar()">Cancelar</button>
+    <button type="button" class="btn btn-danger fw-bold" id="rcmBtnCrear" onclick="rcmCrear()">
+      <i class="bi bi-cart-check me-1"></i>Crear compra</button>
+  </div>
+</div>
+
+{#- 🧾 Fase 5: modal "Recibir compra" -- cantidades por línea. -#}
+<div class="repat-backdrop" id="rcrBackdrop" onclick="rcrCerrar()"></div>
+<div class="repat-modal" id="rcrModal" role="dialog" aria-modal="true">
+  <div class="repat-head">
+    <h5><i class="bi bi-box-seam me-1" style="color:#dc2626"></i>Recibir compra</h5>
+    <button type="button" class="repat-close" onclick="rcrCerrar()"><i class="bi bi-x-lg"></i></button>
+  </div>
+  <div class="repat-body">
+    <p class="text-muted small mb-2">Indica cuánto llegó de cada línea. Lo que complete la cantidad pedida
+      pasa a "Recibido en bodega"; lo que llegue de menos queda "Pedido al proveedor" con una nota.</p>
+    <div id="rcrLineas"></div>
+    <div class="rcm-err" id="rcrErr"></div>
+  </div>
+  <div class="repat-head" style="border-top:1px solid #e5e7eb;border-bottom:none">
+    <button type="button" class="btn btn-outline-secondary" onclick="rcrCerrar()">Cancelar</button>
+    <button type="button" class="btn btn-danger fw-bold" id="rcrBtnConfirmar" onclick="rcrConfirmar()">
+      <i class="bi bi-check2-circle me-1"></i>Registrar recepción</button>
+  </div>
+</div>
+
 
 <!-- Modal "Solicitar repuesto" (bootstrap modal, formulario largo — Regla #8) -->
 <div class="modal fade" id="modalSolicitarRepuesto" tabindex="-1" aria-hidden="true">
@@ -890,6 +1084,14 @@
 
 <script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
 <script>
+// 🧾 Fase 5 (2026-09-26, revisión ALTA #1): comprar a un proveedor es
+// decisión de gestión/bodega, nunca de un técnico -- mismo criterio (y
+// misma condición Jinja) que ya usa el botón "Solicitar repuesto". Se usa
+// para no ofrecer "Crear ticket de compra" ni las acciones de la pestaña
+// Compras aunque -- por lo que sea -- un técnico llegue a verlas en
+// pantalla; el backend (@_otrep_compra_gestion_required) es el candado
+// real, esto es solo no mostrar un botón que igual rebotaría con 403.
+var RS_PUEDE_COMPRAS = {{ 'true' if current_user.role != 'tecnico' else 'false' }};
 // ══════════════ Pestañas Bodega / Solicitudes ══════════════
 function repTab(cual){
   const esBodega = (cual === 'bodega');
@@ -1084,6 +1286,12 @@ function rsAtenderAhora(){
 }
 
 async function rsCargar(){
+  // 🧾 Fase 5 (2026-09-26): "Compras" es una fuente propia (ver rsVista) --
+  // los callers existentes (validar/pedir/rechazar/tomar/etc.) llaman a este
+  // mismo rsCargar() para refrescar "la vista que esté activa"; sin este
+  // desvío, con Compras activa terminaban pisando _rs.grupos con datos que
+  // no le corresponden (rsCargarAgrupado solo entiende 'proveedor'/'cliente').
+  if (_rs.vista === 'compras') return rcCargar();
   if (_rs.vista !== 'lista') return rsCargarAgrupado();
   const lista = document.getElementById('rsLista');
   lista.innerHTML = '<div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando solicitudes…</div>';
@@ -1218,14 +1426,19 @@ function rsVista(v){
   // 🔒 FIX 2026-09-25: vaciar la fuente que deja de estar activa -- si no,
   // rsBuscarSolicitud() podía encontrar una copia vieja de la MISMA
   // solicitud en la vista que ya no se ve (ver comentario ahí).
-  if (v === 'lista') _rs.grupos = []; else _rs.pagina = [];
-  ['Lista','Proveedor','Cliente'].forEach(function(x){
+  if (v === 'lista') _rs.grupos = []; else if (v !== 'compras') _rs.pagina = [];
+  ['Lista','Proveedor','Cliente','Compras'].forEach(function(x){
     const b = document.getElementById('rsVista' + x);
     if (b) b.classList.toggle('on', x.toLowerCase() === v);
   });
   const pl = document.getElementById('rsVistaPaneLista'); if (pl) pl.classList.toggle('d-none', v !== 'lista');
-  const pg = document.getElementById('rsVistaPaneGrupos'); if (pg) pg.classList.toggle('d-none', v === 'lista');
-  rsCargar();
+  // 🧾 Fase 5 (2026-09-26): "Compras" es una TERCERA fuente de datos, propia
+  // (no es ni la lista de solicitudes ni un grupo de ellas) -- tiene su
+  // propio pane y su propia carga (rcCargar), nunca rsCargar/rsCargarAgrupado.
+  const pg = document.getElementById('rsVistaPaneGrupos'); if (pg) pg.classList.toggle('d-none', v !== 'proveedor' && v !== 'cliente');
+  const pc = document.getElementById('rsVistaPaneCompras'); if (pc) pc.classList.toggle('d-none', v !== 'compras');
+  if (v === 'compras') { rcCargarProveedoresFiltro(); rcCargar(); }
+  else rsCargar();
 }
 function rsPintar(){
   const lista = document.getElementById('rsLista');
@@ -1302,8 +1515,10 @@ function rsPintarGrupos(){
         (contacto ? '<span class="rs-grupo-contacto">' + rsEsc(contacto) + '</span>' : '') +
         '<div class="rs-grupo-acc">' +
           '<button type="button" class="rs-btn" onclick="rsGrupoToggleTodo(\'' + key + '\')"><i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>' +
-          '<button type="button" class="rs-btn generar-ot" ' + (nSel ? '' : 'disabled') + ' onclick="rsCrearTicketCompra(\'' + key + '\')">' +
-            '<i class="bi bi-cart-plus me-1"></i>Crear ticket de compra (' + nSel + ')</button>' +
+          (RS_PUEDE_COMPRAS
+            ? '<button type="button" class="rs-btn generar-ot" ' + (nSel ? '' : 'disabled') + ' onclick="rsCrearTicketCompra(\'' + key + '\')">' +
+                '<i class="bi bi-cart-plus me-1"></i>Crear ticket de compra (' + nSel + ')</button>'
+            : '') +
         '</div></div><div class="rs-grupo-body">' + itemsHtml + '</div></div>';
     }
     // 🏗️ Fase 4 (2026-09-26 -- Daniel: "puedo gestionar una orden de
@@ -1369,17 +1584,17 @@ function rsGrupoToggleTodo(key){
   _rs.selGrupo[key] = nuevo;
   rsPintarGrupos();
 }
-async function rsCrearTicketCompra(key){
+function rsCrearTicketCompra(key){
+  // 🧾 Fase 5 (2026-09-26): antes esto llamaba directo al stub; ahora abre
+  // el modal "Crear compra" (formato Retiros, REGLA #15) con la selección
+  // YA armada (checkboxes + marcar/desmarcar todo, REGLA #14, siguen
+  // viviendo en la tarjeta de grupo -- este botón solo dispara el modal).
+  const g = _rs.grupos.find(function(x){ return rsGrupoKey(x) === key; });
+  if (!g) return;
   const sel = _rs.selGrupo[key] || {};
-  const ids = Object.keys(sel).filter(function(k){ return sel[k]; }).map(Number);
-  if (!ids.length) return;
-  try {
-    const r = await fetch('/repuestos/api/solicitudes-ot/crear-ticket-compra', {
-      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
-      body: JSON.stringify({ solicitud_ids: ids }) });
-    const j = await r.json().catch(function(){ return {}; });
-    ilusToast(j.error || 'Disponible en la próxima fase.', { type: 'info' });
-  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+  const sols = g.solicitudes.filter(function(s){ return sel[s.id]; });
+  if (!sols.length) return;
+  rcmAbrir(g, sols);
 }
 // 🏗️ Fase 4 (2026-09-26): ya no restringe a 1 sola solicitud -- N≥1 pasa
 // por el lote (rsGenerarOTLote). El botón mismo queda deshabilitado si la
@@ -1461,6 +1676,18 @@ async function rsListaGenerarOT(){
   const ids = rsListaSeleccionIds();
   if (!ids.length) return;
   await rsGenerarOTLote(ids);
+}
+// 🧾 Fase 5 (2026-09-26 -- spec: "Tarjeta de cada solicitud: muestra 'En
+// compra #N · <estado> · ETA dd/mm' con link"). compra_id viene recortado
+// para el técnico externo (_OTREP_SOL_NO_EXTERNO), así que esta función ya
+// es segura de llamar siempre -- simplemente no encuentra el campo.
+function rsCompraBadge(s){
+  if (!s.compra_id) return '';
+  const txt = 'En compra #' + s.compra_id + (s.compra_estado_label ? ' · ' + s.compra_estado_label : '')
+    + (s.compra_eta ? ' · ETA ' + s.compra_eta : '');
+  const href = s.compra_ticket_id ? ('/tickets/' + s.compra_ticket_id) : 'javascript:void(0)';
+  return '<a class="rs-compra ' + (s.compra_estado || '') + '" href="' + href + '" target="_blank" rel="noopener">'
+    + '<i class="bi bi-truck"></i> ' + rsEsc(txt) + '</a>';
 }
 function rsCardInner(s){
   const est = _RS_EST_CLS[s.estado] || 'sol';
@@ -1578,7 +1805,8 @@ function rsCardInner(s){
           (s.abierta && _rs.puedePedir ? ' <button type="button" class="rs-cant-editar" title="Ajustar cantidad" onclick="rsEditarCantidad(' + s.id + ')"><i class="bi bi-pencil-fill"></i></button>' : '') + '</b>' +
           (s.piola_metros ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
           (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga +
-          (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) + '</div>' +
+          (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) +
+          rsCompraBadge(s) + '</div>' +
       '</div>' +
       '<div class="rs-col rs-col-mot">' +
         '<div class="rs-k">Diagnóstico del técnico</div>' +
@@ -2789,6 +3017,430 @@ async function rsCargarProveedoresFiltro(){
   } catch(e){ /* deja el select con solo "todos" */ }
 }
 document.addEventListener('DOMContentLoaded', rsCargarProveedoresFiltro);
+
+// ═══════════════════════════════════════════════════════════════════════
+//  🧾 Fase 5 (2026-09-26) — Compra a proveedor con ticket y seguimiento.
+//  Daniel: "si no tiene stock, nos vayamos a los tickets, generemos un
+//  ticket de atención con los datos de los proveedores... con total
+//  trazabilidad y viendo los estados" -- pestaña "Compras" (paginada,
+//  REGLA #4.3) + modal "Crear compra" (formato Retiros, REGLA #15) +
+//  modal "Recibir" con cantidades por línea.
+// ═══════════════════════════════════════════════════════════════════════
+var _rc = { grupo: 'abiertas', estado: '', proveedor_id: '', page: 1, size: 100,
+           total: 0, total_pages: 1, lista: [], estados: {}, reqSeq: 0 };
+var _rcm = { grupo: null, sols: [], cantidades: {}, proveedorManualId: null };
+var _rcr = { compraId: null, lineas: [] };
+
+async function rcCargarProveedoresFiltro(){
+  const sel = document.getElementById('rcFProveedor');
+  if (!sel || sel.dataset.cargado) return;
+  try {
+    if (!_rs.provs){
+      const r = await fetch('/mantenciones/api/proveedores-repuesto', {credentials:'same-origin'});
+      const j = await r.json();
+      _rs.provs = j.proveedores || [];
+    }
+    sel.innerHTML = '<option value="">Proveedor: todos</option>' + (_rs.provs || []).map(function(p){
+      return '<option value="' + p.id + '">' + rsEsc(p.nombre) + '</option>';
+    }).join('');
+    sel.dataset.cargado = '1';
+  } catch(e){ /* deja el select con solo "todos" */ }
+}
+function rcPintarEstadoOptions(){
+  const sel = document.getElementById('rcFEstado');
+  if (!sel || sel.dataset.cargado) return;
+  const labels = _rc.estados || {};
+  if (!Object.keys(labels).length) return; // primera respuesta todavía no llegó
+  sel.innerHTML = '<option value="">Estado: todos</option>' + Object.keys(labels).map(function(k){
+    return '<option value="' + k + '">' + rsEsc(labels[k]) + '</option>';
+  }).join('');
+  sel.dataset.cargado = '1';
+}
+function rcQueryString(extra){
+  const p = new URLSearchParams();
+  if (_rc.grupo) p.set('estado_grupo', _rc.grupo);
+  if (_rc.estado) p.set('estado', _rc.estado);
+  if (_rc.proveedor_id) p.set('proveedor_id', _rc.proveedor_id);
+  if (extra) Object.keys(extra).forEach(function(k){ p.set(k, extra[k]); });
+  return p.toString();
+}
+async function rcCargar(){
+  const cont = document.getElementById('rcLista');
+  if (!cont) return;
+  cont.innerHTML = '<div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando compras…</div>';
+  const miSeq = (_rc.reqSeq = (_rc.reqSeq || 0) + 1);
+  try {
+    const qs = rcQueryString({ page: _rc.page, per_page: _rc.size });
+    const r = await fetch('/repuestos/api/compras?' + qs, {credentials:'same-origin', cache:'no-store'});
+    const j = await r.json();
+    if (miSeq !== _rc.reqSeq) return;
+    if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
+    _rc.lista = j.compras || [];
+    _rc.estados = j.estados || {};
+    _rc.total = j.total || 0;
+    _rc.page = j.page || 1;
+    _rc.total_pages = j.total_pages || 1;
+    rcPintarEstadoOptions();
+    rcPintar();
+  } catch(e){
+    cont.innerHTML = '<div class="rc-vacio">No se pudo cargar: ' + rsEsc(e.message) + '</div>';
+  }
+}
+var _RC_TRANS = {
+  pedido: ['cotizado', 'confirmado', 'en_transito', 'cancelada'],
+  cotizado: ['confirmado', 'en_transito', 'cancelada'],
+  confirmado: ['en_transito', 'cancelada'],
+  en_transito: ['cancelada'],
+  recibido_parcial: ['en_transito', 'cancelada']
+};
+var _RC_LBL = { cotizado: 'Cotizado', confirmado: 'Confirmar (con ETA)', en_transito: 'En tránsito', cancelada: 'Cancelar' };
+function rcCard(c){
+  const contacto = [c.proveedor_contacto, c.proveedor_telefono, c.proveedor_email].filter(Boolean).join(' · ');
+  const etaTxt = c.eta ? ('ETA ' + c.eta) : 'Sin ETA';
+  const trans = RS_PUEDE_COMPRAS ? (_RC_TRANS[c.estado] || []) : [];
+  let accHtml = trans.map(function(e){
+    return '<button type="button" class="rs-btn" onclick="rcAccionEstado(' + c.id + ',\'' + e + '\')">' + (_RC_LBL[e] || e) + '</button>';
+  }).join('');
+  // 🔒 2026-09-26 (revisión, hallazgo BAJA): "Recibir" solo si de verdad
+  // queda algo EN 'pedido' -- n_lineas - n_recibidas también contaba las
+  // rechazadas como "pendientes" (una rechazada nunca se recibe).
+  if (RS_PUEDE_COMPRAS && c.abierta && (c.n_pendientes || 0) > 0){
+    accHtml += '<button type="button" class="rs-btn generar-ot" onclick="rcrAbrir(' + c.id + ')">' +
+      '<i class="bi bi-box-seam me-1"></i>Recibir</button>';
+  }
+  return '<div class="rc-card ' + c.estado + '">' +
+    '<div class="rc-head">' +
+      '<span class="rc-est ' + c.estado + '">' + rsEsc(c.estado_label) + '</span>' +
+      '<b>' + rsEsc(c.proveedor_nombre || 'Sin proveedor') + '</b>' +
+      '<span class="text-muted small">#' + c.id + '</span>' +
+      (c.numero_ticket ? '<a class="rc-tk" href="/tickets/' + c.ticket_id + '" target="_blank" rel="noopener">' +
+        '<i class="bi bi-ticket-perforated"></i> ' + rsEsc(c.numero_ticket) + '</a>' : '') +
+    '</div>' +
+    '<div class="rc-body">' +
+      (contacto ? rsEsc(contacto) + '<br>' : '') +
+      '<span class="rc-eta' + (c.eta_vencida ? ' venc' : '') + '">' + (c.eta_vencida ? '⚠ ETA vencida — ' : '') + etaTxt + '</span>' +
+      (c.oc_numero ? ' · OC ' + rsEsc(c.oc_numero) : '') +
+      (c.dias_desde_pedido != null ? ' · ' + rsFmt(c.dias_desde_pedido) + ' días desde el pedido' : '') +
+      ' · ' + (c.n_lineas || 0) + ' ítem' + (c.n_lineas === 1 ? '' : 's') +
+      (c.n_recibidas ? ' (' + c.n_recibidas + ' recibidos)' : '') +
+      (c.nota ? '<div class="rc-linea"><i class="bi bi-chat-left-text me-1"></i>' + rsEsc(c.nota) + '</div>' : '') +
+    '</div>' +
+    (accHtml ? '<div class="rc-acc">' + accHtml + '</div>' : '') +
+  '</div>';
+}
+function rcPintar(){
+  const cont = document.getElementById('rcLista');
+  if (!_rc.lista.length){
+    cont.innerHTML = '<div class="rc-vacio"><i class="bi bi-inbox me-1"></i>No hay compras en este filtro.</div>';
+  } else {
+    cont.innerHTML = _rc.lista.map(rcCard).join('');
+  }
+  const pie = document.getElementById('rcPie');
+  pie.style.display = _rc.total ? '' : 'none';
+  const ini = _rc.total ? ((_rc.page - 1) * _rc.size + 1) : 0;
+  const fin = Math.min(_rc.total, _rc.page * _rc.size);
+  document.getElementById('rcPieTxt').textContent = 'Mostrando ' + ini + '–' + fin + ' de ' + _rc.total;
+  document.getElementById('rcPagTxt').textContent = 'Página ' + _rc.page + ' de ' + _rc.total_pages;
+  document.getElementById('rcPrev').disabled = _rc.page <= 1;
+  document.getElementById('rcNext').disabled = _rc.page >= _rc.total_pages;
+}
+function rcFiltrosAplicar(){
+  _rc.grupo = document.getElementById('rcFGrupo').value;
+  _rc.estado = document.getElementById('rcFEstado').value;
+  _rc.proveedor_id = document.getElementById('rcFProveedor').value;
+  _rc.page = 1;
+  rcCargar();
+}
+function rcSetSize(v){ _rc.size = parseInt(v, 10) || 100; _rc.page = 1; rcCargar(); }
+function rcPag(delta){
+  const np = _rc.page + delta;
+  if (np < 1 || np > _rc.total_pages) return;
+  _rc.page = np;
+  rcCargar();
+}
+async function rcAccionEstado(cid, nuevo){
+  let eta = null, nota = null;
+  if (nuevo === 'confirmado'){
+    eta = await ilusPrompt({ title: 'Confirmar pedido', message: 'Fecha estimada de llegada (ETA)',
+      placeholder: 'AAAA-MM-DD', required: true });
+    if (!eta || !/^\d{4}-\d{2}-\d{2}$/.test(eta)){
+      if (eta) ilusToast('Formato de fecha inválido (usa AAAA-MM-DD).', { type: 'error' });
+      return;
+    }
+  } else if (nuevo === 'cancelada'){
+    nota = await ilusPrompt({ title: 'Cancelar compra',
+      message: '¿Por qué se cancela? Queda registrado en el ticket y las solicitudes vuelven a la cola.',
+      required: true });
+    if (!nota) return;
+  } else {
+    const ok = await ilusConfirm({ title: 'Cambiar estado de la compra',
+      message: '¿Marcar esta compra como "' + (_rc.estados[nuevo] || nuevo) + '"?', okLabel: 'Confirmar' });
+    if (!ok) return;
+  }
+  try {
+    const r = await fetch('/repuestos/api/compras/' + cid + '/estado', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ estado: nuevo, eta: eta, nota: nota }) });
+    const j = await r.json();
+    if (!j.ok){
+      await ilusAlert({ title: 'No se pudo cambiar el estado', message: j.error || 'Error desconocido', type: 'error' });
+      return;
+    }
+    ilusToast('Compra actualizada', { type: 'success' });
+    rcCargar();
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+}
+
+/* ── Modal "Crear compra" (formato Retiros: pasos numerados, REGLA #15) ── */
+function rcmProveedorObj(){
+  const g = _rcm.grupo;
+  if (!g) return null;
+  // 🔒 2026-09-26 (revisión, hallazgo MEDIA #9): el grupo "Sin proveedor
+  // asignado" (proveedor_id NULL) ahora deja ELEGIR uno en el propio
+  // modal (select #rcmSelProv) en vez de solo bloquear con un error.
+  if (!g.proveedor_id && _rcm.proveedorManualId && _rs.provs){
+    const pm = _rs.provs.find(function(x){ return x.id === _rcm.proveedorManualId; });
+    if (pm) return pm;
+  }
+  if (g.proveedor_id && _rs.provs){
+    const p = _rs.provs.find(function(x){ return x.id === g.proveedor_id; });
+    if (p) return p;
+  }
+  return g.proveedor_id ? { id: g.proveedor_id, nombre: g.proveedor_nombre, contacto_nombre: g.contacto,
+    telefono: g.telefono, email: g.email, canal_preferido: g.canal } : null;
+}
+function rcmSeleccionarProveedor(val){
+  _rcm.proveedorManualId = val ? parseInt(val, 10) : null;
+  rcmPintarProveedor();
+  rcmActualizarPreview();
+}
+function rcmPintarProveedor(){
+  const g = _rcm.grupo;
+  const p = rcmProveedorObj();
+  const cont = document.getElementById('rcmProv');
+  const btn = document.getElementById('rcmBtnCrear');
+  if (!p){
+    // Grupo "Sin proveedor asignado": select para elegir uno de
+    // mant_proveedores_repuesto (mismo catálogo que ya usa el filtro).
+    const opciones = (_rs.provs || []).map(function(pv){
+      return '<option value="' + pv.id + '">' + rsEsc(pv.nombre) + '</option>';
+    }).join('');
+    cont.innerHTML = '<div class="text-muted small mb-2">Esta selección no tiene un proveedor único asignado: '
+      + 'elige a quién comprarle.</div>' +
+      '<select id="rcmSelProv" class="form-select" onchange="rcmSeleccionarProveedor(this.value)">' +
+      '<option value="">— Elige el proveedor —</option>' + opciones + '</select>';
+    if (btn) btn.disabled = true;
+    document.getElementById('rcmSinMail').style.display = 'none';
+    return;
+  }
+  if (btn) btn.disabled = false;
+  const telDig = String(p.telefono || '').replace(/\D/g, '');
+  const wa = telDig ? '<a class="wa" href="https://wa.me/' + telDig + '" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i> WhatsApp</a>' : '';
+  const tel = p.telefono ? '<a class="tel" href="tel:' + rsEsc(p.telefono) + '"><i class="bi bi-telephone-fill"></i> ' + rsEsc(p.telefono) + '</a>' : '';
+  const mail = p.email ? '<a class="mail" href="mailto:' + rsEsc(p.email) + '"><i class="bi bi-envelope-fill"></i> ' + rsEsc(p.email) + '</a>' : '';
+  cont.innerHTML = '<b>' + rsEsc(p.nombre) + '</b>' + (p.contacto_nombre ? ' · ' + rsEsc(p.contacto_nombre) : '') +
+    '<div class="mt-1">' + ((mail + tel + wa) || '<span class="text-muted">Sin datos de contacto registrados</span>') + '</div>';
+  const sinMail = document.getElementById('rcmSinMail');
+  if (!p.email){
+    sinMail.style.display = '';
+    sinMail.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Proveedor sin correo: contáctalo por '
+      + rsEsc(p.canal_preferido || 'teléfono') + (p.telefono ? (' (' + rsEsc(p.telefono) + ')') : '')
+      + '. La compra se crea igual; no se enviará correo aunque dejes la casilla marcada.';
+  } else sinMail.style.display = 'none';
+}
+function rcmPintarItems(){
+  document.getElementById('rcmItems').innerHTML = _rcm.sols.map(function(s){
+    return '<div class="rcm-item">' +
+      '<span class="nombre">' + rsEsc(s.repuesto_nombre) +
+        (s.repuesto_sku ? ' <span class="sku">· ' + rsEsc(s.repuesto_sku) + '</span>' : '') + '</span>' +
+      '<input type="number" min="0.5" step="0.5" value="' + rsFmt(_rcm.cantidades[s.id]) + '" ' +
+        'onchange="rcmCantidadCambio(' + s.id + ', this.value)"></div>';
+  }).join('');
+}
+function rcmCantidadCambio(sid, val){
+  const n = parseFloat(String(val).replace(',', '.'));
+  if (isFinite(n) && n > 0) _rcm.cantidades[sid] = n;
+  rcmActualizarPreview();
+}
+function rcmActualizarPreview(){
+  const prev = document.getElementById('rcmPreview');
+  const p = rcmProveedorObj();
+  if (!document.getElementById('rcmEnviar').checked || !p || !p.email){ prev.style.display = 'none'; return; }
+  const msg = document.getElementById('rcmMensaje').value.trim();
+  const filas = _rcm.sols.map(function(s){
+    return '<tr><td style="padding:3px 6px">' + rsEsc(s.repuesto_nombre) + '</td>' +
+      '<td style="padding:3px 6px">' + rsEsc(s.repuesto_sku || '—') + '</td>' +
+      '<td style="padding:3px 6px;text-align:right">' + rsFmt(_rcm.cantidades[s.id]) + '</td></tr>';
+  }).join('');
+  prev.style.display = '';
+  prev.innerHTML = '<b>Vista previa del correo a ' + rsEsc(p.email) + ':</b><br>' +
+    (msg ? rsEsc(msg).replace(/\n/g, '<br>') + '<br><br>' : '') +
+    '<table style="width:100%;border-collapse:collapse;font-size:.76rem">' +
+    '<thead><tr style="background:#0a0a0a;color:#fff"><th style="padding:4px 6px;text-align:left">Repuesto</th>' +
+    '<th style="padding:4px 6px;text-align:left">SKU</th><th style="padding:4px 6px;text-align:right">Cant.</th></tr></thead>' +
+    '<tbody>' + filas + '</tbody></table>';
+}
+function rcmAbrir(g, sols){
+  _rcm.grupo = g;
+  _rcm.sols = sols;
+  _rcm.cantidades = {};
+  _rcm.proveedorManualId = null;
+  sols.forEach(function(s){ _rcm.cantidades[s.id] = s.cantidad; });
+  document.getElementById('rcmEta').value = '';
+  document.getElementById('rcmOc').value = '';
+  document.getElementById('rcmMensaje').value = '';
+  document.getElementById('rcmEnviar').checked = true;
+  document.getElementById('rcmErr').textContent = '';
+  rcmPintarProveedor();
+  rcmPintarItems();
+  rcmActualizarPreview();
+  document.getElementById('rcmBackdrop').classList.add('is-open');
+  document.getElementById('rcmModal').classList.add('is-open');
+}
+function rcmCerrar(){
+  document.getElementById('rcmBackdrop').classList.remove('is-open');
+  document.getElementById('rcmModal').classList.remove('is-open');
+}
+async function rcmCrear(){
+  const p = rcmProveedorObj();
+  if (!p) return;
+  const errEl = document.getElementById('rcmErr');
+  errEl.textContent = '';
+  const btn = document.getElementById('rcmBtnCrear');
+  btn.disabled = true;
+  try {
+    // Cantidad editable (spec): si se tocó respecto a la de la solicitud,
+    // se ajusta ANTES de crear la compra REUTILIZANDO el endpoint de
+    // ajustar cantidad que ya existe -- no se repite esa lógica acá.
+    // 🔒 2026-09-26 (revisión, hallazgo MEDIA #8): esto ignoraba la
+    // respuesta (.catch(function(){}) tragaba cualquier error) -- si el
+    // ajuste fallaba (ej. la solicitud se cerró justo ahora, 409), la
+    // Compra se creaba igual con la cantidad VIEJA, sin que nadie se
+    // enterara del desfase. Ahora se revisa `j.ok` y se aborta.
+    for (const s of _rcm.sols){
+      const nueva = _rcm.cantidades[s.id];
+      if (nueva != null && Math.abs(nueva - s.cantidad) > 0.005){
+        try {
+          const rc = await fetch('/repuestos/api/solicitudes-ot/' + s.id + '/cantidad', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+            body: JSON.stringify({ cantidad: nueva }) });
+          const jc = await rc.json().catch(function(){ return {}; });
+          if (!jc.ok){
+            errEl.textContent = 'No se pudo ajustar la cantidad de #' + s.id + ': ' + (jc.error || 'error desconocido') + '. No se creó la compra.';
+            btn.disabled = false;
+            return;
+          }
+        } catch(ec){
+          errEl.textContent = 'No se pudo ajustar la cantidad de #' + s.id + ' (error de red). No se creó la compra.';
+          btn.disabled = false;
+          return;
+        }
+      }
+    }
+    const eta = document.getElementById('rcmEta').value || null;
+    const oc = document.getElementById('rcmOc').value.trim() || null;
+    const mensaje = document.getElementById('rcmMensaje').value.trim() || null;
+    const enviar = document.getElementById('rcmEnviar').checked;
+    const r = await fetch('/repuestos/api/compras', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({
+        solicitud_ids: _rcm.sols.map(function(s){ return s.id; }),
+        proveedor_id: p.id, eta: eta, oc_numero: oc, mensaje: mensaje, enviar_correo: enviar
+      }) });
+    const j = await r.json();
+    if (!j.ok){ errEl.textContent = j.error || 'No se pudo crear la compra.'; btn.disabled = false; return; }
+    rcmCerrar();
+    let msg = 'Se creó el ticket de compra ' + (j.numero_ticket || '') + ' con ' + j.n_solicitudes + ' repuesto(s).';
+    if (j.correo) msg += j.correo.enviado ? (' Correo enviado a ' + j.correo.to + '.') : (' ' + (j.correo.aviso || 'No se envió correo.'));
+    await ilusAlert({
+      title: 'Compra creada', message: msg, type: 'success',
+      sub: j.ticket_id ? ('<a href="/tickets/' + j.ticket_id + '" target="_blank" rel="noopener" '
+        + 'style="color:#dc2626;font-weight:700;text-decoration:none">Ver ticket ' + rsEsc(j.numero_ticket || '') + ' <i class="bi bi-box-arrow-up-right"></i></a>') : '',
+      subHtml: true
+    });
+    if (j.aviso) ilusToast(j.aviso, { type: 'warning' });
+    if (_rcm.grupo){ _rs.selGrupo[rsGrupoKey(_rcm.grupo)] = {}; }
+    rsCargarAgrupado();
+  } catch(e){
+    errEl.textContent = 'Error de red: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Modal "Recibir compra" (líneas con cantidad recibida) ── */
+async function rcrAbrir(cid){
+  _rcr.compraId = cid;
+  document.getElementById('rcrErr').textContent = '';
+  document.getElementById('rcrLineas').innerHTML = '<div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando líneas…</div>';
+  document.getElementById('rcrBackdrop').classList.add('is-open');
+  document.getElementById('rcrModal').classList.add('is-open');
+  try {
+    const r = await fetch('/repuestos/api/compras/' + cid, {credentials:'same-origin', cache:'no-store'});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
+    _rcr.lineas = (j.compra.lineas || []).filter(function(li){ return li.estado === 'pedido'; });
+    if (!_rcr.lineas.length){
+      document.getElementById('rcrLineas').innerHTML = '<div class="rc-vacio">No quedan líneas pendientes por recibir en esta compra.</div>';
+      return;
+    }
+    // 🔒 2026-09-26 (revisión, hallazgo MEDIA #7): el número que se pide
+    // acá es LO NUEVO que llega en ESTA entrega (se SUMA al acumulado ya
+    // guardado en el backend) -- si ya había algo recibido de antes, se
+    // muestra para que quede claro que no hay que repetirlo.
+    document.getElementById('rcrLineas').innerHTML = _rcr.lineas.map(function(li){
+      const yaRecibido = li.cantidad_recibida || 0;
+      const faltante = Math.max(0, li.cantidad - yaRecibido);
+      return '<div class="rcr-linea"><span class="nombre">' + rsEsc(li.repuesto_nombre) +
+        (li.repuesto_sku ? ' <span class="text-muted">· ' + rsEsc(li.repuesto_sku) + '</span>' : '') +
+        ' <span class="text-muted small">(pedidos ' + rsFmt(li.cantidad)
+        + (yaRecibido > 0 ? ', ya recibidos ' + rsFmt(yaRecibido) + ', faltan ' + rsFmt(faltante) : '') + ')</span></span>' +
+        '<input type="number" min="0" step="0.5" placeholder="0" title="Cantidad NUEVA que llega ahora (se suma a lo ya recibido)" id="rcrCant' + li.id + '"></div>';
+    }).join('');
+  } catch(e){
+    document.getElementById('rcrLineas').innerHTML = '<div class="rc-vacio">No se pudo cargar: ' + rsEsc(e.message) + '</div>';
+  }
+}
+function rcrCerrar(){
+  document.getElementById('rcrBackdrop').classList.remove('is-open');
+  document.getElementById('rcrModal').classList.remove('is-open');
+}
+async function rcrConfirmar(){
+  const lineas = _rcr.lineas.map(function(li){
+    const el = document.getElementById('rcrCant' + li.id);
+    const v = el ? parseFloat(String(el.value).replace(',', '.')) : 0;
+    return { solicitud_id: li.id, cantidad_recibida: isFinite(v) ? v : 0 };
+  }).filter(function(l){ return l.cantidad_recibida > 0; });
+  if (!lineas.length){
+    document.getElementById('rcrErr').textContent = 'Indica al menos una cantidad recibida.';
+    return;
+  }
+  // 🔒 2026-09-26 (revisión, hallazgo MEDIA #7): botón deshabilitado
+  // mientras procesa -- evita un doble envío con doble click.
+  const btnConfirmar = document.getElementById('rcrBtnConfirmar');
+  if (btnConfirmar) btnConfirmar.disabled = true;
+  try {
+    const r = await fetch('/repuestos/api/compras/' + _rcr.compraId + '/recibir', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ lineas: lineas }) });
+    const j = await r.json();
+    if (!j.ok){
+      document.getElementById('rcrErr').textContent = j.error || 'No se pudo registrar la recepción.';
+      if (btnConfirmar) btnConfirmar.disabled = false;
+      return;
+    }
+    rcrCerrar();
+    let msg = (j.recibidas || []).length + ' línea(s) completadas.';
+    if ((j.avisos || []).length) msg += ' ' + j.avisos.join(' ');
+    ilusToast(msg, { type: (j.recibidas || []).length ? 'success' : 'info' });
+    rcCargar();
+    rsCargar();
+  } catch(e){
+    document.getElementById('rcrErr').textContent = 'Error de red: ' + e.message;
+  } finally {
+    if (btnConfirmar) btnConfirmar.disabled = false;
+  }
+}
 </script>
 
 {# Modal compartido de búsqueda avanzada ERP (mode:'seleccionar' -- genérico,
