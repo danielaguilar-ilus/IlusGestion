@@ -87711,16 +87711,27 @@ def ot2_api_equipo_dar_baja(vid, mid):
     # 4) Solicitudes de repuesto abiertas del equipo: se rechazan solas.
     n_rech = 0
     try:
+        # 🔒 2026-09-26 (revisión #2, hallazgo MEDIA #5): esta baja rechaza
+        # solicitudes con SQL directo (no pasa por _otrep_cambiar_estado ni
+        # por el wrapper de la cola) -- si alguna estaba ligada a una
+        # Compra a proveedor, se limpia compra_id y se recalcula el
+        # agregado de esa Compra, mismo criterio que el resto de los
+        # caminos de rechazo/reapertura (ver MEDIA #6 en
+        # repstock_solicitud_ot_estado).
         abiertas = mysql_fetchall(
-            "SELECT id, ticket_id, repuesto_nombre FROM mant_ot_repuesto_solicitudes "
+            "SELECT id, ticket_id, repuesto_nombre, compra_id FROM mant_ot_repuesto_solicitudes "
             " WHERE maquina_id=%s AND estado IN ('solicitado','validado','pedido','recibido')",
             (mid,)) or []
+        compras_afectadas = set()
         for s in abiertas:
             mysql_execute(
                 "UPDATE mant_ot_repuesto_solicitudes SET estado='rechazado', resuelto_por=%s, "
+                "       compra_id=NULL, cantidad_recibida=0, "
                 "       nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) WHERE id=%s",
                 (user, f"Equipo dado de baja desde {numero_ot}", s["id"]))
             n_rech += 1
+            if s.get("compra_id"):
+                compras_afectadas.add(s["compra_id"])
             if s.get("ticket_id"):
                 try:
                     mysql_execute(
@@ -87732,6 +87743,11 @@ def ot2_api_equipo_dar_baja(vid, mid):
                 except Exception:
                     pass
                 _otrep_resolver_ticket_si_corresponde(s["ticket_id"], user)
+        for _cid_afectado in compras_afectadas:
+            try:
+                _otrep_compra_sincronizar(_cid_afectado, user)
+            except Exception as e:
+                print(f"[otrep] dar-baja compra_sincronizar cid={_cid_afectado}: {e}", flush=True)
     except Exception as e:
         print(f"[otrep] dar-baja rechazar solicitudes mid={mid}: {e}", flush=True)
 
@@ -88224,11 +88240,19 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
     if nuevo == "rechazado":
         if len(nota) < 5:
             return False, 400, {"ok": False, "error": "Di por qué se rechaza (queda en la solicitud y en el ticket)."}
+        # 🧾 Fase 5 (revisión #2, hallazgo ALTA #1): `cantidad_recibida` es
+        # el acumulado de entregas parciales de una Compra en curso -- si la
+        # solicitud se rechaza, ese acumulado deja de significar nada (las
+        # unidades que ya llegaron físicamente quedan en bodega igual, ya
+        # están en el kardex/mant_repuestos_stock; esto solo resetea el
+        # CONTADOR de la solicitud para que una futura Compra empiece limpia).
+        sets.append("cantidad_recibida=0")
         sets.append("resuelto_por=%s"); params.append(user)
     if nuevo == "solicitado":
-        # Reabrir: vuelve al inicio de la trayectoria, limpia lo que ya no aplica
+        # Reabrir: vuelve al inicio de la trayectoria, limpia lo que ya no
+        # aplica -- mismo motivo que 'rechazado' arriba para cantidad_recibida.
         sets += ["resuelto_por=NULL", "validado_at=NULL", "validado_por=NULL",
-                 "pedido_at=NULL", "recibido_at=NULL", "instalado_at=NULL"]
+                 "pedido_at=NULL", "recibido_at=NULL", "instalado_at=NULL", "cantidad_recibida=0"]
     if nota:
         # 🔒 FIX 2026-09-20 (revisión): esto REEMPLAZABA nota_gestion en cada
         # transición -- validar con una nota y después rechazar borraba la
@@ -88265,7 +88289,17 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
             if cur.rowcount != 1:
                 raise _OtrepConflictoEstado()
             if nuevo == "recibido":
-                if not s.get("repuesto_stock_id"):
+                # 🧾 Fase 5 (2026-09-26, revisión hallazgo ALTA #1): si esta
+                # transición viene de una recepción por Compra a proveedor
+                # (repstock_compra_recibir), la entrada de bodega de ESTA
+                # entrega ya se registró (motivo_tipo='recepcion_parcial')
+                # en la MISMA transacción, antes de llegar acá --
+                # `_entrada_ya_registrada` es interno (NUNCA viene del body
+                # de un usuario real, lo pone repstock_compra_recibir) y
+                # evita que este bloque sume el mismo stock una segunda vez.
+                if d.get("_entrada_ya_registrada"):
+                    mov_aviso = None
+                elif not s.get("repuesto_stock_id"):
                     mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
                                  "movimiento de bodega no se registró.")
                 elif s.get("es_reposicion"):
@@ -88311,10 +88345,15 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
                 # 'recibido', así que esta es la ÚNICA salida que registra).
                 _tiene_entrada = True
                 if actual == "recibido":
+                    # 🔒 Fase 5 (revisión, hallazgo ALTA #1): una recepción por
+                    # Compra puede haber quedado con motivo_tipo='recepcion_
+                    # parcial' (entregas parciales, ver repstock_compra_recibir)
+                    # en vez de 'recepcion_proveedor' -- ambas son entradas
+                    # reales de bodega para esta solicitud.
                     cur.execute(
                         "SELECT 1 FROM mant_repuestos_movimientos "
-                        " WHERE solicitud_id=%s AND motivo_tipo='recepcion_proveedor' LIMIT 1",
-                        (sid,))
+                        " WHERE solicitud_id=%s AND motivo_tipo IN ('recepcion_proveedor','recepcion_parcial') "
+                        " LIMIT 1", (sid,))
                     _tiene_entrada = cur.fetchone() is not None
                 if not s.get("repuesto_stock_id"):
                     mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
@@ -88561,14 +88600,20 @@ def _otrep_compra_elegible(s):
        el disponible no alcanza (hallazgo MEDIA #9: "sin stock suficiente",
        no cualquier validado -- si hay de sobra en bodega, no hay nada que
        comprarle a nadie).
+       🔒 2026-09-26 (revisión #2, hallazgo MEDIA #3): `stock_disponible`
+       (armado en _otrep_fila) YA le resta a `cantidad` de bodega el
+       comprometido de TODAS las OT abiertas, INCLUYENDO la cantidad
+       propia de esta misma solicitud (ver `_propia` en _otrep_fila) -- así
+       que compararlo de nuevo contra `cantidad` restaba dos veces. La
+       comparación correcta es simplemente `< 0` (bodega ya no alcanza
+       para cubrir ni siquiera lo comprometido).
     2. 'pedido' SIN compra_id -- ya se le pidió al proveedor ANTES de que
        existiera esta Compra (Fase <5, individual): se adjunta a la
        Compra nueva sin repetir la transición (ya está en 'pedido')."""
     estado = s.get("estado")
     if estado == "validado":
         disp = s.get("stock_disponible")
-        cant = float(s.get("cantidad") or 0)
-        return disp is None or disp < cant
+        return disp is None or disp < 0
     if estado == "pedido" and not s.get("compra_id"):
         return True
     return False
@@ -88581,8 +88626,17 @@ def _otrep_compra_sincronizar(compra_id, user):
     hallazgo MEDIA #6). Mismo criterio de agregación que
     repstock_compra_recibir: si ya no queda ninguna línea 'pedido' (entre
     las que NO se rechazaron), la Compra queda 'recibido' y su ticket se
-    resuelve; si hay progreso pero no está completa, 'recibido_parcial'.
-    Nunca pisa una Compra ya cerrada (recibido/cancelada)."""
+    resuelve; si TODAS sus líneas terminaron rechazadas, la Compra queda
+    'cancelada' (revisión #2, hallazgo MEDIA #4 -- no queda nada que
+    comprarle a ese proveedor); si hay progreso pero no está completa,
+    'recibido_parcial'. Nunca pisa una Compra ya cerrada (recibido/
+    cancelada).
+
+    🔒 2026-09-26 (revisión #2, hallazgo MEDIA #4): el UPDATE de la Compra
+    ahora lleva `AND estado=%s` (concurrencia) y el ticket solo se cierra
+    si ESE UPDATE de verdad tocó la fila (rowcount==1) -- antes se cerraba
+    el ticket aunque el UPDATE de la Compra hubiera fallado en silencio
+    por una carrera con otro cambio simultáneo."""
     if not compra_id:
         return
     c = mysql_fetchone("SELECT estado, ticket_id FROM mant_repuestos_compras WHERE id=%s", (compra_id,))
@@ -88598,17 +88652,30 @@ def _otrep_compra_sincronizar(compra_id, user):
         "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
         " WHERE compra_id=%s AND estado IN ('recibido','instalado')", (compra_id,)) or {}).get("n") or 0)
     nuevo_estado = c["estado"]
-    if total_no_rechazadas > 0 and pendientes == 0:
+    if total_no_rechazadas == 0:
+        # Todas las líneas de esta Compra terminaron rechazadas -- no queda
+        # nada que comprarle a este proveedor.
+        nuevo_estado = "cancelada"
+    elif pendientes == 0:
         nuevo_estado = "recibido"
     elif recibidas > 0:
         nuevo_estado = "recibido_parcial"
     if nuevo_estado != c["estado"]:
         try:
-            mysql_execute("UPDATE mant_repuestos_compras SET estado=%s WHERE id=%s", (nuevo_estado, compra_id))
-            if nuevo_estado == "recibido" and c.get("ticket_id"):
-                mysql_execute(
-                    "UPDATE tk_tickets SET estado='resolved', cerrado_at=NOW(), cerrado_por=%s "
-                    " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado')", (user, c["ticket_id"]))
+            tocada = mysql_execute_returning_rowcount(
+                "UPDATE mant_repuestos_compras SET estado=%s WHERE id=%s AND estado=%s",
+                (nuevo_estado, compra_id, c["estado"]))
+            if tocada == 1 and c.get("ticket_id"):
+                if nuevo_estado == "recibido":
+                    mysql_execute(
+                        "UPDATE tk_tickets SET estado='resolved', cerrado_at=NOW(), cerrado_por=%s "
+                        " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado')",
+                        (user, c["ticket_id"]))
+                elif nuevo_estado == "cancelada":
+                    mysql_execute(
+                        "UPDATE tk_tickets SET estado='cancelado', cerrado_at=NOW(), cerrado_por=%s "
+                        " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado')",
+                        (user, c["ticket_id"]))
         except Exception as e:
             print(f"[otrep] compra_sincronizar cid={compra_id}: {e}", flush=True)
 
@@ -88844,78 +88911,117 @@ def _otrep_crear_compra():
                 pass
 
     def _abortar_todo(motivo_log):
-        """Revierte compra_id de lo reclamado + cancela Compra/ticket --
-        usado tanto si el reclamo no calza como si alguna transición falla
-        después (MEDIA #4: todo o nada, nunca una Compra a medias)."""
+        """Revierte compra_id (+ reinicia cantidad_recibida, hallazgo
+        ALTA #1) de lo reclamado y cancela Compra/ticket -- usado tanto si
+        el reclamo no calza como si alguna transición falla después
+        (MEDIA #4: todo o nada, nunca una Compra a medias). Cada paso en su
+        propio try/except (hallazgo MEDIA #6): un fallo al cancelar el
+        ticket, por ejemplo, no debe impedir que igual se suelten las
+        solicitudes reclamadas."""
         try:
-            mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL WHERE compra_id=%s",
-                          (compra_id,))
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL, cantidad_recibida=0 "
+                " WHERE compra_id=%s", (compra_id,))
+        except Exception as e:
+            print(f"[otrep] crear_compra abortar (solicitudes) cid={compra_id}: {e}", flush=True)
+        try:
             mysql_execute("UPDATE mant_repuestos_compras SET estado='cancelada' WHERE id=%s", (compra_id,))
+        except Exception as e:
+            print(f"[otrep] crear_compra abortar (compra) cid={compra_id}: {e}", flush=True)
+        try:
             mysql_execute("UPDATE tk_tickets SET estado='cancelado', cerrado_at=NOW() WHERE id=%s", (tid,))
         except Exception as e:
-            print(f"[otrep] crear_compra abortar cid={compra_id}: {e}", flush=True)
+            print(f"[otrep] crear_compra abortar (ticket) cid={compra_id}: {e}", flush=True)
         print(f"[otrep] crear_compra abortada cid={compra_id}: {motivo_log}", flush=True)
 
-    # --- Reclamo atómico (hallazgo MEDIA #4) -----------------------------
-    # UN solo UPDATE reclama TODAS las solicitudes de una vez, condicionado
-    # a que sigan sin dueño (compra_id IS NULL) y en un estado elegible
-    # ('validado' o 'pedido') -- si el rowcount no calza con lo pedido,
-    # alguien más ya se llevó alguna (otra Compra, u otro cambio de estado)
-    # entre la validación de arriba y este UPDATE, y se aborta completo.
-    tocadas_reclamo = mysql_execute_returning_rowcount(
-        f"UPDATE mant_ot_repuesto_solicitudes SET compra_id=%s "
-        f" WHERE id IN ({ph}) AND compra_id IS NULL AND estado IN ('validado','pedido')",
-        (compra_id,) + tuple(ids))
-    if tocadas_reclamo != len(ids):
-        _abortar_todo(f"reclamo {tocadas_reclamo}/{len(ids)}")
-        return jsonify({"ok": False, "error":
-                        "Alguna solicitud dejó de estar disponible justo ahora (otra compra se la "
-                        "llevó, o cambió de estado): no se creó nada, recarga e inténtalo de nuevo."}), 409
+    # 🔒 2026-09-26 (revisión #2, hallazgo MEDIA #6): `exito` + `finally` --
+    # `_abortar_todo` SIEMPRE corre si esta función sale sin haber llegado al
+    # final feliz (incluida una excepción inesperada a mitad de camino, no
+    # solo los `return` de error explícitos de antes), para que nunca quede
+    # una Compra a medias por un error que nadie previó.
+    exito = False
+    try:
+        # --- Reclamo atómico (hallazgo MEDIA #4) -------------------------
+        # UN solo UPDATE reclama TODAS las solicitudes de una vez,
+        # condicionado a que sigan sin dueño (compra_id IS NULL) y en un
+        # estado elegible ('validado' o 'pedido') -- si el rowcount no
+        # calza con lo pedido, alguien más ya se llevó alguna (otra
+        # Compra, u otro cambio de estado) entre la validación de arriba y
+        # este UPDATE, y se aborta completo.
+        tocadas_reclamo = mysql_execute_returning_rowcount(
+            f"UPDATE mant_ot_repuesto_solicitudes SET compra_id=%s "
+            f" WHERE id IN ({ph}) AND compra_id IS NULL AND estado IN ('validado','pedido')",
+            (compra_id,) + tuple(ids))
+        if tocadas_reclamo != len(ids):
+            return jsonify({"ok": False, "error":
+                            "Alguna solicitud dejó de estar disponible justo ahora (otra compra se la "
+                            "llevó, o cambió de estado): no se creó nada, recarga e inténtalo de nuevo."}), 409
 
-    # --- Transición 'validado' -> 'pedido' (reutilizando _otrep_cambiar_
-    # estado, spec: "no dupliques su lógica" -- Fase 3/4 en main) ---------
-    ok_ids, fallos = [], []
-    for s in sols:
-        sid = s["id"]
-        if s.get("estado") == "pedido":
-            # Ya estaba 'pedido' de antes de esta Fase 5 -- el reclamo de
-            # arriba ya le dejó el compra_id, no hay transición que hacer.
-            ok_ids.append(sid)
-            continue
-        ok, http, payload = _otrep_cambiar_estado(
-            sid, "pedido", user, {"proveedor_id": proveedor_id, "oc_numero": oc_numero})
-        if ok:
-            ok_ids.append(sid)
-        else:
-            print(f"[otrep] crear_compra transición sid={sid}: {payload.get('error')}", flush=True)
-            fallos.append(sid)
+        # --- Transición 'validado' -> 'pedido' (reutilizando _otrep_cambiar_
+        # estado, spec: "no dupliques su lógica" -- Fase 3/4 en main) ------
+        ok_ids, fallos = [], []
+        for s in sols:
+            sid = s["id"]
+            try:
+                if s.get("estado") == "pedido":
+                    # Ya estaba 'pedido' de antes de esta Fase 5 -- el
+                    # reclamo de arriba ya le dejó el compra_id, no hay
+                    # transición que hacer.
+                    ok_ids.append(sid)
+                    continue
+                ok, http, payload = _otrep_cambiar_estado(
+                    sid, "pedido", user, {"proveedor_id": proveedor_id, "oc_numero": oc_numero})
+                if ok:
+                    ok_ids.append(sid)
+                else:
+                    print(f"[otrep] crear_compra transición sid={sid}: {payload.get('error')}", flush=True)
+                    fallos.append(sid)
+            except Exception as e:
+                print(f"[otrep] crear_compra transición sid={sid} EXCEPCIÓN: {e}", flush=True)
+                fallos.append(sid)
 
-    if fallos:
-        # Todo o nada: las que sí alcanzaron a pasar a 'pedido' en ESTE
-        # request vuelven a 'validado' (es lo único que pudieron haber
-        # sido antes, dado que _otrep_compra_elegible solo deja entrar
-        # 'validado' o 'pedido' preexistente a esta función).
-        for sid_ok in ok_ids:
-            s_ok = next((x for x in sols if x["id"] == sid_ok), None)
-            if s_ok and s_ok.get("estado") != "pedido":
-                mysql_execute(
-                    "UPDATE mant_ot_repuesto_solicitudes SET estado='validado', pedido_at=NULL, "
-                    " compra_id=NULL, nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) "
-                    " WHERE id=%s",
-                    (f"Reversión: la compra #{compra_id} no se pudo completar.", sid_ok))
-            else:
-                mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL WHERE id=%s", (sid_ok,))
-        _abortar_todo(f"transición falló para {len(fallos)}/{len(ids)}")
-        return jsonify({"ok": False, "error":
-                        f"No se pudo completar la compra para {len(fallos)} solicitud(es): se "
-                        "revirtió todo, nada quedó a medias. Inténtalo de nuevo."}), 409
+        if fallos:
+            # Todo o nada: las que sí alcanzaron a pasar a 'pedido' en ESTE
+            # request vuelven a 'validado' (es lo único que pudieron haber
+            # sido antes, dado que _otrep_compra_elegible solo deja entrar
+            # 'validado' o 'pedido' preexistente a esta función). El WHERE
+            # de cada UPDATE lleva `estado='pedido' AND compra_id=%s`
+            # (hallazgo MEDIA #6): concurrencia -- si alguien más ya tocó
+            # esa solicitud en el medio, no se le pisa el trabajo.
+            # Las de `fallos` (nunca llegaron a 'pedido': _otrep_cambiar_
+            # estado no tocó nada si falló) NO se tocan acá a propósito --
+            # su compra_id se limpia solo en `_abortar_todo` (finally, más
+            # abajo), que barre TODO lo que siga apuntando a esta Compra.
+            for sid_ok in ok_ids:
+                try:
+                    s_ok = next((x for x in sols if x["id"] == sid_ok), None)
+                    if s_ok and s_ok.get("estado") != "pedido":
+                        mysql_execute(
+                            "UPDATE mant_ot_repuesto_solicitudes SET estado='validado', pedido_at=NULL, "
+                            " compra_id=NULL, cantidad_recibida=0, "
+                            " nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) "
+                            " WHERE id=%s AND estado='pedido' AND compra_id=%s",
+                            (f"Reversión: la compra #{compra_id} no se pudo completar.", sid_ok, compra_id))
+                    else:
+                        mysql_execute(
+                            "UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL, cantidad_recibida=0 "
+                            " WHERE id=%s AND compra_id=%s", (sid_ok, compra_id))
+                except Exception as e:
+                    print(f"[otrep] crear_compra revertir sid={sid_ok}: {e}", flush=True)
+            return jsonify({"ok": False, "error":
+                            f"No se pudo completar la compra para {len(fallos)} solicitud(es): se "
+                            "revirtió todo, nada quedó a medias. Inténtalo de nuevo."}), 409
 
-    correo = None
-    if bool(d.get("enviar_correo")):
-        correo = _otrep_compra_enviar_correo(tid, numero_ticket, proveedor, sols, d.get("mensaje"), user)
+        correo = None
+        if bool(d.get("enviar_correo")):
+            correo = _otrep_compra_enviar_correo(tid, numero_ticket, proveedor, sols, d.get("mensaje"), user)
 
-    return jsonify({"ok": True, "compra_id": compra_id, "ticket_id": tid, "numero_ticket": numero_ticket,
-                    "n_solicitudes": len(ok_ids), "correo": correo})
+        exito = True
+        return jsonify({"ok": True, "compra_id": compra_id, "ticket_id": tid, "numero_ticket": numero_ticket,
+                        "n_solicitudes": len(ok_ids), "correo": correo})
+    finally:
+        if not exito:
+            _abortar_todo("salida sin éxito (ver error de respuesta arriba, o excepción no prevista)")
 
 
 @app.route("/repuestos/api/solicitudes-ot/crear-ticket-compra", methods=["POST"])
@@ -89092,9 +89198,14 @@ def repstock_compra_estado(cid):
                     " WHERE compra_id=%s AND estado='pedido'", (cid,))
                 abiertas = cur.fetchall() or []
                 for s_ab in abiertas:
+                    # 🧾 Fase 5 (revisión #2, hallazgo ALTA #1): cantidad_recibida=0
+                    # -- las unidades que ya hayan llegado en entregas parciales
+                    # quedan en bodega igual (el kardex/mant_repuestos_stock ya
+                    # las sumó); acá solo se reinicia el CONTADOR de la
+                    # solicitud para que una futura Compra empiece limpia.
                     cur.execute(
                         "UPDATE mant_ot_repuesto_solicitudes SET estado='validado', compra_id=NULL, "
-                        " pedido_at=NULL, "
+                        " pedido_at=NULL, cantidad_recibida=0, "
                         " nota_gestion=CONCAT_WS(' · ', NULLIF(nota_gestion,''), %s) "
                         " WHERE id=%s AND compra_id=%s AND estado='pedido'",
                         (f"Compra #{cid} cancelada — {nota[:300]}"[:5000], s_ab["id"], cid))
@@ -89139,16 +89250,40 @@ def _otrep_recepcion_es_completa(cantidad_recibida, cantidad_requerida):
 @_otrep_compra_gestion_required
 def repstock_compra_recibir(cid):
     """Recepción línea por línea. Body: {lineas:[{solicitud_id, cantidad_recibida}]}.
+    `cantidad_recibida` que manda el modal es LO NUEVO que llegó en ESTA
+    entrega (no el total acumulado).
 
-    🔒 2026-09-26 (revisión, hallazgo MEDIA #7): `cantidad_recibida` que
-    manda el modal es LO NUEVO que llegó en ESTA entrega (no el total
-    acumulado) -- se SUMA a la columna `cantidad_recibida` de la solicitud
-    (acumulador real, ya no depende de que el usuario declare el total cada
-    vez). Cuando el acumulado alcanza o supera `cantidad`, la línea pasa a
-    'recibido' reutilizando _otrep_cambiar_estado (kardex de Fase 3, spec:
-    "no dupliques su lógica"); si un excedente llega de más, se registra en
-    la nota. El UPDATE de la Compra al final lleva `AND estado=%s`
-    (concurrencia)."""
+    🔒 2026-09-26 (revisión #2, hallazgo ALTA #1): por CADA entrega, en la
+    MISMA transacción (mismo `conn`/cursor, sin commit entre medio):
+      1. Incrementa `cantidad_recibida` de forma atómica (MEDIA #2:
+         `SET cantidad_recibida=cantidad_recibida+%s WHERE ... AND
+         compra_id=%s AND estado='pedido'` + rowcount).
+      2. Si tiene repuesto de bodega ligado, registra la ENTRADA real de
+         kardex para ESTA entrega vía `_repstock_mover(cur=cur)` -- el
+         excedente sobre lo pedido entra igual (el stock físico debe
+         calzar con lo que de verdad llegó) y queda anotado en la nota.
+      3. Si el acumulado ya completa lo pedido, transiciona a 'recibido'
+         reutilizando `_otrep_cambiar_estado(..., {"_entrada_ya_registrada":
+         True})` -- ese flag le dice al núcleo que NO vuelva a registrar
+         la entrada (ya se hizo en el paso 2, sería un doble conteo físico).
+         El commit de `_otrep_cambiar_estado` (misma conexión) confirma
+         TAMBIÉN los pasos 1-2 de arriba.
+      Si no completa todavía, el commit lo hace esta función misma --
+      la entrega parcial queda guardada aunque falten más.
+
+    🔧 Idempotencia del kardex (spec, "revisa que la idempotencia... no
+    bloquee las entregas parciales múltiples"): `_repstock_mover` solo
+    deduplica por (solicitud_id, motivo_tipo) cuando motivo_tipo es
+    'recepcion_proveedor' o 'instalacion' -- CADA entrega parcial de esta
+    función usa el motivo_tipo PROPIO 'recepcion_parcial' (fuera de ese
+    set), así que nunca se bloquea entre sí y SIEMPRE inserta un movimiento
+    nuevo por entrega. Esto es intencional (varias entregas reales = varios
+    movimientos reales), pero como contrapartida 'recepcion_parcial' NO es
+    idempotente ante un doble-click/reintento de red sobre la MISMA
+    entrega -- se mitiga en el frontend (botón deshabilitado mientras
+    procesa) en vez de en el backend, porque no hay una clave natural más
+    fina que (solicitud_id, motivo_tipo) sin agregar una tabla de líneas
+    de compra que la spec no pidió."""
     c = mysql_fetchone("SELECT * FROM mant_repuestos_compras WHERE id=%s", (cid,))
     if not c:
         return jsonify({"ok": False, "error": "Compra no encontrada."}), 404
@@ -89169,70 +89304,93 @@ def repstock_compra_recibir(cid):
             continue
         if cant_nueva <= 0:
             continue
-        s = mysql_fetchone(
-            "SELECT id, estado, cantidad, cantidad_recibida FROM mant_ot_repuesto_solicitudes "
-            " WHERE id=%s AND compra_id=%s", (sid, cid))
-        if not s:
+        # Pre-check informativo (mensaje amable) -- el candado real de
+        # concurrencia es el UPDATE condicional de abajo, con su rowcount.
+        s_pre = mysql_fetchone(
+            "SELECT id, estado, compra_id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+        if not s_pre or int(s_pre.get("compra_id") or 0) != cid:
             avisos.append(f"#{sid} no pertenece a esta compra.")
             continue
-        if s["estado"] != "pedido":
-            avisos.append(f"#{sid} ya está \"{_OTREP_ESTADO_LABEL.get(s['estado'], s['estado'])}\".")
+        if s_pre["estado"] != "pedido":
+            avisos.append(f"#{sid} ya está \"{_OTREP_ESTADO_LABEL.get(s_pre['estado'], s_pre['estado'])}\".")
             continue
-        requerida = float(s.get("cantidad") or 0)
-        acumulado_antes = float(s.get("cantidad_recibida") or 0)
-        acumulado_nuevo = acumulado_antes + cant_nueva
-        # Excedente (hallazgo MEDIA #7: "excedente se registra"): si llegó
-        # más de lo pedido, se deja constancia pero no se descuenta -- la
-        # línea igual se marca completa con lo pedido.
-        excedente = max(0.0, acumulado_nuevo - requerida)
+
+        conn = get_db()
+        entrada_registrada = False
+        completa = False
+        requerida = acumulado_nuevo = excedente = 0.0
         try:
-            mysql_execute(
-                "UPDATE mant_ot_repuesto_solicitudes SET cantidad_recibida=%s WHERE id=%s",
-                (acumulado_nuevo, sid))
+            with conn.cursor() as cur:
+                # 🔒 MEDIA #2: incremento ATÓMICO (no lee-y-escribe en dos
+                # pasos) + condición de dueño/estado + rowcount.
+                cur.execute(
+                    "UPDATE mant_ot_repuesto_solicitudes SET cantidad_recibida=cantidad_recibida+%s "
+                    " WHERE id=%s AND compra_id=%s AND estado='pedido'",
+                    (cant_nueva, sid, cid))
+                if cur.rowcount != 1:
+                    conn.rollback()
+                    avisos.append(f"#{sid}: cambió de estado justo ahora -- esta entrega no se registró, reintenta.")
+                    continue
+                cur.execute(
+                    "SELECT cantidad, cantidad_recibida, repuesto_stock_id, visita_id, cliente_id, "
+                    "       repuesto_nombre FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+                row = cur.fetchone()
+                requerida = float(row["cantidad"] or 0)
+                acumulado_nuevo = float(row["cantidad_recibida"] or 0)
+                # Excedente (hallazgo MEDIA #7 -> reafirmado ALTA #1: "el
+                # stock debe calzar con lo físico"): si llegó más de lo
+                # pedido, la entrada de bodega es por el TOTAL físico que
+                # llegó (cant_nueva completo), nunca recortada -- solo se
+                # deja constancia del excedente en la nota.
+                excedente = max(0.0, acumulado_nuevo - requerida)
+                if row.get("repuesto_stock_id"):
+                    mov = _repstock_mover(
+                        row["repuesto_stock_id"], cant_nueva, "entrada", "recepcion_parcial",
+                        solicitud_id=sid, visita_id=row.get("visita_id"), cliente_id=row.get("cliente_id"),
+                        nota=(f"Solicitud #{sid} ({row.get('repuesto_nombre')}) recibida -- entrega de "
+                              f"{cant_nueva:g} para la compra #{cid}."
+                              + (f" Incluye excedente recibido: {excedente:g} sobre lo pedido."
+                                 if excedente > 1e-6 else "")),
+                        usuario=user, cur=cur)
+                    entrada_registrada = True
+                    if mov.get("aviso"):
+                        avisos.append(f"#{sid}: {mov['aviso']}")
+                completa = _otrep_recepcion_es_completa(acumulado_nuevo, requerida)
+            if not completa:
+                conn.commit()
+                avisos.append(f"#{sid}: recibido parcial ({acumulado_nuevo:g} de {requerida:g}), sigue "
+                              f"\"{_OTREP_ESTADO_LABEL.get('pedido')}\".")
+                continue
         except Exception as e:
-            print(f"[otrep] recibir acumular sid={sid}: {e}", flush=True)
-            avisos.append(f"#{sid}: no se pudo registrar la cantidad recibida.")
+            conn.rollback()
+            print(f"[otrep] recibir entrega sid={sid}: {e}", flush=True)
+            avisos.append(f"#{sid}: no se pudo registrar esta entrega.")
             continue
-        if _otrep_recepcion_es_completa(acumulado_nuevo, requerida):
-            ok, http, payload = _otrep_cambiar_estado(sid, "recibido", user, {})
-            if ok:
-                recibidas.append(sid)
-                # Propaga cualquier aviso del kardex (hallazgo MEDIA #7:
-                # "propagar payload['aviso'] a avisos") -- ej. "no se sumó
-                # al stock automáticamente" cuando no pasó por 'pedido'.
-                if payload.get("aviso"):
-                    avisos.append(f"#{sid}: {payload['aviso']}")
-                if excedente > 1e-6:
-                    avisos.append(f"#{sid}: llegaron {excedente:g} de más sobre lo pedido "
-                                  f"({acumulado_nuevo:g} de {requerida:g}).")
-            else:
-                avisos.append(f"#{sid}: {payload.get('error')}")
+
+        # Completa: transiciona a 'recibido' reutilizando _otrep_cambiar_
+        # estado (spec: "no dupliques su lógica") -- misma conexión/
+        # transacción que el incremento y la entrada de arriba: el commit
+        # que hace ESA función confirma todo junto.
+        ok, http, payload = _otrep_cambiar_estado(
+            sid, "recibido", user, {"_entrada_ya_registrada": entrada_registrada})
+        if ok:
+            recibidas.append(sid)
+            # Propaga cualquier aviso del kardex (hallazgo MEDIA #7:
+            # "propagar payload['aviso'] a avisos").
+            if payload.get("aviso"):
+                avisos.append(f"#{sid}: {payload['aviso']}")
+            if excedente > 1e-6:
+                avisos.append(f"#{sid}: llegaron {excedente:g} de más sobre lo pedido "
+                              f"({acumulado_nuevo:g} de {requerida:g}).")
         else:
-            avisos.append(f"#{sid}: recibido parcial ({acumulado_nuevo:g} de {requerida:g}), sigue "
-                          f"\"{_OTREP_ESTADO_LABEL.get('pedido')}\".")
-    pendientes = int((mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes WHERE compra_id=%s AND estado='pedido'",
-        (cid,)) or {}).get("n") or 0)
-    total_lineas = int((mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes WHERE compra_id=%s", (cid,)) or {}).get("n") or 0)
-    nuevo_estado = c["estado"]
-    if total_lineas > 0 and pendientes == 0:
-        nuevo_estado = "recibido"
-    elif recibidas:
-        nuevo_estado = "recibido_parcial"
-    if nuevo_estado != c["estado"]:
-        # 🔒 Concurrencia (hallazgo MEDIA #7): AND estado=%s -- si alguien más
-        # ya cambió la Compra en el medio, no se pisa (best-effort: la
-        # recepción de las líneas YA quedó registrada arriba de todos modos,
-        # solo el agregado de la Compra puede quedar un pelo desfasado hasta
-        # el próximo recálculo).
-        tocada_compra = mysql_execute_returning_rowcount(
-            "UPDATE mant_repuestos_compras SET estado=%s WHERE id=%s AND estado=%s",
-            (nuevo_estado, cid, c["estado"]))
-        if tocada_compra and nuevo_estado == "recibido" and c.get("ticket_id"):
-            mysql_execute(
-                "UPDATE tk_tickets SET estado='resolved', cerrado_at=NOW(), cerrado_por=%s "
-                " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado')", (user, c["ticket_id"]))
+            avisos.append(f"#{sid}: {payload.get('error')}")
+    # 🔒 2026-09-26 (revisión #2): el agregado de la Compra se recalcula con
+    # _otrep_compra_sincronizar -- MISMA función que usa el resto de los
+    # caminos individuales (evita mantener dos copias del mismo cálculo, y
+    # ya trae la concurrencia `AND estado=%s` + rowcount de MEDIA #4).
+    _otrep_compra_sincronizar(cid, user)
+    nuevo_estado = (mysql_fetchone(
+        "SELECT estado FROM mant_repuestos_compras WHERE id=%s", (cid,)) or {}).get("estado", c["estado"])
     if c.get("ticket_id"):
         try:
             resumen = ("; ".join(f"#{x} recibida completa" for x in recibidas) or "sin líneas completas")
