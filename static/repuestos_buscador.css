@@ -14,10 +14,17 @@
 .rpb-q-in:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
 .rpb-q-x{position:absolute;right:2px;width:40px;height:40px;border:none;background:transparent;color:#9ca3af;border-radius:8px;cursor:pointer}
 .rpb-q-x:hover{background:#f3f4f6;color:#0a0a0a}
-.rpb-filtros{display:grid;gap:8px}
-.rpb-filtros select,.rpb-modelo-in{width:100%;font-size:16px;min-height:42px;padding:7px 10px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#374151;font-family:inherit}
+/* 🗜️ 2026-09-26 (Daniel, viendo el paso 2: "ojalá ahorrar espacio, algo bien
+   espectacular"): Proveedor/Marca/Modelo/Limpiar van en chips COMPACTOS en
+   UNA sola línea con flex-wrap (antes era un grid de 1 columna -> 4 filas
+   completas en un modal angosto). El input de Modelo se lleva el doble de
+   espacio (flex:2) porque su texto es más largo ("nombre o SKU"). */
+.rpb-filtros{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rpb-filtros select{flex:1 1 108px;min-width:92px}
+.rpb-modelo-wrap{position:relative;min-width:150px;flex:2 1 170px}
+.rpb-filtros select,.rpb-modelo-in{width:100%;font-size:16px;min-height:40px;padding:7px 10px;border:1.5px solid #d1d5db;border-radius:999px;background:#fff;color:#374151;font-family:inherit}
+.rpb-modelo-in{border-radius:10px}
 .rpb-filtros select:focus,.rpb-modelo-in:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
-.rpb-modelo-wrap{position:relative;min-width:0}
 .rpb-modelo-drop{position:absolute;top:100%;left:0;right:0;z-index:30;background:#fff;border:1px solid #e5e7eb;border-radius:10px;
   box-shadow:0 12px 30px -8px rgba(15,23,42,.25);max-height:240px;overflow-y:auto;display:none;margin-top:4px}
 .rpb-modelo-opt{display:block;width:100%;text-align:left;border:none;background:#fff;padding:9px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-family:inherit;min-height:44px}
@@ -25,10 +32,14 @@
 .rpb-modelo-opt b{display:block;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere}
 .rpb-modelo-opt small{display:block;font-size:.7rem;color:#6b7280}
 .rpb-modelo-vacio{padding:10px 12px;font-size:.78rem;color:#6b7280}
-.rpb-limpiar{border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:10px;min-height:42px;padding:7px 12px;font-size:.8rem;font-weight:700;
-  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-family:inherit}
-.rpb-limpiar:hover{border-color:#0a0a0a;color:#0a0a0a}
+/* "Limpiar" (todo: texto + filtros) pasa a ser un ícono cuadrado compacto,
+   NO un botón con texto en su propia fila -- ahorra la fila entera. */
+.rpb-limpiar{flex:0 0 auto;border:1px solid #d1d5db;background:#fff;color:#6b7280;border-radius:999px;width:40px;height:40px;min-height:40px;padding:0;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-family:inherit;font-size:1rem}
+.rpb-limpiar:hover{border-color:#dc2626;color:#dc2626;background:#fff5f5}
 .rpb-ctx{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rpb-resumen{font-size:.72rem;color:#6b7280;font-weight:800;padding:0 2px}
+.rpb-resumen:empty{display:none}
 .rpb-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:999px;
   padding:6px 12px;font-size:.76rem;font-weight:700;cursor:pointer;min-height:36px;font-family:inherit;max-width:100%;overflow-wrap:anywhere;text-align:left}
 .rpb-chip b{font-weight:900}
@@ -44,6 +55,19 @@
 .rpb-vacio{background:#fff;border:1px dashed #d1d5db;border-radius:12px;padding:18px 14px;text-align:center;color:#6b7280;font-size:.82rem;line-height:1.45}
 .rpb-vacio .bi{display:block;font-size:1.3rem;margin-bottom:4px;color:#cbd5e1}
 .rpb-vacio.rpb-error{color:#b91c1c;border-color:#fecaca;background:#fff5f5}
+/* 🗜️ 2026-09-26: estado vacío (sin buscar todavía) chico -- una línea con
+   ícono + texto, no la caja grande de antes. Las "sugerencias" son chips
+   clicables que llenan el buscador y disparan la búsqueda al toque. */
+.rpb-hint{display:flex;align-items:center;gap:8px;color:#6b7280;font-size:.78rem;padding:6px 2px}
+.rpb-hint .bi{font-size:1rem;color:#cbd5e1;flex:none}
+.rpb-sugerencias{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:0 2px 4px}
+.rpb-sug-lbl{font-size:.72rem;color:#9ca3af;font-weight:700}
+.rpb-sug{border:1px dashed #d1d5db;background:#fff;color:#374151;border-radius:999px;padding:5px 12px;font-size:.74rem;font-weight:700;
+  cursor:pointer;font-family:inherit;min-height:32px}
+.rpb-sug:hover{border-style:solid;border-color:#dc2626;color:#dc2626}
+/* Resaltado del término que calzó (REGLA #15: dato completo, solo se marca
+   encima, nunca se recorta el texto alrededor). */
+mark.rpb-mark{background:#fef08a;color:#0a0a0a;border-radius:3px;padding:0 1px;font-weight:800}
 .rpb-grid{display:grid;gap:10px}
 /* Tarjeta de resultado */
 .rpb-card{display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-areas:"foto info" "lado lado";gap:8px 12px;
@@ -54,6 +78,8 @@
 button.rpb-card{cursor:pointer}
 button.rpb-card:hover{border-color:#cbd5e1;box-shadow:0 6px 18px -10px rgba(15,23,42,.35)}
 .rpb-card.sel{border-color:#dc2626;border-left-color:#dc2626;background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+/* Navegación con teclado (↑/↓ desde el buscador, Enter agrega/elige). */
+.rpb-card.nav{outline:2px solid #dc2626;outline-offset:2px;border-color:#dc2626}
 .rpb-foto{grid-area:foto;width:64px;height:64px;border-radius:10px;background:#f3f4f6;overflow:hidden;display:grid;place-items:center;color:#c7cbd1;font-size:1.5rem}
 .rpb-foto img{width:100%;height:100%;object-fit:cover;display:block}
 .rpb-info{grid-area:info;min-width:0;display:flex;flex-direction:column;gap:5px}
@@ -75,8 +101,12 @@ button.rpb-card:hover{border-color:#cbd5e1;box-shadow:0 6px 18px -10px rgba(15,2
 .rpb-modelos{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:.7rem;color:#6b7280}
 .rpb-modelos > .bi{color:#9ca3af;margin-right:2px}
 .rpb-modelos-vacio{font-style:italic}
+.rpb-modelos-lbl{font-weight:700;color:#9ca3af;margin-right:1px}
 .rpb-modelo{background:#f3f4f6;color:#374151;border-radius:999px;padding:2px 8px;font-weight:600;overflow-wrap:anywhere}
 .rpb-modelo.on{background:#dcfce7;color:#15803d;font-weight:800}
+/* SKU del modelo compatible, junto al nombre ("Compatible con: Nombre · SKU-XXX") */
+.rpb-modelo-sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.85}
+.rpb-modelo-mas{background:transparent;color:#9ca3af;font-weight:800;padding:2px 4px}
 .rpb-lado{grid-area:lado;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding-top:8px;border-top:1px dashed #f1f5f9}
 .rpb-sem{display:inline-flex;align-items:center;gap:5px;font-size:.74rem;font-weight:900;border-radius:999px;padding:4px 10px;white-space:nowrap}
 .rpb-sem.verde{background:#dcfce7;color:#15803d}
@@ -97,27 +127,24 @@ button.rpb-card:hover{border-color:#cbd5e1;box-shadow:0 6px 18px -10px rgba(15,2
    ensancha con @container; un navegador sin container queries se queda
    con el apilado, que siempre se ve bien. */
 .rpb{container-type:inline-size}
-.rpb-filtros{grid-template-columns:1fr}
+/* Los chips de filtro (select/modelo/limpiar) ya son flex-wrap en UNA
+   línea desde la base -- mobile-first real: 44px de toque en la fila
+   angosta (un contenedor de ~390px), se reduce a 40px cuando el
+   contenedor da más espacio (modal-lg de gestión, ~740px). */
 .rpb-filtros select,.rpb-modelo-in,.rpb-limpiar{min-height:44px}
 .rpb-grid{grid-template-columns:1fr}
 .rpb-add{margin-left:0;width:100%}
 .rpb-cant{flex:0 0 80px;min-height:44px}
 .rpb-btn-add{flex:1;min-height:44px;justify-content:center}
-@container (min-width:560px){
-  .rpb-filtros{grid-template-columns:1fr 1fr}
-  .rpb-modelo-wrap{grid-column:1 / -1}
-  .rpb-limpiar{grid-column:1 / -1;justify-self:end;min-width:130px}
+@container (min-width:480px){
+  .rpb-filtros select,.rpb-modelo-in,.rpb-limpiar{min-height:40px}
+  .rpb-limpiar{width:40px;height:40px}
   .rpb-add{margin-left:auto;width:auto}
   .rpb-cant{flex:0 0 72px;min-height:40px}
   .rpb-btn-add{flex:none;min-height:40px}
 }
 @container (min-width:700px){
   .rpb-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-}
-@container (min-width:860px){
-  .rpb-filtros{grid-template-columns:1fr 1fr 1.3fr auto}
-  .rpb.sin-prov .rpb-filtros{grid-template-columns:1fr 1.3fr auto}
-  .rpb-modelo-wrap,.rpb-limpiar{grid-column:auto}
 }
 @media (max-width:575.98px){
   .rpb-card{grid-template-columns:52px minmax(0,1fr);padding:10px}
