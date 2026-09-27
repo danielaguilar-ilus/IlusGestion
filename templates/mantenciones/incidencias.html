@@ -611,22 +611,25 @@
 .inc-aviso>i{color:#b45309;font-size:1rem;flex-shrink:0;margin-top:1px}
 .inc-aviso .txt{flex:1;min-width:200px;word-break:break-word}
 .inc-aviso .txt strong{color:#0a0a0a}
-.inc-pane-head{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:11px;margin-bottom:18px}
+.inc-pane-head{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:11px;
+  margin-bottom:18px;background:#f9fafb}
 .inc-pane-head i{font-size:1.4rem;line-height:1}
 .inc-pane-head b{display:block;font-size:.95rem;color:#0f172a}
 .inc-pane-head small{color:#5b6472;font-size:.79rem}
-.inc-c1{background:#eff6ff;border-left:4px solid #3b82f6} .inc-c1 i{color:#3b82f6}
-.inc-c2{background:#f5f3ff;border-left:4px solid #8b5cf6} .inc-c2 i{color:#8b5cf6}
-/* 🔧 2026-09-27 (Daniel, viendo Motivo ya completo -- check verde, borde
-   verde -- pero con la cabecera todavía en naranja: "porque el motivo la
-   tarjeta es diferente, sigue con problemas?"). El naranja (#f97316) se
-   lee muy cerca del ámbar de "advertencia" (#f59e0b) que usa el semáforo
-   -- dos cosas distintas (color temático de la tarjeta vs. estado
-   done/warn/neutro) que visualmente decían lo mismo. Motivo (data-pane=2)
-   es "el protagonista" del modal -- pasa a un rojo/negro de marca ILUS,
-   inconfundible con advertencia. */
-.inc-c3{background:#fef2f2;border-left:4px solid #dc2626} .inc-c3 i{color:#dc2626}
-.inc-c4{background:#f0fdf4;border-left:4px solid #16a34a} .inc-c4 i{color:#16a34a}
+.inc-c1{border-left:4px solid #3b82f6} .inc-c1 i{color:#3b82f6}
+.inc-c2{border-left:4px solid #8b5cf6} .inc-c2 i{color:#8b5cf6}
+/* 🔧 2026-09-27 (Daniel, DOS veces: primero "sigue con problemas" con
+   naranja, después "sigue la parte de motivo roja" con rojo). El error de
+   fondo no era el matiz -- era tener un FONDO TEÑIDO fijo en la cabecera,
+   que compite con el semáforo real de la tarjeta (verde=completo,
+   ámbar=advertencia, neutro=incompleto). Cualquier color de fondo fijo
+   ahí SIEMPRE se va a leer como "todavía pasa algo", sin importar cuál
+   se elija. Se saca el `background` de TODAS las cabeceras -- el color
+   de identidad de cada tarjeta queda SOLO en el borde izquierdo y el
+   ícono; quien manda sobre el estado real es el borde/fondo de
+   `.inc-pane` (.done/.warn), nunca la cabecera. */
+.inc-c3{border-left:4px solid #dc2626} .inc-c3 i{color:#dc2626}
+.inc-c4{border-left:4px solid #16a34a} .inc-c4 i{color:#16a34a}
 .inc-rep-prov-lista{position:absolute;z-index:20;left:0;right:0;top:100%;background:#fff;
   border:1px solid #d1d5db;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);
   max-height:180px;overflow-y:auto}
@@ -637,7 +640,7 @@
 .inc-badge-distribuir{display:inline-flex;align-items:center;gap:4px;background:#fef2f2;
   border:1px solid #fecaca;color:#b91c1c;border-radius:8px;padding:2px 8px;
   font-size:.72rem;font-weight:700;white-space:nowrap;margin-bottom:3px}
-.inc-c5{background:#f8fafc;border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
+.inc-c5{border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
 
 /* ══ 2026-09-26 (Daniel, viendo el modal en producción): sin barra de
    navegación arriba -- cada tarjeta trae su propio círculo numerado
