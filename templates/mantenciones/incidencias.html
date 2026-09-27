@@ -78,12 +78,23 @@
 <div id="incLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 
 {# ── Modal alta/edición (>5 campos → Bootstrap modal, REGLA #8) ── #}
+{#- 🎨 2026-09-27 (Daniel: "quiero el modal de registrar una nueva
+    incidencia justo como el modal de Nuevo retiro interno... establece
+    eso como regla, todos los modales deben tener ese formato"). Mismo
+    lenguaje visual EXACTO que templates/retiros/internal_dashboard.html
+    #modalNuevoRetiroInterno: borde rojo 2px + glow, header oscuro con
+    degradado y borde inferior rojo, progreso "N de M pasos listos" +
+    barra -- ver REGLA en feedback_diseno_estandar_modales (memoria). -#}
 <div class="modal fade" id="incModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
+        <h5 class="modal-title fw-bold" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2" style="color:var(--ilus-red,#dc2626)"></i>Nueva incidencia</h5>
+        <div class="inc-progreso" id="incProgreso" aria-live="polite">
+          <span id="incProgresoTxt">0 de 5 pasos listos</span>
+          <span class="bar"><span id="incProgresoBar"></span></span>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       {# 🔧 2026-09-26 (Daniel, viendo el modal en producción: "elimina por
          completo la barra superior de navegación tipo wizard... esa fila
@@ -510,7 +521,24 @@
   background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
 .inc-faltan.ok{background:#f0fdf4;color:#15803d;border-color:#bbf7d0}
 
-.inc-pane{animation:incFade .28s ease}
+/* 🎨 2026-09-27: progreso "N de M pasos listos" en el header oscuro --
+   mismo patrón .nri-progreso de Retiros (templates/retiros/
+   internal_dashboard.html). */
+.inc-progreso{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;margin-right:12px;
+  font-size:.74rem;font-weight:700;color:#e5e7eb}
+.inc-progreso .bar{width:120px;height:7px;border-radius:50px;background:rgba(255,255,255,.18);overflow:hidden}
+.inc-progreso .bar span{display:block;height:100%;background:var(--ilus-red,#dc2626);border-radius:50px;
+  transition:width .35s ease,background .35s ease}
+@media (max-width:576px){.inc-progreso{margin:6px 0 0;order:3;flex-basis:100%}}
+
+.inc-pane{animation:incFade .28s ease;padding:12px;border-radius:14px;border:1.5px solid transparent;
+  transition:border-color .25s ease,background .25s ease,box-shadow .25s ease;margin-bottom:4px}
+/* Tarjeta COMPLETA (no solo el círculo) -- mismo verde/ámbar que
+   .nri-step-card.is-complete/.is-warn de Retiros. */
+.inc-pane.done{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#ffffff 55%);
+  box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -10px rgba(22,163,74,.35)}
+.inc-pane.warn{border-color:#f59e0b;background:linear-gradient(180deg,#fffbeb 0%,#ffffff 55%);
+  box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -10px rgba(245,158,11,.4)}
 @keyframes incFade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 .inc-pane-head{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:11px;margin-bottom:18px}
 .inc-pane-head i{font-size:1.4rem;line-height:1}
@@ -1023,15 +1051,27 @@
   // se pinta).
   function pintarPasos(){
     var faltanObligatorios = [];
+    var listos = 0, total = 0;
     document.querySelectorAll('.inc-num-circle[data-step]').forEach(function(s){
       var n = parseInt(s.dataset.step, 10);
       var t = INC_TARJETAS[n] || {req: [], opc: []};
       var reqOk = t.req.every(incCompletaCampo);
       var opcOk = t.opc.every(incCompletaCampo);
-      s.classList.toggle('done', reqOk && (t.opc.length === 0 || opcOk));
-      s.classList.toggle('warn', reqOk && t.opc.length > 0 && !opcOk);
+      var done = reqOk && (t.opc.length === 0 || opcOk);
+      var warn = reqOk && t.opc.length > 0 && !opcOk;
+      s.classList.toggle('done', done);
+      s.classList.toggle('warn', warn);
+      // 🎨 2026-09-27: la tarjeta ENTERA se pinta verde/ámbar, no solo el
+      // círculo -- mismo lenguaje visual que Retiros (.nri-step-card).
+      var pane = s.closest('.inc-pane');
+      if(pane){ pane.classList.toggle('done', done); pane.classList.toggle('warn', warn); }
+      total++; if(done) listos++;
       if(!reqOk) faltanObligatorios.push(INC_TARJETA_LABEL[n]);
     });
+    // 🎨 2026-09-27: progreso "N de M pasos listos" en el header oscuro.
+    var pTxt = $('incProgresoTxt'), pBar = $('incProgresoBar');
+    if(pTxt) pTxt.textContent = listos + ' de ' + total + ' pasos listos';
+    if(pBar) pBar.style.width = (total ? Math.round(listos/total*100) : 0) + '%';
     var box = $('incFaltan');
     if(faltanObligatorios.length){
       box.hidden = false;
