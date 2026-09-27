@@ -1653,11 +1653,18 @@ window.OT2C = (function(){
         // 🔒 FIX 2026-09-21 (Daniel, confirmado explícito "obligatorio
         // siempre"): costo_proveedor/costo_despacho pasan de opcionales a
         // obligatorios -- mismo criterio que ya rige "Esta OT vale" para
-        // trabajo interno (arriba). Aplica también en garantía: eximir del
-        // cobro al cliente no exime de saber cuánto nos cuesta a NOSOTROS.
-        // '' (nunca tocado) bloquea; '0' (declarado explícito) no.
-        if (String(S.fin_costo_proveedor||'').trim() === '') return false;
-        if (String(S.fin_costo_despacho||'').trim() === '') return false;
+        // trabajo interno (arriba).
+        // 🔧 CORRECCIÓN 2026-09-27 (Daniel, dos pedidos):
+        // 1) "es obligatorio excepto para garantía, pero al menos debemos
+        //    saber cuánto nos cobran... llamémoslo costo de la OT" -- el
+        //    costo del SERVICIO se exime solo en garantía (se declara/
+        //    corrige después, desde el detalle de la OT).
+        // 2) "el despacho... a veces no es necesario, ese valor es
+        //    opcional" -- el despacho deja de ser obligatorio SIEMPRE (con
+        //    o sin garantía): no toda OT tiene flete/courier de por medio.
+        // '' (nunca tocado) bloquea el servicio (fuera de garantía);
+        // '0' (declarado explícito) no.
+        if (!S.fin_garantia && String(S.fin_costo_proveedor||'').trim() === '') return false;
         return true;
       // 2026-08-29: solo aparece si el líder es externo (ver pasos()) --
       // ahí sí es obligatorio, es lo que Daniel llamó "indispensable para
@@ -5550,14 +5557,21 @@ window.OT2C = (function(){
         '<div id="o2mFinCostoChip"></div>'+
         '<div class="row g-2">'+
           '<div class="col-12 col-sm-6">'+
-            '<label class="fl">Nos cuesta '+(S.tipo==='instalacion'?'la instalación':'el servicio')+' <span class="text-danger">*</span></label>'+
+            // 🔧 2026-09-27 (Daniel: "llamémoslo costo de la OT y no cuánto
+            // nos cobran, porque a veces son técnicos internos" -- "nos
+            // cuesta"/"nos cobran" insinuaba siempre un proveedor externo).
+            // El * (obligatorio) se oculta en garantía -- ahí es opcional,
+            // se puede corregir después (ver completo('finanzas')).
+            '<label class="fl">Costo de '+(S.tipo==='instalacion'?'la instalación':'el servicio')+(S.fin_garantia?'':' <span class="text-danger">*</span>')+'</label>'+
             '<div class="o2m-money sm"><span class="pre">$</span>'+
             '<input type="text" inputmode="numeric" id="o2mFinCostoProv" '+
             'value="'+esc(_o2mFormatearMiles(S.fin_costo_proveedor))+'" placeholder="0 si no hay proveedor externo" '+
             'oninput="OT2C.setFinCostoProveedor(this)"></div>'+
           '</div>'+
           '<div class="col-12 col-sm-6">'+
-            '<label class="fl">Nos cuesta el despacho <span class="text-danger">*</span></label>'+
+            // 🔧 2026-09-27 (Daniel: "el despacho... a veces no es
+            // necesario, ese valor es opcional"): sin asterisco, siempre.
+            '<label class="fl">Costo del despacho <span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
             '<div class="o2m-money sm"><span class="pre">$</span>'+
             '<input type="text" inputmode="numeric" id="o2mFinCostoDesp" '+
             'value="'+esc(_o2mFormatearMiles(S.fin_costo_despacho))+'" placeholder="0 si no hubo despacho" '+
@@ -6124,11 +6138,12 @@ window.OT2C = (function(){
         }
         return {cls:'listo', txt:'Listo'};
       case 'costo':
-        // 🔒 FIX 2026-09-21: pasó de opcional a obligatorio (ver completo()
-        // más arriba) -- los DOS campos, no "al menos uno", porque "0" en
-        // uno de ellos ya es una respuesta válida y completa.
+        // 🔧 CORRECCIÓN 2026-09-27 (Daniel): el servicio sigue obligatorio
+        // salvo garantía; el despacho es SIEMPRE opcional (no toda OT tiene
+        // flete de por medio) -- ver completo('finanzas').
         if (interno) return {cls:'', txt:''};
-        return (String(S.fin_costo_proveedor||'').trim() !== '' && String(S.fin_costo_despacho||'').trim() !== '')
+        if (S.fin_garantia) return {cls:'opcional', txt:'Opcional'};
+        return (String(S.fin_costo_proveedor||'').trim() !== '')
           ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
     }
     return {cls:'', txt:''};

@@ -4854,8 +4854,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                      sea un 0 escrito: vacío es "no se declaró", 0 es "no hubo". #}
                   <div class="otd-fmoney">
                     <div class="otd-fm-row">
-                      <label class="otd-fm-lab" for="otdFinCostoProveedor">Nos cuesta {{ _fin_neg }}
-                        <small>lo que le pagamos al técnico o proveedor · 0 si no hubo</small></label>
+                      {# 🔧 2026-09-27 (Daniel: "llamémoslo costo de la OT y no
+                         cuánto nos cobran, porque a veces son técnicos
+                         internos"). #}
+                      <label class="otd-fm-lab" for="otdFinCostoProveedor">Costo {{ _fin_neg }}
+                        <small>técnico o proveedor · 0 si no hubo</small></label>
                       <div class="otd-fm-in"><span>$</span>
                         <input type="text" id="otdFinCostoProveedor" class="form-control" data-money="1"
                                inputmode="numeric" autocomplete="off" placeholder="—"
@@ -4863,7 +4866,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     </div>
                     <div class="otd-fm-op" aria-hidden="true"><span>+</span></div>
                     <div class="otd-fm-row">
-                      <label class="otd-fm-lab" for="otdFinCostoDespacho">Nos cuesta el despacho
+                      <label class="otd-fm-lab" for="otdFinCostoDespacho">Costo del despacho <small class="text-muted">(opcional)</small>
                         <small>flete o courier · 0 si no hubo</small></label>
                       <div class="otd-fm-in"><span>$</span>
                         <input type="text" id="otdFinCostoDespacho" class="form-control" data-money="1"
@@ -8618,8 +8621,13 @@ window.otdGuardarFinanzas = async function(){
   // backend hace COALESCE en costo, zz_envio_monto, costo_proveedor y
   // costo_despacho: lo conserva): se dice en vez de "guardar" algo que no
   // cambia -- y en vez de pintar como guardado un vacío que la base no tiene.
-  const _vacioDeclarado = [['otdFinCostoProveedor', _kProv, 'Nos cuesta ' + ((window.OTD_FIN || {}).neg || 'la instalación'), 'costo'],
-                           ['otdFinCostoDespacho', _kDesp, 'Nos cuesta el despacho', 'costo'],
+  // 🔧 CORRECCIÓN 2026-09-27 (Daniel, corrigiendo una OT ya creada: "no es
+  // solo cuando creamos la OT... me obliga a pedir el transporte y a veces
+  // no es necesario. Ese valor es opcional, el despacho"). El despacho
+  // sale de esta lista: dejarlo en blanco ya NO exige "escribe 0" -- el
+  // campo simplemente no viaja (COALESCE conserva lo que hubiera, si algo
+  // hubiera). El costo del servicio sigue protegido igual que antes.
+  const _vacioDeclarado = [['otdFinCostoProveedor', _kProv, 'Costo ' + ((window.OTD_FIN || {}).neg || 'de la instalación'), 'costo'],
                            ['otdFinZzEnvio', body.zz_envio_monto, 'Despacho al cliente', 'cobro'],
                            ['otdFinCosto', body.costo, 'Total al cliente', 'cobro']]
     .find(function(x){ return x[1] === null && window.otdFinValorGuardado && window.otdFinValorGuardado(x[0]) !== ''; });

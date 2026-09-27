@@ -92914,9 +92914,16 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # por Levantamiento o desde Tickets con un error que el usuario no
     # podría resolver desde su propia pantalla. Pendiente: sumar los mismos
     # dos campos a esos formularios y activar el flag ahí también.
+    # 🔧 CORRECCIÓN 2026-09-27 (Daniel, caso real de garantía sin costo
+    # todavía sabido -- el aviso del wizard ya prometía "puedes crear la OT
+    # sin este dato" pero este candado igual bloqueaba: "es obligatorio
+    # excepto para garantía, pero al menos debemos saber cuánto nos
+    # cobran... llamémoslo costo de la OT"). En garantía el costo se puede
+    # declarar/corregir DESPUÉS, desde el detalle de la OT -- fuera de
+    # garantía sigue exactamente igual que el 2026-09-21.
     if exigir_costo_prov_desp:
         _fin_costo_prov_raw = _fin.get("costo_proveedor")
-        if not es_interna and (_fin_costo_prov_raw is None or str(_fin_costo_prov_raw).strip() == ""):
+        if not es_interna and not _fin_gar and (_fin_costo_prov_raw is None or str(_fin_costo_prov_raw).strip() == ""):
             return _ferr(
                 "Indica cuánto le pagamos al proveedor externo por esta OT (0 si no hay "
                 "proveedor de por medio): así el reporte de margen no queda con un vacío "
@@ -92925,13 +92932,11 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         _fin_costo_prov = _fin_costo_opcional(_fin.get("costo_proveedor"))
     except (TypeError, ValueError):
         return _ferr("El costo del proveedor no es válido.", "COSTO_PROVEEDOR_INVALIDO"), None
-    if exigir_costo_prov_desp:
-        _fin_costo_desp_raw = _fin.get("costo_despacho")
-        if not es_interna and (_fin_costo_desp_raw is None or str(_fin_costo_desp_raw).strip() == ""):
-            return _ferr(
-                "Indica cuánto costó el despacho de esta OT (0 si no hubo despacho): así "
-                "el reporte de margen no queda con un vacío sin decidir.",
-                "FINANZAS_SIN_COSTO_DESPACHO"), None
+    # 🔧 CORRECCIÓN 2026-09-27 (Daniel: "el despacho... a veces no es
+    # necesario, ese valor es opcional" -- lo dijo en general, no solo para
+    # garantía: no toda OT tiene flete/courier de por medio). El costo del
+    # despacho deja de exigirse acá; el costo del servicio (arriba) sigue
+    # igual que antes.
     try:
         _fin_costo_desp = _fin_costo_opcional(_fin.get("costo_despacho"))
     except (TypeError, ValueError):
