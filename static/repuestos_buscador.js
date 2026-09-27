@@ -373,7 +373,15 @@
       var enLista = Number(st.enLista(it.id) || 0);
       var compat = !!it.es_compatible && !!st.modeloCtx;
       var clases = 'rpb-card' + (compat ? ' compat' : '') + (st.seleccionId === it.id ? ' sel' : '') + (enLista ? ' enlista' : '');
-      var foto = it.foto_url ? '<img src="' + esc(it.foto_url) + '" alt="" loading="lazy">' : '<i class="bi bi-gear"></i>';
+      // 🔍 2026-09-27 (Daniel: "las tarjetas ocupan mucho espacio... me
+      // gustaría ver las fotografías para acercarme al detalle -- se ven
+      // las letras chinas pero no se ven los pernos"). La miniatura sigue
+      // chica (la tarjeta no puede crecer), pero ahora es clicable y abre
+      // el visor global en tamaño completo (static/ilus_lightbox.js, ya
+      // cargado en base.html) para poder acercarse de verdad al detalle.
+      var foto = it.foto_url
+        ? '<img src="' + esc(it.foto_url) + '" alt="" loading="lazy" class="rpb-foto-zoom" data-rpb-foto="' + esc(it.foto_url) + '">'
+        : '<i class="bi bi-gear"></i>';
       var pal = st.palabras;
       var meta = [];
       if (it.sku) meta.push('<span class="rpb-sku">' + marcar(esc(it.sku), pal) + '</span>');
@@ -443,6 +451,17 @@
       return null;
     }
     resBox.addEventListener('click', function (e) {
+      // 🔍 2026-09-27 (Daniel: quiere acercarse a la foto para verificar el
+      // repuesto de verdad, no solo la miniatura). Se intercepta ANTES que
+      // la selección/agregar de la tarjeta -- ver el detalle no debe elegir
+      // ni agregar nada por accidente.
+      var zoom = e.target.closest('.rpb-foto-zoom');
+      if (zoom) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (global.ilusLightbox) ilusLightbox(zoom.dataset.rpbFoto);
+        return;
+      }
       var bsug = e.target.closest('.rpb-sug');
       if (bsug) {
         inQ.value = bsug.dataset.q || '';

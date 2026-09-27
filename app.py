@@ -64178,14 +64178,6 @@ def _inc_comparativa_ua(rows, wms_rows):
     return rows
 
 
-# Columnas filtrables por el header de la tabla (REGLA #4.3, patrón
-# Etiquetas: filtro combinable con el buscador general `q`, y al limpiar
-# un filtro la tabla se recarga -- eso lo maneja el frontend re-pidiendo
-# siempre con el valor actual, vacío o no).
-_INC_COLUMNAS_FILTRO = {
-    "f_ua": "recomendacion", "f_sku": "sku", "f_descripcion": "descripcion",
-    "f_motivo": "motivo",
-}
 _INC_COLUMNAS_ORDEN = {
     "ua": "recomendacion", "sku": "sku", "descripcion": "descripcion",
     "cantidad": "cantidad", "motivo": "motivo",
@@ -64228,30 +64220,18 @@ def mant_api_incidencias_list():
     where = ["COALESCE(eliminada,0) = 0"]
     params = []
     if q:
-        where.append("(sku LIKE %s OR descripcion LIKE %s OR motivo LIKE %s)")
+        # 🔧 2026-09-27 (Daniel, viendo la fila de filtros por columna:
+        # "saca los filtros de la tabla, es mejor manejar un multi filtro"):
+        # se vuelve a UN solo cuadro de búsqueda, pero ahora también busca
+        # por UA (`recomendacion`) además de SKU/descripción/motivo -- antes
+        # esa ronda de filtros por columna se había agregado para cubrir
+        # justo ese hueco; ahora se cubre desde el multi-filtro único.
+        where.append("(sku LIKE %s OR descripcion LIKE %s OR motivo LIKE %s OR recomendacion LIKE %s)")
         like = f"%{q}%"
-        params += [like, like, like]
+        params += [like, like, like, like]
     if estado in ("abierta", "resuelta"):
         where.append("estado = %s")
         params.append(estado)
-    # 🔧 2026-09-26 (Daniel: "filtre resultados por las columnas del
-    # header de la tabla"), combinable con `q`.
-    for arg, col in _INC_COLUMNAS_FILTRO.items():
-        val = (request.args.get(arg) or "").strip()
-        if val:
-            where.append(f"{col} LIKE %s")
-            params.append(f"%{val}%")
-    f_cantidad = (request.args.get("f_cantidad") or "").strip()
-    if f_cantidad:
-        try:
-            where.append("cantidad = %s")
-            params.append(int(f_cantidad))
-        except (TypeError, ValueError):
-            pass   # texto no numérico en el filtro de cantidad -- se ignora, no rompe la consulta
-    f_fecha = (request.args.get("f_fecha") or "").strip()
-    if f_fecha:
-        where.append("fecha_resolucion = %s")
-        params.append(f_fecha)
 
     # 🔧 2026-09-26 (revisión post-merge, Daniel: "select de semáforo si es
     # factible server-side"). El estado del semáforo (chk_estado) no vive

@@ -50,12 +50,27 @@
   <div id="incConcLista"></div>
 </div>
 
+{#- 🔧 2026-09-27 (Daniel, viendo la fila de filtros por columna: "saca
+    los filtros de la tabla, es mejor manejar un multi filtro"): vuelve a
+    ser UNA sola barra -- un cuadro de búsqueda que ahora también busca por
+    UA (ver `q` en el backend) + estado + el semáforo Check (el único
+    filtro que de verdad no cabe en un texto libre, se queda pero acá
+    arriba, no repetido por columna). -#}
 <div class="inc-filtros">
-  <input type="text" id="incFQ" class="form-control form-control-sm" placeholder="Buscar por SKU, descripción o motivo…">
+  <input type="text" id="incFQ" class="form-control form-control-sm" placeholder="Buscar por UA, SKU, descripción o motivo…">
   <select id="incFEstado" class="form-select form-select-sm">
     <option value="">Todos los estados</option>
     <option value="abierta">Abiertas</option>
     <option value="resuelta">Resueltas</option>
+  </select>
+  <select id="incFChk" class="form-select form-select-sm">
+    <option value="">Ubicación/UA vs Check: todos</option>
+    <option value="coincide">Coincide</option>
+    <option value="distinta">Distinta</option>
+    <option value="no_esta">No está en Check</option>
+    <option value="sin_ua">Sin UA</option>
+    <option value="sin_ubicacion_nuestra">Sin ubic. nuestra</option>
+    <option value="sin_datos">Check no disponible</option>
   </select>
   <button class="btn btn-sm btn-ilus-outline" id="incBtnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
 </div>
@@ -119,22 +134,20 @@
                 <i class="bi bi-lock-fill inc-candado" id="incCandadoSku" title="Dato del sistema WMS/ERP, no editable"></i></label>
               <input type="text" class="form-control form-control-lg" id="incSku" placeholder="Ej: TWMA305-140" readonly>
             </div>
-            {#- 🔧 2026-09-26 (Daniel: "Ubicación: en vez de un solo campo,
-                muestra DOS, ambos bloqueados: 'Ubicación en Bodega 13
-                (nuestra)' y 'Ubicación según Check (WMS)' -- si difieren,
-                píntalo en ámbar como ya hace el semáforo de comparativa
-                que ya existe (reutilízalo, no lo dupliques)"). Reusa
-                exactamente `chk_estado`/`chk_ubicacion` que ya calcula
-                _inc_comparativa_ua (mismo semáforo de la tabla principal),
-                devuelto ahora también por la ficha -- ver incCargarEvidencia. -#}
+            {#- 🔒 2026-09-27 (Daniel, viendo el modal en producción: "la
+                ubicación es solo de Check, en la bodega 13. Mantenla
+                bloqueada, solo se edita en Check"). Antes había DOS campos
+                (nuestra + Check) -- Daniel corrige: no existe una "ubicación
+                nuestra" independiente, la ubicación real es la de Check
+                (WMS) y punto; ILUS nunca la edita acá, solo se refleja.
+                `incUbicacion` (oculto) sigue viajando en el payload para no
+                romper el guardado/backend ni la comparativa histórica, pero
+                ya no se muestra como campo propio -- se llena en JS con el
+                mismo valor de Check, nunca a mano. -#}
+            <input type="hidden" id="incUbicacion">
             <div class="col-md-6">
-              <label class="form-label">Ubicación en Bodega 13 (nuestra)
-                <i class="bi bi-lock-fill inc-candado" title="Dato del sistema WMS/ERP, no editable"></i></label>
-              <input type="text" class="form-control" id="incUbicacion" placeholder="Ej: A-12-03" readonly>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Ubicación según Check (WMS)
-                <i class="bi bi-lock-fill inc-candado" title="Dato del sistema WMS/ERP, no editable"></i></label>
+              <label class="form-label">Ubicación (Check / WMS)
+                <i class="bi bi-lock-fill inc-candado" title="Dato de Check (WMS) -- se edita en Check, no acá"></i></label>
               <input type="text" class="form-control" id="incUbicacionCheck" placeholder="—" readonly>
             </div>
             <div id="incUaResultado" class="inc-resultado col-12"></div>
@@ -174,23 +187,19 @@
             <div><b>2. Motivo</b>
               <small>Es el campo más importante: explica la falla o el faltante con claridad.</small></div>
           </div>
+          {#- 🔧 2026-09-27 (Daniel, viendo el modal en producción: "colócale
+              mínimo unos 30 caracteres... y sácale los rápidos, mejor
+              sácale los rápidos"). Sube el mínimo de 10 a 30 y elimina los
+              chips de motivos frecuentes por completo (backend
+              /motivos-frecuentes queda sin llamarse desde acá). -#}
           <div class="inc-campo" data-campo="incMotivo">
             <label class="form-label">Motivo <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
             <textarea class="form-control inc-motivo" id="incMotivo" rows="9"
                       placeholder="Ej: falta acrílico derecho del lado selector de pesos&#10;&#10;Describe con detalle: qué pieza falta o falló, de qué lado, en qué condición llegó, y cualquier dato que ayude al técnico."></textarea>
             <div class="d-flex justify-content-between align-items-center mt-1">
-              <div class="form-text mb-0">Mínimo 10 caracteres. Sé concreto: qué pieza, qué lado, qué falla.</div>
+              <div class="form-text mb-0">Mínimo 30 caracteres. Sé concreto: qué pieza, qué lado, qué falla.</div>
               <span class="inc-contador" id="incMotivoCount">0</span>
             </div>
-          </div>
-          {#- 🔧 2026-09-26 (Daniel, sobre su macro Excel: "chips de motivos
-              frecuentes... top ~8"): reemplaza los 5 chips fijos por los
-              motivos MÁS USADOS de verdad en mant_incidencias (se cargan
-              una vez, GET /mantenciones/api/incidencias/motivos-frecuentes)
-              + un chip "Otro" que solo enfoca el textarea. -#}
-          <div class="inc-chips" id="incMotivoChips">
-            <span class="inc-chip-lbl">Rápidos:</span>
-            <span class="text-muted" style="font-size:.74rem">Cargando…</span>
           </div>
           {#- 🔧 2026-09-21 (Fase 2 -- Daniel: "la bodega de incidencias en la
               gestión de productos y motivos se puede solicitar un
@@ -446,6 +455,7 @@
    borde claro y hover sutil -- no un tema oscuro a medias. */
 .inc-filtros{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:12px 0}
 .inc-filtros #incFQ{max-width:340px}
+.inc-filtros #incFChk{max-width:220px}
 .inc-filtros #incFEstado{max-width:180px}
 .inc-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow:hidden;
   box-shadow:0 1px 3px rgba(0,0,0,.06)}
@@ -470,14 +480,12 @@
 .inc-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626}
 .inc-pg-btn:disabled{opacity:.4;cursor:not-allowed}
 
-/* ══ 2026-09-26: filtros por columna (REGLA #4.3), miniatura, semáforo
-   de comparativa CheckWMS y acciones rápidas por fila ══ */
-.inc-th-filtros td{background:#fff;padding:6px 10px;border-bottom:2px solid #eaecf0}
+/* ══ 2026-09-26: orden por columna, miniatura, semáforo de comparativa
+   CheckWMS y acciones rápidas por fila ══ */
 .inc-th-sort{cursor:pointer;user-select:none;white-space:nowrap}
 .inc-th-sort:hover{color:#fff;opacity:.85}
 .inc-th-sort i{font-size:.62rem;opacity:.55;margin-left:2px}
 .inc-th-sort.on i{opacity:1;color:var(--ilus-red,#dc2626)}
-.inc-th-filtros input.form-control-sm{font-size:.76rem;padding:3px 8px}
 .inc-foto-mini{width:36px;height:36px;object-fit:cover;border-radius:7px;border:1px solid #e5e7eb;cursor:zoom-in}
 .inc-foto-mini-video{display:inline-flex;align-items:center;justify-content:center;background:#0a0a0a;color:#fff;
   cursor:pointer;font-size:1rem}
@@ -717,7 +725,7 @@
   // 🔧 2026-09-26 (revisión post-merge, Daniel: "pon filtro en TODAS las
   // columnas de la tabla principal que tengan dato filtrable"). f_ua/
   // f_cantidad/f_fecha/f_chk se suman a los 3 de la primera vuelta.
-  var incFiltrosCol = {f_ua: '', f_sku: '', f_descripcion: '', f_motivo: '', f_cantidad: '', f_fecha: '', f_chk: ''};
+  var incFChk = '';
   // Se resuelve una sola vez en el render (no en cada fila) para no meter
   // una condición de Jinja adentro de un string de JS -- más frágil de
   // leer y de mantener que una bandera booleana simple.
@@ -783,10 +791,11 @@
     return '<span class="text-muted">—</span>';
   }
 
-  // Encabezado con orden por clic (flecha, como el resto del proyecto) +
-  // fila de filtros por columna (REGLA #4.3, patrón Etiquetas: combinable
-  // con el buscador `q`; al limpiar un filtro de columna la tabla se
-  // recarga igual que al limpiar `q`/estado).
+  // 🔧 2026-09-27 (Daniel: "saca los filtros de la tabla, es mejor
+  // manejar un multi filtro"): se quita la fila de filtros por columna
+  // completa -- el multi-filtro único de arriba (`incFQ` + `incFEstado` +
+  // `incFChk`) cubre lo mismo. El orden por clic en el encabezado se
+  // mantiene, es independiente de los filtros.
   function incTh(label, orderKey){
     if(!orderKey) return '<th>'+label+'</th>';
     var on = incOrderBy === orderKey;
@@ -802,60 +811,10 @@
       + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
       + incTh('Estado', 'estado') + '<th>Ubicación/UA vs Check</th>'
       + incTh('Fecha resolución', 'fecha_resolucion')
-      + '<th style="width:78px">Acciones</th></tr>'
-      + '<tr class="inc-th-filtros">'
-      + '<td></td>'
-      + '<td><input type="text" class="form-control form-control-sm" id="incColUa" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_ua)+'"></td>'
-      + '<td><input type="text" class="form-control form-control-sm" id="incColSku" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_sku)+'"></td>'
-      + '<td><input type="text" class="form-control form-control-sm" id="incColDescripcion" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_descripcion)+'"></td>'
-      + '<td><input type="number" class="form-control form-control-sm" id="incColCantidad" placeholder="N°" value="'+incEsc(incFiltrosCol.f_cantidad)+'"></td>'
-      + '<td><input type="text" class="form-control form-control-sm" id="incColMotivo" placeholder="Filtrar…" value="'+incEsc(incFiltrosCol.f_motivo)+'"></td>'
-      + '<td></td>'
-      + '<td><select class="form-select form-select-sm" id="incColEstado">'
-      +   '<option value="">Todos</option>'
-      +   '<option value="abierta"'+(incEstado==='abierta'?' selected':'')+'>Abierta</option>'
-      +   '<option value="resuelta"'+(incEstado==='resuelta'?' selected':'')+'>Resuelta</option>'
-      + '</select></td>'
-      + '<td><select class="form-select form-select-sm" id="incColChk">'
-      +   '<option value="">Todos</option>'
-      +   '<option value="coincide"'+(incFiltrosCol.f_chk==='coincide'?' selected':'')+'>Coincide</option>'
-      +   '<option value="distinta"'+(incFiltrosCol.f_chk==='distinta'?' selected':'')+'>Distinta</option>'
-      +   '<option value="no_esta"'+(incFiltrosCol.f_chk==='no_esta'?' selected':'')+'>No está en Check</option>'
-      +   '<option value="sin_ua"'+(incFiltrosCol.f_chk==='sin_ua'?' selected':'')+'>Sin UA</option>'
-      +   '<option value="sin_ubicacion_nuestra"'+(incFiltrosCol.f_chk==='sin_ubicacion_nuestra'?' selected':'')+'>Sin ubic. nuestra</option>'
-      +   '<option value="sin_datos"'+(incFiltrosCol.f_chk==='sin_datos'?' selected':'')+'>Check no disponible</option>'
-      + '</select></td>'
-      + '<td><input type="date" class="form-control form-control-sm" id="incColFecha" value="'+incEsc(incFiltrosCol.f_fecha)+'"></td>'
-      + '<td></td>'
-      + '</tr></thead>';
+      + '<th style="width:78px">Acciones</th></tr></thead>';
   }
 
-  function incWireFiltrosCol(){
-    [['incColUa','f_ua'],['incColSku','f_sku'],['incColDescripcion','f_descripcion'],
-     ['incColMotivo','f_motivo'],['incColCantidad','f_cantidad']].forEach(function(par){
-      var el = document.getElementById(par[0]);
-      if(!el) return;
-      el.addEventListener('input', function(){
-        clearTimeout(window['__incColDeb_'+par[1]]);
-        var v = this.value;
-        window['__incColDeb_'+par[1]] = setTimeout(function(){
-          incFiltrosCol[par[1]] = v; incPage = 1; cargar();
-        }, 350);
-      });
-    });
-    var selEstado = document.getElementById('incColEstado');
-    if(selEstado) selEstado.addEventListener('change', function(){
-      incEstado = this.value; incPage = 1; cargar();
-      var top = document.getElementById('incFEstado'); if(top) top.value = incEstado;
-    });
-    var selChk = document.getElementById('incColChk');
-    if(selChk) selChk.addEventListener('change', function(){
-      incFiltrosCol.f_chk = this.value; incPage = 1; cargar();
-    });
-    var fFecha = document.getElementById('incColFecha');
-    if(fFecha) fFecha.addEventListener('change', function(){
-      incFiltrosCol.f_fecha = this.value; incPage = 1; cargar();
-    });
+  function incWireOrden(){
     document.querySelectorAll('.inc-th-sort').forEach(function(th){
       th.addEventListener('click', function(){
         var key = th.dataset.order;
@@ -872,12 +831,12 @@
   function render(data){
     var rows = data.rows || [];
     var box = document.getElementById('incLista');
-    var hayFiltros = incQ || incEstado || Object.keys(incFiltrosCol).some(function(k){ return !!incFiltrosCol[k]; });
+    var hayFiltros = incQ || incEstado || incFChk;
     if(!rows.length){
       box.innerHTML = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'</table>'
         + '<div class="empty-state"><i class="bi bi-inbox"></i>'
         + (hayFiltros ? 'Sin resultados para estos filtros.' : 'No hay incidencias registradas.')+'</div></div>';
-      incWireFiltrosCol();
+      incWireOrden();
       return;
     }
     var checkwmsOk = data.checkwms_ok !== false;
@@ -916,7 +875,7 @@
       + '</div></div></div>';
 
     box.innerHTML = html;
-    incWireFiltrosCol();
+    incWireOrden();
 
     box.querySelectorAll('tbody tr').forEach(function(tr){
       tr.addEventListener('click', function(ev){
@@ -983,9 +942,7 @@
     box.innerHTML = '<div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div>';
     var url = '/mantenciones/api/incidencias?page='+incPage+'&page_size='+incSize
       + '&q='+encodeURIComponent(incQ)+'&estado='+encodeURIComponent(incEstado);
-    Object.keys(incFiltrosCol).forEach(function(k){
-      url += '&'+k+'='+encodeURIComponent(incFiltrosCol[k] || '');
-    });
+    if(incFChk) url += '&f_chk='+encodeURIComponent(incFChk);
     if(incOrderBy) url += '&order_by='+encodeURIComponent(incOrderBy)+'&order_dir='+encodeURIComponent(incOrderDir);
     fetch(url).then(function(r){return r.json();}).then(function(data){
       if(!data.ok){ box.innerHTML = '<div class="empty-state text-danger">'+(data.error||'Error al cargar.')+'</div>'; return; }
@@ -1015,7 +972,7 @@
     incSku:           function(v){ return v.trim().length > 0; },
     incDescripcion:   function(v){ return v.trim().length > 0; },
     incCantidad:      function(v){ var n = parseInt(v, 10); return !!n && n >= 1; },
-    incMotivo:        function(v){ return v.trim().length >= 10; },
+    incMotivo:        function(v){ return v.trim().length >= 30; },
   };
 
   function refrescarVerde(id){
@@ -1126,9 +1083,9 @@
     }
     if(n === 2){
       var mot = $('incMotivo');
-      if(mot.value.trim().length < 10){
+      if(mot.value.trim().length < 30){
         marcarError(mot);
-        ilusToast('Describe el motivo con al menos 10 caracteres', {type:'warning'});
+        ilusToast('Describe el motivo con al menos 30 caracteres', {type:'warning'});
         return false;
       }
     }
@@ -1411,49 +1368,14 @@
   $('incMotivo').addEventListener('input', function(){
     var n = this.value.trim().length, c = $('incMotivoCount');
     c.textContent = n;
-    c.classList.toggle('ok', n >= 10);
+    c.classList.toggle('ok', n >= 30);
   });
 
-  // 🔧 2026-09-26 (Daniel, sobre su macro Excel: "chips de motivos
-  // frecuentes... top ~8"): se cargan UNA vez (GET .../motivos-frecuentes)
-  // y se pintan como chips clicables + un chip "Otro" que solo enfoca el
-  // textarea (no inserta texto). Si la consulta falla, no bloquea nada --
-  // el textarea grande sigue siendo la forma normal de escribir el motivo.
-  var incMotivosFrecuentesCargados = false;
-  function incMotivoChipClick(texto){
-    var t = $('incMotivo');
-    t.value = (t.value.trim() ? t.value.trim() + ' — ' : '') + texto;
-    t.dispatchEvent(new Event('input'));
-    t.focus();
-  }
-  function incCargarMotivosFrecuentes(){
-    if(incMotivosFrecuentesCargados) return;
-    incMotivosFrecuentesCargados = true;
-    fetch('/mantenciones/api/incidencias/motivos-frecuentes')
-      .then(function(r){ return r.json(); }).then(function(d){
-        var cont = $('incMotivoChips');
-        var motivos = (d && d.ok && d.motivos && d.motivos.length) ? d.motivos : [
-          'Falta pieza', 'Llegó dañado del proveedor', 'Se sacó para cubrir garantía',
-          'Devolución de cliente', 'Faltante en despacho',
-        ];
-        var html = '<span class="inc-chip-lbl">Rápidos:</span>';
-        motivos.slice(0, 8).forEach(function(m){
-          html += '<button type="button" class="inc-chip" data-motivo="'+incEsc(m)+'">'+incEsc(m.length > 60 ? m.slice(0,57)+'…' : m)+'</button>';
-        });
-        html += '<button type="button" class="inc-chip" data-motivo="">Otro</button>';
-        cont.innerHTML = html;
-        cont.querySelectorAll('.inc-chip').forEach(function(b){
-          b.addEventListener('click', function(){
-            var m = b.dataset.motivo;
-            if(m) incMotivoChipClick(m); else $('incMotivo').focus();
-          });
-        });
-      }).catch(function(){
-        // Falla silenciosa: se deja la etiqueta sin chips, el textarea sigue disponible.
-        $('incMotivoChips').innerHTML = '<span class="inc-chip-lbl">Rápidos:</span>'
-          + '<span class="text-muted" style="font-size:.74rem">No se pudieron cargar los motivos frecuentes.</span>';
-      });
-  }
+  // 🔧 2026-09-27 (Daniel: "sácale los rápidos, mejor sácale los
+  // rápidos"): los chips de motivos frecuentes se quitaron por completo
+  // (ver también REGLA #3 arriba, min 30 caracteres). `incCargarMotivosFrecuentes`
+  // queda como no-op para no romper la llamada al final del archivo.
+  function incCargarMotivosFrecuentes(){}
 
   // ══════════ Conciliación: nuestra BD vs ERP Random vs CheckWMS ══════════
   // Daniel (2026-08-03): "prioridad a comparar nuestra BD es contra el ERP
@@ -1692,11 +1614,10 @@
     if(h.descripcion) document.getElementById('incDescripcion').value = h.descripcion;
     document.getElementById('incCantidad').value = h.cantidad || 1;
     if(h.ubicacion){
-      document.getElementById('incUbicacion').value = h.ubicacion;
-      // La ubicación viene DIRECTO del WMS en este hallazgo -- Check dice lo mismo por definición.
+      // La ubicación viene DIRECTO del WMS/Check en este hallazgo.
       incPintarUbicacionCheck('coincide', h.ubicacion);
       document.getElementById('incUaResultado').innerHTML =
-        '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación en Bodega 13: <b>'
+        '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación (Check): <b>'
         +h.ubicacion+'</b> (traída de la conciliación, no de una nueva búsqueda de UA).</span>';
     }
     refrescarVerdeTodos();
@@ -1787,19 +1708,21 @@
   // la tabla principal): 'distinta' = ámbar en ambos campos, 'no_esta' =
   // el campo Check queda vacío con una nota, cualquier otro estado = sin
   // resaltar (coincide, o no hay con qué comparar todavía).
+  // 🔒 2026-09-27 (Daniel: "la ubicación es solo de Check... mantenla
+  // bloqueada, solo se edita en Check"): ya no hay dos fuentes que puedan
+  // "diferir" -- Check ES la ubicación. `incUbicacion` (oculto, lo que
+  // viaja al guardar) se llena SIEMPRE con el mismo valor de Check, nunca
+  // a mano, para que la próxima comparación quede coincidiendo por diseño.
   function incPintarUbicacionCheck(chkEstado, chkUbicacion){
-    var elNuestra = $('incUbicacion'), elCheck = $('incUbicacionCheck');
-    elNuestra.classList.remove('inc-ubic-ambar');
+    var elCheck = $('incUbicacionCheck');
     elCheck.classList.remove('inc-ubic-ambar');
     if(chkEstado === 'no_esta'){
       elCheck.value = 'No está en Check';
+      $('incUbicacion').value = '';
       return;
     }
     elCheck.value = chkUbicacion || (chkEstado === 'sin_datos' ? 'Check no disponible' : '—');
-    if(chkEstado === 'distinta'){
-      elNuestra.classList.add('inc-ubic-ambar');
-      elCheck.classList.add('inc-ubic-ambar');
-    }
+    $('incUbicacion').value = chkUbicacion || '';
   }
 
   function limpiarModal(){
@@ -1847,7 +1770,6 @@
     document.getElementById('incObservacion').value = r.observacion || '';
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
-    document.getElementById('incUbicacion').value = r.ubicacion || '';
     document.getElementById('incSugerencia').value = r.sugerencia || '';
     document.getElementById('incRepuestoStockId').value = r.repuesto_stock_id || '';
     // 🔧 2026-09-26 (Daniel: "Ubicación según Check (WMS)... reutiliza el
@@ -2094,13 +2016,16 @@
   document.getElementById('incFEstado').addEventListener('change', function(){
     incEstado = this.value; incPage = 1; cargar();
   });
+  document.getElementById('incFChk').addEventListener('change', function(){
+    incFChk = this.value; incPage = 1; cargar();
+  });
   document.getElementById('incBtnLimpiar').addEventListener('click', function(){
     document.getElementById('incFQ').value = '';
     document.getElementById('incFEstado').value = '';
     // REGLA #4.3 (Daniel, bug real 2026-08-01): al limpiar CUALQUIER
     // filtro -- también los de columna y el orden -- la tabla se recarga
     // siempre, nunca se queda con el resultado anterior.
-    incFiltrosCol = {f_ua: '', f_sku: '', f_descripcion: '', f_motivo: '', f_cantidad: '', f_fecha: '', f_chk: ''};
+    incFChk = ''; var selChk = document.getElementById('incFChk'); if(selChk) selChk.value = '';
     incQ = ''; incEstado = ''; incOrderBy = ''; incOrderDir = ''; incPage = 1; cargar();
   });
 
@@ -2220,16 +2145,17 @@
   // modal -- POST /mantenciones/api/incidencias/repuestos-crear-rapido.
   // Tras crearlo queda auto-seleccionado y sigue el flujo normal.
   document.getElementById('incBtnRepNoExiste').addEventListener('click', function(){
-    // 🔧 2026-09-26 (Daniel, caso real: "me creó el repuesto con el nombre
-    // de Escaladora ILUS, no tiene nada que ver"): se prellenaba con
-    // `incDescripcion`, que es el nombre del EQUIPO/máquina de la
-    // incidencia, no del repuesto que se va a pedir -- por eso quedó mal
-    // guardado. Se usa lo que el usuario ya escribió en el buscador de
-    // repuestos (si algo escribió) y si no, se deja en blanco para que lo
-    // tipee él mismo (nunca el nombre del equipo).
+    // 🔧 2026-09-27 (Daniel, SIGUE pasando tras el primer intento: "aún
+    // cuando presiono el botón de no existe, me sigue saliendo el nombre
+    // del producto"). La ronda anterior lo cambió por el texto ya escrito
+    // en el buscador (`getEstado().q`) -- pero ese texto TAMBIÉN puede ser
+    // el nombre del equipo (Daniel busca repuestos compatibles escribiendo
+    // el modelo de la máquina, ej. "Escaladora ILUS X1", para encontrar
+    // piezas compatibles). Nunca hay un texto seguro para prellenar acá:
+    // el campo nace SIEMPRE en blanco, el usuario escribe el nombre real
+    // del repuesto (ej. "Perno DR Bolt M8X20").
     document.getElementById('incRepNuevoForm').hidden = false;
-    var yaEscrito = (_incRepBuscador && _incRepBuscador.getEstado) ? (_incRepBuscador.getEstado().q || '') : '';
-    document.getElementById('incRepNuevoNombre').value = yaEscrito;
+    document.getElementById('incRepNuevoNombre').value = '';
     document.getElementById('incRepNuevoNombre').focus();
   });
   document.getElementById('incBtnRepNuevoCancelar').addEventListener('click', function(){
