@@ -216,6 +216,52 @@ class TestHallazgoFaltaRegistrar(unittest.TestCase):
         self.assertIsNone(h["sku"])
         self.assertIsNone(h["descripcion"])
 
+    def test_nuestra_bd_y_wms_se_rellenan_solos_2026_09_27(self):
+        """Daniel, viendo la tabla en vivo: "dice que está en la Bodega 13
+        del WMS, pero la columna WMS dice '—'"... el hallazgo YA conoce el
+        número del WMS (es su propia fuente) y que nuestra BD es 0 -- ya
+        no deben quedar en blanco."""
+        h = self.armar("UA1007933", {"codigo": "TWMA305-140", "stFisico": 2})
+        self.assertEqual(h["nuestra_bd"], 0)
+        self.assertEqual(h["wms"], 2)
+        self.assertIsNone(h["erp"])
+
+    def test_erp_se_completa_si_el_sku_aparece_en_erp_por_sku(self):
+        h = self.armar("UA1", {"codigo": "X", "stFisico": 1}, erp_por_sku={"X": 5})
+        self.assertEqual(h["erp"], 5)
+
+    def test_erp_por_sku_vacio_o_none_no_revienta(self):
+        h = self.armar("UA1", {"codigo": "X", "stFisico": 1}, erp_por_sku=None)
+        self.assertIsNone(h["erp"])
+
+    def test_cantidad_1_nunca_sugiere_distribuir(self):
+        h = self.armar("UA1", {"codigo": "X", "stFisico": 1})
+        self.assertFalse(h["sugerir_distribuir"])
+
+    def test_2026_09_27_equipo_real_con_2_unidades_en_una_ua_sugiere_distribuir(self):
+        """Daniel, dictando en vivo: "los esquís está mal, hay que
+        corregir eso"... 2 esquís en la misma UA -> sugerir distribuir,
+        porque cada uno puede tener un motivo distinto."""
+        h = self.armar("UA1", {"codigo": "SKI1", "stFisico": 2},
+                        clasificacion={"repetible": False})
+        self.assertTrue(h["sugerir_distribuir"])
+        self.assertIn("distribuir", h["detalle"].lower())
+
+    def test_2026_09_27_sin_clasificar_tambien_sugiere_distribuir(self):
+        """Sin clasificar cuenta igual que 'no repetible' -- la
+        clasificación manda, nunca se asume que agrupar está bien."""
+        h = self.armar("UA1", {"codigo": "X", "stFisico": 3}, clasificacion=None)
+        self.assertTrue(h["sugerir_distribuir"])
+
+    def test_2026_09_27_par_de_mancuernas_repetible_no_sugiere_distribuir(self):
+        """Daniel: "las mancuernas, el par... está OK, no seamos tan
+        cerrados". modelo_precio='fijo' -> repetible=True -> no se
+        sugiere distribuir, se marca como normal."""
+        h = self.armar("UA1", {"codigo": "MANC1", "stFisico": 2},
+                        clasificacion={"repetible": True})
+        self.assertFalse(h["sugerir_distribuir"])
+        self.assertIn("normal", h["detalle"].lower())
+
 
 class TestComparativaUa(unittest.TestCase):
     """🔧 2026-09-26 (Daniel, en vivo: "necesito hacer una comparativa de

@@ -632,6 +632,11 @@
   max-height:180px;overflow-y:auto}
 .inc-rep-prov-lista .it{padding:7px 10px;font-size:.83rem;cursor:pointer}
 .inc-rep-prov-lista .it:hover{background:#f3f4f6}
+/* 🔧 2026-09-27 (Daniel: "sugerir distribuir a otra UA"). Badge chico e
+   inconfundible, mismo espíritu que .inc-chk-warn. */
+.inc-badge-distribuir{display:inline-flex;align-items:center;gap:4px;background:#fef2f2;
+  border:1px solid #fecaca;color:#b91c1c;border-radius:8px;padding:2px 8px;
+  font-size:.72rem;font-weight:700;white-space:nowrap;margin-bottom:3px}
 .inc-c5{background:#f8fafc;border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
 
 /* ══ 2026-09-26 (Daniel, viendo el modal en producción): sin barra de
@@ -1643,7 +1648,9 @@
         + '<td class="num'+(h.nuestra_bd!=null?' v-bd':'')+'">'+(h.nuestra_bd!=null?h.nuestra_bd:'—')+'</td>'
         + '<td class="num'+(h.erp!=null?' v-erp':'')+'">'+(h.erp!=null?h.erp:'—')+'</td>'
         + '<td class="num'+(h.wms!=null?' v-wms':'')+'">'+(h.wms!=null?h.wms:'—')+'</td>'
-        + '<td class="inc-h-d">'+h.detalle+(ayuda?'<br><small class="text-muted">'+ayuda+'</small>':'')+'</td>'
+        + '<td class="inc-h-d">'
+        +   (h.sugerir_distribuir ? '<span class="inc-badge-distribuir"><i class="bi bi-signpost-split-fill"></i> Distribuir a UAs</span> ' : '')
+        +   h.detalle+(ayuda?'<br><small class="text-muted">'+ayuda+'</small>':'')+'</td>'
         + '<td>'+boton+'</td>'
         + '</tr>';
     });

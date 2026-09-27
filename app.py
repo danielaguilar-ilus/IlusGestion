@@ -63822,7 +63822,7 @@ def _inc_hallazgo_accion(h):
     return None
 
 
-def _inc_hallazgo_falta_registrar(ua, fila_wms):
+def _inc_hallazgo_falta_registrar(ua, fila_wms, erp_por_sku=None, clasificacion=None):
     """Arma el hallazgo 'falta_registrar' (WMS tiene la UA, nosotros no la
     registramos) con los datos para PRELLENAR el alta (Daniel, 2026-09-26:
     "tocar una fila 'Falta en nuestra BD' -> abrir el alta prellenada...
@@ -63832,17 +63832,52 @@ def _inc_hallazgo_falta_registrar(ua, fila_wms):
 
     `cantidad` sale de stFisico -- puede venir como texto o vacío desde el
     WMS, nunca menor a 1 (una incidencia siempre representa al menos una
-    unidad física)."""
+    unidad física).
+
+    🔧 2026-09-27 (Daniel, viendo la tabla en vivo: "dice que está en la
+    Bodega 13 del WMS, pero la columna WMS dice '—'... ¿cuál es el
+    motivo?"). El hallazgo YA conoce el número del WMS (es la fuente
+    misma de la fila) y que nuestra BD es 0 (por eso "falta registrar")
+    -- antes esas columnas se dejaban vacías por no rellenarlas, no porque
+    el dato no existiera. Se agrega también `erp` cuando el SKU aparece
+    en el ERP Random (mismo diccionario ya cacheado que usa el resto de
+    la conciliación, sin golpear el ERP de nuevo).
+
+    🔧 2026-09-27 (Daniel, dictando en vivo, REGLA nueva): si esta UA junta
+    2+ unidades de un producto que NO es repetible (piso/accesorio/pares
+    como mancuernas -- `clasificacion["repetible"] is True`), se sugiere
+    DISTRIBUIR a una UA por unidad -- porque el motivo de una incidencia
+    es por UA, no por SKU: dos máquinas idénticas pueden fallar por cosas
+    distintas (a una le falta una piola, a la otra una polea) y el SKU
+    solo no alcanza para diferenciarlas. Sin clasificar cuenta igual que
+    "no repetible" (mismo criterio ya usado para partir filas en las OT:
+    la clasificación manda, nunca se asume que agrupar está bien)."""
     try:
         cant = int(float((fila_wms or {}).get("stFisico") or 1))
     except (TypeError, ValueError):
         cant = 1
+    cant = max(1, cant)
+    sku = (fila_wms or {}).get("codigo")
+    detalle = f"Está en {INC_BODEGA_WMS} del WMS pero no tiene incidencia registrada."
+    sugerir_distribuir = False
+    if cant > 1:
+        repetible = (clasificacion or {}).get("repetible")
+        if repetible is True:
+            detalle += f" {cant:g} unidades en la misma UA -- normal para este producto (pares/accesorio)."
+        else:
+            sugerir_distribuir = True
+            detalle += (f" Ojo: {cant:g} unidades juntas en la MISMA UA -- sugerimos distribuirlas a "
+                        f"una UA por unidad antes de registrar, para que cada una pueda tener su propio "
+                        f"motivo (dos máquinas iguales pueden fallar por cosas distintas).")
     return {
         "tipo": "falta_registrar", "gravedad": "warn", "orden": 4,
-        "ua": ua, "sku": (fila_wms or {}).get("codigo"),
+        "ua": ua, "sku": sku,
         "descripcion": (fila_wms or {}).get("descripcion"),
-        "ubicacion": (fila_wms or {}).get("ubicacion"), "cantidad": max(1, cant),
-        "detalle": f"Está en {INC_BODEGA_WMS} del WMS pero no tiene incidencia registrada.",
+        "ubicacion": (fila_wms or {}).get("ubicacion"), "cantidad": cant,
+        "nuestra_bd": 0, "wms": cant,
+        "erp": (erp_por_sku or {}).get(sku),
+        "sugerir_distribuir": sugerir_distribuir,
+        "detalle": detalle,
     }
 
 
@@ -64023,9 +64058,23 @@ def mant_api_incidencias_conciliacion():
 
     # ── P4) En bodega pero sin incidencia registrada ──
     if wms_ok:
+        # 🔧 2026-09-27 (Daniel, dictando en vivo: "si un producto está en
+        # una sola UA de Check con TODAS las cantidades juntas, hay que
+        # sugerir distribuirlo a otra UA -- a menos que sean pares
+        # [mancuernas]... el motivo es por UA, no por SKU: puedo tener dos
+        # máquinas iguales con dos fallas distintas, a una le falta una
+        # piola y a la otra una polea, y ahí el SKU no me sirve de
+        # diferenciador"). Reusa la MISMA clasificación del Catálogo que ya
+        # decide esto para las OT (modelo_precio='fijo' -> repetible, se
+        # agrupa sin problema; 'horas' o sin clasificar -> equipo real,
+        # cada unidad necesita su propia UA para poder tener su propio
+        # motivo). Una sola consulta batch, nada de golpear el ERP.
+        _skus_wms = [r.get("codigo") for r in wms_por_ua.values()]
+        _clasif_wms = _inc_clasificacion_skus_batch(_skus_wms)
         for ua, r in wms_por_ua.items():
             if ua not in inc_por_ua:
-                hallazgos.append(_inc_hallazgo_falta_registrar(ua, r))
+                _clas = _clasif_wms.get((r.get("codigo") or "").strip())
+                hallazgos.append(_inc_hallazgo_falta_registrar(ua, r, erp_por_sku, _clas))
 
     # ── P5) UA que ya salió de la bodega de incidencias ──
     if wms_ok:
