@@ -3410,6 +3410,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
        vacía frente a la derecha. #}
     <div class="otd-col">
 
+      {# 📝 2026-09-27 (Daniel, en vivo: "que la descripción le llamemos
+         motivo y esté bien claro en la información, no en los equipos...
+         para tener claro el motivo de por qué se está yendo para allá" --
+         ej. abre una visita a Unión Gastronómica: ¿por qué fuimos? porque
+         hubo una garantía. "darle más importancia a eso, para tener claro
+         el motivo de la persona que crea la OT, qué va a hacer"). Va
+         PRIMERO en la columna izquierda, antes que cualquier otra tarjeta
+         -- es lo primero que se lee al abrir la OT. Mismo dato que ya se
+         pedía en el wizard como "Descripción" (mínimo 25 caracteres,
+         `mant_visitas.descripcion`) -- no es un campo nuevo, es el mismo
+         con más peso visual y el nombre que Daniel de verdad usa: motivo. #}
+      {% if v.descripcion %}
+      <div class="otd-card" style="border-left:4px solid var(--ilus-red,#dc2626)">
+        <h3><i class="bi bi-chat-square-quote-fill" style="color:var(--ilus-red,#dc2626)"></i> Motivo de la visita</h3>
+        <div style="padding:2px 16px 14px;font-size:.92rem;line-height:1.5;color:#1f2937;overflow-wrap:anywhere;white-space:pre-wrap">{{ v.descripcion }}</div>
+      </div>
+      {% endif %}
+
       {# 🆕 2026-09-02 (Daniel, en vivo: "es necesario que siempre lleve
          documento y mostrarlo por trazabilidad además del responsable"):
          quién y cuándo creó la OT, visible para CUALQUIERA que la vea
