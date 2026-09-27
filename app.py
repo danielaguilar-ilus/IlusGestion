@@ -88028,6 +88028,38 @@ def _otrep_subir_evidencia_generica(carpeta, prefijo, f, tipo, user, solicitud_i
         return False, "La evidencia subió pero no se pudo registrar."
 
 
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/evidencia", methods=["POST"])
+@_mant_required
+@_otrep_manual_required
+def repstock_solicitud_evidencia(sid):
+    """📷 2026-09-27 (Daniel: "no dejes avanzar a nadie si no has gestionado
+    al menos una foto de los repuestos... obligatorio"). Antes de esto no
+    había forma de agregarle una foto a una solicitud YA CREADA sin
+    evidencia (ej. una manual/ERP que nació 'solicitado' sin adjunto) --
+    el candado de `_otrep_cambiar_estado` la dejaría trabada para siempre.
+    Reusa el mismo helper genérico que Incidencias/Tickets (sin necesitar
+    visita_id/maquina_id)."""
+    s = mysql_fetchone("SELECT id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    f, tipo, e_arch = _otrep_primer_archivo()
+    if e_arch:
+        return jsonify({"ok": False, "error": e_arch}), 400
+    if not f:
+        return jsonify({"ok": False, "error": "Adjunta una foto o un video."}), 400
+    if not _gcs_ready():
+        return jsonify({"ok": False, "error":
+                        "El almacenamiento de fotos no está disponible en este momento. "
+                        "Intenta de nuevo en un minuto."}), 503
+    ok_ev, e_ev = _otrep_subir_evidencia_generica(
+        "solicitudes", f"sol{sid}", f, tipo, current_username() or "sistema", sid)
+    if not ok_ev:
+        return jsonify({"ok": False, "error": e_ev or "No se pudo subir la evidencia."}), 502
+    sol = mysql_fetchone("SELECT n_fotos, n_videos FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    return jsonify({"ok": True, "n_fotos": int((sol or {}).get("n_fotos") or 0),
+                    "n_videos": int((sol or {}).get("n_videos") or 0)})
+
+
 def _otrep_ticket_para_incidencia(iid, inc, user):
     """Equivalente a _otrep_ticket_para_ot pero para el origen Incidencias
     (Fase 2, 2026-09-21): UN ticket 'spare_parts' por incidencia que agrupa
@@ -89740,6 +89772,17 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         return False, 400, {"ok": False, "error":
                         "Esta es una reposición de stock propio: quedó cerrada al recibirse "
                         "en bodega, no hay una instalación que registrar."}
+    # 📷 2026-09-27 (Daniel: "en la gestión de repuestos, no dejes avanzar a
+    # nadie si no has gestionado al menos una foto de los repuestos, es
+    # necesario, a partir de ahora obligatorio"). Único punto de verdad de
+    # toda transición (OT, cola de gestión, incidencias) -- se bloquea acá
+    # y no en cada endpoint por separado. Rechazar una solicitud SÍ se
+    # permite sin foto (no hace falta evidencia para decir que no). Un
+    # video NO alcanza -- Daniel pidió "una foto" específicamente.
+    if nuevo != "rechazado" and int(s.get("n_fotos") or 0) < 1:
+        return False, 400, {"ok": False, "error":
+                        "Esta solicitud no tiene ninguna foto del repuesto todavía -- "
+                        "sube al menos una antes de avanzarla de estado."}
     nota = (d.get("nota") or "").strip()
     sets, params = ["estado=%s"], [nuevo]
     stock = None
@@ -91838,6 +91881,18 @@ def repstock_solicitud_manual():
         f_ev, tipo_ev, e_arch = _otrep_primer_archivo()
         if e_arch:
             return jsonify({"ok": False, "error": e_arch}), 400
+
+    # 📷 2026-09-27 (Daniel: "en la gestión de repuestos, no dejes avanzar a
+    # nadie si no has gestionado al menos una foto de los repuestos... a
+    # partir de ahora obligatorio"). Los ítems "confirmado" (bodega/
+    # incidencia) NACEN directo en 'validado' -- se saltan por completo el
+    # candado que ya existe en `_otrep_cambiar_estado` para toda transición
+    # normal. Mismo criterio acá: si algún ítem de este lote va a nacer
+    # 'validado', hace falta una FOTO (no basta un video) antes de crearlo.
+    if any((it["stock"] or it.get("incidencia")) for it in limpios) and tipo_ev != "foto":
+        return jsonify({"ok": False, "error":
+                        "Al menos uno de estos repuestos queda validado de inmediato (viene de bodega "
+                        "o de una incidencia): sube una foto del repuesto antes de solicitarlo."}), 400
 
     user = current_username() or "sistema"
     # secrets.token_hex ya está importado (import secrets, arriba del

@@ -199,6 +199,12 @@
 .rs-ev img{width:100%;height:100%;object-fit:cover;display:block}
 .rs-ev-vid{width:100%;height:100%;display:grid;place-items:center;color:#fff;font-size:1.4rem}
 .rs-nota{margin-top:8px;font-size:.74rem;color:#374151;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 9px;white-space:pre-wrap}
+/* 📷 2026-09-27: "no dejes avanzar sin al menos una foto" -- aviso + salida. */
+.rs-sin-foto{margin-top:8px;font-size:.76rem;color:#92400e;background:#fff8e1;border:1px solid #fcd34d;
+  border-radius:8px;padding:7px 9px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rs-btn-foto{display:inline-flex;align-items:center;min-height:32px;padding:4px 12px;border-radius:999px;
+  background:#0a0a0a;color:#fff;font-weight:700;font-size:.72rem;cursor:pointer;white-space:nowrap}
+.rs-btn-foto:hover{background:var(--ilus-red,#dc2626)}
 .rs-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;border-top:1px solid #f1f5f9;background:#fff}
 .rs-tl{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;font-weight:800;color:#9ca3af}
 .rs-tl i{font-size:.6rem;color:#cbd5e1}
@@ -1862,6 +1868,17 @@ function rsCardInner(s){
         '<div class="rs-k">Diagnóstico del técnico</div>' +
         '<div class="rs-v rs-mot">' + rsEsc(s.motivo || '') + '</div>' +
         (evs ? '<div class="rs-evs">' + evs + '</div>' : '') +
+        // 📷 2026-09-27 (Daniel: "no dejes avanzar a nadie si no has
+        // gestionado al menos una foto de los repuestos... obligatorio").
+        // Solicitudes viejas o creadas sin foto (manual/ERP) quedan
+        // trabadas por el candado del backend (_otrep_cambiar_estado) sin
+        // forma de avanzar -- este botón es la salida: sube UNA foto a la
+        // solicitud ya creada (POST .../evidencia) y listo.
+        (!(s.n_fotos > 0) ?
+          '<div class="rs-sin-foto"><i class="bi bi-exclamation-triangle-fill"></i> Sin foto del repuesto -- '
+          + 'no se puede avanzar de estado. '
+          + '<label class="rs-btn-foto">Agregar foto<input type="file" accept="image/*" capture="environment" '
+          + 'onchange="rsSubirFotoSolicitud(' + s.id + ', this)" hidden></label></div>' : '') +
         (s.nota_gestion ? '<div class="rs-nota"><i class="bi bi-chat-left-text"></i> ' + rsEsc(s.nota_gestion) + '</div>' : '') +
       '</div>' +
     '</div>' +
@@ -1977,6 +1994,25 @@ async function rsAccion(sid, nuevo){
     }
   }
   await rsPostEstado(sid, body);
+}
+// 📷 2026-09-27 (Daniel: "no dejes avanzar a nadie si no has gestionado al
+// menos una foto de los repuestos... obligatorio"). Sube la foto a una
+// solicitud que nació sin evidencia (el candado del backend la traba hasta
+// que exista al menos una).
+async function rsSubirFotoSolicitud(sid, input){
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const label = input.closest('.rs-btn-foto');
+  if (label){ label.style.pointerEvents = 'none'; label.textContent = 'Subiendo…'; }
+  try {
+    const fd = new FormData();
+    fd.append('evidencia', f);
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/evidencia', { method:'POST', body: fd, credentials:'same-origin' });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ ilusToast(j.error || 'No se pudo subir la foto.', { type:'error' }); if (label){ label.style.pointerEvents=''; label.textContent='Agregar foto'; } return; }
+    ilusToast('✓ Foto agregada -- ya se puede avanzar la solicitud', { type:'success' });
+    await rsCargar();
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type:'error' }); if (label){ label.style.pointerEvents=''; label.textContent='Agregar foto'; } }
 }
 async function rsCrearTicket(sid){
   try {
