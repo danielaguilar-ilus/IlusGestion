@@ -3898,9 +3898,14 @@ window.OT2C = (function(){
         '<div class="col-md-2"><label class="fl">Piso</label>'+
         '<input type="number" class="form-control" min="-5" max="30" value="'+esc(S.acceso.piso)+'" '+
         'placeholder="Opc." oninput="OT2C.setAccesoTexto(\'piso\',this.value)"></div>'+
-        '<div class="col-md-2"><label class="fl">Notas de acceso</label>'+
+        // 📝 2026-09-27 (Daniel, viendo el campo cortado: "más grandecito,
+        // pero que no ocupe mucho espacio"): pasa de col-md-2 (se veía
+        // recortado, sin espacio para leer lo escrito) a su propia fila a
+        // ancho completo -- más ancho para leer, misma altura de una línea.
+        '<div class="col-md-6"><label class="fl">Notas de acceso</label>'+
         '<input class="form-control" maxlength="500" value="'+esc(S.acceso.notas)+'" '+
-        'placeholder="Opcional" oninput="OT2C.setAccesoTexto(\'notas\',this.value)"></div>'+
+        'placeholder="Ej: entregado por Felipe Gómez, timbre no funciona, llamar antes de subir" '+
+        'oninput="OT2C.setAccesoTexto(\'notas\',this.value)"></div>'+
       '</div>';
   }
 
