@@ -848,11 +848,16 @@
     sin_datos: {cls:'nd',    txt:'Check no disponible'},
   };
 
+  // 🔧 2026-09-27 (Daniel, viendo la tabla en vivo: "no entiendo por qué
+  // repites dos veces la UA si la tienes al principio... la ubicación es
+  // una sola, y es la de Check"). La UA ya está en su propia columna al
+  // inicio de la fila -- acá solo va la UBICACIÓN física (nunca la UA de
+  // nuevo), comparada contra la que reporta Check.
   function incChkCelda(r, checkwmsOk){
     var info = INC_CHK_INFO[r.chk_estado] || INC_CHK_INFO.sin_datos;
-    var nuestra = [r.recomendacion, r.ubicacion].filter(Boolean).join(' · ') || '—';
-    var chk = r.chk_estado === 'no_esta' ? '—' : ([r.chk_ua, r.chk_ubicacion].filter(Boolean).join(' · ') || '—');
-    return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Nuestra: '+incEsc(nuestra)+' · Check: '+incEsc(chk)+'">'
+    var nuestra = r.ubicacion || '—';
+    var chk = r.chk_estado === 'no_esta' ? '—' : (r.chk_ubicacion || '—');
+    return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Nuestra ubicación: '+incEsc(nuestra)+' · Check: '+incEsc(chk)+'">'
       + '<b>'+info.txt+'</b><small>'+incEsc(nuestra)+(checkwmsOk===false ? '' : (' → '+incEsc(chk)))+'</small></span></td>';
   }
 
@@ -893,7 +898,7 @@
       + '<th style="width:56px">Foto</th>'
       + incTh('UA', 'ua') + incTh('SKU', 'sku') + incTh('Descripción', 'descripcion')
       + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
-      + incTh('Estado', 'estado') + '<th>Ubicación/UA vs Check</th>'
+      + '<th>Ubicación vs Check</th>'
       + incTh('Fecha resolución', 'fecha_resolucion')
       + '<th style="width:78px">Acciones</th></tr></thead>';
   }
@@ -934,7 +939,6 @@
         + '<td>'+(r.cantidad||0)+'</td>'
         + '<td>'+(r.motivo||'—')+'</td>'
         + '<td>'+(r.req_repuesto==='si' ? ('Sí'+(r.stock_repuesto?(' · '+(r.stock_repuesto==='hay'?'Hay':'No hay')):'')) : (r.req_repuesto==='no'?'No':'—'))+'</td>'
-        + '<td><span class="inc-badge inc-badge-'+r.estado+'">'+(r.estado==='resuelta'?'Resuelta':'Abierta')+'</span></td>'
         + incChkCelda(r, checkwmsOk)
         + '<td>'+fmtFecha(r.fecha_resolucion)+'</td>'
         + '<td class="inc-acciones">'

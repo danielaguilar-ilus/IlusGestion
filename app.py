@@ -64216,6 +64216,79 @@ _INC_CHK_ESTADOS = ("coincide", "distinta", "no_esta", "sin_ua",
                      "sin_ubicacion_nuestra", "sin_datos")
 
 
+def _inc_ids_no_cuadran():
+    """IDs de incidencias ABIERTAS que NO cuadran: sin motivo declarado, o
+    con diferencia de cantidad por SKU contra el ERP Random o CheckWMS.
+
+    Daniel (2026-09-27, viendo la tabla principal en vivo): "esta tabla sea
+    la que filtra lo que está cuadrado con motivo y con cantidades... si no
+    [cuadra], hay que pasarlo a la tabla de arriba" -- el panel de
+    conciliación (`mant_api_incidencias_conciliacion`) ya lista estos
+    mismos casos como hallazgos (dif_erp/dif_wms/sin_motivo); acá solo se
+    necesita el SET de ids para excluirlos de la lista principal, no volver
+    a construir el hallazgo completo.
+
+    Reutiliza las MISMAS fuentes cacheadas que la conciliación
+    (`_checkwms_stock_rows` 1h, `_erp_stock_b13_por_sku` 15min) -- no
+    dispara ninguna consulta nueva al ERP Random (REGLA #4.1: solo lectura,
+    ya cacheada)."""
+    try:
+        incs = mysql_fetchall(
+            "SELECT id, sku, cantidad, motivo FROM mant_incidencias "
+            "WHERE estado='abierta' AND COALESCE(eliminada,0)=0") or []
+    except Exception as _e:
+        print(f"[incidencias no_cuadran] error MySQL: {_e}", flush=True)
+        return set()
+
+    def _es_servicio(sku):
+        return (sku or "").strip().upper().startswith("ZZ")
+
+    malos = set()
+    inc_por_sku = {}
+    for i in incs:
+        if _es_servicio(i.get("sku")):
+            continue
+        if len((i.get("motivo") or "").strip()) < 10:
+            malos.add(i["id"])
+        sku = (i.get("sku") or "").strip()
+        if sku:
+            e = inc_por_sku.setdefault(sku, {"cant": 0, "ids": []})
+            e["cant"] += int(i.get("cantidad") or 0)
+            e["ids"].append(i["id"])
+
+    try:
+        erp_por_sku = _erp_stock_b13_por_sku() or {}
+    except Exception:
+        erp_por_sku = {}
+    try:
+        stock = _checkwms_stock_rows() or []
+    except Exception:
+        stock = []
+    wms_por_sku = {}
+    for r in stock:
+        if (r.get("bodega") or "").strip().upper() != INC_BODEGA_WMS:
+            continue
+        sku = (r.get("codigo") or "").strip()
+        if not sku:
+            continue
+        try:
+            q = float(r.get("stFisico") or 0)
+        except (TypeError, ValueError):
+            q = 0
+        wms_por_sku[sku] = wms_por_sku.get(sku, 0) + q
+
+    for sku, e in inc_por_sku.items():
+        reg = e["cant"]
+        erp = erp_por_sku.get(sku)
+        if erp is not None and abs(erp - reg) > 0.001:
+            malos.update(e["ids"])
+            continue
+        w = wms_por_sku.get(sku)
+        if w is not None and abs(w - reg) > 0.001:
+            malos.update(e["ids"])
+    return malos
+
+
 @app.route("/mantenciones/api/incidencias", methods=["GET"])
 @_mant_required
 @_no_tecnico_salvo_taller
@@ -64243,6 +64316,21 @@ def mant_api_incidencias_list():
 
     where = ["COALESCE(eliminada,0) = 0"]
     params = []
+
+    # 🔧 2026-09-27 (Daniel, viendo la tabla en vivo): "esta tabla sea la que
+    # filtra lo que está cuadrado con motivo y con cantidades... si no,
+    # pasarlo a la tabla de arriba [el panel de conciliación]". Por defecto
+    # se excluyen las incidencias sin motivo o con diferencia de cantidad
+    # -- esas siguen 100% visibles y gestionables arriba, en "Revisar
+    # diferencias" (mismo dato, ver _inc_ids_no_cuadran). `?ver_todo=1`
+    # es la válvula de escape (no se borra ni se oculta nada de forma
+    # permanente, solo deja de ser el default de esta tabla).
+    if (request.args.get("ver_todo") or "").strip() != "1":
+        ids_no_cuadran = _inc_ids_no_cuadran()
+        if ids_no_cuadran:
+            marcadores_nc = ",".join(["%s"] * len(ids_no_cuadran))
+            where.append(f"id NOT IN ({marcadores_nc})")
+            params += list(ids_no_cuadran)
     if q:
         # 🔧 2026-09-27 (Daniel, viendo la fila de filtros por columna:
         # "saca los filtros de la tabla, es mejor manejar un multi filtro"):
