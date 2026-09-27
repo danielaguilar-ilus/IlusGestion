@@ -317,9 +317,23 @@
                   seguro que el repuesto no existe, debo poder crearlo desde
                   ahí"): atajo de alta MÍNIMA sin salir del modal -- ver
                   POST /mantenciones/api/incidencias/repuestos-crear-rapido. -#}
-              <div class="mt-2">
+              <div class="mt-2 d-flex flex-wrap gap-2">
                 <button type="button" class="btn btn-sm btn-outline-dark" id="incBtnRepNoExiste">
                   <i class="bi bi-plus-circle me-1"></i>No existe, crear repuesto nuevo</button>
+                {#- 🔧 2026-09-27 (Daniel: "sustituyamos por el modal de
+                    recepción/crear repuesto, con todas las restricciones").
+                    Ese modal (#modalRepStock, con sondeo ERP, costo,
+                    ubicación ESCANEADA, dimensiones) vive dentro de
+                    _repuestos_bodega_pane.html -- un archivo enorme con su
+                    propio CSS/JS; incrustarlo entero acá es una integración
+                    pesada con riesgo real de choques de ids/funciones.
+                    Decisión (AskUserQuestion, Daniel): abrirlo en pestaña
+                    nueva es el camino seguro -- el alta rápida de arriba
+                    sigue disponible para cuando no hace falta ubicación
+                    real todavía. -#}
+                <a href="/repuestos" target="_blank" rel="noopener"
+                   class="btn btn-sm btn-outline-dark">
+                  <i class="bi bi-box-arrow-up-right me-1"></i>Crear completo (con ubicación) en Repuestos</a>
               </div>
               <div class="inc-rep-nuevo" id="incRepNuevoForm" hidden>
                 <div class="row g-2">
