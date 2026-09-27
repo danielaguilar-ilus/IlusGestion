@@ -724,19 +724,19 @@
   border:0;background:rgba(10,10,10,.7);color:#fff;font-size:0.83rem;display:grid;place-items:center;cursor:pointer}
 .o2m-foto-thumb button:hover{background:var(--ilus-red,#dc2626)}
 
-/* 📎 2026-09-27: Archivos para el técnico (fotos/videos/documentos) */
-.o2m-adj-add{display:inline-flex;align-items:center;min-height:44px;padding:9px 16px;cursor:pointer;font-weight:700}
-.o2m-adj-grid{display:flex;flex-direction:column;gap:8px;margin-top:14px}
-.o2m-adj-item{display:flex;align-items:center;gap:10px;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px}
-.o2m-adj-prev{width:44px;height:44px;flex:none;border-radius:8px;overflow:hidden;background:#f3f4f6;
-  display:grid;place-items:center;color:#6b7280;font-size:1.2rem}
-.o2m-adj-prev img{width:100%;height:100%;object-fit:cover;display:block}
-.o2m-adj-info{flex:1;min-width:0;display:flex;flex-direction:column}
-.o2m-adj-info b{font-size:.86rem;overflow-wrap:anywhere}
-.o2m-adj-info small{color:#6b7280;text-transform:capitalize}
-.o2m-adj-x{width:32px;height:32px;flex:none;border-radius:50%;border:0;background:#f3f4f6;color:#6b7280;
-  display:grid;place-items:center;cursor:pointer}
-.o2m-adj-x:hover{background:var(--ilus-red,#dc2626);color:#fff}
+/* 📎 2026-09-27 (revisión en vivo: "un cuadrito, con un más" -- mosaico
+   dentro de la MISMA tarjeta de Detalle, no un paso propio). */
+.o2m-adj-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.o2m-adj-mini{position:relative;width:64px;height:64px;border-radius:10px;overflow:hidden;
+  border:1.5px solid #e5e7eb;background:#f3f4f6;display:grid;place-items:center;color:#6b7280;font-size:1.3rem}
+.o2m-adj-mini img{width:100%;height:100%;object-fit:cover;display:block}
+.o2m-adj-mas{border-style:dashed;border-color:#d1d5db;color:#9ca3af;cursor:pointer;transition:all .16s;min-height:44px}
+.o2m-adj-mas:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626);background:#fff8f8}
+.o2m-adj-mini .o2m-adj-x{position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;
+  border:0;background:rgba(10,10,10,.7);color:#fff;font-size:.72rem;display:grid;place-items:center;cursor:pointer}
+.o2m-adj-mini .o2m-adj-x:hover{background:var(--ilus-red,#dc2626)}
+.o2m-adj-warn{flex-basis:100%;font-size:.72rem;color:#92400e;background:#fff8e1;border:1px solid #fcd34d;
+  border-radius:8px;padding:6px 9px;display:flex;align-items:center;gap:6px}
 
 @media (max-width:640px){
   .o2m .modal-dialog{margin:0;max-width:100%}
@@ -1458,16 +1458,12 @@ window.OT2C = (function(){
   function pasos(){
     var p = [{k:'tipo', n:'Tipo'}];
     if (!esInterno()) p.push({k:'cliente', n:'Cliente'});
+    // 📎 2026-09-27 (Daniel, corrigiendo en vivo: "dentro del paso 3 podemos
+    // agregar imágenes y video... sin crear un paso 4"): los archivos para
+    // el técnico YA NO son un paso propio -- viven DENTRO de la tarjeta
+    // "Detalle", justo debajo del motivo (ver pintarDetalle()). El paso
+    // 'adjuntos' se elimina de pasos() a propósito.
     p.push({k:'detalle', n:'Detalle'});
-    // 📎 2026-09-27 (Daniel, viendo el wizard en vivo: "es posible que en
-    // la generación de OT se puedan agregar los datos adjuntos, como
-    // evidencia de un equipo con falla o el recorrido del camión hasta
-    // donde va el equipo... fotos y videos, documentos... que se muestren
-    // al técnico"). Va justo después de Detalle (el motivo) a propósito:
-    // es el mismo espíritu -- contexto para el técnico -- y aplica a
-    // CUALQUIER tipo de OT, no solo trabajo interno. Nunca bloquea
-    // (completo('adjuntos') siempre true): es un apoyo, no un requisito.
-    p.push({k:'adjuntos', n:'Archivos'});
     // 2026-08-29 (Daniel: "agrégale un paso enumerado después del título de la
     // OT los datos de la contraparte... con correo y todo, el teléfono, y con
     // la dirección confirmada, la dirección del lugar"). Va inmediatamente
@@ -1543,8 +1539,6 @@ window.OT2C = (function(){
       // deja vacío (eso no cambió), pero la descripción ahora sí es un
       // requisito real -- ver O2M_DESC_MIN/setDescripcion().
       case 'detalle':  return (S.descripcion||'').trim().length >= O2M_DESC_MIN;
-      // 📎 2026-09-27: los adjuntos son un apoyo, nunca un requisito.
-      case 'adjuntos': return true;
       // 2026-08-29: la fecha no solo tiene que existir -- no puede estar en
       // el pasado (ver _o2mHoyStr). Al vivir acá, crear() la bloquea sola
       // (ya recorre completo() de todos los pasos) y la tarjeta del paso
@@ -1902,7 +1896,6 @@ window.OT2C = (function(){
       if (p.k==='tipo')     pintarTipo(b);
       if (p.k==='cliente')  pintarCliente(b);
       if (p.k==='detalle')  pintarDetalle(b);
-      if (p.k==='adjuntos') pintarAdjuntos(b);
       if (p.k==='contraparte') pintarContraparte(b);
       if (p.k==='agenda')   pintarAgenda(b);
       if (p.k==='tecnicos') pintarTecnicos(b);
@@ -1931,7 +1924,6 @@ window.OT2C = (function(){
       if (k==='tipo')     pintarTipo(b);
       if (k==='cliente')  pintarCliente(b);
       if (k==='detalle')  pintarDetalle(b);
-      if (k==='adjuntos') pintarAdjuntos(b);
       if (k==='contraparte') pintarContraparte(b);
       if (k==='agenda')   pintarAgenda(b);
       if (k==='tecnicos') pintarTecnicos(b);
@@ -2171,6 +2163,15 @@ window.OT2C = (function(){
       (descOk ? '<i class="bi bi-check-circle-fill me-1"></i>'+descLen+' caracteres'
               : descLen+' / '+O2M_DESC_MIN+' caracteres mínimos')+
       '</small>'+
+      // 📎 2026-09-27 (Daniel, corrigiendo en vivo: "dentro del paso 3
+      // podemos agregar imágenes y video... sin crear un paso 4. Algo bien
+      // interactivo, con un cuadrito, con un más"). Vive DENTRO de esta
+      // misma tarjeta -- ver pintarAdjDom()/adjuntosAgregar() más abajo.
+      '<div class="o2m-adj-inline">'+
+        '<label class="fl" style="margin-top:14px">Archivos para el técnico '+
+        '<span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
+        '<div class="o2m-adj-row" id="o2mAdjLista"></div>'+
+      '</div>'+
       // 🔧 FASE 4 REPUESTOS (2026-09-26): bloque informativo -- ver
       // S.repuestos_a_instalar en reset()/abrir(). Nombres completos,
       // nunca truncados (REGLA #15, formato Retiros).
@@ -2183,6 +2184,7 @@ window.OT2C = (function(){
               (r.equipo ? ' — '+esc(r.equipo) : '')+'</li>';
           }).join('')+
           '</ul></div>' : '');
+    pintarAdjListaDom();
   }
 
   function pintarAgenda(b){
@@ -5285,30 +5287,27 @@ window.OT2C = (function(){
     refrescarAnclas();
   }
   var O2M_ADJ_ICONO = {foto:'bi-image', video:'bi-camera-reels-fill', pdf:'bi-file-earmark-pdf-fill', documento:'bi-file-earmark-text-fill'};
+  // 📎 2026-09-27 (Daniel, corrigiendo en vivo: "algo bien interactivo, con
+  // un cuadrito, con un más, que diga agregar foto, video, documento, lo
+  // que sea, y se adjunta"). Mosaico de miniaturas de 64×64 -- la última
+  // casilla es SIEMPRE el "+" para agregar más, igual que cualquier picker
+  // de fotos conocido. El aviso de "no confidencial" va como nota chica
+  // debajo, una sola vez, no repetido por archivo.
   function pintarAdjListaDom(){
     var g = document.getElementById('o2mAdjLista'); if (!g) return;
-    g.innerHTML = S.adjuntos.length ? S.adjuntos.map(function(a,i){
+    g.innerHTML = S.adjuntos.map(function(a,i){
       var prev = (a.tipo==='foto') ? '<img src="'+URL.createObjectURL(a.file)+'" alt="">' : '<i class="bi '+(O2M_ADJ_ICONO[a.tipo]||'bi-file-earmark')+'"></i>';
-      return '<div class="o2m-adj-item">'+
-        '<div class="o2m-adj-prev">'+prev+'</div>'+
-        '<div class="o2m-adj-info"><b>'+esc(a.file.name)+'</b>'+
-        '<small>'+(a.file.size/1024/1024).toFixed(1)+' MB · '+a.tipo+'</small></div>'+
+      return '<div class="o2m-adj-mini" title="'+esc(a.file.name)+' ('+(a.file.size/1024/1024).toFixed(1)+' MB)">'+
+        prev+
         '<button type="button" class="o2m-adj-x" onclick="OT2C.adjuntosQuitar('+i+')" title="Quitar"><i class="bi bi-x-lg"></i></button>'+
       '</div>';
-    }).join('') : '';
-  }
-  function pintarAdjuntos(b){
-    b.innerHTML = '<h6 class="t">Archivos para el técnico</h6>'+
-      '<p class="d">Opcional: fotos, videos o documentos que el técnico va a ver al abrir la OT -- '+
-      'ej. una foto del equipo con falla, o el recorrido hasta el lugar. '+
-      '<b>No subas nada confidencial</b>: cualquier archivo que agregues acá lo ve el técnico asignado.</p>'+
-      '<label class="btn btn-outline-dark o2m-adj-add">'+
-        '<i class="bi bi-paperclip me-1"></i>Agregar archivos'+
+    }).join('') +
+      '<label class="o2m-adj-mini o2m-adj-mas" title="Agregar foto, video o documento">'+
+        '<i class="bi bi-plus-lg"></i>'+
         '<input type="file" multiple accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx" '+
         'onchange="OT2C.adjuntosAgregar(this.files); this.value=\'\';" hidden>'+
       '</label>'+
-      '<div class="o2m-adj-grid" id="o2mAdjLista"></div>';
-    pintarAdjListaDom();
+      (S.adjuntos.length ? '<div class="o2m-adj-warn"><i class="bi bi-shield-exclamation"></i>El técnico asignado va a ver estos archivos -- no subas nada confidencial.</div>' : '');
   }
   function pintarBodegaFotos(){
     var g = document.getElementById('o2mBodegaFotoGrid'); if (!g) return;
