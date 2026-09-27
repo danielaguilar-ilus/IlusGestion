@@ -123287,6 +123287,48 @@ def repstock_eliminar(rid):
     return jsonify({"ok": True})
 
 
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/destruir", methods=["POST"])
+@_mant_required
+def repstock_destruir(rid):
+    """🔧 2026-09-26 (Daniel, caso real: creó un repuesto de PRUEBA con el
+    nombre equivocado ["Escaladora ILUS" en vez del repuesto real] y "no me
+    permite borrarlo, solo desactivarlo"). El soft-delete de arriba sigue
+    siendo la regla para repuestos con historia real (REGLA #5) -- esto es
+    un hard-delete EXCLUSIVO de superadmin, y SOLO si el repuesto nunca se
+    usó de verdad: cantidad en 0, ninguna solicitud de OT/incidencia lo
+    referencia, y su único movimiento de kardex es el de alta inicial. Si
+    tiene cualquier rastro real, se rechaza -- para eso está desactivar."""
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error":
+                        "Solo un superadministrador puede eliminar un repuesto definitivamente."}), 403
+    rep = mysql_fetchone("SELECT sku, descripcion, cantidad FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    if float(rep.get("cantidad") or 0) != 0:
+        return jsonify({"ok": False, "error":
+                        "Tiene stock declarado (%.0f) -- no se puede eliminar, solo desactivar." % float(rep["cantidad"])}), 409
+    n_sol = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes WHERE repuesto_stock_id=%s", (rid,)) or {}).get("n") or 0
+    if n_sol:
+        return jsonify({"ok": False, "error":
+                        f"{n_sol} solicitud(es) ya lo referencian -- no se puede eliminar, solo desactivar."}), 409
+    n_mov = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_movimientos WHERE repuesto_id=%s AND motivo_tipo<>'alta_repuesto'",
+        (rid,)) or {}).get("n") or 0
+    if n_mov:
+        return jsonify({"ok": False, "error":
+                        "Tiene movimientos de bodega registrados -- no se puede eliminar, solo desactivar."}), 409
+    d = request.get_json(silent=True) or {}
+    if (d.get("confirm_text") or "").strip() != (rep.get("sku") or ""):
+        return jsonify({"ok": False, "requiere_confirmacion": True, "sku": rep.get("sku"),
+                        "error": f"Escribe \"{rep.get('sku')}\" para confirmar la eliminación definitiva."}), 409
+    _mant_log("repuesto_stock", rid, "eliminar_definitivo",
+              f"{rep.get('sku')} · {rep.get('descripcion')}")
+    mysql_execute("DELETE FROM mant_repuestos_movimientos WHERE repuesto_id=%s", (rid,))
+    mysql_execute("DELETE FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    return jsonify({"ok": True})
+
+
 @app.route("/mantenciones/api/repuestos-stock/ubicaciones/<int:uid>", methods=["DELETE"])
 @_mant_required
 @_no_tecnico

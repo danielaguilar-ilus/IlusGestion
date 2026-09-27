@@ -2046,11 +2046,27 @@ async function rbEliminarSeleccionados(){
 
   const btn = document.getElementById('rbBtnEliminarSel');
   if (btn){ btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Eliminando…'; }
+  // 🔧 2026-09-26 (Daniel, caso real: creó un repuesto de PRUEBA con el
+  // nombre equivocado y "no me permite borrarlo, solo desactivarlo"): un
+  // superadmin que "elimina" un repuesto que NUNCA se usó de verdad (sin
+  // stock, sin solicitudes, sin movimientos) ahora lo borra DEFINITIVO
+  // (endpoint .../destruir, REGLA #5 -- confirma con el mismo SKU que ya
+  // se ve en pantalla); si tiene cualquier rastro real, ese endpoint lo
+  // rechaza solo y se cae al soft-delete de siempre, sin que se note.
   let bien = 0; const fallaron = [];
   for (const it of items){
     try {
-      const r = await fetch('/mantenciones/api/repuestos-stock/' + it.id, {method:'DELETE'});
-      const d = await r.json().catch(() => ({}));
+      let r, d;
+      if (RB_ES_SUPERADMIN){
+        r = await fetch('/mantenciones/api/repuestos-stock/' + it.id + '/destruir', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({confirm_text: it.sku}),
+        });
+        d = await r.json().catch(() => ({}));
+        if (r.ok && d.ok) { bien++; continue; }
+      }
+      r = await fetch('/mantenciones/api/repuestos-stock/' + it.id, {method:'DELETE'});
+      d = await r.json().catch(() => ({}));
       if (r.ok && d.ok !== false) bien++;
       else fallaron.push(it.sku);
     } catch(e){ fallaron.push(it.sku); }

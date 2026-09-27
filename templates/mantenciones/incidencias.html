@@ -1763,12 +1763,20 @@
   // modal, y por si el día de mañana hay que volver a hacerlo condicional.
   var INC_CAMPOS_CANDADO = ['incRecomendacion', 'incSku', 'incDescripcion'];
   function incAplicarCandadoSistema(){
+    // 🔧 2026-09-26 (Daniel, caso real: creó una incidencia nueva desde cero
+    // para la Escaladora ILUS -- el candado bloqueaba UA/SKU/Descripción
+    // SIEMPRE, incluso vacíos, así que "Nueva incidencia" (alta 100% manual,
+    // sin venir de un hallazgo) quedó imposible de completar: se creó el
+    // repuesto pero la incidencia nunca se pudo guardar. El candado protege
+    // un DATO REAL que ya vino del sistema (WMS/ERP) -- si el campo está
+    // vacío, no hay nada que proteger todavía y se deja editable.
     INC_CAMPOS_CANDADO.forEach(function(id){
       var el = document.getElementById(id);
       if(!el) return;
-      el.readOnly = true;
+      var tieneDato = (el.value || '').trim() !== '';
+      el.readOnly = tieneDato;
       var campo = el.closest('.inc-campo');
-      if(campo) campo.classList.add('inc-bloqueado');
+      if(campo) campo.classList.toggle('inc-bloqueado', tieneDato);
     });
   }
 
@@ -1885,7 +1893,15 @@
     incModal().show();
   });
 
-  document.getElementById('incBtnGuardar').addEventListener('click', function(){
+  // 🔧 2026-09-26 (Daniel, caso real: creó el repuesto de la Escaladora
+  // pero la incidencia nunca se guardó): "Solicitar repuesto" exigía tener
+  // la incidencia ya guardada y solo avisaba con un toast -- en el flujo
+  // real (crear incidencia + repuesto + solicitud de un tirón) eso corta
+  // el paso a mitad de camino. Se extrae el guardado a una función propia
+  // para poder reusarlo: si falta guardar, se guarda solo y se sigue,
+  // sin que el usuario tenga que volver atrás a apretar "Guardar".
+  function incGuardarIncidencia(onOk, opts){
+    opts = opts || {};
     var id = document.getElementById('incId').value;
     var payload = {
       sku: document.getElementById('incSku').value,
@@ -1916,16 +1932,23 @@
       body: JSON.stringify(payload),
     }).then(function(r){return r.json();}).then(function(data){
       if(!data.ok){ ilusToast(data.error || 'No se pudo guardar', {type:'error'}); return; }
-      incModal().hide();
-      ilusToast('✓ Incidencia guardada', {type:'success'});
-      cargar();
+      if(data.id) document.getElementById('incId').value = data.id;
+      if(!opts.silencioso){
+        ilusToast('✓ Incidencia guardada', {type:'success'});
+        cargar();
+      }
       // 🔧 2026-09-26 (Daniel): "tras guardar, la conciliación se refresca y
       // esa fila desaparece o pasa a registrada" -- si el panel sigue
       // abierto (se ocultó, no se cerró, al abrir el alta prellenada),
       // se vuelve a consultar para que el hallazgo recién resuelto se caiga
       // de la lista.
       if(incConcData && !$('incConciliacion').hidden){ incConcData = null; incConcCargar(); }
+      if(onOk) onOk(data.id || id);
     }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
+  }
+
+  document.getElementById('incBtnGuardar').addEventListener('click', function(){
+    incGuardarIncidencia(function(){ incModal().hide(); });
   });
 
   /* ══════════════ SOLICITAR REPUESTO DESDE INCIDENCIA (Fase 2, 2026-09-21)
@@ -2197,8 +2220,16 @@
   // modal -- POST /mantenciones/api/incidencias/repuestos-crear-rapido.
   // Tras crearlo queda auto-seleccionado y sigue el flujo normal.
   document.getElementById('incBtnRepNoExiste').addEventListener('click', function(){
+    // 🔧 2026-09-26 (Daniel, caso real: "me creó el repuesto con el nombre
+    // de Escaladora ILUS, no tiene nada que ver"): se prellenaba con
+    // `incDescripcion`, que es el nombre del EQUIPO/máquina de la
+    // incidencia, no del repuesto que se va a pedir -- por eso quedó mal
+    // guardado. Se usa lo que el usuario ya escribió en el buscador de
+    // repuestos (si algo escribió) y si no, se deja en blanco para que lo
+    // tipee él mismo (nunca el nombre del equipo).
     document.getElementById('incRepNuevoForm').hidden = false;
-    document.getElementById('incRepNuevoNombre').value = $('incDescripcion').value || '';
+    var yaEscrito = (_incRepBuscador && _incRepBuscador.getEstado) ? (_incRepBuscador.getEstado().q || '') : '';
+    document.getElementById('incRepNuevoNombre').value = yaEscrito;
     document.getElementById('incRepNuevoNombre').focus();
   });
   document.getElementById('incBtnRepNuevoCancelar').addEventListener('click', function(){
