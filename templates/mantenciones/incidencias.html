@@ -162,6 +162,22 @@
               <input type="text" class="form-control" id="incUbicacionCheck" placeholder="—" readonly>
             </div>
             <div id="incUaResultado" class="inc-resultado col-12"></div>
+            {#- 🎨 2026-09-27 (Daniel: "ERP Random: N · Nosotros: M · Check: P,
+                que se vea como chips claros, no solo en un tooltip" -- mismo
+                lenguaje visual que los chips de factura verificada en Retiros,
+                `.nri-chip` de templates/retiros/internal_dashboard.html).
+                Se llena SIN pedir nada nuevo al backend: en el alta prellenada
+                desde un hallazgo de conciliación, `h.nuestra_bd/h.erp/h.wms`
+                ya vienen calculados (ver incAbrirAltaPrellenada); al editar,
+                se llena con el mismo `cuadre` que ya se pide para el paso
+                Evidencia (ver incCargarEvidencia). -#}
+            <div id="incChipsErpWms" class="col-12 inc-chip-row" hidden></div>
+            {#- 🎨 2026-09-27: aviso accionable reutilizando el mismo
+                componente `.nri-aviso` de Retiros -- el dato (chk_estado
+                'no_esta') ya lo calculaba _inc_comparativa_ua, pero antes solo
+                dejaba el campo Ubicación en "No está en Check" sin explicar
+                el porqué ni qué implica. -#}
+            <div id="incAvisosUa" class="col-12 inc-avisos"></div>
             <div class="col-12 inc-campo" data-campo="incDescripcion">
               <label class="form-label">Nombre del producto <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i>
                 <i class="bi bi-lock-fill inc-candado" id="incCandadoDescripcion" title="Dato del sistema WMS/ERP, no editable"></i></label>
@@ -531,7 +547,18 @@
   transition:width .35s ease,background .35s ease}
 @media (max-width:576px){.inc-progreso{margin:6px 0 0;order:3;flex-basis:100%}}
 
-.inc-pane{animation:incFade .28s ease;padding:12px;border-radius:14px;border:1.5px solid transparent;
+/* 🎨 2026-09-27 (Daniel: "la tarjeta Motivo se ve en blanco sin ninguna
+   caja mientras no se completa, y Sugerencia/Detalle se ven con caja de
+   color desde el primer segundo"). Causa real: solo las tarjetas SIN
+   ningún campo obligatorio (3/4/5) podían mostrar el estado `warn` desde
+   el arranque; las que SÍ tienen obligatorio (1/2) se quedaban con
+   `border:1.5px solid transparent` -- invisible -- hasta completarse.
+   Se agrega un CUARTO estado NEUTRO, visible siempre (mismo criterio que
+   la tarjeta base `.nri-step-card` de Retiros, que también nace con un
+   borde gris sutil #e5e7eb en vez de transparente): toda `.inc-pane` es
+   SIEMPRE una tarjeta real, en cualquier estado. */
+.inc-pane{animation:incFade .28s ease;padding:12px;border-radius:14px;
+  border:1.5px solid #e5e7eb;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.03);
   transition:border-color .25s ease,background .25s ease,box-shadow .25s ease;margin-bottom:4px}
 /* Tarjeta COMPLETA (no solo el círculo) -- mismo verde/ámbar que
    .nri-step-card.is-complete/.is-warn de Retiros. */
@@ -540,6 +567,35 @@
 .inc-pane.warn{border-color:#f59e0b;background:linear-gradient(180deg,#fffbeb 0%,#ffffff 55%);
   box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -10px rgba(245,158,11,.4)}
 @keyframes incFade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+
+/* 🎨 2026-09-27: chips "ERP Random: N · Nosotros: M · Check: P" (tarjeta
+   1) -- mismo lenguaje visual que `.nri-chip` de Retiros (chips de
+   factura verificada: folio/RUT/saldo). Prefijo propio `.inc-*` (mismo
+   criterio de namespacing que ya usa el proyecto por módulo). */
+.inc-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+.inc-chip-row:empty{display:none}
+.inc-chip{display:inline-flex;align-items:center;gap:6px;background:#f8fafc;border:1px solid #e2e8f0;
+  color:#0f172a;border-radius:10px;padding:6px 12px;font-size:.78rem;font-weight:700}
+.inc-chip .lbl{color:#64748b;font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;font-weight:800}
+.inc-chip .val{font-weight:800}
+.inc-chip.ok{background:#f0fdf4;border-color:#86efac;color:#166534}
+.inc-chip.ok .lbl{color:#4b7a5a}
+.inc-chip.dif{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.inc-chip.dif .lbl{color:#b45309}
+
+/* 🎨 2026-09-27: avisos accionables -- mismo componente `.nri-aviso` de
+   Retiros (borde ámbar, ícono, texto). Se usa hoy para "Esta UA no
+   aparece en Check" (chk_estado === 'no_esta', ya calculado por
+   _inc_comparativa_ua) -- antes ese dato solo cambiaba un input a
+   "No está en Check" sin explicar el porqué. */
+.inc-avisos{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.inc-avisos:empty{display:none}
+.inc-aviso{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px 10px;background:#fffbeb;
+  border:1.5px solid #fde68a;border-left:4px solid #f59e0b;border-radius:10px;padding:8px 12px;
+  font-size:.78rem;color:#78350f;line-height:1.4}
+.inc-aviso>i{color:#b45309;font-size:1rem;flex-shrink:0;margin-top:1px}
+.inc-aviso .txt{flex:1;min-width:200px;word-break:break-word}
+.inc-aviso .txt strong{color:#0a0a0a}
 .inc-pane-head{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:11px;margin-bottom:18px}
 .inc-pane-head i{font-size:1.4rem;line-height:1}
 .inc-pane-head b{display:block;font-size:.95rem;color:#0f172a}
@@ -1274,6 +1330,9 @@
       $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de '+INC_MAX_FOTOS;
       $('incBitacora').innerHTML = '';
       if(hint) hint.textContent = '';
+      // 🎨 2026-09-27: alta 100% manual (sin hallazgo): no hay con qué
+      // llenar los chips todavía -- se ocultan, no se dejan en blanco.
+      incPintarChipsErpWms(null, null, null);
       return;
     }
     $('incCuadre').innerHTML = '<div class="inc-vered v-nd">Consultando ERP y WMS…</div>';
@@ -1294,6 +1353,10 @@
             + (c.erp != null ? incNum(c.erp) : '—') + ' · Check (WMS): '
             + (c.wms != null ? incNum(c.wms) : '—') + '</span>';
         }
+        // 🎨 2026-09-27: mismo `cuadre` recién llegado, ahora también como
+        // chips claros en la tarjeta 1 (edición) -- ver incAbrirAltaPrellenada
+        // para el mismo dato en el alta desde un hallazgo.
+        if(f.cuadre) incPintarChipsErpWms(f.cuadre.nuestra_bd, f.cuadre.erp, f.cuadre.wms);
         pintarPasos();   // ahora que ya sabemos si hay evidencia, refresca el semáforo
       }).catch(function(){
         $('incCuadre').innerHTML = '<div class="inc-vered v-nd">No se pudo consultar el cuadre.</div>';
@@ -1659,7 +1722,13 @@
       document.getElementById('incUaResultado').innerHTML =
         '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación (Check): <b>'
         +h.ubicacion+'</b> (traída de la conciliación, no de una nueva búsqueda de UA).</span>';
+    } else {
+      incPintarAvisoUa(null);
     }
+    // 🎨 2026-09-27: el hallazgo YA trae nuestra_bd/erp/wms (misma fila de
+    // la tabla de conciliación) -- se muestran de inmediato, sin esperar
+    // a que la incidencia se guarde para recién ahí pedir el cuadre.
+    incPintarChipsErpWms(h.nuestra_bd, h.erp, h.wms);
     refrescarVerdeTodos();
     incCargarEvidencia();
     irAPaso(2);
@@ -1759,10 +1828,55 @@
     if(chkEstado === 'no_esta'){
       elCheck.value = 'No está en Check';
       $('incUbicacion').value = '';
+      incPintarAvisoUa('no_esta');
       return;
     }
     elCheck.value = chkUbicacion || (chkEstado === 'sin_datos' ? 'Check no disponible' : '—');
     $('incUbicacion').value = chkUbicacion || '';
+    incPintarAvisoUa(chkEstado);
+  }
+
+  // 🎨 2026-09-27 (Daniel: "avisos tipo Retiros -- si el dato ya existe
+  // pero no se muestra como aviso accionable, agrégalo"). El único dato
+  // real disponible sin pedir nada nuevo al backend es `chk_estado`
+  // (ya calculado por _inc_comparativa_ua) -- 'no_esta' significa que la
+  // UA no aparece hoy en Check/WMS, algo que antes solo se notaba mirando
+  // fijo el campo Ubicación en vez de un aviso explícito.
+  function incPintarAvisoUa(chkEstado){
+    var box = $('incAvisosUa');
+    if(!box) return;
+    if(chkEstado === 'no_esta'){
+      box.innerHTML = '<div class="inc-aviso"><i class="bi bi-exclamation-triangle-fill"></i>'
+        + '<span class="txt">Esta <strong>UA no aparece en Check (WMS)</strong> hoy. '
+        + 'Puede ser que aún no se haya recibido/escaneado, o que la UA esté mal escrita. '
+        + 'No se corrige acá -- se resuelve en Check.</span></div>';
+    } else {
+      box.innerHTML = '';
+    }
+  }
+
+  // 🎨 2026-09-27: chips "ERP Random: N · Nosotros: M · Check: P" -- mismo
+  // lenguaje visual que los chips de factura de Retiros (folio/RUT/saldo).
+  // Los tres valores YA vienen calculados (del hallazgo de conciliación o
+  // del cuadre que pide el paso Evidencia) -- esta función solo pinta,
+  // nunca dispara una consulta nueva al ERP/WMS.
+  function incPintarChipsErpWms(nuestra, erp, wms){
+    var box = $('incChipsErpWms');
+    if(!box) return;
+    if(nuestra == null && erp == null && wms == null){
+      box.hidden = true; box.innerHTML = ''; return;
+    }
+    function chip(lbl, val, cuadra){
+      var cls = cuadra === false ? 'dif' : (cuadra === true ? 'ok' : '');
+      return '<span class="inc-chip '+cls+'"><span class="lbl">'+lbl+'</span>'
+           + '<span class="val">'+(val == null ? '—' : incNum(val))+'</span></span>';
+    }
+    var cuadraErp = (nuestra != null && erp != null) ? (nuestra === erp) : null;
+    var cuadraWms = (nuestra != null && wms != null) ? (nuestra === wms) : null;
+    box.hidden = false;
+    box.innerHTML = chip('Nosotros', nuestra, null)
+      + chip('ERP Random', erp, cuadraErp)
+      + chip('Check (WMS)', wms, cuadraWms);
   }
 
   function limpiarModal(){
@@ -1778,6 +1892,11 @@
     document.getElementById('incReqRepuesto').value = '';
     document.getElementById('incStockRepuesto').value = '';
     document.getElementById('incUaResultado').innerHTML = '';
+    // 🎨 2026-09-27: limpia chips ERP/Nosotros/Check + aviso de UA -- si no
+    // se limpiaran, una incidencia SIN hallazgo (alta 100% manual) podía
+    // quedarse mostrando los chips/aviso de la incidencia anterior abierta.
+    incPintarChipsErpWms(null, null, null);
+    incPintarAvisoUa(null);
     $('incMotivoCount').textContent = '0';
     $('incMotivoCount').classList.remove('ok');
     var btnDel = document.getElementById('incBtnEliminar');
