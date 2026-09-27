@@ -54517,6 +54517,30 @@ def _tecnico_owns_visita(view_func):
     return wrapped
 
 
+def _puede_subir_adjunto_ot(view_func):
+    """📎 2026-09-27 (Daniel, wizard de creación: "poder agregar datos
+    adjuntos... fotos, videos, documentos... que se muestren al técnico").
+    El endpoint de adjuntos (mant_visita_adjuntos_upload) usaba
+    `_tecnico_owns_visita` (matriz 'ejecutar': solo superadmin + técnico
+    ASIGNADO) -- eso bloqueaba a quien CREA la OT (Aarón/Víctor/Juan
+    Pablo, rol ejecutivo/admin), que es justo quien sube estos archivos
+    apenas termina el wizard. Se amplía a 'ejecutar' O 'metadata' (misma
+    matriz de _puede_ot_accion): técnico asignado sigue pudiendo subir
+    evidencia en terreno como siempre, y ahora gestión también puede.
+    Listar (GET) y eliminar (DELETE) NO cambian -- fuera de este pedido."""
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not (_puede_ot_accion(vid, "ejecutar", u) or _puede_ot_accion(vid, "metadata", u)):
+            return _ot_403_response(
+                vid, (u.get("role") or "").lower(), u.get("id"), u.get("username"),
+                accion="ejecutar",
+            )
+        _ot_evidencia_post_firma(vid, "ejecutar")
+        return view_func(vid, *args, **kwargs)
+    return wrapped
+
+
 def _ot_can_view(view_func):
     """Decorador para endpoints de SOLO LECTURA (GET) de una OT.
 
@@ -109508,7 +109532,7 @@ def mant_visita_adjuntos_list(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/adjuntos", methods=["POST"])
 @_mant_required
-@_tecnico_owns_visita
+@_puede_subir_adjunto_ot
 def mant_visita_adjuntos_upload(vid):
     """Sube un adjunto a la OT — PDF, video, documento. Persistente
     en Cloudinary (resource_type según el tipo). Fallback filesystem

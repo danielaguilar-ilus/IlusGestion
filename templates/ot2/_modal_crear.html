@@ -724,6 +724,20 @@
   border:0;background:rgba(10,10,10,.7);color:#fff;font-size:0.83rem;display:grid;place-items:center;cursor:pointer}
 .o2m-foto-thumb button:hover{background:var(--ilus-red,#dc2626)}
 
+/* 📎 2026-09-27: Archivos para el técnico (fotos/videos/documentos) */
+.o2m-adj-add{display:inline-flex;align-items:center;min-height:44px;padding:9px 16px;cursor:pointer;font-weight:700}
+.o2m-adj-grid{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.o2m-adj-item{display:flex;align-items:center;gap:10px;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px}
+.o2m-adj-prev{width:44px;height:44px;flex:none;border-radius:8px;overflow:hidden;background:#f3f4f6;
+  display:grid;place-items:center;color:#6b7280;font-size:1.2rem}
+.o2m-adj-prev img{width:100%;height:100%;object-fit:cover;display:block}
+.o2m-adj-info{flex:1;min-width:0;display:flex;flex-direction:column}
+.o2m-adj-info b{font-size:.86rem;overflow-wrap:anywhere}
+.o2m-adj-info small{color:#6b7280;text-transform:capitalize}
+.o2m-adj-x{width:32px;height:32px;flex:none;border-radius:50%;border:0;background:#f3f4f6;color:#6b7280;
+  display:grid;place-items:center;cursor:pointer}
+.o2m-adj-x:hover{background:var(--ilus-red,#dc2626);color:#fff}
+
 @media (max-width:640px){
   .o2m .modal-dialog{margin:0;max-width:100%}
   .o2m .modal-content{border-radius:0;min-height:100dvh}
@@ -1241,6 +1255,14 @@ window.OT2C = (function(){
          tareas_manuales:[],
          // 26-08-2026: Trabajo de bodega -- observación + fotos.
          bodega_obs:'', bodega_fotos:[],
+         // 📎 2026-09-27 (Daniel: "poder agregar datos adjuntos... como
+         // evidencia de un equipo con falla, o el recorrido del camión...
+         // fotos, videos, documentos, varios archivos que se muestren al
+         // técnico"). Aparte de bodega_fotos (exclusivo de Trabajo de
+         // bodega): esto aplica a CUALQUIER tipo de OT. Se guardan como
+         // File en memoria (no hay vid todavía) y se suben recién después
+         // de crear() -- ver _subirAdjuntosWizard(). {file, descripcion}.
+         adjuntos:[],
          // 28-08-2026 (Daniel: "las plantillas deberán conectarse a la
          // plantilla de trabajos y así alimentarse automáticas, así Jaizer
          // podrá tener una buena calidad de flujo de trabajos con OT"):
@@ -1437,6 +1459,15 @@ window.OT2C = (function(){
     var p = [{k:'tipo', n:'Tipo'}];
     if (!esInterno()) p.push({k:'cliente', n:'Cliente'});
     p.push({k:'detalle', n:'Detalle'});
+    // 📎 2026-09-27 (Daniel, viendo el wizard en vivo: "es posible que en
+    // la generación de OT se puedan agregar los datos adjuntos, como
+    // evidencia de un equipo con falla o el recorrido del camión hasta
+    // donde va el equipo... fotos y videos, documentos... que se muestren
+    // al técnico"). Va justo después de Detalle (el motivo) a propósito:
+    // es el mismo espíritu -- contexto para el técnico -- y aplica a
+    // CUALQUIER tipo de OT, no solo trabajo interno. Nunca bloquea
+    // (completo('adjuntos') siempre true): es un apoyo, no un requisito.
+    p.push({k:'adjuntos', n:'Archivos'});
     // 2026-08-29 (Daniel: "agrégale un paso enumerado después del título de la
     // OT los datos de la contraparte... con correo y todo, el teléfono, y con
     // la dirección confirmada, la dirección del lugar"). Va inmediatamente
@@ -1512,6 +1543,8 @@ window.OT2C = (function(){
       // deja vacío (eso no cambió), pero la descripción ahora sí es un
       // requisito real -- ver O2M_DESC_MIN/setDescripcion().
       case 'detalle':  return (S.descripcion||'').trim().length >= O2M_DESC_MIN;
+      // 📎 2026-09-27: los adjuntos son un apoyo, nunca un requisito.
+      case 'adjuntos': return true;
       // 2026-08-29: la fecha no solo tiene que existir -- no puede estar en
       // el pasado (ver _o2mHoyStr). Al vivir acá, crear() la bloquea sola
       // (ya recorre completo() de todos los pasos) y la tarjeta del paso
@@ -1869,6 +1902,7 @@ window.OT2C = (function(){
       if (p.k==='tipo')     pintarTipo(b);
       if (p.k==='cliente')  pintarCliente(b);
       if (p.k==='detalle')  pintarDetalle(b);
+      if (p.k==='adjuntos') pintarAdjuntos(b);
       if (p.k==='contraparte') pintarContraparte(b);
       if (p.k==='agenda')   pintarAgenda(b);
       if (p.k==='tecnicos') pintarTecnicos(b);
@@ -1897,6 +1931,7 @@ window.OT2C = (function(){
       if (k==='tipo')     pintarTipo(b);
       if (k==='cliente')  pintarCliente(b);
       if (k==='detalle')  pintarDetalle(b);
+      if (k==='adjuntos') pintarAdjuntos(b);
       if (k==='contraparte') pintarContraparte(b);
       if (k==='agenda')   pintarAgenda(b);
       if (k==='tecnicos') pintarTecnicos(b);
@@ -5214,6 +5249,66 @@ window.OT2C = (function(){
     S.bodega_fotos.splice(i,1);
     pintarBodegaFotos();
     refrescarAnclas();
+  }
+  // 📎 2026-09-27 (Daniel: "fotos y videos, tal vez documentos, varios
+  // archivos... el usuario deberá estar capacitado para saber que eso se
+  // le muestra al técnico y no deberán ser archivos sensibles"). Mismos
+  // límites de tamaño que ya exige el backend (mant_visita_adjuntos_upload)
+  // -- se avisan ANTES de intentar crear la OT, no después de esperar.
+  var O2M_ADJ_MAX = {foto:15,pdf:30,video:100,documento:25};
+  function _o2mAdjTipo(f){
+    var mime = (f.type||'').toLowerCase();
+    var ext = (f.name||'').split('.').pop().toLowerCase();
+    if (mime.indexOf('image/')===0) return 'foto';
+    if (mime.indexOf('video/')===0 || ['mp4','mov','avi','webm','mkv'].indexOf(ext)>=0) return 'video';
+    if (mime==='application/pdf' || ext==='pdf') return 'pdf';
+    return 'documento';
+  }
+  function adjuntosAgregar(files){
+    for (var i=0;i<files.length;i++){
+      var f = files[i];
+      if (!f) continue;
+      var tipo = _o2mAdjTipo(f);
+      var maxMb = O2M_ADJ_MAX[tipo] || 25;
+      if (f.size > maxMb*1024*1024){
+        if (window.ilusToast) ilusToast(f.name+': demasiado grande (máx. '+maxMb+' MB para '+tipo+').', {type:'warning'});
+        continue;
+      }
+      S.adjuntos.push({file:f, tipo:tipo, descripcion:''});
+    }
+    pintarAdjListaDom();
+    refrescarAnclas();
+  }
+  function adjuntosQuitar(i){
+    S.adjuntos.splice(i,1);
+    pintarAdjListaDom();
+    refrescarAnclas();
+  }
+  var O2M_ADJ_ICONO = {foto:'bi-image', video:'bi-camera-reels-fill', pdf:'bi-file-earmark-pdf-fill', documento:'bi-file-earmark-text-fill'};
+  function pintarAdjListaDom(){
+    var g = document.getElementById('o2mAdjLista'); if (!g) return;
+    g.innerHTML = S.adjuntos.length ? S.adjuntos.map(function(a,i){
+      var prev = (a.tipo==='foto') ? '<img src="'+URL.createObjectURL(a.file)+'" alt="">' : '<i class="bi '+(O2M_ADJ_ICONO[a.tipo]||'bi-file-earmark')+'"></i>';
+      return '<div class="o2m-adj-item">'+
+        '<div class="o2m-adj-prev">'+prev+'</div>'+
+        '<div class="o2m-adj-info"><b>'+esc(a.file.name)+'</b>'+
+        '<small>'+(a.file.size/1024/1024).toFixed(1)+' MB · '+a.tipo+'</small></div>'+
+        '<button type="button" class="o2m-adj-x" onclick="OT2C.adjuntosQuitar('+i+')" title="Quitar"><i class="bi bi-x-lg"></i></button>'+
+      '</div>';
+    }).join('') : '';
+  }
+  function pintarAdjuntos(b){
+    b.innerHTML = '<h6 class="t">Archivos para el técnico</h6>'+
+      '<p class="d">Opcional: fotos, videos o documentos que el técnico va a ver al abrir la OT -- '+
+      'ej. una foto del equipo con falla, o el recorrido hasta el lugar. '+
+      '<b>No subas nada confidencial</b>: cualquier archivo que agregues acá lo ve el técnico asignado.</p>'+
+      '<label class="btn btn-outline-dark o2m-adj-add">'+
+        '<i class="bi bi-paperclip me-1"></i>Agregar archivos'+
+        '<input type="file" multiple accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx" '+
+        'onchange="OT2C.adjuntosAgregar(this.files); this.value=\'\';" hidden>'+
+      '</label>'+
+      '<div class="o2m-adj-grid" id="o2mAdjLista"></div>';
+    pintarAdjListaDom();
   }
   function pintarBodegaFotos(){
     var g = document.getElementById('o2mBodegaFotoGrid'); if (!g) return;
@@ -9171,8 +9266,14 @@ window.OT2C = (function(){
           var _seguir = (typeof S.onCreada === 'function')
             ? function(){ S.onCreada(vid, _url); }
             : function(){ location.href = _url; };
-          if (S.tipo === 'revision_interna' && S.bodega_fotos.length){
-            _subirEvidenciaBodega(vid).finally(_seguir);
+          // 📎 2026-09-27: los adjuntos del wizard (Archivos para el
+          // técnico) se suman a la evidencia de bodega -- ambos corren
+          // ANTES de navegar, nunca bloquean si algo falla.
+          var _pendientes = [];
+          if (S.tipo === 'revision_interna' && S.bodega_fotos.length) _pendientes.push(_subirEvidenciaBodega(vid));
+          if (S.adjuntos.length) _pendientes.push(_subirAdjuntosWizard(vid));
+          if (_pendientes.length){
+            Promise.all(_pendientes).finally(_seguir);
           } else {
             _seguir();
           }
@@ -9328,6 +9429,32 @@ window.OT2C = (function(){
       });
   }
 
+  // 📎 2026-09-27 (Daniel: "que se puedan agregar los datos adjuntos...
+  // fotos y videos, documentos, varios archivos que se puedan mostrar al
+  // técnico"). Uno por uno (no todos en un solo POST): el endpoint ya
+  // existente /mantenciones/api/visitas/<vid>/adjuntos (mant_visita_
+  // adjuntos_upload) acepta UN archivo por llamada -- se reusa tal cual,
+  // sin backend nuevo. Si alguno falla, se avisa pero no se bloquea nada:
+  // la OT ya existe, y el resto de los archivos sí se suben.
+  async function _subirAdjuntosWizard(vid){
+    if (!S.adjuntos.length) return;
+    var fallaron = 0;
+    for (var i=0;i<S.adjuntos.length;i++){
+      var a = S.adjuntos[i];
+      try{
+        var fd = new FormData();
+        fd.append('archivo', a.file);
+        fd.append('tipo', a.tipo);
+        var r = await fetch('/mantenciones/api/visitas/'+vid+'/adjuntos', {
+          method:'POST', credentials:'same-origin', body: fd
+        }).then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+        if (!r.ok) fallaron++;
+      }catch(_){ fallaron++; }
+    }
+    if (fallaron && window.ilusToast){
+      ilusToast('La OT se creó, pero '+fallaron+' archivo(s) no se subieron. Súbelos desde el detalle de la OT.', {type:'warning', duration:7000});
+    }
+  }
   async function _subirEvidenciaBodega(vid){
     try{
       var fd = new FormData();
@@ -9506,6 +9633,7 @@ window.OT2C = (function(){
           quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
           setPlantillaTareaManual:setPlantillaTareaManual,
           bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
+          adjuntosAgregar:adjuntosAgregar, adjuntosQuitar:adjuntosQuitar,
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
           recargarPlantillasInterno:recargarPlantillasInterno,
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
