@@ -3549,6 +3549,15 @@ window.OT2C = (function(){
      el semáforo de GPS del técnico en terreno -- sin dirección confirmada, su
      "Llegada al lugar" no puede ponerse verde. */
   var cacheContactos = null, cacheContactosCid = null;
+  // 📍 2026-09-27 (Daniel, mismo caso: "la dirección también está, la
+  // comuna también está. Esto se debería autogestionar solo"). La ficha
+  // YA tiene direccion/comuna (mant_clientes) -- se guarda lo que devolvió
+  // el buscador de clientes (autocomplete) por id, para sugerirlo como
+  // TEXTO inicial del campo "Dirección del lugar" cuando el cliente se
+  // elige y ese campo sigue vacío. Nunca se marca como confirmada sola:
+  // el técnico/GPS necesita la sugerencia de Places con lat/lng reales
+  // (ver dirOk en pintarContraparte) -- esto solo evita tipear de cero.
+  var cacheClienteDireccion = {};
 
   /* 2026-08-30 (Daniel, textual: "necesito que valides del contacto el RUT
      con RUT chileno... el teléfono... el correo"). Mismo algoritmo (módulo
@@ -3706,6 +3715,16 @@ window.OT2C = (function(){
   function pintarContraparte(b){
     var cp = S.contraparte;
     var dirOk = !!(cp.lat && cp.lng);
+    // 📍 2026-09-27 (Daniel: "la dirección también está, la comuna
+    // también está... esto se debería autogestionar solo"). Si el campo
+    // sigue vacío, se sugiere el texto de la ficha del cliente -- el
+    // usuario solo tiene que confirmar la sugerencia de Places (no se
+    // marca dirOk=true acá: eso exige lat/lng reales).
+    var _sug = S.cliente && cacheClienteDireccion[S.cliente.id];
+    if (_sug && !cp.direccion && _sug.direccion){
+      cp.direccion = _sug.direccion;
+      if (_sug.comuna && !cp.comuna) cp.comuna = _sug.comuna;
+    }
     b.innerHTML = '<h6 class="t">¿Quién recibe y dónde?</h6>'+
       '<p class="d">Es lo primero que el técnico necesita saber: a quién buscar y a qué '+
       'dirección llegar. Aparece en su pantalla apenas abre la OT.</p>'+
@@ -8743,6 +8762,11 @@ window.OT2C = (function(){
              el usuario veía "sin resultados" para un cliente que SÍ existe
              en el ERP — y no tenía cómo seguir. */
           var arr = (Array.isArray(j)?j:(j.clientes||[]));
+          // 📍 2026-09-27: guarda direccion/comuna de la ficha por id, para
+          // sugerirla en Contraparte cuando se elige este cliente.
+          arr.forEach(function(x){
+            if (x.id && (x.direccion || x.comuna)) cacheClienteDireccion[x.id] = {direccion: x.direccion||'', comuna: x.comuna||''};
+          });
           var c = document.getElementById('o2mCliRes'); if(!c) return;
           if (!arr.length){
             c.innerHTML = '<div class="p-3 text-muted small">Sin resultados. '+
@@ -8864,7 +8888,16 @@ window.OT2C = (function(){
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
     repintarSeccion('equipos');
-    if (_cambioDeCliente) repintarSeccion('contraparte');   // tarjetas + prellenado de la ficha nueva
+    // 📇 2026-09-27 (Daniel, caso real Unión Gastronómica: "esto se debería
+    // autogestionar solo" -- Contraparte quedaba en blanco para siempre).
+    // Antes esto solo repintaba con `_cambioDeCliente` (pasar de un cliente
+    // YA elegido a OTRO) -- en la primera elección de cliente de una OT
+    // nueva, `_idAntes` es undefined, así que `_cambioDeCliente` da false y
+    // Contraparte JAMÁS se repintaba con el cid real: se quedaba pintada
+    // con el cliente null del render inicial (cero contactos, cero
+    // dirección), sin ningún prellenado, para siempre. Ahora repinta
+    // SIEMPRE que hay un cliente elegido, primera vez o cambio.
+    repintarSeccion('contraparte');   // tarjetas + prellenado de la ficha
   }
 
   /* Cliente sin ficha: se crea al vuelo, diciendo POR QUÉ se crea.
