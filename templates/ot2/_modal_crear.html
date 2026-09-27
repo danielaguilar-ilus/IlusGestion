@@ -4566,27 +4566,34 @@ window.OT2C = (function(){
     var cid = S.cliente && S.cliente.id;
     if (!cid || !faltantes.length) return;
 
-    /* 2026-09-06 (Daniel, viendo dos filas del mismo SKU: "si compra seis
-       de un SKU, tiene que preguntar si duplican la fila o lo dejas así...
-       eso es indispensable, las cantidades").
-
-       No son un duplicado: cada fila es una MÁQUINA distinta con su propia
-       serie, y para una máquina eso es lo correcto -- el técnico revisa
-       cada una y firma por cada una. Pero para accesorios o piso, seis
-       unidades en seis filas es ruido. Como el sistema no puede saber cuál
-       es cuál sin clasificación (y hoy la cobertura es baja), se pregunta
-       UNA vez por lote en lugar de decidir por el usuario.
-
-       La respuesta aplica a todas las líneas de este lote. Si cancela el
-       diálogo se toma la opción conservadora -- una fila por unidad, que
-       es como venía funcionando (REGLA #4.2: sin respuesta, no se cambia
-       el comportamiento anterior). */
+    /* 🔴 CORRECCIÓN GRAVE 2026-09-27 (Daniel, caso real OT-00191/Oasis,
+       factura FCV 11522: "el esquí y el rower machine eran 3 unidades y
+       lo tomó como una sola tarea... si compran 2 productos del mismo SKU,
+       tiene que identificar que no sea accesorio o piso para poner las
+       cantidades. Si no, cantidad 1 y se repite la fila. Déjalo como
+       regla."). Hasta este commit, esta función preguntaba UNA vez por
+       LOTE "¿una fila por unidad?" y esa MISMA respuesta se aplicaba a
+       TODAS las líneas -- si el lote traía accesorios (que sí conviene
+       agrupar) MEZCLADOS con máquinas reales (esquí, rower), y quien
+       creaba la OT elegía "una sola fila por producto" pensando en los
+       accesorios, esa respuesta también agrupaba las máquinas reales sin
+       ningún candado que lo evitara. La clasificación del Catálogo
+       (`respetar_clasificacion`, ver mant_maquina_add) solo protegía en
+       el sentido contrario (nunca partía un SKU YA clasificado como piso/
+       accesorio) -- nunca forzaba a partir uno que el humano había
+       agrupado por error.
+       REGLA DEFINITIVA: la decisión ya NO es una pregunta al humano por
+       lote -- es SIEMPRE por SKU, según su clasificación real del
+       Catálogo. Se manda `split_to_rows:true` (partir) SIEMPRE, y
+       `respetar_clasificacion:true` deja que el backend decida: SOLO un
+       SKU clasificado como piso/accesorio (modelo_precio='fijo') se
+       agrupa en una fila con cantidad=N; cualquier SKU sin clasificar
+       o clasificado como equipo se parte en N filas de cantidad=1, sin
+       excepción y sin preguntar. */
     /* 2026-09-20 (Daniel: "respetar las cantidades... entrada por la ficha
-       y por la factura para que no se repita"): (1) un documento con el
-       MISMO SKU en dos líneas se agrupa sumando -- si no, la segunda línea
-       se daba de alta aparte; (2) el diálogo de abajo por fin manda
-       `split_to_rows` explícito: "Una sola fila por producto" crea UNA fila
-       con cantidad=N (antes mandaba cantidad=1 y perdía las otras N-1). */
+       y por la factura para que no se repita"): un documento con el MISMO
+       SKU en dos líneas se agrupa sumando -- si no, la segunda línea se
+       daba de alta aparte. */
     var _porClave = {};
     faltantes.forEach(function(l){
       var kk = String(l.sku || '').trim().toUpperCase() + '|' + ((l.tido || '') + ' ' + (l.nudo || '')).trim();
@@ -4600,26 +4607,12 @@ window.OT2C = (function(){
       var x = _porClave[kk]; x.qty = Math.max(1, Math.round(x.qty)); return x;
     });
     var _multi = faltantes.filter(function(l){ return (parseInt(l.qty, 10) || 1) > 1; });
-    var _unaFilaPorUnidad = true;
-    if (_multi.length && window.ilusConfirm){
+    if (_multi.length && window.ilusToast){
       var _tot = _multi.reduce(function(a, l){ return a + (parseInt(l.qty, 10) || 1); }, 0);
-      var _ej = _multi[0];
-      // 2026-09-20: ilusConfirm devuelve false también con Escape o clic
-      // fuera. Para que cancelar sea la opción CONSERVADORA (una fila por
-      // unidad, como dice el comentario de arriba), el botón "OK" es
-      // "una sola fila" y se invierte el resultado.
-      _unaFilaPorUnidad = !(await ilusConfirm({
-        title: '¿Una fila por unidad?',
-        message: 'Hay ' + _multi.length + ' producto' + (_multi.length === 1 ? '' : 's') +
-                 ' con más de una unidad (' + _tot + ' unidades en total). ' +
-                 'Por ejemplo: ' + ((_ej.nombre || _ej.sku) + ' × ' + (_ej.qty || 1)) + '.',
-        sub: 'Una fila por unidad le da a cada máquina su propia serie y su propio ' +
-             'checklist — es lo que corresponde a un equipo. Una sola fila por producto ' +
-             'es mejor para accesorios o piso, donde revisar seis veces lo mismo no aporta. ' +
-             'Los pisos y accesorios clasificados en el Catálogo se agrupan solos en una fila con su cantidad, elijas lo que elijas.',
-        okLabel: 'Una sola fila por producto',
-        cancelLabel: 'Una fila por unidad',
-      }));
+      ilusToast('Hay ' + _multi.length + ' producto' + (_multi.length === 1 ? '' : 's') +
+                ' con más de una unidad (' + _tot + ' en total). Cada máquina real se agrega como ' +
+                'una fila propia con su propia serie; los pisos/accesorios clasificados en el ' +
+                'Catálogo se agrupan solos en una fila con su cantidad.', {type:'info', duration:6000});
     }
     var docOrigenTxt = S.doc_origen ? (S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '';
     var creadosIds = [];
@@ -4627,11 +4620,12 @@ window.OT2C = (function(){
     for (var i = 0; i < faltantes.length; i++){
       var l = faltantes[i];
       try {
+        // 🔴 2026-09-27: split_to_rows SIEMPRE true -- la única excepción
+        // la decide el backend por clasificación real (repetible=True,
+        // piso/accesorio), nunca una respuesta humana compartida por lote.
         var body = {sku: l.sku, nombre: l.nombre || l.sku,
                     cantidad: (parseInt(l.qty, 10) || 1),
-                    split_to_rows: !!_unaFilaPorUnidad,
-                    // piso/accesorio (clasificación del Catálogo) nunca se
-                    // parte en N filas, ver mant_maquina_add
+                    split_to_rows: true,
                     respetar_clasificacion: true};
         // 2026-08-30 (Daniel, trazabilidad -- "CON QUÉ DOC entró eso a la
         // ficha"): CADA línea puede tener su propio documento ERP real
