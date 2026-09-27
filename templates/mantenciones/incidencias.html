@@ -333,8 +333,23 @@
                     <button type="button" class="btn btn-sm btn-secondary" id="incBtnRepNuevoCancelar">Cancelar</button>
                   </div>
                 </div>
-                <div class="form-text">Se crea en la Bodega con cantidad 0 y SKU automático -- complétalo (ubicación,
-                  costo, proveedor) en /repuestos cuando llegue.</div>
+                {#- 🔧 2026-09-27 (Daniel: "quiero el mismo motor de crear el
+                    repuesto, con la misma calidad de información y las
+                    mismas restricciones... no quiero que esto sea una
+                    brecha"). El alta rápida sigue siendo intencionalmente
+                    más liviana que /repuestos (sin ubicación escaneada,
+                    REGLA 2026-09-09) -- pero el proveedor ya NO es un id a
+                    ciegas: mismo buscador real (`/mantenciones/api/
+                    proveedores-repuesto`, el mismo que usa el modal
+                    completo de Repuestos), no texto libre. -#}
+                <div class="position-relative mt-2">
+                  <input type="text" class="form-control form-control-sm" id="incRepNuevoProveedor"
+                         placeholder="Proveedor (opcional) -- busca por nombre" autocomplete="off">
+                  <input type="hidden" id="incRepNuevoProveedorId">
+                  <div class="inc-rep-prov-lista" id="incRepNuevoProveedorLista" hidden></div>
+                </div>
+                <div class="form-text">Se crea en la Bodega con cantidad 0 y SKU automático -- completa ubicación y
+                  costo en /repuestos cuando llegue.</div>
               </div>
             </div>
             <div class="col-12">
@@ -612,6 +627,11 @@
    inconfundible con advertencia. */
 .inc-c3{background:#fef2f2;border-left:4px solid #dc2626} .inc-c3 i{color:#dc2626}
 .inc-c4{background:#f0fdf4;border-left:4px solid #16a34a} .inc-c4 i{color:#16a34a}
+.inc-rep-prov-lista{position:absolute;z-index:20;left:0;right:0;top:100%;background:#fff;
+  border:1px solid #d1d5db;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);
+  max-height:180px;overflow-y:auto}
+.inc-rep-prov-lista .it{padding:7px 10px;font-size:.83rem;cursor:pointer}
+.inc-rep-prov-lista .it:hover{background:#f3f4f6}
 .inc-c5{background:#f8fafc;border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
 
 /* ══ 2026-09-26 (Daniel, viendo el modal en producción): sin barra de
@@ -2332,41 +2352,66 @@
   document.getElementById('incBtnRepNuevoCancelar').addEventListener('click', function(){
     document.getElementById('incRepNuevoForm').hidden = true;
   });
+
+  // 🔧 2026-09-27 (Daniel: "misma calidad de información, mismas
+  // restricciones... no quiero que esto sea una brecha"). Proveedor real
+  // vía el MISMO endpoint que usa el modal completo de Repuestos
+  // (/mantenciones/api/proveedores-repuesto) -- buscador, no un id a
+  // ciegas ni texto libre.
+  var incRepNuevoProvTimer = null;
+  document.getElementById('incRepNuevoProveedor').addEventListener('input', function(){
+    var q = this.value.trim();
+    document.getElementById('incRepNuevoProveedorId').value = '';
+    var lista = document.getElementById('incRepNuevoProveedorLista');
+    clearTimeout(incRepNuevoProvTimer);
+    if(q.length < 2){ lista.hidden = true; lista.innerHTML = ''; return; }
+    incRepNuevoProvTimer = setTimeout(function(){
+      fetch('/mantenciones/api/proveedores-repuesto?q=' + encodeURIComponent(q))
+        .then(function(r){ return r.json(); }).then(function(d){
+          var provs = (d.proveedores || []);
+          if(!provs.length){ lista.hidden = true; lista.innerHTML = ''; return; }
+          lista.innerHTML = provs.map(function(p){
+            return '<div class="it" data-id="'+p.id+'" data-nombre="'+incEsc(p.nombre)+'">'+incEsc(p.nombre)+'</div>';
+          }).join('');
+          lista.hidden = false;
+        }).catch(function(){ lista.hidden = true; });
+    }, 250);
+  });
+  document.getElementById('incRepNuevoProveedorLista').addEventListener('click', function(ev){
+    var it = ev.target.closest('.it');
+    if(!it) return;
+    document.getElementById('incRepNuevoProveedor').value = it.dataset.nombre;
+    document.getElementById('incRepNuevoProveedorId').value = it.dataset.id;
+    this.hidden = true; this.innerHTML = '';
+  });
+
   document.getElementById('incBtnRepNuevoGuardar').addEventListener('click', function(){
     var nombre = document.getElementById('incRepNuevoNombre').value.trim();
     if(!nombre){ ilusToast('Escribe el nombre del repuesto', {type:'warning'}); return; }
+    var proveedorId = document.getElementById('incRepNuevoProveedorId').value || null;
     var btn = this;
     btn.disabled = true;
     fetch('/mantenciones/api/incidencias/repuestos-crear-rapido', {
       method: 'POST', headers: {'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN || ''},
-      body: JSON.stringify({nombre: nombre}),
+      body: JSON.stringify({nombre: nombre, proveedor_id: proveedorId}),
     }).then(function(r){ return r.json(); }).then(function(d){
       btn.disabled = false;
       if(!d.ok){ ilusToast(d.error || 'No se pudo crear el repuesto', {type:'error'}); return; }
       document.getElementById('incRepNuevoForm').hidden = true;
+      document.getElementById('incRepNuevoProveedor').value = '';
+      document.getElementById('incRepNuevoProveedorId').value = '';
       incRepSeleccionar({id: d.id, sku: d.sku, descripcion: d.descripcion, disponible: 0});
       ilusToast('✓ Repuesto '+d.sku+' creado y seleccionado', {type:'success'});
     }).catch(function(){ btn.disabled = false; ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
   });
 
-  // "Solicitar este repuesto ahora": reusa el modal/flujo YA existente
-  // (incRepModal + incRepEnviar) -- se le pre-selecciona el mismo item de
-  // bodega elegido acá arriba, sin repetir la búsqueda.
-  document.getElementById('incBtnSolicitarAhora').addEventListener('click', function(){
-    var id = document.getElementById('incId').value;
-    if(!id){ ilusToast('Guarda la incidencia primero: la solicitud necesita a qué incidencia engancharse.', {type:'warning'}); return; }
-    var stockId = document.getElementById('incRepuestoStockId').value;
-    if(!stockId){ ilusToast('Elige un repuesto de la bodega primero.', {type:'warning'}); return; }
-    document.getElementById('incBtnSolicitarRepuesto').click();
-    // El click de arriba ya abre incRepModal y precarga cantidad/motivo;
-    // acá se fuerza además la SELECCIÓN del repuesto elegido en Detalle.
-    var txt = document.getElementById('incRepSeleccionadoTxt').textContent;
-    setTimeout(function(){
-      _incRep.sel = {id: parseInt(stockId, 10), descripcion: txt, sku: ''};
-      document.getElementById('incRepNombreManual').value = '';
-      incRepPintarLista();
-    }, 60);
-  });
+  // 🔧 2026-09-27 (Daniel, viendo el paso Detalle en vivo: "saca el botón
+  // y el código de solicitar repuesto ahora... no lo desarrollemos...
+  // pero que no haga nada"). El botón "Solicitar este repuesto ahora" /
+  // "Tomar de bodega" queda VISIBLE (no se borra nada, REGLA #4.2) pero
+  // SIN acción -- a propósito, todavía no está listo para desarrollarse.
+  // Antes disparaba incBtnSolicitarRepuesto + preselección; ese código
+  // queda comentado acá mismo por si se retoma más adelante.
 
   cargar();
   incCargarMotivosFrecuentes();
