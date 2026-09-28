@@ -2280,6 +2280,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   overflow-wrap:anywhere}
 .otd-adj-item .in small{font-size:.68rem;color:#9ca3af}
 .otd-adj-item a{flex:none;color:var(--ilus-red,#dc2626);font-size:1.1rem}
+/* 🎬 2026-09-28 (Daniel: "mejor visión y poder navegar entre las
+   fotos"). Miniatura real en vez del ícono genérico para tipo 'foto' --
+   mismo tamaño/posición que `.ic` (38x38), pero como <button> clickable
+   que abre ilusLightbox con navegación entre todas las fotos. */
+.otd-adj-thumb{padding:0;border:none;background:none;cursor:zoom-in;overflow:hidden}
+.otd-adj-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.otd-adj-thumb:hover{outline:2px solid var(--ilus-red,#dc2626);outline-offset:1px}
 
 /* Documentos — Anexo de Servicios */
 .otd-doc-card{display:flex;align-items:center;gap:14px;padding:14px 16px;margin:14px 16px;
@@ -3428,6 +3435,45 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       </div>
       {% endif %}
 
+      {# 🎬 2026-09-28 (Daniel, viendo el registro fotográfico: "se guarda
+         la evidencia, sin embargo es necesario considerar una mejor
+         visión y poder navegar entre las fotos, además debería estar
+         cerca del motivo para relacionarlo con las imágenes y el motivo
+         ... esta es nuestra página de orgullo"). "Videos y documentos"
+         vivía al fondo de la columna derecha (ver su historial más abajo,
+         donde antes estuvo) -- se MUEVE acá, pegada a Motivo, para que se
+         lean juntos. Las fotos ahora se ven como miniatura real (no un
+         ícono genérico) y abren el visor global `ilusLightbox` con
+         flechas para navegar entre TODAS las fotos de la OT sin cerrar y
+         volver a abrir -- mismo componente que ya usa "Fotos de la OT" en
+         la pestaña Trabajo, reusado, no reinventado. #}
+      <div class="otd-card" data-bal="1">
+        <h3><i class="bi bi-camera-reels-fill"></i> Videos y documentos
+          <span class="n" id="otdAdjCount">—</span></h3>
+        {% if puede_ejecutar %}
+        <div class="otd-ev-add">
+          <div class="tx">
+            <b>¿Necesitas dejar un video o documento?</b>
+            <small>Graba con la cámara o sube un archivo — PDF, Word, video.</small>
+          </div>
+          <button type="button" class="otd-ev-btn" id="otdAdjBtn" onclick="otdAbrirSheetAdjunto()">
+            <i class="bi bi-camera-reels-fill"></i> Agregar
+          </button>
+          <input type="file" id="otdAdjVideoCam" accept="video/*" capture="environment"
+                 style="display:none" onchange="otdSubirAdjunto(this)">
+          <input type="file" id="otdAdjFoto" accept="image/*,image/heic,image/heif"
+                 style="display:none" onchange="otdSubirAdjunto(this)">
+          <input type="file" id="otdAdjArchivo" accept="application/pdf,.doc,.docx,.xls,.xlsx"
+                 style="display:none" onchange="otdSubirAdjunto(this)">
+        </div>
+        {% endif %}
+        <div class="otd-adj-list" id="otdAdjList"></div>
+        <div class="otd-vacio" id="otdAdjEmpty" style="display:none">
+          <i class="bi bi-camera-reels" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+          Todavía no hay videos ni documentos adjuntos a esta OT.
+        </div>
+      </div>
+
       {# 🆕 2026-09-02 (Daniel, en vivo: "es necesario que siempre lleve
          documento y mostrarlo por trazabilidad además del responsable"):
          quién y cuándo creó la OT, visible para CUALQUIERA que la vea
@@ -4352,70 +4398,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% endif %}
 
 
-      {# 🆕 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del
-         técnico: "que puedan grabar video y dejarlo ahí"). Reusa el
-         motor de adjuntos que YA existe desde antes para esta misma OT
-         (mant_visita_adjuntos / GET+POST /mantenciones/api/visitas/<id>/
-         adjuntos, ver app.py ~88920) -- distinto de la galería de FOTOS
-         de la pestaña Evidencia. Detecta tipo por mime/extensión en el
-         backend (video/pdf/documento/audio), sube a Cloudinary con
-         resource_type='video' para videos -- nada de esto es nuevo,
-         solo le faltaba pantalla. Gate de subida: `puede_ejecutar`
-         (mismo que el botón de fotos, el endpoint POST está protegido
-         por @_tecnico_owns_visita). La LISTA se ve siempre que se pueda
-         ver la OT (@_ot_can_view en el GET), sin gate adicional.
-         `capture="environment"` en el input de cámara activa grabar
-         video directo con la cámara trasera en celular (>99% del uso,
-         según Daniel) en vez de solo poder subir un archivo ya grabado. #}
-      <div class="otd-card" data-bal="1">
-        <h3><i class="bi bi-camera-reels-fill"></i> Videos y documentos
-          <span class="n" id="otdAdjCount">—</span></h3>
-        {% if puede_ejecutar %}
-        <div class="otd-ev-add">
-          <div class="tx">
-            <b>¿Necesitas dejar un video o documento?</b>
-            <small>Graba con la cámara o sube un archivo — PDF, Word, video.</small>
-          </div>
-          <button type="button" class="otd-ev-btn" id="otdAdjBtn" onclick="otdAbrirSheetAdjunto()">
-            <i class="bi bi-camera-reels-fill"></i> Agregar
-          </button>
-          <input type="file" id="otdAdjVideoCam" accept="video/*" capture="environment"
-                 style="display:none" onchange="otdSubirAdjunto(this)">
-          {# 🔧 2026-09-09 (Daniel, OT de Rafael: "al entrar [a agregar
-             evidencia] te lleva a los documentos... tienes que tener
-             acceso a la galería de fotos, o por lo menos pedir acceso...
-             o la cámara"). Antes la única forma de dejar una FOTO acá era
-             "Subir un archivo" (otdAdjArchivo, accept mezclando
-             video/pdf/doc/xls/imagen) -- con tipos tan distintos mezclados
-             en un solo accept, el celular abre el gestor de archivos
-             genérico en vez de ofrecer Cámara/Galería. Input propio, solo
-             imágenes (sin capture, para que el SO ofrezca cámara Y
-             galería) -- mismo patrón que ya usa el resto del archivo
-             (otdFotoCam/otdFotoGal, otdFotIn, otdChkFotoInp). #}
-          <input type="file" id="otdAdjFoto" accept="image/*,image/heic,image/heif"
-                 style="display:none" onchange="otdSubirAdjunto(this)">
-          <input type="file" id="otdAdjArchivo" accept="application/pdf,.doc,.docx,.xls,.xlsx"
-                 style="display:none" onchange="otdSubirAdjunto(this)">
-        </div>
-        {% endif %}
-        <div class="otd-adj-list" id="otdAdjList"></div>
-        <div class="otd-vacio" id="otdAdjEmpty" style="display:none">
-          <i class="bi bi-camera-reels" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-          Todavía no hay videos ni documentos adjuntos a esta OT.
-        </div>
-
-        {# 📸 Historia de esta sección, para que no se reponga sin querer:
-           el 2026-08-30 la galería de fotos se fusionó ACÁ, dentro de
-           "Videos y documentos" ("la evidencia se va a guardar como se
-           guarda aquí en video y documento, en información"). El
-           2026-09-02 Daniel pidió sacarla de Información para que la
-           pestaña quede compacta y no haya que scrollear: la galería se
-           MUDÓ a la pestaña Trabajo (ver "Fotos de la OT" allá), que es
-           donde el técnico las toma. Los videos y documentos adjuntos
-           (mant_visita_adjuntos) se quedan acá -- son otro sistema de
-           archivo y Daniel no pidió moverlos. #}
-      </div>
-
+      {# 🎬 "Videos y documentos" vivía acá desde 2026-08-30. El
+         2026-09-28 (Daniel: "debería estar cerca del motivo para
+         relacionarlo con las imágenes") se MUDÓ a la columna izquierda,
+         pegada a "Motivo de la visita" -- ver esa tarjeta más arriba.
+         Nada se quitó, solo cambió de columna (REGLA #4.2). #}
     </div>
 
     {# 💰 2026-09-02 (Daniel: "ese hoyo me gustaría que fuera
@@ -10807,6 +10794,12 @@ const OTD_ADJ_ICONS = {
   foto: 'bi-image', otro: 'bi-file-earmark-fill',
 };
 
+// 🎬 2026-09-28 (Daniel: "mejor visión y poder navegar entre las fotos").
+// Fotos guardan su lista aparte (no solo el HTML) para poder abrir el
+// visor global `ilusLightbox` con TODAS las fotos de esta tarjeta y
+// navegar con flechas, sin tener que volver a pedir la lista al backend.
+var _otdAdjFotos = [];
+
 async function otdCargarAdjuntos(){
   try {
     const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/adjuntos`);
@@ -10819,19 +10812,40 @@ async function otdCargarAdjuntos(){
     if (!list) return;
     if (!d.adjuntos.length){
       list.innerHTML = '';
+      _otdAdjFotos = [];
       if (empty) empty.style.display = '';
       return;
     }
     if (empty) empty.style.display = 'none';
-    list.innerHTML = d.adjuntos.map(a => `
+    // Miniatura real (`?w=160`, mismo criterio que el resto del proyecto
+    // para fotos -- nunca el original) SOLO para tipo 'foto'; video/pdf/
+    // documento se quedan con el ícono, no tiene sentido una miniatura ahí.
+    _otdAdjFotos = d.adjuntos.filter(a => a.tipo === 'foto' && a.url)
+      .map(a => ({ url: a.url, caption: `${a.subido_por || 'Técnico'} · ${a.created_at || ''}` }));
+    let fotoIdx = -1;
+    list.innerHTML = d.adjuntos.map(a => {
+      const esFoto = a.tipo === 'foto' && a.url;
+      if (esFoto) fotoIdx++;
+      const miniatura = esFoto
+        ? `<button type="button" class="ic otd-adj-thumb" data-foto-idx="${fotoIdx}" title="Ver foto">
+             <img src="${a.url}${a.url.includes('?') ? '&' : '?'}w=160" alt="Miniatura" loading="lazy"></button>`
+        : `<span class="ic"><i class="bi ${OTD_ADJ_ICONS[a.tipo] || 'bi-file-earmark-fill'}"></i></span>`;
+      return `
       <div class="otd-adj-item tp-${a.tipo}">
-        <span class="ic"><i class="bi ${OTD_ADJ_ICONS[a.tipo] || 'bi-file-earmark-fill'}"></i></span>
+        ${miniatura}
         <div class="in">
           <b>${(a.archivo_nombre || 'Archivo').replace(/</g,'&lt;')}</b>
           <small>${a.tipo === 'video' ? 'Video' : (a.tipo || 'Archivo')} · ${a.subido_por || 'Técnico'} · ${a.created_at || ''}</small>
         </div>
         ${a.url ? `<a href="${a.url}" target="_blank" rel="noopener" title="Ver / descargar"><i class="bi bi-box-arrow-up-right"></i></a>` : ''}
-      </div>`).join('');
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.otd-adj-thumb').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (typeof ilusLightbox !== 'function' || !_otdAdjFotos.length) return;
+        ilusLightbox(_otdAdjFotos, parseInt(btn.dataset.fotoIdx, 10) || 0, 'Evidencia de la OT');
+      });
+    });
   } catch(e){ /* silencioso -- la card ya arrancó con "—" */ }
 }
 
