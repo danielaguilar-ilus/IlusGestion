@@ -107331,7 +107331,7 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
         "       t.completada, t.completada_at, t.observaciones, "
         "       t.valor_texto, t.valor_numero, t.valor_sino, "
         "       t.valor_verificacion, t.valor_lista, t.valor_fecha_hora, "
-        "       t.valor_gps_lat, t.valor_gps_lng, "
+        "       t.valor_gps_lat, t.valor_gps_lng, t.valor_json, "
         # 2026-09-05 (valor probatorio): quién completó cada tarea y el
         # estado de trabajo (mismo criterio que R1 de _ot_validar_cierre).
         "       t.estado_trabajo, t.completada_por, "
@@ -107459,23 +107459,45 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
         })
 
     # ── Tareas formateadas para tabla detallada ──────────────────────
+    # 🔴 FIX 2026-09-28 (Daniel, caso real OT-2026-00249: "por qué dice
+    # eso si el checklist está al 100%, porque lo van a cuestionar" --
+    # el PDF mostraba "—" en GPS/Número/Verificación/Texto aunque el
+    # técnico SÍ había respondido). Causa raíz: la pantalla de ejecución
+    # (pestaña Trabajo) guarda la respuesta real en `valor_json` (columna
+    # TEXT), NO en las columnas tipadas (valor_numero, valor_gps_lat,
+    # valor_verificacion, valor_texto...) que este PDF leía. Confirmado
+    # con datos reales de esta OT: valor_json traía GPS/40/aprobado/texto
+    # completo mientras las columnas tipadas estaban vacías. Se agrega un
+    # fallback a valor_json cuando la columna tipada no tiene dato --
+    # nunca al revés (la columna tipada, si existe, sigue mandando).
+    def _valor_json_dict(t):
+        vj = t.get("valor_json")
+        if isinstance(vj, str):
+            try:
+                return json.loads(vj) or {}
+            except Exception:
+                return {}
+        return vj or {}
+
     def _fmt_resultado(t):
         """Devuelve (texto, clase) para la pill de resultado."""
         tr = (t.get("tipo_respuesta") or "check").lower()
+        vj = _valor_json_dict(t)
         if tr == "verificacion":
-            v = (t.get("valor_verificacion") or "").lower()
+            v = (t.get("valor_verificacion") or vj.get("valor") or "").lower()
             if v == "aprobado": return ("OK", "ok")
             if v == "alerta":   return ("ALERTA", "warn")
             if v == "falla":    return ("FALLA", "err")
             return ("—", "ok")
         if tr == "sino":
-            v = (t.get("valor_sino") or "").lower()
+            v = (t.get("valor_sino") or vj.get("valor") or "").lower()
             if v == "si":  return ("SÍ", "ok")
             if v == "no":  return ("NO", "err")
             if v == "na":  return ("N/A", "txt")
             return ("—", "txt")
         if tr == "numero":
             num = t.get("valor_numero")
+            if num is None: num = vj.get("numero")
             if num is None: return ("—", "txt")
             try:
                 num_f = float(num)
@@ -107485,12 +107507,15 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             unidad = t.get("unidad") or ""
             return (f"{txt} {unidad}".strip(), "ok")
         if tr == "lista":
-            return ((t.get("valor_lista") or "—"), "txt")
+            return ((t.get("valor_lista") or vj.get("valor") or "—"), "txt")
         if tr == "fecha_hora":
             v = t.get("valor_fecha_hora")
-            return ((v.strftime('%d/%m %H:%M') if v else "—"), "txt")
+            if v: return (v.strftime('%d/%m %H:%M'), "txt")
+            return ((vj.get("valor") or "—"), "txt")
         if tr == "gps":
             la = t.get("valor_gps_lat"); ln = t.get("valor_gps_lng")
+            if la is None: la = vj.get("lat")
+            if ln is None: ln = vj.get("lng")
             if la is None or ln is None: return ("—", "txt")
             try:
                 return (f"{float(la):.4f}, {float(ln):.4f}", "ok")
@@ -107501,7 +107526,7 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             # respuesta de texto del técnico ES la evidencia ("al encender
             # huele a quemado, se desconectó...") y el template ya la pinta
             # como texto corrido cuando es larga (REGLA #15: nada truncado).
-            v = (t.get("valor_texto") or "").strip()
+            v = (t.get("valor_texto") or vj.get("texto") or "").strip()
             return (v or "—", "txt")
         # check / foto / default
         return (("OK" if t.get("completada") else "—"), ("ok" if t.get("completada") else "txt"))
