@@ -5900,14 +5900,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     <div class="otd-bottom-row">
       <button type="button" class="b" onclick="otdVerPdf()">
         <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
-      {# 📸 2026-09-05 (Daniel: "dale con el tope de fotos y que sea descarga
-         aparte"). El PDF de la OT lleva una muestra del anexo; el completo
-         vive acá. Solo se ofrece si de verdad hay fotos: un botón que abre
-         un documento vacío es peor que no tenerlo. #}
-      {% if fotos %}
-      <button type="button" class="b" onclick="otdVerAnexoFotos()">
-        <i class="bi bi-images"></i> Anexo de fotos ({{ fotos|length }})</button>
-      {% endif %}
+      {# 📸 El botón "Anexo de fotos" vivió acá desde 2026-09-05. Daniel
+         (2026-09-28) pidió quitarlo -- "Videos y documentos" (columna
+         izquierda de Información, ver más arriba) ya muestra las fotos
+         con miniatura real y el visor navegable `ilusLightbox`, así que
+         este segundo camino quedaba redundante. `otdVerAnexoFotos()` se
+         deja sin llamar, no se borra por si se necesita retomar. #}
     </div>
     {% endif %}
     {% if v.estado == 'pendiente_aprobacion' and puede_aprobar %}

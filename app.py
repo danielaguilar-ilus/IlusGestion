@@ -60925,7 +60925,16 @@ def _mant_index_cache_invalidar():
 @app.route("/servicio-tecnico")
 @app.route("/mantenciones")
 @_mant_required
+@_no_tecnico
 def mant_index():
+    # 🔒 2026-09-28 (Daniel: "el detalle del dashboard cuando un técnico
+    # entra ve demasiados detalles... es mejor darle acceso solo a las
+    # OT y listo"). Reinstaura el gate para técnicos que el comentario de
+    # abajo (2026-05-22) había quitado -- @_no_tecnico ya redirige solo a
+    # su listado de OTs con un flash explicativo (mismo patrón que
+    # /calendario, /clientes, etc.), sin tener que reinventar nada. Cubre
+    # de una sola vez /mantenciones, /servicio-tecnico Y /dashboard (ver
+    # dashboard_hub más abajo, que llama a mant_index() directo).
     # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos.
     _mant_actualizar_estado_contratos()
     hoy   = datetime.now().date()
