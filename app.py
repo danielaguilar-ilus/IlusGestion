@@ -55882,6 +55882,17 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_tecnicos_externos ADD COLUMN invite_used_at DATETIME NULL",
                 "ALTER TABLE mant_tecnicos_externos ADD COLUMN direccion_place_id VARCHAR(200) NULL",
                 "ALTER TABLE mant_tecnicos_externos ADD INDEX idx_invite (invite_token)",
+                # 🔒 2026-09-28 (Daniel + reclamo real de Felix, cliente:
+                # "el documento anexo indica el RUT de la empresa y el RUT
+                # del representante, siendo el mismo número... eso está
+                # mal"). El anexo firmado usaba `firmante_rut or
+                # proveedor_rut` -- si quien firmaba nunca tenía su RUT
+                # PERSONAL a mano, se repetía el RUT de la empresa como si
+                # fuera el del representante. Se guarda el RUT del
+                # representante en la FICHA del técnico externo para
+                # prellenar el formulario de firma (ver anexo_firma.html),
+                # en vez de depender de que alguien lo tipee bien cada vez.
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN rut_representante VARCHAR(20) NULL",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -68706,6 +68717,12 @@ def _ext_validate_payload(d, partial=False):
     out["contacto_tel"] = ctel or None
     out["contacto_email"] = cmail or None
     out["contacto_cargo"] = (d.get("contacto_cargo") or "").strip()[:100] or None
+    # 🔒 2026-09-28 (Daniel: "el rut del representante sea recolectado en
+    # el perfil del técnico"). RUT de la PERSONA que firma en nombre de
+    # la empresa -- distinto del rut_empresa, aunque en una empresa
+    # unipersonal puedan coincidir. Se usa para prellenar la firma del
+    # anexo (ver anexo_firma.html / ot2_anexo_firma_publica).
+    out["rut_representante"] = (d.get("rut_representante") or "").strip()[:20] or None
     # Facturación
     fp = (d.get("forma_pago") or "transferencia").strip()
     if fp not in ("transferencia","cheque","efectivo","tarjeta"):
@@ -68796,18 +68813,20 @@ def mant_tecnico_externo_crear():
                    (razon_social, rut_empresa, giro, direccion_empresa,
                     direccion_lat, direccion_lng, direccion_place_id,
                     contacto_nombre, contacto_tel, contacto_email, contacto_cargo,
+                    rut_representante,
                     forma_pago, banco, tipo_cuenta, numero_cuenta,
                     factura_a_nombre_de, condicion_pago_dias, valor_hora, valor_visita,
                     especialidades_json, contrato_pdf_url, contrato_inicio,
                     contrato_termino, contrato_renovable, estado, notas, foto_url,
                     created_by)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                           %s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (fields["razon_social"], fields["rut_empresa"], fields["giro"],
                  fields["direccion_empresa"], fields["direccion_lat"],
                  fields["direccion_lng"], fields["direccion_place_id"],
                  fields["contacto_nombre"], fields["contacto_tel"],
                  fields["contacto_email"], fields["contacto_cargo"],
+                 fields["rut_representante"],
                  fields["forma_pago"], fields["banco"], fields["tipo_cuenta"],
                  fields["numero_cuenta"], fields["factura_a_nombre_de"],
                  fields["condicion_pago_dias"], fields["valor_hora"],
@@ -68846,6 +68865,7 @@ def mant_tecnico_externo_editar(eid):
         "razon_social","rut_empresa","giro","direccion_empresa",
         "direccion_lat","direccion_lng","direccion_place_id",
         "contacto_nombre","contacto_tel","contacto_email","contacto_cargo",
+        "rut_representante",
         "forma_pago","banco","tipo_cuenta","numero_cuenta",
         "factura_a_nombre_de","condicion_pago_dias","valor_hora","valor_visita",
         "especialidades_json","contrato_pdf_url","contrato_inicio",
@@ -97571,11 +97591,30 @@ def _anexo_productos_guardados(a):
 
 
 def _anexo_publico_payload(a):
+    # 🔒 2026-09-28 (Daniel + reclamo real de Felix, cliente: "el RUT de
+    # la empresa y el RUT del representante, siendo el mismo número...
+    # eso está mal"). Si la ficha del proveedor ya tiene guardado el RUT
+    # de quien representa a la empresa, se usa para PRELLENAR el campo
+    # RUT del formulario de firma (editable -- el firmante sigue pudiendo
+    # corregirlo, la firma sigue registrando lo que él confirmó). Evita
+    # que alguien, sin ese dato a mano, repita sin querer el RUT de la
+    # empresa como si fuera el del representante.
+    _rut_rep_sugerido, _nombre_rep_sugerido = None, None
+    try:
+        _te = mysql_fetchone(
+            "SELECT rut_representante, contacto_nombre FROM mant_tecnicos_externos WHERE rut_empresa=%s",
+            (a.get("proveedor_rut") or "",))
+        _rut_rep_sugerido = (_te or {}).get("rut_representante") or None
+        _nombre_rep_sugerido = (_te or {}).get("contacto_nombre") or None
+    except Exception:
+        pass
     return {
         "numero": a["numero"],
         "fecha": chile_fmt_filter(a.get("created_at"), "%d/%m/%Y") if a.get("created_at") else "—",
         "proveedor_nombre": a.get("proveedor_nombre") or "",
         "proveedor_rut": a.get("proveedor_rut") or "",
+        "rut_representante_sugerido": _rut_rep_sugerido,
+        "nombre_representante_sugerido": _nombre_rep_sugerido,
         "proveedor_direccion": a.get("proveedor_direccion") or "",
         "objetivo_servicio": a.get("objetivo_servicio") or "",
         "cliente_nombre": a.get("cliente_nombre") or "",
@@ -97736,9 +97775,16 @@ def _anexo_pdf_bytes(a):
     payload = _anexo_publico_payload(a)
     firma = None
     if a.get("estado") == "firmado":
+        # 🔒 2026-09-28: ya NO se cae al nombre/RUT de la EMPRESA cuando
+        # falta el del firmante -- eso es justo el bug real reportado
+        # (RUT Representante mostrando el mismo número que RUT Empresa).
+        # `firmante_nombre`/`firmante_rut` son obligatorios al firmar
+        # (ver ot2_anexo_firma_submit) -- para cualquier firma nueva esto
+        # siempre viene poblado; el "—" solo cubre un registro viejo
+        # incompleto de antes de esa validación.
         firma = {
-            "firmante_nombre": a.get("firmante_nombre") or a.get("proveedor_nombre"),
-            "firmante_rut": a.get("firmante_rut") or a.get("proveedor_rut"),
+            "firmante_nombre": a.get("firmante_nombre"),
+            "firmante_rut": a.get("firmante_rut"),
             # 🔴 FIX 2026-09-06: acá iba la URL cruda ("/f/<key>"). El PDF
             # se arma con page.set_content, donde una ruta RELATIVA no
             # resuelve contra ningún origen: Chromium imprimía el recuadro

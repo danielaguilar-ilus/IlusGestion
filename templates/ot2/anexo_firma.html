@@ -1028,18 +1028,29 @@
             </p>
           </div>
         </div>
+        {# 🔒 2026-09-28 (Daniel + reclamo real de un cliente: "el
+           documento anexo indica el RUT de la empresa y el RUT del
+           representante, siendo el mismo número... eso está mal"). Antes
+           estos dos campos venían prellenados con el nombre/RUT de la
+           EMPRESA (`anexo.proveedor_nombre/proveedor_rut`) -- quien
+           firmaba sin darse cuenta dejaba el RUT de la empresa como si
+           fuera el suyo. Ahora se prellenan con el representante
+           guardado en la ficha del proveedor cuando existe
+           (`*_sugerido`, ver _anexo_publico_payload); si no existe,
+           quedan EN BLANCO -- obliga a escribir el dato real en vez de
+           ofrecer por defecto un dato que casi seguro está mal. #}
         <div class="campos-grid">
           <div class="campo">
             <label for="inpNombre">Nombre completo <span class="req">*</span></label>
-            <input type="text" id="inpNombre" value="{{ anexo.proveedor_nombre }}"
+            <input type="text" id="inpNombre" value="{{ anexo.nombre_representante_sugerido or '' }}"
                    placeholder="Ej: Isabel Milling" autocomplete="name" autocapitalize="words" maxlength="120">
             <div class="error-msg" id="errNombre">Ingresa el nombre completo de quien firma.</div>
           </div>
           <div class="campo">
             <label for="inpRut">RUT <span class="req">*</span></label>
-            <input type="text" id="inpRut" value="{{ anexo.proveedor_rut | rut_fmt }}"
+            <input type="text" id="inpRut" value="{{ (anexo.rut_representante_sugerido | rut_fmt) if anexo.rut_representante_sugerido else '' }}"
                    placeholder="12.345.678-9" inputmode="text" autocomplete="off" maxlength="12">
-            <div class="ayuda">Con dígito verificador. Se formatea solo.</div>
+            <div class="ayuda">Tu RUT personal (no el de la empresa), con dígito verificador. Se formatea solo.</div>
             <div class="error-msg" id="errRut">El RUT no es válido — revisa el dígito verificador.</div>
           </div>
         </div>

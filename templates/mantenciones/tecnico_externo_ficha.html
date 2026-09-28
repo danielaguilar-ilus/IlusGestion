@@ -335,6 +335,20 @@
         <div class="info-key">Cargo</div>
         <div class="info-val">{{ tec.contacto_cargo or '—' }}</div>
       </div>
+      {# 🔒 2026-09-28 (Daniel + reclamo real de Felix, cliente: "el
+         documento anexo indica el RUT de la empresa y el RUT del
+         representante, siendo el mismo número... eso está mal"). El RUT
+         de la persona que firma se guarda ACÁ, en la ficha, para
+         prellenar el formulario de firma del anexo en vez de depender de
+         que alguien lo tipee bien cada vez (ver anexo_firma.html). #}
+      <div class="info-row">
+        <div class="info-key">RUT representante</div>
+        <div class="info-val">
+          <span id="teRutRepVal">{{ tec.rut_representante | rut_fmt if tec.rut_representante else '—' }}</span>
+          <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="editarRutRepresentante()"
+                  title="Editar RUT del representante"><i class="bi bi-pencil-fill"></i></button>
+        </div>
+      </div>
       <div class="info-row">
         <div class="info-key">Teléfono</div>
         <div class="info-val">
@@ -920,6 +934,31 @@ async function enviarInvitacion(){
   } catch(e){
     ilusToast('Error de red', { type: 'error' });
   }
+}
+
+async function editarRutRepresentante(){
+  const actual = {{ (tec.rut_representante or '') | tojson }};
+  const rut = await ilusPrompt({
+    title: 'RUT del representante',
+    message: 'RUT de la PERSONA que firma en nombre de esta empresa (distinto del RUT de la empresa) -- se usa para prellenar la firma del anexo.',
+    placeholder: 'Ej: 12.345.678-9',
+    defaultValue: actual,
+  });
+  if (rut === null) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}`, {
+      method: 'PUT',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ rut_representante: rut.trim() }),
+    });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ RUT del representante actualizado', { type:'success' });
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(d.error || 'No se pudo guardar', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
 }
 
 async function cambiarEstado(){

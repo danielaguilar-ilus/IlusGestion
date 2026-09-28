@@ -291,6 +291,24 @@ textarea.wz-input{min-height:88px;resize:vertical;font-family:inherit}
         </div>
       </div>
 
+      {# 🔒 2026-09-28 (Daniel + reclamo real de un cliente: "el RUT de la
+         empresa y el RUT del representante, siendo el mismo número...
+         eso está mal"). RUT de la PERSONA de contacto -- se usa para
+         prellenar la firma del anexo de servicios (ver anexo_firma.html)
+         en vez de dejar que quede vacío y termine repitiendo el RUT de
+         la empresa. #}
+      <div class="row-2">
+        <div class="wz-field">
+          <label>RUT del representante</label>
+          <input type="text" class="wz-input" name="rut_representante" id="f_crut"
+                 placeholder="Ej: 12.345.678-9" maxlength="20" autocomplete="off">
+          <small class="wz-hint">
+            <i class="bi bi-pen"></i>
+            El RUT PERSONAL de quien firma en nombre de la empresa (no el de la empresa) — se usa para prellenar la firma del anexo.
+          </small>
+        </div>
+      </div>
+
       <div class="row-2">
         <div class="wz-field">
           <label>Teléfono <span class="req">*</span></label>
@@ -656,6 +674,7 @@ async function guardarTecnico(){
     contacto_tel: get('contacto_tel'),
     contacto_email: get('contacto_email'),
     contacto_cargo: get('contacto_cargo'),
+    rut_representante: get('rut_representante'),
     forma_pago: get('forma_pago') || 'transferencia',
     banco: get('banco'),
     tipo_cuenta: get('tipo_cuenta'),
