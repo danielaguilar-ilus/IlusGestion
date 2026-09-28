@@ -288,6 +288,17 @@
               <label class="form-label">Fecha de resolución</label>
               <input type="date" class="form-control" id="incFechaResolucion">
             </div>
+            {#- 🔧 2026-09-28 (Daniel, viendo la tabla en vivo: "agregarle la
+                fecha de ingreso por la emisión de la GRI... para calcular
+                los días que tiene en bodega de incidencias"). Opcional --
+                si no se sabe/no aplica, la tabla usa la fecha en que se
+                registró acá como respaldo (ver columna Días en bodega). -#}
+            <div class="col-md-4">
+              <label class="form-label">Fecha de ingreso a bodega
+                <span class="text-muted" style="font-weight:400">(GRI, opcional)</span></label>
+              <input type="date" class="form-control" id="incFechaIngreso">
+              <div class="form-text">Si no la sabes, se usa la fecha en que se registró esta incidencia.</div>
+            </div>
             {#- 🔧 2026-09-26 (Daniel: "el tipo de repuesto se puede asociar de
                 la bodega de repuestos... hacerlo más interactivo"): motor
                 COMPARTIDO RepBuscador en modo selección, mismo que usan
@@ -903,6 +914,21 @@
   // una sola, y es la de Check"). La UA ya está en su propia columna al
   // inicio de la fila -- acá solo va la UBICACIÓN física (nunca la UA de
   // nuevo), comparada contra la que reporta Check.
+  // 🔧 2026-09-28 (Daniel: "agregarle la fecha de ingreso por la emisión
+  // de la GRI... para calcular los días que tiene en bodega de
+  // incidencias"). `fecha_ingreso` es opcional (GRI); si no se cargó, se
+  // usa `created_at` (cuándo se registró la incidencia acá) como
+  // respaldo -- nunca queda la celda vacía por falta del dato ideal.
+  function incDiasBodegaCelda(r){
+    var base = r.fecha_ingreso || (r.created_at ? r.created_at.slice(0, 10) : null);
+    if(!base) return '—';
+    var dias = Math.floor((Date.now() - new Date(base + 'T00:00:00').getTime()) / 86400000);
+    if(isNaN(dias) || dias < 0) return '—';
+    var cls = dias >= 30 ? 'text-danger fw-bold' : (dias >= 14 ? 'text-warning-emphasis fw-semibold' : '');
+    var fuente = r.fecha_ingreso ? 'Ingreso (GRI): ' : 'Registrada el: ';
+    return '<span class="'+cls+'" title="'+fuente+incEsc(base)+'">'+dias+' día'+(dias===1?'':'s')+'</span>';
+  }
+
   function incChkCelda(r, checkwmsOk){
     var info = INC_CHK_INFO[r.chk_estado] || INC_CHK_INFO.sin_datos;
     var nuestra = r.ubicacion || '—';
@@ -949,6 +975,7 @@
       + incTh('UA', 'ua') + incTh('SKU', 'sku') + incTh('Descripción', 'descripcion')
       + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
       + '<th>Ubicación vs Check</th>'
+      + '<th title="Fecha de ingreso a bodega (GRI) o, si no se cargó, fecha de registro">Días en bodega</th>'
       + incTh('Fecha resolución', 'fecha_resolucion')
       + '<th style="width:78px">Acciones</th></tr></thead>';
   }
@@ -990,6 +1017,7 @@
         + '<td>'+(r.motivo||'—')+'</td>'
         + '<td>'+(r.req_repuesto==='si' ? ('Sí'+(r.stock_repuesto?(' · '+(r.stock_repuesto==='hay'?'Hay':'No hay')):'')) : (r.req_repuesto==='no'?'No':'—'))+'</td>'
         + incChkCelda(r, checkwmsOk)
+        + '<td>'+incDiasBodegaCelda(r)+'</td>'
         + '<td>'+fmtFecha(r.fecha_resolucion)+'</td>'
         + '<td class="inc-acciones">'
         +   '<button type="button" class="inc-mini-btn" data-accion="rep" data-id="'+r.id+'" title="Solicitar repuesto"><i class="bi bi-tools"></i></button>'
@@ -1946,7 +1974,7 @@
 
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
-     'incObservacion','incRecomendacion','incFechaResolucion','incUbicacion',
+     'incObservacion','incRecomendacion','incFechaResolucion','incFechaIngreso','incUbicacion',
      'incUbicacionCheck','incSugerencia','incRepuestoStockId'].forEach(function(id){
       document.getElementById(id).value = '';
     });
@@ -1994,6 +2022,7 @@
     document.getElementById('incObservacion').value = r.observacion || '';
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
+    document.getElementById('incFechaIngreso').value = r.fecha_ingreso || '';
     document.getElementById('incSugerencia').value = r.sugerencia || '';
     document.getElementById('incRepuestoStockId').value = r.repuesto_stock_id || '';
     // 🔧 2026-09-26 (Daniel: "Ubicación según Check (WMS)... reutiliza el
@@ -2064,6 +2093,7 @@
       sugerencia: document.getElementById('incSugerencia').value,
       repuesto_stock_id: document.getElementById('incRepuestoStockId').value,
       fecha_resolucion: document.getElementById('incFechaResolucion').value,
+      fecha_ingreso: document.getElementById('incFechaIngreso').value,
     };
     // Revalidar TODOS los pasos antes de guardar: alguien pudo volver
     // atrás y vaciar un campo ya validado. Si algo falla, se salta al

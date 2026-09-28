@@ -54911,6 +54911,7 @@ def init_mantenciones_tables():
                     descripcion_repuesto  VARCHAR(300),
                     stock_repuesto        ENUM('hay','no_hay'),
                     observacion           TEXT,
+                    fecha_ingreso         DATE,
                     fecha_resolucion      DATE,
                     recomendacion         TEXT,
                     estado                ENUM('abierta','resuelta') DEFAULT 'abierta',
@@ -54923,6 +54924,16 @@ def init_mantenciones_tables():
                     INDEX idx_estado (estado)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # 🔧 2026-09-28 (Daniel, viendo la tabla en vivo: "agregarle la
+            # fecha de ingreso por la emisión de la GRI... para calcular
+            # los días que tiene en bodega de incidencias"). Fecha
+            # OPCIONAL y editable -- cuando no se conoce/no aplica la GRI,
+            # la tabla usa `created_at` (cuándo se registró acá) como
+            # respaldo, nunca bloquea nada por no tenerla.
+            try:
+                cur.execute("ALTER TABLE mant_incidencias ADD COLUMN fecha_ingreso DATE NULL")
+            except Exception:
+                pass
 
             # Fotos de la incidencia (2026-08-03, Daniel: "ojalá le puedas
             # meter una foto del producto, o al menos 3"). Evidencia del
@@ -64228,6 +64239,8 @@ def _mant_incidencia_row(r):
             r[k] = r[k].strftime("%Y-%m-%d %H:%M:%S")
     if r.get("fecha_resolucion"):
         r["fecha_resolucion"] = r["fecha_resolucion"].strftime("%Y-%m-%d")
+    if r.get("fecha_ingreso"):
+        r["fecha_ingreso"] = r["fecha_ingreso"].strftime("%Y-%m-%d")
     return r
 
 
@@ -64529,6 +64542,7 @@ def mant_api_incidencias_crear():
     if stock_repuesto not in ("hay", "no_hay", None):
         stock_repuesto = None
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+    fecha_ingreso = (data.get("fecha_ingreso") or "").strip() or None
     rep_stock_id = str(data.get("repuesto_stock_id") or "").strip()
     rep_stock_id = int(rep_stock_id) if rep_stock_id.isdigit() else None
     # 🔧 2026-09-26 (Daniel: "la UA como identificador único real"). Se
@@ -64548,14 +64562,14 @@ def mant_api_incidencias_crear():
             """INSERT INTO mant_incidencias
                (sku, descripcion, cantidad, motivo, req_repuesto,
                 descripcion_repuesto, stock_repuesto, observacion,
-                fecha_resolucion, recomendacion, ubicacion, sugerencia,
+                fecha_ingreso, fecha_resolucion, recomendacion, ubicacion, sugerencia,
                 repuesto_stock_id, created_by)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (sku or None, descripcion, cantidad,
              _sentence_case((data.get("motivo") or "").strip()) or None,
              req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
              stock_repuesto, (data.get("observacion") or "").strip() or None,
-             fecha_resolucion, ua_norm or None,
+             fecha_ingreso, fecha_resolucion, ua_norm or None,
              (data.get("ubicacion") or "").strip() or None,
              (data.get("sugerencia") or "").strip() or None,
              rep_stock_id,
@@ -64589,6 +64603,7 @@ def mant_api_incidencias_editar(iid):
     if estado not in ("abierta", "resuelta"):
         estado = "abierta"
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+    fecha_ingreso = (data.get("fecha_ingreso") or "").strip() or None
     rep_stock_id = str(data.get("repuesto_stock_id") or "").strip()
     rep_stock_id = int(rep_stock_id) if rep_stock_id.isdigit() else None
     nuevos = {
@@ -64600,6 +64615,7 @@ def mant_api_incidencias_editar(iid):
         "descripcion_repuesto": (data.get("descripcion_repuesto") or "").strip() or None,
         "stock_repuesto": stock_repuesto,
         "observacion": (data.get("observacion") or "").strip() or None,
+        "fecha_ingreso": fecha_ingreso,
         "fecha_resolucion": fecha_resolucion,
         "recomendacion": (data.get("recomendacion") or "").strip() or None,
         "ubicacion": (data.get("ubicacion") or "").strip() or None,
@@ -64642,13 +64658,13 @@ def mant_api_incidencias_editar(iid):
             """UPDATE mant_incidencias SET
                  sku=%s, descripcion=%s, cantidad=%s, motivo=%s,
                  req_repuesto=%s, descripcion_repuesto=%s, stock_repuesto=%s,
-                 observacion=%s, fecha_resolucion=%s, recomendacion=%s, ubicacion=%s,
+                 observacion=%s, fecha_ingreso=%s, fecha_resolucion=%s, recomendacion=%s, ubicacion=%s,
                  sugerencia=%s, repuesto_stock_id=%s,
                  estado=%s, updated_by=%s
                WHERE id=%s""",
             (nuevos["sku"], nuevos["descripcion"], nuevos["cantidad"], nuevos["motivo"],
              nuevos["req_repuesto"], nuevos["descripcion_repuesto"], nuevos["stock_repuesto"],
-             nuevos["observacion"], nuevos["fecha_resolucion"], nuevos["recomendacion"],
+             nuevos["observacion"], nuevos["fecha_ingreso"], nuevos["fecha_resolucion"], nuevos["recomendacion"],
              nuevos["ubicacion"], nuevos["sugerencia"], nuevos["repuesto_stock_id"],
              nuevos["estado"], current_username(), iid),
         )
