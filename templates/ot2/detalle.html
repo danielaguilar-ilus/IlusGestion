@@ -7233,11 +7233,11 @@ function otdIniciarRuta(app){
               {% endif %}
             </div>
 
-            {% elif v.factura_nudo %}
+            {% elif v.factura_nudo and v.factura_tido not in ('NVV','NVI') %}
             <div class="alert py-2 small mb-0" id="otfFactGate"
                  style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
               <i class="bi bi-receipt me-1"></i>
-              <strong>{{ 'Nota de venta asociada' if v.factura_tido in ('NVV','NVI') else 'Documento asociado' }}:</strong>
+              <strong>Documento asociado:</strong>
               {{ v.factura_tido or 'FCV' }} N° {{ v.factura_nudo }}
               {% if v.factura_monto %} · ${{ '{:,.0f}'.format(v.factura_monto|float).replace(',', '.') }}{% endif %}
               {% if v.factura_rut_ok == 0 %}
@@ -7247,8 +7247,35 @@ function otdIniciarRuta(app){
             </div>
 
             {% else %}
+            {# 🔒 2026-09-28 (Daniel, caso real OT-2026-00249: "estaba
+               bloqueado porque estaba con la NVV y pide factura o boleta,
+               pero al momento de cambiarla... no estaba funcionando --
+               el modal debe ayudar a gestionar ese tipo de cosas"). Antes
+               esta rama (`v.factura_nudo` con cualquier tipo) SOLO
+               mostraba un aviso informativo -- si el documento YA
+               asociado era justo la nota de venta bloqueante (NVV/NVI,
+               ver REGLA de cierre 2026-09-10 y `_OT_DOCS_NOTA_VENTA` en
+               app.py), no había NINGÚN camino desde acá para
+               reemplazarla por la factura/boleta real: había que salir
+               del modal a buscar dónde cambiar el documento. Se une con
+               la rama "sin documento" (mismo buscador/asociar de abajo)
+               -- si ya hay una NVV, se ve primero qué dice y luego el
+               mismo camino para asociar la factura/boleta que la
+               reemplace. #}
             <div class="mb-2 p-3" id="otfFactGate"
                  style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px">
+              {% if v.factura_nudo %}
+              <div class="fw-bold small mb-1" style="color:#991b1b">
+                <i class="bi bi-lock-fill me-1"></i>Nota de venta asociada -- no sirve para cerrar
+              </div>
+              <div class="small mb-2" style="color:#7f1d1d">
+                Esta OT tiene {{ v.factura_tido }} N° {{ v.factura_nudo }}
+                {% if v.factura_monto %} · ${{ '{:,.0f}'.format(v.factura_monto|float).replace(',', '.') }}{% endif %}
+                asociada -- es una <b>promesa de cobro, no un cobro</b>: no sirve para cerrar
+                (salvo garantía o que el cliente sea arriendo/leasing).
+                Busca abajo la factura o boleta real que la reemplace, o declara la OT como garantía.
+              </div>
+              {% else %}
               <div class="fw-bold small mb-1" style="color:#991b1b">
                 <i class="bi bi-lock-fill me-1"></i>Sin esto no se puede firmar el cierre
               </div>
@@ -7257,6 +7284,7 @@ function otdIniciarRuta(app){
                 garantía. El RUT debe coincidir con el del cliente
                 ({{ (v.cliente_rut or '—') }}); si no coincide, deberás explicar por qué.
               </div>
+              {% endif %}
               <div class="d-flex gap-2 flex-wrap align-items-end">
                 <div>
                   <label class="form-label small fw-semibold mb-1">Tipo</label>
@@ -7267,14 +7295,7 @@ function otdIniciarRuta(app){
                      Se quitan NVV/NVI/VD/WEB de ESTE selector -- el del candado de
                      cierre. Una nota de venta es una promesa de cobro, no un cobro:
                      cerrar la OT contra ella deja el servicio ejecutado y sin
-                     facturar, que es justo lo que se quiere evitar.
-                     OJO, alcance real de este cambio: aplica al momento de CERRAR
-                     cuando la OT todavía no tiene documento. Una OT que ya venía con
-                     nota de venta asociada (desde el wizard o la tarjeta de Finanzas)
-                     entra por la otra rama de este modal y hoy sigue pudiendo
-                     cerrarse -- esa regla vive en el backend (_OT_DOCS_NOTA_VENTA /
-                     estado 'con_nota_venta') y cambiarla bloquearía OT ya en curso,
-                     así que queda pendiente de tu confirmación. #}
+                     facturar, que es justo lo que se quiere evitar. #}
                   <select id="otfFactTipo" class="form-select form-select-sm" style="width:auto">
                     <option value="FCV" selected>FCV — Factura</option>
                     <option value="FCE">FCE — Factura exenta</option>
