@@ -929,10 +929,22 @@
     return '<span class="'+cls+'" title="'+fuente+incEsc(base)+'">'+dias+' día'+(dias===1?'':'s')+'</span>';
   }
 
+  // 🔧 2026-09-28 (Daniel, viendo la tabla en vivo: "por qué dice
+  // coincide, armado 1 con armado 1... no debe coincidir, es una sola,
+  // no hay por qué presentar esta cuestión"). Cuando la ubicación
+  // coincide, mostrarla dos veces con una flecha era puro ruido -- la
+  // comparación (con la flecha "nuestra → Check") solo aporta algo
+  // cuando de verdad hay una diferencia que investigar. Si coincide, se
+  // muestra la ubicación UNA sola vez, sin la etiqueta "Coincide" ni la
+  // flecha.
   function incChkCelda(r, checkwmsOk){
     var info = INC_CHK_INFO[r.chk_estado] || INC_CHK_INFO.sin_datos;
     var nuestra = r.ubicacion || '—';
     var chk = r.chk_estado === 'no_esta' ? '—' : (r.chk_ubicacion || '—');
+    if(r.chk_estado === 'coincide'){
+      return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Coincide con Check">'
+        + incEsc(nuestra) + '</span></td>';
+    }
     return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Nuestra ubicación: '+incEsc(nuestra)+' · Check: '+incEsc(chk)+'">'
       + '<b>'+info.txt+'</b><small>'+incEsc(nuestra)+(checkwmsOk===false ? '' : (' → '+incEsc(chk)))+'</small></span></td>';
   }
@@ -974,7 +986,7 @@
       + '<th style="width:56px">Foto</th>'
       + incTh('UA', 'ua') + incTh('SKU', 'sku') + incTh('Descripción', 'descripcion')
       + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
-      + '<th>Ubicación vs Check</th>'
+      + '<th>Ubicación</th>'
       + '<th title="Fecha de ingreso a bodega (GRI) o, si no se cargó, fecha de registro">Días en bodega</th>'
       + incTh('Fecha resolución', 'fecha_resolucion')
       + '<th style="width:78px">Acciones</th></tr></thead>';
