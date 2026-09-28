@@ -1378,10 +1378,19 @@
     var id = $('incId').value;
     var hint = $('incCantidadHintErpWms');
     if(!id){
-      // Incidencia nueva: aún no hay id, así que no hay fotos ni bitácora.
-      $('incCuadre').innerHTML = '<div class="inc-vered v-nd">El cuadre y las fotos se habilitan al guardar la incidencia.'
-        + '<small>Primero guarda; luego vuelve a abrirla para adjuntar evidencia.</small></div>';
-      $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de '+INC_MAX_FOTOS;
+      // 🔧 2026-09-28 (Daniel, viendo el paso Evidencia en vivo: "por qué
+      // no me deja tomar la foto"). El cuadre SÍ necesita una incidencia
+      // guardada (compara contra ERP/WMS), pero la foto no tiene por qué
+      // esperar: "Agregar foto/video" ahora guarda la incidencia EN
+      // SILENCIO primero (misma validación de siempre -- si falta algo
+      // obligatorio, salta a ese paso en vez de fallar mudo) y abre la
+      // cámara/galería apenas tiene el id, sin pedirle cerrar y reabrir.
+      $('incCuadre').innerHTML = '<div class="inc-vered v-nd">El cuadre (comparación contra ERP/WMS) se habilita al guardar la incidencia.</div>';
+      $('incFotos').innerHTML = '<div class="inc-foto-add" id="incFotoAdd"><i class="bi bi-camera"></i>Agregar foto</div>'
+        + '<div class="inc-foto-add" id="incVideoAdd"><i class="bi bi-camera-video"></i>Agregar video</div>';
+      $('incFotosCount').textContent = '0 de '+INC_MAX_FOTOS;
+      document.getElementById('incFotoAdd').onclick = function(){ incGuardarYLuego(function(){ $('incFotoInput').click(); }); };
+      document.getElementById('incVideoAdd').onclick = function(){ incGuardarYLuego(function(){ $('incVideoInput').click(); }); };
       $('incBitacora').innerHTML = '';
       if(hint) hint.textContent = '';
       // 🎨 2026-09-27: alta 100% manual (sin hallazgo): no hay con qué
@@ -2087,6 +2096,18 @@
   document.getElementById('incBtnGuardar').addEventListener('click', function(){
     incGuardarIncidencia(function(){ incModal().hide(); });
   });
+
+  // 🔧 2026-09-28: guarda en silencio (sin cerrar el modal ni recargar la
+  // tabla) y solo entonces ejecuta `luego` -- usado por "Agregar foto/
+  // video" en el paso Evidencia cuando la incidencia todavía no existe.
+  // Si falta un campo obligatorio, incGuardarIncidencia ya salta a ese
+  // paso y no llama onOk -- `luego` simplemente no se ejecuta.
+  function incGuardarYLuego(luego){
+    incGuardarIncidencia(function(){
+      incCargarEvidencia();
+      if(luego) luego();
+    }, {silencioso:true});
+  }
 
   /* ══════════════ SOLICITAR REPUESTO DESDE INCIDENCIA (Fase 2, 2026-09-21)
      Mismo motor que la OT: POST /mantenciones/api/incidencias/<id>/solicitar-repuesto
