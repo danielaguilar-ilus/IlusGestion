@@ -2458,6 +2458,11 @@ def get_mysql():
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
+        # FIX 2026-09-29: init_db corre sus ALTER por esta conexión. 5 s de
+        # espera máxima por metadata lock (default MySQL = 1 año): un ALTER
+        # que no consigue la tabla se rinde en vez de congelarla para todos.
+        # 5 < 10 del pool → la DML que queda detrás siempre alcanza a pasar.
+        init_command="SET SESSION lock_wait_timeout=5",
     )
 
 
@@ -2538,7 +2543,18 @@ def _get_pool():
                 # Mantener wait_timeout de la sesión MySQL alto para que
                 # NUESTRO read_timeout sea siempre el que dispare primero
                 # (no MySQL cerrando la conexión por su lado).
-                init_command   = "SET SESSION wait_timeout=600",
+                # ── FIX 2026-09-29 (caída en horario laboral, 2da del día) ──
+                # lock_wait_timeout = espera máxima por un METADATA LOCK. El
+                # default de MySQL es 31536000 s (1 AÑO). Un ALTER de boot que
+                # esperaba detrás de una transacción abierta se quedaba ahí
+                # "para siempre" del lado del servidor (nuestro read_timeout=5
+                # solo corta al CLIENTE, y DBUtils lo reintentaba), y detrás de
+                # ese ALTER pendiente hacía fila TODO SELECT a esa tabla
+                # (mant_clientes: 10 s por un SELECT por PK) → página caída.
+                # Con 10 s una consulta normal jamás queda colgada; los DDL van
+                # con 3 s (ver mysql_execute), así que siempre se rinden antes
+                # que la DML que tienen detrás.
+                init_command   = "SET SESSION wait_timeout=600, lock_wait_timeout=10",
             )
             print("[ILUS] Pool de conexiones MySQL activo (DBUtils + anti-idle).")
 
@@ -3062,12 +3078,29 @@ def mysql_fetchall(query, params=None):
         _sql_track(query, int((time.time() - _t0) * 1000))
 
 
+_DDL_RE = re.compile(r"^\s*(ALTER|CREATE|DROP|RENAME|TRUNCATE)\b", re.I)
+
+
 def mysql_execute(query, params=None):
     _t0 = time.time()
     try:
         conn = get_db()
         with conn.cursor() as cur:
-            cur.execute(query, params or ())
+            # FIX 2026-09-29: un DDL (los _ensure_* de cada boot) espera como
+            # máximo 3 s por el metadata lock y se rinde; así nunca deja una
+            # tabla congelada con toda la app haciendo fila detrás. Se restaura
+            # a 10 s (valor del pool) porque la conexión vuelve al pool.
+            _es_ddl = bool(_DDL_RE.match(query or ""))
+            if _es_ddl:
+                cur.execute("SET SESSION lock_wait_timeout=3")
+            try:
+                cur.execute(query, params or ())
+            finally:
+                if _es_ddl:
+                    try:
+                        cur.execute("SET SESSION lock_wait_timeout=10")
+                    except Exception:
+                        pass
         conn.commit()
     finally:
         _sql_track(query, int((time.time() - _t0) * 1000))
