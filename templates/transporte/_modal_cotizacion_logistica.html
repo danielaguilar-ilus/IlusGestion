@@ -1724,16 +1724,21 @@ async function lcGuardar(){
     return it.stock && it.stock.hay_stock === false && !it.stockGestionado;
   });
   if (sinStock.length){
-    await window.ilusAlert({
+    var continuar = await window.ilusConfirm({
       title: 'Hay productos sin stock disponible',
-      message: 'No se puede crear la cotización mientras estas línea(s) no tengan stock y no las hayas gestionado ni quitado:\n' +
+      message: 'Estas líneas no tienen stock en el ERP:\n' +
         sinStock.map(function(it){ return '• ' + it.nombre + ' (SKU ' + it.sku + ')'; }).join('\n'),
-      sub: 'En la tabla de productos, usa el botón "Sin stock · gestionar" de cada línea (si ya coordinaste el faltante) o quítala con el botón ✕.',
+      sub: '¿Ya coordinaste el faltante (backorder, pedido al proveedor, etc.) y quieres avanzar de todas formas?',
+      okLabel: 'Sí, avanzar igual', cancelLabel: 'Volver a revisar',
       type: 'warning',
     });
-    var filaSinStock = document.querySelector('#lcItemsBody .lc-sinficha');
-    if (filaSinStock) filaSinStock.scrollIntoView({behavior:'smooth', block:'center'});
-    return;
+    if (!continuar){
+      var filaSinStock = document.querySelector('#lcItemsBody .lc-sinficha');
+      if (filaSinStock) filaSinStock.scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+    sinStock.forEach(function(it){ it.stockGestionado = true; });
+    lcRenderItems();
   }
   if (!(Math.max(parseInt($('lcCostoCourier').value, 10) || 0, 0) > 0)){
     var seguir = await window.ilusConfirm({
