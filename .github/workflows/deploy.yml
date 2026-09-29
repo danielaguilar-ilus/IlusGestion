@@ -254,6 +254,21 @@ jobs:
       # hasta el siguiente push, que lo pisó en silencio de vuelta a 2Gi (así
       # volvió a caerse el mismo día). 2Gi -> 4Gi queda ACÁ, en el propio
       # workflow, para que sobreviva a todos los deploys futuros.
+      # 🔴 2026-09-29 (recurrencia del incidente de concurrencia del 22-sep,
+      # Daniel: "la página debe funcionar expedita siempre y rápida" --
+      # "varios usuarios" sin poder entrar, curl daba timeout total sin
+      # respuesta). El 22-sep ya se había subido `--max-instances` a 15 a
+      # mano (`gcloud run services update`) tras confirmar en los logs "no
+      # available instance" -- EXACTO el mismo error de fondo que con la
+      # memoria del 23-sep: un `gcloud run services update` manual no
+      # sobrevive al siguiente `gcloud run deploy --source .` de este mismo
+      # workflow, que lo pisa de vuelta al valor de ACÁ ABAJO en cada push.
+      # Esta línea seguía en 4 desde el 08-sep -- ese fue el hueco real. Con
+      # --concurrency 16 (línea de abajo), 4 instancias son 64 cupos
+      # simultáneos como techo duro para TODA la empresa; 15 son 240. Ver
+      # incidente_concurrencia_cloud_run_2026_09_08 en memoria (incluye la
+      # recurrencia del 22-sep) -- si esto se vuelve a quedar corto, medir
+      # instancias reales en Cloud Run Metrics antes de volver a subir a ciegas.
       - name: Deploy to Cloud Run
         id: deploy
         run: |
@@ -264,7 +279,7 @@ jobs:
             --add-cloudsql-instances "$CLOUDSQL_INST" \
             --allow-unauthenticated \
             --min-instances 1 \
-            --max-instances 4 \
+            --max-instances 15 \
             --memory 4Gi \
             --cpu 2 \
             --timeout 300 \
