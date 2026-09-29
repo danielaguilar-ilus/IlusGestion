@@ -2456,7 +2456,9 @@ def get_mysql():
         database=MYSQL_CONFIG["database"],
         connect_timeout=MYSQL_CONFIG.get("connect_timeout", 15),
         charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
+        # FIX 2026-09-29: DictCursor + guardia de DDL (ver _ddl_ya_aplicado):
+        # un ALTER/CREATE que ya está aplicado no se ejecuta ni pide lock.
+        cursorclass=_ilus_guard_cursor_class(),
         autocommit=False,
         # FIX 2026-09-29: init_db corre sus ALTER por esta conexión. 5 s de
         # espera máxima por metadata lock (default MySQL = 1 año): un ALTER
@@ -3078,7 +3080,123 @@ def mysql_fetchall(query, params=None):
         _sql_track(query, int((time.time() - _t0) * 1000))
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  GUARDIA DE DDL DE BOOT (2026-09-29 — caídas en horario laboral)
+#
+#  En producción cada instancia nueva de Cloud Run corre init_db + los
+#  _ensure_* = ~800 sentencias ALTER/CREATE, aunque ya estén aplicadas
+#  ("idempotente" por try/except). Pero un DDL que "no hace nada" igual
+#  pide un metadata lock EXCLUSIVO sobre la tabla, y un MODIFY de ENUM
+#  puede REESCRIBIR la tabla completa. Con 1-2 instancias pasaba piola;
+#  con el tráfico de un día normal Cloud Run levanta muchas, cada boot
+#  repetía los ~800 DDL, y la tabla de clientes quedaba congelada para
+#  toda la empresa.
+#
+#  Esta guardia pregunta primero a information_schema (lectura liviana,
+#  no bloquea a nadie) si el cambio YA está hecho, y en ese caso no
+#  ejecuta el DDL. Solo reconoce casos inequívocos; ante cualquier duda
+#  (sentencia con varias cláusulas, sintaxis que no entiende, error al
+#  consultar) devuelve False y el DDL corre igual que antes.
+#
+#  MODIFY ... ENUM: se salta si los valores pedidos ya están TODOS en la
+#  columna (pedido ⊆ actual). Hay varios MODIFY de mant_visitas.estado
+#  con listas distintas que en cada boot intentaban ACHICAR el ENUM (y
+#  reescribir la tabla) para después volver a agrandarlo. Achicar un ENUM
+#  nunca fue la intención de una migración de boot; si algún día hace
+#  falta, se hace a mano, no en el arranque.
+# ══════════════════════════════════════════════════════════════════════
 _DDL_RE = re.compile(r"^\s*(ALTER|CREATE|DROP|RENAME|TRUNCATE)\b", re.I)
+_DDLG_MULTI      = re.compile(r",\s*(ADD|MODIFY|CHANGE|DROP|ALTER|RENAME)\s", re.I)
+_DDLG_CREATE_TBL = re.compile(r"^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`?(\w+)`?", re.I)
+_DDLG_ADD_IDX    = re.compile(r"^\s*ALTER\s+TABLE\s+`?(\w+)`?\s+ADD\s+(?:UNIQUE\s+|FULLTEXT\s+)?(?:INDEX|KEY)\s+`?(\w+)`?", re.I)
+_DDLG_CREATE_IDX = re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+|FULLTEXT\s+)?INDEX\s+`?(\w+)`?\s+ON\s+`?(\w+)`?", re.I)
+_DDLG_ADD_COL    = re.compile(r"^\s*ALTER\s+TABLE\s+`?(\w+)`?\s+ADD\s+(?:COLUMN\s+)?`?(\w+)`?[\s(]", re.I)
+_DDLG_MOD_ENUM   = re.compile(r"^\s*ALTER\s+TABLE\s+`?(\w+)`?\s+MODIFY\s+(?:COLUMN\s+)?`?(\w+)`?\s+ENUM\s*\((.*?)\)", re.I | re.S)
+_DDLG_ENUM_VAL   = re.compile(r"'([^']*)'")
+_DDLG_NO_COLUMNA = {"INDEX", "KEY", "UNIQUE", "CONSTRAINT", "FOREIGN", "PRIMARY",
+                    "FULLTEXT", "SPATIAL", "CHECK", "PARTITION"}
+_ddl_guard_saltados = 0   # contador por proceso (se imprime al terminar el boot)
+
+
+def _ddl_ya_aplicado(consultar, query) -> bool:
+    """True si el DDL `query` ya está aplicado y no hace falta ejecutarlo.
+    `consultar(sql, params)` ejecuta un SELECT y devuelve la 1a fila o None.
+    Nunca lanza: ante cualquier duda devuelve False (el DDL corre normal)."""
+    global _ddl_guard_saltados
+    q = query if isinstance(query, str) else ""
+    if not _DDL_RE.match(q) or _DDLG_MULTI.search(q):
+        return False
+    try:
+        existe = None
+        m = _DDLG_CREATE_TBL.match(q)
+        if m:
+            existe = consultar(
+                "SELECT 1 FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s", (m.group(1),)) is not None
+        if existe is None:
+            m = _DDLG_ADD_IDX.match(q)
+            tabla_idx = (m.group(1), m.group(2)) if m else None
+            if not m:
+                m = _DDLG_CREATE_IDX.match(q)
+                tabla_idx = (m.group(2), m.group(1)) if m else None
+            if tabla_idx:
+                existe = consultar(
+                    "SELECT 1 FROM information_schema.STATISTICS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND INDEX_NAME=%s "
+                    "LIMIT 1", tabla_idx) is not None
+        if existe is None:
+            m = _DDLG_ADD_COL.match(q)
+            if m and m.group(2).upper() not in _DDLG_NO_COLUMNA:
+                existe = consultar(
+                    "SELECT 1 FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME=%s",
+                    (m.group(1), m.group(2))) is not None
+        if existe is None:
+            m = _DDLG_MOD_ENUM.match(q)
+            if m:
+                fila = consultar(
+                    "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME=%s",
+                    (m.group(1), m.group(2)))
+                if fila:
+                    tipo = fila["t"] if isinstance(fila, dict) else fila[0]
+                    if isinstance(tipo, (bytes, bytearray)):
+                        tipo = tipo.decode("utf-8", "replace")
+                    tipo = str(tipo or "")
+                    if tipo.lower().startswith("enum("):
+                        pedidos = set(_DDLG_ENUM_VAL.findall(m.group(3)))
+                        actuales = set(_DDLG_ENUM_VAL.findall(tipo))
+                        existe = bool(pedidos) and pedidos <= actuales
+        if existe:
+            _ddl_guard_saltados += 1
+            return True
+    except Exception:
+        return False
+    return False
+
+
+_IlusGuardCursor = None
+
+
+def _ilus_guard_cursor_class():
+    """DictCursor que aplica _ddl_ya_aplicado antes de cada DDL. Lo usa
+    get_mysql() (la conexión de init_db). La DML pasa intacta."""
+    global _IlusGuardCursor
+    if _IlusGuardCursor is None:
+        import pymysql.cursors
+
+        class _Cur(pymysql.cursors.DictCursor):
+            def execute(self, query, args=None):
+                if isinstance(query, str) and _DDL_RE.match(query):
+                    def _consultar(sql, params):
+                        super(_Cur, self).execute(sql, params)
+                        return self.fetchone()
+                    if _ddl_ya_aplicado(_consultar, query):
+                        return 0
+                return super().execute(query, args)
+
+        _IlusGuardCursor = _Cur
+    return _IlusGuardCursor
 
 
 def mysql_execute(query, params=None):
@@ -3092,9 +3210,16 @@ def mysql_execute(query, params=None):
             # a 10 s (valor del pool) porque la conexión vuelve al pool.
             _es_ddl = bool(_DDL_RE.match(query or ""))
             if _es_ddl:
+                def _consultar(sql, p):
+                    cur.execute(sql, p)
+                    return cur.fetchone()
+                if _ddl_ya_aplicado(_consultar, query):
+                    _es_ddl = None      # ya aplicado: ni se pide el lock
+            if _es_ddl:
                 cur.execute("SET SESSION lock_wait_timeout=3")
             try:
-                cur.execute(query, params or ())
+                if _es_ddl is not None:
+                    cur.execute(query, params or ())
             finally:
                 if _es_ddl:
                     try:
