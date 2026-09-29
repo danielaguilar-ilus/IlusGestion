@@ -1384,7 +1384,11 @@ def _lc_cotizacion_pdf_ctx(cid):
             "contacto_nombre": cot.get("contacto_nombre") or "",
             "tipo_servicio_label": tipo_label,
             "notas": cot.get("notas"),
-            "subtotal": int(cot.get("subtotal") or 0),
+            # En transporte la BD guarda `subtotal` YA CON el descuento global
+            # restado (ver _lc_calcular_totales). La plantilla compartida
+            # espera el subtotal ANTES del descuento (igual que Servicio
+            # Tecnico), asi que se lo devolvemos aqui; si no, lo resta 2 veces.
+            "subtotal": int(cot.get("subtotal") or 0) + int(cot.get("descuento_monto") or 0),
             "descuento_pct": float(cot.get("descuento_pct") or 0),
             "descuento_monto": int(cot.get("descuento_monto") or 0),
             # El costo del flete NO se muestra como linea aparte -- ya viene
