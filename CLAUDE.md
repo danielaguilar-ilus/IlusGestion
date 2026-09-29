@@ -728,5 +728,42 @@ agente pudiera destruir la base de datos real de la empresa.
 
 ---
 
-_Última actualización: 2026-09-23_
+## 🧊 REGLA #18 — Escalabilidad: el arranque de la app NO puede bloquear tablas, y no se agranda infraestructura sin diagnóstico
+
+**Incidente real, 2026-09-29:** la página se cayó dos veces en horario
+laboral. Se subieron instancias de Cloud Run, la RAM de la BD y el disco
+(+~100 mil CLP/mes) y nada lo arreglaba de fondo. La causa real era
+otra: cada instancia nueva corre al arrancar init_db + los `_ensure_*`
+(~800 ALTER/CREATE), y un DDL "que no cambia nada" igual pide un lock
+EXCLUSIVO de la tabla. Con `lock_wait_timeout` en el default de MySQL
+(1 año), un ALTER que esperaba detrás de una transacción abierta
+congelaba `mant_clientes` para toda la empresa, y más instancias =
+más ALTER en fila. Fix: commits `868d3a04` y `57212c2d`.
+
+### Reglas
+
+1. **Toda migración nueva debe ser barata cuando ya está aplicada.**
+   Usar `mysql_execute(...)` o la conexión de `get_mysql()` — ambas pasan
+   por `_ddl_ya_aplicado()`, que salta sin pedir lock los `CREATE TABLE IF
+   NOT EXISTS`, `ADD COLUMN`, `ADD INDEX`/`CREATE INDEX` y `MODIFY ... ENUM`
+   ya aplicados. **Una sentencia = una cláusula** (`ADD COLUMN a, ADD COLUMN
+   b` en una sola sentencia no se puede verificar y corre siempre).
+2. **Nunca achicar un ENUM en el arranque**, y nunca dos migraciones que
+   definan la misma columna con valores distintos (había 4 para
+   `mant_visitas.estado`). Un MODIFY que solo cambia DEFAULT/NOT NULL de
+   un ENUM sin agregar valores lo salta la guardia → aplicarlo a mano.
+3. **No tocar `lock_wait_timeout`** (pool 10 s, init 5 s, DDL 3 s): es lo
+   que impide que un DDL deje una tabla congelada.
+4. **Antes de agrandar infraestructura (instancias, tier de BD, disco),
+   diagnosticar.** Firma de "lock, no capacidad": un `SELECT ... WHERE
+   id=%s` tarda segundos con la BD a CPU baja → metadata lock. Agrandar
+   ahí solo aumenta la factura. Los cambios de tamaño de BD se explican a
+   Daniel con su costo mensual en pesos ANTES de aplicarlos.
+5. **Recursos de Cloud Run solo en `.github/workflows/deploy.yml`** (un
+   `gcloud run services update` manual lo pisa el siguiente push — pasó
+   con `--max-instances` y con `--memory`).
+
+---
+
+_Última actualización: 2026-09-29_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
