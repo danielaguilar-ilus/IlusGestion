@@ -721,6 +721,7 @@
        Filas bajas (md/sm): se queda la etiqueta de arriba, en la línea del estado. */
     .p-empresa-fila{display:none;margin-top:4px;max-width:100%;color:#93c5fd;font-weight:800;
       font-size:var(--fs-sub,15px);line-height:1.15;overflow-wrap:anywhere;white-space:normal}
+    #stage.con-empresa{--col-left:420px}
     #stage[data-densidad="xl"] .p-empresa-fila{display:block}
     #stage[data-densidad="xl"] .p-empresa-fila:empty{display:none}
     #stage[data-densidad="xl"] .p-sub .p-empresa{display:none}
@@ -2143,6 +2144,9 @@
     const rowH = Math.max(46, Math.min(112, Math.floor(disponible / filas)));
     stage.style.setProperty('--row-h', rowH + 'px');
     stage.dataset.densidad = rowH >= 88 ? 'xl' : rowH >= 72 ? 'lg' : rowH >= 58 ? 'md' : 'sm';
+    // 🏢 2026-09-30: con técnicos externos que traen empresa, la columna de identidad se ensancha para que
+    // la empresa quepa completa junto al estado (Daniel: "a los externos les figure la empresa").
+    stage.classList.toggle('con-empresa', pagina.some(g => (g.personas || []).some(p => p && p.empresa)));
   }
 
   /* ──────────────── tarjeta-calendario: regla y overlays ──────────────── */
