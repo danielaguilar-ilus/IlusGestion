@@ -8,6 +8,11 @@
 {# 🔧 2026-09-26: timeline de actividad COMPARTIDO (mismo lenguaje visual
    que "Actividad del ticket") -- usado por la bitácora de la incidencia. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='ilus_timeline.css') }}">
+{# 🎨 2026-09-30 (Daniel: "enchular la tabla y que se vea justo como lo
+   hicimos con retiros"): se REUSAN los estilos `rm-*` del Monitor de
+   Retiros tal cual (barra de búsqueda, cabecera negra, semáforo por fila,
+   pastillas, detalle desplegable, pie negro) -- no se copian. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}">
 {% endblock %}
 {% block content %}
 
@@ -56,26 +61,40 @@
     UA (ver `q` en el backend) + estado + el semáforo Check (el único
     filtro que de verdad no cabe en un texto libre, se queda pero acá
     arriba, no repetido por columna). -#}
-<div class="inc-filtros">
-  <input type="text" id="incFQ" class="form-control form-control-sm" placeholder="Buscar por UA, SKU, descripción o motivo…">
-  <select id="incFEstado" class="form-select form-select-sm">
-    <option value="">Todos los estados</option>
-    <option value="abierta">Abiertas</option>
-    <option value="resuelta">Resueltas</option>
-  </select>
-  <select id="incFChk" class="form-select form-select-sm">
-    <option value="">Ubicación/UA vs Check: todos</option>
-    <option value="coincide">Coincide</option>
-    <option value="distinta">Distinta</option>
-    <option value="no_esta">No está en Check</option>
-    <option value="sin_ua">Sin UA</option>
-    <option value="sin_ubicacion_nuestra">Sin ubic. nuestra</option>
-    <option value="sin_datos">Check no disponible</option>
-  </select>
-  <button class="btn btn-sm btn-ilus-outline" id="incBtnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
-</div>
+{#- 🎨 2026-09-30: misma barra que el Monitor de Retiros (rm-toolbar). Los
+    IDs (incFQ, incFEstado, incFChk, incBtnLimpiar) no cambian: los filtros,
+    la búsqueda y la paginación del servidor siguen funcionando igual. -#}
+<section class="rm-monitor" id="incMonitor" aria-label="Bodega de incidencias">
+  <div class="rm-toolbar">
+    <div class="rm-search" role="search">
+      <label class="rm-search-tag" for="incFQ"><i class="bi bi-search"></i><span>Buscar</span></label>
+      <input id="incFQ" type="search" autocomplete="off" spellcheck="false"
+             placeholder="UA, SKU, descripción o motivo…" aria-label="Buscar en la bodega de incidencias">
+      <span class="rm-search-count" id="incCount" aria-live="polite"></span>
+    </div>
+    <div class="rm-tools-row">
+      <div class="rm-tools">
+        <select id="incFEstado" class="rm-select" aria-label="Filtrar por estado">
+          <option value="">Todos los estados</option>
+          <option value="abierta">Abiertas</option>
+          <option value="resuelta">Resueltas</option>
+        </select>
+        <select id="incFChk" class="rm-select" aria-label="Filtrar por ubicación contra Check">
+          <option value="">Ubicación/UA vs Check: todos</option>
+          <option value="coincide">Coincide</option>
+          <option value="distinta">Distinta</option>
+          <option value="no_esta">No está en Check</option>
+          <option value="sin_ua">Sin UA</option>
+          <option value="sin_ubicacion_nuestra">Sin ubic. nuestra</option>
+          <option value="sin_datos">Check no disponible</option>
+        </select>
+        <button type="button" class="rm-btn rm-btn-rojo" id="incBtnLimpiar"><i class="bi bi-x-circle"></i>Limpiar filtros</button>
+      </div>
+    </div>
+  </div>
 
-<div id="incLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
+  <div id="incLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
+</section>
 
 {# ── Modal alta/edición (>5 campos → Bootstrap modal, REGLA #8) ── #}
 {#- 🎨 2026-09-27 (Daniel: "quiero el modal de registrar una nueva
@@ -919,14 +938,95 @@
   // incidencias"). `fecha_ingreso` es opcional (GRI); si no se cargó, se
   // usa `created_at` (cuándo se registró la incidencia acá) como
   // respaldo -- nunca queda la celda vacía por falta del dato ideal.
-  function incDiasBodegaCelda(r){
+  function incDias(r){
     var base = r.fecha_ingreso || (r.created_at ? r.created_at.slice(0, 10) : null);
-    if(!base) return '—';
+    if(!base) return null;
     var dias = Math.floor((Date.now() - new Date(base + 'T00:00:00').getTime()) / 86400000);
-    if(isNaN(dias) || dias < 0) return '—';
-    var cls = dias >= 30 ? 'text-danger fw-bold' : (dias >= 14 ? 'text-warning-emphasis fw-semibold' : '');
-    var fuente = r.fecha_ingreso ? 'Ingreso (GRI): ' : 'Registrada el: ';
-    return '<span class="'+cls+'" title="'+fuente+incEsc(base)+'">'+dias+' día'+(dias===1?'':'s')+'</span>';
+    if(isNaN(dias) || dias < 0) return null;
+    return {dias: dias, base: base, gri: !!r.fecha_ingreso};
+  }
+
+  // 🎨 2026-09-30: semáforo de la fila (borde izquierdo, igual que Retiros)
+  // por días en bodega -- mismos cortes que ya pintaban la columna: rojo
+  // desde 30 días, ámbar desde 14, verde bajo 14.
+  function incSemaforo(r){
+    var x = incDias(r);
+    if(!x) return 'gris';
+    return x.dias >= 30 ? 'rojo' : (x.dias >= 14 ? 'ambar' : 'verde');
+  }
+
+  function incDiasBodegaCelda(r){
+    var x = incDias(r);
+    if(!x) return '<span class="rm-sub">—</span>';
+    var niv = incSemaforo(r);
+    var ico = niv === 'rojo' ? 'exclamation-octagon-fill' : (niv === 'ambar' ? 'clock-fill' : 'calendar-check');
+    return '<span class="rm-pill '+niv+'" style="margin-top:0"><i class="bi bi-'+ico+'"></i>'
+      + x.dias+' día'+(x.dias===1?'':'s')+'</span>'
+      + '<div class="rm-sub">'+(x.gri ? 'Ingreso GRI ' : 'Registrada ')+fmtFecha(x.base)+'</div>';
+  }
+
+  // Fechas de auditoría (created_at/updated_at): MySQL las guarda en UTC --
+  // se muestran SIEMPRE en hora de Chile y d/m/a (REGLA #6).
+  function incFmtChile(s){
+    if(!s) return '—';
+    var d = new Date(String(s).replace(' ', 'T') + 'Z');
+    if(isNaN(d.getTime())) return incEsc(s);
+    var p = {};
+    new Intl.DateTimeFormat('es-CL', {timeZone:'America/Santiago', day:'2-digit', month:'2-digit',
+      year:'numeric', hour:'2-digit', minute:'2-digit', hour12:false})
+      .formatToParts(d).forEach(function(x){ p[x.type] = x.value; });
+    return p.day+'/'+p.month+'/'+p.year+' '+p.hour+':'+p.minute;
+  }
+
+  // Daniel (2026-09-27): "Sí · No hay... ahí es confuso" -- se dice en
+  // palabras qué significa, con el color del semáforo.
+  function incRepCelda(r){
+    if(r.req_repuesto === 'si'){
+      if(r.stock_repuesto === 'hay') return '<span class="rm-pill verde" style="margin-top:0"><i class="bi bi-box-seam"></i>Sí · en stock</span>';
+      if(r.stock_repuesto === 'no_hay') return '<span class="rm-pill ambar" style="margin-top:0"><i class="bi bi-cart-plus"></i>Sí · sin stock</span>';
+      return '<span class="rm-pill ambar" style="margin-top:0"><i class="bi bi-tools"></i>Sí</span>';
+    }
+    if(r.req_repuesto === 'no') return '<span class="rm-sub">No requiere</span>';
+    return '<span class="rm-sub">—</span>';
+  }
+
+  // Acciones en menú ⋮, como en Retiros. `strategy:fixed` para que el menú
+  // no quede cortado por el contenedor con scroll de la tabla.
+  function incAccCelda(r){
+    return '<td class="text-end rm-c-acc" data-label="Acción"><div class="dropdown">'
+      + '<button class="btn btn-outline-dark rm-acc-btn" type="button" data-bs-toggle="dropdown"'
+      + ' data-bs-popper-config=\'{"strategy":"fixed"}\' aria-expanded="false" title="Acciones"'
+      + ' aria-label="Acciones de la incidencia"><i class="bi bi-three-dots-vertical"></i></button>'
+      + '<ul class="dropdown-menu dropdown-menu-end shadow-sm">'
+      +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="edit" data-id="'+r.id+'"><i class="bi bi-pencil-square me-2"></i>Ver / editar</button></li>'
+      +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="rep" data-id="'+r.id+'"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>'
+      +   (incCanDelete ? '<li><hr class="dropdown-divider"></li><li><button type="button" class="dropdown-item text-danger inc-acc" data-accion="del" data-id="'+r.id+'"><i class="bi bi-trash me-2"></i>Eliminar</button></li>' : '')
+      + '</ul></div></td>';
+  }
+
+  // Detalle desplegable (flecha ">"), mismo patrón de paneles que Retiros.
+  // Todo sale de la fila que ya trae el listado: cero consultas extra.
+  function incDetalleHtml(r, ncols){
+    function panel(ico, titulo, cuerpo, ancho){
+      return '<div class="rm-panel'+(ancho ? ' rm-panel-wide' : '')+'"><h4><i class="bi bi-'+ico+'"></i>'+titulo+'</h4>'+cuerpo+'</div>';
+    }
+    function p(txt){ return '<p>'+(txt ? incEsc(txt) : '<span class="rm-sub">Sin dato</span>')+'</p>'; }
+    var x = incDias(r);
+    var rep = r.req_repuesto === 'si'
+      ? '<p><b>Requiere repuesto</b> · '+(r.stock_repuesto === 'hay' ? 'hay en bodega' : (r.stock_repuesto === 'no_hay' ? 'sin stock' : 'stock sin definir'))+'</p>'
+        + (r.descripcion_repuesto ? p(r.descripcion_repuesto) : '')
+      : '<p>'+(r.req_repuesto === 'no' ? 'No requiere repuesto' : '<span class="rm-sub">Sin definir</span>')+'</p>';
+    var reg = '<p><b>Creada:</b> '+incFmtChile(r.created_at)+(r.created_by ? ' · '+incEsc(r.created_by) : '')+'</p>'
+      + (r.updated_by ? '<p><b>Última edición:</b> '+incFmtChile(r.updated_at)+' · '+incEsc(r.updated_by)+'</p>' : '')
+      + (x ? '<p><b>En bodega:</b> '+x.dias+' día'+(x.dias===1?'':'s')+(x.gri ? ' (desde la GRI)' : ' (desde el registro)')+'</p>' : '');
+    return '<tr class="rm-detail" hidden><td colspan="'+ncols+'"><div class="rm-panels">'
+      + panel('chat-square-quote', 'Motivo', p(r.motivo), true)
+      + panel('lightbulb', 'Sugerencia', p(r.sugerencia))
+      + panel('journal-text', 'Observación', p(r.observacion))
+      + panel('tools', 'Repuesto', rep)
+      + panel('geo-alt', 'Ubicación', '<p><b>Nuestra:</b> '+incEsc(r.ubicacion || '—')+'</p><p><b>Check:</b> '+incEsc(r.chk_ubicacion || '—')+'</p>')
+      + panel('clock-history', 'Registro', reg)
+      + '</div></td></tr>';
   }
 
   // 🔧 2026-09-28 (Daniel, viendo la tabla en vivo: "por qué dice
@@ -937,16 +1037,18 @@
   // cuando de verdad hay una diferencia que investigar. Si coincide, se
   // muestra la ubicación UNA sola vez, sin la etiqueta "Coincide" ni la
   // flecha.
+  var INC_CHK_NIVEL = {ok:'verde', warn:'ambar', bad:'rojo', nd:'gris'};
   function incChkCelda(r, checkwmsOk){
     var info = INC_CHK_INFO[r.chk_estado] || INC_CHK_INFO.sin_datos;
     var nuestra = r.ubicacion || '—';
     var chk = r.chk_estado === 'no_esta' ? '—' : (r.chk_ubicacion || '—');
     if(r.chk_estado === 'coincide'){
-      return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Coincide con Check">'
-        + incEsc(nuestra) + '</span></td>';
+      return '<td data-label="Ubicación"><div class="rm-cell"><span class="rm-code" style="font-size:.95rem" title="Coincide con Check">'
+        + incEsc(nuestra) + '</span></div></td>';
     }
-    return '<td><span class="inc-chk inc-chk-'+info.cls+'" title="Nuestra ubicación: '+incEsc(nuestra)+' · Check: '+incEsc(chk)+'">'
-      + '<b>'+info.txt+'</b><small>'+incEsc(nuestra)+(checkwmsOk===false ? '' : (' → '+incEsc(chk)))+'</small></span></td>';
+    return '<td data-label="Ubicación"><div class="rm-cell">'
+      + '<span class="rm-pill '+(INC_CHK_NIVEL[info.cls] || 'gris')+'" style="margin-top:0" title="Nuestra ubicación: '+incEsc(nuestra)+' · Check: '+incEsc(chk)+'">'+info.txt+'</span>'
+      + '<div class="rm-sub">'+incEsc(nuestra)+(checkwmsOk===false ? '' : (' → '+incEsc(chk)))+'</div></div></td>';
   }
 
   function incEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
@@ -976,20 +1078,22 @@
   function incTh(label, orderKey){
     if(!orderKey) return '<th>'+label+'</th>';
     var on = incOrderBy === orderKey;
-    var icon = on ? (incOrderDir === 'asc' ? 'bi-caret-up-fill' : 'bi-caret-down-fill') : 'bi-caret-down';
-    return '<th class="inc-th-sort'+(on?' on':'')+'" data-order="'+orderKey+'">'
-      + label + ' <i class="bi '+icon+'"></i></th>';
+    var cls = 'inc-th-sort rm-sortable' + (on ? (incOrderDir === 'asc' ? ' is-asc' : ' is-desc') : '');
+    var icon = on ? (incOrderDir === 'asc' ? 'bi-sort-up' : 'bi-sort-down') : 'bi-arrow-down-up';
+    return '<th class="'+cls+'" data-order="'+orderKey+'">' + label + ' <i class="bi '+icon+'"></i></th>';
   }
 
+  var INC_NCOLS = 12;
   function incTheadHtml(){
     return '<thead><tr>'
+      + '<th class="rm-c-exp"><button type="button" class="rm-ic-btn" id="incExpandAll" aria-label="Abrir o cerrar el detalle de todas las filas" title="Abrir / cerrar todo el detalle"><i class="bi bi-arrows-expand"></i></button></th>'
       + '<th style="width:56px">Foto</th>'
       + incTh('UA', 'ua') + incTh('SKU', 'sku') + incTh('Descripción', 'descripcion')
       + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
       + '<th>Ubicación</th>'
       + '<th title="Fecha de ingreso a bodega (GRI) o, si no se cargó, fecha de registro">Días en bodega</th>'
       + incTh('Fecha resolución', 'fecha_resolucion')
-      + '<th style="width:78px">Acciones</th></tr></thead>';
+      + '<th class="text-end rm-c-acc">Acción</th></tr></thead>';
   }
 
   function incWireOrden(){
@@ -1010,55 +1114,90 @@
     var rows = data.rows || [];
     var box = document.getElementById('incLista');
     var hayFiltros = incQ || incEstado || incFChk;
+    var cnt = document.getElementById('incCount');
+    if(cnt) cnt.textContent = (data.total || 0) + ' incidencia' + (data.total === 1 ? '' : 's');
+    var tabla = '<div class="rm-wrap"><div class="table-responsive">'
+      + '<table class="ilus-table table-mobile-cards rm-table align-middle" id="incTabla">' + incTheadHtml();
     if(!rows.length){
-      box.innerHTML = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'</table>'
-        + '<div class="empty-state"><i class="bi bi-inbox"></i>'
-        + (hayFiltros ? 'Sin resultados para estos filtros.' : 'No hay incidencias registradas.')+'</div></div>';
+      box.innerHTML = tabla + '<tbody><tr class="rm-empty"><td colspan="'+INC_NCOLS+'">'
+        + '<i class="bi bi-'+(hayFiltros ? 'search' : 'inbox')+'"></i>'
+        + (hayFiltros ? 'Ninguna incidencia coincide con lo que buscas.' : 'No hay incidencias registradas.')
+        + '</td></tr></tbody></table></div></div>';
       incWireOrden();
       return;
     }
     var checkwmsOk = data.checkwms_ok !== false;
-    var html = '<div class="inc-wrap"><table class="inc-tabla">'+incTheadHtml()+'<tbody>';
+    var html = tabla + '<tbody>';
     rows.forEach(function(r){
-      html += '<tr data-id="'+r.id+'">'
-        + '<td>'+incMiniaturaCelda(r)+'</td>'
-        + '<td>'+(r.recomendacion||'—')+'</td>'
-        + '<td>'+(r.sku||'—')+'</td>'
-        + '<td>'+(r.descripcion||'')+'</td>'
-        + '<td>'+(r.cantidad||0)+'</td>'
-        + '<td>'+(r.motivo||'—')+'</td>'
-        + '<td>'+(r.req_repuesto==='si' ? ('Sí'+(r.stock_repuesto?(' · '+(r.stock_repuesto==='hay'?'Hay':'No hay')):'')) : (r.req_repuesto==='no'?'No':'—'))+'</td>'
+      html += '<tr class="rm-row" data-id="'+r.id+'" data-alerta="'+incSemaforo(r)+'" style="cursor:pointer">'
+        + '<td class="rm-c-exp"><button type="button" class="rm-ic-btn rm-exp" aria-expanded="false" aria-label="Ver el detalle" title="Ver el detalle"><i class="bi bi-chevron-right"></i></button></td>'
+        + '<td data-label="Foto">'+incMiniaturaCelda(r)+'</td>'
+        + '<td data-label="UA"><div class="rm-cell"><span class="rm-code">'+incEsc(r.recomendacion || '—')+'</span></div></td>'
+        + '<td data-label="SKU"><div class="rm-cell" style="font-weight:600">'+incEsc(r.sku || '—')+'</div></td>'
+        + '<td data-label="Descripción"><div class="rm-cell"><div class="rm-cli-name">'+incEsc(r.descripcion || '')+'</div></div></td>'
+        + '<td data-label="Cant."><div class="rm-cell"><div class="rm-carga-main">'+(r.cantidad || 0)+'</div></div></td>'
+        + '<td data-label="Motivo"><div class="rm-cell">'+incEsc(r.motivo || '—')+'</div></td>'
+        + '<td data-label="Repuesto"><div class="rm-cell">'+incRepCelda(r)+'</div></td>'
         + incChkCelda(r, checkwmsOk)
-        + '<td>'+incDiasBodegaCelda(r)+'</td>'
-        + '<td>'+fmtFecha(r.fecha_resolucion)+'</td>'
-        + '<td class="inc-acciones">'
-        +   '<button type="button" class="inc-mini-btn" data-accion="rep" data-id="'+r.id+'" title="Solicitar repuesto"><i class="bi bi-tools"></i></button>'
-        +   (incCanDelete ? ('<button type="button" class="inc-mini-btn danger" data-accion="del" data-id="'+r.id+'" title="Eliminar"><i class="bi bi-trash"></i></button>') : '')
-        + '</td>'
-        + '</tr>';
+        + '<td data-label="Días en bodega"><div class="rm-cell">'+incDiasBodegaCelda(r)+'</div></td>'
+        + '<td data-label="Fecha resolución"><div class="rm-cell">'
+        +   (r.fecha_resolucion ? '<div class="rm-fecha-main">'+fmtFecha(r.fecha_resolucion)+'</div>' : '<span class="rm-sub">—</span>')
+        + '</div></td>'
+        + incAccCelda(r)
+        + '</tr>'
+        + incDetalleHtml(r, INC_NCOLS);
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
 
+    // Pie de tabla negro, mismo que Retiros (REGLA #4.3: Mostrando A–B de N,
+    // N por página, Anterior / Página X de Y / Siguiente).
     var desde = ((data.page-1)*data.page_size)+1, hasta = Math.min(data.page*data.page_size, data.total);
-    html += '<div class="inc-foot">'
-      + '<div class="inc-foot-info">Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+data.total+'</b>'
-      + (checkwmsOk ? '' : ' &nbsp;·&nbsp; <span class="text-danger">Check no disponible</span>')+'</div>'
-      + '<div class="d-flex align-items-center gap-2">'
-      + '<select class="form-select form-select-sm" id="incSizeSel" style="width:auto">'
-      + [10,25,50,100,200].map(function(sz){return '<option value="'+sz+'"'+(sz===incSize?' selected':'')+'>'+sz+' por página</option>';}).join('')
-      + '</select>'
-      + '<button class="inc-pg-btn" id="incPrev" '+(data.page<=1?'disabled':'')+'><i class="bi bi-chevron-left"></i> Anterior</button>'
-      + '<span class="inc-badge" style="background:var(--ilus-red,#dc2626);color:#fff">Página '+data.page+' de '+data.total_pages+'</span>'
-      + '<button class="inc-pg-btn" id="incNext" '+(data.page>=data.total_pages?'disabled':'')+'>Siguiente <i class="bi bi-chevron-right"></i></button>'
+    html += '<div class="rm-foot">'
+      + '<div class="rm-foot-count"><i class="bi bi-collection"></i><span>Mostrando <strong>'+desde+'–'+hasta+'</strong> de <strong>'+data.total+'</strong>'
+      +   (checkwmsOk ? '' : ' · <span style="color:#fca5a5">Check no disponible</span>')+'</span></div>'
+      + '<div class="rm-foot-ctrl">'
+      +   '<select class="rm-select" id="incSizeSel" aria-label="Filas por página">'
+      +   [10,25,50,100,200].map(function(sz){return '<option value="'+sz+'"'+(sz===incSize?' selected':'')+'>'+sz+' por página</option>';}).join('')
+      +   '</select>'
+      +   '<button type="button" class="rm-btn" id="incPrev" '+(data.page<=1?'disabled':'')+'><i class="bi bi-chevron-left"></i>Anterior</button>'
+      +   '<span>Página '+data.page+' de '+data.total_pages+'</span>'
+      +   '<button type="button" class="rm-btn" id="incNext" '+(data.page>=data.total_pages?'disabled':'')+'>Siguiente<i class="bi bi-chevron-right"></i></button>'
       + '</div></div></div>';
 
     box.innerHTML = html;
     incWireOrden();
 
-    box.querySelectorAll('tbody tr').forEach(function(tr){
+    box.querySelectorAll('tr.rm-row').forEach(function(tr){
       tr.addEventListener('click', function(ev){
-        if(ev.target.closest('.inc-mini-btn') || ev.target.closest('.inc-foto-mini')) return;
+        if(ev.target.closest('.rm-exp') || ev.target.closest('.rm-c-acc') || ev.target.closest('.inc-foto-mini')) return;
         abrirEdicion(tr.dataset.id, rows);
+      });
+    });
+    // Flecha ">" : abre/cierra el detalle de esa fila.
+    function incToggleDetalle(btn, abrir){
+      var det = btn.closest('tr').nextElementSibling;
+      if(!det || !det.classList.contains('rm-detail')) return;
+      abrir = (abrir === undefined) ? det.hidden : abrir;
+      det.hidden = !abrir;
+      btn.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+    }
+    box.querySelectorAll('.rm-exp').forEach(function(btn){
+      btn.addEventListener('click', function(ev){ ev.stopPropagation(); incToggleDetalle(btn); });
+    });
+    var expAll = document.getElementById('incExpandAll');
+    if(expAll) expAll.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      var btns = box.querySelectorAll('.rm-exp');
+      var abrir = Array.prototype.some.call(btns, function(b){ return b.getAttribute('aria-expanded') !== 'true'; });
+      btns.forEach(function(b){ incToggleDetalle(b, abrir); });
+    });
+    box.querySelectorAll('.inc-acc').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var id = btn.dataset.id, accion = btn.dataset.accion;
+        if(accion === 'edit') abrirEdicion(id, rows);
+        else if(accion === 'del') incEliminarDesdeTabla(id);
+        else if(accion === 'rep') incSolicitarRepuestoDesdeTabla(id, rows);
       });
     });
     box.querySelectorAll('.inc-foto-mini[data-lightbox]').forEach(function(img){
@@ -1071,14 +1210,6 @@
       v.addEventListener('click', function(ev){
         ev.stopPropagation();
         window.open(v.dataset.video, '_blank');
-      });
-    });
-    box.querySelectorAll('.inc-mini-btn').forEach(function(btn){
-      btn.addEventListener('click', function(ev){
-        ev.stopPropagation();
-        var id = btn.dataset.id, accion = btn.dataset.accion;
-        if(accion === 'del') incEliminarDesdeTabla(id);
-        else if(accion === 'rep') incSolicitarRepuestoDesdeTabla(id, rows);
       });
     });
     document.getElementById('incPrev').onclick = function(){ if(incPage>1){incPage--; cargar();} };
