@@ -163,6 +163,16 @@
   .cc-tables{grid-template-columns:1fr}
   .cc-fr{grid-template-columns:96px minmax(0,1fr) 44px}
   .cc-upd{margin-left:0;width:100%}
+  /* Mapa de calor: cabe en la pantalla (antes exigía deslizar y nada lo avisaba; 2026-09-30).
+     El JS acorta la etiqueta del día y muestra solo las horas en punto. */
+  .cc-heat{min-width:0;gap:2px}
+  .cc-hh{font-size:.68rem}
+  .cc-hd{padding-right:0;font-size:.72rem}
+  .cc-hd.is-hoy::after{content:"";width:7px;height:7px;padding:0;border-radius:50%}
+  .cc-hc{height:30px;border-radius:4px;font-size:.72rem}
+  /* Textos y botones de apoyo que quedaban muy chicos para leer o tocar en el celular */
+  .cc-al-m,.cc-legend,.cc-th,.cc-st span{font-size:.78rem}
+  .cc-seg button{min-height:44px;padding:5px 14px;font-size:.85rem}
 }
 @media (prefers-reduced-motion:reduce){
   .cc-dot,.cc-ev.e-atr{animation:none}

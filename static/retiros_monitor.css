@@ -228,4 +228,58 @@
   .rm-select,.rm-seg{flex:1 1 auto}
   .rm-foot{padding:10px 12px}
 }
+
+/* ══════════ Móvil para gerentes y jefaturas (Daniel 2026-09-30) ══════════
+   "Que puedan ver la información que se maneja en Retiros desde un celular". Antes cada solicitud
+   eran 5 filas con etiqueta (~450px: 2 por pantalla); ahora es una tarjeta compacta: código y ⋮
+   arriba, cliente, estado con su reloj, fecha, responsable y carga. El semáforo va en el borde
+   izquierdo. Todo cuelga de #rmMonitor / #rmTable: Incidencias reutiliza .rm-table con otras columnas. */
+@media (max-width:767px){
+  #rmMonitor .rm-search-count{padding:0 8px;font-size:.85rem}
+  #rmMonitor .rm-count-txt{display:none}
+  #rmMonitor .rm-cols-panel{left:0;right:auto;max-width:calc(100vw - 48px)}
+  #rmMonitor .rm-foot-count{width:100%}
+  #rmMonitor .rm-foot-ctrl{width:100%;display:grid;grid-template-columns:1fr auto 1fr;gap:8px}
+  #rmMonitor .rm-foot-ctrl .rm-select{grid-column:1/-1;width:100%}
+  #rmMonitor .rm-foot-ctrl .rm-btn{justify-content:center}
+  #rmPageInfo{text-align:center;white-space:nowrap}
+
+  #rmTable tbody tr.rm-row{display:grid;grid-template-columns:minmax(0,1fr) auto;
+    grid-template-areas:"sol acc" "cli cli" "est est" "fec fec" "resp car";
+    column-gap:12px;row-gap:10px;padding:12px 12px 12px 14px;border-left:6px solid var(--rm-sem,#d1d5db)}
+  #rmTable tbody tr.rm-row > td{margin:0;padding:0;border:0;min-width:0}
+  #rmTable tbody tr.rm-row > td::before{display:none}
+  #rmTable td[data-label="Solicitud"]{grid-area:sol;align-self:center}
+  #rmTable td[data-label="Cliente"]{grid-area:cli}
+  #rmTable td[data-label="Estado"]{grid-area:est}
+  #rmTable td[data-label="Fecha de retiro"]{grid-area:fec}
+  #rmTable td.rm-c-carga{grid-area:car;align-self:center}
+  #rmTable td.rm-c-acc{grid-area:acc}
+  /* Responsable: en celular sí se ve (¿quién lo lleva?); "Columnas" lo sigue pudiendo ocultar */
+  #rmTable:not(.rm-hide-resp) tbody tr.rm-row > td.rm-c-resp{display:flex !important;grid-area:resp;align-self:center}
+  #rmTable .rm-cell{flex:1 1 auto;min-width:0;text-align:left}
+  #rmTable .rm-c-carga .rm-cell{text-align:right}
+  #rmTable .rm-cli-name{font-size:1.05rem}
+  #rmTable td[data-label="Solicitud"] .rm-cell,
+  #rmTable td[data-label="Estado"] .rm-cell,
+  #rmTable td[data-label="Fecha de retiro"] .rm-cell{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+  #rmTable td[data-label="Solicitud"] .rm-sub,
+  #rmTable td[data-label="Fecha de retiro"] .rm-sub{margin:0}
+  #rmTable td[data-label="Estado"] .rm-pill,
+  #rmTable td[data-label="Fecha de retiro"] .rm-pill{margin-top:0}
+  #rmTable td[data-label="Estado"] .rm-reloj{flex:1 1 100%}
+  #rmTable .rm-reloj-barra{max-width:none}
+  #rmTable td[data-label="Fecha de retiro"] .rm-pill{order:2}
+  #rmTable td[data-label="Fecha de retiro"] .rm-sub{order:3;flex:1 1 100%}
+}
+
+/* Selector de vistas y filtros clásicos de las demás vistas (Kanban, Lista, Agenda) */
+@media (max-width:767px){
+  .btn-group.rt-vistas{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%}
+  .btn-group.rt-vistas > .btn{display:flex;align-items:center;justify-content:center;min-height:44px;margin:0 !important;
+    border-radius:10px !important;font-size:.95rem;white-space:nowrap}
+  .btn-group.rt-vistas > .btn:last-child{grid-column:1/-1}
+  form.rt-filtros .form-control-sm,form.rt-filtros .form-select-sm{min-height:44px;font-size:16px}
+  form.rt-filtros .btn-sm{min-height:44px}
+}
 @media (prefers-reduced-motion:reduce){.rm-kpi,.rm-exp .bi{transition:none}}

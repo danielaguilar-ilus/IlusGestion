@@ -139,10 +139,12 @@
   function pintarMapa() {
     const m = datos.mapa, cap = datos.capacidad || 2, bl = m.bloques || [];
     const h = $('ccHeat');
-    h.style.gridTemplateColumns = '96px repeat(' + bl.length + ', minmax(0,1fr))';
-    let html = '<div></div>' + bl.map((b) => '<div class="cc-hh">' + esc(b) + '</div>').join('');
+    // Celular: el mapa cabe en la pantalla (día sin año y horas solo en punto) en vez de exigir deslizar.
+    const cel = !!(window.matchMedia && window.matchMedia('(max-width:640px)').matches);
+    h.style.gridTemplateColumns = (cel ? '64px' : '96px') + ' repeat(' + bl.length + ', minmax(0,1fr))';
+    let html = '<div></div>' + bl.map((b) => '<div class="cc-hh">' + esc(cel ? (/:00$/.test(b) ? String(parseInt(b, 10)) : '') : b) + '</div>').join('');
     (m.dias || []).forEach((d) => {
-      html += '<div class="cc-hd' + (d.es_hoy ? ' is-hoy' : '') + '">' + esc(d.lbl) + '</div>';
+      html += '<div class="cc-hd' + (d.es_hoy ? ' is-hoy' : '') + '">' + esc(cel ? String(d.lbl).replace(/\/\d{4}$/, '') : d.lbl) + '</div>';
       d.celdas.forEach((c) => {
         let cls = 'cc-hc', txt = c.n ? c.n : '';
         if (c.bloqueo) { cls += ' blk'; txt = '×'; }

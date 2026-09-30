@@ -387,7 +387,12 @@
       }
       pintarContadores();
       var cnt = $('rmCount');
-      if (cnt) cnt.textContent = hayFiltros() ? vis.length + ' de ' + filas.length : filas.length + (filas.length === 1 ? ' solicitud' : ' solicitudes');
+      if (cnt) {
+        // El sustantivo va en su propio <span>: en celular se oculta y queda solo el número (CSS).
+        cnt.textContent = '';
+        cnt.appendChild(document.createTextNode(hayFiltros() ? vis.length + ' de ' + filas.length : String(filas.length)));
+        if (!hayFiltros()) cnt.appendChild(el('span', 'rm-count-txt', filas.length === 1 ? ' solicitud' : ' solicitudes'));
+      }
       var pie = $('rmFootCount');
       if (pie) {
         pie.textContent = '';
@@ -418,6 +423,8 @@
 
     // ── Eventos ──
     var caja = $('rmSearch'), t0 = null;
+    // En celular el texto guía largo del escritorio se corta ("Solicitud, cliente, l…"): uno corto.
+    if (caja && global.matchMedia && global.matchMedia('(max-width:767px)').matches) caja.placeholder = 'Cliente, RUT o solicitud…';
     if (caja) {
       caja.addEventListener('input', function () {
         clearTimeout(t0);

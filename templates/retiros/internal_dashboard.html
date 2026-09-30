@@ -1278,7 +1278,7 @@ select.nri-field-locked{pointer-events:none}
 {% set _mon_nuevo = filtros.view not in ('kanban', 'agenda', 'lista') and mon is defined and mon.ok %}
 {% set _filtro_srv = filtros.q or filtros.status or filtros.date %}
 {% set _fila_filtros = (not _mon_nuevo) or _filtro_srv %}
-<form method="get" class="ilus-card {{ 'p-3' if _fila_filtros else 'px-3 py-2' }} mb-3">
+<form method="get" class="ilus-card rt-filtros {{ 'p-3' if _fila_filtros else 'px-3 py-2' }} mb-3">
   {% if _fila_filtros %}
   <div class="row g-2 align-items-end">
     <div class="col-md-4"><input name="q" value="{{ filtros.q }}" class="form-control form-control-sm" placeholder="Buscar solicitud, documento, cliente, telefono"></div>
@@ -1293,7 +1293,7 @@ select.nri-field-locked{pointer-events:none}
   </div>
   {% endif %}
   {# responsive_retiros (2026-06-09): flex-wrap evita que el selector de vistas se clipee en móvil #}
-  <div class="btn-group btn-group-sm {{ 'mt-3' if _fila_filtros else '' }} flex-wrap">
+  <div class="btn-group btn-group-sm rt-vistas {{ 'mt-3' if _fila_filtros else '' }} flex-wrap">
     {# 2026-09-24 (Daniel: "Uno solo desde el Monitor"): el botón que antes
        abría la "Agenda diaria" (lista simple por fecha) ahora abre el
        calendario operativo completo, que salió del menú lateral. La vista

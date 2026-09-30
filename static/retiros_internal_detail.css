@@ -2403,3 +2403,29 @@
     .rd-more-scores{grid-template-columns:1fr}
     .rd-more-fecha{margin-left:0;flex-basis:100%}
   }
+
+  /* ════════════════════════════════════════════════════════════════
+     MÓVIL PARA GERENTES Y JEFATURAS (2026-09-30)
+     "Que puedan ver la información de Retiros desde un celular": textos de apoyo que
+     quedaban en 9–11 px, el globo de Calidad/Riesgo que se cortaba a la izquierda y
+     el botón de colapso de 32 px. Solo ≤768px; el escritorio no cambia.
+     ════════════════════════════════════════════════════════════════ */
+  @media (max-width:768px){
+    .pipe-step-num{font-size:.72rem}
+    .pipe-sub{font-size:.76rem}
+    .ficha-lbl,.rh-sello .k,.rh-d .k,.id-kpi .lbl,.carga-strip .carga-cell .lbl{font-size:.76rem}
+    .step-collapse-toggle{width:40px;height:40px}
+    /* El globo de ayuda se abre debajo del chip, a todo el ancho, en vez de flotar (y cortarse) */
+    details.pipe-score-details summary{display:flex;align-items:center;min-height:44px}
+    details.pipe-score-details[open]{flex:1 1 100%}
+    .pipe-score-pop{position:static;width:auto;margin-top:6px}
+    /* Pasos del retiro: 3 × 2 en vez de una lista de 6 filas (~300px menos de scroll).
+       Los colores (verde hecho, rojo activo) y el "PASO n" siguen diciendo dónde va. */
+    .pipe-row{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    .pipe-step{display:block;text-align:center;padding:10px 4px}
+    .pipe-step:not(:last-child)::after{display:none}
+    .pipe-circle{margin:0 auto 6px}
+    .pipe-step-num{margin-bottom:3px}
+    .pipe-label{font-size:.74rem;letter-spacing:.01em}
+    .pipe-step.active .pipe-label{font-size:.76rem}
+  }
