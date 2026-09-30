@@ -23,7 +23,8 @@
                      background:#9ca3af;margin-right:6px;vertical-align:middle"></span>
         <span id="smtpHealthLabel">SMTP: chequeando…</span>
       </button>
-      <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-light">
+      <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-light"
+         onclick="return histAbrirDesdeHeader(event)">
         <i class="bi bi-list-ul me-1"></i>Log de envíos
       </a>
     </div>
@@ -679,29 +680,160 @@
        TAB 3 — HISTORIAL
     ══════════════════════════════════════════════ #}
     <div class="tab-pane fade" id="tabLog">
-      <div class="card shadow-sm border-0">
+      <div class="card shadow-sm border-0 hist-card">
         <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2"
              style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
           <span class="fw-bold">
-            <i class="bi bi-list-ul me-2 text-danger"></i>Historial de envíos (últimos 80)
+            <i class="bi bi-list-ul me-2 text-danger"></i>Historial de envíos
+            <span class="hist-sub d-none d-md-inline">· cada correo que el sistema intentó mandar: si salió, si una llave lo frenó o si falló, y qué decía</span>
           </span>
-          <div class="d-flex gap-2 align-items-center">
+          <span id="histCargando" class="hist-cargando d-none" role="status">
+            <span class="spinner-border spinner-border-sm me-1"></span>Cargando…
+          </span>
+        </div>
+
+        {# ── Semáforo: conteo por estado con los filtros actuales (clic = filtrar) ── #}
+        <div class="hist-semaforo" id="histSemaforo" aria-label="Resumen por estado">
+          <button type="button" class="hist-chip todos active" data-estado="" onclick="histFiltrarEstado('')">
+            <i class="bi bi-collection"></i><span>Todos</span><b id="histCnt_todos">—</b>
+          </button>
+          <button type="button" class="hist-chip ok" data-estado="enviado" onclick="histFiltrarEstado('enviado')">
+            <i class="bi bi-check-circle-fill"></i><span>Enviados</span><b id="histCnt_enviado">—</b>
+          </button>
+          <button type="button" class="hist-chip warn" data-estado="bloqueado" onclick="histFiltrarEstado('bloqueado')">
+            <i class="bi bi-sign-stop-fill"></i><span>Bloqueados por llave</span><b id="histCnt_bloqueado">—</b>
+          </button>
+          <button type="button" class="hist-chip fail" data-estado="fallido" onclick="histFiltrarEstado('fallido')">
+            <i class="bi bi-x-circle-fill"></i><span>Fallidos</span><b id="histCnt_fallido">—</b>
+          </button>
+          <button type="button" class="hist-chip info" data-estado="en_cola" onclick="histFiltrarEstado('en_cola')">
+            <i class="bi bi-hourglass-split"></i><span>En cola</span><b id="histCnt_en_cola">—</b>
+          </button>
+        </div>
+
+        {# ── Filtros: consultan al SERVIDOR (REGLA #4.3) y al limpiarlos la tabla se recarga ── #}
+        <div class="hist-filtros" id="histFiltros">
+          <div class="hist-f">
+            <label for="histFEstado">Estado</label>
+            <select id="histFEstado" class="form-select form-select-sm" onchange="histFiltroCambio()">
+              <option value="">Todos</option>
+              <option value="enviado">Enviado</option>
+              <option value="bloqueado">Bloqueado por llave</option>
+              <option value="fallido">Fallido</option>
+              <option value="en_cola">En cola</option>
+            </select>
+          </div>
+          <div class="hist-f">
+            <label for="histFModulo">Módulo</label>
+            <select id="histFModulo" class="form-select form-select-sm" onchange="histFiltroCambio()">
+              <option value="">Todos</option>
+              <option value="transporte">Transporte</option>
+              <option value="transporte_cotizaciones">Cotizaciones de transporte</option>
+              <option value="retiros">Retiros</option>
+              <option value="mantenciones">Mantenciones</option>
+              <option value="tickets">Tickets</option>
+              <option value="comunicacion_interna">Comunicación interna</option>
+              <option value="catalogo">Catálogo</option>
+              <option value="general">General</option>
+              <option value="prueba_manual">Pruebas manuales (antiguas)</option>
+            </select>
+          </div>
+          <div class="hist-f hist-f-grow">
+            <label for="histFQ">Buscar</label>
+            <input type="search" id="histFQ" class="form-control form-control-sm" maxlength="100"
+                   placeholder="Destinatario, asunto, evento o usuario" oninput="histFiltroTexto()">
+          </div>
+          <div class="hist-f">
+            <label for="histFDesde">Desde</label>
+            <input type="date" id="histFDesde" class="form-control form-control-sm" onchange="histFiltroCambio()">
+          </div>
+          <div class="hist-f">
+            <label for="histFHasta">Hasta</label>
+            <input type="date" id="histFHasta" class="form-control form-control-sm" onchange="histFiltroCambio()">
+          </div>
+          <div class="hist-f">
+            <label for="histFRef">Referencia</label>
+            <input type="search" id="histFRef" class="form-control form-control-sm" maxlength="60"
+                   placeholder="RET-…, OT-…, TK-…" oninput="histFiltroTexto()">
+          </div>
+          <div class="hist-f hist-f-btn">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="histBtnLimpiar" onclick="histLimpiar()">
+              <i class="bi bi-x-circle me-1"></i>Limpiar filtros
+            </button>
+          </div>
+        </div>
+
+        <div id="histAviso" class="hist-aviso-error d-none" role="alert"></div>
+
+        {# ── Tabla paginada en el servidor (se muestra al cargar) ── #}
+        <div id="histNuevoWrap" class="d-none">
+          <div class="table-responsive hist-scroll" id="histScroll">
+            <table class="table mb-0 log-tab-table hist-table" id="histTable">
+              <thead>
+                <tr>
+                  <th><i class="bi bi-calendar3 me-1"></i>Fecha</th>
+                  <th>Canal</th>
+                  <th>Módulo</th>
+                  <th>Destinatario</th>
+                  <th>Asunto</th>
+                  <th>Estado</th>
+                  <th>Referencia</th>
+                  <th>Enviado por</th>
+                  <th class="text-end">Correo</th>
+                </tr>
+              </thead>
+              <tbody id="histTbody"></tbody>
+            </table>
+          </div>
+          {# Pie REGLA #4.3: Mostrando A–B de N · N por página · Anterior / Página X de Y / Siguiente #}
+          <div class="hist-pie" id="histPie">
+            <span class="hist-pie-info">
+              Mostrando <b id="histDesdeN">0</b>–<b id="histHastaN">0</b> de <b id="histTotalN">0</b>
+            </span>
+            <div class="hist-pie-size">
+              <label for="histPerPage">Mostrar</label>
+              <select id="histPerPage" class="form-select form-select-sm" onchange="histCambiarTamano(this.value)">
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="200">200</option>
+              </select>
+              <span>por página</span>
+            </div>
+            <div class="hist-pie-nav">
+              <button type="button" class="btn btn-sm btn-outline-secondary fw-bold" id="histPrev" aria-label="Página anterior" title="Página anterior" onclick="histIrPagina(-1)">
+                <i class="bi bi-chevron-left"></i><span class="d-none d-sm-inline"> Anterior</span>
+              </button>
+              <span class="hist-pie-pos">Página <b id="histPagAct">1</b> de <b id="histPagTot">1</b></span>
+              <button type="button" class="btn btn-sm btn-danger fw-bold" id="histNext" aria-label="Página siguiente" title="Página siguiente" onclick="histIrPagina(1)">
+                <span class="d-none d-sm-inline">Siguiente </span><i class="bi bi-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {# ── Vista anterior (últimos 80, render del servidor). Se conserva como
+              RESPALDO: queda visible si el historial paginado no carga. ── #}
+        <div id="histLegacyWrap">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 px-3 py-2 hist-legacy-head">
+            <span class="small fw-bold text-muted">Últimos 80 envíos (vista de respaldo)</span>
+          <div class="d-flex gap-2 align-items-center flex-wrap">
             <select id="logFilterEstado" class="form-select form-select-sm"
-                    style="max-width:140px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
+                    style="max-width:160px"
                     onchange="applyLogFilters()">
               <option value="">Todos los estados</option>
               <option value="ok">Solo OK</option>
               <option value="error">Solo Errores</option>
             </select>
             <select id="logFilterCanal" class="form-select form-select-sm"
-                    style="max-width:130px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2);display:none"
+                    style="max-width:130px;display:none"
                     onchange="applyLogFilters()">
               <option value="">Todos los canales</option>
               <option value="email" selected>Email</option>
             </select>
             <input type="text" id="logFilterText" class="form-control form-control-sm"
                    placeholder="🔍 Buscar destinatario/asunto..."
-                   style="max-width:220px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
+                   style="max-width:240px"
                    oninput="applyLogFilters()">
           </div>
         </div>
@@ -750,8 +882,14 @@
                   <td class="text-center">
                     {% if l.estado == 'ok' %}
                       <span class="log-status-pill ok"><i class="bi bi-check-circle-fill me-1"></i>OK</span>
+                    {% elif l.estado_det == 'bloqueado' %}
+                      {# 2026-09-23: un bloqueo por llave de paso NO es un error del correo #}
+                      <span class="log-status-pill warn" title="{{ l.detalle or '' }}"><i class="bi bi-sign-stop-fill me-1"></i>Bloqueado</span>
                     {% else %}
                       <span class="log-status-pill fail" title="{{ l.detalle or '' }}"><i class="bi bi-x-circle-fill me-1"></i>Error</span>
+                    {% endif %}
+                    {% if l.estado != 'ok' and l.detalle %}
+                      <div class="hist-motivo {{ 'warn' if l.estado_det == 'bloqueado' else 'fail' }}">{{ l.detalle }}</div>
                     {% endif %}
                   </td>
                   <td class="text-muted" style="font-size:.75rem">
@@ -767,8 +905,9 @@
             </table>
           </div>
         </div>
-      </div>
-    </div>
+        </div>{# /histLegacyWrap #}
+      </div>{# /hist-card #}
+    </div>{# /tabLog #}
 
   </div>{# /tab-content #}
 </div>{# /container #}
@@ -873,6 +1012,38 @@
         <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-danger btn-sm fw-bold" onclick="enviarTestEmail()">
           <i class="bi bi-send me-1"></i>Enviar prueba
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════
+   MODAL: Ver correo del Historial (2026-09-23)
+   El HTML guardado se muestra en un <iframe sandbox> (sin scripts, sin
+   formularios, sin navegar) servido por /comunicaciones/log/<id>/cuerpo
+   con una CSP que bloquea todo menos imágenes y estilos en línea.
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalHistCorreo" tabindex="-1" aria-labelledby="histCorreoTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down">
+    <div class="modal-content border-0">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title" id="histCorreoTitulo">
+          <i class="bi bi-envelope-open me-2 text-danger"></i><span id="histCorreoAsunto"></span>
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="histCorreoInfo" class="hist-info"></div>
+        <div id="histCorreoAviso" class="hist-aviso d-none"></div>
+        <iframe id="histCorreoFrame" sandbox="" referrerpolicy="no-referrer"
+                title="Contenido del correo guardado" class="hist-frame d-none"></iframe>
+        <div id="histCorreoVacio" class="hist-vacio d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-danger fw-bold d-none" id="histBtnReenviar" onclick="histReenviar()">
+          <i class="bi bi-arrow-repeat me-1"></i>Reenviar este correo
         </button>
       </div>
     </div>

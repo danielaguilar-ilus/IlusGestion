@@ -1,4 +1,6 @@
-// Filtros combinados client-side del tab Historial
+// Filtros combinados client-side de la tabla de RESPALDO del tab Historial
+// (últimos 80, render del servidor). Desde 2026-09-23 la vista principal es
+// el historial paginado en el servidor (ver "HISTORIAL PAGINADO" al final).
 function applyLogFilters(){
   const txt = (document.getElementById('logFilterText')?.value || '').toLowerCase().trim();
   const estado = document.getElementById('logFilterEstado')?.value || '';
@@ -31,6 +33,9 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     }
     applyLogFilters();
+    // Mismos filtros para el historial paginado (antes de abrir la pestaña,
+    // que es la que dispara la primera carga).
+    if (typeof histDesdeQuery === 'function') histDesdeQuery(qs);
     // Activar tab Historial si vino con #tabLog
     if (hash.startsWith('#tabLog')){
       const btn = document.querySelector('[data-bs-target="#tabLog"]');
@@ -1964,4 +1969,463 @@ document.addEventListener('DOMContentLoaded', () => {
   // Pequeño retraso para no competir con el render inicial
   setTimeout(refreshSmtpHealthBadge, 600);
 });
+
+/* ══════════════════════════════════════════════════════════════════
+   HISTORIAL PAGINADO (2026-09-23 — REGLA #4.3, patrón de Etiquetas)
+
+   Daniel: "no me muestra los correos de agosto... quiero saber si se
+   envió o no, y qué se envió". La vista anterior traía solo los últimos
+   80 registros y las llaves de paso cerradas generan ~100 bloqueos al
+   día, así que los envíos reales quedaban fuera de la ventana en horas.
+
+   Ahora la tabla se pagina en el SERVIDOR (GET /api/comm/historial):
+   filtros que re-consultan (y al limpiarlos la tabla se recarga), semáforo
+   por estado, motivo visible como texto, enlace a la referencia y botón
+   "Ver correo" con el HTML guardado en un iframe aislado.
+   La tabla anterior (#histLegacyWrap) queda como RESPALDO si esto falla.
+   ══════════════════════════════════════════════════════════════════ */
+const HIST_PER_PAGE_OK = [25, 50, 100, 200];
+const _hist = {
+  page: 1, per_page: 100,
+  estado: '', modulo: '', q: '', desde: '', hasta: '', ref: '',
+  seq: 0, filas: [], pages: 1, total: 0,
+  iniciado: false, cargadoOk: false, actual: null, debounce: null,
+};
+// El tamaño de página es del usuario (REGLA #4.3) y se recuerda entre visitas.
+try {
+  const _pp = parseInt(localStorage.getItem('commHistPerPage') || '', 10);
+  if (HIST_PER_PAGE_OK.includes(_pp)) _hist.per_page = _pp;
+} catch (_e) { /* almacenamiento bloqueado: se usa 100 */ }
+
+function histEsc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* Lee los filtros desde un URLSearchParams (hash #tabLog?… o /comunicaciones/log?…) */
+function histDesdeQuery(qs){
+  if (!qs) return;
+  const est = (qs.get('estado') || '').toLowerCase();
+  _hist.estado = ({ok:'enviado', error:'fallido'})[est] ||
+                 (['enviado','fallido','bloqueado','en_cola'].includes(est) ? est : '');
+  _hist.modulo = qs.get('modulo') || '';
+  _hist.q      = qs.get('q') || qs.get('evento') || '';
+  _hist.desde  = qs.get('desde') || '';
+  _hist.hasta  = qs.get('hasta') || '';
+  _hist.ref    = qs.get('ref') || '';
+  const pg = parseInt(qs.get('page') || '1', 10);
+  _hist.page = pg > 0 ? pg : 1;
+  histPintarFiltros();
+}
+
+/* Filtros del estado → controles del formulario */
+function histPintarFiltros(){
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  set('histFEstado', _hist.estado);
+  set('histFModulo', _hist.modulo);
+  set('histFQ', _hist.q);
+  set('histFDesde', _hist.desde);
+  set('histFHasta', _hist.hasta);
+  set('histFRef', _hist.ref);
+  histPintarChips();
+}
+
+/* Solo el semáforo y el tamaño de página. Al llegar una respuesta NO se
+   reescriben los campos de texto: pisaría lo que el usuario sigue escribiendo. */
+function histPintarChips(){
+  document.querySelectorAll('#histSemaforo .hist-chip').forEach(b => {
+    const on = (b.dataset.estado || '') === _hist.estado;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const pp = document.getElementById('histPerPage');
+  if (pp) pp.value = String(_hist.per_page);
+}
+
+/* Controles del formulario → estado */
+function histLeerFiltros(){
+  const val = id => ((document.getElementById(id) || {}).value || '').trim();
+  _hist.estado = val('histFEstado');
+  _hist.modulo = val('histFModulo');
+  _hist.q      = val('histFQ');
+  _hist.desde  = val('histFDesde');
+  _hist.hasta  = val('histFHasta');
+  _hist.ref    = val('histFRef');
+}
+
+function histFiltroCambio(){
+  clearTimeout(_hist.debounce);
+  histLeerFiltros();
+  _hist.page = 1;
+  histPintarChips();
+  histCargar();
+}
+
+/* Texto libre: espera a que el usuario deje de escribir. También corre al
+   BORRAR el texto (REGLA #4.3: al limpiar un filtro la tabla se recarga). */
+function histFiltroTexto(){
+  clearTimeout(_hist.debounce);
+  _hist.debounce = setTimeout(histFiltroCambio, 380);
+}
+
+function histFiltrarEstado(est){
+  const sel = document.getElementById('histFEstado');
+  if (sel) sel.value = est || '';
+  histFiltroCambio();
+}
+
+function histLimpiar(){
+  ['histFEstado','histFModulo','histFQ','histFDesde','histFHasta','histFRef'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  histFiltroCambio();
+}
+
+function histIrPagina(delta){
+  const destino = _hist.page + delta;
+  if (destino < 1 || destino > _hist.pages) return;
+  _hist.page = destino;
+  histCargar();
+}
+
+function histCambiarTamano(v){
+  const n = parseInt(v, 10);
+  if (!HIST_PER_PAGE_OK.includes(n)) return;
+  _hist.per_page = n;
+  _hist.page = 1;   // más predecible: al cambiar el tamaño se vuelve a la página 1
+  try { localStorage.setItem('commHistPerPage', String(n)); } catch (_e) {}
+  histCargar();
+}
+
+function histSetCargando(on){
+  const el = document.getElementById('histCargando');
+  if (el) el.classList.toggle('d-none', !on);
+  const t = document.getElementById('histTable');
+  if (t) t.classList.toggle('hist-cargando-tabla', !!on);
+}
+
+function histAviso(msg){
+  const el = document.getElementById('histAviso');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('d-none', !msg);
+}
+
+/* Guarda los filtros en el hash: al volver atrás (p. ej. desde el retiro
+   o la OT enlazada) el historial reaparece en la misma página y filtros. */
+function histGuardarEnHash(){
+  const p = new URLSearchParams();
+  ['estado','modulo','q','desde','hasta','ref'].forEach(k => { if (_hist[k]) p.set(k, _hist[k]); });
+  if (_hist.page > 1) p.set('page', String(_hist.page));
+  const s = p.toString();
+  try { history.replaceState(null, '', '#tabLog' + (s ? '?' + s : '')); } catch (_e) {}
+}
+
+async function histCargar(){
+  const seq = ++_hist.seq;
+  _hist.iniciado = true;
+  const p = new URLSearchParams();
+  p.set('page', String(_hist.page));
+  p.set('per_page', String(_hist.per_page));
+  ['estado','modulo','q','desde','hasta','ref'].forEach(k => { if (_hist[k]) p.set(k, _hist[k]); });
+  histSetCargando(true);
+  try {
+    const r = await fetch('/api/comm/historial?' + p.toString(),
+                          {cache: 'no-store', headers: {'Accept': 'application/json'}});
+    let d = null;
+    try { d = await r.json(); } catch (_e) { d = null; }
+    if (seq !== _hist.seq) return;   // llegó tarde: ya hay una consulta más nueva
+    if (!r.ok || !d || !d.ok) {
+      throw new Error((d && d.error) || 'El servidor no respondió como se esperaba.');
+    }
+    _hist.page  = d.page || 1;
+    _hist.pages = d.pages || 1;
+    _hist.total = d.total || 0;
+    _hist.filas = d.filas || [];
+    _hist.cargadoOk = true;
+    histRender(d);
+    document.getElementById('histNuevoWrap')?.classList.remove('d-none');
+    document.getElementById('histLegacyWrap')?.classList.add('d-none');
+    histAviso('');
+    histGuardarEnHash();
+    requestAnimationFrame(histAjustarAlto);
+  } catch (e) {
+    if (seq !== _hist.seq) return;
+    const msg = (e && e.message) ? e.message : String(e);
+    if (_hist.cargadoOk) {
+      histAviso('No se pudo actualizar el historial: ' + msg);
+    } else {
+      // Sin ninguna carga buena: queda visible la vista de respaldo (últimos 80).
+      histAviso('No se pudo cargar el historial completo (' + msg + '). '
+                + 'Abajo se muestran los últimos 80 envíos.');
+      document.getElementById('histLegacyWrap')?.classList.remove('d-none');
+    }
+  } finally {
+    if (seq === _hist.seq) histSetCargando(false);
+  }
+}
+
+function histRender(d){
+  // Semáforo
+  const c = d.conteos || {};
+  const fmt = n => Number(n || 0).toLocaleString('es-CL');
+  const tot = (c.enviado || 0) + (c.bloqueado || 0) + (c.fallido || 0) + (c.en_cola || 0);
+  const put = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  put('histCnt_todos', fmt(tot));
+  ['enviado','bloqueado','fallido','en_cola'].forEach(k => put('histCnt_' + k, fmt(c[k])));
+  histPintarChips();
+
+  // Filas
+  const tbody = document.getElementById('histTbody');
+  if (tbody) {
+    if (!_hist.filas.length) {
+      const hayFiltros = ['estado','modulo','q','desde','hasta','ref'].some(k => _hist[k]);
+      tbody.innerHTML = `<tr class="hist-vacia"><td colspan="9">
+          <i class="bi bi-envelope-x"></i>
+          <div class="t">${hayFiltros ? 'Ningún correo coincide con los filtros' : 'Sin registros de envíos aún'}</div>
+          ${hayFiltros ? '<button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="histLimpiar()"><i class="bi bi-arrow-counterclockwise me-1"></i>Ver todo el historial</button>' : ''}
+        </td></tr>`;
+    } else {
+      tbody.innerHTML = _hist.filas.map((r, i) => histFilaHtml(r, i)).join('');
+    }
+  }
+
+  // Pie: Mostrando A–B de N · Página X de Y
+  put('histDesdeN', fmt(d.desde_n || 0));
+  put('histHastaN', fmt(d.hasta_n || 0));
+  put('histTotalN', fmt(d.total || 0));
+  put('histPagAct', fmt(_hist.page));
+  put('histPagTot', fmt(_hist.pages));
+  const prev = document.getElementById('histPrev');
+  const next = document.getElementById('histNext');
+  if (prev) prev.disabled = _hist.page <= 1;
+  if (next) next.disabled = _hist.page >= _hist.pages;
+  const scroll = document.getElementById('histScroll');
+  if (scroll) scroll.scrollTop = 0;
+}
+
+const HIST_ESTADOS = {
+  enviado:   {cls: 'ok',   icon: 'bi-check-circle-fill', txt: 'Enviado'},
+  bloqueado: {cls: 'warn', icon: 'bi-sign-stop-fill',    txt: 'Bloqueado por llave'},
+  fallido:   {cls: 'fail', icon: 'bi-x-circle-fill',     txt: 'Fallido'},
+  en_cola:   {cls: 'info', icon: 'bi-hourglass-split',   txt: 'En cola'},
+};
+
+function histEstadoHtml(r){
+  const m = HIST_ESTADOS[r.estado] || {cls: 'info', icon: 'bi-question-circle', txt: r.estado || '—'};
+  let h = `<span class="hist-pill ${m.cls}"><i class="bi ${m.icon}"></i>${histEsc(m.txt)}</span>`;
+  if (r.motivo) h += `<div class="hist-motivo ${m.cls}">${histEsc(r.motivo)}</div>`;
+  else if (r.via) h += `<div class="hist-motivo muted">Vía ${histEsc(r.via)}</div>`;
+  return h;
+}
+
+function histRefHtml(ref){
+  if (!ref || !(ref.codigo || ref.id)) return '<span class="text-muted">—</span>';
+  const txt = ref.codigo || ((ref.tipo || 'REF') + ' #' + ref.id);
+  if (ref.url) {
+    return `<a class="hist-ref" href="${histEsc(ref.url)}" title="Abrir ${histEsc(txt)}">`
+         + `${histEsc(txt)}<i class="bi bi-arrow-up-right-square"></i></a>`;
+  }
+  return `<span class="hist-ref sin-link">${histEsc(txt)}</span>`;
+}
+
+function histCanalHtml(canal){
+  if (canal === 'whatsapp') return '<span class="log-channel-pill wa" title="WhatsApp"><i class="bi bi-whatsapp"></i><span class="lcp-txt">WA</span></span>';
+  if (canal === 'sms') return '<span class="log-channel-pill wa" title="SMS"><i class="bi bi-phone"></i><span class="lcp-txt">SMS</span></span>';
+  return '<span class="log-channel-pill email" title="Email"><i class="bi bi-envelope"></i><span class="lcp-txt">Email</span></span>';
+}
+
+const HIST_ORIGEN = {
+  manual:        {txt: 'Manual',        tip: 'Enviado a mano desde Comunicaciones'},
+  prueba_manual: {txt: 'Prueba manual', tip: 'Registro antiguo de pruebas / otros canales'},
+  cola:          {txt: 'En cola',       tip: 'Encolado: saldrá en segundos'},
+};
+
+function histFilaHtml(r, i){
+  const org = HIST_ORIGEN[r.origen];
+  const modulo = (r.modulo_label ? `<span class="hist-mod">${histEsc(r.modulo_label)}</span>` : '<span class="text-muted">—</span>')
+               + (org ? `<span class="hist-origen" title="${histEsc(org.tip)}">${histEsc(org.txt)}</span>` : '');
+  const evento = r.evento ? `<div class="hist-evento">${histEsc(r.evento)}</div>` : '';
+  const btn = r.src === 'comm_log'
+    ? '<span class="text-muted small">—</span>'
+    : `<button type="button" class="btn btn-sm hist-btn-ver" onclick="histVerCorreo(${i})" `
+      + `title="Ver correo" aria-label="Ver correo">`
+      + `<i class="bi bi-envelope-open"></i><span class="hbv-largo">Ver correo</span>`
+      + `<span class="hbv-corto">Ver</span></button>`;
+  // Cada celda envuelve su contenido en .hc: en móvil la fila es una tarjeta
+  // "etiqueta | valor" y el valor debe ser UN solo bloque.
+  return `<tr class="hist-row est-${histEsc(r.estado)}">
+    <td class="log-date-cell" data-label="Fecha" title="Hora de Chile"><div class="hc">
+      <span class="ldc-d">${histEsc(r.fecha || '—')}</span><span class="ldc-h">${histEsc(r.hora || '')}</span>
+    </div></td>
+    <td data-label="Canal"><div class="hc">${histCanalHtml(r.canal)}</div></td>
+    <td data-label="Módulo"><div class="hc">${modulo}</div></td>
+    <td data-label="Destinatario" class="hist-dest"><div class="hc">${histEsc(r.destinatario || '—')}</div></td>
+    <td data-label="Asunto" class="hist-asunto"><div class="hc">${histEsc(r.asunto || '—')}${evento}</div></td>
+    <td data-label="Estado" class="hist-estado"><div class="hc">${histEstadoHtml(r)}</div></td>
+    <td data-label="Referencia"><div class="hc">${histRefHtml(r.ref)}</div></td>
+    <td data-label="Enviado por"><div class="hc"><span class="hist-actor">${histEsc(r.enviado_por || '—')}</span></div></td>
+    <td data-label="Correo" class="text-end hist-td-btn"><div class="hc">${btn}</div></td>
+  </tr>`;
+}
+
+/* La tabla ocupa el alto disponible de la ventana: la PÁGINA no scrollea
+   para recorrerla (REGLA #4.3), se cambia de página. En móvil las filas son
+   tarjetas que fluyen y el paginador queda al final. */
+function histAjustarAlto(){
+  const sc = document.getElementById('histScroll');
+  const pie = document.getElementById('histPie');
+  if (!sc || !pie) return;
+  if (window.innerWidth < 768 || !sc.offsetParent) { sc.style.maxHeight = ''; return; }
+  const top = sc.getBoundingClientRect().top + window.scrollY;
+  let alto = Math.max(260, Math.floor(window.innerHeight - top - pie.offsetHeight - 16));
+  sc.style.maxHeight = alto + 'px';
+  // Autocorrección: si aun así la página queda más alta que la ventana
+  // (márgenes del layout), se descuenta lo que sobra.
+  const sobra = document.documentElement.scrollHeight - window.innerHeight;
+  if (sobra > 0) {
+    alto = Math.max(260, alto - sobra);
+    sc.style.maxHeight = alto + 'px';
+  }
+}
+window.addEventListener('resize', () => {
+  clearTimeout(histAjustarAlto._t);
+  histAjustarAlto._t = setTimeout(histAjustarAlto, 120);
+});
+
+/* ── Modal "Ver correo" ── */
+let _histModal = null;
+
+function histInfoFila(label, valorHtml){
+  return `<div class="hi-item"><div class="hi-k">${histEsc(label)}</div><div class="hi-v">${valorHtml}</div></div>`;
+}
+
+function histVerCorreo(i){
+  const r = _hist.filas[i];
+  if (!r) return;
+  _hist.actual = r;
+  const modalEl = document.getElementById('modalHistCorreo');
+  if (!modalEl || typeof bootstrap === 'undefined') return;
+  if (!_histModal) {
+    _histModal = new bootstrap.Modal(modalEl);
+    modalEl.addEventListener('hidden.bs.modal', () => {
+      const fr = document.getElementById('histCorreoFrame');
+      if (fr) fr.src = 'about:blank';   // corta la carga y libera memoria
+    });
+  }
+  document.getElementById('histCorreoAsunto').textContent = r.asunto || '(sin asunto)';
+
+  const adj = (r.adjuntos || []).map(a => {
+    const kb = a.bytes ? ' (' + Math.max(1, Math.round(a.bytes / 1024)).toLocaleString('es-CL') + ' KB)' : '';
+    return histEsc((a.nombre || 'adjunto') + kb);
+  }).join('<br>');
+  const org = HIST_ORIGEN[r.origen];
+  document.getElementById('histCorreoInfo').innerHTML =
+      histInfoFila('Destinatario', `<span class="hist-dest">${histEsc(r.destinatario || '—')}</span>`)
+    + histInfoFila('Fecha (hora Chile)', histEsc((r.fecha || '—') + ' ' + (r.hora || '')))
+    + histInfoFila('Estado', histEstadoHtml(r))
+    + histInfoFila('Módulo', histEsc(r.modulo_label || '—') + (org ? ` · ${histEsc(org.txt)}` : ''))
+    + histInfoFila('Referencia', histRefHtml(r.ref))
+    + histInfoFila('Enviado por', histEsc(r.enviado_por || '—'))
+    + (r.evento ? histInfoFila('Evento', `<code>${histEsc(r.evento)}</code>`) : '')
+    + (adj ? histInfoFila('Adjuntos (solo el nombre)', adj) : '');
+
+  const aviso = document.getElementById('histCorreoAviso');
+  const frame = document.getElementById('histCorreoFrame');
+  const vacio = document.getElementById('histCorreoVacio');
+  const avisos = [];
+  if (r.estado === 'bloqueado') avisos.push('Este correo NO salió: se muestra lo que habría recibido el destinatario.');
+  if (r.enmascarado) avisos.push('Los enlaces privados (firma, anexo o seguimiento) se guardan tapados por seguridad: esta copia no sirve para entrar.');
+  aviso.textContent = avisos.join(' ');
+  aviso.classList.toggle('d-none', !avisos.length);
+
+  if (r.cuerpo === 'disponible') {
+    frame.src = `/comunicaciones/log/${encodeURIComponent(r.id)}/cuerpo` + (r.src === 'cola' ? '?src=cola' : '');
+    frame.classList.remove('d-none');
+    vacio.classList.add('d-none');
+  } else {
+    frame.src = 'about:blank';
+    frame.classList.add('d-none');
+    const TXT = {
+      privado:   ['Contenido privado', 'Los correos de acceso, contraseñas y alertas de inicio de sesión no guardan su contenido por seguridad.'],
+      vencido:   ['Contenido eliminado por antigüedad', 'El contenido se conserva 180 días; el registro del envío sigue disponible.'],
+      sin_copia: ['No hay copia de este correo', 'Los envíos anteriores al 30/09/2026 solo registraron destinatario, asunto y resultado.'],
+    };
+    const t = TXT[r.cuerpo] || TXT.sin_copia;
+    vacio.innerHTML = `<i class="bi bi-envelope-slash"></i><div class="t">${histEsc(t[0])}</div><div class="d">${histEsc(t[1])}</div>`;
+    vacio.classList.remove('d-none');
+  }
+  document.getElementById('histBtnReenviar').classList.toggle('d-none', !r.puede_reenviar);
+  _histModal.show();
+}
+
+async function histReenviar(){
+  const r = _hist.actual;
+  if (!r || !r.puede_reenviar) return;
+  if (typeof ilusConfirm !== 'function') return;
+  const adj = (r.adjuntos || []).length
+    ? ' Los adjuntos originales no se guardan: el reenvío sale sin ellos.' : '';
+  const ok = await ilusConfirm({
+    title: 'Reenviar correo',
+    message: `¿Reenviar «${r.asunto || '(sin asunto)'}» a ${r.destinatario}?`,
+    sub: 'Se envía el mismo contenido guardado. Respeta la llave de paso del módulo: '
+       + 'si sigue cerrada, quedará bloqueado otra vez.' + adj,
+    okLabel: 'Reenviar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const btn = document.getElementById('histBtnReenviar');
+  const txt = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Reenviando…'; }
+  try {
+    const resp = await fetch(`/comunicaciones/log/${encodeURIComponent(r.id)}/reintentar`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+    let d = {};
+    try { d = await resp.json(); } catch (_e) { d = {}; }
+    if (resp.ok && d.ok) {
+      if (typeof ilusToast === 'function') ilusToast('✓ Correo reenviado a ' + r.destinatario, {type: 'success'});
+      if (_histModal) _histModal.hide();
+    } else if (d.estado === 'bloqueado') {
+      await ilusAlert({title: 'Quedó bloqueado otra vez',
+                       message: 'La llave de paso de este módulo sigue cerrada: el correo no salió.',
+                       sub: 'Ábrela en la pestaña Plantillas → Llave de paso si corresponde enviarlo.',
+                       type: 'warning'});
+    } else {
+      await ilusAlert({title: 'No se pudo reenviar',
+                       message: d.error || d.motivo || 'El proveedor de correo rechazó el envío.',
+                       type: 'error'});
+    }
+  } catch (e) {
+    if (typeof ilusToast === 'function') ilusToast('No se pudo conectar con el servidor — ' + (e.message || e), {type: 'error'});
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = txt; }
+    histCargar();   // el reenvío deja su propia fila: se refresca la tabla
+  }
+}
+
+/* Botón "Log de envíos" del encabezado: abre la pestaña sin recargar la página */
+function histAbrirDesdeHeader(ev){
+  const btn = document.querySelector('[data-bs-target="#tabLog"]');
+  if (!btn || typeof bootstrap === 'undefined') return true;   // sigue el enlace normal
+  if (ev) ev.preventDefault();
+  btn.click();
+  return false;
+}
+
+/* Primera carga: al abrir la pestaña Historial (o de inmediato si ya está
+   abierta, p. ej. al llegar con #tabLog). Se registra al ejecutar el script
+   (defer), ANTES de DOMContentLoaded, para no perder el evento. */
+(function histInit(){
+  const btn = document.querySelector('[data-bs-target="#tabLog"]');
+  if (btn) {
+    // 2026-09-30 (revisión): SIEMPRE se vuelve a consultar al entrar a la pestaña (conserva página y filtros):
+    // si no, un correo enviado desde otra pestaña no aparecía hasta tocar un filtro.
+    btn.addEventListener('shown.bs.tab', () => { histCargar(); });
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    histPintarFiltros();
+    const pane = document.getElementById('tabLog');
+    if (pane && pane.classList.contains('active') && !_hist.iniciado) histCargar();
+  });
+})();
 

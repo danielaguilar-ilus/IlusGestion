@@ -9065,21 +9065,273 @@ def _send_via_resend(to, subject: str, html: str, from_addr: str = None,
         return False
 
 
-def _email_log(destinatario, asunto, evento, estado, error_msg=None, metadata=None):
-    """Registra cada intento de envío de email para trazabilidad."""
+# ══════════════════════════════════════════════════════════════════════
+# TRAZABILIDAD DE CORREOS (2026-09-23, Daniel: la pestaña Historial "no
+# muestra los correos de agosto" y quiere saber, correo por correo, SI se
+# envió o NO y QUÉ se envió).
+#
+# email_log guarda UNA fila por intento (enviado / fallido / bloqueado).
+# Desde esta fecha además:
+#   - columnas propias modulo / ref_tipo / ref_id / ref_codigo / proveedor /
+#     job_id (antes el módulo vivía solo dentro del JSON `metadata`, y no
+#     había forma de filtrar ni de enlazar el correo con su retiro/OT/ticket);
+#   - el HTML que salió (o que HABRÍA salido, si una llave de paso lo frenó)
+#     comprimido con zlib en la tabla aparte `email_log_cuerpo` (1:1 por
+#     log_id) para abrirlo desde Comunicaciones → Historial → "Ver correo".
+#
+# Privacidad: los correos de "comunicacion_interna" (restablecer contraseña,
+# accesos, alertas de inicio de sesión) NO guardan su contenido. En el resto
+# se enmascaran los tokens largos de los enlaces (firma remota de OT, anexo,
+# seguimiento /t/<token>): la copia guardada NO sirve para entrar a nada.
+#
+# email_log_cuerpo.redactado:
+#   0 = contenido íntegro
+#   1 = no guardado por privacidad (comunicación interna)
+#   2 = guardado, con los enlaces privados enmascarados
+#   3 = contenido eliminado por la retención de 180 días (la fila de
+#       email_log y los nombres de los adjuntos se conservan)
+# ══════════════════════════════════════════════════════════════════════
+
+_EMAIL_LOG_MODULOS_PRIVADOS = ("comunicacion_interna",)
+_EMAIL_LOG_CUERPO_MAX_GZ = 8 * 1024 * 1024       # MEDIUMBLOB admite 16 MB
+_EMAIL_LOG_CUERPO_RETENCION_DIAS = 180
+
+# Referencias que se reconocen solas en el ASUNTO cuando quien envía no pasa
+# ref=... — casi todos los correos de retiros / OT / tickets ya llevan el
+# código ahí (ej. "Firma tu orden de trabajo OT-2026-00179").
+#   TK-2026-00012 → el número ES el id del ticket (tk_tickets.id, 5 dígitos)
+#   OT-2026-00179 → numero_ot de mant_visitas (el id se resuelve al mostrar)
+#   RET-7K2Q9M    → pickup_requests.code  (el id se resuelve al mostrar)
+_EMAIL_REF_TK = re.compile(r"\bTK-\d{4}-(\d{1,7})\b")
+_EMAIL_REF_OT = re.compile(r"\bOT-\d{4}-\d{2,7}\b")
+_EMAIL_REF_RET = re.compile(r"\bRET-[A-Z0-9]{4,12}\b")
+
+# Un "token" dentro de una URL: tramo de 20+ caracteres url-safe justo
+# después de "/" o "=" (también en su forma %-codificada), en el PATH o la
+# query -- NUNCA en el host. Se tapa todo tramo así salvo los que son una
+# "frase" legible: piezas separadas por "-" o "_" donde cada pieza es una
+# palabra limpia (minúsculas, Capitalizada, MAYÚSCULAS o solo números), como
+# los slugs de producto ("mancuerna-hexagonal-20-kg") o los nombres de archivo
+# ("Logo_ILUS_Fitness_Blanco_equipamiento"). Un token aleatorio (token_urlsafe,
+# uuid, hex) casi nunca cumple eso, tenga o no dígitos.
+# 2026-09-30 (revisión): antes solo tapaba lo que mezclaba letras y dígitos, así
+# que 1 de cada ~2.000 tokens sin dígitos quedaba legible y el host de Cloud Run
+# (letras+dígitos) se tapaba, marcando casi todo correo como "no reenviable".
+_EMAIL_TOKEN_RE = re.compile(
+    r"(?:(?<=[/=])|(?<=%2F)|(?<=%2f)|(?<=%3D)|(?<=%3d))[A-Za-z0-9_\-]{20,}")
+_EMAIL_PIEZA_LIMPIA = re.compile(r"(?:[a-z]+|[A-Z][a-z]+|[A-Z]+|[0-9]+)")
+_EMAIL_URL_CABEZA = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*://[^/?#\s]*)(.*)$", re.S)
+
+
+def _email_log_es_frase(tramo):
+    """True si el tramo es una frase legible (slug o nombre de archivo) y no un
+    secreto: 2+ piezas separadas por "-" o "_", todas palabras limpias."""
+    piezas = re.split(r"[-_]", tramo)
+    return len(piezas) >= 2 and all(p and _EMAIL_PIEZA_LIMPIA.fullmatch(p) for p in piezas)
+
+
+def _email_log_enmascarar_url(url):
+    """Tapa los tokens largos de UNA url (deja los 4 primeros caracteres
+    para poder reconocer de qué enlace se trataba). El host no se toca."""
+    def _tapa(m):
+        s = m.group(0)
+        if _email_log_es_frase(s):
+            return s
+        return s[:4] + "…oculto"
+    url = url or ""
+    m = _EMAIL_URL_CABEZA.match(url)
+    cabeza, resto = (m.group(1), m.group(2)) if m else ("", url)
+    return cabeza + _EMAIL_TOKEN_RE.sub(_tapa, resto)
+
+
+def _email_log_enmascarar_tokens(html):
+    """Enmascara los tokens de acceso de un correo antes de guardarlo.
+
+    Actúa en (a) los atributos href y (b) las URLs escritas como texto
+    visible (el fallback de firma remota manda "<a href='L'>L</a>"). NO toca
+    los src de imágenes: la vista previa sigue mostrando logo y fotos.
+    Devuelve (html_enmascarado, hubo_cambio)."""
+    if not html:
+        return html or "", False
+
+    def _href(m):
+        return m.group(1) + _email_log_enmascarar_url(m.group(2))
+
+    out = re.sub(r"""(\bhref\s*=\s*["']?)([^"'\s>]+)""", _href, html, flags=re.I)
+
+    def _texto(m):
+        return ">" + re.sub(r"https?://[^\s<>\"']+",
+                            lambda u: _email_log_enmascarar_url(u.group(0)),
+                            m.group(1)) + "<"
+
+    out = re.sub(r">([^<]+)<", _texto, out)
+    return out, out != html
+
+
+def _email_log_adjuntos_meta(adjuntos):
+    """JSON con SOLO nombre/tamaño/tipo de cada adjunto (jamás su
+    contenido). None si no hay adjuntos."""
     try:
-        actor = ""
-        try: actor = current_username() if g.user else "sistema"
-        except Exception: actor = "sistema"
-        mysql_execute(
-            "INSERT INTO email_log (destinatario,asunto,evento,canal,estado,error_msg,actor,metadata) "
-            "VALUES (%s,%s,%s,'email',%s,%s,%s,%s)",
-            (str(destinatario)[:300], str(asunto)[:500], evento or "manual",
-             estado, (error_msg or "")[:1000], actor[:190],
-             json.dumps(metadata or {}, ensure_ascii=False)[:1500])
-        )
+        norm = _email_normalize_attachments(adjuntos) if adjuntos else []
+    except Exception:
+        norm = []
+    out = [{"nombre": fn, "bytes": len(fb or b""), "tipo": fm}
+           for fn, fb, fm in norm[:30]]
+    return json.dumps(out, ensure_ascii=False) if out else None
+
+
+def _email_log_norm_ref(ref=None, asunto=None):
+    """Normaliza la referencia de negocio de un correo a (tipo, id, codigo).
+
+    `ref` es un dict opcional {"tipo": "RET"|"OT"|"TK"|..., "id": int,
+    "codigo": str}. Si no viene, se intenta reconocer en el asunto
+    (TK-AAAA-NNNNN, OT-AAAA-NNNNN, RET-XXXXXX). Nunca lanza."""
+    tipo = rid = cod = None
+    if isinstance(ref, dict):
+        tipo = (str(ref.get("tipo") or "").strip().upper()[:30]) or None
+        try:
+            rid = int(ref.get("id")) if ref.get("id") not in (None, "") else None
+        except (TypeError, ValueError):
+            rid = None
+        cod = (str(ref.get("codigo") or "").strip()[:60]) or None
+    if not tipo and not cod and asunto:
+        s = str(asunto)
+        m = _EMAIL_REF_TK.search(s)
+        if m:
+            tipo, rid, cod = "TK", int(m.group(1)), m.group(0)
+        else:
+            m = _EMAIL_REF_OT.search(s) or _EMAIL_REF_RET.search(s)
+            if m:
+                tipo, cod = m.group(0).split("-", 1)[0], m.group(0)
+    if rid is not None and not (0 < rid <= 2147483647):
+        rid = None
+    return tipo, rid, cod
+
+
+def _email_log_cuerpo_fila(html, modulo=None, adjuntos=None):
+    """Arma la fila de email_log_cuerpo: (html_gz, bytes_original,
+    adjuntos_json, redactado). None si el cuerpo es demasiado grande."""
+    import zlib as _zlib
+    if isinstance(html, (bytes, bytearray)):
+        html = bytes(html).decode("utf-8", "replace")
+    html = html if isinstance(html, str) else str(html or "")
+    n_bytes = len(html.encode("utf-8", "replace"))
+    adj = _email_log_adjuntos_meta(adjuntos)
+    if (modulo or "").strip().lower() in _EMAIL_LOG_MODULOS_PRIVADOS:
+        return (None, n_bytes, adj, 1)
+    html_m, cambio = _email_log_enmascarar_tokens(html)
+    gz = _zlib.compress(html_m.encode("utf-8", "replace"), 6)
+    if len(gz) > _EMAIL_LOG_CUERPO_MAX_GZ:
+        print(f"[EMAIL LOG][FALLO] cuerpo demasiado grande ({len(gz)} bytes comprimidos): no se guarda",
+              flush=True)
+        return None
+    return (gz, n_bytes, adj, 2 if cambio else 0)
+
+
+def _email_log(destinatario, asunto, evento, estado, error_msg=None, metadata=None, *,
+               modulo=None, ref=None, html=None, adjuntos=None, proveedor=None,
+               job_id=None, actor=None):
+    """Registra cada intento de envío de email para trazabilidad.
+
+    Firma compatible hacia atrás: los 6 posicionales de siempre + kwargs
+    opcionales (2026-09-23):
+      modulo    → columna email_log.modulo (y metadata.modulo si faltaba)
+      ref       → dict {"tipo","id","codigo"} (o se reconoce en el asunto)
+      html      → cuerpo del correo; se guarda comprimido en email_log_cuerpo
+      adjuntos  → solo se guardan nombre/tamaño/tipo
+      proveedor → 'smtp' | 'resend' | 'resend_respaldo'
+      job_id    → comm_email_jobs.id si vino de la cola
+      actor     → quién lo mandó (por defecto el usuario logueado o 'sistema')
+
+    Devuelve el id de la fila de email_log, o None si no se pudo registrar.
+
+    Conexión: dentro de un request / app context usa get_db() (la del request,
+    como siempre — NUNCA se cierra aquí). Fuera de todo contexto (un hilo
+    suelto) abre una conexión propia con get_mysql() y la cierra al final:
+    antes esa fila se perdía en silencio.
+    El cuerpo va en un SEGUNDO paso: si falla, la fila del log ya quedó
+    guardada (el cuerpo es un extra; el registro de que se intentó, no)."""
+    from flask import has_app_context as _has_app, has_request_context as _has_req
+    meta = dict(metadata) if isinstance(metadata, dict) else {}
+    mod = (str(modulo or meta.get("modulo") or "").strip().lower()[:40]) or None
+    if mod and not meta.get("modulo"):
+        meta["modulo"] = mod
+    if actor is None:
+        actor = "sistema"
+        try:
+            if _has_req() and getattr(g, "user", None):
+                actor = current_username() or "sistema"
+        except Exception:
+            actor = "sistema"
+    ref_tipo, ref_id, ref_codigo = _email_log_norm_ref(ref, asunto)
+    prov = (str(proveedor).strip()[:30] or None) if proveedor else None
+    try:
+        job_id = int(job_id) if job_id not in (None, "") else None
+    except (TypeError, ValueError):
+        job_id = None
+
+    vals_base = (str(destinatario)[:300], str(asunto)[:500], evento or "manual",
+                 estado, (error_msg or "")[:1000], str(actor or "sistema")[:190],
+                 json.dumps(meta, ensure_ascii=False, default=str)[:1500])
+
+    conn = None
+    propia = False
+    log_id = None
+    try:
+        if _has_app():
+            conn = get_db()
+        else:
+            conn = get_mysql()
+            propia = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO email_log (destinatario,asunto,evento,canal,estado,error_msg,"
+                    " actor,metadata,modulo,ref_tipo,ref_id,ref_codigo,proveedor,job_id) "
+                    "VALUES (%s,%s,%s,'email',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    vals_base + (mod, ref_tipo, ref_id, ref_codigo, prov, job_id))
+                log_id = cur.lastrowid
+        except Exception as exc_ext:
+            # Columnas nuevas aún sin migrar (u otro problema del INSERT
+            # extendido): se registra con el formato de siempre. Un INSERT
+            # fallido no inserta nada, así que no hay duplicado posible.
+            print(f"[EMAIL LOG][FALLO] insert extendido: {str(exc_ext)[:200]} "
+                  f"— registro con el formato anterior", flush=True)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO email_log (destinatario,asunto,evento,canal,estado,error_msg,actor,metadata) "
+                    "VALUES (%s,%s,%s,'email',%s,%s,%s,%s)", vals_base)
+                log_id = cur.lastrowid
+        conn.commit()
     except Exception as exc:
-        print(f"[EMAIL LOG] {exc}")
+        print(f"[EMAIL LOG][FALLO] el intento de envío NO quedó registrado "
+              f"(evento={evento}, estado={estado}): {str(exc)[:300]}", flush=True)
+        log_id = None
+
+    if log_id and html is not None and conn is not None:
+        try:
+            fila = _email_log_cuerpo_fila(html, mod, adjuntos)
+            if fila:
+                # `_binary` antes del blob: sin él, MySQL valida los bytes
+                # comprimidos como texto utf8mb4 (advertencia/error 1300).
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO email_log_cuerpo (log_id, html_gz, bytes_original, "
+                        " adjuntos_json, redactado) VALUES (%s,"
+                        + ("_binary %s" if fila[0] is not None else "%s")
+                        + ",%s,%s,%s)",
+                        (log_id,) + tuple(fila))
+                conn.commit()
+        except Exception as exc_cuerpo:
+            print(f"[EMAIL LOG][FALLO] contenido no guardado (log_id={log_id}): "
+                  f"{str(exc_cuerpo)[:200]}", flush=True)
+
+    if propia and conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return log_id
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -9374,7 +9626,7 @@ def _modulo_desde_evento(evento: str) -> str:
 
 def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
                      evento: str = None, modulo: str = None,
-                     asincrono: bool = False, **kwargs) -> bool:
+                     asincrono: bool = False, ref: dict = None, **kwargs) -> bool:
     """
     Envía un correo HTML usando la configuración SMTP dinámica.
     Prioridad: Resend API (Railway) → SMTP con env vars → SMTP BD → SMTP config.py
@@ -9405,12 +9657,28 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
     (no se persisten — binarios en MySQL es mala idea), se degrada
     automáticamente al envío SÍNCRONO de siempre. Un correo JAMÁS se
     pierde por un fallo de encolado.
+
+    ref= (parámetro EXPLÍCITO, 2026-09-23 — trazabilidad del Historial):
+    dict opcional {"tipo": "RET"|"OT"|"TK"|..., "id": int, "codigo": str}
+    que enlaza el correo con su retiro / OT / ticket en Comunicaciones →
+    Historial. Va como parámetro propio y NO dentro de **kwargs porque
+    kwargs se reenvía tal cual a _send_ilus_email_real, que no lo conoce
+    (TypeError → el correo no saldría). Si no se pasa, se reconoce solo
+    en el asunto cuando trae TK-/OT-/RET-.
+
+    Todo intento queda en email_log CON su contenido (email_log_cuerpo),
+    incluidos los BLOQUEADOS por llave: así se puede ver qué habría salido
+    y reenviarlo desde el Historial.
     """
+    _adj = kwargs.get("attachments")
+
     # 1) KILL SWITCH GLOBAL (todo email)
     if not comm_is_enabled("email"):
         try:
+            _mod_g = (modulo or _modulo_desde_evento(evento) or "general").strip().lower()
             _email_log(to_addr, subject, evento, 'bloqueado',
-                       error_msg='Email deshabilitado por superadmin (kill switch global ON)')
+                       error_msg='Email deshabilitado por superadmin (kill switch global ON)',
+                       modulo=_mod_g, ref=ref, html=html_body, adjuntos=_adj)
         except Exception: pass
         print(f"[EMAIL][KILL_SWITCH] Bloqueado a {to_addr}: kill switch global OFF")
         return False
@@ -9421,7 +9689,8 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
         try:
             _email_log(to_addr, subject, evento, 'bloqueado',
                        error_msg=f'Llave de paso cerrada para módulo "{mod_resolved}" — email no enviado',
-                       metadata={"modulo": mod_resolved, "killswitch": True})
+                       metadata={"modulo": mod_resolved, "killswitch": True},
+                       modulo=mod_resolved, ref=ref, html=html_body, adjuntos=_adj)
         except Exception: pass
         print(f"[KILLSWITCH] modulo={mod_resolved} canal=email bloqueado por kill switch — no enviado (to={to_addr})")
         return False
@@ -9432,15 +9701,43 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
         try:
             kw_persistir = {k: kwargs[k] for k in ("cc", "reply_to") if kwargs.get(k)}
             kw_json = json.dumps(kw_persistir, ensure_ascii=False) if kw_persistir else None
+            # La referencia viaja en su PROPIA columna (ref_json), nunca
+            # dentro de kwargs_json: el drenado hace **kwargs hacia
+            # _send_ilus_email_real y una instancia vieja (en pleno deploy)
+            # reventaría con TypeError.
+            ref_json = None
+            if ref:
+                try:
+                    _rt, _ri, _rc = _email_log_norm_ref(ref, subject)
+                    if _rt or _rc:
+                        ref_json = json.dumps({"tipo": _rt, "id": _ri, "codigo": _rc},
+                                              ensure_ascii=False)
+                except Exception:
+                    ref_json = None
+            _vals_job = (str(to_addr)[:300], (subject or "")[:500], html_body,
+                         evento, mod_resolved, kw_json)
             conn = get_db()
             with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO comm_email_jobs "
-                    "(destinatario, asunto, cuerpo, evento, modulo, kwargs_json, "
-                    " origen, status, created_by) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,'cola_v2','queued','sistema')",
-                    (str(to_addr)[:300], (subject or "")[:500], html_body,
-                     evento, mod_resolved, kw_json))
+                _encolado = False
+                if ref_json:
+                    try:
+                        cur.execute(
+                            "INSERT INTO comm_email_jobs "
+                            "(destinatario, asunto, cuerpo, evento, modulo, kwargs_json, "
+                            " origen, status, created_by, ref_json) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,'cola_v2','queued','sistema',%s)",
+                            _vals_job + (ref_json,))
+                        _encolado = True
+                    except Exception as _e_ref:
+                        # Columna ref_json aún sin migrar: se encola igual, sin referencia.
+                        print(f"[EMAIL][QUEUE] ref_json no disponible: {str(_e_ref)[:120]}", flush=True)
+                if not _encolado:
+                    cur.execute(
+                        "INSERT INTO comm_email_jobs "
+                        "(destinatario, asunto, cuerpo, evento, modulo, kwargs_json, "
+                        " origen, status, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,'cola_v2','queued','sistema')",
+                        _vals_job)
             conn.commit()
             _email_queue_kick()
             return True  # True = encolado con éxito (no "entregado")
@@ -9453,14 +9750,35 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
     # _send_ilus_email_inner hace el envío real; lo wrappeamos
     sent = False
     err  = None
+    # Se limpian los rastros del envío ANTERIOR del mismo request/contexto:
+    # si no, un False sin excepción heredaba el motivo de otro correo.
+    try:
+        g._last_email_error = None
+        g._last_email_via = None
+    except Exception:
+        pass
     try:
         sent = _send_ilus_email_real(to_addr, subject, html_body, **kwargs)
     except Exception as exc:
         err = str(exc)[:1000]
+    proveedor = None
+    try:
+        if sent:
+            proveedor = getattr(g, "_last_email_via", None)
+        else:
+            # _send_ilus_email_real devuelve False SIN excepción cuando todos
+            # los proveedores rechazan: la causa real queda en g.
+            err = err or getattr(g, "_last_email_error", None) or \
+                "El proveedor de correo rechazó el envío sin informar el motivo"
+    except Exception:
+        err = err or "El proveedor de correo rechazó el envío sin informar el motivo"
     # Log
     try:
         _email_log(to_addr, subject, evento, 'enviado' if sent else 'fallido',
-                   error_msg=err, metadata={"modulo": mod_resolved})
+                   error_msg=(str(err)[:1000] if err else None),
+                   metadata={"modulo": mod_resolved},
+                   modulo=mod_resolved, ref=ref, html=html_body, adjuntos=_adj,
+                   proveedor=proveedor)
     except Exception: pass
     return sent
 
@@ -9590,8 +9908,18 @@ def _email_queue_send_job(job):
     modulo      = job.get("modulo") or "general"
     intentos    = int(job.get("intentos") or 1)
     max_int     = int(job.get("max_intentos") or 5)
+    # Referencia de negocio guardada al encolar (columna ref_json, 2026-09-23).
+    # .get(): si la columna no existe todavía, simplemente no hay referencia.
+    ref_job = None
+    try:
+        ref_job = json.loads(job.get("ref_json") or "null")
+        if not isinstance(ref_job, dict):
+            ref_job = None
+    except Exception:
+        ref_job = None
 
-    if not comm_is_enabled("email") or _modulo_canal_bloqueado(modulo, "email"):
+    _global_off = not comm_is_enabled("email")
+    if _global_off or _modulo_canal_bloqueado(modulo, "email"):
         try:
             mysql_execute(
                 "UPDATE comm_email_jobs SET status='failed', completed_at=NOW(), "
@@ -9601,14 +9929,23 @@ def _email_queue_send_job(job):
             pass
         try:
             _email_log(destino, asunto, evento, 'bloqueado',
-                       error_msg='Bloqueado por kill switch al drenar la cola',
-                       metadata={"modulo": modulo, "job_id": job_id, "async": True})
+                       error_msg=('Bloqueado por kill switch global al drenar la cola' if _global_off
+                                  else f'Llave de paso cerrada para módulo "{modulo}" al drenar la cola'),
+                       metadata={"modulo": modulo, "job_id": job_id, "async": True},
+                       modulo=modulo, ref=ref_job, html=cuerpo, job_id=job_id)
         except Exception:
             pass
         return
 
     sent = False
     err  = None
+    # El worker drena varios jobs dentro del MISMO app context: sin limpiar,
+    # un job fallido heredaba el motivo del anterior.
+    try:
+        g._last_email_error = None
+        g._last_email_via = None
+    except Exception:
+        pass
     try:
         kw = json.loads(job.get("kwargs_json") or "{}")
         sent = _send_ilus_email_real(destino, asunto, cuerpo, **kw)
@@ -9630,7 +9967,9 @@ def _email_queue_send_job(job):
         try:
             _email_log(destino, asunto, evento, 'enviado',
                        metadata={"modulo": modulo, "job_id": job_id,
-                                 "async": True, "intento": intentos})
+                                 "async": True, "intento": intentos},
+                       modulo=modulo, ref=ref_job, html=cuerpo, job_id=job_id,
+                       proveedor=getattr(g, "_last_email_via", None))
         except Exception:
             pass
         return
@@ -9645,7 +9984,8 @@ def _email_queue_send_job(job):
             pass
         try:
             _email_log(destino, asunto, evento, 'fallido', error_msg=err,
-                       metadata={"modulo": modulo, "job_id": job_id, "intentos": intentos})
+                       metadata={"modulo": modulo, "job_id": job_id, "intentos": intentos},
+                       modulo=modulo, ref=ref_job, html=cuerpo, job_id=job_id)
         except Exception:
             pass
     else:
@@ -9908,6 +10248,11 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
                             from_addr=from_for_resend,
                             reply_to=marca["reply_to"],
                             attachments=att_norm, cc=cc):
+            # Proveedor que efectivamente entregó (columna email_log.proveedor)
+            try:
+                g._last_email_via = "resend"
+            except Exception:
+                pass
             return True
         # Resend falló — guardar error legible y caer a SMTP
         err = getattr(g, "_last_resend_error", None) or {}
@@ -10053,6 +10398,10 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
         try:
             _try_send(p, sec)
             print(f"[ILUS][EMAIL] Enviado a {to_addr} via :{p} (source={cfg.get('_source','?')})")
+            try:
+                g._last_email_via = "smtp"
+            except Exception:
+                pass
             return True
         except Exception as exc:
             last_exc = exc
@@ -10077,6 +10426,10 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
                             reply_to=marca["reply_to"],
                             attachments=att_norm, cc=cc):
             print(f"[ILUS][EMAIL] Enviado a {to_addr} via Resend (fallback de SMTP)")
+            try:
+                g._last_email_via = "resend_respaldo"
+            except Exception:
+                pass
             return True
 
     try:
@@ -23119,7 +23472,9 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
     })
     _send_ilus_email(c["email"].strip(), asunto, html,
                      evento=f"tracking_{estado.lower().replace(' ','_')}",
-                     modulo="transporte", asincrono=True)
+                     modulo="transporte", asincrono=True,
+                     # Trazabilidad en Comunicaciones → Historial (documento del despacho)
+                     ref={"tipo": "TR", "id": commitment_id, "codigo": str(doc or "")[:60]})
 
 
 def _ilus_email_html_tracking(titulo, cliente, doc, cuerpo, track_url, comentario=None):
@@ -29384,6 +29739,8 @@ def _mantenciones_cron_run_once(slot_str=""):
                     html,
                     evento="pickup_reminder_24h",
                     modulo="retiros",
+                    # Enlace desde Comunicaciones → Historial al retiro
+                    ref={"tipo": "RET", "id": rd.get("id"), "codigo": rd.get("code")},
                 )
                 if sent:
                     mysql_execute(
@@ -29423,6 +29780,15 @@ def _mantenciones_cron_run_once(slot_str=""):
         metricas["email_queue_drenados"] = _email_queue_drain(max_jobs=50, max_seconds=30)
     except Exception as _e_eq:
         metricas["errores"].append(f"paso_email_queue: {_e_eq}")
+
+    # ── Paso 6: Retención del CONTENIDO de los correos (2026-09-23) ─────
+    # Pasados 180 días se elimina el HTML guardado en email_log_cuerpo. La
+    # fila de email_log se CONSERVA: se sigue sabiendo a quién, cuándo, con
+    # qué asunto y con qué resultado; solo deja de poder abrirse el correo.
+    try:
+        metricas["email_cuerpos_vencidos"] = _email_log_cuerpo_retencion()
+    except Exception as _e_ret:
+        metricas["errores"].append(f"paso_email_retencion: {_e_ret}")
 
     metricas["tiempo_ms"] = int((_time.time() - _t0) * 1000)
     print(
@@ -52227,11 +52593,16 @@ def comm_index():
     except Exception:
         email_rows = []
     try:
+        # 2026-09-23: el envío manual ahora TAMBIÉN escribe en email_log (con
+        # su contenido); su espejo en comm_log lleva el prefijo
+        # "[email_log#N]" y se omite aquí para no mostrar el mismo correo dos veces.
         comm_rows = mysql_fetchall(
             "SELECT id, canal, destinatario, asunto, estado, "
             "       LEFT(COALESCE(detalle,''), 500) AS detalle, "
             "       enviado_por, created_at "
-            "  FROM comm_log ORDER BY created_at DESC LIMIT 60"
+            "  FROM comm_log WHERE COALESCE(detalle,'') NOT LIKE %s "
+            " ORDER BY created_at DESC LIMIT 60",
+            (_COMM_HIST_MARCA_DUP,)
         ) or []
     except Exception:
         comm_rows = []
@@ -52244,13 +52615,18 @@ def comm_index():
         except Exception:
             d.pop("metadata", None)
         d["modulo"] = modulo
-        # email_log: 'enviado'|'fallido'|'bloqueado' -> la pantalla solo
-        # distingue ok/no-ok (mismo criterio que ya usaba comm_log).
+        # email_log: 'enviado'|'fallido'|'bloqueado'. `estado` sigue siendo
+        # ok/error (lo usa el filtro de esta vista); `estado_det` conserva el
+        # estado real para no pintar un BLOQUEO por llave como si fuera error.
+        d["estado_det"] = d.get("estado") or ""
         d["estado"] = "ok" if d.get("estado") == "enviado" else "error"
         log_rows.append(d)
     for r in comm_rows:
         d = dict(r)
         d["modulo"] = None  # comm_log (pruebas manuales) no registra módulo de origen
+        d["estado_det"] = {"ok": "enviado", "error": "fallido"}.get(d.get("estado"), d.get("estado") or "")
+        if d.get("estado") != "ok":
+            d["estado"] = "error"
         log_rows.append(d)
     log_rows.sort(key=lambda d: d.get("created_at") or datetime.min, reverse=True)
     log_rows = log_rows[:80]
@@ -52614,6 +52990,7 @@ def comm_email_enviar():
     snap_subject  = subject_demo
     snap_html     = html
     snap_job_id   = job_id
+    snap_actor    = creador or "sistema"
 
     def _bg_send_email():
         import time as _t
@@ -52686,12 +53063,36 @@ def comm_email_enviar():
             except Exception as _exc:
                 print(f"[comm-email-job][{snap_job_id}] no se pudo actualizar BD: {_exc}", flush=True)
 
-            # Compat con el log existente (/comunicaciones → tab Log)
+            # Trazabilidad (2026-09-23): el envío manual también queda en
+            # email_log CON su contenido, igual que el tráfico automático, para
+            # que Comunicaciones → Historial lo muestre y se pueda abrir.
+            _lid_manual = None
+            try:
+                _via = None
+                try:
+                    _via = getattr(g, "_last_email_via", None) if status_final == "sent" else None
+                except Exception:
+                    _via = None
+                _lid_manual = _email_log(
+                    snap_to, snap_subject, "manual",
+                    "enviado" if status_final == "sent" else "fallido",
+                    error_msg=(err_msg or None),
+                    metadata={"origen": "manual", "job_id": snap_job_id,
+                              "elapsed_ms": elapsed_ms},
+                    modulo="general", html=snap_html, job_id=snap_job_id,
+                    proveedor=_via, actor=snap_actor)
+            except Exception as _exc_el:
+                print(f"[comm-email-job][{snap_job_id}] email_log: {_exc_el}", flush=True)
+
+            # Compat con el log existente (/comunicaciones → tab Log). Si ya
+            # quedó en email_log, se marca "[email_log#N]" para que el
+            # Historial no lo muestre dos veces.
             try:
                 _comm_log_entry(
                     "email", snap_to, snap_subject,
                     "ok" if status_final == "sent" else "error",
-                    err_msg or f"job_id={snap_job_id} ({elapsed_ms}ms)",
+                    (f"[email_log#{_lid_manual}] " if _lid_manual else "")
+                    + (err_msg or f"job_id={snap_job_id} ({elapsed_ms}ms)"),
                 )
             except Exception:
                 pass
@@ -53500,30 +53901,710 @@ def comm_email_log():
     Historial de /comunicaciones para evitar duplicidad. Si vino con filtros
     en query, se preservan en el hash para que el JS los procese.
     """
+    from urllib.parse import quote as _q_log
     qs = []
-    for k in ("evento", "estado", "limit"):
+    # 2026-09-23: también se preservan los filtros del Historial paginado
+    # (modulo, q, ref, desde, hasta) y los valores van URL-encodeados.
+    for k in ("evento", "estado", "limit", "modulo", "q", "ref", "desde", "hasta"):
         v = request.args.get(k)
-        if v: qs.append(f"{k}={v}")
+        if v: qs.append(f"{k}={_q_log(str(v)[:100], safe='')}")
     hash_part = "#tabLog"
     if qs:
         hash_part += "?" + "&".join(qs)
     return redirect(url_for("comm_index") + hash_part)
 
 
+def _email_log_cuerpo_leer(lid):
+    """Devuelve (html | None, redactado | None) del contenido guardado de
+    un email_log. (None, None) si ese envío no guardó copia."""
+    import zlib as _zlib
+    try:
+        cb = mysql_fetchone(
+            "SELECT html_gz, redactado FROM email_log_cuerpo WHERE log_id=%s", (lid,))
+    except Exception as exc:
+        print(f"[comm-log] cuerpo lid={lid}: {str(exc)[:200]}", flush=True)
+        return None, None
+    if not cb:
+        return None, None
+    red = int(cb.get("redactado") or 0)
+    if cb.get("html_gz") is None:
+        return None, red
+    try:
+        return _zlib.decompress(bytes(cb["html_gz"])).decode("utf-8", "replace"), red
+    except Exception as exc:
+        print(f"[comm-log] cuerpo corrupto lid={lid}: {str(exc)[:200]}", flush=True)
+        return None, red
+
+
 @app.route("/comunicaciones/log/<int:lid>/reintentar", methods=["POST"])
-@require_permission("admin")
+@_require_superadmin   # 2026-09-30: reenvía el contenido ÍNTEGRO a clientes reales; mismo permiso que el Historial
 def comm_log_reintentar(lid):
-    """Reintenta un email que falló."""
+    """Reintenta (reenvía) un email del historial.
+
+    Desde 2026-09-23 reenvía el HTML ORIGINAL guardado en email_log_cuerpo
+    —el mismo que recibió, o habría recibido, el destinatario— con su
+    módulo y su referencia, así que respeta la llave de paso de ESE módulo
+    (si sigue cerrada, vuelve a quedar 'bloqueado').
+
+    - Sin copia guardada (envíos anteriores a esta fecha, o correos de
+      acceso que por privacidad no se guardan): comportamiento histórico,
+      un aviso genérico con el asunto original.
+    - Copia con enlaces privados ENMASCARADOS (firma de OT, anexo,
+      seguimiento): NO se reenvía — el destinatario recibiría un enlace
+      roto. Hay que reenviarlo desde su módulo para generar uno vigente.
+    """
     row = mysql_fetchone("SELECT * FROM email_log WHERE id=%s",(lid,))
     if not row: return jsonify({"error":"Log no encontrado"}), 404
-    # Reintento envuelto con la plantilla corporativa
-    body = (
-        f"<p>Reintento del envío original: <strong>{row['asunto']}</strong></p>"
-        f"<p>Si crees que es un error, contacta al administrador.</p>"
-    )
-    html = _comm_render_email_document(row["asunto"], body, "Reintento")
-    sent = _send_ilus_email(row["destinatario"], row["asunto"], html, evento="retry_"+(row.get("evento") or "manual"))
-    return jsonify({"ok": bool(sent)})
+    meta = {}
+    try:
+        meta = json.loads(row.get("metadata") or "{}")
+        if not isinstance(meta, dict):
+            meta = {}
+    except Exception:
+        meta = {}
+    modulo = (str(row.get("modulo") or meta.get("modulo") or "").strip().lower()) or None
+    ref = None
+    if row.get("ref_tipo") or row.get("ref_codigo"):
+        ref = {"tipo": row.get("ref_tipo"), "id": row.get("ref_id"),
+               "codigo": row.get("ref_codigo")}
+
+    html, redactado = _email_log_cuerpo_leer(lid)
+    if html is not None and redactado == 2:
+        return jsonify({
+            "ok": False, "estado": "no_reenviable",
+            "error": ("Este correo llevaba enlaces privados (firma, anexo o seguimiento) "
+                      "que no se guardan por seguridad. Reenvíalo desde su módulo para "
+                      "generar un enlace vigente."),
+        }), 409
+    if html is None:
+        # Reintento histórico envuelto con la plantilla corporativa
+        from markupsafe import escape as _esc_rt
+        body = (
+            f"<p>Reintento del envío original: <strong>{_esc_rt(row.get('asunto') or '')}</strong></p>"
+            f"<p>Si crees que es un error, contacta al administrador.</p>"
+        )
+        html = _comm_render_email_document(row["asunto"], body, "Reintento")
+
+    ev = str(row.get("evento") or "manual")
+    if not ev.startswith("retry_"):
+        ev = "retry_" + ev
+    mod_llave = modulo or _modulo_desde_evento(ev) or "general"
+    try:
+        llave_cerrada = (not comm_is_enabled("email")) or _modulo_canal_bloqueado(mod_llave, "email")
+    except Exception:
+        llave_cerrada = False
+    sent = _send_ilus_email(row["destinatario"], row["asunto"], html, evento=ev,
+                            modulo=modulo, ref=ref)
+    estado = "enviado" if sent else ("bloqueado" if llave_cerrada else "fallido")
+    motivo = ""
+    if not sent and not llave_cerrada:
+        try:
+            motivo = str(getattr(g, "_last_email_error", "") or "")[:300]
+        except Exception:
+            motivo = ""
+    return jsonify({"ok": bool(sent), "estado": estado, "motivo": motivo})
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  HISTORIAL PAGINADO (2026-09-23 — REGLA #4.3, patrón de Etiquetas)
+#
+#  Antes: /comunicaciones leía email_log LIMIT 60 + comm_log LIMIT 60 y
+#  cortaba en 80, sin filtros de servidor. Con las llaves de paso cerradas
+#  se generan ~60-120 filas "bloqueado" por día, así que esa ventana se
+#  llenaba en horas y los envíos reales (que SÍ estaban en email_log)
+#  nunca se veían: "no muestra los correos de agosto".
+#
+#  Ahora: GET /api/comm/historial pagina en el SERVIDOR sobre
+#     email_log (tráfico real)
+#     UNION ALL comm_log (pruebas manuales antiguas + WhatsApp/SMS)
+#     UNION ALL comm_email_jobs pendientes (cola: "en cola")
+#  con filtros de lista blanca y conteo por estado para el semáforo.
+# ══════════════════════════════════════════════════════════════════════
+
+_COMM_HIST_ESTADOS = ("enviado", "fallido", "bloqueado", "en_cola")
+_COMM_HIST_PER_PAGE = (25, 50, 100, 200)
+_COMM_HIST_MODULO_LABELS = {
+    "transporte":              "Transporte",
+    "transporte_cotizaciones": "Cotizaciones de transporte",
+    "retiros":                 "Retiros",
+    "mantenciones":            "Mantenciones",
+    "comunicacion_interna":    "Comunicación interna",
+    "general":                 "General",
+    "tickets":                 "Tickets",
+    "catalogo":                "Catálogo",
+    "prueba_manual":           "Pruebas manuales (antiguas)",
+}
+_COMM_HIST_PROVEEDOR_LABELS = {
+    "smtp":            "SMTP (Gmail)",
+    "resend":          "Resend",
+    "resend_respaldo": "Resend (respaldo de SMTP)",
+}
+# Patrón LIKE de las filas de comm_log que ya están espejadas en email_log
+# (envío manual desde 2026-09-23): se omiten para no duplicar el correo.
+_COMM_HIST_MARCA_DUP = "[email\\_log#%"
+
+
+def _comm_hist_filtros(args):
+    """Normaliza los filtros del historial contra LISTAS BLANCAS (REGLA #4).
+    `args` es cualquier mapping con .get (request.args o un dict)."""
+    def _ent(v, defecto):
+        try:
+            return int(str(v).strip())
+        except (TypeError, ValueError):
+            return defecto
+
+    def _fecha(v):
+        v = str(v or "").strip()
+        if not v:
+            return None
+        try:
+            return datetime.strptime(v[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    page = max(1, _ent(args.get("page"), 1))
+    per_page = _ent(args.get("per_page"), 100)
+    if per_page not in _COMM_HIST_PER_PAGE:
+        per_page = 100
+    estado = str(args.get("estado") or "").strip().lower()
+    if estado not in _COMM_HIST_ESTADOS:
+        estado = ""
+    modulo = str(args.get("modulo") or "").strip().lower()
+    if modulo not in _COMM_HIST_MODULO_LABELS:
+        modulo = ""
+    q = str(args.get("q") or "").strip()[:100]
+    desde, hasta = _fecha(args.get("desde")), _fecha(args.get("hasta"))
+    if desde and hasta and desde > hasta:
+        desde, hasta = hasta, desde
+    ref = str(args.get("ref") or "").strip()[:60]
+    ref_tipo = ref_id = ref_codigo = None
+    if ref:
+        # "OT:55", "RET #12", "TK 9" → tipo + id interno.
+        # "RET-7K2Q9M", "OT-2026-00179" → código tal como aparece en el correo.
+        m = re.match(r"^([A-Za-z]{2,5})\s*[:#\s]\s*(\d{1,9})$", ref)
+        if m:
+            ref_tipo, ref_id = m.group(1).upper(), int(m.group(2))
+        else:
+            ref_codigo = ref.upper() if re.match(r"^[A-Za-z]{2,5}-", ref) else ref
+    return {"page": page, "per_page": per_page, "estado": estado, "modulo": modulo,
+            "q": q, "desde": desde, "hasta": hasta, "ref": ref,
+            "ref_tipo": ref_tipo, "ref_id": ref_id, "ref_codigo": ref_codigo}
+
+
+def _comm_hist_rango_utc(desde, hasta):
+    """Fechas elegidas en hora CHILE → límites UTC naive (así guarda MySQL,
+    REGLA #6): [desde 00:00 Chile, hasta+1 00:00 Chile)."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Santiago")
+    except Exception:
+        tz = timezone(timedelta(hours=-4))
+
+    def _utc(d):
+        return datetime(d.year, d.month, d.day, tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
+
+    return (_utc(desde) if desde else None,
+            _utc(hasta + timedelta(days=1)) if hasta else None)
+
+
+def _comm_hist_like(texto):
+    """Patrón LIKE '%texto%' con %, _ y \\ escapados (búsqueda literal)."""
+    t = str(texto or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{t}%"
+
+
+def _comm_hist_ramas(f, con_estado=True, incluir_cola=True):
+    """WHERE de cada fuente del historial a partir de filtros YA normalizados
+    por _comm_hist_filtros. Solo placeholders %s: ningún valor del usuario se
+    concatena al SQL. Devuelve {fuente: (condiciones, params)} solo con las
+    fuentes que pueden aportar filas con esos filtros."""
+    est = f.get("estado") if con_estado else ""
+    mod = f.get("modulo") or ""
+    like = _comm_hist_like(f["q"]) if f.get("q") else None
+    d0, d1 = f.get("desde_utc"), f.get("hasta_utc")
+    r_tipo, r_id, r_cod = f.get("ref_tipo"), f.get("ref_id"), f.get("ref_codigo")
+    ramas = {}
+
+    # email_log — el tráfico real de _send_ilus_email (y el manual desde hoy)
+    if est != "en_cola" and mod != "prueba_manual":
+        w, p = [], []
+        if est:
+            w.append("e.estado=%s"); p.append(est)
+        if mod:
+            w.append("e.modulo=%s"); p.append(mod)
+        if like:
+            w.append("(e.destinatario LIKE %s OR e.asunto LIKE %s OR e.evento LIKE %s "
+                     "OR e.actor LIKE %s OR e.ref_codigo LIKE %s)")
+            p += [like] * 5
+        if d0:
+            w.append("e.created_at >= %s"); p.append(d0)
+        if d1:
+            w.append("e.created_at < %s"); p.append(d1)
+        if r_tipo:
+            w.append("(e.ref_tipo=%s AND e.ref_id=%s)"); p += [r_tipo, r_id]
+        elif r_cod:
+            # El asunto cubre también los envíos anteriores a las columnas ref_*
+            w.append("(e.ref_codigo=%s OR e.asunto LIKE %s)"); p += [r_cod, _comm_hist_like(r_cod)]
+        ramas["email_log"] = (w, p)
+
+    # comm_log — pruebas manuales antiguas + WhatsApp/SMS (sin módulo ni referencia)
+    if est != "en_cola" and mod in ("", "prueba_manual") and not (r_tipo or r_cod):
+        w, p = ["COALESCE(c.detalle,'') NOT LIKE %s"], [_COMM_HIST_MARCA_DUP]
+        if est:
+            w.append("c.estado=%s")
+            p.append({"enviado": "ok", "fallido": "error", "bloqueado": "bloqueado"}[est])
+        if like:
+            w.append("(c.destinatario LIKE %s OR c.asunto LIKE %s OR c.enviado_por LIKE %s)")
+            p += [like] * 3
+        if d0:
+            w.append("c.created_at >= %s"); p.append(d0)
+        if d1:
+            w.append("c.created_at < %s"); p.append(d1)
+        ramas["comm_log"] = (w, p)
+
+    # comm_email_jobs — correos encolados que aún no salen (estado "en cola")
+    if incluir_cola and est in ("", "en_cola") and mod != "prueba_manual" and not r_tipo:
+        w, p = ["j.origen='cola_v2'", "j.status IN ('queued','sending')"], []
+        if mod:
+            w.append("j.modulo=%s"); p.append(mod)
+        if like:
+            w.append("(j.destinatario LIKE %s OR j.asunto LIKE %s OR j.evento LIKE %s)")
+            p += [like] * 3
+        if d0:
+            w.append("j.created_at >= %s"); p.append(d0)
+        if d1:
+            w.append("j.created_at < %s"); p.append(d1)
+        if r_cod:
+            w.append("j.asunto LIKE %s"); p.append(_comm_hist_like(r_cod))
+        ramas["cola"] = (w, p)
+    return ramas
+
+
+def _comm_hist_cx(expr):
+    """Collation común para el UNION: las 3 tablas pudieron nacer con
+    collations distintas (migración Clever Cloud → Cloud SQL) y MySQL
+    rechaza un UNION con 'Illegal mix of collations'."""
+    return f"CONVERT({expr} USING utf8mb4) COLLATE utf8mb4_unicode_ci"
+
+
+def _comm_hist_proyecciones():
+    """SELECT de cada fuente con las MISMAS columnas, en el mismo orden.
+    Devuelve {fuente: (alias_tabla, sql_select_from)}. Sin datos de usuario:
+    solo nombres de columna fijos."""
+    cx = _comm_hist_cx
+    det_e = "LEFT(COALESCE(e.error_msg,''),1000)"
+    det_c = "LEFT(COALESCE(c.detalle,''),1000)"
+    det_j = "LEFT(COALESCE(j.ultimo_error,''),600)"
+    # En la cola el "metadata" se arma al vuelo: {"intentos":N,"status":"queued"}
+    meta_j = """CONCAT('{"intentos":', COALESCE(j.intentos,0), ',"status":"', j.status, '"}')"""
+    email_log = (
+        "SELECT 'email_log' AS src, e.id AS id, "
+        + cx("e.canal") + " AS canal, "
+        + cx("e.destinatario") + " AS destinatario, "
+        + cx("e.asunto") + " AS asunto, "
+        + cx("e.evento") + " AS evento, "
+        + cx("e.estado") + " AS estado, "
+        + cx(det_e) + " AS detalle, "
+        + cx("e.actor") + " AS enviado_por, "
+        + cx("LEFT(e.metadata,1500)") + " AS metadata, "
+        "e.created_at AS created_at, "
+        + cx("e.modulo") + " AS modulo, "
+        + cx("e.ref_tipo") + " AS ref_tipo, "
+        "e.ref_id AS ref_id, "
+        + cx("e.ref_codigo") + " AS ref_codigo, "
+        + cx("e.proveedor") + " AS proveedor, "
+        "e.job_id AS job_id, b.redactado AS cuerpo_redactado, "
+        "(b.log_id IS NOT NULL) AS cuerpo_fila, (b.html_gz IS NOT NULL) AS cuerpo_html, "
+        + cx("b.adjuntos_json") + " AS adjuntos_json "
+        "FROM email_log e LEFT JOIN email_log_cuerpo b ON b.log_id = e.id")
+    comm_log = (
+        "SELECT 'comm_log' AS src, c.id AS id, "
+        + cx("c.canal") + " AS canal, "
+        + cx("c.destinatario") + " AS destinatario, "
+        + cx("c.asunto") + " AS asunto, "
+        "NULL AS evento, "
+        "(CASE c.estado WHEN 'ok' THEN 'enviado' WHEN 'error' THEN 'fallido' "
+        " ELSE 'bloqueado' END) AS estado, "
+        + cx(det_c) + " AS detalle, "
+        + cx("c.enviado_por") + " AS enviado_por, "
+        "NULL AS metadata, c.created_at AS created_at, NULL AS modulo, "
+        "NULL AS ref_tipo, NULL AS ref_id, NULL AS ref_codigo, NULL AS proveedor, "
+        "NULL AS job_id, NULL AS cuerpo_redactado, 0 AS cuerpo_fila, 0 AS cuerpo_html, "
+        "NULL AS adjuntos_json "
+        "FROM comm_log c")
+    cola = (
+        "SELECT 'cola' AS src, j.id AS id, 'email' AS canal, "
+        + cx("j.destinatario") + " AS destinatario, "
+        + cx("j.asunto") + " AS asunto, "
+        + cx("j.evento") + " AS evento, "
+        "'en_cola' AS estado, "
+        + cx(det_j) + " AS detalle, "
+        + cx("j.created_by") + " AS enviado_por, "
+        + cx(meta_j) + " AS metadata, "
+        "j.created_at AS created_at, "
+        + cx("j.modulo") + " AS modulo, "
+        "NULL AS ref_tipo, NULL AS ref_id, NULL AS ref_codigo, NULL AS proveedor, "
+        "j.id AS job_id, NULL AS cuerpo_redactado, 0 AS cuerpo_fila, "
+        "(j.cuerpo IS NOT NULL) AS cuerpo_html, NULL AS adjuntos_json "
+        "FROM comm_email_jobs j")
+    return {"email_log": ("e", email_log), "comm_log": ("c", comm_log), "cola": ("j", cola)}
+
+
+def _comm_hist_where(conds):
+    return (" WHERE " + " AND ".join(conds)) if conds else ""
+
+
+def _comm_hist_consultar(f, incluir_cola=True):
+    """Ejecuta el conteo por estado + la página pedida. Lanza si la BD falla
+    (el endpoint decide qué mostrar)."""
+    conteos = {k: 0 for k in _COMM_HIST_ESTADOS}
+
+    # 1) Conteo por estado SIN el filtro de estado (alimenta el semáforo:
+    #    "Enviados N · Bloqueados N · Fallidos N · En cola N").
+    r_cnt = _comm_hist_ramas(f, con_estado=False, incluir_cola=incluir_cola)
+    if "email_log" in r_cnt:
+        w, p = r_cnt["email_log"]
+        for row in mysql_fetchall(
+                "SELECT e.estado AS estado, COUNT(*) AS n FROM email_log e"
+                + _comm_hist_where(w) + " GROUP BY e.estado", tuple(p)) or []:
+            est = str(row.get("estado") or "").lower()
+            if est in conteos:
+                conteos[est] += int(row.get("n") or 0)
+    if "comm_log" in r_cnt:
+        w, p = r_cnt["comm_log"]
+        for row in mysql_fetchall(
+                "SELECT c.estado AS estado, COUNT(*) AS n FROM comm_log c"
+                + _comm_hist_where(w) + " GROUP BY c.estado", tuple(p)) or []:
+            est = {"ok": "enviado", "error": "fallido"}.get(str(row.get("estado") or ""), "bloqueado")
+            conteos[est] += int(row.get("n") or 0)
+    if "cola" in r_cnt:
+        w, p = r_cnt["cola"]
+        row = mysql_fetchone("SELECT COUNT(*) AS n FROM comm_email_jobs j"
+                             + _comm_hist_where(w), tuple(p)) or {}
+        conteos["en_cola"] += int(row.get("n") or 0)
+
+    total = conteos[f["estado"]] if f["estado"] else sum(conteos.values())
+    per_page = f["per_page"]
+    pages = max(1, -(-total // per_page))
+    page = min(f["page"], pages)
+    offset = (page - 1) * per_page
+
+    # 2) La página: cada fuente aporta como máximo offset+per_page filas
+    #    (ya ordenadas por su índice de fecha) y el UNION se ordena y corta.
+    filas = []
+    ramas = _comm_hist_ramas(f, con_estado=True, incluir_cola=incluir_cola)
+    if total and ramas:
+        proy = _comm_hist_proyecciones()
+        partes, params = [], []
+        tope = offset + per_page
+        for nombre, (w, p) in ramas.items():
+            alias, sel = proy[nombre]
+            partes.append(f"({sel}{_comm_hist_where(w)} "
+                          f"ORDER BY {alias}.created_at DESC, {alias}.id DESC LIMIT %s)")
+            params += list(p) + [tope]
+        sql = ("SELECT * FROM (" + " UNION ALL ".join(partes) + ") u "
+               "ORDER BY u.created_at DESC, u.id DESC LIMIT %s OFFSET %s")
+        params += [per_page, offset]
+        filas = mysql_fetchall(sql, tuple(params)) or []
+
+    return {"conteos": conteos, "total": total, "page": page, "pages": pages,
+            "per_page": per_page, "offset": offset, "filas": filas}
+
+
+def _comm_hist_llave(detalle, modulo):
+    """Nombre legible de la llave que frenó un correo bloqueado."""
+    d = str(detalle or "").lower()
+    if "global" in d:
+        return "Interruptor general de email (todos los módulos)"
+    lbl = _COMM_HIST_MODULO_LABELS.get(str(modulo or ""), "") or (str(modulo or "").capitalize())
+    return f"Llave de paso de {lbl}" if lbl else "Llave de paso del módulo"
+
+
+def _comm_hist_serializar(filas):
+    """Filas crudas del UNION → JSON para la tabla (fechas en hora Chile,
+    REGLA #6; estados separados; motivo SIEMPRE como texto visible)."""
+    out = []
+    for r in filas:
+        src = r.get("src") or "email_log"
+        estado = str(r.get("estado") or "").lower()
+        meta = {}
+        try:
+            meta = json.loads(r.get("metadata") or "{}") if r.get("metadata") else {}
+            if not isinstance(meta, dict):
+                meta = {}
+        except Exception:
+            meta = {}
+        modulo = (str(r.get("modulo") or "").strip() or
+                  (str(meta.get("modulo") or "").strip() if src == "email_log" else "")) or None
+        detalle = str(r.get("detalle") or "").strip()
+        # comm_log espejado: el prefijo técnico "[email_log#N]" no se muestra
+        detalle = re.sub(r"^\[email_log#\d+\]\s*", "", detalle)
+        llave = None
+        via = ""
+        if estado == "bloqueado":
+            llave = _comm_hist_llave(detalle, modulo)
+            motivo = llave
+        elif estado == "fallido":
+            motivo = detalle or "El proveedor rechazó el envío sin informar el motivo (registro antiguo)"
+        elif estado == "en_cola":
+            if meta.get("status") == "sending":
+                motivo = "Enviándose en este momento"
+            elif detalle:
+                motivo = f"Reintentará (intento {meta.get('intentos') or 1}): {detalle}"
+            else:
+                motivo = "Esperando su turno en la cola de envío"
+        else:
+            motivo = ""
+            via = _COMM_HIST_PROVEEDOR_LABELS.get(str(r.get("proveedor") or ""), "")
+
+        if src == "comm_log":
+            origen = "prueba_manual"
+        elif src == "cola":
+            origen = "cola"
+        elif meta.get("origen") == "manual":
+            origen = "manual"
+        else:
+            origen = "automatico"
+
+        # Referencia: columnas propias o, en envíos antiguos, el asunto
+        r_tipo, r_id, r_cod = (r.get("ref_tipo"), r.get("ref_id"), r.get("ref_codigo"))
+        if not (r_tipo or r_cod):
+            r_tipo, r_id, r_cod = _email_log_norm_ref(None, r.get("asunto"))
+        ref = None
+        if r_tipo or r_cod:
+            ref = {"tipo": r_tipo, "id": int(r_id) if r_id else None, "codigo": r_cod, "url": None}
+
+        # Contenido guardado
+        red = r.get("cuerpo_redactado")
+        red = int(red) if red is not None else None
+        if src == "comm_log":
+            cuerpo = "sin_copia"
+        elif src == "cola":
+            cuerpo = ("privado" if (modulo or "") in _EMAIL_LOG_MODULOS_PRIVADOS
+                      else ("disponible" if int(r.get("cuerpo_html") or 0) else "sin_copia"))
+        elif red == 1:
+            cuerpo = "privado"
+        elif red == 3:
+            cuerpo = "vencido"
+        elif int(r.get("cuerpo_html") or 0):
+            cuerpo = "disponible"
+        else:
+            cuerpo = "sin_copia"
+        adjuntos = []
+        try:
+            adjuntos = json.loads(r.get("adjuntos_json") or "[]") or []
+            if not isinstance(adjuntos, list):
+                adjuntos = []
+        except Exception:
+            adjuntos = []
+
+        ts = r.get("created_at")
+        out.append({
+            "src": src,
+            "id": int(r.get("id") or 0),
+            "canal": str(r.get("canal") or "email"),
+            "fecha": chile_fmt_filter(ts, "%d/%m/%Y") if ts else "",
+            "hora": chile_fmt_filter(ts, "%H:%M:%S") if ts else "",
+            "destinatario": r.get("destinatario") or "",
+            "asunto": r.get("asunto") or "",
+            "evento": r.get("evento") or "",
+            "estado": estado,
+            "motivo": motivo,
+            "llave": llave,
+            "via": via,
+            "modulo": modulo,
+            "modulo_label": _COMM_HIST_MODULO_LABELS.get(modulo or "", modulo or ""),
+            "origen": origen,
+            "enviado_por": r.get("enviado_por") or "",
+            "ref": ref,
+            "cuerpo": cuerpo,
+            "enmascarado": red == 2,
+            "adjuntos": adjuntos,
+            "job_id": r.get("job_id"),
+            # Reenviar solo con la copia íntegra: una copia enmascarada
+            # mandaría enlaces rotos al destinatario.
+            "puede_reenviar": bool(src == "email_log" and cuerpo == "disponible" and red != 2),
+        })
+
+    # Ids de RET / OT que solo traen código (envíos que no pasaron ref=...):
+    # se resuelven en lote, una consulta por tipo.
+    def _resolver(tipo, sql_base):
+        cods = sorted({x["ref"]["codigo"] for x in out
+                       if x["ref"] and x["ref"]["tipo"] == tipo
+                       and not x["ref"]["id"] and x["ref"]["codigo"]})
+        if not cods:
+            return {}
+        try:
+            ph = ",".join(["%s"] * len(cods))
+            return {str(row["cod"]): int(row["id"])
+                    for row in mysql_fetchall(sql_base.format(ph=ph), tuple(cods)) or []}
+        except Exception as exc:
+            print(f"[comm-historial] resolver {tipo}: {str(exc)[:160]}", flush=True)
+            return {}
+
+    ids_ret = _resolver("RET", "SELECT code AS cod, id FROM `" + PICKUP_REQUESTS_TABLE + "` "
+                               "WHERE code IN ({ph})")
+    ids_ot = _resolver("OT", "SELECT numero_ot AS cod, MAX(id) AS id FROM mant_visitas "
+                             "WHERE numero_ot IN ({ph}) GROUP BY numero_ot")
+    for x in out:
+        ref = x["ref"]
+        if not ref:
+            continue
+        if not ref["id"]:
+            ref["id"] = (ids_ret if ref["tipo"] == "RET" else ids_ot if ref["tipo"] == "OT" else {}).get(
+                ref["codigo"] or "")
+        if ref["id"]:
+            ref["url"] = {"RET": f"/retiros/{ref['id']}", "OT": f"/ot/{ref['id']}",
+                          "TK": f"/tickets/{ref['id']}"}.get(ref["tipo"])
+    return out
+
+
+_COMM_HIST_ENSURE_ULTIMO = [0.0]   # cuándo corrió por última vez la autorreparación del esquema
+
+
+@app.route("/api/comm/historial", methods=["GET"])
+@_require_superadmin
+def comm_historial_api():
+    """Historial de envíos PAGINADO en el servidor (REGLA #4.3).
+
+    Query: page, per_page (25|50|100|200, por defecto 100), estado
+    (enviado|fallido|bloqueado|en_cola), modulo, q, desde, hasta
+    (AAAA-MM-DD en hora Chile), ref ("RET-XXXXXX", "OT-2026-00179",
+    "TK-2026-00012" o "OT:55"). Todo se normaliza contra listas blancas y
+    va a la BD como %s (REGLA #4). Mismo permiso que /comunicaciones."""
+    f = _comm_hist_filtros(request.args)
+    f["desde_utc"], f["hasta_utc"] = _comm_hist_rango_utc(f["desde"], f["hasta"])
+    try:
+        res = _comm_hist_consultar(f, incluir_cola=True)
+    except Exception as exc1:
+        # 2026-09-30 (revisión): la autorreparación (DDL + relleno) solo corre ante un
+        # error de ESQUEMA (1054 columna desconocida, 1146 tabla inexistente) y a lo más
+        # una vez por minuto; un timeout o un deadlock solo reintentan sin la cola.
+        _errno = exc1.args[0] if getattr(exc1, "args", None) and isinstance(exc1.args[0], int) else None
+        print(f"[comm-historial] consulta falló (errno={_errno}), reintento sin la cola: {str(exc1)[:300]}",
+              flush=True)
+        try:
+            if _errno in (1054, 1146) and (time.time() - _COMM_HIST_ENSURE_ULTIMO[0]) > 60:
+                _COMM_HIST_ENSURE_ULTIMO[0] = time.time()
+                _ensure_email_log_trazabilidad()
+            res = _comm_hist_consultar(f, incluir_cola=False)
+        except Exception as exc2:
+            print(f"[comm-historial] consulta falló de nuevo: {str(exc2)[:300]}", flush=True)
+            return jsonify({"ok": False,
+                            "error": "No se pudo cargar el historial. Intenta de nuevo en unos segundos."}), 500
+    try:
+        filas = _comm_hist_serializar(res["filas"])
+    except Exception as exc:
+        print(f"[comm-historial] serializar: {str(exc)[:300]}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo preparar el historial. Intenta de nuevo."}), 500
+    desde_n = (res["offset"] + 1) if res["total"] else 0
+    resp = jsonify({
+        "ok": True,
+        "filas": filas,
+        "total": res["total"],
+        "page": res["page"],
+        "pages": res["pages"],
+        "per_page": res["per_page"],
+        "desde_n": desde_n,
+        "hasta_n": res["offset"] + len(filas),
+        "conteos": res["conteos"],
+        "filtros": {"estado": f["estado"], "modulo": f["modulo"], "q": f["q"],
+                    "desde": f["desde"].isoformat() if f["desde"] else "",
+                    "hasta": f["hasta"].isoformat() if f["hasta"] else "",
+                    "ref": f["ref"]},
+    })
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
+def _comm_hist_aviso_html(titulo, detalle=""):
+    """Página mínima (sin scripts) para el iframe de "Ver correo" cuando no
+    hay contenido que mostrar."""
+    from markupsafe import escape as _esc_av
+    return (
+        "<!DOCTYPE html><html lang='es'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'></head>"
+        "<body style='margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
+        "background:#f3f4f6;color:#374151'>"
+        "<div style='max-width:520px;margin:48px auto;padding:24px 22px;background:#fff;"
+        "border:1px solid #e5e7eb;border-radius:12px;text-align:center'>"
+        "<div style='font-size:34px;line-height:1;margin-bottom:10px'>&#9993;</div>"
+        f"<div style='font-weight:800;font-size:16px;color:#0a0a0a;margin-bottom:6px'>{_esc_av(titulo)}</div>"
+        f"<div style='font-size:14px;line-height:1.5;color:#6b7280'>{_esc_av(detalle)}</div>"
+        "</div></body></html>")
+
+
+@app.route("/comunicaciones/log/<int:lid>/cuerpo", methods=["GET"])
+@_require_superadmin
+def comm_log_cuerpo(lid):
+    """HTML guardado de un correo del historial, para el <iframe sandbox>
+    del modal "Ver correo". Se sirve con una CSP que bloquea todo (sin
+    scripts, sin formularios, sin conexiones) salvo imágenes https/data y
+    estilos en línea — el contenido del correo jamás corre como página.
+
+    ?src=cola → el cuerpo de un correo que todavía está en la cola."""
+    import zlib as _zlib
+    src = (request.args.get("src") or "email_log").strip().lower()
+    html = None
+    status = 200
+    titulo, detalle = "Sin contenido", ""
+    try:
+        if src == "cola":
+            row = mysql_fetchone(
+                "SELECT cuerpo, modulo FROM comm_email_jobs WHERE id=%s AND origen='cola_v2' LIMIT 1",
+                (lid,))
+            if not row:
+                status = 404
+                titulo, detalle = ("Este correo ya salió de la cola",
+                                   "Búscalo de nuevo en el historial: ahora aparece con su resultado final.")
+            elif str(row.get("modulo") or "").strip().lower() in _EMAIL_LOG_MODULOS_PRIVADOS:
+                titulo, detalle = ("Contenido privado",
+                                   "Los correos de acceso y contraseñas no se muestran por seguridad.")
+            elif not row.get("cuerpo"):
+                titulo = "Este correo no tiene contenido guardado"
+            else:
+                html, _ = _email_log_enmascarar_tokens(str(row["cuerpo"]))
+        else:
+            row = mysql_fetchone(
+                "SELECT e.id AS id, b.html_gz AS html_gz, b.redactado AS redactado "
+                "  FROM email_log e LEFT JOIN email_log_cuerpo b ON b.log_id = e.id "
+                " WHERE e.id=%s LIMIT 1", (lid,))
+            red = int(row.get("redactado") or 0) if row and row.get("redactado") is not None else None
+            if not row:
+                status = 404
+                titulo = "Registro no encontrado"
+            elif red == 1:
+                titulo, detalle = ("Contenido privado",
+                                   "Los correos de acceso, contraseñas y alertas de inicio de sesión "
+                                   "no guardan su contenido por seguridad.")
+            elif red == 3:
+                titulo, detalle = ("Contenido eliminado por antigüedad",
+                                   f"El contenido de los correos se conserva "
+                                   f"{_EMAIL_LOG_CUERPO_RETENCION_DIAS} días. "
+                                   "El registro del envío sigue disponible.")
+            elif row.get("html_gz") is None:
+                titulo, detalle = ("No hay copia de este correo",
+                                   "Los envíos anteriores al 30/09/2026 solo registraron destinatario, "
+                                   "asunto y resultado, no el contenido.")
+            else:
+                html = _zlib.decompress(bytes(row["html_gz"])).decode("utf-8", "replace")
+    except Exception as exc:
+        print(f"[comm-log-cuerpo] lid={lid} src={src}: {str(exc)[:200]}", flush=True)
+        status = 500
+        html = None
+        titulo, detalle = "No se pudo abrir el contenido", "Intenta de nuevo en unos segundos."
+
+    resp = make_response(html if html is not None else _comm_hist_aviso_html(titulo, detalle), status)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; "
+        "frame-ancestors 'self'")
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
 
 
 # ══════════════════════════════════════════════════════════════
@@ -57628,9 +58709,19 @@ def init_mantenciones_tables():
                     actor        VARCHAR(190),
                     metadata     TEXT COMMENT 'JSON con info adicional',
                     created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    -- Trazabilidad (2026-09-23): en tablas existentes las
+                    -- agrega _ensure_email_log_trazabilidad().
+                    modulo       VARCHAR(40) NULL,
+                    ref_tipo     VARCHAR(30) NULL,
+                    ref_id       INT NULL,
+                    ref_codigo   VARCHAR(60) NULL,
+                    proveedor    VARCHAR(30) NULL,
+                    job_id       INT NULL,
                     INDEX idx_evento (evento),
                     INDEX idx_dest   (destinatario),
-                    INDEX idx_created(created_at)
+                    INDEX idx_created(created_at),
+                    INDEX idx_ref (ref_tipo, ref_id),
+                    INDEX idx_mod_est_fecha (modulo, estado, created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
@@ -105642,7 +106733,8 @@ def mant_ot_enviar_firma_remota(vid):
                         f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
             try:
                 ok = _send_ilus_email(email_dest, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
-                                      evento="ot_firma_remota", modulo="mantenciones")
+                                      evento="ot_firma_remota", modulo="mantenciones",
+                                      ref={"tipo": "OT", "id": vid, "codigo": numero})
             except Exception as _e:
                 print(f"[firma-remota] email fail vid={vid}: {_e}", flush=True)
                 ok = False
@@ -138808,6 +139900,186 @@ def _ensure_email_log_estado_bloqueado():
         return False
 
 
+# Columnas de trazabilidad de email_log (2026-09-23). Definiciones fijas:
+# se concatenan al ALTER, nunca vienen del usuario.
+_EMAIL_LOG_COLS_TRAZ = (
+    ("modulo",     "VARCHAR(40) NULL"),
+    ("ref_tipo",   "VARCHAR(30) NULL"),
+    ("ref_id",     "INT NULL"),
+    ("ref_codigo", "VARCHAR(60) NULL"),
+    ("proveedor",  "VARCHAR(30) NULL"),
+    ("job_id",     "INT NULL"),
+)
+_EMAIL_LOG_IDX_TRAZ = (
+    ("idx_ref",           "(ref_tipo, ref_id)"),
+    ("idx_mod_est_fecha", "(modulo, estado, created_at)"),
+)
+
+
+def _email_log_cuerpo_retencion(dias=None, lote=2000, max_lotes=25):
+    """Retención: borra el HTML guardado de los correos con más de `dias`
+    (180 por defecto). La fila de email_log NO se toca y la de
+    email_log_cuerpo queda con redactado=3 (conserva los nombres de los
+    adjuntos), para que el Historial explique por qué ya no se puede abrir.
+    Por lotes, para no bloquear la tabla. Devuelve cuántos se vencieron."""
+    dias = int(dias or _EMAIL_LOG_CUERPO_RETENCION_DIAS)
+    total = 0
+    for _ in range(max_lotes):
+        n = mysql_execute_returning_rowcount(
+            "UPDATE email_log_cuerpo SET html_gz=NULL, redactado=3 "
+            " WHERE created_at < (NOW() - INTERVAL %s DAY) AND html_gz IS NOT NULL "
+            " LIMIT %s", (dias, int(lote))) or 0
+        total += n
+        if n < lote:
+            break
+    if total:
+        print(f"[email_log_retencion] {total} contenido(s) de correo con más de {dias} días eliminados "
+              f"(las filas de email_log se conservan)", flush=True)
+    return total
+
+
+def _ensure_email_log_trazabilidad():
+    """Migración idempotente de la trazabilidad de correos (2026-09-23),
+    AUNQUE ILUS_SKIP_MIGRATIONS=1 (se llama en el arranque junto a los demás
+    _ensure_*). Mismo patrón que _ensure_email_log_estado_bloqueado: mira
+    information_schema ANTES de alterar, nunca un ALTER a ciegas.
+
+      1. CREATE TABLE IF NOT EXISTS email_log_cuerpo.
+      2. email_log: ADD COLUMN de modulo/ref_tipo/ref_id/ref_codigo/
+         proveedor/job_id que falten (un solo ALTER).
+      3. email_log: índices idx_ref e idx_mod_est_fecha si faltan.
+      4. comm_email_jobs.ref_json (la referencia de los correos encolados;
+         columna propia para no tocar kwargs_json).
+      5. Relleno ÚNICO de email_log.modulo desde metadata.modulo, solo
+         cuando el JSON es válido y el módulo está en la lista conocida. La
+         sonda usa el mismo filtro, así que una vez rellenado no vuelve a
+         escribir nada.
+    Cada paso en su propio try: si uno falla, los demás igual corren.
+    Los ALTER y el relleno van por una conexión DEDICADA (get_mysql, sin el
+    read_timeout=5s del pool): un índice sobre una tabla grande puede
+    tardar más que eso y dejaría la conexión del pool rota a mitad de camino.
+    Devuelve la lista de cambios aplicados."""
+    hechos = []
+
+    def _txt(v):
+        return v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else str(v or "")
+
+    def _ddl(sql, params=None):
+        """Ejecuta en conexión propia, commit y cierra. Devuelve rowcount."""
+        c = get_mysql()
+        try:
+            with c.cursor() as cur:
+                cur.execute(sql, params or ())
+                n = cur.rowcount
+            c.commit()
+            return n
+        finally:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+    # 1) Tabla del contenido (1:1 con email_log)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS email_log_cuerpo (
+                log_id          INT NOT NULL PRIMARY KEY COMMENT 'email_log.id (1:1)',
+                html_gz         MEDIUMBLOB NULL COMMENT 'HTML enviado, comprimido con zlib',
+                bytes_original  INT NULL COMMENT 'tamaño del HTML sin comprimir',
+                adjuntos_json   TEXT NULL COMMENT 'solo nombre/tamaño/tipo de cada adjunto, nunca su contenido',
+                redactado       TINYINT NOT NULL DEFAULT 0
+                                COMMENT '0 íntegro · 1 privado (no guardado) · 2 enlaces enmascarados · 3 vencido (retención)',
+                created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_email_log_traz] email_log_cuerpo: {e}", flush=True)
+
+    # 2) Columnas nuevas de email_log
+    agregadas = []
+    existentes = set()
+    try:
+        cols = mysql_fetchall(
+            "SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='email_log'") or []
+        existentes = {_txt(r.get("c")).lower() for r in cols}
+        # Si email_log aún no existe, el CREATE de init ya trae las columnas.
+        faltan = ([(n, d) for n, d in _EMAIL_LOG_COLS_TRAZ if n not in existentes]
+                  if existentes else [])
+        if faltan:
+            _ddl("ALTER TABLE email_log "
+                 + ", ".join(f"ADD COLUMN {n} {d}" for n, d in faltan))
+            agregadas = [n for n, _ in faltan]
+            hechos.append("email_log +" + ",".join(agregadas))
+            print(f"[ensure_email_log_traz] columnas agregadas: {agregadas}", flush=True)
+    except Exception as e:
+        print(f"[ensure_email_log_traz] columnas email_log: {e}", flush=True)
+
+    # 3) Índices
+    try:
+        if not existentes:
+            raise RuntimeError("email_log aún no existe (lo crea init con sus índices)")
+        idx = mysql_fetchall(
+            "SELECT DISTINCT INDEX_NAME AS i FROM information_schema.STATISTICS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='email_log'") or []
+        idx_existentes = {_txt(r.get("i")).lower() for r in idx}
+        for nombre, cols_sql in _EMAIL_LOG_IDX_TRAZ:
+            if nombre.lower() in idx_existentes:
+                continue
+            try:
+                _ddl(f"ALTER TABLE email_log ADD INDEX {nombre} {cols_sql}")
+                hechos.append(f"email_log idx {nombre}")
+                print(f"[ensure_email_log_traz] índice creado: {nombre}", flush=True)
+            except Exception as e_i:
+                print(f"[ensure_email_log_traz] índice {nombre}: {e_i}", flush=True)
+    except Exception as e:
+        print(f"[ensure_email_log_traz] índices email_log: {e}", flush=True)
+
+    # 4) comm_email_jobs.ref_json
+    try:
+        cj = mysql_fetchall(
+            "SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='comm_email_jobs'") or []
+        cj_cols = {_txt(r.get("c")).lower() for r in cj}
+        if cj_cols and "ref_json" not in cj_cols:
+            _ddl("ALTER TABLE comm_email_jobs ADD COLUMN ref_json VARCHAR(200) NULL")
+            hechos.append("comm_email_jobs +ref_json")
+            print("[ensure_email_log_traz] comm_email_jobs.ref_json agregada", flush=True)
+    except Exception as e:
+        print(f"[ensure_email_log_traz] comm_email_jobs.ref_json: {e}", flush=True)
+
+    # 5) Relleno único de email_log.modulo desde el JSON de metadata.
+    #    CASE (no AND) para garantizar que JSON_EXTRACT jamás se evalúe sobre
+    #    un JSON inválido (metadata se truncaba a 1500 caracteres).
+    try:
+        if not existentes:
+            return hechos
+        expr = ("(CASE WHEN JSON_VALID(metadata) "
+                "THEN JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.modulo')) END)")
+        mods = tuple(_COMM_MODULOS_VALIDOS)
+        ph = ",".join(["%s"] * len(mods))
+        where = f"modulo IS NULL AND metadata LIKE %s AND {expr} IN ({ph})"
+        params = ('%"modulo"%',) + mods
+        pendiente = bool(agregadas and "modulo" in agregadas) or bool(
+            mysql_fetchone(f"SELECT id FROM email_log WHERE {where} LIMIT 1", params))
+        if pendiente:
+            total = 0
+            for _ in range(400):
+                n = _ddl(f"UPDATE email_log SET modulo = LEFT({expr}, 40) WHERE {where} LIMIT 5000",
+                         params) or 0
+                total += n
+                if n < 5000:
+                    break
+            if total:
+                hechos.append(f"email_log.modulo rellenado en {total} filas")
+                print(f"[ensure_email_log_traz] modulo rellenado desde metadata en {total} filas", flush=True)
+    except Exception as e:
+        print(f"[ensure_email_log_traz] relleno de modulo: {e}", flush=True)
+
+    return hechos
+
+
 # ═══════════════════════════════════════════════════════════════════
 # BODEGA DE REPUESTOS — inventario físico real (2026-08-07, Daniel).
 #
@@ -141626,6 +142898,19 @@ try:
         _ensure_comm_email_jobs()
 except Exception as _ensure_ceq_err:
     print(f"[ILUS][WARN] _ensure_comm_email_jobs: {_ensure_ceq_err}", flush=True)
+
+# TRAZABILIDAD DE CORREOS (2026-09-23): columnas modulo/ref_*/proveedor/
+# job_id + índices de email_log, tabla email_log_cuerpo (el HTML enviado) y
+# comm_email_jobs.ref_json — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+# Va DESPUÉS de _ensure_comm_email_jobs (necesita esa tabla). Si no corre,
+# _email_log cae al INSERT histórico y ningún envío deja de registrarse.
+try:
+    with app.app_context():
+        _elog_traz = _ensure_email_log_trazabilidad()
+    if _elog_traz:
+        print(f"[ILUS] email_log trazabilidad: {_elog_traz}", flush=True)
+except Exception as _ensure_eltraz_err:
+    print(f"[ILUS][WARN] _ensure_email_log_trazabilidad: {_ensure_eltraz_err}", flush=True)
 
 # Logo del correo apuntando a Cloudinary (leftover pre-GCS) -> Cloud Run
 # (2026-07-23, Daniel). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
