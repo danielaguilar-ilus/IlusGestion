@@ -476,6 +476,14 @@
   cursor:not-allowed;
 }
 .agi-slot.nohabil:hover{box-shadow:none;}
+/* Salida temprano / bloqueo de horas (2026-09-30) */
+.agi-slot.nohabil.temprano{background:repeating-linear-gradient(135deg,#fff7ed 0 8px,#ffedd5 8px 16px);}
+.agi-slot.nohabil.bloqueado{background:repeating-linear-gradient(135deg,#eff6ff 0 8px,#dbeafe 8px 16px);}
+.agi-slot-tag{position:absolute;left:5px;top:3px;font-size:.6rem;font-weight:800;color:#1e40af;max-width:90%;
+  overflow-wrap:anywhere;line-height:1.15;pointer-events:none}
+.agi-nohabil-nombre{margin-top:3px;font-size:.6rem;font-weight:700;color:#991b1b;line-height:1.15;text-transform:none;letter-spacing:0;overflow-wrap:anywhere}
+.agi-temprano-tag{display:inline-block;margin:2px 0 1px;font-size:.58rem;font-weight:900;color:#92400e;
+  background:#fef3c7;padding:1px 7px;border-radius:50px}
 
 /* ── Slot vacío clicable → crear retiro ─────────────────────────────── */
 .agi-slot.creatable{cursor:pointer;}
@@ -966,6 +974,17 @@ function agiFmt(d){
 // backend pero NO vienen en settings.holidays — aquí solo pintamos los
 // configurados manualmente + fines de semana.
 function agiWorkInfo(d, fecha){
+  // 2026-09-30: la API entrega el estado real de cada día (feriados de Chile con su nombre,
+  // cierres, salida temprano). Si no viene (respuesta vieja), queda la regla de antes.
+  const inf = _agiData && _agiData.dias_info && _agiData.dias_info[fecha];
+  if (inf) {
+    if (!inf.abierto) {
+      const fer = String(inf.razon || '').indexOf('Feriado') === 0;
+      return { habil:false, label: fer ? 'Feriado' : (inf.razon === 'No hábil' ? 'No hábil' : 'Cerrado'),
+               detalle: inf.razon || '', nombre: fer ? String(inf.razon).replace('Feriado · ', '') : '' };
+    }
+    return { habil:true, label:'' };
+  }
   const cfg = (_agiData && _agiData.settings) || {};
   const wd = String(cfg.work_days || '1,2,3,4,5').split(',')
     .map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
@@ -1006,6 +1025,10 @@ function agiSOW(d){
   x.setDate(x.getDate() - dow);
   x.setHours(0,0,0,0);
   return x;
+}
+function agiMin(hhmm){   // 'HH:MM' → minutos desde medianoche
+  const p = String(hhmm || '0:0').split(':');
+  return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0);
 }
 function agiEsc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -1104,13 +1127,16 @@ function agiRenderWeek(){
     const { d, fecha, w } = daysMeta[i];
     const dia = _agiData.dias[fecha] || { total_picks:0, ocupacion_pct:0 };
     const isToday = fecha === today;
+    const _inf = (_agiData.dias_info || {})[fecha] || null;
     const barColor = dia.ocupacion_pct >= 80 ? '#dc2626' : dia.ocupacion_pct >= 50 ? '#f59e0b' : '#16a34a';
     html += `<div class="agi-week-head${isToday?' today':''}${!w.habil?' nohabil':''}" data-fecha="${fecha}">
       <div style="font-size:.65rem">${dayNames[i]}</div>
       <div class="agi-day">${d.getDate()}</div>
       ${!w.habil
-        ? `<div class="agi-nohabil-tag">${w.label}</div>`
+        ? `<div class="agi-nohabil-tag" title="${agiEsc(w.detalle || w.label)}">${w.label}</div>${w.nombre ? `<div class="agi-nohabil-nombre">${agiEsc(w.nombre)}</div>` : ''}`
         : `<div style="font-size:.62rem;color:var(--ilus-muted-soft);font-weight:700">${dia.total_picks} ${dia.total_picks === 1 ? 'retiro' : 'retiros'}</div>
+      ${_inf && _inf.cierre && (_inf.origen === 'temprano' || _inf.origen === 'vispera')
+        ? `<div class="agi-temprano-tag" title="${agiEsc(_inf.motivo || 'Salida más temprano')}">Sale ${_inf.cierre}</div>` : ''}
       <div class="agi-bar"><div class="agi-bar-fill" style="width:${dia.ocupacion_pct}%;background:${barColor}"></div></div>`}
     </div>`;
   }
@@ -1148,11 +1174,28 @@ function agiRenderWeek(){
         capInfo = `<div class="agi-slot-cap" title="${_lbl} (${ocup}/${mx})">${ocup}/${mx}</div>`;
         picksHtml = slotData.picks.map(p => agiPickCardHtml(p)).join('');
       }
+      // Día abierto pero con salida temprano o bloqueos de horas (Daniel 2026-09-30):
+      // esas horas se ven rayadas con su motivo y no se pueden agendar desde aquí.
+      const infoDia = (_agiData.dias_info || {})[fecha];
+      if (w.habil && infoDia && infoDia.abierto){
+        const sm = agiMin(slot);
+        if (infoDia.cierre && (infoDia.origen === 'temprano' || infoDia.origen === 'vispera') && sm > agiMin(infoDia.cierre)){
+          html += `<div class="${cellClass} nohabil temprano" data-fecha="${fecha}" data-slot="${slot}"
+                    title="Último retiro a las ${infoDia.cierre}${infoDia.motivo ? ' · ' + agiEsc(infoDia.motivo) : ''}">${capInfo}${picksHtml}</div>`;
+          continue;
+        }
+        const bl = (infoDia.bloqueos || []).find(b => sm < agiMin(b.hasta) && sm + slotMin > agiMin(b.desde));
+        if (bl){
+          html += `<div class="${cellClass} nohabil bloqueado" data-fecha="${fecha}" data-slot="${slot}"
+                    title="Bloqueado: ${agiEsc(bl.motivo || 'sin motivo')}">${capInfo}<span class="agi-slot-tag">🔒 ${agiEsc(bl.motivo || 'Bloqueado')}</span>${picksHtml}</div>`;
+          continue;
+        }
+      }
       // Día NO hábil: gris rayado, sin DnD ni click-crear.
       if (!w.habil){
         cellClass += ' nohabil';
         html += `<div class="${cellClass}" data-fecha="${fecha}" data-slot="${slot}"
-                  title="${w.label} — no se agendan retiros">${capInfo}${picksHtml}</div>`;
+                  title="${agiEsc(w.detalle || w.label)} — no se agendan retiros">${capInfo}${picksHtml}</div>`;
         continue;
       }
       // Día hábil con cupo: click en zona vacía → crear retiro prellenado.

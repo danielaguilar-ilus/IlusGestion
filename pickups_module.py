@@ -9,6 +9,7 @@ from flask import flash, has_request_context, jsonify, redirect, render_template
 from werkzeug.utils import secure_filename
 
 import retiros_monitor as _rmon  # datos derivados del Monitor (semáforo, tarjetas, línea de tiempo)
+import retiros_horarios as _rh    # días especiales: víspera de feriado y salida temprano (funciones puras)
 
 
 def _public_base_url():
@@ -554,6 +555,40 @@ def register_pickup_routes(app, ctx):
             )
         except Exception:
             pass
+        # 2026-09-30 (Daniel: "que yo pueda agregar por el front uno o varios responsables
+        # que reciban un correo cada vez que se gestione un retiro"). Columna NUEVA a
+        # propósito: notify_emails quedó inerte desde el 14-09 y guarda un dato viejo; si
+        # se reutilizara, esas direcciones antiguas empezarían a recibir avisos sin querer.
+        # Una sentencia = una cláusula (REGLA #18: así la guardia _ddl_ya_aplicado la salta).
+        for _col_sql in (
+            f"ALTER TABLE `{SET}` ADD COLUMN aviso_equipo_emails TEXT NULL "
+            f"COMMENT 'Correos (CSV) que reciben un aviso interno por cada gestión de un retiro'",
+            # Salida temprano automática la víspera de un feriado (Daniel 2026-09-30).
+            f"ALTER TABLE `{SET}` ADD COLUMN vispera_activa TINYINT(1) NOT NULL DEFAULT 0",
+            f"ALTER TABLE `{SET}` ADD COLUMN vispera_hasta VARCHAR(5) NOT NULL DEFAULT '15:00'",
+        ):
+            try:
+                mysql_execute(_col_sql)
+            except Exception:
+                pass
+        # Reglas por día (una fila por fecha): reabrir un feriado, cerrar más temprano
+        # o quitarle la salida automática de víspera a un día puntual.
+        try:
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS pickup_day_rules (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    fecha       DATE NOT NULL,
+                    abierto     TINYINT(1) NOT NULL DEFAULT 0,
+                    hasta       VARCHAR(5) NULL,
+                    sin_vispera TINYINT(1) NOT NULL DEFAULT 0,
+                    motivo      VARCHAR(200) NOT NULL DEFAULT '',
+                    created_by  VARCHAR(190) DEFAULT NULL,
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_pdr_fecha (fecha)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        except Exception:
+            pass
 
     # 2026-06-10 — FIX RAÍZ: estas migraciones de boot corren en IMPORT,
     # donde NO hay contexto Flask. get_db() usa `g` → RuntimeError que el
@@ -954,6 +989,9 @@ def register_pickup_routes(app, ctx):
             "hero_image_3": "",
             "notify_emails": "",
             "web_responsable_user_id": None,
+            "aviso_equipo_emails": "",
+            "vispera_activa": 0,
+            "vispera_hasta": "15:00",
         }
         _SETTINGS_CACHE["row"] = result
         _SETTINGS_CACHE["fetched_at"] = now
@@ -1041,6 +1079,124 @@ def register_pickup_routes(app, ctx):
             pass
         return out
 
+    # ══════════════════════════════════════════════════════════════════
+    #  DÍAS ESPECIALES (Daniel 2026-09-30): reabrir un feriado, salir más
+    #  temprano un día puntual y salida automática la víspera de feriado.
+    #  Se editan desde Horarios y alertas (rutas /retiros/excepciones).
+    #  La decisión pura vive en retiros_horarios.py (con pruebas).
+    # ══════════════════════════════════════════════════════════════════
+    _DAY_RULES_CACHE = {"rows": None, "at": 0.0}
+
+    def _iso_fecha(v):
+        return v.isoformat() if hasattr(v, "isoformat") else str(v)[:10]
+
+    def _day_rules():
+        """{'YYYY-MM-DD': {abierto, hasta, sin_vispera, motivo}} de las reglas por día.
+        Cache de 30 s (igual que settings); se invalida al guardar. Si la tabla aún
+        no existe devuelve {} y todo sigue como antes."""
+        if _DAY_RULES_CACHE["rows"] is not None and (time.time() - _DAY_RULES_CACHE["at"]) < 30:
+            return _DAY_RULES_CACHE["rows"]
+        rows = {}
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT fecha, abierto, hasta, sin_vispera, motivo FROM pickup_day_rules "
+                    "WHERE fecha >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)") or []):
+                rows[_iso_fecha(r["fecha"])] = {
+                    "abierto": bool(r.get("abierto")),
+                    "hasta": (r.get("hasta") or "").strip() or None,
+                    "sin_vispera": bool(r.get("sin_vispera")),
+                    "motivo": (r.get("motivo") or "").strip(),
+                }
+        except Exception as _e_dr:
+            print(f"[pickup_day_rules] lectura: {_e_dr}", flush=True)
+        _DAY_RULES_CACHE["rows"] = rows
+        _DAY_RULES_CACHE["at"] = time.time()
+        return rows
+
+    def _invalidate_day_rules():
+        _DAY_RULES_CACHE["rows"] = None
+        try: _invalidate_settings_cache()
+        except Exception: pass
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
+
+    def _holiday_names(year):
+        """{'YYYY-MM-DD': 'Nombre'} de los feriados legales de Chile de `year`."""
+        try:
+            from cl_feriados import feriados_chile
+            return dict(feriados_chile(year))
+        except Exception:
+            return {d: "Feriado" for d in _chile_holidays(year)}
+
+    def _dias_ctx(d_from, d_to, cfg=None, con_bloqueos=False):
+        """Lo necesario para juzgar cada día de [d_from, d_to]. Los cierres de día
+        completo (pickup_blocks) solo se leen si la víspera está activa o si se piden
+        (la lista del panel): en el camino caliente del validador no suman consultas."""
+        cfg = cfg or settings()
+        work_days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
+        extra = {h.strip() for h in (cfg.get("holidays") or "").replace(";", ",").split(",") if h.strip()}
+        rules = _day_rules()
+        holgura = d_to + timedelta(days=_rh.TOPE_DIAS_VISPERA + 1)
+        legales = {}
+        for yr in range(d_from.year, holgura.year + 1):
+            legales.update(_holiday_names(yr))
+        try:
+            vispera_on = bool(int(cfg.get("vispera_activa") or 0))
+        except (TypeError, ValueError):
+            vispera_on = False
+        full = set()
+        if vispera_on or con_bloqueos:
+            try:
+                for r in (mysql_fetchall(
+                        "SELECT DISTINCT fecha FROM pickup_blocks WHERE hora_inicio IS NULL "
+                        "AND fecha BETWEEN %s AND %s", (d_from, holgura)) or []):
+                    full.add(_iso_fecha(r["fecha"]))
+            except Exception:
+                pass
+
+        def feriado(d):
+            iso = d.isoformat()
+            if iso in extra:
+                return True
+            return iso in legales and not (rules.get(iso) or {}).get("abierto")
+
+        def cerrado(d):
+            return d.isoweekday() not in work_days or feriado(d) or d.isoformat() in full
+
+        return {"cfg": cfg, "work_days": work_days, "extra": extra, "rules": rules,
+                "legales": legales, "full": full, "feriado": feriado, "cerrado": cerrado,
+                "vispera_on": vispera_on,
+                "vispera_hasta": (cfg.get("vispera_hasta") or "15:00").strip() or "15:00",
+                "normal": _td_to_hhmm(cfg.get("close_time") or "16:30:00")}
+
+    def _info_dia(c, d):
+        """Estado de un día: {abierto, razon, cierre, origen, motivo, vispera_de}.
+        `cierre` = última hora de llegada; `origen`: normal | temprano | vispera | cerrado."""
+        iso = d.isoformat()
+        if c["cerrado"](d):
+            if iso in c["extra"]:
+                razon = "Cierre de bodega"
+            elif iso in c["legales"] and d.isoweekday() in c["work_days"]:
+                razon = "Feriado · " + c["legales"][iso]
+            elif iso in c["full"]:
+                razon = "Día bloqueado"
+            else:
+                razon = "No hábil"
+            return {"abierto": False, "razon": razon, "cierre": None, "origen": "cerrado",
+                    "motivo": "", "vispera_de": None}
+        vis = _rh.vispera_de(d, c["cerrado"], c["feriado"]) if c["vispera_on"] else None
+        hasta, origen, motivo = _rh.cierre_efectivo(
+            c["normal"], c["rules"].get(iso), vis is not None, c["vispera_on"], c["vispera_hasta"])
+        if origen == "vispera" and vis:
+            motivo = "Víspera de " + (c["legales"].get(vis.isoformat()) or "feriado")
+        return {"abierto": True, "razon": "", "cierre": hasta, "origen": origen, "motivo": motivo,
+                "vispera_de": vis.isoformat() if vis else None}
+
+    def _cierre_dia(d, cfg=None):
+        """(hasta 'HH:MM', origen, motivo) de un día abierto, para el validador de slots."""
+        i = _info_dia(_dias_ctx(d, d, cfg), d)
+        return i["cierre"], i["origen"], i["motivo"]
+
     def date_allowed(date_str, cfg=None):
         cfg = cfg or settings()
         try:
@@ -1049,7 +1205,10 @@ def register_pickup_routes(app, ctx):
             return False, "Fecha no valida."
         days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
         holidays = {d.strip() for d in (cfg.get("holidays") or "").replace(";", ",").split(",") if d.strip()}
-        holidays |= _chile_holidays(dt.year)   # feriados legales de Chile (auto)
+        legales = _chile_holidays(dt.year)   # feriados legales de Chile (auto)
+        if (_day_rules().get(date_str) or {}).get("abierto"):
+            legales = legales - {date_str}   # feriado reabierto desde Horarios y alertas
+        holidays |= legales
         if dt.isoweekday() not in days:
             return False, "La bodega no recibe retiros ese día (solo días hábiles)."
         if date_str in holidays:
@@ -1443,6 +1602,17 @@ def register_pickup_routes(app, ctx):
         ok_t, msg_t = time_allowed(time_from, time_to, cfg, bypass_lunch=bypass_lunch)
         if not ok_t:
             return False, msg_t
+
+        # 1b) Salida temprano de ese día (regla manual o víspera de feriado): ningún
+        # bloque puede empezar después de la última hora de llegada (Daniel 2026-09-30).
+        try:
+            _hasta_dia, _origen_dia, _motivo_dia = _cierre_dia(
+                datetime.strptime(date_str, "%Y-%m-%d").date(), cfg)
+            if _origen_dia in ("temprano", "vispera") and _hasta_dia and time_from > _hasta_dia:
+                return False, (f"Ese día la bodega recibe retiros hasta las {_hasta_dia}"
+                               + (f" ({_motivo_dia})" if _motivo_dia else "") + ".")
+        except Exception as _e_cd:
+            print(f"[pickup] cierre del día: {_e_cd}", flush=True)
 
         # Parsear minutos
         try:
@@ -2408,7 +2578,9 @@ def register_pickup_routes(app, ctx):
     # flujo principal (todo va en try/except).
     def _notificar_equipo_retiros(evento_titulo, cuerpo, rid, code,
                                   prioridad="alta", tipo="retiro_nuevo",
-                                  send_email=True):
+                                  send_email=True, campana=True):
+        # campana=False: solo correo (los eventos agregados el 2026-09-30 van así porque
+        # Daniel dijo "después activamos la campana": no sumar avisos ahí todavía).
         try:
             titulo_snap = str(evento_titulo or "")[:200]
             cuerpo_snap = str(cuerpo or "")[:2000]
@@ -2417,6 +2589,7 @@ def register_pickup_routes(app, ctx):
             prio_snap = prioridad or "alta"
             tipo_snap = tipo or "retiro_nuevo"
             send_email_snap = bool(send_email)
+            campana_snap = bool(campana)
 
             def _runner():
                 try:
@@ -2424,7 +2597,7 @@ def register_pickup_routes(app, ctx):
                         url_accion = f"/retiros/{rid_snap}"
                         # ── (a) In-app: campana del header ────────────────
                         try:
-                            _mant_notificar = ctx.get("_mant_notificar")
+                            _mant_notificar = ctx.get("_mant_notificar") if campana_snap else None
                             _auth_table = ctx.get("AUTH_TABLE") or "app_users"
                             if _mant_notificar:
                                 # Review M4 2026-06-09: los roles usan slugs
@@ -2464,7 +2637,21 @@ def register_pickup_routes(app, ctx):
                             print(f"[ILUS][PICKUP TEAM NOTIF] in-app: {_e_inapp}", flush=True)
 
                         # ── (b) Email interno ─────────────────────────────
-                        if send_email_snap:
+                        # Daniel 2026-09-30: "que yo pueda agregar por el front uno o varios
+                        # responsables y que cada vez que se gestione un retiro les llegue un
+                        # correo". Esa lista (Horarios y alertas → Equipo y alertas) recibe el
+                        # aviso de TODAS las gestiones, incluso las que hasta hoy solo tocaban
+                        # la campana (send_email=False). El responsable asignado a cada retiro
+                        # sigue como antes (solo las gestiones con send_email=True).
+                        _equipo = []
+                        try:
+                            for _e_eq in re.split(r"[,;\s]+", str(settings().get("aviso_equipo_emails") or "")):
+                                _e_eq = _e_eq.strip().lower()
+                                if _e_eq and is_valid_email(_e_eq) and _e_eq not in _equipo:
+                                    _equipo.append(_e_eq)
+                        except Exception as _e_lista:
+                            print(f"[ILUS][PICKUP TEAM NOTIF] lista de responsables: {_e_lista}", flush=True)
+                        if send_email_snap or _equipo:
                             try:
                                 # FIX 2026-08-24 (Daniel: "para de enviar a Fran, Juan,
                                 # Alison, Roberto y Daniel Aguilar... gestionemos en
@@ -2498,9 +2685,9 @@ def register_pickup_routes(app, ctx):
                                 dests = []
                                 _resp_email = None
                                 try:
-                                    _rq_dest = mysql_fetchone(
+                                    _rq_dest = (mysql_fetchone(
                                         f"SELECT responsable_user_id FROM `{REQ}` WHERE id=%s",
-                                        (rid_snap,)) or {}
+                                        (rid_snap,)) or {}) if send_email_snap else {}
                                     _resp_uid = _rq_dest.get("responsable_user_id")
                                     if _resp_uid:
                                         _auth_table = ctx.get("AUTH_TABLE") or "app_users"
@@ -2514,6 +2701,9 @@ def register_pickup_routes(app, ctx):
                                     print(f"[ILUS][PICKUP TEAM NOTIF] responsable lookup: {_e_resp}", flush=True)
                                 if _resp_email:
                                     dests.append(_resp_email)
+                                for _e_eq in _equipo:
+                                    if _e_eq not in dests:
+                                        dests.append(_e_eq)
                                 if dests:
                                     import html as _html_esc
                                     link = _public_base_url() + f"/retiros/{rid_snap}"
@@ -2539,6 +2729,8 @@ def register_pickup_routes(app, ctx):
                                             "retiro_cerrado":     ("Completado", "#dcfce7", "#14532d"),
                                             "retiro_mensaje":     ("Mensaje del cliente", "#dcfce7", "#14532d"),
                                             "retiro_sin_saldo":   ("Revisar saldo ERP", "#fee2e2", "#7f1d1d"),
+                                            "retiro_propuesta":   ("ILUS propuso fecha", "#fed7aa", "#9a3412"),
+                                            "retiro_anulado":     ("Retiro anulado", "#fee2e2", "#7f1d1d"),
                                         }
                                         _ch_txt, _ch_bg, _ch_fg = _chips.get(
                                             tipo_snap, ("Aviso interno", "#f3f4f6", "#374151"))
@@ -5129,6 +5321,19 @@ def register_pickup_routes(app, ctx):
             "por_responsable": sorted(por_resp.values(), key=lambda x: -x["solicitudes"])[:8],
         })
 
+    def _resp_email_admin(fila):
+        """{'email': ...} solo si quien pide es admin y lo pide (?con_email=1): lo usa la lista
+        de responsables de Horarios y alertas. Al resto de las pantallas no se les entrega el
+        correo de los compañeros."""
+        try:
+            if request.args.get("con_email") and (g.permissions.get("superadmin") or g.permissions.get("admin")):
+                u = (fila.get("username") or "").strip().lower()
+                if u and is_valid_email(u):
+                    return {"email": u}
+        except Exception:
+            pass
+        return {}
+
     @app.route("/retiros/api/responsables", methods=["GET"])
     @require_permission("retiros")
     def pickup_responsables():
@@ -5167,7 +5372,8 @@ def register_pickup_routes(app, ctx):
                         continue
                     users.append({"id": r["id"],
                                   "nombre": (r.get("nombre") or r.get("username") or "Usuario"),
-                                  "rut": r.get("rut")})
+                                  "rut": r.get("rut"),
+                                  **_resp_email_admin(r)})
                 return jsonify({"ok": True, "responsables": users})
             except Exception as e:
                 print(f"[pickup-responsables] acceso real: {e} — uso consulta anterior", flush=True)
@@ -5184,7 +5390,8 @@ def register_pickup_routes(app, ctx):
                 f"ORDER BY u.nombre") or []
             users = [{"id": r["id"],
                       "nombre": (r.get("nombre") or r.get("username") or "Usuario"),
-                      "rut": r.get("rut")}
+                      "rut": r.get("rut"),
+                      **_resp_email_admin(r)}
                      for r in rows]
             return jsonify({"ok": True, "responsables": users})
         except Exception as e:
@@ -6029,6 +6236,16 @@ def register_pickup_routes(app, ctx):
                         f"✅ Retiro {_cod} confirmado",
                         f"{_cli} — cita confirmada, listo para preparar.",
                         rid, _cod, prioridad="media", tipo="retiro_confirmado", send_email=False)
+                elif new_status in ("rechazada", "fallida", "cerrada"):
+                    # Gestiones que faltaban en el aviso (2026-09-30): solo correo, sin campana.
+                    _txt_fin = {"rechazada": "fue rechazado", "fallida": "quedó como no concretado",
+                                "cerrada": "fue cerrado"}[new_status]
+                    _notificar_equipo_retiros(
+                        f"Retiro {_cod} {_txt_fin}",
+                        f"{_cli} — un operador cambió el estado a "
+                        f"{PICKUP_STATUS.get(new_status, new_status)}." + (f" Nota: {notes[:200]}" if notes else ""),
+                        rid, _cod, prioridad="media", tipo="retiro_anulado",
+                        send_email=False, campana=False)
         except Exception as _e_team:
             print(f"[pickup-updstatus] aviso equipo: {_e_team}", flush=True)
 
@@ -10421,6 +10638,19 @@ def register_pickup_routes(app, ctx):
             print(f"[_pickup_enviar_propuesta_core notify] {_e}", flush=True)
             email_enviado = False
 
+        # Aviso interno de la gestión (solo correo a la lista de responsables, sin campana).
+        try:
+            _notificar_equipo_retiros(
+                f"📅 ILUS propuso fecha en el retiro {(fresh or {}).get('code') or '?'}",
+                f"{(fresh or {}).get('customer_name') or 'Cliente'} — propuesta {_fmt_fecha_cl(date)} "
+                f"de {tf} a {tt}."
+                + ("" if email_enviado else " El correo al cliente NO salió: revisar.")
+                + (f" Mensaje: {message[:200]}" if message else ""),
+                rid, (fresh or {}).get("code") or "?",
+                prioridad="media", tipo="retiro_propuesta", send_email=False, campana=False)
+        except Exception as _e_np:
+            print(f"[pickup-propuesta] aviso equipo: {_e_np}", flush=True)
+
         if not email_enviado:
             try:
                 log_event(rid, "propuesta_email_no_enviado", "propuesta_enviada",
@@ -11043,20 +11273,36 @@ def register_pickup_routes(app, ctx):
     @require_permission("admin")
     def pickup_settings_save():
         data = request.form
+        # notify_emails ya no se toca (inerte desde el 14-09; los avisos por correo usan
+        # aviso_equipo_emails, más abajo).
         mysql_execute(
             f"""UPDATE `{SET}`
                 SET warehouse_name=%s, warehouse_addr=%s, maps_url=%s, open_time=%s, close_time=%s,
-                    work_days=%s, holidays=%s, alert_enabled=%s, alert_title=%s, alert_message=%s,
-                    notify_emails=%s
+                    work_days=%s, holidays=%s, alert_enabled=%s, alert_title=%s, alert_message=%s
                 WHERE id=1""",
             (
                 data.get("warehouse_name", ""), data.get("warehouse_addr", ""), data.get("maps_url", ""),
                 data.get("open_time", "09:00"), data.get("close_time", "16:30"),
                 ",".join(data.getlist("work_days")) or "1,2,3,4,5", data.get("holidays", ""),
                 1 if data.get("alert_enabled") else 0, data.get("alert_title", "Aviso importante"), data.get("alert_message", ""),
-                (data.get("notify_emails") or "").strip()[:2000],
             ),
         )
+        # Correos que reciben un aviso interno por cada gestión de un retiro (Daniel
+        # 2026-09-30). Solo se guarda si el campo llegó en el formulario; así un guardado
+        # desde una pantalla vieja no borra la lista. Válidos, sin repetir, máximo 20.
+        if "aviso_equipo_emails" in data:
+            try:
+                _lista, _vistos = [], set()
+                for _e in re.split(r"[,;\s]+", data.get("aviso_equipo_emails") or ""):
+                    _e = _e.strip().lower()
+                    if _e and _e not in _vistos and is_valid_email(_e) and len(_e) <= 180:
+                        _vistos.add(_e)
+                        _lista.append(_e)
+                mysql_execute(
+                    f"UPDATE `{SET}` SET aviso_equipo_emails=%s WHERE id=1",
+                    (",".join(_lista[:20]),))
+            except Exception as _e_ae:
+                print(f"[pickup_settings] aviso_equipo_emails: {_e_ae}", flush=True)
         # Responsable automático de solicitudes web (UPDATE aparte: si la
         # columna aún no existiera, el resto de la configuración igual se guarda).
         try:
@@ -11075,6 +11321,225 @@ def register_pickup_routes(app, ctx):
         except Exception: pass
         flash("Configuracion de retiros actualizada.", "success")
         return redirect(url_for("pickup_dashboard"))
+
+    # ══════════════════════════════════════════════════════════════════
+    #  CALENDARIO DE EXCEPCIONES (Daniel 2026-09-30) — Horarios y alertas
+    #  "Una inteligencia de aplicación de los feriados, bien controlable por
+    #  el front": cada feriado con su nombre (reabrible), víspera automática,
+    #  salidas temprano y cierres, todo en una lista y con efecto inmediato en
+    #  el formulario público, el calendario interno y las propuestas.
+    # ══════════════════════════════════════════════════════════════════
+    _DIAS_ABREV = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+
+    @app.route("/retiros/api/excepciones", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_excepciones_list():
+        cfg = settings()
+        hoy = _now_chile().date()
+        try:
+            dias = max(7, min(int(request.args.get("dias") or 90), 400))
+        except (TypeError, ValueError):
+            dias = 90
+        fin = hoy + timedelta(days=dias)
+        c = _dias_ctx(hoy, fin, cfg, con_bloqueos=True)
+        items, en_vispera = [], set()
+
+        def _fila(d, tipo, **extra):
+            base = {"fecha": d.isoformat(), "dia": _DIAS_ABREV[d.weekday()], "tipo": tipo}
+            base.update(extra)
+            items.append(base)
+
+        # 1) Feriados legales que caen en día hábil (los de fin de semana no cambian nada)
+        for iso, nombre in sorted(c["legales"].items()):
+            d = datetime.strptime(iso, "%Y-%m-%d").date()
+            if not (hoy <= d <= fin) or d.isoweekday() not in c["work_days"]:
+                continue
+            r = c["rules"].get(iso) or {}
+            _fila(d, "feriado", nombre=nombre, abierto=bool(r.get("abierto")),
+                  hasta=r.get("hasta") or "", motivo=r.get("motivo") or "")
+        # 2) Vísperas (solo si la regla está activa, para no llenar la lista)
+        proxima = None
+        for k in range((fin - hoy).days + 1):
+            d = hoy + timedelta(days=k)
+            if c["cerrado"](d):
+                continue
+            vis = _rh.vispera_de(d, c["cerrado"], c["feriado"])
+            if not vis:
+                continue
+            if proxima is None:
+                proxima = {"fecha": d.isoformat(), "dia": _DIAS_ABREV[d.weekday()],
+                           "nombre": c["legales"].get(vis.isoformat()) or "feriado"}
+            if c["vispera_on"]:
+                info = _info_dia(c, d)
+                r = c["rules"].get(d.isoformat()) or {}
+                en_vispera.add(d.isoformat())
+                _fila(d, "vispera", nombre="Víspera de " + (c["legales"].get(vis.isoformat()) or "feriado"),
+                      aplica=(info["origen"] in ("vispera", "temprano")), origen=info["origen"],
+                      hasta=info["cierre"], sin_vispera=bool(r.get("sin_vispera")),
+                      motivo=r.get("motivo") or "")
+        # 3) Salidas temprano puestas a mano (los días de víspera ya llevan la suya arriba)
+        for iso, r in sorted(c["rules"].items()):
+            d = datetime.strptime(iso, "%Y-%m-%d").date()
+            if (not r.get("hasta")) or iso in en_vispera or not (hoy <= d <= fin) or c["cerrado"](d):
+                continue
+            _fila(d, "temprano", hasta=r["hasta"], motivo=r.get("motivo") or "")
+        # 4) Cierres de día completo y bloqueos de horas (Marketing → Bloqueos)
+        try:
+            for b in (mysql_fetchall(
+                    "SELECT id, fecha, hora_inicio, hora_fin, motivo FROM pickup_blocks "
+                    "WHERE fecha BETWEEN %s AND %s ORDER BY fecha, hora_inicio", (hoy, fin)) or []):
+                d = datetime.strptime(_iso_fecha(b["fecha"]), "%Y-%m-%d").date()
+                if not b.get("hora_inicio"):
+                    _fila(d, "cierre", block_id=int(b["id"]), motivo=b.get("motivo") or "")
+                else:
+                    _fila(d, "bloqueo", block_id=int(b["id"]),
+                          desde=_td_to_hhmm(b["hora_inicio"]),
+                          hasta=_td_to_hhmm(b["hora_fin"]) if b.get("hora_fin") else "",
+                          motivo=b.get("motivo") or "")
+        except Exception as _e_bl:
+            print(f"[excepciones] bloqueos: {_e_bl}", flush=True)
+        # 5) Cierres extra escritos a mano en el campo de texto (solo lectura aquí)
+        for iso in sorted(c["extra"]):
+            try:
+                d = datetime.strptime(iso, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if hoy <= d <= fin and d.isoweekday() in c["work_days"]:
+                _fila(d, "cierre", motivo="Cierre extra (campo de texto)", solo_lectura=True)
+
+        _orden = {"feriado": 0, "cierre": 1, "vispera": 2, "temprano": 2, "bloqueo": 3}
+        items.sort(key=lambda x: (x["fecha"], _orden.get(x["tipo"], 9)))
+        anios = sorted({datetime.strptime(i["fecha"], "%Y-%m-%d").year for i in items})
+        try:
+            from cl_feriados import FERIADOS_OFICIALES as _OFI
+        except Exception:
+            _OFI = {}
+        return jsonify({
+            "ok": True, "hoy": hoy.isoformat(), "dias": dias,
+            "abre": _td_to_hhmm(cfg.get("open_time") or "09:00:00"),
+            "normal_hasta": c["normal"],
+            "vispera": {"activa": c["vispera_on"], "hasta": c["vispera_hasta"], "proxima": proxima},
+            "anios_estimados": [a for a in anios if a not in _OFI],
+            "items": items,
+        })
+
+    def _excepcion_afectados(fecha_iso, desde=None):
+        """Retiros vivos de ese día que quedan fuera del horario nuevo (todo el día si
+        `desde` es None; si no, los que empiezan desde esa hora). El panel los muestra."""
+        rango = None if desde is None else [f"{desde}-23:59"]
+        rows = _pickup_retiros_en_bloqueo(fecha_iso, slots=rango, full_day=(desde is None))
+        return [{"code": r.get("code"), "cliente": r.get("customer_name"),
+                 "hora": _td_to_hhmm(r.get("tf_ef")) if r.get("tf_ef") is not None else ""} for r in rows]
+
+    def _rule_write(fecha_iso, usuario, **cambios):
+        """Crea/actualiza la regla de un día; si queda sin efecto la borra."""
+        row = mysql_fetchone(
+            "SELECT abierto, hasta, sin_vispera, motivo FROM pickup_day_rules WHERE fecha=%s",
+            (fecha_iso,))
+        cur = {"abierto": int(row["abierto"]) if row else 0,
+               "hasta": ((row or {}).get("hasta") or None),
+               "sin_vispera": int(row["sin_vispera"]) if row else 0,
+               "motivo": ((row or {}).get("motivo") or "")}
+        cur.update(cambios)
+        if not cur["abierto"] and not cur["hasta"] and not cur["sin_vispera"]:
+            if row:
+                mysql_execute("DELETE FROM pickup_day_rules WHERE fecha=%s", (fecha_iso,))
+        elif row:
+            mysql_execute(
+                "UPDATE pickup_day_rules SET abierto=%s, hasta=%s, sin_vispera=%s, motivo=%s, "
+                "created_by=%s WHERE fecha=%s",
+                (int(cur["abierto"]), cur["hasta"], int(cur["sin_vispera"]), cur["motivo"][:200],
+                 usuario, fecha_iso))
+        else:
+            mysql_execute(
+                "INSERT INTO pickup_day_rules (fecha, abierto, hasta, sin_vispera, motivo, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (fecha_iso, int(cur["abierto"]), cur["hasta"], int(cur["sin_vispera"]),
+                 cur["motivo"][:200], usuario))
+
+    @app.route("/retiros/excepciones", methods=["POST"])
+    @require_permission("admin")
+    def pickup_excepciones_save():
+        body = request.get_json(silent=True) or {}
+        accion = (body.get("accion") or "").strip()
+        usuario = ((getattr(g, "user", None) or {}).get("nombre") or "admin")[:190]
+        cfg = settings()
+        hoy = _now_chile().date()
+
+        def _err(msg, code=400):
+            return jsonify({"ok": False, "error": msg}), code
+
+        # Configuración de la víspera (no lleva fecha)
+        if accion == "vispera_config":
+            hasta = (body.get("hasta") or "").strip()
+            m = _rh.hhmm_a_min(hasta)
+            n = _rh.hhmm_a_min(_td_to_hhmm(cfg.get("close_time") or "16:30:00"))
+            a = _rh.hhmm_a_min(_td_to_hhmm(cfg.get("open_time") or "09:00:00"))
+            if m is None or m % 30 or m < a or m >= n:
+                return _err(f"La hora de salida debe ser :00 o :30, desde las {_rh.min_a_hhmm(a)} "
+                            f"y antes del cierre normal ({_rh.min_a_hhmm(n)}).")
+            mysql_execute(f"UPDATE `{SET}` SET vispera_activa=%s, vispera_hasta=%s WHERE id=1",
+                          (1 if body.get("activa") else 0, hasta))
+            _invalidate_day_rules()
+            print(f"[pickup-excepciones] {usuario}: víspera activa={bool(body.get('activa'))} hasta={hasta}", flush=True)
+            return jsonify({"ok": True})
+
+        # Quitar un cierre / bloqueo de la lista
+        if accion == "quitar_bloqueo":
+            try:
+                bid = int(body.get("block_id"))
+            except (TypeError, ValueError):
+                return _err("Falta el bloqueo a quitar.")
+            print(f"[pickup-excepciones] {usuario}: quita bloqueo #{bid}", flush=True)
+            mysql_execute("DELETE FROM pickup_blocks WHERE id=%s", (bid,))
+            _invalidate_day_rules()
+            return jsonify({"ok": True})
+
+        # Todo lo demás lleva fecha
+        fecha = (body.get("fecha") or "").strip()
+        try:
+            d = datetime.strptime(fecha, "%Y-%m-%d").date()
+        except ValueError:
+            return _err("Fecha no válida.")
+        if d < hoy or d > hoy + timedelta(days=730):
+            return _err("Elige una fecha desde hoy y hasta dos años más.")
+        motivo = (body.get("motivo") or "").strip()[:200]
+        afectados = []
+
+        if accion == "feriado":
+            if fecha not in _holiday_names(d.year):
+                return _err("Esa fecha no es feriado legal.")
+            abrir = bool(body.get("abierto"))
+            _rule_write(fecha, usuario, abierto=int(abrir))
+            if not abrir:
+                afectados = _excepcion_afectados(fecha)
+        elif accion == "temprano":
+            hasta = (body.get("hasta") or "").strip() or None
+            if hasta is not None:
+                m = _rh.hhmm_a_min(hasta)
+                n = _rh.hhmm_a_min(_td_to_hhmm(cfg.get("close_time") or "16:30:00"))
+                a = _rh.hhmm_a_min(_td_to_hhmm(cfg.get("open_time") or "09:00:00"))
+                if m is None or m % 30 or m < a or m >= n:
+                    return _err(f"La hora debe ser :00 o :30, desde las {_rh.min_a_hhmm(a)} y antes del "
+                                f"cierre normal ({_rh.min_a_hhmm(n)}).")
+                afectados = _excepcion_afectados(fecha, _rh.min_a_hhmm(m + 30))
+            _rule_write(fecha, usuario, hasta=hasta, motivo=motivo if hasta else "")
+        elif accion == "sin_vispera":
+            _rule_write(fecha, usuario, sin_vispera=int(bool(body.get("valor"))))
+        elif accion == "cierre":
+            ya = mysql_fetchone(
+                "SELECT id FROM pickup_blocks WHERE fecha=%s AND hora_inicio IS NULL", (fecha,))
+            if not ya:
+                mysql_execute(
+                    "INSERT INTO pickup_blocks (fecha, hora_inicio, hora_fin, motivo, created_by) "
+                    "VALUES (%s, NULL, NULL, %s, %s)", (fecha, motivo or "Cierre de bodega", usuario))
+            afectados = _excepcion_afectados(fecha)
+        else:
+            return _err("Acción no válida.")
+        print(f"[pickup-excepciones] {usuario}: {accion} {fecha} "
+              f"{ {k: body.get(k) for k in ('abierto','hasta','valor','motivo') if k in body} }", flush=True)
+        _invalidate_day_rules()
+        return jsonify({"ok": True, "afectados": afectados})
 
     @app.route("/ajustes/marketing", methods=["GET", "POST"])
     @require_permission("admin")
@@ -11632,9 +12097,33 @@ def register_pickup_routes(app, ctx):
                 s["pct_kg"]    = round(min(100, pct_kg))
                 s["pct_m3"]    = round(min(100, pct_m3))
 
+        # Estado de cada día del rango (Daniel 2026-09-30): feriado con su nombre, salida
+        # temprano / víspera y bloqueos de horas, para pintarlos en la grilla semanal.
+        dias_info = {}
+        try:
+            _c = _dias_ctx(d_from, d_to, cfg, con_bloqueos=True)
+            _bloq = {}
+            for b in (mysql_fetchall(
+                    "SELECT fecha, hora_inicio, hora_fin, motivo FROM pickup_blocks "
+                    "WHERE fecha BETWEEN %s AND %s AND hora_inicio IS NOT NULL ORDER BY hora_inicio",
+                    (d_from, d_to)) or []):
+                _bloq.setdefault(_iso_fecha(b["fecha"]), []).append({
+                    "desde": _td_to_hhmm(b["hora_inicio"]),
+                    "hasta": _td_to_hhmm(b["hora_fin"]) if b.get("hora_fin") else "23:59",
+                    "motivo": b.get("motivo") or ""})
+            for _k in range((d_to - d_from).days + 1):
+                _d = d_from + _td(days=_k)
+                _i = _info_dia(_c, _d)
+                _i.pop("vispera_de", None)
+                _i["bloqueos"] = _bloq.get(_d.isoformat(), [])
+                dias_info[_d.isoformat()] = _i
+        except Exception as _e_di:
+            print(f"[pickup_calendar_api] dias_info: {_e_di}", flush=True)
+
         return jsonify({
             "from": d_from.isoformat(),
             "to":   d_to.isoformat(),
+            "dias_info": dias_info,
             "settings": {
                 "open_time":      _td_to_hhmm(cfg.get("open_time") or "09:00:00"),
                 "close_time":     _td_to_hhmm(cfg.get("close_time") or "16:30:00"),
@@ -11992,12 +12481,30 @@ def register_pickup_routes(app, ctx):
         total_dias = (d_to - d_from).days + 1
         # Feriados legales de Chile (auto) para los años del horizonte, además del
         # config. (Juan Daniel 2026-06-05: bloquear feriados chilenos en el calendario.)
+        _csv_cierres = set(holidays)   # cierres extra escritos a mano (no se pueden reabrir desde el panel)
+        _legales_rng = set()
         for _yr in {d_from.year, d_to.year}:
-            holidays = holidays | _chile_holidays(_yr)
+            _legales_rng |= _chile_holidays(_yr)
+        # Feriados reabiertos desde Horarios y alertas (Daniel 2026-09-30) no se bloquean.
+        _reabiertos = {i for i, r in _day_rules().items() if r.get("abierto")}
+        holidays = _csv_cierres | (_legales_rng - (_reabiertos - _csv_cierres))
+        try:
+            _dctx = _dias_ctx(d_from, d_to, cfg)   # salida temprano / víspera de cada día
+        except Exception as _e_dc:
+            # Nunca dejar sin calendario al cliente por la lógica nueva: horario normal.
+            print(f"[disponibilidad] días especiales: {_e_dc}", flush=True)
+            _dctx = None
         for offset in range(total_dias):
             d = d_from + _td(days=offset)
             iso = d.isoformat()
             disp_dia = (d.isoweekday() in work_days) and (iso not in holidays)
+            try:
+                _inf_dia = _info_dia(_dctx, d) if _dctx else {"abierto": True, "origen": "normal", "cierre": None, "motivo": ""}
+            except Exception as _e_id:
+                print(f"[disponibilidad] info del día {iso}: {_e_id}", flush=True)
+                _inf_dia = {"abierto": True, "origen": "normal", "cierre": None, "motivo": ""}
+            _cierre_min = (_rh.hhmm_a_min(_inf_dia["cierre"])
+                           if _inf_dia["abierto"] and _inf_dia["origen"] in ("temprano", "vispera") else None)
 
             day_blocks = blocks_by_date.get(iso, [])
             full_day_block = any(not b["hora_inicio"] for b in day_blocks)
@@ -12012,6 +12519,7 @@ def register_pickup_routes(app, ctx):
                 "disponible": dia_disponible,
                 "razon":      "" if dia_disponible else (
                                 "Día bloqueado: " + full_day_motivo if full_day_block else
+                                ("Feriado · " + _dctx["legales"][iso]) if (iso in holidays and _dctx and iso in _dctx["legales"]) else
                                 "Feriado en Chile" if iso in holidays else
                                 "Fin de semana" if d.isoweekday() not in work_days else
                                 "Día completo"
@@ -12042,6 +12550,12 @@ def register_pickup_routes(app, ctx):
                             break
                     except Exception:
                         continue
+
+                # Salida temprano del día (regla manual o víspera de feriado): los
+                # bloques que empiezan después del cierre se ven bloqueados con su motivo.
+                if manual_block is None and _cierre_min is not None and slot_start_min > _cierre_min:
+                    manual_block = (f"Último retiro a las {_inf_dia['cierre']}"
+                                    + (f" · {_inf_dia['motivo']}" if _inf_dia["motivo"] else ""))
 
                 ocupacion_actual = int(ocup["ocupados"])
                 kg_actual = float(ocup["kg"])

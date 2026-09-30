@@ -1851,8 +1851,15 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
 {# 2026-06-10 — Modal reorganizado en secciones tituladas (Bodega /
    Horario y dias / Feriados y cierres / Equipo y alertas). TODOS los
    names se mantienen intactos: warehouse_name, warehouse_addr, maps_url,
-   open_time, close_time, work_days, holidays, notify_emails,
-   alert_enabled, alert_title, alert_message.
+   open_time, close_time, work_days, holidays, alert_enabled, alert_title,
+   alert_message. (notify_emails salió del formulario el 2026-09-30: estaba
+   inerte desde el 14-09; el dato guardado en BD no se toca.)
+   2026-09-30 (Daniel: "hazle una reestructuración a Horarios y Alertas... una
+   inteligencia de aplicación de los feriados, bien controlable por el front"):
+   + salida temprano automática la víspera de feriado,
+   + Calendario de excepciones (feriados con nombre, salidas temprano, cierres,
+     bloqueos) con efecto inmediato — rutas /retiros/api/excepciones y /retiros/excepciones,
+   + lista de responsables que reciben un correo por cada gestión (aviso_equipo_emails).
    modal-dialog-scrollable → header/footer fijos (sticky) y cuerpo con scroll. #}
 <style>
   #settingsModal .settings-section-title{
@@ -1876,12 +1883,59 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
   @media (max-width:768px){
     #settingsModal .day-pill{min-height:44px;min-width:48px}  /* touch ≥44px */
   }
+  /* ── 2026-09-30: calendario de excepciones + responsables (formato Retiros, REGLA #15) ── */
+  #settingsModal .xc-nota{font-size:.82rem;color:#6b7280;margin:4px 0 10px}
+  #settingsModal .xc-vispera{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 14px;
+    background:#fffbeb;border:1px solid #fde68a;border-radius:12px}
+  #settingsModal .xc-vispera .form-select{width:auto;min-height:40px}
+  #settingsModal .xc-lista{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+  #settingsModal .xc-row{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:12px;align-items:center;
+    padding:10px 12px;background:#fff;border:1px solid #e5e7eb;border-left:5px solid #9ca3af;border-radius:12px}
+  #settingsModal .xc-row.t-feriado{border-left-color:#dc2626;background:#fef2f2}
+  #settingsModal .xc-row.t-feriado.abierto{border-left-color:#16a34a;background:#f0fdf4}
+  #settingsModal .xc-row.t-vispera,#settingsModal .xc-row.t-temprano{border-left-color:#f59e0b;background:#fffbeb}
+  #settingsModal .xc-row.t-vispera.apagada{border-left-color:#9ca3af;background:#f9fafb}
+  #settingsModal .xc-row.t-cierre{border-left-color:#dc2626;background:#fef2f2}
+  #settingsModal .xc-row.t-bloqueo{border-left-color:#3b82f6;background:#eff6ff}
+  #settingsModal .xc-fecha{font-weight:800;font-size:.86rem;color:#0a0a0a;line-height:1.2}
+  #settingsModal .xc-fecha small{display:block;font-weight:600;color:#6b7280;font-size:.72rem;text-transform:capitalize}
+  #settingsModal .xc-titulo{font-weight:700;font-size:.94rem;color:#0a0a0a;overflow-wrap:anywhere}
+  #settingsModal .xc-sub{font-size:.8rem;color:#4b5563;margin-top:2px;overflow-wrap:anywhere}
+  #settingsModal .xc-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.72rem;font-weight:800;margin-right:6px}
+  #settingsModal .xc-pill.rojo{background:#fee2e2;color:#991b1b}
+  #settingsModal .xc-pill.verde{background:#dcfce7;color:#166534}
+  #settingsModal .xc-pill.ambar{background:#fef3c7;color:#92400e}
+  #settingsModal .xc-pill.gris{background:#e5e7eb;color:#374151}
+  #settingsModal .xc-pill.azul{background:#dbeafe;color:#1e40af}
+  #settingsModal .xc-acc{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
+  #settingsModal .xc-acc .form-select{width:auto;min-height:38px;font-size:.84rem}
+  #settingsModal .xc-acc .btn{min-height:38px}
+  #settingsModal .xc-vacio{padding:18px;text-align:center;color:#6b7280;background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px}
+  #settingsModal .xc-add{display:grid;grid-template-columns:170px 190px 150px minmax(0,1fr) auto;gap:8px;align-items:end;
+    padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px}
+  #settingsModal .xc-add label{font-size:.72rem;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:2px}
+  #settingsModal .xc-aviso{padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;
+    font-size:.82rem;color:#1e3a8a;margin-bottom:10px}
+  #settingsModal .xc-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;min-height:38px}
+  #settingsModal .xc-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;background:#f3f4f6;
+    border:1px solid #e5e7eb;border-radius:999px;font-size:.86rem;font-weight:600;color:#111827}
+  #settingsModal .xc-chip small{color:#6b7280;font-weight:500}
+  #settingsModal .xc-chip button{border:0;background:#e5e7eb;border-radius:50%;width:26px;height:26px;line-height:1;
+    font-weight:800;color:#374151;cursor:pointer}
+  #settingsModal .xc-chip button:hover{background:#dc2626;color:#fff}
+  #settingsModal .xc-chips .xc-vacio{padding:8px 12px;width:100%;text-align:left}
+  @media (max-width:991.98px){
+    #settingsModal .xc-row{grid-template-columns:1fr}
+    #settingsModal .xc-acc{justify-content:flex-start}
+    #settingsModal .xc-add{grid-template-columns:1fr 1fr}
+    #settingsModal .xc-add .xc-add-motivo,#settingsModal .xc-add .btn{grid-column:1/-1}
+  }
 </style>
 <div class="modal fade" id="settingsModal" tabindex="-1">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable"><form method="post" action="{{ url_for('pickup_settings_save') }}" class="modal-content">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable"><form method="post" action="{{ url_for('pickup_settings_save') }}" class="modal-content">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="modal-header bg-dark text-white">
-      <h5 class="modal-title"><i class="bi bi-gear me-2" style="color:var(--ilus-red)"></i>Horarios, feriados y alerta publica</h5>
+      <h5 class="modal-title"><i class="bi bi-gear me-2" style="color:var(--ilus-red)"></i>Horarios, feriados y alertas</h5>
       <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
     </div>
     <div class="modal-body">
@@ -1908,16 +1962,56 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
             {% endfor %}
           </div>
         </div>
+        <div class="col-12">
+          {# Salida temprano automática la víspera de feriado (2026-09-30). Se guarda AL INSTANTE
+             (no espera a "Guardar configuración"): los inputs no llevan name. #}
+          <div class="xc-vispera">
+            <label class="form-check form-switch m-0">
+              <input class="form-check-input" type="checkbox" id="xcVisperaOn" {% if settings.vispera_activa %}checked{% endif %}>
+              <span class="form-check-label fw-bold">Salir más temprano la víspera de un feriado</span>
+            </label>
+            <span class="d-inline-flex align-items-center gap-2">
+              <span class="small text-muted">Último retiro a las</span>
+              <select class="form-select form-select-sm" id="xcVisperaHasta" data-actual="{{ settings.vispera_hasta or '15:00' }}"></select>
+            </span>
+            <span class="small text-muted" id="xcVisperaProxima" style="flex:1 1 220px"></span>
+          </div>
+          <div class="form-text">Aplica solo a los días que la bodega abre y cuyo siguiente tramo cerrado incluye un feriado (ej.: el viernes antes de un lunes feriado). Cada día se puede quitar en el calendario de abajo. Se aplica al instante.</div>
+        </div>
       </div>
 
-      {# ── Sección 3: Feriados y cierres ── #}
-      <div class="settings-section-title"><i class="bi bi-calendar-x me-1"></i>Feriados y cierres</div>
-      <div class="row g-3 mb-4">
-        <div class="col-12">
-          <label class="form-label">Cierres extra de bodega</label>
-          <input name="holidays" class="form-control" value="{{ settings.holidays or '' }}" placeholder="2026-09-18, 2026-12-24">
-          <div class="form-text">Los feriados nacionales de Chile se bloquean solos. Agrega aqui SOLO cierres extra de bodega (YYYY-MM-DD, separados por coma).</div>
-        </div>
+      {# ── Sección 3: Calendario de excepciones (feriados, salidas temprano, cierres) ── #}
+      <div class="settings-section-title"><i class="bi bi-calendar-x me-1"></i>Feriados y cierres · calendario de excepciones</div>
+      <div class="xc-nota">Los feriados de Chile se cierran solos. Aquí ves los próximos con su nombre y decides: reabrir uno, salir más temprano un día o cerrar la bodega. <b>Los cambios de este calendario se aplican al instante</b> (formulario público, calendario interno y propuestas); no hace falta "Guardar configuración". El motivo lo puede ver el cliente.</div>
+      <div id="xcAnios" class="xc-aviso" style="display:none"></div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <span class="small text-muted">Mostrar</span>
+        <select class="form-select form-select-sm" id="xcRango" style="width:auto;min-height:38px">
+          <option value="90">próximos 90 días</option>
+          <option value="180">próximos 6 meses</option>
+          <option value="365">próximo año</option>
+        </select>
+      </div>
+      <div class="xc-lista" id="xcLista"><div class="xc-vacio">Cargando…</div></div>
+      <div class="xc-add mb-3">
+        <div><label for="xcFecha">Día</label><input type="date" class="form-control" id="xcFecha"></div>
+        <div><label for="xcTipo">Qué pasa ese día</label>
+          <select class="form-select" id="xcTipo">
+            <option value="temprano">Salir más temprano</option>
+            <option value="cierre">Cerrar todo el día</option>
+          </select></div>
+        <div id="xcHoraWrap"><label for="xcHora">Último retiro a las</label><select class="form-select" id="xcHora"></select></div>
+        <div class="xc-add-motivo"><label for="xcMotivo">Motivo (lo ve el cliente)</label><input type="text" class="form-control" id="xcMotivo" maxlength="120" placeholder="Ej.: Inventario, cena de fin de año"></div>
+        <button type="button" class="btn btn-ilus" id="xcAgregar"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+      </div>
+      <div class="mb-4">
+        <details>
+          <summary class="small text-muted" style="cursor:pointer">Cierres extra escritos a mano (avanzado)</summary>
+          <div class="mt-2">
+            <input name="holidays" class="form-control" value="{{ settings.holidays or '' }}" placeholder="2026-09-18, 2026-12-24">
+            <div class="form-text">Sigue funcionando como siempre (YYYY-MM-DD separados por coma). Se guardan con "Guardar configuración". Para cerrar un día, es más cómodo el botón "Cerrar todo el día" de arriba.</div>
+          </div>
+        </details>
       </div>
 
       {# ── Sección 4: Equipo y alertas ── #}
@@ -1941,9 +2035,17 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
           <div class="form-text">Cada solicitud nueva del formulario público queda a su cargo y le llegan por correo la solicitud, la confirmación, la contrapropuesta y la cancelación del cliente. Solo aparecen personas con acceso a Retiros.</div>
         </div>
         <div class="col-12">
-          <label class="form-label">Correos del equipo para alertas de retiros (separados por coma)</label>
-          <textarea name="notify_emails" class="form-control" rows="2" placeholder="bodega@ilusfitness.com, ventas@ilusfitness.com">{{ settings.notify_emails or '' }}</textarea>
-          <div class="form-text">Hoy los avisos por correo van al responsable de cada retiro (el de arriba para las solicitudes web). Esta lista queda guardada pero no se usa desde el 14-09.</div>
+          {# 2026-09-30 (Daniel: "que yo pueda agregar por el front uno o varios responsables que
+             reciban un correo cada vez que se gestione un retiro"). Sale de aviso_equipo_emails. #}
+          <label class="form-label fw-bold">Responsables que reciben un correo por cada gestión de un retiro</label>
+          <div class="xc-chips" id="avisoChips"></div>
+          <div class="row g-2">
+            <div class="col-md-5"><select class="form-select" id="avisoSel"><option value="">Agregar una persona del equipo…</option></select></div>
+            <div class="col-md-5"><input type="email" class="form-control" id="avisoExt" placeholder="o escribe un correo (ej.: bodega@ilusfitness.com)" autocomplete="off"></div>
+            <div class="col-md-2 d-grid"><button type="button" class="btn btn-outline-dark" id="avisoAdd"><i class="bi bi-plus-lg me-1"></i>Agregar</button></div>
+          </div>
+          <input type="hidden" name="aviso_equipo_emails" id="avisoInp" value="{{ settings.aviso_equipo_emails or '' }}">
+          <div class="form-text">Reciben el aviso de cada gestión: nueva solicitud, respuestas y mensajes del cliente, cuando ILUS propone fecha, confirmado, en preparación, pedido listo, completado, rechazo o cierre, y agendado sin saldo. Van además del responsable de cada retiro y sin repetir. Puedes agregar varias personas. Se guarda con "Guardar configuración".</div>
         </div>
         <div class="col-md-4">
           <label class="form-check form-switch mt-md-4 pt-md-2">
@@ -1997,6 +2099,279 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
     } catch (e) {
       console.warn('[retiros] no se pudo cargar la lista de responsables', e);
     }
+  });
+})();
+</script>
+<script>
+// ── Horarios y alertas · calendario de excepciones + responsables por correo (2026-09-30) ──
+// Los cambios del calendario se aplican al instante (POST /retiros/excepciones). Los
+// inputs de esta sección no llevan `name` (no viajan en "Guardar configuración"), salvo
+// aviso_equipo_emails, que sí se guarda con el formulario.
+(function(){
+  const modal = document.getElementById('settingsModal');
+  if (!modal) return;
+  const $ = id => document.getElementById(id);
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const csrf = () => (modal.querySelector('input[name=csrf_token]') || {}).value || '';
+  const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  let D = null;                 // última respuesta de /retiros/api/excepciones
+  let cargadoUnaVez = false;
+
+  const aMin = h => { const [a, b] = String(h || '0:0').split(':').map(Number); return a * 60 + (b || 0); };
+  const aHHMM = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  function fechaCl(iso){ const [y, m, d] = iso.split('-'); return d + '/' + m + '/' + y; }
+  function diaLargo(iso){ const [y, m, d] = iso.split('-').map(Number); return DIAS[new Date(y, m - 1, d).getDay()]; }
+
+  function opcionesHoras(actual, conNormal){
+    if (!D) return '';
+    let h = conNormal ? '<option value="">Horario normal (' + esc(D.normal_hasta) + ')</option>' : '';
+    for (let m = aMin(D.abre); m < aMin(D.normal_hasta); m += 30){
+      const v = aHHMM(m);
+      h += '<option value="' + v + '"' + (v === actual ? ' selected' : '') + '>' + v + '</option>';
+    }
+    return h;
+  }
+
+  async function api(cuerpo){
+    let r, d = {};
+    try {
+      r = await fetch('/retiros/excepciones', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf(), 'Accept': 'application/json'},
+        body: JSON.stringify(cuerpo)
+      });
+      d = await r.json().catch(() => ({}));
+    } catch (e) { ilusToast('⚠ Sin conexión. No se guardó el cambio.', {type: 'error'}); return null; }
+    if (!r.ok || !d.ok){ ilusToast('⚠ ' + (d.error || ('No se pudo guardar (error ' + r.status + ')')), {type: 'error'}); return null; }
+    return d;
+  }
+
+  async function aplicar(cuerpo, msg){
+    const d = await api(cuerpo);
+    await cargar();                      // se recarga siempre: si falló, el interruptor vuelve a su estado real
+    if (!d) return;
+    ilusToast('✓ ' + msg, {type: 'success'});
+    if (d.afectados && d.afectados.length){
+      const filas = d.afectados.map(a => '• <b>' + esc(a.code) + '</b> · ' + esc(a.cliente || 'Cliente') +
+        (a.hora ? ' · ' + esc(a.hora) : '')).join('<br>');
+      await ilusAlert({
+        type: 'warning', title: 'Ojo: hay retiros ya agendados ese día',
+        message: 'El cambio NO mueve retiros existentes. Estos quedan fuera del nuevo horario; reagéndalos con el cliente:',
+        sub: filas, subHtml: true
+      });
+    }
+  }
+
+  function filaHtml(it){
+    const f = '<div class="xc-fecha">' + esc(it.dia) + ' ' + esc(fechaCl(it.fecha).slice(0, 5)) +
+              '<small>' + esc(diaLargo(it.fecha)) + ' ' + esc(it.fecha.slice(0, 4)) + '</small></div>';
+    let cuerpo = '', acc = '', cls = 't-' + it.tipo;
+    const f_ = esc(it.fecha);
+    if (it.tipo === 'feriado'){
+      cls += it.abierto ? ' abierto' : '';
+      cuerpo = '<div class="xc-titulo">' + esc(it.nombre) + '</div><div class="xc-sub">' +
+        (it.abierto
+          ? '<span class="xc-pill verde">Abierto igual</span>Se agenda con normalidad' + (it.hasta ? ' hasta las ' + esc(it.hasta) : '')
+          : '<span class="xc-pill rojo">Cerrado</span>Feriado en Chile: no se agenda') + '</div>';
+      acc = '<label class="form-check form-switch m-0 d-flex align-items-center gap-2">' +
+            '<input class="form-check-input" type="checkbox" data-xc="feriado" data-fecha="' + f_ + '"' + (it.abierto ? ' checked' : '') + '>' +
+            '<span class="small fw-bold">Abrir igual</span></label>' +
+            (it.abierto ? '<select class="form-select form-select-sm" data-xc="hasta" data-fecha="' + f_ + '" title="Última hora de llegada ese día">' +
+                          opcionesHoras(it.hasta, true) + '</select>' : '');
+    } else if (it.tipo === 'vispera'){
+      cls += it.aplica ? '' : ' apagada';
+      cuerpo = '<div class="xc-titulo">' + esc(it.nombre) + '</div><div class="xc-sub">' +
+        (it.aplica
+          ? '<span class="xc-pill ambar">Sale ' + esc(it.hasta) + '</span>Último retiro a las ' + esc(it.hasta) + (it.motivo && it.origen === 'temprano' ? ' · ' + esc(it.motivo) : '')
+          : '<span class="xc-pill gris">Horario normal</span>No se aplica salida temprano este día') + '</div>';
+      acc = '<label class="form-check form-switch m-0 d-flex align-items-center gap-2">' +
+            '<input class="form-check-input" type="checkbox" data-xc="vispera" data-fecha="' + f_ + '"' + (it.aplica ? ' checked' : '') + '>' +
+            '<span class="small fw-bold">Salir temprano</span></label>';
+    } else if (it.tipo === 'temprano'){
+      cuerpo = '<div class="xc-titulo">Salida más temprano</div><div class="xc-sub"><span class="xc-pill ambar">Hasta las ' + esc(it.hasta) + '</span>' +
+               esc(it.motivo || 'Sin motivo') + '</div>';
+      acc = '<select class="form-select form-select-sm" data-xc="hasta" data-fecha="' + f_ + '" title="Última hora de llegada">' + opcionesHoras(it.hasta, false) + '</select>' +
+            '<button type="button" class="btn btn-sm btn-outline-danger" data-xc="quitar-temprano" data-fecha="' + f_ + '">Quitar</button>';
+    } else if (it.tipo === 'cierre'){
+      cuerpo = '<div class="xc-titulo">Cerrado todo el día</div><div class="xc-sub"><span class="xc-pill rojo">Sin retiros</span>' + esc(it.motivo || 'Sin motivo') + '</div>';
+      acc = it.solo_lectura
+        ? '<span class="small text-muted">Se quita en “Cierres extra escritos a mano”</span>'
+        : '<button type="button" class="btn btn-sm btn-outline-danger" data-xc="quitar-bloqueo" data-id="' + esc(it.block_id) + '">Quitar cierre</button>';
+    } else if (it.tipo === 'bloqueo'){
+      cuerpo = '<div class="xc-titulo">Bloqueo de horas</div><div class="xc-sub"><span class="xc-pill azul">' + esc(it.desde) + (it.hasta ? '–' + esc(it.hasta) : ' en adelante') +
+               '</span>' + esc(it.motivo || 'Sin motivo') + '</div>';
+      acc = '<button type="button" class="btn btn-sm btn-outline-danger" data-xc="quitar-bloqueo" data-id="' + esc(it.block_id) + '">Quitar</button>';
+    }
+    return '<div class="xc-row ' + cls + '">' + f + '<div>' + cuerpo + '</div><div class="xc-acc">' + acc + '</div></div>';
+  }
+
+  function pintar(){
+    if (!D) return;
+    // víspera: interruptor + hora + cuándo es la próxima
+    $('xcVisperaOn').checked = !!D.vispera.activa;
+    $('xcVisperaHasta').innerHTML = opcionesHoras(D.vispera.hasta, false);
+    const px = D.vispera.proxima;
+    $('xcVisperaProxima').textContent = px
+      ? 'Próxima víspera: ' + px.dia + ' ' + fechaCl(px.fecha).slice(0, 5) + ' (antes de ' + px.nombre + ')'
+      : 'No hay vísperas en el período.';
+    // aviso de años sin lista oficial de feriados
+    const av = $('xcAnios');
+    if (D.anios_estimados && D.anios_estimados.length){
+      av.style.display = '';
+      av.innerHTML = '<b>Revisa los feriados de ' + esc(D.anios_estimados.join(' y ')) + '.</b> Todavía no hay lista oficial cargada: se calculan con las fechas fijas y la Semana Santa. Si algún día no calza con el calendario oficial, puedes reabrirlo o cerrarlo aquí.';
+    } else { av.style.display = 'none'; }
+    // lista
+    $('xcLista').innerHTML = D.items.length
+      ? D.items.map(filaHtml).join('')
+      : '<div class="xc-vacio"><i class="bi bi-calendar-check me-1"></i>No hay feriados ni excepciones en este período. La bodega opera con el horario normal.</div>';
+    // formulario de agregar
+    const sel = $('xcHora');
+    if (!sel.options.length) sel.innerHTML = opcionesHoras('', false);
+  }
+
+  async function cargar(){
+    const rango = ($('xcRango') || {}).value || '90';
+    try {
+      const r = await fetch('/retiros/api/excepciones?dias=' + encodeURIComponent(rango), {credentials: 'same-origin', cache: 'no-store'});
+      const d = await r.json();
+      if (!d.ok) throw new Error('respuesta no válida');
+      D = d;
+      pintar();
+    } catch (e) {
+      $('xcLista').innerHTML = '<div class="xc-vacio">No se pudo cargar el calendario. Cierra y vuelve a abrir esta ventana.</div>';
+    }
+  }
+
+  // ── acciones de las filas (delegación) ──
+  $('xcLista').addEventListener('change', async ev => {
+    const el = ev.target, fecha = el.dataset.fecha, tipo = el.dataset.xc;
+    if (tipo === 'feriado')
+      await aplicar({accion: 'feriado', fecha, abierto: el.checked},
+                    el.checked ? 'Feriado reabierto: se agenda con normalidad' : 'Feriado cerrado');
+    else if (tipo === 'vispera')
+      await aplicar({accion: 'sin_vispera', fecha, valor: !el.checked},
+                    el.checked ? 'Ese día sale temprano' : 'Ese día queda con horario normal');
+    else if (tipo === 'hasta')
+      await aplicar({accion: 'temprano', fecha, hasta: el.value || null},
+                    el.value ? 'Último retiro ese día: ' + el.value : 'Horario normal restaurado');
+  });
+  $('xcLista').addEventListener('click', async ev => {
+    const b = ev.target.closest('button[data-xc]');
+    if (!b) return;
+    if (b.dataset.xc === 'quitar-temprano'){
+      await aplicar({accion: 'temprano', fecha: b.dataset.fecha, hasta: null}, 'Salida temprano quitada');
+    } else if (b.dataset.xc === 'quitar-bloqueo'){
+      const ok = await ilusConfirm({title: 'Quitar bloqueo', message: '¿Volver a abrir ese día u horario para agendar?',
+                                    okLabel: 'Sí, quitar', cancelLabel: 'Cancelar', danger: true});
+      if (ok) await aplicar({accion: 'quitar_bloqueo', block_id: Number(b.dataset.id)}, 'Bloqueo quitado');
+    }
+  });
+
+  // ── víspera ──
+  $('xcVisperaOn').addEventListener('change', () =>
+    aplicar({accion: 'vispera_config', activa: $('xcVisperaOn').checked, hasta: $('xcVisperaHasta').value},
+            $('xcVisperaOn').checked ? 'Regla de víspera activada' : 'Regla de víspera desactivada'));
+  $('xcVisperaHasta').addEventListener('change', () =>
+    aplicar({accion: 'vispera_config', activa: $('xcVisperaOn').checked, hasta: $('xcVisperaHasta').value},
+            'Hora de salida de víspera: ' + $('xcVisperaHasta').value));
+
+  // ── agregar excepción ──
+  const tipoSel = $('xcTipo');
+  const toggleHora = () => { $('xcHoraWrap').style.display = tipoSel.value === 'temprano' ? '' : 'none'; };
+  tipoSel.addEventListener('change', toggleHora);
+  $('xcAgregar').addEventListener('click', async () => {
+    const fecha = $('xcFecha').value;
+    if (!fecha){ ilusToast('Elige el día.', {type: 'warning'}); $('xcFecha').focus(); return; }
+    const motivo = $('xcMotivo').value.trim();
+    const cuerpo = tipoSel.value === 'temprano'
+      ? {accion: 'temprano', fecha, hasta: $('xcHora').value, motivo}
+      : {accion: 'cierre', fecha, motivo};
+    const msg = tipoSel.value === 'temprano' ? 'Salida temprano agregada' : 'Día cerrado';
+    const d = await api(cuerpo);
+    await cargar();
+    if (!d) return;
+    $('xcMotivo').value = '';
+    ilusToast('✓ ' + msg, {type: 'success'});
+    if (d.afectados && d.afectados.length){
+      const filas = d.afectados.map(a => '• <b>' + esc(a.code) + '</b> · ' + esc(a.cliente || 'Cliente') + (a.hora ? ' · ' + esc(a.hora) : '')).join('<br>');
+      await ilusAlert({type: 'warning', title: 'Ojo: hay retiros ya agendados ese día',
+        message: 'El cambio NO mueve retiros existentes. Estos quedan fuera del nuevo horario; reagéndalos con el cliente:',
+        sub: filas, subHtml: true});
+    }
+  });
+  // Enter dentro de esta sección NO debe enviar el formulario de configuración completo
+  ['xcFecha', 'xcMotivo', 'xcHora', 'xcTipo', 'avisoExt'].forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const boton = id === 'avisoExt' ? $('avisoAdd') : $('xcAgregar');
+      if (boton) boton.click();
+    });
+  });
+  $('xcRango').addEventListener('change', cargar);
+
+  // ── responsables que reciben un correo por cada gestión ──
+  const inp = $('avisoInp'), chips = $('avisoChips'), selP = $('avisoSel');
+  let lista = String(inp.value || '').split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+  const nombres = {};                                   // correo → nombre (de la lista del sistema)
+  const emailOk = e => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(e);
+
+  function pintarChips(){
+    inp.value = lista.join(',');
+    chips.innerHTML = lista.length
+      ? lista.map((e, i) => '<span class="xc-chip">' +
+          (nombres[e] ? esc(nombres[e]) + ' <small>' + esc(e) + '</small>' : esc(e)) +
+          '<button type="button" data-i="' + i + '" aria-label="Quitar ' + esc(e) + '">×</button></span>').join('')
+      : '<div class="xc-vacio">Nadie todavía: solo recibe el correo el responsable asignado a cada retiro.</div>';
+  }
+  chips.addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-i]');
+    if (!b) return;
+    lista.splice(Number(b.dataset.i), 1);
+    pintarChips();
+  });
+  function agregarCorreo(e){
+    e = String(e || '').trim().toLowerCase();
+    if (!e) return false;
+    if (!emailOk(e)){ ilusToast('Ese correo no es válido.', {type: 'warning'}); return false; }
+    if (lista.includes(e)){ ilusToast('Ya está en la lista.', {type: 'info'}); return false; }
+    if (lista.length >= 20){ ilusToast('Máximo 20 personas.', {type: 'warning'}); return false; }
+    lista.push(e);
+    pintarChips();
+    return true;
+  }
+  $('avisoAdd').addEventListener('click', () => {
+    const ext = $('avisoExt');
+    if (agregarCorreo(selP.value || ext.value)){ selP.value = ''; ext.value = ''; }
+  });
+  selP.addEventListener('change', () => {           // elegir a alguien de la lista lo agrega de inmediato
+    if (selP.value && agregarCorreo(selP.value)) selP.value = '';
+  });
+  pintarChips();
+
+  async function cargarPersonas(){
+    try {
+      const r = await fetch('/retiros/api/responsables?con_email=1', {credentials: 'same-origin', cache: 'no-store'});
+      const d = await r.json();
+      (d.responsables || []).forEach(u => {
+        if (!u.email) return;                        // sin correo válido no se puede avisar
+        nombres[u.email] = u.nombre || u.email;
+        const o = document.createElement('option');
+        o.value = u.email;
+        o.textContent = (u.nombre || u.email) + ' — ' + u.email;
+        selP.appendChild(o);
+      });
+      pintarChips();
+    } catch (e) { console.warn('[retiros] lista de personas para avisos', e); }
+  }
+
+  modal.addEventListener('show.bs.modal', () => {
+    if (cargadoUnaVez) { cargar(); return; }        // al reabrir, se refresca (otro admin pudo cambiar algo)
+    cargadoUnaVez = true;
+    toggleHora();
+    cargar();
+    cargarPersonas();
   });
 })();
 </script>
