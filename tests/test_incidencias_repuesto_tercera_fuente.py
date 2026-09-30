@@ -327,7 +327,9 @@ class TestConciliacionExcluyeEliminadas(unittest.TestCase):
     criterio que el resto del archivo (funciones puras vía ast)."""
 
     def test_conciliacion_excluye_eliminadas_del_where(self):
-        src = _fuente_de("mant_api_incidencias_conciliacion")
+        # 2026-09-30: el cálculo de hallazgos se movió del endpoint a
+        # _inc_calcular_hallazgos (lo comparten la lista y "dar de baja").
+        src = _fuente_de("_inc_calcular_hallazgos")
         self.assertIn("FROM mant_incidencias WHERE estado='abierta' AND COALESCE(eliminada,0)=0", src,
                        "la consulta de incidencias abiertas para la conciliación debe excluir eliminada=1")
 

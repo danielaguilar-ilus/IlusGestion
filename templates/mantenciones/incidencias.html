@@ -89,6 +89,9 @@
           <option value="sin_datos">Check no disponible</option>
         </select>
         <button type="button" class="rm-btn rm-btn-rojo" id="incBtnLimpiar"><i class="bi bi-x-circle"></i>Limpiar filtros</button>
+        {#- 🗄️ 2026-09-30: acceso directo al historial de bajas (mismo panel de "Revisar diferencias"). -#}
+        <button type="button" class="rm-btn" id="incBtnBajas"
+                title="Historial de lo que se dio de baja, con su motivo, quién y cuándo"><i class="bi bi-archive"></i>Dadas de baja</button>
       </div>
     </div>
   </div>
@@ -547,6 +550,61 @@
   </div>
 </div>
 
+{#- 🗄️ 2026-09-30 (Daniel: "que todos los usuarios puedan gestionar y dar de baja
+    productos sin eliminar, para tener trazabilidad de por qué algún día estuvo").
+    Modal corto con el formato de Retiros (tarjetas + semáforo) y pensado para el
+    celular: los motivos son botones grandes. Sirve para las dos bajas: un pendiente
+    sin incidencia y una incidencia registrada. Todo conectado por código (los
+    onclick del HTML no alcanzan funciones que viven dentro de la IIFE). -#}
+<div class="modal fade" id="incBajaModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
+        <h6 class="modal-title fw-bold">
+          <i class="bi bi-archive me-2" style="color:#dc2626"></i>Dar de baja
+          <small class="d-block fw-normal" id="incBajaSub" style="font-size:.72rem;opacity:.8"></small>
+        </h6>
+        <div class="inc-progreso" aria-live="polite">
+          <span id="incBajaProgresoTxt">0 de 2 pasos listos</span>
+          <span class="bar"><span id="incBajaProgresoBar"></span></span>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <section class="inc-pane" id="incBajaPane1">
+          <div class="inc-pane-head inc-c4">
+            <span class="inc-num-circle"><span class="num">1</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-box-seam"></i>
+            <div><b>1. Qué se da de baja</b>
+              <small>Revisa que sea el producto correcto.</small></div>
+          </div>
+          <div class="inc-baja-item" id="incBajaItem"></div>
+        </section>
+        <section class="inc-pane" id="incBajaPane2">
+          <div class="inc-pane-head inc-c3">
+            <span class="inc-num-circle"><span class="num">2</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-chat-left-quote"></i>
+            <div><b>2. Por qué se da de baja</b>
+              <small>Queda registrado: quién, cuándo y por qué.</small></div>
+          </div>
+          <div class="inc-baja-motivos" id="incBajaMotivos" role="radiogroup" aria-label="Motivo de la baja"></div>
+          <label class="form-label fw-semibold small mb-1 mt-3" for="incBajaTexto" id="incBajaTextoLbl">Detalle (opcional)</label>
+          <textarea id="incBajaTexto" class="form-control" rows="3" maxlength="500"
+                    placeholder="Algo que ayude a entender la baja más adelante"></textarea>
+        </section>
+        <div class="inc-baja-nota"><i class="bi bi-shield-check"></i>
+          <span>No se borra nada: queda en <b>Dadas de baja</b> con su motivo y se puede reactivar.</span></div>
+        <div class="text-danger small mt-2" id="incBajaErr"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus" id="incBajaBtnOk">
+          <i class="bi bi-archive me-1"></i>Dar de baja</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% if permissions.superadmin %}
 <div class="modal fade" id="incImportModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
@@ -940,6 +998,47 @@
 .g-error .inc-h-ico{background:#fee2e2;color:#dc2626}
 .g-warn  .inc-h-ico{background:#fff7ed;color:#f97316}
 .g-info  .inc-h-ico{background:#f3f4f6;color:#6b7280}
+
+/* ══ 🗄️ 2026-09-30 · Dar de baja + tabla de Pendientes con el formato de Retiros ══ */
+.inc-kpi.k-baja .inc-kpi-n{color:#475569} .inc-kpi.k-baja.sel{border-color:#475569}
+/* Los .rm-* de Retiros leen sus colores de variables que solo define `.rm-monitor` (la
+   tabla principal); el panel de Pendientes vive fuera de él, así que se las damos acá
+   (sin esto la cabecera negra y los bordes salían transparentes). */
+.inc-conc{--rm-red:#dc2626;--rm-black:#0a0a0a;--rm-green:#16a34a;--rm-amber:#f59e0b;--rm-blue:#3b82f6;
+  --rm-ink:#111827;--rm-ink2:#374151;--rm-line:#e5e7eb;--rm-bg:#f9fafb}
+/* Pendientes: mismos estilos rm-* que la tabla principal; acá solo lo propio */
+#incConcTabla td.inc-num,#incConcTabla th.inc-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#incConcTabla td.inc-num .rm-carga-main{font-weight:800}
+#incConcTabla td.inc-num.v-bd .rm-carga-main{color:#1d4ed8}
+#incConcTabla td.inc-num.v-erp .rm-carga-main{color:#b91c1c}
+#incConcTabla td.inc-num.v-wms .rm-carga-main{color:#c2410c}
+#incConcTabla .rm-cell{min-width:0}
+#incConcTabla .rm-pill,#incBajasTabla .rm-pill{white-space:nowrap}
+#incConcTabla td[data-label="Qué significa"] .rm-cell{max-width:340px;font-size:.84rem;line-height:1.35}
+.inc-pill-baja{cursor:help}
+.inc-h-accion{white-space:nowrap}
+/* Historial "Dadas de baja" */
+.inc-baja-tools{padding:10px 16px 0}
+#incBajasTabla .rm-cell{min-width:0}
+.inc-baja-nums{display:flex;gap:5px;flex-wrap:wrap}
+/* Modal */
+.inc-baja-item{display:flex;flex-direction:column;gap:5px;padding:11px 13px;border:1px solid #e5e7eb;
+  border-radius:10px;background:#fafbfc;font-size:.88rem}
+.inc-baja-item .ttl{font-weight:800;color:#0f172a;line-height:1.3}
+.inc-baja-item .sub{display:flex;gap:8px;flex-wrap:wrap;align-items:center;color:#5b6472;font-size:.78rem}
+.inc-baja-motivos{display:grid;gap:8px}
+.inc-baja-mot{display:flex;align-items:center;gap:11px;width:100%;min-height:48px;padding:10px 13px;text-align:left;
+  border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#1f2430;font-weight:600;font-size:.9rem;
+  cursor:pointer;transition:border-color .12s,background .12s}
+.inc-baja-mot i{font-size:1.15rem;color:#9aa3ae;flex:0 0 auto}
+.inc-baja-mot:hover{border-color:#9aa3ae}
+.inc-baja-mot:focus-visible{outline:2px solid #dc2626;outline-offset:2px}
+.inc-baja-mot.on{border-color:#16a34a;background:#f0fdf4;color:#166534}
+.inc-baja-mot.on i{color:#16a34a}
+.inc-baja-nota{display:flex;gap:9px;align-items:flex-start;font-size:.8rem;color:#475569;background:#f1f5f9;
+  border-radius:10px;padding:10px 12px;margin-top:4px}
+.inc-baja-nota i{color:#16a34a;font-size:1.05rem;margin-top:1px}
+#incBajaTexto{font-size:16px}
 </style>
 
 <script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
@@ -956,6 +1055,9 @@
   // una condición de Jinja adentro de un string de JS -- más frágil de
   // leer y de mantener que una bandera booleana simple.
   var incCanDelete = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }};
+  // 🗄️ 2026-09-30: motivos de baja [{codigo, texto}] -- UNA sola fuente (INC_BAJA_MOTIVOS
+  // en app.py), no se repiten escritos a mano acá.
+  var INC_BAJA_MOTIVOS = {{ (motivos_baja or [])|tojson }};
   // Mismos topes que app.py (INC_MAX_FOTOS/INC_MAX_VIDEOS) -- se usan solo
   // como valor por defecto mientras llega la respuesta real del backend.
   var INC_MAX_FOTOS = 5, INC_MAX_VIDEOS = 1;
@@ -1083,6 +1185,8 @@
       + '<ul class="dropdown-menu dropdown-menu-end shadow-sm">'
       +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="edit" data-id="'+r.id+'"><i class="bi bi-pencil-square me-2"></i>Ver / editar</button></li>'
       +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="rep" data-id="'+r.id+'"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>'
+      // 🗄️ 2026-09-30: dar de baja es de TODOS (con motivo, sin borrar nada); eliminar sigue solo para admins.
+      +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="baja" data-id="'+r.id+'"><i class="bi bi-archive me-2"></i>Dar de baja</button></li>'
       +   (incCanDelete ? '<li><hr class="dropdown-divider"></li><li><button type="button" class="dropdown-item text-danger inc-acc" data-accion="del" data-id="'+r.id+'"><i class="bi bi-trash me-2"></i>Eliminar</button></li>' : '')
       + '</ul></div></td>';
   }
@@ -1287,6 +1391,7 @@
         var id = btn.dataset.id, accion = btn.dataset.accion;
         if(accion === 'edit') abrirEdicion(id, rows);
         else if(accion === 'del') incEliminarDesdeTabla(id);
+        else if(accion === 'baja') incBajaDesdeFila(id, rows);
         else if(accion === 'rep') incSolicitarRepuestoDesdeTabla(id, rows);
       });
     });
@@ -1814,7 +1919,9 @@
 
   var INC_TIPOS = {
     dif_erp:        {ico:'bi-exclamation-octagon-fill', t:'Diferencia con el ERP'},
-    no_en_erp:      {ico:'bi-database-x',               t:'No existe en el ERP'},
+    // 🏷️ 2026-09-30: "No existe en el ERP" engañaba -- lo que se comprueba es que el SKU no
+    // tiene stock registrado en la bodega 13 de Random (el producto sí puede existir).
+    no_en_erp:      {ico:'bi-database-x',               t:'Sin stock en Random'},
     dif_wms:        {ico:'bi-box-arrow-in-down',        t:'Diferencia con el WMS'},
     sin_motivo:     {ico:'bi-chat-left-dots',           t:'Sin motivo declarado'},
     falta_registrar:{ico:'bi-plus-square-dotted',       t:'Falta registrar'},
@@ -1853,6 +1960,8 @@
       ['sin_motivo',      'k-mot', 'Pendiente motivo',  (r.sin_motivo || 0), ayudaDe('sin_motivo')],
       ['falta_registrar', 'k-reg', 'Falta en nuestra BD',(r.falta_registrar || 0), ayudaDe('falta_registrar')],
       ['fuera_de_bodega', 'k-fue', 'Salió de bodega',   (r.fuera_de_bodega || 0), ayudaDe('fuera_de_bodega')],
+      // 🗄️ 2026-09-30: el historial de bajas (motivo, quién, cuándo) -- nada se borra.
+      ['bajas',           'k-baja','Dadas de baja',     (r.dadas_de_baja || 0), 'Historial de lo que se dio de baja, con su motivo, quién y cuándo. Nada se borra y se puede reactivar.'],
     ];
     $('incConcKpis').innerHTML = kpis.map(function(k){
       return '<div class="inc-kpi '+k[1]+(incConcFiltro===k[0]?' sel':'')+'" data-t="'+k[0]+'"'
@@ -1866,6 +1975,9 @@
         incConcPintar();
       };
     });
+
+    // 🗄️ "Dadas de baja" no lista pendientes: es el historial (se pide al servidor).
+    if(incConcFiltro === 'bajas'){ incBajasCargar(); return; }
 
     // "Pendiente Random" agrupa las dos formas de faltar en el ERP.
     var lista = (d.hallazgos || []).filter(function(h){
@@ -1884,87 +1996,126 @@
     // TABLA paginada de 10 en 10, sin scroll (REGLA #4.3, patrón Etiquetas).
     // Daniel: "una lista que se despliegue no me gustó mucho... todas las
     // tablas de diez en diez, y que no le den scroll".
+    // 🎨 2026-09-30 (Daniel: "podemos ir enchulando esa parte"): ahora con el
+    // formato de Retiros, igual que la tabla de incidencias -- semáforo en el
+    // borde de la fila, pastillas, menú ⋮ y detalle desplegable (se REUSAN los
+    // .rm-* del Monitor). La frase de ayuda larga pasó al detalle para que la
+    // fila no ocupe tres líneas; sigue en el tooltip de cada tarjeta de arriba.
     var total = lista.length;
     var pages = Math.max(1, Math.ceil(total / incConcSize));
     if(incConcPage > pages) incConcPage = pages;
     var desde = (incConcPage - 1) * incConcSize;
     var pagina = lista.slice(desde, desde + incConcSize);
+    var NC = 9;   // flecha, pendiente, SKU, producto, BD, ERP, WMS, qué significa, acción
 
-    var html = '<div class="inc-wrap"><table class="inc-tabla"><thead><tr>'
-      + '<th style="width:34px"></th><th>Pendiente</th><th>SKU</th><th>Producto</th>'
-      + '<th class="num">Nuestra BD</th><th class="num">ERP</th><th class="num">WMS</th>'
-      + '<th>Qué significa</th><th>Acción</th></tr></thead><tbody>';
-    // 🔧 2026-09-26 (Daniel: "no selecciona nada, no sé qué hace"): la
-    // acción YA viene resuelta del backend (h.accion, ver
-    // _inc_hallazgo_accion en app.py) -- el frontend deja de adivinar
-    // mirando si `h.ids` viene o no. 'registrar' abre el alta prellenada
-    // (falta_registrar, sin incidencia todavía); 'ver' abre la incidencia
-    // ya existente; sin acción -> fila sin cursor de mano y sin botón,
-    // solo el texto de qué significa.
+    function celdaNum(label, v, cls){
+      return '<td class="inc-num'+(v != null ? ' '+cls : '')+'" data-label="'+label+'"><div class="rm-cell">'
+        + (v != null ? '<div class="rm-carga-main">'+v+'</div>' : '<span class="rm-sub">—</span>') + '</div></td>';
+    }
+    function vn(v){ return v != null ? v : '—'; }
+
+    // 🔧 2026-09-26 (Daniel: "no selecciona nada, no sé qué hace"): la acción YA
+    // viene resuelta del backend (h.accion, ver _inc_hallazgo_accion en app.py).
+    // 🗄️ 2026-09-30: además TODO pendiente se puede dar de baja (sin borrar nada):
+    // si no tiene incidencia, se da de baja el pendiente; si la tiene, la incidencia.
+    function accionesHtml(h, idx){
+      var principal = '', items = '';
+      if(h.accion === 'registrar'){
+        principal = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
+                  + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
+      } else if(h.accion === 'ver'){
+        principal = '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
+                  + '<i class="bi bi-search me-1"></i>Ver / corregir</button>';
+        items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="repuesto"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>';
+      }
+      if(h.baja_hallazgo || (h.ids && h.ids.length)){
+        items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="baja"><i class="bi bi-archive me-2"></i>Dar de baja</button></li>';
+      }
+      if(h.accion === 'ver' && incCanDelete){
+        items += '<li><hr class="dropdown-divider"></li><li><button type="button" class="dropdown-item text-danger inc-h-accion" data-idx="'+idx+'" data-accion="eliminar"><i class="bi bi-trash me-2"></i>Eliminar</button></li>';
+      }
+      var menu = items
+        ? '<div class="dropdown"><button class="btn btn-outline-dark rm-acc-btn" type="button" data-bs-toggle="dropdown"'
+          + ' data-bs-popper-config=\'{"strategy":"fixed"}\' aria-expanded="false" title="Más acciones" aria-label="Más acciones"><i class="bi bi-three-dots-vertical"></i></button>'
+          + '<ul class="dropdown-menu dropdown-menu-end shadow-sm">'+items+'</ul></div>'
+        : '';
+      if(!principal && !menu) return '<td class="text-end rm-c-acc" data-label="Acción"><span class="inc-h-sinaccion">Sin acción disponible todavía</span></td>';
+      return '<td class="text-end rm-c-acc" data-label="Acción"><div class="d-flex gap-1 justify-content-end align-items-center">'+principal+menu+'</div></td>';
+    }
+
+    // Detalle desplegable (flecha ">"): la explicación completa, los números y,
+    // si antes se dio de baja, quién/cuándo/por qué y cómo estaban los números.
+    function detalleHtml(h){
+      var ayuda = (tiposInfo[h.tipo] || {}).ayuda || '';
+      function panel(ico, titulo, cuerpo, ancho){
+        return '<div class="rm-panel'+(ancho ? ' rm-panel-wide' : '')+'"><h4><i class="bi bi-'+ico+'"></i>'+titulo+'</h4>'+cuerpo+'</div>';
+      }
+      function p(txt){ return '<p>'+(txt ? incEsc(txt) : '<span class="rm-sub">Sin dato</span>')+'</p>'; }
+      var paneles = panel('question-circle', 'Qué significa', p(h.detalle) + (ayuda ? '<p class="rm-sub">'+incEsc(ayuda)+'</p>' : ''), true)
+        + panel('123', 'Números', '<p><b>Nuestra BD:</b> '+vn(h.nuestra_bd)+'</p><p><b>ERP Random:</b> '+vn(h.erp)+'</p><p><b>CheckWMS:</b> '+vn(h.wms)+'</p>')
+        + panel('geo-alt', 'Dónde', '<p><b>UA:</b> '+incEsc(h.ua || '—')+'</p><p><b>Ubicación (Check):</b> '+incEsc(h.ubicacion || '—')+'</p>');
+      if(h.baja_previa){
+        var b = h.baja_previa;
+        paneles += panel('archive', 'Antes dada de baja',
+          '<p><b>'+incEsc(b.motivo || '')+'</b></p>' + (b.motivo_texto ? p(b.motivo_texto) : '')
+          + '<p class="rm-sub">'+incFmtChile(b.baja_at)+(b.baja_by ? ' · '+incEsc(b.baja_by) : '')+'</p>'
+          + '<p class="rm-sub">Entonces: Nuestra BD '+vn(b.nuestra_bd)+' · ERP '+vn(b.erp)+' · WMS '+vn(b.wms)
+          + '. Los números cambiaron, por eso volvió a salir.</p>', true);
+      }
+      return '<tr class="rm-detail" hidden><td colspan="'+NC+'"><div class="rm-panels">'+paneles+'</div></td></tr>';
+    }
+
+    var html = '<div class="rm-wrap"><div class="table-responsive">'
+      + '<table class="ilus-table table-mobile-cards rm-table align-middle" id="incConcTabla"><thead><tr>'
+      + '<th class="rm-c-exp"><button type="button" class="rm-ic-btn" id="incConcExpandAll" aria-label="Abrir o cerrar el detalle de todas las filas" title="Abrir / cerrar todo el detalle"><i class="bi bi-arrows-expand"></i></button></th>'
+      + '<th>Pendiente</th><th>SKU</th><th>Producto</th>'
+      + '<th class="inc-num">Nuestra BD</th><th class="inc-num">ERP</th><th class="inc-num">WMS</th>'
+      + '<th>Qué significa</th><th class="text-end rm-c-acc">Acción</th></tr></thead><tbody>';
     pagina.forEach(function(h, i){
       var m = INC_TIPOS[h.tipo] || {ico:'bi-question-circle', t:h.tipo};
-      var act = !!h.accion;
+      var nivel = h.gravedad === 'error' ? 'rojo' : (h.gravedad === 'warn' ? 'ambar' : 'gris');
       var idx = desde + i;
-      var boton = '';
-      if (h.accion === 'registrar'){
-        boton = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
-              + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
-      } else if (h.accion === 'ver'){
-        // 🔧 2026-09-26 (Daniel: "CRUD completo desde Revisar diferencias
-        // ... debo borrar algunas, y debo solicitar repuesto de una"): la
-        // fila con incidencia ya registrada ofrece las 3 acciones juntas.
-        boton = '<div class="d-flex gap-1 flex-wrap">'
-              + '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
-              + '<i class="bi bi-search me-1"></i>Ver / corregir</button>'
-              + '<button type="button" class="btn btn-sm btn-outline-secondary inc-h-accion" data-idx="'+idx+'" data-accion="repuesto" title="Solicitar repuesto">'
-              + '<i class="bi bi-tools"></i></button>';
-        if(incCanDelete){
-          boton += '<button type="button" class="btn btn-sm btn-outline-danger inc-h-accion" data-idx="'+idx+'" data-accion="eliminar" title="Eliminar">'
-                + '<i class="bi bi-trash"></i></button>';
-        }
-        boton += '</div>';
-      } else {
-        boton = '<span class="inc-h-sinaccion">Sin acción disponible todavía</span>';
-      }
-      var ayuda = (tiposInfo[h.tipo] || {}).ayuda || '';
-      html += '<tr class="g-'+h.gravedad+(act?' act':'')+'" data-idx="'+idx+'">'
-        + '<td><span class="inc-h-ico"><i class="bi '+m.ico+'"></i></span></td>'
-        + '<td><b>'+m.t+'</b></td>'
-        + '<td><code>'+(h.sku||h.ua||'—')+'</code></td>'
-        + '<td>'+(h.descripcion||'—')+'</td>'
-        + '<td class="num'+(h.nuestra_bd!=null?' v-bd':'')+'">'+(h.nuestra_bd!=null?h.nuestra_bd:'—')+'</td>'
-        + '<td class="num'+(h.erp!=null?' v-erp':'')+'">'+(h.erp!=null?h.erp:'—')+'</td>'
-        + '<td class="num'+(h.wms!=null?' v-wms':'')+'">'+(h.wms!=null?h.wms:'—')+'</td>'
-        + '<td class="inc-h-d">'
-        +   (h.sugerir_distribuir ? '<span class="inc-badge-distribuir"><i class="bi bi-signpost-split-fill"></i> Distribuir a UAs</span> ' : '')
-        +   h.detalle+(ayuda?'<br><small class="text-muted">'+ayuda+'</small>':'')+'</td>'
-        + '<td>'+boton+'</td>'
-        + '</tr>';
+      html += '<tr class="rm-row" data-alerta="'+nivel+'" data-idx="'+idx+'" data-act="'+(h.accion ? '1' : '0')+'"'+(h.accion ? ' style="cursor:pointer"' : '')+'>'
+        + '<td class="rm-c-exp"><button type="button" class="rm-ic-btn rm-exp" aria-expanded="false" aria-label="Ver el detalle" title="Ver el detalle"><i class="bi bi-chevron-right"></i></button></td>'
+        + '<td data-label="Pendiente"><div class="rm-cell"><span class="rm-pill '+nivel+'" style="margin-top:0"><i class="bi '+m.ico+'"></i>'+m.t+'</span>'
+        +   (h.baja_previa ? '<div><span class="rm-pill gris inc-pill-baja" style="margin-top:4px" title="Alguien ya la dio de baja con otros números. Abre el detalle para ver quién, cuándo y por qué."><i class="bi bi-archive"></i>Antes dada de baja</span></div>' : '')
+        +   (h.sugerir_distribuir ? '<div><span class="inc-badge-distribuir"><i class="bi bi-signpost-split-fill"></i> Distribuir a UAs</span></div>' : '')
+        + '</div></td>'
+        + '<td data-label="SKU"><div class="rm-cell"><span class="rm-code">'+incEsc(h.sku || h.ua || '—')+'</span></div></td>'
+        + '<td data-label="Producto"><div class="rm-cell"><div class="rm-cli-name">'+incEsc(h.descripcion || '—')+'</div>'
+        +   (h.ua && h.sku ? '<div class="rm-sub">UA '+incEsc(h.ua)+'</div>' : '')
+        +   (h.descripcion_fuente === 'erp' ? '<div class="rm-sub" title="CheckWMS no tiene este SKU en su Bodega 13: el nombre viene del maestro de productos de Random.">Nombre según Random</div>' : '')
+        + '</div></td>'
+        + celdaNum('Nuestra BD', h.nuestra_bd, 'v-bd') + celdaNum('ERP', h.erp, 'v-erp') + celdaNum('WMS', h.wms, 'v-wms')
+        + '<td data-label="Qué significa"><div class="rm-cell">'+incEsc(h.detalle || '')+'</div></td>'
+        + accionesHtml(h, idx)
+        + '</tr>'
+        + detalleHtml(h);
     });
-    html += '</tbody></table>'
-      + '<div class="inc-foot">'
-      +   '<div class="inc-foot-info">Mostrando <b>'+(desde+1)+'–'+(desde+pagina.length)+'</b> de <b>'+total+'</b></div>'
-      +   '<div class="d-flex align-items-center gap-2">'
-      +     '<select class="form-select form-select-sm" id="incConcSize" style="width:auto">'
+    html += '</tbody></table></div>'
+      + '<div class="rm-foot">'
+      +   '<div class="rm-foot-count"><i class="bi bi-collection"></i><span>Mostrando <strong>'+(desde+1)+'–'+(desde+pagina.length)+'</strong> de <strong>'+total+'</strong></span></div>'
+      +   '<div class="rm-foot-ctrl">'
+      +     '<select class="rm-select" id="incConcSize" aria-label="Filas por página">'
       +       [10,25,50,100].map(function(s){return '<option value="'+s+'"'+(s===incConcSize?' selected':'')+'>'+s+' por página</option>';}).join('')
       +     '</select>'
-      +     '<button class="inc-pg-btn" id="incConcPrev" '+(incConcPage<=1?'disabled':'')+'><i class="bi bi-chevron-left"></i> Anterior</button>'
-      +     '<span class="inc-badge" style="background:var(--ilus-red,#dc2626);color:#fff">Página '+incConcPage+' de '+pages+'</span>'
-      +     '<button class="inc-pg-btn" id="incConcNext" '+(incConcPage>=pages?'disabled':'')+'>Siguiente <i class="bi bi-chevron-right"></i></button>'
+      +     '<button type="button" class="rm-btn" id="incConcPrev" '+(incConcPage<=1?'disabled':'')+'><i class="bi bi-chevron-left"></i>Anterior</button>'
+      +     '<span>Página '+incConcPage+' de '+pages+'</span>'
+      +     '<button type="button" class="rm-btn" id="incConcNext" '+(incConcPage>=pages?'disabled':'')+'>Siguiente<i class="bi bi-chevron-right"></i></button>'
       +   '</div></div></div>';
     $('incConcLista').innerHTML = html;
 
-    // Búsqueda por índice ABSOLUTO dentro de `lista` (no solo `pagina`):
-    // así el botón/fila siguen apuntando al hallazgo correcto sin importar
-    // la página en la que esté parado el usuario.
+    // Búsqueda por índice ABSOLUTO dentro de `lista` (no solo `pagina`): así el
+    // botón/fila siguen apuntando al hallazgo correcto sin importar la página.
     function hallazgoPorIdx(idx){ return lista[idx]; }
-    // 🔧 2026-09-26: ahora una fila 'ver' puede disparar 3 sub-acciones
-    // distintas (ver, solicitar repuesto, eliminar) -- `subaccion` viene
-    // del data-accion del botón concreto que se clickeó; el clic en la
-    // FILA (sin botón) siempre significa "ver/corregir", como antes.
+    // Una fila 'ver' dispara varias acciones (ver, solicitar repuesto, dar de baja,
+    // eliminar): `subaccion` viene del data-accion del botón clickeado; el clic en
+    // la FILA (sin botón) siempre significa "ver/corregir" o "registrar", como antes.
     function accionarHallazgo(idx, subaccion){
       var h = hallazgoPorIdx(idx);
-      if(!h || !h.accion) return;
+      if(!h) return;
+      if(subaccion === 'baja'){ incBajaDesdeHallazgo(h); return; }
+      if(!h.accion) return;
       if(h.accion === 'registrar'){ incAbrirAltaPrellenada(h); return; }
       if(h.accion !== 'ver' || !h.ids || !h.ids.length) return;
       var id = h.ids[0];
@@ -1972,17 +2123,36 @@
       else if(subaccion === 'repuesto') incAbrirPorId(id, true);
       else incAbrirPorId(id);
     }
-    $('incConcLista').querySelectorAll('tr.act').forEach(function(el){
+    var contC = $('incConcLista');
+    contC.querySelectorAll('tr.rm-row[data-act="1"]').forEach(function(el){
       el.addEventListener('click', function(ev){
-        if(ev.target.closest('button')) return;   // el botón ya dispara su propio click
+        if(ev.target.closest('.rm-exp') || ev.target.closest('.rm-c-acc')) return;   // los botones disparan lo suyo
         accionarHallazgo(parseInt(el.dataset.idx, 10));
       });
     });
-    $('incConcLista').querySelectorAll('.inc-h-accion').forEach(function(btn){
+    contC.querySelectorAll('.inc-h-accion').forEach(function(btn){
       btn.addEventListener('click', function(ev){
         ev.stopPropagation();
         accionarHallazgo(parseInt(btn.dataset.idx, 10), btn.dataset.accion);
       });
+    });
+    // Flecha ">" : abre/cierra el detalle de esa fila (igual que la tabla principal).
+    function toggleDetalleC(btn, abrir){
+      var det = btn.closest('tr').nextElementSibling;
+      if(!det || !det.classList.contains('rm-detail')) return;
+      abrir = (abrir === undefined) ? det.hidden : abrir;
+      det.hidden = !abrir;
+      btn.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+    }
+    contC.querySelectorAll('.rm-exp').forEach(function(btn){
+      btn.addEventListener('click', function(ev){ ev.stopPropagation(); toggleDetalleC(btn); });
+    });
+    var expAllC = $('incConcExpandAll');
+    if(expAllC) expAllC.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      var btns = contC.querySelectorAll('.rm-exp');
+      var abrir = Array.prototype.some.call(btns, function(b){ return b.getAttribute('aria-expanded') !== 'true'; });
+      btns.forEach(function(b){ toggleDetalleC(b, abrir); });
     });
     $('incConcPrev').onclick = function(){ if(incConcPage>1){ incConcPage--; incConcPintar(); } };
     $('incConcNext').onclick = function(){ if(incConcPage<pages){ incConcPage++; incConcPintar(); } };
@@ -2025,6 +2195,300 @@
       });
     });
   }
+
+  // ══════════ 🗄️ Dar de baja (Daniel, 2026-09-30) ══════════
+  // "quiero que todos los usuarios puedan gestionar y dar de baja productos sin
+  // eliminar para tener trazabilidad de por qué algún día estuvo". Eliminar sigue
+  // siendo solo de administradores; dar de baja es de TODOS, pide un motivo y deja
+  // quién, cuándo y por qué en el historial "Dadas de baja". Nada se borra y se puede
+  // reactivar. Un pendiente SIN incidencia se da de baja como pendiente (se oculta
+  // mientras sus números no cambien; si cambian vuelve a salir "antes dado de baja");
+  // una incidencia registrada pasa a 'resuelta' y sale de las tablas.
+  var INC_BAJA_ICONOS = {regularizado_random:'bi-database-check', regularizado_wms:'bi-box-seam',
+    salio_resuelto:'bi-box-arrow-up-right', duplicado_error:'bi-files', merma_desecho:'bi-recycle', otro:'bi-pencil'};
+  var _incBaja = {ctx: null, motivo: ''};
+  function incBajaModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incBajaModal')); }
+  function incVn(v){ return v != null ? v : '—'; }
+
+  // Desde la tabla principal: la incidencia de esa fila.
+  function incBajaDesdeFila(id, rows){
+    var r = (rows || []).filter(function(x){ return String(x.id) === String(id); })[0] || {};
+    incAbrirBaja({origen:'incidencia', id:id, sku:r.sku, descripcion:r.descripcion, ua:r.recomendacion,
+                  cantidad:r.cantidad, sub:'Incidencia #'+id});
+  }
+  // Desde Pendientes: sin incidencia -> se da de baja el pendiente; con incidencia -> la incidencia.
+  function incBajaDesdeHallazgo(h){
+    var m = INC_TIPOS[h.tipo] || {t: h.tipo};
+    if(h.baja_hallazgo){
+      incAbrirBaja({origen:'hallazgo', clave:h.clave, sku:h.sku, descripcion:h.descripcion, ua:h.ua,
+                    nuestra_bd:h.nuestra_bd, erp:h.erp, wms:h.wms, sub:'Pendiente · '+m.t});
+    } else if(h.ids && h.ids.length){
+      incAbrirBaja({origen:'incidencia', id:h.ids[0], sku:h.sku, descripcion:h.descripcion, ua:h.ua,
+                    nuestra_bd:h.nuestra_bd, erp:h.erp, wms:h.wms,
+                    sub:'Incidencia #'+h.ids[0]+' · '+m.t+(h.ids.length > 1 ? ' (la 1ª de '+h.ids.length+')' : '')});
+    }
+  }
+
+  function incAbrirBaja(ctx){
+    _incBaja.ctx = ctx; _incBaja.motivo = '';
+    document.getElementById('incBajaSub').textContent = ctx.sub || '';
+    var partes = [];
+    if(ctx.ua) partes.push('<span class="rm-code">UA '+incEsc(ctx.ua)+'</span>');
+    if(ctx.cantidad != null) partes.push('<span>Cantidad <b>'+incEsc(ctx.cantidad)+'</b></span>');
+    if(ctx.nuestra_bd != null || ctx.erp != null || ctx.wms != null){
+      partes.push('<span class="inc-cmp inc-cmp-bd">Nuestra BD '+incVn(ctx.nuestra_bd)+'</span>'
+        + '<span class="inc-cmp inc-cmp-erp">ERP '+incVn(ctx.erp)+'</span>'
+        + '<span class="inc-cmp inc-cmp-wms">WMS '+incVn(ctx.wms)+'</span>');
+    }
+    document.getElementById('incBajaItem').innerHTML =
+      '<div class="ttl">'+incEsc(ctx.descripcion || 'Sin nombre')+'</div>'
+      + '<div class="sub"><span class="rm-code">'+incEsc(ctx.sku || '—')+'</span>'+partes.join('')+'</div>';
+    document.getElementById('incBajaMotivos').innerHTML = INC_BAJA_MOTIVOS.map(function(m){
+      return '<button type="button" class="inc-baja-mot" role="radio" aria-checked="false" data-cod="'+m.codigo+'">'
+        + '<i class="bi '+(INC_BAJA_ICONOS[m.codigo] || 'bi-archive')+'"></i><span>'+incEsc(m.texto)+'</span></button>';
+    }).join('');
+    document.getElementById('incBajaTexto').value = '';
+    document.getElementById('incBajaErr').textContent = '';
+    incBajaPintar();
+    incBajaModal().show();
+  }
+
+  // Semáforo de las 2 tarjetas + progreso (mismo patrón que "Solicitar repuesto").
+  function incBajaPintar(){
+    var texto = (document.getElementById('incBajaTexto').value || '').trim();
+    var otro = _incBaja.motivo === 'otro';
+    document.querySelectorAll('#incBajaMotivos .inc-baja-mot').forEach(function(b){
+      var on = b.dataset.cod === _incBaja.motivo;
+      b.classList.toggle('on', !!on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    document.getElementById('incBajaTextoLbl').innerHTML = otro
+      ? 'Cuéntanos el motivo <span class="text-danger">*</span> <small class="text-muted fw-normal">(mínimo 10 caracteres)</small>'
+      : 'Detalle (opcional)';
+    var ok = [true, !!_incBaja.motivo && (!otro || texto.length >= 10)];
+    ok.forEach(function(d, i){
+      var pane = document.getElementById('incBajaPane' + (i + 1));
+      pane.classList.toggle('done', !!d);
+      pane.querySelector('.inc-num-circle').classList.toggle('done', !!d);
+    });
+    var n = ok.filter(Boolean).length;
+    document.getElementById('incBajaProgresoTxt').textContent = n + ' de 2 pasos listos';
+    var bar = document.getElementById('incBajaProgresoBar');
+    bar.style.width = Math.round(n / 2 * 100) + '%';
+    bar.style.background = n === 2 ? '#16a34a' : '';
+  }
+
+  function incBajaEnviar(){
+    var ctx = _incBaja.ctx;
+    if(!ctx) return;
+    var err = document.getElementById('incBajaErr');
+    err.textContent = '';
+    var texto = (document.getElementById('incBajaTexto').value || '').trim();
+    if(!_incBaja.motivo){ err.textContent = 'Elige el motivo de la baja.'; return; }
+    if(_incBaja.motivo === 'otro' && texto.length < 10){ err.textContent = 'Cuéntanos el motivo de la baja (mínimo 10 caracteres).'; return; }
+    var url = ctx.origen === 'incidencia' ? '/mantenciones/api/incidencias/'+ctx.id+'/baja' : '/mantenciones/api/incidencias/bajas';
+    var body = ctx.origen === 'incidencia' ? {} : {clave: ctx.clave};
+    body.motivo_codigo = _incBaja.motivo;
+    body.motivo_texto = texto;
+    var btn = document.getElementById('incBajaBtnOk');
+    btn.disabled = true;
+    fetch(url, {method:'POST', credentials:'same-origin',
+                headers:{'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN || ''},
+                body: JSON.stringify(body)})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        btn.disabled = false;
+        if(!d.ok){ err.textContent = d.error || 'No se pudo dar de baja.'; return; }
+        incBajaModal().hide();
+        ilusToast('✓ Dada de baja. Queda en "Dadas de baja" con su motivo.', {type:'success'});
+        if(d.solicitudes_repuesto){
+          ilusAlert({title:'Ojo con los repuestos', type:'warning',
+            message:'Esta incidencia tiene '+d.solicitudes_repuesto+' solicitud(es) de repuesto hechas. Darla de baja no las cancela.'});
+        }
+        incBajaRefrescar();
+      })
+      .catch(function(){ btn.disabled = false; err.textContent = 'No se pudo conectar con el servidor.'; });
+  }
+
+  // Después de dar de baja o reactivar: la tabla principal y, si está abierto, el panel.
+  function incBajaRefrescar(){
+    cargar();
+    if(!document.getElementById('incConciliacion').hidden){ incConcData = null; incConcCargar(); }
+  }
+
+  // ── Historial "Dadas de baja": trazabilidad de por qué algún día estuvo ──
+  var incBajasSt = {page: 1, size: 10, estado: 'vigentes', q: ''};
+  var incBajasToken = 0;
+
+  function incBajasCargar(){
+    var box = $('incConcLista');
+    if(!$('incBajasTabla')){
+      var optEstado = [['vigentes','Vigentes'], ['reactivadas','Reactivadas'], ['todas','Todas']].map(function(o){
+        return '<option value="'+o[0]+'"'+(o[0] === incBajasSt.estado ? ' selected' : '')+'>'+o[1]+'</option>';
+      }).join('');
+      box.innerHTML = '<div class="rm-toolbar inc-baja-tools">'
+        + '<div class="rm-search" role="search"><label class="rm-search-tag" for="incBajasQ"><i class="bi bi-search"></i><span>Buscar</span></label>'
+        +   '<input id="incBajasQ" type="search" autocomplete="off" spellcheck="false" placeholder="SKU, producto, UA, motivo o quién…" aria-label="Buscar en las bajas" value="'+incEsc(incBajasSt.q)+'">'
+        +   '<span class="rm-search-count" id="incBajasCount" aria-live="polite"></span></div>'
+        + '<div class="rm-tools-row"><div class="rm-tools"><select id="incBajasEstado" class="rm-select" aria-label="Filtrar las bajas">'+optEstado+'</select></div></div>'
+        + '</div><div id="incBajasTabla"></div>';
+      $('incBajasQ').addEventListener('input', function(){
+        clearTimeout(window.__incBajasDeb);
+        var v = this.value;
+        window.__incBajasDeb = setTimeout(function(){ incBajasSt.q = v; incBajasSt.page = 1; incBajasCargar(); }, 350);
+      });
+      $('incBajasEstado').addEventListener('change', function(){ incBajasSt.estado = this.value; incBajasSt.page = 1; incBajasCargar(); });
+    }
+    var miToken = ++incBajasToken;
+    $('incBajasTabla').innerHTML = '<div class="empty-state" style="padding:26px"><i class="bi bi-hourglass-split"></i>Cargando…</div>';
+    fetch('/mantenciones/api/incidencias/bajas?page='+incBajasSt.page+'&page_size='+incBajasSt.size
+        + '&estado='+encodeURIComponent(incBajasSt.estado)+'&q='+encodeURIComponent(incBajasSt.q), {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(miToken !== incBajasToken || !$('incBajasTabla')) return;   // llegó tarde
+        if(!d.ok){ $('incBajasTabla').innerHTML = '<div class="empty-state text-danger" style="padding:26px">'+incEsc(d.error || 'No se pudo leer el historial.')+'</div>'; return; }
+        incBajasPintar(d);
+      })
+      .catch(function(){
+        if(miToken !== incBajasToken || !$('incBajasTabla')) return;
+        $('incBajasTabla').innerHTML = '<div class="empty-state text-danger" style="padding:26px">No se pudo conectar con el servidor.</div>';
+      });
+  }
+
+  function incBajasPintar(d){
+    var rows = d.rows || [];
+    var cnt = $('incBajasCount');
+    if(cnt) cnt.textContent = (d.total || 0) + ' baja' + (d.total === 1 ? '' : 's');
+    var cont = $('incBajasTabla');
+    if(!rows.length){
+      cont.innerHTML = '<div class="empty-state" style="padding:26px"><i class="bi bi-archive"></i>'
+        + (incBajasSt.q ? 'Ninguna baja coincide con lo que buscas.' : 'Todavía no hay bajas en esta vista.') + '</div>';
+      return;
+    }
+    var NCB = 7;   // flecha, cuándo y quién, producto, motivo, números, estado, acción
+    function panel(ico, titulo, cuerpo, ancho){
+      return '<div class="rm-panel'+(ancho ? ' rm-panel-wide' : '')+'"><h4><i class="bi bi-'+ico+'"></i>'+titulo+'</h4>'+cuerpo+'</div>';
+    }
+    function nums(b){
+      var esInc = b.origen === 'incidencia';
+      return '<div class="inc-baja-nums">'
+        + (esInc ? '<span class="inc-cmp inc-cmp-bd">Cant. '+incVn(b.cantidad)+'</span>'
+                 : '<span class="inc-cmp inc-cmp-bd">Nuestra BD '+incVn(b.nuestra_bd)+'</span>')
+        + '<span class="inc-cmp inc-cmp-erp">ERP '+incVn(b.erp)+'</span>'
+        + '<span class="inc-cmp inc-cmp-wms">WMS '+incVn(b.wms)+'</span></div>';
+    }
+    var html = '<div class="rm-wrap"><div class="table-responsive">'
+      + '<table class="ilus-table table-mobile-cards rm-table align-middle" id="incBajasTbl"><thead><tr>'
+      + '<th class="rm-c-exp"></th><th>Dada de baja</th><th>Producto</th><th>Motivo</th><th>Números de ese día</th><th>Estado</th>'
+      + '<th class="text-end rm-c-acc">Acción</th></tr></thead><tbody>';
+    rows.forEach(function(b){
+      var esInc = b.origen === 'incidencia';
+      var tipoTxt = esInc ? 'Incidencia #'+b.incidencia_id : ((INC_TIPOS[b.tipo_hallazgo] || {}).t || 'Pendiente');
+      html += '<tr class="rm-row" data-alerta="'+(b.vigente ? 'gris' : 'verde')+'">'
+        + '<td class="rm-c-exp"><button type="button" class="rm-ic-btn rm-exp" aria-expanded="false" aria-label="Ver el detalle" title="Ver el detalle"><i class="bi bi-chevron-right"></i></button></td>'
+        + '<td data-label="Dada de baja"><div class="rm-cell"><div class="rm-fecha-main">'+incFmtChile(b.baja_at)+'</div><div class="rm-sub">'+incEsc(b.baja_by || '')+'</div></div></td>'
+        + '<td data-label="Producto"><div class="rm-cell"><span class="rm-pill gris" style="margin-top:0"><i class="bi bi-'+(esInc ? 'exclamation-triangle' : 'shield-check')+'"></i>'+incEsc(tipoTxt)+'</span>'
+        +   '<div class="rm-cli-name" style="margin-top:4px">'+incEsc(b.descripcion || '—')+'</div>'
+        +   '<div class="rm-sub"><span class="rm-code">'+incEsc(b.sku || '—')+'</span>'+(b.ua ? ' · UA '+incEsc(b.ua) : '')+'</div></div></td>'
+        + '<td data-label="Motivo"><div class="rm-cell"><b>'+incEsc(b.motivo || '')+'</b>'+(b.motivo_texto ? '<div class="rm-sub">'+incEsc(b.motivo_texto)+'</div>' : '')+'</div></td>'
+        + '<td data-label="Números de ese día"><div class="rm-cell">'+nums(b)+'</div></td>'
+        + '<td data-label="Estado"><div class="rm-cell">'
+        +   (b.vigente ? '<span class="rm-pill gris" style="margin-top:0"><i class="bi bi-archive"></i>Vigente</span>'
+                       : '<span class="rm-pill verde" style="margin-top:0"><i class="bi bi-arrow-counterclockwise"></i>Reactivada</span>'
+                         + '<div class="rm-sub">'+incFmtChile(b.reactivada_at)+(b.reactivada_by ? ' · '+incEsc(b.reactivada_by) : '')+'</div>')
+        + '</div></td>'
+        + '<td class="text-end rm-c-acc" data-label="Acción">'
+        +   (b.vigente ? '<button type="button" class="btn btn-sm btn-outline-dark inc-baja-react" data-id="'+b.id+'"><i class="bi bi-arrow-counterclockwise me-1"></i>Reactivar</button>'
+                       : '<span class="rm-sub">—</span>')
+        + '</td></tr>'
+        + '<tr class="rm-detail" hidden><td colspan="'+NCB+'"><div class="rm-panels">'
+        +   panel('chat-square-quote', 'Motivo de la baja', '<p><b>'+incEsc(b.motivo || '')+'</b></p>'
+              + (b.motivo_texto ? '<p>'+incEsc(b.motivo_texto)+'</p>' : '<p class="rm-sub">Sin detalle escrito</p>'), true)
+        +   panel('info-circle', 'Qué era', '<p>'+incEsc(tipoTxt)+'</p>' + nums(b))
+        +   panel('clock-history', 'Registro', '<p><b>Dada de baja:</b> '+incFmtChile(b.baja_at)+(b.baja_by ? ' · '+incEsc(b.baja_by) : '')+'</p>'
+              + (b.vigente ? '' : '<p><b>Reactivada:</b> '+incFmtChile(b.reactivada_at)+(b.reactivada_by ? ' · '+incEsc(b.reactivada_by) : '')+'</p>'
+                  + (b.reactivada_motivo ? '<p>'+incEsc(b.reactivada_motivo)+'</p>' : '')))
+        + '</div></td></tr>';
+    });
+    var desde = ((d.page - 1) * d.page_size) + 1, hasta = Math.min(d.page * d.page_size, d.total);
+    html += '</tbody></table></div>'
+      + '<div class="rm-foot">'
+      +   '<div class="rm-foot-count"><i class="bi bi-collection"></i><span>Mostrando <strong>'+desde+'–'+hasta+'</strong> de <strong>'+d.total+'</strong></span></div>'
+      +   '<div class="rm-foot-ctrl">'
+      +     '<select class="rm-select" id="incBajasSize" aria-label="Filas por página">'
+      +       [10,25,50,100].map(function(s){ return '<option value="'+s+'"'+(s === incBajasSt.size ? ' selected' : '')+'>'+s+' por página</option>'; }).join('')
+      +     '</select>'
+      +     '<button type="button" class="rm-btn" id="incBajasPrev" '+(d.page <= 1 ? 'disabled' : '')+'><i class="bi bi-chevron-left"></i>Anterior</button>'
+      +     '<span>Página '+d.page+' de '+d.total_pages+'</span>'
+      +     '<button type="button" class="rm-btn" id="incBajasNext" '+(d.page >= d.total_pages ? 'disabled' : '')+'>Siguiente<i class="bi bi-chevron-right"></i></button>'
+      +   '</div></div></div>';
+    cont.innerHTML = html;
+    cont.querySelectorAll('.rm-exp').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var det = btn.closest('tr').nextElementSibling;
+        if(!det || !det.classList.contains('rm-detail')) return;
+        det.hidden = !det.hidden;
+        btn.setAttribute('aria-expanded', det.hidden ? 'false' : 'true');
+      });
+    });
+    cont.querySelectorAll('.inc-baja-react').forEach(function(btn){
+      btn.addEventListener('click', function(){ incBajaReactivar(btn.dataset.id); });
+    });
+    $('incBajasPrev').onclick = function(){ if(incBajasSt.page > 1){ incBajasSt.page--; incBajasCargar(); } };
+    $('incBajasNext').onclick = function(){ if(incBajasSt.page < d.total_pages){ incBajasSt.page++; incBajasCargar(); } };
+    $('incBajasSize').onchange = function(){ incBajasSt.size = parseInt(this.value, 10); incBajasSt.page = 1; incBajasCargar(); };
+  }
+
+  // Pide un texto con mínimo de caracteres (ilusPrompt no valida largo): si queda corto
+  // vuelve a preguntar conservando lo escrito. Devuelve null si cancelan.
+  function incPedirTexto(opts, min){
+    return new Promise(function(resolve){
+      (function pedir(previo, aviso){
+        ilusPrompt(Object.assign({}, opts, {defaultValue: previo || '', sub: aviso || ''})).then(function(v){
+          if(v === null || v === undefined) return resolve(null);
+          v = String(v).trim();
+          if(v.length < min) return pedir(v, 'Escribe al menos '+min+' caracteres.');
+          resolve(v);
+        });
+      })('', '');
+    });
+  }
+
+  function incBajaReactivar(bid){
+    incPedirTexto({title:'Reactivar', type:'question', multiline:true, okLabel:'Reactivar',
+      message:'Cuéntanos por qué se reactiva. Queda en el historial.',
+      placeholder:'Ej: la unidad volvió a la bodega 13'}, 10).then(function(motivo){
+      if(motivo === null) return;
+      fetch('/mantenciones/api/incidencias/bajas/'+bid+'/reactivar', {method:'POST', credentials:'same-origin',
+          headers:{'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN || ''},
+          body: JSON.stringify({motivo: motivo})})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d.ok){ ilusToast(d.error || 'No se pudo reactivar', {type:'error'}); return; }
+          ilusToast('✓ Reactivada', {type:'success'});
+          incBajaRefrescar();
+        })
+        .catch(function(){ ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
+    });
+  }
+
+  // Todo conectado por código (los onclick del HTML no alcanzan funciones de la IIFE).
+  document.getElementById('incBajaMotivos').addEventListener('click', function(ev){
+    var b = ev.target.closest('.inc-baja-mot');
+    if(!b) return;
+    _incBaja.motivo = b.dataset.cod;
+    incBajaPintar();
+    if(_incBaja.motivo === 'otro') document.getElementById('incBajaTexto').focus();
+  });
+  document.getElementById('incBajaTexto').addEventListener('input', incBajaPintar);
+  document.getElementById('incBajaBtnOk').addEventListener('click', incBajaEnviar);
+  // Acceso directo desde la barra de la tabla principal: abre el panel en "Dadas de baja".
+  document.getElementById('incBtnBajas').addEventListener('click', function(){
+    incConcFiltro = 'bajas'; incConcPage = 1; incBajasSt.page = 1;
+    incConcCargar();
+    document.getElementById('incConciliacion').scrollIntoView({behavior:'smooth', block:'start'});
+  });
 
   // 🔧 2026-09-26 (Daniel, decisión confirmada): tocar una fila "Falta en
   // nuestra BD" -- o "dif_erp"/"no_en_erp" sin incidencia asociada, ej. el

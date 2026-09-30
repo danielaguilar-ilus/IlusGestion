@@ -64148,10 +64148,16 @@ INC_HALLAZGO_INFO = {
         "ayuda": "El ERP Random (la fuente que manda) tiene una cantidad "
                  "distinta a la que tenemos declarada. Corrige la incidencia.",
     },
+    # 🏷️ 2026-09-30 (Daniel: "existen SKU que no existen en Random, no sé de
+    # dónde los sacaste"): la etiqueta decía "No existe en el ERP" pero lo que
+    # se comprueba es que el SKU NO TIENE REGISTRO DE STOCK en la bodega 13 de
+    # Random (tabla MAEST) -- el producto puede existir igual en su maestro
+    # (MAEPR), en otra bodega o con el stock en otra parte. Se dice lo que es.
     "no_en_erp": {
-        "label": "No existe en el ERP", "accion": "ver",
-        "ayuda": "Declaramos este SKU pero no tiene stock en la bodega 13 "
-                 "del ERP Random -- revisa si el SKU está bien escrito.",
+        "label": "Sin stock en Random", "accion": "ver",
+        "ayuda": "Este SKU no tiene registro de stock en la bodega 13 del ERP "
+                 "Random (el producto sí puede existir en Random, solo que no "
+                 "está en esa bodega) -- revisa si el SKU está bien escrito.",
     },
     "dif_wms": {
         "label": "Diferencia con CheckWMS", "accion": "ver",
@@ -64198,6 +64204,226 @@ def _inc_hallazgo_accion(h):
     if h.get("tipo") in ("dif_erp", "no_en_erp"):
         return "registrar"
     return None
+
+
+# ══ Dar de baja (Daniel, 2026-09-30) ══════════════════════════════════════════
+# "quiero que todos los usuarios puedan gestionar y dar de baja productos sin
+# eliminar para tener trazabilidad de por qué algún día estuvo".
+#   · ELIMINAR sigue siendo solo de administradores (mant_api_incidencias_borrar).
+#   · DAR DE BAJA es de todos los usuarios del módulo, pide un MOTIVO y deja
+#     quién, cuándo y por qué en `mant_incidencia_bajas`. Nada se borra y se
+#     puede reactivar.
+#   · Un pendiente SIN incidencia (Random o el WMS tienen algo que nadie registró)
+#     se da de baja como "hallazgo": se oculta mientras sus números no cambien.
+#     Decisión de Daniel: si cambian, vuelve a salir marcado "antes dado de baja".
+#   · Una incidencia registrada se da de baja como "incidencia": pasa a
+#     'resuelta' (sale de la tabla principal y de la conciliación) conservando
+#     fotos, bitácora y todos sus datos.
+INC_BAJA_MOTIVOS = {
+    "regularizado_random": "Ya está regularizado en Random",
+    "regularizado_wms": "Ya está regularizado en CheckWMS",
+    "salio_resuelto": "Salió de la bodega o ya se resolvió",
+    "duplicado_error": "Duplicado o error de registro",
+    "merma_desecho": "Producto dado de baja (merma o desecho)",
+    "otro": "Otro motivo",
+}
+
+
+def _inc_baja_validar(codigo, texto):
+    """PURA. Valida el motivo de una baja. Devuelve (codigo, texto, error);
+    `error` es None si todo está bien. "Otro motivo" exige explicarlo (mínimo
+    10 caracteres, igual que el motivo de una incidencia); con los demás el
+    detalle es opcional."""
+    codigo = (codigo or "").strip()
+    texto = (texto or "").strip()[:500]
+    if codigo not in INC_BAJA_MOTIVOS:
+        return None, None, "Elige el motivo de la baja."
+    if codigo == "otro" and len(texto) < 10:
+        return None, None, "Cuéntanos el motivo de la baja (mínimo 10 caracteres)."
+    return codigo, (texto or None), None
+
+
+def _inc_baja_clave(h):
+    """PURA. Clave ESTABLE de un hallazgo de la conciliación: permite saber que
+    "el mismo pendiente" sigue ahí aunque la lista se recalcule en cada carga
+    (los hallazgos no se guardan). Por SKU para las diferencias de cantidad; por
+    UA+SKU para lo que depende de una UA concreta; por incidencia para "sin motivo"."""
+    tipo = (h.get("tipo") or "").strip()
+    sku = (h.get("sku") or "").strip()
+    ua = (h.get("ua") or "").strip().upper()
+    if tipo in ("falta_registrar", "fuera_de_bodega"):
+        return f"{tipo}|{ua}|{sku}"
+    if tipo == "sin_motivo":
+        ids = h.get("ids") or []
+        return f"{tipo}|{ids[0] if ids else ''}"
+    return f"{tipo}|{sku}"
+
+
+def _inc_baja_num(v):
+    try:
+        return None if v is None or v == "" else round(float(v), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _inc_baja_mismos_numeros(baja, h):
+    """PURA. True si los números del hallazgo HOY (nuestra BD / ERP / WMS) son los
+    mismos que cuando se dio de baja. Si cambiaron, la baja ya no vale para este
+    pendiente y vuelve a salir (marcado "antes dado de baja")."""
+    for k in ("nuestra_bd", "erp", "wms"):
+        a, b = _inc_baja_num(baja.get(k)), _inc_baja_num(h.get(k))
+        if (a is None) != (b is None):
+            return False
+        if a is not None and abs(a - b) > 0.001:
+            return False
+    return True
+
+
+def _inc_aplicar_bajas(hallazgos, bajas):
+    """PURA. Saca de la lista los pendientes SIN incidencia que alguien dio de baja
+    y cuyos números siguen iguales. Si los números cambiaron (Random pasó de 4 a 5),
+    el pendiente vuelve a salir con `baja_previa` (quién, cuándo, por qué y cómo
+    estaban) -- decisión de Daniel, 2026-09-30. Un pendiente CON incidencia nunca se
+    oculta por acá: a ese se le da de baja la incidencia."""
+    visibles = []
+    for h in hallazgos:
+        b = bajas.get(h.get("clave")) if h.get("baja_hallazgo") else None
+        if b:
+            if _inc_baja_mismos_numeros(b, h):
+                continue          # sigue igual que cuando se dio de baja: oculto
+            h["baja_previa"] = _inc_baja_publica(b)
+        visibles.append(h)
+    return visibles
+
+
+def _inc_baja_publica(b):
+    """Fila de `mant_incidencia_bajas` lista para JSON (fechas como texto UTC;
+    el navegador las muestra en hora de Chile, REGLA #6)."""
+    b = dict(b)
+    for k in ("baja_at", "reactivada_at"):
+        if b.get(k):
+            b[k] = b[k].strftime("%Y-%m-%d %H:%M:%S")
+    if b.get("fecha_res_antes"):
+        b["fecha_res_antes"] = b["fecha_res_antes"].strftime("%Y-%m-%d")
+    for k in ("cantidad", "nuestra_bd", "erp", "wms"):
+        if b.get(k) is not None:
+            b[k] = float(b[k])
+    b["motivo"] = INC_BAJA_MOTIVOS.get(b.get("motivo_codigo"), b.get("motivo_codigo"))
+    b["vigente"] = not b.get("reactivada_at")
+    return b
+
+
+def _ensure_incidencia_bajas_table():
+    """Tabla NUEVA de bajas (2026-09-30). Se crea SIEMPRE en el arranque, incluso
+    con ILUS_SKIP_MIGRATIONS=1. Una sentencia `CREATE TABLE IF NOT EXISTS`: la
+    guardia de DDL la salta sin pedir lock si ya existe (REGLA #18)."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_incidencia_bajas (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    origen          VARCHAR(20)  NOT NULL COMMENT 'hallazgo | incidencia',
+                    clave           VARCHAR(190) NOT NULL COMMENT 'hallazgo: tipo|sku|ua -- incidencia: inc|<id>',
+                    incidencia_id   INT NULL,
+                    tipo_hallazgo   VARCHAR(40)  NULL,
+                    sku             VARCHAR(100) NULL,
+                    descripcion     VARCHAR(400) NULL,
+                    ua              VARCHAR(60)  NULL,
+                    cantidad        DECIMAL(12,2) NULL COMMENT 'cantidad de la incidencia al darla de baja',
+                    nuestra_bd      DECIMAL(12,2) NULL COMMENT 'foto de los números al momento de la baja',
+                    erp             DECIMAL(12,2) NULL,
+                    wms             DECIMAL(12,2) NULL,
+                    motivo_codigo   VARCHAR(40)  NOT NULL,
+                    motivo_texto    VARCHAR(500) NULL,
+                    estado_antes    VARCHAR(20)  NULL COMMENT 'estado de la incidencia antes de la baja (para reactivar)',
+                    fecha_res_antes DATE NULL,
+                    baja_by         VARCHAR(190) NULL,
+                    baja_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    reactivada_at   DATETIME NULL,
+                    reactivada_by   VARCHAR(190) NULL,
+                    reactivada_motivo VARCHAR(500) NULL,
+                    KEY idx_baja_clave (clave, reactivada_at),
+                    KEY idx_baja_inc (incidencia_id, reactivada_at),
+                    KEY idx_baja_fecha (baja_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _inc_bajas_hallazgo_vigentes():
+    """{clave: fila} de las bajas VIGENTES de hallazgos (la más reciente por clave).
+    Nunca lanza: si la tabla no está, la conciliación sigue como antes."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT * FROM mant_incidencia_bajas "
+            " WHERE origen='hallazgo' AND reactivada_at IS NULL ORDER BY id") or []
+    except Exception as _e:
+        print(f"[incidencias bajas] no se pudieron leer: {_e}", flush=True)
+        return {}
+    return {f["clave"]: f for f in filas}
+
+
+def _inc_ids_en_baja():
+    """IDs de incidencias con una baja VIGENTE: no se muestran en la tabla
+    principal (viven en "Dadas de baja"). Nunca lanza."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT DISTINCT incidencia_id FROM mant_incidencia_bajas "
+            " WHERE origen='incidencia' AND reactivada_at IS NULL AND incidencia_id IS NOT NULL") or []
+    except Exception as _e:
+        print(f"[incidencias bajas] ids en baja: {_e}", flush=True)
+        return set()
+    return {f["incidencia_id"] for f in filas}
+
+
+# 🏷️ 2026-09-30 (Daniel: "existen SKU que no existen en Random, no sé de dónde los
+# sacaste"): el nombre del producto de un pendiente salía SOLO de CheckWMS; cuando
+# CheckWMS no tenía el SKU en su Bodega 13 la celda quedaba en "—" aunque el SKU sí
+# existe en Random. Se completa con el maestro de productos de Random (MAEPR),
+# SOLO lectura (REGLA #4.1). El nombre casi no cambia: caché de 12 h.
+_ERP_NOMBRES_CACHE = {}      # {SKU en mayúsculas: (ts, nombre | None)}
+_ERP_NOMBRES_TTL = 43200
+
+
+def _erp_nombres_por_sku(skus):
+    """{sku: nombre} según el maestro de productos de Random. Nunca lanza: si el
+    ERP no responde devuelve lo que haya en caché."""
+    pedidos = sorted({(s or "").strip() for s in (skus or []) if (s or "").strip()})
+    ahora = time.time()
+    faltan = [s for s in pedidos
+              if s.upper() not in _ERP_NOMBRES_CACHE
+              or (ahora - _ERP_NOMBRES_CACHE[s.upper()][0]) >= _ERP_NOMBRES_TTL]
+    if faltan:
+        try:
+            filas = _random_sql_query(
+                "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS nombre "
+                "  FROM MAEPR WHERE LTRIM(RTRIM(KOPR)) IN (" + ",".join(["%s"] * len(faltan)) + ")",
+                tuple(faltan), max_rows=len(faltan) + 10)
+        except Exception as _e:
+            print(f"[incidencias nombres ERP] no disponible: {_e}", flush=True)
+            filas = None
+        if filas is not None:
+            hallados = {(f.get("sku") or "").strip().upper(): (f.get("nombre") or "").strip() for f in filas}
+            for s in faltan:
+                _ERP_NOMBRES_CACHE[s.upper()] = (ahora, hallados.get(s.upper()) or None)
+    return {s: _ERP_NOMBRES_CACHE[s.upper()][1] for s in pedidos
+            if s.upper() in _ERP_NOMBRES_CACHE and _ERP_NOMBRES_CACHE[s.upper()][1]}
+
+
+def _inc_completar_nombres(hallazgos):
+    """Rellena `descripcion` de los hallazgos que no la traen (CheckWMS no tiene
+    el SKU) con el nombre del producto en Random. Marca `descripcion_fuente`."""
+    faltan = [h["sku"] for h in hallazgos if h.get("sku") and not (h.get("descripcion") or "").strip()]
+    if not faltan:
+        return
+    nombres = _erp_nombres_por_sku(faltan)
+    for h in hallazgos:
+        if h.get("sku") and not (h.get("descripcion") or "").strip() and nombres.get(h["sku"]):
+            h["descripcion"] = nombres[h["sku"]]
+            h["descripcion_fuente"] = "erp"
 
 
 def _inc_hallazgo_falta_registrar(ua, fila_wms, erp_por_sku=None, clasificacion=None):
@@ -64259,11 +64485,18 @@ def _inc_hallazgo_falta_registrar(ua, fila_wms, erp_por_sku=None, clasificacion=
     }
 
 
-@app.route("/mantenciones/api/incidencias/conciliacion", methods=["GET"])
-@_mant_required
-@_no_tecnico_salvo_taller
-def mant_api_incidencias_conciliacion():
+class _IncConcMysqlError(Exception):
+    """No se pudieron leer las incidencias (MySQL): la conciliación no sigue."""
+
+
+def _inc_calcular_hallazgos():
     """Conciliación Bodega 13 ↔ Incidencias ↔ ERP Random.
+
+    🔧 2026-09-30: el cálculo vive acá (antes era el cuerpo del endpoint) para que
+    el endpoint de la lista Y el de "dar de baja" usen exactamente los mismos
+    hallazgos: la baja se guarda con la foto de los números que calcula el
+    SERVIDOR, no con lo que mande el navegador. Devuelve un dict con `hallazgos`
+    y el estado de las fuentes; lanza _IncConcMysqlError si MySQL falla.
 
     Reproduce lo que hacían las macros VBA que Daniel usaba en Excel
     (`Cargar_ListView1_FaltantesEnMySQL` y `Cargar_ListView2_
@@ -64308,7 +64541,7 @@ def mant_api_incidencias_conciliacion():
             "  FROM mant_incidencias WHERE estado='abierta' AND COALESCE(eliminada,0)=0") or []
     except Exception as _e:
         print(f"[conciliacion] error MySQL: {_e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
+        raise _IncConcMysqlError() from _e
 
     inc_por_ua, inc_por_sku = {}, {}
     for i in incs:
@@ -64476,13 +64709,48 @@ def mant_api_incidencias_conciliacion():
     # que Daniel reportó: "no selecciona nada, no sé qué hace").
     for h in hallazgos:
         h["accion"] = _inc_hallazgo_accion(h)
+        h["clave"] = _inc_baja_clave(h)
+        # Un pendiente SIN incidencia asociada se da de baja como "hallazgo"; si
+        # tiene incidencia, la baja se le hace a la incidencia.
+        h["baja_hallazgo"] = not h.get("ids")
 
+    # 🏷️ 2026-09-30: el nombre que falta (CheckWMS no tiene el SKU) sale de Random.
+    _inc_completar_nombres(hallazgos)
+
+    return {
+        "hallazgos": hallazgos,
+        "wms_ok": wms_ok, "wms_uas": len(wms_por_ua),
+        "erp_ok": erp_ok, "erp_skus": len(erp_por_sku),
+        "incs_abiertas": len(incs),
+    }
+
+
+@app.route("/mantenciones/api/incidencias/conciliacion", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_conciliacion():
+    """Lista de pendientes entre nuestra BD, el ERP Random y CheckWMS (ver
+    _inc_calcular_hallazgos). 🔧 2026-09-30: los pendientes SIN incidencia que
+    alguien dio de baja se ocultan mientras sus números no cambien; si cambian,
+    vuelven a salir con `baja_previa` (quién, cuándo y por qué, y los números de
+    entonces). `resumen.dadas_de_baja` cuenta todas las bajas vigentes."""
+    try:
+        calc = _inc_calcular_hallazgos()
+    except _IncConcMysqlError:
+        return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
+    hallazgos = _inc_aplicar_bajas(calc["hallazgos"], _inc_bajas_hallazgo_vigentes())
+    try:
+        n_bajas = (mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_incidencia_bajas WHERE reactivada_at IS NULL") or {}).get("n", 0)
+    except Exception as _e:
+        print(f"[incidencias bajas] conteo: {_e}", flush=True)
+        n_bajas = 0
     return jsonify({
         "ok": True,
         "fuentes": {
-            "wms": {"ok": wms_ok, "uas": len(wms_por_ua), "bodega": INC_BODEGA_WMS},
-            "erp": {"ok": erp_ok, "skus": len(erp_por_sku), "bodega": INC_BODEGA_ERP},
-            "incidencias": {"ok": True, "abiertas": len(incs)},
+            "wms": {"ok": calc["wms_ok"], "uas": calc["wms_uas"], "bodega": INC_BODEGA_WMS},
+            "erp": {"ok": calc["erp_ok"], "skus": calc["erp_skus"], "bodega": INC_BODEGA_ERP},
+            "incidencias": {"ok": True, "abiertas": calc["incs_abiertas"]},
         },
         "total": len(hallazgos),
         "resumen": {
@@ -64492,8 +64760,10 @@ def mant_api_incidencias_conciliacion():
             "sin_motivo":     sum(1 for h in hallazgos if h["tipo"] == "sin_motivo"),
             "falta_registrar": sum(1 for h in hallazgos if h["tipo"] == "falta_registrar"),
             "fuera_de_bodega": sum(1 for h in hallazgos if h["tipo"] == "fuera_de_bodega"),
+            "dadas_de_baja":  int(n_bajas or 0),
         },
         "tipos": INC_HALLAZGO_INFO,
+        "motivos_baja": [{"codigo": k, "texto": v} for k, v in INC_BAJA_MOTIVOS.items()],
         "hallazgos": hallazgos[:300],
     })
 
@@ -64545,7 +64815,9 @@ def mant_incidencias_page():
     tabla que hoy vive en un Clever Cloud aparte (Excel/VBA vía DSN=SPHS),
     para poder dar de baja esa instancia externa. Paginada server-side
     (REGLA #4.3, patrón Etiquetas)."""
-    return render_template("mantenciones/incidencias.html")
+    # 🗄️ 2026-09-30: los motivos de baja salen de UNA sola fuente (INC_BAJA_MOTIVOS).
+    return render_template("mantenciones/incidencias.html",
+                           motivos_baja=[{"codigo": k, "texto": v} for k, v in INC_BAJA_MOTIVOS.items()])
 
 
 def _inc_diagnostico_ua_duplicadas():
@@ -64567,14 +64839,17 @@ def _inc_diagnostico_ua_duplicadas():
 
 
 def _inc_ua_duplicada(ua_normalizada, excluir_id=None):
-    """True si YA existe otra incidencia ACTIVA (no eliminada) con esa
+    """True si YA existe otra incidencia ACTIVA (abierta y no eliminada) con esa
     misma UA. Usada por crear/editar para rechazar con un mensaje claro
-    -- REGLA de Daniel 2026-09-26: "la UA como identificador único real"."""
+    -- REGLA de Daniel 2026-09-26: "la UA como identificador único real".
+    🔧 2026-09-30: una incidencia dada de baja ('resuelta') libera su UA -- si la
+    unidad vuelve a la bodega se puede registrar de nuevo (antes la conciliación
+    decía "falta registrar" y el alta la rechazaba por la UA de la ya cerrada)."""
     if not ua_normalizada:
         return False
     fila = mysql_fetchone(
         "SELECT id FROM mant_incidencias WHERE recomendacion=%s AND COALESCE(eliminada,0)=0 "
-        " AND (%s IS NULL OR id<>%s) LIMIT 1",
+        " AND estado='abierta' AND (%s IS NULL OR id<>%s) LIMIT 1",
         (ua_normalizada, excluir_id, excluir_id))
     return bool(fila)
 
@@ -64862,6 +65137,14 @@ def mant_api_incidencias_list():
 
     where = ["COALESCE(eliminada,0) = 0"]
     params = []
+
+    # 🔧 2026-09-30 (Daniel: "dar de baja sin eliminar"): una incidencia dada de
+    # baja no se muestra acá -- vive en "Dadas de baja", el historial con el
+    # motivo, quién y cuándo. Sigue en la base con todo su detalle.
+    ids_baja = _inc_ids_en_baja()
+    if ids_baja:
+        where.append("id NOT IN (" + ",".join(["%s"] * len(ids_baja)) + ")")
+        params += list(ids_baja)
 
     # 🔧 2026-09-27 (Daniel, viendo la tabla en vivo): "esta tabla sea la que
     # filtra lo que está cuadrado con motivo y con cantidades... si no,
@@ -65179,6 +65462,214 @@ def mant_api_incidencias_borrar(iid):
         cur.execute(
             "UPDATE mant_incidencias SET eliminada=1, eliminada_at=NOW(), eliminada_by=%s WHERE id=%s",
             (current_username(), iid))
+        db.commit()
+    return jsonify({"ok": True})
+
+
+# ══ Dar de baja: pendientes e incidencias (Daniel, 2026-09-30) ═══════════════
+# Ver el bloque de INC_BAJA_MOTIVOS. Todos los usuarios del módulo pueden (a
+# diferencia de ELIMINAR, que sigue siendo solo de administradores).
+def _inc_baja_foto_numeros(sku):
+    """(erp, wms) de un SKU AHORA, desde las mismas cachés de la conciliación: solo
+    para dejar en la baja la foto de los números de ese momento. Nunca lanza."""
+    erp = wms = None
+    try:
+        erp = (_erp_stock_b13_por_sku() or {}).get(sku)
+    except Exception:
+        pass
+    try:
+        total, hay = 0.0, False
+        for r in (_checkwms_stock_rows() or []):
+            if (r.get("bodega") or "").strip().upper() == INC_BODEGA_WMS and (r.get("codigo") or "").strip() == sku:
+                hay = True
+                try:
+                    total += float(r.get("stFisico") or 0)
+                except (TypeError, ValueError):
+                    pass
+        wms = total if hay else None
+    except Exception:
+        pass
+    return erp, wms
+
+
+@app.route("/mantenciones/api/incidencias/bajas", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_bajas_list():
+    """Historial de bajas (REGLA #4.3: paginado). `estado`: vigentes (por defecto),
+    reactivadas o todas. Es la trazabilidad de "por qué algún día estuvo"."""
+    q = (request.args.get("q") or "").strip()
+    estado = (request.args.get("estado") or "vigentes").strip()
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", "10"))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in (10, 25, 50, 100):
+        page_size = 10
+    where, params = [], []
+    if estado == "reactivadas":
+        where.append("reactivada_at IS NOT NULL")
+    elif estado != "todas":
+        where.append("reactivada_at IS NULL")
+    if q:
+        where.append("(sku LIKE %s OR descripcion LIKE %s OR ua LIKE %s OR motivo_texto LIKE %s OR baja_by LIKE %s)")
+        params += [f"%{q}%"] * 5
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    try:
+        total = (mysql_fetchone(f"SELECT COUNT(*) AS n FROM mant_incidencia_bajas {where_sql}", params) or {}).get("n", 0)
+        filas = mysql_fetchall(
+            f"SELECT * FROM mant_incidencia_bajas {where_sql} ORDER BY baja_at DESC, id DESC LIMIT %s OFFSET %s",
+            params + [page_size, (page - 1) * page_size]) or []
+    except Exception as _e:
+        print(f"[incidencias bajas] listado: {_e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer el historial de bajas."}), 500
+    return jsonify({
+        "ok": True, "rows": [_inc_baja_publica(f) for f in filas],
+        "total": total, "page": page, "page_size": page_size,
+        "total_pages": max(1, -(-total // page_size)),
+        "motivos_baja": [{"codigo": k, "texto": v} for k, v in INC_BAJA_MOTIVOS.items()],
+    })
+
+
+@app.route("/mantenciones/api/incidencias/bajas", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_baja_hallazgo():
+    """Da de baja un PENDIENTE que no tiene incidencia (Random o el WMS tienen algo
+    que nadie registró). Motivo obligatorio; nada se borra. El servidor vuelve a
+    calcular los hallazgos y toma de ahí la foto de los números (no confía en lo
+    que mande el navegador)."""
+    data = request.get_json(silent=True) or {}
+    clave = (data.get("clave") or "").strip()
+    codigo, texto, err = _inc_baja_validar(data.get("motivo_codigo"), data.get("motivo_texto"))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if not clave:
+        return jsonify({"ok": False, "error": "Falta indicar qué pendiente dar de baja."}), 400
+    try:
+        calc = _inc_calcular_hallazgos()
+    except _IncConcMysqlError:
+        return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
+    h = next((x for x in calc["hallazgos"] if x.get("clave") == clave), None)
+    if not h:
+        return jsonify({"ok": False, "error":
+                        "Ese pendiente ya no aparece (quizá ya se resolvió). Actualiza la lista."}), 404
+    if not h.get("baja_hallazgo"):
+        return jsonify({"ok": False, "error":
+                        "Este pendiente tiene una incidencia registrada: dala de baja desde la incidencia."}), 400
+    usuario = current_username()
+    db = get_db()
+    with db.cursor() as cur:
+        # Una baja anterior de la MISMA clave (con otros números) queda reemplazada,
+        # no borrada: el historial conserva las dos.
+        cur.execute(
+            "UPDATE mant_incidencia_bajas SET reactivada_at=NOW(), reactivada_by=%s, reactivada_motivo=%s "
+            " WHERE origen='hallazgo' AND clave=%s AND reactivada_at IS NULL",
+            (usuario, "Reemplazada por una baja nueva (los números cambiaron).", clave))
+        cur.execute(
+            "INSERT INTO mant_incidencia_bajas (origen, clave, tipo_hallazgo, sku, descripcion, ua, "
+            "nuestra_bd, erp, wms, motivo_codigo, motivo_texto, baja_by) "
+            "VALUES ('hallazgo',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (clave, h.get("tipo"), (h.get("sku") or None), (h.get("descripcion") or "")[:400] or None,
+             (h.get("ua") or None), _inc_baja_num(h.get("nuestra_bd")), _inc_baja_num(h.get("erp")),
+             _inc_baja_num(h.get("wms")), codigo, texto, usuario))
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/incidencias/<int:iid>/baja", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencia_baja(iid):
+    """Da de baja una INCIDENCIA registrada: pasa a 'resuelta' conservando fotos,
+    bitácora y todos sus datos, con el motivo, quién y cuándo. A diferencia de
+    eliminar, la puede hacer cualquier usuario del módulo y se puede reactivar."""
+    data = request.get_json(silent=True) or {}
+    codigo, texto, err = _inc_baja_validar(data.get("motivo_codigo"), data.get("motivo_texto"))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    inc = mysql_fetchone(
+        "SELECT id, sku, descripcion, cantidad, recomendacion, estado, fecha_resolucion "
+        "  FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
+    if not inc:
+        return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
+    if inc.get("estado") != "abierta":
+        return jsonify({"ok": False, "error": "Esa incidencia ya no está abierta."}), 409
+    sku = (inc.get("sku") or "").strip()
+    erp, wms = _inc_baja_foto_numeros(sku)
+    ua = _checkwms_norm_ua(inc.get("recomendacion") or "") or None
+    detalle = INC_BAJA_MOTIVOS[codigo] + (f" — {texto}" if texto else "")
+    usuario = current_username()
+    # La bitácora queda ANTES de tocar la fila (REGLA #5).
+    _inc_log(iid, "baja", "estado", "abierta", f"resuelta (baja: {detalle})")
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE mant_incidencias SET estado='resuelta', fecha_resolucion=COALESCE(fecha_resolucion, %s), "
+            "updated_by=%s WHERE id=%s AND estado='abierta'",
+            (_now_chile().date(), usuario, iid))
+        if not cur.rowcount:
+            db.rollback()
+            return jsonify({"ok": False, "error": "Esa incidencia ya no está abierta."}), 409
+        cur.execute(
+            "INSERT INTO mant_incidencia_bajas (origen, clave, incidencia_id, sku, descripcion, ua, cantidad, "
+            "erp, wms, motivo_codigo, motivo_texto, estado_antes, fecha_res_antes, baja_by) "
+            "VALUES ('incidencia',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (f"inc|{iid}", iid, sku or None, (inc.get("descripcion") or "")[:400] or None, ua,
+             _inc_baja_num(inc.get("cantidad")), _inc_baja_num(erp), _inc_baja_num(wms),
+             codigo, texto, inc.get("estado"), inc.get("fecha_resolucion"), usuario))
+        db.commit()
+    # Las solicitudes de repuesto ya hechas con esta incidencia NO se cancelan: se avisa.
+    try:
+        n_sol = (mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes "
+            " WHERE incidencia_id=%s AND estado <> 'rechazado'", (iid,)) or {}).get("n", 0)
+    except Exception:
+        n_sol = 0
+    return jsonify({"ok": True, "solicitudes_repuesto": int(n_sol or 0)})
+
+
+@app.route("/mantenciones/api/incidencias/bajas/<int:bid>/reactivar", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_baja_reactivar(bid):
+    """Reactiva una baja (con motivo, queda en el historial). Si era de una
+    incidencia, vuelve a 'abierta' con la fecha de resolución que tenía antes."""
+    data = request.get_json(silent=True) or {}
+    motivo = (data.get("motivo") or "").strip()[:500]
+    if len(motivo) < 10:
+        return jsonify({"ok": False, "error": "Cuéntanos por qué se reactiva (mínimo 10 caracteres)."}), 400
+    b = mysql_fetchone("SELECT * FROM mant_incidencia_bajas WHERE id=%s", (bid,))
+    if not b:
+        return jsonify({"ok": False, "error": "Esa baja no existe."}), 404
+    if b.get("reactivada_at"):
+        return jsonify({"ok": False, "error": "Esa baja ya fue reactivada."}), 409
+    usuario = current_username()
+    inc = None
+    if b.get("origen") == "incidencia":
+        inc = mysql_fetchone(
+            "SELECT id, estado, recomendacion FROM mant_incidencias "
+            " WHERE id=%s AND COALESCE(eliminada,0)=0", (b.get("incidencia_id"),))
+        if not inc:
+            return jsonify({"ok": False, "error": "La incidencia de esta baja ya no existe."}), 409
+        ua = _checkwms_norm_ua(inc.get("recomendacion") or "")
+        if ua and _inc_ua_duplicada(ua, excluir_id=inc["id"]):
+            return jsonify({"ok": False, "error":
+                            f"La UA {ua} ya está en uso por otra incidencia abierta: no se puede reactivar."}), 409
+        _inc_log(inc["id"], "reactivada", "estado", inc.get("estado"), f"abierta (reactivada: {motivo})")
+    db = get_db()
+    with db.cursor() as cur:
+        if inc:
+            cur.execute(
+                "UPDATE mant_incidencias SET estado=%s, fecha_resolucion=%s, updated_by=%s WHERE id=%s",
+                (b.get("estado_antes") or "abierta", b.get("fecha_res_antes"), usuario, inc["id"]))
+        cur.execute(
+            "UPDATE mant_incidencia_bajas SET reactivada_at=NOW(), reactivada_by=%s, reactivada_motivo=%s "
+            " WHERE id=%s AND reactivada_at IS NULL", (usuario, motivo, bid))
         db.commit()
     return jsonify({"ok": True})
 
@@ -140419,6 +140910,13 @@ try:
     _ensure_app_users_geo_columns()
 except Exception as _ensure_ug_err:
     print(f"[ILUS][WARN] columnas geo app_users: {_ensure_ug_err}", flush=True)
+
+# Bajas de pendientes e incidencias (2026-09-30, Daniel: "dar de baja sin
+# eliminar, para tener trazabilidad") — tabla NUEVA: SIEMPRE, incluso skip-migrations.
+try:
+    _ensure_incidencia_bajas_table()
+except Exception as _ensure_ib_err:
+    print(f"[ILUS][WARN] tabla mant_incidencia_bajas: {_ensure_ib_err}", flush=True)
 
 # Índices de trazabilidad por producto (2026-07-29, Daniel: "trazabilidad
 # épica de producto") — SIEMPRE, incluso skip-migrations.
