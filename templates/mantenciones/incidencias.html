@@ -316,10 +316,15 @@
                 si no se sabe/no aplica, la tabla usa la fecha en que se
                 registró acá como respaldo (ver columna Días en bodega). -#}
             <div class="col-md-4">
+              {#- 🔧 2026-09-30 (Daniel: "la fecha de ingreso a bodega debe ser automática,
+                  determinada por la GRI"): ya no se escribe. El input queda OCULTO solo para
+                  no borrar una fecha manual que alguna incidencia vieja ya tenga guardada. -#}
               <label class="form-label">Fecha de ingreso a bodega
-                <span class="text-muted" style="font-weight:400">(GRI, opcional)</span></label>
-              <input type="date" class="form-control" id="incFechaIngreso">
-              <div class="form-text">Si la dejas vacía se usa la fecha de la GRI del ERP (si se encuentra) o, si no, la del registro.</div>
+                <span class="text-muted" style="font-weight:400">(automática)</span></label>
+              <input type="hidden" id="incFechaIngreso">
+              <div class="form-control" id="incFechaIngresoAuto" style="background:#f3f4f6;min-height:38px"
+                   aria-live="polite">Se calcula sola con la GRI del ERP</div>
+              <div class="form-text">La toma de la GRI del ERP (emparejada por orden de UA). Si no se encuentra, se cuenta desde el registro.</div>
             </div>
             {#- 🔧 2026-09-26 (Daniel: "el tipo de repuesto se puede asociar de
                 la bodega de repuestos... hacerlo más interactivo"): motor
@@ -2914,6 +2919,7 @@
     $('incUbicacion').classList.remove('inc-ubic-ambar');
     $('incUbicacionCheck').classList.remove('inc-ubic-ambar');
     document.getElementById('incCantidad').value = 1;
+    document.getElementById('incFechaIngresoAuto').textContent = 'Se calcula sola con la GRI del ERP';
     document.getElementById('incEstado').value = 'abierta';
     document.getElementById('incReqRepuesto').value = '';
     document.getElementById('incStockRepuesto').value = '';
@@ -2956,6 +2962,11 @@
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
     document.getElementById('incFechaIngreso').value = r.fecha_ingreso || '';
+    // Fecha de ingreso AUTOMÁTICA (la da la GRI del ERP): solo se muestra de dónde sale.
+    var xi = incDias(r);
+    document.getElementById('incFechaIngresoAuto').innerHTML = xi
+      ? incOrigenTxt(xi) + ' <span class="text-muted">· ' + xi.dias + ' día' + (xi.dias === 1 ? '' : 's') + ' en bodega</span>'
+      : 'Se calcula sola con la GRI del ERP';
     document.getElementById('incSugerencia').value = r.sugerencia || '';
     document.getElementById('incRepuestoStockId').value = r.repuesto_stock_id || '';
     // 🔧 2026-09-26 (Daniel: "Ubicación según Check (WMS)... reutiliza el
