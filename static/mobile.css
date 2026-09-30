@@ -694,3 +694,14 @@ body {
     text-overflow: ellipsis;
   }
 }
+
+/* Campana de notificaciones del topbar móvil: 42×34 → 44×44 (2026-09-30, Retiros para gerentes). */
+@media (max-width: 767px) {
+  .ilus-notif-mobile .ilus-notif-bell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

@@ -654,6 +654,15 @@
   .agi-hoy-list{max-height:260px;}
   .agi-next{max-width:none;width:100%;}
 }
+/* Celular (gerentes, 2026-09-30): las etiquetas de 9-10 px pensadas para la pantalla del escritorio
+   pasan a un tamaño legible, y el botón de cerrar la ficha rápida a 44 px. */
+@media (max-width:767.98px){
+  .agi-hero .agi-stat-lbl,.agi-next-lbl{font-size:.7rem;}
+  .agi-hoy-head,.agi-hoy-cli{font-size:.85rem;}
+  .agi-hoy-hora{font-size:.8rem;}
+  .agi-hoy-sub,.agi-hoy-est,.agi-side .agi-legend-chip,.agi-drawer-status,.agi-pick-kd,.agi-list-day-name{font-size:.75rem;}
+  .agi-drawer-close{width:44px;height:44px;}
+}
 </style>
 
 {# ── Hero ── #}
