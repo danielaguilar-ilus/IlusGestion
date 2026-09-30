@@ -230,7 +230,8 @@
 }
 .agi-pick-cliente{
   font-weight:700;color:var(--ilus-ink);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  /* REGLA #15: el nombre completo, nunca cortado (2026-09-29, columnas más angostas) */
+  white-space:normal;overflow-wrap:anywhere;
   font-size:.72rem;
 }
 .agi-pick-meta{
@@ -540,13 +541,48 @@
 
 /* ══ Todo en una pantalla (Daniel 2026-09-29: "ver toda la información sin
    necesidad de darle scroll... potente, informativo, que sorprenda") ══ */
-.agi-layout{display:grid;grid-template-columns:310px minmax(0,1fr);gap:14px;align-items:start;}
+.agi-layout{display:grid;grid-template-columns:clamp(250px,17vw,310px) minmax(0,1fr);gap:14px;align-items:start;}
 .agi-side{display:flex;flex-direction:column;gap:10px;min-width:0;}
 .agi-main{min-width:0;}
 .agi-side .agi-month-card{height:auto;}
-.agi-side .agi-stats{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0;}
-.agi-side .agi-stat{padding:8px 10px;gap:8px;}
-.agi-side .agi-stat-icon{width:30px;height:30px;font-size:.9rem;border-radius:8px;}
+/* Números de la semana dentro de la cabecera negra */
+.agi-hero .agi-stats{display:flex;flex-wrap:wrap;gap:8px;margin:0;position:relative;z-index:1;}
+.agi-hero .agi-stat{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);box-shadow:none;
+  padding:7px 12px 7px 10px;gap:0;min-width:74px;border-left:3px solid #64748b;border-radius:10px;}
+.agi-hero .agi-stat:hover{background:rgba(255,255,255,.09);box-shadow:none;}
+.agi-hero .agi-stat-icon{display:none;}
+.agi-hero .agi-stat:nth-child(1){border-left-color:#3b82f6;}
+.agi-hero .agi-stat:nth-child(2){border-left-color:#f59e0b;}
+.agi-hero .agi-stat:nth-child(3){border-left-color:#16a34a;}
+.agi-hero .agi-stat:nth-child(4){border-left-color:#8b5cf6;}
+.agi-hero .agi-stat:nth-child(5){border-left-color:#dc2626;}
+.agi-hero .agi-stat:nth-child(6){border-left-color:#06b6d4;}
+.agi-hero .agi-stat-num{color:#fff;font-size:1.1rem;}
+.agi-hero .agi-stat-lbl{color:#94a3b8;font-size:.56rem;}
+/* Agenda de hoy (columna izquierda, llena el alto que queda) */
+.agi-hoy{background:#fff;border:1px solid var(--ilus-line);border-radius:12px;display:flex;flex-direction:column;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);overflow:hidden;}
+.agi-hoy-head{display:flex;align-items:center;gap:6px;padding:9px 12px;font-size:.72rem;font-weight:900;
+  text-transform:uppercase;letter-spacing:.4px;color:var(--ilus-ink);border-bottom:1px solid var(--ilus-line);}
+.agi-hoy-head .bi{color:var(--ilus-red);}
+.agi-hoy-head span{margin-left:auto;background:#f3f4f6;color:#374151;border-radius:50px;padding:1px 8px;font-size:.66rem;}
+.agi-hoy-head span:empty{display:none;}
+.agi-hoy-list{overflow:auto;padding:6px;flex:1 1 auto;min-height:60px;}
+.agi-hoy-item{display:flex;gap:9px;align-items:flex-start;padding:7px 8px;border-radius:9px;cursor:pointer;
+  border-left:3px solid #cbd5e1;margin-bottom:5px;background:#fafbfc;transition:background .15s,transform .15s;}
+.agi-hoy-item:hover{background:#f1f5f9;transform:translateX(2px);}
+.agi-hoy-item.kd-requested{border-left-color:var(--kd-req);}
+.agi-hoy-item.kd-proposed{border-left-color:var(--kd-prop);}
+.agi-hoy-item.kd-confirmed{border-left-color:var(--kd-conf);}
+.agi-hoy-item.kd-disputed{border-left-color:var(--kd-disp);}
+.agi-hoy-hora{font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;color:var(--ilus-ink);min-width:42px;}
+.agi-hoy-cli{font-size:.76rem;font-weight:700;color:var(--ilus-ink);line-height:1.25;overflow-wrap:anywhere;}
+.agi-hoy-sub{font-size:.66rem;color:var(--ilus-muted);margin-top:1px;}
+.agi-hoy-est{display:inline-block;margin-top:3px;font-size:.62rem;font-weight:800;padding:1px 7px;border-radius:50px;}
+.agi-hoy-est.verde{background:#dcfce7;color:#166534;}
+.agi-hoy-est.ambar{background:#fff8e1;color:#92400e;}
+.agi-hoy-est.rojo{background:#fee2e2;color:#991b1b;}
+.agi-hoy-vacio{padding:14px 10px;text-align:center;font-size:.76rem;color:var(--ilus-muted);}
 .agi-side .agi-legend{margin-bottom:0;gap:5px;padding:8px 10px;}
 .agi-side .agi-legend-chip{font-size:.66rem;padding:2px 8px;}
 .agi-cap-card{
@@ -573,7 +609,7 @@
 .agi-next-lbl{font-size:.6rem;font-weight:900;letter-spacing:.6px;text-transform:uppercase;color:#94a3b8;}
 .agi-next-cd{font-family:'JetBrains Mono',monospace;font-size:1.15rem;font-weight:800;color:#fff;line-height:1.15;
   font-variant-numeric:tabular-nums;}
-.agi-next-who{font-size:.74rem;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;}
+.agi-next-who{font-size:.74rem;color:#cbd5e1;overflow-wrap:anywhere;max-width:340px;}  /* REGLA #15: nombre completo */
 
 /* Línea de "ahora" sobre el día de hoy */
 .agi-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--ilus-red);z-index:4;pointer-events:none;}
@@ -590,14 +626,24 @@
 .agi-slot.creatable:hover::after{content:'+ ' attr(data-slot);font-size:.68rem;font-family:'JetBrains Mono',monospace;}
 
 @media (min-width:992px){
+  /* Columna izquierda compacta: que quepa entera junto a la semana */
+  .agi-side .agi-month-card{padding:10px 12px 8px;}
+  .agi-side{overflow:hidden;}
+  .agi-hoy{flex:1 1 auto;min-height:0;}
+  .agi-side .ilus-cal-month-day{min-height:36px;}
+  .agi-side .agi-legend-title{display:none;}   /* los 4 colores se explican solos; ahorra una fila */
+  .agi-hero-title{white-space:nowrap;}
   .agi-hero{padding:12px 20px;margin-bottom:12px;}
   .agi-hero-badge{width:44px;height:44px;font-size:1.3rem;}
-  .agi-slot{min-height:34px;}
+  .agi-slot{min-height:33px;}
   .agi-week{overflow:auto;}
   .agi-week-head{position:sticky;top:0;z-index:5;}
 }
 @media (max-width:991.98px){
   .agi-layout{grid-template-columns:1fr;}
+  .agi-hero .agi-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;}
+  .agi-hero .agi-stat{min-width:0;}
+  .agi-hoy-list{max-height:260px;}
   .agi-next{max-width:none;width:100%;}
 }
 </style>
@@ -615,13 +661,40 @@
     <div class="agi-hero-badge">
       <i class="bi bi-calendar2-week-fill"></i>
     </div>
-    <div style="flex:1;min-width:240px">
+    <div style="flex:1 1 280px;min-width:0">
       <div class="agi-hero-title">Agenda interna de retiros</div>
       <div class="agi-hero-sub">
         <span class="agi-live-dot"></span>
-        Actualización en vivo cada 30s · arrastra para mover · click para datos rápidos
+        En vivo cada 30 s · arrastra para mover · clic para ver la ficha
       </div>
     </div>
+{# ── Números de la semana (en la cabecera desde 2026-09-29) ── #}
+<div class="agi-stats" id="agiStats">
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-calendar-event"></i></div>
+    <div><div class="agi-stat-num" id="ag-total">—</div><div class="agi-stat-lbl">Retiros</div></div>
+  </div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#fff8e6;color:#92400e"><i class="bi bi-clock-history"></i></div>
+    <div><div class="agi-stat-num" id="ag-pendientes">—</div><div class="agi-stat-lbl">Por confirmar</div></div>
+  </div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#dcfce7;color:#166534"><i class="bi bi-check-circle-fill"></i></div>
+    <div><div class="agi-stat-num" id="ag-confirmadas">—</div><div class="agi-stat-lbl">Confirmadas</div></div>
+  </div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#ede9fe;color:#5b21b6"><i class="bi bi-box-seam"></i></div>
+    <div><div class="agi-stat-num" id="ag-bultos">—</div><div class="agi-stat-lbl">Bultos</div></div>
+  </div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-truck"></i></div>
+    <div><div class="agi-stat-num" id="ag-kg">—</div><div class="agi-stat-lbl">Peso (kg)</div></div>
+  </div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#cffafe;color:#0e7490"><i class="bi bi-bounding-box"></i></div>
+    <div><div class="agi-stat-num" id="ag-m3">—</div><div class="agi-stat-lbl">Volumen (m³)</div></div>
+  </div>
+</div>
     {# Próximo retiro con cuenta regresiva (agiProximo*): clic = abre su ficha #}
     <div class="agi-next vacio" id="agiNextBox" role="button" tabindex="0" title="Abrir la ficha del próximo retiro">
       <div class="agi-next-ico"><i class="bi bi-stopwatch"></i></div>
@@ -654,42 +727,20 @@
       <div id="agiMonthGrid" style="display:none" aria-hidden="true"></div>
     </div>
 
-{# ── Stats globales ── #}
-<div class="agi-stats" id="agiStats">
-  <div class="agi-stat">
-    <div class="agi-stat-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-calendar-event"></i></div>
-    <div><div class="agi-stat-num" id="ag-total">—</div><div class="agi-stat-lbl">Retiros</div></div>
-  </div>
-  <div class="agi-stat">
-    <div class="agi-stat-icon" style="background:#fff8e6;color:#92400e"><i class="bi bi-clock-history"></i></div>
-    <div><div class="agi-stat-num" id="ag-pendientes">—</div><div class="agi-stat-lbl">Por confirmar</div></div>
-  </div>
-  <div class="agi-stat">
-    <div class="agi-stat-icon" style="background:#dcfce7;color:#166534"><i class="bi bi-check-circle-fill"></i></div>
-    <div><div class="agi-stat-num" id="ag-confirmadas">—</div><div class="agi-stat-lbl">Confirmadas</div></div>
-  </div>
-  <div class="agi-stat">
-    <div class="agi-stat-icon" style="background:#ede9fe;color:#5b21b6"><i class="bi bi-box-seam"></i></div>
-    <div><div class="agi-stat-num" id="ag-bultos">—</div><div class="agi-stat-lbl">Bultos</div></div>
-  </div>
-  <div class="agi-stat">
-    <div class="agi-stat-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-truck"></i></div>
-    <div><div class="agi-stat-num" id="ag-kg">—</div><div class="agi-stat-lbl">Peso (kg)</div></div>
-  </div>
-  <div class="agi-stat">
-    <div class="agi-stat-icon" style="background:#cffafe;color:#0e7490"><i class="bi bi-bounding-box"></i></div>
-    <div><div class="agi-stat-num" id="ag-m3">—</div><div class="agi-stat-lbl">Volumen (m³)</div></div>
-  </div>
-</div>
+{# ── Agenda de hoy (agiHoyPintar): los retiros del día con su estado en vivo ── #}
+    <div class="agi-hoy" id="agiHoy">
+      <div class="agi-hoy-head"><i class="bi bi-lightning-charge-fill"></i>Agenda de hoy<span id="agiHoyN"></span></div>
+      <div class="agi-hoy-list" id="agiHoyList"><div class="agi-hoy-vacio">Cargando…</div></div>
+    </div>
 
 {# ── Capacidad por franja ── #}
     <div class="agi-cap-card">
-      <span>Capacidad por franja:</span>
+      <span title="Capacidad por franja de 30 minutos">Capacidad:</span>
       <span class="badge bg-light text-dark" style="font-size:.7rem" id="agi-cap-badge">—</span>
       <a href="{{ url_for('pickup_dashboard') }}#settings"
-         class="btn-sm btn btn-outline-dark ms-auto"
-         style="font-size:.74rem;padding:5px 10px;font-weight:700">
-        <i class="bi bi-sliders me-1"></i>Configurar
+         class="btn-sm btn btn-outline-dark ms-auto" title="Configurar capacidad y horarios" aria-label="Configurar capacidad y horarios"
+         style="font-size:.8rem;padding:4px 9px;font-weight:700">
+        <i class="bi bi-sliders"></i>
       </a>
     </div>
 
@@ -997,6 +1048,7 @@ async function agiCargar(silent){
     agiRenderList();
     agiRenderStats();
     document.getElementById('agiLoader').style.display = 'none';
+    agiAjustarAlto();   // ya sin el cargador encima: el alto real de la grilla
   } catch (e) {
     document.getElementById('agiLoader').innerHTML =
       `<div class="alert alert-danger">No pude cargar la agenda: ${agiEsc(e.message)}</div>`;
@@ -1139,10 +1191,14 @@ function agiRenderWeek(){
 function agiAjustarAlto(){
   const wk = document.getElementById('agiWeek');
   if (!wk) return;
-  if (window.innerWidth < 992 || wk.style.display === 'none'){ wk.style.maxHeight = ''; return; }
-  let y = 0;
-  for (let el = wk; el; el = el.offsetParent) y += el.offsetTop;
-  wk.style.maxHeight = Math.max(380, window.innerHeight - y - 14) + 'px';
+  const side = document.querySelector('.agi-side');
+  const top = el => { let y = 0; for (; el; el = el.offsetParent) y += el.offsetTop; return y; };
+  if (window.innerWidth < 992 || wk.style.display === 'none'){
+    wk.style.maxHeight = ''; if (side) side.style.height = ''; return;
+  }
+  wk.style.maxHeight = Math.max(380, window.innerHeight - top(wk) - 14) + 'px';
+  // En pantallas bajas la columna izquierda se desplaza sola, no la página.
+  if (side) side.style.height = Math.max(420, window.innerHeight - top(side) - 14) + 'px';
 }
 window.addEventListener('resize', agiAjustarAlto);
 
@@ -1215,6 +1271,7 @@ async function agiProximoCargar(){
     }
     _agiProx = lista.sort((a, b) => a.ini - b.ini);
     agiProximoTic();
+    agiHoyPintar();
   } catch (_){ /* sin red: el recuadro queda con lo último que mostró */ }
 }
 function agiProximoTic(){
@@ -1245,6 +1302,39 @@ function agiProximoTic(){
   lbl.textContent = 'Próximo retiro en';
   cd.textContent = d ? `${d} d ${h} h ${dos(m)} min` : `${dos(h)}:${dos(m)}:${dos(x)}`;
 }
+// Agenda de hoy: cada retiro del día con su estado respecto de la hora actual.
+function agiHoyPintar(){
+  const cont = document.getElementById('agiHoyList');
+  if (!cont) return;
+  const now = new Date(), hoy = agiFmt(now);
+  const items = _agiProx.filter(x => x.p.fecha === hoy);
+  const n = document.getElementById('agiHoyN');
+  if (n) n.textContent = items.length ? `${items.length} ${items.length === 1 ? 'retiro' : 'retiros'}` : '';
+  if (!items.length){
+    const sig = _agiProx.find(x => x.ini > now);
+    const sigTxt = sig ? `<br><b>Próximo:</b> ${agiEsc(sig.ini.toLocaleDateString('es-CL', { weekday:'long', day:'numeric', month:'short' }))} · ${agiEsc(sig.p.time_from)}` : '';
+    cont.innerHTML = `<div class="agi-hoy-vacio"><i class="bi bi-cup-hot" style="font-size:1.3rem;display:block;margin-bottom:4px"></i>Sin retiros pendientes hoy${sigTxt}</div>`;
+    return;
+  }
+  const kdLbl = { requested:'Solicitado', proposed:'Propuesto', confirmed:'Confirmado', disputed:'En disputa' };
+  cont.innerHTML = items.map(x => {
+    const kd = x.p.is_disputed ? 'disputed' : (x.p.kind_date || 'requested');
+    const min = Math.round((x.ini - now) / 60000);
+    const est = x.fin <= now ? ['rojo', 'Pasó su horario']
+              : x.ini <= now ? ['rojo', 'En curso ahora']
+              : min <= 60 ? ['ambar', `En ${min} min`]
+              : ['verde', `A las ${x.p.time_from}`];
+    return `<div class="agi-hoy-item kd-${kd}" onclick="agiAbrirDrawer(${parseInt(x.p.id, 10)})" title="Abrir la ficha">
+      <div class="agi-hoy-hora">${agiEsc(x.p.time_from)}</div>
+      <div style="min-width:0">
+        <div class="agi-hoy-cli">${agiEsc(x.p.customer_name || '—')}</div>
+        <div class="agi-hoy-sub">${agiEsc(x.p.code || '')} · ${kdLbl[kd] || ''}</div>
+        <span class="agi-hoy-est ${est[0]}">${est[1]}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 function agiProximoAbrir(){
   const id = parseInt(document.getElementById('agiNextBox').dataset.pickId || '', 10);
   if (id) agiAbrirDrawer(id);
@@ -1258,7 +1348,7 @@ document.addEventListener('DOMContentLoaded', () => {
   agiProximoCargar();
   setInterval(agiProximoTic, 1000);
   setInterval(() => { if (document.visibilityState === 'visible') agiProximoCargar(); }, 60000);
-  setInterval(agiPintarAhora, 30000);
+  setInterval(() => { agiPintarAhora(); agiHoyPintar(); }, 30000);
 });
 
 // ── Crear retiro desde un slot vacío (día hábil con cupo) ────────────
@@ -2125,7 +2215,7 @@ function agiMountMonth(){
     container:      '#agiMonthGrid',      // oculto: la grilla semanal muestra los bloques
     dateInput:      '#agiMonthDate',
     monthContainer: '#agiMonth',
-    monthHelp:      'Clic en un día para ir a esa semana. El punto muestra la carga del día.',
+    monthHelp:      'Clic en un día para ir a esa semana.',   // el punto de carga ya lo explica la leyenda del mes
     includeOwners:  true,
     allowToday:     true,
     allowCrossLunch: true,
