@@ -2414,6 +2414,8 @@
     .pipe-step-num{font-size:.72rem}
     .pipe-sub{font-size:.76rem}
     .ficha-lbl,.rh-sello .k,.rh-d .k,.id-kpi .lbl,.carga-strip .carga-cell .lbl{font-size:.76rem}
+    .rd-dv-vals .val .k,.rd-docval-tot .val .k,.pipe-wrap-title{font-size:.75rem}
+    .erp-chip{font-size:.72rem}
     .step-collapse-toggle{width:40px;height:40px}
     /* El globo de ayuda se abre debajo del chip, a todo el ancho, en vez de flotar (y cortarse) */
     details.pipe-score-details summary{display:flex;align-items:center;min-height:44px}
