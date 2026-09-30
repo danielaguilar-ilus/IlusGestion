@@ -64353,6 +64353,51 @@ def _ensure_incidencia_bajas_table():
         conn.close()
 
 
+# ══ Desglosar por motivo (Daniel, 2026-09-30) ═════════════════════════════════
+# "es recomendable un producto por UA para poder desglosar los motivos de cada
+# producto: si me entran tres productos de un mismo SKU, que pueda separar el
+# producto en las cantidades según el motivo". Decisiones suyas: va al REGISTRAR un
+# pendiente con varias unidades Y en incidencias ya registradas con 2+ unidades; la
+# UA es identificador único, así que la 1ª parte conserva la UA y las demás quedan
+# SIN UA hasta que el WMS las distribuya (se la ponen después con Ver / editar).
+INC_DESGLOSE_MAX_GRUPOS = 20
+INC_MOTIVO_MAX = 200     # largo de la columna mant_incidencias.motivo
+
+
+def _inc_desglose_validar(total, grupos):
+    """PURA. Valida el reparto de `total` unidades en grupos {cantidad, motivo}.
+    Devuelve (grupos_limpios, error). Desglosar REPARTE lo que hay: al menos 2 grupos,
+    cada uno con cantidad entera >= 1 y su propio motivo (>= 10 caracteres, el mismo
+    piso que marca "sin motivo"), y la suma tiene que dar EXACTAMENTE el total."""
+    try:
+        total = int(total)
+    except (TypeError, ValueError):
+        total = 0
+    if total < 2:
+        return None, "Para desglosar hacen falta al menos 2 unidades."
+    if not isinstance(grupos, list) or len(grupos) < 2:
+        return None, "Un desglose necesita al menos 2 grupos (cantidad y motivo de cada uno)."
+    if len(grupos) > min(total, INC_DESGLOSE_MAX_GRUPOS):
+        return None, "Hay más grupos que unidades: cada grupo necesita al menos 1."
+    limpios, suma = [], 0
+    for i, g in enumerate(grupos, 1):
+        g = g if isinstance(g, dict) else {}
+        try:
+            c = float(str(g.get("cantidad")).replace(",", "."))
+        except (TypeError, ValueError):
+            c = 0.0
+        if c < 1 or c != int(c):
+            return None, f"Grupo {i}: la cantidad tiene que ser un número entero de 1 o más."
+        motivo = (g.get("motivo") or "").strip()
+        if len(motivo) < 10:
+            return None, f"Grupo {i}: escribe su motivo (mínimo 10 caracteres)."
+        limpios.append({"cantidad": int(c), "motivo": _sentence_case(motivo)[:INC_MOTIVO_MAX]})
+        suma += int(c)
+    if suma != total:
+        return None, f"Las cantidades suman {suma} y hay {total} unidades: tienen que coincidir."
+    return limpios, None
+
+
 def _inc_bajas_hallazgo_vigentes():
     """{clave: fila} de las bajas VIGENTES de hallazgos (la más reciente por clave).
     Nunca lanza: si la tabla no está, la conciliación sigue como antes."""
@@ -65672,6 +65717,127 @@ def mant_api_incidencias_baja_reactivar(bid):
             " WHERE id=%s AND reactivada_at IS NULL", (usuario, motivo, bid))
         db.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/incidencias/desglosar", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_desglosar():
+    """Desglosa por motivo (ver el bloque de _inc_desglose_validar). Dos orígenes:
+      · 'incidencia': una incidencia abierta con 2+ unidades. La ORIGINAL queda con el
+        primer grupo (conserva UA, fotos, repuesto y bitácora) y los demás grupos
+        nacen como incidencias nuevas SIN UA.
+      · 'hallazgo': un pendiente sin incidencia con varias unidades (el servidor lo
+        vuelve a calcular). Nacen todas las incidencias; la UA del pendiente va con
+        el primer grupo.
+    Todo en UNA transacción: o se crean todas o ninguna."""
+    data = request.get_json(silent=True) or {}
+    origen = (data.get("origen") or "").strip()
+    grupos = data.get("grupos")
+    usuario = current_username()
+
+    if origen == "incidencia":
+        try:
+            iid = int(data.get("id"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Falta indicar qué incidencia desglosar."}), 400
+        inc = mysql_fetchone(
+            "SELECT id, sku, descripcion, cantidad, motivo, fecha_ingreso, ubicacion, estado "
+            "  FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
+        if not inc:
+            return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
+        if inc.get("estado") != "abierta":
+            return jsonify({"ok": False, "error": "Esa incidencia ya no está abierta."}), 409
+        total = int(inc.get("cantidad") or 0)
+        limpios, err = _inc_desglose_validar(total, grupos)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        # Lo que ya se tomó como repuesto de esta incidencia no puede quedar fuera del
+        # primer grupo (la cantidad de la original es la que se descuenta).
+        try:
+            tomadas = float((mysql_fetchone(
+                "SELECT COALESCE(SUM(cantidad),0) AS n FROM mant_ot_repuesto_solicitudes "
+                " WHERE incidencia_id=%s AND estado <> 'rechazado'", (iid,)) or {}).get("n") or 0)
+        except Exception:
+            tomadas = 0
+        if tomadas > limpios[0]["cantidad"]:
+            return jsonify({"ok": False, "error":
+                            f"Ya se tomaron {tomadas:g} unidad(es) de esta incidencia como repuesto: el primer "
+                            "grupo no puede tener menos que eso."}), 409
+        # La bitácora queda ANTES de tocar la fila (REGLA #5): el motivo original NO se pierde.
+        _inc_log(iid, "desglosada", "cantidad", total, f"{limpios[0]['cantidad']} (se repartió en {len(limpios)} grupos)")
+        _inc_log(iid, "desglosada", "motivo", inc.get("motivo"), limpios[0]["motivo"])
+        db = get_db()
+        nuevos = []
+        with db.cursor() as cur:
+            cur.execute(
+                "UPDATE mant_incidencias SET cantidad=%s, motivo=%s, updated_by=%s "
+                " WHERE id=%s AND estado='abierta' AND COALESCE(eliminada,0)=0 AND cantidad=%s",
+                (limpios[0]["cantidad"], limpios[0]["motivo"], usuario, iid, total))
+            if not cur.rowcount:
+                db.rollback()
+                return jsonify({"ok": False, "error":
+                                "La incidencia cambió mientras desglosabas. Ábrela de nuevo e inténtalo otra vez."}), 409
+            for g in limpios[1:]:
+                cur.execute(
+                    "INSERT INTO mant_incidencias (sku, descripcion, cantidad, motivo, fecha_ingreso, "
+                    "ubicacion, created_by) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    (inc.get("sku"), inc.get("descripcion"), g["cantidad"], g["motivo"],
+                     inc.get("fecha_ingreso"), inc.get("ubicacion"), usuario))
+                nuevos.append(cur.lastrowid)
+            db.commit()
+        for k, nid in enumerate(nuevos, 2):
+            _inc_log(nid, "creada", "sku", None, inc.get("sku") or "(sin SKU)")
+            _inc_log(nid, "desglosada", "grupo", None,
+                     f"{k}/{len(limpios)} · {limpios[k - 1]['cantidad']} u. · desglosada de la incidencia #{iid}")
+        return jsonify({"ok": True, "ids": [iid] + nuevos})
+
+    if origen == "hallazgo":
+        clave = (data.get("clave") or "").strip()
+        if not clave:
+            return jsonify({"ok": False, "error": "Falta indicar qué pendiente desglosar."}), 400
+        try:
+            calc = _inc_calcular_hallazgos()
+        except _IncConcMysqlError:
+            return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
+        h = next((x for x in calc["hallazgos"] if x.get("clave") == clave), None)
+        if not h:
+            return jsonify({"ok": False, "error":
+                            "Ese pendiente ya no aparece (quizá ya se registró). Actualiza la lista."}), 404
+        if not h.get("baja_hallazgo"):
+            return jsonify({"ok": False, "error":
+                            "Este pendiente ya tiene una incidencia: desglósala desde la incidencia."}), 400
+        total = int(_inc_baja_num(h.get("cantidad")) or 0)
+        limpios, err = _inc_desglose_validar(total, grupos)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        sku = (h.get("sku") or "").strip()
+        descripcion = (h.get("descripcion") or sku).strip()
+        if not descripcion:
+            return jsonify({"ok": False, "error": "El pendiente no trae nombre de producto."}), 400
+        ua = _checkwms_norm_ua(h.get("ua") or "") or None
+        if ua and _inc_ua_duplicada(ua):
+            return jsonify({"ok": False, "error":
+                            f"La UA {ua} ya está en uso por otra incidencia activa."}), 409
+        ubicacion = (h.get("ubicacion") or "").strip() or None
+        db = get_db()
+        ids = []
+        with db.cursor() as cur:
+            for k, g in enumerate(limpios):
+                cur.execute(
+                    "INSERT INTO mant_incidencias (sku, descripcion, cantidad, motivo, recomendacion, "
+                    "ubicacion, created_by) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    (sku or None, descripcion, g["cantidad"], g["motivo"],
+                     ua if k == 0 else None, ubicacion, usuario))
+                ids.append(cur.lastrowid)
+            db.commit()
+        for k, nid in enumerate(ids, 1):
+            _inc_log(nid, "creada", "sku", None, sku or "(sin SKU)")
+            _inc_log(nid, "desglosada", "grupo", None,
+                     f"{k}/{len(ids)} · {limpios[k - 1]['cantidad']} u. · desglosada del pendiente {clave}")
+        return jsonify({"ok": True, "ids": ids})
+
+    return jsonify({"ok": False, "error": "No se entendió qué desglosar."}), 400
 
 
 @app.route("/mantenciones/api/incidencias/deduplicar", methods=["POST"])

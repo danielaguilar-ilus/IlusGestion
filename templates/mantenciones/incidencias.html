@@ -605,6 +605,61 @@
   </div>
 </div>
 
+{#- 🧩 2026-09-30 (Daniel: "es recomendable un producto por UA para poder desglosar los
+    motivos... si me entran tres productos de un mismo SKU, que pueda separar el
+    producto en las cantidades según el motivo"). Reparte las unidades en grupos
+    (cantidad + motivo); cada grupo queda como una incidencia. La UA es única: la
+    1ª parte conserva la UA y las demás quedan sin UA hasta que el WMS las distribuya.
+    Mismo formato de tarjetas con semáforo de Retiros y pensado para el celular. -#}
+<div class="modal fade" id="incDesgloseModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
+        <h6 class="modal-title fw-bold">
+          <i class="bi bi-diagram-3 me-2" style="color:#dc2626"></i>Desglosar por motivo
+          <small class="d-block fw-normal" id="incDesSub" style="font-size:.72rem;opacity:.8"></small>
+        </h6>
+        <div class="inc-progreso" aria-live="polite">
+          <span id="incDesProgresoTxt">0 de 2 pasos listos</span>
+          <span class="bar"><span id="incDesProgresoBar"></span></span>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <section class="inc-pane" id="incDesPane1">
+          <div class="inc-pane-head inc-c4">
+            <span class="inc-num-circle"><span class="num">1</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-box-seam"></i>
+            <div><b>1. Qué se desglosa</b>
+              <small>Las unidades se reparten según el motivo de cada una.</small></div>
+          </div>
+          <div class="inc-baja-item" id="incDesItem"></div>
+        </section>
+        <section class="inc-pane" id="incDesPane2">
+          <div class="inc-pane-head inc-c3">
+            <span class="inc-num-circle"><span class="num">2</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-list-check"></i>
+            <div><b>2. Reparte las unidades</b>
+              <small>Cada grupo lleva su cantidad y su motivo. Tienen que sumar el total.</small></div>
+          </div>
+          <div class="inc-des-cuenta" id="incDesCuenta" aria-live="polite"></div>
+          <div id="incDesGrupos"></div>
+          <button type="button" class="btn btn-outline-dark w-100 mt-2" id="incDesAgregar" style="min-height:44px">
+            <i class="bi bi-plus-lg me-1"></i>Agregar otro motivo</button>
+        </section>
+        <div class="inc-baja-nota"><i class="bi bi-info-circle"></i>
+          <span id="incDesNota"></span></div>
+        <div class="text-danger small mt-2" id="incDesErr"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus" id="incDesBtnOk">
+          <i class="bi bi-diagram-3 me-1"></i>Desglosar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% if permissions.superadmin %}
 <div class="modal fade" id="incImportModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
@@ -1039,6 +1094,26 @@
   border-radius:10px;padding:10px 12px;margin-top:4px}
 .inc-baja-nota i{color:#16a34a;font-size:1.05rem;margin-top:1px}
 #incBajaTexto{font-size:16px}
+/* Desglosar por motivo */
+.inc-des-cuenta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:800;font-size:.92rem;
+  padding:9px 12px;border-radius:10px;margin-bottom:10px;border:1.5px solid #fde68a;background:#fff8e1;color:#92400e}
+.inc-des-cuenta.ok{border-color:#86efac;background:#f0fdf4;color:#166534}
+.inc-des-cuenta.bad{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+.inc-des-cuenta small{font-weight:600;opacity:.85}
+.inc-des-grupo{border:1.5px solid #e5e7eb;border-radius:11px;background:#fff;padding:10px 12px;margin-bottom:9px}
+.inc-des-grupo.ok{border-color:#86efac;background:#f6fefa}
+.inc-des-head{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.inc-des-n{width:26px;height:26px;border-radius:50%;background:#0a0a0a;color:#fff;display:grid;place-items:center;
+  font-size:.8rem;font-weight:800;flex:0 0 26px}
+.inc-des-grupo.ok .inc-des-n{background:#16a34a}
+.inc-des-tag{font-size:.7rem;font-weight:700;color:#166534;background:#dcfce7;border-radius:999px;padding:2px 9px}
+.inc-des-quitar{margin-left:auto;min-width:44px;min-height:44px;border:0;background:transparent;color:#b91c1c;font-size:1.05rem}
+.inc-des-fila{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;align-items:start}
+.inc-des-fila label{font-size:.74rem;font-weight:700;color:#475569;margin-bottom:3px;display:block}
+.inc-des-fila .form-control{font-size:16px;min-height:44px}
+.inc-des-cont{font-size:.72rem;color:#94a3b8;text-align:right;margin-top:2px}
+.inc-des-grupo.ok .inc-des-cont{color:#16a34a}
+@media (max-width:576px){.inc-des-fila{grid-template-columns:1fr}}
 </style>
 
 <script src="{{ url_for('static', filename='repuestos_buscador.js') }}"></script>
@@ -1185,6 +1260,8 @@
       + '<ul class="dropdown-menu dropdown-menu-end shadow-sm">'
       +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="edit" data-id="'+r.id+'"><i class="bi bi-pencil-square me-2"></i>Ver / editar</button></li>'
       +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="rep" data-id="'+r.id+'"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>'
+      // 🧩 2026-09-30: con 2+ unidades se puede repartir según el motivo de cada una.
+      +   ((parseInt(r.cantidad, 10) || 0) >= 2 ? '<li><button type="button" class="dropdown-item inc-acc" data-accion="desglosar" data-id="'+r.id+'"><i class="bi bi-diagram-3 me-2"></i>Desglosar por motivo</button></li>' : '')
       // 🗄️ 2026-09-30: dar de baja es de TODOS (con motivo, sin borrar nada); eliminar sigue solo para admins.
       +   '<li><button type="button" class="dropdown-item inc-acc" data-accion="baja" data-id="'+r.id+'"><i class="bi bi-archive me-2"></i>Dar de baja</button></li>'
       +   (incCanDelete ? '<li><hr class="dropdown-divider"></li><li><button type="button" class="dropdown-item text-danger inc-acc" data-accion="del" data-id="'+r.id+'"><i class="bi bi-trash me-2"></i>Eliminar</button></li>' : '')
@@ -1392,6 +1469,7 @@
         if(accion === 'edit') abrirEdicion(id, rows);
         else if(accion === 'del') incEliminarDesdeTabla(id);
         else if(accion === 'baja') incBajaDesdeFila(id, rows);
+        else if(accion === 'desglosar') incDesgloseDesdeFila(id, rows);
         else if(accion === 'rep') incSolicitarRepuestoDesdeTabla(id, rows);
       });
     });
@@ -2028,6 +2106,10 @@
                   + '<i class="bi bi-search me-1"></i>Ver / corregir</button>';
         items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="repuesto"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>';
       }
+      // 🧩 2026-09-30: un pendiente con varias unidades se registra repartido según el motivo.
+      if(h.baja_hallazgo && h.accion === 'registrar' && (parseInt(h.cantidad, 10) || 0) >= 2){
+        items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="desglosar"><i class="bi bi-diagram-3 me-2"></i>Desglosar por motivo</button></li>';
+      }
       if(h.baja_hallazgo || (h.ids && h.ids.length)){
         items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="baja"><i class="bi bi-archive me-2"></i>Dar de baja</button></li>';
       }
@@ -2115,6 +2197,7 @@
       var h = hallazgoPorIdx(idx);
       if(!h) return;
       if(subaccion === 'baja'){ incBajaDesdeHallazgo(h); return; }
+      if(subaccion === 'desglosar'){ incDesgloseDesdeHallazgo(h); return; }
       if(!h.accion) return;
       if(h.accion === 'registrar'){ incAbrirAltaPrellenada(h); return; }
       if(h.accion !== 'ver' || !h.ids || !h.ids.length) return;
@@ -2489,6 +2572,159 @@
     incConcCargar();
     document.getElementById('incConciliacion').scrollIntoView({behavior:'smooth', block:'start'});
   });
+
+  // ══════════ 🧩 Desglosar por motivo (Daniel, 2026-09-30) ══════════
+  // "es recomendable un producto por UA para poder desglosar los motivos de cada producto:
+  // si me entran tres productos de un mismo SKU, que pueda separar el producto en las
+  // cantidades según el motivo". Se reparten las unidades en grupos (cantidad + motivo) y
+  // cada grupo queda como una incidencia. La UA es única: el grupo 1 conserva la UA y los
+  // demás quedan SIN UA hasta que el WMS distribuya las unidades. Va al registrar un
+  // pendiente con varias unidades y en incidencias ya registradas con 2+ unidades.
+  var INC_DES_MIN_MOTIVO = 30;   // mismo mínimo que el campo Motivo de la incidencia
+  var _incDes = {ctx: null, total: 0};
+  function incDesModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incDesgloseModal')); }
+
+  function incDesgloseDesdeFila(id, rows){
+    var r = (rows || []).filter(function(x){ return String(x.id) === String(id); })[0] || {};
+    incAbrirDesglose({origen:'incidencia', id:id, sku:r.sku, descripcion:r.descripcion, ua:r.recomendacion,
+                      cantidad:r.cantidad, sub:'Incidencia #'+id});
+  }
+  function incDesgloseDesdeHallazgo(h){
+    var m = INC_TIPOS[h.tipo] || {t: h.tipo};
+    incAbrirDesglose({origen:'hallazgo', clave:h.clave, sku:h.sku, descripcion:h.descripcion, ua:h.ua,
+                      cantidad:h.cantidad, sub:'Pendiente · '+m.t});
+  }
+
+  function incAbrirDesglose(ctx){
+    _incDes.ctx = ctx;
+    _incDes.total = parseInt(ctx.cantidad, 10) || 0;
+    document.getElementById('incDesSub').textContent = ctx.sub || '';
+    var partes = ['<span>Total <b>'+_incDes.total+'</b> unidades</span>'];
+    if(ctx.ua) partes.unshift('<span class="rm-code">UA '+incEsc(ctx.ua)+'</span>');
+    document.getElementById('incDesItem').innerHTML =
+      '<div class="ttl">'+incEsc(ctx.descripcion || 'Sin nombre')+'</div>'
+      + '<div class="sub"><span class="rm-code">'+incEsc(ctx.sku || '—')+'</span>'+partes.join('')+'</div>';
+    document.getElementById('incDesNota').innerHTML = (ctx.ua
+        ? 'El <b>grupo 1</b> conserva la UA <b>'+incEsc(ctx.ua)+'</b>. Los demás quedan <b>sin UA</b> hasta que el WMS distribuya las unidades; después se la pones con Ver / editar.'
+        : 'Ninguna parte tiene UA todavía: cuando el WMS distribuya las unidades, se la pones a cada una con Ver / editar.')
+      + ' Cada grupo queda como una incidencia aparte, con su propia bitácora.';
+    var a = Math.ceil(_incDes.total / 2);
+    incDesPintarGrupos([{cantidad: a, motivo: ''}, {cantidad: _incDes.total - a, motivo: ''}]);
+    document.getElementById('incDesErr').textContent = '';
+    incDesPintar();
+    incDesModal().show();
+  }
+
+  // Lee lo que hay escrito ahora en los grupos (para no perderlo al agregar o quitar uno).
+  function incDesLeer(){
+    return Array.prototype.map.call(document.querySelectorAll('#incDesGrupos .inc-des-grupo'), function(el){
+      return {cantidad: el.querySelector('.inc-des-cant').value, motivo: el.querySelector('.inc-des-mot').value};
+    });
+  }
+  function incDesPintarGrupos(gs){
+    var ua = _incDes.ctx && _incDes.ctx.ua;
+    document.getElementById('incDesGrupos').innerHTML = gs.map(function(g, i){
+      return '<div class="inc-des-grupo" data-i="'+i+'">'
+        + '<div class="inc-des-head"><span class="inc-des-n">'+(i + 1)+'</span><b>Grupo '+(i + 1)+'</b>'
+        +   (i === 0 && ua ? '<span class="inc-des-tag"><i class="bi bi-upc-scan"></i> conserva la UA</span>' : '')
+        +   (i >= 2 ? '<button type="button" class="inc-des-quitar" data-i="'+i+'" aria-label="Quitar el grupo '+(i + 1)+'" title="Quitar este grupo"><i class="bi bi-x-lg"></i></button>' : '')
+        + '</div>'
+        + '<div class="inc-des-fila">'
+        +   '<div><label for="incDesC'+i+'">Cantidad</label>'
+        +     '<input type="number" class="form-control inc-des-cant" id="incDesC'+i+'" min="1" step="1" inputmode="numeric" value="'+incEsc(g.cantidad)+'"></div>'
+        +   '<div><label for="incDesM'+i+'">Motivo</label>'
+        +     '<textarea class="form-control inc-des-mot" id="incDesM'+i+'" rows="2" maxlength="200" placeholder="Qué pieza, qué lado, qué falla (mínimo '+INC_DES_MIN_MOTIVO+' caracteres)">'+incEsc(g.motivo)+'</textarea>'
+        +     '<div class="inc-des-cont"></div></div>'
+        + '</div></div>';
+    }).join('');
+  }
+
+  // Semáforo: cada grupo en verde cuando tiene cantidad y motivo válidos, la cuenta
+  // "Asignadas X de N" y el progreso del encabezado. No vuelve a dibujar los grupos
+  // (perdería el foco al escribir): solo actualiza estados.
+  function incDesPintar(){
+    var total = _incDes.total, suma = 0, validos = 0;
+    var gs = document.querySelectorAll('#incDesGrupos .inc-des-grupo');
+    gs.forEach(function(el){
+      var c = parseFloat(String(el.querySelector('.inc-des-cant').value).replace(',', '.'));
+      var m = (el.querySelector('.inc-des-mot').value || '').trim();
+      var cOk = isFinite(c) && c >= 1 && c === Math.floor(c);
+      var mOk = m.length >= INC_DES_MIN_MOTIVO;
+      if(cOk) suma += c;
+      if(cOk && mOk) validos++;
+      el.classList.toggle('ok', !!(cOk && mOk));
+      el.querySelector('.inc-des-cont').textContent = mOk ? (m.length + ' caracteres') : (m.length + ' / ' + INC_DES_MIN_MOTIVO + ' mínimo');
+    });
+    var dif = total - suma;
+    var cuenta = document.getElementById('incDesCuenta');
+    cuenta.className = 'inc-des-cuenta ' + (dif === 0 ? 'ok' : (dif < 0 ? 'bad' : ''));
+    cuenta.innerHTML = '<i class="bi bi-' + (dif === 0 ? 'check-circle-fill' : 'exclamation-circle-fill') + '"></i>Asignadas ' + suma + ' de ' + total
+      + (dif > 0 ? ' <small>· faltan ' + dif + '</small>' : (dif < 0 ? ' <small>· te pasaste por ' + (-dif) + '</small>' : ''));
+    var ok = [true, dif === 0 && gs.length >= 2 && validos === gs.length];
+    ok.forEach(function(d, i){
+      var pane = document.getElementById('incDesPane' + (i + 1));
+      pane.classList.toggle('done', !!d);
+      pane.querySelector('.inc-num-circle').classList.toggle('done', !!d);
+    });
+    var n = ok.filter(Boolean).length;
+    document.getElementById('incDesProgresoTxt').textContent = n + ' de 2 pasos listos';
+    var bar = document.getElementById('incDesProgresoBar');
+    bar.style.width = Math.round(n / 2 * 100) + '%';
+    bar.style.background = n === 2 ? '#16a34a' : '';
+    document.getElementById('incDesAgregar').disabled = gs.length >= Math.min(total, 20);
+  }
+
+  function incDesEnviar(){
+    var ctx = _incDes.ctx;
+    if(!ctx) return;
+    var err = document.getElementById('incDesErr');
+    err.textContent = '';
+    var grupos = incDesLeer().map(function(g){
+      return {cantidad: parseInt(g.cantidad, 10), motivo: (g.motivo || '').trim()};
+    });
+    var suma = 0, i;
+    for(i = 0; i < grupos.length; i++){
+      if(!isFinite(grupos[i].cantidad) || grupos[i].cantidad < 1){ err.textContent = 'Grupo ' + (i + 1) + ': la cantidad tiene que ser 1 o más.'; return; }
+      if(grupos[i].motivo.length < INC_DES_MIN_MOTIVO){ err.textContent = 'Grupo ' + (i + 1) + ': describe el motivo con al menos ' + INC_DES_MIN_MOTIVO + ' caracteres.'; return; }
+      suma += grupos[i].cantidad;
+    }
+    if(suma !== _incDes.total){ err.textContent = 'Las cantidades suman ' + suma + ' y hay ' + _incDes.total + ' unidades: tienen que coincidir.'; return; }
+    var body = {origen: ctx.origen, grupos: grupos};
+    if(ctx.origen === 'incidencia') body.id = ctx.id; else body.clave = ctx.clave;
+    var btn = document.getElementById('incDesBtnOk');
+    btn.disabled = true;
+    fetch('/mantenciones/api/incidencias/desglosar', {method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN || ''},
+        body: JSON.stringify(body)})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        btn.disabled = false;
+        if(!d.ok){ err.textContent = d.error || 'No se pudo desglosar.'; return; }
+        incDesModal().hide();
+        ilusToast('✓ Desglosada en ' + (d.ids || []).length + ' incidencias. Las que no tienen UA esperan que el WMS las distribuya.', {type:'success'});
+        incBajaRefrescar();
+      })
+      .catch(function(){ btn.disabled = false; err.textContent = 'No se pudo conectar con el servidor.'; });
+  }
+
+  // Todo conectado por código (los onclick del HTML no alcanzan funciones de la IIFE).
+  document.getElementById('incDesGrupos').addEventListener('input', incDesPintar);
+  document.getElementById('incDesGrupos').addEventListener('click', function(ev){
+    var q = ev.target.closest('.inc-des-quitar');
+    if(!q) return;
+    var gs = incDesLeer();
+    gs.splice(parseInt(q.dataset.i, 10), 1);
+    incDesPintarGrupos(gs);
+    incDesPintar();
+  });
+  document.getElementById('incDesAgregar').addEventListener('click', function(){
+    var gs = incDesLeer();
+    var suma = gs.reduce(function(a, g){ var c = parseInt(g.cantidad, 10); return a + (isFinite(c) && c > 0 ? c : 0); }, 0);
+    gs.push({cantidad: Math.max(1, _incDes.total - suma), motivo: ''});
+    incDesPintarGrupos(gs);
+    incDesPintar();
+  });
+  document.getElementById('incDesBtnOk').addEventListener('click', incDesEnviar);
 
   // 🔧 2026-09-26 (Daniel, decisión confirmada): tocar una fila "Falta en
   // nuestra BD" -- o "dif_erp"/"no_en_erp" sin incidencia asociada, ej. el

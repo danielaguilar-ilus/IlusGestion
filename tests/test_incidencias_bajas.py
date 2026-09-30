@@ -328,6 +328,151 @@ class TestEndpointsDeBaja(unittest.TestCase):
         self.assertIn("Sin stock en Random", bloque)
 
 
+class TestDesgloseValidar(unittest.TestCase):
+    """Desglosar por motivo (Daniel, 2026-09-30): "si me entran tres productos de un
+    mismo SKU, que pueda separar el producto en las cantidades según el motivo"."""
+
+    @classmethod
+    def setUpClass(cls):
+        amb = _cargar(["_inc_desglose_validar", "_sentence_case"], ["INC_DESGLOSE_MAX_GRUPOS", "INC_MOTIVO_MAX"])
+        cls.validar = staticmethod(amb["_inc_desglose_validar"])
+
+    MOT_A = "falta el acrílico derecho del selector de pesos"
+    MOT_B = "pantalla defectuosa, el equipo llegó sin pantalla"
+
+    def test_tres_unidades_dos_motivos_es_valido(self):
+        limpios, err = self.validar(3, [{"cantidad": 2, "motivo": self.MOT_A}, {"cantidad": 1, "motivo": self.MOT_B}])
+        self.assertIsNone(err)
+        self.assertEqual([g["cantidad"] for g in limpios], [2, 1])
+
+    def test_el_motivo_se_capitaliza_como_en_el_resto_del_modulo(self):
+        limpios, _ = self.validar(2, [{"cantidad": 1, "motivo": "  falta una pieza importante"},
+                                      {"cantidad": 1, "motivo": "otra pieza distinta rota"}])
+        self.assertTrue(limpios[0]["motivo"].startswith("Falta"))
+
+    def test_la_suma_tiene_que_dar_exactamente_el_total(self):
+        for cants in ((1, 1), (2, 2), (3, 1)):
+            _, err = self.validar(3, [{"cantidad": c, "motivo": self.MOT_A} for c in cants])
+            self.assertIsNotNone(err, cants)
+            self.assertIn("suman", err)
+
+    def test_hace_falta_mas_de_un_grupo_y_mas_de_una_unidad(self):
+        self.assertIsNotNone(self.validar(3, [{"cantidad": 3, "motivo": self.MOT_A}])[1])
+        self.assertIsNotNone(self.validar(1, [{"cantidad": 1, "motivo": self.MOT_A}, {"cantidad": 0, "motivo": self.MOT_B}])[1])
+        self.assertIsNotNone(self.validar(3, None)[1])
+        self.assertIsNotNone(self.validar(3, "x")[1])
+
+    def test_cada_grupo_necesita_su_motivo(self):
+        _, err = self.validar(3, [{"cantidad": 2, "motivo": self.MOT_A}, {"cantidad": 1, "motivo": "corto"}])
+        self.assertIn("Grupo 2", err)
+
+    def test_cantidades_invalidas_se_rechazan(self):
+        for mala in (0, -1, "abc", None, 1.5, "1,5"):
+            _, err = self.validar(3, [{"cantidad": 2, "motivo": self.MOT_A}, {"cantidad": mala, "motivo": self.MOT_B}])
+            self.assertIsNotNone(err, mala)
+
+    def test_acepta_cantidades_como_texto(self):
+        limpios, err = self.validar("3", [{"cantidad": "2", "motivo": self.MOT_A}, {"cantidad": "1", "motivo": self.MOT_B}])
+        self.assertIsNone(err)
+        self.assertEqual(sum(g["cantidad"] for g in limpios), 3)
+
+    def test_no_puede_haber_mas_grupos_que_unidades(self):
+        gs = [{"cantidad": 1, "motivo": self.MOT_A}] * 3
+        self.assertIsNotNone(self.validar(2, gs)[1])
+
+    def test_el_motivo_se_corta_al_largo_de_la_columna(self):
+        limpios, err = self.validar(2, [{"cantidad": 1, "motivo": "x" * 500}, {"cantidad": 1, "motivo": self.MOT_B}])
+        self.assertIsNone(err)
+        self.assertEqual(len(limpios[0]["motivo"]), 200)
+
+
+class TestEndpointDesglosar(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.src = _fuente_de("mant_api_incidencias_desglosar")
+
+    def test_es_de_todos_los_usuarios_del_modulo(self):
+        decs = _decoradores("mant_api_incidencias_desglosar")
+        self.assertIn("_mant_required", decs)
+        self.assertIn("_no_tecnico_salvo_taller", decs)
+        self.assertNotIn('perms.get("admin")', self.src)
+
+    def test_la_bitacora_del_original_queda_antes_de_tocar_la_fila(self):
+        s = self.src
+        self.assertLess(s.index('_inc_log(iid, "desglosada", "motivo"'), s.index("UPDATE mant_incidencias SET cantidad"))
+        self.assertLess(s.index('_inc_log(iid, "desglosada", "cantidad"'), s.index("UPDATE mant_incidencias SET cantidad"))
+
+    def test_el_original_se_actualiza_solo_si_nadie_lo_cambio_antes(self):
+        self.assertIn("AND estado='abierta' AND COALESCE(eliminada,0)=0 AND cantidad=%s", self.src)
+        self.assertIn("if not cur.rowcount:", self.src)
+
+    def test_las_partes_nuevas_nacen_sin_ua_y_la_primera_conserva_la_ua(self):
+        s = self.src
+        # desglose de una incidencia: los clones se insertan SIN `recomendacion`
+        ins_clon = s.split("INSERT INTO mant_incidencias")[1].split("VALUES")[0]
+        self.assertNotIn("recomendacion", ins_clon)
+        # desglose de un pendiente: solo el primer grupo lleva la UA
+        self.assertIn("ua if k == 0 else None", s)
+
+    def test_un_desglose_es_una_sola_transaccion(self):
+        for trozo in self.src.split('if origen == "hallazgo":'):
+            self.assertEqual(trozo.count("db.commit()"), 1 if "INSERT" in trozo else trozo.count("db.commit()"))
+        self.assertIn("db.rollback()", self.src)
+
+    def test_no_deja_la_cantidad_por_debajo_de_lo_ya_tomado_como_repuesto(self):
+        self.assertIn("mant_ot_repuesto_solicitudes", self.src)
+        self.assertIn("tomadas > limpios[0][\"cantidad\"]", self.src)
+
+    def test_el_pendiente_se_recalcula_en_el_servidor_y_no_se_borra_nada(self):
+        self.assertIn("_inc_calcular_hallazgos()", self.src)
+        self.assertNotIn("DELETE", self.src.upper().replace("DELETED", ""))
+        self.assertNotIn("eliminada=1", self.src)
+
+    def test_solo_desglosa_pendientes_sin_incidencia(self):
+        self.assertIn('if not h.get("baja_hallazgo"):', self.src)
+
+
+class TestSqlDeBajas(unittest.TestCase):
+    """REGLA #5 (verificar las columnas contra el CREATE TABLE): `ast.parse` no ve los
+    nombres de columnas dentro del SQL, y un error acá solo aparecería en producción."""
+
+    @staticmethod
+    def _unir_literales(src):
+        # "a" \n "b"  ->  "ab"  (concatenación implícita de literales de Python)
+        return re.sub(r'"\s*\n\s*"', "", src)
+
+    @classmethod
+    def setUpClass(cls):
+        create = _fuente_de("_ensure_incidencia_bajas_table")
+        cls.columnas = set(re.findall(r"^\s+(\w+)\s+(?:INT|VARCHAR|DECIMAL|DATETIME|DATE)\b", create, re.M))
+
+    def test_la_tabla_declara_las_columnas_esperadas(self):
+        for c in ("origen", "clave", "incidencia_id", "motivo_codigo", "motivo_texto", "estado_antes",
+                  "fecha_res_antes", "baja_by", "baja_at", "reactivada_at", "reactivada_by", "reactivada_motivo"):
+            self.assertIn(c, self.columnas)
+
+    def test_las_columnas_insertadas_existen_y_cuadran_con_los_valores(self):
+        for nombre in ("mant_api_incidencias_baja_hallazgo", "mant_api_incidencia_baja"):
+            with self.subTest(nombre):
+                src = self._unir_literales(_fuente_de(nombre))
+                m = re.search(r"INSERT INTO mant_incidencia_bajas \(([^)]*)\)\s*VALUES \(([^)]*)\)", src)
+                self.assertIsNotNone(m, "no se encontró el INSERT")
+                cols = [c.strip() for c in m.group(1).split(",")]
+                vals = [v.strip() for v in m.group(2).split(",")]
+                self.assertEqual(len(cols), len(vals), "columnas y valores no cuadran")
+                self.assertTrue(set(cols) <= self.columnas, f"columnas que no existen: {set(cols) - self.columnas}")
+
+    def test_los_update_solo_tocan_columnas_que_existen(self):
+        usados = set()
+        for nombre in ("mant_api_incidencias_baja_hallazgo", "mant_api_incidencia_baja",
+                       "mant_api_incidencias_baja_reactivar"):
+            src = self._unir_literales(_fuente_de(nombre))
+            for m in re.finditer(r"UPDATE mant_incidencia_bajas SET ([^\"]*?) WHERE", src):
+                usados |= set(re.findall(r"(\w+)\s*=", m.group(1)))
+        self.assertTrue(usados)
+        self.assertTrue(usados <= self.columnas, f"columnas que no existen: {usados - self.columnas}")
+
+
 class TestPlantillaBajas(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -353,6 +498,20 @@ class TestPlantillaBajas(unittest.TestCase):
         self.assertIn("data-alerta=", self.html)
         # ya no se arma la tabla vieja de cabecera negra propia
         self.assertNotIn("'<div class=\"inc-wrap\"><table class=\"inc-tabla\">", self.html)
+
+    def test_desglosar_esta_en_las_dos_tablas_y_solo_con_dos_o_mas_unidades(self):
+        self.assertIn('id="incDesgloseModal"', self.html)
+        # tabla principal: solo si la fila tiene 2+ unidades
+        self.assertIn("(parseInt(r.cantidad, 10) || 0) >= 2 ? '<li><button type=\"button\" class=\"dropdown-item inc-acc\" data-accion=\"desglosar\"", self.html)
+        # pendientes: solo los que no tienen incidencia y traen 2+ unidades
+        self.assertIn("if(h.baja_hallazgo && h.accion === 'registrar' && (parseInt(h.cantidad, 10) || 0) >= 2)", self.html)
+        self.assertIn("data-accion=\"desglosar\"><i class=\"bi bi-diagram-3", self.html)
+
+    def test_el_desglose_valida_la_suma_y_el_motivo_antes_de_enviar(self):
+        bloque = self.html.split("function incDesEnviar(){")[1].split("// Todo conectado por código")[0]
+        self.assertIn("suma !== _incDes.total", bloque)
+        self.assertIn("INC_DES_MIN_MOTIVO", bloque)
+        self.assertIn("/mantenciones/api/incidencias/desglosar", bloque)
 
     def test_no_se_usan_dialogos_nativos(self):
         # REGLA #1: alert/confirm/prompt nativos prohibidos (solo ilus*).
