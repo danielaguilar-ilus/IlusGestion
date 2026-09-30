@@ -24,9 +24,9 @@
 {# 🧭 2026-09-19 (Daniel: "poder ordenar"). Encabezado clicable de la tabla
    "OT por facturar" -- next_dir invierte si ya es la columna activa, si no
    parte en desc (más reciente/mayor primero, lo que la gente espera). #}
-{% macro th_orden(campo, label, extra_class='') -%}
+{% macro th_orden(campo, label, extra_class='', tip='') -%}
 {% set next_dir = 'asc' if (pf_orden == campo and pf_dir == 'desc') else 'desc' %}
-<th class="{{ extra_class }} fp-th-ord {{ 'activo' if pf_orden == campo }}" onclick="fpvOrdenar('{{ campo }}','{{ next_dir }}')">
+<th class="{{ extra_class }} fp-th-ord {{ 'activo' if pf_orden == campo }}"{% if tip %} title="{{ tip }}"{% endif %} onclick="fpvOrdenar('{{ campo }}','{{ next_dir }}')">
   {{ label }}{% if pf_orden == campo %}<i class="bi bi-caret-{{ 'up' if pf_dir == 'asc' else 'down' }}-fill"></i>{% endif %}
 </th>
 {%- endmacro %}
@@ -296,18 +296,21 @@
    🏢 2026-09-20 solicitar OC sobre VARIOS proveedores a la vez (una OC por
    cada uno) + Excel del corte: el checkbox va siempre, no solo filtrando. #}
 <div class="table-responsive">
-  <table class="fp-tabla">
+  {# 📐 2026-09-30 (Daniel: "que quepa todo en la pantalla"): eran 14 columnas y
+     ~1800px mínimos, así que cortaba a la derecha incluso en pantalla grande. Ahora
+     Pagado y Cobrado son UNA columna cada uno (total + instalación + despacho
+     apilados) y Servicio + Estado comparten celda: ~990px mínimos. No se quitó
+     ningún dato ni el orden por Pagado / Cobrado / Margen (REGLA #4.2). #}
+  <table class="fp-tabla fp-tabla-ot">
     <thead>
       <tr>
         {% if puede_seleccionar %}
         <th style="width:38px"><span class="fp-chk-wrap"><input type="checkbox" id="fpvOtCheckAll" onchange="fpvOtToggleAll(this.checked)" aria-label="Seleccionar todas"></span></th>
         {% endif %}
         {{ th_orden('fecha', 'OT') }}{{ th_orden('proveedor', 'Proveedor') }}{{ th_orden('cliente', 'Cliente') }}
-        <th>Servicio</th><th>Estado</th><th>Anexo</th>
-        <th class="m">Pagado instalación</th><th class="m">Pagado despacho</th>
-        {{ th_orden('pagado_total', 'Pagado total', 'm') }}
-        <th class="m">Cobrado instalación</th><th class="m">Cobrado despacho</th>
-        {{ th_orden('cobrado_total', 'Cobrado total', 'm') }}
+        <th>Servicio y estado</th><th>Anexo</th>
+        {{ th_orden('pagado_total', 'Pagado', 'm', 'Total pagado al proveedor, con su instalación y despacho. Toca para ordenar.') }}
+        {{ th_orden('cobrado_total', 'Cobrado', 'm', 'Total cobrado al cliente, con su instalación y despacho. Toca para ordenar.') }}
         {{ th_orden('margen', 'Margen', 'm') }}
       </tr>
     </thead>
@@ -332,15 +335,15 @@
           {% if d.tecnico_nombre and d.tecnico_nombre | lower != d.proveedor | lower %}<div class="fp-sub"><i class="bi bi-person"></i> {{ d.tecnico_nombre }}</div>{% endif %}</td>
         <td data-label="Cliente"><div class="fp-nom-cli">{{ d.cliente or '—' }}</div>
           {% if d.comuna %}<div class="fp-sub"><i class="bi bi-geo-alt"></i> {{ d.comuna }}</div>{% endif %}</td>
-        <td data-label="Servicio"><span class="fp-tipo">{{ d.tipo_label }}</span>
-          {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
-        <td data-label="Estado"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span>
+        <td class="fp-td-serv" data-label="Servicio y estado"><span class="fp-tipo">{{ d.tipo_label }}</span>
+          {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}
+          <div class="fp-est-fila"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span></div>
           {# 2026-09-21: la OT no cerrada se ve y se puede pagar; se avisa, no se esconde. #}
           {% if d.no_cerrada %}<div class="fp-sub" style="color:#b45309;font-weight:800"><i class="bi bi-exclamation-triangle-fill"></i> No cerrada aún</div>{% endif %}</td>
         {# 📎 2026-09-19 (N° de anexo) + 2026-09-20 (Daniel: "el anexo lo
            necesito"): estado y PDF en la fila. Sin anexo firmado = ámbar,
            no rojo: Daniel decidió avisar, no bloquear. #}
-        <td data-label="Anexo">
+        <td class="fp-td-anx" data-label="Anexo">
           {% if d.anexo_numero %}
           <a class="fp-anx {{ 'ok' if d.anexo_firmado else 'warn' }}" href="/ot/api/anexos/{{ d.anexo_id }}/pdf" target="_blank" rel="noopener"
              title="Abrir el PDF del anexo N° {{ d.anexo_numero }}">
@@ -355,26 +358,31 @@
             módulo la escondía; ahora se muestra con el aviso y el link a
             Finanzas de esa OT, donde se carga el costo (0 si es garantía). -#}
         {% if d.sin_costo %}
-        <td class="m" data-label="Pagado instalación" colspan="3" style="text-align:left">
-          <a class="fp-sindoc" style="text-decoration:none" href="{{ url_for('ot2_detalle', vid=d.id) }}#otdCardFinanzas"
+        <td class="m" data-label="Pagado" style="text-align:left">
+          <a class="fp-sindoc fp-sindoc-wrap" style="text-decoration:none" href="{{ url_for('ot2_detalle', vid=d.id) }}#otdCardFinanzas"
              title="Abrir la OT y cargar el costo del proveedor en la tarjeta Finanzas">
             <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if d.es_garantia %} (garantía: puede ser $0){% endif %}</a></td>
         {% else %}
-        <td class="m" data-label="Pagado instalación">{{ clp(d.servicio) if d.servicio else '—' }}</td>
-        <td class="m" data-label="Pagado despacho">{{ clp(d.despacho) if d.despacho else '—' }}</td>
-        <td class="m tot" data-label="Pagado total">{{ clp(d.sugerido) }}{% if d.es_garantia and not d.sugerido %}<div class="fp-sub">garantía · $0</div>{% endif %}</td>
+        <td class="m" data-label="Pagado"><div class="fp-mstack">
+          <div class="fp-mt">{{ clp(d.sugerido) }}</div>
+          {% if d.es_garantia and not d.sugerido %}<div class="fp-sub">garantía · $0</div>{% endif %}
+          <div class="fp-ml"><em title="Instalación">Inst.</em><span>{{ clp(d.servicio) if d.servicio else '—' }}</span></div>
+          <div class="fp-ml"><em title="Despacho">Desp.</em><span>{{ clp(d.despacho) if d.despacho else '—' }}</span></div>
+        </div></td>
         {% endif %}
         {# 💰 2026-09-19 (Daniel: "cuánto le cobré al cliente en instalación
            y despacho también" -- no solo el total, mismo desglose que ya
            existe del lado proveedor). #}
-        <td class="m" data-label="Cobrado instalación">{{ clp(d.cobrado_cliente_serv) if d.cobrado_cliente_serv else '—' }}</td>
-        <td class="m" data-label="Cobrado despacho">{{ clp(d.cobrado_cliente_envio) if d.cobrado_cliente_envio else '—' }}</td>
-        <td class="m tot" data-label="Cobrado total">{{ clp(d.cobrado_cliente) }}</td>
+        <td class="m" data-label="Cobrado"><div class="fp-mstack">
+          <div class="fp-mt">{{ clp(d.cobrado_cliente) }}</div>
+          <div class="fp-ml"><em title="Instalación">Inst.</em><span>{{ clp(d.cobrado_cliente_serv) if d.cobrado_cliente_serv else '—' }}</span></div>
+          <div class="fp-ml"><em title="Despacho">Desp.</em><span>{{ clp(d.cobrado_cliente_envio) if d.cobrado_cliente_envio else '—' }}</span></div>
+        </div></td>
         <td class="m" data-label="Margen">
           {# Misma regla que la franja "Lo filtrado" y que Facturación: una OT
              en garantía o sin cobro declarado no tiene margen, se dice. #}
           {% if d.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">Garantía</span>
-          {% elif not d.cobrado_cliente %}<span class="fp-sindoc" title="Sin línea ZZ ni valor de cotización/contrato: el cobro no se sabe">Sin cobro declarado</span>
+          {% elif not d.cobrado_cliente %}<span class="fp-sindoc fp-sindoc-wrap" title="Sin línea ZZ ni valor de cotización/contrato: el cobro no se sabe">Sin cobro declarado</span>
           {% else %}
           <span class="{{ 'fp-margen-pos' if d.margen > 0 else ('fp-margen-neg' if d.margen < 0 else '') }}">
             {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span>
@@ -1143,10 +1151,25 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fp-doc-oc{color:#1e40af;background:#dbeafe;border-color:#bfdbfe}
 /* 📋 2026-09-21 calidad de información: tracking del lote, pastillas de OT,
    cliente completo (nunca truncado, REGLA #15), toggle de pruebas. */
-.fp-nom-cli{font-weight:700;color:#0f172a;line-height:1.25;min-width:160px}
+.fp-nom-cli{font-weight:700;color:#0f172a;line-height:1.25;min-width:130px}
 /* El N° de OT y sus fechas no se parten en 3 líneas (celda con ancho propio). */
 .fp-tabla td[data-label="OT"]{min-width:150px}
 .fp-tabla td[data-label="OT"] .fp-ot,.fp-tabla td[data-label="OT"] .fp-sub{white-space:nowrap}
+/* 📐 2026-09-30 tabla "OT por facturar" contenida en pantalla (ver th_orden/<table>).
+   Montos apilados: total arriba en negrita, instalación y despacho debajo. */
+.fp-mstack{display:inline-flex;flex-direction:column;align-items:stretch;min-width:96px;line-height:1.25}
+.fp-mstack .fp-mt{font-weight:900;color:#0f172a;text-align:right}
+.fp-mstack .fp-ml{display:flex;justify-content:space-between;gap:10px;font-size:.7rem;font-weight:600;color:#64748b}
+.fp-mstack .fp-ml em{font-style:normal;font-weight:700;color:#94a3b8}
+.fp-mstack .fp-sub{text-align:right}
+.fp-est-fila{margin-top:4px}
+/* Aprietan la tabla solo si hace falta: un nombre de servicio largo ("Mantención
+   preventiva programada"), el chip del anexo y el aviso "sin costo" se parten en
+   2 líneas en vez de ensanchar la tabla y cortarla a la derecha. */
+.fp-tabla-ot tbody td,.fp-tabla-ot thead th{padding-left:8px;padding-right:8px}
+.fp-tabla-ot .fp-td-serv .fp-tipo{white-space:normal;display:inline-block;border-radius:10px}
+.fp-tabla-ot .fp-td-anx .fp-anx{flex-wrap:wrap;border-radius:12px}
+.fp-sindoc.fp-sindoc-wrap{white-space:normal;display:inline-block;border-radius:10px;line-height:1.3;text-align:left;max-width:190px}
 .fp-trk{display:inline-flex;align-items:center;gap:2px}
 .fp-trk-s{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:44px}
 .fp-trk-s small{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;white-space:nowrap}
@@ -1234,6 +1257,10 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
     text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
   /* REGLA #3: 44px en lo que se toca con el dedo y no es .btn */
   .fp-pag-btn,.fp-pag-ctl select{min-height:44px}
+  /* Montos apilados en la tarjeta: a la izquierda, bajo su nombre (Pagado / Cobrado) */
+  .fp-mstack{min-width:170px}
+  .fp-mstack .fp-mt,.fp-mstack .fp-sub{text-align:left}
+  .fp-mstack .fp-mt{font-size:1rem}
 }
 @media (min-width:769px){ .fpv-selall{display:none} }
 @media (max-width:768px){

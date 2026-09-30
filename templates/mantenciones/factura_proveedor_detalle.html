@@ -323,13 +323,15 @@
          detalle que afuera... cliente, servicio, estado, N° de anexo, pagado
          instalación y despacho, pagado total, cobrado instalación y despacho,
          cobrado total, margen y porcentaje. Siempre todo clarito"). Mismas
-         columnas y mismo orden que la tabla "OT por facturar". #}
+         columnas y mismo orden que la tabla "OT por facturar".
+         📐 2026-09-30 (Daniel: "que quepa todo en la pantalla"): igual que
+         afuera, los montos se apilan en UNA columna cada lado (total arriba,
+         instalación y despacho debajo) y Servicio + Estado comparten celda:
+         de ~1600px mínimos a ~900px. No se quitó ningún dato (REGLA #4.2). #}
       <tr>
-        <th>OT</th><th>Cliente</th><th>Servicio</th><th>Estado</th><th>Anexo</th>
-        <th class="m">Pagado instalación</th><th class="m">Pagado despacho</th>
-        <th class="m">Cobra esta factura</th>
-        <th class="m">Cobrado instalación</th><th class="m">Cobrado despacho</th>
-        <th class="m">Cobrado total</th><th class="m">Margen</th>
+        <th>OT</th><th>Cliente</th><th>Servicio y estado</th><th>Anexo</th>
+        <th class="m fpd-th-wrap" title="Lo que esta factura le paga al proveedor por la OT, con su instalación y despacho">Cobra esta factura</th>
+        <th class="m" title="Lo cobrado al cliente, con su instalación y despacho">Cobrado</th><th class="m">Margen</th>
         {% if puede_quitar %}<th></th>{% endif %}
       </tr>
     </thead>
@@ -351,14 +353,14 @@
           {% if it.tecnico_nombre and it.tecnico_nombre | lower != prov_nombre | lower %}
           <div class="fp-sub"><i class="bi bi-person"></i> {{ it.tecnico_nombre }}</div>{% endif %}</td>
         <td data-label="Cliente"><div class="fp-nom">{{ it.cliente }}</div></td>
-        <td data-label="Servicio"><span class="fp-tipo">{{ it.tipo_label }}</span>
-          {% if it.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}</td>
-        <td data-label="Estado"><span class="fp-est est-{{ it.estado }}">{{ it.estado | replace('_',' ') }}</span>
+        <td class="fp-td-serv" data-label="Servicio y estado"><span class="fp-tipo">{{ it.tipo_label }}</span>
+          {% if it.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}
+          <div class="fp-est-fila"><span class="fp-est est-{{ it.estado }}">{{ it.estado | replace('_',' ') }}</span></div>
           {# 2026-09-21: la OT no cerrada se ve y se puede pagar; se avisa, no se esconde. #}
           {% if it.no_cerrada %}<div class="fp-sub" style="color:#b45309;font-weight:800"><i class="bi bi-exclamation-triangle-fill"></i> No cerrada aún</div>{% endif %}</td>
         {# 📎 Mismo chip de anexo que la tabla principal (facturas_proveedor.html):
            estado y PDF en la fila. Sin anexo firmado = ámbar, no rojo. #}
-        <td data-label="Anexo">
+        <td class="fp-td-anx" data-label="Anexo">
           {% if it.anexo_numero %}
           <a class="fp-anx {{ 'ok' if it.anexo_firmado else 'warn' }}" href="/ot/api/anexos/{{ it.anexo_id }}/pdf" target="_blank" rel="noopener"
              title="Abrir el PDF del anexo N° {{ it.anexo_numero }}">
@@ -370,22 +372,25 @@
         </td>
         {# 🔴 OT nacida por Levantamiento/Ticket sin costo declarado (NULL):
            se muestra con aviso y link a Finanzas de la OT, como afuera. #}
-        {% if it.sin_costo %}
-        <td class="m" data-label="Pagado instalación / despacho" colspan="2" style="text-align:left">
-          <a class="fp-sindoc" style="text-decoration:none;white-space:normal" href="{{ url_for('ot2_detalle', vid=it.id) }}#otdCardFinanzas"
-             title="Abrir la OT y cargar el costo del proveedor en la tarjeta Finanzas">
-            <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if it.es_garantia %} (garantía: puede ser $0){% endif %}</a></td>
-        {% else %}
-        <td class="m" data-label="Pagado instalación">{{ clp(it.servicio) if it.servicio else '—' }}</td>
-        <td class="m" data-label="Pagado despacho">{{ clp(it.despacho) if it.despacho else '—' }}</td>
-        {% endif %}
-        <td class="m tot" data-label="Cobra esta factura">{{ clp(cobra) }}
+        <td class="m" data-label="Cobra esta factura"><div class="fp-mstack">
+          <div class="fp-mt">{{ clp(cobra) }}</div>
           {% if it.fac_monto is not none and (it.fac_monto - it.sugerido)|round(0) != 0 %}
           <div class="fp-sub" style="color:#b45309;font-weight:800">≠ declarado {{ clp(it.sugerido) }}</div>
-          {% elif it.es_garantia and not cobra %}<div class="fp-sub">garantía · $0</div>{% endif %}</td>
-        <td class="m" data-label="Cobrado instalación">{{ clp(it.cobrado_cliente_serv) if it.cobrado_cliente_serv else '—' }}</td>
-        <td class="m" data-label="Cobrado despacho">{{ clp(it.cobrado_cliente_envio) if it.cobrado_cliente_envio else '—' }}</td>
-        <td class="m tot" data-label="Cobrado total">{{ clp(it.cobrado_cliente) }}</td>
+          {% elif it.es_garantia and not cobra %}<div class="fp-sub">garantía · $0</div>{% endif %}
+          {% if it.sin_costo %}
+          <a class="fp-sindoc fp-sindoc-wrap" style="text-decoration:none" href="{{ url_for('ot2_detalle', vid=it.id) }}#otdCardFinanzas"
+             title="Abrir la OT y cargar el costo del proveedor en la tarjeta Finanzas">
+            <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if it.es_garantia %} (garantía: puede ser $0){% endif %}</a>
+          {% else %}
+          <div class="fp-ml"><em title="Pagado por la instalación">Inst.</em><span>{{ clp(it.servicio) if it.servicio else '—' }}</span></div>
+          <div class="fp-ml"><em title="Pagado por el despacho">Desp.</em><span>{{ clp(it.despacho) if it.despacho else '—' }}</span></div>
+          {% endif %}
+        </div></td>
+        <td class="m" data-label="Cobrado"><div class="fp-mstack">
+          <div class="fp-mt">{{ clp(it.cobrado_cliente) }}</div>
+          <div class="fp-ml"><em title="Cobrado por la instalación">Inst.</em><span>{{ clp(it.cobrado_cliente_serv) if it.cobrado_cliente_serv else '—' }}</span></div>
+          <div class="fp-ml"><em title="Cobrado por el despacho">Desp.</em><span>{{ clp(it.cobrado_cliente_envio) if it.cobrado_cliente_envio else '—' }}</span></div>
+        </div></td>
         <td class="m" data-label="Margen">
           {# Contra lo que cobra ESTA factura (margen_fila), para que la suma
              cuadre con el KPI de arriba; garantía y sin cobro se dicen. #}
@@ -417,7 +422,7 @@
          en una segunda línea de ancho total bajo la OT, junto con quién y
          cuándo la asignó al lote. La fila principal queda compacta. #}
       <tr class="fpd-obs-row {{ 'fpd-row-warn' if it.no_cerrada or it.sin_costo }}">
-        <td colspan="{{ 13 if puede_quitar else 12 }}" data-label="Observación / asignación">
+        <td colspan="{{ 8 if puede_quitar else 7 }}" data-label="Observación / asignación">
           <div class="fpd-obs">
             <div class="fpd-obs-meta"><i class="bi bi-person-plus"></i> Asignada por <b>{{ it.usuario or '—' }}</b>{% if it.asignada %} · {{ it.asignada }}{% endif %}</div>
             {% if it.observacion %}<div class="fpd-obs-txt"><i class="bi bi-chat-left-text"></i> {{ it.observacion }}</div>
@@ -428,18 +433,22 @@
     </tbody>
     <tfoot>
       <tr class="fpd-tfoot">
-        <td data-label="Totales" colspan="5"><b>Totales del lote</b>
+        <td data-label="Totales" colspan="4"><b>Totales del lote</b>
           <div class="fp-sub">{{ items|length }} OT
             {%- if tot.garantias %} · {{ tot.garantias }} en garantía{% endif %}
             {%- if tot.no_cerradas %} · <span style="color:#b45309;font-weight:800">{{ tot.no_cerradas }} sin cerrar</span>{% endif %}
             {%- if tot.sin_costo %} · <span style="color:#b91c1c;font-weight:800">{{ tot.sin_costo }} sin costo declarado</span>{% endif %}</div></td>
-        <td class="m" data-label="Pagado instalación">{{ clp(tot.serv) }}</td>
-        <td class="m" data-label="Pagado despacho">{{ clp(tot.desp) }}</td>
-        <td class="m tot" data-label="Cobra esta factura">{{ clp(total_asignado) }}
-          {% if diferencia|round(0) != 0 %}<div class="fp-sub" style="color:#b45309;font-weight:800">factura: {{ clp(factura.monto_total) }}</div>{% endif %}</td>
-        <td class="m" data-label="Cobrado instalación">{{ clp(tot.cserv) }}</td>
-        <td class="m" data-label="Cobrado despacho">{{ clp(tot.cenvio) }}</td>
-        <td class="m tot" data-label="Cobrado total">{{ clp(total_cobrado_cliente) }}</td>
+        <td class="m" data-label="Cobra esta factura"><div class="fp-mstack">
+          <div class="fp-mt">{{ clp(total_asignado) }}</div>
+          {% if diferencia|round(0) != 0 %}<div class="fp-sub" style="color:#b45309;font-weight:800">factura: {{ clp(factura.monto_total) }}</div>{% endif %}
+          <div class="fp-ml"><em title="Pagado por la instalación">Inst.</em><span>{{ clp(tot.serv) }}</span></div>
+          <div class="fp-ml"><em title="Pagado por el despacho">Desp.</em><span>{{ clp(tot.desp) }}</span></div>
+        </div></td>
+        <td class="m" data-label="Cobrado"><div class="fp-mstack">
+          <div class="fp-mt">{{ clp(total_cobrado_cliente) }}</div>
+          <div class="fp-ml"><em title="Cobrado por la instalación">Inst.</em><span>{{ clp(tot.cserv) }}</span></div>
+          <div class="fp-ml"><em title="Cobrado por el despacho">Desp.</em><span>{{ clp(tot.cenvio) }}</span></div>
+        </div></td>
         {% set mg_filas = total_cobrado_cliente - total_asignado %}
         <td class="m" data-label="Margen">
           <span class="{{ 'fp-margen-pos' if mg_filas > 0 else ('fp-margen-neg' if mg_filas < 0 else '') }}">{{ '+' if mg_filas > 0 else '' }}{{ clp(mg_filas) }}</span>
@@ -1025,7 +1034,25 @@ async function fpdGuardarEdicion(){
 .fp-tabla tfoot .fp-sub{color:rgba(255,255,255,.65)}
 .fp-tabla tfoot .fp-margen-pos{color:#4ade80}.fp-tabla tfoot .fp-margen-neg{color:#fca5a5}
 .fp-tabla tfoot .fp-pct{color:rgba(255,255,255,.7)}.fp-tabla tfoot .fp-pct.neg{color:#fca5a5}
-.fp-nom{font-weight:700;color:#0f172a;line-height:1.3;min-width:160px;word-break:break-word}
+.fp-nom{font-weight:700;color:#0f172a;line-height:1.3;min-width:130px;word-break:break-word}
+/* 📐 2026-09-30 tabla contenida en pantalla (misma idea que "OT por facturar"):
+   montos apilados (total arriba, instalación y despacho debajo) y Servicio +
+   Estado en una celda. Las pastillas largas se parten en 2 líneas en vez de
+   ensanchar la tabla y cortarla a la derecha. */
+.fp-mstack{display:inline-flex;flex-direction:column;align-items:stretch;min-width:96px;line-height:1.25}
+.fp-mstack .fp-mt{font-weight:900;color:#0f172a;text-align:right}
+.fp-mstack .fp-ml{display:flex;justify-content:space-between;gap:10px;font-size:.7rem;font-weight:600;color:#64748b}
+.fp-mstack .fp-ml em{font-style:normal;font-weight:700;color:#94a3b8}
+.fp-mstack .fp-sub{text-align:right}
+.fp-tabla tfoot .fp-mstack .fp-mt{color:#fff}
+.fp-tabla tfoot .fp-ml{color:rgba(255,255,255,.72)}
+.fp-tabla tfoot .fp-ml em{color:rgba(255,255,255,.55)}
+.fp-est-fila{margin-top:4px}
+.fpd-tabla tbody td,.fpd-tabla thead th{padding-left:8px;padding-right:8px}
+.fpd-tabla thead th.fpd-th-wrap{white-space:normal;min-width:88px}
+.fpd-tabla .fp-td-serv .fp-tipo{white-space:normal;display:inline-block;border-radius:10px}
+.fpd-tabla .fp-td-anx .fp-anx{flex-wrap:wrap;border-radius:12px}
+.fp-sindoc.fp-sindoc-wrap{white-space:normal;display:inline-block;border-radius:10px;line-height:1.3;text-align:left;max-width:190px}
 .fp-margen-pos{color:#15803d;font-weight:800}
 .fp-margen-neg{color:#b91c1c;font-weight:800}
 .fp-gar{display:inline-block;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
@@ -1137,6 +1164,10 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   .fp-tabla tfoot td[data-label]::before{color:rgba(255,255,255,.55)}
   .fp-tabla tfoot td:empty{display:none}
   .fp-nom{min-width:0}
+  /* Montos apilados en la tarjeta: a la izquierda, bajo su nombre */
+  .fp-mstack{min-width:170px}
+  .fp-mstack .fp-mt,.fp-mstack .fp-sub{text-align:left}
+  .fp-mstack .fp-mt{font-size:1rem}
   .fpd-acc{padding-top:8px}
   .fpd-acc .btn{width:100%}
   .fpd-acc-txt{display:inline;margin-left:6px}
