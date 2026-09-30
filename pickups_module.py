@@ -1158,6 +1158,10 @@ def register_pickup_routes(app, ctx):
                 pass
 
         def feriado(d):
+            # Solo cuenta si cae en un día que la bodega abriría: un feriado en sábado o
+            # domingo no cambia nada (ej. 31/10/2026 es sábado → el viernes 30 NO es víspera).
+            if d.isoweekday() not in work_days:
+                return False
             iso = d.isoformat()
             if iso in extra:
                 return True
