@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from flask import flash, has_request_context, jsonify, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.utils import secure_filename
 
+import retiros_monitor as _rmon  # datos derivados del Monitor (semáforo, tarjetas, línea de tiempo)
+
 
 def _public_base_url():
     """Base URL pública absoluta, SEGURA para usar dentro de threads.
@@ -4569,7 +4571,7 @@ def register_pickup_routes(app, ctx):
         )
         counts = mysql_fetchall(f"SELECT status, COUNT(*) AS n FROM `{REQ}` GROUP BY status")
         stats = {r["status"]: int(r["n"]) for r in counts}
-        today = datetime.now().date().isoformat()
+        today = _now_chile().date().isoformat()
         day = mysql_fetchone(
             f"""SELECT COUNT(*) AS total, COALESCE(SUM(total_packages),0) AS bultos,
                        COALESCE(SUM(total_weight_kg),0) AS peso, COALESCE(SUM(total_volumetric_weight),0) AS pvol,
@@ -4616,6 +4618,108 @@ def register_pickup_routes(app, ctx):
                 "WHERE sender='cliente' AND leido_operador=0") or {}
             kpis["msgs"] = int(_r.get("n") or 0)
         except Exception: pass
+        # ── Monitor rico: semáforo por fila, línea de tiempo y tarjetas Power BI ──
+        # Daniel 2026-09-29: "enchular" el Monitor. Todo es best-effort: si una consulta
+        # falla, el dashboard igual carga (esa tarjeta o ese detalle queda sin datos).
+        # La lógica vive en retiros_monitor.py (módulo puro, con pruebas).
+        ahora_cl = _now_chile()
+        hoy_cl = ahora_cl.date()
+        lunes_cl, domingo_cl = _rmon.semana(hoy_cl)
+        _cfg_mon = settings()
+        feriados_mon = set()
+        for _yr in {hoy_cl.year, (hoy_cl + timedelta(days=40)).year}:
+            try:
+                feriados_mon |= set(_chile_holidays(_yr))
+            except Exception:
+                pass
+        feriados_mon |= {h.strip() for h in (_cfg_mon.get("holidays") or "").replace(";", ",").split(",") if h.strip()}
+        mon = {"hoy": hoy_cl.isoformat(), "lunes": lunes_cl.isoformat(), "domingo": domingo_cl.isoformat(),
+               "limite": 250, "total": len(rows), "ok": False}
+        try:
+            mon["total"] = int((mysql_fetchone(
+                f"SELECT COUNT(*) AS n FROM `{REQ}` WHERE {' AND '.join(where)}", tuple(params)) or {}).get("n") or 0)
+        except Exception:
+            pass
+        if filtros["view"] not in ("kanban", "agenda"):
+            logs_mon = {}
+            try:
+                _ids = [int(r["id"]) for r in rows]
+                if _ids:
+                    _ph = ",".join(["%s"] * len(_ids))
+                    for lg in (mysql_fetchall(
+                            f"""SELECT t.request_id, t.actor_name, t.action, t.new_status, t.created_at
+                                  FROM (SELECT l.id, l.request_id, l.actor_name, l.action, l.new_status, l.created_at,
+                                               ROW_NUMBER() OVER (PARTITION BY l.request_id
+                                                                  ORDER BY l.created_at DESC, l.id DESC) AS rn
+                                          FROM `{LOG}` l WHERE l.request_id IN ({_ph})) t
+                                 WHERE t.rn <= 10
+                                 ORDER BY t.request_id, t.created_at DESC, t.id DESC""", tuple(_ids)) or []):
+                        logs_mon.setdefault(int(lg["request_id"]), []).append(lg)
+            except Exception:
+                logs_mon = {}
+            try:
+                _rmon.enriquecer_filas(
+                    rows, hoy=hoy_cl, ahora=ahora_cl, horas_habiles=_cc_horas_habiles,
+                    utc_a_chile=_cc_utc_a_chile, td_hhmm=_td_to_hhmm, estados=PICKUP_STATUS,
+                    grupos=PIPELINE_GROUPS, relaciones=dict(PICKUP_RELATIONS), feriados=feriados_mon,
+                    sla_ambar=_CC_SLA_AMBAR_H, sla_rojo=_CC_SLA_ROJO_H, logs=logs_mon)
+                mon["datos"] = _rmon.armar_datos(rows, app.jinja_env.filters.get("rut_fmt", lambda v: v or ""))
+                mon["ok"] = True   # si algo falla, la plantilla muestra la tabla de siempre
+            except Exception as _e_mon:
+                print(f"[retiros/monitor] no se pudo enriquecer las filas: {type(_e_mon).__name__}", flush=True)
+        kx = {}
+        _CONF = "'agenda_confirmada','reagendada','en_preparacion','retirada','cerrada'"
+        try:
+            _prev_lunes = lunes_cl - timedelta(days=7)
+            _fr = mysql_fetchall(
+                f"SELECT COALESCE(confirmed_date, requested_date) AS d, COUNT(*) AS n FROM `{REQ}` "
+                f"WHERE COALESCE(confirmed_date, requested_date) BETWEEN %s AND %s "
+                f"  AND status NOT IN ('rechazada','fallida') GROUP BY d",
+                (_prev_lunes.isoformat(), domingo_cl.isoformat())) or []
+            _por_fecha = {str(x["d"])[:10]: int(x["n"]) for x in _fr}
+            _prev_total = sum(_por_fecha.get((_prev_lunes + timedelta(days=i)).isoformat(), 0) for i in range(7))
+            kx["semana"] = {"barras": _rmon.barras_semana(_por_fecha, lunes_cl, hoy_cl),
+                            "prev": _prev_total, "delta": _rmon.delta(kpis["semana"], _prev_total)}
+        except Exception:
+            pass
+        try:
+            _rt = mysql_fetchall(
+                f"SELECT YEARWEEK(created_at,1) AS w, SUM(status IN ({_CONF})) AS conf, COUNT(*) AS tot "
+                f"FROM `{REQ}` WHERE created_at >= NOW() - INTERVAL 56 DAY GROUP BY w ORDER BY w") or []
+            _serie_t = [round(int(x["conf"] or 0) * 100.0 / int(x["tot"])) for x in _rt if int(x["tot"] or 0)]
+            _rp = mysql_fetchone(
+                f"SELECT SUM(status IN ({_CONF})) AS conf, COUNT(*) AS tot FROM `{REQ}` "
+                f"WHERE created_at >= NOW() - INTERVAL 60 DAY AND created_at < NOW() - INTERVAL 30 DAY") or {}
+            _prev_t = round(int(_rp.get("conf") or 0) * 100.0 / int(_rp["tot"])) if int(_rp.get("tot") or 0) else None
+            kx["tasa"] = {"spark": _rmon.spark(_serie_t), "prev": _prev_t,
+                          "delta": _rmon.delta(kpis["tasa_conf"], _prev_t, unidad=" pts")}
+        except Exception:
+            pass
+        try:
+            _rc = mysql_fetchall(
+                f"SELECT YEARWEEK(closed_at,1) AS w, AVG(TIMESTAMPDIFF(HOUR, created_at, closed_at)) AS h "
+                f"FROM `{REQ}` WHERE status IN ('retirada','cerrada') AND closed_at IS NOT NULL "
+                f"  AND closed_at >= NOW() - INTERVAL 56 DAY GROUP BY w ORDER BY w") or []
+            _serie_c = [float(x["h"]) for x in _rc if x["h"] is not None]
+            _rp = mysql_fetchone(
+                f"SELECT AVG(TIMESTAMPDIFF(HOUR, created_at, closed_at)) AS h FROM `{REQ}` "
+                f"WHERE status IN ('retirada','cerrada') AND closed_at IS NOT NULL "
+                f"  AND created_at >= NOW() - INTERVAL 180 DAY AND created_at < NOW() - INTERVAL 90 DAY") or {}
+            _prev_c = round(float(_rp["h"]), 1) if _rp.get("h") is not None else None
+            kx["ciclo"] = {"spark": _rmon.spark(_serie_c), "prev": _prev_c,
+                           "delta": _rmon.delta(kpis["ciclo_h"], _prev_c, menor_es_mejor=True, unidad=" h", decimales=1)}
+        except Exception:
+            pass
+        try:
+            _rv = mysql_fetchone(
+                f"SELECT MIN(created_at) AS m FROM `{REQ}` "
+                f"WHERE status IN ('solicitud_recibida','en_revision','informacion_incompleta')") or {}
+            if _rv.get("m"):
+                _h = _cc_horas_habiles(_cc_utc_a_chile(_rv["m"]), ahora_cl, feriados_mon)
+                kx["revisar"] = {"txt": _rmon.fmt_horas_habiles(_h),
+                                 "nivel": "rojo" if _h >= _CC_SLA_ROJO_H else ("ambar" if _h >= _CC_SLA_AMBAR_H else "verde")}
+        except Exception:
+            pass
         templates = mysql_fetchall(f"SELECT id, code, title, body, channel, active FROM `{TPL}` WHERE active=1 ORDER BY title")
         return render_template(
             "retiros/internal_dashboard.html",
@@ -4625,6 +4729,7 @@ def register_pickup_routes(app, ctx):
             # 2026-05-26 (Daniel) — Pipeline consolidada: 12 estados → 6 columnas
             # visuales. El template usa pipeline_groups en el kanban del monitor.
             pipeline_groups=PIPELINE_GROUPS,
+            mon=mon, kx=kx,
         )
 
     # ══════════════════════════════════════════════════════════════════

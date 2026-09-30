@@ -1,0 +1,104 @@
+{# ══════════════════════════════════════════════════════════════════════
+   Tarjetas KPI del Monitor de Retiros, estilo Power BI.
+   Daniel 2026-09-29: "que esas tarjetas sean tipo Power BI ... más informativa".
+   Se conservan los 10 números de siempre (semana, tasa, ciclo, en preparación, por
+   revisar, mensajes, y la franja de hoy). Ahora traen variación contra el período
+   anterior, un mini gráfico y, en la vista Monitor, un clic que filtra la tabla.
+   Estilos: static/retiros_monitor.css.  Datos: pickup_dashboard (mon, kx, kpis, day, stats).
+   ══════════════════════════════════════════════════════════════════════ #}
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}">
+{% set _clic = (mon is defined and mon.ok) and filtros.view not in ['kanban', 'agenda'] %}
+{% set _kx = kx if kx is defined and kx else {} %}
+
+{% macro chip_delta(d, vs) %}
+  {% if d %}
+    {% set cls = 'neutro' if d.bueno is none else ('bueno' if d.bueno else 'malo') %}
+    <span class="rm-delta {{ cls }}"><i class="bi bi-{{ 'arrow-up-right' if d.dir == 'up' else ('arrow-down-right' if d.dir == 'down' else 'dash-lg') }}"></i>{{ d.txt }}</span>
+    <span>{{ vs }}</span>
+  {% else %}
+    <span>Aún no hay período anterior para comparar</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro linea_svg(s) %}
+  {% if s %}
+  <svg class="rm-spark" viewBox="0 0 {{ s.ancho }} {{ s.alto }}" role="img" aria-label="Tendencia de las últimas semanas">
+    <polygon class="area" points="{{ s.area }}"/><polyline points="{{ s.linea }}"/><circle cx="{{ s.ult_x }}" cy="{{ s.ult_y }}" r="3.5"/>
+  </svg>
+  {% endif %}
+{% endmacro %}
+
+<section class="rm-kpis" id="rmKpis" aria-label="Indicadores de retiros">
+
+  {# 1 · Retiros esta semana #}
+  {% set _s = _kx.get('semana') or {} %}
+  <div class="rm-kpi" style="--acc:#dc2626"
+       {% if _clic %}data-rm-filter="fecha:semana" role="button" tabindex="0" aria-pressed="false" title="Clic: ver solo los retiros de esta semana"{% endif %}>
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Retiros esta semana</span><i class="bi bi-calendar-week"></i></div>
+    <div class="rm-kpi-num">{{ kpis.semana }}</div>
+    <div class="rm-kpi-foot">{{ chip_delta(_s.get('delta'), 'vs. semana anterior') }}</div>
+    {% if _s.get('barras') %}
+    <svg class="rm-bars" viewBox="0 0 106 34" role="img"
+         aria-label="Retiros por día de esta semana. {{ _s.barras | map(attribute='tit') | join('. ') }}">
+      {% for b in _s.barras %}<rect x="{{ b.x }}" y="{{ 34 - b.h }}" width="10" height="{{ b.h }}" rx="2"
+        class="{{ 'hoy' if b.hoy else ('fut' if b.futuro else '') }}{{ ' vacio' if b.n == 0 else '' }}"><title>{{ b.tit }}</title></rect>{% endfor %}
+    </svg>
+    {% endif %}
+  </div>
+
+  {# 2 · Tasa de confirmación #}
+  {% set _t = _kx.get('tasa') or {} %}
+  <div class="rm-kpi" style="--acc:#16a34a">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Tasa confirmación 30d</span><i class="bi bi-graph-up-arrow"></i></div>
+    <div class="rm-kpi-num">{% if kpis.tasa_conf is not none %}{{ kpis.tasa_conf }}<small>%</small>{% else %}—{% endif %}</div>
+    <div class="rm-kpi-foot">{{ chip_delta(_t.get('delta'), 'vs. 30 días antes') }}</div>
+    {{ linea_svg(_t.get('spark')) }}
+  </div>
+
+  {# 3 · Ciclo promedio #}
+  {% set _c = _kx.get('ciclo') or {} %}
+  <div class="rm-kpi" style="--acc:#3b82f6">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Ciclo promedio 90d</span><i class="bi bi-stopwatch"></i></div>
+    <div class="rm-kpi-num">{% if kpis.ciclo_h is not none %}{{ kpis.ciclo_h }}<small>h</small>{% else %}—{% endif %}</div>
+    <div class="rm-kpi-foot">{{ chip_delta(_c.get('delta'), 'vs. 90 días antes') }}</div>
+    {{ linea_svg(_c.get('spark')) }}
+  </div>
+
+  {# 4 · En preparación #}
+  <div class="rm-kpi" style="--acc:#f59e0b"
+       {% if _clic %}data-rm-filter="grupo:preparacion" role="button" tabindex="0" aria-pressed="false" title="Clic: ver solo los retiros en preparación"{% endif %}>
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">En preparación</span><i class="bi bi-box-seam"></i></div>
+    <div class="rm-kpi-num">{{ stats.get('en_preparacion', 0) }}</div>
+    <div class="rm-kpi-foot"><span>Se están armando en bodega</span></div>
+  </div>
+
+  {# 5 · Por revisar #}
+  {% set _rv = _kx.get('revisar') %}
+  <div class="rm-kpi" style="--acc:#8b5cf6"
+       {% if _clic %}data-rm-filter="grupo:por_revisar" role="button" tabindex="0" aria-pressed="false" title="Clic: ver solo lo que falta revisar"{% endif %}>
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Por revisar</span><i class="bi bi-inbox"></i></div>
+    <div class="rm-kpi-num">{{ stats.get('solicitud_recibida', 0) + stats.get('en_revision', 0) + stats.get('informacion_incompleta', 0) }}</div>
+    <div class="rm-kpi-foot">
+      {% if _rv %}<span class="rm-pill {{ _rv.nivel }}" style="margin-top:0"><i class="bi bi-{{ 'exclamation-octagon-fill' if _rv.nivel == 'rojo' else ('exclamation-triangle-fill' if _rv.nivel == 'ambar' else 'check-circle-fill') }}"></i>La más antigua espera {{ _rv.txt }}</span>
+      {% else %}<span>Nada esperando respuesta</span>{% endif %}
+    </div>
+  </div>
+
+  {# 6 · Mensajes sin leer #}
+  <div class="rm-kpi" style="--acc:#16a34a">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Mensajes sin leer</span><i class="bi bi-chat-dots"></i></div>
+    <div class="rm-kpi-num" id="rkKpiMsgs">{{ kpis.msgs }}</div>
+    <div class="rm-kpi-foot"><span>Mensajes de clientes por leer</span></div>
+  </div>
+</section>
+
+{# Franja "Hoy": retiros, bultos, peso y volumen del día (hora Chile) #}
+<section class="rm-hoy" aria-label="Carga de hoy">
+  <div class="rm-hoy-title"><i class="bi bi-truck"></i>Hoy</div>
+  <div class="rm-hoy-item" {% if _clic %}data-rm-filter="fecha:hoy" role="button" tabindex="0" aria-pressed="false" title="Clic: ver solo los retiros de hoy"{% endif %}>
+    <span class="lbl">Retiros hoy</span><span class="val">{{ day.total or 0 }}</span></div>
+  <div class="rm-hoy-item"><span class="lbl">Bultos hoy</span><span class="val">{{ day.bultos or 0 }}</span></div>
+  <div class="rm-hoy-item"><span class="lbl">Peso real</span><span class="val">{{ "%.1f"|format(day.peso or 0) }} <small>kg</small></span></div>
+  <div class="rm-hoy-item"><span class="lbl">Peso volumétrico</span><span class="val">{{ "%.1f"|format(day.pvol or 0) }} <small>kg</small></span></div>
+  <div class="rm-hoy-item"><span class="lbl">Volumen</span><span class="val">{{ "%.3f"|format(day.m3 or 0) }} <small>m³</small></span></div>
+</section>

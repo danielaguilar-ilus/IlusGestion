@@ -1,0 +1,205 @@
+{# ══════════════════════════════════════════════════════════════════════
+   Monitor de Retiros: tabla rica.
+   Daniel 2026-09-29: "enchular la tabla ... más detalles ... poderla filtrar, tener
+   una barra bien identificada de búsqueda ... para mostrar en una reunión".
+   Necesita en el contexto: rows (ya enriquecidas con m_*), mon (con datos y ok),
+   status_badge, pipeline_groups, permissions/current_user. La lógica del navegador
+   (buscar, filtrar, ordenar, paginar, abrir el detalle) vive en static/retiros_monitor.js.
+   Formato: REGLA #4.3 (paginada como Etiquetas), #6 (fechas d-m-a hora Chile), #14/#15.
+   ══════════════════════════════════════════════════════════════════════ #}
+{% set _resp = {} %}
+{% for r in rows %}{% if r.responsable_nombre %}{% set _ = _resp.update({r.m_resp_norm: r.responsable_nombre}) %}{% endif %}{% endfor %}
+
+<section class="rm-monitor" id="rmMonitor" aria-label="Monitor de retiros">
+
+  <div class="rm-toolbar">
+    {# Búsqueda instantánea: la barra grande y con nombre #}
+    <div class="rm-search" role="search">
+      <label class="rm-search-tag" for="rmSearch"><i class="bi bi-search"></i><span>Buscar</span></label>
+      <input id="rmSearch" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Solicitud, cliente, RUT, documento, quién retira, responsable…"
+             aria-label="Buscar en la tabla de retiros">
+      <span class="rm-search-count" id="rmCount" aria-live="polite"></span>
+      <button type="button" class="rm-x" id="rmSearchClear" hidden aria-label="Borrar búsqueda"><i class="bi bi-x-lg"></i></button>
+      <kbd title="Presiona / para buscar">/</kbd>
+    </div>
+
+    <div class="rm-tools-row">
+      <div class="rm-chips" role="group" aria-label="Filtrar por etapa">
+        <button type="button" class="rm-chip" data-rm-grupo=""><i class="bi bi-list-ul"></i>Todos <span class="n">0</span></button>
+        {% for g in pipeline_groups %}
+        <button type="button" class="rm-chip" data-rm-grupo="{{ g.key }}"><i class="bi {{ g.icon }}"></i>{{ g.label }} <span class="n">0</span></button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="rm-tools-row">
+      <div class="rm-tools">
+        <div class="rm-seg" role="group" aria-label="Filtrar por semáforo">
+          <button type="button" data-rm-alerta="">Todos los semáforos</button>
+          <button type="button" data-rm-alerta="rojo"><span class="rm-dot rojo"></span>Urgente <span class="n">0</span></button>
+          <button type="button" data-rm-alerta="ambar"><span class="rm-dot ambar"></span>Atención <span class="n">0</span></button>
+          <button type="button" data-rm-alerta="verde"><span class="rm-dot verde"></span>En orden <span class="n">0</span></button>
+        </div>
+        <select id="rmFecha" class="rm-select" aria-label="Filtrar por fecha de retiro">
+          <option value="">Todas las fechas</option>
+          <option value="hoy">Hoy</option>
+          <option value="manana">Mañana</option>
+          <option value="semana">Esta semana</option>
+          <option value="vencidas">Vencidas o atrasadas</option>
+          <option value="sin_fecha">Sin fecha</option>
+        </select>
+        <select id="rmResp" class="rm-select" aria-label="Filtrar por responsable">
+          <option value="">Todos los responsables</option>
+          <option value="__sin__">Sin asignar</option>
+          {% for k, nombre in _resp.items() %}<option value="{{ k }}">{{ nombre }}</option>{% endfor %}
+        </select>
+        <button type="button" class="rm-btn rm-btn-rojo" id="rmClear" hidden><i class="bi bi-x-circle"></i>Limpiar filtros de la tabla</button>
+      </div>
+      <div class="rm-tools">
+        <details class="rm-cols" id="rmCols">
+          <summary class="rm-btn"><i class="bi bi-layout-three-columns"></i>Columnas</summary>
+          <div class="rm-cols-panel">
+            <label><input type="checkbox" data-rm-col="doc" checked>Documento</label>
+            <label><input type="checkbox" data-rm-col="ret" checked>Quién retira</label>
+            <label><input type="checkbox" data-rm-col="resp" checked>Responsable</label>
+            <label><input type="checkbox" data-rm-col="cal" checked>Calidad</label>
+            <label><input type="checkbox" data-rm-col="carga" checked>Carga</label>
+            <div class="sep"></div>
+            <label><input type="checkbox" id="rmDens">Filas compactas</label>
+          </div>
+        </details>
+        <button type="button" class="rm-btn" id="rmExport" title="Descargar en Excel (CSV) lo que estás viendo, todas las páginas"><i class="bi bi-file-earmark-excel"></i>Exportar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="rm-wrap">
+    <div class="table-responsive">
+      {# .table-mobile-cards (mobile.css): en móvil cada fila se ve como tarjeta con data-label #}
+      <table class="ilus-table table-mobile-cards rm-table align-middle" id="rmTable"
+             data-hoy="{{ mon.hoy }}" data-lunes="{{ mon.lunes }}" data-domingo="{{ mon.domingo }}"
+             data-super="{{ 1 if (current_user and current_user.role == 'superadmin') else 0 }}">
+        <thead><tr>
+          <th class="rm-c-exp"><button type="button" class="rm-ic-btn" id="rmExpandAll" aria-label="Abrir o cerrar el detalle de todas las filas" title="Abrir / cerrar todo el detalle"><i class="bi bi-arrows-expand"></i></button></th>
+          <th class="rm-sortable" data-sort="solicitud">Solicitud <i class="bi bi-arrow-down-up"></i></th>
+          <th class="rm-sortable" data-sort="cliente">Cliente <i class="bi bi-arrow-down-up"></i></th>
+          <th class="desktop-only rm-c-doc">Documento</th>
+          <th class="desktop-only rm-c-ret">Quién retira</th>
+          <th class="desktop-only rm-c-resp rm-sortable" data-sort="resp">Responsable <i class="bi bi-arrow-down-up"></i></th>
+          <th class="rm-sortable" data-sort="fecha">Fecha de retiro <i class="bi bi-arrow-down-up"></i></th>
+          <th class="rm-sortable" data-sort="estado">Estado <i class="bi bi-arrow-down-up"></i></th>
+          <th class="desktop-only rm-c-cal rm-sortable" data-sort="cal">Calidad <i class="bi bi-arrow-down-up"></i></th>
+          <th class="rm-c-carga rm-sortable text-end" data-sort="carga">Carga <i class="bi bi-arrow-down-up"></i></th>
+          <th class="text-end rm-c-acc">Acción</th>
+        </tr></thead>
+        <tbody>
+          <tr id="rmEmpty" class="rm-empty" hidden><td colspan="11">
+            <i class="bi bi-search"></i>Ninguna solicitud coincide con lo que buscas.
+            <div style="margin-top:12px"><button type="button" class="rm-btn" id="rmEmptyClear">Limpiar filtros de la tabla</button></div>
+          </td></tr>
+          {% for r in rows %}
+{% set b = status_badge(r.status) %}
+<tr class="rm-row row-clickable" {% if loop.index > 10 %}hidden{% endif %}
+data-href="{{ url_for('pickup_detail', rid=r.id) }}" data-rid="{{ r.id }}" data-code="{{ r.code }}"
+data-pub="{{ url_for('pickup_public_tracking', token=r.public_token) }}"
+{% if r.status not in ['retirada', 'cerrada', 'rechazada', 'fallida'] %}{% set _fch = r.confirmed_date or r.proposed_date or r.requested_date %}data-reag="{{ (_fch | string)[:10] if _fch else '' }}"{% endif %}
+data-grupo="{{ r.m_grupo }}" data-estado-idx="{{ r.m_estado_idx }}" data-alerta="{{ r.m_al_nivel }}"
+data-resp="{{ r.m_resp_norm }}" data-cliente="{{ r.m_cliente_norm }}"
+data-fecha="{{ r.m_fecha_iso }}" data-dias="{{ '' if r.m_dias is none else r.m_dias }}"
+data-semana="{{ 1 if r.m_en_semana else 0 }}" data-vencida="{{ 1 if r.m_vencida else 0 }}"
+data-req="{{ r.m_req_iso }}" data-conf="{{ r.m_conf_iso }}" data-creado="{{ r.m_creado_ts }}"
+data-bultos="{{ r.total_packages or 0 }}" data-cal="{{ r.m_cal }}"
+data-search="{{ r.m_search }}" style="cursor:pointer">
+<td class="rm-c-exp"><button type="button" class="rm-ic-btn rm-exp" aria-expanded="false"
+aria-label="Ver el detalle de {{ r.code }}" title="Ver el detalle"><i class="bi bi-chevron-right"></i></button></td>
+<td data-label="Solicitud"><div class="rm-cell">
+<span class="rm-code rm-hl">{{ r.code }}</span><span class="js-row-chat"></span>
+<div class="rm-sub"><span class="rm-origen {{ 'interno' if r.m_origen == 'Interno' else '' }}" style="margin-left:0">{{ r.m_origen }}</span>
+{% if r.m_hace %}<span> {{ r.m_hace }}</span>{% endif %}</div>
+</div></td>
+<td data-label="Cliente"><div class="rm-cell">
+<div class="rm-cli-name rm-hl">{{ r.customer_name }}</div>
+{% if r.customer_rut %}<div class="rm-sub desktop-only">RUT {{ r.customer_rut | rut_fmt }}</div>{% endif %}
+<div class="rm-sub"><i class="bi bi-person"></i><span class="rm-hl">{{ r.contact_name }}</span>{% if r.contact_phone %} · <a class="rm-tel" href="tel:{{ r.contact_phone | replace(' ', '') }}" onclick="event.stopPropagation()">{{ r.contact_phone }}</a>{% endif %}</div>
+</div></td>
+<td class="desktop-only rm-c-doc" data-label="Documento"><div class="rm-cell">
+{% if r.document_number %}
+<div class="rm-doc rm-hl">{{ r.document_type | upper }} {{ r.document_number }}</div>
+{% if r.m_doc_val_txt %}<span class="rm-pill {{ r.m_doc_val_nivel }}"><i class="bi bi-{{ 'patch-check-fill' if r.m_doc_val_nivel == 'verde' else ('exclamation-triangle-fill' if r.m_doc_val_nivel == 'ambar' else 'hourglass-split') }}"></i>{{ r.m_doc_val_txt }}</span>{% endif %}
+{% else %}<span class="rm-sub" style="font-style:italic">Sin factura</span>{% endif %}
+</div></td>
+<td class="desktop-only rm-c-ret" data-label="Quién retira"><div class="rm-cell">
+{% if r.pickup_person_name %}
+<div class="rm-hl" style="font-weight:600">{{ r.pickup_person_name }}</div>
+<div class="rm-sub">{{ r.m_relacion }}{% if r.pickup_person_rut %}{% if r.m_relacion %} · {% endif %}{{ r.pickup_person_rut | rut_fmt }}{% endif %}</div>
+{% else %}<span class="rm-sub">No indicado</span>{% endif %}
+</div></td>
+<td class="desktop-only rm-c-resp" data-label="Responsable"><div class="rm-cell">
+{% if r.responsable_nombre %}<div class="rm-resp"><span class="rm-avatar" aria-hidden="true">{{ r.m_resp_ini }}</span><span class="rm-hl">{{ r.responsable_nombre }}</span></div>
+{% else %}<span class="rm-pill gris" style="margin-top:0"><i class="bi bi-person-dash"></i>Sin asignar</span>{% endif %}
+</div></td>
+<td data-label="Fecha de retiro"><div class="rm-cell">
+{% if r.m_fecha %}
+<div class="rm-fecha-main">{{ r.m_fecha_txt }}</div>
+<div class="rm-sub">{% if r.m_desde %}{{ r.m_desde }}–{{ r.m_hasta }} · {% endif %}{{ r.m_fecha_tipo }}</div>
+{% if r.m_rel_txt %}<span class="rm-pill {{ r.m_rel_nivel }}"><i class="bi bi-{{ 'exclamation-octagon-fill' if r.m_rel_nivel == 'rojo' else ('clock-fill' if r.m_rel_nivel == 'ambar' else 'calendar-check') }}"></i>{{ r.m_rel_txt }}</span>{% endif %}
+{% else %}<span class="rm-sub">Sin fecha</span>{% endif %}
+</div></td>
+<td data-label="Estado"><div class="rm-cell">
+<span class="badge bg-{{ b.color }} {{ 'text-dark' if b.color in ['warning', 'info'] else '' }} rm-estado"><i class="bi {{ r.m_grupo_ico }}"></i>{{ b.label }}</span>
+{% if r.m_al_txt %}<div><span class="rm-pill {{ r.m_al_nivel }}"><i class="bi {{ r.m_al_ico }}"></i>{{ r.m_al_txt }}</span></div>{% endif %}
+{% if r.m_siguiente %}<div class="rm-sub desktop-only">{{ r.m_siguiente }}</div>{% endif %}
+</div></td>
+<td class="desktop-only rm-c-cal" data-label="Calidad"><div class="rm-cell">
+{% if r.m_cal_na %}<span class="rm-sub" title="Los retiros internos no se puntúan">—</span>
+{% else %}
+<div class="progress" style="height:8px"><div class="progress-bar bg-{{ 'success' if r.m_cal >= 80 else ('warning' if r.m_cal >= 60 else 'danger') }}" style="width:{{ r.m_cal }}%"></div></div>
+<div class="rm-cal-num">{{ r.m_cal }}%</div>
+{% endif %}
+</div></td>
+<td class="text-end rm-c-carga" data-label="Carga"><div class="rm-cell">
+<div class="rm-carga-main">{{ r.m_carga_txt }}</div>
+{% if r.m_sin_peso %}<div class="rm-sub">Peso por confirmar</div>
+{% else %}<div class="rm-sub">{{ "%.1f"|format((r.total_weight_kg or 0)|float) }} kg · PV {{ "%.1f"|format((r.total_volumetric_weight or 0)|float) }}</div>{% endif %}
+</div></td>
+{# Columna Acción: el menú ⋮ (Ver ficha, Link cliente, Reagendar, Eliminar) se arma en el navegador
+al abrirlo (static/retiros_monitor.js, llenarMenu): así no se repite 250 veces en el HTML. #}
+<td class="text-end rm-c-acc" onclick="event.stopPropagation()">
+<div class="dropdown">
+<button class="btn btn-outline-dark rm-acc-btn" type="button" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Acciones" aria-label="Acciones de {{ r.code }}">
+<i class="bi bi-three-dots-vertical"></i>
+</button>
+<ul class="dropdown-menu dropdown-menu-end shadow-sm"></ul>
+</div>
+</td>
+</tr>
+          {% else %}
+          <tr><td colspan="11" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# Pie de tabla, mismo patrón que Etiquetas (REGLA #4.3) #}
+    <div class="rm-foot">
+      <div class="rm-foot-count"><i class="bi bi-collection"></i><span id="rmFootCount"></span></div>
+      <div class="rm-foot-ctrl">
+        <select id="rmPer" class="rm-select" aria-label="Filas por página">
+          <option value="10">10 por página</option><option value="25">25 por página</option>
+          <option value="50">50 por página</option><option value="100">100 por página</option>
+        </select>
+        <button type="button" class="rm-btn" id="rmPrev"><i class="bi bi-chevron-left"></i>Anterior</button>
+        <span id="rmPageInfo">Página 1 de 1</span>
+        <button type="button" class="rm-btn" id="rmNext">Siguiente<i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>
+    {% if mon.total > mon.limite %}
+    <div class="rm-limit"><i class="bi bi-info-circle-fill me-1"></i>Se muestran las {{ mon.limite }} solicitudes más recientes de las {{ mon.total }} que cumplen el filtro de arriba. Afínalo para ver el resto.</div>
+    {% endif %}
+  </div>
+
+  {# Datos del detalle y de la exportación: una sola vez, no repetidos por fila #}
+  <script type="application/json" id="rmData">{{ mon.datos | tojson }}</script>
+</section>
+<script defer src="{{ url_for('static', filename='retiros_monitor.js') }}"></script>

@@ -1266,37 +1266,9 @@ select.nri-field-locked{pointer-events:none}
    "Enviar recordatorios 24h" junto con su JS. Los endpoints del backend
    (informe-mes.xlsx y pickup_enviar_recordatorios_24h) siguen vivos. #}
 
-{# ── KPIs ejecutivos (Daniel 2026-06-20, levantamiento) ── #}
-<style>
-  .rk-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
-  .rk-kpi{background:#fff;border:1px solid #ececef;border-radius:14px;padding:14px 16px;position:relative;overflow:hidden;box-shadow:0 2px 8px rgba(10,10,10,.04)}
-  .rk-kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--rk-accent,#dc2626)}
-  .rk-kpi .num{font-size:1.65rem;font-weight:900;line-height:1.1;color:#0a0a0a}
-  .rk-kpi .lbl{font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;font-weight:700;margin-top:2px}
-  .rk-kpi .ico{position:absolute;right:12px;top:10px;font-size:1.3rem;opacity:.18}
-  @media(max-width:600px){.rk-kpi-row{grid-template-columns:repeat(2,1fr)}}
-</style>
-<div class="rk-kpi-row">
-  <div class="rk-kpi" style="--rk-accent:#dc2626"><i class="bi bi-calendar-week ico"></i>
-    <div class="num">{{ kpis.semana }}</div><div class="lbl">Retiros esta semana</div></div>
-  <div class="rk-kpi" style="--rk-accent:#16a34a"><i class="bi bi-graph-up-arrow ico"></i>
-    <div class="num">{{ kpis.tasa_conf ~ '%' if kpis.tasa_conf is not none else '—' }}</div><div class="lbl">Tasa confirmación 30d</div></div>
-  <div class="rk-kpi" style="--rk-accent:#3b82f6"><i class="bi bi-stopwatch ico"></i>
-    <div class="num">{{ kpis.ciclo_h ~ ' h' if kpis.ciclo_h is not none else '—' }}</div><div class="lbl">Ciclo promedio 90d</div></div>
-  <div class="rk-kpi" style="--rk-accent:#f59e0b"><i class="bi bi-box-seam ico"></i>
-    <div class="num">{{ stats.get('en_preparacion', 0) }}</div><div class="lbl">En preparación</div></div>
-  <div class="rk-kpi" style="--rk-accent:#8b5cf6"><i class="bi bi-inbox ico"></i>
-    <div class="num">{{ stats.get('solicitud_recibida', 0) + stats.get('en_revision', 0) + stats.get('informacion_incompleta', 0) }}</div><div class="lbl">Por revisar</div></div>
-  <div class="rk-kpi" style="--rk-accent:#16a34a"><i class="bi bi-chat-dots ico"></i>
-    <div class="num" id="rkKpiMsgs">{{ kpis.msgs }}</div><div class="lbl">Mensajes sin leer</div></div>
-</div>
-
-<div class="row g-3 mb-3">
-  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Retiros hoy</div><div class="fs-3 fw-black">{{ day.total or 0 }}</div></div></div>
-  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Bultos hoy</div><div class="fs-3 fw-black">{{ day.bultos or 0 }}</div></div></div>
-  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Peso real</div><div class="fs-3 fw-black">{{ "%.1f"|format(day.peso or 0) }} kg</div></div></div>
-  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Volumen</div><div class="fs-3 fw-black">{{ "%.3f"|format(day.m3 or 0) }} m3</div></div></div>
-</div>
+{# ── KPIs del Monitor, estilo Power BI (Daniel 2026-09-29). Antes: 6 tarjetas + 4 de hoy;
+   siguen los mismos 10 números, ahora con variación, gráfico y clic para filtrar. ── #}
+{% include "retiros/_monitor_kpis.html" %}
 
 <form method="get" class="ilus-card p-3 mb-3">
   <div class="row g-2 align-items-end">
@@ -1722,6 +1694,10 @@ select.nri-field-locked{pointer-events:none}
   </div>
 </div>
 {% else %}
+{# Monitor: tabla rica (Daniel 2026-09-29). Lista, y cualquier falla al armar los datos, conservan la tabla de siempre. #}
+{% if filtros.view != 'lista' and mon is defined and mon.ok %}
+{% include "retiros/_monitor_tabla.html" %}
+{% else %}
 <div class="ilus-card">
   <div class="table-responsive">
     {# responsive_retiros: .table-mobile-cards (patrón mobile.css) → en móvil cada fila se ve como card con data-label #}
@@ -1792,6 +1768,8 @@ select.nri-field-locked{pointer-events:none}
     </table>
   </div>
 </div>
+
+{% endif %}
 
 {# Daniel 2026-05-23: handler unificado para click en fila (excepto en la columna de acción) #}
 <script>
