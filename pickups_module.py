@@ -2738,6 +2738,7 @@ def register_pickup_routes(app, ctx):
                                             "retiro_sin_saldo":   ("Revisar saldo ERP", "#fee2e2", "#7f1d1d"),
                                             "retiro_propuesta":   ("ILUS propuso fecha", "#fed7aa", "#9a3412"),
                                             "retiro_anulado":     ("Retiro anulado", "#fee2e2", "#7f1d1d"),
+                                            "retiro_cierre":      ("Retiro cerrado", "#e5e7eb", "#374151"),
                                         }
                                         _ch_txt, _ch_bg, _ch_fg = _chips.get(
                                             tipo_snap, ("Aviso interno", "#f3f4f6", "#374151"))
@@ -6251,7 +6252,8 @@ def register_pickup_routes(app, ctx):
                         f"Retiro {_cod} {_txt_fin}",
                         f"{_cli} — un operador cambió el estado a "
                         f"{PICKUP_STATUS.get(new_status, new_status)}." + (f" Nota: {notes[:200]}" if notes else ""),
-                        rid, _cod, prioridad="media", tipo="retiro_anulado",
+                        rid, _cod, prioridad="media",
+                        tipo=("retiro_cierre" if new_status == "cerrada" else "retiro_anulado"),
                         send_email=False, campana=False)
         except Exception as _e_team:
             print(f"[pickup-updstatus] aviso equipo: {_e_team}", flush=True)
