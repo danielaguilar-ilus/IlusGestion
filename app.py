@@ -61,6 +61,7 @@ except ImportError:
 # ── Motor ERP unificado (cubicador, asignar, retiros, mantenciones, etc.) ──
 import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
+import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -5525,6 +5526,100 @@ def get_auth_user_by_username(username):
     )
 
 
+# ── Datos personales del usuario: RUT, fecha de nacimiento y dirección validada ──
+# Daniel 2026-09-29: al agregar a Felipe el RUT no entró con formato chileno, la
+# dirección debe quedar validada con Google y la fecha de nacimiento llevar semáforo.
+# Las columnas de coordenadas son NUEVAS: se agregan SIEMPRE en boot (incluso con
+# ILUS_SKIP_MIGRATIONS=1) y NUNCA se agregan al SELECT de get_auth_user_by_id: si esa
+# consulta fallara por una columna faltante, nadie podría iniciar sesión.
+def _ensure_app_users_geo_columns():
+    """Idempotente. Una sentencia por columna: así la guardia _ddl_ya_aplicado la
+    salta sin pedir lock cuando ya existe."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for _mig in (
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN direccion_lat DECIMAL(10,7) NULL "
+                f"COMMENT 'Latitud de la dirección, validada con Google Places'",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN direccion_lng DECIMAL(10,7) NULL "
+                f"COMMENT 'Longitud de la dirección, validada con Google Places'",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN direccion_place_id VARCHAR(200) NULL "
+                f"COMMENT 'place_id de Google de la dirección validada'",
+            ):
+                try:
+                    cur.execute(_mig)
+                except Exception:
+                    pass  # ya existe: esperado en cada boot posterior
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _usuario_geo(user_id):
+    """Coordenadas guardadas de la dirección del usuario ({} si no hay, o si las
+    columnas aún no existen). Consulta aparte a propósito: ver nota de arriba."""
+    try:
+        return mysql_fetchone(
+            f"SELECT direccion_lat, direccion_lng, direccion_place_id FROM `{AUTH_TABLE}` WHERE id=%s",
+            (user_id,),
+        ) or {}
+    except Exception:
+        return {}
+
+
+def _validar_rut_usuario(raw, rut_actual=None, excluir_id=None):
+    """RUT opcional del formulario de usuarios. Devuelve (ok, valor).
+    ok=True  → valor es el RUT normalizado (cuerpo + DV sin separadores, ej.
+               '255470655'), o None si quedó vacío.
+    ok=False → valor es el mensaje de error.
+    Si el RUT no cambió respecto de `rut_actual` no se vuelve a validar: un dato
+    viejo escrito a mano en Mi cuenta no puede impedir editar el rol del usuario."""
+    txt = (raw or "").strip()
+    if not txt:
+        return True, None
+    if rut_actual is not None and (normalizar_rut(txt) or "") == (normalizar_rut(rut_actual) or ""):
+        return True, rut_actual
+    ok, val = validar_rut(txt, auto_completar_dv=False)
+    if not ok:
+        return False, f"RUT no válido: {val}."
+    from html import escape as _esc
+    for fila in (mysql_fetchall(
+            f"SELECT id, nombre, username, rut FROM `{AUTH_TABLE}` "
+            f"WHERE rut IS NOT NULL AND rut<>''") or []):
+        if excluir_id and fila["id"] == excluir_id:
+            continue
+        if normalizar_rut(fila["rut"]) == val:
+            return False, (f"Ese RUT ya está registrado en el usuario {_esc(str(fila['nombre']))} "
+                           f"({_esc(str(fila['username']))}).")
+    return True, val
+
+
+def _guardar_perfil_usuario(cur, where_col, where_val, rut, fecha_nac, dir_val, comuna, ciudad):
+    """Guarda RUT, fecha de nacimiento y dirección del usuario. Devuelve False si no
+    se pudo guardar la ubicación (el resto igual queda guardado).
+    `where_col` es siempre 'id' o 'username': constante del código, nunca input."""
+    accion = dir_val["accion"]
+    sets, params = ["rut=%s", "fecha_nac=%s"], [rut, fecha_nac]
+    if accion == "limpiar":
+        sets += ["direccion=NULL", "comuna=NULL", "ciudad=NULL"]
+    elif accion == "guardar":
+        sets += ["direccion=%s", "comuna=%s", "ciudad=%s"]
+        params += [dir_val["direccion"], comuna, ciudad]
+    cur.execute(f"UPDATE `{AUTH_TABLE}` SET {', '.join(sets)} WHERE {where_col}=%s",
+                tuple(params) + (where_val,))
+    if accion == "mantener":
+        return True
+    try:
+        cur.execute(
+            f"UPDATE `{AUTH_TABLE}` SET direccion_lat=%s, direccion_lng=%s, direccion_place_id=%s "
+            f"WHERE {where_col}=%s",
+            (dir_val["lat"], dir_val["lng"], dir_val["place_id"], where_val))
+        return True
+    except Exception as _e:
+        print(f"[usuarios] no se pudo guardar la ubicación de la dirección: {type(_e).__name__}", flush=True)
+        return False
+
+
 # ── 2026-05-18: heartbeat last_seen_at ─────────────────────────────────
 # Throttle in-process: 1 update por usuario cada 60s máx. Evita que
 # usuarios con muchos requests (carga de lista grande, polling) actualicen
@@ -10658,6 +10753,19 @@ def mi_cuenta_datos():
     conn = get_db()
     try:
         with conn.cursor() as cur:
+            # 2026-09-29: si la dirección cambia aquí (texto libre), la ubicación validada
+            # con Google que tenía guardada ya no corresponde a ese texto: se borra para
+            # no dejar una ubicación falsa marcada como válida.
+            try:
+                _fila_dir = mysql_fetchone(
+                    f"SELECT direccion FROM `{AUTH_TABLE}` WHERE id=%s", (g.user["id"],)) or {}
+                if (_uperf.normalizar_direccion(_fila_dir.get("direccion"))
+                        != _uperf.normalizar_direccion(direccion)):
+                    cur.execute(
+                        f"UPDATE `{AUTH_TABLE}` SET direccion_lat=NULL, direccion_lng=NULL, "
+                        f"direccion_place_id=NULL WHERE id=%s", (g.user["id"],))
+            except Exception as _ge:
+                print(f"[mi-cuenta] no se pudo revisar la ubicación de la dirección: {type(_ge).__name__}", flush=True)
             cur.execute(
                 f"UPDATE `{AUTH_TABLE}` SET nombre=%s, phone=%s, rut=%s, cargo=%s, "
                 f"genero=%s, direccion=%s, comuna=%s, ciudad=%s, fecha_nac=%s WHERE id=%s",
@@ -13051,6 +13159,20 @@ def new_user():
         if get_auth_user_by_username(username):
             errors.append("Ese correo ya está registrado.")
 
+        ok_rut, rut_val = _validar_rut_usuario(request.form.get("rut", ""))
+        if not ok_rut:
+            errors.append(rut_val)
+        ok_fn, fecha_nac_val = _uperf.validar_fecha_nacimiento(request.form.get("fecha_nac", ""))
+        if not ok_fn:
+            errors.append(fecha_nac_val)
+        ok_dir, dir_val = _uperf.resolver_direccion(
+            request.form.get("direccion", ""), request.form.get("direccion_lat", ""),
+            request.form.get("direccion_lng", ""), request.form.get("direccion_place_id", ""))
+        if not ok_dir:
+            errors.append(dir_val)
+        comuna = (request.form.get("comuna", "").strip()[:100]) or None
+        ciudad = (request.form.get("ciudad", "").strip()[:100]) or None
+
         if errors:
             return render_template("user_form.html", errors=errors, user=None, fd=request.form,
                                    roles=_get_roles_disponibles())
@@ -13082,7 +13204,12 @@ def new_user():
                     f"VALUES (%s,%s,%s,%s,%s,%s)",
                     (username, nombre, placeholder_hash, phone or None, role, active),
                 )
+            perfil_ok = _guardar_perfil_usuario(cur, "username", username, rut_val,
+                                                fecha_nac_val, dir_val, comuna, ciudad)
         conn.commit()
+        if not perfil_ok:
+            flash("Usuario creado, pero no se pudo guardar la ubicación de la dirección. "
+                  "Vuelve a validarla desde Editar usuario.", "warning")
 
         # Bienvenida: token de 7 días + endpoint /welcome/<token>.
         # El envío se hace en background para no bloquear el HTTP response
@@ -13178,9 +13305,29 @@ def edit_user(user_id):
         ):
             errors.append("Ese correo ya está en uso.")
 
+        ok_rut, rut_val = _validar_rut_usuario(request.form.get("rut", ""),
+                                               rut_actual=user.get("rut"), excluir_id=user_id)
+        if not ok_rut:
+            errors.append(rut_val)
+        fecha_txt = request.form.get("fecha_nac", "").strip()
+        if fecha_txt == (str(user["fecha_nac"])[:10] if user.get("fecha_nac") else ""):
+            fecha_nac_val = user.get("fecha_nac")  # sin cambios: no se revalida un dato viejo
+        else:
+            ok_fn, fecha_nac_val = _uperf.validar_fecha_nacimiento(fecha_txt)
+            if not ok_fn:
+                errors.append(fecha_nac_val)
+        ok_dir, dir_val = _uperf.resolver_direccion(
+            request.form.get("direccion", ""), request.form.get("direccion_lat", ""),
+            request.form.get("direccion_lng", ""), request.form.get("direccion_place_id", ""),
+            direccion_actual=user.get("direccion") or "")
+        if not ok_dir:
+            errors.append(dir_val)
+        comuna = (request.form.get("comuna", "").strip()[:100]) or None
+        ciudad = (request.form.get("ciudad", "").strip()[:100]) or None
+
         if errors:
             return render_template("user_form.html", errors=errors, user=user, fd=request.form,
-                                   roles=_get_roles_disponibles())
+                                   geo=_usuario_geo(user_id), roles=_get_roles_disponibles())
 
         conn = get_db()
         with conn.cursor() as cur:
@@ -13194,7 +13341,12 @@ def edit_user(user_id):
                     f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,phone=%s,role=%s,active=%s WHERE id=%s",
                     (username, nombre, phone or None, role, active, user_id),
                 )
+            perfil_ok = _guardar_perfil_usuario(cur, "id", user_id, rut_val,
+                                                fecha_nac_val, dir_val, comuna, ciudad)
         conn.commit()
+        if not perfil_ok:
+            flash("Usuario actualizado, pero no se pudo guardar la ubicación de la dirección. "
+                  "Vuelve a validarla.", "warning")
 
         # Invalida caché de session si se editó el usuario actual
         if g.user and g.user["id"] == user_id:
@@ -13209,7 +13361,7 @@ def edit_user(user_id):
         return redirect(url_for("users_index"))
 
     return render_template("user_form.html", errors=[], user=user, fd={},
-                           roles=_get_roles_disponibles())
+                           geo=_usuario_geo(user_id), roles=_get_roles_disponibles())
 
 
 @app.route("/admin/users/<int:user_id>/delete", methods=["POST"])
@@ -140094,6 +140246,13 @@ try:
     _ensure_transport_commitments_geo_columns()
 except Exception as _ensure_geo_err:
     print(f"[ILUS][WARN] columnas geo transport_commitments: {_ensure_geo_err}", flush=True)
+
+# Columnas geo (lat/lng/place_id) de la dirección del usuario (2026-09-29,
+# Daniel: "hay que validar la dirección") — SIEMPRE, incluso skip-migrations.
+try:
+    _ensure_app_users_geo_columns()
+except Exception as _ensure_ug_err:
+    print(f"[ILUS][WARN] columnas geo app_users: {_ensure_ug_err}", flush=True)
 
 # Índices de trazabilidad por producto (2026-07-29, Daniel: "trazabilidad
 # épica de producto") — SIEMPRE, incluso skip-migrations.

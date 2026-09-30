@@ -64,10 +64,44 @@
     .uf-step-circle{width:26px;height:26px;font-size:.85rem;border-radius:8px}
     .uf-role-box{padding:12px 14px}
   }
+  /* Datos personales (pasos 5-7), Daniel 2026-09-29. Mismo semáforo que los pasos 1-4:
+     gris = vacío/opcional · rojo = error · ámbar = falta validar · verde = listo. */
+  .uf-step-circle.is-optional.is-invalid{
+    background:linear-gradient(150deg,var(--ilus-red) 0%,#a60000 100%);
+    box-shadow:0 6px 14px -4px rgba(220,38,38,.45),0 1px 0 rgba(255,255,255,.25) inset;
+  }
+  .uf-step-circle.is-optional.is-pending{
+    background:linear-gradient(150deg,#f59e0b 0%,#b45309 100%);
+    box-shadow:0 6px 14px -4px rgba(245,158,11,.5),0 1px 0 rgba(255,255,255,.3) inset;
+    animation:ufAmberBreathe 2.4s ease-in-out infinite;
+  }
+  .uf-field.is-valid{border-color:#16a34a;background-color:#f0fdf4}
+  .uf-field.is-invalid{border-color:#dc2626;background-color:#fff5f5}
+  .uf-field.is-pending{border-color:#f59e0b;background-color:#fffbeb}
+  .uf-msg{display:flex;align-items:flex-start;gap:6px;margin-top:6px;min-height:1.3em;font-size:.78rem;line-height:1.35;color:#6b7280}
+  .uf-msg .bi{flex-shrink:0;margin-top:.1em}
+  .uf-msg.ok{color:#15803d}
+  .uf-msg.err{color:#b91c1c}
+  .uf-msg.warn{color:#92400e}
 </style>
 {% endblock %}
 
 {% block content %}
+{# Valores de los pasos 5-7. Tras un error del servidor manda lo que se envió (fd); en
+   editar manda lo guardado; en nuevo, vacío. `geo` trae las coordenadas guardadas. #}
+{% set _fd = fd if fd else {} %}
+{% set _geo = geo if (geo is defined and geo) else {} %}
+{% set v_rut_original = (user.rut | rut_fmt) if (user and user.rut) else '' %}
+{% set v_rut = _fd.get('rut', '') if ('rut' in _fd) else v_rut_original %}
+{% set v_fecha_original = ((user.fecha_nac | string)[:10]) if (user and user.fecha_nac) else '' %}
+{% set v_fecha = _fd.get('fecha_nac', '') if ('fecha_nac' in _fd) else v_fecha_original %}
+{% set v_dir_original = (user.direccion or '') if user else '' %}
+{% set v_dir = _fd.get('direccion', '') if ('direccion' in _fd) else v_dir_original %}
+{% set v_comuna = _fd.get('comuna', '') if ('comuna' in _fd) else ((user.comuna or '') if user else '') %}
+{% set v_ciudad = _fd.get('ciudad', '') if ('ciudad' in _fd) else ((user.ciudad or '') if user else '') %}
+{% set v_lat = _fd.get('direccion_lat', '') if ('direccion_lat' in _fd) else (_geo.get('direccion_lat') or '') %}
+{% set v_lng = _fd.get('direccion_lng', '') if ('direccion_lng' in _fd) else (_geo.get('direccion_lng') or '') %}
+{% set v_pid = _fd.get('direccion_place_id', '') if ('direccion_place_id' in _fd) else (_geo.get('direccion_place_id') or '') %}
 <div class="page-header">
   <div class="d-flex align-items-center gap-3">
     <a href="{{ url_for('users_index') }}" class="btn btn-sm btn-dark-ilus no-print">
@@ -297,6 +331,87 @@
     </div>
   </div>
 
+  {# ══════════ Datos personales — pasos 5, 6 y 7 ══════════
+     Daniel 2026-09-29: "al agregar a Felipe el RUT no pudo agregarse con formato de RUT
+     chileno, hay que validar la dirección y la fecha de nacimiento con formato semáforo".
+     Los tres son opcionales: vacíos nunca bloquean el alta, pero si traen datos tienen
+     que estar correctos (el servidor lo vuelve a validar). #}
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-person-lines-fill me-2"></i>Datos personales <span class="text-muted fw-normal small">(opcionales)</span></span>
+    </div>
+    <div class="card-body p-3">
+      <div class="row g-3">
+
+        <div class="col-md-6">
+          <div class="uf-step-head">
+            <span class="uf-step-circle is-optional" id="ufCircle-rut">
+              <span class="uf-step-num">5</span>
+              <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
+            </span>
+            <label class="form-label fw-semibold small" for="userRutInput">
+              <i class="bi bi-person-vcard me-1"></i>RUT <span class="text-muted">(opcional)</span>
+            </label>
+          </div>
+          <input type="text" name="rut" id="userRutInput" class="form-control uf-field"
+                 value="{{ v_rut }}" data-original="{{ v_rut_original }}"
+                 placeholder="12.345.678-5" maxlength="12" inputmode="text"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <div class="uf-msg" id="ufMsg-rut"></div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="uf-step-head">
+            <span class="uf-step-circle is-optional" id="ufCircle-fecha">
+              <span class="uf-step-num">6</span>
+              <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
+            </span>
+            <label class="form-label fw-semibold small" for="userFechaNacInput">
+              <i class="bi bi-cake2 me-1"></i>Fecha de nacimiento <span class="text-muted">(opcional)</span>
+            </label>
+          </div>
+          <input type="date" name="fecha_nac" id="userFechaNacInput" class="form-control uf-field"
+                 value="{{ v_fecha }}" data-original="{{ v_fecha_original }}"
+                 min="1900-01-01" autocomplete="off">
+          <div class="uf-msg" id="ufMsg-fecha"></div>
+        </div>
+
+        <div class="col-12">
+          <div class="uf-step-head">
+            <span class="uf-step-circle is-optional" id="ufCircle-dir">
+              <span class="uf-step-num">7</span>
+              <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
+            </span>
+            <label class="form-label fw-semibold small" for="userDireccionInput">
+              <i class="bi bi-geo-alt-fill me-1" style="color:var(--ilus-red)"></i>Dirección
+              <span class="text-muted">(opcional · se valida con Google Maps)</span>
+            </label>
+          </div>
+          <input type="text" name="direccion" id="userDireccionInput" class="form-control uf-field"
+                 value="{{ v_dir }}" data-original="{{ v_dir_original }}" maxlength="300"
+                 placeholder="Calle y número, comuna" autocomplete="off">
+          <input type="hidden" name="direccion_lat" id="userDirLat" value="{{ v_lat }}">
+          <input type="hidden" name="direccion_lng" id="userDirLng" value="{{ v_lng }}">
+          <input type="hidden" name="direccion_place_id" id="userDirPlaceId" value="{{ v_pid }}">
+          <div class="uf-msg" id="ufMsg-dir"></div>
+          <div class="row g-2 mt-1">
+            <div class="col-6 col-md-3">
+              <label class="form-label small text-muted mb-1" for="userComunaInput">Comuna</label>
+              <input type="text" name="comuna" id="userComunaInput" class="form-control form-control-sm"
+                     value="{{ v_comuna }}" readonly tabindex="-1" placeholder="Se completa sola">
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small text-muted mb-1" for="userCiudadInput">Ciudad</label>
+              <input type="text" name="ciudad" id="userCiudadInput" class="form-control form-control-sm"
+                     value="{{ v_ciudad }}" readonly tabindex="-1" placeholder="Se completa sola">
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   {% if not user %}
   <div class="ilus-card mb-3" style="border-left:4px solid var(--ilus-red)">
     <div class="ilus-card-header">
@@ -356,6 +471,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='ilus_persona_fields.js') }}"></script>
 <script>
 function toggleInviteOptions() {
   var check = document.getElementById('sendInviteCheck');
@@ -536,6 +652,209 @@ function ilusCopiarResetLink(btn) {
   }
 
   document.addEventListener('DOMContentLoaded', initPasos);
+})();
+</script>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// DATOS PERSONALES — RUT (5), fecha de nacimiento (6) y dirección (7)
+// Daniel 2026-09-29. Mismo semáforo que los pasos 1-4: gris = vacío
+// (opcional), rojo = error, ámbar = falta validar, verde = listo.
+// La lógica de RUT y de fecha vive en static/ilus_persona_fields.js.
+// ══════════════════════════════════════════════════════════════════
+(function(){
+  var P = window.ilusPersona;
+  if (!P) return;
+  function $(id){ return document.getElementById(id); }
+  var CAMPO = { rut: 'userRutInput', fecha: 'userFechaNacInput', dir: 'userDireccionInput' };
+  var IC_OK = '<i class="bi bi-check-circle-fill"></i>';
+  var IC_ERR = '<i class="bi bi-x-circle-fill"></i>';
+  var IC_WARN = '<i class="bi bi-exclamation-triangle-fill"></i>';
+
+  // estado: 'vacio' | 'error' | 'pendiente' | 'ok'
+  function pintar(pref, estado, tipoMsg, html){
+    var c = $('ufCircle-' + pref), f = $(CAMPO[pref]), m = $('ufMsg-' + pref);
+    if (c){
+      c.classList.toggle('is-complete', estado === 'ok');
+      c.classList.toggle('is-invalid', estado === 'error');
+      c.classList.toggle('is-pending', estado === 'pendiente');
+    }
+    if (f){
+      f.classList.toggle('is-valid', estado === 'ok');
+      f.classList.toggle('is-invalid', estado === 'error');
+      f.classList.toggle('is-pending', estado === 'pendiente');
+    }
+    if (m){ m.className = 'uf-msg' + (tipoMsg ? ' ' + tipoMsg : ''); m.innerHTML = html || ''; }
+  }
+
+  // ── 5 · RUT: se da formato chileno mientras se escribe (12.345.678-5) ──
+  function initRut(){
+    var inp = $(CAMPO.rut);
+    if (!inp) return;
+    function render(final){
+      var r = P.rutEstado(inp.value);
+      var cambio = P.rutLimpiar(inp.value) !== P.rutLimpiar(inp.dataset.original || '');
+      if (r.estado === 'vacio') return pintar('rut', 'vacio', '', 'Opcional. Escríbelo con su dígito verificador, por ejemplo 12.345.678-5.');
+      if (r.estado === 'incompleto'){
+        return final
+          ? pintar('rut', 'error', 'err', IC_ERR + 'RUT incompleto: faltan dígitos.')
+          : pintar('rut', 'vacio', '', 'Sigue escribiendo: el RUT lleva 7 u 8 dígitos y su dígito verificador.');
+      }
+      if (r.estado === 'invalido'){
+        return pintar('rut', 'error', 'err', IC_ERR + 'El dígito verificador no coincide' +
+          (r.dvEsperado ? ' (debería ser <strong>' + r.dvEsperado + '</strong>)' : '') + '.' +
+          (cambio ? '' : ' Es el RUT que ya estaba guardado: corrígelo cuando puedas.'));
+      }
+      pintar('rut', 'ok', 'ok', IC_OK + 'RUT válido: <strong>' + r.formateado + '</strong>');
+    }
+    inp.addEventListener('input', function(){
+      // Formatea y deja el cursor donde estaba (contando solo dígitos y K a su derecha).
+      var pos = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+      var aLaDerecha = P.rutLimpiar(inp.value.slice(pos)).length;
+      inp.value = P.rutFormatear(inp.value);
+      var p = inp.value.length, cuenta = 0;
+      while (p > 0 && cuenta < aLaDerecha){ p--; if (/[0-9K]/.test(inp.value.charAt(p))) cuenta++; }
+      try { inp.setSelectionRange(p, p); } catch(e) {}
+      render(false);
+    });
+    inp.addEventListener('blur', function(){ render(true); });
+    if (inp.value) inp.value = P.rutFormatear(inp.value);
+    render(false);
+  }
+
+  // ── 6 · Fecha de nacimiento ──
+  function initFecha(){
+    var inp = $(CAMPO.fecha);
+    if (!inp) return;
+    var h = new Date(), pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    inp.max = h.getFullYear() + '-' + pad(h.getMonth() + 1) + '-' + pad(h.getDate());
+    function render(){
+      if (!inp.value && inp.validity && inp.validity.badInput){
+        return pintar('fecha', 'error', 'err', IC_ERR + 'Fecha incompleta: escribe día, mes y año.');
+      }
+      var r = P.fechaNacEstado(inp.value, new Date());
+      if (r.estado === 'vacio') return pintar('fecha', 'vacio', '', 'Opcional.');
+      if (r.estado === 'invalido') return pintar('fecha', 'error', 'err', IC_ERR + r.mensaje);
+      pintar('fecha', 'ok', 'ok', IC_OK + r.edad + ' años');
+    }
+    ['input', 'change', 'blur'].forEach(function(ev){ inp.addEventListener(ev, render); });
+    render();
+  }
+
+  // ── 7 · Dirección validada con Google Maps ──
+  function initDireccion(){
+    var inp = $(CAMPO.dir);
+    if (!inp) return;
+    var lat = $('userDirLat'), lng = $('userDirLng'), pid = $('userDirPlaceId');
+    var com = $('userComunaInput'), ciu = $('userCiudadInput');
+    var original = (inp.dataset.original || '').trim();
+    var validada = null;   // última dirección verificada: si se vuelve a escribir igual, se restaura
+
+    function tieneGeo(){ return !!(lat.value && lng.value && pid.value); }
+    function estado(){
+      var txt = inp.value.trim();
+      if (!txt) return 'vacio';
+      if (tieneGeo()) return 'verificada';
+      if (txt === original) return 'guardada';
+      return 'pendiente';
+    }
+    function pintarDir(){
+      var e = estado();
+      inp.dataset.estado = e;
+      if (e === 'vacio') pintar('dir', 'vacio', '', 'Opcional. Escribe la calle y el número, y elige una sugerencia de Google.');
+      else if (e === 'verificada') pintar('dir', 'ok', 'ok', IC_OK + 'Dirección verificada con Google Maps · <small>' +
+        Number(lat.value).toFixed(4) + ', ' + Number(lng.value).toFixed(4) + '</small>');
+      else if (e === 'guardada') pintar('dir', 'pendiente', 'warn', IC_WARN + 'Guardada sin validar. Vuelve a elegirla de la lista para verificarla.');
+      else pintar('dir', 'pendiente', 'warn', IC_WARN + 'Falta elegir una sugerencia de la lista para validar la dirección.');
+    }
+
+    // Misma heurística que Asignar y Cotizar (cubicador_asignar.js): en Chile ni 'locality'
+    // ni 'administrative_area_level_3' son confiables solos; se prefiere el que NO es la provincia.
+    function comunaCiudad(comps){
+      var loc = '', l3 = '', l2 = '';
+      (comps || []).forEach(function(c){
+        var t = c.types || [], n = c.long_name || '';
+        if (t.indexOf('locality') !== -1 && !loc) loc = n;
+        if (t.indexOf('administrative_area_level_3') !== -1 && !l3) l3 = n;
+        if (t.indexOf('administrative_area_level_2') !== -1 && !l2) l2 = n;
+      });
+      function norm(s){ return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
+      var comuna;
+      if (loc && norm(loc) !== norm(l2)) comuna = loc;
+      else if (l3 && norm(l3) !== norm(l2)) comuna = l3;
+      else comuna = loc || l3 || l2;
+      return { comuna: comuna || '', ciudad: (l2 || loc || '').replace(/^Provincia de\s+/i, '') };
+    }
+
+    if (tieneGeo()){
+      validada = { valor: inp.value, lat: lat.value, lng: lng.value, pid: pid.value, comuna: com.value, ciudad: ciu.value };
+    }
+    inp.addEventListener('input', function(){
+      if (validada && inp.value === validada.valor){
+        lat.value = validada.lat; lng.value = validada.lng; pid.value = validada.pid;
+        com.value = validada.comuna; ciu.value = validada.ciudad;
+      } else if (tieneGeo() || !inp.value.trim()){
+        lat.value = ''; lng.value = ''; pid.value = '';
+        if (validada || !inp.value.trim()){ com.value = ''; ciu.value = ''; }
+      }
+      pintarDir();
+    });
+    // Enter en la dirección elige la sugerencia; nunca debe enviar el formulario.
+    inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') e.preventDefault(); });
+
+    function initGoogle(){
+      if (typeof ilusPlacesAutocomplete !== 'function'){
+        if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(initGoogle);
+        return;
+      }
+      ilusPlacesAutocomplete('userDireccionInput', {
+        country: 'cl',
+        types: ['address'],
+        onPlaceSelected: function(place){
+          lat.value = place.lat; lng.value = place.lng; pid.value = place.place_id || '';
+          var cc = comunaCiudad(place.componentes);
+          com.value = cc.comuna; ciu.value = cc.ciudad;
+          validada = { valor: inp.value, lat: lat.value, lng: lng.value, pid: pid.value, comuna: com.value, ciudad: ciu.value };
+          pintarDir();
+        }
+      });
+    }
+    initGoogle();
+    pintarDir();
+  }
+
+  // Un dato NUEVO con error no se envía. Uno viejo que no se tocó (guardado antes de
+  // existir estas validaciones) no impide editar el rol ni el estado del usuario.
+  function initEnvio(){
+    var rutEl = $(CAMPO.rut), fEl = $(CAMPO.fecha), dEl = $(CAMPO.dir);
+    var form = rutEl && rutEl.form;
+    if (!form) return;
+    form.addEventListener('submit', function(e){
+      var probs = [];
+      var r = P.rutEstado(rutEl.value);
+      if ((r.estado === 'incompleto' || r.estado === 'invalido') &&
+          P.rutLimpiar(rutEl.value) !== P.rutLimpiar(rutEl.dataset.original || '')){
+        probs.push({ el: rutEl, msg: 'Revisa el RUT: ' + (r.estado === 'incompleto' ? 'está incompleto.' : 'el dígito verificador no coincide.') });
+      }
+      var parcial = !fEl.value && fEl.validity && fEl.validity.badInput;
+      var fe = P.fechaNacEstado(fEl.value, new Date());
+      if ((parcial || fe.estado === 'invalido') && (parcial || fEl.value !== (fEl.dataset.original || ''))){
+        probs.push({ el: fEl, msg: 'Revisa la fecha de nacimiento.' });
+      }
+      if (dEl.dataset.estado === 'pendiente'){
+        probs.push({ el: dEl, msg: 'Elige la dirección de la lista de Google para validarla.' });
+      }
+      if (!probs.length) return;
+      e.preventDefault();
+      if (typeof ilusToast === 'function') ilusToast(probs[0].msg, { type: 'error' });
+      probs[0].el.focus();
+      try { probs[0].el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(err) {}
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    initRut(); initFecha(); initDireccion(); initEnvio();
+  });
 })();
 </script>
 {% endblock %}
