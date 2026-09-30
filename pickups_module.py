@@ -283,7 +283,10 @@ def pickup_email_stepper_html(active_idx):
             lc = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
             lw = "800" if i == active_idx else "600"
             labels.append(
-                f'<td align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
+                # class email-step-lbl: en el celular (media query de app.py) pasa a 9 px en
+                # minúsculas; con 10 px MAYÚSCULAS los 5 nombres se pegaban
+                # ("SOLICITADAPROPUESTACONFIRMADA…", captura de Daniel 2026-09-30).
+                f'<td class="email-step-lbl" align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
                 f'font-size:10px;color:{lc};text-transform:uppercase;font-weight:{lw};'
                 f'letter-spacing:.04em">{lb}</td>')
         return (

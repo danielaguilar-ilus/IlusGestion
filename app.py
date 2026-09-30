@@ -8777,7 +8777,8 @@ def _ilus_email_master(ctx: dict) -> str:
 .email-title{{font-size:25px!important;line-height:31px!important}}
 .email-detail-label,.email-detail-value{{display:block!important;width:100%!important}}
 .email-detail-value{{padding-top:3px!important;padding-left:0!important;text-align:left!important}}
-.email-button{{display:block!important;width:100%!important}}}}</style></head>
+.email-button{{display:block!important;width:100%!important}}
+.email-step-lbl{{font-size:9px!important;letter-spacing:0!important;text-transform:none!important}}}}</style></head>
 <body style="margin:0;padding:0;background:#eef0f3;font-family:Arial,Helvetica,sans-serif;color:#15171a">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">{preheader}</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#eef0f3">
