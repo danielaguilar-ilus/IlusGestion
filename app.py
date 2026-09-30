@@ -10731,7 +10731,9 @@ def mi_cuenta():
     )
     if not u:
         return redirect(url_for("logout"))
-    return render_template("mi_cuenta.html", usuario=dict(u))
+    # 2026-09-30: coordenadas de la dirección ya validada con Google (consulta aparte a
+    # propósito, ver _usuario_geo): así la dirección guardada se ve "verificada".
+    return render_template("mi_cuenta.html", usuario=dict(u), geo=_usuario_geo(g.user["id"]))
 
 
 @app.route("/mi-cuenta/datos", methods=["POST"])
@@ -10750,42 +10752,55 @@ def mi_cuenta_datos():
     if phone and not re.match(r"^\+?\d{8,16}$", phone):
         return jsonify({"error": "Teléfono inválido. Usa formato +56912345678"}), 400
 
-    rut       = (d.get("rut") or "").strip()[:20] or None
     cargo     = (d.get("cargo") or "").strip()[:120] or None
     genero    = (d.get("genero") or "").strip()[:20] or None
-    direccion = (d.get("direccion") or "").strip()[:300] or None
     comuna    = (d.get("comuna") or "").strip()[:100] or None
     ciudad    = (d.get("ciudad") or "").strip()[:100] or None
-    fecha_nac = (d.get("fecha_nac") or "").strip() or None
     if genero and genero not in ("masculino","femenino","otro","prefiero_no_decir"):
         genero = None
+
+    # 🔒 2026-09-30 (Daniel, reclamo de Juan Espinosa: "la dirección no está validada en
+    # Google y no completa la comuna, el RUT no tiene formato de RUT chileno"). Mi cuenta
+    # guardaba RUT, dirección y fecha como texto plano; ahora aplica las MISMAS reglas que
+    # Nuevo/Editar usuario (pasos 5-7): RUT módulo 11 y sin repetir, fecha real, y dirección
+    # solo si viene validada con Google (o si es la que ya estaba guardada y no se tocó).
+    actual = mysql_fetchone(
+        f"SELECT rut, fecha_nac, direccion FROM `{AUTH_TABLE}` WHERE id=%s", (g.user["id"],)) or {}
+    ok_rut, rut_val = _validar_rut_usuario(d.get("rut") or "", rut_actual=actual.get("rut"),
+                                           excluir_id=g.user["id"])
+    if not ok_rut:
+        return jsonify({"error": rut_val}), 400
+    fecha_txt = (d.get("fecha_nac") or "").strip()
+    if fecha_txt == (str(actual["fecha_nac"])[:10] if actual.get("fecha_nac") else ""):
+        fecha_nac_val = actual.get("fecha_nac")   # sin cambios: no se revalida un dato viejo
+    else:
+        ok_fn, fecha_nac_val = _uperf.validar_fecha_nacimiento(fecha_txt)
+        if not ok_fn:
+            return jsonify({"error": fecha_nac_val}), 400
+    ok_dir, dir_val = _uperf.resolver_direccion(
+        d.get("direccion") or "", d.get("direccion_lat") or "", d.get("direccion_lng") or "",
+        d.get("direccion_place_id") or "", direccion_actual=actual.get("direccion") or "")
+    if not ok_dir:
+        return jsonify({"error": dir_val}), 400
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            # 2026-09-29: si la dirección cambia aquí (texto libre), la ubicación validada
-            # con Google que tenía guardada ya no corresponde a ese texto: se borra para
-            # no dejar una ubicación falsa marcada como válida.
-            try:
-                _fila_dir = mysql_fetchone(
-                    f"SELECT direccion FROM `{AUTH_TABLE}` WHERE id=%s", (g.user["id"],)) or {}
-                if (_uperf.normalizar_direccion(_fila_dir.get("direccion"))
-                        != _uperf.normalizar_direccion(direccion)):
-                    cur.execute(
-                        f"UPDATE `{AUTH_TABLE}` SET direccion_lat=NULL, direccion_lng=NULL, "
-                        f"direccion_place_id=NULL WHERE id=%s", (g.user["id"],))
-            except Exception as _ge:
-                print(f"[mi-cuenta] no se pudo revisar la ubicación de la dirección: {type(_ge).__name__}", flush=True)
             cur.execute(
-                f"UPDATE `{AUTH_TABLE}` SET nombre=%s, phone=%s, rut=%s, cargo=%s, "
-                f"genero=%s, direccion=%s, comuna=%s, ciudad=%s, fecha_nac=%s WHERE id=%s",
-                (nombre, phone or None, rut, cargo, genero, direccion, comuna, ciudad,
-                 fecha_nac, g.user["id"])
+                f"UPDATE `{AUTH_TABLE}` SET nombre=%s, phone=%s, cargo=%s, genero=%s WHERE id=%s",
+                (nombre, phone or None, cargo, genero, g.user["id"])
             )
+            perfil_ok = _guardar_perfil_usuario(cur, "id", g.user["id"], rut_val,
+                                                fecha_nac_val, dir_val, comuna, ciudad)
         conn.commit()
-        return jsonify({"ok": True, "nombre": nombre})
+        resp = {"ok": True, "nombre": nombre}
+        if not perfil_ok:
+            resp["aviso"] = ("Tus datos se guardaron, pero no se pudo guardar la ubicación de la "
+                             "dirección. Vuelve a elegirla de la lista de Google.")
+        return jsonify(resp)
     except Exception as e:
-        return jsonify({"error": f"No se pudo guardar: {e}"}), 500
+        print(f"[mi-cuenta] no se pudo guardar el perfil: {type(e).__name__}", flush=True)
+        return jsonify({"error": "No se pudo guardar. Intenta de nuevo en un momento."}), 500
 
 
 @app.route("/mi-cuenta/foto", methods=["POST"])

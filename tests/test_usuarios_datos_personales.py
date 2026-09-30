@@ -62,6 +62,7 @@ if (inp.fechas) {
   const h = new Date(inp.hoy[0], inp.hoy[1] - 1, inp.hoy[2]);
   out.fechas = inp.fechas.map(s => P.fechaNacEstado(s, h));
 }
+if (inp.comunas) out.comunas = inp.comunas.map(c => P.comunaCiudad(c));
 console.log(JSON.stringify(out));
 """
     r = subprocess.run(
@@ -275,7 +276,9 @@ class TestCableadoDelServidor(unittest.TestCase):
     def test_where_del_guardado_es_siempre_una_constante(self):
         usos = re.findall(r"_guardar_perfil_usuario\(cur, (\"?\w+\"?),", self.src)
         usos = [u for u in usos if u != "where_col"]  # la línea `def` de la propia función
-        self.assertEqual(sorted(usos), ['"id"', '"username"'])
+        # Editar usuario y Mi cuenta guardan por "id"; el alta por "username". Lo que
+        # importa es que sea SIEMPRE una constante del código, nunca un dato de entrada.
+        self.assertEqual(sorted(set(usos)), ['"id"', '"username"'])
 
     def test_rut_se_valida_estricto_y_sin_duplicados(self):
         fn = _extraer_funcion(self.src, "_validar_rut_usuario")
@@ -283,9 +286,107 @@ class TestCableadoDelServidor(unittest.TestCase):
         self.assertIn("Ese RUT ya está registrado", fn)
         self.assertIn("escape", fn)  # los nombres se escapan: la plantilla imprime los errores con |safe
 
-    def test_mi_cuenta_borra_la_ubicacion_si_cambia_el_texto(self):
+    def test_mi_cuenta_aplica_las_mismas_reglas_que_usuarios(self):
+        """Reclamo de Juan Espinosa (2026-09-30): Mi cuenta guardaba RUT, dirección y fecha
+        como texto plano. Ahora valida igual que Nuevo/Editar usuario; y como guarda con
+        _guardar_perfil_usuario, una dirección cambiada nunca deja una ubicación vieja."""
         m = re.search(r"^def mi_cuenta_datos\(.*?(?=^@app\.route)", self.src, re.M | re.S)
-        self.assertIn("direccion_lat=NULL", m.group(0))
+        fn = m.group(0)
+        self.assertIn("_validar_rut_usuario(", fn)
+        self.assertIn("_uperf.validar_fecha_nacimiento(", fn)
+        self.assertIn("_uperf.resolver_direccion(", fn)
+        self.assertIn("_guardar_perfil_usuario(cur, \"id\", g.user[\"id\"]", fn)
+        self.assertIn("excluir_id=g.user[\"id\"]", fn)      # su propio RUT no cuenta como repetido
+        self.assertNotIn("rut=%s, cargo=%s", fn)              # ya no guarda el RUT crudo
+        self.assertNotIn("No se pudo guardar: {e}", fn)       # REGLA #4: sin detalles internos
+
+    def test_mi_cuenta_entrega_las_coordenadas_a_la_plantilla(self):
+        m = re.search(r"^def mi_cuenta\(.*?(?=^@app\.route)", self.src, re.M | re.S)
+        self.assertIn("geo=_usuario_geo(g.user[\"id\"])", m.group(0))
+
+
+class TestPlantillaMiCuenta(unittest.TestCase):
+    """templates/mi_cuenta.html: RUT con formato chileno y dirección con Google."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import jinja2
+        except ImportError:
+            raise unittest.SkipTest("jinja2 no está instalado")
+        cls.py = _cargar_funciones_rut()
+        base = ("{% block title %}{% endblock %}{% block head_extra %}{% endblock %}"
+                "{% block content %}{% endblock %}{% block scripts %}{% endblock %}")
+        cls.env = jinja2.Environment(
+            loader=jinja2.DictLoader({"base.html": base, "mi_cuenta.html": _leer("templates", "mi_cuenta.html")}),
+            autoescape=True)
+        cls.env.filters["rut_fmt"] = lambda v: cls.py["formatear_rut"](v) if v else ""
+        cls.env.globals.update(
+            csrf_token=lambda: "tok",
+            url_for=lambda ep, **kw: "/" + ep + (("/" + kw["filename"]) if "filename" in kw else ""))
+
+    def _render(self, **usuario):
+        u = dict(id=1, username="a@b.cl", nombre="Daniel Aguilar", phone="", role="superadmin",
+                 active=1, created_at=None, foto_url=None, rut=None, cargo=None, genero=None,
+                 direccion=None, comuna=None, ciudad=None, fecha_nac=None)
+        u.update(usuario)
+        geo = u.pop("_geo", {})
+        return self.env.get_template("mi_cuenta.html").render(usuario=u, geo=geo)
+
+    def test_el_rut_guardado_sin_separadores_se_muestra_con_formato_chileno(self):
+        html = self._render(rut="255470655")
+        self.assertIn('id="mcRut"', html)
+        self.assertIn('value="25.547.065-5"', html)
+        self.assertIn('data-original="255470655"', html)
+
+    def test_sin_rut_el_campo_queda_vacio(self):
+        html = self._render(rut=None)
+        self.assertRegex(html, r'id="mcRut"[^>]*value=""')
+
+    def test_direccion_con_google_comuna_y_ciudad_de_solo_lectura(self):
+        html = self._render(direccion="Colon 1265", comuna="Independencia", ciudad="Santiago")
+        self.assertRegex(html, r'id="mcComuna"[^>]*readonly')
+        self.assertRegex(html, r'id="mcCiudad"[^>]*readonly')
+        for oculto in ("mcDirLat", "mcDirLng", "mcDirPid"):
+            self.assertIn(f'id="{oculto}"', html)
+        self.assertIn("ilusPlacesAutocomplete('mcDireccion'", html)
+
+    def test_las_coordenadas_guardadas_llegan_a_los_campos_ocultos(self):
+        html = self._render(direccion="Colon 1265", _geo={
+            "direccion_lat": Decimal("-33.4200000"), "direccion_lng": Decimal("-70.6600000"),
+            "direccion_place_id": "ChIJabcdefghij"})
+        self.assertRegex(html, r'id="mcDirLat" value="-33\.42')
+        self.assertRegex(html, r'id="mcDirPid" value="ChIJabcdefghij"')
+
+    def test_carga_los_helpers_compartidos_y_valida_antes_de_enviar(self):
+        html = self._render()
+        self.assertIn("ilus_persona_fields.js", html)
+        self.assertIn("__mcValidarDatos", html)
+        self.assertIn("direccion_place_id: $v('mcDirPid')", html)
+
+
+@unittest.skipUnless(HAY_NODE, "node no está instalado")
+class TestComunaCiudadNavegador(unittest.TestCase):
+    """ilusPersona.comunaCiudad: comuna y ciudad salen de los componentes de Google."""
+
+    def _comps(self, **tipos):
+        return [{"long_name": v, "types": [k.replace("__", "_")]} for k, v in tipos.items()]
+
+    def test_prefiere_la_localidad_cuando_no_es_la_provincia(self):
+        c = self._comps(locality="Independencia", administrative_area_level_3="Independencia",
+                        administrative_area_level_2="Provincia de Santiago")
+        r = _correr_node({"comunas": [c]})["comunas"][0]
+        self.assertEqual(r, {"comuna": "Independencia", "ciudad": "Santiago"})
+
+    def test_si_la_localidad_es_igual_a_la_provincia_usa_el_nivel_3(self):
+        c = self._comps(locality="Valparaíso", administrative_area_level_3="Playa Ancha",
+                        administrative_area_level_2="Valparaíso")
+        r = _correr_node({"comunas": [c]})["comunas"][0]
+        self.assertEqual(r["comuna"], "Playa Ancha")
+        self.assertEqual(r["ciudad"], "Valparaíso")
+
+    def test_sin_componentes_devuelve_vacios(self):
+        self.assertEqual(_correr_node({"comunas": [[]]})["comunas"][0], {"comuna": "", "ciudad": ""})
 
 
 class _Multi(dict):

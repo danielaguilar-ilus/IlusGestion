@@ -49,6 +49,16 @@
                   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mc-readonly i{color:#9ca3af;font-size:1rem}
 
+/* Semáforo de RUT / fecha / dirección: mismos colores y textos que Nuevo/Editar usuario
+   (templates/user_form.html): verde listo · rojo error · ámbar falta validar · gris vacío. */
+.mc-field.is-valid{border-color:#16a34a;background-color:#f0fdf4}
+.mc-field.is-invalid{border-color:#dc2626;background-color:#fff5f5}
+.mc-field.is-pending{border-color:#f59e0b;background-color:#fffbeb}
+.mc-msg{display:flex;align-items:flex-start;gap:6px;margin-top:6px;min-height:1.3em;font-size:.78rem;line-height:1.35;color:#6b7280}
+.mc-msg .bi{flex-shrink:0;margin-top:.1em}
+.mc-msg.ok{color:#15803d}
+.mc-msg.err{color:#b91c1c}
+.mc-msg.warn{color:#92400e}
 .mc-strength{height:6px;border-radius:3px;background:#f3f4f6;overflow:hidden;margin-top:6px}
 .mc-strength-bar{height:100%;border-radius:3px;transition:width .3s,background .3s}
 .mc-strength-text{font-size:.72rem;color:#6b7280;margin-top:4px}
@@ -184,11 +194,21 @@
         <i class="bi bi-stars me-1"></i>Datos adicionales
         <span class="badge bg-light text-secondary border ms-2" style="font-size:.6rem">OPCIONAL</span>
       </div>
+      {# 🔒 2026-09-30 (Daniel, reclamo de Juan Espinosa: "la dirección no está validada en
+         Google y no completa la comuna, el RUT no tiene formato de RUT chileno"). RUT,
+         dirección y fecha pasan a las MISMAS reglas y al mismo semáforo que Nuevo/Editar
+         usuario (templates/user_form.html, pasos 5-7): componentes en
+         static/ilus_persona_fields.js y validación espejo en el servidor (mi_cuenta_datos). #}
+      {% set _geo = geo or {} %}
+      {% set _rut_fmt = usuario.rut | rut_fmt %}
       <div class="row g-3">
         <div class="col-12 col-md-4">
-          <label class="form-label fw-semibold small">RUT</label>
-          <input type="text" id="mcRut" class="form-control font-monospace" maxlength="20"
-                 value="{{ usuario.rut or '' }}" placeholder="12345678-9">
+          <label class="form-label fw-semibold small" for="mcRut"><i class="bi bi-person-vcard me-1"></i>RUT</label>
+          <input type="text" id="mcRut" class="form-control font-monospace mc-field" maxlength="12"
+                 value="{{ _rut_fmt }}" data-original="{{ usuario.rut or '' }}"
+                 placeholder="12.345.678-5" inputmode="text" autocomplete="off"
+                 autocapitalize="characters" spellcheck="false">
+          <div class="mc-msg" id="mcMsgRut"></div>
         </div>
         <div class="col-12 col-md-4">
           <label class="form-label fw-semibold small">Cargo</label>
@@ -206,24 +226,34 @@
           </select>
         </div>
         <div class="col-12 col-md-6">
-          <label class="form-label fw-semibold small">Dirección</label>
-          <input type="text" id="mcDireccion" class="form-control" maxlength="300"
-                 value="{{ usuario.direccion or '' }}" placeholder="Calle 1234">
+          <label class="form-label fw-semibold small" for="mcDireccion">
+            <i class="bi bi-geo-alt-fill me-1" style="color:var(--ilus-red)"></i>Dirección
+            <span class="text-muted fw-normal" style="font-size:.72rem">(se valida con Google Maps)</span>
+          </label>
+          <input type="text" id="mcDireccion" class="form-control mc-field" maxlength="300"
+                 value="{{ usuario.direccion or '' }}" data-original="{{ usuario.direccion or '' }}"
+                 placeholder="Calle y número, comuna" autocomplete="off">
+          <input type="hidden" id="mcDirLat" value="{{ _geo.direccion_lat if _geo.direccion_lat is not none else '' }}">
+          <input type="hidden" id="mcDirLng" value="{{ _geo.direccion_lng if _geo.direccion_lng is not none else '' }}">
+          <input type="hidden" id="mcDirPid" value="{{ _geo.direccion_place_id or '' }}">
+          <div class="mc-msg" id="mcMsgDir"></div>
         </div>
         <div class="col-6 col-md-3">
-          <label class="form-label fw-semibold small">Comuna</label>
+          <label class="form-label fw-semibold small" for="mcComuna">Comuna</label>
           <input type="text" id="mcComuna" class="form-control" maxlength="100"
-                 value="{{ usuario.comuna or '' }}">
+                 value="{{ usuario.comuna or '' }}" readonly tabindex="-1" placeholder="Se completa sola">
         </div>
         <div class="col-6 col-md-3">
-          <label class="form-label fw-semibold small">Ciudad</label>
+          <label class="form-label fw-semibold small" for="mcCiudad">Ciudad</label>
           <input type="text" id="mcCiudad" class="form-control" maxlength="100"
-                 value="{{ usuario.ciudad or '' }}">
+                 value="{{ usuario.ciudad or '' }}" readonly tabindex="-1" placeholder="Se completa sola">
         </div>
         <div class="col-12 col-md-4">
-          <label class="form-label fw-semibold small">Fecha nacimiento</label>
-          <input type="date" id="mcFechaNac" class="form-control"
-                 value="{{ usuario.fecha_nac.strftime('%Y-%m-%d') if usuario.fecha_nac else '' }}">
+          <label class="form-label fw-semibold small" for="mcFechaNac"><i class="bi bi-cake2 me-1"></i>Fecha nacimiento</label>
+          <input type="date" id="mcFechaNac" class="form-control mc-field" min="1900-01-01"
+                 value="{{ usuario.fecha_nac.strftime('%Y-%m-%d') if usuario.fecha_nac else '' }}"
+                 data-original="{{ usuario.fecha_nac.strftime('%Y-%m-%d') if usuario.fecha_nac else '' }}">
+          <div class="mc-msg" id="mcMsgFecha"></div>
         </div>
       </div>
       <div class="form-text mt-2" style="font-size:.72rem">
@@ -304,7 +334,175 @@
 
 </div>
 
+<script src="{{ url_for('static', filename='ilus_persona_fields.js') }}"></script>
 <script>
+// ══════════════════════════════════════════════════════════════════
+// RUT chileno, fecha de nacimiento y dirección validada con Google.
+// Daniel 2026-09-30 (reclamo de Juan Espinosa). Misma lógica y mismo
+// semáforo que Nuevo/Editar usuario; la validación real vuelve a correr
+// en el servidor (mi_cuenta_datos). Reglas en static/ilus_persona_fields.js.
+// ══════════════════════════════════════════════════════════════════
+(function(){
+  var P = window.ilusPersona;
+  if (!P) return;
+  function $(id){ return document.getElementById(id); }
+  var IC_OK = '<i class="bi bi-check-circle-fill"></i>';
+  var IC_ERR = '<i class="bi bi-x-circle-fill"></i>';
+  var IC_WARN = '<i class="bi bi-exclamation-triangle-fill"></i>';
+
+  // estado: 'vacio' | 'error' | 'pendiente' | 'ok'
+  function pintar(campoId, msgId, estado, tipoMsg, html){
+    var f = $(campoId), m = $(msgId);
+    if (f){
+      f.classList.toggle('is-valid', estado === 'ok');
+      f.classList.toggle('is-invalid', estado === 'error');
+      f.classList.toggle('is-pending', estado === 'pendiente');
+    }
+    if (m){ m.className = 'mc-msg' + (tipoMsg ? ' ' + tipoMsg : ''); m.innerHTML = html || ''; }
+  }
+
+  // ── RUT: formato chileno mientras se escribe (12.345.678-5) ──
+  function initRut(){
+    var inp = $('mcRut');
+    if (!inp) return;
+    function render(final){
+      var r = P.rutEstado(inp.value);
+      var cambio = P.rutLimpiar(inp.value) !== P.rutLimpiar(inp.dataset.original || '');
+      if (r.estado === 'vacio') return pintar('mcRut', 'mcMsgRut', 'vacio', '', 'Opcional. Escríbelo con su dígito verificador, por ejemplo 12.345.678-5.');
+      if (r.estado === 'incompleto'){
+        return final
+          ? pintar('mcRut', 'mcMsgRut', 'error', 'err', IC_ERR + 'RUT incompleto: faltan dígitos.')
+          : pintar('mcRut', 'mcMsgRut', 'vacio', '', 'Sigue escribiendo: el RUT lleva 7 u 8 dígitos y su dígito verificador.');
+      }
+      if (r.estado === 'invalido'){
+        return pintar('mcRut', 'mcMsgRut', 'error', 'err', IC_ERR + 'El dígito verificador no coincide' +
+          (r.dvEsperado ? ' (debería ser <strong>' + r.dvEsperado + '</strong>)' : '') + '.' +
+          (cambio ? '' : ' Es el RUT que ya tenías guardado: corrígelo cuando puedas.'));
+      }
+      pintar('mcRut', 'mcMsgRut', 'ok', 'ok', IC_OK + 'RUT válido: <strong>' + r.formateado + '</strong>');
+    }
+    inp.addEventListener('input', function(){
+      // Formatea y deja el cursor donde estaba (contando solo dígitos y K a su derecha).
+      var pos = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+      var aLaDerecha = P.rutLimpiar(inp.value.slice(pos)).length;
+      inp.value = P.rutFormatear(inp.value);
+      var p = inp.value.length, cuenta = 0;
+      while (p > 0 && cuenta < aLaDerecha){ p--; if (/[0-9K]/.test(inp.value.charAt(p))) cuenta++; }
+      try { inp.setSelectionRange(p, p); } catch(e) {}
+      render(false);
+    });
+    inp.addEventListener('blur', function(){ render(true); });
+    if (inp.value) inp.value = P.rutFormatear(inp.value);
+    render(false);
+  }
+
+  // ── Fecha de nacimiento ──
+  function initFecha(){
+    var inp = $('mcFechaNac');
+    if (!inp) return;
+    var h = new Date(), pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    inp.max = h.getFullYear() + '-' + pad(h.getMonth() + 1) + '-' + pad(h.getDate());
+    function render(){
+      if (!inp.value && inp.validity && inp.validity.badInput){
+        return pintar('mcFechaNac', 'mcMsgFecha', 'error', 'err', IC_ERR + 'Fecha incompleta: escribe día, mes y año.');
+      }
+      var r = P.fechaNacEstado(inp.value, new Date());
+      if (r.estado === 'vacio') return pintar('mcFechaNac', 'mcMsgFecha', 'vacio', '', 'Opcional.');
+      if (r.estado === 'invalido') return pintar('mcFechaNac', 'mcMsgFecha', 'error', 'err', IC_ERR + r.mensaje);
+      pintar('mcFechaNac', 'mcMsgFecha', 'ok', 'ok', IC_OK + r.edad + ' años');
+    }
+    ['input', 'change', 'blur'].forEach(function(ev){ inp.addEventListener(ev, render); });
+    render();
+  }
+
+  // ── Dirección validada con Google Maps (comuna y ciudad salen de Google) ──
+  function initDireccion(){
+    var inp = $('mcDireccion');
+    if (!inp) return;
+    var lat = $('mcDirLat'), lng = $('mcDirLng'), pid = $('mcDirPid');
+    var com = $('mcComuna'), ciu = $('mcCiudad');
+    var original = (inp.dataset.original || '').trim();
+    var validada = null;   // última dirección verificada: si se vuelve a escribir igual, se restaura
+
+    function tieneGeo(){ return !!(lat.value && lng.value && pid.value); }
+    function estado(){
+      var txt = inp.value.trim();
+      if (!txt) return 'vacio';
+      if (tieneGeo()) return 'verificada';
+      if (txt === original) return 'guardada';
+      return 'pendiente';
+    }
+    function pintarDir(){
+      var e = estado();
+      inp.dataset.estado = e;
+      if (e === 'vacio') pintar('mcDireccion', 'mcMsgDir', 'vacio', '', 'Opcional. Escribe la calle y el número, y elige una sugerencia de Google.');
+      else if (e === 'verificada') pintar('mcDireccion', 'mcMsgDir', 'ok', 'ok', IC_OK + 'Dirección verificada con Google Maps · <small>' +
+        Number(lat.value).toFixed(4) + ', ' + Number(lng.value).toFixed(4) + '</small>');
+      else if (e === 'guardada') pintar('mcDireccion', 'mcMsgDir', 'pendiente', 'warn', IC_WARN + 'Guardada sin validar. Vuelve a elegirla de la lista de Google para verificarla y completar la comuna.');
+      else pintar('mcDireccion', 'mcMsgDir', 'pendiente', 'warn', IC_WARN + 'Falta elegir una sugerencia de la lista para validar la dirección.');
+    }
+
+    if (tieneGeo()){
+      validada = { valor: inp.value, lat: lat.value, lng: lng.value, pid: pid.value, comuna: com.value, ciudad: ciu.value };
+    }
+    inp.addEventListener('input', function(){
+      if (validada && inp.value === validada.valor){
+        lat.value = validada.lat; lng.value = validada.lng; pid.value = validada.pid;
+        com.value = validada.comuna; ciu.value = validada.ciudad;
+      } else if (tieneGeo() || !inp.value.trim()){
+        lat.value = ''; lng.value = ''; pid.value = '';
+        if (validada || !inp.value.trim()){ com.value = ''; ciu.value = ''; }
+      }
+      pintarDir();
+    });
+    // Enter en la dirección elige la sugerencia; nunca debe enviar nada.
+    inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') e.preventDefault(); });
+
+    function initGoogle(){
+      if (typeof ilusPlacesAutocomplete !== 'function'){
+        if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(initGoogle);
+        return;
+      }
+      ilusPlacesAutocomplete('mcDireccion', {
+        country: 'cl',
+        types: ['address'],
+        onPlaceSelected: function(place){
+          lat.value = place.lat; lng.value = place.lng; pid.value = place.place_id || '';
+          var cc = P.comunaCiudad(place.componentes);
+          com.value = cc.comuna; ciu.value = cc.ciudad;
+          validada = { valor: inp.value, lat: lat.value, lng: lng.value, pid: pid.value, comuna: com.value, ciudad: ciu.value };
+          pintarDir();
+        }
+      });
+    }
+    initGoogle();
+    pintarDir();
+  }
+
+  // Un dato NUEVO con error no se envía. Uno viejo que no se tocó (guardado antes de existir
+  // estas validaciones) no impide guardar el resto. Devuelve null o {el, msg}.
+  window.__mcValidarDatos = function(){
+    var rutEl = $('mcRut'), fEl = $('mcFechaNac'), dEl = $('mcDireccion');
+    if (!rutEl || !fEl || !dEl) return null;
+    var r = P.rutEstado(rutEl.value);
+    if ((r.estado === 'incompleto' || r.estado === 'invalido') &&
+        P.rutLimpiar(rutEl.value) !== P.rutLimpiar(rutEl.dataset.original || '')){
+      return { el: rutEl, msg: 'Revisa el RUT: ' + (r.estado === 'incompleto' ? 'está incompleto.' : 'el dígito verificador no coincide.') };
+    }
+    var parcial = !fEl.value && fEl.validity && fEl.validity.badInput;
+    var fe = P.fechaNacEstado(fEl.value, new Date());
+    if ((parcial || fe.estado === 'invalido') && (parcial || fEl.value !== (fEl.dataset.original || ''))){
+      return { el: fEl, msg: 'Revisa la fecha de nacimiento.' };
+    }
+    if (dEl.dataset.estado === 'pendiente'){
+      return { el: dEl, msg: 'Elige la dirección de la lista de Google para validarla.' };
+    }
+    return null;
+  };
+
+  document.addEventListener('DOMContentLoaded', function(){ initRut(); initFecha(); initDireccion(); });
+})();
+
 function togglePw(id, btn) {
   const inp = document.getElementById(id);
   const i = btn.querySelector('i');
@@ -342,6 +540,14 @@ function mcToast(msg, type='success') {
 async function guardarDatos() {
   const btn = document.getElementById('btnSaveDatos');
   const original = btn.innerHTML;
+  // RUT / fecha / dirección: un dato nuevo con error no se envía (ver __mcValidarDatos).
+  const prob = window.__mcValidarDatos ? window.__mcValidarDatos() : null;
+  if (prob) {
+    mcToast(prob.msg, 'error');
+    prob.el.focus();
+    try { prob.el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    return;
+  }
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
   const $v = id => (document.getElementById(id)?.value || '').trim();
@@ -356,6 +562,9 @@ async function guardarDatos() {
         cargo:     $v('mcCargo'),
         genero:    $v('mcGenero'),
         direccion: $v('mcDireccion'),
+        direccion_lat: $v('mcDirLat'),
+        direccion_lng: $v('mcDirLng'),
+        direccion_place_id: $v('mcDirPid'),
         comuna:    $v('mcComuna'),
         ciudad:    $v('mcCiudad'),
         fecha_nac: $v('mcFechaNac'),
@@ -364,6 +573,7 @@ async function guardarDatos() {
     const d = await r.json();
     if (d.ok) {
       mcToast('Datos personales actualizados', 'success');
+      if (d.aviso) mcToast(d.aviso, 'error');
       // Reflejar en el header sin recargar
       document.getElementById('hdrNombre').textContent = d.nombre;
       btn.classList.remove('btn-ilus'); btn.classList.add('btn-success');

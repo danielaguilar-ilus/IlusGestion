@@ -76,6 +76,26 @@
     return { estado: 'valido', edad: edad };
   }
 
+  // Comuna y ciudad a partir de los componentes de una dirección de Google. Misma
+  // heurística que Asignar y Cotizar (cubicador_asignar.js) y que Nuevo/Editar
+  // usuario: en Chile ni 'locality' ni 'administrative_area_level_3' son confiables
+  // solos; se prefiere el que NO es la provincia (level_2).
+  function comunaCiudad(comps) {
+    var loc = '', l3 = '', l2 = '';
+    (comps || []).forEach(function (c) {
+      var t = c.types || [], n = c.long_name || '';
+      if (t.indexOf('locality') !== -1 && !loc) loc = n;
+      if (t.indexOf('administrative_area_level_3') !== -1 && !l3) l3 = n;
+      if (t.indexOf('administrative_area_level_2') !== -1 && !l2) l2 = n;
+    });
+    function norm(s) { return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim(); }
+    var comuna;
+    if (loc && norm(loc) !== norm(l2)) comuna = loc;
+    else if (l3 && norm(l3) !== norm(l2)) comuna = l3;
+    else comuna = loc || l3 || l2;
+    return { comuna: comuna || '', ciudad: (l2 || loc || '').replace(/^Provincia de\s+/i, '') };
+  }
+
   global.ilusPersona = {
     EDAD_MINIMA: EDAD_MINIMA,
     EDAD_MAXIMA: EDAD_MAXIMA,
@@ -83,6 +103,7 @@
     rutDV: rutDV,
     rutFormatear: rutFormatear,
     rutEstado: rutEstado,
-    fechaNacEstado: fechaNacEstado
+    fechaNacEstado: fechaNacEstado,
+    comunaCiudad: comunaCiudad
   };
 })(typeof window !== 'undefined' ? window : globalThis);
