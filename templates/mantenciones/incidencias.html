@@ -466,38 +466,81 @@
     buscador de bodega ya existente (GET /ot/api/repuestos/bodega-buscar).
     REGLA #8: >3 campos reales (repuesto, cantidad, motivo, evidencia) →
     modal Bootstrap, no ilusPrompt/ilusConfirm. -#}
+{#- 🎨 2026-09-30 (Daniel: "editar el modal de solicitud de repuestos...
+    y recuerda que esto debe funcionar muy bien desde un celular"). Mismo
+    formato de tarjetas con semáforo que el modal de la incidencia (y el de
+    Retiros): 3 pasos numerados + progreso "N de 3 pasos listos". Reusa las
+    clases inc-pane / inc-num-circle / inc-progreso que ya existen.
+    🔴 FIX: antes los botones usaban onclick/oninput en el HTML apuntando a
+    funciones que viven DENTRO del bloque (function(){...})() de abajo --
+    no eran globales, así que buscar, elegir y "Solicitar" fallaban en
+    silencio desde el 21-sep. Ahora todo se conecta por código. -#}
 <div class="modal fade" id="incRepModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-scrollable">
-    <div class="modal-content" style="border-radius:14px">
-      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+    <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
         <h6 class="modal-title fw-bold">
           <i class="bi bi-tools me-2" style="color:#dc2626"></i>Solicitar repuesto
           <small class="d-block fw-normal" id="incRepSub" style="font-size:.72rem;opacity:.8"></small>
         </h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body pt-2">
-        <label class="form-label fw-semibold small mb-1">Repuesto <span class="text-danger">*</span></label>
-        <input type="search" id="incRepBq" class="form-control mb-2" placeholder="SKU, descripción o código de fabricante"
-               autocomplete="off" oninput="incRepBuscar(this.value)">
-        <div class="otrep-opc" id="incRepLista"></div>
-        <div class="mt-2">
-          <small class="text-muted d-block mb-1" id="incRepManualHint">No está en la bodega: escribe el nombre y bodega lo valida.</small>
-          <input type="text" id="incRepNombreManual" class="form-control" maxlength="400"
-                 placeholder="Nombre del repuesto (manual)" oninput="incRepRefrescar()">
+        <div class="inc-progreso" aria-live="polite">
+          <span id="incRepProgresoTxt">0 de 3 pasos listos</span>
+          <span class="bar"><span id="incRepProgresoBar"></span></span>
         </div>
-        <label class="form-label fw-semibold small mb-1 mt-3">Cantidad <span class="text-danger">*</span></label>
-        <input type="number" id="incRepCantidad" class="form-control" style="max-width:140px" min="0.5" step="0.5" value="1">
-        <label class="form-label fw-semibold small mb-1 mt-3">Motivo / diagnóstico <span class="text-danger">*</span></label>
-        <textarea id="incRepMotivo" class="form-control" rows="3" maxlength="5000"
-                  placeholder="Por qué hace falta este repuesto (mínimo 10 caracteres)"></textarea>
-        <label class="form-label fw-semibold small mb-1 mt-3">Evidencia <span class="text-danger">*</span></label>
-        <input type="file" id="incRepEvidencia" class="form-control" accept="image/*,video/*" capture="environment">
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <section class="inc-pane" id="incRepPane1">
+          <div class="inc-pane-head inc-c4">
+            <span class="inc-num-circle"><span class="num">1</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-box-seam"></i>
+            <div><b>1. Repuesto</b>
+              <small>Búscalo en la bodega. Si no existe, escribe su nombre y bodega lo valida.</small></div>
+          </div>
+          <input type="search" id="incRepBq" class="form-control mb-2" placeholder="SKU, descripción o código de fabricante"
+                 autocomplete="off">
+          <div class="otrep-opc" id="incRepLista"></div>
+          <div class="mt-2">
+            <small class="text-muted d-block mb-1" id="incRepManualHint">No está en la bodega: escribe el nombre y bodega lo valida.</small>
+            <input type="text" id="incRepNombreManual" class="form-control" maxlength="400"
+                   placeholder="Nombre del repuesto (manual)">
+          </div>
+        </section>
+        <section class="inc-pane" id="incRepPane2">
+          <div class="inc-pane-head inc-c3">
+            <span class="inc-num-circle"><span class="num">2</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-chat-left-quote"></i>
+            <div><b>2. Cantidad y motivo</b>
+              <small>Cuántos hacen falta y por qué — es lo que leen bodega y el proveedor.</small></div>
+          </div>
+          <label class="form-label fw-semibold small mb-1" for="incRepCantidad">Cantidad <span class="text-danger">*</span></label>
+          <input type="number" id="incRepCantidad" class="form-control" style="max-width:160px" min="0.5" step="0.5" value="1" inputmode="decimal">
+          <label class="form-label fw-semibold small mb-1 mt-3" for="incRepMotivo">Motivo / diagnóstico <span class="text-danger">*</span></label>
+          <textarea id="incRepMotivo" class="form-control" rows="3" maxlength="5000"
+                    placeholder="Por qué hace falta este repuesto (mínimo 10 caracteres)"></textarea>
+        </section>
+        <section class="inc-pane" id="incRepPane3">
+          <div class="inc-pane-head inc-c5">
+            <span class="inc-num-circle"><span class="num">3</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-camera"></i>
+            <div><b>3. Evidencia</b>
+              <small>Una foto o un video del daño o faltante. Sin evidencia no hay solicitud.</small></div>
+          </div>
+          {#- Dos botones, no un solo input con capture: `capture` solo abre la
+              cámara y en el celular bloquea la galería. -#}
+          <div class="inc-rep-ev-btns">
+            <button type="button" class="btn btn-dark" id="incRepBtnCamara"><i class="bi bi-camera-fill me-1"></i>Tomar foto o video</button>
+            <button type="button" class="btn btn-outline-dark" id="incRepBtnGaleria"><i class="bi bi-images me-1"></i>Elegir de la galería</button>
+          </div>
+          <input type="file" id="incRepEvCam" accept="image/*,video/*" capture="environment" hidden>
+          <input type="file" id="incRepEvGal" accept="image/*,video/*" hidden>
+          <div class="inc-rep-ev-prev" id="incRepEvPrev" hidden></div>
+        </section>
         <div class="text-danger small mt-2" id="incRepErr"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus" id="incRepBtnEnviar" onclick="incRepEnviar()">
+        <button type="button" class="btn btn-ilus" id="incRepBtnEnviar">
           <i class="bi bi-send-check me-1"></i>Solicitar</button>
       </div>
     </div>
@@ -685,6 +728,25 @@
   border:1px solid #fecaca;color:#b91c1c;border-radius:8px;padding:2px 8px;
   font-size:.72rem;font-weight:700;white-space:nowrap;margin-bottom:3px}
 .inc-c5{border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
+
+/* 🎨 2026-09-30 (Daniel, viendo la tabla: "repara las burbujas"). Las
+   pastillas se partían en 2-3 líneas dentro de un borde redondo y quedaban
+   deformes. En la tabla van siempre en UNA línea. */
+#incTabla .rm-pill{white-space:nowrap}
+
+/* 🎨 2026-09-30: evidencia del modal "Solicitar repuesto" -- botones
+   grandes (44px, REGLA #3) que en el celular quedan uno bajo el otro, y
+   miniatura de lo elegido. */
+.inc-rep-ev-btns{display:flex;flex-wrap:wrap;gap:8px}
+.inc-rep-ev-btns .btn{flex:1 1 200px;min-height:44px;font-weight:700}
+.inc-rep-ev-prev{display:flex;align-items:center;gap:12px;margin-top:10px;padding:10px;
+  border:1.5px solid #86efac;border-radius:12px;background:#f0fdf4}
+.inc-rep-ev-prev img,.inc-rep-ev-ico{width:64px;height:64px;flex:0 0 64px;border-radius:10px;object-fit:cover}
+.inc-rep-ev-ico{display:grid;place-items:center;background:#0a0a0a;color:#fff;font-size:1.6rem}
+.inc-rep-ev-info{flex:1;min-width:0}
+.inc-rep-ev-info b{display:block;font-size:.85rem;overflow-wrap:anywhere}
+.inc-rep-ev-info small{color:#4b5563}
+.inc-rep-ev-prev .btn{min-height:44px}
 
 /* ══ 2026-09-26 (Daniel, viendo el modal en producción): sin barra de
    navegación arriba -- cada tarjeta trae su propio círculo numerado
@@ -2285,7 +2347,13 @@
   /* ══════════════ SOLICITAR REPUESTO DESDE INCIDENCIA (Fase 2, 2026-09-21)
      Mismo motor que la OT: POST /mantenciones/api/incidencias/<id>/solicitar-repuesto
      -- ver mant_api_incidencia_solicitar_repuesto en app.py. ══════════════ */
-  var _incRep = { sel: null, items: [] };
+  // evFile/evUrl: evidencia elegida (cámara o galería) y su miniatura.
+  // autoSelId: repuesto que viene elegido desde la incidencia y hay que
+  // marcar apenas llegue la búsqueda.
+  var _incRep = { sel: null, items: [], evFile: null, evUrl: null, autoSelId: null };
+  // Último repuesto elegido en el paso 4 (Detalle) de la incidencia, con
+  // todos sus datos -- para abrir la solicitud con él ya seleccionado.
+  var _incRepDetalleSel = null;
   function incRepEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function incRepFmt(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; }
   function incRepModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incRepModal')); }
@@ -2312,17 +2380,40 @@
     var motivoActual = document.getElementById('incMotivo').value || '';
     document.getElementById('incRepMotivo').value = motivoActual.length >= 10 ? motivoActual : '';
     document.getElementById('incRepNombreManual').value = '';
-    document.getElementById('incRepEvidencia').value = '';
+    incRepQuitarEvidencia();
     document.getElementById('incRepErr').textContent = '';
     document.getElementById('incRepLista').innerHTML = '';
     // 🔒 FIX 2026-09-21: antes solo se limpiaba dentro del `if` de abajo --
     // si el SKU+descripción daban menos de 2 caracteres, quedaba el texto
     // de la búsqueda de la ÚLTIMA incidencia abierta, no de esta.
     document.getElementById('incRepBq').value = '';
+    _incRep.autoSelId = null;
     incModal().hide();
     incRepModal().show();
-    var q = (document.getElementById('incSku').value || document.getElementById('incDescripcion').value || '').trim();
-    if (q.length >= 2){ document.getElementById('incRepBq').value = q; incRepBuscar(q); }
+    // 🎨 2026-09-30: prellenado desde la incidencia. Antes buscaba por el
+    // SKU de la MÁQUINA y listaba repuestos que no tenían nada que ver.
+    // Ahora: si en el paso 4 ya se eligió un repuesto de la bodega, llega
+    // seleccionado; si no, se busca por "Descripción del repuesto".
+    var stockId = document.getElementById('incRepuestoStockId').value;
+    var elegido = (_incRepDetalleSel && String(_incRepDetalleSel.id) === String(stockId)) ? _incRepDetalleSel : null;
+    if (elegido){
+      _incRep.sel = elegido;
+      document.getElementById('incRepBq').value = elegido.descripcion || elegido.sku || '';
+      var qSel = (elegido.sku || elegido.descripcion || '').trim();
+      if (elegido.disponible == null && elegido.con_stock == null && qSel.length >= 2){
+        // Viene de una incidencia guardada (solo id + nombre): se trae su
+        // stock real de la bodega y se marca apenas llega la búsqueda.
+        _incRep.autoSelId = elegido.id;
+        incRepBuscar(qSel);
+      } else {
+        _incRep.items = [elegido];
+        incRepPintarLista();
+      }
+    } else {
+      var q = (document.getElementById('incDescripcionRepuesto').value || '').trim();
+      if (q.length >= 2){ document.getElementById('incRepBq').value = q; incRepBuscar(q); }
+    }
+    incRepPintarPasos();
   });
 
   var _incRepBuscarTimer = null;
@@ -2336,24 +2427,31 @@
         .then(function(r){ return r.json(); })
         .then(function(d){
           _incRep.items = (d && d.ok) ? (d.repuestos || []) : [];
+          if (_incRep.autoSelId != null){
+            var m = _incRep.items.find(function(x){ return String(x.id) === String(_incRep.autoSelId); });
+            if (m) _incRep.sel = m;
+            else if (_incRep.sel) _incRep.items.unshift(_incRep.sel);
+            _incRep.autoSelId = null;
+          }
           incRepPintarLista();
         }).catch(function(){ document.getElementById('incRepLista').innerHTML = '<div class="otrep-opc-vacio">No se pudo buscar.</div>'; });
     }, 300);
   }
   function incRepPintarLista(){
     var cont = document.getElementById('incRepLista');
+    incRepPintarPasos();
     if (!_incRep.items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Nada en bodega con ese texto. Escríbelo abajo como manual.</div>'; return; }
     cont.innerHTML = _incRep.items.map(function(it){
       var stk = (it.disponible != null)
         ? ((it.disponible > 0) ? '<span class="stk">' + incRepFmt(it.disponible) + ' disponible</span>' : '<span class="stk sin">sin disponible</span>')
         : (it.con_stock ? '<span class="stk">en stock</span>' : '<span class="stk sin">sin stock</span>');
       var on = (_incRep.sel && _incRep.sel.id === it.id) ? ' on' : '';
-      return '<button type="button" class="otrep-opc-it' + on + '" data-id="' + it.id + '" onclick="incRepSelStock(' + it.id + ')">' +
+      return '<button type="button" class="otrep-opc-it' + on + '" data-id="' + it.id + '">' +
         '<span class="inf"><b>' + incRepEsc(it.descripcion || '') + '</b><small>' + incRepEsc(it.sku || '') + (it.marca ? ' · ' + incRepEsc(it.marca) : '') + '</small></span>' + stk + '</button>';
     }).join('');
   }
   function incRepSelStock(id){
-    _incRep.sel = _incRep.items.find(function(x){ return x.id === id; }) || null;
+    _incRep.sel = _incRep.items.find(function(x){ return String(x.id) === String(id); }) || null;
     document.getElementById('incRepNombreManual').value = '';
     incRepPintarLista();
   }
@@ -2362,7 +2460,77 @@
       _incRep.sel = null;
       incRepPintarLista();
     }
+    incRepPintarPasos();
   }
+
+  // Semáforo de las 3 tarjetas + progreso del encabezado. Misma regla que
+  // valida el envío: repuesto (de bodega o manual) · cantidad > 0 y motivo
+  // de 10+ letras · evidencia elegida.
+  function incRepPintarPasos(){
+    var cant = parseFloat(String(document.getElementById('incRepCantidad').value || '').replace(',', '.'));
+    var ok = [
+      !!(_incRep.sel || (document.getElementById('incRepNombreManual').value || '').trim()),
+      !!(isFinite(cant) && cant > 0 && (document.getElementById('incRepMotivo').value || '').trim().length >= 10),
+      !!_incRep.evFile
+    ];
+    ok.forEach(function(d, i){
+      var pane = document.getElementById('incRepPane' + (i + 1));
+      if (!pane) return;
+      pane.classList.toggle('done', d);
+      pane.querySelector('.inc-num-circle').classList.toggle('done', d);
+    });
+    var n = ok.filter(Boolean).length;
+    document.getElementById('incRepProgresoTxt').textContent = n + ' de 3 pasos listos';
+    var bar = document.getElementById('incRepProgresoBar');
+    bar.style.width = Math.round(n / 3 * 100) + '%';
+    bar.style.background = n === 3 ? '#16a34a' : '';
+  }
+
+  // Evidencia: cámara o galería, UN archivo (el backend toma uno), con
+  // miniatura para que se vea qué se va a enviar.
+  function incRepElegirEvidencia(input){
+    var f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    incRepQuitarEvidencia();
+    _incRep.evFile = f;
+    var esVideo = (f.type || '').indexOf('video/') === 0;
+    if (!esVideo) _incRep.evUrl = URL.createObjectURL(f);
+    var prev = document.getElementById('incRepEvPrev');
+    prev.innerHTML = (esVideo
+        ? '<span class="inc-rep-ev-ico"><i class="bi bi-camera-video-fill"></i></span>'
+        : '<img src="' + _incRep.evUrl + '" alt="Evidencia elegida">')
+      + '<div class="inc-rep-ev-info"><b>' + incRepEsc(f.name || (esVideo ? 'Video' : 'Foto')) + '</b>'
+      + '<small>' + (esVideo ? 'Video' : 'Foto') + ' · ' + (f.size / 1048576).toFixed(1) + ' MB</small></div>'
+      + '<button type="button" class="btn btn-sm btn-outline-danger" id="incRepEvQuitar"><i class="bi bi-x-lg me-1"></i>Quitar</button>';
+    prev.hidden = false;
+    document.getElementById('incRepEvQuitar').addEventListener('click', incRepQuitarEvidencia);
+    incRepPintarPasos();
+  }
+  function incRepQuitarEvidencia(){
+    if (_incRep.evUrl){ try { URL.revokeObjectURL(_incRep.evUrl); } catch(e){} }
+    _incRep.evFile = null; _incRep.evUrl = null;
+    var prev = document.getElementById('incRepEvPrev');
+    prev.innerHTML = ''; prev.hidden = true;
+    incRepPintarPasos();
+  }
+
+  // Todo conectado por código (antes eran onclick/oninput en el HTML que no
+  // encontraban estas funciones -- ver comentario del modal).
+  document.getElementById('incRepBq').addEventListener('input', function(){ incRepBuscar(this.value); });
+  document.getElementById('incRepNombreManual').addEventListener('input', incRepRefrescar);
+  document.getElementById('incRepCantidad').addEventListener('input', incRepPintarPasos);
+  document.getElementById('incRepMotivo').addEventListener('input', incRepPintarPasos);
+  document.getElementById('incRepLista').addEventListener('click', function(ev){
+    var it = ev.target.closest('.otrep-opc-it');
+    if (it) incRepSelStock(it.dataset.id);
+  });
+  document.getElementById('incRepBtnCamara').addEventListener('click', function(){ document.getElementById('incRepEvCam').click(); });
+  document.getElementById('incRepBtnGaleria').addEventListener('click', function(){ document.getElementById('incRepEvGal').click(); });
+  document.getElementById('incRepEvCam').addEventListener('change', function(){ incRepElegirEvidencia(this); });
+  document.getElementById('incRepEvGal').addEventListener('change', function(){ incRepElegirEvidencia(this); });
+  document.getElementById('incRepBtnEnviar').addEventListener('click', incRepEnviar);
+
   function incRepEnviar(){
     var err = document.getElementById('incRepErr');
     err.textContent = '';
@@ -2373,16 +2541,20 @@
     if (!isFinite(cantidad) || cantidad <= 0){ err.textContent = 'La cantidad tiene que ser un número mayor que cero.'; return; }
     var motivo = (document.getElementById('incRepMotivo').value || '').trim();
     if (motivo.length < 10){ err.textContent = 'Cuenta por qué hace falta el repuesto (mínimo 10 caracteres).'; return; }
-    var fEv = document.getElementById('incRepEvidencia').files[0];
+    var fEv = _incRep.evFile;
     if (!fEv){ err.textContent = 'Sin evidencia no hay solicitud: sube al menos una foto o un video.'; return; }
     var fd = new FormData();
     if (_incRep.sel) fd.append('repuesto_stock_id', _incRep.sel.id); else fd.append('repuesto_nombre', nombreManual);
     fd.append('cantidad', cantidad);
     fd.append('motivo', motivo);
-    fd.append('evidencia', fEv);
     var btn = document.getElementById('incRepBtnEnviar');
     btn.disabled = true;
-    fetch('/mantenciones/api/incidencias/' + iid + '/solicitar-repuesto', { method: 'POST', credentials: 'same-origin', body: fd })
+    // Foto del celular (varios MB) se achica antes de subir, igual que las
+    // fotos de la incidencia (incComprimir). El video va tal cual.
+    incComprimir(fEv).then(function(fFinal){
+      fd.append('evidencia', fFinal);
+      return fetch('/mantenciones/api/incidencias/' + iid + '/solicitar-repuesto', { method: 'POST', credentials: 'same-origin', body: fd });
+    })
       .then(function(r){ return r.json(); })
       .then(function(d){
         btn.disabled = false;
@@ -2534,6 +2706,7 @@
   }
 
   function incRepSelMostrar(it){
+    _incRepDetalleSel = it;
     var box = document.getElementById('incRepSeleccionadoBox');
     var txt = document.getElementById('incRepSeleccionadoTxt');
     txt.textContent = (it.sku ? (it.sku + ' — ') : '') + (it.descripcion || ('Repuesto #'+it.id));
@@ -2541,6 +2714,7 @@
   }
 
   function incRepSelLimpiar(){
+    _incRepDetalleSel = null;
     document.getElementById('incRepSeleccionadoBox').style.display = 'none';
     document.getElementById('incRepuestoStockId').value = '';
     incPintarEstadoStock(null);
@@ -2623,13 +2797,22 @@
     }).catch(function(){ btn.disabled = false; ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
   });
 
-  // 🔧 2026-09-27 (Daniel, viendo el paso Detalle en vivo: "saca el botón
-  // y el código de solicitar repuesto ahora... no lo desarrollemos...
-  // pero que no haga nada"). El botón "Solicitar este repuesto ahora" /
-  // "Tomar de bodega" queda VISIBLE (no se borra nada, REGLA #4.2) pero
-  // SIN acción -- a propósito, todavía no está listo para desarrollarse.
-  // Antes disparaba incBtnSolicitarRepuesto + preselección; ese código
-  // queda comentado acá mismo por si se retoma más adelante.
+  // 🔧 2026-09-27 el botón "Solicitar este repuesto ahora" / "Tomar de
+  // bodega" quedó sin acción a pedido de Daniel. 🎨 2026-09-30 (Daniel eligió
+  // "Solicitar repuesto ahora" como siguiente paso y aprobó el prellenado):
+  // guarda la incidencia en silencio si hace falta y abre la solicitud con
+  // el repuesto elegido YA seleccionado -- solo falta la evidencia.
+  document.getElementById('incBtnSolicitarAhora').addEventListener('click', function(){
+    if (!document.getElementById('incRepuestoStockId').value){
+      ilusToast('Elige un repuesto de la bodega primero.', {type:'warning'});
+      return;
+    }
+    incGuardarYLuego(function(){
+      var b = document.getElementById('incBtnSolicitarRepuesto');
+      b.disabled = false;
+      b.click();
+    });
+  });
 
   cargar();
   incCargarMotivosFrecuentes();
