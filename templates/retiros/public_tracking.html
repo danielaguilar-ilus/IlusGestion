@@ -86,9 +86,12 @@
         {# 2026-09-24 (campaña Shopify): el cliente veía el código interno
            ("NOTA_VENTA 6162", "PEDIDO 123"). Ahora el nombre legible. #}
         {% set _doc_lbl = {'factura':'Factura','boleta':'Boleta','nota_venta':'Nota de venta','pedido':'Pedido',
-                           'fcv':'Factura','blv':'Boleta','nvv':'Nota de venta','vd':'Nota de venta VD','web':'Pedido web'} %}
+                           'fcv':'Factura','blv':'Boleta','nvv':'Nota de venta','vd':'Nota de venta VD','web':'Pedido web',
+                           'gdv':'Guía de despacho','guia':'Guía de despacho','nvi':'Nota de venta interna'} %}
         <div class="doc-line">
-          <i class="bi bi-file-earmark-text"></i>{{ _doc_lbl.get((req.document_type or '')|lower, (req.document_type or '')|upper) }} {{ req.document_number }}
+          {# 2026-09-29 (prueba de tráfico): si ILUS ya validó documentos en el ERP se
+             muestran esos, igual que en los correos; si no, el que declaró el cliente. #}
+          <i class="bi bi-file-earmark-text"></i>{% if docs_asociados %}{% for _d in docs_asociados %}{{ _doc_lbl.get((_d.document_type or '')|lower, (_d.document_type or '')|upper) }} {{ _d.document_number }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}{{ _doc_lbl.get((req.document_type or '')|lower, (req.document_type or '')|upper) }} {{ req.document_number }}{% endif %}
           <span class="sep">·</span>
           <i class="bi bi-person"></i>{{ req.customer_name }}
         </div>
