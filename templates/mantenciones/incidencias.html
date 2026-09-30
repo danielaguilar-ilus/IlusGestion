@@ -113,7 +113,7 @@
       <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
         <h5 class="modal-title fw-bold" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2" style="color:var(--ilus-red,#dc2626)"></i>Nueva incidencia</h5>
         <div class="inc-progreso" id="incProgreso" aria-live="polite">
-          <span id="incProgresoTxt">0 de 5 pasos listos</span>
+          <span id="incProgresoTxt">0 de 6 pasos listos</span>
           <span class="bar"><span id="incProgresoBar"></span></span>
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -280,42 +280,21 @@
                     placeholder="Ej: pedir al proveedor que revise el embalaje antes de despachar…"></textarea>
         </section>
 
-        {# ══ DETALLE: repuesto + resolución + observación ══ #}
+        {# ══ DETALLE: fechas y observación ══
+           🛠️ 2026-09-30 (Daniel, caso de estudio "Escaladora ILUS X1": "la fecha de ingreso a bodega
+           es automática, el usuario no la puede modificar" y "en el punto 4 pide respuesta para
+           ponerse OK; fecha de resolución es opcional"). Todo lo de repuestos se MUDÓ a su propia
+           tarjeta (la 5) con los mismos campos -- acá queda solo lo que no es de repuestos, todo
+           opcional, así que la tarjeta nace en verde. #}
         <section class="inc-pane" data-pane="4">
           <div class="inc-pane-head inc-c4">
             <span class="inc-num-circle" data-step="4"><span class="num">4</span><i class="bi bi-check-lg chk"></i></span>
             <i class="bi bi-wrench-adjustable"></i>
             <div><b>4. Detalle</b>
-              <small>Todo esto es opcional — completa lo que sepas.</small></div>
+              <small>Todo es opcional. Los repuestos se gestionan en la tarjeta 5.</small></div>
           </div>
           <div class="row g-3">
-            <div class="col-md-4">
-              <label class="form-label">¿Requiere repuesto?</label>
-              <select class="form-select" id="incReqRepuesto">
-                <option value="">— Sin definir</option>
-                <option value="si">Sí</option>
-                <option value="no">No</option>
-              </select>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Stock del repuesto</label>
-              <select class="form-select" id="incStockRepuesto">
-                <option value="">— Sin definir</option>
-                <option value="hay">Hay</option>
-                <option value="no_hay">No hay</option>
-              </select>
-              <div class="form-text">Se calcula solo al elegir un repuesto de la bodega; editable si no hay match.</div>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Fecha de resolución</label>
-              <input type="date" class="form-control" id="incFechaResolucion">
-            </div>
-            {#- 🔧 2026-09-28 (Daniel, viendo la tabla en vivo: "agregarle la
-                fecha de ingreso por la emisión de la GRI... para calcular
-                los días que tiene en bodega de incidencias"). Opcional --
-                si no se sabe/no aplica, la tabla usa la fecha en que se
-                registró acá como respaldo (ver columna Días en bodega). -#}
-            <div class="col-md-4">
+            <div class="col-md-6">
               {#- 🔧 2026-09-30 (Daniel: "la fecha de ingreso a bodega debe ser automática,
                   determinada por la GRI"): ya no se escribe. El input queda OCULTO solo para
                   no borrar una fecha manual que alguna incidencia vieja ya tenga guardada. -#}
@@ -326,51 +305,107 @@
                    aria-live="polite">Se calcula sola con la GRI del ERP</div>
               <div class="form-text">La toma de la GRI del ERP (emparejada por orden de UA). Si no se encuentra, se cuenta desde el registro.</div>
             </div>
-            {#- 🔧 2026-09-26 (Daniel: "el tipo de repuesto se puede asociar de
-                la bodega de repuestos... hacerlo más interactivo"): motor
-                COMPARTIDO RepBuscador en modo selección, mismo que usan
-                /repuestos y la OT. Solo se muestra con "Requiere repuesto: Sí". -#}
-            <div class="col-12" id="incRepBuscadorWrap" style="display:none">
-              <label class="form-label">Elegir repuesto de la Bodega</label>
-              <div id="incRepBuscadorMount"></div>
-              {#- 🔧 2026-09-26 (Daniel, viendo el modal en producción: "debe
-                  decirse explícitamente de dónde sale el repuesto... la
-                  tarjeta debe distinguir con claridad visual los dos
-                  caminos (hay stock vs. hay que pedirlo), no dejarlo
-                  ambiguo como hoy"). `disponible` real del ítem elegido
-                  decide el mensaje y el texto del botón -- ver
-                  incRepSeleccionar(). El botón sigue siendo el MISMO
-                  "Solicitar repuesto" que ya existe (mismo endpoint,
-                  compromete stock si lo hay): solo cambia el rótulo para
-                  que el camino sea explícito, no una acción nueva. -#}
-              <div id="incRepEstadoStock" class="inc-rep-estado" hidden></div>
-              <div class="d-flex align-items-center gap-2 mt-2" id="incRepSeleccionadoBox" style="display:none">
-                <span class="badge text-bg-light border" id="incRepSeleccionadoTxt"></span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="incBtnQuitarRepSel">
-                  <i class="bi bi-x-lg"></i> Quitar</button>
-                <button type="button" class="btn btn-sm btn-ilus" id="incBtnSolicitarAhora">
-                  <i class="bi bi-send-check me-1"></i>Solicitar este repuesto ahora</button>
+            <div class="col-md-6">
+              <label class="form-label">Fecha de resolución
+                <span class="text-muted" style="font-weight:400">(opcional)</span></label>
+              <input type="date" class="form-control" id="incFechaResolucion">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Observación</label>
+              <textarea class="form-control" id="incObservacion" rows="4"
+                        placeholder="Notas internas, seguimiento con proveedor, etc. (texto grande, sin límite práctico)"></textarea>
+            </div>
+          </div>
+        </section>
+
+        {# ══ PASO 5 — Gestión de repuestos ══
+           🛠️ 2026-09-30 (Daniel, caso de estudio "Escaladora ILUS X1"): "una tarjeta aparte, la
+           gestión de repuestos: seleccionar si el repuesto existe o no existe en NUESTRA bodega
+           (no Random ni Check), adjuntar la evidencia (foto o video) y, si no existe, proponerlo
+           para generar una solicitud de repuesto de ese equipo. Si existe, la lista según los
+           modelos compatibles. Siempre identificado el producto. La solicitud viaja a Solicitudes
+           del módulo Repuestos con correlativo y responsable, y se gestiona como un ticket. Varios
+           repuestos a la vez, indicando el proveedor, prellenado: si tengo siete de Drax, pedirlos
+           en masa." Mismo lenguaje de Retiros (REGLA #15): tarjetas, semáforo, nombres completos.
+           Mantiene los campos de siempre (¿Requiere repuesto?, Stock, Descripción, repuesto
+           asociado) al final de la tarjeta: se llenan solos al solicitar. #}
+        <section class="inc-pane" data-pane="5" id="igrPane">
+          <div class="inc-pane-head inc-c6">
+            <span class="inc-num-circle" data-step="5"><span class="num">5</span><i class="bi bi-check-lg chk"></i></span>
+            <i class="bi bi-tools"></i>
+            <div><b>5. Gestión de repuestos</b>
+              <small>¿Hace falta un repuesto? Dinos si existe en nuestra bodega, adjunta la evidencia y se pide con ticket.</small></div>
+          </div>
+
+          {#- El producto SIEMPRE identificado (Daniel: "siempre tenemos que tener identificado el
+              producto"): nombre completo, SKU, UA, unidades y el modelo del Catálogo con cuántos
+              repuestos compatibles tiene registrados. -#}
+          <div class="igr-prod" id="igrProd" aria-live="polite"></div>
+
+          <div class="igr-decide" id="igrDecide" role="radiogroup" aria-label="¿Qué pasa con el repuesto?">
+            <button type="button" class="igr-op" data-modo="existe" role="radio" aria-checked="false">
+              <i class="bi bi-box-seam"></i>
+              <span><b>Sí, existe en nuestra bodega</b><small>Elige de la lista del modelo compatible</small></span>
+            </button>
+            <button type="button" class="igr-op" data-modo="noexiste" role="radio" aria-checked="false">
+              <i class="bi bi-patch-plus"></i>
+              <span><b>Sí, pero no existe</b><small>Proponerlo y generar la solicitud</small></span>
+            </button>
+            <button type="button" class="igr-op" data-modo="no" role="radio" aria-checked="false">
+              <i class="bi bi-slash-circle"></i>
+              <span><b>No requiere repuesto</b><small>Solo queda registrada la incidencia</small></span>
+            </button>
+          </div>
+          <div class="igr-nota ambar" id="igrNotaLista" hidden></div>
+
+          <div class="igr-ok" id="igrOk" hidden></div>
+
+          {#- ── Existe en la bodega: buscador compartido (modo agregar) con el MODELO del equipo como
+              contexto, filtro por proveedor y "Agregar los N resultados" para pedir en masa. ── -#}
+          <div class="igr-panel" id="igrPanelExiste" hidden>
+            <div class="igr-sub"><i class="bi bi-search"></i><b>Buscar en nuestra bodega</b></div>
+            <div class="igr-nota" id="igrModeloNota"></div>
+            <div id="igrBuscadorMount"></div>
+          </div>
+
+          {#- ── No existe: se propone como «nuevo»; bodega lo valida y lo da de alta cuando llegue. ── -#}
+          <div class="igr-panel" id="igrPanelNoExiste" hidden>
+            <div class="igr-sub"><i class="bi bi-patch-plus"></i><b>Proponer un repuesto que no existe en la bodega</b></div>
+            <div class="igr-nota">Se pide como «nuevo»: bodega lo valida y lo da de alta cuando llegue. Puedes proponer varios.</div>
+            <div class="igr-nx">
+              <div class="igr-f igr-f-full">
+                <label for="igrNxNombre">Nombre del repuesto <span class="text-danger">*</span></label>
+                <input type="text" id="igrNxNombre" class="form-control" maxlength="400" autocomplete="off"
+                       placeholder="Nombre completo, ej: Perno DR Bolt M8x20">
               </div>
-              {#- 🔧 2026-09-26 (Daniel, caso real "Escaladora ILUS... estoy
-                  seguro que el repuesto no existe, debo poder crearlo desde
-                  ahí"): atajo de alta MÍNIMA sin salir del modal -- ver
-                  POST /mantenciones/api/incidencias/repuestos-crear-rapido. -#}
+              <div class="igr-f">
+                <label for="igrNxCodigo">Código o SKU del fabricante</label>
+                <input type="text" id="igrNxCodigo" class="form-control" maxlength="120" autocomplete="off" placeholder="Opcional">
+              </div>
+              <div class="igr-f">
+                <label for="igrNxProv">Proveedor</label>
+                <select id="igrNxProv" class="form-select"><option value="">Sin proveedor (bodega lo define)</option></select>
+              </div>
+              <div class="igr-f igr-f-cant">
+                <label for="igrNxCant">Cantidad</label>
+                <input type="number" id="igrNxCant" class="form-control" min="0.5" step="0.5" value="1" inputmode="decimal">
+              </div>
+              <div class="igr-f igr-f-btn">
+                <button type="button" class="btn btn-dark" id="igrNxAgregar"><i class="bi bi-plus-lg me-1"></i>Agregar a la solicitud</button>
+              </div>
+            </div>
+            {#- 🔧 2026-09-26/27 (Daniel: "estoy seguro que el repuesto no existe, debo poder crearlo
+                desde ahí" + "misma calidad de información, mismas restricciones"): el alta rápida y
+                el enlace al alta completa SIGUEN, ahora como opción secundaria de este panel. -#}
+            <details class="igr-alta">
+              <summary><i class="bi bi-plus-circle me-1"></i>¿Prefieres darlo de alta ahora en la bodega? (queda con stock 0)</summary>
               <div class="mt-2 d-flex flex-wrap gap-2">
                 <button type="button" class="btn btn-sm btn-outline-dark" id="incBtnRepNoExiste">
                   <i class="bi bi-plus-circle me-1"></i>No existe, crear repuesto nuevo</button>
-                {#- 🔧 2026-09-27 (Daniel: "sustituyamos por el modal de
-                    recepción/crear repuesto, con todas las restricciones").
-                    Ese modal (#modalRepStock, con sondeo ERP, costo,
-                    ubicación ESCANEADA, dimensiones) vive dentro de
-                    _repuestos_bodega_pane.html -- un archivo enorme con su
-                    propio CSS/JS; incrustarlo entero acá es una integración
-                    pesada con riesgo real de choques de ids/funciones.
-                    Decisión (AskUserQuestion, Daniel): abrirlo en pestaña
-                    nueva es el camino seguro -- el alta rápida de arriba
-                    sigue disponible para cuando no hace falta ubicación
-                    real todavía. -#}
-                <a href="/repuestos" target="_blank" rel="noopener"
-                   class="btn btn-sm btn-outline-dark">
+                {#- 🔧 2026-09-27 (Daniel: "sustituyamos por el modal de recepción/crear repuesto, con
+                    todas las restricciones"): ese modal vive dentro de _repuestos_bodega_pane.html
+                    (archivo enorme con su propio CSS/JS); abrirlo en pestaña nueva es el camino seguro. -#}
+                <a href="/repuestos" target="_blank" rel="noopener" class="btn btn-sm btn-outline-dark">
                   <i class="bi bi-box-arrow-up-right me-1"></i>Crear completo (con ubicación) en Repuestos</a>
               </div>
               <div class="inc-rep-nuevo" id="incRepNuevoForm" hidden>
@@ -381,19 +416,10 @@
                   </div>
                   <div class="col-md-5 d-flex gap-2">
                     <button type="button" class="btn btn-sm btn-ilus" id="incBtnRepNuevoGuardar">
-                      <i class="bi bi-check2 me-1"></i>Crear y seleccionar</button>
+                      <i class="bi bi-check2 me-1"></i>Crear y agregar</button>
                     <button type="button" class="btn btn-sm btn-secondary" id="incBtnRepNuevoCancelar">Cancelar</button>
                   </div>
                 </div>
-                {#- 🔧 2026-09-27 (Daniel: "quiero el mismo motor de crear el
-                    repuesto, con la misma calidad de información y las
-                    mismas restricciones... no quiero que esto sea una
-                    brecha"). El alta rápida sigue siendo intencionalmente
-                    más liviana que /repuestos (sin ubicación escaneada,
-                    REGLA 2026-09-09) -- pero el proveedor ya NO es un id a
-                    ciegas: mismo buscador real (`/mantenciones/api/
-                    proveedores-repuesto`, el mismo que usa el modal
-                    completo de Repuestos), no texto libre. -#}
                 <div class="position-relative mt-2">
                   <input type="text" class="form-control form-control-sm" id="incRepNuevoProveedor"
                          placeholder="Proveedor (opcional) -- busca por nombre" autocomplete="off">
@@ -403,32 +429,105 @@
                 <div class="form-text">Se crea en la Bodega con cantidad 0 y SKU automático -- completa ubicación y
                   costo en /repuestos cuando llegue.</div>
               </div>
+            </details>
+          </div>
+
+          {#- ── La lista de lo que se va a pedir, agrupada por proveedor. ── -#}
+          <div class="igr-lista" id="igrLista" hidden></div>
+
+          {#- ── Diagnóstico + evidencia + responsable + enviar. ── -#}
+          <div class="igr-envio" id="igrEnvio" hidden>
+            <div class="igr-sub"><i class="bi bi-send-check"></i><b>Para enviar la solicitud</b></div>
+            <label class="form-label fw-semibold small mb-1" for="igrMotivo">Diagnóstico: por qué hace falta <span class="text-danger">*</span></label>
+            <textarea id="igrMotivo" class="form-control" rows="3" maxlength="5000"
+                      placeholder="Qué pieza, qué falla (mínimo 10 caracteres): es lo que leen bodega y el proveedor."></textarea>
+            <div class="form-text">Se prellena con el Motivo de la incidencia; edítalo si hace falta.</div>
+
+            <label class="form-label fw-semibold small mb-1 mt-3">Evidencia del repuesto <span class="text-danger">*</span></label>
+            {#- Dos botones, no un solo input con capture: `capture` solo abre la cámara y en el
+                celular bloquea la galería. -#}
+            <div class="inc-rep-ev-btns">
+              <button type="button" class="btn btn-dark" id="igrEvCamBtn"><i class="bi bi-camera-fill me-1"></i>Tomar foto o video</button>
+              <button type="button" class="btn btn-outline-dark" id="igrEvGalBtn"><i class="bi bi-images me-1"></i>Elegir de la galería</button>
             </div>
-            <div class="col-12">
-              <label class="form-label">Descripción del repuesto</label>
-              <input type="text" class="form-control" id="incDescripcionRepuesto"
-                     placeholder="Ej: 1 acrílico frontal + 8 embellecedores">
+            <input type="file" id="igrEvCam" accept="image/*,video/*" capture="environment" hidden>
+            <input type="file" id="igrEvGal" accept="image/*,video/*" hidden>
+            <div class="inc-rep-ev-prev" id="igrEvPrev" hidden></div>
+            <div class="form-text">Una foto o un video del repuesto (o de lo que falta). Sin evidencia no hay solicitud.</div>
+
+            <div class="row g-2 mt-2">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small mb-1" for="igrResp">Responsable del ticket</label>
+                <select id="igrResp" class="form-select"></select>
+              </div>
+              <div class="col-md-6 igr-tk-hint" id="igrTkHint"></div>
             </div>
-            <div class="col-12">
-              <label class="form-label">Observación</label>
-              <textarea class="form-control" id="incObservacion" rows="4"
-                        placeholder="Notas internas, seguimiento con proveedor, etc. (texto grande, sin límite práctico)"></textarea>
+
+            <div class="igr-checks" id="igrChecks"></div>
+            <div class="text-danger small mt-2" id="igrErr" role="alert"></div>
+            <button type="button" class="btn btn-ilus igr-enviar" id="igrEnviar">
+              <i class="bi bi-send-check me-1"></i>Enviar solicitud</button>
+            <div class="form-text text-center">Se crea el ticket con su correlativo y la solicitud llega a Repuestos → Solicitudes.</div>
+          </div>
+
+          {#- ── Lo que ya se pidió para esta incidencia (con ticket, responsable y estado). ── -#}
+          <div class="igr-hist" id="igrHist" hidden></div>
+
+          {#- ── Lo que ve la tabla de incidencias. Mismos campos de siempre (¿Requiere repuesto?,
+              Stock, Descripción y el repuesto asociado): se llenan solos al solicitar, siguen
+              editables. -#}
+          <div class="igr-legacy">
+            <div class="igr-sub"><i class="bi bi-card-checklist"></i><b>Lo que ve la tabla de incidencias</b>
+              <small>Se llena solo al solicitar; puedes corregirlo.</small></div>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">¿Requiere repuesto?</label>
+                <select class="form-select" id="incReqRepuesto">
+                  <option value="">— Sin definir</option>
+                  <option value="si">Sí</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Stock del repuesto</label>
+                <select class="form-select" id="incStockRepuesto">
+                  <option value="">— Sin definir</option>
+                  <option value="hay">Hay</option>
+                  <option value="no_hay">No hay</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label">Descripción del repuesto</label>
+                <input type="text" class="form-control" id="incDescripcionRepuesto"
+                       placeholder="Ej: 1 acrílico frontal + 8 embellecedores">
+              </div>
+            </div>
+            {#- Repuesto asociado a la incidencia (el primero de bodega que se pide queda asociado
+                solo; acá se ve y se puede quitar o volver a sumar a la lista). -#}
+            <div id="incRepEstadoStock" class="inc-rep-estado" hidden></div>
+            <div class="d-flex align-items-center flex-wrap gap-2 mt-2" id="incRepSeleccionadoBox" style="display:none">
+              <small class="text-muted">Repuesto asociado:</small>
+              <span class="badge text-bg-light border" style="white-space:normal;text-align:left" id="incRepSeleccionadoTxt"></span>
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="incBtnQuitarRepSel">
+                <i class="bi bi-x-lg"></i> Quitar</button>
+              <button type="button" class="btn btn-sm btn-ilus" id="incBtnSolicitarAhora">
+                <i class="bi bi-plus-lg me-1"></i>Sumar a la solicitud</button>
             </div>
           </div>
         </section>
 
-        {# ══ PASO 5 — Evidencia: fotos + cuadre de stock + bitácora ══
+        {# ══ PASO 6 — Evidencia: fotos + cuadre de stock + bitácora ══
            Daniel (2026-08-03): "ojalá le puedas meter una foto del producto,
            o al menos 3"; "el sistema debe cuadrar el stock en todos los
            sistemas"; "trazable y escalable". Y el principio que fijó:
            "nosotros no tocamos sistemas, solo evidenciamos, y de manera
            automática se autogestiona con el proceso completo" -- por eso
            acá NO hay ningún botón que escriba en ERP ni en WMS. #}
-        <section class="inc-pane" data-pane="5">
+        <section class="inc-pane" data-pane="6">
           <div class="inc-pane-head inc-c5">
-            <span class="inc-num-circle" data-step="5"><span class="num">5</span><i class="bi bi-check-lg chk"></i></span>
+            <span class="inc-num-circle" data-step="6"><span class="num">6</span><i class="bi bi-check-lg chk"></i></span>
             <i class="bi bi-camera"></i>
-            <div><b>5. Evidencia</b>
+            <div><b>6. Evidencia</b>
               <small>Comprueba que las tres fuentes digan lo mismo y deja la foto de respaldo.</small></div>
           </div>
 
@@ -454,7 +553,7 @@
 
       {#- 🔧 2026-09-26: sin paso a paso, el footer se simplifica a
           Eliminar / Cancelar / Guardar -- "Atrás" y "Siguiente" ya no
-          tienen sentido con las 5 tarjetas siempre visibles. -#}
+          tienen sentido con las 6 tarjetas siempre visibles. -#}
       <div class="modal-footer inc-footer">
         {% if permissions.admin or permissions.superadmin %}
         <button type="button" class="btn btn-outline-danger me-auto" id="incBtnEliminar" style="display:none">
@@ -846,6 +945,144 @@
   border:1px solid #fecaca;color:#b91c1c;border-radius:8px;padding:2px 8px;
   font-size:.72rem;font-weight:700;white-space:nowrap;margin-bottom:3px}
 .inc-c5{border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
+
+/* ══ 🛠️ 2026-09-30 (Daniel, caso de estudio "Escaladora ILUS X1"): tarjeta 5 "Gestión de repuestos".
+   Mismo lenguaje de Retiros (REGLA #15): tarjetas, semáforo y nombres COMPLETOS, nunca cortados.
+   REGLA #3 (mobile-first): toques de 44px, inputs de 16px, sin scroll horizontal. ══ */
+.inc-c6{border-left:4px solid #f97316} .inc-c6 i{color:#f97316}
+.igr-sub{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:16px 0 8px;font-size:.88rem;color:#0f172a}
+.igr-sub i{color:#f97316}
+.igr-sub small{color:#6b7280;font-size:.74rem;font-weight:500}
+.igr-nota{font-size:.78rem;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin-bottom:10px;line-height:1.45}
+.igr-nota:empty{display:none}
+.igr-nota[hidden]{display:none}
+.igr-nota.ambar{background:#fff8e1;border-color:#fcd34d;color:#92400e}
+
+/* Producto identificado */
+.igr-prod{display:flex;gap:12px;align-items:flex-start;padding:11px 12px;border:1.5px solid #e5e7eb;border-radius:12px;background:#fff;margin-bottom:12px}
+.igr-prod-foto{width:56px;height:56px;flex:0 0 56px;border-radius:10px;background:#f3f4f6;overflow:hidden;display:grid;place-items:center;color:#c7cbd1;font-size:1.4rem}
+.igr-prod-foto img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.igr-prod-info{min-width:0;flex:1}
+.igr-prod-nombre{font-weight:800;font-size:.95rem;color:#0a0a0a;line-height:1.3;overflow-wrap:anywhere}
+.igr-prod-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:4px;font-size:.76rem;color:#6b7280}
+.igr-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:#374151;background:#f3f4f6;border-radius:6px;padding:1px 6px;overflow-wrap:anywhere}
+.igr-modelo{display:inline-flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:.76rem;font-weight:700;border-radius:10px;padding:5px 10px;line-height:1.35;overflow-wrap:anywhere}
+.igr-modelo i{flex:none;margin-top:1px}
+.igr-modelo.ok{background:#dcfce7;color:#15803d}
+.igr-modelo.vacio{background:#fff8e1;color:#92400e;border:1px solid #fcd34d}
+.igr-modelo.nd{background:#f3f4f6;color:#6b7280}
+
+/* Decisión: existe / no existe / no requiere */
+.igr-decide{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.igr-decide.igr-flash{animation:igrFlash 1.1s ease}
+@keyframes igrFlash{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 4px rgba(249,115,22,.35);border-radius:14px}}
+.igr-op{display:flex;align-items:flex-start;gap:10px;text-align:left;min-height:64px;padding:11px 12px;border:1.5px solid #d1d5db;
+  border-radius:12px;background:#fff;color:#0f172a;cursor:pointer;font-family:inherit;transition:border-color .15s,background .15s,box-shadow .15s}
+.igr-op>i{font-size:1.35rem;color:#9ca3af;flex:none;margin-top:1px}
+.igr-op b{display:block;font-size:.86rem;line-height:1.25}
+.igr-op small{display:block;font-size:.72rem;color:#6b7280;margin-top:2px;line-height:1.3}
+.igr-op:hover{border-color:#94a3b8}
+.igr-op.on{border-color:#dc2626;background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.igr-op.on>i{color:#dc2626}
+.igr-panel{margin-top:4px}
+.igr-panel[hidden]{display:none}
+
+/* Éxito tras enviar */
+.igr-ok{margin-top:12px;padding:12px 14px;border:1.5px solid #86efac;border-radius:12px;background:#f0fdf4;color:#166534;font-size:.85rem;line-height:1.5}
+.igr-ok[hidden]{display:none}
+.igr-ok b{color:#14532d}
+.igr-ok .igr-ok-t{font-size:.95rem;font-weight:800;display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.igr-ok .igr-acc{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+
+/* Proponer uno que no existe */
+.igr-nx{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:end}
+.igr-f label{display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:3px}
+.igr-f .form-control,.igr-f .form-select{font-size:16px;min-height:44px}
+.igr-f-full{grid-column:1/-1}
+.igr-f-btn .btn{width:100%;min-height:44px;font-weight:800}
+.igr-alta{margin-top:12px;border:1px dashed #d7dbe0;border-radius:10px;padding:8px 12px;background:#fafbfc}
+.igr-alta summary{cursor:pointer;font-size:.8rem;font-weight:700;color:#374151;min-height:32px;display:flex;align-items:center}
+
+/* La lista a pedir, agrupada por proveedor */
+.igr-lista{margin-top:14px}
+.igr-lista[hidden],.igr-envio[hidden],.igr-hist[hidden]{display:none}
+.igr-lista-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 10px;margin-bottom:8px}
+.igr-lista-head b{font-size:.9rem;color:#0f172a}
+.igr-lista-head small{color:#6b7280;font-size:.74rem;font-weight:600}
+.igr-grupo{border:1.5px solid #e5e7eb;border-radius:12px;background:#fff;margin-bottom:10px;overflow:hidden}
+.igr-grupo-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:9px 12px;background:#f8fafc;border-bottom:1px solid #eef0f3}
+.igr-grupo-t{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:.85rem;color:#0a0a0a;overflow-wrap:anywhere}
+.igr-grupo-t.sin{color:#92400e}
+.igr-grupo-n{font-size:.74rem;color:#6b7280;font-weight:700}
+.igr-grupo-acc{margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.igr-grupo-acc select{font-size:16px;min-height:40px;max-width:230px}
+.igr-lin{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:6px 10px;align-items:start;padding:10px 12px;border-top:1px solid #f1f5f9}
+.igr-lin:first-of-type{border-top:0}
+.igr-lin-foto{width:48px;height:48px;border-radius:9px;background:#f3f4f6;overflow:hidden;display:grid;place-items:center;color:#c7cbd1;font-size:1.2rem}
+.igr-lin-foto img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.igr-lin-info{min-width:0;display:flex;flex-direction:column;gap:5px}
+.igr-lin-nombre{font-weight:800;font-size:.88rem;color:#0a0a0a;line-height:1.3;overflow-wrap:anywhere;white-space:normal}
+.igr-lin-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:.74rem;color:#6b7280}
+.igr-chip{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:800;border-radius:999px;padding:3px 9px;background:#f3f4f6;color:#374151}
+.igr-chip.verde{background:#dcfce7;color:#15803d}
+.igr-chip.ambar{background:#fff8e1;color:#b45309}
+.igr-chip.rojo{background:#fee2e2;color:#b91c1c}
+.igr-chip.nuevo{background:#dbeafe;color:#1d4ed8}
+.igr-lin-extra{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.igr-mini{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:700;color:#6b7280;margin:0}
+.igr-mini select{font-size:16px;min-height:40px;min-width:170px;max-width:100%}
+.igr-chk{display:flex;align-items:flex-start;gap:7px;font-size:.74rem;color:#374151;margin:0;cursor:pointer;line-height:1.35}
+.igr-chk input{width:18px;height:18px;flex:none;margin-top:1px;accent-color:#16a34a}
+.igr-lin-q{display:flex;align-items:center;gap:6px}
+.igr-q-btn{width:40px;height:40px;border:1.5px solid #d1d5db;background:#fff;color:#0a0a0a;border-radius:10px;display:grid;place-items:center;cursor:pointer;font-size:1rem}
+.igr-q-btn:hover{border-color:#0a0a0a}
+.igr-q{width:64px;font-size:16px;min-height:40px;padding:6px 6px;border:1.5px solid #d1d5db;border-radius:10px;text-align:center;font-family:inherit}
+.igr-q:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.igr-lin-x{width:40px;height:40px;border:none;background:transparent;color:#9ca3af;border-radius:10px;display:grid;place-items:center;cursor:pointer}
+.igr-lin-x:hover{background:#fee2e2;color:#b91c1c}
+.igr-lista-acc{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px}
+.igr-lista-acc .btn{min-height:40px;font-weight:700}
+.igr-link{border:none;background:transparent;color:#1d4ed8;font-size:.74rem;font-weight:700;padding:4px 2px;min-height:32px;cursor:pointer;font-family:inherit}
+.igr-link:hover{text-decoration:underline}
+
+/* Envío */
+.igr-envio{margin-top:6px}
+.igr-tk-hint{font-size:.76rem;color:#475569;line-height:1.4;align-self:end;padding-bottom:6px}
+.igr-checks{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.igr-ck{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:800;border-radius:999px;padding:4px 10px;background:#fee2e2;color:#b91c1c}
+.igr-ck.ok{background:#dcfce7;color:#15803d}
+.igr-enviar{width:100%;min-height:48px;margin-top:10px;font-weight:800}
+
+/* Lo ya pedido */
+.igr-hist{margin-top:6px}
+.igr-tk{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:9px 12px;border:1.5px solid #e5e7eb;border-radius:12px;background:#fff;font-size:.8rem;margin-bottom:8px}
+.igr-tk-n{display:inline-flex;align-items:center;gap:6px;font-weight:900;color:#0a0a0a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.igr-tk .btn{min-height:40px}
+.igr-h{display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px 10px;padding:8px 2px;border-top:1px solid #f1f5f9;font-size:.8rem}
+.igr-h:first-child{border-top:0}
+.igr-h-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;color:#6b7280}
+.igr-h-nom{flex:1 1 220px;min-width:0;font-weight:700;color:#0a0a0a;overflow-wrap:anywhere}
+.igr-h-meta{flex:1 1 100%;font-size:.72rem;color:#6b7280}
+.igr-pill{display:inline-flex;align-items:center;font-size:.68rem;font-weight:900;border-radius:999px;padding:3px 9px;white-space:nowrap;background:#f3f4f6;color:#374151}
+.igr-pill.ambar{background:#fff8e1;color:#b45309}
+.igr-pill.azul{background:#dbeafe;color:#1d4ed8}
+.igr-pill.verde{background:#dcfce7;color:#15803d}
+.igr-pill.rojo{background:#fee2e2;color:#b91c1c}
+
+/* Lo que ve la tabla (campos de siempre) */
+.igr-legacy{margin-top:6px;padding-top:4px;border-top:1px dashed #d7dbe0}
+
+@media (max-width:700px){
+  .igr-decide{grid-template-columns:1fr}
+  .igr-nx{grid-template-columns:1fr}
+  .igr-lin{grid-template-columns:44px minmax(0,1fr)}
+  .igr-lin-q{grid-column:1/-1;justify-content:flex-end}
+  .igr-grupo-acc{margin-left:0;width:100%}
+  .igr-grupo-acc select{max-width:100%;width:100%}
+  .igr-mini{width:100%}
+  .igr-mini select{flex:1;min-width:0}
+}
+@media (prefers-reduced-motion:reduce){.igr-decide.igr-flash{animation:none}}
 
 /* 🎨 2026-09-30 (Daniel, viendo la tabla: "repara las burbujas"). Las
    pastillas se partían en 2-3 líneas dentro de un borde redondo y quedaban
@@ -1543,7 +1780,7 @@
   // Reglas de negocio pedidas: la UA es OBLIGATORIA para guardar; SKU,
   // nombre y cantidad se validan; el MOTIVO es el campo protagonista
   // (mínimo 10 caracteres); el resto es opcional.
-  var incPaso = 1, INC_PASOS = 5;
+  var incPaso = 1, INC_PASOS = 6;
 
   function $(id){ return document.getElementById(id); }
   function marcarError(el){
@@ -1587,14 +1824,23 @@
     1: {req: ['incRecomendacion', 'incSku', 'incDescripcion', 'incCantidad'], opc: ['incUbicacion']},
     2: {req: ['incMotivo'], opc: []},
     3: {req: [], opc: ['incSugerencia']},
-    4: {req: [], opc: ['incReqRepuesto', 'incDescripcionRepuesto']},
-    5: {req: [], opc: ['fotos']},
+    // 🛠️ 2026-09-30 (Daniel: "en el punto 4 pide respuesta para ponerse OK"): Detalle ya es todo
+    // opcional (fechas y observación), así que nace en verde; lo de repuestos es la tarjeta 5, que se
+    // pone verde al decidir "no requiere" o al tener al menos una solicitud hecha.
+    4: {req: [], opc: []},
+    5: {req: [], opc: ['igrGestion']},
+    6: {req: [], opc: ['fotos']},
   };
-  var INC_TARJETA_LABEL = {1: 'datos obligatorios', 2: 'motivo', 3: 'sugerencia', 4: 'detalle', 5: 'evidencia'};
+  var INC_TARJETA_LABEL = {1: 'datos obligatorios', 2: 'motivo', 3: 'sugerencia', 4: 'detalle', 5: 'gestión de repuestos', 6: 'evidencia'};
 
   function incCompletaCampo(id){
     if(id === 'fotos'){
       return !!(incFichaCache && (incFichaCache.fotos || []).length);
+    }
+    if(id === 'igrGestion'){
+      var reqG = $('incReqRepuesto').value;
+      if(reqG === 'no') return true;
+      return reqG === 'si' && !!(incFichaCache && (incFichaCache.solicitudes || []).length);
     }
     var regla = INC_REGLAS[id];
     var el = $(id);
@@ -1869,6 +2115,7 @@
         // chips claros en la tarjeta 1 (edición) -- ver incAbrirAltaPrellenada
         // para el mismo dato en el alta desde un hallazgo.
         if(f.cuadre) incPintarChipsErpWms(f.cuadre.nuestra_bd, f.cuadre.erp, f.cuadre.wms);
+        igrAlFicha();    // 🛠️ 2026-09-30: tarjeta 5 (solicitudes ya hechas, foto del catálogo)
         pintarPasos();   // ahora que ya sabemos si hay evidencia, refresca el semáforo
       }).catch(function(){
         $('incCuadre').innerHTML = '<div class="inc-vered v-nd">No se pudo consultar el cuadre.</div>';
@@ -2933,11 +3180,12 @@
     $('incMotivoCount').classList.remove('ok');
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = 'none';
-    // 🔧 2026-09-21 (Fase 2): sin incidencia guardada todavía no hay a qué
-    // enganchar la solicitud de repuesto.
-    document.getElementById('incBtnSolicitarRepuesto').disabled = true;
-    document.getElementById('incRepCtaHint').textContent = 'Guarda la incidencia primero para poder solicitar un repuesto.';
+    // 🛠️ 2026-09-30: el botón lleva a la tarjeta 5 (Gestión de repuestos); si la incidencia todavía
+    // no está guardada, esa tarjeta la guarda sola al enviar la solicitud.
+    document.getElementById('incBtnSolicitarRepuesto').disabled = false;
+    document.getElementById('incRepCtaHint').textContent = 'Se gestiona en la tarjeta 5 · Gestión de repuestos.';
     incRepSelLimpiar();
+    igrReset();
     incRepBuscadorToggle();
     incAplicarCandadoSistema();
     refrescarVerdeTodos();
@@ -2989,7 +3237,7 @@
     if(btnDel) btnDel.style.display = '';
     // 🔧 2026-09-21 (Fase 2): ya hay id real -- se puede solicitar repuesto.
     document.getElementById('incBtnSolicitarRepuesto').disabled = false;
-    document.getElementById('incRepCtaHint').textContent = '';
+    document.getElementById('incRepCtaHint').textContent = 'Se gestiona en la tarjeta 5 · Gestión de repuestos.';
     incCargarEvidencia();
     irAPaso(1);
     incModal().show();
@@ -3110,7 +3358,10 @@
     if (document.getElementById('incId').value) incModal().show();
   });
 
-  document.getElementById('incBtnSolicitarRepuesto').addEventListener('click', function(){
+  // 🛠️ 2026-09-30 (Daniel, caso "Escaladora ILUS X1"): la solicitud de repuestos ahora se gestiona en la
+  // tarjeta 5 (varios repuestos, proveedor, ticket con responsable). Este modal de UN repuesto se conserva
+  // sin botón que lo abra (REGLA #4.2: no se borra nada).
+  function incAbrirModalRepuestoLegado(){
     var id = document.getElementById('incId').value;
     if (!id){ ilusToast('Guarda la incidencia primero: la solicitud necesita a qué incidencia engancharse.', {type:'warning'}); return; }
     _incRep.sel = null; _incRep.items = [];
@@ -3153,7 +3404,8 @@
       if (q.length >= 2){ document.getElementById('incRepBq').value = q; incRepBuscar(q); }
     }
     incRepPintarPasos();
-  });
+  }
+  document.getElementById('incBtnSolicitarRepuesto').addEventListener('click', igrIrALaTarjeta);
 
   var _incRepBuscarTimer = null;
   function incRepBuscar(q){
@@ -3376,41 +3628,718 @@
   });
   {% endif %}
 
-  /* ══════════ Detalle: elegir repuesto de la Bodega (RepBuscador) ══════════
-     🔧 2026-09-26 (Daniel, sobre su macro Excel: "el tipo de repuesto se
-     puede asociar de la bodega de repuestos... hacerlo más interactivo").
-     Motor COMPARTIDO (static/repuestos_buscador.js), modo 'seleccion' --
-     mismo patrón que ot2/detalle.html (RepBuscador.crear + onSeleccionar).
-     Guarda `repuesto_stock_id` en la incidencia; "Stock del repuesto" se
-     calcula SOLO desde el stock real del item elegido, pero sigue editable
-     a mano si no hay match (select normal, no se bloquea). */
+  /* ══════════ 5 · Gestión de repuestos (Daniel, 2026-09-30) ══════════
+     Caso de estudio "Escaladora ILUS X1". Tarjeta propia, con el PRODUCTO siempre identificado:
+       · ¿existe el repuesto en NUESTRA bodega (no Random ni Check)? -> buscador compartido
+         (RepBuscador, modo agregar) con el MODELO del Catálogo como contexto: los compatibles
+         primero; si el modelo no tiene ninguno registrado (o el SKU no está en el Catálogo), toda
+         la bodega. Filtro por proveedor y "Agregar los N resultados" para pedir en masa.
+       · ¿no existe? -> se propone como «nuevo» (manual) y bodega lo da de alta cuando llegue.
+       · evidencia (foto o video) y diagnóstico compartidos; una sola solicitud con VARIOS
+         repuestos, agrupados por proveedor (prellenado con el de la bodega; se puede cambiar).
+       · viaja a Repuestos -> Solicitudes con ticket (correlativo) y responsable.
+     Endpoint: POST /mantenciones/api/incidencias/<id>/solicitar-repuestos (app.py). Los campos de
+     siempre (¿Requiere repuesto?, Stock, Descripción, repuesto asociado) siguen y se llenan solos. */
+
+  // (legado) acá vivía el buscador de "elegir UN repuesto" (modo selección): lo reemplazó el de la
+  // tarjeta 5. La variable sigue declarada porque incRepSelLimpiar la consulta.
   var _incRepBuscador = null;
 
-  function incRepBuscadorToggle(){
-    var si = $('incReqRepuesto').value === 'si';
-    $('incRepBuscadorWrap').style.display = si ? '' : 'none';
-    if(si) incRepBuscadorPreparar();
-  }
-  $('incReqRepuesto').addEventListener('change', incRepBuscadorToggle);
+  var IGR_MAX_LINEAS = 30;
+  var IGR_YO = {{ (current_user['nombre'] if current_user else '')|tojson }};
+  var IGR_ESTADO_CLS = {solicitado:'ambar', validado:'azul', pedido:'azul', recibido:'verde', instalado:'verde', rechazado:'rojo'};
+  var _igr = {
+    modo: null,          // 'existe' | 'noexiste' | 'no' | null (sin decidir)
+    modoElegido: false,  // true cuando lo eligió la persona: la ficha al cargar ya no lo pisa
+    lineas: [], seq: 0,
+    modelo: undefined,   // undefined = sin consultar · null = el SKU no está en el Catálogo · {id,sku,nombre,n_compatibles}
+    modeloSku: null,
+    buscador: null,
+    provs: null, provsP: null, asig: null, asigP: null,
+    ev: null, evUrl: null, motivoTocado: false, enviando: false
+  };
 
-  function incRepBuscadorPreparar(){
-    var mount = document.getElementById('incRepBuscadorMount');
-    if(!mount || !window.RepBuscador) return;
-    if(!_incRepBuscador){
-      _incRepBuscador = RepBuscador.crear({
-        mount: mount, ctx: 'gestion', modo: 'seleccion',
-        compatPorDefecto: false, mostrarProveedor: true,
-        onSeleccionar: function(it){ incRepSeleccionar(it); },
+  function igrEsc(s){ return incEsc(s); }
+  function igrNum(n){ n = Number(n); return isFinite(n) ? String(Math.round(n * 100) / 100) : ''; }
+  function igrPlural(n, uno, varios){ return n + ' ' + (n === 1 ? uno : varios); }
+  function igrZoom(url){ if(!url) return; if(window.ilusLightbox) ilusLightbox(url); else window.open(url, '_blank'); }
+
+  // ── Proveedores y responsables: se piden UNA vez y se guardan ──
+  function igrProvs(){
+    if(_igr.provs) return Promise.resolve(_igr.provs);
+    if(!_igr.provsP){
+      _igr.provsP = fetch('/mantenciones/api/proveedores-repuesto', {credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){ _igr.provs = (d && d.proveedores) || []; return _igr.provs; })
+        .catch(function(){ _igr.provsP = null; return []; });
+    }
+    return _igr.provsP;
+  }
+  function igrProvNombre(id){
+    var p = (_igr.provs || []).filter(function(x){ return String(x.id) === String(id); })[0];
+    return p ? p.nombre : '';
+  }
+  function igrPintarProvsNx(){
+    var sel = $('igrNxProv');
+    if(!sel) return;
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">Sin proveedor (bodega lo define)</option>'
+      + (_igr.provs || []).map(function(p){ return '<option value="' + p.id + '">' + igrEsc(p.nombre) + '</option>'; }).join('');
+    sel.value = cur;
+  }
+  // Responsable del ticket: los usuarios que el módulo de Tickets ya considera asignables.
+  function igrAsignables(){
+    if(_igr.asig) return Promise.resolve(_igr.asig);
+    if(!_igr.asigP){
+      _igr.asigP = fetch('/tickets/api/asignables', {credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          _igr.asig = (Array.isArray(d) ? d : []).filter(function(u){ return u && u.nombre && u.role !== 'externo'; })
+            .map(function(u){ return u.nombre; });
+          return _igr.asig;
+        })
+        .catch(function(){ _igr.asigP = null; return []; });
+    }
+    return _igr.asigP;
+  }
+  function igrPintarResp(){
+    var sel = $('igrResp');
+    if(!sel) return;
+    var actual = sel.value || IGR_YO;
+    var nombres = (_igr.asig || []).slice();
+    if(IGR_YO && nombres.indexOf(IGR_YO) < 0) nombres.unshift(IGR_YO);
+    sel.innerHTML = nombres.map(function(n){
+      return '<option value="' + igrEsc(n) + '"' + (n === actual ? ' selected' : '') + '>' + igrEsc(n) + (n === IGR_YO ? ' (tú)' : '') + '</option>';
+    }).join('');
+  }
+
+  // ── El modelo del Catálogo al que corresponde el SKU de la incidencia ──
+  function igrCargarModelo(){
+    var sku = ($('incSku').value || '').trim();
+    if(!sku){ _igr.modelo = null; _igr.modeloSku = ''; igrPintarProducto(); igrAplicarModelo(); return; }
+    if(_igr.modeloSku === sku && _igr.modelo !== undefined){ igrPintarProducto(); return; }
+    _igr.modeloSku = sku; _igr.modelo = undefined;
+    igrPintarProducto();
+    fetch('/mantenciones/api/incidencias/modelo-repuestos?sku=' + encodeURIComponent(sku), {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(_igr.modeloSku !== sku) return;   // llegó tarde: el modal ya cambió de producto
+        _igr.modelo = (d && d.ok && d.modelo) ? d.modelo : null;
+        igrPintarProducto(); igrAplicarModelo();
+      })
+      .catch(function(){
+        if(_igr.modeloSku !== sku) return;
+        _igr.modelo = null; igrPintarProducto(); igrAplicarModelo();
       });
+  }
+  function igrPintarNotaModelo(){
+    var n = $('igrModeloNota'), m = _igr.modelo;
+    if(!n) return;
+    if(m === undefined){ n.className = 'igr-nota'; n.innerHTML = ''; return; }
+    if(m && m.n_compatibles > 0){
+      n.className = 'igr-nota';
+      n.innerHTML = '<i class="bi bi-diagram-3-fill me-1"></i>Se muestran los repuestos <b>compatibles con ' + igrEsc(m.nombre || m.sku)
+        + '</b> (' + m.n_compatibles + '). Usa «Toda la bodega» para ver el resto.';
+    } else if(m){
+      n.className = 'igr-nota ambar';
+      n.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>El modelo <b>' + igrEsc(m.nombre || m.sku)
+        + '</b> aún no tiene repuestos compatibles registrados: busca por nombre, SKU, marca o proveedor. Si eliges uno que le sirve, '
+        + 'márcalo en la lista y la próxima vez saldrá solo.';
+    } else {
+      n.className = 'igr-nota ambar';
+      n.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Este SKU no está en el Catálogo de modelos, así que no hay compatibles que filtrar: '
+        + 'busca por nombre, SKU, marca o proveedor.';
     }
   }
+  function igrAplicarModelo(){
+    var m = _igr.modelo;
+    if(_igr.buscador && m !== undefined){
+      _igr.buscador.setModeloBase(m ? {id: m.id, sku: m.sku, nombre: m.nombre} : null, !!(m && m.n_compatibles > 0));
+    }
+    igrPintarNotaModelo();
+  }
+
+  // ── Producto siempre identificado ──
+  function igrPintarProducto(){
+    var box = $('igrProd');
+    if(!box) return;
+    var sku = ($('incSku').value || '').trim();
+    var nombre = ($('incDescripcion').value || '').trim();
+    var ua = ($('incRecomendacion').value || '').trim();
+    var cant = parseInt($('incCantidad').value, 10) || 0;
+    var foto = (incFichaCache && incFichaCache.foto_catalogo) || '';
+    if(!sku && !nombre){
+      box.innerHTML = '<div class="igr-prod-info"><div class="igr-prod-nombre text-muted">Todavía no hay un producto en esta incidencia.</div></div>';
+      return;
+    }
+    var m = _igr.modelo, mod;
+    if(m === undefined){
+      mod = '<span class="igr-modelo nd"><span class="spinner-border spinner-border-sm"></span>Buscando el modelo en el Catálogo…</span>';
+    } else if(m === null){
+      mod = '<span class="igr-modelo nd"><i class="bi bi-diagram-3"></i><span>Este SKU no está en el Catálogo de modelos: se busca en toda la bodega.</span></span>';
+    } else if(!m.n_compatibles){
+      mod = '<span class="igr-modelo vacio"><i class="bi bi-exclamation-triangle-fill"></i><span>Modelo del Catálogo: <b>' + igrEsc(m.nombre || m.sku)
+        + '</b> · aún sin repuestos compatibles registrados: se busca en toda la bodega.</span></span>';
+    } else {
+      mod = '<span class="igr-modelo ok"><i class="bi bi-diagram-3-fill"></i><span>Modelo del Catálogo: <b>' + igrEsc(m.nombre || m.sku) + '</b> · '
+        + igrPlural(m.n_compatibles, 'repuesto compatible', 'repuestos compatibles') + ' en nuestra bodega</span></span>';
+    }
+    box.innerHTML = '<div class="igr-prod-foto">'
+      + (foto ? '<img src="' + igrEsc(foto) + '" alt="" loading="lazy" data-foto="' + igrEsc(foto) + '">' : '<i class="bi bi-box-seam"></i>') + '</div>'
+      + '<div class="igr-prod-info"><div class="igr-prod-nombre">' + igrEsc(nombre || '(sin nombre)') + '</div>'
+      + '<div class="igr-prod-meta">' + (sku ? '<span class="igr-code">' + igrEsc(sku) + '</span>' : '')
+      + (ua ? '<span><i class="bi bi-upc-scan me-1"></i>' + igrEsc(/^UA/i.test(ua) ? ua : ('UA ' + ua)) + '</span>' : '')
+      + (cant ? '<span>' + igrPlural(cant, 'unidad', 'unidades') + '</span>' : '') + '</div>' + mod + '</div>';
+  }
+
+  // ── Qué decidió la persona: existe / no existe / no requiere ──
+  // El punto de partida sale de lo que ya se sabe de la incidencia (y se afina con la ficha).
+  function igrModoInicial(){
+    var req = $('incReqRepuesto').value;
+    if(req === 'no') return 'no';
+    if(req !== 'si') return null;
+    var sols = (incFichaCache && incFichaCache.solicitudes) || [];
+    var bodega = sols.some(function(s){ return !!s.repuesto_stock_id; }) || !!$('incRepuestoStockId').value;
+    var manual = sols.some(function(s){ return !s.repuesto_stock_id; });
+    return (manual && !bodega) ? 'noexiste' : 'existe';
+  }
+  function igrElegirModo(modo){
+    _igr.modo = modo; _igr.modoElegido = true;
+    $('incReqRepuesto').value = (modo === 'no') ? 'no' : 'si';
+    if(modo === 'noexiste' && !$('incStockRepuesto').value) $('incStockRepuesto').value = 'no_hay';
+    igrPintarTodo();
+  }
+  // Mantiene la tarjeta en línea con el selector "¿Requiere repuesto?" (campo de siempre).
+  function incRepBuscadorToggle(){
+    var v = $('incReqRepuesto').value;
+    if(v === 'no'){ _igr.modo = 'no'; }
+    else if(v === 'si'){ if(_igr.modo === 'no' || _igr.modo === null) _igr.modo = 'existe'; }
+    else if(_igr.modo === 'no'){ _igr.modo = null; }
+    igrPintarTodo();
+  }
+  $('incReqRepuesto').addEventListener('change', function(){ _igr.modoElegido = true; incRepBuscadorToggle(); });
+
+  function igrPintarTodo(){
+    var modo = _igr.modo;
+    document.querySelectorAll('#igrDecide .igr-op').forEach(function(b){
+      var on = (b.dataset.modo === modo);
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    $('igrPanelExiste').hidden = (modo !== 'existe');
+    $('igrPanelNoExiste').hidden = (modo !== 'noexiste');
+    if(modo === 'existe') igrAsegurarBuscador();
+    igrPintarLista();
+    pintarPasos();
+  }
+
+  // ── Buscador de la bodega (motor compartido, modo agregar) ──
+  function igrAsegurarBuscador(){
+    var mount = $('igrBuscadorMount');
+    if(_igr.buscador || !mount || !window.RepBuscador) return;
+    igrProvs().then(function(provs){
+      if(_igr.buscador) return;
+      var m = _igr.modelo;
+      _igr.buscador = RepBuscador.crear({
+        mount: mount, ctx: 'gestion', modo: 'agregar', mostrarProveedor: true, provs: provs,
+        modeloBase: m ? {id: m.id, sku: m.sku, nombre: m.nombre} : null,
+        compatPorDefecto: !!(m && m.n_compatibles > 0),
+        masivo: true,
+        enLista: function(id){ var l = igrBuscarLinea('s' + id); return l ? l.cantidad : 0; },
+        onAgregar: function(it, cant){
+          if(igrAgregarBodega(it, cant)) ilusToast('+ ' + (it.descripcion || 'Repuesto') + ' × ' + igrNum(cant), {type:'success'});
+        },
+        onAgregarTodos: igrAgregarTodos
+      });
+      igrPintarNotaModelo();
+    });
+  }
+
+  // ── La lista a pedir ──
+  function igrBuscarLinea(k){
+    for(var i = 0; i < _igr.lineas.length; i++){ if(_igr.lineas[i].k === k) return _igr.lineas[i]; }
+    return null;
+  }
+  function igrEmpujarBodega(it, cantidad){
+    var k = 's' + it.id, ya = igrBuscarLinea(k);
+    if(ya){ ya.cantidad = Math.round((ya.cantidad + cantidad) * 100) / 100; return ya; }
+    var l = {k: k, bodega: true, id: it.id, nombre: it.descripcion || ('Repuesto #' + it.id), sku: it.sku || '', marca: it.marca || '',
+             foto: it.foto_url || '', cantidad: cantidad, provId: it.proveedor_id || null, provOrig: it.proveedor_id || null,
+             provNombre: it.proveedor || '', disponible: (it.disponible != null ? Number(it.disponible) : null),
+             compat: !!it.es_compatible, recordarProv: false, recordarCompat: false, editProv: false};
+    _igr.lineas.push(l);
+    return l;
+  }
+  function igrAvisoMaximo(){
+    ilusToast('Máximo ' + IGR_MAX_LINEAS + ' repuestos por solicitud: envía esta y crea otra.', {type:'warning'});
+  }
+  function igrAgregarBodega(it, cantidad){
+    if(!igrBuscarLinea('s' + it.id) && _igr.lineas.length >= IGR_MAX_LINEAS){ igrAvisoMaximo(); return false; }
+    igrEmpujarBodega(it, cantidad > 0 ? cantidad : 1);
+    igrPintarLista();
+    return true;
+  }
+  function igrAgregarTodos(items){
+    var nuevos = 0, ya = 0, corte = 0;
+    (items || []).forEach(function(it){
+      if(igrBuscarLinea('s' + it.id)){ ya++; return; }
+      if(_igr.lineas.length >= IGR_MAX_LINEAS){ corte++; return; }
+      igrEmpujarBodega(it, 1); nuevos++;
+    });
+    igrPintarLista();
+    var msg = nuevos ? ('✓ ' + igrPlural(nuevos, 'repuesto agregado', 'repuestos agregados') + ' con cantidad 1: ajústala en la lista')
+                     : 'Esos repuestos ya estaban en la lista';
+    if(ya && nuevos) msg += ' · ' + igrPlural(ya, 'ya estaba', 'ya estaban');
+    if(corte) msg += ' · ' + corte + ' quedaron fuera: máximo ' + IGR_MAX_LINEAS + ' por solicitud';
+    ilusToast(msg, {type: corte ? 'warning' : 'success'});
+    var l = $('igrLista');
+    if(nuevos && l && !l.hidden) l.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+  function igrAgregarManual(nombre, codigo, cantidad, provId){
+    var clave = nombre.toLowerCase() + '|' + (codigo || '').toLowerCase();
+    var igual = _igr.lineas.filter(function(l){ return !l.bodega && (l.nombre.toLowerCase() + '|' + (l.sku || '').toLowerCase()) === clave; })[0];
+    if(igual){ igual.cantidad = Math.round((igual.cantidad + cantidad) * 100) / 100; if(provId && !igual.provId){ igual.provId = provId; igual.provNombre = igrProvNombre(provId); } return true; }
+    if(_igr.lineas.length >= IGR_MAX_LINEAS){ igrAvisoMaximo(); return false; }
+    _igr.seq++;
+    _igr.lineas.push({k: 'm' + _igr.seq, bodega: false, id: null, nombre: nombre, sku: codigo || '', marca: '', foto: '', cantidad: cantidad,
+                      provId: provId || null, provOrig: null, provNombre: provId ? igrProvNombre(provId) : '', disponible: null,
+                      compat: false, recordarProv: false, recordarCompat: false, editProv: false});
+    return true;
+  }
+  function igrProponerAgregar(){
+    var nombre = ($('igrNxNombre').value || '').trim();
+    if(nombre.length < 3){ marcarError($('igrNxNombre')); ilusToast('Escribe el nombre completo del repuesto', {type:'warning'}); return; }
+    var cant = parseFloat(String($('igrNxCant').value || '').replace(',', '.'));
+    if(!isFinite(cant) || cant <= 0){ marcarError($('igrNxCant')); ilusToast('La cantidad tiene que ser mayor que cero', {type:'warning'}); return; }
+    var provId = $('igrNxProv').value ? Number($('igrNxProv').value) : null;
+    if(!igrAgregarManual(nombre, ($('igrNxCodigo').value || '').trim(), cant, provId)) return;
+    $('igrNxNombre').value = ''; $('igrNxCodigo').value = ''; $('igrNxCant').value = 1;
+    ilusToast('+ ' + nombre + ' (nuevo, se propone)', {type:'success'});
+    igrPintarLista();
+    $('igrNxNombre').focus();
+  }
+  function igrQuitarLinea(k){
+    _igr.lineas = _igr.lineas.filter(function(l){ return l.k !== k; });
+    igrPintarLista();
+  }
+  function igrQuitarGrupo(g){
+    _igr.lineas = _igr.lineas.filter(function(l){ return (l.provId ? String(l.provId) : 'sin') !== g; });
+    igrPintarLista();
+  }
+  function igrVaciar(){
+    if(!_igr.lineas.length) return;
+    ilusConfirm({title: 'Vaciar la lista', message: '¿Quitar los ' + _igr.lineas.length + ' repuestos de la lista?',
+                 sub: 'Todavía no se envió nada.', okLabel: 'Vaciar', cancelLabel: 'Cancelar', danger: true})
+      .then(function(ok){ if(ok){ _igr.lineas = []; igrPintarLista(); } });
+  }
+
+  function igrChipLinea(l){
+    if(!l.bodega) return '<span class="igr-chip nuevo"><i class="bi bi-patch-plus-fill"></i>Nuevo · no existe en la bodega</span>';
+    if(l.disponible == null) return '';
+    var falta = l.cantidad - l.disponible;
+    if(l.disponible > 0 && falta <= 0){
+      return '<span class="igr-chip verde"><i class="bi bi-check-circle-fill"></i>Hay stock · ' + igrNum(l.disponible) + (l.disponible === 1 ? ' disponible' : ' disponibles') + '</span>';
+    }
+    if(l.disponible > 0){
+      return '<span class="igr-chip ambar"><i class="bi bi-exclamation-triangle-fill"></i>Hay ' + igrNum(l.disponible) + ', faltan ' + igrNum(falta) + ' · se pide al proveedor</span>';
+    }
+    return '<span class="igr-chip rojo"><i class="bi bi-x-circle-fill"></i>Sin stock · se pide al proveedor</span>';
+  }
+  function igrOpcionesProv(l){
+    var h = '<option value="">Sin proveedor</option>', visto = false;
+    (_igr.provs || []).forEach(function(p){
+      var sel = (String(p.id) === String(l.provId));
+      if(sel) visto = true;
+      h += '<option value="' + p.id + '"' + (sel ? ' selected' : '') + '>' + igrEsc(p.nombre) + '</option>';
+    });
+    if(l.provId && !visto) h += '<option value="' + l.provId + '" selected>' + igrEsc(l.provNombre || ('Proveedor #' + l.provId)) + '</option>';
+    return h;
+  }
+  function igrLineaHTML(l){
+    var foto = l.foto ? '<img src="' + igrEsc(l.foto) + '" alt="" loading="lazy" data-foto="' + igrEsc(l.foto) + '">' : '<i class="bi bi-gear"></i>';
+    var meta = [];
+    if(l.sku) meta.push('<span class="igr-code">' + igrEsc(l.sku) + '</span>');
+    if(l.marca) meta.push('<span><i class="bi bi-tag me-1"></i>' + igrEsc(l.marca) + '</span>');
+    var chip = igrChipLinea(l);
+    if(chip) meta.push(chip);
+    if(l.bodega && l.compat) meta.push('<span class="igr-chip verde"><i class="bi bi-diagram-3-fill"></i>Compatible con el modelo</span>');
+    // El grupo ya dice el proveedor: el selector por línea solo aparece si la línea no tiene o si se pide cambiarlo.
+    var extra = (!l.provId || l.editProv)
+      ? '<label class="igr-mini"><span>Proveedor</span><select class="form-select form-select-sm igr-lin-prov" data-k="' + l.k + '">' + igrOpcionesProv(l) + '</select></label>'
+      : '<button type="button" class="igr-link igr-cambiar-prov" data-k="' + l.k + '"><i class="bi bi-arrow-left-right me-1"></i>Cambiar proveedor</button>';
+    if(l.bodega && !l.provOrig && l.provId){
+      extra += '<label class="igr-chk"><input type="checkbox" class="igr-chk-prov" data-k="' + l.k + '"' + (l.recordarProv ? ' checked' : '')
+            + '><span>Guardar este proveedor en el repuesto (no tenía ninguno)</span></label>';
+    }
+    if(l.bodega && !l.compat && _igr.modelo){
+      extra += '<label class="igr-chk"><input type="checkbox" class="igr-chk-compat" data-k="' + l.k + '"' + (l.recordarCompat ? ' checked' : '')
+            + '><span>Recordar que sirve para <b>' + igrEsc(_igr.modelo.nombre || _igr.modelo.sku) + '</b></span></label>';
+    }
+    return '<div class="igr-lin" data-k="' + l.k + '">'
+      + '<div class="igr-lin-foto">' + foto + '</div>'
+      + '<div class="igr-lin-info"><div class="igr-lin-nombre">' + igrEsc(l.nombre) + '</div>'
+      +   '<div class="igr-lin-meta">' + meta.join('') + '</div>'
+      +   '<div class="igr-lin-extra">' + extra + '</div></div>'
+      + '<div class="igr-lin-q">'
+      +   '<button type="button" class="igr-q-btn igr-q-menos" data-k="' + l.k + '" aria-label="Una unidad menos"><i class="bi bi-dash-lg"></i></button>'
+      +   '<input type="number" class="igr-q" data-k="' + l.k + '" value="' + igrNum(l.cantidad) + '" min="0.5" step="0.5" inputmode="decimal" aria-label="Cantidad">'
+      +   '<button type="button" class="igr-q-btn igr-q-mas" data-k="' + l.k + '" aria-label="Una unidad más"><i class="bi bi-plus-lg"></i></button>'
+      +   '<button type="button" class="igr-lin-x" data-k="' + l.k + '" aria-label="Quitar de la lista" title="Quitar de la lista"><i class="bi bi-x-lg"></i></button>'
+      + '</div></div>';
+  }
+  function igrGrupos(){
+    var mapa = {}, orden = [];
+    _igr.lineas.forEach(function(l){
+      var k = l.provId ? String(l.provId) : 'sin';
+      if(!mapa[k]){ mapa[k] = {k: k, nombre: l.provId ? (igrProvNombre(l.provId) || l.provNombre || ('Proveedor #' + l.provId)) : '', lineas: []}; orden.push(k); }
+      mapa[k].lineas.push(l);
+    });
+    var gs = orden.map(function(k){ return mapa[k]; });
+    gs.sort(function(a, b){
+      if(a.k === 'sin') return 1;
+      if(b.k === 'sin') return -1;
+      return a.nombre.localeCompare(b.nombre, 'es');
+    });
+    return gs;
+  }
+  // Líneas de la bodega que todavía NO figuran como compatibles con el modelo de la incidencia.
+  function igrElegibles(){ return _igr.modelo ? _igr.lineas.filter(function(l){ return l.bodega && !l.compat; }) : []; }
+  function igrTotalUnidades(){ return _igr.lineas.reduce(function(a, l){ return a + (Number(l.cantidad) || 0); }, 0); }
+  function igrPintarResumenLista(){
+    var r = $('igrListaResumen');
+    if(r) r.textContent = igrPlural(_igr.lineas.length, 'repuesto', 'repuestos') + ' · ' + igrPlural(Number(igrNum(igrTotalUnidades())), 'unidad', 'unidades');
+  }
+
+  function igrPintarLista(){
+    var box = $('igrLista'), env = $('igrEnvio'), nota = $('igrNotaLista');
+    var ls = _igr.lineas;
+    var visible = ls.length > 0 && _igr.modo !== 'no';
+    if(nota){
+      if(ls.length && _igr.modo === 'no'){
+        nota.hidden = false;
+        nota.innerHTML = 'Tienes <b>' + ls.length + '</b> repuesto(s) en la lista sin enviar. Elige «Sí, existe» o «Sí, pero no existe» para verlos.';
+      } else { nota.hidden = true; nota.innerHTML = ''; }
+    }
+    box.hidden = !visible; env.hidden = !visible;
+    if(!visible){ box.innerHTML = ''; igrPintarBtn(); return; }
+    var elegibles = igrElegibles();
+    var todosCompat = elegibles.length && elegibles.every(function(x){ return x.recordarCompat; });
+    var html = '<div class="igr-lista-head"><b><i class="bi bi-list-check me-1" style="color:#f97316"></i>Lista para solicitar</b>'
+      + '<small id="igrListaResumen"></small>'
+      + '<span class="igr-lista-acc">'
+      + (elegibles.length ? '<button type="button" class="btn btn-sm btn-outline-dark" id="igrCompatTodos" title="La próxima vez saldrán solos al buscar los compatibles de este modelo">'
+          + '<i class="bi bi-diagram-3 me-1"></i>' + (todosCompat ? 'Quitar la marca a todos' : 'Todos sirven para ' + igrEsc(_igr.modelo.nombre || _igr.modelo.sku)) + '</button>' : '')
+      + '<button type="button" class="btn btn-sm btn-outline-danger" id="igrVaciar"><i class="bi bi-trash3 me-1"></i>Vaciar lista</button></span></div>';
+    igrGrupos().forEach(function(g){
+      var sin = (g.k === 'sin');
+      var unid = g.lineas.reduce(function(a, l){ return a + (Number(l.cantidad) || 0); }, 0);
+      html += '<div class="igr-grupo"><div class="igr-grupo-head">'
+        + '<span class="igr-grupo-t' + (sin ? ' sin' : '') + '"><i class="bi bi-' + (sin ? 'exclamation-triangle-fill' : 'truck') + '"></i>'
+        + (sin ? 'Sin proveedor' : igrEsc(g.nombre)) + '</span>'
+        + '<span class="igr-grupo-n">' + igrPlural(g.lineas.length, 'repuesto', 'repuestos') + ' · ' + igrPlural(Number(igrNum(unid)), 'unidad', 'unidades') + '</span>'
+        + '<span class="igr-grupo-acc">'
+        + (sin ? '<select class="form-select form-select-sm igr-grupo-prov" aria-label="Asignar un proveedor a todos los que no tienen">'
+                 + '<option value="">Asignar proveedor a todos…</option>'
+                 + (_igr.provs || []).map(function(p){ return '<option value="' + p.id + '">' + igrEsc(p.nombre) + '</option>'; }).join('') + '</select>' : '')
+        + '<button type="button" class="btn btn-sm btn-outline-secondary igr-grupo-x" data-g="' + g.k + '" title="Quitar este grupo de la lista"><i class="bi bi-x-lg me-1"></i>Quitar grupo</button>'
+        + '</span></div>'
+        + g.lineas.map(igrLineaHTML).join('') + '</div>';
+    });
+    box.innerHTML = html;
+    igrPintarResumenLista();
+    igrPrefillMotivo();
+    igrPintarTkHint();
+    igrPintarChecks();
+    igrPintarBtn();
+    if(!_igr.asig) igrAsignables().then(igrPintarResp);
+    else if(!$('igrResp').options.length) igrPintarResp();
+  }
+
+  $('igrLista').addEventListener('click', function(ev){
+    var t = ev.target, b, l;
+    if((b = t.closest('.igr-q-mas'))){ l = igrBuscarLinea(b.dataset.k); if(l){ l.cantidad = Math.round((l.cantidad + 1) * 100) / 100; igrPintarLista(); } return; }
+    if((b = t.closest('.igr-q-menos'))){ l = igrBuscarLinea(b.dataset.k); if(l){ l.cantidad = Math.max(1, Math.round((l.cantidad - 1) * 100) / 100); igrPintarLista(); } return; }
+    if((b = t.closest('.igr-lin-x'))){ igrQuitarLinea(b.dataset.k); return; }
+    if((b = t.closest('.igr-cambiar-prov'))){ l = igrBuscarLinea(b.dataset.k); if(l){ l.editProv = true; igrPintarLista(); } return; }
+    if(t.closest('#igrCompatTodos')){
+      var el = igrElegibles(), todos = el.every(function(x){ return x.recordarCompat; });
+      el.forEach(function(x){ x.recordarCompat = !todos; });
+      igrPintarLista(); return;
+    }
+    if((b = t.closest('.igr-grupo-x'))){ igrQuitarGrupo(b.dataset.g); return; }
+    if(t.closest('#igrVaciar')){ igrVaciar(); return; }
+    var z = t.closest('.igr-lin-foto img'); if(z) igrZoom(z.dataset.foto);
+  });
+  // Mientras se escribe la cantidad solo se actualiza el estado (volver a pintar le quitaría el foco).
+  $('igrLista').addEventListener('input', function(ev){
+    var q = ev.target.closest('.igr-q');
+    if(!q) return;
+    var l = igrBuscarLinea(q.dataset.k);
+    if(!l) return;
+    var v = parseFloat(String(q.value).replace(',', '.'));
+    if(isFinite(v) && v > 0) l.cantidad = v;
+    igrPintarResumenLista();
+    igrPintarBtn();
+  });
+  $('igrLista').addEventListener('change', function(ev){
+    var t = ev.target, l, v;
+    if(t.classList.contains('igr-q')){
+      l = igrBuscarLinea(t.dataset.k);
+      if(l){ v = parseFloat(String(t.value).replace(',', '.')); if(isFinite(v) && v > 0) l.cantidad = v; igrPintarLista(); }
+      return;
+    }
+    if(t.classList.contains('igr-lin-prov')){
+      l = igrBuscarLinea(t.dataset.k);
+      if(l){
+        var pid = t.value ? Number(t.value) : null;
+        l.provId = pid; l.provNombre = pid ? igrProvNombre(pid) : ''; l.editProv = false;
+        l.recordarProv = !!(l.bodega && !l.provOrig && pid);   // si la bodega no tenía proveedor, lo normal es guardarlo
+        igrPintarLista();
+      }
+      return;
+    }
+    if(t.classList.contains('igr-chk-prov')){ l = igrBuscarLinea(t.dataset.k); if(l) l.recordarProv = t.checked; return; }
+    if(t.classList.contains('igr-chk-compat')){ l = igrBuscarLinea(t.dataset.k); if(l) l.recordarCompat = t.checked; return; }
+    if(t.classList.contains('igr-grupo-prov')){
+      var p2 = t.value ? Number(t.value) : null;
+      if(p2){
+        _igr.lineas.forEach(function(x){ if(!x.provId){ x.provId = p2; x.provNombre = igrProvNombre(p2); x.recordarProv = !!x.bodega; } });
+        igrPintarLista();
+      }
+    }
+  });
+
+  // ── Diagnóstico, evidencia, responsable y envío ──
+  function igrPrefillMotivo(){
+    var t = $('igrMotivo');
+    if(!t || _igr.motivoTocado) return;
+    var base = ($('incMotivo').value || '').trim();
+    if(base.length >= 10 && t.value.trim() !== base) t.value = base;
+  }
+  function igrPintarTkHint(){
+    var box = $('igrTkHint');
+    if(!box) return;
+    var sols = (incFichaCache && incFichaCache.solicitudes) || [];
+    var tk = sols.filter(function(s){ return s.numero_ticket; })[0];
+    box.innerHTML = tk
+      ? '<i class="bi bi-ticket-detailed me-1"></i>Se suma al ticket <b>' + igrEsc(tk.numero_ticket) + '</b>'
+        + (tk.responsable ? ' (responsable: <b>' + igrEsc(tk.responsable) + '</b>)' : '') + '.'
+      : '<i class="bi bi-ticket-detailed me-1"></i>Se crea un ticket nuevo, con su correlativo.';
+  }
+  function igrPintarChecks(){
+    var box = $('igrChecks');
+    if(!box) return;
+    var motivo = ($('igrMotivo').value || '').trim();
+    var it = [{ok: _igr.lineas.length > 0, t: 'Repuestos'}, {ok: motivo.length >= 10, t: 'Diagnóstico'}, {ok: !!_igr.ev, t: 'Evidencia'}];
+    box.innerHTML = it.map(function(x){
+      return '<span class="igr-ck' + (x.ok ? ' ok' : '') + '"><i class="bi bi-' + (x.ok ? 'check-circle-fill' : 'circle') + '"></i>' + x.t + '</span>';
+    }).join('');
+  }
+  function igrPintarBtn(){
+    var b = $('igrEnviar');
+    if(!b) return;
+    var n = _igr.lineas.length;
+    b.disabled = _igr.enviando;
+    b.innerHTML = _igr.enviando
+      ? '<span class="spinner-border spinner-border-sm me-2"></span>Enviando…'
+      : '<i class="bi bi-send-check me-1"></i>Enviar solicitud' + (n ? ' · ' + igrPlural(n, 'repuesto', 'repuestos') : '');
+  }
+  function igrQuitarEv(){
+    if(_igr.evUrl){ try { URL.revokeObjectURL(_igr.evUrl); } catch(e){} }
+    _igr.ev = null; _igr.evUrl = null;
+    var prev = $('igrEvPrev');
+    if(prev){ prev.innerHTML = ''; prev.hidden = true; }
+  }
+  function igrElegirEv(input){
+    var f = input.files && input.files[0];
+    input.value = '';
+    if(!f) return;
+    igrQuitarEv();
+    _igr.ev = f;
+    var esVideo = (f.type || '').indexOf('video/') === 0;
+    if(!esVideo) _igr.evUrl = URL.createObjectURL(f);
+    var prev = $('igrEvPrev');
+    prev.innerHTML = (esVideo
+        ? '<span class="inc-rep-ev-ico"><i class="bi bi-camera-video-fill"></i></span>'
+        : '<img src="' + _igr.evUrl + '" alt="Evidencia elegida">')
+      + '<div class="inc-rep-ev-info"><b>' + igrEsc(f.name || (esVideo ? 'Video' : 'Foto')) + '</b>'
+      + '<small>' + (esVideo ? 'Video' : 'Foto') + ' · ' + (f.size / 1048576).toFixed(1) + ' MB</small></div>'
+      + '<button type="button" class="btn btn-sm btn-outline-danger" id="igrEvQuitar"><i class="bi bi-x-lg me-1"></i>Quitar</button>';
+    prev.hidden = false;
+    $('igrEvQuitar').addEventListener('click', function(){ igrQuitarEv(); igrPintarChecks(); });
+    igrPintarChecks();
+  }
+  function igrLimpiarEnvio(){
+    _igr.lineas = []; igrQuitarEv(); _igr.motivoTocado = false;
+    $('igrMotivo').value = ''; $('igrErr').textContent = '';
+  }
+
+  function igrEnviar(){
+    if(_igr.enviando) return;
+    var err = $('igrErr');
+    err.textContent = '';
+    var ls = _igr.lineas;
+    if(!ls.length){ err.textContent = 'Agrega al menos un repuesto a la lista.'; return; }
+    for(var i = 0; i < ls.length; i++){
+      if(!isFinite(ls[i].cantidad) || ls[i].cantidad <= 0){ err.textContent = 'La cantidad de «' + ls[i].nombre + '» tiene que ser mayor que cero.'; return; }
+    }
+    var motivo = ($('igrMotivo').value || '').trim();
+    if(motivo.length < 10){ err.textContent = 'Cuenta por qué hace falta (mínimo 10 caracteres).'; marcarError($('igrMotivo')); return; }
+    if(!_igr.ev){ err.textContent = 'Sin evidencia no hay solicitud: sube una foto o un video del repuesto.'; return; }
+    var id = $('incId').value;
+    // Incidencia todavía sin guardar: se guarda sola (con su misma validación) y sigue el envío.
+    if(!id){ incGuardarYLuego(function(){ igrEnviar(); }); return; }
+    var lineas = ls.map(function(l){
+      return {
+        origen: l.bodega ? (l.compat ? 'compatible' : 'bodega') : 'manual',
+        repuesto_stock_id: l.id || '', repuesto_nombre: l.nombre, repuesto_sku: l.sku || '', cantidad: l.cantidad,
+        proveedor_id: l.provId || '',
+        guardar_proveedor: !!(l.bodega && l.recordarProv && !l.provOrig && l.provId),
+        marcar_compatible: !!(l.bodega && l.recordarCompat)
+      };
+    });
+    var fd = new FormData();
+    fd.append('lineas', JSON.stringify(lineas));
+    fd.append('motivo', motivo);
+    fd.append('responsable', $('igrResp').value || '');
+    _igr.enviando = true; igrPintarBtn();
+    incComprimir(_igr.ev).then(function(f){
+      fd.append('evidencia', f);
+      return fetch('/mantenciones/api/incidencias/' + id + '/solicitar-repuestos', {method: 'POST', credentials: 'same-origin', body: fd});
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        _igr.enviando = false;
+        if(!d.ok){ igrPintarBtn(); err.textContent = d.error || 'No se pudo enviar la solicitud.'; return; }
+        // Los campos que alimentan la tabla (el servidor ya los dejó así; el formulario se pone igual
+        // para que "Guardar incidencia" no los pise con valores viejos).
+        if(d.legacy){
+          $('incReqRepuesto').value = d.legacy.req_repuesto || '';
+          $('incStockRepuesto').value = d.legacy.stock_repuesto || '';
+          $('incDescripcionRepuesto').value = d.legacy.descripcion_repuesto || '';
+          if(d.legacy.repuesto_stock_id && !$('incRepuestoStockId').value){
+            $('incRepuestoStockId').value = d.legacy.repuesto_stock_id;
+            var primero = ls.filter(function(l){ return String(l.id) === String(d.legacy.repuesto_stock_id); })[0];
+            incRepSelMostrar({id: d.legacy.repuesto_stock_id, sku: primero ? primero.sku : '', descripcion: primero ? primero.nombre : ('Repuesto #' + d.legacy.repuesto_stock_id)});
+          }
+        }
+        igrLimpiarEnvio();
+        _igr.modo = 'existe'; _igr.modoElegido = true;
+        igrPintarTodo();
+        igrPintarOk(d);
+        ilusToast('✓ ' + igrPlural(d.n, 'repuesto solicitado', 'repuestos solicitados') + (d.numero_ticket ? ' · ' + d.numero_ticket : ''), {type:'success'});
+        if(d.aviso) ilusAlert({title: 'Aviso de stock', message: d.aviso, type: 'warning'});
+        incCargarEvidencia();   // vuelve a traer la ficha: historial, bitácora y semáforo
+        cargar();               // la columna Repuesto de la tabla
+      })
+      .catch(function(e){ _igr.enviando = false; igrPintarBtn(); err.textContent = 'Error de red: ' + e.message; });
+  }
+  function igrPintarOk(d){
+    var box = $('igrOk');
+    if(!box) return;
+    var ap = d.aprendido || {}, extra = [];
+    if(ap.proveedores && ap.proveedores.length) extra.push('Proveedor guardado en ' + igrPlural(ap.proveedores.length, 'repuesto', 'repuestos') + ' que no tenía');
+    if(ap.compatibles && ap.compatibles.length) extra.push(igrPlural(ap.compatibles.length, 'repuesto marcado', 'repuestos marcados') + ' como compatible con el modelo');
+    box.innerHTML = '<div class="igr-ok-t"><i class="bi bi-check-circle-fill"></i>Solicitud enviada · ' + igrPlural(d.n, 'repuesto', 'repuestos') + '</div>'
+      + (d.numero_ticket ? 'Ticket <b>' + igrEsc(d.numero_ticket) + '</b>' : 'Quedó guardada, sin ticket de seguimiento')
+      + (d.responsable ? ' · Responsable: <b>' + igrEsc(d.responsable) + '</b>' : '')
+      + (extra.length ? '<div class="mt-1 small">✓ ' + extra.map(function(x){ return igrEsc(x); }).join(' · ') + '.</div>' : '')
+      + '<div class="igr-acc">'
+      + (d.ticket_id ? '<a class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener" href="/tickets/' + d.ticket_id + '"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir ticket</a>' : '')
+      + '<a class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener" href="/repuestos#solicitudes"><i class="bi bi-inboxes me-1"></i>Ver en Repuestos → Solicitudes</a></div>';
+    box.hidden = false;
+    try { box.scrollIntoView({behavior: 'smooth', block: 'nearest'}); } catch(e){}
+  }
+
+  // ── Lo que ya se pidió para esta incidencia (viene en la ficha) ──
+  function igrPintarHist(){
+    var box = $('igrHist');
+    if(!box) return;
+    var sols = (incFichaCache && incFichaCache.solicitudes) || [];
+    if(!sols.length){ box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    var tk = sols.filter(function(s){ return s.numero_ticket; })[0];
+    var html = '<div class="igr-sub"><i class="bi bi-clock-history"></i><b>Ya solicitado para esta incidencia</b><small>'
+      + igrPlural(sols.length, 'repuesto', 'repuestos') + '</small></div>';
+    if(tk){
+      html += '<div class="igr-tk"><span class="igr-tk-n"><i class="bi bi-ticket-detailed"></i>' + igrEsc(tk.numero_ticket) + '</span>'
+        + '<span>Responsable: <b>' + igrEsc(tk.responsable || 'sin asignar') + '</b></span>'
+        + '<a class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener" href="/tickets/' + tk.ticket_id + '"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir ticket</a>'
+        + '<a class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener" href="/repuestos#solicitudes"><i class="bi bi-inboxes me-1"></i>Ver en Repuestos</a></div>';
+    }
+    html += sols.map(function(s){
+      var meta = [];
+      if(s.proveedor_nombre) meta.push('<i class="bi bi-truck me-1"></i>' + igrEsc(s.proveedor_nombre));
+      if(!s.repuesto_stock_id) meta.push('nuevo: no existe en la bodega');
+      if(s.repuesto_sku) meta.push('SKU ' + igrEsc(s.repuesto_sku));
+      return '<div class="igr-h"><span class="igr-h-id">#' + s.id + '</span>'
+        + '<span class="igr-h-nom">' + igrEsc(s.repuesto_nombre) + ' × ' + igrNum(s.cantidad) + '</span>'
+        + '<span class="igr-pill ' + (IGR_ESTADO_CLS[s.estado] || '') + '">' + igrEsc(s.estado_label || s.estado) + '</span>'
+        + (meta.length ? '<span class="igr-h-meta">' + meta.join(' · ') + '</span>' : '') + '</div>';
+    }).join('');
+    box.innerHTML = html;
+  }
+
+  // La ficha (solicitudes, foto del catálogo) llegó: se afina el modo y se repinta.
+  function igrAlFicha(){
+    if(!_igr.modoElegido) _igr.modo = igrModoInicial();
+    igrPintarProducto();
+    igrPintarHist();
+    igrPintarTodo();
+  }
+  function igrIniciar(){
+    igrProvs().then(function(){ igrPintarProvsNx(); igrPintarLista(); });
+    igrCargarModelo();
+    if(!_igr.modoElegido) _igr.modo = igrModoInicial();
+    igrPintarProducto();
+    igrPintarHist();
+    igrPintarTodo();
+  }
+  // Al abrir el modal de cero (alta o edición) la tarjeta vuelve a su estado inicial.
+  function igrReset(){
+    _igr.modo = null; _igr.modoElegido = false;
+    _igr.lineas = []; _igr.motivoTocado = false; _igr.enviando = false;
+    _igr.modelo = undefined; _igr.modeloSku = null;
+    igrQuitarEv();
+    incFichaCache = null;
+    ['igrMotivo', 'igrNxNombre', 'igrNxCodigo'].forEach(function(i){ var e = $(i); if(e) e.value = ''; });
+    $('igrNxCant').value = 1; $('igrNxProv').value = '';
+    $('igrErr').textContent = '';
+    $('igrOk').hidden = true; $('igrOk').innerHTML = '';
+    if(_igr.buscador) _igr.buscador.limpiar();
+    igrPintarHist();
+    igrPintarTodo();
+  }
+  // El botón "Solicitar repuesto" de la tarjeta 2 y el del menú de la tabla llevan a esta tarjeta.
+  function igrIrALaTarjeta(){
+    if(_igr.modo === null) igrElegirModo('existe');
+    var p = $('igrPane');
+    if(p) p.scrollIntoView({behavior: 'smooth', block: 'start'});
+    var d = $('igrDecide');
+    if(d){ d.classList.remove('igr-flash'); void d.offsetWidth; d.classList.add('igr-flash'); }
+  }
+
+  document.querySelectorAll('#igrDecide .igr-op').forEach(function(b){
+    b.addEventListener('click', function(){ igrElegirModo(b.dataset.modo); });
+  });
+  $('igrNxAgregar').addEventListener('click', igrProponerAgregar);
+  ['igrNxNombre', 'igrNxCodigo', 'igrNxCant'].forEach(function(i){
+    $(i).addEventListener('keydown', function(ev){ if(ev.key === 'Enter'){ ev.preventDefault(); igrProponerAgregar(); } });
+  });
+  $('igrMotivo').addEventListener('input', function(){ _igr.motivoTocado = true; igrPintarChecks(); });
+  $('igrEvCamBtn').addEventListener('click', function(){ $('igrEvCam').click(); });
+  $('igrEvGalBtn').addEventListener('click', function(){ $('igrEvGal').click(); });
+  $('igrEvCam').addEventListener('change', function(){ igrElegirEv(this); });
+  $('igrEvGal').addEventListener('change', function(){ igrElegirEv(this); });
+  $('igrEnviar').addEventListener('click', igrEnviar);
+  $('igrProd').addEventListener('click', function(ev){ var z = ev.target.closest('img[data-foto]'); if(z) igrZoom(z.dataset.foto); });
+  document.getElementById('incModal').addEventListener('shown.bs.modal', igrIniciar);
 
   function incRepSeleccionar(it){
     document.getElementById('incRepuestoStockId').value = it.id;
     if(!$('incDescripcionRepuesto').value.trim()) $('incDescripcionRepuesto').value = it.descripcion || '';
-    // Stock real del item elegido -- Daniel: "Stock de repuesto: Hay / No
-    // hay se calcula SOLO desde el stock real, editable manualmente si no
-    // hay match". `disponible` viene ya calculado del backend
+    // Stock real del item elegido -- Daniel: "Stock de repuesto: Hay / No hay se calcula SOLO desde el
+    // stock real, editable manualmente si no hay match". `disponible` viene ya calculado del backend
     // (_otrep_fmt_stock, mismo criterio que el semáforo del buscador).
     if(it.disponible != null){
       $('incStockRepuesto').value = (it.disponible > 0) ? 'hay' : 'no_hay';
@@ -3419,14 +4348,10 @@
     incRepSelMostrar(it);
   }
 
-  // 🔧 2026-09-26 (Daniel: "si disponible > 0, mostrar claro '✅ Hay stock
-  // en bodega: N disponibles'... si no hay stock, mostrar '⚠ Sin stock --
-  // se debe solicitar al proveedor'"). El botón sigue siendo el MISMO
-  // "Solicitar repuesto" (incBtnSolicitarAhora / incBtnSolicitarRepuesto)
-  // -- solo cambia el rótulo para que el camino sea explícito.
+  // 🔧 2026-09-26 (Daniel: "si disponible > 0, mostrar claro '✅ Hay stock en bodega: N disponibles'...
+  // si no hay stock, mostrar '⚠ Sin stock -- se debe solicitar al proveedor'").
   function incPintarEstadoStock(disponible){
     var box = document.getElementById('incRepEstadoStock');
-    var btn = document.getElementById('incBtnSolicitarAhora');
     if(disponible == null){
       box.hidden = true;
       return;
@@ -3436,11 +4361,9 @@
       box.className = 'inc-rep-estado ok';
       box.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Hay stock en bodega: <b>'
         + disponible + ' disponible' + (disponible === 1 ? '' : 's') + '</b>';
-      if(btn) btn.innerHTML = '<i class="bi bi-box-arrow-in-down me-1"></i>Tomar de bodega';
     } else {
       box.className = 'inc-rep-estado sin';
       box.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Sin stock -- se debe solicitar al proveedor';
-      if(btn) btn.innerHTML = '<i class="bi bi-send-check me-1"></i>Solicitar este repuesto ahora';
     }
   }
 
@@ -3520,6 +4443,7 @@
     var nombre = document.getElementById('incRepNuevoNombre').value.trim();
     if(!nombre){ ilusToast('Escribe el nombre del repuesto', {type:'warning'}); return; }
     var proveedorId = document.getElementById('incRepNuevoProveedorId').value || null;
+    var provNombreNuevo = document.getElementById('incRepNuevoProveedor').value || '';
     var btn = this;
     btn.disabled = true;
     fetch('/mantenciones/api/incidencias/repuestos-crear-rapido', {
@@ -3532,7 +4456,10 @@
       document.getElementById('incRepNuevoProveedor').value = '';
       document.getElementById('incRepNuevoProveedorId').value = '';
       incRepSeleccionar({id: d.id, sku: d.sku, descripcion: d.descripcion, disponible: 0});
-      ilusToast('✓ Repuesto '+d.sku+' creado y seleccionado', {type:'success'});
+      // 🛠️ 2026-09-30: además queda en la lista de la solicitud (cantidad 1, con el proveedor elegido).
+      igrAgregarBodega({id: d.id, sku: d.sku, descripcion: d.descripcion, disponible: 0,
+                        proveedor_id: proveedorId ? Number(proveedorId) : null, proveedor: provNombreNuevo}, 1);
+      ilusToast('✓ Repuesto '+d.sku+' creado y agregado a la solicitud', {type:'success'});
     }).catch(function(){ btn.disabled = false; ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
   });
 
@@ -3541,16 +4468,14 @@
   // "Solicitar repuesto ahora" como siguiente paso y aprobó el prellenado):
   // guarda la incidencia en silencio si hace falta y abre la solicitud con
   // el repuesto elegido YA seleccionado -- solo falta la evidencia.
+  // 🛠️ 2026-09-30: el repuesto asociado a la incidencia se suma a la lista de la tarjeta 5 (cantidad 1).
   document.getElementById('incBtnSolicitarAhora').addEventListener('click', function(){
-    if (!document.getElementById('incRepuestoStockId').value){
-      ilusToast('Elige un repuesto de la bodega primero.', {type:'warning'});
-      return;
-    }
-    incGuardarYLuego(function(){
-      var b = document.getElementById('incBtnSolicitarRepuesto');
-      b.disabled = false;
-      b.click();
-    });
+    var sel = _incRepDetalleSel;
+    if (!sel || !sel.id){ ilusToast('Todavía no hay un repuesto asociado.', {type:'warning'}); return; }
+    if (_igr.modo === 'no') igrElegirModo('existe');
+    if (igrAgregarBodega(sel, 1)) ilusToast('+ ' + (sel.descripcion || 'Repuesto') + ' sumado a la solicitud', {type:'success'});
+    var l = $('igrLista');
+    if (l && !l.hidden) l.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   });
 
   cargar();

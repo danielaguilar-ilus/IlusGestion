@@ -711,6 +711,20 @@
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;
     }
     .p-sub .p-cliente{color:#d6dbe4;font-weight:800}
+    /* 🏢 2026-09-30 (Daniel: "a los externos les figure la empresa"): etiqueta con la empresa del
+       técnico externo, junto a su estado. Solo aparece si la persona trae `empresa`. */
+    .p-sub .p-empresa{display:inline-block;max-width:100%;vertical-align:bottom;overflow:hidden;text-overflow:ellipsis;
+      color:#93c5fd;background:rgba(59,130,246,.16);border:1px solid rgba(147,197,253,.35);border-radius:50px;
+      padding:0 10px;font-weight:800;font-size:.9em;letter-spacing:.02em;margin-right:8px}
+    .p-sub .p-empresa:empty{display:none}
+    /* Filas altas (pocas personas): la empresa va COMPLETA en su propia línea, sin cortar el nombre.
+       Filas bajas (md/sm): se queda la etiqueta de arriba, en la línea del estado. */
+    .p-empresa-fila{display:block;margin-top:4px;max-width:100%;color:#93c5fd;font-weight:800;
+      font-size:var(--fs-sub,15px);line-height:1.15;overflow-wrap:anywhere;white-space:normal}
+    .p-empresa-fila:empty{display:none}
+    #stage:not([data-densidad="md"]):not([data-densidad="sm"]) .p-sub .p-empresa{display:none}
+    #stage[data-densidad="md"] .p-empresa-fila,
+    #stage[data-densidad="sm"] .p-empresa-fila{display:none}
     .p-sub .p-tipo{color:#fca5a5;font-weight:800;text-transform:uppercase;
       font-size:.85em;letter-spacing:.03em}
 
@@ -2270,8 +2284,9 @@
           '<span class="p-nombre"></span>' +
           '<div class="p-line2">' +
             '<span class="p-badge"><i></i><b class="badge-txt"></b></span>' +
-            '<span class="p-sub"><span class="p-tipo"></span><span class="p-cliente"></span><span class="p-dir"></span></span>' +
+            '<span class="p-sub"><span class="p-empresa"></span><span class="p-tipo"></span><span class="p-cliente"></span><span class="p-dir"></span></span>' +
           '</div>' +
+          '<span class="p-empresa-fila"></span>' +
         '</div>' +
       '</div>' +
       '<div class="p-av">' +
@@ -2393,6 +2408,11 @@
     // completo en el modal de detalle al hacer clic, ver abrirModal) y el
     // ancho que liberaba pasa a la columna de horario (--col-left más
     // angosto, ver el CSS de la variable).
+    // 🏢 2026-09-30: la empresa del técnico EXTERNO (Daniel: "a los externos les figure la empresa").
+    const empEl = $('.p-empresa', row);
+    setTexto(empEl, p.empresa || '');
+    if (empEl) empEl.title = p.empresa ? ('Empresa: ' + p.empresa) : '';
+    setTexto($('.p-empresa-fila', row), p.empresa || '');
     setTexto($('.p-tipo', row), '');
     setTexto($('.p-cliente', row), '');
     setTexto($('.p-dir', row), '');
@@ -2731,6 +2751,7 @@
 
     const bloques = p.bloques || [];
     const partes = [];
+    if (p.empresa) partes.push('Empresa: ' + p.empresa);   // 2026-09-30: técnico externo
     partes.push(bloques.length === 1 ? '1 OT hoy' : bloques.length + ' OT hoy');
     if (p.tipo) partes.push(p.tipo);
     if (p.cliente) partes.push('Ahora: ' + p.cliente);

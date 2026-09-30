@@ -40,6 +40,11 @@
 .rpb-ctx{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .rpb-resumen{font-size:.72rem;color:#6b7280;font-weight:800;padding:0 2px}
 .rpb-resumen:empty{display:none}
+/* 🛠️ 2026-09-30: con `masivo` el resumen lleva el botón "Agregar los N resultados" (toque de 44px). */
+.rpb-resumen:has(.rpb-btn-todos){display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 10px}
+.rpb-btn-todos{display:inline-flex;align-items:center;gap:6px;border:1.5px solid #0a0a0a;background:#fff;color:#0a0a0a;border-radius:10px;
+  min-height:44px;padding:6px 14px;font-size:.78rem;font-weight:900;cursor:pointer;font-family:inherit}
+.rpb-btn-todos:hover{background:#0a0a0a;color:#fff}
 .rpb-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:999px;
   padding:6px 12px;font-size:.76rem;font-weight:700;cursor:pointer;min-height:36px;font-family:inherit;max-width:100%;overflow-wrap:anywhere;text-align:left}
 .rpb-chip b{font-weight:900}

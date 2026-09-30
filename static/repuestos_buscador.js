@@ -29,6 +29,9 @@
                                   // agregar: cantidad + botón "Agregar" por tarjeta
                                   // seleccion: la tarjeta entera es un botón (flujo OT)
        equipo: {id, nombre, sku} | null,   // contexto "Compatibles con <equipo>"
+       modeloBase: {id, sku, nombre} | null, // 2026-09-30: igual, pero por MODELO del Catálogo
+                                  // (Incidencias: no hay equipo de un cliente, solo el SKU del producto)
+       masivo: true, onAgregarTodos(items)   // 2026-09-30: botón "Agregar los N resultados"
        compatPorDefecto: true|false,       // arranca filtrando compatibles (gestión) o solo rankeando (OT)
        mostrarProveedor: true|false,
        provs: [...] | null, marcas: [...] | null,   // null = se cargan solas
@@ -36,7 +39,7 @@
        enLista: function(id) → cantidad ya elegida (0 si no),
        onAgregar(item, cantidad), onSeleccionar(item, cardEl), onResultados(items)
      });
-     b.setEquipo(eq) · b.setProveedores(lista) · b.setSeleccion(id|null)
+     b.setEquipo(eq) · b.setModeloBase(modelo, compatPorDefecto) · b.setProveedores(lista) · b.setSeleccion(id|null)
      b.limpiar() · b.buscar() · b.refrescar() · b.focus() · b.getItems()
 
    🗜️ v3 2026-09-26 (Daniel, viendo el paso 2 del modal: "es medio débil el
@@ -163,6 +166,10 @@
       mount: opts.mount, ctx: opts.ctx || 'gestion',
       modo: opts.modo === 'seleccion' ? 'seleccion' : 'agregar',
       equipo: opts.equipo || null,
+      // 🛠️ 2026-09-30: contexto por modelo del Catálogo + "agregar todos" (ver cabecera).
+      modeloBase: opts.modeloBase || null,
+      compatDefault: opts.compatPorDefecto !== false,
+      masivo: opts.masivo === true, onAgregarTodos: opts.onAgregarTodos,
       soloCompat: opts.compatPorDefecto !== false,
       modelo: null, q: '', proveedor: '', marca: '',
       provs: Array.isArray(opts.provs) ? opts.provs : null,
@@ -266,6 +273,11 @@
                '<button type="button" class="rpb-chip' + (!st.soloCompat ? ' on' : '') + '" data-act="todos"><i class="bi bi-grid"></i><span>Toda la bodega' + (st.soloCompat ? '' : ' <small>(compatibles primero)</small>') + '</span></button>';
         }
       }
+      if (!st.modelo && !st.equipo && st.modeloBase) {
+        var nombreMb = st.modeloBase.nombre || st.modeloBase.sku || ('Modelo #' + st.modeloBase.id);
+        h += '<button type="button" class="rpb-chip' + (st.soloCompat ? ' on' : '') + '" data-act="compat"><i class="bi bi-diagram-3"></i><span>Compatibles con <b>' + esc(nombreMb) + '</b></span></button>' +
+             '<button type="button" class="rpb-chip' + (!st.soloCompat ? ' on' : '') + '" data-act="todos"><i class="bi bi-grid"></i><span>Toda la bodega' + (st.soloCompat ? '' : ' <small>(compatibles primero)</small>') + '</span></button>';
+      }
       ctxBox.innerHTML = h;
       ctxBox.style.display = h ? '' : 'none';
     }
@@ -311,7 +323,8 @@
 
     /* ── búsqueda ────────────────────────────────────────────────────── */
     function hayCriterio() {
-      return st.q.length >= 2 || !!st.proveedor || !!st.marca || !!st.modelo || (!!st.equipo && st.soloCompat && !st.sinModelo);
+      return st.q.length >= 2 || !!st.proveedor || !!st.marca || !!st.modelo || (!!st.equipo && st.soloCompat && !st.sinModelo) ||
+             (!!st.modeloBase && !st.equipo && st.soloCompat);
     }
     function urlBusqueda() {
       var p = new URLSearchParams();
@@ -321,6 +334,7 @@
       if (st.marca) p.set('marca_id', st.marca);
       if (st.modelo) { p.set('modelo_id', st.modelo.id); p.set('solo_compat', '1'); }
       else if (st.equipo) { p.set('maquina_id', st.equipo.id); p.set('solo_compat', st.soloCompat ? '1' : '0'); }
+      else if (st.modeloBase) { p.set('modelo_id', st.modeloBase.id); p.set('solo_compat', st.soloCompat ? '1' : '0'); }
       return '/ot/api/repuestos/bodega-buscar?' + p.toString();
     }
     async function buscar() {
@@ -438,12 +452,22 @@
         resumenBox.textContent = '0 resultados';
         var que = st.q.length >= 2 ? ' con "' + esc(st.q) + '"' : '';
         resBox.innerHTML = '<div class="rpb-vacio"><i class="bi bi-inbox"></i>Nada en la bodega' + que +
-          (st.modelo || (st.equipo && st.soloCompat && !st.sinModelo) ? ' compatible con ese modelo. Prueba "Toda la bodega", otro texto, o escríbelo manual.' : '. Prueba con otro texto o filtro, o escríbelo manual.') + '</div>';
+          (st.modelo || (st.equipo && st.soloCompat && !st.sinModelo) || (st.modeloBase && !st.equipo && st.soloCompat) ? ' compatible con ese modelo. Prueba "Toda la bodega", otro texto, o escríbelo manual.' : '. Prueba con otro texto o filtro, o escríbelo manual.') + '</div>';
         return;
       }
       // Contador "N resultados" (REGLA #15/#4.3: el usuario siempre sabe
       // cuánto está viendo, aunque no haya paginador en un buscador modal).
-      resumenBox.textContent = st.items.length === 1 ? '1 resultado' : (st.items.length + ' resultados');
+      var txtResumen = st.items.length === 1 ? '1 resultado' : (st.items.length + ' resultados');
+      if (st.masivo && st.onAgregarTodos) {
+        // 🛠️ 2026-09-30 (Daniel: "si tengo siete repuestos del proveedor Drax, poder filtrar y
+        // solicitar en masa"): un solo botón suma TODO lo que se está viendo (el que ya está en
+        // la lista no se duplica: decide quien escucha onAgregarTodos).
+        resumenBox.innerHTML = '<span>' + txtResumen + '</span>' +
+          '<button type="button" class="rpb-btn-todos"><i class="bi bi-check2-all"></i>Agregar ' +
+          (st.items.length === 1 ? 'este resultado' : 'los ' + st.items.length + ' resultados') + '</button>';
+      } else {
+        resumenBox.textContent = txtResumen;
+      }
       resBox.innerHTML = '<div class="rpb-grid">' + st.items.map(tarjetaHTML).join('') + '</div>';
     }
     function itemPorId(id) {
@@ -496,6 +520,11 @@
         if (st.onSeleccionar) st.onSeleccionar(it2, card2);
         pintarResultados();
       }
+    });
+    resumenBox.addEventListener('click', function (e) {
+      if (!e.target.closest('.rpb-btn-todos') || !st.onAgregarTodos) return;
+      st.onAgregarTodos(st.items.slice());
+      pintarResultados();
     });
     // Enter en la cantidad = Agregar (sin tener que llegar al botón).
     resBox.addEventListener('keydown', function (e) {
@@ -556,8 +585,8 @@
       st.marca = ''; selMarca.value = '';
       st.modelo = null; inModelo.value = ''; dropModelo.style.display = 'none';
       st.seleccionId = null;
-      if (!mantenerEquipo) { st.equipo = null; st.sinModelo = false; }
-      st.soloCompat = opts.compatPorDefecto !== false;
+      if (!mantenerEquipo) { st.equipo = null; st.modeloBase = null; st.sinModelo = false; }
+      st.soloCompat = st.compatDefault;
       pintarCtx();
       buscar();
     }
@@ -575,7 +604,18 @@
       setEquipo: function (eq) {
         st.equipo = eq || null;
         st.sinModelo = false;
-        st.soloCompat = opts.compatPorDefecto !== false;
+        st.soloCompat = st.compatDefault;
+        pintarCtx();
+        buscar();
+      },
+      // 🛠️ 2026-09-30: contexto por MODELO del Catálogo (Incidencias). `compatPorDefecto` false =
+      // arranca en "Toda la bodega" (el modelo aún no tiene repuestos compatibles registrados).
+      setModeloBase: function (modelo, compatPorDefecto) {
+        st.modeloBase = modelo || null;
+        st.equipo = null;
+        st.sinModelo = false;
+        st.compatDefault = compatPorDefecto !== false;
+        st.soloCompat = st.compatDefault;
         pintarCtx();
         buscar();
       },

@@ -65963,10 +65963,17 @@ def mant_api_incidencia_ficha(iid):
     # mant_ot_repuesto_solicitudes que apunte a esta incidencia -- sea por
     # el puente viejo (POST .../solicitar-repuesto, origen bodega/manual)
     # o por la tercera fuente nueva del modal /repuestos (origen incidencia).
+    # 🛠️ 2026-09-30 (Daniel, tarjeta "Gestión de repuestos"): cada solicitud trae además su
+    # ticket (correlativo), el responsable y el proveedor -- para verlo sin salir de la incidencia.
     solicitudes = mysql_fetchall(
-        "SELECT id, repuesto_nombre, repuesto_sku, cantidad, origen, estado, created_at "
-        "  FROM mant_ot_repuesto_solicitudes WHERE incidencia_id=%s "
-        " ORDER BY created_at DESC LIMIT 40", (iid,)) or []
+        "SELECT s.id, s.repuesto_nombre, s.repuesto_sku, s.repuesto_stock_id, s.cantidad, s.origen, "
+        "       s.estado, s.created_at, s.ticket_id, s.lote_id, s.solicitado_por, "
+        "       t.numero_ticket, t.asignado_a AS responsable, pv.nombre AS proveedor_nombre "
+        "  FROM mant_ot_repuesto_solicitudes s "
+        "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+        "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=s.proveedor_id "
+        " WHERE s.incidencia_id=%s "
+        " ORDER BY s.created_at DESC LIMIT 40", (iid,)) or []
     for s in solicitudes:
         if s.get("cantidad") is not None:
             s["cantidad"] = float(s["cantidad"])
@@ -66312,6 +66319,443 @@ def mant_api_incidencia_solicitar_repuesto(iid):
                            f"abiertas — faltan {abs(disponible):g}.")
     return jsonify({"ok": True, "solicitud_id": sol_id, "ticket_id": tid, "numero_ticket": numero_ticket,
                     "aviso": "\n".join(avisos) or None})
+
+
+# ══ Gestión de repuestos desde una incidencia (Daniel, 2026-09-30) ══════════════════
+# Daniel, caso de estudio "Escaladora ILUS X1": "una tarjeta aparte, la gestión de repuestos:
+# seleccionar si el repuesto existe o no existe en NUESTRA bodega (no Random ni Check), adjuntar
+# la evidencia (foto o video) y, si no existe, proponerlo para generar una solicitud de repuesto
+# de ese equipo. Si existe, la lista según los modelos compatibles. Siempre identificado el
+# producto. La solicitud viaja a Solicitudes del módulo Repuestos con un correlativo y un
+# responsable, y se gestiona como un ticket. Varios repuestos a la vez, indicando el proveedor,
+# prellenado: si tengo siete de Drax, poder pedirlos en masa."
+# Es el MISMO motor de siempre (mant_ot_repuesto_solicitudes + ticket spare_parts por
+# incidencia): solo cambia que ahora entra un LOTE con diagnóstico y evidencia compartidos.
+INC_GR_MAX_LINEAS = 30
+INC_GR_MOTIVO_MIN = 10
+
+
+def _inc_gr_titulo_ticket(iid, inc):
+    """Título del ticket que agrupa los repuestos de una incidencia. Lleva el PRODUCTO (nombre y
+    SKU) para identificarlo sin abrir nada (Daniel: "siempre tenemos que tener identificado el
+    producto"). Máximo 300 caracteres, el largo de tk_tickets.titulo."""
+    nombre = (inc.get("descripcion") or "").strip()
+    sku = (inc.get("sku") or "").strip()
+    partes = ["Repuestos"]
+    if nombre:
+        partes.append(nombre)
+    if sku:
+        partes.append(f"SKU {sku}")
+    partes.append(f"incidencia #{iid}")
+    return " · ".join(partes)[:300]
+
+
+def _inc_gr_emparejar_extras(lineas_in, lineas_ok):
+    """Lo que el navegador manda POR LÍNEA y que `_otrep_validar_lineas_lote` no conoce
+    (proveedor elegido a mano, "recordar proveedor", "recordar compatible"), alineado con las
+    líneas ya normalizadas. El validador fusiona las líneas de un mismo repuesto de bodega (queda
+    la PRIMERA) y nunca fusiona las manuales, así que el emparejamiento es determinista: las de
+    bodega por id de repuesto, las manuales por orden de aparición. Función PURA (REGLA #9)."""
+    extras = [{"proveedor_id": None, "guardar_proveedor": False, "marcar_compatible": False}
+              for _ in lineas_ok]
+    idx_stock = {li["repuesto_stock_id"]: i for i, li in enumerate(lineas_ok) if li.get("repuesto_stock_id")}
+    idx_manual = [i for i, li in enumerate(lineas_ok) if not li.get("repuesto_stock_id")]
+    k_manual = 0
+    vistos = set()
+    for li in lineas_in:
+        rid = str(li.get("repuesto_stock_id") or "").strip()
+        if rid.isdigit():
+            i = idx_stock.get(int(rid))
+        else:
+            i = idx_manual[k_manual] if k_manual < len(idx_manual) else None
+            k_manual += 1
+        if i is None or i in vistos:
+            continue
+        vistos.add(i)
+        pid = str(li.get("proveedor_id") or "").strip()
+        extras[i]["proveedor_id"] = int(pid) if pid.isdigit() and int(pid) > 0 else None
+        extras[i]["guardar_proveedor"] = li.get("guardar_proveedor") is True
+        extras[i]["marcar_compatible"] = li.get("marcar_compatible") is True
+    return extras
+
+
+def _inc_gr_legacy(lineas_ok, hay_todo):
+    """Lo que el lote deja en los campos de la incidencia que alimentan la tabla: ¿Requiere
+    repuesto? (siempre 'si': hay una solicitud), Stock del repuesto ('hay' solo si todo sale de
+    la bodega y alcanza) y Descripción del repuesto (máx. 300, el largo de la columna)."""
+    desc = ", ".join(f"{li['nombre']} × {li['cantidad']:g}" for li in lineas_ok)
+    if len(desc) > 300:
+        desc = desc[:299].rstrip() + "…"
+    return "si", ("hay" if hay_todo else "no_hay"), desc
+
+
+def _inc_gr_nota_ticket(iid, inc, lineas_ok, sol_ids, nombres_prov, motivo, tipo_ev):
+    """Nota interna que queda en el hilo del ticket: UNA sola para todo el lote, con cada línea
+    (quién la provee, si es un repuesto propuesto que no existe en la bodega), el producto de la
+    incidencia y el diagnóstico."""
+    filas = []
+    for li, sid in zip(lineas_ok, sol_ids):
+        prov = nombres_prov.get(li.get("prov_final")) if li.get("prov_final") else None
+        filas.append(f"  · #{sid} {li['nombre']} × {li['cantidad']:g}"
+                     + (f" — {prov}" if prov else " — sin proveedor")
+                     + ("" if li.get("repuesto_stock_id") else " · NO existe en la bodega (propuesto)"))
+    producto = (inc.get("descripcion") or "").strip() or "(sin nombre)"
+    if (inc.get("sku") or "").strip():
+        producto += f" (SKU {inc['sku'].strip()})"
+    if (inc.get("recomendacion") or "").strip():
+        producto += f" · UA {inc['recomendacion'].strip()}"
+    return (f"Solicitud de repuestos desde la incidencia #{iid} (lote de {len(lineas_ok)}):\n"
+            + "\n".join(filas)
+            + f"\nProducto: {producto}"
+            + f"\nDiagnóstico: {motivo}"
+            + f"\nEvidencia: {'video' if tipo_ev == 'video' else 'foto'}.")
+
+
+@app.route("/mantenciones/api/incidencias/modelo-repuestos", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_modelo_repuestos():
+    """Modelo del Catálogo (cat_productos) al que corresponde un SKU + cuántos repuestos de la
+    bodega declaran ser compatibles con él. Lo usa la tarjeta "Gestión de repuestos" para
+    identificar el producto y decidir si busca por modelo compatible (hay) o en toda la bodega
+    (el modelo no tiene ninguno registrado, o el SKU no está en el Catálogo)."""
+    sku = (request.args.get("sku") or "").strip()
+    if not sku:
+        return jsonify({"ok": True, "modelo": None})
+    modelo = _otrep_producto_de_maquina({"sku": sku})
+    if not modelo:
+        return jsonify({"ok": True, "modelo": None})
+    n = 0
+    try:
+        n = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_repuestos_stock_modelos sm "
+            "  JOIN mant_repuestos_stock rs ON rs.id=sm.repuesto_id "
+            " WHERE sm.producto_id=%s AND COALESCE(rs.activo,1)=1", (modelo["id"],)) or {}).get("n") or 0)
+    except Exception as e:
+        print(f"[inc_gr] compatibles modelo={modelo.get('id')}: {e}", flush=True)
+    return jsonify({"ok": True, "modelo": {"id": modelo["id"], "sku": modelo.get("sku"),
+                                          "nombre": modelo.get("nombre"), "n_compatibles": n}})
+
+
+@app.route("/mantenciones/api/incidencias/<int:iid>/solicitar-repuestos", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencia_solicitar_repuestos(iid):
+    """Solicitud de VARIOS repuestos desde una incidencia, en un solo envío (2026-09-30).
+
+    Body multipart:
+      lineas      JSON [{origen: compatible|bodega|manual, repuesto_stock_id?, repuesto_nombre,
+                  repuesto_sku?, cantidad, proveedor_id?, guardar_proveedor?, marcar_compatible?}],
+                  entre 1 y INC_GR_MAX_LINEAS. `manual` = repuesto que NO existe en nuestra bodega
+                  (propuesto). `proveedor_id` pisa al de la bodega solo para ESTE pedido.
+      motivo      diagnóstico compartido por todo el lote, ≥ INC_GR_MOTIVO_MIN caracteres.
+      evidencia   UN archivo (foto o video), obligatorio: se sube UNA vez y se registra en la
+                  evidencia de CADA solicitud (la cola de Repuestos y el ticket leen por solicitud).
+      responsable nombre de quien queda a cargo del ticket (default: quien solicita). Solo aplica
+                  si el ticket no tenía a nadie asignado.
+
+    Todas las líneas se validan ANTES de escribir; las filas entran en UNA transacción; la
+    evidencia se sube después y, si no queda registrada, el lote entero se descarta ("sin
+    evidencia no existe"). El ticket (spare_parts, uno por incidencia, con correlativo TK-AAAA-NNNNN)
+    se reutiliza si ya existía. Opcionales y aditivos, nunca pisan lo que ya estaba: guardar el
+    proveedor en un repuesto que no tenía, y declarar que un repuesto sirve para el modelo."""
+    inc = mysql_fetchone(
+        "SELECT * FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
+    if not inc:
+        return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
+    fd = request.form
+    user = current_username() or "sistema"
+
+    motivo = (fd.get("motivo") or "").strip()
+    if len(motivo) < INC_GR_MOTIVO_MIN:
+        return jsonify({"ok": False, "error":
+                        f"Cuenta por qué hace falta (mínimo {INC_GR_MOTIVO_MIN} caracteres): "
+                        "ese diagnóstico es el que leen bodega y el proveedor."}), 400
+
+    # 1) Validar TODAS las líneas antes de escribir nada.
+    raw = (fd.get("lineas") or "").strip()
+    if not raw:
+        return jsonify({"ok": False, "error": "No llegó ningún repuesto."}), 400
+    try:
+        lineas_in = json.loads(raw)
+    except Exception:
+        return jsonify({"ok": False, "error": "El listado de repuestos llegó con un formato inválido."}), 400
+    if not isinstance(lineas_in, list) or not lineas_in:
+        return jsonify({"ok": False, "error": "Agrega al menos un repuesto a la lista."}), 400
+    if len(lineas_in) > INC_GR_MAX_LINEAS:
+        return jsonify({"ok": False, "error":
+                        f"Como máximo {INC_GR_MAX_LINEAS} repuestos por solicitud: "
+                        "divídela en dos envíos."}), 400
+    if any(not isinstance(li, dict) for li in lineas_in):
+        return jsonify({"ok": False, "error": "Una de las líneas llegó con un formato inválido."}), 400
+
+    ids_stock = {int(str(li.get("repuesto_stock_id") or "").strip())
+                 for li in lineas_in if str(li.get("repuesto_stock_id") or "").strip().isdigit()}
+    stock_por_id = {}
+    if ids_stock:
+        ph = ",".join(["%s"] * len(ids_stock))
+        rows = mysql_fetchall(
+            f"SELECT id, sku, descripcion, cantidad, proveedor_id FROM mant_repuestos_stock "
+            f" WHERE id IN ({ph}) AND COALESCE(activo,1)=1", tuple(ids_stock)) or []
+        stock_por_id = {r["id"]: r for r in rows}
+    lineas_ok, err_li = _otrep_validar_lineas_lote(lineas_in, stock_por_id)
+    if err_li:
+        return jsonify({"ok": False, "error": err_li[0], "codigo": err_li[1]}), 400
+    if not lineas_ok:
+        return jsonify({"ok": False, "error": "Agrega al menos un repuesto a la lista."}), 400
+    extras = _inc_gr_emparejar_extras(lineas_in, lineas_ok)
+
+    # Proveedor de cada línea: el elegido a mano pisa al de la bodega (solo para este pedido).
+    for li, ex in zip(lineas_ok, extras):
+        li["prov_final"] = ex["proveedor_id"] or li.get("proveedor_id")
+    ov_ids = sorted({e["proveedor_id"] for e in extras if e["proveedor_id"]})
+    todos_prov = sorted({int(li["prov_final"]) for li in lineas_ok if li.get("prov_final")})
+    nombres_prov = {}
+    if todos_prov:
+        ph = ",".join(["%s"] * len(todos_prov))
+        rows = mysql_fetchall(
+            f"SELECT id, nombre FROM mant_proveedores_repuesto WHERE id IN ({ph})", tuple(todos_prov)) or []
+        nombres_prov = {int(r["id"]): r["nombre"] for r in rows}
+    if any(p not in nombres_prov for p in ov_ids):
+        return jsonify({"ok": False, "error":
+                        "Uno de los proveedores elegidos ya no existe: actualiza la lista e intenta de nuevo."}), 400
+
+    # 2) Evidencia: obligatoria, se valida ANTES de escribir.
+    f, tipo, e_arch = _otrep_primer_archivo()
+    if e_arch:
+        return jsonify({"ok": False, "error": e_arch}), 400
+    if not f:
+        return jsonify({"ok": False, "error":
+                        "Sin evidencia no hay solicitud: sube al menos una foto o un video del repuesto."}), 400
+    if not _gcs_ready():
+        return jsonify({"ok": False, "error":
+                        "El almacenamiento de fotos no está disponible en este momento. "
+                        "Intenta de nuevo en un minuto."}), 503
+
+    # Responsable: solo alguien que exista y esté activo; si no, queda quien solicita.
+    responsable, resp_user_id = user, None
+    pedido = (fd.get("responsable") or "").strip()
+    if pedido and pedido != user:
+        try:
+            fila = mysql_fetchone(
+                "SELECT id, COALESCE(nombre, username) AS nombre FROM app_users "
+                " WHERE active=1 AND COALESCE(nombre, username)=%s LIMIT 1", (pedido,))
+        except Exception:
+            fila = None
+        if fila:
+            responsable, resp_user_id = fila["nombre"], fila["id"]
+
+    # 3) Las N solicitudes con el mismo lote_id, en UNA transacción (get_db: NUNCA se cierra).
+    import uuid as _uuid_inc
+    lote_id = _uuid_inc.uuid4().hex
+    sol_ids = []
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            for li in lineas_ok:
+                cur.execute(
+                    "INSERT INTO mant_ot_repuesto_solicitudes "
+                    "(incidencia_id, repuesto_stock_id, repuesto_nombre, repuesto_sku, origen, cantidad, "
+                    " motivo, estado, solicitado_por, proveedor_id, creada_desde, lote_id) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,'solicitado',%s,%s,'incidencia',%s)",
+                    (iid, li["repuesto_stock_id"], li["nombre"][:400], li["sku"], li["origen"],
+                     li["cantidad"], motivo[:5000], user, li["prov_final"], lote_id))
+                sol_ids.append(int(cur.lastrowid))
+        conn.commit()
+    except Exception as e:
+        print(f"[inc_gr] INSERT lote incidencia={iid}: {e}", flush=True)
+        try:
+            conn.rollback()
+        except Exception as e_rb:
+            print(f"[inc_gr][CRITICO] rollback lote FALLÓ incidencia={iid} lote={lote_id}: {e_rb}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos guardar las solicitudes."}), 500
+
+    # 4) Evidencia: se sube UNA vez y se registra en CADA solicitud del lote (misma url). Si no
+    #    queda registrada para la primera, el lote entero se descarta.
+    info = {}
+    ok_ev, e_ev = _otrep_subir_evidencia_generica(
+        "incidencias", f"inc{iid}_lote{lote_id[:8]}", f, tipo, user, sol_ids[0], info_out=info)
+    if not ok_ev:
+        for sid in sol_ids:
+            try:
+                mysql_execute("DELETE FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+            except Exception:
+                pass
+        return jsonify({"ok": False, "error": (e_ev or "No se pudo subir la evidencia")
+                        + ", así que la solicitud NO se guardó. Revisa la conexión e intenta de nuevo."}), 502
+    for sid in sol_ids[1:]:
+        if not info:
+            break
+        try:
+            mysql_execute(
+                "INSERT INTO mant_ot_repuesto_evidencias "
+                "(solicitud_id, tipo, url, public_id, archivo_nombre, size_kb, subido_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (sid, tipo, info.get("url"), info.get("public_id"), info.get("archivo_nombre"),
+                 info.get("size_kb"), user))
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET "
+                + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1")
+                + " WHERE id=%s", (sid,))
+        except Exception as e:
+            print(f"[inc_gr] evidencia compartida sol={sid}: {e}", flush=True)
+
+    # 5) Ticket (uno por incidencia, con correlativo) + responsable + el producto en su ficha +
+    #    UNA nota que lista todo el lote.
+    avisos = []
+    tid, numero_ticket, creado = _otrep_ticket_para_incidencia(iid, inc, user)
+    resp_final = responsable
+    if tid:
+        try:
+            ph = ",".join(["%s"] * len(sol_ids))
+            mysql_execute(f"UPDATE mant_ot_repuesto_solicitudes SET ticket_id=%s WHERE id IN ({ph})",
+                          tuple([tid] + sol_ids))
+        except Exception as e:
+            print(f"[inc_gr] ticket_id lote sol={sol_ids}: {e}", flush=True)
+        try:
+            nombre_p = (inc.get("descripcion") or "").strip()[:300] or None
+            sku_p = (inc.get("sku") or "").strip()[:100] or None
+            ya = mysql_fetchone(
+                "SELECT id FROM tk_ticket_equipos WHERE ticket_id=%s AND COALESCE(sku,'')=COALESCE(%s,'') "
+                "   AND COALESCE(nombre,'')=COALESCE(%s,'') LIMIT 1", (tid, sku_p, nombre_p))
+            if not ya and (nombre_p or sku_p):
+                ua_p = (inc.get("recomendacion") or "").strip()
+                mysql_execute(
+                    "INSERT INTO tk_ticket_equipos (ticket_id, nombre, sku, cantidad, notas) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (tid, nombre_p, sku_p, max(1, int(inc.get("cantidad") or 1)),
+                     (f"Incidencia #{iid}" + (f" · UA {ua_p}" if ua_p else ""))[:500]))
+        except Exception as e:
+            print(f"[inc_gr] tk_ticket_equipos tid={tid}: {e}", flush=True)
+        try:
+            fila_t = mysql_fetchone("SELECT asignado_a FROM tk_tickets WHERE id=%s", (tid,)) or {}
+            actual = (fila_t.get("asignado_a") or "").strip()
+            if actual:
+                resp_final = actual
+            else:
+                mysql_execute(
+                    "UPDATE tk_tickets SET asignado_a=%s WHERE id=%s AND (asignado_a IS NULL OR asignado_a='')",
+                    (responsable, tid))
+                mysql_execute(
+                    "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+                    "VALUES (%s,'asignacion',%s,%s,%s,1)",
+                    (tid, f"Asignado a: {responsable}",
+                     json.dumps({"campo": "asignado_a", "nuevo": responsable,
+                                 "via": "gestion_repuestos_incidencia", "incidencia_id": iid},
+                                ensure_ascii=False), user))
+                if resp_user_id and responsable != user:
+                    _mant_notificar(resp_user_id, "otro", f"Te asignaron el ticket {numero_ticket}",
+                                    cuerpo=_inc_gr_titulo_ticket(iid, inc)[:180],
+                                    url_accion=f"/tickets/{tid}", prioridad="media")
+        except Exception as e:
+            print(f"[inc_gr] responsable tid={tid}: {e}", flush=True)
+        try:
+            mysql_execute(
+                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+                "VALUES (%s,'comentario',%s,%s,%s,1)",
+                (tid, _inc_gr_nota_ticket(iid, inc, lineas_ok, sol_ids, nombres_prov, motivo, tipo),
+                 json.dumps({"solicitud_repuesto_ids": sol_ids, "incidencia_id": iid, "lote_id": lote_id},
+                            ensure_ascii=False), user))
+        except Exception as e:
+            print(f"[inc_gr] nota ticket tid={tid}: {e}", flush=True)
+    else:
+        avisos.append("Las solicitudes quedaron guardadas, pero no se pudo crear el ticket de seguimiento.")
+
+    # 6) Aprender, sin pisar nada (las dos cosas son opcionales y las marca quien solicita):
+    #    a) el proveedor elegido pasa al repuesto SOLO si ese repuesto no tenía ninguno;
+    #    b) "este repuesto sirve para el modelo" -> compatibilidad (tope REPSTOCK_MAX_MODELOS).
+    aprendido = {"proveedores": [], "compatibles": []}
+    modelo = _otrep_producto_de_maquina({"sku": inc.get("sku")}) if (inc.get("sku") or "").strip() else None
+    for li, ex in zip(lineas_ok, extras):
+        rid = li.get("repuesto_stock_id")
+        if not rid:
+            continue
+        etiqueta = li.get("sku") or li["nombre"]
+        try:
+            if ex["guardar_proveedor"] and ex["proveedor_id"] and not (stock_por_id.get(rid) or {}).get("proveedor_id"):
+                n_up = mysql_execute_returning_rowcount(
+                    "UPDATE mant_repuestos_stock SET proveedor_id=%s WHERE id=%s AND proveedor_id IS NULL",
+                    (ex["proveedor_id"], rid))
+                if n_up:
+                    aprendido["proveedores"].append(f"{etiqueta} → {nombres_prov.get(ex['proveedor_id'])}")
+                    _mant_log("repuesto_stock", rid, "proveedor",
+                              f"{etiqueta} -> {nombres_prov.get(ex['proveedor_id'])} (elegido en la incidencia #{iid})")
+            if ex["marcar_compatible"] and modelo:
+                ya_compat = mysql_fetchone(
+                    "SELECT 1 AS x FROM mant_repuestos_stock_modelos WHERE repuesto_id=%s AND producto_id=%s",
+                    (rid, modelo["id"]))
+                if ya_compat:
+                    continue
+                n_act = int((mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM mant_repuestos_stock_modelos WHERE repuesto_id=%s", (rid,)) or {}
+                            ).get("n") or 0)
+                if n_act >= REPSTOCK_MAX_MODELOS:
+                    avisos.append(f"{etiqueta} ya declara {REPSTOCK_MAX_MODELOS} modelos compatibles: "
+                                  "no se agregó este modelo.")
+                    continue
+                mysql_execute(
+                    "INSERT IGNORE INTO mant_repuestos_stock_modelos (repuesto_id, producto_id) VALUES (%s,%s)",
+                    (rid, modelo["id"]))
+                mysql_execute(
+                    "UPDATE mant_repuestos_stock SET modelo_pendiente=0 WHERE id=%s AND COALESCE(modelo_pendiente,0)=1",
+                    (rid,))
+                aprendido["compatibles"].append(etiqueta)
+                _mant_log("repuesto_stock", rid, "asociar_modelo",
+                          f"{etiqueta} -> {modelo.get('nombre') or modelo.get('sku')} (declarado desde la incidencia #{iid})")
+        except Exception as e:
+            print(f"[inc_gr] aprender rid={rid}: {e}", flush=True)
+
+    # 7) Avisos de stock y campos de la incidencia que alimentan la tabla (solo rellenan/actualizan
+    #    lo que la solicitud prueba: ¿requiere repuesto? = sí; stock = hay solo si alcanza todo).
+    hay_todo, primer_stock = True, None
+    for li, sid in zip(lineas_ok, sol_ids):
+        rid = li.get("repuesto_stock_id")
+        if not rid:
+            hay_todo = False
+            continue
+        if primer_stock is None:
+            primer_stock = rid
+        fisico = float(li.get("stock_cantidad") or 0)
+        otras = _otrep_stock_comprometido(rid, excluir_sol_id=sid)
+        disponible = fisico - otras - li["cantidad"]
+        if disponible < 0:
+            hay_todo = False
+            avisos.append(_otrep_aviso_sobrecompromiso(
+                False, li.get("sku") or li["nombre"], otras + li["cantidad"], fisico, disponible))
+    req_n, stock_n, desc_n = _inc_gr_legacy(lineas_ok, hay_todo)
+    desc_final = (inc.get("descripcion_repuesto") or "").strip() or desc_n
+    rep_final = inc.get("repuesto_stock_id") or primer_stock
+    try:
+        mysql_execute(
+            "UPDATE mant_incidencias SET req_repuesto=%s, stock_repuesto=%s, descripcion_repuesto=%s, "
+            "       repuesto_stock_id=%s, updated_by=%s WHERE id=%s",
+            (req_n, stock_n, desc_final[:300], rep_final, user, iid))
+        for campo, viejo, nuevo in (("req_repuesto", inc.get("req_repuesto"), req_n),
+                                    ("stock_repuesto", inc.get("stock_repuesto"), stock_n),
+                                    ("descripcion_repuesto", inc.get("descripcion_repuesto"), desc_final[:300]),
+                                    ("repuesto_stock_id", inc.get("repuesto_stock_id"), rep_final)):
+            if str(viejo or "") != str(nuevo or ""):
+                _inc_log(iid, "editada", campo, viejo, nuevo)
+    except Exception as e:
+        print(f"[inc_gr] campos incidencia={iid}: {e}", flush=True)
+
+    # 8) Bitácora de la incidencia: UNA entrada del lote (la línea de tiempo corta el texto a 40
+    #    caracteres, por eso lo primero es la cuenta).
+    try:
+        _inc_log(iid, "repuesto_solicitado", "repuesto", None,
+                 f"{len(lineas_ok)} repuesto(s)" + (f" · ticket {numero_ticket}" if numero_ticket else ""))
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True, "lote_id": lote_id, "solicitud_ids": sol_ids, "n": len(sol_ids),
+        "ticket_id": tid, "numero_ticket": numero_ticket, "ticket_creado": creado,
+        "responsable": resp_final,
+        "legacy": {"req_repuesto": req_n, "stock_repuesto": stock_n,
+                   "descripcion_repuesto": desc_final[:300], "repuesto_stock_id": rep_final},
+        "aprendido": aprendido,
+        "aviso": "\n".join(avisos) or None,
+    })
 
 
 @app.route("/mantenciones/api/incidencias/importar", methods=["POST"])
@@ -89324,13 +89768,17 @@ def _otrep_ticket_anotar_lote(tid, vid, m, lineas, sol_ids, motivo, dejo_fs, n_f
         print(f"[otrep] tk_mensajes lote tid={tid}: {e}", flush=True)
 
 
-def _otrep_subir_evidencia_generica(carpeta, prefijo, f, tipo, user, solicitud_id):
+def _otrep_subir_evidencia_generica(carpeta, prefijo, f, tipo, user, solicitud_id, info_out=None):
     """Como _otrep_subir_evidencia, pero para orígenes SIN visita_id/
     maquina_id (Incidencias, Tickets directos) -- Fase 2, 2026-09-21. No
     hay equipo/OT donde espejar la foto (mant_visita_fotos exige
     maquina_id NOT NULL), así que sube a GCS y registra SOLO en
     mant_ot_repuesto_evidencias, que ya es la fuente de verdad para la
-    galería de la propia solicitud. Devuelve (ok, error_texto)."""
+    galería de la propia solicitud. Devuelve (ok, error_texto).
+
+    🛠️ 2026-09-30: `info_out` (dict opcional) recibe {url, public_id, archivo_nombre,
+    size_kb} cuando todo salió bien -- así un LOTE sube el archivo UNA vez y registra
+    la misma url en cada solicitud (igual que el lote de la OT), sin releerla de la BD."""
     try:
         f.stream.seek(0)
         res = _uploader_upload(
@@ -89356,6 +89804,9 @@ def _otrep_subir_evidencia_generica(carpeta, prefijo, f, tipo, user, solicitud_i
             "UPDATE mant_ot_repuesto_solicitudes SET "
             + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1")
             + " WHERE id=%s", (solicitud_id,))
+        if info_out is not None:
+            info_out.update({"url": url[:700], "public_id": (pid or "")[:400] or None,
+                             "archivo_nombre": (f.filename or "")[:300] or None, "size_kb": size_kb})
         return True, None
     except Exception as e:
         print(f"[otrep] evidencia genérica BD sol={solicitud_id}: {e}", flush=True)
@@ -89434,7 +89885,7 @@ def _otrep_ticket_para_incidencia(iid, inc, user):
                 cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
                 conn.commit()
                 return tid, prev.get("numero_ticket"), False
-            titulo = f"Repuestos incidencia #{iid}" + (f" · {inc.get('sku')}" if inc.get("sku") else "")
+            titulo = _inc_gr_titulo_ticket(iid, inc)
             desc = (f"Solicitudes de repuesto levantadas desde la incidencia #{iid}"
                     f" ({inc.get('descripcion') or inc.get('sku') or 'sin descripción'}).\n"
                     f"Se gestionan en Repuestos → Solicitudes desde OT.")
@@ -96393,6 +96844,42 @@ def _ot_tv_dia_vecino(fecha, delta):
     return candidata
 
 
+def _ot_tv_empresas_externas(personas):
+    """{id de usuario: nombre de la EMPRESA} de los técnicos EXTERNOS del monitor.
+
+    Daniel (2026-09-30): "quiero que a los externos les figure la empresa" (ej. Giancarlo -> DAP,
+    Gabriel Infante -> Transportes Felca). Solo una etiqueta: no agrupa ni separa por trabajo.
+    Primero el vínculo de la ficha de la empresa (mant_tecnico_externo_usuarios, un técnico = una
+    empresa); si ese técnico no está ahí, la ficha que el monitor ya había cruzado por usuario o por
+    nombre (`proveedor_id`). Nunca rompe el monitor: si falla la consulta, sigue sin etiqueta."""
+    ids = [tid for tid, p in personas.items() if tid and p.get("externo")]
+    if not ids:
+        return {}
+    out = {}
+    try:
+        ph = ",".join(["%s"] * len(ids))
+        for r in mysql_fetchall(
+                "SELECT teu.user_id AS uid, te.razon_social AS empresa "
+                "  FROM mant_tecnico_externo_usuarios teu "
+                "  JOIN mant_tecnicos_externos te ON te.id = teu.tecnico_externo_id "
+                f" WHERE teu.user_id IN ({ph})", tuple(ids)) or []:
+            if (r.get("empresa") or "").strip():
+                out[r["uid"]] = r["empresa"].strip()
+        pend = {tid: personas[tid].get("proveedor_id") for tid in ids
+                if tid not in out and personas[tid].get("proveedor_id")}
+        if pend:
+            pids = sorted(set(pend.values()))
+            ph2 = ",".join(["%s"] * len(pids))
+            nombres = {r["id"]: (r.get("razon_social") or "").strip() for r in (mysql_fetchall(
+                f"SELECT id, razon_social FROM mant_tecnicos_externos WHERE id IN ({ph2})", tuple(pids)) or [])}
+            for tid, pid in pend.items():
+                if nombres.get(pid):
+                    out[tid] = nombres[pid]
+    except Exception as e:
+        print(f"[ot_tv] empresas externas: {e}", flush=True)
+    return out
+
+
 def _ot_tv_datos(fecha=None, incluir_finanzas=False):
     """Payload del monitor: un día agrupado por persona + próximos días.
 
@@ -96572,7 +97059,7 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         personas[t["id"]] = {
             "nombre": t["nombre"], "iniciales": _ot2_iniciales(t["nombre"]),
             "externo": externo, "bloques": [], "actual": None,
-            "total_ot": 0, "terminadas": 0,
+            "total_ot": 0, "terminadas": 0, "proveedor_id": t.get("proveedor_id"),
         }
         orden.append(t["id"])
 
@@ -96888,6 +97375,7 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
                 "externo": (bool(f.get("tecnico_proveedor_id"))
                             or (f.get("tecnico_role") or "").lower().startswith("tecnico_externo")),
                 "bloques": [], "actual": None, "total_ot": 0, "terminadas": 0,
+                "proveedor_id": f.get("tecnico_proveedor_id"),
             }
             orden.append(tid)
 
@@ -96938,6 +97426,7 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
                     "externo": (bool(_colab.get("proveedor_id"))
                                 or (_colab.get("role") or "").lower().startswith("tecnico_externo")),
                     "bloques": [], "actual": None, "total_ot": 0, "terminadas": 0,
+                    "proveedor_id": _colab.get("proveedor_id"),
                 }
                 orden.append(_ctid)
             pc = personas[_ctid]
@@ -96972,6 +97461,7 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
     # como "Disponible" en vez de solo contarlos en el encabezado.
     grupos = {"interno": [], "externo": []}
     disponibles = {"interno": 0, "externo": 0}
+    _empresas = _ot_tv_empresas_externas(personas)   # 2026-09-30: empresa de cada técnico externo
     for tid in orden:
         p = personas.get(tid)
         if not p:
@@ -96981,6 +97471,7 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             disponibles[grupo] += 1
             grupos[grupo].append({
                 "nombre": p["nombre"], "iniciales": p["iniciales"],
+                "empresa": _empresas.get(tid) if p["externo"] else None,
                 "estado": "disponible", "cliente": None, "direccion": None,
                 "avance_pct": 0, "tareas_ok": 0, "tareas_total": 0,
                 "inicio_iso": None, "total_ot": 0, "bloques": [],
@@ -97028,6 +97519,7 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             _avance = 100
         grupos["externo" if p["externo"] else "interno"].append({
             "nombre": p["nombre"], "iniciales": p["iniciales"], "estado": est,
+            "empresa": _empresas.get(tid) if p["externo"] else None,
             "cliente": act.get("cliente"), "direccion": act.get("direccion"),
             "tipo": act.get("tipo"),
             "avance_pct": _avance,
