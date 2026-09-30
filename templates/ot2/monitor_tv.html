@@ -719,12 +719,13 @@
     .p-sub .p-empresa:empty{display:none}
     /* Filas altas (pocas personas): la empresa va COMPLETA en su propia línea, sin cortar el nombre.
        Filas bajas (md/sm): se queda la etiqueta de arriba, en la línea del estado. */
-    .p-empresa-fila{display:block;margin-top:4px;max-width:100%;color:#93c5fd;font-weight:800;
+    .p-empresa-fila{display:none;margin-top:4px;max-width:100%;color:#93c5fd;font-weight:800;
       font-size:var(--fs-sub,15px);line-height:1.15;overflow-wrap:anywhere;white-space:normal}
-    .p-empresa-fila:empty{display:none}
-    #stage:not([data-densidad="md"]):not([data-densidad="sm"]) .p-sub .p-empresa{display:none}
-    #stage[data-densidad="md"] .p-empresa-fila,
-    #stage[data-densidad="sm"] .p-empresa-fila{display:none}
+    #stage[data-densidad="xl"] .p-empresa-fila{display:block}
+    #stage[data-densidad="xl"] .p-empresa-fila:empty{display:none}
+    #stage[data-densidad="xl"] .p-sub .p-empresa{display:none}
+    /* lg/md/sm: etiqueta compacta junto al estado (la fila no da para una línea más) */
+    #stage:not([data-densidad="xl"]) .p-sub .p-empresa{font-size:.8em;padding:0 8px;letter-spacing:0}
     .p-sub .p-tipo{color:#fca5a5;font-weight:800;text-transform:uppercase;
       font-size:.85em;letter-spacing:.03em}
 
