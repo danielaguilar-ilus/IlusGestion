@@ -63,7 +63,7 @@
             <label><input type="checkbox" data-rm-col="doc" checked>Documento</label>
             <label><input type="checkbox" data-rm-col="ret" checked>Quién retira</label>
             <label><input type="checkbox" data-rm-col="resp" checked>Responsable</label>
-            <label><input type="checkbox" data-rm-col="cal" checked>Calidad</label>
+            <label><input type="checkbox" data-rm-col="cal">Calidad</label>
             <label><input type="checkbox" data-rm-col="carga" checked>Carga</label>
             <div class="sep"></div>
             <label><input type="checkbox" id="rmDens">Filas compactas</label>
@@ -79,8 +79,11 @@
   <div class="rm-wrap">
     <div class="table-responsive">
       {# .table-mobile-cards (mobile.css): en móvil cada fila se ve como tarjeta con data-label #}
-      <table class="ilus-table table-mobile-cards rm-table align-middle" id="rmTable"
+      {# rm-hide-cal: "Calidad" nace oculta (Daniel 2026-09-29: el formulario ya valida
+         todo y casi siempre marca alto); se activa en "Columnas". #}
+      <table class="ilus-table table-mobile-cards rm-table align-middle rm-hide-cal" id="rmTable"
              data-hoy="{{ mon.hoy }}" data-lunes="{{ mon.lunes }}" data-domingo="{{ mon.domingo }}"
+             data-hoy-habil="{{ 1 if mon.hoy_habil else 0 }}" data-sla-ambar="{{ mon.sla_ambar_s or 7200 }}" data-sla-rojo="{{ mon.sla_rojo_s or 14400 }}"
              data-super="{{ 1 if (current_user and current_user.role == 'superadmin') else 0 }}">
         <thead><tr>
           <th class="rm-c-exp"><button type="button" class="rm-ic-btn" id="rmExpandAll" aria-label="Abrir o cerrar el detalle de todas las filas" title="Abrir / cerrar todo el detalle"><i class="bi bi-arrows-expand"></i></button></th>
@@ -154,7 +157,13 @@ aria-label="Ver el detalle de {{ r.code }}" title="Ver el detalle"><i class="bi 
 </div></td>
 <td data-label="Estado"><div class="rm-cell">
 <span class="badge bg-{{ b.color }} {{ 'text-dark' if b.color in ['warning', 'info'] else '' }} rm-estado"><i class="bi {{ r.m_grupo_ico }}"></i>{{ b.label }}</span>
-{% if r.m_al_txt %}<div><span class="rm-pill {{ r.m_al_nivel }}"><i class="bi {{ r.m_al_ico }}"></i>{{ r.m_al_txt }}</span></div>{% endif %}
+{% if r.m_reloj %}{# Reloj en vivo: static/retiros_monitor.js (iniciarRelojes) lo hace avanzar #}
+<div class="rm-reloj {{ r.m_al_nivel }}" data-espera="{{ r.m_reloj.espera_s }}" data-plazo="{{ r.m_reloj.plazo_txt }}">
+<span class="rm-pill {{ r.m_al_nivel }}"><i class="bi bi-stopwatch"></i><span class="rm-reloj-t">{{ r.m_al_txt }}</span></span>
+<div class="rm-reloj-barra"><i style="width:{{ r.m_reloj.pct }}%"></i></div>
+{% if r.m_reloj.plazo_txt %}<div class="rm-sub rm-reloj-plazo">Responder antes de {{ r.m_reloj.plazo_txt }}</div>{% endif %}
+</div>
+{% elif r.m_al_txt %}<div><span class="rm-pill {{ r.m_al_nivel }}"><i class="bi {{ r.m_al_ico }}"></i>{{ r.m_al_txt }}</span></div>{% endif %}
 {% if r.m_siguiente %}<div class="rm-sub desktop-only">{{ r.m_siguiente }}</div>{% endif %}
 </div></td>
 <td class="desktop-only rm-c-cal" data-label="Calidad"><div class="rm-cell">

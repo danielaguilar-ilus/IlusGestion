@@ -405,5 +405,44 @@ class TestTarjetasKpi(unittest.TestCase):
         self.assertEqual([x["n"] for x in b], [0] * 7)
 
 
+
+class TestPlazoSla(unittest.TestCase):
+    """Reloj de "Sin responder": hora límite en horas hábiles (lun-vie 09-18)."""
+
+    @staticmethod
+    def _hh(desde, hasta, feriados=()):
+        total, dia = 0.0, desde.date()
+        while dia <= hasta.date():
+            if dia.weekday() < 5 and dia.isoformat() not in feriados:
+                ini = datetime.combine(dia, datetime.min.time()).replace(hour=9)
+                fin = datetime.combine(dia, datetime.min.time()).replace(hour=18)
+                a, b = max(ini, desde), min(fin, hasta)
+                if b > a:
+                    total += (b - a).total_seconds() / 3600
+            dia += timedelta(days=1)
+        return round(total, 2)
+
+    def test_cruza_la_noche(self):
+        p = rm.plazo_sla(datetime(2026, 9, 29, 16, 10), 4.0, self._hh)   # martes 16:10
+        self.assertEqual(p, datetime(2026, 9, 30, 11, 10))
+        self.assertEqual(rm.fmt_plazo(p, date(2026, 9, 29)), "mañana 11:10")
+
+    def test_salta_fin_de_semana_y_feriado(self):
+        p = rm.plazo_sla(datetime(2026, 10, 2, 17, 0), 4.0, self._hh, {"2026-10-05"})   # viernes 17:00
+        self.assertEqual(p, datetime(2026, 10, 6, 12, 0))
+        self.assertEqual(rm.fmt_plazo(p, date(2026, 10, 2)), "el mar 06-10 12:00")
+
+    def test_la_fila_trae_el_reloj(self):
+        kw = dict(hoy=date(2026, 9, 29), ahora=datetime(2026, 9, 29, 11, 30), horas_habiles=self._hh,
+                  utc_a_chile=lambda d: d - timedelta(hours=3), td_hhmm=lambda t: "",
+                  estados={}, grupos=[], relaciones={})
+        sin_resp = dict(id=1, status="solicitud_recibida", created_at=datetime(2026, 9, 29, 14, 0))  # 11:00 Chile
+        retirado = dict(id=2, status="retirada", created_at=datetime(2026, 9, 29, 14, 0))
+        rm.enriquecer_filas([sin_resp, retirado], **kw)
+        self.assertEqual(sin_resp["m_reloj"]["espera_s"], 1800)     # 11:00 → 11:30
+        self.assertEqual(sin_resp["m_reloj"]["plazo_txt"], "las 15:00")
+        self.assertIsNone(retirado["m_reloj"])
+
+
 if __name__ == "__main__":
     unittest.main()

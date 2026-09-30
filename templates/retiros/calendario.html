@@ -537,6 +537,69 @@
 @supports(padding:max(0px)){
   .agi-drawer{padding-bottom:env(safe-area-inset-bottom);}
 }
+
+/* ══ Todo en una pantalla (Daniel 2026-09-29: "ver toda la información sin
+   necesidad de darle scroll... potente, informativo, que sorprenda") ══ */
+.agi-layout{display:grid;grid-template-columns:310px minmax(0,1fr);gap:14px;align-items:start;}
+.agi-side{display:flex;flex-direction:column;gap:10px;min-width:0;}
+.agi-main{min-width:0;}
+.agi-side .agi-month-card{height:auto;}
+.agi-side .agi-stats{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0;}
+.agi-side .agi-stat{padding:8px 10px;gap:8px;}
+.agi-side .agi-stat-icon{width:30px;height:30px;font-size:.9rem;border-radius:8px;}
+.agi-side .agi-legend{margin-bottom:0;gap:5px;padding:8px 10px;}
+.agi-side .agi-legend-chip{font-size:.66rem;padding:2px 8px;}
+.agi-cap-card{
+  background:#fff;border:1px solid var(--ilus-line);border-radius:12px;padding:8px 10px;
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.72rem;color:var(--ilus-muted-soft);
+}
+.agi-main .agi-toolbar{margin-bottom:10px;}
+.agi-toolbar .agi-filter-search{max-width:260px;min-width:170px;}
+
+/* Próximo retiro, en vivo en la cabecera */
+.agi-next{
+  position:relative;z-index:1;display:flex;align-items:center;gap:12px;cursor:pointer;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:14px;
+  padding:9px 14px;min-width:260px;max-width:440px;transition:background .15s,border-color .15s,transform .15s;
+}
+.agi-next:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.28);transform:translateY(-1px);}
+.agi-next.vacio{cursor:default;opacity:.75;}
+.agi-next.vacio:hover{transform:none;}
+.agi-next-ico{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  background:rgba(22,163,74,.18);color:#4ade80;font-size:1.1rem;flex-shrink:0;}
+.agi-next.pronto .agi-next-ico{background:rgba(245,158,11,.2);color:#fbbf24;}
+.agi-next.encurso .agi-next-ico{background:rgba(220,38,38,.25);color:#f87171;animation:agiLatido 1.4s ease-in-out infinite;}
+@keyframes agiLatido{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55);}50%{box-shadow:0 0 0 8px rgba(220,38,38,0);}}
+.agi-next-lbl{font-size:.6rem;font-weight:900;letter-spacing:.6px;text-transform:uppercase;color:#94a3b8;}
+.agi-next-cd{font-family:'JetBrains Mono',monospace;font-size:1.15rem;font-weight:800;color:#fff;line-height:1.15;
+  font-variant-numeric:tabular-nums;}
+.agi-next-who{font-size:.74rem;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;}
+
+/* Línea de "ahora" sobre el día de hoy */
+.agi-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--ilus-red);z-index:4;pointer-events:none;}
+.agi-now::before{content:'';position:absolute;left:-5px;top:-6px;width:10px;height:10px;border-radius:50%;
+  background:var(--ilus-red);box-shadow:0 0 0 4px rgba(220,38,38,.18);}
+.agi-now span{position:absolute;right:4px;top:-9px;background:var(--ilus-red);color:#fff;font-size:.58rem;font-weight:800;
+  font-family:'JetBrains Mono',monospace;padding:1px 6px;border-radius:50px;}
+.agi-slot.pasado:not(.nohabil){background-image:linear-gradient(rgba(243,244,246,.55),rgba(243,244,246,.55));}
+
+/* Mira cruzada: columna y hora bajo el mouse */
+.agi-slot.agi-col-hover::before{content:'';position:absolute;inset:0;background:rgba(220,38,38,.04);pointer-events:none;}
+.agi-week-head.agi-col-hover{color:var(--ilus-red);}
+.agi-time-col.agi-row-hover{color:var(--ilus-red);background:#fef2f2;}
+.agi-slot.creatable:hover::after{content:'+ ' attr(data-slot);font-size:.68rem;font-family:'JetBrains Mono',monospace;}
+
+@media (min-width:992px){
+  .agi-hero{padding:12px 20px;margin-bottom:12px;}
+  .agi-hero-badge{width:44px;height:44px;font-size:1.3rem;}
+  .agi-slot{min-height:34px;}
+  .agi-week{overflow:auto;}
+  .agi-week-head{position:sticky;top:0;z-index:5;}
+}
+@media (max-width:991.98px){
+  .agi-layout{grid-template-columns:1fr;}
+  .agi-next{max-width:none;width:100%;}
+}
 </style>
 
 {# ── Hero ── #}
@@ -559,28 +622,37 @@
         Actualización en vivo cada 30s · arrastra para mover · click para datos rápidos
       </div>
     </div>
+    {# Próximo retiro con cuenta regresiva (agiProximo*): clic = abre su ficha #}
+    <div class="agi-next vacio" id="agiNextBox" role="button" tabindex="0" title="Abrir la ficha del próximo retiro">
+      <div class="agi-next-ico"><i class="bi bi-stopwatch"></i></div>
+      <div style="min-width:0">
+        <div class="agi-next-lbl" id="agiNextLbl">Próximo retiro</div>
+        <div class="agi-next-cd" id="agiNextCd">—</div>
+        <div class="agi-next-who" id="agiNextWho">Buscando…</div>
+      </div>
+    </div>
   </div>
 </div>
 
 {# Daniel 2026-09-14 ("aplica el mismo calendario al calendario del módulo"):
-   el mini-calendario mensual del widget compartido (mismo diseño que
-   /retiros/solicitar y los modales internos) va arriba a la izquierda,
-   con las estadísticas/toolbar/leyenda/filtros a su derecha. Clic en un
-   día = ir a esa semana y resaltar la columna. La grilla semanal de abajo
-   sigue a ancho completo, intacta (drag&drop, drawer, polling). #}
-<div class="row g-3 mb-3">
-  <div class="col-lg-4 col-xl-3">
+   mini-calendario mensual del widget compartido (mismo diseño que
+   /retiros/solicitar). Clic en un día = ir a esa semana y resaltar la columna.
+   Daniel 2026-09-29 ("ese espacio vacío entre el calendario mensual y el
+   horario no se ve agradable... ver toda la información sin scroll"): dos
+   columnas. Izquierda: mes + números + capacidad + leyenda. Derecha: barra
+   (semana + búsqueda + estados) y la grilla semanal, que toma todo el alto
+   que queda (agiAjustarAlto). Nada se quitó: solo se reubicó. #}
+<div class="agi-layout">
+  <div class="agi-side">
     <div class="agi-month-card">
       <label class="ilus-cal-col-label"><i class="bi bi-calendar3 me-1" style="color:var(--ilus-red)"></i>Ir a un día</label>
       <div id="agiMonth" class="ilus-cal-month"></div>
       {# El widget necesita un input date + contenedor de bloques: acá son
          solo "motor" (ocultos) — la agenda usa el mes para navegar y la
-         grilla semanal de abajo para los bloques. #}
+         grilla semanal para los bloques. #}
       <input type="date" id="agiMonthDate" style="display:none" aria-hidden="true">
       <div id="agiMonthGrid" style="display:none" aria-hidden="true"></div>
     </div>
-  </div>
-  <div class="col-lg-8 col-xl-9">
 
 {# ── Stats globales ── #}
 <div class="agi-stats" id="agiStats">
@@ -610,28 +682,16 @@
   </div>
 </div>
 
-{# ── Toolbar navegación ── #}
-<div class="agi-toolbar">
-  <button class="agi-nav-btn" onclick="agiPrev()" title="Semana anterior">
-    <i class="bi bi-chevron-left"></i>
-  </button>
-  <button class="agi-nav-btn" onclick="agiToday()" title="Volver a hoy">
-    <i class="bi bi-calendar2-check me-1"></i>Hoy
-  </button>
-  <button class="agi-nav-btn" onclick="agiNext()" title="Semana siguiente">
-    <i class="bi bi-chevron-right"></i>
-  </button>
-  <span class="agi-range-label" id="agiRangeLabel"></span>
-  <div class="ms-auto d-flex gap-2 align-items-center flex-wrap">
-    <span style="font-size:.74rem;color:var(--ilus-muted-soft)">Capacidad por franja:</span>
-    <span class="badge bg-light text-dark" style="font-size:.7rem" id="agi-cap-badge">—</span>
-    <a href="{{ url_for('pickup_dashboard') }}#settings"
-       class="btn-sm btn btn-outline-dark"
-       style="font-size:.74rem;padding:5px 10px;font-weight:700">
-      <i class="bi bi-sliders me-1"></i>Configurar
-    </a>
-  </div>
-</div>
+{# ── Capacidad por franja ── #}
+    <div class="agi-cap-card">
+      <span>Capacidad por franja:</span>
+      <span class="badge bg-light text-dark" style="font-size:.7rem" id="agi-cap-badge">—</span>
+      <a href="{{ url_for('pickup_dashboard') }}#settings"
+         class="btn-sm btn btn-outline-dark ms-auto"
+         style="font-size:.74rem;padding:5px 10px;font-weight:700">
+        <i class="bi bi-sliders me-1"></i>Configurar
+      </a>
+    </div>
 
 {# ── LEYENDA de colores ── #}
 <div class="agi-legend">
@@ -649,9 +709,21 @@
     <span class="dot" style="background:var(--kd-disp)"></span> En disputa
   </span>
 </div>
+  </div>{# /agi-side #}
 
-{# ── FILTROS: búsqueda + chips de estado (client-side, sin recargar) ── #}
-<div class="agi-filters">
+  <div class="agi-main">
+{# ── Barra: semana + búsqueda + chips de estado (client-side, sin recargar) ── #}
+<div class="agi-toolbar">
+  <button class="agi-nav-btn" onclick="agiPrev()" title="Semana anterior">
+    <i class="bi bi-chevron-left"></i>
+  </button>
+  <button class="agi-nav-btn" onclick="agiToday()" title="Volver a hoy">
+    <i class="bi bi-calendar2-check me-1"></i>Hoy
+  </button>
+  <button class="agi-nav-btn" onclick="agiNext()" title="Semana siguiente">
+    <i class="bi bi-chevron-right"></i>
+  </button>
+  <span class="agi-range-label" id="agiRangeLabel"></span>
   <div class="agi-filter-search">
     <i class="bi bi-search"></i>
     <input type="search" id="agiFilterText" placeholder="Buscar código o cliente…"
@@ -670,9 +742,6 @@
   </div>
 </div>
 
-  </div>{# /col derecha (stats + toolbar + leyenda + filtros) #}
-</div>{# /row calendario mensual + panel #}
-
 {# ── Loader (skeleton) ── #}
 <div id="agiLoader" style="display:none">
   <div class="agi-skel-row">
@@ -685,6 +754,8 @@
 
 {# ── Lista vertical (mobile) ── #}
 <div class="agi-list" id="agiList"></div>
+  </div>{# /agi-main #}
+</div>{# /agi-layout #}
 
 {# ── Drawer ficha rápida ── #}
 <div class="agi-backdrop" id="agiBackdrop" onclick="agiCerrarDrawer()"></div>
@@ -1057,7 +1128,138 @@ function agiRenderWeek(){
 
   // Mantener filtros activos tras cada refresh (polling incluido)
   agiApplyFilters();
+  agiAjustarAlto();
+  agiPintarAhora();
 }
+
+// ══ Todo en una pantalla + vivo (Daniel 2026-09-29: "que sorprenda y sea interactivo") ══
+// La grilla toma el alto que queda hasta el borde de la ventana: la página no se
+// mueve; si una semana muy cargada no cabe, se desplaza dentro de su cuadro con la
+// fila de los días fija arriba.
+function agiAjustarAlto(){
+  const wk = document.getElementById('agiWeek');
+  if (!wk) return;
+  if (window.innerWidth < 992 || wk.style.display === 'none'){ wk.style.maxHeight = ''; return; }
+  let y = 0;
+  for (let el = wk; el; el = el.offsetParent) y += el.offsetTop;
+  wk.style.maxHeight = Math.max(380, window.innerHeight - y - 14) + 'px';
+}
+window.addEventListener('resize', agiAjustarAlto);
+
+// Línea roja de "ahora" sobre el día de hoy + franjas ya pasadas en gris suave.
+function agiPintarAhora(){
+  const wk = document.getElementById('agiWeek');
+  if (!wk || !_agiData) return;
+  wk.querySelectorAll('.agi-now').forEach(el => el.remove());
+  const now = new Date(), hoy = agiFmt(now);
+  const slotMin = (_agiData.settings && _agiData.settings.slot_minutes) || 30;
+  const minAhora = now.getHours()*60 + now.getMinutes();
+  wk.querySelectorAll(`.agi-slot[data-fecha="${hoy}"]`).forEach(c => {
+    const [h, m] = (c.dataset.slot || '0:0').split(':').map(Number);
+    const ini = h*60 + m;
+    c.classList.toggle('pasado', ini + slotMin <= minAhora);
+    if (minAhora >= ini && minAhora < ini + slotMin){
+      const ln = document.createElement('div');
+      ln.className = 'agi-now';
+      ln.style.top = ((minAhora - ini) / slotMin * 100) + '%';
+      ln.innerHTML = `<span>${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}</span>`;
+      c.appendChild(ln);
+    }
+  });
+}
+
+// Mira cruzada: al pasar el mouse se iluminan la columna del día y la hora.
+(function(){
+  let _col = null, _fila = null;
+  document.addEventListener('mouseover', ev => {
+    const wk = document.getElementById('agiWeek');
+    if (!wk || !wk.contains(ev.target)) return;
+    const cel = ev.target.closest('[data-fecha]');
+    const col = cel ? cel.dataset.fecha : null;
+    const fila = cel && cel.dataset.slot ? cel.dataset.slot : null;
+    if (col !== _col){
+      wk.querySelectorAll('.agi-col-hover').forEach(e => e.classList.remove('agi-col-hover'));
+      if (col) wk.querySelectorAll(`.agi-week-head[data-fecha="${col}"], .agi-slot[data-fecha="${col}"]`)
+                 .forEach(e => e.classList.add('agi-col-hover'));
+      _col = col;
+    }
+    if (fila !== _fila){
+      wk.querySelectorAll('.agi-row-hover').forEach(e => e.classList.remove('agi-row-hover'));
+      if (fila) wk.querySelectorAll('.agi-time-col').forEach(e => { if (e.textContent.trim() === fila) e.classList.add('agi-row-hover'); });
+      _fila = fila;
+    }
+  });
+})();
+
+// Próximo retiro (hoy + 13 días, independiente de la semana que se esté mirando),
+// con cuenta regresiva al segundo. Si uno está en su horario ahora: "En curso".
+let _agiProx = [];
+async function agiProximoCargar(){
+  try {
+    const d0 = new Date(), d1 = new Date(); d1.setDate(d1.getDate() + 13);
+    const r = await fetch(`/retiros/api/calendario?from=${agiFmt(d0)}&to=${agiFmt(d1)}`,
+                          { credentials:'same-origin', cache:'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const fuera = ['retirada','cerrada','rechazada','fallida'];
+    const lista = [], vistos = new Set();
+    for (const f in (data.dias || {})){
+      for (const p of (data.dias[f].picks || [])){
+        if (!p.fecha || !p.time_from || fuera.includes(p.status) || vistos.has(p.id)) continue;
+        vistos.add(p.id);
+        const [h, m] = p.time_from.split(':').map(Number);
+        const [h2, m2] = (p.time_to || p.time_from).split(':').map(Number);
+        const [Y, M, D] = p.fecha.split('-').map(Number);
+        lista.push({ p, ini: new Date(Y, M-1, D, h, m), fin: new Date(Y, M-1, D, h2, m2) });
+      }
+    }
+    _agiProx = lista.sort((a, b) => a.ini - b.ini);
+    agiProximoTic();
+  } catch (_){ /* sin red: el recuadro queda con lo último que mostró */ }
+}
+function agiProximoTic(){
+  const box = document.getElementById('agiNextBox');
+  if (!box) return;
+  const now = new Date();
+  const act = _agiProx.find(x => x.fin > now);
+  const lbl = document.getElementById('agiNextLbl'), cd = document.getElementById('agiNextCd'), who = document.getElementById('agiNextWho');
+  box.classList.remove('pronto', 'encurso');
+  if (!act){
+    box.classList.add('vacio'); box.dataset.pickId = '';
+    lbl.textContent = 'Próximo retiro'; cd.textContent = 'Sin retiros'; who.textContent = 'Nada agendado en los próximos 14 días';
+    return;
+  }
+  box.classList.remove('vacio'); box.dataset.pickId = act.p.id;
+  const dos = n => String(n).padStart(2, '0');
+  who.textContent = `${act.p.code || ''} · ${act.p.customer_name || '—'} · ${act.p.time_from}–${act.p.time_to || ''}`;
+  if (act.ini <= now){
+    box.classList.add('encurso');
+    const s = Math.floor((act.fin - now) / 1000);
+    lbl.textContent = 'En curso ahora · termina en';
+    cd.textContent = `${dos(Math.floor(s/60))}:${dos(s%60)}`;
+    return;
+  }
+  const s = Math.floor((act.ini - now) / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  if (s < 3600) box.classList.add('pronto');
+  lbl.textContent = 'Próximo retiro en';
+  cd.textContent = d ? `${d} d ${h} h ${dos(m)} min` : `${dos(h)}:${dos(m)}:${dos(x)}`;
+}
+function agiProximoAbrir(){
+  const id = parseInt(document.getElementById('agiNextBox').dataset.pickId || '', 10);
+  if (id) agiAbrirDrawer(id);
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const box = document.getElementById('agiNextBox');
+  if (box){
+    box.addEventListener('click', agiProximoAbrir);
+    box.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); agiProximoAbrir(); } });
+  }
+  agiProximoCargar();
+  setInterval(agiProximoTic, 1000);
+  setInterval(() => { if (document.visibilityState === 'visible') agiProximoCargar(); }, 60000);
+  setInterval(agiPintarAhora, 30000);
+});
 
 // ── Crear retiro desde un slot vacío (día hábil con cupo) ────────────
 function agiSlotCrear(ev, fecha, slot){

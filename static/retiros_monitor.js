@@ -495,7 +495,9 @@
     // ── Columnas visibles y densidad ──
     function aplicarColumnas() {
       COLS.forEach(function (c) {
-        var oculta = !!(pref.cols && pref.cols[c] === false);   // boolean: toggle(clase, undefined) alterna en vez de fijar
+        // "Calidad" nace oculta (2026-09-29): solo se ve si el usuario la activó en "Columnas".
+        var oculta = c === 'cal' ? !(pref.cols && pref.cols.cal === true)
+                                 : !!(pref.cols && pref.cols[c] === false);   // boolean: toggle(clase, undefined) alterna en vez de fijar
         tabla.classList.toggle('rm-hide-' + c, oculta);
         var cb = document.querySelector('input[data-rm-col="' + c + '"]'); if (cb) cb.checked = !oculta;
       });
@@ -534,8 +536,75 @@
 
     aplicarColumnas();
     render();
+    iniciarRelojes(tabla);
     // Para revisar la pantalla con más filas sin tocar la base (consola del navegador).
     global.RetirosMonitor = { estado: st, datos: DATOS, render: render, reindexar: function () { leerFilas(); render(); } };
+  }
+
+  // ── Reloj en vivo de "Sin responder" (Daniel 2026-09-29: "que tenga un reloj o al menos que avise") ──
+  // El servidor entrega el tiempo hábil ya transcurrido y la hora límite (retiros_monitor.py,
+  // m_reloj). Aquí avanza cada segundo, pero solo en horario hábil (lun-vie 09-18 hora Chile y
+  // día no feriado, igual que el SLA del Centro de control): fuera de horario queda en pausa.
+  // Al pasar a rojo con el Monitor abierto: aviso en pantalla y la fila parpadea.
+  function horaChile() {
+    try {
+      var p = {};
+      new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', weekday: 'short', hour: 'numeric', hour12: false })
+        .formatToParts(new Date()).forEach(function (x) { p[x.type] = x.value; });
+      return { dia: p.weekday, hora: parseInt(p.hour, 10) % 24 };
+    } catch (e) { return null; }
+  }
+  function durTxt(s) {
+    s = Math.max(0, Math.floor(s));
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x;
+  }
+  function restaTxt(s) {
+    var min = Math.ceil(s / 60), h = Math.floor(min / 60), m = min % 60;
+    return h ? (m ? h + ' h ' + m + ' min' : h + ' h') : m + ' min';
+  }
+  function iniciarRelojes(tabla) {
+    var relojes = [].slice.call(tabla.querySelectorAll('.rm-reloj[data-espera]')).map(function (el) {
+      var tr = el.closest('tr'), cod = tr && tr.querySelector('.rm-code');
+      return { el: el, base: +el.dataset.espera || 0, ambar: +tabla.dataset.slaAmbar || 7200, rojo: +tabla.dataset.slaRojo || 14400,
+               plazo: el.dataset.plazo || '', code: cod ? cod.textContent.trim() : 'Un retiro', nivel: '' };
+    });
+    if (!relojes.length) return;
+    var hoyHabil = tabla.dataset.hoyHabil !== '0';
+    var extra = 0, ultimo = Date.now();
+    function tic() {
+      var ahora = Date.now(), hc = horaChile();
+      var enHorario = hoyHabil && hc && hc.dia !== 'Sat' && hc.dia !== 'Sun' && hc.hora >= 9 && hc.hora < 18;
+      if (enHorario) extra += (ahora - ultimo) / 1000;
+      ultimo = ahora;
+      relojes.forEach(function (r) {
+        var s = r.base + extra;
+        var nivel = s >= r.rojo ? 'rojo' : (s >= r.ambar ? 'ambar' : 'verde');
+        var pill = r.el.querySelector('.rm-pill'), t = r.el.querySelector('.rm-reloj-t');
+        var barra = r.el.querySelector('.rm-reloj-barra i'), plazo = r.el.querySelector('.rm-reloj-plazo');
+        if (t) t.textContent = 'Sin responder · ' + durTxt(s) + (enHorario ? '' : ' · en pausa');
+        if (barra) barra.style.width = Math.min(100, s / r.rojo * 100) + '%';
+        if (plazo) plazo.textContent = s >= r.rojo
+          ? 'Plazo vencido' + (r.plazo ? ' (' + r.plazo + ')' : '') + ': responder ya'
+          : 'Quedan ' + restaTxt(r.rojo - s) + ' hábiles' + (r.plazo ? ' · antes de ' + r.plazo : '');
+        if (nivel !== r.nivel) {
+          ['verde', 'ambar', 'rojo'].forEach(function (n) {
+            r.el.classList.toggle(n, n === nivel);
+            if (pill) pill.classList.toggle(n, n === nivel);
+          });
+          var tr = r.el.closest('tr');
+          if (tr) tr.dataset.alerta = nivel;
+          // Solo avisa al CRUZAR a rojo con la pantalla abierta (no al cargar).
+          if (nivel === 'rojo' && r.nivel && r.nivel !== 'rojo') {
+            r.el.classList.add('rm-reloj-alerta');
+            toast('⏱ ' + r.code + ' superó el plazo de respuesta (' + Math.round(r.rojo / 3600) + ' h hábiles sin responder)', 'error');
+          }
+          r.nivel = nivel;
+        }
+      });
+    }
+    tic();
+    setInterval(tic, 1000);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);

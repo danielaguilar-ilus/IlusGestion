@@ -143,6 +143,34 @@ def fecha_efectiva(r):
     return None, None, None, None
 
 
+def plazo_sla(creado, horas, horas_habiles, feriados=()):
+    """Momento (hora Chile) en que una solicitud cumple `horas` hábiles sin respuesta.
+    Búsqueda binaria sobre la misma función de horas hábiles del Centro de control:
+    así no hay una segunda definición del horario (lun-vie 09-18, sin feriados)."""
+    lo, hi = creado, creado + timedelta(days=21)
+    if horas_habiles(creado, hi, feriados) < horas:
+        return None
+    for _ in range(22):   # 21 días / 2^22 ≈ medio segundo de precisión
+        medio = lo + (hi - lo) / 2
+        if horas_habiles(creado, medio, feriados) >= horas:
+            hi = medio
+        else:
+            lo = medio
+    # horas_habiles redondea a centésimas (36 s): se lleva al minuto más cercano.
+    return (hi + timedelta(seconds=30)).replace(second=0, microsecond=0)
+
+
+def fmt_plazo(plazo, hoy):
+    if not plazo:
+        return ""
+    hhmm = plazo.strftime("%H:%M")
+    if plazo.date() == hoy:
+        return f"las {hhmm}"
+    if plazo.date() == hoy + timedelta(days=1):
+        return f"mañana {hhmm}"
+    return f"el {DIAS_CORTOS[plazo.weekday()]} {plazo.strftime('%d-%m')} {hhmm}"
+
+
 def _alerta(st, dias, ini_min, ahora_min, horas_espera, sla_ambar, sla_rojo):
     """Semáforo de la fila: (nivel, texto, icono). Rojo = hay que actuar ya."""
     if st in POR_RESPONDER:
@@ -223,6 +251,13 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, e
         if st in POR_RESPONDER and creado:
             horas_espera = horas_habiles(creado, ahora, feriados)
         nivel, al_txt, al_ico = _alerta(st, dias, ini_min, ahora_min, horas_espera, sla_ambar, sla_rojo)
+        # Reloj en vivo del "Sin responder" (Daniel 2026-09-29): tiempo hábil ya
+        # transcurrido + hora límite; static/retiros_monitor.js lo hace avanzar.
+        reloj = None
+        if st in POR_RESPONDER and creado:
+            reloj = {"espera_s": int(horas_espera * 3600),
+                     "pct": min(100, int(horas_espera / sla_rojo * 100)) if sla_rojo else 100,
+                     "plazo_txt": fmt_plazo(plazo_sla(creado, sla_rojo, horas_habiles, feriados), hoy)}
 
         if fch and activo:
             rel_nivel = "rojo" if dias < 0 else ("ambar" if dias == 0 else "verde")
@@ -273,6 +308,7 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, e
         r["m_conf_iso"] = f_conf.isoformat() if f_conf else ""
         r["m_en_semana"] = bool(f_kpi and lunes <= f_kpi <= domingo and st not in NEGATIVOS)
         r["m_al_nivel"], r["m_al_txt"], r["m_al_ico"] = nivel, al_txt, al_ico
+        r["m_reloj"] = reloj
         r["m_vencida"] = bool(activo and nivel == "rojo" and st in AGENDADOS)
         r["m_siguiente"] = SIGUIENTE.get(st, "") if st not in POR_RESPONDER or r.get("document_number") \
             else "Siguiente: agregar la factura o boleta"

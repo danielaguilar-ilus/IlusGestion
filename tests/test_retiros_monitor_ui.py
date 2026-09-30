@@ -344,7 +344,8 @@ class TestPlantillaTabla(unittest.TestCase):
         html = self._render(_filas(40))
         filas = re.findall(r'<tr class="rm-row.*?</tr>', html, re.S)
         promedio = sum(len(f) for f in filas) // len(filas)
-        self.assertLess(promedio, 3700, f"cada fila pesa {promedio} bytes: el detalle y el menú no deben repetirse en el HTML")
+        # 2026-09-29: +300 por el reloj en vivo de "Sin responder" (aquí TODAS las filas lo llevan: peor caso).
+        self.assertLess(promedio, 4000, f"cada fila pesa {promedio} bytes: el detalle y el menú no deben repetirse en el HTML")
         datos = re.search(r'id="rmData">(.*?)</script>', html, re.S).group(1)
         self.assertLess(len(datos) // 40, 1100)
 

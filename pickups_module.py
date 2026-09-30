@@ -4634,7 +4634,10 @@ def register_pickup_routes(app, ctx):
                 pass
         feriados_mon |= {h.strip() for h in (_cfg_mon.get("holidays") or "").replace(";", ",").split(",") if h.strip()}
         mon = {"hoy": hoy_cl.isoformat(), "lunes": lunes_cl.isoformat(), "domingo": domingo_cl.isoformat(),
-               "limite": 250, "total": len(rows), "ok": False}
+               "limite": 250, "total": len(rows), "ok": False,
+               # El reloj de "Sin responder" solo avanza en día hábil (lo lee retiros_monitor.js)
+               "hoy_habil": hoy_cl.weekday() < 5 and hoy_cl.isoformat() not in feriados_mon,
+               "sla_ambar_s": int(_CC_SLA_AMBAR_H * 3600), "sla_rojo_s": int(_CC_SLA_ROJO_H * 3600)}
         try:
             mon["total"] = int((mysql_fetchone(
                 f"SELECT COUNT(*) AS n FROM `{REQ}` WHERE {' AND '.join(where)}", tuple(params)) or {}).get("n") or 0)
