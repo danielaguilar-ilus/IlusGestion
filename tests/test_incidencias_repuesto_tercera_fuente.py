@@ -421,3 +421,64 @@ class TestCandadoSistemaYUaUnica(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEmparejarGriPorOrden(unittest.TestCase):
+    """_inc_emparejar_gri (Daniel, 2026-09-30): la antigüedad en bodega sale de
+    la GRI del ERP, que no trae UA -- se empareja POR ORDEN (UA más baja con la
+    GRI más antigua de las vigentes). Caso real: TWMA303-140, UA1007932 y
+    UA1007934, GRI 1860 (26-09-2024) y GRI 1923 (14-11-2024)."""
+
+    @classmethod
+    def setUpClass(cls):
+        amb = _cargar_funciones("_inc_orden_ua", "_inc_emparejar_gri")
+        amb["re"] = __import__("re")
+        exec("import re", amb)
+        cls.emparejar = staticmethod(amb["_inc_emparejar_gri"])
+
+    def test_caso_real_dos_ua_dos_gri(self):
+        hermanas = [{"id": 2, "recomendacion": "UA1007934", "cantidad": 1},
+                    {"id": 1, "recomendacion": "UA1007932", "cantidad": 1}]
+        gri = [("2024-09-26", "0000001860", 1), ("2024-11-14", "0000001923", 1)]
+        r = self.emparejar(hermanas, gri)
+        self.assertEqual(r[1], ("2024-09-26", "0000001860"))   # UA más baja -> GRI más antigua
+        self.assertEqual(r[2], ("2024-11-14", "0000001923"))
+
+    def test_sobran_gri_antiguas_se_usan_las_mas_recientes(self):
+        # 3 unidades entraron en total pero solo 1 sigue en incidencia: lo que
+        # queda en bodega es lo último que entró (FIFO).
+        hermanas = [{"id": 7, "recomendacion": "UA1", "cantidad": 1}]
+        gri = [("2024-01-01", "A", 1), ("2024-02-01", "B", 1), ("2024-03-01", "C", 1)]
+        self.assertEqual(self.emparejar(hermanas, gri)[7], ("2024-03-01", "C"))
+
+    def test_faltan_gri_no_adivina(self):
+        hermanas = [{"id": 1, "recomendacion": "UA1", "cantidad": 1},
+                    {"id": 2, "recomendacion": "UA2", "cantidad": 1}]
+        self.assertEqual(self.emparejar(hermanas, [("2024-01-01", "A", 1)]), {})
+
+    def test_sin_gri_o_sin_hermanas_devuelve_vacio(self):
+        self.assertEqual(self.emparejar([{"id": 1, "recomendacion": "UA1", "cantidad": 1}], []), {})
+        self.assertEqual(self.emparejar([], [("2024-01-01", "A", 1)]), {})
+
+    def test_una_gri_con_varias_unidades(self):
+        hermanas = [{"id": 1, "recomendacion": "UA10", "cantidad": 1},
+                    {"id": 2, "recomendacion": "UA11", "cantidad": 1}]
+        r = self.emparejar(hermanas, [("2024-05-05", "X", 2)])
+        self.assertEqual(r[1], ("2024-05-05", "X"))
+        self.assertEqual(r[2], ("2024-05-05", "X"))
+
+    def test_incidencia_con_cantidad_mayor_consume_varias_unidades(self):
+        hermanas = [{"id": 1, "recomendacion": "UA1", "cantidad": 2},
+                    {"id": 2, "recomendacion": "UA2", "cantidad": 1}]
+        gri = [("2024-01-01", "A", 1), ("2024-02-01", "B", 1), ("2024-03-01", "C", 1)]
+        r = self.emparejar(hermanas, gri)
+        self.assertEqual(r[1], ("2024-01-01", "A"))   # arranca en la más antigua de las 3
+        self.assertEqual(r[2], ("2024-03-01", "C"))
+
+    def test_ua_sin_numero_va_al_final(self):
+        hermanas = [{"id": 1, "recomendacion": "", "cantidad": 1},
+                    {"id": 2, "recomendacion": "UA5", "cantidad": 1}]
+        gri = [("2024-01-01", "A", 1), ("2024-02-01", "B", 1)]
+        r = self.emparejar(hermanas, gri)
+        self.assertEqual(r[2], ("2024-01-01", "A"))
+        self.assertEqual(r[1], ("2024-02-01", "B"))

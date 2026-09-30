@@ -64616,11 +64616,128 @@ def _inc_comparativa_ua(rows, wms_rows):
     return rows
 
 
+# ══ Antigüedad en bodega desde la GRI del ERP (Daniel, 2026-09-30) ══════════
+# "se ingresaron con GRI 1860 26-09-2024 y la otra con GRI 1923 14-11-2024 ...
+# estás diciendo que todo tiene 58 días y quiero atacar también por antigüedad
+# en la bodega". Los 58 días eran desde que la incidencia se REGISTRÓ acá, no
+# desde que el equipo ENTRÓ a la bodega. La fecha real es la de la GRI (guía de
+# recepción) del ERP Random: SOLO lectura (REGLA #4.1), por _random_sql_query.
+# El ERP no guarda la UA, así que se empareja POR ORDEN (decisión de Daniel):
+# la UA de número más bajo con la GRI más antigua. Es una sugerencia -- la
+# fecha de ingreso manual de la incidencia siempre manda sobre ella.
+_INC_GRI_CACHE = {}        # {sku: (ts, [(fecha 'YYYY-MM-DD', nudo, cant), ...])}
+_INC_GRI_TTL = 900         # 15 min, igual que el stock B13 del ERP
+
+
+def _erp_gri_b13_por_sku(skus):
+    """{sku: [(fecha, nudo, cant), ...]} en orden cronológico: TODAS las GRI no
+    anuladas que ingresaron ese SKU a la bodega 13 del ERP. Solo lectura. Si
+    el ERP no responde devuelve lo que haya en caché (o {}): nunca lanza, la
+    tabla cae a la fecha de registro."""
+    skus = sorted({(s or "").strip() for s in (skus or []) if (s or "").strip()})
+    ahora = time.time()
+    faltan = [s for s in skus
+              if s not in _INC_GRI_CACHE or (ahora - _INC_GRI_CACHE[s][0]) >= _INC_GRI_TTL]
+    if faltan:
+        try:
+            filas = _random_sql_query(
+                "SELECT LTRIM(RTRIM(d.KOPRCT)) AS sku, LTRIM(RTRIM(e.NUDO)) AS nudo, "
+                "       e.FEEMDO AS fecha, d.CAPRCO1 AS cant "
+                "  FROM MAEDDO d JOIN MAEEDO e ON e.IDMAEEDO = d.IDMAEEDO "
+                " WHERE e.TIDO = 'GRI' "
+                "   AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO') "
+                "   AND LTRIM(RTRIM(COALESCE(d.BOSULIDO, ''))) = %s "
+                "   AND LTRIM(RTRIM(d.KOPRCT)) IN (" + ",".join(["%s"] * len(faltan)) + ") "
+                " ORDER BY e.FEEMDO, e.NUDO",
+                tuple([INC_BODEGA_ERP] + faltan), max_rows=5000)
+        except Exception as _e:
+            print(f"[incidencias GRI] ERP no disponible: {_e}", flush=True)
+            filas = None
+        if filas is not None:
+            nuevo = {s: [] for s in faltan}
+            for f in filas:
+                try:
+                    fecha = f["fecha"].strftime("%Y-%m-%d") if hasattr(f["fecha"], "strftime") else str(f["fecha"])[:10]
+                    nuevo.setdefault((f.get("sku") or "").strip(), []).append(
+                        (fecha, (f.get("nudo") or "").strip(), int(float(f.get("cant") or 0))))
+                except Exception:
+                    continue
+            for s, lista in nuevo.items():
+                _INC_GRI_CACHE[s] = (ahora, lista)
+    return {s: _INC_GRI_CACHE[s][1] for s in skus if s in _INC_GRI_CACHE}
+
+
+def _inc_orden_ua(r):
+    """Clave para ordenar UA por su número (UA1007932 < UA1007934), luego id."""
+    m = re.search(r"(\d+)", (r.get("recomendacion") or ""))
+    return (int(m.group(1)) if m else 10 ** 12, r.get("id") or 0)
+
+
+def _inc_emparejar_gri(hermanas, unidades):
+    """PURA (testeable sin red). `hermanas`: incidencias ABIERTAS de un mismo SKU
+    (dicts con id/recomendacion/cantidad). `unidades`: [(fecha, nudo, cant)] de
+    las GRI en orden cronológico. Devuelve {id_incidencia: (fecha, nudo)}.
+
+    Supuestos (los de Daniel + FIFO): lo que hoy sigue en la bodega es lo MÁS
+    RECIENTE que entró; la UA de número más bajo va con la GRI más antigua de
+    esas. Si hay menos unidades de GRI que unidades en incidencia el emparejamiento
+    sería adivinar: no se asigna nada (la tabla usa la fecha de registro)."""
+    cola = []
+    for fecha, nudo, cant in unidades:
+        cola.extend([(fecha, nudo)] * max(0, int(cant or 0)))
+    orden = sorted(hermanas, key=_inc_orden_ua)
+    necesarias = sum(max(1, int(r.get("cantidad") or 1)) for r in orden)
+    if not orden or len(cola) < necesarias:
+        return {}
+    vigentes = cola[len(cola) - necesarias:]
+    out, i = {}, 0
+    for r in orden:
+        n = max(1, int(r.get("cantidad") or 1))
+        out[r["id"]] = vigentes[i]
+        i += n
+    return out
+
+
+def _inc_anotar_ingreso(rows):
+    """Agrega a cada fila ingreso_fecha / ingreso_origen ('manual' | 'gri' |
+    'registro') / ingreso_gri: la base de "Días en bodega". Manual gana; si no,
+    la GRI del ERP; si no, cuándo se registró la incidencia."""
+    skus = sorted({(r.get("sku") or "").strip() for r in rows if (r.get("sku") or "").strip()})
+    asignadas = {}
+    if skus:
+        try:
+            hermanas = mysql_fetchall(
+                "SELECT id, sku, recomendacion, cantidad FROM mant_incidencias "
+                " WHERE estado='abierta' AND COALESCE(eliminada,0)=0 AND sku IN ("
+                + ",".join(["%s"] * len(skus)) + ")", tuple(skus)) or []
+            gri = _erp_gri_b13_por_sku(skus)
+            por_sku = {}
+            for h in hermanas:
+                por_sku.setdefault((h.get("sku") or "").strip(), []).append(dict(h))
+            for sku, lst in por_sku.items():
+                asignadas.update(_inc_emparejar_gri(lst, gri.get(sku) or []))
+        except Exception as _e:
+            print(f"[incidencias antigüedad] {_e}", flush=True)
+    for r in rows:
+        if r.get("fecha_ingreso"):
+            r["ingreso_fecha"], r["ingreso_origen"], r["ingreso_gri"] = r["fecha_ingreso"], "manual", None
+        elif r.get("id") in asignadas:
+            fecha, nudo = asignadas[r["id"]]
+            r["ingreso_fecha"], r["ingreso_origen"], r["ingreso_gri"] = fecha, "gri", (nudo.lstrip("0") or nudo)
+        else:
+            r["ingreso_fecha"] = (r.get("created_at") or "")[:10] or None
+            r["ingreso_origen"], r["ingreso_gri"] = "registro", None
+    return rows
+
+
 _INC_COLUMNAS_ORDEN = {
     "ua": "recomendacion", "sku": "sku", "descripcion": "descripcion",
     "cantidad": "cantidad", "motivo": "motivo",
     "estado": "estado", "fecha_resolucion": "fecha_resolucion",
     "created_at": "created_at",
+    # "dias" (Días en bodega) depende de la GRI del ERP, que no está en la
+    # tabla: se ordena en Python en el listado. Acá solo evita el default.
+    "dias": "created_at",
 }
 # 🔧 2026-09-26 (revisión post-merge, Daniel: "pon filtro en TODAS las
 # columnas de la tabla principal que tengan dato filtrable"). Los estados
@@ -64797,13 +64914,25 @@ def mant_api_incidencias_list():
         cur.execute(f"SELECT COUNT(*) AS n FROM mant_incidencias {where_sql}", params)
         total = (cur.fetchone() or {"n": 0})["n"]
         offset = (page - 1) * page_size
-        cur.execute(
-            f"""SELECT * FROM mant_incidencias {where_sql}
-                ORDER BY {order_sql}
-                LIMIT %s OFFSET %s""",
-            params + [page_size, offset],
-        )
-        rows = [_mant_incidencia_row(r) for r in cur.fetchall()]
+        if (request.args.get("order_by") or "").strip() == "dias":
+            # 🔧 2026-09-30 (Daniel: "atacar también por antigüedad en la
+            # bodega"): la antigüedad sale de la GRI del ERP, no de una
+            # columna -- se trae lo que cumple el filtro (son pocas decenas),
+            # se anota, se ordena por la fecha de ingreso y recién ahí se
+            # pagina. "DESC" = más días primero (fecha más antigua primero).
+            cur.execute(f"SELECT * FROM mant_incidencias {where_sql} ORDER BY created_at DESC", params)
+            todas = _inc_anotar_ingreso([_mant_incidencia_row(r) for r in cur.fetchall()])
+            todas.sort(key=lambda r: (r.get("ingreso_fecha") or "9999-12-31", r.get("id") or 0),
+                       reverse=(order_dir == "ASC"))
+            rows = todas[offset:offset + page_size]
+        else:
+            cur.execute(
+                f"""SELECT * FROM mant_incidencias {where_sql}
+                    ORDER BY {order_sql}
+                    LIMIT %s OFFSET %s""",
+                params + [page_size, offset],
+            )
+            rows = _inc_anotar_ingreso([_mant_incidencia_row(r) for r in cur.fetchall()])
 
         # Foto principal por incidencia (miniatura en la tabla, Daniel
         # 2026-09-26: "mostrar en la tabla una miniatura de la foto

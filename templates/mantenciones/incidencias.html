@@ -316,7 +316,7 @@
               <label class="form-label">Fecha de ingreso a bodega
                 <span class="text-muted" style="font-weight:400">(GRI, opcional)</span></label>
               <input type="date" class="form-control" id="incFechaIngreso">
-              <div class="form-text">Si no la sabes, se usa la fecha en que se registró esta incidencia.</div>
+              <div class="form-text">Si la dejas vacía se usa la fecha de la GRI del ERP (si se encuentra) o, si no, la del registro.</div>
             </div>
             {#- 🔧 2026-09-26 (Daniel: "el tipo de repuesto se puede asociar de
                 la bodega de repuestos... hacerlo más interactivo"): motor
@@ -1000,21 +1000,38 @@
   // incidencias"). `fecha_ingreso` es opcional (GRI); si no se cargó, se
   // usa `created_at` (cuándo se registró la incidencia acá) como
   // respaldo -- nunca queda la celda vacía por falta del dato ideal.
+  // 🔧 2026-09-30 (Daniel: "se ingresaron con GRI 1860 26-09-2024 y la otra
+  // con GRI 1923 14-11-2024... dice que todo tiene 58 días y quiero atacar
+  // también por antigüedad en la bodega"). La base de los días ya NO es solo
+  // cuándo se registró la incidencia: 1) fecha de ingreso escrita a mano,
+  // 2) fecha de la GRI del ERP (la calcula el servidor, ver
+  // _inc_anotar_ingreso en app.py), 3) cuándo se registró acá.
   function incDias(r){
-    var base = r.fecha_ingreso || (r.created_at ? r.created_at.slice(0, 10) : null);
+    var base = r.ingreso_fecha || r.fecha_ingreso || (r.created_at ? r.created_at.slice(0, 10) : null);
     if(!base) return null;
     var dias = Math.floor((Date.now() - new Date(base + 'T00:00:00').getTime()) / 86400000);
     if(isNaN(dias) || dias < 0) return null;
-    return {dias: dias, base: base, gri: !!r.fecha_ingreso};
+    return {dias: dias, base: base, gri: r.ingreso_gri || null,
+            origen: r.ingreso_origen || (r.fecha_ingreso ? 'manual' : 'registro')};
   }
 
-  // 🎨 2026-09-30: semáforo de la fila (borde izquierdo, igual que Retiros)
-  // por días en bodega -- mismos cortes que ya pintaban la columna: rojo
-  // desde 30 días, ámbar desde 14, verde bajo 14.
+  // 🎨 Semáforo de la fila (borde izquierdo, igual que Retiros) por antigüedad.
+  // Cortes elegidos por Daniel (2026-09-30): verde bajo 90 días, ámbar desde
+  // 90, rojo desde 180 (medio año). Los de 14/30 días quedaban todos en rojo
+  // ahora que la antigüedad se cuenta desde la GRI (meses y años).
   function incSemaforo(r){
     var x = incDias(r);
     if(!x) return 'gris';
-    return x.dias >= 30 ? 'rojo' : (x.dias >= 14 ? 'ambar' : 'verde');
+    return x.dias >= 180 ? 'rojo' : (x.dias >= 90 ? 'ambar' : 'verde');
+  }
+
+  // Texto de "de dónde sale esta fecha" -- visible en la celda, no solo en el
+  // tooltip (Daniel: "sería ideal indicar que la fecha está relacionada con
+  // la GRI").
+  function incOrigenTxt(x){
+    if(x.origen === 'gri') return '<i class="bi bi-receipt"></i>GRI N° ' + incEsc(x.gri) + ' · ' + fmtFecha(x.base);
+    if(x.origen === 'manual') return '<i class="bi bi-pencil"></i>Ingreso ' + fmtFecha(x.base) + ' (manual)';
+    return 'Sin GRI · registrada ' + fmtFecha(x.base);
   }
 
   function incDiasBodegaCelda(r){
@@ -1022,9 +1039,13 @@
     if(!x) return '<span class="rm-sub">—</span>';
     var niv = incSemaforo(r);
     var ico = niv === 'rojo' ? 'exclamation-octagon-fill' : (niv === 'ambar' ? 'clock-fill' : 'calendar-check');
+    var tip = x.origen === 'gri'
+      ? 'Fecha de emisión de la GRI N° ' + x.gri + ' en el ERP Random (bodega 13). El ERP no guarda la UA: se empareja por orden -- la UA de número más bajo con la GRI más antigua vigente. Si no corresponde, escribe la fecha de ingreso a mano en la incidencia.'
+      : (x.origen === 'manual' ? 'Fecha de ingreso escrita a mano en la incidencia.'
+                               : 'No se encontró la GRI en el ERP: se cuenta desde que se registró la incidencia.');
     return '<span class="rm-pill '+niv+'" style="margin-top:0"><i class="bi bi-'+ico+'"></i>'
       + x.dias+' día'+(x.dias===1?'':'s')+'</span>'
-      + '<div class="rm-sub">'+(x.gri ? 'Ingreso GRI ' : 'Registrada ')+fmtFecha(x.base)+'</div>';
+      + '<div class="rm-sub" title="'+incEsc(tip)+'">'+incOrigenTxt(x)+'</div>';
   }
 
   // Fechas de auditoría (created_at/updated_at): MySQL las guarda en UTC --
@@ -1080,7 +1101,11 @@
       : '<p>'+(r.req_repuesto === 'no' ? 'No requiere repuesto' : '<span class="rm-sub">Sin definir</span>')+'</p>';
     var reg = '<p><b>Creada:</b> '+incFmtChile(r.created_at)+(r.created_by ? ' · '+incEsc(r.created_by) : '')+'</p>'
       + (r.updated_by ? '<p><b>Última edición:</b> '+incFmtChile(r.updated_at)+' · '+incEsc(r.updated_by)+'</p>' : '')
-      + (x ? '<p><b>En bodega:</b> '+x.dias+' día'+(x.dias===1?'':'s')+(x.gri ? ' (desde la GRI)' : ' (desde el registro)')+'</p>' : '');
+      + (x ? '<p><b>En bodega:</b> '+x.dias+' día'+(x.dias===1?'':'s')+'</p>'
+        + '<p><b>Desde:</b> '+(x.origen === 'gri'
+            ? 'GRI N° '+incEsc(x.gri)+' del '+fmtFecha(x.base)+' <span class="rm-sub">(emparejada por orden de UA)</span>'
+            : (x.origen === 'manual' ? 'ingreso escrito a mano el '+fmtFecha(x.base)
+                                     : 'el registro en el sistema, '+fmtFecha(x.base)+' <span class="rm-sub">(no se encontró la GRI)</span>'))+'</p>' : '');
     return '<tr class="rm-detail" hidden><td colspan="'+ncols+'"><div class="rm-panels">'
       + panel('chat-square-quote', 'Motivo', p(r.motivo), true)
       + panel('lightbulb', 'Sugerencia', p(r.sugerencia))
@@ -1153,7 +1178,8 @@
       + incTh('UA', 'ua') + incTh('SKU', 'sku') + incTh('Descripción', 'descripcion')
       + incTh('Cant.', 'cantidad') + incTh('Motivo', 'motivo') + '<th>Repuesto</th>'
       + '<th>Ubicación</th>'
-      + '<th title="Fecha de ingreso a bodega (GRI) o, si no se cargó, fecha de registro">Días en bodega</th>'
+      + incTh('<span title="Días desde la fecha de la GRI del ERP (ingreso a la bodega 13). Clic para ordenar: primero las más antiguas.">Días en bodega</span>'
+          + '<small style="display:block;font-size:.68rem;font-weight:600;opacity:.75;letter-spacing:.02em">desde la GRI</small>', 'dias')
       + incTh('Fecha resolución', 'fecha_resolucion')
       + '<th class="text-end rm-c-acc">Acción</th></tr></thead>';
   }
@@ -1165,7 +1191,9 @@
         if(incOrderBy === key){
           incOrderDir = (incOrderDir === 'asc') ? 'desc' : 'asc';
         } else {
-          incOrderBy = key; incOrderDir = 'asc';
+          // Antigüedad: el primer clic muestra lo más viejo primero (lo que
+          // Daniel quiere atacar); el segundo lo invierte.
+          incOrderBy = key; incOrderDir = (key === 'dias') ? 'desc' : 'asc';
         }
         incPage = 1; cargar();
       });
