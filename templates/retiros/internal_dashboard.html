@@ -11,7 +11,7 @@
       <i class="bi bi-plus-lg me-1"></i>Nuevo retiro interno
     </button>
     <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-box-arrow-up-right me-1"></i>Vista publica</a>
-    {% if permissions.admin %}
+    {% if permissions.admin or permissions.ret_horarios %}
     <button class="btn btn-sm btn-ilus" data-bs-toggle="modal" data-bs-target="#settingsModal"><i class="bi bi-gear me-1"></i>Horarios y alertas</button>
     {% endif %}
   </div>
@@ -1697,7 +1697,7 @@ select.nri-field-locked{pointer-events:none}
     <div class="ilus-card p-3">
       <div class="fw-bold mb-2"><i class="bi bi-broadcast me-1 text-danger"></i>Comunicacion operativa</div>
       <p class="small text-muted">Usa la alerta publica para avisos generales como cierre anticipado. Para clientes especificos, entra a la ficha del retiro y usa Comunicacion rapida.</p>
-      {% if permissions.admin %}
+      {% if permissions.admin or permissions.ret_horarios %}
       <button class="btn btn-sm btn-ilus w-100" data-bs-toggle="modal" data-bs-target="#settingsModal"><i class="bi bi-megaphone me-1"></i>Editar alerta publica</button>
       {% endif %}
     </div>
@@ -1847,7 +1847,7 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
 </script>
 {% endif %}
 
-{% if permissions.admin %}
+{% if permissions.admin or permissions.ret_horarios %}
 {# ════════════════════════════════════════════════════════════════════════════════
    MODAL: HORARIOS, FERIADOS Y ALERTAS (Daniel 2026-09-30)
    Rehecho con el formato EXACTO de "Nuevo retiro interno" (regla formal de Daniel

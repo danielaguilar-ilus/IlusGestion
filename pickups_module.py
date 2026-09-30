@@ -4,6 +4,7 @@ import secrets
 import threading
 import time
 from datetime import datetime, timedelta
+from functools import wraps
 
 from flask import flash, has_request_context, jsonify, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.utils import secure_filename
@@ -5334,7 +5335,7 @@ def register_pickup_routes(app, ctx):
         de responsables de Horarios y alertas. Al resto de las pantallas no se les entrega el
         correo de los compañeros."""
         try:
-            if request.args.get("con_email") and (g.permissions.get("superadmin") or g.permissions.get("admin")):
+            if request.args.get("con_email") and (g.permissions.get("superadmin") or g.permissions.get("admin") or g.permissions.get("ret_horarios")):
                 u = (fila.get("username") or "").strip().lower()
                 if u and is_valid_email(u):
                     return {"email": u}
@@ -11278,8 +11279,21 @@ def register_pickup_routes(app, ctx):
         flash("Mensaje enviado por los canales disponibles.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 
+    def _require_horarios(view):
+        """Horarios y alertas: permiso propio `ret_horarios` (Roles → Retiros o Permisos
+        individuales) o admin, como hasta ahora (2026-09-30)."""
+        con_admin = require_permission("admin")(view)
+        con_horarios = require_permission("ret_horarios")(view)
+
+        @wraps(view)
+        def wrapped(*a, **kw):
+            if (getattr(g, "permissions", None) or {}).get("ret_horarios"):
+                return con_horarios(*a, **kw)
+            return con_admin(*a, **kw)
+        return wrapped
+
     @app.route("/retiros/settings", methods=["POST"])
-    @require_permission("admin")
+    @_require_horarios
     def pickup_settings_save():
         data = request.form
         # notify_emails ya no se toca (inerte desde el 14-09; los avisos por correo usan
@@ -11514,7 +11528,7 @@ def register_pickup_routes(app, ctx):
                  cur["motivo"][:200], usuario))
 
     @app.route("/retiros/excepciones", methods=["POST"])
-    @require_permission("admin")
+    @_require_horarios
     def pickup_excepciones_save():
         body = request.get_json(silent=True) or {}
         accion = (body.get("accion") or "").strip()
@@ -11651,7 +11665,7 @@ def register_pickup_routes(app, ctx):
 
 
     @app.route("/retiros/bloqueos/nuevo", methods=["POST"])
-    @require_permission("admin")
+    @_require_horarios
     def pickup_blocks_new():
         """Crea un bloqueo de día/franja en pickup_blocks."""
         fecha = (request.form.get("fecha") or "").strip()
@@ -11706,7 +11720,7 @@ def register_pickup_routes(app, ctx):
         return out
 
     @app.route("/retiros/bloqueos/batch", methods=["POST"])
-    @require_permission("admin")
+    @_require_horarios
     def pickup_blocks_new_batch():
         """Crea múltiples bloqueos en una sola operación.
 
@@ -11793,7 +11807,7 @@ def register_pickup_routes(app, ctx):
 
 
     @app.route("/retiros/bloqueos/<int:bid>/eliminar", methods=["POST"])
-    @require_permission("admin")
+    @_require_horarios
     def pickup_blocks_delete(bid):
         """Elimina un bloqueo."""
         try:

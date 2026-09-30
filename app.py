@@ -4771,6 +4771,14 @@ PERMS_KEYS = (
     # matriz no mapeaba a NADA (chip muerto). Caso usuaria transporte
     # 2026-06-11: tenía Carga masiva ✓ pero rebotaba por no tener Imprimir.
     "masivo",
+    # ret_horarios — "Horarios y alertas" de Retiros (feriados, cierres, salida
+    # temprano, responsables por correo). Aditivo 2026-09-30, Daniel: "no tengo cómo
+    # activar esto con los roles... a Juan Espinosa no le sale". Hasta hoy el botón, el
+    # modal y sus 5 endpoints exigían "admin" (Administración → usuarios/roles), que
+    # un jefe de Retiros no tiene. Los gates aceptan admin OR ret_horarios, así que
+    # este flag solo puede SUMAR acceso. Se enciende por rol (Roles → Retiros) o por
+    # persona (Permisos individuales).
+    "ret_horarios",
     # tk_* — flags del módulo Tickets (aditivo 2026-07-12). El gate
     # _tickets_required sigue aceptando "mantenciones" también, así que
     # estos flags solo pueden SUMAR acceso, nunca quitarlo.
@@ -5085,6 +5093,7 @@ def _build_perms_from_matrix(role):
         or eti.get("eliminar") or eti.get("imprimir") or eti.get("masivo")
     )
     base["retiros"]        = bool(ret.get("ver"))
+    base["ret_horarios"]   = bool(ret.get("horarios"))
     base["mantenciones"]   = bool(man.get("ver"))
     # Crear OT de trabajo interno sin cliente (aditivo 2026-08-26). Ver el
     # comentario de "mant_ot_interna" en PERMS_KEYS: el gate real deja pasar
@@ -13444,7 +13453,7 @@ PERMISSIONS_MATRIX = {
                                    "reagendar", "reasignar_tecnico",
                                    "ot2_tecnico", "taller"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
-                       "acciones":["ver","gestionar","monitor","marketing"]},
+                       "acciones":["ver","gestionar","monitor","marketing","horarios"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
                        "acciones":["ver","cubicador","asignar","manifiestos","couriers",
                                    "eliminar","cambiar_estado"]},
@@ -13553,6 +13562,8 @@ PERMISSIONS_META = {
         "gestionar": {"label": "Gestionar retiros",   "tipo": "submodulo", "icon": "bi-tools"},
         "monitor":   {"label": "Dashboard avanzado",  "tipo": "submodulo", "icon": "bi-speedometer"},
         "marketing": {"label": "Marketing de retiros","tipo": "submodulo", "icon": "bi-megaphone"},
+        # Aditivo 2026-09-30: ver "ret_horarios" en PERMS_KEYS.
+        "horarios":  {"label": "Horarios y alertas (feriados, cierres, responsables)", "tipo": "bloqueo", "icon": "bi-gear"},
     },
     "transporte": {
         "ver":         {"label": "Monitor transporte","tipo": "submodulo", "icon": "bi-truck"},
