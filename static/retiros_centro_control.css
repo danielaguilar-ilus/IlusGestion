@@ -171,7 +171,7 @@
   .cc-hd.is-hoy::after{content:"";width:7px;height:7px;padding:0;border-radius:50%}
   .cc-hc{height:30px;border-radius:4px;font-size:.72rem}
   /* Textos y botones de apoyo que quedaban muy chicos para leer o tocar en el celular */
-  .cc-al-m,.cc-legend,.cc-th,.cc-st span{font-size:.78rem}
+  .cc-al-m,.cc-legend,.cc-th{font-size:.78rem}
   .cc-seg button{min-height:44px;padding:5px 14px;font-size:.85rem}
 }
 @media (prefers-reduced-motion:reduce){
