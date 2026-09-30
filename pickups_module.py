@@ -1933,6 +1933,9 @@ def register_pickup_routes(app, ctx):
             # Tabla de productos del retiro (Daniel 2026-06-17). Vacía si el
             # retiro aún no tiene documentos/productos asociados.
             "productos_html":        _pickup_productos_html(req),
+            # Nota que el operador escribe en "Mensaje al cliente" al proponer fecha
+            # (texto plano; notify() arma su bloque HTML escapado).
+            "mensaje_propuesta":     ((proposal or {}).get("message") or "").strip(),
         }
 
 
@@ -2028,6 +2031,20 @@ def register_pickup_routes(app, ctx):
         variables_html = dict(variables)
         for _k_nt in ("cliente", "persona_retira", "documento"):
             variables_html[_k_nt] = _html_nt.escape(str(variables.get(_k_nt) or ""), quote=True)
+        # Prueba de tráfico 2026-09-29: el "Mensaje al cliente" que escribe el operador
+        # al proponer fecha NO llegaba en el correo (la plantilla de BD no tenía dónde
+        # ponerlo). Bloque "Mensaje de ILUS", escapado; {{mensaje_propuesta}} en el editor
+        # lo ubica donde se quiera, y si la plantilla no lo trae se inserta antes del botón.
+        _msg_prop = variables.get("mensaje_propuesta") or ""
+        variables_html["mensaje_propuesta"] = (
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f9fafb;'
+            'border:1px solid #e5e7eb;border-left:4px solid #0a0a0a;border-radius:10px;margin:0 0 18px">'
+            '<tr><td style="padding:14px 18px;font-size:14px;color:#1f2937;line-height:1.6">'
+            '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.07em;'
+            'font-weight:700;margin-bottom:6px">Mensaje de ILUS</div>'
+            + _html_nt.escape(_msg_prop, quote=True).replace("\n", "<br>")
+            + '</td></tr></table>'
+        ) if (kind == "proposal" and _msg_prop) else ""
         estado = _KIND_TO_ESTADO.get(kind)
 
         # ── CALENDARIO (.ics) — Daniel 2026-06-17 ──────────────────────
@@ -2053,6 +2070,11 @@ def register_pickup_routes(app, ctx):
                 # Plantilla configurada en BD: usar con variables interpoladas
                 asunto = _apply_template(tpl_email.get("asunto") or "", variables)
                 cuerpo = _apply_template(tpl_email.get("cuerpo") or "", variables_html)
+                _bloque_msg = variables_html.get("mensaje_propuesta") or ""
+                if _bloque_msg and "mensaje_propuesta" not in (tpl_email.get("cuerpo") or ""):
+                    _i_btn = cuerpo.find(follow_url)
+                    _i_tbl = cuerpo.rfind("<table", 0, _i_btn) if _i_btn != -1 else -1
+                    cuerpo = (cuerpo[:_i_tbl] + _bloque_msg + cuerpo[_i_tbl:]) if _i_tbl != -1 else (cuerpo + _bloque_msg)
                 # FIX 2026-06-19 (Daniel: "los correos me llegan SIN tracking, un
                 # perfil distinto al que enviamos"). CAUSA RAÍZ: si la plantilla de
                 # BD fue editada a mano (o quedó vieja) su `cuerpo` NO trae el
