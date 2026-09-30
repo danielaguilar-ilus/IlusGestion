@@ -1848,279 +1848,417 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
 {% endif %}
 
 {% if permissions.admin %}
-{# 2026-06-10 — Modal reorganizado en secciones tituladas (Bodega /
-   Horario y dias / Feriados y cierres / Equipo y alertas). TODOS los
-   names se mantienen intactos: warehouse_name, warehouse_addr, maps_url,
-   open_time, close_time, work_days, holidays, alert_enabled, alert_title,
-   alert_message. (notify_emails salió del formulario el 2026-09-30: estaba
-   inerte desde el 14-09; el dato guardado en BD no se toca.)
-   2026-09-30 (Daniel: "hazle una reestructuración a Horarios y Alertas... una
-   inteligencia de aplicación de los feriados, bien controlable por el front"):
-   + salida temprano automática la víspera de feriado,
-   + Calendario de excepciones (feriados con nombre, salidas temprano, cierres,
-     bloqueos) con efecto inmediato — rutas /retiros/api/excepciones y /retiros/excepciones,
-   + lista de responsables que reciben un correo por cada gestión (aviso_equipo_emails).
-   modal-dialog-scrollable → header/footer fijos (sticky) y cuerpo con scroll. #}
+{# ════════════════════════════════════════════════════════════════════════════════
+   MODAL: HORARIOS, FERIADOS Y ALERTAS (Daniel 2026-09-30)
+   Rehecho con el formato EXACTO de "Nuevo retiro interno" (regla formal de Daniel
+   2026-09-27: "todos los modales con ese formato, con tarjetas, con semáforo en la
+   tarjeta y en los objetos de adentro, y con información suficiente para que el
+   usuario no se equivoque"). Se REUTILIZAN las clases .nri-* que ya define este
+   mismo archivo (encabezado negro con progreso, .nri-step-card / .nri-step-circle con
+   semáforo rojo→ámbar→verde, .nri-step-estado, .nri-aviso, .nri-add-doc,
+   .nri-retira-opt, .nri-erp-btn, .nri-doc-card, .nri-pill…) y solo se agrega .hz-*
+   para lo que no existía: los objetos ENUMERADOS con su propio semáforo (.hz-obj) y
+   las tarjetas de día especial (.hz-card).
+   Names del formulario intactos: warehouse_name, warehouse_addr, maps_url, open_time,
+   close_time, work_days, holidays, web_responsable_user_id, alert_enabled, alert_title,
+   alert_message, aviso_equipo_emails. (notify_emails salió del formulario: estaba inerte
+   desde el 14-09; el dato guardado en la BD no se toca.)
+   El paso 3 (feriados y cierres) se aplica AL INSTANTE por fetch — rutas
+   /retiros/api/excepciones y /retiros/excepciones —; el resto va con "Guardar configuración".
+   ════════════════════════════════════════════════════════════════════════════════ #}
 <style>
-  #settingsModal .settings-section-title{
-    font-weight:700;font-size:.78rem;text-transform:uppercase;
-    letter-spacing:.05em;color:var(--ilus-red);
-    border-bottom:2px solid #f3f4f6;padding-bottom:6px;margin-bottom:4px;
-  }
-  /* Días como pills clicables (checkbox btn-check oculto + label pill) */
-  #settingsModal .day-pill{
-    display:inline-flex;align-items:center;justify-content:center;
-    min-width:54px;min-height:40px;padding:6px 14px;margin:0;
-    border:1.5px solid #d1d5db;border-radius:999px;background:#fff;
-    font-weight:600;font-size:.86rem;color:#374151;
-    cursor:pointer;user-select:none;transition:all .12s ease;
-  }
-  #settingsModal .day-pill:hover{border-color:#9ca3af;background:#f9fafb}
-  #settingsModal .btn-check:checked + .day-pill{
-    background:var(--ilus-red);border-color:var(--ilus-red);color:#fff;
-  }
-  #settingsModal .btn-check:focus-visible + .day-pill{outline:2px solid var(--ilus-black);outline-offset:2px}
-  @media (max-width:768px){
-    #settingsModal .day-pill{min-height:44px;min-width:48px}  /* touch ≥44px */
-  }
-  /* ── 2026-09-30: calendario de excepciones + responsables (formato Retiros, REGLA #15) ── */
-  #settingsModal .xc-nota{font-size:.82rem;color:#6b7280;margin:4px 0 10px}
-  #settingsModal .xc-vispera{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 14px;
-    background:#fffbeb;border:1px solid #fde68a;border-radius:12px}
-  #settingsModal .xc-vispera .form-select{width:auto;min-height:40px}
-  #settingsModal .xc-lista{display:flex;flex-direction:column;gap:8px;margin:10px 0}
-  #settingsModal .xc-row{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:12px;align-items:center;
-    padding:10px 12px;background:#fff;border:1px solid #e5e7eb;border-left:5px solid #9ca3af;border-radius:12px}
-  #settingsModal .xc-row.t-feriado{border-left-color:#dc2626;background:#fef2f2}
-  #settingsModal .xc-row.t-feriado.abierto{border-left-color:#16a34a;background:#f0fdf4}
-  #settingsModal .xc-row.t-vispera,#settingsModal .xc-row.t-temprano{border-left-color:#f59e0b;background:#fffbeb}
-  #settingsModal .xc-row.t-vispera.apagada{border-left-color:#9ca3af;background:#f9fafb}
-  #settingsModal .xc-row.t-cierre{border-left-color:#dc2626;background:#fef2f2}
-  #settingsModal .xc-row.t-bloqueo{border-left-color:#3b82f6;background:#eff6ff}
-  #settingsModal .xc-fecha{font-weight:800;font-size:.86rem;color:#0a0a0a;line-height:1.2}
-  #settingsModal .xc-fecha small{display:block;font-weight:600;color:#6b7280;font-size:.72rem;text-transform:capitalize}
-  #settingsModal .xc-titulo{font-weight:700;font-size:.94rem;color:#0a0a0a;overflow-wrap:anywhere}
-  #settingsModal .xc-sub{font-size:.8rem;color:#4b5563;margin-top:2px;overflow-wrap:anywhere}
-  #settingsModal .xc-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.72rem;font-weight:800;margin-right:6px}
-  #settingsModal .xc-pill.rojo{background:#fee2e2;color:#991b1b}
-  #settingsModal .xc-pill.verde{background:#dcfce7;color:#166534}
-  #settingsModal .xc-pill.ambar{background:#fef3c7;color:#92400e}
-  #settingsModal .xc-pill.gris{background:#e5e7eb;color:#374151}
-  #settingsModal .xc-pill.azul{background:#dbeafe;color:#1e40af}
-  #settingsModal .xc-acc{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
-  #settingsModal .xc-acc .form-select{width:auto;min-height:38px;font-size:.84rem}
-  #settingsModal .xc-acc .btn{min-height:38px}
-  #settingsModal .xc-vacio{padding:18px;text-align:center;color:#6b7280;background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px}
-  #settingsModal .xc-add{display:grid;grid-template-columns:170px 190px 150px minmax(0,1fr) auto;gap:8px;align-items:end;
-    padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px}
-  #settingsModal .xc-add label{font-size:.72rem;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:2px}
-  #settingsModal .xc-aviso{padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;
-    font-size:.82rem;color:#1e3a8a;margin-bottom:10px}
-  #settingsModal .xc-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;min-height:38px}
-  #settingsModal .xc-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;background:#f3f4f6;
-    border:1px solid #e5e7eb;border-radius:999px;font-size:.86rem;font-weight:600;color:#111827}
-  #settingsModal .xc-chip small{color:#6b7280;font-weight:500}
-  #settingsModal .xc-chip button{border:0;background:#e5e7eb;border-radius:50%;width:26px;height:26px;line-height:1;
-    font-weight:800;color:#374151;cursor:pointer}
-  #settingsModal .xc-chip button:hover{background:#dc2626;color:#fff}
-  #settingsModal .xc-chips .xc-vacio{padding:8px 12px;width:100%;text-align:left}
-  @media (max-width:991.98px){
-    #settingsModal .xc-row{grid-template-columns:1fr}
-    #settingsModal .xc-acc{justify-content:flex-start}
-    #settingsModal .xc-add{grid-template-columns:1fr 1fr}
-    #settingsModal .xc-add .xc-add-motivo,#settingsModal .xc-add .btn{grid-column:1/-1}
-  }
+/* ── Legibilidad: misma que el modal de Nuevo retiro interno (Daniel 2026-09-23: "la persona
+   que hará los retiros es media ciega") — letra grande, gris oscuro, controles de 44 px ── */
+#settingsModal .modal-body{font-size:1rem}
+#settingsModal .form-label{font-size:.92rem;color:#111827;font-weight:700;margin:0}
+#settingsModal .form-control,#settingsModal .form-select{font-size:1rem;min-height:44px;color:#0a0a0a;border-color:#9ca3af}
+#settingsModal .form-control::placeholder{color:#6b7280}
+#settingsModal textarea.form-control{min-height:84px}
+#settingsModal .text-muted{color:#4b5563!important}
+#settingsModal .nri-step-titles .nri-step-title{font-size:1.12rem}
+#settingsModal .nri-step-titles .nri-step-sub{font-size:.88rem;color:#374151}
+#settingsModal .nri-step-circle-label{font-size:.66rem}
+#settingsModal .nri-step-circle{width:42px;height:42px;font-size:1.15rem}
+#settingsModal .nri-step-estado{font-size:.88rem}
+#settingsModal .nri-step-estado span{flex:1;min-width:0}   /* el texto queda junto a su ícono, también en celular */
+#settingsModal .nri-aviso{font-size:.88rem}
+#settingsModal .nri-aviso-btn{font-size:.82rem;min-height:40px}
+#settingsModal .nri-add-doc-txt strong{font-size:1.12rem}
+#settingsModal .nri-add-doc-txt small{font-size:.86rem;color:#374151}
+#settingsModal .nri-retira-txt strong{font-size:1.04rem}
+#settingsModal .nri-retira-txt small{font-size:.86rem;color:#374151}
+#settingsModal .nri-retira-opt.is-on .nri-retira-txt small{color:#166534}
+#settingsModal .nri-list-title{font-size:.82rem;color:#111827}
+#settingsModal .nri-doc-num{font-size:1.05rem}
+#settingsModal .nri-doc-num small{font-size:.74rem;color:#4b5563}
+#settingsModal .nri-doc-meta .ddate{font-size:.8rem;color:#4b5563}
+#settingsModal .nri-doc-meta .dcli{font-size:.98rem}
+#settingsModal .nri-doc-meta .dlin{font-size:.84rem;color:#374151}
+#settingsModal .nri-pill{font-size:.74rem}
+#settingsModal .nri-erp-btn{min-height:44px;font-size:.86rem}
+#settingsModal .modal-footer .btn{font-size:.95rem;min-height:46px;padding:.5rem 1.1rem}
+#hzGuardar.is-pending{opacity:.62;filter:saturate(.7)}
+/* Interruptores en verde (semáforo: encendido = verde) y más grandes */
+#settingsModal .form-switch .form-check-input{width:2.7em;height:1.45em;cursor:pointer}
+#settingsModal .form-check-input:checked{background-color:#16a34a;border-color:#16a34a}
+#settingsModal .form-check-input:focus{box-shadow:0 0 0 .25rem rgba(22,163,74,.25);border-color:#16a34a}
+/* Días como tarjetas-pill: seleccionado = verde (semáforo) */
+#settingsModal .day-pill{display:inline-flex;align-items:center;justify-content:center;min-width:60px;min-height:46px;padding:6px 14px;margin:0;
+  border:2px solid #d1d5db;border-radius:14px;background:#fff;font-weight:800;font-size:.95rem;color:#374151;cursor:pointer;user-select:none;transition:all .15s ease}
+#settingsModal .day-pill:hover{border-color:#9ca3af;background:#f9fafb}
+#settingsModal .btn-check:checked + .day-pill{background:#16a34a;border-color:#16a34a;color:#fff;box-shadow:0 8px 18px -12px rgba(22,163,74,.8)}
+#settingsModal .btn-check:focus-visible + .day-pill{outline:3px solid rgba(22,163,74,.3);outline-offset:2px}
+
+/* ── Objetos ENUMERADOS con su propio semáforo (regla 2026-09-27: "los objetos adentro
+   enumerados y el semáforo tanto de la tarjeta como de los objetos"). Gris = opcional/sin
+   definir, rojo = falta algo obligatorio, ámbar = con advertencia, verde = listo, azul = info. ── */
+#settingsModal .hz-obj{height:100%;padding:12px 14px 14px;background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;
+  transition:border-color .25s ease,background .25s ease,box-shadow .25s ease}
+#settingsModal .hz-obj-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+#settingsModal .hz-obj-num{position:relative;min-width:28px;height:28px;padding:0 6px;border-radius:999px;flex-shrink:0;background:#9ca3af;color:#fff;
+  display:inline-flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:900;letter-spacing:-.02em;
+  transition:background .25s ease,transform .25s ease}
+#settingsModal .hz-obj-num .chk{display:none;font-size:1rem}
+#settingsModal .hz-obj-estado{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:.8rem;font-weight:800;color:#6b7280;text-align:right}
+#settingsModal .hz-obj-estado:empty{display:none}
+#settingsModal .hz-obj.is-ok{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%)}
+#settingsModal .hz-obj.is-ok .hz-obj-num{background:#16a34a;transform:scale(1.06)}
+#settingsModal .hz-obj.is-ok .hz-obj-num .n{display:none}
+#settingsModal .hz-obj.is-ok .hz-obj-num .chk{display:block}
+#settingsModal .hz-obj.is-ok .hz-obj-estado{color:#15803d}
+#settingsModal .hz-obj.is-warn{border-color:#f59e0b;background:linear-gradient(180deg,#fffbeb 0%,#fff 70%)}
+#settingsModal .hz-obj.is-warn .hz-obj-num{background:#f59e0b}
+#settingsModal .hz-obj.is-warn .hz-obj-estado{color:#b45309}
+#settingsModal .hz-obj.is-bad{border-color:#fca5a5;background:linear-gradient(180deg,#fef2f2 0%,#fff 70%)}
+#settingsModal .hz-obj.is-bad .hz-obj-num{background:#dc2626}
+#settingsModal .hz-obj.is-bad .hz-obj-estado{color:#b91c1c}
+#settingsModal .hz-obj.is-info{border-color:#93c5fd;background:linear-gradient(180deg,#eff6ff 0%,#fff 70%)}
+#settingsModal .hz-obj.is-info .hz-obj-num{background:#3b82f6}
+#settingsModal .hz-obj.is-info .hz-obj-estado{color:#1d4ed8}
+#settingsModal .hz-obj .hz-help{margin-top:6px;font-size:.8rem;color:#4b5563;line-height:1.35}
+/* Tarjeta de día especial (misma gramática que .nri-doc-card) */
+#settingsModal .hz-card{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 14px;background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;
+  transition:border-color .2s ease,box-shadow .2s ease,background .2s ease}
+#settingsModal .hz-card:hover{box-shadow:0 4px 10px rgba(0,0,0,.05)}
+#settingsModal .hz-card.is-ok{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%)}
+#settingsModal .hz-card.is-warn{border-color:#f59e0b;background:linear-gradient(180deg,#fffbeb 0%,#fff 70%)}
+#settingsModal .hz-card.is-bad{border-color:#fca5a5;background:linear-gradient(180deg,#fef2f2 0%,#fff 70%)}
+#settingsModal .hz-card.is-info{border-color:#93c5fd;background:linear-gradient(180deg,#eff6ff 0%,#fff 70%)}
+#settingsModal .hz-card.is-opt{background:#f9fafb;border-style:dashed}
+#settingsModal .hz-card.is-ok .hz-obj-num{background:#16a34a}
+#settingsModal .hz-card.is-ok .hz-obj-num .n{display:none}
+#settingsModal .hz-card.is-ok .hz-obj-num .chk{display:block}
+#settingsModal .hz-card.is-warn .hz-obj-num{background:#f59e0b}
+#settingsModal .hz-card.is-bad .hz-obj-num{background:#dc2626}
+#settingsModal .hz-card.is-info .hz-obj-num{background:#3b82f6}
+#settingsModal .hz-card.is-ok .nri-doc-num{color:#15803d}
+#settingsModal .hz-card.is-warn .nri-doc-num{color:#b45309}
+#settingsModal .hz-card.is-info .nri-doc-num{color:#1d4ed8}
+#settingsModal .hz-card.is-opt .nri-doc-num{color:#6b7280}
+#settingsModal .hz-card .nri-doc-num{min-width:104px}
+#settingsModal .hz-acc{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-left:auto}
+#settingsModal .hz-acc .form-select{width:auto;min-height:44px}
+#settingsModal .hz-acc .form-switch{margin:0;display:flex;align-items:center;gap:8px;padding-left:0}
+#settingsModal .hz-acc .form-switch .form-check-input{margin:0;float:none}
+#settingsModal .hz-acc .form-switch span{font-size:.86rem;font-weight:800;color:#111827}
+/* Correos del equipo: etiquetas verdes que se quitan con × */
+#settingsModal .hz-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;min-height:44px}
+#settingsModal .hz-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 6px 6px 14px;background:#f0fdf4;border:1.5px solid #86efac;color:#166534;
+  border-radius:999px;font-size:.92rem;font-weight:700;max-width:100%}
+#settingsModal .hz-chip small{color:#4b7a5a;font-weight:600;overflow-wrap:anywhere}
+#settingsModal .hz-chip button{border:0;background:#dcfce7;color:#166534;border-radius:50%;width:32px;height:32px;line-height:1;font-weight:900;cursor:pointer;flex-shrink:0}
+#settingsModal .hz-chip button:hover{background:#dc2626;color:#fff}
+#settingsModal .hz-chips .hz-vacio{width:100%;padding:10px 14px;border:1.5px dashed #d1d5db;border-radius:12px;color:#4b5563;font-size:.9rem;background:#f9fafb}
+#settingsModal .hz-vacio-lista{padding:16px;text-align:center;color:#374151;background:#f0fdf4;border:1.5px solid #86efac;border-radius:12px;font-weight:700}
+@media(max-width:768px){
+  #settingsModal .modal-header{flex-wrap:wrap}
+  #settingsModal .hz-card{padding:12px}
+  #settingsModal .hz-card .nri-doc-num{min-width:0;width:auto}
+  #settingsModal .hz-card .nri-doc-meta{min-width:0;flex-basis:100%}
+  #settingsModal .hz-acc{margin-left:0;width:100%}
+  #settingsModal .hz-acc .form-select,#settingsModal .hz-acc .btn{flex:1}
+}
 </style>
-<div class="modal fade" id="settingsModal" tabindex="-1">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable"><form method="post" action="{{ url_for('pickup_settings_save') }}" class="modal-content">
+<div class="modal fade" id="settingsModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered"><form method="post" action="{{ url_for('pickup_settings_save') }}" class="modal-content" id="hzForm" style="border:2px solid var(--ilus-red);box-shadow:0 0 40px rgba(0,0,0,.25)">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header bg-dark text-white">
-      <h5 class="modal-title"><i class="bi bi-gear me-2" style="color:var(--ilus-red)"></i>Horarios, feriados y alertas</h5>
+    <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+      <h5 class="modal-title fw-bold"><i class="bi bi-gear me-2" style="color:var(--ilus-red)"></i>Horarios, feriados y alertas</h5>
+      {# Progreso global "N de 4 pasos listos" + avisos (lo pinta hzEvaluar(), mismo patrón de nriEvaluarPasos) #}
+      <div class="nri-progreso" id="hzProgreso" aria-live="polite">
+        <span id="hzProgresoTxt">0 de 4 pasos listos</span>
+        <span class="bar"><span id="hzProgresoBar"></span></span>
+        <span class="avisos" id="hzProgresoAvisos"></span>
+      </div>
       <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
     </div>
     <div class="modal-body">
-
-      {# ── Sección 1: Bodega ── #}
-      <div class="settings-section-title"><i class="bi bi-buildings me-1"></i>Bodega</div>
-      <div class="row g-3 mb-4">
-        <div class="col-md-6"><label class="form-label">Nombre bodega</label><input name="warehouse_name" class="form-control" value="{{ settings.warehouse_name }}"></div>
-        <div class="col-md-6"><label class="form-label">Direccion</label><input name="warehouse_addr" class="form-control" value="{{ settings.warehouse_addr }}"></div>
-        <div class="col-12"><label class="form-label">Link mapa</label><input name="maps_url" class="form-control" value="{{ settings.maps_url }}" placeholder="https://maps.google.com/..."></div>
+      <div class="alert d-flex align-items-center gap-2 mb-3" style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;font-size:.88rem">
+        <i class="bi bi-info-circle-fill" style="color:#2563eb"></i>
+        <div>Los pasos <strong>1, 2 y 4</strong> se guardan con <strong>Guardar configuración</strong>. El paso <strong>3</strong> (feriados y cierres) se aplica <strong>solo</strong>, en menos de un minuto: formulario público, calendario interno y propuestas.</div>
       </div>
 
-      {# ── Sección 2: Horario y días ── #}
-      <div class="settings-section-title"><i class="bi bi-clock me-1"></i>Horario y dias</div>
-      <div class="row g-3 mb-4">
-        <div class="col-6 col-md-3"><label class="form-label">Abre</label><input name="open_time" type="time" class="form-control" value="{{ settings.open_time|hm }}"></div>
-        <div class="col-6 col-md-3"><label class="form-label">Cierra</label><input name="close_time" type="time" class="form-control" value="{{ settings.close_time|hm }}"></div>
-        <div class="col-12">
-          <label class="form-label d-block">Dias habilitados</label>
-          <div class="d-flex flex-wrap gap-2">
-            {% for n,d in [(1,'Lun'),(2,'Mar'),(3,'Mie'),(4,'Jue'),(5,'Vie'),(6,'Sab'),(7,'Dom')] %}
-            <input class="btn-check" type="checkbox" id="wd_pill_{{ n }}" name="work_days" value="{{ n }}" {% if n|string in (settings.work_days or '') %}checked{% endif %} autocomplete="off">
-            <label class="day-pill" for="wd_pill_{{ n }}">{{ d }}</label>
-            {% endfor %}
+      {# ═══ PASO 1 · Bodega ═══ #}
+      <div class="nri-step-card" id="hzStep1">
+        <div class="nri-step-header">
+          <div class="nri-step-circle-wrap">
+            <span class="nri-step-circle-label">Paso 1</span>
+            <div class="nri-step-circle"><span class="nri-step-num-text">1</span><i class="bi bi-check-lg nri-step-check"></i></div>
+          </div>
+          <div class="nri-step-titles">
+            <div class="nri-step-title">Bodega</div>
+            <div class="nri-step-sub">Dónde retiran los clientes. Estos datos salen en los correos y en el formulario público.</div>
+            <div class="nri-step-estado" id="hzEstado1"></div>
           </div>
         </div>
-        <div class="col-12">
-          {# Salida temprano automática la víspera de feriado (2026-09-30). Se guarda AL INSTANTE
-             (no espera a "Guardar configuración"): los inputs no llevan name. #}
-          <div class="xc-vispera">
-            <label class="form-check form-switch m-0">
-              <input class="form-check-input" type="checkbox" id="xcVisperaOn" {% if settings.vispera_activa %}checked{% endif %}>
-              <span class="form-check-label fw-bold">Salir más temprano la víspera de un feriado</span>
+        <div class="row g-3">
+          <div class="col-12 col-md-6">
+            <div class="hz-obj" data-obj="1.1">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">1.1</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzNombre">Nombre de la bodega <span class="text-danger">*</span></label><span class="hz-obj-estado"></span></div>
+              <input id="hzNombre" name="warehouse_name" class="form-control" maxlength="200" autocomplete="off" value="{{ settings.warehouse_name }}">
+            </div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div class="hz-obj" data-obj="1.2">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">1.2</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzDireccion">Dirección <span class="text-danger">*</span></label><span class="hz-obj-estado"></span></div>
+              <input id="hzDireccion" name="warehouse_addr" class="form-control" maxlength="300" autocomplete="off" value="{{ settings.warehouse_addr }}">
+            </div>
+          </div>
+          <div class="col-12">
+            <div class="hz-obj" data-obj="1.3">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">1.3</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzMapa">Link del mapa <span class="text-muted fw-normal" style="font-size:.78rem">(opcional — el botón "Cómo llegar" de los correos)</span></label><span class="hz-obj-estado"></span></div>
+              <input id="hzMapa" name="maps_url" class="form-control" maxlength="500" autocomplete="off" value="{{ settings.maps_url }}" placeholder="https://maps.google.com/...">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ═══ PASO 2 · Horario y días ═══ #}
+      <div class="nri-step-card" id="hzStep2">
+        <div class="nri-step-header">
+          <div class="nri-step-circle-wrap">
+            <span class="nri-step-circle-label">Paso 2</span>
+            <div class="nri-step-circle"><span class="nri-step-num-text">2</span><i class="bi bi-check-lg nri-step-check"></i></div>
+          </div>
+          <div class="nri-step-titles">
+            <div class="nri-step-title">Horario y días</div>
+            <div class="nri-step-sub">Cuándo recibe retiros la bodega. Es el horario normal; los feriados y las excepciones van en el paso 3.</div>
+            <div class="nri-step-estado" id="hzEstado2"></div>
+          </div>
+        </div>
+        <div class="row g-3">
+          <div class="col-6 col-md-3">
+            <div class="hz-obj" data-obj="2.1">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">2.1</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzAbre">Abre <span class="text-danger">*</span></label></div>
+              <input id="hzAbre" name="open_time" type="time" class="form-control" value="{{ settings.open_time|hm }}">
+              <div class="hz-obj-estado mt-2" style="margin-left:0"></div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="hz-obj" data-obj="2.2">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">2.2</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzCierra">Cierra <span class="text-danger">*</span></label></div>
+              <input id="hzCierra" name="close_time" type="time" class="form-control" value="{{ settings.close_time|hm }}">
+              <div class="hz-obj-estado mt-2" style="margin-left:0"></div>
+              <div class="hz-help">Última hora a la que puede llegar un cliente.</div>
+            </div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div class="hz-obj" data-obj="2.3">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">2.3</span><i class="bi bi-check-lg chk"></i></span><label class="form-label">Días habilitados <span class="text-danger">*</span></label><span class="hz-obj-estado"></span></div>
+              <div class="d-flex flex-wrap gap-2">
+                {% for n,d in [(1,'Lun'),(2,'Mar'),(3,'Mié'),(4,'Jue'),(5,'Vie'),(6,'Sáb'),(7,'Dom')] %}
+                <input class="btn-check" type="checkbox" id="wd_pill_{{ n }}" name="work_days" value="{{ n }}" {% if n|string in (settings.work_days or '') %}checked{% endif %} autocomplete="off">
+                <label class="day-pill" for="wd_pill_{{ n }}">{{ d }}</label>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <div class="col-12">
+            {# Salida temprano automática la víspera de feriado. Se guarda AL INSTANTE (sin name). #}
+            <div class="hz-obj" data-obj="2.4">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">2.4</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzVisperaOn">Salir más temprano la víspera de un feriado</label><span class="hz-obj-estado"></span></div>
+              <div class="d-flex flex-wrap align-items-center gap-3">
+                <label class="form-check form-switch m-0 d-flex align-items-center gap-2 ps-0">
+                  <input class="form-check-input m-0" type="checkbox" id="hzVisperaOn" {% if settings.vispera_activa %}checked{% endif %}>
+                  <span class="fw-bold" id="hzVisperaTxt">{% if settings.vispera_activa %}Activada{% else %}Desactivada{% endif %}</span>
+                </label>
+                <span class="d-inline-flex align-items-center gap-2"><span class="small fw-bold text-dark">Último retiro a las</span>
+                  <select class="form-select" id="hzVisperaHasta" style="width:auto" data-actual="{{ settings.vispera_hasta or '15:00' }}"></select></span>
+              </div>
+              <div class="hz-help" id="hzVisperaProxima">Se aplica solo al día que la bodega abre y cuyo siguiente tramo cerrado incluye un feriado (ej.: el viernes antes de un lunes feriado). Cada día se puede quitar en el paso 3. <b>Se aplica al instante, sin Guardar.</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ═══ PASO 3 · Feriados y cierres (se aplica solo) ═══ #}
+      <div class="nri-step-card" id="hzStep3">
+        <div class="nri-step-header">
+          <div class="nri-step-circle-wrap">
+            <span class="nri-step-circle-label">Paso 3</span>
+            <div class="nri-step-circle"><span class="nri-step-num-text">3</span><i class="bi bi-check-lg nri-step-check"></i></div>
+          </div>
+          <div class="nri-step-titles">
+            <div class="nri-step-title">Feriados y cierres <span class="nri-hdr-badge" style="background:#dbeafe;color:#1e40af;border-color:#93c5fd"><i class="bi bi-lightning-charge-fill"></i>Se aplica solo</span></div>
+            <div class="nri-step-sub">Los feriados de Chile se cierran solos. Aquí ves cada uno con su nombre y decides: reabrirlo, salir más temprano un día o cerrar la bodega. El motivo lo puede ver el cliente.</div>
+            <div class="nri-step-estado" id="hzEstado3"></div>
+          </div>
+        </div>
+        <div id="hzAvisos3" class="nri-avisos"></div>
+        <div class="nri-list-title">
+          <span><i class="bi bi-calendar-x"></i>Feriados y días especiales<span class="nri-count" id="hzCount">0</span></span>
+          <span class="d-inline-flex align-items-center gap-2 text-muted fw-normal text-lowercase" style="letter-spacing:0">mostrar
+            <select class="form-select form-select-sm" id="hzRango" style="width:auto;min-height:40px">
+              <option value="90">próximos 90 días</option>
+              <option value="180">próximos 6 meses</option>
+              <option value="365">próximo año</option>
+            </select></span>
+        </div>
+        <div class="nri-docs-list" id="hzLista"><div class="nri-loading-text">Cargando el calendario…</div></div>
+
+        {# Botón grande punteado (mismo patrón que "Agregar factura o boleta") #}
+        <button type="button" class="nri-add-doc" id="hzAddBtn" title="Salir más temprano un día o cerrar la bodega">
+          <span class="nri-add-doc-ico"><i class="bi bi-plus-lg"></i></span>
+          <span class="nri-add-doc-txt">
+            <strong>Agregar un día especial</strong>
+            <small>Toca aquí para elegir el día: salir más temprano o cerrar la bodega</small>
+          </span>
+          <i class="bi bi-chevron-right nri-add-doc-go"></i>
+        </button>
+        <div class="nri-add-doc-quick" id="hzAdd" hidden>
+          <div class="nri-retira-opts" role="radiogroup" aria-label="Qué pasa ese día">
+            <label class="nri-retira-opt is-on" id="hzOptTemprano">
+              <input type="radio" name="hz_tipo" value="temprano" checked>
+              <span class="nri-retira-ico"><i class="bi bi-clock-history"></i></span>
+              <span class="nri-retira-txt"><strong>Salir más temprano</strong><small>La bodega atiende ese día, pero cierra antes</small></span>
+              <span class="nri-retira-radio" aria-hidden="true"></span>
             </label>
-            <span class="d-inline-flex align-items-center gap-2">
-              <span class="small text-muted">Último retiro a las</span>
-              <select class="form-select form-select-sm" id="xcVisperaHasta" data-actual="{{ settings.vispera_hasta or '15:00' }}"></select>
-            </span>
-            <span class="small text-muted" id="xcVisperaProxima" style="flex:1 1 220px"></span>
+            <label class="nri-retira-opt" id="hzOptCierre">
+              <input type="radio" name="hz_tipo" value="cierre">
+              <span class="nri-retira-ico"><i class="bi bi-slash-circle"></i></span>
+              <span class="nri-retira-txt"><strong>Cerrar todo el día</strong><small>Nadie puede agendar ese día</small></span>
+              <span class="nri-retira-radio" aria-hidden="true"></span>
+            </label>
           </div>
-          <div class="form-text">Aplica solo a los días que la bodega abre y cuyo siguiente tramo cerrado incluye un feriado (ej.: el viernes antes de un lunes feriado). Cada día se puede quitar en el calendario de abajo. Se aplica en menos de un minuto.</div>
+          <div class="row g-3 mt-1">
+            <div class="col-12 col-md-4"><label class="form-label" for="hzFecha">Día <span class="text-danger">*</span></label><input type="date" class="form-control" id="hzFecha"></div>
+            <div class="col-12 col-md-3" id="hzHoraWrap"><label class="form-label" for="hzHora">Último retiro a las</label><select class="form-select" id="hzHora"></select></div>
+            <div class="col-12 col-md"><label class="form-label" for="hzMotivo">Motivo <span class="text-muted fw-normal" style="font-size:.78rem">(lo ve el cliente)</span></label><input type="text" class="form-control" id="hzMotivo" maxlength="120" placeholder="Ej.: Inventario, cena de fin de año"></div>
+          </div>
+          <div class="nri-doc-tools">
+            <button type="button" class="nri-erp-btn" id="hzAddGuardar"><i class="bi bi-check-lg"></i>Guardar día especial</button>
+            <button type="button" class="nri-erp-btn is-outline" id="hzAddCancelar">Cancelar</button>
+          </div>
+        </div>
+
+        {# Cierres extra escritos a mano (campo de siempre, se guarda con "Guardar configuración") #}
+        <div class="hz-obj mt-3" data-obj="3.x">
+          <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">+</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzHolidays">Cierres extra escritos a mano <span class="text-muted fw-normal" style="font-size:.78rem">(avanzado — se guarda con "Guardar configuración")</span></label><span class="hz-obj-estado"></span></div>
+          <input id="hzHolidays" name="holidays" class="form-control" value="{{ settings.holidays or '' }}" placeholder="2026-09-18, 2026-12-24" autocomplete="off">
+          <div class="hz-help">Formato AAAA-MM-DD separado por comas. Sigue funcionando como siempre; para cerrar un día es más cómodo el botón de arriba.</div>
         </div>
       </div>
 
-      {# ── Sección 3: Calendario de excepciones (feriados, salidas temprano, cierres) ── #}
-      <div class="settings-section-title"><i class="bi bi-calendar-x me-1"></i>Feriados y cierres · calendario de excepciones</div>
-      <div class="xc-nota">Los feriados de Chile se cierran solos. Aquí ves los próximos con su nombre y decides: reabrir uno, salir más temprano un día o cerrar la bodega. <b>Los cambios de este calendario se aplican en menos de un minuto</b> (formulario público, calendario interno y propuestas); no hace falta "Guardar configuración". El motivo lo puede ver el cliente.</div>
-      <div id="xcAnios" class="xc-aviso" style="display:none"></div>
-      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-        <span class="small text-muted">Mostrar</span>
-        <select class="form-select form-select-sm" id="xcRango" style="width:auto;min-height:38px">
-          <option value="90">próximos 90 días</option>
-          <option value="180">próximos 6 meses</option>
-          <option value="365">próximo año</option>
-        </select>
-      </div>
-      <div class="xc-lista" id="xcLista"><div class="xc-vacio">Cargando…</div></div>
-      <div class="xc-add mb-3">
-        <div><label for="xcFecha">Día</label><input type="date" class="form-control" id="xcFecha"></div>
-        <div><label for="xcTipo">Qué pasa ese día</label>
-          <select class="form-select" id="xcTipo">
-            <option value="temprano">Salir más temprano</option>
-            <option value="cierre">Cerrar todo el día</option>
-          </select></div>
-        <div id="xcHoraWrap"><label for="xcHora">Último retiro a las</label><select class="form-select" id="xcHora"></select></div>
-        <div class="xc-add-motivo"><label for="xcMotivo">Motivo (lo ve el cliente)</label><input type="text" class="form-control" id="xcMotivo" maxlength="120" placeholder="Ej.: Inventario, cena de fin de año"></div>
-        <button type="button" class="btn btn-ilus" id="xcAgregar"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
-      </div>
-      <div class="mb-4">
-        <details>
-          <summary class="small text-muted" style="cursor:pointer">Cierres extra escritos a mano (avanzado)</summary>
-          <div class="mt-2">
-            <input name="holidays" class="form-control" value="{{ settings.holidays or '' }}" placeholder="2026-09-18, 2026-12-24">
-            <div class="form-text">Sigue funcionando como siempre (YYYY-MM-DD separados por coma). Se guardan con "Guardar configuración". Para cerrar un día, es más cómodo el botón "Cerrar todo el día" de arriba.</div>
+      {# ═══ PASO 4 · Equipo y alertas ═══ #}
+      <div class="nri-step-card" id="hzStep4">
+        <div class="nri-step-header">
+          <div class="nri-step-circle-wrap">
+            <span class="nri-step-circle-label">Paso 4</span>
+            <div class="nri-step-circle"><span class="nri-step-num-text">4</span><i class="bi bi-check-lg nri-step-check"></i></div>
           </div>
-        </details>
-      </div>
-
-      {# ── Sección 4: Equipo y alertas ── #}
-      <div class="settings-section-title"><i class="bi bi-people me-1"></i>Equipo y alertas</div>
-      <div class="row g-3">
-        <div class="col-12">
-          {# 2026-09-24 (Daniel: "necesito que esto quede por el front"): quién
-             queda a cargo de cada solicitud que entra por el formulario público.
-             La lista es la de personas con acceso a Retiros (la misma del
-             "Nuevo retiro interno"); se carga al abrir este modal. #}
-          <label class="form-label" for="webResponsableSel">Responsable de solicitudes web</label>
-          <select name="web_responsable_user_id" id="webResponsableSel" class="form-select"
-                  data-actual="{{ settings.web_responsable_user_id or '' }}">
-            <option value="">— Sin responsable automático —</option>
-            {# Mientras carga la lista (o si falla), el valor guardado sigue
-               seleccionado: guardar el modal nunca lo borra sin querer. #}
-            {% if settings.web_responsable_user_id %}
-            <option value="{{ settings.web_responsable_user_id }}" selected data-placeholder="1">Responsable actual (cargando nombre…)</option>
-            {% endif %}
-          </select>
-          <div class="form-text">Cada solicitud nueva del formulario público queda a su cargo y le llegan por correo la solicitud, la confirmación, la contrapropuesta y la cancelación del cliente. Solo aparecen personas con acceso a Retiros.</div>
-        </div>
-        <div class="col-12">
-          {# 2026-09-30 (Daniel: "que yo pueda agregar por el front uno o varios responsables que
-             reciban un correo cada vez que se gestione un retiro"). Sale de aviso_equipo_emails. #}
-          <label class="form-label fw-bold">Responsables que reciben un correo por cada gestión de un retiro</label>
-          <div class="xc-chips" id="avisoChips"></div>
-          <div class="row g-2">
-            <div class="col-md-5"><select class="form-select" id="avisoSel"><option value="">Agregar una persona del equipo…</option></select></div>
-            <div class="col-md-5"><input type="email" class="form-control" id="avisoExt" placeholder="o escribe un correo (ej.: bodega@ilusfitness.com)" autocomplete="off"></div>
-            <div class="col-md-2 d-grid"><button type="button" class="btn btn-outline-dark" id="avisoAdd"><i class="bi bi-plus-lg me-1"></i>Agregar</button></div>
+          <div class="nri-step-titles">
+            <div class="nri-step-title">Equipo y alertas</div>
+            <div class="nri-step-sub">Quién se entera de cada solicitud y qué aviso ven los clientes en el formulario público.</div>
+            <div class="nri-step-estado" id="hzEstado4"></div>
           </div>
-          <input type="hidden" name="aviso_equipo_emails" id="avisoInp" value="{{ settings.aviso_equipo_emails or '' }}">
-          <div class="form-text">Reciben el aviso de cada gestión: nueva solicitud, respuestas y mensajes del cliente, cuando ILUS propone fecha, confirmado, en preparación, pedido listo, completado, rechazo o cierre, y agendado sin saldo. Van además del responsable de cada retiro y sin repetir. Puedes agregar varias personas. Se guarda con "Guardar configuración".</div>
         </div>
-        <div class="col-md-4">
-          <label class="form-check form-switch mt-md-4 pt-md-2">
-            <input class="form-check-input" type="checkbox" name="alert_enabled" {% if settings.alert_enabled %}checked{% endif %}>
-            <span class="form-check-label">Mostrar alerta publica</span>
-          </label>
+        <div class="row g-3">
+          <div class="col-12">
+            <div class="hz-obj" data-obj="4.1">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">4.1</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="webResponsableSel">Responsable de solicitudes web</label><span class="hz-obj-estado"></span></div>
+              <select name="web_responsable_user_id" id="webResponsableSel" class="form-select" data-actual="{{ settings.web_responsable_user_id or '' }}">
+                <option value="">— Sin responsable automático —</option>
+                {# Mientras carga la lista (o si falla), el valor guardado sigue seleccionado: guardar el modal nunca lo borra sin querer. #}
+                {% if settings.web_responsable_user_id %}
+                <option value="{{ settings.web_responsable_user_id }}" selected data-placeholder="1">Responsable actual (cargando nombre…)</option>
+                {% endif %}
+              </select>
+              <div class="hz-help">Cada solicitud nueva del formulario público queda a su cargo y le llegan por correo la solicitud, la confirmación, la contrapropuesta y la cancelación del cliente. Solo aparecen personas con acceso a Retiros.</div>
+            </div>
+          </div>
+          <div class="col-12">
+            <div class="hz-obj" data-obj="4.2">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">4.2</span><i class="bi bi-check-lg chk"></i></span><label class="form-label">Responsables que reciben un correo por cada gestión de un retiro</label><span class="hz-obj-estado"></span></div>
+              <div class="hz-chips" id="hzChips"></div>
+              <div class="row g-2">
+                <div class="col-md-5"><select class="form-select" id="hzAvisoSel" aria-label="Agregar una persona del equipo"><option value="">Agregar una persona del equipo…</option></select></div>
+                <div class="col-md-5"><input type="email" class="form-control" id="hzAvisoExt" placeholder="o escribe un correo (ej.: bodega@ilusfitness.com)" autocomplete="off"></div>
+                <div class="col-md-2 d-grid"><button type="button" class="nri-erp-btn justify-content-center" id="hzAvisoAdd"><i class="bi bi-plus-lg"></i>Agregar</button></div>
+              </div>
+              <input type="hidden" name="aviso_equipo_emails" id="hzAvisoInp" value="{{ settings.aviso_equipo_emails or '' }}">
+              <div class="hz-help">Reciben el aviso de cada gestión: nueva solicitud, respuestas y mensajes del cliente, cuando ILUS propone fecha, confirmado, en preparación, pedido listo, completado, rechazo o cierre, y agendado sin saldo. Van además del responsable de cada retiro y sin repetir. Puedes agregar varias personas.</div>
+            </div>
+          </div>
+          <div class="col-12">
+            <div class="hz-obj" data-obj="4.3">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">4.3</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzAlertaOn">Alerta pública en el formulario</label><span class="hz-obj-estado"></span></div>
+              <label class="form-check form-switch m-0 d-flex align-items-center gap-2 ps-0 mb-3">
+                <input class="form-check-input m-0" type="checkbox" id="hzAlertaOn" name="alert_enabled" {% if settings.alert_enabled %}checked{% endif %}>
+                <span class="fw-bold">Mostrar una alerta a los clientes</span>
+              </label>
+              <div class="row g-3">
+                <div class="col-12 col-md-4"><label class="form-label" for="hzAlertaTitulo">Título</label><input id="hzAlertaTitulo" name="alert_title" class="form-control" maxlength="120" value="{{ settings.alert_title }}"></div>
+                <div class="col-12 col-md-8"><label class="form-label" for="hzAlertaMensaje">Mensaje</label><textarea id="hzAlertaMensaje" name="alert_message" class="form-control" rows="2">{{ settings.alert_message or '' }}</textarea></div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="col-md-8"><label class="form-label">Titulo de la alerta</label><input name="alert_title" class="form-control" value="{{ settings.alert_title }}"></div>
-        <div class="col-12"><label class="form-label">Mensaje de la alerta</label><textarea name="alert_message" class="form-control" rows="3">{{ settings.alert_message or '' }}</textarea></div>
       </div>
-
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-      <button class="btn btn-ilus">Guardar configuracion</button>
+      <button class="btn btn-ilus" id="hzGuardar" type="submit">Guardar configuración</button>
     </div>
   </form></div>
 </div>
 <script>
-// Responsable de solicitudes web: se llena al abrir "Horarios y alertas" con
-// las personas que tienen acceso a Retiros (mismo endpoint del Nuevo retiro).
-(function(){
-  const modal = document.getElementById('settingsModal');
-  const sel = document.getElementById('webResponsableSel');
-  if (!modal || !sel) return;
-  let cargado = false;
-  modal.addEventListener('show.bs.modal', async () => {
-    if (cargado) return;
-    try {
-      const r = await fetch('/retiros/api/responsables', {credentials: 'same-origin', cache: 'no-store'});
-      const d = await r.json();
-      const actual = String(sel.dataset.actual || '');
-      const ph = sel.querySelector('option[data-placeholder]');
-      if (ph && (d.responsables || []).length) ph.remove();
-      (d.responsables || []).forEach(u => {
-        const o = document.createElement('option');
-        o.value = String(u.id);
-        o.textContent = u.nombre || ('Usuario ' + u.id);
-        if (o.value === actual) o.selected = true;
-        sel.appendChild(o);
-      });
-      // Responsable guardado que ya no tiene acceso a Retiros: se muestra igual
-      // para no borrarlo sin querer al guardar otra cosa del modal.
-      if (actual && !sel.querySelector('option[value="' + actual + '"]')) {
-        const o = document.createElement('option');
-        o.value = actual; o.selected = true;
-        o.textContent = 'Usuario #' + actual + ' (sin acceso a Retiros)';
-        sel.appendChild(o);
-      }
-      cargado = true;
-    } catch (e) {
-      console.warn('[retiros] no se pudo cargar la lista de responsables', e);
-    }
-  });
-})();
-</script>
-<script>
-// ── Horarios y alertas · calendario de excepciones + responsables por correo (2026-09-30) ──
-// Los cambios del calendario se aplican al instante (POST /retiros/excepciones). Los
-// inputs de esta sección no llevan `name` (no viajan en "Guardar configuración"), salvo
-// aviso_equipo_emails, que sí se guarda con el formulario.
+// ── Horarios, feriados y alertas · semáforo + calendario de excepciones (2026-09-30) ──
+// Mismo patrón que nriEvaluarPasos() de "Nuevo retiro interno": cada paso devuelve
+// {faltan, avisos, ok} y se PINTA en la tarjeta (rojo = falta algo obligatorio, ámbar =
+// completo con advertencia, verde = listo), en su línea de estado, en los objetos numerados
+// de adentro y en el progreso del encabezado. El paso 3 se aplica AL INSTANTE por fetch
+// (POST /retiros/excepciones); el resto viaja con "Guardar configuración". Los inputs que
+// no llevan `name` no se envían con el formulario.
 (function(){
   const modal = document.getElementById('settingsModal');
   if (!modal) return;
   const $ = id => document.getElementById(id);
   const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const csrf = () => (modal.querySelector('input[name=csrf_token]') || {}).value || '';
+  const campo = n => modal.querySelector('[name="' + n + '"]');
+  const val = n => { const e = campo(n); return e ? String(e.value || '').trim() : ''; };
   const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-  let D = null;                 // última respuesta de /retiros/api/excepciones
-  let cargadoUnaVez = false;
-
-  const aMin = h => { const [a, b] = String(h || '0:0').split(':').map(Number); return a * 60 + (b || 0); };
+  const aMin = h => { const p = String(h || '').split(':'); return p.length < 2 ? NaN : (+p[0]) * 60 + (+p[1]); };
   const aHHMM = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
-  function fechaCl(iso){ const [y, m, d] = iso.split('-'); return d + '/' + m + '/' + y; }
-  function diaLargo(iso){ const [y, m, d] = iso.split('-').map(Number); return DIAS[new Date(y, m - 1, d).getDay()]; }
+  const fechaCl = iso => { const p = iso.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; };
+  const diaLargo = iso => { const p = iso.split('-').map(Number); return DIAS[new Date(p[0], p[1] - 1, p[2]).getDay()]; };
+  const plural = (n, s, p) => n + ' ' + (n === 1 ? s : p);
+  const ICONO = {rojo: 'bi-x-circle-fill', ambar: 'bi-exclamation-triangle-fill', verde: 'bi-check-circle-fill'};
+  const ICO_OBJ = {ok: 'bi-check-circle-fill', warn: 'bi-exclamation-triangle-fill', bad: 'bi-x-circle-fill', opt: 'bi-dash-circle', info: 'bi-info-circle-fill'};
+  let D = null;                     // última respuesta de /retiros/api/excepciones
+  let cargadoUnaVez = false;
+  const nombres = {};               // correo → nombre (lista de personas del sistema)
+  let correos = String(($('hzAvisoInp') || {}).value || '').split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+
+  // ── semáforo de un objeto numerado ──
+  function objeto(id, estado, txt){
+    const el = modal.querySelector('.hz-obj[data-obj="' + id + '"]');
+    if (!el) return;
+    ['is-ok', 'is-warn', 'is-bad', 'is-info'].forEach(c => el.classList.remove(c));
+    if (estado !== 'opt') el.classList.add('is-' + estado);
+    const st = el.querySelector('.hz-obj-estado');
+    if (st) st.innerHTML = txt ? '<i class="bi ' + ICO_OBJ[estado] + '"></i><span>' + esc(txt) + '</span>' : '';
+  }
 
   function opcionesHoras(actual, conNormal){
     if (!D) return '';
@@ -2132,6 +2270,7 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
     return h;
   }
 
+  // ── llamadas al servidor (paso 3 y víspera) ──
   async function api(cuerpo){
     let r, d = {};
     try {
@@ -2145,233 +2284,400 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
     if (!r.ok || !d.ok){ ilusToast('⚠ ' + (d.error || ('No se pudo guardar (error ' + r.status + ')')), {type: 'error'}); return null; }
     return d;
   }
-
+  async function avisarAfectados(d){
+    if (!d || !d.afectados || !d.afectados.length) return;
+    const filas = d.afectados.map(a => '• <b>' + esc(a.code) + '</b> · ' + esc(a.cliente || 'Cliente') + (a.hora ? ' · ' + esc(a.hora) : '')).join('<br>');
+    await ilusAlert({type: 'warning', title: 'Ojo: hay retiros ya agendados ese día',
+      message: 'El cambio NO mueve retiros existentes. Estos quedan fuera del nuevo horario; reagéndalos con el cliente:',
+      sub: filas, subHtml: true});
+  }
   async function aplicar(cuerpo, msg){
     const d = await api(cuerpo);
-    await cargar();                      // se recarga siempre: si falló, el interruptor vuelve a su estado real
+    await cargar();                  // se recarga siempre: si falló, el interruptor vuelve a su estado real
     if (!d) return;
     ilusToast('✓ ' + msg, {type: 'success'});
-    if (d.afectados && d.afectados.length){
-      const filas = d.afectados.map(a => '• <b>' + esc(a.code) + '</b> · ' + esc(a.cliente || 'Cliente') +
-        (a.hora ? ' · ' + esc(a.hora) : '')).join('<br>');
-      await ilusAlert({
-        type: 'warning', title: 'Ojo: hay retiros ya agendados ese día',
-        message: 'El cambio NO mueve retiros existentes. Estos quedan fuera del nuevo horario; reagéndalos con el cliente:',
-        sub: filas, subHtml: true
-      });
-    }
+    await avisarAfectados(d);
   }
 
-  function filaHtml(it){
-    const f = '<div class="xc-fecha">' + esc(it.dia) + ' ' + esc(fechaCl(it.fecha).slice(0, 5)) +
-              '<small>' + esc(diaLargo(it.fecha)) + ' ' + esc(it.fecha.slice(0, 4)) + '</small></div>';
-    let cuerpo = '', acc = '', cls = 't-' + it.tipo;
+  // ── tarjetas de día especial (paso 3) ──
+  function tarjeta(it, n, choques){
     const f_ = esc(it.fecha);
+    const num = '<span class="hz-obj-num"><span class="n">3.' + n + '</span><i class="bi bi-check-lg chk"></i></span>';
+    const fecha = '<div class="nri-doc-num">' + esc(it.dia) + ' ' + esc(fechaCl(it.fecha).slice(0, 5)) +
+                  '<small>' + esc(diaLargo(it.fecha)) + ' ' + esc(it.fecha.slice(0, 4)) + '</small></div>';
+    let cls = 'is-opt', ddate = '', dcli = '', dlin = '', pill = '', acc = '';
     if (it.tipo === 'feriado'){
-      cls += it.abierto ? ' abierto' : '';
-      cuerpo = '<div class="xc-titulo">' + esc(it.nombre) + '</div><div class="xc-sub">' +
-        (it.abierto
-          ? '<span class="xc-pill verde">Abierto igual</span>Se agenda con normalidad' + (it.hasta ? ' hasta las ' + esc(it.hasta) : '')
-          : '<span class="xc-pill rojo">Cerrado</span>Feriado en Chile: no se agenda') + '</div>';
-      acc = '<label class="form-check form-switch m-0 d-flex align-items-center gap-2">' +
-            '<input class="form-check-input" type="checkbox" data-xc="feriado" data-fecha="' + f_ + '"' + (it.abierto ? ' checked' : '') + '>' +
-            '<span class="small fw-bold">Abrir igual</span></label>' +
-            (it.abierto ? '<select class="form-select form-select-sm" data-xc="hasta" data-fecha="' + f_ + '" title="Última hora de llegada ese día">' +
-                          opcionesHoras(it.hasta, true) + '</select>' : '');
+      ddate = 'Feriado en Chile'; dcli = it.nombre;
+      if (it.abierto){
+        cls = 'is-ok'; dlin = 'Se agenda con normalidad' + (it.hasta ? ' hasta las ' + it.hasta : '');
+        pill = '<span class="nri-pill ok"><i class="bi bi-door-open-fill"></i>Abierto igual</span>';
+      } else {
+        cls = 'is-bad'; dlin = 'No se agenda ese día';
+        pill = '<span class="nri-pill lock"><i class="bi bi-lock-fill"></i>Cerrado</span>';
+      }
+      acc = '<label class="form-check form-switch"><input class="form-check-input" type="checkbox" data-hz="feriado" data-fecha="' + f_ + '"' + (it.abierto ? ' checked' : '') + '><span>Abrir igual</span></label>' +
+            (it.abierto ? '<select class="form-select" data-hz="hasta" data-fecha="' + f_ + '" title="Última hora de llegada ese día">' + opcionesHoras(it.hasta, true) + '</select>' : '');
     } else if (it.tipo === 'vispera'){
-      cls += it.aplica ? '' : ' apagada';
-      cuerpo = '<div class="xc-titulo">' + esc(it.nombre) + '</div><div class="xc-sub">' +
-        (it.aplica
-          ? '<span class="xc-pill ambar">Sale ' + esc(it.hasta) + '</span>Último retiro a las ' + esc(it.hasta) + (it.motivo && it.origen === 'temprano' ? ' · ' + esc(it.motivo) : '')
-          : '<span class="xc-pill gris">Horario normal</span>No se aplica salida temprano este día') + '</div>';
-      acc = '<label class="form-check form-switch m-0 d-flex align-items-center gap-2">' +
-            '<input class="form-check-input" type="checkbox" data-xc="vispera" data-fecha="' + f_ + '"' + (it.aplica ? ' checked' : '') + '>' +
-            '<span class="small fw-bold">Salir temprano</span></label>';
+      ddate = 'Víspera de feriado'; dcli = it.nombre;
+      if (it.aplica){
+        cls = 'is-warn'; dlin = 'Último retiro a las ' + it.hasta + (it.origen === 'temprano' && it.motivo ? ' · ' + it.motivo : '');
+        pill = '<span class="nri-pill warn"><i class="bi bi-clock-history"></i>Sale ' + esc(it.hasta) + '</span>';
+      } else {
+        dlin = 'No se aplica salida temprano este día';
+        pill = '<span class="nri-pill"><i class="bi bi-clock"></i>Horario normal</span>';
+      }
+      acc = '<label class="form-check form-switch"><input class="form-check-input" type="checkbox" data-hz="vispera" data-fecha="' + f_ + '"' + (it.aplica ? ' checked' : '') + '><span>Salir temprano</span></label>';
     } else if (it.tipo === 'temprano'){
-      cuerpo = '<div class="xc-titulo">Salida más temprano</div><div class="xc-sub"><span class="xc-pill ambar">Hasta las ' + esc(it.hasta) + '</span>' +
-               esc(it.motivo || 'Sin motivo') + '</div>';
-      acc = '<select class="form-select form-select-sm" data-xc="hasta" data-fecha="' + f_ + '" title="Última hora de llegada">' + opcionesHoras(it.hasta, false) + '</select>' +
-            '<button type="button" class="btn btn-sm btn-outline-danger" data-xc="quitar-temprano" data-fecha="' + f_ + '">Quitar</button>';
+      cls = 'is-warn'; ddate = 'Salida más temprano'; dcli = it.motivo || 'Sin motivo'; dlin = 'Último retiro a las ' + it.hasta;
+      pill = '<span class="nri-pill warn"><i class="bi bi-clock-history"></i>Hasta ' + esc(it.hasta) + '</span>';
+      acc = '<select class="form-select" data-hz="hasta" data-fecha="' + f_ + '" title="Última hora de llegada">' + opcionesHoras(it.hasta, false) + '</select>' +
+            '<button type="button" class="nri-doc-quitar" data-hz="quitar-temprano" data-fecha="' + f_ + '"><i class="bi bi-x-lg"></i>Quitar</button>';
     } else if (it.tipo === 'cierre'){
-      cuerpo = '<div class="xc-titulo">Cerrado todo el día</div><div class="xc-sub"><span class="xc-pill rojo">Sin retiros</span>' + esc(it.motivo || 'Sin motivo') + '</div>';
+      cls = 'is-bad'; ddate = 'Cierre de bodega'; dcli = it.motivo || 'Sin motivo'; dlin = 'Nadie puede agendar ese día';
+      pill = '<span class="nri-pill lock"><i class="bi bi-lock-fill"></i>Cerrado todo el día</span>';
       acc = it.solo_lectura
-        ? '<span class="small text-muted">Se quita en “Cierres extra escritos a mano”</span>'
-        : '<button type="button" class="btn btn-sm btn-outline-danger" data-xc="quitar-bloqueo" data-id="' + esc(it.block_id) + '">Quitar cierre</button>';
+        ? '<span class="small fw-bold text-muted">Se quita en “Cierres extra escritos a mano”</span>'
+        : '<button type="button" class="nri-doc-quitar" data-hz="quitar-bloqueo" data-id="' + esc(it.block_id) + '"><i class="bi bi-x-lg"></i>Quitar cierre</button>';
     } else if (it.tipo === 'bloqueo'){
-      cuerpo = '<div class="xc-titulo">Bloqueo de horas</div><div class="xc-sub"><span class="xc-pill azul">' + esc(it.desde) + (it.hasta ? '–' + esc(it.hasta) : ' en adelante') +
-               '</span>' + esc(it.motivo || 'Sin motivo') + '</div>';
-      acc = '<button type="button" class="btn btn-sm btn-outline-danger" data-xc="quitar-bloqueo" data-id="' + esc(it.block_id) + '">Quitar</button>';
+      cls = 'is-info'; ddate = 'Bloqueo de horas'; dcli = it.motivo || 'Sin motivo'; dlin = 'Esas horas no se pueden agendar';
+      pill = '<span class="nri-pill"><i class="bi bi-lock-fill"></i>' + esc(it.desde) + (it.hasta ? '–' + esc(it.hasta) : ' en adelante') + '</span>';
+      acc = '<button type="button" class="nri-doc-quitar" data-hz="quitar-bloqueo" data-id="' + esc(it.block_id) + '"><i class="bi bi-x-lg"></i>Quitar</button>';
     }
-    return '<div class="xc-row ' + cls + '">' + f + '<div>' + cuerpo + '</div><div class="xc-acc">' + acc + '</div></div>';
+    const ch = choques[it.fecha];
+    if (ch) pill += '<span class="nri-pill warn"><i class="bi bi-exclamation-triangle-fill"></i>' + esc(plural(ch, 'retiro agendado', 'retiros agendados')) + '</span>';
+    return '<div class="hz-card ' + cls + '">' + num + fecha +
+           '<div class="nri-doc-meta"><span class="ddate">' + esc(ddate) + '</span><span class="dcli">' + esc(dcli) + '</span><span class="dlin">' + esc(dlin) + '</span></div>' +
+           '<div class="nri-doc-totals">' + pill + '</div><div class="hz-acc">' + acc + '</div></div>';
   }
-
-  function pintar(){
+  function pintarLista(){
     if (!D) return;
-    // víspera: interruptor + hora + cuándo es la próxima
-    $('xcVisperaOn').checked = !!D.vispera.activa;
-    $('xcVisperaHasta').innerHTML = opcionesHoras(D.vispera.hasta, false);
-    const px = D.vispera.proxima;
-    $('xcVisperaProxima').textContent = px
-      ? 'Próxima víspera: ' + px.dia + ' ' + fechaCl(px.fecha).slice(0, 5) + ' (antes de ' + px.nombre + ')'
-      : 'No hay vísperas en el período.';
-    // aviso de años sin lista oficial de feriados
-    const av = $('xcAnios');
-    if (D.anios_estimados && D.anios_estimados.length){
-      av.style.display = '';
-      av.innerHTML = '<b>Revisa los feriados de ' + esc(D.anios_estimados.join(' y ')) + '.</b> Todavía no hay lista oficial cargada: se calculan con las fechas fijas y la Semana Santa. Si algún día no calza con el calendario oficial, puedes reabrirlo o cerrarlo aquí.';
-    } else { av.style.display = 'none'; }
-    // lista
-    $('xcLista').innerHTML = D.items.length
-      ? D.items.map(filaHtml).join('')
-      : '<div class="xc-vacio"><i class="bi bi-calendar-check me-1"></i>No hay feriados ni excepciones en este período. La bodega opera con el horario normal.</div>';
-    // formulario de agregar
-    const sel = $('xcHora');
-    if (!sel.options.length) sel.innerHTML = opcionesHoras('', false);
+    const choques = {};
+    (D.conflictos || []).forEach(c => { choques[c.fecha] = (choques[c.fecha] || 0) + 1; });
+    $('hzCount').textContent = D.items.length;
+    $('hzLista').innerHTML = D.items.length
+      ? D.items.map((it, i) => tarjeta(it, i + 1, choques)).join('')
+      : '<div class="hz-vacio-lista"><i class="bi bi-calendar-check me-1"></i>No hay feriados ni días especiales en este período: la bodega opera con el horario normal.</div>';
+    $('hzVisperaHasta').innerHTML = opcionesHoras(D.vispera.hasta, false);
+    $('hzVisperaOn').checked = !!D.vispera.activa;
+    $('hzVisperaTxt').textContent = D.vispera.activa ? 'Activada' : 'Desactivada';
+    if (!$('hzHora').options.length) $('hzHora').innerHTML = opcionesHoras('', false);
+    const fi = $('hzFecha'); if (fi && D.hoy) fi.min = D.hoy;
   }
 
+  // ── evaluadores por paso (mismo contrato que nriEvaluarPasos) ──
+  function evalPaso1(){
+    const r = {faltan: [], avisos: [], ok: ''};
+    const nom = val('warehouse_name'), dir = val('warehouse_addr'), mapa = val('maps_url');
+    if (!nom){ r.faltan.push('nombre de la bodega'); objeto('1.1', 'bad', 'Falta el nombre'); } else objeto('1.1', 'ok', 'Listo');
+    if (!dir){ r.faltan.push('dirección'); objeto('1.2', 'bad', 'Falta la dirección'); } else objeto('1.2', 'ok', 'Listo');
+    if (!mapa) objeto('1.3', 'opt', 'Opcional');
+    else if (!/^https?:\/\/\S+$/i.test(mapa)){
+      r.avisos.push({txt: 'el link del mapa no parece una dirección web (debe empezar con https://)'});
+      objeto('1.3', 'warn', 'No parece un link');
+    } else objeto('1.3', 'ok', 'Listo');
+    if (!r.faltan.length) r.ok = nom + ' · ' + dir;
+    return r;
+  }
+  function diasSel(){ return [...modal.querySelectorAll('input[name=work_days]:checked')].map(x => +x.value); }
+  function etiquetaDias(ds){
+    const N = ['', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    if (!ds.length) return '';
+    const o = ds.slice().sort((a, b) => a - b), tramos = [];
+    let ini = o[0], ant = o[0];
+    for (let i = 1; i <= o.length; i++){
+      if (o[i] === ant + 1){ ant = o[i]; continue; }
+      tramos.push(ini === ant ? N[ini] : (ant === ini + 1 ? N[ini] + ' y ' + N[ant] : N[ini] + ' a ' + N[ant]));
+      ini = ant = o[i];
+    }
+    return tramos.join(', ');
+  }
+  function evalPaso2(){
+    const r = {faltan: [], avisos: [], ok: ''};
+    const abre = val('open_time'), cierra = val('close_time'), ds = diasSel();
+    if (!abre){ r.faltan.push('hora de apertura'); objeto('2.1', 'bad', 'Falta la hora'); }
+    else if (aMin(abre) < 9 * 60){ r.avisos.push({txt: 'el formulario público parte a las 09:00'}); objeto('2.1', 'warn', 'El formulario parte a las 09:00'); }
+    else objeto('2.1', 'ok', 'Abre ' + abre);
+    if (!cierra){ r.faltan.push('hora de cierre'); objeto('2.2', 'bad', 'Falta la hora'); }
+    else if (abre && aMin(cierra) <= aMin(abre)){ r.faltan.push('el cierre debe ser después de la apertura'); objeto('2.2', 'bad', 'Debe ser después de la apertura'); }
+    else if (aMin(cierra) > 16 * 60 + 30){ r.avisos.push({txt: 'el formulario público solo ofrece bloques hasta las 16:30'}); objeto('2.2', 'warn', 'El formulario llega hasta las 16:30'); }
+    else objeto('2.2', 'ok', 'Última llegada ' + cierra);
+    if (!ds.length){ r.faltan.push('al menos un día habilitado'); objeto('2.3', 'bad', 'Elige al menos un día'); }
+    else if (ds.some(d => d >= 6)){ r.avisos.push({txt: 'sábado o domingo habilitado (ILUS no opera fin de semana)'}); objeto('2.3', 'warn', 'ILUS no opera fin de semana'); }
+    else objeto('2.3', 'ok', etiquetaDias(ds));
+    // víspera (instantánea) y cambios sin guardar
+    const vOn = $('hzVisperaOn').checked, vH = $('hzVisperaHasta').value;
+    const px = D && D.vispera && D.vispera.proxima;
+    const cambio = D && ((abre && abre !== D.abre) || (cierra && cierra !== D.normal_hasta));
+    if (cambio){
+      r.avisos.push({txt: 'cambiaste el horario: guarda para que el calendario de excepciones use el nuevo'});
+      objeto('2.4', 'warn', 'Guarda para actualizar las horas');
+    } else if (vOn) objeto('2.4', 'ok', 'Activa: sale ' + (vH || '') + (px ? ' · próxima ' + px.dia + ' ' + fechaCl(px.fecha).slice(0, 5) : ''));
+    else objeto('2.4', 'opt', 'Desactivada');
+    if (!r.faltan.length){
+      r.ok = etiquetaDias(ds) + ' · ' + abre + '–' + cierra + (vOn ? ' · víspera: sale ' + vH : '');
+    }
+    return r;
+  }
+  function avisoConflicto(c){
+    return '<div class="nri-aviso"><i class="bi bi-exclamation-triangle-fill"></i>' +
+      '<div class="txt"><strong>' + esc(c.code) + '</strong> · ' + esc(c.cliente || 'Cliente') + ' · ' + esc(c.dia) + ' ' + esc(fechaCl(c.fecha)) + (c.hora ? ' ' + esc(c.hora) : '') +
+      ' — cae en <strong>' + esc(c.motivo) + '</strong>. Reagéndalo con el cliente.</div>' +
+      '<div class="acts"><a class="nri-aviso-btn is-primary" href="/retiros/' + esc(c.id) + '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i>Abrir retiro</a></div></div>';
+  }
+  function evalPaso3(){
+    const r = {faltan: [], avisos: [], ok: ''};
+    // cierres extra a mano: fechas bien escritas
+    const txt = val('holidays');
+    if (!txt) objeto('3.x', 'opt', 'Opcional');
+    else {
+      const malas = txt.split(/[;,\s]+/).filter(Boolean).filter(f => !/^\d{4}-\d{2}-\d{2}$/.test(f));
+      if (malas.length){ r.avisos.push({txt: 'hay fechas mal escritas en los cierres a mano: ' + malas.join(', ')}); objeto('3.x', 'warn', 'Formato AAAA-MM-DD'); }
+      else objeto('3.x', 'ok', plural(txt.split(/[;,\s]+/).filter(Boolean).length, 'fecha', 'fechas'));
+    }
+    if (!D){ r.avisos.push({txt: 'cargando el calendario…'}); return r; }
+    const cf = D.conflictos || [];
+    if (cf.length){
+      r.avisos.push({txt: plural(cf.length, 'retiro agendado choca', 'retiros agendados chocan') + ' con un día cerrado o un horario bloqueado: reagéndalos'});
+      cf.forEach(c => r.avisos.push({txt: '', html: avisoConflicto(c)}));
+    }
+    if (D.anios_estimados && D.anios_estimados.length){
+      r.avisos.push({txt: 'los feriados de ' + D.anios_estimados.join(' y ') + ' son calculados (aún no hay lista oficial): revísalos'});
+    }
+    r.ok = plural(D.items.length, 'día especial', 'días especiales') + ' en el período · sin choques con retiros agendados';
+    return r;
+  }
+  function evalPaso4(){
+    const r = {faltan: [], avisos: [], ok: ''};
+    const web = val('web_responsable_user_id'), on = !!(campo('alert_enabled') || {}).checked;
+    const opWeb = (campo('web_responsable_user_id') || {}).selectedOptions;
+    const nomWeb = opWeb && opWeb[0] ? String(opWeb[0].textContent || '').trim() : '';
+    objeto('4.1', web ? 'ok' : 'opt', web ? 'Responsable: ' + nomWeb : 'Sin responsable automático');
+    objeto('4.2', correos.length ? 'ok' : 'opt', correos.length ? plural(correos.length, 'persona recibe', 'personas reciben') + ' el correo' : 'Nadie todavía');
+    if (!web && !correos.length) r.avisos.push({txt: 'nadie recibe el correo de las solicitudes nuevas: elige un responsable o agrega correos'});
+    if (on){
+      const t = val('alert_title'), m = val('alert_message');
+      if (!m){ r.faltan.push('mensaje de la alerta pública'); objeto('4.3', 'bad', 'Falta el mensaje'); }
+      else if (!t){ r.avisos.push({txt: 'la alerta pública no tiene título'}); objeto('4.3', 'warn', 'Sin título'); }
+      else objeto('4.3', 'ok', 'Visible para los clientes ahora');
+    } else objeto('4.3', 'opt', 'Apagada');
+    if (!r.faltan.length){
+      r.ok = (web ? 'Responsable web: ' + nomWeb : 'Sin responsable web') + ' · ' + plural(correos.length, 'correo de aviso', 'correos de aviso') + ' · alerta pública ' + (on ? 'visible' : 'apagada');
+    }
+    return r;
+  }
+
+  // ── pintar tarjeta / progreso (copiados de nriEvaluarPasos) ──
+  function pintarPaso(idx, r){
+    const card = $('hzStep' + idx), linea = $('hzEstado' + idx);
+    const estado = r.faltan.length ? 'rojo' : (r.avisos.length ? 'ambar' : 'verde');
+    r.idx = idx; r.estado = estado;
+    if (card){ card.classList.toggle('is-complete', estado === 'verde'); card.classList.toggle('is-warn', estado === 'ambar'); }
+    if (linea){
+      const conTxt = r.avisos.filter(a => a.txt).map(a => a.txt);
+      let t;
+      if (estado === 'rojo') t = 'Falta: ' + r.faltan.join(' · ') + (conTxt.length ? ' · ' + conTxt.join(' · ') : '');
+      else if (estado === 'ambar') t = conTxt.join(' · ');
+      else t = r.ok;
+      linea.innerHTML = t ? '<i class="bi ' + ICONO[estado] + '"></i><span>' + esc(t) + '</span>' : '';
+    }
+    if (idx === 3){
+      const html = r.avisos.filter(a => a.html).map(a => a.html).join('');
+      const cont = $('hzAvisos3');
+      if (cont && cont.innerHTML !== html) cont.innerHTML = html;
+    }
+  }
+  function hzEvaluar(){
+    const evals = [evalPaso1, evalPaso2, evalPaso3, evalPaso4];
+    const res = evals.map((fn, i) => {
+      let r;
+      try { r = fn(); } catch (e) { console.warn('[hz] evalPaso' + (i + 1), e); r = {faltan: [], avisos: [], ok: ''}; }
+      pintarPaso(i + 1, r);
+      return r;
+    });
+    const verdes = res.filter(r => r.estado === 'verde').length;
+    const avisos = res.reduce((n, r) => n + r.avisos.filter(a => a.txt).length, 0);
+    $('hzProgresoTxt').textContent = verdes + ' de ' + res.length + ' pasos listos';
+    $('hzProgresoBar').style.width = Math.round(verdes / res.length * 100) + '%';
+    $('hzProgresoAvisos').textContent = avisos ? '· ' + plural(avisos, 'aviso', 'avisos') : '';
+    // pasos del formulario (1, 2 y 4): con rojo el botón se atenúa (no se deshabilita: regla de Daniel)
+    $('hzGuardar').classList.toggle('is-pending', [0, 1, 3].some(i => res[i].estado === 'rojo'));
+    return res;
+  }
+
+  // ── carga de datos ──
   async function cargar(){
-    const rango = ($('xcRango') || {}).value || '90';
+    const rango = ($('hzRango') || {}).value || '90';
     try {
       const r = await fetch('/retiros/api/excepciones?dias=' + encodeURIComponent(rango), {credentials: 'same-origin', cache: 'no-store'});
       const d = await r.json();
       if (!d.ok) throw new Error('respuesta no válida');
       D = d;
-      pintar();
+      pintarLista();
     } catch (e) {
-      $('xcLista').innerHTML = '<div class="xc-vacio">No se pudo cargar el calendario. Cierra y vuelve a abrir esta ventana.</div>';
+      $('hzLista').innerHTML = '<div class="nri-loading-text">No se pudo cargar el calendario. Cierra y vuelve a abrir esta ventana.</div>';
     }
+    hzEvaluar();
   }
 
-  // ── acciones de las filas (delegación) ──
-  $('xcLista').addEventListener('change', async ev => {
-    const el = ev.target, fecha = el.dataset.fecha, tipo = el.dataset.xc;
+  // ── acciones del paso 3 (delegación) ──
+  $('hzLista').addEventListener('change', async ev => {
+    const el = ev.target, fecha = el.dataset.fecha, tipo = el.dataset.hz;
     if (tipo === 'feriado')
-      await aplicar({accion: 'feriado', fecha, abierto: el.checked},
-                    el.checked ? 'Feriado reabierto: se agenda con normalidad' : 'Feriado cerrado');
+      await aplicar({accion: 'feriado', fecha, abierto: el.checked}, el.checked ? 'Feriado reabierto: se agenda con normalidad' : 'Feriado cerrado');
     else if (tipo === 'vispera')
-      await aplicar({accion: 'sin_vispera', fecha, valor: !el.checked},
-                    el.checked ? 'Ese día sale temprano' : 'Ese día queda con horario normal');
+      await aplicar({accion: 'sin_vispera', fecha, valor: !el.checked}, el.checked ? 'Ese día sale temprano' : 'Ese día queda con horario normal');
     else if (tipo === 'hasta')
-      await aplicar({accion: 'temprano', fecha, hasta: el.value || null},
-                    el.value ? 'Último retiro ese día: ' + el.value : 'Horario normal restaurado');
+      await aplicar({accion: 'temprano', fecha, hasta: el.value || null}, el.value ? 'Último retiro ese día: ' + el.value : 'Horario normal restaurado');
   });
-  $('xcLista').addEventListener('click', async ev => {
-    const b = ev.target.closest('button[data-xc]');
+  $('hzLista').addEventListener('click', async ev => {
+    const b = ev.target.closest('button[data-hz]');
     if (!b) return;
-    if (b.dataset.xc === 'quitar-temprano'){
+    if (b.dataset.hz === 'quitar-temprano'){
       await aplicar({accion: 'temprano', fecha: b.dataset.fecha, hasta: null}, 'Salida temprano quitada');
-    } else if (b.dataset.xc === 'quitar-bloqueo'){
+    } else if (b.dataset.hz === 'quitar-bloqueo'){
       const ok = await ilusConfirm({title: 'Quitar bloqueo', message: '¿Volver a abrir ese día u horario para agendar?',
                                     okLabel: 'Sí, quitar', cancelLabel: 'Cancelar', danger: true});
       if (ok) await aplicar({accion: 'quitar_bloqueo', block_id: Number(b.dataset.id)}, 'Bloqueo quitado');
     }
   });
+  $('hzRango').addEventListener('change', cargar);
 
-  // ── víspera ──
-  $('xcVisperaOn').addEventListener('change', () =>
-    aplicar({accion: 'vispera_config', activa: $('xcVisperaOn').checked, hasta: $('xcVisperaHasta').value},
-            $('xcVisperaOn').checked ? 'Regla de víspera activada' : 'Regla de víspera desactivada'));
-  $('xcVisperaHasta').addEventListener('change', () =>
-    aplicar({accion: 'vispera_config', activa: $('xcVisperaOn').checked, hasta: $('xcVisperaHasta').value},
-            'Hora de salida de víspera: ' + $('xcVisperaHasta').value));
+  // ── víspera (instantánea) ──
+  const visperaCfg = msg => aplicar({accion: 'vispera_config', activa: $('hzVisperaOn').checked, hasta: $('hzVisperaHasta').value}, msg);
+  $('hzVisperaOn').addEventListener('change', () => visperaCfg($('hzVisperaOn').checked ? 'Regla de víspera activada' : 'Regla de víspera desactivada'));
+  $('hzVisperaHasta').addEventListener('change', () => visperaCfg('Hora de salida de víspera: ' + $('hzVisperaHasta').value));
 
-  // ── agregar excepción ──
-  const tipoSel = $('xcTipo');
-  const toggleHora = () => { $('xcHoraWrap').style.display = tipoSel.value === 'temprano' ? '' : 'none'; };
-  tipoSel.addEventListener('change', toggleHora);
-  $('xcAgregar').addEventListener('click', async () => {
-    const fecha = $('xcFecha').value;
-    if (!fecha){ ilusToast('Elige el día.', {type: 'warning'}); $('xcFecha').focus(); return; }
-    const motivo = $('xcMotivo').value.trim();
-    const cuerpo = tipoSel.value === 'temprano'
-      ? {accion: 'temprano', fecha, hasta: $('xcHora').value, motivo}
-      : {accion: 'cierre', fecha, motivo};
-    const msg = tipoSel.value === 'temprano' ? 'Salida temprano agregada' : 'Día cerrado';
-    const d = await api(cuerpo);
+  // ── agregar un día especial ──
+  const optT = $('hzOptTemprano'), optC = $('hzOptCierre');
+  function tipoActual(){ return (modal.querySelector('input[name=hz_tipo]:checked') || {}).value || 'temprano'; }
+  function syncTipo(){
+    const t = tipoActual();
+    optT.classList.toggle('is-on', t === 'temprano'); optC.classList.toggle('is-on', t === 'cierre');
+    $('hzHoraWrap').style.display = t === 'temprano' ? '' : 'none';
+  }
+  modal.querySelectorAll('input[name=hz_tipo]').forEach(r => r.addEventListener('change', syncTipo));
+  $('hzAddBtn').addEventListener('click', () => {
+    const f = $('hzAdd'); f.hidden = !f.hidden;
+    if (!f.hidden){ syncTipo(); setTimeout(() => { try { $('hzFecha').focus(); } catch (_) {} }, 60); }
+  });
+  $('hzAddCancelar').addEventListener('click', () => { $('hzAdd').hidden = true; });
+  $('hzAddGuardar').addEventListener('click', async () => {
+    const fecha = $('hzFecha').value;
+    if (!fecha){ ilusToast('Elige el día.', {type: 'warning'}); $('hzFecha').focus(); return; }
+    const motivo = $('hzMotivo').value.trim(), t = tipoActual();
+    const d = await api(t === 'temprano' ? {accion: 'temprano', fecha, hasta: $('hzHora').value, motivo} : {accion: 'cierre', fecha, motivo});
     await cargar();
     if (!d) return;
-    $('xcMotivo').value = '';
-    ilusToast('✓ ' + msg, {type: 'success'});
-    if (d.afectados && d.afectados.length){
-      const filas = d.afectados.map(a => '• <b>' + esc(a.code) + '</b> · ' + esc(a.cliente || 'Cliente') + (a.hora ? ' · ' + esc(a.hora) : '')).join('<br>');
-      await ilusAlert({type: 'warning', title: 'Ojo: hay retiros ya agendados ese día',
-        message: 'El cambio NO mueve retiros existentes. Estos quedan fuera del nuevo horario; reagéndalos con el cliente:',
-        sub: filas, subHtml: true});
-    }
+    $('hzMotivo').value = ''; $('hzFecha').value = ''; $('hzAdd').hidden = true;
+    ilusToast('✓ ' + (t === 'temprano' ? 'Salida temprano agregada' : 'Día cerrado'), {type: 'success'});
+    await avisarAfectados(d);
   });
-  // Enter dentro de esta sección NO debe enviar el formulario de configuración completo
-  ['xcFecha', 'xcMotivo', 'xcHora', 'xcTipo', 'avisoExt'].forEach(id => {
-    const el = $(id);
-    if (el) el.addEventListener('keydown', ev => {
-      if (ev.key !== 'Enter') return;
-      ev.preventDefault();
-      const boton = id === 'avisoExt' ? $('avisoAdd') : $('xcAgregar');
-      if (boton) boton.click();
-    });
-  });
-  $('xcRango').addEventListener('change', cargar);
+  // Enter dentro del paso 3 NO debe enviar el formulario de configuración completo
+  ['hzFecha', 'hzMotivo', 'hzHora'].forEach(id => $(id).addEventListener('keydown', ev => {
+    if (ev.key === 'Enter'){ ev.preventDefault(); $('hzAddGuardar').click(); }
+  }));
 
-  // ── responsables que reciben un correo por cada gestión ──
-  const inp = $('avisoInp'), chips = $('avisoChips'), selP = $('avisoSel');
-  let lista = String(inp.value || '').split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
-  const nombres = {};                                   // correo → nombre (de la lista del sistema)
+  // ── responsables por correo (paso 4.2) ──
+  const inp = $('hzAvisoInp'), chips = $('hzChips'), selP = $('hzAvisoSel');
   const emailOk = e => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(e);
-
   function pintarChips(){
-    inp.value = lista.join(',');
-    chips.innerHTML = lista.length
-      ? lista.map((e, i) => '<span class="xc-chip">' +
-          (nombres[e] ? esc(nombres[e]) + ' <small>' + esc(e) + '</small>' : esc(e)) +
+    inp.value = correos.join(',');
+    chips.innerHTML = correos.length
+      ? correos.map((e, i) => '<span class="hz-chip">' + (nombres[e] ? esc(nombres[e]) + ' <small>' + esc(e) + '</small>' : esc(e)) +
           '<button type="button" data-i="' + i + '" aria-label="Quitar ' + esc(e) + '">×</button></span>').join('')
-      : '<div class="xc-vacio">Nadie todavía: solo recibe el correo el responsable asignado a cada retiro.</div>';
+      : '<div class="hz-vacio">Nadie todavía: solo recibe el correo el responsable asignado a cada retiro.</div>';
+    hzEvaluar();
   }
   chips.addEventListener('click', ev => {
     const b = ev.target.closest('button[data-i]');
     if (!b) return;
-    lista.splice(Number(b.dataset.i), 1);
+    correos.splice(Number(b.dataset.i), 1);
     pintarChips();
   });
   function agregarCorreo(e){
     e = String(e || '').trim().toLowerCase();
     if (!e) return false;
     if (!emailOk(e)){ ilusToast('Ese correo no es válido.', {type: 'warning'}); return false; }
-    if (lista.includes(e)){ ilusToast('Ya está en la lista.', {type: 'info'}); return false; }
-    if (lista.length >= 20){ ilusToast('Máximo 20 personas.', {type: 'warning'}); return false; }
-    lista.push(e);
+    if (correos.includes(e)){ ilusToast('Ya está en la lista.', {type: 'info'}); return false; }
+    if (correos.length >= 20){ ilusToast('Máximo 20 personas.', {type: 'warning'}); return false; }
+    correos.push(e);
     pintarChips();
     return true;
   }
-  $('avisoAdd').addEventListener('click', () => {
-    const ext = $('avisoExt');
+  $('hzAvisoAdd').addEventListener('click', () => {
+    const ext = $('hzAvisoExt');
     if (agregarCorreo(selP.value || ext.value)){ selP.value = ''; ext.value = ''; }
   });
-  selP.addEventListener('change', () => {           // elegir a alguien de la lista lo agrega de inmediato
-    if (selP.value && agregarCorreo(selP.value)) selP.value = '';
-  });
+  selP.addEventListener('change', () => { if (selP.value && agregarCorreo(selP.value)) selP.value = ''; });
+  $('hzAvisoExt').addEventListener('keydown', ev => { if (ev.key === 'Enter'){ ev.preventDefault(); $('hzAvisoAdd').click(); } });
   pintarChips();
 
+  // ── personas del sistema (responsable web + lista de correos): un solo fetch ──
   async function cargarPersonas(){
     try {
       const r = await fetch('/retiros/api/responsables?con_email=1', {credentials: 'same-origin', cache: 'no-store'});
       const d = await r.json();
-      (d.responsables || []).forEach(u => {
-        if (!u.email) return;                        // sin correo válido no se puede avisar
-        nombres[u.email] = u.nombre || u.email;
+      const lista = d.responsables || [];
+      const sel = $('webResponsableSel'), actual = String(sel.dataset.actual || '');
+      const ph = sel.querySelector('option[data-placeholder]');
+      if (ph && lista.length) ph.remove();
+      lista.forEach(u => {
         const o = document.createElement('option');
-        o.value = u.email;
-        o.textContent = (u.nombre || u.email) + ' — ' + u.email;
-        selP.appendChild(o);
+        o.value = String(u.id);
+        o.textContent = u.nombre || ('Usuario ' + u.id);
+        if (o.value === actual) o.selected = true;
+        sel.appendChild(o);
+        if (u.email){
+          nombres[u.email] = u.nombre || u.email;
+          const o2 = document.createElement('option');
+          o2.value = u.email; o2.textContent = (u.nombre || u.email) + ' — ' + u.email;
+          selP.appendChild(o2);
+        }
       });
+      // Responsable guardado que ya no tiene acceso a Retiros: se muestra igual para no borrarlo al guardar
+      if (actual && !sel.querySelector('option[value="' + actual + '"]')){
+        const o = document.createElement('option');
+        o.value = actual; o.selected = true; o.textContent = 'Usuario #' + actual + ' (sin acceso a Retiros)';
+        sel.appendChild(o);
+      }
       pintarChips();
-    } catch (e) { console.warn('[retiros] lista de personas para avisos', e); }
+    } catch (e) { console.warn('[retiros] no se pudo cargar la lista de personas', e); }
   }
 
+  // ── eventos generales: cualquier cambio en el formulario repinta el semáforo ──
+  let _t = null;
+  const rearmar = () => { clearTimeout(_t); _t = setTimeout(hzEvaluar, 120); };
+  modal.addEventListener('input', rearmar);
+  modal.addEventListener('change', rearmar);
+
+  // ── guardar: con rojos NO se envía (scroll + resalte + aviso), igual que "Crear retiro" ──
+  $('hzForm').addEventListener('submit', ev => {
+    const res = hzEvaluar();
+    const rojos = [0, 1, 3].map(i => res[i]).filter(r => r.estado === 'rojo');
+    if (!rojos.length) return;
+    ev.preventDefault();
+    const card = $('hzStep' + rojos[0].idx);
+    if (card){
+      try { card.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (_) { card.scrollIntoView(); }
+      card.classList.remove('nri-flash'); void card.offsetWidth; card.classList.add('nri-flash');
+      setTimeout(() => card.classList.remove('nri-flash'), 1300);
+      const f = card.querySelector('.hz-obj.is-bad input, .hz-obj.is-bad select, .hz-obj.is-bad textarea');
+      if (f) try { f.focus({preventScroll: true}); } catch (_) {}
+    }
+    ilusToast('Falta: ' + rojos.map(r => 'Paso ' + r.idx + ' → ' + r.faltan.join(', ')).join(' · '), {type: 'warning'});
+  });
+
   modal.addEventListener('show.bs.modal', () => {
-    if (cargadoUnaVez) { cargar(); return; }        // al reabrir, se refresca (otro admin pudo cambiar algo)
+    syncTipo();
+    if (cargadoUnaVez){ cargar(); return; }        // al reabrir se refresca (otro admin pudo cambiar algo)
     cargadoUnaVez = true;
-    toggleHora();
     cargar();
     cargarPersonas();
+  });
+  modal.addEventListener('shown.bs.modal', hzEvaluar);
+  // El icono "Configurar" del calendario interno enlaza a /retiros#settings: abre este modal.
+  window.addEventListener('load', () => {
+    if (location.hash === '#settings' && window.bootstrap) bootstrap.Modal.getOrCreateInstance(modal).show();
   });
 })();
 </script>

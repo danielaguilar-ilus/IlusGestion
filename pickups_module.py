@@ -11393,10 +11393,12 @@ def register_pickup_routes(app, ctx):
                 continue
             _fila(d, "temprano", hasta=r["hasta"], motivo=r.get("motivo") or "")
         # 4) Cierres de día completo y bloqueos de horas (Marketing → Bloqueos)
+        blk_rows = []
         try:
-            for b in (mysql_fetchall(
-                    "SELECT id, fecha, hora_inicio, hora_fin, motivo FROM pickup_blocks "
-                    "WHERE fecha BETWEEN %s AND %s ORDER BY fecha, hora_inicio", (hoy, fin)) or []):
+            blk_rows = mysql_fetchall(
+                "SELECT id, fecha, hora_inicio, hora_fin, motivo FROM pickup_blocks "
+                "WHERE fecha BETWEEN %s AND %s ORDER BY fecha, hora_inicio", (hoy, fin)) or []
+            for b in blk_rows:
                 d = datetime.strptime(_iso_fecha(b["fecha"]), "%Y-%m-%d").date()
                 if not b.get("hora_inicio"):
                     _fila(d, "cierre", block_id=int(b["id"]), motivo=b.get("motivo") or "")
@@ -11416,6 +11418,50 @@ def register_pickup_routes(app, ctx):
             if hoy <= d <= fin and d.isoweekday() in c["work_days"]:
                 _fila(d, "cierre", motivo="Cierre extra (campo de texto)", solo_lectura=True)
 
+        # 6) Retiros YA agendados que chocan con un día cerrado, una salida temprano o un
+        # bloqueo de horas (Daniel 2026-09-30: el semáforo del panel debe avisarlo). No los mueve.
+        conflictos = []
+        try:
+            _bh = {}
+            for b in blk_rows:
+                if b.get("hora_inicio"):
+                    _bh.setdefault(_iso_fecha(b["fecha"]), []).append((
+                        _td_to_hhmm(b["hora_inicio"]),
+                        _td_to_hhmm(b["hora_fin"]) if b.get("hora_fin") else "23:59",
+                        (b.get("motivo") or "").strip()))
+            for r in (mysql_fetchall(
+                    f"SELECT id, code, customer_name, "
+                    f"  COALESCE(confirmed_date, proposed_date, requested_date) AS f_ef, "
+                    f"  CASE WHEN confirmed_date IS NOT NULL THEN confirmed_time_from "
+                    f"       WHEN proposed_date IS NOT NULL THEN proposed_time_from "
+                    f"       ELSE requested_time_from END AS tf_ef "
+                    f"FROM `{REQ}` "
+                    f"WHERE status NOT IN ('rechazada','cerrada','fallida','retirada') "
+                    f"  AND COALESCE(confirmed_date, proposed_date, requested_date) BETWEEN %s AND %s "
+                    f"ORDER BY f_ef, tf_ef", (hoy, fin)) or []):
+                iso = _iso_fecha(r["f_ef"])
+                d = datetime.strptime(iso, "%Y-%m-%d").date()
+                tf = _td_to_hhmm(r["tf_ef"]) if r.get("tf_ef") is not None else ""
+                info = _info_dia(c, d)
+                motivo = ""
+                if not info["abierto"]:
+                    motivo = info["razon"]
+                elif info["origen"] in ("temprano", "vispera") and tf and info["cierre"] and tf > info["cierre"]:
+                    motivo = f"ese día el último retiro es a las {info['cierre']}"
+                elif tf:
+                    for hi, hf, mot in _bh.get(iso, []):
+                        if hi <= tf < hf:
+                            motivo = f"horario bloqueado {hi}–{hf}" + (f" ({mot})" if mot else "")
+                            break
+                if motivo:
+                    conflictos.append({"id": int(r["id"]), "code": r.get("code"),
+                                       "cliente": r.get("customer_name") or "", "fecha": iso,
+                                       "dia": _DIAS_ABREV[d.weekday()], "hora": tf, "motivo": motivo})
+                    if len(conflictos) >= 30:
+                        break
+        except Exception as _e_cf:
+            print(f"[excepciones] cruce con retiros agendados: {_e_cf}", flush=True)
+
         _orden = {"feriado": 0, "cierre": 1, "vispera": 2, "temprano": 2, "bloqueo": 3}
         items.sort(key=lambda x: (x["fecha"], _orden.get(x["tipo"], 9)))
         anios = sorted({datetime.strptime(i["fecha"], "%Y-%m-%d").year for i in items})
@@ -11429,6 +11475,7 @@ def register_pickup_routes(app, ctx):
             "normal_hasta": c["normal"],
             "vispera": {"activa": c["vispera_on"], "hasta": c["vispera_hasta"], "proxima": proxima},
             "anios_estimados": [a for a in anios if a not in _OFI],
+            "conflictos": conflictos,
             "items": items,
         })
 
@@ -12512,8 +12559,11 @@ def register_pickup_routes(app, ctx):
             except Exception as _e_id:
                 print(f"[disponibilidad] info del día {iso}: {_e_id}", flush=True)
                 _inf_dia = {"abierto": True, "origen": "normal", "cierre": None, "motivo": ""}
-            _cierre_min = (_rh.hhmm_a_min(_inf_dia["cierre"])
-                           if _inf_dia["abierto"] and _inf_dia["origen"] in ("temprano", "vispera") else None)
+            # Última hora de llegada del día (normal, salida temprano o víspera) y apertura:
+            # el "Abre/Cierra" del panel Horarios y alertas ahora también manda en la grilla
+            # (antes la grilla pública iba fija de 09:00 a 16:30 y el servidor rechazaba lo demás).
+            _cierre_min = (_rh.hhmm_a_min(_inf_dia["cierre"]) if _inf_dia["abierto"] else None)
+            _apertura_min = _rh.hhmm_a_min(_td_to_hhmm(cfg.get("open_time") or "09:00:00"))
 
             day_blocks = blocks_by_date.get(iso, [])
             full_day_block = any(not b["hora_inicio"] for b in day_blocks)
@@ -12562,6 +12612,8 @@ def register_pickup_routes(app, ctx):
 
                 # Salida temprano del día (regla manual o víspera de feriado): los
                 # bloques que empiezan después del cierre se ven bloqueados con su motivo.
+                if manual_block is None and _apertura_min is not None and slot_start_min < _apertura_min:
+                    manual_block = f"Abrimos a las {_rh.min_a_hhmm(_apertura_min)}"
                 if manual_block is None and _cierre_min is not None and slot_start_min > _cierre_min:
                     manual_block = (f"Último retiro a las {_inf_dia['cierre']}"
                                     + (f" · {_inf_dia['motivo']}" if _inf_dia["motivo"] else ""))
