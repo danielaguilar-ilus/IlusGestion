@@ -159,6 +159,8 @@
   box-shadow:0 6px 12px -4px rgba(220,38,38,.2);
 }
 .ilus-cal-month-day.is-blank{visibility:hidden;pointer-events:none;border:none;background:transparent}
+/* Días del mes siguiente que completan la última semana (2026-09-29) */
+.ilus-cal-month-day.is-adjacent .d{opacity:.45}
 .ilus-cal-month-day.is-out{background:transparent;border-color:transparent;color:#d1d5db;cursor:default;font-weight:600}
 .ilus-cal-month-day.is-closed{background:#f3f4f6;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed;font-weight:600}
 .ilus-cal-month-day .mark-lock{font-size:.58rem;line-height:1;color:#9ca3af}

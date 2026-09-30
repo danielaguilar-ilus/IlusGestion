@@ -70,6 +70,8 @@
           </div>
         </details>
         <button type="button" class="rm-btn" id="rmExport" title="Descargar en Excel (CSV) lo que estás viendo, todas las páginas"><i class="bi bi-file-earmark-excel"></i>Exportar</button>
+        {# Informe KPIs (antes en la fila de filtros de arriba, que en el Monitor ya no se muestra — 2026-09-29) #}
+        <button type="button" class="rm-btn" onclick="descargarInformeKpis()" title="Descargar informe Excel con KPIs y detalle del período"><i class="bi bi-file-earmark-bar-graph"></i>Informe</button>
       </div>
     </div>
   </div>
@@ -96,7 +98,11 @@
         <tbody>
           <tr id="rmEmpty" class="rm-empty" hidden><td colspan="11">
             <i class="bi bi-search"></i>Ninguna solicitud coincide con lo que buscas.
-            <div style="margin-top:12px"><button type="button" class="rm-btn" id="rmEmptyClear">Limpiar filtros de la tabla</button></div>
+            <div style="margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+              <button type="button" class="rm-btn" id="rmEmptyClear">Limpiar filtros de la tabla</button>
+              {# La tabla trae los últimos 250 retiros; esto busca en todo el historial (2026-09-29) #}
+              <a class="rm-btn" id="rmEmptyHist" href="#" hidden><i class="bi bi-clock-history"></i>Buscar en todo el historial</a>
+            </div>
           </td></tr>
           {% for r in rows %}
 {% set b = status_badge(r.status) %}

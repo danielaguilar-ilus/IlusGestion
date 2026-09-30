@@ -283,6 +283,29 @@
           + '<span class="d">' + d + '</span>' + mark
           + '</button>';
       }
+      // Días del mes SIGUIENTE hasta completar la última semana (2026-09-29):
+      // si la semana cruza de mes (28-sep → 4-oct), el retiro del jueves 1 se
+      // ve aquí sin cambiar de mes. Tono más suave; clic igual lleva a ese día.
+      const _resto = (7 - ((offset + nDias) % 7)) % 7;
+      const _ms = m === 12 ? 1 : m + 1, _as = m === 12 ? a + 1 : a;
+      for (let d = 1; d <= _resto; d++){
+        const fecha = _as + '-' + String(_ms).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        const inRange = Object.prototype.hasOwnProperty.call(diasPayload, fecha);
+        const heat = inRange ? _diaHeat(diasPayload[fecha]) : { cls: 'is-out', libres: 0, total: 0 };
+        const cls = ['ilus-cal-month-day', heat.cls, 'is-adjacent'];
+        if (fecha === hoyStr) cls.push('is-today');
+        if (fecha === state.currentDate) cls.push('is-selected');
+        const clickable = inRange && heat.cls !== 'is-closed';
+        if (!clickable) cls.push('is-disabled');
+        let mark = '<span class="mark"></span>';
+        if (heat.cls === 'is-closed') mark = '<i class="bi bi-lock-fill mark-lock"></i>';
+        else if (heat.cls === 'is-out') mark = '';
+        html += '<button type="button" class="' + cls.join(' ') + '"'
+          + (clickable ? (' data-cal-month-day="' + fecha + '"') : ' disabled')
+          + ' aria-label="' + _esc(_fechaCl(fecha)) + '">'
+          + '<span class="d">' + d + '</span>' + mark
+          + '</button>';
+      }
       html += '</div>'
         + '<div class="ilus-cal-month-legend">'
         + '<span><i class="dot" style="background:#16a34a"></i>Libre</span>'

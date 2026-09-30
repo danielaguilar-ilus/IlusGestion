@@ -542,6 +542,13 @@
 {# ── Hero ── #}
 <div class="agi-hero">
   <div class="agi-hero-row">
+    {# 2026-09-29 (Daniel: "una flechita para devolver al monitor"): el botón
+       "Lista clásica" ya llevaba al Monitor, pero no se entendía; ahora es la
+       flecha de volver, a la izquierda, con su nombre real. #}
+    <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm" title="Volver al Monitor de retiros"
+       style="background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.18);font-weight:700;min-height:44px;display:inline-flex;align-items:center">
+      <i class="bi bi-arrow-left me-1"></i>Monitor
+    </a>
     <div class="agi-hero-badge">
       <i class="bi bi-calendar2-week-fill"></i>
     </div>
@@ -552,10 +559,6 @@
         Actualización en vivo cada 30s · arrastra para mover · click para datos rápidos
       </div>
     </div>
-    <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm"
-       style="background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.18);font-weight:700">
-      <i class="bi bi-list-ul me-1"></i>Lista clásica
-    </a>
   </div>
 </div>
 
@@ -984,7 +987,7 @@ function agiRenderWeek(){
       <div class="agi-day">${d.getDate()}</div>
       ${!w.habil
         ? `<div class="agi-nohabil-tag">${w.label}</div>`
-        : `<div style="font-size:.62rem;color:var(--ilus-muted-soft);font-weight:700">${dia.total_picks} retiros</div>
+        : `<div style="font-size:.62rem;color:var(--ilus-muted-soft);font-weight:700">${dia.total_picks} ${dia.total_picks === 1 ? 'retiro' : 'retiros'}</div>
       <div class="agi-bar"><div class="agi-bar-fill" style="width:${dia.ocupacion_pct}%;background:${barColor}"></div></div>`}
     </div>`;
   }

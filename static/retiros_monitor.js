@@ -378,6 +378,13 @@
         resaltar(f.el);
       });
       if (vacio) vacio.hidden = vis.length > 0 || !filas.length;
+      // La tabla trae los últimos 250 retiros: si lo buscado no está, se ofrece
+      // buscarlo en TODO el historial (búsqueda del servidor, ?q=) — 2026-09-29.
+      var hist = $('rmEmptyHist');
+      if (hist) {
+        hist.hidden = !(st.q && vis.length === 0);
+        if (!hist.hidden) hist.href = '?q=' + encodeURIComponent(st.q);
+      }
       pintarContadores();
       var cnt = $('rmCount');
       if (cnt) cnt.textContent = hayFiltros() ? vis.length + ' de ' + filas.length : filas.length + (filas.length === 1 ? ' solicitud' : ' solicitudes');

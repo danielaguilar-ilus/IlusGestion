@@ -1270,7 +1270,16 @@ select.nri-field-locked{pointer-events:none}
    siguen los mismos 10 números, ahora con variación, gráfico y clic para filtrar. ── #}
 {% include "retiros/_monitor_kpis.html" %}
 
-<form method="get" class="ilus-card p-3 mb-3">
+{# 2026-09-29 (Daniel: dos búsquedas una encima de otra, "no logro absorber"):
+   en el Monitor con la tabla nueva, esta fila se oculta porque la barra
+   "Buscar" + fichas hace lo mismo al instante. Se muestra igual si hay un
+   filtro del servidor activo (p.ej. "Buscar en todo el historial"), para poder
+   verlo y limpiarlo. En Kanban y Lista sigue siendo el filtro de siempre. #}
+{% set _mon_nuevo = filtros.view not in ('kanban', 'agenda', 'lista') and mon is defined and mon.ok %}
+{% set _filtro_srv = filtros.q or filtros.status or filtros.date %}
+{% set _fila_filtros = (not _mon_nuevo) or _filtro_srv %}
+<form method="get" class="ilus-card {{ 'p-3' if _fila_filtros else 'px-3 py-2' }} mb-3">
+  {% if _fila_filtros %}
   <div class="row g-2 align-items-end">
     <div class="col-md-4"><input name="q" value="{{ filtros.q }}" class="form-control form-control-sm" placeholder="Buscar solicitud, documento, cliente, telefono"></div>
     <div class="col-md-3"><select name="status" class="form-select form-select-sm"><option value="">Todos los estados</option>{% for k,v in statuses.items() %}<option value="{{ k }}" {% if filtros.status==k %}selected{% endif %}>{{ v }} ({{ stats.get(k,0) }})</option>{% endfor %}</select></div>
@@ -1282,8 +1291,9 @@ select.nri-field-locked{pointer-events:none}
       </button>
     </div>
   </div>
+  {% endif %}
   {# responsive_retiros (2026-06-09): flex-wrap evita que el selector de vistas se clipee en móvil #}
-  <div class="btn-group btn-group-sm mt-3 flex-wrap">
+  <div class="btn-group btn-group-sm {{ 'mt-3' if _fila_filtros else '' }} flex-wrap">
     {# 2026-09-24 (Daniel: "Uno solo desde el Monitor"): el botón que antes
        abría la "Agenda diaria" (lista simple por fecha) ahora abre el
        calendario operativo completo, que salió del menú lateral. La vista
