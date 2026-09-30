@@ -50487,7 +50487,7 @@ def _build_retiro_email_templates():
          'Todo el equipo ILUS te agradece la confianza.</p>' +
          _ret_info_card(
              _DATOS_BASE +
-             _ret_field("Retirado el",      "{{fecha_confirmada}}") +
+             _ret_field("Retirado el",      "{{fecha_retiro}}") +
              _ret_field("Bodega",           "{{warehouse_name}}")
          ) +
          '<table cellpadding="0" cellspacing="0" width="100%" '

@@ -1824,6 +1824,20 @@ def register_pickup_routes(app, ctx):
                 pass
             return ""
 
+    def _pickup_fecha_retiro_cl(req):
+        """Fecha (hora Chile) en que el retiro quedó 'retirada': closed_at se guarda
+        en UTC con NOW(). None si no está retirado o no hay closed_at."""
+        if (req.get("status") or "") != "retirada" or not req.get("closed_at"):
+            return None
+        try:
+            from zoneinfo import ZoneInfo as _ZI_fr
+            _ca = req["closed_at"]
+            if isinstance(_ca, str):
+                _ca = datetime.fromisoformat(_ca)
+            return _ca.replace(tzinfo=_ZI_fr("UTC")).astimezone(_ZI_fr("America/Santiago")).date()
+        except Exception:
+            return None
+
     def _render_pickup_vars(req, proposal=None):
         """Construye el dict de variables disponibles en plantillas de retiros."""
         cfg = settings()
@@ -1936,6 +1950,10 @@ def register_pickup_routes(app, ctx):
             # Nota que el operador escribe en "Mensaje al cliente" al proponer fecha
             # (texto plano; notify() arma su bloque HTML escapado).
             "mensaje_propuesta":     ((proposal or {}).get("message") or "").strip(),
+            # Día REAL de la entrega (closed_at al marcar "retirada"). El correo
+            # "completado" decía "Retirado el" + la fecha de la cita aunque se
+            # retirara otro día (prueba de tráfico 2026-09-29).
+            "fecha_retiro":          _fmt_fecha(_pickup_fecha_retiro_cl(req)) or _fmt_fecha(req.get("confirmed_date")),
         }
 
 
@@ -2046,6 +2064,10 @@ def register_pickup_routes(app, ctx):
             + '</td></tr></table>'
         ) if (kind == "proposal" and _msg_prop) else ""
         estado = _KIND_TO_ESTADO.get(kind)
+        # "Retirado el" de la plantilla sembrada usa {{fecha_confirmada}}: en el correo
+        # "completado" ese dato es el día real de la entrega ({{fecha_retiro}}).
+        if kind == "done":
+            variables_html["fecha_confirmada"] = variables.get("fecha_retiro") or variables_html.get("fecha_confirmada", "")
 
         # ── CALENDARIO (.ics) — Daniel 2026-06-17 ──────────────────────
         # Adjuntamos el evento SOLO cuando el retiro tiene cita confirmada
@@ -5960,7 +5982,10 @@ def register_pickup_routes(app, ctx):
         # "cerrada" reusa la plantilla de retirada ("Retiro completado · Gracias"):
         # solo es verdad si el retiro SÍ se retiró. Cerrar un duplicado o spam
         # (nunca retirado) no le escribe nada al cliente (auditoría 2026-09-24).
-        if new_status == "cerrada" and old_status != "retirada":
+        # Y cerrar DESPUÉS de "retirada" tampoco (prueba de tráfico 2026-09-29): el
+        # "Gracias" ya salió al marcar retirada (este mismo endpoint es el único que
+        # pone ese estado) y el cliente recibía dos correos idénticos.
+        if new_status == "cerrada":
             kind = None
         if kind and old_status != new_status:
             try:
