@@ -16904,12 +16904,22 @@ def comm_diagnostico():
         "from_addr":   resend_cfg.get("from_addr", ""),
         "source":      resend_cfg.get("_source", ""),
     }
+    # 2026-09-29 (prueba de tráfico de Retiros): el diagnóstico decía "resend" solo
+    # porque Resend tiene clave, y mostraba el Reply-To de la env antigua. Lo que
+    # de verdad usa _send_ilus_email_real es ILUS_EMAIL_PROVIDER (SMTP por defecto,
+    # REGLA #13) y la marca de Comunicaciones (_get_marca: la BD gana sobre la env).
+    try:
+        marca = _get_marca() or {}
+    except Exception:
+        marca = {}
+    _prov = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
     email_status = {
         "smtp":            smtp_status,
         "resend":          resend_status,
-        "metodo_preferido": "resend" if resend_status["configurado"] else ("smtp" if smtp_status["configurado"] else "ninguno"),
-        "from_efectivo":   f"{brand['from_name']} <{brand['from_email']}>",
-        "reply_to":        brand["reply_to"],
+        "metodo_preferido": _prov if _prov in ("smtp", "resend", "auto") else "smtp",
+        "from_efectivo":   f"{marca.get('from_name') or brand['from_name']} <{marca.get('from_email') or brand['from_email']}>",
+        "reply_to":        marca.get("reply_to") or brand["reply_to"],
+        "reply_to_env":    brand["reply_to"],
     }
 
     # ── Twilio (WhatsApp + SMS) ───────────────────────────────────
