@@ -59,5 +59,21 @@ class TestPdfValidaConElBotonGps(unittest.TestCase):
         self.assertIn('_vj.get("lat")', bloque)
 
 
+class TestBotonManualPorEquipo(unittest.TestCase):
+    """Daniel (2026-10-01): acceso directo al manual del equipo desde la tarjeta de cada equipo."""
+
+    def test_el_boton_abre_el_modal_en_la_pestana_manual(self):
+        html = _leer("templates", "ot2", "detalle.html")
+        self.assertIn("otdRepAbrir({{ e.id }}, 'repuesto', 'docs')", html)
+        self.assertIn("window.otdRepAbrir = async function(mid, modo, tabInicial)", html)
+        self.assertIn("if (tabInicial === 'docs')", html)
+
+    def test_el_boton_esta_dentro_del_bloque_de_quien_puede_pedir_repuestos(self):
+        html = _leer("templates", "ot2", "detalle.html")
+        i = html.index('<div class="otd-desv-btns">')
+        j = html.index("otdRepAbrir({{ e.id }}, 'repuesto', 'docs')")
+        self.assertLess(i, j, "va con los demás botones, bajo el mismo permiso que 'Solicitar repuesto'")
+
+
 if __name__ == "__main__":
     unittest.main()

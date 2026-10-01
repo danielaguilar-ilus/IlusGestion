@@ -1680,6 +1680,8 @@
 .otd-fs-btn.rep:hover{background:#2563eb;border-color:#2563eb;color:#fff}
 .otd-fs-btn.piola{border-color:#fde68a;color:#a16207}
 .otd-fs-btn.piola:hover{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.otd-fs-btn.man{border-color:#c7d2fe;color:#3730a3}
+.otd-fs-btn.man:hover{background:#4338ca;border-color:#4338ca;color:#fff}
 .otd-fs-btn.baja{border-color:#e5e7eb;color:#374151}
 .otd-fs-btn.baja:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
 .otd-fs-badge{flex-wrap:wrap}
@@ -5613,6 +5615,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <button type="button" class="otd-fs-btn rep"
                         onclick="otdRepAbrir({{ e.id }}, 'repuesto')">
                   <i class="bi bi-tools"></i> Solicitar repuesto</button>
+                {#- 📖 2026-10-01 (Daniel: "te pedí agregar los manuales o manual de uso para tener acceso a eso"):
+                    acceso directo al MANUAL del equipo (y sus piolas) sin tener que entrar a pedir un repuesto.
+                    Abre el mismo modal en la pestaña "Manual del equipo"; solo se ve. -#}
+                <button type="button" class="otd-fs-btn man"
+                        onclick="otdRepAbrir({{ e.id }}, 'repuesto', 'docs')">
+                  <i class="bi bi-file-earmark-pdf"></i> Manual del equipo</button>
                 {#- Solo en equipos de polea / selector de pesos (y racks,
                     opcional) -- Daniel 2026-09-20. Ver piola_aplica. -#}
                 {% if e.piola_aplica %}
@@ -16129,7 +16137,7 @@ async function _otrepJson(r){
   return j;
 }
 
-window.otdRepAbrir = async function(mid, modo){
+window.otdRepAbrir = async function(mid, modo, tabInicial){
   _otrepLiberar(_otrep.archivos);
   _otrep = { mid: mid, modo: (modo === 'piola' ? 'piola' : (modo === 'cinta' ? 'cinta' : 'repuesto')), tab: 'compat', opciones: null, sel: null, archivos: [], enviando: false, piola: null, lista: [] };
   var esLote = (_otrep.modo === 'repuesto');
@@ -16176,6 +16184,10 @@ window.otdRepAbrir = async function(mid, modo){
   otrepTab(_otrep.modo === 'repuesto' ? 'compat' : 'manual');
   if (_otrep.modo !== 'repuesto') otrepSelManual();
   otrepRefrescar();
+  if (tabInicial === 'docs'){   // viene del botón "Manual del equipo" de la tarjeta del equipo
+    otrepTab('docs');
+    document.getElementById('otrepTitulo').textContent = 'Manual del equipo';
+  }
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRepSol')).show();
   try {
     const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
