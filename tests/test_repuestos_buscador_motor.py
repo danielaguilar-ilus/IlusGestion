@@ -282,7 +282,7 @@ class TestMotorBusqueda(unittest.TestCase):
         modelos = [{"repuesto_id": 5, "id": 700, "sku": "TX9", "nombre": "Trotadora X9 Pro"}]
         res, doble = self._buscar(maquina_id="40", maquina=maquina, producto=producto, modelos=modelos)
         sql, params = _sql_principal(doble)
-        self.assertIn("smf.producto_id=%s", sql, "filtra compatibles con el modelo")
+        self.assertIn("smf.producto_id IN (", sql, "filtra compatibles con el modelo")
         self.assertIn(700, params)
         self.assertEqual(res["modelo"], {"id": 700, "sku": "TX9", "nombre": "Trotadora X9 Pro"})
         self.assertFalse(res["compatibles_sin_modelo"])
@@ -297,8 +297,8 @@ class TestMotorBusqueda(unittest.TestCase):
         where = _where_extra(sql)
         self.assertNotIn("smf.producto_id", where, "con solo_compat=0 NO se filtra")
         orden = _orden_clause(sql)
-        self.assertLess(orden.index("(rs.sku = %s) DESC"), orden.index("smf.producto_id=%s"))
-        self.assertLess(orden.index("smf.producto_id=%s"), orden.index("(rs.descripcion LIKE %s) DESC"))
+        self.assertLess(orden.index("(rs.sku = %s) DESC"), orden.index("smf.producto_id IN ("))
+        self.assertLess(orden.index("smf.producto_id IN ("), orden.index("(rs.descripcion LIKE %s) DESC"))
         self.assertLess(orden.index("(rs.descripcion LIKE %s) DESC"), orden.index("rs.cantidad -"),
                          "el desempate de stock disponible va despues de 'empieza con'")
         self.assertEqual(params[-1], 26, "sin filtro real el techo sigue en 25")
@@ -314,7 +314,7 @@ class TestMotorBusqueda(unittest.TestCase):
         producto = {"id": 800, "sku": "LP-1", "nombre": "Leg Press"}
         res, doble = self._buscar(modelo_id="800", producto=producto)
         sql, params = _sql_principal(doble)
-        self.assertIn("smf.producto_id=%s", sql)
+        self.assertIn("smf.producto_id IN (", sql)
         self.assertIn(800, params)
         self.assertEqual(res["modelo"]["nombre"], "Leg Press")
 

@@ -765,5 +765,28 @@ más ALTER en fila. Fix: commits `868d3a04` y `57212c2d`.
 
 ---
 
-_Última actualización: 2026-09-29_
+## 🔒 REGLA #19 — Ningún técnico ve ni contacta proveedores (no negociable)
+
+**Pedido explícito de Daniel (2026-10-01): "nunca los técnicos deben contener
+datos o poder comunicarse con los proveedores. Ni siquiera pueden ver mis
+proveedores."** Confirmado: aplica a TODA la familia técnico (interno,
+elevado/`tecnico_ejecutivo` —Jaizer incluido— y externo) y en TODO el sistema.
+
+- Un técnico ve del repuesto: SKU, descripción, cantidad, stock (semáforo),
+  ubicación, equipo/modelo compatible, fotos y el manual del equipo. Nunca
+  proveedor, su contacto, costo, N° OC, notas de gestión ni tickets de compra.
+- **Una sola fuente de verdad:** `_oculta_proveedores()` en `app.py` (Jinja:
+  `oculta_proveedores`). NO usar `_otrep_puede_gestion()` para esto: devuelve
+  True para el técnico interno (esa fue la fuga).
+- El dato se quita **en el servidor** (`_otrep_fmt_stock`, `_otrep_fila`,
+  contextos de Bodega/Repuestos, bitácoras), no solo en la plantilla: lo que
+  viaja en un `tojson` se lee con "ver código fuente".
+- Las escrituras de un técnico **ignoran** `proveedor_id`/`costo_unitario` y
+  conservan lo que gestión ya cargó (nunca los pisan con NULL).
+- Toda pantalla o endpoint nuevo que muestre repuestos pasa por esa regla.
+  Gestión no pierde nada.
+
+---
+
+_Última actualización: 2026-10-01_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

@@ -609,6 +609,7 @@ class TestEndpointsBloqueados(unittest.TestCase):
         self.assertIn("bod_count_sin_costo = 0", fuente)
         # (revisión 2026-10-01) esta consulta usa el alias proveedor_nombre: se quita todo "proveedor*"
         self.assertIn('str(_k).startswith("proveedor")', fuente)
+        self.assertIn('request.args.get("sin_costo") == "1" and not _oculta_proveedores()', fuente)
 
     def test_bitacoras_no_muestran_proveedor_ni_nota_de_gestion(self):
         amb = _cargar(["_otrep_log_sin_proveedor"], ["_OTREP_LOG_ESTADO_RE"], extra={"re": re})
@@ -619,7 +620,6 @@ class TestEndpointsBloqueados(unittest.TestCase):
         app_src = open(os.path.join(RAIZ, "app.py"), encoding="utf-8").read()
         self.assertIn("_det = _otrep_log_sin_proveedor(_det)", app_src)
         self.assertIn('l["valor_despues"] = _otrep_log_sin_proveedor(l.get("valor_despues"))', app_src)
-        self.assertIn('request.args.get("sin_costo") == "1" and not _oculta_proveedores()', fuente)
 
     def test_el_alta_y_la_edicion_ignoran_las_claves(self):
         for f in ("repstock_crear", "repstock_editar"):

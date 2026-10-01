@@ -91697,6 +91697,11 @@ def ot2_api_repuestos_bodega_buscar():
 
     # Modelo de contexto: por equipo del cliente o por modelo directo.
     modelo = None
+    # 🔗 2026-10-01 (Daniel: "acercarnos más a la compatibilidad real"): mismos modelos
+    # equivalentes que la pestaña Compatibles (_otrep_modelos_de_maquina) -- un repuesto
+    # declarado contra un duplicado del modelo (MOD-xxxx, otro KOPR con el mismo nombre)
+    # también cuenta como compatible aquí, y las dos pestañas dicen lo mismo.
+    ids_modelo = []
     compat_pedido = bool(maquina_id or modelo_id)
     if maquina_id:
         try:
@@ -91704,13 +91709,24 @@ def ot2_api_repuestos_bodega_buscar():
         except Exception:
             maq = None
         if maq:
-            modelo = _otrep_producto_de_maquina(maq)
+            try:
+                _eq = _otrep_modelos_de_maquina(maq) or []
+            except Exception as e:
+                print(f"[otrep] bodega-buscar modelos equivalentes: {e}", flush=True)
+                _eq = []
+            if _eq:
+                modelo = {"id": _eq[0]["id"], "sku": _eq[0].get("sku"), "nombre": _eq[0].get("nombre")}
+                ids_modelo = [int(x["id"]) for x in _eq]
+            else:
+                modelo = _otrep_producto_de_maquina(maq)
     elif modelo_id:
         try:
             modelo = mysql_fetchone("SELECT id, sku, nombre FROM cat_productos WHERE id=%s", (modelo_id,))
         except Exception:
             modelo = None
 
+    if modelo and not ids_modelo:
+        ids_modelo = [int(modelo["id"])]
     filtra_modelo = bool(modelo) and solo_compat
     hay_filtro = bool(proveedor_id or sin_proveedor or marca_id or filtra_modelo)
     if len(q) < 2 and not hay_filtro:
@@ -91759,10 +91775,11 @@ def ot2_api_repuestos_bodega_buscar():
         where.append("rs.marca_id=%s")
         params.append(marca_id)
     sql_compat = ("EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos smf "
-                  " WHERE smf.repuesto_id=rs.id AND smf.producto_id=%s)")
+                  " WHERE smf.repuesto_id=rs.id AND smf.producto_id IN ("
+                  + ",".join(["%s"] * max(1, len(ids_modelo))) + "))")
     if filtra_modelo:
         where.append(sql_compat)
-        params.append(modelo["id"])
+        params.extend(ids_modelo)
 
     # Ranking (ver docstring). Todo parametrizado; el SQL solo cambia por
     # banderas internas, nunca por texto del usuario.
@@ -91772,7 +91789,7 @@ def ot2_api_repuestos_bodega_buscar():
         params.append(q)
     if modelo and not filtra_modelo:
         orden.append(sql_compat + " DESC")
-        params.append(modelo["id"])
+        params.extend(ids_modelo)
     if len(q) >= 2:
         orden.append("(rs.descripcion LIKE %s) DESC")
         params.append(f"{q_like}%")
@@ -91819,7 +91836,7 @@ def ot2_api_repuestos_bodega_buscar():
         d = _otrep_fmt_stock(r, para_ot=para_ot)
         d["modelos"] = modelos_por_rep.get(int(r["id"]), [])
         if modelo:
-            d["es_compatible"] = any(int(m["id"]) == int(modelo["id"]) for m in d["modelos"])
+            d["es_compatible"] = any(int(m["id"]) in ids_modelo for m in d["modelos"])
         out.append(d)
     return jsonify({
         "ok": True, "repuestos": out, "truncado": truncado,
