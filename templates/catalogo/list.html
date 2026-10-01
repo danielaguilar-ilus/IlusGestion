@@ -419,7 +419,9 @@ window.CAT_LIST_DATA = {
   isSuperadmin: {{ 'true' if permissions.superadmin else 'false' }},
   canCargarPiolas: {{ 'true' if (permissions.mantenciones or permissions.superadmin) else 'false' }},
   canEliminarCatalogo: {{ 'true' if (permissions.cat_eliminar or permissions.superadmin) else 'false' }},
-  canDescargarManual: {{ 'true' if (permissions.cat_manual_descargar or permissions.superadmin) else 'false' }}
+  canDescargarManual: {{ 'true' if (permissions.cat_manual_descargar or permissions.superadmin) else 'false' }},
+  {# 🔒 2026-10-01: "Enviar por correo" es un canal hacia terceros -- no se ofrece a un técnico. #}
+  canEnviarManual: {{ 'false' if oculta_proveedores else 'true' }}
 };
 </script>
 <script defer src="{{ url_for('static', filename='catalogo_list.js') }}"></script>

@@ -297,7 +297,11 @@ class TestPlantillaTarjeta5(unittest.TestCase):
 
     def test_el_buscador_se_usa_en_modo_agregar_con_el_modelo_y_en_masa(self):
         bloque = self.html.split("function igrAsegurarBuscador(){")[1].split("// ── La lista a pedir ──")[0]
-        for clave in ("modo: 'agregar'", "modeloBase:", "masivo: true", "onAgregarTodos: igrAgregarTodos", "mostrarProveedor: true"):
+        # 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): `mostrarProveedor` ya no es
+        # `true` fijo -- gestion lo ve (true) y un tecnico, Jaizer incluido, no (false): ver
+        # tests/test_privacidad_proveedores_tecnicos.py.
+        for clave in ("modo: 'agregar'", "modeloBase:", "masivo: true", "onAgregarTodos: igrAgregarTodos",
+                      "mostrarProveedor: !IGR_OCULTA_PROV"):
             self.assertIn(clave, bloque)
 
     def test_todo_lo_que_viene_del_servidor_va_escapado(self):

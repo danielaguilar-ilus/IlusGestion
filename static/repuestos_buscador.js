@@ -19,7 +19,10 @@
 
    Permisos: lo que el usuario NO puede ver simplemente no viene en el JSON
    (_OTREP_STOCK_NO_EXTERNO): la tarjeta pinta solo los campos presentes. Con
-   `mostrarProveedor:false` (técnico externo) tampoco se ofrece el filtro.
+   `mostrarProveedor:false` (CUALQUIER técnico desde 2026-10-01: interno,
+   elevado o externo -- Daniel: "ni siquiera pueden ver mis proveedores")
+   tampoco se ofrece el filtro, no se pide la lista de proveedores, no se
+   dibuja la pastilla de proveedor y no se manda `proveedor_id` al buscar.
 
    Uso:
      var b = RepBuscador.crear({
@@ -237,7 +240,11 @@
       if (selMarca.value !== cur) selMarca.value = '';
     }
     async function cargarOpciones() {
-      if (st.mostrarProveedor && !st.provs) {
+      if (!st.mostrarProveedor) {
+        // 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): a un técnico
+        // NUNCA se le pide el catálogo de proveedores (el backend igual le responde 403).
+        st.provs = [];
+      } else if (!st.provs) {
         try {
           var r = await fetch('/mantenciones/api/proveedores-repuesto', { credentials: 'same-origin', headers: st.headers });
           var j = await r.json();
@@ -330,7 +337,7 @@
       var p = new URLSearchParams();
       if (st.q.length >= 2) p.set('q', st.q);
       p.set('ctx', st.ctx === 'ot' ? 'ot' : 'gestion');
-      if (st.proveedor) p.set('proveedor_id', st.proveedor);
+      if (st.proveedor && st.mostrarProveedor) p.set('proveedor_id', st.proveedor);   // 🔒 2026-10-01: sin proveedor para técnicos
       if (st.marca) p.set('marca_id', st.marca);
       if (st.modelo) { p.set('modelo_id', st.modelo.id); p.set('solo_compat', '1'); }
       else if (st.equipo) { p.set('maquina_id', st.equipo.id); p.set('solo_compat', st.soloCompat ? '1' : '0'); }
@@ -401,7 +408,9 @@
       if (it.sku) meta.push('<span class="rpb-sku">' + marcar(esc(it.sku), pal) + '</span>');
       if (it.marca) meta.push('<span><i class="bi bi-tag"></i>' + marcar(esc(it.marca), pal) + '</span>');
       if (it.codigo_fabricante) meta.push('<span title="Código de fabricante">cód. ' + marcar(esc(it.codigo_fabricante), pal) + '</span>');
-      var tags = proveedorBadge(it, pal);
+      // 🔒 2026-10-01: sin pastilla de proveedor si el modal va con mostrarProveedor:false
+      // (técnicos); y proveedorBadge ya no pinta nada si el dato no viene en el JSON.
+      var tags = st.mostrarProveedor ? proveedorBadge(it, pal) : '';
       if (it.ubicacion_codigo) tags += '<span class="rpb-tag ubi"><i class="bi bi-geo-alt"></i>' + esc(it.ubicacion_codigo) + '</span>';
       if (compat) tags += '<span class="rpb-tag compat"><i class="bi bi-check2-circle"></i>Compatible con ' + esc((st.modelo && (st.modelo.nombre || st.modelo.sku)) || (st.equipo && st.equipo.nombre) || 'el modelo') + '</span>';
       var lado = '<div class="rpb-lado">' + semaforoHTML(it);
@@ -619,7 +628,7 @@
         pintarCtx();
         buscar();
       },
-      setProveedores: function (lista) { st.provs = Array.isArray(lista) ? lista : []; pintarProvs(); },
+      setProveedores: function (lista) { st.provs = (st.mostrarProveedor && Array.isArray(lista)) ? lista : []; pintarProvs(); },
       setSeleccion: function (id) { st.seleccionId = (id == null ? null : Number(id)); pintarResultados(); },
       getEstado: function () { return { q: st.q, proveedor: st.proveedor, marca: st.marca, modelo: st.modelo, equipo: st.equipo, soloCompat: st.soloCompat }; }
     };

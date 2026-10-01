@@ -300,10 +300,14 @@
      el form, y al desmarcarlo + Filtrar el GET ya no manda el parámetro,
      así que la tabla se recarga completa (sin el bug histórico de filtros
      que no se limpiaban). El badge muestra cuántos hay ANTES de marcarlo. #}
+  {# 🔒 2026-10-01 (Daniel: "sin ver ni tocar proveedor ni costo"): "Sin costo" es
+     información de costos -- no se dibuja para un técnico (el backend tampoco lo aplica). #}
+  {% if not oculta_proveedores %}
   <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
     <input type="checkbox" name="sin_costo" value="1" {% if bod_sin_costo %}checked{% endif %}> Sin costo
     <span class="rb-chip" style="background:#fff8e1;color:#92400e">{{ bod_count_sin_costo }}</span>
   </label>
+  {% endif %}
   <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
     <input type="checkbox" name="sin_modelo" value="1" {% if bod_sin_modelo %}checked{% endif %}> Sin modelo asociado
     <span class="rb-chip" style="background:#fee2e2;color:#991b1b">{{ bod_count_sin_modelo }}</span>
@@ -384,7 +388,7 @@
          "Cantidad" (el físico real, REGLA #4.2 no se quita nada existente). #}
       <th>Stock</th>
       <th>Ubicación</th>
-      <th>Costo</th>
+      {% if not oculta_proveedores %}<th>Costo</th>{% endif %}
       <th>Marca</th>
       <th>Modelos compatibles</th>
       <th>Asociado a</th>
@@ -435,7 +439,7 @@
         {% if r.por_llegar %}<div class="text-muted">Por llegar: {{ (r.por_llegar|round)|int }}</div>{% endif %}
       </td>
       <td>{% if r.ubicacion_codigo %}{{ r.ubicacion_codigo }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-      <td>{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      {% if not oculta_proveedores %}<td>{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
       <td>{% if r.marca_nombre %}{{ r.marca_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td>
         {# 2026-09-16: cada chip sabe si su modelo esta DESCONTINUADO (gris +
@@ -595,11 +599,18 @@
                 <label class="form-label small fw-semibold">Stock mínimo <span class="rb-req">*</span></label>
                 <input type="number" class="form-control" id="rbStockMinimo" min="0" step="1" value="1">
               </div>
+              {% if not oculta_proveedores %}
               <div class="col-md-4">
                 <label class="form-label small fw-semibold">Costo unitario</label>
                 <input type="text" class="form-control" id="rbCosto" inputmode="numeric" placeholder="$0"
                        onfocus="rbCostoFoco(this)" onblur="rbCostoFormatear(this)">
               </div>
+              {% else %}
+              {# 🔒 2026-10-01: un técnico no ve ni escribe el costo. El campo queda OCULTO y sin
+                 valor solo para que el JS del modal (rbCostoRaw/rbCostoSet) siga sin errores;
+                 rbGuardar NO lo manda cuando RB_OCULTA_PROV, y el backend lo ignora igual. #}
+              <input type="hidden" id="rbCosto">
+              {% endif %}
               {# 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"):
                  solo aparece cuando la cantidad de un repuesto YA EXISTENTE
                  cambia (rbCantidadCambio) -- un alta nueva no pide motivo,
@@ -690,11 +701,11 @@
         <section class="rb-step" id="rbStep3">
           <div class="rb-step-header">
             <div class="rb-step-circle"><span class="rb-step-num">3</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-title">Marca y proveedor <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Opcional</span></div>
-            <div class="rb-step-sub">Quién lo fabrica y a quién se le compra</div>
+            <div class="rb-step-title">{% if oculta_proveedores %}Marca{% else %}Marca y proveedor{% endif %} <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Opcional</span></div>
+            <div class="rb-step-sub">{% if oculta_proveedores %}Quién lo fabrica{% else %}Quién lo fabrica y a quién se le compra{% endif %}</div>
           </div>
           <div class="rb-step-body">
-            <p class="rb-input-help mt-0 mb-2">Si eliges una marca con proveedor de referencia, te lo sugerimos solo.</p>
+            {% if not oculta_proveedores %}<p class="rb-input-help mt-0 mb-2">Si eliges una marca con proveedor de referencia, te lo sugerimos solo.</p>{% endif %}
             <div class="row g-3">
               <div class="col-md-6">
                 <label class="form-label small fw-semibold">Marca <span class="text-muted fw-normal">(del ERP)</span></label>
@@ -705,6 +716,7 @@
                 </div>
                 <div id="rbMarcaSeleccionada" class="mt-1"></div>
               </div>
+              {% if not oculta_proveedores %}
               <div class="col-md-6">
                 <label class="form-label small fw-semibold">Proveedor <span class="text-muted fw-normal">(contraparte)</span></label>
                 <input type="hidden" id="rbProveedor">
@@ -715,6 +727,18 @@
                 <div id="rbProveedorSeleccionado" class="mt-1"></div>
                 <div id="rbProveedorSugerido" class="mt-1 small" style="display:none"></div>
               </div>
+              {% else %}
+              {# 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): un técnico no ve el
+                 selector de proveedor. Quedan los elementos ocultos y vacíos solo para que el JS del
+                 modal (rbSetProveedor, rbPickMarca...) no falle; rbGuardar no manda proveedor_id. #}
+              <div hidden aria-hidden="true">
+                <input type="hidden" id="rbProveedor">
+                <input type="text" id="rbProveedorBuscar" tabindex="-1" autocomplete="off">
+                <div id="rbProveedorResultadosList"></div>
+                <div id="rbProveedorSeleccionado"></div>
+                <div id="rbProveedorSugerido" style="display:none"></div>
+              </div>
+              {% endif %}
             </div>
           </div>
         </section>
@@ -812,6 +836,7 @@
    Daniel 2026-08-08: "el tratamiento de los proveedores deberá ser
    bastante delicado... tenemos que tener los datos, su correo, todo."
    Más de 3 campos -> modal Bootstrap propio (Regla #8), no ilusPrompt. #}
+{% if not oculta_proveedores %}{# 🔒 2026-10-01: el alta de proveedores no se dibuja para un técnico #}
 <div class="modal fade" id="modalRbProveedor" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -880,6 +905,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 {# 📊 2026-09-24 (Daniel: "cuantos repuestos se estan registrando en este
    minuto... necesito ver el avance y quien lo esta avanzando", y luego:
@@ -1330,6 +1356,10 @@ const RB_ES_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
 // esta en los endpoints (403), esto es cortesia de UI, no seguridad.
 const RB_PUEDE_GESTIONAR_MODELOS = {{ 'true' if bod_puede_gestionar_modelos else 'false' }};
 const RB_CSRF = {{ csrf_token()|tojson }};
+// 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores... sin ver ni tocar
+// proveedor ni costo"): para un técnico el modal no manda proveedor_id ni costo_unitario
+// (si no, cada edición suya BORRARÍA el proveedor y el costo que gestión ya cargó).
+const RB_OCULTA_PROV = {{ 'true' if oculta_proveedores else 'false' }};
 let RB_MODAL = null;
 let RB_PROVEEDOR_MODAL = null;
 // Cada item: {producto_id, producto_nombre, sku, origen ('erp'|'manual'),
@@ -1370,7 +1400,8 @@ let RB_CANTIDAD_ORIGINAL = null;
 document.addEventListener('DOMContentLoaded', function(){
   const modalEl = document.getElementById('modalRepStock');
   RB_MODAL = new bootstrap.Modal(modalEl);
-  RB_PROVEEDOR_MODAL = new bootstrap.Modal(document.getElementById('modalRbProveedor'));
+  const _modalProvEl = document.getElementById('modalRbProveedor');   // no existe para un técnico
+  RB_PROVEEDOR_MODAL = _modalProvEl ? new bootstrap.Modal(_modalProvEl) : null;
   // La tabla se refresca UNA vez al cerrar (no en cada guardado) — así
   // "Guardar y crear otro" encadena repuestos sin perder el modal.
   modalEl.addEventListener('hidden.bs.modal', function(){
@@ -1498,7 +1529,7 @@ async function rbSondearErp(){
         const badge = '<span class="rb-sondeo-badge" style="background:' + (hay ? '#dcfce7' : '#f3f4f6') +
                       ';color:' + (hay ? '#166534' : '#6b7280') + '">' +
                       rbCantidadFmt(cant) + (hay ? ' en bodega' : ' — sin stock') + '</span>';
-        const costo = Number(p.costo_promedio) || 0;
+        const costo = RB_OCULTA_PROV ? 0 : (Number(p.costo_promedio) || 0);   // 🔒 el costo del ERP no se le muestra a un técnico
         const costoHtml = costo > 0
           ? '<span class="rb-sondeo-costo">$' + Math.round(costo).toLocaleString('es-CL') + '</span>'
           : '';
@@ -1564,7 +1595,7 @@ function rbPickSondeo(i){
   if (p.cantidad !== null && p.cantidad !== undefined && p.cantidad !== ''){
     document.getElementById('rbCantidad').value = Number(p.cantidad) || 0;
   }
-  const costo = Number(p.costo_promedio) || 0;
+  const costo = RB_OCULTA_PROV ? 0 : (Number(p.costo_promedio) || 0);
   if (costo > 0) rbCostoSet(costo);
   ilusToast('Traído de bodega 18 · el SKU (' + (p.sku || 's/SKU') + ') reemplaza al auto-generado',
             {type:'success'});
@@ -1913,10 +1944,10 @@ async function rbGuardar(crearOtro){
     cantidad: (id && !cantidadCambio) ? undefined : cantidad,
     cantidad_original: cantidadCambio ? RB_CANTIDAD_ORIGINAL : undefined,
     stock_minimo: stockMin,
-    costo_unitario: rbCostoRaw(),
+    costo_unitario: RB_OCULTA_PROV ? undefined : rbCostoRaw(),   // 🔒 un técnico no manda costo (undefined = la clave no viaja)
     ubicacion_id: document.getElementById('rbUbicacion').value || null,
     marca_id: document.getElementById('rbMarca').value || null,
-    proveedor_id: document.getElementById('rbProveedor').value || null,
+    proveedor_id: RB_OCULTA_PROV ? undefined : (document.getElementById('rbProveedor').value || null),   // 🔒 idem proveedor
     codigo_fabricante: document.getElementById('rbCodigoFabricante').value.trim(),
     notas: document.getElementById('rbNotas').value.trim(),
     largo: document.getElementById('rbLargo').value || null,
@@ -2157,6 +2188,8 @@ function rbPickMarca(i){
   // repuesto) — esto solo sugiere/avisa.
   const sugerido = document.getElementById('rbProveedorSugerido');
   if (!m){ sugerido.style.display = 'none'; return; }
+  // 🔒 2026-10-01: un técnico no ve ni gestiona proveedores: ni sugerencia ni "Asignar ahora".
+  if (RB_OCULTA_PROV){ sugerido.style.display = 'none'; return; }
   if (document.getElementById('rbProveedor').value){ sugerido.style.display = 'none'; return; }
   if (m.proveedor_id){
     rbSetProveedor(m.proveedor_id, m.proveedor_nombre, m.proveedor_contacto);

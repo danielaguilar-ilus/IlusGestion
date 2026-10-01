@@ -382,7 +382,9 @@
                 <label for="igrNxCodigo">Código o SKU del fabricante</label>
                 <input type="text" id="igrNxCodigo" class="form-control" maxlength="120" autocomplete="off" placeholder="Opcional">
               </div>
-              <div class="igr-f">
+              {#- 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): a un técnico (Jaizer
+                  incluido) el campo no se le dibuja; queda oculto y vacío para que el JS no falle. -#}
+              <div class="igr-f"{% if oculta_proveedores %} hidden style="display:none"{% endif %}>
                 <label for="igrNxProv">Proveedor</label>
                 <select id="igrNxProv" class="form-select"><option value="">Sin proveedor (bodega lo define)</option></select>
               </div>
@@ -420,14 +422,14 @@
                     <button type="button" class="btn btn-sm btn-secondary" id="incBtnRepNuevoCancelar">Cancelar</button>
                   </div>
                 </div>
-                <div class="position-relative mt-2">
+                <div class="position-relative mt-2"{% if oculta_proveedores %} hidden style="display:none"{% endif %}>
                   <input type="text" class="form-control form-control-sm" id="incRepNuevoProveedor"
                          placeholder="Proveedor (opcional) -- busca por nombre" autocomplete="off">
                   <input type="hidden" id="incRepNuevoProveedorId">
                   <div class="inc-rep-prov-lista" id="incRepNuevoProveedorLista" hidden></div>
                 </div>
-                <div class="form-text">Se crea en la Bodega con cantidad 0 y SKU automático -- completa ubicación y
-                  costo en /repuestos cuando llegue.</div>
+                <div class="form-text">Se crea en la Bodega con cantidad 0 y SKU automático -- completa ubicación{% if not oculta_proveedores %} y
+                  costo{% endif %} en /repuestos cuando llegue.</div>
               </div>
             </details>
           </div>
@@ -3647,6 +3649,12 @@
 
   var IGR_MAX_LINEAS = 30;
   var IGR_YO = {{ (current_user['nombre'] if current_user else '')|tojson }};
+  // 🔒 2026-10-01 (Daniel: "nunca los técnicos deben contener datos o poder comunicarse con los
+  // proveedores. Ni siquiera pueden ver mis proveedores"): para un técnico (Jaizer incluido) la tarjeta
+  // no pide ni dibuja proveedores, el buscador va sin proveedor y el envío no manda proveedor_id ni
+  // "recordar proveedor" (el backend igual los ignora).
+  var IGR_OCULTA_PROV = {{ 'true' if oculta_proveedores else 'false' }};
+  function igrBusquedaTxt(){ return IGR_OCULTA_PROV ? 'nombre, SKU o marca' : 'nombre, SKU, marca o proveedor'; }
   var IGR_ESTADO_CLS = {solicitado:'ambar', validado:'azul', pedido:'azul', recibido:'verde', instalado:'verde', rechazado:'rojo'};
   var _igr = {
     modo: null,          // 'existe' | 'noexiste' | 'no' | null (sin decidir)
@@ -3666,6 +3674,7 @@
 
   // ── Proveedores y responsables: se piden UNA vez y se guardan ──
   function igrProvs(){
+    if(IGR_OCULTA_PROV){ _igr.provs = []; return Promise.resolve(_igr.provs); }   // 🔒 nunca se pide el catálogo de proveedores
     if(_igr.provs) return Promise.resolve(_igr.provs);
     if(!_igr.provsP){
       _igr.provsP = fetch('/mantenciones/api/proveedores-repuesto', {credentials:'same-origin'})
@@ -3743,12 +3752,12 @@
     } else if(m){
       n.className = 'igr-nota ambar';
       n.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>El modelo <b>' + igrEsc(m.nombre || m.sku)
-        + '</b> aún no tiene repuestos compatibles registrados: busca por nombre, SKU, marca o proveedor. Si eliges uno que le sirve, '
+        + '</b> aún no tiene repuestos compatibles registrados: busca por ' + igrBusquedaTxt() + '. Si eliges uno que le sirve, '
         + 'márcalo en la lista y la próxima vez saldrá solo.';
     } else {
       n.className = 'igr-nota ambar';
       n.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Este SKU no está en el Catálogo de modelos, así que no hay compatibles que filtrar: '
-        + 'busca por nombre, SKU, marca o proveedor.';
+        + 'busca por ' + igrBusquedaTxt() + '.';
     }
   }
   function igrAplicarModelo(){
@@ -3841,7 +3850,7 @@
       if(_igr.buscador) return;
       var m = _igr.modelo;
       _igr.buscador = RepBuscador.crear({
-        mount: mount, ctx: 'gestion', modo: 'agregar', mostrarProveedor: true, provs: provs,
+        mount: mount, ctx: 'gestion', modo: 'agregar', mostrarProveedor: !IGR_OCULTA_PROV, provs: provs,
         modeloBase: m ? {id: m.id, sku: m.sku, nombre: m.nombre} : null,
         compatPorDefecto: !!(m && m.n_compatibles > 0),
         masivo: true,
@@ -3964,12 +3973,15 @@
     if(chip) meta.push(chip);
     if(l.bodega && l.compat) meta.push('<span class="igr-chip verde"><i class="bi bi-diagram-3-fill"></i>Compatible con el modelo</span>');
     // El grupo ya dice el proveedor: el selector por línea solo aparece si la línea no tiene o si se pide cambiarlo.
-    var extra = (!l.provId || l.editProv)
-      ? '<label class="igr-mini"><span>Proveedor</span><select class="form-select form-select-sm igr-lin-prov" data-k="' + l.k + '">' + igrOpcionesProv(l) + '</select></label>'
-      : '<button type="button" class="igr-link igr-cambiar-prov" data-k="' + l.k + '"><i class="bi bi-arrow-left-right me-1"></i>Cambiar proveedor</button>';
-    if(l.bodega && !l.provOrig && l.provId){
-      extra += '<label class="igr-chk"><input type="checkbox" class="igr-chk-prov" data-k="' + l.k + '"' + (l.recordarProv ? ' checked' : '')
-            + '><span>Guardar este proveedor en el repuesto (no tenía ninguno)</span></label>';
+    var extra = '';
+    if(!IGR_OCULTA_PROV){   // 🔒 2026-10-01: a un técnico no se le ofrece elegir, cambiar ni guardar proveedores
+      extra = (!l.provId || l.editProv)
+        ? '<label class="igr-mini"><span>Proveedor</span><select class="form-select form-select-sm igr-lin-prov" data-k="' + l.k + '">' + igrOpcionesProv(l) + '</select></label>'
+        : '<button type="button" class="igr-link igr-cambiar-prov" data-k="' + l.k + '"><i class="bi bi-arrow-left-right me-1"></i>Cambiar proveedor</button>';
+      if(l.bodega && !l.provOrig && l.provId){
+        extra += '<label class="igr-chk"><input type="checkbox" class="igr-chk-prov" data-k="' + l.k + '"' + (l.recordarProv ? ' checked' : '')
+              + '><span>Guardar este proveedor en el repuesto (no tenía ninguno)</span></label>';
+      }
     }
     if(l.bodega && !l.compat && _igr.modelo){
       extra += '<label class="igr-chk"><input type="checkbox" class="igr-chk-compat" data-k="' + l.k + '"' + (l.recordarCompat ? ' checked' : '')
@@ -4031,11 +4043,11 @@
           + '<i class="bi bi-diagram-3 me-1"></i>' + (todosCompat ? 'Quitar la marca a todos' : 'Todos sirven para ' + igrEsc(_igr.modelo.nombre || _igr.modelo.sku)) + '</button>' : '')
       + '<button type="button" class="btn btn-sm btn-outline-danger" id="igrVaciar"><i class="bi bi-trash3 me-1"></i>Vaciar lista</button></span></div>';
     igrGrupos().forEach(function(g){
-      var sin = (g.k === 'sin');
+      var sin = (g.k === 'sin') && !IGR_OCULTA_PROV;   // 🔒 para un técnico no hay "sin proveedor" que advertir
       var unid = g.lineas.reduce(function(a, l){ return a + (Number(l.cantidad) || 0); }, 0);
       html += '<div class="igr-grupo"><div class="igr-grupo-head">'
-        + '<span class="igr-grupo-t' + (sin ? ' sin' : '') + '"><i class="bi bi-' + (sin ? 'exclamation-triangle-fill' : 'truck') + '"></i>'
-        + (sin ? 'Sin proveedor' : igrEsc(g.nombre)) + '</span>'
+        + '<span class="igr-grupo-t' + (sin ? ' sin' : '') + '"><i class="bi bi-' + (IGR_OCULTA_PROV ? 'box-seam' : (sin ? 'exclamation-triangle-fill' : 'truck')) + '"></i>'
+        + (IGR_OCULTA_PROV ? 'Repuestos a solicitar' : (sin ? 'Sin proveedor' : igrEsc(g.nombre))) + '</span>'
         + '<span class="igr-grupo-n">' + igrPlural(g.lineas.length, 'repuesto', 'repuestos') + ' · ' + igrPlural(Number(igrNum(unid)), 'unidad', 'unidades') + '</span>'
         + '<span class="igr-grupo-acc">'
         + (sin ? '<select class="form-select form-select-sm igr-grupo-prov" aria-label="Asignar un proveedor a todos los que no tienen">'
@@ -4193,8 +4205,8 @@
       return {
         origen: l.bodega ? (l.compat ? 'compatible' : 'bodega') : 'manual',
         repuesto_stock_id: l.id || '', repuesto_nombre: l.nombre, repuesto_sku: l.sku || '', cantidad: l.cantidad,
-        proveedor_id: l.provId || '',
-        guardar_proveedor: !!(l.bodega && l.recordarProv && !l.provOrig && l.provId),
+        proveedor_id: IGR_OCULTA_PROV ? '' : (l.provId || ''),
+        guardar_proveedor: !IGR_OCULTA_PROV && !!(l.bodega && l.recordarProv && !l.provOrig && l.provId),
         marcar_compatible: !!(l.bodega && l.recordarCompat)
       };
     });
@@ -4269,7 +4281,7 @@
     }
     html += sols.map(function(s){
       var meta = [];
-      if(s.proveedor_nombre) meta.push('<i class="bi bi-truck me-1"></i>' + igrEsc(s.proveedor_nombre));
+      if(!IGR_OCULTA_PROV && s.proveedor_nombre) meta.push('<i class="bi bi-truck me-1"></i>' + igrEsc(s.proveedor_nombre));
       if(!s.repuesto_stock_id) meta.push('nuevo: no existe en la bodega');
       if(s.repuesto_sku) meta.push('SKU ' + igrEsc(s.repuesto_sku));
       return '<div class="igr-h"><span class="igr-h-id">#' + s.id + '</span>'

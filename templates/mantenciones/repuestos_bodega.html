@@ -12,11 +12,12 @@
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-box-seam me-2"></i>Bodega de Repuestos</h4>
-    <div class="sub">Inventario físico real — SKU, stock, ubicación, costo, marca y compatibilidad con modelos de equipo.</div>
+    <div class="sub">Inventario físico real — SKU, stock, ubicación,{% if not oculta_proveedores %} costo,{% endif %} marca y compatibilidad con modelos de equipo.</div>
   </div>
   <div class="d-flex gap-2">
     <a href="/repuestos" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Ir a Repuestos</a>
-    {% if current_user.role != 'tecnico' %}
+    {# 🔒 2026-10-01: antes `current_user.role != 'tecnico'` (rol EXACTO): un técnico elevado o externo lo veía. #}
+    {% if not oculta_proveedores %}
     <a href="/mantenciones/proveedores" class="btn btn-sm btn-outline-secondary"><i class="bi bi-truck me-1"></i>Proveedores</a>
     {% endif %}
     <button class="btn btn-sm btn-danger" type="button" onclick="rbAbrirNuevo()"><i class="bi bi-plus-lg me-1"></i>Nuevo repuesto</button>
