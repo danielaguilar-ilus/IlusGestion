@@ -6823,10 +6823,12 @@ function otdIniciarRuta(app){
     }).catch(function(){});
   } catch(e){}
 
-  /* El check-in va en los TRES caminos, incluido "ya estoy en el lugar":
-     esa es justamente la vez que más importa saber desde dónde se
-     empezó. El ping en cambio solo tiene sentido si va en camino. */
-  otdGpsCheckin();
+  /* 📍 2026-10-01 (Daniel: "no es necesario, tomemos la ubicación con el botón de GPS"):
+     al tocar Ruta YA NO se captura la ubicación. Ahí el técnico está en la oficina o en
+     su casa, y esa posición quedaba guardada como "ubicación de ejecución" (el PDF del
+     cliente decía "Validada" con un punto a kilómetros del lugar). La ubicación real
+     la captura el técnico en el sitio con el botón "Capturar mi ubicación" del checklist.
+     El ping en cambio solo tiene sentido si va en camino. */
 
   if (app === 'saltado'){
     bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalRuta')).hide();

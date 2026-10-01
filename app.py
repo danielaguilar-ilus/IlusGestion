@@ -111100,6 +111100,20 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     ubic_validada = bool(
         visita.get("exec_gps_lat") is not None and visita.get("exec_gps_lng") is not None
     )
+    if not ubic_validada:
+        # 📍 2026-10-01 (Daniel: la ubicación se toma con el botón "Capturar mi ubicación" del
+        # checklist, ya no al tocar Ruta): una tarea GPS con coordenadas capturadas también
+        # valida la ubicación de la OT.
+        for _t in tareas:
+            if (_t.get("tipo_respuesta") or "").lower() != "gps":
+                continue
+            _la, _ln = _t.get("valor_gps_lat"), _t.get("valor_gps_lng")
+            if _la is None or _ln is None:
+                _vj = _valor_json_dict(_t)
+                _la, _ln = _vj.get("lat"), _vj.get("lng")
+            if _la is not None and _ln is not None:
+                ubic_validada = True
+                break
 
     # 3) Logo SPHS junto al de ILUS en el header (mismo mecanismo que
     #    cotizaciones/etiquetas -- _logo_shs_pdf_data_url(), PNG real
