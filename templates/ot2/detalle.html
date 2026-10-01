@@ -1796,8 +1796,15 @@
   .otd-repai-btn{width:100%;justify-content:center;min-height:44px}
 }
 @media (max-width:640px){
-  .otd-desv-btns{display:grid;grid-template-columns:1fr 1fr}
+  {#- 📱 2026-10-01 (Daniel, en su iPhone: "Fuera de servicio, Solicitar repuesto, Dar de baja, No pude
+      revisarlo, Cambio de cinta... no está siendo responsivo"). `1fr` es minmax(auto,1fr): con los
+      botones en nowrap, cada columna medía el botón ENTERO y la de la derecha quedaba cortada 22-44px
+      (Arial, la fuente real de iOS; con Segoe UI en Windows no se notaba). minmax(0,1fr) + que la
+      etiqueta pueda bajar a 2 líneas: medido de 320 a 640px, nada se corta y el alto sigue en 44px. -#}
+  .otd-desv-btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .otd-desv-btns .otd-fs-btn,.otd-fs-badge .otd-fs-btn{justify-content:center;min-height:44px}
+  .otd-desv-btns .otd-fs-btn{white-space:normal;min-width:0;text-align:center;line-height:1.2;
+    padding-left:8px;padding-right:8px}
   {#- 🔀 2026-09-20 (Daniel: "los botones de solicitar repuesto tienen
       cierta desasimetría"). Entre 2 y 6 botones aparecen acá según el
       equipo (fuera de servicio/piola/cinta/no pude revisarlo/dar de baja
@@ -1810,9 +1817,38 @@
   .otrep-ev-th .x{width:32px;height:32px}
   #modalRepSol .modal-dialog-scrollable .modal-content,#modalBajaEq .modal-dialog-scrollable .modal-content{
     height:100% !important;max-height:100% !important}
-  #modalRepSol .modal-footer,#modalBajaEq .modal-footer{display:grid;grid-template-columns:1fr 1fr;gap:8px;
+  #modalRepSol .modal-footer,#modalBajaEq .modal-footer{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;
     padding-bottom:max(.6rem,env(safe-area-inset-bottom,0px))}
   #modalRepSol .modal-footer > .btn,#modalBajaEq .modal-footer > .btn{width:auto !important;min-height:46px;margin:0 !important}
+  {#- 2026-10-01: Cancelar a su ancho y el principal ("Solicitar cambio de cinta") en UNA línea. -#}
+  #modalRepSol .modal-footer > #otrepBtn,#modalBajaEq .modal-footer > #otbajaBtn{padding-left:12px !important;padding-right:12px !important}
+  {#- 2026-10-01: Compatibles con "12 disponible · 3 comprometido" dejaban el NOMBRE del repuesto en
+      47-62px (8 a 11 líneas, "inclinació / n") -- REGLA #15. La pastilla baja a su propia fila,
+      alineada con el texto; flex:0 1 auto + max-width para que una pastilla larga tampoco desborde. -#}
+  .otrep-opc-it:not(.otrep-lista-it){flex-wrap:wrap}
+  .otrep-opc-it:not(.otrep-lista-it) .inf{flex:1 1 calc(100% - 54px)}
+  .otrep-opc-it:not(.otrep-lista-it) .stk{flex:0 1 auto;max-width:calc(100% - 54px);margin-left:54px;white-space:normal}
+}
+{#- 📱 2026-10-01 -- mismo corte que static/mobile.css (≤768px), donde los modales pasan a pantalla completa. -#}
+@media (max-width:768px){
+  {#- mobile.css aplasta TODO .form-check-input a 22x22 con !important: los interruptores ("Dejarlo fuera
+      de servicio", "¿Está operativa?") quedaban como un circulito. 0,2,0 !important le gana a 0,1,0
+      !important. Se respeta el margin-top:8px de mobile.css (con 0 quedaba más alto que su etiqueta). -#}
+  .otrep-sw .form-check-input,.levd-sw .form-check-input,.levd-no-esta .form-check-input{width:2.6em !important;height:1.4em !important}
+  {#- Pantalla completa desde top:0: en el iPhone (app instalada, barra de estado translúcida) el título y
+      la X quedaban bajo la hora. py-2 de Bootstrap es !important, por eso el id + !important. La X a 44px
+      (REGLA #3) sin tocar su margin-left:auto (con margin:0 se iba al lado del título). -#}
+  #modalRepSol .modal-header,#modalBajaEq .modal-header,#otdModalRuta .modal-header{
+    padding-top:max(.5rem,env(safe-area-inset-top,0px)) !important}
+  #modalRepSol .modal-header .btn-close,#modalBajaEq .modal-header .btn-close,#otdModalRuta .modal-header .btn-close{
+    box-sizing:border-box;width:44px;height:44px;padding:0;background-size:14px 14px}
+  {#- El radio inline de 14px le ganaba al border-radius:0 de mobile.css y se veía la página en las esquinas. -#}
+  #modalRepSol .modal-content,#modalBajaEq .modal-content,#otdModalRuta .modal-content{border-radius:0 !important}
+  #modalRepSol .modal-body,#modalBajaEq .modal-body{overscroll-behavior:contain}
+}
+{#- 2026-10-01: en cinta/piola, "¿Qué tiene malo?" quedaba en 220px junto a una Cantidad de 106px. -#}
+@media (max-width:575.98px){
+  #otrepCantidadWrap,#otrepMotivoWrap{width:100%}
 }
 
 .otd-wk-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0}
@@ -6233,6 +6269,12 @@ async function otdSaltarEquipo(mid){
   var opciones = OTD_SALTO_RAZONES.map(function(r){
     return '<option value="' + r[0] + '">' + r[1] + '</option>';
   }).join('');
+  /* 🐛 2026-10-01: la causa elegida SIEMPRE se guardaba como 'otro' -- ilusPrompt quita el overlay del DOM
+     ANTES de resolver, así que después del await el <select> ya no existía. Y el mínimo de 10 caracteres
+     no frenaba nada aquí (validate devolvía un string; ilusPrompt espera {ok:false, error}): el servidor
+     respondía 400 con el modal ya cerrado y el técnico perdía lo escrito. Ahora la causa se lee DENTRO de
+     validate (corre al tocar Aceptar, con el select todavía en pantalla). */
+  var causal = 'otro';
   var razon = await ilusPrompt({
     title: 'No pude revisar este equipo',
     message: '¿Por qué no se pudo?',
@@ -6242,13 +6284,22 @@ async function otdSaltarEquipo(mid){
     placeholder: 'Cuéntanos qué pasó (mínimo 10 caracteres)',
     required: true,
     validate: function(v){
-      return (v || '').trim().length >= 10
-        ? null : 'Escribe al menos 10 caracteres: quien vuelva necesita saber qué pasó.';
+      var sel = document.getElementById('otdSaltoRazon');
+      var c = sel ? sel.value : 'otro';
+      /* La OT es evidencia: "El cliente lo dio de baja" por esta vía dejaba el PDF diciendo "Dado de baja"
+         con la ficha del equipo todavía activa. La baja de verdad es el botón "Dar de baja" (foto + motivo). */
+      if (c === 'dado_de_baja'){
+        return {ok: false, error: 'Si el cliente lo dio de baja, usa el botón "Dar de baja" del equipo ' +
+                                  '(pide foto y motivo). Si no lo tienes, elige "Otro motivo" y explícalo.'};
+      }
+      if ((v || '').trim().length < 10){
+        return {ok: false, error: 'Escribe al menos 10 caracteres: quien vuelva necesita saber qué pasó.'};
+      }
+      causal = c;
+      return {ok: true};
     },
   });
   if (!razon) return;
-  var sel = document.getElementById('otdSaltoRazon');
-  var causal = sel ? sel.value : 'otro';
   try {
     const r = await fetch('/mantenciones/api/visitas/' + OTD_VID +
                           '/equipos/' + mid + '/saltar', {
@@ -6473,7 +6524,10 @@ const OTD_RUTA = {
       Ahora que mant_visitas guarda SU PROPIA comuna (direccion_comuna,
       capturada por el mismo Google Places del paso Contraparte), se usa
       esa en vez de quedar en blanco. -#}
-  comuna: {{ ((v.direccion_comuna if v.direccion_visita else v.cliente_comuna) or '') | tojson }},
+  {#- 2026-10-01: misma regla que _ot_ruta_destino en app.py -- si la OT copió la dirección del cliente, la
+      comuna del cliente sí sirve; si la dirección es propia y no trae comuna, queda vacía (y entonces el
+      geocodificador de abajo NO adivina: ver "sin comuna"). -#}
+  comuna: {{ ((((v.direccion_comuna or '')|trim) or (((v.cliente_comuna or '')|trim) if ((v.direccion_visita or '')|trim) == ((v.cliente_direccion or '')|trim) else '')) if ((v.direccion_visita or '')|trim) else ((v.cliente_comuna or '')|trim)) | tojson }},
 };
 
 /* La dirección SOLA no le sirve a Waze: "Puerta Oriente, Local 03B" no
@@ -6527,13 +6581,16 @@ function otdHayCoords(){ return OTD_RUTA.lat != null && OTD_RUTA.lng != null; }
         const tipo = r.geometry.location_type;
         if (tipo === 'APPROXIMATE' || (r.partial_match && tipo === 'GEOMETRIC_CENTER')){ fallo(); return; }
         const hint = norm(OTD_RUTA.comuna);
-        if (hint){
-          const zonas = (r.address_components || [])
-            .filter(function(c){ return (c.types || []).some(function(t){ return ZONAS.indexOf(t) >= 0; }); })
-            .map(function(c){ return norm(c.long_name); }).filter(Boolean);
-          if (zonas.length && !zonas.some(function(z){ return z.indexOf(hint) >= 0 || hint.indexOf(z) >= 0; })){
-            fallo(); return;
-          }
+        /* 🔴 2026-10-01: SIN comuna no hay cómo comprobar que el punto sea el correcto ("Los Aromos 345"
+           existe en muchas comunas) y lo que se encuentra aquí queda guardado en la OT para siempre (y
+           alimenta la geocerca). Mejor sin punto: Waze/Google navegan con el texto y el aviso al
+           responsable sigue a la vista para que complete la dirección. */
+        if (!hint){ fallo(); return; }
+        const zonas = (r.address_components || [])
+          .filter(function(c){ return (c.types || []).some(function(t){ return ZONAS.indexOf(t) >= 0; }); })
+          .map(function(c){ return norm(c.long_name); }).filter(Boolean);
+        if (!zonas.length || !zonas.some(function(z){ return z.indexOf(hint) >= 0 || hint.indexOf(z) >= 0; })){
+          fallo(); return;
         }
         if (otdHayCoords()) return;
         OTD_RUTA.lat = r.geometry.location.lat();
@@ -6723,11 +6780,34 @@ function otdIniciarRuta(app){
       // el scheme nativo con rescate. `document.hidden` es la señal
       // estándar de que el sistema SÍ nos sacó a la otra app -- si a los
       // 1.2s seguimos visibles, no había Waze/Maps instalado o el scheme
-      // no prendió, y se cae al link universal en la MISMA pestaña.
+      // no prendió, y se ofrece el link universal (ver abajo).
+      /* 🔧 2026-10-01: el rescate miraba document.hidden SOLO al vencer los 1,2 s. Si en ese momento la
+         página seguía visible por un aviso del sistema ("¿Abrir en Waze?", el permiso de ubicación) o si
+         el temporizador vencía tarde al volver de Waze, navegaba la MISMA pestaña de la OT a waze.com y
+         sacaba al técnico de su trabajo. Ahora se recuerda si la página se ocultó en algún momento y,
+         si nunca se ocultó, se ofrece el botón amarillo en vez de navegar solo. */
+      var _salio = false;
+      var _marcar = function(){ _salio = true; };
+      document.addEventListener('visibilitychange', function _v(){
+        if (document.hidden){ _salio = true; document.removeEventListener('visibilitychange', _v); }
+      });
+      window.addEventListener('pagehide', _marcar, {once: true});
       try { window.location.href = urlNativo; } catch(e){}
       setTimeout(function(){
-        if (!document.hidden) ilusIrADeepLink(null, url);
-      }, 1200);
+        window.removeEventListener('pagehide', _marcar);
+        if (_salio || document.hidden) return;
+        var resc = document.getElementById('otdRutaRescate');
+        var nom = (app === 'waze') ? 'Waze' : 'Google Maps';
+        if (resc){
+          resc.innerHTML = '<a target="_blank" rel="noopener" href="' + url + '">' +
+            '<i class="bi bi-box-arrow-up-right"></i>Abrir ' + nom + '</a>';
+          resc.hidden = false;
+          var modal = document.getElementById('otdModalRuta');
+          if (modal && !modal.classList.contains('show'))
+            bootstrap.Modal.getOrCreateInstance(modal).show();
+        }
+        ilusToast('¿No se abrió ' + nom + '? Toca el botón amarillo.', {type: 'warning'});
+      }, 1500);
     } else {
       _rutaOk = ilusIrADeepLink(ventana, url);
     }

@@ -113,6 +113,18 @@
         .ilus-overlay.show .ilus-modal{ transform: none !important; }
         .ilus-toast.show{ transform: none !important; }
       }
+
+      /* 📱 2026-10-01 (iPhone, "Fuera de servicio" / "No pude revisarlo" de la OT): centrado y sin
+         scroll, al tomar foco el input subía el teclado de iOS y TAPABA Aceptar/Cancelar. En
+         pantallas chicas el modal va arriba (bajo la barra de estado) y el overlay hace scroll; de
+         paso, un aviso largo ya no queda con el título fuera de la pantalla. Va AL FINAL a propósito:
+         misma especificidad que .ilus-overlay de arriba, gana por orden. */
+      @media (max-width:640px){
+        .ilus-overlay{
+          align-items:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;
+          padding-top:max(16px, env(safe-area-inset-top, 0px));
+        }
+      }
     `;
     document.head.appendChild(s);
   }
