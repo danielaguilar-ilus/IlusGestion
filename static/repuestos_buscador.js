@@ -452,7 +452,7 @@
         resumenBox.textContent = '0 resultados';
         var que = st.q.length >= 2 ? ' con "' + esc(st.q) + '"' : '';
         resBox.innerHTML = '<div class="rpb-vacio"><i class="bi bi-inbox"></i>Nada en la bodega' + que +
-          (st.modelo || (st.equipo && st.soloCompat && !st.sinModelo) || (st.modeloBase && !st.equipo && st.soloCompat) ? ' compatible con ese modelo. Prueba "Toda la bodega", otro texto, o escríbelo manual.' : '. Prueba con otro texto o filtro, o escríbelo manual.') + '</div>';
+          (st.modelo || (st.equipo && st.soloCompat && !st.sinModelo) || (st.modeloBase && !st.equipo && st.soloCompat) ? ' compatible con ese modelo. Prueba "Toda la bodega", otro texto, o escríbelo a mano.' : '. Prueba con otro texto o filtro, o escríbelo a mano.') + '</div>';
         return;
       }
       // Contador "N resultados" (REGLA #15/#4.3: el usuario siempre sabe

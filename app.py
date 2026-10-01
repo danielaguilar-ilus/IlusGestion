@@ -89524,7 +89524,9 @@ _OTREP_ESTADO_LABEL = {
 }
 _OTREP_ORIGEN_LABEL = {
     "compatible": "Compatible con el modelo", "bodega": "De la bodega",
-    "manual": "Manual · por validar", "piola": "Cambio de piola",
+    # 2026-10-01 (Daniel): "Manual" se confundía con el MANUAL del equipo (el PDF del
+    # Catálogo). El origen sigue siendo 'manual' en BD; solo cambia lo que se lee.
+    "manual": "Escrito a mano · por validar", "piola": "Cambio de piola",
     "cinta": "Cambio de cinta",
     # 2026-09-26: repuesto tomado de un sobrante/faltante YA registrado en
     # la bodega de Incidencias (mant_incidencias), no de mant_repuestos_stock.
@@ -90240,6 +90242,247 @@ def _otrep_producto_de_maquina(m):
         return mysql_fetchone("SELECT id, sku, nombre FROM cat_productos WHERE sku=%s LIMIT 1", (sku,))
     except Exception:
         return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🧭 2026-10-01 — COMPATIBILIDAD REAL + MANUAL DEL EQUIPO en el modal
+#  "Solicitar repuestos" de la OT.
+#
+#  Daniel: "acercarnos más a la compatibilidad real ... y que el técnico
+#  tenga acceso al MANUAL del equipo (lo sube Juan en el Catálogo),
+#  relacionado con las piolas, para que si el repuesto no está, lo busque
+#  en el manual". En la OT el manual SOLO se ve (nada de correo ni descarga
+#  extra desde acá).
+#
+#  Problema real: un mismo modelo físico vive en VARIOS registros de
+#  cat_productos (un MOD-xxxx creado a mano en Bodega, otro KOPR del ERP, un
+#  duplicado con el mismo nombre) y los repuestos quedan declarados contra
+#  UNO solo -- los demás nunca aparecían en "Compatibles". Acá el modelo del
+#  equipo se resuelve a TODOS los registros que representan lo mismo; no se
+#  fusiona ni se borra nada del Catálogo (REGLA #4.2): se unen al leer.
+# ═══════════════════════════════════════════════════════════════════════════
+_OTREP_MODELOS_TOPE = 10
+_OTREP_POSIBLES_TOPE = 30
+# Marca y conectores: no distinguen un modelo de otro ("Trotadora ILUS X1"
+# se reconoce por {trotadora, x1}), así que no cuentan al buscar posibles.
+_OTREP_PALABRAS_IGNORADAS = frozenset(
+    ("ilus", "fitness", "de", "del", "la", "el", "los", "las", "para", "con", "y", "en"))
+
+
+def _otrep_norm_nombre(s):
+    """TRIM + espacios colapsados. Mayúsculas y acentos NO se tocan acá: la
+    collation de cat_productos (utf8mb4_0900_ai_ci) ya los ignora al comparar
+    en SQL, igual que el resto del módulo."""
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
+
+def _otrep_norm_sku(s):
+    """SKU comparable: MAYÚSCULAS y sin ningún espacio ('abc 123' == 'ABC123')."""
+    return re.sub(r"\s+", "", str(s or "")).upper()
+
+
+def _otrep_modelos_de_maquina(m):
+    """Todos los registros de cat_productos que representan el MODELO de una
+    máquina, el principal primero y sin repetir ids (tope _OTREP_MODELOS_TOPE).
+    Devuelve [{id, sku, nombre, via}] con `via` =
+      'sku'             SKU exacto (el de siempre: _otrep_producto_de_maquina)
+      'sku_normalizado' mismo SKU sin espacios y en mayúsculas
+      'nombre'          mismo nombre normalizado que el principal o que la máquina
+      'nombre_maquina'  NO hubo match por SKU (equipo MAN-..., sin SKU o SKU que
+                        el Catálogo no tiene): el principal se DEDUCE por el
+                        nombre del equipo -- la UI lo dice así.
+    Solo activo=1 en las ampliaciones (b)/(c); 'ZZ%' son líneas de servicio del
+    ERP, nunca un equipo. Columnas verificadas contra el CREATE TABLE de
+    cat_productos (catalogo_module.py): id, sku, nombre, activo, origen."""
+    m = m or {}
+    out, vistos = [], set()
+
+    def _agregar(fila, via):
+        if not fila or fila.get("id") in vistos or len(out) >= _OTREP_MODELOS_TOPE:
+            return
+        vistos.add(fila["id"])
+        out.append({"id": fila["id"], "sku": fila.get("sku"), "nombre": fila.get("nombre"), "via": via})
+
+    # a) principal por SKU exacto -- mismo comportamiento de siempre.
+    _agregar(_otrep_producto_de_maquina(m), "sku")
+
+    # b) otras filas activas con el mismo SKU normalizado. Si el SKU exacto no
+    #    existe, la primera de estas pasa a ser el principal (la identidad por
+    #    SKU es la más segura que hay).
+    sku_norm = _otrep_norm_sku(m.get("sku"))
+    if sku_norm:
+        try:
+            filas = mysql_fetchall(
+                "SELECT id, sku, nombre FROM cat_productos "
+                " WHERE activo=1 AND UPPER(REPLACE(sku,' ',''))=%s ORDER BY id LIMIT 10",
+                (sku_norm,)) or []
+        except Exception as e:
+            print(f"[otrep] modelos sku_normalizado: {e}", flush=True)
+            filas = []
+        for f in filas:
+            _agregar(f, "sku_normalizado")
+
+    # c) mismo nombre normalizado que el principal o que el equipo, y d) si no
+    #    hay principal todavía, el primero que calce por el nombre del EQUIPO.
+    nombres, vistos_n = [], set()
+    for n in ((out[0].get("nombre") if out else None), m.get("nombre")):
+        n = _otrep_norm_nombre(n)
+        if n and n.casefold() not in vistos_n:
+            vistos_n.add(n.casefold())
+            nombres.append(n)
+    if nombres:
+        try:
+            filas = mysql_fetchall(
+                "SELECT id, sku, nombre FROM cat_productos "
+                " WHERE activo=1 AND sku NOT LIKE 'ZZ%%' "
+                "   AND REGEXP_REPLACE(TRIM(nombre), '[[:space:]]+', ' ') IN ("
+                + ",".join(["%s"] * len(nombres)) + ") "
+                " ORDER BY (COALESCE(origen,'erp')='erp') DESC, id LIMIT 20",
+                tuple(nombres)) or []
+        except Exception as e:
+            print(f"[otrep] modelos por nombre: {e}", flush=True)
+            filas = []
+        for f in filas:
+            _agregar(f, "nombre" if out else "nombre_maquina")
+    return out
+
+
+def _otrep_marcar_modelos_origen(items, modelos):
+    """A cada repuesto compatible le agrega `modelos_origen` = [{nombre, sku}]:
+    contra CUÁL de los modelos equivalentes se declaró (el principal primero).
+    Solo nombre y SKU del modelo: nada de proveedor ni costo (privacidad del
+    técnico)."""
+    if not items:
+        return
+    ids_modelo = [x["id"] for x in modelos]
+    try:
+        filas = mysql_fetchall(
+            "SELECT repuesto_id, producto_id FROM mant_repuestos_stock_modelos "
+            " WHERE repuesto_id IN (" + ",".join(["%s"] * len(items)) + ") "
+            "   AND producto_id IN (" + ",".join(["%s"] * len(ids_modelo)) + ")",
+            tuple(i["id"] for i in items) + tuple(ids_modelo)) or []
+    except Exception as e:
+        print(f"[otrep] modelos_origen: {e}", flush=True)
+        filas = []
+    por_repuesto = {}
+    for f in filas:
+        por_repuesto.setdefault(f["repuesto_id"], set()).add(f["producto_id"])
+    for it in items:
+        pids = por_repuesto.get(it["id"], set())
+        it["modelos_origen"] = [{"nombre": x.get("nombre"), "sku": x.get("sku")}
+                                for x in modelos if x["id"] in pids]
+
+
+def _otrep_palabras_de_texto(texto):
+    """Palabras de un texto: minúsculas, sin acentos, solo letras y números
+    (ñ cuenta como n, igual que la collation _ai_ci de MySQL)."""
+    t = unicodedata.normalize("NFKD", str(texto or ""))
+    t = "".join(c for c in t if not unicodedata.combining(c)).lower()
+    return re.findall(r"[a-z0-9]+", t)
+
+
+def _otrep_palabras_distintivas(nombre):
+    """Palabras que IDENTIFICAN un modelo: sin la marca ni conectores y de 2+
+    caracteres, sin repetir. 'Trotadora ILUS X1' -> ['trotadora', 'x1']."""
+    out = []
+    for w in _otrep_palabras_de_texto(nombre):
+        if len(w) >= 2 and w not in _OTREP_PALABRAS_IGNORADAS and w not in out:
+            out.append(w)
+    return out
+
+
+def _otrep_calza_palabras(descripcion, palabras):
+    """True si la descripción contiene TODAS las palabras como palabras
+    COMPLETAS (x1 no calza con x10). Sin palabras no calza nada: un modelo sin
+    nombre distintivo jamás debe traer media bodega."""
+    if not palabras:
+        return False
+    presentes = set(_otrep_palabras_de_texto(descripcion))
+    return all(p in presentes for p in palabras)
+
+
+def _otrep_posibles_compatibles(modelo, excluir_ids):
+    """"Posibles compatibles (sin confirmar)": repuestos activos que NO están ya
+    declarados para el modelo pero cuya descripción nombra el modelo (todas
+    sus palabras distintivas). Es una pista, no un dato: la UI los marca
+    'sin confirmar' y solo gestión puede confirmarlos. Prefiltro SQL con LIKE
+    por las palabras (condición necesaria de una palabra completa) y filtro
+    fino por palabras completas en Python. Tope _OTREP_POSIBLES_TOPE."""
+    palabras = _otrep_palabras_distintivas((modelo or {}).get("nombre"))
+    if not palabras:
+        return []
+    usar = sorted(palabras, key=len, reverse=True)[:4]
+    try:
+        rows = mysql_fetchall(
+            _OTREP_SQL_STOCK
+            + " WHERE COALESCE(rs.activo,1)=1 AND "
+            + " AND ".join(["rs.descripcion LIKE %s"] * len(usar))
+            + " ORDER BY rs.descripcion LIMIT 300",
+            tuple("%" + w + "%" for w in usar)) or []
+    except Exception as e:
+        print(f"[otrep] posibles: {e}", flush=True)
+        return []
+    excluir = set(excluir_ids or ())
+    out = []
+    for r in rows:
+        if r.get("id") in excluir or not _otrep_calza_palabras(r.get("descripcion"), palabras):
+            continue
+        out.append(_otrep_fmt_stock(r, para_ot=True))
+        if len(out) >= _OTREP_POSIBLES_TOPE:
+            break
+    return out
+
+
+def _otrep_manuales_de_modelos(modelos, vid, mid):
+    """Manuales del Catálogo de TODOS los modelos del equipo, el principal
+    primero y por `orden`: los de cat_producto_manuales ('multi', hasta 5 por
+    producto) y el manual_pdf_key legado ('legado'). Cada uno trae la URL
+    PROPIA de la OT (acotada a OT y equipo), nunca /catalogo/api. 🔒 JAMÁS
+    sale gcs_key ni uploaded_by: la clave de almacenamiento no viaja al
+    navegador."""
+    ids = [x["id"] for x in (modelos or [])]
+    if not ids:
+        return []
+    ph = ",".join(["%s"] * len(ids))
+    pos = {pid: i for i, pid in enumerate(ids)}
+    por_id = {x["id"]: x for x in modelos}
+    try:
+        multi = mysql_fetchall(
+            "SELECT id, producto_id, gcs_key, nombre_archivo, size_kb, orden "
+            "  FROM cat_producto_manuales WHERE producto_id IN (" + ph + ") ORDER BY orden, id",
+            tuple(ids)) or []
+    except Exception as e:
+        print(f"[otrep] manuales multi: {e}", flush=True)
+        multi = []
+    try:
+        legado = mysql_fetchall(
+            "SELECT id, manual_pdf_key, manual_pdf_nombre, manual_pdf_size_kb FROM cat_productos "
+            " WHERE id IN (" + ph + ") AND manual_pdf_key IS NOT NULL AND manual_pdf_key<>''",
+            tuple(ids)) or []
+    except Exception as e:
+        print(f"[otrep] manuales legado: {e}", flush=True)
+        legado = []
+    filas, claves = [], set()
+    for r in multi:
+        claves.add((r["producto_id"], r.get("gcs_key")))
+        filas.append((pos[r["producto_id"]], 0, r.get("orden") or 0, r["id"], {
+            "id": r["id"], "tipo": "multi", "nombre": r.get("nombre_archivo") or "Manual.pdf",
+            "size_kb": r.get("size_kb"), "producto_id": r["producto_id"],
+            "url": f"/ot/{vid}/equipo/{mid}/manual/{r['id']}"}))
+    for r in legado:
+        if (r["id"], r.get("manual_pdf_key")) in claves:
+            continue  # el mismo archivo ya salió como manual 'multi'
+        filas.append((pos[r["id"]], 1, 0, r["id"], {
+            "id": r["id"], "tipo": "legado", "nombre": r.get("manual_pdf_nombre") or "Manual.pdf",
+            "size_kb": r.get("manual_pdf_size_kb"), "producto_id": r["id"],
+            "url": f"/ot/{vid}/equipo/{mid}/manual-legado/{r['id']}"}))
+    filas.sort(key=lambda f: f[:4])
+    out = []
+    for _p, _t, _o, _i, it in filas:
+        mod = por_id.get(it.pop("producto_id"), {})
+        it["modelo"] = {"sku": mod.get("sku"), "nombre": mod.get("nombre")}
+        out.append(it)
+    return out
 
 
 def _otrep_piolas_de_modelo(producto_id):
@@ -91105,24 +91348,45 @@ def ot2_api_equipo_repuestos_opciones(vid, mid):
     compatibles con el MODELO de este equipo (mant_maquinas.sku →
     cat_productos → mant_repuestos_stock_modelos → mant_repuestos_stock),
     las piolas del modelo en el Catálogo (cat_producto_piolas), y las
-    solicitudes ya hechas para este equipo en esta OT."""
+    solicitudes ya hechas para este equipo en esta OT.
+
+    🧭 2026-10-01 (Daniel: "acercarnos más a la compatibilidad real"): el
+    modelo ya no es UN solo cat_productos sino todos los que representan lo
+    mismo (_otrep_modelos_de_maquina). Respuesta, además de lo de siempre:
+      modelos   [{id, sku, nombre, via}] -- el principal primero (`modelo` sigue
+                siendo el principal, por compatibilidad hacia atrás)
+      compatibles[].modelos_origen  contra cuál modelo se declaró cada uno
+      posibles  repuestos que nombran el modelo pero NO están declarados
+                ('sin confirmar'; solo gestión puede confirmarlos)
+      manuales  PDF del Catálogo, solo para VER (URL propia de la OT)"""
     v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
     if err:
         return err
-    prod = _otrep_producto_de_maquina(m)
-    compatibles, piolas = [], []
-    if prod:
+    modelos = _otrep_modelos_de_maquina(m)
+    prod = modelos[0] if modelos else None
+    compatibles, piolas, posibles = [], [], []
+    if modelos:
+        ids_modelo = [x["id"] for x in modelos]
         try:
+            # IN (subconsulta): un repuesto declarado contra varios de los
+            # modelos equivalentes sale UNA sola vez (sin filas repetidas).
             rows = mysql_fetchall(
                 _OTREP_SQL_STOCK
-                + " JOIN mant_repuestos_stock_modelos sm ON sm.repuesto_id=rs.id "
-                  " WHERE sm.producto_id=%s AND COALESCE(rs.activo,1)=1 "
+                + " WHERE rs.id IN (SELECT sm.repuesto_id FROM mant_repuestos_stock_modelos sm "
+                  "                 WHERE sm.producto_id IN (" + ",".join(["%s"] * len(ids_modelo)) + ")) "
+                  "   AND COALESCE(rs.activo,1)=1 "
                   " ORDER BY rs.descripcion LIMIT 100",
-                (prod["id"],)) or []
+                tuple(ids_modelo)) or []
             compatibles = [_otrep_fmt_stock(r, para_ot=True) for r in rows]
+            _otrep_marcar_modelos_origen(compatibles, modelos)
         except Exception as e:
             print(f"[otrep] compatibles mid={mid}: {e}", flush=True)
+        try:
+            posibles = _otrep_posibles_compatibles(prod, {c["id"] for c in compatibles})
+        except Exception as e:
+            print(f"[otrep] posibles mid={mid}: {e}", flush=True)
         piolas = _otrep_piolas_de_modelo(prod["id"])
+    manuales = _otrep_manuales_de_modelos(modelos, vid, mid)
     try:
         solicitudes = _otrep_listar("s.visita_id=%s AND s.maquina_id=%s", (vid, mid),
                                     limit=50, para_ot=True)
@@ -91134,14 +91398,102 @@ def ot2_api_equipo_repuestos_opciones(vid, mid):
         "equipo": {"id": m["id"], "nombre": m.get("nombre"), "sku": m.get("sku"),
                    "serie": m.get("serie"), "marca": m.get("marca"),
                    "estado_capturado": m.get("estado_capturado")},
-        "modelo": ({"id": prod["id"], "sku": prod.get("sku"), "nombre": prod.get("nombre")}
+        "modelo": ({"id": prod["id"], "sku": prod.get("sku"), "nombre": prod.get("nombre"),
+                    "via": prod.get("via")}
                    if prod else None),
+        "modelos": [{"id": x["id"], "sku": x.get("sku"), "nombre": x.get("nombre"), "via": x.get("via")}
+                    for x in modelos],
         "compatibles": compatibles,
+        "posibles": posibles,
+        "manuales": manuales,
         "piolas": piolas,
         "solicitudes": solicitudes,
         "limites": {"foto_mb": _OTREP_MAX_FOTO // (1024 * 1024),
                     "video_mb": _OTREP_MAX_VIDEO // (1024 * 1024)},
     })
+
+
+def _otrep_servir_manual(vid, mid, manual_id=None, producto_id=None):
+    """Entrega el PDF de un manual del Catálogo DENTRO de la OT (inline, solo
+    para ver). 2026-10-01 (Daniel): "en la OT el manual se puede SOLO VER".
+
+    Por qué una ruta propia y no /catalogo/api/...: esa no está acotada a la
+    OT -- cualquiera con 'mantenciones' bajaría el manual de CUALQUIER
+    producto. Acá el candado es triple: (1) el decorador exige poder VER la
+    OT; (2) _otrep_cargar_ot_y_equipo valida OT <-> equipo <-> cliente; (3) el
+    manual debe pertenecer a uno de los modelos de ESE equipo, si no, 404.
+    Se abre en una pestaña nueva, así que los errores son una página amable
+    (nunca JSON crudo) y NADA interno se le cuenta al usuario (REGLA #4)."""
+    v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
+    if err:
+        try:
+            http = int(err[1])
+        except Exception:
+            http = 404
+        return _friendly_error_page(
+            "No pudimos abrir el manual",
+            "Ese equipo no está disponible en esta orden de trabajo. Vuelve a la OT e inténtalo de nuevo.",
+            http)
+    modelos = _otrep_modelos_de_maquina(m)
+    ids = {x["id"] for x in modelos}
+    key = nombre = None
+    try:
+        if manual_id is not None:
+            fila = mysql_fetchone(
+                "SELECT producto_id, gcs_key, nombre_archivo FROM cat_producto_manuales WHERE id=%s",
+                (manual_id,))
+            if fila and fila.get("producto_id") in ids:
+                key, nombre = fila.get("gcs_key"), fila.get("nombre_archivo")
+        elif producto_id in ids:
+            fila = mysql_fetchone(
+                "SELECT manual_pdf_key, manual_pdf_nombre FROM cat_productos WHERE id=%s",
+                (producto_id,))
+            if fila:
+                key, nombre = fila.get("manual_pdf_key"), fila.get("manual_pdf_nombre")
+    except Exception as e:
+        print(f"[otrep] manual vid={vid} mid={mid}: {e}", flush=True)
+        return _friendly_error_page(
+            "No pudimos abrir el manual",
+            "Hubo un problema al buscarlo. Inténtalo de nuevo en un minuto.", 500)
+    if not key:
+        return _friendly_error_page(
+            "Manual no encontrado",
+            "Este manual no corresponde al modelo de este equipo o ya no está en el Catálogo.", 404)
+    bucket = _gcs_bucket()
+    if bucket is None:
+        return _friendly_error_page("Manual no disponible", _STORAGE_OFF_MSG, 503)
+    try:
+        data = bucket.blob(key).download_as_bytes()
+    except Exception as e:
+        # Solo el TIPO de la excepción: el mensaje puede traer la clave del blob.
+        print(f"[otrep] manual vid={vid} mid={mid} no se pudo leer ({type(e).__name__})", flush=True)
+        return _friendly_error_page(
+            "No pudimos abrir el manual",
+            "No se pudo leer el archivo en este momento. Inténtalo de nuevo en un minuto.", 502)
+    nombre = re.sub(r"[\x00-\x1f]", "", str(nombre or "")).strip() or "manual.pdf"
+    if not nombre.lower().endswith(".pdf"):
+        nombre += ".pdf"
+    resp = send_file(io.BytesIO(data), mimetype="application/pdf", as_attachment=False,
+                     download_name=nombre)
+    resp.headers["Cache-Control"] = "private, no-store"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+@app.route("/ot/<int:vid>/equipo/<int:mid>/manual/<int:manual_id>", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_equipo_manual_ver(vid, mid, manual_id):
+    """Manual (cat_producto_manuales) de uno de los modelos del equipo, inline."""
+    return _otrep_servir_manual(vid, mid, manual_id=manual_id)
+
+
+@app.route("/ot/<int:vid>/equipo/<int:mid>/manual-legado/<int:producto_id>", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_equipo_manual_legado_ver(vid, mid, producto_id):
+    """Manual legado (cat_productos.manual_pdf_key) de uno de los modelos del equipo, inline."""
+    return _otrep_servir_manual(vid, mid, producto_id=producto_id)
 
 
 @app.route("/ot/api/repuestos/bodega-buscar", methods=["GET"])
@@ -127254,8 +127606,11 @@ def repstock_modelo_asociar(rid):
       - {"manual": true, "nombre": "Trotadora Life Fitness 95T"} -- 2026-09-16:
         modelo que NO está en el ERP, escrito a mano. SOLO supervisor o
         superior (_repstock_puede_gestionar_modelos); ejecutivo/técnico
-        reciben 403 amable. Reusa un manual existente con el mismo nombre
-        (LOWER(TRIM)) o crea uno nuevo con SKU MOD-0001 (secuencia atómica)
+        reciben 403 amable. 2026-10-01: antes de crear nada reusa CUALQUIER
+        producto activo del Catálogo (ERP o manual, sin 'ZZ%') con el mismo
+        nombre normalizado -- así no se duplican modelos que ya existen en el
+        ERP -- y solo si no hay ninguno crea uno nuevo con SKU MOD-0001
+        (secuencia atómica)
         y origen='manual'. Los manuales NO entran al buscador de
         Cotizaciones/Tickets (decisión Daniel): son solo para atar repuestos.
 
@@ -127278,6 +127633,7 @@ def repstock_modelo_asociar(rid):
     if n_actual >= REPSTOCK_MAX_MODELOS:
         return jsonify({"ok": False, "error": f"Máximo {REPSTOCK_MAX_MODELOS} modelos por repuesto"}), 400
     producto_id = None
+    reusado_de_catalogo = False  # 2026-10-01: la rama "escrito a mano" encontró el modelo ya hecho
     if d.get("producto_id") not in (None, ""):
         try:
             producto_id = int(d.get("producto_id"))
@@ -127294,12 +127650,24 @@ def repstock_modelo_asociar(rid):
         nombre_manual = re.sub(r"\s+", " ", str(d.get("nombre") or "")).strip()[:300]
         if len(nombre_manual) < 3:
             return jsonify({"ok": False, "error": "Escribe el nombre completo del modelo (mínimo 3 caracteres)"}), 400
+        # 🧭 2026-10-01 (Daniel: "acercarnos más a la compatibilidad real"): la
+        # búsqueda de un modelo igual ya NO mira solo los escritos a mano. Un
+        # modelo del ERP (u otro MOD-xxxx) con el mismo nombre normalizado
+        # (TRIM + espacios colapsados; la collation _ai_ci ignora mayúsculas y
+        # acentos) se REUSA: antes se creaba un MOD-xxxx duplicado de un
+        # modelo que ya existía y los repuestos quedaban declarados contra el
+        # clon. Se prefiere el del ERP. Los duplicados que ya existen NO se
+        # fusionan ni se borran (REGLA #4.2): _otrep_modelos_de_maquina los
+        # une al leer. 'ZZ%' son líneas de servicio, nunca un equipo.
         existente = mysql_fetchone(
-            "SELECT id FROM cat_productos "
-            " WHERE activo=1 AND origen='manual' AND LOWER(TRIM(nombre)) = LOWER(%s) LIMIT 1",
+            "SELECT id, sku FROM cat_productos "
+            " WHERE activo=1 AND sku NOT LIKE 'ZZ%%' "
+            "   AND REGEXP_REPLACE(TRIM(nombre), '[[:space:]]+', ' ') = %s "
+            " ORDER BY (COALESCE(origen,'erp')='erp') DESC, id LIMIT 1",
             (nombre_manual,))
         if existente:
             producto_id = existente["id"]
+            reusado_de_catalogo = True
         else:
             # SKU y INSERT en la MISMA transacción (conexión directa, igual
             # que repstock_crear): si el INSERT falla, el correlativo vuelve.
@@ -127362,7 +127730,12 @@ def repstock_modelo_asociar(rid):
               f"{rep.get('sku') or ''} -> {prod.get('nombre') or prod.get('sku') or producto_id}")
     prod_out = dict(prod)
     prod_out["descontinuado"] = 1 if prod_out.get("descontinuado") else 0
-    return jsonify({"ok": True, "producto": prod_out})
+    resp_ok = {"ok": True, "producto": prod_out}
+    if reusado_de_catalogo:
+        # El nombre escrito a mano ya existía en el Catálogo: se asoció ese.
+        resp_ok["reusado_de_catalogo"] = True
+        resp_ok["sku"] = prod_out.get("sku")
+    return jsonify(resp_ok)
 
 
 @app.route("/mantenciones/api/repuestos-stock/modelos/<int:producto_id>/descontinuado", methods=["POST"])
