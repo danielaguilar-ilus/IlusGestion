@@ -907,7 +907,11 @@
 .otd-hero.h-comp{--halo:rgba(22,163,74,.28)}
 .otd-hero.h-cerr{--halo:rgba(107,114,128,.22)}
 .otd-hero.h-pend{--halo:rgba(59,130,246,.26)}
-.otd-hero > *{position:relative;z-index:1}
+/* 2026-10-01: :where(:not(.modal)) -- un modal dentro del hero quedaba relative/z-index:1 y oculto tras el
+   fondo oscuro de Bootstrap (bug del botón Ruta). Los modales viven a nivel raíz; esto es solo el resguardo.
+   :where() deja la especificidad en (0,1,0): con :not() a secas subía a (0,2,0) y le ganaba a
+   .otd-gps-vivo{position:fixed}, sacando de su lugar el aviso "Compartiendo tu ubicación". */
+.otd-hero > :where(:not(.modal)){position:relative;z-index:1}
 
 .otd-top{display:flex;align-items:flex-start;justify-content:space-between;
   gap:18px;flex-wrap:wrap}
@@ -3217,45 +3221,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         <small id="otdGpsVivoSub">Para que la oficina vea que vas en camino.</small>
       </div>
       <button type="button" onclick="otdPingDetener(true)">Detener</button>
-    </div>
-
-    {#- Modal de ruta de OT 2.0. Mismas tres opciones que la pantalla
-        clásica (Google / Waze / ya estoy acá), pero con el patrón de
-        apertura correcto desde el día uno: ver otdIniciarRuta(). -#}
-    <div class="modal fade" id="otdModalRuta" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content" style="border-radius:14px;overflow:hidden">
-          <div class="modal-header otd-ruta-head">
-            <h5 class="modal-title fw-bold">
-              <i class="bi bi-signpost-split-fill me-2"></i>Iniciar ruta</h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
-                    aria-label="Cerrar"></button>
-          </div>
-          <div class="modal-body">
-            <div class="otd-ruta-dest">
-              <small>Destino</small>
-              <div id="otdRutaDestino"></div>
-              {% if v.direccion_detalle %}
-              <div class="otd-ruta-detalle">
-                <i class="bi bi-building"></i>{{ v.direccion_detalle }}</div>
-              {% endif %}
-            </div>
-            <button type="button" class="otd-ruta-app g" onclick="otdIniciarRuta('google')">
-              <span class="lg">G</span>
-              <span class="tx"><b>Google Maps</b><small>Navegación paso a paso</small></span>
-              <i class="bi bi-chevron-right"></i></button>
-            <button type="button" class="otd-ruta-app w" onclick="otdIniciarRuta('waze')">
-              <span class="lg">W</span>
-              <span class="tx"><b>Waze</b><small>Alertas de tráfico</small></span>
-              <i class="bi bi-chevron-right"></i></button>
-            <button type="button" class="otd-ruta-app s" onclick="otdIniciarRuta('saltado')">
-              <span class="lg"><i class="bi bi-skip-forward-fill"></i></span>
-              <span class="tx"><b>Ya estoy en el lugar</b><small>No abrir navegador</small></span>
-              <i class="bi bi-chevron-right"></i></button>
-            <div id="otdRutaRescate" hidden></div>
-          </div>
-        </div>
-      </div>
     </div>
 
     {# ── Acciones rápidas: contraparte (Llamar/WhatsApp/Correo) + CTA verde ── #}
@@ -6834,6 +6799,50 @@ function otdIniciarRuta(app){
   </script>
   {% endif %}
 {% endif %}
+
+{#- 🛣️ 2026-10-01 (Aarón y los técnicos: "el modal de Ruta sale oculto atrás de la página").
+    Este modal vivía DENTRO del hero negro (.otd-hero), y la regla `.otd-hero > *{position:relative;
+    z-index:1}` le ganaba al position:fixed de Bootstrap: el modal quedaba pegado y recortado dentro del
+    hero, debajo del fondo oscuro (.modal-backdrop) que cubre toda la pantalla. Ahora vive a nivel raíz,
+    como todos los demás modales de la OT (misma regla que "modales fuera de pestañas"). -#}
+{#- Modal de ruta de OT 2.0. Mismas tres opciones que la pantalla
+    clásica (Google / Waze / ya estoy acá), pero con el patrón de
+    apertura correcto desde el día uno: ver otdIniciarRuta(). -#}
+<div class="modal fade" id="otdModalRuta" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header otd-ruta-head">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-signpost-split-fill me-2"></i>Iniciar ruta</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="otd-ruta-dest">
+          <small>Destino</small>
+          <div id="otdRutaDestino"></div>
+          {% if v.direccion_detalle %}
+          <div class="otd-ruta-detalle">
+            <i class="bi bi-building"></i>{{ v.direccion_detalle }}</div>
+          {% endif %}
+        </div>
+        <button type="button" class="otd-ruta-app g" onclick="otdIniciarRuta('google')">
+          <span class="lg">G</span>
+          <span class="tx"><b>Google Maps</b><small>Navegación paso a paso</small></span>
+          <i class="bi bi-chevron-right"></i></button>
+        <button type="button" class="otd-ruta-app w" onclick="otdIniciarRuta('waze')">
+          <span class="lg">W</span>
+          <span class="tx"><b>Waze</b><small>Alertas de tráfico</small></span>
+          <i class="bi bi-chevron-right"></i></button>
+        <button type="button" class="otd-ruta-app s" onclick="otdIniciarRuta('saltado')">
+          <span class="lg"><i class="bi bi-skip-forward-fill"></i></span>
+          <span class="tx"><b>Ya estoy en el lugar</b><small>No abrir navegador</small></span>
+          <i class="bi bi-chevron-right"></i></button>
+        <div id="otdRutaRescate" hidden></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ═════════════════════════════════════════════════════════════════════
    MODAL: Firma (técnico / cliente) — namespace OT2F, 2026-08-28.
