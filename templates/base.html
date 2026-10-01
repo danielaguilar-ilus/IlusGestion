@@ -756,7 +756,10 @@
       {# Proveedores queda con el candado original — Daniel pidió
          plantillas para Lenin, no proveedores; no se abren las dos por
          compartir antes el mismo "if". #}
-      {% if current_user and current_user.role != 'tecnico' %}
+      {# 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): antes solo el rol EXACTO
+         'tecnico' quedaba sin el link -- un técnico elevado (tecnico_ejecutivo) lo veía y la página
+         lo rebotaba. Ahora toda la familia técnico (oculta_proveedores, del context processor). #}
+      {% if current_user and not oculta_proveedores %}
       <a href="{{ url_for('mant_proveedores_repuesto_page') }}"
          class="sidebar-link{% if request.endpoint == 'mant_proveedores_repuesto_page' %} active{% endif %}">
         <i class="bi bi-truck"></i><span>Proveedores de equipos</span>

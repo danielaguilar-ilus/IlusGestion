@@ -57,6 +57,11 @@ const CAN_ELIMINAR_CATALOGO = window.CAT_LIST_DATA.canEliminarCatalogo;
 // embebido, catvAbrir) sigue abierto a cualquiera con acceso al módulo,
 // y desde ahí se puede imprimir directo con el visor del navegador.
 const CAN_DESCARGAR_MANUAL = window.CAT_LIST_DATA.canDescargarManual;
+// 2026-10-01 (Daniel: "nunca los técnicos deben... poder comunicarse con los
+// proveedores"): "Enviar por correo" acepta cualquier destinatario, o sea un
+// canal directo hacia un proveedor. A un técnico no se le muestra el botón
+// (el backend igual lo rechaza con 403). Ver y descargar siguen igual.
+const CAN_ENVIAR_MANUAL = window.CAT_LIST_DATA.canEnviarManual !== false;
 const MAX_FOTOS = 10;
 const MAX_PIOLAS = 10;  // 2026-07-21 (Daniel): vuelve a 10 (ver MAX_PIOLAS_POR_PRODUCTO en catalogo_module.py)
 let _catTimer = null;
@@ -791,8 +796,10 @@ async function catfCargar(){
       + '<button type="button" class="btn btn-sm btn-outline-primary" id="catfManualVer">'
       +   '<i class="bi bi-eye me-1"></i>Ver</button>'
       + btnDescargarManual
-      + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualEnviar">'
-      +   '<i class="bi bi-envelope me-1"></i>Enviar por correo</button>'
+      + (CAN_ENVIAR_MANUAL
+          ? '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualEnviar">'
+            + '<i class="bi bi-envelope me-1"></i>Enviar por correo</button>'
+          : '')
       + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualReemplazar">'
       +   '<i class="bi bi-arrow-repeat me-1"></i>Reemplazar</button>'
       + btnQuitarManual
@@ -800,7 +807,9 @@ async function catfCargar(){
     document.getElementById('catfManualVer').addEventListener('click', function(){
       catvAbrir('/catalogo/api/productos/'+catfProductoId+'/manual/descargar', d.manual.nombre||'manual.pdf');
     });
-    document.getElementById('catfManualEnviar').addEventListener('click', catfEnviarManualCorreo);
+    if(CAN_ENVIAR_MANUAL){
+      document.getElementById('catfManualEnviar').addEventListener('click', catfEnviarManualCorreo);
+    }
     document.getElementById('catfManualReemplazar').addEventListener('click', function(){
       document.getElementById('catfManualInput').click();
     });
@@ -1543,7 +1552,9 @@ function catfRenderManualesMulti(manuales){
       + '<div class="nm">'+esc(m.nombre)+'</div>'
       + '<button type="button" class="btn btn-sm btn-outline-primary ver" title="Ver" data-ver-url="'+esc(m.url)+'" data-ver-nombre="'+esc(m.nombre)+'"><i class="bi bi-eye"></i></button>'
       + btnDescargar
-      + '<button type="button" class="btn btn-sm btn-outline-secondary" title="Enviar por correo" data-enviar-id="'+m.id+'" data-enviar-nombre="'+esc(m.nombre)+'"><i class="bi bi-envelope"></i></button>'
+      + (CAN_ENVIAR_MANUAL
+          ? '<button type="button" class="btn btn-sm btn-outline-secondary" title="Enviar por correo" data-enviar-id="'+m.id+'" data-enviar-nombre="'+esc(m.nombre)+'"><i class="bi bi-envelope"></i></button>'
+          : '')
       + btnQuitar
       + '</div>';
   }).join('');

@@ -78,11 +78,12 @@ class _Doble:
         return None
 
 
-def _cargar_motor(gestion=True, externo=False):
+def _cargar_motor(gestion=True, externo=False, tecnico=False):
     arbol = _arbol()
     ambito = {"re": __import__("re")}
     quiero = {"ot2_api_repuestos_bodega_buscar", "_otrep_fmt_stock", "_otrep_producto_de_maquina"}
-    consts = {"_OTREP_STOCK_SOLO_GESTION", "_OTREP_STOCK_NO_EXTERNO", "_OTREP_ABIERTOS",
+    consts = {"_OTREP_STOCK_SOLO_GESTION", "_OTREP_STOCK_SOLO_GESTION_PROV",
+              "_OTREP_STOCK_NO_EXTERNO", "_OTREP_ABIERTOS",
               "_OTREP_ESTADOS_COMPROMETEN", "_OTREP_ESTADOS_POR_LLEGAR", "_OTREP_SQL_STOCK",
               "_OTREP_SQL_DISPONIBLE"}
     for nodo in arbol.body:
@@ -100,6 +101,9 @@ def _cargar_motor(gestion=True, externo=False):
     ambito["jsonify"] = lambda d: d
     ambito["_otrep_puede_gestion"] = lambda: gestion
     ambito["_es_tecnico_externo"] = lambda user=None: externo
+    # 2026-10-01: la regla central "ningun tecnico ve proveedores" (_oculta_proveedores) cubre
+    # al externo Y a cualquier tecnico (`tecnico=True`: interno o elevado).
+    ambito["_oculta_proveedores"] = lambda user=None: bool(externo or tecnico)
     ambito["print"] = lambda *a, **k: None
     return ambito, doble
 

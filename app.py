@@ -8162,6 +8162,12 @@ def inject_globals():
         # "desviaciones desde la OT" para ocultar acciones que Daniel
         # reservó al interno (ej. dar de baja un equipo del cliente).
         "es_tecnico_externo": _es_tecnico_externo(),
+        # 2026-10-01 (Daniel: "nunca los técnicos deben contener datos o poder
+        # comunicarse con los proveedores"): UNA sola bandera para que las
+        # plantillas no dibujen proveedores/costos a ningún técnico (interno,
+        # elevado o externo). Es cortesía de UI -- el candado real vive en cada
+        # endpoint, que quita el dato en el servidor (ver _oculta_proveedores).
+        "oculta_proveedores": _oculta_proveedores(),
         # 2026-06-09 (Daniel): roles de gestión (admin/supervisor/ejecutivo/
         # superadmin) pueden editar y REAGENDAR visitas. Usado por el modal
         # del calendario para habilitar campos + botón Guardar. Espejo exacto
@@ -54685,6 +54691,31 @@ def _es_rol_tecnico(user=None):
     return _rol_familia(role) == "tecnico"
 
 
+def _oculta_proveedores(user=None):
+    """True si a este usuario NO se le muestran proveedores, su contacto ni
+    costos de repuestos: TODA la familia técnico (interno 'tecnico', elevado
+    como 'tecnico_ejecutivo' -- Jaizer, el de bodega -- y 'tecnico_externo*').
+
+    ÚNICA fuente de verdad de esta regla (2026-10-01, Daniel: "nunca los
+    técnicos deben contener datos o poder comunicarse con los proveedores. Ni
+    siquiera pueden ver mis proveedores. Solo que puedan seleccionar los
+    repuestos viendo SKU, descripción, cantidad, stock y equipo compatible").
+    Se apoya en _es_rol_tecnico() (que normaliza vía _rol_familia() cualquier
+    variante 'tecnico*') en vez de comparar el string del rol acá.
+
+    ⚠️ NO usar _otrep_puede_gestion() para esto: devuelve True para el técnico
+    INTERNO (opera la cola de bodega) -- esa era justamente la raíz de la
+    fuga. Gestión (admin/ejecutivo/superadmin/supervisor) NO cambia: ve y hace
+    exactamente lo de siempre. Los técnicos siguen cargando y usando la
+    Bodega (SKU, stock, ubicación, modelos compatibles, fotos); solo pierden
+    proveedor, contacto y costo. Sin sesión (g.user vacío) devuelve False: en
+    ese caso ningún endpoint con datos de proveedores llega a ejecutarse."""
+    try:
+        return bool(_es_rol_tecnico(user))
+    except Exception:
+        return False
+
+
 def _puede_crear_ot_interna(user=None):
     """¿Puede este usuario levantar una OT de trabajo interno (sin cliente)?
 
@@ -67072,6 +67103,11 @@ def mant_api_incidencia_ficha(iid):
             s["created_at"] = s["created_at"].strftime("%Y-%m-%d %H:%M:%S")
         s["origen_label"] = _OTREP_ORIGEN_LABEL.get(s.get("origen"), s.get("origen"))
         s["estado_label"] = _OTREP_ESTADO_LABEL.get(s.get("estado"), s.get("estado"))
+        if _oculta_proveedores():
+            # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"):
+            # Jaizer (técnico elevado con permiso Taller) abre esta ficha, pero
+            # no ve a qué proveedor se le pidió cada repuesto.
+            s.pop("proveedor_nombre", None)
 
     return jsonify({
         "ok": True,
@@ -67260,6 +67296,10 @@ def mant_api_incidencias_repuesto_crear_rapido():
     try:
         proveedor_id = int(proveedor_id) if proveedor_id else None
     except (TypeError, ValueError):
+        proveedor_id = None
+    if _oculta_proveedores():
+        # 🔒 2026-10-01: un técnico (Jaizer incluido) crea el repuesto SIN
+        # proveedor aunque el navegador lo mande: gestión lo completa después.
         proveedor_id = None
     conn = get_mysql()
     try:
@@ -67595,6 +67635,15 @@ def mant_api_incidencia_solicitar_repuestos(iid):
     if not lineas_ok:
         return jsonify({"ok": False, "error": "Agrega al menos un repuesto a la lista."}), 400
     extras = _inc_gr_emparejar_extras(lineas_in, lineas_ok)
+    if _oculta_proveedores():
+        # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): un
+        # técnico no elige proveedor ni "recuerda" uno en el repuesto -- si el
+        # navegador (o una llamada a mano) los manda, se ignoran. La línea
+        # igual hereda el proveedor que la bodega ya tenía (lo decide gestión;
+        # el técnico nunca lo ve).
+        for _ex in extras:
+            _ex["proveedor_id"] = None
+            _ex["guardar_proveedor"] = False
 
     # Proveedor de cada línea: el elegido a mano pisa al de la bodega (solo para este pedido).
     for li, ex in zip(lineas_ok, extras):
@@ -68005,6 +68054,16 @@ def repuestos_hub_list():
     sql += f" ORDER BY {order_by} LIMIT 300"
 
     repuestos = mysql_fetchall(sql, tuple(params)) or []
+    # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): el
+    # dato se quita ACÁ, en el servidor -- no basta con esconderlo en la
+    # plantilla, porque la tabla viaja entera al navegador (tojson en el
+    # onclick) y quien abra "ver código fuente" lo leería. Incluye el
+    # teléfono/correo/canal del proveedor con el que "Asignar a ticket" arma
+    # los links wa.me / tel: / mailto:.
+    if _oculta_proveedores():
+        _quitar = ("costo_unitario", "proveedor", "proveedor_id", "proveedor_nombre",
+                   "proveedor_telefono", "proveedor_email", "proveedor_canal", "proveedor_contacto")
+        repuestos = [{k: v for k, v in dict(r).items() if k not in _quitar} for r in repuestos]
 
     estados = ["cotizado", "aprobado", "instalado", "facturado", "cancelado"]
 
@@ -89561,6 +89620,24 @@ _OTREP_MAX_VIDEO = 28 * 1024 * 1024
 # y campos que además no ve un técnico EXTERNO (política del 2026-09-08:
 # costos/stock/proveedores de otros no se exponen al proveedor).
 _OTREP_STOCK_SOLO_GESTION = ("costo_unitario",)
+# 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): lo que se
+# quita de CADA fila de bodega que reciba CUALQUIER técnico (interno, elevado
+# o externo), siempre -- con o sin para_ot. A diferencia de
+# _OTREP_STOCK_NO_EXTERNO (que además esconde cantidad/disponible/semáforo/
+# ubicación al externo), el técnico interno SÍ debe ver stock: solo pierde
+# proveedor, su contacto y el costo.
+_OTREP_STOCK_SOLO_GESTION_PROV = ("proveedor", "proveedor_id", "proveedor_contacto",
+                                  "proveedor_telefono", "proveedor_email", "proveedor_canal",
+                                  "costo_unitario")
+# Mismo criterio para la fila de una SOLICITUD (_otrep_fila): proveedor, OC, la
+# nota de gestión (suele hablar del proveedor) y todo lo que ligue la solicitud
+# a la Compra/ticket de compra (ahí vive el contacto del proveedor). Se
+# conservan estado, estado_label, compra_estado_label y compra_eta: el técnico
+# sí puede saber que su repuesto "está pedido" y cuándo llega.
+_OTREP_SOL_SOLO_GESTION_PROV = ("proveedor_id", "proveedor_nombre", "proveedor_contacto",
+                                "proveedor_telefono", "proveedor_email", "proveedor_canal",
+                                "oc_numero", "nota_gestion", "compra_id",
+                                "compra_ticket_id", "compra_numero_ticket")
 _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
                            "comprometido", "disponible", "por_llegar",
                            # 🔒 2026-09-26: los campos nuevos del buscador del modal
@@ -90342,6 +90419,14 @@ def _otrep_fmt_stock(r, para_ot=False):
     r["es_piola"] = bool(re.search(r"piola|cable de acero", r.get("descripcion") or "", re.I))
     r["es_cinta"] = bool(re.search(r"cinta|banda|belt", r.get("descripcion") or "", re.I))
     r["con_stock"] = bool((r.get("disponible") or 0) > 0)
+    # 🔒 2026-10-01: ningún técnico ve proveedor/contacto/costo de la bodega,
+    # NUNCA, con o sin para_ot (antes solo se recortaba el costo y, al externo,
+    # el proveedor: el técnico interno veía todo el contacto de los
+    # proveedores). Esto va ANTES del bloque para_ot a propósito: no depende
+    # de que el caller se acuerde de pasar para_ot=True.
+    if _oculta_proveedores():
+        for k in _OTREP_STOCK_SOLO_GESTION_PROV:
+            r.pop(k, None)
     if para_ot:
         for k in _OTREP_STOCK_SOLO_GESTION:
             r.pop(k, None)
@@ -90519,6 +90604,14 @@ def _otrep_fila(s, para_ot=False):
                     s.pop(k, None)
         except Exception:
             pass
+    # 🔒 2026-10-01 (Daniel: "nunca los técnicos deben contener datos o poder
+    # comunicarse con los proveedores"): al FINAL, ya calculado
+    # compra_estado_label (que lee compra_id), y sin depender de para_ot --
+    # el técnico interno llegaba a la cola completa (para_ot=False) y veía
+    # proveedor, OC, nota de gestión y el ticket de compra de cada solicitud.
+    if _oculta_proveedores():
+        for k in _OTREP_SOL_SOLO_GESTION_PROV:
+            s.pop(k, None)
     return s
 
 
@@ -91210,15 +91303,20 @@ def ot2_api_repuestos_bodega_buscar():
 
     # Gestión (cola de bodega) sí puede ver stock/ubicación/proveedor: solo
     # se recorta para la OT y para el externo.
-    para_ot = not _otrep_puede_gestion() or (args.get("ctx") or "") == "ot"
+    # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): para
+    # CUALQUIER técnico la respuesta va siempre en modo "OT" (sin costo ni
+    # proveedor), aunque mande ctx=gestion a mano por la URL.
+    oculta_prov = _oculta_proveedores()
+    para_ot = oculta_prov or not _otrep_puede_gestion() or (args.get("ctx") or "") == "ot"
     try:
         es_externo = bool(_es_tecnico_externo())
     except Exception:
         es_externo = False
-    if es_externo:
+    if es_externo or oculta_prov:
         # 🔒 Un técnico externo no ve proveedores (política 2026-09-08,
         # _OTREP_STOCK_NO_EXTERNO) -- tampoco puede usarlos como filtro ni
         # buscarlos por texto para deducirlos por el camino indirecto.
+        # Desde 2026-10-01 lo mismo rige para el técnico interno y el elevado.
         proveedor_id, sin_proveedor = None, False
 
     # Modelo de contexto: por equipo del cliente o por modelo directo.
@@ -91271,7 +91369,7 @@ def ot2_api_repuestos_bodega_buscar():
                      "          JOIN cat_productos pq ON pq.id=smq.producto_id "
                      "         WHERE smq.repuesto_id=rs.id AND (pq.nombre LIKE %s OR pq.sku LIKE %s))"]
             params += [like_p, like_p, like_p, like_p, like_p, like_p]
-            if not es_externo:
+            if not es_externo and not oculta_prov:
                 texto.append("pv.nombre LIKE %s")
                 params.append(like_p)
             clausulas_y.append("(" + " OR ".join(texto) + ")")
@@ -92278,6 +92376,10 @@ def _otrep_filtros_query():
     for arg, col in (("ticket_id", "s.ticket_id"), ("visita_id", "s.visita_id"),
                      ("maquina_id", "s.maquina_id"), ("cliente_id", "s.cliente_id"),
                      ("proveedor_id", "s.proveedor_id")):
+        if arg == "proveedor_id" and _oculta_proveedores():
+            # 🔒 2026-10-01: un técnico no filtra por proveedor (deduciría a
+            # quién se le compra cada cosa por el camino indirecto).
+            continue
         val = (request.args.get(arg) or "").strip()
         if val.isdigit():
             where.append(f"{col}=%s"); params.append(int(val))
@@ -92430,6 +92532,11 @@ def repstock_solicitudes_ot_listar():
     repuestos... hay que atender eso" -- después el resto por antigüedad."""
     where_sql, params = _otrep_filtros_query()
     vista = (request.args.get("vista") or "lista").strip().lower()
+    if vista == "proveedor" and _oculta_proveedores():
+        # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): la
+        # vista "Por proveedor" agrupa por proveedor y arma su contacto -- a un
+        # técnico se le trata como "lista" aunque pida ?vista=proveedor a mano.
+        vista = "lista"
     if vista in ("proveedor", "cliente"):
         return _otrep_listar_agrupado(vista, where_sql, params)
 
@@ -92530,6 +92637,10 @@ def repstock_solicitudes_ot_export():
     headers = ["ID", "Estado", "Origen", "Cliente", "Equipo / Serie", "N° OT", "N° Ticket",
                "Repuesto", "SKU", "Cantidad", "Proveedor", "N° OC", "Motivo",
                "Solicitado por", "Creado (hora Chile)", "Días abiertos"]
+    # 🔒 2026-10-01: a un técnico el Excel le sale sin "Proveedor" ni "N° OC".
+    _cols_ok = [i for i, h in enumerate(headers)
+                if not (_oculta_proveedores() and h in ("Proveedor", "N° OC"))]
+    headers = [headers[i] for i in _cols_ok]
     for ci, h in enumerate(headers, 1):
         cell = ws.cell(1, ci, h)
         cell.font = HDR_FONT
@@ -92538,7 +92649,7 @@ def repstock_solicitudes_ot_export():
     ws.freeze_panes = "A2"
     _ORIGEN_XLS = {"ot": "OT", "manual": "Manual", "incidencia": "Incidencia", "ticket": "Ticket directo"}
     for s in sols:
-        ws.append([
+        _fila_xls = [
             s.get("id"), s.get("estado_label"), _ORIGEN_XLS.get(s.get("contexto"), s.get("contexto")),
             s.get("cliente_nombre") or ("Reposición de stock propio" if s.get("es_reposicion") else "—"),
             s.get("maquina_nombre") or "", s.get("numero_ot") or "", s.get("numero_ticket") or "",
@@ -92546,7 +92657,8 @@ def repstock_solicitudes_ot_export():
             s.get("cantidad"), s.get("proveedor_nombre") or "", s.get("oc_numero") or "",
             (s.get("motivo") or "")[:500], s.get("solicitado_por") or "",
             s.get("created_at") or "", s.get("dias_transcurridos"),
-        ])
+        ]
+        ws.append([_fila_xls[i] for i in _cols_ok])
     for i in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 18
     # ⚠️ 2026-09-25 (revisión adversarial post-commit f5db174b): si el
@@ -124700,6 +124812,10 @@ def mant_repuesto_update(rid):
     allowed = ['sku','nombre','descripcion','cantidad','costo_unitario','precio_venta',
                'moneda','tipo','estado','proveedor','documento','fecha','observacion',
                'visita_id','reporte_id','maquina_id']
+    if _oculta_proveedores():
+        # 🔒 2026-10-01: un técnico no escribe proveedor ni costo (tabla legacy
+        # mant_repuestos, seguimiento): se ignoran si llegan.
+        allowed = [f for f in allowed if f not in ('costo_unitario', 'proveedor')]
     sets, vals = [], []
     for f in allowed:
         if f in d:
@@ -124976,6 +125092,7 @@ def mant_repuesto_crear_desde_erp():
 
 @app.route("/mantenciones/api/proveedores-repuesto", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_proveedores_repuesto_list():
     """Catálogo de proveedores de repuestos (para el selector del modal
     de ficha de proveedor). Filtro opcional ?q="""
@@ -124992,6 +125109,7 @@ def mant_proveedores_repuesto_list():
 
 @app.route("/mantenciones/api/proveedores-repuesto/<int:pid>", methods=["PUT"])
 @_mant_required
+@_no_tecnico
 def mant_proveedor_repuesto_update(pid):
     """Edita contacto/canal preferido de un proveedor de repuestos."""
     d = request.get_json(silent=True) or {}
@@ -125014,6 +125132,7 @@ def mant_proveedor_repuesto_update(pid):
 
 @app.route("/mantenciones/api/proveedores-repuesto", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_proveedor_repuesto_crear():
     """2026-07-13: crea un proveedor de repuestos nuevo desde el Tarjetero
     de Proveedores (/mantenciones/proveedores). Mismos campos editables
@@ -125060,6 +125179,7 @@ def mant_proveedor_repuesto_crear():
 
 @app.route("/mantenciones/api/proveedores-repuesto/<int:pid>/repuestos", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_proveedor_repuesto_items(pid):
     """Repuestos asociados a un proveedor (detalle del Tarjetero)."""
     rows = mysql_fetchall(
@@ -125677,7 +125797,9 @@ def _repstock_contexto_bodega():
     # para atacar el caso de qué es lo que no está asociado, qué máquina no
     # tiene modelo"): dos filtros nuevos para el levantamiento de bodega,
     # mismo patrón que bajo_minimo (querystring persistente, WHERE dinámico).
-    solo_sin_costo = request.args.get("sin_costo") == "1"
+    # 🔒 2026-10-01: el filtro "Sin costo" es información de costos -- un
+    # técnico no lo usa ni lo ve (la plantilla tampoco lo dibuja).
+    solo_sin_costo = request.args.get("sin_costo") == "1" and not _oculta_proveedores()
     solo_sin_modelo = request.args.get("sin_modelo") == "1"
     # 2026-09-03 (Daniel: "colocale un objeto que diga pendiente de
     # identificar para despues filtrarlo y identificar que es lo que tenemos
@@ -125790,6 +125912,16 @@ def _repstock_contexto_bodega():
         tuple(params) + (page_size, offset)
     ) or []
     bod_repuestos = [_repstock_fmt(r) for r in rows]
+    # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): la
+    # fila viaja entera al navegador (tojson en el onclick de la tabla), así
+    # que el proveedor, su contacto y el costo se quitan ACÁ, no solo en la
+    # plantilla. Los técnicos siguen viendo SKU, stock, ubicación, marca y
+    # modelos compatibles.
+    if _oculta_proveedores():
+        for _r in bod_repuestos:
+            for _k in _OTREP_STOCK_SOLO_GESTION_PROV:
+                _r.pop(_k, None)
+        bod_count_sin_costo = 0
 
     modelos_por_repuesto = {}
     fotos_por_repuesto = {}
@@ -125923,6 +126055,16 @@ def repstock_crear():
     REAL (mant_repuestos_ubicaciones) -- este check es el respaldo de
     servidor, no la única barrera."""
     d = request.get_json(silent=True) or {}
+    # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores... solo
+    # que puedan seleccionar los repuestos"): un técnico SÍ crea repuestos en
+    # la Bodega, pero no fija proveedor ni costo -- si el navegador (o una
+    # llamada a mano) los manda, se ignoran. El repuesto nace con costo 0 y,
+    # sin proveedor elegido, solo hereda el proveedor de REFERENCIA de la
+    # marca (comportamiento de siempre, ver más abajo): el técnico nunca lo ve.
+    _tecnico_sin_prov = _oculta_proveedores()
+    if _tecnico_sin_prov:
+        d.pop("proveedor_id", None)
+        d.pop("costo_unitario", None)
     descripcion = (d.get("descripcion") or "").strip()[:400]
     if not descripcion:
         return jsonify({"ok": False, "error": "La descripción es obligatoria"}), 400
@@ -126035,6 +126177,11 @@ def repstock_crear():
                 # aparte con _repstock_mover(objetivo=...), que lee el saldo
                 # previo bajo FOR UPDATE y calcula el delta real.
                 cols_upd = [c for c in cols if c not in ("created_by", "cantidad")]
+                if _tecnico_sin_prov:
+                    # 🔒 2026-10-01: reactivar un repuesto dado de baja NO debe
+                    # pisar con NULL/0 el proveedor y el costo que gestión ya
+                    # tenía cargados (el técnico no los manda ni los ve).
+                    cols_upd = [c for c in cols_upd if c not in ("proveedor_id", "costo_unitario")]
                 set_sql = ", ".join(f"{c}=%s" for c in cols_upd)
                 cur.execute(
                     f"UPDATE mant_repuestos_stock SET {set_sql}, activo=1, "
@@ -126074,8 +126221,11 @@ def repstock_crear():
         conn.commit()
         _mant_log("repuesto_stock", new_id,
                    "reactivar" if reactivar_id else "crear", f"{sku} — {descripcion}")
-        return jsonify({"ok": True, "id": new_id, "sku": sku, "proveedor_id": proveedor_id,
-                          "reactivado": bool(reactivar_id), "aviso": mov_aviso})
+        _resp_crear = {"ok": True, "id": new_id, "sku": sku, "proveedor_id": proveedor_id,
+                       "reactivado": bool(reactivar_id), "aviso": mov_aviso}
+        if _tecnico_sin_prov:
+            _resp_crear.pop("proveedor_id", None)   # ni siquiera el id vuelve al técnico
+        return jsonify(_resp_crear)
     except Exception as e:
         conn.rollback()
         print(f"[repstock_crear] ERROR: {e}", flush=True)
@@ -126104,6 +126254,16 @@ def repstock_editar(rid):
     # se ignora en silencio — cambiarlo rompería etiquetas ya impresas.
     d = request.get_json(silent=True) or {}
     d.pop("sku", None)
+    # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): un
+    # técnico edita el repuesto (stock, ubicación, marca, modelos, fotos) pero
+    # NO toca proveedor ni costo. Como el modal ya no se los muestra, el
+    # navegador no los manda; si llegaran igual (llamada a mano), se ignoran
+    # y se CONSERVA el valor que ya tenía la fila: sacarlos del `allowed`
+    # evita que una edición del técnico los borre con NULL.
+    _tecnico_sin_prov = _oculta_proveedores()
+    if _tecnico_sin_prov:
+        d.pop("proveedor_id", None)
+        d.pop("costo_unitario", None)
     if "descripcion" in d:
         d["descripcion"] = (d.get("descripcion") or "").strip()[:400]
         if not d["descripcion"]:
@@ -126729,15 +126889,23 @@ def repstock_sondeo_erp():
             return 0.0
 
     productos = []
+    _sin_costos = _oculta_proveedores()
     for f in filas:
-        productos.append({
+        _prod = {
             "sku":                 (f.get("sku") or "").strip(),
             "descripcion":         (f.get("descripcion") or "").strip(),
             "codigo_tecnico":      (f.get("codigo_tecnico") or "").strip(),
             "cantidad":            _num(f.get("cantidad")),
             "costo_promedio":      _num(f.get("costo_promedio")),
             "costo_ultima_compra": _num(f.get("costo_ultima_compra")),
-        })
+        }
+        if _sin_costos:
+            # 🔒 2026-10-01 (Daniel: "sin ver ni tocar proveedor ni costo"): el
+            # costo del ERP tampoco viaja a un técnico (SKU, descripción,
+            # código técnico y stock de la bodega 18 sí).
+            _prod.pop("costo_promedio", None)
+            _prod.pop("costo_ultima_compra", None)
+        productos.append(_prod)
 
     return jsonify({"ok": True, "productos": productos})
 
@@ -127184,13 +127352,16 @@ def repstock_buscar_marcas():
         externo = bool(_es_tecnico_externo())
     except Exception:
         externo = False
-    if externo:
+    # 🔒 2026-10-01: el proveedor de referencia de la marca tampoco lo ve
+    # ningún técnico (interno ni elevado): le llega solo id y nombre.
+    if externo or _oculta_proveedores():
         return jsonify({"ok": True, "marcas": [{"id": r["id"], "nombre": r["nombre"]} for r in rows]})
     return jsonify({"ok": True, "marcas": [dict(r) for r in rows]})
 
 
 @app.route("/mantenciones/api/repuestos-stock/marcas/<int:mid>/proveedor", methods=["PUT"])
 @_mant_required
+@_no_tecnico
 def repstock_marca_asignar_proveedor(mid):
     """Asigna/cambia el proveedor de REFERENCIA (contraparte habitual) de
     una marca -- Daniel 2026-08-08: "si es Drax debe tener su
@@ -127545,6 +127716,7 @@ def repuestos_print_labels():
 
 @app.route("/mantenciones/api/repuestos-stock/exportar-excel")
 @_mant_required
+@_no_tecnico_externo
 def repstock_exportar_excel():
     """Export Excel "bien coqueto" de la Bodega de Repuestos (Daniel
     2026-08-08: "un Excel bien coqueto donde se bajen hasta las imágenes
@@ -127578,7 +127750,11 @@ def repstock_exportar_excel():
     marca_id = request.args.get("marca_id") or ""
     ubicacion_id = request.args.get("ubicacion_id") or ""
     solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
-    solo_sin_costo = request.args.get("sin_costo") == "1"
+    # 🔒 2026-10-01: a un técnico (interno) el Excel le sale SIN las columnas
+    # "Costo unitario" y "Proveedor", y sin el filtro "sin costo". El técnico
+    # EXTERNO ni siquiera llega acá (@_no_tecnico_externo).
+    _omitir_cols = {11, 12} if _oculta_proveedores() else set()   # posiciones 1-based: Costo, Proveedor
+    solo_sin_costo = request.args.get("sin_costo") == "1" and not _omitir_cols
     solo_sin_modelo = request.args.get("sin_modelo") == "1"
     # El Excel tiene que traer lo MISMO que se esta viendo en pantalla.
     solo_pendiente_modelo = request.args.get("pendiente_modelo") == "1"
@@ -127718,6 +127894,14 @@ def repstock_exportar_excel():
          # abajo (7, 8, 11, 13, 16...) son posicionales y no se mueven.
          "Equipo descontinuado"]
     )
+    # 🔒 2026-10-01: las columnas "Costo unitario" (11) y "Proveedor" (12) se
+    # sacan del encabezado para un técnico; los valores de cada fila y los
+    # anchos se filtran igual más abajo (_dest_col mantiene el resto pegado).
+    headers = [h for i, h in enumerate(headers, 1) if i not in _omitir_cols]
+
+    def _dest_col(ci):
+        return ci - sum(1 for o in _omitir_cols if o < ci)
+
     NCOLS = len(headers)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
     tcell = ws.cell(row=1, column=1,
@@ -127816,7 +128000,9 @@ def repstock_exportar_excel():
         for ci, val in enumerate(vals, 1):
             if ci <= FOTO_COLS:
                 continue  # columnas Foto se resuelven aparte (imagen o celda vacía)
-            cell = ws.cell(row=r_idx, column=ci, value=val)
+            if ci in _omitir_cols:
+                continue  # 🔒 Costo/Proveedor no salen en el Excel de un técnico
+            cell = ws.cell(row=r_idx, column=_dest_col(ci), value=val)
             cell.font = Font(size=9)
             cell.alignment = Alignment(
                 horizontal="center" if ci in (7, 8, 11, 19) else "left",
@@ -127858,6 +128044,7 @@ def repstock_exportar_excel():
         r_idx += 1
 
     widths = [10, 10, 10, 20, 40, 18, 14, 16, 16, 18, 14, 22, 30, 22, 14, 30, 16, 16, 18]
+    widths = [w for i, w in enumerate(widths, 1) if i not in _omitir_cols]
     for ci, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "B3"

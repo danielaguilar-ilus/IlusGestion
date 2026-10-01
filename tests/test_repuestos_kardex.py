@@ -326,6 +326,11 @@ class TestOtrepFilaComprometidoPropio(unittest.TestCase):
             # son sobre comprometido/disponible, no sobre ese candado.
             "_es_rol_tecnico": lambda *a, **k: False,
             "_OTREP_SOL_SOLO_GESTION": ("costo_unitario", "costo_origen"),
+            # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): _otrep_fila
+            # termina quitando proveedor/OC/compra para cualquier técnico
+            # (_oculta_proveedores). Stub neutro (False): acá se prueba comprometido/disponible.
+            "_oculta_proveedores": lambda *a, **k: False,
+            "_OTREP_SOL_SOLO_GESTION_PROV": ("proveedor_id", "proveedor_nombre"),
         }
         cls.fila = staticmethod(_extraer_funcion("_otrep_fila", contexto=contexto))
 

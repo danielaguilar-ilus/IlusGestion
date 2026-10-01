@@ -1029,6 +1029,27 @@ def register_catalogo_routes(app, ctx):
         perms = g.get("permissions") or {}
         return bool(perms.get("superadmin") or perms.get("cat_manual_descargar"))
 
+    def _envio_manual_bloqueado_para_tecnico():
+        """🔒 2026-10-01 (Daniel: "nunca los técnicos deben... poder
+        comunicarse con los proveedores"): los dos endpoints de "enviar manual
+        por correo" aceptan CUALQUIER destinatario, o sea un canal directo
+        hacia un proveedor desde la cuenta de ILUS. A un técnico (interno,
+        elevado o externo) se le cierra: puede VER y DESCARGAR el manual
+        (según su permiso de siempre), pero no mandarlo por correo. Devuelve
+        la respuesta 403 si hay que bloquear, o None si puede seguir.
+        Se apoya en _oculta_proveedores() de app.py (ctx = globals())."""
+        f = ctx.get("_oculta_proveedores") or ctx.get("_es_rol_tecnico")
+        try:
+            if f and f():
+                return jsonify({
+                    "ok": False,
+                    "error": "Enviar manuales por correo lo hace gestión. Puedes verlos desde el Catálogo.",
+                    "error_codigo": "TECNICO_SIN_ENVIO_MANUAL",
+                }), 403
+        except Exception:
+            pass
+        return None
+
     def _catalogo_producto_write_required(view):
         """2026-07-23 (Daniel, dictado): "ya es momento de que este módulo,
         el técnico pueda llamar a un producto nuevo y agregar las medidas de
@@ -3184,6 +3205,9 @@ def register_catalogo_routes(app, ctx):
     @app.route("/catalogo/api/productos/<int:pid>/manual/enviar-correo", methods=["POST"])
     @_catalogo_required
     def cat_api_manual_enviar_correo(pid):
+        _bloqueo = _envio_manual_bloqueado_para_tecnico()
+        if _bloqueo:
+            return _bloqueo
         p = mysql_fetchone(
             "SELECT sku, nombre, manual_pdf_key, manual_pdf_nombre FROM cat_productos WHERE id=%s", (pid,))
         if not p:
@@ -3307,6 +3331,9 @@ def register_catalogo_routes(app, ctx):
     @app.route("/catalogo/api/productos/<int:pid>/manuales/<int:manual_id>/enviar-correo", methods=["POST"])
     @_catalogo_required
     def cat_api_manuales_multi_enviar_correo(pid, manual_id):
+        _bloqueo = _envio_manual_bloqueado_para_tecnico()
+        if _bloqueo:
+            return _bloqueo
         m = mysql_fetchone(
             "SELECT mm.gcs_key, mm.nombre_archivo, p.sku, p.nombre AS producto_nombre "
             "FROM cat_producto_manuales mm JOIN cat_productos p ON p.id = mm.producto_id "

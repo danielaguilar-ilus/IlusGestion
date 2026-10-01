@@ -400,7 +400,7 @@
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-gear-wide-connected me-2"></i>Repuestos</h4>
-    <div class="sub" id="repSubBodega">Inventario físico de la bodega — SKU, stock, ubicación, costo,
+    <div class="sub" id="repSubBodega">Inventario físico de la bodega — SKU, stock, ubicación,{% if not oculta_proveedores %} costo,{% endif %}
       marca y compatibilidad con modelos de equipo.</div>
     {# 🔒 2026-09-20 (revisión): la pestaña "Solicitudes desde OT" heredaba
        este mismo subtítulo de Bodega, que no la describe. #}
@@ -415,7 +415,9 @@
     <button class="btn btn-sm btn-outline-secondary" type="button" onclick="rbaAbrirActividad()"
             title="Cuántos repuestos hay cargados, quién los está cargando y el avance de hoy">
       <i class="bi bi-graph-up-arrow me-1"></i>Avance de carga</button>
-    {% if current_user.role != 'tecnico' %}
+    {# 🔒 2026-10-01: antes `current_user.role != 'tecnico'` (rol EXACTO) -- un
+       'tecnico_ejecutivo'/'tecnico_externo' lo veía. Ahora toda la familia técnico. #}
+    {% if not oculta_proveedores %}
     <a href="/mantenciones/proveedores" class="btn btn-sm btn-outline-secondary"><i class="bi bi-truck me-1"></i>Proveedores</a>
     {% endif %}
     <button class="btn btn-sm btn-danger" type="button" onclick="rbAbrirNuevo()">
@@ -495,7 +497,7 @@
          interno o externo). Este `if` es solo cortesía de UI -- no ocultarlo
          no sería un hueco de seguridad, pero evita que un técnico llene
          todo el modal y recién al final le rebote un 403. #}
-      {% if current_user.role != 'tecnico' %}
+      {% if not oculta_proveedores %}
       <button class="btn btn-sm btn-danger" type="button" onclick="rsmAbrir()">
         <i class="bi bi-send-plus me-1"></i>Solicitar repuesto</button>
       {% endif %}
@@ -517,9 +519,13 @@
     </select>
     <input type="text" id="rsFCliente" class="form-control" style="max-width:190px" placeholder="Cliente…"
            autocomplete="off" oninput="rsFClienteBuscar(this.value)">
+    {# 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): el filtro por
+       proveedor (y la lista de proveedores que lo llena) no se dibuja para un técnico. #}
+    {% if not oculta_proveedores %}
     <select id="rsFProveedor" class="form-select" style="max-width:190px" onchange="rsFiltrosAplicar()">
       <option value="">Proveedor: todos</option>
     </select>
+    {% endif %}
     <input type="date" id="rsFDesde" class="form-control rs-f-fecha" title="Desde" onchange="rsFiltrosAplicar()">
     <input type="date" id="rsFHasta" class="form-control rs-f-fecha" title="Hasta" onchange="rsFiltrosAplicar()">
     {% if 0 %}{# placeholder de accesibilidad, la lista de clientes vive en el datalist de abajo #}{% endif %}
@@ -527,7 +533,9 @@
       <i class="bi bi-x-lg"></i> Limpiar filtros</button>
     <div class="rs-vistas" role="tablist">
       <button type="button" class="on" id="rsVistaLista" onclick="rsVista('lista')">Lista</button>
+      {% if not oculta_proveedores %}
       <button type="button" id="rsVistaProveedor" onclick="rsVista('proveedor')">Por proveedor</button>
+      {% endif %}
       <button type="button" id="rsVistaCliente" onclick="rsVista('cliente')">Por cliente</button>
       {# 🧾 Fase 5 (2026-09-26): compras a proveedor con ticket y seguimiento.
          🔒 revisión ALTA #1: comprar es plata/proveedor, nunca un técnico
@@ -535,7 +543,7 @@
          "Solicitar repuesto" (current_user.role != 'tecnico'). El backend
          (@_otrep_compra_gestion_required) igual lo bloquea aunque alguien
          fuerce la URL o el fetch a mano; esto es solo no ofrecer el botón. #}
-      {% if current_user.role != 'tecnico' %}
+      {% if not oculta_proveedores %}
       <button type="button" id="rsVistaCompras" onclick="rsVista('compras')">Compras</button>
       {% endif %}
     </div>
@@ -876,7 +884,7 @@
         <th>Repuesto</th>
         <th>Cliente</th>
         <th>Ubicación / Motivo</th>
-        <th>Costo</th>
+        {% if not oculta_proveedores %}<th>Costo</th>{% endif %}
         <th>Estado</th>
         <th>Seguimiento</th>
         <th>Garantía</th>
@@ -905,10 +913,12 @@
         </td>
         <td>
           {{ r.cliente_nombre or r.cliente_texto_original or '—' }}
+          {% if not oculta_proveedores %}
           {% if r.proveedor_nombre %}
           <div class="rep-meta-line"><i class="bi bi-truck"></i> {{ r.proveedor_nombre }}</div>
           {% elif r.proveedor %}
           <div class="rep-meta-line"><i class="bi bi-truck"></i> {{ r.proveedor }}</div>
+          {% endif %}
           {% endif %}
         </td>
         <td class="rep-meta-line">
@@ -916,7 +926,7 @@
           {% if r.motivo %}<div>{{ r.motivo[:80] }}{% if r.motivo|length > 80 %}…{% endif %}</div>{% endif %}
           {% if r.numero_ot %}<div>OT {{ r.numero_ot }}</div>{% endif %}
         </td>
-        <td>${{ '{:,.0f}'.format(r.costo_unitario|float).replace(',', '.') if r.costo_unitario else 0 }}</td>
+        {% if not oculta_proveedores %}<td>${{ '{:,.0f}'.format(r.costo_unitario|float).replace(',', '.') if r.costo_unitario else 0 }}</td>{% endif %}
         <td><span class="rep-badge rep-{{ r.estado }}">{{ r.estado }}</span></td>
         <td>
           <select class="rep-seg-select rep-seg-{{ r.estado_seguimiento or 'pending' }}"
@@ -940,14 +950,18 @@
         </td>
         <td class="text-muted small">{{ r.fecha.strftime('%d/%m/%Y') if r.fecha and r.fecha.strftime else (r.fecha or '—') }}</td>
         <td>
+          {#- 🔒 2026-10-01: "Asignar a ticket" arma los links wa.me / tel: / mailto: del
+              proveedor (ver _repatRenderProveedor): no se ofrece a un técnico. -#}
+          {% if not oculta_proveedores %}
           <button type="button" class="rep-btn-asignar"
                   onclick='repatOpen({{ r.id }}, {{ (r.proveedor_id or "null") }}, {{ (r.ticket_id or "null") }})'>
             <i class="bi bi-link-45deg"></i> Ticket
           </button>
+          {% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="text-center text-muted py-4">No hay repuestos que coincidan con el filtro.</td></tr>
+      <tr><td colspan="{{ 9 if oculta_proveedores else 10 }}" class="text-center text-muted py-4">No hay repuestos que coincidan con el filtro.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -1130,7 +1144,11 @@
 // Compras aunque -- por lo que sea -- un técnico llegue a verlas en
 // pantalla; el backend (@_otrep_compra_gestion_required) es el candado
 // real, esto es solo no mostrar un botón que igual rebotaría con 403.
-var RS_PUEDE_COMPRAS = {{ 'true' if current_user.role != 'tecnico' else 'false' }};
+// 🔒 2026-10-01: antes comparaba el rol EXACTO ('tecnico'), así que un técnico
+// elevado ('tecnico_ejecutivo') o externo veía las acciones de compra. Ahora
+// toda la familia técnico queda sin compras ni proveedores en esta pantalla.
+var RS_OCULTA_PROV = {{ 'true' if oculta_proveedores else 'false' }};
+var RS_PUEDE_COMPRAS = {{ 'false' if oculta_proveedores else 'true' }};
 // ══════════════ Pestañas Bodega / Solicitudes ══════════════
 function repTab(cual){
   const esBodega = (cual === 'bodega');
@@ -1396,7 +1414,8 @@ function rsSetSize(n){ _rs.size = parseInt(n) || 100; _rs.page = 1; rsCargar(); 
 function rsPag(d){ _rs.page += d; rsCargar(); }
 function rsFiltrosAplicar(){
   _rs.origen = document.getElementById('rsFOrigen').value || '';
-  _rs.proveedor_id = document.getElementById('rsFProveedor').value || '';
+  const _selProv = document.getElementById('rsFProveedor');   // no existe para un técnico (2026-10-01)
+  _rs.proveedor_id = _selProv ? (_selProv.value || '') : '';
   _rs.fecha_desde = document.getElementById('rsFDesde').value || '';
   _rs.fecha_hasta = document.getElementById('rsFHasta').value || '';
   _rs.page = 1;
@@ -1408,7 +1427,8 @@ function rsFiltrosLimpiar(){
   _rs.fecha_desde = ''; _rs.fecha_hasta = '';
   document.getElementById('rsFOrigen').value = '';
   document.getElementById('rsFCliente').value = '';
-  document.getElementById('rsFProveedor').value = '';
+  const _selProv2 = document.getElementById('rsFProveedor');   // no existe para un técnico (2026-10-01)
+  if (_selProv2) _selProv2.value = '';
   document.getElementById('rsFDesde').value = '';
   document.getElementById('rsFHasta').value = '';
   _rs.page = 1;

@@ -40,7 +40,7 @@ try:
 except Exception:  # pragma: no cover
     _CL_TZ = None
 
-from flask import request, jsonify, render_template, redirect, url_for, g
+from flask import request, jsonify, render_template, redirect, url_for, g, flash
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
 # Mismo patron que app._EMAIL_RE, para no confiar solo en el front (Regla #4).
@@ -479,6 +479,60 @@ def _tk_list_where(args):
 
     wsql = (" WHERE " + " AND ".join(where)) if where else ""
     return wsql, params
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  🔒 2026-10-01 (Daniel: "nunca los técnicos deben contener datos o poder
+#  comunicarse con los proveedores. Ni siquiera pueden ver mis proveedores").
+#  Los tickets de COMPRA a proveedor (Repuestos bodega / importación) guardan
+#  el contacto del proveedor (correo, teléfono, empresa): ninguna persona de
+#  la familia técnico (interna, elevada o externa) los lista ni los abre. Y
+#  las notas del hilo de un ticket de repuestos que mencionan al proveedor
+#  ("Proveedor sugerido: ...", "Proveedor: ...", "OC ...", y la lista del
+#  lote "· #12 Perno × 4 — Drax") se muestran SIN esas líneas a un técnico.
+#  Gestión no cambia nada: ve el hilo completo.
+# ─────────────────────────────────────────────────────────────────────────
+TK_TIPOS_COMPRA_PROVEEDOR = ("spare_parts_store", "spare_parts_import")
+
+# Líneas que las notas del sistema arman con el proveedor (ver app.py,
+# _otrep_ticket_anotar / _otrep_cambiar_estado) y que un técnico no debe leer.
+_TK_LINEA_PROVEEDOR_RE = re.compile(r"^\s*(?:Proveedor sugerido:|Proveedor:|OC\s)")
+# Línea de un lote: "  · #901 Perno M8 × 4 — Drax Fitness[ · NO existe en la bodega (propuesto)]"
+# (_inc_gr_nota_ticket). Se conserva todo menos el " — <proveedor>".
+_TK_LINEA_LOTE_PROV_RE = re.compile(
+    r"^(\s*· #\d+ .+? × [^\s—]+) — .*?((?: · NO existe en la bodega \(propuesto\))?)$")
+
+
+def _tk_texto_sin_proveedor(txt):
+    """Devuelve `txt` sin las líneas que nombran al proveedor o a la OC.
+
+    Función PURA: solo toca el texto de las notas del sistema ligadas a
+    solicitudes de repuesto; el resto de las líneas queda exacto."""
+    if not txt:
+        return txt
+    salida = []
+    for linea in str(txt).split("\n"):
+        if _TK_LINEA_PROVEEDOR_RE.match(linea):
+            continue
+        m = _TK_LINEA_LOTE_PROV_RE.match(linea)
+        if m:
+            linea = m.group(1) + m.group(2)
+        salida.append(linea)
+    return "\n".join(salida)
+
+
+def _tk_mensajes_sin_proveedor(mensajes):
+    """Copia de las filas crudas de tk_mensajes donde las notas ligadas a
+    solicitudes de repuesto (metadata con `solicitud_repuesto_id[s]`) pierden
+    las líneas de proveedor/OC. Los demás mensajes pasan tal cual."""
+    salida = []
+    for m in (mensajes or []):
+        meta = m.get("metadata")
+        if meta and "solicitud_repuesto" in str(meta):
+            m = dict(m)
+            m["contenido"] = _tk_texto_sin_proveedor(m.get("contenido"))
+        salida.append(m)
+    return salida
 
 # ── Mapas de migracion desde los tickets de Mantenciones (mant_tickets*) ──
 # Blueprint §7. Se usan al centralizar; conservan el dato sin romper el origen.
@@ -2414,6 +2468,48 @@ def register_tickets_routes(app, ctx):
             return view(*a, **k)
         return login_required(wrapped)
 
+    def _tk_ticket_es_de_compra(tid):
+        """¿Este ticket es una COMPRA a proveedor (Repuestos bodega/importación)?
+        Ante un error de lectura devuelve True: para un técnico es mejor un
+        "sin acceso" pasajero que filtrar el contacto de un proveedor."""
+        try:
+            r = mysql_fetchone("SELECT tipo FROM tk_tickets WHERE id=%s", (tid,))
+        except Exception:
+            return True
+        return bool(r) and (r.get("tipo") or "") in TK_TIPOS_COMPRA_PROVEEDOR
+
+    def _tk_sin_tickets_de_compra(view):
+        """Decorador (2026-10-01, Daniel: "ni siquiera pueden ver mis
+        proveedores"): un técnico -- de cualquier tipo -- no abre, edita ni
+        comenta un ticket de compra a proveedor. JSON 403 amable en las APIs;
+        en la ficha (página) un aviso y vuelta al listado. Gestión no se
+        entera de que existe. Se aplica DESPUÉS de @_tickets_required."""
+        @wraps(view)
+        def wrapped(*a, **k):
+            tid = k.get("tid")
+            if tid is not None and _tk_es_tecnico() and _tk_ticket_es_de_compra(tid):
+                if _is_ajaxish():
+                    return jsonify({
+                        "ok": False,
+                        "error": "Los tickets de compra a proveedores los gestiona bodega/gestión.",
+                        "error_codigo": "TICKET_COMPRA_SIN_ACCESO",
+                    }), 403
+                flash("Los tickets de compra a proveedores los gestiona bodega/gestión.", "warning")
+                return redirect(url_for("tk_list"))
+            return view(*a, **k)
+        return wrapped
+
+    def _tk_list_where_scoped(args):
+        """_tk_list_where + (solo para un técnico) excluir los tickets de
+        compra a proveedor. Una sola fuente para el listado, los KPIs y los
+        reportes CSV, así ninguno los cuela por una puerta lateral."""
+        wsql, params = _tk_list_where(args)
+        if _tk_es_tecnico():
+            cond = ("COALESCE(t.tipo,'') NOT IN ("
+                    + ",".join("'" + x + "'" for x in TK_TIPOS_COMPRA_PROVEEDOR) + ")")
+            wsql = (wsql + " AND " + cond) if wsql else (" WHERE " + cond)
+        return wsql, params
+
     def _tk_log(ticket_id, tipo, contenido, usuario=None, metadata=None, es_interno=True,
                 to_email=None, cc_email=None, estado_envio=None, message_date=None):
         """Escribe un evento/mensaje en tk_mensajes. Nunca rompe el flujo.
@@ -2682,6 +2778,7 @@ def register_tickets_routes(app, ctx):
     # Mismo criterio que _es_tecnico_externo/_no_tecnico_externo ya
     # documentan: el técnico INTERNO no se ve afectado.
     @_no_tecnico_externo
+    @_tk_sin_tickets_de_compra
     def tk_ficha(tid):
         t = _row("SELECT id FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
@@ -5454,10 +5551,14 @@ def register_tickets_routes(app, ctx):
             limite = max(1, min(20, int(request.args.get("limit") or 10)))
         except Exception:
             limite = 10
+        # 🔒 2026-10-01: un técnico no encuentra tickets de compra a proveedor.
+        _sin_compra = (" AND COALESCE(tipo,'') NOT IN ('spare_parts_store','spare_parts_import') "
+                       if _tk_es_tecnico() else " ")
         rows = mysql_fetchall(
             "SELECT id, numero_ticket, titulo, estado, empresa, rut, created_at "
             "FROM tk_tickets "
-            "WHERE numero_ticket LIKE %s OR titulo LIKE %s OR empresa LIKE %s OR rut LIKE %s "
+            "WHERE (numero_ticket LIKE %s OR titulo LIKE %s OR empresa LIKE %s OR rut LIKE %s)"
+            + _sin_compra +
             "ORDER BY created_at DESC LIMIT %s",
             (like, like, like, like, limite)) or []
         return jsonify({"ok": True, "tickets": [_fmt_row(r) for r in rows]})
@@ -6244,7 +6345,8 @@ def register_tickets_routes(app, ctx):
         # WHERE compartido con los reportes CSV (una sola fuente de verdad).
         # Filtros: estado, tipo, prioridad, origen, asignado_a, rut, q,
         # + nuevos: ticket, fecha_desde, fecha_hasta, hoy=1.
-        wsql, params = _tk_list_where(request.args)
+        # 🔒 2026-10-01: _scoped = sin tickets de compra a proveedor para un técnico.
+        wsql, params = _tk_list_where_scoped(request.args)
 
         try:
             page = max(1, int(request.args.get("page", 1)))
@@ -6343,7 +6445,7 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/reporte/tickets.csv", methods=["GET"])
     @_tickets_required
     def tk_reporte_tickets_csv():
-        wsql, params = _tk_list_where(request.args)
+        wsql, params = _tk_list_where_scoped(request.args)
         # Reporte orientado a fechas: created_at DESC por defecto; honra
         # ?sort=&dir= (misma whitelist del listado) si vienen.
         order_sql = _tk_sort_order(request.args) or "t.created_at DESC, t.id DESC"
@@ -6380,7 +6482,7 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/reporte/sla.csv", methods=["GET"])
     @_tickets_required
     def tk_reporte_sla_csv():
-        wsql, params = _tk_list_where(request.args)
+        wsql, params = _tk_list_where_scoped(request.args)
         rows = mysql_fetchall(
             "SELECT t.numero_ticket, t.empresa, t.nombre_contacto, t.rut, t.tipo, "
             "       t.estado, t.created_at, t.updated_at, t.fecha_limite "
@@ -6608,6 +6710,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>", methods=["GET"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_get(tid):
         # FIX 2026-07-12 (Daniel, en vivo): el auto-barrido del buzon SOLO
         # estaba en tk_api_list (la bandeja) -- si el staff entra directo a
@@ -6762,7 +6865,10 @@ def register_tickets_routes(app, ctx):
             "documentos": docs_out,
             "cotizaciones": cot_out,
             "finanzas_ocultas": _finanzas_ocultas,
-            "mensajes": [_fmt_row(r) for r in mensajes],
+            # 🔒 2026-10-01: a un técnico se le quitan, de las notas ligadas a
+            # solicitudes de repuesto, las líneas con el proveedor y la OC.
+            "mensajes": [_fmt_row(r) for r in
+                         (_tk_mensajes_sin_proveedor(mensajes) if _finanzas_ocultas else mensajes)],
             "adjuntos": [_fmt_row(r) for r in adjuntos],
             "vistas": [_fmt_row(r) for r in vistas] if _puede_ver_actividad else [],
             "unread_count": unread_count,
@@ -6774,6 +6880,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>", methods=["PATCH"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_update(tid):
         prev = mysql_fetchone(
             "SELECT estado, prioridad, tipo, asignado_a, numero_ticket, titulo "
@@ -6908,6 +7015,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>", methods=["DELETE"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_delete(tid):
         t = mysql_fetchone("SELECT numero_ticket, created_by FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
@@ -7347,6 +7455,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/comentario", methods=["POST"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_comentario(tid):
         if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
@@ -7371,6 +7480,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/responder-cliente", methods=["POST"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_responder_cliente(tid):
         t = mysql_fetchone(
             "SELECT numero_ticket, email, empresa, nombre_contacto, estado "
@@ -7862,6 +7972,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/marcar-leido", methods=["PATCH"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_marcar_leido(tid):
         # updated_at = updated_at para NO disparar ON UPDATE CURRENT_TIMESTAMP.
         mysql_execute(
@@ -7903,6 +8014,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/equipos", methods=["POST"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_add_equipo(tid):
         if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
@@ -7929,6 +8041,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/tickets/<int:tid>/equipos/<int:eid>", methods=["DELETE"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_del_equipo(tid, eid):
         mysql_execute("DELETE FROM tk_ticket_equipos WHERE id=%s AND ticket_id=%s", (eid, tid))
         _tk_log(tid, "otro", f"Equipo #{eid} quitado")
@@ -8149,6 +8262,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/generar-ot", methods=["POST"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_generar_ot(tid):
         t = mysql_fetchone("SELECT * FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
@@ -8776,6 +8890,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/equipos/<int:eid>", methods=["PATCH"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_update_equipo_garantia(tid, eid):
         prev = mysql_fetchone(
             "SELECT * FROM tk_ticket_equipos WHERE id=%s AND ticket_id=%s", (eid, tid))
@@ -8941,6 +9056,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/equipos-desde-documento", methods=["POST"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_equipos_desde_documento(tid):
         if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
@@ -8974,6 +9090,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/equipos-manual", methods=["POST"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_equipos_manual(tid):
         if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
@@ -9009,6 +9126,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/adjuntos", methods=["POST"])
     @_tickets_required
+    @_tk_sin_tickets_de_compra
     def tk_api_upload_adjunto(tid):
         if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
