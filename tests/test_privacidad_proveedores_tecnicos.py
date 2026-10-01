@@ -607,6 +607,18 @@ class TestEndpointsBloqueados(unittest.TestCase):
         self.assertIn("if _oculta_proveedores():", fuente)
         self.assertIn("_OTREP_STOCK_SOLO_GESTION_PROV", fuente)
         self.assertIn("bod_count_sin_costo = 0", fuente)
+        # (revisión 2026-10-01) esta consulta usa el alias proveedor_nombre: se quita todo "proveedor*"
+        self.assertIn('str(_k).startswith("proveedor")', fuente)
+
+    def test_bitacoras_no_muestran_proveedor_ni_nota_de_gestion(self):
+        amb = _cargar(["_otrep_log_sin_proveedor"], ["_OTREP_LOG_ESTADO_RE"], extra={"re": re})
+        f = amb["_otrep_log_sin_proveedor"]
+        self.assertEqual(f("#12 Motor X1: pendiente → pedido · REP-0004 · proveedor Drax · Pedido a Juan +569"),
+                         "#12 Motor X1: pendiente → pedido")
+        self.assertEqual(f("algo raro · proveedor Drax"), "algo raro")
+        app_src = open(os.path.join(RAIZ, "app.py"), encoding="utf-8").read()
+        self.assertIn("_det = _otrep_log_sin_proveedor(_det)", app_src)
+        self.assertIn('l["valor_despues"] = _otrep_log_sin_proveedor(l.get("valor_despues"))', app_src)
         self.assertIn('request.args.get("sin_costo") == "1" and not _oculta_proveedores()', fuente)
 
     def test_el_alta_y_la_edicion_ignoran_las_claves(self):
@@ -810,10 +822,11 @@ class TestTicketsDeCompra(unittest.TestCase):
     def test_la_busqueda_de_tickets_tambien_los_excluye(self):
         fuente = _fuente_modulo(TICKETS, "tk_api_tickets_buscar")
         self.assertIn("_tk_es_tecnico()", fuente)
-        self.assertIn("NOT IN ('spare_parts_store','spare_parts_import')", fuente)
+        # (revisión 2026-10-01) por compra ligada, no por tipo: esos tipos también los usan clientes
+        self.assertIn("NOT EXISTS (SELECT 1 FROM mant_repuestos_compras", fuente)
 
     # ---- comportamiento del decorador y del WHERE ----
-    def _ambito(self, es_tecnico, tipo, falla_bd=False):
+    def _ambito(self, es_tecnico, es_compra, falla_bd=False):
         amb = {"wraps": functools.wraps, "request": types.SimpleNamespace(path="/tickets/api/tickets/9"),
                "_tk_es_tecnico": lambda: es_tecnico,
                "_is_ajaxish": lambda: True,
@@ -825,7 +838,8 @@ class TestTicketsDeCompra(unittest.TestCase):
         def _fetchone(sql, params=None):
             if falla_bd:
                 raise RuntimeError("bd caida")
-            return {"tipo": tipo} if tipo is not None else None
+            self.assertIn("mant_repuestos_compras", sql)
+            return {"si": 1} if es_compra else None
         amb["mysql_fetchone"] = _fetchone
         _constantes_modulo(TICKETS, ["TK_TIPOS_COMPRA_PROVEEDOR"], amb)
         _ejecutar_nodo(TICKETS, "_tk_ticket_es_de_compra", amb)
@@ -840,8 +854,8 @@ class TestTicketsDeCompra(unittest.TestCase):
         return vista
 
     def test_el_tecnico_no_abre_un_ticket_de_compra(self):
-        for tipo in ("spare_parts_store", "spare_parts_import"):
-            amb = self._ambito(True, tipo)
+        for _ in (1,):
+            amb = self._ambito(True, True)
             r = self._vista(amb)(tid=9)
             cuerpo, http = r
             self.assertEqual(http, 403)
@@ -850,7 +864,7 @@ class TestTicketsDeCompra(unittest.TestCase):
             self.assertIn("gestiona bodega/gestión", cuerpo["error"], "mensaje amable, sin detalles internos")
 
     def test_la_ficha_pagina_avisa_y_vuelve_al_listado(self):
-        amb = self._ambito(True, "spare_parts_store")
+        amb = self._ambito(True, True)
         amb["_is_ajaxish"] = lambda: False
         # el decorador resuelve _is_ajaxish del ambito al llamarlo
         r = self._vista(amb)(tid=9)
@@ -858,16 +872,16 @@ class TestTicketsDeCompra(unittest.TestCase):
         self.assertTrue(amb.get("_flasheado"))
 
     def test_el_tecnico_si_abre_cualquier_otro_ticket(self):
-        for tipo in ("spare_parts", "tech_support", "repair", "install", None):
-            amb = self._ambito(True, tipo)
-            self.assertEqual(self._vista(amb)(tid=9), "VISTA-OK", tipo)
+        # incluido un ticket PÚBLICO de cliente tipo "Repuestos bodega": sin compra ligada, se abre
+        amb = self._ambito(True, False)
+        self.assertEqual(self._vista(amb)(tid=9), "VISTA-OK")
 
     def test_gestion_abre_tambien_los_de_compra(self):
-        amb = self._ambito(False, "spare_parts_store")
+        amb = self._ambito(False, True)
         self.assertEqual(self._vista(amb)(tid=9), "VISTA-OK")
 
     def test_si_la_bd_falla_el_tecnico_queda_sin_acceso_en_vez_de_filtrar_contacto(self):
-        amb = self._ambito(True, "spare_parts", falla_bd=True)
+        amb = self._ambito(True, False, falla_bd=True)
         cuerpo, http = self._vista(amb)(tid=9)
         self.assertEqual(http, 403)
 
@@ -879,12 +893,12 @@ class TestTicketsDeCompra(unittest.TestCase):
             _constantes_modulo(TICKETS, ["TK_TIPOS_COMPRA_PROVEEDOR"], amb)
             f = _ejecutar_nodo(TICKETS, "_tk_list_where_scoped", amb)
             wsql, params = f({})
-            tiene = "COALESCE(t.tipo,'') NOT IN ('spare_parts_store','spare_parts_import')" in wsql
+            tiene = "NOT EXISTS (SELECT 1 FROM mant_repuestos_compras _c WHERE _c.ticket_id=t.id)" in wsql
             self.assertEqual(tiene, esperado_en, (es_tecnico, wsql_in, wsql))
             if wsql_in:
                 self.assertTrue(wsql.startswith(wsql_in), "conserva los filtros que ya habia")
                 if es_tecnico:
-                    self.assertIn(" AND COALESCE(", wsql)
+                    self.assertIn(" AND NOT EXISTS (", wsql)
             elif es_tecnico:
                 self.assertTrue(wsql.startswith(" WHERE "))
 

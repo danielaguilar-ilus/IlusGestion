@@ -1741,7 +1741,13 @@ async function rsListaGenerarOT(){
 // para el técnico externo (_OTREP_SOL_NO_EXTERNO), así que esta función ya
 // es segura de llamar siempre -- simplemente no encuentra el campo.
 function rsCompraBadge(s){
-  if (!s.compra_id) return '';
+  // 🔒 2026-10-01: a un técnico le llega sin compra_id ni ticket (privacidad de proveedores),
+  // pero sí con estado y ETA: el chip se pinta igual, sin número ni link.
+  if (!s.compra_id && !s.compra_estado_label) return '';
+  if (!s.compra_id){
+    return '<span class="rs-compra ' + (s.compra_estado || '') + '"><i class="bi bi-truck"></i> '
+      + rsEsc('En compra · ' + s.compra_estado_label + (s.compra_eta ? ' · ETA ' + s.compra_eta : '')) + '</span>';
+  }
   const txt = 'En compra #' + s.compra_id + (s.compra_estado_label ? ' · ' + s.compra_estado_label : '')
     + (s.compra_eta ? ' · ETA ' + s.compra_eta : '');
   const href = s.compra_ticket_id ? ('/tickets/' + s.compra_ticket_id) : 'javascript:void(0)';

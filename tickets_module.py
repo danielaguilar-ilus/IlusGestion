@@ -2472,11 +2472,15 @@ def register_tickets_routes(app, ctx):
         """¿Este ticket es una COMPRA a proveedor (Repuestos bodega/importación)?
         Ante un error de lectura devuelve True: para un técnico es mejor un
         "sin acceso" pasajero que filtrar el contacto de un proveedor."""
+        # (revisión 2026-10-01) NO por `tipo`: spare_parts_store/import también son
+        # tipos PÚBLICOS (un cliente pide "Repuestos bodega" en el formulario) y el
+        # técnico debe seguir atendiéndolos. Es de compra si una Compra de bodega lo usa.
         try:
-            r = mysql_fetchone("SELECT tipo FROM tk_tickets WHERE id=%s", (tid,))
+            r = mysql_fetchone(
+                "SELECT 1 AS si FROM mant_repuestos_compras WHERE ticket_id=%s LIMIT 1", (tid,))
         except Exception:
             return True
-        return bool(r) and (r.get("tipo") or "") in TK_TIPOS_COMPRA_PROVEEDOR
+        return bool(r)
 
     def _tk_sin_tickets_de_compra(view):
         """Decorador (2026-10-01, Daniel: "ni siquiera pueden ver mis
@@ -2505,8 +2509,8 @@ def register_tickets_routes(app, ctx):
         reportes CSV, así ninguno los cuela por una puerta lateral."""
         wsql, params = _tk_list_where(args)
         if _tk_es_tecnico():
-            cond = ("COALESCE(t.tipo,'') NOT IN ("
-                    + ",".join("'" + x + "'" for x in TK_TIPOS_COMPRA_PROVEEDOR) + ")")
+            cond = ("NOT EXISTS (SELECT 1 FROM mant_repuestos_compras _c "
+                    "WHERE _c.ticket_id=t.id)")
             wsql = (wsql + " AND " + cond) if wsql else (" WHERE " + cond)
         return wsql, params
 
@@ -5552,7 +5556,8 @@ def register_tickets_routes(app, ctx):
         except Exception:
             limite = 10
         # 🔒 2026-10-01: un técnico no encuentra tickets de compra a proveedor.
-        _sin_compra = (" AND COALESCE(tipo,'') NOT IN ('spare_parts_store','spare_parts_import') "
+        _sin_compra = (" AND NOT EXISTS (SELECT 1 FROM mant_repuestos_compras _c "
+                       "WHERE _c.ticket_id=tk_tickets.id) "
                        if _tk_es_tecnico() else " ")
         rows = mysql_fetchall(
             "SELECT id, numero_ticket, titulo, estado, empresa, rut, created_at "

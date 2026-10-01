@@ -54716,6 +54716,21 @@ def _oculta_proveedores(user=None):
         return False
 
 
+_OTREP_LOG_ESTADO_RE = re.compile(r"^(#\d+ .*?: \S+ → \S+)")
+
+
+def _otrep_log_sin_proveedor(detalle):
+    """Detalle de 'repuesto_solicitud_estado' para un técnico (2026-10-01): solo
+    "#N repuesto: antes → después". Lo que sigue (SKU, "· proveedor X" y la nota de
+    gestión, que suele hablar del proveedor) no se muestra. Si el texto no tiene la
+    forma esperada, se corta en " · proveedor " por las dudas."""
+    det = (detalle or "")
+    m = _OTREP_LOG_ESTADO_RE.match(det)
+    if m:
+        return m.group(1)
+    return det.split(" · proveedor ")[0]
+
+
 def _puede_crear_ot_interna(user=None):
     """¿Puede este usuario levantar una OT de trabajo interno (sin cliente)?
 
@@ -67074,7 +67089,11 @@ def mant_api_incidencia_ficha(iid):
         "SELECT accion, campo, valor_antes, valor_despues, usuario, created_at "
         "  FROM mant_incidencia_log WHERE incidencia_id=%s "
         " ORDER BY created_at DESC LIMIT 40", (iid,)) or []
+    _log_oculta_prov = _oculta_proveedores()
     for l in log:
+        if _log_oculta_prov and l.get("accion") == "repuesto_solicitud_estado":
+            # 🔒 2026-10-01: mismo recorte que la bitácora de la OT (proveedor + nota de gestión).
+            l["valor_despues"] = _otrep_log_sin_proveedor(l.get("valor_despues"))
         if l.get("created_at"):
             # 🔧 2026-09-26 (REGLA #6): la bitácora mostraba la hora UTC cruda
             # -- ahora pasa por chile_fmt_filter como el resto de la UI.
@@ -86252,6 +86271,11 @@ def ot2_detalle(vid):
                     _det = ""
                 elif "$" in _det:
                     _det = _RE_MONTO.sub("[oculto]", _det)
+                # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): el cambio
+                # de estado de una solicitud de repuesto se anota con "· proveedor X · <nota
+                # de gestión>". Al técnico le queda solo "#N repuesto: antes → después".
+                if _acc == "repuesto_solicitud_estado":
+                    _det = _otrep_log_sin_proveedor(_det)
             # 👤 2026-09-05 (Daniel: "agregar el movimiento del cliente a la
             # actividad de la OT, no registra cuando el cliente firma"). Sí
             # se registraba, pero con el protagonista equivocado: la línea
@@ -125919,8 +125943,12 @@ def _repstock_contexto_bodega():
     # modelos compatibles.
     if _oculta_proveedores():
         for _r in bod_repuestos:
-            for _k in _OTREP_STOCK_SOLO_GESTION_PROV:
-                _r.pop(_k, None)
+            # (revisión 2026-10-01) esta consulta usa alias propios (proveedor_nombre,
+            # proveedor_contacto...) distintos de _OTREP_SQL_STOCK: se quitan TODOS los
+            # que empiezan con "proveedor" además de los de la constante.
+            for _k in list(_r.keys()):
+                if _k in _OTREP_STOCK_SOLO_GESTION_PROV or str(_k).startswith("proveedor"):
+                    _r.pop(_k, None)
         bod_count_sin_costo = 0
 
     modelos_por_repuesto = {}
