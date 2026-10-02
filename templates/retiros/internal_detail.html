@@ -356,7 +356,7 @@
 </section>
 
 <div class="pipe-wrap">
-  <div class="pipe-wrap-title"><i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>Estado del retiro · click en un paso para ir a esa sección</div>
+  <div class="pipe-wrap-title"><i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>Estado del retiro · los mismos 5 pasos que ve el cliente · toca uno para ir a su sección</div>
 
   {# ── BANNER DE PING-PONG — Daniel 2026-09-23: "lo primero que quiero
      ver es el tracking de cómo va la agenda... esto es un pimponeo, no
@@ -388,9 +388,15 @@
       </div>
     </div>
     {% else %}
+    {% set _cf = hitos[2].conf if hitos else none %}
     <div class="pp-banner pp-accepted">
       <i class="bi bi-envelope-check-fill"></i>
-      <div class="pp-banner-txt"><strong>El cliente aceptó</strong> la propuesta por correo. Agenda confirmada: {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
+      <div class="pp-banner-txt">
+        {% if _cf and _cf.tipo == 'ilus' %}<strong>ILUS aceptó la fecha que pidió el cliente</strong> ({{ _cf.quien or 'ILUS' }}{% if _cf.ts %}, {{ _cf.ts | chile_fmt('%H:%M') }}{% endif %}). El cliente recibió la confirmación por correo.
+        {% elif _cf and _cf.tipo == 'cliente' %}<strong>El cliente confirmó</strong> la propuesta por correo{% if _cf.ts %} ({{ _cf.ts | chile_fmt('%H:%M') }}){% endif %}.
+        {% else %}<strong>Cita confirmada.</strong>{% endif %}
+        Agenda: {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.
+      </div>
     </div>
     {% endif %}
   {% elif _contraprop_cliente %}
@@ -422,6 +428,70 @@
   </div>
   {% endif %}
 
+  {% if hitos %}
+  {# Tracking v6 (Daniel 2026-10-02): LOS MISMOS 5 pasos que ve el cliente
+     (PICKUP_JOURNEY), círculos grandes, hora real y detalle de cada uno.
+     Lo arma pickup_hitos() en pickups_module.py (solo lectura). #}
+  <div class="trk-row" role="list">
+    {% for h in hitos %}
+    {% set _ancla = ['paso-1','paso-4','paso-4','paso-5','paso-5'][h.n] %}
+    <div class="trk-step is-{{ h.estado }}{% if _cambio_pedido and h.n == 2 %} is-cambio{% endif %}" role="listitem" onclick="document.getElementById('{{ _ancla }}').scrollIntoView({behavior:'smooth',block:'center'})">
+      <div class="trk-circle"><span class="trk-emoji">{{ h.emoji }}</span>{% if h.estado == 'done' %}<span class="trk-tick"><i class="bi bi-check-lg"></i></span>{% endif %}</div>
+      <div class="trk-label">{{ h.label }}</div>
+      <div class="trk-time">{% if h.ts %}{{ h.ts | chile_fmt('%H:%M') }}<small>{{ h.ts | chile_fmt('%a %d/%m') }}</small>{% else %}<span class="trk-pend">Pendiente</span>{% endif %}</div>
+      <div class="trk-det">
+        {% if h.n == 0 %}
+          <div>Llegó por <strong>{{ 'retiro interno' if h.nota == 'Retiro interno' else 'el formulario web' }}</strong></div>
+          {% if _hdecl %}<div>{{ _hdecl }}</div>{% endif %}
+        {% elif h.n == 1 %}
+          {% for e in h.eventos %}
+          <div>{{ e.quien }} {{ e.texto }} <strong>{{ e.fecha | chile_fmt('%a %d/%m') }} {{ e.tf|hm }}</strong>{% if e.ts %} · {{ e.ts | chile_fmt('%H:%M') }}{% endif %}</div>
+          {% else %}
+          <div>Aún no le propones fecha</div>
+          {% endfor %}
+        {% elif h.n == 2 %}
+          {% if _cambio_pedido %}
+          <div class="trk-warn">⚠ El cliente pidió cambiar a las {{ _contraprop_cliente.time_from|hm }}</div>
+          {% endif %}
+          {% if h.conf %}
+            <div>{% if h.conf.tipo == 'cliente' %}Confirmó <strong>el cliente</strong>{% elif h.conf.tipo == 'ilus' %}Aceptó <strong>{{ h.conf.quien or 'ILUS' }}</strong> (fecha que pidió el cliente){% elif h.conf.tipo == 'manual' %}Marcada a mano por <strong>{{ h.conf.quien or 'ILUS' }}</strong>{% else %}Confirmada por <strong>{{ h.conf.quien or 'ILUS' }}</strong>{% endif %}</div>
+            <div><strong>{{ h.cita.fecha | chile_fmt('%a %d/%m') }} {{ h.cita.tf|hm }}–{{ h.cita.tt|hm }}</strong></div>
+          {% elif _step4_done %}
+            <div>Esperando que el cliente acepte</div>
+          {% else %}
+            <div>Falta proponer fecha</div>
+          {% endif %}
+        {% elif h.n == 3 %}
+          {% if h.preparado %}<div class="trk-ok">Pedido listo para entregar{% if h.listo_ts %} · {{ h.listo_ts | chile_fmt('%H:%M') }}{% endif %}</div>
+          {% elif req.status == 'en_preparacion' %}<div>Bodega está preparando el pedido</div>
+          {% else %}<div>Se activa al enviar a preparación</div>{% endif %}
+          {% if h.quien %}<div>Lo envió {{ h.quien }}</div>{% endif %}
+        {% else %}
+          {% if h.estado == 'done' %}<div>Retiró <strong>{{ h.quien or 'el cliente' }}</strong></div>
+          {% elif h.cita %}<div>Lo esperamos <strong>{{ h.cita.fecha | chile_fmt('%a %d/%m') }} {{ h.cita.tf|hm }}</strong></div>{% else %}<div>Sin fecha todavía</div>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="trk-cards">
+    <div class="trk-card">
+      <div class="trk-card-h"><i class="bi bi-stars"></i>Información completa<strong>{{ info_completa.ok if info_completa else '—' }} de {{ info_completa.total if info_completa else '—' }}</strong></div>
+      {% if info_completa %}
+      <ul class="trk-list">
+        {% for it in info_completa['items'] %}
+        <li class="{{ 'ok' if it.ok else 'falta' }}"><i class="bi {{ 'bi-check-circle-fill' if it.ok else 'bi-x-circle-fill' }}"></i>{{ it.texto }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    <div class="trk-card">
+      <div class="trk-card-h"><i class="bi bi-shield-check"></i>Riesgo<strong>{{ req.risk_score }}%</strong></div>
+      <p class="trk-card-p">Qué tan probable es que el retiro se complique: RUT faltante, quien retira es chofer o tercero, o datos incompletos. Más alto = revisa con más cuidado antes de agendar.</p>
+    </div>
+  </div>
+  {% else %}
   <div class="pipe-row">
     <div class="pipe-step {% if 1 < _pipe_active %}done{% elif 1 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-1').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 1</span>
@@ -485,6 +555,7 @@
       <div class="pipe-score-pop">Probabilidad de que el retiro se complique (RUT distinto, sin saldo verificado, carga pesada, etc.). Más alto = revisa con más cuidado antes de agendar.</div>
     </details>
   </div>
+  {% endif %}
 </div>
 
 {# FICHA v3 (2026-09-23): se quitó la franja negra "GESTIONAR RETIRO" y la
@@ -497,18 +568,18 @@
     {% set _docs_con_saldo_n = _docs_list | selectattr('con_saldo', 'equalto', 1) | list | length %}
     {% set _docs_otro_rut_n = _docs_list | selectattr('motivo_otro_rut') | list | length %}
     {% set _paso2_is_warn = _n_docs_inicial > 0 and (_docs_con_saldo_n == 0 or _docs_otro_rut_n > 0) %}
-    {% set _paso2_collapsed = (_pipe_active != 2) %}
+    {% set _paso2_collapsed = false %}{# Daniel 2026-10-02: "nada desplegable" — todo como tarjetas abiertas #}
     <section class="step-section {% if _paso2_collapsed %}is-collapsed{% endif %} {% if _paso2_is_warn %}is-warn{% elif _n_docs_inicial > 0 %}is-complete{% endif %}" id="paso-2" data-step="2">
       <div class="step-header">
         <div class="step-circle-wrap">
-          <span class="step-circle-label">Documentos</span>
+          <span class="step-circle-label">Facturas</span>
           <div class="step-circle">
-            <span class="step-num-text">2</span>
+            <span class="step-num-text">1</span>
             <span class="step-check"><i class="bi bi-check-lg"></i></span>
           </div>
         </div>
         <div class="step-titles">
-          <h5>Factura, boleta o nota de venta</h5>
+          <h5>¿Esta es la factura o boleta que viene a retirar?</h5>
           <p class="step-sub">Asocia los documentos que vienen a retirar. Solo mostramos los que tienen <strong>saldo pendiente</strong> en ERP — los ya despachados quedan ocultos.</p>
           {# Daniel 2026-09-16: resumen corto de estado, semáforo ámbar/verde según saldo y RUTs pendientes de revisar #}
           <p class="step-sub-status {% if _paso2_is_warn %}is-warn{% elif _n_docs_inicial > 0 %}is-ok{% endif %}" id="paso2StatusLine">
@@ -539,9 +610,6 @@
             <span class="erp-chip"><i class="bi bi-database-fill-gear"></i>ERP Random</span>
           </button>
         </div>
-        <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-          <i class="bi bi-chevron-down"></i>
-        </button>
       </div>
       <p class="step-collapsed-line" id="paso2CollapsedLine">
         {% if _n_docs_inicial == 0 %}<i class="bi bi-file-earmark"></i>Aún no hay documentos asociados.
@@ -896,8 +964,43 @@
 </div>
 
 
+    {# ═════════ PASO 2 · RESPONSABLE (Daniel 2026-10-02) ═════════
+       "Responsable de quien se hace cargo... automático: la persona que
+       gestiona ya tiene sus credenciales, solo solicita la confirmación".
+       El nombre sale de la sesión en el servidor (POST /retiros/<rid>/tomar);
+       no escribe al cliente. #}
+    {% set _terminal = req.status in ['rechazada','fallida','retirada','cerrada'] %}
+    <section class="step-section {% if req.responsable_nombre %}is-complete{% else %}is-warn{% endif %}" id="paso-resp" data-step="2">
+      <div class="step-header">
+        <div class="step-circle-wrap">
+          <span class="step-circle-label">Responsable</span>
+          <div class="step-circle">
+            <span class="step-num-text">2</span>
+            <span class="step-check"><i class="bi bi-check-lg"></i></span>
+          </div>
+        </div>
+        <div class="step-titles">
+          <h5>¿Quién se hace cargo de este retiro?</h5>
+          {% if req.responsable_nombre %}
+          <p class="step-sub"><strong>{{ req.responsable_nombre }}</strong> está a cargo. Le llegan los avisos internos de este retiro; el cliente no ve este dato.</p>
+          {% else %}
+          <p class="step-sub">Nadie se ha hecho cargo todavía. No tienes que elegir a nadie: quedas tú, con tu usuario.</p>
+          {% endif %}
+        </div>
+        {% if req.responsable_nombre %}
+        <span class="step-badge-ok"><i class="bi bi-person-check-fill"></i>{{ req.responsable_nombre }}</span>
+        {% elif permissions.get('retiros') and not _terminal %}
+        <button type="button" class="resp-btn" id="btnTomarRetiro" onclick="tomarRetiro(this)">
+          <i class="bi bi-person-raised-hand"></i><span>Me hago cargo{% if current_user %} · {{ current_user.nombre or current_user.username }}{% endif %}</span>
+        </button>
+        {% else %}
+        <span class="step-badge-warn"><i class="bi bi-exclamation-triangle-fill"></i>Sin responsable</span>
+        {% endif %}
+      </div>
+    </section>
+
     {# ═════════ 6 · PASO · CARGA (peso/volumen/tiempo — strip único) ═════════ #}
-    {% set _paso3_collapsed = (_n_docs_inicial == 0) %}{# ficha v3: abierto si hay documentos #}
+    {% set _paso3_collapsed = false %}{# ficha v3: abierto si hay documentos #}
     <section class="step-section {% if _paso3_collapsed %}is-collapsed{% endif %} {% if _cubic_ok %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-3" data-step="3">
       <div class="step-header">
         <div class="step-circle-wrap">
@@ -912,9 +1015,6 @@
           <p class="step-sub">Lo que el cliente se lleva. Marca cada producto y su cantidad — <strong>nunca puede ser más de lo que compró</strong>.</p>
         </div>
         {% if _cubic_ok %}<span class="step-badge-ok"><i class="bi bi-check-circle"></i>Cubicaje OK</span>{% endif %}
-        <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-          <i class="bi bi-chevron-down"></i>
-        </button>
       </div>
       <p class="step-collapsed-line" id="paso3CollapsedLine">
         <i class="bi bi-speedometer2"></i>⚖️ {{ "%.1f"|format(req.peso_real_kg|float) }} kg · {{ "%.3f"|format(req.total_volume_m3|float) }} m³ · {{ req.tiempo_estimado_min or '—' }} min
@@ -1615,11 +1715,11 @@
        (aprobado por Daniel; el único que queda vivo es el de la
        sección 8, arriba). #}
     {% if _step5_done %}
-    {% set _paso9_collapsed = req.status in ['retirada','cerrada'] %}
+    {% set _paso9_collapsed = false %}
     <section class="step-section is-complete {% if _paso9_collapsed %}is-collapsed{% endif %}" id="paso-confirmacion" data-step="5">
       <div class="step-header">
         <div class="step-circle-wrap">
-          <span class="step-circle-label">Cierre</span>
+          <span class="step-circle-label">Preparación</span>
           <div class="step-circle">
             <span class="step-num-text">5</span>
             <span class="step-check"><i class="bi bi-check-lg"></i></span>
@@ -1645,9 +1745,6 @@
         {% else %}
         <span class="step-badge-ok"><i class="bi bi-check2-circle"></i>{% if req.status in ['retirada','cerrada'] %}Completado{% elif req.status == 'en_preparacion' %}En preparación{% else %}Confirmada{% endif %}</span>
         {% endif %}
-        <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-          <i class="bi bi-chevron-down"></i>
-        </button>
       </div>
       <p class="step-collapsed-line">
         <i class="bi bi-check2-circle"></i>
@@ -1683,6 +1780,7 @@
              siempre (abrirModalRetirar), en tarjeta de "siguiente paso". #}
           <div class="cierre-next is-green">
             <div class="cierre-next-k"><i class="bi bi-signpost-2-fill"></i>Siguiente paso</div>
+            {% if hitos and hitos[3].preparado %}<div class="cierre-next-k" style="color:#166534"><i class="bi bi-check-circle-fill"></i>Pedido listo para entregar</div>{% endif %}
             <h6 class="cierre-next-t">Entregar el pedido al cliente</h6>
             <ol class="cierre-next-steps">
               <li><span>1</span>Bodega junta los productos y los marca en la lista de abajo.</li>

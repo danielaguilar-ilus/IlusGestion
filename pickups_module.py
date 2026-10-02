@@ -97,6 +97,167 @@ def pickup_journey_idx(status):
 
 
 # ════════════════════════════════════════════════════════════════════
+#  TRACKING INTERNO = LOS MISMOS 5 HITOS DEL CLIENTE, CON HORA REAL
+#  Daniel 2026-10-02: "los círculos más grandes... la hora de cada
+#  información, el detalle y los pasos correctamente... que sean los
+#  mismos que ve el cliente". Antes la ficha tenía su propio pipeline de 6
+#  pasos (Solicitada/Documentos/Carga/Propuesta/Confirmada/Retirada) que no
+#  calzaba con PICKUP_JOURNEY. Estas dos funciones son SOLO LECTURA: arman
+#  todo con lo que pickup_detail ya trajo (req, proposals, logs DESC).
+#  Las horas salen en UTC tal como las guarda MySQL; la plantilla las pasa
+#  por chile_fmt (REGLA #6). Fechas/horas de la cita ya están en hora Chile.
+# ════════════════════════════════════════════════════════════════════
+_ACCIONES_CONFIRMAN = {
+    "cliente_confirmo": "cliente",             # el cliente tocó "Confirmar" en su correo/link
+    "ilus_acepto_contrapropuesta": "ilus",     # ILUS aceptó la fecha que pidió el cliente
+    "auto_confirmada_coincidencia": "ilus",    # ILUS propuso justo la hora que pidió el cliente
+    "aceptada_manual": "manual",               # marcado a mano, con motivo
+}
+
+
+def pickup_confirmacion(req, logs):
+    """Quién dejó confirmada la cita VIGENTE y cuándo, dicho con verdad.
+
+    Antes el banner decía "El cliente aceptó la propuesta por correo" en
+    cualquier cita confirmada, también cuando la había aceptado ILUS
+    (RET-VQJ58N: el cliente pidió 11:00 y Milagros lo aceptó). Toma el evento
+    de confirmación más reciente: re-proponer sobre una cita confirmada borra
+    confirmed_date, así que el último evento es el de la cita actual.
+    None si no hay cita confirmada."""
+    if not (req or {}).get("confirmed_date"):
+        return None
+    for lg in logs or []:
+        accion = lg.get("action") or ""
+        if accion in _ACCIONES_CONFIRMAN or (
+                accion == "estado_actualizado" and lg.get("new_status") == "agenda_confirmada"):
+            return {
+                "tipo": _ACCIONES_CONFIRMAN.get(accion, "estado"),
+                "quien": (lg.get("actor_name") or "").strip(),
+                "ts": lg.get("created_at"),
+            }
+    if req.get("manual_accept_por"):
+        return {"tipo": "manual", "quien": req.get("manual_accept_por"), "ts": req.get("manual_accept_en")}
+    return {"tipo": "desconocido", "quien": "", "ts": None}
+
+
+def pickup_hitos(req, proposals, logs):
+    """Los 5 hitos de PICKUP_JOURNEY para el tracking interno, con estado
+    (done/active/pend), hora del hito y su detalle. Misma regla de avance que
+    el cliente (pickup_journey_idx), con dos diferencias a propósito:
+    - retirada/cerrada: los 5 quedan "done" (el cliente dejaba el último en
+      "active" para siempre);
+    - "Preparado": si bodega terminó la lista (evento picking_completo
+      posterior al paso a preparación), Preparación queda hecha y lo activo
+      pasa a Retirada ("listo para entregar"). Daniel 2026-10-02: "se cambia
+      automáticamente a preparado nomás" — sin correo al cliente."""
+    req = req or {}
+    status = req.get("status") or ""
+    idx = pickup_journey_idx(status)
+    logs = list(logs or [])
+    props = list(proposals or [])
+
+    def _ultimo(accion, nuevo=None):
+        for lg in logs:
+            if lg.get("action") == accion and (nuevo is None or lg.get("new_status") == nuevo):
+                return lg
+        return None
+
+    p_ilus = next((p for p in props if str(p.get("proposed_by") or "").lower() != "cliente"), None)
+    p_cli = next((p for p in props if str(p.get("proposed_by") or "").lower() == "cliente"), None)
+    log_prop = _ultimo("propuesta_enviada")
+    log_prep = _ultimo("estado_actualizado", "en_preparacion")
+    log_listo = _ultimo("picking_completo")
+    terminado = status in ("retirada", "cerrada")
+    preparado = bool(
+        status == "en_preparacion" and log_prep and log_listo
+        and int(log_listo.get("id") or 0) > int(log_prep.get("id") or 0))
+    cita = ({"fecha": req.get("confirmed_date"), "tf": req.get("confirmed_time_from"),
+             "tt": req.get("confirmed_time_to")} if req.get("confirmed_date") else None)
+
+    hitos = [dict(p, n=i, estado="pend", ts=None, quien="", nota="", eventos=[], cita=None)
+             for i, p in enumerate(PICKUP_JOURNEY)]
+    # 0 · Solicitada
+    hitos[0]["ts"] = req.get("created_at")
+    hitos[0]["nota"] = "Retiro interno" if req.get("request_source") == "backoffice" else "Formulario web"
+    # 1 · Propuesta: la última de ILUS y, si existe, lo último que pidió el cliente
+    if p_ilus:
+        hitos[1]["ts"] = p_ilus.get("created_at")
+        hitos[1]["eventos"].append({
+            "quien": ((log_prop or {}).get("actor_name") or "ILUS").strip(), "texto": "propuso",
+            "fecha": p_ilus.get("date"), "tf": p_ilus.get("time_from"), "ts": p_ilus.get("created_at")})
+    if p_cli:
+        hitos[1]["eventos"].append({
+            "quien": "El cliente", "texto": "pidió", "fecha": p_cli.get("date"),
+            "tf": p_cli.get("time_from"), "ts": p_cli.get("created_at"),
+            "pendiente": p_cli.get("status") == "pending"})
+    # 2 · Confirmada
+    conf = pickup_confirmacion(req, logs)
+    if conf:
+        hitos[2]["ts"] = conf["ts"]
+        hitos[2]["quien"] = conf["quien"]
+        hitos[2]["conf"] = conf
+        hitos[2]["cita"] = cita
+    # 3 · Preparación
+    if log_prep:
+        hitos[3]["ts"] = log_prep.get("created_at")
+        hitos[3]["quien"] = (log_prep.get("actor_name") or "").strip()
+    hitos[3]["preparado"] = preparado or terminado
+    hitos[3]["listo_ts"] = (log_listo or {}).get("created_at") if (preparado or terminado) else None
+    # 4 · Retirada
+    if terminado:
+        hitos[4]["ts"] = req.get("closed_at")
+        hitos[4]["quien"] = (req.get("retirado_por_nombre") or "").strip()
+    else:
+        hitos[4]["cita"] = cita
+
+    if terminado:
+        for h in hitos:
+            h["estado"] = "done"
+    elif idx == -1:
+        # Cancelado/fallido: se conserva en verde lo que sí alcanzó a pasar
+        for h in hitos:
+            h["estado"] = "done" if h["ts"] else "pend"
+    else:
+        actual = 4 if preparado else idx
+        for i, h in enumerate(hitos):
+            h["estado"] = "done" if i < actual else ("active" if i == actual else "pend")
+    return hitos
+
+
+def pickup_info_completa(req, docs):
+    """"Información completa: N de 8" con la lista de lo que falta y el paso
+    que lo resuelve (Daniel 2026-10-02: "la calidad de información siempre
+    está en 79... no sé de dónde está sacando ese porcentaje").
+
+    information_quality_score NO se toca: se calcula una sola vez al crear
+    por el formulario web y todo retiro web sale en 79 (11 de 14: el bulto de
+    relleno sin medidas ni peso y los adjuntos desactivados nunca suman).
+    Esto se calcula en vivo al abrir la ficha, solo con datos que ya existen."""
+    req = req or {}
+    docs = list(docs or [])
+
+    def _rut(valor):
+        return re.sub(r"[^0-9K]", "", str(valor or "").upper())
+
+    rut_cli, rut_ret = _rut(req.get("customer_rut")), _rut(req.get("pickup_person_rut"))
+    autorizado = ("DECLARACIÓN AUTORIZACIÓN TERCERO" in (req.get("observations") or "")
+                  or any(d.get("motivo_otro_rut") for d in docs))
+    items = [
+        ("Factura o boleta asociada", bool(docs), "paso-2"),
+        ("Documento con saldo en el ERP", any(d.get("con_saldo") == 1 for d in docs), "paso-2"),
+        ("Responsable asignado", bool(req.get("responsable_user_id") or req.get("responsable_nombre")), "paso-resp"),
+        ("Peso y tiempo de carga calculados", bool(req.get("peso_real_kg") and req.get("tiempo_estimado_min")), "paso-3"),
+        ("Correo del cliente válido", is_valid_email(req.get("contact_email") or ""), "fichaRetiro"),
+        ("Teléfono del cliente válido", is_valid_cl_phone(req.get("contact_phone") or ""), "fichaRetiro"),
+        ("RUT de quien retira", is_valid_rut(req.get("pickup_person_rut") or ""), "fichaRetiro"),
+        ("Quien retira es el dueño del documento (o está autorizado)",
+         (not rut_cli or not rut_ret or rut_cli == rut_ret or autorizado), "fichaRetiro"),
+    ]
+    out = [{"texto": t, "ok": bool(ok), "ancla": a} for t, ok, a in items]
+    return {"items": out, "ok": sum(1 for x in out if x["ok"]), "total": len(out)}
+
+
+# ════════════════════════════════════════════════════════════════════
 #  MAPA ÚNICO document_type (ILUS) ↔ TIDO (ERP Random) — 2026-09-15
 #  pickup_requests.document_type guarda el tipo "humano" ('factura',
 #  'boleta', 'nota_venta', 'pedido', 'guia'); el ERP y pickup_request_docs
@@ -5756,6 +5917,7 @@ def register_pickup_routes(app, ctx):
         "auto_confirmada_coincidencia": ("cambios", "bi-calendar-check-fill", "cli", "confirmó la fecha pedida por el cliente"),
         "ilus_acepto_contrapropuesta": ("cambios", "bi-calendar-check-fill", "agenda", "aceptó la contrapropuesta del cliente"),
         "aceptada_manual": ("cambios", "bi-person-check-fill", "agenda", "marcó la propuesta como aceptada"),
+        "responsable_asignado": ("cambios", "bi-person-badge-fill", "ok", "se hizo cargo del retiro"),
         "cliente_confirmo": ("mensajes", "bi-check2-square", "cli", "aceptó la propuesta"),
         "cliente_rechazo": ("mensajes", "bi-x-octagon-fill", "fail", "rechazó el retiro"),
         "cliente_contrapropuso": ("mensajes", "bi-arrow-left-right", "cli", "propuso otra fecha"),
@@ -6011,6 +6173,19 @@ def register_pickup_routes(app, ctx):
             except Exception as _e_act:
                 print(f"[pickup_detail] actividad rid={rid}: {_e_act}", flush=True)
                 actividad = []
+            # Ficha v6 (Daniel 2026-10-02): tracking con los 5 hitos del cliente
+            # + "Información completa N de 8". Solo lectura; si fallan, la
+            # plantilla muestra lo de siempre (no rompe la ficha).
+            try:
+                hitos = pickup_hitos(req, proposals, logs)
+            except Exception as _e_hit:
+                print(f"[pickup_detail] hitos rid={rid}: {_e_hit}", flush=True)
+                hitos = []
+            try:
+                info_completa = pickup_info_completa(req, docs_asociados)
+            except Exception as _e_inf:
+                print(f"[pickup_detail] info_completa rid={rid}: {_e_inf}", flush=True)
+                info_completa = None
 
             return render_template(
                 "retiros/internal_detail.html",
@@ -6020,6 +6195,7 @@ def register_pickup_routes(app, ctx):
                 statuses=PICKUP_STATUS, status_badge=status_badge,
                 settings=settings(),
                 valores=valores, ficha_ubicacion=ficha_ubicacion, actividad=actividad,
+                hitos=hitos, info_completa=info_completa,
             )
         except Exception as _e_detail:
             # Logging COMPLETO con traceback para diagnóstico inmediato
@@ -11147,6 +11323,49 @@ def register_pickup_routes(app, ctx):
             },
             "redirect_url": url_for("pickup_detail", rid=rid),
         })
+
+    # ══════════════════════════════════════════════════════════════════
+    #  "ME HAGO CARGO DE ESTE RETIRO" — Daniel 2026-10-02 (paso 2 de la
+    #  guía): "responsable... quisiera que fuera automático ya que la
+    #  persona que gestione tiene sus credenciales, solo solicita la
+    #  confirmación". El responsable sale de la SESIÓN (g.user), nunca de lo
+    #  que mande el navegador. No escribe al cliente ni manda correo: solo
+    #  UPDATE + log_event. Reclamo atómico (AND responsable_user_id IS NULL)
+    #  para que dos personas no queden a la vez; reasignar a otro sigue
+    #  siendo cosa de quien crea el retiro interno.
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/<int:rid>/tomar", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_tomar_retiro(rid):
+        u = getattr(g, "user", None) or {}
+        uid = u.get("id")
+        nombre = (u.get("nombre") or u.get("username") or "").strip()[:190]
+        if not uid or not nombre:
+            return jsonify({"ok": False, "error": "No pudimos identificar tu usuario. Vuelve a iniciar sesión."}), 400
+        req = mysql_fetchone(
+            f"SELECT id, status, responsable_user_id, responsable_nombre FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        if str(req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
+            return jsonify({"ok": False, "error": "Este retiro ya terminó: no necesita responsable."}), 409
+        if req.get("responsable_user_id"):
+            if int(req["responsable_user_id"]) == int(uid):
+                return jsonify({"ok": True, "nombre": req.get("responsable_nombre") or nombre})
+            return jsonify({"ok": False, "error": f"Este retiro ya está a cargo de {req.get('responsable_nombre') or 'otra persona'}."}), 409
+        try:
+            mysql_execute(
+                f"UPDATE `{REQ}` SET responsable_user_id=%s, responsable_nombre=%s "
+                f"WHERE id=%s AND responsable_user_id IS NULL", (uid, nombre, rid))
+            quedo = mysql_fetchone(
+                f"SELECT responsable_user_id, responsable_nombre FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+        except Exception as _e:
+            print(f"[pickup_tomar_retiro] rid={rid}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo guardar. Reintenta."}), 500
+        if int(quedo.get("responsable_user_id") or 0) != int(uid):
+            return jsonify({"ok": False, "error": f"Se te adelantó {quedo.get('responsable_nombre') or 'otra persona'}: ya está a su cargo."}), 409
+        log_event(rid, "responsable_asignado", req.get("status"), req.get("status"),
+                  f"{nombre} se hizo cargo del retiro", "interno", nombre)
+        return jsonify({"ok": True, "nombre": nombre})
 
     # ══════════════════════════════════════════════════════════════════
     #  MARCAR PROPUESTA COMO ACEPTADA MANUALMENTE — Daniel 2026-09-23

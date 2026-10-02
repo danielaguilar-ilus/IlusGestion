@@ -2510,3 +2510,52 @@
   }
   .cierre-next.is-red{--cn-c:#dc2626;--cn-bg:#fee2e2;--cn-ink:#991b1b}
   .cierre-next-btn.is-red{background:linear-gradient(180deg,#dc2626 0%,#b91c1c 100%);color:#fff;box-shadow:0 12px 24px -10px rgba(220,38,38,.6)}
+
+  /* ════════════════════════════════════════════════════════════════
+     TRACKING v6 + sin plegables + tarjeta Responsable (Daniel 2026-10-02)
+     "nada desplegable", "los círculos más grandes... la hora de cada
+     información, el detalle". Letra grande para baja visión (REGLA #3).
+     ════════════════════════════════════════════════════════════════ */
+  .step-collapse-toggle,.step-collapsed-line{display:none !important}
+  .step-section.is-collapsed .step-content{display:block !important}
+  .trk-row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;position:relative;margin-top:6px}
+  .trk-row::before{content:'';position:absolute;left:10%;right:10%;top:56px;height:5px;background:#3f3f46;border-radius:50px}
+  .trk-step{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;cursor:pointer;padding:0 4px}
+  .trk-circle{position:relative;width:100px;height:100px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:46px;background:#27272a;border:4px solid #52525b;box-shadow:0 0 0 6px #0a0a0a;opacity:.6;z-index:1}
+  .trk-step.is-done .trk-circle{background:#f0fdf4;border-color:#22c55e;opacity:1}
+  .trk-step.is-active .trk-circle{background:#f0fdf4;border-color:#22c55e;opacity:1;transform:scale(1.07);animation:trkHalo 2s ease-in-out infinite}
+  .trk-step.is-cambio .trk-circle{border-color:#f59e0b;animation:none;box-shadow:0 0 0 6px #0a0a0a,0 0 0 11px rgba(245,158,11,.35)}
+  @keyframes trkHalo{0%,100%{box-shadow:0 0 0 6px #0a0a0a,0 0 0 10px rgba(34,197,94,.35)}50%{box-shadow:0 0 0 6px #0a0a0a,0 0 0 20px rgba(34,197,94,0)}}
+  .trk-tick{position:absolute;right:-3px;bottom:-3px;width:30px;height:30px;border-radius:50%;background:#16a34a;color:#fff;border:3px solid #0a0a0a;
+    display:flex;align-items:center;justify-content:center;font-size:.95rem;font-weight:900}
+  .trk-label{font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:.05em;color:#a1a1aa;margin-top:8px;line-height:1}
+  .trk-step.is-done .trk-label,.trk-step.is-active .trk-label{color:#86efac}
+  .trk-time{font-size:1.7rem;font-weight:900;color:#fff;line-height:1;display:flex;flex-direction:column;align-items:center;gap:2px}
+  .trk-time small{font-size:.85rem;font-weight:700;color:#d4d4d8;text-transform:capitalize}
+  .trk-pend{font-size:1.1rem;font-weight:800;color:#a1a1aa}
+  .trk-det{font-size:.92rem;color:#e4e4e7;line-height:1.45;display:flex;flex-direction:column;gap:3px}
+  .trk-det strong{color:#fff}
+  .trk-warn{color:#fbbf24;font-weight:800}
+  .trk-ok{color:#86efac;font-weight:800}
+  .trk-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px;border-top:1px solid #27272a;padding-top:16px}
+  .trk-card{background:#18181b;border:1.5px solid #3f3f46;border-radius:14px;padding:14px 16px;color:#e4e4e7}
+  .trk-card-h{display:flex;align-items:center;gap:8px;font-size:1rem;font-weight:800;color:#fff}
+  .trk-card-h i{color:#f87171}
+  .trk-card-h strong{margin-left:auto;font-size:1.25rem;color:#fbbf24}
+  .trk-card-p{margin:8px 0 0;font-size:.9rem;line-height:1.5;color:#d4d4d8}
+  .trk-list{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:5px;font-size:.92rem}
+  .trk-list li{display:flex;align-items:center;gap:8px}
+  .trk-list li.ok i{color:#22c55e}.trk-list li.falta{color:#fcd34d;font-weight:700}.trk-list li.falta i{color:#f59e0b}
+  .resp-btn{align-self:center;flex-shrink:0;min-height:48px;border:none;border-radius:10px;padding:10px 18px;background:#0a0a0a;color:#fff;
+    font-weight:800;font-size:1rem;display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+  .resp-btn:hover{background:#27272a}
+  @media (max-width:768px){
+    .trk-row{grid-template-columns:1fr;gap:18px}
+    .trk-row::before{display:none}
+    .trk-step{flex-direction:row;flex-wrap:wrap;text-align:left;align-items:center;gap:4px 14px}
+    .trk-circle{width:72px;height:72px;font-size:34px;flex-shrink:0}
+    .trk-label,.trk-time{margin:0}.trk-det{flex-basis:100%;padding-left:86px}
+    .trk-cards{grid-template-columns:1fr}
+    .resp-btn{width:100%;justify-content:center}
+  }

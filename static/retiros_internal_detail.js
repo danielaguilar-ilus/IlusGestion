@@ -4062,3 +4062,38 @@ async function _confirmarEnviarPreparacion(btn){
   input.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();send();} });
   setTimeout(()=>{ load(); setInterval(()=>{if(!open)load();},20000); },2000);
 })();
+
+// Ficha v6 (Daniel 2026-10-02): paso 2 "Responsable". La persona que gestiona
+// ya tiene sus credenciales: solo confirma. El servidor toma id y nombre de la
+// SESIÓN (POST /retiros/<rid>/tomar), no de lo que mande el navegador. No le
+// escribe al cliente ni manda correo.
+async function tomarRetiro(btn){
+  if (!btn || btn.disabled) return;
+  const ok = await ilusConfirm({
+    title: '¿Te haces cargo de este retiro?',
+    message: 'Quedarás como responsable con tu usuario.',
+    sub: 'Te llegarán los avisos internos de este retiro. El cliente no recibe ningún aviso ni ve este dato.',
+    okLabel: 'Sí, me hago cargo', cancelLabel: 'Todavía no',
+    type: 'question',
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/retiros/${_RID}/tomar`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok){
+      ilusToast(d.error || 'No se pudo guardar. Reintenta.', { type: 'error' });
+      btn.disabled = false;
+      return;
+    }
+    ilusToast('✓ Quedaste como responsable', { type: 'success' });
+    setTimeout(() => window.location.reload(), 700);
+  } catch (e){
+    ilusToast('Sin conexión: ' + e.message, { type: 'error' });
+    btn.disabled = false;
+  }
+}

@@ -1498,6 +1498,26 @@ select.nri-field-locked{pointer-events:none}
       return;
     }
 
+    // Daniel 2026-10-02 ("no detonar mensajes que arruinen nuestra
+    // reputación"): estos dos destinos también le escriben al cliente
+    // (kind_map de pickup_update_status: en_preparacion → "preparing",
+    // en_revision → "created") y antes se mandaban sin preguntar.
+    if (nuevoEstado === 'en_preparacion' || nuevoEstado === 'en_revision'){
+      const prep = nuevoEstado === 'en_preparacion';
+      const ok = await ilusConfirm({
+        title: prep ? 'Enviar a preparación' : 'Pasar a "Por revisar"',
+        message: prep
+          ? '¿Enviar ' + code + ' a preparación? Bodega recibe la lista de productos.'
+          : '¿Pasar ' + code + ' a "Por revisar"?',
+        sub: prep
+          ? 'Al cliente le llega un correo avisando que su pedido se está preparando. No se puede deshacer.'
+          : 'Al cliente le llega un correo de "estamos revisando tu solicitud". No se puede deshacer.',
+        okLabel: prep ? 'Sí, enviar a preparación' : 'Sí, pasar a revisión', cancelLabel: 'Cancelar',
+        type: 'warning',
+      });
+      if (!ok) return;
+    }
+
     if (nuevoEstado === 'rechazada'){
       const ok = await ilusConfirm({
         title: 'Cancelar retiro',
