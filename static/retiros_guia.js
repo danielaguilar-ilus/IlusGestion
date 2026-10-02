@@ -156,18 +156,8 @@
   }, true);
 
   // ── Dibujo ───────────────────────────────────────────────────────────────
-  function listaFaltan(p) {
-    if (!p.faltan.length) return '';
-    return '<ul class="gp-faltan">' + p.faltan.map(function (t) {
-      var ic = p.estado === 'espera' ? 'bi-hourglass-split' : (p.estado === 'actual' ? 'bi-arrow-right-circle-fill' : 'bi-info-circle-fill');
-      return '<li><i class="bi ' + ic + '"></i><span>' + esc(t) + '</span></li>';
-    }).join('') + '</ul>';
-  }
-  function detalleHtml(p) {
-    if (!p.detalle || !p.detalle.length || p.estado === 'hecho' || (p.n !== 1 && p.n !== 3)) return '';
-    return '<div class="gp-detalle"><b>' + (p.n === 1 ? 'Documentos que vas a confirmar' : 'Productos que vas a confirmar') + ' (' + p.detalle.length + ')</b><ul>' +
-      p.detalle.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>';
-  }
+  // La barra es corta a propósito (como la cabecera del modal «Nuevo retiro interno»): progreso, los 6 pasos y
+  // el siguiente. El detalle de cada paso vive en SU tarjeta de la ficha, bordeada en rojo si te toca.
   function botones(p) {
     if (!p.accion) return '';
     var a = p.accion;
@@ -175,55 +165,34 @@
     var dis = a.deshabilitada ? ' disabled title="Primero confirma las facturas (paso 1)"' : '';
     var icono = { confirmar_docs: 'bi-patch-check-fill', confirmar_productos: 'bi-patch-check-fill', tomar: 'bi-person-raised-hand',
       proponer: 'bi-calendar2-plus', preparacion: 'bi-box-seam-fill', retirar: 'bi-check-circle-fill', ir: 'bi-arrow-right-circle-fill' }[a.tipo] || 'bi-arrow-right-circle-fill';
-    return '<div class="gp-acc"><button type="button" class="' + cls + '" data-gp-acc="' + p.n + '"' + dis + '><i class="bi ' + icono + '"></i>' + esc(a.texto) + '</button></div>';
+    return '<button type="button" class="' + cls + '" data-gp-acc="' + p.n + '"' + dis + '><i class="bi ' + icono + '"></i>' + esc(a.texto) + '</button>';
   }
-  function pasoHtml(p) {
+  function fichaHtml(p) {
     var st = ESTADO_TXT[p.estado] || ESTADO_TXT.pendiente;
-    var esSig = p.n === G.siguiente && p.estado === 'actual';   // ya está explicado arriba, en «Tu siguiente paso»
-    var h = '<li class="gp-paso is-' + p.estado + '" data-n="' + p.n + '">';
-    h += '<span class="gp-circ">' + (p.estado === 'hecho' ? '<i class="bi bi-check-lg"></i>' : p.n) + '</span><div>';
-    h += '<div class="gp-ptop"><h5 class="gp-ptit">Paso ' + p.n + ' · ' + esc(p.titulo) + '</h5>' +
-      '<span class="gp-badge ' + st[0] + '"><i class="bi ' + st[1] + '"></i>' + st[2] + '</span></div>';
-    if (p.estado !== 'hecho' && !esSig) h += '<p class="gp-pq">' + esc(p.pregunta) + '</p>';
-    if (p.resumen) h += '<p class="gp-res"><i class="bi bi-check2-circle"></i> ' + esc(p.resumen) + '</p>';
-    if (!esSig) h += listaFaltan(p);
-    if (p.avisos && p.avisos.length && p.estado !== 'hecho') {
-      h += '<ul class="gp-avisos">' + p.avisos.map(function (t) { return '<li><i class="bi bi-exclamation-triangle-fill"></i><span>' + esc(t) + '</span></li>'; }).join('') + '</ul>';
-    }
-    if (!esSig) h += detalleHtml(p);
-    if (p.correo && p.estado !== 'hecho' && !esSig) h += '<span class="gp-correo"><i class="bi bi-envelope-fill"></i>Esta acción le envía un correo al cliente</span>';
-    if (!esSig) {
-      var b = botones(p);
-      if (!b && p.estado !== 'hecho') b = '<div class="gp-acc"><button type="button" class="gp-btn sec" data-gp-ver="' + p.n + '"><i class="bi bi-arrow-right-circle"></i>Ir a este paso</button></div>';
-      h += b;
-    }
-    if (p.n === 5) h += checkHtml(p);
-    h += '</div></li>';
-    return h;
+    return '<li><button type="button" class="gp-chip is-' + p.estado + (p.n === G.siguiente ? ' es-sig' : '') + '" data-gp-ver="' + p.n + '" title="' + esc(p.pregunta) + '" aria-label="Paso ' + p.n + ', ' + esc(p.titulo) + ': ' + st[2] + '">' +
+      '<span class="gp-chip-n">' + (p.estado === 'hecho' ? '<i class="bi bi-check-lg"></i>' : p.n) + '</span>' +
+      '<span class="gp-chip-t">' + esc(p.titulo) + '<small>' + st[2] + '</small></span></button></li>';
   }
   function sigHtml() {
     if (G.terminal) {
-      return '<div class="gp-sig is-pendiente"><div class="gp-sig-k"><i class="bi bi-flag-fill"></i>Retiro terminado</div><h4>' + esc(G.terminal) + '</h4><p class="gp-preg mb-0">No queda nada por hacer en este retiro.</p></div>';
+      return '<div class="gp-sig is-pendiente"><i class="bi bi-flag-fill"></i><div class="gp-sig-t"><b>Retiro terminado</b><span>' + esc(G.terminal) + ' No queda nada por hacer.</span></div></div>';
     }
     if (!G.siguiente) {
-      return '<div class="gp-sig is-fin"><div class="gp-sig-k"><i class="bi bi-trophy-fill"></i>Retiro completado</div><h4>¡Todos los pasos están hechos!</h4><p class="gp-preg mb-0">El cliente ya se llevó su pedido.</p></div>';
+      return '<div class="gp-sig is-fin"><i class="bi bi-trophy-fill"></i><div class="gp-sig-t"><b>¡Todos los pasos están hechos!</b><span>El cliente ya se llevó su pedido.</span></div></div>';
     }
     var p = G.pasos[G.siguiente - 1];
     var k = { actual: ['Tu siguiente paso', 'bi-signpost-2-fill'], espera: ['Ahora toca esperar', 'bi-hourglass-split'],
-      pendiente: ['Siguiente paso (aún no toca)', 'bi-lock-fill'], bloqueado: ['No se puede avanzar todavía', 'bi-slash-circle-fill'] }[p.estado] || ['Siguiente paso', 'bi-signpost-2-fill'];
-    var h = '<div class="gp-sig is-' + p.estado + '" aria-live="polite"><div class="gp-sig-k"><i class="bi ' + k[1] + '"></i>' + k[0] + '</div>';
-    h += '<h4>Paso ' + p.n + ' · ' + esc(p.titulo) + '</h4><p class="gp-preg">' + esc(p.pregunta) + '</p>';
-    h += listaFaltan(p);
-    if (p.avisos && p.avisos.length) {
-      h += '<ul class="gp-avisos">' + p.avisos.map(function (t) { return '<li><i class="bi bi-exclamation-triangle-fill"></i><span>' + esc(t) + '</span></li>'; }).join('') + '</ul>';
-    }
-    h += detalleHtml(p);                       // lo que se va a confirmar, ANTES del botón «Confirmo»
-    if (p.correo && p.estado === 'actual') h += '<span class="gp-correo"><i class="bi bi-envelope-fill"></i>Esta acción le envía un correo al cliente</span>';
+      pendiente: ['Siguiente (aún no toca)', 'bi-lock-fill'], bloqueado: ['No se puede avanzar todavía', 'bi-slash-circle-fill'] }[p.estado] || ['Siguiente paso', 'bi-signpost-2-fill'];
+    var h = '<div class="gp-sig is-' + p.estado + '" aria-live="polite"><i class="bi ' + k[1] + '"></i><div class="gp-sig-t"><b>' + k[0] + ': Paso ' + p.n + ' · ' + esc(p.titulo) + '</b>';
+    if (p.faltan[0]) h += '<span>' + esc(p.faltan[0]) + '</span>';
+    if (p.avisos && p.avisos[0]) h += '<span class="gp-sig-av"><i class="bi bi-exclamation-triangle-fill"></i> ' + esc(p.avisos[0]) + '</span>';
+    if (p.correo && p.estado === 'actual') h += '<span class="gp-correo"><i class="bi bi-envelope-fill"></i>Esto le envía un correo al cliente</span>';
+    h += '</div>';
     var b = botones(p);
-    if (!b && p.estado !== 'hecho') b = '<div class="gp-acc"><button type="button" class="gp-btn sec" data-gp-ver="' + p.n + '"><i class="bi bi-arrow-right-circle"></i>Ir a este paso</button></div>';
-    return h + b + '</div>';
+    if (!b && p.estado !== 'hecho') b = '<button type="button" class="gp-btn sec" data-gp-ver="' + p.n + '"><i class="bi bi-arrow-right-circle"></i>Ir a este paso</button>';
+    return h + (b ? '<div class="gp-sig-acc">' + b + '</div>' : '') + '</div>';
   }
-  function checkHtml(p5) {
+  function checkHtml() {
     if (STATUS !== 'agenda_confirmada' && STATUS !== 'en_preparacion') return '';
     if (!G.pasos[0].detalle || !G.pasos[0].detalle.length) return '';
     var h = '<div class="gp-check" data-gp-noclick="1"><div class="gp-check-h"><i class="bi bi-box-seam-fill"></i><b>Preparación en Check (bodega)</b>' +
@@ -255,28 +224,43 @@
     if (STATUS !== 'en_preparacion') nota = 'Cuando envíes el pedido a preparación, ILUS empezará a marcar solo el «listo» según Check. Por ahora solo se consulta.';
     else if (CHECK.auto_activo === false) nota = 'El marcado automático está apagado: Check solo informa. Marca la lista de abajo a mano.';
     else nota = 'Cuando Check tenga todo pickeado (confirmado en dos revisiones seguidas), ILUS marca solo «Pedido listo para entregar». No se le envía ningún correo al cliente. Check solo se consulta, nunca se modifica.';
-    h += '<p class="gp-check-nota">' + nota + (CHECK_TS ? ' Actualizado a las ' + CHECK_TS + '.' : '') + '</p></div>';
-    return h;
+    return h + '<p class="gp-check-nota">' + nota + (CHECK_TS ? ' Actualizado a las ' + CHECK_TS + '.' : '') + '</p></div>';
+  }
+  // El panel de Check vive DENTRO de la tarjeta del paso 5 (donde lo busca quien prepara), no en la barra.
+  function renderCheck() {
+    var html = checkHtml();
+    var slot = document.getElementById('gpCheckSlot');
+    if (!html) { if (slot) slot.remove(); return; }
+    if (!slot) {
+      var cont = $('#paso5Content');
+      if (!cont) return;
+      slot = document.createElement('div');
+      slot.id = 'gpCheckSlot';
+      cont.insertBefore(slot, cont.firstChild);
+    }
+    if (slot.dataset.h !== html) { slot.innerHTML = html; slot.dataset.h = html; }
   }
   function render() {
     var hechos = G.pasos.filter(function (p) { return p.estado === 'hecho'; }).length;
     var pct = Math.round(100 * hechos / G.pasos.length);
-    var h = '<div class="gp-head"><div class="gp-head-t"><i class="bi bi-signpost-split-fill"></i><div><h3>Guía del retiro</h3>' +
-      '<p>Sigue los 6 pasos en orden. <b>En rojo está lo que te toca hacer ahora.</b></p></div></div>' +
-      '<div class="gp-prog"><b>' + hechos + ' de ' + G.pasos.length + ' pasos listos</b><div class="gp-prog-bar"><i style="width:' + pct + '%"></i></div></div></div>';
+    var tocan = G.pasos.filter(function (p) { return p.estado === 'actual'; }).length;
+    var h = '<div class="gp-bar"><div class="gp-bar-t"><i class="bi bi-signpost-split-fill"></i><b>Guía del retiro</b></div>' +
+      '<div class="gp-bar-prog"><b>' + hechos + ' de ' + G.pasos.length + ' pasos listos</b><div class="gp-prog-bar"><i style="width:' + pct + '%"></i></div>' +
+      (tocan && !G.terminal ? '<span class="gp-bar-av">· ' + tocan + (tocan === 1 ? ' te toca' : ' te tocan') + '</span>' : '') + '</div></div>';
+    h += '<ol class="gp-chips">' + G.pasos.map(fichaHtml).join('') + '</ol>';
     h += sigHtml();
-    h += '<ol class="gp-lista">' + G.pasos.map(pasoHtml).join('') + '</ol>';
-    if (h === ULTIMO_DIBUJO) return;           // nada cambió: no se redibuja (así no se pierde el foco)
-    var foco = document.activeElement;
-    var clave = '';
-    if (foco && panel.contains(foco)) {
-      if (foco.getAttribute('data-gp-acc')) clave = '[data-gp-acc="' + foco.getAttribute('data-gp-acc') + '"]';
-      else if (foco.getAttribute('data-gp-ver')) clave = '[data-gp-ver="' + foco.getAttribute('data-gp-ver') + '"]';
-      else if (foco.hasAttribute('data-gp-check-refresh')) clave = '[data-gp-check-refresh]';
+    if (h !== ULTIMO_DIBUJO) {
+      var foco = document.activeElement;
+      var clave = '';
+      if (foco && panel.contains(foco)) {
+        if (foco.getAttribute('data-gp-acc')) clave = '[data-gp-acc="' + foco.getAttribute('data-gp-acc') + '"]';
+        else if (foco.getAttribute('data-gp-ver')) clave = '[data-gp-ver="' + foco.getAttribute('data-gp-ver') + '"]';
+      }
+      panel.innerHTML = h;
+      ULTIMO_DIBUJO = h;
+      if (clave) { var nuevo = $(clave, panel); if (nuevo && !nuevo.disabled) nuevo.focus({ preventScroll: true }); }
     }
-    panel.innerHTML = h;
-    ULTIMO_DIBUJO = h;
-    if (clave) { var nuevo = $(clave, panel); if (nuevo && !nuevo.disabled) nuevo.focus({ preventScroll: true }); }
+    renderCheck();
   }
 
   // ── Marcas sobre las tarjetas de la ficha ───────────────────────────────
@@ -300,7 +284,7 @@
       var tag = document.createElement('div');
       tag.className = 'gp-tag' + (p.estado === 'espera' ? ' is-espera' : '');
       var acc = p.accion && (p.accion.tipo === 'confirmar_docs' || p.accion.tipo === 'confirmar_productos') && p.estado === 'actual' && !p.accion.deshabilitada;
-      tag.innerHTML = '<span><b>PASO ' + p.n + ' · ' + (p.estado === 'actual' ? 'TE TOCA' : 'ESPERANDO') + ':</b> ' + esc(p.faltan[0] || p.titulo) + '</span>' +
+      tag.innerHTML = '<span><b>PASO ' + p.n + ' · ' + (p.estado === 'actual' ? 'TE TOCA' : 'ESPERANDO') + ':</b> ' + esc(p.faltan[0] || p.titulo) + (p.correo && p.estado === 'actual' ? ' <em class="gp-tag-mail"><i class="bi bi-envelope-fill"></i> Le llega un correo al cliente</em>' : '') + '</span>' +
         (acc ? '<button type="button" class="gp-btn" data-gp-acc="' + p.n + '"><i class="bi bi-patch-check-fill"></i>' + esc(p.accion.texto) + '</button>' : '');
       card.insertBefore(tag, card.firstChild);
       if (p.estado === 'actual' && BTNS[p.n]) {
@@ -367,20 +351,18 @@
   panel.addEventListener('click', function (ev) {
     var t = ev.target;
     if (!t.closest) return;
-    var chk = t.closest('[data-gp-check-refresh]');
-    if (chk) { cargarCheck(true); return; }
     var b = t.closest('[data-gp-acc]');
     if (b) { ev.stopPropagation(); accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
     var v = t.closest('[data-gp-ver]');
     if (v) { irAlPaso(parseInt(v.dataset.gpVer, 10), true); return; }
-    if (t.closest('[data-gp-noclick]')) return;
-    var li = t.closest('.gp-paso');
-    if (li) irAlPaso(parseInt(li.dataset.n, 10), true);
   });
-  // Los botones «Confirmo» que viven en la franja roja de cada tarjeta
+  // Botones que viven en las tarjetas de la ficha: «Confirmo» de la franja roja y «Actualizar» del panel de Check
   document.addEventListener('click', function (ev) {
-    var b = ev.target.closest && ev.target.closest('.gp-tag [data-gp-acc]');
-    if (b) accionar(parseInt(b.dataset.gpAcc, 10), b);
+    var t = ev.target;
+    if (!t.closest) return;
+    var b = t.closest('.gp-tag [data-gp-acc]');
+    if (b) { accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
+    if (t.closest('#gpCheckSlot [data-gp-check-refresh]')) cargarCheck(true);
   });
 
   // ── Refrescos ────────────────────────────────────────────────────────────
