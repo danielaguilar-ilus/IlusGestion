@@ -1021,6 +1021,7 @@ function _pdRenderLinea(docId, l){
       <div class="pd-qty">
         <button type="button" tabindex="-1" onclick="_pdStep(this, -1)" ${disabled ? 'disabled' : ''} aria-label="Una menos">−</button>
         <input type="number" min="0" step="0.01" value="${_fmtNum(l.a_retirar, 2)}" ${disabled ? 'disabled' : ''}
+               ${l.facturado > 0 ? `max="${l.facturado}" data-max-compra="${l.facturado}"` : ''}
                oninput="_pdOnChange(this, ${docId})">
         <button type="button" tabindex="-1" onclick="_pdStep(this, 1)" ${disabled ? 'disabled' : ''} aria-label="Una más">+</button>
       </div>
@@ -1067,9 +1068,33 @@ function _escAttr(s){ return _esc(s).replace(/'/g, '&#39;'); }
 function _pdStep(btn, delta){
   const inp = btn.parentElement.querySelector('input[type="number"]');
   if (!inp || inp.disabled) return;
-  const v = Math.max(0, (parseFloat(inp.value || 0) + delta));
+  let v = Math.max(0, (parseFloat(inp.value || 0) + delta));
+  const tope = _pdTopeCompra(inp);
+  if (tope !== null && v > tope){
+    v = tope;
+    _pdAvisoTope(tope);
+    if (parseFloat(inp.value || 0) === tope) return;  // ya estaba en el tope: no re-guardar
+  }
   inp.value = v % 1 === 0 ? v : v.toFixed(2);
   inp.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// Daniel 2026-10-02: "me gustaría que no se modifique más allá de lo que
+// compró". El tope es lo FACTURADO de la línea (data-max-compra); si el ERP
+// no lo trajo (null) no se inventa uno. Entre el saldo y lo facturado sigue
+// rigiendo el semáforo "excede saldo" + "Entregar igual…" de siempre.
+function _pdTopeCompra(inp){
+  const t = parseFloat(inp && inp.dataset ? inp.dataset.maxCompra : '');
+  // 0 = el dato no vino (línea guardada sin cantidad): mejor sin tope que trabar a bodega
+  return (isNaN(t) || t <= 0) ? null : t;
+}
+let _pdAvisoTopeT = 0;
+function _pdAvisoTope(tope){
+  if (Date.now() - _pdAvisoTopeT < 2500) return;  // no apilar toasts al mantener el "+"
+  _pdAvisoTopeT = Date.now();
+  if (typeof ilusToast === 'function'){
+    ilusToast(`Tope: el cliente compró ${_fmtNum(tope, tope % 1 === 0 ? 0 : 2)} — no se puede retirar más que eso.`, { type: 'warning' });
+  }
 }
 
 function _pdOnChange(el, docId){
@@ -1078,6 +1103,11 @@ function _pdOnChange(el, docId){
     const cb = row.querySelector('input[type="checkbox"]');
     const qty = row.querySelector('input[type="number"]');
     // Marcar la casilla sola al tocar la cantidad (misma UX que el buscador ERP)
+    const tope = _pdTopeCompra(qty);
+    if (el === qty && tope !== null && parseFloat(qty.value || 0) > tope){
+      qty.value = tope % 1 === 0 ? tope : tope.toFixed(2);
+      _pdAvisoTope(tope);
+    }
     if (el === qty && parseFloat(qty.value || 0) > 0 && !cb.disabled) cb.checked = true;
     if (el === cb && !cb.checked) qty.value = '0';
   }
@@ -1506,6 +1536,13 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
   // no está en un estado terminal (mismo criterio que el backend en
   // POST /proposal — pickups_module.py).
   const CAN_CHANGE = !!(window.RETIROS_DETAIL_DATA && RETIROS_DETAIL_DATA.canChangeAgenda);
+  // Ficha v5 (Daniel 2026-10-02): con propuesta enviada o cita confirmada la
+  // agenda nace BLOQUEADA — los bloques se ven pero no se tocan, para no
+  // mandarle al cliente un correo de cambio por un clic sin querer. Se abre
+  // a mano con "Desbloquear para cambiar" (#icdLockBar). Solo vive en esta
+  // página: al recargar vuelve a quedar bloqueada.
+  let _agendaAbierta = !(window.RETIROS_DETAIL_DATA && RETIROS_DETAIL_DATA.agendaLocked);
+  const _puedeMover = () => CAN_CHANGE && _agendaAbierta;
 
   function _hmToMin(s){
     const p = String(s||'').split(':').map(Number);
@@ -1570,7 +1607,7 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
       // el retiro aquí. Con dueños pero con cupo (ocupado), se ofrece
       // "Mover este retiro aquí" dentro del modal de dueños (ver abajo) —
       // así el operador ve primero quién más hay agendado a esa hora.
-      const pickable = CAN_CHANGE && !isCurrent && hayCupo && !owners.length;
+      const pickable = _puedeMover() && !isCurrent && hayCupo && !owners.length;
       if (pickable) cls.push('is-pickable');
       let label = '';
       if (estado === 'colacion') label = 'Colación';
@@ -1665,7 +1702,7 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
     const oc = slot.ocupacion_actual != null ? slot.ocupacion_actual : (slot.ocupados || 0);
     const mx = slot.capacidad_max    != null ? slot.capacidad_max    : (slot.max || 2);
     const yaEsEste = _isThisRequestSlot(slot);
-    if (CAN_CHANGE && !yaEsEste && oc < mx && slot.estado !== 'bloqueado' && slot.estado !== 'colacion'){
+    if (_puedeMover() && !yaEsEste && oc < mx && slot.estado !== 'bloqueado' && slot.estado !== 'colacion'){
       MODAL_BODY.innerHTML += `<button type="button" class="icd-owner-mover" id="icdBtnMoverAqui">
         <i class="bi bi-arrow-repeat"></i>Mover este retiro a este bloque (${mx - oc} cupo${mx - oc === 1 ? '' : 's'} libre${mx - oc === 1 ? '' : 's'})
       </button>`;
@@ -1685,7 +1722,7 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
   // (mismo mecanismo que "Aceptar como propuesta") — mismo correo real,
   // mismo candado anti-doble-envío, mismo manejo de errores 409.
   window._icdCambiarAgenda = async function(fecha, slot){
-    if (!CAN_CHANGE) return;
+    if (!_puedeMover()) return;
     // window._RETIROS_REQUEST_STATE se refresca en cada _refrescarEstadoPasos
     // (más al día); antes del primer refresco se usa lo que trajo el
     // servidor al cargar la página.
@@ -1731,6 +1768,43 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
     if (he) he.value = tt;
     if (reasonInp) reasonInp.value = 'Cambio de horario desde el calendario del día';
     if (typeof enviarPropuestaWizard === 'function') enviarPropuestaWizard();
+  };
+  // Botón del candado: abrir pregunta antes (explica qué pasa si se cambia);
+  // volver a cerrar es inmediato. No guarda nada en el servidor.
+  window._icdToggleLock = async function(){
+    const bar = document.getElementById('icdLockBar');
+    const btn = document.getElementById('icdLockBtn');
+    if (!bar || !btn || !CAN_CHANGE) return;
+    if (!_agendaAbierta){
+      const rs = window._RETIROS_REQUEST_STATE || {};
+      const confirmada = rs.step5_done != null ? !!rs.step5_done : !!RETIROS_DETAIL_DATA.step5Done;
+      const ok = await ilusConfirm({
+        title: '¿Desbloquear la agenda?',
+        message: confirmada
+          ? 'El cliente ya confirmó esta fecha. Desbloquea solo si de verdad hay que cambiarla.'
+          : 'El cliente tiene una propuesta pendiente. Desbloquea solo si de verdad hay que cambiarla.',
+        sub: 'Desbloquear no cambia nada todavía. Si después tocas otro bloque, te volvemos a preguntar y recién ahí <strong>le llega un correo al cliente</strong> con la fecha nueva.',
+        subHtml: true,
+        okLabel: 'Sí, desbloquear', cancelLabel: 'Dejarla bloqueada',
+        type: 'warning',
+      });
+      if (!ok) return;
+    }
+    _agendaAbierta = !_agendaAbierta;
+    bar.classList.toggle('is-locked', !_agendaAbierta);
+    bar.classList.toggle('is-open', _agendaAbierta);
+    bar.querySelector('.icd-lock-ico i').className = _agendaAbierta ? 'bi bi-unlock-fill' : 'bi bi-lock-fill';
+    bar.querySelector('[data-lock-title]').textContent = _agendaAbierta ? 'Agenda desbloqueada' : 'Agenda bloqueada';
+    bar.querySelector('[data-lock-locked]').style.display = _agendaAbierta ? 'none' : '';
+    bar.querySelector('[data-lock-open]').style.display = _agendaAbierta ? '' : 'none';
+    btn.innerHTML = _agendaAbierta
+      ? '<i class="bi bi-lock-fill"></i><span>Volver a bloquear</span>'
+      : '<i class="bi bi-unlock-fill"></i><span>Desbloquear para cambiar</span>';
+    const hint = document.getElementById('icdCalHint');
+    if (hint) hint.textContent = _agendaAbierta
+      ? 'Toca un bloque libre para mover este retiro ahí — se pregunta antes de avisarle al cliente.'
+      : 'Solo para mirar: la agenda está bloqueada.';
+    _loadDia(DATE_IN.value);
   };
   async function _loadDia(fecha){
     if (!fecha){ _renderEmpty('Elige una fecha.'); return; }
@@ -3913,6 +3987,40 @@ document.addEventListener('DOMContentLoaded', function(){
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRetirar')).show();
   }
   document.addEventListener('DOMContentLoaded', _wmsCargar);
+
+// Ficha v5 (Daniel 2026-10-02: "el paso ... de la enviada a preparación
+// necesito que sea más contundente"). Antes el botón mandaba el form al
+// primer clic; ahora explica en simple qué pasa y pide un "sí". El POST
+// es el de siempre (#formEnviarPreparacion → /retiros/<rid>/status), que
+// también le escribe al cliente (kind "preparing" en pickup_update_status).
+async function _confirmarEnviarPreparacion(btn){
+  const form = document.getElementById('formEnviarPreparacion');
+  if (!form || btn.disabled) return;
+  const D = window.RETIROS_DETAIL_DATA || {};
+  const email = D.contactEmail || '';
+  const quien = D.contactName || 'el cliente';
+  const unidades = document.querySelector('.pd-totales b');
+  const sub =
+    '<div style="text-align:left;line-height:1.6">' +
+    '📋 Bodega recibe la lista de productos para juntar' +
+      (unidades ? ` (<strong>${_esc(unidades.textContent)}</strong>)` : '') + '.<br>' +
+    (email
+      ? `📧 Le llega un correo a <strong>${_esc(email)}</strong> avisando que su pedido se está preparando.<br>`
+      : '📧 El retiro no tiene correo del cliente: no le llegará aviso.<br>') +
+    '⚠️ Hazlo cuando bodega vaya a armar el pedido — el correo no se puede deshacer.' +
+    '</div>';
+  const ok = await ilusConfirm({
+    title: '¿Enviar el pedido a preparación?',
+    message: `Bodega empezará a preparar el pedido de ${quien}.`,
+    sub, subHtml: true,
+    okLabel: 'Sí, enviar a preparación', cancelLabel: 'Todavía no',
+    type: 'warning',
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Enviando a preparación…</span>';
+  form.submit();
+}
 (function(){
   'use strict';
   const RID = RETIROS_DETAIL_DATA.reqId;

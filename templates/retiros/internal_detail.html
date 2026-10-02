@@ -747,15 +747,24 @@
 {% set _rut_mismatch = (_cli_rut_clean and _ret_rut_clean and _cli_rut_clean != _ret_rut_clean) %}
 {% set _has_decl_tercero = (req.observations and 'DECLARACIÓN AUTORIZACIÓN TERCERO' in req.observations) %}
 
-<div class="ficha-rapida-wrap">
+{# Ficha v5 (Daniel 2026-10-02: "la ficha del retiro me gustaría que fuera un
+   poco más expresiva y amigable"). Solo presentación: ícono de color por
+   tarjeta + pregunta simple ("¿Quién compró?") bajo cada título. Los
+   data-inline-edit son los mismos de siempre. Scoped a .ficha-v5 para no
+   tocar la ficha rápida del modal "Proponer fecha", que reusa .ficha-card. #}
+{% set _retira_mismo = req.pickup_person_name and req.customer_name and (req.pickup_person_name|trim|lower) == (req.customer_name|trim|lower) %}
+<div class="ficha-rapida-wrap ficha-v5">
   <div class="ficha-rapida-head">
-    <i class="bi bi-pencil-square" style="color:var(--ilus-red)"></i>
-    <span><strong>Ficha del retiro</strong> — click en cualquier dato para editarlo. Se guarda solo.</span>
+    <span class="fv5-head-ico"><i class="bi bi-person-vcard"></i></span>
+    <div>
+      <strong>Ficha del retiro</strong>
+      <span class="fv5-head-sub">Quién compró, a quién le escribimos y quién viene a buscar. Toca cualquier dato para corregirlo — se guarda solo.</span>
+    </div>
   </div>
   <div class="ficha-rapida-grid">
 
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-building"></i> Cliente</div>
+    <div class="ficha-card fv5-cli">
+      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-building"></i></span><span>Cliente<small>¿Quién compró?</small></span></div>
       <div class="ficha-val" data-inline-edit="customer_name"
            data-placeholder="Sin razón social"
            title="Click para editar la razón social">{{ req.customer_name or '' }}</div>
@@ -764,8 +773,8 @@
       </div>
     </div>
 
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-envelope-at"></i> Contacto principal</div>
+    <div class="ficha-card fv5-con">
+      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-envelope-at"></i></span><span>Contacto principal<small>¿A quién le llegan los correos?</small></span></div>
       <div class="ficha-val" data-inline-edit="contact_name"
            data-placeholder="Sin nombre">{{ req.contact_name or '' }}</div>
       <div class="ficha-sub">
@@ -795,10 +804,11 @@
       </div>
     </div>
 
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-person-badge"></i> Persona que retira</div>
+    <div class="ficha-card fv5-ret">
+      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-person-badge"></i></span><span>Persona que retira<small>¿Quién viene a buscar?</small></span></div>
       <div class="ficha-val" data-inline-edit="pickup_person_name"
            data-placeholder="Sin nombre">{{ req.pickup_person_name or '' }}</div>
+      {% if _retira_mismo %}<span class="fv5-chip is-ok"><i class="bi bi-check-circle-fill"></i>Viene el mismo cliente</span>{% endif %}
       <div class="ficha-sub">RUT
         <span data-inline-edit="pickup_person_rut" data-placeholder="—" style="font-family:monospace">{{ req.pickup_person_rut or '' }}</span>
         · <i class="bi bi-telephone"></i>
@@ -811,10 +821,14 @@
 
     {# Gestión — Daniel 2026-09-23: "Gestionar retiro. Acá quisiera ver
        quién lo gestionó" — responsable asignado + quién creó la solicitud. #}
-    <div class="ficha-card">
-      <div class="ficha-lbl"><i class="bi bi-person-workspace"></i> Gestión</div>
-      <div class="ficha-val" style="font-size:.94rem">{{ req.responsable_nombre or 'Sin responsable asignado' }}</div>
+    <div class="ficha-card fv5-ges">
+      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-person-workspace"></i></span><span>Gestión<small>¿Quién lo atiende en ILUS?</small></span></div>
+      {% if req.responsable_nombre %}
+      <div class="ficha-val" style="font-size:.94rem">{{ req.responsable_nombre }}</div>
       <div class="ficha-sub">Responsable del retiro</div>
+      {% else %}
+      <span class="fv5-chip is-warn"><i class="bi bi-exclamation-triangle-fill"></i>Sin responsable asignado</span>
+      {% endif %}
       {% if req.created_by_user_name %}
       <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
         <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d-%m-%Y %H:%M') }}{% endif %}
@@ -851,10 +865,8 @@
     </div>
     {% endif %}
 
-    <div class="ficha-card ficha-card-wide">
-      <div class="ficha-lbl"><i class="bi bi-sticky"></i> Notas internas del operador
-        <small style="color:#94a3b8;font-weight:500;text-transform:none;letter-spacing:0">(no visible al cliente)</small>
-      </div>
+    <div class="ficha-card ficha-card-wide fv5-not">
+      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-sticky"></i></span><span>Notas internas del operador<small>Solo las ve ILUS — el cliente nunca las ve</small></span></div>
       <div class="ficha-textarea" data-inline-edit="internal_notes"
            data-placeholder="Agrega notas, recordatorios, contexto del retiro…">{{ req.internal_notes or '' }}</div>
     </div>
@@ -876,7 +888,7 @@
         </div>
         <div class="step-titles">
           <h5>Productos a retirar</h5>
-          <p class="step-sub">Lo que se va a retirar, con su peso, volumen y peso volumétrico. Revisa las cantidades antes de proponer la fecha.</p>
+          <p class="step-sub">Lo que el cliente se lleva. Marca cada producto y su cantidad — <strong>nunca puede ser más de lo que compró</strong>.</p>
         </div>
         {% if _cubic_ok %}<span class="step-badge-ok"><i class="bi bi-check-circle"></i>Cubicaje OK</span>{% endif %}
         <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
@@ -975,7 +987,13 @@
        abajo, antes del botón de proponer) y queda visible en casi todo el
        ciclo de vida del retiro — solo se pliega si ya terminó o si todavía
        no hay documentos (nada que agendar). #}
-    {% set _paso4_collapsed = (req.status in ['rechazada','fallida','retirada','cerrada']) or (_n_docs_inicial == 0) %}
+    {# Ficha v5 (Daniel 2026-10-02): "el calendario siempre abierto, no necesito
+       que esté cerrado, esa flecha sácasela" → el paso Agenda ya no se pliega
+       ni tiene flecha. Y "bloquéalo cuando el cliente confirme la fecha que
+       proponemos o cuando yo la proponga... para no generar una alerta al
+       cliente adicional" → con propuesta enviada o cita confirmada el
+       calendario queda solo para mirar (_agenda_locked) hasta que alguien toque
+       "Desbloquear para cambiar" (solo JS, no guarda nada). #}
     {% set _cal_init_date = (
         (req.confirmed_date|string)[:10] if req.confirmed_date
         else (req.proposed_date|string)[:10] if req.proposed_date
@@ -983,7 +1001,8 @@
         else ''
     ) %}
     {% set _can_change_agenda = permissions.get('retiros') and req.status not in ['rechazada','fallida','retirada','cerrada'] %}
-    <section class="step-section {% if _paso4_collapsed %}is-collapsed{% endif %} {% if _step4_done %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-4" data-step="4">
+    {% set _agenda_locked = _can_change_agenda and _step4_done %}
+    <section class="step-section {% if _step4_done %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-4" data-step="4">
       <div class="step-header">
         <div class="step-circle-wrap">
           <span class="step-circle-label">Agenda</span>
@@ -993,15 +1012,22 @@
           </div>
         </div>
         <div class="step-titles">
-          <h5>Proponer fecha y hora al cliente</h5>
-          <p class="step-sub">Elige día y bloque horario en el calendario inteligente. El cliente recibirá email para aceptar o contraproponer.</p>
+          {% if _step5_done %}
+          <h5>Fecha confirmada por el cliente</h5>
+          <p class="step-sub">El cliente aceptó venir el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.confirmed_time_from|hm }} a {{ req.confirmed_time_to|hm }}</strong>. La agenda queda bloqueada para que nadie la cambie por error.</p>
+          {% elif _step4_done %}
+          <h5>Fecha propuesta al cliente</h5>
+          <p class="step-sub">Le propusimos el <strong>{{ req.proposed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.proposed_time_from|hm }} a {{ req.proposed_time_to|hm }}</strong>. Estamos esperando que responda por correo.</p>
+          {% else %}
+          <h5>Elige el día y la hora del retiro</h5>
+          <p class="step-sub">Toca un día y un bloque libre del calendario. Al cliente le llega un correo para que acepte o proponga otro horario.</p>
+          {% endif %}
         </div>
-        {% if _step4_done %}
-          <span class="step-badge-ok"><i class="bi bi-calendar-check"></i>{{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}</span>
+        {% if _step5_done %}
+          <span class="step-badge-ok"><i class="bi bi-lock-fill"></i>{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}</span>
+        {% elif _step4_done %}
+          <span class="step-badge-warn"><i class="bi bi-hourglass-split"></i>{{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}</span>
         {% endif %}
-        <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
-          <i class="bi bi-chevron-down"></i>
-        </button>
       </div>
       <p class="step-collapsed-line">
         {% if _step4_done %}
@@ -1088,10 +1114,26 @@
           <div class="icd-cal-head">
             <div>
               <h6><i class="bi bi-calendar-week"></i>Agenda del retiro</h6>
-              <p>{% if _can_change_agenda %}Toca un bloque libre para mover este retiro ahí — se pregunta antes de avisarle al cliente.{% else %}Disponibilidad de todos los retiros del día.{% endif %}</p>
+              <p id="icdCalHint">{% if _agenda_locked %}Solo para mirar: la agenda está bloqueada.{% elif _can_change_agenda %}Toca un bloque libre para mover este retiro ahí — se pregunta antes de avisarle al cliente.{% else %}Disponibilidad de todos los retiros del día.{% endif %}</p>
             </div>
             <span class="ms-auto small text-muted" id="icdCalSummary" style="font-size:.78rem"></span>
           </div>
+          {% if _agenda_locked %}
+          {# Candado de la agenda (Daniel 2026-10-02). Lo maneja _icdSetLock()
+             en retiros_internal_detail.js: solo cambia si los bloques se pueden
+             tocar; NO guarda nada ni le escribe al cliente. #}
+          <div class="icd-lock is-locked" id="icdLockBar">
+            <span class="icd-lock-ico"><i class="bi bi-lock-fill"></i></span>
+            <div class="icd-lock-txt">
+              <strong data-lock-title>Agenda bloqueada</strong>
+              <span data-lock-locked>{% if _step5_done %}El cliente ya confirmó el {{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}. Así nadie le cambia la cita por error ni le llega otro correo.{% else %}Ya le propusimos el {{ req.proposed_date | chile_fmt('%A %d/%m') }} a las {{ req.proposed_time_from|hm }} y estamos esperando su respuesta. Así no le llega otro correo por error.{% endif %}</span>
+              <span data-lock-open style="display:none">Toca un bloque libre para mover el retiro. Antes de mandar nada te vamos a preguntar.</span>
+            </div>
+            <button type="button" class="icd-lock-btn" id="icdLockBtn" onclick="_icdToggleLock()">
+              <i class="bi bi-unlock-fill"></i><span>Desbloquear para cambiar</span>
+            </button>
+          </div>
+          {% endif %}
           <div class="icd-cal-toolbar">
             <label class="form-label small fw-bold mb-0" for="icdCalDate" style="font-size:.78rem">Día:</label>
             <input type="date" id="icdCalDate" value="{{ _cal_init_date }}">
@@ -1533,10 +1575,18 @@
           </div>
         </div>
         <div class="step-titles">
-          <h5>Retiro confirmado por el cliente</h5>
-          <p class="step-sub">¡Listo! El cliente aceptó. Cuando llegue el día, marca el retiro como completado.</p>
+          {% if req.status in ['retirada','cerrada'] %}
+          <h5>Retiro completado</h5>
+          <p class="step-sub">El cliente ya se llevó sus productos. No queda nada pendiente.</p>
+          {% elif req.status == 'en_preparacion' %}
+          <h5>Bodega está preparando el pedido</h5>
+          <p class="step-sub">Marca cada producto en la lista a medida que bodega lo junta. Cuando el cliente venga y se lo lleve, marca el retiro como <strong>RETIRADO</strong>.</p>
+          {% else %}
+          <h5>El cliente confirmó — ahora toca preparar</h5>
+          <p class="step-sub">La fecha ya está acordada. El siguiente paso es avisarle a bodega que arme el pedido.</p>
+          {% endif %}
         </div>
-        <span class="step-badge-ok"><i class="bi bi-check2-circle"></i>Confirmada</span>
+        <span class="step-badge-ok"><i class="bi bi-check2-circle"></i>{% if req.status in ['retirada','cerrada'] %}Completado{% elif req.status == 'en_preparacion' %}En preparación{% else %}Confirmada{% endif %}</span>
         <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
           <i class="bi bi-chevron-down"></i>
         </button>
@@ -1550,26 +1600,53 @@
         {% endif %}
       </p>
       <div class="step-content" id="paso5Content">
+        {% if req.status in ['retirada','cerrada'] %}
         <div class="d-flex gap-2 flex-wrap align-items-center">
-          {% if req.status in ['retirada','cerrada'] %}
             <span class="step-badge-ok"><i class="bi bi-check2-circle me-1"></i>Retiro completado</span>
             <span class="text-muted small">Proceso cerrado{% if req.closed_at %} · {{ req.closed_at|chile_fmt }}{% endif %}
               {% if req.retirado_por_nombre %} · <i class="bi bi-person-check"></i> Retirado por <strong>{{ req.retirado_por_nombre }}</strong>{% if req.retirado_por_rut %} ({{ req.retirado_por_rut }}){% endif %}{% endif %}
             </span>
-          {% elif req.status == 'en_preparacion' %}
-            <span class="badge bg-warning text-dark px-3 py-2"><i class="bi bi-box-seam me-1"></i>En preparación</span>
-            <button type="button" class="btn btn-success fw-bold" onclick="abrirModalRetirar()">
-              <i class="bi bi-check-circle me-1"></i>Marcar como RETIRADO
+        </div>
+        {% elif req.status == 'en_preparacion' %}
+          {# Ficha v5 (2026-10-02): mismo botón y mismo modal de evidencia de
+             siempre (abrirModalRetirar), en tarjeta de "siguiente paso". #}
+          <div class="cierre-next is-green">
+            <div class="cierre-next-k"><i class="bi bi-signpost-2-fill"></i>Siguiente paso</div>
+            <h6 class="cierre-next-t">Entregar el pedido al cliente</h6>
+            <ol class="cierre-next-steps">
+              <li><span>1</span>Bodega junta los productos y los marca en la lista de abajo.</li>
+              <li><span>2</span>El cliente llega el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> a las <strong>{{ req.confirmed_time_from|hm }}</strong> y se lo lleva.</li>
+              <li><span>3</span>Tocas <strong>Marcar como RETIRADO</strong> y anotas quién lo retiró.</li>
+            </ol>
+            <button type="button" class="cierre-next-btn is-green" onclick="abrirModalRetirar()">
+              <i class="bi bi-check-circle-fill"></i><span>Marcar como RETIRADO</span>
             </button>
-          {% else %}
-            <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" style="display:inline">
+          </div>
+        {% else %}
+          {# Ficha v5 (Daniel 2026-10-02: "el paso del cierre ... de la enviada
+             a preparación necesito que sea más contundente"). El POST y sus
+             campos son los de siempre; lo único nuevo es que ANTES de
+             mandarlo se explica en simple qué pasa y se pide un "sí"
+             (_confirmarEnviarPreparacion, retiros_internal_detail.js) — ese
+             cambio de estado le escribe al cliente (kind "preparing"). #}
+          <div class="cierre-next">
+            <div class="cierre-next-k"><i class="bi bi-signpost-2-fill"></i>Siguiente paso</div>
+            <h6 class="cierre-next-t">Enviar el pedido a preparación</h6>
+            <p class="cierre-next-p">El cliente viene el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> a las <strong>{{ req.confirmed_time_from|hm }}</strong>. Al tocar el botón pasa esto:</p>
+            <ol class="cierre-next-steps">
+              <li><span>1</span>Bodega recibe la <strong>lista de productos</strong> para juntar el pedido.</li>
+              <li><span>2</span>Al cliente le llega un <strong>correo</strong> avisando que su pedido se está preparando.</li>
+              <li><span>3</span>Cuando el cliente se lo lleve, marcas el retiro como <strong>RETIRADO</strong>.</li>
+            </ol>
+            <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" id="formEnviarPreparacion">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="status" value="en_preparacion">
-              <button type="submit" class="btn btn-warning fw-bold"><i class="bi bi-box-seam me-1"></i>Enviar a PREPARACIÓN</button>
+              <button type="button" class="cierre-next-btn" onclick="_confirmarEnviarPreparacion(this)">
+                <i class="bi bi-box-seam-fill"></i><span>Enviar a PREPARACIÓN</span>
+              </button>
             </form>
-            <span class="text-muted small">El cliente ya confirmó — cuando bodega arme el pedido, envíalo a preparación. Se generará el checklist de picking.</span>
-          {% endif %}
-        </div>
+          </div>
+        {% endif %}
 
         {% if req.status == 'en_preparacion' %}
         {# ── CHECK WMS de preparación (Daniel 2026-06-20) ── #}
@@ -2015,6 +2092,10 @@ window.RETIROS_DETAIL_DATA = {
   contactEmail: {{ (req.contact_email or '')|tojson }},
   step4Done: {{ (_step4_done or false)|tojson }},
   step5Done: {{ (_step5_done or false)|tojson }},
+  // Ficha v5 (2026-10-02): con propuesta enviada o cita confirmada el
+  // calendario nace bloqueado (ver #icdLockBar).
+  agendaLocked: {{ (_agenda_locked or false)|tojson }},
+  contactName: {{ (req.contact_name or req.customer_name or '')|tojson }},
 };
 </script>
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>
