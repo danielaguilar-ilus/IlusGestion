@@ -200,6 +200,14 @@
    o re-proponer otra fecha con el flujo existente. (responsive_retiros 2026-06-09) #}
 {% set _props_cc = proposals | selectattr('status', 'equalto', 'pending') | selectattr('proposed_by', 'equalto', 'cliente') | list %}
 {% set _contraprop_cliente = _props_cc[0] if _props_cc else none %}
+{# Daniel 2026-10-02 (RET-VQJ58N): el cliente aceptó 14:30 y 10 min después
+   pidió 11:00 desde su link. El backend deja la cita vieja VIGENTE mientras
+   ILUS responde (pickup_public_tracking, rama "counter"), pero la ficha
+   preguntaba primero por confirmed_date y decía "El cliente aceptó" — el
+   tracking mentía y el botón para aceptar su fecha nueva ni aparecía.
+   _cambio_pedido = cita confirmada + contrapropuesta del cliente pendiente:
+   se chequea ANTES que _step5_done en banner, pasos, sello y cierre. #}
+{% set _cambio_pedido = (_step5_done and _contraprop_cliente is not none and req.status not in ['en_preparacion','retirada','cerrada','rechazada','fallida']) %}
 
 {# Daniel 2026-06-16: progresión LIMPIA de UN SOLO paso activo. Antes cada paso
    decidía su color por su cuenta y se solapaban (3 rojos a la vez). Ahora
@@ -210,6 +218,7 @@
 {% elif req.status == 'fallida' %}{% set _pipe_active = 6 %}{% set _pipe_fail = true %}
 {% elif req.status in ['retirada','cerrada'] %}{% set _pipe_active = 7 %}{% set _pipe_fail = false %}
 {% elif req.status == 'en_preparacion' %}{% set _pipe_active = 6 %}{% set _pipe_fail = false %}
+{% elif _cambio_pedido %}{% set _pipe_active = 5 %}{% set _pipe_fail = false %}
 {% elif _step5_done %}{% set _pipe_active = 6 %}{% set _pipe_fail = false %}
 {% elif _step4_done %}{% set _pipe_active = 5 %}{% set _pipe_fail = false %}
 {% elif _cubic_ok %}{% set _pipe_active = 4 %}{% set _pipe_fail = false %}
@@ -232,6 +241,7 @@
 {% elif req.status == 'fallida' %}{% set _sig = 'El retiro no se concretó' %}{% set _sello = 'fail' %}{% set _sello_ico = 'bi-x-circle-fill' %}
 {% elif req.status in ['retirada','cerrada'] %}{% set _sig = 'Retiro completado' %}{% set _sello = 'ok' %}{% set _sello_ico = 'bi-check-lg' %}
 {% elif req.status == 'en_preparacion' %}{% set _sig = 'Siguiente: entregar al cliente' %}{% set _sello = 'info' %}{% set _sello_ico = 'bi-box-seam-fill' %}
+{% elif _cambio_pedido %}{% set _sig = 'Siguiente: responder el cambio de fecha que pidió el cliente' %}{% set _sello = 'wait' %}{% set _sello_ico = 'bi-arrow-left-right' %}
 {% elif _step5_done %}{% set _sig = 'Siguiente: enviar a preparación' %}{% set _sello = 'info' %}{% set _sello_ico = 'bi-calendar-check-fill' %}
 {% elif _contraprop_cliente %}{% set _sig = 'Siguiente: responder la contrapropuesta del cliente' %}{% set _sello = 'wait' %}{% set _sello_ico = 'bi-arrow-left-right' %}
 {% elif _step4_done %}{% set _sig = 'Siguiente: que el cliente acepte la propuesta' %}{% set _sello = 'wait' %}{% set _sello_ico = 'bi-hourglass-split' %}
@@ -357,6 +367,17 @@
     <i class="bi bi-check-circle-fill"></i>
     <div class="pp-banner-txt"><strong>{% if req.status == 'retirada' %}Retiro completado{% else %}Retiro cerrado{% endif %}.</strong> Confirmado el {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
   </div>
+  {% elif _cambio_pedido %}
+  <div class="pp-banner pp-counter">
+    <i class="bi bi-arrow-left-right"></i>
+    <div class="pp-banner-txt">
+      <strong>El cliente pidió cambiar su cita:</strong> ahora quiere el {{ _contraprop_cliente.date | chile_fmt('%d-%m-%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
+      <div class="pp-banner-sub">Tenía confirmado el {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}, que sigue vigente hasta que le respondas. No lo envíes a preparación todavía.</div>
+    </div>
+    <button type="button" class="pp-banner-btn" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
+      <i class="bi bi-eye me-1"></i>Ver y responder
+    </button>
+  </div>
   {% elif _step5_done %}
     {% if req.manual_accept_por %}
     <div class="pp-banner pp-manual">
@@ -430,7 +451,7 @@
       <span class="pipe-step-num">Paso 5</span>
       <div class="pipe-circle"><span class="pipe-emoji">✅</span></div>
       <div class="pipe-label">Confirmada</div>
-      <div class="pipe-sub">{% if req.confirmed_date %}{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }}{% elif req.status == 'rechazada' %}✗ Rechazada{% elif 5 == _pipe_active %}Esperando cliente{% else %}—{% endif %}</div>
+      <div class="pipe-sub">{% if _cambio_pedido %}⚠ Pidió cambio{% elif req.confirmed_date %}{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }}{% elif req.status == 'rechazada' %}✗ Rechazada{% elif 5 == _pipe_active %}Esperando cliente{% else %}—{% endif %}</div>
     </div>
     <div class="pipe-step {% if 6 < _pipe_active %}done{% elif 6 == _pipe_active and _pipe_fail %}fail{% elif 6 == _pipe_active %}active{% endif %}">
       <span class="pipe-step-num">Paso 6</span>
@@ -1012,7 +1033,10 @@
           </div>
         </div>
         <div class="step-titles">
-          {% if _step5_done %}
+          {% if _cambio_pedido %}
+          <h5>El cliente pidió otra fecha</h5>
+          <p class="step-sub">Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}</strong> y ahora pide el <strong>{{ _contraprop_cliente.date | chile_fmt('%A %d/%m') }} a las {{ _contraprop_cliente.time_from|hm }}</strong>. Respóndele más abajo.</p>
+          {% elif _step5_done %}
           <h5>Fecha confirmada por el cliente</h5>
           <p class="step-sub">El cliente aceptó venir el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.confirmed_time_from|hm }} a {{ req.confirmed_time_to|hm }}</strong>. La agenda queda bloqueada para que nadie la cambie por error.</p>
           {% elif _step4_done %}
@@ -1023,7 +1047,9 @@
           <p class="step-sub">Toca un día y un bloque libre del calendario. Al cliente le llega un correo para que acepte o proponga otro horario.</p>
           {% endif %}
         </div>
-        {% if _step5_done %}
+        {% if _cambio_pedido %}
+          <span class="step-badge-warn"><i class="bi bi-arrow-left-right"></i>Pidió cambio</span>
+        {% elif _step5_done %}
           <span class="step-badge-ok"><i class="bi bi-lock-fill"></i>{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}</span>
         {% elif _step4_done %}
           <span class="step-badge-warn"><i class="bi bi-hourglass-split"></i>{{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}</span>
@@ -1126,7 +1152,7 @@
             <span class="icd-lock-ico"><i class="bi bi-lock-fill"></i></span>
             <div class="icd-lock-txt">
               <strong data-lock-title>Agenda bloqueada</strong>
-              <span data-lock-locked>{% if _step5_done %}El cliente ya confirmó el {{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}. Así nadie le cambia la cita por error ni le llega otro correo.{% else %}Ya le propusimos el {{ req.proposed_date | chile_fmt('%A %d/%m') }} a las {{ req.proposed_time_from|hm }} y estamos esperando su respuesta. Así no le llega otro correo por error.{% endif %}</span>
+              <span data-lock-locked>{% if _cambio_pedido %}El cliente pidió cambiar su cita a las {{ _contraprop_cliente.time_from|hm }}. Acepta su fecha más abajo; desbloquea solo si quieres ofrecerle otra hora.{% elif _step5_done %}El cliente ya confirmó el {{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}. Así nadie le cambia la cita por error ni le llega otro correo.{% else %}Ya le propusimos el {{ req.proposed_date | chile_fmt('%A %d/%m') }} a las {{ req.proposed_time_from|hm }} y estamos esperando su respuesta. Así no le llega otro correo por error.{% endif %}</span>
               <span data-lock-open style="display:none">Toca un bloque libre para mover el retiro. Antes de mandar nada te vamos a preguntar.</span>
             </div>
             <button type="button" class="icd-lock-btn" id="icdLockBtn" onclick="_icdToggleLock()">
@@ -1487,19 +1513,43 @@
        espera del viejo Paso 5 (recordatorio/llamar) y la card de
        contrapropuesta (misma card verde, NO se duplica). Solo existe en
        el DOM mientras _step4_done && !_step5_done. #}
-    {% if _step4_done and not _step5_done %}
+    {% if (_step4_done and not _step5_done) or _cambio_pedido %}
     <section class="step-section is-complete" id="paso-esperando">
       <div class="step-header">
         <div class="step-circle-wrap" style="display:none"></div>
         <div class="step-titles" style="flex:1">
+          {% if _cambio_pedido %}
+          <h5>El cliente pidió cambiar la fecha — te toca responder</h5>
+          <p class="step-sub">
+            Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong> y ahora pide otra hora. Acepta su fecha nueva con un clic, o usa <strong>Re-proponer</strong> para ofrecerle otra.
+          </p>
+          {% else %}
           <h5>Esperando respuesta del cliente</h5>
           <p class="step-sub">
             Propuesta enviada el <strong>{{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}</strong>. Esperando que el cliente acepte, contraproponga o cancele.
           </p>
+          {% endif %}
         </div>
+        {% if _cambio_pedido %}
+        <span class="step-badge-warn"><i class="bi bi-arrow-left-right"></i>Responder</span>
+        {% else %}
         <span class="step-badge-warn"><i class="bi bi-hourglass-split"></i>En espera</span>
+        {% endif %}
       </div>
       <div class="step-content">
+        {% if _cambio_pedido %}
+        <div class="smart-hint" id="iwStep4Summary">
+          <i class="bi bi-calendar-check"></i>
+          <div>
+            <strong>Cita vigente:</strong>
+            <strong>{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong>.
+            <div class="small mt-1" style="opacity:.85">Sigue vigente hasta que respondas. Si aceptas lo que pide el cliente, esta cita se reemplaza y le llega un correo de confirmación.</div>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-dark ms-2" id="iwShowReproposeBtn" style="flex-shrink:0">
+            <i class="bi bi-arrow-repeat me-1"></i>Re-proponer
+          </button>
+        </div>
+        {% else %}
         <div class="smart-hint is-success" id="iwStep4Summary">
           <i class="bi bi-send-check"></i>
           <div>
@@ -1511,6 +1561,7 @@
             <i class="bi bi-arrow-repeat me-1"></i>Re-proponer
           </button>
         </div>
+        {% endif %}
 
         {# ── CONTRAPROPUESTA DEL CLIENTE (responsive_retiros 2026-06-09) ──
            Visible solo si hay propuesta pending con proposed_by='cliente'.
@@ -1578,6 +1629,9 @@
           {% if req.status in ['retirada','cerrada'] %}
           <h5>Retiro completado</h5>
           <p class="step-sub">El cliente ya se llevó sus productos. No queda nada pendiente.</p>
+          {% elif _cambio_pedido %}
+          <h5>Antes de preparar, responde al cliente</h5>
+          <p class="step-sub">El cliente pidió cambiar la fecha. Hasta que le respondas no se envía a preparación.</p>
           {% elif req.status == 'en_preparacion' %}
           <h5>Bodega está preparando el pedido</h5>
           <p class="step-sub">Marca cada producto en la lista a medida que bodega lo junta. Cuando el cliente venga y se lo lleve, marca el retiro como <strong>RETIRADO</strong>.</p>
@@ -1586,7 +1640,11 @@
           <p class="step-sub">La fecha ya está acordada. El siguiente paso es avisarle a bodega que arme el pedido.</p>
           {% endif %}
         </div>
+        {% if _cambio_pedido %}
+        <span class="step-badge-warn"><i class="bi bi-pause-circle"></i>En pausa</span>
+        {% else %}
         <span class="step-badge-ok"><i class="bi bi-check2-circle"></i>{% if req.status in ['retirada','cerrada'] %}Completado{% elif req.status == 'en_preparacion' %}En preparación{% else %}Confirmada{% endif %}</span>
+        {% endif %}
         <button type="button" class="step-collapse-toggle" title="Expandir/colapsar" onclick="toggleStepCollapse(this)">
           <i class="bi bi-chevron-down"></i>
         </button>
@@ -1607,6 +1665,19 @@
               {% if req.retirado_por_nombre %} · <i class="bi bi-person-check"></i> Retirado por <strong>{{ req.retirado_por_nombre }}</strong>{% if req.retirado_por_rut %} ({{ req.retirado_por_rut }}){% endif %}{% endif %}
             </span>
         </div>
+        {% elif _cambio_pedido %}
+          {# Con una contrapropuesta del cliente pendiente, pasar a preparación
+             la descartaría sin aviso (pickup_update_status marca 'superseded'
+             toda propuesta pending) y le llegaría el correo de "preparando"
+             con la hora vieja. El botón vuelve solo cuando se responda. #}
+          <div class="cierre-next is-red">
+            <div class="cierre-next-k"><i class="bi bi-exclamation-octagon-fill"></i>Primero responde al cliente</div>
+            <h6 class="cierre-next-t">El cliente pidió cambiar la fecha</h6>
+            <p class="cierre-next-p">Pide el <strong>{{ _contraprop_cliente.date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ _contraprop_cliente.time_from|hm }} a {{ _contraprop_cliente.time_to|hm }}</strong>. Si lo envías a preparación ahora, su pedido de cambio se pierde y le llega un correo con la hora vieja.</p>
+            <button type="button" class="cierre-next-btn is-red" onclick="document.getElementById('paso-esperando').scrollIntoView({behavior:'smooth',block:'center'})">
+              <i class="bi bi-arrow-up-circle-fill"></i><span>Ir a responderle</span>
+            </button>
+          </div>
         {% elif req.status == 'en_preparacion' %}
           {# Ficha v5 (2026-10-02): mismo botón y mismo modal de evidencia de
              siempre (abrirModalRetirar), en tarjeta de "siguiente paso". #}

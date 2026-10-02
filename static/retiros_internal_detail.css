@@ -2508,3 +2508,5 @@
     .cierre-next-t{font-size:1.15rem}
     .icd-lock-btn{width:100%;justify-content:center}
   }
+  .cierre-next.is-red{--cn-c:#dc2626;--cn-bg:#fee2e2;--cn-ink:#991b1b}
+  .cierre-next-btn.is-red{background:linear-gradient(180deg,#dc2626 0%,#b91c1c 100%);color:#fff;box-shadow:0 12px 24px -10px rgba(220,38,38,.6)}
