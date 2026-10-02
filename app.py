@@ -64873,6 +64873,24 @@ def cotizaciones_hub_list():
     )
 
 
+# REGLA #4.4 (Daniel 2026-10-02: "en Check no se altera nada, siempre siempre
+# siempre solo se consulta"). Mismo candado que el ERP Random (REGLA #4.1):
+# _checkwms_get es la ÚNICA puerta a CheckWMS, solo hace GET y solo a estos
+# reportes. Cualquier otra ruta se rechaza ANTES de salir a la red — incluidas
+# las que escriben en Check según su Swagger (monitorSalida, monitorSalidaPTL,
+# cancelaLineaPde, actualizaLineaPde, PTLmigraEspejo, monitorEntrada(V2),
+# cargaInventario, documentoDespacho*, materiales/peso-volumen,
+# maestroMateriales, EnvioEmail*) y las POST con nombre de consulta
+# (obtieneOTporPDE, pedidosExistentes): POST queda fuera, sin excepciones.
+_CHECKWMS_GET_PERMITIDOS = frozenset({
+    "/api/ext/GetReporteStock",
+    "/api/ext/GetStockTrazabilidad",
+    "/api/ext/GetStockTrazabilidadV2",
+    "/api/ext/GetSeguimientoDespacho",
+    "/api/ext/GetControlSalida",
+})
+
+
 def _checkwms_get(path: str, params: dict, timeout: int = 60) -> dict | None:
     """GET de solo lectura contra CheckWMS (sistema de bodega externo).
 
@@ -64886,6 +64904,10 @@ def _checkwms_get(path: str, params: dict, timeout: int = 60) -> dict | None:
     timeout alto a propósito: GetStockTrazabilidad devuelve ~5,4 MB y
     tarda 15-35 s (medido 2026-08-03). Con 12 s NUNCA alcanzaba a
     responder -- ese era el bug de "CheckWMS no disponible"."""
+    if path not in _CHECKWMS_GET_PERMITIDOS:
+        # REGLA #4.4: fuera de la lista no se llama (ni siquiera con GET).
+        print(f"[checkwms] BLOQUEADO (solo lectura, REGLA #4.4): {path}", flush=True)
+        return None
     if not (CHECKWMS_CONFIG.get("uid_ins") and CHECKWMS_CONFIG.get("uid_erp")):
         return None
     import requests as _req

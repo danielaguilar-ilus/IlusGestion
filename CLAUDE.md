@@ -332,6 +332,46 @@ tabla nueva o existente del proyecto debe seguirlo:
 
 ---
 
+## 🚫 REGLA #4.4 — CheckWMS (bodega) es **READ-ONLY ABSOLUTO**, mismo candado que el ERP (no negociable)
+
+**Pedido explícito de Daniel (2026-10-02): "dejemos con el mismo candado, que
+en Check no se altera nada, siempre siempre siempre solo se consulta".**
+
+CheckWMS (`checkapi-integracion-prod-checkwms.azurewebsites.net`) es el sistema
+de bodega. ILUS **solo consulta** — igual que con el ERP Random (REGLA #4.1).
+Sin excepciones: ni "para probar", ni "es solo una línea", ni porque el
+endpoint "suene" a consulta.
+
+### Cómo está garantizado en el código
+
+- **Puerta única:** toda llamada a Check pasa por `_checkwms_get()` en `app.py`.
+  Solo hace `requests.get`. Las credenciales (`CHECKWMS_CONFIG`) no se usan en
+  ningún otro lugar.
+- **Lista blanca:** `_CHECKWMS_GET_PERMITIDOS` (`app.py`, justo arriba de
+  `_checkwms_get`). Una ruta fuera de la lista se rechaza **antes** de salir a
+  la red y queda en el log como `[checkwms] BLOQUEADO`. Hoy: `GetReporteStock`,
+  `GetStockTrazabilidad`, `GetStockTrazabilidadV2`, `GetSeguimientoDespacho`,
+  `GetControlSalida`.
+- **Prueba:** `tests/test_checkwms_solo_lectura.py` falla si alguien agrega un
+  POST/PUT/DELETE, saca la lista blanca o le habla a Check desde otro archivo.
+
+### Prohibido (escriben en Check según su Swagger)
+
+`monitorSalida`, `monitorSalidaPTL`, `cancelaLineaPde`, `actualizaLineaPde`,
+`PTLmigraEspejo`, `monitorEntrada`, `monitorEntradaV2`, `cargaInventario`,
+`documentoDespacho`, `documentoDespachoPTLSorting`, `materiales/peso-volumen`,
+`maestroMateriales`, `EnvioEmail`, `EnvioEmail/Generico`. Y **todo POST**,
+aunque se llame "obtiene…" o "…Existentes" (`obtieneOTporPDE`,
+`pedidosExistentes`): POST queda fuera.
+
+### Si crees que necesitas algo más de Check
+
+Agregar un reporte GET nuevo a la lista blanca → avisarle a Daniel en el
+mismo mensaje. Escribir en Check → **no**: eso lo hace la gente de Check
+(Sebastián Ojeda) o el ERP, nunca ILUS.
+
+---
+
 ## 🗄 REGLA #5 — Base de datos
 
 - **Antes de SELECT de columnas nuevas, verificar el `CREATE TABLE`**
