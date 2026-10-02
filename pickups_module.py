@@ -6232,6 +6232,22 @@ def register_pickup_routes(app, ctx):
                   "una cita confirmada.", "warning")
             return redirect(url_for("pickup_detail", rid=rid))
 
+        # ── GUARDA DE CAMBIO PEDIDO (Daniel 2026-10-02, RET-VQJ58N) ───────────
+        # Si el cliente pidió cambiar una cita YA confirmada (contrapropuesta
+        # pendiente) y alguien manda el retiro a PREPARACIÓN, la contrapropuesta
+        # se marca 'superseded' sin que nadie la responda y al cliente le llega
+        # el correo "preparando" con la hora vieja. La ficha ya oculta el botón;
+        # esto cierra las otras puertas (Cambiar estado avanzado, Kanban,
+        # calendario operativo), que postean a este mismo endpoint.
+        if new_status == "en_preparacion" and old_status == "agenda_confirmada":
+            _pend_cambio = mysql_fetchone(
+                f"SELECT id FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+                f"AND LOWER(proposed_by)='cliente' LIMIT 1", (rid,))
+            if _pend_cambio:
+                flash("El cliente pidió cambiar la fecha de este retiro. Respóndele primero "
+                      "(aceptar su fecha o proponer otra) antes de enviarlo a preparación.", "warning")
+                return redirect(url_for("pickup_detail", rid=rid))
+
         mysql_execute(f"UPDATE `{REQ}` SET status=%s, closed_at=IF(%s IN ('cerrada','rechazada','retirada'),NOW(),closed_at) WHERE id=%s", (new_status, new_status, rid))
         log_event(rid, "estado_actualizado", old_status, new_status, notes, "interno")
         # Una propuesta pendiente no puede sobrevivir a un cambio manual a
@@ -11323,6 +11339,62 @@ def register_pickup_routes(app, ctx):
             },
             "redirect_url": url_for("pickup_detail", rid=rid),
         })
+
+    # ══════════════════════════════════════════════════════════════════
+    #  DIAGNÓSTICO CHECKWMS (Daniel 2026-10-02) — SOLO LECTURA, REGLA #4.4.
+    #  "Que la preparación se detecte sola desde Check": antes de construir la
+    #  detección hay que ver QUÉ devuelve GetSeguimientoDespacho para un
+    #  documento real (el Swagger lo declara genérico). Solo admin. Va por la
+    #  puerta única _checkwms_get (solo GET, lista blanca); nunca escribe en
+    #  Check ni en ILUS. Deja en el log de Cloud Run un resumen (campos, N de
+    #  filas, valores distintos de los campos tipo estado) para poder leerlo
+    #  sin depender de capturas.
+    #    GET /retiros/admin/check-diagnostico?tipo=BLV&num=23732
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/admin/check-diagnostico", methods=["GET"])
+    @require_permission("admin")
+    def pickup_check_diagnostico():
+        import json as _json_cd
+        tipo = (request.args.get("tipo") or "").strip().upper()[:5]
+        num = re.sub(r"\D", "", request.args.get("num") or "")[:12]
+        if not tipo or not num:
+            return jsonify({"ok": False, "error": "Falta tipo y num. Ej: ?tipo=BLV&num=23732"}), 400
+        _get = ctx.get("_checkwms_get")
+        if not _get:
+            return jsonify({"ok": False, "error": "CheckWMS no está disponible en esta instalación."}), 503
+        salida = {"ok": True, "tipo": tipo, "num": num, "consultas": []}
+        resumen_log = []
+        # La API guarda el documento de varias formas: se prueba sin ceros y a 10 dígitos.
+        for variante in dict.fromkeys([num.lstrip("0") or num, num.zfill(10)]):
+            data = _get("/api/ext/GetSeguimientoDespacho",
+                        {"tipodoc": tipo, "numdoc": variante, "diasrevisa": "90"}, timeout=50)
+            if data is None:
+                salida["consultas"].append({"numdoc": variante, "respondio": False})
+                resumen_log.append(f"{variante}: sin respuesta")
+                continue
+            est = (data or {}).get("estado") or {}
+            body = (data or {}).get("body")
+            filas = body.get("response") if isinstance(body, dict) else body
+            filas = filas if isinstance(filas, list) else ([] if filas is None else [filas])
+            campos = sorted({k for f in filas if isinstance(f, dict) for k in f.keys()})
+            distintos = {}
+            for k in campos:
+                if re.search(r"est|status|despach|prepar|pick|ot|tipo", k, re.I):
+                    vals = sorted({str(f.get(k))[:40] for f in filas if isinstance(f, dict) and f.get(k) not in (None, "")})
+                    if 0 < len(vals) <= 12:
+                        distintos[k] = vals
+            salida["consultas"].append({
+                "numdoc": variante, "respondio": True, "estado_api": est,
+                "n_filas": len(filas), "campos": campos, "valores_distintos": distintos,
+                "muestra": filas[:3],
+            })
+            resumen_log.append(f"{variante}: filas={len(filas)} campos={campos} distintos={distintos}")
+        try:
+            print("[retiros-check-diag] " + tipo + " " + num + " | " + " || ".join(resumen_log)[:3500], flush=True)
+        except Exception:
+            pass
+        return app.response_class(_json_cd.dumps(salida, ensure_ascii=False, default=str, indent=2),
+                                  mimetype="application/json")
 
     # ══════════════════════════════════════════════════════════════════
     #  "ME HAGO CARGO DE ESTE RETIRO" — Daniel 2026-10-02 (paso 2 de la

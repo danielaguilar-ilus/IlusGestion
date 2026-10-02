@@ -2416,6 +2416,20 @@ async function enviarPropuestaWizard(){
     return;
   }
 
+  // Daniel 2026-10-02: si el horario elegido es EXACTAMENTE el que el cliente ya
+  // pidió, el backend NO manda una propuesta: confirma directo y le llega el
+  // correo de confirmación. El botón decía "Enviar propuesta": se avisa antes.
+  const _ped = (window.RETIROS_DETAIL_DATA || {}).pedidoCliente;
+  if (_ped && _ped.fecha === String(date).slice(0, 10) && _ped.tf === String(tf).slice(0, 5) && _ped.tt === String(tt).slice(0, 5)){
+    const _okC = await ilusConfirm({
+      title: 'Este es el horario que pidió el cliente',
+      message: 'Al enviarlo, el retiro queda CONFIRMADO de inmediato.',
+      sub: '📧 Al cliente le llega el correo de confirmación (no una propuesta). No se puede deshacer.',
+      okLabel: 'Sí, confirmar y avisar', cancelLabel: 'Cancelar', type: 'warning',
+    });
+    if (!_okC) return;
+  }
+
   window._iwSendingProposal = true;
   // UI loading
   btn.disabled = true;
@@ -4096,4 +4110,40 @@ async function tomarRetiro(btn){
     ilusToast('Sin conexión: ' + e.message, { type: 'error' });
     btn.disabled = false;
   }
+}
+
+// Daniel 2026-10-02 ("no detonar mensajes que arruinen nuestra reputación"):
+// el cambio de estado avanzado mandaba correo al cliente sin avisar. Mismos
+// estados que kind_map de pickup_update_status. Los que no escriben al cliente
+// ("cerrada", "propuesta"/"esperando" a mano, etc.) pasan sin preguntar.
+const _ESTADOS_CON_CORREO = {
+  agenda_confirmada: 'le llega la confirmación de su cita',
+  en_preparacion: 'le llega el aviso "tu pedido se está preparando"',
+  retirada: 'le llega el correo de retiro completado',
+  rechazada: 'le llega el aviso de que su retiro fue rechazado',
+  fallida: 'le llega el aviso de que no pudimos completar su retiro',
+  reagendada: 'le llega el aviso de reagendamiento',
+  informacion_incompleta: 'le llega un correo pidiéndole información',
+  esperando_cliente: 'le llega un correo pidiéndole información',
+  en_revision: 'le llega un correo de "estamos revisando tu solicitud"',
+};
+async function _confirmarCambioEstado(ev){
+  const form = ev.target;
+  if (form.dataset.confirmado === '1') return true;
+  const sel = form.querySelector('select[name=status]');
+  const nuevo = sel ? sel.value : '';
+  const efecto = _ESTADOS_CON_CORREO[nuevo];
+  const actual = (window.RETIROS_DETAIL_DATA || {}).estado || '';
+  if (!efecto || nuevo === actual) return true;
+  ev.preventDefault();
+  const ok = await ilusConfirm({
+    title: '¿Cambiar el estado y avisarle al cliente?',
+    message: `Pasar este retiro a "${sel.options[sel.selectedIndex].text}".`,
+    sub: `📧 Al cliente ${efecto}. No se puede deshacer.`,
+    okLabel: 'Sí, cambiar y avisar', cancelLabel: 'Cancelar', type: 'warning', danger: true,
+  });
+  if (!ok) return false;
+  form.dataset.confirmado = '1';
+  form.submit();
+  return false;
 }

@@ -1137,8 +1137,9 @@
           <h5>El cliente pidió otra fecha</h5>
           <p class="step-sub">Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}</strong> y ahora pide el <strong>{{ _contraprop_cliente.date | chile_fmt('%A %d/%m') }} a las {{ _contraprop_cliente.time_from|hm }}</strong>. Respóndele más abajo.</p>
           {% elif _step5_done %}
-          <h5>Fecha confirmada por el cliente</h5>
-          <p class="step-sub">El cliente aceptó venir el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.confirmed_time_from|hm }} a {{ req.confirmed_time_to|hm }}</strong>. La agenda queda bloqueada para que nadie la cambie por error.</p>
+          {% set _cfa = hitos[2].conf if hitos else none %}
+          <h5>{% if _cfa and _cfa.tipo == 'cliente' %}Fecha confirmada por el cliente{% elif _cfa and _cfa.tipo == 'ilus' %}Fecha confirmada · la aceptó ILUS{% else %}Fecha confirmada{% endif %}</h5>
+          <p class="step-sub">{% if _cfa and _cfa.tipo == 'cliente' %}El cliente aceptó venir{% elif _cfa and _cfa.tipo == 'ilus' %}{{ _cfa.quien or 'ILUS' }} aceptó la hora que pidió el cliente: viene{% elif _cfa and _cfa.tipo == 'manual' %}{{ _cfa.quien or 'ILUS' }} la marcó a mano: viene{% else %}Viene{% endif %} el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.confirmed_time_from|hm }} a {{ req.confirmed_time_to|hm }}</strong>. La agenda queda bloqueada para que nadie la cambie por error.</p>
           {% elif _step4_done %}
           <h5>Fecha propuesta al cliente</h5>
           <p class="step-sub">Le propusimos el <strong>{{ req.proposed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.proposed_time_from|hm }} a {{ req.proposed_time_to|hm }}</strong>. Estamos esperando que responda por correo.</p>
@@ -1252,7 +1253,7 @@
             <span class="icd-lock-ico"><i class="bi bi-lock-fill"></i></span>
             <div class="icd-lock-txt">
               <strong data-lock-title>Agenda bloqueada</strong>
-              <span data-lock-locked>{% if _cambio_pedido %}El cliente pidió cambiar su cita a las {{ _contraprop_cliente.time_from|hm }}. Acepta su fecha más abajo; desbloquea solo si quieres ofrecerle otra hora.{% elif _step5_done %}El cliente ya confirmó el {{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}. Así nadie le cambia la cita por error ni le llega otro correo.{% else %}Ya le propusimos el {{ req.proposed_date | chile_fmt('%A %d/%m') }} a las {{ req.proposed_time_from|hm }} y estamos esperando su respuesta. Así no le llega otro correo por error.{% endif %}</span>
+              <span data-lock-locked>{% if _cambio_pedido %}El cliente pidió cambiar su cita a las {{ _contraprop_cliente.time_from|hm }}. Acepta su fecha más abajo; desbloquea solo si quieres ofrecerle otra hora.{% elif _step5_done %}La cita ya está confirmada: {{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}. Así nadie le cambia la cita por error ni le llega otro correo.{% else %}Ya le propusimos el {{ req.proposed_date | chile_fmt('%A %d/%m') }} a las {{ req.proposed_time_from|hm }} y estamos esperando su respuesta. Así no le llega otro correo por error.{% endif %}</span>
               <span data-lock-open style="display:none">Toca un bloque libre para mover el retiro. Antes de mandar nada te vamos a preguntar.</span>
             </div>
             <button type="button" class="icd-lock-btn" id="icdLockBtn" onclick="_icdToggleLock()">
@@ -2074,9 +2075,9 @@
   <div class="rd-more-pane" id="tab-acciones" role="tabpanel" hidden>
     <div class="rid-advanced-warn">
       <i class="bi bi-exclamation-triangle-fill"></i>
-      <span>Uso avanzado — salta el flujo guiado de los pasos de arriba, úsalo solo si sabes lo que haces.</span>
+      <span>Uso avanzado — salta el flujo guiado de los pasos de arriba, úsalo solo si sabes lo que haces. Casi todos los estados le mandan un correo al cliente.</span>
     </div>
-    <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}">
+    <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" id="formCambiarEstadoAvanzado" onsubmit="return _confirmarCambioEstado(event)">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2">
         <div class="col-md-6">
@@ -2264,7 +2265,12 @@ window.RETIROS_DETAIL_DATA = {
   // Ficha v5 (2026-10-02): con propuesta enviada o cita confirmada el
   // calendario nace bloqueado (ver #icdLockBar).
   agendaLocked: {{ (_agenda_locked or false)|tojson }},
+  // Horario que el cliente ya pidió (contrapropuesta viva o, si no hay, el del
+  // formulario): proponer EXACTAMENTE ese horario confirma directo (backend,
+  // pickup_create_proposal) y manda el correo de confirmación.
+  pedidoCliente: {{ ({'fecha': (_contraprop_cliente.date|string)[:10], 'tf': (_contraprop_cliente.time_from|hm), 'tt': (_contraprop_cliente.time_to|hm)} if _contraprop_cliente else ({'fecha': (req.requested_date|string)[:10], 'tf': (req.requested_time_from|hm), 'tt': (req.requested_time_to|hm)} if req.requested_date else none))|tojson }},
   contactName: {{ (req.contact_name or req.customer_name or '')|tojson }},
+  estado: {{ (req.status or '')|tojson }},
 };
 </script>
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>
