@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Días especiales de Retiros: víspera de feriado y salida temprano (funciones puras)."""
+import os
 import unittest
 from datetime import date
 
@@ -95,3 +96,35 @@ class TestCierreEfectivo(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FeriadosIrrenunciables(unittest.TestCase):
+    """Calendario de días especiales (2026-10-02): distingue feriados irrenunciables de los normales."""
+
+    def test_los_cinco_irrenunciables_del_comercio(self):
+        from datetime import date
+        for d in (date(2026, 1, 1), date(2026, 5, 1), date(2026, 9, 18), date(2026, 9, 19), date(2026, 12, 25)):
+            self.assertTrue(rh.es_irrenunciable(d), d)
+
+    def test_los_demas_feriados_son_normales(self):
+        from datetime import date
+        for d in (date(2026, 4, 3), date(2026, 5, 21), date(2026, 10, 12), date(2026, 12, 8), date(2026, 12, 31)):
+            self.assertFalse(rh.es_irrenunciable(d), d)
+
+
+class CalendarioDelPanel(unittest.TestCase):
+    """El panel pide 400 días, muestra feriados con irrenunciable/confirmado y NO bloquea sin confirmación humana."""
+
+    def test_la_api_entrega_los_datos_del_calendario(self):
+        src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pickups_module.py"), encoding="utf-8").read()
+        for clave in ('"feriados_cal": feriados_cal', '"work_days": sorted(c["work_days"])', "irrenunciable=_rh.es_irrenunciable(d)",
+                      '"confirmado": iso in cierres_dia', "created_by FROM pickup_blocks"):
+            self.assertIn(clave, src)
+
+    def test_el_panel_pide_confirmacion_antes_de_bloquear(self):
+        html = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "retiros", "internal_dashboard.html"), encoding="utf-8").read()
+        i = html.index("$('hzSelOk').addEventListener('click'")
+        cuerpo = html[i:i + 4500]
+        self.assertIn("await ilusConfirm(", cuerpo)
+        self.assertLess(cuerpo.index("await ilusConfirm("), cuerpo.index("await api("))     # el «sí» va ANTES de escribir
+        self.assertIn("if (!ok) return;", cuerpo)

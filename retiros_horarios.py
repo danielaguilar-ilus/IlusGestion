@@ -14,6 +14,11 @@ pickups_module): la hora de cierre es la ÚLTIMA HORA DE LLEGADA admitida. Con c
 """
 from datetime import timedelta
 
+# Feriados IRRENUNCIABLES del comercio en Chile (Código del Trabajo, art. 38 bis): no se puede obligar a
+# trabajar ese día. Los demás feriados son "normales" y la bodega decide si cierra. (Los días de elección
+# también son irrenunciables, pero cambian cada vez y no se pueden calcular aquí: se cierran a mano.)
+IRRENUNCIABLES_MES_DIA = frozenset({(1, 1), (5, 1), (9, 18), (9, 19), (12, 25)})
+
 TOPE_DIAS_VISPERA = 10   # ninguna racha de días cerrados seguidos en Chile pasa de esto
 
 
@@ -81,3 +86,8 @@ def cierre_efectivo(normal, regla=None, vispera=False, vispera_activa=False, vis
         if v is not None and v < n:
             return min_a_hhmm(v), "vispera", "Víspera de feriado"
     return min_a_hhmm(n), "normal", ""
+
+
+def es_irrenunciable(dia):
+    """True si `dia` (date) es feriado IRRENUNCIABLE: 1 ene, 1 may, 18 y 19 sep, 25 dic."""
+    return (dia.month, dia.day) in IRRENUNCIABLES_MES_DIA

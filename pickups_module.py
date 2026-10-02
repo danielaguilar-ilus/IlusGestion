@@ -12120,7 +12120,8 @@ def register_pickup_routes(app, ctx):
                 continue
             r = c["rules"].get(iso) or {}
             _fila(d, "feriado", nombre=nombre, abierto=bool(r.get("abierto")),
-                  hasta=r.get("hasta") or "", motivo=r.get("motivo") or "")
+                  hasta=r.get("hasta") or "", motivo=r.get("motivo") or "",
+                  irrenunciable=_rh.es_irrenunciable(d))
         # 2) Vísperas (solo si la regla está activa, para no llenar la lista)
         proxima = None
         for k in range((fin - hoy).days + 1):
@@ -12151,7 +12152,7 @@ def register_pickup_routes(app, ctx):
         blk_rows = []
         try:
             blk_rows = mysql_fetchall(
-                "SELECT id, fecha, hora_inicio, hora_fin, motivo FROM pickup_blocks "
+                "SELECT id, fecha, hora_inicio, hora_fin, motivo, created_by FROM pickup_blocks "
                 "WHERE fecha BETWEEN %s AND %s ORDER BY fecha, hora_inicio", (hoy, fin)) or []
             for b in blk_rows:
                 d = datetime.strptime(_iso_fecha(b["fecha"]), "%Y-%m-%d").date()
@@ -12217,6 +12218,25 @@ def register_pickup_routes(app, ctx):
         except Exception as _e_cf:
             print(f"[excepciones] cruce con retiros agendados: {_e_cf}", flush=True)
 
+        # 7) Para el calendario del panel (Daniel 2026-10-02): TODOS los feriados del período (también los de
+        # fin de semana), si son irrenunciables y si una persona ya los CONFIRMÓ (hay un cierre de día completo).
+        cierres_dia = {}
+        for b in blk_rows:
+            if not b.get("hora_inicio"):
+                cierres_dia[_iso_fecha(b["fecha"])] = (b.get("created_by") or "").strip()
+        feriados_cal = []
+        for iso, nombre in sorted(c["legales"].items()):
+            d = datetime.strptime(iso, "%Y-%m-%d").date()
+            if not (hoy <= d <= fin):
+                continue
+            r = c["rules"].get(iso) or {}
+            feriados_cal.append({
+                "fecha": iso, "nombre": nombre, "irrenunciable": _rh.es_irrenunciable(d),
+                "fin_de_semana": d.isoweekday() not in c["work_days"], "abierto": bool(r.get("abierto")),
+                "confirmado": iso in cierres_dia, "confirmado_por": cierres_dia.get(iso, "")})
+        for it in items:
+            if it["tipo"] == "feriado":
+                it["confirmado"] = it["fecha"] in cierres_dia
         _orden = {"feriado": 0, "cierre": 1, "vispera": 2, "temprano": 2, "bloqueo": 3}
         items.sort(key=lambda x: (x["fecha"], _orden.get(x["tipo"], 9)))
         anios = sorted({datetime.strptime(i["fecha"], "%Y-%m-%d").year for i in items})
@@ -12231,6 +12251,8 @@ def register_pickup_routes(app, ctx):
             "vispera": {"activa": c["vispera_on"], "hasta": c["vispera_hasta"], "proxima": proxima},
             "anios_estimados": [a for a in anios if a not in _OFI],
             "conflictos": conflictos,
+            "work_days": sorted(c["work_days"]),
+            "feriados_cal": feriados_cal,
             "items": items,
         })
 

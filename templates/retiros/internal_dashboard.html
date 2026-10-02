@@ -1903,6 +1903,64 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
 #settingsModal .nri-step-estado span{flex:1;min-width:0}   /* el texto queda junto a su ícono, también en celular */
 #settingsModal .nri-aviso{font-size:.88rem}
 #settingsModal .nri-aviso-btn{font-size:.82rem;min-height:40px}
+/* Calendario de días especiales (Daniel 2026-10-02): feriados sugeridos, selección múltiple y confirmación humana */
+#settingsModal .hz-cal{margin:4px 0 18px;padding:16px;background:#fff;border:2px solid #0a0a0a;border-radius:16px;box-shadow:0 6px 20px rgba(10,10,10,.08)}
+#settingsModal .hz-cal-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;margin-bottom:10px}
+#settingsModal .hz-cal-t{display:flex;align-items:center;gap:10px;font-size:1.15rem;font-weight:800}
+#settingsModal .hz-cal-t .bi{color:#dc2626;font-size:1.4rem}
+#settingsModal .hz-cal-nav{display:flex;align-items:center;gap:8px}
+#settingsModal .hz-cal-nav b{min-width:170px;text-align:center;font-size:1.15rem;text-transform:capitalize}
+#settingsModal .hz-cal-nav button{min-width:44px;min-height:44px;border:2px solid #0a0a0a;border-radius:12px;background:#fff;font-weight:800;cursor:pointer}
+#settingsModal .hz-cal-nav button:hover{background:#0a0a0a;color:#fff}
+#settingsModal .hz-cal-hoy{padding:0 14px}
+#settingsModal .hz-cal-sug{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin:0 0 12px;padding:12px 14px;border:2px solid #f59e0b;border-radius:14px;background:#fffbeb;font-size:1rem}
+#settingsModal .hz-cal-sug.is-ok{border-color:#16a34a;background:#f0fdf4}
+#settingsModal .hz-cal-sug .t{flex:1 1 320px;min-width:0}
+#settingsModal .hz-cal-sug .t>b:first-child{display:block;font-size:1.05rem;margin-bottom:2px}
+#settingsModal .hz-cal-sug .a{display:flex;flex-wrap:wrap;gap:8px}
+#settingsModal .hz-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:12px;border:2px solid #dc2626;
+  background:#dc2626;color:#fff;font-size:.98rem;font-weight:800;cursor:pointer}
+#settingsModal .hz-btn.sec{background:#fff;color:#0a0a0a;border-color:#0a0a0a}
+#settingsModal .hz-btn:disabled{background:#e5e7eb;border-color:#d1d5db;color:#4b5563;cursor:not-allowed}
+#settingsModal .hz-cal-ley{display:flex;flex-wrap:wrap;gap:8px 14px;margin:0 0 10px;font-size:.88rem;font-weight:700;color:#374151}
+#settingsModal .hz-cal-ley span{display:inline-flex;align-items:center;gap:6px}
+#settingsModal .hz-cal-ley i{display:inline-block;width:16px;height:16px;border-radius:5px;border:2px solid #9ca3af}
+#settingsModal .hz-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+#settingsModal .hz-cal-dow{padding:4px 0;text-align:center;font-size:.85rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#4b5563}
+#settingsModal .hz-cal-dia{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:2px;min-height:78px;padding:6px 8px;border:2px solid #e5e7eb;border-radius:12px;
+  background:#fff;color:#111827;text-align:left;font:inherit;cursor:pointer;overflow-wrap:anywhere}
+#settingsModal .hz-cal-dia .n{font-size:1.15rem;font-weight:800;line-height:1}
+#settingsModal .hz-cal-dia .e{display:block;font-size:.78rem;font-weight:800;line-height:1.15}
+#settingsModal .hz-cal-dia:hover:not(:disabled){border-color:#0a0a0a;transform:translateY(-1px)}
+#settingsModal .hz-cal-dia:focus-visible{outline:3px solid #0a0a0a;outline-offset:2px}
+#settingsModal .hz-cal-dia.is-vacio{visibility:hidden}
+#settingsModal .hz-cal-dia.is-pasado{opacity:.4;cursor:default}
+#settingsModal .hz-cal-dia.is-finde{background:#f3f4f6;color:#6b7280;cursor:default}
+#settingsModal .hz-cal-dia.is-hoy .n{background:#0a0a0a;color:#fff;border-radius:99px;padding:2px 7px}
+#settingsModal .hz-cal-dia.is-fer{border-color:#dc2626;background:#fef2f2;color:#991b1b}
+#settingsModal .hz-cal-dia.is-irr{border-color:#7f1d1d;background:#7f1d1d;color:#fff}
+#settingsModal .hz-cal-dia.is-conf{border-color:#0a0a0a;background:#0a0a0a;color:#fff}
+#settingsModal .hz-cal-dia.is-conf .e::before{content:"✔ "}
+#settingsModal .hz-cal-dia.is-abierto{border-color:#16a34a;background:#f0fdf4;color:#166534}
+#settingsModal .hz-cal-dia.is-temprano{border-color:#f59e0b;background:#fffbeb;color:#92400e}
+#settingsModal .hz-cal-dia.is-bloqueo{border-color:#6b7280;background:#f9fafb;color:#374151}
+#settingsModal .hz-cal-dia.is-sel{box-shadow:0 0 0 4px rgba(220,38,38,.35);border-color:#dc2626}
+#settingsModal .hz-cal-dia.is-sel::after{content:"✓";position:absolute;top:4px;right:6px;width:22px;height:22px;border-radius:50%;background:#dc2626;color:#fff;font-weight:900;font-size:.9rem;display:flex;align-items:center;justify-content:center}
+#settingsModal .hz-cal-det{margin:12px 0 0;padding:10px 14px;border:2px dashed #9ca3af;border-radius:12px;background:#f9fafb;font-size:1rem}
+#settingsModal .hz-cal-sel{margin:12px 0 0;padding:14px;border:3px solid #dc2626;border-radius:14px;background:#fef2f2}
+#settingsModal .hz-cal-sel h6{margin:0 0 8px;font-size:1.1rem;font-weight:800}
+#settingsModal .hz-sel-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+#settingsModal .hz-sel-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:99px;background:#fff;border:2px solid #fca5a5;font-size:.95rem;font-weight:700;overflow-wrap:anywhere}
+#settingsModal .hz-sel-chip button{width:30px;height:30px;border:0;border-radius:50%;background:#fee2e2;color:#991b1b;font-weight:900;cursor:pointer}
+#settingsModal .hz-cal-sel .row{--bs-gutter-y:.6rem}
+@media (max-width:767px){
+  #settingsModal .hz-cal{padding:10px}
+  #settingsModal .hz-cal-grid{gap:4px}
+  #settingsModal .hz-cal-dia{min-height:62px;padding:4px 5px}
+  #settingsModal .hz-cal-dia .e{font-size:.68rem}
+  #settingsModal .hz-cal-nav b{min-width:0;flex:1}
+  #settingsModal .hz-cal-nav{width:100%}
+}
 #settingsModal .nri-add-doc-txt strong{font-size:1.12rem}
 #settingsModal .nri-add-doc-txt small{font-size:.86rem;color:#374151}
 #settingsModal .nri-retira-txt strong{font-size:1.04rem}
@@ -2125,6 +2183,52 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
           </div>
         </div>
         <div id="hzAvisos3" class="nri-avisos"></div>
+
+        {# ═══ Calendario de días especiales: feriados sugeridos + selección + confirmación humana ═══ #}
+        <div class="hz-cal" id="hzCal" aria-label="Calendario de días especiales">
+          <div class="hz-cal-head">
+            <div class="hz-cal-t"><i class="bi bi-calendar3"></i>Calendario de días especiales</div>
+            <div class="hz-cal-nav">
+              <button type="button" id="hzCalPrev" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
+              <b id="hzCalMes">…</b>
+              <button type="button" id="hzCalNext" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
+              <button type="button" id="hzCalHoy" class="hz-cal-hoy">Hoy</button>
+            </div>
+          </div>
+          <div class="hz-cal-sug" id="hzCalSug" hidden></div>
+          <div class="hz-cal-ley" aria-hidden="true">
+            <span><i style="background:#7f1d1d;border-color:#7f1d1d"></i>★ Feriado irrenunciable</span>
+            <span><i style="background:#fef2f2;border-color:#dc2626"></i>Feriado (se cierra solo)</span>
+            <span><i style="background:#0a0a0a;border-color:#0a0a0a"></i>✔ Confirmado y bloqueado</span>
+            <span><i style="background:#f0fdf4;border-color:#16a34a"></i>Abre igual</span>
+            <span><i style="background:#fffbeb;border-color:#f59e0b"></i>Sale temprano</span>
+            <span><i style="background:#fff;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.35)"></i>Elegido por ti</span>
+          </div>
+          <div class="hz-cal-grid" id="hzCalGrid" role="grid"></div>
+          <div class="hz-cal-det" id="hzCalDet">Toca un día para ver su detalle. Toca varios para elegirlos y bloquearlos juntos.</div>
+          <div class="hz-cal-sel" id="hzCalSel" hidden>
+            <h6><i class="bi bi-check2-square text-danger me-1"></i>Días que elegiste (<span id="hzSelN">0</span>)</h6>
+            <div class="hz-sel-chips" id="hzSelChips"></div>
+            <div class="nri-retira-opts" role="radiogroup" aria-label="Qué hacer con esos días">
+              <label class="nri-retira-opt is-on" id="hzSelOptCierre"><input type="radio" name="hz_sel_tipo" value="cierre" checked>
+                <span class="nri-retira-ico"><i class="bi bi-slash-circle"></i></span>
+                <span class="nri-retira-txt"><strong>Cerrar y bloquear el día completo</strong><small>Nadie podrá agendar ese día</small></span><span class="nri-retira-radio" aria-hidden="true"></span></label>
+              <label class="nri-retira-opt" id="hzSelOptTemprano"><input type="radio" name="hz_sel_tipo" value="temprano">
+                <span class="nri-retira-ico"><i class="bi bi-clock-history"></i></span>
+                <span class="nri-retira-txt"><strong>Salir más temprano</strong><small>La bodega atiende, pero cierra antes</small></span><span class="nri-retira-radio" aria-hidden="true"></span></label>
+            </div>
+            <div class="row g-3 mt-1">
+              <div class="col-12 col-md-3" id="hzSelHoraWrap" hidden><label class="form-label" for="hzSelHora">Último retiro a las</label><select class="form-select" id="hzSelHora"></select></div>
+              <div class="col-12 col-md"><label class="form-label" for="hzSelMotivo">Motivo <span class="text-muted fw-normal" style="font-size:.78rem">(lo ve el cliente · si lo dejas vacío, a los feriados se les pone su nombre)</span></label><input type="text" class="form-control" id="hzSelMotivo" maxlength="120" placeholder="Ej.: Inventario, cena de fin de año"></div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              <button type="button" class="hz-btn" id="hzSelOk"><i class="bi bi-shield-check"></i>Revisar y confirmar</button>
+              <button type="button" class="hz-btn sec" id="hzSelLimpiar">Quitar mi selección</button>
+            </div>
+            <div class="hz-help mt-2">Nada se bloquea hasta que confirmes. Los retiros ya agendados en esos días <b>no se mueven</b>: te avisaré cuáles quedan afectados.</div>
+          </div>
+        </div>
+
         <div class="nri-list-title">
           <span><i class="bi bi-calendar-x"></i>Feriados y días especiales<span class="nri-count" id="hzCount">0</span></span>
           <span class="d-inline-flex align-items-center gap-2 text-muted fw-normal text-lowercase" style="letter-spacing:0">mostrar
@@ -2373,15 +2477,20 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
     if (!D) return;
     const choques = {};
     (D.conflictos || []).forEach(c => { choques[c.fecha] = (choques[c.fecha] || 0) + 1; });
-    $('hzCount').textContent = D.items.length;
-    $('hzLista').innerHTML = D.items.length
-      ? D.items.map((it, i) => tarjeta(it, i + 1, choques)).join('')
+    const rango = Number(($('hzRango') || {}).value || 90);
+    const tope = new Date(D.hoy + 'T00:00:00'); tope.setDate(tope.getDate() + rango);
+    const topeIso = tope.getFullYear() + '-' + String(tope.getMonth() + 1).padStart(2, '0') + '-' + String(tope.getDate()).padStart(2, '0');
+    const visibles = D.items.filter(it => it.fecha <= topeIso);
+    $('hzCount').textContent = visibles.length;
+    $('hzLista').innerHTML = visibles.length
+      ? visibles.map((it, i) => tarjeta(it, i + 1, choques)).join('')
       : '<div class="hz-vacio-lista"><i class="bi bi-calendar-check me-1"></i>No hay feriados ni días especiales en este período: la bodega opera con el horario normal.</div>';
     $('hzVisperaHasta').innerHTML = opcionesHoras(D.vispera.hasta, false);
     $('hzVisperaOn').checked = !!D.vispera.activa;
     $('hzVisperaTxt').textContent = D.vispera.activa ? 'Activada' : 'Desactivada';
     if (!$('hzHora').options.length) $('hzHora').innerHTML = opcionesHoras('', false);
     const fi = $('hzFecha'); if (fi && D.hoy) fi.min = D.hoy;
+    pintarCal();
   }
 
   // ── evaluadores por paso (mismo contrato que nriEvaluarPasos) ──
@@ -2460,6 +2569,8 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
       r.avisos.push({txt: plural(cf.length, 'retiro agendado choca', 'retiros agendados chocan') + ' con un día cerrado o un horario bloqueado: reagéndalos'});
       cf.forEach(c => r.avisos.push({txt: '', html: avisoConflicto(c)}));
     }
+    const sinConf = D.feriados_cal ? porConfirmar().length : 0;
+    if (sinConf) r.avisos.push({txt: plural(sinConf, 'feriado de Chile sin confirmar', 'feriados de Chile sin confirmar') + ': hoy se cierran solos; confírmalos en el calendario para dejarlos reservados'});
     if (D.anios_estimados && D.anios_estimados.length){
       r.avisos.push({txt: 'los feriados de ' + D.anios_estimados.join(' y ') + ' son calculados (aún no hay lista oficial): revísalos'});
     }
@@ -2526,9 +2637,8 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
 
   // ── carga de datos ──
   async function cargar(){
-    const rango = ($('hzRango') || {}).value || '90';
     try {
-      const r = await fetch('/retiros/api/excepciones?dias=' + encodeURIComponent(rango), {credentials: 'same-origin', cache: 'no-store'});
+      const r = await fetch('/retiros/api/excepciones?dias=400', {credentials: 'same-origin', cache: 'no-store'});   // el calendario muestra ~13 meses
       const d = await r.json();
       if (!d.ok) throw new Error('respuesta no válida');
       D = d;
@@ -2560,7 +2670,7 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
       if (ok) await aplicar({accion: 'quitar_bloqueo', block_id: Number(b.dataset.id)}, 'Bloqueo quitado');
     }
   });
-  $('hzRango').addEventListener('change', cargar);
+  $('hzRango').addEventListener('change', () => { if (D) pintarLista(); else cargar(); });
 
   // ── víspera (instantánea) ──
   const visperaCfg = msg => aplicar({accion: 'vispera_config', activa: $('hzVisperaOn').checked, hasta: $('hzVisperaHasta').value}, msg);
@@ -2596,6 +2706,169 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
   ['hzFecha', 'hzMotivo', 'hzHora'].forEach(id => $(id).addEventListener('keydown', ev => {
     if (ev.key === 'Enter'){ ev.preventDefault(); $('hzAddGuardar').click(); }
   }));
+
+  // ═══ CALENDARIO DE DÍAS ESPECIALES (Daniel 2026-10-02) ═══════════════════════════════════════
+  // Muestra feriados de Chile (irrenunciables y normales), lo ya cerrado y lo que sale temprano. Sugiere
+  // los feriados sin confirmar; la persona elige días y CONFIRMA: recién ahí se crean los cierres
+  // (misma acción 'cierre'/'temprano' de siempre). Nada se bloquea sin ese «sí».
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const sel = new Map();             // iso → {nombre, irr, fer}
+  let calMes = null;                 // {y, m}  (m: 0-11)
+  let FM = {}, IM = {};              // feriados por fecha / ítems por fecha
+  const isoDe = (y, m, d) => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+  const diaFechaLarga = iso => { const p = iso.split('-').map(Number); return DIAS[new Date(p[0], p[1] - 1, p[2]).getDay()] + ' ' + p[2] + ' de ' + MESES[p[1] - 1] + ' de ' + p[0]; };
+  function indexar(){
+    FM = {}; IM = {};
+    (D.feriados_cal || []).forEach(f => { FM[f.fecha] = f; });
+    (D.items || []).forEach(it => { (IM[it.fecha] = IM[it.fecha] || []).push(it); });
+  }
+  function estadoDia(iso, dow){        // dow: 1 (lun) … 7 (dom)
+    const laboral = (D.work_days || [1, 2, 3, 4, 5]).includes(dow);
+    const f = FM[iso], its = IM[iso] || [];
+    const cierre = its.find(i => i.tipo === 'cierre'), temp = its.find(i => i.tipo === 'temprano' || (i.tipo === 'vispera' && i.aplica));
+    const blq = its.find(i => i.tipo === 'bloqueo');
+    const o = {cls: '', e: '', sel: false, det: '', nombre: ''};
+    if (iso < D.hoy){ o.cls = 'is-pasado'; o.det = 'Día pasado.'; return o; }
+    if (cierre){ o.cls = 'is-conf'; o.e = 'Cerrado'; o.det = 'Cerrado todo el día' + (cierre.motivo ? ': ' + cierre.motivo : '') + '. Para abrirlo, quítalo en la lista de abajo.'; return o; }
+    if (f){
+      o.nombre = f.nombre;
+      const tipo = f.irrenunciable ? 'feriado IRRENUNCIABLE' : 'feriado';
+      if (f.fin_de_semana){ o.cls = 'is-finde'; o.e = f.irrenunciable ? '★ ' + f.nombre : f.nombre; o.det = f.nombre + ' (' + tipo + '): cae en fin de semana, la bodega no opera ese día.'; return o; }
+      if (f.abierto){ o.cls = 'is-abierto'; o.e = 'Abre igual'; o.det = f.nombre + ' (' + tipo + '): lo reabriste, se agenda con normalidad.'; return o; }
+      if (f.confirmado){ o.cls = 'is-conf'; o.e = f.nombre; o.det = f.nombre + ' (' + tipo + '): confirmado y bloqueado' + (f.confirmado_por ? ' por ' + f.confirmado_por : '') + '. Nadie puede agendar ese día.'; return o; }
+      o.cls = f.irrenunciable ? 'is-irr' : 'is-fer'; o.e = (f.irrenunciable ? '★ ' : '') + f.nombre; o.sel = true;
+      o.det = f.nombre + ' (' + tipo + '). Hoy la bodega se cierra sola ese día, pero falta que una persona lo confirme. ' + (f.irrenunciable ? 'Es irrenunciable: no se puede obligar a trabajar.' : 'Es un feriado normal: tú decides.');
+      return o;
+    }
+    if (!laboral){ o.cls = 'is-finde'; o.det = 'Fin de semana: la bodega no opera.'; return o; }
+    if (temp){ o.cls = 'is-temprano'; o.e = 'Sale ' + (temp.hasta || ''); o.det = 'Sale más temprano: último retiro a las ' + (temp.hasta || '') + (temp.motivo ? ' · ' + temp.motivo : '') + '.'; return o; }
+    if (blq){ o.cls = 'is-bloqueo'; o.e = 'Horas bloqueadas'; o.det = 'Hay horas bloqueadas (' + blq.desde + (blq.hasta ? '–' + blq.hasta : ' en adelante') + ').'; o.sel = true; return o; }
+    o.sel = true; o.det = 'Día normal. Tócalo para elegirlo (cerrarlo o hacer que la bodega salga más temprano).';
+    return o;
+  }
+  function pintarCal(){
+    if (!D) return;
+    indexar();
+    if (!calMes){ const h = D.hoy.split('-').map(Number); calMes = {y: h[0], m: h[1] - 1}; }
+    const y = calMes.y, m = calMes.m;
+    $('hzCalMes').textContent = MESES[m] + ' ' + y;
+    const dias = new Date(y, m + 1, 0).getDate();
+    const primero = (new Date(y, m, 1).getDay() + 6) % 7;      // lunes = 0
+    let h = ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do'].map(d => '<div class="hz-cal-dow">' + d + '</div>').join('');
+    for (let i = 0; i < primero; i++) h += '<button type="button" class="hz-cal-dia is-vacio" disabled tabindex="-1" aria-hidden="true"></button>';
+    for (let d = 1; d <= dias; d++){
+      const iso = isoDe(y, m, d), dow = ((new Date(y, m, d).getDay() + 6) % 7) + 1;
+      const o = estadoDia(iso, dow);
+      const cls = ['hz-cal-dia', o.cls, iso === D.hoy ? 'is-hoy' : '', sel.has(iso) ? 'is-sel' : ''].filter(Boolean).join(' ');
+      h += '<button type="button" class="' + cls + '" data-iso="' + iso + '" aria-pressed="' + (sel.has(iso) ? 'true' : 'false') + '" aria-label="' + esc(diaFechaLarga(iso) + '. ' + o.det) + '">' +
+           '<span class="n">' + d + '</span>' + (o.e ? '<span class="e">' + esc(o.e) + '</span>' : '') + '</button>';
+    }
+    $('hzCalGrid').innerHTML = h;
+    pintarSugerencia();
+    pintarSeleccion();
+  }
+  function porConfirmar(){
+    return (D.feriados_cal || []).filter(f => !f.fin_de_semana && !f.abierto && !f.confirmado && f.fecha >= D.hoy);
+  }
+  function pintarSugerencia(){
+    const box = $('hzCalSug'), pc = porConfirmar(), irr = pc.filter(f => f.irrenunciable);
+    box.hidden = false;
+    if (!pc.length){
+      box.className = 'hz-cal-sug is-ok';
+      box.innerHTML = '<div class="t"><b><i class="bi bi-check-circle-fill text-success me-1"></i>Todos los feriados de Chile del período están confirmados</b>Esos días quedan reservados y bloqueados.</div>';
+      return;
+    }
+    box.className = 'hz-cal-sug';
+    box.innerHTML = '<div class="t"><b><i class="bi bi-lightbulb-fill me-1" style="color:#b45309"></i>Sugerencia: ' + plural(pc.length, 'feriado de Chile sin confirmar', 'feriados de Chile sin confirmar') +
+      (irr.length ? ' (' + plural(irr.length, 'irrenunciable', 'irrenunciables') + ')' : '') + '</b>' +
+      'Hoy la bodega se cierra sola esos días. Elígelos y confírmalos para dejarlos <b>reservados y bloqueados</b> desde ya. Próximo: <b>' +
+      esc(pc[0].nombre) + '</b> · ' + esc(diaFechaLarga(pc[0].fecha)) + '.</div>' +
+      '<div class="a">' + (irr.length ? '<button type="button" class="hz-btn" data-sug="irr"><i class="bi bi-star-fill"></i>Elegir los ' + irr.length + ' irrenunciables</button>' : '') +
+      '<button type="button" class="hz-btn sec" data-sug="todos"><i class="bi bi-check2-all"></i>Elegir los ' + pc.length + ' feriados</button></div>';
+  }
+  function pintarSeleccion(){
+    const box = $('hzCalSel');
+    box.hidden = sel.size === 0;
+    if (!sel.size) return;
+    $('hzSelN').textContent = sel.size;
+    const orden = [...sel.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    $('hzSelChips').innerHTML = orden.map(([iso, v]) => '<span class="hz-sel-chip">' + (v.irr ? '★ ' : '') + esc(fechaCl(iso).slice(0, 5)) + ' · ' + esc(v.nombre || diaLargo(iso)) +
+      '<button type="button" data-quitar="' + iso + '" aria-label="Quitar ' + esc(fechaCl(iso)) + '">×</button></span>').join('');
+    if (!$('hzSelHora').options.length) $('hzSelHora').innerHTML = opcionesHoras('', false);
+    const t = tipoSel();
+    $('hzSelOptCierre').classList.toggle('is-on', t === 'cierre'); $('hzSelOptTemprano').classList.toggle('is-on', t === 'temprano');
+    $('hzSelHoraWrap').hidden = t !== 'temprano';
+  }
+  function tipoSel(){ return (modal.querySelector('input[name=hz_sel_tipo]:checked') || {}).value || 'cierre'; }
+  function alternar(iso){
+    if (sel.has(iso)){ sel.delete(iso); return; }
+    const f = FM[iso];
+    sel.set(iso, {nombre: f ? f.nombre : '', irr: !!(f && f.irrenunciable), fer: !!f});
+  }
+  function irAlMes(iso){ const p = iso.split('-').map(Number); calMes = {y: p[0], m: p[1] - 1}; }
+  $('hzCalGrid').addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-iso]');
+    if (!b) return;
+    const iso = b.dataset.iso, p = iso.split('-').map(Number), dow = ((new Date(p[0], p[1] - 1, p[2]).getDay() + 6) % 7) + 1;
+    const o = estadoDia(iso, dow);
+    $('hzCalDet').innerHTML = '<b>' + esc(diaFechaLarga(iso)) + '</b><br>' + esc(o.det);
+    if (o.sel){ alternar(iso); pintarCal(); }
+  });
+  $('hzCalPrev').addEventListener('click', () => { if (!calMes) return; calMes = calMes.m ? {y: calMes.y, m: calMes.m - 1} : {y: calMes.y - 1, m: 11}; pintarCal(); });
+  $('hzCalNext').addEventListener('click', () => { if (!calMes) return; calMes = calMes.m < 11 ? {y: calMes.y, m: calMes.m + 1} : {y: calMes.y + 1, m: 0}; pintarCal(); });
+  $('hzCalHoy').addEventListener('click', () => { if (D) irAlMes(D.hoy); pintarCal(); });
+  $('hzCalSug').addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-sug]');
+    if (!b || !D) return;
+    const lista = porConfirmar().filter(f => b.dataset.sug === 'todos' || f.irrenunciable);
+    lista.forEach(f => sel.set(f.fecha, {nombre: f.nombre, irr: f.irrenunciable, fer: true}));
+    if (lista.length) irAlMes(lista[0].fecha);
+    pintarCal();
+    $('hzCalSel').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  });
+  $('hzSelChips').addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-quitar]');
+    if (!b) return;
+    sel.delete(b.dataset.quitar); pintarCal();
+  });
+  $('hzSelLimpiar').addEventListener('click', () => { sel.clear(); pintarCal(); });
+  modal.querySelectorAll('input[name=hz_sel_tipo]').forEach(r => r.addEventListener('change', pintarSeleccion));
+  $('hzSelMotivo').addEventListener('keydown', ev => { if (ev.key === 'Enter'){ ev.preventDefault(); $('hzSelOk').click(); } });
+  $('hzSelOk').addEventListener('click', async () => {
+    if (!sel.size) return;
+    const t = tipoSel(), motivoLibre = $('hzSelMotivo').value.trim();
+    const orden = [...sel.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    if (t === 'temprano' && orden.some(([, v]) => v.fer)){
+      ilusToast('Los feriados se cierran completos. Para «salir más temprano» elige solo días normales.', {type: 'warning'});
+      return;
+    }
+    const hora = $('hzSelHora').value;
+    if (t === 'temprano' && !hora){ ilusToast('Elige la hora del último retiro.', {type: 'warning'}); $('hzSelHora').focus(); return; }
+    const motivoDe = (iso, v) => motivoLibre || (v.fer ? 'Feriado' + (v.irr ? ' irrenunciable' : '') + ': ' + v.nombre : '');
+    const filas = orden.map(([iso, v]) => '• <b>' + (v.irr ? '★ ' : '') + esc(diaFechaLarga(iso)) + '</b>' + (motivoDe(iso, v) ? ' — ' + esc(motivoDe(iso, v)) : '')).join('<br>');
+    const ok = await ilusConfirm({
+      title: t === 'cierre' ? 'Confirmar: cerrar y bloquear ' + plural(orden.length, 'día', 'días') : 'Confirmar: salir más temprano ' + plural(orden.length, 'día', 'días'),
+      message: t === 'cierre'
+        ? 'Vas a dejar estos días cerrados y reservados. Nadie podrá agendar retiros en ellos (ni el cliente ni el equipo):'
+        : 'Estos días la bodega atenderá solo hasta las ' + hora + ' (último retiro):',
+      sub: filas, subHtml: true,
+      okLabel: t === 'cierre' ? 'Sí, confirmo cerrar ' + plural(orden.length, 'día', 'días') : 'Sí, confirmo', cancelLabel: 'Revisar de nuevo', danger: t === 'cierre'
+    });
+    if (!ok) return;
+    $('hzSelOk').disabled = true;
+    const afectados = []; let hechos = 0;
+    for (const [iso, v] of orden){
+      const d = await api(t === 'cierre' ? {accion: 'cierre', fecha: iso, motivo: motivoDe(iso, v)} : {accion: 'temprano', fecha: iso, hasta: hora, motivo: motivoDe(iso, v)});
+      if (!d) break;
+      hechos++; sel.delete(iso);
+      (d.afectados || []).forEach(a => afectados.push(Object.assign({fecha: iso}, a)));
+    }
+    $('hzSelOk').disabled = false;
+    $('hzSelMotivo').value = '';
+    await cargar();
+    if (hechos) ilusToast('✓ ' + plural(hechos, 'día confirmado', 'días confirmados') + (hechos < orden.length ? ' (los demás no se pudieron guardar: revisa e inténtalo de nuevo)' : ''), {type: hechos < orden.length ? 'warning' : 'success'});
+    await avisarAfectados({afectados});
+  });
 
   // ── responsables por correo (paso 4.2) ──
   const inp = $('hzAvisoInp'), chips = $('hzChips'), selP = $('hzAvisoSel');
