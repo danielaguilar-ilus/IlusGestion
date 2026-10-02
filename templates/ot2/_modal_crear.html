@@ -1669,9 +1669,13 @@ window.OT2C = (function(){
       // 2026-08-29: solo aparece si el líder es externo (ver pasos()) --
       // ahí sí es obligatorio, es lo que Daniel llamó "indispensable para
       // continuar" (bloquea el trabajo del proveedor en el sistema real).
+      // 2026-10-02 (Daniel, Anexo N°203 con $1 para poder avanzar): en
+      // GARANTÍA el anexo puede ir en $0 -- el proveedor cubre su garantía y
+      // no se le paga, pero el anexo igual compromete el servicio. Fuera de
+      // garantía se sigue exigiendo monto.
       case 'anexo':
         return !!(S.anexo.proveedor_nombre.trim() && S.anexo.objetivo_servicio.trim() &&
-                  (S.anexo.items||[]).some(function(it){ return it.monto > 0; }));
+                  (S.fin_garantia || (S.anexo.items||[]).some(function(it){ return it.monto > 0; })));
       default: return false;
     }
   }
@@ -7117,7 +7121,9 @@ window.OT2C = (function(){
           : '')+
       '</div></div>'+
       '<div class="o2m-anx-nota"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
-      'Estos montos van al anexo que firma el proveedor; quedan bajo tu responsabilidad.</div>';
+      ((S.fin_garantia && _o2mAnexoTotal() === 0)
+        ? 'Garantía sin pago al proveedor: el anexo sale en $0 y solo lo compromete a realizar el servicio en tiempo, forma y condiciones.'
+        : 'Estos montos van al anexo que firma el proveedor; quedan bajo tu responsabilidad.')+'</div>';
   }
   function _o2mAnexoTotal(){
     return (S.anexo.items||[]).reduce(function(s,it){ return s + (parseFloat(it.monto) || 0); }, 0);
@@ -7125,9 +7131,15 @@ window.OT2C = (function(){
   /* Ítems que viajan al backend: tal como los dejó el usuario, omitiendo
      solo una fila vacía (sin concepto y sin monto). Montos como número. */
   function _o2mAnexoItemsValidos(){
-    return (S.anexo.items||[]).filter(function(it){
+    var items = (S.anexo.items||[]).filter(function(it){
       return (it.concepto||'').trim() !== '' || (parseFloat(it.monto) || 0) > 0;
     }).map(function(it){ return {concepto: (it.concepto||'').trim(), monto: Math.round(parseFloat(it.monto) || 0)}; });
+    // 2026-10-02 (Anexo N°203): garantía sin pago al proveedor -> el anexo
+    // igual se crea, en $0 y con el concepto explícito. Sin esto la OT
+    // quedaba sin anexo (el POST de abajo no se disparaba).
+    if (!items.length && S.fin_garantia)
+      items = [{concepto: 'Servicio en garantía — sin pago al proveedor', monto: 0}];
+    return items;
   }
   function _o2mAnexoPintarTotal(){
     var t = document.getElementById('o2mAnexoTotal');

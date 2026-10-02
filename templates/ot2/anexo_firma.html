@@ -818,13 +818,19 @@
                   <td class="monto">{{ clp(item.monto) }}</td>
                 </tr>
                 {% endfor %}
+                {% set _ax_total = anexo.precio_items | sum(attribute='monto') %}
                 <tr class="total">
                   <td>Total neto</td>
-                  <td class="monto">{{ clp(anexo.precio_items | sum(attribute='monto')) }}</td>
+                  <td class="monto">{{ clp(_ax_total) }}{% if _ax_total == 0 %} · Sin pago al proveedor (garantía){% endif %}</td>
                 </tr>
               </tbody>
             </table>
+            {% if _ax_total == 0 %}
+            {#- 2026-10-02 (Anexo N°203): garantía sin pago al proveedor. #}
+            <p class="precio-nota">Servicio cubierto por garantía: no genera pago al proveedor. El proveedor se compromete a realizarlo en el tiempo, forma y condiciones de este anexo.</p>
+            {% else %}
             <p class="precio-nota">Los valores indicados son netos y no incluyen IVA.</p>
+            {% endif %}
           </div>
         </div>
 

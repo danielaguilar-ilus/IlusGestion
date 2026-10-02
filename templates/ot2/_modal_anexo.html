@@ -516,6 +516,14 @@ window.OT2ANX = (function(){
     if (!DEF_FECHA_FIN) DEF_FECHA_FIN = DEF_FECHA_INI;
   })();
   var OT_ID = {{ v.id }};
+  /* 2026-10-02 (Daniel, Anexo N°203: tuvo que poner $1 para poder avanzar).
+     En GARANTÍA hay dos casos: con pago al proveedor (monto > 0, igual que
+     siempre) o sin pago (el proveedor cubre su propia garantía). En el
+     segundo el anexo igual existe —compromete el servicio en tiempo, forma
+     y condiciones— pero va en $0. Fuera de garantía se sigue exigiendo
+     monto. El backend aplica la misma regla (ot2_api_anexo_crear/editar). */
+  var OT_GARANTIA = {{ 'true' if v.garantia_aplica else 'false' }};
+  var OAX_CONCEPTO_GARANTIA = 'Servicio en garantía — sin pago al proveedor';
   /* 🆕 2026-09-02 (Daniel: "crees un anexo con todos los datos que tiene la
      orden de trabajo... la orden valorizada, los montos declarados, el RUT
      del cliente, el RUT del proveedor, los equipos... de manera
@@ -794,7 +802,9 @@ window.OT2ANX = (function(){
   function actualizarTotal(){
     var total = S.items.reduce((acc, it) => acc + (Number(it.monto) || 0), 0);
     document.getElementById('oaxTotal').textContent =
-      'Total neto: $' + total.toLocaleString('es-CL');
+      'Total neto: $' + total.toLocaleString('es-CL') +
+      (OT_GARANTIA && total === 0
+        ? ' · Garantía sin pago al proveedor: el anexo solo compromete el servicio.' : '');
   }
 
   async function cargarProveedores(){
@@ -1109,7 +1119,7 @@ window.OT2ANX = (function(){
     }
     if (paso === 'objetivo') return !!(S.objetivo_servicio || '').trim();
     if (paso === 'precio')
-      return (S.items || []).some(function(it){ return Number(it.monto) > 0; });
+      return OT_GARANTIA || (S.items || []).some(function(it){ return Number(it.monto) > 0; });
     if (paso === 'fechas') return !!(S.fecha_inicio && S.fecha_termino);
     return false;
   }
@@ -1253,9 +1263,13 @@ window.OT2ANX = (function(){
     var items = (S.items || [])
       .filter(it => (it.concepto || '').trim() || Number(it.monto) > 0)
       .map(it => ({concepto: (it.concepto || '').trim(), monto: Math.round(Number(it.monto) || 0)}));
-    if (!items.length || !items.some(it => it.monto > 0)){
-      ilusToast('Agrega al menos un ítem de precio con monto.', {type:'warning'});
-      return;
+    if (!items.some(it => it.monto > 0)){
+      if (!OT_GARANTIA){
+        ilusToast('Agrega al menos un ítem de precio con monto.', {type:'warning'});
+        return;
+      }
+      // Garantía sin pago al proveedor: anexo en $0 con el concepto explícito.
+      if (!items.length) items = [{concepto: OAX_CONCEPTO_GARANTIA, monto: 0}];
     }
 
     var btn = document.getElementById('oaxBtnCrear');

@@ -318,7 +318,13 @@
       <tr><td>{{ it.concepto }}</td><td class="monto">${{ '{:,}'.format(it.monto|int).replace(',', '.') }}</td></tr>
       {% set total.v = total.v + (it.monto|int) %}
       {% endfor %}
+      {% if total.v == 0 %}
+      {#- 2026-10-02 (Anexo N°203): garantía sin pago al proveedor. El anexo
+          compromete el servicio igual; se dice explícito, no un "$0" mudo. #}
+      <tr class="total"><td>Total Neto</td><td class="monto">$0 · Sin pago al proveedor (garantía)</td></tr>
+      {% else %}
       <tr class="total"><td>Total Neto</td><td class="monto">${{ '{:,}'.format(total.v).replace(',', '.') }}</td></tr>
+      {% endif %}
     </tbody>
   </table>
   {% endif %}

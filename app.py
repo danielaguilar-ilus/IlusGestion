@@ -97517,6 +97517,11 @@ def ot2_api_crear():
                         "monto": int(round(_fin_costo_prov))})
                 if _fin_costo_desp:
                     _items_auto.append({"concepto": "Despacho", "monto": int(round(_fin_costo_desp))})
+            # 2026-10-02 (Anexo N°203): garantía sin pago al proveedor -> el
+            # anexo se crea igual, en $0, en vez de quedar sin crear por
+            # "falta el costo del proveedor".
+            if not _items_auto and _fin_gar:
+                _items_auto.append({"concepto": _ANEXO_CONCEPTO_GARANTIA, "monto": 0})
 
             _objetivo_auto = (
                 f"Ejecutar servicio de {_TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title()).lower()} "
@@ -97554,7 +97559,8 @@ def ot2_api_crear():
                          _prov_dir or None, cliente_razon_social, _objetivo_auto,
                          json.dumps(_items_auto), json.dumps([]),
                          _f, _f,
-                         _clx_auto["niveles_servicio"], _clx_auto["hitos_pago"],
+                         _clx_auto["niveles_servicio"],
+                         _anexo_hitos_para(_items_auto, "", bool(_fin_gar)) or _clx_auto["hitos_pago"],
                          _clx_auto["alcance_servicio"], _clx_auto["clausulas_adicionales"],
                          current_username()))
                     _aid_auto = _cur2.lastrowid
@@ -99977,6 +99983,50 @@ def _anexo_clausulas_defecto():
     }
 
 
+# 2026-10-02 (Daniel, Anexo N°203: tuvo que poner $1 para poder avanzar).
+# En GARANTÍA hay dos casos: (a) ILUS le paga al proveedor -> anexo con
+# monto, igual que siempre; (b) no corresponde pagarle (el proveedor cubre su
+# propia garantía) -> el anexo IGUAL existe, porque compromete el servicio en
+# tiempo, forma y condiciones, pero va en $0 y exento de pago. Fuera de
+# garantía un anexo en $0 sigue rechazándose (casi siempre es un olvido).
+_ANEXO_CONCEPTO_GARANTIA = "Servicio en garantía — sin pago al proveedor"
+_ANEXO_HITOS_GARANTIA_SIN_PAGO = (
+    "Este servicio se ejecuta en garantía y no genera pago al proveedor. "
+    "El proveedor se compromete a realizarlo en el tiempo, forma y "
+    "condiciones que este anexo declara, y a llenar la OT con la respectiva "
+    "firma del cliente.")
+
+
+def _anexo_total_items(items):
+    try:
+        return sum(int(it.get("monto") or 0) for it in (items or []))
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def _anexo_ot_en_garantia(vid):
+    """True si la OT está declarada en garantía. Ante error, False (se
+    mantiene la regla estricta de siempre: exigir monto)."""
+    if not vid:
+        return False
+    try:
+        r = mysql_fetchone("SELECT garantia_aplica FROM mant_visitas WHERE id=%s", (vid,))
+        return bool(r and int(r.get("garantia_aplica") or 0) == 1)
+    except Exception:
+        return False
+
+
+def _anexo_hitos_para(items, hitos_in, es_garantia):
+    """Hitos de pago a guardar. En garantía sin pago, el texto por defecto
+    ("se emitirá documentación para el pago") se reemplaza por el de
+    garantía; un texto que la persona escribió a mano se respeta."""
+    hitos_in = (hitos_in or "").strip()
+    if es_garantia and _anexo_total_items(items) == 0 and \
+            hitos_in in ("", _anexo_clausulas_defecto()["hitos_pago"]):
+        return _ANEXO_HITOS_GARANTIA_SIN_PAGO
+    return hitos_in
+
+
 def _anexo_clausulas_pendientes():
     """Qué le falta al anexo para ser exigible — para avisarlo en pantalla.
 
@@ -100242,6 +100292,11 @@ def ot2_api_anexo_crear():
         vid = int(vid) if vid else None
     except (TypeError, ValueError):
         vid = None
+    _ax_garantia = _anexo_ot_en_garantia(vid)
+    if _anexo_total_items(items) <= 0 and not _ax_garantia:
+        return _ot2_err(
+            "Agrega al menos un ítem de precio con monto. Solo una OT en "
+            "garantía puede llevar un anexo sin pago al proveedor.", "PRECIO_REQUERIDO")
 
     # 🔒 IDEMPOTENCIA 2026-09-10 (Daniel: "arregla el anexo que se envía dos
     # veces"). La causa principal era que el wizard y ot2_api_crear creaban
@@ -100323,7 +100378,7 @@ def ot2_api_anexo_crear():
              _json.dumps(_anexo_productos_norm(d.get("productos"))),
              d.get("fecha_inicio") or None, d.get("fecha_termino") or None,
              (d.get("niveles_servicio") or "").strip() or _clx["niveles_servicio"],
-             (d.get("hitos_pago") or "").strip() or _clx["hitos_pago"],
+             _anexo_hitos_para(items, d.get("hitos_pago"), _ax_garantia) or _clx["hitos_pago"],
              (d.get("alcance_servicio") or "").strip() or _clx["alcance_servicio"],
              _clx["clausulas_adicionales"],
              current_username()))
@@ -100488,6 +100543,12 @@ def ot2_api_anexo_editar(aid):
                   "monto": int(it.get("monto") or 0)} for it in items]
     except (TypeError, ValueError):
         return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
+    # 2026-10-02: misma regla que al crear -- $0 solo si la OT es garantía.
+    _ax_garantia = _anexo_ot_en_garantia((a or {}).get("ot_id"))
+    if _anexo_total_items(items) <= 0 and not _ax_garantia:
+        return _ot2_err(
+            "Agrega al menos un ítem de precio con monto. Solo una OT en "
+            "garantía puede llevar un anexo sin pago al proveedor.", "PRECIO_REQUERIDO")
 
     # Mismo criterio SUGERIDO (no bloqueante) de ot2_api_anexo_crear -- ver
     # comentario ahí y en oaxManDireccion (_modal_anexo.html).
@@ -100522,7 +100583,7 @@ def ot2_api_anexo_editar(aid):
              _json.dumps(_anexo_productos_norm(d.get("productos"))),
              d.get("fecha_inicio") or None, d.get("fecha_termino") or None,
              (d.get("niveles_servicio") or "").strip() or None,
-             (d.get("hitos_pago") or "").strip() or None,
+             _anexo_hitos_para(items, d.get("hitos_pago"), _ax_garantia) or None,
              (d.get("alcance_servicio") or "").strip() or None,
              aid))
     except Exception as e:
