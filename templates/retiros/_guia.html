@@ -1,0 +1,17 @@
+{# ══════════════════════════════════════════════════════════════════════
+   Guía del retiro: los 6 pasos, qué está hecho, qué te toca y qué falta.
+   Daniel 2026-10-02: "los pasos enumerados, los objetos bordeados en rojo, y que te
+   diga exactamente qué hace falta si vas a un paso y no has terminado el anterior".
+   Todo se dibuja en el navegador (static/retiros_guia.js) con los datos de `guia`
+   (retiros_guia.evaluar, calculado en el servidor). No escribe nada por sí solo: sus
+   botones llaman a las mismas acciones que ya tiene la ficha, y «Confirmo» solo deja un
+   registro interno — jamás manda correo al cliente.
+   ══════════════════════════════════════════════════════════════════════ #}
+{% if guia and permissions.retiros %}
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_guia.css') }}">
+<section class="gp" id="gpPanel" data-rid="{{ req.id }}" data-status="{{ req.status }}" aria-label="Guía del retiro: pasos y qué falta">
+  <div class="gp-cargando"><span class="spinner-border spinner-border-sm me-2"></span>Preparando la guía de pasos…</div>
+</section>
+<script type="application/json" id="gpData">{{ guia | tojson }}</script>
+<script defer src="{{ url_for('static', filename='retiros_guia.js') }}"></script>
+{% endif %}

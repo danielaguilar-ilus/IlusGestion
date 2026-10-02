@@ -1,0 +1,179 @@
+/* Guía del retiro (Daniel 2026-10-02): 6 pasos enumerados, lo pendiente BORDEADO EN ROJO y el aviso
+   exacto de qué falta. La operadora de Retiros tiene baja visión: texto >= 16px en lo que se lee,
+   botones >= 48px, el color SIEMPRE acompañado de ícono + texto, contraste alto. Paleta ILUS (REGLA #2).
+   Todo cuelga de .gp* para no tocar el resto de la ficha. */
+:root{--gp-red:#dc2626;--gp-red-bg:#fef2f2;--gp-green:#16a34a;--gp-green-bg:#f0fdf4;--gp-amber:#f59e0b;--gp-amber-bg:#fffbeb;
+  --gp-ink:#111827;--gp-mut:#374151;--gp-line:#e5e7eb}
+.gp{margin:0 0 20px;background:#fff;border:1px solid var(--gp-line);border-radius:18px;box-shadow:0 4px 18px rgba(10,10,10,.07);
+  overflow:hidden;color:var(--gp-ink)}
+.gp *{box-sizing:border-box}
+.gp-cargando{padding:18px 20px;font-size:1rem;color:var(--gp-mut)}
+
+/* ── Cabecera ── */
+.gp-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;padding:16px 20px;background:#0a0a0a;color:#fff}
+.gp-head-t{display:flex;align-items:center;gap:12px;flex:1 1 280px;min-width:0}
+.gp-head-t .bi{font-size:1.7rem;color:#f87171}
+.gp-head h3{margin:0;font-size:1.25rem;font-weight:800;letter-spacing:.01em}
+.gp-head p{margin:2px 0 0;font-size:.95rem;color:#e5e7eb}
+.gp-prog{flex:0 1 260px;min-width:200px}
+.gp-prog b{display:block;font-size:1rem;margin-bottom:6px}
+.gp-prog-bar{height:10px;border-radius:99px;background:rgba(255,255,255,.2);overflow:hidden}
+.gp-prog-bar i{display:block;height:100%;border-radius:99px;background:#22c55e;transition:width .5s}
+
+/* ── Tu siguiente paso ── */
+.gp-sig{margin:16px 16px 4px;padding:16px 18px;border:3px solid var(--gp-red);border-radius:16px;background:var(--gp-red-bg)}
+.gp-sig.is-espera{border-color:var(--gp-amber);background:var(--gp-amber-bg)}
+.gp-sig.is-pendiente,.gp-sig.is-bloqueado{border-color:#9ca3af;background:#f9fafb}
+.gp-sig.is-fin{border-color:var(--gp-green);background:var(--gp-green-bg)}
+.gp-sig-k{display:flex;align-items:center;gap:8px;font-size:.9rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--gp-red)}
+.gp-sig.is-espera .gp-sig-k{color:#b45309}
+.gp-sig.is-pendiente .gp-sig-k,.gp-sig.is-bloqueado .gp-sig-k{color:#4b5563}
+.gp-sig.is-fin .gp-sig-k{color:#166534}
+.gp-sig h4{margin:6px 0 2px;font-size:1.35rem;font-weight:800;line-height:1.25}
+.gp-sig .gp-preg{margin:0 0 10px;font-size:1.05rem;color:var(--gp-mut)}
+
+/* ── Lista de pasos ── */
+.gp-lista{list-style:none;margin:0;padding:14px 16px 16px;display:grid;gap:12px}
+.gp-paso{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 16px;padding:14px 16px;border:2px solid var(--gp-line);
+  border-left-width:8px;border-radius:14px;background:#fff;cursor:pointer;transition:box-shadow .15s,transform .15s}
+.gp-paso:hover{box-shadow:0 6px 18px rgba(10,10,10,.09)}
+.gp-paso:focus-visible{outline:3px solid #0a0a0a;outline-offset:2px}
+.gp-paso.is-hecho{border-color:#bbf7d0;border-left-color:var(--gp-green);background:var(--gp-green-bg)}
+.gp-paso.is-actual{border-color:var(--gp-red);border-left-color:var(--gp-red);background:#fff;box-shadow:0 0 0 4px rgba(220,38,38,.13)}
+.gp-paso.is-espera{border-color:#fcd34d;border-left-color:var(--gp-amber);background:var(--gp-amber-bg)}
+.gp-paso.is-pendiente,.gp-paso.is-bloqueado{border-left-color:#9ca3af;background:#f9fafb}
+.gp-paso.is-bloqueado{opacity:.92}
+.gp-circ{grid-row:1 / span 3;display:flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:50%;
+  font-size:1.5rem;font-weight:800;border:3px solid #9ca3af;color:#4b5563;background:#fff}
+.gp-paso.is-hecho .gp-circ{background:var(--gp-green);border-color:var(--gp-green);color:#fff}
+.gp-paso.is-actual .gp-circ{background:var(--gp-red);border-color:var(--gp-red);color:#fff;animation:gpPulso 1.8s ease-in-out infinite}
+.gp-paso.is-espera .gp-circ{background:var(--gp-amber);border-color:var(--gp-amber);color:#fff}
+@keyframes gpPulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}50%{box-shadow:0 0 0 10px rgba(220,38,38,0)}}
+.gp-ptop{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.gp-ptit{margin:0;font-size:1.2rem;font-weight:800}
+.gp-pq{margin:0;font-size:1rem;color:var(--gp-mut)}
+.gp-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:99px;font-size:.9rem;font-weight:800;border:2px solid transparent}
+.gp-badge.b-hecho{background:#dcfce7;color:#166534;border-color:#86efac}
+.gp-badge.b-actual{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+.gp-badge.b-espera{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+.gp-badge.b-pendiente,.gp-badge.b-bloqueado{background:#f3f4f6;color:#374151;border-color:#d1d5db}
+.gp-res{margin:2px 0 0;font-size:1rem;font-weight:700;color:#166534}
+
+/* Qué falta / avisos / qué se va a confirmar */
+.gp-faltan{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+.gp-faltan li{display:flex;gap:10px;align-items:flex-start;font-size:1.05rem;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.gp-faltan li .bi{flex:0 0 auto;margin-top:3px;color:var(--gp-red)}
+.gp-paso.is-espera .gp-faltan li .bi{color:#b45309}
+.gp-paso.is-pendiente .gp-faltan li .bi,.gp-paso.is-bloqueado .gp-faltan li .bi{color:#6b7280}
+.gp-avisos{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px}
+.gp-avisos li{display:flex;gap:8px;align-items:flex-start;font-size:.95rem;color:#92400e;overflow-wrap:anywhere}
+.gp-avisos .bi{flex:0 0 auto;margin-top:2px}
+.gp-detalle{margin:10px 0 0;padding:10px 14px;border:1px dashed #9ca3af;border-radius:10px;background:#fff;font-size:.98rem}
+.gp-detalle b{display:block;margin-bottom:4px;font-size:.88rem;letter-spacing:.05em;text-transform:uppercase;color:#4b5563}
+.gp-detalle ul{margin:0;padding-left:20px}
+.gp-detalle li{overflow-wrap:anywhere}
+.gp-correo{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:4px 12px;border-radius:99px;background:#fff7ed;
+  border:1.5px solid #fdba74;color:#9a3412;font-size:.92rem;font-weight:700}
+
+/* Botones */
+.gp-acc{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.gp-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 20px;border-radius:12px;
+  border:2px solid var(--gp-red);background:var(--gp-red);color:#fff;font-size:1.05rem;font-weight:800;cursor:pointer;
+  text-decoration:none;transition:filter .15s,transform .1s}
+.gp-btn:hover:not(:disabled){filter:brightness(.93)}
+.gp-btn:active:not(:disabled){transform:scale(.98)}
+.gp-btn.sec{background:#fff;color:#0a0a0a;border-color:#0a0a0a}
+.gp-btn.verde{background:var(--gp-green);border-color:var(--gp-green)}
+.gp-btn:disabled{background:#e5e7eb;border-color:#d1d5db;color:#6b7280;cursor:not-allowed}
+.gp-btn:focus-visible{outline:3px solid #0a0a0a;outline-offset:2px}
+
+/* ── Preparación según Check ── */
+.gp-check{margin-top:12px;padding:14px 16px;border:2px solid #0a0a0a;border-radius:14px;background:#fff}
+.gp-check-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-bottom:6px}
+.gp-check-h b{font-size:1.05rem}
+.gp-check-h .gp-btn{min-height:44px;padding:0 14px;font-size:.95rem;margin-left:auto}
+.gp-check-frase{margin:0 0 10px;font-size:1.05rem;font-weight:700}
+.gp-check-frase.ok{color:#166534}
+.gp-check-et{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.gp-check-et li{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center}
+.gp-et-n{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;font-weight:800;
+  border:2.5px solid #9ca3af;color:#4b5563;background:#fff}
+.gp-check-et li.is-ok .gp-et-n{background:var(--gp-green);border-color:var(--gp-green);color:#fff}
+.gp-check-et li.is-clave .gp-et-n{border-color:var(--gp-red)}
+.gp-et-t{font-size:1rem;font-weight:700;line-height:1.3}
+.gp-et-t small{display:block;font-size:.88rem;font-weight:500;color:#4b5563}
+.gp-et-c{font-size:1rem;font-weight:800;white-space:nowrap}
+.gp-check-bar{grid-column:2 / span 2;height:7px;border-radius:99px;background:#e5e7eb;overflow:hidden}
+.gp-check-bar i{display:block;height:100%;border-radius:99px;background:var(--gp-green)}
+.gp-check-docs{margin:10px 0 0;font-size:.92rem;color:#4b5563}
+.gp-check-nota{margin:10px 0 0;padding:8px 12px;border-radius:10px;background:#f3f4f6;font-size:.92rem;color:#374151}
+
+/* ── Marcas sobre las tarjetas de la ficha (objetos en rojo) ── */
+.step-section.gp-roja{outline:4px solid #dc2626;outline-offset:5px;border-radius:18px;box-shadow:0 0 0 10px rgba(220,38,38,.10)}
+.step-section.gp-ambar{outline:4px solid #f59e0b;outline-offset:5px;border-radius:18px}
+.gp-tag{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0 0 12px;padding:10px 14px;border-radius:12px;
+  background:#dc2626;color:#fff;font-size:1.05rem;font-weight:700}
+.gp-tag.is-espera{background:#f59e0b;color:#1f2937}
+.gp-tag b{font-weight:800}
+.gp-tag .gp-btn{min-height:44px;background:#fff;color:#991b1b;border-color:#fff;margin-left:auto}
+.gp-btn-roja{outline:4px solid #dc2626 !important;outline-offset:3px;animation:gpBtnPulso 1.8s ease-in-out infinite}
+@keyframes gpBtnPulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}50%{box-shadow:0 0 0 12px rgba(220,38,38,0)}}
+.gp-resalta{animation:gpResalta 1.6s ease-out 1}
+@keyframes gpResalta{0%{box-shadow:0 0 0 0 rgba(220,38,38,.7)}100%{box-shadow:0 0 0 24px rgba(220,38,38,0)}}
+
+/* ── Aviso «antes falta…» ── */
+.gp-modal .modal-content{border:3px solid var(--gp-red,#dc2626);border-radius:18px}
+.gp-modal .modal-title{font-size:1.3rem;font-weight:800}
+.gp-modal-lista{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.gp-modal-lista li{display:grid;grid-template-columns:40px minmax(0,1fr);gap:12px;align-items:start;padding:10px 12px;
+  border:2px solid #fca5a5;border-radius:12px;background:#fef2f2}
+.gp-modal-lista .n{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;
+  background:#dc2626;color:#fff;font-weight:800;font-size:1.1rem}
+.gp-modal-lista b{display:block;font-size:1.05rem}
+.gp-modal-lista span{font-size:1rem;overflow-wrap:anywhere}
+.gp-modal .modal-footer{gap:10px;flex-wrap:wrap}
+.gp-modal .gp-btn{min-height:48px}
+
+@media (max-width:767px){
+  .gp{border-radius:14px;margin-bottom:16px}
+  .gp-head{padding:14px}
+  .gp-prog{flex:1 1 100%}
+  .gp-sig{margin:12px 10px 4px;padding:14px}
+  .gp-sig h4{font-size:1.2rem}
+  .gp-lista{padding:12px 10px 14px}
+  .gp-paso{grid-template-columns:44px minmax(0,1fr);gap:4px 12px;padding:12px}
+  .gp-circ{width:44px;height:44px;font-size:1.3rem}
+  .gp-acc .gp-btn{flex:1 1 100%}
+  .gp-tag .gp-btn{flex:1 1 100%;margin-left:0}
+  .gp-check-et li{grid-template-columns:30px minmax(0,1fr) auto}
+  .step-section.gp-roja,.step-section.gp-ambar{outline-offset:3px;box-shadow:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .gp-paso.is-actual .gp-circ,.gp-btn-roja,.gp-resalta{animation:none}
+  .gp-prog-bar i{transition:none}
+}
+
+/* ── Auditoría 2026-10-02: contraste, tamaños y choques con los colores nativos de las tarjetas ── */
+.gp-paso.is-espera .gp-circ{color:#1f2937}
+.gp-btn.verde{background:#15803d;border-color:#15803d}
+.gp-btn:disabled{color:#4b5563}
+.gp-sig-k{color:#b91c1c}
+.gp-detalle{font-size:1rem;max-height:300px;overflow:auto}
+.gp-avisos li,.gp-correo{font-size:1rem}
+.gp-modal .btn-close{width:44px;height:44px;background-size:16px}
+.gp-check-alerta{margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#fef3c7;border:2px solid #f59e0b;color:#78350f;font-size:1rem;font-weight:700}
+.gp-check-et li.is-extra{opacity:.85}
+.gp-check-et li.is-extra .gp-et-t{font-weight:600}
+/* Cada tarjeta de la ficha toma el color del estado de la guía (rojo = te toca, ámbar = esperando, gris = aún no toca, verde = hecho) */
+.step-section.gp-e-actual .step-circle{background:#dc2626 !important;border-color:#dc2626 !important;color:#fff !important}
+.step-section.gp-e-espera .step-circle{background:#f59e0b !important;border-color:#f59e0b !important;color:#1f2937 !important}
+.step-section.gp-e-pendiente .step-circle,.step-section.gp-e-bloqueado .step-circle{background:#fff !important;border-color:#9ca3af !important;color:#4b5563 !important}
+.step-section.gp-e-hecho .step-circle{background:#16a34a !important;border-color:#16a34a !important;color:#fff !important}
+.step-section.gp-e-actual .step-check,.step-section.gp-e-espera .step-check,.step-section.gp-e-pendiente .step-check,.step-section.gp-e-bloqueado .step-check{display:none !important}
+.step-section.gp-e-actual .step-num-text,.step-section.gp-e-espera .step-num-text,.step-section.gp-e-pendiente .step-num-text,.step-section.gp-e-bloqueado .step-num-text{display:inline !important;opacity:1 !important}
+.step-section.gp-e-hecho .step-check{display:inline-flex !important}
+.step-section.gp-e-hecho .step-num-text{display:none !important}
+@media (max-width:767px){
+  #paso-resp > .step-header{flex-wrap:wrap}
+  #paso-resp .resp-btn{max-width:100%;flex:1 1 100%}
+}

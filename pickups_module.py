@@ -11,6 +11,8 @@ from werkzeug.utils import secure_filename
 
 import retiros_monitor as _rmon  # datos derivados del Monitor (semáforo, tarjetas, línea de tiempo)
 import retiros_horarios as _rh    # días especiales: víspera de feriado y salida temprano (funciones puras)
+import retiros_guia as _rg         # guía de 6 pasos de la ficha (funciones puras)
+import retiros_check as _rck       # preparación según CheckWMS (funciones puras; Check es SOLO LECTURA, REGLA #4.4)
 
 
 def _public_base_url():
@@ -4943,6 +4945,10 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros")
     @require_permission("retiros")
     def pickup_dashboard():
+        try:
+            _check_barrido_si_toca()   # preparado por Check aunque nadie tenga abierta la ficha (solo lectura)
+        except Exception:
+            pass
         filtros = {"q": request.args.get("q", "").strip()[:80],
                    "status": request.args.get("status", "").strip()[:40],
                    "date": request.args.get("date", "").strip()[:12],
@@ -5929,6 +5935,8 @@ def register_pickup_routes(app, ctx):
         "whatsapp_enviado": ("mensajes", "bi-whatsapp", "mail", "envió un WhatsApp"),
         "recordatorio_24h_enviado": ("mensajes", "bi-alarm-fill", "mail", "envió el recordatorio de 24 h"),
         "picking_completo": ("cambios", "bi-box-seam-fill", "ok", "terminó de preparar la carga en bodega"),
+        "docs_confirmadas": ("cambios", "bi-patch-check-fill", "ok", "confirmó las facturas o boletas"),
+        "productos_confirmados": ("cambios", "bi-patch-check-fill", "ok", "confirmó los productos y cantidades"),
         "retiro_evidencia": ("cambios", "bi-person-check-fill", "ok", "registró quién retiró"),
         "retiro_evidencia_foto": ("archivos", "bi-camera-fill", "file", "subió la foto de evidencia del retiro"),
     }
@@ -6187,6 +6195,13 @@ def register_pickup_routes(app, ctx):
                 print(f"[pickup_detail] info_completa rid={rid}: {_e_inf}", flush=True)
                 info_completa = None
 
+            # Guía de 6 pasos (Daniel 2026-10-02). Solo lectura; si falla, la ficha sigue igual.
+            try:
+                guia = _guia_datos(rid, req)
+            except Exception as _e_gu:
+                print(f"[pickup_detail] guia rid={rid}: {_e_gu}", flush=True)
+                guia = None
+
             return render_template(
                 "retiros/internal_detail.html",
                 req=req, packages=packages, proposals=proposals, logs=logs,
@@ -6195,7 +6210,7 @@ def register_pickup_routes(app, ctx):
                 statuses=PICKUP_STATUS, status_badge=status_badge,
                 settings=settings(),
                 valores=valores, ficha_ubicacion=ficha_ubicacion, actividad=actividad,
-                hitos=hitos, info_completa=info_completa,
+                hitos=hitos, info_completa=info_completa, guia=guia,
             )
         except Exception as _e_detail:
             # Logging COMPLETO con traceback para diagnóstico inmediato
@@ -11339,6 +11354,441 @@ def register_pickup_routes(app, ctx):
             },
             "redirect_url": url_for("pickup_detail", rid=rid),
         })
+
+    # ══════════════════════════════════════════════════════════════════
+    #  GUÍA DE 6 PASOS + PREPARACIÓN POR CHECK (Daniel 2026-10-02)
+    #  "Que los pasos estén enumerados, los objetos bordeados en rojo y que
+    #  te diga exactamente qué hace falta... y que el sistema identifique con
+    #  Check si está preparado y lo cambie automáticamente."
+    #
+    #  REGLAS DE ESTE BLOQUE (cliente real en producción):
+    #   · NADA de lo de aquí manda correo ni WhatsApp al CLIENTE. Las marcas
+    #     «Confirmo» son INSERT directo en pickup_logs (log_event); jamás pasan
+    #     por /status ni por notify*.
+    #   · Check es SOLO LECTURA (REGLA #4.4): se habla con él únicamente por
+    #     _checkwms_get (solo GET, lista blanca).
+    #   · El «preparado» automático solo ocurre con el retiro YA en
+    #     preparación (ese paso es manual y es el que avisa al cliente) y hace
+    #     lo mismo que el marcado manual de bodega: ítems de la lista + evento
+    #     picking_completo + aviso interno. No cambia el estado del retiro.
+    # ══════════════════════════════════════════════════════════════════
+    _GUIA_ADELANTADOS = ("agenda_confirmada", "reagendada", "en_preparacion", "retirada", "cerrada")
+    _CHECK_PREP_CACHE = {}          # (tipo, numero) → (ts, respondio, resumen|None)
+    _CHECK_PREP_TTL = 45            # s: Check respondió
+    _CHECK_PREP_TTL_ERR = 20        # s: Check no respondió (no insistir en cada refresco)
+    _CHECK_PREP_TIMEOUT = 10        # s por consulta (Check puede colgarse; cada consulta ocupa un hilo)
+    _CHECK_PREP_PRESUPUESTO = 20    # s máximos por petición entre todos los documentos
+    _CHECK_PREP_MAX_DOCS = 12       # más documentos que esto: no se revisa solo
+    _CHECK_LISTO_VISTO = {}         # rid → ts de la primera lectura «listo»
+    _CHECK_APLICAR_LOCK = threading.Lock()
+
+    def _guia_marcas(rid):
+        """Última confirmación de facturas y de productos: {accion: {'firma', 'quien'}}."""
+        out = {}
+        try:
+            rows = mysql_fetchall(
+                f"SELECT id, action, notes, actor_name FROM `{LOG}` "
+                f"WHERE request_id=%s AND action IN ('docs_confirmadas','productos_confirmados') "
+                f"ORDER BY id DESC LIMIT 20", (rid,)) or []
+        except Exception:
+            rows = []
+        for r in rows:
+            a = r.get("action")
+            if a in out:
+                continue
+            m = re.search(r"firma=([0-9a-f]{12})", r.get("notes") or "")
+            out[a] = {"firma": m.group(1) if m else None, "quien": (r.get("actor_name") or "").strip()}
+        return out
+
+    def _retiro_preparado(rid, status):
+        """¿Bodega ya terminó de preparar? Solo tiene sentido con el retiro en preparación.
+        Cuenta el evento picking_completo POSTERIOR al último paso a preparación; si hay lista de picking,
+        además debe estar completa ahora (si bodega desmarca un ítem, deja de estar «listo»)."""
+        if status != "en_preparacion":
+            return False
+        try:
+            f = mysql_fetchone(
+                f"SELECT (SELECT MAX(id) FROM `{LOG}` WHERE request_id=%s AND action='picking_completo') AS listo, "
+                f"(SELECT MAX(id) FROM `{LOG}` WHERE request_id=%s AND action='estado_actualizado' "
+                f" AND new_status='en_preparacion') AS prep", (rid, rid)) or {}
+            listo_id = int(f.get("listo") or 0)
+            prep_id = int(f.get("prep") or 0)
+        except Exception:
+            listo_id = prep_id = 0
+        if not listo_id or listo_id <= prep_id:
+            return False
+        try:
+            pk = _picking_estado(rid)
+            if pk.get("total"):
+                return bool(pk.get("completo"))
+        except Exception:
+            pass
+        return True
+
+    def _guia_firmas(rid, estricto=False):
+        """Huellas de la lista de documentos y de la selección de productos (para saber si lo confirmado sigue vigente).
+        `estricto`: si no se pueden leer los productos, falla en vez de usar una lista vacía."""
+        docs = mysql_fetchall(
+            "SELECT id, document_type, document_number FROM pickup_request_docs "
+            "WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+        f_docs = _rg.firma([f"{d.get('id')}:{(d.get('document_type') or '').upper()}:{d.get('document_number') or ''}" for d in docs])
+        try:
+            lineas = (_pickup_lineas_consolidadas(rid) or {}).get("lineas") or []
+        except Exception:
+            if estricto:
+                raise
+            lineas = []
+        f_prod = _rg.firma([
+            f"{l.get('doc_tipo') or ''}{l.get('doc_numero') or ''}:{l.get('sku') or ''}:{l.get('cantidad') or 0}" for l in lineas])
+        return f_docs, f_prod, docs, lineas
+
+    def _guia_correo_ok(req):
+        """¿Hay a dónde mandarle la propuesta? Mismos correos que usa el envío real (contacto + extras)."""
+        try:
+            return bool(_get_pickup_all_emails(req))
+        except Exception:
+            return bool(is_valid_email(req.get("contact_email") or ""))
+
+    def _guia_evidencia_retiro(rid, req):
+        """¿Este retiro 'cerrado' realmente se retiró? (quién retiró, o un paso por «retirada»)."""
+        if (req.get("retirado_por_nombre") or "").strip():
+            return True
+        try:
+            return bool(mysql_fetchone(
+                f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action='estado_actualizado' "
+                f"AND new_status='retirada' LIMIT 1", (rid,)))
+        except Exception:
+            return True
+
+    def _guia_datos(rid, req):
+        """Arma la guía de 6 pasos (retiros_guia.evaluar) con lo que hay en la BD. Solo lectura."""
+        f_docs, f_prod, _docs_min, lineas = _guia_firmas(rid)
+        try:
+            docs = mysql_fetchall(
+                "SELECT id, document_type, document_number, cliente_nombre, cliente_rut, con_saldo, motivo_otro_rut "
+                "FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+        except Exception:
+            docs = mysql_fetchall(
+                "SELECT id, document_type, document_number, cliente_nombre "
+                "FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+        docs_ui = []
+        for d in docs:
+            rot = f"{(d.get('document_type') or '').upper()} {d.get('document_number') or ''}".strip()
+            docs_ui.append({"rotulo": rot, "con_saldo": d.get("con_saldo"), "rut": d.get("cliente_rut") or "",
+                            "otro_rut": bool(d.get("motivo_otro_rut")), "cliente": d.get("cliente_nombre") or ""})
+        marcas = _guia_marcas(rid)
+        st = req.get("status") or ""
+        cita = (str(req.get("confirmed_date") or "").strip() not in ("", "None"))
+        propuesta = (str(req.get("proposed_date") or "").strip() not in ("", "None"))
+        cambio = False
+        if (cita or propuesta) and st not in ("en_preparacion", "retirada", "cerrada", "rechazada", "fallida"):
+            try:
+                cambio = bool(mysql_fetchone(
+                    f"SELECT id FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+                    f"AND LOWER(proposed_by)='cliente' LIMIT 1", (rid,)))
+            except Exception:
+                cambio = False
+        try:
+            pk = _picking_estado(rid)
+        except Exception:
+            pk = {"total": 0, "hechos": 0}
+        g_ = _rg.evaluar({
+            "status": st, "n_docs": len(docs), "docs": docs_ui,
+            "docs_firma": f_docs, "docs_conf": (marcas.get("docs_confirmadas") or {}).get("firma"),
+            "docs_conf_quien": (marcas.get("docs_confirmadas") or {}).get("quien"),
+            "prod_n": len(lineas), "prod_firma": f_prod,
+            "prod_conf": (marcas.get("productos_confirmados") or {}).get("firma"),
+            "prod_conf_quien": (marcas.get("productos_confirmados") or {}).get("quien"),
+            "adelantado": bool(propuesta or cita or st in _GUIA_ADELANTADOS),
+            "responsable": req.get("responsable_nombre") or "",
+            "correo_ok": _guia_correo_ok(req),
+            "evidencia_retiro": _guia_evidencia_retiro(rid, req),
+            "propuesta": propuesta, "cita": cita, "cambio_pedido": cambio,
+            "preparado": _retiro_preparado(rid, st),
+            "picking_total": pk.get("total"), "picking_hechos": pk.get("hechos"),
+        })
+        # Lo que se va a confirmar, a la vista y COMPLETO (REGLA #15: nada recortado): documento, cliente, RUT y saldo.
+        def _saldo_txt(v):
+            return "con saldo" if v == 1 else ("SIN saldo" if v == 0 else "saldo sin verificar")
+        g_["pasos"][0]["detalle"] = [
+            d["rotulo"] + (f" · {d['cliente']}" if d["cliente"] else "") + (f" · RUT {d['rut']}" if d.get("rut") else "")
+            + f" · {_saldo_txt(d.get('con_saldo'))}" for d in docs_ui]
+        g_["pasos"][0]["total"] = len(docs_ui)
+
+        def _cant(v):
+            try:
+                v = float(v or 0)
+            except (TypeError, ValueError):
+                return "?"
+            return str(int(v)) if v.is_integer() else str(v)
+        g_["pasos"][2]["detalle"] = [
+            f"{_cant(l.get('cantidad'))} × {(l.get('descripcion') or l.get('sku') or 'Producto')}"
+            + (f" (SKU {l.get('sku')})" if l.get("sku") else "") + (" · sin saldo" if l.get("marcada_sin_saldo") else "")
+            for l in lineas]
+        g_["pasos"][2]["total"] = len(lineas)
+        g_["firma_docs"], g_["firma_prod"] = f_docs, f_prod
+        g_["status"] = st
+        g_["rid"] = rid
+        g_["codigo"] = req.get("code") or ""
+        return g_
+
+    @app.route("/retiros/<int:rid>/guia", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_guia_json(rid):
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        try:
+            resp = jsonify({"ok": True, **_guia_datos(rid, req)})
+        except Exception as e:
+            print(f"[pickup-guia] rid={rid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo armar la guía."}), 500
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    def _guia_confirmar(rid, que):
+        """Marca «Confirmo estas facturas / estos productos». SOLO escribe un evento en pickup_logs:
+        no cambia el estado, no manda correo ni WhatsApp al cliente."""
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        if (req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
+            return jsonify({"ok": False, "error": "Este retiro ya terminó: no hay nada que confirmar."}), 409
+        u = getattr(g, "user", None) or {}
+        quien = (u.get("nombre") or u.get("username") or "").strip()[:190]
+        if not quien:
+            return jsonify({"ok": False, "error": "No pudimos identificar tu usuario. Vuelve a iniciar sesión."}), 400
+        body = request.get_json(silent=True) or {}
+        datos = _guia_datos(rid, req)
+        p1, p3 = datos["pasos"][0], datos["pasos"][2]
+        idx = 0 if que == "docs" else 2
+        paso = datos["pasos"][idx]
+        tipo_ok = "confirmar_docs" if que == "docs" else "confirmar_productos"
+        if (paso.get("accion") or {}).get("tipo") != tipo_ok:
+            if paso["estado"] == "hecho":
+                return jsonify({"ok": True, "ya": True, **datos})
+            return jsonify({"ok": False, "error": "Primero agrega la factura o boleta del cliente."}), 409
+        if (paso.get("accion") or {}).get("deshabilitada"):
+            return jsonify({"ok": False, "error": "Primero confirma las facturas (paso 1)."}), 409
+        # Lo confirmado es EXACTAMENTE lo que la persona vio: si la lista cambió mientras tanto, se pide revisar de nuevo.
+        visto = body.get("firma")
+        actual = datos["firma_docs"] if que == "docs" else datos["firma_prod"]
+        if visto and visto != actual:
+            return jsonify({"ok": False, "error": "La lista cambió mientras la mirabas. Revísala de nuevo y confirma."}), 409
+        try:
+            f_docs, f_prod, _d, _l = _guia_firmas(rid, estricto=True)
+        except Exception as e:
+            print(f"[pickup-guia] firma rid={rid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo leer la lista para confirmarla. Reintenta."}), 500
+        firma = f_docs if que == "docs" else f_prod
+        n = paso.get("total") or len(paso.get("detalle") or [])
+        texto = (f"{n} documento{'s' if n != 1 else ''}: " if que == "docs" else f"{n} producto{'s' if n != 1 else ''}: ") \
+            + "; ".join((paso.get("detalle") or [])[:40])
+        accion = "docs_confirmadas" if que == "docs" else "productos_confirmados"
+        log_event(rid, accion, req.get("status"), req.get("status"),
+                  f"firma={firma} · {texto}"[:900], "interno", quien)
+        # log_event no avisa si falla: se comprueba que la marca quedó guardada antes de decir «listo».
+        despues = _guia_datos(rid, req)
+        if despues["pasos"][idx]["estado"] != "hecho":
+            return jsonify({"ok": False, "error": "No se pudo guardar la confirmación. Reintenta."}), 500
+        return jsonify({"ok": True, **despues})
+
+    @app.route("/retiros/<int:rid>/confirmar-docs", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_confirmar_docs(rid):
+        return _guia_confirmar(rid, "docs")
+
+    @app.route("/retiros/<int:rid>/confirmar-productos", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_confirmar_productos(rid):
+        return _guia_confirmar(rid, "productos")
+
+    # ── Preparación detectada por Check (SOLO LECTURA) ────────────────
+    def _check_doc_resumen(tipo, num):
+        """GetSeguimientoDespacho de UN documento → (respondio, resumen|None). Cacheado unos segundos.
+        Timeout corto (Check puede colgarse y cada consulta ocupa un hilo de la petición)."""
+        key = (tipo, num)
+        hit = _CHECK_PREP_CACHE.get(key)
+        if hit:
+            ttl = _CHECK_PREP_TTL if hit[1] else _CHECK_PREP_TTL_ERR
+            if time.time() - hit[0] < ttl:
+                return hit[1], hit[2]
+        _get = ctx.get("_checkwms_get")
+        respondio, resumen = False, None
+        if _get:
+            try:
+                # La API guarda el número de varias formas: sin ceros y a 10 dígitos.
+                for variante in dict.fromkeys([num.lstrip("0") or num, num.zfill(10)]):
+                    data = _get("/api/ext/GetSeguimientoDespacho",
+                                {"tipodoc": tipo, "numdoc": variante, "diasrevisa": "90"}, timeout=_CHECK_PREP_TIMEOUT)
+                    if data is None:
+                        break          # no respondió (error o tiempo agotado): no reintentar con otro formato
+                    if not isinstance(data, dict):
+                        break          # respuesta que no es un objeto JSON: se trata como «no respondió»
+                    respondio = True
+                    body = data.get("body")
+                    filas = body.get("response") if isinstance(body, dict) else body
+                    filas = filas if isinstance(filas, list) else ([] if filas is None else [filas])
+                    resumen = _rck.resumir_filas(filas, tipo=tipo, num=num)
+                    if resumen:
+                        break
+            except Exception as e:
+                print(f"[retiros-check] consulta {tipo} {num}: {e}", flush=True)
+                respondio, resumen = False, None
+        _CHECK_PREP_CACHE[key] = (time.time(), respondio, resumen)
+        if len(_CHECK_PREP_CACHE) > 400:
+            _CHECK_PREP_CACHE.clear()
+        return respondio, resumen
+
+    def _check_prep_retiro(rid):
+        """Qué dice Check de los documentos de un retiro. Solo lectura, con tope de documentos y de tiempo."""
+        docs = mysql_fetchall(
+            "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
+            (rid,)) or []
+        if len(docs) > _CHECK_PREP_MAX_DOCS:
+            ev = {"estado": "en_proceso", "listo": False, "listo_auto": False, "pedidas": 0, "faltan": 0, "etapas": [],
+                  "frase": f"Este retiro tiene {len(docs)} documentos: son demasiados para revisarlos solos en Check. Usa la lista manual.",
+                  "alerta": "", "documentos_con_datos": 0, "documentos": len(docs)}
+            return {"evaluacion": ev, "documentos": [], "sin_respuesta": 0}
+        t0 = time.time()
+        resumenes, docs_ui, sin_respuesta = [], [], 0
+        for d in docs:
+            tipo = (d.get("document_type") or "").strip().upper()[:5]
+            num = re.sub(r"\D", "", d.get("document_number") or "")[:12]
+            if not tipo or not num:
+                resumenes.append(None)
+                docs_ui.append({"rotulo": f"{tipo} {d.get('document_number') or ''}".strip(), "estado": "sin_datos"})
+                continue
+            if time.time() - t0 > _CHECK_PREP_PRESUPUESTO:      # Check lento: no seguir ocupando el hilo
+                sin_respuesta += 1
+                resumenes.append(None)
+                docs_ui.append({"rotulo": f"{tipo} {num}", "estado": "sin_datos"})
+                continue
+            ok, res = _check_doc_resumen(tipo, num)
+            if not ok:
+                sin_respuesta += 1
+            resumenes.append(res)
+            ev1 = _rck.evaluar([res]) if res else None
+            docs_ui.append({"rotulo": f"{tipo} {num}", "estado": (ev1 or {}).get("estado") or "sin_datos",
+                            "pedidas": (ev1 or {}).get("pedidas"), "faltan": (ev1 or {}).get("faltan")})
+        if docs and sin_respuesta == len(docs):
+            ev = {"estado": "sin_conexion", "listo": False, "listo_auto": False, "pedidas": 0, "faltan": 0, "etapas": [],
+                  "frase": "No pudimos consultar Check ahora. Mientras tanto usa la lista manual de abajo.",
+                  "alerta": "", "documentos_con_datos": 0, "documentos": len(docs)}
+        else:
+            ev = _rck.evaluar(resumenes)
+        return {"evaluacion": ev, "documentos": docs_ui, "sin_respuesta": sin_respuesta}
+
+    def _check_auto_activo():
+        """Interruptor del marcado automático (variable de entorno RETIROS_CHECK_AUTO; por defecto ENCENDIDO).
+        Apagado (0/false/no/off) = Check solo informa en pantalla y no escribe nada."""
+        return (os.environ.get("RETIROS_CHECK_AUTO") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+    def _check_confirmacion_s():
+        """Segundos que deben separar las dos lecturas «listo» (RETIROS_CHECK_CONFIRMACION_S; por defecto 25)."""
+        try:
+            return max(0.0, float(os.environ.get("RETIROS_CHECK_CONFIRMACION_S") or 25))
+        except ValueError:
+            return 25.0
+
+    def _check_aplicar_listo(rid, req, ev):
+        """Si Check confirma que TODO está pickeado y el retiro ya está en preparación, deja el pedido
+        «listo para entregar»: marca la lista de bodega, deja el evento picking_completo y avisa al equipo
+        (igual que el marcado manual). NO cambia el estado del retiro y NO escribe al cliente.
+        Salvaguardas: interruptor de entorno; solo `listo_auto` (nada despachado ni datos raros); dos lecturas
+        seguidas de «listo» separadas por >= 25 s (descarta un dato pasajero); el estado se relee dentro del candado."""
+        if (req.get("status") or "") != "en_preparacion" or not ev.get("listo_auto") or not _check_auto_activo():
+            _CHECK_LISTO_VISTO.pop(rid, None)
+            return False
+        ahora = time.time()
+        primera = _CHECK_LISTO_VISTO.setdefault(rid, ahora)
+        if ahora - primera < _check_confirmacion_s():
+            return False
+        with _CHECK_APLICAR_LOCK:
+            fresco = mysql_fetchone(f"SELECT status FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+            if (fresco.get("status") or "") != "en_preparacion":
+                _CHECK_LISTO_VISTO.pop(rid, None)
+                return False
+            if _retiro_preparado(rid, "en_preparacion"):
+                return False
+            try:
+                mysql_execute(
+                    "UPDATE pickup_picking_items SET picked=1, picked_by='Check WMS', picked_at=NOW() "
+                    "WHERE request_id=%s AND picked=0", (rid,))
+                log_event(rid, "picking_completo", "en_preparacion", "en_preparacion",
+                          f"Check confirmó que bodega ya juntó todo el pedido ({ev.get('pedidas')} unidades): "
+                          f"marcado como preparado automáticamente.", "sistema", "Check WMS")
+            except Exception as e:
+                print(f"[retiros-check] aplicar rid={rid}: {e}", flush=True)
+                return False
+            _CHECK_LISTO_VISTO.pop(rid, None)
+        try:
+            _notificar_equipo_retiros(
+                f"📦✅ Pedido {req.get('code') or '?'} LISTO para entrega",
+                f"{req.get('customer_name') or 'Cliente'} — Check confirmó que bodega ya juntó el pedido.",
+                rid, req.get("code") or "?", prioridad="media", tipo="retiro_listo", send_email=False)
+        except Exception as e:
+            print(f"[retiros-check] aviso equipo rid={rid}: {e}", flush=True)
+        try:
+            tok = req.get("public_token")
+            if tok:
+                _POLL_CACHE.pop(tok, None)
+        except Exception:
+            pass
+        return True
+
+    @app.route("/retiros/<int:rid>/check-preparacion", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_check_preparacion(rid):
+        """Qué dice Check de la preparación de este retiro. Con ?solo_lectura=1 nunca escribe nada."""
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        try:
+            res = _check_prep_retiro(rid)
+        except Exception as e:
+            print(f"[retiros-check] rid={rid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo consultar Check."}), 500
+        aplicado = False
+        if not request.args.get("solo_lectura"):
+            aplicado = _check_aplicar_listo(rid, req, res["evaluacion"])
+        resp = jsonify({"ok": True, "status": req.get("status"), "aplicado_ahora": aplicado,
+                        "auto_activo": _check_auto_activo(),
+                        "preparado": _retiro_preparado(rid, req.get("status") or ""), **res})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    _CHECK_BARRIDO = {"ts": 0.0, "corriendo": False}
+
+    def _check_barrido():
+        """Revisa en Check TODOS los retiros en preparación (lo dispara quien entra al Monitor, a lo más
+        cada 2 minutos), para que 'preparado' se marque aunque nadie tenga abierta la ficha.
+        Corre en un hilo aparte: necesita su propio contexto de aplicación (mysql_* usa flask.g)."""
+        try:
+            with app.app_context():
+                filas = mysql_fetchall(
+                    f"SELECT id FROM `{REQ}` WHERE status='en_preparacion' ORDER BY id DESC LIMIT 30") or []
+                for f in filas:
+                    try:
+                        rid = int(f["id"])
+                        if _retiro_preparado(rid, "en_preparacion"):
+                            continue
+                        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+                        if req:
+                            _check_aplicar_listo(rid, req, _check_prep_retiro(rid)["evaluacion"])
+                    except Exception as e:      # un retiro con datos raros no frena a los demás
+                        print(f"[retiros-check] barrido rid={f.get('id')}: {e}", flush=True)
+        except Exception as e:
+            print(f"[retiros-check] barrido: {e}", flush=True)
+        finally:
+            _CHECK_BARRIDO["corriendo"] = False
+
+    def _check_barrido_si_toca():
+        if _CHECK_BARRIDO["corriendo"] or time.time() - _CHECK_BARRIDO["ts"] < 120:
+            return
+        _CHECK_BARRIDO["ts"] = time.time()
+        _CHECK_BARRIDO["corriendo"] = True
+        threading.Thread(target=_check_barrido, daemon=True).start()
 
     # ══════════════════════════════════════════════════════════════════
     #  DIAGNÓSTICO CHECKWMS (Daniel 2026-10-02) — SOLO LECTURA, REGLA #4.4.
