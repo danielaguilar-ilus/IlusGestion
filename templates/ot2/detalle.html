@@ -12721,11 +12721,61 @@ function otdChkTareaHtml(t, nro, esSiguiente){
     ${sello}
     <div class="bodyc">
       ${body}
+      ${otdChkNoAplicaHtml(t, tipo, bloqueada)}
       ${otdChkFotoBtnHtml(t)}
       ${otdChkFotosHtml(t)}
       ${lockMsg}
     </div>
   </div>`;
+}
+
+/* 2026-10-02 (OT-2026-00268): "No aplica" con motivo. Si la tarea no
+   corresponde al trabajo de esta OT (ej. revisar cable y poleas en un retiro
+   de tapices), el técnico la marca No aplica y explica por qué: queda quién y
+   cuándo, la respuesta anterior se conserva y NO cuenta como aprobada. Las
+   tareas de seguridad o ya en falla las autoriza solo un supervisor
+   (el servidor responde 403 y se avisa). */
+function otdChkNoAplicaHtml(t, tipo, bloqueada){
+  if (['verificacion','lista','texto','numero','fecha_hora'].indexOf(tipo) < 0) return '';
+  const vj = t.valor_json || {};
+  if (vj.na){
+    return `<div class="otd-chk-na"><b>No aplica</b> · ${otdEsc(vj.na_motivo || '')}
+      <span class="text-muted">— ${otdEsc(vj.na_por || '')}</span></div>`;
+  }
+  if (bloqueada) return '';
+  return `<button type="button" class="btn btn-link btn-sm p-0 mt-1" style="min-height:44px"
+    onclick="otdChkNoAplica(${t.id})">Esta tarea no aplica a este trabajo</button>`;
+}
+async function otdChkNoAplica(tid){
+  const found = otdChkFindTarea(tid);
+  if (!found) return;
+  const { t, mid } = found;
+  const motivo = await ilusPrompt({
+    title: 'Marcar «No aplica»',
+    message: t.titulo || 'Esta tarea',
+    sub: 'Explica por qué no corresponde a este trabajo (mínimo 10 caracteres). Queda registrado con tu nombre y no cuenta como aprobada.',
+    placeholder: 'Ej: Visita solo para retirar tapices; no incluye revisión mecánica',
+    required: true,
+  });
+  if (!motivo) return;
+  try {
+    const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/respuesta`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ na: true, na_motivo: motivo, version: t.version || 0 })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      ilusToast(d.error || 'No se pudo marcar «No aplica»', {type:'warning', duration:6000});
+      return;
+    }
+    t.completada = d.completada;
+    t.valor_json = d.valor_norm;
+    if (typeof d.version === 'number') t.version = d.version;
+    ilusToast('✓ Marcada «No aplica»', {type:'success', duration:1500});
+    otdRenderChecklistEquipo(mid);
+  } catch(e){
+    ilusToast('Sin conexión: no se pudo guardar. Reintenta.', {type:'error'});
+  }
 }
 
 /* Fecha corta y en hora de Chile (REGLA #6). El backend manda

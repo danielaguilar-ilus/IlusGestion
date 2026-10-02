@@ -77913,6 +77913,55 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
     return razones
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  COHERENCIA CHECKLIST ↔ VEREDICTO (2026-10-02, OT-2026-00268)
+#  El PDF salió con "2 críticos" (cable en FALLA, "¿seguro?"=NO) y a la vez
+#  "Operativo / Aprobado": el Diagnóstico del equipo era manual y no miraba
+#  el checklist. Y el técnico no tenía "No aplica" en verificación/lista, así
+#  que una tarea que no correspondía al trabajo (retiro de tapices vs cable
+#  y poleas) solo podía quedar en FALLA o bloqueada.
+# ══════════════════════════════════════════════════════════════════════
+_RE_TAREA_SEGURIDAD = re.compile(
+    r"seguridad|cable|polea|cinta|correa|freno|emergencia|anclaje|"
+    r"soldadura|estructur|fijaci[oó]n|cadena|guard", re.I)
+
+
+def _tarea_es_seguridad(titulo):
+    return bool(_RE_TAREA_SEGURIDAD.search(titulo or ""))
+
+
+def _tarea_vj(t):
+    vj = t.get("valor_json")
+    if isinstance(vj, str):
+        try:
+            vj = json.loads(vj)
+        except Exception:
+            vj = {}
+    return vj if isinstance(vj, dict) else {}
+
+
+def _tarea_es_hallazgo(t):
+    """True si la tarea quedó en FALLA (verificación) o NO (sino) y NO fue
+    marcada 'No aplica'."""
+    vj = _tarea_vj(t)
+    if vj.get("na"):
+        return False
+    tr = (t.get("tipo_respuesta") or "").strip().lower()
+    v = str(vj.get("valor") or "").strip().lower()
+    return (tr == "verificacion" and v == "falla") or (tr == "sino" and v == "no")
+
+
+def _ot_equipo_hallazgos(vid, mid):
+    """Títulos de las tareas en FALLA/NO (sin N/A) de un equipo de la OT."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT titulo, tipo_respuesta, valor_json FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND maquina_id=%s", (vid, mid)) or []
+    except Exception:
+        return []
+    return [r.get("titulo") for r in rows if _tarea_es_hallazgo(r)]
+
+
 def _ot_validar_cierre(vid):
     """FASE 5 — Validación de cierre auditable de OT con 4 reglas que el
     usuario aprobó. Devuelve dict con resultado:
@@ -78638,6 +78687,21 @@ def mant_visita_equipo_diagnostico(vid, mid):
             "error": f"Describe el diagnóstico (mínimo {_MOTIVO_MIN_CHARS} caracteres)."
         }), 400
     texto = texto[:3000]
+
+    # 🔒 2026-10-02 (OT-2026-00268): "Aprobado" no puede coexistir con una
+    # tarea en FALLA o "¿puede operar con seguridad?"=NO. Si la tarea no
+    # corresponde al trabajo, se marca "No aplica" con motivo; si es real,
+    # el veredicto es "Con falla".
+    if estado == "aprobado":
+        _hall = _ot_equipo_hallazgos(vid, mid)
+        if _hall:
+            return jsonify({
+                "ok": False, "error_codigo": "DIAGNOSTICO_INCOHERENTE",
+                "error": ("No se puede aprobar este equipo: tiene tareas en falla o "
+                          "marcadas como NO (" + "; ".join(h for h in _hall[:3] if h) +
+                          "). Si no corresponden a este trabajo, márcalas «No aplica» "
+                          "con su motivo; si son reales, el diagnóstico es «Con falla»."),
+            }), 409
 
     user = current_username()
     # 🔴 FIX 2026-09-08 (Bug 2, Daniel en vivo: "marco fuera de servicio, no
@@ -108998,7 +109062,7 @@ def mant_visita_tarea_respuesta(vid, tid):
     valor = d.get("valor")
     # Leer la tarea para conocer su tipo + version + lock-holder
     tar = mysql_fetchone(
-        "SELECT id, tipo_respuesta, obligatoria, rango_min, rango_max, valor_json, "
+        "SELECT id, titulo, tipo_respuesta, obligatoria, rango_min, rango_max, valor_json, "
         "       version, locked_by_user_id, locked_at, maquina_id, target_field "
         "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
         (tid, vid)
@@ -109102,7 +109166,31 @@ def mant_visita_tarea_respuesta(vid, tid):
     valor_norm = None
     error = None
     completar = True
-    if tipo == "texto":
+    # ── "No aplica" con motivo (2026-10-02, OT-2026-00268) ──
+    # Cualquier tarea simple puede marcarse "No aplica" si NO corresponde al
+    # trabajo de esta OT. Reglas: motivo obligatorio (>=10); queda quién y
+    # cuándo; la respuesta anterior se CONSERVA (evidencia); no cuenta como
+    # aprobada; en tareas de SEGURIDAD o sobre una FALLA/NO ya marcada solo
+    # lo autoriza un supervisor/gestión.
+    _na_ok = False
+    if d.get("na") and tipo in ("verificacion", "lista", "texto", "numero", "fecha_hora", "sino"):
+        _na_motivo = str(d.get("na_motivo") or "").strip()[:300]
+        if len(_na_motivo) < 10:
+            return jsonify({"ok": False, "error_codigo": "NA_SIN_MOTIVO",
+                            "error": "Explica por qué no aplica (mínimo 10 caracteres)."}), 400
+        _prev = _tarea_vj(tar)
+        if (_tarea_es_seguridad(tar.get("titulo")) or _tarea_es_hallazgo(tar))                 and not _is_supervisor_user():
+            return jsonify({"ok": False, "error_codigo": "NA_REQUIERE_SUPERVISOR",
+                            "error": "Esta tarea es de seguridad o ya quedó en falla: solo un "
+                                     "supervisor puede marcarla «No aplica». Avísale a gestión."}), 403
+        _na_ok = True
+        valor_norm = {"na": True, "na_motivo": _na_motivo, "na_por": current_username() or "sistema",
+                      "na_at": datetime.now().isoformat(timespec="seconds")}
+        if _prev and not _prev.get("na"):
+            valor_norm["valor_previo"] = _prev
+    if _na_ok:
+        pass
+    elif tipo == "texto":
         # 2026-05-18 (Mejora UX): aplicamos umbral mínimo de caracteres para
         # marcar la tarea como gestionada (completada=1). Si el técnico escribió
         # menos del mínimo, persistimos el valor pero NO marcamos completada
@@ -110117,7 +110205,8 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         _rev_e = (e.get("estado_revision") or "").strip().lower()
         _diag_e = (e.get("diagnostico_estado") or "").strip().lower()
         _saltado_e = (_rev_e == "saltado")
-        _falla_e = (_rev_e == "falla_detectada") or (_diag_e == "falla")
+        _falla_e = (_rev_e == "falla_detectada") or (_diag_e == "falla") or any(
+            _tarea_es_hallazgo(_t) for _t in (tareas or []) if _t.get("maquina_id") == e.get("id"))
         _hay_fs_sol = any(s.get("dejo_fuera_servicio") for s in _sols_e)
         # No depende de _OTREP_ABIERTOS (MEDIA 3): rechazada es la ÚNICA
         # que no cuenta como alerta -- ni siquiera "instalado" se excluye.
@@ -110804,6 +110893,9 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
         """Devuelve (texto, clase) para la pill de resultado."""
         tr = (t.get("tipo_respuesta") or "check").lower()
         vj = _valor_json_dict(t)
+        if vj.get("na"):
+            _m = (vj.get("na_motivo") or "").strip()
+            return ("N/A" + (f" · {_m[:160]}" if _m else ""), "txt")
         if tr == "verificacion":
             v = (t.get("valor_verificacion") or vj.get("valor") or "").lower()
             if v == "aprobado": return ("OK", "ok")
@@ -110828,7 +110920,7 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             unidad = t.get("unidad") or ""
             return (f"{txt} {unidad}".strip(), "ok")
         if tr == "lista":
-            return ((t.get("valor_lista") or vj.get("valor") or "—"), "txt")
+            return ((t.get("valor_lista") or vj.get("opcion") or vj.get("valor") or "—"), "txt")
         if tr == "fecha_hora":
             v = t.get("valor_fecha_hora")
             if v: return (v.strftime('%d/%m %H:%M'), "txt")
