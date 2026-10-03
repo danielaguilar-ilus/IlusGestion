@@ -8475,9 +8475,14 @@ def register_pickup_routes(app, ctx):
         import json as _json_pd
         if refrescar:
             _PROD_ERP_CACHE.clear()
-        docs = mysql_fetchall(
-            "SELECT id, document_type, document_number, erp_snapshot, has_seleccion_lineas "
-            "FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+        try:
+            docs = mysql_fetchall(
+                "SELECT id, document_type, document_number, erp_snapshot, has_seleccion_lineas, cliente_nombre, cliente_rut "
+                "FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+        except Exception:
+            docs = mysql_fetchall(
+                "SELECT id, document_type, document_number, erp_snapshot, has_seleccion_lineas "
+                "FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
         consolidado = _pickup_lineas_consolidadas(rid)
         # Pesos/volúmenes de lo que SE RETIRA, ya multiplicados por la cantidad
         pesos = {}
@@ -8636,6 +8641,7 @@ def register_pickup_routes(app, ctx):
                         doc_guias.append({"tipo": c["tipo"], "label": c["label"], "numero": c["numero"], "fecha": c["fecha"]})
             out_docs.append({
                 "doc_id": d["id"], "tipo": tipo, "numero": numero, "fecha": erp.get("fecha") or "",
+                "cliente": (d.get("cliente_nombre") or "").strip(), "cliente_rut": (d.get("cliente_rut") or "").strip(),
                 "erp_ok": bool(erp.get("ok")), "erp_error": None if erp.get("ok") else erp.get("error"),
                 "guias_ok": bool(erp.get("guias_ok")), "consumos": doc_guias,
                 "otros_retiros": otros.get((tipo, numero), []),

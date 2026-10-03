@@ -971,12 +971,18 @@ function _pdRenderDoc(doc){
   const servHtml = servicios.length
     ? `<div class="pd-servicios"><i class="bi bi-info-circle"></i> ${servicios.map(_esc).join(' · ')}: línea de servicio, no es producto físico.</div>`
     : '';
-  return `<article class="pd-doc" data-doc-id="${doc.doc_id}">
+  // Cabecera por FACTURA (Daniel 2026-10-02: «de qué factura viene, por si es multifactura»): número, cliente,
+  // RUT, emisión y cuántos productos se retiran de ella.
+  const _incl = lineas.filter(l => l.incluida && l.a_retirar > 0);
+  const _unid = _incl.reduce((a, l) => a + (parseFloat(l.a_retirar) || 0), 0);
+  const _prob = lineas.filter(l => l.tono === 'rojo').length;
+  const _resumen = `${_incl.length} de ${lineas.length} producto${lineas.length === 1 ? '' : 's'} · ${_fmtNum(_unid, 0)} unidad${_unid === 1 ? '' : 'es'} a retirar`;
+  return `<article class="pd-doc ${_prob ? 'has-problema' : ''}" data-doc-id="${doc.doc_id}">
     <div class="pd-doc-head">
       <span class="pd-doc-pill">${_esc(doc.tipo)}</span>
       <div class="pd-doc-meta">
-        <span class="pd-doc-num">${_esc(doc.tipo)} ${_esc(doc.numero)}</span>
-        <span class="pd-doc-fecha">${doc.fecha ? 'Emitida ' + _esc(doc.fecha) : ''}</span>
+        <span class="pd-doc-num">${_esc(doc.tipo)} ${_esc(doc.numero)}${doc.cliente ? ' · ' + _esc(doc.cliente) : ''}</span>
+        <span class="pd-doc-fecha">${doc.fecha ? 'Emitida ' + _esc(doc.fecha) : ''}${doc.cliente_rut ? ' · RUT ' + _esc(doc.cliente_rut) : ''} · ${_esc(_resumen)}${_prob ? ' · <b class="pd-doc-prob">' + _prob + ' con problema</b>' : ''}</span>
       </div>
       <button type="button" class="pd-toggle-all" onclick="_pdToggleAll(this, ${doc.doc_id})" title="Marcar o desmarcar todas las líneas de este documento">
         <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo

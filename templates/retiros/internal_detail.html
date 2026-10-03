@@ -83,6 +83,7 @@
    RACIÓN 2026-09-22" — ver ese archivo.
    ══════════════════════════════════════════════════════════════════════ #}
 <link rel="stylesheet" href="{{ url_for('static', filename='retiros_internal_detail.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_ficha_v7.css') }}">
 
 {# ════════════════════════════════════════════════════════════════════
    Daniel 2026-09-16 — Paso 2: botón compacto "Asociar documento" (con
@@ -355,8 +356,6 @@
   </div>
 </section>
 
-{% include "retiros/_guia.html" %}
-
 <div class="pipe-wrap">
   <div class="pipe-wrap-title"><i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>Estado del retiro · los mismos 5 pasos que ve el cliente · toca uno para ir a su sección</div>
 
@@ -563,6 +562,9 @@
 {# FICHA v3 (2026-09-23): se quitó la franja negra "GESTIONAR RETIRO" y la
    línea "Solicitada" (su ancla id="paso-1" pasó a la cabecera). Los pasos
    quedan como tarjetas sueltas, en el orden del boceto aprobado. #}
+{# Guía de 6 pasos: justo antes de los pasos, tras cabecera y tracking (ficha v7) #}
+{% include "retiros/_guia.html" %}
+
 <div class="rd-flow">
 
     {# ═════════ 5 · PASO · DOCUMENTOS (Paso 2 tal cual, colapsable) ═════════ #}
@@ -815,9 +817,15 @@
            eliminación puntual (una de las 3 autorizadas en este plan). Los
            `if (!el) return;` que ya traía retiros_internal_detail.js hacen
            que perder estos ids sea inofensivo (no-op, no hay error). #}
-      </div>
-    </section>
 
+        {# ═════ 1.2 · CLIENTE, CONTACTO Y QUIÉN RETIRA (antes la tarjeta suelta «Ficha del retiro»; Daniel 2026-10-02:
+           "no sé para qué sale la ficha del retiro, esto tiene que estar definido en una tarjeta completa").
+           Mismos campos, mismos data-inline-edit: solo cambió de lugar. ═════ #}
+        <div class="fv7-sub" id="fichaRetiro">
+          <div class="fv7-sub-head">
+            <span class="fv7-num">1.2</span>
+            <div><strong>Cliente, contacto y quién retira</strong><small>Toca cualquier dato para corregirlo — se guarda solo.</small></div>
+          </div>
 {# ──────────────────────────────────────────────────────────────
    3 · FICHA DEL RETIRO — PERSISTENTE, ÚNICA fuente editable.
    Daniel 2026-05-23: "La info debe estar disponible como ficha y
@@ -964,7 +972,9 @@
 
   </div>
 </div>
-
+        </div>
+      </div>
+    </section>
 
     {# ═════════ PASO 2 · RESPONSABLE (Daniel 2026-10-02) ═════════
        "Responsable de quien se hace cargo... automático: la persona que
