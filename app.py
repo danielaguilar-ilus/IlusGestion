@@ -6286,6 +6286,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/firmar-anexo/",           # firma pública del proveedor (Anexo de Servicios)
     "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
     "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
+    "/retiros/cron/",           # cron de Retiros (auth por X-Cron-Token)
     "/transporte/webhook/",     # webhooks de couriers (auth por secreto propio)
     "/chofer",                  # app del chofer (sesión driver_id propia)
     "/soporte",                 # formulario publico de Tickets (sin sesion)
@@ -38948,6 +38949,15 @@ def tr_cron_simpliroute_poll():
         limit = 400
     dry = (request.args.get("dry") or "") in ("1", "true", "yes")
     res = _simpliroute_poll_batch(limit=limit, dry=dry)
+    # Retiros: «Enviar a preparación» automático según Check (Daniel 2026-10-02). Cuelga de este trabajo, que Cloud Scheduler corre cada
+    # 10 min, porque Cloud Run casi no da CPU a un hilo fuera de una petición. Si falla no afecta al polling de SimpliRoute.
+    if not dry:
+        try:
+            _fn_rp = globals().get("_retiros_prep_auto_barrido")
+            if _fn_rp:
+                res["retiros_prep_auto"] = _fn_rp(max_s=70)
+        except Exception as _e_rp:
+            print(f"[cron-simpliroute] retiros prep auto: {_e_rp}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 

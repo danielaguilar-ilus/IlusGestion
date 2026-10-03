@@ -29,6 +29,10 @@ import hashlib
 
 TERMINALES = ("rechazada", "fallida", "retirada", "cerrada")
 
+# Daniel 2026-10-02: «para avanzar debe declarar el responsable, y para agendar o liberar el calendario».
+MSG_SIN_RESPONSABLE = ("Primero declara quién se hace cargo de este retiro (paso 2). "
+                       "Sin responsable no se avanza ni se agenda o libera el calendario.")
+
 PASOS = (
     (1, "facturas", "Facturas", "¿Son las facturas o boletas que el cliente viene a retirar?", "#paso-2"),
     (2, "responsable", "Responsable", "¿Quién se hace cargo de este retiro?", "#paso-resp"),
@@ -56,12 +60,12 @@ def _paso(n, **kw):
 
 
 def evaluar(c):
-    """`c` (dict) → {'pasos': [6 dicts], 'siguiente': n|None, 'terminal': str|None, 'previos': {n: [...]}}.
+    """`c` (dict) → {'pasos': [6 dicts], 'siguiente': n|None, 'terminal': str|None, 'sin_responsable': bool, 'previos': {n: [...]}}.
 
     Claves de `c` (todas opcionales, con valores neutros):
       status, n_docs, docs (lista de {'rotulo','con_saldo','otro_rut'}), docs_firma, docs_conf (firma
       confirmada o None), docs_conf_quien, prod_n, prod_firma, prod_conf, prod_conf_quien,
-      adelantado, responsable (nombre), correo_ok, propuesta (bool), cita (bool), cambio_pedido,
+      adelantado, responsable (nombre), exige_responsable (True por defecto), correo_ok, propuesta (bool), cita (bool), cambio_pedido,
       preparado, picking_total, picking_hechos, check_listo (None si no se sabe)."""
     st = c.get("status") or ""
     n_docs = int(c.get("n_docs") or 0)
@@ -103,11 +107,18 @@ def evaluar(c):
 
     # ── 2 · Responsable ──────────────────────────────────────────────────────
     resp = (c.get("responsable") or "").strip()
+    # Sin responsable declarado, un retiro en curso NO avanza ni ocupa o libera el calendario (exige_responsable=False = vuelve a ser solo un aviso).
+    sin_resp = bool(c.get("exige_responsable", True) and not resp and not retirado and not terminal)
     p2 = _paso(2)
     if resp:
         p2.update(estado="hecho", resumen=f"A cargo de {resp}")
     elif retirado:
         p2.update(estado="hecho", resumen="Sin responsable registrado")
+    elif sin_resp:
+        p2.update(estado="actual",
+                  faltan=["Toca «Me hago cargo» para declarar el responsable (queda tu nombre). "
+                          "Sin responsable no se avanza ni se agenda o libera el calendario."],
+                  accion={"tipo": "tomar", "texto": "Me hago cargo"})
     elif adelantado or st == "en_preparacion":
         # Retiro ya en curso: faltar el responsable es un AVISO, no el «siguiente paso» (eso es lo operativo).
         p2.update(estado="pendiente", secundario=True,
@@ -204,6 +215,11 @@ def evaluar(c):
         p6.update(estado="pendiente", bloquea=True, faltan=["Primero hay que enviar el pedido a preparación (paso 5)."])
 
     pasos = [p1, p2, p3, p4, p5, p6]
+    if sin_resp:
+        # Lo único que se puede hacer es «Me hago cargo»: el resto de las acciones queda bloqueado (con el motivo a la vista).
+        for p in pasos:
+            if p["n"] != 2 and p.get("accion"):
+                p["accion"] = dict(p["accion"], deshabilitada=True, motivo=MSG_SIN_RESPONSABLE)
     if terminal:
         for p in pasos:
             if p["estado"] != "hecho":
@@ -211,8 +227,11 @@ def evaluar(c):
     pend = [p for p in pasos if p["estado"] != "hecho"]
     principales = [p for p in pend if not p.get("secundario")]
     siguiente = ((principales or pend)[0]["n"] if pend else None) if not terminal else None
+    if sin_resp:
+        siguiente = 2
     previos = {p["n"]: _faltan_de(pasos[:p["n"] - 1]) for p in pasos}
-    return {"pasos": pasos, "siguiente": siguiente, "terminal": terminal, "previos": {str(k): v for k, v in previos.items()}}
+    return {"pasos": pasos, "siguiente": siguiente, "terminal": terminal, "sin_responsable": sin_resp,
+            "previos": {str(k): v for k, v in previos.items()}}
 
 
 def _faltan_de(pasos):

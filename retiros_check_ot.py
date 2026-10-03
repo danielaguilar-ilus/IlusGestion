@@ -267,4 +267,14 @@ def resumen_para_log(filas_doc, filas_todas):
         for k, v in f.items():
             if _texto(v) and (_es_persona(k, v) or _es_momento(k, v) or _clave(k) in ("ot", "estado", "tipoot", "estot")):
                 ejemplo[k] = _texto(v)[:40]
-    return f"filas_doc={len(filas_doc or [])} filas_total={len(filas_todas or [])} campos={campos} ejemplo={ejemplo}"
+    # Cómo escribe Check el campo «doc» (p. ej. 'FCV-0000011155' o 'FCV 11155'): sin ese dato no se sabe si un documento «no tiene OT» o
+    # si simplemente no se está reconociendo su formato (2026-10-02: el retiro real salió con filas_doc=0 y 10.203 movimientos).
+    docs_ej = []
+    for f in (filas_todas or [])[:6000]:
+        if isinstance(f, dict):
+            v = _texto(f.get("doc"))[:20]
+            if v and v not in docs_ej:
+                docs_ej.append(v)
+                if len(docs_ej) >= 6:
+                    break
+    return f"filas_doc={len(filas_doc or [])} filas_total={len(filas_todas or [])} campos={campos} ejemplo={ejemplo} doc_ejemplos={docs_ej}"

@@ -87,6 +87,10 @@ def env(monkeypatch):
 
 
 def retiro(env, rid=RID, status="solicitud_recibida", docs=(DOC_A,), **kw):
+    # Por defecto el retiro YA tiene responsable (Daniel 2026-10-02: sin responsable no se avanza; esa regla se prueba aparte,
+    # pasando responsable_user_id=None y responsable_nombre=None).
+    kw.setdefault("responsable_user_id", 7)
+    kw.setdefault("responsable_nombre", "Samantha Blacio")
     env.db.nueva_solicitud(rid, status=status, **kw)
     for n, numero in enumerate(docs):
         snap = None if n == 0 else {"lineas": [{"sku": f"EXTRA{n}", "descripcion_erp": f"Banca {n}", "cantidad": 1}]}
@@ -194,8 +198,8 @@ class TestGuiaGET:
         assert p3["estado"] == "pendiente" and p3["accion"]["deshabilitada"] is True
         assert p3["detalle"] == ["1 × Set Discos 2,5 - 5 kg (SKU DISCO25)", "2 × Mancuerna hexagonal 10 kg (SKU MANC10)"]
         assert p3["total"] == 2
-        assert paso(g, 2)["estado"] == "actual" and paso(g, 2)["accion"]["tipo"] == "tomar"
-        assert g["siguiente"] == 1
+        assert paso(g, 2)["estado"] == "hecho" and "A cargo de Samantha Blacio" in paso(g, 2)["resumen"]
+        assert g["siguiente"] == 1 and g["sin_responsable"] is False
         # el navegador recibe las huellas de lo que está viendo (para que «Confirmo» confirme EXACTAMENTE eso)
         assert re.fullmatch(r"[0-9a-f]{12}", g["firma_docs"]) and re.fullmatch(r"[0-9a-f]{12}", g["firma_prod"])
         assert g["status"] == "solicitud_recibida"
@@ -243,7 +247,7 @@ class TestGuiaGET:
         assert {p["numdoc"].lstrip("0") for _, p in env.esp.check.llamadas} == {"23732"}
 
     def test_cada_paso_dice_que_falta_antes_de_el(self, env):
-        retiro(env)
+        retiro(env, responsable_user_id=None, responsable_nombre=None)
         previos = guia(env)["previos"]
         assert previos["1"] == []
         assert [n for n, _ in previos["3"]] == [1, 2]
@@ -334,12 +338,24 @@ class TestGuiaGET:
         g = guia(env)
         assert paso(g, 5)["estado"] == "espera" and paso(g, 6)["estado"] == "pendiente"
 
-    def test_retiro_en_curso_sin_responsable_no_lo_pone_como_siguiente(self, env):
-        retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05")
+    def test_retiro_en_curso_sin_responsable_se_frena_y_pide_hacerse_cargo_primero(self, env):
+        """Daniel 2026-10-02: «para avanzar debe declarar el responsable, y para agendar o liberar el calendario»."""
+        retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05", responsable_user_id=None, responsable_nombre=None)
+        g = guia(env)
+        p2 = paso(g, 2)
+        assert p2["estado"] == "actual" and p2["secundario"] is False and p2["accion"]["tipo"] == "tomar"
+        assert g["siguiente"] == 2 and g["sin_responsable"] is True
+        p5 = paso(g, 5)
+        assert p5["accion"]["tipo"] == "preparacion" and p5["accion"]["deshabilitada"] is True
+        assert "Sin responsable no se avanza" in p5["accion"]["motivo"]
+
+    def test_con_la_regla_apagada_vuelve_a_ser_solo_un_aviso(self, env, monkeypatch):
+        monkeypatch.setenv("RETIROS_EXIGE_RESPONSABLE", "0")
+        retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05", responsable_user_id=None, responsable_nombre=None)
         g = guia(env)
         p2 = paso(g, 2)
         assert p2["estado"] == "pendiente" and p2["secundario"] is True and p2["accion"]["tipo"] == "tomar"
-        assert g["siguiente"] == 5            # lo operativo, no «asignar responsable»
+        assert g["siguiente"] == 5 and g["sin_responsable"] is False          # lo operativo, no «asignar responsable»
 
     def test_retiro_ya_en_curso_sin_marca_confirmo_lo_dice_con_honestidad(self, env):
         retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05")
@@ -584,8 +600,8 @@ class TestConfirmar:
         assert len(env.db.eventos(RID, "docs_confirmadas")) == 2
 
     def test_flujo_completo_de_los_tres_primeros_pasos_sin_un_solo_mensaje(self, env):
-        retiro(env)
-        for ruta in ("confirmar-docs", "confirmar-productos", "tomar"):
+        retiro(env, responsable_user_id=None, responsable_nombre=None)
+        for ruta in ("tomar", "confirmar-docs", "confirmar-productos"):       # primero el responsable: sin él no se avanza
             r = env.cli.post(f"/retiros/{RID}/{ruta}")
             assert r.status_code == 200 and r.get_json()["ok"] is True, ruta
         g = guia(env)
@@ -631,7 +647,7 @@ class TestConfirmar:
 # ══════════════════════════════════════════════════════════════════════════════
 class TestTomar:
     def test_toma_el_retiro_con_el_nombre_de_la_sesion_y_no_manda_nada(self, env):
-        retiro(env)
+        retiro(env, responsable_user_id=None, responsable_nombre=None)
         r = env.cli.post(f"/retiros/{RID}/tomar", json={"nombre": "Otra Persona", "uid": 99})
         assert r.status_code == 200 and r.get_json() == {"ok": True, "nombre": "Samantha Blacio"}
         fila = env.db.solicitudes[RID]
@@ -641,7 +657,7 @@ class TestTomar:
         assert_nada_al_cliente(env)
 
     def test_tomarlo_dos_veces_es_idempotente(self, env):
-        retiro(env)
+        retiro(env, responsable_user_id=None, responsable_nombre=None)
         env.cli.post(f"/retiros/{RID}/tomar")
         env.db.reiniciar_registro()
         r = env.cli.post(f"/retiros/{RID}/tomar")
@@ -666,6 +682,113 @@ class TestTomar:
         retiro(e)
         assert e.cli.post(f"/retiros/{RID}/tomar").status_code == 400
         assert_sin_escrituras(e)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RESPONSABLE OBLIGATORIO (Daniel 2026-10-02): «para avanzar debe declarar el responsable, y para agendar o liberar el calendario»
+# ══════════════════════════════════════════════════════════════════════════════
+class TestResponsableObligatorio:
+    MSG = "Sin responsable no se avanza ni se agenda o libera el calendario"
+
+    def _sin_resp(self, env, status="solicitud_recibida", **kw):
+        return retiro(env, status=status, responsable_user_id=None, responsable_nombre=None, **kw)
+
+    @pytest.mark.parametrize("ruta", ["confirmar-docs", "confirmar-productos"])
+    def test_confirmar_pide_antes_el_responsable(self, env, ruta):
+        self._sin_resp(env)
+        r = env.cli.post(f"/retiros/{RID}/{ruta}")
+        assert r.status_code == 409 and self.MSG in r.get_json()["error"] and r.get_json()["code"] == "SIN_RESPONSABLE"
+        assert_sin_escrituras(env)
+        assert_nada_al_cliente(env)
+
+    def test_hacerse_cargo_destraba_todo(self, env):
+        self._sin_resp(env)
+        assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 409
+        assert env.cli.post(f"/retiros/{RID}/tomar").status_code == 200
+        assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 200
+        assert env.cli.post(f"/retiros/{RID}/confirmar-productos").status_code == 200
+
+    def test_proponer_fecha_ocupa_el_calendario_y_exige_responsable(self, env):
+        self._sin_resp(env, docs=(DOC_A,))
+        r = env.cli.post(f"/retiros/{RID}/proposal", json={"date": "2026-10-08", "time_from": "10:00", "time_to": "10:30"})
+        assert r.status_code == 409 and self.MSG in r.get_json()["error"]
+        assert_sin_escrituras(env)
+        assert_nada_al_cliente(env)
+
+    def test_aceptar_la_fecha_del_cliente_exige_responsable(self, env):
+        self._sin_resp(env, status="en_revision", proposed_date="2026-10-08")
+        env.db.propuestas.append({"id": 5, "request_id": RID, "status": "pending", "proposed_by": "cliente",
+                                  "date": "2026-10-09", "time_from": "10:00", "time_to": "10:30"})
+        r = env.cli.post(f"/retiros/{RID}/aceptar-contrapropuesta")
+        assert r.status_code == 409 and r.get_json()["code"] == "SIN_RESPONSABLE"
+        assert env.db.solicitudes[RID]["status"] == "en_revision"
+        assert_sin_escrituras(env)
+
+    def test_marcar_la_cita_como_aceptada_exige_responsable(self, env):
+        self._sin_resp(env, status="propuesta_enviada", proposed_date="2026-10-08")
+        r = env.cli.post(f"/retiros/{RID}/marcar-aceptada-manual", json={"motivo": "llamó y confirmó"})
+        assert r.status_code == 409 and r.get_json()["code"] == "SIN_RESPONSABLE"
+        assert_sin_escrituras(env)
+
+    @pytest.mark.parametrize("nuevo", ["agenda_confirmada", "en_preparacion", "retirada", "reagendada", "rechazada", "cerrada",
+                                       "fallida", "en_revision"])
+    def test_cambiar_de_estado_un_retiro_sin_responsable_no_hace_nada(self, env, nuevo):
+        self._sin_resp(env, status="propuesta_enviada", confirmed_date="2026-10-08")
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": nuevo})
+        assert r.status_code == 302
+        assert env.db.solicitudes[RID]["status"] == "propuesta_enviada"
+        assert_sin_escrituras(env)
+        assert_nada_al_cliente(env)
+
+    @pytest.mark.parametrize("cabeceras", [{"X-Requested-With": "XMLHttpRequest"}, {"Sec-Fetch-Dest": "empty"},
+                                           {"Accept": "application/json"}])
+    def test_el_kanban_y_el_calendario_reciben_un_409_y_no_un_redirect(self, env, cabeceras):
+        """Ambos hacen fetch con redirect:'manual' y dan por bueno cualquier redirect: con un 302 mostrarían «✓ movido» sin que nada cambiara."""
+        self._sin_resp(env, status="propuesta_enviada", confirmed_date="2026-10-08")
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "agenda_confirmada"}, headers=cabeceras)
+        assert r.status_code == 409 and r.get_json()["code"] == "SIN_RESPONSABLE" and self.MSG in r.get_json()["error"]
+        assert env.db.solicitudes[RID]["status"] == "propuesta_enviada"
+        assert_sin_escrituras(env)
+        assert_nada_al_cliente(env)
+
+    def test_el_mensaje_llega_a_la_pantalla(self, env):
+        self._sin_resp(env, status="agenda_confirmada", confirmed_date="2026-10-08")
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "en_preparacion"})
+        with env.cli.session_transaction() as sesion:
+            avisos = [m for _, m in sesion.get("_flashes", [])]
+        assert r.status_code == 302 and any(self.MSG in m for m in avisos), avisos
+
+    def test_con_responsable_el_cambio_de_estado_sigue_funcionando(self, env):
+        retiro(env, status="agenda_confirmada", confirmed_date="2026-10-08")
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "en_preparacion"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "en_preparacion"
+
+    def test_el_mismo_estado_no_pide_responsable(self, env):
+        """Guardar el estado que ya tiene no avanza nada (no es «avanzar»)."""
+        self._sin_resp(env, status="agenda_confirmada", confirmed_date="2026-10-08")
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "agenda_confirmada", "notes": "nota"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "agenda_confirmada"
+
+    @pytest.mark.parametrize("estado", ["rechazada", "cerrada", "retirada", "fallida"])
+    def test_un_retiro_terminado_se_puede_reabrir_sin_responsable(self, env, estado):
+        """«Tomar» rechaza los retiros terminados (409), así que exigirles responsable para reabrirlos sería un callejón sin salida."""
+        self._sin_resp(env, status=estado)
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "en_revision"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "en_revision"
+
+    def test_la_regla_se_puede_apagar_por_entorno(self, env, monkeypatch):
+        monkeypatch.setenv("RETIROS_EXIGE_RESPONSABLE", "0")
+        self._sin_resp(env)
+        assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 200
+
+    def test_la_guia_dice_que_hay_que_hacerse_cargo_y_bloquea_el_resto(self, env):
+        self._sin_resp(env)
+        env.db.reiniciar_registro()
+        g = guia(env)
+        assert g["sin_responsable"] is True and g["siguiente"] == 2
+        assert paso(g, 2)["estado"] == "actual" and paso(g, 2)["accion"]["tipo"] == "tomar"
+        assert paso(g, 1)["accion"]["deshabilitada"] is True and self.MSG in paso(g, 1)["accion"]["motivo"]
+        assert_sin_escrituras(env)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -775,7 +898,9 @@ class TestCheckPreparacion:
     @pytest.mark.parametrize("estado", ["solicitud_recibida", "propuesta_enviada", "agenda_confirmada",
                                         "reagendada", "retirada", "cerrada", "rechazada"])
     def test_fuera_de_preparacion_nunca_se_aplica(self, env, estado):
-        retiro(env, status=estado, confirmed_date="2026-10-05")
+        # Cita lejana a propósito: con la cita cercana, «agenda_confirmada» + picking en Check sí pasa sola a «En preparación»
+        # (envío automático, Daniel 2026-10-02; ver tests/test_retiros_prep_auto.py). Aquí se fija que Check NUNCA marca «preparado».
+        retiro(env, status=estado, confirmed_date="2099-01-01")
         env.esp.check.respuestas["23732"] = TODO_PICKEADO
         d = env.cli.get(f"/retiros/{RID}/check-preparacion").get_json()      # sin solo_lectura
         assert d["ok"] and d["evaluacion"]["listo"] is True
@@ -1158,7 +1283,7 @@ class TestBarrido:
     def test_la_logica_del_barrido_marca_solo_lo_que_check_confirma(self, env):
         retiro_en_preparacion(env, rid=1)
         retiro_en_preparacion(env, rid=2, docs=("0000099999",))
-        retiro(env, rid=3, status="agenda_confirmada", confirmed_date="2026-10-05", docs=("0000055555",))
+        retiro(env, rid=3, status="agenda_confirmada", confirmed_date="2099-01-01", docs=("0000055555",))   # cita lejana: no se mira
         env.esp.check.respuestas["23732"] = TODO_PICKEADO                   # retiro 1: listo
         env.esp.check.respuestas["99999"] = A.respuesta_check(A.fila_check(solicitado=2, asignado=2))   # retiro 2: no
         env.esp.check.respuestas["*"] = TODO_PICKEADO                       # (el 3 ni se consulta)
@@ -1170,7 +1295,7 @@ class TestBarrido:
         assert env.db.solicitudes[1]["status"] == "en_preparacion"
         assert env.esp.check.rutas == {"/api/ext/GetSeguimientoDespacho"}
         assert not any(p["numdoc"].lstrip("0") == "55555" for _, p in env.esp.check.llamadas), \
-            "el barrido solo revisa retiros EN PREPARACIÓN"
+            "el barrido solo revisa retiros EN PREPARACIÓN y los confirmados con la cita cercana"
         assert_nada_al_cliente(env, permitidos=(EQUIPO_EMAIL,))
 
     def test_el_hilo_del_barrido_marca_el_pedido_listo_sin_ficha_abierta(self, env):
@@ -1256,9 +1381,15 @@ def _bloque_nuevo():
 class TestCandadosDeCodigo:
     def test_el_bloque_nuevo_no_le_escribe_al_cliente(self):
         bloque = _bloque_nuevo()
-        for prohibido in (r"\bnotify\(", r"\bnotify_async\(", r"_send_ilus_email\(", r"_send_whatsapp\(",
+        for prohibido in (r"_send_ilus_email\(", r"_send_whatsapp\(",
                           r"\bsend_email\s*=\s*True", r"_notificar_cliente"):
             assert not re.search(prohibido, bloque), f"el bloque nuevo usa {prohibido}"
+        # Único aviso al cliente permitido (Daniel 2026-10-02, «envíes a preparación en automático»): el MISMO correo «preparing»
+        # del botón «Enviar a preparación» (solo trae la fecha agendada), y solo desde el envío automático: en un hilo (ficha abierta)
+        # o dentro de la misma petición (el cron, donde Cloud Run no da CPU a un hilo suelto).
+        llamadas = re.findall(r"\bnotify(?:_async)?\((.*?)\)\s*(?:#.*)?\n", bloque)
+        assert llamadas and all(x.replace(" ", "") == 'req_despues,"preparing"' for x in llamadas), llamadas
+        assert len(llamadas) == 2, "solo el envío automático (hilo o cron) avisa al cliente"
         # el único aviso permitido es al equipo interno y sin correo directo
         for llamada in re.findall(r"_notificar_equipo_retiros\((.*?)\)\s*\n", bloque, re.S):
             assert "send_email=False" in llamada, llamada

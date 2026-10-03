@@ -828,5 +828,47 @@ elevado/`tecnico_ejecutivo` —Jaizer incluido— y externo) y en TODO el sistem
 
 ---
 
-_Última actualización: 2026-10-01_
+## 🤖 REGLA #20 — Retiros: «Enviar a preparación» es AUTOMÁTICO según Check (no se apaga ni se quita sin permiso)
+
+**Pedido explícito de Daniel (2026-10-02): "necesito que envíes a preparación en automático. Por supuesto, lleva control de hora, fecha, todo. Y usuario.
+Internamente… al cliente le va a dar fecha nada más".**
+
+- Un retiro con la **cita confirmada y cercana** pasa solo a «En preparación» cuando Check muestra que bodega **ya empezó a juntar** el pedido (alguna unidad
+  pickeada y nada despachado). Mismo camino que el botón: checklist de bodega, correo al cliente y aviso interno. Código: `pickups_module.py` (bloque «ENVIAR A
+  PREPARACIÓN» AUTOMÁTICO), señal en `retiros_check.evaluar`.
+- **Salvaguardas (revisión adversarial 2026-10-02 — no quitarlas):** cita de **hoy o de los próximos N días HÁBILES** de la bodega (N=1; viernes → lunes cuenta 1; una
+  cita pasada la decide una persona) · solo en **horario de bodega** (07:30–20:00, día abierto, hora Chile: ningún correo de madrugada ni en fin de semana o feriado) ·
+  **una sola vez por retiro** (si una persona lo devuelve a «Cita confirmada», el automático no lo repite ni le vuelve a escribir al cliente) · nunca con un cambio de
+  fecha del cliente pendiente (la guarda va también dentro del UPDATE) · nunca si la factura o boleta está en **otro retiro activo** (Check informa por documento) ·
+  nunca sin **responsable declarado** (REGLA #21) · la señal se ve en **dos lecturas** y la segunda se pide **de verdad** a Check (sin su memoria de 45 s).
+- **La bitácora siempre distingue** «Manual: <usuario> pasó el retiro a «En preparación»» de «Automático · Check WMS …» (con hora Chile, N de M unidades y, si Check ya
+  los informa, la OT y el usuario). Quitar o mezclar esa distinción rompe lo que Daniel pidió.
+- **Al cliente solo se le comunica la fecha agendada** (el mismo correo «Estamos preparando tu retiro»). Jamás datos internos: OT, usuarios de Check, horas de picking.
+- Check sigue **SOLO LECTURA** (REGLA #4.4): el envío automático solo usa `GetSeguimientoDespacho`. El cambio de estado es atómico (`UPDATE … WHERE
+  status='agenda_confirmada'`): si el botón gana, no se repite nada, y el botón ya no escribe «en preparación → en preparación» si el automático llegó antes.
+- Interruptores (solo con permiso de Daniel): `RETIROS_PREP_AUTO=0` lo apaga (también lo apaga `RETIROS_CHECK_AUTO=0`: «Check solo informa»);
+  `RETIROS_PREP_AUTO_DIAS` cambia la ventana. Corre con la ficha abierta, al entrar al Monitor y cada 10 min colgado del trabajo de Cloud Scheduler
+  `simpliroute-poll` (`/retiros/cron/check-barrido` existe para un job propio; `?dry=1` solo mira, incluso de noche). Pruebas: `tests/test_retiros_prep_auto.py`.
+
+---
+
+## 🙋 REGLA #21 — Retiros: sin responsable declarado no se avanza, ni se agenda, ni se libera el calendario
+
+**Pedido explícito de Daniel (2026-10-02): "Para avanzar debe declarar el responsable y para agendar o liberar el calendario".**
+
+Un retiro **sin responsable** (`responsable_user_id` / `responsable_nombre` vacíos) no avanza hasta que alguien toque «Me hago cargo» (paso 2 de la guía; el nombre sale
+de la sesión, nunca del navegador):
+
+- **Guía:** lo único que toca es «Me hago cargo»; las demás acciones quedan bloqueadas con el motivo a la vista y los botones nativos (proponer fecha, enviar a
+  preparación, marcar retirado) abren un aviso que lleva al paso 2. Enter va solo a ese pendiente. `retiros_guia.evaluar` → `sin_responsable`.
+- **Servidor (`pickups_module.py`, `_sin_responsable`):** exige responsable `confirmar-docs`, `confirmar-productos`, `/proposal` (agendar), `/aceptar-contrapropuesta`,
+  `/marcar-aceptada-manual` y **cualquier cambio de estado** de `/status` (Kanban, Cambiar estado, botones de la ficha: confirmar, reagendar, rechazar, cerrar → ocupan o
+  liberan el calendario). Responde 409 con «Primero declara quién se hace cargo… Sin responsable no se avanza ni se agenda o libera el calendario».
+- **Excepción:** un retiro **terminado** (retirada, cerrada, rechazada, fallida) no lo necesita (así se puede reabrir: «Me hago cargo» rechaza los terminados).
+- El envío automático de la REGLA #20 tampoco mueve un retiro sin responsable. Interruptor (solo con permiso de Daniel): `RETIROS_EXIGE_RESPONSABLE=0`.
+- Los bloqueos de la agenda (`/retiros/bloqueos/*`, permiso `ret_horarios`) son de la bodega, no de un retiro: esta regla no los toca.
+
+---
+
+_Última actualización: 2026-10-02_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

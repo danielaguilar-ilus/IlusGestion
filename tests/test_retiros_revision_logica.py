@@ -62,8 +62,11 @@ def tearDownModule():
 #  Utilidades
 # ──────────────────────────────────────────────────────────────────────────────
 def _nuevo(status="solicitud_recibida", docs=1, **kw):
-    """App de mentira con UN retiro (id 1) y `docs` documentos BLV."""
+    """App de mentira con UN retiro (id 1) y `docs` documentos BLV. Por defecto YA tiene responsable (Daniel 2026-10-02: sin responsable
+    no se avanza; esa regla se prueba aparte, pasando responsable_user_id=None y responsable_nombre=None)."""
     app, db, ctx, esp = A.construir_app()
+    kw.setdefault("responsable_user_id", 7)
+    kw.setdefault("responsable_nombre", "Sam")
     db.nueva_solicitud(1, status=status, **kw)
     for i in range(docs):
         db.agregar_doc(1, "BLV", str(23732 + i).zfill(10))
@@ -170,11 +173,23 @@ class GuardiaClienteReal(unittest.TestCase):
         self.assertEqual(db.escrituras, [])
 
     def test_con_cita_pero_sin_preparacion_check_jamas_marca_preparado(self):
-        app, db, ctx, esp = _nuevo("agenda_confirmada", confirmed_date="2026-10-03", responsable_nombre="M")
+        # Cita lejana: no se mueve sola. (Con la cita cercana el retiro pasa solo a «En preparación», ver test_retiros_prep_auto.py;
+        # lo que NUNCA hace Check es marcar «preparado» sobre un retiro que aún no estaba en preparación.)
+        app, db, ctx, esp = _nuevo("agenda_confirmada", confirmed_date="2099-01-01", responsable_nombre="M")
         esp.check.respuestas["*"] = respuesta_check(fila_check(solicitado=1, pickeado=1))
         r = app.test_client().get("/retiros/1/check-preparacion")
         self.assertFalse(r.get_json()["aplicado_ahora"])
         self.assertEqual(db.escrituras, [])
+
+    def test_con_cita_cercana_solo_se_mueve_el_estado_nunca_se_marca_preparado(self):
+        import datetime as dt
+        cerca = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+        app, db, ctx, esp = _nuevo("agenda_confirmada", confirmed_date=cerca, responsable_nombre="M")
+        esp.check.respuestas["*"] = respuesta_check(fila_check(solicitado=1, pickeado=1))
+        d = app.test_client().get("/retiros/1/check-preparacion").get_json()
+        self.assertFalse(d["aplicado_ahora"])           # «preparado»: no, todavía no era un retiro en preparación
+        self.assertEqual([x for x in db.logs if x["action"] == "picking_completo"], [])
+        self.assertFalse(any(it["picked"] for it in db.picking))
 
     def test_check_sin_respuesta_no_inventa_nada(self):
         app, db, ctx, esp = self._real()
@@ -303,9 +318,9 @@ class GuardiaGuiaPura(unittest.TestCase):
     def test_invariantes_en_toda_la_matriz_de_estados(self):
         import itertools
         import pickups_module as pm
-        for st, n_docs, cita, prop, resp, prep, cambio, evid in itertools.product(
+        for st, n_docs, cita, prop, resp, prep, cambio, evid, exige in itertools.product(
                 pm.PICKUP_STATUS, (0, 1), (False, True), (False, True), ("", "Ana"), (False, True), (False, True),
-                (False, True)):
+                (False, True), (True, False)):
             if cambio and st in ("en_preparacion", "retirada", "cerrada", "rechazada", "fallida"):
                 continue    # _guia_datos nunca marca «cambio» en esos estados (combinación inalcanzable)
             if prep and st != "en_preparacion":
@@ -314,7 +329,7 @@ class GuardiaGuiaPura(unittest.TestCase):
                 continue    # la evidencia de retiro solo cambia algo en «cerrada»
             c = {"status": st, "n_docs": n_docs, "docs": [], "docs_firma": "a", "prod_n": 2, "prod_firma": "b",
                  "correo_ok": True, "cita": cita, "propuesta": prop, "responsable": resp, "preparado": prep,
-                 "cambio_pedido": cambio, "evidencia_retiro": evid,
+                 "cambio_pedido": cambio, "evidencia_retiro": evid, "exige_responsable": exige,
                  "adelantado": bool(prop or cita or st in ("agenda_confirmada", "reagendada", "en_preparacion",
                                                            "retirada", "cerrada"))}
             gu = rg.evaluar(c)
@@ -335,14 +350,25 @@ class GuardiaGuiaPura(unittest.TestCase):
             else:
                 self.assertIsNone(gu["terminal"], ctx_txt)
                 pend = [p for p in gu["pasos"] if p["estado"] != "hecho"]
-                # «siguiente» = primer paso pendiente que NO sea secundario (el responsable de un retiro en curso es un
-                # aviso, no lo operativo); si solo quedan secundarios, el primero de ellos
-                principales = [p for p in pend if not p.get("secundario")]
-                primero = (principales or pend)[0]["n"] if pend else None
-                self.assertEqual(gu["siguiente"], primero, ctx_txt)
-                for p in gu["pasos"]:
-                    if p.get("secundario"):      # solo el responsable de un retiro ya en curso, y siempre como aviso
-                        self.assertEqual((p["n"], p["estado"], c["adelantado"]), (2, "pendiente", True), ctx_txt)
+                retirado = st == "retirada" or (st == "cerrada" and evid)
+                # Responsable obligatorio (Daniel 2026-10-02): se frena SOLO un retiro en curso, sin responsable y con la regla encendida
+                self.assertEqual(gu["sin_responsable"], bool(exige and not resp and not retirado), ctx_txt)
+                if gu["sin_responsable"]:
+                    self.assertEqual(gu["siguiente"], 2, ctx_txt)
+                    self.assertEqual(gu["pasos"][1]["estado"], "actual", ctx_txt)
+                    for p in gu["pasos"]:
+                        a = p.get("accion")
+                        if a and a["tipo"] != "tomar":
+                            self.assertTrue(a.get("deshabilitada"), f"paso {p['n']} sin bloquear · {ctx_txt}")
+                else:
+                    # «siguiente» = primer paso pendiente que NO sea secundario (el responsable de un retiro en curso es un
+                    # aviso, no lo operativo); si solo quedan secundarios, el primero de ellos
+                    principales = [p for p in pend if not p.get("secundario")]
+                    primero = (principales or pend)[0]["n"] if pend else None
+                    self.assertEqual(gu["siguiente"], primero, ctx_txt)
+                    for p in gu["pasos"]:
+                        if p.get("secundario"):      # solo con la regla apagada: el responsable de un retiro ya en curso es un aviso
+                            self.assertEqual((p["n"], p["estado"], c["adelantado"], exige), (2, "pendiente", True, False), ctx_txt)
             # nunca aparece «hecho» un paso posterior a uno que no está listo, salvo 1/2/3 que son independientes
             if gu["pasos"][4]["estado"] == "hecho" and st not in ("retirada", "cerrada"):
                 self.assertEqual(gu["pasos"][3]["estado"], "hecho", ctx_txt)
@@ -413,12 +439,23 @@ class RegresionGuiaContradiceLaFicha(unittest.TestCase):
         self.assertIsNone(gu["terminal"])
         self.assertEqual(_estados(gu), ["hecho"] * 6)
 
-    def test_retiro_en_preparacion_sin_responsable_no_pone_responsable_como_siguiente(self):
-        """HALLAZGO 4. En preparación la ficha dice «Siguiente: entregar al cliente»; la guía dice
-        «Tu siguiente paso: Paso 2 · Responsable» (siguiente = primer paso no hecho) y tapa el paso real."""
-        app, db, ctx, esp = _nuevo("en_preparacion", confirmed_date="2026-10-03", proposed_date="2026-10-03")
+    def test_retiro_en_preparacion_sin_responsable_antes_era_un_aviso_ahora_se_frena(self):
+        """HALLAZGO 4 (2026-10-02, antes de la regla del responsable). En preparación la ficha decía «Siguiente: entregar al
+        cliente» y la guía mandaba a asignar responsable en pleno picking. Daniel decidió después que SIN responsable no se
+        avanza («para avanzar debe declarar el responsable»): ahora es lo primero; con RETIROS_EXIGE_RESPONSABLE=0 vuelve a
+        ser solo un aviso que no tapa el paso real."""
+        app, db, ctx, esp = _nuevo("en_preparacion", confirmed_date="2026-10-03", proposed_date="2026-10-03",
+                                   responsable_user_id=None, responsable_nombre=None)
         gu = _guia(app)
-        self.assertNotEqual(gu["siguiente"], 2, "el cartel principal manda a asignar responsable en pleno picking")
+        self.assertEqual(gu["siguiente"], 2)
+        self.assertTrue(gu["sin_responsable"])
+        os.environ["RETIROS_EXIGE_RESPONSABLE"] = "0"
+        try:
+            gu = _guia(app)
+        finally:
+            os.environ.pop("RETIROS_EXIGE_RESPONSABLE", None)
+        self.assertNotEqual(gu["siguiente"], 2, "con la regla apagada el cartel principal no manda a asignar responsable en pleno picking")
+        self.assertFalse(gu["sin_responsable"])
 
 
 class RegresionPreparacionCheck(unittest.TestCase):

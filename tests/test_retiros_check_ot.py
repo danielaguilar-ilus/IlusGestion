@@ -125,6 +125,12 @@ class TestResumenOT(unittest.TestCase):
         self.assertNotIn("CLIENTE DEMO", txt)
         self.assertNotIn("Set discos", txt)
 
+    def test_resumen_para_log_dice_como_escribe_check_el_campo_doc(self):
+        filas = [fila(doc="FCV-0000011155"), fila(doc="BLV 23732"), fila(doc="FCV-0000011155"), fila(doc="")]
+        txt = ot.resumen_para_log([], filas)
+        self.assertIn("filas_doc=0", txt)
+        self.assertIn("doc_ejemplos=['FCV-0000011155', 'BLV 23732']", txt)       # distintos, sin repetir y sin vacíos
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,8 +24,8 @@ def base(**kw):
 
 class GuiaDeSeisPasos(unittest.TestCase):
     def test_retiro_nuevo_sin_documentos_empieza_por_agregar_la_factura(self):
-        g = rg.evaluar(base(n_docs=0, docs=[], prod_n=0))
-        self.assertEqual(estados(g)[:4], ["actual", "actual", "bloqueado", "bloqueado"])
+        g = rg.evaluar(base(n_docs=0, docs=[], prod_n=0, responsable="Ana"))
+        self.assertEqual(estados(g)[:4], ["actual", "hecho", "bloqueado", "bloqueado"])
         self.assertEqual(g["siguiente"], 1)
         self.assertIn("factura o boleta", g["pasos"][0]["faltan"][0])
         self.assertEqual(len(g["pasos"]), 6)
@@ -41,7 +41,7 @@ class GuiaDeSeisPasos(unittest.TestCase):
         self.assertIn("paso 1", p3["faltan"][0])
 
     def test_confirmar_facturas_habilita_productos(self):
-        g = rg.evaluar(base(docs_conf="aaa", docs_conf_quien="Samantha"))
+        g = rg.evaluar(base(docs_conf="aaa", docs_conf_quien="Samantha", responsable="Ana"))
         self.assertEqual(g["pasos"][0]["estado"], "hecho")
         self.assertIn("Samantha", g["pasos"][0]["resumen"])
         self.assertEqual(g["pasos"][2]["accion"]["tipo"], "confirmar_productos")
@@ -104,13 +104,53 @@ class GuiaDeSeisPasos(unittest.TestCase):
         self.assertEqual(g["pasos"][3]["estado"], "espera")
         self.assertEqual(g["pasos"][3]["ancla"], "#paso-esperando")
 
-    def test_retiro_en_curso_sin_responsable_no_lo_pone_de_siguiente(self):
-        g = rg.evaluar(base(status="en_preparacion", adelantado=True, cita=True, preparado=False))
+    def test_retiro_en_curso_sin_responsable_se_frena_hasta_que_alguien_se_haga_cargo(self):
+        # Daniel 2026-10-02: «para avanzar debe declarar el responsable, y para agendar o liberar el calendario»
+        g = rg.evaluar(base(status="en_preparacion", adelantado=True, cita=True, preparado=True))
+        self.assertTrue(g["sin_responsable"])
+        self.assertEqual(g["pasos"][1]["estado"], "actual")
+        self.assertFalse(g["pasos"][1]["secundario"])
+        self.assertEqual(g["siguiente"], 2)          # lo primero es declarar el responsable
+        self.assertEqual(g["pasos"][5]["accion"]["tipo"], "retirar")
+        self.assertTrue(g["pasos"][5]["accion"]["deshabilitada"])
+        self.assertEqual(g["pasos"][5]["accion"]["motivo"], rg.MSG_SIN_RESPONSABLE)
+
+    def test_con_el_interruptor_apagado_el_responsable_vuelve_a_ser_solo_un_aviso(self):
+        g = rg.evaluar(base(status="en_preparacion", adelantado=True, cita=True, preparado=False, exige_responsable=False))
+        self.assertFalse(g["sin_responsable"])
         self.assertEqual(g["pasos"][1]["estado"], "pendiente")
         self.assertTrue(g["pasos"][1]["secundario"])
         self.assertEqual(g["siguiente"], 5)          # lo operativo, no el responsable
-        g2 = rg.evaluar(base(status="en_preparacion", adelantado=True, cita=True, preparado=True))
+        g2 = rg.evaluar(base(status="en_preparacion", adelantado=True, cita=True, preparado=True, exige_responsable=False))
         self.assertEqual(g2["siguiente"], 6)
+        self.assertNotIn("deshabilitada", g2["pasos"][5]["accion"])
+
+    def test_sin_responsable_solo_se_puede_tomar_el_retiro(self):
+        g = rg.evaluar(base(status="agenda_confirmada", cita=True, adelantado=True, docs_conf="aaa", prod_conf="bbb"))
+        self.assertTrue(g["sin_responsable"])
+        self.assertEqual(g["siguiente"], 2)
+        for p in g["pasos"]:
+            a = p.get("accion")
+            if not a:
+                continue
+            if a["tipo"] == "tomar":
+                self.assertNotIn("deshabilitada", a)
+            else:
+                self.assertTrue(a.get("deshabilitada"), f"paso {p['n']} ({a['tipo']}) debía quedar bloqueado")
+                self.assertEqual(a["motivo"], rg.MSG_SIN_RESPONSABLE)
+
+    def test_con_responsable_nada_queda_bloqueado_por_eso(self):
+        g = rg.evaluar(base(status="agenda_confirmada", cita=True, adelantado=True, responsable="Ana"))
+        self.assertFalse(g["sin_responsable"])
+        self.assertEqual(g["pasos"][1]["estado"], "hecho")
+        for p in g["pasos"]:
+            self.assertNotEqual((p.get("accion") or {}).get("motivo"), rg.MSG_SIN_RESPONSABLE)
+
+    def test_un_retiro_terminado_no_pide_responsable(self):
+        for st in ("retirada", "rechazada", "fallida"):
+            g = rg.evaluar(base(status=st, adelantado=True))
+            self.assertFalse(g["sin_responsable"], st)
+            self.assertIsNone(g["siguiente"], st)
 
     def test_retiro_nuevo_sin_responsable_si_es_actual(self):
         g = rg.evaluar(base())

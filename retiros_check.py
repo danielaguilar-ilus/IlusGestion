@@ -119,6 +119,9 @@ def evaluar(resumenes):
       estado   'sin_documento' | 'sin_datos' | 'en_proceso' | 'listo'
       listo    True solo si TODAS las líneas pedidas de TODOS los documentos están pickeadas o más allá
       listo_auto  listo Y sin unidades ya despachadas ni datos raros: lo único que se marca solo
+      iniciada  bodega YA EMPEZÓ a juntar (alguna unidad pickeada o más allá) y los datos se entienden
+      iniciada_auto  iniciada Y sin unidades despachadas: es la señal con la que ILUS pasa solo el retiro a «En preparación»
+      pickeadas  unidades pickeadas (o más allá)
       pedidas  unidades pedidas (menos canceladas)
       etapas   por etapa: clave, n, titulo, texto, hechas, de, completa
       faltan   unidades que aún no están pickeadas
@@ -165,6 +168,10 @@ def evaluar(resumenes):
         alerta = ("Check ya da unidades por DESPACHADAS. Verifica que este pedido no se haya entregado antes "
                   "de entregárselo al cliente: no se marca solo.")
     listo_auto = bool(listo and not alerta)
+    # «Bodega ya empezó» (Daniel 2026-10-02: «envíes a preparación en automático»): alguna unidad ya fue pickeada. Si Check ya
+    # da algo por despachado, el pedido pudo entregarse antes: se muestra pero NO se usa para mover el retiro solo.
+    iniciada = bool(adelantadas > 0.0001 and not malos)       # misma tolerancia que _ent(): «0,0000001» no es una unidad pickeada
+    iniciada_auto = bool(iniciada and despachadas <= 0)
 
     def etapa(clave, n, titulo, texto, hechas):
         return {"clave": clave, "n": n, "titulo": titulo, "texto": texto,
@@ -191,6 +198,7 @@ def evaluar(resumenes):
     else:
         estado, frase = "en_proceso", "Check ya tiene el pedido, pero bodega todavía no empieza a juntarlo."
     return {"estado": estado, "listo": listo, "listo_auto": listo_auto, "pedidas": _ent(pedidas), "faltan": _ent(faltan),
+            "pickeadas": _ent(adelantadas), "iniciada": iniciada, "iniciada_auto": iniciada_auto,
             "etapas": etapas, "frase": frase, "alerta": alerta,
             "documentos_con_datos": len(con_datos), "documentos": len(resumenes)}
 
@@ -202,4 +210,5 @@ def _ent(x):
 
 def _vacio(estado, frase, n_docs):
     return {"estado": estado, "listo": False, "listo_auto": False, "pedidas": 0, "faltan": 0, "etapas": [],
+            "pickeadas": 0, "iniciada": False, "iniciada_auto": False,
             "frase": frase, "alerta": "", "documentos_con_datos": 0, "documentos": n_docs}

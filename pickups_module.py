@@ -38,6 +38,9 @@ def _public_base_url():
     ).rstrip("/")
 
 
+# Reloj de las pruebas: fijan «ahora» (hora Chile) para no depender del día ni de la hora en que corren (tests/test_retiros_prep_auto.py)
+_RELOJ_CHILE = None
+
 PICKUP_STATUS = {
     "solicitud_recibida": "Solicitud recibida",
     "en_revision": "En revisión",
@@ -5976,6 +5979,11 @@ def register_pickup_routes(app, ctx):
                 if n and o != n:
                     trans = f"Estado: {PICKUP_STATUS.get(o, o) if o else '—'} → {PICKUP_STATUS.get(n, n)}"
                     detalle = f"{trans} · {notes}" if notes else trans
+                # Daniel 2026-10-02: «que la bitácora identifique si alguien presionó el botón o si fue automático»
+                if n == "en_preparacion" and notes.startswith("Automático"):
+                    verbo, tag, tag_tono = "pasó el retiro a preparación solo", "Automático", "cli"
+                elif n == "en_preparacion" and notes.startswith("Manual"):
+                    verbo, tag, tag_tono = "envió el retiro a preparación", "Manual", "ok"
             if action.startswith("cliente_"):
                 tag, tag_tono = "Respondió el cliente", "cli"
             items.append({
@@ -6225,6 +6233,66 @@ def register_pickup_routes(app, ctx):
             )
             return redirect(url_for("pickup_dashboard"))
 
+    # ── RESPONSABLE OBLIGATORIO (Daniel 2026-10-02): «para avanzar debe declarar el responsable, y para agendar o liberar el calendario» ──
+    # Un retiro sin responsable no avanza (confirmar facturas/productos, cambiar de estado) ni ocupa o libera un bloque del calendario
+    # (proponer fecha, aceptar la del cliente, marcarla aceptada, reagendar, rechazar o cerrar) hasta que alguien toque «Me hago cargo».
+    # Los retiros ya terminados no lo necesitan. RETIROS_EXIGE_RESPONSABLE=0 la apaga. La guía (retiros_guia.py) la refleja en pantalla.
+    _MSG_SIN_RESPONSABLE = _rg.MSG_SIN_RESPONSABLE
+
+    def _exige_responsable_activo():
+        return (os.environ.get("RETIROS_EXIGE_RESPONSABLE") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+    def _tiene_responsable(req):
+        return bool(req.get("responsable_user_id") or (req.get("responsable_nombre") or "").strip())
+
+    def _sin_responsable(req):
+        """¿Hay que pedir que alguien se haga cargo antes de dejar avanzar este retiro? (sin responsable y todavía no terminado)"""
+        if not _exige_responsable_activo():
+            return False
+        if (req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
+            return False
+        return not _tiene_responsable(req)
+
+    def _es_fetch():
+        """¿La petición viene de un fetch (el Kanban, el panel del calendario) y no de un formulario con navegación? Esos esperan un código
+        HTTP: con un redirect darían por bueno un cambio que el servidor rechazó."""
+        return ((request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
+                or (request.headers.get("Sec-Fetch-Dest") or "").lower() == "empty"
+                or "application/json" in (request.headers.get("Accept") or "").lower())
+
+    def _pickup_generar_checklist(rid):
+        """Checklist de picking por producto, desde las líneas consolidadas del retiro. Lo usan el botón «Enviar a preparación» y el
+        envío automático según Check. Idempotente (INSERT IGNORE): volver a entrar a preparación no duplica ni borra lo ya marcado."""
+        try:
+            _data_pk = _pickup_lineas_consolidadas(rid) or {}
+            # PRE-AGREGAR por SKU (review 2026-06-20): un retiro multidoc puede
+            # traer el MISMO SKU en 2+ facturas. Sin agregación, el INSERT IGNORE
+            # contra UNIQUE(request_id, sku) descartaba las ocurrencias extra y
+            # bodega veía x2 cuando el total real era 5 → preparaba de menos.
+            _agg = {}
+            _n_sin_sku = 0
+            for _ln in (_data_pk.get("lineas") or [])[:200]:
+                _sku = (str(_ln.get("sku") or "").strip())[:80]
+                if not _sku:
+                    # SKU vacío → clave ÚNICA por índice (fallback constante
+                    # colapsaría todas las líneas sin SKU en una sola).
+                    _n_sin_sku += 1
+                    _sku = f"item-{_n_sin_sku}"
+                if _sku in _agg:
+                    _agg[_sku]["cantidad"] += float(_ln.get("cantidad") or 1)
+                else:
+                    _agg[_sku] = {
+                        "descripcion": (str(_ln.get("descripcion") or _sku))[:300],
+                        "cantidad": float(_ln.get("cantidad") or 1),
+                    }
+            for _sku, _it in _agg.items():
+                mysql_execute(
+                    "INSERT IGNORE INTO pickup_picking_items "
+                    "(request_id, sku, descripcion, cantidad) VALUES (%s,%s,%s,%s)",
+                    (rid, _sku, _it["descripcion"], _it["cantidad"]))
+        except Exception as _e_pk:
+            print(f"[pickup-updstatus] picking gen: {_e_pk}", flush=True)
+
     @app.route("/retiros/<int:rid>/status", methods=["POST"])
     @require_permission("retiros")
     def pickup_update_status(rid):
@@ -6236,6 +6304,14 @@ def register_pickup_routes(app, ctx):
             flash("Estado no valido.", "danger")
             return redirect(url_for("pickup_detail", rid=rid))
         old_status = req.get("status") or ""
+
+        # ── GUARDA DE RESPONSABLE (Daniel 2026-10-02): «para avanzar debe declarar el responsable, y para agendar o liberar el calendario».
+        # Cualquier cambio de estado de un retiro sin responsable (Kanban, Cambiar estado, botones de la ficha) pide primero «Me hago cargo».
+        if old_status != new_status and _sin_responsable(req):
+            if _es_fetch():                 # Kanban / panel del calendario: reciben el rechazo y revierten lo que mostraron
+                return jsonify({"ok": False, "error": _MSG_SIN_RESPONSABLE, "code": "SIN_RESPONSABLE"}), 409
+            flash(_MSG_SIN_RESPONSABLE, "warning")
+            return redirect(url_for("pickup_detail", rid=rid))
 
         # ── GUARDA DE SECUENCIA (Daniel 2026-06-19) ────────────────────────────
         # No se puede pasar a PREPARACIÓN ni marcar RETIRADO sin una cita
@@ -6264,12 +6340,24 @@ def register_pickup_routes(app, ctx):
                       "(aceptar su fecha o proponer otra) antes de enviarlo a preparación.", "warning")
                 return redirect(url_for("pickup_detail", rid=rid))
 
-        mysql_execute(f"UPDATE `{REQ}` SET status=%s, closed_at=IF(%s IN ('cerrada','rechazada','retirada'),NOW(),closed_at) WHERE id=%s", (new_status, new_status, rid))
-        # Bitácora (Daniel 2026-10-02): debe quedar claro SI LO APRETÓ UNA PERSONA o fue automático, y quién fue.
+        # Ya estaba en preparación (otra persona, otra pestaña o el envío automático de Check lo pasó antes): no hay nada que cambiar. Escribir
+        # igual «en preparación → en preparación» le quitaba la autoría al automático en la bitácora y en los hitos (revisión 2026-10-02).
+        if new_status == "en_preparacion" and old_status == "en_preparacion":
+            flash("Este retiro ya estaba en preparación.", "warning")
+            return redirect(url_for("pickup_detail", rid=rid))
+        _conteo_estado = ctx.get("mysql_execute_returning_rowcount")
+        if new_status == "en_preparacion" and old_status == "agenda_confirmada" and _conteo_estado:
+            # Cambio atómico: si entre la lectura y este UPDATE lo pasó el envío automático (u otra persona), no se repite correo ni bitácora
+            if not _conteo_estado(f"UPDATE `{REQ}` SET status='en_preparacion' WHERE id=%s AND status='agenda_confirmada'", (rid,)):
+                flash("Otra persona (o Check, en automático) ya pasó este retiro a preparación. No se envió nada más.", "warning")
+                return redirect(url_for("pickup_detail", rid=rid))
+        else:
+            mysql_execute(f"UPDATE `{REQ}` SET status=%s, closed_at=IF(%s IN ('cerrada','rechazada','retirada'),NOW(),closed_at) WHERE id=%s", (new_status, new_status, rid))
+        # Bitácora (Daniel 2026-10-02): debe quedar claro SI LO HIZO UNA PERSONA o fue automático, y quién fue.
         _notas_log = notes
         if new_status == "en_preparacion" and old_status != new_status:
             _quien = ((getattr(g, "user", None) or {}).get("nombre") or "un usuario").strip()
-            _notas_log = (f"Manual: {_quien} presionó «Enviar a preparación»." + (f" Nota: {notes}" if notes else "")).strip()
+            _notas_log = (f"Manual: {_quien} pasó el retiro a «En preparación»." + (f" Nota: {notes}" if notes else "")).strip()
         log_event(rid, "estado_actualizado", old_status, new_status, _notas_log, "interno")
         # Una propuesta pendiente no puede sobrevivir a un cambio manual a
         # confirmado / preparación / estado terminal: desde el link viejo el
@@ -6312,35 +6400,7 @@ def register_pickup_routes(app, ctx):
         # marca ítem por ítem en la ficha. INSERT IGNORE = idempotente (re-entrar
         # a preparación no duplica ni borra checks ya hechos).
         if new_status == "en_preparacion" and old_status != new_status:
-            try:
-                _data_pk = _pickup_lineas_consolidadas(rid) or {}
-                # PRE-AGREGAR por SKU (review 2026-06-20): un retiro multidoc puede
-                # traer el MISMO SKU en 2+ facturas. Sin agregación, el INSERT IGNORE
-                # contra UNIQUE(request_id, sku) descartaba las ocurrencias extra y
-                # bodega veía x2 cuando el total real era 5 → preparaba de menos.
-                _agg = {}
-                _n_sin_sku = 0
-                for _ln in (_data_pk.get("lineas") or [])[:200]:
-                    _sku = (str(_ln.get("sku") or "").strip())[:80]
-                    if not _sku:
-                        # SKU vacío → clave ÚNICA por índice (fallback constante
-                        # colapsaría todas las líneas sin SKU en una sola).
-                        _n_sin_sku += 1
-                        _sku = f"item-{_n_sin_sku}"
-                    if _sku in _agg:
-                        _agg[_sku]["cantidad"] += float(_ln.get("cantidad") or 1)
-                    else:
-                        _agg[_sku] = {
-                            "descripcion": (str(_ln.get("descripcion") or _sku))[:300],
-                            "cantidad": float(_ln.get("cantidad") or 1),
-                        }
-                for _sku, _it in _agg.items():
-                    mysql_execute(
-                        "INSERT IGNORE INTO pickup_picking_items "
-                        "(request_id, sku, descripcion, cantidad) VALUES (%s,%s,%s,%s)",
-                        (rid, _sku, _it["descripcion"], _it["cantidad"]))
-            except Exception as _e_pk:
-                print(f"[pickup-updstatus] picking gen: {_e_pk}", flush=True)
+            _pickup_generar_checklist(rid)
 
         # ── EVIDENCIA DE RETIRO (Daniel 2026-06-20): quién retiró + foto opcional.
         # Llega desde el modal de la ficha (multipart). Best-effort: nada de esto
@@ -10943,6 +11003,10 @@ def register_pickup_routes(app, ctx):
                              f"({PICKUP_STATUS.get(req.get('status'), req.get('status'))}): "
                              "no se puede cambiar su agenda.", 409)
 
+        # Responsable obligatorio (Daniel 2026-10-02): proponer fecha OCUPA un bloque del calendario.
+        if _sin_responsable(req):
+            return _resp_err(_MSG_SIN_RESPONSABLE, 409)
+
         # WORKFLOW: la propuesta requiere documentación cargada.
         # Daniel 2026-06-15: si el retiro YA tiene documentos asociados NO
         # bloqueamos por la "validación formal" — los docs SIN SALDO no
@@ -11200,6 +11264,10 @@ def register_pickup_routes(app, ctx):
                 "ok": False,
                 "error": "Este retiro ya está cerrado o finalizado. Si corresponde reagendar, crea una solicitud nueva o reabre desde Cambiar estado.",
             }), 409
+
+        # Responsable obligatorio (Daniel 2026-10-02): aceptar la fecha del cliente confirma (ocupa) un bloque del calendario.
+        if _sin_responsable(req):
+            return jsonify({"ok": False, "error": _MSG_SIN_RESPONSABLE, "code": "SIN_RESPONSABLE"}), 409
 
         proposal = mysql_fetchone(
             f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' "
@@ -11512,7 +11580,8 @@ def register_pickup_routes(app, ctx):
             "prod_conf": (marcas.get("productos_confirmados") or {}).get("firma"),
             "prod_conf_quien": (marcas.get("productos_confirmados") or {}).get("quien"),
             "adelantado": bool(propuesta or cita or st in _GUIA_ADELANTADOS),
-            "responsable": req.get("responsable_nombre") or "",
+            "responsable": (req.get("responsable_nombre") or "").strip() or ("Responsable asignado" if req.get("responsable_user_id") else ""),
+            "exige_responsable": _exige_responsable_activo(),
             "correo_ok": _guia_correo_ok(req),
             "evidencia_retiro": _guia_evidencia_retiro(rid, req),
             "propuesta": propuesta, "cita": cita, "cambio_pedido": cambio,
@@ -11539,6 +11608,7 @@ def register_pickup_routes(app, ctx):
             for l in lineas]
         g_["pasos"][2]["total"] = len(lineas)
         g_["firma_docs"], g_["firma_prod"] = f_docs, f_prod
+        g_["docs"] = docs_ui            # un semáforo por factura o boleta en el encabezado de la guía (retiros con varios documentos)
         g_["status"] = st
         g_["rid"] = rid
         g_["codigo"] = req.get("code") or ""
@@ -11566,6 +11636,8 @@ def register_pickup_routes(app, ctx):
             return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
         if (req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
             return jsonify({"ok": False, "error": "Este retiro ya terminó: no hay nada que confirmar."}), 409
+        if _sin_responsable(req):             # Daniel 2026-10-02: para avanzar hay que declarar el responsable
+            return jsonify({"ok": False, "error": _MSG_SIN_RESPONSABLE, "code": "SIN_RESPONSABLE"}), 409
         u = getattr(g, "user", None) or {}
         quien = (u.get("nombre") or u.get("username") or "").strip()[:190]
         if not quien:
@@ -11581,7 +11653,7 @@ def register_pickup_routes(app, ctx):
                 return jsonify({"ok": True, "ya": True, **datos})
             return jsonify({"ok": False, "error": "Primero agrega la factura o boleta del cliente."}), 409
         if (paso.get("accion") or {}).get("deshabilitada"):
-            return jsonify({"ok": False, "error": "Primero confirma las facturas (paso 1)."}), 409
+            return jsonify({"ok": False, "error": (paso.get("accion") or {}).get("motivo") or "Primero confirma las facturas (paso 1)."}), 409
         # Lo confirmado es EXACTAMENTE lo que la persona vio: si la lista cambió mientras tanto, se pide revisar de nuevo.
         visto = body.get("firma")
         actual = datos["firma_docs"] if que == "docs" else datos["firma_prod"]
@@ -11789,9 +11861,12 @@ def register_pickup_routes(app, ctx):
             print(f"[retiros-check] rid={rid}: {e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo consultar Check."}), 500
         aplicado = False
+        prep_auto = False
         if not request.args.get("solo_lectura"):
             aplicado = _check_aplicar_listo(rid, req, res["evaluacion"])
-        resp = jsonify({"ok": True, "status": req.get("status"), "aplicado_ahora": aplicado,
+            prep_auto = _prep_auto_aplicar(rid, req, res["evaluacion"])      # «Enviar a preparación» automático
+        resp = jsonify({"ok": True, "status": req.get("status"), "aplicado_ahora": aplicado, "prep_auto_ahora": prep_auto,
+                        "prep_auto_activo": _prep_auto_activo(),
                         "auto_activo": _check_auto_activo(), "conexion": _check_conexion(res),
                         "preparado": _retiro_preparado(rid, req.get("status") or ""), **res})
         resp.headers["Cache-Control"] = "no-store"
@@ -11817,6 +11892,16 @@ def register_pickup_routes(app, ctx):
                             _check_aplicar_listo(rid, req, _check_prep_retiro(rid)["evaluacion"])
                     except Exception as e:      # un retiro con datos raros no frena a los demás
                         print(f"[retiros-check] barrido rid={f.get('id')}: {e}", flush=True)
+                # Retiros con la cita confirmada y cercana: si bodega ya empezó a juntar, pasan solos a «En preparación»
+                # (con el interruptor apagado o fuera del horario de la bodega ni siquiera se le pregunta a Check)
+                for f in (_prep_auto_candidatos() if (_prep_auto_activo() and _prep_auto_en_horario()) else []):
+                    try:
+                        rid = int(f["id"])
+                        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+                        if req:
+                            _prep_auto_aplicar(rid, req, _check_prep_retiro(rid)["evaluacion"])
+                    except Exception as e:
+                        print(f"[retiros-prep-auto] barrido rid={f.get('id')}: {e}", flush=True)
         except Exception as e:
             print(f"[retiros-check] barrido: {e}", flush=True)
         finally:
@@ -11964,6 +12049,344 @@ def register_pickup_routes(app, ctx):
         return app.response_class(_json_ot.dumps(salida, ensure_ascii=False, default=str, indent=2), mimetype="application/json")
 
     # ══════════════════════════════════════════════════════════════════
+    #  «ENVIAR A PREPARACIÓN» AUTOMÁTICO (Daniel 2026-10-02): «necesito que envíes a preparación en automático. Por supuesto, lleva control
+    #  de hora, fecha, todo. Y usuario. Internamente… al cliente le va a dar fecha nada más».
+    #  Cuando Check muestra que bodega YA EMPEZÓ a juntar el pedido (alguna unidad pickeada y nada despachado), un retiro con la cita
+    #  confirmada pasa solo a «En preparación» por el MISMO camino que el botón: checklist de bodega, aviso interno y el correo al cliente
+    #  (que trae solo la fecha agendada). Lo que cambia es la bitácora: queda «Automático · Check WMS», con la hora, la regla, y la OT y el
+    #  usuario que informe Check; el botón manual deja «Manual: <usuario> …».
+    #  Salvaguardas (revisión adversarial del 2026-10-02):
+    #   · interruptor RETIROS_PREP_AUTO (0 = apagado; por defecto encendido); RETIROS_CHECK_AUTO=0 («Check solo informa») también lo apaga;
+    #   · solo con la cita de HOY o de los próximos N días HÁBILES de la bodega (RETIROS_PREP_AUTO_DIAS, 1; viernes → lunes cuenta 1): una cita
+    #     ya pasada la decide una persona, porque el correo dice «faltan pocas horas»;
+    #   · solo en horario de bodega (07:30–20:00, día abierto, hora Chile): ningún correo sale de madrugada ni en fin de semana o feriado;
+    #   · UNA sola vez por retiro: si una persona lo devuelve a «Cita confirmada», el automático no lo vuelve a mover ni a escribirle al cliente;
+    #   · nunca si el cliente pidió cambiar la fecha y nadie le respondió (la guarda va también DENTRO del UPDATE: a prueba de lecturas viejas);
+    #   · nunca si una factura o boleta del retiro está también en OTRO retiro activo (Check informa por documento, no por retiro);
+    #   · nunca si el retiro no tiene responsable declarado (para avanzar hay que declararlo: ver _sin_responsable);
+    #   · la señal debe verse en dos lecturas separadas por RETIROS_CHECK_CONFIRMACION_S segundos y la segunda se pide DE VERDAD a Check;
+    #   · el cambio de estado es atómico (UPDATE … WHERE status='agenda_confirmada'): si el botón gana, no se repite nada.
+    #  Check solo se consulta (REGLA #4.4).
+    # ══════════════════════════════════════════════════════════════════
+    _CHECK_INICIO_VISTO = {}        # rid → ts de la primera lectura «bodega ya empezó» (camino de la ficha / barrido en hilo)
+    _CHECK_INICIO_VIGENCIA_S = 300  # una primera lectura de hace más de 5 min ya no cuenta
+    _PREP_AUTO_DESDE_MIN = 7 * 60 + 30      # el correo al cliente solo sale entre las 07:30 …
+    _PREP_AUTO_HASTA_MIN = 20 * 60          # … y las 20:00 (hora Chile) de un día en que la bodega abre
+
+    def _prep_auto_activo():
+        """Encendido por defecto. RETIROS_PREP_AUTO=0 lo apaga; RETIROS_CHECK_AUTO=0 («Check solo informa y no escribe nada») también."""
+        return (os.environ.get("RETIROS_PREP_AUTO") or "1").strip().lower() not in ("0", "false", "no", "off") and _check_auto_activo()
+
+    def _prep_auto_dias():
+        try:
+            return max(0, min(int(os.environ.get("RETIROS_PREP_AUTO_DIAS") or 1), 30))
+        except ValueError:
+            return 1
+
+    def _ahora_chile():
+        if _RELOJ_CHILE is not None:                # solo las pruebas lo fijan
+            return _RELOJ_CHILE()
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo("America/Santiago"))
+        except Exception:
+            return datetime.now()
+
+    def _a_fecha(v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, datetime):
+            return v.date()
+        if hasattr(v, "year") and hasattr(v, "month") and hasattr(v, "day"):
+            return v
+        try:
+            return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    def _prep_auto_dias_abiertos(hoy, cita, cerrado=None):
+        """Cuántos días en que la bodega ABRE hay desde mañana hasta la cita, inclusive: el mismo día = 0, mañana = 1, viernes → lunes = 1.
+        Usa el calendario de Horarios y alertas (fin de semana, feriados y cierres); si no se puede leer, solo salta sábado y domingo."""
+        if (cita - hoy).days > 31:
+            return 999
+        if cerrado is None:
+            try:
+                cerrado = _dias_ctx(hoy, cita)["cerrado"]
+            except Exception as e:
+                print(f"[retiros-prep-auto] calendario de la bodega: {e}", flush=True)
+                cerrado = lambda d: d.isoweekday() >= 6
+        n, d = 0, hoy
+        while d < cita:
+            d += timedelta(days=1)
+            if not cerrado(d):
+                n += 1
+        return n
+
+    def _prep_auto_en_ventana(req, cerrado=None):
+        """La cita es de hoy o de los próximos N días hábiles de la bodega (hora Chile; N = 1 por defecto). Una cita ya pasada no se mueve sola:
+        el correo diría «faltan pocas horas» para algo que ya pasó. Evita además mover un retiro por picking que no es el suyo."""
+        cd = _a_fecha(req.get("confirmed_date"))
+        if not cd:
+            return False
+        hoy = _ahora_chile().date()
+        if cd < hoy:
+            return False
+        return _prep_auto_dias_abiertos(hoy, cd, cerrado) <= _prep_auto_dias()
+
+    def _prep_auto_en_horario():
+        """El correo al cliente no sale de madrugada ni de noche ni un día en que la bodega no abre (fin de semana, feriado o cierre)."""
+        ahora = _ahora_chile()
+        if not (_PREP_AUTO_DESDE_MIN <= ahora.hour * 60 + ahora.minute < _PREP_AUTO_HASTA_MIN):
+            return False
+        hoy = ahora.date()
+        try:
+            return not _dias_ctx(hoy, hoy)["cerrado"](hoy)
+        except Exception as e:
+            print(f"[retiros-prep-auto] calendario de la bodega: {e}", flush=True)
+            return hoy.isoweekday() < 6
+
+    def _prep_auto_cambio_pendiente(rid):
+        """¿El cliente pidió cambiar la fecha y nadie le ha respondido? (misma guarda que el botón)."""
+        return bool(mysql_fetchone(
+            f"SELECT id FROM `{PROP}` WHERE request_id=%s AND status='pending' AND LOWER(proposed_by)='cliente' LIMIT 1", (rid,)))
+
+    def _prep_auto_ya_paso(rid):
+        """¿Este retiro ya estuvo alguna vez «En preparación»? Si una persona lo devolvió a «Cita confirmada», el automático no lo vuelve a
+        mover (ni a escribirle otra vez al cliente): desde ahí decide la persona con el botón."""
+        return bool(mysql_fetchone(
+            f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action='estado_actualizado' AND new_status='en_preparacion' LIMIT 1", (rid,)))
+
+    def _prep_auto_doc_compartido(rid):
+        """Código de OTRO retiro activo que comparte una factura o boleta con este, o None. Check informa por DOCUMENTO, no por retiro:
+        el picking que ve podría ser del otro retiro."""
+        fila = mysql_fetchone(
+            f"SELECT otro_r.code AS code FROM pickup_request_docs mia "
+            f"JOIN pickup_request_docs otra ON otra.document_type=mia.document_type AND otra.request_id<>mia.request_id "
+            f"AND TRIM(LEADING '0' FROM otra.document_number)=TRIM(LEADING '0' FROM mia.document_number) "
+            f"JOIN `{REQ}` otro_r ON otro_r.id=otra.request_id "
+            f"WHERE mia.request_id=%s AND otro_r.status NOT IN ('retirada','cerrada','rechazada','fallida') LIMIT 1", (rid,))
+        return ((fila.get("code") or "otro retiro") if fila else None)
+
+    def _prep_auto_detalle_check(rid):
+        """«FCV 10953: OT 481516 (TERMINADA) · Usuario picking JPEREZ · Inicio 02/10/2026 15:32» con lo que YA hay en memoria del
+        reporte de movimientos de Check. Nunca espera a Check ni dispara una descarga."""
+        try:
+            cache = ctx.get("_CHECKWMS_TRAZA")
+            filas = cache.get("rows") if cache else None
+            if not isinstance(filas, list):
+                return ""
+            docs = mysql_fetchall("SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
+                                  (rid,)) or []
+            partes = []
+            for d in docs[:6]:
+                tipo = (d.get("document_type") or "").strip().upper()[:5]
+                num = re.sub(r"\D", "", d.get("document_number") or "")[:12]
+                if not tipo or not num:
+                    continue
+                for o in _rco.agrupar_por_ot(_rco.filas_del_documento(filas, tipo, num))[:2]:
+                    quien = ", ".join(f"{p['etiqueta']} {p['valor']}" for p in (o.get("personas") or [])[:3])
+                    cuando = " · ".join(f"{m['etiqueta']} {m['valor']}" for m in (o.get("momentos") or [])[:2])
+                    partes.append(f"{tipo} {num}: OT {o.get('ot') or 's/n'}" + (f" ({o['estado']})" if o.get("estado") else "")
+                                  + (f" · {quien}" if quien else "") + (f" · {cuando}" if cuando else ""))
+            return "; ".join(partes)[:480]
+        except Exception as e:
+            print(f"[retiros-prep-auto] detalle Check rid={rid}: {e}", flush=True)
+            return ""
+
+    def _prep_auto_aplicar(rid, req, ev, confirmado=None, sincrono=False):
+        """Pasa el retiro de «cita confirmada» a «En preparación» si Check ya muestra que bodega empezó. Devuelve True si ESTA llamada
+        hizo el cambio. `confirmado=True` = el que llama ya vio la señal en dos lecturas separadas (barrido del cron); None = se exigen dos
+        lecturas separadas por RETIROS_CHECK_CONFIRMACION_S segundos: la primera solo toma nota y la segunda se pide DE VERDAD a Check, sin
+        su memoria de 45 s (la ficha abierta y el barrido en hilo). `sincrono=True` manda el correo al cliente dentro de la misma petición
+        (el cron: Cloud Run casi no da CPU a un hilo que sigue corriendo cuando la petición ya respondió)."""
+        if (req.get("status") or "") != "agenda_confirmada" or not _prep_auto_activo() or not ev.get("iniciada_auto") \
+                or _sin_responsable(req) or not _prep_auto_en_ventana(req) or not _prep_auto_en_horario():
+            _CHECK_INICIO_VISTO.pop(rid, None)
+            return False
+        espera = _check_confirmacion_s()
+        if confirmado is None:
+            ahora = time.time()
+            primera = _CHECK_INICIO_VISTO.get(rid)
+            if primera is None or ahora - primera > _CHECK_INICIO_VIGENCIA_S:
+                primera = _CHECK_INICIO_VISTO[rid] = ahora          # primera vez (o una nota vieja): solo toma nota
+            if ahora - primera < espera:
+                return False
+            if espera > 0:                                           # segunda lectura DE VERDAD: sin la memoria de 45 s de Check
+                _check_olvidar(rid)
+                nuevo = _check_prep_retiro(rid)["evaluacion"]
+                if not nuevo.get("iniciada_auto"):
+                    _CHECK_INICIO_VISTO.pop(rid, None)
+                    return False
+                ev, confirmado = nuevo, True
+        with _CHECK_APLICAR_LOCK:
+            try:
+                get_db().commit()       # cierra la lectura vieja (REPEATABLE READ): lo que se relee abajo es lo de AHORA, no lo de hace un minuto
+            except Exception:
+                pass
+            fresco = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+            if (fresco.get("status") or "") != "agenda_confirmada" or not _prep_auto_en_ventana(fresco) or _sin_responsable(fresco) \
+                    or _prep_auto_cambio_pendiente(rid) or _prep_auto_ya_paso(rid):
+                _CHECK_INICIO_VISTO.pop(rid, None)
+                return False
+            otro = _prep_auto_doc_compartido(rid)
+            if otro:
+                print(f"[retiros-prep-auto] rid={rid} {req.get('code')}: no se mueve solo, comparte documento con {otro}", flush=True)
+                _CHECK_INICIO_VISTO.pop(rid, None)
+                return False
+            detalle = _prep_auto_detalle_check(rid)
+            confirmacion = "; confirmado con una segunda lectura a Check" if (confirmado or espera > 0) else ""
+            notas = (f"Automático · Check WMS detectó que bodega ya empezó a juntar el pedido "
+                     f"({ev.get('pickeadas')} de {ev.get('pedidas')} unidades pickeadas{confirmacion}). "
+                     + (f"Check: {detalle}. " if detalle else "OT y usuario: Check aún no los informa en el reporte de movimientos. ")
+                     + f"Registrado el {_ahora_chile().strftime('%d/%m/%Y %H:%M')} (hora Chile). "
+                       f"Al cliente solo se le comunica la fecha del retiro.")[:900]
+            conteo = ctx.get("mysql_execute_returning_rowcount")
+            try:
+                if conteo:
+                    if not conteo(f"UPDATE `{REQ}` SET status='en_preparacion' WHERE id=%s AND status='agenda_confirmada' "
+                                  f"AND NOT EXISTS (SELECT 1 FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+                                  f"AND LOWER(proposed_by)='cliente')", (rid, rid)):
+                        _CHECK_INICIO_VISTO.pop(rid, None)       # otro proceso (o el botón, o un cambio del cliente) llegó primero
+                        return False
+                else:
+                    mysql_execute(f"UPDATE `{REQ}` SET status='en_preparacion' WHERE id=%s AND status='agenda_confirmada' "
+                                  f"AND NOT EXISTS (SELECT 1 FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+                                  f"AND LOWER(proposed_by)='cliente')", (rid, rid))
+                log_event(rid, "estado_actualizado", "agenda_confirmada", "en_preparacion", notas, "sistema", "Check WMS (automático)")
+            except Exception as e:
+                print(f"[retiros-prep-auto] rid={rid}: {e}", flush=True)
+                return False
+            _CHECK_INICIO_VISTO.pop(rid, None)
+        # Mismos efectos que el botón (cada uno por separado: ninguno puede frenar al resto ni deshacer el cambio)
+        try:
+            mysql_execute(f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() WHERE request_id=%s AND status='pending'", (rid,))
+        except Exception as e:
+            print(f"[retiros-prep-auto] cerrar propuestas pendientes rid={rid}: {e}", flush=True)
+        _pickup_generar_checklist(rid)
+        try:
+            req_despues = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+            if sincrono:
+                notify(req_despues, "preparing")       # el cron no puede dejar el correo en un hilo: la petición termina y Cloud Run frena la CPU
+            else:
+                notify_async(req_despues, "preparing")  # el mismo correo del botón: fecha agendada, nada interno
+        except Exception as e:
+            print(f"[retiros-prep-auto] aviso al cliente rid={rid}: {e}", flush=True)
+        try:
+            tok = req.get("public_token")
+            if tok:
+                _POLL_CACHE.pop(tok, None)
+            _DISPO_CACHE["payload"] = None
+        except Exception:
+            pass
+        try:
+            _notificar_equipo_retiros(
+                f"📦 Retiro {req.get('code') or '?'} en preparación (automático)",
+                f"{req.get('customer_name') or 'Cliente'} — Check detectó que bodega ya empezó a juntar el pedido.",
+                rid, req.get("code") or "?", prioridad="media", tipo="retiro_preparacion", send_email=False)
+        except Exception as e:
+            print(f"[retiros-prep-auto] aviso equipo rid={rid}: {e}", flush=True)
+        print(f"[retiros-prep-auto] rid={rid} {req.get('code')} -> en_preparacion (automatico, Check)", flush=True)
+        return True
+
+    def _prep_auto_candidatos(limite=30):
+        """Retiros con la cita confirmada dentro de la ventana (hoy o los próximos N días hábiles), los más próximos primero. Los que YA
+        estuvieron en preparación alguna vez quedan fuera: una persona los devolvió a propósito."""
+        hoy = _ahora_chile().date()
+        hasta = hoy + timedelta(days=_prep_auto_dias() * 2 + 6)     # margen para fines de semana y feriados; el filtro fino va abajo
+        filas = mysql_fetchall(
+            f"SELECT id, confirmed_date FROM `{REQ}` WHERE status='agenda_confirmada' AND confirmed_date BETWEEN %s AND %s "
+            f"AND NOT EXISTS (SELECT 1 FROM `{LOG}` l WHERE l.request_id=`{REQ}`.id AND l.action='estado_actualizado' "
+            f"AND l.new_status='en_preparacion') "
+            f"ORDER BY confirmed_date ASC, id ASC LIMIT %s", (hoy, hasta, int(limite))) or []
+        try:
+            cerrado = _dias_ctx(hoy, hasta)["cerrado"]
+        except Exception:
+            cerrado = None
+        return [f for f in filas if _prep_auto_en_ventana(f, cerrado)]
+
+    def _check_olvidar(rid):
+        """Borra la memoria de 45 s de lo que Check dijo de los documentos de este retiro (para volver a leerlos de verdad)."""
+        try:
+            for d in mysql_fetchall("SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s", (rid,)) or []:
+                _CHECK_PREP_CACHE.pop(((d.get("document_type") or "").strip().upper()[:5],
+                                       re.sub(r"\D", "", d.get("document_number") or "")[:12]), None)
+        except Exception:
+            pass
+
+    def _prep_auto_barrido_sync(max_s=90, dry=False):
+        """Revisa en Check los retiros con cita cercana y pasa a «En preparación» los que ya tienen picking. Dentro de UNA petición
+        (la que hace Cloud Scheduler), porque Cloud Run casi no da CPU a un hilo fuera de una petición. La señal se confirma releyendo
+        a Check tras RETIROS_CHECK_CONFIRMACION_S segundos (una sola espera para todos los candidatos). Fuera del horario de la bodega no
+        lee ni escribe nada (salvo con dry=True, que solo mira)."""
+        t0 = time.time()
+        res = {"activo": _prep_auto_activo(), "en_horario": True, "revisados": 0, "con_senal": [], "pasaron": [], "errores": 0}
+        if not res["activo"]:
+            return res
+        res["en_horario"] = _prep_auto_en_horario()
+        if not res["en_horario"] and not dry:
+            return res
+
+        def _lee(rid):
+            req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+            return req, (_check_prep_retiro(rid)["evaluacion"] if req else None)
+        senal = []
+        for f in _prep_auto_candidatos():
+            if time.time() - t0 > max_s * 0.45:
+                break
+            try:
+                rid = int(f["id"])
+                req, ev = _lee(rid)
+                res["revisados"] += 1
+                if req and ev and ev.get("iniciada_auto") and _prep_auto_en_ventana(req) and not _prep_auto_cambio_pendiente(rid):
+                    senal.append(rid)
+                    res["con_senal"].append(req.get("code") or rid)
+            except Exception as e:
+                res["errores"] += 1
+                print(f"[retiros-prep-auto] barrido rid={f.get('id')}: {e}", flush=True)
+        if senal and not dry:
+            try:
+                get_db().commit()       # no dormir con una transacción abierta (bloqueos de las tablas pickup_* y lectura vieja)
+            except Exception:
+                pass
+            espera = min(_check_confirmacion_s(), max(0.0, max_s - (time.time() - t0) - 20))
+            if espera > 0:
+                time.sleep(espera)
+            for rid in senal:
+                if time.time() - t0 > max_s:
+                    print(f"[retiros-prep-auto] barrido: sin tiempo, el resto queda para el próximo ciclo (rid={rid})", flush=True)
+                    break
+                try:
+                    _check_olvidar(rid)
+                    req, ev = _lee(rid)
+                    if req and ev and _prep_auto_aplicar(rid, req, ev, confirmado=True, sincrono=True):
+                        res["pasaron"].append(req.get("code") or rid)
+                except Exception as e:
+                    res["errores"] += 1
+                    print(f"[retiros-prep-auto] confirmación rid={rid}: {e}", flush=True)
+        res["segundos"] = round(time.time() - t0, 1)
+        return res
+
+    # Lo usa el trabajo de Cloud Scheduler que ya corre cada 10 min (app.py) y el endpoint de abajo
+    try:
+        ctx["_retiros_prep_auto_barrido"] = _prep_auto_barrido_sync
+    except Exception:
+        pass
+
+    @app.route("/retiros/cron/check-barrido", methods=["GET", "POST"])
+    def pickup_cron_check_barrido():
+        """Para Cloud Scheduler: revisa en Check y pasa solos a «En preparación» los retiros que ya tienen picking. Token por header
+        X-Cron-Token (= ILUS_CRON_TOKEN); sin token configurado solo acepta localhost. ?dry=1: solo mira, no cambia nada."""
+        esperado = (os.environ.get("ILUS_CRON_TOKEN") or "").strip()
+        recibido = (request.headers.get("X-Cron-Token") or "").strip()
+        if esperado:
+            if not recibido or not secrets.compare_digest(recibido.encode("utf-8"), esperado.encode("utf-8")):
+                return jsonify({"error": "forbidden"}), 403
+        elif request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
+            return jsonify({"error": "forbidden"}), 403
+        res = _prep_auto_barrido_sync(max_s=100, dry=(request.args.get("dry") or "") in ("1", "true", "yes"))
+        return jsonify({"ok": True, **res})
+
+    # ══════════════════════════════════════════════════════════════════
     #  DIAGNÓSTICO CHECKWMS (Daniel 2026-10-02) — SOLO LECTURA, REGLA #4.4.
     #  "Que la preparación se detecte sola desde Check": antes de construir la
     #  detección hay que ver QUÉ devuelve GetSeguimientoDespacho para un
@@ -12080,6 +12503,9 @@ def register_pickup_routes(app, ctx):
             return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
         if str(req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
             return jsonify({"ok": False, "error": "Este retiro ya está cerrado o finalizado."}), 409
+        # Responsable obligatorio (Daniel 2026-10-02): marcar la cita como aceptada confirma (ocupa) un bloque del calendario.
+        if _sin_responsable(req):
+            return jsonify({"ok": False, "error": _MSG_SIN_RESPONSABLE, "code": "SIN_RESPONSABLE"}), 409
 
         body = request.get_json(silent=True) or {}
         motivo = (body.get("motivo") or request.form.get("motivo") or "").strip()[:300]

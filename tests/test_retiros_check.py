@@ -138,3 +138,46 @@ class InterpretarCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BodegaYaEmpezo(unittest.TestCase):
+    """«iniciada_auto»: la señal con la que ILUS pasa solo un retiro a «En preparación» (Daniel 2026-10-02)."""
+
+    def test_sin_nada_pickeado_no_empezo(self):
+        r = rc.evaluar([doc(fila(solicitado=3, asignado=3))])           # stock reservado, nadie ha juntado nada
+        self.assertFalse(r["iniciada"])
+        self.assertFalse(r["iniciada_auto"])
+        self.assertEqual(r["pickeadas"], 0)
+
+    def test_una_unidad_pickeada_ya_empezo(self):
+        r = rc.evaluar([doc(fila(solicitado=3, asignado=2, pickeado=1))])
+        self.assertTrue(r["iniciada"] and r["iniciada_auto"])
+        self.assertEqual(r["pickeadas"], 1)
+
+    def test_basta_con_un_documento_aunque_el_otro_no_este_en_check(self):
+        r = rc.evaluar([doc(fila(solicitado=2, pickeado=2)), None])
+        self.assertTrue(r["iniciada_auto"])
+
+    def test_si_algo_ya_esta_despachado_no_se_mueve_solo(self):
+        r = rc.evaluar([doc(fila(solicitado=2, pickeado=1, despachado=1))])
+        self.assertTrue(r["iniciada"])
+        self.assertFalse(r["iniciada_auto"])
+
+    def test_datos_raros_no_cuentan(self):
+        r = rc.evaluar([doc(fila(solicitado=2, pickeado="x"))])
+        self.assertFalse(r["iniciada"] or r["iniciada_auto"])
+        r = rc.evaluar([doc(fila(solicitado=2, pickeado=1, asignado=-1))])
+        self.assertFalse(r["iniciada"] or r["iniciada_auto"])
+
+    def test_sin_documentos_o_sin_datos(self):
+        for r in (rc.evaluar([]), rc.evaluar([None]), rc.evaluar([None, None])):
+            self.assertFalse(r["iniciada"] or r["iniciada_auto"])
+            self.assertEqual(r["pickeadas"], 0)
+
+    def test_una_cantidad_minuscula_no_es_una_unidad_pickeada(self):
+        """Revisión adversarial 2026-10-02: «0,0000001» movía el retiro con la nota «0 de 3 unidades pickeadas»."""
+        r = rc.evaluar([doc(fila(solicitado=3, pickeado="0.0000001"))])
+        self.assertFalse(r["iniciada"] or r["iniciada_auto"])
+        self.assertEqual(r["pickeadas"], 0)
+        r = rc.evaluar([doc(fila(solicitado=3, pickeado="0.5"))])           # media unidad sí es una señal real
+        self.assertTrue(r["iniciada_auto"])

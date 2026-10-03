@@ -66,6 +66,8 @@ class BDFalsa:
         self._id_log = 0
         self.falla_si = []       # [(regex, Excepcion)]: hace fallar consultas que coincidan
         self.falla_si_params = []   # [(regex, predicado(params)->bool, Excepcion)]: falla solo si el predicado da True
+        self.snapshot_viejo = False  # True: la lectura «¿hay un cambio pedido por el cliente?» sigue viendo el mundo de hace un minuto
+        self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
 
     # ── construcción de datos ─────────────────────────────────────────────
     def nueva_solicitud(self, rid=1, **kw):
@@ -120,7 +122,18 @@ class BDFalsa:
     def _por_id(self, params):
         return self.solicitudes.get(int(params[0]))
 
+    def _ganchos(self, s):
+        for par in list(self.al_leer):
+            if re.search(par[0], s, re.I):
+                self.al_leer.remove(par)
+                par[1]()
+
     def fetchall(self, sql, params=()):
+        res = self._fetchall(sql, params)
+        self._ganchos(_n(sql))
+        return res
+
+    def _fetchall(self, sql, params=()):
         s = _n(sql)
         self.consultas.append((s, params))
         for patron, exc in self.falla_si:
@@ -150,6 +163,20 @@ class BDFalsa:
         if low.startswith("select id, sku, descripcion, cantidad, picked, picked_by, picked_at from pickup_picking_items"):
             rid = int(params[0])
             return [dict(x) for x in self.picking if x["request_id"] == rid]
+        if low.startswith("select id, confirmed_date from `pickup_requests` where status='agenda_confirmada' and confirmed_date between"):
+            import datetime as _dt
+            desde, hasta = params[0], params[1]
+
+            def _f(v):
+                if isinstance(v, _dt.datetime):
+                    return v.date()
+                return v if isinstance(v, _dt.date) else _dt.date.fromisoformat(str(v)[:10])
+            # NOT EXISTS (…): los que YA estuvieron en preparación alguna vez no son candidatos
+            ya = {x["request_id"] for x in self.logs if x["action"] == "estado_actualizado" and x["new_status"] == "en_preparacion"}
+            return [{"id": r["id"], "confirmed_date": r["confirmed_date"]}
+                    for r in sorted(self.solicitudes.values(), key=lambda r: (str(r.get("confirmed_date")), r["id"]))
+                    if r["status"] == "agenda_confirmada" and r.get("confirmed_date") and desde <= _f(r["confirmed_date"]) <= hasta
+                    and r["id"] not in ya][:int(params[2])]
         if low.startswith("select id from `pickup_requests` where status='en_preparacion'"):
             return [{"id": r["id"]} for r in sorted(self.solicitudes.values(), key=lambda r: -r["id"])
                     if r["status"] == "en_preparacion"][:30]
@@ -157,6 +184,11 @@ class BDFalsa:
         return []
 
     def fetchone(self, sql, params=()):
+        res = self._fetchone(sql, params)
+        self._ganchos(_n(sql))
+        return res
+
+    def _fetchone(self, sql, params=()):
         s = _n(sql)
         low = s.lower()
         if low == "select * from `pickup_requests` where id=%s":
@@ -172,19 +204,36 @@ class BDFalsa:
             return {"listo": max(lis) if lis else None, "prep": max(prep) if prep else None}
         if low.startswith("select id from `pickup_proposals` where request_id=%s and status='pending'"):
             self.consultas.append((s, params))
+            if self.snapshot_viejo:
+                return None
             rid = int(params[0])
             for p in self.propuestas:
                 if p["request_id"] == rid and p["status"] == "pending" and (p.get("proposed_by") or "").lower() == "cliente":
                     return {"id": p["id"]}
             return None
-        if low.startswith("select id from `pickup_logs` where request_id=%s and action='estado_actualizado' "
-                          "and new_status='retirada'"):
-            # evidencia de que un retiro «cerrado» sí se retiró (paso por «retirada»)
+        m_est = re.match(r"^select id from `pickup_logs` where request_id=%s and action='estado_actualizado' and new_status='(\w+)'", low)
+        if m_est:
+            # «¿pasó alguna vez por ese estado?»: la evidencia de que un retiro «cerrado» sí se retiró (retirada) y el freno del envío
+            # automático (en_preparacion)
             self.consultas.append((s, params))
             rid = int(params[0])
             for x in self.logs:
-                if x["request_id"] == rid and x["action"] == "estado_actualizado" and x["new_status"] == "retirada":
+                if x["request_id"] == rid and x["action"] == "estado_actualizado" and x["new_status"] == m_est.group(1):
                     return {"id": x["id"]}
+            return None
+        if low.startswith("select otro_r.code as code from pickup_request_docs mia"):
+            # factura o boleta que el retiro comparte con OTRO retiro activo
+            self.consultas.append((s, params))
+            rid = int(params[0])
+            terminales = ("retirada", "cerrada", "rechazada", "fallida")
+            for mia in self.docs:
+                if mia["request_id"] != rid:
+                    continue
+                for otra in self.docs:
+                    if otra["request_id"] != rid and otra["document_type"] == mia["document_type"] \
+                            and otra["document_number"].lstrip("0") == mia["document_number"].lstrip("0") \
+                            and self.solicitudes[otra["request_id"]]["status"] not in terminales:
+                        return {"code": self.solicitudes[otra["request_id"]]["code"]}
             return None
         if re.match(r"^select (?!\*).+ from `pickup_requests` where id=%s$", low):
             # «SELECT status FROM pickup_requests WHERE id=%s» (el estado se relee dentro del candado) y similares
@@ -212,6 +261,24 @@ class BDFalsa:
                               "actor_name": actor_name, "action": action, "old_status": old_status,
                               "new_status": new_status, "notes": notes})
             return 1
+        if low.startswith("update `pickup_requests` set status='en_preparacion' where id=%s and status='agenda_confirmada'"):
+            rid = int(params[0])
+            fila = self.solicitudes.get(rid)
+            if " not exists (select 1 from `pickup_proposals`" in low and any(
+                    p["request_id"] == rid and p["status"] == "pending" and (p.get("proposed_by") or "").lower() == "cliente"
+                    for p in self.propuestas):
+                return 0            # el cliente pidió cambiar la fecha: el UPDATE no toca nada (aunque la lectura previa fuera vieja)
+            if fila and fila.get("status") == "agenda_confirmada":
+                fila["status"] = "en_preparacion"
+                return 1
+            return 0
+        if low.startswith("update `pickup_requests` set status=%s, closed_at="):
+            nuevo, _, rid = params
+            fila = self.solicitudes.get(int(rid))
+            if fila:
+                fila["status"] = nuevo
+                return 1
+            return 0
         if low.startswith("update pickup_picking_items set picked=1"):
             rid = int(params[0])
             n = 0
@@ -297,6 +364,7 @@ def construir_app(usuario=None):
     ctx = Ctx(TABLAS)
     ctx.update({
         "mysql_fetchone": db.fetchone, "mysql_fetchall": db.fetchall, "mysql_execute": db.execute,
+        "mysql_execute_returning_rowcount": lambda sql, params=(): int(db.execute(sql, params) or 0),
         "get_db": MagicMock(name="get_db"), "get_mysql": MagicMock(name="get_mysql"),
         "require_permission": lambda *a, **k: (lambda f: f),     # transparente: el permiso no se prueba aquí
         "EMAIL_RE": re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
