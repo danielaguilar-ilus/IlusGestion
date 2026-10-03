@@ -1267,7 +1267,9 @@ class TestCandadosDeCodigo:
         bloque = _bloque_nuevo()
         assert not re.search(r"\brequests\b|urllib|http\.client|urlopen|\.post\(|\.put\(|\.delete\(|\.patch\(", bloque)
         rutas = set(re.findall(r'"(/api/ext/[A-Za-z0-9_]+)"', bloque))
-        assert rutas == {"/api/ext/GetSeguimientoDespacho"}
+        # Retiros solo consulta reportes GET que YA estaban en la lista blanca: el seguimiento por documento (la guía) y,
+        # solo en el diagnóstico de admin (2026-10-02, «quién pickeó y cuándo»), los movimientos V2 y el control de salida.
+        assert rutas == {"/api/ext/GetSeguimientoDespacho", "/api/ext/GetStockTrazabilidadV2", "/api/ext/GetControlSalida"}
         assert rutas <= set(re.findall(r'"(/api/ext/[A-Za-z0-9_]+)"', _bloque_whitelist_check()))
         assert 'ctx.get("_checkwms_get")' in bloque
 

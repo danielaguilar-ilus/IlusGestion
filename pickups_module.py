@@ -13,6 +13,7 @@ import retiros_monitor as _rmon  # datos derivados del Monitor (semáforo, tarje
 import retiros_horarios as _rh    # días especiales: víspera de feriado y salida temprano (funciones puras)
 import retiros_guia as _rg         # guía de 6 pasos de la ficha (funciones puras)
 import retiros_check as _rck       # preparación según CheckWMS (funciones puras; Check es SOLO LECTURA, REGLA #4.4)
+import retiros_check_ot as _rco    # movimientos (OT) de CheckWMS por documento: quién, cuándo, estado (puras; SOLO LECTURA)
 
 
 def _public_base_url():
@@ -6264,7 +6265,12 @@ def register_pickup_routes(app, ctx):
                 return redirect(url_for("pickup_detail", rid=rid))
 
         mysql_execute(f"UPDATE `{REQ}` SET status=%s, closed_at=IF(%s IN ('cerrada','rechazada','retirada'),NOW(),closed_at) WHERE id=%s", (new_status, new_status, rid))
-        log_event(rid, "estado_actualizado", old_status, new_status, notes, "interno")
+        # Bitácora (Daniel 2026-10-02): debe quedar claro SI LO APRETÓ UNA PERSONA o fue automático, y quién fue.
+        _notas_log = notes
+        if new_status == "en_preparacion" and old_status != new_status:
+            _quien = ((getattr(g, "user", None) or {}).get("nombre") or "un usuario").strip()
+            _notas_log = (f"Manual: {_quien} presionó «Enviar a preparación»." + (f" Nota: {notes}" if notes else "")).strip()
+        log_event(rid, "estado_actualizado", old_status, new_status, _notas_log, "interno")
         # Una propuesta pendiente no puede sobrevivir a un cambio manual a
         # confirmado / preparación / estado terminal: desde el link viejo el
         # cliente la confirmaba y "revivía" el retiro (auditoría 2026-09-24).
@@ -11657,7 +11663,7 @@ def register_pickup_routes(app, ctx):
                   "alerta": "", "documentos_con_datos": 0, "documentos": len(docs)}
             return {"evaluacion": ev, "documentos": [], "sin_respuesta": 0}
         t0 = time.time()
-        resumenes, docs_ui, sin_respuesta = [], [], 0
+        resumenes, docs_ui, sin_respuesta, edades = [], [], 0, []
         for d in docs:
             tipo = (d.get("document_type") or "").strip().upper()[:5]
             num = re.sub(r"\D", "", d.get("document_number") or "")[:12]
@@ -11673,6 +11679,8 @@ def register_pickup_routes(app, ctx):
             ok, res = _check_doc_resumen(tipo, num)
             if not ok:
                 sin_respuesta += 1
+            else:                                   # hace cuánto se leyó de verdad (la respuesta puede venir de la memoria de 45 s)
+                edades.append(max(0.0, time.time() - (_CHECK_PREP_CACHE.get((tipo, num)) or (time.time(),))[0]))
             resumenes.append(res)
             ev1 = _rck.evaluar([res]) if res else None
             docs_ui.append({"rotulo": f"{tipo} {num}", "estado": (ev1 or {}).get("estado") or "sin_datos",
@@ -11683,7 +11691,8 @@ def register_pickup_routes(app, ctx):
                   "alerta": "", "documentos_con_datos": 0, "documentos": len(docs)}
         else:
             ev = _rck.evaluar(resumenes)
-        return {"evaluacion": ev, "documentos": docs_ui, "sin_respuesta": sin_respuesta}
+        return {"evaluacion": ev, "documentos": docs_ui, "sin_respuesta": sin_respuesta,
+                "leido_hace_s": int(max(edades)) if edades else None}
 
     def _check_auto_activo():
         """Interruptor del marcado automático (variable de entorno RETIROS_CHECK_AUTO; por defecto ENCENDIDO).
@@ -11743,6 +11752,30 @@ def register_pickup_routes(app, ctx):
             pass
         return True
 
+    def _check_conexion(res):
+        """¿Funciona la conexión con Check? (Daniel 2026-10-02: «que me diga si está funcionando la conexión o no»).
+        ok = respondió por todos los documentos · parcial = por algunos · sin_conexion = por ninguno ·
+        sin_credenciales = esta instalación no tiene las credenciales de Check cargadas (no es lo mismo que «no responde»)."""
+        conf = ctx.get("_checkwms_configurado")
+        try:
+            configurado = bool(conf()) if conf else None
+        except Exception:
+            configurado = None
+        docs = res.get("documentos") or []
+        sin = res.get("sin_respuesta") or 0
+        if configurado is False:
+            estado = "sin_credenciales"
+        elif not docs:
+            estado = "sin_documentos"
+        elif sin >= len(docs):
+            estado = "sin_conexion"
+        elif sin:
+            estado = "parcial"
+        else:
+            estado = "ok"
+        return {"estado": estado, "leido_hace_s": res.get("leido_hace_s"),
+                "docs_ok": max(0, len(docs) - sin), "docs_total": len(docs)}
+
     @app.route("/retiros/<int:rid>/check-preparacion", methods=["GET"])
     @require_permission("retiros")
     def pickup_check_preparacion(rid):
@@ -11759,7 +11792,7 @@ def register_pickup_routes(app, ctx):
         if not request.args.get("solo_lectura"):
             aplicado = _check_aplicar_listo(rid, req, res["evaluacion"])
         resp = jsonify({"ok": True, "status": req.get("status"), "aplicado_ahora": aplicado,
-                        "auto_activo": _check_auto_activo(),
+                        "auto_activo": _check_auto_activo(), "conexion": _check_conexion(res),
                         "preparado": _retiro_preparado(rid, req.get("status") or ""), **res})
         resp.headers["Cache-Control"] = "no-store"
         return resp
@@ -11795,6 +11828,140 @@ def register_pickup_routes(app, ctx):
         _CHECK_BARRIDO["ts"] = time.time()
         _CHECK_BARRIDO["corriendo"] = True
         threading.Thread(target=_check_barrido, daemon=True).start()
+
+    # ══════════════════════════════════════════════════════════════════
+    #  MOVIMIENTOS (OT) DE CHECK: quién, cuándo y a quién se asignó — SOLO LECTURA (REGLA #4.4).
+    #  Daniel 2026-10-02: «necesito que me identifiques dinámicamente quién piqueó el producto, el
+    #  responsable, cuándo, hora, si lo asignó a alguien… toda la información que pueda sacar de Check».
+    #  GetSeguimientoDespacho (lo que usa la guía) solo trae cantidades por etapa y NINGÚN usuario ni hora
+    #  (campos reales verificados en el log de Cloud Run); esos datos viven en los movimientos por OT
+    #  (GetStockTrazabilidad). Se usa el MISMO volcado que ya cachea Incidencias (app.py) y se refresca en un
+    #  hilo aparte: Check tarda 15-35 s en entregarlo y la pantalla no puede quedarse esperando.
+    # ══════════════════════════════════════════════════════════════════
+    _CHECK_OT = {"corriendo": False, "intento": 0.0, "logs": set()}
+    _CHECK_OT_MAX_EDAD = 180        # s: pasado esto se vuelve a pedir a Check (mientras tanto se muestra lo último)
+    _CHECK_OT_REINTENTO = 60        # s mínimos entre dos pedidos (si Check no responde, no insistir en cada refresco)
+    _CHECK_OT_MAX_OT = 12           # OT que se muestran por documento
+
+    def _check_ot_filas():
+        """(filas | None, edad_s | None, cargando). Devuelve lo que haya en memoria y, si está viejo o vacío, lo refresca
+        en un hilo aparte. filas=None y cargando=False: no hay reporte disponible (sin credenciales o Check no respondió)."""
+        cache = ctx.get("_CHECKWMS_TRAZA")
+        traer = ctx.get("_checkwms_trazabilidad_rows")
+        if cache is None or traer is None:
+            return None, None, False
+        filas = cache.get("rows")
+        edad = (time.time() - (cache.get("ts") or 0)) if filas is not None else None
+        if (filas is None or edad > _CHECK_OT_MAX_EDAD) and not _CHECK_OT["corriendo"] \
+                and time.time() - _CHECK_OT["intento"] > _CHECK_OT_REINTENTO:
+            _CHECK_OT["corriendo"], _CHECK_OT["intento"] = True, time.time()
+
+            def _refrescar():
+                try:
+                    traer(forzar=True)
+                except Exception as e:
+                    print(f"[retiros-check-ot] refresco: {e}", flush=True)
+                finally:
+                    _CHECK_OT["corriendo"] = False
+            threading.Thread(target=_refrescar, daemon=True).start()
+        return (filas if isinstance(filas, list) else None), edad, bool(_CHECK_OT["corriendo"])
+
+    @app.route("/retiros/<int:rid>/check-actividad", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_check_actividad(rid):
+        """OT de Check de cada documento del retiro (quién, cuándo, estado, asignación y TODOS los campos). Solo lectura."""
+        if not mysql_fetchone(f"SELECT id FROM `{REQ}` WHERE id=%s", (rid,)):
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        docs = mysql_fetchall(
+            "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
+            (rid,)) or []
+        filas, edad, cargando = _check_ot_filas()
+        if filas is None:
+            conf = ctx.get("_checkwms_configurado")
+            try:
+                configurado = bool(conf()) if conf else None
+            except Exception:
+                configurado = None
+            estado = "cargando" if cargando else ("sin_credenciales" if configurado is False else "sin_datos")
+            resp = jsonify({"ok": True, "estado": estado, "documentos": []})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        salida, coincidencias = [], []
+        for d in docs[:_CHECK_PREP_MAX_DOCS]:
+            tipo = (d.get("document_type") or "").strip().upper()[:5]
+            num = re.sub(r"\D", "", d.get("document_number") or "")[:12]
+            if not tipo or not num:
+                continue
+            filas_doc = _rco.filas_del_documento(filas, tipo, num)
+            coincidencias.extend(filas_doc)
+            ots = _rco.agrupar_por_ot(filas_doc)
+            salida.append({"rotulo": f"{tipo} {num}", "n_ot": len(ots), "ots": ots[:_CHECK_OT_MAX_OT],
+                           "mas": max(0, len(ots) - _CHECK_OT_MAX_OT)})
+        # Una vez por proceso (y otra la primera vez que aparece una OT) se deja en el log QUÉ campos entrega Check,
+        # para poder afinar la pantalla sin pedirle capturas a nadie. Solo nombres de campo y valores de personas/momentos.
+        for clave in (("global",) + (("coincide",) if coincidencias else ())):
+            if clave not in _CHECK_OT["logs"]:
+                _CHECK_OT["logs"].add(clave)
+                try:
+                    print(f"[retiros-check-ot] {clave} rid={rid} " + _rco.resumen_para_log(coincidencias, filas)[:3000], flush=True)
+                except Exception:
+                    pass
+        resp = jsonify({"ok": True, "estado": "listo", "edad_s": int(edad or 0), "refrescando": cargando,
+                        "total_movimientos": len(filas),
+                        "campos": _rco.catalogo_campos(coincidencias or filas[:200]), "documentos": salida})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.route("/retiros/admin/check-diagnostico-ot", methods=["GET"])
+    @require_permission("admin")
+    def pickup_check_diagnostico_ot():
+        """Qué campos entregan los reportes de movimientos de Check para un documento. SOLO LECTURA, solo admin.
+        Siempre revisa GetStockTrazabilidad (el volcado en memoria); con ?v2=1 pide también GetStockTrazabilidadV2 (últimos
+        5 días) y con ?salida=1 GetControlSalida. Todo por la puerta única _checkwms_get (lista blanca, solo GET)."""
+        import json as _json_ot
+        tipo = (request.args.get("tipo") or "").strip().upper()[:5]
+        num = re.sub(r"\D", "", request.args.get("num") or "")[:12]
+        if not tipo or not num:
+            return jsonify({"ok": False, "error": "Falta tipo y num. Ej: ?tipo=BLV&num=23732"}), 400
+        _get = ctx.get("_checkwms_get")
+        if not _get:
+            return jsonify({"ok": False, "error": "CheckWMS no está disponible en esta instalación."}), 503
+        salida = {"ok": True, "tipo": tipo, "num": num, "reportes": []}
+
+        def _reporte(nombre, filas):
+            if filas is None:
+                salida["reportes"].append({"reporte": nombre, "respondio": False})
+                return
+            propias = _rco.filas_del_documento(filas, tipo, num)
+            salida["reportes"].append({
+                "reporte": nombre, "respondio": True, "n_filas": len(filas), "campos": _rco.catalogo_campos(filas[:500]),
+                "n_filas_documento": len(propias), "filas_documento": propias[:15], "muestra": filas[:2],
+                "ots": _rco.agrupar_por_ot(propias)[:_CHECK_OT_MAX_OT],
+            })
+            try:
+                print(f"[retiros-check-diag-ot] {nombre} {tipo} {num} " + _rco.resumen_para_log(propias, filas)[:3000], flush=True)
+            except Exception:
+                pass
+
+        def _filas_de(data):
+            body = (data or {}).get("body")
+            r = body.get("response") if isinstance(body, dict) else body
+            return r if isinstance(r, list) else ([] if r is None else [r])
+
+        filas, edad, cargando = _check_ot_filas()
+        if filas is None:
+            salida["reportes"].append({"reporte": "GetStockTrazabilidad", "respondio": False, "cargando": cargando,
+                                       "nota": "Se está pidiendo a Check (tarda 15-35 s la primera vez). Reintenta en un minuto."})
+        else:
+            _reporte("GetStockTrazabilidad", filas)
+        if request.args.get("v2"):
+            desde = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%dT00:00:00")
+            d2 = _get("/api/ext/GetStockTrazabilidadV2", {"fecIniOT": desde}, timeout=50)
+            _reporte("GetStockTrazabilidadV2", None if d2 is None else _filas_de(d2))
+        if request.args.get("salida"):
+            d3 = _get("/api/ext/GetControlSalida", {}, timeout=50)
+            _reporte("GetControlSalida", None if d3 is None else _filas_de(d3))
+        return app.response_class(_json_ot.dumps(salida, ensure_ascii=False, default=str, indent=2), mimetype="application/json")
 
     # ══════════════════════════════════════════════════════════════════
     #  DIAGNÓSTICO CHECKWMS (Daniel 2026-10-02) — SOLO LECTURA, REGLA #4.4.

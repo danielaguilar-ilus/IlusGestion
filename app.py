@@ -64931,6 +64931,12 @@ def _checkwms_get(path: str, params: dict, timeout: int = 60) -> dict | None:
         return None
 
 
+def _checkwms_configurado() -> bool:
+    """¿Hay credenciales de Check cargadas en esta instalación? Solo el sí/no, nunca el valor.
+    Retiros lo usa para decirle a la persona si la conexión con Check «no está configurada» (distinto de «no responde»)."""
+    return bool(CHECKWMS_CONFIG.get("uid_ins") and CHECKWMS_CONFIG.get("uid_erp"))
+
+
 # Cache del dump completo de trazabilidad. Necesario porque el parámetro
 # `codUa` de la API CUELGA la conexión (verificado 2026-08-03: 60 s sin
 # responder con filtro vs 15-35 s sin filtro). Se trae todo una vez y se
