@@ -235,10 +235,10 @@
 .gp-check.ck.is-mal{--ck-c:#dc2626}
 
 /* Cabecera oscura (mismo lenguaje que la cabecera del retiro): título, estado de la conexión y «Actualizar» */
-.ck-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:14px 18px;color:#fff;
+.ck-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:11px 16px;color:#fff;
   background:radial-gradient(120% 170% at 100% 0%,rgba(220,38,38,.38),transparent 55%),repeating-linear-gradient(135deg,rgba(255,255,255,.035) 0 2px,transparent 2px 9px),#0a0a0a}
 .ck-tit{display:flex;align-items:center;gap:12px;flex:1 1 250px;min-width:0}
-.ck-ico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:46px;height:46px;border-radius:13px;background:#dc2626;
+.ck-ico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:40px;height:40px;border-radius:12px;background:#dc2626;
   font-size:1.4rem;box-shadow:0 8px 18px -8px rgba(220,38,38,.9)}
 .ck-tit b{display:block;font-size:1.22rem;letter-spacing:.01em;line-height:1.15}
 .ck-tit small{display:block;font-size:.88rem;font-weight:600;color:#d1d5db}
@@ -267,9 +267,9 @@
 @media (prefers-reduced-motion:reduce){.ck-gira,.gp-conex.is-ok .gp-conex-dot,.gp-conex.is-mal .gp-conex-dot{animation:none}}
 
 /* Cuerpo */
-.ck-cuerpo{display:grid;gap:14px;padding:14px 18px 16px}
-.ck-banner{display:flex;align-items:center;gap:14px;margin:0;padding:13px 16px;border:2px solid;border-radius:14px;font-size:1.1rem}
-.ck-banner>.bi{flex:0 0 auto;font-size:1.8rem}
+.ck-cuerpo{display:grid;gap:10px;padding:12px 16px 14px}
+.ck-banner{display:flex;align-items:center;gap:12px;margin:0;padding:10px 14px;border:2px solid;border-radius:14px;font-size:1.05rem}
+.ck-banner>.bi{flex:0 0 auto;font-size:1.6rem}
 .ck-banner b{font-weight:800;line-height:1.3}
 .ck-banner.is-ok{background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-color:#16a34a;color:#14532d}
 .ck-banner.is-en{background:#fffbeb;border-color:#f59e0b;color:#78350f}
@@ -278,22 +278,22 @@
 .ck-alerta{display:flex;align-items:center;gap:10px;margin:0;padding:10px 14px;border:2px solid #f59e0b;border-radius:12px;background:#fef3c7;color:#78350f;font-weight:700}
 
 /* Etapas de bodega como tarjetas: Check asignó → bodega juntó (marca «preparado») → revisó → despachó */
-.ck-et{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:0;padding:0;list-style:none}
-.ck-et li{display:grid;align-content:start;gap:7px;padding:12px 14px;border:2px solid #e5e7eb;border-radius:14px;background:#fff}
+.ck-et{display:grid;grid-template-columns:repeat(auto-fit,minmax(172px,1fr));gap:8px;margin:0;padding:0;list-style:none}
+.ck-et li{display:grid;align-content:start;gap:6px;padding:9px 11px;border:2px solid #e5e7eb;border-radius:12px;background:#fff}
 .ck-et li.is-ok{border-color:#86efac;background:#f7fef9}
 .ck-et li.is-clave{border-color:#dc2626;box-shadow:0 0 0 4px rgba(220,38,38,.12)}
 .ck-et li.is-clave.is-ok{border-color:#16a34a;box-shadow:0 0 0 4px rgba(22,163,74,.16)}
 .ck-et li.is-extra{opacity:.88}
 .ck-et-top{display:flex;align-items:center;justify-content:space-between}
-.ck-et-n{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;border:2.5px solid #9ca3af;color:#6b7280;background:#fff}
+.ck-et-n{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;border:2.5px solid #9ca3af;color:#6b7280;background:#fff}
 .ck-et li.is-ok .ck-et-n{background:#16a34a;border-color:#16a34a;color:#fff}
 .ck-et li.is-clave:not(.is-ok) .ck-et-n{border-color:#dc2626;color:#dc2626}
 .ck-et-c{font-size:1rem;font-weight:700;color:#4b5563}
-.ck-et-c b{font-size:1.6rem;font-weight:900;color:#111827}
-.ck-et-t{font-size:1.02rem;font-weight:800;line-height:1.2}
+.ck-et-c b{font-size:1.35rem;font-weight:900;color:#111827}
+.ck-et-t{font-size:.95rem;font-weight:800;line-height:1.15}
 .ck-et-barra{height:8px;border-radius:99px;background:#e5e7eb;overflow:hidden}
 .ck-et-barra i{display:block;height:100%;border-radius:99px;background:#16a34a}
-.ck-et small{font-size:.86rem;font-weight:500;line-height:1.35;color:#4b5563}
+.ck-et small{font-size:.82rem;font-weight:500;line-height:1.3;color:#4b5563}
 .ck-docs{display:flex;flex-wrap:wrap;gap:8px}
 .ck-docpill{display:inline-flex;align-items:center;gap:8px;padding:5px 13px;border:2px solid;border-radius:99px;font-size:.9rem;font-weight:700}
 .ck-docpill b{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:900}
@@ -302,23 +302,23 @@
 .ck-docpill.is-neutro{background:#f3f4f6;border-color:#9ca3af;color:#374151}
 
 /* Quién y cuándo */
-.ck-act{padding:14px 16px;border:2px solid #e5e7eb;border-radius:16px;background:linear-gradient(180deg,#f9fafb,#fff)}
+.ck-act{padding:10px 14px 12px;border:2px solid #e5e7eb;border-radius:16px;background:linear-gradient(180deg,#f9fafb,#fff)}
 .ck-act-h{display:flex;align-items:center;gap:12px;margin-bottom:4px}
 .ck-act-h>.bi{font-size:1.7rem;color:#dc2626}
 .ck-act-h b{display:block;font-size:1.12rem}
 .ck-act-h small{display:block;font-size:.88rem;font-weight:600;color:#6b7280}
-.ck-doc{margin-top:14px}
+.ck-doc{margin-top:10px}
 .ck-doc-h{display:flex;align-items:center;gap:10px}
 .ck-doc-t{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:1.08rem;font-weight:900;color:#b91c1c}
 .ck-doc-n{padding:2px 11px;border-radius:99px;background:#0a0a0a;color:#fff;font-size:.76rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
 .ck-vacio{display:flex;align-items:center;gap:10px;margin:8px 0 0;padding:10px 13px;border-radius:10px;background:#f3f4f6;color:#4b5563;font-size:.95rem;font-weight:600}
 .ck-vacio .bi{flex:0 0 auto;color:#6b7280}
-.ck-ot{margin:10px 0 0;border:2px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:14px;background:#fff;overflow:hidden}
+.ck-ot{margin:8px 0 0;border:2px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:14px;background:#fff;overflow:hidden}
 .ck-ot.is-ok{border-left-color:#16a34a}
 .ck-ot.is-en{border-left-color:#f59e0b}
 .ck-ot.is-mal{border-left-color:#dc2626}
-.ck-ot-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 14px;background:#fafafa;border-bottom:1.5px solid #f0f0f2}
-.ck-ot-n{display:inline-flex;align-items:baseline;gap:7px;font-size:1.4rem;font-weight:900;font-variant-numeric:tabular-nums}
+.ck-ot-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 14px;background:#fafafa;border-bottom:1.5px solid #f0f0f2}
+.ck-ot-n{display:inline-flex;align-items:baseline;gap:7px;font-size:1.3rem;font-weight:900;font-variant-numeric:tabular-nums}
 .ck-ot-n small{font-size:.8rem;font-weight:800;letter-spacing:.09em;color:#6b7280}
 .ck-tag,.ck-est{padding:3px 11px;border-radius:99px;font-size:.78rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
 .ck-tag{background:#0a0a0a;color:#fff}
@@ -327,22 +327,22 @@
 .ck-est.is-mal{background:#fee2e2;color:#991b1b}
 .ck-ot-res{margin-left:auto;font-size:.9rem;font-weight:700;color:#4b5563}
 .ck-ot-g{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-.ck-quien,.ck-cuando{padding:12px 16px 14px}
+.ck-quien,.ck-cuando{padding:10px 16px 12px}
 .ck-cuando{border-left:1.5px solid #f0f0f2}
-.ck-ot-g h6{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:.8rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:#6b7280}
-.ck-quien ul{display:grid;gap:12px;margin:0;padding:0;list-style:none}
+.ck-ot-g h6{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:.8rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:#6b7280}
+.ck-quien ul{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .ck-per{display:flex;align-items:center;gap:12px}
-.ck-av{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:44px;height:44px;border-radius:50%;color:#fff;
+.ck-av{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:40px;height:40px;border-radius:50%;color:#fff;
   font-size:1rem;font-weight:900;box-shadow:0 0 0 3px #fff,0 0 0 5px rgba(10,10,10,.14)}
 .ck-per b{display:block;font-size:1.06rem;overflow-wrap:anywhere}
 .ck-per small{display:block;font-size:.84rem;font-weight:600;color:#6b7280}
-.ck-tl{position:relative;display:grid;gap:14px;margin:0;padding:0 0 0 4px;list-style:none}
+.ck-tl{position:relative;display:grid;gap:10px;margin:0;padding:0 0 0 4px;list-style:none}
 .ck-tl::before{content:"";position:absolute;left:10px;top:9px;bottom:9px;width:3px;border-radius:2px;background:#e5e7eb}
 .ck-tl li{position:relative;display:grid;grid-template-columns:14px auto minmax(0,1fr);align-items:center;gap:12px}
 .ck-dot{z-index:1;width:14px;height:14px;border-radius:50%;border:3.5px solid #0a0a0a;background:#fff}
 .ck-tl li.es-ultimo .ck-dot{border-color:#16a34a;background:#16a34a}
 .ck-mom{display:flex;flex-direction:column;line-height:1.1}
-.ck-mom b{font-size:1.28rem;font-variant-numeric:tabular-nums}
+.ck-mom b{font-size:1.2rem;font-variant-numeric:tabular-nums}
 .ck-mom span{font-size:.8rem;font-weight:700;color:#6b7280}
 .ck-tl small{font-size:.92rem;font-weight:700;color:#374151}
 .ck-raw{border-top:1.5px solid #f0f0f2;background:#fafafa}
@@ -353,8 +353,8 @@
 .ck-raw dl{display:grid;grid-template-columns:minmax(130px,max-content) minmax(0,1fr);gap:4px 16px;margin:0;padding:4px 16px 14px;font-size:.92rem}
 .ck-raw dt{font-weight:700;color:#4b5563}
 .ck-raw dd{margin:0;overflow-wrap:anywhere;font-weight:600}
-.ck-pie{margin:12px 0 0;font-size:.84rem;color:#6b7280}
-.ck-nota{display:flex;align-items:flex-start;gap:10px;margin:0;padding:10px 14px;border-radius:12px;background:#f3f4f6;font-size:.92rem;color:#374151}
+.ck-pie{margin:8px 0 0;font-size:.82rem;color:#6b7280}
+.ck-nota{display:flex;align-items:flex-start;gap:10px;margin:0;padding:8px 12px;border-radius:12px;background:#f3f4f6;font-size:.88rem;color:#374151}
 .ck-nota>.bi{flex:0 0 auto;margin-top:2px;color:#16a34a}
 
 @media (max-width:767px){
@@ -368,3 +368,10 @@
   .ck-raw dl{grid-template-columns:minmax(0,1fr);gap:0}
   .ck-raw dt{margin-top:8px}
 }
+
+/* ── Pista «Enter ↵ siguiente pendiente» (Daniel 2026-10-02) ── */
+.gp-tecla{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:.88rem;font-weight:600;color:#d1d5db}
+.gp-tecla kbd{padding:2px 9px;border-radius:7px;background:#fff;color:#0a0a0a;font-size:.85rem;font-weight:900;box-shadow:0 2px 0 #9ca3af}
+.gp-sig{cursor:pointer}
+@media (hover:none){.gp-tecla{display:none}}
+.step-section[tabindex="-1"]:focus,.pd-row[tabindex="-1"]:focus,#tabDocsAsociados tr[tabindex="-1"]:focus{outline:none}

@@ -78,6 +78,16 @@ class TestResumenOT(unittest.TestCase):
         r = ot.resumir_ot([f])
         self.assertEqual(r["personas"], [])
 
+    def test_codigo_numerico_de_usuario_solo_si_el_campo_lo_dice(self):
+        r = ot.resumir_ot([fila(usuario=1534, asignado=5, cantAsignada=4)])
+        self.assertEqual({p["campo"]: p["valor"] for p in r["personas"]}, {"usuario": "1534"})
+
+    def test_momentos_con_nombres_de_creacion(self):
+        r = ot.resumir_ot([fila(creadoEn="2026-10-02T10:00:00.1234567", horaSalida="02/10/2026 12:15")])
+        etiquetas = {m["campo"]: m["valor"] for m in r["momentos"]}
+        self.assertEqual(etiquetas["creadoEn"], "02/10/2026 10:00")
+        self.assertEqual(etiquetas["horaSalida"], "02/10/2026 12:15")
+
     def test_persona_por_nombre_de_campo(self):
         f = fila(pickeadoPor="JPEREZ", responsable="Ana Soto", operador="OP-12")
         campos = {p["campo"] for p in ot.resumir_ot([f])["personas"]}

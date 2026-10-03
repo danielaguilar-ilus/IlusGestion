@@ -34,7 +34,9 @@ ETIQUETAS = {
 _PERSONA = re.compile(r"(usuario|usu|user|operador|operario|oper|picker|pickeador|responsable|resp|asignado|asig|ejecutor|revisor|login|(?<=[a-z])por$)")
 # …salvo que el nombre del campo diga que es otra cosa (un id, una cantidad, una ubicación, una fecha, un estado)
 _NO_PERSONA = re.compile(r"(uid|guid|cant|stock|ubi|codigo|descripcion|fecha|^fe|hora|estado|sol$|ejec$)")
-_MOMENTO = re.compile(r"(fecha|fec|^fe|hora|^fh|inicio|fin$|date|time|creac|asign|pick|revis|despach|termin|cierre)")
+_MOMENTO = re.compile(r"(fecha|fec|^fe|hora|^fh|inicio|fin$|date|time|creac|cread|created|updat|modific|actualiz|asign|pick|revis|despach|termin|cierre|ingreso|salida)")
+# Un código numérico (ej. usuario = 1534) solo cuenta como persona si el campo lo dice con todas sus letras
+_PERSONA_FUERTE = re.compile(r"(usuario|user|operador|operario|picker|pickeador|responsable)")
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 _DOC_RE = re.compile(r"^\s*([A-Za-z]{2,5})[\s\-_./:]*0*([0-9]+)\s*$")
 _CLAVES_DOC = ("doc", "documento", "docerp", "docref", "docreferencia", "nrodoc", "numdoc", "numerodocumento")
@@ -146,12 +148,16 @@ def _texto(v):
 
 def _es_persona(campo, valor):
     s = _texto(valor)
-    if not s or isinstance(valor, (bool, int, float)) or s.replace(".", "").replace(",", "").isdigit():
+    if not s or isinstance(valor, bool):
         return False
     if _UUID.match(s) or momento(s) is not None:
         return False
     k = _clave(campo)
-    return bool(_PERSONA.search(k)) and not _NO_PERSONA.search(k)
+    if _NO_PERSONA.search(k):
+        return False
+    if s.replace(".", "").replace(",", "").isdigit():          # un número: solo si el campo dice «usuario/operador/…»
+        return bool(_PERSONA_FUERTE.search(k))
+    return bool(_PERSONA.search(k))
 
 
 def _es_momento(campo, valor):

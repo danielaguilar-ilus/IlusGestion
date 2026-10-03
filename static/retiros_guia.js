@@ -313,7 +313,7 @@
           '<div class="ck-et-top"><span class="ck-et-n">' + (e.completa ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-circle"></i>') + '</span>' +
           '<span class="ck-et-c"><b>' + e.hechas + '</b> de ' + e.de + '</span></div>' +
           '<div class="ck-et-t">' + esc(e.titulo) + '</div><div class="ck-et-barra"><i style="width:' + pct + '%"></i></div>' +
-          '<small>' + esc(e.texto) + (e.clave === 'pickeado' ? ' <b>Esta etapa marca «preparado».</b>' : '') + (extra ? ' No hace falta para «preparado».' : '') + '</small></li>';
+          '<small>' + esc(e.texto) + (e.clave === 'pickeado' ? ' <b>Marca «preparado».</b>' : '') + (extra ? ' No hace falta para «preparado».' : '') + '</small></li>';
       }).join('') + '</ul>';
     }
     if (CHECK.documentos && CHECK.documentos.length) {
@@ -354,7 +354,8 @@
     var tocan = G.pasos.filter(function (p) { return p.estado === 'actual'; }).length;
     var h = '<div class="gp-bar"><div class="gp-bar-t"><i class="bi bi-signpost-split-fill"></i><b>Guía del retiro</b></div>' +
       '<div class="gp-bar-prog"><b>' + hechos + ' de ' + G.pasos.length + ' pasos listos</b><div class="gp-prog-bar"><i style="width:' + pct + '%"></i></div>' +
-      (tocan && !G.terminal ? '<span class="gp-bar-av">· ' + tocan + (tocan === 1 ? ' te toca' : ' te tocan') + '</span>' : '') + '</div></div>';
+      (tocan && !G.terminal ? '<span class="gp-bar-av">· ' + tocan + (tocan === 1 ? ' te toca' : ' te tocan') + '</span>' : '') + '</div>' +
+      (G.siguiente && !G.terminal ? '<span class="gp-tecla" title="Te lleva al siguiente pendiente, por orden de tarjeta"><kbd>Enter ↵</kbd> siguiente pendiente</span>' : '') + '</div>';
     h += '<ol class="gp-chips">' + G.pasos.map(fichaHtml).join('') + '</ol>';
     h += sigHtml();
     if (h !== ULTIMO_DIBUJO) {
@@ -463,6 +464,7 @@
     if (b) { ev.stopPropagation(); accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
     var v = t.closest('[data-gp-ver]');
     if (v) { irAlPaso(parseInt(v.dataset.gpVer, 10), true); return; }
+    if (t.closest('.gp-sig') && !t.closest('button,a')) irAlSiguientePendiente(false);
   });
   // Botones que viven en las tarjetas de la ficha: «Confirmo» de la franja roja y «Actualizar» del panel de Check
   document.addEventListener('click', function (ev) {
@@ -471,6 +473,83 @@
     var b = t.closest('.gp-tag [data-gp-acc]');
     if (b) { accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
     if (t.closest('#gpCheckSlot [data-gp-check-refresh]')) { cargarCheck(true); ACT_REINTENTOS = 0; cargarActividad(); }
+  });
+
+  // ── Enter = ir al siguiente pendiente, por prioridad de tarjeta ─────────────────────────────────────────
+  // Daniel 2026-10-02: «si algo está mal y le das Enter, que te lleve a donde falta el detalle, por orden de prioridad de
+  // tarjeta». La lista sale de la guía (pasos en rojo) y de lo que se ve en pantalla (productos con problema, facturas sin
+  // saldo o de otro RUT); va de la tarjeta 1 a la 6 y cada Enter pasa al siguiente (Mayús+Enter vuelve al anterior).
+  var PEND_I = -1;
+  function textoDe(el) { return el ? String(el.textContent || '').replace(/\s+/g, ' ').trim() : ''; }
+  function pendientes() {
+    var out = [];
+    if (G.terminal) return out;
+    function poner(n, nivel, texto, el) { if (el) out.push({ n: n, nivel: nivel, texto: texto, el: el }); }
+    G.pasos.forEach(function (p) {
+      var card = $(anclaDe(p));
+      var boton = card ? $('.gp-tag [data-gp-acc]', card) : null;       // el «Confirmo» de la franja roja
+      if (p.n === 1) {
+        if (p.estado === 'actual') {
+          var abrir = $('.btn-asociar-compact');
+          var hayDocs = G.pasos[0].detalle && G.pasos[0].detalle.length;
+          poner(1, 'rojo', p.faltan[0] || p.titulo, hayDocs ? (boton || card) : (visible(abrir) ? abrir : card));
+        }
+        [].forEach.call(document.querySelectorAll('#tabDocsAsociados tbody tr[data-doc-id]'), function (tr) {
+          var sinSaldo = $('.td-pill-warn', tr), otroRut = $('.otro-rut-badge', tr);
+          if (sinSaldo || otroRut) {
+            poner(1, 'ambar', 'Revisar ' + textoDe($('.td-pill-dark', tr)) + ' ' + textoDe($('td.mono', tr)) + ': ' + (sinSaldo ? textoDe(sinSaldo).toLowerCase() : 'es de otro RUT'), tr);
+          }
+        });
+      } else if (p.n === 2) {
+        if (p.estado === 'actual' || (p.estado === 'pendiente' && p.secundario)) {
+          var tomar = $('#btnTomarRetiro');
+          poner(2, p.estado === 'actual' ? 'rojo' : 'ambar', p.faltan[0] || p.titulo, visible(tomar) ? tomar : card);
+        }
+      } else if (p.n === 3) {
+        [].forEach.call(document.querySelectorAll('#paso-3 .pd-row.t-rojo'), function (row) {
+          poner(3, 'rojo', 'Producto con problema: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
+        });
+        [].forEach.call(document.querySelectorAll('#paso-3 .pd-row.t-ambar'), function (row) {
+          poner(3, 'ambar', 'Revisar: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
+        });
+        if (p.estado === 'actual') poner(3, 'rojo', p.faltan[0] || p.titulo, boton || card);
+      } else if (p.estado === 'actual') {
+        var bt = BTNS[p.n] ? $(BTNS[p.n]) : null;
+        poner(p.n, 'rojo', p.faltan[0] || p.titulo, visible(bt) ? bt : card);
+      }
+    });
+    return out;
+  }
+  function irAlSiguientePendiente(atras) {
+    var lista = pendientes();
+    if (!lista.length) {
+      var sig = G.siguiente ? G.pasos[G.siguiente - 1] : null;
+      toast(sig && sig.estado === 'espera' ? 'Todo está al día. Ahora toca esperar: ' + (sig.faltan[0] || sig.titulo) : 'No hay nada pendiente: todo está en verde ✔', 'success');
+      return;
+    }
+    if (atras && PEND_I < 0) PEND_I = 0;
+    PEND_I = (((PEND_I + (atras ? -1 : 1)) % lista.length) + lista.length) % lista.length;
+    var it = lista[PEND_I];
+    it.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var marco = (it.el.closest && it.el.closest('.pd-row,tr,.step-section')) || it.el;
+    [marco, it.el].forEach(function (x) {
+      x.classList.remove('gp-resalta'); void x.offsetWidth; x.classList.add('gp-resalta');
+      setTimeout(function () { x.classList.remove('gp-resalta'); }, 1800);
+    });
+    // El foco se queda en el CONTENEDOR (no en un botón): así otro Enter sigue al siguiente pendiente en vez de apretar
+    // sin querer «Enviar a preparación» o «Quitar»; con Tab se entra a los controles de esa fila o tarjeta.
+    marco.setAttribute('tabindex', '-1');
+    try { marco.focus({ preventScroll: true }); } catch (e) { /* queda resaltado igual */ }
+    toast('Pendiente ' + (PEND_I + 1) + ' de ' + lista.length + ' · Paso ' + it.n + ': ' + it.texto, it.nivel === 'rojo' ? 'warning' : 'info');
+  }
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' || ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    var t = ev.target;
+    // Enter dentro de un campo, botón, enlace o ventana abierta sigue haciendo lo suyo
+    if (t && t.closest && t.closest('input,textarea,select,button,a,summary,[contenteditable="true"],[role="button"]')) return;
+    if (AVISO_ABIERTO || document.querySelector('.modal.show,.ilus-overlay,.ilus-sheet-overlay')) return;
+    ev.preventDefault();
+    irAlSiguientePendiente(ev.shiftKey);
   });
 
   // ── Refrescos ────────────────────────────────────────────────────────────

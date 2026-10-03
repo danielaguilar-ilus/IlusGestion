@@ -281,9 +281,11 @@
       <div class="rh-code">{{ req.code }}</div>
       <h1 class="rh-cli">{{ req.customer_name or 'Cliente sin nombre' }}</h1>
       <div class="rh-sub">
-        {% if req.customer_rut %}<span>RUT {{ req.customer_rut | rut_fmt }}</span>{% endif %}
+        <span id="rhRut" {% if not req.customer_rut %}hidden{% endif %}>RUT {{ (req.customer_rut or '') | rut_fmt }}</span>
         {% if _hdir or _hcom %}<span><i class="bi bi-geo-alt-fill"></i>{{ _hdir }}{% if _hdir and _hcom %}, {% endif %}{{ _hcom }}</span>{% endif %}
-        {% if req.contact_phone %}<span><i class="bi bi-telephone-fill"></i>{{ req.contact_phone }}</span>{% endif %}
+        <span id="rhTel" {% if not req.contact_phone %}hidden{% endif %}><i class="bi bi-telephone-fill"></i><span id="rhTelTxt">{{ req.contact_phone or '' }}</span></span>
+        {# Contacto principal (a quién le llegan los correos): se edita en «Editar datos» #}
+        <span id="rhContacto" title="Contacto principal: a quién le llegan los correos" {% if not (req.contact_name or req.contact_email) %}hidden{% endif %}><i class="bi bi-person-lines-fill"></i><span id="rhContactoTxt">{{ req.contact_name or '' }}{% if req.contact_name and req.contact_email %} · {% endif %}{{ req.contact_email or '' }}</span></span>
         {# Solo si YA hay facturas asociadas y ninguna coincide con la declarada;
            sin facturas asociadas, el tile Documento ya la muestra (no repetir). #}
         {% if _hdecl and _n_docs_inicial > 0 and not _hdecl_ok %}<span title="Número que escribió el cliente al pedir el retiro"><i class="bi bi-receipt"></i>{{ _hdecl_lbl }} {{ _hdecl }}</span>{% endif %}
@@ -309,9 +311,10 @@
     <div class="rh-d d-resp"><i class="bi bi-person-badge"></i><div class="in">
       <span class="v">{{ req.responsable_nombre or 'Sin asignar' }}</span>
       <span class="k">Responsable ILUS</span></div></div>
-    <div class="rh-d d-ret"><i class="bi bi-person-check"></i><div class="in">
-      <span class="v">{{ _hretira }}</span>
-      <span class="k">Quién retira</span></div></div>
+    <button type="button" id="heroRetiraTile" class="rh-d d-ret" data-bs-toggle="modal" data-bs-target="#modalFichaEditar" title="Cambiar quién retira o corregir los datos del cliente">
+      <i class="bi bi-person-check"></i><div class="in">
+      <span class="v" id="heroRetiraTxt">{{ _hretira }}</span>
+      <span class="k">Quién retira <i class="bi bi-pencil-fill"></i></span></div></button>
     <button type="button" id="heroDocTile" class="rh-d d-doc {% if _n_docs_inicial == 0 %}is-falta{% endif %}" data-declarado="{{ _hdecl }}" data-declarado-lbl="{{ _hdecl_lbl }}"
             onclick="document.getElementById('paso-2').scrollIntoView({behavior:'smooth',block:'start'})" title="Ir a los documentos">
       <i class="bi bi-receipt"></i><div class="in">
@@ -338,6 +341,7 @@
   </div>
 
   <div class="rh-acciones">
+    <button type="button" class="rh-btn" id="btnEditarFicha" data-bs-toggle="modal" data-bs-target="#modalFichaEditar" title="Corregir los datos del cliente o dejar los de otra persona que va a retirar"><i class="bi bi-pencil-square"></i>Editar datos / quién retira</button>
     {% if req.contact_phone %}
     <a class="rh-btn call" href="tel:{{ req.contact_phone|replace(' ','') }}"><i class="bi bi-telephone-fill"></i>Llamar</a>
     {% if _hwa|length >= 11 %}<a class="rh-btn wa" href="https://wa.me/{{ _hwa }}" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i>WhatsApp</a>{% endif %}
@@ -818,130 +822,16 @@
            `if (!el) return;` que ya traía retiros_internal_detail.js hacen
            que perder estos ids sea inofensivo (no-op, no hay error). #}
 
-        {# ═════ 1.2 · CLIENTE, CONTACTO Y QUIÉN RETIRA (antes la tarjeta suelta «Ficha del retiro»; Daniel 2026-10-02:
-           "no sé para qué sale la ficha del retiro, esto tiene que estar definido en una tarjeta completa").
-           Mismos campos, mismos data-inline-edit: solo cambió de lugar. ═════ #}
-        <div class="fv7-sub" id="fichaRetiro">
-          <div class="fv7-sub-head">
-            <span class="fv7-num">1.2</span>
-            <div><strong>Cliente, contacto y quién retira</strong><small>Toca cualquier dato para corregirlo — se guarda solo.</small></div>
-          </div>
-{# ──────────────────────────────────────────────────────────────
-   3 · FICHA DEL RETIRO — PERSISTENTE, ÚNICA fuente editable.
-   Daniel 2026-05-23: "La info debe estar disponible como ficha y
-   modificable a medida que se agrega información."
-   Daniel 2026-09-22: fusiona en UNA sola instancia editable lo que
-   antes vivía repetido en 3 lugares — la Ficha rápida original + el
-   editor de razón social del viejo Paso 1 (pa1EditNombre/
-   pa1GuardarNombre, botones propios) + la tarjeta de solo lectura
-   "Quien retira" del viejo Paso 1. El viejo Paso 1 completo se
-   disuelve: no queda ningún remanente duplicado más abajo — su única
-   función (ver/editar cliente y quien retira) queda 100% cubierta
-   aquí. Ver retiros_internal_detail.js para el detalle de la fusión
-   de JS (pa1UsarClienteComoContacto ahora actualiza estos mismos
-   campos data-inline-edit en vez de una tarjeta aparte).
-   ────────────────────────────────────────────────────────────── #}
+        {# La «Ficha del retiro» (cliente, contacto, quién retira, notas) ya no es una tarjeta: sus datos viven en el encabezado y se
+           editan en el modal «Datos del cliente y de quién retira» (más abajo). Daniel 2026-10-02: "el detalle del cliente no necesito que
+           esté en una tarjeta… pero sí la opción de editar si alguien adicional va a buscar el pedido". #}
 {% set _cli_rut_clean = (req.customer_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
 {% set _ret_rut_clean = (req.pickup_person_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
 {% set _rut_mismatch = (_cli_rut_clean and _ret_rut_clean and _cli_rut_clean != _ret_rut_clean) %}
 {% set _has_decl_tercero = (req.observations and 'DECLARACIÓN AUTORIZACIÓN TERCERO' in req.observations) %}
-
-{# Ficha v5 (Daniel 2026-10-02: "la ficha del retiro me gustaría que fuera un
-   poco más expresiva y amigable"). Solo presentación: ícono de color por
-   tarjeta + pregunta simple ("¿Quién compró?") bajo cada título. Los
-   data-inline-edit son los mismos de siempre. Scoped a .ficha-v5 para no
-   tocar la ficha rápida del modal "Proponer fecha", que reusa .ficha-card. #}
 {% set _retira_mismo = req.pickup_person_name and req.customer_name and (req.pickup_person_name|trim|lower) == (req.customer_name|trim|lower) %}
-<div class="ficha-rapida-wrap ficha-v5">
-  <div class="ficha-rapida-head">
-    <span class="fv5-head-ico"><i class="bi bi-person-vcard"></i></span>
-    <div>
-      <strong>Ficha del retiro</strong>
-      <span class="fv5-head-sub">Quién compró, a quién le escribimos y quién viene a buscar. Toca cualquier dato para corregirlo — se guarda solo.</span>
-    </div>
-  </div>
-  <div class="ficha-rapida-grid">
-
-    <div class="ficha-card fv5-cli">
-      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-building"></i></span><span>Cliente<small>¿Quién compró?</small></span></div>
-      <div class="ficha-val" data-inline-edit="customer_name"
-           data-placeholder="Sin razón social"
-           title="Click para editar la razón social">{{ req.customer_name or '' }}</div>
-      <div class="ficha-sub">RUT
-        <span data-inline-edit="customer_rut" data-placeholder="Sin RUT" style="font-family:monospace">{{ req.customer_rut or '' }}</span>
-      </div>
-    </div>
-
-    <div class="ficha-card fv5-con">
-      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-envelope-at"></i></span><span>Contacto principal<small>¿A quién le llegan los correos?</small></span></div>
-      <div class="ficha-val" data-inline-edit="contact_name"
-           data-placeholder="Sin nombre">{{ req.contact_name or '' }}</div>
-      <div class="ficha-sub">
-        <i class="bi bi-envelope"></i>
-        <span data-inline-edit="contact_email" data-placeholder="Sin email">{{ req.contact_email or '' }}</span>
-      </div>
-      <div class="ficha-sub">
-        <i class="bi bi-telephone"></i>
-        <span data-inline-edit="contact_phone" data-placeholder="Sin teléfono">{{ req.contact_phone or '' }}</span>
-      </div>
-      {# Daniel 2026-05-23: extra_emails — CC del envío de notificaciones #}
-      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
-        <i class="bi bi-people"></i>
-        <span style="font-size:.74rem;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.04em">Emails CC adicionales</span>
-      </div>
-      <div data-inline-edit="extra_emails"
-           data-placeholder="Click para agregar emails separados por coma…"
-           title="Estos emails recibirán TAMBIÉN las notificaciones (propuesta, confirmación, recordatorio). Separa con coma."
-           style="font-size:.82rem;color:#0a0a0a;line-height:1.5;padding:4px 6px;background:#fafafa;border:1px solid #f1f5f9;border-radius:6px;min-height:24px;word-break:break-all">{{ req.extra_emails or '' }}</div>
-      <div id="emailErpSug" style="margin-top:6px"></div>
-      {# Contacto rápido — antes vivía al fondo del viejo Paso 1
-         (líneas 406-410); ahora junto al dato que usa (Daniel 2026-09-22). #}
-      <div class="d-flex gap-2 flex-wrap mt-2" style="font-size:.76rem">
-        <a class="btn btn-sm btn-outline-dark btn-2027" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope me-1"></i>Email</a>
-        {% if req.contact_phone %}<a class="btn btn-sm btn-outline-success btn-2027" href="tel:{{ req.contact_phone }}"><i class="bi bi-telephone me-1"></i>Llamar</a>{% endif %}
-        <button type="button" class="btn btn-sm btn-outline-dark btn-2027" onclick="cambiarTabInfo('comunicacion')"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
-      </div>
-    </div>
-
-    <div class="ficha-card fv5-ret">
-      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-person-badge"></i></span><span>Persona que retira<small>¿Quién viene a buscar?</small></span></div>
-      <div class="ficha-val" data-inline-edit="pickup_person_name"
-           data-placeholder="Sin nombre">{{ req.pickup_person_name or '' }}</div>
-      {% if _retira_mismo %}<span class="fv5-chip is-ok"><i class="bi bi-check-circle-fill"></i>Viene el mismo cliente</span>{% endif %}
-      <div class="ficha-sub">RUT
-        <span data-inline-edit="pickup_person_rut" data-placeholder="—" style="font-family:monospace">{{ req.pickup_person_rut or '' }}</span>
-        · <i class="bi bi-telephone"></i>
-        <span data-inline-edit="pickup_person_phone" data-placeholder="—">{{ req.pickup_person_phone or '' }}</span>
-      </div>
-      <div class="ficha-sub" style="text-transform:capitalize">Relación:
-        <span data-inline-edit="pickup_person_relation" data-placeholder="—">{{ req.pickup_person_relation or '' }}</span>
-      </div>
-    </div>
-
-    {# Gestión — Daniel 2026-09-23: "Gestionar retiro. Acá quisiera ver
-       quién lo gestionó" — responsable asignado + quién creó la solicitud. #}
-    <div class="ficha-card fv5-ges">
-      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-person-workspace"></i></span><span>Gestión<small>¿Quién lo atiende en ILUS?</small></span></div>
-      {% if req.responsable_nombre %}
-      <div class="ficha-val" style="font-size:.94rem">{{ req.responsable_nombre }}</div>
-      <div class="ficha-sub">Responsable del retiro</div>
-      {% else %}
-      <span class="fv5-chip is-warn"><i class="bi bi-exclamation-triangle-fill"></i>Sin responsable asignado</span>
-      {% endif %}
-      {% if req.created_by_user_name %}
-      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
-        <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d-%m-%Y %H:%M') }}{% endif %}
-      </div>
-      {% endif %}
-    </div>
-
-    {# RUT del documento ≠ RUT de quien retira — antes vivía SUELTA arriba
-       de todo (líneas 305-326) y el checkbox de "usar como contacto" vivía
-       lejos, dentro del viejo Paso 1 (líneas 383-394). Daniel 2026-09-22:
-       un solo bloque, misma condición _rut_mismatch, justo debajo de
-       "Persona que retira" que es el dato al que afecta. #}
-    {% if _rut_mismatch %}
-    <div class="ficha-card ficha-card-wide" style="padding:0;background:transparent;border:none;box-shadow:none">
+        {% if _rut_mismatch %}
+    <div class="fv8-alerta">
       <div class="rut-mismatch-alert" style="margin:0 0 10px">
         <i class="bi bi-exclamation-triangle-fill"></i>
         <div>
@@ -954,6 +844,7 @@
           {% endif %}
         </div>
       </div>
+      <button type="button" class="btn btn-sm btn-danger fw-bold fv8-corregir" data-bs-toggle="modal" data-bs-target="#modalFichaEditar"><i class="bi bi-pencil-square me-1"></i>Corregir quién retira</button>
       <label class="pa1-contact-chk btn-2027" for="pa1UsarComoContacto">
         <input type="checkbox" id="pa1UsarComoContacto" onchange="pa1UsarClienteComoContacto(this.checked)">
         <div>
@@ -962,17 +853,7 @@
         </div>
       </label>
     </div>
-    {% endif %}
-
-    <div class="ficha-card ficha-card-wide fv5-not">
-      <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-sticky"></i></span><span>Notas internas del operador<small>Solo las ve ILUS — el cliente nunca las ve</small></span></div>
-      <div class="ficha-textarea" data-inline-edit="internal_notes"
-           data-placeholder="Agrega notas, recordatorios, contexto del retiro…">{{ req.internal_notes or '' }}</div>
-    </div>
-
-  </div>
-</div>
-        </div>
+        {% endif %}
       </div>
     </section>
 
@@ -2286,10 +2167,118 @@ window.RETIROS_DETAIL_DATA = {
 };
 </script>
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>
+<script defer src="{{ url_for('static', filename='retiros_ficha_v7.js') }}"></script>
 
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
 
 
+
+{# ════════ DATOS DEL CLIENTE Y DE QUIÉN RETIRA (Daniel 2026-10-02) ════════
+   Antes era la tarjeta «1.2» del paso 1. Mismos campos y mismos data-inline-edit (se guardan solos al salir del campo).
+   Va FUERA de .rd-flow a propósito: las tarjetas llevan transform/opacity y romperían el position:fixed del modal. #}
+<div class="modal fade fv8-modal" id="modalFichaEditar" tabindex="-1" aria-labelledby="modalFichaEditarT" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="modalFichaEditarT"><i class="bi bi-person-vcard me-2"></i>Datos del cliente y de quién retira</h5>
+          <p class="fv8-sub">Toca cualquier dato para corregirlo: se guarda solo. Si va a retirar otra persona, déjala en «Persona que retira».</p>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+<div class="ficha-rapida-wrap ficha-v5">
+          <div class="ficha-rapida-grid">
+        
+            <div class="ficha-card fv5-cli">
+              <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-building"></i></span><span>Cliente<small>¿Quién compró?</small></span></div>
+              <div class="ficha-val" data-inline-edit="customer_name"
+                   data-placeholder="Sin razón social"
+                   title="Click para editar la razón social">{{ req.customer_name or '' }}</div>
+              <div class="ficha-sub">RUT
+                <span data-inline-edit="customer_rut" data-placeholder="Sin RUT" style="font-family:monospace">{{ req.customer_rut or '' }}</span>
+              </div>
+            </div>
+        
+            <div class="ficha-card fv5-con">
+              <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-envelope-at"></i></span><span>Contacto principal<small>¿A quién le llegan los correos?</small></span></div>
+              <div class="ficha-val" data-inline-edit="contact_name"
+                   data-placeholder="Sin nombre">{{ req.contact_name or '' }}</div>
+              <div class="ficha-sub">
+                <i class="bi bi-envelope"></i>
+                <span data-inline-edit="contact_email" data-placeholder="Sin email">{{ req.contact_email or '' }}</span>
+              </div>
+              <div class="ficha-sub">
+                <i class="bi bi-telephone"></i>
+                <span data-inline-edit="contact_phone" data-placeholder="Sin teléfono">{{ req.contact_phone or '' }}</span>
+              </div>
+              {# Daniel 2026-05-23: extra_emails — CC del envío de notificaciones #}
+              <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
+                <i class="bi bi-people"></i>
+                <span style="font-size:.74rem;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.04em">Emails CC adicionales</span>
+              </div>
+              <div data-inline-edit="extra_emails"
+                   data-placeholder="Click para agregar emails separados por coma…"
+                   title="Estos emails recibirán TAMBIÉN las notificaciones (propuesta, confirmación, recordatorio). Separa con coma."
+                   style="font-size:.82rem;color:#0a0a0a;line-height:1.5;padding:4px 6px;background:#fafafa;border:1px solid #f1f5f9;border-radius:6px;min-height:24px;word-break:break-all">{{ req.extra_emails or '' }}</div>
+              <div id="emailErpSug" style="margin-top:6px"></div>
+              {# Contacto rápido — antes vivía al fondo del viejo Paso 1
+                 (líneas 406-410); ahora junto al dato que usa (Daniel 2026-09-22). #}
+              <div class="d-flex gap-2 flex-wrap mt-2" style="font-size:.76rem">
+                <a class="btn btn-sm btn-outline-dark btn-2027" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope me-1"></i>Email</a>
+                {% if req.contact_phone %}<a class="btn btn-sm btn-outline-success btn-2027" href="tel:{{ req.contact_phone }}"><i class="bi bi-telephone me-1"></i>Llamar</a>{% endif %}
+                <button type="button" class="btn btn-sm btn-outline-dark btn-2027" onclick="cambiarTabInfo('comunicacion')"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
+              </div>
+            </div>
+        
+            <div class="ficha-card fv5-ret">
+              <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-person-badge"></i></span><span>Persona que retira<small>¿Quién viene a buscar?</small></span></div>
+              <div class="ficha-val" data-inline-edit="pickup_person_name"
+                   data-placeholder="Sin nombre">{{ req.pickup_person_name or '' }}</div>
+              {% if _retira_mismo %}<span class="fv5-chip is-ok"><i class="bi bi-check-circle-fill"></i>Viene el mismo cliente</span>{% endif %}
+              <div class="ficha-sub">RUT
+                <span data-inline-edit="pickup_person_rut" data-placeholder="—" style="font-family:monospace">{{ req.pickup_person_rut or '' }}</span>
+                · <i class="bi bi-telephone"></i>
+                <span data-inline-edit="pickup_person_phone" data-placeholder="—">{{ req.pickup_person_phone or '' }}</span>
+              </div>
+              <div class="ficha-sub" style="text-transform:capitalize">Relación:
+                <span data-inline-edit="pickup_person_relation" data-placeholder="—">{{ req.pickup_person_relation or '' }}</span>
+              </div>
+            </div>
+        
+            {# Gestión — Daniel 2026-09-23: "Gestionar retiro. Acá quisiera ver
+               quién lo gestionó" — responsable asignado + quién creó la solicitud. #}
+            <div class="ficha-card fv5-ges">
+              <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-person-workspace"></i></span><span>Gestión<small>¿Quién lo atiende en ILUS?</small></span></div>
+              {% if req.responsable_nombre %}
+              <div class="ficha-val" style="font-size:.94rem">{{ req.responsable_nombre }}</div>
+              <div class="ficha-sub">Responsable del retiro</div>
+              {% else %}
+              <span class="fv5-chip is-warn"><i class="bi bi-exclamation-triangle-fill"></i>Sin responsable asignado</span>
+              {% endif %}
+              {% if req.created_by_user_name %}
+              <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
+                <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d-%m-%Y %H:%M') }}{% endif %}
+              </div>
+              {% endif %}
+            </div>
+        
+        
+            <div class="ficha-card ficha-card-wide fv5-not">
+              <div class="ficha-lbl"><span class="fv5-ico"><i class="bi bi-sticky"></i></span><span>Notas internas del operador<small>Solo las ve ILUS — el cliente nunca las ve</small></span></div>
+              <div class="ficha-textarea" data-inline-edit="internal_notes"
+                   data-placeholder="Agrega notas, recordatorios, contexto del retiro…">{{ req.internal_notes or '' }}</div>
+            </div>
+        
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-dark fw-bold" data-bs-dismiss="modal"><i class="bi bi-check-lg me-1"></i>Listo</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ════════ MARCAR RETIRADO con EVIDENCIA + CHECK WMS (Daniel 2026-06-20) ════════ #}
 {% if req.status == 'en_preparacion' %}

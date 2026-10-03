@@ -44,26 +44,35 @@
 .rd-flow .gp-e-hecho .step-circle-label{color:#15803d}
 .rd-flow .gp-e-pendiente .step-circle-label,.rd-flow .gp-e-bloqueado .step-circle-label{color:#6b7280}
 
-/* ══ 3 · Paso 1: facturas + cliente en una sola tarjeta ═══════════════════════════════ */
-.fv7-sub{margin-top:22px;padding:16px;border:2px solid #e5e7eb;border-radius:14px;background:#fff}
-.fv7-sub-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-.fv7-num{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:42px;height:32px;padding:0 10px;border-radius:99px;background:#dc2626;color:#fff;font-weight:900;font-size:.95rem}
-.fv7-sub-head strong{display:block;font-size:1.1rem}
-.fv7-sub-head small{display:block;font-size:.9rem;color:#4b5563}
-.fv7-sub .ficha-rapida-head{display:none}          /* el título «Ficha del retiro» ya no hace falta: lo dice 1.2 */
-.fv7-sub .ficha-rapida-wrap{margin:0;padding:0;border:0;box-shadow:none;background:transparent}
-.fv7-sub .ficha-rapida-grid{gap:12px}
-/* Cuatro tarjetas sin huecos: 2 columnas en tablet; en escritorio, Cliente y Gestión se apilan en la 1ª columna
-   y Contacto / Quién retira ocupan las otras dos a toda altura (antes «Cliente» quedaba alto y vacío). */
-.fv7-sub .ficha-rapida-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-@media (max-width:768px){.fv7-sub .ficha-rapida-grid{grid-template-columns:minmax(0,1fr)}}
+/* ══ 3 · Datos del cliente: ya NO son una tarjeta (Daniel 2026-10-02) ═══════════════════════════════════════
+   Viven en el encabezado y se editan en el modal #modalFichaEditar («Datos del cliente y de quién retira»), que reutiliza los mismos
+   campos data-inline-edit. El aviso «RUT del documento ≠ RUT de quien retira» sigue a la vista, con borde rojo, en el paso 1. */
+.rh-sub [hidden]{display:none !important}                 /* .rh-sub span{display:inline-flex} le ganaría al atributo hidden */
+.rh-d.d-ret{cursor:pointer}
+.rh-d.d-ret:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.55);box-shadow:0 10px 22px -10px rgba(34,211,238,.55)}
+.rh-d.d-ret:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.rh-d.d-ret .k .bi{margin-left:4px;font-size:.7rem;color:#67e8f9}
+.fv8-alerta{margin:16px 0 0;padding:12px 14px;border:3px solid #dc2626;border-radius:14px;background:#fff1f2}
+.fv8-alerta .rut-mismatch-alert{margin:0 0 10px;padding:0;border:0;background:transparent}
+.fv8-alerta .rut-mismatch-alert::before{display:none}
+.fv8-corregir{min-height:44px;margin:0 0 10px}
+.fv8-modal .modal-content{overflow:hidden;border:2px solid #dc2626;border-radius:16px}
+.fv8-modal .modal-header{align-items:flex-start;border-bottom:3px solid #dc2626;color:#fff;background:linear-gradient(135deg,#0a0a0a,#1a1a1a)}
+.fv8-modal .modal-title{font-weight:800}
+.fv8-sub{margin:4px 0 0;font-size:.92rem;color:#d1d5db}
+.fv8-modal .modal-body{background:#fafafa}
+.fv8-modal .ficha-rapida-wrap{margin:0;padding:0;border:0;box-shadow:none;background:transparent}
+.fv8-modal .ficha-rapida-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:768px){.fv8-modal .ficha-rapida-grid{grid-template-columns:minmax(0,1fr)}}
+/* Cuatro tarjetas sin huecos: Cliente y Gestión apiladas en la 1ª columna; Contacto y Quién retira a toda altura */
 @media (min-width:1100px){
-  .fv7-sub .ficha-rapida-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .fv7-sub .fv5-cli{grid-column:1;grid-row:1}
-  .fv7-sub .fv5-ges{grid-column:1;grid-row:2}
-  .fv7-sub .fv5-con{grid-column:2;grid-row:1 / span 2}
-  .fv7-sub .fv5-ret{grid-column:3;grid-row:1 / span 2}
+  .fv8-modal .ficha-rapida-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .fv8-modal .fv5-cli{grid-column:1;grid-row:1}
+  .fv8-modal .fv5-ges{grid-column:1;grid-row:2}
+  .fv8-modal .fv5-con{grid-column:2;grid-row:1 / span 2}
+  .fv8-modal .fv5-ret{grid-column:3;grid-row:1 / span 2}
 }
+.fv8-modal .fv5-ret.fv8-foco{box-shadow:0 0 0 4px rgba(34,211,238,.5);transition:box-shadow .3s}
 
 /* Tabla de facturas: que quepa a 1280px sin barra de desplazamiento horizontal (cabeceras en 2 líneas, menos relleno).
    Las columnas, el orden por columna, el buscador y «Quitar seleccionados» siguen iguales. */
@@ -74,28 +83,36 @@
   .rd-flow .ilus-tabla .td-asoc small{display:block}
 }
 
-/* ══ 4 · Productos: cada FACTURA con su cabecera clara ═══════════════════════════════ */
+/* ══ 4 · Productos: UNA tabla con cabecera de columnas; el borde rojo marca lo que está mal ═══════════════════════
+   Daniel 2026-10-02: «muestra el detalle definitivamente en una tabla, lo menos que se le dé scroll; tarjetas con semáforo y el borde
+   del objeto en rojo de lo que está mal». Cada factura trae su cabecera («FCV 10953 · cliente»). */
 .pd-doc-head .pd-doc-meta{flex:1 1 280px}                 /* el texto largo no empuja «Seleccionar todo» a otra línea */
 .pd-doc-head .pd-doc-num{font-size:1.1rem}
 .pd-doc-head .pd-doc-fecha{display:block;font-size:.88rem;color:#374151;overflow-wrap:anywhere}
-.pd-doc.has-problema{border-color:#fca5a5}
 .pd-doc-prob{color:#b91c1c}
+.pd-doc.has-problema{border-color:#dc2626}
+.pd-doc.has-problema .pd-doc-head{background:#fef2f2}
+.pd-peso b{font-weight:900;color:#111827}
+.pd-cols{display:none}
+/* Lo que está mal lleva el borde rojo (lo que pide atención, ámbar) */
+.rd-flow .pd-row.t-rojo{background:#fef2f2;box-shadow:inset 0 0 0 2px #dc2626}
+.rd-flow .pd-row.t-ambar{background:#fffbeb;box-shadow:inset 0 0 0 2px #f59e0b}
+/* Desde 1100px: una fila por producto, con las mismas columnas que la cabecera (antes 5 filas apiladas en notebook) */
+@media (min-width:1100px){
+  .rd-flow .pd-row,.rd-flow .pd-cols{grid-template-columns:150px minmax(180px,1.5fr) 112px 84px minmax(104px,.8fr) 184px;
+    grid-template-areas:none;gap:6px 12px;align-items:center}
+  .rd-flow .pd-row{padding:10px 16px}
+  .rd-flow .pd-row > *{grid-area:auto}
+  .rd-flow .pd-nums,.rd-flow .pd-peso{flex-direction:column;flex-wrap:nowrap;gap:2px}
+  .rd-flow .pd-nums span{white-space:nowrap}
+  .rd-flow .pd-estado{flex-direction:column;align-items:flex-start;justify-content:center}
+  .rd-flow .pd-aviso-linea{grid-column:2 / -1}
+  .rd-flow .pd-cols{display:grid;padding:8px 16px;border-bottom:1.5px solid #e4e4e7;background:#f4f4f5;color:#3f3f46;
+    font-size:.72rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
+}
 /* Celular: Neto / IVA / Bruto en una sola fila (antes 3 filas apiladas por factura, ~280px de más) */
 @media (max-width:640px){
   .rd-dv-vals .val,.rd-docval-tot .val{flex:1 1 28%;flex-direction:column;align-items:flex-end;justify-content:flex-start;padding:6px 8px}
   .rd-dv-vals .val .v,.rd-docval-tot .val .v{font-size:.92rem}
   .rd-dv{padding:10px 12px}
-}
-/* Notebook (1100–1599px): cada producto en 2 líneas (nombre arriba; facturado · stock · peso abajo; estado a la derecha).
-   Antes caía al diseño apilado de 5 filas (~240px por producto). Desde 1600px sigue el de 6 columnas, bajo 1100px el apilado. */
-@media (min-width:1100px) and (max-width:1599px){
-  .rd-flow .pd-row{grid-template-columns:150px minmax(0,1.2fr) minmax(0,.7fr) minmax(0,1fr) 200px;
-    grid-template-areas:"check info info info estado" "check nums stock peso estado";gap:6px 14px;padding:12px 16px}
-  .rd-flow .pd-check{grid-area:check}
-  .rd-flow .pd-info{grid-area:info}
-  .rd-flow .pd-nums{grid-area:nums;flex-direction:row;flex-wrap:wrap;gap:2px 12px}
-  .rd-flow .pd-stock{grid-area:stock}
-  .rd-flow .pd-peso{grid-area:peso;flex-direction:row;flex-wrap:wrap;gap:2px 10px}
-  .rd-flow .pd-estado{grid-area:estado;flex-direction:column;align-items:flex-start;justify-content:center}
-  .rd-flow .pd-aviso-linea{grid-column:1 / -1}
 }

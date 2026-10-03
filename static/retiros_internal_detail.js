@@ -977,7 +977,7 @@ function _pdRenderDoc(doc){
   const _unid = _incl.reduce((a, l) => a + (parseFloat(l.a_retirar) || 0), 0);
   const _prob = lineas.filter(l => l.tono === 'rojo').length;
   const _resumen = `${_incl.length} de ${lineas.length} producto${lineas.length === 1 ? '' : 's'} · ${_fmtNum(_unid, 0)} unidad${_unid === 1 ? '' : 'es'} a retirar`;
-  return `<article class="pd-doc ${_prob ? 'has-problema' : ''}" data-doc-id="${doc.doc_id}">
+  return `<article class="pd-doc ${_prob ? 'has-problema' : ''}" data-doc-id="${doc.doc_id}" role="table" aria-label="Productos de ${_escAttr(doc.tipo)} ${_escAttr(doc.numero)}">
     <div class="pd-doc-head">
       <span class="pd-doc-pill">${_esc(doc.tipo)}</span>
       <div class="pd-doc-meta">
@@ -989,6 +989,7 @@ function _pdRenderDoc(doc){
       </button>
     </div>
     ${otrosHtml}${erpErrHtml}
+    ${rows ? _PD_COLS : ''}
     ${rows || '<div class="pd-vacio">Sin productos en este documento (solo servicios).</div>'}
     ${servHtml}
   </article>`;
@@ -1015,12 +1016,12 @@ function _pdRenderLinea(docId, l){
     : (l.estado === 'autorizado'
         ? `<button type="button" class="pd-btn-quitar-autorizacion" onclick="_pdQuitarAutorizacion(this, ${docId}, '${_escAttr(l.sku)}')" title="Quitar autorización">Quitar autorización</button>`
         : '');
-  const pesoTxt = (l.peso_total != null && l.a_retirar > 0)
-    ? `${_fmtNum(l.peso_unit, 2)} × ${_fmtNum(l.a_retirar, 2)} = ${_fmtNum(l.peso_total, 1)} kg`
-    : '—';
-  const volTxt = (l.vol_total != null && l.a_retirar > 0) ? `${_fmtNum(l.vol_total, 3)} m³` : '—';
-  return `<div class="pd-row t-${l.tono}" data-doc-id="${docId}" data-sku="${_escAttr(l.sku)}">
-    <div class="pd-check">
+  const _conPeso = (l.peso_total != null && l.a_retirar > 0);
+  const pesoTxt = _conPeso ? `<b>${_fmtNum(l.peso_total, 1)} kg</b>` : '—';
+  const volTxt = (l.vol_total != null && l.a_retirar > 0) ? `${_fmtNum(l.vol_total, 3)} m³` : '';
+  const pesoCalc = [(_conPeso ? `${_fmtNum(l.peso_unit, 2)} × ${_fmtNum(l.a_retirar, 2)}` : ''), volTxt].filter(Boolean).join(' · ');
+  return `<div class="pd-row t-${l.tono}" data-doc-id="${docId}" data-sku="${_escAttr(l.sku)}" role="row">
+    <div class="pd-check" role="cell">
       <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}
              aria-label="Retirar ${_escAttr(l.nombre)}"
              onchange="_pdOnChange(this, ${docId})">
@@ -1032,27 +1033,32 @@ function _pdRenderLinea(docId, l){
         <button type="button" tabindex="-1" onclick="_pdStep(this, 1)" ${disabled ? 'disabled' : ''} aria-label="Una más">+</button>
       </div>
     </div>
-    <div class="pd-info">
+    <div class="pd-info" role="cell">
       <span class="pd-nombre">${_esc(l.nombre || l.sku)}</span>
       <span class="pd-sub">SKU ${_esc(l.sku)} · ${nulido}bodega ${_esc(l.bodega || '02')}</span>
       ${consumos ? `<div class="pd-guias">${consumos}</div>` : ''}
     </div>
-    <div class="pd-nums">
+    <div class="pd-nums" role="cell">
       <span><b>${facturadoTxt}</b> facturado</span>
       <span class="${l.saldo !== null && l.saldo <= 0 ? 't-gris' : 't-ok'}"><b>${saldoTxt}</b> saldo</span>
     </div>
-    <div class="pd-stock">${stockHtml}</div>
-    <div class="pd-peso">
+    <div class="pd-stock" role="cell">${stockHtml}</div>
+    <div class="pd-peso" role="cell">
       <span>${pesoTxt}</span>
-      <span class="pd-vol">${volTxt}</span>
+      <span class="pd-vol">${pesoCalc}</span>
     </div>
-    <div class="pd-estado">
+    <div class="pd-estado" role="cell">
       <span class="pd-badge t-${l.tono}"><i class="bi ${_PD_ICO[l.estado] || 'bi-dash-circle'}"></i>${_esc(l.estado_txt)}</span>
       ${autorizarBtn}
     </div>
     ${avisos}
   </div>`;
 }
+
+// Cabecera de la tabla de productos (solo se ve desde 1100 px; en el celular cada producto es una tarjeta)
+const _PD_COLS = `<div class="pd-cols" role="row"><span role="columnheader">Retirar</span><span role="columnheader">Producto</span>` +
+  `<span role="columnheader">Facturado · saldo</span><span role="columnheader">Stock</span><span role="columnheader">Peso</span>` +
+  `<span role="columnheader">Estado</span></div>`;
 
 const _PD_ICO = {
   ok: 'bi-check-lg', revisar: 'bi-exclamation-triangle-fill', autorizado: 'bi-shield-check',
