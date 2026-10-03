@@ -97,15 +97,17 @@
 /* Lo que está mal lleva el borde rojo (lo que pide atención, ámbar) */
 .rd-flow .pd-row.t-rojo{background:#fef2f2;box-shadow:inset 0 0 0 2px #dc2626}
 .rd-flow .pd-row.t-ambar{background:#fffbeb;box-shadow:inset 0 0 0 2px #f59e0b}
-/* Desde 1100px: una fila por producto, con las mismas columnas que la cabecera (antes 5 filas apiladas en notebook) */
-@media (min-width:1100px){
+/* Desde 1250px: una fila por producto, con las mismas columnas que la cabecera. Las 6 columnas, los espacios y el relleno suman ~906px:
+   con menos ancho (1100–1249 con el menú lateral) se desbordaba y la tarjeta recortaba Peso y Estado; ahí vale el apilado de siempre. */
+@media (min-width:1250px){
   .rd-flow .pd-row,.rd-flow .pd-cols{grid-template-columns:150px minmax(180px,1.5fr) 112px 84px minmax(104px,.8fr) 184px;
     grid-template-areas:none;gap:6px 12px;align-items:center}
   .rd-flow .pd-row{padding:10px 16px}
   .rd-flow .pd-row > *{grid-area:auto}
   .rd-flow .pd-nums,.rd-flow .pd-peso{flex-direction:column;flex-wrap:nowrap;gap:2px}
   .rd-flow .pd-nums span{white-space:nowrap}
-  .rd-flow .pd-estado{flex-direction:column;align-items:flex-start;justify-content:center}
+  .rd-flow .pd-estado{flex-direction:column;align-items:flex-start;justify-content:center;min-width:0}
+  .rd-flow .pd-badge{white-space:normal;max-width:100%}        /* «Sin stock: no se puede entregar» NUNCA se corta (REGLA #15): baja a 2 líneas */
   .rd-flow .pd-aviso-linea{grid-column:2 / -1}
   .rd-flow .pd-cols{display:grid;padding:8px 16px;border-bottom:1.5px solid #e4e4e7;background:#f4f4f5;color:#3f3f46;
     font-size:.72rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
@@ -116,3 +118,11 @@
   .rd-dv-vals .val .v,.rd-docval-tot .val .v{font-size:.92rem}
   .rd-dv{padding:10px 12px}
 }
+
+/* ══ Revisión de front-end 2026-10-02: contraste y textos largos ═════════════════════════════════════════════════ */
+.rd-flow .pd-badge.t-ambar{background:#f59e0b;color:#1f2937}      /* blanco sobre ámbar daba 2,1:1 */
+.rd-flow .pd-badge.t-ok{background:#15803d}                        /* blanco sobre #16a34a daba 3,3:1 */
+.pd-doc.has-problema .pd-doc-num{color:#991b1b}
+.rh-sub span,#rhContactoTxt{min-width:0;overflow-wrap:anywhere}    /* un correo largo no se corta en el celular */
+.fv8-modal .ficha-sub span{min-width:0;overflow-wrap:anywhere}
+.fv8-alerta[hidden]{display:none !important}

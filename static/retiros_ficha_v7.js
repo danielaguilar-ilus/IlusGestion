@@ -39,6 +39,12 @@
     fijar('rhContactoTxt', contacto, null); fijar('rhContacto', null, !contacto);
     var mismo = rnom && nombre && rnom.toLowerCase() === nombre.toLowerCase();
     fijar('heroRetiraTxt', mismo ? 'El mismo cliente' : (rnom || '—'), null);
+    // La alerta roja «RUT del documento ≠ RUT de quien retira» deja de decir algo falso cuando, al corregirlo en el modal, ya coinciden
+    var alerta = document.querySelector('.fv8-alerta');
+    if (alerta) {
+      var r1 = String(rut || '').replace(/[^0-9kK]/g, '').toUpperCase(), r2 = dato('pickup_person_rut').replace(/[^0-9kK]/g, '').toUpperCase();
+      alerta.hidden = !!(r1 && r2 && r1 === r2);
+    }
     var llamar = document.querySelector('a.rh-btn.call'), wa = document.querySelector('a.rh-btn.wa');
     if (llamar && tel) llamar.href = 'tel:' + tel.replace(/\s+/g, '');
     if (wa && tel) wa.href = 'https://wa.me/' + waNumero(tel);
@@ -54,6 +60,15 @@
     new MutationObserver(programar).observe(modal, { subtree: true, childList: true, characterData: true });
   }
   modal.addEventListener('hidden.bs.modal', sincronizarEncabezado);
+
+  // «Enviarle mensaje» (dentro del modal): primero se cierra el modal y recién entonces se abre la pestaña Comunicación; antes la
+  // pestaña se abría y la página bajaba DETRÁS de la ventana, y no pasaba nada a la vista.
+  window.fichaIrAComunicacion = function () {
+    var ir = function () { if (typeof window.cambiarTabInfo === 'function') window.cambiarTabInfo('comunicacion'); };
+    var m = window.bootstrap && window.bootstrap.Modal ? window.bootstrap.Modal.getInstance(modal) : null;
+    if (m && modal.classList.contains('show')) { modal.addEventListener('hidden.bs.modal', ir, { once: true }); m.hide(); }
+    else ir();
+  };
 
   // Desde «Quién retira» o «Corregir quién retira»: el cursor cae directo en la persona que retira
   modal.addEventListener('shown.bs.modal', function (ev) {

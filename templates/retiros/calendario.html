@@ -1910,7 +1910,7 @@ function agiRenderDrawer(d){
         html += `<div class="agi-warn-item">
           <i class="bi bi-envelope-plus" style="color:#f59e0b"></i>
           <span style="font-size:.78rem"><b>${agiEsc(em)}</b></span>
-          <button class="agi-warn-add-btn" onclick="agiAddExtraEmail(${d.id}, '${agiEsc(em)}', this)">
+          <button class="agi-warn-add-btn" data-em="${agiEsc(em)}" onclick="agiAddExtraEmail(${d.id}, this.dataset.em, this)">
             <i class="bi bi-plus-lg"></i> CC
           </button>
         </div>`;
@@ -2168,7 +2168,9 @@ async function agiCambiarEstado(rid, status, label){
       agiCerrarDrawer();
       agiCargar(true);
     } else {
-      ilusToast('No se pudo cambiar el estado', { type:'error' });
+      let motivo = '';
+      try { const d = await r.json(); motivo = (d && d.error) || ''; } catch(_){ /* sin cuerpo: mensaje genérico */ }
+      ilusToast(motivo || 'No se pudo cambiar el estado', { type:'error', duration: motivo ? 7000 : 3500 });
     }
   } catch(e){
     ilusToast('Error de red: ' + e.message, { type:'error' });

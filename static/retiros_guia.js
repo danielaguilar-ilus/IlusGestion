@@ -83,7 +83,7 @@
   }
 
   // ── Aviso «antes falta…» (solo para los botones que le escriben al cliente) ──────────────
-  function avisoFalta(n, items, duro) {
+  function avisoFalta(n, items, duro, sinPropios) {
     return new Promise(function (resolve) {
       if (AVISO_ABIERTO) { resolve(null); return; }
       AVISO_ABIERTO = true;
@@ -92,7 +92,7 @@
       el.className = 'modal fade gp-modal';
       el.tabIndex = -1;
       el.setAttribute('aria-hidden', 'true');
-      var propios = duro ? p.faltan : [];
+      var propios = (duro && !sinPropios) ? p.faltan : [];
       var lista = items.map(function (it) {
         return '<li><span class="n">' + it.n + '</span><div><b>Paso ' + it.n + ' · ' + esc(it.titulo) + '</b><span>' + esc(it.texto) + '</span></div></li>';
       }).join('') + propios.map(function (t) {
@@ -126,6 +126,12 @@
       if (m) m.show(); else { el.style.display = 'block'; el.classList.add('show'); }
     });
   }
+  // Sin responsable declarado no se avanza: aviso DURO (sin «continuar de todos modos») que lleva directo a «Me hago cargo»
+  function avisoResponsable(n) {
+    var p2 = G.pasos[1];
+    avisoFalta(n, [{ n: 2, titulo: p2.titulo, texto: (p2.faltan && p2.faltan[0]) || 'Declara quién se hace cargo de este retiro.', estado: 'actual' }], true, true)
+      .then(function (r) { if (r === 'ir') irAlPaso(2, false); });
+  }
   function guardar(n, hacer) {
     var p = G.pasos[n - 1];
     var ant = faltantesAntes(n).filter(function (it) { return it.n !== n; });
@@ -144,6 +150,12 @@
       var b = ev.target.closest(g.sel);
       if (!b) continue;
       if (b.dataset.gpOk === '1') return;
+      if (G.sin_responsable) {            // Daniel 2026-10-02: «para avanzar debe declarar el responsable, y para agendar o liberar el calendario»
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        avisoResponsable(g.n);
+        return;
+      }
       var p = G.pasos[g.n - 1];
       var ant = faltantesAntes(g.n);
       if (!ant.length && !(p.bloquea && p.faltan.length)) return;
@@ -165,35 +177,104 @@
     if (!p.accion) return '';
     var a = p.accion;
     var cls = 'gp-btn' + (p.estado === 'actual' ? '' : ' sec') + (a.tipo === 'retirar' && p.estado === 'actual' ? ' verde' : '');
-    var dis = a.deshabilitada ? ' disabled title="Primero confirma las facturas (paso 1)"' : '';
+    var dis = a.deshabilitada ? ' disabled title="' + esc(a.motivo || 'Primero confirma las facturas (paso 1)') + '"' : '';
     var icono = { confirmar_docs: 'bi-patch-check-fill', confirmar_productos: 'bi-patch-check-fill', tomar: 'bi-person-raised-hand',
       proponer: 'bi-calendar2-plus', preparacion: 'bi-box-seam-fill', retirar: 'bi-check-circle-fill', ir: 'bi-arrow-right-circle-fill' }[a.tipo] || 'bi-arrow-right-circle-fill';
     return '<button type="button" class="' + cls + '" data-gp-acc="' + p.n + '"' + dis + '><i class="bi ' + icono + '"></i>' + esc(a.texto) + '</button>';
   }
-  function fichaHtml(p) {
+  // Un paso del recorrido: círculo conectado al anterior (verde = hecho, rojo que late = te toca, ámbar = esperando, gris = aún no)
+  function nodoHtml(p, i) {
     var st = ESTADO_TXT[p.estado] || ESTADO_TXT.pendiente;
-    return '<li><button type="button" class="gp-chip is-' + p.estado + (p.n === G.siguiente ? ' es-sig' : '') + '" data-gp-ver="' + p.n + '" title="' + esc(p.pregunta) + '" aria-label="Paso ' + p.n + ', ' + esc(p.titulo) + ': ' + st[2] + '">' +
-      '<span class="gp-chip-n">' + (p.estado === 'hecho' ? '<i class="bi bi-check-lg"></i>' : p.n) + '</span>' +
-      '<span class="gp-chip-t">' + esc(p.titulo) + '<small>' + st[2] + '</small></span></button></li>';
+    var ant = i > 0 ? G.pasos[i - 1] : null;
+    var cont = p.estado === 'hecho' ? '<i class="bi bi-check-lg"></i>' : (p.estado === 'espera' ? '<i class="bi bi-hourglass-split"></i>' :
+      (p.estado === 'bloqueado' ? '<i class="bi bi-lock-fill"></i>' : String(p.n)));
+    return '<li class="gp-n is-' + p.estado + (ant && ant.estado === 'hecho' ? ' tras-hecho' : '') + (p.n === G.siguiente ? ' es-sig' : '') + '">' +
+      '<button type="button" class="gp-node" data-gp-ver="' + p.n + '" title="' + esc(p.pregunta) + '" aria-label="Paso ' + p.n + ', ' + esc(p.titulo) + ': ' + st[2] + '">' +
+      '<span class="gp-nc">' + cont + '</span><span class="gp-nt">' + esc(p.titulo) + '<small>' + st[2] + '</small></span></button></li>';
   }
-  function sigHtml() {
+  // La tarea que toca, con su botón, SIEMPRE a la vista (Daniel 2026-10-02: «que avisara arriba… y tuviera la acción, un botón»)
+  function stripHtml() {
     if (G.terminal) {
-      return '<div class="gp-sig is-pendiente"><i class="bi bi-flag-fill"></i><div class="gp-sig-t"><b>Retiro terminado</b><span>' + esc(G.terminal) + ' No queda nada por hacer.</span></div></div>';
+      return '<div class="gp-strip is-pendiente" aria-live="polite"><span class="gp-strip-ico"><i class="bi bi-flag-fill"></i></span>' +
+        '<div class="gp-strip-t"><span class="gp-strip-k">Retiro terminado</span><b>' + esc(G.terminal) + ' No queda nada por hacer.</b></div></div>';
     }
     if (!G.siguiente) {
-      return '<div class="gp-sig is-fin"><i class="bi bi-trophy-fill"></i><div class="gp-sig-t"><b>¡Todos los pasos están hechos!</b><span>El cliente ya se llevó su pedido.</span></div></div>';
+      return '<div class="gp-strip is-fin" aria-live="polite"><span class="gp-strip-ico"><i class="bi bi-trophy-fill"></i></span>' +
+        '<div class="gp-strip-t"><span class="gp-strip-k">Todo listo</span><b>¡Todos los pasos están hechos! El cliente ya se llevó su pedido.</b></div></div>';
     }
     var p = G.pasos[G.siguiente - 1];
-    var k = { actual: ['Tu siguiente paso', 'bi-signpost-2-fill'], espera: ['Ahora toca esperar', 'bi-hourglass-split'],
+    var k = { actual: ['Te toca', 'bi-exclamation-lg'], espera: ['Ahora toca esperar', 'bi-hourglass-split'],
       pendiente: ['Siguiente (aún no toca)', 'bi-lock-fill'], bloqueado: ['No se puede avanzar todavía', 'bi-slash-circle-fill'] }[p.estado] || ['Siguiente paso', 'bi-signpost-2-fill'];
-    var h = '<div class="gp-sig is-' + p.estado + '" aria-live="polite"><i class="bi ' + k[1] + '"></i><div class="gp-sig-t"><b>' + k[0] + ': Paso ' + p.n + ' · ' + esc(p.titulo) + '</b>';
-    if (p.faltan[0]) h += '<span>' + esc(p.faltan[0]) + '</span>';
-    if (p.avisos && p.avisos[0]) h += '<span class="gp-sig-av"><i class="bi bi-exclamation-triangle-fill"></i> ' + esc(p.avisos[0]) + '</span>';
-    if (p.correo && p.estado === 'actual') h += '<span class="gp-correo"><i class="bi bi-envelope-fill"></i>Esto le envía un correo al cliente</span>';
+    var h = '<div class="gp-strip is-' + p.estado + '" aria-live="polite"><span class="gp-strip-ico"><i class="bi ' + k[1] + '"></i></span>' +
+      '<div class="gp-strip-t"><span class="gp-strip-k">' + k[0] + ' · Paso ' + p.n + ' · ' + esc(p.titulo) + '</span><b>' + esc(p.faltan[0] || p.pregunta) + '</b>';
+    if (p.avisos && p.avisos[0]) h += '<span class="gp-strip-av"><i class="bi bi-exclamation-triangle-fill"></i> ' + esc(p.avisos[0]) + '</span>';
     h += '</div>';
+    if (p.correo && p.estado === 'actual') h += '<span class="gp-correo"><i class="bi bi-envelope-fill"></i>Le llega un correo al cliente</span>';
     var b = botones(p);
     if (!b && p.estado !== 'hecho') b = '<button type="button" class="gp-btn sec" data-gp-ver="' + p.n + '"><i class="bi bi-arrow-right-circle"></i>Ir a este paso</button>';
-    return h + (b ? '<div class="gp-sig-acc">' + b + '</div>' : '') + '</div>';
+    if (b) h += '<div class="gp-strip-acc">' + b + '</div>';
+    return h + '<span class="gp-tecla" title="Te lleva al siguiente pendiente, por orden de tarjeta"><kbd>Enter ↵</kbd><span>siguiente pendiente</span></span></div>';
+  }
+  // ── Multi-documento: un semáforo por factura o boleta del retiro ────────────────────────────────────────────
+  function claveDoc(r) {              // 'BLV 0000023732' y 'BLV 23732' son el mismo documento
+    var m = /^\s*([A-Za-z]{2,5})[\s\-_.\/:]*0*([0-9]+)/.exec(String(r || ''));
+    return m ? m[1].toUpperCase() + ' ' + m[2] : String(r || '').replace(/\s+/g, ' ').trim().toUpperCase();
+  }
+  function articuloDoc(clave) {       // la tabla de productos de ESA factura
+    var arts = document.querySelectorAll('#paso-3 .pd-doc');
+    for (var i = 0; i < arts.length; i++) { if (claveDoc(textoDe($('.pd-doc-num', arts[i]))) === clave) return arts[i]; }
+    return null;
+  }
+  function filaDoc(clave) {           // su fila en la tabla de facturas del paso 1
+    var filas = document.querySelectorAll('#tabDocsAsociados tbody tr[data-doc-id]');
+    for (var i = 0; i < filas.length; i++) {
+      if (claveDoc(textoDe($('.td-pill-dark', filas[i])) + ' ' + textoDe($('td.mono', filas[i]))) === clave) return filas[i];
+    }
+    return null;
+  }
+  var ORDEN_NIVEL = { neutro: 0, ok: 1, aviso: 2, mal: 3 };
+  function estadoDoc(d) {
+    var clave = claveDoc(d.rotulo), nivel = 'neutro', mal = [], aviso = [], info = [];
+    function subir(n) { if (ORDEN_NIVEL[n] > ORDEN_NIVEL[nivel]) nivel = n; }
+    if (d.con_saldo === 1) { subir('ok'); info.push('con saldo'); }
+    else if (d.con_saldo === 0) { subir('aviso'); aviso.push('sin saldo'); }
+    else info.push('saldo sin verificar');
+    if (d.otro_rut) { subir('aviso'); aviso.push('otro RUT'); }
+    var art = articuloDoc(clave);
+    if (art) {
+      var rojos = art.querySelectorAll('.pd-row.t-rojo').length, ambar = art.querySelectorAll('.pd-row.t-ambar').length;
+      if (rojos) { subir('mal'); mal.push(rojos + (rojos === 1 ? ' producto con problema' : ' productos con problema')); }
+      if (ambar) { subir('aviso'); aviso.push(ambar + ' por revisar'); }
+    }
+    var cd = null;
+    if (CHECK && CHECK.documentos && (STATUS === 'agenda_confirmada' || STATUS === 'en_preparacion')) {
+      CHECK.documentos.forEach(function (x) { if (claveDoc(x.rotulo) === clave) cd = x; });
+    }
+    if (cd) info.push(cd.estado === 'listo' ? 'Check: listo' : (cd.estado === 'sin_datos' ? 'Check aún no lo tiene' : 'Check: en proceso'));
+    return { clave: clave, nivel: nivel, partes: mal.concat(aviso, info) };
+  }
+  function docsHtml() {
+    var docs = G.docs || [];
+    if (docs.length < 2) return '';
+    var MAX = 6;
+    var h = '<div class="gp-docs" role="list" aria-label="Documentos de este retiro"><span class="gp-docs-k"><i class="bi bi-files"></i>' + docs.length + ' documentos</span>';
+    docs.slice(0, MAX).forEach(function (d) {
+      var e = estadoDoc(d);
+      var icono = { ok: 'bi-check-circle-fill', aviso: 'bi-exclamation-triangle-fill', mal: 'bi-x-octagon-fill', neutro: 'bi-dash-circle' }[e.nivel];
+      h += '<button type="button" role="listitem" class="gp-doc is-' + e.nivel + '" data-gp-doc="' + esc(e.clave) + '" title="' + esc(e.clave + (e.partes.length ? ': ' + e.partes.join(' · ') : '')) +
+        '"><i class="bi ' + icono + '"></i><b>' + esc(e.clave) + '</b>' + (e.partes.length ? '<small>' + esc(e.partes[0]) + '</small>' : '') + '</button>';
+    });
+    if (docs.length > MAX) h += '<button type="button" class="gp-doc is-neutro" data-gp-doc="*" title="Ver todos los documentos"><b>+' + (docs.length - MAX) + ' más</b></button>';
+    return h + '</div>';
+  }
+  function irADoc(clave) {
+    var el = clave === '*' ? $('#tabDocsAsociados') : (articuloDoc(clave) || filaDoc(clave) || $('#paso-3'));
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('gp-resalta'); void el.offsetWidth; el.classList.add('gp-resalta');
+    setTimeout(function () { el.classList.remove('gp-resalta'); }, 1800);
+    el.setAttribute('tabindex', '-1');
+    try { el.focus({ preventScroll: true }); } catch (e) { /* queda resaltado igual */ }
   }
   // «hace 12 s» / «hace 3 min» / «hace 2 h»
   function haceTxt(s) {
@@ -324,7 +405,9 @@
     }
     h += actHtml();
     var nota;
-    if (STATUS !== 'en_preparacion') nota = 'Cuando envíes el pedido a preparación, ILUS empezará a marcar solo el «listo» según Check. Por ahora solo se consulta.';
+    if (STATUS !== 'en_preparacion') nota = (CHECK.prep_auto_activo === false)
+      ? 'Cuando envíes el pedido a preparación, ILUS empezará a marcar solo el «listo» según Check. El envío automático está apagado: por ahora solo se consulta.'
+      : 'Cuando Check vea que bodega empezó a juntar el pedido, la cita sea de hoy o del próximo día hábil y el retiro tenga responsable, ILUS lo pasa solo a «En preparación» en horario de bodega (queda en la bitácora como automático, con la hora, la OT y el usuario que informe Check). Si quieres adelantarte, usa el botón.';
     else if (CHECK.auto_activo === false) nota = 'El marcado automático está apagado: Check solo informa. Marca la lista de abajo a mano.';
     else nota = 'Cuando Check tenga todo pickeado (confirmado en dos revisiones seguidas), ILUS marca solo «Pedido listo para entregar». No se le envía ningún correo al cliente. Check solo se consulta, nunca se modifica.';
     return h + '<p class="ck-nota"><i class="bi bi-shield-lock-fill"></i><span>' + nota + (CHECK_TS ? ' Actualizado a las ' + CHECK_TS + '.' : '') + '</span></p></div></div>';
@@ -349,21 +432,20 @@
     }
   }
   function render() {
+    var total = G.pasos.length;
     var hechos = G.pasos.filter(function (p) { return p.estado === 'hecho'; }).length;
-    var pct = Math.round(100 * hechos / G.pasos.length);
-    var tocan = G.pasos.filter(function (p) { return p.estado === 'actual'; }).length;
-    var h = '<div class="gp-bar"><div class="gp-bar-t"><i class="bi bi-signpost-split-fill"></i><b>Guía del retiro</b></div>' +
-      '<div class="gp-bar-prog"><b>' + hechos + ' de ' + G.pasos.length + ' pasos listos</b><div class="gp-prog-bar"><i style="width:' + pct + '%"></i></div>' +
-      (tocan && !G.terminal ? '<span class="gp-bar-av">· ' + tocan + (tocan === 1 ? ' te toca' : ' te tocan') + '</span>' : '') + '</div>' +
-      (G.siguiente && !G.terminal ? '<span class="gp-tecla" title="Te lleva al siguiente pendiente, por orden de tarjeta"><kbd>Enter ↵</kbd> siguiente pendiente</span>' : '') + '</div>';
-    h += '<ol class="gp-chips">' + G.pasos.map(fichaHtml).join('') + '</ol>';
-    h += sigHtml();
+    var pct = Math.round(100 * hechos / total);
+    var anillo = '<div class="gp-ring' + (hechos === total ? ' is-lleno' : '') + '" role="img" aria-label="' + hechos + ' de ' + total + ' pasos listos"><svg viewBox="0 0 36 36" aria-hidden="true">' +
+      '<circle class="gp-ring-bg" cx="18" cy="18" r="15.9155" pathLength="100"/><circle class="gp-ring-fg" cx="18" cy="18" r="15.9155" pathLength="100" stroke-dasharray="' + pct + ' 100"/></svg>' +
+      '<b>' + hechos + '<small>/' + total + '</small></b></div>';
+    var h = '<div class="gp-top">' + anillo + '<ol class="gp-track">' + G.pasos.map(nodoHtml).join('') + '</ol>' + docsHtml() + '</div>' + stripHtml();
     if (h !== ULTIMO_DIBUJO) {
       var foco = document.activeElement;
       var clave = '';
       if (foco && panel.contains(foco)) {
         if (foco.getAttribute('data-gp-acc')) clave = '[data-gp-acc="' + foco.getAttribute('data-gp-acc') + '"]';
         else if (foco.getAttribute('data-gp-ver')) clave = '[data-gp-ver="' + foco.getAttribute('data-gp-ver') + '"]';
+        else if (foco.getAttribute('data-gp-doc')) clave = '[data-gp-doc="' + foco.getAttribute('data-gp-doc') + '"]';
       }
       panel.innerHTML = h;
       ULTIMO_DIBUJO = h;
@@ -393,7 +475,9 @@
       var tag = document.createElement('div');
       tag.className = 'gp-tag' + (p.estado === 'espera' ? ' is-espera' : '');
       var acc = p.accion && (p.accion.tipo === 'confirmar_docs' || p.accion.tipo === 'confirmar_productos') && p.estado === 'actual' && !p.accion.deshabilitada;
-      tag.innerHTML = '<span><b>PASO ' + p.n + ' · ' + (p.estado === 'actual' ? 'TE TOCA' : 'ESPERANDO') + ':</b> ' + esc(p.faltan[0] || p.titulo) + (p.correo && p.estado === 'actual' ? ' <em class="gp-tag-mail"><i class="bi bi-envelope-fill"></i> Le llega un correo al cliente</em>' : '') + '</span>' +
+      var bloq = p.estado === 'actual' && p.accion && p.accion.deshabilitada && p.accion.motivo;
+      tag.innerHTML = '<span><b>PASO ' + p.n + ' · ' + (p.estado === 'actual' ? 'TE TOCA' : 'ESPERANDO') + ':</b> ' + esc(p.faltan[0] || p.titulo) + (p.correo && p.estado === 'actual' ? ' <em class="gp-tag-mail"><i class="bi bi-envelope-fill"></i> Le llega un correo al cliente</em>' : '') +
+        (bloq ? ' <em class="gp-tag-mail"><i class="bi bi-lock-fill"></i> ' + esc(p.accion.motivo) + '</em>' : '') + '</span>' +
         (acc ? '<button type="button" class="gp-btn" data-gp-acc="' + p.n + '"><i class="bi bi-patch-check-fill"></i>' + esc(p.accion.texto) + '</button>' : '');
       card.insertBefore(tag, card.firstChild);
       if (p.estado === 'actual' && BTNS[p.n]) {
@@ -464,7 +548,9 @@
     if (b) { ev.stopPropagation(); accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
     var v = t.closest('[data-gp-ver]');
     if (v) { irAlPaso(parseInt(v.dataset.gpVer, 10), true); return; }
-    if (t.closest('.gp-sig') && !t.closest('button,a')) irAlSiguientePendiente(false);
+    var dd = t.closest('[data-gp-doc]');
+    if (dd) { irADoc(dd.getAttribute('data-gp-doc')); return; }
+    if (t.closest('.gp-strip') && !t.closest('button,a')) irAlSiguientePendiente(false);
   });
   // Botones que viven en las tarjetas de la ficha: «Confirmo» de la franja roja y «Actualizar» del panel de Check
   document.addEventListener('click', function (ev) {
@@ -478,13 +564,29 @@
   // ── Enter = ir al siguiente pendiente, por prioridad de tarjeta ─────────────────────────────────────────
   // Daniel 2026-10-02: «si algo está mal y le das Enter, que te lleve a donde falta el detalle, por orden de prioridad de
   // tarjeta». La lista sale de la guía (pasos en rojo) y de lo que se ve en pantalla (productos con problema, facturas sin
-  // saldo o de otro RUT); va de la tarjeta 1 a la 6 y cada Enter pasa al siguiente (Mayús+Enter vuelve al anterior).
-  var PEND_I = -1;
+  // saldo o de otro RUT, el RUT que no coincide); va de la tarjeta 1 a la 6 y cada Enter pasa al siguiente (Mayús+Enter vuelve al
+  // anterior). Con varios documentos, cada pendiente dice de CUÁL es. Sin responsable declarado solo hay un pendiente: «Me hago cargo».
+  var PEND_I = -1, PEND_EL = null;
+  var VENTANAS = '.modal.show,.ilus-overlay,.ilus-sheet-overlay,.rba-modal.is-open,#opChatPanel.open,[aria-modal="true"]:not([aria-hidden="true"])';
+  function hayVentanaAbierta() {      // una ventana propia abierta: el Enter es suyo, no de la guía
+    var l = document.querySelectorAll(VENTANAS);
+    for (var i = 0; i < l.length; i++) { if (visible(l[i])) return true; }
+    return false;
+  }
   function textoDe(el) { return el ? String(el.textContent || '').replace(/\s+/g, ' ').trim() : ''; }
+  function docDeFila(row) {           // «BLV 23732 · » delante del pendiente cuando el retiro tiene varios documentos
+    var art = row.closest && row.closest('.pd-doc');
+    return ((G.docs || []).length > 1 && art) ? claveDoc(textoDe($('.pd-doc-num', art))) + ' · ' : '';
+  }
   function pendientes() {
     var out = [];
     if (G.terminal) return out;
     function poner(n, nivel, texto, el) { if (el) out.push({ n: n, nivel: nivel, texto: texto, el: el }); }
+    if (G.sin_responsable) {          // lo demás está bloqueado hasta que alguien se haga cargo
+      var tomar0 = $('#btnTomarRetiro'), card0 = $(CARDS[2]);
+      poner(2, 'rojo', (G.pasos[1].faltan && G.pasos[1].faltan[0]) || G.pasos[1].titulo, visible(tomar0) ? tomar0 : card0);
+      return out;
+    }
     G.pasos.forEach(function (p) {
       var card = $(anclaDe(p));
       var boton = card ? $('.gp-tag [data-gp-acc]', card) : null;       // el «Confirmo» de la franja roja
@@ -494,6 +596,8 @@
           var hayDocs = G.pasos[0].detalle && G.pasos[0].detalle.length;
           poner(1, 'rojo', p.faltan[0] || p.titulo, hayDocs ? (boton || card) : (visible(abrir) ? abrir : card));
         }
+        var alertaRut = $('.fv8-alerta');
+        if (alertaRut && visible(alertaRut)) poner(1, 'rojo', textoDe($('strong', alertaRut)) || 'El RUT del documento no coincide con el de quien retira.', alertaRut);
         [].forEach.call(document.querySelectorAll('#tabDocsAsociados tbody tr[data-doc-id]'), function (tr) {
           var sinSaldo = $('.td-pill-warn', tr), otroRut = $('.otro-rut-badge', tr);
           if (sinSaldo || otroRut) {
@@ -507,10 +611,10 @@
         }
       } else if (p.n === 3) {
         [].forEach.call(document.querySelectorAll('#paso-3 .pd-row.t-rojo'), function (row) {
-          poner(3, 'rojo', 'Producto con problema: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
+          poner(3, 'rojo', docDeFila(row) + 'Producto con problema: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
         });
         [].forEach.call(document.querySelectorAll('#paso-3 .pd-row.t-ambar'), function (row) {
-          poner(3, 'ambar', 'Revisar: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
+          poner(3, 'ambar', docDeFila(row) + 'Revisar: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
         });
         if (p.estado === 'actual') poner(3, 'rojo', p.faltan[0] || p.titulo, boton || card);
       } else if (p.estado === 'actual') {
@@ -521,15 +625,24 @@
     return out;
   }
   function irAlSiguientePendiente(atras) {
+    if (G.terminal) { toast(G.terminal + ' No queda nada por hacer.', 'info'); return; }
     var lista = pendientes();
     if (!lista.length) {
       var sig = G.siguiente ? G.pasos[G.siguiente - 1] : null;
       toast(sig && sig.estado === 'espera' ? 'Todo está al día. Ahora toca esperar: ' + (sig.faltan[0] || sig.titulo) : 'No hay nada pendiente: todo está en verde ✔', 'success');
       return;
     }
-    if (atras && PEND_I < 0) PEND_I = 0;
-    PEND_I = (((PEND_I + (atras ? -1 : 1)) % lista.length) + lista.length) % lista.length;
-    var it = lista[PEND_I];
+    // Dónde quedó la persona: se busca por la CARTA (no por el número de orden): si resolvió un pendiente anterior, el Enter no salta uno
+    var pos = -1;
+    for (var k = 0; k < lista.length; k++) { if (PEND_EL && lista[k].el === PEND_EL) { pos = k; break; } }
+    var i;
+    if (pos >= 0) i = pos + (atras ? -1 : 1);
+    else if (PEND_I >= 0) i = atras ? PEND_I - 1 : PEND_I;          // el que estaba ya se resolvió: el siguiente ocupó su lugar
+    else i = atras ? lista.length - 1 : 0;
+    i = ((i % lista.length) + lista.length) % lista.length;
+    PEND_I = i;
+    var it = lista[i];
+    PEND_EL = it.el;
     it.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     var marco = (it.el.closest && it.el.closest('.pd-row,tr,.step-section')) || it.el;
     [marco, it.el].forEach(function (x) {
@@ -540,14 +653,15 @@
     // sin querer «Enviar a preparación» o «Quitar»; con Tab se entra a los controles de esa fila o tarjeta.
     marco.setAttribute('tabindex', '-1');
     try { marco.focus({ preventScroll: true }); } catch (e) { /* queda resaltado igual */ }
-    toast('Pendiente ' + (PEND_I + 1) + ' de ' + lista.length + ' · Paso ' + it.n + ': ' + it.texto, it.nivel === 'rojo' ? 'warning' : 'info');
+    toast('Pendiente ' + (i + 1) + ' de ' + lista.length + ' · Paso ' + it.n + ': ' + it.texto, it.nivel === 'rojo' ? 'warning' : 'info');
   }
   document.addEventListener('keydown', function (ev) {
     if (ev.key !== 'Enter' || ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     var t = ev.target;
     // Enter dentro de un campo, botón, enlace o ventana abierta sigue haciendo lo suyo
     if (t && t.closest && t.closest('input,textarea,select,button,a,summary,[contenteditable="true"],[role="button"]')) return;
-    if (AVISO_ABIERTO || document.querySelector('.modal.show,.ilus-overlay,.ilus-sheet-overlay')) return;
+    if (AVISO_ABIERTO || hayVentanaAbierta()) return;
+    if (ev.repeat) return;            // con la tecla mantenida no se recorre toda la lista de golpe (ni 12 avisos)
     ev.preventDefault();
     irAlSiguientePendiente(ev.shiftKey);
   });
@@ -597,7 +711,7 @@
     if (manual) render();
     var ctrl = window.AbortController ? new AbortController() : null;
     var corte = setTimeout(function () { if (ctrl) ctrl.abort(); }, 30000);
-    fetch('/retiros/' + RID + '/check-preparacion' + (STATUS === 'en_preparacion' ? '' : '?solo_lectura=1'),
+    fetch('/retiros/' + RID + '/check-preparacion' + ((STATUS === 'en_preparacion' || STATUS === 'agenda_confirmada') ? '' : '?solo_lectura=1'),
       { credentials: 'same-origin', cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -605,6 +719,18 @@
         CHECK_CARGANDO = false;
         if (!d || !d.ok) CHECK = msgCheckCaido();
         else { CHECK = d; CHECK_TS = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }); }
+        if (d && d.prep_auto_ahora) {
+          // Daniel 2026-10-02: «envíes a preparación en automático». El estado y los botones los pinta el servidor: se recarga la
+          // página, salvo que la persona esté escribiendo en un campo.
+          toast('✓ Check detectó que bodega ya empezó a juntar el pedido: el retiro pasó solo a EN PREPARACIÓN.', 'success');
+          setTimeout(function () {
+            var foco = document.activeElement;
+            var ocupada = hayVentanaAbierta() || (foco && foco.closest && foco.closest('input,textarea,select,[contenteditable="true"]'));
+            if (!ocupada) { window.location.reload(); return; }
+            // Está haciendo algo (una ventana abierta o escribiendo): no se le pisa; se le deja un aviso fijo para que actualice cuando termine
+            if (typeof window.ilusToast === 'function') window.ilusToast('El retiro cambió de estado. Cuando termines lo que estás haciendo, actualiza la página (F5).', { type: 'warning', duration: 0 });
+          }, 2500);
+        }
         if (d && d.aplicado_ahora) {
           toast('✓ Check confirmó que bodega ya juntó todo: pedido LISTO para entregar.', 'success');
           if (typeof window._wmsCargar === 'function') { try { window._wmsCargar(); } catch (e) { /* la lista se actualiza al recargar */ } }
@@ -649,6 +775,14 @@
       }).observe(sentinela);
     }
   } catch (e) { /* sin barra compacta: todo sigue funcionando igual */ }
+
+  // Sin bucles: render() solo escribe dentro del panel (y su dibujo se compara antes de tocar el DOM)
+  try {
+    var contProductos = $('#paso-3'), esperaDocs = null;
+    if (contProductos && window.MutationObserver) {
+      new MutationObserver(function () { clearTimeout(esperaDocs); esperaDocs = setTimeout(render, 250); }).observe(contProductos, { childList: true, subtree: true });
+    }
+  } catch (e) { /* sin seguimiento en vivo: se actualiza con cada refresco */ }
 
   render();
   decorar();

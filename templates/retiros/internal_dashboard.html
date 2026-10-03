@@ -1571,7 +1571,13 @@ select.nri-field-locked{pointer-events:none}
         redirect: 'manual',          // el endpoint redirige al éxito
       });
       // 'opaqueredirect' = el backend redirigió (flujo normal del form-POST)
-      if (!(r.type === 'opaqueredirect' || r.ok)) throw new Error('HTTP ' + r.status);
+      if (!(r.type === 'opaqueredirect' || r.ok)) {
+        let motivo = '';
+        try { const d = await r.json(); motivo = (d && d.error) || ''; } catch (_) { /* sin cuerpo: queda el mensaje genérico */ }
+        const falla = new Error('HTTP ' + r.status);
+        falla.motivo = motivo;           // p. ej. «Primero declara quién se hace cargo de este retiro…»
+        throw falla;
+      }
       ilusToast('✓ ' + code + ' → ' + (sb ? sb.label : nuevoEstado), { type: 'success' });
     } catch (err){
       // Revertir el movimiento optimista
@@ -1579,7 +1585,7 @@ select.nri-field-locked{pointer-events:none}
       card.dataset.status = estadoActual;
       card.style.borderLeftColor = snap.accent;
       if (badge){ badge.className = snap.badgeClass; badge.textContent = snap.badgeText; }
-      ilusToast('No se pudo mover ' + code + ' — cambio revertido', { type: 'error' });
+      ilusToast((err && err.motivo ? err.motivo + ' ' : '') + 'No se pudo mover ' + code + ' — cambio revertido', { type: 'error', duration: err && err.motivo ? 7000 : 3500 });
       console.error('[kanban]', err);
     }
   }

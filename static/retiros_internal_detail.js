@@ -714,7 +714,8 @@ function _renderTablaDocsAsociados(docs){
       </td>
       <td data-label="Acciones" class="acciones">
         <button type="button" class="td-btn td-btn-quitar"
-                onclick="quitarDoc(${_RID}, ${d.id}, '${_esc(tipoUp)} ${_esc(numero)}')"
+                data-rotulo="${_esc(tipoUp)} ${_esc(numero)}"
+                onclick="quitarDoc(${_RID}, ${d.id}, this.dataset.rotulo)"
                 title="Quitar del retiro (no afecta al ERP)">
           <i class="bi bi-x-lg"></i><span>Quitar</span>
         </button>
@@ -1012,9 +1013,9 @@ function _pdRenderLinea(docId, l){
   const avisos = (l.avisos || []).map(a => `<div class="pd-aviso-linea">${_esc(a)}</div>`).join('');
   const puedeAutorizar = l.estado === 'sin_saldo' || l.estado === 'excede_saldo';
   const autorizarBtn = puedeAutorizar
-    ? `<button type="button" class="pd-btn-autorizar" onclick="_pdEntregarIgual(this, ${docId}, '${_escAttr(l.sku)}', '${_escAttr(l.nombre)}')">Entregar igual…</button>`
+    ? `<button type="button" class="pd-btn-autorizar" data-sku="${_escAttr(l.sku)}" data-nombre="${_escAttr(l.nombre)}" onclick="_pdEntregarIgual(this, ${docId}, this.dataset.sku, this.dataset.nombre)">Entregar igual…</button>`
     : (l.estado === 'autorizado'
-        ? `<button type="button" class="pd-btn-quitar-autorizacion" onclick="_pdQuitarAutorizacion(this, ${docId}, '${_escAttr(l.sku)}')" title="Quitar autorización">Quitar autorización</button>`
+        ? `<button type="button" class="pd-btn-quitar-autorizacion" data-sku="${_escAttr(l.sku)}" onclick="_pdQuitarAutorizacion(this, ${docId}, this.dataset.sku)" title="Quitar autorización">Quitar autorización</button>`
         : '');
   const _conPeso = (l.peso_total != null && l.a_retirar > 0);
   const pesoTxt = _conPeso ? `<b>${_fmtNum(l.peso_total, 1)} kg</b>` : '—';
@@ -3769,12 +3770,14 @@ async function _saveInlineField(el){
       indicator.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> sesión expirada';
       indicator.style.color = '#dc2626';
       el.textContent = originalValue;
+      if (typeof ilusToast === 'function') ilusToast('Tu sesión expiró: el cambio no se guardó. Vuelve a entrar y repítelo.', { type: 'error', duration: 6000 });
       return;
     }
     if (!d.ok){
       indicator.innerHTML = `<i class="bi bi-x-circle-fill"></i> ${d.error || 'error'}`;
       indicator.style.color = '#dc2626';
       el.textContent = originalValue;
+      if (typeof ilusToast === 'function') ilusToast(d.error || 'No se guardó el cambio.', { type: 'error', duration: 6000 });
       return;
     }
     el.textContent = d.value;
@@ -3806,6 +3809,7 @@ async function _saveInlineField(el){
   } catch(err){
     indicator.innerHTML = '<i class="bi bi-wifi-off"></i> sin conexión';
     indicator.style.color = '#dc2626';
+    if (typeof ilusToast === 'function') ilusToast('Sin conexión: el cambio no se guardó.', { type: 'error', duration: 6000 });
   }
 }
 
@@ -3846,6 +3850,7 @@ function setupInlineEdit(root){
         e.preventDefault();
         el.blur();
       } else if (e.key === 'Escape'){
+        e.stopPropagation();          // dentro del modal «Datos del cliente»: este Esc solo cancela la edición, no cierra la ventana
         el.textContent = el.dataset.inlineOriginal || '';
         delete el.dataset.inlineDirty;
         el.blur();
@@ -3881,7 +3886,7 @@ async function cargarSugerenciasEmail(){
       return;
     }
     cont.innerHTML = '<div style="font-size:.72rem;color:#64748b;margin:6px 0 4px"><i class="bi bi-lightbulb"></i> Detectados en ERP — click para agregar:</div>' +
-      d.sugerencias.map(em => `<button type="button" class="sug-email-chip" onclick="agregarEmailSugerencia('${_esc(em).replace(/'/g, "\\'")}')">
+      d.sugerencias.map(em => `<button type="button" class="sug-email-chip" data-email="${_esc(em)}" onclick="agregarEmailSugerencia(this.dataset.email)">
         <i class="bi bi-plus-circle"></i> ${_esc(em)}
       </button>`).join('');
   } catch(e){ /* silencioso */ }

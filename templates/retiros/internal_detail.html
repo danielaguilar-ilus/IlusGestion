@@ -348,7 +348,7 @@
     {% endif %}
     {% if req.contact_email %}<a class="rh-btn mail" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope-fill"></i>Correo</a>{% endif %}
     <a class="rh-btn" href="{{ url_for('pickup_public_tracking', token=req.public_token) }}" target="_blank" rel="noopener"><i class="bi bi-link-45deg"></i>Link cliente</a>
-    <button type="button" class="rh-btn" onclick="abrirDescargaInforme('{{ req.customer_rut }}')" title="Excel con todos los retiros del mes"><i class="bi bi-file-earmark-excel"></i>Informe mes</button>
+    <button type="button" class="rh-btn" data-rut="{{ req.customer_rut }}" onclick="abrirDescargaInforme(this.dataset.rut)" title="Excel con todos los retiros del mes"><i class="bi bi-file-earmark-excel"></i>Informe mes</button>
     <button type="button" class="rh-btn" onclick="cambiarTabInfo('comunicacion')" title="Ver mensajes, adjuntos, propuestas e historial"><i class="bi bi-chat-square-text"></i>Mensajes/Adjuntos</button>
     {# Daniel 2026-05-23: borrar solicitud completa — SOLO superadmin #}
     {% if current_user and current_user.role == 'superadmin' %}
@@ -2227,7 +2227,7 @@ window.RETIROS_DETAIL_DATA = {
               <div class="d-flex gap-2 flex-wrap mt-2" style="font-size:.76rem">
                 <a class="btn btn-sm btn-outline-dark btn-2027" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope me-1"></i>Email</a>
                 {% if req.contact_phone %}<a class="btn btn-sm btn-outline-success btn-2027" href="tel:{{ req.contact_phone }}"><i class="bi bi-telephone me-1"></i>Llamar</a>{% endif %}
-                <button type="button" class="btn btn-sm btn-outline-dark btn-2027" onclick="cambiarTabInfo('comunicacion')"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
+                <button type="button" class="btn btn-sm btn-outline-dark btn-2027" onclick="fichaIrAComunicacion()"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
               </div>
             </div>
         
