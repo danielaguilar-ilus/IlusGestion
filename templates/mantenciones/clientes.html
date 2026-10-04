@@ -370,15 +370,6 @@
     <div class="mod-sub">Contratos, equipos, instalaciones y visitas programadas</div>
   </div>
   <div class="d-flex gap-2 align-items-center flex-wrap">
-    {# Recuperación: muestra fichas que están como inactivo/suspendido/prospecto
-       y permite restaurarlas al estado activo. Útil si alguien marcó por error
-       un cliente y desapareció del listado. #}
-    <button type="button" class="btn btn-outline-light fw-semibold px-3"
-            style="border-color:rgba(255,255,255,.3);color:#fff"
-            onclick="abrirFichasOcultas()"
-            title="Ver clientes que están inactivos / suspendidos / prospecto y restaurarlos">
-      <i class="bi bi-archive me-1"></i>Fichas ocultas
-    </button>
     {% if permissions.admin or permissions.superadmin %}
     <button type="button" class="btn btn-outline-warning fw-semibold px-3"
             onclick="abrirDuplicados()"
@@ -916,6 +907,31 @@ async function limpiarHuerfanos(){
    para evitar confusiones (ej: "Con equipos" = clientes que tienen 1+,
    NO la cantidad total de equipos en el sistema).
    #}
+{% if global_stats.inst_pendientes %}
+{# Paso 1 del proceso comercial (Daniel 2026-10-04): avisar que hay clientes de instalación
+   a los que contactar para ofrecerles plan de mantención + contrato. #}
+<div class="inst-alerta">
+  <i class="bi bi-megaphone-fill"></i>
+  <div>
+    <b>{{ global_stats.inst_pendientes }} cliente{{ '' if global_stats.inst_pendientes == 1 else 's' }} de instalación esperan que les ofrezcamos mantención</b>
+    <span>{{ global_stats.inst_sin_contactar }} sin contactar aún{% if global_stats.inst_vencidos %} · {{ global_stats.inst_vencidos }} con seguimiento vencido{% endif %}.
+      Contáctalos, ofrece el plan de mantención con descuento y gestiona su contrato.</span>
+  </div>
+  <button type="button" class="btn btn-sm" onclick="aplicarKpiFiltro('instalacion')">
+    <i class="bi bi-funnel-fill me-1"></i>Ver clientes</button>
+</div>
+<style>
+.inst-alerta{display:flex;gap:11px;align-items:center;margin-bottom:14px;padding:12px 14px;
+  background:#f0fdfa;border:1px solid #99f6e4;border-radius:12px}
+.inst-alerta > i{color:#0d9488;font-size:1.2rem;flex:0 0 auto}
+.inst-alerta > div{flex:1;min-width:0;line-height:1.4}
+.inst-alerta b{display:block;font-size:.88rem;color:#115e59;font-weight:800}
+.inst-alerta span{display:block;font-size:.78rem;color:#0f766e}
+.inst-alerta .btn{flex:0 0 auto;background:#0d9488;border-color:#0d9488;color:#fff;font-weight:800;min-height:38px}
+.inst-alerta .btn:hover{background:#0f766e;border-color:#0f766e;color:#fff}
+@media (max-width:640px){ .inst-alerta{flex-wrap:wrap} .inst-alerta .btn{width:100%} }
+</style>
+{% endif %}
 {%- set tot   = global_stats.total or 0 %}
 <div class="kpi-strip">
   <div class="kpi-card kpi-clickable {% if not filtros.estado and not filtros.contrato and not filtros.equipos %}active{% endif %}"
@@ -936,14 +952,14 @@ async function limpiarHuerfanos(){
       <div class="kpi-num">{{ global_stats.activos or 0 }}</div>
     </div>
   </div>
-  {# Prospectos de instalación: clientes a los que hay que ofrecerles mantención #}
-  <div class="kpi-card kpi-clickable {% if filtros.estado == 'prospecto' %}active{% endif %}"
-       onclick="aplicarKpiFiltro('prospecto')"
-       title="Clientes de instalación que aún no tienen mantención: a quienes hay que ofrecérsela">
-    <div class="kpi-icon" style="background:#fef9c3;color:#854d0e"><i class="bi bi-person-add"></i></div>
+  {# Clientes de instalación: a quienes hay que ofrecerles mantención #}
+  <div class="kpi-card kpi-clickable {% if filtros.tipo == 'instalacion' %}active{% endif %}"
+       onclick="aplicarKpiFiltro('instalacion')"
+       title="Clientes de instalación sin contrato de mantención: a quienes hay que ofrecérselo">
+    <div class="kpi-icon" style="background:#ccfbf1;color:#0f766e"><i class="bi bi-megaphone-fill"></i></div>
     <div>
-      <div class="kpi-lbl">Prospectos</div>
-      <div class="kpi-num">{{ global_stats.prospectos or 0 }}</div>
+      <div class="kpi-lbl">Por ofrecer mantención</div>
+      <div class="kpi-num">{{ global_stats.inst_pendientes or 0 }}</div>
     </div>
   </div>
   <div class="kpi-card kpi-clickable {% if filtros.contrato == 'con' %}active{% endif %}"
@@ -1018,7 +1034,7 @@ function aplicarKpiFiltro(tipo) {
   switch(tipo) {
     case 'all':           ILUSFilter.clear();                     break;
     case 'activo':        ILUSFilter.set('estado',  'activo');    break;
-    case 'prospecto':     ILUSFilter.set('estado',  'prospecto'); break;
+    case 'instalacion':   ILUSFilter.set('tipo',    'instalacion'); break;
     case 'contrato_con':  ILUSFilter.set('contrato','vigente');   break;
     case 'contrato_sin':  ILUSFilter.set('contrato','sin_vigente'); break;
     case 'equipos_con':   ILUSFilter.set('equipos', 'con');       break;
@@ -1249,7 +1265,7 @@ function aplicarKpiFiltro(tipo) {
       </div>
 
       {# ── Prospecto: de qué OT nació + etapa de la oferta de mantención ── #}
-      {% if c.estado == 'prospecto' and c.pr %}
+      {% if c.pr %}
       <div class="cc2-prosp">
         <span class="cc2-prosp-etapa cc2-prosp-{{ c.pr.etapa }}">
           <i class="bi bi-megaphone-fill me-1"></i>Mantención: {{ c.pr.etapa_label }}
@@ -1672,7 +1688,8 @@ function aplicarKpiFiltro(tipo) {
     // (experiencia familiar). El chip "Estado: Activo" lo hace explícito y
     // se quita con un clic para ver todos los clientes.
     const hadParam = ['q', 'tipo', 'estado', 'contrato', 'equipos'].some(k => p.get(k));
-    if (!hadParam) F.estado = 'activo';
+    // 2026-10-04 (Daniel: «No quiero tener fichas ocultas, quiero mostrarlas»): ya no se
+    // arranca filtrando por Activo; el listado muestra a todos y se filtra con las pastillas.
     const i = $('#searchInput'); if (i && F.q) i.value = F.q;
     renderCounts(); renderActivePills(); renderChips();
     try { const v = localStorage.getItem('ilus_cli_view'); if (v) setView(v); } catch (e) {}

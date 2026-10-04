@@ -62733,13 +62733,25 @@ def mant_clientes():
 
     # Prospectos: origen (primera OT) + etapa de la oferta de mantención.
     try:
-        _pinfo = _prospecto_info([c["id"] for c in clientes if c.get("estado") == "prospecto"])
+        _pinfo = _prospecto_info([c["id"] for c in clientes
+                                  if c.get("estado") == "prospecto" or c.get("tipo_cliente") == "instalacion"])
         for c in clientes:
             _p = _pinfo.get(c["id"])
             if _p:
                 c["pr"] = _p
+        # Aviso de «clientes de instalación a los que ofrecer mantención»: los que
+        # aún no tienen contrato y cuya oferta no está cerrada (aceptada/rechazada).
+        _pend = [c for c in clientes if c.get("pr") and c.get("estado") != "inactivo"
+                 and c.get("contrato_estado") == "sin_contrato"
+                 and c["pr"]["etapa"] in ("por_ofrecer", "ofrecida")]
+        _inst_stats = {
+            "inst_pendientes": len(_pend),
+            "inst_sin_contactar": sum(1 for c in _pend if c["pr"]["etapa"] == "por_ofrecer"),
+            "inst_vencidos": sum(1 for c in _pend if c["pr"].get("vencida")),
+        }
     except Exception as _e_pr:
         print(f"[clientes] prospectos: {_e_pr}", flush=True)
+        _inst_stats = {"inst_pendientes": 0, "inst_sin_contactar": 0, "inst_vencidos": 0}
 
     # Stats globales (sin filtros)
     gs = mysql_fetchone("""
@@ -62758,6 +62770,7 @@ def mant_clientes():
            WHERE ct2.estado IN ('vencido','por_vencer'))                                     AS contratos_alerta
     """)
     global_stats = dict(gs) if gs else {}
+    global_stats.update(_inst_stats)
 
     # ── Detección de registros HUÉRFANOS (sin cliente padre) ──
     # Solo si el usuario es superadmin y vale la pena (caso típico:
@@ -69026,7 +69039,7 @@ def _mant_ficha_impl(cid):
 
     _prospecto = None
     try:
-        if (cliente.get("estado") or "") == "prospecto":
+        if (cliente.get("estado") or "") == "prospecto" or (cliente.get("tipo_cliente") or "") == "instalacion":
             _prospecto = _prospecto_info([cid]).get(cid)
     except Exception as _e_pr:
         print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
@@ -69331,9 +69344,9 @@ def _prospecto_convertir_a_mantencion(cid, motivo):
     mano (arriendo/leasing). Devuelve True si convirtió."""
     try:
         n = mysql_execute_returning_rowcount(
-            "UPDATE mant_clientes SET estado='activo', updated_by=%s, "
+            "UPDATE mant_clientes SET estado=IF(estado='prospecto','activo',estado), updated_by=%s, "
             "       tipo_cliente=IF(tipo_cliente IN ('instalacion','prospecto'),'mantencion',tipo_cliente) "
-            " WHERE id=%s AND estado='prospecto'",
+            " WHERE id=%s AND (estado='prospecto' OR tipo_cliente IN ('instalacion','prospecto'))",
             (current_username() or "sistema", cid))
         if not n:
             return False
@@ -69505,7 +69518,9 @@ def _prospectos_oferta_barrido(max_n=15, dry=False):
             "  JOIN mant_visitas v ON v.cliente_id=c.id AND v.tipo='instalacion' "
             "                     AND v.estado IN ('cerrada','completada') "
             "  LEFT JOIN mant_prospecto_seguimiento s ON s.cliente_id=c.id "
-            " WHERE c.estado='prospecto' "
+            " WHERE (c.estado='prospecto' OR c.tipo_cliente='instalacion') AND c.estado<>'inactivo' "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id "
+            "                    AND ct.nombre<>'Contenedor de documentos') "
             "   AND COALESCE(s.etapa,'por_ofrecer') NOT IN ('aceptada','rechazada') "
             " GROUP BY c.id "
             "HAVING ref IS NOT NULL AND ref <= DATE_SUB(CURDATE(), INTERVAL %s DAY) "
@@ -69640,11 +69655,11 @@ def mant_prospecto_seguimiento_guardar(cid):
             pg = datetime.strptime(d["proxima_gestion"].strip()[:10], "%Y-%m-%d").date()
         except ValueError:
             return jsonify({"ok": False, "error": "La fecha de próxima gestión no es válida."}), 400
-    cli = mysql_fetchone("SELECT id, razon_social, estado FROM mant_clientes WHERE id=%s", (cid,))
+    cli = mysql_fetchone("SELECT id, razon_social, estado, tipo_cliente FROM mant_clientes WHERE id=%s", (cid,))
     if not cli:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
-    if cli["estado"] != "prospecto":
-        return jsonify({"ok": False, "error": "Este cliente ya no es prospecto."}), 409
+    if cli["estado"] != "prospecto" and cli.get("tipo_cliente") != "instalacion":
+        return jsonify({"ok": False, "error": "Este cliente no es de instalación ni prospecto."}), 409
     quien = current_username() or "sistema"
     _ensure_mant_prospecto_seguimiento()
     mysql_execute(
