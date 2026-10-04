@@ -62725,11 +62725,22 @@ def mant_clientes():
         if not c.get('contrato_estado'):
             c['contrato_estado'] = 'sin_contrato'
 
+    # Prospectos: origen (primera OT) + etapa de la oferta de mantención.
+    try:
+        _pinfo = _prospecto_info([c["id"] for c in clientes if c.get("estado") == "prospecto"])
+        for c in clientes:
+            _p = _pinfo.get(c["id"])
+            if _p:
+                c["pr"] = _p
+    except Exception as _e_pr:
+        print(f"[clientes] prospectos: {_e_pr}", flush=True)
+
     # Stats globales (sin filtros)
     gs = mysql_fetchone("""
         SELECT
           (SELECT COUNT(*) FROM mant_clientes)                                              AS total,
           (SELECT COUNT(*) FROM mant_clientes WHERE estado='activo')                        AS activos,
+          (SELECT COUNT(*) FROM mant_clientes WHERE estado='prospecto')                     AS prospectos,
           (SELECT COUNT(DISTINCT ct.cliente_id) FROM mant_contratos ct
            WHERE ct.estado='vigente')                                                        AS con_contrato,
           (SELECT COUNT(DISTINCT m.cliente_id)  FROM mant_maquinas m)                       AS con_equipos,
@@ -69001,7 +69012,15 @@ def _mant_ficha_impl(cid):
         print(f"[ficha-cli] equipos por origen cid={cid}: {_e_ho}", flush=True)
         historial["equipos_por_origen"] = []
 
+    _prospecto = None
+    try:
+        if (cliente.get("estado") or "") == "prospecto":
+            _prospecto = _prospecto_info([cid]).get(cid)
+    except Exception as _e_pr:
+        print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
+
     return render_template("mantenciones/ficha.html",
+        prospecto = _prospecto,
         cliente   = dict(cliente),
         maquinas  = maquinas,
         contratos = contratos,
@@ -69200,6 +69219,168 @@ def mant_cliente_restaurar(cid):
         "estado_previo": estado_previo,
         "mensaje": f"✓ {cliente['razon_social']} restaurado correctamente",
     })
+
+
+# ══════════════════════════════════════════════════════════════════
+# PROSPECTOS DE INSTALACIÓN — trazabilidad para ofrecerles mantención
+# (Daniel 2026-10-04: los clientes que gestionamos por instalación nacen como
+# 'prospecto'; necesitan seguimiento comercial para ofrecerles mantención y
+# repuestos, y no quedar como "cliente huérfano").
+#   · Origen: se DERIVA de la primera OT del cliente (no se duplica el dato).
+#   · Seguimiento: tabla propia con 4 etapas; la historia queda en mant_logs.
+#   · Conversión: al subir un contrato, el prospecto pasa solo a activo.
+# ══════════════════════════════════════════════════════════════════
+_PROSP_ETAPAS = {
+    "por_ofrecer": "Por ofrecer", "ofrecida": "Ofrecida",
+    "aceptada": "Aceptada", "rechazada": "Rechazada",
+}
+
+
+def _ensure_mant_prospecto_seguimiento():
+    """Tabla del seguimiento comercial del prospecto. Sin FOREIGN KEY a
+    propósito (REGLA #18): una FK pide lock sobre mant_clientes en el arranque.
+    Idempotente: pasa por la guardia de DDL ya aplicado."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_prospecto_seguimiento (
+                cliente_id      INT NOT NULL PRIMARY KEY,
+                etapa           VARCHAR(20) NOT NULL DEFAULT 'por_ofrecer',
+                nota            VARCHAR(500) NULL,
+                proxima_gestion DATE NULL,
+                ofrecida_at     DATETIME NULL,
+                ofrecida_por    VARCHAR(190) NULL,
+                updated_by      VARCHAR(190) NULL,
+                updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_etapa (etapa)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_mant_prospecto_seguimiento] {e}", flush=True)
+
+
+def _prospecto_info(ids):
+    """{cliente_id: {etapa, etapa_label, nota, proxima_gestion, vencida,
+    ofrecida_at, ofrecida_por, origen_ot, origen_tipo, origen_fecha}}.
+    Tolerante: si la tabla o una columna falta, devuelve lo que pueda."""
+    ids = [int(i) for i in ids if i]
+    out = {i: {"etapa": "por_ofrecer", "etapa_label": _PROSP_ETAPAS["por_ofrecer"],
+               "nota": "", "proxima_gestion": None, "proxima_gestion_iso": "",
+               "vencida": False, "ofrecida_at": None, "ofrecida_por": None,
+               "origen_ot": None, "origen_tipo": None, "origen_fecha": None}
+           for i in ids}
+    if not ids:
+        return out
+    ph = ",".join(["%s"] * len(ids))
+    hoy = datetime.today().date()
+    try:
+        for r in mysql_fetchall(
+                f"SELECT cliente_id, etapa, nota, proxima_gestion, ofrecida_at, ofrecida_por "
+                f"  FROM mant_prospecto_seguimiento WHERE cliente_id IN ({ph})", tuple(ids)) or []:
+            o = out.get(r["cliente_id"])
+            if not o:
+                continue
+            o["etapa"] = r["etapa"] if r["etapa"] in _PROSP_ETAPAS else "por_ofrecer"
+            o["etapa_label"] = _PROSP_ETAPAS[o["etapa"]]
+            o["nota"] = r.get("nota") or ""
+            pg = r.get("proxima_gestion")
+            if pg:
+                pg = pg.date() if isinstance(pg, datetime) else pg
+                o["proxima_gestion"] = pg.strftime("%d/%m/%Y")
+                o["proxima_gestion_iso"] = pg.strftime("%Y-%m-%d")
+                o["vencida"] = (pg < hoy) and o["etapa"] in ("por_ofrecer", "ofrecida")
+            if r.get("ofrecida_at"):
+                o["ofrecida_at"] = chile_fmt_filter(r["ofrecida_at"], "%d/%m/%Y")
+            o["ofrecida_por"] = r.get("ofrecida_por")
+    except Exception as e:
+        print(f"[prospecto_info] seguimiento: {e}", flush=True)
+    try:
+        for r in mysql_fetchall(
+                f"SELECT v.cliente_id, v.numero_ot, v.tipo, v.created_at "
+                f"  FROM mant_visitas v "
+                f"  JOIN (SELECT cliente_id, MIN(id) AS mid FROM mant_visitas "
+                f"         WHERE cliente_id IN ({ph}) GROUP BY cliente_id) f ON f.mid=v.id",
+                tuple(ids)) or []:
+            o = out.get(r["cliente_id"])
+            if not o:
+                continue
+            o["origen_ot"] = r.get("numero_ot")
+            o["origen_tipo"] = _TIPO_OT_LABEL.get(r.get("tipo"), (r.get("tipo") or "").replace("_", " ").title())
+            if r.get("created_at"):
+                o["origen_fecha"] = chile_fmt_filter(r["created_at"], "%d/%m/%Y")
+    except Exception as e:
+        print(f"[prospecto_info] origen: {e}", flush=True)
+    return out
+
+
+def _prospecto_convertir_a_mantencion(cid, motivo):
+    """Pasa un prospecto a cliente activo de mantención. Solo actúa sobre
+    estado='prospecto' (no pisa a nadie más) y NO pisa un tipo ya declarado a
+    mano (arriendo/leasing). Devuelve True si convirtió."""
+    try:
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_clientes SET estado='activo', updated_by=%s, "
+            "       tipo_cliente=IF(tipo_cliente IN ('instalacion','prospecto'),'mantencion',tipo_cliente) "
+            " WHERE id=%s AND estado='prospecto'",
+            (current_username() or "sistema", cid))
+        if not n:
+            return False
+        mysql_execute(
+            "INSERT INTO mant_prospecto_seguimiento (cliente_id, etapa, updated_by) "
+            "VALUES (%s,'aceptada',%s) "
+            "ON DUPLICATE KEY UPDATE etapa='aceptada', updated_by=VALUES(updated_by)",
+            (cid, current_username() or "sistema"))
+        _mant_log("cliente", cid, "prospecto_convertido",
+                  f"Prospecto → cliente activo de mantención · {motivo}")
+        return True
+    except Exception as e:
+        print(f"[prospecto_convertir] cid={cid}: {e}", flush=True)
+        return False
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/seguimiento", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_seguimiento_guardar(cid):
+    """Registra la etapa de la oferta de mantención a un prospecto.
+    Body: {etapa: por_ofrecer|ofrecida|aceptada|rechazada, nota, proxima_gestion: YYYY-MM-DD}"""
+    d = request.get_json(silent=True) or {}
+    etapa = (d.get("etapa") or "").strip().lower()
+    if etapa not in _PROSP_ETAPAS:
+        return jsonify({"ok": False, "error": "Etapa inválida."}), 400
+    nota = (d.get("nota") or "").strip()[:500] or None
+    pg = None
+    if (d.get("proxima_gestion") or "").strip():
+        try:
+            pg = datetime.strptime(d["proxima_gestion"].strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"ok": False, "error": "La fecha de próxima gestión no es válida."}), 400
+    cli = mysql_fetchone("SELECT id, razon_social, estado FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    if cli["estado"] != "prospecto":
+        return jsonify({"ok": False, "error": "Este cliente ya no es prospecto."}), 409
+    quien = current_username() or "sistema"
+    _ensure_mant_prospecto_seguimiento()
+    mysql_execute(
+        "INSERT INTO mant_prospecto_seguimiento "
+        "  (cliente_id, etapa, nota, proxima_gestion, ofrecida_at, ofrecida_por, updated_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s) "
+        "ON DUPLICATE KEY UPDATE etapa=VALUES(etapa), nota=VALUES(nota), "
+        "  proxima_gestion=VALUES(proxima_gestion), updated_by=VALUES(updated_by), "
+        "  ofrecida_at=COALESCE(ofrecida_at, VALUES(ofrecida_at)), "
+        "  ofrecida_por=COALESCE(ofrecida_por, VALUES(ofrecida_por))",
+        (cid, etapa, nota, pg,
+         datetime.utcnow() if etapa == "ofrecida" else None,
+         quien if etapa == "ofrecida" else None, quien))
+    try:
+        _mant_log("cliente", cid, "prospecto_seguimiento",
+                  f"Oferta de mantención: {_PROSP_ETAPAS[etapa]}"
+                  + (f" · próxima gestión {pg.strftime('%d/%m/%Y')}" if pg else "")
+                  + (f" · {nota}" if nota else "") + f" · por {quien}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "etapa": etapa, "etapa_label": _PROSP_ETAPAS[etapa]})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/cambiar-estado", methods=["POST"])
@@ -73382,6 +73563,8 @@ def mant_contrato_subir(cid):
             _detalle_log += " · FORZADO como contrato pese al detector"
         _detalle_log += ")"
         _mant_log("contrato", ctid, "subido", _detalle_log)
+        # Un prospecto que firma contrato deja de ser prospecto (no queda huérfano).
+        _prospecto_convertir_a_mantencion(cid, f"contrato subido ({f.filename})")
         return jsonify({
             "ok": True, "id": ctid,
             "persistente": True,
@@ -144182,6 +144365,13 @@ try:
         _ensure_mant_clientes_tipo_relacion()
 except Exception as _ensure_tr_err:
     print(f"[ILUS][WARN] _ensure_mant_clientes_tipo_relacion: {_ensure_tr_err}", flush=True)
+
+# Seguimiento comercial de prospectos (2026-10-04) — SIEMPRE, incluso con SKIP_MIGRATIONS.
+try:
+    with app.app_context():
+        _ensure_mant_prospecto_seguimiento()
+except Exception as _ensure_prosp_err:
+    print(f"[ILUS][WARN] _ensure_mant_prospecto_seguimiento: {_ensure_prosp_err}", flush=True)
 
 # COLA DE CORREO EN BACKGROUND (peritaje 2026-07-19, palanca #2 de
 # velocidad percibida): columnas nuevas de comm_email_jobs SIEMPRE,

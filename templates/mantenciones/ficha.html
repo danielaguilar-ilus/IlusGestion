@@ -276,6 +276,68 @@
        ───────────────────────────────────────────────────────────── #}
     <div class="col-12 col-xl-8">
 
+      {# ── PROSPECTO: seguimiento de la oferta de mantención (Daniel 2026-10-04) ──
+         Cliente de instalación sin mantención: se registra si se le ofreció,
+         quién, cuándo y cuándo volver a gestionarlo. Al subir un contrato pasa solo a activo. #}
+      {% if prospecto and not is_tecnico %}
+      <div class="ilus-card mb-3" id="prospCard" style="border-left:4px solid #f59e0b">
+        <div class="p-3">
+          <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+            <i class="bi bi-megaphone-fill" style="color:#f59e0b"></i>
+            <strong>Prospecto · oferta de mantención</strong>
+            <span class="badge bg-warning text-dark" id="prospEtapaBadge">{{ prospecto.etapa_label }}</span>
+          </div>
+          <div class="small text-muted mb-2">
+            {% if prospecto.origen_ot %}Nació de la {{ prospecto.origen_ot }} ({{ prospecto.origen_tipo }}{% if prospecto.origen_fecha %}, {{ prospecto.origen_fecha }}{% endif %}).{% endif %}
+            {% if prospecto.ofrecida_at %}Se ofreció el {{ prospecto.ofrecida_at }}{% if prospecto.ofrecida_por %} por {{ prospecto.ofrecida_por }}{% endif %}.{% endif %}
+            Al subir su contrato pasa solo a cliente activo.
+          </div>
+          <div class="row g-2 align-items-end">
+            <div class="col-12 col-sm-3">
+              <label class="form-label small fw-semibold mb-1">Etapa</label>
+              <select id="prospEtapa" class="form-select form-select-sm">
+                {% for k, v in [('por_ofrecer','Por ofrecer'),('ofrecida','Ofrecida'),('aceptada','Aceptada'),('rechazada','Rechazada')] %}
+                <option value="{{ k }}" {% if prospecto.etapa == k %}selected{% endif %}>{{ v }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-sm-3">
+              <label class="form-label small fw-semibold mb-1">Próxima gestión</label>
+              <input type="date" id="prospProxima" class="form-control form-control-sm" value="{{ prospecto.proxima_gestion_iso }}">
+            </div>
+            <div class="col-12 col-sm-4">
+              <label class="form-label small fw-semibold mb-1">Nota (descuento, plan, respuesta…)</label>
+              <input type="text" id="prospNota" class="form-control form-control-sm" maxlength="500" value="{{ prospecto.nota }}">
+            </div>
+            <div class="col-12 col-sm-2 d-grid">
+              <button type="button" class="btn btn-sm btn-ilus fw-bold" onclick="guardarProspecto(this)">
+                <i class="bi bi-check2 me-1"></i>Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+      async function guardarProspecto(btn){
+        btn.disabled = true;
+        try {
+          const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/prospecto/seguimiento', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              etapa: document.getElementById('prospEtapa').value,
+              proxima_gestion: document.getElementById('prospProxima').value,
+              nota: document.getElementById('prospNota').value })});
+          const d = await r.json();
+          if (!d.ok) { ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+          document.getElementById('prospEtapaBadge').textContent = d.etapa_label;
+          ilusToast('✓ Seguimiento guardado', {type:'success'});
+        } catch(e) {
+          ilusToast('Error de red al guardar', {type:'error'});
+        } finally { btn.disabled = false; }
+      }
+      </script>
+      {% endif %}
+
       {# ── 7 KPI CARDS — Tipo cliente / Estado / Contrato / Mantención / Equipos / Visita / Cumplimiento ── #}
       <div class="row g-2 mb-3">
 

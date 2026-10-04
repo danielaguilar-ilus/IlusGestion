@@ -545,6 +545,11 @@ async function buscarFichasOcultas(){
             </a>
             ${esActivo
               ? '<span class="ms-1 small text-muted">ya activo</span>'
+              : c.estado === 'prospecto'
+              ? `<a href="${c.url_ficha}" target="_blank" class="btn btn-xs btn-warning fw-bold ms-1"
+                    title="Prospecto de instalación: se gestiona su oferta de mantención en su ficha">
+                   <i class="bi bi-person-add me-1"></i>Ver prospecto
+                 </a>`
               : `<button class="btn btn-xs btn-success fw-bold ms-1" onclick="restaurarCliente(${c.id}, this)">
                    <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar
                  </button>`}
@@ -931,6 +936,16 @@ async function limpiarHuerfanos(){
       <div class="kpi-num">{{ global_stats.activos or 0 }}</div>
     </div>
   </div>
+  {# Prospectos de instalación: clientes a los que hay que ofrecerles mantención #}
+  <div class="kpi-card kpi-clickable {% if filtros.estado == 'prospecto' %}active{% endif %}"
+       onclick="aplicarKpiFiltro('prospecto')"
+       title="Clientes de instalación que aún no tienen mantención: a quienes hay que ofrecérsela">
+    <div class="kpi-icon" style="background:#fef9c3;color:#854d0e"><i class="bi bi-person-add"></i></div>
+    <div>
+      <div class="kpi-lbl">Prospectos</div>
+      <div class="kpi-num">{{ global_stats.prospectos or 0 }}</div>
+    </div>
+  </div>
   <div class="kpi-card kpi-clickable {% if filtros.contrato == 'con' %}active{% endif %}"
        onclick="aplicarKpiFiltro('contrato_con')"
        title="Clientes con contrato vigente">
@@ -1003,6 +1018,7 @@ function aplicarKpiFiltro(tipo) {
   switch(tipo) {
     case 'all':           ILUSFilter.clear();                     break;
     case 'activo':        ILUSFilter.set('estado',  'activo');    break;
+    case 'prospecto':     ILUSFilter.set('estado',  'prospecto'); break;
     case 'contrato_con':  ILUSFilter.set('contrato','vigente');   break;
     case 'contrato_sin':  ILUSFilter.set('contrato','sin_vigente'); break;
     case 'equipos_con':   ILUSFilter.set('equipos', 'con');       break;
@@ -1232,6 +1248,23 @@ function aplicarKpiFiltro(tipo) {
         {% endif %}
       </div>
 
+      {# ── Prospecto: de qué OT nació + etapa de la oferta de mantención ── #}
+      {% if c.estado == 'prospecto' and c.pr %}
+      <div class="cc2-prosp">
+        <span class="cc2-prosp-etapa cc2-prosp-{{ c.pr.etapa }}">
+          <i class="bi bi-megaphone-fill me-1"></i>Mantención: {{ c.pr.etapa_label }}
+        </span>
+        {% if c.pr.origen_ot %}
+        <span class="cc2-prosp-txt">Nació de {{ c.pr.origen_ot }} · {{ c.pr.origen_tipo }}{% if c.pr.origen_fecha %} · {{ c.pr.origen_fecha }}{% endif %}</span>
+        {% endif %}
+        {% if c.pr.proxima_gestion %}
+        <span class="cc2-prosp-txt{% if c.pr.vencida %} cc2-prosp-vencida{% endif %}">
+          <i class="bi bi-calendar-event me-1"></i>Próxima gestión: {{ c.pr.proxima_gestion }}{% if c.pr.vencida %} · vencida{% endif %}
+        </span>
+        {% endif %}
+      </div>
+      {% endif %}
+
       {# ── Fila 1 de KPIs: Contrato · Equipos · Próx visita · Completaje ── #}
       <div class="cc2-kpi-row">
         <div class="cc2-kpi">
@@ -1387,6 +1420,12 @@ function aplicarKpiFiltro(tipo) {
 .flt-ocultos .btn:hover{background:#d97706;border-color:#d97706;color:#fff}
 .flt-ocultos[hidden]{display:none}
 @media (max-width:640px){ .flt-ocultos{flex-wrap:wrap} .flt-ocultos .btn{width:100%} }
+.cc2-prosp{display:flex;flex-direction:column;gap:4px;margin:8px 14px 0;padding:8px 10px;
+  background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:.78rem;line-height:1.35}
+.cc2-prosp-etapa{font-weight:800;color:#92400e}
+.cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
+.cc2-prosp-txt{color:#6b7280}
+.cc2-prosp-vencida{color:#dc2626;font-weight:700}
 .flt-empty{text-align:center;padding:48px 20px;background:#fff;border:1px dashed #e5e7eb;border-radius:14px}
 .flt-empty-icon{font-size:2.4rem;margin-bottom:6px;opacity:.7}
 .flt-empty-title{font-weight:800;color:#374151;margin:0 0 2px}
