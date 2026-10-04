@@ -240,6 +240,8 @@
 .rs-btn.ins{border-color:#bbf7d0;color:#15803d}.rs-btn.ins:hover{background:#16a34a;border-color:#16a34a;color:#fff}
 .rs-btn.rej{border-color:#fecaca;color:#b91c1c}.rs-btn.rej:hover{background:#dc2626;border-color:#dc2626;color:#fff}
 .rs-btn.generar-ot{border-color:#dc2626;color:#dc2626;background:#fef2f2}.rs-btn.generar-ot:hover{background:#dc2626;border-color:#dc2626;color:#fff}
+/* 🔁 2026-10-04: Repartir lo recibido (instalar / bodega). */
+.rs-btn.rep{border-color:#16a34a;color:#166534;background:#f0fdf4}.rs-btn.rep:hover{background:#16a34a;border-color:#16a34a;color:#fff}
 .rs-btn.ot-generada{border-color:#d1d5db;color:#374151;text-decoration:none;display:inline-flex;align-items:center}.rs-btn.ot-generada:hover{background:#f3f4f6}
 .rs-pie{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;
   font-size:.78rem;color:#475569}
@@ -931,6 +933,10 @@
                 cumple. -#}
             <label class="form-label small fw-bold mt-2">Adjunto <span class="text-muted fw-normal">(opcional, foto o video)</span></label>
             <input type="file" id="rsmAdjunto" class="form-control" accept="image/*,video/*">
+            {#- 🎫 2026-10-04 (Daniel: "Sí, con responsable"): las manuales también nacen
+                con ticket; quien queda a cargo se elige aquí (por defecto, tú). -#}
+            <label class="form-label small fw-bold mt-2" for="rsmResp">Responsable <span class="text-muted fw-normal">(queda a cargo del ticket de seguimiento)</span></label>
+            <select id="rsmResp" class="form-select" style="font-size:16px;min-height:44px"></select>
           </div>
         </section>
 
@@ -955,6 +961,88 @@
     </div>
   </div>
 </div>
+
+{# 🔁 Modal "Repartir lo recibido" (2026-10-04, Daniel: "pedimos 10 repuestos, pueden
+   terminar 9 almacenados y uno se gestiona la instalación con el cliente" + "por
+   trazabilidad tendríamos que recibir las 10 y ahí gestionar la orden de trabajo de
+   instalación para consumir las recibidas"). Lenguaje de Retiros (REGLA #15): pasos
+   numerados, barra de reparto y semáforo. La parte de bodega nace como solicitud hija. #}
+<div class="modal fade" id="rsModalRepartir" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-diagram-2 me-2" style="color:#dc2626"></i>Repartir lo recibido
+          <small class="d-block fw-normal" id="rsrTitulo" style="font-size:.78rem;opacity:.85"></small></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body pt-3">
+        <div class="rsg-ctx" id="rsrCtx"></div>
+        <section class="rb-step is-complete" id="rsrPaso1">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">1</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-title">¿Cuántas se instalan en el cliente?</div>
+            <div class="rb-step-sub">Esas las consume la OT de instalación</div>
+          </div>
+          <div class="rb-step-body">
+            <div class="rsr-stepper">
+              <button type="button" class="rsr-pm" onclick="rsrMas(-1)" aria-label="Una menos"><i class="bi bi-dash-lg"></i></button>
+              <input type="number" id="rsrInstalar" min="1" step="1" inputmode="decimal" oninput="rsrPintar()" aria-label="Unidades para instalar">
+              <button type="button" class="rsr-pm" onclick="rsrMas(1)" aria-label="Una más"><i class="bi bi-plus-lg"></i></button>
+              <button type="button" class="rsr-todo" onclick="rsrTodo()">Todas para el cliente</button>
+            </div>
+          </div>
+        </section>
+        <section class="rb-step is-complete" id="rsrPaso2">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">2</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-title">El resto queda en bodega</div>
+            <div class="rb-step-sub">Stock libre, disponible para cualquier otra solicitud</div>
+          </div>
+          <div class="rb-step-body">
+            <div class="rsr-barra" aria-hidden="true"><span class="cli" id="rsrBarCli"></span><span class="bod" id="rsrBarBod"></span></div>
+            <div class="rsr-leyenda">
+              <span class="rsr-chip cli"><i class="bi bi-tools"></i> Para instalar: <b id="rsrNCli">0</b></span>
+              <span class="rsr-chip bod"><i class="bi bi-box-seam"></i> A bodega: <b id="rsrNBod">0</b></span>
+            </div>
+            <div class="rsg-hint" id="rsrHint"></div>
+          </div>
+        </section>
+        <div class="text-danger small mt-2" id="rsrErr" style="min-height:18px"></div>
+      </div>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6;justify-content:space-between">
+        <button type="button" class="btn btn-outline-secondary" style="min-height:44px" data-bs-dismiss="modal">Ahora no</button>
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="button" class="btn fw-bold" id="rsrBtn" style="background:#0a0a0a;color:#fff;min-height:44px" onclick="rsrConfirmar(false)">
+            <i class="bi bi-check-lg me-1"></i>Repartir</button>
+          <button type="button" class="btn fw-bold" id="rsrBtnOT" style="background:#dc2626;color:#fff;min-height:44px" onclick="rsrConfirmar(true)">
+            <i class="bi bi-clipboard2-plus me-1"></i>Repartir y generar OT de instalación</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+  .rsr-stepper{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .rsr-stepper input{width:110px;font-size:20px;font-weight:800;text-align:center;min-height:48px;border:1.5px solid #e5e7eb;border-radius:10px}
+  .rsr-stepper input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+  .rsr-pm{width:48px;height:48px;border-radius:10px;border:1.5px solid #e5e7eb;background:#fff;font-size:1.1rem;color:#0a0a0a}
+  .rsr-todo{min-height:44px;border-radius:50px;border:1px solid #d1d5db;background:#fff;color:#374151;padding:0 14px;font-size:.85rem;font-weight:700}
+  .rsr-barra{display:flex;height:14px;border-radius:50px;overflow:hidden;background:#f3f4f6;margin-bottom:8px}
+  .rsr-barra .cli{background:#dc2626;transition:width .2s}
+  .rsr-barra .bod{background:#16a34a;transition:width .2s}
+  .rsr-leyenda{display:flex;gap:8px;flex-wrap:wrap}
+  .rsr-chip{display:inline-flex;align-items:center;gap:6px;border-radius:50px;padding:5px 12px;font-size:.85rem}
+  .rsr-chip.cli{background:#fee2e2;color:#991b1b}
+  .rsr-chip.bod{background:#dcfce7;color:#166534}
+  .rs-familia{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.78rem;margin-top:6px}
+  .rs-familia .rs-fam-chip{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:3px 10px;font-weight:700}
+  .rs-familia .rs-fam-chip.cli{background:#fee2e2;color:#991b1b}
+  .rs-familia .rs-fam-chip.bod{background:#dcfce7;color:#166534}
+  .rs-hist{list-style:none;padding:0;margin:0;text-align:left;font-size:.85rem}
+  .rs-hist li{border-left:3px solid #e5e7eb;padding:4px 0 6px 10px;margin-left:4px}
+  .rs-hist li b{color:#0a0a0a}
+  .rs-hist .rs-hist-f{color:#6b7280;font-size:.75rem}
+</style>
 
 {# ════════ PANE SEGUIMIENTO (lo que ya existía) ════════ #}
 <div id="repPaneSeguimiento" class="d-none">
@@ -1934,6 +2022,42 @@ function rsFaltaHtml(s){
   if (!falta.length) return '<div class="rs-liga ok"><i class="bi bi-check2-circle"></i> Lista para validar</div>';
   return '<div class="rs-liga pend"><i class="bi bi-list-check"></i> Falta: <b>' + falta.join(' · ') + '</b></div>';
 }
+/* 🔁 2026-10-04: cómo se repartió lo recibido. En la original: cuánto queda para el
+   cliente y cuánto pasó a bodega (con el # de la parte separada). En la parte de
+   bodega: de qué solicitud salió. */
+function rsFamiliaHtml(s){
+  const hijas = s.hijas_ids || [];
+  if (hijas.length){
+    const bod = parseFloat(s.hijas_cantidad || 0);
+    const cli = parseFloat(s.cantidad || 0);
+    return '<div class="rs-familia">' +
+      '<span class="rs-fam-chip cli"><i class="bi bi-tools"></i> Para el cliente: ' + rsFmt(cli) + '</span>' +
+      '<span class="rs-fam-chip bod"><i class="bi bi-box-seam"></i> A bodega: ' + rsFmt(bod) + ' (' + hijas.map(function(h){ return '#' + h; }).join(', ') + ')</span>' +
+      '<span class="text-muted">de ' + rsFmt(cli + bod) + ' recibidas</span></div>';
+  }
+  if (s.solicitud_padre_id){
+    return '<div class="rs-familia"><span class="rs-fam-chip bod"><i class="bi bi-box-seam"></i> En bodega: ' + rsFmt(s.cantidad) + '</span>' +
+      '<span class="text-muted">separada de la solicitud #' + s.solicitud_padre_id + '</span></div>';
+  }
+  return '';
+}
+/* 🕓 2026-10-04: bitácora completa de la solicitud (quién hizo qué y cuándo, hora
+   Chile): creación, cambios de estado, cantidad, compra, entregas parciales,
+   reparto, OT de instalación, costo y "Tomar". */
+const _RS_ACCION_LBL = {creada:'Creada', estado:'Cambio de estado', tomar:'Responsable', cantidad:'Cantidad',
+  compra:'Compra al proveedor', recepcion_parcial:'Entrega parcial', repartir:'Reparto', ot:'OT de instalación', costo:'Costo'};
+function rsHistorial(sid){
+  const s = rsBuscarSolicitud(sid);
+  if (!s) return;
+  const evs = (s.eventos || []).slice().reverse();
+  const html = '<ul class="rs-hist">' + evs.map(function(e){
+    const titulo = e.accion === 'estado' && e.a_label ? 'Pasó a «' + String(e.a_label).split(' · ')[0] + '»' : (_RS_ACCION_LBL[e.accion] || e.accion);
+    return '<li><b>' + rsEsc(titulo) + '</b>' + (e.detalle ? ' · ' + rsEsc(e.detalle) : '') +
+      '<div class="rs-hist-f">' + rsEsc(e.cuando || '') + (e.usuario ? ' · ' + rsEsc(e.usuario) : '') + '</div></li>';
+  }).join('') + '</ul>';
+  ilusAlert({ title: 'Historial de la solicitud #' + sid, message: (s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad),
+    sub: html, subHtml: true, type: 'info' });
+}
 function rsCardInner(s){
   const est = _RS_EST_CLS[s.estado] || 'sol';
   const evs = (s.evidencias || []).map(function(e){
@@ -1952,7 +2076,12 @@ function rsCardInner(s){
   // honesto por si igual se llama (ver repstock_solicitud_ot_ticket), pero
   // acá directamente no se ofrece un botón que sabemos que no puede
   // funcionar todavía.
-  }).join('') + (!s.ticket_id && s.contexto !== 'manual' ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '');
+  // 🎫 2026-10-04: las manuales también tienen ticket (las antiguas lo crean aquí);
+  // la parte que quedó en bodega al repartir no necesita uno propio.
+  }).join('') + (!s.ticket_id && !s.solicitud_padre_id && (s.contexto !== 'manual' || s.abierta) ? '<button type="button" class="rs-btn" onclick="rsCrearTicket(' + s.id + ')"><i class="bi bi-ticket-perforated me-1"></i>Crear ticket</button>' : '')
+    // 🔁 2026-10-04: recibida para un cliente con más de una unidad -> repartir.
+    + (s.repartible && _rs.puedePedir ? '<button type="button" class="rs-btn rep" onclick="rsRepartirDesdeCard(' + s.id + ')"><i class="bi bi-diagram-2 me-1"></i>Repartir: instalar / bodega</button>' : '')
+    + ((s.eventos || []).length ? '<button type="button" class="rs-btn" onclick="rsHistorial(' + s.id + ')"><i class="bi bi-clock-history me-1"></i>Historial (' + s.eventos.length + ')</button>' : '');
   // 🏗️ Fase 3 (2026-09-21, Daniel: "vayamos con la fase 3", los 3 orígenes
   // + tipo correctiva): una vez recibido (o validado con stock, Fase 4) el
   // repuesto, se puede generar la OT que lo va a instalar. Ya generada:
@@ -1963,7 +2092,7 @@ function rsCardInner(s){
     // 🏗️ FIX Fase 4 (2026-09-26): antes solo 'recibido' -- ahora también
     // 'validado' con stock disponible (decisión de Daniel: "se puede
     // generar desde validada con stock o recibida").
-    : ((s.estado === 'recibido' || (s.estado === 'validado' && !(s.stock_disponible < 0))) && _rs.puedeGenerarOT
+    : ((s.estado === 'recibido' || (s.estado === 'validado' && !(s.stock_disponible < 0))) && _rs.puedeGenerarOT && !s.solicitud_padre_id
         ? '<button type="button" class="rs-btn generar-ot" onclick="rsGenerarOT(' + s.id + ')"><i class="bi bi-clipboard2-plus me-1"></i>Generar OT de instalación de repuestos</button>'
         : '');
   // 🔒 2026-09-20 (Daniel: "comprometer el stock según la necesidad de la
@@ -2020,14 +2149,21 @@ function rsCardInner(s){
   // 🏗️ 2026-09-25 (Fase 2): 'manual' es un cuarto origen explícito (antes
   // caía al else de "Directo del ticket", que era incorrecto para una
   // solicitud creada desde el modal "Solicitar repuesto").
-  const origenTxt = s.contexto === 'ot'
+  // 🔁 2026-10-04: una parte que quedó en bodega al repartir muestra de dónde viene
+  // (no tiene OT ni cliente propios).
+  const origenTxt = s.solicitud_padre_id
+    ? '<span class="rs-ot" style="color:#166534"><i class="bi bi-arrow-return-right"></i> Parte de la solicitud #' + s.solicitud_padre_id + '</span>'
+    : s.contexto === 'ot'
     ? '<a class="rs-ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener"><i class="bi bi-clipboard2-check"></i> ' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>'
     : (s.contexto === 'incidencia'
         ? '<span class="rs-ot" style="color:#a16207"><i class="bi bi-exclamation-triangle-fill"></i> Incidencia' + (s.incidencia_sku ? ' ' + rsEsc(s.incidencia_sku) : '') + '</span>'
         : (s.contexto === 'manual'
             ? '<span class="rs-ot" style="color:#374151"><i class="bi bi-pencil-square"></i> ' + (s.es_reposicion ? 'Reposición de stock' : 'Solicitud manual') + '</span>'
             : '<span class="rs-ot" style="color:#6b7280">Directo del ticket</span>'));
-  const clienteEquipoTxt = s.contexto === 'incidencia'
+  const clienteEquipoTxt = s.solicitud_padre_id
+    ? '<b>Stock libre en bodega</b><br><span class="text-muted">Quedó al repartir lo recibido en la solicitud #' + s.solicitud_padre_id
+      + (s.padre_cliente_nombre ? ' (era para ' + rsEsc(s.padre_cliente_nombre) + ')' : '') + '.</span>'
+    : s.contexto === 'incidencia'
     ? '<b>' + rsEsc(s.incidencia_descripcion || s.incidencia_sku || ('Incidencia #' + (s.incidencia_id || ''))) + '</b><br><span class="text-muted">Discrepancia de recepción, sin equipo de cliente asociado.</span>'
     : (s.contexto === 'ticket'
         ? '<b>' + rsEsc(s.cliente_nombre || 'Sin cliente') + '</b><br><span class="text-muted">Solicitada directo desde el ticket, sin equipo formal.</span>'
@@ -2054,7 +2190,7 @@ function rsCardInner(s){
         '<div class="rs-v"><b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + rsEsc(s.repuesto_nombre) + ' × ' + rsFmt(s.cantidad) +
           (s.abierta && _rs.puedePedir ? ' <button type="button" class="rs-cant-editar" title="Ajustar cantidad" onclick="rsEditarCantidad(' + s.id + ')"><i class="bi bi-pencil-fill"></i></button>' : '') + '</b>' +
           (s.piola_metros ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
-          (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga + rsFaltaHtml(s) +
+          (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga + rsFaltaHtml(s) + rsFamiliaHtml(s) +
           (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) +
           rsCompraBadge(s) +
           {#- 💰 M3 (revisión Opus 2026-09-26 -- Daniel: "corregir costo de
@@ -2206,6 +2342,12 @@ function rsTableroHtml(s){
     items.push('<span class="rs-tab-i prio"><i class="bi bi-exclamation-octagon-fill"></i><b>Prioridad inmediata:</b> el equipo' +
       (s.maquina_nombre ? ' ' + rsEsc(s.maquina_nombre) : '') + ' está fuera de servicio</span>');
   }
+  if (s.solicitud_padre_id){
+    // 🔁 2026-10-04: parte separada a bodega al repartir -- vive sin ticket propio
+    // (el seguimiento queda en el ticket de la solicitud original).
+    items.push('<span class="rs-tab-i"><i class="bi bi-box-seam"></i>Stock libre en bodega · separado de la solicitud <b>#' + s.solicitud_padre_id + '</b></span>');
+    return '<div class="rs-tablero">' + items.join('') + '</div>';
+  }
   if (s.numero_ticket){
     const n = parseInt(s.ticket_n_solicitudes || 1, 10);
     items.push('<span class="rs-tab-i"><i class="bi bi-ticket-perforated"></i>Ticket <b>' + rsEsc(s.numero_ticket) + '</b>' +
@@ -2252,7 +2394,13 @@ async function rsAccion(sid, nuevo){
       body.equipo_operativo = !!op;
     }
   }
-  await rsPostEstado(sid, body);
+  const okEstado = await rsPostEstado(sid, body);
+  // 🔁 2026-10-04: recién recibida para un cliente y con más de una unidad ->
+  // se ofrece repartir ahí mismo (instalar / bodega) y generar la OT.
+  if (okEstado && nuevo === 'recibido' && !s.es_reposicion && parseFloat(s.cantidad || 0) > 1 && _rs.puedePedir){
+    await rsRepartirTrasRecibir([{ id: s.id, repuesto_nombre: s.repuesto_nombre, cantidad: s.cantidad,
+                                   cliente_nombre: s.cliente_nombre, puede_ot: !s.ot_generada_id }]);
+  }
 }
 // 📷 2026-09-27 (Daniel: "no dejes avanzar a nadie si no has gestionado al
 // menos una foto de los repuestos... obligatorio"). Sube la foto a una
@@ -2852,6 +3000,128 @@ async function rsGenerarOT(sid){
   OT2C.abrir(opts);
 }
 
+/* ══════════════ 🔁 2026-10-04: Repartir lo recibido (instalar / bodega) ══════
+   Daniel: "pedimos 10 repuestos, pueden terminar 9 almacenados y uno se gestiona
+   la instalación con el cliente" + "por trazabilidad tendríamos que recibir las 10
+   y ahí gestionar la orden de trabajo de instalación para consumir las recibidas".
+   Se abre desde la tarjeta (botón "Repartir") y SOLO al recibir (compra o botón
+   "Recibido"), una por una si llegaron varias. "Repartir y generar OT" encadena el
+   mismo wizard de siempre (rsGenerarOT) sobre la solicitud del cliente. */
+const _rsr = { sid: null, total: 0, puedeOT: true, resolver: null };
+function rsRepartirDesdeCard(sid){
+  const s = rsBuscarSolicitud(sid);
+  if (!s) return;
+  rsRepartirAbrir({ id: s.id, repuesto_nombre: s.repuesto_nombre, cantidad: s.cantidad,
+                    cliente_nombre: s.cliente_nombre, puede_ot: !s.ot_generada_id });
+}
+// Devuelve una promesa que se resuelve al cerrarse el modal (para encadenar varias).
+function rsRepartirAbrir(info){
+  _rsr.sid = info.id;
+  _rsr.siguioOT = false;
+  _rsr.total = parseFloat(info.cantidad || 0);
+  _rsr.puedeOT = !!(info.puede_ot && _rs.puedeGenerarOT);
+  document.getElementById('rsrTitulo').textContent = 'Solicitud #' + info.id;
+  document.getElementById('rsrCtx').innerHTML =
+    '<span class="rsg-chip"><i class="bi bi-box-seam"></i> Llegaron ' + rsFmt(_rsr.total) + '</span>' +
+    '<span><b>' + rsEsc(info.repuesto_nombre || '') + '</b></span>' +
+    (info.cliente_nombre ? '<span class="text-muted">para ' + rsEsc(info.cliente_nombre) + '</span>' : '');
+  document.getElementById('rsrInstalar').value = '1';
+  document.getElementById('rsrInstalar').max = String(_rsr.total);
+  document.getElementById('rsrErr').textContent = '';
+  document.getElementById('rsrBtnOT').style.display = _rsr.puedeOT ? '' : 'none';
+  rsrPintar();
+  const el = document.getElementById('rsModalRepartir');
+  return new Promise(function(resolve){
+    _rsr.resolver = resolve;
+    el.addEventListener('hidden.bs.modal', function(){ if (_rsr.resolver){ const r = _rsr.resolver; _rsr.resolver = null; r(); } }, { once: true });
+    bootstrap.Modal.getOrCreateInstance(el).show();
+  });
+}
+function rsrValor(){
+  const v = parseFloat(String(document.getElementById('rsrInstalar').value || '').replace(',', '.'));
+  return isFinite(v) ? v : NaN;
+}
+function rsrPintar(){
+  const v = rsrValor();
+  const ok = isFinite(v) && v > 0 && v <= _rsr.total + 1e-9;
+  const cli = ok ? v : 0;
+  const bod = ok ? Math.max(0, Math.round((_rsr.total - v) * 100) / 100) : 0;
+  document.getElementById('rsrNCli').textContent = rsFmt(cli);
+  document.getElementById('rsrNBod').textContent = rsFmt(bod);
+  const pct = _rsr.total > 0 ? (cli / _rsr.total) * 100 : 0;
+  document.getElementById('rsrBarCli').style.width = pct + '%';
+  document.getElementById('rsrBarBod').style.width = (ok ? 100 - pct : 0) + '%';
+  document.getElementById('rsrPaso1').classList.toggle('is-complete', ok);
+  document.getElementById('rsrPaso2').classList.toggle('is-complete', ok);
+  const todo = ok && bod <= 0;
+  document.getElementById('rsrHint').textContent = !ok
+    ? 'Indica entre 1 y ' + rsFmt(_rsr.total) + '.'
+    : (todo ? 'Todas van al cliente: no queda nada en bodega y la solicitud no se divide.'
+            : rsFmt(bod) + ' quedan como stock libre en bodega, en una solicitud aparte ligada a esta.');
+  const btn = document.getElementById('rsrBtn');
+  btn.disabled = !ok;
+  btn.innerHTML = todo ? '<i class="bi bi-check-lg me-1"></i>Listo, todas al cliente' : '<i class="bi bi-check-lg me-1"></i>Repartir';
+  const btnOT = document.getElementById('rsrBtnOT');
+  btnOT.disabled = !ok;
+  btnOT.innerHTML = '<i class="bi bi-clipboard2-plus me-1"></i>' + (todo ? 'Generar OT de instalación' : 'Repartir y generar OT de instalación');
+  return { ok: ok, cli: cli, bod: bod, todo: todo };
+}
+function rsrMas(d){
+  const v = rsrValor();
+  const base = isFinite(v) ? v : 1;
+  document.getElementById('rsrInstalar').value = String(Math.min(_rsr.total, Math.max(1, base + d)));
+  rsrPintar();
+}
+function rsrTodo(){
+  document.getElementById('rsrInstalar').value = String(_rsr.total);
+  rsrPintar();
+}
+async function rsrConfirmar(conOT){
+  const st = rsrPintar();
+  if (!st.ok) return;
+  const sid = _rsr.sid;
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalRepartir'));
+  _rsr.siguioOT = !!conOT;
+  if (!st.todo){
+    const btns = [document.getElementById('rsrBtn'), document.getElementById('rsrBtnOT')];
+    btns.forEach(function(b){ b.disabled = true; });
+    let j = {};
+    try {
+      const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/repartir', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+        body: JSON.stringify({ instalar: st.cli }) });
+      j = await r.json().catch(function(){ return {}; });
+    } catch(e){
+      document.getElementById('rsrErr').textContent = 'Sin conexión: no se repartió nada.';
+      btns.forEach(function(b){ b.disabled = false; });
+      _rsr.siguioOT = false;
+      return;
+    }
+    if (!j.ok){
+      document.getElementById('rsrErr').textContent = j.error || 'No se pudo repartir.';
+      btns.forEach(function(b){ b.disabled = false; });
+      _rsr.siguioOT = false;
+      return;
+    }
+    ilusToast('✓ ' + rsFmt(j.instalar) + ' para el cliente · ' + rsFmt(j.bodega) + ' a bodega (solicitud #' + j.hija_id + ')', { type: 'success' });
+    modal.hide();
+    if (j.aviso) await ilusAlert({ title: 'Aviso de bodega', message: j.aviso, type: 'warning' });
+  } else {
+    modal.hide();
+  }
+  await rsCargar();
+  if (conOT) await rsGenerarOT(sid);
+}
+// Tras recibir (compra completa o botón "Recibido"): ofrece repartir cada una.
+async function rsRepartirTrasRecibir(lista){
+  for (const info of (lista || [])){
+    await rsRepartirAbrir(info);
+    // Si eligió generar la OT, el wizard queda abierto: no se apila otro modal
+    // encima (las demás se reparten después desde su tarjeta).
+    if (_rsr.siguioOT) break;
+  }
+}
+
 /* ══════════════ Fase 4 (2026-09-26): UNA OT para VARIAS solicitudes del
    MISMO cliente ══════════════════════════════════════════════════════════
    Daniel: "gestionar esa solicitud, ver si tengo stock, puedo gestionar
@@ -3002,6 +3272,7 @@ function rsmAbrir(){
     _rsm.buscador.limpiar();
   }
   rsmCargarProvs();
+  rsmCargarResponsables();
   rsmRenderItems();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('rsmModal')).show();
 }
@@ -3496,6 +3767,30 @@ function rsmActualizarEstado(){
   }
   return ok1 && ok2 && ok3;
 }
+/* 🎫 2026-10-04: responsable del ticket de una solicitud manual -- los mismos
+   usuarios que Tickets considera asignables (como el lote de Incidencias); por
+   defecto, quien solicita. */
+async function rsmCargarResponsables(){
+  const sel = document.getElementById('rsmResp');
+  if (!sel) return;
+  if (!_rsm.resp){
+    let yo = '', nombres = [];
+    try {
+      const [rp, ra] = await Promise.all([
+        fetch('/repuestos/api/solicitudes-ot/personas', {credentials:'same-origin'}).then(function(r){ return r.json(); }).catch(function(){ return {}; }),
+        fetch('/tickets/api/asignables', {credentials:'same-origin'}).then(function(r){ return r.json(); }).catch(function(){ return []; }),
+      ]);
+      yo = (rp && rp.yo) || '';
+      nombres = (Array.isArray(ra) ? ra : []).filter(function(u){ return u && u.nombre && u.role !== 'externo'; }).map(function(u){ return u.nombre; });
+    } catch(e){}
+    if (yo && nombres.indexOf(yo) < 0) nombres.unshift(yo);
+    _rsm.resp = { yo: yo, nombres: nombres };
+  }
+  const yo = _rsm.resp.yo;
+  sel.innerHTML = _rsm.resp.nombres.map(function(n){
+    return '<option value="' + rsEsc(n) + '"' + (n === yo ? ' selected' : '') + '>' + rsEsc(n) + (n === yo ? ' (tú)' : '') + '</option>';
+  }).join('') || '<option value="">Tú</option>';
+}
 async function rsmEnviar(){
   const err = document.getElementById('rsmErr');
   err.textContent = '';
@@ -3522,6 +3817,7 @@ async function rsmEnviar(){
   // maquina_id (el backend lo rechazaría igual, pero mejor no ni intentarlo).
   const maquinaId = _rsm.es_reposicion ? '' : (document.getElementById('rsmMaquina').value || '');
   const adjunto = (document.getElementById('rsmAdjunto').files || [])[0];
+  const responsable = (document.getElementById('rsmResp') || {}).value || '';
   let j;
   try {
     if (adjunto){
@@ -3531,6 +3827,7 @@ async function rsmEnviar(){
       fd.append('maquina_id', maquinaId);
       fd.append('motivo', motivo);
       fd.append('items', JSON.stringify(items));
+      fd.append('responsable', responsable);
       fd.append('evidencia', adjunto);
       const r = await fetch('/repuestos/api/solicitudes/manual', { method: 'POST', credentials: 'same-origin', body: fd });
       j = await r.json();
@@ -3540,7 +3837,7 @@ async function rsmEnviar(){
         body: JSON.stringify({
           cliente_id: _rsm.es_reposicion ? null : (_rsm.cliente ? _rsm.cliente.id : null),
           es_reposicion: _rsm.es_reposicion, maquina_id: maquinaId || null,
-          motivo: motivo, items: items,
+          motivo: motivo, items: items, responsable: responsable,
         })
       });
       j = await r.json();
@@ -3553,7 +3850,8 @@ async function rsmEnviar(){
   btn.disabled = false;
   if (!j.ok){ err.textContent = j.error || 'No se pudo crear la solicitud.'; return; }
   const res = rsmResumen();
-  ilusToast('✓ ' + (j.creadas || items.length) + ' solicitud(es) creada(s)' + (res.provs.length ? ' para ' + res.provs.length + ' proveedor(es)' : ''), { type: 'success' });
+  ilusToast('✓ ' + (j.creadas || items.length) + ' solicitud(es) creada(s)' + (res.provs.length ? ' para ' + res.provs.length + ' proveedor(es)' : '')
+    + (j.numero_ticket ? ' · ticket ' + j.numero_ticket + (j.responsable ? ' a cargo de ' + j.responsable : '') : ''), { type: 'success' });
   bootstrap.Modal.getOrCreateInstance(document.getElementById('rsmModal')).hide();
   if (j.aviso) await ilusAlert({ title: 'Aviso de stock', message: j.aviso, type: 'warning' });
   rsCargar();
@@ -4091,6 +4389,8 @@ async function rcrConfirmar(){
     ilusToast(msg, { type: (j.recibidas || []).length ? 'success' : 'info' });
     rcCargar();
     rsCargar();
+    // 🔁 2026-10-04: lo que llegó completo para un cliente se reparte aquí mismo.
+    if (_rs.puedePedir && (j.repartibles || []).length) await rsRepartirTrasRecibir(j.repartibles);
   } catch(e){
     document.getElementById('rcrErr').textContent = 'Error de red: ' + e.message;
   } finally {
