@@ -90835,7 +90835,8 @@ _OTREP_SQL_SOL = (
     # 🏗️ 2026-09-21 (Fase 3): OT de instalación ya generada desde esta
     # solicitud (si la hay) -- vg es DISTINTA de v (v es la OT de ORIGEN
     # cuando contexto='ot'; vg es la OT NUEVA que instala el repuesto).
-    "       vg.numero_ot AS ot_generada_numero, "
+    "       vg.numero_ot AS ot_generada_numero, vg.estado AS ot_generada_estado,  "
+    "       (SELECT COUNT(*) FROM mant_ot_repuesto_solicitudes s3 WHERE s3.ticket_id=s.ticket_id) AS ticket_n_solicitudes, "
     # 🔒 2026-09-20: cuánto de ESTE mismo repuesto de bodega ya está
     # comprometido en OTRAS solicitudes abiertas (s.id<>s2.id) -- _otrep_fila
     # le suma la cantidad de ESTA fila (si sigue abierta) para el total.
@@ -90882,6 +90883,16 @@ def _otrep_fila(s, para_ot=False):
     s["origen_label"] = _OTREP_ORIGEN_LABEL.get(s.get("origen"), s.get("origen"))
     s["abierta"] = s.get("estado") in _OTREP_ABIERTOS
     s["siguientes"] = list(_OTREP_TRANSICIONES.get(s.get("estado"), ()))
+    if s.get("es_reposicion") and s.get("estado") == "recibido":
+        # 📦 2026-10-04: la reposición termina al recibirse (el servidor ya
+        # bloqueaba "instalado"; ahora tampoco se ofrece ni cuenta como abierta).
+        s["abierta"] = False
+        s["siguientes"] = [n for n in s["siguientes"] if n != "instalado"]
+    # 🚨 2026-10-04 (Daniel: "algunas solicitudes tienen ciertas máquinas fuera de
+    # servicio, esas se tienen que gestionar de manera inmediata"): prioridad
+    # máxima mientras la solicitud siga abierta.
+    s["prioridad_fs"] = bool(s["abierta"] and (
+        s.get("dejo_fuera_servicio") or s.get("maquina_estado_capturado") == "fuera_servicio"))
     # 🔀 2026-09-21 (Fase 2): de dónde nació la solicitud -- se DERIVA de
     # qué FK quedó seteada, no es una columna propia (evita una tercera
     # fuente de verdad que se pueda desincronizar). "Herencia documental"
@@ -92856,10 +92867,14 @@ def _otrep_filtros_query():
     if _es_rol_tecnico():
         where.append("s.incidencia_id IS NULL")
     estado = (request.args.get("estado") or "").strip().lower()
+    # 📦 2026-10-04: una reposición de stock propio TERMINA al recibirse (no hay
+    # nada que instalar) -- antes quedaba "abierta" para siempre.
     if estado == "abiertas":
-        where.append("s.estado IN ('solicitado','validado','pedido','recibido')")
+        where.append("s.estado IN ('solicitado','validado','pedido','recibido') "
+                     "AND NOT (COALESCE(s.es_reposicion,0)=1 AND s.estado='recibido')")
     elif estado == "cerradas":
-        where.append("s.estado IN ('instalado','rechazado')")
+        where.append("(s.estado IN ('instalado','rechazado') "
+                     " OR (COALESCE(s.es_reposicion,0)=1 AND s.estado='recibido'))")
     elif estado in _OTREP_ESTADOS:
         where.append("s.estado=%s"); params.append(estado)
     origen = (request.args.get("origen") or "").strip().lower()
@@ -92906,14 +92921,87 @@ def _otrep_filtros_query():
                 where.append("s.created_at <= %s"); params.append(dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
             except ValueError:
                 pass
+    # 👤 2026-10-04 (Daniel: "actualmente no sé qué tiene pedido Juan Pablo, no sé
+    # en qué estado está"): filtros por PERSONA. El responsable sigue siendo el del
+    # TICKET que agrupa la solicitud ("Tomar" = tk_tickets.asignado_a, decisión de
+    # Daniel: "uno por ticket, como hoy"). Subconsultas en vez de alias para que
+    # sirvan igual en la lista, el conteo, el Excel y las vistas agrupadas.
+    responsable = (request.args.get("responsable") or "").strip()[:190]
+    if (request.args.get("mias") or "") == "1":
+        responsable = (current_username() or "")[:190] or "\u0000"
+    if responsable:
+        if responsable == "__sin__":
+            where.append("(s.ticket_id IS NULL OR s.ticket_id IN (SELECT id FROM tk_tickets "
+                         " WHERE asignado_a IS NULL OR asignado_a=''))")
+        else:
+            where.append("s.ticket_id IN (SELECT id FROM tk_tickets WHERE asignado_a=%s)")
+            params.append(responsable)
+    solicitante = (request.args.get("solicitante") or "").strip()[:190]
+    if solicitante:
+        where.append("s.solicitado_por=%s"); params.append(solicitante)
+    if (request.args.get("fs") or "") == "1":
+        # 🚨 2026-10-04: solo las que tienen el equipo fuera de servicio.
+        where.append("(COALESCE(s.dejo_fuera_servicio,0)=1 OR s.maquina_id IN (SELECT id FROM mant_maquinas WHERE estado_capturado='fuera_servicio'))")
     q = (request.args.get("q") or "").strip()
     if q:
         like = f"%{q}%"
-        where.append("(s.repuesto_nombre LIKE %s OR v.numero_ot LIKE %s OR m.nombre LIKE %s "
-                     " OR c.razon_social LIKE %s OR t.numero_ticket LIKE %s OR rs.sku LIKE %s "
-                     " OR m.serie LIKE %s)")
-        params += [like] * 7
+        # 🔎 2026-10-04: también por SKU de la solicitud (aunque no esté ligada a
+        # bodega), por persona (quién la pidió / quién la gestiona) y por
+        # proveedor (este último nunca para un técnico, REGLA #19).
+        _q_or = ("s.repuesto_nombre LIKE %s OR v.numero_ot LIKE %s OR m.nombre LIKE %s "
+                 " OR c.razon_social LIKE %s OR t.numero_ticket LIKE %s OR rs.sku LIKE %s "
+                 " OR m.serie LIKE %s OR s.repuesto_sku LIKE %s OR s.solicitado_por LIKE %s "
+                 " OR s.ticket_id IN (SELECT id FROM tk_tickets WHERE asignado_a LIKE %s)")
+        params += [like] * 10
+        if not _oculta_proveedores():
+            _q_or += " OR s.proveedor_id IN (SELECT id FROM mant_proveedores_repuesto WHERE nombre LIKE %s)"
+            params.append(like)
+        where.append("(" + _q_or + ")")
     return " AND ".join(where), params
+
+
+# 🕓 2026-10-04 (Daniel: "diseñar una trazabilidad completa... controlarlo por este
+# sistema"): bitácora PROPIA de cada solicitud -- quién movió qué y cuándo. Antes las
+# fechas vivían en columnas sueltas (sin "quién" para pedido/recibido) y "Reabrir"
+# las borraba; esta tabla solo se agrega, nunca se borra ni se pisa. Se crea sola la
+# primera vez (también con ILUS_SKIP_MIGRATIONS=1); mysql_execute salta el DDL si ya existe.
+_OTREP_EVENTOS_OK = {"listo": False}
+
+
+def _otrep_eventos_asegurar():
+    if _OTREP_EVENTOS_OK["listo"]:
+        return True
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_ot_repuesto_eventos ("
+            " id INT AUTO_INCREMENT PRIMARY KEY,"
+            " solicitud_id INT NOT NULL,"
+            " de_estado VARCHAR(30) NULL,"
+            " a_estado VARCHAR(30) NULL,"
+            " accion VARCHAR(40) NOT NULL,"
+            " usuario VARCHAR(190) NULL,"
+            " detalle VARCHAR(500) NULL,"
+            " created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            " INDEX idx_otrep_ev_sol (solicitud_id, created_at)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        _OTREP_EVENTOS_OK["listo"] = True
+    except Exception as e:
+        print(f"[otrep] eventos asegurar: {e}", flush=True)
+    return _OTREP_EVENTOS_OK["listo"]
+
+
+def _otrep_evento(sid, accion, usuario, de_estado=None, a_estado=None, detalle=None):
+    """Agrega una línea a la bitácora de la solicitud. Nunca rompe a quien la llama."""
+    try:
+        if not _otrep_eventos_asegurar():
+            return
+        mysql_execute(
+            "INSERT INTO mant_ot_repuesto_eventos (solicitud_id, de_estado, a_estado, accion, usuario, detalle) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (sid, de_estado, a_estado, (accion or "")[:40], (usuario or None) and str(usuario)[:190],
+             (detalle or None) and str(detalle)[:500]))
+    except Exception as e:
+        print(f"[otrep] evento sid={sid}: {e}", flush=True)
 
 
 def _otrep_pendientes_tecnicos():
@@ -93046,6 +93134,7 @@ def repstock_solicitudes_ot_listar():
     per_page = max(10, min(per_page, 200))
 
     sols, conteo, total, total_pages = [], {}, 0, 1
+    fuera_servicio_n = 0
     try:
         total = int((mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes s "
@@ -93062,7 +93151,10 @@ def repstock_solicitudes_ot_listar():
         offset = (page - 1) * per_page
         rows = mysql_fetchall(
             _OTREP_SQL_SOL + " WHERE " + where_sql
-            + " ORDER BY (s.estado='solicitado') DESC, s.id DESC LIMIT %s OFFSET %s",
+            # 🚨 2026-10-04: equipo fuera de servicio PRIMERO (gestión inmediata),
+            # después las por validar, después el resto por antigüedad.
+            + " ORDER BY (s.estado IN ('solicitado','validado','pedido','recibido') AND (COALESCE(s.dejo_fuera_servicio,0)=1 OR s.maquina_id IN (SELECT id FROM mant_maquinas WHERE estado_capturado='fuera_servicio'))) DESC, "
+            + "(s.estado='solicitado') DESC, s.id DESC LIMIT %s OFFSET %s",
             tuple(params) + (per_page, offset)) or []
         sols = [_otrep_fila(r) for r in rows]
         if sols:
@@ -93076,6 +93168,22 @@ def repstock_solicitudes_ot_listar():
             for e in evs:
                 if e.get("solicitud_id") in idx:
                     idx[e["solicitud_id"]]["evidencias"].append(dict(e))
+            # 🕓 2026-10-04: bitácora de cada solicitud (quién y cuándo), hora Chile.
+            for _s in sols:
+                _s["eventos"] = []
+            if _otrep_eventos_asegurar():
+                try:
+                    for ev in (mysql_fetchall(
+                            f"SELECT solicitud_id, de_estado, a_estado, accion, usuario, detalle, created_at "
+                            f"  FROM mant_ot_repuesto_eventos WHERE solicitud_id IN ({ph}) ORDER BY id",
+                            tuple(ids)) or []):
+                        if ev.get("solicitud_id") in idx:
+                            _ev = dict(ev)
+                            _ev["cuando"] = chile_fmt_filter(_ev.pop("created_at", None), "%d/%m/%Y %H:%M")
+                            _ev["a_label"] = _OTREP_ESTADO_LABEL.get(_ev.get("a_estado"), _ev.get("a_estado"))
+                            idx[ev["solicitud_id"]]["eventos"].append(_ev)
+                except Exception as _e_ev:
+                    print(f"[otrep] cola eventos: {_e_ev}", flush=True)
         # Conteo por estado SIN el resto de los filtros (para los chips: los
         # chips necesitan ver cuánto hay en CADA estado, no solo en el que
         # ya está aplicado) -- mismo filtro de técnico que arriba.
@@ -93083,12 +93191,19 @@ def repstock_solicitudes_ot_listar():
         conteo = {r["estado"]: int(r["n"]) for r in (mysql_fetchall(
             "SELECT estado, COUNT(*) AS n FROM mant_ot_repuesto_solicitudes"
             + _conteo_where + " GROUP BY estado") or [])}
+        # 🚨 2026-10-04: cuántas abiertas tienen el equipo fuera de servicio.
+        fuera_servicio_n = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes s "
+            " WHERE s.estado IN ('solicitado','validado','pedido','recibido') "
+            "   AND NOT (COALESCE(s.es_reposicion,0)=1 AND s.estado='recibido') AND (COALESCE(s.dejo_fuera_servicio,0)=1 OR s.maquina_id IN (SELECT id FROM mant_maquinas WHERE estado_capturado='fuera_servicio'))"
+            + (" AND s.incidencia_id IS NULL" if _es_rol_tecnico() else "")) or {}).get("n") or 0)
     except Exception as e:
         print(f"[otrep] cola: {e}", flush=True)
     puede_gestion_plata = not _es_rol_tecnico()
     return jsonify({"ok": True, "solicitudes": sols, "conteo": conteo,
                     "total": total, "page": page, "per_page": per_page, "total_pages": total_pages,
                     "pendientes_tecnicos": _otrep_pendientes_tecnicos(),
+                    "fuera_servicio_n": fuera_servicio_n,
                     "estados": _OTREP_ESTADO_LABEL, "transiciones": _OTREP_TRANSICIONES,
                     "puede_pedir_rechazar": puede_gestion_plata,
                     # 🏗️ Fase 3 (2026-09-21): controla si la cola ofrece
@@ -93288,8 +93403,19 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
             return False, 400, {"ok": False, "error": "Ese repuesto de bodega no existe o está inactivo."}
         sets += ["repuesto_stock_id=%s", "repuesto_sku=%s", "validado_por=%s", "validado_at=NOW()"]
         params += [stock["id"], stock.get("sku"), user]
-        if stock.get("proveedor_id") and not s.get("proveedor_id"):
-            sets.append("proveedor_id=%s"); params.append(stock["proveedor_id"])
+        # 🏭 2026-10-04 (Daniel: "validar el proveedor y todos los datos... para
+        # solicitar en lotes a proveedor"): gestión no deja una solicitud "validada"
+        # sin proveedor -- sin él no entra al lote "Por proveedor". Un técnico NO ve
+        # proveedores (REGLA #19): para él no se exige, hereda el del repuesto si lo hay.
+        _prov_val = str(d.get("proveedor_id") or s.get("proveedor_id") or stock.get("proveedor_id") or "").strip()
+        if not _es_rol_tecnico():
+            if not _prov_val.isdigit():
+                return False, 400, {"ok": False, "error":
+                                "Elige el proveedor de este repuesto antes de validar: sin él no puede entrar al lote de compra."}
+            if not mysql_fetchone("SELECT id FROM mant_proveedores_repuesto WHERE id=%s", (int(_prov_val),)):
+                return False, 400, {"ok": False, "error": "Ese proveedor no existe."}
+        if _prov_val.isdigit() and (str(d.get("proveedor_id") or "").strip().isdigit() or not s.get("proveedor_id")):
+            sets.append("proveedor_id=%s"); params.append(int(_prov_val))
         # 💰 Vida del cliente, Etapa A (2026-09-26; corregido en la revisión
         # Opus del mismo día -- BAJA: "revalidar no pisa costo 'compra'"):
         # el costo de bodega se copia AL VALIDAR solo si la solicitud
@@ -93317,6 +93443,15 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         if oc:
             sets.append("oc_numero=%s"); params.append(oc)
     if nuevo == "recibido":
+        # 📥 2026-10-04: un repuesto creado "por llegar" no tiene ubicación; al
+        # recibirlo entra stock real, así que debe quedar escaneado en una.
+        _rid_rec = s.get("repuesto_stock_id")
+        if _rid_rec:
+            _u = mysql_fetchone("SELECT ubicacion_id FROM mant_repuestos_stock WHERE id=%s", (_rid_rec,))
+            if _u is not None and not _u.get("ubicacion_id"):
+                return False, 400, {"ok": False, "error":
+                                "Este repuesto llegó pero todavía no tiene ubicación: escanéala en Bodega "
+                                "(editar el repuesto) y vuelve a marcar Recibido."}
         sets.append("recibido_at=NOW()")
     if nuevo == "instalado":
         sets += ["instalado_at=NOW()", "resuelto_por=%s"]; params.append(user)
@@ -93568,6 +93703,12 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
             _inc_log(s["incidencia_id"], "repuesto_solicitud_estado", "repuesto", None, _detalle_log)
     except Exception:
         pass
+    _otrep_evento(sid, "estado", user, actual, nuevo,
+                  "; ".join(x for x in (
+                      f"{stock['sku']} · {stock['descripcion']}" if stock else "",
+                      f"proveedor {prov['nombre']}" if prov else "",
+                      f"OC {d.get('oc_numero')}" if nuevo == "pedido" and d.get("oc_numero") else "",
+                      nota[:200] if nota else "") if x))
     return True, 200, {"ok": True, "estado": nuevo, "estado_label": label, "aviso": aviso,
                     "siguientes": list(_OTREP_TRANSICIONES.get(nuevo, ()))}
 
@@ -94697,6 +94838,17 @@ def repstock_compra_recibir(cid):
         if s_pre["estado"] != "pedido":
             avisos.append(f"#{sid} ya está \"{_OTREP_ESTADO_LABEL.get(s_pre['estado'], s_pre['estado'])}\".")
             continue
+        # 📥 2026-10-04: un repuesto creado «por llegar» no tiene ubicación. Se
+        # revisa ANTES de sumar nada: si se sumara el stock y después
+        # _otrep_cambiar_estado('recibido') lo frenara por falta de ubicación,
+        # la bodega quedaría con stock sin solicitud recibida (descuadre).
+        _ub_pre = mysql_fetchone(
+            "SELECT rs.ubicacion_id FROM mant_ot_repuesto_solicitudes s "
+            "  JOIN mant_repuestos_stock rs ON rs.id=s.repuesto_stock_id WHERE s.id=%s", (sid,))
+        if _ub_pre is not None and not _ub_pre.get("ubicacion_id"):
+            avisos.append(f"#{sid}: el repuesto todavía no tiene ubicación -- escanéala en Bodega "
+                          f"(editar el repuesto) antes de registrar lo que llegó.")
+            continue
 
         conn = get_db()
         entrada_registrada = False
@@ -94954,7 +95106,34 @@ def repstock_solicitud_ot_tomar(sid):
     except Exception as e:
         print(f"[otrep] tomar sid={sid}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo tomar la solicitud."}), 500
+    # 🕓 2026-10-04: el responsable es el del ticket, así que el rastro queda en
+    # cada solicitud que ese ticket agrupa.
+    try:
+        for _r in (mysql_fetchall("SELECT id, estado FROM mant_ot_repuesto_solicitudes WHERE ticket_id=%s",
+                                  (s["ticket_id"],)) or []):
+            _otrep_evento(_r["id"], "tomar", user, _r.get("estado"), _r.get("estado"), f"{user} quedó a cargo")
+    except Exception:
+        pass
     return jsonify({"ok": True, "asignado_a": user})
+
+
+@app.route("/repuestos/api/solicitudes-ot/personas", methods=["GET"])
+@_otrep_gestion_required
+def repstock_solicitudes_personas():
+    """Personas para los filtros del centro (2026-10-04): quién gestiona (el
+    responsable del ticket) y quién pidió. Solo nombres que ya aparecen en
+    solicitudes -- no expone la lista de usuarios del sistema."""
+    try:
+        resp = sorted({(r.get("n") or "").strip() for r in (mysql_fetchall(
+            "SELECT DISTINCT t.asignado_a AS n FROM mant_ot_repuesto_solicitudes s "
+            "  JOIN tk_tickets t ON t.id=s.ticket_id WHERE t.asignado_a IS NOT NULL AND t.asignado_a<>''") or [])} - {""})
+        sol = sorted({(r.get("n") or "").strip() for r in (mysql_fetchall(
+            "SELECT DISTINCT solicitado_por AS n FROM mant_ot_repuesto_solicitudes "
+            " WHERE solicitado_por IS NOT NULL AND solicitado_por<>''") or [])} - {""})
+    except Exception as e:
+        print(f"[otrep] personas: {e}", flush=True)
+        resp, sol = [], []
+    return jsonify({"ok": True, "responsables": resp, "solicitantes": sol, "yo": current_username() or ""})
 
 
 def _otrep_puede_tickets():
@@ -126667,6 +126846,19 @@ def repstock_crear():
     if _tecnico_sin_prov:
         d.pop("proveedor_id", None)
         d.pop("costo_unitario", None)
+    # 📥 2026-10-04 (Daniel, "gestionar solicitudes de repuesto": si el repuesto no
+    # existe, "crear 'por llegar' sin ubicación"): excepción ACOTADA a la regla del
+    # 09-sep -- un repuesto que todavía no llegó no está físicamente en ninguna
+    # ubicación, así que no hay código de barras que escanear. Solo gestión (nunca
+    # un técnico), nace con cantidad 0 y con proveedor (sin él no entra al lote), y
+    # la ubicación se exige DESPUÉS, al recibirlo (_otrep_cambiar_estado 'recibido').
+    por_llegar = bool(d.get("por_llegar")) and not _tecnico_sin_prov and _otrep_puede_gestion()
+    if por_llegar:
+        d["cantidad"] = 0
+        if d.get("stock_minimo") in (None, "", "null"):
+            d["stock_minimo"] = 0
+        if not (d.get("proveedor_id") or d.get("marca_id")):
+            return jsonify({"ok": False, "error": "Indica el proveedor del repuesto: sin él no entra al lote de compra."}), 400
     descripcion = (d.get("descripcion") or "").strip()[:400]
     if not descripcion:
         return jsonify({"ok": False, "error": "La descripción es obligatoria"}), 400
@@ -126700,7 +126892,9 @@ def repstock_crear():
         ubicacion_id = int(ubicacion_id) if ubicacion_id not in (None, "", "null") else None
     except (TypeError, ValueError):
         ubicacion_id = None
-    if not ubicacion_id or not mysql_fetchone(
+    if por_llegar:
+        ubicacion_id = None   # "por llegar": se escanea al recibirlo
+    elif not ubicacion_id or not mysql_fetchone(
         "SELECT id FROM mant_repuestos_ubicaciones WHERE id=%s AND activo=1", (ubicacion_id,)
     ):
         return jsonify({"ok": False, "error": "La ubicación es obligatoria"}), 400
@@ -126754,7 +126948,8 @@ def repstock_crear():
             "codigo_fabricante": (d.get("codigo_fabricante") or "").strip()[:120] or None,
             "stock_minimo": stock_minimo,
             "cliente_id": cliente_id, "ticket_id": ticket_id,
-            "notas": (d.get("notas") or "").strip() or None,
+            "notas": (d.get("notas") or "").strip() or (
+                "Creado «por llegar» desde una solicitud: falta escanear su ubicación al recibirlo." if por_llegar else None),
             "largo": _repstock_dim_float(d.get("largo")),
             "ancho": _repstock_dim_float(d.get("ancho")),
             "alto": _repstock_dim_float(d.get("alto")),

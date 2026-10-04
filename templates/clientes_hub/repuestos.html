@@ -209,6 +209,28 @@
 .rs-tl{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;font-weight:800;color:#9ca3af}
 .rs-tl i{font-size:.6rem;color:#cbd5e1}
 .rs-tl-p.ok{color:#15803d}
+/* 2026-10-04: seguimiento paso a paso (quién y cuándo) + tablero del ticket */
+.rs-trk{display:flex;flex-wrap:wrap;gap:6px;align-items:stretch}
+.rs-trk-p{display:grid;grid-template-columns:auto 1fr;column-gap:6px;align-items:center;min-width:112px;padding:6px 10px;border-radius:10px;
+  background:#f3f4f6;border:1.5px solid #e5e7eb;color:#4b5563;font-size:.8rem;line-height:1.25}
+.rs-trk-c{grid-row:span 3;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.75rem;
+  background:#e5e7eb;color:#374151}
+.rs-trk-l{font-weight:800;color:#111827}
+.rs-trk-f,.rs-trk-q{font-size:.74rem;color:#374151}
+.rs-trk-q{font-weight:700}
+.rs-trk-p.ok{background:#f0fdf4;border-color:#86efac}.rs-trk-p.ok .rs-trk-c{background:#16a34a;color:#fff}
+.rs-trk-p.ahora{background:#fff;border-color:#dc2626}.rs-trk-p.ahora .rs-trk-c{background:#dc2626;color:#fff}
+.rs-trk-p.rej{background:#fee2e2;border-color:#fca5a5}.rs-trk-p.rej .rs-trk-c{background:#dc2626;color:#fff}
+.rs-tablero{display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 14px;border-top:1px dashed #e5e7eb;font-size:.84rem;color:#1f2937}
+.rs-tab-i{display:inline-flex;align-items:center;gap:6px}
+.rs-tab-i i{color:#6b7280}
+.rs-tab-i.falta{color:#b45309}.rs-tab-i.falta i{color:#f59e0b}
+.rs-f-mias.on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.rs-f-fs{background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;font-weight:800}
+.rs-f-fs.on{background:#dc2626;color:#fff;border-color:#dc2626}
+.rs-card.prio-fs{border-color:#dc2626 !important;box-shadow:0 0 0 2px rgba(220,38,38,.25)}
+.rs-tab-i.prio{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;border-radius:50px;padding:3px 10px}
+.rs-tab-i.prio i{color:#dc2626}
 .rs-acc{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
 .rs-btn{border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 11px;font-size:.74rem;
   font-weight:800;cursor:pointer;min-height:36px;font-family:inherit}
@@ -528,6 +550,19 @@
     {% endif %}
     <input type="date" id="rsFDesde" class="form-control rs-f-fecha" title="Desde" onchange="rsFiltrosAplicar()">
     <input type="date" id="rsFHasta" class="form-control rs-f-fecha" title="Hasta" onchange="rsFiltrosAplicar()">
+    {# 👤 2026-10-04 (Daniel: "no sé qué tiene pedido Juan Pablo, no sé en qué estado está"):
+       responsable = quien tomó el TICKET que agrupa la solicitud; "Pidió" = solicitante. #}
+    <select id="rsFResp" class="form-select" style="max-width:200px" onchange="rsFiltrosAplicar()" aria-label="Responsable">
+      <option value="">Responsable: todos</option>
+      <option value="__sin__">Sin responsable</option>
+    </select>
+    <select id="rsFSol" class="form-select" style="max-width:190px" onchange="rsFiltrosAplicar()" aria-label="Quién pidió">
+      <option value="">Pidió: todos</option>
+    </select>
+    <button type="button" class="btn btn-sm btn-outline-dark rs-f-mias" id="rsFMias" onclick="rsFMiasToggle()" aria-pressed="false">
+      <i class="bi bi-person-check"></i> Mis solicitudes</button>
+    <button type="button" class="btn btn-sm rs-f-fs" id="rsFFs" onclick="rsFFsToggle()" aria-pressed="false" style="display:none">
+      <i class="bi bi-exclamation-octagon-fill"></i> Equipos fuera de servicio <b id="rsFFsN">0</b></button>
     {% if 0 %}{# placeholder de accesibilidad, la lista de clientes vive en el datalist de abajo #}{% endif %}
     <button type="button" class="btn btn-sm btn-outline-secondary" id="rsFLimpiar" style="display:none" onclick="rsFiltrosLimpiar()">
       <i class="bi bi-x-lg"></i> Limpiar filtros</button>
@@ -658,31 +693,111 @@
   </div>
 </div>
 
-{# Modal "Validar en bodega": ligar la solicitud a un repuesto REAL (buscar)
-   o crearlo con el modal de siempre (rbAbrirNuevo, que exige ubicación). #}
+{# Modal "Gestionar solicitud" (Daniel 2026-10-04: "la solicitud sea amigable,
+   indiferentemente de lo que haya hecho el técnico o la persona que levantó la
+   incidencia... OT, incidencias, tickets, bodega de repuestos"). Reemplaza el
+   viejo "Validar en bodega" (mismos ids rsVal*): 1) ¿existe? (sugerencias con
+   los compatibles del equipo primero; si no existe se crea AQUÍ "por llegar",
+   sin ubicación) · 2) ¿para quién? · 3) proveedor (obligatorio: sin él no
+   entra al lote) · Validar. "Crear completo en Bodega" (con ubicación) sigue. #}
 <div class="modal fade" id="rsModalValidar" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
     <div class="modal-content" style="border-radius:14px">
       <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
-        <h6 class="modal-title fw-bold"><i class="bi bi-check2-square me-2" style="color:#dc2626"></i>Validar en bodega
-          <small class="d-block fw-normal" id="rsValTitulo" style="font-size:.72rem;opacity:.8"></small></h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        <h6 class="modal-title fw-bold"><i class="bi bi-clipboard2-check me-2" style="color:#dc2626"></i>Gestionar solicitud
+          <small class="d-block fw-normal" id="rsValTitulo" style="font-size:.78rem;opacity:.85"></small></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
-      <div class="modal-body pt-2">
-        <p class="small mb-2" style="color:#475569">Liga la solicitud a un repuesto <b>real</b> de la bodega. Si no existe, créalo primero con su ubicación y vuelve a validar.</p>
-        <input type="search" id="rsValQ" class="form-control" placeholder="Buscar por SKU, descripción o código de fabricante"
-               autocomplete="off" style="font-size:16px" oninput="rsValBuscar(this.value)">
-        <div class="otrep-opc mt-2" id="rsValLista"></div>
+      <div class="modal-body pt-3">
+        <div class="rsg-ctx" id="rsGestCtx"></div>
+
+        <section class="rb-step" id="rsGestPaso1">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">1</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-title">¿El repuesto ya existe en la bodega?</div>
+            <div class="rb-step-sub">Si no existe, créalo aquí</div>
+          </div>
+          <div class="rb-step-body">
+            <input type="search" id="rsValQ" class="form-control" placeholder="Buscar por SKU, descripción, marca, proveedor o modelo"
+                   autocomplete="off" style="font-size:16px;min-height:44px" oninput="rsValBuscar(this.value)">
+            <div class="rsg-hint" id="rsGestHint"></div>
+            <div class="otrep-opc mt-2" id="rsValLista"></div>
+            <button type="button" class="rsg-nuevo-btn" id="rsNuToggle" onclick="rsNuMostrar()">
+              <i class="bi bi-plus-circle"></i>No está en la lista: crearlo aquí «por llegar»</button>
+            <div class="rsg-nuevo" id="rsNuBox" hidden>
+              <div class="rsg-nuevo-k"><i class="bi bi-box-arrow-in-down"></i>Nuevo repuesto «por llegar»</div>
+              <p class="rsg-nuevo-p">Nace con cantidad 0 y sin ubicación: la ubicación se escanea cuando llegue a la bodega.</p>
+              <label class="form-label small fw-bold mb-1" for="rsNuDesc">Descripción <span class="text-danger">*</span></label>
+              <input type="text" id="rsNuDesc" class="form-control mb-2" maxlength="400" style="font-size:16px;min-height:44px">
+              <div class="row g-2">
+                <div class="col-md-8">
+                  <label class="form-label small fw-bold mb-1" for="rsNuProv">Proveedor <span class="text-danger">*</span></label>
+                  <select id="rsNuProv" class="form-select" style="font-size:16px;min-height:44px"></select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-bold mb-1" for="rsNuCosto">Costo unitario <span class="text-muted fw-normal">(opcional)</span></label>
+                  <input type="number" id="rsNuCosto" class="form-control" min="0" step="1" style="font-size:16px;min-height:44px">
+                </div>
+              </div>
+              <div class="d-flex gap-2 mt-2 flex-wrap">
+                <button type="button" class="btn fw-bold" id="rsNuBtn" style="background:#0a0a0a;color:#fff;min-height:44px" onclick="rsNuCrear()">
+                  <i class="bi bi-check2-circle me-1"></i>Crear y usar este repuesto</button>
+                <button type="button" class="btn btn-outline-secondary" style="min-height:44px" onclick="rsNuMostrar(false)">Cancelar</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="rb-step" id="rsGestPaso2">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">2</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-title">¿Para quién es?</div>
+            <div class="rb-step-sub">Cliente, equipo y de dónde viene</div>
+          </div>
+          <div class="rb-step-body"><div id="rsGestPara"></div></div>
+        </section>
+
+        <section class="rb-step" id="rsGestPaso3">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">3</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-title">¿A qué proveedor se le pide?</div>
+            <div class="rb-step-sub">Obligatorio para entrar al lote de compra</div>
+          </div>
+          <div class="rb-step-body">
+            <select id="rsGestProv" class="form-select" style="font-size:16px;min-height:44px" onchange="rsGestPintar()"></select>
+            <div class="rsg-hint" id="rsGestProvHint"></div>
+          </div>
+        </section>
+
         <div class="text-danger small mt-2" id="rsValErr" style="min-height:18px"></div>
       </div>
-      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
-        <button type="button" class="btn btn-outline-dark" onclick="rsCrearEnBodega()"><i class="bi bi-plus-lg me-1"></i>Crear en bodega</button>
-        <button type="button" class="btn fw-bold px-4" id="rsValBtn" disabled style="background:#dc2626;color:#fff;min-height:44px" onclick="rsValConfirmar()">
-          <i class="bi bi-check-lg me-1"></i>Validar</button>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6;justify-content:space-between">
+        <button type="button" class="btn btn-link px-0" style="font-size:.88rem" onclick="rsCrearEnBodega()">
+          <i class="bi bi-box-seam me-1"></i>Crear completo en Bodega (con ubicación)</button>
+        <button type="button" class="btn fw-bold px-4" id="rsValBtn" disabled style="background:#dc2626;color:#fff;min-height:48px" onclick="rsValConfirmar()">
+          <i class="bi bi-check-lg me-1"></i>Validar y dejar lista para el lote</button>
       </div>
     </div>
   </div>
 </div>
+<style>
+  .rsg-ctx{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:.9rem;color:#1f2937}
+  .rsg-ctx .rsg-chip{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:3px 10px;font-weight:800;font-size:.78rem;background:#0a0a0a;color:#fff}
+  .rsg-ctx .rsg-falta{color:#b45309;font-weight:800}
+  .rsg-hint{font-size:.85rem;color:#374151;margin-top:6px}
+  .rsg-nuevo-btn{margin-top:10px;width:100%;min-height:44px;border:1.5px dashed #94a3b8;border-radius:10px;background:#fff;color:#0f172a;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px}
+  .rsg-nuevo-btn:hover{border-color:#dc2626;color:#dc2626}
+  .rsg-nuevo{margin-top:10px;border:1.5px solid #fcd34d;background:#fff8e1;border-radius:12px;padding:12px 14px}
+  .rsg-nuevo-k{font-weight:900;color:#92400e;display:flex;align-items:center;gap:6px}
+  .rsg-nuevo-p{font-size:.85rem;color:#78350f;margin:4px 0 10px}
+  .rsg-para{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;font-size:.92rem}
+  .rsg-para .k{display:block;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#4b5563}
+  .rsg-para .v{color:#0f172a;font-weight:700}
+  .rsg-para .v.falta{color:#b45309}
+  .otrep-opc-it .rsg-compat{display:inline-block;margin-left:6px;border-radius:50px;padding:1px 8px;font-size:.7rem;font-weight:800;background:#dcfce7;color:#166534}
+  .otrep-opc-it .rsg-porllegar{display:inline-block;margin-left:6px;border-radius:50px;padding:1px 8px;font-size:.7rem;font-weight:800;background:#fff8e1;color:#92400e}
+  @media (max-width:768px){ .rsg-para{grid-template-columns:1fr} }
+</style>
 
 {# Modal "Solicitar repuesto" — POTENTE (Fase 2, 2026-09-25 -- Daniel: "el
    solicitar repuesto debe ser bien potente"). REGLA #15: mismo lenguaje que
@@ -1258,11 +1373,16 @@ function rsQueryString(extra){
   if (_rs.fecha_desde) p.set('fecha_desde', _rs.fecha_desde);
   if (_rs.fecha_hasta) p.set('fecha_hasta', _rs.fecha_hasta);
   if (_rs.q) p.set('q', _rs.q);
+  if (_rs.responsable) p.set('responsable', _rs.responsable);
+  if (_rs.solicitante) p.set('solicitante', _rs.solicitante);
+  if (_rs.mias) p.set('mias', '1');
+  if (_rs.fs) p.set('fs', '1');
   if (extra) Object.keys(extra).forEach(function(k){ p.set(k, extra[k]); });
   return p.toString();
 }
 function rsHayFiltrosExtra(){
-  return !!(_rs.origen || _rs.cliente_id || _rs.proveedor_id || _rs.fecha_desde || _rs.fecha_hasta);
+  return !!(_rs.origen || _rs.cliente_id || _rs.proveedor_id || _rs.fecha_desde || _rs.fecha_hasta
+            || _rs.responsable || _rs.solicitante || _rs.mias || _rs.fs);
 }
 
 // ⚠️ 2026-09-25 (Daniel: "el técnico ya está subiendo solicitudes de
@@ -1275,6 +1395,7 @@ async function rsCargarPendientesSolo(){
     const j = await r.json();
     if (j.ok){
       rsAplicarPendientesTecnicos(j.pendientes_tecnicos);
+    rsFFsPintar(j.fuera_servicio_n);
       // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): esta
       // llamada (usada cuando la página abre en Bodega) nunca actualizaba
       // la burbuja "abiertas" de la pestaña Solicitudes -- se quedaba en el
@@ -1379,6 +1500,7 @@ async function rsCargar(){
     rsPintarChips();
     rsPintar();
     rsAplicarPendientesTecnicos(j.pendientes_tecnicos);
+    rsFFsPintar(j.fuera_servicio_n);
     rsAplicarConteoAbiertas(j.conteo);
     rsFiltrosSyncBoton();
     rsActualizarExportLink();
@@ -1418,13 +1540,59 @@ function rsFiltrosAplicar(){
   _rs.proveedor_id = _selProv ? (_selProv.value || '') : '';
   _rs.fecha_desde = document.getElementById('rsFDesde').value || '';
   _rs.fecha_hasta = document.getElementById('rsFHasta').value || '';
+  _rs.responsable = document.getElementById('rsFResp').value || '';
+  _rs.solicitante = document.getElementById('rsFSol').value || '';
   _rs.page = 1;
   rsCargar();
 }
+function rsFFsToggle(){
+  _rs.fs = !_rs.fs;
+  const b = document.getElementById('rsFFs');
+  b.classList.toggle('on', _rs.fs);
+  b.setAttribute('aria-pressed', _rs.fs ? 'true' : 'false');
+  _rs.page = 1;
+  rsCargar();
+}
+function rsFFsPintar(n){
+  const b = document.getElementById('rsFFs');
+  if (!b || n === undefined) return;   // respuestas que no traen el conteo no lo tocan
+  document.getElementById('rsFFsN').textContent = n || 0;
+  b.style.display = (n > 0 || _rs.fs) ? '' : 'none';
+}
+function rsFMiasToggle(){
+  _rs.mias = !_rs.mias;
+  const b = document.getElementById('rsFMias');
+  b.classList.toggle('on', _rs.mias);
+  b.setAttribute('aria-pressed', _rs.mias ? 'true' : 'false');
+  _rs.page = 1;
+  rsCargar();
+}
+async function rsCargarPersonas(){
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/personas', {credentials:'same-origin'});
+    const j = await r.json();
+    if (!j.ok) return;
+    const llenar = function(id, lista, primeras){
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      sel.innerHTML = primeras + (lista || []).map(function(n){ return '<option value="' + rsEsc(n) + '">' + rsEsc(n) + '</option>'; }).join('');
+    };
+    llenar('rsFResp', j.responsables, '<option value="">Responsable: todos</option><option value="__sin__">Sin responsable</option>');
+    llenar('rsFSol', j.solicitantes, '<option value="">Pidió: todos</option>');
+  } catch(e){}
+}
+document.addEventListener('DOMContentLoaded', rsCargarPersonas);
 function rsFiltrosLimpiar(){
   // REGLA #4.3 punto 4: al limpiar un filtro, la lista se recarga siempre.
   _rs.origen = ''; _rs.cliente_id = ''; _rs.cliente_nombre = ''; _rs.proveedor_id = '';
   _rs.fecha_desde = ''; _rs.fecha_hasta = '';
+  _rs.responsable = ''; _rs.solicitante = ''; _rs.mias = false; _rs.fs = false;
+  const _bFs = document.getElementById('rsFFs');
+  if (_bFs){ _bFs.classList.remove('on'); _bFs.setAttribute('aria-pressed', 'false'); }
+  document.getElementById('rsFResp').value = '';
+  document.getElementById('rsFSol').value = '';
+  const _bMias = document.getElementById('rsFMias');
+  if (_bMias){ _bMias.classList.remove('on'); _bMias.setAttribute('aria-pressed', 'false'); }
   document.getElementById('rsFOrigen').value = '';
   document.getElementById('rsFCliente').value = '';
   const _selProv2 = document.getElementById('rsFProveedor');   // no existe para un técnico (2026-10-01)
@@ -1564,7 +1732,7 @@ function rsPintarGrupos(){
       const checked = !!sel[s.id];
       return '<div class="rs-grupo-item"><input type="checkbox" ' + (checked ? 'checked' : '') +
         ' onchange="rsGrupoToggle(\'' + key + '\', ' + s.id + ', this.checked)">' +
-        '<div class="rs-card ' + (_RS_EST_CLS[s.estado] || 'sol') + (s.por_atender ? ' por-atender' : '') + '">' + rsCardInner(s) + '</div></div>';
+        '<div class="rs-card ' + (_RS_EST_CLS[s.estado] || 'sol') + (s.por_atender ? ' por-atender' : '') + (s.prioridad_fs ? ' prio-fs' : '') + '">' + rsCardInner(s) + '</div></div>';
     }).join('');
     if (_rs.vista === 'proveedor'){
       const contacto = [g.contacto, g.telefono, g.email].filter(Boolean).join(' · ') + (g.canal ? (' · ' + g.canal) : '');
@@ -1667,7 +1835,7 @@ function rsGrupoGenerarOT(key){
 }
 function rsCard(s){
   const est = _RS_EST_CLS[s.estado] || 'sol';
-  const card = '<div class="rs-card ' + est + (s.por_atender ? ' por-atender' : '') + '">' + rsCardInner(s) + '</div>';
+  const card = '<div class="rs-card ' + est + (s.por_atender ? ' por-atender' : '') + (s.prioridad_fs ? ' prio-fs' : '') + '">' + rsCardInner(s) + '</div>';
   // 🏗️ Fase 4 (2026-09-26): checkbox de selección para "Generar OT (N)" en
   // la vista Lista -- solo tiene sentido si el usuario puede generar OT
   // (mismo permiso que ya gatea el botón individual de cada tarjeta).
@@ -1754,6 +1922,18 @@ function rsCompraBadge(s){
   return '<a class="rs-compra ' + (s.compra_estado || '') + '" href="' + href + '" target="_blank" rel="noopener">'
     + '<i class="bi bi-truck"></i> ' + rsEsc(txt) + '</a>';
 }
+/* 2026-10-04 ("gestionar y ordenar la solicitud"): qué le falta a una solicitud
+   por validar para quedar lista para el lote -- foto, repuesto ligado y proveedor.
+   Mismas tres condiciones que exige el servidor al validar. */
+function rsFaltaHtml(s){
+  if (s.estado !== 'solicitado') return '';
+  const falta = [];
+  if (!(parseInt(s.n_fotos || 0, 10) > 0)) falta.push('foto');
+  if (!s.repuesto_stock_id) falta.push('repuesto de bodega');
+  if (!s.proveedor_id) falta.push('proveedor');
+  if (!falta.length) return '<div class="rs-liga ok"><i class="bi bi-check2-circle"></i> Lista para validar</div>';
+  return '<div class="rs-liga pend"><i class="bi bi-list-check"></i> Falta: <b>' + falta.join(' · ') + '</b></div>';
+}
 function rsCardInner(s){
   const est = _RS_EST_CLS[s.estado] || 'sol';
   const evs = (s.evidencias || []).map(function(e){
@@ -1761,7 +1941,7 @@ function rsCardInner(s){
       (e.tipo === 'video' ? '<span class="rs-ev-vid"><i class="bi bi-play-circle-fill"></i></span>' : '<img src="' + rsEsc(e.url) + '" loading="lazy" alt="">') + '</a>';
   }).join('');
   const acciones = (s.siguientes || []).filter(function(n){ return _rs.puedePedir || (n !== 'pedido' && n !== 'rechazado'); }).map(function(n){
-    const lbl = {validado:'Validar en bodega', pedido:'Pedir al proveedor', recibido:'Recibido', instalado:'Instalado', rechazado:'Rechazar', solicitado:'Reabrir'}[n] || n;
+    const lbl = {validado:'Gestionar solicitud', pedido:'Pedir al proveedor', recibido:'Recibido', instalado:'Instalado', rechazado:'Rechazar', solicitado:'Reabrir'}[n] || n;
     const cls = {validado:'val', pedido:'ped', recibido:'rec', instalado:'ins', rechazado:'rej', solicitado:'sol'}[n] || '';
     return '<button type="button" class="rs-btn ' + cls + '" onclick="rsAccion(' + s.id + ', \'' + n + '\')">' + lbl + '</button>';
   // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
@@ -1874,7 +2054,7 @@ function rsCardInner(s){
         '<div class="rs-v"><b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + rsEsc(s.repuesto_nombre) + ' × ' + rsFmt(s.cantidad) +
           (s.abierta && _rs.puedePedir ? ' <button type="button" class="rs-cant-editar" title="Ajustar cantidad" onclick="rsEditarCantidad(' + s.id + ')"><i class="bi bi-pencil-fill"></i></button>' : '') + '</b>' +
           (s.piola_metros ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
-          (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga +
+          (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga + rsFaltaHtml(s) +
           (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) +
           rsCompraBadge(s) +
           {#- 💰 M3 (revisión Opus 2026-09-26 -- Daniel: "corregir costo de
@@ -1908,6 +2088,7 @@ function rsCardInner(s){
         (s.nota_gestion ? '<div class="rs-nota"><i class="bi bi-chat-left-text"></i> ' + rsEsc(s.nota_gestion) + '</div>' : '') +
       '</div>' +
     '</div>' +
+    rsTableroHtml(s) +
     '<div class="rs-foot">' +
       '<span class="rs-tl">' + rsTimeline(s) + '</span>' +
       '<div class="rs-acc">' + generarOT + acciones + '</div>' +
@@ -1985,14 +2166,66 @@ async function rsTomar(sid){
     await rsCargar();
   } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
+/* 2026-10-04 (Daniel: "un tracking que vayamos validando paso a paso... con
+   trazabilidad real"): cada paso muestra CUÁNDO y QUIÉN, a la vista (antes solo
+   un tooltip sin nombre). Quién sale de la bitácora propia (eventos) y, para
+   solicitudes anteriores a ella, de las columnas que ya existían. */
 function rsTimeline(s){
-  const pasos = [['solicitado', s.created_at], ['validado', s.validado_at], ['pedido', s.pedido_at], ['recibido', s.recibido_at], ['instalado', s.instalado_at]];
-  const orden = ['solicitado','validado','pedido','recibido','instalado'];
+  const corto = function(f){ const m = /^(\d{2})\/(\d{2})\/\d{4} (\d{2}:\d{2})/.exec(f || ''); return m ? (m[1] + '/' + m[2] + ' ' + m[3]) : (f || ''); };
+  const evs = s.eventos || [];
+  const quienDe = function(estado){
+    for (let i = evs.length - 1; i >= 0; i--){ if (evs[i].accion === 'estado' && evs[i].a_estado === estado) return evs[i].usuario || ''; }
+    return {solicitado: s.solicitado_por, validado: s.validado_por, instalado: s.resuelto_por, rechazado: s.resuelto_por}[estado] || '';
+  };
+  const lbl = {solicitado:'Solicitado', validado:'Validado', pedido:'Pedido', recibido:'Recibido', instalado: s.es_reposicion ? 'En bodega' : 'Instalado'};
+  const pasos = [['solicitado', s.created_at], ['validado', s.validado_at], ['pedido', s.pedido_at], ['recibido', s.recibido_at]];
+  if (!s.es_reposicion) pasos.push(['instalado', s.instalado_at]);
+  const orden = pasos.map(function(p){ return p[0]; });
   const idx = orden.indexOf(s.estado);
-  return pasos.map(function(p, i){
+  let html = pasos.map(function(p, i){
     const hecho = s.estado === 'rechazado' ? (p[1] != null) : (i <= idx && (p[1] != null || i === 0));
-    return '<span class="rs-tl-p' + (hecho ? ' ok' : '') + '" title="' + rsEsc(p[1] || '') + '">' + p[0] + '</span>';
-  }).join('<i class="bi bi-chevron-right"></i>');
+    const actual = !hecho && (i === idx + 1) && s.estado !== 'rechazado' && s.abierta;
+    const quien = hecho ? quienDe(p[0]) : '';
+    return '<div class="rs-trk-p' + (hecho ? ' ok' : (actual ? ' ahora' : '')) + '">' +
+      '<span class="rs-trk-c">' + (hecho ? '<i class="bi bi-check-lg"></i>' : (i + 1)) + '</span>' +
+      '<span class="rs-trk-l">' + lbl[p[0]] + '</span>' +
+      (hecho && p[1] ? '<span class="rs-trk-f">' + rsEsc(corto(p[1])) + '</span>' : (actual ? '<span class="rs-trk-f">Siguiente</span>' : '')) +
+      (quien ? '<span class="rs-trk-q">' + rsEsc(quien) + '</span>' : '') + '</div>';
+  }).join('');
+  if (s.estado === 'rechazado'){
+    html += '<div class="rs-trk-p rej"><span class="rs-trk-c"><i class="bi bi-x-lg"></i></span><span class="rs-trk-l">Rechazado</span>' +
+      (quienDe('rechazado') ? '<span class="rs-trk-q">' + rsEsc(quienDe('rechazado')) + '</span>' : '') + '</div>';
+  }
+  return '<div class="rs-trk">' + html + '</div>';
+}
+/* Tablero de la solicitud: en qué ticket está, con cuántas va agrupada, quién
+   es el responsable, la compra al proveedor y la OT de instalación (con su estado). */
+function rsTableroHtml(s){
+  const items = [];
+  if (s.prioridad_fs){
+    items.push('<span class="rs-tab-i prio"><i class="bi bi-exclamation-octagon-fill"></i><b>Prioridad inmediata:</b> el equipo' +
+      (s.maquina_nombre ? ' ' + rsEsc(s.maquina_nombre) : '') + ' está fuera de servicio</span>');
+  }
+  if (s.numero_ticket){
+    const n = parseInt(s.ticket_n_solicitudes || 1, 10);
+    items.push('<span class="rs-tab-i"><i class="bi bi-ticket-perforated"></i>Ticket <b>' + rsEsc(s.numero_ticket) + '</b>' +
+      (n > 1 ? ' · agrupa <b>' + n + '</b> solicitudes' : ' · solo esta solicitud') + '</span>');
+    items.push('<span class="rs-tab-i' + (s.ticket_asignado_a ? '' : ' falta') + '"><i class="bi bi-person-badge"></i>Responsable: <b>' +
+      rsEsc(s.ticket_asignado_a || 'nadie todavía') + '</b></span>');
+  } else {
+    items.push('<span class="rs-tab-i falta"><i class="bi bi-ticket-perforated"></i>Sin ticket todavía: el responsable se asigna al tomar el ticket</span>');
+  }
+  if (s.compra_numero_ticket){
+    items.push('<span class="rs-tab-i"><i class="bi bi-cart-check"></i>Compra <b>' + rsEsc(s.compra_numero_ticket) + '</b>' +
+      (s.compra_estado ? ' · ' + rsEsc(String(s.compra_estado).replace(/_/g, ' ')) : '') +
+      (s.compra_eta ? ' · llega ' + rsEsc(s.compra_eta) : '') + '</span>');
+  }
+  if (s.ot_generada_id){
+    items.push('<span class="rs-tab-i"><i class="bi bi-tools"></i>OT de instalación <b>' + rsEsc(s.ot_generada_numero || ('#' + s.ot_generada_id)) + '</b>' +
+      (s.ot_generada_estado ? ' · ' + rsEsc(String(s.ot_generada_estado).replace(/_/g, ' ')) : '') + '</span>');
+  }
+  if (s.es_reposicion) items.push('<span class="rs-tab-i"><i class="bi bi-box-seam"></i>Reposición de stock propio: termina al llegar a bodega</span>');
+  return '<div class="rs-tablero">' + items.join('') + '</div>';
 }
 
 async function rsAccion(sid, nuevo){
@@ -2093,34 +2326,103 @@ async function rsPostEstado(sid, body){
   } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); return false; }
 }
 
-/* Validar: ligar a un repuesto real (buscar) o crear en bodega. */
-function rsValAbrir(s){
-  _rs.valSid = s.id; _rs.sel = null;
-  document.getElementById('rsValTitulo').textContent = '#' + s.id + ' · ' + s.repuesto_nombre + ' · ' + (s.numero_ot || '');
+/* Gestionar solicitud (2026-10-04, antes "Validar en bodega"): el mismo flujo
+   para TODOS los orígenes (OT, incidencia, ticket, manual). Paso 1 elige o crea
+   el repuesto, paso 2 muestra para quién es (con lo que haya), paso 3 el
+   proveedor (obligatorio). Valida con rsPostEstado(..., {repuesto_stock_id,
+   proveedor_id}) -- el servidor exige ambas cosas (_otrep_cambiar_estado). */
+async function rsGestCargarProvs(){
+  if (!_rs.provs){
+    try {
+      const r = await fetch('/mantenciones/api/proveedores-repuesto', {credentials:'same-origin'});
+      const j = await r.json();
+      _rs.provs = j.proveedores || [];
+    } catch(e){ _rs.provs = []; }
+  }
+  return _rs.provs;
+}
+function rsGestOpcionesProv(sel, elegido){
+  const provs = _rs.provs || [];
+  sel.innerHTML = '<option value="">— Elige el proveedor —</option>' + provs.map(function(p){
+    return '<option value="' + p.id + '"' + (String(p.id) === String(elegido || '') ? ' selected' : '') + '>' + rsEsc(p.nombre) + '</option>';
+  }).join('');
+}
+function rsGestCtxHtml(s){
+  const origen = {ot:'OT', incidencia:'Incidencia', ticket:'Ticket', manual:'Solicitud manual'}[s.contexto] || (s.origen_label || 'Solicitud');
+  const ref = s.contexto === 'ot' ? (s.numero_ot || '') : (s.contexto === 'incidencia' ? ('#' + (s.incidencia_id || '')) : (s.contexto === 'ticket' ? (s.numero_ticket || '') : ''));
+  const fotos = parseInt(s.n_fotos || 0, 10);
+  return '<span class="rsg-chip"><i class="bi bi-diagram-2"></i>' + rsEsc(origen) + (ref ? ' · ' + rsEsc(ref) : '') + '</span>' +
+    '<span><b>' + rsEsc(s.repuesto_nombre || 'Repuesto sin nombre') + '</b> × ' + rsFmt(s.cantidad || 1) + '</span>' +
+    (s.motivo ? '<span>«' + rsEsc(s.motivo) + '»</span>' : '') +
+    (fotos > 0 ? '<span style="color:#166534;font-weight:700"><i class="bi bi-camera-fill"></i> ' + fotos + ' foto' + (fotos === 1 ? '' : 's') + '</span>'
+               : '<span class="rsg-falta"><i class="bi bi-camera"></i> Sin foto: súbela en la tarjeta antes de validar</span>');
+}
+function rsGestParaHtml(s){
+  const fila = function(k, v, falta){ return '<div><span class="k">' + k + '</span><span class="v' + (falta ? ' falta' : '') + '">' + v + '</span></div>'; };
+  const cliente = s.es_reposicion ? 'Reposición de stock propio (sin cliente)' : (s.cliente_nombre || s.cliente || '');
+  const equipo = [s.maquina_nombre, s.maquina_serie ? 'S/N ' + s.maquina_serie : ''].filter(Boolean).join(' · ');
+  return '<div class="rsg-para">' +
+    fila('Cliente', cliente ? rsEsc(cliente) : 'Sin cliente todavía', !cliente) +
+    fila('Equipo', equipo ? rsEsc(equipo) : 'Sin equipo indicado', false) +
+    fila('Viene de', rsEsc({ot:'OT ' + (s.numero_ot || ''), incidencia:'Incidencia #' + (s.incidencia_id || ''), ticket:'Ticket ' + (s.numero_ticket || ''), manual:'Solicitud manual'}[s.contexto] || (s.origen_label || '—')), false) +
+    fila('Ticket que la agrupa', s.numero_ticket ? rsEsc(s.numero_ticket) : 'Se crea al pedir', false) +
+    '</div>' + (!cliente ? '<div class="rsg-hint" style="color:#b45309"><i class="bi bi-info-circle me-1"></i>Puedes validarla igual; el cliente se completa cuando se genere la OT de instalación.</div>' : '');
+}
+function rsGestPintar(){
+  const p1 = document.getElementById('rsGestPaso1'), p2 = document.getElementById('rsGestPaso2'), p3 = document.getElementById('rsGestPaso3');
+  const prov = document.getElementById('rsGestProv').value;
+  if (p1) p1.classList.toggle('is-complete', !!_rs.sel);
+  if (p2) p2.classList.toggle('is-complete', true);
+  if (p3) p3.classList.toggle('is-complete', !!prov);
+  const btn = document.getElementById('rsValBtn');
+  if (btn) btn.disabled = !(_rs.sel && prov);
+  const hint = document.getElementById('rsGestProvHint');
+  if (hint) hint.textContent = prov ? 'Quedará en el lote de este proveedor (pestaña "Por proveedor").' : 'Elige el proveedor: sin él la solicitud no puede entrar a un lote de compra.';
+}
+async function rsValAbrir(s){
+  _rs.valSid = s.id; _rs.sel = null; _rs.selProv = null;
+  document.getElementById('rsValTitulo').textContent = '#' + s.id + ' · ' + (s.repuesto_nombre || '') + (s.numero_ot ? ' · ' + s.numero_ot : '');
   document.getElementById('rsValErr').textContent = '';
-  document.getElementById('rsValBtn').disabled = true;
+  document.getElementById('rsGestCtx').innerHTML = rsGestCtxHtml(s);
+  document.getElementById('rsGestPara').innerHTML = rsGestParaHtml(s);
+  document.getElementById('rsGestHint').innerHTML = s.maquina_id
+    ? '<i class="bi bi-stars me-1"></i>Primero aparecen los repuestos <b>compatibles con el equipo</b>' + (s.maquina_nombre ? ' (' + rsEsc(s.maquina_nombre) + ')' : '') + '.'
+    : 'Revisa si ya existe antes de crear uno nuevo, para no duplicarlo.';
+  rsNuMostrar(false);
   const q = document.getElementById('rsValQ');
   q.value = s.stock_sku || (s.origen === 'piola' ? 'piola' : (s.repuesto_nombre || '').split(' ').slice(0, 2).join(' '));
-  rsValBuscar(q.value);
+  if (s.repuesto_stock_id) _rs.sel = s.repuesto_stock_id;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalValidar')).show();
+  await rsGestCargarProvs();
+  rsGestOpcionesProv(document.getElementById('rsGestProv'), s.proveedor_id);
+  rsGestOpcionesProv(document.getElementById('rsNuProv'), s.proveedor_id);
+  rsGestPintar();
+  rsValBuscar(q.value);
 }
 function rsValBuscar(q){
   clearTimeout(_rs.valTimer);
   const cont = document.getElementById('rsValLista');
   q = (q || '').trim();
-  if (q.length < 2){ cont.innerHTML = '<div class="otrep-opc-vacio">Escribe al menos 2 letras.</div>'; return; }
+  const s = rsBuscarSolicitud(_rs.valSid) || {};
+  if (q.length < 2 && !s.maquina_id){ cont.innerHTML = '<div class="otrep-opc-vacio">Escribe al menos 2 letras.</div>'; return; }
   _rs.valTimer = setTimeout(async function(){
     cont.innerHTML = '<div class="otrep-opc-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando…</div>';
     try {
-      const r = await fetch('/ot/api/repuestos/bodega-buscar?q=' + encodeURIComponent(q), {credentials:'same-origin'});
+      // Mismo motor de siempre: con maquina_id y solo_compat=0 trae TODO pero
+      // rankea primero los compatibles con el modelo del equipo (es_compatible).
+      let url = '/ot/api/repuestos/bodega-buscar?ctx=gestion&q=' + encodeURIComponent(q);
+      if (s.maquina_id) url += '&maquina_id=' + encodeURIComponent(s.maquina_id) + '&solo_compat=0';
+      const r = await fetch(url, {credentials:'same-origin'});
       const j = await r.json();
       const items = j.repuestos || [];
       _rs._val = items;
-      if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Nada en la bodega con "' + rsEsc(q) + '". Créalo con el botón de abajo (pide ubicación).</div>'; return; }
+      if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Nada en la bodega con "' + rsEsc(q) + '". Créalo aquí con el botón de abajo.</div>'; return; }
       cont.innerHTML = items.map(function(it){
-        return '<button type="button" class="otrep-opc-it" data-id="' + it.id + '" onclick="rsValSel(' + it.id + ', this)">' +
+        return '<button type="button" class="otrep-opc-it' + (String(it.id) === String(_rs.sel) ? ' on' : '') + '" data-id="' + it.id + '" onclick="rsValSel(' + it.id + ', this)">' +
           '<span class="ph">' + (it.foto_url ? '<img src="' + rsEsc(it.foto_url) + '" alt="">' : '<i class="bi bi-gear"></i>') + '</span>' +
-          '<span class="inf"><b>' + rsEsc(it.descripcion) + '</b><small>' + rsEsc(it.sku) + (it.marca ? ' · ' + rsEsc(it.marca) : '') + (it.ubicacion_codigo ? ' · ' + rsEsc(it.ubicacion_codigo) : '') + (it.proveedor ? ' · ' + rsEsc(it.proveedor) : '') + '</small></span>' +
+          '<span class="inf"><b>' + rsEsc(it.descripcion) + '</b>' + (it.es_compatible ? '<span class="rsg-compat">Compatible con el equipo</span>' : '') +
+          (!it.ubicacion_codigo && !((it.cantidad || 0) > 0) ? '<span class="rsg-porllegar">Por llegar</span>' : '') +
+          '<small>' + rsEsc(it.sku) + (it.marca ? ' · ' + rsEsc(it.marca) : '') + (it.ubicacion_codigo ? ' · ' + rsEsc(it.ubicacion_codigo) : '') + (it.proveedor ? ' · ' + rsEsc(it.proveedor) : '') + '</small></span>' +
           ((it.cantidad || 0) > 0 ? '<span class="stk">' + rsFmt(it.cantidad) + ' en stock</span>' : '<span class="stk sin">sin stock</span>') + '</button>';
       }).join('');
     } catch(e){ cont.innerHTML = '<div class="otrep-opc-vacio">No se pudo buscar.</div>'; }
@@ -2129,11 +2431,58 @@ function rsValBuscar(q){
 function rsValSel(id, btn){
   _rs.sel = id;
   document.querySelectorAll('#rsValLista .otrep-opc-it').forEach(function(b){ b.classList.toggle('on', b === btn); });
-  document.getElementById('rsValBtn').disabled = false;
+  // Si el repuesto elegido ya trae proveedor y todavía no se eligió uno, se sugiere ese.
+  const it = (_rs._val || []).find(function(x){ return String(x.id) === String(id); });
+  const sel = document.getElementById('rsGestProv');
+  if (it && it.proveedor_id && sel && !sel.value) sel.value = String(it.proveedor_id);
+  rsGestPintar();
+}
+function rsNuMostrar(mostrar){
+  const box = document.getElementById('rsNuBox'), tog = document.getElementById('rsNuToggle');
+  const ver = mostrar === undefined ? box.hidden : !!mostrar;
+  box.hidden = !ver; tog.hidden = ver;
+  if (ver){
+    const s = rsBuscarSolicitud(_rs.valSid) || {};
+    const d = document.getElementById('rsNuDesc');
+    if (!d.value) d.value = s.repuesto_nombre || '';
+    d.focus();
+  }
+}
+async function rsNuCrear(){
+  const s = rsBuscarSolicitud(_rs.valSid) || {};
+  const desc = (document.getElementById('rsNuDesc').value || '').trim();
+  const prov = document.getElementById('rsNuProv').value;
+  const costo = document.getElementById('rsNuCosto').value;
+  const err = document.getElementById('rsValErr');
+  if (!desc){ err.textContent = 'Escribe la descripción del repuesto.'; return; }
+  if (!prov){ err.textContent = 'Elige el proveedor del repuesto nuevo.'; return; }
+  const btn = document.getElementById('rsNuBtn'); btn.disabled = true; err.textContent = '';
+  const origenNota = s.contexto === 'incidencia' ? ('Incidencia #' + (s.incidencia_id || ''))
+    : (s.contexto === 'ticket' ? ('Ticket ' + (s.numero_ticket || '')) : (s.numero_ot || 'solicitud manual'));
+  try {
+    const r = await fetch('/mantenciones/api/repuestos-stock', {
+      method: 'POST', credentials: 'same-origin', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ por_llegar: true, descripcion: desc, proveedor_id: prov, costo_unitario: costo || null,
+        cliente_id: s.cliente_id || null,
+        notas: 'Creado «por llegar» desde ' + origenNota + ' · solicitud #' + (s.id || '') + (s.motivo ? ' · ' + s.motivo : '') + '. Falta escanear su ubicación al recibirlo.' }),
+    });
+    const j = await r.json().catch(function(){ return {}; });
+    if (!j.ok){ err.textContent = j.error || 'No se pudo crear el repuesto.'; btn.disabled = false; return; }
+    _rs.sel = j.id;
+    document.getElementById('rsGestProv').value = String(prov);
+    ilusToast('✓ Repuesto ' + (j.sku || '') + ' creado «por llegar». Ahora valida la solicitud.', { type: 'success' });
+    rsNuMostrar(false);
+    document.getElementById('rsValQ').value = j.sku || desc;
+    rsValBuscar(j.sku || desc);
+    rsGestPintar();
+  } catch(e){ err.textContent = 'Error de red: ' + e.message; }
+  btn.disabled = false;
 }
 async function rsValConfirmar(){
-  if (!_rs.sel || !_rs.valSid) return;
-  const ok = await rsPostEstado(_rs.valSid, { estado: 'validado', repuesto_stock_id: _rs.sel });
+  const prov = document.getElementById('rsGestProv').value;
+  if (!_rs.sel){ document.getElementById('rsValErr').textContent = 'Elige o crea el repuesto (paso 1).'; return; }
+  if (!prov){ document.getElementById('rsValErr').textContent = 'Elige el proveedor (paso 3).'; return; }
+  const ok = await rsPostEstado(_rs.valSid, { estado: 'validado', repuesto_stock_id: _rs.sel, proveedor_id: prov });
   if (ok) bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalValidar')).hide();
 }
 function rsCrearEnBodega(){
