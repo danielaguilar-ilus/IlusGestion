@@ -621,6 +621,11 @@ const TPL_ESTADOS_MANTENCIONES = [
   // acompaña un documento contractual.
   { key:'anexo_nueva_ot',      label:'Anexo de servicios al proveedor', icon:'bi-file-earmark-check', grupo:'anexo',
     color:'#dc2626', desc:'Aviso de OT nueva + link para que el proveedor firme el Anexo de Servicios' },
+  // 2026-10-04 (Daniel): campaña para ofrecer mantención a clientes de instalación.
+  { key:'prospecto_oferta_1',  label:'Oferta de mantención · 15 días', icon:'bi-megaphone-fill', grupo:'prospecto',
+    color:'#f59e0b', desc:'Primer correo al cliente de instalación, 15 días después de terminada la instalación (abre un ticket sin asignar)' },
+  { key:'prospecto_oferta_2',  label:'Oferta de mantención · 3 meses', icon:'bi-megaphone', grupo:'prospecto',
+    color:'#d97706', desc:'Segundo correo, 3 meses después de la instalación, si el cliente no aceptó ni rechazó' },
 ];
 
 const TPL_ESTADOS_COMUNICACION_INTERNA = [
@@ -768,6 +773,11 @@ const TPL_VARS = {
     { v:'{{cliente_nombre}}',   label:'Razón social del cliente' },
     { v:'{{link_anexo}}',       label:'Link para firmar el anexo' },
     { v:'{{link_ot}}',          label:'Link a la OT' },
+  ],
+  prospecto: [
+    { v:'{{cliente_nombre}}',     label:'Razón social del cliente' },
+    { v:'{{contacto_nombre}}',    label:'Nombre del contacto' },
+    { v:'{{fecha_instalacion}}',  label:'Fecha en que terminó la instalación' },
   ],
   interna: [
     { v:'{{nombre_usuario}}',   label:'Nombre del usuario' },
@@ -1408,6 +1418,7 @@ const GRUPO_LABELS = {
   retiro:     { label:'Retiros',              icon:'bi-box-arrow-up' },
   mantencion: { label:'Servicio Técnico',     icon:'bi-wrench-adjustable' },
   anexo:      { label:'Anexo de servicios',   icon:'bi-file-earmark-check' },
+  prospecto:  { label:'Oferta de mantención', icon:'bi-megaphone-fill' },
   interna:    { label:'Comunicación interna', icon:'bi-people' },
   general:    { label:'General',              icon:'bi-megaphone' },
   tickets:    { label:'Tickets',              icon:'bi-ticket-perforated' },

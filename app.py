@@ -38958,6 +38958,12 @@ def tr_cron_simpliroute_poll():
                 res["retiros_prep_auto"] = _fn_rp(max_s=70)
         except Exception as _e_rp:
             print(f"[cron-simpliroute] retiros prep auto: {_e_rp}", flush=True)
+    # Campaña de mantención a clientes de instalación (Daniel 2026-10-04). Mismo criterio: si falla no afecta al polling.
+    if not dry:
+        try:
+            res["prospectos_oferta"] = _prospectos_oferta_barrido()
+        except Exception as _e_po:
+            print(f"[cron-simpliroute] prospectos oferta: {_e_po}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -69336,6 +69342,279 @@ def _prospecto_convertir_a_mantencion(cid, motivo):
     except Exception as e:
         print(f"[prospecto_convertir] cid={cid}: {e}", flush=True)
         return False
+
+
+# ── CAMPAÑA AUTOMÁTICA: ofrecer mantención a los clientes de instalación ──
+# Daniel 2026-10-04: a los 15 días y a los 3 meses de terminada la instalación
+# se abre un ticket SIN asignar (bandeja del equipo comercial) y sale un correo
+# con la plantilla editable de Comunicaciones. Si no responde, una persona lo
+# llama desde el ticket. Quien rechaza (etapa «Rechazada») o ya aceptó no recibe
+# nada más. Apagar: PROSPECTOS_OFERTA_AUTO=0 (solo con permiso de Daniel).
+_PROSP_TOQUES = {1: 15, 2: 90}          # toque -> días tras terminar la instalación
+_PROSP_CORREO_VENTANA_DIAS = 14         # un toque más vencido NO sale por correo solo
+_PROSP_PLAN_PUNTOS = (
+    "Plan de mantención con gestión de descuento",
+    "Certificación de repuestos originales",
+    "Menos tiempo con máquinas detenidas",
+    "Gestión eficiente de repuestos y de mantención",
+)
+
+
+def _ensure_mant_prospecto_toques():
+    """Registro de cada toque de la campaña (1 fila por cliente y toque).
+    Su PRIMARY KEY es lo que impide crear dos veces el mismo ticket/correo."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_prospecto_toques (
+                cliente_id    INT NOT NULL,
+                toque         TINYINT NOT NULL,
+                ticket_id     INT NULL,
+                correo_a      VARCHAR(190) NULL,
+                correo_estado VARCHAR(20) NULL,
+                nota          VARCHAR(300) NULL,
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (cliente_id, toque)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_mant_prospecto_toques] {e}", flush=True)
+
+
+def _prospecto_oferta_seed(toque):
+    """(asunto, cuerpo_html) por defecto de la plantilla editable."""
+    lis = "".join(f'<li style="margin:4px 0">{p}</li>' for p in _PROSP_PLAN_PUNTOS)
+    if toque == 1:
+        asunto = "Cuida tus equipos: conoce el Plan de Mantención ILUS Fitness"
+        intro = ("<p>Hola {{contacto_nombre}},</p>"
+                 "<p>Hace unos días instalamos el equipamiento de <b>{{cliente_nombre}}</b> "
+                 "y queremos que siga funcionando al 100%. Por eso te presentamos nuestro "
+                 "<b>Plan de Mantención</b>:</p>")
+    else:
+        asunto = "¿Ya conoces el Plan de Mantención para tus equipos?"
+        intro = ("<p>Hola {{contacto_nombre}},</p>"
+                 "<p>Te escribimos de nuevo por los equipos de <b>{{cliente_nombre}}</b>, "
+                 "instalados el {{fecha_instalacion}}. Una mantención a tiempo evita paradas "
+                 "y gastos grandes. Nuestro <b>Plan de Mantención</b> incluye:</p>")
+    cuerpo = (intro
+              + f'<ul style="margin:10px 0 14px;padding-left:20px">{lis}</ul>'
+              + "<p>Responde este correo o escríbenos y te contactamos para armar un plan "
+                "a la medida de tu centro.</p>")
+    return asunto, cuerpo
+
+
+def _ensure_comm_template_prospecto_oferta():
+    """Siembra idempotente de 'prospecto_oferta_1' y 'prospecto_oferta_2'
+    (modulo 'mantenciones') AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE: no
+    pisa lo que Daniel edite desde /comunicaciones."""
+    try:
+        for t in (1, 2):
+            asunto, cuerpo = _prospecto_oferta_seed(t)
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('mantenciones',%s,'email',%s,%s)",
+                (f"prospecto_oferta_{t}", asunto, cuerpo))
+    except Exception as e:
+        print(f"[ensure_comm_tpl] prospecto_oferta: {e}", flush=True)
+
+
+def _prospecto_crear_ticket(cli, toque, ref, correo_txt):
+    """Ticket SIN asignar (tipo mantención) para gestionar la oferta.
+    Va por SQL directo: no pasa por la ruta de tickets, así que NO le manda al
+    cliente el correo de «ticket creado» (ya recibe la oferta)."""
+    now = datetime.now()
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/Santiago"))
+    except Exception:
+        pass
+    puntos = "\n".join(f"  • {p}" for p in _PROSP_PLAN_PUNTOS)
+    cuando = "15 días" if toque == 1 else "3 meses"
+    desc = (f"Seguimiento comercial: ofrecer plan de mantención a {cli['razon_social']} "
+            f"({cuando} después de terminada la instalación, el {ref.strftime('%d/%m/%Y')}).\n\n"
+            f"{correo_txt}\n\n"
+            f"Si no responde el correo, llamar por teléfono y preguntar si le interesa una "
+            f"mantención. Ofrecer:\n{puntos}\n\n"
+            f"Registrar el resultado en la ficha del cliente (etapa: Ofrecida / Aceptada / "
+            f"Rechazada). Si el cliente rechaza, marcar «Rechazada» para que no se le vuelva a escribir.")
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tk_tickets "
+                "(origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, "
+                " nombre_contacto, email, phone, direccion, comuna_nombre, fecha_limite, created_by) "
+                "VALUES ('backoffice','open','maintenance','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (f"Ofrecer plan de mantención ({cuando}) — {cli['razon_social']}"[:300], desc,
+                 (cli.get("rut") or "")[:12] or None, (cli["razon_social"] or "")[:150],
+                 (cli.get("contacto_nombre") or "")[:150] or None,
+                 (cli.get("contacto_email") or cli.get("email_empresa") or "")[:150] or None,
+                 (cli.get("contacto_tel") or cli.get("tel_empresa") or "")[:20] or None,
+                 (cli.get("direccion") or "")[:255] or None,
+                 (cli.get("comuna") or "")[:120] or None,
+                 (now.date() + timedelta(days=5)), "sistema"))
+            tid = cur.lastrowid
+            cur.execute(
+                "UPDATE tk_tickets SET numero_ticket = CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                (now.year, tid))
+            try:
+                cur.execute(
+                    "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                    "VALUES (%s,'creacion',%s,'sistema',1)",
+                    (tid, f"Ticket creado automáticamente por la campaña de mantención a clientes de "
+                          f"instalación (toque {toque}: {cuando}). {correo_txt}"))
+            except Exception as _e:
+                print(f"[prospecto_ticket] mensaje no insertado: {_e}", flush=True)
+        conn.commit()
+    finally:
+        conn.close()
+    return tid
+
+
+def _prospectos_oferta_barrido(max_n=15, dry=False):
+    """Crea los tickets (y envía el correo) de la campaña. Idempotente: el
+    PRIMARY KEY de mant_prospecto_toques reclama cada (cliente, toque) antes de
+    actuar. Corre colgado del trabajo de Cloud Scheduler (cada 10 min).
+    Solo manda correo de lunes a viernes, 08:00-19:00 hora Chile."""
+    res = {"ok": True, "tickets": [], "correos": 0, "omitidos": 0, "errores": []}
+    if (os.environ.get("PROSPECTOS_OFERTA_AUTO", "1") or "1").strip().lower() in ("0", "false", "no"):
+        res["apagado"] = True
+        return res
+    now = datetime.now()
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/Santiago"))
+    except Exception:
+        pass
+    if now.weekday() >= 5 or not (8 <= now.hour < 19):
+        res["fuera_de_horario"] = True
+        return res
+    hoy = now.date()
+    _ensure_mant_prospecto_toques()
+    try:
+        cands = mysql_fetchall(
+            "SELECT c.id, c.razon_social, c.rut, c.contacto_nombre, c.contacto_email, "
+            "       c.email_empresa, c.contacto_tel, c.tel_empresa, c.direccion, c.comuna, "
+            "       MIN(COALESCE(v.fecha_realizada, DATE(v.updated_at))) AS ref "
+            "  FROM mant_clientes c "
+            "  JOIN mant_visitas v ON v.cliente_id=c.id AND v.tipo='instalacion' "
+            "                     AND v.estado IN ('cerrada','completada') "
+            "  LEFT JOIN mant_prospecto_seguimiento s ON s.cliente_id=c.id "
+            " WHERE c.estado='prospecto' "
+            "   AND COALESCE(s.etapa,'por_ofrecer') NOT IN ('aceptada','rechazada') "
+            " GROUP BY c.id "
+            "HAVING ref IS NOT NULL AND ref <= DATE_SUB(CURDATE(), INTERVAL %s DAY) "
+            " ORDER BY ref ASC LIMIT 200", (_PROSP_TOQUES[1],)) or []
+    except Exception as e:
+        res["ok"] = False
+        res["errores"].append(f"consulta: {e}")
+        return res
+    hechos = 0
+    for c in cands:
+        if hechos >= max_n:
+            break
+        ref = c["ref"].date() if isinstance(c["ref"], datetime) else c["ref"]
+        dias = (hoy - ref).days
+        # El toque que toca es el más avanzado ya vencido; si el 1 quedó atrás
+        # (cliente antiguo) se marca omitido y no se manda doble.
+        vencidos = [t for t, d in _PROSP_TOQUES.items() if dias >= d]
+        if not vencidos:
+            continue
+        toque = max(vencidos)
+        hecho_antes = {r["toque"] for r in (mysql_fetchall(
+            "SELECT toque FROM mant_prospecto_toques WHERE cliente_id=%s", (c["id"],)) or [])}
+        if toque in hecho_antes:
+            continue
+        if dry:
+            res["tickets"].append({"cliente_id": c["id"], "toque": toque, "dry": True})
+            continue
+        if not mysql_execute_returning_rowcount(
+                "INSERT IGNORE INTO mant_prospecto_toques (cliente_id, toque) VALUES (%s,%s)",
+                (c["id"], toque)):
+            continue            # otro proceso lo reclamó
+        for t in vencidos:      # toques anteriores sin hacer: omitidos
+            if t < toque and t not in hecho_antes:
+                mysql_execute(
+                    "INSERT IGNORE INTO mant_prospecto_toques (cliente_id, toque, correo_estado, nota) "
+                    "VALUES (%s,%s,'omitido','Vencido: se hizo el toque siguiente')", (c["id"], t))
+        try:
+            dentro_ventana = (dias - _PROSP_TOQUES[toque]) <= _PROSP_CORREO_VENTANA_DIAS
+            emails = _mant_get_cliente_emails(c["id"])
+            estado_correo, correo_a, correo_txt = "sin_correo", None, \
+                "No hay correo del cliente: contactar por teléfono."
+            if emails and not dentro_ventana:
+                estado_correo = "no_automatico"
+                correo_txt = (f"El toque venció hace más de {_PROSP_CORREO_VENTANA_DIAS} días, "
+                              f"por eso el correo NO salió solo: revisar y enviar la oferta o llamar.")
+            elif emails:
+                if not comm_is_enabled("email"):
+                    estado_correo, correo_txt = "apagado", "El correo está apagado en Comunicaciones: llamar."
+                else:
+                    tpl = _render_comm_template(f"prospecto_oferta_{toque}", "email", {
+                        "cliente_nombre": c["razon_social"] or "",
+                        "contacto_nombre": (c.get("contacto_nombre") or "").strip() or "equipo",
+                        "fecha_instalacion": ref.strftime("%d/%m/%Y"),
+                    }, modulo="mantenciones")
+                    if tpl is None:
+                        a0, b0 = _prospecto_oferta_seed(toque)
+                        tpl = (a0, b0.replace("{{contacto_nombre}}", (c.get("contacto_nombre") or "equipo"))
+                               .replace("{{cliente_nombre}}", c["razon_social"] or "")
+                               .replace("{{fecha_instalacion}}", ref.strftime("%d/%m/%Y")))
+                    asunto, cuerpo = tpl
+                    html = _comm_render_email_document(asunto, cuerpo, subtitle="Plan de Mantención")
+                    ok = _send_ilus_email(emails[0], _brand_subject(asunto), html, modulo="mantenciones",
+                                          evento=f"prospecto_oferta_{toque}",
+                                          ref={"cliente_id": c["id"]})
+                    correo_a = emails[0]
+                    estado_correo = "enviado" if ok else "fallo"
+                    correo_txt = (f"Se envió el correo de oferta a {emails[0]}. Si no responde, llamar."
+                                  if ok else f"El correo a {emails[0]} falló: llamar.")
+                    if ok:
+                        res["correos"] += 1
+                        mysql_execute(
+                            "INSERT INTO mant_prospecto_seguimiento "
+                            "  (cliente_id, etapa, ofrecida_at, ofrecida_por, updated_by) "
+                            "VALUES (%s,'ofrecida',UTC_TIMESTAMP(),'sistema','sistema') "
+                            "ON DUPLICATE KEY UPDATE "
+                            "  etapa=IF(etapa='por_ofrecer','ofrecida',etapa), "
+                            "  ofrecida_at=COALESCE(ofrecida_at, VALUES(ofrecida_at)), "
+                            "  ofrecida_por=COALESCE(ofrecida_por, VALUES(ofrecida_por))",
+                            (c["id"],))
+            tid = _prospecto_crear_ticket(c, toque, ref, correo_txt)
+            mysql_execute(
+                "UPDATE mant_prospecto_toques SET ticket_id=%s, correo_a=%s, correo_estado=%s "
+                " WHERE cliente_id=%s AND toque=%s", (tid, correo_a, estado_correo, c["id"], toque))
+            _mant_log("cliente", c["id"], "prospecto_toque",
+                      f"Campaña de mantención · toque {toque} · ticket #{tid} · correo: {estado_correo}")
+            res["tickets"].append({"cliente_id": c["id"], "toque": toque, "ticket_id": tid,
+                                   "correo": estado_correo})
+            hechos += 1
+        except Exception as e:
+            print(f"[prospectos_oferta] cliente={c['id']}: {e}", flush=True)
+            res["errores"].append(f"cliente {c['id']}: {str(e)[:120]}")
+            # Se libera el reclamo para reintentar en el próximo ciclo
+            # (solo si todavía no se creó el ticket).
+            try:
+                mysql_execute(
+                    "DELETE FROM mant_prospecto_toques WHERE cliente_id=%s AND toque=%s AND ticket_id IS NULL",
+                    (c["id"], toque))
+            except Exception:
+                pass
+    return res
+
+
+@app.route("/mantenciones/cron/prospectos-oferta", methods=["GET", "POST"])
+def mant_cron_prospectos_oferta():
+    """Disparo manual / por Cloud Scheduler. Mismo token que los demás cron.
+    ?dry=1 solo lista lo que haría."""
+    tok = _cron_extract_token()
+    esperado = ((os.environ.get("ILUS_CRON_TOKEN") or "").strip()
+                or (os.environ.get("FEDEX_CRON_TOKEN") or "").strip())
+    if esperado:
+        if tok != esperado:
+            return jsonify({"error": "forbidden"}), 403
+    elif request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
+        return jsonify({"error": "forbidden"}), 403
+    return jsonify(_prospectos_oferta_barrido(dry=(request.args.get("dry") or "") in ("1", "true", "yes")))
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/prospecto/seguimiento", methods=["POST"])
@@ -144384,6 +144663,8 @@ except Exception as _ensure_tr_err:
 try:
     with app.app_context():
         _ensure_mant_prospecto_seguimiento()
+        _ensure_mant_prospecto_toques()
+        _ensure_comm_template_prospecto_oferta()
 except Exception as _ensure_prosp_err:
     print(f"[ILUS][WARN] _ensure_mant_prospecto_seguimiento: {_ensure_prosp_err}", flush=True)
 
