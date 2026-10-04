@@ -366,7 +366,6 @@
         </div>
       </div>
       <script>
-      async function guardarProspecto(btn){
       let _pmModal = null, _pm = null;
       function cotizarPlan(tipo){
         const q = new URLSearchParams({ desde_cliente: '{{ cliente.id }}', plan: '1', tipo: tipo,
@@ -420,6 +419,7 @@
         finally { btn.disabled = false; }
       }
 
+      async function guardarProspecto(btn){
         btn.disabled = true;
         try {
           const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/prospecto/seguimiento', {

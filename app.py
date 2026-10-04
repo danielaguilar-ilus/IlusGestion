@@ -62742,6 +62742,7 @@ def mant_clientes():
         # Aviso de «clientes de instalación a los que ofrecer mantención»: los que
         # aún no tienen contrato y cuya oferta no está cerrada (aceptada/rechazada).
         _pend = [c for c in clientes if c.get("pr") and c.get("estado") != "inactivo"
+                 and c.get("tipo_cliente") == "instalacion"
                  and c.get("contrato_estado") == "sin_contrato"
                  and c["pr"]["etapa"] in ("por_ofrecer", "ofrecida")]
         _inst_stats = {
@@ -69524,7 +69525,7 @@ def _prospectos_oferta_barrido(max_n=15, dry=False):
             "  JOIN mant_visitas v ON v.cliente_id=c.id AND v.tipo='instalacion' "
             "                     AND v.estado IN ('cerrada','completada') "
             "  LEFT JOIN mant_prospecto_seguimiento s ON s.cliente_id=c.id "
-            " WHERE (c.estado='prospecto' OR c.tipo_cliente='instalacion') AND c.estado<>'inactivo' "
+            " WHERE c.tipo_cliente='instalacion' AND c.estado<>'inactivo' "
             "   AND NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id "
             "                    AND ct.nombre<>'Contenedor de documentos') "
             "   AND COALESCE(s.etapa,'por_ofrecer') NOT IN ('aceptada','rechazada') "
