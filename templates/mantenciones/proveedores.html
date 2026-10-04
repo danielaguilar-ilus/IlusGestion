@@ -1,172 +1,523 @@
 {% extends "base.html" %}
-{% block title %}Proveedores de equipos — ILUS{% endblock %}
+{% block title %}Proveedores de equipos — ILUS Fitness{% endblock %}
+{% block head_extra %}
+{# Mismo diseño de tarjetas que Couriers (Daniel 2026-10-04: "tarjetas así...
+   con diseños atractivos"): se REUSAN sus hojas (tokens --trx-* y .cr-*), no
+   una copia. Lo propio de Proveedores va abajo, con prefijo .pv-. #}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='ilus_couriers.css') }}" rel="stylesheet">
+{% endblock %}
 {% block content %}
+{# ══════════════════════════════════════════════════════════════════════
+   PROVEEDORES COMO REPOSITORIO (2026-10-04, Daniel: "es prioridad que
+   mejoremos los proveedores, ya que esa será nuestro repositorio... mejorar
+   las tarjetas en términos de formato y la calidad de la información" +
+   "tarjetas así [Couriers], donde mantengamos relación de solicitudes y además
+   calidad de información").
+   Anatomía (igual que Couriers): franja de color · nombre + chips + datos +
+   logo · KPIs (bodega, solicitudes, compras, entrega real) · condiciones +
+   "Falta…" · contacto · acciones (Ficha, Solicitudes, Compras, Editar, Correo,
+   Llamar). Nada se quitó (REGLA #4.2): Nuevo, Editar, canal, contacto de
+   respaldo, notas y los repuestos del sistema anterior (dentro de la ficha).
+   Indicadores reales: _prov_indicadores() en app.py.
+   ══════════════════════════════════════════════════════════════════════ #}
 <style>
-.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px}
-.prov-card{
-  background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:24px 26px;cursor:pointer;
-  box-shadow:0 1px 3px rgba(15,23,42,.06);transition:.18s;position:relative;overflow:hidden;
+/* Proveedores: lo propio sobre el diseño de Couriers */
+.pv-wrap .cr-meta span{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word}  /* REGLA #15: nada cortado */
+.pv-wrap .cr-nombre{word-break:break-word}
+.pv-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.pv-kpi{background:#fff;border:1px solid var(--trx-g2,#e5e7eb);border-radius:14px;padding:12px 16px}
+.pv-kpi .k{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--trx-muted,#6b7280)}
+.pv-kpi .v{font-size:1.6rem;font-weight:900;color:var(--trx-black,#0a0a0a);line-height:1.1}
+.pv-kpi.warn .v{color:#b45309}.pv-kpi.ok .v{color:#15803d}.pv-kpi.hot .v{color:var(--trx-red,#dc2626)}
+.pv-ficha-ring{flex:none;width:64px;height:64px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:conic-gradient(var(--pv-c) calc(var(--pv-p) * 1%), #eef0f3 0);position:relative}
+.pv-ficha-ring::after{content:'';position:absolute;inset:6px;border-radius:50%;background:#fff}
+.pv-ficha-ring b,.pv-ficha-ring small{position:relative;z-index:1;line-height:1}
+.pv-ficha-ring b{font-size:1.05rem;font-weight:900;color:var(--trx-black,#0a0a0a)}
+.pv-ficha-ring small{font-size:.58rem;font-weight:800;color:var(--trx-muted,#6b7280);margin-top:2px}
+.pv-n-verde{--pv-c:#16a34a}.pv-n-ambar{--pv-c:#f59e0b}.pv-n-rojo{--pv-c:#dc2626}
+.pv-falta-l{font-size:.8rem;color:#92400e;line-height:1.45}
+.pv-notas{font-size:.8rem;color:var(--trx-muted,#4b5563);white-space:pre-wrap;padding:0 16px 10px}
+.pv-canal{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:800;padding:4px 10px;border-radius:50px;color:#fff;flex:none}
+.pv-canal.whatsapp{background:#16a34a}.pv-canal.wechat{background:#07a04f}.pv-canal.telefono{background:#2563eb}.pv-canal.email{background:#4b5563}
+.pv-canal.sin{background:#f3f4f6;color:#6b7280}
+.cr-kpi-v.hot{color:var(--trx-red,#dc2626)}
+/* Modales */
+#modalProveedor .modal-header,#modalProveedorDetalle .modal-header{background:#0a0a0a;color:#fff}
+#modalProveedor .btn-close,#modalProveedorDetalle .btn-close{filter:invert(1)}
+.pv-step{border:1.5px solid #e5e7eb;border-radius:14px;margin-bottom:14px;overflow:hidden;background:#fff}
+.pv-step.done{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
+.pv-step-h{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #f3f4f6}
+.pv-step-c{width:38px;height:38px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:900;
+  background:#dc2626;color:#fff;box-shadow:0 0 0 4px rgba(220,38,38,.15)}
+.pv-step.done .pv-step-c{background:#16a34a;box-shadow:0 0 0 4px rgba(22,163,74,.15)}
+.pv-step-t{font-weight:900;font-size:1.02rem;color:#0a0a0a}
+.pv-step-s{font-size:.84rem;color:#4b5563}
+.pv-step-b{padding:14px}
+.pv-seg{display:flex;gap:6px;flex-wrap:wrap}
+.pv-seg label{min-height:44px;display:inline-flex;align-items:center;gap:6px;border:1.5px solid #e5e7eb;border-radius:10px;padding:8px 14px;font-weight:700;cursor:pointer;background:#fff}
+.pv-seg input{position:absolute;opacity:0;pointer-events:none}
+.pv-seg label:has(input:checked){background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.pv-sec{border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;margin-bottom:14px;background:#fff}
+.pv-sec h6{font-weight:900;font-size:1rem;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.pv-sec h6 i{color:#dc2626}
+.pv-dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;font-size:.92rem}
+.pv-dl .k{display:block;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#4b5563}
+.pv-dl .v{color:#0a0a0a;font-weight:700;word-break:break-word}
+.pv-dl .v.falta{color:#b45309}
+.pv-check{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 14px;font-size:.92rem}
+.pv-check li{display:flex;align-items:center;gap:7px}
+.pv-check .ok i{color:#16a34a}.pv-check .no{color:#92400e;font-weight:700}.pv-check .no i{color:#f59e0b}
+.pv-ind{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.pv-ind div{background:#f9fafb;border:1px solid #eef0f3;border-radius:12px;padding:8px 10px;text-align:center}
+.pv-ind b{display:block;font-size:1.25rem;font-weight:900;color:#0a0a0a;line-height:1.1}
+.pv-ind small{display:block;font-size:.72rem;font-weight:700;color:#4b5563;line-height:1.25}
+.pv-tabla{width:100%;font-size:.9rem;border-collapse:collapse}
+.pv-tabla th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:#4b5563;font-weight:800;padding:6px 8px;border-bottom:2px solid #e5e7eb;text-align:left}
+.pv-tabla td{padding:7px 8px;border-bottom:1px solid #f3f4f6;vertical-align:top}
+.pv-sem{display:inline-block;border-radius:50px;padding:2px 9px;font-weight:800;font-size:.76rem;white-space:nowrap}
+.pv-sem.verde{background:#dcfce7;color:#166534}.pv-sem.ambar{background:#fff8e1;color:#92400e}.pv-sem.rojo{background:#fee2e2;color:#991b1b}
+.pv-sem.gris{background:#f3f4f6;color:#374151}
+.pv-btn{min-height:38px;border-radius:10px;padding:4px 12px;font-weight:800;font-size:.88rem;display:inline-flex;align-items:center;gap:6px;border:1.5px solid #0a0a0a;background:#fff;color:#0a0a0a;cursor:pointer}
+.pv-rel{margin:0 16px 12px;border:1.5px solid #eef0f3;border-radius:14px;background:#fbfbfc;overflow:hidden}
+.pv-rel-tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1.5px solid #eef0f3}
+.pv-rel-t{min-height:44px;border:0;background:transparent;font-weight:800;font-size:.84rem;color:#4b5563;display:flex;align-items:center;justify-content:center;gap:6px;
+  cursor:pointer;transition:background .15s,color .15s;position:relative;flex-wrap:wrap}
+.pv-rel-t b{background:#e5e7eb;color:#111827;border-radius:50px;padding:1px 8px;font-size:.78rem}
+.pv-rel-t b.hot{background:#dc2626;color:#fff}
+.pv-rel-t.on{background:#fff;color:#0a0a0a}
+.pv-rel-t.on::after{content:'';position:absolute;left:14%;right:14%;bottom:-1.5px;height:3px;border-radius:3px;background:var(--marca,#dc2626)}
+.pv-rel-t:hover{color:#0a0a0a}
+.pv-fs-dot{background:#dc2626;color:#fff;border-radius:50px;font-size:.68rem;padding:1px 6px;animation:pvLate 1.6s ease-in-out infinite}
+.pv-sin-dot{background:#fee2e2;color:#991b1b;border-radius:50px;font-size:.68rem;padding:1px 7px}
+@keyframes pvLate{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}50%{box-shadow:0 0 0 5px rgba(220,38,38,0)}}
+.pv-rel-p{padding:6px;display:flex;flex-direction:column;gap:4px;animation:pvEntra .2s ease-out}
+@keyframes pvEntra{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.pv-rel-it{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:10px;background:#fff;border:1px solid #f1f2f4;text-decoration:none;color:#111827;
+  transition:transform .12s,box-shadow .12s,border-color .12s}
+a.pv-rel-it:hover{transform:translateX(3px);border-color:var(--marca,#dc2626);box-shadow:0 4px 12px -6px rgba(0,0,0,.25);color:#111827}
+.pv-rel-it.fs{border-color:#fca5a5;background:#fff5f5}
+.pv-rel-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.pv-rel-txt b{font-size:.85rem;font-weight:800;word-break:break-word}
+.pv-rel-txt small{font-size:.74rem;color:#4b5563;word-break:break-word}
+.pv-est{flex:none;font-size:.68rem;font-weight:900;letter-spacing:.03em;text-transform:uppercase;border-radius:50px;padding:3px 8px;white-space:nowrap}
+.pv-est.e-solicitado{background:#fee2e2;color:#991b1b}
+.pv-est.e-validado{background:#dbeafe;color:#1e40af}
+.pv-est.e-pedido{background:#fff8e1;color:#92400e}
+.pv-est.e-recibido{background:#dcfce7;color:#166534}
+.pv-fs-tag{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:900;color:#fff;background:#dc2626;border-radius:50px;padding:3px 8px}
+.pv-stk{flex:none;font-size:.72rem;font-weight:800;border-radius:50px;padding:3px 8px;white-space:nowrap}
+.pv-stk.ok{background:#dcfce7;color:#166534}.pv-stk.no{background:#fee2e2;color:#991b1b}
+.pv-semaf{flex:none;width:12px;height:12px;border-radius:50%}
+.pv-semaf.s-verde{background:#16a34a;box-shadow:0 0 0 3px #dcfce7}.pv-semaf.s-ambar{background:#f59e0b;box-shadow:0 0 0 3px #fff8e1}
+.pv-semaf.s-rojo{background:#dc2626;box-shadow:0 0 0 3px #fee2e2}
+.pv-rel-vacio{padding:12px;text-align:center;font-size:.82rem;color:#6b7280;display:flex;align-items:center;justify-content:center;gap:6px}
+.pv-rel-mas{display:block;text-align:center;padding:7px;font-size:.8rem;font-weight:800;color:var(--marca,#dc2626);text-decoration:none}
+.pv-rel-mas:hover{text-decoration:underline}
+.pv-wrap .cr-card{animation:pvAparece .35s ease-out both}
+@keyframes pvAparece{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.pv-wrap .cr-card,.pv-rel-p,.pv-fs-dot{animation:none}}
+@media (max-width:992px){ .pv-kpis{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media (max-width:768px){
+  .pv-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pv-dl,.pv-check{grid-template-columns:1fr}
+  .pv-ind{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
-.prov-card:hover{box-shadow:0 10px 28px -8px rgba(220,38,38,.28);border-color:#f3c9c9;transform:translateY(-2px)}
-.prov-card::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:4px;
-  background:linear-gradient(90deg,#dc2626,#f87171);opacity:0;transition:.18s;
-}
-.prov-card:hover::before{opacity:1}
-.prov-name{font-weight:800;font-size:1.28rem;color:#0a0a0a;margin-bottom:6px}
-.prov-contact{font-size:.95rem;color:#6b7280;margin-bottom:12px}
-.prov-row{font-size:.92rem;color:#374151;display:flex;align-items:center;gap:9px;margin-bottom:7px}
-.prov-row i{width:18px;color:#9ca3af;font-size:1rem}
-.prov-channel{
-  display:inline-flex;align-items:center;gap:6px;font-size:.8rem;font-weight:800;
-  padding:5px 13px;border-radius:50px;color:#fff;margin-top:10px;
-}
-.prov-channel.whatsapp{background:#16a34a}
-.prov-channel.wechat{background:#07C160}
-.prov-channel.telefono{background:#3b82f6}
-.prov-channel.email{background:#6b7280}
-.prov-count{
-  position:absolute;top:14px;right:16px;font-size:.68rem;font-weight:800;color:#dc2626;
-  background:#fee2e2;padding:3px 10px;border-radius:50px;
-}
-.prov-notas{font-size:.76rem;color:#9ca3af;margin-top:8px;font-style:italic;
-  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.prov-empty{padding:60px 20px;text-align:center;color:#9ca3af}
-
-/* Modal crear/editar proveedor */
-#modalProveedor .modal-header{background:#0a0a0a;color:#fff;border-radius:.5rem .5rem 0 0}
-#modalProveedor .btn-close{filter:invert(1)}
-
-/* Detalle de repuestos asociados */
-.prov-detail-item{padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:.85rem;display:flex;justify-content:space-between;gap:8px}
-.prov-detail-item:last-child{border-bottom:none}
-.rep-badge{font-size:.66rem;font-weight:700;padding:2px 9px;border-radius:50px;white-space:nowrap;display:inline-block}
-.rep-cotizado{background:#f3f4f6;color:#6b7280}
-.rep-aprobado{background:#dbeafe;color:#1d4ed8}
-.rep-instalado{background:#dcfce7;color:#166534}
-.rep-facturado{background:#fff8e1;color:#b45309}
-.rep-cancelado{background:#fee2e2;color:#991b1b}
 </style>
 
-<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-  <div>
-    <h4><i class="bi bi-truck me-2"></i>Proveedores de equipos</h4>
-    <div class="sub">Tarjetero de contactos de proveedores — canal preferido de contacto y repuestos asociados.</div>
-  </div>
-  <button class="btn btn-sm btn-danger" type="button" onclick="provAbrirNuevo()">
-    <i class="bi bi-plus-lg me-1"></i>Nuevo proveedor</button>
-</div>
+<div class="container-fluid py-3 px-3 px-md-4 pv-wrap">
 
-{% if proveedores %}
-<div class="prov-grid">
-  {% for p in proveedores %}
-  <div class="prov-card" onclick="provVerDetalle({{ p.id }})">
-    <span class="prov-count">{{ p.n_repuestos }} producto{{ 's' if p.n_repuestos != 1 else '' }}</span>
-    <div class="prov-name">{{ p.nombre }}</div>
-    {% if p.contacto_nombre %}<div class="prov-contact">{{ p.contacto_nombre }}</div>{% endif %}
-    {% if p.telefono %}<div class="prov-row"><i class="bi bi-telephone"></i>{{ p.telefono }}</div>{% endif %}
-    {% if p.email %}<div class="prov-row"><i class="bi bi-envelope"></i>{{ p.email }}</div>{% endif %}
-    {% if p.canal_preferido %}
-    <span class="prov-channel {{ p.canal_preferido }}">
-      {% if p.canal_preferido == 'whatsapp' %}<i class="bi bi-whatsapp"></i>WhatsApp
-      {% elif p.canal_preferido == 'wechat' %}<i class="bi bi-chat-dots"></i>WeChat
-      {% elif p.canal_preferido == 'telefono' %}<i class="bi bi-telephone"></i>Teléfono
-      {% elif p.canal_preferido == 'email' %}<i class="bi bi-envelope"></i>Email
-      {% endif %}
-    </span>
-    {% endif %}
-    {% if p.contacto2_nombre %}<div class="prov-row"><i class="bi bi-person-lines-fill"></i>{{ p.contacto2_nombre }} <span class="text-muted" style="font-size:.72rem">(respaldo)</span></div>{% endif %}
-    {% if p.notas %}<div class="prov-notas">{{ p.notas }}</div>{% endif %}
-    <div class="mt-2">
-      <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size:.72rem;padding:3px 10px"
-              onclick="event.stopPropagation(); provAbrirEditar({{ p.id }}, '{{ p.nombre|e }}', '{{ p.contacto_nombre or ''|e }}', '{{ p.telefono or ''|e }}', '{{ p.email or ''|e }}', '{{ p.canal_preferido or '' }}', '{{ (p.notas or '')|e }}', '{{ p.contacto2_nombre or ''|e }}', '{{ p.contacto2_telefono or ''|e }}', '{{ p.contacto2_email or ''|e }}')">
-        <i class="bi bi-pencil"></i> Editar</button>
+  {# ── HEADER (mismo .trx-hero de Couriers) ── #}
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="/repuestos" title="Volver a Repuestos" aria-label="Volver a Repuestos"><i class="bi bi-arrow-left"></i></a>
+      <div class="trx-hero-ico"><i class="bi bi-truck"></i></div>
+      <div>
+        <div class="trx-crumb"><a href="/repuestos">Repuestos</a><span class="sep">›</span><span>Proveedores</span></div>
+        <h1>Proveedores de equipos</h1>
+        <div class="trx-hero-sub">Repositorio de proveedores: contactos, condiciones, lo que les compramos y sus solicitudes</div>
+      </div>
+    </div>
+    <div class="trx-hero-actions">
+      <button class="trx-btn-primary" type="button" onclick="provAbrirNuevo()"><i class="bi bi-plus-lg"></i>Nuevo proveedor</button>
     </div>
   </div>
-  {% endfor %}
-</div>
-{% else %}
-<div class="prov-empty">
-  <i class="bi bi-truck" style="font-size:2.5rem;opacity:.3"></i>
-  <div class="mt-2">Aún no hay proveedores registrados.</div>
-</div>
-{% endif %}
 
-<!-- Modal crear/editar -->
+  {% set R = resumen or {} %}
+  <div class="pv-kpis">
+    <div class="pv-kpi"><div class="k">Proveedores</div><div class="v">{{ R.total or 0 }}</div></div>
+    <div class="pv-kpi {{ 'ok' if (R.completas or 0) == (R.total or 0) and R.total else 'warn' }}"><div class="k">Fichas completas</div><div class="v">{{ R.completas or 0 }} <small style="font-size:.85rem;color:#4b5563">de {{ R.total or 0 }}</small></div></div>
+    <div class="pv-kpi {{ 'hot' if R.sol_abiertas else '' }}"><div class="k">Solicitudes abiertas</div><div class="v">{{ R.sol_abiertas or 0 }}</div></div>
+    <div class="pv-kpi"><div class="k">Compras en curso</div><div class="v">{{ R.compras_en_curso or 0 }}</div></div>
+    <div class="pv-kpi"><div class="k">En tránsito</div><div class="v">{{ R.en_transito or 0 }}</div></div>
+  </div>
+
+  {% if proveedores %}
+  {# ── BUSCADOR + FILTROS (mismo .cr-toolbar de Couriers). REGLA #4.3: limpiar
+     vuelve a armar la lista: todo pasa por pvFiltrar(). ── #}
+  <div class="cr-toolbar" id="pvToolbar">
+    <div class="cr-search">
+      <i class="bi bi-search"></i>
+      <input type="search" id="pvQ" autocomplete="off" placeholder="Buscar por nombre, contacto, país, correo o teléfono…"
+             aria-label="Buscar proveedor" oninput="pvFiltrar()">
+      <button type="button" class="cr-search-x" onclick="document.getElementById('pvQ').value='';pvFiltrar()" aria-label="Limpiar la búsqueda">
+        <i class="bi bi-x-circle-fill"></i></button>
+    </div>
+    <div class="cr-segs" role="group" aria-label="Filtrar proveedores">
+      <button type="button" class="cr-seg is-on" data-f="todos" onclick="pvSeg(this)">Todos <span class="n" data-n="todos">0</span></button>
+      <button type="button" class="cr-seg" data-f="solicitudes" onclick="pvSeg(this)">Con solicitudes <span class="n" data-n="solicitudes">0</span></button>
+      <button type="button" class="cr-seg" data-f="extranjero" onclick="pvSeg(this)">Extranjeros <span class="n" data-n="extranjero">0</span></button>
+      <button type="button" class="cr-seg" data-f="nacional" onclick="pvSeg(this)">Nacionales <span class="n" data-n="nacional">0</span></button>
+      <button type="button" class="cr-seg" data-f="incompleta" onclick="pvSeg(this)">Ficha incompleta <span class="n" data-n="incompleta">0</span></button>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="cr-grid" id="pvGrid">
+    {% for p in proveedores %}
+      {% set C = p.calidad %}
+      {% set _nomtxt = p.nombre or 'Proveedor' %}
+      {% set _marca = 'hsl(' ~ ((p.id|int * 47) % 360) ~ 'deg 62% 38%)' %}
+      {% set _ini3 = _nomtxt[:3]|upper %}
+      {% set _cp = (p.contacto_nombre or '').split() %}
+      {% set _cini = ((_cp[0][0] ~ (_cp[1][0] if _cp|length > 1 else ''))|upper) if _cp else '' %}
+      {% set _faltan = C['items']|rejectattr('ok')|map(attribute='texto')|list %}
+      {% set _pct = (C.ok * 100 // C.total) if C.total else 0 %}
+      {% set _stockpct = ((p.n_con_stock or 0) * 100 // (p.n_productos or 1)) if p.n_productos else 0 %}
+      {% set _datos = {'id': p.id, 'nombre': p.nombre, 'contacto_nombre': p.contacto_nombre or '', 'telefono': p.telefono or '', 'email': p.email or '',
+                       'canal_preferido': p.canal_preferido or '', 'notas': p.notas or '', 'contacto2_nombre': p.contacto2_nombre or '',
+                       'contacto2_telefono': p.contacto2_telefono or '', 'contacto2_email': p.contacto2_email or '', 'origen': p.origen or '',
+                       'pais': p.pais or '', 'moneda': p.moneda or '', 'rut_tax': p.rut_tax or '', 'condiciones_pago': p.condiciones_pago or '',
+                       'plazo_entrega_dias': p.plazo_entrega_dias if p.plazo_entrega_dias is not none else '', 'sitio_web': p.sitio_web or ''} %}
+    {# Los datos viajan en data-* (JSON escapado por el servidor): un nombre con
+       apóstrofe ("O'Brien") ya no rompe el botón Editar, como pasaba antes con
+       los parámetros escritos dentro del onclick. #}
+    <div id="cardWrap{{ p.id }}" data-prov='{{ _datos|tojson }}'
+         data-origen="{{ p.origen or '' }}" data-incompleta="{{ 1 if C.nivel != 'verde' else 0 }}"
+         data-solicitudes="{{ 1 if (p.sol_abiertas or p.compras_en_curso) else 0 }}"
+         data-buscar="{{ (_nomtxt ~ ' ' ~ (p.contacto_nombre or '') ~ ' ' ~ (p.contacto2_nombre or '') ~ ' ' ~ (p.pais or '') ~ ' ' ~ (p.email or '') ~ ' ' ~ (p.telefono or '') ~ ' ' ~ (p.rut_tax or ''))|lower }}">
+      <div class="cr-card" style="--marca:{{ _marca }}">
+        <div class="cr-bar"></div>
+
+        {# ── CABECERA ── #}
+        <div class="cr-head">
+          <a class="cr-id" href="#" onclick="event.preventDefault(); provVerDetalle({{ p.id }})" title="Abrir la ficha de {{ _nomtxt }}">
+            <div class="cr-nombre">{{ _nomtxt }}</div>
+            <div class="cr-chips">
+              {% if p.origen == 'extranjero' %}
+              <span class="cr-chip cr-chip-tipo"><i class="bi bi-globe-americas"></i>Extranjero{% if p.pais %} · {{ p.pais }}{% endif %}</span>
+              {% elif p.origen == 'nacional' %}
+              <span class="cr-chip cr-chip-tipo"><i class="bi bi-geo-alt"></i>Nacional</span>
+              {% else %}
+              <span class="cr-chip cr-chip-sin"><i class="bi bi-question-circle"></i>Origen sin definir</span>
+              {% endif %}
+              {% if p.moneda %}<span class="cr-chip cr-chip-off"><i class="bi bi-currency-exchange"></i>{{ p.moneda }}</span>{% endif %}
+              {% if C.nivel == 'verde' %}
+              <span class="cr-chip cr-chip-on"><i class="bi bi-patch-check-fill"></i>Ficha completa</span>
+              {% else %}
+              <span class="cr-chip cr-chip-sin"><i class="bi bi-list-check"></i>Ficha {{ C.ok }} de {{ C.total }}</span>
+              {% endif %}
+            </div>
+            <div class="cr-meta">
+              {% if p.telefono %}<div><i class="bi bi-telephone"></i><span>{{ p.telefono }}</span></div>{% endif %}
+              {% if p.email %}<div><i class="bi bi-envelope"></i><span>{{ p.email }}</span></div>{% endif %}
+              {% if p.sitio_web %}<div><i class="bi bi-globe2"></i><span>{{ p.sitio_web|replace('https://','')|replace('http://','') }}</span></div>{% endif %}
+              {% if p.rut_tax %}<div><i class="bi bi-card-text"></i><span>{{ p.rut_tax }}</span></div>{% endif %}
+              {% if not p.telefono and not p.email and not p.sitio_web %}
+              <div><i class="bi bi-dash-circle"></i><span>Sin datos de contacto</span></div>
+              {% endif %}
+            </div>
+          </a>
+          {# Logo: el proveedor todavía no tiene logo propio; anillo con la
+             calidad de la ficha (mismo recuadro que Couriers). #}
+          <div class="pv-ficha-ring pv-n-{{ C.nivel }}" style="--pv-p:{{ _pct }}" title="Ficha completa: {{ C.ok }} de {{ C.total }} datos">
+            <b>{{ C.ok }}/{{ C.total }}</b><small>FICHA</small>
+          </div>
+        </div>
+
+        {# ── KPIs: lo que le compramos y cómo responde ── #}
+        <a class="cr-kpis" href="#" onclick="event.preventDefault(); provVerDetalle({{ p.id }})" title="Ver el detalle de {{ _nomtxt }}">
+          <div class="cr-kpi">
+            <div class="cr-kpi-k">En bodega</div>
+            <div class="cr-kpi-v {% if not p.n_productos %}mute{% endif %}">{{ p.n_productos or 0 }}</div>
+            {% if p.n_productos %}
+            <div class="cr-bar-mini" title="{{ p.n_con_stock }} de {{ p.n_productos }} con stock"><span style="width:{{ _stockpct }}%"></span></div>
+            {% endif %}
+          </div>
+          <div class="cr-kpi">
+            <div class="cr-kpi-k">Solicitudes<br>abiertas</div>
+            <div class="cr-kpi-v {% if p.sol_abiertas %}hot{% else %}mute{% endif %}">{{ p.sol_abiertas or 0 }}</div>
+          </div>
+          <div class="cr-kpi">
+            <div class="cr-kpi-k">Compras<br>en curso</div>
+            <div class="cr-kpi-v {% if p.compras_en_curso %}ok{% else %}mute{% endif %}">{{ p.compras_en_curso or 0 }}</div>
+          </div>
+          <div class="cr-kpi">
+            <div class="cr-kpi-k">Entrega<br>real</div>
+            {% if p.plazo_real_dias is not none %}
+            <div class="cr-kpi-v" title="Promedio entre pedido y recibido ({{ p.n_entregas }} entregas)">{{ p.plazo_real_dias|round(0)|int }} d</div>
+            {% else %}
+            <div class="cr-kpi-v mute">Sin dato</div>
+            {% endif %}
+          </div>
+        </a>
+
+        {# ── RELACIÓN: solicitudes y repuestos con su stock (Daniel 2026-10-04:
+           "que se relacionen las solicitudes de repuestos... solicitudes y
+           repuestos asociados con su stock"). Dos pestañas, sin recargar. ── #}
+        {% set _tab0 = 'sol' if p.sols_n else 'rep' %}
+        <div class="pv-rel" data-tab="{{ _tab0 }}">
+          <div class="pv-rel-tabs" role="tablist" aria-label="Relación del proveedor">
+            <button type="button" role="tab" class="pv-rel-t {{ 'on' if _tab0 == 'sol' else '' }}" data-t="sol" onclick="pvTab(this)"
+                    aria-selected="{{ 'true' if _tab0 == 'sol' else 'false' }}">
+              <i class="bi bi-inbox-fill"></i>Solicitudes <b class="{{ 'hot' if p.sols_n else '' }}">{{ p.sols_n }}</b>
+              {% if p.sols_fs %}<span class="pv-fs-dot" title="{{ p.sols_fs }} con el equipo fuera de servicio">{{ p.sols_fs }}</span>{% endif %}
+            </button>
+            <button type="button" role="tab" class="pv-rel-t {{ 'on' if _tab0 == 'rep' else '' }}" data-t="rep" onclick="pvTab(this)"
+                    aria-selected="{{ 'true' if _tab0 == 'rep' else 'false' }}">
+              <i class="bi bi-box-seam-fill"></i>Repuestos <b>{{ p.reps_n }}</b>
+              {% if p.reps_sin_stock %}<span class="pv-sin-dot" title="{{ p.reps_sin_stock }} sin stock">{{ p.reps_sin_stock }} sin stock</span>{% endif %}
+            </button>
+          </div>
+          <div class="pv-rel-p" data-p="sol" {% if _tab0 != 'sol' %}hidden{% endif %}>
+            {% for s in p.sols_top %}
+            <a class="pv-rel-it {{ 'fs' if s.fs else '' }}" href="/repuestos?rs_proveedor={{ p.id }}#solicitudes" title="Abrir en el centro de solicitudes">
+              <span class="pv-est e-{{ s.estado }}" title="{{ s.estado_label }}">{{ {'solicitado':'Por validar','validado':'Validado','pedido':'Pedido','recibido':'Recibido'}.get(s.estado, s.estado_label) }}</span>
+              <span class="pv-rel-txt"><b>{{ s.repuesto_nombre }}{% if s.cantidad %} × {{ '%g'|format(s.cantidad) }}{% endif %}</b>
+                <small>#{{ s.id }}{% if s.cliente_nombre %} · {{ s.cliente_nombre }}{% endif %}{% if s.numero_ot %} · {{ s.numero_ot }}{% elif s.numero_ticket %} · {{ s.numero_ticket }}{% endif %}</small></span>
+              {% if s.fs %}<span class="pv-fs-tag" title="Equipo fuera de servicio"><i class="bi bi-exclamation-octagon-fill"></i>Urgente</span>
+              {% elif s.stock_cantidad is not none %}<span class="pv-stk {{ 'ok' if s.stock_cantidad > 0 else 'no' }}">{{ '%g'|format(s.stock_cantidad) }} en bodega</span>{% endif %}
+            </a>
+            {% else %}
+            <div class="pv-rel-vacio"><i class="bi bi-check2-circle"></i>Sin solicitudes abiertas con este proveedor</div>
+            {% endfor %}
+            {% if p.sols_n > 6 %}<a class="pv-rel-mas" href="/repuestos?rs_proveedor={{ p.id }}#solicitudes">Ver las {{ p.sols_n }} solicitudes <i class="bi bi-arrow-right"></i></a>{% endif %}
+          </div>
+          <div class="pv-rel-p" data-p="rep" {% if _tab0 != 'rep' %}hidden{% endif %}>
+            {% for r in p.reps_top %}
+            <div class="pv-rel-it">
+              <span class="pv-semaf s-{{ r.semaforo }}" title="{{ 'Sin stock' if r.semaforo == 'rojo' else ('Bajo el mínimo' if r.semaforo == 'ambar' else 'Con stock') }}"></span>
+              <span class="pv-rel-txt"><b>{{ r.descripcion }}</b><small>{{ r.sku }}{% if r.por_llegar %} · <span style="color:#b45309;font-weight:800">por llegar</span>{% endif %}</small></span>
+              <span class="pv-stk {{ 'ok' if r.cantidad > 0 else 'no' }}">{{ '%g'|format(r.cantidad) }} un.</span>
+            </div>
+            {% else %}
+            <div class="pv-rel-vacio"><i class="bi bi-box"></i>Todavía no hay repuestos de bodega ligados a este proveedor</div>
+            {% endfor %}
+            {% if p.reps_n > 6 %}<a class="pv-rel-mas" href="#" onclick="event.preventDefault(); provVerDetalle({{ p.id }}, 'repuestos')">Ver los {{ p.reps_n }} repuestos con su stock <i class="bi bi-arrow-right"></i></a>{% endif %}
+          </div>
+        </div>
+
+        {# ── CONDICIONES + calidad de la ficha ── #}
+        <div class="cr-datos">
+          <div class="cr-datos-g">
+            <div>
+              <div class="cr-dk">Plazo declarado</div>
+              {% if p.plazo_entrega_dias is not none %}<div class="cr-dv">{{ p.plazo_entrega_dias }} días</div>{% else %}<div class="cr-dv mute">Sin registrar</div>{% endif %}
+            </div>
+            <div>
+              <div class="cr-dk">Condiciones de pago</div>
+              {% if p.condiciones_pago %}<div class="cr-dv">{{ p.condiciones_pago }}</div>{% else %}<div class="cr-dv mute">Sin registrar</div>{% endif %}
+            </div>
+            <div>
+              <div class="cr-dk">Última compra</div>
+              {% if p.ultima_compra %}<div class="cr-dv">{{ p.ultima_compra }}</div>{% else %}<div class="cr-dv mute">Sin compras</div>{% endif %}
+            </div>
+          </div>
+          <div class="cr-doc">
+            {% if _faltan %}
+            <i class="bi bi-list-check" style="color:var(--trx-warn,#f59e0b)"></i>
+            <span class="falta pv-falta-l">Falta: {{ _faltan|join(' · ') }}</span>
+            <a class="push" href="#" onclick="event.preventDefault(); provAbrirEditarCard(this)">Completar</a>
+            {% else %}
+            <i class="bi bi-patch-check-fill" style="color:var(--trx-green,#16a34a)"></i>
+            <span class="nota">Ficha completa: todos los datos para comprar y costear</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if p.notas %}<div class="pv-notas">{{ p.notas }}</div>{% endif %}
+
+        {# ── PIE: contacto + canal ── #}
+        <div class="cr-pie">
+          <div class="cr-pers">
+            <div class="cr-av {% if not _cini %}vacio{% endif %}">{{ _cini or '—' }}</div>
+            <div style="min-width:0">
+              <div class="cr-pers-k">Contacto en el proveedor</div>
+              {% if p.contacto_nombre %}
+              <div class="cr-pers-v">{{ p.contacto_nombre }}{% if p.contacto2_nombre %} <span style="font-weight:600;color:#6b7280">· respaldo {{ p.contacto2_nombre }}</span>{% endif %}</div>
+              {% else %}
+              <div class="cr-pers-v mute">Sin registrar</div>
+              {% endif %}
+            </div>
+          </div>
+          {% if p.canal_preferido %}
+          <span class="pv-canal {{ p.canal_preferido }}">
+            {% if p.canal_preferido == 'whatsapp' %}<i class="bi bi-whatsapp"></i>WhatsApp
+            {% elif p.canal_preferido == 'wechat' %}<i class="bi bi-chat-dots"></i>WeChat
+            {% elif p.canal_preferido == 'telefono' %}<i class="bi bi-telephone"></i>Teléfono
+            {% else %}<i class="bi bi-envelope"></i>Correo{% endif %}</span>
+          {% else %}
+          <span class="pv-canal sin">Canal sin definir</span>
+          {% endif %}
+        </div>
+
+        {# ── ACCIONES (dos filas de tres, como Couriers) ── #}
+        <div class="cr-acc">
+          <button class="cr-btn cr-btn-primary" type="button" onclick="provVerDetalle({{ p.id }})" title="Abrir la ficha completa">
+            <i class="bi bi-file-person-fill"></i>Ficha</button>
+          <a class="cr-btn" href="/repuestos?rs_proveedor={{ p.id }}#solicitudes" title="Ver las solicitudes de repuesto de {{ _nomtxt }}">
+            <i class="bi bi-inbox"></i>Solicitudes</a>
+          <button class="cr-btn" type="button" onclick="provVerDetalle({{ p.id }}, 'compras')" title="Ver las compras a {{ _nomtxt }}">
+            <i class="bi bi-cart-check"></i>Compras</button>
+          <button class="cr-btn" type="button" onclick="provAbrirEditarCard(this)" title="Editar los datos de {{ _nomtxt }}">
+            <i class="bi bi-pencil-square"></i>Editar</button>
+          {% if p.email %}
+          <a class="cr-btn" href="mailto:{{ p.email }}" title="Escribir a {{ p.email }}"><i class="bi bi-envelope"></i>Correo</a>
+          {% else %}
+          <button class="cr-btn" type="button" disabled title="Sin correo registrado"><i class="bi bi-envelope"></i>Correo</button>
+          {% endif %}
+          {% if p.telefono %}
+          <a class="cr-btn" href="tel:{{ p.telefono|replace(' ','') }}" title="Llamar al {{ p.telefono }}"><i class="bi bi-telephone"></i>Llamar</a>
+          {% else %}
+          <button class="cr-btn" type="button" disabled title="Sin teléfono registrado"><i class="bi bi-telephone"></i>Llamar</button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div>
+      <div class="trx-card">
+        <div class="trx-empty">
+          <div class="trx-empty-ico"><i class="bi bi-truck"></i></div>
+          <div class="trx-empty-t">Todavía no hay proveedores registrados</div>
+          <div class="trx-empty-d">Crea el primero para ligarle sus repuestos y pedirle en lotes.</div>
+          <button class="trx-btn-primary" type="button" onclick="provAbrirNuevo()"><i class="bi bi-plus-lg"></i>Nuevo proveedor</button>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="trx-card mt-3" id="pvSinResultados" style="display:none">
+    <div class="trx-empty"><div class="trx-empty-ico"><i class="bi bi-search"></i></div>
+      <div class="trx-empty-t">Ningún proveedor coincide con la búsqueda</div></div>
+  </div>
+</div>
+
+<!-- Modal crear/editar (3 pasos, estilo Retiros) -->
 <div class="modal fade" id="modalProveedor" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+    <div class="modal-content" style="border-radius:16px">
       <div class="modal-header">
-        <h5 class="modal-title" id="modalProveedorTitulo"><i class="bi bi-truck me-2"></i>Nuevo proveedor</h5>
+        <h5 class="modal-title fw-bold" id="modalProveedorTitulo"><i class="bi bi-truck me-2"></i>Nuevo proveedor</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body" oninput="pvPasos()" onchange="pvPasos()">
         <input type="hidden" id="provId">
-        <div class="mb-3">
-          <label class="form-label small fw-bold">Nombre *</label>
-          <input type="text" class="form-control" id="provNombre" style="font-size:16px" required>
-        </div>
-        <div class="mb-3">
-          <label class="form-label small fw-bold">Nombre de contacto</label>
-          <input type="text" class="form-control" id="provContacto" style="font-size:16px">
-        </div>
-        <div class="row g-2 mb-3">
-          <div class="col-6">
-            <label class="form-label small fw-bold">Teléfono</label>
-            <input type="text" class="form-control" id="provTelefono" style="font-size:16px">
-          </div>
-          <div class="col-6">
-            <label class="form-label small fw-bold">Email</label>
-            <input type="email" class="form-control" id="provEmail" style="font-size:16px">
-          </div>
-        </div>
-        <div class="mb-3">
-          <label class="form-label small fw-bold">Canal preferido</label>
-          <select class="form-select" id="provCanal" style="font-size:16px">
-            <option value="">— Sin definir —</option>
-            <option value="whatsapp">WhatsApp</option>
-            <option value="wechat">WeChat</option>
-            <option value="telefono">Teléfono</option>
-            <option value="email">Email</option>
-          </select>
-        </div>
-        <hr>
-        <div class="mb-2">
-          <label class="form-label small fw-bold text-muted mb-1">Contacto secundario <span class="fw-normal">(respaldo — opcional)</span></label>
-          <input type="text" class="form-control mb-2" id="provContacto2Nombre" placeholder="Nombre" style="font-size:16px">
-          <div class="row g-2">
-            <div class="col-6">
-              <input type="tel" class="form-control" id="provContacto2Telefono" placeholder="Teléfono" style="font-size:16px">
+
+        <section class="pv-step" id="pvPaso1">
+          <div class="pv-step-h"><span class="pv-step-c">1</span><div><div class="pv-step-t">La empresa</div><div class="pv-step-s">Nombre, de dónde es y cómo se le compra</div></div></div>
+          <div class="pv-step-b">
+            <label class="form-label small fw-bold" for="provNombre">Nombre <span class="text-danger">*</span></label>
+            <input type="text" class="form-control mb-3" id="provNombre" maxlength="200" style="font-size:16px;min-height:44px" required>
+            <label class="form-label small fw-bold d-block">¿Nacional o extranjero?</label>
+            <div class="pv-seg mb-3" role="radiogroup" aria-label="Origen">
+              <label><input type="radio" name="provOrigen" value="nacional"><span><i class="bi bi-geo-alt-fill me-1"></i>Nacional (Chile)</span></label>
+              <label><input type="radio" name="provOrigen" value="extranjero"><span><i class="bi bi-globe-americas me-1"></i>Extranjero</span></label>
             </div>
-            <div class="col-6">
-              <input type="email" class="form-control" id="provContacto2Email" placeholder="Correo" style="font-size:16px">
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label small fw-bold" for="provPais">País</label>
+                <input type="text" class="form-control" id="provPais" maxlength="80" placeholder="Ej: China" style="font-size:16px;min-height:44px">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold" for="provRutTax">RUT o identificador tributario</label>
+                <input type="text" class="form-control" id="provRutTax" maxlength="40" style="font-size:16px;min-height:44px">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold" for="provSitio">Sitio o portal de compra</label>
+                <input type="text" class="form-control" id="provSitio" maxlength="300" placeholder="www…" style="font-size:16px;min-height:44px">
+              </div>
             </div>
           </div>
-        </div>
-        <div class="mb-1">
-          <label class="form-label small fw-bold">Notas</label>
-          <textarea class="form-control" id="provNotas" rows="3" style="font-size:16px"></textarea>
-        </div>
+        </section>
+
+        <section class="pv-step" id="pvPaso2">
+          <div class="pv-step-h"><span class="pv-step-c">2</span><div><div class="pv-step-t">Contactos</div><div class="pv-step-s">A quién se le escribe y por dónde</div></div></div>
+          <div class="pv-step-b">
+            <div class="row g-2 mb-3">
+              <div class="col-md-4">
+                <label class="form-label small fw-bold" for="provContacto">Persona de contacto</label>
+                <input type="text" class="form-control" id="provContacto" maxlength="150" style="font-size:16px;min-height:44px">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold" for="provTelefono">Teléfono</label>
+                <input type="tel" class="form-control" id="provTelefono" maxlength="50" style="font-size:16px;min-height:44px">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold" for="provEmail">Correo</label>
+                <input type="email" class="form-control" id="provEmail" maxlength="150" style="font-size:16px;min-height:44px">
+              </div>
+            </div>
+            <label class="form-label small fw-bold d-block">Canal preferido</label>
+            <div class="pv-seg mb-3" role="radiogroup" aria-label="Canal preferido">
+              <label><input type="radio" name="provCanal" value="whatsapp"><span><i class="bi bi-whatsapp me-1"></i>WhatsApp</span></label>
+              <label><input type="radio" name="provCanal" value="wechat"><span><i class="bi bi-chat-dots me-1"></i>WeChat</span></label>
+              <label><input type="radio" name="provCanal" value="telefono"><span><i class="bi bi-telephone me-1"></i>Teléfono</span></label>
+              <label><input type="radio" name="provCanal" value="email"><span><i class="bi bi-envelope me-1"></i>Correo</span></label>
+            </div>
+            <label class="form-label small fw-bold">Contacto de respaldo <span class="fw-normal text-muted">(opcional)</span></label>
+            <div class="row g-2">
+              <div class="col-md-4"><input type="text" class="form-control" id="provContacto2Nombre" placeholder="Nombre" maxlength="150" style="font-size:16px;min-height:44px" aria-label="Nombre del contacto de respaldo"></div>
+              <div class="col-md-4"><input type="tel" class="form-control" id="provContacto2Telefono" placeholder="Teléfono" maxlength="50" style="font-size:16px;min-height:44px" aria-label="Teléfono del contacto de respaldo"></div>
+              <div class="col-md-4"><input type="email" class="form-control" id="provContacto2Email" placeholder="Correo" maxlength="150" style="font-size:16px;min-height:44px" aria-label="Correo del contacto de respaldo"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="pv-step" id="pvPaso3">
+          <div class="pv-step-h"><span class="pv-step-c">3</span><div><div class="pv-step-t">Condiciones de compra</div><div class="pv-step-s">Moneda, plazo y pago: lo que se necesita para costear y planificar</div></div></div>
+          <div class="pv-step-b">
+            <div class="row g-2 mb-3">
+              <div class="col-md-3">
+                <label class="form-label small fw-bold" for="provMoneda">Moneda</label>
+                <select class="form-select" id="provMoneda" style="font-size:16px;min-height:44px">
+                  <option value="">— Elige —</option>
+                  {% for m in (monedas or ['CLP','USD','EUR','CNY']) %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small fw-bold" for="provPlazo">Plazo de entrega (días)</label>
+                <input type="number" class="form-control" id="provPlazo" min="0" max="720" step="1" style="font-size:16px;min-height:44px">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-bold" for="provCondPago">Condiciones de pago</label>
+                <input type="text" class="form-control" id="provCondPago" maxlength="200" placeholder="Ej: 50% anticipo, 50% contra embarque" style="font-size:16px;min-height:44px">
+              </div>
+            </div>
+            <label class="form-label small fw-bold" for="provNotas">Notas</label>
+            <textarea class="form-control" id="provNotas" rows="3" style="font-size:16px"></textarea>
+          </div>
+        </section>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-danger" id="btnProvGuardar" onclick="provGuardar()">
+        <button type="button" class="btn btn-outline-secondary" style="min-height:44px" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger fw-bold px-4" style="min-height:44px" id="btnProvGuardar" onclick="provGuardar()">
           <i class="bi bi-check-lg me-1"></i>Guardar</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Modal detalle: repuestos asociados -->
+<!-- Modal ficha del proveedor -->
 <div class="modal fade" id="modalProveedorDetalle" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-    <div class="modal-content">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
+    <div class="modal-content" style="border-radius:16px">
       <div class="modal-header">
-        <h5 class="modal-title" id="provDetalleTitulo"><i class="bi bi-box-seam me-2"></i>Repuestos asociados</h5>
+        <h5 class="modal-title fw-bold" id="provDetalleTitulo"><i class="bi bi-person-vcard me-2"></i>Ficha del proveedor</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
-      <div class="modal-body p-0">
-        <div id="provDetalleBody" class="p-3 text-muted small">Cargando…</div>
+      <div class="modal-body" style="background:#f9fafb">
+        <div id="provDetalleBody" class="text-muted">Cargando…</div>
       </div>
     </div>
   </div>
@@ -178,63 +529,115 @@ document.addEventListener('DOMContentLoaded', function(){
   _provModal = new bootstrap.Modal(document.getElementById('modalProveedor'));
   _provDetalleModal = new bootstrap.Modal(document.getElementById('modalProveedorDetalle'));
 });
+function pvEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
+/* ── Búsqueda + filtros (en el navegador: son pocas tarjetas). Los contadores
+   de cada filtro se calculan sobre la búsqueda actual, como en Couriers. ── */
+let _pvFiltro = 'todos';
+function pvSeg(btn){
+  _pvFiltro = btn.dataset.f;
+  document.querySelectorAll('#pvToolbar .cr-seg').forEach(function(b){ b.classList.toggle('is-on', b === btn); });
+  pvFiltrar();
+}
+function pvPasa(c, f){
+  if (f === 'nacional') return c.dataset.origen === 'nacional';
+  if (f === 'extranjero') return c.dataset.origen === 'extranjero';
+  if (f === 'incompleta') return c.dataset.incompleta === '1';
+  if (f === 'solicitudes') return c.dataset.solicitudes === '1';
+  return true;
+}
+function pvFiltrar(){
+  const q = ((document.getElementById('pvQ') || {}).value || '').trim().toLowerCase();
+  const n = {todos:0, solicitudes:0, extranjero:0, nacional:0, incompleta:0};
+  let vis = 0;
+  document.querySelectorAll('#pvGrid > [id^="cardWrap"]').forEach(function(c){
+    const okQ = !q || (c.dataset.buscar || '').indexOf(q) !== -1;
+    if (okQ) Object.keys(n).forEach(function(f){ if (pvPasa(c, f)) n[f]++; });
+    const ok = okQ && pvPasa(c, _pvFiltro);
+    c.style.display = ok ? '' : 'none';
+    if (ok) vis++;
+  });
+  document.querySelectorAll('#pvToolbar [data-n]').forEach(function(el){ el.textContent = n[el.dataset.n] || 0; });
+  const sin = document.getElementById('pvSinResultados');
+  if (sin) sin.style.display = (vis || !document.querySelector('#pvGrid > [id^="cardWrap"]')) ? 'none' : '';
+}
+document.addEventListener('DOMContentLoaded', pvFiltrar);
+/* Pestañas Solicitudes / Repuestos dentro de cada tarjeta (sin recargar). */
+function pvTab(btn){
+  const rel = btn.closest('.pv-rel');
+  const t = btn.dataset.t;
+  rel.dataset.tab = t;
+  rel.querySelectorAll('.pv-rel-t').forEach(function(b){ const on = b === btn; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+  rel.querySelectorAll('.pv-rel-p').forEach(function(pn){ pn.hidden = pn.dataset.p !== t; });
+}
+
+/* ── Formulario en 3 pasos ── */
+const _PV_CAMPOS = {provNombre:'nombre', provContacto:'contacto_nombre', provTelefono:'telefono', provEmail:'email', provNotas:'notas',
+  provContacto2Nombre:'contacto2_nombre', provContacto2Telefono:'contacto2_telefono', provContacto2Email:'contacto2_email',
+  provPais:'pais', provRutTax:'rut_tax', provSitio:'sitio_web', provMoneda:'moneda', provPlazo:'plazo_entrega_dias', provCondPago:'condiciones_pago'};
+function pvRadio(nombre, valor){
+  document.querySelectorAll('input[name="' + nombre + '"]').forEach(function(r){ r.checked = (r.value === (valor || '')); });
+}
+function pvRadioVal(nombre){ const r = document.querySelector('input[name="' + nombre + '"]:checked'); return r ? r.value : ''; }
+function pvVal(id){ return (document.getElementById(id).value || '').trim(); }
+function pvPasos(){
+  const p1 = pvVal('provNombre') && pvRadioVal('provOrigen') && (pvRadioVal('provOrigen') === 'nacional' || pvVal('provPais'));
+  const p2 = pvVal('provContacto') && (pvVal('provTelefono') || pvVal('provEmail')) && pvRadioVal('provCanal');
+  const p3 = pvVal('provMoneda') && pvVal('provPlazo') !== '';
+  document.getElementById('pvPaso1').classList.toggle('done', !!p1);
+  document.getElementById('pvPaso2').classList.toggle('done', !!p2);
+  document.getElementById('pvPaso3').classList.toggle('done', !!p3);
+  // Nacional sin país → Chile (dato obvio, no hace falta tipearlo)
+  const pais = document.getElementById('provPais');
+  if (pvRadioVal('provOrigen') === 'nacional' && !pais.value) pais.placeholder = 'Chile';
+}
+function provLlenar(d){
+  d = d || {};
+  document.getElementById('provId').value = d.id || '';
+  Object.keys(_PV_CAMPOS).forEach(function(id){ const v = d[_PV_CAMPOS[id]]; document.getElementById(id).value = (v == null ? '' : v); });
+  pvRadio('provOrigen', d.origen); pvRadio('provCanal', d.canal_preferido);
+  pvPasos();
+}
 function provAbrirNuevo(){
   document.getElementById('modalProveedorTitulo').innerHTML = '<i class="bi bi-truck me-2"></i>Nuevo proveedor';
-  document.getElementById('provId').value = '';
-  document.getElementById('provNombre').value = '';
-  document.getElementById('provContacto').value = '';
-  document.getElementById('provTelefono').value = '';
-  document.getElementById('provEmail').value = '';
-  document.getElementById('provCanal').value = '';
-  document.getElementById('provNotas').value = '';
-  document.getElementById('provContacto2Nombre').value = '';
-  document.getElementById('provContacto2Telefono').value = '';
-  document.getElementById('provContacto2Email').value = '';
+  provLlenar({});
   (_provModal || new bootstrap.Modal(document.getElementById('modalProveedor'))).show();
 }
-
-function provAbrirEditar(id, nombre, contacto, telefono, email, canal, notas, contacto2Nombre, contacto2Telefono, contacto2Email){
+/* Los datos viajan en data-prov (JSON escapado por el servidor): un nombre con
+   apóstrofe ya no rompe el botón, como pasaba con los parámetros en el onclick. */
+function provAbrirEditarCard(btn){
+  const card = btn.closest('[data-prov]');
+  let d = {};
+  try { d = JSON.parse(card.dataset.prov || '{}'); } catch(e){}
+  provAbrirEditarDatos(d);
+}
+function provAbrirEditarDatos(d){
   document.getElementById('modalProveedorTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar proveedor';
-  document.getElementById('provId').value = id;
-  document.getElementById('provNombre').value = nombre || '';
-  document.getElementById('provContacto').value = contacto || '';
-  document.getElementById('provTelefono').value = telefono || '';
-  document.getElementById('provEmail').value = email || '';
-  document.getElementById('provCanal').value = canal || '';
-  document.getElementById('provNotas').value = notas || '';
-  document.getElementById('provContacto2Nombre').value = contacto2Nombre || '';
-  document.getElementById('provContacto2Telefono').value = contacto2Telefono || '';
-  document.getElementById('provContacto2Email').value = contacto2Email || '';
+  provLlenar(d);
+  if (_provDetalleModal) _provDetalleModal.hide();
   (_provModal || new bootstrap.Modal(document.getElementById('modalProveedor'))).show();
 }
-
+/* Se conserva la firma vieja por si otra pantalla la llama. */
+function provAbrirEditar(id, nombre, contacto, telefono, email, canal, notas, contacto2Nombre, contacto2Telefono, contacto2Email){
+  provAbrirEditarDatos({id: id, nombre: nombre, contacto_nombre: contacto, telefono: telefono, email: email, canal_preferido: canal,
+    notas: notas, contacto2_nombre: contacto2Nombre, contacto2_telefono: contacto2Telefono, contacto2_email: contacto2Email});
+}
 async function provGuardar(){
   const id = document.getElementById('provId').value;
-  const nombre = document.getElementById('provNombre').value.trim();
-  if (!nombre){ ilusToast('El nombre del proveedor es obligatorio', {type:'warning'}); return; }
-  const payload = {
-    nombre: nombre,
-    contacto_nombre: document.getElementById('provContacto').value.trim(),
-    telefono: document.getElementById('provTelefono').value.trim(),
-    email: document.getElementById('provEmail').value.trim(),
-    canal_preferido: document.getElementById('provCanal').value,
-    notas: document.getElementById('provNotas').value.trim(),
-    contacto2_nombre: document.getElementById('provContacto2Nombre').value.trim(),
-    contacto2_telefono: document.getElementById('provContacto2Telefono').value.trim(),
-    contacto2_email: document.getElementById('provContacto2Email').value.trim(),
-  };
+  const nombre = pvVal('provNombre');
+  if (!nombre){ ilusToast('El nombre del proveedor es obligatorio', {type:'warning'}); document.getElementById('provNombre').focus(); return; }
+  const payload = {};
+  Object.keys(_PV_CAMPOS).forEach(function(idc){ payload[_PV_CAMPOS[idc]] = pvVal(idc); });
+  payload.origen = pvRadioVal('provOrigen');
+  payload.canal_preferido = pvRadioVal('provCanal');
+  if (payload.origen === 'nacional' && !payload.pais) payload.pais = 'Chile';
   const url = id ? `/mantenciones/api/proveedores-repuesto/${id}` : '/mantenciones/api/proveedores-repuesto';
-  const method = id ? 'PUT' : 'POST';
   const btn = document.getElementById('btnProvGuardar');
   btn.disabled = true;
   let d;
   try{
-    const r = await fetch(url, {
-      method: method,
-      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
-      body: JSON.stringify(payload)
-    });
+    const r = await fetch(url, { method: id ? 'PUT' : 'POST',
+      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'}, body: JSON.stringify(payload) });
     d = await r.json();
   }catch(e){
     btn.disabled = false;
@@ -245,33 +648,81 @@ async function provGuardar(){
   if (!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
   ilusToast('✓ Proveedor guardado', {type:'success'});
   (_provModal || bootstrap.Modal.getInstance(document.getElementById('modalProveedor'))).hide();
-  setTimeout(()=> location.reload(), 500);
+  setTimeout(function(){ location.reload(); }, 500);
 }
 
-async function provVerDetalle(id){
+/* ── Ficha del proveedor ── */
+const _PV_COMPRA_LBL = {pedido:'Pedido', cotizado:'Cotizado', confirmado:'Confirmado', en_transito:'En tránsito', recibido_parcial:'Recibido parcial', recibido:'Recibido', cancelada:'Cancelada'};
+function pvFmtN(n){ return (n == null) ? '—' : (Math.round(n * 100) / 100).toLocaleString('es-CL'); }
+async function provVerDetalle(id, seccion){
   const body = document.getElementById('provDetalleBody');
-  body.innerHTML = '<div class="p-3 text-muted small">Cargando…</div>';
+  body.innerHTML = '<div class="p-3 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Cargando la ficha…</div>';
   (_provDetalleModal || new bootstrap.Modal(document.getElementById('modalProveedorDetalle'))).show();
+  let d;
   try{
-    const r = await fetch(`/mantenciones/api/proveedores-repuesto/${id}/repuestos`);
-    const d = await r.json();
-    if (!d.ok || !d.repuestos || !d.repuestos.length){
-      body.innerHTML = '<div class="p-3 text-muted small">Este proveedor no tiene repuestos asociados todavía.</div>';
-      return;
-    }
-    body.innerHTML = d.repuestos.map(it => `
-      <div class="prov-detail-item">
-        <div>
-          <strong>${(it.nombre || 'Sin nombre').replace(/</g,'&lt;')}</strong>
-          ${it.sku ? ' · SKU '+it.sku : ''}<br>
-          <span class="text-muted">${(it.cliente_nombre || 'Sin cliente').replace(/</g,'&lt;')}</span>
-        </div>
-        <span class="rep-badge rep-${it.estado || 'cotizado'}" style="align-self:flex-start">${it.estado || '—'}</span>
-      </div>
-    `).join('');
-  }catch(e){
-    body.innerHTML = '<div class="p-3 text-danger small">Error cargando repuestos del proveedor.</div>';
+    const r = await fetch(`/mantenciones/api/proveedores-repuesto/${id}/ficha`);
+    d = await r.json();
+  }catch(e){ body.innerHTML = '<div class="p-3 text-danger">No se pudo cargar la ficha.</div>'; return; }
+  if (!d.ok){ body.innerHTML = '<div class="p-3 text-danger">' + pvEsc(d.error || 'No se pudo cargar la ficha.') + '</div>'; return; }
+  const p = d.proveedor || {}, c = d.calidad || {items: []}, ind = d.indicadores || {};
+  _pvFichaActual = p;
+  document.getElementById('provDetalleTitulo').innerHTML = '<i class="bi bi-person-vcard me-2"></i>' + pvEsc(p.nombre);
+  const fila = function(k, v){ return '<div><span class="k">' + k + '</span><span class="v' + (v ? '' : ' falta') + '">' + (v ? pvEsc(v) : 'Sin dato') + '</span></div>'; };
+  const canal = {whatsapp:'WhatsApp', wechat:'WeChat', telefono:'Teléfono', email:'Correo'}[p.canal_preferido] || '';
+  let h = '';
+  h += '<div class="pv-sec"><h6><i class="bi bi-building"></i>Datos del proveedor <button type="button" class="pv-btn light ms-auto" style="min-height:38px;padding:4px 12px" onclick="provAbrirEditarDatos(_pvFichaActual)"><i class="bi bi-pencil"></i>Editar</button></h6>' +
+    '<div class="pv-dl">' + fila('Origen', p.origen ? (p.origen === 'extranjero' ? 'Extranjero' : 'Nacional') : '') + fila('País', p.pais) +
+    fila('RUT o identificador tributario', p.rut_tax) + fila('Sitio o portal de compra', p.sitio_web) +
+    fila('Persona de contacto', p.contacto_nombre) + fila('Teléfono', p.telefono) + fila('Correo', p.email) + fila('Canal preferido', canal) +
+    fila('Contacto de respaldo', [p.contacto2_nombre, p.contacto2_telefono, p.contacto2_email].filter(Boolean).join(' · ')) +
+    fila('Moneda', p.moneda) + fila('Plazo de entrega declarado', p.plazo_entrega_dias != null ? p.plazo_entrega_dias + ' días' : '') +
+    fila('Condiciones de pago', p.condiciones_pago) + '</div>' +
+    (p.notas ? '<div class="pv-notas mt-3">' + pvEsc(p.notas) + '</div>' : '') + '</div>';
+  h += '<div class="pv-sec"><h6><i class="bi bi-list-check"></i>Calidad de la ficha · ' + c.ok + ' de ' + c.total + '</h6><ul class="pv-check">' +
+    c.items.map(function(it){ return '<li class="' + (it.ok ? 'ok' : 'no') + '"><i class="bi ' + (it.ok ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill') + '"></i>' + pvEsc(it.texto) + '</li>'; }).join('') + '</ul></div>';
+  h += '<div class="pv-sec"><h6><i class="bi bi-graph-up"></i>Cómo nos ha respondido</h6><div class="pv-ind">' +
+    '<div><b>' + (ind.n_productos || 0) + '</b><small>repuestos en bodega</small></div>' +
+    '<div><b>' + (ind.sol_abiertas || 0) + '</b><small>solicitudes abiertas</small></div>' +
+    '<div><b>' + (ind.compras_en_curso || 0) + '</b><small>compras en curso' + (ind.en_transito ? ' · ' + ind.en_transito + ' en tránsito' : '') + '</small></div>' +
+    '<div><b>' + (ind.plazo_real_dias != null ? Math.round(ind.plazo_real_dias) + ' d' : '—') + '</b><small>' + (ind.n_entregas ? 'entrega real promedio (' + ind.n_entregas + ' entregas)' : 'sin entregas registradas') + '</small></div>' +
+    '</div></div>';
+  const reps = d.repuestos || [];
+  h += '<div class="pv-sec" id="pvSecRepuestos"><h6><i class="bi bi-box-seam"></i>Repuestos que le compramos (' + reps.length + ')</h6>' + (reps.length ?
+    '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Repuesto</th><th>SKU</th><th>Stock</th><th>Ubicación</th><th>Costo unit.</th></tr></thead><tbody>' +
+    reps.map(function(r){
+      const sem = (r.cantidad || 0) <= 0 ? 'rojo' : ((r.stock_minimo != null && r.cantidad <= r.stock_minimo) ? 'ambar' : 'verde');
+      return '<tr><td>' + pvEsc(r.descripcion) + '</td><td>' + pvEsc(r.sku) + '</td><td><span class="pv-sem ' + sem + '">' + pvFmtN(r.cantidad) + '</span></td>' +
+        '<td>' + (r.ubicacion_codigo ? pvEsc(r.ubicacion_codigo) : '<span class="pv-sem ambar">Por llegar</span>') + '</td>' +
+        '<td>' + (r.costo_unitario ? '$' + pvFmtN(r.costo_unitario) : '—') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<div class="text-muted">Todavía no hay repuestos de la bodega ligados a este proveedor.</div>') + '</div>';
+  const sols = d.solicitudes || [];
+  h += '<div class="pv-sec"><h6><i class="bi bi-inbox"></i>Solicitudes abiertas (' + sols.length + ')</h6>' + (sols.length ?
+    '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>#</th><th>Repuesto</th><th>Estado</th><th>Cliente</th><th>OT / Ticket</th><th>Desde</th></tr></thead><tbody>' +
+    sols.map(function(s){
+      return '<tr><td>' + s.id + '</td><td>' + pvEsc(s.repuesto_nombre) + ' × ' + pvFmtN(s.cantidad) + '</td><td><span class="pv-sem gris">' + pvEsc(s.estado_label) + '</span></td>' +
+        '<td>' + pvEsc(s.cliente_nombre || '—') + '</td><td>' + pvEsc([s.numero_ot, s.numero_ticket].filter(Boolean).join(' · ') || '—') + '</td><td>' + pvEsc(s.created_at || '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<div class="text-muted">Sin solicitudes abiertas con este proveedor.</div>') + '</div>';
+  const comps = d.compras || [];
+  h += '<div class="pv-sec" id="pvSecCompras"><h6><i class="bi bi-cart-check"></i>Compras (' + comps.length + ')</h6>' + (comps.length ?
+    '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Ticket</th><th>Estado</th><th>OC</th><th>Líneas</th><th>Monto</th><th>Llega</th><th>Creada</th></tr></thead><tbody>' +
+    comps.map(function(c2){
+      const sem = c2.estado === 'recibido' ? 'verde' : (c2.estado === 'cancelada' ? 'rojo' : (c2.estado === 'en_transito' || c2.estado === 'recibido_parcial' ? 'ambar' : 'gris'));
+      return '<tr><td>' + pvEsc(c2.numero_ticket || ('#' + c2.id)) + '</td><td><span class="pv-sem ' + sem + '">' + pvEsc(_PV_COMPRA_LBL[c2.estado] || c2.estado) + '</span></td>' +
+        '<td>' + pvEsc(c2.oc_numero || '—') + '</td><td>' + (c2.n_lineas || 0) + '</td><td>' + (c2.monto_total ? '$' + pvFmtN(c2.monto_total) : '—') + '</td>' +
+        '<td>' + pvEsc(c2.eta || '—') + '</td><td>' + pvEsc(c2.created_at || '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<div class="text-muted">Todavía no hay compras registradas con este proveedor.</div>') + '</div>';
+  const leg = d.legacy || [];
+  if (leg.length){
+    h += '<div class="pv-sec"><h6><i class="bi bi-archive"></i>Repuestos del sistema anterior (' + leg.length + ')</h6><div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Repuesto</th><th>SKU</th><th>Cliente</th><th>Estado</th></tr></thead><tbody>' +
+      leg.map(function(it){ return '<tr><td>' + pvEsc(it.nombre || 'Sin nombre') + '</td><td>' + pvEsc(it.sku || '—') + '</td><td>' + pvEsc(it.cliente_nombre || '—') + '</td><td>' + pvEsc(it.estado || '—') + '</td></tr>'; }).join('') +
+      '</tbody></table></div></div>';
+  }
+  body.innerHTML = h;
+  if (seccion === 'compras' || seccion === 'repuestos'){
+    const sec = document.getElementById(seccion === 'compras' ? 'pvSecCompras' : 'pvSecRepuestos');
+    if (sec) setTimeout(function(){ sec.scrollIntoView({behavior:'smooth', block:'start'}); }, 250);
   }
 }
+let _pvFichaActual = null;
 </script>
 {% endblock %}

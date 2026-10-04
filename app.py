@@ -125867,6 +125867,155 @@ def mant_repuesto_crear_desde_erp():
         return jsonify({"ok": False, "error": "Error interno", "error_codigo": "INTERNAL_CRASH"}), 500
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  PROVEEDORES COMO REPOSITORIO (2026-10-04, Daniel: "es prioridad que
+#  mejoremos los proveedores, ya que esa será nuestro repositorio... no solo
+#  para registrar, debemos mejorar las tarjetas en términos de formato y la
+#  calidad de la información"). Datos nuevos de la ficha + indicadores REALES
+#  (bodega, solicitudes, compras) + "Ficha completa N de 10".
+#  Las columnas se agregan solas la primera vez (también con
+#  ILUS_SKIP_MIGRATIONS=1): una sentencia = una cláusula (REGLA #18), y
+#  mysql_execute salta sin lock las que ya existen (_ddl_ya_aplicado).
+# ══════════════════════════════════════════════════════════════════════
+_PROV_COLS_NUEVAS = (
+    ("origen", "VARCHAR(20) NULL COMMENT 'nacional | extranjero'"),
+    ("pais", "VARCHAR(80) NULL"),
+    ("moneda", "VARCHAR(10) NULL COMMENT 'CLP, USD, EUR, CNY...'"),
+    ("rut_tax", "VARCHAR(40) NULL COMMENT 'RUT (nacional) o identificador tributario (extranjero)'"),
+    ("condiciones_pago", "VARCHAR(200) NULL"),
+    ("plazo_entrega_dias", "INT NULL COMMENT 'Plazo típico declarado, en días'"),
+    ("sitio_web", "VARCHAR(300) NULL COMMENT 'Sitio o portal donde se compra'"),
+)
+_PROV_COLS_OK = {"listo": False}
+_PROV_MONEDAS = ("CLP", "USD", "EUR", "CNY", "GBP", "BRL", "ARS", "MXN")
+
+
+def _prov_cols_asegurar():
+    if _PROV_COLS_OK["listo"]:
+        return True
+    ok = True
+    for col, ddl in _PROV_COLS_NUEVAS:
+        try:
+            mysql_execute(f"ALTER TABLE mant_proveedores_repuesto ADD COLUMN {col} {ddl}")
+        except Exception as e:
+            # "Duplicate column" = ya estaba: no es un error.
+            if "1060" not in str(e) and "Duplicate column" not in str(e):
+                ok = False
+                print(f"[proveedores] columna {col}: {e}", flush=True)
+    _PROV_COLS_OK["listo"] = ok
+    return ok
+
+
+def _prov_calidad(p):
+    """'Ficha completa N de 10' con la lista de lo que falta (mismo espíritu que
+    'Información completa' de Retiros). Solo mira datos de la propia ficha."""
+    p = p or {}
+    ext = (p.get("origen") or "") == "extranjero"
+    items = [
+        ("Persona de contacto", bool((p.get("contacto_nombre") or "").strip())),
+        ("Teléfono", bool((p.get("telefono") or "").strip())),
+        ("Correo", bool((p.get("email") or "").strip())),
+        ("Canal preferido", bool(p.get("canal_preferido"))),
+        ("Nacional o extranjero", bool(p.get("origen"))),
+        ("País", bool((p.get("pais") or "").strip()) or (p.get("origen") == "nacional")),
+        ("Moneda", bool(p.get("moneda"))),
+        ("RUT o identificador tributario" if not ext else "Identificador tributario", bool((p.get("rut_tax") or "").strip())),
+        ("Condiciones de pago", bool((p.get("condiciones_pago") or "").strip())),
+        ("Plazo de entrega", p.get("plazo_entrega_dias") not in (None, "")),
+    ]
+    out = [{"texto": t, "ok": ok} for t, ok in items]
+    n = sum(1 for x in out if x["ok"])
+    return {"items": out, "ok": n, "total": len(out),
+            "nivel": "verde" if n >= 9 else ("ambar" if n >= 6 else "rojo")}
+
+
+def _prov_indicadores():
+    """Indicadores por proveedor, en 5 consultas agrupadas (no una por tarjeta).
+    {proveedor_id: {...}}. Si una tabla no existe todavía, ese dato queda en 0."""
+    ind = {}
+
+    def _sumar(sql, campos):
+        try:
+            for r in (mysql_fetchall(sql) or []):
+                d = ind.setdefault(int(r["pid"]), {})
+                for c in campos:
+                    d[c] = r.get(c)
+        except Exception as e:
+            print(f"[proveedores] indicadores: {e}", flush=True)
+
+    _sumar("SELECT proveedor_id AS pid, COUNT(*) AS n_productos, "
+           "       SUM(CASE WHEN cantidad>0 THEN 1 ELSE 0 END) AS n_con_stock, "
+           "       SUM(CASE WHEN ubicacion_id IS NULL THEN 1 ELSE 0 END) AS n_por_llegar "
+           "  FROM mant_repuestos_stock WHERE COALESCE(activo,1)=1 AND proveedor_id IS NOT NULL "
+           " GROUP BY proveedor_id", ("n_productos", "n_con_stock", "n_por_llegar"))
+    _sumar("SELECT proveedor_id AS pid, "
+           "       SUM(CASE WHEN estado IN ('solicitado','validado','pedido','recibido') "
+           "                 AND NOT (COALESCE(es_reposicion,0)=1 AND estado='recibido') THEN 1 ELSE 0 END) AS sol_abiertas, "
+           "       ROUND(AVG(CASE WHEN pedido_at IS NOT NULL AND recibido_at IS NOT NULL "
+           "                      THEN DATEDIFF(recibido_at, pedido_at) END), 1) AS plazo_real_dias, "
+           "       SUM(CASE WHEN pedido_at IS NOT NULL AND recibido_at IS NOT NULL THEN 1 ELSE 0 END) AS n_entregas "
+           "  FROM mant_ot_repuesto_solicitudes WHERE proveedor_id IS NOT NULL GROUP BY proveedor_id",
+           ("sol_abiertas", "plazo_real_dias", "n_entregas"))
+    _sumar("SELECT proveedor_id AS pid, "
+           "       SUM(CASE WHEN estado IN ('pedido','cotizado','confirmado','en_transito','recibido_parcial') THEN 1 ELSE 0 END) AS compras_en_curso, "
+           "       SUM(CASE WHEN estado='en_transito' THEN 1 ELSE 0 END) AS en_transito, "
+           "       MAX(created_at) AS ultima_compra, "
+           "       SUM(CASE WHEN estado<>'cancelada' THEN COALESCE(monto_total,0) ELSE 0 END) AS monto_comprado, "
+           "       COUNT(*) AS n_compras "
+           "  FROM mant_repuestos_compras GROUP BY proveedor_id",
+           ("compras_en_curso", "en_transito", "ultima_compra", "monto_comprado", "n_compras"))
+    _sumar("SELECT proveedor_id AS pid, COUNT(*) AS n_legacy FROM mant_repuestos "
+           " WHERE proveedor_id IS NOT NULL GROUP BY proveedor_id", ("n_legacy",))
+    for d in ind.values():
+        for k in ("n_productos", "n_con_stock", "n_por_llegar", "sol_abiertas", "n_entregas",
+                  "compras_en_curso", "en_transito", "n_compras", "n_legacy"):
+            d[k] = int(d.get(k) or 0)
+        d["monto_comprado"] = float(d.get("monto_comprado") or 0)
+        d["plazo_real_dias"] = float(d["plazo_real_dias"]) if d.get("plazo_real_dias") is not None else None
+        d["ultima_compra"] = chile_fmt_filter(d["ultima_compra"], "%d/%m/%Y") if d.get("ultima_compra") else None
+    return ind
+
+
+def _prov_campos_desde_body(d, parcial):
+    """Normaliza los campos editables del body (alta y edición). `parcial`: solo
+    los que vinieron. Devuelve (dict, error)."""
+    out = {}
+
+    def _txt(k, largo):
+        if parcial and k not in d:
+            return
+        v = (d.get(k) or "")
+        v = str(v).strip()[:largo]
+        out[k] = v or None
+
+    for k, largo in (("contacto_nombre", 150), ("telefono", 50), ("email", 150), ("notas", 4000),
+                     ("contacto2_nombre", 150), ("contacto2_telefono", 50), ("contacto2_email", 150),
+                     ("pais", 80), ("rut_tax", 40), ("condiciones_pago", 200), ("sitio_web", 300)):
+        _txt(k, largo)
+    if not parcial or "canal_preferido" in d:
+        c = (d.get("canal_preferido") or "").strip()
+        out["canal_preferido"] = c if c in ("whatsapp", "wechat", "telefono", "email") else None
+    if not parcial or "origen" in d:
+        o = (d.get("origen") or "").strip().lower()
+        out["origen"] = o if o in ("nacional", "extranjero") else None
+    if not parcial or "moneda" in d:
+        m = (d.get("moneda") or "").strip().upper()
+        out["moneda"] = m if m in _PROV_MONEDAS else None
+    if not parcial or "plazo_entrega_dias" in d:
+        v = str(d.get("plazo_entrega_dias") or "").strip()
+        if v and not v.isdigit():
+            return None, "El plazo de entrega va en días (un número entero)."
+        out["plazo_entrega_dias"] = int(v) if v else None
+        if out["plazo_entrega_dias"] is not None and out["plazo_entrega_dias"] > 720:
+            return None, "El plazo de entrega parece demasiado largo (máximo 720 días)."
+    for k in ("email", "contacto2_email"):
+        if out.get(k) and "@" not in out[k]:
+            return None, "Revisa el correo: le falta la @."
+    if out.get("sitio_web") and not re.match(r"^https?://", out["sitio_web"], re.I):
+        out["sitio_web"] = "https://" + out["sitio_web"]
+    return out, None
+
+
 @app.route("/mantenciones/api/proveedores-repuesto", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -125888,15 +126037,24 @@ def mant_proveedores_repuesto_list():
 @_mant_required
 @_no_tecnico
 def mant_proveedor_repuesto_update(pid):
-    """Edita contacto/canal preferido de un proveedor de repuestos."""
+    """Edita la ficha de un proveedor de repuestos. 2026-10-04: también los datos
+    nuevos (origen, país, moneda, RUT/Tax, condiciones, plazo, sitio) y el
+    NOMBRE (antes no se podía corregir después del alta)."""
     d = request.get_json(silent=True) or {}
-    allowed = ["contacto_nombre", "telefono", "email", "canal_preferido", "notas",
-               "contacto2_nombre", "contacto2_telefono", "contacto2_email"]
-    sets, vals = [], []
-    for f in allowed:
-        if f in d:
-            sets.append(f"{f}=%s")
-            vals.append(d[f] if d[f] not in ("", "null") else None)
+    _prov_cols_asegurar()
+    campos, err = _prov_campos_desde_body(d, parcial=True)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if "nombre" in d:
+        nombre = (d.get("nombre") or "").strip()[:200]
+        if not nombre:
+            return jsonify({"ok": False, "error": "El nombre del proveedor no puede quedar vacío."}), 400
+        otro = mysql_fetchone("SELECT id FROM mant_proveedores_repuesto WHERE nombre=%s AND id<>%s", (nombre, pid))
+        if otro:
+            return jsonify({"ok": False, "error": "Ya existe otro proveedor con ese nombre."}), 409
+        campos["nombre"] = nombre
+    sets = [f"{k}=%s" for k in campos]
+    vals = list(campos.values())
     if not sets:
         return jsonify({"ok": False, "error": "Sin campos"}), 400
     try:
@@ -125918,21 +126076,15 @@ def mant_proveedor_repuesto_crear():
     nombre = (d.get("nombre") or "").strip()
     if not nombre:
         return jsonify({"ok": False, "error": "El nombre del proveedor es obligatorio"}), 400
-    canal_ok = ["whatsapp", "wechat", "telefono", "email"]
-    canal = (d.get("canal_preferido") or "").strip() or None
-    if canal and canal not in canal_ok:
-        canal = None
-    fields = {
-        "nombre": nombre[:200],
-        "contacto_nombre": (d.get("contacto_nombre") or "").strip()[:150] or None,
-        "telefono": (d.get("telefono") or "").strip()[:50] or None,
-        "email": (d.get("email") or "").strip()[:150] or None,
-        "canal_preferido": canal,
-        "notas": (d.get("notas") or "").strip() or None,
-        "contacto2_nombre": (d.get("contacto2_nombre") or "").strip()[:150] or None,
-        "contacto2_telefono": (d.get("contacto2_telefono") or "").strip()[:50] or None,
-        "contacto2_email": (d.get("contacto2_email") or "").strip()[:150] or None,
-    }
+    if mysql_fetchone("SELECT id FROM mant_proveedores_repuesto WHERE nombre=%s", (nombre[:200],)):
+        return jsonify({"ok": False, "error": "Ya existe un proveedor con ese nombre."}), 409
+    # 2026-10-04: mismos campos que la edición, incluidos los datos nuevos de la ficha.
+    _prov_cols_asegurar()
+    campos, err = _prov_campos_desde_body(d, parcial=False)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    fields = {"nombre": nombre[:200]}
+    fields.update(campos)
     cols = [c for c in fields if fields[c] is not None]
     vals = [fields[c] for c in cols]
     try:
@@ -125952,6 +126104,76 @@ def mant_proveedor_repuesto_crear():
     except Exception as e:
         print(f"[mant_proveedor_repuesto_crear] CRASH: {e}", flush=True)
         return jsonify({"ok": False, "error": "Error interno"}), 500
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/<int:pid>/ficha", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_proveedor_repuesto_ficha(pid):
+    """Ficha del proveedor (2026-10-04): sus datos, la calidad de la ficha, los
+    repuestos que le compramos (bodega real, con stock), las solicitudes
+    abiertas, sus compras y lo que quedó del sistema anterior (mant_repuestos)."""
+    _prov_cols_asegurar()
+    p = mysql_fetchone("SELECT * FROM mant_proveedores_repuesto WHERE id=%s", (pid,))
+    if not p:
+        return jsonify({"ok": False, "error": "Proveedor no encontrado."}), 404
+    p = dict(p)
+    for k in ("created_at", "updated_at"):
+        p[k] = chile_fmt_filter(p[k]) if p.get(k) else None
+    out = {"ok": True, "proveedor": p, "calidad": _prov_calidad(p),
+           "indicadores": _prov_indicadores().get(pid, {}),
+           "repuestos": [], "solicitudes": [], "compras": [], "legacy": []}
+    try:
+        for r in (mysql_fetchall(
+                "SELECT rs.id, rs.sku, rs.descripcion, rs.cantidad, rs.stock_minimo, rs.costo_unitario, "
+                "       u.codigo AS ubicacion_codigo "
+                "  FROM mant_repuestos_stock rs LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
+                " WHERE rs.proveedor_id=%s AND COALESCE(rs.activo,1)=1 ORDER BY rs.descripcion LIMIT 500", (pid,)) or []):
+            r = dict(r)
+            for k in ("cantidad", "stock_minimo", "costo_unitario"):
+                r[k] = float(r[k]) if r.get(k) is not None else None
+            out["repuestos"].append(r)
+    except Exception as e:
+        print(f"[proveedor ficha] repuestos pid={pid}: {e}", flush=True)
+    try:
+        for r in (mysql_fetchall(
+                "SELECT s.id, s.repuesto_nombre, s.cantidad, s.estado, s.created_at, "
+                "       c.razon_social AS cliente_nombre, v.numero_ot, t.numero_ticket "
+                "  FROM mant_ot_repuesto_solicitudes s "
+                "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
+                "  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+                "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+                " WHERE s.proveedor_id=%s AND s.estado IN ('solicitado','validado','pedido','recibido') "
+                "   AND NOT (COALESCE(s.es_reposicion,0)=1 AND s.estado='recibido') "
+                " ORDER BY s.id DESC LIMIT 200", (pid,)) or []):
+            r = dict(r)
+            r["cantidad"] = float(r["cantidad"]) if r.get("cantidad") is not None else None
+            r["created_at"] = chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else None
+            r["estado_label"] = _OTREP_ESTADO_LABEL.get(r.get("estado"), r.get("estado"))
+            out["solicitudes"].append(r)
+    except Exception as e:
+        print(f"[proveedor ficha] solicitudes pid={pid}: {e}", flush=True)
+    try:
+        for r in (mysql_fetchall(
+                "SELECT cp.id, cp.estado, cp.eta, cp.oc_numero, cp.monto_total, cp.created_at, t.numero_ticket, "
+                "       (SELECT COUNT(*) FROM mant_ot_repuesto_solicitudes s WHERE s.compra_id=cp.id) AS n_lineas "
+                "  FROM mant_repuestos_compras cp LEFT JOIN tk_tickets t ON t.id=cp.ticket_id "
+                " WHERE cp.proveedor_id=%s ORDER BY cp.id DESC LIMIT 100", (pid,)) or []):
+            r = dict(r)
+            r["monto_total"] = float(r["monto_total"]) if r.get("monto_total") is not None else None
+            r["created_at"] = chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else None
+            r["eta"] = r["eta"].strftime("%d/%m/%Y") if hasattr(r.get("eta"), "strftime") else (r.get("eta") or None)
+            out["compras"].append(r)
+    except Exception as e:
+        print(f"[proveedor ficha] compras pid={pid}: {e}", flush=True)
+    try:
+        out["legacy"] = [dict(r) for r in (mysql_fetchall(
+            "SELECT r.id, r.nombre, r.sku, r.estado, c.razon_social AS cliente_nombre "
+            "  FROM mant_repuestos r LEFT JOIN mant_clientes c ON c.id=r.cliente_id "
+            " WHERE r.proveedor_id=%s ORDER BY r.id DESC LIMIT 100", (pid,)) or [])]
+    except Exception:
+        pass
+    return jsonify(out)
 
 
 @app.route("/mantenciones/api/proveedores-repuesto/<int:pid>/repuestos", methods=["GET"])
@@ -126004,14 +126226,81 @@ def mant_repuesto_estado_seguimiento(rid):
 @_mant_required
 @_no_tecnico
 def mant_proveedores_repuesto_page():
-    """Tarjetero de Proveedores de repuestos (2026-07-13)."""
-    rows = mysql_fetchall(
-        "SELECT p.*, COUNT(r.id) AS n_repuestos "
-        "  FROM mant_proveedores_repuesto p "
-        "  LEFT JOIN mant_repuestos r ON r.proveedor_id = p.id "
-        " GROUP BY p.id ORDER BY p.nombre"
-    ) or []
-    return render_template("mantenciones/proveedores.html", proveedores=[dict(r) for r in rows])
+    """Tarjetero de Proveedores de repuestos (2026-07-13).
+
+    🔧 2026-10-04: "0 productos" en TODAS las tarjetas: el conteo leía la tabla
+    del sistema viejo (mant_repuestos), no la bodega real (mant_repuestos_stock).
+    Ahora cada tarjeta trae indicadores reales (_prov_indicadores) y la calidad
+    de su ficha (_prov_calidad). `n_repuestos` se conserva (= sistema anterior)."""
+    _prov_cols_asegurar()
+    rows = mysql_fetchall("SELECT p.* FROM mant_proveedores_repuesto p ORDER BY p.nombre") or []
+    ind = _prov_indicadores()
+    # 🔗 2026-10-04 (Daniel: "necesito que se relacionen las solicitudes de
+    # repuestos... solicitudes y repuestos asociados con su stock"): cada tarjeta
+    # muestra sus solicitudes abiertas (equipo fuera de servicio primero) y los
+    # repuestos que le compramos con su semáforo de stock. Dos consultas para
+    # TODOS los proveedores (no una por tarjeta); a la tarjeta van las 6 primeras.
+    sols_por, reps_por = {}, {}
+    try:
+        for r in (mysql_fetchall(
+                "SELECT s.id, s.proveedor_id, s.repuesto_nombre, s.cantidad, s.estado, "
+                "       (COALESCE(s.dejo_fuera_servicio,0)=1 OR m.estado_capturado='fuera_servicio') AS fs, "
+                "       c.razon_social AS cliente_nombre, v.numero_ot, t.numero_ticket, rs.cantidad AS stock_cantidad "
+                "  FROM mant_ot_repuesto_solicitudes s "
+                "  LEFT JOIN mant_maquinas m ON m.id=s.maquina_id "
+                "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
+                "  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+                "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+                "  LEFT JOIN mant_repuestos_stock rs ON rs.id=s.repuesto_stock_id "
+                " WHERE s.proveedor_id IS NOT NULL AND s.estado IN ('solicitado','validado','pedido','recibido') "
+                "   AND NOT (COALESCE(s.es_reposicion,0)=1 AND s.estado='recibido') "
+                " ORDER BY fs DESC, (s.estado='solicitado') DESC, s.id DESC LIMIT 2000") or []):
+            r = dict(r)
+            r["cantidad"] = float(r["cantidad"]) if r.get("cantidad") is not None else None
+            r["stock_cantidad"] = float(r["stock_cantidad"]) if r.get("stock_cantidad") is not None else None
+            r["estado_label"] = _OTREP_ESTADO_LABEL.get(r.get("estado"), r.get("estado"))
+            sols_por.setdefault(int(r["proveedor_id"]), []).append(r)
+    except Exception as e:
+        print(f"[proveedores] solicitudes por proveedor: {e}", flush=True)
+    try:
+        for r in (mysql_fetchall(
+                "SELECT id, proveedor_id, sku, descripcion, cantidad, stock_minimo, ubicacion_id "
+                "  FROM mant_repuestos_stock WHERE proveedor_id IS NOT NULL AND COALESCE(activo,1)=1 "
+                " ORDER BY (cantidad<=0) DESC, descripcion LIMIT 5000") or []):
+            r = dict(r)
+            cant = float(r.get("cantidad") or 0)
+            mini = float(r["stock_minimo"]) if r.get("stock_minimo") is not None else None
+            r["cantidad"] = cant
+            r["por_llegar"] = r.get("ubicacion_id") is None
+            r["semaforo"] = "rojo" if cant <= 0 else ("ambar" if (mini is not None and cant <= mini) else "verde")
+            reps_por.setdefault(int(r["proveedor_id"]), []).append(r)
+    except Exception as e:
+        print(f"[proveedores] repuestos por proveedor: {e}", flush=True)
+    provs = []
+    for r in rows:
+        d = dict(r)
+        d.update({"n_productos": 0, "n_con_stock": 0, "n_por_llegar": 0, "sol_abiertas": 0,
+                  "plazo_real_dias": None, "n_entregas": 0, "compras_en_curso": 0, "en_transito": 0,
+                  "ultima_compra": None, "monto_comprado": 0.0, "n_compras": 0, "n_legacy": 0})
+        d.update(ind.get(int(d["id"]), {}))
+        d["n_repuestos"] = d["n_legacy"]
+        d["calidad"] = _prov_calidad(d)
+        _sl = sols_por.get(int(d["id"]), [])
+        _rl = reps_por.get(int(d["id"]), [])
+        d["sols_top"], d["sols_n"] = _sl[:6], len(_sl)
+        d["sols_fs"] = sum(1 for x in _sl if x.get("fs"))
+        d["reps_top"], d["reps_n"] = _rl[:6], len(_rl)
+        d["reps_sin_stock"] = sum(1 for x in _rl if x["semaforo"] == "rojo")
+        provs.append(d)
+    resumen = {
+        "total": len(provs),
+        "completas": sum(1 for p in provs if p["calidad"]["nivel"] == "verde"),
+        "compras_en_curso": sum(p["compras_en_curso"] for p in provs),
+        "en_transito": sum(p["en_transito"] for p in provs),
+        "sol_abiertas": sum(p["sol_abiertas"] for p in provs),
+    }
+    return render_template("mantenciones/proveedores.html", proveedores=provs, resumen=resumen,
+                           monedas=_PROV_MONEDAS)
 
 
 # ══════════════════════════════════════════════════════════════════════

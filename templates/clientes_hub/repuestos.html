@@ -3575,9 +3575,18 @@ async function rsCargarProveedoresFiltro(){
       return '<option value="' + p.id + '">' + rsEsc(p.nombre) + '</option>';
     }).join('');
     sel.dataset.cargado = '1';
+    if (_rs.proveedor_id) sel.value = String(_rs.proveedor_id);
   } catch(e){ /* deja el select con solo "todos" */ }
 }
 document.addEventListener('DOMContentLoaded', rsCargarProveedoresFiltro);
+// 2026-10-04: desde la tarjeta de un proveedor se llega a SUS solicitudes
+// (/repuestos?rs_proveedor=ID#solicitudes) -- el filtro queda puesto desde el inicio.
+(function(){
+  try {
+    const v = new URLSearchParams(location.search).get('rs_proveedor');
+    if (v && /^\d+$/.test(v)) _rs.proveedor_id = v;
+  } catch(e){}
+})();
 
 // ═══════════════════════════════════════════════════════════════════════
 //  🧾 Fase 5 (2026-09-26) — Compra a proveedor con ticket y seguimiento.
