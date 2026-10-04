@@ -127014,10 +127014,191 @@ _PROV_COLS_NUEVAS = (
     ("marcas", "VARCHAR(300) NULL COMMENT 'Marcas o líneas que vende'"),
     ("pedido_minimo", "VARCHAR(120) NULL"),
     ("garantia", "VARCHAR(120) NULL"),
+    # Proceso de compra propio de cada proveedor (lista JSON de pasos, editable).
+    ("proceso_compra", "TEXT NULL"),
+    # Familias del ERP Random que vende (lista JSON [{codigo, nombre}]): para
+    # anticipar a quién se le compra cada línea (Daniel 2026-10-04).
+    ("familias_erp", "TEXT NULL"),
 )
 _PROV_INCOTERMS = ("EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP")
 _PROV_COLS_OK = {"listo": False}
 _PROV_MONEDAS = ("CLP", "USD", "EUR", "CNY", "GBP", "BRL", "ARS", "MXN")
+
+
+_PROV_TABLAS_OK = {"listo": False}
+_PROV_CANALES = ("whatsapp", "wechat", "telefono", "email")
+_PROV_MAX_CONTACTOS = 5
+_PROV_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
+
+
+def _prov_tablas_asegurar():
+    """Contactos (hasta 5 por proveedor, varias vías cada uno) y bitácora de
+    notas como hitos (2026-10-04, Daniel: "puede tener hasta cinco... varias
+    opciones, WeChat, WhatsApp, teléfono, correo" + notas que "se van guardando
+    como hitos"). Perezoso: corre una vez por proceso."""
+    if _PROV_TABLAS_OK["listo"]:
+        return True
+    ok = True
+    for ddl in (
+        """CREATE TABLE IF NOT EXISTS mant_proveedor_contactos (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            proveedor_id  INT NOT NULL,
+            nombre        VARCHAR(150) NOT NULL,
+            cargo         VARCHAR(100) NULL,
+            telefono      VARCHAR(50) NULL,
+            email         VARCHAR(150) NULL,
+            wechat        VARCHAR(100) NULL,
+            canales       VARCHAR(60) NULL COMMENT 'whatsapp,wechat,telefono,email',
+            es_principal  TINYINT(1) NOT NULL DEFAULT 0,
+            orden         INT NOT NULL DEFAULT 1,
+            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_provcont_prov (proveedor_id, orden)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        """CREATE TABLE IF NOT EXISTS mant_proveedor_notas (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            proveedor_id  INT NOT NULL,
+            texto         TEXT NOT NULL,
+            usuario       VARCHAR(190) NULL,
+            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_provnota_prov (proveedor_id, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    ):
+        try:
+            mysql_execute(ddl)
+        except Exception as e:
+            ok = False
+            print(f"[proveedores] tablas: {e}", flush=True)
+    _PROV_TABLAS_OK["listo"] = ok
+    return ok
+
+
+def _prov_tel_normalizar(raw):
+    """Teléfono de un contacto de proveedor -> (valor, error).
+    Chileno (sin '+' o con +56): 9 dígitos que no parten en 0/1 -> +56XXXXXXXXX
+    (mismas reglas que ilusTelChileno). Extranjero (+ y otro código): 8 a 15
+    dígitos, se guarda tal cual lo escribieron."""
+    crudo = str(raw or "").strip()
+    if not crudo:
+        return None, None
+    if re.search(r"[A-Za-zÁÉÍÓÚáéíóúÑñ]", crudo):
+        return None, "El teléfono no puede tener letras."
+    dig = re.sub(r"\D", "", crudo)
+    if crudo.startswith("+") and not dig.startswith("56"):
+        if not 8 <= len(dig) <= 15:
+            return None, "El teléfono internacional debe tener entre 8 y 15 dígitos con su código de país."
+        return "+" + dig, None
+    if dig.startswith("56"):
+        dig = dig[2:]
+    dig = dig.lstrip("0")
+    if len(dig) == 8:
+        dig = "9" + dig
+    if len(dig) != 9:
+        return None, "El teléfono chileno debe tener 9 dígitos (ej: 9 1234 5678)."
+    if dig[0] not in "23456789":
+        return None, "Un teléfono chileno no empieza con ese dígito."
+    return "+56" + dig, None
+
+
+def _prov_contactos_desde_body(lista):
+    """Valida la lista de contactos (máximo 5). Cada contacto que tenga ALGÚN
+    dato tiene que quedar completo: nombre, al menos una vía, y el dato de cada
+    vía elegida (teléfono para WhatsApp/teléfono, ID para WeChat, correo para
+    correo), con teléfono y correo válidos. Devuelve (contactos, error)."""
+    if lista is None:
+        return None, None
+    if not isinstance(lista, list):
+        return None, "Los contactos vienen en un formato que no se entiende."
+    out = []
+    for i, c in enumerate(lista):
+        if not isinstance(c, dict):
+            continue
+        nombre = str(c.get("nombre") or "").strip()[:150]
+        cargo = str(c.get("cargo") or "").strip()[:100]
+        tel_raw = str(c.get("telefono") or "").strip()
+        email = str(c.get("email") or "").strip()[:150]
+        wechat = str(c.get("wechat") or "").strip()[:100]
+        canales = [x for x in (c.get("canales") or []) if x in _PROV_CANALES]
+        if not any([nombre, cargo, tel_raw, email, wechat, canales]):
+            continue   # fila vacía: se ignora
+        n = len(out) + 1
+        quien = nombre or f"el contacto {n}"
+        if not nombre:
+            return None, f"Contacto {n}: falta el nombre."
+        if not canales:
+            return None, f"{quien}: elige al menos una vía (WhatsApp, WeChat, teléfono o correo)."
+        tel, err = _prov_tel_normalizar(tel_raw)
+        if err:
+            return None, f"{quien}: {err}"
+        if ("whatsapp" in canales or "telefono" in canales) and not tel:
+            return None, f"{quien}: falta el teléfono (elegiste WhatsApp o teléfono)."
+        if "wechat" in canales and not wechat:
+            return None, f"{quien}: falta su ID de WeChat."
+        if email and not _PROV_EMAIL_RE.match(email):
+            return None, f"{quien}: el correo no es válido."
+        if "email" in canales and not email:
+            return None, f"{quien}: falta el correo (elegiste correo)."
+        out.append({"nombre": nombre, "cargo": cargo or None, "telefono": tel, "email": email or None,
+                    "wechat": wechat or None, "canales": ",".join(canales),
+                    "es_principal": 1 if c.get("es_principal") else 0, "orden": n})
+    if len(out) > _PROV_MAX_CONTACTOS:
+        return None, f"Máximo {_PROV_MAX_CONTACTOS} contactos por proveedor."
+    if out and not any(x["es_principal"] for x in out):
+        out[0]["es_principal"] = 1
+    vio = False
+    for x in out:   # uno solo principal
+        if x["es_principal"] and not vio:
+            vio = True
+        else:
+            x["es_principal"] = 0
+    return out, None
+
+
+def _prov_contactos_guardar(pid, contactos, cur):
+    """Reemplaza los contactos del proveedor (misma transacción del caller) y deja
+    el principal y el segundo en las columnas de siempre (las usan la tarjeta,
+    la calidad de la ficha y el correo de compra)."""
+    cur.execute("DELETE FROM mant_proveedor_contactos WHERE proveedor_id=%s", (pid,))
+    for c in contactos:
+        cur.execute(
+            "INSERT INTO mant_proveedor_contactos (proveedor_id, nombre, cargo, telefono, email, wechat, canales, es_principal, orden) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (pid, c["nombre"], c["cargo"], c["telefono"], c["email"], c["wechat"], c["canales"], c["es_principal"], c["orden"]))
+    princ = next((c for c in contactos if c["es_principal"]), None)
+    otro = next((c for c in contactos if not c["es_principal"]), None)
+    canal = None
+    if princ:
+        cs = princ["canales"].split(",")
+        canal = next((x for x in ("whatsapp", "wechat", "telefono", "email") if x in cs), None)
+    cur.execute(
+        "UPDATE mant_proveedores_repuesto SET contacto_nombre=%s, telefono=%s, email=%s, canal_preferido=%s, "
+        " contacto2_nombre=%s, contacto2_telefono=%s, contacto2_email=%s WHERE id=%s",
+        ((princ or {}).get("nombre"), (princ or {}).get("telefono"), (princ or {}).get("email"), canal,
+         (otro or {}).get("nombre"), (otro or {}).get("telefono"), (otro or {}).get("email"), pid))
+
+
+def _prov_contactos_de(p):
+    """Contactos del proveedor; si todavía no tiene filas propias, se arman con
+    las columnas de antes (contacto principal y respaldo) para no perder nada."""
+    filas = []
+    try:
+        filas = [dict(r) for r in (mysql_fetchall(
+            "SELECT id, nombre, cargo, telefono, email, wechat, canales, es_principal, orden "
+            "  FROM mant_proveedor_contactos WHERE proveedor_id=%s ORDER BY orden, id", (p["id"],)) or [])]
+    except Exception as e:
+        print(f"[proveedores] contactos pid={p.get('id')}: {e}", flush=True)
+    for f in filas:
+        f["canales"] = [x for x in (f.get("canales") or "").split(",") if x]
+    if filas:
+        return filas
+    out = []
+    if (p.get("contacto_nombre") or p.get("telefono") or p.get("email")):
+        cs = [p["canal_preferido"]] if p.get("canal_preferido") in _PROV_CANALES else []
+        out.append({"nombre": p.get("contacto_nombre") or "", "cargo": None, "telefono": p.get("telefono"),
+                    "email": p.get("email"), "wechat": None, "canales": cs, "es_principal": 1, "orden": 1})
+    if (p.get("contacto2_nombre") or p.get("contacto2_telefono") or p.get("contacto2_email")):
+        out.append({"nombre": p.get("contacto2_nombre") or "", "cargo": "Respaldo", "telefono": p.get("contacto2_telefono"),
+                    "email": p.get("contacto2_email"), "wechat": None, "canales": [], "es_principal": 0 if out else 1, "orden": len(out) + 1})
+    return out
 
 
 def _prov_cols_asegurar():
@@ -127056,6 +127237,7 @@ def _prov_calidad(p):
         ("Marcas que vende", bool((p.get("marcas") or "").strip())),
         # Incoterm solo aplica a importaciones: a un nacional no se le exige.
         ("Incoterm (importación)", bool((p.get("incoterm") or "").strip()) or (p.get("origen") == "nacional")),
+        ("Familia del ERP", bool(p.get("familias_erp") and str(p.get("familias_erp")).strip() not in ("[]", "null"))),
     ]
     out = [{"texto": t, "ok": ok} for t, ok in items]
     n = sum(1 for x in out if x["ok"])
@@ -127128,6 +127310,26 @@ def _prov_campos_desde_body(d, parcial):
                      ("direccion", 300), ("ciudad", 80), ("direccion_place_id", 200), ("marcas", 300),
                      ("pedido_minimo", 120), ("garantia", 120)):
         _txt(k, largo)
+    if not parcial or "proceso_compra" in d:
+        pasos = d.get("proceso_compra") or []
+        if not isinstance(pasos, list):
+            return None, "El proceso de compra viene en un formato que no se entiende."
+        pasos = [str(x).strip()[:80] for x in pasos if str(x or "").strip()][:12]
+        out["proceso_compra"] = json.dumps(pasos, ensure_ascii=False) if pasos else None
+    if not parcial or "familias_erp" in d:
+        fams = d.get("familias_erp") or []
+        if not isinstance(fams, list):
+            return None, "Las familias vienen en un formato que no se entiende."
+        limpias, vistos = [], set()
+        for f in fams[:30]:
+            if not isinstance(f, dict):
+                continue
+            nom = str(f.get("nombre") or "").strip()[:80]
+            cod = str(f.get("codigo") or "").strip()[:20]
+            if nom and (cod or nom).lower() not in vistos:
+                vistos.add((cod or nom).lower())
+                limpias.append({"codigo": cod, "nombre": nom})
+        out["familias_erp"] = json.dumps(limpias, ensure_ascii=False) if limpias else None
     if not parcial or "incoterm" in d:
         it = (d.get("incoterm") or "").strip().upper()
         out["incoterm"] = it if it in _PROV_INCOTERMS else None
@@ -127199,12 +127401,29 @@ def mant_proveedor_repuesto_update(pid):
         if otro:
             return jsonify({"ok": False, "error": "Ya existe otro proveedor con ese nombre."}), 409
         campos["nombre"] = nombre
+    contactos, err = _prov_contactos_desde_body(d.get("contactos") if "contactos" in d else None)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
     sets = [f"{k}=%s" for k in campos]
     vals = list(campos.values())
-    if not sets:
+    if not sets and contactos is None:
         return jsonify({"ok": False, "error": "Sin campos"}), 400
+    if contactos is not None:
+        _prov_tablas_asegurar()
     try:
-        mysql_execute(f"UPDATE mant_proveedores_repuesto SET {','.join(sets)} WHERE id=%s", tuple(vals) + (pid,))
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                if sets:
+                    cur.execute(f"UPDATE mant_proveedores_repuesto SET {','.join(sets)} WHERE id=%s", tuple(vals) + (pid,))
+                if contactos is not None:
+                    _prov_contactos_guardar(pid, contactos, cur)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         return jsonify({"ok": True})
     except Exception as e:
         print(f"[mant_proveedor_repuesto_update] CRASH pid={pid}: {e}", flush=True)
@@ -127229,6 +127448,11 @@ def mant_proveedor_repuesto_crear():
     campos, err = _prov_campos_desde_body(d, parcial=False)
     if err:
         return jsonify({"ok": False, "error": err}), 400
+    contactos, err = _prov_contactos_desde_body(d.get("contactos") if "contactos" in d else None)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if contactos is not None:
+        _prov_tablas_asegurar()
     fields = {"nombre": nombre[:200]}
     fields.update(campos)
     cols = [c for c in fields if fields[c] is not None]
@@ -127243,13 +127467,97 @@ def mant_proveedor_repuesto_crear():
                     tuple(vals)
                 )
                 new_id = cur.lastrowid
+                if contactos:
+                    _prov_contactos_guardar(new_id, contactos, cur)
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
         return jsonify({"ok": True, "id": new_id})
     except Exception as e:
         print(f"[mant_proveedor_repuesto_crear] CRASH: {e}", flush=True)
         return jsonify({"ok": False, "error": "Error interno"}), 500
+
+
+_PROV_FAMILIAS_CACHE = {"data": None, "ts": 0.0}
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/familias-erp", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_proveedores_familias_erp():
+    """Familias de productos declaradas en el ERP Random (TABFM: KOFM código,
+    NOKOFM nombre) para asociarlas al proveedor. SOLO LECTURA (REGLA #4.1: pasa
+    por _random_sql_query, SELECT). Cache de 1 hora en el proceso."""
+    if _PROV_FAMILIAS_CACHE["data"] is not None and time.time() - _PROV_FAMILIAS_CACHE["ts"] < 3600:
+        return jsonify({"ok": True, "familias": _PROV_FAMILIAS_CACHE["data"]})
+    fams = []
+    for _sql in (
+        "SELECT TOP 500 RTRIM(KOFM) AS c, RTRIM(NOKOFM) AS n FROM TABFM WHERE NOKOFM IS NOT NULL ORDER BY NOKOFM",
+        "SELECT DISTINCT TOP 500 RTRIM(NOKOFM) AS n FROM TABFM WHERE NOKOFM IS NOT NULL",
+    ):
+        try:
+            filas = _random_sql_query(_sql, None, max_rows=500) or []
+        except Exception as e:
+            print(f"[proveedores] familias ERP: {e}", flush=True)
+            filas = []
+        if filas:
+            vistos = set()
+            for f in filas:
+                n = str(f.get("n") or "").strip()
+                if len(n) < 2 or n.lower() in vistos:
+                    continue
+                vistos.add(n.lower())
+                fams.append({"codigo": str(f.get("c") or "").strip(), "nombre": n.title() if n.isupper() else n})
+            break
+    if not fams:
+        return jsonify({"ok": False, "familias": [], "error": "No se pudo leer las familias del ERP. Intenta en un rato."})
+    _PROV_FAMILIAS_CACHE["data"], _PROV_FAMILIAS_CACHE["ts"] = fams, time.time()
+    return jsonify({"ok": True, "familias": fams})
+
+
+def _prov_hitos_de(p):
+    """Bitácora del proveedor, lo más nuevo primero. La nota suelta de antes
+    (columna notas) queda como el primer hito para no perderla."""
+    hitos = []
+    try:
+        for r in (mysql_fetchall(
+                "SELECT id, texto, usuario, created_at FROM mant_proveedor_notas WHERE proveedor_id=%s "
+                " ORDER BY created_at DESC, id DESC LIMIT 200", (p["id"],)) or []):
+            r = dict(r)
+            r["cuando"] = chile_fmt_filter(r.pop("created_at")) if r.get("created_at") else ""
+            hitos.append(r)
+    except Exception as e:
+        print(f"[proveedores] hitos pid={p.get('id')}: {e}", flush=True)
+    if (p.get("notas") or "").strip():
+        hitos.append({"id": None, "texto": p["notas"].strip(), "usuario": None, "cuando": "Nota anterior a la bitácora"})
+    return hitos
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/<int:pid>/notas", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_proveedor_repuesto_nota(pid):
+    """Agrega un hito a la bitácora del proveedor (2026-10-04, Daniel: las notas
+    "se van guardando como hitos... se guardó y después se va agregando otro").
+    Solo se agregan: un hito no se edita ni se borra (queda la trazabilidad)."""
+    d = request.get_json(silent=True) or {}
+    texto = (d.get("texto") or "").strip()[:4000]
+    if len(texto) < 3:
+        return jsonify({"ok": False, "error": "Escribe el hito (al menos 3 letras)."}), 400
+    p = mysql_fetchone("SELECT id, notas FROM mant_proveedores_repuesto WHERE id=%s", (pid,))
+    if not p:
+        return jsonify({"ok": False, "error": "Proveedor no encontrado."}), 404
+    _prov_tablas_asegurar()
+    try:
+        mysql_execute("INSERT INTO mant_proveedor_notas (proveedor_id, texto, usuario) VALUES (%s,%s,%s)",
+                      (pid, texto, current_username()))
+    except Exception as e:
+        print(f"[proveedores] nota pid={pid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el hito."}), 500
+    return jsonify({"ok": True, "hitos": _prov_hitos_de(dict(p))})
 
 
 @app.route("/mantenciones/api/proveedores-repuesto/<int:pid>/ficha", methods=["GET"])
@@ -127268,18 +127576,36 @@ def mant_proveedor_repuesto_ficha(pid):
         p[k] = chile_fmt_filter(p[k]) if p.get(k) else None
     for k in ("direccion_lat", "direccion_lng"):
         p[k] = float(p[k]) if p.get(k) is not None else None
+    _prov_tablas_asegurar()
+    for _k in ("proceso_compra", "familias_erp"):
+        try:
+            p[_k] = json.loads(p.get(_k) or "[]")
+        except Exception:
+            p[_k] = []
+    p["contactos"] = _prov_contactos_de(p)
+    p["hitos"] = _prov_hitos_de(p)
     out = {"ok": True, "proveedor": p, "calidad": _prov_calidad(p),
            "indicadores": _prov_indicadores().get(pid, {}),
            "repuestos": [], "solicitudes": [], "compras": [], "legacy": []}
     try:
         for r in (mysql_fetchall(
                 "SELECT rs.id, rs.sku, rs.descripcion, rs.cantidad, rs.stock_minimo, rs.costo_unitario, "
-                "       u.codigo AS ubicacion_codigo "
+                "       u.codigo AS ubicacion_codigo, "
+                # Demanda de los últimos 12 meses (Daniel 2026-10-04: "que sea bien
+                # dinámico el detalle de los repuestos... para hacer margen"): cuántas
+                # veces se pidió y cuántas unidades -> qué conviene comprar por volumen.
+                "       (SELECT COUNT(*) FROM mant_ot_repuesto_solicitudes s WHERE s.repuesto_stock_id=rs.id "
+                "          AND s.estado<>'rechazado' AND COALESCE(s.es_reposicion,0)=0 "
+                "          AND s.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)) AS pedidos_12m, "
+                "       (SELECT COALESCE(SUM(s.cantidad),0) FROM mant_ot_repuesto_solicitudes s WHERE s.repuesto_stock_id=rs.id "
+                "          AND s.estado<>'rechazado' AND COALESCE(s.es_reposicion,0)=0 "
+                "          AND s.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)) AS unidades_12m "
                 "  FROM mant_repuestos_stock rs LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
                 " WHERE rs.proveedor_id=%s AND COALESCE(rs.activo,1)=1 ORDER BY rs.descripcion LIMIT 500", (pid,)) or []):
             r = dict(r)
-            for k in ("cantidad", "stock_minimo", "costo_unitario"):
+            for k in ("cantidad", "stock_minimo", "costo_unitario", "unidades_12m"):
                 r[k] = float(r[k]) if r.get(k) is not None else None
+            r["pedidos_12m"] = int(r.get("pedidos_12m") or 0)
             # Semáforo de stock (mismo criterio que el tarjetero): sin stock →
             # rojo, en o bajo el mínimo → ámbar, con stock → verde.
             _cant = r["cantidad"] or 0

@@ -22,9 +22,10 @@ def _cargar():
     with open(APP_PY, encoding="utf-8") as fh:
         arbol = ast.parse(fh.read())
     nodos = [n for n in arbol.body
-             if (isinstance(n, ast.FunctionDef) and n.name in ("_prov_calidad", "_prov_campos_desde_body"))
-             or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("_PROV_MONEDAS", "_PROV_INCOTERMS") for t in n.targets))]
+             if (isinstance(n, ast.FunctionDef) and n.name in ("_prov_calidad", "_prov_campos_desde_body", "_prov_tel_normalizar", "_prov_contactos_desde_body"))
+             or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("_PROV_MONEDAS", "_PROV_INCOTERMS", "_PROV_CANALES", "_PROV_MAX_CONTACTOS", "_PROV_EMAIL_RE") for t in n.targets))]
     _AMB["re"] = re
+    _AMB["json"] = __import__("json")
     exec(compile(ast.Module(body=nodos, type_ignores=[]), "<app>", "exec"), _AMB)
     return _AMB
 
@@ -36,7 +37,7 @@ class TestCalidadFicha(unittest.TestCase):
 
     def test_ficha_vacia_es_roja(self):
         c = self.calidad({"nombre": "Booty builder"})
-        self.assertEqual(c["total"], 13)
+        self.assertEqual(c["total"], 14)
         self.assertEqual(c["ok"], 0)
         self.assertEqual(c["nivel"], "rojo")
 
@@ -54,8 +55,9 @@ class TestCalidadFicha(unittest.TestCase):
         c = self.calidad({"contacto_nombre": "Wonyong", "telefono": "+82", "email": "a@b.com", "canal_preferido": "email",
                           "origen": "extranjero", "pais": "Corea del Sur", "moneda": "USD", "rut_tax": "123",
                           "condiciones_pago": "50/50", "plazo_entrega_dias": 45,
-                          "direccion": "Seúl", "marcas": "Drax", "incoterm": "FOB"})
-        self.assertEqual(c["ok"], 13)
+                          "direccion": "Seúl", "marcas": "Drax", "incoterm": "FOB",
+                          "familias_erp": '[{"codigo": "DR", "nombre": "Drax"}]'})
+        self.assertEqual(c["ok"], 14)
         self.assertEqual(c["nivel"], "verde")
 
     def test_plazo_cero_cuenta_como_dato(self):
@@ -130,6 +132,55 @@ class TestCamposNuevos(unittest.TestCase):
         self.assertEqual(c["marcas"], "Drax")
         c, _ = campos({"incoterm": "XYZ"}, parcial=True)
         self.assertIsNone(c["incoterm"])
+
+
+class TestContactos(unittest.TestCase):
+
+    def setUp(self):
+        self.tel = _cargar()["_prov_tel_normalizar"]
+        self.cont = _cargar()["_prov_contactos_desde_body"]
+
+    def test_telefono_chileno(self):
+        for raw in ("9 1234 5678", "+56 9 1234 5678", "56912345678", "(9) 1234-5678", "12345678"):
+            self.assertEqual(self.tel(raw)[0][:3], "+56", raw)
+        self.assertEqual(self.tel("+56 9 1234 5678")[0], "+56912345678")
+        self.assertIsNotNone(self.tel("9 1234")[1])
+        self.assertIsNotNone(self.tel("1 2345 6789")[1])
+        self.assertIsNotNone(self.tel("9 12AB 5678")[1])
+
+    def test_telefono_extranjero(self):
+        self.assertEqual(self.tel("+86 138 0013 8000")[0], "+8613800138000")
+        self.assertIsNotNone(self.tel("+86 12")[1])
+
+    def test_contacto_con_datos_debe_quedar_completo(self):
+        _, err = self.cont([{"telefono": "912345678"}])
+        self.assertIn("nombre", err)
+        _, err = self.cont([{"nombre": "Ana"}])
+        self.assertIn("vía", err)
+        _, err = self.cont([{"nombre": "Ana", "canales": ["whatsapp"]}])
+        self.assertIn("teléfono", err)
+        _, err = self.cont([{"nombre": "Ana", "canales": ["wechat"]}])
+        self.assertIn("WeChat", err)
+        _, err = self.cont([{"nombre": "Ana", "canales": ["email"], "email": "ana@"}])
+        self.assertIn("correo", err)
+
+    def test_filas_vacias_se_ignoran_y_hay_un_solo_principal(self):
+        out, err = self.cont([{}, {"nombre": "Ana", "canales": ["email"], "email": "ana@drax.com"},
+                              {"nombre": "Li", "canales": ["wechat"], "wechat": "li88", "es_principal": True},
+                              {"nombre": "Bo", "canales": ["telefono"], "telefono": "+82 10 1234 5678", "es_principal": True}])
+        self.assertIsNone(err)
+        self.assertEqual(len(out), 3)
+        self.assertEqual([c["es_principal"] for c in out], [0, 1, 0])
+
+    def test_maximo_cinco(self):
+        _, err = self.cont([{"nombre": f"P{i}", "canales": ["email"], "email": f"p{i}@x.com"} for i in range(6)])
+        self.assertIn("5", err)
+
+    def test_proceso_de_compra(self):
+        campos = _cargar()["_prov_campos_desde_body"]
+        c, err = campos({"proceso_compra": ["Cotizar", " ", "Pagar"]}, parcial=True)
+        self.assertIsNone(err)
+        self.assertEqual(c["proceso_compra"], '["Cotizar", "Pagar"]')
 
 
 if __name__ == "__main__":

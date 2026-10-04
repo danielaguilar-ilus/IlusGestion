@@ -291,6 +291,116 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
 }
 @media (max-width:420px){ .pvf-opts{grid-template-columns:1fr} }
 @media (prefers-reduced-motion:reduce){ .pvf-step,.pvf-tile,.pvf-opt{transition:none} .pvf-step.is-complete .pvf-circ::after,.pvf-step.pvf-flash,.pvf-tile .dot-fs{animation:none} }
+/* ── Cabecera de la ficha: los datos clave de un vistazo ── */
+.pvf-cab{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;background:#fff;border:1.5px solid #e5e7eb;border-left:6px solid var(--pvf-c,#dc2626);border-radius:16px;padding:14px 18px;margin-bottom:12px}
+.pvf-cab:empty{display:none}
+.pvf-cab-ini{width:62px;height:62px;border-radius:14px;color:#fff;font-weight:900;font-size:1.25rem;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--pvf-c,#dc2626),#0a0a0a)}
+.pvf-cab-nom{font-size:1.3rem;font-weight:900;color:#0a0a0a;line-height:1.15;word-break:break-word}
+.pvf-cab-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.pvf-chip{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:3px 10px;font-size:.76rem;font-weight:800;background:#f3f4f6;color:#374151}
+.pvf-chip.az{background:#dbeafe;color:#1e40af}.pvf-chip.vd{background:#dcfce7;color:#166534}.pvf-chip.am{background:#fff8e1;color:#92400e}.pvf-chip.rj{background:#fee2e2;color:#991b1b}.pvf-chip.ng{background:#0a0a0a;color:#fff}
+.pvf-cab-datos{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:8px;font-size:.86rem;color:#374151}
+.pvf-cab-datos span{display:inline-flex;align-items:center;gap:6px;word-break:break-word}
+.pvf-cab-datos i{color:#9ca3af}
+.pvf-cab-datos a{color:#0a0a0a;font-weight:700;text-decoration:none}
+.pvf-cab-datos a:hover{color:#dc2626}
+.pvf-cab-ring{width:74px;height:74px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;background:conic-gradient(var(--pvf-rc) calc(var(--pvf-rp)*1%),#eef0f3 0)}
+.pvf-cab-ring::after{content:'';position:absolute;inset:7px;border-radius:50%;background:#fff}
+.pvf-cab-ring b,.pvf-cab-ring small{position:relative;z-index:1;line-height:1}
+.pvf-cab-ring b{font-size:1.1rem;font-weight:900}
+.pvf-cab-ring small{font-size:.6rem;font-weight:800;color:#6b7280;margin-top:2px;text-transform:uppercase}
+.pvf-cab-com{grid-column:1/-1;display:flex;gap:10px;align-items:flex-start;background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:9px 12px;font-size:.88rem;color:#374151}
+.pvf-cab-com i{color:#6b7280;margin-top:2px}
+.pvf-cab-com b{color:#0a0a0a}
+.pvf-cab-com a{margin-left:auto;flex-shrink:0;font-weight:800;color:#dc2626;text-decoration:none;white-space:nowrap}
+/* ── Pestañas con semáforo ── */
+.pvf-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px;position:sticky;top:-16px;z-index:5;background:#f9fafb;padding:6px 0}
+.pvf-tab{position:relative;text-align:left;border:2px solid #e5e7eb;background:#fff;border-radius:12px;padding:8px 12px;min-height:58px;cursor:pointer;display:flex;flex-direction:column;gap:1px;transition:all .15s}
+.pvf-tab:hover{border-color:#9ca3af}
+.pvf-tab .k{font-size:.74rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;display:flex;align-items:center;gap:6px;color:#374151}
+.pvf-tab .d{font-size:.84rem;font-weight:800;color:#0a0a0a}
+.pvf-tab.t-rojo{border-color:#fca5a5}.pvf-tab.t-rojo .d{color:#b91c1c}
+.pvf-tab.t-ambar{border-color:#fcd34d}.pvf-tab.t-ambar .d{color:#b45309}
+.pvf-tab.t-verde .d{color:#15803d}.pvf-tab.t-azul .d{color:#1d4ed8}
+.pvf-tab.is-on{background:#0a0a0a;border-color:#0a0a0a}
+.pvf-tab.is-on .k,.pvf-tab.is-on .d{color:#fff}
+.pvf-tab .dot-fs{position:absolute;top:8px;right:8px;width:10px;height:10px;border-radius:50%;background:#dc2626;animation:pvLate 1.6s ease-in-out infinite}
+/* ── Contactos ── */
+.pvf-contactos{display:flex;flex-direction:column;gap:10px}
+.pvf-cont{border:1.5px solid #e5e7eb;border-radius:14px;padding:12px 14px;background:#fff;position:relative}
+.pvf-cont.is-ok{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 60%)}
+.pvf-cont.is-mal{border-color:#fca5a5;background:#fffafa}
+.pvf-cont-h{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.pvf-cont-h b{font-size:.9rem;color:#0a0a0a}
+.pvf-star{border:1.5px solid #e5e7eb;background:#fff;border-radius:50px;min-height:34px;padding:2px 12px;font-size:.8rem;font-weight:800;color:#6b7280;cursor:pointer}
+.pvf-star.is-on{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.pvf-cont-x{margin-left:auto;border:0;background:none;color:#991b1b;font-weight:800;font-size:.84rem;min-height:34px}
+.pvf-vias{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px}
+.pvf-via{min-height:40px;border:1.5px solid #e5e7eb;background:#fff;border-radius:50px;padding:5px 14px;font-weight:800;font-size:.84rem;color:#374151;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.pvf-via.is-on{background:#16a34a;border-color:#16a34a;color:#fff}
+.pvf-cont-err{font-size:.84rem;font-weight:700;color:#b91c1c;margin-top:6px}
+.pvf-cont-err:empty{display:none}
+.pvf-cont-ok{font-size:.84rem;font-weight:700;color:#15803d;margin-top:6px}
+.pvf-add-cont{margin-top:10px;width:100%;min-height:48px;border:2px dashed #fca5a5;border-radius:12px;background:#fff;color:#0a0a0a;font-weight:800;display:flex;align-items:center;justify-content:center;gap:8px}
+.pvf-add-cont:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2}
+.pvf-add-cont[disabled]{opacity:.45;cursor:not-allowed}
+/* ── Familias del ERP ── */
+.pvf-fams{display:flex;flex-wrap:wrap;gap:6px}
+.pvf-fams:empty::before{content:'Ninguna familia asociada todavía';font-size:.86rem;color:#9ca3af}
+.pvf-fam{display:inline-flex;align-items:center;gap:6px;background:#0a0a0a;color:#fff;border-radius:50px;padding:5px 6px 5px 12px;font-size:.84rem;font-weight:800}
+.pvf-fam button{border:0;background:rgba(255,255,255,.18);color:#fff;width:22px;height:22px;border-radius:50%;font-size:.7rem;display:flex;align-items:center;justify-content:center}
+.pvf-fam-lista{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:150px;overflow-y:auto}
+.pvf-fam-lista:empty{display:none}
+.pvf-fam-op{min-height:38px;border:1.5px solid #e5e7eb;background:#fff;border-radius:50px;padding:5px 12px;font-size:.84rem;font-weight:700;color:#374151;cursor:pointer}
+.pvf-fam-op:hover{border-color:#16a34a;background:#f0fdf4;color:#166534}
+/* ── Proceso de compra ── */
+.pvf-proc{margin-top:14px;border:1.5px solid #e5e7eb;border-radius:14px;padding:12px 14px;background:#fbfbfc}
+.pvf-proc-h{font-weight:900;font-size:.96rem;color:#0a0a0a;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.pvf-proc-h i{color:#dc2626}
+.pvf-proc-lista{display:flex;flex-direction:column;gap:6px}
+.pvf-proc-lista:empty::before{content:'Sin pasos todavía: agrégalos o usa el proceso sugerido.';font-size:.86rem;color:#9ca3af}
+.pvf-pp{display:flex;align-items:center;gap:8px}
+.pvf-pp-n{width:30px;height:30px;border-radius:50%;background:#dc2626;color:#fff;font-weight:900;font-size:.85rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pvf-pp input{flex:1;min-height:42px!important}
+.pvf-pp button{border:1.5px solid #e5e7eb;background:#fff;border-radius:8px;width:38px;height:38px;color:#374151;flex-shrink:0}
+.pvf-pp button:hover{border-color:#0a0a0a}
+.pvf-pp button.x{color:#991b1b}
+/* ── Bitácora ── */
+.pvf-nota-nueva{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.pvf-nota-nueva textarea{flex:1;min-width:220px;font-size:16px}
+.pvf-nota-btn{background:#0a0a0a;color:#fff;min-height:46px;align-self:flex-end}
+.pvf-nota-btn:hover{background:#1f2937;color:#fff}
+.pvf-hitos{list-style:none;margin:12px 0 0;padding:0 0 0 18px;border-left:3px solid #e5e7eb;display:flex;flex-direction:column;gap:10px}
+.pvf-hitos:empty{display:none}
+.pvf-hitos li{position:relative;background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:9px 12px;font-size:.9rem;color:#1f2937;white-space:pre-wrap;word-break:break-word}
+.pvf-hitos li::before{content:'';position:absolute;left:-26px;top:12px;width:13px;height:13px;border-radius:50%;background:#dc2626;border:3px solid #fff;box-shadow:0 0 0 2px #fca5a5}
+.pvf-hitos li.viejo::before{background:#9ca3af;box-shadow:0 0 0 2px #e5e7eb}
+.pvf-hitos li.pend::before{background:#f59e0b;box-shadow:0 0 0 2px #fde68a}
+.pvf-hitos .q{display:block;font-size:.76rem;font-weight:800;color:#6b7280;margin-bottom:3px;white-space:normal}
+/* ── Repuestos dinámicos ── */
+.pvr-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.pvr-kpi{background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:9px 12px}
+.pvr-kpi .k{font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
+.pvr-kpi .v{font-size:1.25rem;font-weight:900;color:#0a0a0a;line-height:1.15;word-break:break-word}
+.pvr-kpi.rj .v{color:#b91c1c}.pvr-kpi.am .v{color:#b45309}.pvr-kpi.vd .v{color:#15803d}
+.pvr-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.pvr-bar input{flex:1;min-width:200px}
+.pvr-bar select{width:auto;min-width:180px}
+.pvr-fil{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.pvr-it{display:grid;grid-template-columns:14px 1fr auto;gap:10px;align-items:center;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid #eef0f3}
+.pvr-it .met{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.pvr-m{font-size:.76rem;font-weight:800;border-radius:50px;padding:3px 9px;background:#f3f4f6;color:#374151;white-space:nowrap}
+.pvr-m.dem{background:#ede9fe;color:#5b21b6}
+.pvr-vacio{padding:16px;text-align:center;color:#6b7280;font-size:.9rem}
+@media (max-width:768px){
+  .pvf-cab{grid-template-columns:auto 1fr}
+  .pvf-cab-ring{display:none}
+  .pvf-tabs{grid-template-columns:1fr 1fr}
+  .pvr-kpis{grid-template-columns:1fr 1fr}
+  .pvr-it{grid-template-columns:14px 1fr}
+  .pvr-it .met{grid-column:2;justify-content:flex-start}
+}
+.pvf-cont.pvf-flash{animation:pvfFlash 1.1s ease-in-out 1}
 </style>
 
 <div class="container-fluid py-3 px-3 px-md-4">
@@ -551,7 +661,8 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
 </div>
 
 <!-- Ficha del proveedor: crear, ver y editar en UN solo lugar, con el formato de
-     "Nuevo retiro interno" (REGLA #15; Daniel 2026-10-04). -->
+     "Nuevo retiro interno" (REGLA #15; Daniel 2026-10-04). Cabecera con los datos
+     clave + pestañas Información / Solicitudes / Repuestos / Compras. -->
 <div class="modal fade" id="modalProveedorFicha" tabindex="-1" aria-hidden="true" aria-labelledby="pvfTitulo" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
     <div class="modal-content">
@@ -560,158 +671,162 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
         <div class="pvf-progreso" aria-live="polite">
           <span id="pvfProgresoTxt">0 de 4 pasos listos</span>
           <span class="bar"><span id="pvfProgresoBar"></span></span>
-          <span class="ficha" id="pvfProgresoFicha">Ficha 0 de 13</span>
+          <span class="ficha" id="pvfProgresoFicha">Ficha 0 de 14</span>
           <span class="avisos" id="pvfProgresoAvisos"></span>
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="provId">
-        <div class="pvf-intro"><i class="bi bi-info-circle-fill"></i><div id="pvfIntroTxt"></div></div>
 
-        {# Lo que tenemos con este proveedor (solo si ya existe) #}
-        <section class="pvf-rel" id="pvfRel" hidden>
-          <div class="pvf-rel-h">
-            <h6><i class="bi bi-diagram-3-fill"></i><span id="pvfRelTit">Lo que tenemos con este proveedor</span></h6>
-            <a class="pvf-aviso-btn" id="pvfRelCentro" href="#"><i class="bi bi-inbox"></i>Abrir en el centro de solicitudes</a>
-          </div>
-          <div class="pvf-avisos" id="pvfRelAvisos"></div>
-          <div class="pvf-tiles" id="pvfTiles"></div>
-          <div id="pvfRelPanel"></div>
-        </section>
+        {# ── Cabecera: los datos clave del proveedor de un vistazo ── #}
+        <div class="pvf-cab" id="pvfCab"></div>
 
-        <form id="pvfForm" onsubmit="return false" oninput="pvfEvaluar()" onchange="pvfEvaluar()" autocomplete="off">
-          {# ── PASO 1: La empresa ── #}
-          <div class="pvf-step" id="pvfStep1">
-            <div class="pvf-step-h">
-              <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 1</span><div class="pvf-circ"><span class="num">1</span><i class="bi bi-check-lg chk"></i></div></div>
-              <div class="pvf-tits"><div class="pvf-tit">La empresa</div>
-                <div class="pvf-sub">Cómo se llama, de dónde es y su identificación tributaria. Con esto se agrupan las compras y se emiten las órdenes.</div>
-                <div class="pvf-estado" id="pvfEstado1"></div></div>
-            </div>
-            <label class="form-label" for="provNombre">Nombre del proveedor <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="provNombre" maxlength="200" placeholder="Ej: Drax Fitness">
-            <div class="pvf-avisos" id="pvfAvisos1"></div>
-            <label class="form-label mt-3 d-block">¿De dónde es?</label>
-            <div class="pvf-opts" role="radiogroup" aria-label="Origen del proveedor">
-              <label class="pvf-opt"><input type="radio" name="provOrigen" value="nacional"><span class="pvf-opt-ico"><i class="bi bi-geo-alt-fill"></i></span>
-                <span class="pvf-opt-txt"><strong>Nacional</strong><small>Empresa chilena · factura con RUT</small></span><span class="pvf-opt-radio"></span></label>
-              <label class="pvf-opt"><input type="radio" name="provOrigen" value="extranjero"><span class="pvf-opt-ico"><i class="bi bi-globe-americas"></i></span>
-                <span class="pvf-opt-txt"><strong>Extranjero</strong><small>Importación · identificador tributario de su país</small></span><span class="pvf-opt-radio"></span></label>
-            </div>
-            <div class="row g-2 mt-1">
-              <div class="col-md-4"><label class="form-label" for="provPais">País</label>
-                <input type="text" class="form-control" id="provPais" maxlength="80" placeholder="Ej: China"></div>
-              <div class="col-md-4"><label class="form-label" for="provRutTax" id="provRutTaxLbl">RUT o identificador tributario</label>
-                <input type="text" class="form-control" id="provRutTax" maxlength="40" onblur="pvfRutBlur()"></div>
-              <div class="col-md-4"><label class="form-label" for="provSitio">Sitio o portal de compra <span class="pvf-opc">(opcional)</span></label>
-                <input type="text" class="form-control" id="provSitio" maxlength="300" placeholder="www…"></div>
-            </div>
-            <div class="pvf-sugs" id="pvfSugs1"></div>
-          </div>
+        {# ── Pestañas (solo con un proveedor que ya existe) ── #}
+        <div class="pvf-tabs" id="pvfTabs" role="tablist" hidden></div>
 
-          {# ── PASO 2: Contacto ── #}
-          <div class="pvf-step" id="pvfStep2">
-            <div class="pvf-step-h">
-              <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 2</span><div class="pvf-circ"><span class="num">2</span><i class="bi bi-check-lg chk"></i></div></div>
-              <div class="pvf-tits"><div class="pvf-tit">Contacto principal</div>
-                <div class="pvf-sub">A quién se le escribe para cotizar y pedir, y por dónde responde más rápido.</div>
-                <div class="pvf-estado" id="pvfEstado2"></div></div>
-            </div>
-            <div class="row g-2">
-              <div class="col-md-4"><label class="form-label" for="provContacto">Persona de contacto</label>
-                <input type="text" class="form-control" id="provContacto" maxlength="150"></div>
-              <div class="col-md-4"><label class="form-label" for="provTelefono">Teléfono <span class="pvf-opc">(con código de país)</span></label>
-                <input type="tel" class="form-control" id="provTelefono" maxlength="50" placeholder="+56 9 … / +86 …"></div>
-              <div class="col-md-4"><label class="form-label" for="provEmail">Correo</label>
-                <input type="email" class="form-control" id="provEmail" maxlength="150"></div>
-            </div>
-            <label class="form-label mt-3 d-block">¿Por dónde responde más rápido?</label>
-            <div class="pvf-opts c4" role="radiogroup" aria-label="Canal preferido">
-              <label class="pvf-opt"><input type="radio" name="provCanal" value="whatsapp"><span class="pvf-opt-ico"><i class="bi bi-whatsapp"></i></span><span class="pvf-opt-txt"><strong>WhatsApp</strong></span><span class="pvf-opt-radio"></span></label>
-              <label class="pvf-opt"><input type="radio" name="provCanal" value="wechat"><span class="pvf-opt-ico"><i class="bi bi-chat-dots-fill"></i></span><span class="pvf-opt-txt"><strong>WeChat</strong></span><span class="pvf-opt-radio"></span></label>
-              <label class="pvf-opt"><input type="radio" name="provCanal" value="telefono"><span class="pvf-opt-ico"><i class="bi bi-telephone-fill"></i></span><span class="pvf-opt-txt"><strong>Teléfono</strong></span><span class="pvf-opt-radio"></span></label>
-              <label class="pvf-opt"><input type="radio" name="provCanal" value="email"><span class="pvf-opt-ico"><i class="bi bi-envelope-fill"></i></span><span class="pvf-opt-txt"><strong>Correo</strong></span><span class="pvf-opt-radio"></span></label>
-            </div>
-            <div class="pvf-sugs" id="pvfSugs2"></div>
-            <div class="pvf-contacto-rap" id="pvfContactoRap"></div>
-          </div>
+        {# ════════ Pestaña INFORMACIÓN ════════ #}
+        <div class="pvf-pane" data-pane="info">
+          <div class="pvf-intro"><i class="bi bi-info-circle-fill"></i><div id="pvfIntroTxt"></div></div>
+          <div class="pvf-avisos mb-3" id="pvfRelAvisos"></div>
 
-          {# ── PASO 3: Qué vende y dónde está ── #}
-          <div class="pvf-step" id="pvfStep3">
-            <div class="pvf-step-h">
-              <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 3</span><div class="pvf-circ"><span class="num">3</span><i class="bi bi-check-lg chk"></i></div></div>
-              <div class="pvf-tits"><div class="pvf-tit">Qué vende y dónde está</div>
-                <div class="pvf-sub">Las marcas o líneas que nos vende (para saber a quién pedirle cada repuesto) y su dirección.</div>
-                <div class="pvf-estado" id="pvfEstado3"></div></div>
+          <form id="pvfForm" onsubmit="return false" oninput="pvfEvaluar()" onchange="pvfEvaluar()" autocomplete="off">
+            {# ── PASO 1: La empresa ── #}
+            <div class="pvf-step" id="pvfStep1">
+              <div class="pvf-step-h">
+                <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 1</span><div class="pvf-circ"><span class="num">1</span><i class="bi bi-check-lg chk"></i></div></div>
+                <div class="pvf-tits"><div class="pvf-tit">La empresa</div>
+                  <div class="pvf-sub">Cómo se llama, de dónde es y su identificación tributaria. Con esto se agrupan las compras y se emiten las órdenes.</div>
+                  <div class="pvf-estado" id="pvfEstado1"></div></div>
+              </div>
+              <label class="form-label" for="provNombre">Nombre del proveedor <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="provNombre" maxlength="200" placeholder="Ej: Drax Fitness">
+              <div class="pvf-avisos" id="pvfAvisos1"></div>
+              <label class="form-label mt-3 d-block">¿De dónde es?</label>
+              <div class="pvf-opts" role="radiogroup" aria-label="Origen del proveedor">
+                <label class="pvf-opt"><input type="radio" name="provOrigen" value="nacional"><span class="pvf-opt-ico"><i class="bi bi-geo-alt-fill"></i></span>
+                  <span class="pvf-opt-txt"><strong>Nacional</strong><small>Empresa chilena · factura con RUT</small></span><span class="pvf-opt-radio"></span></label>
+                <label class="pvf-opt"><input type="radio" name="provOrigen" value="extranjero"><span class="pvf-opt-ico"><i class="bi bi-globe-americas"></i></span>
+                  <span class="pvf-opt-txt"><strong>Extranjero</strong><small>Importación · identificador tributario de su país</small></span><span class="pvf-opt-radio"></span></label>
+              </div>
+              <div class="row g-2 mt-1">
+                <div class="col-md-4"><label class="form-label" for="provPais">País</label>
+                  <input type="text" class="form-control" id="provPais" maxlength="80" placeholder="Ej: China"></div>
+                <div class="col-md-4"><label class="form-label" for="provRutTax" id="provRutTaxLbl">RUT o identificador tributario</label>
+                  <input type="text" class="form-control" id="provRutTax" maxlength="40" onblur="pvfRutBlur()"></div>
+                <div class="col-md-4"><label class="form-label" for="provSitio">Sitio o portal de compra <span class="pvf-opc">(opcional)</span></label>
+                  <input type="text" class="form-control" id="provSitio" maxlength="300" placeholder="www…"></div>
+              </div>
+              <div class="pvf-sugs" id="pvfSugs1"></div>
             </div>
-            <label class="form-label" for="provMarcas">Marcas o líneas que vende</label>
-            <input type="text" class="form-control" id="provMarcas" maxlength="300" placeholder="Ej: Drax, línea de trotadoras X3, repuestos de bicicletas">
-            <div class="row g-2 mt-1">
-              <div class="col-md-8"><label class="form-label" for="provDireccion">Dirección</label>
-                <input type="text" class="form-control" id="provDireccion" maxlength="300" oninput="pvfDirTipeo()" placeholder="Calle y número (en Chile se verifica con Google Maps)">
-                <input type="hidden" id="provDirLat"><input type="hidden" id="provDirLng"><input type="hidden" id="provDirPlace">
-                <div class="pvf-geo" id="pvfGeo"></div></div>
-              <div class="col-md-4"><label class="form-label" for="provCiudad">Ciudad <span class="pvf-opc">(opcional)</span></label>
-                <input type="text" class="form-control" id="provCiudad" maxlength="80"></div>
-            </div>
-          </div>
 
-          {# ── PASO 4: Condiciones de compra ── #}
-          <div class="pvf-step" id="pvfStep4">
-            <div class="pvf-step-h">
-              <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 4</span><div class="pvf-circ"><span class="num">4</span><i class="bi bi-check-lg chk"></i></div></div>
-              <div class="pvf-tits"><div class="pvf-tit">Condiciones de compra</div>
-                <div class="pvf-sub">Moneda, plazo, forma de pago y, si es importación, el Incoterm: lo que hace falta para costear y saber cuándo llega.</div>
-                <div class="pvf-estado" id="pvfEstado4"></div></div>
+            {# ── PASO 2: Contactos (hasta 5, varias vías cada uno) ── #}
+            <div class="pvf-step" id="pvfStep2">
+              <div class="pvf-step-h">
+                <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 2</span><div class="pvf-circ"><span class="num">2</span><i class="bi bi-check-lg chk"></i></div></div>
+                <div class="pvf-tits"><div class="pvf-tit">Contactos <span class="pvf-opc">(hasta 5)</span></div>
+                  <div class="pvf-sub">A quién se le escribe y por dónde. Cada contacto puede tener varias vías; marca con ★ al principal. Si escribes algo en un contacto, ese contacto tiene que quedar completo.</div>
+                  <div class="pvf-estado" id="pvfEstado2"></div></div>
+              </div>
+              <div class="pvf-contactos" id="pvfContactos"></div>
+              <button type="button" class="pvf-add-cont" id="pvfAddCont" onclick="pvfContactoAgregar()"><i class="bi bi-person-plus-fill"></i>Agregar contacto</button>
             </div>
-            <label class="form-label d-block">Moneda en que cotiza</label>
-            <input type="hidden" id="provMoneda">
-            <div class="pvf-quick" id="pvfMonedas">
-              {% for m in (monedas or ['CLP','USD','EUR','CNY']) %}<button type="button" class="pvf-q" data-m="{{ m }}" onclick="pvfMoneda('{{ m }}')">{{ m }}</button>{% endfor %}
-            </div>
-            <div class="row g-2 mt-2">
-              <div class="col-md-4"><label class="form-label" for="provPlazo">Plazo de entrega (días)</label>
-                <input type="number" class="form-control" id="provPlazo" min="0" max="720" step="1" inputmode="numeric">
-                <div class="pvf-quick">{% for d in (7, 15, 30, 45, 60, 90) %}<button type="button" class="pvf-q" data-plazo="{{ d }}" onclick="pvfQuick('provPlazo','{{ d }}')">{{ d }}</button>{% endfor %}</div></div>
-              <div class="col-md-8"><label class="form-label" for="provCondPago">Condiciones de pago</label>
-                <input type="text" class="form-control" id="provCondPago" maxlength="200" placeholder="Ej: 50% anticipo, 50% contra embarque">
-                <div class="pvf-quick">{% for c in ('Contado', '30 días', '50% anticipo / 50% contra embarque', '100% anticipado') %}<button type="button" class="pvf-q" data-pago="{{ c }}" onclick="pvfQuick('provCondPago','{{ c }}')">{{ c }}</button>{% endfor %}</div></div>
-            </div>
-            <div id="pvfIncotermWrap" class="mt-2">
-              <label class="form-label d-block">Incoterm <span class="pvf-opc">(quién paga el flete y el seguro en una importación)</span></label>
-              <input type="hidden" id="provIncoterm">
-              <div class="pvf-quick" id="pvfIncoterms">
-                {% for it, d in (('EXW','En su fábrica'), ('FOB','Puesto en el barco'), ('CIF','Con flete y seguro'), ('DAP','Entregado en destino'), ('DDP','Entregado con impuestos')) %}<button type="button" class="pvf-q" data-inc="{{ it }}" title="{{ d }}" onclick="pvfIncoterm('{{ it }}')">{{ it }} · {{ d }}</button>{% endfor %}
+
+            {# ── PASO 3: Qué vende y dónde está ── #}
+            <div class="pvf-step" id="pvfStep3">
+              <div class="pvf-step-h">
+                <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 3</span><div class="pvf-circ"><span class="num">3</span><i class="bi bi-check-lg chk"></i></div></div>
+                <div class="pvf-tits"><div class="pvf-tit">Qué vende y dónde está</div>
+                  <div class="pvf-sub">Las familias del ERP que nos vende (así se anticipa a quién comprarle cada línea), sus marcas y su dirección.</div>
+                  <div class="pvf-estado" id="pvfEstado3"></div></div>
+              </div>
+              <label class="form-label d-block">Familias del ERP que vende</label>
+              <div class="pvf-fams" id="pvfFamsSel"></div>
+              <div class="pvf-sugs" id="pvfFamsSug"></div>
+              <input type="search" class="form-control mt-2" id="pvfFamQ" placeholder="Buscar familia del ERP (ej: Relax, Broadway, Booty Builder)" oninput="pvfFamBuscar(this.value)" autocomplete="off">
+              <div class="pvf-fam-lista" id="pvfFamLista"></div>
+              <label class="form-label mt-3" for="provMarcas">Marcas o líneas que vende</label>
+              <input type="text" class="form-control" id="provMarcas" maxlength="300" placeholder="Ej: Drax, línea de trotadoras X3, repuestos de bicicletas">
+              <div class="row g-2 mt-1">
+                <div class="col-md-8"><label class="form-label" for="provDireccion">Dirección</label>
+                  <input type="text" class="form-control" id="provDireccion" maxlength="300" oninput="pvfDirTipeo()" placeholder="Calle y número (en Chile se verifica con Google Maps)">
+                  <input type="hidden" id="provDirLat"><input type="hidden" id="provDirLng"><input type="hidden" id="provDirPlace">
+                  <div class="pvf-geo" id="pvfGeo"></div></div>
+                <div class="col-md-4"><label class="form-label" for="provCiudad">Ciudad <span class="pvf-opc">(opcional)</span></label>
+                  <input type="text" class="form-control" id="provCiudad" maxlength="80"></div>
               </div>
             </div>
-            <div class="row g-2 mt-1">
-              <div class="col-md-6"><label class="form-label" for="provPedidoMin">Pedido mínimo <span class="pvf-opc">(opcional)</span></label>
-                <input type="text" class="form-control" id="provPedidoMin" maxlength="120" placeholder="Ej: USD 500 o 10 unidades"></div>
-              <div class="col-md-6"><label class="form-label" for="provGarantia">Garantía de sus repuestos <span class="pvf-opc">(opcional)</span></label>
-                <input type="text" class="form-control" id="provGarantia" maxlength="120" placeholder="Ej: 6 meses"></div>
-            </div>
-            <div class="pvf-sugs" id="pvfSugs4"></div>
-            <div class="pvf-avisos" id="pvfAvisos4"></div>
-          </div>
 
-          {# ── Opcional: respaldo y notas ── #}
+            {# ── PASO 4: Condiciones y proceso de compra ── #}
+            <div class="pvf-step" id="pvfStep4">
+              <div class="pvf-step-h">
+                <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 4</span><div class="pvf-circ"><span class="num">4</span><i class="bi bi-check-lg chk"></i></div></div>
+                <div class="pvf-tits"><div class="pvf-tit">Condiciones y proceso de compra</div>
+                  <div class="pvf-sub">Moneda, plazo, forma de pago, Incoterm si es importación, y los pasos que sigue una compra con este proveedor.</div>
+                  <div class="pvf-estado" id="pvfEstado4"></div></div>
+              </div>
+              <label class="form-label d-block">Moneda en que cotiza</label>
+              <input type="hidden" id="provMoneda">
+              <div class="pvf-quick" id="pvfMonedas">
+                {% for m in (monedas or ['CLP','USD','EUR','CNY']) %}<button type="button" class="pvf-q" data-m="{{ m }}" onclick="pvfMoneda('{{ m }}')">{{ m }}</button>{% endfor %}
+              </div>
+              <div class="row g-2 mt-2">
+                <div class="col-md-4"><label class="form-label" for="provPlazo">Plazo de entrega (días)</label>
+                  <input type="number" class="form-control" id="provPlazo" min="0" max="720" step="1" inputmode="numeric">
+                  <div class="pvf-quick">{% for d in (7, 15, 30, 45, 60, 90) %}<button type="button" class="pvf-q" data-plazo="{{ d }}" onclick="pvfQuick('provPlazo','{{ d }}')">{{ d }}</button>{% endfor %}</div></div>
+                <div class="col-md-8"><label class="form-label" for="provCondPago">Condiciones de pago</label>
+                  <input type="text" class="form-control" id="provCondPago" maxlength="200" placeholder="Ej: 50% anticipo, 50% contra embarque">
+                  <div class="pvf-quick">{% for c in ('Contado', '30 días', '50% anticipo / 50% contra embarque', '100% anticipado') %}<button type="button" class="pvf-q" data-pago="{{ c }}" onclick="pvfQuick('provCondPago','{{ c }}')">{{ c }}</button>{% endfor %}</div></div>
+              </div>
+              <div id="pvfIncotermWrap" class="mt-2">
+                <label class="form-label d-block">Incoterm <span class="pvf-opc">(quién paga el flete y el seguro en una importación)</span></label>
+                <input type="hidden" id="provIncoterm">
+                <div class="pvf-quick" id="pvfIncoterms">
+                  {% for it, d in (('EXW','En su fábrica'), ('FOB','Puesto en el barco'), ('CIF','Con flete y seguro'), ('DAP','Entregado en destino'), ('DDP','Entregado con impuestos')) %}<button type="button" class="pvf-q" data-inc="{{ it }}" title="{{ d }}" onclick="pvfIncoterm('{{ it }}')">{{ it }} · {{ d }}</button>{% endfor %}
+                </div>
+              </div>
+              <div class="row g-2 mt-1">
+                <div class="col-md-6"><label class="form-label" for="provPedidoMin">Pedido mínimo <span class="pvf-opc">(opcional)</span></label>
+                  <input type="text" class="form-control" id="provPedidoMin" maxlength="120" placeholder="Ej: USD 500 o 10 unidades"></div>
+                <div class="col-md-6"><label class="form-label" for="provGarantia">Garantía de sus repuestos <span class="pvf-opc">(opcional)</span></label>
+                  <input type="text" class="form-control" id="provGarantia" maxlength="120" placeholder="Ej: 6 meses"></div>
+              </div>
+              <div class="pvf-sugs" id="pvfSugs4"></div>
+              <div class="pvf-avisos" id="pvfAvisos4"></div>
+
+              {# Proceso de compra propio de este proveedor (editable: cada proveedor es distinto) #}
+              <div class="pvf-proc">
+                <div class="pvf-proc-h"><i class="bi bi-signpost-split-fill"></i>Proceso de compra con este proveedor
+                  <span class="pvf-opc">— los pasos en orden; edítalos, cada proveedor es distinto</span></div>
+                <div class="pvf-proc-lista" id="pvfProc"></div>
+                <div class="d-flex gap-2 flex-wrap mt-2">
+                  <button type="button" class="pvf-q" onclick="pvfProcAgregar('')"><i class="bi bi-plus-lg me-1"></i>Agregar paso</button>
+                  <button type="button" class="pvf-q" onclick="pvfProcSugerido()"><i class="bi bi-magic me-1"></i>Usar el proceso sugerido</button>
+                </div>
+              </div>
+            </div>
+          </form>
+
+          {# ── Bitácora: notas que se guardan como hitos ── #}
           <div class="pvf-step is-opt" id="pvfStep5">
             <div class="pvf-step-h">
-              <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Opcional</span><div class="pvf-circ"><span class="num"><i class="bi bi-plus-lg"></i></span><i class="bi bi-check-lg chk"></i></div></div>
-              <div class="pvf-tits"><div class="pvf-tit">Respaldo y notas</div>
-                <div class="pvf-sub">Otra persona por si el contacto principal no responde, y lo que convenga recordar de este proveedor.</div>
+              <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Bitácora</span><div class="pvf-circ"><span class="num"><i class="bi bi-journal-text"></i></span><i class="bi bi-check-lg chk"></i></div></div>
+              <div class="pvf-tits"><div class="pvf-tit">Notas e hitos</div>
+                <div class="pvf-sub">Cualquier anormalidad o dato que convenga recordar. Cada nota queda guardada como un hito con fecha y quién la escribió; las siguientes se van sumando.</div>
                 <div class="pvf-estado" id="pvfEstado5"></div></div>
             </div>
-            <div class="row g-2">
-              <div class="col-md-4"><label class="form-label" for="provContacto2Nombre">Contacto de respaldo</label><input type="text" class="form-control" id="provContacto2Nombre" maxlength="150"></div>
-              <div class="col-md-4"><label class="form-label" for="provContacto2Telefono">Teléfono</label><input type="tel" class="form-control" id="provContacto2Telefono" maxlength="50"></div>
-              <div class="col-md-4"><label class="form-label" for="provContacto2Email">Correo</label><input type="email" class="form-control" id="provContacto2Email" maxlength="150"></div>
+            <div class="pvf-nota-nueva">
+              <textarea class="form-control" id="pvfNotaTxt" rows="2" placeholder="Ej: el embarque de septiembre llegó con 2 piezas dañadas; quedaron en reclamo"></textarea>
+              <button type="button" class="btn fw-bold pvf-nota-btn" id="pvfNotaBtn" onclick="pvfNotaAgregar()"><i class="bi bi-plus-circle-fill me-1"></i>Agregar hito</button>
             </div>
-            <label class="form-label mt-2" for="provNotas">Notas</label>
-            <textarea class="form-control" id="provNotas" rows="3" style="font-size:16px"></textarea>
+            <ul class="pvf-hitos" id="pvfHitos"></ul>
           </div>
-        </form>
+        </div>
+
+        {# ════════ Pestañas de relación ════════ #}
+        <div class="pvf-pane" data-pane="sol" hidden><div id="pvfPaneSol"></div></div>
+        <div class="pvf-pane" data-pane="rep" hidden><div id="pvfPaneRep"></div></div>
+        <div class="pvf-pane" data-pane="com" hidden><div id="pvfPaneCom"></div></div>
       </div>
       <div class="modal-footer pvf-footer">
         <span class="pvf-foot-msg" id="pvfFootMsg"></span>
@@ -856,22 +971,25 @@ function pvEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, functio
 })();
 
 /* ══ Ficha del proveedor (crear / ver / editar en un solo lugar) con el formato
-   de "Nuevo retiro interno": 4 pasos con semáforo (rojo falta · ámbar raro ·
-   verde listo), sugerencias "Detectado → Usar" y, si el proveedor ya existe,
-   lo que tenemos con él (solicitudes, repuestos con stock, compras). ══ */
-const _PV_CAMPOS = {provNombre:'nombre', provContacto:'contacto_nombre', provTelefono:'telefono', provEmail:'email', provNotas:'notas',
-  provContacto2Nombre:'contacto2_nombre', provContacto2Telefono:'contacto2_telefono', provContacto2Email:'contacto2_email',
-  provPais:'pais', provRutTax:'rut_tax', provSitio:'sitio_web', provMoneda:'moneda', provPlazo:'plazo_entrega_dias', provCondPago:'condiciones_pago',
-  provMarcas:'marcas', provDireccion:'direccion', provCiudad:'ciudad', provDirLat:'direccion_lat', provDirLng:'direccion_lng', provDirPlace:'direccion_place_id',
-  provIncoterm:'incoterm', provPedidoMin:'pedido_minimo', provGarantia:'garantia'};
-let _pvfModal = null, _pvfSnap = '', _pvfCerrarOk = false, _pvfRel = null, _pvfTile = null, _pvfPlaces = false, _pvfIgnorar = {};
+   de "Nuevo retiro interno". Cabecera con los datos clave, pestañas
+   Información / Solicitudes / Repuestos / Compras, contactos (hasta 5, varias
+   vías, teléfono chileno y correo validados), familias del ERP, proceso de
+   compra editable y bitácora de hitos. Daniel 2026-10-04. ══ */
+const _PV_CAMPOS = {provNombre:'nombre', provPais:'pais', provRutTax:'rut_tax', provSitio:'sitio_web', provMoneda:'moneda',
+  provPlazo:'plazo_entrega_dias', provCondPago:'condiciones_pago', provMarcas:'marcas', provDireccion:'direccion', provCiudad:'ciudad',
+  provDirLat:'direccion_lat', provDirLng:'direccion_lng', provDirPlace:'direccion_place_id', provIncoterm:'incoterm',
+  provPedidoMin:'pedido_minimo', provGarantia:'garantia'};
+const _PVF_VIAS = [['whatsapp','WhatsApp','bi-whatsapp'], ['wechat','WeChat','bi-chat-dots-fill'], ['telefono','Teléfono','bi-telephone-fill'], ['email','Correo','bi-envelope-fill']];
+const _PVF_COLORES = ['#ec4899', '#dc2626', '#f59e0b', '#8b5cf6', '#3b82f6', '#06b6d4', '#10b981', '#f97316'];
+let _pvfModal = null, _pvfSnap = '', _pvfCerrarOk = false, _pvfPlaces = false, _pvfIgnorar = {};
+let _pvf = { contactos: [], fams: [], famsErp: null, proc: [], hitos: [], pend: [], rel: null, tab: 'info', repQ: '', repFil: 'todos', repOrd: 'demanda' };
 function pvfModal(){ if (!_pvfModal) _pvfModal = new bootstrap.Modal(document.getElementById('modalProveedorFicha')); return _pvfModal; }
 function pvRadio(nombre, valor){ document.querySelectorAll('input[name="' + nombre + '"]').forEach(function(r){ r.checked = (r.value === (valor || '')); }); }
 function pvRadioVal(nombre){ const r = document.querySelector('input[name="' + nombre + '"]:checked'); return r ? r.value : ''; }
 function pvVal(id){ const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; }
 function pvfSet(id, v){ const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); }
 function pvfSnapshot(){
-  return JSON.stringify([Object.keys(_PV_CAMPOS).map(pvVal), pvRadioVal('provOrigen'), pvRadioVal('provCanal')]);
+  return JSON.stringify([Object.keys(_PV_CAMPOS).map(pvVal), pvRadioVal('provOrigen'), _pvf.contactos, _pvf.fams, _pvf.proc, _pvf.pend.length]);
 }
 document.addEventListener('DOMContentLoaded', function(){
   const m = document.getElementById('modalProveedorFicha');
@@ -887,7 +1005,7 @@ document.addEventListener('DOMContentLoaded', function(){
   m.addEventListener('hidden.bs.modal', function(){ _pvfCerrarOk = false; });
 });
 
-/* ── RUT chileno: dígito verificador (módulo 11) ── */
+/* ── Validaciones: RUT, correo y teléfono (chileno o internacional) ── */
 function pvfRutLimpio(s){ return String(s || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
 function pvfRutValido(s){
   const r = pvfRutLimpio(s);
@@ -896,19 +1014,33 @@ function pvfRutValido(s){
   let suma = 0, mul = 2;
   for (let i = cuerpo.length - 1; i >= 0; i--){ suma += parseInt(cuerpo[i], 10) * mul; mul = mul === 7 ? 2 : mul + 1; }
   const res = 11 - (suma % 11);
-  const esperado = res === 11 ? '0' : (res === 10 ? 'K' : String(res));
-  return dv === esperado;
+  return dv === (res === 11 ? '0' : (res === 10 ? 'K' : String(res)));
 }
 function pvfRutBlur(){
   if (pvRadioVal('provOrigen') !== 'nacional') return;
   const r = pvfRutLimpio(pvVal('provRutTax'));
   if (r.length < 2) return;
-  const cuerpo = r.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  pvfSet('provRutTax', cuerpo + '-' + r.slice(-1));
+  pvfSet('provRutTax', r.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + r.slice(-1));
   pvfEvaluar();
 }
 function pvfEmailOk(e){ return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e); }
-/* ── Inteligencia: país por el código del teléfono, sitio por el dominio del correo ── */
+function pvfTel(raw){
+  const t = String(raw || '').trim();
+  if (!t) return { ok: true, vacio: true };
+  if (/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(t)) return { ok: false, error: 'el teléfono no puede tener letras' };
+  const d = t.replace(/\D/g, '');
+  if (t.charAt(0) === '+' && d.indexOf('56') !== 0){
+    return (d.length >= 8 && d.length <= 15) ? { ok: true, intl: true } : { ok: false, error: 'el teléfono internacional debe tener entre 8 y 15 dígitos' };
+  }
+  if (typeof ilusTelChileno === 'function'){
+    const r = ilusTelChileno(t);
+    return r.ok ? { ok: true, valor: r.valor } : { ok: false, error: 'teléfono chileno: ' + String(r.error || '').replace(/\.$/, '').toLowerCase() };
+  }
+  let x = d.indexOf('56') === 0 ? d.slice(2) : d.replace(/^0+/, '');
+  if (x.length === 8) x = '9' + x;
+  return (x.length === 9 && /^[2-9]/.test(x)) ? { ok: true, valor: '+56' + x } : { ok: false, error: 'el teléfono chileno debe tener 9 dígitos (ej: 9 1234 5678)' };
+}
+/* ── Inteligencia: país por el teléfono, sitio por el correo, nombres parecidos ── */
 const _PVF_PREFIJOS = [['+886','Taiwán'],['+852','Hong Kong'],['+56','Chile'],['+86','China'],['+82','Corea del Sur'],['+81','Japón'],['+84','Vietnam'],['+91','India'],
   ['+90','Turquía'],['+66','Tailandia'],['+34','España'],['+39','Italia'],['+49','Alemania'],['+33','Francia'],['+31','Países Bajos'],['+44','Reino Unido'],
   ['+52','México'],['+54','Argentina'],['+55','Brasil'],['+57','Colombia'],['+51','Perú'],['+1','Estados Unidos']];
@@ -934,40 +1066,289 @@ function pvfDuplicado(nombre, id){
   });
   return hallado;
 }
-function pvfSug(lbl, val, accion){
-  return '<button type="button" class="pvf-sug" onclick="' + accion + '"><span class="lbl">' + lbl + '</span><span class="val">' + pvEsc(val) + '</span><span class="usar">Usar</span></button>';
+function pvfSug(lbl, val, accion, verbo){
+  return '<button type="button" class="pvf-sug" onclick="' + accion + '"><span class="lbl">' + lbl + '</span><span class="val">' + pvEsc(val) + '</span><span class="usar">' + (verbo || 'Usar') + '</span></button>';
 }
 function pvfUsar(id, v){ pvfSet(id, v); pvfEvaluar(); }
 function pvfUsarOrigen(v){ pvRadio('provOrigen', v); pvfEvaluar(); }
 function pvfMoneda(m){ pvfSet('provMoneda', pvVal('provMoneda') === m ? '' : m); pvfEvaluar(); }
 function pvfIncoterm(it){ pvfSet('provIncoterm', pvVal('provIncoterm') === it ? '' : it); pvfEvaluar(); }
 function pvfQuick(id, v){ pvfSet(id, v); pvfEvaluar(); }
-/* Si se vuelve a escribir la dirección, deja de estar verificada. */
 function pvfDirTipeo(){ pvfSet('provDirLat', ''); pvfSet('provDirLng', ''); pvfSet('provDirPlace', ''); }
 function pvfIgnorar(k){ _pvfIgnorar[k] = true; pvfEvaluar(); }
+
+/* ══ Contactos: hasta 5, cada uno con varias vías ══ */
+function pvfContVacio(c){ return !(c.nombre || c.cargo || c.telefono || c.email || c.wechat || (c.canales || []).length); }
+function pvfContValidar(c){
+  if (pvfContVacio(c)) return { vacio: true };
+  const cs = c.canales || [];
+  if (!String(c.nombre || '').trim()) return { error: 'falta el nombre' };
+  if (!cs.length) return { error: 'elige al menos una vía (WhatsApp, WeChat, teléfono o correo)' };
+  const t = pvfTel(c.telefono);
+  if (!t.ok) return { error: t.error };
+  if ((cs.indexOf('whatsapp') >= 0 || cs.indexOf('telefono') >= 0) && t.vacio) return { error: 'falta el teléfono (elegiste WhatsApp o teléfono)' };
+  if (cs.indexOf('wechat') >= 0 && !String(c.wechat || '').trim()) return { error: 'falta su ID de WeChat' };
+  if (c.email && !pvfEmailOk(String(c.email).trim())) return { error: 'el correo no es válido' };
+  if (cs.indexOf('email') >= 0 && !String(c.email || '').trim()) return { error: 'falta el correo (elegiste correo)' };
+  return { ok: true };
+}
+function pvfContPrincipal(){
+  const val = _pvf.contactos.filter(function(c){ return pvfContValidar(c).ok; });
+  return val.find(function(c){ return c.es_principal; }) || val[0] || null;
+}
+function pvfContactosRender(){
+  const box = document.getElementById('pvfContactos');
+  box.innerHTML = _pvf.contactos.map(function(c, i){
+    const vias = _PVF_VIAS.map(function(v){
+      const on = (c.canales || []).indexOf(v[0]) >= 0;
+      return '<button type="button" class="pvf-via' + (on ? ' is-on' : '') + '" onclick="pvfVia(' + i + ',\'' + v[0] + '\')" aria-pressed="' + on + '"><i class="bi ' + v[2] + '"></i>' + v[1] + '</button>';
+    }).join('');
+    return '<div class="pvf-cont" data-i="' + i + '">' +
+      '<div class="pvf-cont-h"><b>Contacto ' + (i + 1) + '</b>' +
+        '<button type="button" class="pvf-star' + (c.es_principal ? ' is-on' : '') + '" onclick="pvfStar(' + i + ')">' + (c.es_principal ? '★ Principal' : '☆ Hacer principal') + '</button>' +
+        '<button type="button" class="pvf-cont-x" onclick="pvfContQuitar(' + i + ')"><i class="bi bi-trash3 me-1"></i>Quitar</button></div>' +
+      '<div class="row g-2">' +
+        '<div class="col-md-4"><label class="form-label">Nombre</label><input type="text" class="form-control" maxlength="150" value="' + pvEsc(c.nombre || '') + '" oninput="pvfContSet(' + i + ',\'nombre\',this.value)"></div>' +
+        '<div class="col-md-4"><label class="form-label">Cargo <span class="pvf-opc">(opcional)</span></label><input type="text" class="form-control" maxlength="100" value="' + pvEsc(c.cargo || '') + '" placeholder="Ej: Ventas, Postventa" oninput="pvfContSet(' + i + ',\'cargo\',this.value)"></div>' +
+        '<div class="col-md-4"><label class="form-label">Teléfono</label><input type="tel" class="form-control" maxlength="50" value="' + pvEsc(c.telefono || '') + '" placeholder="9 1234 5678 o +86 …" oninput="pvfContSet(' + i + ',\'telefono\',this.value)"></div>' +
+        '<div class="col-md-6"><label class="form-label">Correo</label><input type="email" class="form-control" maxlength="150" value="' + pvEsc(c.email || '') + '" oninput="pvfContSet(' + i + ',\'email\',this.value)"></div>' +
+        '<div class="col-md-6"><label class="form-label">ID de WeChat <span class="pvf-opc">(si usa WeChat)</span></label><input type="text" class="form-control" maxlength="100" value="' + pvEsc(c.wechat || '') + '" oninput="pvfContSet(' + i + ',\'wechat\',this.value)"></div>' +
+      '</div>' +
+      '<div class="pvf-vias">' + vias + '</div>' +
+      '<div class="pvf-cont-err" id="pvfContErr' + i + '"></div></div>';
+  }).join('');
+  document.getElementById('pvfAddCont').disabled = _pvf.contactos.length >= 5;
+  document.getElementById('pvfAddCont').innerHTML = _pvf.contactos.length >= 5
+    ? '<i class="bi bi-people-fill"></i>Máximo 5 contactos' : '<i class="bi bi-person-plus-fill"></i>Agregar contacto' + (_pvf.contactos.length ? ' (' + _pvf.contactos.length + ' de 5)' : '');
+}
+function pvfContSet(i, k, v){ if (_pvf.contactos[i]){ _pvf.contactos[i][k] = v; } }
+function pvfVia(i, canal){
+  const c = _pvf.contactos[i]; if (!c) return;
+  c.canales = c.canales || [];
+  const k = c.canales.indexOf(canal);
+  if (k >= 0) c.canales.splice(k, 1); else c.canales.push(canal);
+  pvfContactosRender(); pvfEvaluar();
+}
+function pvfStar(i){ _pvf.contactos.forEach(function(c, j){ c.es_principal = (j === i); }); pvfContactosRender(); pvfEvaluar(); }
+async function pvfContQuitar(i){
+  const c = _pvf.contactos[i];
+  if (c && !pvfContVacio(c)){
+    const ok = await ilusConfirm({ title: 'Quitar contacto', message: '¿Quitar a ' + (c.nombre || 'este contacto') + ' de la ficha?', sub: 'Se aplica al tocar «Guardar ficha».', okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true });
+    if (!ok) return;
+  }
+  const eraPrincipal = c && c.es_principal;
+  _pvf.contactos.splice(i, 1);
+  if (eraPrincipal && _pvf.contactos[0]) _pvf.contactos[0].es_principal = true;
+  pvfContactosRender(); pvfEvaluar();
+}
+function pvfContactoAgregar(){
+  if (_pvf.contactos.length >= 5) return;
+  _pvf.contactos.push({ nombre: '', cargo: '', telefono: '', email: '', wechat: '', canales: [], es_principal: !_pvf.contactos.length });
+  pvfContactosRender(); pvfEvaluar();
+  const ins = document.querySelectorAll('#pvfContactos .pvf-cont:last-child input');
+  if (ins[0]) ins[0].focus();
+}
+
+/* ══ Familias del ERP (solo lectura del ERP) ══ */
+async function pvfFamsCargar(){
+  if (_pvf.famsErp) return _pvf.famsErp;
+  try {
+    const r = await fetch('/mantenciones/api/proveedores-repuesto/familias-erp', {credentials:'same-origin'});
+    const j = await r.json();
+    _pvf.famsErp = j.familias || [];
+    if (!j.ok) document.getElementById('pvfFamLista').innerHTML = '<span class="pvf-opc">' + pvEsc(j.error || 'No se pudo leer el ERP.') + '</span>';
+  } catch(e){ _pvf.famsErp = []; }
+  pvfEvaluar();
+  return _pvf.famsErp;
+}
+function pvfFamTiene(f){ return _pvf.fams.some(function(x){ return (x.codigo && x.codigo === f.codigo) || pvfNorm(x.nombre) === pvfNorm(f.nombre); }); }
+function pvfFamsRender(){
+  document.getElementById('pvfFamsSel').innerHTML = _pvf.fams.map(function(f, i){
+    return '<span class="pvf-fam">' + pvEsc(f.nombre) + '<button type="button" onclick="pvfFamQuitar(' + i + ')" aria-label="Quitar ' + pvEsc(f.nombre) + '"><i class="bi bi-x-lg"></i></button></span>';
+  }).join('');
+}
+function pvfFamAgregar(i, desde){
+  const lista = desde === 'sug' ? (_pvf._famSug || []) : (_pvf._famRes || []);
+  const f = lista[i]; if (!f || pvfFamTiene(f)) return;
+  _pvf.fams.push({ codigo: f.codigo || '', nombre: f.nombre });
+  pvfFamsRender(); pvfFamBuscar(document.getElementById('pvfFamQ').value); pvfEvaluar();
+}
+function pvfFamQuitar(i){ _pvf.fams.splice(i, 1); pvfFamsRender(); pvfEvaluar(); }
+function pvfFamBuscar(q){
+  const cont = document.getElementById('pvfFamLista');
+  const n = pvfNorm(q);
+  if (n.length < 2 || !_pvf.famsErp){ cont.innerHTML = ''; return; }
+  _pvf._famRes = _pvf.famsErp.filter(function(f){ return pvfNorm(f.nombre).indexOf(n) >= 0 && !pvfFamTiene(f); }).slice(0, 40);
+  cont.innerHTML = _pvf._famRes.length ? _pvf._famRes.map(function(f, i){
+    return '<button type="button" class="pvf-fam-op" onclick="pvfFamAgregar(' + i + ',\'res\')"><i class="bi bi-plus-lg me-1"></i>' + pvEsc(f.nombre) + '</button>';
+  }).join('') : '<span class="pvf-opc">Ninguna familia del ERP con «' + pvEsc(q) + '».</span>';
+}
+/* Parecido entre dos textos (0 a 1), para reconocer "Booty Builder" en "BOOTYBUILDER LTD" */
+function pvfParecido(a, b){
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const m = a.length, n = b.length, d = [];
+  for (let i = 0; i <= m; i++){ d[i] = [i]; }
+  for (let j = 0; j <= n; j++){ d[0][j] = j; }
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+    d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return 1 - d[m][n] / Math.max(m, n);
+}
+function pvfFamsSugeridas(){
+  if (!_pvf.famsErp || !_pvf.famsErp.length) return [];
+  const fuentes = [pvVal('provNombre')].concat(pvVal('provMarcas').split(/[,;\/]| y /));
+  const claves = fuentes.map(pvfNorm).filter(function(x){ return x.length >= 3; });
+  if (!claves.length) return [];
+  return _pvf.famsErp.filter(function(f){
+    if (pvfFamTiene(f)) return false;
+    const nf = pvfNorm(f.nombre);
+    if (nf.length < 3) return false;
+    return claves.some(function(k){
+      return k === nf || (nf.length >= 4 && k.indexOf(nf) >= 0) || (k.length >= 4 && nf.indexOf(k) >= 0) || pvfParecido(k, nf) >= 0.8;
+    });
+  }).slice(0, 6);
+}
+
+/* ══ Proceso de compra (editable: cada proveedor es distinto) ══ */
+function pvfProcRender(){
+  document.getElementById('pvfProc').innerHTML = _pvf.proc.map(function(p, i){
+    return '<div class="pvf-pp"><span class="pvf-pp-n">' + (i + 1) + '</span>' +
+      '<input type="text" class="form-control" maxlength="80" value="' + pvEsc(p) + '" placeholder="Ej: Enviar orden de compra" oninput="pvfProcSet(' + i + ',this.value)" aria-label="Paso ' + (i + 1) + ' del proceso">' +
+      '<button type="button" onclick="pvfProcMover(' + i + ',-1)" title="Subir" aria-label="Subir"' + (i === 0 ? ' disabled' : '') + '><i class="bi bi-arrow-up"></i></button>' +
+      '<button type="button" onclick="pvfProcMover(' + i + ',1)" title="Bajar" aria-label="Bajar"' + (i === _pvf.proc.length - 1 ? ' disabled' : '') + '><i class="bi bi-arrow-down"></i></button>' +
+      '<button type="button" class="x" onclick="pvfProcQuitar(' + i + ')" title="Quitar" aria-label="Quitar"><i class="bi bi-x-lg"></i></button></div>';
+  }).join('');
+}
+function pvfProcSet(i, v){ _pvf.proc[i] = v; pvfEvaluar(); }
+function pvfProcMover(i, d){ const j = i + d; if (j < 0 || j >= _pvf.proc.length) return; const t = _pvf.proc[i]; _pvf.proc[i] = _pvf.proc[j]; _pvf.proc[j] = t; pvfProcRender(); pvfEvaluar(); }
+function pvfProcQuitar(i){ _pvf.proc.splice(i, 1); pvfProcRender(); pvfEvaluar(); }
+function pvfProcAgregar(v){
+  if (_pvf.proc.length >= 12){ ilusToast('Máximo 12 pasos', {type:'warning'}); return; }
+  _pvf.proc.push(v || ''); pvfProcRender(); pvfEvaluar();
+  const ins = document.querySelectorAll('#pvfProc input'); if (ins.length && !v) ins[ins.length - 1].focus();
+}
+async function pvfProcSugerido(){
+  const ext = pvRadioVal('provOrigen') === 'extranjero';
+  const pasos = ext
+    ? ['Pedir cotización (proforma)', 'Enviar orden de compra', 'Pagar anticipo', 'Producción', 'Embarque', 'Pagar saldo', 'Aduana e internación', 'Recepción en bodega']
+    : ['Pedir cotización', 'Enviar orden de compra', 'Pagar o aprobar crédito', 'Despacho del proveedor', 'Recepción en bodega'];
+  if (_pvf.proc.some(function(x){ return String(x).trim(); })){
+    const ok = await ilusConfirm({ title: 'Proceso sugerido', message: '¿Reemplazar los pasos actuales por el proceso sugerido para un proveedor ' + (ext ? 'extranjero' : 'nacional') + '?', okLabel: 'Reemplazar', cancelLabel: 'Cancelar' });
+    if (!ok) return;
+  }
+  _pvf.proc = pasos.slice(); pvfProcRender(); pvfEvaluar();
+}
+
+/* ══ Bitácora: hitos que se van sumando ══ */
+function pvfHitosRender(){
+  const pend = _pvf.pend.map(function(t){ return '<li class="pend"><span class="q">Se guarda al tocar «Guardar ficha»</span>' + pvEsc(t) + '</li>'; });
+  const hs = _pvf.hitos.map(function(h){
+    return '<li class="' + (h.id ? '' : 'viejo') + '"><span class="q">' + pvEsc(h.cuando || '') + (h.usuario ? ' · ' + pvEsc(h.usuario) : '') + '</span>' + pvEsc(h.texto) + '</li>';
+  });
+  document.getElementById('pvfHitos').innerHTML = pend.concat(hs).join('');
+  const n = _pvf.hitos.length + _pvf.pend.length;
+  const st = document.getElementById('pvfStep5');
+  st.classList.toggle('is-opt', !n); st.classList.toggle('is-complete', !!n);
+  document.getElementById('pvfEstado5').innerHTML = n ? '<i class="bi bi-check-circle-fill"></i><span>' + n + (n === 1 ? ' hito registrado' : ' hitos registrados') + '</span>' : '<span>Sin notas todavía</span>';
+}
+async function pvfNotaAgregar(){
+  const ta = document.getElementById('pvfNotaTxt');
+  const t = (ta.value || '').trim();
+  if (t.length < 3){ ilusToast('Escribe el hito (al menos 3 letras)', {type:'warning'}); ta.focus(); return; }
+  const id = pvVal('provId');
+  if (!id){ _pvf.pend.unshift(t); ta.value = ''; pvfHitosRender(); pvfCabRender(); return; }
+  const btn = document.getElementById('pvfNotaBtn'); btn.disabled = true;
+  let j = {};
+  try {
+    const r = await fetch('/mantenciones/api/proveedores-repuesto/' + id + '/notas', { method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ texto: t }) });
+    j = await r.json();
+  } catch(e){ j = { ok: false, error: 'Sin conexión: no se guardó el hito.' }; }
+  btn.disabled = false;
+  if (!j.ok){ ilusToast(j.error || 'No se pudo guardar el hito', {type:'error'}); return; }
+  ta.value = '';
+  _pvf.hitos = j.hitos || _pvf.hitos;
+  pvfHitosRender(); pvfCabRender();
+  ilusToast('✓ Hito guardado', {type:'success'});
+}
+
+/* ══ Cabecera con los datos clave ══ */
+function pvfCabRender(){
+  const id = pvVal('provId'), nom = pvVal('provNombre');
+  const orig = pvRadioVal('provOrigen'), pr = pvfContPrincipal();
+  const color = _PVF_COLORES[(parseInt(id || '0', 10) || 0) % 8];
+  const rel = _pvf.rel || {}, sols = rel.solicitudes || [];
+  const nFs = sols.filter(function(s){ return s.fs; }).length;
+  const cal = pvfCalidad();
+  const pct = Math.round(cal / 14 * 100);
+  const rc = cal >= 13 ? '#16a34a' : (cal >= 8 ? '#f59e0b' : '#dc2626');
+  const chips = [];
+  if (orig) chips.push('<span class="pvf-chip ' + (orig === 'extranjero' ? 'az' : 'vd') + '"><i class="bi ' + (orig === 'extranjero' ? 'bi-globe-americas' : 'bi-geo-alt-fill') + '"></i>' +
+    (orig === 'extranjero' ? 'Extranjero' : 'Nacional') + (pvVal('provPais') ? ' · ' + pvEsc(pvVal('provPais')) : '') + '</span>');
+  else chips.push('<span class="pvf-chip am"><i class="bi bi-question-circle"></i>Origen sin definir</span>');
+  if (pvVal('provMoneda')) chips.push('<span class="pvf-chip"><i class="bi bi-currency-exchange"></i>' + pvEsc(pvVal('provMoneda')) + '</span>');
+  if (pvVal('provIncoterm') && orig === 'extranjero') chips.push('<span class="pvf-chip"><i class="bi bi-boat"></i>' + pvEsc(pvVal('provIncoterm')) + '</span>');
+  if (pvVal('provPlazo') !== '') chips.push('<span class="pvf-chip"><i class="bi bi-hourglass-split"></i>' + pvEsc(pvVal('provPlazo')) + ' días</span>');
+  _pvf.fams.slice(0, 4).forEach(function(f){ chips.push('<span class="pvf-chip ng"><i class="bi bi-tags-fill"></i>' + pvEsc(f.nombre) + '</span>'); });
+  if (_pvf.fams.length > 4) chips.push('<span class="pvf-chip ng">+' + (_pvf.fams.length - 4) + '</span>');
+  if (nFs) chips.push('<span class="pvf-chip rj"><i class="bi bi-exclamation-octagon-fill"></i>' + nFs + ' urgente' + (nFs === 1 ? '' : 's') + '</span>');
+  const datos = [];
+  if (pr){
+    const tel = String(pr.telefono || '').replace(/[^\d+]/g, '');
+    datos.push('<span><i class="bi bi-person-circle"></i><b>' + pvEsc(pr.nombre) + '</b>' + (pr.cargo ? ' · ' + pvEsc(pr.cargo) : '') + '</span>');
+    if (tel && (pr.canales || []).indexOf('whatsapp') >= 0) datos.push('<span><i class="bi bi-whatsapp"></i><a href="https://wa.me/' + tel.replace('+', '') + '" target="_blank" rel="noopener">WhatsApp</a></span>');
+    if (tel) datos.push('<span><i class="bi bi-telephone"></i><a href="tel:' + pvEsc(tel) + '">' + pvEsc(pr.telefono) + '</a></span>');
+    if (pr.email) datos.push('<span><i class="bi bi-envelope"></i><a href="mailto:' + pvEsc(pr.email) + '">' + pvEsc(pr.email) + '</a></span>');
+    if (pr.wechat) datos.push('<span><i class="bi bi-chat-dots"></i>WeChat ' + pvEsc(pr.wechat) + '</span>');
+  } else datos.push('<span><i class="bi bi-person-x"></i>Sin contacto principal</span>');
+  if (pvVal('provDireccion')) datos.push('<span><i class="bi bi-geo"></i>' + pvEsc(pvVal('provDireccion')) + (pvVal('provCiudad') ? ', ' + pvEsc(pvVal('provCiudad')) : '') + '</span>');
+  if (pvVal('provSitio')) datos.push('<span><i class="bi bi-globe2"></i>' + pvEsc(pvVal('provSitio').replace(/^https?:\/\//, '')) + '</span>');
+  const ult = _pvf.pend[0] ? { texto: _pvf.pend[0], cuando: 'por guardar' } : _pvf.hitos[0];
+  const com = ult
+    ? '<div class="pvf-cab-com"><i class="bi bi-chat-square-quote-fill"></i><div><b>Último comentario</b> · ' + pvEsc(ult.cuando || '') + (ult.usuario ? ' · ' + pvEsc(ult.usuario) : '') +
+      '<br>' + pvEsc(String(ult.texto).length > 180 ? String(ult.texto).slice(0, 180) + '…' : ult.texto) + '</div><a href="#" onclick="event.preventDefault();pvfIrANota()">Agregar comentario</a></div>'
+    : '<div class="pvf-cab-com"><i class="bi bi-chat-square"></i><div>Sin comentarios todavía.</div><a href="#" onclick="event.preventDefault();pvfIrANota()">Agregar comentario</a></div>';
+  const cab = document.getElementById('pvfCab');
+  cab.style.setProperty('--pvf-c', color);
+  cab.innerHTML = '<div class="pvf-cab-ini">' + pvEsc((nom || 'Nuevo').slice(0, 3).toUpperCase()) + '</div>' +
+    '<div style="min-width:0"><div class="pvf-cab-nom">' + pvEsc(nom || 'Proveedor nuevo') + '</div><div class="pvf-cab-chips">' + chips.join('') + '</div>' +
+    '<div class="pvf-cab-datos">' + datos.join('') + '</div></div>' +
+    '<div class="pvf-cab-ring" style="--pvf-rc:' + rc + ';--pvf-rp:' + pct + '" title="Ficha ' + cal + ' de 14"><b>' + cal + '/14</b><small>Ficha</small></div>' + com;
+}
+function pvfIrANota(){
+  pvfTab('info');
+  const ta = document.getElementById('pvfNotaTxt');
+  ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(function(){ ta.focus(); }, 350);
+}
+function pvfCalidad(){
+  const orig = pvRadioVal('provOrigen'), pr = pvfContPrincipal();
+  const canal = pr && (pr.canales || []).length;
+  return [pr && pr.nombre, pr && pr.telefono, pr && pr.email, canal, orig, (pvVal('provPais') || orig === 'nacional'), pvVal('provMoneda'), pvVal('provRutTax'),
+    pvVal('provCondPago'), pvVal('provPlazo') !== '', pvVal('provDireccion'), pvVal('provMarcas'), (pvVal('provIncoterm') || orig === 'nacional'), _pvf.fams.length].filter(Boolean).length;
+}
+
+/* ══ Semáforo de los pasos ══ */
 function pvfPintarPaso(n, faltan, raros, okTxt){
   const st = document.getElementById('pvfStep' + n), es = document.getElementById('pvfEstado' + n);
   st.classList.remove('is-complete', 'is-warn');
-  let estado = 'rojo';
   if (!faltan.length){
-    estado = raros.length ? 'ambar' : 'verde';
     st.classList.add(raros.length ? 'is-warn' : 'is-complete');
     es.innerHTML = raros.length ? '<i class="bi bi-exclamation-triangle-fill"></i><span>Revisa: ' + pvEsc(raros.join(' · ')) + '</span>'
                                 : '<i class="bi bi-check-circle-fill"></i><span>' + pvEsc(okTxt) + '</span>';
-  } else {
-    es.innerHTML = '<i class="bi bi-x-circle-fill"></i><span>Falta: ' + pvEsc(faltan.join(' · ')) + '</span>';
+    return raros.length ? 'ambar' : 'verde';
   }
-  return estado;
+  es.innerHTML = '<i class="bi bi-x-circle-fill"></i><span>Falta: ' + pvEsc(faltan.join(' · ')) + '</span>';
+  return 'rojo';
 }
 function pvfEvaluar(){
-  const orig = pvRadioVal('provOrigen'), canal = pvRadioVal('provCanal'), id = pvVal('provId');
+  const orig = pvRadioVal('provOrigen'), id = pvVal('provId');
   document.querySelectorAll('#modalProveedorFicha .pvf-opt').forEach(function(l){ const i = l.querySelector('input'); l.classList.toggle('is-on', !!(i && i.checked)); });
   document.querySelectorAll('#pvfMonedas .pvf-q').forEach(function(b){ b.classList.toggle('is-on', b.dataset.m === pvVal('provMoneda')); });
   document.querySelectorAll('#pvfIncoterms .pvf-q').forEach(function(b){ b.classList.toggle('is-on', b.dataset.inc === pvVal('provIncoterm')); });
   document.querySelectorAll('[data-plazo]').forEach(function(b){ b.classList.toggle('is-on', b.dataset.plazo === pvVal('provPlazo')); });
   document.querySelectorAll('[data-pago]').forEach(function(b){ b.classList.toggle('is-on', b.dataset.pago === pvVal('provCondPago')); });
-  const lbl = document.getElementById('provRutTaxLbl');
-  lbl.textContent = orig === 'nacional' ? 'RUT de la empresa' : (orig === 'extranjero' ? 'Identificador tributario (Tax ID)' : 'RUT o identificador tributario');
+  document.getElementById('provRutTaxLbl').textContent = orig === 'nacional' ? 'RUT de la empresa' : (orig === 'extranjero' ? 'Identificador tributario (Tax ID)' : 'RUT o identificador tributario');
   document.getElementById('provRutTax').placeholder = orig === 'nacional' ? '76.123.456-7' : (orig === 'extranjero' ? 'Ej: 91310000MA1FL5…' : '');
   document.getElementById('pvfIncotermWrap').hidden = (orig === 'nacional');
   if (orig === 'nacional' && !_pvfPlaces && typeof ilusPlacesAutocomplete === 'function'){
@@ -995,31 +1376,37 @@ function pvfEvaluar(){
   document.getElementById('pvfAvisos1').innerHTML = (dup && !_pvfIgnorar.dup) ? '<div class="pvf-aviso"><i class="bi bi-exclamation-triangle-fill" style="color:#b45309"></i><span class="txt">Ya existe <strong>' + pvEsc(dup.nombre) + '</strong>. ¿Es el mismo proveedor?</span>' +
     '<button type="button" class="pvf-aviso-btn is-primary" onclick="pvfAbrirOtro(' + dup.id + ')">Abrir su ficha</button><button type="button" class="pvf-aviso-btn" onclick="pvfIgnorar(\'dup\')">Es otro</button></div>' : '';
 
-  // Paso 2 · Contacto
+  // Paso 2 · Contactos
   const f2 = [], r2 = [];
-  if (!pvVal('provContacto')) f2.push('persona de contacto');
-  if (!pvVal('provTelefono')) f2.push('teléfono');
-  if (!pvVal('provEmail')) f2.push('correo');
-  if (!canal) f2.push('por dónde responde');
-  const mailMalo = pvVal('provEmail') && !pvfEmailOk(pvVal('provEmail'));
-  if (mailMalo) r2.push('el correo no parece válido');
-  document.getElementById('provEmail').classList.toggle('is-raro', !!mailMalo);
-  if (pvVal('provTelefono') && pvVal('provTelefono').charAt(0) !== '+' && orig === 'extranjero') r2.push('al teléfono le falta el código de país (+…)');
-  const e2 = pvfPintarPaso(2, f2, r2, 'Contacto listo' + (pvVal('provContacto') ? ' · ' + pvVal('provContacto') : ''));
-  const tel = pvVal('provTelefono').replace(/[^\d+]/g, ''), mail = pvVal('provEmail');
-  document.getElementById('pvfContactoRap').innerHTML =
-    (tel ? '<a class="wa" href="https://wa.me/' + tel.replace('+', '') + '" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i>WhatsApp</a><a href="tel:' + pvEsc(tel) + '"><i class="bi bi-telephone"></i>Llamar</a>' : '') +
-    (mail && !mailMalo ? '<a href="mailto:' + pvEsc(mail) + '"><i class="bi bi-envelope"></i>Escribir correo</a>' : '');
+  let malos = 0, buenos = 0;
+  _pvf.contactos.forEach(function(c, i){
+    const v = pvfContValidar(c);
+    const card = document.querySelector('#pvfContactos .pvf-cont[data-i="' + i + '"]');
+    const err = document.getElementById('pvfContErr' + i);
+    if (card){ card.classList.toggle('is-ok', !!v.ok); card.classList.toggle('is-mal', !!v.error); }
+    if (err) err.textContent = v.error ? 'Para guardar: ' + v.error + '.' : '';
+    if (v.error) malos++;
+    if (v.ok) buenos++;
+  });
+  if (malos) f2.push(malos === 1 ? 'completar el contacto marcado en rojo' : 'completar los ' + malos + ' contactos marcados en rojo');
+  else if (!buenos) f2.push('al menos un contacto');
+  const pr = pvfContPrincipal();
+  if (pr && orig === 'extranjero' && pr.telefono && String(pr.telefono).trim().charAt(0) !== '+') r2.push('al teléfono le falta el código de país (+…)');
+  const e2 = pvfPintarPaso(2, f2, r2, buenos + (buenos === 1 ? ' contacto' : ' contactos') + (pr ? ' · principal: ' + pr.nombre : ''));
 
   // Paso 3 · Qué vende y dónde está
   const f3 = [], r3 = [];
-  if (!pvVal('provMarcas')) f3.push('marcas o líneas que vende');
+  if (!_pvf.fams.length) f3.push('familia del ERP');
+  if (!pvVal('provMarcas')) f3.push('marcas o líneas');
   if (!pvVal('provDireccion')) f3.push('dirección');
   if (orig === 'nacional' && pvVal('provDireccion') && !pvVal('provDirLat')) r3.push('dirección sin verificar: elígela de las sugerencias de Google');
   const e3 = pvfPintarPaso(3, f3, r3, 'Sabemos qué vende y dónde está');
   document.getElementById('pvfGeo').innerHTML = pvVal('provDirLat') ? '<i class="bi bi-patch-check-fill"></i>Dirección verificada con Google Maps' : '';
+  pvfFamsRender();
+  _pvf._famSug = pvfFamsSugeridas();
+  document.getElementById('pvfFamsSug').innerHTML = _pvf._famSug.map(function(f, i){ return pvfSug('Sugerida por el nombre', f.nombre, "pvfFamAgregar(" + i + ",'sug')", 'Asociar'); }).join('');
 
-  // Paso 4 · Condiciones
+  // Paso 4 · Condiciones y proceso
   const f4 = [], r4 = [];
   if (!pvVal('provMoneda')) f4.push('moneda');
   if (pvVal('provPlazo') === '') f4.push('plazo de entrega');
@@ -1028,8 +1415,9 @@ function pvfEvaluar(){
   const pl = parseInt(pvVal('provPlazo'), 10);
   if (pvVal('provPlazo') !== '' && (isNaN(pl) || pl < 0 || pl > 720)) r4.push('el plazo debe estar entre 0 y 720 días');
   if (orig === 'nacional' && pvVal('provMoneda') && pvVal('provMoneda') !== 'CLP') r4.push('un proveedor nacional normalmente cotiza en CLP');
+  if (!_pvf.proc.some(function(x){ return String(x).trim(); })) r4.push('sin proceso de compra definido');
   let avisos4 = '';
-  const ind = (_pvfRel && _pvfRel.indicadores) || {};
+  const ind = (_pvf.rel && _pvf.rel.indicadores) || {};
   if (ind.plazo_real_dias != null && pvVal('provPlazo') !== '' && !isNaN(pl)){
     const real = Math.round(ind.plazo_real_dias);
     if (real > pl + 3){
@@ -1041,16 +1429,11 @@ function pvfEvaluar(){
     }
   }
   document.getElementById('pvfAvisos4').innerHTML = avisos4;
-  const e4 = pvfPintarPaso(4, f4, r4, 'Condiciones claras para costear');
-
-  // Opcional
-  const st5 = document.getElementById('pvfStep5');
-  const tiene5 = ['provContacto2Nombre','provContacto2Telefono','provContacto2Email','provNotas'].some(function(k){ return pvVal(k); });
-  st5.classList.toggle('is-opt', !tiene5); st5.classList.toggle('is-complete', !!tiene5);
-  document.getElementById('pvfEstado5').innerHTML = tiene5 ? '<i class="bi bi-check-circle-fill"></i><span>Con respaldo o notas</span>' : '<span>No es obligatorio</span>';
+  const e4 = pvfPintarPaso(4, f4, r4, 'Condiciones claras para costear' + (_pvf.proc.length ? ' · proceso de ' + _pvf.proc.length + ' pasos' : ''));
 
   // Sugerencias "Detectado → Usar"
-  const paisTel = pvfPaisPorTelefono(pvVal('provTelefono'));
+  const telP = pr ? pr.telefono : '', mail = pr ? String(pr.email || '') : '';
+  const paisTel = pvfPaisPorTelefono(telP);
   let s1 = '';
   if (paisTel && !orig) s1 += pvfSug('Por el teléfono', paisTel === 'Chile' ? 'Nacional' : 'Extranjero · ' + paisTel, "pvfUsarOrigen('" + (paisTel === 'Chile' ? 'nacional' : 'extranjero') + "');" + (paisTel !== 'Chile' && !pvVal('provPais') ? "pvfUsar('provPais','" + paisTel + "')" : ''));
   if (paisTel && paisTel !== 'Chile' && orig === 'extranjero' && !pvVal('provPais')) s1 += pvfSug('País por el teléfono', paisTel, "pvfUsar('provPais','" + paisTel + "')");
@@ -1060,51 +1443,69 @@ function pvfEvaluar(){
   document.getElementById('pvfSugs1').innerHTML = s1;
   let s4 = '';
   if (!pvVal('provMoneda')){
-    const pais = pvVal('provPais');
+    const eur = _PVF_EUROPA.indexOf(pvVal('provPais')) >= 0;
     if (orig === 'nacional') s4 += pvfSug('Moneda sugerida', 'CLP', "pvfMoneda('CLP')");
-    else if (orig === 'extranjero') s4 += pvfSug('Moneda sugerida', _PVF_EUROPA.indexOf(pais) >= 0 ? 'EUR' : 'USD', "pvfMoneda('" + (_PVF_EUROPA.indexOf(pais) >= 0 ? 'EUR' : 'USD') + "')");
+    else if (orig === 'extranjero') s4 += pvfSug('Moneda sugerida', eur ? 'EUR' : 'USD', "pvfMoneda('" + (eur ? 'EUR' : 'USD') + "')");
   }
   if (ind.plazo_real_dias != null && pvVal('provPlazo') === '') s4 += pvfSug('Plazo real medido', Math.round(ind.plazo_real_dias) + ' días', "pvfUsar('provPlazo','" + Math.round(ind.plazo_real_dias) + "')");
   document.getElementById('pvfSugs4').innerHTML = s4;
 
-  // Progreso, calidad (los 13 puntos del servidor) y pie
+  // Progreso, calidad (14 puntos, igual que el servidor) y pie
   const estados = [e1, e2, e3, e4];
   const listos = estados.filter(function(e){ return e !== 'rojo'; }).length;
   const avisos = estados.filter(function(e){ return e === 'ambar'; }).length;
+  const cal = pvfCalidad();
   document.getElementById('pvfProgresoTxt').textContent = listos + ' de 4 pasos listos';
   document.getElementById('pvfProgresoBar').style.width = (listos / 4 * 100) + '%';
-  const cal = [pvVal('provContacto'), pvVal('provTelefono'), pvVal('provEmail'), canal, orig, (pvVal('provPais') || orig === 'nacional'), pvVal('provMoneda'), pvVal('provRutTax'),
-    pvVal('provCondPago'), pvVal('provPlazo') !== '', pvVal('provDireccion'), pvVal('provMarcas'), (pvVal('provIncoterm') || orig === 'nacional')].filter(Boolean).length;
-  document.getElementById('pvfProgresoFicha').textContent = 'Ficha ' + cal + ' de 13';
+  document.getElementById('pvfProgresoFicha').textContent = 'Ficha ' + cal + ' de 14';
   document.getElementById('pvfProgresoAvisos').textContent = avisos ? '· ' + avisos + (avisos === 1 ? ' aviso' : ' avisos') : '';
   const pie = document.getElementById('pvfFootMsg'), btn = document.getElementById('btnProvGuardar');
   if (!pvVal('provNombre')){ pie.className = 'pvf-foot-msg'; pie.innerHTML = '<i class="bi bi-x-circle-fill"></i>Falta el nombre para poder guardar'; }
-  else if (listos < 4){ pie.className = 'pvf-foot-msg'; pie.innerHTML = '<i class="bi bi-info-circle-fill"></i>Puedes guardar ya; la ficha queda incompleta (' + cal + ' de 13)'; }
+  else if (malos){ pie.className = 'pvf-foot-msg'; pie.innerHTML = '<i class="bi bi-x-circle-fill"></i>Completa o quita el contacto marcado en rojo para guardar'; }
+  else if (listos < 4){ pie.className = 'pvf-foot-msg'; pie.innerHTML = '<i class="bi bi-info-circle-fill"></i>Puedes guardar ya; la ficha queda incompleta (' + cal + ' de 14)'; }
   else { pie.className = 'pvf-foot-msg ok'; pie.innerHTML = '<i class="bi bi-patch-check-fill"></i>Ficha completa: lista para pedir en lote y costear'; }
-  btn.classList.toggle('is-pending', listos < 4);
+  btn.classList.toggle('is-pending', listos < 4 || !!malos);
+  pvfCabRender();
+  if (_pvf.rel) pvfTabsRender();
 }
 
+/* ══ Abrir la ficha ══ */
 function provLlenar(d){
   d = d || {};
   pvfSet('provId', d.id || '');
   Object.keys(_PV_CAMPOS).forEach(function(k){ pvfSet(k, d[_PV_CAMPOS[k]]); });
-  pvRadio('provOrigen', d.origen); pvRadio('provCanal', d.canal_preferido);
+  pvRadio('provOrigen', d.origen);
+  _pvf.contactos = (d.contactos || []).map(function(c){
+    return { nombre: c.nombre || '', cargo: c.cargo || '', telefono: c.telefono || '', email: c.email || '', wechat: c.wechat || '',
+             canales: (c.canales || []).slice(), es_principal: !!c.es_principal };
+  });
+  if (!_pvf.contactos.length) _pvf.contactos = [{ nombre: '', cargo: '', telefono: '', email: '', wechat: '', canales: [], es_principal: true }];
+  _pvf.fams = (d.familias_erp || []).map(function(f){ return { codigo: f.codigo || '', nombre: f.nombre }; });
+  _pvf.proc = (d.proceso_compra || []).slice();
+  _pvf.hitos = (d.hitos || []).slice();
+  _pvf.pend = [];
 }
 function pvfAbrir(d, rel, seccion){
   d = d || {};
   _pvfIgnorar = {};
+  _pvf.rel = rel || null;
+  _pvf.repQ = ''; _pvf.repFil = 'todos'; _pvf.repOrd = 'demanda';
   provLlenar(d);
   const nuevo = !d.id;
   document.getElementById('pvfTituloTxt').textContent = nuevo ? 'Nuevo proveedor' : (d.nombre || 'Proveedor');
   document.getElementById('pvfIntroTxt').innerHTML = nuevo
     ? 'Completa los pasos hasta que queden en <b>verde</b>. Con el nombre ya se puede guardar, pero una ficha completa es la que permite pedir en lote, costear importaciones y saber cuándo llega.'
-    : 'Esta es la ficha del proveedor: arriba, lo que le pedimos y le compramos; abajo, sus datos. Corrige lo que haga falta aquí mismo y toca <b>Guardar ficha</b>.';
-  _pvfRel = rel || null;
-  pvfRenderRel(seccion);
+    : 'Corrige lo que haga falta aquí mismo y toca <b>Guardar ficha</b>. Las solicitudes, los repuestos y las compras están en las pestañas de arriba.';
+  document.getElementById('pvfNotaTxt').value = '';
+  document.getElementById('pvfFamQ').value = ''; document.getElementById('pvfFamLista').innerHTML = '';
+  pvfContactosRender(); pvfProcRender(); pvfHitosRender();
+  pvfRelRender();
+  pvfTab({solicitudes: 'sol', repuestos: 'rep', compras: 'com'}[seccion] || 'info');
   pvfEvaluar();
   _pvfSnap = pvfSnapshot();
   _pvfCerrarOk = false;
   pvfModal().show();
+  pvfFamsCargar();
   if (nuevo) setTimeout(function(){ document.getElementById('provNombre').focus(); }, 350);
 }
 function provAbrirNuevo(){ pvfAbrir({}, null); }
@@ -1119,11 +1520,7 @@ async function provVerDetalle(id, seccion){
   if (!d.ok){ ilusToast(d.error || 'No se pudo abrir la ficha.', {type:'error'}); return; }
   pvfAbrir(d.proveedor || {}, d, seccion);
 }
-async function pvfAbrirOtro(id){
-  _pvfCerrarOk = true;
-  pvfModal().hide();
-  setTimeout(function(){ provVerDetalle(id); }, 350);
-}
+async function pvfAbrirOtro(id){ _pvfCerrarOk = true; pvfModal().hide(); setTimeout(function(){ provVerDetalle(id); }, 350); }
 /* Compatibilidad con las llamadas viejas */
 function provAbrirEditarCard(btn){
   let d = {};
@@ -1133,54 +1530,55 @@ function provAbrirEditarCard(btn){
 function provAbrirEditarDatos(d){ if (d && d.id) provVerDetalle(d.id); else pvfAbrir(d || {}, null); }
 function provAbrirEditar(id){ provVerDetalle(id); }
 
-/* ── Lo que tenemos con este proveedor: mosaicos con semáforo que cambian la lista ── */
+/* ══ Pestañas y relación con el proveedor ══ */
 const _PV_COMPRA_LBL = {pedido:'Pedido', cotizado:'Cotizado', confirmado:'Confirmado', en_transito:'En tránsito', recibido_parcial:'Recibido parcial', recibido:'Recibido', cancelada:'Cancelada'};
 const _PV_EST_CORTO = {solicitado:'Por validar', validado:'Validado', pedido:'Pedido', recibido:'Recibido'};
 function pvFmtN(n){ return (n == null) ? '—' : (Math.round(n * 100) / 100).toLocaleString('es-CL'); }
-function pvfRenderRel(seccion){
-  const box = document.getElementById('pvfRel');
-  const d = _pvfRel;
+function pvFmtCLP(n){ return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
+function pvfTab(t){
+  _pvf.tab = (_pvf.rel || t === 'info') ? t : 'info';
+  document.querySelectorAll('#modalProveedorFicha .pvf-pane').forEach(function(p){ p.hidden = p.dataset.pane !== _pvf.tab; });
+  document.querySelectorAll('#pvfTabs .pvf-tab').forEach(function(b){ const on = b.dataset.t === _pvf.tab; b.classList.toggle('is-on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+}
+function pvfTabsRender(){
+  const box = document.getElementById('pvfTabs');
+  const d = _pvf.rel;
   if (!d || !d.proveedor || !d.proveedor.id){ box.hidden = true; return; }
   box.hidden = false;
-  const p = d.proveedor, ind = d.indicadores || {};
-  const sols = d.solicitudes || [], reps = d.repuestos || [], comps = d.compras || [];
-  const nFs = sols.filter(function(s){ return s.fs; }).length;
-  const nSin = reps.filter(function(r){ return r.semaforo === 'rojo'; }).length;
-  const enCurso = ind.compras_en_curso || 0, trans = ind.en_transito || 0;
-  document.getElementById('pvfRelTit').textContent = 'Lo que tenemos con ' + (p.nombre || 'este proveedor');
-  document.getElementById('pvfRelCentro').href = '/repuestos?rs_proveedor=' + p.id + '#solicitudes';
-  let av = '';
-  if (nFs) av += '<div class="pvf-aviso rojo"><i class="bi bi-exclamation-octagon-fill"></i><span class="txt"><strong>' + nFs + (nFs === 1 ? ' solicitud tiene' : ' solicitudes tienen') + ' el equipo del cliente fuera de servicio.</strong> Gestiónalas primero.</span>' +
-    '<a class="pvf-aviso-btn is-primary" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes">Gestionar ahora</a></div>';
-  if (nSin) av += '<div class="pvf-aviso"><i class="bi bi-box-seam" style="color:#b45309"></i><span class="txt"><strong>' + nSin + (nSin === 1 ? ' repuesto' : ' repuestos') + ' de este proveedor sin stock.</strong> Revisa si conviene incluirlos en el próximo pedido.</span>' +
-    '<button type="button" class="pvf-aviso-btn" onclick="pvfTileSel(\'rep\')">Ver cuáles</button></div>';
-  document.getElementById('pvfRelAvisos').innerHTML = av;
-  const real = ind.plazo_real_dias != null ? Math.round(ind.plazo_real_dias) : null, decl = p.plazo_entrega_dias;
-  const tiles = [
-    {t: 'sol', cls: nFs ? 't-rojo' : (sols.length ? 't-ambar' : 't-verde'), ico: 'bi-inbox-fill', k: 'Solicitudes', v: sols.length,
-     d: nFs ? nFs + ' urgente' + (nFs === 1 ? '' : 's') : (sols.length ? 'abiertas' : 'al día'), fs: nFs},
-    {t: 'rep', cls: !reps.length ? 't-gris' : (nSin ? 't-ambar' : 't-verde'), ico: 'bi-box-seam-fill', k: 'Repuestos', v: reps.length,
-     d: !reps.length ? 'ninguno en bodega' : (nSin ? nSin + ' sin stock' : 'todos con stock')},
-    {t: 'com', cls: trans ? 't-azul' : (enCurso ? 't-ambar' : 't-gris'), ico: 'bi-cart-check-fill', k: 'Compras', v: enCurso,
-     d: trans ? trans + ' en tránsito' : (enCurso ? 'en curso' : (comps.length ? comps.length + ' en total' : 'sin compras'))},
-    {t: 'ent', cls: real == null ? 't-gris' : (decl != null && real > decl + 3 ? 't-ambar' : 't-verde'), ico: 'bi-hourglass-split', k: 'Entrega real',
-     v: real == null ? '—' : real + ' d', d: real == null ? 'sin entregas medidas' : (decl != null ? 'declara ' + decl + ' d' : (ind.n_entregas || 0) + ' entregas')},
+  const ind = d.indicadores || {}, sols = d.solicitudes || [], reps = d.repuestos || [], comps = d.compras || [];
+  const nFs = sols.filter(function(s){ return s.fs; }).length, nSin = reps.filter(function(r){ return r.semaforo === 'rojo'; }).length;
+  const enCurso = ind.compras_en_curso || 0, trans = ind.en_transito || 0, cal = pvfCalidad();
+  const tabs = [
+    {t: 'info', cls: cal >= 13 ? 't-verde' : (cal >= 8 ? 't-ambar' : 't-rojo'), ico: 'bi-building', k: 'Información', d: 'Ficha ' + cal + ' de 14'},
+    {t: 'sol', cls: nFs ? 't-rojo' : (sols.length ? 't-ambar' : 't-verde'), ico: 'bi-inbox-fill', k: 'Solicitudes', d: sols.length + (nFs ? ' · ' + nFs + ' urgente' + (nFs === 1 ? '' : 's') : (sols.length ? ' abiertas' : ' · al día')), fs: nFs},
+    {t: 'rep', cls: !reps.length ? '' : (nSin ? 't-ambar' : 't-verde'), ico: 'bi-box-seam-fill', k: 'Repuestos', d: reps.length + (nSin ? ' · ' + nSin + ' sin stock' : (reps.length ? ' con stock' : ''))},
+    {t: 'com', cls: trans ? 't-azul' : (enCurso ? 't-ambar' : ''), ico: 'bi-cart-check-fill', k: 'Compras', d: trans ? trans + ' en tránsito' : (enCurso ? enCurso + ' en curso' : (comps.length ? comps.length + ' en total' : 'sin compras'))},
   ];
-  document.getElementById('pvfTiles').innerHTML = tiles.map(function(x){
-    return '<button type="button" class="pvf-tile ' + x.cls + '" data-t="' + x.t + '" onclick="pvfTileSel(\'' + x.t + '\')">' + (x.fs ? '<span class="dot-fs"></span>' : '') +
-      '<span class="k"><i class="bi ' + x.ico + '"></i>' + x.k + '</span><span class="v">' + x.v + '</span><span class="d">' + pvEsc(x.d) + '</span></button>';
+  box.innerHTML = tabs.map(function(x){
+    return '<button type="button" role="tab" class="pvf-tab ' + x.cls + (x.t === _pvf.tab ? ' is-on' : '') + '" data-t="' + x.t + '" onclick="pvfTab(\'' + x.t + '\')" aria-selected="' + (x.t === _pvf.tab) + '">' +
+      (x.fs ? '<span class="dot-fs"></span>' : '') + '<span class="k"><i class="bi ' + x.ico + '"></i>' + x.k + '</span><span class="d">' + pvEsc(x.d) + '</span></button>';
   }).join('');
-  const ini = {solicitudes: 'sol', repuestos: 'rep', compras: 'com'}[seccion] || (sols.length ? 'sol' : (reps.length ? 'rep' : 'com'));
-  pvfTileSel(ini);
 }
-function pvfTileSel(t){
-  _pvfTile = t;
-  document.querySelectorAll('#pvfTiles .pvf-tile').forEach(function(b){ b.classList.toggle('is-on', b.dataset.t === t); });
-  const d = _pvfRel || {}, p = d.proveedor || {};
-  const sols = d.solicitudes || [], reps = d.repuestos || [], comps = d.compras || [], leg = d.legacy || [];
-  let h = '';
-  if (t === 'sol' || t === 'ent'){
-    h = '<div class="pv-lista">' + (sols.length ? sols.map(function(s){
+function pvfRelRender(){
+  const d = _pvf.rel;
+  const av = document.getElementById('pvfRelAvisos');
+  if (!d || !d.proveedor || !d.proveedor.id){
+    av.innerHTML = ''; document.getElementById('pvfTabs').hidden = true;
+    ['pvfPaneSol', 'pvfPaneRep', 'pvfPaneCom'].forEach(function(id){ document.getElementById(id).innerHTML = ''; });
+    return;
+  }
+  const p = d.proveedor, sols = d.solicitudes || [], reps = d.repuestos || [], comps = d.compras || [];
+  const nFs = sols.filter(function(s){ return s.fs; }).length, nSin = reps.filter(function(r){ return r.semaforo === 'rojo'; }).length;
+  let a = '';
+  if (nFs) a += '<div class="pvf-aviso rojo"><i class="bi bi-exclamation-octagon-fill" style="color:#dc2626"></i><span class="txt"><strong>' + nFs + (nFs === 1 ? ' solicitud tiene' : ' solicitudes tienen') + ' el equipo del cliente fuera de servicio.</strong> Gestiónalas primero.</span>' +
+    '<button type="button" class="pvf-aviso-btn is-primary" onclick="pvfTab(\'sol\')">Ver solicitudes</button></div>';
+  if (nSin) a += '<div class="pvf-aviso"><i class="bi bi-box-seam" style="color:#b45309"></i><span class="txt"><strong>' + nSin + (nSin === 1 ? ' repuesto' : ' repuestos') + ' de este proveedor sin stock.</strong> Revisa si conviene incluirlos en el próximo pedido.</span>' +
+    '<button type="button" class="pvf-aviso-btn" onclick="_pvf.repFil=\'sin\';pvfRepRender();pvfTab(\'rep\')">Ver cuáles</button></div>';
+  av.innerHTML = a;
+  // Solicitudes
+  document.getElementById('pvfPaneSol').innerHTML =
+    '<div class="d-flex justify-content-end mb-2"><a class="pvf-aviso-btn" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes"><i class="bi bi-inbox"></i>Abrir en el centro de solicitudes</a></div>' +
+    '<div class="pv-lista">' + (sols.length ? sols.map(function(s){
       const ref = [s.cliente_nombre, s.numero_ot || s.numero_ticket, s.created_at ? 'desde ' + s.created_at : ''].filter(Boolean).join(' · ');
       const der = s.fs ? '<span class="pv-fs-tag"><i class="bi bi-exclamation-octagon-fill"></i>Urgente</span>'
         : (s.stock_cantidad != null ? '<span class="pv-stk ' + (s.stock_cantidad > 0 ? 'ok' : 'no') + '">' + pvFmtN(s.stock_cantidad) + ' en bodega</span>' : '');
@@ -1188,41 +1586,107 @@ function pvfTileSel(t){
         '<span class="pv-est e-' + pvEsc(s.estado) + '">' + pvEsc(_PV_EST_CORTO[s.estado] || s.estado_label) + '</span>' +
         '<span class="pv-it-txt"><b>' + pvEsc(s.repuesto_nombre) + (s.cantidad ? ' × ' + pvFmtN(s.cantidad) : '') + '</b><small>#' + s.id + (ref ? ' · ' + pvEsc(ref) : '') + '</small></span>' + der + '</a>';
     }).join('') : '<div class="pv-vacio"><i class="bi bi-check2-circle me-1"></i>Sin solicitudes abiertas con este proveedor.</div>') + '</div>';
-  } else if (t === 'rep'){
-    const ord = reps.slice().sort(function(a, b){ const o = {rojo:0, ambar:1, verde:2}; return (o[a.semaforo] - o[b.semaforo]) || String(a.descripcion || '').localeCompare(String(b.descripcion || '')); });
-    h = '<div class="pv-lista">' + (ord.length ? ord.map(function(r){
-      const det = [r.sku, r.ubicacion_codigo ? 'Ubicación ' + r.ubicacion_codigo : '', r.costo_unitario ? 'Costo $' + pvFmtN(r.costo_unitario) : '', r.stock_minimo != null ? 'Mínimo ' + pvFmtN(r.stock_minimo) : ''].filter(Boolean).join(' · ');
-      return '<div class="pv-it"><span class="pv-semaf s-' + pvEsc(r.semaforo) + '"></span><span class="pv-it-txt"><b>' + pvEsc(r.descripcion) + '</b><small>' + pvEsc(det) +
-        (r.por_llegar ? ' · <span style="color:#b45309;font-weight:800">por llegar</span>' : '') + '</small></span>' +
-        '<span class="pv-stk ' + (r.semaforo === 'rojo' ? 'no' : (r.semaforo === 'ambar' ? 'am' : 'ok')) + '">' + pvFmtN(r.cantidad) + ' un.</span></div>';
-    }).join('') : '<div class="pv-vacio"><i class="bi bi-box me-1"></i>Todavía no hay repuestos de la bodega ligados a este proveedor.</div>') + '</div>' +
-    (leg.length ? '<div class="mt-2 small text-muted">Además hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');
-  } else {
-    h = comps.length ? '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Ticket</th><th>Estado</th><th>OC</th><th>Líneas</th><th>Monto</th><th>Llega</th><th>Creada</th></tr></thead><tbody>' +
+  // Compras
+  document.getElementById('pvfPaneCom').innerHTML = comps.length
+    ? '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Ticket</th><th>Estado</th><th>OC</th><th>Líneas</th><th>Monto</th><th>Llega</th><th>Creada</th></tr></thead><tbody>' +
       comps.map(function(c){
         const sem = c.estado === 'recibido' ? 'verde' : (c.estado === 'cancelada' ? 'rojo' : (c.estado === 'en_transito' || c.estado === 'recibido_parcial' ? 'ambar' : 'gris'));
         return '<tr><td>' + pvEsc(c.numero_ticket || ('#' + c.id)) + '</td><td><span class="pv-sem ' + sem + '">' + pvEsc(_PV_COMPRA_LBL[c.estado] || c.estado) + '</span></td><td>' + pvEsc(c.oc_numero || '—') +
           '</td><td>' + (c.n_lineas || 0) + '</td><td>' + (c.monto_total ? '$' + pvFmtN(c.monto_total) : '—') + '</td><td>' + pvEsc(c.eta || '—') + '</td><td>' + pvEsc(c.created_at || '') + '</td></tr>';
-      }).join('') + '</tbody></table></div>' : '<div class="pv-vacio"><i class="bi bi-cart me-1"></i>Todavía no hay compras registradas con este proveedor.</div>';
+      }).join('') + '</tbody></table></div>'
+    : '<div class="pv-vacio"><i class="bi bi-cart me-1"></i>Todavía no hay compras registradas con este proveedor.</div>';
+  pvfRepRender();
+}
+/* Repuestos del proveedor: dinámico (buscar, filtrar, ordenar) con costo, valor
+   en bodega y demanda de 12 meses -> qué conviene comprar por volumen. */
+function pvfRepRender(){
+  const d = _pvf.rel || {}, reps = d.repuestos || [], leg = d.legacy || [];
+  const box = document.getElementById('pvfPaneRep');
+  if (!reps.length){
+    box.innerHTML = '<div class="pv-vacio"><i class="bi bi-box me-1"></i>Todavía no hay repuestos de la bodega ligados a este proveedor.</div>' +
+      (leg.length ? '<div class="mt-2 small text-muted">Hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');
+    return;
   }
-  document.getElementById('pvfRelPanel').innerHTML = '<div class="pvf-panel">' + h + '</div>';
+  const valor = reps.reduce(function(a, r){ return a + (r.cantidad || 0) * (r.costo_unitario || 0); }, 0);
+  const nSin = reps.filter(function(r){ return r.semaforo === 'rojo'; }).length;
+  const nBajo = reps.filter(function(r){ return r.semaforo === 'ambar'; }).length;
+  const top = reps.slice().sort(function(a, b){ return (b.unidades_12m || 0) - (a.unidades_12m || 0); })[0];
+  const sinCosto = reps.filter(function(r){ return !r.costo_unitario; }).length;
+  const fil = {todos: function(){ return true; }, sin: function(r){ return r.semaforo === 'rojo'; }, bajo: function(r){ return r.semaforo === 'ambar'; },
+    con: function(r){ return r.semaforo === 'verde'; }, llegar: function(r){ return r.por_llegar; }, dem: function(r){ return (r.pedidos_12m || 0) > 0; },
+    costo: function(r){ return !r.costo_unitario; }};
+  const n = function(k){ return reps.filter(fil[k]).length; };
+  const q = pvfNorm(_pvf.repQ);
+  let lista = reps.filter(fil[_pvf.repFil] || fil.todos).filter(function(r){ return !q || pvfNorm(r.descripcion + ' ' + r.sku + ' ' + (r.ubicacion_codigo || '')).indexOf(q) >= 0; });
+  const ord = {demanda: function(a, b){ return (b.unidades_12m || 0) - (a.unidades_12m || 0) || (b.pedidos_12m || 0) - (a.pedidos_12m || 0); },
+    stock: function(a, b){ const o = {rojo:0, ambar:1, verde:2}; return o[a.semaforo] - o[b.semaforo]; },
+    valor: function(a, b){ return (b.cantidad || 0) * (b.costo_unitario || 0) - (a.cantidad || 0) * (a.costo_unitario || 0); },
+    az: function(a, b){ return String(a.descripcion || '').localeCompare(String(b.descripcion || '')); }};
+  lista = lista.slice().sort(ord[_pvf.repOrd] || ord.demanda);
+  const chip = function(k, lbl){ return '<button type="button" class="pvf-q' + (_pvf.repFil === k ? ' is-on' : '') + '" onclick="_pvf.repFil=\'' + k + '\';pvfRepRender()">' + lbl + ' (' + n(k) + ')</button>'; };
+  const filas = lista.map(function(r){
+    const v = (r.cantidad || 0) * (r.costo_unitario || 0);
+    const det = [r.sku, r.ubicacion_codigo ? 'Ubicación ' + r.ubicacion_codigo : '', r.stock_minimo != null ? 'mínimo ' + pvFmtN(r.stock_minimo) : ''].filter(Boolean).join(' · ');
+    return '<div class="pvr-it"><span class="pv-semaf s-' + pvEsc(r.semaforo) + '" title="' + (r.semaforo === 'rojo' ? 'Sin stock' : (r.semaforo === 'ambar' ? 'En o bajo el mínimo' : 'Con stock')) + '"></span>' +
+      '<span class="pv-it-txt"><b>' + pvEsc(r.descripcion) + '</b><small>' + pvEsc(det) + (r.por_llegar ? ' · <span style="color:#b45309;font-weight:800">por llegar</span>' : '') + '</small></span>' +
+      '<span class="met"><span class="pv-stk ' + (r.semaforo === 'rojo' ? 'no' : (r.semaforo === 'ambar' ? 'am' : 'ok')) + '">' + pvFmtN(r.cantidad) + ' un.</span>' +
+        '<span class="pvr-m">' + (r.costo_unitario ? 'Costo ' + pvFmtCLP(r.costo_unitario) : 'Sin costo') + '</span>' +
+        (v ? '<span class="pvr-m">Valor ' + pvFmtCLP(v) + '</span>' : '') +
+        '<span class="pvr-m dem" title="Últimos 12 meses">' + ((r.pedidos_12m || 0) ? 'Pedido ' + r.pedidos_12m + (r.pedidos_12m === 1 ? ' vez' : ' veces') + ' · ' + pvFmtN(r.unidades_12m) + ' un.' : 'Sin pedidos en 12 meses') + '</span></span></div>';
+  }).join('');
+  box.innerHTML =
+    '<div class="pvr-kpis">' +
+      '<div class="pvr-kpi"><div class="k">Repuestos</div><div class="v">' + reps.length + '</div></div>' +
+      '<div class="pvr-kpi vd"><div class="k">Valor en bodega</div><div class="v">' + pvFmtCLP(valor) + '</div></div>' +
+      '<div class="pvr-kpi ' + (nSin ? 'rj' : '') + '"><div class="k">Sin stock</div><div class="v">' + nSin + '</div></div>' +
+      '<div class="pvr-kpi ' + (nBajo ? 'am' : '') + '"><div class="k">Bajo el mínimo</div><div class="v">' + nBajo + '</div></div>' +
+      '<div class="pvr-kpi"><div class="k">Más pedido (12 meses)</div><div class="v" style="font-size:.92rem">' + (top && top.unidades_12m ? pvEsc(top.descripcion) + ' · ' + pvFmtN(top.unidades_12m) + ' un.' : '—') + '</div></div>' +
+    '</div>' +
+    (sinCosto ? '<div class="pvf-aviso mb-2"><i class="bi bi-cash-coin" style="color:#b45309"></i><span class="txt"><strong>' + sinCosto + (sinCosto === 1 ? ' repuesto sin costo' : ' repuestos sin costo') + ' cargado.</strong> Sin costo no se puede calcular el margen: complétalo en Bodega.</span></div>' : '') +
+    '<div class="pvr-bar"><input type="search" class="form-control" placeholder="Buscar por nombre, SKU o ubicación" value="' + pvEsc(_pvf.repQ) + '" oninput="_pvf.repQ=this.value;pvfRepLista()">' +
+      '<select class="form-select" onchange="_pvf.repOrd=this.value;pvfRepRender()" aria-label="Ordenar repuestos">' +
+        [['demanda','Más pedidos primero'], ['stock','Sin stock primero'], ['valor','Mayor valor en bodega'], ['az','A a Z']].map(function(o){ return '<option value="' + o[0] + '"' + (_pvf.repOrd === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
+      '</select></div>' +
+    '<div class="pvr-fil">' + chip('todos', 'Todos') + chip('sin', 'Sin stock') + chip('bajo', 'Bajo el mínimo') + chip('con', 'Con stock') + chip('llegar', 'Por llegar') + chip('dem', 'Con demanda') + chip('costo', 'Sin costo') + '</div>' +
+    '<div class="pv-lista" id="pvfRepLista">' + (filas || '<div class="pvr-vacio">Ningún repuesto con ese filtro.</div>') + '</div>' +
+    (leg.length ? '<div class="mt-2 small text-muted">Además hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');
+}
+function pvfRepLista(){
+  // Buscar sin perder el foco del cuadro de búsqueda: solo se repinta la lista.
+  const foco = document.activeElement, pos = foco && foco.selectionStart;
+  pvfRepRender();
+  const inp = document.querySelector('#pvfPaneRep .pvr-bar input');
+  if (inp){ inp.focus(); try { inp.setSelectionRange(pos, pos); } catch(e){} }
 }
 
+/* ══ Guardar ══ */
 async function provGuardar(){
   const id = pvVal('provId');
+  pvfEvaluar();
   if (!pvVal('provNombre')){
+    pvfTab('info');
     const st = document.getElementById('pvfStep1');
     st.classList.remove('pvf-flash'); void st.offsetWidth; st.classList.add('pvf-flash');
     st.scrollIntoView({behavior:'smooth', block:'center'});
     document.getElementById('provNombre').focus();
     return;
   }
+  const malo = _pvf.contactos.findIndex(function(c){ return pvfContValidar(c).error; });
+  if (malo >= 0){
+    pvfTab('info');
+    const card = document.querySelector('#pvfContactos .pvf-cont[data-i="' + malo + '"]');
+    if (card){ card.scrollIntoView({behavior:'smooth', block:'center'}); card.classList.remove('pvf-flash'); void card.offsetWidth; card.classList.add('pvf-flash'); }
+    ilusToast('Contacto ' + (malo + 1) + ': ' + pvfContValidar(_pvf.contactos[malo]).error, {type:'warning'});
+    return;
+  }
   pvfRutBlur();
   const payload = {};
   Object.keys(_PV_CAMPOS).forEach(function(k){ payload[_PV_CAMPOS[k]] = pvVal(k); });
   payload.origen = pvRadioVal('provOrigen');
-  payload.canal_preferido = pvRadioVal('provCanal');
   if (payload.origen === 'nacional'){ if (!payload.pais) payload.pais = 'Chile'; payload.incoterm = ''; }
+  payload.contactos = _pvf.contactos.filter(function(c){ return !pvfContVacio(c); });
+  payload.familias_erp = _pvf.fams;
+  payload.proceso_compra = _pvf.proc.map(function(x){ return String(x).trim(); }).filter(Boolean);
   const url = id ? '/mantenciones/api/proveedores-repuesto/' + id : '/mantenciones/api/proveedores-repuesto';
   const btn = document.getElementById('btnProvGuardar');
   btn.disabled = true;
@@ -1232,8 +1696,16 @@ async function provGuardar(){
       headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'}, body: JSON.stringify(payload) });
     d = await r.json();
   } catch(e){ d = { ok: false, error: 'Sin conexión: no se pudo guardar.' }; }
+  if (!d.ok){ btn.disabled = false; ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+  // Los hitos escritos antes de crear el proveedor se guardan ahora, en orden.
+  const nuevoId = id || d.id;
+  for (let i = _pvf.pend.length - 1; i >= 0 && nuevoId; i--){
+    try {
+      await fetch('/mantenciones/api/proveedores-repuesto/' + nuevoId + '/notas', { method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type':'application/json'}, body: JSON.stringify({ texto: _pvf.pend[i] }) });
+    } catch(e){}
+  }
   btn.disabled = false;
-  if (!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
   ilusToast('✓ Ficha del proveedor guardada', {type:'success'});
   _pvfCerrarOk = true;
   pvfModal().hide();
