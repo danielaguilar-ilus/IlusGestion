@@ -126315,22 +126315,36 @@ def mant_proveedor_repuesto_ficha(pid):
             r = dict(r)
             for k in ("cantidad", "stock_minimo", "costo_unitario"):
                 r[k] = float(r[k]) if r.get(k) is not None else None
+            # Semáforo de stock (mismo criterio que el tarjetero): sin stock →
+            # rojo, en o bajo el mínimo → ámbar, con stock → verde.
+            _cant = r["cantidad"] or 0
+            r["semaforo"] = ("rojo" if _cant <= 0 else
+                             ("ambar" if (r["stock_minimo"] is not None and _cant <= r["stock_minimo"]) else "verde"))
+            r["por_llegar"] = not r.get("ubicacion_codigo")
             out["repuestos"].append(r)
     except Exception as e:
         print(f"[proveedor ficha] repuestos pid={pid}: {e}", flush=True)
     try:
+        # 2026-10-04: las solicitudes salieron de la tarjeta y viven acá (Daniel:
+        # "eso elimínalo y colócalo adentro"). Traen lo que mostraba la tarjeta:
+        # equipo fuera de servicio primero ("Urgente") y el stock en bodega.
         for r in (mysql_fetchall(
                 "SELECT s.id, s.repuesto_nombre, s.cantidad, s.estado, s.created_at, "
-                "       c.razon_social AS cliente_nombre, v.numero_ot, t.numero_ticket "
+                "       (COALESCE(s.dejo_fuera_servicio,0)=1 OR m.estado_capturado='fuera_servicio') AS fs, "
+                "       c.razon_social AS cliente_nombre, v.numero_ot, t.numero_ticket, rs.cantidad AS stock_cantidad "
                 "  FROM mant_ot_repuesto_solicitudes s "
+                "  LEFT JOIN mant_maquinas m ON m.id=s.maquina_id "
                 "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
                 "  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
                 "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+                "  LEFT JOIN mant_repuestos_stock rs ON rs.id=s.repuesto_stock_id "
                 " WHERE s.proveedor_id=%s AND s.estado IN ('solicitado','validado','pedido','recibido') "
                 "   AND NOT (COALESCE(s.es_reposicion,0)=1 AND s.estado='recibido') "
-                " ORDER BY s.id DESC LIMIT 200", (pid,)) or []):
+                " ORDER BY fs DESC, (s.estado='solicitado') DESC, s.id DESC LIMIT 200", (pid,)) or []):
             r = dict(r)
             r["cantidad"] = float(r["cantidad"]) if r.get("cantidad") is not None else None
+            r["stock_cantidad"] = float(r["stock_cantidad"]) if r.get("stock_cantidad") is not None else None
+            r["fs"] = 1 if r.get("fs") else 0
             r["created_at"] = chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else None
             r["estado_label"] = _OTREP_ESTADO_LABEL.get(r.get("estado"), r.get("estado"))
             out["solicitudes"].append(r)

@@ -1,49 +1,148 @@
 {% extends "base.html" %}
 {% block title %}Proveedores de equipos — ILUS Fitness{% endblock %}
 {% block head_extra %}
-{# Mismo diseño de tarjetas que Couriers (Daniel 2026-10-04: "tarjetas así...
-   con diseños atractivos"): se REUSAN sus hojas (tokens --trx-* y .cr-*), no
-   una copia. Lo propio de Proveedores va abajo, con prefijo .pv-. #}
+{# Encabezado (.trx-hero) y estados vacíos (.trx-empty) de Transporte. #}
 <link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
-<link href="{{ url_for('static', filename='ilus_couriers.css') }}" rel="stylesheet">
 {% endblock %}
 {% block content %}
 {# ══════════════════════════════════════════════════════════════════════
-   PROVEEDORES COMO REPOSITORIO (2026-10-04, Daniel: "es prioridad que
-   mejoremos los proveedores, ya que esa será nuestro repositorio... mejorar
-   las tarjetas en términos de formato y la calidad de la información" +
-   "tarjetas así [Couriers], donde mantengamos relación de solicitudes y además
-   calidad de información").
-   Anatomía (igual que Couriers): franja de color · nombre + chips + datos +
-   logo · KPIs (bodega, solicitudes, compras, entrega real) · condiciones +
-   "Falta…" · contacto · acciones (Ficha, Solicitudes, Compras, Editar, Correo,
-   Llamar). Nada se quitó (REGLA #4.2): Nuevo, Editar, canal, contacto de
-   respaldo, notas y los repuestos del sistema anterior (dentro de la ficha).
+   PROVEEDORES COMO REPOSITORIO
+   · 2026-10-04 (1) Daniel: "es prioridad que mejoremos los proveedores, ya
+     que esa será nuestro repositorio... formato y calidad de la información".
+   · 2026-10-04 (2) Daniel: "eso elimínalo y colócalo adentro, afuera lo que
+     quiero ver es la ficha con los datos, el contacto... quería algo como la
+     de los clientes, la gestión de clientes".
+   → La tarjeta es la de Gestión de clientes (client-card-v2 / cc2-* de
+     templates/mantenciones/clientes.html, copiada tal cual — esa pantalla NO
+     se toca desde acá). Solicitudes, repuestos con stock y compras viven
+     DENTRO de la ficha (pestañas), junto con Editar, Correo y Llamar: nada se
+     quitó (REGLA #4.2), se movió adentro como pidió Daniel.
+   · Filtros por filas con contador + paginación fija abajo (REGLA #4.3),
+     mismo motor que Clientes (PVFilter ≈ ILUSFilter).
    Indicadores reales: _prov_indicadores() en app.py.
    ══════════════════════════════════════════════════════════════════════ #}
 <style>
-/* Proveedores: lo propio sobre el diseño de Couriers */
-.pv-wrap .cr-meta span{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word}  /* REGLA #15: nada cortado */
-.pv-wrap .cr-nombre{word-break:break-word}
+/* ── KPIs de cabecera ── */
 .pv-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:14px}
-.pv-kpi{background:#fff;border:1px solid var(--trx-g2,#e5e7eb);border-radius:14px;padding:12px 16px}
-.pv-kpi .k{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--trx-muted,#6b7280)}
-.pv-kpi .v{font-size:1.6rem;font-weight:900;color:var(--trx-black,#0a0a0a);line-height:1.1}
-.pv-kpi.warn .v{color:#b45309}.pv-kpi.ok .v{color:#15803d}.pv-kpi.hot .v{color:var(--trx-red,#dc2626)}
-.pv-ficha-ring{flex:none;width:64px;height:64px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:conic-gradient(var(--pv-c) calc(var(--pv-p) * 1%), #eef0f3 0);position:relative}
-.pv-ficha-ring::after{content:'';position:absolute;inset:6px;border-radius:50%;background:#fff}
-.pv-ficha-ring b,.pv-ficha-ring small{position:relative;z-index:1;line-height:1}
-.pv-ficha-ring b{font-size:1.05rem;font-weight:900;color:var(--trx-black,#0a0a0a)}
-.pv-ficha-ring small{font-size:.58rem;font-weight:800;color:var(--trx-muted,#6b7280);margin-top:2px}
-.pv-n-verde{--pv-c:#16a34a}.pv-n-ambar{--pv-c:#f59e0b}.pv-n-rojo{--pv-c:#dc2626}
-.pv-falta-l{font-size:.8rem;color:#92400e;line-height:1.45}
-.pv-notas{font-size:.8rem;color:var(--trx-muted,#4b5563);white-space:pre-wrap;padding:0 16px 10px}
-.pv-canal{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:800;padding:4px 10px;border-radius:50px;color:#fff;flex:none}
+.pv-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px 16px}
+.pv-kpi .k{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+.pv-kpi .v{font-size:1.6rem;font-weight:900;color:#0a0a0a;line-height:1.1}
+.pv-kpi.warn .v{color:#b45309}.pv-kpi.ok .v{color:#15803d}.pv-kpi.hot .v{color:#dc2626}
+
+/* ══ Motor de filtros (copiado de Gestión de clientes) ══ */
+.flt-shell{background:#fff;border:1px solid #eef0f2;border-radius:14px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.flt-top{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+.flt-search{position:relative;flex:1;display:flex;align-items:center}
+.flt-search > .bi-search{position:absolute;left:12px;color:#9ca3af;font-size:.9rem;pointer-events:none}
+.flt-search input{width:100%;height:42px;border:1.5px solid #e5e7eb;border-radius:10px;padding:0 38px 0 36px;font-size:16px;transition:border-color .15s,box-shadow .15s;outline:none}
+.flt-search input:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.flt-search-clear{position:absolute;right:8px;border:0;background:#f3f4f6;color:#6b7280;width:24px;height:24px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.7rem}
+.flt-search-clear:hover{background:#e5e7eb;color:#111}
+.flt-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px dashed #f0f1f3}
+.flt-row:first-of-type{border-top:0}
+.flt-row-lbl{flex-shrink:0;width:104px;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;display:flex;align-items:center;gap:5px}
+.flt-row-lbl .bi{font-size:.7rem;opacity:.7}
+.flt-pills{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.flt-pill{display:inline-flex;align-items:center;gap:6px;border:1.5px solid #e5e7eb;background:#fff;color:#374151;padding:5px 12px;border-radius:50px;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s cubic-bezier(.2,.8,.2,1);white-space:nowrap}
+.flt-pill:hover{border-color:#d1d5db;transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+.flt-pill.is-active{background:#0a0a0a;border-color:#0a0a0a;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.flt-count{font-size:.68rem;font-weight:800;background:rgba(0,0,0,.06);color:inherit;padding:1px 7px;border-radius:50px;min-width:20px;text-align:center}
+.flt-pill.is-active .flt-count{background:rgba(255,255,255,.22)}
+.flt-pill[data-count="0"]{opacity:.4}
+.flt-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid #f0f1f3}
+.flt-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-height:24px;align-items:center}
+.flt-chip{display:inline-flex;align-items:center;gap:6px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;padding:3px 6px 3px 11px;border-radius:50px;font-size:.74rem;font-weight:700}
+.flt-chip button{border:0;background:rgba(220,38,38,.12);color:#dc2626;width:18px;height:18px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.6rem}
+.flt-chip button:hover{background:#dc2626;color:#fff}
+.flt-foot-right{display:flex;align-items:center;gap:12px}
+.flt-result{font-size:.8rem;color:#6b7280;font-weight:600;white-space:nowrap}
+.flt-result b{color:#0a0a0a}
+.flt-clear{border:1px solid #e5e7eb;background:#fff;color:#6b7280;padding:5px 12px;border-radius:8px;font-size:.76rem;font-weight:700;cursor:pointer;white-space:nowrap}
+.flt-clear:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2}
+.flt-empty{text-align:center;padding:48px 20px;background:#fff;border:1px dashed #e5e7eb;border-radius:14px}
+.flt-empty-title{font-weight:800;color:#374151;margin:0 0 2px}
+.flt-empty-sub{color:#9ca3af;font-size:.85rem;margin:0 0 16px}
+@media (max-width:640px){
+  .flt-shell{padding:12px;border-radius:12px}
+  .flt-row{flex-direction:column;align-items:flex-start;gap:5px}
+  .flt-row-lbl{width:auto}
+  .flt-pills{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px;-webkit-overflow-scrolling:touch}
+  .flt-foot{flex-direction:column;align-items:stretch}
+  .flt-foot-right{justify-content:space-between}
+}
+
+/* ══ Tarjeta (copiada de Gestión de clientes: client-card-v2 / cc2-*) ══ */
+#pvGrid{margin-bottom:80px}
+.client-card-v2{background:#fff;border:1px solid #e5e7eb;border-radius:14px;cursor:pointer;overflow:hidden;height:100%;
+  display:flex;flex-direction:column;transition:transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s,border-color .18s;position:relative}
+.client-card-v2:hover,.client-card-v2:focus-visible{transform:translateY(-3px);box-shadow:0 14px 32px rgba(0,0,0,.10),0 4px 10px rgba(0,0,0,.04);border-color:transparent;outline:none}
+.client-card-v2:focus-visible{box-shadow:0 0 0 3px rgba(220,38,38,.35)}
+.cc2-top-bar{height:5px;background:linear-gradient(90deg,var(--hdr-c) 0%,var(--hdr-c) 70%,var(--hdr-c) 100%)}
+.cc2-header{display:flex;align-items:stretch;gap:14px;padding:14px 18px 12px}
+.cc2-header-left{flex:1;min-width:0;display:flex;align-items:flex-start;gap:12px}
+.cc2-icon-box{width:42px;height:42px;border-radius:9px;flex-shrink:0;background:#f3f4f6;color:var(--hdr-c);display:flex;align-items:center;justify-content:center;font-size:1.15rem}
+.cc2-title-wrap{flex:1;min-width:0;padding-top:1px}
+.cc2-name{font-weight:800;color:#0f172a;font-size:1.05rem;line-height:1.22;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;flex-wrap:wrap;word-break:break-word}
+.cc2-badge{display:inline-flex;align-items:center;font-weight:700;font-size:.6rem;padding:3px 9px;border-radius:50px;letter-spacing:.5px;text-transform:uppercase;flex-shrink:0}
+.bx-activo{background:#dcfce7;color:#166534}
+.bx-advertencia{background:#fff8e1;color:#92400e}
+.bx-peligro{background:#fee2e2;color:#991b1b}
+.bx-urgente{background:#dc2626;color:#fff;animation:pvLate 1.6s ease-in-out infinite}
+@keyframes pvLate{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}50%{box-shadow:0 0 0 5px rgba(220,38,38,0)}}
+.cc2-banner{width:90px;height:60px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  color:#fff;font-weight:900;font-size:1.3rem;letter-spacing:.04em;text-shadow:0 1px 2px rgba(0,0,0,.15)}
+.cc2-contact-info{padding:0 18px 12px;display:flex;flex-direction:column;gap:5px;font-size:.78rem;color:#475569}
+.cc2-ci-row{display:flex;align-items:center;gap:7px;min-width:0}
+.cc2-ci-row i{color:#94a3b8;flex-shrink:0;font-size:.85rem}
+.cc2-ci-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc2-ci-row.mute{color:#9ca3af}
+.cc2-kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px 18px;border-top:1px solid #f3f4f6}
+.cc2-kpi{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cc2-kpi-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;line-height:1.1}
+.cc2-kpi-val{font-size:.82rem;color:#0f172a;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cc2-kpi-val strong{font-weight:700}
+.cc2-kpi-val small{font-weight:500;color:#6b7280;font-size:.7rem}
+.cc2-kpi-val .mute{color:#9ca3af}
+.cc2-kpi-val .hot{color:#dc2626}
+.cc2-kpi-val .ok{color:#16a34a}
+.cc2-pct-bar{height:3px;background:#f3f4f6;border-radius:2px;overflow:hidden;margin-top:3px}
+.cc2-pct-fill{height:100%;border-radius:2px;transition:width .3s}
+.cc2-footer{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 18px 14px;border-top:1px solid #f3f4f6}
+.cc2-contact-main{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.cc2-contact-main > i{font-size:1.25rem;color:#94a3b8;flex-shrink:0}
+.cc2-contact-lbl{font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;line-height:1}
+.cc2-contact-name{font-size:.85rem;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.cc2-contact-name.mute{color:#9ca3af;font-weight:600}
+.pv-canal{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:800;padding:4px 10px;border-radius:50px;color:#fff;flex:none}
 .pv-canal.whatsapp{background:#16a34a}.pv-canal.wechat{background:#07a04f}.pv-canal.telefono{background:#2563eb}.pv-canal.email{background:#4b5563}
 .pv-canal.sin{background:#f3f4f6;color:#6b7280}
-.cr-kpi-v.hot{color:var(--trx-red,#dc2626)}
-/* Modales */
+@media (max-width:991px){ .cc2-kpi-row{grid-template-columns:repeat(2,1fr);row-gap:10px} .pv-kpis{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media (max-width:575px){
+  .cc2-header{padding:12px 14px 10px}
+  .cc2-banner{width:60px;height:50px;font-size:1rem}
+  .cc2-name{font-size:.95rem}
+  .cc2-kpi-row{padding:8px 14px}
+  .cc2-footer{padding:10px 14px 12px}
+  .pv-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (prefers-reduced-motion:reduce){ .bx-urgente,.pv-dot-fs{animation:none} }
+
+/* ══ Paginación fija abajo (copiada de Gestión de clientes) ══ */
+.cli-footer{position:fixed;bottom:0;left:0;right:0;margin-left:var(--sidebar-w,250px);display:flex;align-items:center;justify-content:space-between;
+  gap:14px;flex-wrap:wrap;background:#fff;border-top:1px solid #e5e7eb;padding:10px 22px;box-shadow:0 -2px 10px rgba(0,0,0,.06);z-index:1000;
+  padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+.cli-footer-info{font-size:.82rem;font-weight:600;color:#6b7280}
+.cli-footer-perpage{display:flex;align-items:center;gap:6px}
+.cli-footer-perpage select{width:auto;font-size:.78rem;padding:4px 24px 4px 9px;font-weight:600}
+.cli-footer .pagination{margin:0}
+.cli-footer .page-link{border:none;color:#6b7280;font-weight:600;padding:4px 11px;border-radius:6px !important;margin:0 1px;font-size:.82rem;transition:background .15s,color .15s}
+.cli-footer .page-link:hover{background:#f3f4f6;color:#0f172a}
+.cli-footer .page-item.active .page-link{background:#dc2626;color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.3)}
+.cli-footer .page-item.disabled .page-link{color:#cbd5e1;background:transparent}
+@media (max-width:991px){ .cli-footer{margin-left:0} }
+@media (max-width:575px){ .cli-footer{flex-direction:column;gap:8px;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))} }
+
+/* ══ Modales ══ */
 #modalProveedor .modal-header,#modalProveedorDetalle .modal-header{background:#0a0a0a;color:#fff}
 #modalProveedor .btn-close,#modalProveedorDetalle .btn-close{filter:invert(1)}
 .pv-step{border:1.5px solid #e5e7eb;border-radius:14px;margin-bottom:14px;overflow:hidden;background:#fff}
@@ -59,6 +158,26 @@
 .pv-seg label{min-height:44px;display:inline-flex;align-items:center;gap:6px;border:1.5px solid #e5e7eb;border-radius:10px;padding:8px 14px;font-weight:700;cursor:pointer;background:#fff}
 .pv-seg input{position:absolute;opacity:0;pointer-events:none}
 .pv-seg label:has(input:checked){background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+/* Ficha por dentro: barra de acciones + pestañas */
+.pv-acc{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.pv-btn{min-height:44px;border-radius:10px;padding:6px 14px;font-weight:800;font-size:.88rem;display:inline-flex;align-items:center;gap:6px;
+  border:1.5px solid #e5e7eb;background:#fff;color:#0a0a0a;cursor:pointer;text-decoration:none;transition:border-color .15s,background .15s}
+.pv-btn:hover{border-color:#0a0a0a;color:#0a0a0a}
+.pv-btn.primario{background:#dc2626;border-color:#dc2626;color:#fff}
+.pv-btn.primario:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}
+.pv-btn[aria-disabled="true"]{opacity:.45;pointer-events:none}
+.pv-tabs{display:flex;gap:4px;box-shadow:inset 0 -2px 0 #e5e7eb;margin-bottom:14px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch}
+.pv-tab{min-height:44px;border:0;background:transparent;font-weight:800;font-size:.9rem;color:#6b7280;padding:8px 14px;display:inline-flex;align-items:center;gap:7px;
+  position:relative;white-space:nowrap;cursor:pointer}
+.pv-tab:hover{color:#0a0a0a}
+.pv-tab.on{color:#0a0a0a}
+.pv-tab.on::after{content:'';position:absolute;left:10px;right:10px;bottom:0;height:3px;border-radius:3px;background:#dc2626}
+.pv-tab b{background:#e5e7eb;color:#111827;border-radius:50px;padding:1px 8px;font-size:.76rem}
+.pv-tab b.hot{background:#dc2626;color:#fff}
+.pv-dot-fs{background:#dc2626;color:#fff;border-radius:50px;font-size:.66rem;padding:1px 7px;animation:pvLate 1.6s ease-in-out infinite}
+.pv-dot-sin{background:#fee2e2;color:#991b1b;border-radius:50px;font-size:.66rem;padding:1px 7px}
+.pv-panel{animation:pvEntra .2s ease-out}
+@keyframes pvEntra{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .pv-sec{border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;margin-bottom:14px;background:#fff}
 .pv-sec h6{font-weight:900;font-size:1rem;margin:0 0 10px;display:flex;align-items:center;gap:8px}
 .pv-sec h6 i{color:#dc2626}
@@ -66,6 +185,7 @@
 .pv-dl .k{display:block;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#4b5563}
 .pv-dl .v{color:#0a0a0a;font-weight:700;word-break:break-word}
 .pv-dl .v.falta{color:#b45309}
+.pv-notas{font-size:.86rem;color:#4b5563;white-space:pre-wrap}
 .pv-check{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 14px;font-size:.92rem}
 .pv-check li{display:flex;align-items:center;gap:7px}
 .pv-check .ok i{color:#16a34a}.pv-check .no{color:#92400e;font-weight:700}.pv-check .no i{color:#f59e0b}
@@ -73,62 +193,41 @@
 .pv-ind div{background:#f9fafb;border:1px solid #eef0f3;border-radius:12px;padding:8px 10px;text-align:center}
 .pv-ind b{display:block;font-size:1.25rem;font-weight:900;color:#0a0a0a;line-height:1.1}
 .pv-ind small{display:block;font-size:.72rem;font-weight:700;color:#4b5563;line-height:1.25}
+.pv-lista{display:flex;flex-direction:column;gap:6px}
+.pv-it{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:12px;background:#fff;border:1px solid #eef0f3;text-decoration:none;color:#111827;
+  transition:transform .12s,box-shadow .12s,border-color .12s}
+a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12px -6px rgba(0,0,0,.25);color:#111827}
+.pv-it.fs{border-color:#fca5a5;background:#fff5f5}
+.pv-it-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.pv-it-txt b{font-size:.9rem;font-weight:800;word-break:break-word}
+.pv-it-txt small{font-size:.78rem;color:#4b5563;word-break:break-word}
+.pv-est{flex:none;font-size:.68rem;font-weight:900;letter-spacing:.03em;text-transform:uppercase;border-radius:50px;padding:3px 9px;white-space:nowrap}
+.pv-est.e-solicitado{background:#fee2e2;color:#991b1b}
+.pv-est.e-validado{background:#dbeafe;color:#1e40af}
+.pv-est.e-pedido{background:#fff8e1;color:#92400e}
+.pv-est.e-recibido{background:#dcfce7;color:#166534}
+.pv-fs-tag{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:900;color:#fff;background:#dc2626;border-radius:50px;padding:3px 9px}
+.pv-stk{flex:none;font-size:.74rem;font-weight:800;border-radius:50px;padding:3px 9px;white-space:nowrap}
+.pv-stk.ok{background:#dcfce7;color:#166534}.pv-stk.no{background:#fee2e2;color:#991b1b}.pv-stk.am{background:#fff8e1;color:#92400e}
+.pv-semaf{flex:none;width:12px;height:12px;border-radius:50%}
+.pv-semaf.s-verde{background:#16a34a;box-shadow:0 0 0 3px #dcfce7}.pv-semaf.s-ambar{background:#f59e0b;box-shadow:0 0 0 3px #fff8e1}
+.pv-semaf.s-rojo{background:#dc2626;box-shadow:0 0 0 3px #fee2e2}
+.pv-vacio{padding:18px;text-align:center;font-size:.88rem;color:#6b7280;background:#fff;border:1px dashed #e5e7eb;border-radius:12px}
 .pv-tabla{width:100%;font-size:.9rem;border-collapse:collapse}
 .pv-tabla th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:#4b5563;font-weight:800;padding:6px 8px;border-bottom:2px solid #e5e7eb;text-align:left}
 .pv-tabla td{padding:7px 8px;border-bottom:1px solid #f3f4f6;vertical-align:top}
 .pv-sem{display:inline-block;border-radius:50px;padding:2px 9px;font-weight:800;font-size:.76rem;white-space:nowrap}
 .pv-sem.verde{background:#dcfce7;color:#166534}.pv-sem.ambar{background:#fff8e1;color:#92400e}.pv-sem.rojo{background:#fee2e2;color:#991b1b}
 .pv-sem.gris{background:#f3f4f6;color:#374151}
-.pv-btn{min-height:38px;border-radius:10px;padding:4px 12px;font-weight:800;font-size:.88rem;display:inline-flex;align-items:center;gap:6px;border:1.5px solid #0a0a0a;background:#fff;color:#0a0a0a;cursor:pointer}
-.pv-rel{margin:0 16px 12px;border:1.5px solid #eef0f3;border-radius:14px;background:#fbfbfc;overflow:hidden}
-.pv-rel-tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1.5px solid #eef0f3}
-.pv-rel-t{min-height:44px;border:0;background:transparent;font-weight:800;font-size:.84rem;color:#4b5563;display:flex;align-items:center;justify-content:center;gap:6px;
-  cursor:pointer;transition:background .15s,color .15s;position:relative;flex-wrap:wrap}
-.pv-rel-t b{background:#e5e7eb;color:#111827;border-radius:50px;padding:1px 8px;font-size:.78rem}
-.pv-rel-t b.hot{background:#dc2626;color:#fff}
-.pv-rel-t.on{background:#fff;color:#0a0a0a}
-.pv-rel-t.on::after{content:'';position:absolute;left:14%;right:14%;bottom:-1.5px;height:3px;border-radius:3px;background:var(--marca,#dc2626)}
-.pv-rel-t:hover{color:#0a0a0a}
-.pv-fs-dot{background:#dc2626;color:#fff;border-radius:50px;font-size:.68rem;padding:1px 6px;animation:pvLate 1.6s ease-in-out infinite}
-.pv-sin-dot{background:#fee2e2;color:#991b1b;border-radius:50px;font-size:.68rem;padding:1px 7px}
-@keyframes pvLate{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}50%{box-shadow:0 0 0 5px rgba(220,38,38,0)}}
-.pv-rel-p{padding:6px;display:flex;flex-direction:column;gap:4px;animation:pvEntra .2s ease-out}
-@keyframes pvEntra{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-.pv-rel-it{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:10px;background:#fff;border:1px solid #f1f2f4;text-decoration:none;color:#111827;
-  transition:transform .12s,box-shadow .12s,border-color .12s}
-a.pv-rel-it:hover{transform:translateX(3px);border-color:var(--marca,#dc2626);box-shadow:0 4px 12px -6px rgba(0,0,0,.25);color:#111827}
-.pv-rel-it.fs{border-color:#fca5a5;background:#fff5f5}
-.pv-rel-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
-.pv-rel-txt b{font-size:.85rem;font-weight:800;word-break:break-word}
-.pv-rel-txt small{font-size:.74rem;color:#4b5563;word-break:break-word}
-.pv-est{flex:none;font-size:.68rem;font-weight:900;letter-spacing:.03em;text-transform:uppercase;border-radius:50px;padding:3px 8px;white-space:nowrap}
-.pv-est.e-solicitado{background:#fee2e2;color:#991b1b}
-.pv-est.e-validado{background:#dbeafe;color:#1e40af}
-.pv-est.e-pedido{background:#fff8e1;color:#92400e}
-.pv-est.e-recibido{background:#dcfce7;color:#166534}
-.pv-fs-tag{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:900;color:#fff;background:#dc2626;border-radius:50px;padding:3px 8px}
-.pv-stk{flex:none;font-size:.72rem;font-weight:800;border-radius:50px;padding:3px 8px;white-space:nowrap}
-.pv-stk.ok{background:#dcfce7;color:#166534}.pv-stk.no{background:#fee2e2;color:#991b1b}
-.pv-semaf{flex:none;width:12px;height:12px;border-radius:50%}
-.pv-semaf.s-verde{background:#16a34a;box-shadow:0 0 0 3px #dcfce7}.pv-semaf.s-ambar{background:#f59e0b;box-shadow:0 0 0 3px #fff8e1}
-.pv-semaf.s-rojo{background:#dc2626;box-shadow:0 0 0 3px #fee2e2}
-.pv-rel-vacio{padding:12px;text-align:center;font-size:.82rem;color:#6b7280;display:flex;align-items:center;justify-content:center;gap:6px}
-.pv-rel-mas{display:block;text-align:center;padding:7px;font-size:.8rem;font-weight:800;color:var(--marca,#dc2626);text-decoration:none}
-.pv-rel-mas:hover{text-decoration:underline}
-.pv-wrap .cr-card{animation:pvAparece .35s ease-out both}
-@keyframes pvAparece{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:reduce){.pv-wrap .cr-card,.pv-rel-p,.pv-fs-dot{animation:none}}
-@media (max-width:992px){ .pv-kpis{grid-template-columns:repeat(3,minmax(0,1fr))} }
 @media (max-width:768px){
-  .pv-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
   .pv-dl,.pv-check{grid-template-columns:1fr}
   .pv-ind{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 </style>
 
-<div class="container-fluid py-3 px-3 px-md-4 pv-wrap">
+<div class="container-fluid py-3 px-3 px-md-4">
 
-  {# ── HEADER (mismo .trx-hero de Couriers) ── #}
+  {# ── HEADER ── #}
   <div class="trx-hero">
     <div class="trx-hero-main">
       <a class="trx-back" href="/repuestos" title="Volver a Repuestos" aria-label="Volver a Repuestos"><i class="bi bi-arrow-left"></i></a>
@@ -154,200 +253,179 @@ a.pv-rel-it:hover{transform:translateX(3px);border-color:var(--marca,#dc2626);bo
   </div>
 
   {% if proveedores %}
-  {# ── BUSCADOR + FILTROS (mismo .cr-toolbar de Couriers). REGLA #4.3: limpiar
-     vuelve a armar la lista: todo pasa por pvFiltrar(). ── #}
-  <div class="cr-toolbar" id="pvToolbar">
-    <div class="cr-search">
-      <i class="bi bi-search"></i>
-      <input type="search" id="pvQ" autocomplete="off" placeholder="Buscar por nombre, contacto, país, correo o teléfono…"
-             aria-label="Buscar proveedor" oninput="pvFiltrar()">
-      <button type="button" class="cr-search-x" onclick="document.getElementById('pvQ').value='';pvFiltrar()" aria-label="Limpiar la búsqueda">
-        <i class="bi bi-x-circle-fill"></i></button>
+  {# ── FILTROS por filas con contador (mismo motor que Gestión de clientes).
+     REGLA #4.3: limpiar un filtro vuelve a armar la lista (todo pasa por refresh). ── #}
+  {% set PV_GROUPS = [
+       {'key':'origen',  'label':'Origen',      'icon':'globe-americas',
+        'opts':[('nacional','Nacional'),('extranjero','Extranjero'),('sin','Sin definir')]},
+       {'key':'ficha',   'label':'Ficha',       'icon':'list-check',
+        'opts':[('completa','Completa'),('incompleta','Incompleta')]},
+       {'key':'sol',     'label':'Solicitudes', 'icon':'inbox-fill',
+        'opts':[('con','Con solicitudes'),('urgente','Urgentes'),('sin','Sin solicitudes')]},
+       {'key':'compras', 'label':'Compras',     'icon':'cart-check-fill',
+        'opts':[('curso','En curso'),('transito','En tránsito'),('sin','Sin compras en curso')]}
+     ] %}
+  <div class="flt-shell mb-3">
+    <div class="flt-top">
+      <div class="flt-search">
+        <i class="bi bi-search"></i>
+        <input type="text" id="pvQ" autocomplete="off" aria-label="Buscar proveedor"
+               placeholder="Buscar por nombre, contacto, país, correo o teléfono…"
+               oninput="PVFilter.setSearch(this.value)">
+        <button type="button" class="flt-search-clear" id="pvQClear" onclick="PVFilter.setSearch('')" title="Limpiar búsqueda" hidden>
+          <i class="bi bi-x-lg"></i></button>
+      </div>
     </div>
-    <div class="cr-segs" role="group" aria-label="Filtrar proveedores">
-      <button type="button" class="cr-seg is-on" data-f="todos" onclick="pvSeg(this)">Todos <span class="n" data-n="todos">0</span></button>
-      <button type="button" class="cr-seg" data-f="solicitudes" onclick="pvSeg(this)">Con solicitudes <span class="n" data-n="solicitudes">0</span></button>
-      <button type="button" class="cr-seg" data-f="extranjero" onclick="pvSeg(this)">Extranjeros <span class="n" data-n="extranjero">0</span></button>
-      <button type="button" class="cr-seg" data-f="nacional" onclick="pvSeg(this)">Nacionales <span class="n" data-n="nacional">0</span></button>
-      <button type="button" class="cr-seg" data-f="incompleta" onclick="pvSeg(this)">Ficha incompleta <span class="n" data-n="incompleta">0</span></button>
+    {% for g in PV_GROUPS %}
+    <div class="flt-row">
+      <span class="flt-row-lbl"><i class="bi bi-{{ g.icon }}"></i>{{ g.label }}</span>
+      <div class="flt-pills" data-group="{{ g.key }}">
+        <button type="button" class="flt-pill is-active" data-val="" onclick="PVFilter.set('{{ g.key }}','')">Todos</button>
+        {% for val,lbl in g.opts %}
+        <button type="button" class="flt-pill" data-val="{{ val }}" onclick="PVFilter.set('{{ g.key }}','{{ val }}')">
+          {{ lbl }}<span class="flt-count" data-cg="{{ g.key }}" data-cv="{{ val }}">0</span>
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    <div class="flt-foot">
+      <div class="flt-chips" id="pvChips"></div>
+      <div class="flt-foot-right">
+        <span class="flt-result" id="pvResult"></span>
+        <button type="button" class="flt-clear" id="pvClear" onclick="PVFilter.clear()" hidden>
+          <i class="bi bi-x-circle me-1"></i>Limpiar todo</button>
+      </div>
     </div>
   </div>
   {% endif %}
 
-  <div class="cr-grid" id="pvGrid">
+  {# ── TARJETAS (mismo diseño que Gestión de clientes). Toda la tarjeta abre la
+     ficha; adentro están las solicitudes, los repuestos con su stock, las
+     compras y las acciones (Editar, Correo, Llamar). ── #}
+  {% set _hdr_colors = ['#ec4899', '#dc2626', '#f59e0b', '#8b5cf6', '#3b82f6', '#06b6d4', '#10b981', '#f97316'] %}
+  <div id="pvGrid" class="row g-3">
     {% for p in proveedores %}
       {% set C = p.calidad %}
       {% set _nomtxt = p.nombre or 'Proveedor' %}
-      {% set _marca = 'hsl(' ~ ((p.id|int * 47) % 360) ~ 'deg 62% 38%)' %}
-      {% set _ini3 = _nomtxt[:3]|upper %}
-      {% set _cp = (p.contacto_nombre or '').split() %}
-      {% set _cini = ((_cp[0][0] ~ (_cp[1][0] if _cp|length > 1 else ''))|upper) if _cp else '' %}
-      {% set _faltan = C['items']|rejectattr('ok')|map(attribute='texto')|list %}
+      {% set _hdr = _hdr_colors[p.id % 8] %}
       {% set _pct = (C.ok * 100 // C.total) if C.total else 0 %}
-      {% set _stockpct = ((p.n_con_stock or 0) * 100 // (p.n_productos or 1)) if p.n_productos else 0 %}
+      {% set _pcol = '#16a34a' if C.nivel == 'verde' else ('#d97706' if C.nivel == 'ambar' else '#dc2626') %}
+      {% set _faltan = C['items']|rejectattr('ok')|map(attribute='texto')|list %}
+      {% set _origen = p.origen if p.origen in ('nacional', 'extranjero') else 'sin' %}
       {% set _datos = {'id': p.id, 'nombre': p.nombre, 'contacto_nombre': p.contacto_nombre or '', 'telefono': p.telefono or '', 'email': p.email or '',
                        'canal_preferido': p.canal_preferido or '', 'notas': p.notas or '', 'contacto2_nombre': p.contacto2_nombre or '',
                        'contacto2_telefono': p.contacto2_telefono or '', 'contacto2_email': p.contacto2_email or '', 'origen': p.origen or '',
                        'pais': p.pais or '', 'moneda': p.moneda or '', 'rut_tax': p.rut_tax or '', 'condiciones_pago': p.condiciones_pago or '',
                        'plazo_entrega_dias': p.plazo_entrega_dias if p.plazo_entrega_dias is not none else '', 'sitio_web': p.sitio_web or ''} %}
-    {# Los datos viajan en data-* (JSON escapado por el servidor): un nombre con
-       apóstrofe ("O'Brien") ya no rompe el botón Editar, como pasaba antes con
-       los parámetros escritos dentro del onclick. #}
-    <div id="cardWrap{{ p.id }}" data-prov='{{ _datos|tojson }}'
-         data-origen="{{ p.origen or '' }}" data-incompleta="{{ 1 if C.nivel != 'verde' else 0 }}"
-         data-solicitudes="{{ 1 if (p.sol_abiertas or p.compras_en_curso) else 0 }}"
+    <div class="col-12 col-md-6 col-lg-4 pv-wrapper" data-prov='{{ _datos|tojson }}'
+         data-origen="{{ _origen }}" data-ficha="{{ 'completa' if C.nivel == 'verde' else 'incompleta' }}"
+         data-soln="{{ p.sols_n or 0 }}" data-solfs="{{ p.sols_fs or 0 }}"
+         data-compras="{{ p.compras_en_curso or 0 }}" data-transito="{{ p.en_transito or 0 }}"
          data-buscar="{{ (_nomtxt ~ ' ' ~ (p.contacto_nombre or '') ~ ' ' ~ (p.contacto2_nombre or '') ~ ' ' ~ (p.pais or '') ~ ' ' ~ (p.email or '') ~ ' ' ~ (p.telefono or '') ~ ' ' ~ (p.rut_tax or ''))|lower }}">
-      <div class="cr-card" style="--marca:{{ _marca }}">
-        <div class="cr-bar"></div>
+      <div class="client-card-v2" style="--hdr-c: {{ _hdr }}" role="button" tabindex="0"
+           aria-label="Abrir la ficha de {{ _nomtxt }}"
+           onclick="provVerDetalle({{ p.id }})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();provVerDetalle({{ p.id }});}">
+        <div class="cc2-top-bar"></div>
 
-        {# ── CABECERA ── #}
-        <div class="cr-head">
-          <a class="cr-id" href="#" onclick="event.preventDefault(); provVerDetalle({{ p.id }})" title="Abrir la ficha de {{ _nomtxt }}">
-            <div class="cr-nombre">{{ _nomtxt }}</div>
-            <div class="cr-chips">
-              {% if p.origen == 'extranjero' %}
-              <span class="cr-chip cr-chip-tipo"><i class="bi bi-globe-americas"></i>Extranjero{% if p.pais %} · {{ p.pais }}{% endif %}</span>
-              {% elif p.origen == 'nacional' %}
-              <span class="cr-chip cr-chip-tipo"><i class="bi bi-geo-alt"></i>Nacional</span>
-              {% else %}
-              <span class="cr-chip cr-chip-sin"><i class="bi bi-question-circle"></i>Origen sin definir</span>
-              {% endif %}
-              {% if p.moneda %}<span class="cr-chip cr-chip-off"><i class="bi bi-currency-exchange"></i>{{ p.moneda }}</span>{% endif %}
-              {% if C.nivel == 'verde' %}
-              <span class="cr-chip cr-chip-on"><i class="bi bi-patch-check-fill"></i>Ficha completa</span>
-              {% else %}
-              <span class="cr-chip cr-chip-sin"><i class="bi bi-list-check"></i>Ficha {{ C.ok }} de {{ C.total }}</span>
-              {% endif %}
+        <div class="cc2-header">
+          <div class="cc2-header-left">
+            <div class="cc2-icon-box"><i class="bi bi-truck"></i></div>
+            <div class="cc2-title-wrap">
+              <div class="cc2-name">
+                {{ _nomtxt }}
+                {% if C.nivel == 'verde' %}
+                <span class="cc2-badge bx-activo" title="Ficha completa: {{ C.ok }} de {{ C.total }} datos">Ficha completa</span>
+                {% else %}
+                <span class="cc2-badge {{ 'bx-advertencia' if C.nivel == 'ambar' else 'bx-peligro' }}" title="Falta: {{ _faltan|join(', ') }}">
+                  <i class="bi bi-exclamation-triangle-fill me-1"></i>Ficha incompleta</span>
+                {% endif %}
+                {% if _origen == 'extranjero' %}
+                <span class="cc2-badge" style="background:#3b82f6;color:#fff"><i class="bi bi-globe-americas me-1"></i>Extranjero</span>
+                {% elif _origen == 'nacional' %}
+                <span class="cc2-badge" style="background:#0d9488;color:#fff"><i class="bi bi-geo-alt-fill me-1"></i>Nacional</span>
+                {% else %}
+                <span class="cc2-badge" style="background:#6b7280;color:#fff"><i class="bi bi-question-circle me-1"></i>Origen sin definir</span>
+                {% endif %}
+                {% if p.sols_fs %}
+                <span class="cc2-badge bx-urgente" title="{{ p.sols_fs }} solicitud(es) con el equipo del cliente fuera de servicio">
+                  <i class="bi bi-exclamation-octagon-fill me-1"></i>{{ p.sols_fs }} urgente{{ 's' if p.sols_fs > 1 else '' }}</span>
+                {% endif %}
+              </div>
             </div>
-            <div class="cr-meta">
-              {% if p.telefono %}<div><i class="bi bi-telephone"></i><span>{{ p.telefono }}</span></div>{% endif %}
-              {% if p.email %}<div><i class="bi bi-envelope"></i><span>{{ p.email }}</span></div>{% endif %}
-              {% if p.sitio_web %}<div><i class="bi bi-globe2"></i><span>{{ p.sitio_web|replace('https://','')|replace('http://','') }}</span></div>{% endif %}
-              {% if p.rut_tax %}<div><i class="bi bi-card-text"></i><span>{{ p.rut_tax }}</span></div>{% endif %}
-              {% if not p.telefono and not p.email and not p.sitio_web %}
-              <div><i class="bi bi-dash-circle"></i><span>Sin datos de contacto</span></div>
-              {% endif %}
+          </div>
+          <div class="cc2-banner" style="background:linear-gradient(135deg, {{ _hdr }}, {{ _hdr }}aa)" aria-hidden="true">{{ _nomtxt[:3]|upper }}</div>
+        </div>
+
+        {# ── Datos de contacto de la empresa ── #}
+        <div class="cc2-contact-info">
+          {% if p.pais %}<div class="cc2-ci-row"><i class="bi bi-geo-alt"></i><span>{{ p.pais }}</span></div>{% endif %}
+          {% if p.telefono %}<div class="cc2-ci-row"><i class="bi bi-telephone"></i><span>{{ p.telefono }}</span></div>{% endif %}
+          {% if p.email %}<div class="cc2-ci-row"><i class="bi bi-envelope"></i><span>{{ p.email }}</span></div>{% endif %}
+          {% if p.sitio_web %}<div class="cc2-ci-row"><i class="bi bi-globe2"></i><span>{{ p.sitio_web|replace('https://','')|replace('http://','') }}</span></div>{% endif %}
+          {% if not p.pais and not p.telefono and not p.email and not p.sitio_web %}
+          <div class="cc2-ci-row mute"><i class="bi bi-dash-circle"></i><span>Sin datos de contacto</span></div>
+          {% endif %}
+        </div>
+
+        {# ── Fila 1: Solicitudes · Repuestos · Compras · Ficha ── #}
+        <div class="cc2-kpi-row">
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Solicitudes</div>
+            <div class="cc2-kpi-val">
+              {% if p.sols_n %}<strong class="hot">{{ p.sols_n }}</strong> <small>abierta{{ 's' if p.sols_n > 1 else '' }}</small>
+              {% else %}<span class="mute">Sin abiertas</span>{% endif %}
             </div>
-          </a>
-          {# Logo: el proveedor todavía no tiene logo propio; anillo con la
-             calidad de la ficha (mismo recuadro que Couriers). #}
-          <div class="pv-ficha-ring pv-n-{{ C.nivel }}" style="--pv-p:{{ _pct }}" title="Ficha completa: {{ C.ok }} de {{ C.total }} datos">
-            <b>{{ C.ok }}/{{ C.total }}</b><small>FICHA</small>
+          </div>
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Repuestos</div>
+            <div class="cc2-kpi-val" title="{% if p.n_productos %}{{ p.n_con_stock or 0 }} de {{ p.n_productos }} con stock{% endif %}">
+              {% if p.n_productos %}<strong>{{ p.n_productos }}</strong> <small>{% if p.reps_sin_stock %}<span class="hot">{{ p.reps_sin_stock }} sin stock</span>{% else %}en bodega{% endif %}</small>
+              {% else %}<span class="mute">—</span>{% endif %}
+            </div>
+          </div>
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Compras</div>
+            <div class="cc2-kpi-val">
+              {% if p.compras_en_curso %}<strong class="ok">{{ p.compras_en_curso }}</strong> <small>{% if p.en_transito %}{{ p.en_transito }} en tránsito{% else %}en curso{% endif %}</small>
+              {% else %}<span class="mute">Sin compras</span>{% endif %}
+            </div>
+          </div>
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Ficha</div>
+            <div class="cc2-kpi-val" style="color:{{ _pcol }}" title="{{ C.ok }} de {{ C.total }} datos{% if _faltan %} · Falta: {{ _faltan|join(', ') }}{% endif %}"><strong>{{ _pct }}%</strong></div>
+            <div class="cc2-pct-bar"><div class="cc2-pct-fill" style="width:{{ _pct }}%;background:{{ _pcol }}"></div></div>
           </div>
         </div>
 
-        {# ── KPIs: lo que le compramos y cómo responde ── #}
-        <a class="cr-kpis" href="#" onclick="event.preventDefault(); provVerDetalle({{ p.id }})" title="Ver el detalle de {{ _nomtxt }}">
-          <div class="cr-kpi">
-            <div class="cr-kpi-k">En bodega</div>
-            <div class="cr-kpi-v {% if not p.n_productos %}mute{% endif %}">{{ p.n_productos or 0 }}</div>
-            {% if p.n_productos %}
-            <div class="cr-bar-mini" title="{{ p.n_con_stock }} de {{ p.n_productos }} con stock"><span style="width:{{ _stockpct }}%"></span></div>
-            {% endif %}
+        {# ── Fila 2: Moneda · Plazo · Entrega real · Última compra ── #}
+        <div class="cc2-kpi-row">
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Moneda</div>
+            <div class="cc2-kpi-val">{% if p.moneda %}<strong>{{ p.moneda }}</strong>{% else %}<span class="mute">—</span>{% endif %}</div>
           </div>
-          <div class="cr-kpi">
-            <div class="cr-kpi-k">Solicitudes<br>abiertas</div>
-            <div class="cr-kpi-v {% if p.sol_abiertas %}hot{% else %}mute{% endif %}">{{ p.sol_abiertas or 0 }}</div>
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Plazo</div>
+            <div class="cc2-kpi-val" title="Plazo de entrega que declara el proveedor">{% if p.plazo_entrega_dias is not none %}<strong>{{ p.plazo_entrega_dias }}</strong> <small>días</small>{% else %}<span class="mute">—</span>{% endif %}</div>
           </div>
-          <div class="cr-kpi">
-            <div class="cr-kpi-k">Compras<br>en curso</div>
-            <div class="cr-kpi-v {% if p.compras_en_curso %}ok{% else %}mute{% endif %}">{{ p.compras_en_curso or 0 }}</div>
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Entrega real</div>
+            <div class="cc2-kpi-val" title="{% if p.plazo_real_dias is not none %}Promedio entre pedido y recibido ({{ p.n_entregas }} entregas){% else %}Todavía sin entregas registradas{% endif %}">
+              {% if p.plazo_real_dias is not none %}<strong>{{ p.plazo_real_dias|round(0)|int }}</strong> <small>días</small>{% else %}<span class="mute">Sin dato</span>{% endif %}</div>
           </div>
-          <div class="cr-kpi">
-            <div class="cr-kpi-k">Entrega<br>real</div>
-            {% if p.plazo_real_dias is not none %}
-            <div class="cr-kpi-v" title="Promedio entre pedido y recibido ({{ p.n_entregas }} entregas)">{{ p.plazo_real_dias|round(0)|int }} d</div>
-            {% else %}
-            <div class="cr-kpi-v mute">Sin dato</div>
-            {% endif %}
-          </div>
-        </a>
-
-        {# ── RELACIÓN: solicitudes y repuestos con su stock (Daniel 2026-10-04:
-           "que se relacionen las solicitudes de repuestos... solicitudes y
-           repuestos asociados con su stock"). Dos pestañas, sin recargar. ── #}
-        {% set _tab0 = 'sol' if p.sols_n else 'rep' %}
-        <div class="pv-rel" data-tab="{{ _tab0 }}">
-          <div class="pv-rel-tabs" role="tablist" aria-label="Relación del proveedor">
-            <button type="button" role="tab" class="pv-rel-t {{ 'on' if _tab0 == 'sol' else '' }}" data-t="sol" onclick="pvTab(this)"
-                    aria-selected="{{ 'true' if _tab0 == 'sol' else 'false' }}">
-              <i class="bi bi-inbox-fill"></i>Solicitudes <b class="{{ 'hot' if p.sols_n else '' }}">{{ p.sols_n }}</b>
-              {% if p.sols_fs %}<span class="pv-fs-dot" title="{{ p.sols_fs }} con el equipo fuera de servicio">{{ p.sols_fs }}</span>{% endif %}
-            </button>
-            <button type="button" role="tab" class="pv-rel-t {{ 'on' if _tab0 == 'rep' else '' }}" data-t="rep" onclick="pvTab(this)"
-                    aria-selected="{{ 'true' if _tab0 == 'rep' else 'false' }}">
-              <i class="bi bi-box-seam-fill"></i>Repuestos <b>{{ p.reps_n }}</b>
-              {% if p.reps_sin_stock %}<span class="pv-sin-dot" title="{{ p.reps_sin_stock }} sin stock">{{ p.reps_sin_stock }} sin stock</span>{% endif %}
-            </button>
-          </div>
-          <div class="pv-rel-p" data-p="sol" {% if _tab0 != 'sol' %}hidden{% endif %}>
-            {% for s in p.sols_top %}
-            <a class="pv-rel-it {{ 'fs' if s.fs else '' }}" href="/repuestos?rs_proveedor={{ p.id }}#solicitudes" title="Abrir en el centro de solicitudes">
-              <span class="pv-est e-{{ s.estado }}" title="{{ s.estado_label }}">{{ {'solicitado':'Por validar','validado':'Validado','pedido':'Pedido','recibido':'Recibido'}.get(s.estado, s.estado_label) }}</span>
-              <span class="pv-rel-txt"><b>{{ s.repuesto_nombre }}{% if s.cantidad %} × {{ '%g'|format(s.cantidad) }}{% endif %}</b>
-                <small>#{{ s.id }}{% if s.cliente_nombre %} · {{ s.cliente_nombre }}{% endif %}{% if s.numero_ot %} · {{ s.numero_ot }}{% elif s.numero_ticket %} · {{ s.numero_ticket }}{% endif %}</small></span>
-              {% if s.fs %}<span class="pv-fs-tag" title="Equipo fuera de servicio"><i class="bi bi-exclamation-octagon-fill"></i>Urgente</span>
-              {% elif s.stock_cantidad is not none %}<span class="pv-stk {{ 'ok' if s.stock_cantidad > 0 else 'no' }}">{{ '%g'|format(s.stock_cantidad) }} en bodega</span>{% endif %}
-            </a>
-            {% else %}
-            <div class="pv-rel-vacio"><i class="bi bi-check2-circle"></i>Sin solicitudes abiertas con este proveedor</div>
-            {% endfor %}
-            {% if p.sols_n > 6 %}<a class="pv-rel-mas" href="/repuestos?rs_proveedor={{ p.id }}#solicitudes">Ver las {{ p.sols_n }} solicitudes <i class="bi bi-arrow-right"></i></a>{% endif %}
-          </div>
-          <div class="pv-rel-p" data-p="rep" {% if _tab0 != 'rep' %}hidden{% endif %}>
-            {% for r in p.reps_top %}
-            <div class="pv-rel-it">
-              <span class="pv-semaf s-{{ r.semaforo }}" title="{{ 'Sin stock' if r.semaforo == 'rojo' else ('Bajo el mínimo' if r.semaforo == 'ambar' else 'Con stock') }}"></span>
-              <span class="pv-rel-txt"><b>{{ r.descripcion }}</b><small>{{ r.sku }}{% if r.por_llegar %} · <span style="color:#b45309;font-weight:800">por llegar</span>{% endif %}</small></span>
-              <span class="pv-stk {{ 'ok' if r.cantidad > 0 else 'no' }}">{{ '%g'|format(r.cantidad) }} un.</span>
-            </div>
-            {% else %}
-            <div class="pv-rel-vacio"><i class="bi bi-box"></i>Todavía no hay repuestos de bodega ligados a este proveedor</div>
-            {% endfor %}
-            {% if p.reps_n > 6 %}<a class="pv-rel-mas" href="#" onclick="event.preventDefault(); provVerDetalle({{ p.id }}, 'repuestos')">Ver los {{ p.reps_n }} repuestos con su stock <i class="bi bi-arrow-right"></i></a>{% endif %}
+          <div class="cc2-kpi">
+            <div class="cc2-kpi-lbl">Última compra</div>
+            <div class="cc2-kpi-val">{% if p.ultima_compra %}<strong>{{ p.ultima_compra }}</strong>{% else %}<span class="mute">—</span>{% endif %}</div>
           </div>
         </div>
 
-        {# ── CONDICIONES + calidad de la ficha ── #}
-        <div class="cr-datos">
-          <div class="cr-datos-g">
-            <div>
-              <div class="cr-dk">Plazo declarado</div>
-              {% if p.plazo_entrega_dias is not none %}<div class="cr-dv">{{ p.plazo_entrega_dias }} días</div>{% else %}<div class="cr-dv mute">Sin registrar</div>{% endif %}
-            </div>
-            <div>
-              <div class="cr-dk">Condiciones de pago</div>
-              {% if p.condiciones_pago %}<div class="cr-dv">{{ p.condiciones_pago }}</div>{% else %}<div class="cr-dv mute">Sin registrar</div>{% endif %}
-            </div>
-            <div>
-              <div class="cr-dk">Última compra</div>
-              {% if p.ultima_compra %}<div class="cr-dv">{{ p.ultima_compra }}</div>{% else %}<div class="cr-dv mute">Sin compras</div>{% endif %}
-            </div>
-          </div>
-          <div class="cr-doc">
-            {% if _faltan %}
-            <i class="bi bi-list-check" style="color:var(--trx-warn,#f59e0b)"></i>
-            <span class="falta pv-falta-l">Falta: {{ _faltan|join(' · ') }}</span>
-            <a class="push" href="#" onclick="event.preventDefault(); provAbrirEditarCard(this)">Completar</a>
-            {% else %}
-            <i class="bi bi-patch-check-fill" style="color:var(--trx-green,#16a34a)"></i>
-            <span class="nota">Ficha completa: todos los datos para comprar y costear</span>
-            {% endif %}
-          </div>
-        </div>
-        {% if p.notas %}<div class="pv-notas">{{ p.notas }}</div>{% endif %}
-
-        {# ── PIE: contacto + canal ── #}
-        <div class="cr-pie">
-          <div class="cr-pers">
-            <div class="cr-av {% if not _cini %}vacio{% endif %}">{{ _cini or '—' }}</div>
+        {# ── Pie: contacto principal + canal ── #}
+        <div class="cc2-footer">
+          <div class="cc2-contact-main">
+            <i class="bi bi-person-circle"></i>
             <div style="min-width:0">
-              <div class="cr-pers-k">Contacto en el proveedor</div>
-              {% if p.contacto_nombre %}
-              <div class="cr-pers-v">{{ p.contacto_nombre }}{% if p.contacto2_nombre %} <span style="font-weight:600;color:#6b7280">· respaldo {{ p.contacto2_nombre }}</span>{% endif %}</div>
-              {% else %}
-              <div class="cr-pers-v mute">Sin registrar</div>
-              {% endif %}
+              <div class="cc2-contact-lbl">Contacto principal</div>
+              <div class="cc2-contact-name {{ '' if p.contacto_nombre else 'mute' }}">{{ p.contacto_nombre or 'Sin contacto' }}</div>
             </div>
           </div>
           {% if p.canal_preferido %}
@@ -360,32 +438,10 @@ a.pv-rel-it:hover{transform:translateX(3px);border-color:var(--marca,#dc2626);bo
           <span class="pv-canal sin">Canal sin definir</span>
           {% endif %}
         </div>
-
-        {# ── ACCIONES (dos filas de tres, como Couriers) ── #}
-        <div class="cr-acc">
-          <button class="cr-btn cr-btn-primary" type="button" onclick="provVerDetalle({{ p.id }})" title="Abrir la ficha completa">
-            <i class="bi bi-file-person-fill"></i>Ficha</button>
-          <a class="cr-btn" href="/repuestos?rs_proveedor={{ p.id }}#solicitudes" title="Ver las solicitudes de repuesto de {{ _nomtxt }}">
-            <i class="bi bi-inbox"></i>Solicitudes</a>
-          <button class="cr-btn" type="button" onclick="provVerDetalle({{ p.id }}, 'compras')" title="Ver las compras a {{ _nomtxt }}">
-            <i class="bi bi-cart-check"></i>Compras</button>
-          <button class="cr-btn" type="button" onclick="provAbrirEditarCard(this)" title="Editar los datos de {{ _nomtxt }}">
-            <i class="bi bi-pencil-square"></i>Editar</button>
-          {% if p.email %}
-          <a class="cr-btn" href="mailto:{{ p.email }}" title="Escribir a {{ p.email }}"><i class="bi bi-envelope"></i>Correo</a>
-          {% else %}
-          <button class="cr-btn" type="button" disabled title="Sin correo registrado"><i class="bi bi-envelope"></i>Correo</button>
-          {% endif %}
-          {% if p.telefono %}
-          <a class="cr-btn" href="tel:{{ p.telefono|replace(' ','') }}" title="Llamar al {{ p.telefono }}"><i class="bi bi-telephone"></i>Llamar</a>
-          {% else %}
-          <button class="cr-btn" type="button" disabled title="Sin teléfono registrado"><i class="bi bi-telephone"></i>Llamar</button>
-          {% endif %}
-        </div>
       </div>
     </div>
     {% else %}
-    <div>
+    <div class="col-12">
       <div class="trx-card">
         <div class="trx-empty">
           <div class="trx-empty-ico"><i class="bi bi-truck"></i></div>
@@ -397,10 +453,33 @@ a.pv-rel-it:hover{transform:translateX(3px);border-color:var(--marca,#dc2626);bo
     </div>
     {% endfor %}
   </div>
-  <div class="trx-card mt-3" id="pvSinResultados" style="display:none">
-    <div class="trx-empty"><div class="trx-empty-ico"><i class="bi bi-search"></i></div>
-      <div class="trx-empty-t">Ningún proveedor coincide con la búsqueda</div></div>
+
+  {% if proveedores %}
+  <div id="pvEmpty" class="flt-empty" hidden>
+    <div style="font-size:2.2rem;opacity:.7">🔍</div>
+    <p class="flt-empty-title">Ningún proveedor coincide con estos filtros</p>
+    <p class="flt-empty-sub">Prueba quitar algún filtro o cambiar la búsqueda.</p>
+    <button type="button" class="btn btn-danger fw-bold" style="min-height:44px" onclick="PVFilter.clear()">
+      <i class="bi bi-arrow-counterclockwise me-1"></i>Limpiar filtros</button>
   </div>
+
+  {# ── PAGINACIÓN (REGLA #4.3, igual que Gestión de clientes) ── #}
+  <div class="cli-footer">
+    <div class="cli-footer-info" id="pvPageInfo">Mostrando 0 de 0</div>
+    <ul class="pagination pagination-sm mb-0" id="pvPag"></ul>
+    <div class="cli-footer-perpage">
+      <span class="text-muted small">Mostrar</span>
+      <select id="pvPerPage" class="form-select form-select-sm" onchange="PVFilter.refresh(true)" aria-label="Proveedores por página">
+        <option value="6" selected>6</option>
+        <option value="9">9</option>
+        <option value="12">12</option>
+        <option value="24">24</option>
+        <option value="999">Todo</option>
+      </select>
+      <span class="text-muted small">por página</span>
+    </div>
+  </div>
+  {% endif %}
 </div>
 
 <!-- Modal crear/editar (3 pasos, estilo Retiros) -->
@@ -508,7 +587,7 @@ a.pv-rel-it:hover{transform:translateX(3px);border-color:var(--marca,#dc2626);bo
   </div>
 </div>
 
-<!-- Modal ficha del proveedor -->
+<!-- Modal ficha del proveedor: datos + solicitudes + repuestos con stock + compras -->
 <div class="modal fade" id="modalProveedorDetalle" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
     <div class="modal-content" style="border-radius:16px">
@@ -531,45 +610,134 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 function pvEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
-/* ── Búsqueda + filtros (en el navegador: son pocas tarjetas). Los contadores
-   de cada filtro se calculan sobre la búsqueda actual, como en Couriers. ── */
-let _pvFiltro = 'todos';
-function pvSeg(btn){
-  _pvFiltro = btn.dataset.f;
-  document.querySelectorAll('#pvToolbar .cr-seg').forEach(function(b){ b.classList.toggle('is-on', b === btn); });
-  pvFiltrar();
-}
-function pvPasa(c, f){
-  if (f === 'nacional') return c.dataset.origen === 'nacional';
-  if (f === 'extranjero') return c.dataset.origen === 'extranjero';
-  if (f === 'incompleta') return c.dataset.incompleta === '1';
-  if (f === 'solicitudes') return c.dataset.solicitudes === '1';
-  return true;
-}
-function pvFiltrar(){
-  const q = ((document.getElementById('pvQ') || {}).value || '').trim().toLowerCase();
-  const n = {todos:0, solicitudes:0, extranjero:0, nacional:0, incompleta:0};
-  let vis = 0;
-  document.querySelectorAll('#pvGrid > [id^="cardWrap"]').forEach(function(c){
-    const okQ = !q || (c.dataset.buscar || '').indexOf(q) !== -1;
-    if (okQ) Object.keys(n).forEach(function(f){ if (pvPasa(c, f)) n[f]++; });
-    const ok = okQ && pvPasa(c, _pvFiltro);
-    c.style.display = ok ? '' : 'none';
-    if (ok) vis++;
+/* ══ Motor de filtros + paginación (mismo comportamiento que ILUSFilter de
+   Gestión de clientes): filtros combinables, contador por opción, chips,
+   "N de M", Limpiar todo, deep-link por URL. Fuente de verdad: data-* de cada
+   .pv-wrapper. ══ */
+(function(){
+  const GROUPS = ['origen', 'ficha', 'sol', 'compras'];
+  const F = { q: '', origen: '', ficha: '', sol: '', compras: '' };
+  let curPage = 1;
+  const $  = function(s, r){ return (r || document).querySelector(s); };
+  const $$ = function(s, r){ return Array.from((r || document).querySelectorAll(s)); };
+  const cards = function(){ return $$('.pv-wrapper'); };
+  const GLBL = { origen: 'Origen', ficha: 'Ficha', sol: 'Solicitudes', compras: 'Compras' };
+  const LBL = {
+    origen:  { nacional: 'Nacional', extranjero: 'Extranjero', sin: 'Sin definir' },
+    ficha:   { completa: 'Completa', incompleta: 'Incompleta' },
+    sol:     { con: 'Con solicitudes', urgente: 'Urgentes', sin: 'Sin solicitudes' },
+    compras: { curso: 'En curso', transito: 'En tránsito', sin: 'Sin compras en curso' },
+  };
+  function num(c, k){ return parseInt(c.dataset[k] || '0', 10) || 0; }
+  function matchGroup(c, g, v){
+    if (!v) return true;
+    if (g === 'sol')     return v === 'con' ? num(c, 'soln') > 0 : (v === 'urgente' ? num(c, 'solfs') > 0 : num(c, 'soln') === 0);
+    if (g === 'compras') return v === 'curso' ? num(c, 'compras') > 0 : (v === 'transito' ? num(c, 'transito') > 0 : num(c, 'compras') === 0);
+    return (c.dataset[g] || '') === v;
+  }
+  function matchAll(c){
+    if (F.q && (c.dataset.buscar || '').indexOf(F.q) === -1) return false;
+    return GROUPS.every(function(g){ return matchGroup(c, g, F[g]); });
+  }
+  function renderCounts(){
+    const all = cards();
+    $$('.flt-count').forEach(function(span){
+      const n = all.filter(function(c){ return matchGroup(c, span.dataset.cg, span.dataset.cv); }).length;
+      span.textContent = n;
+      const pill = span.closest('.flt-pill'); if (pill) pill.dataset.count = n;
+    });
+  }
+  function renderPills(){
+    $$('.flt-pills').forEach(function(box){
+      const g = box.dataset.group;
+      $$('.flt-pill', box).forEach(function(p){ p.classList.toggle('is-active', (p.dataset.val || '') === (F[g] || '')); });
+    });
+  }
+  function renderChips(){
+    const wrap = $('#pvChips');
+    if (wrap){
+      const chips = [];
+      if (F.q) chips.push({ g: 'q', label: 'Búsqueda: “' + F.q + '”' });
+      GROUPS.forEach(function(g){ if (F[g]) chips.push({ g: g, label: GLBL[g] + ': ' + (LBL[g][F[g]] || F[g]) }); });
+      wrap.innerHTML = chips.map(function(c){
+        return '<span class="flt-chip">' + pvEsc(c.label) +
+          '<button type="button" onclick="PVFilter.remove(\'' + c.g + '\')" title="Quitar filtro" aria-label="Quitar filtro"><i class="bi bi-x-lg"></i></button></span>';
+      }).join('');
+    }
+    const any = !!(F.q || GROUPS.some(function(g){ return F[g]; }));
+    const clr = $('#pvClear'); if (clr) clr.hidden = !any;
+    const sc = $('#pvQClear'); if (sc) sc.hidden = !F.q;
+  }
+  function syncURL(){
+    const p = new URLSearchParams();
+    if (F.q) p.set('q', F.q);
+    GROUPS.forEach(function(g){ if (F[g]) p.set(g, F[g]); });
+    const qs = p.toString();
+    try { history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '')); } catch (e) {}
+  }
+  function paginate(vis){
+    const sel = $('#pvPerPage');
+    const pp = parseInt(sel ? sel.value : 6, 10) || 6;
+    const tot = vis.length, universo = cards().length;
+    const pgs = pp >= 999 ? 1 : Math.max(1, Math.ceil(tot / pp));
+    if (curPage > pgs) curPage = 1;
+    const s = (curPage - 1) * pp, e = pp >= 999 ? tot : s + pp;
+    cards().forEach(function(el){ el.style.display = 'none'; });
+    vis.forEach(function(el, i){ el.style.display = (i >= s && i < e) ? '' : 'none'; });
+    const empty = $('#pvEmpty'); if (empty) empty.hidden = (tot !== 0 || universo === 0);
+    const res = $('#pvResult');
+    if (res) res.innerHTML = (tot === universo) ? '<b>' + tot + '</b> proveedor' + (tot === 1 ? '' : 'es') : '<b>' + tot + '</b> de ' + universo;
+    const pi = $('#pvPageInfo');
+    if (pi) pi.textContent = !tot ? 'Sin resultados'
+      : (pp >= 999 ? ('Mostrando ' + tot + ' de ' + tot) : ('Página ' + curPage + ' de ' + pgs + ' · ' + tot + ' proveedor' + (tot === 1 ? '' : 'es')));
+    const ul = $('#pvPag'); if (!ul) return;
+    ul.innerHTML = '';
+    if (pgs <= 1) return;
+    const li = function(label, pg, dis, act){
+      const l = document.createElement('li');
+      l.className = 'page-item' + (dis ? ' disabled' : '') + (act ? ' active' : '');
+      const a = document.createElement('a');
+      a.className = 'page-link'; a.href = '#'; a.innerHTML = label;
+      if (!dis) a.onclick = function(ev){ ev.preventDefault(); curPage = pg; refresh(false); };
+      l.appendChild(a); ul.appendChild(l);
+    };
+    li('&laquo;', curPage - 1, curPage === 1);
+    for (let p = 1; p <= pgs; p++){
+      if (p === 1 || p === pgs || (p >= curPage - 1 && p <= curPage + 1)) li(p, p, false, p === curPage);
+      else if (p === curPage - 2 || p === curPage + 2) li('…', p, true);
+    }
+    li('&raquo;', curPage + 1, curPage === pgs);
+  }
+  function refresh(resetPage){
+    if (resetPage) curPage = 1;
+    paginate(cards().filter(matchAll));
+  }
+  window.PVFilter = {
+    set: function(g, v){ F[g] = (F[g] === v) ? '' : v; renderPills(); renderChips(); syncURL(); refresh(true); },
+    remove: function(g){
+      if (g === 'q'){ F.q = ''; const i = $('#pvQ'); if (i) i.value = ''; } else F[g] = '';
+      renderPills(); renderChips(); syncURL(); refresh(true);
+    },
+    setSearch: function(v){
+      F.q = (v || '').toLowerCase().trim();
+      const i = $('#pvQ'); if (i && !v) i.value = '';
+      renderChips(); syncURL(); refresh(true);
+    },
+    clear: function(){
+      F.q = ''; GROUPS.forEach(function(g){ F[g] = ''; });
+      const i = $('#pvQ'); if (i) i.value = '';
+      renderPills(); renderChips(); syncURL(); refresh(true);
+    },
+    refresh: refresh,
+  };
+  document.addEventListener('DOMContentLoaded', function(){
+    const p = new URLSearchParams(location.search);
+    F.q = (p.get('q') || '').toLowerCase().trim();
+    GROUPS.forEach(function(g){ const v = (p.get(g) || '').toLowerCase().trim(); F[g] = (LBL[g][v] ? v : ''); });
+    const i = $('#pvQ'); if (i) i.value = F.q;
+    renderCounts(); renderPills(); renderChips(); refresh(true);
   });
-  document.querySelectorAll('#pvToolbar [data-n]').forEach(function(el){ el.textContent = n[el.dataset.n] || 0; });
-  const sin = document.getElementById('pvSinResultados');
-  if (sin) sin.style.display = (vis || !document.querySelector('#pvGrid > [id^="cardWrap"]')) ? 'none' : '';
-}
-document.addEventListener('DOMContentLoaded', pvFiltrar);
-/* Pestañas Solicitudes / Repuestos dentro de cada tarjeta (sin recargar). */
-function pvTab(btn){
-  const rel = btn.closest('.pv-rel');
-  const t = btn.dataset.t;
-  rel.dataset.tab = t;
-  rel.querySelectorAll('.pv-rel-t').forEach(function(b){ const on = b === btn; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
-  rel.querySelectorAll('.pv-rel-p').forEach(function(pn){ pn.hidden = pn.dataset.p !== t; });
-}
+})();
 
 /* ── Formulario en 3 pasos ── */
 const _PV_CAMPOS = {provNombre:'nombre', provContacto:'contacto_nombre', provTelefono:'telefono', provEmail:'email', provNotas:'notas',
@@ -651,9 +819,19 @@ async function provGuardar(){
   setTimeout(function(){ location.reload(); }, 500);
 }
 
-/* ── Ficha del proveedor ── */
+/* ══ Ficha del proveedor (por dentro): acciones arriba + 4 pestañas.
+   2026-10-04, Daniel: "eso elimínalo y colócalo adentro" → las solicitudes,
+   los repuestos con su stock y las compras salieron de la tarjeta y viven acá. ══ */
 const _PV_COMPRA_LBL = {pedido:'Pedido', cotizado:'Cotizado', confirmado:'Confirmado', en_transito:'En tránsito', recibido_parcial:'Recibido parcial', recibido:'Recibido', cancelada:'Cancelada'};
+const _PV_EST_CORTO = {solicitado:'Por validar', validado:'Validado', pedido:'Pedido', recibido:'Recibido'};
 function pvFmtN(n){ return (n == null) ? '—' : (Math.round(n * 100) / 100).toLocaleString('es-CL'); }
+let _pvFichaActual = null;
+function pvTabFicha(t){
+  document.querySelectorAll('#provDetalleBody .pv-tab').forEach(function(b){
+    const on = b.dataset.t === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('#provDetalleBody .pv-panel').forEach(function(pn){ pn.hidden = pn.dataset.p !== t; });
+}
 async function provVerDetalle(id, seccion){
   const body = document.getElementById('provDetalleBody');
   body.innerHTML = '<div class="p-3 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Cargando la ficha…</div>';
@@ -665,12 +843,38 @@ async function provVerDetalle(id, seccion){
   }catch(e){ body.innerHTML = '<div class="p-3 text-danger">No se pudo cargar la ficha.</div>'; return; }
   if (!d.ok){ body.innerHTML = '<div class="p-3 text-danger">' + pvEsc(d.error || 'No se pudo cargar la ficha.') + '</div>'; return; }
   const p = d.proveedor || {}, c = d.calidad || {items: []}, ind = d.indicadores || {};
+  const sols = d.solicitudes || [], reps = d.repuestos || [], comps = d.compras || [], leg = d.legacy || [];
   _pvFichaActual = p;
   document.getElementById('provDetalleTitulo').innerHTML = '<i class="bi bi-person-vcard me-2"></i>' + pvEsc(p.nombre);
   const fila = function(k, v){ return '<div><span class="k">' + k + '</span><span class="v' + (v ? '' : ' falta') + '">' + (v ? pvEsc(v) : 'Sin dato') + '</span></div>'; };
   const canal = {whatsapp:'WhatsApp', wechat:'WeChat', telefono:'Teléfono', email:'Correo'}[p.canal_preferido] || '';
+  const nFs = sols.filter(function(s){ return s.fs; }).length;
+  const nSinStock = reps.filter(function(r){ return r.semaforo === 'rojo'; }).length;
   let h = '';
-  h += '<div class="pv-sec"><h6><i class="bi bi-building"></i>Datos del proveedor <button type="button" class="pv-btn light ms-auto" style="min-height:38px;padding:4px 12px" onclick="provAbrirEditarDatos(_pvFichaActual)"><i class="bi bi-pencil"></i>Editar</button></h6>' +
+
+  /* Acciones (antes en la tarjeta) */
+  h += '<div class="pv-acc">' +
+    '<button type="button" class="pv-btn primario" onclick="provAbrirEditarDatos(_pvFichaActual)"><i class="bi bi-pencil-square"></i>Editar</button>' +
+    '<a class="pv-btn" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes"><i class="bi bi-inbox"></i>Abrir en el centro de solicitudes</a>' +
+    (p.email ? '<a class="pv-btn" href="mailto:' + pvEsc(p.email) + '"><i class="bi bi-envelope"></i>Correo</a>'
+             : '<span class="pv-btn" aria-disabled="true" title="Sin correo registrado"><i class="bi bi-envelope"></i>Correo</span>') +
+    (p.telefono ? '<a class="pv-btn" href="tel:' + pvEsc(String(p.telefono).replace(/\s+/g, '')) + '"><i class="bi bi-telephone"></i>Llamar</a>'
+                : '<span class="pv-btn" aria-disabled="true" title="Sin teléfono registrado"><i class="bi bi-telephone"></i>Llamar</span>') +
+    '</div>';
+
+  /* Pestañas */
+  h += '<div class="pv-tabs" role="tablist" aria-label="Ficha del proveedor">' +
+    '<button type="button" role="tab" class="pv-tab" data-t="ficha" onclick="pvTabFicha(\'ficha\')"><i class="bi bi-building"></i>Ficha</button>' +
+    '<button type="button" role="tab" class="pv-tab" data-t="sol" onclick="pvTabFicha(\'sol\')"><i class="bi bi-inbox-fill"></i>Solicitudes <b class="' + (sols.length ? 'hot' : '') + '">' + sols.length + '</b>' +
+      (nFs ? '<span class="pv-dot-fs" title="Con el equipo fuera de servicio">' + nFs + ' urgente' + (nFs > 1 ? 's' : '') + '</span>' : '') + '</button>' +
+    '<button type="button" role="tab" class="pv-tab" data-t="rep" onclick="pvTabFicha(\'rep\')"><i class="bi bi-box-seam-fill"></i>Repuestos <b>' + reps.length + '</b>' +
+      (nSinStock ? '<span class="pv-dot-sin">' + nSinStock + ' sin stock</span>' : '') + '</button>' +
+    '<button type="button" role="tab" class="pv-tab" data-t="com" onclick="pvTabFicha(\'com\')"><i class="bi bi-cart-check-fill"></i>Compras <b>' + comps.length + '</b></button>' +
+    '</div>';
+
+  /* ── Pestaña Ficha ── */
+  h += '<div class="pv-panel" data-p="ficha">';
+  h += '<div class="pv-sec"><h6><i class="bi bi-building"></i>Datos del proveedor</h6>' +
     '<div class="pv-dl">' + fila('Origen', p.origen ? (p.origen === 'extranjero' ? 'Extranjero' : 'Nacional') : '') + fila('País', p.pais) +
     fila('RUT o identificador tributario', p.rut_tax) + fila('Sitio o portal de compra', p.sitio_web) +
     fila('Persona de contacto', p.contacto_nombre) + fila('Teléfono', p.telefono) + fila('Correo', p.email) + fila('Canal preferido', canal) +
@@ -686,43 +890,49 @@ async function provVerDetalle(id, seccion){
     '<div><b>' + (ind.compras_en_curso || 0) + '</b><small>compras en curso' + (ind.en_transito ? ' · ' + ind.en_transito + ' en tránsito' : '') + '</small></div>' +
     '<div><b>' + (ind.plazo_real_dias != null ? Math.round(ind.plazo_real_dias) + ' d' : '—') + '</b><small>' + (ind.n_entregas ? 'entrega real promedio (' + ind.n_entregas + ' entregas)' : 'sin entregas registradas') + '</small></div>' +
     '</div></div>';
-  const reps = d.repuestos || [];
-  h += '<div class="pv-sec" id="pvSecRepuestos"><h6><i class="bi bi-box-seam"></i>Repuestos que le compramos (' + reps.length + ')</h6>' + (reps.length ?
-    '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Repuesto</th><th>SKU</th><th>Stock</th><th>Ubicación</th><th>Costo unit.</th></tr></thead><tbody>' +
-    reps.map(function(r){
-      const sem = (r.cantidad || 0) <= 0 ? 'rojo' : ((r.stock_minimo != null && r.cantidad <= r.stock_minimo) ? 'ambar' : 'verde');
-      return '<tr><td>' + pvEsc(r.descripcion) + '</td><td>' + pvEsc(r.sku) + '</td><td><span class="pv-sem ' + sem + '">' + pvFmtN(r.cantidad) + '</span></td>' +
-        '<td>' + (r.ubicacion_codigo ? pvEsc(r.ubicacion_codigo) : '<span class="pv-sem ambar">Por llegar</span>') + '</td>' +
-        '<td>' + (r.costo_unitario ? '$' + pvFmtN(r.costo_unitario) : '—') + '</td></tr>';
-    }).join('') + '</tbody></table></div>' : '<div class="text-muted">Todavía no hay repuestos de la bodega ligados a este proveedor.</div>') + '</div>';
-  const sols = d.solicitudes || [];
-  h += '<div class="pv-sec"><h6><i class="bi bi-inbox"></i>Solicitudes abiertas (' + sols.length + ')</h6>' + (sols.length ?
-    '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>#</th><th>Repuesto</th><th>Estado</th><th>Cliente</th><th>OT / Ticket</th><th>Desde</th></tr></thead><tbody>' +
-    sols.map(function(s){
-      return '<tr><td>' + s.id + '</td><td>' + pvEsc(s.repuesto_nombre) + ' × ' + pvFmtN(s.cantidad) + '</td><td><span class="pv-sem gris">' + pvEsc(s.estado_label) + '</span></td>' +
-        '<td>' + pvEsc(s.cliente_nombre || '—') + '</td><td>' + pvEsc([s.numero_ot, s.numero_ticket].filter(Boolean).join(' · ') || '—') + '</td><td>' + pvEsc(s.created_at || '') + '</td></tr>';
-    }).join('') + '</tbody></table></div>' : '<div class="text-muted">Sin solicitudes abiertas con este proveedor.</div>') + '</div>';
-  const comps = d.compras || [];
-  h += '<div class="pv-sec" id="pvSecCompras"><h6><i class="bi bi-cart-check"></i>Compras (' + comps.length + ')</h6>' + (comps.length ?
+  if (leg.length){
+    h += '<div class="pv-sec"><h6><i class="bi bi-archive"></i>Repuestos del sistema anterior (' + leg.length + ')</h6><div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Repuesto</th><th>SKU</th><th>Cliente</th><th>Estado</th></tr></thead><tbody>' +
+      leg.map(function(it){ return '<tr><td>' + pvEsc(it.nombre || 'Sin nombre') + '</td><td>' + pvEsc(it.sku || '—') + '</td><td>' + pvEsc(it.cliente_nombre || '—') + '</td><td>' + pvEsc(it.estado || '—') + '</td></tr>'; }).join('') +
+      '</tbody></table></div></div>';
+  }
+  h += '</div>';
+
+  /* ── Pestaña Solicitudes (equipo fuera de servicio primero) ── */
+  h += '<div class="pv-panel" data-p="sol" hidden><div class="pv-lista">' + (sols.length ? sols.map(function(s){
+      const ref = [s.cliente_nombre, s.numero_ot || s.numero_ticket, s.created_at ? 'desde ' + s.created_at : ''].filter(Boolean).join(' · ');
+      const der = s.fs ? '<span class="pv-fs-tag" title="Equipo del cliente fuera de servicio"><i class="bi bi-exclamation-octagon-fill"></i>Urgente</span>'
+        : (s.stock_cantidad != null ? '<span class="pv-stk ' + (s.stock_cantidad > 0 ? 'ok' : 'no') + '">' + pvFmtN(s.stock_cantidad) + ' en bodega</span>' : '');
+      return '<a class="pv-it' + (s.fs ? ' fs' : '') + '" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes" title="Abrir en el centro de solicitudes">' +
+        '<span class="pv-est e-' + pvEsc(s.estado) + '" title="' + pvEsc(s.estado_label) + '">' + pvEsc(_PV_EST_CORTO[s.estado] || s.estado_label) + '</span>' +
+        '<span class="pv-it-txt"><b>' + pvEsc(s.repuesto_nombre) + (s.cantidad ? ' × ' + pvFmtN(s.cantidad) : '') + '</b><small>#' + s.id + (ref ? ' · ' + pvEsc(ref) : '') + '</small></span>' +
+        der + '</a>';
+    }).join('') : '<div class="pv-vacio"><i class="bi bi-check2-circle me-1"></i>Sin solicitudes abiertas con este proveedor.</div>') + '</div></div>';
+
+  /* ── Pestaña Repuestos con su stock (sin stock primero) ── */
+  const repsOrd = reps.slice().sort(function(a, b){ const o = {rojo:0, ambar:1, verde:2}; return (o[a.semaforo] - o[b.semaforo]) || String(a.descripcion || '').localeCompare(String(b.descripcion || '')); });
+  h += '<div class="pv-panel" data-p="rep" hidden><div class="pv-lista">' + (repsOrd.length ? repsOrd.map(function(r){
+      const tit = r.semaforo === 'rojo' ? 'Sin stock' : (r.semaforo === 'ambar' ? 'En o bajo el mínimo' : 'Con stock');
+      const det = [r.sku, r.ubicacion_codigo ? 'Ubicación ' + r.ubicacion_codigo : '', r.costo_unitario ? 'Costo $' + pvFmtN(r.costo_unitario) : '',
+                   r.stock_minimo != null ? 'Mínimo ' + pvFmtN(r.stock_minimo) : ''].filter(Boolean).join(' · ');
+      return '<div class="pv-it"><span class="pv-semaf s-' + pvEsc(r.semaforo) + '" title="' + tit + '"></span>' +
+        '<span class="pv-it-txt"><b>' + pvEsc(r.descripcion) + '</b><small>' + pvEsc(det) +
+          (r.por_llegar ? ' · <span style="color:#b45309;font-weight:800">por llegar</span>' : '') + '</small></span>' +
+        '<span class="pv-stk ' + (r.semaforo === 'rojo' ? 'no' : (r.semaforo === 'ambar' ? 'am' : 'ok')) + '">' + pvFmtN(r.cantidad) + ' un.</span></div>';
+    }).join('') : '<div class="pv-vacio"><i class="bi bi-box me-1"></i>Todavía no hay repuestos de la bodega ligados a este proveedor.</div>') + '</div></div>';
+
+  /* ── Pestaña Compras ── */
+  h += '<div class="pv-panel" data-p="com" hidden><div class="pv-sec">' + (comps.length ?
     '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Ticket</th><th>Estado</th><th>OC</th><th>Líneas</th><th>Monto</th><th>Llega</th><th>Creada</th></tr></thead><tbody>' +
     comps.map(function(c2){
       const sem = c2.estado === 'recibido' ? 'verde' : (c2.estado === 'cancelada' ? 'rojo' : (c2.estado === 'en_transito' || c2.estado === 'recibido_parcial' ? 'ambar' : 'gris'));
       return '<tr><td>' + pvEsc(c2.numero_ticket || ('#' + c2.id)) + '</td><td><span class="pv-sem ' + sem + '">' + pvEsc(_PV_COMPRA_LBL[c2.estado] || c2.estado) + '</span></td>' +
         '<td>' + pvEsc(c2.oc_numero || '—') + '</td><td>' + (c2.n_lineas || 0) + '</td><td>' + (c2.monto_total ? '$' + pvFmtN(c2.monto_total) : '—') + '</td>' +
         '<td>' + pvEsc(c2.eta || '—') + '</td><td>' + pvEsc(c2.created_at || '') + '</td></tr>';
-    }).join('') + '</tbody></table></div>' : '<div class="text-muted">Todavía no hay compras registradas con este proveedor.</div>') + '</div>';
-  const leg = d.legacy || [];
-  if (leg.length){
-    h += '<div class="pv-sec"><h6><i class="bi bi-archive"></i>Repuestos del sistema anterior (' + leg.length + ')</h6><div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Repuesto</th><th>SKU</th><th>Cliente</th><th>Estado</th></tr></thead><tbody>' +
-      leg.map(function(it){ return '<tr><td>' + pvEsc(it.nombre || 'Sin nombre') + '</td><td>' + pvEsc(it.sku || '—') + '</td><td>' + pvEsc(it.cliente_nombre || '—') + '</td><td>' + pvEsc(it.estado || '—') + '</td></tr>'; }).join('') +
-      '</tbody></table></div></div>';
-  }
+    }).join('') + '</tbody></table></div>' : '<div class="text-muted">Todavía no hay compras registradas con este proveedor.</div>') + '</div></div>';
+
   body.innerHTML = h;
-  if (seccion === 'compras' || seccion === 'repuestos'){
-    const sec = document.getElementById(seccion === 'compras' ? 'pvSecCompras' : 'pvSecRepuestos');
-    if (sec) setTimeout(function(){ sec.scrollIntoView({behavior:'smooth', block:'start'}); }, 250);
-  }
+  const tabIni = {compras: 'com', repuestos: 'rep', solicitudes: 'sol'}[seccion] || 'ficha';
+  pvTabFicha(tabIni);
 }
-let _pvFichaActual = null;
 </script>
 {% endblock %}
