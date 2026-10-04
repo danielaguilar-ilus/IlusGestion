@@ -155,10 +155,10 @@ def _plan():
 CFG = {"descuento_pct": "10", "descuento_max_pct": "20", "visitas_anio": "4", "valor_visita_equipo": "50000"}
 
 
-def test_plan_calcula_total_con_descuento():
+def test_plan_no_inventa_precio_lo_da_el_cotizador():
     c = _plan()["_plan_calc"](CFG, 3)
-    assert c["subtotal_anual"] == 3 * 4 * 50000 and c["total_anual"] == 600000 * 0.9
-    assert round(c["total_mensual"]) == round(540000 / 12)
+    assert c["n_equipos"] == 3 and c["visitas_anio"] == 4 and c["descuento_pct"] == 10.0
+    assert not any(k in c for k in ("total_anual", "subtotal_anual", "has_price"))
 
 
 def test_plan_descuento_no_pasa_del_tope():
@@ -169,11 +169,6 @@ def test_plan_descuento_no_pasa_del_tope():
 def test_plan_tope_nunca_menor_al_descuento_base():
     cfg = dict(CFG, descuento_max_pct="0")
     assert _plan()["_plan_calc"](cfg, 1)["descuento_pct"] == 10.0
-
-
-def test_plan_sin_valor_no_inventa_precio():
-    c = _plan()["_plan_calc"](dict(CFG, valor_visita_equipo="0"), 5)
-    assert c["has_price"] is False and c["total_anual"] == 0
 
 
 def test_plan_entradas_raras_no_rompen():

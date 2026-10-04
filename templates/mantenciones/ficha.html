@@ -315,12 +315,20 @@
               </button>
             </div>
           </div>
-          <div class="mt-2">
-            <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirPlanMantencion()">
-              <i class="bi bi-clipboard2-check me-1"></i>Armar plan de mantención
+          <div class="mt-2 d-flex flex-wrap gap-2 align-items-center">
+            <button type="button" class="btn btn-sm btn-ilus fw-bold" onclick="cotizarPlan('mantencion')"
+                    title="Abre el cotizador con los equipos del plan, tipo Mantención y el descuento del cuadro de mando">
+              <i class="bi bi-calculator me-1"></i>Cotizar mantención del plan
             </button>
-            <span class="small text-muted ms-2">Propuesta con sus equipos, visitas y descuento; se envía por correo.</span>
+            <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="cotizarPlan('visita_tecnica')"
+                    title="Igual, pero como visita técnica">
+              <i class="bi bi-geo-alt me-1"></i>Cotizar visita
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirPlanMantencion()">
+              <i class="bi bi-envelope-paper me-1"></i>Enviar propuesta del plan
+            </button>
           </div>
+          <div class="small text-muted mt-1">El precio lo calcula el cotizador (tarifas por categoría de producto); ahí mismo cambias entre mantención, visita u otro tipo.</div>
         </div>
       </div>
       <div class="modal fade" id="modalPlanMant" tabindex="-1">
@@ -345,7 +353,9 @@
                     <input type="email" id="pmEmail" class="form-control form-control-sm" list="pmEmails" placeholder="correo@cliente.cl">
                     <datalist id="pmEmails"></datalist></div>
                 </div>
-                <div class="p-3 rounded" style="background:#f0fdfa;border:1px solid #99f6e4" id="pmTotales"></div>
+                <div class="p-3 rounded small" style="background:#f0fdfa;border:1px solid #99f6e4" id="pmTotales">
+                  El <b>precio</b> sale del cotizador. Primero usa <b>«Cotizar mantención del plan»</b>, envía la cotización con su PDF
+                  y luego esta propuesta lleva el descuento, las visitas y lo que incluye el plan.</div>
               </div>
             </div>
             <div class="modal-footer">
@@ -358,6 +368,11 @@
       <script>
       async function guardarProspecto(btn){
       let _pmModal = null, _pm = null;
+      function cotizarPlan(tipo){
+        const q = new URLSearchParams({ desde_cliente: '{{ cliente.id }}', plan: '1', tipo: tipo,
+          descuento: '{{ prospecto.plan_descuento_pct }}', frecuencia: '{{ prospecto.plan_visitas }}' });
+        window.open('/tickets/cotizaciones?' + q.toString(), '_blank');
+      }
       const _pmClp = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
       async function abrirPlanMantencion(){
         if (!_pmModal) _pmModal = new bootstrap.Modal(document.getElementById('modalPlanMant'));
@@ -385,18 +400,7 @@
         } catch(e){ document.getElementById('pmCargando').innerHTML = '<span class="text-danger">' + pmEsc(e.message) + '</span>'; }
       }
       function pmEsc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-      function pmRecalcular(){
-        if (!_pm) return;
-        const c = _pm.calc;
-        let desc = Math.max(0, Math.min(parseFloat(document.getElementById('pmDesc').value) || 0, c.descuento_tope_pct));
-        const vis = Math.max(1, Math.min(parseInt(document.getElementById('pmVisitas').value) || c.visitas_anio, 52));
-        const box = document.getElementById('pmTotales');
-        if (!c.has_price) { box.innerHTML = '<b>Cotización a la medida.</b> El valor por visita y equipo aún está en $0 en el cuadro de mando («Plan de mantención» en Clientes), así que la propuesta no lleva totales.'; return; }
-        const sub = c.n_equipos * vis * c.valor_visita_equipo, tot = sub * (1 - desc / 100);
-        box.innerHTML = c.n_equipos + ' equipo(s) × ' + vis + ' visitas × ' + _pmClp(c.valor_visita_equipo) + ' = <b>' + _pmClp(sub) + '</b>' +
-          (desc ? '<br>Descuento ' + desc + '% → <b style="font-size:1.1rem">' + _pmClp(tot) + ' al año</b> (' + _pmClp(tot / 12) + ' al mes)'
-                : '<br><b style="font-size:1.1rem">' + _pmClp(sub) + ' al año</b> (' + _pmClp(sub / 12) + ' al mes)');
-      }
+      function pmRecalcular(){ /* el precio lo calcula el cotizador; acá solo se ajustan descuento y visitas */ }
       async function pmEnviar(btn){
         const email = document.getElementById('pmEmail').value.trim();
         const ok = await ilusConfirm({ title: 'Enviar propuesta', message: 'Se enviará la propuesta de plan de mantención a:',

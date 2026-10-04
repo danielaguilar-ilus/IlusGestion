@@ -69044,6 +69044,9 @@ def _mant_ficha_impl(cid):
             "   AND nombre<>'Contenedor de documentos' AND estado IN ('vigente','por_vencer','indefinido')", (cid,)) or {}
         if not int(_ctr_vig.get("n") or 0):
             _prospecto = _prospecto_info([cid]).get(cid)
+            _cfg_plan = _plan_config()
+            _prospecto["plan_descuento_pct"] = _cfg_plan.get("descuento_pct") or "0"
+            _prospecto["plan_visitas"] = _cfg_plan.get("visitas_anio") or "4"
     except Exception as _e_pr:
         print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
 
@@ -69649,7 +69652,7 @@ def mant_cron_prospectos_oferta():
 # «cotización a la medida» y no muestra totales.
 _PLAN_DEFAULTS = {
     "descuento_pct": "0", "descuento_max_pct": "0", "visitas_anio": "4",
-    "vigencia_meses": "12", "valor_visita_equipo": "0",
+    "vigencia_meses": "12",
     "incluye": ("Plan de mantención con gestión de descuento\n"
                 "Certificación de repuestos originales\n"
                 "Menos tiempo con máquinas detenidas\n"
@@ -69679,13 +69682,10 @@ def _plan_calc(cfg, n_equipos, descuento_pct=None, visitas=None):
     except (TypeError, ValueError):
         vis = int(cfg.get("visitas_anio") or 4)
     vis = max(1, min(vis, 52))
-    valor = float(cfg.get("valor_visita_equipo") or 0)
     n = max(0, int(n_equipos or 0))
-    subtotal = n * vis * valor
-    total = subtotal * (1 - desc / 100.0)
-    return {"descuento_pct": desc, "descuento_tope_pct": tope, "visitas_anio": vis,
-            "valor_visita_equipo": valor, "n_equipos": n, "has_price": valor > 0,
-            "subtotal_anual": subtotal, "total_anual": total, "total_mensual": total / 12.0}
+    # El PRECIO no se calcula acá: lo da el cotizador (tarifas por categoría de producto
+    # y tipo de servicio). Esto solo fija descuento, visitas y cantidad de equipos.
+    return {"descuento_pct": desc, "descuento_tope_pct": tope, "visitas_anio": vis, "n_equipos": n}
 
 
 def _ensure_mant_plan_config():
@@ -69765,7 +69765,6 @@ def mant_plan_config_api():
             "descuento_max_pct": _num("descuento_max_pct", 0, 100),
             "visitas_anio": _num("visitas_anio", 1, 52, True),
             "vigencia_meses": _num("vigencia_meses", 1, 60, True),
-            "valor_visita_equipo": _num("valor_visita_equipo", 0, 100000000, True),
             "incluye": (d.get("incluye") or "").strip()[:1500],
         }
     except ValueError as e:
@@ -69783,7 +69782,7 @@ def mant_plan_config_api():
     try:
         _mant_log("plan_config", 0, "actualizado",
                   f"Plan de mantención: descuento {nuevo['descuento_pct']}% (tope {nuevo['descuento_max_pct']}%) · "
-                  f"{nuevo['visitas_anio']} visitas/año · valor visita-equipo {_clp_fmt(nuevo['valor_visita_equipo'])} · por {quien}")
+                  f"{nuevo['visitas_anio']} visitas/año · por {quien}")
     except Exception:
         pass
     return jsonify({"ok": True, "config": nuevo})
@@ -69792,7 +69791,8 @@ def mant_plan_config_api():
 def _plan_equipos(cid):
     return [dict(r) for r in (mysql_fetchall(
         "SELECT id, nombre, sku, marca, modelo, serie, COALESCE(cantidad,1) AS cantidad "
-        "  FROM mant_maquinas WHERE cliente_id=%s AND estado='activo' ORDER BY nombre", (cid,)) or [])]
+        "  FROM mant_maquinas WHERE cliente_id=%s AND estado='activo' "
+        "   AND COALESCE(aplica_mantencion,1)=1 ORDER BY nombre", (cid,)) or [])]
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/plan-propuesta", methods=["GET"])
@@ -69828,7 +69828,7 @@ def mant_plan_enviar(cid):
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
     eq = _plan_equipos(cid)
     if not eq:
-        return jsonify({"ok": False, "error": "El cliente no tiene equipos activos en su ficha: no hay qué mantener."}), 400
+        return jsonify({"ok": False, "error": "El cliente no tiene equipos dentro del plan en su ficha: no hay qué mantener."}), 400
     if not comm_is_enabled("email"):
         return jsonify({"ok": False, "error": "El correo está apagado en Comunicaciones."}), 409
     cfg = _plan_config()
@@ -69840,14 +69840,9 @@ def mant_plan_enviar(cid):
         + (f' × {int(e["cantidad"])}' if int(e["cantidad"] or 1) > 1 else "")
         + (f' <span style="color:#6b7280">({esc(e["marca"] or "")} {esc(e["modelo"] or "")})</span>'
            if (e.get("marca") or e.get("modelo")) else "") + "</li>" for e in eq) + "</ul>")
-    if c["has_price"]:
-        precio_html = (f'<p style="margin:10px 0"><b>Inversión anual:</b> {_clp_fmt(c["total_anual"])}'
-                       + (f' ({_clp_fmt(c["total_mensual"])} al mes)' if c["total_anual"] else "")
-                       + (f' — con <b>{c["descuento_pct"]:g}% de descuento</b> sobre {_clp_fmt(c["subtotal_anual"])}'
-                          if c["descuento_pct"] else "") + ".</p>")
-    else:
-        precio_html = ('<p style="margin:10px 0">Te enviaremos la cotización a la medida de tus equipos'
-                       + (f' con <b>{c["descuento_pct"]:g}% de descuento</b>' if c["descuento_pct"] else "") + ".</p>")
+    precio_html = ('<p style="margin:10px 0">El valor de tu plan va en la <b>cotización</b> que te enviamos '
+                   'con las tarifas de cada equipo'
+                   + (f', con <b>{c["descuento_pct"]:g}% de descuento</b>' if c["descuento_pct"] else "") + ".</p>")
     incluye_html = ('<ul style="margin:8px 0 12px;padding-left:20px">' + "".join(
         f'<li style="margin:3px 0">{esc(l.strip())}</li>'
         for l in (cfg["incluye"] or "").splitlines() if l.strip()) + "</ul>")
@@ -69867,8 +69862,7 @@ def mant_plan_enviar(cid):
     ok = _send_ilus_email(email, _brand_subject(asunto), html_final, modulo="mantenciones",
                           evento="plan_mantencion_oferta", ref={"cliente_id": cid})
     quien = current_username() or "sistema"
-    detalle = (f"{n} equipo(s) · {c['visitas_anio']} visitas/año · descuento {c['descuento_pct']:g}%"
-               + (f" · total anual {_clp_fmt(c['total_anual'])}" if c["has_price"] else " · sin precio (cotizar)"))
+    detalle = f"{n} equipo(s) del plan · {c['visitas_anio']} visitas/año · descuento {c['descuento_pct']:g}%"
     if not ok:
         try:
             _mant_log("cliente", cid, "plan_envio_fallo", f"Falló el correo a {email} · {detalle} · por {quien}")

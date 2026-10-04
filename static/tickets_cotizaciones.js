@@ -2718,7 +2718,9 @@ async function _cotWizAplicarDeepLinkCliente(cid, opts){
     // que el badge "🟢 En plan" del buscador). Sin plan vigente, no se
     // auto-agrega nada -- el usuario sigue pudiendo sumarlos a mano con
     // "Traer equipos de la ficha" si igual corresponde.
-    const _tienePlanVigente = !!(_WIZ.planInfo && _WIZ.planInfo.activo);
+    // forzarPlan: el botón «Cotizar plan» de la ficha lo pide a propósito, también para clientes
+    // que AÚN no tienen contrato (prospectos de instalación): se cotizan los equipos marcados «en plan».
+    const _tienePlanVigente = !!(_WIZ.planInfo && _WIZ.planInfo.activo) || !!(opts && opts.forzarPlan);
     if (opts && opts.autoAgregarEquipos && _WIZ.fichaMaquinas.length){
       if (!_tienePlanVigente){
         ilusToast('Este cliente no tiene un plan/contrato vigente — agrega los equipos manualmente con "Traer equipos de la ficha" si corresponde', {type:'warning'});
@@ -2746,6 +2748,29 @@ async function _cotWizAplicarDeepLinkCliente(cid, opts){
     }
   }catch(e){ ilusToast('Error de conexión al cargar el cliente', {type:'error'}); }
 }
+// Daniel 2026-10-04: «un botón para gestionar automáticamente los productos que están dentro del
+// plan para cotizar … mantención o una visita». /tickets/cotizaciones?desde_cliente=<CID>&plan=1
+// &tipo=mantencion|visita_tecnica[&descuento=<pct>&frecuencia=<n>] abre el MISMO wizard con los
+// equipos «en plan» ya cargados, el tipo de servicio elegido y el descuento del cuadro de mando.
+// El precio lo sigue calculando el cotizador (tarifas por categoría) y el tipo se puede cambiar.
+async function _cotWizPlanDesdeFicha(cid, params){
+  await _cotWizAplicarDeepLinkCliente(cid, { autoAgregarEquipos: true, forzarPlan: true });
+  if (!_WIZ) return;
+  const tipo = (params.get('tipo') || 'mantencion');
+  const pill = document.querySelector('.cot-wiz-ts-pill[data-v="' + tipo + '"]');
+  if (pill && !pill.classList.contains('disabled') && _WIZ.tipo !== tipo) cotWizTipoServ(pill);
+  const desc = parseFloat(params.get('descuento'));
+  if (isFinite(desc) && desc > 0 && desc < 100){
+    document.getElementById('cotWizDescModo').value = 'pct';
+    cotWizDescModoCambio();
+    document.getElementById('cotWizDescValor').value = String(desc);
+    try { cotWizResumen(); } catch(e){}
+  }
+  const frec = parseInt(params.get('frecuencia'), 10);
+  const frecEl = document.getElementById('cotWizFrecuenciaAnual');
+  if (frecEl && isFinite(frec) && frec > 0 && tipo === 'mantencion') frecEl.value = String(frec);
+  if (_WIZ.items.length) ilusToast('Plan cargado con ' + _WIZ.items.length + ' producto(s) — revisa el tipo de servicio y el descuento', {type:'info'});
+}
 (function(){
   const params = new URLSearchParams(window.location.search);
   const desdeTicket = params.get('desde_ticket');
@@ -2754,7 +2779,11 @@ async function _cotWizAplicarDeepLinkCliente(cid, opts){
   const _iniciar = function(){
     cotWizAbrir();
     if (desdeTicket) _cotWizAplicarDeepLinkTicket(parseInt(desdeTicket, 10));
-    else if (desdeCliente) _cotWizAplicarDeepLinkCliente(parseInt(desdeCliente, 10));
+    else if (desdeCliente){
+      const cidN = parseInt(desdeCliente, 10);
+      if (params.get('plan') === '1') _cotWizPlanDesdeFicha(cidN, params);
+      else _cotWizAplicarDeepLinkCliente(cidN);
+    }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _iniciar);
   else _iniciar();

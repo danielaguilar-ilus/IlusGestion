@@ -412,8 +412,7 @@
       </div>
       <div class="modal-body">
         <div class="alert alert-info py-2 small mb-3" id="planCfgAviso">
-          Estos valores arman la propuesta que se envía a cada cliente desde su ficha. Mientras el
-          <b>valor por visita y equipo</b> esté en $0, la propuesta dice «cotización a la medida» y no muestra totales.
+          Estos valores arman la propuesta del plan de cada cliente y alimentan el cotizador (descuento y visitas por año).
         </div>
         <div class="row g-3">
           <div class="col-6 col-md-3"><label class="form-label small fw-semibold">Descuento base (%)</label>
@@ -425,9 +424,9 @@
             <input type="number" id="pcVisitas" class="form-control" min="1" max="52"></div>
           <div class="col-6 col-md-3"><label class="form-label small fw-semibold">Vigencia (meses)</label>
             <input type="number" id="pcVigencia" class="form-control" min="1" max="60"></div>
-          <div class="col-12 col-md-6"><label class="form-label small fw-semibold">Valor por visita y por equipo (CLP)</label>
-            <input type="number" id="pcValor" class="form-control" min="0" step="1000">
-            <div class="form-text">Total anual = equipos × visitas × este valor, menos el descuento.</div></div>
+          <div class="col-12 col-md-6 d-flex align-items-end"><div class="small text-muted">
+            El <b>precio</b> no se define acá: lo calcula el cotizador con las tarifas por categoría de producto
+            (Mantención, Visita técnica…). Este descuento se carga solo al abrir la cotización del plan.</div></div>
           <div class="col-12"><label class="form-label small fw-semibold">Qué incluye el plan (una línea por ítem)</label>
             <textarea id="pcIncluye" class="form-control" rows="5" maxlength="1500"></textarea></div>
         </div>
@@ -452,9 +451,8 @@ async function abrirPlanConfig(){
     document.getElementById('pcDescMax').value = c.descuento_max_pct;
     document.getElementById('pcVisitas').value = c.visitas_anio;
     document.getElementById('pcVigencia').value = c.vigencia_meses;
-    document.getElementById('pcValor').value = c.valor_visita_equipo;
     document.getElementById('pcIncluye').value = c.incluye;
-    ['pcDesc','pcDescMax','pcVisitas','pcVigencia','pcValor','pcIncluye'].forEach(i => document.getElementById(i).disabled = !d.puede_editar);
+    ['pcDesc','pcDescMax','pcVisitas','pcVigencia','pcIncluye'].forEach(i => document.getElementById(i).disabled = !d.puede_editar);
     document.getElementById('pcGuardar').style.display = d.puede_editar ? '' : 'none';
     if (!d.puede_editar) document.getElementById('planCfgAviso').insertAdjacentHTML('beforeend', '<br><b>Solo un administrador puede cambiarlos.</b>');
   } catch(e){ ilusToast('No se pudo cargar el plan: ' + e.message, {type:'error'}); }
@@ -468,7 +466,6 @@ async function guardarPlanConfig(btn){
         descuento_max_pct: document.getElementById('pcDescMax').value,
         visitas_anio: document.getElementById('pcVisitas').value,
         vigencia_meses: document.getElementById('pcVigencia').value,
-        valor_visita_equipo: document.getElementById('pcValor').value,
         incluye: document.getElementById('pcIncluye').value })});
     const d = await r.json();
     if (!d.ok) { ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
