@@ -126987,7 +126987,20 @@ _PROV_COLS_NUEVAS = (
     ("condiciones_pago", "VARCHAR(200) NULL"),
     ("plazo_entrega_dias", "INT NULL COMMENT 'Plazo típico declarado, en días'"),
     ("sitio_web", "VARCHAR(300) NULL COMMENT 'Sitio o portal donde se compra'"),
+    # 2026-10-04 (Daniel: "ficha del proveedor con formato Retiros y con más
+    # calidad de información"): dirección verificada con Google, condiciones de
+    # importación y lo comercial que hace falta para comprar bien.
+    ("direccion", "VARCHAR(300) NULL"),
+    ("ciudad", "VARCHAR(80) NULL"),
+    ("direccion_lat", "DECIMAL(10,7) NULL"),
+    ("direccion_lng", "DECIMAL(10,7) NULL"),
+    ("direccion_place_id", "VARCHAR(200) NULL"),
+    ("incoterm", "VARCHAR(10) NULL COMMENT 'Solo importación: EXW, FOB, CIF, DAP, DDP...'"),
+    ("marcas", "VARCHAR(300) NULL COMMENT 'Marcas o líneas que vende'"),
+    ("pedido_minimo", "VARCHAR(120) NULL"),
+    ("garantia", "VARCHAR(120) NULL"),
 )
+_PROV_INCOTERMS = ("EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP")
 _PROV_COLS_OK = {"listo": False}
 _PROV_MONEDAS = ("CLP", "USD", "EUR", "CNY", "GBP", "BRL", "ARS", "MXN")
 
@@ -127024,11 +127037,15 @@ def _prov_calidad(p):
         ("RUT o identificador tributario" if not ext else "Identificador tributario", bool((p.get("rut_tax") or "").strip())),
         ("Condiciones de pago", bool((p.get("condiciones_pago") or "").strip())),
         ("Plazo de entrega", p.get("plazo_entrega_dias") not in (None, "")),
+        ("Dirección", bool((p.get("direccion") or "").strip())),
+        ("Marcas que vende", bool((p.get("marcas") or "").strip())),
+        # Incoterm solo aplica a importaciones: a un nacional no se le exige.
+        ("Incoterm (importación)", bool((p.get("incoterm") or "").strip()) or (p.get("origen") == "nacional")),
     ]
     out = [{"texto": t, "ok": ok} for t, ok in items]
     n = sum(1 for x in out if x["ok"])
     return {"items": out, "ok": n, "total": len(out),
-            "nivel": "verde" if n >= 9 else ("ambar" if n >= 6 else "rojo")}
+            "nivel": "verde" if n >= len(out) - 1 else ("ambar" if n >= round(len(out) * 0.6) else "rojo")}
 
 
 def _prov_indicadores():
@@ -127092,8 +127109,20 @@ def _prov_campos_desde_body(d, parcial):
 
     for k, largo in (("contacto_nombre", 150), ("telefono", 50), ("email", 150), ("notas", 4000),
                      ("contacto2_nombre", 150), ("contacto2_telefono", 50), ("contacto2_email", 150),
-                     ("pais", 80), ("rut_tax", 40), ("condiciones_pago", 200), ("sitio_web", 300)):
+                     ("pais", 80), ("rut_tax", 40), ("condiciones_pago", 200), ("sitio_web", 300),
+                     ("direccion", 300), ("ciudad", 80), ("direccion_place_id", 200), ("marcas", 300),
+                     ("pedido_minimo", 120), ("garantia", 120)):
         _txt(k, largo)
+    if not parcial or "incoterm" in d:
+        it = (d.get("incoterm") or "").strip().upper()
+        out["incoterm"] = it if it in _PROV_INCOTERMS else None
+    for k in ("direccion_lat", "direccion_lng"):
+        if not parcial or k in d:
+            try:
+                v = float(d.get(k)) if str(d.get(k) or "").strip() else None
+            except (TypeError, ValueError):
+                v = None
+            out[k] = v if v is not None and -180 <= v <= 180 else None
     if not parcial or "canal_preferido" in d:
         c = (d.get("canal_preferido") or "").strip()
         out["canal_preferido"] = c if c in ("whatsapp", "wechat", "telefono", "email") else None
@@ -127222,6 +127251,8 @@ def mant_proveedor_repuesto_ficha(pid):
     p = dict(p)
     for k in ("created_at", "updated_at"):
         p[k] = chile_fmt_filter(p[k]) if p.get(k) else None
+    for k in ("direccion_lat", "direccion_lng"):
+        p[k] = float(p[k]) if p.get(k) is not None else None
     out = {"ok": True, "proveedor": p, "calidad": _prov_calidad(p),
            "indicadores": _prov_indicadores().get(pid, {}),
            "repuestos": [], "solicitudes": [], "compras": [], "legacy": []}

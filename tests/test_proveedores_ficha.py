@@ -23,7 +23,7 @@ def _cargar():
         arbol = ast.parse(fh.read())
     nodos = [n for n in arbol.body
              if (isinstance(n, ast.FunctionDef) and n.name in ("_prov_calidad", "_prov_campos_desde_body"))
-             or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "_PROV_MONEDAS" for t in n.targets))]
+             or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("_PROV_MONEDAS", "_PROV_INCOTERMS") for t in n.targets))]
     _AMB["re"] = re
     exec(compile(ast.Module(body=nodos, type_ignores=[]), "<app>", "exec"), _AMB)
     return _AMB
@@ -36,7 +36,7 @@ class TestCalidadFicha(unittest.TestCase):
 
     def test_ficha_vacia_es_roja(self):
         c = self.calidad({"nombre": "Booty builder"})
-        self.assertEqual(c["total"], 10)
+        self.assertEqual(c["total"], 13)
         self.assertEqual(c["ok"], 0)
         self.assertEqual(c["nivel"], "rojo")
 
@@ -53,14 +53,23 @@ class TestCalidadFicha(unittest.TestCase):
     def test_ficha_completa_es_verde(self):
         c = self.calidad({"contacto_nombre": "Wonyong", "telefono": "+82", "email": "a@b.com", "canal_preferido": "email",
                           "origen": "extranjero", "pais": "Corea del Sur", "moneda": "USD", "rut_tax": "123",
-                          "condiciones_pago": "50/50", "plazo_entrega_dias": 45})
-        self.assertEqual(c["ok"], 10)
+                          "condiciones_pago": "50/50", "plazo_entrega_dias": 45,
+                          "direccion": "Seúl", "marcas": "Drax", "incoterm": "FOB"})
+        self.assertEqual(c["ok"], 13)
         self.assertEqual(c["nivel"], "verde")
 
     def test_plazo_cero_cuenta_como_dato(self):
         c = self.calidad({"plazo_entrega_dias": 0})
         plazo = next(i for i in c["items"] if i["texto"] == "Plazo de entrega")
         self.assertTrue(plazo["ok"])
+
+
+    def test_incoterm_solo_se_exige_a_importaciones(self):
+        nac = self.calidad({"origen": "nacional"})
+        ext = self.calidad({"origen": "extranjero"})
+        f = lambda c: next(i for i in c["items"] if i["texto"].startswith("Incoterm"))["ok"]
+        self.assertTrue(f(nac))
+        self.assertFalse(f(ext))
 
 
 class TestCamposDelFormulario(unittest.TestCase):
@@ -107,6 +116,20 @@ class TestCamposDelFormulario(unittest.TestCase):
         for k in ("contacto_nombre", "telefono", "email", "canal_preferido", "origen", "pais", "moneda",
                   "rut_tax", "condiciones_pago", "plazo_entrega_dias", "sitio_web"):
             self.assertIn(k, c)
+
+
+class TestCamposNuevos(unittest.TestCase):
+
+    def test_incoterm_y_coordenadas(self):
+        campos = _cargar()["_prov_campos_desde_body"]
+        c, err = campos({"incoterm": "fob", "direccion_lat": "-33.45", "direccion_lng": "x", "marcas": " Drax "}, parcial=True)
+        self.assertIsNone(err)
+        self.assertEqual(c["incoterm"], "FOB")
+        self.assertEqual(c["direccion_lat"], -33.45)
+        self.assertIsNone(c["direccion_lng"])
+        self.assertEqual(c["marcas"], "Drax")
+        c, _ = campos({"incoterm": "XYZ"}, parcial=True)
+        self.assertIsNone(c["incoterm"])
 
 
 if __name__ == "__main__":
