@@ -125,6 +125,14 @@ class TestResumenOT(unittest.TestCase):
         self.assertNotIn("CLIENTE DEMO", txt)
         self.assertNotIn("Set discos", txt)
 
+    def test_reconoce_los_formatos_reales_del_campo_doc_de_check(self):
+        """Valores REALES del log de producción (03-oct-2026): Check escribe «FCV-0000011658» y también «FCV - 0000011658» (con espacios)."""
+        filas = [fila(doc="BLV - 0000023751", ot="A1"), fila(doc="BLV-0000023751", ot="A2"), fila(doc="FCV - 0000011658", ot="B1"),
+                 fila(doc="FCC-CMI084214G", ot="C1")]
+        self.assertEqual(sorted(f["ot"] for f in ot.filas_del_documento(filas, "BLV", "23751")), ["A1", "A2"])
+        self.assertEqual([f["ot"] for f in ot.filas_del_documento(filas, "FCV", "11658")], ["B1"])
+        self.assertEqual(ot.filas_del_documento(filas, "FCC", "84214"), [])      # una factura de compra con código alfanumérico no es un documento de retiro
+
     def test_resumen_para_log_dice_como_escribe_check_el_campo_doc(self):
         filas = [fila(doc="FCV-0000011155"), fila(doc="BLV 23732"), fila(doc="FCV-0000011155"), fila(doc="")]
         txt = ot.resumen_para_log([], filas)
