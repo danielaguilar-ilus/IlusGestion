@@ -702,103 +702,302 @@
    los compatibles del equipo primero; si no existe se crea AQUÍ "por llegar",
    sin ubicación) · 2) ¿para quién? · 3) proveedor (obligatorio: sin él no
    entra al lote) · Validar. "Crear completo en Bodega" (con ubicación) sigue. #}
-<div class="modal fade" id="rsModalValidar" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
-    <div class="modal-content" style="border-radius:14px">
-      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
-        <h6 class="modal-title fw-bold"><i class="bi bi-clipboard2-check me-2" style="color:#dc2626"></i>Gestionar solicitud
-          <small class="d-block fw-normal" id="rsValTitulo" style="font-size:.78rem;opacity:.85"></small></h6>
+<div class="modal fade" id="rsModalValidar" tabindex="-1" aria-labelledby="gsTituloH" data-bs-backdrop="static">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content gs-content">
+      <div class="modal-header gs-header">
+        <h5 class="modal-title fw-bold" id="gsTituloH"><i class="bi bi-clipboard2-check me-2" style="color:#dc2626"></i>Gestionar solicitud
+          <small class="d-block fw-normal" id="rsValTitulo"></small></h5>
+        <div class="gs-progreso" aria-live="polite">
+          <span id="gsProgresoTxt">0 de 3 pasos listos</span>
+          <span class="bar"><span id="gsProgresoBar"></span></span>
+          <span class="avisos" id="gsProgresoAvisos"></span>
+        </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
-      <div class="modal-body pt-3">
-        <div class="rsg-ctx" id="rsGestCtx"></div>
+      <div class="modal-body">
+        {# Qué se pidió y para quién (siempre a la vista) #}
+        <div class="gs-ctx" id="rsGestCtx"></div>
+        <div id="rsGestPara"></div>
 
-        <section class="rb-step" id="rsGestPaso1">
-          <div class="rb-step-header">
-            <div class="rb-step-circle"><span class="rb-step-num">1</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-title">¿El repuesto ya existe en la bodega?</div>
-            <div class="rb-step-sub">Si no existe, créalo aquí</div>
-          </div>
-          <div class="rb-step-body">
-            <input type="search" id="rsValQ" class="form-control" placeholder="Buscar por SKU, descripción, marca, proveedor o modelo"
-                   autocomplete="off" style="font-size:16px;min-height:44px" oninput="rsValBuscar(this.value)">
-            <div class="rsg-hint" id="rsGestHint"></div>
-            <div class="otrep-opc mt-2" id="rsValLista"></div>
-            <button type="button" class="rsg-nuevo-btn" id="rsNuToggle" onclick="rsNuMostrar()">
-              <i class="bi bi-plus-circle"></i>No está en la lista: crearlo aquí «por llegar»</button>
-            <div class="rsg-nuevo" id="rsNuBox" hidden>
-              <div class="rsg-nuevo-k"><i class="bi bi-box-arrow-in-down"></i>Nuevo repuesto «por llegar»</div>
-              <p class="rsg-nuevo-p">Nace con cantidad 0 y sin ubicación: la ubicación se escanea cuando llegue a la bodega.</p>
-              <label class="form-label small fw-bold mb-1" for="rsNuDesc">Descripción <span class="text-danger">*</span></label>
-              <input type="text" id="rsNuDesc" class="form-control mb-2" maxlength="400" style="font-size:16px;min-height:44px">
-              <div class="row g-2">
-                <div class="col-md-8">
-                  <label class="form-label small fw-bold mb-1" for="rsNuProv">Proveedor <span class="text-danger">*</span></label>
-                  <select id="rsNuProv" class="form-select" style="font-size:16px;min-height:44px"></select>
-                </div>
-                <div class="col-md-4">
-                  <label class="form-label small fw-bold mb-1" for="rsNuCosto">Costo unitario <span class="text-muted fw-normal">(opcional)</span></label>
-                  <input type="number" id="rsNuCosto" class="form-control" min="0" step="1" style="font-size:16px;min-height:44px">
-                </div>
-              </div>
-              <div class="d-flex gap-2 mt-2 flex-wrap">
-                <button type="button" class="btn fw-bold" id="rsNuBtn" style="background:#0a0a0a;color:#fff;min-height:44px" onclick="rsNuCrear()">
-                  <i class="bi bi-check2-circle me-1"></i>Crear y usar este repuesto</button>
-                <button type="button" class="btn btn-outline-secondary" style="min-height:44px" onclick="rsNuMostrar(false)">Cancelar</button>
-              </div>
+        {# ── PASO 1: ¿Lo tenemos? ── #}
+        <div class="gs-step" id="rsGestPaso1">
+          <div class="gs-step-h">
+            <div class="gs-circ-wrap"><span class="gs-circ-lbl">Paso 1</span><div class="gs-circ"><span class="num">1</span><i class="bi bi-check-lg chk"></i></div></div>
+            <div class="gs-tits">
+              <div class="gs-tit">¿Tenemos este repuesto?</div>
+              <div class="gs-sub">Búscalo en la bodega. Si existe, el sistema te dice si alcanza el stock; si no existe, se crea aquí con su ficha completa.</div>
+              <div class="gs-estado" id="gsEstado1"></div>
             </div>
           </div>
-        </section>
+          <input type="search" id="rsValQ" class="form-control" placeholder="Buscar por SKU, descripción, marca, proveedor o modelo"
+                 autocomplete="off" oninput="rsValBuscar(this.value)">
+          <div class="gs-hint" id="rsGestHint"></div>
+          <div class="otrep-opc mt-2" id="rsValLista"></div>
+          <button type="button" class="gs-add" id="rsNuToggle" onclick="rsNuMostrar()">
+            <span class="gs-add-ico"><i class="bi bi-plus-lg"></i></span>
+            <span class="gs-add-txt"><strong>No está en la bodega: crear el repuesto</strong>
+              <small>Con todo lo que exige el alta de bodega: foto, equipo compatible, proveedor y stock mínimo</small></span>
+            <i class="bi bi-chevron-right gs-add-go"></i>
+          </button>
 
-        <section class="rb-step" id="rsGestPaso2">
-          <div class="rb-step-header">
-            <div class="rb-step-circle"><span class="rb-step-num">2</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-title">¿Para quién es?</div>
-            <div class="rb-step-sub">Cliente, equipo y de dónde viene</div>
-          </div>
-          <div class="rb-step-body"><div id="rsGestPara"></div></div>
-        </section>
+          {# Crear repuesto (ficha completa, mismas exigencias que el alta de bodega) #}
+          <div class="gs-nuevo" id="rsNuBox" hidden>
+            <div class="gs-nuevo-h"><i class="bi bi-patch-plus-fill"></i>Repuesto nuevo
+              <span>nace «por llegar»: cantidad 0 y la ubicación se escanea cuando llegue</span></div>
 
-        <section class="rb-step" id="rsGestPaso3">
-          <div class="rb-step-header">
-            <div class="rb-step-circle"><span class="rb-step-num">3</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-title">¿A qué proveedor se le pide?</div>
-            <div class="rb-step-sub">Obligatorio para entrar al lote de compra</div>
-          </div>
-          <div class="rb-step-body">
-            <select id="rsGestProv" class="form-select" style="font-size:16px;min-height:44px" onchange="rsGestPintar()"></select>
-            <div class="rsg-hint" id="rsGestProvHint"></div>
-          </div>
-        </section>
+            <div class="gs-blk" id="gsBlkErp">
+              <div class="gs-blk-t"><span class="gs-dot" id="gsDotErp"></span>¿Está en el ERP? <em>(bodega 18 — si aparece, se usa su código real)</em></div>
+              <input type="search" id="gsErpQ" class="form-control" placeholder="Buscar en el ERP por SKU o nombre" autocomplete="off" oninput="gsErpBuscar(this.value)">
+              <div class="gs-erp-lista" id="gsErpLista"></div>
+              <div class="gs-erp-sel" id="gsErpSel" hidden></div>
+            </div>
 
-        <div class="text-danger small mt-2" id="rsValErr" style="min-height:18px"></div>
+            <div class="gs-blk">
+              <div class="gs-blk-t"><span class="gs-dot" id="gsDotId"></span>Qué es</div>
+              <div class="row g-2">
+                <div class="col-md-8">
+                  <label class="form-label" for="rsNuDesc">Descripción <span class="text-danger">*</span></label>
+                  <input type="text" id="rsNuDesc" class="form-control" maxlength="400" oninput="gsPintar()" placeholder="Ej: Correa de motor trotadora X3">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="gsNuMarca">Marca <span class="text-muted fw-normal">(da el código REP-MARCA)</span></label>
+                  <select id="gsNuMarca" class="form-select" onchange="gsPintar()">
+                    <option value="">— Sin marca —</option>
+                    {% for m in (marcas or []) %}<option value="{{ m.id }}">{{ m.nombre }}</option>{% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="gsNuFab">Código del fabricante <span class="text-muted fw-normal">(opcional)</span></label>
+                  <input type="text" id="gsNuFab" class="form-control" maxlength="120">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="gsNuMin">Stock mínimo <span class="text-danger">*</span></label>
+                  <input type="number" id="gsNuMin" class="form-control" min="0" step="1" value="1" oninput="gsPintar()">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="rsNuCosto">Costo unitario <span class="text-muted fw-normal">(opcional)</span></label>
+                  <input type="number" id="rsNuCosto" class="form-control" min="0" step="1">
+                </div>
+                <div class="col-12">
+                  <label class="form-label" for="rsNuProv">Proveedor <span class="text-danger">*</span></label>
+                  <select id="rsNuProv" class="form-select" onchange="gsPintar()"></select>
+                </div>
+              </div>
+            </div>
+
+            <div class="gs-blk">
+              <div class="gs-blk-t"><span class="gs-dot" id="gsDotEq"></span>¿A qué equipo sirve? <span class="text-danger">*</span></div>
+              <div class="gs-opts c3" role="radiogroup" aria-label="Equipo compatible">
+                <label class="gs-opt" id="gsEqOptEquipo"><input type="radio" name="gsEq" value="equipo" onchange="gsPintar()">
+                  <span class="gs-opt-ico"><i class="bi bi-cpu"></i></span>
+                  <span class="gs-opt-txt"><strong>El equipo de esta solicitud</strong><small id="gsEqEquipoTxt">—</small></span><span class="gs-opt-radio"></span></label>
+                <label class="gs-opt"><input type="radio" name="gsEq" value="catalogo" onchange="gsPintar()">
+                  <span class="gs-opt-ico"><i class="bi bi-search"></i></span>
+                  <span class="gs-opt-txt"><strong>Otro modelo</strong><small>Búscalo en el catálogo</small></span><span class="gs-opt-radio"></span></label>
+                <label class="gs-opt warn"><input type="radio" name="gsEq" value="pendiente" onchange="gsPintar()">
+                  <span class="gs-opt-ico"><i class="bi bi-question-lg"></i></span>
+                  <span class="gs-opt-txt"><strong>Aún no sé</strong><small>Queda en ámbar hasta que se sepa</small></span><span class="gs-opt-radio"></span></label>
+              </div>
+              <div id="gsModeloWrap" hidden>
+                <input type="search" id="gsModeloQ" class="form-control mt-2" placeholder="Modelo o SKU del equipo (ej: X3, Life Fitness 95T)" autocomplete="off" oninput="gsModeloBuscar(this.value)">
+                <div class="gs-erp-lista" id="gsModeloLista"></div>
+                <div class="gs-erp-sel" id="gsModeloSel" hidden></div>
+              </div>
+            </div>
+
+            <div class="gs-blk">
+              <div class="gs-blk-t"><span class="gs-dot" id="gsDotFoto"></span>Foto del repuesto <span class="text-danger">*</span></div>
+              <div class="gs-fotos" id="gsFotos"></div>
+              <label class="gs-foto-subir"><i class="bi bi-camera-fill"></i><span id="gsFotoTxt">Subir una foto nueva</span>
+                <input type="file" id="gsNuFoto" accept="image/*" hidden onchange="gsFotoNueva(this)"></label>
+            </div>
+
+            <div class="gs-avisos" id="gsNuAvisos"></div>
+            <div class="d-flex gap-2 mt-3 flex-wrap">
+              <button type="button" class="btn fw-bold gs-btn-crear" id="rsNuBtn" onclick="rsNuCrear()">
+                <i class="bi bi-check2-circle me-1"></i>Crear el repuesto y usarlo</button>
+              <button type="button" class="btn btn-outline-secondary" style="min-height:46px" onclick="rsNuMostrar(false)">Cancelar</button>
+            </div>
+          </div>
+        </div>
+
+        {# ── PASO 2: ¿Qué camino sigue? ── #}
+        <div class="gs-step" id="rsGestPaso2">
+          <div class="gs-step-h">
+            <div class="gs-circ-wrap"><span class="gs-circ-lbl">Paso 2</span><div class="gs-circ"><span class="num">2</span><i class="bi bi-check-lg chk"></i></div></div>
+            <div class="gs-tits">
+              <div class="gs-tit">¿Qué hacemos?</div>
+              <div class="gs-sub">Según el stock, el sistema te sugiere el camino. Siempre termina en la OT de instalación.</div>
+              <div class="gs-estado" id="gsEstado2"></div>
+            </div>
+          </div>
+          <div class="gs-opts" role="radiogroup" aria-label="Camino de la solicitud">
+            <label class="gs-opt" id="gsCamConsumir"><input type="radio" name="gsCamino" value="consumir" onchange="gsPintar()">
+              <span class="gs-opt-ico"><i class="bi bi-box-seam-fill"></i></span>
+              <span class="gs-opt-txt"><strong>Consumir de bodega</strong><small id="gsCamConsumirTxt">Se reserva el stock y se genera la OT de instalación</small></span><span class="gs-opt-radio"></span></label>
+            <label class="gs-opt" id="gsCamPedir"><input type="radio" name="gsCamino" value="pedir" onchange="gsPintar()">
+              <span class="gs-opt-ico"><i class="bi bi-ticket-perforated-fill"></i></span>
+              <span class="gs-opt-txt"><strong>Pedir al proveedor por ticket</strong><small id="gsCamPedirTxt">Entra al ticket de compra; al llegar se reparte entre instalar y bodega</small></span><span class="gs-opt-radio"></span></label>
+          </div>
+          <div class="gs-ruta" id="gsRuta"></div>
+        </div>
+
+        {# ── PASO 3: Proveedor ── #}
+        <div class="gs-step" id="rsGestPaso3">
+          <div class="gs-step-h">
+            <div class="gs-circ-wrap"><span class="gs-circ-lbl">Paso 3</span><div class="gs-circ"><span class="num">3</span><i class="bi bi-check-lg chk"></i></div></div>
+            <div class="gs-tits">
+              <div class="gs-tit">Proveedor del repuesto</div>
+              <div class="gs-sub">Obligatorio: con él se agrupan las compras por proveedor.</div>
+              <div class="gs-estado" id="gsEstado3"></div>
+            </div>
+          </div>
+          <select id="rsGestProv" class="form-select" onchange="gsPintar()"></select>
+          <div class="gs-hint" id="rsGestProvHint"></div>
+        </div>
+
+        <div class="text-danger fw-bold mt-2" id="rsValErr" style="min-height:20px"></div>
       </div>
-      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6;justify-content:space-between">
-        <button type="button" class="btn btn-link px-0" style="font-size:.88rem" onclick="rsCrearEnBodega()">
+      <div class="modal-footer gs-footer">
+        <button type="button" class="btn btn-link px-0 me-auto" style="font-size:.88rem" onclick="rsCrearEnBodega()">
           <i class="bi bi-box-seam me-1"></i>Crear completo en Bodega (con ubicación)</button>
-        <button type="button" class="btn fw-bold px-4" id="rsValBtn" disabled style="background:#dc2626;color:#fff;min-height:48px" onclick="rsValConfirmar()">
-          <i class="bi bi-check-lg me-1"></i>Validar y dejar lista para el lote</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn fw-bold px-4 gs-btn-ok" id="rsValBtn" onclick="rsValConfirmar()">
+          <i class="bi bi-check-lg me-1"></i><span id="gsBtnTxt">Elige o crea el repuesto</span></button>
       </div>
     </div>
   </div>
 </div>
 <style>
-  .rsg-ctx{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:.9rem;color:#1f2937}
-  .rsg-ctx .rsg-chip{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:3px 10px;font-weight:800;font-size:.78rem;background:#0a0a0a;color:#fff}
-  .rsg-ctx .rsg-falta{color:#b45309;font-weight:800}
-  .rsg-hint{font-size:.85rem;color:#374151;margin-top:6px}
-  .rsg-nuevo-btn{margin-top:10px;width:100%;min-height:44px;border:1.5px dashed #94a3b8;border-radius:10px;background:#fff;color:#0f172a;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px}
-  .rsg-nuevo-btn:hover{border-color:#dc2626;color:#dc2626}
-  .rsg-nuevo{margin-top:10px;border:1.5px solid #fcd34d;background:#fff8e1;border-radius:12px;padding:12px 14px}
-  .rsg-nuevo-k{font-weight:900;color:#92400e;display:flex;align-items:center;gap:6px}
-  .rsg-nuevo-p{font-size:.85rem;color:#78350f;margin:4px 0 10px}
-  .rsg-para{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;font-size:.92rem}
-  .rsg-para .k{display:block;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#4b5563}
-  .rsg-para .v{color:#0f172a;font-weight:700}
+  /* Gestionar solicitud = MISMO lenguaje que "Nuevo retiro interno" (REGLA #15;
+     Daniel 2026-10-04: "opciones de ver si se puede consumir si tiene stock o
+     crearlo y solicitarlo mediante ticket para después gestionar una OT de
+     instalación y almacenar el resto"). Copiado de .nri-* con prefijo .gs-. */
+  #rsModalValidar .gs-content{border:2px solid #dc2626;border-radius:16px;overflow:hidden;box-shadow:0 0 40px rgba(0,0,0,.25)}
+  .gs-header{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid #dc2626}
+  .gs-header small{font-size:.84rem;opacity:.85;margin-top:2px}
+  .gs-progreso{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;margin-right:12px;font-size:.82rem;font-weight:700;color:#e5e7eb}
+  .gs-progreso .bar{width:120px;height:7px;border-radius:50px;background:rgba(255,255,255,.18);overflow:hidden}
+  .gs-progreso .bar>span{display:block;height:100%;width:0;background:#16a34a;border-radius:50px;transition:width .3s ease}
+  .gs-progreso .avisos{color:#fbbf24}.gs-progreso .avisos:empty{display:none}
+  #rsModalValidar .modal-body{background:#f9fafb;font-size:1rem}
+  #rsModalValidar .form-label{font-size:.9rem;color:#111827;font-weight:700;margin-bottom:4px}
+  #rsModalValidar .form-control,#rsModalValidar .form-select{font-size:16px;min-height:46px;border-color:#9ca3af}
+  #rsModalValidar .form-control:focus,#rsModalValidar .form-select:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+  .gs-ctx{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;background:#fff;border:1.5px solid #e5e7eb;border-left:5px solid #dc2626;border-radius:14px;padding:12px 16px;margin-bottom:10px;font-size:.95rem;color:#1f2937}
+  .gs-ctx .rsg-chip{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:4px 11px;font-weight:800;font-size:.8rem;background:#0a0a0a;color:#fff}
+  .gs-ctx .rsg-falta{color:#b45309;font-weight:800}
+  .rsg-para{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 16px;font-size:.9rem;background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:10px 14px;margin-bottom:14px}
+  .rsg-para .k{display:block;font-size:.7rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280}
+  .rsg-para .v{color:#0f172a;font-weight:700;word-break:break-word}
   .rsg-para .v.falta{color:#b45309}
+  .gs-step{margin:0 0 14px;padding:16px 18px;background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;transition:border-color .25s,background .25s,box-shadow .25s}
+  .gs-step.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%);box-shadow:0 6px 18px -10px rgba(22,163,74,.35)}
+  .gs-step.is-warn{border-color:#f59e0b;background:linear-gradient(180deg,#fffbeb 0%,#fff 55%);box-shadow:0 6px 18px -10px rgba(245,158,11,.4)}
+  .gs-step.is-off{opacity:.55}
+  .gs-step-h{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px}
+  .gs-circ-wrap{display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;min-width:48px}
+  .gs-circ-lbl{font-size:.66rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:#dc2626;line-height:1}
+  .gs-step.is-complete .gs-circ-lbl{color:#16a34a}.gs-step.is-warn .gs-circ-lbl{color:#b45309}
+  .gs-circ{width:42px;height:42px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.15rem;box-shadow:0 4px 10px rgba(220,38,38,.3);position:relative;border:2px solid #fff;transition:all .3s cubic-bezier(.4,0,.2,1)}
+  .gs-circ .chk{display:none;font-size:1.15rem}
+  .gs-step.is-complete .gs-circ{background:#16a34a;box-shadow:0 4px 10px rgba(22,163,74,.32);transform:scale(1.04)}
+  .gs-step.is-complete .gs-circ .num{display:none}.gs-step.is-complete .gs-circ .chk{display:block}
+  .gs-step.is-complete .gs-circ::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid #16a34a;opacity:.35;animation:gsPulse 1.4s ease-in-out 1}
+  @keyframes gsPulse{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.25);opacity:0}}
+  .gs-step.is-warn .gs-circ{background:#f59e0b;box-shadow:0 4px 10px rgba(245,158,11,.35)}
+  .gs-step.is-warn .gs-circ .num{display:none}.gs-step.is-warn .gs-circ::before{content:'!';font-size:1.3rem;font-weight:900;line-height:1}
+  .gs-tits{flex:1;min-width:0;padding-top:2px}
+  .gs-tit{font-size:1.12rem;font-weight:800;color:#0a0a0a}
+  .gs-sub{margin-top:2px;font-size:.88rem;color:#374151}
+  .gs-estado{display:flex;align-items:flex-start;gap:6px;margin-top:6px;font-size:.88rem;font-weight:700;line-height:1.35;color:#b91c1c}
+  .gs-estado:empty{display:none}
+  .gs-step.is-complete .gs-estado{color:#15803d}.gs-step.is-warn .gs-estado{color:#b45309}
+  .gs-hint{font-size:.86rem;color:#374151;margin-top:6px}
   .otrep-opc-it .rsg-compat{display:inline-block;margin-left:6px;border-radius:50px;padding:1px 8px;font-size:.7rem;font-weight:800;background:#dcfce7;color:#166534}
   .otrep-opc-it .rsg-porllegar{display:inline-block;margin-left:6px;border-radius:50px;padding:1px 8px;font-size:.7rem;font-weight:800;background:#fff8e1;color:#92400e}
-  @media (max-width:768px){ .rsg-para{grid-template-columns:1fr} }
+  .gs-add{width:100%;display:flex;align-items:center;gap:14px;margin-top:12px;padding:14px 16px;min-height:72px;background:#fff;border:2px dashed #fca5a5;border-radius:14px;cursor:pointer;text-align:left;transition:all .18s ease}
+  .gs-add:hover{border-color:#dc2626;background:#fef2f2;transform:translateY(-1px);box-shadow:0 10px 22px -14px rgba(220,38,38,.6)}
+  .gs-add-ico{width:44px;height:44px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.35rem;flex-shrink:0;box-shadow:0 4px 12px rgba(220,38,38,.35)}
+  .gs-add-txt{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+  .gs-add-txt strong{font-size:1rem;font-weight:900;color:#0a0a0a}
+  .gs-add-txt small{font-size:.82rem;color:#4b5563}
+  .gs-add-go{color:#dc2626;font-size:1.2rem}
+  .gs-nuevo{margin-top:12px;border:2px solid #fca5a5;background:#fffafa;border-radius:14px;padding:14px 16px}
+  .gs-nuevo-h{font-weight:900;font-size:1.05rem;color:#991b1b;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .gs-nuevo-h span{font-weight:600;font-size:.82rem;color:#6b7280}
+  .gs-blk{background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  .gs-blk-t{font-weight:800;font-size:.95rem;color:#0a0a0a;display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .gs-blk-t em{font-style:normal;font-weight:600;font-size:.8rem;color:#6b7280}
+  .gs-dot{width:12px;height:12px;border-radius:50%;background:#dc2626;box-shadow:0 0 0 3px #fee2e2;flex-shrink:0}
+  .gs-dot.ok{background:#16a34a;box-shadow:0 0 0 3px #dcfce7}.gs-dot.warn{background:#f59e0b;box-shadow:0 0 0 3px #fff8e1}.gs-dot.opt{background:#9ca3af;box-shadow:0 0 0 3px #f3f4f6}
+  .gs-erp-lista{display:flex;flex-direction:column;gap:6px;margin-top:6px;max-height:220px;overflow-y:auto}
+  .gs-erp-lista:empty{display:none}
+  .gs-erp-it{display:flex;align-items:center;gap:10px;text-align:left;border:1.5px solid #e5e7eb;background:#fff;border-radius:10px;padding:8px 12px;min-height:44px;cursor:pointer}
+  .gs-erp-it:hover{border-color:#16a34a;background:#f0fdf4}
+  .gs-erp-it b{font-weight:800;color:#0a0a0a;word-break:break-word}
+  .gs-erp-it small{display:block;color:#4b5563;font-size:.8rem}
+  .gs-erp-it .usar{margin-left:auto;flex-shrink:0;color:#fff;background:#16a34a;border-radius:50px;padding:2px 10px;font-size:.74rem;font-weight:800}
+  .gs-erp-sel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:10px;padding:8px 12px;font-size:.88rem;font-weight:700}
+  .gs-erp-sel button{margin-left:auto;border:0;background:none;color:#991b1b;font-weight:800;font-size:.82rem;min-height:32px}
+  .gs-opts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .gs-opts.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .gs-opt{position:relative;display:flex;align-items:center;gap:12px;margin:0;padding:12px 14px;min-height:70px;background:#fff;border:2px solid #e5e7eb;border-radius:14px;cursor:pointer;transition:all .18s ease;user-select:none}
+  .gs-opt:hover{border-color:#9ca3af}
+  .gs-opt input{position:absolute;opacity:0;pointer-events:none}
+  .gs-opt:focus-within{outline:3px solid rgba(22,163,74,.3);outline-offset:2px}
+  .gs-opt-ico{width:42px;height:42px;border-radius:50%;background:#f3f4f6;color:#6b7280;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;transition:all .18s ease}
+  .gs-opt-txt{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+  .gs-opt-txt strong{font-size:.98rem;font-weight:900;color:#0a0a0a}
+  .gs-opt-txt small{font-size:.8rem;color:#4b5563;line-height:1.3;word-break:break-word}
+  .gs-opt-radio{width:22px;height:22px;border-radius:50%;border:2px solid #d1d5db;flex-shrink:0;position:relative}
+  .gs-opt.is-on{border-color:#16a34a;background:linear-gradient(180deg,#f0fdf4 0%,#fff 75%);box-shadow:0 8px 20px -14px rgba(22,163,74,.6)}
+  .gs-opt.is-on .gs-opt-ico{background:#16a34a;color:#fff}
+  .gs-opt.is-on .gs-opt-radio{border-color:#16a34a;background:#16a34a}
+  .gs-opt.is-on .gs-opt-radio::after{content:'';position:absolute;inset:4px;border-radius:50%;background:#fff}
+  .gs-opt.warn.is-on{border-color:#f59e0b;background:linear-gradient(180deg,#fffbeb 0%,#fff 75%)}
+  .gs-opt.warn.is-on .gs-opt-ico,.gs-opt.warn.is-on .gs-opt-radio{background:#f59e0b;border-color:#f59e0b;color:#fff}
+  .gs-opt.is-dis{opacity:.5;cursor:not-allowed}
+  .gs-opt.is-sug::before{content:'Sugerido';position:absolute;top:-10px;left:14px;background:#0a0a0a;color:#fff;font-size:.66rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;border-radius:50px;padding:2px 9px}
+  .gs-ruta{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap;margin-top:12px}
+  .gs-ruta:empty{display:none}
+  .gs-r{flex:1;min-width:130px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;font-size:.8rem;color:#374151;display:flex;gap:8px;align-items:flex-start}
+  .gs-r i{color:#dc2626;font-size:1rem;flex-shrink:0;margin-top:1px}
+  .gs-r b{display:block;color:#0a0a0a;font-size:.84rem}
+  .gs-r.ya{background:#f0fdf4;border-color:#86efac}.gs-r.ya i{color:#16a34a}
+  .gs-fotos{display:flex;gap:10px;flex-wrap:wrap}
+  .gs-fotos:empty{display:none}
+  .gs-foto{position:relative;width:96px;height:96px;border-radius:12px;overflow:hidden;border:3px solid #e5e7eb;cursor:pointer;padding:0;background:#f3f4f6}
+  .gs-foto img{width:100%;height:100%;object-fit:cover}
+  .gs-foto.is-on{border-color:#16a34a;box-shadow:0 0 0 3px #dcfce7}
+  .gs-foto.is-on::after{content:'\F26E';font-family:bootstrap-icons;position:absolute;top:4px;right:4px;background:#16a34a;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+  .gs-foto-subir{display:inline-flex;align-items:center;gap:8px;margin-top:10px;min-height:46px;border:1.5px dashed #9ca3af;border-radius:10px;padding:8px 16px;font-weight:800;color:#0a0a0a;cursor:pointer;background:#fff}
+  .gs-foto-subir:hover{border-color:#dc2626;color:#dc2626}
+  .gs-foto-subir.is-on{border-style:solid;border-color:#16a34a;background:#f0fdf4;color:#166534}
+  .gs-avisos{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+  .gs-avisos:empty{display:none}
+  .gs-aviso{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px 10px;background:#fffbeb;border:1.5px solid #fde68a;border-left:4px solid #f59e0b;border-radius:10px;padding:9px 12px;font-size:.88rem;color:#78350f}
+  .gs-aviso.rojo{background:#fef2f2;border-color:#fecaca;border-left-color:#dc2626;color:#7f1d1d}
+  .gs-aviso .txt{flex:1;min-width:200px;word-break:break-word}
+  .gs-aviso button{background:#16a34a;color:#fff;border:0;border-radius:8px;padding:6px 12px;min-height:38px;font-weight:800;font-size:.84rem}
+  .gs-btn-crear{background:#0a0a0a;color:#fff;min-height:46px}
+  .gs-btn-crear:hover{background:#1f2937;color:#fff}
+  .gs-btn-crear.is-pending{opacity:.6}
+  .gs-footer{background:#fff;gap:10px}
+  .gs-footer .btn{min-height:46px;font-size:.95rem}
+  .gs-btn-ok{background:#dc2626;color:#fff}
+  .gs-btn-ok:hover{background:#b91c1c;color:#fff}
+  .gs-btn-ok:disabled{background:#9ca3af;color:#fff;opacity:1}
+  @media (max-width:768px){
+    .gs-header{flex-wrap:wrap}
+    .gs-progreso{margin:6px 0 0;width:100%}
+    .gs-progreso .bar{flex:1;min-width:80px}
+    .gs-opts,.gs-opts.c3{grid-template-columns:1fr}
+    .rsg-para{grid-template-columns:1fr 1fr}
+    .gs-footer .btn-link{width:100%;text-align:left}
+  }
+  @media (prefers-reduced-motion:reduce){ .gs-step,.gs-opt,.gs-add{transition:none} .gs-step.is-complete .gs-circ::after{animation:none} }
 </style>
 
 {# Modal "Solicitar repuesto" — POTENTE (Fase 2, 2026-09-25 -- Daniel: "el
@@ -2044,7 +2243,7 @@ function rsFamiliaHtml(s){
 /* 🕓 2026-10-04: bitácora completa de la solicitud (quién hizo qué y cuándo, hora
    Chile): creación, cambios de estado, cantidad, compra, entregas parciales,
    reparto, OT de instalación, costo y "Tomar". */
-const _RS_ACCION_LBL = {creada:'Creada', estado:'Cambio de estado', tomar:'Responsable', cantidad:'Cantidad',
+const _RS_ACCION_LBL = {creada:'Creada', repuesto_creado:'Repuesto creado', estado:'Cambio de estado', tomar:'Responsable', cantidad:'Cantidad',
   compra:'Compra al proveedor', recepcion_parcial:'Entrega parcial', repartir:'Reparto', ot:'OT de instalación', costo:'Costo'};
 function rsHistorial(sid){
   const s = rsBuscarSolicitud(sid);
@@ -2065,7 +2264,7 @@ function rsCardInner(s){
       (e.tipo === 'video' ? '<span class="rs-ev-vid"><i class="bi bi-play-circle-fill"></i></span>' : '<img src="' + rsEsc(e.url) + '" loading="lazy" alt="">') + '</a>';
   }).join('');
   const acciones = (s.siguientes || []).filter(function(n){ return _rs.puedePedir || (n !== 'pedido' && n !== 'rechazado'); }).map(function(n){
-    const lbl = {validado:'Gestionar solicitud', pedido:'Pedir al proveedor', recibido:'Recibido', instalado:'Instalado', rechazado:'Rechazar', solicitado:'Reabrir'}[n] || n;
+    const lbl = {validado:'Gestionar solicitud', pedido:'Pedir al proveedor', recibido:'Recibido', instalado:'Instalado', rechazado:'Anular', solicitado:'Reabrir'}[n] || n;
     const cls = {validado:'val', pedido:'ped', recibido:'rec', instalado:'ins', rechazado:'rej', solicitado:'sol'}[n] || '';
     return '<button type="button" class="rs-btn ' + cls + '" onclick="rsAccion(' + s.id + ', \'' + n + '\')">' + lbl + '</button>';
   // 🔒 FIX 2026-09-25 (revisión adversarial post-commit f5db174b): una
@@ -2376,8 +2575,8 @@ async function rsAccion(sid, nuevo){
   if (nuevo === 'validado'){ rsValAbrir(s); return; }
   let body = { estado: nuevo };
   if (nuevo === 'rechazado'){
-    const nota = await ilusPrompt({ title: 'Rechazar solicitud #' + sid, message: '¿Por qué se rechaza?',
-      sub: 'Queda en la solicitud y en el hilo del ticket.', placeholder: 'Ej: no corresponde, se repara sin repuesto', required: true });
+    const nota = await ilusPrompt({ title: 'Anular solicitud #' + sid, message: '¿Por qué se anula?',
+      sub: 'Sale de la lista activa y queda en su historial y en el hilo del ticket (no se borra: es evidencia).', placeholder: 'Ej: no corresponde, se repara sin repuesto', required: true });
     if (!nota) return;
     body.nota = nota;
   } else if (nuevo === 'pedido'){ rsPedAbrir(s); return; }
@@ -2500,138 +2699,413 @@ function rsGestCtxHtml(s){
   const ref = s.contexto === 'ot' ? (s.numero_ot || '') : (s.contexto === 'incidencia' ? ('#' + (s.incidencia_id || '')) : (s.contexto === 'ticket' ? (s.numero_ticket || '') : ''));
   const fotos = parseInt(s.n_fotos || 0, 10);
   return '<span class="rsg-chip"><i class="bi bi-diagram-2"></i>' + rsEsc(origen) + (ref ? ' · ' + rsEsc(ref) : '') + '</span>' +
-    '<span><b>' + rsEsc(s.repuesto_nombre || 'Repuesto sin nombre') + '</b> × ' + rsFmt(s.cantidad || 1) + '</span>' +
+    '<span style="font-size:1.05rem"><b>' + rsEsc(s.repuesto_nombre || 'Repuesto sin nombre') + '</b> × ' + rsFmt(s.cantidad || 1) + '</span>' +
+    (s.dejo_fuera_servicio ? '<span class="rsg-chip" style="background:#dc2626"><i class="bi bi-exclamation-octagon-fill"></i>Equipo fuera de servicio</span>' : '') +
     (s.motivo ? '<span>«' + rsEsc(s.motivo) + '»</span>' : '') +
     (fotos > 0 ? '<span style="color:#166534;font-weight:700"><i class="bi bi-camera-fill"></i> ' + fotos + ' foto' + (fotos === 1 ? '' : 's') + '</span>'
-               : '<span class="rsg-falta"><i class="bi bi-camera"></i> Sin foto: súbela en la tarjeta antes de validar</span>');
+               : '<span class="rsg-falta"><i class="bi bi-camera"></i> Sin foto: agrégala en la tarjeta antes de avanzar (o al crear el repuesto)</span>');
 }
 function rsGestParaHtml(s){
   const fila = function(k, v, falta){ return '<div><span class="k">' + k + '</span><span class="v' + (falta ? ' falta' : '') + '">' + v + '</span></div>'; };
-  const cliente = s.es_reposicion ? 'Reposición de stock propio (sin cliente)' : (s.cliente_nombre || s.cliente || '');
+  const cliente = s.es_reposicion ? 'Reposición de stock propio' : (s.cliente_nombre || s.cliente || '');
   const equipo = [s.maquina_nombre, s.maquina_serie ? 'S/N ' + s.maquina_serie : ''].filter(Boolean).join(' · ');
   return '<div class="rsg-para">' +
-    fila('Cliente', cliente ? rsEsc(cliente) : 'Sin cliente todavía', !cliente) +
+    fila('Cliente', cliente ? rsEsc(cliente) : 'Se completa en la OT', !cliente) +
     fila('Equipo', equipo ? rsEsc(equipo) : 'Sin equipo indicado', false) +
-    fila('Viene de', rsEsc({ot:'OT ' + (s.numero_ot || ''), incidencia:'Incidencia #' + (s.incidencia_id || ''), ticket:'Ticket ' + (s.numero_ticket || ''), manual:'Solicitud manual'}[s.contexto] || (s.origen_label || '—')), false) +
-    fila('Ticket que la agrupa', s.numero_ticket ? rsEsc(s.numero_ticket) : 'Se crea al pedir', false) +
-    '</div>' + (!cliente ? '<div class="rsg-hint" style="color:#b45309"><i class="bi bi-info-circle me-1"></i>Puedes validarla igual; el cliente se completa cuando se genere la OT de instalación.</div>' : '');
+    fila('Viene de', rsEsc({ot:(s.numero_ot || 'OT'), incidencia:'Incidencia #' + (s.incidencia_id || ''), ticket:'Ticket ' + (s.numero_ticket || ''), manual:'Solicitud manual'}[s.contexto] || (s.origen_label || '—')), false) +
+    fila('Ticket', s.numero_ticket ? rsEsc(s.numero_ticket) : 'Se crea al pedir', false) +
+    '</div>';
 }
-function rsGestPintar(){
-  const p1 = document.getElementById('rsGestPaso1'), p2 = document.getElementById('rsGestPaso2'), p3 = document.getElementById('rsGestPaso3');
-  const prov = document.getElementById('rsGestProv').value;
-  if (p1) p1.classList.toggle('is-complete', !!_rs.sel);
-  if (p2) p2.classList.toggle('is-complete', true);
-  if (p3) p3.classList.toggle('is-complete', !!prov);
-  const btn = document.getElementById('rsValBtn');
-  if (btn) btn.disabled = !(_rs.sel && prov);
-  const hint = document.getElementById('rsGestProvHint');
-  if (hint) hint.textContent = prov ? 'Quedará en el lote de este proveedor (pestaña "Por proveedor").' : 'Elige el proveedor: sin él la solicitud no puede entrar a un lote de compra.';
+
+/* ══ Gestionar solicitud con caminos (2026-10-04, Daniel: "ver si se puede
+   consumir si tiene stock, o crearlo y solicitarlo mediante ticket para
+   después gestionar una OT de instalación y almacenar el resto").
+   Paso 1 ¿lo tenemos? (o se crea con ficha completa) · Paso 2 el camino
+   (consumir de bodega / pedir por ticket, sugerido según stock) · Paso 3
+   proveedor. Formato de "Nuevo retiro interno" (REGLA #15). ══ */
+var _gs = { erp: null, modelo: null, foto: null, autoCam: false };
+function gsEl(id){ return document.getElementById(id); }
+function gsDisp(it){
+  if (!it) return 0;
+  const d = (it.disponible != null) ? it.disponible : it.cantidad;
+  return parseFloat(d || 0) || 0;
+}
+function gsPintar(){
+  const s = rsBuscarSolicitud(_rs.valSid) || {};
+  const cant = parseFloat(s.cantidad || 1) || 1;
+  const it = _rs.selItem || null;
+  const disp = gsDisp(it);
+  const nuevoAbierto = !gsEl('rsNuBox').hidden;
+  const consumirOK = !!it && disp >= cant;
+
+  // Paso 2: qué caminos se pueden tomar
+  const rCons = document.querySelector('input[name="gsCamino"][value="consumir"]');
+  const rPed = document.querySelector('input[name="gsCamino"][value="pedir"]');
+  rCons.disabled = !consumirOK; rPed.disabled = !it;
+  if (!consumirOK && rCons.checked) rCons.checked = false;
+  if (!it && rPed.checked) rPed.checked = false;
+  if (it && !_gs.autoCam && !rCons.checked && !rPed.checked){
+    (consumirOK ? rCons : rPed).checked = true;
+    _gs.autoCam = true;
+  }
+  gsEl('gsCamConsumir').classList.toggle('is-dis', !consumirOK);
+  gsEl('gsCamPedir').classList.toggle('is-dis', !it);
+  gsEl('gsCamConsumir').classList.toggle('is-sug', consumirOK);
+  gsEl('gsCamPedir').classList.toggle('is-sug', !!it && !consumirOK);
+  gsEl('gsCamConsumirTxt').textContent = !it ? 'Primero elige el repuesto (paso 1)'
+    : (consumirOK ? 'Hay ' + rsFmt(disp) + ' disponibles: se reservan ' + rsFmt(cant) + ' y se genera la OT de instalación'
+                  : 'No alcanza: hay ' + rsFmt(Math.max(disp, 0)) + ' disponibles y se necesitan ' + rsFmt(cant));
+  gsEl('gsCamPedirTxt').textContent = 'Entra al ticket de compra de su proveedor; al llegar se reparte entre instalar y guardar en bodega';
+  document.querySelectorAll('#rsModalValidar .gs-opt').forEach(function(l){
+    const i = l.querySelector('input'); l.classList.toggle('is-on', !!(i && i.checked));
+  });
+  const camino = rCons.checked ? 'consumir' : (rPed.checked ? 'pedir' : '');
+
+  // Paso 1
+  const p1 = gsEl('rsGestPaso1'), e1 = gsEl('gsEstado1');
+  p1.classList.remove('is-complete', 'is-warn');
+  if (it){
+    p1.classList.add('is-complete');
+    e1.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>' + rsEsc(it.descripcion) + ' (' + rsEsc(it.sku || '') + ') · ' +
+      (consumirOK ? 'hay ' + rsFmt(disp) + ' disponibles: alcanza'
+                  : (disp > 0 ? 'hay ' + rsFmt(disp) + ' de ' + rsFmt(cant) + ': falta pedir' : 'sin stock: hay que pedirlo')) + '</span>';
+  } else {
+    e1.innerHTML = '<i class="bi bi-x-circle-fill"></i><span>' + (nuevoAbierto
+      ? 'Falta: completar la ficha del repuesto nuevo y crearlo'
+      : 'Falta: elegir un repuesto de la lista, o crearlo si no está') + '</span>';
+  }
+  // Paso 2
+  const p2 = gsEl('rsGestPaso2'), e2 = gsEl('gsEstado2');
+  p2.classList.remove('is-complete', 'is-warn');
+  p2.classList.toggle('is-off', !it);
+  if (camino){
+    p2.classList.add(camino === 'pedir' && consumirOK ? 'is-warn' : 'is-complete');
+    e2.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>' + (camino === 'consumir' ? 'Se consume de bodega'
+      : (consumirOK ? 'Se pedirá aunque hay stock suficiente: revisa que sea lo que quieres' : 'Se pide al proveedor por ticket')) + '</span>';
+  } else {
+    e2.innerHTML = it ? '<i class="bi bi-x-circle-fill"></i><span>Falta: elegir el camino</span>' : '';
+  }
+  const pasosRuta = camino === 'consumir'
+    ? [['bi-box-seam-fill', 'Reservar en bodega', rsFmt(cant) + ' de ' + rsFmt(disp)], ['bi-clipboard2-plus', 'OT de instalación', 'se abre al confirmar'], ['bi-tools', 'Instalado', 'el técnico lo marca en la OT']]
+    : (camino === 'pedir'
+      ? [['bi-ticket-perforated-fill', 'Ticket de compra', 'al proveedor elegido'], ['bi-truck', 'Recibir', 'se escanea su ubicación'], ['bi-diagram-2', 'Repartir', 'instalar / guardar en bodega'], ['bi-clipboard2-plus', 'OT de instalación', 'consume lo que se instala']]
+      : []);
+  gsEl('gsRuta').innerHTML = pasosRuta.map(function(p, i){
+    return '<div class="gs-r' + (i === 0 ? ' ya' : '') + '"><i class="bi ' + p[0] + '"></i><div><b>' + (i + 1) + '. ' + p[1] + '</b>' + rsEsc(p[2]) + '</div></div>';
+  }).join('');
+  // Paso 3
+  const prov = gsEl('rsGestProv').value;
+  const p3 = gsEl('rsGestPaso3'), e3 = gsEl('gsEstado3');
+  p3.classList.remove('is-complete', 'is-warn');
+  if (prov){ p3.classList.add('is-complete'); e3.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>' + rsEsc((gsEl('rsGestProv').selectedOptions[0] || {}).text || '') + '</span>'; }
+  else e3.innerHTML = '<i class="bi bi-x-circle-fill"></i><span>Falta: elegir el proveedor</span>';
+  gsEl('rsGestProvHint').textContent = camino === 'pedir' ? 'El ticket de compra se arma con este proveedor.' : 'Queda registrado como proveedor del repuesto.';
+  // Progreso + botón
+  const listos = [p1, p2, p3].filter(function(p){ return p.classList.contains('is-complete') || p.classList.contains('is-warn'); }).length;
+  gsEl('gsProgresoTxt').textContent = listos + ' de 3 pasos listos';
+  gsEl('gsProgresoBar').style.width = Math.round(listos / 3 * 100) + '%';
+  gsEl('gsProgresoAvisos').textContent = s.dejo_fuera_servicio ? '· equipo fuera de servicio: prioridad' : '';
+  const btn = gsEl('rsValBtn');
+  btn.disabled = !(it && camino && prov);
+  gsEl('gsBtnTxt').textContent = !it ? 'Elige o crea el repuesto' : (!camino ? 'Elige el camino' : (!prov ? 'Elige el proveedor'
+    : (camino === 'consumir' ? 'Reservar y generar OT de instalación' : 'Validar y armar el ticket de compra')));
+  if (nuevoAbierto) gsPintarNuevo();
+}
+function gsDot(id, est){ const d = gsEl(id); if (d) d.className = 'gs-dot' + (est ? ' ' + est : ''); }
+function gsPintarNuevo(){
+  const desc = (gsEl('rsNuDesc').value || '').trim();
+  const min = gsEl('gsNuMin').value;
+  const prov = gsEl('rsNuProv').value;
+  const eq = (document.querySelector('input[name="gsEq"]:checked') || {}).value || '';
+  gsEl('gsModeloWrap').hidden = (eq !== 'catalogo');
+  gsDot('gsDotErp', _gs.erp ? 'ok' : 'opt');
+  const okId = desc.length >= 3 && min !== '' && parseFloat(min) >= 0 && !!prov;
+  gsDot('gsDotId', okId ? 'ok' : '');
+  const okEq = eq === 'equipo' || (eq === 'catalogo' && _gs.modelo);
+  gsDot('gsDotEq', okEq ? 'ok' : (eq === 'pendiente' ? 'warn' : ''));
+  gsDot('gsDotFoto', _gs.foto ? 'ok' : '');
+  document.querySelectorAll('#rsNuBox .gs-opt').forEach(function(l){
+    const i = l.querySelector('input'); l.classList.toggle('is-on', !!(i && i.checked));
+  });
+  const listo = okId && (okEq || eq === 'pendiente') && !!_gs.foto;
+  gsEl('rsNuBtn').classList.toggle('is-pending', !listo);
+  return { okId: okId, eq: eq, okEq: okEq, listo: listo, desc: desc, min: min, prov: prov };
 }
 async function rsValAbrir(s){
-  _rs.valSid = s.id; _rs.sel = null; _rs.selProv = null;
-  document.getElementById('rsValTitulo').textContent = '#' + s.id + ' · ' + (s.repuesto_nombre || '') + (s.numero_ot ? ' · ' + s.numero_ot : '');
-  document.getElementById('rsValErr').textContent = '';
-  document.getElementById('rsGestCtx').innerHTML = rsGestCtxHtml(s);
-  document.getElementById('rsGestPara').innerHTML = rsGestParaHtml(s);
-  document.getElementById('rsGestHint').innerHTML = s.maquina_id
+  _rs.valSid = s.id; _rs.sel = null; _rs.selItem = null; _rs.selProv = null;
+  _gs = { erp: null, modelo: null, foto: null, autoCam: false };
+  gsEl('rsValTitulo').textContent = '#' + s.id + ' · ' + (s.repuesto_nombre || '') + (s.numero_ot ? ' · ' + s.numero_ot : '');
+  gsEl('rsValErr').textContent = '';
+  gsEl('rsGestCtx').innerHTML = rsGestCtxHtml(s);
+  gsEl('rsGestPara').innerHTML = rsGestParaHtml(s);
+  gsEl('rsGestHint').innerHTML = s.maquina_id
     ? '<i class="bi bi-stars me-1"></i>Primero aparecen los repuestos <b>compatibles con el equipo</b>' + (s.maquina_nombre ? ' (' + rsEsc(s.maquina_nombre) + ')' : '') + '.'
     : 'Revisa si ya existe antes de crear uno nuevo, para no duplicarlo.';
+  document.querySelectorAll('input[name="gsCamino"],input[name="gsEq"]').forEach(function(r){ r.checked = false; });
+  // Formulario de repuesto nuevo, limpio
+  ['rsNuDesc', 'gsNuFab', 'rsNuCosto', 'gsErpQ', 'gsModeloQ'].forEach(function(id){ gsEl(id).value = ''; });
+  gsEl('gsNuMin').value = '1'; gsEl('gsNuMarca').value = ''; gsEl('gsNuFoto').value = '';
+  gsEl('gsErpLista').innerHTML = ''; gsEl('gsModeloLista').innerHTML = ''; gsEl('gsNuAvisos').innerHTML = '';
+  gsEl('gsErpSel').hidden = true; gsEl('gsModeloSel').hidden = true;
+  gsEl('gsFotoTxt').textContent = 'Subir una foto nueva';
+  gsEl('gsFotoTxt').parentElement.classList.remove('is-on');
+  const optEq = gsEl('gsEqOptEquipo');
+  optEq.hidden = !s.maquina_id;
+  gsEl('gsEqEquipoTxt').textContent = s.maquina_nombre || 'Equipo de la solicitud';
+  if (s.maquina_id) document.querySelector('input[name="gsEq"][value="equipo"]').checked = true;
+  const fotos = (s.evidencias || []).filter(function(e){ return e.tipo === 'foto'; });
+  gsEl('gsFotos').innerHTML = fotos.map(function(e){
+    return '<button type="button" class="gs-foto" data-ev="' + e.id + '" onclick="gsFotoSel(' + e.id + ')" title="Usar esta foto de la solicitud">' +
+      '<img src="' + rsEsc(e.url) + '" alt="Foto de la solicitud" loading="lazy"></button>';
+  }).join('');
+  if (fotos.length) gsFotoSel(fotos[0].id);
   rsNuMostrar(false);
-  const q = document.getElementById('rsValQ');
+  const q = gsEl('rsValQ');
   q.value = s.stock_sku || (s.origen === 'piola' ? 'piola' : (s.repuesto_nombre || '').split(' ').slice(0, 2).join(' '));
   if (s.repuesto_stock_id) _rs.sel = s.repuesto_stock_id;
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalValidar')).show();
+  bootstrap.Modal.getOrCreateInstance(gsEl('rsModalValidar')).show();
   await rsGestCargarProvs();
-  rsGestOpcionesProv(document.getElementById('rsGestProv'), s.proveedor_id);
-  rsGestOpcionesProv(document.getElementById('rsNuProv'), s.proveedor_id);
-  rsGestPintar();
+  rsGestOpcionesProv(gsEl('rsGestProv'), s.proveedor_id);
+  rsGestOpcionesProv(gsEl('rsNuProv'), s.proveedor_id);
+  gsPintar();
   rsValBuscar(q.value);
 }
 function rsValBuscar(q){
   clearTimeout(_rs.valTimer);
-  const cont = document.getElementById('rsValLista');
+  const cont = gsEl('rsValLista');
   q = (q || '').trim();
   const s = rsBuscarSolicitud(_rs.valSid) || {};
   if (q.length < 2 && !s.maquina_id){ cont.innerHTML = '<div class="otrep-opc-vacio">Escribe al menos 2 letras.</div>'; return; }
   _rs.valTimer = setTimeout(async function(){
     cont.innerHTML = '<div class="otrep-opc-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando…</div>';
     try {
-      // Mismo motor de siempre: con maquina_id y solo_compat=0 trae TODO pero
-      // rankea primero los compatibles con el modelo del equipo (es_compatible).
+      // Con maquina_id y solo_compat=0 trae TODO pero rankea primero los compatibles.
       let url = '/ot/api/repuestos/bodega-buscar?ctx=gestion&q=' + encodeURIComponent(q);
       if (s.maquina_id) url += '&maquina_id=' + encodeURIComponent(s.maquina_id) + '&solo_compat=0';
       const r = await fetch(url, {credentials:'same-origin'});
       const j = await r.json();
       const items = j.repuestos || [];
       _rs._val = items;
-      if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Nada en la bodega con "' + rsEsc(q) + '". Créalo aquí con el botón de abajo.</div>'; return; }
+      if (_rs.sel && !_rs.selItem){
+        _rs.selItem = items.find(function(x){ return String(x.id) === String(_rs.sel); }) || null;
+        gsPintar();
+      }
+      if (!items.length){ cont.innerHTML = '<div class="otrep-opc-vacio">Nada en la bodega con "' + rsEsc(q) + '". Si no existe, créalo con el botón de abajo.</div>'; return; }
+      const cant = parseFloat(s.cantidad || 1) || 1;
       cont.innerHTML = items.map(function(it){
+        const disp = gsDisp(it);
+        const stk = disp >= cant ? '<span class="stk">' + rsFmt(disp) + ' disponibles · alcanza</span>'
+          : (disp > 0 ? '<span class="stk" style="background:#fff8e1;color:#92400e">' + rsFmt(disp) + ' disponibles · no alcanza</span>' : '<span class="stk sin">sin stock</span>');
         return '<button type="button" class="otrep-opc-it' + (String(it.id) === String(_rs.sel) ? ' on' : '') + '" data-id="' + it.id + '" onclick="rsValSel(' + it.id + ', this)">' +
           '<span class="ph">' + (it.foto_url ? '<img src="' + rsEsc(it.foto_url) + '" alt="">' : '<i class="bi bi-gear"></i>') + '</span>' +
           '<span class="inf"><b>' + rsEsc(it.descripcion) + '</b>' + (it.es_compatible ? '<span class="rsg-compat">Compatible con el equipo</span>' : '') +
           (!it.ubicacion_codigo && !((it.cantidad || 0) > 0) ? '<span class="rsg-porllegar">Por llegar</span>' : '') +
           '<small>' + rsEsc(it.sku) + (it.marca ? ' · ' + rsEsc(it.marca) : '') + (it.ubicacion_codigo ? ' · ' + rsEsc(it.ubicacion_codigo) : '') + (it.proveedor ? ' · ' + rsEsc(it.proveedor) : '') + '</small></span>' +
-          ((it.cantidad || 0) > 0 ? '<span class="stk">' + rsFmt(it.cantidad) + ' en stock</span>' : '<span class="stk sin">sin stock</span>') + '</button>';
+          stk + '</button>';
       }).join('');
     } catch(e){ cont.innerHTML = '<div class="otrep-opc-vacio">No se pudo buscar.</div>'; }
   }, 250);
 }
 function rsValSel(id, btn){
   _rs.sel = id;
+  _rs.selItem = (_rs._val || []).find(function(x){ return String(x.id) === String(id); }) || null;
+  _gs.autoCam = false;
+  document.querySelectorAll('input[name="gsCamino"]').forEach(function(r){ r.checked = false; });
   document.querySelectorAll('#rsValLista .otrep-opc-it').forEach(function(b){ b.classList.toggle('on', b === btn); });
-  // Si el repuesto elegido ya trae proveedor y todavía no se eligió uno, se sugiere ese.
-  const it = (_rs._val || []).find(function(x){ return String(x.id) === String(id); });
-  const sel = document.getElementById('rsGestProv');
+  const it = _rs.selItem, sel = gsEl('rsGestProv');
   if (it && it.proveedor_id && sel && !sel.value) sel.value = String(it.proveedor_id);
-  rsGestPintar();
+  if (!gsEl('rsNuBox').hidden) rsNuMostrar(false);
+  gsPintar();
 }
 function rsNuMostrar(mostrar){
-  const box = document.getElementById('rsNuBox'), tog = document.getElementById('rsNuToggle');
+  const box = gsEl('rsNuBox'), tog = gsEl('rsNuToggle');
   const ver = mostrar === undefined ? box.hidden : !!mostrar;
   box.hidden = !ver; tog.hidden = ver;
   if (ver){
+    // Crear uno nuevo = no usar uno de la lista
+    _rs.sel = null; _rs.selItem = null;
+    document.querySelectorAll('#rsValLista .otrep-opc-it').forEach(function(b){ b.classList.remove('on'); });
     const s = rsBuscarSolicitud(_rs.valSid) || {};
-    const d = document.getElementById('rsNuDesc');
+    const d = gsEl('rsNuDesc');
     if (!d.value) d.value = s.repuesto_nombre || '';
-    d.focus();
+    const prov = gsEl('rsGestProv').value;
+    if (prov && !gsEl('rsNuProv').value) gsEl('rsNuProv').value = prov;
+    if (!gsEl('gsErpQ').value && d.value){ gsEl('gsErpQ').value = d.value; gsErpBuscar(d.value); }
+    setTimeout(function(){ d.focus(); }, 50);
   }
+  gsPintar();
+}
+/* ¿Está en el ERP? (bodega 18): si aparece, se usa su código real (solo lectura del ERP) */
+function gsErpBuscar(q){
+  clearTimeout(_gs.erpTimer);
+  const cont = gsEl('gsErpLista');
+  q = (q || '').trim();
+  if (q.length < 3){ cont.innerHTML = ''; return; }
+  _gs.erpTimer = setTimeout(async function(){
+    cont.innerHTML = '<div class="gs-hint"><span class="spinner-border spinner-border-sm me-1"></span>Consultando el ERP…</div>';
+    try {
+      const r = await fetch('/mantenciones/api/repuestos-stock/sondeo-erp?q=' + encodeURIComponent(q), {credentials:'same-origin'});
+      const j = await r.json();
+      const ps = (j.productos || []).slice(0, 8);
+      _gs._erp = ps;
+      cont.innerHTML = ps.length ? ps.map(function(p, i){
+        return '<button type="button" class="gs-erp-it" onclick="gsErpUsar(' + i + ')"><span><b>' + rsEsc(p.descripcion) + '</b>' +
+          '<small>' + rsEsc(p.sku) + (p.codigo_tecnico ? ' · cód. ' + rsEsc(p.codigo_tecnico) : '') + ' · ' + rsFmt(p.cantidad || 0) + ' en el ERP</small></span><span class="usar">Usar</span></button>';
+      }).join('') : '<div class="gs-hint">No aparece en el ERP: se le asigna un código REP- automático.</div>';
+    } catch(e){ cont.innerHTML = '<div class="gs-hint">No se pudo consultar el ERP; puedes seguir sin él.</div>'; }
+  }, 350);
+}
+function gsErpUsar(i){
+  const p = (_gs._erp || [])[i];
+  if (!p) return;
+  _gs.erp = p;
+  gsEl('rsNuDesc').value = p.descripcion || gsEl('rsNuDesc').value;
+  if (p.codigo_tecnico) gsEl('gsNuFab').value = p.codigo_tecnico;
+  const c = p.costo_promedio || p.costo_ultima_compra;
+  if (c && !gsEl('rsNuCosto').value) gsEl('rsNuCosto').value = Math.round(c);
+  gsEl('gsErpLista').innerHTML = '';
+  const sel = gsEl('gsErpSel');
+  sel.hidden = false;
+  sel.innerHTML = '<i class="bi bi-check-circle-fill"></i>Código del ERP: ' + rsEsc(p.sku) + ' · ' + rsEsc(p.descripcion) +
+    '<button type="button" onclick="gsErpQuitar()">Quitar</button>';
+  gsPintar();
+}
+function gsErpQuitar(){ _gs.erp = null; gsEl('gsErpSel').hidden = true; gsPintar(); }
+/* Otro modelo del catálogo */
+function gsModeloBuscar(q){
+  clearTimeout(_gs.modTimer);
+  const cont = gsEl('gsModeloLista');
+  q = (q || '').trim();
+  if (q.length < 2){ cont.innerHTML = ''; return; }
+  _gs.modTimer = setTimeout(async function(){
+    try {
+      const r = await fetch('/mantenciones/api/repuestos-stock/buscar-modelos?q=' + encodeURIComponent(q), {credentials:'same-origin'});
+      const j = await r.json();
+      const ps = j.productos || [];
+      _gs._mod = ps;
+      cont.innerHTML = ps.length ? ps.map(function(p, i){
+        return '<button type="button" class="gs-erp-it" onclick="gsModeloUsar(' + i + ')"><span><b>' + rsEsc(p.nombre) + '</b><small>' + rsEsc(p.sku || '') + '</small></span><span class="usar">Elegir</span></button>';
+      }).join('') : '<div class="gs-hint">Sin resultados en el catálogo.</div>';
+    } catch(e){ cont.innerHTML = '<div class="gs-hint">No se pudo buscar.</div>'; }
+  }, 300);
+}
+function gsModeloUsar(i){
+  const p = (_gs._mod || [])[i];
+  if (!p) return;
+  _gs.modelo = p;
+  gsEl('gsModeloLista').innerHTML = '';
+  const sel = gsEl('gsModeloSel');
+  sel.hidden = false;
+  sel.innerHTML = '<i class="bi bi-check-circle-fill"></i>Sirve para: ' + rsEsc(p.nombre) + (p.sku ? ' (' + rsEsc(p.sku) + ')' : '') +
+    '<button type="button" onclick="gsModeloQuitar()">Quitar</button>';
+  gsPintar();
+}
+function gsModeloQuitar(){ _gs.modelo = null; gsEl('gsModeloSel').hidden = true; gsPintar(); }
+/* Foto: una de la solicitud o una nueva */
+function gsFotoSel(evId){
+  _gs.foto = { tipo: 'ev', id: evId };
+  gsEl('gsNuFoto').value = '';
+  gsEl('gsFotoTxt').textContent = 'Subir una foto nueva';
+  gsEl('gsFotoTxt').parentElement.classList.remove('is-on');
+  document.querySelectorAll('#gsFotos .gs-foto').forEach(function(b){ b.classList.toggle('is-on', String(b.dataset.ev) === String(evId)); });
+  if (!gsEl('rsNuBox').hidden) gsPintar();
+}
+function gsFotoNueva(input){
+  const f = input.files && input.files[0];
+  if (!f) return;
+  _gs.foto = { tipo: 'nuevo', file: f };
+  document.querySelectorAll('#gsFotos .gs-foto').forEach(function(b){ b.classList.remove('is-on'); });
+  gsEl('gsFotoTxt').textContent = 'Foto nueva: ' + f.name;
+  gsEl('gsFotoTxt').parentElement.classList.add('is-on');
+  gsPintar();
 }
 async function rsNuCrear(){
   const s = rsBuscarSolicitud(_rs.valSid) || {};
-  const desc = (document.getElementById('rsNuDesc').value || '').trim();
-  const prov = document.getElementById('rsNuProv').value;
-  const costo = document.getElementById('rsNuCosto').value;
-  const err = document.getElementById('rsValErr');
-  if (!desc){ err.textContent = 'Escribe la descripción del repuesto.'; return; }
-  if (!prov){ err.textContent = 'Elige el proveedor del repuesto nuevo.'; return; }
-  const btn = document.getElementById('rsNuBtn'); btn.disabled = true; err.textContent = '';
-  const origenNota = s.contexto === 'incidencia' ? ('Incidencia #' + (s.incidencia_id || ''))
-    : (s.contexto === 'ticket' ? ('Ticket ' + (s.numero_ticket || '')) : (s.numero_ot || 'solicitud manual'));
+  const v = gsPintarNuevo();
+  const av = gsEl('gsNuAvisos');
+  const faltan = [];
+  if (v.desc.length < 3) faltan.push('la descripción');
+  if (v.min === '' || parseFloat(v.min) < 0) faltan.push('el stock mínimo');
+  if (!v.prov) faltan.push('el proveedor');
+  if (!v.eq || (v.eq === 'catalogo' && !_gs.modelo)) faltan.push('a qué equipo sirve');
+  if (!_gs.foto) faltan.push('la foto');
+  if (faltan.length){
+    av.innerHTML = '<div class="gs-aviso rojo"><i class="bi bi-x-circle-fill"></i><span class="txt">Para crearlo falta: <b>' + faltan.join(', ') + '</b>.</span></div>';
+    return;
+  }
+  av.innerHTML = '';
+  const fd = new FormData();
+  fd.append('descripcion', v.desc);
+  fd.append('stock_minimo', v.min);
+  fd.append('proveedor_id', v.prov);
+  fd.append('marca_id', gsEl('gsNuMarca').value || '');
+  fd.append('codigo_fabricante', (gsEl('gsNuFab').value || '').trim());
+  fd.append('costo_unitario', gsEl('rsNuCosto').value || '');
+  if (_gs.erp) fd.append('sku_erp', _gs.erp.sku || '');
+  fd.append('modelo_modo', v.eq);
+  if (v.eq === 'catalogo' && _gs.modelo) fd.append('modelo_producto_id', _gs.modelo.id);
+  if (_gs.foto.tipo === 'nuevo') fd.append('foto', _gs.foto.file);
+  else fd.append('foto_evidencia_id', _gs.foto.id);
+  const btn = gsEl('rsNuBtn'); btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+  let j = {};
   try {
-    const r = await fetch('/mantenciones/api/repuestos-stock', {
-      method: 'POST', credentials: 'same-origin', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ por_llegar: true, descripcion: desc, proveedor_id: prov, costo_unitario: costo || null,
-        cliente_id: s.cliente_id || null,
-        notas: 'Creado «por llegar» desde ' + origenNota + ' · solicitud #' + (s.id || '') + (s.motivo ? ' · ' + s.motivo : '') + '. Falta escanear su ubicación al recibirlo.' }),
-    });
-    const j = await r.json().catch(function(){ return {}; });
-    if (!j.ok){ err.textContent = j.error || 'No se pudo crear el repuesto.'; btn.disabled = false; return; }
-    _rs.sel = j.id;
-    document.getElementById('rsGestProv').value = String(prov);
-    ilusToast('✓ Repuesto ' + (j.sku || '') + ' creado «por llegar». Ahora valida la solicitud.', { type: 'success' });
-    rsNuMostrar(false);
-    document.getElementById('rsValQ').value = j.sku || desc;
-    rsValBuscar(j.sku || desc);
-    rsGestPintar();
-  } catch(e){ err.textContent = 'Error de red: ' + e.message; }
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + s.id + '/crear-repuesto', { method: 'POST', body: fd, credentials: 'same-origin' });
+    j = await r.json().catch(function(){ return {}; });
+  } catch(e){ j = { ok: false, error: 'Sin conexión: ' + e.message }; }
   btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Crear el repuesto y usarlo';
+  if (!j.ok){
+    if (j.duplicado){
+      av.innerHTML = '<div class="gs-aviso"><i class="bi bi-exclamation-triangle-fill"></i><span class="txt">' + rsEsc(j.error) + '</span>' +
+        '<button type="button" onclick="gsUsarExistente(' + j.duplicado.id + ', \'' + rsEsc(String(j.duplicado.sku || '')).replace(/'/g, '') + '\')">Usar ese</button></div>';
+    } else {
+      av.innerHTML = '<div class="gs-aviso rojo"><i class="bi bi-x-circle-fill"></i><span class="txt">' + rsEsc(j.error || 'No se pudo crear el repuesto.') + '</span></div>';
+    }
+    return;
+  }
+  const provId = parseInt(v.prov, 10);
+  bootstrap.Modal.getOrCreateInstance(gsEl('rsModalValidar')).hide();
+  ilusToast('✓ Repuesto ' + (j.sku || '') + ' creado «por llegar»' + (j.validado ? ' y solicitud validada' : ''), { type: 'success' });
+  await rsCargar();
+  if (!j.validado){
+    await ilusAlert({ title: 'Repuesto creado', message: 'El repuesto ' + (j.sku || '') + ' quedó creado, pero la solicitud no se pudo validar.', sub: j.aviso || '', type: 'warning' });
+    return;
+  }
+  // No hay stock de un repuesto recién creado: el camino es pedirlo por ticket.
+  gsAbrirCompra(s.id, provId);
+}
+function gsUsarExistente(id, sku){
+  rsNuMostrar(false);
+  _rs.sel = id; _rs.selItem = null;
+  gsEl('rsValQ').value = sku || '';
+  rsValBuscar(sku || '');
+}
+async function gsAbrirCompra(sid, provId){
+  const s2 = rsBuscarSolicitud(sid);
+  if (!s2 || typeof rcmAbrir !== 'function') return;
+  const p = (_rs.provs || []).find(function(x){ return x.id === provId; }) || {};
+  const ok = await ilusConfirm({ title: 'Armar el ticket de compra', message: '¿Pides ahora ' + (s2.repuesto_nombre || 'el repuesto') + ' × ' + rsFmt(s2.cantidad) + ' a ' + (p.nombre || 'su proveedor') + '?',
+    sub: 'Se abre la ventana de compra: ahí eliges si se le manda el correo al proveedor. Si prefieres juntarlo con otros, déjalo para después en «Por proveedor».',
+    okLabel: 'Sí, armar el ticket', cancelLabel: 'Después' });
+  if (!ok) return;
+  rcmAbrir({ proveedor_id: provId, proveedor_nombre: p.nombre || '' }, [s2]);
 }
 async function rsValConfirmar(){
-  const prov = document.getElementById('rsGestProv').value;
-  if (!_rs.sel){ document.getElementById('rsValErr').textContent = 'Elige o crea el repuesto (paso 1).'; return; }
-  if (!prov){ document.getElementById('rsValErr').textContent = 'Elige el proveedor (paso 3).'; return; }
-  const ok = await rsPostEstado(_rs.valSid, { estado: 'validado', repuesto_stock_id: _rs.sel, proveedor_id: prov });
-  if (ok) bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalValidar')).hide();
+  const prov = gsEl('rsGestProv').value;
+  const camino = (document.querySelector('input[name="gsCamino"]:checked') || {}).value || '';
+  if (!_rs.sel){ gsEl('rsValErr').textContent = 'Elige o crea el repuesto (paso 1).'; return; }
+  if (!camino){ gsEl('rsValErr').textContent = 'Elige el camino (paso 2).'; return; }
+  if (!prov){ gsEl('rsValErr').textContent = 'Elige el proveedor (paso 3).'; return; }
+  const sid = _rs.valSid;
+  const ok = await rsPostEstado(sid, { estado: 'validado', repuesto_stock_id: _rs.sel, proveedor_id: prov });
+  if (!ok) return;
+  bootstrap.Modal.getOrCreateInstance(gsEl('rsModalValidar')).hide();
+  if (camino === 'consumir'){
+    if (typeof rsGenerarOT === 'function' && _rs.puedeGenerarOT) rsGenerarOT(sid);
+  } else {
+    gsAbrirCompra(sid, parseInt(prov, 10));
+  }
 }
 function rsCrearEnBodega(){
   const s = rsBuscarSolicitud(_rs.valSid) || {};

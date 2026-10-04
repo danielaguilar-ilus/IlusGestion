@@ -95881,6 +95881,206 @@ def repstock_solicitudes_personas():
     return jsonify({"ok": True, "responsables": resp, "solicitantes": sol, "yo": current_username() or ""})
 
 
+def _otrep_norm_desc(txt):
+    """Descripción normalizada para detectar duplicados: minúsculas, sin
+    tildes y con un solo espacio entre palabras."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(txt or "")).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/crear-repuesto", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_crear_repuesto(sid):
+    """Crear el repuesto que NO existe, desde la solicitud, con TODAS las
+    exigencias del alta de bodega (2026-10-04, Daniel: "si lo vamos a crear,
+    creémoslo bien con todas las restricciones que significa crear" + foto y
+    equipo compatible obligatorios).
+
+    Una sola llamada, todo o nada en la base:
+      · descripción, stock mínimo y proveedor obligatorios; SKU automático
+        (REP-<MARCA>-0001) o el SKU real del ERP si se eligió de la bodega 18;
+      · equipo compatible obligatorio: un modelo del catálogo, el modelo del
+        equipo de la solicitud, o declarar "aún no sé" (queda modelo_pendiente);
+      · foto obligatoria: una nueva, o una de las fotos de la propia solicitud
+        (se COPIA el archivo: borrar una no rompe la otra);
+      · no se crean duplicados: misma descripción o mismo código de fabricante
+        que un repuesto activo -> 409 con el existente, para usarlo;
+      · nace "por llegar" (cantidad 0, sin ubicación: se escanea al recibirlo)
+        y la solicitud queda validada contra él.
+    Solo gestión: un técnico no crea repuestos con proveedor (REGLA #19)."""
+    if _es_rol_tecnico() or _oculta_proveedores():
+        return jsonify({"ok": False, "error": "Crear un repuesto con su proveedor lo hace gestión."}), 403
+    s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if s.get("estado") != "solicitado":
+        return jsonify({"ok": False, "error": "Esta solicitud ya fue gestionada: recarga la lista."}), 409
+    f = request.form
+    descripcion = (f.get("descripcion") or "").strip()[:400]
+    if len(descripcion) < 3:
+        return jsonify({"ok": False, "error": "Escribe la descripción del repuesto."}), 400
+    try:
+        stock_minimo = float(f.get("stock_minimo"))
+        costo = float(f.get("costo_unitario")) if (f.get("costo_unitario") or "").strip() else 0.0
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Indica el stock mínimo (un número, puede ser 0)."}), 400
+    if stock_minimo < 0 or costo < 0:
+        return jsonify({"ok": False, "error": "El stock mínimo y el costo no pueden ser negativos."}), 400
+    prov_txt = (f.get("proveedor_id") or "").strip()
+    if not prov_txt.isdigit() or not mysql_fetchone(
+            "SELECT id FROM mant_proveedores_repuesto WHERE id=%s", (int(prov_txt),)):
+        return jsonify({"ok": False, "error": "Elige el proveedor: sin él no entra al lote de compra."}), 400
+    proveedor_id = int(prov_txt)
+    marca_id, marca_nombre = None, None
+    if (f.get("marca_id") or "").strip().isdigit():
+        _m = mysql_fetchone("SELECT id, nombre FROM mant_repuestos_marcas WHERE id=%s AND activo=1",
+                            (int(f.get("marca_id")),))
+        if not _m:
+            return jsonify({"ok": False, "error": "Esa marca no existe."}), 400
+        marca_id, marca_nombre = _m["id"], _m["nombre"]
+    codigo_fab = (f.get("codigo_fabricante") or "").strip()[:120] or None
+    sku_erp = (f.get("sku_erp") or "").strip()[:100]
+    if sku_erp and not re.match(r'^[A-Za-z0-9._\-\/]+$', sku_erp):
+        sku_erp = ""
+
+    # ── Duplicados (antes de subir nada) ──
+    norm = _otrep_norm_desc(descripcion)
+    for r in (mysql_fetchall(
+            "SELECT id, sku, descripcion, codigo_fabricante FROM mant_repuestos_stock "
+            " WHERE COALESCE(activo,1)=1 AND (descripcion LIKE %s OR (codigo_fabricante IS NOT NULL AND codigo_fabricante=%s) "
+            "       OR (%s<>'' AND sku=%s)) LIMIT 50",
+            ("%" + descripcion[:40] + "%", codigo_fab or "", sku_erp, sku_erp)) or []):
+        motivo = None
+        if _otrep_norm_desc(r.get("descripcion")) == norm:
+            motivo = "la misma descripción"
+        elif codigo_fab and (r.get("codigo_fabricante") or "").strip().lower() == codigo_fab.lower():
+            motivo = "el mismo código de fabricante"
+        elif sku_erp and r.get("sku") == sku_erp:
+            motivo = "el mismo SKU del ERP"
+        if motivo:
+            return jsonify({"ok": False, "duplicado": {"id": r["id"], "sku": r.get("sku"), "descripcion": r.get("descripcion")},
+                            "error": f"Ya existe {r.get('sku')} «{r.get('descripcion')}» con {motivo}: úsalo en vez de crear otro."}), 409
+
+    # ── Equipo compatible (obligatorio, o declarar que aún no se sabe) ──
+    modo_modelo = (f.get("modelo_modo") or "").strip()
+    modelo_ids = []
+    if modo_modelo == "catalogo" and (f.get("modelo_producto_id") or "").strip().isdigit():
+        _p = mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (int(f.get("modelo_producto_id")),))
+        if _p:
+            modelo_ids = [int(_p["id"])]
+    elif modo_modelo == "equipo" and s.get("maquina_id"):
+        maq = mysql_fetchone("SELECT id, nombre, sku FROM mant_maquinas WHERE id=%s", (s["maquina_id"],))
+        if maq:
+            try:
+                _eq = _otrep_modelos_de_maquina(maq) or []
+                modelo_ids = [int(_eq[0]["id"])] if _eq else []
+                if not modelo_ids:
+                    _pm = _otrep_producto_de_maquina(maq)
+                    modelo_ids = [int(_pm["id"])] if _pm and _pm.get("id") else []
+            except Exception as e:
+                print(f"[otrep crear-repuesto] modelo del equipo sid={sid}: {e}", flush=True)
+    modelo_pendiente = 1 if (modo_modelo == "pendiente") else 0
+    if not modelo_ids and not modelo_pendiente:
+        return jsonify({"ok": False, "error":
+                        "Indica a qué equipo sirve el repuesto, o marca «Aún no sé a qué equipo sirve»."}), 400
+
+    # ── Foto obligatoria: nueva o copiada de la solicitud ──
+    archivo = request.files.get("foto")
+    ev_id = (f.get("foto_evidencia_id") or "").strip()
+    src_key, ext = None, None
+    if archivo and archivo.filename:
+        ext, err = _validate_uploaded_image(archivo, label="foto del repuesto")
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+    elif ev_id.isdigit():
+        ev = mysql_fetchone(
+            "SELECT public_id FROM mant_ot_repuesto_evidencias WHERE id=%s AND solicitud_id=%s AND tipo='foto'",
+            (int(ev_id), sid))
+        src_key = (ev or {}).get("public_id") or ""
+        if not ("/" in src_key and os.path.splitext(src_key)[1]):
+            return jsonify({"ok": False, "error": "Esa foto no se puede reutilizar: sube una nueva."}), 400
+    else:
+        return jsonify({"ok": False, "error": "Agrega una foto del repuesto (o usa una de la solicitud)."}), 400
+
+    user = current_username()
+    ts = int(time.time() * 1000)
+    foto_key, ev_copia_key = None, None
+    try:
+        if archivo and archivo.filename:
+            res = _uploader_upload(archivo, folder="repuestos", public_id=f"rep_sol{sid}_{ts}", resource_type="image")
+            foto_key = res.get("public_id")
+        else:
+            _b = _gcs_bucket()
+            foto_key = f"repuestos/rep_sol{sid}_{ts}{os.path.splitext(src_key)[1]}"
+            _b.copy_blob(_b.blob(src_key), _b, foto_key)
+        # La solicitud necesita su propia foto para avanzar (candado del 27-sep):
+        # si no tenía ninguna, se le deja una COPIA de la recién subida.
+        if int(s.get("n_fotos") or 0) < 1 and foto_key:
+            _b = _gcs_bucket()
+            ev_copia_key = f"otrep/sol{sid}_{ts}{os.path.splitext(foto_key)[1]}"
+            _b.copy_blob(_b.blob(foto_key), _b, ev_copia_key)
+    except Exception as e:
+        print(f"[otrep crear-repuesto] foto sid={sid}: {e}", flush=True)
+        for k in (foto_key, ev_copia_key):
+            try:
+                _uploader_destroy(k)
+            except Exception:
+                pass
+        return jsonify({"ok": False, "error": "No se pudo guardar la foto. Intenta de nuevo."}), 500
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            sku = sku_erp or _repstock_next_sku(marca_nombre, conn)
+            origen = ("Incidencia #" + str(s.get("incidencia_id"))) if s.get("incidencia_id") else (
+                "solicitud #" + str(sid))
+            cur.execute(
+                "INSERT INTO mant_repuestos_stock (sku, descripcion, cantidad, ubicacion_id, marca_id, proveedor_id, "
+                " costo_unitario, codigo_fabricante, stock_minimo, cliente_id, notas, modelo_pendiente, created_by) "
+                "VALUES (%s,%s,0,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (sku, descripcion, marca_id, proveedor_id, costo, codigo_fab, stock_minimo, s.get("cliente_id"),
+                 f"Creado «por llegar» desde la {origen}: falta escanear su ubicación al recibirlo.",
+                 modelo_pendiente, user))
+            rid = int(cur.lastrowid)
+            _repstock_log_movimiento(cur, rid, "inicial", "alta_repuesto", 0, 0,
+                                     nota=f"Alta de repuesto «por llegar» desde la solicitud #{sid}.", usuario=user)
+            for mid in modelo_ids:
+                cur.execute("INSERT IGNORE INTO mant_repuestos_stock_modelos (repuesto_id, producto_id) VALUES (%s,%s)",
+                            (rid, mid))
+            cur.execute("INSERT INTO mant_repuestos_stock_fotos (repuesto_id, gcs_key, orden, created_by) VALUES (%s,%s,1,%s)",
+                        (rid, foto_key, user))
+            if ev_copia_key:
+                cur.execute("INSERT INTO mant_ot_repuesto_evidencias (solicitud_id, tipo, url, public_id, archivo_nombre, subido_por) "
+                            "VALUES (%s,'foto',%s,%s,%s,%s)",
+                            (sid, "/f/" + ev_copia_key, ev_copia_key, "foto del repuesto", user))
+                cur.execute("UPDATE mant_ot_repuesto_solicitudes SET n_fotos=n_fotos+1 WHERE id=%s", (sid,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[otrep crear-repuesto] INSERT sid={sid}: {e}", flush=True)
+        for k in (foto_key, ev_copia_key):
+            try:
+                _uploader_destroy(k)
+            except Exception:
+                pass
+        if "1062" in str(e) or "Duplicate entry" in str(e):
+            return jsonify({"ok": False, "error": "Ese SKU quedó registrado recién por otra persona. Vuelve a intentar."}), 409
+        return jsonify({"ok": False, "error": "No se pudo crear el repuesto."}), 500
+    finally:
+        conn.close()
+
+    _mant_log("repuesto_stock", rid, "crear", f"{sku} — {descripcion} (desde solicitud #{sid})")
+    try:
+        _otrep_evento(sid, "repuesto_creado", user, detalle=f"{sku} — {descripcion}")
+    except Exception:
+        pass
+    ok, _http, payload = _otrep_cambiar_estado(sid, "validado", user,
+                                               {"repuesto_stock_id": rid, "proveedor_id": proveedor_id})
+    return jsonify({"ok": True, "id": rid, "sku": sku, "validado": bool(ok),
+                    "aviso": None if ok else (payload or {}).get("error")})
+
+
 def _otrep_puede_tickets():
     """Gate para el origen Ticket (Fase 2, 2026-09-21). Base: MISMA lógica
     que `_tickets_required` en tickets_module.py (perms mantenciones/
