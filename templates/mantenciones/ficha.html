@@ -315,10 +315,107 @@
               </button>
             </div>
           </div>
+          <div class="mt-2">
+            <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirPlanMantencion()">
+              <i class="bi bi-clipboard2-check me-1"></i>Armar plan de mantención
+            </button>
+            <span class="small text-muted ms-2">Propuesta con sus equipos, visitas y descuento; se envía por correo.</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal fade" id="modalPlanMant" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#0a0a0a;color:#fff">
+              <h5 class="modal-title fw-bold"><i class="bi bi-clipboard2-check me-2"></i>Plan de mantención — {{ cliente.razon_social }}</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <div id="pmCargando" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Armando la propuesta…</div>
+              <div id="pmCuerpo" hidden>
+                <div class="fw-semibold mb-1">Equipos activos de la ficha (<span id="pmN">0</span>)</div>
+                <ul id="pmEquipos" class="small mb-3" style="padding-left:18px"></ul>
+                <div class="row g-2 align-items-end mb-3">
+                  <div class="col-6 col-md-3"><label class="form-label small fw-semibold mb-1">Descuento (%)</label>
+                    <input type="number" id="pmDesc" class="form-control form-control-sm" min="0" step="0.5" oninput="pmRecalcular()">
+                    <div class="form-text" id="pmTope"></div></div>
+                  <div class="col-6 col-md-3"><label class="form-label small fw-semibold mb-1">Visitas por año</label>
+                    <input type="number" id="pmVisitas" class="form-control form-control-sm" min="1" max="52" oninput="pmRecalcular()"></div>
+                  <div class="col-12 col-md-6"><label class="form-label small fw-semibold mb-1">Enviar a</label>
+                    <input type="email" id="pmEmail" class="form-control form-control-sm" list="pmEmails" placeholder="correo@cliente.cl">
+                    <datalist id="pmEmails"></datalist></div>
+                </div>
+                <div class="p-3 rounded" style="background:#f0fdfa;border:1px solid #99f6e4" id="pmTotales"></div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+              <button class="btn btn-ilus fw-bold" id="pmEnviar" onclick="pmEnviar(this)" disabled><i class="bi bi-envelope-paper me-1"></i>Enviar propuesta por correo</button>
+            </div>
+          </div>
         </div>
       </div>
       <script>
       async function guardarProspecto(btn){
+      let _pmModal = null, _pm = null;
+      const _pmClp = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
+      async function abrirPlanMantencion(){
+        if (!_pmModal) _pmModal = new bootstrap.Modal(document.getElementById('modalPlanMant'));
+        _pmModal.show();
+        document.getElementById('pmCargando').hidden = false; document.getElementById('pmCuerpo').hidden = true;
+        document.getElementById('pmEnviar').disabled = true;
+        try {
+          const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/plan-propuesta'); const d = await r.json();
+          if (!d.ok) throw new Error(d.error || 'No se pudo armar');
+          _pm = d;
+          document.getElementById('pmN').textContent = d.calc.n_equipos;
+          document.getElementById('pmEquipos').innerHTML = d.equipos.length ? d.equipos.map(e =>
+            '<li>' + pmEsc(e.nombre || 'Equipo') + (e.cantidad > 1 ? ' × ' + e.cantidad : '') +
+            ((e.marca || e.modelo) ? ' <span class="text-muted">(' + pmEsc((e.marca||'') + ' ' + (e.modelo||'')) + ')</span>' : '') + '</li>').join('')
+            : '<li class="text-danger">Este cliente no tiene equipos activos en su ficha.</li>';
+          document.getElementById('pmDesc').value = d.calc.descuento_pct;
+          document.getElementById('pmDesc').max = d.calc.descuento_tope_pct;
+          document.getElementById('pmTope').textContent = 'Máximo permitido: ' + d.calc.descuento_tope_pct + '%';
+          document.getElementById('pmVisitas').value = d.calc.visitas_anio;
+          document.getElementById('pmEmail').value = d.emails[0] || '';
+          document.getElementById('pmEmails').innerHTML = d.emails.map(m => '<option value="' + pmEsc(m) + '">').join('');
+          document.getElementById('pmCargando').hidden = true; document.getElementById('pmCuerpo').hidden = false;
+          document.getElementById('pmEnviar').disabled = !d.equipos.length;
+          pmRecalcular();
+        } catch(e){ document.getElementById('pmCargando').innerHTML = '<span class="text-danger">' + pmEsc(e.message) + '</span>'; }
+      }
+      function pmEsc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+      function pmRecalcular(){
+        if (!_pm) return;
+        const c = _pm.calc;
+        let desc = Math.max(0, Math.min(parseFloat(document.getElementById('pmDesc').value) || 0, c.descuento_tope_pct));
+        const vis = Math.max(1, Math.min(parseInt(document.getElementById('pmVisitas').value) || c.visitas_anio, 52));
+        const box = document.getElementById('pmTotales');
+        if (!c.has_price) { box.innerHTML = '<b>Cotización a la medida.</b> El valor por visita y equipo aún está en $0 en el cuadro de mando («Plan de mantención» en Clientes), así que la propuesta no lleva totales.'; return; }
+        const sub = c.n_equipos * vis * c.valor_visita_equipo, tot = sub * (1 - desc / 100);
+        box.innerHTML = c.n_equipos + ' equipo(s) × ' + vis + ' visitas × ' + _pmClp(c.valor_visita_equipo) + ' = <b>' + _pmClp(sub) + '</b>' +
+          (desc ? '<br>Descuento ' + desc + '% → <b style="font-size:1.1rem">' + _pmClp(tot) + ' al año</b> (' + _pmClp(tot / 12) + ' al mes)'
+                : '<br><b style="font-size:1.1rem">' + _pmClp(sub) + ' al año</b> (' + _pmClp(sub / 12) + ' al mes)');
+      }
+      async function pmEnviar(btn){
+        const email = document.getElementById('pmEmail').value.trim();
+        const ok = await ilusConfirm({ title: 'Enviar propuesta', message: 'Se enviará la propuesta de plan de mantención a:',
+          sub: email || '(sin correo)', okLabel: 'Enviar', cancelLabel: 'Cancelar' });
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/plan-enviar', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ email, descuento_pct: document.getElementById('pmDesc').value, visitas_anio: document.getElementById('pmVisitas').value })});
+          const d = await r.json();
+          if (!d.ok) { ilusToast(d.error || 'No se pudo enviar', {type:'error'}); return; }
+          ilusToast('✓ ' + d.mensaje, {type:'success'});
+          document.getElementById('prospEtapa').value = 'ofrecida';
+          document.getElementById('prospEtapaBadge').textContent = 'Ofrecida';
+          _pmModal.hide();
+        } catch(e){ ilusToast('Error de red al enviar', {type:'error'}); }
+        finally { btn.disabled = false; }
+      }
+
         btn.disabled = true;
         try {
           const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/prospecto/seguimiento', {

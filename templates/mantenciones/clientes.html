@@ -370,6 +370,12 @@
     <div class="mod-sub">Contratos, equipos, instalaciones y visitas programadas</div>
   </div>
   <div class="d-flex gap-2 align-items-center flex-wrap">
+    <button type="button" class="btn btn-outline-light fw-semibold px-3"
+            style="border-color:rgba(255,255,255,.3);color:#fff"
+            onclick="abrirPlanConfig()"
+            title="Descuento y condiciones del plan de mantención que se ofrece a los clientes">
+      <i class="bi bi-sliders me-1"></i>Plan de mantención
+    </button>
     {% if permissions.admin or permissions.superadmin %}
     <button type="button" class="btn btn-outline-warning fw-semibold px-3"
             onclick="abrirDuplicados()"
@@ -395,6 +401,84 @@
 </div>
 
 {% include "mantenciones/_reporte_excel_modal.html" %}
+{# ══ CUADRO DE MANDO DEL PLAN DE MANTENCIÓN (Daniel 2026-10-04) ══
+   El descuento y las condiciones se manejan desde acá; la propuesta de cada cliente los usa. #}
+<div class="modal fade" id="modalPlanConfig" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-sliders me-2"></i>Plan de mantención — cuadro de mando</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 small mb-3" id="planCfgAviso">
+          Estos valores arman la propuesta que se envía a cada cliente desde su ficha. Mientras el
+          <b>valor por visita y equipo</b> esté en $0, la propuesta dice «cotización a la medida» y no muestra totales.
+        </div>
+        <div class="row g-3">
+          <div class="col-6 col-md-3"><label class="form-label small fw-semibold">Descuento base (%)</label>
+            <input type="number" id="pcDesc" class="form-control" min="0" max="100" step="0.5"></div>
+          <div class="col-6 col-md-3"><label class="form-label small fw-semibold">Descuento máximo (%)</label>
+            <input type="number" id="pcDescMax" class="form-control" min="0" max="100" step="0.5">
+            <div class="form-text">Tope que se puede dar en una propuesta puntual.</div></div>
+          <div class="col-6 col-md-3"><label class="form-label small fw-semibold">Visitas por año</label>
+            <input type="number" id="pcVisitas" class="form-control" min="1" max="52"></div>
+          <div class="col-6 col-md-3"><label class="form-label small fw-semibold">Vigencia (meses)</label>
+            <input type="number" id="pcVigencia" class="form-control" min="1" max="60"></div>
+          <div class="col-12 col-md-6"><label class="form-label small fw-semibold">Valor por visita y por equipo (CLP)</label>
+            <input type="number" id="pcValor" class="form-control" min="0" step="1000">
+            <div class="form-text">Total anual = equipos × visitas × este valor, menos el descuento.</div></div>
+          <div class="col-12"><label class="form-label small fw-semibold">Qué incluye el plan (una línea por ítem)</label>
+            <textarea id="pcIncluye" class="form-control" rows="5" maxlength="1500"></textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-ilus fw-bold" id="pcGuardar" onclick="guardarPlanConfig(this)"><i class="bi bi-check2 me-1"></i>Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+let _modalPlanCfg = null;
+async function abrirPlanConfig(){
+  if (!_modalPlanCfg) _modalPlanCfg = new bootstrap.Modal(document.getElementById('modalPlanConfig'));
+  _modalPlanCfg.show();
+  try {
+    const r = await fetch('/mantenciones/api/plan-config'); const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'No se pudo cargar');
+    const c = d.config;
+    document.getElementById('pcDesc').value = c.descuento_pct;
+    document.getElementById('pcDescMax').value = c.descuento_max_pct;
+    document.getElementById('pcVisitas').value = c.visitas_anio;
+    document.getElementById('pcVigencia').value = c.vigencia_meses;
+    document.getElementById('pcValor').value = c.valor_visita_equipo;
+    document.getElementById('pcIncluye').value = c.incluye;
+    ['pcDesc','pcDescMax','pcVisitas','pcVigencia','pcValor','pcIncluye'].forEach(i => document.getElementById(i).disabled = !d.puede_editar);
+    document.getElementById('pcGuardar').style.display = d.puede_editar ? '' : 'none';
+    if (!d.puede_editar) document.getElementById('planCfgAviso').insertAdjacentHTML('beforeend', '<br><b>Solo un administrador puede cambiarlos.</b>');
+  } catch(e){ ilusToast('No se pudo cargar el plan: ' + e.message, {type:'error'}); }
+}
+async function guardarPlanConfig(btn){
+  btn.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/plan-config', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        descuento_pct: document.getElementById('pcDesc').value,
+        descuento_max_pct: document.getElementById('pcDescMax').value,
+        visitas_anio: document.getElementById('pcVisitas').value,
+        vigencia_meses: document.getElementById('pcVigencia').value,
+        valor_visita_equipo: document.getElementById('pcValor').value,
+        incluye: document.getElementById('pcIncluye').value })});
+    const d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+    ilusToast('✓ Plan de mantención guardado', {type:'success'});
+    _modalPlanCfg.hide();
+  } catch(e){ ilusToast('Error de red al guardar', {type:'error'}); }
+  finally { btn.disabled = false; }
+}
+</script>
+
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: FICHAS OCULTAS — buscador y restaurador de clientes

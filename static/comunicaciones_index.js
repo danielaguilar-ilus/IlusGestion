@@ -626,6 +626,8 @@ const TPL_ESTADOS_MANTENCIONES = [
     color:'#f59e0b', desc:'Primer correo al cliente de instalación, 15 días después de terminada la instalación (abre un ticket sin asignar)' },
   { key:'prospecto_oferta_2',  label:'Oferta de mantención · 3 meses', icon:'bi-megaphone', grupo:'prospecto',
     color:'#d97706', desc:'Segundo correo, 3 meses después de la instalación, si el cliente no aceptó ni rechazó' },
+  { key:'plan_mantencion_oferta', label:'Propuesta de plan de mantención', icon:'bi-clipboard2-check-fill', grupo:'prospecto',
+    color:'#0d9488', desc:'Propuesta con equipos, visitas, descuento y precio, enviada desde la ficha del cliente' },
 ];
 
 const TPL_ESTADOS_COMUNICACION_INTERNA = [
@@ -778,6 +780,12 @@ const TPL_VARS = {
     { v:'{{cliente_nombre}}',     label:'Razón social del cliente' },
     { v:'{{contacto_nombre}}',    label:'Nombre del contacto' },
     { v:'{{fecha_instalacion}}',  label:'Fecha en que terminó la instalación' },
+    { v:'{{equipos_html}}',       label:'Lista de equipos (propuesta)' },
+    { v:'{{visitas_anio}}',       label:'Visitas al año (propuesta)' },
+    { v:'{{vigencia_meses}}',     label:'Vigencia en meses (propuesta)' },
+    { v:'{{descuento_pct}}',      label:'% de descuento (propuesta)' },
+    { v:'{{precio_html}}',        label:'Bloque de precio (propuesta)' },
+    { v:'{{incluye_html}}',       label:'Qué incluye el plan (propuesta)' },
   ],
   interna: [
     { v:'{{nombre_usuario}}',   label:'Nombre del usuario' },

@@ -140,3 +140,46 @@ def test_tope_por_corrida():
     cands = [_cli(i, 16, LUNES_10H) for i in range(1, 31)]
     m, _ = _correr(cands)
     assert len(m.tickets) == 15
+
+
+# ───────── Plan de mantención: cálculo y tope de descuento ─────────
+def _plan():
+    src = open(_APP, encoding="utf-8").read()
+    a = src.index("_PLAN_DEFAULTS = {")
+    b = src.index("def _ensure_mant_plan_config")
+    ns = {}
+    exec(src[a:b], ns)
+    return ns
+
+
+CFG = {"descuento_pct": "10", "descuento_max_pct": "20", "visitas_anio": "4", "valor_visita_equipo": "50000"}
+
+
+def test_plan_calcula_total_con_descuento():
+    c = _plan()["_plan_calc"](CFG, 3)
+    assert c["subtotal_anual"] == 3 * 4 * 50000 and c["total_anual"] == 600000 * 0.9
+    assert round(c["total_mensual"]) == round(540000 / 12)
+
+
+def test_plan_descuento_no_pasa_del_tope():
+    c = _plan()["_plan_calc"](CFG, 1, descuento_pct="80")
+    assert c["descuento_pct"] == 20.0
+
+
+def test_plan_tope_nunca_menor_al_descuento_base():
+    cfg = dict(CFG, descuento_max_pct="0")
+    assert _plan()["_plan_calc"](cfg, 1)["descuento_pct"] == 10.0
+
+
+def test_plan_sin_valor_no_inventa_precio():
+    c = _plan()["_plan_calc"](dict(CFG, valor_visita_equipo="0"), 5)
+    assert c["has_price"] is False and c["total_anual"] == 0
+
+
+def test_plan_entradas_raras_no_rompen():
+    c = _plan()["_plan_calc"](CFG, 2, descuento_pct="abc", visitas="x")
+    assert c["visitas_anio"] == 4 and c["descuento_pct"] == 10.0
+
+
+def test_formato_pesos_chilenos():
+    assert _plan()["_clp_fmt"](1234567) == "$1.234.567"

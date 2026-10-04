@@ -69039,7 +69039,10 @@ def _mant_ficha_impl(cid):
 
     _prospecto = None
     try:
-        if (cliente.get("estado") or "") == "prospecto" or (cliente.get("tipo_cliente") or "") == "instalacion":
+        _ctr_vig = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_contratos WHERE cliente_id=%s "
+            "   AND nombre<>'Contenedor de documentos' AND estado IN ('vigente','por_vencer','indefinido')", (cid,)) or {}
+        if not int(_ctr_vig.get("n") or 0):
             _prospecto = _prospecto_info([cid]).get(cid)
     except Exception as _e_pr:
         print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
@@ -69638,6 +69641,255 @@ def mant_cron_prospectos_oferta():
     return jsonify(_prospectos_oferta_barrido(dry=(request.args.get("dry") or "") in ("1", "true", "yes")))
 
 
+# ── PLAN DE MANTENCIÓN (Daniel 2026-10-04) ──────────────────────────────
+# Panel en el front con el descuento y las condiciones del plan; en la ficha de
+# CUALQUIER cliente sin contrato vigente se arma la propuesta desde sus equipos y
+# se envía por correo (plantilla editable). Nada de precios inventados: el valor
+# por visita y equipo lo define el panel; mientras esté en 0 la propuesta dice
+# «cotización a la medida» y no muestra totales.
+_PLAN_DEFAULTS = {
+    "descuento_pct": "0", "descuento_max_pct": "0", "visitas_anio": "4",
+    "vigencia_meses": "12", "valor_visita_equipo": "0",
+    "incluye": ("Plan de mantención con gestión de descuento\n"
+                "Certificación de repuestos originales\n"
+                "Menos tiempo con máquinas detenidas\n"
+                "Gestión eficiente de repuestos y de mantención"),
+}
+
+
+def _clp_fmt(n):
+    """1234567 -> $1.234.567"""
+    try:
+        return "$" + f"{int(round(float(n))):,}".replace(",", ".")
+    except Exception:
+        return "$0"
+
+
+def _plan_calc(cfg, n_equipos, descuento_pct=None, visitas=None):
+    """Cálculo de la propuesta. El descuento de una propuesta puntual nunca pasa
+    del tope del panel (o del descuento base si el tope es menor)."""
+    tope = max(float(cfg.get("descuento_max_pct") or 0), float(cfg.get("descuento_pct") or 0))
+    try:
+        desc = float(descuento_pct) if descuento_pct not in (None, "") else float(cfg.get("descuento_pct") or 0)
+    except (TypeError, ValueError):
+        desc = float(cfg.get("descuento_pct") or 0)
+    desc = max(0.0, min(desc, tope))
+    try:
+        vis = int(visitas) if visitas not in (None, "") else int(cfg.get("visitas_anio") or 4)
+    except (TypeError, ValueError):
+        vis = int(cfg.get("visitas_anio") or 4)
+    vis = max(1, min(vis, 52))
+    valor = float(cfg.get("valor_visita_equipo") or 0)
+    n = max(0, int(n_equipos or 0))
+    subtotal = n * vis * valor
+    total = subtotal * (1 - desc / 100.0)
+    return {"descuento_pct": desc, "descuento_tope_pct": tope, "visitas_anio": vis,
+            "valor_visita_equipo": valor, "n_equipos": n, "has_price": valor > 0,
+            "subtotal_anual": subtotal, "total_anual": total, "total_mensual": total / 12.0}
+
+
+def _ensure_mant_plan_config():
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_plan_config (
+                clave      VARCHAR(40) NOT NULL PRIMARY KEY,
+                valor      TEXT NULL,
+                updated_by VARCHAR(190) NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_mant_plan_config] {e}", flush=True)
+
+
+def _plan_config():
+    cfg = dict(_PLAN_DEFAULTS)
+    try:
+        for r in mysql_fetchall("SELECT clave, valor FROM mant_plan_config") or []:
+            if r["clave"] in cfg and r.get("valor") is not None:
+                cfg[r["clave"]] = r["valor"]
+    except Exception as e:
+        print(f"[plan_config] {e}", flush=True)
+    return cfg
+
+
+def _plan_oferta_seed():
+    asunto = "Tu plan de mantención ILUS Fitness para {{cliente_nombre}}"
+    cuerpo = ("<p>Hola {{contacto_nombre}},</p>"
+              "<p>Te preparamos una propuesta de <b>Plan de Mantención</b> para los equipos de "
+              "<b>{{cliente_nombre}}</b>:</p>"
+              "{{equipos_html}}"
+              "<p><b>{{visitas_anio}} visitas al año</b> · vigencia de {{vigencia_meses}} meses.</p>"
+              "{{precio_html}}"
+              "<p>El plan incluye:</p>{{incluye_html}}"
+              "<p>Responde este correo y armamos el contrato con tus condiciones.</p>")
+    return asunto, cuerpo
+
+
+def _ensure_comm_template_plan_oferta():
+    """Siembra idempotente de 'plan_mantencion_oferta' (mantenciones/email), sin pisar ediciones."""
+    try:
+        asunto, cuerpo = _plan_oferta_seed()
+        mysql_execute(
+            "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+            "VALUES ('mantenciones','plan_mantencion_oferta','email',%s,%s)", (asunto, cuerpo))
+    except Exception as e:
+        print(f"[ensure_comm_tpl] plan_mantencion_oferta: {e}", flush=True)
+
+
+@app.route("/mantenciones/api/plan-config", methods=["GET", "POST"])
+@_mant_required
+@_no_tecnico
+def mant_plan_config_api():
+    """Panel del plan de mantención. GET: lo ve todo el equipo. POST: solo admin."""
+    if request.method == "GET":
+        cfg = _plan_config()
+        return jsonify({"ok": True, "config": cfg,
+                        "puede_editar": bool(g.permissions.get("admin") or g.permissions.get("superadmin"))})
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede cambiar el plan."}), 403
+    d = request.get_json(silent=True) or {}
+
+    def _num(k, lo, hi, entero=False):
+        try:
+            v = float(str(d.get(k, "")).replace(",", "."))
+        except ValueError:
+            raise ValueError(f"«{k}» no es un número válido.")
+        if v < lo or v > hi:
+            raise ValueError(f"«{k}» debe estar entre {lo} y {hi}.")
+        return str(int(v)) if entero else str(v)
+
+    try:
+        nuevo = {
+            "descuento_pct": _num("descuento_pct", 0, 100),
+            "descuento_max_pct": _num("descuento_max_pct", 0, 100),
+            "visitas_anio": _num("visitas_anio", 1, 52, True),
+            "vigencia_meses": _num("vigencia_meses", 1, 60, True),
+            "valor_visita_equipo": _num("valor_visita_equipo", 0, 100000000, True),
+            "incluye": (d.get("incluye") or "").strip()[:1500],
+        }
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if float(nuevo["descuento_max_pct"]) < float(nuevo["descuento_pct"]):
+        nuevo["descuento_max_pct"] = nuevo["descuento_pct"]
+    if not nuevo["incluye"]:
+        nuevo["incluye"] = _PLAN_DEFAULTS["incluye"]
+    quien = current_username() or "sistema"
+    _ensure_mant_plan_config()
+    for k, v in nuevo.items():
+        mysql_execute(
+            "INSERT INTO mant_plan_config (clave, valor, updated_by) VALUES (%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)", (k, v, quien))
+    try:
+        _mant_log("plan_config", 0, "actualizado",
+                  f"Plan de mantención: descuento {nuevo['descuento_pct']}% (tope {nuevo['descuento_max_pct']}%) · "
+                  f"{nuevo['visitas_anio']} visitas/año · valor visita-equipo {_clp_fmt(nuevo['valor_visita_equipo'])} · por {quien}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "config": nuevo})
+
+
+def _plan_equipos(cid):
+    return [dict(r) for r in (mysql_fetchall(
+        "SELECT id, nombre, sku, marca, modelo, serie, COALESCE(cantidad,1) AS cantidad "
+        "  FROM mant_maquinas WHERE cliente_id=%s AND estado='activo' ORDER BY nombre", (cid,)) or [])]
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/plan-propuesta", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_plan_propuesta(cid):
+    """Propuesta de plan desde los equipos activos de la ficha + el panel."""
+    cli = mysql_fetchone("SELECT id, razon_social, contacto_nombre FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    cfg = _plan_config()
+    eq = _plan_equipos(cid)
+    n = sum(int(e["cantidad"] or 1) for e in eq)
+    calc = _plan_calc(cfg, n, request.args.get("descuento_pct"), request.args.get("visitas_anio"))
+    return jsonify({"ok": True, "cliente": {"razon_social": cli["razon_social"],
+                                            "contacto_nombre": cli.get("contacto_nombre") or ""},
+                    "emails": _mant_get_cliente_emails(cid), "equipos": eq, "calc": calc,
+                    "vigencia_meses": int(float(cfg["vigencia_meses"]))})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/plan-enviar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_plan_enviar(cid):
+    """Envía la propuesta por correo con la plantilla editable y deja la oferta como «Ofrecida»."""
+    import html as _html
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) or len(email) > 180:
+        return jsonify({"ok": False, "error": "Escribe un correo válido para enviar la propuesta."}), 400
+    cli = mysql_fetchone("SELECT id, razon_social, contacto_nombre FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    eq = _plan_equipos(cid)
+    if not eq:
+        return jsonify({"ok": False, "error": "El cliente no tiene equipos activos en su ficha: no hay qué mantener."}), 400
+    if not comm_is_enabled("email"):
+        return jsonify({"ok": False, "error": "El correo está apagado en Comunicaciones."}), 409
+    cfg = _plan_config()
+    n = sum(int(e["cantidad"] or 1) for e in eq)
+    c = _plan_calc(cfg, n, d.get("descuento_pct"), d.get("visitas_anio"))
+    esc = _html.escape
+    equipos_html = ('<ul style="margin:8px 0 12px;padding-left:20px">' + "".join(
+        f'<li style="margin:3px 0">{esc(e["nombre"] or "Equipo")}'
+        + (f' × {int(e["cantidad"])}' if int(e["cantidad"] or 1) > 1 else "")
+        + (f' <span style="color:#6b7280">({esc(e["marca"] or "")} {esc(e["modelo"] or "")})</span>'
+           if (e.get("marca") or e.get("modelo")) else "") + "</li>" for e in eq) + "</ul>")
+    if c["has_price"]:
+        precio_html = (f'<p style="margin:10px 0"><b>Inversión anual:</b> {_clp_fmt(c["total_anual"])}'
+                       + (f' ({_clp_fmt(c["total_mensual"])} al mes)' if c["total_anual"] else "")
+                       + (f' — con <b>{c["descuento_pct"]:g}% de descuento</b> sobre {_clp_fmt(c["subtotal_anual"])}'
+                          if c["descuento_pct"] else "") + ".</p>")
+    else:
+        precio_html = ('<p style="margin:10px 0">Te enviaremos la cotización a la medida de tus equipos'
+                       + (f' con <b>{c["descuento_pct"]:g}% de descuento</b>' if c["descuento_pct"] else "") + ".</p>")
+    incluye_html = ('<ul style="margin:8px 0 12px;padding-left:20px">' + "".join(
+        f'<li style="margin:3px 0">{esc(l.strip())}</li>'
+        for l in (cfg["incluye"] or "").splitlines() if l.strip()) + "</ul>")
+    variables = {"cliente_nombre": cli["razon_social"] or "", "equipos_html": equipos_html,
+                 "contacto_nombre": (cli.get("contacto_nombre") or "").strip() or "equipo",
+                 "visitas_anio": c["visitas_anio"], "vigencia_meses": int(float(cfg["vigencia_meses"])),
+                 "precio_html": precio_html, "incluye_html": incluye_html,
+                 "n_equipos": n, "descuento_pct": f'{c["descuento_pct"]:g}'}
+    tpl = _render_comm_template("plan_mantencion_oferta", "email", variables, modulo="mantenciones")
+    if tpl is None:
+        a0, b0 = _plan_oferta_seed()
+        for k, v in variables.items():
+            a0, b0 = a0.replace("{{" + k + "}}", str(v)), b0.replace("{{" + k + "}}", str(v))
+        tpl = (a0, b0)
+    asunto, cuerpo = tpl
+    html_final = _comm_render_email_document(asunto, cuerpo, subtitle="Plan de Mantención")
+    ok = _send_ilus_email(email, _brand_subject(asunto), html_final, modulo="mantenciones",
+                          evento="plan_mantencion_oferta", ref={"cliente_id": cid})
+    quien = current_username() or "sistema"
+    detalle = (f"{n} equipo(s) · {c['visitas_anio']} visitas/año · descuento {c['descuento_pct']:g}%"
+               + (f" · total anual {_clp_fmt(c['total_anual'])}" if c["has_price"] else " · sin precio (cotizar)"))
+    if not ok:
+        try:
+            _mant_log("cliente", cid, "plan_envio_fallo", f"Falló el correo a {email} · {detalle} · por {quien}")
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "No se pudo enviar el correo. Inténtalo de nuevo o revisa Comunicaciones."}), 502
+    _ensure_mant_prospecto_seguimiento()
+    mysql_execute(
+        "INSERT INTO mant_prospecto_seguimiento (cliente_id, etapa, nota, ofrecida_at, ofrecida_por, updated_by) "
+        "VALUES (%s,'ofrecida',%s,UTC_TIMESTAMP(),%s,%s) "
+        "ON DUPLICATE KEY UPDATE etapa=IF(etapa IN ('aceptada','rechazada'),etapa,'ofrecida'), "
+        "  nota=VALUES(nota), ofrecida_at=COALESCE(ofrecida_at, VALUES(ofrecida_at)), "
+        "  ofrecida_por=COALESCE(ofrecida_por, VALUES(ofrecida_por)), updated_by=VALUES(updated_by)",
+        (cid, f"Plan enviado a {email}: {detalle}"[:500], quien, quien))
+    try:
+        _mant_log("cliente", cid, "plan_enviado", f"Propuesta de plan de mantención enviada a {email} · {detalle} · por {quien}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "mensaje": f"Propuesta enviada a {email}."})
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/prospecto/seguimiento", methods=["POST"])
 @_mant_required
 @_no_tecnico
@@ -69658,8 +69910,6 @@ def mant_prospecto_seguimiento_guardar(cid):
     cli = mysql_fetchone("SELECT id, razon_social, estado, tipo_cliente FROM mant_clientes WHERE id=%s", (cid,))
     if not cli:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
-    if cli["estado"] != "prospecto" and cli.get("tipo_cliente") != "instalacion":
-        return jsonify({"ok": False, "error": "Este cliente no es de instalación ni prospecto."}), 409
     quien = current_username() or "sistema"
     _ensure_mant_prospecto_seguimiento()
     mysql_execute(
@@ -145677,6 +145927,8 @@ try:
         _ensure_mant_prospecto_seguimiento()
         _ensure_mant_prospecto_toques()
         _ensure_comm_template_prospecto_oferta()
+        _ensure_mant_plan_config()
+        _ensure_comm_template_plan_oferta()
 except Exception as _ensure_prosp_err:
     print(f"[ILUS][WARN] _ensure_mant_prospecto_seguimiento: {_ensure_prosp_err}", flush=True)
 
