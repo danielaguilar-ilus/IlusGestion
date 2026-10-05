@@ -62613,25 +62613,31 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
         creados, errores = [], []
         quien = usuario or current_username() or "sistema"
         for c in candidatos:
-            aplica = 0 if (clasif.get(c["sku"]) or {}).get("repetible") is True else 1
+            repetible = (clasif.get(c["sku"]) or {}).get("repetible") is True
+            aplica = 0 if repetible else 1
+            # Pisos y accesorios (repetibles, modelo de precio fijo): UNA fila con su cantidad (160 palmetas no son
+            # 160 máquinas). Las máquinas: una fila por unidad, cada una con su serie.
+            filas = [(None, int(c["cantidad"]))] if repetible else [("serie", 1)] * int(c["cantidad"])
             pref, seq = None, None
-            try:
-                base = _generar_serie_ilus(cid, c["sku"])
-                pref, suf = base.rsplit("-", 1)
-                seq = int(suf)
-            except Exception:
-                pref, seq = None, None
-            for i in range(int(c["cantidad"])):
-                serie = f"{pref}-{seq + i}" if pref is not None else None
+            if not repetible:
+                try:
+                    base = _generar_serie_ilus(cid, c["sku"])
+                    pref, suf = base.rsplit("-", 1)
+                    seq = int(suf)
+                except Exception:
+                    pref, seq = None, None
+            for i, (tipo_fila, cant_fila) in enumerate(filas):
+                serie = f"{pref}-{seq + i}" if (tipo_fila and pref is not None) else None
                 mid = None
                 for intento in range(5):
                     try:
                         mysql_execute(
                             "INSERT INTO mant_maquinas (cliente_id, sku, nombre, serie, cantidad, doc_origen, doc_fecha, "
                             "  fecha_instalacion, estado, notas, aplica_mantencion, created_by) "
-                            "VALUES (%s,%s,%s,%s,1,%s,%s,%s,'activo',%s,%s,%s)",
-                            (cid, c["sku"][:100], c["nombre"], serie, c["doc_key"], c["doc_fecha"], c["fecha_inst"],
-                             f"Alta desde la instalación (ticket {c['ticket']})", aplica, quien))
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'activo',%s,%s,%s)",
+                            (cid, c["sku"][:100], c["nombre"], serie, cant_fila, c["doc_key"], c["doc_fecha"], c["fecha_inst"],
+                             f"Alta desde la instalación (ticket {c['ticket']})"
+                             + (f" · lote de {cant_fila} unidades" if repetible else ""), aplica, quien))
                         mid = (mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}).get("id")
                         break
                     except Exception as e:

@@ -396,15 +396,16 @@ def test_equipos_vista_previa_sin_servicios_zz_ni_glosas():
     assert {o["sku"] for o in d["omitidos_detalle"]} == {"DE", "HTE"}     # no están en el maestro de productos
 
 
-def test_equipos_se_cargan_uno_por_unidad_y_accesorios_fuera_del_plan():
+def test_maquinas_una_por_unidad_y_accesorios_en_un_lote_fuera_del_plan():
     ns, calls, tk = _equipos_ns()
     ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=True, tickets_cache=tk)
-    assert ok and d["creados"] == 6 and len(calls["insert"]) == 6
+    assert ok and d["creados"] == 3 and len(calls["insert"]) == 3
     trot = [p for p in calls["insert"] if p[1] == "TROT1"]
     kb = [p for p in calls["insert"] if p[1] == "KB20"]
-    assert len(trot) == 2 and len(kb) == 4
-    assert trot[0][4] == "FCV 1234" and trot[0][5] == "2026-02-20"     # documento y fecha de emisión
-    assert trot[0][8] == 1 and kb[0][8] == 0                              # el accesorio no entra al plan
+    assert len(trot) == 2 and all(p[4] == 1 for p in trot)               # cada trotadora con su fila (y su serie)
+    assert len(kb) == 1 and kb[0][4] == 4 and kb[0][3] is None           # 4 kettlebells = un lote, sin serie
+    assert trot[0][5] == "FCV 1234" and trot[0][6] == "2026-02-20"       # documento y fecha de emisión
+    assert trot[0][9] == 1 and kb[0][9] == 0                              # el accesorio no entra al plan
 
 
 def test_misma_venta_en_varios_documentos_cuenta_una_vez():
