@@ -62498,12 +62498,26 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
         tickets = _tickets_instalacion_del_cliente(cli.get("rut"), tickets_cache)
         docs = _docs_de_tickets(tickets) if tickets else []
         candidatos, omitidos, docs_info = [], [], []
+        leidos = []
         for tido, nudo, fecha_reg, t in docs:
-            t = t or {}
             try:
                 header, lineas = _mant_erp_doc_cached(tido, nudo)
             except Exception:
                 header, lineas = None, []
+            leidos.append((tido, nudo, fecha_reg, t or {}, header, lineas or []))
+        # Solo entran PRODUCTOS reales: los que existen en el maestro de productos de ILUS (tiene_ficha, el de las
+        # etiquetas) o en el Catálogo. Una factura puede traer líneas de servicio o glosas ('DE' x 828000) que no
+        # son máquinas: esas quedan omitidas con su motivo, nunca se inventa un equipo.
+        _skus_doc = sorted({(ln.get("sku") or "").strip().upper() for *_x, lns in leidos for ln in lns if ln.get("sku")})
+        en_catalogo = set()
+        if _skus_doc:
+            try:
+                _ph = ",".join(["%s"] * len(_skus_doc))
+                en_catalogo = {(r["sku"] or "").strip().upper() for r in (mysql_fetchall(
+                    f"SELECT sku FROM cat_productos WHERE UPPER(TRIM(sku)) IN ({_ph})", tuple(_skus_doc)) or [])}
+            except Exception as e:
+                print(f"[equipos_instalacion] catálogo: {e}", flush=True)
+        for tido, nudo, fecha_reg, t, header, lineas in leidos:
             if not header:
                 docs_info.append({"doc": f"{tido} {nudo}", "estado": "no está en el ERP"})
                 continue
@@ -62522,8 +62536,14 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                     cant = 0
                 if cant <= 0:
                     continue
-                saldo = cant - int(ya.get(sku.upper()) or 0)
                 nombre = (ln.get("nombre_app") or ln.get("descripcion_erp") or sku)[:400]
+                if not ln.get("tiene_ficha") and sku.upper() not in en_catalogo:
+                    omitidos.append({"sku": sku, "nombre": nombre, "motivo": "no está en el maestro de productos"})
+                    continue
+                if cant > 300:
+                    omitidos.append({"sku": sku, "nombre": nombre, "motivo": f"cantidad fuera de rango ({cant})"})
+                    continue
+                saldo = cant - int(ya.get(sku.upper()) or 0)
                 if saldo <= 0:
                     omitidos.append({"sku": sku, "nombre": nombre, "motivo": f"ya está en una ficha con {doc_key}"})
                     continue
@@ -62533,7 +62553,7 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
             docs_info.append({"doc": doc_key, "fecha": str(doc_fecha)[:10] if doc_fecha else "", "equipos": n_doc})
         respaldo = False
         if not candidatos and tickets and not any(d.get("equipos") for d in docs_info if "equipos" in d) \
-                and not any(o for o in omitidos):
+                and not any("ya está" in (o.get("motivo") or "") for o in omitidos):
             por_id = {t["id"]: t for t in tickets}
             existentes = {(r["sku"] or ""): int(r["n"] or 0) for r in (mysql_fetchall(
                 "SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(cantidad),0) AS n FROM mant_maquinas "
@@ -62546,6 +62566,8 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                 if not sku or sku.upper().startswith("ZZ"):
                     continue
                 cant = max(1, int(e.get("cantidad") or 1))
+                if cant > 300:
+                    continue
                 saldo = cant - existentes.get(sku.upper(), 0)
                 if saldo <= 0:
                     continue
@@ -62559,7 +62581,7 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
             respaldo = bool(candidatos)
         resumen = {"tickets": [t.get("numero_ticket") for t in tickets], "documentos": docs_info,
                    "respaldo_ticket": respaldo, "total_a_crear": sum(c["cantidad"] for c in candidatos),
-                   "omitidos": len(omitidos)}
+                   "omitidos": len(omitidos), "omitidos_detalle": omitidos[:20]}
         if not confirmar:
             return True, {"preview": True, **resumen,
                           "candidatos": [{k: (str(v)[:10] if k in ("doc_fecha", "fecha_inst") and v else v)

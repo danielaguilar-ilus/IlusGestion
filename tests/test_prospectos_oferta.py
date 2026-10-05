@@ -352,8 +352,10 @@ def _equipos_ns(header=True, asignados=None, equipos_ticket=None, numero_documen
         return {"id": 5, "rut": "1-9", "razon_social": "Gym"}
 
     lineas = [{"sku": "ZZINSTALACION", "cantidad": 1, "es_zz": True},
-              {"sku": "TROT1", "cantidad": 2, "nombre_app": "Trotadora"},
-              {"sku": "KB20", "cantidad": 4, "nombre_app": "Kettlebell 20"}]
+              {"sku": "TROT1", "cantidad": 2, "nombre_app": "Trotadora", "tiene_ficha": True},
+              {"sku": "KB20", "cantidad": 4, "nombre_app": "Kettlebell 20", "tiene_ficha": True},
+              {"sku": "DE", "cantidad": 828000, "descripcion_erp": "glosa de la factura"},      # basura real (FCV 11150)
+              {"sku": "HTE", "cantidad": 1, "descripcion_erp": "no es un producto"}]
     ns = {"re": _re, "print": print,
           "_rut_canon": lambda r: "1-9", "_rut_cuerpo": lambda r: "1",
           "mysql_fetchall": fetchall, "mysql_fetchone": fetchone,
@@ -376,11 +378,12 @@ def test_docs_se_leen_del_texto_del_ticket():
     assert [(d[0], d[1]) for d in docs] == [("FCV", "1234"), ("BLV", "55")]
 
 
-def test_equipos_vista_previa_sin_servicios_zz():
+def test_equipos_vista_previa_sin_servicios_zz_ni_glosas():
     ns, calls, tk = _equipos_ns()
     ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=False, tickets_cache=tk)
     assert ok and d["preview"] and d["total_a_crear"] == 6 and not calls["insert"]
     assert {c["sku"] for c in d["candidatos"]} == {"TROT1", "KB20"}
+    assert {o["sku"] for o in d["omitidos_detalle"]} == {"DE", "HTE"}     # no están en el maestro de productos
 
 
 def test_equipos_se_cargan_uno_por_unidad_y_accesorios_fuera_del_plan():
