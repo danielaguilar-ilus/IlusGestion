@@ -127775,6 +127775,61 @@ def mant_proveedor_repuesto_crear():
 _PROV_FAMILIAS_CACHE = {"data": None, "ts": 0.0}
 
 
+@app.route("/admin/erp/familias-buscar", methods=["GET"])
+@require_permission("admin")
+def admin_erp_familias_buscar():
+    """Diagnóstico SOLO LECTURA (REGLA #4.1, todo por _random_sql_query): dónde
+    aparece un nombre (ej. DRAX) en las familias del ERP Random. Según el
+    diccionario oficial, MAEPR tiene 3 niveles: FMPR = superfamilia (TABFM:
+    KOFM/NOKOFM), PFPR = familia (TABPF: KOFM+KOPF/NOKOPF) y HFPR = subfamilia
+    (TABHF: KOFM+KOPF+KOHF/NOKOHF). Uso: /admin/erp/familias-buscar?q=DRAX"""
+    q = re.sub(r"[^A-Za-z0-9 ÁÉÍÓÚÑáéíóúñ\-]", "", request.args.get("q") or "").strip().upper()[:40]
+    if len(q) < 2:
+        return jsonify({"ok": False, "error": "Indica ?q= con al menos 2 letras. Ej: ?q=DRAX"}), 400
+    like = f"%{q}%"
+    consultas = {
+        "superfamilias_TABFM": (
+            "SELECT TOP 50 RTRIM(KOFM) AS kofm, RTRIM(NOKOFM) AS nombre FROM TABFM "
+            " WHERE UPPER(NOKOFM) LIKE %s OR UPPER(KOFM) LIKE %s ORDER BY NOKOFM", (like, like)),
+        "familias_TABPF": (
+            "SELECT TOP 50 RTRIM(pf.KOFM) AS kofm, RTRIM(fm.NOKOFM) AS superfamilia, RTRIM(pf.KOPF) AS kopf, RTRIM(pf.NOKOPF) AS nombre "
+            "  FROM TABPF pf LEFT JOIN TABFM fm ON fm.KOFM = pf.KOFM "
+            " WHERE UPPER(pf.NOKOPF) LIKE %s OR UPPER(pf.KOPF) LIKE %s ORDER BY pf.NOKOPF", (like, like)),
+        "subfamilias_TABHF": (
+            "SELECT TOP 50 RTRIM(hf.KOFM) AS kofm, RTRIM(fm.NOKOFM) AS superfamilia, RTRIM(hf.KOPF) AS kopf, RTRIM(pf.NOKOPF) AS familia, "
+            "       RTRIM(hf.KOHF) AS kohf, RTRIM(hf.NOKOHF) AS nombre "
+            "  FROM TABHF hf LEFT JOIN TABFM fm ON fm.KOFM = hf.KOFM "
+            "  LEFT JOIN TABPF pf ON pf.KOFM = hf.KOFM AND pf.KOPF = hf.KOPF "
+            " WHERE UPPER(hf.NOKOHF) LIKE %s OR UPPER(hf.KOHF) LIKE %s ORDER BY hf.NOKOHF", (like, like)),
+        "productos_MAEPR": (
+            "SELECT TOP 40 RTRIM(pr.KOPR) AS sku, RTRIM(pr.NOKOPR) AS descripcion, RTRIM(pr.MRPR) AS marca, "
+            "       RTRIM(pr.FMPR) AS fmpr, RTRIM(fm.NOKOFM) AS superfamilia, RTRIM(pr.PFPR) AS pfpr, RTRIM(pf.NOKOPF) AS familia, "
+            "       RTRIM(pr.HFPR) AS hfpr, RTRIM(hf.NOKOHF) AS subfamilia "
+            "  FROM MAEPR pr LEFT JOIN TABFM fm ON fm.KOFM = pr.FMPR "
+            "  LEFT JOIN TABPF pf ON pf.KOFM = pr.FMPR AND pf.KOPF = pr.PFPR "
+            "  LEFT JOIN TABHF hf ON hf.KOFM = pr.FMPR AND hf.KOPF = pr.PFPR AND hf.KOHF = pr.HFPR "
+            " WHERE UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.MRPR) LIKE %s ORDER BY pr.NOKOPR", (like, like)),
+        "productos_por_familia": (
+            "SELECT TOP 40 RTRIM(fm.NOKOFM) AS superfamilia, RTRIM(pf.NOKOPF) AS familia, RTRIM(hf.NOKOHF) AS subfamilia, COUNT(*) AS productos "
+            "  FROM MAEPR pr LEFT JOIN TABFM fm ON fm.KOFM = pr.FMPR "
+            "  LEFT JOIN TABPF pf ON pf.KOFM = pr.FMPR AND pf.KOPF = pr.PFPR "
+            "  LEFT JOIN TABHF hf ON hf.KOFM = pr.FMPR AND hf.KOPF = pr.PFPR AND hf.KOHF = pr.HFPR "
+            " WHERE UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.MRPR) LIKE %s "
+            " GROUP BY fm.NOKOFM, pf.NOKOPF, hf.NOKOHF ORDER BY COUNT(*) DESC", (like, like)),
+    }
+    salida = {"ok": True, "q": q}
+    for clave, (sql, params) in consultas.items():
+        try:
+            filas = [dict(r) for r in (_random_sql_query(sql, params, max_rows=50) or [])]
+            salida[clave] = filas
+        except Exception as e:
+            print(f"[erp-familias] {clave} q={q}: {e}", flush=True)
+            salida[clave] = "no se pudo consultar (ver registro)"
+    print(f"[erp-familias] q={q} " + " · ".join(
+        f"{k}={len(v) if isinstance(v, list) else 'error'}" for k, v in salida.items() if k not in ("ok", "q")), flush=True)
+    return jsonify(salida)
+
+
 @app.route("/mantenciones/api/proveedores-repuesto/familias-erp", methods=["GET"])
 @_mant_required
 @_no_tecnico
