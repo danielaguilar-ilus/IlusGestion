@@ -127389,6 +127389,9 @@ _PROV_COLS_NUEVAS = (
     # Familias del ERP Random que vende (lista JSON [{codigo, nombre}]): para
     # anticipar a quién se le compra cada línea (Daniel 2026-10-04).
     ("familias_erp", "TEXT NULL"),
+    # 2026-10-04: en Random "DRAX" o "BOOYBUILDER" no son familias, son MARCAS
+    # (MAEPR.MRPR). Se asocian marcas del ERP (lista JSON [{codigo, nombre}]).
+    ("marcas_erp", "TEXT NULL"),
 )
 _PROV_INCOTERMS = ("EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP")
 _PROV_COLS_OK = {"listo": False}
@@ -127604,10 +127607,11 @@ def _prov_calidad(p):
         ("Condiciones de pago", bool((p.get("condiciones_pago") or "").strip())),
         ("Plazo de entrega", p.get("plazo_entrega_dias") not in (None, "")),
         ("Dirección", bool((p.get("direccion") or "").strip())),
-        ("Marcas que vende", bool((p.get("marcas") or "").strip())),
+        ("Marcas que vende", bool((p.get("marcas") or "").strip())
+         or bool(p.get("marcas_erp") and str(p.get("marcas_erp")).strip() not in ("[]", "null"))),
         # Incoterm solo aplica a importaciones: a un nacional no se le exige.
         ("Incoterm (importación)", bool((p.get("incoterm") or "").strip()) or (p.get("origen") == "nacional")),
-        ("Familia del ERP", bool(p.get("familias_erp") and str(p.get("familias_erp")).strip() not in ("[]", "null"))),
+        ("Marca del ERP", any(p.get(k) and str(p.get(k)).strip() not in ("[]", "null") for k in ("marcas_erp", "familias_erp"))),
     ]
     out = [{"texto": t, "ok": ok} for t, ok in items]
     n = sum(1 for x in out if x["ok"])
@@ -127686,6 +127690,20 @@ def _prov_campos_desde_body(d, parcial):
             return None, "El proceso de compra viene en un formato que no se entiende."
         pasos = [str(x).strip()[:80] for x in pasos if str(x or "").strip()][:12]
         out["proceso_compra"] = json.dumps(pasos, ensure_ascii=False) if pasos else None
+    if not parcial or "marcas_erp" in d:
+        mrs = d.get("marcas_erp") or []
+        if not isinstance(mrs, list):
+            return None, "Las marcas vienen en un formato que no se entiende."
+        limpias, vistos = [], set()
+        for m in mrs[:30]:
+            if not isinstance(m, dict):
+                continue
+            cod = str(m.get("codigo") or "").strip()[:40]
+            nom = str(m.get("nombre") or cod).strip()[:80]
+            if (cod or nom) and (cod or nom).lower() not in vistos:
+                vistos.add((cod or nom).lower())
+                limpias.append({"codigo": cod, "nombre": nom})
+        out["marcas_erp"] = json.dumps(limpias, ensure_ascii=False) if limpias else None
     if not parcial or "familias_erp" in d:
         fams = d.get("familias_erp") or []
         if not isinstance(fams, list):
@@ -127909,6 +127927,61 @@ def admin_erp_familias_buscar():
     return jsonify(salida)
 
 
+_PROV_MARCAS_ERP_CACHE = {"data": None, "ts": 0.0}
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/marcas-erp", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_proveedores_marcas_erp():
+    """Marcas del ERP Random (MAEPR.MRPR, con su nombre de TABMR si existe) y,
+    por cada una, cuántos productos tiene en cada superfamilia/familia
+    (FMPR/TABFM, PFPR/TABPF). Sirve para asociar al proveedor sus marcas con una
+    búsqueda aproximada (Daniel 2026-10-04: "una búsqueda más o menos, no quiero
+    modificar nada del ERP"). SOLO LECTURA (REGLA #4.1). Cache de 1 hora."""
+    if _PROV_MARCAS_ERP_CACHE["data"] is not None and time.time() - _PROV_MARCAS_ERP_CACHE["ts"] < 3600:
+        return jsonify({"ok": True, "marcas": _PROV_MARCAS_ERP_CACHE["data"]})
+    filas = []
+    for _sql in (
+        "SELECT RTRIM(pr.MRPR) AS m, RTRIM(MAX(mr.NOKOMR)) AS nom, RTRIM(fm.NOKOFM) AS sf, RTRIM(pf.NOKOPF) AS f, COUNT(*) AS n "
+        "  FROM MAEPR pr LEFT JOIN TABMR mr ON mr.KOMR = pr.MRPR "
+        "  LEFT JOIN TABFM fm ON fm.KOFM = pr.FMPR "
+        "  LEFT JOIN TABPF pf ON pf.KOFM = pr.FMPR AND pf.KOPF = pr.PFPR "
+        " WHERE pr.MRPR IS NOT NULL AND RTRIM(pr.MRPR) <> '' "
+        " GROUP BY pr.MRPR, fm.NOKOFM, pf.NOKOPF",
+        "SELECT RTRIM(pr.MRPR) AS m, RTRIM(fm.NOKOFM) AS sf, RTRIM(pf.NOKOPF) AS f, COUNT(*) AS n "
+        "  FROM MAEPR pr LEFT JOIN TABFM fm ON fm.KOFM = pr.FMPR "
+        "  LEFT JOIN TABPF pf ON pf.KOFM = pr.FMPR AND pf.KOPF = pr.PFPR "
+        " WHERE pr.MRPR IS NOT NULL AND RTRIM(pr.MRPR) <> '' "
+        " GROUP BY pr.MRPR, fm.NOKOFM, pf.NOKOPF",
+    ):
+        try:
+            filas = _random_sql_query(_sql, None, max_rows=5000) or []
+        except Exception as e:
+            print(f"[proveedores] marcas ERP: {e}", flush=True)
+            filas = []
+        if filas:
+            break
+    if not filas:
+        return jsonify({"ok": False, "marcas": [], "error": "No se pudo leer las marcas del ERP. Intenta en un rato."})
+    por = {}
+    for f in filas:
+        cod = str(f.get("m") or "").strip()
+        if not cod:
+            continue
+        nom = str(f.get("nom") or "").strip() or cod
+        m = por.setdefault(cod, {"codigo": cod, "nombre": nom.title() if nom.isupper() else nom, "productos": 0, "familias": []})
+        n = int(f.get("n") or 0)
+        m["productos"] += n
+        fam = " › ".join(x for x in (str(f.get("sf") or "").strip().title(), str(f.get("f") or "").strip().title()) if x) or "Sin familia"
+        m["familias"].append({"familia": fam, "productos": n})
+    data = sorted(por.values(), key=lambda x: -x["productos"])
+    for m in data:
+        m["familias"].sort(key=lambda x: -x["productos"])
+    _PROV_MARCAS_ERP_CACHE["data"], _PROV_MARCAS_ERP_CACHE["ts"] = data, time.time()
+    return jsonify({"ok": True, "marcas": data})
+
+
 @app.route("/mantenciones/api/proveedores-repuesto/familias-erp", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -128002,7 +128075,7 @@ def mant_proveedor_repuesto_ficha(pid):
     for k in ("direccion_lat", "direccion_lng"):
         p[k] = float(p[k]) if p.get(k) is not None else None
     _prov_tablas_asegurar()
-    for _k in ("proceso_compra", "familias_erp"):
+    for _k in ("proceso_compra", "familias_erp", "marcas_erp"):
         try:
             p[_k] = json.loads(p.get(_k) or "[]")
         except Exception:

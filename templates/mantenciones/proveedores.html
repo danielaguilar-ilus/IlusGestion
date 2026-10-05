@@ -401,6 +401,61 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
   .pvr-it .met{grid-column:2;justify-content:flex-start}
 }
 .pvf-cont.pvf-flash{animation:pvfFlash 1.1s ease-in-out 1}
+
+/* ── Marcas del ERP asociadas ── */
+.pvf-fams{display:flex;flex-direction:column;gap:8px}
+.pvf-fams:empty::before{content:'Ninguna marca del ERP asociada todavía';font-size:.86rem;color:#9ca3af}
+.pvf-marca{border:1.5px solid #86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%);border-radius:12px;padding:9px 12px}
+.pvf-marca-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pvf-marca-h i{color:#16a34a}
+.pvf-marca-h b{font-size:.98rem;color:#0a0a0a}
+.pvf-marca-h button{margin-left:auto;border:0;background:#fee2e2;color:#991b1b;width:30px;height:30px;border-radius:50%}
+.pvf-marca-f{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.pvf-marca-f span{background:#fff;border:1px solid #e5e7eb;border-radius:50px;padding:2px 10px;font-size:.78rem;color:#374151}
+.pvf-fam-op{display:inline-flex;align-items:center;gap:4px;text-align:left}
+/* ── Pestañas al estilo de la ficha de Clientes (más marcadas) ── */
+.pvf-tabs{display:flex;gap:0;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:0 6px;margin-bottom:14px;position:sticky;top:-16px;z-index:5;
+  box-shadow:0 4px 14px rgba(0,0,0,.10);overflow-x:auto;scrollbar-width:none}
+.pvf-tabs::-webkit-scrollbar{display:none}
+.pvf-tab{position:relative;background:none;border:0;border-bottom:3px solid transparent;border-radius:0;padding:14px 18px;min-height:54px;font-weight:700;font-size:.95rem;
+  color:#6b7280;display:inline-flex;flex-direction:row;align-items:center;gap:8px;white-space:nowrap;cursor:pointer;margin-bottom:-1px;transition:color .15s,border-color .15s;text-align:left;box-shadow:none}
+.pvf-tab:hover{color:#111827;background:none;border-color:transparent}
+.pvf-tab.is-on{color:#dc2626;border-bottom-color:#dc2626;background:none}
+.pvf-tab .cnt{border-radius:50px;padding:2px 9px;font-size:.74rem;font-weight:800;background:#f3f4f6;color:#374151}
+.pvf-tab .cnt.vd{background:#dcfce7;color:#166534}.pvf-tab .cnt.am{background:#fff8e1;color:#92400e}
+.pvf-tab .cnt.rj{background:#fee2e2;color:#991b1b}.pvf-tab .cnt.az{background:#dbeafe;color:#1e40af}
+.pvf-tab .dot-fs{position:static;width:9px;height:9px}
+/* ── Tabla estándar (patrón Retiros: encabezado negro + pie paginado) ── */
+.pvt-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(10,10,10,.05)}
+.pvt-scroll{overflow-x:auto}
+.pvt{width:100%;margin:0;border-collapse:separate;border-spacing:0}
+.pvt thead th{padding:11px 12px;background:#0a0a0a;color:#fff;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;border:0;text-align:left}
+.pvt th.num,.pvt td.num{text-align:right}
+.pvt tbody td{padding:11px 12px;vertical-align:middle;border-bottom:1px solid #f1f2f4;color:#111827;font-size:.9rem}
+.pvt tbody tr:hover td{background:#f9fafb}
+.pvt tbody tr.pvt-fs td{background:#fff5f5}
+.pvt tbody tr.pvt-fs td:first-child{box-shadow:inset 5px 0 0 #dc2626}
+.pvt-vacio{text-align:center;color:#6b7280;padding:22px!important}
+.pvt-link{font-weight:800;color:#dc2626;text-decoration:none}
+.pvt-rep{display:flex;align-items:center;gap:10px}
+.pvt-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;background:#161616;border-top:1px solid #2d2d2d}
+.pvt-count{display:flex;align-items:center;gap:8px;color:#e5e7eb;font-size:.88rem}
+.pvt-count .bi{color:#f87171}.pvt-count strong{color:#fff}
+.pvt-ctrl{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:#e5e7eb;font-size:.88rem}
+.pvt-select{min-height:40px;padding:0 30px 0 10px;border:1.5px solid #4b5563;border-radius:10px;background-color:#1a1a1a;color:#fff;font-size:.88rem;font-weight:600}
+.pvt-btn{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 12px;background:transparent;border:1.5px solid #6b7280;border-radius:10px;color:#fff;font-size:.86rem;font-weight:700}
+.pvt-btn:hover:not(:disabled){background:#fff;color:#0a0a0a}
+.pvt-btn:disabled{opacity:.4;cursor:not-allowed}
+@media (max-width:768px){
+  .pvt thead{display:none}
+  .pvt,.pvt tbody,.pvt tr,.pvt td{display:block;width:100%}
+  .pvt tbody tr{border-bottom:1px solid #e5e7eb;padding:8px 4px}
+  .pvt tbody td{border:0;padding:4px 10px;text-align:left!important;display:flex;gap:10px;align-items:flex-start}
+  .pvt tbody td::before{content:attr(data-th);flex:0 0 42%;font-size:.72rem;font-weight:800;text-transform:uppercase;color:#6b7280}
+  .pvt tbody td.pvt-vacio::before{content:none}
+  .pvt-foot{flex-direction:column;align-items:stretch}
+  .pvt-ctrl{justify-content:space-between}
+}
 </style>
 
 <div class="container-fluid py-3 px-3 px-md-4">
@@ -737,15 +792,15 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
               <div class="pvf-step-h">
                 <div class="pvf-circ-wrap"><span class="pvf-circ-lbl">Paso 3</span><div class="pvf-circ"><span class="num">3</span><i class="bi bi-check-lg chk"></i></div></div>
                 <div class="pvf-tits"><div class="pvf-tit">Qué vende y dónde está</div>
-                  <div class="pvf-sub">Las familias del ERP que nos vende (así se anticipa a quién comprarle cada línea), sus marcas y su dirección.</div>
+                  <div class="pvf-sub">Las marcas del ERP que nos vende (así se anticipa a quién comprarle cada producto; el ERP solo se consulta), otras líneas y su dirección.</div>
                   <div class="pvf-estado" id="pvfEstado3"></div></div>
               </div>
-              <label class="form-label d-block">Familias del ERP que vende</label>
+              <label class="form-label d-block">Marcas del ERP que vende</label>
               <div class="pvf-fams" id="pvfFamsSel"></div>
               <div class="pvf-sugs" id="pvfFamsSug"></div>
-              <input type="search" class="form-control mt-2" id="pvfFamQ" placeholder="Buscar familia del ERP (ej: Relax, Broadway, Booty Builder)" oninput="pvfFamBuscar(this.value)" autocomplete="off">
+              <input type="search" class="form-control mt-2" id="pvfFamQ" placeholder="Buscar marca del ERP, aunque no esté escrita igual (ej: Drax, Booty Builder)" oninput="pvfFamBuscar(this.value)" autocomplete="off">
               <div class="pvf-fam-lista" id="pvfFamLista"></div>
-              <label class="form-label mt-3" for="provMarcas">Marcas o líneas que vende</label>
+              <label class="form-label mt-3" for="provMarcas">Otras marcas o líneas que vende <span class="pvf-opc">(texto libre)</span></label>
               <input type="text" class="form-control" id="provMarcas" maxlength="300" placeholder="Ej: Drax, línea de trotadoras X3, repuestos de bicicletas">
               <div class="row g-2 mt-1">
                 <div class="col-md-8"><label class="form-label" for="provDireccion">Dirección</label>
@@ -1149,22 +1204,35 @@ function pvfContactoAgregar(){
   if (ins[0]) ins[0].focus();
 }
 
-/* ══ Familias del ERP (solo lectura del ERP) ══ */
+/* ══ Marcas del ERP (Random) que vende el proveedor — solo lectura del ERP.
+   En Random "DRAX" o "BOOYBUILDER" son MARCAS (MAEPR.MRPR), no familias: la
+   familia es la categoría (Fuerza › Máquinas, Cardio › Trotadoras, Repuestos).
+   Búsqueda aproximada: encuentra "BOOYBUILDER" escribiendo "Booty Builder". ══ */
 async function pvfFamsCargar(){
   if (_pvf.famsErp) return _pvf.famsErp;
   try {
-    const r = await fetch('/mantenciones/api/proveedores-repuesto/familias-erp', {credentials:'same-origin'});
+    const r = await fetch('/mantenciones/api/proveedores-repuesto/marcas-erp', {credentials:'same-origin'});
     const j = await r.json();
-    _pvf.famsErp = j.familias || [];
+    _pvf.famsErp = j.marcas || [];
     if (!j.ok) document.getElementById('pvfFamLista').innerHTML = '<span class="pvf-opc">' + pvEsc(j.error || 'No se pudo leer el ERP.') + '</span>';
   } catch(e){ _pvf.famsErp = []; }
   pvfEvaluar();
   return _pvf.famsErp;
 }
+function pvfMarcaErp(m){ return (_pvf.famsErp || []).find(function(x){ return (m.codigo && x.codigo === m.codigo) || pvfNorm(x.nombre) === pvfNorm(m.nombre); }) || null; }
 function pvfFamTiene(f){ return _pvf.fams.some(function(x){ return (x.codigo && x.codigo === f.codigo) || pvfNorm(x.nombre) === pvfNorm(f.nombre); }); }
+function pvfFamsTxt(m, n){
+  return (m && m.familias || []).slice(0, n || 4).map(function(f){ return f.familia + ' ' + f.productos; }).join(' · ');
+}
 function pvfFamsRender(){
   document.getElementById('pvfFamsSel').innerHTML = _pvf.fams.map(function(f, i){
-    return '<span class="pvf-fam">' + pvEsc(f.nombre) + '<button type="button" onclick="pvfFamQuitar(' + i + ')" aria-label="Quitar ' + pvEsc(f.nombre) + '"><i class="bi bi-x-lg"></i></button></span>';
+    const e = pvfMarcaErp(f);
+    return '<div class="pvf-marca"><div class="pvf-marca-h"><i class="bi bi-tags-fill"></i><b>' + pvEsc(f.nombre) + '</b>' +
+      (f.codigo && pvfNorm(f.codigo) !== pvfNorm(f.nombre) ? '<span class="pvf-opc">código ERP ' + pvEsc(f.codigo) + '</span>' : '') +
+      (e ? '<span class="pvf-chip">' + e.productos + ' productos en el ERP</span>' : '') +
+      '<button type="button" onclick="pvfFamQuitar(' + i + ')" aria-label="Quitar ' + pvEsc(f.nombre) + '"><i class="bi bi-x-lg"></i></button></div>' +
+      (e ? '<div class="pvf-marca-f">' + (e.familias || []).slice(0, 6).map(function(x){ return '<span>' + pvEsc(x.familia) + ' <b>' + x.productos + '</b></span>'; }).join('') + '</div>' : '') +
+      '</div>';
   }).join('');
 }
 function pvfFamAgregar(i, desde){
@@ -1174,16 +1242,7 @@ function pvfFamAgregar(i, desde){
   pvfFamsRender(); pvfFamBuscar(document.getElementById('pvfFamQ').value); pvfEvaluar();
 }
 function pvfFamQuitar(i){ _pvf.fams.splice(i, 1); pvfFamsRender(); pvfEvaluar(); }
-function pvfFamBuscar(q){
-  const cont = document.getElementById('pvfFamLista');
-  const n = pvfNorm(q);
-  if (n.length < 2 || !_pvf.famsErp){ cont.innerHTML = ''; return; }
-  _pvf._famRes = _pvf.famsErp.filter(function(f){ return pvfNorm(f.nombre).indexOf(n) >= 0 && !pvfFamTiene(f); }).slice(0, 40);
-  cont.innerHTML = _pvf._famRes.length ? _pvf._famRes.map(function(f, i){
-    return '<button type="button" class="pvf-fam-op" onclick="pvfFamAgregar(' + i + ',\'res\')"><i class="bi bi-plus-lg me-1"></i>' + pvEsc(f.nombre) + '</button>';
-  }).join('') : '<span class="pvf-opc">Ninguna familia del ERP con «' + pvEsc(q) + '».</span>';
-}
-/* Parecido entre dos textos (0 a 1), para reconocer "Booty Builder" en "BOOTYBUILDER LTD" */
+/* Parecido entre dos textos (0 a 1): "bootybuilder" ≈ "booybuilder" */
 function pvfParecido(a, b){
   if (!a || !b) return 0;
   if (a === b) return 1;
@@ -1194,18 +1253,38 @@ function pvfParecido(a, b){
     d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
   return 1 - d[m][n] / Math.max(m, n);
 }
+function pvfMarcaPuntaje(k, m){
+  const nn = pvfNorm(m.nombre), nc = pvfNorm(m.codigo);
+  let best = 0;
+  [nn, nc].forEach(function(x){
+    if (!x || x.length < 2) return;
+    if (x === k) best = Math.max(best, 1);
+    else if ((x.length >= 3 && k.indexOf(x) >= 0) || (k.length >= 3 && x.indexOf(k) >= 0)) best = Math.max(best, 0.9);
+    else best = Math.max(best, pvfParecido(k, x));
+  });
+  return best;
+}
+function pvfFamBuscar(q){
+  const cont = document.getElementById('pvfFamLista');
+  const k = pvfNorm(q);
+  if (k.length < 2 || !_pvf.famsErp){ cont.innerHTML = ''; return; }
+  _pvf._famRes = _pvf.famsErp.map(function(m){ return { m: m, p: pvfMarcaPuntaje(k, m) }; })
+    .filter(function(x){ return x.p >= 0.7 && !pvfFamTiene(x.m); })
+    .sort(function(a, b){ return b.p - a.p || b.m.productos - a.m.productos; })
+    .slice(0, 12).map(function(x){ return x.m; });
+  cont.innerHTML = _pvf._famRes.length ? _pvf._famRes.map(function(m, i){
+    return '<button type="button" class="pvf-fam-op" onclick="pvfFamAgregar(' + i + ',\'res\')"><i class="bi bi-plus-lg me-1"></i><b>' + pvEsc(m.nombre) + '</b>' +
+      ' <span class="pvf-opc">' + m.productos + ' productos' + (pvfFamsTxt(m, 2) ? ' · ' + pvEsc(pvfFamsTxt(m, 2)) : '') + '</span></button>';
+  }).join('') : '<span class="pvf-opc">Ninguna marca del ERP se parece a «' + pvEsc(q) + '».</span>';
+}
 function pvfFamsSugeridas(){
   if (!_pvf.famsErp || !_pvf.famsErp.length) return [];
   const fuentes = [pvVal('provNombre')].concat(pvVal('provMarcas').split(/[,;\/]| y /));
   const claves = fuentes.map(pvfNorm).filter(function(x){ return x.length >= 3; });
   if (!claves.length) return [];
-  return _pvf.famsErp.filter(function(f){
-    if (pvfFamTiene(f)) return false;
-    const nf = pvfNorm(f.nombre);
-    if (nf.length < 3) return false;
-    return claves.some(function(k){
-      return k === nf || (nf.length >= 4 && k.indexOf(nf) >= 0) || (k.length >= 4 && nf.indexOf(k) >= 0) || pvfParecido(k, nf) >= 0.8;
-    });
+  return _pvf.famsErp.filter(function(m){
+    if (pvfFamTiene(m)) return false;
+    return claves.some(function(k){ return pvfMarcaPuntaje(k, m) >= 0.8; });
   }).slice(0, 6);
 }
 
@@ -1325,7 +1404,7 @@ function pvfCalidad(){
   const orig = pvRadioVal('provOrigen'), pr = pvfContPrincipal();
   const canal = pr && (pr.canales || []).length;
   return [pr && pr.nombre, pr && pr.telefono, pr && pr.email, canal, orig, (pvVal('provPais') || orig === 'nacional'), pvVal('provMoneda'), pvVal('provRutTax'),
-    pvVal('provCondPago'), pvVal('provPlazo') !== '', pvVal('provDireccion'), pvVal('provMarcas'), (pvVal('provIncoterm') || orig === 'nacional'), _pvf.fams.length].filter(Boolean).length;
+    pvVal('provCondPago'), pvVal('provPlazo') !== '', pvVal('provDireccion'), (pvVal('provMarcas') || _pvf.fams.length), (pvVal('provIncoterm') || orig === 'nacional'), _pvf.fams.length].filter(Boolean).length;
 }
 
 /* ══ Semáforo de los pasos ══ */
@@ -1396,15 +1475,15 @@ function pvfEvaluar(){
 
   // Paso 3 · Qué vende y dónde está
   const f3 = [], r3 = [];
-  if (!_pvf.fams.length) f3.push('familia del ERP');
-  if (!pvVal('provMarcas')) f3.push('marcas o líneas');
+  if (!_pvf.fams.length) f3.push('marca del ERP');
+  if (!pvVal('provMarcas') && !_pvf.fams.length) f3.push('marcas o líneas');
   if (!pvVal('provDireccion')) f3.push('dirección');
   if (orig === 'nacional' && pvVal('provDireccion') && !pvVal('provDirLat')) r3.push('dirección sin verificar: elígela de las sugerencias de Google');
   const e3 = pvfPintarPaso(3, f3, r3, 'Sabemos qué vende y dónde está');
   document.getElementById('pvfGeo').innerHTML = pvVal('provDirLat') ? '<i class="bi bi-patch-check-fill"></i>Dirección verificada con Google Maps' : '';
   pvfFamsRender();
   _pvf._famSug = pvfFamsSugeridas();
-  document.getElementById('pvfFamsSug').innerHTML = _pvf._famSug.map(function(f, i){ return pvfSug('Sugerida por el nombre', f.nombre, "pvfFamAgregar(" + i + ",'sug')", 'Asociar'); }).join('');
+  document.getElementById('pvfFamsSug').innerHTML = _pvf._famSug.map(function(f, i){ return pvfSug('Marca del ERP parecida', f.nombre + ' · ' + f.productos + ' productos', "pvfFamAgregar(" + i + ",'sug')", 'Asociar'); }).join('');
 
   // Paso 4 · Condiciones y proceso
   const f4 = [], r4 = [];
@@ -1480,7 +1559,9 @@ function provLlenar(d){
              canales: (c.canales || []).slice(), es_principal: !!c.es_principal };
   });
   if (!_pvf.contactos.length) _pvf.contactos = [{ nombre: '', cargo: '', telefono: '', email: '', wechat: '', canales: [], es_principal: true }];
-  _pvf.fams = (d.familias_erp || []).map(function(f){ return { codigo: f.codigo || '', nombre: f.nombre }; });
+  // Marcas del ERP asociadas (las familias que se alcanzaron a guardar se conservan tal cual).
+  _pvf.fams = (d.marcas_erp || []).map(function(f){ return { codigo: f.codigo || '', nombre: f.nombre || f.codigo }; });
+  _pvf.famsViejas = (d.familias_erp || []).slice();
   _pvf.proc = (d.proceso_compra || []).slice();
   _pvf.hitos = (d.hitos || []).slice();
   _pvf.pend = [];
@@ -1547,18 +1628,48 @@ function pvfTabsRender(){
   box.hidden = false;
   const ind = d.indicadores || {}, sols = d.solicitudes || [], reps = d.repuestos || [], comps = d.compras || [];
   const nFs = sols.filter(function(s){ return s.fs; }).length, nSin = reps.filter(function(r){ return r.semaforo === 'rojo'; }).length;
-  const enCurso = ind.compras_en_curso || 0, trans = ind.en_transito || 0, cal = pvfCalidad();
+  const trans = ind.en_transito || 0, cal = pvfCalidad();
+  // Pestañas al estilo de la ficha de Clientes: subrayado rojo en la activa y un contador con semáforo.
   const tabs = [
-    {t: 'info', cls: cal >= 13 ? 't-verde' : (cal >= 8 ? 't-ambar' : 't-rojo'), ico: 'bi-building', k: 'Información', d: 'Ficha ' + cal + ' de 14'},
-    {t: 'sol', cls: nFs ? 't-rojo' : (sols.length ? 't-ambar' : 't-verde'), ico: 'bi-inbox-fill', k: 'Solicitudes', d: sols.length + (nFs ? ' · ' + nFs + ' urgente' + (nFs === 1 ? '' : 's') : (sols.length ? ' abiertas' : ' · al día')), fs: nFs},
-    {t: 'rep', cls: !reps.length ? '' : (nSin ? 't-ambar' : 't-verde'), ico: 'bi-box-seam-fill', k: 'Repuestos', d: reps.length + (nSin ? ' · ' + nSin + ' sin stock' : (reps.length ? ' con stock' : ''))},
-    {t: 'com', cls: trans ? 't-azul' : (enCurso ? 't-ambar' : ''), ico: 'bi-cart-check-fill', k: 'Compras', d: trans ? trans + ' en tránsito' : (enCurso ? enCurso + ' en curso' : (comps.length ? comps.length + ' en total' : 'sin compras'))},
+    {t: 'info', ico: 'bi-building', k: 'Información', n: cal + '/14', c: cal >= 13 ? 'vd' : (cal >= 8 ? 'am' : 'rj')},
+    {t: 'sol', ico: 'bi-inbox-fill', k: 'Solicitudes', n: sols.length + (nFs ? ' · ' + nFs + ' urgente' + (nFs === 1 ? '' : 's') : ''), c: nFs ? 'rj' : (sols.length ? 'am' : 'vd'), fs: nFs},
+    {t: 'rep', ico: 'bi-box-seam-fill', k: 'Repuestos', n: reps.length + (nSin ? ' · ' + nSin + ' sin stock' : ''), c: nSin ? 'am' : (reps.length ? 'vd' : '')},
+    {t: 'com', ico: 'bi-cart-check-fill', k: 'Compras', n: comps.length + (trans ? ' · ' + trans + ' en tránsito' : ''), c: trans ? 'az' : ''},
   ];
   box.innerHTML = tabs.map(function(x){
-    return '<button type="button" role="tab" class="pvf-tab ' + x.cls + (x.t === _pvf.tab ? ' is-on' : '') + '" data-t="' + x.t + '" onclick="pvfTab(\'' + x.t + '\')" aria-selected="' + (x.t === _pvf.tab) + '">' +
-      (x.fs ? '<span class="dot-fs"></span>' : '') + '<span class="k"><i class="bi ' + x.ico + '"></i>' + x.k + '</span><span class="d">' + pvEsc(x.d) + '</span></button>';
+    return '<button type="button" role="tab" class="pvf-tab' + (x.t === _pvf.tab ? ' is-on' : '') + '" data-t="' + x.t + '" onclick="pvfTab(\'' + x.t + '\')" aria-selected="' + (x.t === _pvf.tab) + '">' +
+      '<i class="bi ' + x.ico + '"></i>' + x.k + '<span class="cnt ' + x.c + '">' + pvEsc(x.n) + '</span>' + (x.fs ? '<span class="dot-fs"></span>' : '') + '</button>';
   }).join('');
 }
+
+/* ══ Tabla estándar (REGLA #4.3, mismo patrón que Retiros): encabezado negro,
+   20 por página por defecto, "Mostrando A–B de N", N por página, Anterior /
+   Página X de Y / Siguiente. En el celular cada fila es una tarjeta. ══ */
+const _pvfPag = {};
+function pvfTabla(key, cols, filas, vacio){
+  const st = _pvfPag[key] || (_pvfPag[key] = { page: 1, per: 20 });
+  const tot = filas.length, pgs = Math.max(1, Math.ceil(tot / st.per));
+  if (st.page > pgs) st.page = pgs;
+  if (st.page < 1) st.page = 1;
+  const a = (st.page - 1) * st.per, b = Math.min(tot, a + st.per);
+  const head = '<thead><tr>' + cols.map(function(c){ return '<th' + (c.num ? ' class="num"' : '') + '>' + c.t + '</th>'; }).join('') + '</tr></thead>';
+  const body = tot ? filas.slice(a, b).map(function(f){
+    return '<tr' + (f._cls ? ' class="' + f._cls + '"' : '') + '>' + cols.map(function(c){
+      return '<td' + (c.num ? ' class="num"' : '') + ' data-th="' + pvEsc(c.t) + '">' + (f[c.k] == null ? '' : f[c.k]) + '</td>';
+    }).join('') + '</tr>';
+  }).join('') : '<tr><td colspan="' + cols.length + '" class="pvt-vacio">' + vacio + '</td></tr>';
+  const opts = [10, 20, 50, 100].map(function(n){ return '<option value="' + n + '"' + (st.per === n ? ' selected' : '') + '>' + n + ' por página</option>'; }).join('');
+  const foot = '<div class="pvt-foot"><div class="pvt-count"><i class="bi bi-collection"></i>' +
+    (tot ? 'Mostrando <strong>' + (a + 1) + '–' + b + '</strong> de <strong>' + tot + '</strong>' : 'Sin resultados') + '</div>' +
+    '<div class="pvt-ctrl"><select class="pvt-select" aria-label="Filas por página" onchange="pvfPagPer(\'' + key + '\',this.value)">' + opts + '</select>' +
+    '<button type="button" class="pvt-btn" onclick="pvfPagIr(\'' + key + '\',-1)"' + (st.page <= 1 ? ' disabled' : '') + '><i class="bi bi-chevron-left"></i>Anterior</button>' +
+    '<span>Página ' + st.page + ' de ' + pgs + '</span>' +
+    '<button type="button" class="pvt-btn" onclick="pvfPagIr(\'' + key + '\',1)"' + (st.page >= pgs ? ' disabled' : '') + '>Siguiente<i class="bi bi-chevron-right"></i></button></div></div>';
+  return '<div class="pvt-wrap"><div class="pvt-scroll"><table class="pvt">' + head + '<tbody>' + body + '</tbody></table></div>' + foot + '</div>';
+}
+function pvfPagIr(key, d){ _pvfPag[key].page += d; pvfRelRender(); }
+function pvfPagPer(key, v){ _pvfPag[key].per = parseInt(v, 10) || 20; _pvfPag[key].page = 1; pvfRelRender(); }
+
 function pvfRelRender(){
   const d = _pvf.rel;
   const av = document.getElementById('pvfRelAvisos');
@@ -1573,28 +1684,36 @@ function pvfRelRender(){
   if (nFs) a += '<div class="pvf-aviso rojo"><i class="bi bi-exclamation-octagon-fill" style="color:#dc2626"></i><span class="txt"><strong>' + nFs + (nFs === 1 ? ' solicitud tiene' : ' solicitudes tienen') + ' el equipo del cliente fuera de servicio.</strong> Gestiónalas primero.</span>' +
     '<button type="button" class="pvf-aviso-btn is-primary" onclick="pvfTab(\'sol\')">Ver solicitudes</button></div>';
   if (nSin) a += '<div class="pvf-aviso"><i class="bi bi-box-seam" style="color:#b45309"></i><span class="txt"><strong>' + nSin + (nSin === 1 ? ' repuesto' : ' repuestos') + ' de este proveedor sin stock.</strong> Revisa si conviene incluirlos en el próximo pedido.</span>' +
-    '<button type="button" class="pvf-aviso-btn" onclick="_pvf.repFil=\'sin\';pvfRepRender();pvfTab(\'rep\')">Ver cuáles</button></div>';
+    '<button type="button" class="pvf-aviso-btn" onclick="_pvf.repFil=\'sin\';(_pvfPag.rep||{}).page=1;pvfRepRender();pvfTab(\'rep\')">Ver cuáles</button></div>';
   av.innerHTML = a;
-  // Solicitudes
+
+  // Solicitudes (equipo fuera de servicio primero)
+  const filasSol = sols.map(function(s){
+    return {
+      _cls: s.fs ? 'pvt-fs' : '',
+      n: '<a href="/repuestos?rs_proveedor=' + p.id + '#solicitudes" class="pvt-link">#' + s.id + '</a>',
+      rep: '<b>' + pvEsc(s.repuesto_nombre) + '</b>' + (s.cantidad ? ' × ' + pvFmtN(s.cantidad) : ''),
+      est: '<span class="pv-est e-' + pvEsc(s.estado) + '">' + pvEsc(_PV_EST_CORTO[s.estado] || s.estado_label) + '</span>',
+      cli: pvEsc(s.cliente_nombre || '—') + (s.numero_ot || s.numero_ticket ? '<small class="d-block text-muted">' + pvEsc(s.numero_ot || s.numero_ticket) + '</small>' : ''),
+      desde: pvEsc(s.created_at || '—'),
+      stk: s.fs ? '<span class="pv-fs-tag"><i class="bi bi-exclamation-octagon-fill"></i>Urgente</span>'
+        : (s.stock_cantidad != null ? '<span class="pv-stk ' + (s.stock_cantidad > 0 ? 'ok' : 'no') + '">' + pvFmtN(s.stock_cantidad) + ' en bodega</span>' : '—'),
+    };
+  });
   document.getElementById('pvfPaneSol').innerHTML =
     '<div class="d-flex justify-content-end mb-2"><a class="pvf-aviso-btn" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes"><i class="bi bi-inbox"></i>Abrir en el centro de solicitudes</a></div>' +
-    '<div class="pv-lista">' + (sols.length ? sols.map(function(s){
-      const ref = [s.cliente_nombre, s.numero_ot || s.numero_ticket, s.created_at ? 'desde ' + s.created_at : ''].filter(Boolean).join(' · ');
-      const der = s.fs ? '<span class="pv-fs-tag"><i class="bi bi-exclamation-octagon-fill"></i>Urgente</span>'
-        : (s.stock_cantidad != null ? '<span class="pv-stk ' + (s.stock_cantidad > 0 ? 'ok' : 'no') + '">' + pvFmtN(s.stock_cantidad) + ' en bodega</span>' : '');
-      return '<a class="pv-it' + (s.fs ? ' fs' : '') + '" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes">' +
-        '<span class="pv-est e-' + pvEsc(s.estado) + '">' + pvEsc(_PV_EST_CORTO[s.estado] || s.estado_label) + '</span>' +
-        '<span class="pv-it-txt"><b>' + pvEsc(s.repuesto_nombre) + (s.cantidad ? ' × ' + pvFmtN(s.cantidad) : '') + '</b><small>#' + s.id + (ref ? ' · ' + pvEsc(ref) : '') + '</small></span>' + der + '</a>';
-    }).join('') : '<div class="pv-vacio"><i class="bi bi-check2-circle me-1"></i>Sin solicitudes abiertas con este proveedor.</div>') + '</div>';
+    pvfTabla('sol', [{k:'n', t:'#'}, {k:'rep', t:'Repuesto'}, {k:'est', t:'Estado'}, {k:'cli', t:'Cliente / OT'}, {k:'desde', t:'Desde'}, {k:'stk', t:'Stock / prioridad'}],
+      filasSol, '<i class="bi bi-check2-circle me-1"></i>Sin solicitudes abiertas con este proveedor.');
+
   // Compras
-  document.getElementById('pvfPaneCom').innerHTML = comps.length
-    ? '<div class="table-responsive"><table class="pv-tabla"><thead><tr><th>Ticket</th><th>Estado</th><th>OC</th><th>Líneas</th><th>Monto</th><th>Llega</th><th>Creada</th></tr></thead><tbody>' +
-      comps.map(function(c){
-        const sem = c.estado === 'recibido' ? 'verde' : (c.estado === 'cancelada' ? 'rojo' : (c.estado === 'en_transito' || c.estado === 'recibido_parcial' ? 'ambar' : 'gris'));
-        return '<tr><td>' + pvEsc(c.numero_ticket || ('#' + c.id)) + '</td><td><span class="pv-sem ' + sem + '">' + pvEsc(_PV_COMPRA_LBL[c.estado] || c.estado) + '</span></td><td>' + pvEsc(c.oc_numero || '—') +
-          '</td><td>' + (c.n_lineas || 0) + '</td><td>' + (c.monto_total ? '$' + pvFmtN(c.monto_total) : '—') + '</td><td>' + pvEsc(c.eta || '—') + '</td><td>' + pvEsc(c.created_at || '') + '</td></tr>';
-      }).join('') + '</tbody></table></div>'
-    : '<div class="pv-vacio"><i class="bi bi-cart me-1"></i>Todavía no hay compras registradas con este proveedor.</div>';
+  const filasCom = comps.map(function(c){
+    const sem = c.estado === 'recibido' ? 'verde' : (c.estado === 'cancelada' ? 'rojo' : (c.estado === 'en_transito' || c.estado === 'recibido_parcial' ? 'ambar' : 'gris'));
+    return { tk: '<b>' + pvEsc(c.numero_ticket || ('#' + c.id)) + '</b>', est: '<span class="pv-sem ' + sem + '">' + pvEsc(_PV_COMPRA_LBL[c.estado] || c.estado) + '</span>',
+      oc: pvEsc(c.oc_numero || '—'), lin: String(c.n_lineas || 0), monto: c.monto_total ? '$' + pvFmtN(c.monto_total) : '—', eta: pvEsc(c.eta || '—'), cre: pvEsc(c.created_at || '') };
+  });
+  document.getElementById('pvfPaneCom').innerHTML = pvfTabla('com',
+    [{k:'tk', t:'Ticket'}, {k:'est', t:'Estado'}, {k:'oc', t:'OC'}, {k:'lin', t:'Líneas', num:true}, {k:'monto', t:'Monto', num:true}, {k:'eta', t:'Llega'}, {k:'cre', t:'Creada'}],
+    filasCom, '<i class="bi bi-cart me-1"></i>Todavía no hay compras registradas con este proveedor.');
   pvfRepRender();
 }
 /* Repuestos del proveedor: dinámico (buscar, filtrar, ordenar) con costo, valor
@@ -1623,17 +1742,20 @@ function pvfRepRender(){
     valor: function(a, b){ return (b.cantidad || 0) * (b.costo_unitario || 0) - (a.cantidad || 0) * (a.costo_unitario || 0); },
     az: function(a, b){ return String(a.descripcion || '').localeCompare(String(b.descripcion || '')); }};
   lista = lista.slice().sort(ord[_pvf.repOrd] || ord.demanda);
-  const chip = function(k, lbl){ return '<button type="button" class="pvf-q' + (_pvf.repFil === k ? ' is-on' : '') + '" onclick="_pvf.repFil=\'' + k + '\';pvfRepRender()">' + lbl + ' (' + n(k) + ')</button>'; };
+  const chip = function(k, lbl){ return '<button type="button" class="pvf-q' + (_pvf.repFil === k ? ' is-on' : '') + '" onclick="_pvf.repFil=\'' + k + '\';(_pvfPag.rep||{}).page=1;pvfRepRender()">' + lbl + ' (' + n(k) + ')</button>'; };
   const filas = lista.map(function(r){
     const v = (r.cantidad || 0) * (r.costo_unitario || 0);
-    const det = [r.sku, r.ubicacion_codigo ? 'Ubicación ' + r.ubicacion_codigo : '', r.stock_minimo != null ? 'mínimo ' + pvFmtN(r.stock_minimo) : ''].filter(Boolean).join(' · ');
-    return '<div class="pvr-it"><span class="pv-semaf s-' + pvEsc(r.semaforo) + '" title="' + (r.semaforo === 'rojo' ? 'Sin stock' : (r.semaforo === 'ambar' ? 'En o bajo el mínimo' : 'Con stock')) + '"></span>' +
-      '<span class="pv-it-txt"><b>' + pvEsc(r.descripcion) + '</b><small>' + pvEsc(det) + (r.por_llegar ? ' · <span style="color:#b45309;font-weight:800">por llegar</span>' : '') + '</small></span>' +
-      '<span class="met"><span class="pv-stk ' + (r.semaforo === 'rojo' ? 'no' : (r.semaforo === 'ambar' ? 'am' : 'ok')) + '">' + pvFmtN(r.cantidad) + ' un.</span>' +
-        '<span class="pvr-m">' + (r.costo_unitario ? 'Costo ' + pvFmtCLP(r.costo_unitario) : 'Sin costo') + '</span>' +
-        (v ? '<span class="pvr-m">Valor ' + pvFmtCLP(v) + '</span>' : '') +
-        '<span class="pvr-m dem" title="Últimos 12 meses">' + ((r.pedidos_12m || 0) ? 'Pedido ' + r.pedidos_12m + (r.pedidos_12m === 1 ? ' vez' : ' veces') + ' · ' + pvFmtN(r.unidades_12m) + ' un.' : 'Sin pedidos en 12 meses') + '</span></span></div>';
-  }).join('');
+    return {
+      rep: '<span class="pvt-rep"><span class="pv-semaf s-' + pvEsc(r.semaforo) + '"></span><span><b>' + pvEsc(r.descripcion) + '</b><small class="d-block text-muted">' + pvEsc(r.sku) +
+        (r.ubicacion_codigo ? ' · ' + pvEsc(r.ubicacion_codigo) : '') + (r.por_llegar ? ' · <span style="color:#b45309;font-weight:800">por llegar</span>' : '') + '</small></span></span>',
+      stk: '<span class="pv-stk ' + (r.semaforo === 'rojo' ? 'no' : (r.semaforo === 'ambar' ? 'am' : 'ok')) + '">' + pvFmtN(r.cantidad) + '</span>',
+      min: r.stock_minimo != null ? pvFmtN(r.stock_minimo) : '—',
+      costo: r.costo_unitario ? pvFmtCLP(r.costo_unitario) : '<span class="text-muted">sin costo</span>',
+      valor: v ? pvFmtCLP(v) : '—',
+      ped: (r.pedidos_12m || 0) ? '<span class="pvr-m dem">' + r.pedidos_12m + (r.pedidos_12m === 1 ? ' vez' : ' veces') + '</span>' : '<span class="text-muted">—</span>',
+      uni: (r.unidades_12m || 0) ? pvFmtN(r.unidades_12m) : '—',
+    };
+  });
   box.innerHTML =
     '<div class="pvr-kpis">' +
       '<div class="pvr-kpi"><div class="k">Repuestos</div><div class="v">' + reps.length + '</div></div>' +
@@ -1643,16 +1765,18 @@ function pvfRepRender(){
       '<div class="pvr-kpi"><div class="k">Más pedido (12 meses)</div><div class="v" style="font-size:.92rem">' + (top && top.unidades_12m ? pvEsc(top.descripcion) + ' · ' + pvFmtN(top.unidades_12m) + ' un.' : '—') + '</div></div>' +
     '</div>' +
     (sinCosto ? '<div class="pvf-aviso mb-2"><i class="bi bi-cash-coin" style="color:#b45309"></i><span class="txt"><strong>' + sinCosto + (sinCosto === 1 ? ' repuesto sin costo' : ' repuestos sin costo') + ' cargado.</strong> Sin costo no se puede calcular el margen: complétalo en Bodega.</span></div>' : '') +
-    '<div class="pvr-bar"><input type="search" class="form-control" placeholder="Buscar por nombre, SKU o ubicación" value="' + pvEsc(_pvf.repQ) + '" oninput="_pvf.repQ=this.value;pvfRepLista()">' +
+    '<div class="pvr-bar"><input type="search" class="form-control" placeholder="Buscar por nombre, SKU o ubicación" value="' + pvEsc(_pvf.repQ) + '" oninput="_pvf.repQ=this.value;(_pvfPag.rep||{}).page=1;pvfRepLista()">' +
       '<select class="form-select" onchange="_pvf.repOrd=this.value;pvfRepRender()" aria-label="Ordenar repuestos">' +
         [['demanda','Más pedidos primero'], ['stock','Sin stock primero'], ['valor','Mayor valor en bodega'], ['az','A a Z']].map(function(o){ return '<option value="' + o[0] + '"' + (_pvf.repOrd === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
       '</select></div>' +
     '<div class="pvr-fil">' + chip('todos', 'Todos') + chip('sin', 'Sin stock') + chip('bajo', 'Bajo el mínimo') + chip('con', 'Con stock') + chip('llegar', 'Por llegar') + chip('dem', 'Con demanda') + chip('costo', 'Sin costo') + '</div>' +
-    '<div class="pv-lista" id="pvfRepLista">' + (filas || '<div class="pvr-vacio">Ningún repuesto con ese filtro.</div>') + '</div>' +
+    pvfTabla('rep', [{k:'rep', t:'Repuesto'}, {k:'stk', t:'Stock', num:true}, {k:'min', t:'Mínimo', num:true}, {k:'costo', t:'Costo', num:true},
+      {k:'valor', t:'Valor en bodega', num:true}, {k:'ped', t:'Pedidos 12 m', num:true}, {k:'uni', t:'Unidades 12 m', num:true}],
+      filas, 'Ningún repuesto con ese filtro.') +
     (leg.length ? '<div class="mt-2 small text-muted">Además hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');
 }
 function pvfRepLista(){
-  // Buscar sin perder el foco del cuadro de búsqueda: solo se repinta la lista.
+  // Buscar sin perder el foco del cuadro de búsqueda.
   const foco = document.activeElement, pos = foco && foco.selectionStart;
   pvfRepRender();
   const inp = document.querySelector('#pvfPaneRep .pvr-bar input');
@@ -1685,7 +1809,8 @@ async function provGuardar(){
   payload.origen = pvRadioVal('provOrigen');
   if (payload.origen === 'nacional'){ if (!payload.pais) payload.pais = 'Chile'; payload.incoterm = ''; }
   payload.contactos = _pvf.contactos.filter(function(c){ return !pvfContVacio(c); });
-  payload.familias_erp = _pvf.fams;
+  payload.marcas_erp = _pvf.fams;
+  payload.familias_erp = _pvf.famsViejas || [];
   payload.proceso_compra = _pvf.proc.map(function(x){ return String(x).trim(); }).filter(Boolean);
   const url = id ? '/mantenciones/api/proveedores-repuesto/' + id : '/mantenciones/api/proveedores-repuesto';
   const btn = document.getElementById('btnProvGuardar');
