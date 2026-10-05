@@ -62336,6 +62336,13 @@ def _instalaciones_auditar(desde=None):
             ok, res = validar_rut(g_["rut"])
             g_["rut_normalizado"] = res if ok else ""
             g_["rut_error"] = "" if ok else str(res)
+            limpio = re.sub(r"[^0-9Kk]", "", g_["rut"] or "")
+            g_["dv_agregado"] = bool(ok and len(limpio) < len(res))
+            # RUT de relleno (ej. 00000001-9): no corresponde a nadie real, no se crea ficha con él.
+            cuerpo_num = int(re.sub(r"[^0-9]", "", res[:-1]) or 0) if ok else 0
+            if ok and cuerpo_num < 1000000:
+                g_["rut_error"] = "RUT de relleno, no parece real"
+                g_["rut_normalizado"] = ""
         out["tickets_sin_ficha"] = sorted(grupos.values(), key=lambda x: (x["empresa"] or "").lower())
     except Exception as e:
         print(f"[auditoria instalaciones] tickets: {e}", flush=True)

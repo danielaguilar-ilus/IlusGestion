@@ -469,7 +469,7 @@ function pintarRepInst(){
       '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:.82rem"><thead><tr><th></th><th>Cliente</th><th>RUT</th><th>Tickets</th><th>Contacto</th></tr></thead><tbody>' +
       filas.map(g => '<tr><td><input type="checkbox" class="form-check-input repInstChk" value="' + _repEsc(g.key) + '"' + (g.rut_error ? ' disabled' : (_repSel.has(g.key) ? ' checked' : '')) + ' onchange="marcarRepInst(this)"></td>' +
         '<td><b>' + _repEsc(g.empresa || g.contacto || '(sin nombre)') + '</b><div class="text-muted">' + _repEsc([g.direccion, g.comuna].filter(Boolean).join(', ')) + '</div></td>' +
-        '<td class="font-monospace">' + _repEsc(g.rut_error ? g.rut : g.rut_normalizado) + (g.rut_error ? '<div class="text-danger">' + _repEsc(g.rut_error) + '</div>' : (g.rut_normalizado !== g.rut ? '<div class="text-muted">corregido</div>' : '')) + '</td>' +
+        '<td class="font-monospace">' + _repEsc(g.rut_error ? g.rut : g.rut_normalizado) + (g.rut_error ? '<div class="text-danger">' + _repEsc(g.rut_error) + '</div>' : (g.dv_agregado ? '<div class="text-muted">se agregó el dígito verificador</div>' : '')) + '</td>' +
         '<td>' + g.tickets.length + ' · ' + _repEsc(estTxt(g.tickets)) + '<div class="text-muted">' + _repEsc(g.tickets.slice(0, 4).map(t => t.numero).join(', ')) + '</div></td>' +
         '<td>' + _repEsc(g.contacto) + '<div class="text-muted">' + _repEsc([g.telefono, g.email].filter(Boolean).join(' · ')) + '</div></td></tr>').join('') +
       '</tbody></table></div>' +
