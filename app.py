@@ -62517,8 +62517,18 @@ def mant_instalaciones_sanear():
         if nuevo_nom.strip().lower() in _NOMBRES_RELLENO and (c.get("contacto_nombre") or "").strip():
             nuevo_nom = c["contacto_nombre"].strip()[:200]
         if nuevo_rut != c.get("rut") or nuevo_nom != c.get("razon_social"):
-            mysql_execute("UPDATE mant_clientes SET rut=%s, razon_social=%s, updated_by=%s WHERE id=%s",
-                          (nuevo_rut, nuevo_nom, quien, c["id"]))
+            try:
+                mysql_execute("UPDATE mant_clientes SET rut=%s, razon_social=%s, updated_by=%s WHERE id=%s",
+                              (nuevo_rut, nuevo_nom, quien, c["id"]))
+            except Exception as e:
+                # Otra ficha ya tiene ese RUT (índice único): es un duplicado que se fusiona después.
+                # Se corrige solo el nombre y el RUT queda como estaba.
+                print(f"[sanear] cid={c['id']} rut en uso: {str(e)[:120]}", flush=True)
+                nuevo_rut = c.get("rut")
+                if nuevo_nom == c.get("razon_social"):
+                    continue
+                mysql_execute("UPDATE mant_clientes SET razon_social=%s, updated_by=%s WHERE id=%s",
+                              (nuevo_nom, quien, c["id"]))
             cambios.append(c["id"])
             try:
                 _mant_log("cliente", c["id"], "saneado",
