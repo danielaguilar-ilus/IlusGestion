@@ -252,7 +252,7 @@ def _ficha_ns(existente=None):
             return {"id": 777}
         return {"id": existente} if existente else None
 
-    ns = {"os": os,
+    ns = {"os": os, "re": __import__("re"),
           "validar_rut": lambda r: (True, "123456785") if (r or "").replace(".", "").startswith("1234567") else (False, "RUT muy corto"),
           "_rut_cuerpo": lambda r: "12345678",
           "mysql_fetchone": fetchone,
@@ -325,3 +325,83 @@ def test_vigilancia_se_puede_apagar(monkeypatch):
     ns, _ = _ficha_ns()
     monkeypatch.setenv("INSTALACIONES_FICHA_AUTO", "0")
     assert ns["_instalaciones_asegurar_fichas"]().get("apagado")
+
+
+# ───────── Productos de la instalación → equipos de la ficha ─────────
+def _equipos_ns(header=True, asignados=None, equipos_ticket=None, numero_documento="FCV-0001234"):
+    src = open(_APP, encoding="utf-8").read()
+    a = src.index("_TIDOS_VENTA = (")
+    b = src.index("def _instalaciones_asegurar_fichas")
+    import re as _re
+    calls = {"insert": [], "log": []}
+    ticket = {"id": 1, "numero_ticket": "TAA-1", "rut": "1-9", "estado": "resolved",
+              "numero_documento": numero_documento, "cerrado_at": "2026-03-10", "created_at": "2026-03-01"}
+
+    def fetchall(q, p=()):
+        if "FROM tk_ticket_documentos" in q:
+            return []
+        if "FROM tk_ticket_equipos" in q:
+            return equipos_ticket or []
+        if "FROM mant_maquinas" in q:
+            return []
+        return []
+
+    def fetchone(q, p=()):
+        if "LAST_INSERT_ID" in q:
+            return {"id": 900 + len(calls["insert"])}
+        return {"id": 5, "rut": "1-9", "razon_social": "Gym"}
+
+    lineas = [{"sku": "ZZINSTALACION", "cantidad": 1, "es_zz": True},
+              {"sku": "TROT1", "cantidad": 2, "nombre_app": "Trotadora"},
+              {"sku": "KB20", "cantidad": 4, "nombre_app": "Kettlebell 20"}]
+    ns = {"re": _re, "print": print,
+          "_rut_canon": lambda r: "1-9", "_rut_cuerpo": lambda r: "1",
+          "mysql_fetchall": fetchall, "mysql_fetchone": fetchone,
+          "mysql_execute": lambda q, p=(): calls["insert"].append(p),
+          "_mant_erp_doc_cached": lambda t, n: (({"fecha": "2026-02-20"}, lineas) if header else (None, [])),
+          "_doc_origen_key": lambda t, n: f"{t} {n}",
+          "_doc_origen_normalizar": lambda d: d,
+          "_asignados_por_sku": lambda t, n: dict(asignados or {}),
+          "_inc_clasificacion_skus_batch": lambda skus: {"KB20": {"repetible": True}},
+          "_generar_serie_ilus": lambda cid, sku, _intento=0: f"S-{sku}-1",
+          "_mant_log": lambda *x, **k: calls["log"].append(x),
+          "current_username": lambda: "daniel"}
+    exec(src[a:b], ns)
+    return ns, calls, [ticket]
+
+
+def test_docs_se_leen_del_texto_del_ticket():
+    ns, _, tk = _equipos_ns(numero_documento="FCV-0001234, BLV 55 y una NCV 9")
+    docs = ns["_docs_de_tickets"](tk)
+    assert [(d[0], d[1]) for d in docs] == [("FCV", "1234"), ("BLV", "55")]
+
+
+def test_equipos_vista_previa_sin_servicios_zz():
+    ns, calls, tk = _equipos_ns()
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=False, tickets_cache=tk)
+    assert ok and d["preview"] and d["total_a_crear"] == 6 and not calls["insert"]
+    assert {c["sku"] for c in d["candidatos"]} == {"TROT1", "KB20"}
+
+
+def test_equipos_se_cargan_uno_por_unidad_y_accesorios_fuera_del_plan():
+    ns, calls, tk = _equipos_ns()
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=True, tickets_cache=tk)
+    assert ok and d["creados"] == 6 and len(calls["insert"]) == 6
+    trot = [p for p in calls["insert"] if p[1] == "TROT1"]
+    kb = [p for p in calls["insert"] if p[1] == "KB20"]
+    assert len(trot) == 2 and len(kb) == 4
+    assert trot[0][4] == "FCV 1234" and trot[0][5] == "2026-02-20"     # documento y fecha de emisión
+    assert trot[0][8] == 1 and kb[0][8] == 0                              # el accesorio no entra al plan
+
+
+def test_equipos_no_se_duplican():
+    ns, calls, tk = _equipos_ns(asignados={"TROT1": 2, "KB20": 4})
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=True, tickets_cache=tk)
+    assert d["creados"] == 0 and not calls["insert"] and not d["respaldo_ticket"]
+
+
+def test_equipos_respaldo_del_ticket_si_la_factura_no_esta_en_el_erp():
+    eq = [{"ticket_id": 1, "erp_kopr": "BICI9", "sku": None, "nombre": "Bicicleta", "cantidad": 1, "documento_garantia": None}]
+    ns, calls, tk = _equipos_ns(header=False, equipos_ticket=eq)
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=True, tickets_cache=tk)
+    assert d["respaldo_ticket"] and d["creados"] == 1 and calls["insert"][0][1] == "BICI9"

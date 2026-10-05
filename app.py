@@ -62318,7 +62318,17 @@ def _instalaciones_auditar(desde=None):
       d) clientes con OT de instalación que NO están clasificados como «Instalación» y no tienen contrato.
     `desde` (date) limita (a) y (b) a tickets creados desde esa fecha. Daniel 2026-10-04: «los clientes que
     se agregan por instalación son la pepita de oro, tener en orden todos esos clientes»."""
-    out = {"tickets_sin_ficha": [], "tickets_sin_rut": [], "ot_instalacion_sin_cliente": [], "mal_clasificados": []}
+    out = {"tickets_sin_ficha": [], "tickets_sin_rut": [], "ot_instalacion_sin_cliente": [], "mal_clasificados": [],
+           "fichas_sin_equipos": []}
+    try:
+        for c in (mysql_fetchall(
+                "SELECT c.id, c.razon_social FROM mant_clientes c "
+                " WHERE c.tipo_cliente='instalacion' AND c.estado<>'inactivo' "
+                "   AND NOT EXISTS (SELECT 1 FROM mant_maquinas m WHERE m.cliente_id=c.id AND m.estado='activo') "
+                " ORDER BY c.razon_social LIMIT 400") or []):
+            out["fichas_sin_equipos"].append({"id": c["id"], "razon_social": c["razon_social"]})
+    except Exception as e:
+        print(f"[auditoria instalaciones] sin equipos: {e}", flush=True)
     fichas = {}
     for r in (mysql_fetchall("SELECT id, rut FROM mant_clientes WHERE rut IS NOT NULL AND rut<>''") or []):
         for k in {_rut_canon(r["rut"]), _rut_cuerpo(r["rut"])}:
@@ -62336,8 +62346,12 @@ def _instalaciones_auditar(desde=None):
             if not (t.get("rut") or "").strip():
                 out["tickets_sin_rut"].append({"ticket": t["numero_ticket"], "empresa": t.get("empresa"), "estado": t["estado"]})
                 continue
-            k = _rut_canon(t["rut"]) or _rut_cuerpo(t["rut"])
-            if not k or k in fichas:
+            kc, kb = _rut_canon(t["rut"]), _rut_cuerpo(t["rut"])
+            # Una ficha antigua puede guardar el RUT sin DV ('72498100'): se compara por las dos llaves.
+            if (kc and kc in fichas) or (kb and kb in fichas):
+                continue
+            k = kc or kb
+            if not k:
                 continue
             g_ = grupos.setdefault(k, {"key": k, "rut": t["rut"], "empresa": "", "email": "", "telefono": "", "direccion": "",
                                        "comuna": "", "contacto": "", "tickets": []})
@@ -62428,6 +62442,186 @@ def _ficha_instalacion_desde_grupo(g_, quien):
     return cid, "creada"
 
 
+# ── Productos de la instalación → equipos de la ficha (Daniel 2026-10-04: «considerando el ingreso de los
+# productos. Pon la factura para poder hacerle seguimiento según la emisión, para realizar mantenciones») ──
+_TIDOS_VENTA = ("FCV", "BLV", "FCE", "BLE", "NVV", "NVI", "FCO", "WEB", "VD", "GDV")
+_DOC_EN_TEXTO_RE = re.compile(r"\b(FCV|BLV|FCE|BLE|NVV|NVI|FCO|WEB|VD|GDV)\s*[-_ ]?\s*0*(\d{1,10})\b", re.I)
+
+
+def _tickets_instalacion_del_cliente(rut, cache=None):
+    """Tickets de instalación (no cancelados) del cliente, por RUT canónico o por cuerpo."""
+    llaves = {k for k in (_rut_canon(rut), _rut_cuerpo(rut)) if k}
+    if not llaves:
+        return []
+    filas = cache if cache is not None else (mysql_fetchall(
+        "SELECT id, numero_ticket, rut, estado, numero_documento, cerrado_at, created_at "
+        "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado'") or [])
+    return [t for t in filas if t.get("rut") and (_rut_canon(t["rut"]) in llaves or _rut_cuerpo(t["rut"]) in llaves)]
+
+
+def _docs_de_tickets(tickets):
+    """[(tido, nudo, fecha_registrada, ticket)] sin repetir: tk_ticket_documentos + el texto numero_documento."""
+    docs, vistos = [], set()
+    por_id = {t["id"]: t for t in tickets}
+    if por_id:
+        ph = ",".join(["%s"] * len(por_id))
+        try:
+            for d in (mysql_fetchall(
+                    f"SELECT ticket_id, erp_tido, erp_nudo, fecha FROM tk_ticket_documentos WHERE ticket_id IN ({ph}) ORDER BY id",
+                    tuple(por_id)) or []):
+                tido = (d.get("erp_tido") or "").strip().upper()
+                nudo = re.sub(r"[^0-9]", "", str(d.get("erp_nudo") or "")).lstrip("0")
+                if tido in _TIDOS_VENTA and nudo and (tido, nudo) not in vistos:
+                    vistos.add((tido, nudo))
+                    docs.append((tido, nudo, d.get("fecha"), por_id.get(d["ticket_id"])))
+        except Exception as e:
+            print(f"[equipos_instalacion] tk_ticket_documentos: {e}", flush=True)
+    for t in tickets:
+        for m in _DOC_EN_TEXTO_RE.finditer(t.get("numero_documento") or ""):
+            tido, nudo = m.group(1).upper(), m.group(2).lstrip("0")
+            if nudo and (tido, nudo) not in vistos:
+                vistos.add((tido, nudo))
+                docs.append((tido, nudo, None, t))
+    return docs
+
+
+def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets_cache=None):
+    """Carga en la ficha los PRODUCTOS que el cliente compró con instalación, desde la factura del ERP (solo
+    lectura), con su fecha de emisión (doc_fecha) para programar las mantenciones. Una fila por unidad (cada
+    máquina con su serie), sin servicios ZZ, idempotente por documento (_asignados_por_sku, mismo candado que
+    el alta desde la OT). Si la factura no está en el ERP, usa los equipos declarados en el ticket.
+    Devuelve (ok, data). Nunca lanza."""
+    try:
+        cli = mysql_fetchone("SELECT id, rut, razon_social FROM mant_clientes WHERE id=%s", (cid,))
+        if not cli:
+            return False, {"error": "Cliente no encontrado"}
+        tickets = _tickets_instalacion_del_cliente(cli.get("rut"), tickets_cache)
+        docs = _docs_de_tickets(tickets) if tickets else []
+        candidatos, omitidos, docs_info = [], [], []
+        for tido, nudo, fecha_reg, t in docs:
+            t = t or {}
+            try:
+                header, lineas = _mant_erp_doc_cached(tido, nudo)
+            except Exception:
+                header, lineas = None, []
+            if not header:
+                docs_info.append({"doc": f"{tido} {nudo}", "estado": "no está en el ERP"})
+                continue
+            doc_key = _doc_origen_key(tido, nudo)
+            ya = _asignados_por_sku(tido, nudo)
+            doc_fecha = header.get("fecha") or fecha_reg
+            fecha_inst = t.get("cerrado_at") if t.get("estado") in ("resolved", "closed") else None
+            n_doc = 0
+            for ln in (lineas or []):
+                sku = (ln.get("sku") or "").strip()
+                if not sku or ln.get("es_zz") or sku.upper().startswith("ZZ"):
+                    continue
+                try:
+                    cant = int(float(ln.get("cantidad") or 0))
+                except (TypeError, ValueError):
+                    cant = 0
+                if cant <= 0:
+                    continue
+                saldo = cant - int(ya.get(sku.upper()) or 0)
+                nombre = (ln.get("nombre_app") or ln.get("descripcion_erp") or sku)[:400]
+                if saldo <= 0:
+                    omitidos.append({"sku": sku, "nombre": nombre, "motivo": f"ya está en una ficha con {doc_key}"})
+                    continue
+                candidatos.append({"sku": sku, "nombre": nombre, "cantidad": saldo, "doc_key": doc_key,
+                                   "doc_fecha": doc_fecha, "fecha_inst": fecha_inst, "ticket": t.get("numero_ticket")})
+                n_doc += saldo
+            docs_info.append({"doc": doc_key, "fecha": str(doc_fecha)[:10] if doc_fecha else "", "equipos": n_doc})
+        respaldo = False
+        if not candidatos and tickets and not any(d.get("equipos") for d in docs_info if "equipos" in d) \
+                and not any(o for o in omitidos):
+            por_id = {t["id"]: t for t in tickets}
+            existentes = {(r["sku"] or ""): int(r["n"] or 0) for r in (mysql_fetchall(
+                "SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(cantidad),0) AS n FROM mant_maquinas "
+                " WHERE cliente_id=%s GROUP BY UPPER(TRIM(sku))", (cid,)) or [])}
+            ph = ",".join(["%s"] * len(por_id))
+            for e in (mysql_fetchall(
+                    f"SELECT ticket_id, erp_kopr, sku, nombre, cantidad, documento_garantia FROM tk_ticket_equipos "
+                    f" WHERE ticket_id IN ({ph}) ORDER BY id", tuple(por_id)) or []):
+                sku = (e.get("erp_kopr") or e.get("sku") or "").strip()
+                if not sku or sku.upper().startswith("ZZ"):
+                    continue
+                cant = max(1, int(e.get("cantidad") or 1))
+                saldo = cant - existentes.get(sku.upper(), 0)
+                if saldo <= 0:
+                    continue
+                existentes[sku.upper()] = existentes.get(sku.upper(), 0) + saldo
+                t = por_id.get(e["ticket_id"]) or {}
+                dk = _doc_origen_normalizar(e.get("documento_garantia")) if e.get("documento_garantia") else None
+                candidatos.append({"sku": sku, "nombre": (e.get("nombre") or sku)[:400], "cantidad": saldo,
+                                   "doc_key": dk, "doc_fecha": None,
+                                   "fecha_inst": t.get("cerrado_at") if t.get("estado") in ("resolved", "closed") else None,
+                                   "ticket": t.get("numero_ticket")})
+            respaldo = bool(candidatos)
+        resumen = {"tickets": [t.get("numero_ticket") for t in tickets], "documentos": docs_info,
+                   "respaldo_ticket": respaldo, "total_a_crear": sum(c["cantidad"] for c in candidatos),
+                   "omitidos": len(omitidos)}
+        if not confirmar:
+            return True, {"preview": True, **resumen,
+                          "candidatos": [{k: (str(v)[:10] if k in ("doc_fecha", "fecha_inst") and v else v)
+                                          for k, v in c.items()} for c in candidatos]}
+        clasif = _inc_clasificacion_skus_batch([c["sku"] for c in candidatos]) if candidatos else {}
+        creados, errores = [], []
+        quien = usuario or current_username() or "sistema"
+        for c in candidatos:
+            aplica = 0 if (clasif.get(c["sku"]) or {}).get("repetible") is True else 1
+            pref, seq = None, None
+            try:
+                base = _generar_serie_ilus(cid, c["sku"])
+                pref, suf = base.rsplit("-", 1)
+                seq = int(suf)
+            except Exception:
+                pref, seq = None, None
+            for i in range(int(c["cantidad"])):
+                serie = f"{pref}-{seq + i}" if pref is not None else None
+                mid = None
+                for intento in range(5):
+                    try:
+                        mysql_execute(
+                            "INSERT INTO mant_maquinas (cliente_id, sku, nombre, serie, cantidad, doc_origen, doc_fecha, "
+                            "  fecha_instalacion, estado, notas, aplica_mantencion, created_by) "
+                            "VALUES (%s,%s,%s,%s,1,%s,%s,%s,'activo',%s,%s,%s)",
+                            (cid, c["sku"][:100], c["nombre"], serie, c["doc_key"], c["doc_fecha"], c["fecha_inst"],
+                             f"Alta desde la instalación (ticket {c['ticket']})", aplica, quien))
+                        mid = (mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}).get("id")
+                        break
+                    except Exception as e:
+                        msg = str(e)
+                        if ("1062" in msg or "Duplicate entry" in msg) and intento < 4:
+                            try:
+                                serie = _generar_serie_ilus(cid, c["sku"], _intento=intento + 1)
+                                continue
+                            except Exception:
+                                pass
+                        errores.append(f"{c['sku']}: {msg[:100]}")
+                        break
+                if mid:
+                    creados.append(mid)
+                    try:
+                        _mant_log("maquina", mid, "creada_desde_instalacion",
+                                  f"Alta desde el ticket de instalación {c['ticket']} · "
+                                  + (f"documento {c['doc_key']}" if c["doc_key"] else "equipos declarados en el ticket")
+                                  + (f" · emitido {str(c['doc_fecha'])[:10]}" if c["doc_fecha"] else ""))
+                    except Exception:
+                        pass
+        if creados:
+            try:
+                _mant_log("cliente", cid, "equipos_desde_instalacion",
+                          f"{len(creados)} equipo(s) cargados desde "
+                          + (", ".join(d["doc"] for d in docs_info if d.get("equipos")) or "los equipos del ticket")
+                          + f" · por {quien}")
+            except Exception:
+                pass
+        return True, {**resumen, "creados": len(creados), "errores": errores}
+    except Exception as e:
+        print(f"[equipos_instalacion] cid={cid}: {e}", flush=True)
+        return False, {"error": "No se pudieron cargar los equipos."}
+
+
 def _instalaciones_asegurar_fichas(desde=None, max_n=30):
     """Vigilancia: toda instalación nueva (ticket) deja su ficha de cliente. Corre colgada del cron de cada 10 min.
     Solo mira tickets desde `desde` (lo anterior se repara a mano con vista previa). No envía nada a nadie."""
@@ -62440,6 +62634,10 @@ def _instalaciones_asegurar_fichas(desde=None, max_n=30):
             cid, estado = _ficha_instalacion_desde_grupo(g_, "sistema")
             if estado == "creada":
                 res["creadas"] += 1
+                try:
+                    _ficha_equipos_desde_instalacion(cid, confirmar=True, usuario="sistema")
+                except Exception as _e_eq:
+                    print(f"[vigilancia instalaciones] equipos cid={cid}: {_e_eq}", flush=True)
             elif estado == "ya_existia":
                 res["ya_existian"] += 1
             else:
@@ -62546,6 +62744,29 @@ def mant_instalaciones_sanear():
                                              "estado": r["estado"], "del_lote": r["id"] in ids_lote})
     dup = [{"rut": k, "fichas": v} for k, v in grupos.items() if len(v) > 1 and any(x["del_lote"] for x in v)]
     return jsonify({"ok": True, "lote": len(lote), "saneadas": len(cambios), "duplicados": dup})
+
+
+@app.route("/mantenciones/api/instalaciones/equipos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_equipos():
+    """Carga (o previsualiza) los productos de la instalación en las fichas indicadas. Lotes chicos: cada
+    ficha lee sus facturas en el ERP. Body: {ids: [..], confirmar: bool}"""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    d = request.get_json(silent=True) or {}
+    ids = [int(x) for x in (d.get("ids") or [])[:15] if str(x).isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "No indicaste fichas."}), 400
+    cache = mysql_fetchall(
+        "SELECT id, numero_ticket, rut, estado, numero_documento, cerrado_at, created_at "
+        "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado'") or []
+    out = []
+    for cid in ids:
+        ok, data = _ficha_equipos_desde_instalacion(cid, confirmar=bool(d.get("confirmar")),
+                                                   usuario=current_username(), tickets_cache=cache)
+        out.append({"id": cid, "ok": ok, **data})
+    return jsonify({"ok": True, "resultados": out})
 
 
 @app.route("/mantenciones/api/instalaciones/reclasificar", methods=["POST"])

@@ -438,9 +438,10 @@ const _repEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'
     if (!d.ok) return;
     _repInst = d;
     const nF = d.tickets_sin_ficha.length, nC = d.mal_clasificados.length, nO = d.ot_instalacion_sin_cliente.length;
-    if (!(nF || nC || nO)) return;
+    const nE = (d.fichas_sin_equipos || []).length;
+    if (!(nF || nC || nO || nE)) return;
     document.getElementById('repInstTitulo').textContent = 'Hay clientes de instalación que se están perdiendo o mal clasificados';
-    document.getElementById('repInstSub').textContent = [nF ? nF + ' con tickets de instalación y SIN ficha' : '', nC ? nC + ' con OT de instalación mal clasificados' : '', nO ? nO + ' OT de instalación sin cliente' : ''].filter(Boolean).join(' · ') + '.';
+    document.getElementById('repInstSub').textContent = [nF ? nF + ' con tickets de instalación y SIN ficha' : '', nC ? nC + ' con OT de instalación mal clasificados' : '', nO ? nO + ' OT de instalación sin cliente' : '', nE ? nE + ' fichas de instalación sin sus productos' : ''].filter(Boolean).join(' · ') + '.';
     document.getElementById('repInstAviso').hidden = false;
   } catch(e){}
 })();
@@ -457,6 +458,15 @@ function pintarRepInst(){
   const filas = sf.slice((_repInstPag - 1) * PER, _repInstPag * PER);
   const estTxt = tks => { const m = {}; tks.forEach(t => m[t.estado] = (m[t.estado] || 0) + 1); return Object.entries(m).map(([k, v]) => v + ' ' + k).join(', '); };
   let h = '';
+  const sinEq = d.fichas_sin_equipos || [];
+  if (sinEq.length) {
+    h += '<div class="p-3 mb-3 rounded" style="background:#eff6ff;border:1px solid #bfdbfe"><div class="d-flex justify-content-between align-items-center flex-wrap gap-2">' +
+      '<div><b>' + sinEq.length + ' fichas de instalación todavía no tienen sus productos</b>' +
+      '<div class="small text-muted">Se cargan desde la factura de su instalación (con su fecha de emisión, para programar las mantenciones). ' +
+      'Si la factura no está en el ERP, se usan los equipos del ticket. No se duplica nada.</div>' +
+      '<div class="small mt-1" id="repEqProgreso"></div></div>' +
+      '<button class="btn btn-sm btn-primary fw-bold" onclick="cargarEquiposInst(this)"><i class="bi bi-box-seam me-1"></i>Cargar productos desde sus facturas</button></div></div>';
+  }
   if (d.mal_clasificados.length) {
     h += '<div class="p-3 mb-3 rounded" style="background:#f0fdfa;border:1px solid #99f6e4"><div class="d-flex justify-content-between align-items-center flex-wrap gap-2">' +
       '<div><b>' + d.mal_clasificados.length + ' clientes ya tuvieron una OT de instalación pero figuran como otro tipo</b><div class="small text-muted">' +
@@ -513,6 +523,28 @@ async function crearFichasInst(btn){
       message: d.creadas + ' creada(s) · ' + d.ya_existian + ' ya existían' + (d.fallidas.length ? ' · ' + d.fallidas.length + ' con problema: ' + d.fallidas.slice(0, 5).join('; ') : '') });
     location.reload();
   } catch(e){ ilusToast('Error de red', {type:'error'}); btn.disabled = false; }
+}
+async function cargarEquiposInst(btn){
+  const ids = (_repInst.fichas_sin_equipos || []).map(c => c.id);
+  if (!ids.length) return;
+  const ok = await ilusConfirm({ title: 'Cargar productos', message: 'Se cargarán los productos de ' + ids.length + ' ficha(s) desde sus facturas de instalación.',
+    sub: 'Cada máquina queda con su serie y la fecha de emisión de la factura. No se envía ningún mensaje.', okLabel: 'Cargar', cancelLabel: 'Cancelar' });
+  if (!ok) return;
+  btn.disabled = true;
+  const prog = document.getElementById('repEqProgreso');
+  let creados = 0, sinNada = 0, errores = 0;
+  for (let i = 0; i < ids.length; i += 5){
+    prog.textContent = 'Cargando… ' + Math.min(i + 5, ids.length) + ' de ' + ids.length + ' fichas · ' + creados + ' equipos creados';
+    try {
+      const r = await fetch('/mantenciones/api/instalaciones/equipos', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ids: ids.slice(i, i + 5), confirmar: true})});
+      const d = await r.json();
+      (d.resultados || []).forEach(x => { creados += (x.creados || 0); if (!x.creados) sinNada++; if ((x.errores || []).length || !x.ok) errores++; });
+    } catch(e){ errores++; }
+  }
+  await ilusAlert({ title: 'Productos cargados', type: errores ? 'warning' : 'success',
+    message: creados + ' equipo(s) creados en las fichas · ' + sinNada + ' ficha(s) sin productos que cargar' + (errores ? ' · ' + errores + ' con algún problema' : '') });
+  location.reload();
 }
 async function reclasificarInst(btn){
   const ok = await ilusConfirm({ title: 'Marcar como Instalación', message: 'Se cambiará el tipo de ' + _repInst.mal_clasificados.length + ' cliente(s) a «Instalación».',
