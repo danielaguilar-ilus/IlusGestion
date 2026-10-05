@@ -62288,6 +62288,71 @@ def admin_mantenciones_reset():
 # POST /admin/mantenciones/clean-orphans  (solo superadmin)
 # ══════════════════════════════════════════════════════════════════════
 
+def _instalaciones_auditar():
+    """SOLO LECTURA. Dónde se puede estar perdiendo un cliente que entra por instalación:
+      a) tickets de instalación cuyo RUT no tiene ficha de cliente,
+      b) tickets de instalación sin RUT (no se puede crear ficha),
+      c) OT de instalación sin cliente,
+      d) clientes con OT de instalación que NO están clasificados como «Instalación».
+    Daniel 2026-10-04: «los clientes que se agregan por instalación son la pepita de oro»."""
+    out = {"tickets_sin_ficha": [], "tickets_sin_rut": [], "ot_instalacion_sin_cliente": [], "mal_clasificados": []}
+    fichas = {}
+    for r in (mysql_fetchall("SELECT id, rut FROM mant_clientes WHERE rut IS NOT NULL AND rut<>''") or []):
+        k = _rut_cuerpo(r["rut"]) if r.get("rut") else ""
+        if k:
+            fichas[k] = r["id"]
+    try:
+        grupos = {}
+        for t in (mysql_fetchall(
+                "SELECT id, numero_ticket, rut, empresa, email, phone, direccion, comuna_nombre, nombre_contacto, estado, created_at "
+                "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado' ORDER BY id") or []):
+            if not (t.get("rut") or "").strip():
+                out["tickets_sin_rut"].append({"ticket": t["numero_ticket"], "empresa": t.get("empresa"), "estado": t["estado"]})
+                continue
+            k = _rut_cuerpo(t["rut"])
+            if k and k not in fichas:
+                g_ = grupos.setdefault(k, {"rut": t["rut"], "empresa": t.get("empresa"), "email": t.get("email"),
+                                           "telefono": t.get("phone"), "tickets": []})
+                g_["tickets"].append(t["numero_ticket"])
+        out["tickets_sin_ficha"] = list(grupos.values())
+    except Exception as e:
+        print(f"[auditoria instalaciones] tickets: {e}", flush=True)
+    try:
+        for v in (mysql_fetchall(
+                "SELECT id, numero_ot, titulo, estado, created_by, created_at FROM mant_visitas "
+                " WHERE tipo='instalacion' AND cliente_id IS NULL ORDER BY id DESC LIMIT 100") or []):
+            out["ot_instalacion_sin_cliente"].append({"visita_id": v["id"], "numero_ot": v.get("numero_ot"), "titulo": v.get("titulo"),
+                                                     "estado": v.get("estado"), "creada_por": v.get("created_by")})
+    except Exception as e:
+        print(f"[auditoria instalaciones] ot sin cliente: {e}", flush=True)
+    try:
+        for c in (mysql_fetchall(
+                "SELECT c.id, c.razon_social, c.estado, c.tipo_cliente, "
+                "       (SELECT COUNT(*) FROM mant_contratos ct WHERE ct.cliente_id=c.id AND ct.nombre<>'Contenedor de documentos' "
+                "           AND ct.estado IN ('vigente','por_vencer','indefinido')) AS contratos_vigentes, "
+                "       (SELECT MIN(v.numero_ot) FROM mant_visitas v WHERE v.cliente_id=c.id AND v.tipo='instalacion') AS ot "
+                "  FROM mant_clientes c "
+                " WHERE c.tipo_cliente<>'instalacion' "
+                "   AND EXISTS (SELECT 1 FROM mant_visitas v2 WHERE v2.cliente_id=c.id AND v2.tipo='instalacion') "
+                " ORDER BY c.razon_social LIMIT 300") or []):
+            out["mal_clasificados"].append({"id": c["id"], "razon_social": c["razon_social"], "estado": c["estado"],
+                                            "tipo_cliente": c["tipo_cliente"], "contratos_vigentes": int(c["contratos_vigentes"] or 0),
+                                            "ot": c.get("ot")})
+    except Exception as e:
+        print(f"[auditoria instalaciones] mal clasificados: {e}", flush=True)
+    return out
+
+
+@app.route("/mantenciones/api/instalaciones/auditoria", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_auditoria():
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede ver esto."}), 403
+    a = _instalaciones_auditar()
+    return jsonify({"ok": True, **a, "resumen": {k: len(v) for k, v in a.items()}})
+
+
 @app.route("/mantenciones/api/huerfanos", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -69367,6 +69432,62 @@ def _ensure_mant_prospecto_seguimiento():
         print(f"[ensure_mant_prospecto_seguimiento] {e}", flush=True)
 
 
+# Tracking del cliente de instalación (Daniel 2026-10-04: «que se vea como un proceso de verdad tipo tracking»).
+# Cada paso se deduce de lo que pasa DE VERDAD en el sistema; nadie lo marca a mano.
+_PROSP_PASOS = [
+    ("instalacion", "Instalación", ""),
+    ("contacto", "Contacto", "Contactar al cliente"),
+    ("cotizacion", "Cotización", "Enviar la cotización"),
+    ("aceptacion", "Aceptó el plan", "Esperar su respuesta"),
+    ("contrato", "Contrato", "Firmar el contrato"),
+]
+_COT_ESTADO_LABEL = {"draft": "borrador", "sent": "enviada", "approved": "aprobada", "rejected": "rechazada", "expired": "vencida"}
+
+
+def _prospecto_pasos(o, cot=None, contrato_fecha=None):
+    """Devuelve (pasos, hechos, texto_siguiente). `o` = dict de _prospecto_info; `cot` = última cotización
+    {numero, estado, fecha}; `contrato_fecha` = fecha del primer contrato vigente (str) o None."""
+    etapa = o.get("etapa") or "por_ofrecer"
+    cot_estado = (cot or {}).get("estado")
+    cot_ok = cot_estado in ("sent", "approved")
+    contactado = bool(o.get("ofrecida_at")) or etapa in ("ofrecida", "aceptada", "rechazada") or cot_ok
+    acepto = etapa == "aceptada" or cot_estado == "approved" or bool(contrato_fecha)
+    rechazo = etapa == "rechazada" and not acepto
+    hechos = {
+        "instalacion": True, "contacto": contactado, "cotizacion": cot_ok or acepto or bool(contrato_fecha),
+        "aceptacion": acepto, "contrato": bool(contrato_fecha),
+    }
+    info = {
+        "instalacion": (o.get("origen_fecha"), o.get("origen_ot") or "Cliente creado por la instalación"),
+        "contacto": (o.get("ofrecida_at"), (f"por {o['ofrecida_por']}" if o.get("ofrecida_por") else "")),
+        "cotizacion": ((cot or {}).get("fecha"),
+                       (f"{cot['numero']} · {_COT_ESTADO_LABEL.get(cot_estado, cot_estado)}" if cot else "")),
+        "aceptacion": (None, ""), "contrato": (contrato_fecha, ""),
+    }
+    pasos, actual_puesto, siguiente = [], False, ""
+    for key, label, accion in _PROSP_PASOS:
+        fecha, detalle = info[key]
+        if hechos[key]:
+            estado = "hecho"
+        elif key == "aceptacion" and rechazo:
+            estado, detalle = "fallido", "El cliente rechazó el plan"
+        elif rechazo:
+            estado = "pendiente"
+        elif not actual_puesto:
+            estado, actual_puesto, siguiente = "actual", True, accion
+            if key == "cotizacion" and cot_estado == "draft":
+                detalle = f"{cot['numero']} · borrador (falta enviarla)"
+        else:
+            estado = "pendiente"
+        pasos.append({"key": key, "label": label, "estado": estado, "fecha": fecha, "detalle": detalle})
+    n = sum(1 for x in pasos if x["estado"] == "hecho")
+    if rechazo:
+        siguiente = "Rechazó el plan"
+    elif n == len(pasos):
+        siguiente = "Cliente de mantención"
+    return pasos, n, siguiente
+
+
 def _prospecto_info(ids):
     """{cliente_id: {etapa, etapa_label, nota, proxima_gestion, vencida,
     ofrecida_at, ofrecida_por, origen_ot, origen_tipo, origen_fecha}}.
@@ -69375,7 +69496,8 @@ def _prospecto_info(ids):
     out = {i: {"etapa": "por_ofrecer", "etapa_label": _PROSP_ETAPAS["por_ofrecer"],
                "nota": "", "proxima_gestion": None, "proxima_gestion_iso": "",
                "vencida": False, "ofrecida_at": None, "ofrecida_por": None,
-               "origen_ot": None, "origen_tipo": None, "origen_fecha": None, "marcas": ""}
+               "origen_ot": None, "origen_tipo": None, "origen_fecha": None, "marcas": "",
+               "pasos": [], "pasos_hechos": 0, "pasos_total": len(_PROSP_PASOS), "paso_actual": ""}
            for i in ids}
     if not ids:
         return out
@@ -69428,6 +69550,28 @@ def _prospecto_info(ids):
                 o["origen_fecha"] = chile_fmt_filter(r["created_at"], "%d/%m/%Y")
     except Exception as e:
         print(f"[prospecto_info] origen: {e}", flush=True)
+    cots, contratos = {}, {}
+    try:
+        for r in mysql_fetchall(
+                f"SELECT cliente_id, numero_cotizacion, estado, created_at FROM tk_cotizaciones "
+                f" WHERE cliente_id IN ({ph}) AND COALESCE(eliminada,0)=0 ORDER BY id", tuple(ids)) or []:
+            cots[r["cliente_id"]] = {"numero": r.get("numero_cotizacion") or "", "estado": r.get("estado"),
+                                     "fecha": chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else None}
+    except Exception as e:
+        print(f"[prospecto_info] cotizaciones: {e}", flush=True)
+    try:
+        for r in mysql_fetchall(
+                f"SELECT cliente_id, MIN(created_at) AS f FROM mant_contratos WHERE cliente_id IN ({ph}) "
+                f"   AND nombre<>'Contenedor de documentos' AND estado IN ('vigente','por_vencer','indefinido') "
+                f" GROUP BY cliente_id", tuple(ids)) or []:
+            contratos[r["cliente_id"]] = chile_fmt_filter(r["f"], "%d/%m/%Y") if r.get("f") else "sí"
+    except Exception as e:
+        print(f"[prospecto_info] contratos: {e}", flush=True)
+    for i, o in out.items():
+        try:
+            o["pasos"], o["pasos_hechos"], o["paso_actual"] = _prospecto_pasos(o, cots.get(i), contratos.get(i))
+        except Exception as e:
+            print(f"[prospecto_info] pasos {i}: {e}", flush=True)
     return out
 
 

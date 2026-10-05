@@ -1417,6 +1417,10 @@ function aplicarKpiFiltro(tipo) {
       {# ── Prospecto: de qué OT nació + etapa de la oferta de mantención ── #}
       {% if c.pr %}
       <div class="cc2-prosp">
+        <div class="ptmini" title="{% for p in c.pr.pasos %}{{ loop.index }}. {{ p.label }}{% if p.estado == 'hecho' %} ✓{% endif %}  {% endfor %}">
+          {% for p in c.pr.pasos %}<span class="pm {{ p.estado }}">{% if p.estado == 'hecho' %}<i class="bi bi-check-lg"></i>{% elif p.estado == 'fallido' %}<i class="bi bi-x-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>{% if not loop.last %}<i class="pl {{ 'on' if p.estado == 'hecho' }}"></i>{% endif %}{% endfor %}
+          <span class="pt">{{ c.pr.pasos_hechos }} de {{ c.pr.pasos_total }} · {{ c.pr.paso_actual }}</span>
+        </div>
         <span class="cc2-prosp-etapa cc2-prosp-{{ c.pr.etapa }}">
           <i class="bi bi-megaphone-fill me-1"></i>Mantención: {{ c.pr.etapa_label }}
         </span>
@@ -1606,6 +1610,14 @@ function aplicarKpiFiltro(tipo) {
 .cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
 .cc2-prosp-txt{color:#6b7280}
 .cc2-prosp-vencida{color:#dc2626;font-weight:700}
+.ptmini{display:flex;align-items:center;flex-wrap:wrap;gap:0;margin-bottom:4px}
+.ptmini .pm{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:800;background:#e5e7eb;color:#6b7280;flex:0 0 auto}
+.ptmini .pm.hecho{background:#16a34a;color:#fff}
+.ptmini .pm.actual{background:#dc2626;color:#fff;animation:ptpulse 1.6s infinite}
+.ptmini .pm.fallido{background:#374151;color:#fff}
+.ptmini .pl{width:14px;height:3px;background:#e5e7eb;flex:0 0 auto}.ptmini .pl.on{background:#16a34a}
+.ptmini .pt{margin-left:10px;font-size:.76rem;font-weight:700;color:#0f766e}
+@keyframes ptpulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}70%{box-shadow:0 0 0 7px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
 .cc2-prosp-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .cc2-prosp-acts .pa{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;min-height:34px;border:1px solid #d1d5db;
   background:#fff;border-radius:8px;font-size:.76rem;font-weight:700;color:#374151;text-decoration:none;cursor:pointer}

@@ -192,3 +192,47 @@ def test_plan_entradas_raras_no_rompen():
 
 def test_formato_pesos_chilenos():
     assert _plan()["_clp_fmt"](1234567) == "$1.234.567"
+
+
+# ───────── Tracking de pasos ─────────
+def _pasos():
+    src = open(_APP, encoding="utf-8").read()
+    a = src.index("_PROSP_PASOS = [")
+    b = src.index("def _prospecto_info")
+    ns = {}
+    exec(src[a:b], ns)
+    return ns["_prospecto_pasos"]
+
+
+def _estados(pasos):
+    return [p["estado"] for p in pasos]
+
+
+def test_tracking_recien_instalado():
+    pasos, n, sig = _pasos()({"etapa": "por_ofrecer", "origen_ot": "OT-1", "origen_fecha": "02/09/2026"})
+    assert _estados(pasos) == ["hecho", "actual", "pendiente", "pendiente", "pendiente"] and n == 1 and sig == "Contactar al cliente"
+
+
+def test_tracking_contactado_sin_cotizar():
+    pasos, n, sig = _pasos()({"etapa": "ofrecida", "ofrecida_at": "05/10/2026", "ofrecida_por": "Aaron"})
+    assert _estados(pasos)[:3] == ["hecho", "hecho", "actual"] and sig == "Enviar la cotización"
+
+
+def test_tracking_cotizacion_borrador_sigue_pendiente_de_enviar():
+    pasos, n, sig = _pasos()({"etapa": "ofrecida", "ofrecida_at": "x"}, {"numero": "COT-1", "estado": "draft", "fecha": "05/10/2026"})
+    assert pasos[2]["estado"] == "actual" and "borrador" in pasos[2]["detalle"]
+
+
+def test_tracking_cotizacion_enviada_espera_respuesta():
+    pasos, n, sig = _pasos()({"etapa": "ofrecida", "ofrecida_at": "x"}, {"numero": "COT-1", "estado": "sent", "fecha": "05/10/2026"})
+    assert _estados(pasos) == ["hecho", "hecho", "hecho", "actual", "pendiente"] and sig == "Esperar su respuesta"
+
+
+def test_tracking_rechazo_corta_el_proceso():
+    pasos, n, sig = _pasos()({"etapa": "rechazada", "ofrecida_at": "x"}, {"numero": "COT-1", "estado": "sent", "fecha": "x"})
+    assert pasos[3]["estado"] == "fallido" and pasos[4]["estado"] == "pendiente" and sig == "Rechazó el plan"
+
+
+def test_tracking_con_contrato_queda_completo():
+    pasos, n, sig = _pasos()({"etapa": "ofrecida"}, None, "10/10/2026")
+    assert set(_estados(pasos)) == {"hecho"} and n == 5 and sig == "Cliente de mantención"
