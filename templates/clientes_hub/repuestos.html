@@ -589,6 +589,30 @@
 
   {# ── Vista Lista (paginada en servidor, REGLA #4.3) ── #}
   <div id="rsVistaPaneLista">
+    {# 🚦 2026-10-04: plazos vencidos = aviso rojo ("que moleste") + semáforo y
+       responsable por defecto ("el que se defina por el front"). #}
+    {# 🧠 2026-10-04 (Daniel: "ponle inteligencia"): tarjetas que filtran al tocarlas
+       y sugerencias calculadas con lo que hay en la tabla. #}
+    <div class="rst-kpis" id="rstKpis"></div>
+    <div class="rst-intel" id="rstIntel" style="display:none"></div>
+    <div id="rstVencidas" class="rst-vencidas" style="display:none" role="alert">
+      <i class="bi bi-alarm-fill"></i><b id="rstVencidasTxt"></b>
+      <span>El responsable ya tiene el aviso en su campana. Están arriba de la tabla.</span>
+      <button type="button" class="rst-btn rojo" onclick="rsSem('rojo')">Ver vencidas</button>
+    </div>
+    <div class="rst-bar-top">
+      <div class="rst-seg" id="rstSem" role="group" aria-label="Filtrar por plazo">
+        <button type="button" data-sem="" onclick="rsSem('')">Todos los plazos <span class="n">0</span></button>
+        <button type="button" data-sem="rojo" onclick="rsSem('rojo')"><span class="rst-dot rojo"></span>Vencidas <span class="n">0</span></button>
+        <button type="button" data-sem="ambar" onclick="rsSem('ambar')"><span class="rst-dot ambar"></span>Por vencer <span class="n">0</span></button>
+        <button type="button" data-sem="verde" onclick="rsSem('verde')"><span class="rst-dot verde"></span>En plazo <span class="n">0</span></button>
+      </div>
+      {% if not oculta_proveedores %}
+      <label class="rst-respdef"><i class="bi bi-person-gear"></i><span>Responsable por defecto</span>
+        <select id="rstRespDef" class="rst-select-def" onchange="rsRespDefGuardar(this.value)" aria-label="Responsable por defecto de las solicitudes"></select>
+      </label>
+      {% endif %}
+    </div>
     {#- 🏗️ Fase 4 (2026-09-26 -- Daniel: "puedo gestionar una orden de
         trabajo en base a que vayan a instalar todos esos repuestos o uno
         solo, con el filtro de que tiene que ser siempre el mismo
@@ -619,6 +643,177 @@
       </div>
     </div>
   </div>
+
+  
+<style>
+  /* ══ Tabla de solicitudes: mismo lenguaje que el Monitor de Retiros ══ */
+  #repPaneSolicitudes{--rst-rojo:#dc2626;--rst-ambar:#f59e0b;--rst-verde:#16a34a;--rst-gris:#d1d5db;--rst-azul:#3b82f6;--rst-violeta:#7c3aed}
+  .rst-chip{display:inline-flex;align-items:center;gap:7px;min-height:42px;border:1.5px solid #e5e7eb;background:#fff;border-radius:50px;padding:6px 14px;font-weight:700;font-size:.88rem;color:#374151;margin:0 6px 6px 0;cursor:pointer}
+  .rst-chip .n{background:#f3f4f6;border-radius:50px;padding:1px 8px;font-size:.76rem;font-weight:800}
+  .rst-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}.rst-chip.on .n{background:rgba(255,255,255,.2);color:#fff}
+  .rst-chip.e-gestionar i{color:#dc2626}.rst-chip.e-lote i{color:#f59e0b}.rst-chip.e-ot i{color:#3b82f6}.rst-chip.e-compra i{color:#7c3aed}.rst-chip.e-cerrada i{color:#16a34a}
+  .rst-chip.on i{color:#fff}
+  .rst-vencidas{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;background:#fef2f2;border:1.5px solid #fecaca;border-left:5px solid #dc2626;border-radius:12px;padding:10px 14px;margin-bottom:10px;color:#7f1d1d}
+  .rst-vencidas > i{color:#dc2626;font-size:1.2rem;animation:rstLate 1.6s ease-in-out infinite;border-radius:50%}
+  .rst-vencidas b{color:#991b1b}.rst-vencidas span{flex:1;min-width:200px;font-size:.88rem}
+  @keyframes rstLate{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}50%{box-shadow:0 0 0 7px rgba(220,38,38,0)}}
+  .rst-bar-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px}
+  .rst-seg{display:inline-flex;border:1.5px solid #0a0a0a;border-radius:10px;overflow:hidden;flex-wrap:wrap}
+  .rst-seg button{min-height:42px;border:0;border-right:1px solid #e5e7eb;background:#fff;padding:0 14px;font-weight:700;font-size:.86rem;color:#111827;display:inline-flex;align-items:center;gap:6px}
+  .rst-seg button:last-child{border-right:0}
+  .rst-seg button.on{background:#0a0a0a;color:#fff}
+  .rst-seg .n{font-size:.76rem;font-weight:800;opacity:.75}
+  .rst-dot{display:inline-block;width:11px;height:11px;border-radius:50%}
+  .rst-dot.rojo{background:#dc2626}.rst-dot.ambar{background:#f59e0b}.rst-dot.verde{background:#16a34a}
+  .rst-respdef{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:.86rem;color:#374151;margin:0}
+  .rst-select-def,.rst-select-resp{min-height:42px;border:1.5px solid #9ca3af;border-radius:10px;padding:0 30px 0 10px;font-size:15px;font-weight:600;background-color:#fff;max-width:260px}
+  .rst-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(10,10,10,.05)}
+  .rst-scroll{overflow-x:auto}
+  .rst-table{width:100%;margin:0;border-collapse:separate;border-spacing:0}
+  .rst-table thead th{padding:12px;background:#0a0a0a;color:#fff;font-size:.8rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;border:0;text-align:left}
+  .rst-table thead th.rst-sort{cursor:pointer;user-select:none}
+  .rst-table thead th.rst-sort:hover{background:#1f2937}
+  .rst-table thead th .bi-arrow-down-up{margin-left:4px;opacity:.5;font-size:.75rem}
+  .rst-table thead th.is-asc .bi,.rst-table thead th.is-desc .bi{opacity:1;color:#f87171}
+  .rst-table tbody td{padding:11px 12px;vertical-align:top;border-bottom:1px solid #f1f2f4;color:#111827;font-size:.9rem}
+  .rst-table tbody td small{display:block;color:#4b5563;font-size:.78rem;margin-top:2px;word-break:break-word}
+  .rst-row{cursor:pointer}
+  .rst-row:hover td{background:#f9fafb}
+  .rst-row td:first-child{box-shadow:inset 5px 0 0 var(--rst-sem,transparent)}
+  .rst-row.is-abierta td{background:#fffafa}
+  .rst-c0{width:58px;white-space:nowrap}
+  .rst-chk{width:18px;height:18px;vertical-align:middle;margin-right:6px}
+  .rst-chev{color:#6b7280}
+  .rst-num{font-size:.98rem;display:block}
+  .rst-org{display:inline-flex;align-items:center;gap:4px;font-size:.78rem;font-weight:700;color:#374151;text-decoration:none;margin-top:2px}
+  .rst-org.ot{color:#dc2626}.rst-org.inc{color:#a16207}
+  .rst-hace{color:#6b7280!important}
+  .rst-pill{display:inline-flex;align-items:center;gap:4px;border-radius:50px;padding:2px 9px;font-size:.74rem;font-weight:800;margin-top:4px;margin-right:4px}
+  .rst-pill.verde{background:#dcfce7;color:#166534}.rst-pill.rojo{background:#fee2e2;color:#991b1b}.rst-pill.ambar{background:#fff8e1;color:#92400e}
+  .rst-pill.rojo.fuerte{background:#dc2626;color:#fff}
+  .rst-etapa{display:inline-block;border-radius:50px;padding:4px 11px;font-size:.78rem;font-weight:800;white-space:nowrap}
+  .rst-etapa.rojo{background:#fee2e2;color:#991b1b}.rst-etapa.ambar{background:#fff8e1;color:#92400e}.rst-etapa.azul{background:#dbeafe;color:#1e40af}
+  .rst-etapa.violeta{background:#ede9fe;color:#5b21b6}.rst-etapa.gris{background:#f3f4f6;color:#374151}
+  .rst-sig{font-weight:600}
+  .rst-plazo b{font-size:.86rem}
+  .rst-plazo.rojo b{color:#b91c1c}.rst-plazo.ambar b{color:#b45309}.rst-plazo.verde b{color:#15803d}
+  .rst-plazo .rst-dot{margin-right:5px;vertical-align:-1px}
+  .rst-bar{height:5px;border-radius:50px;background:#f3f4f6;overflow:hidden;margin-top:5px;max-width:160px}
+  .rst-bar span{display:block;height:100%;border-radius:50px}
+  .rst-plazo.rojo .rst-bar span{background:#dc2626}.rst-plazo.ambar .rst-bar span{background:#f59e0b}.rst-plazo.verde .rst-bar span{background:#16a34a}
+  .rst-resp{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;border:1.5px dashed transparent;background:none;border-radius:8px;padding:3px 6px;text-align:left;position:relative;cursor:pointer}
+  .rst-resp:hover{border-color:#9ca3af}
+  .rst-resp .bi-pencil-fill{position:absolute;right:-14px;top:5px;font-size:.7rem;color:#9ca3af}
+  .rst-resp.ro{cursor:default}
+  .rst-sin{color:#b45309;font-weight:800}
+  .rst-tk{display:inline-flex;align-items:center;gap:5px;font-weight:800;color:#1d4ed8;text-decoration:none;white-space:nowrap}
+  .rst-btn{display:inline-flex;align-items:center;gap:6px;min-height:40px;border:1.5px solid #0a0a0a;background:#fff;color:#0a0a0a;border-radius:10px;padding:4px 12px;font-weight:800;font-size:.84rem;white-space:nowrap;text-decoration:none;cursor:pointer}
+  .rst-btn:hover{background:#0a0a0a;color:#fff}
+  .rst-btn.sm{min-height:34px;font-size:.78rem;padding:2px 10px}
+  .rst-btn.rojo{background:#dc2626;border-color:#dc2626;color:#fff}.rst-btn.rojo:hover{background:#b91c1c}
+  .rst-btn.azul{background:#2563eb;border-color:#2563eb;color:#fff}.rst-btn.azul:hover{background:#1d4ed8}
+  .rst-btn.ambar{background:#f59e0b;border-color:#f59e0b;color:#fff}.rst-btn.ambar:hover{background:#d97706}
+  .rst-btn.violeta{background:#7c3aed;border-color:#7c3aed;color:#fff}.rst-btn.violeta:hover{background:#6d28d9}
+  .rst-det td{background:#f9fafb;padding:10px 12px 14px!important;cursor:default}
+  .rst-det .rs-card{margin:0}
+  .rst-vacio{text-align:center;color:#6b7280;padding:28px!important}
+  .rst-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:#161616;border-top:1px solid #2d2d2d}
+  .rst-count{display:flex;align-items:center;gap:8px;color:#e5e7eb;font-size:.9rem;flex-wrap:wrap}
+  .rst-count .bi{color:#f87171}.rst-count strong{color:#fff}
+  .rst-lim{color:#fbbf24;font-size:.8rem}
+  .rst-ctrl{display:flex;flex-wrap:wrap;align-items:center;gap:10px;color:#e5e7eb;font-size:.9rem}
+  .rst-select{min-height:42px;padding:0 30px 0 10px;border:1.5px solid #4b5563;border-radius:10px;background-color:#1a1a1a;color:#fff;font-size:.9rem;font-weight:600}
+  .rst-pbtn{display:inline-flex;align-items:center;gap:6px;min-height:42px;padding:0 12px;background:transparent;border:1.5px solid #6b7280;border-radius:10px;color:#fff;font-size:.88rem;font-weight:700}
+  .rst-pbtn:hover:not(:disabled){background:#fff;color:#0a0a0a}
+  .rst-pbtn:disabled{opacity:.4;cursor:not-allowed}
+  /* Celular (Daniel 2026-10-04: "el gerente lo ve por el celular... es mejor que
+     sean filas, filas interactivas, potentes, con colores"): cada solicitud es UNA
+     fila compacta con su franja de color; al tocarla se abre la ficha completa. */
+  @media (max-width:900px){
+    .rst-table thead{display:none}
+    .rst-table,.rst-table tbody{display:block;width:100%}
+    .rst-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+      grid-template-areas:"c0 sol eta" "c0 cli pla" "c0 rep acc" "c0 res tk";
+      column-gap:10px;row-gap:3px;padding:10px 12px 10px 4px;border-bottom:1px solid #e5e7eb;box-shadow:inset 6px 0 0 var(--rst-sem,transparent)}
+    .rst-row td{display:block;border:0!important;padding:0!important;box-shadow:none!important;background:none!important;min-width:0}
+    .rst-row td:nth-child(1){grid-area:c0;align-self:center;padding-left:12px!important;width:auto}
+    .rst-row td:nth-child(2){grid-area:sol}
+    .rst-row td:nth-child(3){grid-area:cli}
+    .rst-row td:nth-child(4){grid-area:rep}
+    .rst-row td:nth-child(5){grid-area:eta;text-align:right}
+    .rst-row td:nth-child(6){grid-area:pla;text-align:right}
+    .rst-row td:nth-child(7){grid-area:res}
+    .rst-row td:nth-child(8){grid-area:tk;text-align:right}
+    .rst-row td:nth-child(9){grid-area:acc;text-align:right;align-self:center}
+    .rst-row td:nth-child(2) .rst-num{display:inline;margin-right:6px}
+    .rst-row td:nth-child(2) .rst-hace,.rst-row .rst-sig{display:none}
+    .rst-row td:nth-child(3) small{display:none}
+    .rst-row .rst-bar{margin-left:auto;max-width:110px}
+    .rst-row .rst-plazo small{display:none}
+    .rst-row .rst-btn{min-height:36px;padding:2px 10px;font-size:.8rem}
+    .rst-row .rst-chk{margin:0 0 6px 0;display:block}
+    .rst-row.is-abierta{background:#fffafa}
+    .rst-det,.rst-det td{display:block;width:100%}
+    .rst-foot{flex-direction:column;align-items:stretch}
+    .rst-ctrl{justify-content:space-between}
+    .rst-bar-top{flex-direction:column;align-items:stretch}
+    .rst-seg{width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+    .rst-seg::-webkit-scrollbar{display:none}
+    .rst-seg button{flex:0 0 auto;min-height:38px;padding:0 10px;font-size:.78rem;white-space:nowrap}
+    .rst-respdef{width:100%;flex-wrap:wrap}
+    .rst-respdef .rst-select-def{flex:1;max-width:none;min-width:0;width:100%}
+    .rst-row{grid-template-columns:auto minmax(0,1fr) minmax(0,46%)}
+    .rst-row td:nth-child(5),.rst-row td:nth-child(6),.rst-row td:nth-child(8),.rst-row td:nth-child(9){justify-self:end;max-width:100%}
+    .rst-row .rst-plazo b{font-size:.78rem;display:block;line-height:1.2}
+    .rst-row .rst-plazo .rst-dot{display:none}
+    .rst-row td:nth-child(3) b,.rst-row td:nth-child(4) b{word-break:normal;overflow-wrap:break-word;font-size:.86rem;line-height:1.25}
+  }
+  @media (prefers-reduced-motion:reduce){ .rst-vencidas > i{animation:none} }
+</style>
+
+  
+<style>
+  /* ══ Inteligencia: tarjetas KPI y sugerencias ══ */
+  .rst-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:10px}
+  .rst-kpi{text-align:left;background:#fff;border:1px solid #e5e7eb;border-top:4px solid var(--acc,#dc2626);border-radius:14px;padding:10px 14px;cursor:pointer;
+    display:flex;flex-direction:column;gap:2px;transition:transform .15s,box-shadow .15s}
+  .rst-kpi:hover{transform:translateY(-2px);box-shadow:0 10px 22px -14px rgba(0,0,0,.35)}
+  .rst-kpi .k{font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#4b5563;display:flex;align-items:center;gap:6px}
+  .rst-kpi .k i{color:var(--acc)}
+  .rst-kpi .v{font-size:1.8rem;font-weight:900;color:#0a0a0a;line-height:1.05}
+  .rst-kpi.hot{background:linear-gradient(180deg,#fef2f2 0%,#fff 80%)}
+  .rst-kpi.hot .v{color:#b91c1c}
+  .rst-intel{background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;padding:12px 14px;margin-bottom:10px}
+  .rst-intel-h{font-weight:900;font-size:1rem;color:#0a0a0a;display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .rst-intel-h i{color:#7c3aed}
+  .rst-intel-h span{background:#ede9fe;color:#5b21b6;border-radius:50px;padding:1px 9px;font-size:.78rem}
+  .rst-sug{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;border-radius:10px;padding:8px 12px;margin-top:6px;font-size:.9rem;border:1px solid #e5e7eb;border-left:4px solid #9ca3af;background:#f9fafb}
+  .rst-sug > i{font-size:1.05rem}
+  .rst-sug > span{flex:1;min-width:220px;color:#1f2937}
+  .rst-sug.rojo{border-left-color:#dc2626;background:#fef2f2}.rst-sug.rojo > i{color:#dc2626}
+  .rst-sug.ambar{border-left-color:#f59e0b;background:#fffbeb}.rst-sug.ambar > i{color:#b45309}
+  .rst-sug.azul{border-left-color:#3b82f6;background:#eff6ff}.rst-sug.azul > i{color:#1d4ed8}
+  .rst-sug.verde{border-left-color:#16a34a;background:#f0fdf4}.rst-sug.verde > i{color:#16a34a}
+  .rst-sug-mas{font-size:.82rem;color:#6b7280;margin-top:6px}
+  .rst-solo{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#0a0a0a;color:#fff;border-radius:10px;padding:8px 12px;margin-bottom:8px;font-size:.9rem}
+  .rst-solo i{color:#f87171}
+  .rst-solo button{margin-left:auto;border:1.5px solid #6b7280;background:transparent;color:#fff;border-radius:8px;min-height:34px;padding:2px 10px;font-weight:700}
+  @media (max-width:992px){ .rst-kpis{grid-template-columns:repeat(3,minmax(0,1fr))} }
+  @media (max-width:576px){
+    /* Celular: todo compacto para llegar rápido a la tabla */
+    #rsChips{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    #rsChips::-webkit-scrollbar{display:none}
+    .rst-chip{flex:0 0 auto;min-height:38px;padding:4px 11px;font-size:.8rem;margin:0}
+    .rst-kpis{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+    .rst-kpi{padding:7px 9px;border-top-width:3px;border-radius:12px}
+    .rst-kpi .k{font-size:.6rem;letter-spacing:0;line-height:1.15}
+    .rst-kpi .k i{display:none}
+    .rst-kpi .v{font-size:1.3rem}
+    .rst-intel{padding:10px}
+    .rst-sug{font-size:.82rem;padding:7px 10px}
+    .rst-sug:nth-of-type(n+4){display:none}
+  }
+</style>
 
   {# ── Vistas agrupadas: Por proveedor / Por cliente (REGLA #14) ── #}
   <div id="rsVistaPaneGrupos" class="d-none">
@@ -1623,7 +1818,9 @@ var _rs = {
   // 🏗️ Fase 4 (2026-09-26): selección de la vista Lista para "Generar OT
   // (N)" -- solo de la página visible (se reinicia en cada rsCargar()),
   // mismo espíritu que selGrupo pero sin agrupar por cliente/proveedor.
-  selLista: {}
+  selLista: {},
+  // 🚦 2026-10-04: tabla tipo Monitor de Retiros (etapa, semáforo, orden y página en el navegador).
+  etapa: '', sem: '', ord: 'urgencia', ordDir: 1, tPage: 1, tPer: 20, abiertas: {}, visibles: []
 };
 var _RS_EST_CLS = { solicitado: 'sol', validado: 'val', pedido: 'ped', recibido: 'rec', instalado: 'ins', rechazado: 'rej' };
 function rsEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
@@ -1741,7 +1938,7 @@ function rsAtenderAhora(){
   const pl = document.getElementById('rsVistaPaneLista'); if (pl) pl.classList.remove('d-none');
   const pg = document.getElementById('rsVistaPaneGrupos'); if (pg) pg.classList.add('d-none');
 
-  _rs.filtro = 'solicitado'; _rs.origen = ''; _rs.cliente_id = ''; _rs.cliente_nombre = '';
+  _rs.filtro = 'abiertas'; _rs.etapa = 'gestionar'; _rs.sem = ''; _rs.tPage = 1; _rs.origen = ''; _rs.cliente_id = ''; _rs.cliente_nombre = '';
   _rs.proveedor_id = ''; _rs.fecha_desde = ''; _rs.fecha_hasta = ''; _rs.q = ''; _rs.page = 1;
   const setVal = function(id, v){ const el = document.getElementById(id); if (el) el.value = v; };
   setVal('rsQ', ''); setVal('rsFOrigen', ''); setVal('rsFCliente', '');
@@ -1768,7 +1965,7 @@ async function rsCargar(){
   // de que ya se pintó el filtro nuevo.
   const miSeq = (_rs.reqSeq = (_rs.reqSeq || 0) + 1);
   try {
-    const qs = rsQueryString({ page: _rs.page, per_page: _rs.size });
+    const qs = rsQueryString({ page: 1, per_page: 500 });
     const r = await fetch('/repuestos/api/solicitudes-ot?' + qs, {credentials:'same-origin', cache:'no-store'});
     const j = await r.json();
     if (miSeq !== _rs.reqSeq) return; // llegó tarde: ya hay un fetch más nuevo en curso o resuelto
@@ -1786,6 +1983,7 @@ async function rsCargar(){
     _rs.selLista = {};
     rsPintarChips();
     rsPintar();
+    rsVencidasPintar(j.vencidas_n || 0);
     rsAplicarPendientesTecnicos(j.pendientes_tecnicos);
     rsFFsPintar(j.fuera_servicio_n);
     rsAplicarConteoAbiertas(j.conteo);
@@ -1803,18 +2001,8 @@ function rsFiltrosSyncBoton(){
   const btn = document.getElementById('rsFLimpiar');
   if (btn) btn.style.display = rsHayFiltrosExtra() ? '' : 'none';
 }
-function rsPintarChips(){
-  const c = _rs.conteo;
-  const abiertas = (c.solicitado||0)+(c.validado||0)+(c.pedido||0)+(c.recibido||0);
-  const cerradas = (c.instalado||0)+(c.rechazado||0);
-  const defs = [['abiertas','Pendientes',abiertas],['solicitado','Por validar',c.solicitado||0],['validado','Validadas',c.validado||0],
-                ['pedido','Pedidas',c.pedido||0],['recibido','Recibidas',c.recibido||0],['cerradas','Cerradas',cerradas],
-                ['todas','Todas',abiertas + cerradas]];
-  document.getElementById('rsChips').innerHTML = defs.map(function(d){
-    return '<button type="button" class="rs-chip' + (_rs.filtro === d[0] ? ' on' : '') + '" onclick="rsFiltro(\'' + d[0] + '\')">' + d[1] + ' <b>' + d[2] + '</b></button>';
-  }).join('');
-}
-function rsFiltro(f){ _rs.filtro = f; _rs.page = 1; rsCargar(); }
+
+
 function rsBuscarDeb(q){
   clearTimeout(_rs.qTimer);
   _rs.qTimer = setTimeout(function(){ _rs.q = (q || '').trim(); _rs.page = 1; rsCargar(); }, 350);
@@ -1954,26 +2142,334 @@ function rsVista(v){
   if (v === 'compras') { rcCargarProveedoresFiltro(); rcCargar(); }
   else rsCargar();
 }
+
+
+/* ══ Tabla de solicitudes al estilo del Monitor de Retiros (2026-10-04, Daniel:
+   "como la tabla de retiros, con información de verdad, colores, gestión de
+   filtros... con tiempo para responder en plazos y que moleste"). 5 etapas,
+   plazo con semáforo, responsable (el del ticket, el propio o el por defecto),
+   ticket o "Generar ticket" y la acción que sigue. La flecha de cada fila abre
+   la ficha completa de antes (todas sus acciones siguen ahí, REGLA #4.2). ══ */
+var _RS_ETAPAS = [['', 'Todas abiertas', 'bi-list-ul'], ['gestionar', 'Por gestionar', 'bi-inbox-fill'], ['lote', 'Lista para lote', 'bi-collection-fill'],
+                  ['ot', 'Lista para OT', 'bi-clipboard2-check-fill'], ['compra', 'En compra', 'bi-truck'], ['cerrada', 'Cerradas', 'bi-check2-all']];
+function rsPintarChips(){
+  const rows = _rs.pagina || [];
+  const n = function(k){ return rows.filter(function(s){ return s.etapa === k; }).length; };
+  const c = _rs.conteo || {};
+  const cerradas = (c.instalado || 0) + (c.rechazado || 0);
+  const abiertas = _rs.filtro === 'cerradas' ? ((c.solicitado||0)+(c.validado||0)+(c.pedido||0)+(c.recibido||0)) : rows.filter(function(s){ return s.etapa !== 'cerrada'; }).length;
+  document.getElementById('rsChips').innerHTML = _RS_ETAPAS.map(function(e){
+    const k = e[0];
+    const on = (k === 'cerrada') ? _rs.filtro === 'cerradas' : (_rs.filtro !== 'cerradas' && (_rs.etapa || '') === k);
+    const cnt = k === '' ? abiertas : (k === 'cerrada' ? cerradas : (_rs.filtro === 'cerradas' ? '–' : n(k)));
+    return '<button type="button" class="rst-chip e-' + (k || 'todas') + (on ? ' on' : '') + '" onclick="rsEtapa(\'' + k + '\')"><i class="bi ' + e[2] + '"></i>' + e[1] + ' <span class="n">' + cnt + '</span></button>';
+  }).join('');
+}
+function rsEtapa(k){
+  _rs.soloIds = null;
+  const nuevoFiltro = (k === 'cerrada') ? 'cerradas' : 'abiertas';
+  _rs.etapa = (k === 'cerrada') ? '' : k;
+  _rs.tPage = 1;
+  if (nuevoFiltro !== _rs.filtro){ _rs.filtro = nuevoFiltro; rsCargar(); }
+  else { rsPintarChips(); rsPintar(); }
+}
+function rsFiltro(f){ _rs.filtro = f; _rs.etapa = ''; _rs.page = 1; _rs.tPage = 1; rsCargar(); }
+function rsSem(v){ _rs.sem = (_rs.sem === v ? '' : v); _rs.tPage = 1; rsPintar(); }
+function rsOrden(campo){
+  if (_rs.ord === campo) _rs.ordDir = -(_rs.ordDir || 1); else { _rs.ord = campo; _rs.ordDir = 1; }
+  rsPintar();
+}
+function rsTPag(d){ _rs.tPage = (_rs.tPage || 1) + d; rsPintar(); }
+function rsTPer(v){ _rs.tPer = parseInt(v, 10) || 20; _rs.tPage = 1; rsPintar(); }
+function rsVisibles(){
+  let rows = (_rs.pagina || []).slice();
+  if (_rs.filtro !== 'cerradas' && _rs.etapa) rows = rows.filter(function(s){ return s.etapa === _rs.etapa; });
+  if (_rs.sem) rows = rows.filter(function(s){ return (s.plazo && s.plazo.color) === _rs.sem; });
+  if (_rs.soloIds) rows = rows.filter(function(s){ return _rs.soloIds.indexOf(s.id) >= 0; });
+  const urg = function(s){ return (s.prioridad_fs ? 2 : 0) + (s.plazo ? Math.min(s.plazo.pct || 0, 5) : -1); };
+  const cmp = {
+    urgencia: function(a, b){ return urg(b) - urg(a) || b.id - a.id; },
+    id: function(a, b){ return a.id - b.id; },
+    plazo: function(a, b){ return ((a.plazo && a.plazo.pct) || -1) - ((b.plazo && b.plazo.pct) || -1); },
+    etapa: function(a, b){ const o = {gestionar:0, lote:1, ot:2, compra:3, cerrada:4}; return (o[a.etapa] || 0) - (o[b.etapa] || 0); },
+    cliente: function(a, b){ return String(a.cliente_nombre || '').localeCompare(String(b.cliente_nombre || '')); },
+    resp: function(a, b){ return String(a.responsable_efectivo || '~').localeCompare(String(b.responsable_efectivo || '~')); },
+  };
+  const ord = _rs.ord || 'urgencia', dir = _rs.ordDir || 1;
+  rows.sort(function(a, b){ return (cmp[ord] || cmp.urgencia)(a, b) * (ord === 'urgencia' ? 1 : dir); });
+  return rows;
+}
+function rsSemaforoConteo(){
+  const rows = (_rs.pagina || []).filter(function(s){ return _rs.filtro === 'cerradas' || !_rs.etapa || s.etapa === _rs.etapa; });
+  const c = {rojo: 0, ambar: 0, verde: 0};
+  rows.forEach(function(s){ if (s.plazo && c[s.plazo.color] != null) c[s.plazo.color]++; });
+  document.querySelectorAll('#rstSem [data-sem]').forEach(function(b){
+    const k = b.dataset.sem;
+    b.classList.toggle('on', (_rs.sem || '') === k);
+    const nEl = b.querySelector('.n'); if (nEl) nEl.textContent = k ? c[k] : rows.length;
+  });
+}
+const _RST_ETAPA_CLS = {gestionar: 'rojo', lote: 'ambar', ot: 'azul', compra: 'violeta', cerrada: 'gris'};
+function rsFilaHtml(s){
+  const sel = _rs.puedeGenerarOT ? '<input type="checkbox" class="rst-chk" ' + (_rs.selLista[s.id] ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="rsListaToggle(' + s.id + ', this.checked)" aria-label="Seleccionar la solicitud #' + s.id + '">' : '';
+  const abierta = !!_rs.abiertas[s.id];
+  const origen = s.solicitud_padre_id ? '<span class="rst-org">Parte de #' + s.solicitud_padre_id + '</span>'
+    : (s.contexto === 'ot' ? '<a class="rst-org ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()"><i class="bi bi-clipboard2-check"></i>' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>'
+    : (s.contexto === 'incidencia' ? '<span class="rst-org inc"><i class="bi bi-exclamation-triangle-fill"></i>Incidencia</span>'
+    : (s.contexto === 'manual' ? '<span class="rst-org"><i class="bi bi-pencil-square"></i>' + (s.es_reposicion ? 'Reposición' : 'Manual') + '</span>'
+    : '<span class="rst-org"><i class="bi bi-ticket-perforated"></i>Ticket</span>')));
+  const cliente = s.solicitud_padre_id ? '<b>Stock libre en bodega</b>'
+    : (s.contexto === 'manual' && s.es_reposicion ? '<b>Reposición de stock propio</b>'
+    : (s.contexto === 'incidencia' ? '<b>' + rsEsc(s.incidencia_descripcion || s.incidencia_sku || 'Incidencia') + '</b>'
+    : '<b>' + rsEsc(s.cliente_nombre || 'Sin cliente') + '</b>'));
+  const equipo = [s.maquina_nombre, s.maquina_serie ? 'S/N ' + s.maquina_serie : ''].filter(Boolean).join(' · ');
+  const stock = s.stock_disponible == null ? (s.repuesto_stock_id ? '' : '<span class="rst-pill ambar">Sin ligar a bodega</span>')
+    : (s.stock_disponible >= 0 ? '<span class="rst-pill verde">Hay stock · ' + rsFmt(s.stock_cantidad) + '</span>'
+                               : '<span class="rst-pill rojo">Falta ' + rsFmt(Math.abs(s.stock_disponible)) + '</span>');
+  const et = s.etapa || 'gestionar';
+  const p = s.plazo;
+  const plazo = p ? '<div class="rst-plazo ' + p.color + '"><span class="rst-dot ' + p.color + '"></span><b>' + rsEsc(p.texto) + '</b>' +
+      '<div class="rst-bar"><span style="width:' + Math.min(100, Math.round((p.pct || 0) * 100)) + '%"></span></div>' +
+      '<small>' + (p.dias ? 'Llega ' : 'Vence ') + rsEsc(p.vence || '') + '</small></div>'
+    : '<span class="text-muted small">' + (et === 'cerrada' ? '—' : (s.ot_generada_id ? 'Lo lleva la OT' : '—')) + '</span>';
+  const respTxt = s.responsable_efectivo
+    ? '<b>' + rsEsc(s.responsable_efectivo) + '</b>' + (s.responsable_origen === 'defecto' ? '<small>por defecto</small>' : '')
+    : '<span class="rst-sin">Sin asignar</span>';
+  const resp = (_rs.puedePedir && s.abierta)
+    ? '<button type="button" class="rst-resp" onclick="event.stopPropagation();rsRespCambiar(' + s.id + ', this)" title="Cambiar responsable">' + respTxt + '<i class="bi bi-pencil-fill"></i></button>'
+    : '<span class="rst-resp ro">' + respTxt + '</span>';
+  const puedeTicket = !s.ticket_id && !s.solicitud_padre_id && (s.contexto !== 'manual' || s.abierta);
+  const ticket = s.numero_ticket
+    ? '<a class="rst-tk" href="/tickets/' + s.ticket_id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()"><i class="bi bi-ticket-perforated"></i>' + rsEsc(s.numero_ticket) + '</a>'
+    : (puedeTicket ? '<button type="button" class="rst-btn sm" onclick="event.stopPropagation();rsCrearTicket(' + s.id + ')"><i class="bi bi-plus-lg"></i>Generar ticket</button>' : '<span class="text-muted small">—</span>');
+  // Acción principal según la etapa (todas las demás siguen en la ficha de la flecha).
+  let acc = '';
+  if (et === 'gestionar' && (s.siguientes || []).indexOf('validado') >= 0) acc = '<button type="button" class="rst-btn rojo" onclick="event.stopPropagation();rsAccion(' + s.id + ',\'validado\')"><i class="bi bi-clipboard2-check"></i>Gestionar</button>';
+  else if (et === 'ot' && s.ot_generada_id) acc = '<a class="rst-btn" href="/ot/' + s.ot_generada_id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()"><i class="bi bi-box-arrow-up-right"></i>' + rsEsc(s.ot_generada_numero || 'Ver OT') + '</a>';
+  else if (et === 'ot' && s.repartible && _rs.puedePedir) acc = '<button type="button" class="rst-btn azul" onclick="event.stopPropagation();rsRepartirDesdeCard(' + s.id + ')"><i class="bi bi-diagram-2"></i>Repartir</button>';
+  else if (et === 'ot' && _rs.puedeGenerarOT && !s.solicitud_padre_id) acc = '<button type="button" class="rst-btn azul" onclick="event.stopPropagation();rsGenerarOT(' + s.id + ')"><i class="bi bi-clipboard2-plus"></i>Generar OT</button>';
+  else if (et === 'lote' && _rs.puedePedir && typeof gsAbrirCompra === 'function') acc = '<button type="button" class="rst-btn ambar" onclick="event.stopPropagation();gsAbrirCompra(' + s.id + ',' + (s.proveedor_id || 'null') + ')"><i class="bi bi-cart-plus"></i>Armar compra</button>';
+  else if (et === 'compra' && (s.siguientes || []).indexOf('recibido') >= 0) acc = '<button type="button" class="rst-btn violeta" onclick="event.stopPropagation();rsAccion(' + s.id + ',\'recibido\')"><i class="bi bi-box-arrow-in-down"></i>Recibido</button>';
+  const semCls = s.prioridad_fs ? 'rojo' : (p ? p.color : 'gris');
+  return '<tr class="rst-row' + (abierta ? ' is-abierta' : '') + '" style="--rst-sem:var(--rst-' + semCls + ')" onclick="rsFilaToggle(' + s.id + ')">' +
+    '<td class="rst-c0">' + sel + '<i class="bi bi-chevron-' + (abierta ? 'down' : 'right') + ' rst-chev"></i></td>' +
+    '<td><b class="rst-num">#' + s.id + '</b>' + origen + '<small class="rst-hace">' + rsEsc(s.created_at ? String(s.created_at).slice(0, 10) : '') + (s.dias_transcurridos != null ? ' · ' + rsFmt(s.dias_transcurridos) + ' d' : '') + '</small></td>' +
+    '<td>' + cliente + (equipo ? '<small>' + rsEsc(equipo) + '</small>' : '') + (s.prioridad_fs ? '<span class="rst-pill rojo fuerte"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</span>' : '') + '</td>' +
+    '<td><b>' + rsEsc(s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad) + '</b>' + (s.stock_sku ? '<small>' + rsEsc(s.stock_sku) + '</small>' : '') + stock + (!(s.n_fotos > 0) && s.abierta ? '<span class="rst-pill ambar"><i class="bi bi-camera"></i>Sin foto</span>' : '') + '</td>' +
+    '<td><span class="rst-etapa ' + (_RST_ETAPA_CLS[et] || 'gris') + '">' + rsEsc(s.etapa_label || '') + '</span><small class="rst-sig">' + rsEsc(s.siguiente || '') + '</small></td>' +
+    '<td>' + plazo + '</td>' +
+    '<td>' + resp + '</td>' +
+    '<td>' + ticket + '</td>' +
+    '<td class="rst-acc">' + acc + '</td></tr>' +
+    (abierta ? '<tr class="rst-det"><td colspan="9"><div class="rs-card ' + (_RS_EST_CLS[s.estado] || 'sol') + (s.prioridad_fs ? ' prio-fs' : '') + '">' + rsCardInner(s) + '</div></td></tr>' : '');
+}
+
+/* ══ Inteligencia de la tabla (2026-10-04, Daniel: "ponle inteligencia") ══
+   Tarjetas KPI que filtran, y sugerencias calculadas con las solicitudes
+   abiertas: lotes listos por proveedor, el mismo repuesto pedido varias veces,
+   solicitudes por gestionar que ya tienen stock, sin foto, sin responsable. */
+function rsNormTxt(t){ return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function rsKpisPintar(){
+  const box = document.getElementById('rstKpis');
+  if (!box) return;
+  const rows = (_rs.filtro === 'cerradas') ? [] : (_rs.pagina || []);
+  const n = function(f){ return rows.filter(f).length; };
+  const k = [
+    {id: 'gestionar', t: 'Por gestionar', v: n(function(s){ return s.etapa === 'gestionar'; }), c: '#dc2626', i: 'bi-inbox-fill', a: "rsEtapa('gestionar')"},
+    {id: 'vencidas', t: 'Plazo vencido', v: n(function(s){ return s.plazo && s.plazo.color === 'rojo'; }), c: '#991b1b', i: 'bi-alarm-fill', a: "rsSem('rojo')", hot: true},
+    {id: 'fs', t: 'Equipo fuera de servicio', v: n(function(s){ return s.prioridad_fs; }), c: '#b91c1c', i: 'bi-exclamation-octagon-fill', a: "rsSoloIds(" + JSON.stringify(rows.filter(function(s){ return s.prioridad_fs; }).map(function(s){ return s.id; })) + ", 'Equipos fuera de servicio')"},
+    {id: 'lote', t: 'Listas para lote', v: n(function(s){ return s.etapa === 'lote'; }), c: '#f59e0b', i: 'bi-collection-fill', a: "rsEtapa('lote')"},
+    {id: 'ot', t: 'Listas para OT', v: n(function(s){ return s.etapa === 'ot'; }), c: '#2563eb', i: 'bi-clipboard2-check-fill', a: "rsEtapa('ot')"},
+    {id: 'compra', t: 'En compra', v: n(function(s){ return s.etapa === 'compra'; }), c: '#7c3aed', i: 'bi-truck', a: "rsEtapa('compra')"},
+  ];
+  box.innerHTML = k.map(function(x){
+    return '<button type="button" class="rst-kpi' + (x.hot && x.v ? ' hot' : '') + '" style="--acc:' + x.c + '" onclick="' + x.a.replace(/"/g, '&quot;') + '">' +
+      '<span class="k"><i class="bi ' + x.i + '"></i>' + x.t + '</span><span class="v">' + x.v + '</span></button>';
+  }).join('');
+}
+function rsSoloIds(ids, motivo){
+  _rs.soloIds = (ids && ids.length) ? ids : null;
+  _rs.soloMotivo = motivo || '';
+  _rs.etapa = ''; _rs.sem = ''; _rs.tPage = 1;
+  if (_rs.filtro !== 'abiertas'){ _rs.filtro = 'abiertas'; rsCargar(); return; }
+  rsPintar();
+}
+function rsIntelPintar(){
+  const box = document.getElementById('rstIntel');
+  if (!box) return;
+  if (_rs.filtro === 'cerradas'){ box.style.display = 'none'; return; }
+  const ab = (_rs.pagina || []).filter(function(s){ return s.abierta; });
+  const sug = [];
+  // 1) Lotes listos por proveedor
+  const lotes = {};
+  ab.filter(function(s){ return s.etapa === 'lote' && s.proveedor_id && !s.compra_id; }).forEach(function(s){
+    (lotes[s.proveedor_id] = lotes[s.proveedor_id] || { nombre: s.proveedor_nombre || ('Proveedor #' + s.proveedor_id), sols: [] }).sols.push(s);
+  });
+  Object.keys(lotes).forEach(function(pid){
+    const L = lotes[pid], uni = L.sols.reduce(function(a, x){ return a + (parseFloat(x.cantidad) || 0); }, 0);
+    _rs._lotes = _rs._lotes || {}; _rs._lotes[pid] = L.sols;
+    sug.push({ c: 'ambar', i: 'bi-collection-fill', peso: 3,
+      t: '<b>' + rsEsc(L.nombre) + '</b> tiene <b>' + L.sols.length + (L.sols.length === 1 ? ' solicitud lista' : ' solicitudes listas') + '</b> para el lote (' + rsFmt(uni) + ' unidades).',
+      b: _rs.puedePedir ? '<button type="button" class="rst-btn ambar sm" onclick="rsLoteArmar(' + pid + ')"><i class="bi bi-cart-plus"></i>Armar la compra</button>' : '' });
+  });
+  // 2) El mismo repuesto pedido en varias solicitudes
+  const rep = {};
+  ab.filter(function(s){ return ['gestionar', 'lote'].indexOf(s.etapa) >= 0; }).forEach(function(s){
+    const k = s.repuesto_stock_id ? ('id' + s.repuesto_stock_id) : ('n' + rsNormTxt(s.repuesto_nombre));
+    (rep[k] = rep[k] || { nombre: s.stock_descripcion || s.repuesto_nombre, sols: [] }).sols.push(s);
+  });
+  Object.keys(rep).forEach(function(k){
+    const R = rep[k];
+    if (R.sols.length < 2) return;
+    const uni = R.sols.reduce(function(a, x){ return a + (parseFloat(x.cantidad) || 0); }, 0);
+    sug.push({ c: 'azul', i: 'bi-intersect', peso: 2,
+      t: '<b>«' + rsEsc(R.nombre) + '»</b> se pide en <b>' + R.sols.length + ' solicitudes</b> (' + rsFmt(uni) + ' unidades): conviene gestionarlas juntas en un solo pedido.',
+      b: '<button type="button" class="rst-btn sm" onclick="rsSoloIds(' + JSON.stringify(R.sols.map(function(x){ return x.id; })) + ', \'' + rsEsc(String(R.nombre).replace(/'/g, '')) + '\')"><i class="bi bi-funnel"></i>Verlas juntas</button>' });
+  });
+  // 3) Por gestionar que ya tienen stock
+  const conStock = ab.filter(function(s){ return s.etapa === 'gestionar' && s.stock_disponible != null && s.stock_disponible >= 0; });
+  if (conStock.length){
+    sug.push({ c: 'verde', i: 'bi-box-seam-fill', peso: 4,
+      t: (conStock.length === 1 ? 'La solicitud <b>#' + conStock[0].id + '</b> ya tiene' : '<b>' + conStock.length + ' solicitudes</b> por gestionar ya tienen') + ' stock en bodega: al gestionarlas quedan listas para la OT de instalación.',
+      b: conStock.length === 1 ? '<button type="button" class="rst-btn sm" onclick="rsAccion(' + conStock[0].id + ',\'validado\')"><i class="bi bi-clipboard2-check"></i>Gestionar</button>'
+        : '<button type="button" class="rst-btn sm" onclick="rsSoloIds(' + JSON.stringify(conStock.map(function(x){ return x.id; })) + ', \'Por gestionar con stock\')"><i class="bi bi-funnel"></i>Ver cuáles</button>' });
+  }
+  // 4) Sin foto: no pueden avanzar
+  const sinFoto = ab.filter(function(s){ return !(s.n_fotos > 0) && s.etapa !== 'cerrada'; });
+  if (sinFoto.length){
+    sug.push({ c: 'rojo', i: 'bi-camera', peso: 5,
+      t: '<b>' + sinFoto.length + (sinFoto.length === 1 ? ' solicitud no tiene' : ' solicitudes no tienen') + ' foto</b> del repuesto: no pueden avanzar hasta que se agregue.',
+      b: '<button type="button" class="rst-btn sm" onclick="rsSoloIds(' + JSON.stringify(sinFoto.map(function(x){ return x.id; })) + ', \'Sin foto\')"><i class="bi bi-funnel"></i>Ver cuáles</button>' });
+  }
+  // 5) Sin responsable
+  const sinResp = ab.filter(function(s){ return !s.responsable_efectivo; });
+  if (sinResp.length){
+    sug.push({ c: 'ambar', i: 'bi-person-exclamation', peso: 4,
+      t: '<b>' + sinResp.length + (sinResp.length === 1 ? ' solicitud no tiene' : ' solicitudes no tienen') + ' responsable</b>: nadie recibe sus avisos de plazo.',
+      b: document.getElementById('rstRespDef') ? '<button type="button" class="rst-btn sm" onclick="document.getElementById(\'rstRespDef\').focus()"><i class="bi bi-person-gear"></i>Elegir responsable por defecto</button>' : '' });
+  }
+  sug.sort(function(a, b){ return b.peso - a.peso; });
+  if (!sug.length){
+    box.style.display = ab.length ? '' : 'none';
+    box.innerHTML = '<div class="rst-intel-h"><i class="bi bi-stars"></i>Sugerencias</div><div class="rst-sug verde"><i class="bi bi-check-circle-fill"></i><span>Todo en orden: no hay lotes pendientes, repetidos ni bloqueos.</span></div>';
+    return;
+  }
+  box.style.display = '';
+  box.innerHTML = '<div class="rst-intel-h"><i class="bi bi-stars"></i>Sugerencias <span>' + sug.length + '</span></div>' +
+    sug.slice(0, 6).map(function(x){ return '<div class="rst-sug ' + x.c + '"><i class="bi ' + x.i + '"></i><span>' + x.t + '</span>' + (x.b || '') + '</div>'; }).join('') +
+    (sug.length > 6 ? '<div class="rst-sug-mas">y ' + (sug.length - 6) + ' más…</div>' : '');
+}
+function rsLoteArmar(pid){
+  const sols = ((_rs._lotes || {})[pid] || []).map(function(x){ return rsBuscarSolicitud(x.id) || x; });
+  if (!sols.length || typeof rcmAbrir !== 'function') return;
+  const p = (_rs.provs || []).find(function(x){ return String(x.id) === String(pid); }) || {};
+  rcmAbrir({ proveedor_id: parseInt(pid, 10), proveedor_nombre: p.nombre || sols[0].proveedor_nombre || '' }, sols);
+}
+
+function rsFilaToggle(sid){ _rs.abiertas[sid] = !_rs.abiertas[sid]; rsPintar(); }
 function rsPintar(){
   const lista = document.getElementById('rsLista');
-  const pag = _rs.pagina;
-  const total = _rs.total;
-  if (!pag.length){
-    lista.innerHTML = '<div class="rs-vacio"><i class="bi bi-inbox me-1"></i>' +
-      (_rs.q ? 'Nada coincide con la búsqueda.' :
-       (_rs.filtro === 'abiertas' ? 'No hay solicitudes pendientes. Cuando un técnico pida un repuesto desde una OT, o gestión cree una manual, aparece acá.' : 'Sin solicitudes en este filtro.')) + '</div>';
-  } else {
-    lista.innerHTML = pag.map(rsCard).join('');
+  _rs.abiertas = _rs.abiertas || {};
+  const vis = rsVisibles();
+  _rs.visibles = vis;
+  rsSemaforoConteo();
+  const per = _rs.tPer || 20;
+  const tot = vis.length, pgs = Math.max(1, Math.ceil(tot / per));
+  if ((_rs.tPage || 1) > pgs) _rs.tPage = pgs;
+  if ((_rs.tPage || 1) < 1) _rs.tPage = 1;
+  const a = ((_rs.tPage || 1) - 1) * per, b = Math.min(tot, a + per);
+  const th = function(campo, txt){ return '<th class="rst-sort' + (_rs.ord === campo ? (_rs.ordDir === -1 ? ' is-desc' : ' is-asc') : '') + '" onclick="rsOrden(\'' + campo + '\')">' + txt + ' <i class="bi bi-arrow-down-up"></i></th>'; };
+  const vacio = _rs.q ? 'Nada coincide con la búsqueda.' : (_rs.filtro === 'cerradas' ? 'Sin solicitudes cerradas con estos filtros.'
+    : (_rs.etapa || _rs.sem ? 'Ninguna solicitud en este filtro.' : 'No hay solicitudes pendientes. Cuando un técnico pida un repuesto desde una OT, o gestión cree una manual, aparece aquí.'));
+  const opts = [10, 20, 50, 100].map(function(n){ return '<option value="' + n + '"' + (per === n ? ' selected' : '') + '>' + n + ' por página</option>'; }).join('');
+  lista.innerHTML = '<div class="rst-wrap"><div class="rst-scroll"><table class="rst-table"><thead><tr>' +
+      '<th class="rst-c0"></th>' + th('id', 'Solicitud') + th('cliente', 'Cliente · equipo') + '<th>Repuesto</th>' + th('etapa', 'Etapa') + th('plazo', 'Plazo') + th('resp', 'Responsable') + '<th>Ticket</th><th>Acción</th>' +
+    '</tr></thead><tbody>' + (tot ? vis.slice(a, b).map(rsFilaHtml).join('') : '<tr><td colspan="9" class="rst-vacio"><i class="bi bi-inbox me-1"></i>' + vacio + '</td></tr>') + '</tbody></table></div>' +
+    '<div class="rst-foot"><div class="rst-count"><i class="bi bi-collection"></i>' + (tot ? 'Mostrando <strong>' + (a + 1) + '–' + b + '</strong> de <strong>' + tot + '</strong>' : 'Sin resultados') +
+      (_rs.total > (_rs.pagina || []).length ? ' <span class="rst-lim">(se cargaron las ' + (_rs.pagina || []).length + ' más recientes de ' + _rs.total + ')</span>' : '') + '</div>' +
+    '<div class="rst-ctrl"><select class="rst-select" aria-label="Filas por página" onchange="rsTPer(this.value)">' + opts + '</select>' +
+      '<button type="button" class="rst-pbtn" onclick="rsTPag(-1)"' + ((_rs.tPage || 1) <= 1 ? ' disabled' : '') + '><i class="bi bi-chevron-left"></i>Anterior</button>' +
+      '<span>Página ' + (_rs.tPage || 1) + ' de ' + pgs + '</span>' +
+      '<button type="button" class="rst-pbtn" onclick="rsTPag(1)"' + ((_rs.tPage || 1) >= pgs ? ' disabled' : '') + '>Siguiente<i class="bi bi-chevron-right"></i></button></div></div></div>';
+  const pie = document.getElementById('rsPie'); if (pie) pie.style.display = 'none';
+  if (_rs.soloIds){
+    lista.insertAdjacentHTML('afterbegin', '<div class="rst-solo"><i class="bi bi-funnel-fill"></i>Mostrando: <b>' + rsEsc(_rs.soloMotivo || 'sugerencia') + '</b> (' + tot + ')' +
+      '<button type="button" onclick="rsSoloIds(null)"><i class="bi bi-x-lg"></i>Quitar</button></div>');
   }
-  const pie = document.getElementById('rsPie');
-  pie.style.display = total ? '' : 'none';
-  const ini = total ? ((_rs.page - 1) * _rs.size + 1) : 0;
-  const fin = Math.min(total, _rs.page * _rs.size);
-  document.getElementById('rsPieTxt').textContent = 'Mostrando ' + ini + '–' + fin + ' de ' + total;
-  document.getElementById('rsPagTxt').textContent = 'Página ' + _rs.page + ' de ' + _rs.total_pages;
-  document.getElementById('rsPrev').disabled = _rs.page <= 1;
-  document.getElementById('rsNext').disabled = _rs.page >= _rs.total_pages;
+  rsKpisPintar();
+  rsIntelPintar();
+  rsPintarChips();
   rsListaActualizarBoton();
+}
+function rsListaToggleTodo(){
+  // REGLA #14: un solo toggle sobre lo VISIBLE (los filtros y la página actual).
+  const per = _rs.tPer || 20, a = ((_rs.tPage || 1) - 1) * per;
+  const vis = (_rs.visibles || []).slice(a, a + per);
+  const faltaAlguno = vis.some(function(s){ return !_rs.selLista[s.id]; });
+  vis.forEach(function(s){ _rs.selLista[s.id] = faltaAlguno; });
+  rsPintar();
+}
+/* Responsable de una solicitud (si tiene ticket, se cambia también el del ticket). */
+async function rsRespCargar(){
+  if (_rs.usuarios) return _rs.usuarios;
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/config', {credentials:'same-origin'});
+    const j = await r.json();
+    _rs.usuarios = j.usuarios || [];
+    _rs.respDef = j.responsable_defecto || '';
+  } catch(e){ _rs.usuarios = []; }
+  return _rs.usuarios;
+}
+async function rsRespCambiar(sid, btn){
+  const s = rsBuscarSolicitud(sid); if (!s || !btn) return;
+  await rsRespCargar();
+  const sel = document.createElement('select');
+  sel.className = 'rst-select-resp';
+  sel.setAttribute('aria-label', 'Responsable de la solicitud #' + sid);
+  sel.innerHTML = '<option value="">— Elige el responsable —</option>' + _rs.usuarios.map(function(u){
+    return '<option value="' + rsEsc(u) + '"' + (u === s.responsable_efectivo ? ' selected' : '') + '>' + rsEsc(u) + '</option>'; }).join('');
+  sel.addEventListener('click', function(e){ e.stopPropagation(); });
+  sel.addEventListener('blur', function(){ if (!sel.dataset.guardando) rsPintar(); });
+  sel.addEventListener('change', async function(){
+    if (!sel.value) return;
+    sel.dataset.guardando = '1';
+    try {
+      const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/responsable', { method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({ responsable: sel.value }) });
+      const j = await r.json();
+      if (!j.ok){ ilusToast(j.error || 'No se pudo cambiar el responsable.', {type:'error'}); rsPintar(); return; }
+      ilusToast('✓ Responsable: ' + sel.value + (s.ticket_id ? ' (también en el ticket)' : ''), {type:'success'});
+      await rsCargar();
+    } catch(e){ ilusToast('Error de red: ' + e.message, {type:'error'}); rsPintar(); }
+  });
+  btn.replaceWith(sel);
+  sel.focus();
+}
+async function rsRespDefPintar(){
+  const sel = document.getElementById('rstRespDef');
+  if (!sel) return;
+  await rsRespCargar();
+  sel.innerHTML = '<option value="">— Sin responsable por defecto —</option>' + _rs.usuarios.map(function(u){
+    return '<option value="' + rsEsc(u) + '"' + (u === _rs.respDef ? ' selected' : '') + '>' + rsEsc(u) + '</option>'; }).join('');
+}
+async function rsRespDefGuardar(v){
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/config', { method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ responsable_defecto: v }) });
+    const j = await r.json();
+    if (!j.ok){ ilusToast(j.error || 'No se pudo guardar.', {type:'error'}); return; }
+    _rs.respDef = j.responsable_defecto || '';
+    ilusToast(v ? '✓ Responsable por defecto: ' + v : 'Sin responsable por defecto', {type:'success'});
+    await rsCargar();
+  } catch(e){ ilusToast('Error de red: ' + e.message, {type:'error'}); }
+}
+document.addEventListener('DOMContentLoaded', rsRespDefPintar);
+function rsVencidasPintar(n){
+  const b = document.getElementById('rstVencidas');
+  if (!b) return;
+  b.style.display = n > 0 ? '' : 'none';
+  const t = document.getElementById('rstVencidasTxt');
+  if (t) t.textContent = n + (n === 1 ? ' solicitud con el plazo vencido' : ' solicitudes con el plazo vencido');
 }
 
 /* ── Vistas agrupadas: Por proveedor / Por cliente (Daniel, 25-sep) ── */
@@ -2138,14 +2634,7 @@ function rsListaToggle(sid, checked){
   _rs.selLista[sid] = checked;
   rsListaActualizarBoton();
 }
-function rsListaToggleTodo(){
-  // REGLA #14: un solo toggle sobre lo VISIBLE (la página actual) -- si
-  // ALGUNO no está marcado, marca todos; si ya están todos marcados, los
-  // desmarca todos. Mismo criterio que rsGrupoToggleTodo.
-  const faltaAlguno = _rs.pagina.some(function(s){ return !_rs.selLista[s.id]; });
-  _rs.pagina.forEach(function(s){ _rs.selLista[s.id] = faltaAlguno; });
-  rsPintar();
-}
+
 // 🏗️ Fase 4 (2026-09-26): habilita/deshabilita "Generar OT (N)" de la vista
 // Lista y explica por qué, si alguna seleccionada no cumple -- mismo
 // espíritu que la validación de "Por cliente" (rsPintarGrupos). Se llama

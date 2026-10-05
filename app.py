@@ -92117,6 +92117,205 @@ _OTREP_SQL_SOL = (
     "  LEFT JOIN mant_clientes cpad ON cpad.id=sp.cliente_id ")
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  Solicitudes de repuesto: 5 ETAPAS, PLAZOS y RESPONSABLE (2026-10-04)
+#  Daniel: "hay mucho estado" -> Por gestionar · Lista para lote · Lista para
+#  OT · En compra · Cerradas (por dentro siguen los estados de siempre).
+#  Plazos (decisión de Daniel, "los sugeridos"): por gestionar 1 día hábil
+#  (equipo fuera de servicio: 4 h hábiles), lote / OT 2 días hábiles, en
+#  compra = la fecha que dio el proveedor. Ámbar al 75 %, rojo vencido.
+#  Responsable "se define por el front": uno por defecto elegido en pantalla;
+#  el de cada solicitud se puede cambiar (si tiene ticket, es el del ticket).
+# ══════════════════════════════════════════════════════════════════════
+_OTREP_ETAPA_LABEL = {"gestionar": "Por gestionar", "lote": "Lista para lote", "ot": "Lista para OT",
+                      "compra": "En compra", "cerrada": "Cerrada"}
+_OTREP_PLAZO_H = {"gestionar": 9.0, "gestionar_fs": 4.0, "lote": 18.0, "ot": 18.0}
+_OTREP_JORNADA = (8, 17)          # ILUS trabaja de 08:00 a 17:00, lunes a viernes
+_OTREP_COMPRA_DIAS_DEF = 30       # sin fecha del proveedor ni plazo declarado
+_OTREP_RESP_OK = {"listo": False}
+_OTREP_CFG_CACHE = {"data": None, "ts": 0.0}
+_OTREP_FERIADOS = {}
+
+
+def _otrep_resp_asegurar():
+    """Columnas y tabla perezosas (prod corre con SKIP_MIGRATIONS): responsable
+    propio de la solicitud, la etapa en que ya se avisó el plazo vencido y la
+    configuración del centro (responsable por defecto)."""
+    if _OTREP_RESP_OK["listo"]:
+        return True
+    ok = True
+    for ddl in ("ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN responsable VARCHAR(190) NULL",
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN plazo_avisado_etapa VARCHAR(20) NULL"):
+        try:
+            mysql_execute(ddl)
+        except Exception as e:
+            if "1060" not in str(e) and "Duplicate column" not in str(e):
+                ok = False
+                print(f"[otrep] columna: {e}", flush=True)
+    try:
+        mysql_execute("""CREATE TABLE IF NOT EXISTS mant_otrep_config (
+            clave       VARCHAR(60) PRIMARY KEY,
+            valor       TEXT NULL,
+            updated_by  VARCHAR(190) NULL,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
+    except Exception as e:
+        ok = False
+        print(f"[otrep] config: {e}", flush=True)
+    _OTREP_RESP_OK["listo"] = ok
+    return ok
+
+
+def _otrep_cfg():
+    """{clave: valor} del centro de solicitudes (cache 60 s)."""
+    if _OTREP_CFG_CACHE["data"] is not None and time.time() - _OTREP_CFG_CACHE["ts"] < 60:
+        return _OTREP_CFG_CACHE["data"]
+    data = {}
+    try:
+        _otrep_resp_asegurar()
+        data = {r["clave"]: r["valor"] for r in (mysql_fetchall("SELECT clave, valor FROM mant_otrep_config") or [])}
+    except Exception as e:
+        print(f"[otrep] leer config: {e}", flush=True)
+    _OTREP_CFG_CACHE["data"], _OTREP_CFG_CACHE["ts"] = data, time.time()
+    return data
+
+
+def _otrep_feriados(anio):
+    if anio not in _OTREP_FERIADOS:
+        try:
+            from cl_feriados import feriados_chile
+            _OTREP_FERIADOS[anio] = set(feriados_chile(anio).keys())
+        except Exception:
+            _OTREP_FERIADOS[anio] = set()
+    return _OTREP_FERIADOS[anio]
+
+
+def _otrep_a_chile(dt_utc):
+    if not dt_utc:
+        return None
+    try:
+        from zoneinfo import ZoneInfo as _ZI
+        return dt_utc.replace(tzinfo=_ZI("UTC")).astimezone(_ZI("America/Santiago")).replace(tzinfo=None)
+    except Exception:
+        return dt_utc
+
+
+def _otrep_dia_habil(d):
+    return d.weekday() < 5 and d.isoformat() not in _otrep_feriados(d.year)
+
+
+def _otrep_horas_habiles(desde, hasta):
+    """Horas hábiles (lun-vie 08-17, sin feriados) entre dos datetimes en hora Chile."""
+    if not desde or not hasta or hasta <= desde:
+        return 0.0
+    total, dia = 0.0, desde.date()
+    for _ in range(400):
+        if dia > hasta.date():
+            break
+        if _otrep_dia_habil(dia):
+            ini = datetime.combine(dia, datetime.min.time()).replace(hour=_OTREP_JORNADA[0])
+            fin = datetime.combine(dia, datetime.min.time()).replace(hour=_OTREP_JORNADA[1])
+            a, b = max(ini, desde), min(fin, hasta)
+            if b > a:
+                total += (b - a).total_seconds() / 3600.0
+        dia += timedelta(days=1)
+    return total
+
+
+def _otrep_sumar_horas_habiles(desde, horas):
+    """Fecha y hora (Chile) en que se cumplen `horas` hábiles contadas desde `desde`."""
+    actual, quedan = desde, float(horas)
+    for _ in range(400):
+        d = actual.date()
+        if _otrep_dia_habil(d):
+            ini = datetime.combine(d, datetime.min.time()).replace(hour=_OTREP_JORNADA[0])
+            fin = datetime.combine(d, datetime.min.time()).replace(hour=_OTREP_JORNADA[1])
+            a = max(ini, actual)
+            if a < fin:
+                disp = (fin - a).total_seconds() / 3600.0
+                if disp >= quedan:
+                    return a + timedelta(hours=quedan)
+                quedan -= disp
+        actual = datetime.combine(d + timedelta(days=1), datetime.min.time()).replace(hour=_OTREP_JORNADA[0])
+    return actual
+
+
+def _otrep_fmt_horas(h):
+    h = abs(h)
+    if h < 1:
+        return f"{max(1, int(round(h * 60)))} min"
+    if h < 9:
+        return f"{h:.1f}".rstrip("0").rstrip(".") + " h hábiles"
+    dias = h / 9.0
+    return f"{dias:.1f}".rstrip("0").rstrip(".") + (" día hábil" if round(dias, 1) == 1 else " días hábiles")
+
+
+def _otrep_etapa_y_plazo(s):
+    """Etapa visible, qué sigue y el plazo (con semáforo) de una solicitud.
+    `s` todavía trae los datetimes en UTC (se llama antes de formatearlos)."""
+    est = s.get("estado")
+    out = {"etapa": "cerrada", "etapa_label": _OTREP_ETAPA_LABEL["cerrada"], "siguiente": None, "plazo": None}
+    if not s.get("abierta") or est in ("instalado", "rechazado"):
+        out["siguiente"] = ("Anulada" if est == "rechazado" else
+                            ("En bodega (stock libre)" if (s.get("es_reposicion") or s.get("solicitud_padre_id")) else "Instalada"))
+        return out
+    ahora = _otrep_a_chile(datetime.utcnow())
+    desde, objetivo, etapa = None, None, None
+    if est == "solicitado":
+        etapa, desde = "gestionar", s.get("created_at")
+        objetivo = _OTREP_PLAZO_H["gestionar_fs"] if s.get("prioridad_fs") else _OTREP_PLAZO_H["gestionar"]
+        sig = "Gestionar: ligar o crear el repuesto y elegir el camino"
+    elif est == "pedido" or (est == "validado" and s.get("compra_id")):
+        etapa, desde = "compra", s.get("pedido_at") or s.get("validado_at")
+        sig = "Esperar al proveedor y recibir en bodega"
+    elif est == "recibido":
+        etapa, desde, objetivo = "ot", s.get("recibido_at"), _OTREP_PLAZO_H["ot"]
+        sig = ("Repartir (instalar / bodega) y generar la OT" if s.get("repartible") and not s.get("ot_generada_id")
+               else ("Instalar en la OT " + str(s.get("ot_generada_numero") or s.get("ot_generada_id")) if s.get("ot_generada_id")
+                     else "Generar la OT de instalación"))
+    else:  # validado sin compra
+        disp = s.get("stock_disponible")
+        if disp is not None and disp >= 0:
+            etapa, desde, objetivo = "ot", s.get("validado_at"), _OTREP_PLAZO_H["ot"]
+            sig = ("Instalar en la OT " + str(s.get("ot_generada_numero") or s.get("ot_generada_id")) if s.get("ot_generada_id")
+                   else "Hay stock: generar la OT de instalación")
+        else:
+            etapa, desde, objetivo = "lote", s.get("validado_at"), _OTREP_PLAZO_H["lote"]
+            sig = "Sin stock: armar el ticket de compra del proveedor (lote)"
+    out.update({"etapa": etapa, "etapa_label": _OTREP_ETAPA_LABEL[etapa], "siguiente": sig})
+    # Con la OT de instalación ya generada, el plazo lo lleva la OT.
+    if etapa == "ot" and s.get("ot_generada_id"):
+        return out
+    desde_ch = _otrep_a_chile(desde) if desde else None
+    if not desde_ch:
+        return out
+    if etapa == "compra":
+        eta = s.get("compra_eta")
+        if eta is not None and hasattr(eta, "year"):
+            eta_d = eta.date() if hasattr(eta, "hour") else eta
+            vence = datetime.combine(eta_d, datetime.min.time()).replace(hour=_OTREP_JORNADA[1])
+        else:
+            dias = s.get("proveedor_plazo_dias")
+            vence = desde_ch + timedelta(days=int(dias) if str(dias or "").isdigit() else _OTREP_COMPRA_DIAS_DEF)
+        total_d = max((vence - desde_ch).total_seconds() / 86400.0, 0.01)
+        usado_d = (ahora - desde_ch).total_seconds() / 86400.0
+        pct = usado_d / total_d
+        rest = (vence - ahora).total_seconds() / 86400.0
+        texto = (("Llega en " + (f"{rest:.0f}" if rest >= 1 else "menos de 1") + " día" + ("" if 0 < rest < 2 else "s")) if rest >= 0
+                 else ("Atrasada " + f"{abs(rest):.0f}" + " día" + ("" if abs(rest) < 2 else "s")))
+        out["plazo"] = {"pct": round(pct, 3), "color": "rojo" if rest < 0 else ("ambar" if pct >= 0.75 else "verde"),
+                        "texto": texto, "vence": vence.strftime("%d/%m/%Y"), "dias": True}
+        return out
+    usado = _otrep_horas_habiles(desde_ch, ahora)
+    pct = usado / objetivo if objetivo else 0
+    rest = objetivo - usado
+    vence = _otrep_sumar_horas_habiles(desde_ch, objetivo)
+    texto = ("Quedan " + _otrep_fmt_horas(rest)) if rest > 0 else ("Vencida hace " + _otrep_fmt_horas(rest))
+    out["plazo"] = {"pct": round(pct, 3), "color": "rojo" if rest <= 0 else ("ambar" if pct >= 0.75 else "verde"),
+                    "texto": texto, "vence": vence.strftime("%d/%m/%Y %H:%M"), "objetivo": _otrep_fmt_horas(objetivo)}
+    return out
+
+
 def _otrep_fila(s, para_ot=False):
     s = dict(s)
     # 🔒 2026-09-26 (revisión Opus, hallazgo ALTA #1): costo_unitario/
@@ -92232,6 +92431,24 @@ def _otrep_fila(s, para_ot=False):
     # ETA dd/mm' con link"). Solo tiene sentido si compra_id está seteado.
     s["compra_estado_label"] = (_OTREP_COMPRA_ESTADO_LABEL.get(s.get("compra_estado"))
                                  if s.get("compra_id") else None)
+    # 🚦 2026-10-04: etapa visible + plazo con semáforo + responsable efectivo.
+    try:
+        s.update(_otrep_etapa_y_plazo(s))
+    except Exception as _e_et:
+        print(f"[otrep] etapa sid={s.get('id')}: {_e_et}", flush=True)
+        s.setdefault("etapa", None); s.setdefault("plazo", None)
+    try:
+        _resp_def = (_otrep_cfg().get("responsable_defecto") or "").strip()
+    except Exception:
+        _resp_def = ""
+    if (s.get("ticket_asignado_a") or "").strip():
+        s["responsable_efectivo"], s["responsable_origen"] = s["ticket_asignado_a"].strip(), "ticket"
+    elif (s.get("responsable") or "").strip():
+        s["responsable_efectivo"], s["responsable_origen"] = s["responsable"].strip(), "solicitud"
+    elif _resp_def and s.get("abierta"):
+        s["responsable_efectivo"], s["responsable_origen"] = _resp_def, "defecto"
+    else:
+        s["responsable_efectivo"], s["responsable_origen"] = None, None
     # REGLA #6: todo datetime a hora Chile, nunca ISO crudo.
     for k in ("created_at", "validado_at", "pedido_at", "recibido_at", "instalado_at", "updated_at"):
         s[k] = chile_fmt_filter(s[k]) if s.get(k) else None
@@ -94203,12 +94420,16 @@ def _otrep_filtros_query():
     if (request.args.get("mias") or "") == "1":
         responsable = (current_username() or "")[:190] or "\u0000"
     if responsable:
+        # 2026-10-04: el responsable EFECTIVO = el del ticket, si no el propio de la
+        # solicitud, si no el responsable por defecto que se eligió en pantalla.
+        _otrep_resp_asegurar()
+        _def = (_otrep_cfg().get("responsable_defecto") or "").strip()
+        _efect = ("COALESCE(NULLIF((SELECT tt.asignado_a FROM tk_tickets tt WHERE tt.id=s.ticket_id),''), "
+                  "NULLIF(s.responsable,''), NULLIF(%s,''))")
         if responsable == "__sin__":
-            where.append("(s.ticket_id IS NULL OR s.ticket_id IN (SELECT id FROM tk_tickets "
-                         " WHERE asignado_a IS NULL OR asignado_a=''))")
+            where.append(_efect + " IS NULL"); params.append(_def)
         else:
-            where.append("s.ticket_id IN (SELECT id FROM tk_tickets WHERE asignado_a=%s)")
-            params.append(responsable)
+            where.append(_efect + "=%s"); params.extend([_def, responsable])
     solicitante = (request.args.get("solicitante") or "").strip()[:190]
     if solicitante:
         where.append("s.solicitado_por=%s"); params.append(solicitante)
@@ -94404,7 +94625,8 @@ def repstock_solicitudes_ot_listar():
         per_page = int(request.args.get("per_page") or 100)
     except (TypeError, ValueError):
         per_page = 100
-    per_page = max(10, min(per_page, 200))
+    per_page = max(10, min(per_page, 500))
+    _otrep_resp_asegurar()
 
     sols, conteo, total, total_pages = [], {}, 0, 1
     fuera_servicio_n = 0
@@ -94481,7 +94703,12 @@ def repstock_solicitudes_ot_listar():
     except Exception as e:
         print(f"[otrep] cola: {e}", flush=True)
     puede_gestion_plata = not _es_rol_tecnico()
+    vencidas = [x for x in sols if (x.get("plazo") or {}).get("color") == "rojo"]
+    if vencidas and not _es_rol_tecnico():
+        _otrep_avisar_vencidas(vencidas)
     return jsonify({"ok": True, "solicitudes": sols, "conteo": conteo,
+                    "vencidas_n": len(vencidas),
+                    "responsable_defecto": (_otrep_cfg().get("responsable_defecto") or ""),
                     "total": total, "page": page, "per_page": per_page, "total_pages": total_pages,
                     "pendientes_tecnicos": _otrep_pendientes_tecnicos(),
                     "fuera_servicio_n": fuera_servicio_n,
@@ -94490,6 +94717,96 @@ def repstock_solicitudes_ot_listar():
                     # 🏗️ Fase 3 (2026-09-21): controla si la cola ofrece
                     # "Generar OT de instalación" -- ver _otrep_puede_generar_ot.
                     "puede_generar_ot": _otrep_puede_generar_ot()})
+
+
+def _otrep_avisar_vencidas(vencidas):
+    """Campana del responsable cuando una solicitud vence su plazo (Daniel: "que
+    moleste"). Una vez por solicitud y etapa (plazo_avisado_etapa). Sin correos."""
+    try:
+        for x in vencidas[:30]:
+            if x.get("plazo_avisado_etapa") == x.get("etapa") or not x.get("responsable_efectivo"):
+                continue
+            u = mysql_fetchone("SELECT id FROM app_users WHERE active=1 AND COALESCE(nombre, username)=%s LIMIT 1",
+                               (x["responsable_efectivo"],))
+            if u:
+                _mant_notificar(u["id"], "repuesto_plazo",
+                                f"Solicitud #{x['id']} vencida: {x.get('etapa_label')}",
+                                f"{x.get('repuesto_nombre') or 'Repuesto'} × {x.get('cantidad') or 1}"
+                                f"{' · ' + x['cliente_nombre'] if x.get('cliente_nombre') else ''}. {x.get('siguiente') or ''}",
+                                url_accion=f"/repuestos?solicitud={x['id']}#solicitudes", prioridad="alta")
+                try:
+                    _mant_notif_cache_invalidar(u["id"])
+                except Exception:
+                    pass
+            mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET plazo_avisado_etapa=%s WHERE id=%s",
+                          (x.get("etapa"), x["id"]))
+    except Exception as e:
+        print(f"[otrep] avisar vencidas: {e}", flush=True)
+
+
+@app.route("/repuestos/api/solicitudes-ot/config", methods=["GET", "POST"])
+@_otrep_gestion_required
+def repstock_solicitudes_config():
+    """Responsable por defecto del centro de solicitudes (Daniel 2026-10-04: "el
+    responsable sería el usuario que se defina por el front"). GET devuelve el
+    actual y los usuarios activos; POST lo cambia (gestión, nunca un técnico)."""
+    _otrep_resp_asegurar()
+    if request.method == "POST":
+        if _es_rol_tecnico():
+            return jsonify({"ok": False, "error": "El responsable por defecto lo define gestión."}), 403
+        nombre = ((request.get_json(silent=True) or {}).get("responsable_defecto") or "").strip()[:190]
+        if nombre and not mysql_fetchone(
+                "SELECT id FROM app_users WHERE active=1 AND COALESCE(nombre, username)=%s LIMIT 1", (nombre,)):
+            return jsonify({"ok": False, "error": "Ese usuario no existe o no está activo."}), 400
+        mysql_execute("INSERT INTO mant_otrep_config (clave, valor, updated_by) VALUES ('responsable_defecto', %s, %s) "
+                      "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
+                      (nombre or None, current_username()))
+        _OTREP_CFG_CACHE["data"] = None
+        _mant_log("repuesto_solicitud", 0, "responsable_defecto", nombre or "(sin responsable por defecto)")
+    usuarios = []
+    try:
+        usuarios = [r["nombre"] for r in (mysql_fetchall(
+            "SELECT COALESCE(nombre, username) AS nombre FROM app_users WHERE active=1 "
+            " AND COALESCE(nombre, username) IS NOT NULL ORDER BY nombre LIMIT 300") or [])]
+    except Exception as e:
+        print(f"[otrep] usuarios: {e}", flush=True)
+    return jsonify({"ok": True, "responsable_defecto": (_otrep_cfg().get("responsable_defecto") or ""),
+                    "usuarios": usuarios})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/responsable", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_responsable(sid):
+    """Cambia el responsable de UNA solicitud. Si la solicitud ya tiene ticket, el
+    responsable es el del ticket (tk_tickets.asignado_a), así que se cambia ahí
+    también -- nunca quedan dos versiones distintas."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "El responsable lo asigna gestión."}), 403
+    _otrep_resp_asegurar()
+    nombre = ((request.get_json(silent=True) or {}).get("responsable") or "").strip()[:190]
+    s = mysql_fetchone("SELECT id, ticket_id, responsable FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if nombre and not mysql_fetchone(
+            "SELECT id FROM app_users WHERE active=1 AND COALESCE(nombre, username)=%s LIMIT 1", (nombre,)):
+        return jsonify({"ok": False, "error": "Ese usuario no existe o no está activo."}), 400
+    antes = s.get("responsable") or ""
+    try:
+        mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET responsable=%s, plazo_avisado_etapa=NULL WHERE id=%s",
+                      (nombre or None, sid))
+        if s.get("ticket_id"):
+            t = mysql_fetchone("SELECT asignado_a FROM tk_tickets WHERE id=%s", (s["ticket_id"],)) or {}
+            antes = t.get("asignado_a") or antes
+            mysql_execute("UPDATE tk_tickets SET asignado_a=%s WHERE id=%s", (nombre or None, s["ticket_id"]))
+    except Exception as e:
+        print(f"[otrep] responsable sid={sid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo cambiar el responsable."}), 500
+    try:
+        _otrep_evento(sid, "tomar", current_username(),
+                      detalle=f"Responsable: {nombre or 'sin responsable'}" + (f" (antes {antes})" if antes and antes != nombre else ""))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "responsable": nombre})
 
 
 @app.route("/repuestos/api/solicitudes-ot/export", methods=["GET"])

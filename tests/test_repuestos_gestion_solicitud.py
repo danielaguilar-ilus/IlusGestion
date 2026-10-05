@@ -72,13 +72,18 @@ class TestFiltrosPorPersona(unittest.TestCase):
     def _where(self, args, tecnico=False, oculta=False, yo="Juan Pablo"):
         f = _cargar("_otrep_filtros_query", {
             "request": _Req(args), "_es_rol_tecnico": lambda: tecnico,
-            "_oculta_proveedores": lambda: oculta, "current_username": lambda: yo})
+            "_oculta_proveedores": lambda: oculta, "current_username": lambda: yo,
+            "_otrep_resp_asegurar": lambda: True, "_otrep_cfg": lambda: {"responsable_defecto": "Daniel"}})
         return f()
 
-    def test_responsable_es_el_del_ticket(self):
+    def test_responsable_es_el_efectivo(self):
+        # 2026-10-04: el del ticket, si no el propio de la solicitud, si no el por defecto.
         w, p = self._where({"responsable": "Juan Pablo"})
-        self.assertIn("s.ticket_id IN (SELECT id FROM tk_tickets WHERE asignado_a=%s)", w)
+        self.assertIn("tt.asignado_a", w)
+        self.assertIn("NULLIF(s.responsable,'')", w)
         self.assertIn("Juan Pablo", p)
+        self.assertIn("Daniel", p)          # el responsable por defecto entra al cálculo
+        self.assertEqual(w.count("%s"), len(p))
 
     def test_mis_solicitudes_usa_el_usuario_de_la_sesion(self):
         w, p = self._where({"mias": "1", "responsable": "Otra persona"}, yo="Lenin Urbina")
@@ -91,8 +96,9 @@ class TestFiltrosPorPersona(unittest.TestCase):
 
     def test_sin_responsable(self):
         w, p = self._where({"responsable": "__sin__"})
-        self.assertIn("s.ticket_id IS NULL", w)
+        self.assertIn(") IS NULL", w)
         self.assertNotIn("__sin__", p)
+        self.assertEqual(w.count("%s"), len(p))
 
     def test_solicitante(self):
         w, p = self._where({"solicitante": "Lenin Urbina"})
