@@ -29,13 +29,13 @@
 .pnext{margin-top:6px;padding:9px 10px;border-radius:10px;background:#fff;border:1px solid #e5e7eb;border-left:4px solid #dc2626;
   display:flex;flex-direction:column;gap:7px;animation:pnextIn .35s ease}
 .pnext-tit{display:flex;gap:8px;align-items:flex-start}
-.pnext-ico{color:#dc2626;font-size:1rem;line-height:1.15;flex:0 0 auto}
-.pnext-tit b{display:block;font-size:.83rem;color:#111827}
-.pnext-tit span{display:block;font-size:.74rem;color:#6b7280}
+.pnext-tit .pnext-ico{color:#dc2626;font-size:1.05rem;line-height:1.1;flex:0 0 auto}
+.pnext-tit > div > b{display:block;font-size:.83rem;color:#111827}
+.pnext-tit > div > span{display:block;font-size:.74rem;color:#6b7280}
 .pnext-respuesta,.pnext-aceptacion{border-left-color:#f59e0b}
-.pnext-respuesta .pnext-ico,.pnext-aceptacion .pnext-ico{color:#f59e0b}
-.pnext-llamar{border-left-color:#3b82f6}.pnext-llamar .pnext-ico{color:#3b82f6}
-.pnext-contrato{border-left-color:#16a34a}.pnext-contrato .pnext-ico{color:#16a34a}
+.pnext-respuesta .pnext-tit .pnext-ico,.pnext-aceptacion .pnext-tit .pnext-ico{color:#f59e0b}
+.pnext-llamar{border-left-color:#3b82f6}.pnext-llamar .pnext-tit .pnext-ico{color:#3b82f6}
+.pnext-contrato{border-left-color:#16a34a}.pnext-contrato .pnext-tit .pnext-ico{color:#16a34a}
 
 .cc2-prosp-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .cc2-prosp-acts .pa{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;min-height:36px;border:1px solid #d1d5db;

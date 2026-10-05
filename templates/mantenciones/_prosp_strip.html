@@ -38,6 +38,8 @@
 {% set ac = pr.accion or {'key': '', 'titulo': pr.paso_actual, 'detalle': ''} %}
 {% set of = pr.oferta or {} %}
 {% set cot = pr.cotizacion or {} %}
+{# En la lista la cotización trae «numero»; en la ficha viene de _cotizacion_vigente_de con «numero_cotizacion» #}
+{% set cot_num = cot.numero or cot.numero_cotizacion or 'la cotización' %}
 {% set tel = (c.contacto_tel or c.tel_empresa or '') %}
 <div class="cc2-prosp{{ ' en-ficha' if en_ficha }}" data-prosp-cid="{{ c.id }}">
   {% if not en_ficha %}
@@ -104,10 +106,10 @@
       {% else %}
       <a class="pa pa-main" href="{{ url_for('mant_ficha', cid=c.id) }}?accion=enviar_cotizacion"><i class="bi bi-send-fill"></i> Enviar para aceptar</a>
       {% endif %}
-      {% if cot.id %}<a class="pa" target="_blank" href="/tickets/cotizaciones/{{ cot.id }}/ver"><i class="bi bi-eye"></i> Revisar {{ cot.numero }}</a>{% endif %}
+      {% if cot.id %}<a class="pa" target="_blank" href="/tickets/cotizaciones/{{ cot.id }}/ver"><i class="bi bi-eye"></i> Revisar {{ cot_num }}</a>{% endif %}
     {% elif ac.key == 'aceptacion' %}
       {{ _si_no(c, 'acepta', 'Aceptó', 'No acepta') }}
-      {% if cot.id %}<a class="pa" target="_blank" href="/tickets/cotizaciones/{{ cot.id }}/ver"><i class="bi bi-eye"></i> Ver {{ cot.numero }}</a>{% endif %}
+      {% if cot.id %}<a class="pa" target="_blank" href="/tickets/cotizaciones/{{ cot.id }}/ver"><i class="bi bi-eye"></i> Ver {{ cot_num }}</a>{% endif %}
     {% elif ac.key == 'contrato' %}
       {% if en_ficha %}
       <button type="button" class="pa pa-main" onclick="abrirContratoModal()"><i class="bi bi-file-earmark-arrow-up-fill"></i> Subir contrato</button>

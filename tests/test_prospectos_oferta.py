@@ -770,6 +770,8 @@ def test_franja_en_ficha_usa_las_funciones_de_la_ficha():
     assert "abrirContratoModal()" in _franja(_ac("contrato"), en_ficha=True)
     assert "?accion=contrato" in _franja(_ac("contrato"))
     assert "enviarCotizacionAceptar(this)" in _franja(_ac("enviar"), en_ficha=True, cotizacion={"id": 3, "numero": "COT-3"})
+    # en la ficha la cotización viene de _cotizacion_vigente_de, con «numero_cotizacion»
+    assert "Revisar COT-3" in _franja(_ac("enviar"), en_ficha=True, cotizacion={"id": 3, "numero_cotizacion": "COT-3"})
 
 
 def test_franja_cliente_con_contrato_no_muestra_acciones():
